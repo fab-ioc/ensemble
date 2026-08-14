@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# Install the claude-dashboard LaunchAgent so the server starts at login and
+# restarts itself if it crashes.
+#
+# Usage:
+#   ./install-launchd.sh           # install + load
+#   ./install-launchd.sh uninstall # unload + remove
+#   ./install-launchd.sh status    # show status
+#
+# Logs: ~/Library/Logs/claude-dashboard.log
+# Plist: ~/Library/LaunchAgents/com.claude-code.dashboard.plist
+set -euo pipefail
+
+LABEL="com.claude-code.dashboard"
+DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT="$DIR/dashboard.py"
+TEMPLATE="$DIR/com.claude-code.dashboard.plist.template"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+LOG="$HOME/Library/Logs/claude-dashboard.log"
+PORT="${CLAUDE_DASHBOARD_PORT:-8765}"
+
+action="${1:-install}"
+
+case "$action" in
+  install)
+    PYTHON="$(command -v python3)"
+    if [[ -z "$PYTHON" ]]; then
+      echo "error: python3 not found in PATH" >&2
+      exit 1
+    fi
+    if [[ ! -f "$SCRIPT" ]]; then
+      echo "error: $SCRIPT not found" >&2
+      exit 1
+    fi
+
+    mkdir -p "$(dirname "$PLIST")" "$(dirname "$LOG")"
+
+    sed \
+      -e "s|__PYTHON__|$PYTHON|g" \
+      -e "s|__SCRIPT__|$SCRIPT|g" \
+      -e "s|__DIR__|$DIR|g" \
+      -e "s|__PORT__|$PORT|g" \
+      -e "s|__LOG__|$LOG|g" \
+      -e "s|__HOME__|$HOME|g" \
+      "$TEMPLATE" > "$PLIST"
+
+    # Unload first if already loaded (safe to ignore failures)
+    launchctl bootout "gui/$UID/$LABEL" 2>/dev/null || true
+
+    launchctl bootstrap "gui/$UID" "$PLIST"
+    launchctl enable "gui/$UID/$LABEL"
+    launchctl kickstart -k "gui/$UID/$LABEL"
+
+    echo "Installed: $PLIST"
+    echo "Logs:      $LOG"
+    echo "URL:       http://127.0.0.1:$PORT"
+    echo
+    echo "Status:"
+    launchctl print "gui/$UID/$LABEL" | grep -E '^\s*(state|pid|last exit code)' || true
+    ;;
+
+  uninstall)
+    launchctl bootout "gui/$UID/$LABEL" 2>/dev/null || true
+    rm -f "$PLIST"
+    echo "Uninstalled. Plist removed: $PLIST"
+    ;;
+
+  status)
+    if [[ ! -f "$PLIST" ]]; then
+      echo "Not installed (no $PLIST)"
+      exit 0
+    fi
+    launchctl print "gui/$UID/$LABEL" | grep -E '^\s*(state|pid|last exit code|program|arguments)' || true
+    echo
+    echo "Recent log lines:"
+    tail -n 10 "$LOG" 2>/dev/null || echo "  (no log yet)"
+    ;;
+
+  *)
+    echo "Usage: $0 [install|uninstall|status]" >&2
+    exit 2
+    ;;
+esac

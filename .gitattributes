@@ -1,0 +1,17 @@
+# Normalize text to LF in the repo; check out native on Windows.
+* text=auto
+
+# Files that MUST stay LF everywhere (POSIX shell scripts / launchers run on
+# macOS & Linux and break with CRLF), regardless of the checkout platform.
+*.sh            text eol=lf
+claude-dashboard text eol=lf
+install-launchd.sh text eol=lf
+*.py            text eol=lf
+
+# PowerShell is fine either way; keep CRLF on Windows-only scripts.
+*.ps1           text eol=crlf
+
+# Treat these as binary (never touch line endings).
+*.png binary
+*.ico binary
+*.zip binary

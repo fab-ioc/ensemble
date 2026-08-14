@@ -1,0 +1,179 @@
+<#
+.SYNOPSIS
+  claude-dashboard: start/stop/restart/status/logs/open the Claude session
+  dashboard on Windows (PowerShell counterpart of the macOS/Linux `claude-dashboard`
+  bash script).
+
+.USAGE
+  .\claude-dashboard.ps1 start   [-Port N]
+  .\claude-dashboard.ps1 stop
+  .\claude-dashboard.ps1 restart [-Port N]
+  .\claude-dashboard.ps1 status
+  .\claude-dashboard.ps1 logs        # tail -f the log file
+  .\claude-dashboard.ps1 open        # open the dashboard in the default browser
+
+.STATE
+  PID file: %USERPROFILE%\.claude\dashboard\server.pid
+  Logs:     %USERPROFILE%\.claude\dashboard\logs\claude-dashboard.log
+#>
+[CmdletBinding()]
+param(
+  [Parameter(Position = 0)]
+  [ValidateSet('start', 'stop', 'restart', 'status', 'logs', 'open', 'doctor', 'help')]
+  [string]$Action = 'status',
+  [int]$Port = 0
+)
+
+$ErrorActionPreference = 'Stop'
+
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Server    = Join-Path $ScriptDir 'dashboard.py'
+$StateDir  = Join-Path $env:USERPROFILE '.claude\dashboard'
+$LogDir    = Join-Path $StateDir 'logs'
+$PidFile   = Join-Path $StateDir 'server.pid'
+$Log       = Join-Path $LogDir 'claude-dashboard.log'
+
+if ($Port -eq 0) {
+  $Port = if ($env:CLAUDE_DASHBOARD_PORT) { [int]$env:CLAUDE_DASHBOARD_PORT } else { 8765 }
+}
+$Url = "http://127.0.0.1:$Port"
+
+New-Item -ItemType Directory -Force -Path $StateDir, $LogDir | Out-Null
+
+function Resolve-Python {
+  foreach ($c in 'py', 'python', 'python3') {
+    $g = Get-Command $c -ErrorAction SilentlyContinue
+    # Skip the Microsoft Store alias stub (it lives under WindowsApps and only
+    # prompts to install).
+    if ($g -and $g.Source -notlike '*\WindowsApps\*') { return $g.Source }
+  }
+  # Last resort: a real `py` even if the only thing on PATH is the launcher.
+  $g = Get-Command 'py' -ErrorAction SilentlyContinue
+  if ($g) { return $g.Source }
+  return $null
+}
+
+function Resolve-PythonW {
+  # Windowless interpreter (pythonw.exe) so no console window appears. Resolved
+  # next to the real python.exe; falls back to pyw / console python.
+  $py = Resolve-Python
+  if ($py) {
+    try {
+      $exe = (& $py -c 'import sys; print(sys.executable)').Trim()
+      $pyw = Join-Path (Split-Path $exe) 'pythonw.exe'
+      if (Test-Path $pyw) { return $pyw }
+    } catch {}
+  }
+  $g = Get-Command pythonw, pyw -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($g) { return $g.Source }
+  return $py
+}
+
+function Get-RunningPid {
+  # Prefer the recorded PID; fall back to whoever is listening on the port.
+  if (Test-Path $PidFile) {
+    $p = (Get-Content $PidFile -ErrorAction SilentlyContinue | Select-Object -First 1)
+    if ($p -and (Get-Process -Id $p -ErrorAction SilentlyContinue)) { return [int]$p }
+  }
+  try {
+    $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop |
+            Select-Object -First 1
+    if ($conn) { return [int]$conn.OwningProcess }
+  } catch {}
+  return $null
+}
+
+function Start-Dashboard {
+  $existing = Get-RunningPid
+  if ($existing) { Write-Host "Already running (pid $existing). $Url"; return }
+  if (-not (Test-Path $Server)) { Write-Error "$Server not found"; exit 1 }
+  $python = Resolve-PythonW
+  if (-not $python) { Write-Error 'No real Python found (need python.org install / py launcher).'; exit 1 }
+
+  # pythonw.exe = no console window. The server writes its own log via --log
+  # (pythonw has no stdio to redirect).
+  $proc = Start-Process -FilePath $python `
+    -ArgumentList @($Server, '--port', $Port, '--log', $Log) `
+    -WorkingDirectory $ScriptDir -WindowStyle Hidden -PassThru
+  $proc.Id | Out-File -Encoding ascii $PidFile
+  Start-Sleep -Milliseconds 500
+  if (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue) {
+    Write-Host "Started (pid $($proc.Id)). $Url"
+  } else {
+    Write-Host 'Failed to start. Last log lines:'
+    Get-Content $Log -Tail 20 -ErrorAction SilentlyContinue
+    Remove-Item $PidFile -ErrorAction SilentlyContinue
+    exit 1
+  }
+}
+
+function Stop-Dashboard {
+  $p = Get-RunningPid
+  if (-not $p) { Remove-Item $PidFile -ErrorAction SilentlyContinue; Write-Host 'Not running.'; return }
+  try { Stop-Process -Id $p -Force -ErrorAction Stop } catch {}
+  Remove-Item $PidFile -ErrorAction SilentlyContinue
+  Write-Host "Stopped (was pid $p)."
+}
+
+function Invoke-Doctor {
+  # Green/red health check of every prerequisite. Exits non-zero if any fail.
+  $fail = 0
+  function Check($label, $ok, $detail) {
+    if ($ok) { Write-Host ("  [OK]   {0}  {1}" -f $label, $detail) }
+    else     { Write-Host ("  [FAIL] {0}  {1}" -f $label, $detail); $script:fail++ }
+  }
+  Write-Host "claude-dashboard doctor"
+  Write-Host ""
+
+  $py = Resolve-Python
+  Check "python" ($null -ne $py) ($(if ($py) { $py } else { "not found (install from python.org)" }))
+
+  $pyw = Resolve-PythonW
+  $isWindowless = $pyw -and ($pyw -like '*pythonw.exe')
+  Check "pythonw (windowless)" $isWindowless ($(if ($pyw) { $pyw } else { "not found" }))
+
+  $claude = Get-Command claude -ErrorAction SilentlyContinue
+  Check "claude CLI" ($null -ne $claude) ($(if ($claude) { $claude.Source } else { "not on PATH" }))
+
+  $wt = Get-Command wt -ErrorAction SilentlyContinue
+  Check "Windows Terminal (wt.exe)" ($null -ne $wt) ($(if ($wt) { $wt.Source } else { "not found - Open/New/Fork won't work" }))
+
+  Check "dashboard.py" (Test-Path $Server) $Server
+
+  $running = Get-RunningPid
+  Check "server running" ($null -ne $running) ($(if ($running) { "pid $running - $Url" } else { "not running (start it: claude-dashboard.ps1 start)" }))
+
+  if ($running) {
+    $responds = $false
+    try {
+      $r = Invoke-WebRequest -UseBasicParsing -Uri "$Url/api/platform" -TimeoutSec 4
+      $responds = ($r.StatusCode -eq 200)
+    } catch {}
+    Check "server responds" $responds "$Url/api/platform"
+  }
+
+  $task = Get-ScheduledTask -TaskName 'ClaudeDashboard' -ErrorAction SilentlyContinue
+  Check "autostart task" ($null -ne $task) ($(if ($task) { "ClaudeDashboard ($($task.State))" } else { "not installed (optional: install-task.ps1)" }))
+
+  Write-Host ""
+  if ($fail -eq 0) { Write-Host "All checks passed." }
+  else { Write-Host "$fail check(s) failed."; exit 1 }
+}
+
+switch ($Action) {
+  'start'   { Start-Dashboard }
+  'stop'    { Stop-Dashboard }
+  'restart' { Stop-Dashboard; Start-Dashboard }
+  'status'  {
+    $p = Get-RunningPid
+    if ($p) { Write-Host "Running (pid $p) - $Url"; Write-Host "Log: $Log" }
+    else    { Write-Host 'Not running.' }
+  }
+  'logs'    {
+    if (-not (Test-Path $Log)) { Write-Host "(no log yet at $Log)"; break }
+    Get-Content $Log -Tail 50 -Wait
+  }
+  'open'    { Start-Process $Url }
+  'doctor'  { Invoke-Doctor }
+  'help'    { Get-Help $MyInvocation.MyCommand.Path -Detailed }
+}

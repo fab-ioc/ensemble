@@ -1,0 +1,2979 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>claude dashboard</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 0 C13 8 16 11 24 12 C16 13 13 16 12 24 C11 16 8 13 0 12 C8 11 11 8 12 0 Z' fill='%23D97757'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    color-scheme: light dark;
+    /* Neutral light theme — terracotta only on accent/focus/primary, not on
+       surfaces. To dial the warmth back up, only tweak the --accent* and
+       --live-* vars below; the rest should stay neutral. */
+    --bg: #fafafa;
+    --surface: #ffffff;
+    --fg: #111111;
+    --muted: #6b7280;
+    --muted-2: #9ca3af;
+    --border: #e7e7e7;
+    --hover: rgba(0, 0, 0, .04);
+    --accent: #c25d3c;          /* terracotta — Claude's brand color */
+    --accent-fg: #ffffff;
+    --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+    --live-busy: #d97757;
+    --live-idle: #7a9a6b;       /* muted sage */
+    --danger: #c0392b;
+    --turn-bg: rgba(0, 0, 0, .03);
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 1px 3px rgba(0,0,0,.03);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e0e0e;
+      --surface: #161616;
+      --fg: #ededed;
+      --muted: #9ca3af;
+      --muted-2: #6b7280;
+      --border: #262626;
+      --hover: rgba(255, 255, 255, .05);
+      --accent: #e89478;          /* lighter terracotta for dark */
+      --accent-fg: #0e0e0e;
+      --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+      --live-busy: #e89478;
+      --live-idle: #94b585;
+      --danger: #e06464;
+      --turn-bg: rgba(255, 255, 255, .03);
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 1px 3px rgba(0,0,0,.2);
+    }
+  }
+  :root {
+    --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --font-display: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font: 13.5px/1.5 var(--font-sans);
+    margin: 0; background: var(--bg); color: var(--fg);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "ss01", "cv11";
+  }
+  header {
+    padding: 12px 20px; border-bottom: 1px solid var(--border);
+    display: flex; gap: 12px; align-items: center;
+    position: sticky; top: 0; background: var(--bg); z-index: 10;
+    backdrop-filter: saturate(180%) blur(8px);
+  }
+  header h1 {
+    font: 600 17px/1 var(--font-display);
+    margin: 0; flex-shrink: 0;
+    letter-spacing: -0.03em;
+    color: var(--fg);
+    display: inline-flex; align-items: center; gap: 9px;
+  }
+  header h1 .logo {
+    width: 20px; height: 20px;
+    display: inline-block; vertical-align: middle;
+  }
+  #new-btn {
+    background: var(--accent); color: var(--accent-fg);
+    border: 0; padding: 6px 14px; border-radius: 6px;
+    cursor: pointer; font: inherit; font-weight: 500;
+    transition: filter .12s, transform .06s;
+    box-shadow: 0 1px 2px rgba(0,0,0,.08);
+  }
+  #new-btn:hover { filter: brightness(1.08); }
+  #new-btn:active { transform: translateY(1px); }
+  .search-wrap {
+    flex: 1; max-width: 460px; position: relative;
+    display: flex; align-items: center;
+  }
+  #search {
+    flex: 1; padding: 6px 12px; padding-right: 80px;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--surface); color: var(--fg); font: inherit;
+    transition: border-color .12s, box-shadow .12s;
+  }
+  #search:focus {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+  .search-state {
+    position: absolute; right: 8px;
+    font-size: 10.5px; color: var(--muted);
+    background: var(--bg); padding: 2px 8px; border-radius: 4px;
+    pointer-events: none; user-select: none;
+    border: 1px solid var(--border);
+    font-weight: 500;
+  }
+  .search-state.deep {
+    color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+    background: var(--accent-soft);
+  }
+  .search-state[hidden] { display: none; }
+  .seg {
+    display: inline-flex; border: 1px solid var(--border);
+    border-radius: 6px; overflow: hidden; background: var(--surface);
+  }
+  .seg button {
+    background: transparent; border: 0; padding: 6px 12px;
+    cursor: pointer; font: inherit; color: var(--fg);
+    transition: background .1s;
+  }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button:hover { background: var(--hover); }
+  .seg button.active { background: var(--accent); color: var(--accent-fg); }
+  #meta { color: var(--muted); margin-left: auto; font-variant-numeric: tabular-nums; font-size: 12px; }
+  main { padding: 8px 20px 40px; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  thead { position: sticky; top: 49px; background: var(--bg); z-index: 5; }
+  th {
+    text-align: left; font-size: 10.5px; text-transform: uppercase;
+    color: var(--muted-2); padding: 9px 8px 7px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600; letter-spacing: 0.04em;
+  }
+  td {
+    padding: 8px 8px; border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  /* Numeric / timestamp columns: narrow, right-aligned, non-wrapping. */
+  th.num, td.ago { width: 60px; text-align: right; padding-left: 4px; padding-right: 10px; white-space: nowrap; }
+  th.num.turns, td.ago.turns { width: 44px; }
+  td.sid { width: 130px; padding-right: 4px; }
+  tr.row { cursor: pointer; transition: background .08s; }
+  tr.row:hover td { background: var(--hover); }
+  tr.row.live td:first-child {
+    box-shadow: inset 3px 0 0 0 var(--live-idle);
+  }
+  tr.row.live.busy td:first-child {
+    box-shadow: inset 3px 0 0 0 var(--live-busy);
+  }
+  tr.row.live { background: linear-gradient(90deg, color-mix(in srgb, var(--live-idle) 5%, transparent), transparent 30%); }
+  tr.row.live.busy { background: linear-gradient(90deg, color-mix(in srgb, var(--live-busy) 6%, transparent), transparent 30%); }
+  mark.match {
+    background: color-mix(in srgb, var(--accent) 28%, transparent);
+    color: inherit; padding: 1px 3px; border-radius: 3px; font-weight: 500;
+  }
+  /* category grouping */
+  tr.category-header { cursor: pointer; }
+  tr.category-header td {
+    background: var(--surface);
+    font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); padding: 14px 8px 6px;
+    border-bottom: 1px solid var(--border);
+    user-select: none;
+  }
+  tr.category-header:hover td { background: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
+  tr.category-header .chev {
+    display: inline-block; width: 12px; margin-right: 2px;
+    color: var(--muted-2); font-size: 9px; transition: transform .12s ease;
+    vertical-align: middle;
+  }
+  tr.category-header.collapsed .chev { transform: rotate(-90deg); }
+  tr.category-header .cat-name { color: var(--fg); letter-spacing: 0.04em; text-transform: none; }
+  tr.category-header .cat-count { color: var(--muted-2); margin-left: 8px; font-weight: 400; }
+  tr.category-header.drop-target td { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); color: var(--accent); }
+  tr.row.drop-target td { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  tr.row.dragging { opacity: 0.4; }
+  tr.row { user-select: none; }
+  .pid, .sid, .ago { color: var(--muted); font-size: 12.5px; }
+  .sid { font-family: var(--font-mono); font-size: 11.5px; }
+  .fork-indent {
+    display: inline-block;
+    margin-left: calc((var(--depth, 1) - 1) * 18px);
+    margin-right: 6px;
+    color: var(--muted-2); font-family: -apple-system, sans-serif;
+  }
+  tr.row.is-fork td:first-child { box-shadow: inset 3px 0 0 0 var(--muted-2); }
+  tr.row.is-fork.live td:first-child { box-shadow: inset 3px 0 0 0 var(--live-idle); }
+  tr.row.is-fork.live.busy td:first-child { box-shadow: inset 3px 0 0 0 var(--live-busy); }
+  .cwd { color: var(--muted); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 11.5px; }
+  .topic { max-width: 560px; }
+  .topic .first { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; color: var(--fg); }
+  .topic .last {
+    color: var(--muted); font-size: 12px; display: block; margin-top: 4px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .status {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 14px; height: 14px; vertical-align: middle;
+  }
+  .status.idle {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--live-idle);
+  }
+  .status.busy {
+    color: var(--live-busy);
+  }
+  .status.busy::before {
+    content: '';
+    width: 14px; height: 14px;
+    background-color: currentColor;
+    -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 0 C13 8 16 11 24 12 C16 13 13 16 12 24 C11 16 8 13 0 12 C8 11 11 8 12 0 Z'/></svg>") center/contain no-repeat;
+            mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 0 C13 8 16 11 24 12 C16 13 13 16 12 24 C11 16 8 13 0 12 C8 11 11 8 12 0 Z'/></svg>") center/contain no-repeat;
+    animation: burst-spin 3.6s linear infinite, burst-pulse 1.6s ease-in-out infinite;
+    transform-origin: center;
+  }
+  @keyframes burst-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+  @keyframes burst-pulse {
+    0%, 100% { opacity: .65; }
+    50%      { opacity: 1; }
+  }
+  .badge-live {
+    background: var(--live-idle); color: white;
+    padding: 1px 7px; border-radius: 10px; font-size: 10px;
+    margin-left: 8px; vertical-align: middle; font-weight: 600;
+    letter-spacing: 0.04em; text-transform: uppercase;
+  }
+  .badge-pin {
+    margin-left: 6px; font-size: 11px; vertical-align: middle;
+    filter: saturate(1.4);
+  }
+  .actions .pin-btn.is-pinned {
+    background: color-mix(in srgb, var(--live-busy) 16%, transparent);
+    border-color: var(--live-busy);
+    color: var(--live-busy);
+  }
+  .actions .pin-btn.is-pinned:hover {
+    background: color-mix(in srgb, var(--live-busy) 24%, transparent);
+    color: var(--live-busy);
+  }
+  .label {
+    font-weight: 600; color: var(--fg); display: block;
+    font-size: 14px; letter-spacing: -0.005em; margin-bottom: 2px;
+  }
+  .row-cat-chip {
+    display: inline-block; margin-left: 8px;
+    background: var(--accent-soft); color: var(--accent);
+    padding: 0 7px; border-radius: 99px;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.02em;
+    vertical-align: middle; line-height: 18px;
+    font-variant-caps: all-small-caps;
+  }
+  .row-jira-chip {
+    display: inline-block; margin-left: 6px;
+    background: rgba(99, 122, 158, .14); color: #4f6c98;
+    padding: 0 7px; border-radius: 99px;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+    vertical-align: middle; line-height: 18px;
+    text-decoration: none;
+    font-family: var(--font-mono);
+  }
+  .row-jira-chip:hover {
+    background: rgba(99, 122, 158, .25); color: #2c4a78;
+    text-decoration: none;
+  }
+  @media (prefers-color-scheme: dark) {
+    .row-jira-chip { background: rgba(123, 154, 200, .16); color: #9ab4d8; }
+    .row-jira-chip:hover { background: rgba(123, 154, 200, .26); color: #c5d8ee; }
+  }
+  .row-cost-chip {
+    display: inline-block; margin-left: 6px;
+    background: rgba(120, 120, 120, .12); color: var(--muted);
+    padding: 0 7px; border-radius: 99px;
+    font-size: 10px; font-weight: 500; letter-spacing: 0.02em;
+    vertical-align: middle; line-height: 18px;
+    font-variant-numeric: tabular-nums;
+    cursor: default; user-select: none;
+  }
+  @media (prefers-color-scheme: dark) {
+    .row-cost-chip { background: rgba(255, 255, 255, .06); color: var(--muted); }
+  }
+  .actions {
+    display: flex; gap: 5px; align-items: center;
+    flex-wrap: wrap; justify-content: flex-start;
+  }
+  /* Row-level actions are hidden by default; the right-side detail panel
+     is the canonical place to act on a session. */
+  body.detail-mode #view .actions { display: none; }
+  /* Selection: subtle warm-tinted bg + right-edge accent notch, so the
+     live/busy left-border encoding stays dominant. */
+  body.detail-mode tr.row.selected td {
+    background: var(--accent-soft);
+  }
+  body.detail-mode tr.row.selected td:last-child {
+    box-shadow: inset -3px 0 0 0 var(--accent);
+  }
+  /* Panel itself — slides in from the right */
+  main {
+    padding-left: 248px;
+    transition: padding-right .22s cubic-bezier(0.16, 1, 0.3, 1),
+                padding-left  .2s  cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  /* Page header inside the main view — appears when a specific category
+     (or Uncategorized) is selected in the sidebar. */
+  .page-header {
+    display: flex; align-items: baseline; gap: 16px;
+    padding: 14px 4px 14px; margin-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+  }
+  .page-header h2 {
+    font: 600 21px/1.2 var(--font-display);
+    margin: 0; letter-spacing: -0.025em; color: var(--fg);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .page-header .page-count {
+    color: var(--muted); font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .page-header .page-actions {
+    margin-left: auto; display: flex; gap: 6px;
+  }
+  .page-header .page-actions button {
+    background: transparent; border: 1px solid var(--border);
+    padding: 5px 11px; border-radius: 6px; cursor: pointer;
+    font: inherit; font-size: 12px; color: var(--muted); font-weight: 500;
+    transition: border-color .08s, color .08s, background .08s;
+  }
+  .page-header .page-actions button:hover { border-color: var(--accent); color: var(--accent); background: var(--hover); }
+  .page-header .page-actions #cat-delete-btn:hover { border-color: var(--danger); color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent); }
+  body { --detail-w: 380px; }
+  body.detail-open main { padding-right: calc(var(--detail-w) + 20px); }
+
+  /* Sidebar toggle button */
+  #sidebar-toggle {
+    background: transparent; border: 1px solid var(--border);
+    padding: 4px 10px; border-radius: 6px; cursor: pointer;
+    color: var(--muted); font-size: 14px; line-height: 1;
+    flex-shrink: 0;
+    transition: color .1s, border-color .1s, background .1s;
+  }
+  #sidebar-toggle:hover { color: var(--accent); border-color: var(--accent); background: var(--hover); }
+  /* Sidebar */
+  #sidebar {
+    transition: transform .2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  body.sidebar-collapsed #sidebar {
+    transform: translateX(-100%);
+  }
+  body.sidebar-collapsed main {
+    padding-left: 0;
+  }
+  #sidebar {
+    position: fixed; left: 0; top: 49px; bottom: 0;
+    width: 248px; box-sizing: border-box;
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    overflow-y: auto;
+    padding: 8px 0 24px;
+    z-index: 5;
+  }
+  .sb-section {
+    font-size: 10px; font-weight: 600;
+    color: var(--muted-2); text-transform: uppercase; letter-spacing: 0.08em;
+    padding: 16px 16px 6px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .sb-section + .sb-section { padding-top: 18px; }
+  .sb-divider {
+    height: 1px; background: var(--border);
+    margin: 10px 12px;
+  }
+  .sb-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 16px 6px 13px;
+    cursor: pointer; user-select: none;
+    color: var(--fg); font-size: 13px;
+    background: transparent;
+    border: 0; border-left: 3px solid transparent;
+    text-align: left; font: inherit; width: 100%;
+    transition: background .08s, color .08s, border-color .08s;
+    position: relative;
+  }
+  .sb-item:hover { background: var(--hover); }
+  .sb-item.active {
+    background: var(--accent-soft);
+    border-left-color: var(--accent);
+    color: var(--accent);
+    font-weight: 500;
+  }
+  .sb-item .sb-icon {
+    width: 16px; flex-shrink: 0; text-align: center;
+    color: var(--muted-2); font-size: 12.5px;
+  }
+  .sb-item.active .sb-icon { color: var(--accent); }
+  .sb-item .sb-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sb-item .sb-count {
+    color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums;
+    font-weight: 500; min-width: 22px; text-align: right;
+  }
+  .sb-item.active .sb-count { color: var(--accent); }
+  .sb-item.drop-target {
+    background: var(--accent-soft);
+    border-left-color: var(--accent); color: var(--accent);
+  }
+  .sb-cat-actions {
+    opacity: 0; display: inline-flex; gap: 2px;
+    transition: opacity .1s;
+  }
+  .sb-item:hover .sb-cat-actions { opacity: 1; }
+  .sb-cat-actions button {
+    background: transparent; border: 0; padding: 1px 5px;
+    cursor: pointer; color: var(--muted); font-size: 12px; line-height: 1;
+    border-radius: 3px;
+  }
+  .sb-cat-actions button:hover { color: var(--accent); background: var(--hover); }
+  /* Footer "+ New category" affordance */
+  .sb-add-cat {
+    margin: 8px 12px 0;
+    background: transparent; color: var(--muted);
+    border: 1px dashed var(--border); padding: 6px 10px;
+    border-radius: 6px; cursor: pointer; font: inherit; font-size: 12px;
+    width: calc(100% - 24px); text-align: left;
+  }
+  .sb-add-cat:hover { color: var(--accent); border-color: var(--accent); border-style: solid; }
+  #detail-panel {
+    position: fixed; right: 0; top: 49px; bottom: 0;
+    width: var(--detail-w);
+    background: var(--surface); border-left: 1px solid var(--border);
+    box-shadow: -14px 0 36px rgba(40,20,10,.10);
+    overflow-y: auto; padding: 22px 22px 28px; z-index: 20;
+    display: flex; flex-direction: column; gap: 16px;
+    transform: translateX(100%);
+    transition: transform .22s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  body.detail-open #detail-panel { transform: translateX(0); }
+  /* Resize handle on the panel's left edge — sibling of #detail-panel so it
+     survives panel re-renders. Hidden when the panel is closed. Hover/drag
+     paints it in the accent colour. Drag updates --detail-w on <body>. */
+  #detail-panel-resize {
+    position: fixed; top: 49px; bottom: 0;
+    right: calc(var(--detail-w) - 3px); width: 6px;
+    cursor: ew-resize; z-index: 22; background: transparent;
+    transition: background .15s;
+    display: none;
+  }
+  body.detail-open #detail-panel-resize { display: block; }
+  #detail-panel-resize:hover,
+  body.detail-resizing #detail-panel-resize {
+    background: color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+  body.detail-resizing,
+  body.detail-resizing * { cursor: ew-resize !important; user-select: none; }
+  /* Suspend the panel's slide-in transition during a drag so it tracks the
+     mouse exactly. */
+  body.detail-resizing #detail-panel { transition: none; }
+  .dp-head { display: flex; align-items: flex-start; gap: 8px; }
+  .dp-head h2 {
+    font: 600 22px/1.25 var(--font-display);
+    margin: 0; flex: 1; letter-spacing: -0.025em;
+    color: var(--fg);
+  }
+  .dp-close {
+    background: transparent; border: 0; cursor: pointer;
+    color: var(--muted); font-size: 18px; padding: 2px 6px; border-radius: 4px; line-height: 1;
+  }
+  .dp-close:hover { background: var(--hover); color: var(--fg); }
+  .dp-meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: 11.5px; color: var(--muted); }
+  .dp-meta .chip {
+    background: var(--bg); border: 1px solid var(--border);
+    padding: 2px 9px; border-radius: 999px; font-size: 11px; color: var(--muted);
+    font-weight: 500; letter-spacing: 0.005em;
+  }
+  .dp-meta .chip.mono { font-family: var(--font-mono); letter-spacing: 0; }
+  .dp-meta .chip.live { background: color-mix(in srgb, var(--live-idle) 16%, transparent); color: var(--live-idle); border-color: transparent; }
+  .dp-meta .chip.busy { background: color-mix(in srgb, var(--live-busy) 20%, transparent); color: var(--live-busy); border-color: transparent; }
+  .dp-meta .chip.pinned { background: color-mix(in srgb, var(--live-busy) 16%, transparent); color: var(--live-busy); border-color: transparent; }
+  .dp-meta .chip.category { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+  .dp-section h3 {
+    font-size: 10.5px; font-weight: 600; color: var(--muted-2);
+    text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 6px;
+  }
+  .dp-cwd { font-family: var(--font-mono); font-size: 12px; color: var(--muted); word-break: break-all; }
+  .dp-cost .cost-total {
+    font: 600 22px/1 var(--font-display); letter-spacing: -0.02em;
+    color: var(--fg); font-variant-numeric: tabular-nums;
+  }
+  .dp-cost .cost-table {
+    margin-top: 10px; width: 100%; border-collapse: collapse;
+    font-size: 11.5px; font-variant-numeric: tabular-nums;
+  }
+  .dp-cost .cost-table td {
+    border: 0; padding: 6px 8px 6px 0;
+    vertical-align: top;
+  }
+  .dp-cost .cost-table tr + tr td { border-top: 1px solid var(--border); }
+  .dp-cost .cost-model {
+    font-family: var(--font-mono); font-size: 11px; color: var(--fg);
+    white-space: nowrap;
+  }
+  .dp-cost .cost-amount {
+    color: var(--fg); font-weight: 600; text-align: right; white-space: nowrap;
+    padding-right: 12px;
+  }
+  .dp-cost .cost-tokens { color: var(--muted); font-size: 10.5px; }
+  .dp-cost .cost-unknown {
+    background: color-mix(in srgb, var(--danger) 15%, transparent);
+    color: var(--danger); padding: 1px 5px; border-radius: 3px;
+    font-size: 9px; text-transform: uppercase; letter-spacing: .04em;
+    font-family: var(--font-sans); font-weight: 600;
+  }
+  .dp-cost .cost-note {
+    margin: 10px 0 0; font-size: 11px; color: var(--muted-2); line-height: 1.5;
+  }
+  .dp-jira-pill { display: inline-flex; align-items: center; }
+  .dp-jira-remove {
+    background: transparent; border: 0; cursor: pointer;
+    color: var(--muted-2); font-size: 14px; line-height: 1;
+    padding: 0 5px; margin-left: -4px; border-radius: 3px;
+  }
+  .dp-jira-remove:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+  #dp-jira-add {
+    background: transparent; border: 1px dashed var(--border);
+    padding: 2px 9px; border-radius: 99px; color: var(--muted);
+    cursor: pointer; font: inherit; font-size: 11px; line-height: 18px;
+  }
+  #dp-jira-add:hover { color: var(--accent); border-color: var(--accent); border-style: solid; }
+  /* Inline transcript inside the detail panel */
+  .dp-transcript { display: flex; flex-direction: column; gap: 6px; }
+  .tx-turn {
+    border-left: 2px solid var(--border);
+    padding: 6px 10px 6px 12px;
+    background: var(--bg);
+    border-radius: 0 6px 6px 0;
+  }
+  .tx-turn.user { border-left-color: var(--accent); background: var(--turn-bg); }
+  .tx-turn.assistant { border-left-color: var(--muted-2); }
+  .tx-turn .tx-role {
+    font-size: 9.5px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--muted-2); display: block; margin-bottom: 3px;
+  }
+  .tx-turn.user .tx-role { color: var(--accent); }
+  .tx-turn .tx-ts {
+    font-size: 9.5px; color: var(--muted-2); margin-left: 6px;
+    font-family: var(--font-mono); font-weight: 400; text-transform: none; letter-spacing: 0;
+  }
+  .tx-turn .tx-text {
+    font-family: var(--font-mono); font-size: 11.5px; line-height: 1.5;
+    color: var(--fg); white-space: pre-wrap; word-wrap: break-word;
+  }
+  .dp-quote {
+    background: var(--turn-bg); border-left: 3px solid var(--accent);
+    padding: 10px 12px; border-radius: 0 6px 6px 0;
+    font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; word-wrap: break-word;
+    font-family: ui-monospace, "SF Mono", monospace;
+  }
+  .dp-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+  .dp-actions button, .dp-actions select {
+    background: var(--bg); border: 1px solid var(--border);
+    padding: 5px 11px; border-radius: 6px; cursor: pointer;
+    font: inherit; font-size: 12px; color: var(--fg); font-weight: 500;
+    transition: border-color .08s, background .08s, color .08s, transform .06s;
+  }
+  .dp-actions button:hover, .dp-actions select:hover {
+    border-color: var(--accent); color: var(--accent); background: var(--hover);
+  }
+  .dp-actions button:active { transform: translateY(1px); }
+  /* PRIMARY actions (Focus on live, Open on historical) — filled terracotta */
+  .dp-actions .focus-btn, .dp-actions .open-btn {
+    background: var(--accent); color: var(--accent-fg); border-color: var(--accent);
+  }
+  .dp-actions .focus-btn:hover, .dp-actions .open-btn:hover {
+    background: var(--accent); color: var(--accent-fg); filter: brightness(1.08);
+  }
+  /* DESTRUCTIVE actions — red by default, not just on hover */
+  .dp-actions .close-btn, .dp-actions .delete-btn {
+    color: var(--danger); border-color: color-mix(in srgb, var(--danger) 30%, var(--border));
+  }
+  .dp-actions .close-btn:hover, .dp-actions .delete-btn:hover {
+    background: color-mix(in srgb, var(--danger) 10%, transparent);
+    border-color: var(--danger); color: var(--danger);
+  }
+  .actions button, .actions select {
+    background: var(--surface); border: 1px solid var(--border); padding: 3px 9px;
+    font: inherit; font-size: 11.5px; cursor: pointer; border-radius: 5px;
+    color: var(--fg); line-height: 1.4; font-weight: 500;
+    transition: border-color .08s, background .08s, color .08s;
+  }
+  .actions button:hover, .actions select:hover {
+    background: var(--hover); border-color: var(--accent); color: var(--accent);
+  }
+  .actions .close-btn:hover { border-color: var(--danger); color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent); }
+  .actions .delete-btn:hover { border-color: var(--danger); color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent); }
+  .actions .open-btn:hover  { border-color: var(--live-idle); color: var(--live-idle); background: color-mix(in srgb, var(--live-idle) 8%, transparent); }
+  .actions select { max-width: 130px; }
+  .actions button.busy { opacity: .5; cursor: progress; }
+  .theme-dd-trigger {
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 3px 9px; font: inherit; font-size: 11.5px; cursor: pointer;
+    border-radius: 5px; color: var(--fg); font-weight: 500;
+    max-width: 160px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; transition: border-color .08s, background .08s, color .08s;
+  }
+  .theme-dd-trigger:hover { background: var(--hover); border-color: var(--accent); color: var(--accent); }
+  .theme-dd-menu {
+    position: fixed; z-index: 200;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; box-shadow: 0 12px 36px rgba(0,0,0,.22);
+    width: 280px; max-height: 420px;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .theme-dd-search {
+    border: 0; border-bottom: 1px solid var(--border);
+    padding: 9px 12px; font: inherit; font-size: 13px;
+    background: transparent; color: var(--fg); outline: none;
+  }
+  .theme-dd-list { overflow-y: auto; padding: 6px; }
+  .theme-dd-section {
+    padding: 8px 8px 4px; font-size: 10px;
+    color: var(--muted-2); text-transform: uppercase;
+    font-weight: 600; letter-spacing: 0.06em;
+  }
+  .theme-dd-empty { padding: 8px 12px; font-size: 12px; color: var(--muted); }
+  .theme-dd-item {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 6px 5px 4px; border-radius: 5px;
+    font-size: 12.5px; line-height: 1.4;
+  }
+  .theme-dd-item:hover { background: var(--hover); }
+  .theme-dd-item.current .name { color: var(--accent); font-weight: 600; }
+  .theme-dd-item .star {
+    background: transparent; border: 0; cursor: pointer;
+    color: var(--muted-2); font-size: 14px; line-height: 1;
+    padding: 2px 6px; border-radius: 4px; flex-shrink: 0;
+  }
+  .theme-dd-item .star:hover { background: color-mix(in srgb, var(--live-busy) 18%, transparent); color: var(--live-busy); }
+  .theme-dd-item .star.is-fav { color: var(--live-busy); }
+  .theme-dd-item .name {
+    flex: 1; cursor: pointer; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+    padding: 1px 0;
+  }
+  .ij-menu {
+    position: fixed; z-index: 100; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.18); padding: 6px;
+    min-width: 220px; display: flex; flex-direction: column; gap: 2px;
+  }
+  .ij-menu-item {
+    background: transparent; border: none; padding: 7px 10px;
+    cursor: pointer; font: inherit; font-size: 12.5px;
+    color: var(--fg); text-align: left; border-radius: 4px;
+    transition: background .08s;
+    display: flex; align-items: center; gap: 8px; width: 100%;
+  }
+  .ij-menu-item:hover { background: var(--hover); }
+  .ij-menu-item .ij-icon { width: 20px; height: 20px; flex-shrink: 0; border-radius: 4px; }
+  .ij-menu-item .ij-icon-fallback {
+    width: 20px; height: 20px; flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--muted-2); font-size: 16px;
+  }
+  .ij-menu-item .ij-name { flex: 1; font-weight: 500; }
+  .ij-menu-item .ij-editor { color: var(--muted-2); font-size: 11px; }
+  .empty {
+    color: var(--muted); padding: 64px 16px; text-align: center;
+    font-size: 14px;
+  }
+  .empty::before {
+    content: '∅'; display: block; font-size: 32px;
+    color: var(--muted-2); margin-bottom: 12px; opacity: .6;
+  }
+  #status {
+    padding: 4px 12px; font-size: 12px; font-weight: 500;
+    border-radius: 6px;
+    display: inline-flex; align-items: center; gap: 10px;
+    margin-left: auto;
+    background: var(--muted); color: white;
+    box-shadow: 0 1px 2px rgba(0,0,0,.06);
+  }
+  #status[hidden] { display: none; }
+  #status.ok   { background: var(--live-idle); }
+  #status.busy { background: var(--live-busy); }
+  #status.err  { background: var(--danger); }
+  #status .dismiss { background: rgba(255,255,255,.2); color: inherit; border: 0; padding: 2px 8px; border-radius: 4px; cursor: pointer; font: inherit; font-size: 11px; font-weight: 500; }
+  #status .dismiss:hover { background: rgba(255,255,255,.35); }
+  #meta { margin-left: 0 !important; }
+  /* Settings */
+  #settings-btn {
+    background: transparent; border: 1px solid var(--border);
+    padding: 4px 10px; border-radius: 6px; cursor: pointer;
+    color: var(--muted); font-size: 14px; line-height: 1;
+    transition: color .1s, border-color .1s, background .1s;
+  }
+  #settings-btn:hover { color: var(--accent); border-color: var(--accent); background: var(--hover); }
+  #settings-panel {
+    position: absolute; top: 56px; right: 16px; z-index: 50;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; box-shadow: 0 12px 36px rgba(0,0,0,.12);
+    padding: 16px; min-width: 280px;
+  }
+  #settings-panel[hidden] { display: none; }
+  #settings-panel h4 {
+    margin: 0 0 10px; font-size: 11px; font-weight: 600;
+    color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em;
+  }
+  #settings-panel .swatch-row {
+    display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap;
+  }
+  #settings-panel .swatch {
+    width: 22px; height: 22px; border-radius: 50%;
+    border: 2px solid var(--border); padding: 0; cursor: pointer;
+    transition: transform .1s, border-color .1s;
+  }
+  #settings-panel .swatch:hover { transform: scale(1.1); }
+  #settings-panel .swatch.active { border-color: var(--fg); }
+  #settings-panel #accent-input {
+    width: 100%; padding: 6px 10px;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); color: var(--fg); font: inherit;
+    font-family: var(--font-mono); font-size: 12px;
+    outline: none;
+  }
+  #settings-panel #accent-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  #settings-panel .settings-section + .settings-section {
+    margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border);
+  }
+  #settings-panel .cfg-grid {
+    margin: 0; display: grid; grid-template-columns: max-content 1fr;
+    column-gap: 10px; row-gap: 4px;
+    font-family: var(--font-mono); font-size: 11.5px;
+  }
+  #settings-panel .cfg-grid dt { color: var(--muted-2); }
+  #settings-panel .cfg-grid dd {
+    margin: 0; color: var(--fg); word-break: break-all;
+  }
+  #settings-panel .cfg-grid dd.is-empty { color: var(--muted-2); font-style: italic; }
+  #settings-panel .cfg-hint {
+    margin: 10px 0 0; font-size: 11px; color: var(--muted-2); line-height: 1.5;
+  }
+  #settings-panel .cfg-hint code {
+    font-family: var(--font-mono); font-size: 10.5px;
+    background: var(--hover); padding: 1px 4px; border-radius: 3px;
+  }
+  /* Preferences section: label above a segmented control */
+  #settings-panel .pref-row {
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  #settings-panel .pref-label {
+    font-size: 11px; color: var(--muted-2); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600;
+  }
+  #settings-panel .pref-seg { width: 100%; }
+  #settings-panel .pref-seg button { flex: 1; font-size: 12px; padding: 6px 10px; }
+  #settings-panel #pref-default-model {
+    width: 100%; padding: 5px 10px;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); color: var(--fg); font: inherit;
+    font-family: var(--font-mono); font-size: 12px;
+    outline: none;
+  }
+  #settings-panel #pref-default-model:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  #settings-panel .pref-btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  #settings-panel .pref-btn-row button {
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 6px 10px; border-radius: 6px; cursor: pointer;
+    font: inherit; font-size: 12px; color: var(--fg); font-weight: 500;
+    transition: border-color .1s, color .1s, background .1s;
+  }
+  #settings-panel .pref-btn-row button:hover {
+    border-color: var(--accent); color: var(--accent); background: var(--hover);
+  }
+  #settings-panel .pref-btn-row button:disabled {
+    opacity: .55; cursor: progress;
+  }
+  /* Instance badge in the header — only shown for non-default instances. */
+  .instance-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    margin-left: 8px; padding: 2px 8px; border-radius: 99px;
+    background: var(--accent-soft); color: var(--accent);
+    font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .instance-badge::before { content: '●'; font-size: 8px; }
+  /* Update banner — shown at the top when a newer commit is available */
+  #update-banner {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 16px;
+    background: var(--accent-soft);
+    border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+    color: var(--fg); font-size: 13px;
+    position: sticky; top: 0; z-index: 100;
+  }
+  #update-banner[hidden] { display: none; }
+  #update-banner-text { flex: 1; }
+  #update-banner-text code {
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    padding: 1px 6px; border-radius: 3px;
+    font-family: var(--font-mono); font-size: 12px;
+  }
+  #update-banner-go {
+    background: var(--accent); color: var(--accent-fg);
+    border: 0; padding: 5px 14px; border-radius: 5px;
+    cursor: pointer; font: inherit; font-weight: 600; font-size: 12px;
+  }
+  #update-banner-go:hover { filter: brightness(1.06); }
+  #update-banner-go:disabled { opacity: .65; cursor: progress; }
+  #update-banner-dismiss {
+    background: transparent; border: 0; color: var(--muted-2);
+    font-size: 16px; line-height: 1; padding: 4px 6px;
+    cursor: pointer; border-radius: 3px;
+  }
+  #update-banner-dismiss:hover { color: var(--fg); background: var(--hover); }
+  /* Full-screen overlay shown while update is in progress */
+  #update-overlay {
+    position: fixed; inset: 0; z-index: 200;
+    background: color-mix(in srgb, var(--bg) 70%, transparent);
+    backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+    display: flex; align-items: center; justify-content: center;
+  }
+  #update-overlay[hidden] { display: none; }
+  .update-modal {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 24px 32px; min-width: 380px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.3);
+    text-align: center;
+  }
+  .update-modal h3 {
+    margin: 0 0 16px; font-size: 15px; font-weight: 600;
+    color: var(--fg); letter-spacing: 0.01em;
+  }
+  .update-progress {
+    height: 4px; background: color-mix(in srgb, var(--accent) 14%, transparent);
+    border-radius: 2px; overflow: hidden; position: relative;
+  }
+  .update-progress-bar {
+    position: absolute; top: 0; bottom: 0; left: 0;
+    width: 35%; background: var(--accent);
+    border-radius: 2px;
+    animation: update-progress-slide 1.4s ease-in-out infinite;
+  }
+  @keyframes update-progress-slide {
+    0%   { left: -35%; }
+    100% { left: 100%; }
+  }
+  .update-stage {
+    margin: 14px 0 0; font-size: 13px; color: var(--fg);
+    font-family: var(--font-mono); min-height: 1.4em;
+  }
+  .update-hint {
+    margin: 6px 0 0; font-size: 11.5px; color: var(--muted-2);
+  }
+  /* Category header gets a "+ New here" button on hover */
+  tr.category-header .cat-add {
+    margin-left: 8px; background: transparent; border: 1px dashed var(--border);
+    padding: 1px 8px; border-radius: 4px; font-size: 11px;
+    color: var(--muted); cursor: pointer; opacity: 0; transition: opacity .1s;
+    text-transform: none; letter-spacing: 0;
+  }
+  tr.category-header:hover .cat-add { opacity: 1; }
+  tr.category-header .cat-add:hover { color: var(--accent); border-color: var(--accent); border-style: solid; }
+  .actions button.busy::before { content: '⏳ '; }
+  .actions button.busy { opacity: .6; pointer-events: none; }
+  dialog {
+    border: 1px solid var(--border); border-radius: 12px;
+    max-width: 880px; width: 80vw; max-height: 82vh;
+    padding: 20px; background: var(--surface); color: var(--fg);
+    box-shadow: 0 25px 50px rgba(0,0,0,.25);
+  }
+  dialog::backdrop { background: rgba(0,0,0,.5); backdrop-filter: blur(2px); }
+  dialog h3 { margin: 0 0 4px; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+  dialog .cwd-line {
+    color: var(--muted); font-size: 12px; margin-bottom: 16px;
+    font-family: var(--font-mono);
+  }
+  dialog .im-field { margin: 14px 0; display: flex; flex-direction: column; gap: 4px; }
+  dialog .im-field label {
+    font-size: 12px; color: var(--muted); font-weight: 500;
+  }
+  dialog .im-field label small { color: var(--muted-2); font-weight: 400; margin-left: 6px; }
+  dialog .im-field input,
+  dialog .im-field textarea {
+    width: 100%; padding: 8px 10px;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); color: var(--fg); font: inherit;
+    outline: none; box-sizing: border-box;
+  }
+  dialog .im-field input:focus,
+  dialog .im-field textarea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  dialog .im-field textarea { font-family: var(--font-mono); resize: vertical; line-height: 1.5; }
+  dialog .actions { display: flex; gap: 8px; margin-bottom: 16px; justify-content: flex-start; }
+  dialog button {
+    background: var(--accent); color: var(--accent-fg);
+    border: none; padding: 7px 14px; border-radius: 6px;
+    cursor: pointer; font: inherit; font-weight: 500;
+  }
+  dialog button.secondary {
+    background: transparent; color: var(--fg);
+    border: 1px solid var(--border);
+  }
+  dialog button:hover { filter: brightness(1.06); }
+  .turn {
+    margin: 10px 0; padding: 12px 14px;
+    background: var(--turn-bg);
+    border-left: 3px solid var(--accent);
+    white-space: pre-wrap; word-wrap: break-word;
+    font-family: var(--font-mono);
+    font-size: 12.5px; line-height: 1.55;
+    border-radius: 0 8px 8px 0;
+  }
+  .turn .ts {
+    color: var(--muted-2); font-size: 11px; display: block; margin-bottom: 6px;
+    font-family: -apple-system, sans-serif; letter-spacing: 0.02em;
+  }
+</style>
+</head>
+<body>
+<div id="update-banner" hidden>
+  <span id="update-banner-text"></span>
+  <button id="update-banner-go">Update now</button>
+  <button id="update-banner-dismiss" title="Dismiss for this session" aria-label="Dismiss">×</button>
+</div>
+<div id="update-overlay" hidden>
+  <div class="update-modal">
+    <h3>Updating claude-dashboard</h3>
+    <div class="update-progress"><div class="update-progress-bar"></div></div>
+    <p class="update-stage" id="update-stage">Fetching from origin…</p>
+    <p class="update-hint">The server will restart and the page will reload automatically.</p>
+  </div>
+</div>
+<header>
+  <button id="sidebar-toggle" title="Toggle sidebar" aria-label="Toggle sidebar">☰</button>
+  <h1>
+    <svg class="logo" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M12 0 C13 8 16 11 24 12 C16 13 13 16 12 24 C11 16 8 13 0 12 C8 11 11 8 12 0 Z" fill="#D97757"/>
+    </svg>
+    claude dashboard
+  </h1>
+  <button id="new-btn" title="Create a new ~/cs/NN_<slug> session and open it in iTerm">+ New</button>
+  <div class="search-wrap">
+    <input id="search" type="search"
+           placeholder='filter — Enter to grep transcripts. Space = AND · OR = OR · "quoted phrase" = literal'
+           title='Search syntax:&#10;  space-separated terms → AND (all must appear)&#10;  OR (uppercase) → OR&#10;  &quot;quoted phrase&quot; → literal, keeps spaces&#10;example: &quot;prop-risk&quot; replay OR quoting review'
+           autofocus>
+    <span id="search-state" class="search-state" hidden></span>
+  </div>
+  <div class="seg" id="filter">
+    <button data-mode="live" class="active">Live</button>
+    <button data-mode="pinned" class="active">📌 Pinned</button>
+    <button data-mode="history" class="active">History</button>
+    <button data-mode="archived" title="Show archived sessions">🗄 Archived</button>
+  </div>
+  <span id="status" hidden></span>
+  <span id="meta"></span>
+  <button id="settings-btn" title="Settings — accent color &amp; runtime info" aria-label="Settings">⚙</button>
+</header>
+<div id="settings-panel" hidden>
+  <div class="settings-section">
+    <h4>Accent color</h4>
+    <div class="swatch-row">
+      <button class="swatch is-default" data-color="" style="background:#c25d3c" title="Terracotta (default)"></button>
+      <button class="swatch" data-color="#3b82f6" style="background:#3b82f6" title="Blue"></button>
+      <button class="swatch" data-color="#0ea5a5" style="background:#0ea5a5" title="Teal"></button>
+      <button class="swatch" data-color="#16a34a" style="background:#16a34a" title="Green"></button>
+      <button class="swatch" data-color="#7c3aed" style="background:#7c3aed" title="Violet"></button>
+      <button class="swatch" data-color="#db2777" style="background:#db2777" title="Pink"></button>
+      <button class="swatch" data-color="#ea580c" style="background:#ea580c" title="Orange"></button>
+      <button class="swatch" data-color="#525252" style="background:#525252" title="Neutral"></button>
+    </div>
+    <input type="text" id="accent-input" placeholder="#xxxxxx or color name" spellcheck="false" autocomplete="off">
+  </div>
+  <div class="settings-section" id="settings-prefs">
+    <h4>Preferences</h4>
+    <div class="pref-row">
+      <span class="pref-label">Open new sessions in</span>
+      <div class="seg pref-seg" id="pref-open-mode">
+        <button type="button" data-val="window">New window</button>
+        <button type="button" data-val="tab">Tab in current window</button>
+      </div>
+    </div>
+    <p class="cfg-hint" id="pref-open-mode-hint"></p>
+    <div class="pref-row" style="margin-top: 14px;">
+      <span class="pref-label">Default model for new sessions</span>
+      <input type="text" id="pref-default-model" list="model-presets"
+             placeholder="claude default (leave empty)"
+             autocomplete="off" spellcheck="false">
+      <datalist id="model-presets">
+        <option value="opus"></option>
+        <option value="sonnet"></option>
+        <option value="haiku"></option>
+        <option value="fable"></option>
+      </datalist>
+    </div>
+    <p class="cfg-hint">Passed as <code>claude --model &lt;value&gt;</code> for + New sessions. Aliases (<code>opus</code>, <code>sonnet</code>, …) or full IDs both work. Empty = let claude pick.</p>
+    <div class="pref-row" id="pref-rearrange-row" style="margin-top: 14px;">
+      <span class="pref-label">Rearrange existing sessions</span>
+      <div class="pref-btn-row">
+        <button type="button" id="pref-consolidate" title="Merge all iTerm windows into tabs of one window">Consolidate into one window</button>
+        <button type="button" id="pref-split" title="Move each live claude session into its own iTerm window">Split each into its own window</button>
+      </div>
+    </div>
+    <p class="cfg-hint" id="pref-rearrange-hint">One-shot actions. Won't touch preferences.</p>
+  </div>
+  <div class="settings-section" id="settings-runtime">
+    <h4>This instance</h4>
+    <dl class="cfg-grid"></dl>
+    <p class="cfg-hint">Read-only. Override with <code>CLAUDE_DASHBOARD_*</code> env vars at start time — see the README.</p>
+  </div>
+</div>
+<aside id="sidebar"></aside>
+<main>
+  <section id="view"></section>
+</main>
+<dialog id="modal"></dialog>
+<aside id="detail-panel"></aside>
+<div id="detail-panel-resize" title="Drag to resize" aria-label="Resize detail panel"></div>
+<script>
+const $ = sel => document.querySelector(sel);
+const fmtAgo = secs => {
+  if (secs == null) return '-';
+  if (secs < 0) secs = 0;
+  if (secs < 90) return Math.floor(secs) + 's';
+  if (secs < 5400) return Math.floor(secs/60) + 'm';
+  if (secs < 86400*2) return Math.floor(secs/3600) + 'h';
+  return Math.floor(secs/86400) + 'd';
+};
+// Collapse the home dir to ~ across platforms: /Users/<u> (macOS),
+// /home/<u> (Linux), C:\Users\<u> (Windows).
+const tildeify = p => (p || '')
+  .replace(/^\/Users\/[^/]+/, '~')
+  .replace(/^\/home\/[^/]+/, '~')
+  .replace(/^[A-Za-z]:\\Users\\[^\\]+/i, '~');
+// Last path segment, splitting on both / and \ so Windows paths work too.
+const baseName = p => {
+  const parts = String(p || '').split(/[/\\]+/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : '';
+};
+const fmtCost = usd => {
+  if (usd == null) return '';
+  if (usd < 0.01) return '<$0.01';
+  if (usd < 100)  return '$' + usd.toFixed(2);
+  if (usd < 10000) return '$' + Math.round(usd).toLocaleString();
+  return '$' + (usd / 1000).toFixed(1) + 'k';
+};
+const fmtInt = n => (n == null ? '0' : n.toLocaleString());
+const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const toast = (msg, ms=2500, kind='') => {
+  const s = $('#status');
+  // Build content: message + dismiss button
+  s.innerHTML = `<span class="msg"></span><button class="dismiss" type="button">dismiss</button>`;
+  s.querySelector('.msg').textContent = msg;
+  s.classList.remove('ok', 'busy', 'err');
+  if (kind) s.classList.add(kind);
+  s.hidden = false;
+  s.querySelector('.dismiss').onclick = () => { s.hidden = true; };
+  clearTimeout(toast._t);
+  if (ms > 0 && kind !== 'busy') {
+    toast._t = setTimeout(() => { s.hidden = true; }, ms);
+  }
+};
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) {
+    let detail = '';
+    try { detail = JSON.stringify(await r.json()); } catch {}
+    throw new Error(`${r.status} ${detail || r.statusText}`);
+  }
+  return r.json();
+}
+
+// Platform metadata from the backend (/api/platform). Fetched once before the
+// first render so the UI can adapt terminal / file-manager names and hide
+// features the current OS can't perform (focus, live themes, iTerm window ops).
+let PLATFORM = {
+  os: 'darwin', terminalName: 'iTerm', fileManagerName: 'Finder',
+  features: { focus: true, themes: true, geometry: true, liveTitle: true,
+              consolidate: true, split: true },
+};
+async function loadPlatform() {
+  try { PLATFORM = await api('/api/platform'); } catch {}
+}
+const feat = k => !!(PLATFORM.features && PLATFORM.features[k]);
+const T = () => PLATFORM.terminalName || 'terminal';
+const FM = () => PLATFORM.fileManagerName || 'file manager';
+
+// Hide OS-specific controls the current platform can't do. Called once after
+// loadPlatform(), before the first render.
+function applyPlatformChrome() {
+  const hideIf = (id, cond) => { const el = document.getElementById(id); if (el && cond) el.style.display = 'none'; };
+  hideIf('pref-consolidate', !feat('consolidate'));
+  hideIf('pref-split', !feat('split'));
+  // Hide the whole "Rearrange" row + its hint when neither op is supported.
+  if (!feat('consolidate') && !feat('split')) {
+    hideIf('pref-rearrange-row', true);
+    hideIf('pref-rearrange-hint', true);
+  }
+  const nb = document.getElementById('new-btn');
+  if (nb) nb.title = `Start a new claude session in a new ${T()} window`;
+}
+
+function actionsCell(r, isLive) {
+  const sid = r.sessionId;
+  const current = r.currentTheme || '';
+  const placeholder = current ? `🎨 ${current}` : '🎨 Theme…';
+  const themeTitle = current ? `Active ${T()} theme: ${current}` : `Pick a ${T()} color theme for this session`;
+  // Show the theme picker on any theming platform for any session with a pid
+  // or cwd. A live session (pid) themes the running tab on macOS / queues on
+  // Windows; a historical session (cwd only) sets the theme for its next Open.
+  const themeSelect = (feat('themes') && (r.pid || r.cwd)) ? `
+    <button type="button" class="theme-dd-trigger" data-pid="${r.pid || ''}" data-cwd="${esc(r.cwd || '')}" data-current="${esc(current)}" title="${esc(themeTitle)}">${esc(placeholder)}</button>` : '';
+  const finderBtn = r.cwd
+    ? `<button class="finder-btn" data-path="${esc(r.cwd)}" title="Open cwd in ${esc(FM())}">📂 ${esc(FM())}</button>`
+    : '';
+  const ijBtn = `<button class="ij-btn" data-sid="${sid}" title="Open the project in its preferred editor (auto-detected by language)">🧠 IDE</button>`;
+  // Focus requires a tty→tab mapping (macOS/iTerm only); hidden where unsupported.
+  const focusBtn = (isLive && feat('focus'))
+    ? `<button class="focus-btn" data-pid="${r.pid}" title="Bring this session's ${esc(T())} window to the front">🪟 Focus</button>`
+    : '';
+  const closeTitle = feat('geometry')
+    ? `Close this ${T()} session (saves window position, kills claude)`
+    : `Close this ${T()} session (kills claude)`;
+  const openTitle = feat('geometry')
+    ? `Open in new ${T()} window — restores saved theme and position`
+    : `Open in new ${T()} window`;
+  const openCloseBtn = isLive
+    ? `<button class="close-btn" data-pid="${r.pid}" title="${esc(closeTitle)}">⛔ Close</button>`
+    : `<button class="open-btn" data-sid="${sid}" data-cwd="${esc(r.cwd)}" title="${esc(openTitle)}">▶ Open</button>`;
+  const archiveBtn = isLive
+    ? ''
+    : (r.archived
+        ? `<button class="archive-btn" data-sid="${sid}" data-archived="1" title="Restore this session to the main list">📦 Unarchive</button>`
+        : `<button class="archive-btn" data-sid="${sid}" data-archived="0" title="Hide this session from the main list (reversible)">🗄 Archive</button>`);
+  const deleteBtn = isLive
+    ? ''
+    : `<button class="delete-btn" data-sid="${sid}" title="Permanently delete this session's transcript and sidecar data (irreversible)">🗑 Delete</button>`;
+  const forkBtn = r.cwd
+    ? `<button class="fork-btn" data-sid="${sid}" data-cwd="${esc(r.cwd)}" title="Duplicate into a new window — forks the conversation (new session ID), original keeps running untouched">⑂ Fork</button>`
+    : '';
+  const pinBtn = `<button class="pin-btn ${r.pinned ? 'is-pinned' : ''}" data-sid="${sid}" data-pinned="${r.pinned ? 1 : 0}" title="${r.pinned ? 'Unpin from quick-access' : 'Pin this session for quick access'}">${r.pinned ? '📌 Unpin' : '📌 Pin'}</button>`;
+  return `<div class="actions">
+    ${pinBtn}
+    ${focusBtn}
+    ${openCloseBtn}
+    ${forkBtn}
+    ${archiveBtn}
+    ${deleteBtn}
+    <button class="rename-btn" data-sid="${sid}" title="Edit the label manually (also updates the iTerm tab name when live)">✎ Rename</button>
+    <button class="auto-btn" data-sid="${sid}" title="Ask Claude to suggest a label based on the conversation">✨ Auto</button>
+    ${finderBtn}
+    ${ijBtn}
+    ${themeSelect}
+  </div>`;
+}
+
+let ALL_ROWS = [];
+let SEARCH_QUERY = '';
+let FILTERS = new Set(['live', 'pinned', 'history']); // multi-select
+// Category sidebar selection. Sentinel values: '__all__' (everything),
+// '__uncat__' (no category); anything else is the literal category name.
+let SELECTED_CAT = localStorage.getItem('cd-cat') || '__all__';
+
+let SELECTED_SID = null;
+let TRANSCRIPT_SID = null;        // sid whose full transcript is expanded
+let TRANSCRIPT_DATA = null;        // cached transcript turns
+// "Detail mode" hides the per-row buttons and shows the right-hand panel
+// instead. Persist preference so a user can opt in/out.
+let DETAIL_MODE = localStorage.getItem('cd-detail-mode') !== 'off';
+document.body.classList.toggle('detail-mode', DETAIL_MODE);
+
+// Restore the detail-panel width from the previous session. Clamp on load
+// in case the viewport shrank since.
+const DETAIL_W_MIN = 320;
+const detailWMax = () => Math.max(DETAIL_W_MIN, Math.floor(window.innerWidth * 0.8));
+{
+  const saved = parseInt(localStorage.getItem('cd-detail-w') || '', 10);
+  if (Number.isFinite(saved)) {
+    const w = Math.min(detailWMax(), Math.max(DETAIL_W_MIN, saved));
+    document.body.style.setProperty('--detail-w', w + 'px');
+  }
+}
+(function installDetailResize() {
+  const handle = document.getElementById('detail-panel-resize');
+  if (!handle) return;
+  let dragging = false;
+  handle.addEventListener('pointerdown', (ev) => {
+    ev.preventDefault();
+    dragging = true;
+    document.body.classList.add('detail-resizing');
+    handle.setPointerCapture(ev.pointerId);
+  });
+  handle.addEventListener('pointermove', (ev) => {
+    if (!dragging) return;
+    // Panel hugs the right edge, so width = viewport - mouseX.
+    let w = window.innerWidth - ev.clientX;
+    w = Math.min(detailWMax(), Math.max(DETAIL_W_MIN, w));
+    document.body.style.setProperty('--detail-w', w + 'px');
+  });
+  const stop = (ev) => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.classList.remove('detail-resizing');
+    try { handle.releasePointerCapture(ev.pointerId); } catch {}
+    const w = parseInt(getComputedStyle(document.body).getPropertyValue('--detail-w'), 10);
+    if (Number.isFinite(w)) localStorage.setItem('cd-detail-w', String(w));
+  };
+  handle.addEventListener('pointerup', stop);
+  handle.addEventListener('pointercancel', stop);
+})();
+
+function openDetail(sid) {
+  if (sid !== SELECTED_SID) {
+    // Selecting a different session — drop any expanded transcript.
+    TRANSCRIPT_SID = null;
+    TRANSCRIPT_DATA = null;
+    COST_DETAIL_SID = null;
+    COST_DETAIL_DATA = null;
+  }
+  SELECTED_SID = sid;
+  document.body.classList.add('detail-open');
+  renderDetail();
+  renderRows();
+  loadCostDetail(sid);
+}
+
+let COST_DETAIL_SID = null;
+let COST_DETAIL_DATA = null;
+async function loadCostDetail(sid) {
+  try {
+    const d = await api('/api/cost/' + sid);
+    // Only apply if the selection hasn't moved on.
+    if (SELECTED_SID !== sid) return;
+    COST_DETAIL_SID = sid;
+    COST_DETAIL_DATA = d;
+    renderDetail();
+  } catch {}
+}
+function renderCostSection(r) {
+  const rowTotal = r && r.cost ? r.cost : 0;
+  const detail = (COST_DETAIL_SID === r.sessionId) ? COST_DETAIL_DATA : null;
+  const total = detail ? detail.dollars : rowTotal;
+  if (!total || total < 0.01) return '';
+  let breakdown = '';
+  if (detail && detail.byModel) {
+    const models = Object.entries(detail.byModel)
+      .filter(([, v]) => (v.dollars || 0) > 0.005 || Object.values(v.tokens || {}).some(n => n > 0))
+      .sort((a, b) => (b[1].dollars || 0) - (a[1].dollars || 0));
+    breakdown = models.map(([id, v]) => {
+      const t = v.tokens || {};
+      const unknown = v.unknownPricing ? '  <span class="cost-unknown">no price</span>' : '';
+      return `
+        <tr>
+          <td class="cost-model">${esc(id)}${unknown}</td>
+          <td class="cost-amount">${fmtCost(v.dollars || 0)}</td>
+          <td class="cost-tokens">in ${fmtInt(t.input)} · out ${fmtInt(t.output)}<br>cache w ${fmtInt(t.cacheWrite)} · r ${fmtInt(t.cacheRead)}</td>
+        </tr>`;
+    }).join('');
+  }
+  return `<div class="dp-section dp-cost">
+    <h3>Cost</h3>
+    <div class="cost-total">${fmtCost(total)}</div>
+    ${breakdown ? `<table class="cost-table">${breakdown}</table>` : ''}
+  </div>`;
+}
+
+function closeDetail() {
+  SELECTED_SID = null;
+  TRANSCRIPT_SID = null;
+  TRANSCRIPT_DATA = null;
+  document.body.classList.remove('detail-open');
+  renderRows();
+}
+
+async function toggleTranscript() {
+  if (!SELECTED_SID) return;
+  if (TRANSCRIPT_SID === SELECTED_SID) {
+    TRANSCRIPT_SID = null;
+    TRANSCRIPT_DATA = null;
+    renderDetail();
+    return;
+  }
+  try {
+    const data = await api('/api/session/' + SELECTED_SID + '?full=1');
+    TRANSCRIPT_SID = SELECTED_SID;
+    TRANSCRIPT_DATA = data;
+    renderDetail();
+  } catch (e) {
+    toast('failed to load transcript: ' + e.message, 4000, 'err');
+  }
+}
+
+function renderDetail() {
+  const sid = SELECTED_SID;
+  if (!sid) { closeDetail(); return; }
+  const r = ALL_ROWS.find(x => x.sessionId === sid);
+  const panel = $('#detail-panel');
+  if (!r) { panel.innerHTML = `<div class="dp-head"><h2>Session not found</h2><button class="dp-close">×</button></div>`; return; }
+  const now = Date.now() / 1000;
+  const pills = [];
+  if (r.isLive) pills.push(`<span class="chip ${r.status === 'busy' ? 'busy' : 'live'}">${r.status === 'busy' ? '✻ busy' : '● live'}</span>`);
+  else pills.push(`<span class="chip">historical</span>`);
+  if (r.pinned) pills.push(`<span class="chip pinned">📌 pinned</span>`);
+  if (r.archived) pills.push(`<span class="chip">🗄 archived</span>`);
+  if (r.category) pills.push(`<span class="chip category">📁 ${esc(r.category)}</span>`);
+  pills.push(`<span class="chip">${r.turns || 0} turns</span>`);
+  pills.push(`<span class="chip">${fmtAgo(now - r.updatedAt)} ago</span>`);
+  if (r.isLive) pills.push(`<span class="chip">idle ${fmtAgo(r.idleSeconds)}</span>`);
+  if (r.isLive && r.pid) pills.push(`<span class="chip mono">pid ${r.pid}</span>`);
+  pills.push(`<span class="chip mono">${r.sessionId.slice(0,8)}</span>`);
+
+  panel.innerHTML = `
+    <div class="dp-head">
+      <h2>${esc(r.label || r.first || ((r.cwd||'').split('/').pop().replace(/^\d+_/, '').replace(/_/g, ' ')) || '(no turns yet)')}</h2>
+      <button class="dp-close" title="Close (Esc)">×</button>
+    </div>
+    <div class="dp-meta">${pills.join('')}</div>
+
+    <div class="dp-actions">
+      ${actionsCell(r, r.isLive)}
+    </div>
+
+    ${JIRA_ENABLED ? `<div class="dp-section">
+      <h3>Jira</h3>
+      <div id="dp-jira-list" style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center;">
+        ${(r.jira || []).map(t => `<span class="dp-jira-pill">
+          <a class="row-jira-chip" href="${esc(JIRA_BASE) + esc(t)}" target="_blank" rel="noopener" style="line-height: 22px; padding: 0 10px; font-size: 11.5px;">${esc(t)}</a>
+          <button class="dp-jira-remove" data-ticket="${esc(t)}" title="Unlink ${esc(t)} from this session">×</button>
+        </span>`).join('')}
+        <button id="dp-jira-add" title="Link a Jira ticket to this session">+ Link</button>
+      </div>
+    </div>` : ''}
+
+    ${r.cwd ? `<div class="dp-section">
+      <h3>cwd</h3>
+      <div class="dp-cwd" title="${esc(r.cwd)}">${esc(tildeify(r.cwd))}</div>
+    </div>` : ''}
+
+    ${renderCostSection(r)}
+
+    ${r.first ? `<div class="dp-section">
+      <h3>First user turn</h3>
+      <div class="dp-quote">${esc(r.first)}</div>
+    </div>` : ''}
+
+    ${r.last && r.last !== r.first ? `<div class="dp-section">
+      <h3>Last user turn</h3>
+      <div class="dp-quote">${esc(r.last)}</div>
+    </div>` : ''}
+
+    <div class="dp-section">
+      <button id="dp-transcript-toggle" style="background: var(--bg); border: 1px solid var(--border); padding: 6px 12px; border-radius: 6px; cursor: pointer; font: inherit; font-size: 12px; color: var(--fg); font-weight: 500;">
+        ${TRANSCRIPT_SID === sid ? '▲ Hide conversation' : '📜 Show full conversation'}
+      </button>
+    </div>
+
+    ${TRANSCRIPT_SID === sid && TRANSCRIPT_DATA ? `
+    <div class="dp-section">
+      <h3>Conversation · ${TRANSCRIPT_DATA.turns.length} turns</h3>
+      <div class="dp-transcript">
+        ${TRANSCRIPT_DATA.turns.map(t => `
+          <div class="tx-turn ${esc(t.role || 'user')}">
+            <span class="tx-role">${esc(t.role || 'user')}<span class="tx-ts">${esc((t.timestamp || '').slice(0,19).replace('T',' '))}</span></span>
+            <div class="tx-text">${esc(t.text)}</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>` : ''}
+  `;
+}
+
+// Single unified layout — list on left, detail panel on right.
+const LAYOUT = 'grid';
+
+let COLLAPSED_CATS = new Set();
+try {
+  const stored = localStorage.getItem('cd-collapsed-cats');
+  if (stored) COLLAPSED_CATS = new Set(JSON.parse(stored));
+} catch {}
+function persistCollapsed() {
+  try { localStorage.setItem('cd-collapsed-cats', JSON.stringify([...COLLAPSED_CATS])); } catch {}
+}
+function toggleCollapsed(cat) {
+  if (COLLAPSED_CATS.has(cat)) COLLAPSED_CATS.delete(cat);
+  else COLLAPSED_CATS.add(cat);
+  persistCollapsed();
+}
+
+// --- shared search-query semantics (matches backend _parse_search_query) ---
+// Rules:
+//   * space-separated → AND
+//   * uppercase OR    → OR-group separator
+//   * "quoted phrase" → literal, keeps spaces
+function parseSearchQuery(q) {
+  q = (q || '').trim();
+  if (!q) return { groups: [], terms: [] };
+  const tokens = [];
+  let i = 0, n = q.length;
+  while (i < n) {
+    const ch = q[i];
+    if (/\s/.test(ch)) { i++; continue; }
+    if (ch === '"') {
+      const end = q.indexOf('"', i + 1);
+      if (end < 0) { tokens.push(q.slice(i + 1)); break; }
+      tokens.push(q.slice(i + 1, end));
+      i = end + 1;
+    } else {
+      let e = i;
+      while (e < n && !/\s/.test(q[e])) e++;
+      tokens.push(q.slice(i, e));
+      i = e;
+    }
+  }
+  const groups = [[]];
+  for (const t of tokens) {
+    if (t === 'OR') { if (groups[groups.length - 1].length) groups.push([]); }
+    else if (t) groups[groups.length - 1].push(t);
+  }
+  const nonempty = groups.filter(g => g.length);
+  const terms = [...new Set(nonempty.flat().map(t => t.toLowerCase()))];
+  return { groups: nonempty, terms };
+}
+
+// Does the given text satisfy the parsed query (as concatenated haystack)?
+function haystackMatches(hay, parsed) {
+  if (!parsed.groups.length) return true;
+  const lo = (hay || '').toLowerCase();
+  return parsed.groups.some(g => g.every(t => lo.includes(t.toLowerCase())));
+}
+
+// Mark every term with <mark>. Case-insensitive, longest-first so overlapping
+// terms bind cleanly. Falls back to esc(text) when no query is active.
+function highlight(text, parsedOrQuery) {
+  const parsed = (parsedOrQuery && parsedOrQuery.terms)
+    ? parsedOrQuery
+    : parseSearchQuery(parsedOrQuery);
+  if (!parsed.terms.length) return esc(text || '');
+  const s = String(text || '');
+  const sorted = [...parsed.terms].sort((a, b) => b.length - a.length);
+  const re = new RegExp(sorted.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'gi');
+  let last = 0, out = '';
+  for (const m of s.matchAll(re)) {
+    out += esc(s.slice(last, m.index));
+    out += '<mark class="match">' + esc(m[0]) + '</mark>';
+    last = m.index + m[0].length;
+  }
+  out += esc(s.slice(last));
+  return out;
+}
+
+function topicCellHL(r, parsed) {
+  // Only show the category chip in views where category isn't already implied
+  // by the sidebar selection (so "All sessions" view shows it; a specific
+  // category view would just be repeating itself).
+  const showCat = (SELECTED_CAT === '__all__' || SELECTED_CAT === '__uncat__') && r.category;
+  const catChip = showCat ? ` <span class="row-cat-chip">${esc(r.category)}</span>` : '';
+  const allJira = r.jira || [];
+  const shownJira = allJira.slice(0, 3);
+  const jiraChips = shownJira.map(t =>
+    `<a class="row-jira-chip" href="${esc(JIRA_BASE) + esc(t)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Open ${esc(t)} in Jira">${esc(t)}</a>`
+  ).join('') + (allJira.length > shownJira.length
+    ? ` <span class="row-jira-chip" style="opacity: .7; cursor: default;" title="${esc(allJira.slice(3).join(', '))}">+${allJira.length - shownJira.length}</span>`
+    : '');
+  const costChip = (r.cost != null && r.cost >= 0.01)
+    ? ` <span class="row-cost-chip" title="Retail per-token estimate (tokens × published Anthropic pricing). Not your actual bill on a subscription plan.">${fmtCost(r.cost)}</span>`
+    : '';
+  const label = r.label ? `<span class="label">${highlight(r.label, parsed)}${catChip}${jiraChips}${costChip}</span>` : '';
+  const first = r.first && !r.label ? `<span class="first">${highlight(r.first, parsed)}${catChip}${jiraChips}${costChip}</span>` : (r.first ? `<span class="first">${highlight(r.first, parsed)}</span>` : '');
+  const last = r.last ? `<span class="last">${highlight(r.last, parsed)}</span>` : '';
+  // Show the deep-grep snippet whenever the server returned one. Redundant
+  // with a label-visible match sometimes, but "which line matched" is often
+  // useful even when the label already contains one of the terms.
+  let snippetLine = '';
+  if (parsed.terms.length && SERVER_MATCHES.has(r.sessionId)) {
+    const m = SERVER_MATCHES.get(r.sessionId);
+    const hitsLabel = m.hits > 1 ? ` · ${m.hits} matches` : '';
+    snippetLine = `<span class="last">🔎 ${highlight(m.snippet, parsed)}${hitsLabel}</span>`;
+  }
+  const out = label + first + last + snippetLine;
+  if (out) return out;
+  // Fallback: show the cwd's basename so the row isn't completely blank.
+  const base = (r.cwd || '').split('/').pop().replace(/^\d+_/, '').replace(/_/g, ' ');
+  return `<span class="first" style="color: var(--muted-2); font-style: italic">${base ? esc(base) : '(no turns yet)'}</span>`;
+}
+
+let SERVER_MATCHES = new Map(); // sid → {hits, snippet}
+
+function rowHaystack(r) {
+  return [r.label, r.first, r.last, r.cwd, r.sessionId, r.pid || '', r.currentTheme || '']
+    .map(s => String(s || '')).join(' ');
+}
+
+// Shallow-match a row against the parsed query. If the server already
+// returned this row via deep search, it counts as matched regardless.
+function rowMatches(r, parsed) {
+  if (!parsed.groups.length) return true;
+  if (SERVER_MATCHES.has(r.sessionId)) return true;
+  return haystackMatches(rowHaystack(r), parsed);
+}
+
+function renderRow(r, parsed, now) {
+  const depth = r._depth || 0;
+  const liveClasses = r.isLive ? `live ${r.status === 'busy' ? 'busy' : 'idle'}` : '';
+  const statusDot = r.isLive
+    ? `<span class="status ${r.status === 'busy' ? 'busy' : 'idle'}" title="${esc(r.status || 'live')}"></span>`
+    : '';
+  const dataAttrs = r.isLive
+    ? `data-pid="${r.pid}" data-sid="${r.sessionId}" data-live="1"`
+    : `data-sid="${r.sessionId}" data-cwd="${esc(r.cwd)}" data-live="0"`;
+  const indent = depth ? `<span class="fork-indent" style="--depth:${depth}">↳</span>` : '';
+  const selected = r.sessionId === SELECTED_SID ? ' selected' : '';
+  // In detail mode the actions live in the right-side panel, so we drop
+  // the trailing actions cell entirely and let the topic column breathe.
+  const actionsTd = DETAIL_MODE ? '' : `<td>${actionsCell(r, r.isLive)}</td>`;
+  return `<tr class="row${selected} ${liveClasses} ${depth ? 'is-fork' : ''}" ${dataAttrs} draggable="true">
+    <td>${statusDot}</td>
+    <td class="sid">${indent}${highlight(r.sessionId.slice(0,8), parsed)}${r.isLive ? '<span class="badge-live">live</span>' : ''}${r.pinned ? '<span class="badge-pin" title="pinned">📌</span>' : ''}</td>
+    <td class="ago turns">${r.turns || 0}</td>
+    <td class="ago">${fmtAgo(now - r.updatedAt)}</td>
+    <td class="ago">${r.isLive ? fmtAgo(r.idleSeconds) : '-'}</td>
+    <td class="topic" title="${esc(r.cwd)}">${topicCellHL(r, parsed)}</td>
+    ${actionsTd}
+  </tr>`;
+}
+
+function renderGroupedRows(rows, parsed, now) {
+  // Sidebar handles category context now — main view is just a flat list.
+  return rows.map(r => renderRow(r, parsed, now)).join('');
+}
+
+function nestForks(rows) {
+  // Insert each fork immediately after its parent (if both visible) and add a
+  // depth marker so we can indent. Top-level rows keep their existing order.
+  const byId = new Map(rows.map(r => [r.sessionId, r]));
+  const children = new Map();
+  for (const r of rows) {
+    if (r.parent && byId.has(r.parent)) {
+      if (!children.has(r.parent)) children.set(r.parent, []);
+      children.get(r.parent).push(r);
+    }
+  }
+  const placed = new Set();
+  const out = [];
+  const place = (r, depth) => {
+    if (placed.has(r.sessionId)) return;
+    placed.add(r.sessionId);
+    out.push({...r, _depth: depth});
+    const kids = children.get(r.sessionId);
+    if (kids) for (const k of kids) place(k, depth + 1);
+  };
+  for (const r of rows) {
+    if (!r.parent || !byId.has(r.parent)) place(r, 0);
+  }
+  // Any orphans (shouldn't happen) — append.
+  for (const r of rows) if (!placed.has(r.sessionId)) out.push({...r, _depth: 0});
+  return out;
+}
+
+function passesFilter(r) {
+  // Sidebar category gate first
+  if (SELECTED_CAT === '__uncat__' && r.category) return false;
+  if (SELECTED_CAT !== '__all__' && SELECTED_CAT !== '__uncat__' && r.category !== SELECTED_CAT) return false;
+  // Then the chips
+  if (FILTERS.size === 0) return false;
+  if (r.archived) return FILTERS.has('archived');
+  if (FILTERS.has('live') && r.isLive) return true;
+  if (FILTERS.has('pinned') && r.pinned) return true;
+  if (FILTERS.has('history') && !r.isLive) return true;
+  return false;
+}
+
+let JIRA_BASE = '';
+let JIRA_ENABLED = false;   // opt-in; set from /api/jira-config at boot
+async function loadJiraConfig() {
+  try {
+    const c = await api('/api/jira-config');
+    JIRA_ENABLED = !!(c && c.enabled);
+    if (c && c.base) JIRA_BASE = c.base;
+  } catch {}
+}
+
+let RUNTIME_CFG = null;
+async function loadRuntimeConfig() {
+  try {
+    RUNTIME_CFG = await api('/api/config');
+    renderRuntimeConfig();
+  } catch {}
+}
+
+let PREFS = null;
+async function loadPrefs() {
+  try {
+    PREFS = await api('/api/settings');
+    renderPrefs();
+  } catch {}
+}
+function renderPrefs() {
+  if (!PREFS) return;
+  const seg = document.getElementById('pref-open-mode');
+  if (seg) {
+    seg.querySelectorAll('button').forEach(b => {
+      b.classList.toggle('active', b.dataset.val === PREFS.openMode);
+    });
+  }
+  const hint = document.getElementById('pref-open-mode-hint');
+  if (hint) {
+    hint.textContent = PREFS.openMode === 'tab'
+      ? `New sessions open as a tab in the frontmost ${T()} window. Saved window geometry is not restored in tab mode.`
+      : `New sessions open in a new ${T()} window${feat('geometry') ? ' at their saved geometry (if any)' : ''}.`;
+  }
+  const modelInput = document.getElementById('pref-default-model');
+  if (modelInput && document.activeElement !== modelInput) {
+    modelInput.value = PREFS.defaultModel || '';
+  }
+}
+async function setPref(key, val) {
+  try {
+    const updated = await api('/api/settings', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({[key]: val}),
+    });
+    PREFS = updated;
+    renderPrefs();
+    toast(`preference saved`, 1500, 'ok');
+  } catch (e) { toast('preference save failed: ' + e.message, 4000, 'err'); }
+}
+
+let UPDATE_DISMISSED = false;
+let UPDATE_IN_PROGRESS = false;
+const UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000; // 30 min — matches backend cache TTL
+async function checkForUpdate() {
+  if (UPDATE_DISMISSED || UPDATE_IN_PROGRESS) return;
+  try {
+    const info = await api('/api/update-check');
+    renderUpdateBanner(info);
+  } catch {}
+}
+function renderUpdateBanner(info) {
+  const banner = document.getElementById('update-banner');
+  if (!banner) return;
+  if (!info || !info.available) {
+    banner.hidden = true;
+    return;
+  }
+  const text = document.getElementById('update-banner-text');
+  const plural = info.behind === 1 ? '' : 's';
+  text.innerHTML =
+    `Update available — ${info.behind} commit${plural} behind. Latest: ` +
+    `<code>${esc(info.latestMessage || info.latestSha || '')}</code>`;
+  banner.hidden = false;
+}
+function setUpdateStage(text) {
+  const el = document.getElementById('update-stage');
+  if (el) el.textContent = text;
+}
+async function triggerUpdate() {
+  if (UPDATE_IN_PROGRESS) return;
+  UPDATE_IN_PROGRESS = true;
+  const banner = document.getElementById('update-banner');
+  const overlay = document.getElementById('update-overlay');
+  if (banner) banner.hidden = true;
+  if (overlay) overlay.hidden = false;
+  setUpdateStage('Fetching from origin…');
+
+  const startPid = RUNTIME_CFG && RUNTIME_CFG.pid;
+  try {
+    const r = await fetch('/api/update', { method: 'POST' });
+    if (!r.ok && r.status !== 202) {
+      const body = await r.text();
+      throw new Error(`/api/update returned ${r.status}: ${body}`);
+    }
+  } catch {
+    // Network error here is expected — the server may have died mid-request.
+  }
+
+  setUpdateStage('Restarting server…');
+  // Wait for the new pid to appear. launchctl kickstart is ~5-10s typically
+  // (git fetch dominates). Cap at 60s.
+  const deadline = performance.now() + 60_000;
+  let lastStage = 'restart';
+  while (performance.now() < deadline) {
+    await new Promise(r => setTimeout(r, 500));
+    try {
+      const resp = await fetch('/api/config');
+      if (!resp.ok) continue;
+      const cfg = await resp.json();
+      if (cfg && cfg.pid && cfg.pid !== startPid) {
+        setUpdateStage('Reloading…');
+        // Small pause so the user sees the final stage flash, then reload.
+        await new Promise(r => setTimeout(r, 300));
+        location.reload();
+        return;
+      }
+    } catch { /* still restarting */ }
+  }
+
+  // Timed out — let the user retry.
+  UPDATE_IN_PROGRESS = false;
+  if (overlay) overlay.hidden = true;
+  if (banner) banner.hidden = false;
+  toast('update timed out — check `claude-dashboard logs`', 6000, 'err');
+}
+function renderRuntimeConfig() {
+  if (!RUNTIME_CFG) return;
+  const c = RUNTIME_CFG;
+  // Order chosen so the most variable bits (instance, port, sources) lead.
+  const rows = [
+    ['instance', c.instance, '(default)'],
+    ['port', c.port != null ? String(c.port) : ''],
+    ['state dir', tildeify(c.stateDir)],
+    ['sessions', tildeify(c.sessionsDir)],
+    ['projects', tildeify(c.projectsDir)],
+    ['cs root', tildeify(c.csRoot)],
+    ['log', tildeify(c.logFile)],
+    ['pid', c.pid != null ? String(c.pid) : ''],
+  ];
+  const grid = document.querySelector('#settings-runtime .cfg-grid');
+  if (grid) {
+    grid.innerHTML = rows.map(([k, v, placeholder]) => {
+      const empty = !v;
+      const shown = empty ? (placeholder || '—') : v;
+      return `<dt>${esc(k)}</dt><dd${empty ? ' class="is-empty"' : ''}>${esc(shown)}</dd>`;
+    }).join('');
+  }
+  // Instance badge next to the page title — only for non-default instances.
+  const h1 = document.querySelector('header h1');
+  if (h1 && c.instance) {
+    let badge = h1.querySelector('.instance-badge');
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'instance-badge';
+      h1.appendChild(badge);
+    }
+    badge.textContent = c.instance;
+    document.title = `claude dashboard [${c.instance}]`;
+  }
+}
+
+let KNOWN_CATS = [];   // union of assignment-categories and explicit list
+
+async function loadKnownCategories() {
+  try { KNOWN_CATS = await api('/api/category-list'); }
+  catch { KNOWN_CATS = []; }
+}
+
+function renderSidebar() {
+  const counts = new Map();
+  let uncatCount = 0;
+  let liveCount = 0;
+  let pinnedCount = 0;
+  let archivedCount = 0;
+  for (const r of ALL_ROWS) {
+    if (r.isLive) liveCount++;
+    if (r.pinned) pinnedCount++;
+    if (r.archived) { archivedCount++; continue; }
+    if (!r.category) uncatCount++;
+    else counts.set(r.category, (counts.get(r.category) || 0) + 1);
+  }
+  const total = ALL_ROWS.filter(r => !r.archived).length;
+  // The sidebar list is the union of (categories actually used) ∪ (known explicit).
+  const catSet = new Set([...counts.keys(), ...KNOWN_CATS]);
+  const cats = [...catSet].sort((a, b) => a.localeCompare(b));
+  const item = (cat, icon, label) => {
+    const active = SELECTED_CAT === cat ? ' active' : '';
+    return `<button class="sb-item${active}" data-cat="${esc(cat)}">
+      <span class="sb-icon">${icon}</span>
+      <span class="sb-name">${esc(label)}</span>
+    </button>`;
+  };
+  const out = [];
+  out.push(`<div class="sb-section">Views</div>`);
+  out.push(item('__all__',   '◉',  'All sessions'));
+  out.push(item('__uncat__', '○',  'Uncategorized'));
+  out.push(`<div class="sb-section">Categories</div>`);
+  for (const c of cats) out.push(item(c, '◆', c));
+  out.push(`<button id="sb-add-cat" class="sb-add-cat">+ New category</button>`);
+  out.push(`<div class="sb-divider"></div>`);
+  out.push(`<div class="sb-section">Footprint</div>`);
+  out.push(`<div style="padding: 2px 16px 4px; font-size: 11px; color: var(--muted); display: flex; justify-content: space-between;">
+    <span>● live</span><span style="font-variant-numeric: tabular-nums; color: var(--live-idle); font-weight: 500;">${liveCount}</span></div>`);
+  out.push(`<div style="padding: 2px 16px 4px; font-size: 11px; color: var(--muted); display: flex; justify-content: space-between;">
+    <span>📌 pinned</span><span style="font-variant-numeric: tabular-nums; font-weight: 500;">${pinnedCount}</span></div>`);
+  out.push(`<div style="padding: 2px 16px 4px; font-size: 11px; color: var(--muted); display: flex; justify-content: space-between;">
+    <span>🗄 archived</span><span style="font-variant-numeric: tabular-nums; font-weight: 500;">${archivedCount}</span></div>`);
+  $('#sidebar').innerHTML = out.join('');
+}
+
+function renderRows() {
+  renderSidebar();
+  const parsed = parseSearchQuery(SEARCH_QUERY);
+  const active = parsed.groups.length > 0;
+  const modeFiltered = ALL_ROWS.filter(passesFilter);
+  const filtered = active ? modeFiltered.filter(r => rowMatches(r, parsed)) : modeFiltered;
+  const liveCount = ALL_ROWS.filter(r => r.isLive).length;
+  const pinnedCount = ALL_ROWS.filter(r => r.pinned).length;
+  const total = ALL_ROWS.length;
+  const scope = modeFiltered.length;
+  $('#meta').textContent = active
+    ? `${filtered.length} / ${scope} match · ${liveCount} live · ${pinnedCount} pinned · ${total} total`
+    : `${scope} shown · ${liveCount} live · ${pinnedCount} pinned · ${total} total`;
+  const view = $('#view');
+  // Page header for category context
+  let pageHeader = '';
+  if (SELECTED_CAT !== '__all__') {
+    const title = SELECTED_CAT === '__uncat__'
+      ? `<h2>Uncategorized <span class="page-count">${scope}</span></h2>`
+      : `<h2>📁 ${esc(SELECTED_CAT)} <span class="page-count">${scope}</span></h2>`;
+    const actions = (SELECTED_CAT === '__uncat__') ? '' :
+      `<div class="page-actions">
+        <button id="cat-rename-btn">✎ Rename</button>
+        <button id="cat-delete-btn">🗑 Delete</button>
+      </div>`;
+    pageHeader = `<div class="page-header">${title}${actions}</div>`;
+  }
+  if (!filtered.length) {
+    view.innerHTML = pageHeader + '<p class="empty">' + (active ? 'No matches.' : 'No sessions.') + '</p>';
+    return;
+  }
+  const now = Date.now() / 1000;
+  const ordered = nestForks(filtered);
+  const headExtra = DETAIL_MODE ? '' : '<th></th>';
+  view.innerHTML = pageHeader + `<table>
+    <thead><tr>
+      <th></th><th>Session</th><th class="num turns">Turns</th><th class="num">Updated</th><th class="num">Idle</th><th>Topic</th>${headExtra}
+    </tr></thead>
+    <tbody>${renderGroupedRows(ordered, parsed, now)}</tbody>
+  </table>`;
+}
+
+// Custom theme dropdown state.
+let FAVORITE_THEMES = new Set();
+let THEME_MENU = null;       // currently open menu element
+let THEME_MENU_FILTER = '';
+
+async function loadFavoriteThemes() {
+  try {
+    const favs = await api('/api/favorite-themes');
+    FAVORITE_THEMES = new Set(favs);
+  } catch { FAVORITE_THEMES = new Set(); }
+}
+
+async function toggleFavoriteTheme(theme) {
+  const wantFav = !FAVORITE_THEMES.has(theme);
+  try {
+    const r = await api('/api/favorite-themes', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({theme, favorite: wantFav}),
+    });
+    FAVORITE_THEMES = new Set(r.favorites);
+  } catch (e) {
+    toast('favorite failed: ' + e.message, 4000, 'err');
+  }
+}
+
+function renderThemeMenu(menu, current) {
+  const q = THEME_MENU_FILTER.toLowerCase().trim();
+  const all = THEMES.map(t => t.name);
+  const matches = q ? all.filter(n => n.toLowerCase().includes(q)) : all;
+  const favs = matches.filter(n => FAVORITE_THEMES.has(n)).sort((a,b) => a.localeCompare(b));
+  const rest = matches.filter(n => !FAVORITE_THEMES.has(n));
+  const itemHtml = (name) => {
+    const fav = FAVORITE_THEMES.has(name);
+    const cur = name === current;
+    return `<div class="theme-dd-item ${cur ? 'current' : ''}" data-theme="${esc(name)}">
+      <button type="button" class="star ${fav ? 'is-fav' : ''}" title="${fav ? 'Remove from favorites' : 'Add to favorites'}">${fav ? '★' : '☆'}</button>
+      <span class="name" title="${esc(name)}">${esc(name)}</span>
+    </div>`;
+  };
+  let body = '';
+  if (favs.length) {
+    body += `<div class="theme-dd-section">Favorites</div>`;
+    body += favs.map(itemHtml).join('');
+  }
+  if (rest.length) {
+    body += `<div class="theme-dd-section">${favs.length ? 'All themes' : 'Themes'}</div>`;
+    body += rest.map(itemHtml).join('');
+  }
+  if (!favs.length && !rest.length) {
+    body = `<div class="theme-dd-empty">No matches.</div>`;
+  }
+  menu.querySelector('.theme-dd-list').innerHTML = body;
+}
+
+function openThemeMenu(trigger) {
+  closeThemeMenu();
+  const current = trigger.dataset.current || '';
+  THEME_MENU_FILTER = '';
+  const menu = document.createElement('div');
+  menu.className = 'theme-dd-menu';
+  menu.dataset.pid = trigger.dataset.pid || '';
+  menu.dataset.cwd = trigger.dataset.cwd || '';
+  menu.dataset.key = trigger.dataset.pid || trigger.dataset.cwd || '';
+  menu.dataset.current = current;
+  menu.innerHTML = `
+    <input type="text" class="theme-dd-search" placeholder="Search themes…">
+    <div class="theme-dd-list"></div>
+  `;
+  document.body.appendChild(menu);
+  renderThemeMenu(menu, current);
+  const rect = trigger.getBoundingClientRect();
+  const top = rect.bottom + 4;
+  const left = Math.min(rect.left, window.innerWidth - menu.offsetWidth - 8);
+  menu.style.top = top + 'px';
+  menu.style.left = Math.max(8, left) + 'px';
+  menu.querySelector('.theme-dd-search').focus();
+  THEME_MENU = menu;
+}
+
+function closeThemeMenu() {
+  if (THEME_MENU) {
+    THEME_MENU.remove();
+    THEME_MENU = null;
+    THEME_MENU_FILTER = '';
+  }
+}
+
+function selectInteracting() {
+  return THEME_MENU !== null;
+}
+
+let DISPLAYED_ORDER = []; // session IDs in their last-rendered order
+
+async function refresh() {
+  if (selectInteracting()) return;
+  try {
+    const data = await api('/api/sessions?n=300');
+    if (selectInteracting()) return; // user opened a dropdown mid-fetch
+    // If the mouse is inside the dashboard window, keep the existing row
+    // positions so the user's click target doesn't slide out from under them.
+    // Only field values (label, status, idle, theme) get refreshed. Any new
+    // sessions that appeared since are appended. Once the mouse leaves the
+    // window the next refresh re-applies the canonical sort.
+    // Freeze the rendered order only when the mouse is over the table
+    // itself — not the sidebar/header/detail panel — so the sort isn't
+    // held stale just because the cursor happens to be on the page.
+    const tableEl = $('#view');
+    const hovering = tableEl && tableEl.matches(':hover');
+    if (hovering && DISPLAYED_ORDER.length) {
+      const byId = new Map(data.map(r => [r.sessionId, r]));
+      const ordered = [];
+      for (const sid of DISPLAYED_ORDER) {
+        const r = byId.get(sid);
+        if (r) { ordered.push(r); byId.delete(sid); }
+      }
+      for (const r of byId.values()) ordered.push(r); // newcomers
+      ALL_ROWS = ordered;
+    } else {
+      ALL_ROWS = data;
+      DISPLAYED_ORDER = data.map(r => r.sessionId);
+    }
+    renderRows();
+    if (SELECTED_SID) renderDetail();
+  } catch (e) {
+    $('#view').innerHTML = `<p class="empty">Error: ${esc(e.message)}</p>`;
+  }
+}
+
+let _searchVersion = 0;
+function setSearchBadge(state, label) {
+  const el = $('#search-state');
+  el.className = 'search-state' + (state ? ' ' + state : '');
+  el.textContent = label || '';
+  el.hidden = !label;
+}
+async function setCategory(sid, category) {
+  const r = await api('/api/categories/' + sid, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({category}),
+  });
+  const row = ALL_ROWS.find(x => x.sessionId === sid);
+  if (row) row.category = r.category;
+}
+
+let DRAGGED_SID = null;
+
+// Selectors that work across all layouts.
+const DRAG_SRC_SEL = '.row[data-sid]';
+const DRAG_DST_SEL = '.row[data-sid], .sb-item[data-cat]';
+
+document.addEventListener('dragstart', (ev) => {
+  const el = ev.target.closest(DRAG_SRC_SEL);
+  if (!el) return;
+  DRAGGED_SID = el.dataset.sid;
+  ev.dataTransfer.effectAllowed = 'move';
+  ev.dataTransfer.setData('text/plain', DRAGGED_SID);
+  el.classList.add('dragging');
+});
+
+document.addEventListener('dragend', () => {
+  document.querySelectorAll('.dragging').forEach(t => t.classList.remove('dragging'));
+  document.querySelectorAll('.drop-target').forEach(t => t.classList.remove('drop-target'));
+  DRAGGED_SID = null;
+});
+
+document.addEventListener('dragover', (ev) => {
+  if (!DRAGGED_SID) return;
+  const el = ev.target.closest(DRAG_DST_SEL);
+  if (!el) return;
+  if (el.matches(DRAG_SRC_SEL) && el.dataset.sid === DRAGGED_SID) return; // self
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect = 'move';
+  document.querySelectorAll('.drop-target').forEach(t => { if (t !== el) t.classList.remove('drop-target'); });
+  el.classList.add('drop-target');
+});
+
+document.addEventListener('dragleave', (ev) => {
+  const el = ev.target.closest(DRAG_DST_SEL);
+  if (el) el.classList.remove('drop-target');
+});
+
+document.addEventListener('drop', async (ev) => {
+  const el = ev.target.closest(DRAG_DST_SEL);
+  if (!el || !DRAGGED_SID) return;
+  ev.preventDefault();
+  el.classList.remove('drop-target');
+  const srcSid = DRAGGED_SID;
+  DRAGGED_SID = null;
+
+  // Sidebar item drop — translate sentinels back to a real category value.
+  if (el.classList.contains('sb-item')) {
+    let targetCat = el.dataset.cat || '';
+    if (targetCat === '__all__') return; // "All" isn't an assignment
+    if (targetCat === '__uncat__') targetCat = '';
+    try {
+      await setCategory(srcSid, targetCat);
+      toast(targetCat ? `moved to "${targetCat}"` : 'removed from category', 2000, 'ok');
+      renderRows();
+    } catch (e) { toast('error: ' + e.message, 4000, 'err'); }
+    return;
+  }
+
+  if (el.dataset.sid === srcSid) return; // self
+  const targetSid = el.dataset.sid;
+  const targetRow = ALL_ROWS.find(x => x.sessionId === targetSid);
+  const srcRow = ALL_ROWS.find(x => x.sessionId === srcSid);
+  if (!targetRow || !srcRow) return;
+
+  if (targetRow.category) {
+    // Target already in a category — adopt the same category.
+    try {
+      await setCategory(srcSid, targetRow.category);
+      toast(`moved to "${targetRow.category}"`, 2000, 'ok');
+      renderRows();
+    } catch (e) { toast('error: ' + e.message, 4000, 'err'); }
+    return;
+  }
+
+  // Target is uncategorized: prompt for a new category name, apply to both.
+  const r = await showInputModal({
+    title: 'New category',
+    defaults: { title: '', prompt: '' },
+    okLabel: 'Create category',
+    titleHelp: 'name for the new category',
+    promptHelp: '(unused for categories — leave empty)',
+  });
+  if (!r || !r.title) return;
+  try {
+    // Sequential, not Promise.all: the server's load-modify-save is not
+    // atomic, so parallel PUTs would race and one assignment would be lost.
+    await setCategory(srcSid, r.title);
+    await setCategory(targetSid, r.title);
+    toast(`created category "${r.title}"`, 2500, 'ok');
+    renderRows();
+  } catch (e) { toast('error: ' + e.message, 4000, 'err'); }
+});
+
+$('#search').addEventListener('input', (ev) => {
+  SEARCH_QUERY = ev.target.value;
+  // Drop any deep-search results when the query changes; they'd be stale.
+  SERVER_MATCHES = new Map();
+  _searchVersion++;
+  const q = SEARCH_QUERY.trim();
+  setSearchBadge(q.length >= 2 ? '' : null, q.length >= 2 ? '⏎ deep' : '');
+  renderRows();
+});
+
+$('#search').addEventListener('keydown', async (ev) => {
+  if (ev.key !== 'Enter') return;
+  const q = SEARCH_QUERY.trim();
+  if (q.length < 2) return;
+  ev.preventDefault();
+  const v = ++_searchVersion;
+  setSearchBadge('deep', 'searching…');
+  try {
+    const r = await api('/api/search?q=' + encodeURIComponent(q));
+    if (v !== _searchVersion) return; // a newer query has been typed
+    SERVER_MATCHES = new Map(r.map(x => [x.sessionId, x]));
+    setSearchBadge('deep', `🔎 ${r.length} hit${r.length === 1 ? '' : 's'}`);
+    renderRows();
+  } catch (e) {
+    setSearchBadge('', '');
+    toast('search failed: ' + e.message, 4000, 'err');
+  }
+});
+
+async function createSessionInCategory(category) {
+  const heading = category ? `New session in "${category}"` : 'New session';
+  const r = await showInputModal({
+    title: heading,
+    okLabel: 'Create',
+    titleHelp: 'becomes ~/cs/NN_<slug> and the dashboard label',
+    promptHelp: 'sent to claude as the first message (optional)',
+  });
+  if (!r || !r.title) return;
+  toast('creating session…', 0, 'busy');
+  try {
+    const resp = await api('/api/new', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({description: r.title, initialPrompt: r.prompt, category, model: r.model}),
+    });
+    if (resp.result === 'ok') toast(`created ${tildeify(resp.path)}${category ? ` in "${category}"` : ''}`, 3500, 'ok');
+    else toast(`created folder, open failed: ${resp.result}`, 5000, 'err');
+    setTimeout(refresh, 1500);
+  } catch (e) {
+    toast('new session failed: ' + e.message, 5000, 'err');
+  }
+}
+
+$('#new-btn').addEventListener('click', () => {
+  const cat = (SELECTED_CAT !== '__all__' && SELECTED_CAT !== '__uncat__') ? SELECTED_CAT : '';
+  createSessionInCategory(cat);
+});
+
+// Accent color customization
+function applyAccent(color) {
+  if (color) document.documentElement.style.setProperty('--accent', color);
+  else document.documentElement.style.removeProperty('--accent');
+  // Highlight the active swatch
+  $('#settings-panel').querySelectorAll('.swatch').forEach(s => {
+    s.classList.toggle('active', (s.dataset.color || '') === (color || ''));
+  });
+}
+const _storedAccent = localStorage.getItem('cd-accent') || '';
+if (_storedAccent) applyAccent(_storedAccent);
+queueMicrotask(() => {
+  // Make sure the active swatch is highlighted at load time.
+  applyAccent(_storedAccent);
+  $('#accent-input').value = _storedAccent;
+});
+
+$('#settings-btn').addEventListener('click', (ev) => {
+  ev.stopPropagation();
+  const panel = $('#settings-panel');
+  const opening = panel.hidden;
+  panel.hidden = !opening;
+  if (opening) {
+    // Anchor right-edge to the button so the panel drops directly under it.
+    const r = ev.currentTarget.getBoundingClientRect();
+    panel.style.top = Math.round(r.bottom + 6) + 'px';
+    panel.style.right = Math.round(window.innerWidth - r.right) + 'px';
+    panel.style.left = 'auto';
+  }
+});
+$('#settings-panel').addEventListener('click', (ev) => {
+  const sw = ev.target.closest('.swatch');
+  if (!sw) return;
+  ev.stopPropagation();
+  const color = sw.dataset.color || '';
+  applyAccent(color);
+  if (color) localStorage.setItem('cd-accent', color);
+  else localStorage.removeItem('cd-accent');
+  $('#accent-input').value = color;
+});
+$('#accent-input').addEventListener('input', (ev) => {
+  const v = ev.target.value.trim();
+  if (!v) {
+    applyAccent('');
+    localStorage.removeItem('cd-accent');
+    return;
+  }
+  // Accept #rgb / #rrggbb / named colors that the browser understands.
+  const probe = document.createElement('div');
+  probe.style.color = v;
+  if (probe.style.color) {
+    applyAccent(v);
+    localStorage.setItem('cd-accent', v);
+  }
+});
+document.addEventListener('click', (ev) => {
+  if (ev.target.closest('#settings-btn') || ev.target.closest('#settings-panel')) return;
+  $('#settings-panel').hidden = true;
+});
+
+// Jira link add/remove (in the detail panel)
+document.addEventListener('click', async (ev) => {
+  const removeBtn = ev.target.closest('.dp-jira-remove');
+  if (removeBtn && SELECTED_SID) {
+    ev.stopPropagation();
+    const ticket = removeBtn.dataset.ticket;
+    try {
+      await api('/api/jira-links/' + SELECTED_SID, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({remove: ticket}),
+      });
+      const row = ALL_ROWS.find(x => x.sessionId === SELECTED_SID);
+      if (row) row.jira = (row.jira || []).filter(t => t !== ticket);
+      renderDetail();
+      renderRows();
+      toast(`unlinked ${ticket}`, 1800, 'ok');
+    } catch (e) { toast('unlink failed: ' + e.message, 4000, 'err'); }
+    return;
+  }
+  const addBtn = ev.target.closest('#dp-jira-add');
+  if (addBtn && SELECTED_SID) {
+    ev.stopPropagation();
+    const ticket = prompt('Link a Jira ticket to this session (e.g. PTECH-12345):');
+    if (!ticket) return;
+    const normalised = ticket.trim().toUpperCase().replace(/_/g, '-');
+    if (!/^[A-Z][A-Z0-9]+-\d+$/.test(normalised)) {
+      toast('not a valid ticket format', 3000, 'err');
+      return;
+    }
+    try {
+      const r = await api('/api/jira-links/' + SELECTED_SID, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({add: normalised}),
+      });
+      const row = ALL_ROWS.find(x => x.sessionId === SELECTED_SID);
+      if (row) {
+        const set = new Set([...(row.jira || []), normalised]);
+        row.jira = [...set].sort();
+      }
+      renderDetail();
+      renderRows();
+      toast(`linked ${normalised}`, 1800, 'ok');
+    } catch (e) { toast('link failed: ' + e.message, 4000, 'err'); }
+    return;
+  }
+});
+
+// Close detail panel
+document.addEventListener('click', (ev) => {
+  if (ev.target.closest('.dp-close')) closeDetail();
+});
+// Toggle full-conversation inside the detail panel
+document.addEventListener('click', (ev) => {
+  if (ev.target.closest('#dp-transcript-toggle')) toggleTranscript();
+});
+document.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Escape') return;
+  if (THEME_MENU || $('#modal').open) return;
+  if (SELECTED_SID) closeDetail();
+});
+
+$('#filter').addEventListener('click', (ev) => {
+  const btn = ev.target.closest('button[data-mode]');
+  if (!btn) return;
+  const mode = btn.dataset.mode;
+  if (FILTERS.has(mode)) FILTERS.delete(mode);
+  else FILTERS.add(mode);
+  btn.classList.toggle('active', FILTERS.has(mode));
+  renderRows();
+});
+
+// Sidebar collapse — persisted in localStorage
+if (localStorage.getItem('cd-sidebar') === 'collapsed') {
+  document.body.classList.add('sidebar-collapsed');
+}
+$('#sidebar-toggle').addEventListener('click', () => {
+  const collapsed = document.body.classList.toggle('sidebar-collapsed');
+  localStorage.setItem('cd-sidebar', collapsed ? 'collapsed' : 'open');
+});
+
+// Sidebar: select category, or create one
+$('#sidebar').addEventListener('click', async (ev) => {
+  const addBtn = ev.target.closest('#sb-add-cat');
+  if (addBtn) {
+    ev.stopPropagation();
+    const name = prompt('New category name:');
+    if (!name) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    try {
+      const r = await api('/api/category-list', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name: trimmed}),
+      });
+      KNOWN_CATS = r.categories;
+      SELECTED_CAT = trimmed;
+      localStorage.setItem('cd-cat', trimmed);
+      renderRows();
+      toast(`created category "${trimmed}"`, 2500, 'ok');
+    } catch (e) { toast('create failed: ' + e.message, 4000, 'err'); }
+    return;
+  }
+  const item = ev.target.closest('.sb-item');
+  if (!item) return;
+  SELECTED_CAT = item.dataset.cat;
+  localStorage.setItem('cd-cat', SELECTED_CAT);
+  renderRows();
+});
+
+// Page-header actions (rename + delete current category)
+document.addEventListener('click', async (ev) => {
+  const renameBtn = ev.target.closest('#cat-rename-btn');
+  if (renameBtn) {
+    ev.stopPropagation();
+    const oldName = SELECTED_CAT;
+    if (oldName === '__all__' || oldName === '__uncat__') return;
+    const newName = prompt(`Rename category "${oldName}" to:`, oldName);
+    if (newName === null) return;
+    const trimmed = newName.trim();
+    if (!trimmed || trimmed === oldName) return;
+    try {
+      const r = await api('/api/categories/rename', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({from: oldName, to: trimmed}),
+      });
+      toast(`renamed ${r.moved} session${r.moved === 1 ? '' : 's'} → "${trimmed}"`, 3000, 'ok');
+      SELECTED_CAT = trimmed;
+      localStorage.setItem('cd-cat', trimmed);
+      await loadKnownCategories();
+      await refresh();
+    } catch (e) { toast('rename failed: ' + e.message, 4000, 'err'); }
+    return;
+  }
+  const deleteBtn = ev.target.closest('#cat-delete-btn');
+  if (deleteBtn) {
+    ev.stopPropagation();
+    const cat = SELECTED_CAT;
+    if (cat === '__all__' || cat === '__uncat__') return;
+    const confirmed = await showConfirmDialog({
+      title: `Delete category "${cat}"?`,
+      message: 'Sessions in this category stay (they become uncategorized). Nothing is deleted from disk.',
+      confirmLabel: '🗑 Delete category',
+      danger: true,
+    });
+    if (!confirmed) return;
+    try {
+      const r = await api('/api/categories/delete', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({category: cat}),
+      });
+      toast(`category removed (${r.removed} session${r.removed === 1 ? '' : 's'} now uncategorized)`, 3500, 'ok');
+      SELECTED_CAT = '__all__';
+      localStorage.setItem('cd-cat', '__all__');
+      await loadKnownCategories();
+      await refresh();
+    } catch (e) { toast('delete failed: ' + e.message, 4000, 'err'); }
+    return;
+  }
+});
+
+async function focusByPid(pid) {
+  try {
+    const r = await api('/api/focus', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({pid: +pid}),
+    });
+    if (r.result === 'ok') toast(`${T()} focused`, 1800, 'ok');
+    else toast('focus: ' + r.result, 4000, 'err');
+  } catch (e) { toast('error: ' + e.message, 4000, 'err'); }
+}
+
+async function showTranscript(sid) {
+  try {
+    const data = await api('/api/session/' + sid);
+    const dlg = $('#modal');
+    dlg.innerHTML = `
+      <h3>${esc(sid.slice(0,8))} <span style="color:var(--muted); font-weight:400; font-size:12px">· ${data.turns.length} turns</span></h3>
+      <div class="cwd-line">${esc(tildeify(data.cwd))}</div>
+      <div class="actions">
+        <button id="open-btn">Resume in new ${T()} window</button>
+        <button id="close-btn" class="secondary">Close</button>
+      </div>
+      ${data.turns.map((t, i) => `
+        <div class="turn">
+          <span class="ts">[${i+1}] ${esc((t.timestamp || '').slice(0, 19).replace('T', ' '))}</span>${esc(t.text)}
+        </div>`).join('') || '<p class="empty">No user turns recorded.</p>'}
+    `;
+    dlg.showModal();
+    $('#close-btn').onclick = () => dlg.close();
+    $('#open-btn').onclick = async () => {
+      try {
+        const r = await api('/api/open', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({sessionId: sid, cwd: data.cwd}),
+        });
+        toast(r.result === 'ok' ? `${T()} window opened` : 'open: ' + r.result);
+        dlg.close();
+      } catch (e) { toast('error: ' + e.message); }
+    };
+  } catch (e) { toast('error: ' + e.message); }
+}
+
+async function renameSession(sid, label) {
+  const r = await api('/api/label/' + sid, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({label}),
+  });
+  return r.label;
+}
+
+// Confirmation modal: returns true on confirm, false on cancel/dismiss.
+function showConfirmDialog({title, message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger = false}) {
+  return new Promise(resolve => {
+    const dlg = $('#modal');
+    dlg.innerHTML = `
+      <h3>${esc(title)}</h3>
+      <p style="color: var(--muted); margin: 6px 0 18px; font-size: 13px; line-height: 1.55; white-space: pre-wrap;">${esc(message)}</p>
+      <div class="actions" style="justify-content: flex-end; margin-bottom: 0;">
+        <button id="cf-cancel" class="secondary">${esc(cancelLabel)}</button>
+        <button id="cf-ok"${danger ? ' style="background: var(--danger); color: white;"' : ''}>${esc(confirmLabel)}</button>
+      </div>
+    `;
+    dlg.showModal();
+    const done = (v) => { dlg.close(); resolve(v); };
+    $('#cf-ok').onclick = () => done(true);
+    $('#cf-cancel').onclick = () => done(false);
+    dlg.addEventListener('cancel', () => done(false), {once: true});
+    // Focus Cancel by default — safer default for destructive actions.
+    $('#cf-cancel').focus();
+  });
+}
+
+// Two-field modal: returns {title, prompt} on submit, null on cancel.
+function showInputModal({title, defaults = {}, okLabel = 'OK', titleHelp, promptHelp}) {
+  return new Promise((resolve) => {
+    const dlg = $('#modal');
+    const defaultModel = (PREFS && PREFS.defaultModel) || '';
+    dlg.innerHTML = `
+      <h3>${esc(title)}</h3>
+      <div class="im-field">
+        <label>Title ${titleHelp ? `<small>${esc(titleHelp)}</small>` : ''}</label>
+        <input type="text" id="im-title" value="${esc(defaults.title || '')}">
+      </div>
+      <div class="im-field">
+        <label>Model <small>alias (opus/sonnet/haiku/fable) or full ID; empty = claude default</small></label>
+        <input type="text" id="im-model" list="model-presets" value="${esc(defaultModel)}" placeholder="claude default (leave empty)" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="im-field">
+        <label>Initial prompt ${promptHelp ? `<small>${esc(promptHelp)}</small>` : ''}</label>
+        <textarea id="im-prompt" rows="6">${esc(defaults.prompt || '')}</textarea>
+      </div>
+      <div class="actions">
+        <button id="im-ok">${esc(okLabel)}</button>
+        <button id="im-cancel" class="secondary">Cancel</button>
+      </div>
+    `;
+    dlg.showModal();
+    $('#im-title').focus();
+    $('#im-title').select();
+    const submit = () => {
+      const t = $('#im-title').value.trim();
+      const p = $('#im-prompt').value.trim();
+      const m = $('#im-model').value.trim();
+      dlg.close();
+      resolve({title: t, prompt: p, model: m});
+    };
+    const cancel = () => { dlg.close(); resolve(null); };
+    $('#im-ok').onclick = submit;
+    $('#im-cancel').onclick = cancel;
+    dlg.addEventListener('cancel', cancel, {once: true});
+    $('#im-title').onkeydown = (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); $('#im-prompt').focus(); }
+    };
+    $('#im-prompt').onkeydown = (ev) => {
+      if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey)) {
+        ev.preventDefault();
+        submit();
+      }
+    };
+  });
+}
+
+async function openInEditor(path, editor) {
+  try {
+    const r = await api('/api/open-path', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({path, app: editor || 'default'}),
+    });
+    const where = editor ? ` in ${editor}` : '';
+    if (r.result === 'ok') toast(`opened${where}: ${path.split('/').pop()}`, 2200, 'ok');
+    else toast('open: ' + r.result, 4000, 'err');
+  } catch (e) { toast('error: ' + e.message, 4000, 'err'); }
+}
+
+function closeIjMenu() {
+  document.querySelectorAll('.ij-menu').forEach(m => m.remove());
+}
+
+function showIjMenu(anchor, repos) {
+  closeIjMenu();
+  const menu = document.createElement('div');
+  menu.className = 'ij-menu';
+  menu.innerHTML = repos.map(r => `
+    <button class="ij-menu-item" data-path="${esc(r.path)}" data-editor="${esc(r.editor || '')}" title="${esc(r.path)} → ${esc(r.editor || 'default')}">
+      ${r.iconUrl ? `<img class="ij-icon" src="${esc(r.iconUrl)}" alt="">` : `<span class="ij-icon-fallback">▢</span>`}
+      <span class="ij-name">${esc(r.name)}</span>
+      <span class="ij-editor">${esc(r.editor || '')}</span>
+    </button>`
+  ).join('');
+  document.body.appendChild(menu);
+  const rect = anchor.getBoundingClientRect();
+  menu.style.left = Math.min(rect.left, window.innerWidth - menu.offsetWidth - 8) + 'px';
+  menu.style.top = (rect.bottom + 4) + 'px';
+  menu.addEventListener('click', async (ev) => {
+    const item = ev.target.closest('.ij-menu-item');
+    if (!item) return;
+    closeIjMenu();
+    await openInEditor(item.dataset.path, item.dataset.editor);
+  });
+}
+
+async function autoRename(btn) {
+  const sid = btn.dataset.sid;
+  btn.classList.add('busy');
+  btn.disabled = true;
+  toast('asking claude to suggest a label… (~10–20s)', 60000, 'busy');
+  try {
+    const r = await api('/api/label/' + sid + '/auto', { method: 'POST' });
+    toast(`label set: "${r.label}"`, 3000, 'ok');
+    await refresh();
+  } catch (e) {
+    toast('auto-rename failed: ' + e.message, 5000, 'err');
+  } finally {
+    btn.classList.remove('busy');
+    btn.disabled = false;
+  }
+}
+
+document.addEventListener('click', async (ev) => {
+  // Action buttons
+  const renameBtn = ev.target.closest('.rename-btn');
+  if (renameBtn) {
+    ev.stopPropagation();
+    const sid = renameBtn.dataset.sid;
+    // Pull the current label from the row model, not the DOM — the rename
+    // button also lives in the detail panel where there is no <tr>.
+    const row = ALL_ROWS.find(x => x.sessionId === sid);
+    const current = (row && row.label) || '';
+    const label = prompt('Label for this session (empty to clear):', current);
+    if (label === null) return;
+    try {
+      await renameSession(sid, label.trim());
+      toast(label.trim() ? `label set: "${label.trim()}"` : 'label cleared', 2500, 'ok');
+      await refresh();
+    } catch (e) { toast('rename failed: ' + e.message, 5000, 'err'); }
+    return;
+  }
+  const autoBtn = ev.target.closest('.auto-btn');
+  if (autoBtn) { ev.stopPropagation(); autoRename(autoBtn); return; }
+  const openBtn = ev.target.closest('.open-btn');
+  if (openBtn) {
+    ev.stopPropagation();
+    const sid = openBtn.dataset.sid;
+    const cwd = openBtn.dataset.cwd;
+    if (!cwd) { toast('no cwd for this session'); return; }
+    openBtn.classList.add('busy');
+    toast(`opening ${T()} window…`, 8000, 'busy');
+    try {
+      const r = await api('/api/open', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({sessionId: sid, cwd}),
+      });
+      if (r.result === 'ok') toast(`opened in ${T()}`, 2200, 'ok');
+      else toast('open failed: ' + r.result, 5000, 'err');
+      setTimeout(refresh, 1000);
+    } catch (e) { toast('error: ' + e.message, 5000, 'err'); }
+    finally { openBtn.classList.remove('busy'); }
+    return;
+  }
+  const archiveBtnEl = ev.target.closest('.archive-btn');
+  if (archiveBtnEl) {
+    ev.stopPropagation();
+    const sid = archiveBtnEl.dataset.sid;
+    const archiving = archiveBtnEl.dataset.archived !== '1';
+    try {
+      await api('/api/archived', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({sessionId: sid, archived: archiving}),
+      });
+      const row = ALL_ROWS.find(x => x.sessionId === sid);
+      if (row) row.archived = archiving;
+      renderRows();
+      if (archiving && SELECTED_SID === sid) closeDetail();
+      else if (SELECTED_SID === sid) renderDetail();
+      toast(archiving ? 'archived' : 'restored', 1800, 'ok');
+    } catch (e) { toast('archive failed: ' + e.message, 4000, 'err'); }
+    return;
+  }
+  const focusBtnEl = ev.target.closest('.focus-btn');
+  if (focusBtnEl) {
+    ev.stopPropagation();
+    await focusByPid(+focusBtnEl.dataset.pid);
+    return;
+  }
+  const deleteBtnEl = ev.target.closest('.delete-btn');
+  if (deleteBtnEl) {
+    ev.stopPropagation();
+    const sid = deleteBtnEl.dataset.sid;
+    const confirmed = await showConfirmDialog({
+      title: 'Permanently delete this session?',
+      message: 'This removes the transcript JSONL and the dashboard\'s sidecar entries (label, parent, geometry, pin, archive, category). Your code in the cwd folder is NOT touched.\n\nThere is no undo.',
+      confirmLabel: '🗑 Delete permanently',
+      danger: true,
+    });
+    if (!confirmed) return;
+    deleteBtnEl.classList.add('busy');
+    try {
+      const r = await api('/api/session/' + sid, { method: 'DELETE' });
+      const n = (r.files || []).length;
+      toast(`deleted (${n} transcript file${n === 1 ? '' : 's'})`, 2500, 'ok');
+      ALL_ROWS = ALL_ROWS.filter(x => x.sessionId !== sid);
+      if (SELECTED_SID === sid) closeDetail();
+      else renderRows();
+      setTimeout(refresh, 600);
+    } catch (e) { toast('delete failed: ' + e.message, 5000, 'err'); }
+    finally { deleteBtnEl.classList.remove('busy'); }
+    return;
+  }
+  const pinBtnEl = ev.target.closest('.pin-btn');
+  if (pinBtnEl) {
+    ev.stopPropagation();
+    const sid = pinBtnEl.dataset.sid;
+    const pinning = pinBtnEl.dataset.pinned !== '1';
+    try {
+      await api('/api/pinned', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({sessionId: sid, pinned: pinning}),
+      });
+      // Optimistic local update so it's instant.
+      const row = ALL_ROWS.find(x => x.sessionId === sid);
+      if (row) row.pinned = pinning;
+      renderRows();
+      toast(pinning ? 'pinned' : 'unpinned', 1800, 'ok');
+    } catch (e) { toast('pin failed: ' + e.message, 4000, 'err'); }
+    return;
+  }
+  const forkBtnEl = ev.target.closest('.fork-btn');
+  if (forkBtnEl) {
+    ev.stopPropagation();
+    const sid = forkBtnEl.dataset.sid;
+    const cwd = forkBtnEl.dataset.cwd;
+    if (!cwd) { toast('no cwd for this session', 4000, 'err'); return; }
+    const origRow = ALL_ROWS.find(x => x.sessionId === sid);
+    const origName = origRow?.label || origRow?.first || '';
+    const suggested = origName ? ('fork: ' + origName).slice(0, 60) : '';
+    const r = await showInputModal({
+      title: 'Fork session',
+      defaults: { title: suggested, prompt: '' },
+      okLabel: 'Fork',
+      titleHelp: "becomes the fork's label (and is sent to claude with the prompt)",
+      promptHelp: 'first message to the forked claude after it resumes',
+    });
+    if (!r) return;
+    forkBtnEl.classList.add('busy');
+    toast('forking session into a new window…', 8000, 'busy');
+    try {
+      const resp = await api('/api/fork', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({sessionId: sid, cwd, label: r.title, initialPrompt: r.prompt}),
+      });
+      if (resp.result === 'ok') {
+        const where = resp.newCwd ? ` → ${tildeify(resp.newCwd).split('/').pop()}` : '';
+        toast(`forked into isolated workspace${where}`, 3500, 'ok');
+      } else toast('fork failed: ' + resp.result, 5000, 'err');
+      setTimeout(refresh, 1500);
+    } catch (e) { toast('error: ' + e.message, 5000, 'err'); }
+    finally { forkBtnEl.classList.remove('busy'); }
+    return;
+  }
+  const closeBtnEl = ev.target.closest('.close-btn');
+  if (closeBtnEl) {
+    ev.stopPropagation();
+    const pid = +closeBtnEl.dataset.pid;
+    const confirmed = await showConfirmDialog({
+      title: 'Close this Claude session?',
+      message: feat('geometry')
+        ? `The ${T()} window will close and the claude process will be terminated. Window position is saved — you can re-Open it later in the same spot.`
+        : `The ${T()} window will close and the claude process will be terminated.`,
+      confirmLabel: '⛔ Close session',
+      danger: true,
+    });
+    if (!confirmed) return;
+    closeBtnEl.classList.add('busy');
+    toast(`closing pid ${pid}…`, 8000, 'busy');
+    try {
+      const r = await api('/api/close', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({pid}),
+      });
+      if (r.result === 'ok') {
+        const row = ALL_ROWS.find(x => x.pid === pid);
+        if (row) {
+          row.isLive = false;
+          row.pid = null;
+          row.status = '';
+          row.idleSeconds = null;
+        }
+        renderRows();
+        toast('closed (window position saved for next Open)', 3000, 'ok');
+      } else {
+        toast('close failed: ' + r.result, 5000, 'err');
+      }
+      setTimeout(refresh, 800);
+    } catch (e) { toast('error: ' + e.message, 5000, 'err'); }
+    finally { closeBtnEl.classList.remove('busy'); }
+    return;
+  }
+  const finderBtn = ev.target.closest('.finder-btn');
+  if (finderBtn) {
+    ev.stopPropagation();
+    const path = finderBtn.dataset.path;
+    finderBtn.classList.add('busy');
+    try {
+      const r = await api('/api/open-path', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({path, app: 'finder'}),
+      });
+      if (r.result === 'ok') toast(`${FM()} → ${tildeify(path)}`, 2200, 'ok');
+      else toast('finder: ' + r.result, 5000, 'err');
+    } catch (e) { toast('error: ' + e.message, 5000, 'err'); }
+    finally { finderBtn.classList.remove('busy'); }
+    return;
+  }
+  const ijBtnEl = ev.target.closest('.ij-btn');
+  if (ijBtnEl) {
+    ev.stopPropagation();
+    const sid = ijBtnEl.dataset.sid;
+    closeIjMenu();
+    ijBtnEl.classList.add('busy');
+    try {
+      const repos = await api('/api/repos/' + sid);
+      ijBtnEl.classList.remove('busy');
+      if (!repos.length) { toast('no project found in this session', 3000, 'err'); return; }
+      if (repos.length === 1) { await openInEditor(repos[0].path, repos[0].editor); return; }
+      showIjMenu(ijBtnEl, repos);
+    } catch (e) {
+      ijBtnEl.classList.remove('busy');
+      toast('repo lookup failed: ' + e.message);
+    }
+    return;
+  }
+  // Click outside menu closes it
+  if (!ev.target.closest('.ij-menu')) closeIjMenu();
+
+  // "✎ Rename" pill in a category header → rename the whole category
+  const catRename = ev.target.closest('.cat-rename');
+  if (catRename) {
+    ev.stopPropagation();
+    const oldName = catRename.dataset.cat;
+    const newName = prompt(`Rename category "${oldName}" to:`, oldName);
+    if (newName === null) return;
+    const trimmed = newName.trim();
+    if (!trimmed || trimmed === oldName) return;
+    try {
+      const r = await api('/api/categories/rename', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({from: oldName, to: trimmed}),
+      });
+      toast(`renamed ${r.moved} session${r.moved === 1 ? '' : 's'} → "${trimmed}"`, 3000, 'ok');
+      // Carry collapsed-state across the rename
+      if (COLLAPSED_CATS.has(oldName)) {
+        COLLAPSED_CATS.delete(oldName);
+        COLLAPSED_CATS.add(trimmed);
+        persistCollapsed();
+      }
+      await refresh();
+    } catch (e) { toast('rename failed: ' + e.message, 4000, 'err'); }
+    return;
+  }
+  // "+ New here" button in a category header → open New modal in that category
+  const catAdd = ev.target.closest('.cat-add');
+  if (catAdd) {
+    ev.stopPropagation();
+    await createSessionInCategory(catAdd.dataset.cat);
+    return;
+  }
+  // Category header click → toggle collapse.
+  const catHdr = ev.target.closest('.category-header[data-cat]');
+  if (catHdr) {
+    toggleCollapsed(catHdr.dataset.cat);
+    renderRows();
+    return;
+  }
+
+  // Theme dropdown trigger
+  const themeTrigger = ev.target.closest('.theme-dd-trigger');
+  if (themeTrigger) {
+    ev.stopPropagation();
+    const key = themeTrigger.dataset.pid || themeTrigger.dataset.cwd || '';
+    if (THEME_MENU && THEME_MENU.dataset.key === key) {
+      closeThemeMenu();
+    } else {
+      openThemeMenu(themeTrigger);
+    }
+    return;
+  }
+  // Star (favorite toggle) inside theme menu
+  const starBtn = ev.target.closest('.theme-dd-menu .star');
+  if (starBtn) {
+    ev.stopPropagation();
+    const item = starBtn.closest('.theme-dd-item');
+    const theme = item.dataset.theme;
+    await toggleFavoriteTheme(theme);
+    renderThemeMenu(THEME_MENU, THEME_MENU.dataset.current || '');
+    return;
+  }
+  // Name (apply theme) inside theme menu
+  const themeItem = ev.target.closest('.theme-dd-menu .theme-dd-item .name');
+  if (themeItem) {
+    ev.stopPropagation();
+    const item = themeItem.closest('.theme-dd-item');
+    const theme = item.dataset.theme;
+    const pidRaw = THEME_MENU.dataset.pid;
+    const cwd = THEME_MENU.dataset.cwd || '';
+    const previous = THEME_MENU.dataset.current || '';
+    closeThemeMenu();
+    if (theme === previous) return;
+    // Live session → apply by pid; historical → set by cwd for next Open.
+    const payload = pidRaw ? {pid: +pidRaw, theme} : {cwd, theme};
+    try {
+      const r = await api('/api/theme', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload),
+      });
+      if (r.result === 'ok') toast(`applied ${theme}`, 2200, 'ok');
+      else if (r.result === 'queued') toast(`${theme} set — applies next time you Open this session`, 3500, 'ok');
+      else toast(`theme: ${r.result}`, 5000, 'err');
+    } catch (e) { toast('error: ' + e.message, 5000, 'err'); }
+    return;
+  }
+  // Click outside the theme menu closes it
+  if (THEME_MENU && !ev.target.closest('.theme-dd-menu') && !ev.target.closest('.theme-dd-trigger')) {
+    closeThemeMenu();
+  }
+
+  // Row/card click → open the right-side detail panel (in detail mode) or
+  // fall back to the legacy behavior (focus iTerm / open transcript modal).
+  if (ev.target.closest('.actions')) return;
+  if (ev.target.closest('#detail-panel')) return;
+  const sel = ev.target.closest('.row[data-sid]');
+  if (!sel) return;
+  const sid = sel.dataset.sid;
+  if (!sid) return;
+  if (DETAIL_MODE) {
+    openDetail(sid);
+    return;
+  }
+  // Legacy (non-detail) mode: focus the live tab where the OS supports it,
+  // otherwise fall straight through to the transcript.
+  if (feat('focus')) {
+    if (sel.dataset.pid) { await focusByPid(sel.dataset.pid); return; }
+    if (sel.dataset.live === '1') {
+      try {
+        const live = await api('/api/live');
+        const m = live.find(s => s.sessionId === sid);
+        if (m) { await focusByPid(m.pid); return; }
+      } catch {}
+    }
+  }
+  showTranscript(sid);
+});
+
+// Theme menu search input → re-render
+document.addEventListener('input', (ev) => {
+  if (ev.target.matches && ev.target.matches('.theme-dd-search')) {
+    THEME_MENU_FILTER = ev.target.value;
+    renderThemeMenu(THEME_MENU, THEME_MENU.dataset.current || '');
+  }
+});
+
+// keyboard: / focuses search, r refreshes, Esc closes theme menu
+document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && THEME_MENU) {
+    closeThemeMenu();
+    return;
+  }
+  if (ev.target.tagName === 'INPUT' || ev.target.tagName === 'TEXTAREA') return;
+  if ($('#modal').open) return;
+  if (ev.key === '/') { ev.preventDefault(); $('#search').focus(); }
+  else if (ev.key === 'r') refresh();
+});
+
+let THEMES = [];
+async function loadThemes() {
+  try { THEMES = await api('/api/themes'); }
+  catch (e) { THEMES = []; }
+}
+
+(async () => {
+  // Platform first — everything downstream (feature-gating, terminal names) reads it.
+  await loadPlatform();
+  applyPlatformChrome();
+  await Promise.all([loadThemes(), loadFavoriteThemes(), loadKnownCategories(), loadJiraConfig(), loadRuntimeConfig(), loadPrefs()]);
+  // Preferences: segmented control click → save
+  document.getElementById('pref-open-mode')?.addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-val]');
+    if (b) setPref('openMode', b.dataset.val);
+  });
+  // Default model: save on blur, or on Enter
+  const modelInput = document.getElementById('pref-default-model');
+  if (modelInput) {
+    const commit = () => {
+      const v = modelInput.value.trim();
+      if (v !== (PREFS?.defaultModel || '')) setPref('defaultModel', v);
+    };
+    modelInput.addEventListener('blur', commit);
+    modelInput.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); modelInput.blur(); }
+    });
+  }
+  // One-shot rearrange actions
+  const runItermAction = async (path, label, btn) => {
+    btn.disabled = true;
+    const old = btn.textContent;
+    btn.textContent = 'running…';
+    try {
+      const r = await fetch(path, { method: 'POST' });
+      const body = await r.json();
+      if (body.ok) {
+        toast(`${label} — done${body.count != null ? ` (${body.count} sessions)` : ''}`, 2500, 'ok');
+      } else {
+        toast(body.message || `${label} failed`, 8000, 'err');
+      }
+    } catch (e) {
+      toast(`${label} failed: ${e.message}`, 6000, 'err');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = old;
+    }
+  };
+  document.getElementById('pref-consolidate')?.addEventListener('click', (ev) => {
+    runItermAction('/api/iterm/consolidate', 'consolidate', ev.currentTarget);
+  });
+  document.getElementById('pref-split')?.addEventListener('click', (ev) => {
+    runItermAction('/api/iterm/split-live', 'split', ev.currentTarget);
+  });
+  // Update banner: initial check + periodic. RUNTIME_CFG.pid must be set
+  // before the first check so triggerUpdate can detect the new pid later.
+  document.getElementById('update-banner-go')?.addEventListener('click', triggerUpdate);
+  document.getElementById('update-banner-dismiss')?.addEventListener('click', () => {
+    UPDATE_DISMISSED = true;
+    document.getElementById('update-banner').hidden = true;
+  });
+  checkForUpdate();
+  setInterval(checkForUpdate, UPDATE_CHECK_INTERVAL_MS);
+  await refresh();
+})();
+setInterval(refresh, 2500);
+
+</script>
+</body>
+</html>

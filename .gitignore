@@ -1,0 +1,34 @@
+# Runtime state — generated locally per user
+labels.json
+geometries.json
+favorite_themes.json
+parents.json
+editors.json
+server.pid
+_rename_workspace/
+
+# Downloaded third-party assets (Anthropic's icon — fetched at runtime if you want)
+static/claude.png
+static/claude.ico
+
+# Per-machine cached editor icons (extracted from /Applications/<App>.app)
+static/editors/
+
+# Imported macOS build artifacts (the app's source already lives in this repo)
+claude-dashboard.zip
+claude-dashboard-installer.sh
+
+# Per-machine local state
+.wt-scheme
+.iterm-preset
+.claude/settings.local.json
+settings.json
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor
+.DS_Store
+.vscode/
+.idea/
