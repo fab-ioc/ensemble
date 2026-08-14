@@ -78,7 +78,7 @@ Four steps. The whole thing takes about 30 seconds.
 ### 1. Clone the repo into `~/.claude/dashboard`
 
 ```sh
-git clone https://github.com/fab-ioc/claude-bashboard.git ~/.claude/dashboard
+git clone https://github.com/fab-ioc/claude-dashboard.git ~/.claude/dashboard
 ```
 
 ### 2. Put the CLI on your PATH
@@ -139,7 +139,7 @@ cd ~/.claude/dashboard && git pull
 ### 1. Clone the repo
 
 ```powershell
-git clone https://github.com/fab-ioc/claude-bashboard.git "$env:USERPROFILE\.claude\dashboard"
+git clone https://github.com/fab-ioc/claude-dashboard.git "$env:USERPROFILE\.claude\dashboard"
 cd "$env:USERPROFILE\.claude\dashboard"
 ```
 
