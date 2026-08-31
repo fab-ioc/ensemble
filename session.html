@@ -81,6 +81,14 @@ const ROOM = qs.get('id');
 const $ = s => document.querySelector(s);
 const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const jpost = (path, body) => fetch(path, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) }).then(r=>r.json());
+const b64bytes = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+// Strip terminal query REPLIES (fg/bg color = OSC 10/11, device attributes =
+// CSI ? … c) that some PTY/ConPTY setups leak into the output as literal text.
+function cleanSeq(s) {
+  return s
+    .replace(/\x1b?\]1[01];rgb:[0-9a-f\/]+(?:\x1b\\|\x07|\\)/gi, '')
+    .replace(/\x1b?\[\?[0-9;]+c/g, '');
+}
 
 const terms = {};          // ptyId -> {term, es}
 let agentsBuilt = false;
@@ -136,9 +144,9 @@ function mountTerm(el, ptyId) {
   let fit = null;
   try { fit = new FitAddon.FitAddon(); term.loadAddon(fit); } catch(e) {}
   term.open(el);
-  const dec = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+  const td = new TextDecoder();
   const es = new EventSource('/api/pty/stream?id=' + encodeURIComponent(ptyId));
-  es.onmessage = ev => term.write(dec(ev.data));
+  es.onmessage = ev => term.write(cleanSeq(td.decode(b64bytes(ev.data), { stream: true })));
   term.onData(d => jpost('/api/pty/input', { id: ptyId, data: d }));
   terms[ptyId] = { term, es, fit };
   // Size the PTY to the terminal once it has laid out, and on any resize.
