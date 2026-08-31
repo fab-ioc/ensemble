@@ -236,6 +236,71 @@
     margin-left: 6px; font-size: 11px; vertical-align: middle;
     filter: saturate(1.4);
   }
+  /* Agent-type badge (claude / codex). Distinguishes what CLI runs the session. */
+  .badge-agent {
+    margin-left: 8px; padding: 1px 6px; border-radius: 10px;
+    font-size: 9.5px; font-weight: 700; vertical-align: middle;
+    letter-spacing: 0.05em; text-transform: uppercase;
+    border: 1px solid transparent;
+  }
+  .badge-agent.claude {
+    color: #d97757;
+    background: color-mix(in srgb, #d97757 14%, transparent);
+    border-color: color-mix(in srgb, #d97757 30%, transparent);
+  }
+  .badge-agent.codex {
+    color: #10a37f;
+    background: color-mix(in srgb, #10a37f 14%, transparent);
+    border-color: color-mix(in srgb, #10a37f 30%, transparent);
+  }
+  /* ---- Multiagent "Duo" creator + chat panel ---- */
+  #duo-btn { white-space: nowrap; }
+  .duo-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .duo-row select, .duo-row input { flex: 1; }
+  .duo-row .duo-agent { flex: 0 0 130px; }
+  #rooms-panel {
+    position: fixed; top: 0; right: 0; bottom: 0; width: min(460px, 92vw);
+    background: var(--surface, #161616); color: var(--fg, #ededed);
+    border-left: 1px solid var(--border, #262626);
+    box-shadow: -8px 0 24px rgba(0,0,0,0.35);
+    display: flex; flex-direction: column; z-index: 60;
+  }
+  /* id selector above outranks a bare [hidden] reset — restore hide-on-hidden. */
+  #rooms-panel[hidden] { display: none; }
+  #rooms-panel .rp-head {
+    display: flex; align-items: center; gap: 8px; padding: 12px 14px;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  }
+  #rooms-panel .rp-head h3 { margin: 0; font-size: 14px; flex: 1;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #rooms-panel .rp-status {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.05em; padding: 2px 8px; border-radius: 10px;
+    border: 1px solid transparent;
+  }
+  .rp-status.active { color: #16a34a; background: color-mix(in srgb, #16a34a 14%, transparent); border-color: color-mix(in srgb, #16a34a 30%, transparent); }
+  .rp-status.waiting_human { color: #eab308; background: color-mix(in srgb, #eab308 16%, transparent); border-color: color-mix(in srgb, #eab308 34%, transparent); }
+  .rp-status.paused { color: #ef4444; background: color-mix(in srgb, #ef4444 14%, transparent); border-color: color-mix(in srgb, #ef4444 30%, transparent); }
+  #rooms-panel .rp-list { padding: 8px 10px; border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent); max-height: 120px; overflow-y: auto; }
+  #rooms-panel .rp-list button { display: block; width: 100%; text-align: left; margin: 2px 0; font-size: 12px; }
+  #rooms-panel .rp-list button.sel { outline: 2px solid var(--accent, #c25d3c); }
+  #rooms-panel .rp-msgs { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+  .rp-msg { border-radius: 10px; padding: 8px 10px; max-width: 92%;
+    border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+    background: color-mix(in srgb, currentColor 5%, transparent); }
+  .rp-msg .rp-from { font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.04em; opacity: 0.85; margin-bottom: 3px; }
+  .rp-msg.claude { border-color: color-mix(in srgb, #d97757 32%, transparent); }
+  .rp-msg.claude .rp-from { color: #d97757; }
+  .rp-msg.codex { border-color: color-mix(in srgb, #10a37f 32%, transparent); }
+  .rp-msg.codex .rp-from { color: #10a37f; }
+  .rp-msg.user { align-self: flex-end; border-color: color-mix(in srgb, var(--accent, #c25d3c) 40%, transparent); background: color-mix(in srgb, var(--accent, #c25d3c) 12%, transparent); }
+  .rp-msg .rp-to { font-weight: 400; opacity: 0.6; text-transform: none; }
+  .rp-msg .rp-text { font-size: 12.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+  #rooms-panel .rp-compose { padding: 10px 12px; border-top: 1px solid color-mix(in srgb, currentColor 14%, transparent); display: flex; flex-direction: column; gap: 6px; }
+  #rooms-panel .rp-compose textarea { width: 100%; resize: vertical; min-height: 46px; box-sizing: border-box; }
+  #rooms-panel .rp-compose .rp-actions { display: flex; gap: 8px; align-items: center; }
+  #rooms-panel .rp-hint { font-size: 11px; opacity: 0.7; }
   .actions .pin-btn.is-pinned {
     background: color-mix(in srgb, var(--live-busy) 16%, transparent);
     border-color: var(--live-busy);
@@ -951,6 +1016,7 @@
     claude dashboard
   </h1>
   <button id="new-btn" title="Create a new ~/cs/NN_<slug> session and open it in iTerm">+ New</button>
+  <button id="duo-btn" title="Open the collaboration chat panel — watch and steer multi-agent sessions">💬 Chats</button>
   <div class="search-wrap">
     <input id="search" type="search"
            placeholder='filter — Enter to grep transcripts. Space = AND · OR = OR · "quoted phrase" = literal'
@@ -1026,6 +1092,7 @@
   <section id="view"></section>
 </main>
 <dialog id="modal"></dialog>
+<aside id="rooms-panel" hidden></aside>
 <aside id="detail-panel"></aside>
 <div id="detail-panel-resize" title="Drag to resize" aria-label="Resize detail panel"></div>
 <script>
@@ -1139,7 +1206,7 @@ function actionsCell(r, isLive) {
     : `Open in new ${T()} window`;
   const openCloseBtn = isLive
     ? `<button class="close-btn" data-pid="${r.pid}" title="${esc(closeTitle)}">⛔ Close</button>`
-    : `<button class="open-btn" data-sid="${sid}" data-cwd="${esc(r.cwd)}" title="${esc(openTitle)}">▶ Open</button>`;
+    : `<button class="open-btn" data-sid="${sid}" data-cwd="${esc(r.cwd)}" data-agent="${esc(r.agent || '')}" title="${esc(openTitle)}">▶ Open</button>`;
   const archiveBtn = isLive
     ? ''
     : (r.archived
@@ -1152,9 +1219,14 @@ function actionsCell(r, isLive) {
     ? `<button class="fork-btn" data-sid="${sid}" data-cwd="${esc(r.cwd)}" title="Duplicate into a new window — forks the conversation (new session ID), original keeps running untouched">⑂ Fork</button>`
     : '';
   const pinBtn = `<button class="pin-btn ${r.pinned ? 'is-pinned' : ''}" data-sid="${sid}" data-pinned="${r.pinned ? 1 : 0}" title="${r.pinned ? 'Unpin from quick-access' : 'Pin this session for quick access'}">${r.pinned ? '📌 Unpin' : '📌 Pin'}</button>`;
+  // Send: inject a prompt into a live session's terminal (the coordination doorbell).
+  const sendBtn = (isLive && r.pid && feat('send'))
+    ? `<button class="send-btn" data-pid="${r.pid}" data-agent="${esc(r.agent || '')}" title="Type a message into this running session and submit it">✉ Send</button>`
+    : '';
   return `<div class="actions">
     ${pinBtn}
     ${focusBtn}
+    ${sendBtn}
     ${openCloseBtn}
     ${forkBtn}
     ${archiveBtn}
@@ -1527,7 +1599,7 @@ function renderRow(r, parsed, now) {
   const actionsTd = DETAIL_MODE ? '' : `<td>${actionsCell(r, r.isLive)}</td>`;
   return `<tr class="row${selected} ${liveClasses} ${depth ? 'is-fork' : ''}" ${dataAttrs} draggable="true">
     <td>${statusDot}</td>
-    <td class="sid">${indent}${highlight(r.sessionId.slice(0,8), parsed)}${r.isLive ? '<span class="badge-live">live</span>' : ''}${r.pinned ? '<span class="badge-pin" title="pinned">📌</span>' : ''}</td>
+    <td class="sid">${indent}${highlight(r.sessionId.slice(0,8), parsed)}${r.agent ? `<span class="badge-agent ${esc(r.agent)}" title="${esc(r.agent)} session">${esc(r.agent)}</span>` : ''}${r.isLive ? '<span class="badge-live">live</span>' : ''}${r.pinned ? '<span class="badge-pin" title="pinned">📌</span>' : ''}</td>
     <td class="ago turns">${r.turns || 0}</td>
     <td class="ago">${fmtAgo(now - r.updatedAt)}</td>
     <td class="ago">${r.isLive ? fmtAgo(r.idleSeconds) : '-'}</td>
@@ -2109,34 +2181,220 @@ $('#search').addEventListener('keydown', async (ev) => {
   }
 });
 
-async function createSessionInCategory(category) {
-  const heading = category ? `New session in "${category}"` : 'New session';
-  const r = await showInputModal({
-    title: heading,
-    okLabel: 'Create',
-    titleHelp: 'becomes ~/cs/NN_<slug> and the dashboard label',
-    promptHelp: 'sent to claude as the first message (optional)',
-  });
-  if (!r || !r.title) return;
-  toast('creating session…', 0, 'busy');
-  try {
-    const resp = await api('/api/new', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({description: r.title, initialPrompt: r.prompt, category, model: r.model}),
-    });
-    if (resp.result === 'ok') toast(`created ${tildeify(resp.path)}${category ? ` in "${category}"` : ''}`, 3500, 'ok');
-    else toast(`created folder, open failed: ${resp.result}`, 5000, 'err');
-    setTimeout(refresh, 1500);
-  } catch (e) {
-    toast('new session failed: ' + e.message, 5000, 'err');
-  }
+// Kept as the single entry point used by "+ New" and the per-category "+ New
+// here" affordances; both now open the unified new-session modal.
+function createSessionInCategory(category) {
+  showNewSessionModal(category);
 }
 
 $('#new-btn').addEventListener('click', () => {
   const cat = (SELECTED_CAT !== '__all__' && SELECTED_CAT !== '__uncat__') ? SELECTED_CAT : '';
   createSessionInCategory(cat);
 });
+
+// ---------------------------------------------------------------------------
+// Multiagent "Duo": create a room of two agents (each with its own model) that
+// collaborate on a task and tag you when they need input. Chat lives in a
+// side panel; the terminals remain the agents' workspaces.
+// ---------------------------------------------------------------------------
+let AGENT_OPTIONS = [{ key: 'claude', displayName: 'Claude' }];
+async function loadAgentOptions() {
+  try {
+    const a = await api('/api/agents');
+    if (Array.isArray(a) && a.length) AGENT_OPTIONS = a.filter(x => x.installed !== false);
+  } catch {}
+}
+function agentSelect(sel) {
+  return `<select class="duo-agent">` + AGENT_OPTIONS.map(o =>
+    `<option value="${esc(o.key)}"${o.key === sel ? ' selected' : ''}>${esc(o.displayName || o.key)}</option>`
+  ).join('') + `</select>`;
+}
+// Unified new-session modal: add 1..N agents (each with its own model). One
+// agent → a normal session; two or more → a collaborating room (same UI).
+function addAgentRow(container, sel, model) {
+  const div = document.createElement('div');
+  div.className = 'duo-row';
+  div.innerHTML = `${agentSelect(sel)}
+    <input type="text" class="duo-model" list="model-presets" placeholder="model (optional)" value="${esc(model || '')}" autocomplete="off" spellcheck="false">
+    <button type="button" class="duo-remove secondary" title="Remove this agent">✕</button>`;
+  div.querySelector('.duo-remove').onclick = () => {
+    const rows = container.querySelectorAll('.duo-row');
+    if (rows.length > 1) div.remove();
+    updateNsHint(container);
+  };
+  container.appendChild(div);
+  updateNsHint(container);
+}
+function updateNsHint(container) {
+  const n = container.querySelectorAll('.duo-row').length;
+  const hint = document.getElementById('ns-hint');
+  if (hint) hint.textContent = n >= 2
+    ? `${n} agents will collaborate in a shared room and tag you when they need input.`
+    : `1 agent — a normal session.`;
+}
+function showNewSessionModal(category) {
+  const dlg = $('#modal');
+  const def = (PREFS && PREFS.defaultModel) || '';
+  dlg.innerHTML = `
+    <h3>New session${category ? ` in "${esc(category)}"` : ''}</h3>
+    <div class="im-field">
+      <label>Title <small>becomes ~/cs/NN_&lt;slug&gt; and the session name</small></label>
+      <input type="text" id="ns-title" value="">
+    </div>
+    <div class="im-field">
+      <label>Agents <small>add one or more; each can run a different model</small></label>
+      <div id="ns-agents"></div>
+      <button type="button" id="ns-add" class="secondary">+ Add agent</button>
+      <p class="cfg-hint" id="ns-hint"></p>
+    </div>
+    <div class="im-field">
+      <label>Task / prompt <small>the goal or first message</small></label>
+      <textarea id="ns-task" rows="6"></textarea>
+    </div>
+    <div class="actions">
+      <button id="ns-ok">Start</button>
+      <button id="ns-cancel" class="secondary">Cancel</button>
+    </div>`;
+  dlg.showModal();
+  const agentsBox = $('#ns-agents');
+  addAgentRow(agentsBox, 'claude', def);
+  $('#ns-title').focus();
+  $('#ns-add').onclick = () => {
+    const second = AGENT_OPTIONS.find(o => o.key !== 'claude')?.key
+      || AGENT_OPTIONS[0]?.key || 'claude';
+    addAgentRow(agentsBox, second, '');
+  };
+  const close = () => dlg.close();
+  $('#ns-cancel').onclick = close;
+  dlg.addEventListener('cancel', close, { once: true });
+  $('#ns-ok').onclick = async () => {
+    const title = $('#ns-title').value.trim();
+    const task = $('#ns-task').value.trim();
+    const specs = [...agentsBox.querySelectorAll('.duo-row')].map(r => ({
+      agent: r.querySelector('.duo-agent').value,
+      model: r.querySelector('.duo-model').value.trim(),
+    }));
+    if (!specs.length) return;
+    dlg.close();
+    if (specs.length >= 2) {
+      if (!task) { toast('a task is required for a collaboration', 3000, 'err'); return; }
+      toast('launching collaboration…', 0, 'busy');
+      try {
+        const resp = await api('/api/room/new', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: title || 'multiagent session', task, agents: specs }),
+        });
+        toast('collaboration launched', 2500, 'ok');
+        setTimeout(refresh, 2500);
+        openRoomsPanel(resp.room && resp.room.id);
+      } catch (e) {
+        toast('launch failed: ' + e.message, 5000, 'err');
+      }
+      return;
+    }
+    // Single agent → a normal session.
+    const { agent, model } = specs[0];
+    if (!title) { toast('a title is required', 3000, 'err'); return; }
+    toast(`creating ${agent} session…`, 0, 'busy');
+    try {
+      const resp = await api('/api/new', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description: title, initialPrompt: task, category, model, agent }),
+      });
+      if (resp.result === 'ok') toast(`created ${agent} session ${tildeify(resp.path)}${category ? ` in "${category}"` : ''}`, 3500, 'ok');
+      else toast(`created folder, open failed: ${resp.result}`, 5000, 'err');
+      setTimeout(refresh, agent === 'claude' ? 1500 : 2500);
+    } catch (e) {
+      toast('new session failed: ' + e.message, 5000, 'err');
+    }
+  };
+}
+$('#duo-btn').addEventListener('click', () => openRoomsPanel());
+
+// ---- Rooms / chat panel ----
+let ROOM_POLL = null;
+let CUR_ROOM = null;
+function closeRoomsPanel() {
+  if (ROOM_POLL) { clearInterval(ROOM_POLL); ROOM_POLL = null; }
+  CUR_ROOM = null;
+  const p = $('#rooms-panel'); p.hidden = true; p.innerHTML = '';
+}
+async function openRoomsPanel(preferId) {
+  const p = $('#rooms-panel');
+  p.hidden = false;
+  if (preferId) CUR_ROOM = preferId;
+  await renderRoomsPanel();
+  if (ROOM_POLL) clearInterval(ROOM_POLL);
+  ROOM_POLL = setInterval(renderRoomsPanel, 2500);
+}
+async function renderRoomsPanel() {
+  const p = $('#rooms-panel');
+  if (p.hidden) return;
+  let rooms = [];
+  try { rooms = await api('/api/rooms'); } catch {}
+  if (!CUR_ROOM && rooms.length) CUR_ROOM = rooms[0].id;
+  let room = null;
+  if (CUR_ROOM) { try { room = await api('/api/room?id=' + encodeURIComponent(CUR_ROOM)); } catch {} }
+  const composing = document.activeElement && document.activeElement.id === 'rp-input';
+  const draft = composing ? document.activeElement.value : null;
+  const st = room ? room.status : '';
+  const list = rooms.map(r =>
+    `<button data-room="${esc(r.id)}" class="${r.id === CUR_ROOM ? 'sel' : ''}">${esc(r.title || r.id)} <span class="rp-status ${esc(r.status)}">${esc((r.status||'').replace('_',' '))}</span></button>`
+  ).join('') || '<div class="rp-hint">No multiagent sessions yet.</div>';
+  const msgs = room ? room.messages.map(m => {
+    const cls = m.from === 'user' ? 'user' : esc(m.from);
+    const toTxt = m.to && m.to !== 'all' ? ` <span class="rp-to">→ ${esc(m.to)}</span>` : '';
+    return `<div class="rp-msg ${cls}"><div class="rp-from">${esc(m.from)}${toTxt}</div><div class="rp-text">${esc(m.text)}</div></div>`;
+  }).join('') : '<div class="rp-hint">Select a session above.</div>';
+  const waiting = st === 'waiting_human' || st === 'paused';
+  p.innerHTML = `
+    <div class="rp-head">
+      <h3>${room ? esc(room.title) : 'Multiagent'}</h3>
+      ${room ? `<span class="rp-status ${esc(st)}">${esc(st.replace('_',' '))}</span>` : ''}
+      <button id="rp-new" title="Start a new multiagent session">＋ New</button>
+      <button id="rp-close" title="Close">✕</button>
+    </div>
+    <div class="rp-list">${list}</div>
+    <div class="rp-msgs" id="rp-msgs">${msgs}</div>
+    ${room ? `<div class="rp-compose">
+      ${waiting ? '<div class="rp-hint">The agents are waiting for your input — reply to resume.</div>' : ''}
+      <textarea id="rp-input" placeholder="Message the agents (sends to everyone; they resume)…">${draft != null ? esc(draft) : ''}</textarea>
+      <div class="rp-actions">
+        <button id="rp-send">Send</button>
+        ${st === 'paused' ? '<button id="rp-resume" class="secondary">Resume</button>' : ''}
+        <span class="rp-hint">hop ${room.hopCount||0}/${room.maxHops||0}</span>
+      </div>
+    </div>` : ''}`;
+  $('#rp-close').onclick = closeRoomsPanel;
+  const newBtn = $('#rp-new'); if (newBtn) newBtn.onclick = showDuoModal;
+  p.querySelectorAll('.rp-list button[data-room]').forEach(b =>
+    b.onclick = () => { CUR_ROOM = b.dataset.room; renderRoomsPanel(); });
+  const sendBtn = $('#rp-send');
+  if (sendBtn) sendBtn.onclick = async () => {
+    const t = $('#rp-input').value.trim();
+    if (!t) return;
+    try {
+      await api('/api/room/say', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId: CUR_ROOM, text: t }),
+      });
+      $('#rp-input').value = '';
+      renderRoomsPanel();
+    } catch (e) { toast('send failed: ' + e.message, 4000, 'err'); }
+  };
+  const resumeBtn = $('#rp-resume');
+  if (resumeBtn) resumeBtn.onclick = async () => {
+    try {
+      await api('/api/room/status', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId: CUR_ROOM, status: 'active' }),
+      });
+      renderRoomsPanel();
+    } catch (e) { toast('resume failed: ' + e.message, 4000, 'err'); }
+  };
+  // Keep the transcript scrolled to the newest message (unless composing).
+  if (!composing) { const m = $('#rp-msgs'); if (m) m.scrollTop = m.scrollHeight; }
+}
 
 // Accent color customization
 function applyAccent(color) {
@@ -2439,17 +2697,26 @@ function showConfirmDialog({title, message, confirmLabel = 'Confirm', cancelLabe
 }
 
 // Two-field modal: returns {title, prompt} on submit, null on cancel.
-function showInputModal({title, defaults = {}, okLabel = 'OK', titleHelp, promptHelp}) {
+function showInputModal({title, defaults = {}, okLabel = 'OK', titleHelp, promptHelp, agentPicker = false}) {
   return new Promise((resolve) => {
     const dlg = $('#modal');
     const defaultModel = (PREFS && PREFS.defaultModel) || '';
+    const agentField = agentPicker ? `
+      <div class="im-field">
+        <label>Agent <small>which CLI runs this session</small></label>
+        <select id="im-agent">
+          <option value="claude">Claude</option>
+          <option value="codex">Codex</option>
+        </select>
+      </div>` : '';
     dlg.innerHTML = `
       <h3>${esc(title)}</h3>
       <div class="im-field">
         <label>Title ${titleHelp ? `<small>${esc(titleHelp)}</small>` : ''}</label>
         <input type="text" id="im-title" value="${esc(defaults.title || '')}">
       </div>
-      <div class="im-field">
+      ${agentField}
+      <div class="im-field" id="im-model-field">
         <label>Model <small>alias (opus/sonnet/haiku/fable) or full ID; empty = claude default</small></label>
         <input type="text" id="im-model" list="model-presets" value="${esc(defaultModel)}" placeholder="claude default (leave empty)" autocomplete="off" spellcheck="false">
       </div>
@@ -2465,12 +2732,23 @@ function showInputModal({title, defaults = {}, okLabel = 'OK', titleHelp, prompt
     dlg.showModal();
     $('#im-title').focus();
     $('#im-title').select();
+    // The Model field is claude-only; hide it when Codex is picked.
+    const agentSel = $('#im-agent');
+    if (agentSel) {
+      const syncModelField = () => {
+        const f = $('#im-model-field');
+        if (f) f.style.display = (agentSel.value === 'claude') ? '' : 'none';
+      };
+      agentSel.addEventListener('change', syncModelField);
+      syncModelField();
+    }
     const submit = () => {
       const t = $('#im-title').value.trim();
       const p = $('#im-prompt').value.trim();
       const m = $('#im-model').value.trim();
+      const agent = agentSel ? agentSel.value : 'claude';
       dlg.close();
-      resolve({title: t, prompt: p, model: m});
+      resolve({title: t, prompt: p, model: m, agent});
     };
     const cancel = () => { dlg.close(); resolve(null); };
     $('#im-ok').onclick = submit;
@@ -2566,19 +2844,39 @@ document.addEventListener('click', async (ev) => {
   }
   const autoBtn = ev.target.closest('.auto-btn');
   if (autoBtn) { ev.stopPropagation(); autoRename(autoBtn); return; }
+  const sendBtn = ev.target.closest('.send-btn');
+  if (sendBtn) {
+    ev.stopPropagation();
+    const pid = Number(sendBtn.dataset.pid);
+    const text = prompt('Message to inject into this running session (submitted with Enter):');
+    if (!text) return;
+    sendBtn.classList.add('busy');
+    try {
+      const r = await api('/api/send', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({pid, text}),
+      });
+      if (r.result === 'ok') toast('message sent', 1800, 'ok');
+      else toast('send failed: ' + r.result, 5000, 'err');
+    } catch (e) { toast('error: ' + e.message, 5000, 'err'); }
+    finally { sendBtn.classList.remove('busy'); }
+    return;
+  }
   const openBtn = ev.target.closest('.open-btn');
   if (openBtn) {
     ev.stopPropagation();
     const sid = openBtn.dataset.sid;
     const cwd = openBtn.dataset.cwd;
+    const agent = openBtn.dataset.agent || '';
     if (!cwd) { toast('no cwd for this session'); return; }
     openBtn.classList.add('busy');
-    toast(`opening ${T()} window…`, 8000, 'busy');
+    toast(`opening ${agent === 'codex' ? 'Codex' : T()} window…`, 8000, 'busy');
     try {
       const r = await api('/api/open', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({sessionId: sid, cwd}),
+        body: JSON.stringify({sessionId: sid, cwd, agent}),
       });
       if (r.result === 'ok') toast(`opened in ${T()}`, 2200, 'ok');
       else toast('open failed: ' + r.result, 5000, 'err');
@@ -2917,7 +3215,7 @@ async function loadThemes() {
   // Platform first — everything downstream (feature-gating, terminal names) reads it.
   await loadPlatform();
   applyPlatformChrome();
-  await Promise.all([loadThemes(), loadFavoriteThemes(), loadKnownCategories(), loadJiraConfig(), loadRuntimeConfig(), loadPrefs()]);
+  await Promise.all([loadThemes(), loadFavoriteThemes(), loadKnownCategories(), loadJiraConfig(), loadRuntimeConfig(), loadPrefs(), loadAgentOptions()]);
   // Preferences: segmented control click → save
   document.getElementById('pref-open-mode')?.addEventListener('click', (ev) => {
     const b = ev.target.closest('button[data-val]');

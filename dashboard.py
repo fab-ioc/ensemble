@@ -36,10 +36,15 @@ from backends.base import (
     HOME, DASHBOARD_DIR, PRESETS_DIR, CS_ROOT, NUMBERED_RE as _NUMBERED_RE,
 )
 from backends.shared import (
-    SESS_DIR, RENAME_WORKSPACE, GEOMETRIES_FILE, PERMISSION_MODE,
+    SESS_DIR, AGENT_SESS_DIR, RENAME_WORKSPACE, GEOMETRIES_FILE, PERMISSION_MODE,
     claude_cmd, claude_cmd_args, load_geometries, save_geometries, save_geometry,
-    is_workspace_cwd, read_session_files,
+    is_workspace_cwd, read_session_files, read_agent_session_files,
 )
+# Agent-type abstraction (WHAT runs in a session), orthogonal to the OS backend
+# (WHERE it runs). Codex discovery + the claude/codex registry live here.
+import agents
+# Multi-agent chat rooms (pairing live sessions into a collaborating "duo").
+import chatroom
 
 BACKEND = get_backend()
 
@@ -47,7 +52,21 @@ BACKEND = get_backend()
 # backends can use them without importing dashboard.py). Aliased to the private
 # names the rest of this module already uses.
 _read_session_files = read_session_files
+_read_agent_session_files = read_agent_session_files
 _is_workspace_cwd = is_workspace_cwd
+
+
+def _allocate_agent_identity(agent_key: str) -> str:
+    """Pick a unique identity for a newly launched agent session, e.g.
+    ``codex`` then ``codex-2`` if one is already live. Identities are the
+    routing handles the chat/MCP layer will address."""
+    existing = {r.get("identity", "") for r in _read_agent_session_files()}
+    if agent_key not in existing:
+        return agent_key
+    i = 2
+    while f"{agent_key}-{i}" in existing:
+        i += 1
+    return f"{agent_key}-{i}"
 
 # Kept for /api/config display only; parallel-install (--instance) isolation is
 # not wired up on the cross-platform build.
@@ -1528,6 +1547,7 @@ def load_sessions(n: int = 200) -> list[dict]:
                 - set(jira_unlinks.get(sid, []))
             ) if JIRA_ENABLED else []),
             "cost": compute_session_cost(jsonl).get("dollars", 0.0),
+            "agent": "claude",
         })
     # Live sessions without a transcript yet (rare — only at session birth).
     for sid, live in live_by_sid.items():
@@ -1561,7 +1581,76 @@ def load_sessions(n: int = 200) -> list[dict]:
                 - set(jira_unlinks.get(sid, []))
             ) if JIRA_ENABLED else []),
             "cost": 0.0,  # live-only entries with no transcript yet — cost is 0
+            "agent": "claude",
         })
+    # ---- Codex sessions. Discovered from ~/.codex rollout files; a session the
+    # dashboard launched also has a live registry record (AGENT_SESS_DIR), which
+    # supplies its pid/identity and marks it live. Codex has no pid file of its
+    # own, so un-launched (externally started) codex sessions still surface as
+    # history. Wrapped defensively: a Codex parse hiccup must never break the
+    # (Claude-critical) sessions list. ----
+    try:
+        codex_sessions = agents.get_agent("codex").list_sessions(limit=n)
+    except Exception:
+        codex_sessions = []
+    # Live launch records keyed by normalized cwd (newest wins). Each fresh codex
+    # session gets its own ~/cs folder, so cwd is a unique key back to its pid.
+    def _norm_cwd(p: str) -> str:
+        return os.path.normcase(os.path.normpath(p)) if p else ""
+    codex_live: dict[str, dict] = {}
+    try:
+        for _r in _read_agent_session_files():
+            if _r.get("agent") != "codex":
+                continue
+            _k = _norm_cwd(_r.get("cwd", ""))
+            if not _k:
+                continue
+            _prev = codex_live.get(_k)
+            if _prev is None or _r.get("startedAt", 0) >= _prev.get("startedAt", 0):
+                codex_live[_k] = _r
+    except Exception:
+        codex_live = {}
+    _claimed_cwds: set[str] = set()
+    for cs in codex_sessions:
+        sid = cs.session_id
+        if sid in seen:
+            continue
+        # A live launch record for this cwd (not yet claimed by a newer session
+        # in the newest-first list) makes this the live session for that folder.
+        _ck = _norm_cwd(cs.cwd)
+        _rec = codex_live.get(_ck) if _ck not in _claimed_cwds else None
+        is_live = _rec is not None
+        # Same empty-shell filter Claude uses: drop zero-turn history with no
+        # user-applied label/pin/category/archive — unless it's live.
+        if (not is_live and cs.turns == 0 and not labels.get(sid)
+                and sid not in pinned_set and sid not in categories_map
+                and sid not in archived_set):
+            continue
+        seen.add(sid)
+        if is_live:
+            _claimed_cwds.add(_ck)
+        row = cs.to_row()
+        row["isLive"] = is_live
+        row_cwd = row.get("cwd", "")
+        row_label = labels.get(sid, "")
+        row.update({
+            "label": row_label,
+            "pid": (int(_rec["pid"]) if is_live else None),
+            "identity": (_rec.get("identity", "") if is_live else ""),
+            "status": "",
+            "currentTheme": "",
+            "idleSeconds": None,
+            "parent": parents_map.get(sid, ""),
+            "pinned": sid in pinned_set,
+            "category": categories_map.get(sid, ""),
+            "archived": sid in archived_set,
+            "jira": (sorted(
+                (set(extract_jira_tickets(row_label, row_cwd)) | set(jira_links.get(sid, [])))
+                - set(jira_unlinks.get(sid, []))
+            ) if JIRA_ENABLED else []),
+            "cost": 0.0,
+        })
+        out.append(row)
     # Sort: tiered by activity, then by updatedAt desc within each tier.
     # Tier 0: live & busy   (orange blinker — claude is doing something)
     # Tier 1: live & idle
@@ -1575,7 +1664,7 @@ def load_sessions(n: int = 200) -> list[dict]:
             return (tier, -r["updatedAt"])
         return (2, -r["updatedAt"])
     out.sort(key=_key)
-    return out
+    return out[:n]
 
 
 # ---------- self-update ----------
@@ -1700,6 +1789,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         u = urlparse(self.path)
         p = u.path
+        if p == "/mcp":
+            # We don't offer a server-initiated SSE stream (the "doorbell" is a
+            # terminal keystroke instead); tell clients the GET stream is absent.
+            self.send_response(405)
+            self.send_header("Allow", "POST")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if p in ("/", "/index.html"):
             self._send_file(STATIC_DIR / "index.html", "text/html; charset=utf-8")
             return
@@ -1780,6 +1877,20 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p == "/api/platform":
             self._send_json(200, BACKEND.info())
+            return
+        if p == "/api/agents":
+            self._send_json(200, agents.agents_info())
+            return
+        if p == "/api/rooms":
+            self._send_json(200, chatroom.list_rooms())
+            return
+        if p == "/api/room":
+            rid = (parse_qs(u.query).get("id", [""])[0]).strip()
+            room = chatroom.get_room(rid) if rid else None
+            if room is None:
+                self._send_json(404, {"error": "no_such_room"})
+                return
+            self._send_json(200, room)
             return
         if p == "/api/themes":
             self._send_json(200, list_presets())
@@ -1942,6 +2053,269 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.send_error(404)
 
+    def _resolve_live_pid(self, part: dict):
+        """Resolve a participant's current terminal pid. Claude sessions come
+        from Claude's own registry (by session id); other agents from our launch
+        registry (by cwd). Resolved live because a Claude pid isn't known until
+        after launch, and pids change across resume."""
+        agent_key = part.get("agent", "")
+        if agent_key == "claude":
+            sid = part.get("sessionId", "")
+            for s in _read_session_files():
+                if s.get("sessionId") == sid:
+                    return s.get("pid")
+            return None
+        cwd = part.get("cwd", "")
+        nk = os.path.normcase(os.path.normpath(cwd)) if cwd else ""
+        for r in _read_agent_session_files():
+            if (r.get("agent") == agent_key and nk and
+                    os.path.normcase(os.path.normpath(r.get("cwd", ""))) == nk):
+                return r.get("pid")
+        return None
+
+    def _ring_recipients(self, room_id: str, result: dict) -> None:
+        """Ring each agent recipient's terminal (the keystroke doorbell) so it
+        wakes to read the freshly posted message. Recipients are already
+        loop-guard filtered by chatroom.post_message (empty when paused/waiting
+        on the human)."""
+        recipients = (result or {}).get("recipients") or []
+        if not recipients:
+            return
+        room = chatroom.get_room(room_id)
+        if not room:
+            return
+        sender = (result.get("message") or {}).get("from", "your partner")
+        for ident in recipients:
+            part = next((x for x in room["participants"]
+                         if x.get("identity") == ident), None)
+            if not part:
+                continue
+            pid = self._resolve_live_pid(part)
+            if not pid:
+                continue
+            wake = (f"[relay] New message from '{sender}' in your shared room. "
+                    f"Use the chat_read tool to read it, then reply with "
+                    f"chat_send — to your partner, or to \"user\" if you need "
+                    f"the human's input.")
+            try:
+                BACKEND.send_text(int(pid), wake, submit=True)
+            except (OSError, ValueError):
+                pass
+
+    def _mcp_url(self) -> str:
+        port = self.server.server_address[1]
+        return f"http://127.0.0.1:{port}/mcp"
+
+    def _launch_room_agent(self, room_full: dict, part: dict, task: str) -> dict:
+        """Spawn one agent for a room, pre-wired to the chat MCP with its own
+        bearer token, in its own working dir, seeded with the collaboration
+        briefing + task. Returns {sessionId, cwd, launch}."""
+        ident = part["identity"]
+        agent_key = part["agent"]
+        token = next((t for t, i in room_full.get("tokens", {}).items()
+                      if i == ident), "")
+        url = self._mcp_url()
+        base = room_full.get("cwd") or str(CS_ROOT)
+        cwd = os.path.join(base, ident)
+        try:
+            os.makedirs(cwd, exist_ok=True)
+        except OSError:
+            pass
+        partners = ", ".join(p["identity"] for p in room_full["participants"]
+                             if p.get("kind") == "agent" and p["identity"] != ident)
+        briefing = (
+            f"You are '{ident}', collaborating with {partners or 'your partner'} "
+            f"in a shared workspace to find the best possible solution to the "
+            f"task below. Coordinate through the 'chat' MCP tools: call chat_send "
+            f"to message your partner (end each of your turns by sending them "
+            f"your findings, critique, or proposal), chat_read to read their "
+            f"replies, and chat_send with to=\"user\" whenever you need the "
+            f"human's decision, input, or clarification. Do not stop until you "
+            f"have converged on a solution together or tagged the human. Begin "
+            f"now by sending your partner your initial approach.\n\n"
+            f"TASK:\n{task}"
+        )
+        ag = agents.get_agent(agent_key)
+        label = room_full["title"][:60]
+        model = (part.get("model") or "").strip()
+        # Pre-clear each agent's first-run trust gate so the unattended launch
+        # starts talking instead of blocking on a prompt no one can answer.
+        if hasattr(ag, "ensure_trusted"):
+            ag.ensure_trusted(cwd)
+        if agent_key == "codex":
+            command = ["codex",
+                       # never prompt for tool approval — the whole point is
+                       # autonomous collaboration; the workspace is a scratch dir.
+                       "-c", 'approval_policy="never"',
+                       "-c", f'mcp_servers.chat.url="{url}"',
+                       "-c", 'mcp_servers.chat.bearer_token_env_var="CHAT_TOKEN"']
+            if model:
+                command += ["-c", f'model="{model}"']
+            res = BACKEND.open_new(cwd, briefing, label=label, command=command,
+                                   agent="codex", identity=ident,
+                                   env={"CHAT_TOKEN": token})
+            return {"sessionId": "", "cwd": cwd, "launch": res}
+        # claude (and claude-N)
+        cfg = {"mcpServers": {"chat": {"type": "http", "url": url,
+                                       "headers": {"Authorization": f"Bearer {token}"}}}}
+        mcp_dir = DASHBOARD_DIR / "_mcp"
+        mcp_dir.mkdir(parents=True, exist_ok=True)
+        cfg_path = mcp_dir / f"{uuid.uuid4().hex}.json"
+        cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+        new_sid = str(uuid.uuid4())
+        claude_extra = ["--mcp-config", str(cfg_path), "--strict-mcp-config"]
+        if model:
+            claude_extra += ["--model", model]
+        res = BACKEND.open_new(cwd, briefing, label=label, session_id=new_sid,
+                               agent="claude", identity=ident,
+                               extra_args=claude_extra)
+        return {"sessionId": new_sid, "cwd": cwd, "launch": res}
+
+    def _brief_agents(self, room_id: str) -> None:
+        """Introduce the room to each agent: its identity, partner(s), and the
+        collaboration protocol. Delivered via the doorbell. (The chat tools that
+        this references are provided by the MCP server wired at launch.)"""
+        room = chatroom.get_room(room_id)
+        if not room:
+            return
+        agents_in = [x for x in room["participants"] if x.get("kind") == "agent"]
+        for part in agents_in:
+            pid = part.get("pid")
+            if not pid:
+                continue
+            partners = [a["identity"] for a in agents_in
+                        if a["identity"] != part["identity"]]
+            brief = (
+                f"[room '{room['title']}'] You are '{part['identity']}', "
+                f"collaborating with {', '.join(partners) or 'your partner'} to "
+                f"find the best possible solution. Coordinate via the chat tools: "
+                f"call chat_read to see new messages and chat_send to reply. End "
+                f"each turn by sending your partner a message. When you need input "
+                f"from the human, chat_send to \"user\". Start by introducing your "
+                f"approach with chat_send."
+            )
+            try:
+                BACKEND.send_text(int(pid), brief, submit=True)
+            except (OSError, ValueError):
+                pass
+
+    # ---------- MCP (streamable-HTTP) endpoint for the chat rooms ----------
+
+    def _send_mcp(self, payload, session_id: str = "") -> None:
+        body = json.dumps(payload).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        if session_id:
+            self.send_header("Mcp-Session-Id", session_id)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _handle_mcp(self, data) -> None:
+        """Serve one MCP request (single or JSON-RPC batch) over streamable
+        HTTP. Identity comes from the bearer token minted at room creation, so
+        every tool call is attributed to the right agent."""
+        auth = self.headers.get("Authorization", "")
+        token = auth[7:].strip() if auth[:7].lower() == "bearer " else ""
+        resolved = chatroom.resolve_token(token)
+        if not resolved:
+            self._send_json(401, {"error": "unauthorized"})
+            return
+        room_id, identity = resolved
+        session_id = self.headers.get("Mcp-Session-Id") or room_id
+        reqs = data if isinstance(data, list) else [data]
+        responses = []
+        for req in reqs:
+            if not isinstance(req, dict):
+                continue
+            resp = self._mcp_method(req, room_id, identity)
+            if resp is not None:
+                responses.append(resp)
+        if not responses:
+            # Everything was a notification → 202 Accepted, empty body.
+            self.send_response(202)
+            self.send_header("Content-Length", "0")
+            if session_id:
+                self.send_header("Mcp-Session-Id", session_id)
+            self.end_headers()
+            return
+        payload = responses if isinstance(data, list) else responses[0]
+        self._send_mcp(payload, session_id)
+
+    def _mcp_method(self, req: dict, room_id: str, identity: str):
+        method = req.get("method")
+        rid = req.get("id")
+        params = req.get("params") or {}
+
+        def ok(result):
+            return {"jsonrpc": "2.0", "id": rid, "result": result}
+
+        def err(code, msg):
+            return {"jsonrpc": "2.0", "id": rid,
+                    "error": {"code": code, "message": msg}}
+
+        if method == "initialize":
+            return ok({
+                "protocolVersion": params.get("protocolVersion", "2025-06-18"),
+                "capabilities": {"tools": {"listChanged": False}},
+                "serverInfo": {"name": "claude-dashboard-chat", "version": "1.0"},
+            })
+        if method is not None and method.startswith("notifications/"):
+            return None  # notifications get no JSON-RPC response
+        if method == "ping":
+            return ok({})
+        if method == "tools/list":
+            return ok({"tools": chatroom.MCP_TOOLS})
+        if method == "tools/call":
+            return self._mcp_tool_call(params.get("name"),
+                                       params.get("arguments") or {},
+                                       room_id, identity, ok, err)
+        return err(-32601, f"method not found: {method}")
+
+    def _mcp_tool_call(self, name, args, room_id, identity, ok, err):
+        if name == "chat_send":
+            text = (args.get("message") or "").strip()
+            to = (args.get("to") or "").strip()
+            if not text:
+                return err(-32602, "message is required")
+            result = chatroom.post_message(room_id, identity, text, to=to)
+            if result is None:
+                return err(-32000, "room no longer exists")
+            self._ring_recipients(room_id, result)
+            status = result["status"]
+            note = "delivered"
+            if status == "waiting_human":
+                note = ("delivered to the human — the collaboration is paused "
+                        "until they reply, so stop and wait.")
+            elif status == "paused":
+                note = ("delivered, but the room reached its turn limit and is "
+                        "paused for human review — stop and wait.")
+            return ok({"content": [{"type": "text", "text": note}],
+                       "isError": False})
+        if name == "chat_read":
+            msgs = chatroom.read_new_for(room_id, identity)
+            if not msgs:
+                body = "(no new messages)"
+            else:
+                body = "\n".join(f"[from {m['from']}] {m['text']}" for m in msgs)
+            return ok({"content": [{"type": "text", "text": body}],
+                       "isError": False})
+        if name == "chat_whoami":
+            info = chatroom.whoami(room_id, identity)
+            return ok({"content": [{"type": "text", "text": json.dumps(info)}],
+                       "isError": False})
+        return err(-32602, f"unknown tool: {name}")
+
+    def do_DELETE(self):
+        # MCP clients DELETE /mcp to end a session; nothing to tear down.
+        if urlparse(self.path).path == "/mcp":
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        self.send_error(404)
+
     def do_POST(self):
         u = urlparse(self.path)
         p = u.path
@@ -1951,6 +2325,9 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(body) if body else {}
         except json.JSONDecodeError:
             self._send_json(400, {"error": "bad_json"})
+            return
+        if p == "/mcp":
+            self._handle_mcp(data)
             return
         if p == "/api/update":
             # Fire and forget — the spawned `claude-dashboard update`
@@ -1993,8 +2370,120 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "missing_fields"})
                 return
             label = load_labels().get(sid, "")
-            res = BACKEND.open_resume(cwd, sid, label=label)
+            agent_key = (data.get("agent") or "claude").strip() or "claude"
+            if agent_key != "claude":
+                # Non-Claude agent: resume via that agent's own CLI (e.g.
+                # `codex resume <id>`), launched verbatim by the OS backend.
+                ag = agents.get_agent(agent_key)
+                if ag is None:
+                    self._send_json(400, {"error": "unknown_agent"})
+                    return
+                res = BACKEND.open_resume(cwd, sid, label=label,
+                                          command=ag.resume_argv(sid))
+            else:
+                res = BACKEND.open_resume(cwd, sid, label=label)
             self._send_json(200, {"result": res})
+            return
+        if p == "/api/send":
+            # Inject text into a live session's terminal (the chat "doorbell").
+            # Empty text with submit=True is a bare Enter — used to confirm
+            # prompts (e.g. codex's directory-trust gate) and as a lightweight
+            # doorbell ring; only reject when there's nothing to do at all.
+            pid = data.get("pid")
+            text = data.get("text", "")
+            submit = data.get("submit", True)
+            if not pid or (not text and not submit):
+                self._send_json(400, {"error": "missing_fields"})
+                return
+            res = BACKEND.send_text(int(pid), text, submit=bool(submit))
+            self._send_json(200, {"result": res})
+            return
+        if p == "/api/room/create":
+            title = (data.get("title") or "multiagent session").strip()[:120]
+            members = data.get("members") or []
+            if not isinstance(members, list) or len(members) < 2:
+                self._send_json(400, {"error": "need_two_members"})
+                return
+            room = chatroom.create_room(title, members)
+            # Announce the room to each agent so they know their identity, their
+            # partner(s), and the collaboration protocol (chat_send/chat_read).
+            self._brief_agents(room["id"])
+            self._send_json(200, {"ok": True, "room": chatroom.get_room(room["id"])})
+            return
+        if p == "/api/room/new":
+            # Create a multiagent room AND launch its agents pre-wired to the
+            # chat MCP (each with its own identity token), seeded with the task.
+            title = (data.get("title") or "multiagent session").strip()[:120]
+            task = (data.get("task") or "").strip()
+            agent_list = data.get("agents") or []
+            if not isinstance(agent_list, list) or len(agent_list) < 2:
+                self._send_json(400, {"error": "need_two_agents"})
+                return
+            # Each item is either a plain agent key ("claude") or an object
+            # {agent, model}. Normalize to (agent_key, model) pairs.
+            specs = []
+            for item in agent_list:
+                if isinstance(item, dict):
+                    ak = (item.get("agent") or "").strip()
+                    mdl = (item.get("model") or "").strip()
+                else:
+                    ak, mdl = str(item).strip(), ""
+                ag = agents.get_agent(ak)
+                if ag is None or not ag.installed():
+                    self._send_json(400, {"error": f"agent_unavailable:{ak}"})
+                    return
+                specs.append((ak, mdl))
+            ok, base, msg = create_cs_session(title)
+            if not ok:
+                self._send_json(400, {"error": msg})
+                return
+            members = [{"identity": ak, "agent": ak, "model": mdl}
+                       for ak, mdl in specs]
+            room = chatroom.create_room(title, members)
+            room_full = chatroom.get_room(room["id"], public=False)
+            room_full["cwd"] = base
+            launched = []
+            for part in [pp for pp in room_full["participants"]
+                         if pp.get("kind") == "agent"]:
+                info = self._launch_room_agent(room_full, part, task)
+                part["sessionId"] = info["sessionId"]
+                part["cwd"] = info["cwd"]
+                launched.append({"identity": part["identity"],
+                                 "result": info["launch"]})
+            chatroom.update_room(room_full)
+            self._send_json(200, {"ok": True,
+                                  "room": chatroom.get_room(room["id"]),
+                                  "launched": launched})
+            return
+        if p == "/api/room/say":
+            rid = (data.get("roomId") or "").strip()
+            text = (data.get("text") or "").strip()
+            to = (data.get("to") or "").strip()
+            if not rid or not text:
+                self._send_json(400, {"error": "missing_fields"})
+                return
+            result = chatroom.post_message(rid, chatroom.HUMAN_IDENTITY, text, to=to)
+            if result is None:
+                self._send_json(404, {"error": "no_such_room"})
+                return
+            self._ring_recipients(rid, result)
+            self._send_json(200, {"ok": True, "result": result})
+            return
+        if p == "/api/room/status":
+            rid = (data.get("roomId") or "").strip()
+            status = (data.get("status") or "").strip()
+            if status not in ("active", "paused"):
+                self._send_json(400, {"error": "bad_status"})
+                return
+            room = chatroom.set_status(rid, status)
+            if room is None:
+                self._send_json(404, {"error": "no_such_room"})
+                return
+            self._send_json(200, {"ok": True, "room": room})
+            return
+        if p == "/api/room/delete":
+            rid = (data.get("roomId") or "").strip()
+            self._send_json(200, {"ok": chatroom.delete_room(rid)})
             return
         if p == "/api/fork":
             sid = data.get("sessionId")
@@ -2073,9 +2562,49 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "missing_description"})
                 return
             user_prompt = (data.get("initialPrompt") or "").strip()
+            agent_key = (data.get("agent") or "claude").strip().lower()
             ok, path, msg = create_cs_session(desc)
             if not ok:
                 self._send_json(400, {"error": msg})
+                return
+            settings = load_settings()
+            open_mode = settings.get("openMode", "window")
+            # --- Codex (or any non-claude agent): launch a fresh CLI in the new
+            # folder. We can't pre-allocate its session id (codex mints its own
+            # and we discover it from ~/.codex rollout files on the next refresh),
+            # so there's no sid-keyed label/category here — the session surfaces
+            # with its own id shortly after launch.
+            if agent_key != "claude":
+                ag = agents.get_agent(agent_key)
+                if ag is None:
+                    self._send_json(400, {"error": f"unknown_agent:{agent_key}"})
+                    return
+                if not ag.installed():
+                    self._send_json(400, {"error": f"{agent_key}_not_installed"})
+                    return
+                combined = "\n\n".join(p for p in (desc, user_prompt) if p)
+                # Pre-authorize the folder so codex doesn't block at its
+                # interactive directory-trust gate (no one's there to confirm).
+                if hasattr(ag, "ensure_trusted"):
+                    ag.ensure_trusted(path)
+                identity = _allocate_agent_identity(agent_key)
+                # launch_argv("") keeps the prompt out of argv; _launch_wt appends
+                # it as a here-string so the CLI receives it as its first message.
+                # agent/identity make the launch script self-register the session
+                # (liveness + injection target) in AGENT_SESS_DIR.
+                argv = ag.launch_argv(path, "")
+                # Apply a per-agent model where the CLI supports it (codex reads
+                # it as a `-c` config override).
+                raw_model = data.get("model")
+                sess_model = raw_model.strip()[:80] if isinstance(raw_model, str) else ""
+                if sess_model and agent_key == "codex":
+                    argv += ["-c", f'model="{sess_model}"']
+                res = BACKEND.open_new(path, combined, label=desc,
+                                       command=argv, open_mode=open_mode,
+                                       agent=agent_key, identity=identity)
+                self._send_json(200, {"ok": True, "path": path, "result": res,
+                                      "sessionId": "", "agent": agent_key,
+                                      "identity": identity})
                 return
             # Pre-allocate the session UUID so we can label it before claude
             # has written its first transcript line. Otherwise the dashboard
@@ -2093,16 +2622,15 @@ class Handler(BaseHTTPRequestHandler):
             combined = "\n\n".join(p for p in (desc, user_prompt) if p)
             # `model` from the client picker overrides the persisted default;
             # missing → the persisted default → no --model flag. open_mode
-            # (window/tab) is honored where the terminal supports it.
-            settings = load_settings()
+            # (window/tab, read above) is honored where the terminal supports it.
             raw_model = data.get("model")
             model_override = raw_model.strip()[:80] if isinstance(raw_model, str) else None
             chosen_model = (model_override if model_override is not None
                             else settings.get("defaultModel", "")).strip() or None
-            open_mode = settings.get("openMode", "window")
             res = BACKEND.open_new(path, combined, label=desc, session_id=new_sid,
                                    model=chosen_model, open_mode=open_mode)
-            self._send_json(200, {"ok": True, "path": path, "result": res, "sessionId": new_sid})
+            self._send_json(200, {"ok": True, "path": path, "result": res,
+                                  "sessionId": new_sid, "agent": "claude"})
             return
         if p == "/api/close":
             pid = data.get("pid")

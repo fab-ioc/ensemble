@@ -17,12 +17,14 @@ import os
 import re
 import shutil
 import subprocess
+import threading
+import time
 import uuid
 from ctypes import wintypes
 from pathlib import Path
 
 from .base import Backend, DASHBOARD_DIR
-from .shared import claude_cmd_args
+from .shared import AGENT_SESS_DIR, claude_cmd_args
 
 LAUNCH_DIR = DASHBOARD_DIR / "_launch"
 SCHEME_MARKER = ".wt-scheme"
@@ -44,6 +46,106 @@ _PROCESS_TERMINATE = 0x0001
 _STILL_ACTIVE = 259
 _ERROR_ACCESS_DENIED = 5
 
+# ---------- console keystroke injection (the chat "doorbell") ----------
+#
+# A separate process (this server) can push input into a live agent's Windows
+# Terminal tab by attaching to that tab's console and writing key events to its
+# input buffer. Validated against a real Claude TUI: AttachConsole(agent_pid) →
+# CONIN$ → WriteConsoleInputW with well-formed key events (VkKeyScan/MapVirtualKey,
+# Enter = VK_RETURN + scan 0x1C). AttachConsole is process-global (one console at
+# a time), so every injection serializes under _CONSOLE_LOCK and always
+# FreeConsole()s afterward.
+
+_kernel32.AttachConsole.argtypes = (wintypes.DWORD,)
+_kernel32.AttachConsole.restype = wintypes.BOOL
+_kernel32.FreeConsole.restype = wintypes.BOOL
+_kernel32.CreateFileW.restype = wintypes.HANDLE
+_kernel32.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                  wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD,
+                                  wintypes.HANDLE)
+_kernel32.WriteConsoleInputW.argtypes = (wintypes.HANDLE, wintypes.LPVOID,
+                                         wintypes.DWORD, ctypes.POINTER(wintypes.DWORD))
+# NB: VkKeyScanW / MapVirtualKeyW live on _user32, which is defined further down;
+# their argtype/restype setup is done there (search "VkKeyScanW").
+
+_KEY_EVENT = 0x0001
+_GENERIC_RW = 0x80000000 | 0x40000000
+_FILE_SHARE_RW = 0x1 | 0x2
+_OPEN_EXISTING = 3
+_INVALID_HANDLE = wintypes.HANDLE(-1).value
+_VK_RETURN = 0x0D
+_CONSOLE_LOCK = threading.Lock()
+
+
+class _CHAR_UNION(ctypes.Union):
+    _fields_ = [("UnicodeChar", wintypes.WCHAR), ("AsciiChar", ctypes.c_char)]
+
+
+class _KEY_EVENT_RECORD(ctypes.Structure):
+    _fields_ = [("bKeyDown", wintypes.BOOL), ("wRepeatCount", wintypes.WORD),
+                ("wVirtualKeyCode", wintypes.WORD), ("wVirtualScanCode", wintypes.WORD),
+                ("uChar", _CHAR_UNION), ("dwControlKeyState", wintypes.DWORD)]
+
+
+class _INPUT_EVENT_UNION(ctypes.Union):
+    _fields_ = [("KeyEvent", _KEY_EVENT_RECORD)]
+
+
+class _INPUT_RECORD(ctypes.Structure):
+    _fields_ = [("EventType", wintypes.WORD), ("Event", _INPUT_EVENT_UNION)]
+
+
+def _key_record(ch: str, down: bool) -> _INPUT_RECORD:
+    r = _INPUT_RECORD()
+    r.EventType = _KEY_EVENT
+    ke = r.Event.KeyEvent
+    ke.bKeyDown = 1 if down else 0
+    ke.wRepeatCount = 1
+    if ch == "\r":
+        vk, scan = _VK_RETURN, 0x1C
+    else:
+        vk = _user32.VkKeyScanW(ch) & 0xFF
+        scan = _user32.MapVirtualKeyW(vk, 0)  # MAPVK_VK_TO_VSC
+    ke.wVirtualKeyCode = vk
+    ke.wVirtualScanCode = scan
+    ke.uChar.UnicodeChar = ch
+    ke.dwControlKeyState = 0
+    return r
+
+
+def _write_records(hin, seq: str) -> None:
+    recs = []
+    for ch in seq:
+        recs.append(_key_record(ch, True))
+        recs.append(_key_record(ch, False))
+    arr = (_INPUT_RECORD * len(recs))(*recs)
+    written = wintypes.DWORD(0)
+    _kernel32.WriteConsoleInputW(hin, arr, len(recs), ctypes.byref(written))
+
+
+def _inject_console_input(pid: int, text: str, submit: bool) -> str:
+    """Attach to `pid`'s console and type `text` (+ Enter if submit). Returns
+    'ok' or an error string. Must hold _CONSOLE_LOCK."""
+    _kernel32.FreeConsole()
+    if not _kernel32.AttachConsole(pid):
+        return f"attach_failed:{ctypes.get_last_error()}"
+    try:
+        hin = _kernel32.CreateFileW("CONIN$", _GENERIC_RW, _FILE_SHARE_RW,
+                                    None, _OPEN_EXISTING, 0, None)
+        if hin == _INVALID_HANDLE:
+            return f"conin_failed:{ctypes.get_last_error()}"
+        try:
+            _write_records(hin, text)
+            if submit:
+                # Let the TUI ingest the text before the Enter lands.
+                time.sleep(max(0.5, len(text) * 0.004))
+                _write_records(hin, "\r")
+        finally:
+            _kernel32.CloseHandle(hin)
+        return "ok"
+    finally:
+        _kernel32.FreeConsole()
+
 # ---------- Win32 window helpers (for focus) ----------
 
 _user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -62,6 +164,11 @@ _user32.ShowWindow.argtypes = (wintypes.HWND, ctypes.c_int)
 _user32.ShowWindow.restype = wintypes.BOOL
 _user32.IsIconic.argtypes = (wintypes.HWND,)
 _user32.IsIconic.restype = wintypes.BOOL
+# Used by the console-injection helpers above to build well-formed key events.
+_user32.VkKeyScanW.restype = ctypes.c_short
+_user32.VkKeyScanW.argtypes = (wintypes.WCHAR,)
+_user32.MapVirtualKeyW.restype = wintypes.UINT
+_user32.MapVirtualKeyW.argtypes = (wintypes.UINT, wintypes.UINT)
 
 # Windows Terminal's top-level window class.
 _WT_WINDOW_CLASS = "CASCADIA_HOSTING_WINDOW_CLASS"
@@ -195,7 +302,22 @@ class WindowsBackend(Backend):
         "default":    "code",
     }
     features = {"focus": True, "themes": "launch-only", "geometry": False,
-                "liveTitle": False, "consolidate": False, "split": False}
+                "liveTitle": False, "consolidate": False, "split": False,
+                "send": True}
+
+    def send_text(self, pid: int, text: str, submit: bool = True) -> str:
+        """Inject `text` into the live session's WT console (the chat doorbell).
+        `pid` is any process attached to that tab's console — the agent's own pid
+        works. Serialized: AttachConsole is process-global."""
+        if not pid:
+            return "no_pid"
+        if not self.process_alive(int(pid)):
+            return "not_alive"
+        with _CONSOLE_LOCK:
+            try:
+                return _inject_console_input(int(pid), text, submit)
+            except OSError as e:
+                return f"error:{e}"
 
     # ---------- process introspection ----------
 
@@ -263,22 +385,31 @@ class WindowsBackend(Backend):
 
     def open_new(self, cwd: str, initial_prompt: str = "", label: str = "",
                  session_id: str = "", model: str | None = None,
-                 open_mode: str = "window") -> str:
+                 open_mode: str = "window", command: list[str] | None = None,
+                 agent: str = "", identity: str = "",
+                 env: dict | None = None, extra_args: list[str] | None = None) -> str:
         extra = ["--session-id", session_id] if session_id else []
         if model:
             extra += ["--model", model]
-        return self._launch_wt(cwd, extra, initial_prompt, label, open_mode=open_mode)
+        if extra_args:
+            extra += list(extra_args)
+        return self._launch_wt(cwd, extra, initial_prompt, label,
+                               open_mode=open_mode, command=command,
+                               agent=agent, identity=identity, env=env)
 
     def open_resume(self, cwd: str, session_id: str, fork: bool = False,
                     new_session_id: str | None = None, initial_prompt: str = "",
-                    label: str = "") -> str:
+                    label: str = "", command: list[str] | None = None,
+                    agent: str = "", identity: str = "") -> str:
         extra = ["--resume", session_id]
         if fork:
             extra.append("--fork-session")
         if new_session_id:
             extra += ["--session-id", new_session_id]
         # Resumed/forked sessions always open in a new window.
-        return self._launch_wt(cwd, extra, initial_prompt, label, open_mode="window")
+        return self._launch_wt(cwd, extra, initial_prompt, label,
+                               open_mode="window", command=command,
+                               agent=agent, identity=identity)
 
     def close(self, session: dict) -> str:
         from .shared import SESS_DIR
@@ -302,7 +433,10 @@ class WindowsBackend(Backend):
         return "ok"
 
     def _launch_wt(self, cwd: str, claude_extra: list[str], initial_prompt: str,
-                   label: str, open_mode: str = "window") -> str:
+                   label: str, open_mode: str = "window",
+                   command: list[str] | None = None,
+                   agent: str = "", identity: str = "",
+                   env: dict | None = None) -> str:
         wt = shutil.which("wt")
         if not wt:
             return "Windows Terminal (wt.exe) not found"
@@ -310,11 +444,14 @@ class WindowsBackend(Backend):
         if not shell:
             return "PowerShell not found"
 
-        # Compose the `claude` argv (permission mode + caller extras). The
-        # initial prompt is appended inside the script as a literal here-string
-        # so any content (spaces, quotes, newlines) survives intact.
-        args = claude_cmd_args(*claude_extra)
-        script_path = self._write_launch_script(cwd, args, initial_prompt)
+        # A caller-supplied `command` (e.g. `codex resume <id>`) is launched
+        # verbatim. Otherwise compose the `claude` argv (permission mode +
+        # caller extras). The initial prompt is appended inside the script as a
+        # literal here-string so any content survives intact.
+        args = list(command) if command else claude_cmd_args(*claude_extra)
+        script_path = self._write_launch_script(cwd, args, initial_prompt,
+                                                agent=agent, identity=identity,
+                                                env=env)
 
         # tab → open a tab in the most-recently-used window; window → new window.
         # `-w last` targets the last active WT window (creating one if none).
@@ -338,19 +475,25 @@ class WindowsBackend(Backend):
         return "ok"
 
     def _write_launch_script(self, cwd: str, claude_argv: list[str],
-                             initial_prompt: str) -> str:
-        """Write a one-shot .ps1 that cd's into cwd, runs claude, then deletes
+                             initial_prompt: str, agent: str = "",
+                             identity: str = "", env: dict | None = None) -> str:
+        """Write a one-shot .ps1 that cd's into cwd, runs the agent, then deletes
         itself. Using a script file (rather than a wt-parsed command line) keeps
-        arbitrary cwd paths and prompts robust against wt's quoting."""
+        arbitrary cwd paths and prompts robust against wt's quoting.
+
+        For a non-Claude agent, the script also registers this session in
+        AGENT_SESS_DIR keyed by its own $PID (the hosting shell) before launch
+        and removes the record on exit — that's how a codex session becomes
+        "live" and injectable (the shell shares the terminal console)."""
         LAUNCH_DIR.mkdir(parents=True, exist_ok=True)
         script_path = LAUNCH_DIR / f"{uuid.uuid4().hex}.ps1"
-        # Build the claude call. claude_argv tokens are simple (no spaces); the
-        # prompt is the only free-form part and goes in a literal here-string.
+        # Build the agent call. argv tokens are simple (no spaces); the prompt is
+        # the only free-form part and goes in a literal here-string.
         claude_line = " ".join(_ps_quote(a) for a in claude_argv)
         if initial_prompt:
             here = "@'\n" + initial_prompt.replace("\r\n", "\n") + "\n'@"
             claude_line = f"{claude_line} {here}"
-        # After claude exits, reset any terminal modes it left enabled (xterm
+        # After the agent exits, reset any terminal modes it left enabled (xterm
         # mouse tracking 1000/1002/1003/1006, bracketed paste 2004, focus
         # reporting 1004, alt-screen 1049) so the surviving pwsh prompt doesn't
         # spew escape codes on mouse movement.
@@ -360,10 +503,37 @@ class WindowsBackend(Backend):
             "\"$__e[?1000l$__e[?1002l$__e[?1003l$__e[?1006l"
             "$__e[?1004l$__e[?2004l$__e[?1049l\")\n"
         )
+        # Non-Claude agents self-register (Claude maintains its own SESS_DIR
+        # registry; codex & friends do not). $PID here is the hosting shell,
+        # which shares the terminal console with the agent — so it works as both
+        # the liveness signal and the keystroke-injection target.
+        reg_write = reg_cleanup = ""
+        if agent and agent != "claude":
+            ident = identity or agent
+            reg_write = (
+                f"$__regdir = {_ps_quote(str(AGENT_SESS_DIR))}\n"
+                "New-Item -ItemType Directory -Force -Path $__regdir | Out-Null\n"
+                "$__reg = Join-Path $__regdir (\"$PID.json\")\n"
+                f"@{{ pid = $PID; agent = {_ps_quote(agent)}; "
+                f"identity = {_ps_quote(ident)}; cwd = {_ps_quote(cwd)}; "
+                "startedAt = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() } | "
+                "ConvertTo-Json -Compress | "
+                "Set-Content -LiteralPath $__reg -Encoding utf8\n"
+            )
+            reg_cleanup = ("Remove-Item -LiteralPath $__reg "
+                           "-ErrorAction SilentlyContinue\n")
+        # Environment variables (e.g. a per-session MCP bearer token that codex
+        # reads via bearer_token_env_var) set before the agent launches.
+        env_lines = ""
+        for k, v in (env or {}).items():
+            env_lines += f"$env:{k} = {_ps_quote(str(v))}\n"
         body = (
             f"Set-Location -LiteralPath {_ps_quote(cwd)}\n"
+            f"{env_lines}"
+            f"{reg_write}"
             f"& {claude_line}\n"
             f"{reset_line}"
+            f"{reg_cleanup}"
             f"Remove-Item -LiteralPath {_ps_quote(str(script_path))} "
             f"-ErrorAction SilentlyContinue\n"
         )

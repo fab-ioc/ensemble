@@ -12,6 +12,12 @@ from .base import DASHBOARD_DIR, HOME
 SESS_DIR = HOME / ".claude" / "sessions"
 RENAME_WORKSPACE = DASHBOARD_DIR / "_rename_workspace"
 GEOMETRIES_FILE = DASHBOARD_DIR / "geometries.json"
+# Registry for sessions the dashboard *launches* for non-Claude agents (codex,
+# …). Claude self-registers in SESS_DIR; other CLIs don't, so our launch script
+# writes a <pid>.json here (pid = the hosting shell, which shares the terminal
+# console — so it doubles as the keystroke-injection target). This is how a
+# codex session becomes "live" and reachable by the send/doorbell mechanism.
+AGENT_SESS_DIR = DASHBOARD_DIR / "agents"
 
 # Permission mode for sessions the dashboard launches. "bypassPermissions"
 # auto-approves everything (no "yes?" prompts). Override with the env var, e.g.
@@ -87,6 +93,35 @@ def read_session_files() -> list[dict]:
         # file but aren't real chat sessions.
         kind = d.get("kind", "")
         if kind and kind != "interactive":
+            continue
+        out.append(d)
+    return out
+
+
+def read_agent_session_files() -> list[dict]:
+    """Read dashboard-launched agent registry files (AGENT_SESS_DIR/<pid>.json).
+
+    Each record describes a non-Claude session we launched — its hosting shell
+    pid, the assigned identity, agent key, and cwd. Records whose pid has died
+    are pruned on read (the clean-exit path also removes them, but a killed
+    session leaves a stale file). Returns only live records."""
+    from . import get_backend  # lazy: avoids import cycle at module load
+    backend = get_backend()
+    out = []
+    if not AGENT_SESS_DIR.exists():
+        return out
+    for f in AGENT_SESS_DIR.glob("*.json"):
+        try:
+            # utf-8-sig: tolerate a BOM if a PowerShell 5.1 fallback wrote one.
+            d = json.loads(f.read_text(encoding="utf-8-sig"))
+        except (json.JSONDecodeError, OSError, ValueError):
+            continue
+        pid = d.get("pid")
+        if not pid or not backend.process_alive(int(pid)):
+            try:
+                f.unlink()
+            except OSError:
+                pass
             continue
         out.append(d)
     return out

@@ -210,6 +210,31 @@ on run argv
 end run
 """
 
+_SEND_SCRIPT = """
+on run argv
+    set targetTTY to item 1 of argv
+    set theText to item 2 of argv
+    set doSubmit to (item 3 of argv is "1")
+    tell application "iTerm"
+        repeat with W in windows
+            repeat with T in tabs of W
+                repeat with S in sessions of T
+                    if (tty of S) is targetTTY then
+                        if doSubmit then
+                            tell S to write text theText
+                        else
+                            tell S to write text theText newline NO
+                        end if
+                        return "ok"
+                    end if
+                end repeat
+            end repeat
+        end repeat
+    end tell
+    return "not_found"
+end run
+"""
+
 _APPLESCRIPT_COLOR_KEYS = {
     "Foreground Color": "foreground color",
     "Background Color": "background color",
@@ -274,7 +299,7 @@ class MacBackend(Backend):
         "default":    "Visual Studio Code",
     }
     features = {"focus": True, "themes": True, "geometry": True, "liveTitle": True,
-                "consolidate": True, "split": True}
+                "consolidate": True, "split": True, "send": True}
 
     def __init__(self):
         # Throttled "iTerm tab name follows label" re-pusher. Some shells
@@ -329,17 +354,40 @@ class MacBackend(Backend):
         except subprocess.SubprocessError as e:
             return f"error: {e}"
 
+    def send_text(self, pid: int, text: str, submit: bool = True) -> str:
+        """Inject text into a live iTerm session (the chat doorbell). iTerm's
+        `write text` delivers to the session by tty; with a newline it submits."""
+        if not pid:
+            return "no_pid"
+        tty = self._tty_of_pid(int(pid))
+        if not tty:
+            return "no_tty"
+        try:
+            r = subprocess.run(
+                ["osascript", "-e", _SEND_SCRIPT, tty, text, "1" if submit else "0"],
+                capture_output=True, text=True, timeout=5,
+            )
+            return r.stdout.strip() or r.stderr.strip() or "unknown"
+        except subprocess.SubprocessError as e:
+            return f"error: {e}"
+
     def open_new(self, cwd: str, initial_prompt: str = "", label: str = "",
                  session_id: str = "", model: str | None = None,
-                 open_mode: str = "window") -> str:
-        extra = []
-        if session_id:
-            extra += ["--session-id", session_id]
-        if model:
-            extra += ["--model", model]
-        cmd_str = claude_cmd(*extra)
-        if initial_prompt:
-            cmd_str = f"{cmd_str} {shlex.quote(_safe_claude_prompt(initial_prompt))}"
+                 open_mode: str = "window", command: list[str] | None = None,
+                 agent: str = "", identity: str = "",
+                 env: dict | None = None, extra_args: list[str] | None = None) -> str:
+        if command:
+            # Non-Claude agent (e.g. codex): run its argv verbatim.
+            cmd_str = shlex.join(command)
+        else:
+            extra = []
+            if session_id:
+                extra += ["--session-id", session_id]
+            if model:
+                extra += ["--model", model]
+            cmd_str = claude_cmd(*extra)
+            if initial_prompt:
+                cmd_str = f"{cmd_str} {shlex.quote(_safe_claude_prompt(initial_prompt))}"
         args = ["osascript", "-e", _OPEN_SCRIPT, cwd, cmd_str, open_mode or "window"]
         try:
             r = subprocess.run(args, capture_output=True, text=True, timeout=10)
@@ -357,15 +405,20 @@ class MacBackend(Backend):
 
     def open_resume(self, cwd: str, session_id: str, fork: bool = False,
                     new_session_id: str | None = None, initial_prompt: str = "",
-                    label: str = "") -> str:
-        extra = ["--resume", session_id]
-        if fork:
-            extra.append("--fork-session")
-        if new_session_id:
-            extra += ["--session-id", new_session_id]
-        cmd = claude_cmd(*extra)
-        if initial_prompt:
-            cmd = f"{cmd} {shlex.quote(initial_prompt)}"
+                    label: str = "", command: list[str] | None = None,
+                    agent: str = "", identity: str = "") -> str:
+        if command:
+            # Non-Claude agent (e.g. `codex resume <id>`): run verbatim.
+            cmd = shlex.join(command)
+        else:
+            extra = ["--resume", session_id]
+            if fork:
+                extra.append("--fork-session")
+            if new_session_id:
+                extra += ["--session-id", new_session_id]
+            cmd = claude_cmd(*extra)
+            if initial_prompt:
+                cmd = f"{cmd} {shlex.quote(initial_prompt)}"
         # A fork is a brand-new session — don't reuse the original's saved window
         # bounds, or the two windows would land exactly on top of each other.
         geom = None if fork else load_geometries().get(session_id)

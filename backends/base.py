@@ -78,6 +78,7 @@ class Backend:
         "liveTitle": False,
         "consolidate": False,  # merge all terminal windows into one (iTerm only)
         "split": False,        # explode live sessions into separate windows
+        "send": False,         # inject text into a live session's terminal (chat doorbell)
     }
 
     # ---------- process introspection ----------
@@ -125,12 +126,20 @@ class Backend:
 
     def open_resume(self, cwd: str, session_id: str, fork: bool = False,
                     new_session_id: str | None = None, initial_prompt: str = "",
-                    label: str = "") -> str:
+                    label: str = "", command: list[str] | None = None,
+                    agent: str = "", identity: str = "") -> str:
+        # `command`, when given, is a fully-built argv (e.g. from a non-Claude
+        # agent like `codex resume <id>`); the backend launches it verbatim
+        # instead of composing a `claude` invocation. `agent`/`identity`, when
+        # set, ask the backend to register the launched session for liveness +
+        # message injection (platform support varies).
         return "unsupported"
 
     def open_new(self, cwd: str, initial_prompt: str = "", label: str = "",
                  session_id: str = "", model: str | None = None,
-                 open_mode: str = "window") -> str:
+                 open_mode: str = "window", command: list[str] | None = None,
+                 agent: str = "", identity: str = "",
+                 env: dict | None = None, extra_args: list[str] | None = None) -> str:
         return "unsupported"
 
     def close(self, session: dict) -> str:
@@ -139,6 +148,11 @@ class Backend:
         if pid:
             self.terminate(pid)
         return "ok"
+
+    def send_text(self, pid: int, text: str, submit: bool = True) -> str:
+        """Inject text into a live session's terminal (the chat "doorbell" that
+        wakes an agent to read a message). Default: unsupported."""
+        return "unsupported"
 
     def maybe_resync_label(self, pid: int, label: str) -> None:
         return None
