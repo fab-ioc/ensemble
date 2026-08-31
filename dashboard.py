@@ -2350,6 +2350,60 @@ class Handler(BaseHTTPRequestHandler):
         sess = ptyrun.create(cmd, cwd=cwd, label=label, meta=meta)
         return {"ptyId": sess.id, "cwd": cwd, "sessionId": new_sid}
 
+    def _resume_room_agent_pty(self, room_full: dict, part: dict,
+                               wire_mcp: bool = True) -> dict:
+        """Relaunch an agent in a fresh PTY, RESUMING its prior conversation
+        (claude --resume / codex resume). Used to recover a session after a
+        dashboard restart killed its PTY. Returns {ptyId, cwd, sessionId}."""
+        ident = part["identity"]
+        agent_key = part["agent"]
+        model = (part.get("model") or "").strip()
+        token = next((t for t, i in room_full.get("tokens", {}).items()
+                      if i == ident), "")
+        url = self._mcp_url()
+        base = room_full.get("cwd") or str(CS_ROOT)
+        cwd = part.get("cwd") or os.path.join(base, ident)
+        ag = agents.get_agent(agent_key)
+        if hasattr(ag, "ensure_trusted"):
+            ag.ensure_trusted(cwd)
+        label = f"{room_full['title'][:40]} · {ident}"
+        meta = {"room": room_full["id"], "identity": ident, "agent": agent_key}
+        if agent_key == "codex":
+            argv = ["codex", "-c", "check_for_update_on_startup=false"]
+            if wire_mcp:
+                argv += ["--dangerously-bypass-approvals-and-sandbox",
+                         "-c", f'mcp_servers.chat.url="{url}"',
+                         "-c", 'mcp_servers.chat.bearer_token_env_var="CHAT_TOKEN"']
+            if model:
+                argv += ["-c", f'model="{model}"']
+            codex_sid = (ag.latest_session_id_for_cwd(cwd)
+                         if hasattr(ag, "latest_session_id_for_cwd") else "")
+            if codex_sid:
+                argv += ["resume", codex_sid]   # subcommand goes last
+            cmd = BACKEND.headless_launch(cwd, argv, "")
+            sess = ptyrun.create(cmd, cwd=cwd,
+                                 env=({"CHAT_TOKEN": token} if wire_mcp else None),
+                                 label=label, meta=meta)
+            return {"ptyId": sess.id, "cwd": cwd, "sessionId": part.get("sessionId", "")}
+        # claude
+        claude_extra = []
+        if wire_mcp:
+            cfg = {"mcpServers": {"chat": {"type": "http", "url": url,
+                                           "headers": {"Authorization": f"Bearer {token}"}}}}
+            mcp_dir = DASHBOARD_DIR / "_mcp"
+            mcp_dir.mkdir(parents=True, exist_ok=True)
+            cfg_path = mcp_dir / f"{uuid.uuid4().hex}.json"
+            cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+            claude_extra = ["--mcp-config", str(cfg_path), "--strict-mcp-config"]
+        sid = part.get("sessionId", "")
+        resume = ["--resume", sid] if sid else []
+        argv = claude_cmd_args(*resume, *claude_extra)
+        if model:
+            argv += ["--model", model]
+        cmd = BACKEND.headless_launch(cwd, argv, "")
+        sess = ptyrun.create(cmd, cwd=cwd, label=label, meta=meta)
+        return {"ptyId": sess.id, "cwd": cwd, "sessionId": sid}
+
     def _brief_agents(self, room_id: str) -> None:
         """Introduce the room to each agent: its identity, partner(s), and the
         collaboration protocol. Delivered via the doorbell. (The chat tools that
@@ -2746,6 +2800,32 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/room/delete":
             rid = (data.get("roomId") or "").strip()
             self._send_json(200, {"ok": chatroom.delete_room(rid)})
+            return
+        if p == "/api/room/resume":
+            # Recover an ended session after a restart: relaunch each agent in a
+            # fresh PTY, resuming its prior conversation.
+            rid = (data.get("roomId") or "").strip()
+            room_full = chatroom.get_room(rid, public=False)
+            if room_full is None:
+                self._send_json(404, {"error": "no_such_room"})
+                return
+            agents_in = [pp for pp in room_full.get("participants", [])
+                         if pp.get("kind") == "agent"]
+            solo = room_full.get("mode") == "solo" or len(agents_in) < 2
+            resumed = []
+            for part in agents_in:
+                info = self._resume_room_agent_pty(room_full, part,
+                                                   wire_mcp=not solo)
+                part["ptyId"] = info["ptyId"]
+                part["cwd"] = info["cwd"]
+                resumed.append({"identity": part["identity"],
+                                "ptyId": info["ptyId"]})
+            room_full["status"] = "active"
+            room_full["hopCount"] = 0
+            room_full["waitingFor"] = ""
+            chatroom.update_room(room_full)
+            self._send_json(200, {"ok": True, "resumed": resumed,
+                                  "room": chatroom.get_room(rid)})
             return
         if p == "/api/room/close":
             # End a collaboration: kill every agent's headless PTY, then remove

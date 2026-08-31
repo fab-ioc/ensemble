@@ -1639,6 +1639,7 @@ function renderHeadlessRow(r, parsed, now) {
   const liveBadge = r.isLive ? '<span class="badge-live">live</span>'
     : '<span class="badge-headless ended" title="ended — transcript preserved">ended</span>';
   const actions = `<button class="room-open" data-room="${esc(r.roomId)}" title="Open session window">▶ Open ↗</button>`
+    + (r.isLive ? '' : `<button class="room-resume" data-room="${esc(r.roomId)}" title="Resume — relaunch the agent(s) with their conversation">↻ Resume</button>`)
     + `<button class="room-end" data-room="${esc(r.roomId)}" title="${r.isLive ? 'End session (stops agents)' : 'Dismiss'}">✕</button>`;
   const actionsTd = DETAIL_MODE ? '' : `<td>${actions}</td>`;
   return `<tr class="row headless ${liveClasses}" data-room="${esc(r.roomId)}" data-sid="${esc(r.sessionId)}" draggable="false">
@@ -2850,6 +2851,18 @@ document.addEventListener('click', async (ev) => {
   // click anywhere on the row opens it.
   const roomOpen = ev.target.closest('.room-open');
   if (roomOpen) { ev.stopPropagation(); openSessionWindow(roomOpen.dataset.room); return; }
+  const roomResume = ev.target.closest('.room-resume');
+  if (roomResume) {
+    ev.stopPropagation();
+    toast('resuming session…', 0, 'busy');
+    try {
+      const resp = await api('/api/room/resume', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: roomResume.dataset.room }) });
+      toast('resumed', 2000, 'ok');
+      await refresh(); updateRoomsBadge();
+      if (resp.room && resp.room.id) openSessionWindow(resp.room.id);
+    } catch (e) { toast('resume failed: ' + e.message, 4000, 'err'); }
+    return;
+  }
   const roomEnd = ev.target.closest('.room-end');
   if (roomEnd) {
     ev.stopPropagation();

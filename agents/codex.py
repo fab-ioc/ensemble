@@ -181,6 +181,20 @@ class CodexAgent(AgentType):
             argv.append(prompt)
         return argv
 
+    def latest_session_id_for_cwd(self, cwd: str) -> str:
+        """The most recent codex session id whose rollout ran in `cwd` — used to
+        `codex resume <id>` a headless session after a dashboard restart."""
+        if not cwd:
+            return ""
+        target = os.path.normcase(os.path.normpath(cwd))
+        try:
+            for s in self.list_sessions(limit=300):
+                if os.path.normcase(os.path.normpath(s.cwd or "")) == target:
+                    return s.session_id
+        except Exception:
+            pass
+        return ""
+
     def resume_argv(self, session_id: str,
                     extra: list[str] | None = None) -> list[str]:
         argv = ["codex", "resume", session_id]

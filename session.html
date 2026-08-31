@@ -57,8 +57,9 @@
   <span id="status" class="status"></span>
   <span id="hop" class="dim"></span>
   <span class="grow"></span>
+  <button id="resume" hidden title="Relaunch the agent(s) with their conversation">↻ Resume</button>
   <button id="pause">Pause</button>
-  <button id="end" title="Stop both agents and end this collaboration">End</button>
+  <button id="end" title="Stop the agent(s) and end this session">End</button>
 </header>
 <main>
   <div id="chatcol">
@@ -182,6 +183,7 @@ async function refresh() {
       ? 'The agents are waiting for you — reply to resume.' : '';
   $('#send').disabled = ended;
   $('#input').disabled = ended;
+  $('#resume').hidden = !ended;
   const pb = $('#pause');
   pb.style.display = ended ? 'none' : '';
   pb.textContent = st === 'paused' ? 'Resume' : 'Pause';
@@ -228,9 +230,21 @@ $('#input').addEventListener('keydown', e => {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $('#send').click(); }
 });
 $('#end').onclick = async () => {
-  if (!confirm('End this collaboration and stop both agents?')) return;
+  if (!confirm('End this session and stop the agent(s)?')) return;
   try { await jpost('/api/room/close', { roomId: ROOM }); } catch(e) {}
   window.close();
+};
+$('#resume').onclick = async () => {
+  $('#resume').disabled = true;
+  try {
+    await jpost('/api/room/resume', { roomId: ROOM });
+    // ptyIds changed → tear down the dead terminals and rebuild.
+    Object.values(terms).forEach(t => { try { t.es.close(); } catch(e) {} });
+    for (const k in terms) delete terms[k];
+    agentsBuilt = false;
+    await refresh();
+  } catch (e) { /* stay ended */ }
+  $('#resume').disabled = false;
 };
 if (!ROOM) { $('#title').textContent = '(no session id)'; }
 else { refresh(); setInterval(refresh, 2000); }
