@@ -203,18 +203,20 @@ async function refresh() {
   document.title = room.title + ' — session';
   $('#title').textContent = room.title;
   const st = room.status || '';
-  const sb = $('#status'); sb.className = 'status ' + st; sb.textContent = st.replace('_', ' ');
-  $('#hop').textContent = `hop ${room.hopCount || 0}/${room.maxHops || 0}`;
-  const ended = st === 'ended' || room.live === false;
-  $('#hint').textContent = ended
-    ? 'This collaboration has ended — the agents have stopped. The transcript is preserved.'
+  const notRunning = room.live === false;
+  const sb = $('#status');
+  sb.className = 'status ' + (notRunning ? '' : st);
+  sb.textContent = notRunning ? 'not running' : st.replace('_', ' ');
+  $('#hop').textContent = notRunning ? '' : `hop ${room.hopCount || 0}/${room.maxHops || 0}`;
+  $('#hint').textContent = notRunning
+    ? 'Not running — Resume to continue where it left off.'
     : (st === 'waiting_human' || st === 'paused')
       ? 'The agents are waiting for you — reply to resume.' : '';
-  $('#send').disabled = ended;
-  $('#input').disabled = ended;
-  $('#resume').hidden = !ended;
+  $('#send').disabled = notRunning;
+  $('#input').disabled = notRunning;
+  $('#resume').hidden = !notRunning;
   const pb = $('#pause');
-  pb.style.display = ended ? 'none' : '';
+  pb.style.display = notRunning ? 'none' : '';
   pb.textContent = st === 'paused' ? 'Resume' : 'Pause';
   pb.onclick = () => jpost('/api/room/status', { roomId: ROOM, status: st === 'paused' ? 'active' : 'paused' }).then(refresh);
   const soloMode = room.mode === 'solo' ||

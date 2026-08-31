@@ -74,12 +74,9 @@ def _room_is_live(room: dict) -> bool:
 
 
 def _annotate_room_liveness(room: dict) -> dict:
-    """Add a `live` flag and persist an 'ended' status once the agents are gone."""
-    live = _room_is_live(room)
-    room["live"] = live
-    if not live and room.get("status") != "ended":
-        chatroom.set_status(room.get("id", ""), "ended")
-        room["status"] = "ended"
+    """Add a `live` flag: True if any agent PTY is running. Not live simply means
+    the session isn't running — there's no separate 'ended' state."""
+    room["live"] = _room_is_live(room)
     return room
 
 
@@ -2943,7 +2940,7 @@ class Handler(BaseHTTPRequestHandler):
                     pid = part.get("ptyId")
                     if pid:
                         ptyrun.kill(pid)
-                chatroom.set_status(rid, "ended")
+            # Killing the PTYs makes the room not-live; no explicit 'ended' state.
             self._send_json(200, {"ok": room is not None})
             return
         if p == "/api/room/dismiss":

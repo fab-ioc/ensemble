@@ -1041,7 +1041,6 @@
     claude dashboard
   </h1>
   <button id="new-btn" title="Create a new ~/cs/NN_<slug> session and open it in iTerm">+ New</button>
-  <button id="duo-btn" title="Open the collaboration chat panel — watch and steer multi-agent sessions">💬 Chats</button>
   <div class="search-wrap">
     <input id="search" type="search"
            placeholder='filter — Enter to grep transcripts. Space = AND · OR = OR · "quoted phrase" = literal'
@@ -1117,7 +1116,6 @@
   <section id="view"></section>
 </main>
 <dialog id="modal"></dialog>
-<aside id="rooms-panel" hidden></aside>
 <aside id="detail-panel"></aside>
 <div id="detail-panel-resize" title="Drag to resize" aria-label="Resize detail panel"></div>
 <script>
@@ -1685,8 +1683,7 @@ function renderHeadlessRow(r, parsed, now) {
     const label = m.model ? `${esc(m.agent)} ${esc(m.model)}` : esc(m.agent);
     return `<span class="badge-agent ${esc(m.agent)}" title="${esc(m.identity)}${m.model ? ' · ' + esc(m.model) : ''}">${label}</span>`;
   }).join('');
-  const liveBadge = r.isLive ? '<span class="badge-live">live</span>'
-    : '<span class="badge-headless ended" title="ended — transcript preserved">ended</span>';
+  const liveBadge = r.isLive ? '<span class="badge-live">live</span>' : '';
   const actions = r.orphan
     ? `<button class="orphan-open" data-grp="${esc(r.sessionId)}" title="Resume this collaboration headless (its room record is gone)">▶ Open</button>`
     : `<button class="room-open" data-room="${esc(r.roomId)}" title="Open in a floating window">▶ Open ↗</button>`
@@ -2412,7 +2409,6 @@ function showNewSessionModal(category) {
     }
   };
 }
-$('#duo-btn').addEventListener('click', () => openRoomsPanel());
 
 // Resume an orphaned collaboration (its room record is gone) by re-adopting its
 // member sessions into a fresh room, then dock it.
@@ -2437,76 +2433,9 @@ function openSessionWindow(roomId) {
               'width=1200,height=820');
 }
 
-// ---- Rooms / chat panel ----
-let ROOM_POLL = null;
-let CUR_ROOM = null;
-function closeRoomsPanel() {
-  if (ROOM_POLL) { clearInterval(ROOM_POLL); ROOM_POLL = null; }
-  CUR_ROOM = null;
-  const p = $('#rooms-panel'); p.hidden = true; p.innerHTML = '';
-}
-async function openRoomsPanel(preferId) {
-  const p = $('#rooms-panel');
-  p.hidden = false;
-  if (preferId) CUR_ROOM = preferId;
-  await renderRoomsPanel();
-  if (ROOM_POLL) clearInterval(ROOM_POLL);
-  ROOM_POLL = setInterval(renderRoomsPanel, 2500);
-}
-async function renderRoomsPanel() {
-  const p = $('#rooms-panel');
-  if (p.hidden) return;
-  let rooms = [];
-  try { rooms = await api('/api/rooms'); } catch {}
-  const list = rooms.length ? rooms.map(r => {
-    const agents = (r.participants || []).filter(x => x.kind === 'agent')
-      .map(x => x.identity).join(' + ');
-    const ended = r.live === false;
-    return `<div class="rp-room ${ended ? 'ended' : ''}" data-room="${esc(r.id)}">
-      <div style="flex:1;min-width:0">
-        <div style="font-weight:600">${esc(r.title || r.id)}</div>
-        <div class="rp-hint">${esc(agents)} · ${(r.messages||[]).length} msgs</div>
-      </div>
-      <span class="rp-status ${esc(r.status)}">${esc((r.status||'').replace('_',' '))}</span>
-      <button class="rp-open">Open ↗</button>
-      <button class="rp-end" title="${ended ? 'Dismiss ended collaboration' : 'End collaboration (stops the agents)'}">✕</button>
-    </div>`;
-  }).join('') : '<div class="rp-hint" style="padding:12px">No sessions yet. Use “+ New”.</div>';
-  p.innerHTML = `
-    <div class="rp-head">
-      <h3>Sessions</h3>
-      <button id="rp-new" title="Start a new session">＋ New</button>
-      <button id="rp-close" title="Close">✕</button>
-    </div>
-    <div class="rp-rooms">${list}</div>`;
-  $('#rp-close').onclick = closeRoomsPanel;
-  const newBtn = $('#rp-new'); if (newBtn) newBtn.onclick = () => showNewSessionModal('');
-  p.querySelectorAll('.rp-room').forEach(row => {
-    row.onclick = () => openSessionWindow(row.dataset.room);
-    const openB = row.querySelector('.rp-open');
-    if (openB) openB.onclick = (e) => { e.stopPropagation(); openSessionWindow(row.dataset.room); };
-    const endB = row.querySelector('.rp-end');
-    if (endB) endB.onclick = async (e) => {
-      e.stopPropagation();
-      if (!confirm('End this collaboration and stop its agents?')) return;
-      try {
-        await api('/api/room/close', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: row.dataset.room }) });
-        renderRoomsPanel(); updateRoomsBadge();
-      } catch (err) { toast('close failed: ' + err.message, 4000, 'err'); }
-    };
-  });
-}
-
-// Live count on the 💬 Chats button so you can see active collaborations.
-async function updateRoomsBadge() {
-  let rooms = [];
-  try { rooms = await api('/api/rooms'); } catch {}
-  const live = rooms.filter(r => r.live !== false).length;
-  const btn = $('#duo-btn');
-  if (btn) btn.textContent = live ? `💬 Chats (${live})` : '💬 Chats';
-}
-setInterval(updateRoomsBadge, 4000);
-updateRoomsBadge();
+// Sessions now live in the main list (no separate Chats panel). Kept as a no-op
+// so the handful of callers don't need touching.
+function updateRoomsBadge() {}
 
 // Accent color customization
 function applyAccent(color) {
