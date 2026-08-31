@@ -45,6 +45,8 @@ from backends.shared import (
 import agents
 # Multi-agent chat rooms (pairing live sessions into a collaborating "duo").
 import chatroom
+# Headless PTY runtime — dashboard-owned agent processes streamed to the browser.
+from backends import ptyrun
 
 BACKEND = get_backend()
 
@@ -1797,6 +1799,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
+        if p == "/pty-test":
+            self._send_file(STATIC_DIR / "pty-test.html",
+                            "text/html; charset=utf-8")
+            return
         if p in ("/", "/index.html"):
             self._send_file(STATIC_DIR / "index.html", "text/html; charset=utf-8")
             return
@@ -1891,6 +1897,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(404, {"error": "no_such_room"})
                 return
             self._send_json(200, room)
+            return
+        if p == "/api/ptys":
+            ptyrun.reap()
+            self._send_json(200, ptyrun.list_sessions())
+            return
+        if p == "/api/pty/stream":
+            pty_id = (parse_qs(u.query).get("id", [""])[0]).strip()
+            self._handle_pty_stream(pty_id)
             return
         if p == "/api/themes":
             self._send_json(200, list_presets())
@@ -2199,6 +2213,50 @@ class Handler(BaseHTTPRequestHandler):
             except (OSError, ValueError):
                 pass
 
+    # ---------- headless PTY streaming (xterm.js drill-down) ----------
+
+    def _handle_pty_stream(self, pty_id: str) -> None:
+        """SSE: stream a PTY's output to an xterm.js terminal. Sends the current
+        screen snapshot first, then live chunks (base64, since terminal bytes
+        aren't valid UTF-8 at chunk boundaries)."""
+        import base64
+        import queue as _queue
+        sess = ptyrun.get(pty_id)
+        if sess is None:
+            self._send_json(404, {"error": "no_such_pty"})
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+        snapshot, q = sess.subscribe()
+
+        def emit(chunk: bytes):
+            b64 = base64.b64encode(chunk).decode("ascii")
+            self.wfile.write(f"data: {b64}\n\n".encode("ascii"))
+            self.wfile.flush()
+
+        try:
+            if snapshot:
+                emit(snapshot)
+            while True:
+                try:
+                    chunk = q.get(timeout=15)
+                except _queue.Empty:
+                    self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
+                    continue
+                if chunk is None:
+                    self.wfile.write(b"event: end\ndata: end\n\n")
+                    self.wfile.flush()
+                    break
+                emit(chunk)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            sess.unsubscribe(q)
+
     # ---------- MCP (streamable-HTTP) endpoint for the chat rooms ----------
 
     def _send_mcp(self, payload, session_id: str = "") -> None:
@@ -2328,6 +2386,39 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p == "/mcp":
             self._handle_mcp(data)
+            return
+        if p == "/api/pty/create":
+            # Dev/testing entry point for a headless PTY process. (Real agent
+            # sessions get created server-side by the room launcher.)
+            cmd = data.get("cmd")
+            if not cmd:
+                self._send_json(400, {"error": "missing_cmd"})
+                return
+            cwd = (data.get("cwd") or "").strip() or None
+            rows = int(data.get("rows") or 40)
+            cols = int(data.get("cols") or 120)
+            sess = ptyrun.create(cmd, cwd=cwd, rows=rows, cols=cols,
+                                 label=(data.get("label") or "").strip())
+            self._send_json(200, {"id": sess.id, "info": sess.info()})
+            return
+        if p == "/api/pty/input":
+            sess = ptyrun.get((data.get("id") or "").strip())
+            if sess is None:
+                self._send_json(404, {"error": "no_such_pty"})
+                return
+            sess.write(data.get("data", ""))
+            self._send_json(200, {"ok": True})
+            return
+        if p == "/api/pty/resize":
+            sess = ptyrun.get((data.get("id") or "").strip())
+            if sess is None:
+                self._send_json(404, {"error": "no_such_pty"})
+                return
+            sess.resize(int(data.get("rows") or 40), int(data.get("cols") or 120))
+            self._send_json(200, {"ok": True})
+            return
+        if p == "/api/pty/kill":
+            self._send_json(200, {"ok": ptyrun.kill((data.get("id") or "").strip())})
             return
         if p == "/api/update":
             # Fire and forget — the spawned `claude-dashboard update`

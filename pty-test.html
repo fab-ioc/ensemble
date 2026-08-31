@@ -1,0 +1,61 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>PTY test</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/xterm/5.3.0/xterm.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xterm/5.3.0/xterm.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xterm-addon-fit/0.8.0/xterm-addon-fit.min.js"></script>
+<style>
+  body { margin: 0; background: #0e0e0e; color: #ddd; font: 13px system-ui; }
+  #bar { padding: 8px 10px; display: flex; gap: 8px; align-items: center; border-bottom: 1px solid #262626; }
+  #bar input { flex: 1; background: #161616; color: #ddd; border: 1px solid #333; padding: 4px 6px; }
+  #term { position: absolute; top: 44px; left: 0; right: 0; bottom: 0; padding: 6px; }
+  button { background: #2a2a2a; color: #ddd; border: 1px solid #444; padding: 4px 10px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <input id="cmd" value="powershell -NoLogo -NoProfile" spellcheck="false">
+  <input id="cwd" value="" placeholder="cwd (optional)" spellcheck="false" style="flex:0 0 260px">
+  <button id="start">Start headless PTY</button>
+  <span id="status">idle</span>
+</div>
+<div id="term"></div>
+<script>
+const term = new Terminal({ convertEol: false, fontSize: 13, theme: { background: '#0e0e0e' } });
+const fit = new FitAddon.FitAddon();
+term.loadAddon(fit);
+term.open(document.getElementById('term'));
+fit.fit();
+window.addEventListener('resize', () => { fit.fit(); if (PTY) resizePty(); });
+
+let PTY = null, es = null;
+const dec = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+
+async function post(path, body) {
+  const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  return r.json();
+}
+function resizePty() {
+  if (!PTY) return;
+  post('/api/pty/resize', { id: PTY, rows: term.rows, cols: term.cols });
+}
+document.getElementById('start').onclick = async () => {
+  if (es) es.close();
+  term.reset();
+  const cmd = document.getElementById('cmd').value;
+  const cwd = document.getElementById('cwd').value.trim();
+  document.getElementById('status').textContent = 'starting…';
+  const res = await post('/api/pty/create', { cmd, cwd, rows: term.rows, cols: term.cols });
+  PTY = res.id;
+  document.getElementById('status').textContent = PTY + ' (pid ' + (res.info && res.info.pid) + ')';
+  es = new EventSource('/api/pty/stream?id=' + encodeURIComponent(PTY));
+  es.onmessage = (ev) => term.write(dec(ev.data));
+  es.addEventListener('end', () => { document.getElementById('status').textContent = PTY + ' — ended'; es.close(); });
+  es.onerror = () => { document.getElementById('status').textContent = PTY + ' — stream error'; };
+};
+term.onData(d => { if (PTY) post('/api/pty/input', { id: PTY, data: d }); });
+</script>
+</body>
+</html>

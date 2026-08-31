@@ -1,0 +1,7 @@
+# The dashboard core is standard-library only. These are needed solely for the
+# headless PTY runtime (backends/ptyrun.py) — running agents with no visible
+# terminal and streaming them to the browser. Installed per-platform:
+#   Windows -> ConPTY via pywinpty
+#   macOS/Linux -> Unix pty via ptyprocess
+pywinpty>=2.0 ; platform_system == "Windows"
+ptyprocess>=0.7 ; platform_system != "Windows"
