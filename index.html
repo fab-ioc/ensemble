@@ -1674,13 +1674,15 @@ function renderHeadlessRow(r, parsed, now) {
   }).join('');
   const liveBadge = r.isLive ? '<span class="badge-live">live</span>'
     : '<span class="badge-headless ended" title="ended — transcript preserved">ended</span>';
-  const actions = `<button class="room-open" data-room="${esc(r.roomId)}" title="Open in a floating window">▶ Open ↗</button>`
-    + (r.isLive
-        ? `<button class="room-end" data-room="${esc(r.roomId)}" title="End — stop the agent(s), keep the session">✕ End</button>`
-        : `<button class="room-resume" data-room="${esc(r.roomId)}" title="Resume — relaunch the agent(s) with their conversation">↻ Resume</button>`
-          + `<button class="room-dismiss" data-room="${esc(r.roomId)}" title="Dismiss — remove this session from the list">🗑</button>`);
+  const actions = r.orphan
+    ? `<button class="orphan-open" data-grp="${esc(r.sessionId)}" title="Resume this collaboration headless (its room record is gone)">▶ Open</button>`
+    : `<button class="room-open" data-room="${esc(r.roomId)}" title="Open in a floating window">▶ Open ↗</button>`
+      + (r.isLive
+          ? `<button class="room-end" data-room="${esc(r.roomId)}" title="End — stop the agent(s), keep the session">✕ End</button>`
+          : `<button class="room-resume" data-room="${esc(r.roomId)}" title="Resume — relaunch the agent(s) with their conversation">↻ Resume</button>`
+            + `<button class="room-dismiss" data-room="${esc(r.roomId)}" title="Dismiss — remove this session from the list">🗑</button>`);
   const actionsTd = DETAIL_MODE ? '' : `<td>${actions}</td>`;
-  return `<tr class="row headless ${liveClasses}" data-room="${esc(r.roomId)}" data-sid="${esc(r.sessionId)}" draggable="false">
+  return `<tr class="row headless ${liveClasses}" data-room="${esc(r.roomId || '')}" data-orphan="${r.orphan ? '1' : ''}" data-sid="${esc(r.sessionId)}" draggable="false">
     <td>${statusDot}</td>
     <td class="sid">${badges}${liveBadge}</td>
     <td class="ago turns">${r.turns || 0}</td>
@@ -2399,6 +2401,23 @@ function showNewSessionModal(category) {
 }
 $('#duo-btn').addEventListener('click', () => openRoomsPanel());
 
+// Resume an orphaned collaboration (its room record is gone) by re-adopting its
+// member sessions into a fresh room, then dock it.
+async function adoptOrphan(grpSid) {
+  const r = ALL_ROWS.find(x => x.sessionId === grpSid);
+  if (!r || !r.members) return;
+  toast('resuming collaboration…', 0, 'busy');
+  try {
+    const resp = await api('/api/session/adopt', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ members: r.members, label: r.label || '' }),
+    });
+    toast('resumed', 2000, 'ok');
+    await refresh(); updateRoomsBadge();
+    if (resp.room && resp.room.id) openDetail(resp.room.id);
+  } catch (e) { toast('resume failed: ' + e.message, 5000, 'err'); }
+}
+
 // Open a collaboration in its own pop-out window (movable to another screen).
 function openSessionWindow(roomId) {
   window.open('/session?id=' + encodeURIComponent(roomId), 'session-' + roomId,
@@ -2913,6 +2932,8 @@ async function autoRename(btn) {
 document.addEventListener('click', async (ev) => {
   // Headless session rows: Open ↗ pops the window, ✕ ends/dismisses, and a
   // click anywhere on the row opens it.
+  const orphanOpen = ev.target.closest('.orphan-open');
+  if (orphanOpen) { ev.stopPropagation(); adoptOrphan(orphanOpen.dataset.grp); return; }
   const roomOpen = ev.target.closest('.room-open');
   if (roomOpen) { ev.stopPropagation(); openSessionWindow(roomOpen.dataset.room); return; }
   const roomResume = ev.target.closest('.room-resume');
@@ -2950,9 +2971,9 @@ document.addEventListener('click', async (ev) => {
   }
   const headlessRow = ev.target.closest('tr.row.headless');
   if (headlessRow) {
-    // Dock the session view in the panel; block the legacy detail handlers.
     ev.stopImmediatePropagation();
-    openDetail(headlessRow.dataset.room);
+    if (headlessRow.dataset.orphan) adoptOrphan(headlessRow.dataset.sid);
+    else openDetail(headlessRow.dataset.room);  // dock the session view
     return;
   }
   // Action buttons

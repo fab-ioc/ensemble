@@ -1743,6 +1743,49 @@ def load_sessions(n: int = 200) -> list[dict]:
                if r.get("sessionId") not in collab_sids
                and os.path.normcase(os.path.normpath(r.get("cwd", "") or "."))
                    not in collab_cwds]
+    # Orphaned headless sub-sessions (a finished collaboration whose room record
+    # is gone) live in CS_ROOT/<slug>/<identity>. Group siblings by their parent
+    # folder into ONE row tagged with the agents, so a duo doesn't split back
+    # into separate claude + codex rows.
+    cs_root_n = os.path.normcase(os.path.normpath(str(CS_ROOT)))
+    orphan_groups: dict[str, dict] = {}
+    kept: list[dict] = []
+    for r in out:
+        cwd = r.get("cwd", "") or ""
+        parent = os.path.dirname(cwd)
+        is_subfolder = (
+            os.path.normcase(os.path.normpath(os.path.dirname(parent))) == cs_root_n
+            and bool(_NUMBERED_RE.match(os.path.basename(parent))))
+        if is_subfolder and not r.get("isLive"):
+            g = orphan_groups.setdefault(
+                os.path.normcase(os.path.normpath(parent)),
+                {"parent": parent, "rows": []})
+            g["rows"].append(r)
+        else:
+            kept.append(r)
+    out = kept
+    for key, g in orphan_groups.items():
+        rs = g["rows"]
+        if len(rs) < 2:
+            out.extend(rs)          # a lone sub-session isn't a collaboration
+            continue
+        members = [{"identity": os.path.basename(r.get("cwd", "")) or r.get("agent", ""),
+                    "agent": r.get("agent", ""), "model": "",
+                    "sessionId": r.get("sessionId", ""),
+                    "cwd": r.get("cwd", "")} for r in rs]
+        out.append({
+            "sessionId": "grp:" + key, "roomId": "", "headless": True,
+            "orphan": True, "mode": "collab", "agent": "duo",
+            "agents": [m["identity"] for m in members], "members": members,
+            "label": os.path.basename(g["parent"]), "cwd": g["parent"],
+            "isLive": False, "status": "idle",
+            "updatedAt": max((r.get("updatedAt", 0) for r in rs), default=0),
+            "startedAt": 0, "turns": sum(r.get("turns", 0) for r in rs),
+            "idleSeconds": None, "pid": None, "pinned": False, "category": "",
+            "archived": False, "parent": "", "jira": [],
+            "cost": sum(r.get("cost", 0) or 0 for r in rs),
+            "currentTheme": "", "first": "", "last": "", "transcriptPath": "",
+        })
     out.extend(room_rows)
     out.sort(key=_key)
     return out[:n]
@@ -2806,8 +2849,34 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"ok": chatroom.delete_room(rid)})
             return
         if p == "/api/session/adopt":
-            # Bring an existing (legacy) claude/codex session into the headless
-            # model: resume it in a PTY, as a solo room, opened in the window.
+            # Bring existing (legacy / orphaned) session(s) into the headless
+            # model: resume them in PTYs as a room, opened in the window.
+            members_in = data.get("members")
+            if isinstance(members_in, list) and members_in:
+                # Multi-agent adopt (e.g. re-open an orphaned collaboration).
+                title = (data.get("label") or "session")[:120]
+                solo = len(members_in) < 2
+                room = chatroom.create_room(
+                    title, [{"identity": m.get("agent", ""),
+                             "agent": m.get("agent", ""),
+                             "model": m.get("model", "")} for m in members_in])
+                room_full = chatroom.get_room(room["id"], public=False)
+                first_cwd = members_in[0].get("cwd", "")
+                room_full["cwd"] = os.path.dirname(first_cwd) or first_cwd
+                room_full["mode"] = "solo" if solo else "collab"
+                room_full["adopted"] = True
+                parts = [pp for pp in room_full["participants"]
+                         if pp.get("kind") == "agent"]
+                for part, m in zip(parts, members_in):
+                    part["sessionId"] = (m.get("sessionId") or "").strip()
+                    part["cwd"] = (m.get("cwd") or "").strip()
+                    info = self._resume_room_agent_pty(room_full, part,
+                                                       wire_mcp=not solo)
+                    part["ptyId"] = info["ptyId"]
+                chatroom.update_room(room_full)
+                self._send_json(200, {"ok": True,
+                                      "room": chatroom.get_room(room["id"])})
+                return
             agent_key = (data.get("agent") or "claude").strip().lower()
             sid = (data.get("sessionId") or "").strip()
             cwd = (data.get("cwd") or "").strip()
