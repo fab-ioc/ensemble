@@ -57,6 +57,7 @@
   <span id="status" class="status"></span>
   <span id="hop" class="dim"></span>
   <span class="grow"></span>
+  <button id="dock" hidden title="Dock this session back into the dashboard panel">⧉ Dock</button>
   <button id="resume" hidden title="Relaunch the agent(s) with their conversation">↻ Resume</button>
   <button id="pause">Pause</button>
   <button id="end" title="Stop the agent(s) and end this session">End</button>
@@ -275,6 +276,18 @@ window.addEventListener('focus', () => {
   const t = Object.values(terms)[0];
   if (t) { try { t.term.focus(); } catch (e) {} }
 });
+// Floating window (opened by the dashboard) → offer "Dock" to move it back into
+// the panel. When embedded as the panel's iframe, this is hidden (the panel has
+// its own "Pop out").
+const inIframe = window.parent !== window;
+if (!inIframe && window.opener) {
+  const dockBtn = $('#dock');
+  dockBtn.hidden = false;
+  dockBtn.onclick = () => {
+    try { window.opener.postMessage({ type: 'dock-session', roomId: ROOM }, '*'); } catch (e) {}
+    window.close();
+  };
+}
 if (!ROOM) { $('#title').textContent = '(no session id)'; }
 else { refresh(); setInterval(refresh, 2000); }
 </script>

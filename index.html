@@ -554,6 +554,13 @@
     color: var(--muted); font-size: 18px; padding: 2px 6px; border-radius: 4px; line-height: 1;
   }
   .dp-close:hover { background: var(--hover); color: var(--fg); }
+  .dp-popout { background: var(--bg); border: 1px solid var(--border); cursor: pointer;
+    color: var(--fg); font-size: 12px; padding: 3px 8px; border-radius: 6px; }
+  .dp-popout:hover { background: var(--hover); }
+  /* Embedded /session view — fills the panel below the header. */
+  iframe.dp-session { width: 100%; flex: 1; border: 0; display: block; background: #0e0e0e; }
+  #detail-panel:has(iframe.dp-session) { display: flex; flex-direction: column; padding: 0; }
+  #detail-panel:has(iframe.dp-session) .dp-head { padding: 8px 12px; margin: 0; }
   .dp-meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: 11.5px; color: var(--muted); }
   .dp-meta .chip {
     background: var(--bg); border: 1px solid var(--border);
@@ -1381,6 +1388,25 @@ function closeDetail() {
   renderRows();
 }
 
+// The docked view of a headless session: the SAME /session page embedded in the
+// panel. Idempotent — refresh() re-renders the panel every 2s, so we keep the
+// iframe (and its live terminals) instead of reloading it.
+function renderHeadlessDetail(r, panel) {
+  const existing = panel.querySelector('iframe.dp-session');
+  if (existing && existing.dataset.room === r.roomId) {
+    const h = panel.querySelector('.dp-head h2');
+    if (h) h.textContent = r.label || r.roomId;
+    return;
+  }
+  panel.innerHTML = `
+    <div class="dp-head">
+      <h2>${esc(r.label || r.roomId)}</h2>
+      <button class="dp-popout" data-room="${esc(r.roomId)}" title="Pop out to a floating window">⧉ Pop out</button>
+      <button class="dp-close" title="Close">×</button>
+    </div>
+    <iframe class="dp-session" data-room="${esc(r.roomId)}" src="/session?id=${encodeURIComponent(r.roomId)}" title="session"></iframe>`;
+}
+
 async function toggleTranscript() {
   if (!SELECTED_SID) return;
   if (TRANSCRIPT_SID === SELECTED_SID) {
@@ -1405,6 +1431,7 @@ function renderDetail() {
   const r = ALL_ROWS.find(x => x.sessionId === sid);
   const panel = $('#detail-panel');
   if (!r) { panel.innerHTML = `<div class="dp-head"><h2>Session not found</h2><button class="dp-close">×</button></div>`; return; }
+  if (r.headless) { renderHeadlessDetail(r, panel); return; }
   const now = Date.now() / 1000;
   const pills = [];
   if (r.isLive) pills.push(`<span class="chip ${r.status === 'busy' ? 'busy' : 'live'}">${r.status === 'busy' ? '✻ busy' : '● live'}</span>`);
@@ -2339,8 +2366,9 @@ function showNewSessionModal(category) {
         body: JSON.stringify({ title, task, agents: specs }),
       });
       toast('launched', 2000, 'ok');
-      setTimeout(() => { refresh(); updateRoomsBadge(); }, 2000);
-      if (resp.room && resp.room.id) openSessionWindow(resp.room.id);
+      await refresh(); updateRoomsBadge();
+      if (resp.room && resp.room.id) openDetail(resp.room.id);
+      setTimeout(() => { refresh(); updateRoomsBadge(); }, 2500);
     } catch (e) {
       toast('launch failed: ' + e.message, 5000, 'err');
     }
@@ -2537,6 +2565,13 @@ document.addEventListener('click', async (ev) => {
 // Close detail panel
 document.addEventListener('click', (ev) => {
   if (ev.target.closest('.dp-close')) closeDetail();
+  const popout = ev.target.closest('.dp-popout');
+  if (popout) { openSessionWindow(popout.dataset.room); closeDetail(); }
+});
+// A floating session window can ask to dock back into the panel.
+window.addEventListener('message', (ev) => {
+  const d = ev.data;
+  if (d && d.type === 'dock-session' && d.roomId) openDetail(d.roomId);
 });
 // Toggle full-conversation inside the detail panel
 document.addEventListener('click', (ev) => {
@@ -2881,9 +2916,9 @@ document.addEventListener('click', async (ev) => {
   }
   const headlessRow = ev.target.closest('tr.row.headless');
   if (headlessRow) {
-    // Open the window and block the later detail-panel / select handlers.
+    // Dock the session view in the panel; block the legacy detail handlers.
     ev.stopImmediatePropagation();
-    openSessionWindow(headlessRow.dataset.room);
+    openDetail(headlessRow.dataset.room);
     return;
   }
   // Action buttons
