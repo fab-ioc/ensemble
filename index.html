@@ -1393,6 +1393,19 @@ function closeDetail() {
 // panel. Idempotent — refresh() re-renders the panel every 2s, so we keep the
 // iframe (and its live terminals) instead of reloading it.
 function renderHeadlessDetail(r, panel) {
+  if (r.orphan) {
+    // No live room — show a summary; resuming is an explicit action, not a
+    // side effect of selecting the row.
+    panel.innerHTML = `
+      <div class="dp-head"><h2>${esc(r.label || 'session')}</h2><button class="dp-close" title="Close">×</button></div>
+      <div style="padding:14px; display:flex; flex-direction:column; gap:10px">
+        <div class="dp-meta">${(r.members || []).map(m => `<span class="chip">${esc(m.agent)}${m.model ? ' · ' + esc(m.model) : ''}</span>`).join('')}</div>
+        <div style="font-size:12px; color:var(--muted); word-break:break-all">${esc(r.cwd || '')}</div>
+        <p style="font-size:12.5px; color:var(--muted); margin:0">This collaboration has ended and its agents aren't running. Resume it to continue where it left off.</p>
+        <div><button class="orphan-open" data-grp="${esc(r.sessionId)}">▶ Open (resume)</button></div>
+      </div>`;
+    return;
+  }
   const existing = panel.querySelector('iframe.dp-session');
   if (existing && existing.dataset.room === r.roomId) {
     const h = panel.querySelector('.dp-head h2');
@@ -2971,9 +2984,9 @@ document.addEventListener('click', async (ev) => {
   }
   const headlessRow = ev.target.closest('tr.row.headless');
   if (headlessRow) {
+    // Selecting a row only SHOWS its detail — never launches. (▶ Open does.)
     ev.stopImmediatePropagation();
-    if (headlessRow.dataset.orphan) adoptOrphan(headlessRow.dataset.sid);
-    else openDetail(headlessRow.dataset.room);  // dock the session view
+    openDetail(headlessRow.dataset.orphan ? headlessRow.dataset.sid : headlessRow.dataset.room);
     return;
   }
   // Action buttons
