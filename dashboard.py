@@ -1666,6 +1666,26 @@ def load_sessions(n: int = 200) -> list[dict]:
             return (tier, -r["updatedAt"])
         return (2, -r["updatedAt"])
     out.sort(key=_key)
+    # A collaboration is ONE session, viewed in its own window — so hide its
+    # per-agent sub-sessions from the main list (they'd otherwise scatter as a
+    # live claude row + a codex history row per room). Matched by the agent's
+    # session id and its per-agent subfolder cwd, gathered from active rooms.
+    collab_sids: set[str] = set()
+    collab_cwds: set[str] = set()
+    try:
+        for rm in chatroom.list_rooms():
+            for pp in rm.get("participants", []):
+                if pp.get("sessionId"):
+                    collab_sids.add(pp["sessionId"])
+                if pp.get("cwd"):
+                    collab_cwds.add(os.path.normcase(os.path.normpath(pp["cwd"])))
+    except Exception:
+        pass
+    if collab_sids or collab_cwds:
+        out = [r for r in out
+               if r.get("sessionId") not in collab_sids
+               and os.path.normcase(os.path.normpath(r.get("cwd", "") or "."))
+                   not in collab_cwds]
     return out[:n]
 
 
@@ -1801,6 +1821,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p == "/pty-test":
             self._send_file(STATIC_DIR / "pty-test.html",
+                            "text/html; charset=utf-8")
+            return
+        if p == "/session":
+            self._send_file(STATIC_DIR / "session.html",
                             "text/html; charset=utf-8")
             return
         if p in ("/", "/index.html"):
@@ -2113,7 +2137,7 @@ class Handler(BaseHTTPRequestHandler):
             if pty_id:
                 sess = ptyrun.get(pty_id)
                 if sess and sess.alive():
-                    sess.write(wake + "\r")
+                    sess.send_line(wake)   # type + discrete Enter to submit
                 continue
             # Legacy visible-terminal session → keystroke injection.
             pid = self._resolve_live_pid(part)
@@ -2648,6 +2672,18 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p == "/api/room/delete":
             rid = (data.get("roomId") or "").strip()
+            self._send_json(200, {"ok": chatroom.delete_room(rid)})
+            return
+        if p == "/api/room/close":
+            # End a collaboration: kill every agent's headless PTY, then remove
+            # the room. (delete alone would orphan the running agents.)
+            rid = (data.get("roomId") or "").strip()
+            room = chatroom.get_room(rid, public=False)
+            if room:
+                for part in room.get("participants", []):
+                    pid = part.get("ptyId")
+                    if pid:
+                        ptyrun.kill(pid)
             self._send_json(200, {"ok": chatroom.delete_room(rid)})
             return
         if p == "/api/fork":

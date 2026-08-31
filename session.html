@@ -1,0 +1,180 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>session</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+<style>
+  :root { --bg:#0e0e0e; --surface:#161616; --fg:#ededed; --border:#2a2a2a; --accent:#c25d3c; --dim:#9a9a9a; }
+  * { box-sizing: border-box; }
+  body { margin:0; height:100vh; display:flex; flex-direction:column; background:var(--bg); color:var(--fg); font:13px system-ui,-apple-system,sans-serif; }
+  header { display:flex; align-items:center; gap:10px; padding:8px 12px; border-bottom:1px solid var(--border); flex:0 0 auto; }
+  header h1 { font-size:14px; margin:0; }
+  .grow { flex:1; }
+  .status { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; padding:2px 8px; border-radius:10px; border:1px solid transparent; }
+  .status.active { color:#16a34a; background:#16a34a22; border-color:#16a34a55; }
+  .status.waiting_human { color:#eab308; background:#eab30822; border-color:#eab30855; }
+  .status.paused { color:#ef4444; background:#ef444422; border-color:#ef444455; }
+  .dim { color:var(--dim); font-size:11px; }
+  main { flex:1; display:flex; min-height:0; }
+  #chatcol { flex:1; display:flex; flex-direction:column; min-width:0; border-right:1px solid var(--border); }
+  #msgs { flex:1; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:10px; }
+  .msg { border:1px solid var(--border); border-radius:10px; padding:8px 10px; max-width:92%; background:#ffffff08; }
+  .msg .from { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; opacity:.85; margin-bottom:3px; }
+  .msg.claude { border-color:#d9775755; } .msg.claude .from { color:#d97757; }
+  .msg.codex { border-color:#10a37f55; } .msg.codex .from { color:#10a37f; }
+  .msg.user { align-self:flex-end; border-color:var(--accent); background:#c25d3c1a; }
+  .msg .text { white-space:pre-wrap; word-break:break-word; line-height:1.45; }
+  .to { font-weight:400; opacity:.6; text-transform:none; }
+  #compose { border-top:1px solid var(--border); padding:10px; display:flex; flex-direction:column; gap:6px; flex:0 0 auto; }
+  #compose textarea { width:100%; min-height:48px; resize:vertical; background:var(--surface); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:6px; font:inherit; }
+  #agentcol { flex:0 0 46%; display:flex; flex-direction:column; min-width:0; overflow-y:auto; }
+  .agent { border-bottom:1px solid var(--border); }
+  .agent .ah { display:flex; align-items:center; gap:8px; padding:8px 10px; cursor:pointer; user-select:none; }
+  .agent .ah:hover { background:#ffffff08; }
+  .agent .ah .nm { font-weight:700; }
+  .agent .term { height:300px; display:none; background:#0b0b0b; padding:4px; }
+  .agent.open .term { display:block; }
+  button { background:#2a2a2a; color:var(--fg); border:1px solid #444; padding:4px 12px; border-radius:6px; cursor:pointer; font:inherit; }
+  button:hover { background:#333; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">session</h1>
+  <span id="status" class="status"></span>
+  <span id="hop" class="dim"></span>
+  <span class="grow"></span>
+  <button id="pause">Pause</button>
+  <button id="end" title="Stop both agents and end this collaboration">End</button>
+</header>
+<main>
+  <div id="chatcol">
+    <div id="msgs"></div>
+    <div id="compose">
+      <div class="dim" id="hint"></div>
+      <textarea id="input" placeholder="Message the agents — Ctrl+Enter to send. Start with @codex or @claude to direct it to one."></textarea>
+      <div style="display:flex; gap:8px; align-items:center">
+        <span class="dim">To</span>
+        <select id="to"><option value="">Everyone</option></select>
+        <button id="send">Send</button>
+      </div>
+    </div>
+  </div>
+  <div id="agentcol"></div>
+</main>
+<script>
+const qs = new URLSearchParams(location.search);
+const ROOM = qs.get('id');
+const $ = s => document.querySelector(s);
+const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const jpost = (path, body) => fetch(path, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) }).then(r=>r.json());
+
+const terms = {};          // ptyId -> {term, es}
+let agentsBuilt = false;
+
+function buildAgents(room) {
+  const col = $('#agentcol'); col.innerHTML = '';
+  room.participants.filter(p => p.kind === 'agent').forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'agent';
+    div.innerHTML = `<div class="ah"><span class="nm">${esc(p.identity)}</span>`
+      + `<span class="dim">${esc(p.agent)}${p.model ? ' · ' + esc(p.model) : ''}</span>`
+      + `<span class="grow"></span><span class="dim toggle">▸ terminal</span></div>`
+      + `<div class="term"></div>`;
+    div.querySelector('.ah').onclick = () => toggleTerm(div, p.ptyId);
+    col.appendChild(div);
+  });
+  // Populate the "To" picker: Everyone + each agent (directed message).
+  const sel = $('#to');
+  const keep = sel.value;
+  sel.innerHTML = '<option value="">Everyone</option>' +
+    room.participants.filter(p => p.kind === 'agent')
+      .map(p => `<option value="${esc(p.identity)}">${esc(p.identity)}</option>`).join('');
+  sel.value = keep;
+  agentsBuilt = true;
+}
+function toggleTerm(div, ptyId) {
+  const open = div.classList.toggle('open');
+  div.querySelector('.toggle').textContent = open ? '▾ terminal' : '▸ terminal';
+  if (open && ptyId && !terms[ptyId]) mountTerm(div.querySelector('.term'), ptyId);
+  else if (open && terms[ptyId]) syncSize(ptyId);
+}
+// Match the PTY's size to the rendered xterm, else the agent's absolute cursor
+// positioning lands wrong and the layout looks garbled.
+function syncSize(ptyId) {
+  const t = terms[ptyId]; if (!t) return;
+  try { t.fit && t.fit.fit(); } catch(e) {}
+  jpost('/api/pty/resize', { id: ptyId, rows: t.term.rows, cols: t.term.cols });
+}
+function mountTerm(el, ptyId) {
+  const term = new Terminal({ fontSize:12, convertEol:false, scrollback:4000,
+                              theme:{ background:'#0b0b0b' } });
+  let fit = null;
+  try { fit = new FitAddon.FitAddon(); term.loadAddon(fit); } catch(e) {}
+  term.open(el);
+  const dec = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+  const es = new EventSource('/api/pty/stream?id=' + encodeURIComponent(ptyId));
+  es.onmessage = ev => term.write(dec(ev.data));
+  term.onData(d => jpost('/api/pty/input', { id: ptyId, data: d }));
+  terms[ptyId] = { term, es, fit };
+  // Size the PTY to the terminal once it has laid out, and on any resize.
+  setTimeout(() => syncSize(ptyId), 60);
+  try { new ResizeObserver(() => syncSize(ptyId)).observe(el); } catch(e) {}
+}
+
+function renderMsgs(room) {
+  const box = $('#msgs');
+  const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 50;
+  box.innerHTML = room.messages.map(m => {
+    const cls = m.from === 'user' ? 'user' : esc(m.from);
+    const to = m.to && m.to !== 'all' ? ` <span class="to">→ ${esc(m.to)}</span>` : '';
+    return `<div class="msg ${cls}"><div class="from">${esc(m.from)}${to}</div><div class="text">${esc(m.text)}</div></div>`;
+  }).join('');
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+
+async function refresh() {
+  let room;
+  try { room = await fetch('/api/room?id=' + encodeURIComponent(ROOM)).then(r => r.json()); }
+  catch(e) { return; }
+  if (!room || room.error) { $('#title').textContent = '(session not found)'; return; }
+  document.title = room.title + ' — session';
+  $('#title').textContent = room.title;
+  const st = room.status || '';
+  const sb = $('#status'); sb.className = 'status ' + st; sb.textContent = st.replace('_', ' ');
+  $('#hop').textContent = `hop ${room.hopCount || 0}/${room.maxHops || 0}`;
+  $('#hint').textContent = (st === 'waiting_human' || st === 'paused')
+    ? 'The agents are waiting for you — reply to resume.' : '';
+  const pb = $('#pause'); pb.textContent = st === 'paused' ? 'Resume' : 'Pause';
+  pb.onclick = () => jpost('/api/room/status', { roomId: ROOM, status: st === 'paused' ? 'active' : 'paused' }).then(refresh);
+  if (!agentsBuilt && room.participants.some(p => p.kind === 'agent' && p.ptyId)) buildAgents(room);
+  renderMsgs(room);
+}
+$('#send').onclick = async () => {
+  const t = $('#input').value.trim(); if (!t) return;
+  let to = $('#to') ? $('#to').value : '';
+  // A leading @<identity> overrides the To picker: "@codex do X" → codex only.
+  const m = t.match(/^@([\w-]+)\b/);
+  if (m) {
+    const idents = $('#to') ? [...$('#to').options].map(o => o.value) : [];
+    if (idents.includes(m[1]) || m[1] === 'user') to = m[1];
+  }
+  await jpost('/api/room/say', { roomId: ROOM, text: t, to });
+  $('#input').value = ''; if ($('#to')) $('#to').value = ''; refresh();
+};
+$('#input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $('#send').click(); }
+});
+$('#end').onclick = async () => {
+  if (!confirm('End this collaboration and stop both agents?')) return;
+  try { await jpost('/api/room/close', { roomId: ROOM }); } catch(e) {}
+  window.close();
+};
+if (!ROOM) { $('#title').textContent = '(no session id)'; }
+else { refresh(); setInterval(refresh, 2000); }
+</script>
+</body>
+</html>

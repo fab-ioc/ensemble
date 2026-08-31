@@ -89,6 +89,15 @@ class PtySession:
         except (OSError, EOFError):
             pass
 
+    def send_line(self, text: str) -> None:
+        """Type `text` then submit with Enter. The Enter is a SEPARATE write
+        after a short delay — a TUI treats a trailing newline in the same write
+        as pasted content (it lands in the input box unsubmitted), but a
+        discrete Enter keystroke submits. This is the chat doorbell."""
+        self.write(text)
+        time.sleep(0.25)
+        self.write("\r")
+
     def resize(self, rows: int, cols: int) -> None:
         self.rows, self.cols = rows, cols
         try:

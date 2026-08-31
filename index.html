@@ -301,6 +301,12 @@
   #rooms-panel .rp-compose textarea { width: 100%; resize: vertical; min-height: 46px; box-sizing: border-box; }
   #rooms-panel .rp-compose .rp-actions { display: flex; gap: 8px; align-items: center; }
   #rooms-panel .rp-hint { font-size: 11px; opacity: 0.7; }
+  #rooms-panel .rp-rooms { padding: 6px; overflow-y: auto; }
+  .rp-room { display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+    border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+    border-radius: 8px; margin: 4px 0; cursor: pointer; }
+  .rp-room:hover { background: color-mix(in srgb, currentColor 7%, transparent); }
+  .rp-open { flex: 0 0 auto; }
   .actions .pin-btn.is-pinned {
     background: color-mix(in srgb, var(--live-busy) 16%, transparent);
     border-color: var(--live-busy);
@@ -2286,7 +2292,7 @@ function showNewSessionModal(category) {
         });
         toast('collaboration launched', 2500, 'ok');
         setTimeout(refresh, 2500);
-        openRoomsPanel(resp.room && resp.room.id);
+        if (resp.room && resp.room.id) openSessionWindow(resp.room.id);
       } catch (e) {
         toast('launch failed: ' + e.message, 5000, 'err');
       }
@@ -2311,6 +2317,12 @@ function showNewSessionModal(category) {
 }
 $('#duo-btn').addEventListener('click', () => openRoomsPanel());
 
+// Open a collaboration in its own pop-out window (movable to another screen).
+function openSessionWindow(roomId) {
+  window.open('/session?id=' + encodeURIComponent(roomId), 'session-' + roomId,
+              'width=1200,height=820');
+}
+
 // ---- Rooms / chat panel ----
 let ROOM_POLL = null;
 let CUR_ROOM = null;
@@ -2332,69 +2344,53 @@ async function renderRoomsPanel() {
   if (p.hidden) return;
   let rooms = [];
   try { rooms = await api('/api/rooms'); } catch {}
-  if (!CUR_ROOM && rooms.length) CUR_ROOM = rooms[0].id;
-  let room = null;
-  if (CUR_ROOM) { try { room = await api('/api/room?id=' + encodeURIComponent(CUR_ROOM)); } catch {} }
-  const composing = document.activeElement && document.activeElement.id === 'rp-input';
-  const draft = composing ? document.activeElement.value : null;
-  const st = room ? room.status : '';
-  const list = rooms.map(r =>
-    `<button data-room="${esc(r.id)}" class="${r.id === CUR_ROOM ? 'sel' : ''}">${esc(r.title || r.id)} <span class="rp-status ${esc(r.status)}">${esc((r.status||'').replace('_',' '))}</span></button>`
-  ).join('') || '<div class="rp-hint">No multiagent sessions yet.</div>';
-  const msgs = room ? room.messages.map(m => {
-    const cls = m.from === 'user' ? 'user' : esc(m.from);
-    const toTxt = m.to && m.to !== 'all' ? ` <span class="rp-to">→ ${esc(m.to)}</span>` : '';
-    return `<div class="rp-msg ${cls}"><div class="rp-from">${esc(m.from)}${toTxt}</div><div class="rp-text">${esc(m.text)}</div></div>`;
-  }).join('') : '<div class="rp-hint">Select a session above.</div>';
-  const waiting = st === 'waiting_human' || st === 'paused';
+  const list = rooms.length ? rooms.map(r => {
+    const agents = (r.participants || []).filter(x => x.kind === 'agent')
+      .map(x => x.identity).join(' + ');
+    return `<div class="rp-room" data-room="${esc(r.id)}">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600">${esc(r.title || r.id)}</div>
+        <div class="rp-hint">${esc(agents)} · ${(r.messages||[]).length} msgs</div>
+      </div>
+      <span class="rp-status ${esc(r.status)}">${esc((r.status||'').replace('_',' '))}</span>
+      <button class="rp-open">Open ↗</button>
+      <button class="rp-end" title="End collaboration (stops the agents)">✕</button>
+    </div>`;
+  }).join('') : '<div class="rp-hint" style="padding:12px">No collaborations yet. Use “+ New” with two or more agents.</div>';
   p.innerHTML = `
     <div class="rp-head">
-      <h3>${room ? esc(room.title) : 'Multiagent'}</h3>
-      ${room ? `<span class="rp-status ${esc(st)}">${esc(st.replace('_',' '))}</span>` : ''}
-      <button id="rp-new" title="Start a new multiagent session">＋ New</button>
+      <h3>Collaborations</h3>
+      <button id="rp-new" title="Start a new session">＋ New</button>
       <button id="rp-close" title="Close">✕</button>
     </div>
-    <div class="rp-list">${list}</div>
-    <div class="rp-msgs" id="rp-msgs">${msgs}</div>
-    ${room ? `<div class="rp-compose">
-      ${waiting ? '<div class="rp-hint">The agents are waiting for your input — reply to resume.</div>' : ''}
-      <textarea id="rp-input" placeholder="Message the agents (sends to everyone; they resume)…">${draft != null ? esc(draft) : ''}</textarea>
-      <div class="rp-actions">
-        <button id="rp-send">Send</button>
-        ${st === 'paused' ? '<button id="rp-resume" class="secondary">Resume</button>' : ''}
-        <span class="rp-hint">hop ${room.hopCount||0}/${room.maxHops||0}</span>
-      </div>
-    </div>` : ''}`;
+    <div class="rp-rooms">${list}</div>`;
   $('#rp-close').onclick = closeRoomsPanel;
-  const newBtn = $('#rp-new'); if (newBtn) newBtn.onclick = showDuoModal;
-  p.querySelectorAll('.rp-list button[data-room]').forEach(b =>
-    b.onclick = () => { CUR_ROOM = b.dataset.room; renderRoomsPanel(); });
-  const sendBtn = $('#rp-send');
-  if (sendBtn) sendBtn.onclick = async () => {
-    const t = $('#rp-input').value.trim();
-    if (!t) return;
-    try {
-      await api('/api/room/say', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: CUR_ROOM, text: t }),
-      });
-      $('#rp-input').value = '';
-      renderRoomsPanel();
-    } catch (e) { toast('send failed: ' + e.message, 4000, 'err'); }
-  };
-  const resumeBtn = $('#rp-resume');
-  if (resumeBtn) resumeBtn.onclick = async () => {
-    try {
-      await api('/api/room/status', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: CUR_ROOM, status: 'active' }),
-      });
-      renderRoomsPanel();
-    } catch (e) { toast('resume failed: ' + e.message, 4000, 'err'); }
-  };
-  // Keep the transcript scrolled to the newest message (unless composing).
-  if (!composing) { const m = $('#rp-msgs'); if (m) m.scrollTop = m.scrollHeight; }
+  const newBtn = $('#rp-new'); if (newBtn) newBtn.onclick = () => showNewSessionModal('');
+  p.querySelectorAll('.rp-room').forEach(row => {
+    row.onclick = () => openSessionWindow(row.dataset.room);
+    const openB = row.querySelector('.rp-open');
+    if (openB) openB.onclick = (e) => { e.stopPropagation(); openSessionWindow(row.dataset.room); };
+    const endB = row.querySelector('.rp-end');
+    if (endB) endB.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm('End this collaboration and stop its agents?')) return;
+      try {
+        await api('/api/room/close', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: row.dataset.room }) });
+        renderRoomsPanel(); updateRoomsBadge();
+      } catch (err) { toast('close failed: ' + err.message, 4000, 'err'); }
+    };
+  });
 }
+
+// Live count on the 💬 Chats button so you can see active collaborations.
+async function updateRoomsBadge() {
+  let rooms = [];
+  try { rooms = await api('/api/rooms'); } catch {}
+  const btn = $('#duo-btn');
+  if (btn) btn.textContent = rooms.length ? `💬 Chats (${rooms.length})` : '💬 Chats';
+}
+setInterval(updateRoomsBadge, 4000);
+updateRoomsBadge();
 
 // Accent color customization
 function applyAccent(color) {

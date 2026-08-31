@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <title>PTY test</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/xterm/5.3.0/xterm.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xterm/5.3.0/xterm.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xterm-addon-fit/0.8.0/xterm-addon-fit.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
 <style>
   body { margin: 0; background: #0e0e0e; color: #ddd; font: 13px system-ui; }
   #bar { padding: 8px 10px; display: flex; gap: 8px; align-items: center; border-bottom: 1px solid #262626; }
@@ -23,12 +23,19 @@
 </div>
 <div id="term"></div>
 <script>
+const setStatus = m => { document.getElementById('status').textContent = m; };
+window.addEventListener('error', e => setStatus('JS error: ' + (e.message || e)));
+if (typeof Terminal === 'undefined') {
+  setStatus('xterm.js failed to load (blocked or offline).');
+  throw new Error('xterm.js not loaded');
+}
 const term = new Terminal({ convertEol: false, fontSize: 13, theme: { background: '#0e0e0e' } });
-const fit = new FitAddon.FitAddon();
-term.loadAddon(fit);
+let fit = null;
+try { fit = new FitAddon.FitAddon(); term.loadAddon(fit); } catch (e) { /* optional */ }
 term.open(document.getElementById('term'));
-fit.fit();
-window.addEventListener('resize', () => { fit.fit(); if (PTY) resizePty(); });
+const doFit = () => { try { if (fit) fit.fit(); } catch (e) {} };
+doFit();
+window.addEventListener('resize', () => { doFit(); if (PTY) resizePty(); });
 
 let PTY = null, es = null;
 const dec = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
