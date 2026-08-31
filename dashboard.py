@@ -2863,8 +2863,23 @@ class Handler(BaseHTTPRequestHandler):
                                   "room": chatroom.get_room(rid)})
             return
         if p == "/api/room/close":
-            # End a collaboration: kill every agent's headless PTY, then remove
-            # the room. (delete alone would orphan the running agents.)
+            # End a session: stop every agent's PTY but KEEP the room (marked
+            # ended) so a collaboration stays as ONE row tagged with its agents,
+            # instead of its per-agent sub-sessions reappearing separately. Use
+            # /api/room/dismiss to actually remove it.
+            rid = (data.get("roomId") or "").strip()
+            room = chatroom.get_room(rid, public=False)
+            if room:
+                for part in room.get("participants", []):
+                    pid = part.get("ptyId")
+                    if pid:
+                        ptyrun.kill(pid)
+                chatroom.set_status(rid, "ended")
+            self._send_json(200, {"ok": room is not None})
+            return
+        if p == "/api/room/dismiss":
+            # Remove a room record entirely (kills any lingering PTYs). Its
+            # agents' transcripts then surface as normal history.
             rid = (data.get("roomId") or "").strip()
             room = chatroom.get_room(rid, public=False)
             if room:
