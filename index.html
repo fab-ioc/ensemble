@@ -2282,37 +2282,23 @@ function showNewSessionModal(category) {
       model: r.querySelector('.duo-model').value.trim(),
     }));
     if (!specs.length) return;
-    dlg.close();
-    if (specs.length >= 2) {
-      if (!task) { toast('a task is required for a collaboration', 3000, 'err'); return; }
-      toast('launching collaboration…', 0, 'busy');
-      try {
-        const resp = await api('/api/room/new', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: title || 'multiagent session', task, agents: specs }),
-        });
-        toast('collaboration launched', 2500, 'ok');
-        setTimeout(refresh, 2500);
-        if (resp.room && resp.room.id) openSessionWindow(resp.room.id);
-      } catch (e) {
-        toast('launch failed: ' + e.message, 5000, 'err');
-      }
-      return;
-    }
-    // Single agent → a normal session.
-    const { agent, model } = specs[0];
     if (!title) { toast('a title is required', 3000, 'err'); return; }
-    toast(`creating ${agent} session…`, 0, 'busy');
+    if (specs.length >= 2 && !task) { toast('a task is required for a collaboration', 3000, 'err'); return; }
+    dlg.close();
+    // Unified: 1 or N agents both launch headless (no terminal window) and open
+    // in the session window. 1 agent = a solo session you drive directly; 2+ =
+    // a collaboration.
+    toast(specs.length >= 2 ? 'launching collaboration…' : 'launching session…', 0, 'busy');
     try {
-      const resp = await api('/api/new', {
+      const resp = await api('/api/room/new', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ description: title, initialPrompt: task, category, model, agent }),
+        body: JSON.stringify({ title, task, agents: specs }),
       });
-      if (resp.result === 'ok') toast(`created ${agent} session ${tildeify(resp.path)}${category ? ` in "${category}"` : ''}`, 3500, 'ok');
-      else toast(`created folder, open failed: ${resp.result}`, 5000, 'err');
-      setTimeout(refresh, agent === 'claude' ? 1500 : 2500);
+      toast('launched', 2000, 'ok');
+      setTimeout(() => { refresh(); updateRoomsBadge(); }, 2000);
+      if (resp.room && resp.room.id) openSessionWindow(resp.room.id);
     } catch (e) {
-      toast('new session failed: ' + e.message, 5000, 'err');
+      toast('launch failed: ' + e.message, 5000, 'err');
     }
   };
 }
@@ -2358,10 +2344,10 @@ async function renderRoomsPanel() {
       <button class="rp-open">Open ↗</button>
       <button class="rp-end" title="${ended ? 'Dismiss ended collaboration' : 'End collaboration (stops the agents)'}">✕</button>
     </div>`;
-  }).join('') : '<div class="rp-hint" style="padding:12px">No collaborations yet. Use “+ New” with two or more agents.</div>';
+  }).join('') : '<div class="rp-hint" style="padding:12px">No sessions yet. Use “+ New”.</div>';
   p.innerHTML = `
     <div class="rp-head">
-      <h3>Collaborations</h3>
+      <h3>Sessions</h3>
       <button id="rp-new" title="Start a new session">＋ New</button>
       <button id="rp-close" title="Close">✕</button>
     </div>

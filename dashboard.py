@@ -2244,11 +2244,17 @@ class Handler(BaseHTTPRequestHandler):
                                extra_args=claude_extra)
         return {"sessionId": new_sid, "cwd": cwd, "launch": res}
 
-    def _launch_room_agent_pty(self, room_full: dict, part: dict, task: str) -> dict:
+    def _launch_room_agent_pty(self, room_full: dict, part: dict, task: str,
+                               wire_mcp: bool = True) -> dict:
         """Headless variant: spawn the agent in a dashboard-owned PTY (no
-        terminal window), pre-wired to the chat MCP. Returns {ptyId, cwd,
-        sessionId}. This is the new execution model — the PtySession owns
-        liveness, and the doorbell is a PTY write."""
+        terminal window). Returns {ptyId, cwd, sessionId}. The PtySession owns
+        liveness; the doorbell is a PTY write.
+
+        wire_mcp=True (collaboration): wire the chat MCP + a collaboration
+        briefing, and (codex) bypass approvals for autonomy. wire_mcp=False
+        (solo): a plain headless agent the human drives directly through the
+        embedded terminal — no chat tools, no approval bypass, task as the
+        first message."""
         ident = part["identity"]
         agent_key = part["agent"]
         model = (part.get("model") or "").strip()
@@ -2261,49 +2267,54 @@ class Handler(BaseHTTPRequestHandler):
             os.makedirs(cwd, exist_ok=True)
         except OSError:
             pass
-        partners = ", ".join(p["identity"] for p in room_full["participants"]
-                             if p.get("kind") == "agent" and p["identity"] != ident)
-        briefing = (
-            f"You are '{ident}', collaborating with {partners or 'your partner'} "
-            f"to find the best possible solution to the task below. Coordinate "
-            f"ONLY through the 'chat' MCP tools — you have no direct human at "
-            f"this terminal. Use chat_send to message your partner (end each turn "
-            f"by sending them your findings/critique/proposal), chat_read to read "
-            f"replies, and chat_send with to=\"user\" whenever you need the "
-            f"human's decision, input, or clarification. Do not ask questions "
-            f"here in the terminal — the human only sees chat_send. Begin now by "
-            f"sending your partner your initial approach.\n\nTASK:\n{task}"
-        )
+        if wire_mcp:
+            partners = ", ".join(p["identity"] for p in room_full["participants"]
+                                 if p.get("kind") == "agent" and p["identity"] != ident)
+            briefing = (
+                f"You are '{ident}', collaborating with {partners or 'your partner'} "
+                f"to find the best possible solution to the task below. Coordinate "
+                f"ONLY through the 'chat' MCP tools — you have no direct human at "
+                f"this terminal. Use chat_send to message your partner (end each turn "
+                f"by sending them your findings/critique/proposal), chat_read to read "
+                f"replies, and chat_send with to=\"user\" whenever you need the "
+                f"human's decision, input, or clarification. Do not ask questions "
+                f"here in the terminal — the human only sees chat_send. Begin now by "
+                f"sending your partner your initial approach.\n\nTASK:\n{task}"
+            )
+        else:
+            briefing = task  # solo: the task is just the first prompt
         ag = agents.get_agent(agent_key)
         if hasattr(ag, "ensure_trusted"):
             ag.ensure_trusted(cwd)
         label = f"{room_full['title'][:40]} · {ident}"
         meta = {"room": room_full["id"], "identity": ident, "agent": agent_key}
         if agent_key == "codex":
-            argv = ["codex",
-                    # Skip ALL confirmation prompts (incl. MCP tool approval) and
-                    # the sandbox — autonomous collaboration in a scratch folder.
-                    # (approval_policy="never" would instead *block* MCP tools.)
-                    "--dangerously-bypass-approvals-and-sandbox",
-                    "-c", "check_for_update_on_startup=false",
-                    "-c", f'mcp_servers.chat.url="{url}"',
-                    "-c", 'mcp_servers.chat.bearer_token_env_var="CHAT_TOKEN"']
+            argv = ["codex", "-c", "check_for_update_on_startup=false"]
+            if wire_mcp:
+                # Autonomous: skip approval prompts (incl. MCP tool approval) and
+                # the sandbox. (approval_policy="never" would *block* MCP tools.)
+                argv += ["--dangerously-bypass-approvals-and-sandbox",
+                         "-c", f'mcp_servers.chat.url="{url}"',
+                         "-c", 'mcp_servers.chat.bearer_token_env_var="CHAT_TOKEN"']
             if model:
                 argv += ["-c", f'model="{model}"']
             cmd = BACKEND.headless_launch(cwd, argv, briefing)
-            sess = ptyrun.create(cmd, cwd=cwd, env={"CHAT_TOKEN": token},
+            sess = ptyrun.create(cmd, cwd=cwd,
+                                 env=({"CHAT_TOKEN": token} if wire_mcp else None),
                                  label=label, meta=meta)
             return {"ptyId": sess.id, "cwd": cwd, "sessionId": ""}
         # claude (and claude-N)
-        cfg = {"mcpServers": {"chat": {"type": "http", "url": url,
-                                       "headers": {"Authorization": f"Bearer {token}"}}}}
-        mcp_dir = DASHBOARD_DIR / "_mcp"
-        mcp_dir.mkdir(parents=True, exist_ok=True)
-        cfg_path = mcp_dir / f"{uuid.uuid4().hex}.json"
-        cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+        claude_extra = []
+        if wire_mcp:
+            cfg = {"mcpServers": {"chat": {"type": "http", "url": url,
+                                           "headers": {"Authorization": f"Bearer {token}"}}}}
+            mcp_dir = DASHBOARD_DIR / "_mcp"
+            mcp_dir.mkdir(parents=True, exist_ok=True)
+            cfg_path = mcp_dir / f"{uuid.uuid4().hex}.json"
+            cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+            claude_extra = ["--mcp-config", str(cfg_path), "--strict-mcp-config"]
         new_sid = str(uuid.uuid4())
-        argv = claude_cmd_args("--session-id", new_sid,
-                               "--mcp-config", str(cfg_path), "--strict-mcp-config")
+        argv = claude_cmd_args("--session-id", new_sid, *claude_extra)
         if model:
             argv += ["--model", model]
         cmd = BACKEND.headless_launch(cwd, argv, briefing)
@@ -2632,8 +2643,8 @@ class Handler(BaseHTTPRequestHandler):
             title = (data.get("title") or "multiagent session").strip()[:120]
             task = (data.get("task") or "").strip()
             agent_list = data.get("agents") or []
-            if not isinstance(agent_list, list) or len(agent_list) < 2:
-                self._send_json(400, {"error": "need_two_agents"})
+            if not isinstance(agent_list, list) or len(agent_list) < 1:
+                self._send_json(400, {"error": "need_an_agent"})
                 return
             # Each item is either a plain agent key ("claude") or an object
             # {agent, model}. Normalize to (agent_key, model) pairs.
@@ -2658,10 +2669,15 @@ class Handler(BaseHTTPRequestHandler):
             room = chatroom.create_room(title, members)
             room_full = chatroom.get_room(room["id"], public=False)
             room_full["cwd"] = base
+            # 1 agent → a solo session the human drives directly (no chat MCP,
+            # terminal-primary window). 2+ → an autonomous collaboration.
+            solo = len(specs) < 2
+            room_full["mode"] = "solo" if solo else "collab"
             launched = []
             for part in [pp for pp in room_full["participants"]
                          if pp.get("kind") == "agent"]:
-                info = self._launch_room_agent_pty(room_full, part, task)
+                info = self._launch_room_agent_pty(room_full, part, task,
+                                                   wire_mcp=not solo)
                 part["sessionId"] = info["sessionId"]
                 part["cwd"] = info["cwd"]
                 part["ptyId"] = info["ptyId"]

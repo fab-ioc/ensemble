@@ -40,6 +40,13 @@
   .astat { font-size:11px; }
   .agent .term { height:300px; display:none; background:#0b0b0b; padding:4px; }
   .agent.open .term { display:block; }
+  /* Solo session: one agent, driven directly — hide the chat, terminal fills. */
+  body.solo #chatcol { display:none; }
+  body.solo #agentcol { flex:1; }
+  body.solo .agent { border-bottom:none; height:100%; display:flex; flex-direction:column; }
+  body.solo .agent .ah { cursor:default; }
+  body.solo .agent .ah .toggle { display:none; }
+  body.solo .agent .term { display:block; flex:1; height:auto; }
   button { background:#2a2a2a; color:var(--fg); border:1px solid #444; padding:4px 12px; border-radius:6px; cursor:pointer; font:inherit; }
   button:hover { background:#333; }
 </style>
@@ -99,6 +106,15 @@ function buildAgents(room) {
     room.participants.filter(p => p.kind === 'agent')
       .map(p => `<option value="${esc(p.identity)}">${esc(p.identity)}</option>`).join('');
   sel.value = keep;
+  // Solo session: auto-open the single agent's terminal (it's the main view).
+  const agentDivs = col.querySelectorAll('.agent');
+  if (agentDivs.length === 1) {
+    const div = agentDivs[0];
+    const p = room.participants.find(x => x.kind === 'agent');
+    div.classList.add('open');
+    const tog = div.querySelector('.toggle'); if (tog) tog.textContent = '▾ terminal';
+    if (p && p.ptyId && !terms[p.ptyId]) mountTerm(div.querySelector('.term'), p.ptyId);
+  }
   agentsBuilt = true;
 }
 function toggleTerm(div, ptyId) {
@@ -162,8 +178,11 @@ async function refresh() {
   pb.style.display = ended ? 'none' : '';
   pb.textContent = st === 'paused' ? 'Resume' : 'Pause';
   pb.onclick = () => jpost('/api/room/status', { roomId: ROOM, status: st === 'paused' ? 'active' : 'paused' }).then(refresh);
+  const soloMode = room.mode === 'solo' ||
+    room.participants.filter(p => p.kind === 'agent').length === 1;
+  document.body.classList.toggle('solo', soloMode);
   if (!agentsBuilt && room.participants.some(p => p.kind === 'agent' && p.ptyId)) buildAgents(room);
-  renderMsgs(room);
+  if (!soloMode) renderMsgs(room);
   updateAgentStatus();
 }
 
