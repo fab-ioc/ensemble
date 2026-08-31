@@ -140,18 +140,40 @@ function syncSize(ptyId) {
   jpost('/api/pty/resize', { id: ptyId, rows: t.term.rows, cols: t.term.cols });
 }
 function mountTerm(el, ptyId) {
-  const term = new Terminal({ fontSize:12, convertEol:false, scrollback:4000,
-                              theme:{ background:'#0b0b0b' } });
+  const term = new Terminal({
+    fontSize: 13, convertEol: false, scrollback: 8000, cursorBlink: true,
+    fontFamily: 'Consolas, "Cascadia Mono", "DejaVu Sans Mono", monospace',
+    theme: { background: '#0b0b0b' },
+  });
   let fit = null;
   try { fit = new FitAddon.FitAddon(); term.loadAddon(fit); } catch(e) {}
   term.open(el);
+  // Copy (Ctrl+Shift+C) / paste (Ctrl+Shift+V or right-click). The app itself
+  // uses plain Ctrl+C/V, so the shift variants are the terminal's — like a real
+  // terminal.
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.type !== 'keydown' || !(e.ctrlKey && e.shiftKey)) return true;
+    if (e.code === 'KeyC') {
+      const sel = term.getSelection();
+      if (sel) { navigator.clipboard.writeText(sel).catch(() => {}); return false; }
+    }
+    if (e.code === 'KeyV') {
+      navigator.clipboard.readText().then(t => term.paste(t)).catch(() => {});
+      return false;
+    }
+    return true;
+  });
+  el.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    navigator.clipboard.readText().then(t => term.paste(t)).catch(() => {});
+  });
   const td = new TextDecoder();
   const es = new EventSource('/api/pty/stream?id=' + encodeURIComponent(ptyId));
   es.onmessage = ev => term.write(cleanSeq(td.decode(b64bytes(ev.data), { stream: true })));
   term.onData(d => jpost('/api/pty/input', { id: ptyId, data: d }));
   terms[ptyId] = { term, es, fit };
-  // Size the PTY to the terminal once it has laid out, and on any resize.
-  setTimeout(() => syncSize(ptyId), 60);
+  // Size the PTY to the terminal once it has laid out; focus it for typing.
+  setTimeout(() => { syncSize(ptyId); term.focus(); }, 60);
   try { new ResizeObserver(() => syncSize(ptyId)).observe(el); } catch(e) {}
 }
 
@@ -246,6 +268,13 @@ $('#resume').onclick = async () => {
   } catch (e) { /* stay ended */ }
   $('#resume').disabled = false;
 };
+// In a solo session the terminal is the main surface — refocus it when the
+// window regains focus so you can just start typing.
+window.addEventListener('focus', () => {
+  if (!document.body.classList.contains('solo')) return;
+  const t = Object.values(terms)[0];
+  if (t) { try { t.term.focus(); } catch (e) {} }
+});
 if (!ROOM) { $('#title').textContent = '(no session id)'; }
 else { refresh(); setInterval(refresh, 2000); }
 </script>
