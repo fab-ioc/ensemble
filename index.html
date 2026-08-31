@@ -1241,10 +1241,16 @@ function actionsCell(r, isLive) {
   const sendBtn = (isLive && r.pid && feat('send'))
     ? `<button class="send-btn" data-pid="${r.pid}" data-agent="${esc(r.agent || '')}" title="Type a message into this running session and submit it">✉ Send</button>`
     : '';
+  // Open headless: resume a historical session in the browser window (no
+  // terminal). Only for history — resuming a live session would double it.
+  const headlessBtn = (!isLive && r.cwd && r.sessionId)
+    ? `<button class="headless-btn" data-sid="${sid}" data-cwd="${esc(r.cwd)}" data-agent="${esc(r.agent || '')}" data-label="${esc(r.label || '')}" title="Resume this session headless in the browser — no terminal window">⚡ Headless</button>`
+    : '';
   return `<div class="actions">
     ${pinBtn}
     ${focusBtn}
     ${sendBtn}
+    ${headlessBtn}
     ${openCloseBtn}
     ${forkBtn}
     ${archiveBtn}
@@ -2900,6 +2906,26 @@ document.addEventListener('click', async (ev) => {
   }
   const autoBtn = ev.target.closest('.auto-btn');
   if (autoBtn) { ev.stopPropagation(); autoRename(autoBtn); return; }
+  const headlessBtn = ev.target.closest('.headless-btn');
+  if (headlessBtn) {
+    ev.stopPropagation();
+    toast('opening headless…', 0, 'busy');
+    try {
+      const resp = await api('/api/session/adopt', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agent: headlessBtn.dataset.agent || 'claude',
+          sessionId: headlessBtn.dataset.sid,
+          cwd: headlessBtn.dataset.cwd,
+          label: headlessBtn.dataset.label || '',
+        }),
+      });
+      toast('opened headless', 2000, 'ok');
+      await refresh(); updateRoomsBadge();
+      if (resp.room && resp.room.id) openSessionWindow(resp.room.id);
+    } catch (e) { toast('open headless failed: ' + e.message, 5000, 'err'); }
+    return;
+  }
   const sendBtn = ev.target.closest('.send-btn');
   if (sendBtn) {
     ev.stopPropagation();

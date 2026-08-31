@@ -2376,8 +2376,9 @@ class Handler(BaseHTTPRequestHandler):
                          "-c", 'mcp_servers.chat.bearer_token_env_var="CHAT_TOKEN"']
             if model:
                 argv += ["-c", f'model="{model}"']
-            codex_sid = (ag.latest_session_id_for_cwd(cwd)
-                         if hasattr(ag, "latest_session_id_for_cwd") else "")
+            codex_sid = part.get("sessionId") or (
+                ag.latest_session_id_for_cwd(cwd)
+                if hasattr(ag, "latest_session_id_for_cwd") else "")
             if codex_sid:
                 argv += ["resume", codex_sid]   # subcommand goes last
             cmd = BACKEND.headless_launch(cwd, argv, "")
@@ -2800,6 +2801,37 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/room/delete":
             rid = (data.get("roomId") or "").strip()
             self._send_json(200, {"ok": chatroom.delete_room(rid)})
+            return
+        if p == "/api/session/adopt":
+            # Bring an existing (legacy) claude/codex session into the headless
+            # model: resume it in a PTY, as a solo room, opened in the window.
+            agent_key = (data.get("agent") or "claude").strip().lower()
+            sid = (data.get("sessionId") or "").strip()
+            cwd = (data.get("cwd") or "").strip()
+            label = (data.get("label") or "").strip()
+            if not sid or not cwd:
+                self._send_json(400, {"error": "missing_fields"})
+                return
+            ag = agents.get_agent(agent_key)
+            if ag is None or not ag.installed():
+                self._send_json(400, {"error": f"agent_unavailable:{agent_key}"})
+                return
+            title = (label or f"{agent_key} {sid[:8]}")[:120]
+            room = chatroom.create_room(title, [{"identity": agent_key,
+                                                 "agent": agent_key}])
+            room_full = chatroom.get_room(room["id"], public=False)
+            room_full["cwd"] = cwd
+            room_full["mode"] = "solo"
+            room_full["adopted"] = True
+            part = next(p for p in room_full["participants"]
+                        if p.get("kind") == "agent")
+            part["sessionId"] = sid
+            part["cwd"] = cwd          # resume in place (no per-agent subfolder)
+            info = self._resume_room_agent_pty(room_full, part, wire_mcp=False)
+            part["ptyId"] = info["ptyId"]
+            chatroom.update_room(room_full)
+            self._send_json(200, {"ok": True,
+                                  "room": chatroom.get_room(room["id"])})
             return
         if p == "/api/room/resume":
             # Recover an ended session after a restart: relaunch each agent in a
