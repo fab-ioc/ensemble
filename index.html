@@ -1231,7 +1231,7 @@ function actionsCell(r, isLive) {
     : `Open in new ${T()} window`;
   const openCloseBtn = isLive
     ? `<button class="close-btn" data-pid="${r.pid}" title="${esc(closeTitle)}">⛔ Close</button>`
-    : `<button class="open-btn" data-sid="${sid}" data-cwd="${esc(r.cwd)}" data-agent="${esc(r.agent || '')}" title="${esc(openTitle)}">▶ Open</button>`;
+    : `<button class="open-btn" data-sid="${sid}" data-cwd="${esc(r.cwd)}" data-agent="${esc(r.agent || '')}" data-label="${esc(r.label || '')}" title="Open in the dashboard, headless — no terminal window">▶ Open</button>`;
   const archiveBtn = isLive
     ? ''
     : (r.archived
@@ -1248,16 +1248,17 @@ function actionsCell(r, isLive) {
   const sendBtn = (isLive && r.pid && feat('send'))
     ? `<button class="send-btn" data-pid="${r.pid}" data-agent="${esc(r.agent || '')}" title="Type a message into this running session and submit it">✉ Send</button>`
     : '';
-  // Open headless: resume a historical session in the browser window (no
-  // terminal). Only for history — resuming a live session would double it.
-  const headlessBtn = (!isLive && r.cwd && r.sessionId)
-    ? `<button class="headless-btn" data-sid="${sid}" data-cwd="${esc(r.cwd)}" data-agent="${esc(r.agent || '')}" data-label="${esc(r.label || '')}" title="Resume this session headless in the browser — no terminal window">⚡ Headless</button>`
+  // History sessions open HEADLESS by default (▶ Open). A real terminal is the
+  // opt-in escape hatch. (Only history — resuming a live session would double
+  // it.)
+  const terminalBtn = (!isLive && r.cwd)
+    ? `<button class="terminal-btn" data-sid="${sid}" data-cwd="${esc(r.cwd)}" data-agent="${esc(r.agent || '')}" title="Open in a real ${esc(T())} terminal window">🖥 Terminal</button>`
     : '';
   return `<div class="actions">
     ${pinBtn}
     ${focusBtn}
     ${sendBtn}
-    ${headlessBtn}
+    ${terminalBtn}
     ${openCloseBtn}
     ${forkBtn}
     ${archiveBtn}
@@ -2961,7 +2962,8 @@ document.addEventListener('click', async (ev) => {
   }
   const autoBtn = ev.target.closest('.auto-btn');
   if (autoBtn) { ev.stopPropagation(); autoRename(autoBtn); return; }
-  const headlessBtn = ev.target.closest('.headless-btn');
+  // ▶ Open on a history session → resume it headless (no terminal) and dock.
+  const headlessBtn = ev.target.closest('.open-btn');
   if (headlessBtn) {
     ev.stopPropagation();
     toast('opening headless…', 0, 'busy');
@@ -2977,7 +2979,7 @@ document.addEventListener('click', async (ev) => {
       });
       toast('opened headless', 2000, 'ok');
       await refresh(); updateRoomsBadge();
-      if (resp.room && resp.room.id) openSessionWindow(resp.room.id);
+      if (resp.room && resp.room.id) openDetail(resp.room.id);
     } catch (e) { toast('open headless failed: ' + e.message, 5000, 'err'); }
     return;
   }
@@ -3000,7 +3002,7 @@ document.addEventListener('click', async (ev) => {
     finally { sendBtn.classList.remove('busy'); }
     return;
   }
-  const openBtn = ev.target.closest('.open-btn');
+  const openBtn = ev.target.closest('.terminal-btn');
   if (openBtn) {
     ev.stopPropagation();
     const sid = openBtn.dataset.sid;
