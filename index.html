@@ -1437,6 +1437,46 @@ async function toggleTranscript() {
   }
 }
 
+// Compact, consistent detail for any NOT-running session (a single-agent
+// history session, same shape as a multi-agent one): header, cwd, ▶ Open to
+// resume headless, and an optional conversation view. No launching on select.
+function renderNotRunningDetail(r, panel) {
+  const now = Date.now() / 1000;
+  const title = r.label || r.first
+    || ((r.cwd || '').split(/[\\/]/).pop().replace(/^\d+_/, '').replace(/_/g, ' '))
+    || r.sessionId.slice(0, 8);
+  panel.innerHTML = `
+    <div class="dp-head"><h2>${esc(title)}</h2><button class="dp-close" title="Close (Esc)">×</button></div>
+    <div class="dp-meta">
+      ${r.agent ? `<span class="chip">${esc(r.agent)}</span>` : ''}
+      <span class="chip">${r.turns || 0} turns</span>
+      <span class="chip">${fmtAgo(now - r.updatedAt)} ago</span>
+      <span class="chip mono">${esc(r.sessionId.slice(0, 8))}</span>
+      ${r.pinned ? '<span class="chip pinned">📌 pinned</span>' : ''}
+      ${r.category ? `<span class="chip category">📁 ${esc(r.category)}</span>` : ''}
+    </div>
+    ${r.cwd ? `<div class="dp-section"><h3>cwd</h3><div class="dp-cwd" title="${esc(r.cwd)}">${esc(tildeify(r.cwd))}</div></div>` : ''}
+    <div class="dp-actions"><div class="actions">
+      <button class="open-btn" data-sid="${esc(r.sessionId)}" data-cwd="${esc(r.cwd)}" data-agent="${esc(r.agent || '')}" data-label="${esc(r.label || '')}" title="Open headless (no terminal window)">▶ Open</button>
+      <button class="terminal-btn" data-sid="${esc(r.sessionId)}" data-cwd="${esc(r.cwd)}" data-agent="${esc(r.agent || '')}" title="Open in a real terminal window">🖥 Terminal</button>
+      <button class="rename-btn" data-sid="${esc(r.sessionId)}" title="Rename">✎ Rename</button>
+      <button class="delete-btn" data-sid="${esc(r.sessionId)}" title="Delete transcript">🗑 Delete</button>
+    </div></div>
+    <div class="dp-section">
+      <button id="dp-transcript-toggle" style="background: var(--bg); border: 1px solid var(--border); padding: 6px 12px; border-radius: 6px; cursor: pointer; font: inherit; font-size: 12px; color: var(--fg); font-weight: 500;">
+        ${TRANSCRIPT_SID === r.sessionId ? '▲ Hide conversation' : '📜 Show conversation'}
+      </button>
+    </div>
+    ${TRANSCRIPT_SID === r.sessionId && TRANSCRIPT_DATA ? `
+    <div class="dp-section"><div class="dp-transcript">
+      ${TRANSCRIPT_DATA.turns.map(t => `
+        <div class="tx-turn ${esc(t.role || 'user')}">
+          <span class="tx-role">${esc(t.role || 'user')}<span class="tx-ts">${esc((t.timestamp || '').slice(0, 19).replace('T', ' '))}</span></span>
+          <div class="tx-text">${esc(t.text)}</div>
+        </div>`).join('')}
+    </div></div>` : ''}`;
+}
+
 function renderDetail() {
   const sid = SELECTED_SID;
   if (!sid) { closeDetail(); return; }
@@ -1444,6 +1484,9 @@ function renderDetail() {
   const panel = $('#detail-panel');
   if (!r) { panel.innerHTML = `<div class="dp-head"><h2>Session not found</h2><button class="dp-close">×</button></div>`; return; }
   if (r.headless) { renderHeadlessDetail(r, panel); return; }
+  // A not-running legacy session shows the SAME compact summary as any other
+  // not-running session — select shows detail, ▶ Open resumes it headless.
+  if (!r.isLive) { renderNotRunningDetail(r, panel); return; }
   const now = Date.now() / 1000;
   const pills = [];
   if (r.isLive) pills.push(`<span class="chip ${r.status === 'busy' ? 'busy' : 'live'}">${r.status === 'busy' ? '✻ busy' : '● live'}</span>`);
