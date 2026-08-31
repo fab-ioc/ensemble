@@ -474,6 +474,27 @@ class WindowsBackend(Backend):
             return f"error: {e}"
         return "ok"
 
+    def headless_launch(self, cwd: str, argv: list[str], prompt: str = "") -> str:
+        """Run `argv` in a headless PTY via a one-shot .ps1 (the same robust
+        here-string prompt handling as the WT launcher, minus the window and the
+        AGENT_SESS_DIR registry — a PtySession owns liveness now)."""
+        LAUNCH_DIR.mkdir(parents=True, exist_ok=True)
+        script_path = LAUNCH_DIR / f"pty-{uuid.uuid4().hex}.ps1"
+        line = " ".join(_ps_quote(a) for a in argv)
+        if prompt:
+            line += " @'\n" + prompt.replace("\r\n", "\n") + "\n'@"
+        body = (
+            f"Set-Location -LiteralPath {_ps_quote(cwd)}\n"
+            f"& {line}\n"
+            f"Remove-Item -LiteralPath {_ps_quote(str(script_path))} "
+            f"-ErrorAction SilentlyContinue\n"
+        )
+        script_path.write_text(body, encoding="utf-8")
+        # Return an argv LIST — pywinpty resolves argv[0] via PATH and quotes the
+        # rest itself, so use a bare shell name (not a quoted full path).
+        shell = "pwsh" if shutil.which("pwsh") else "powershell"
+        return [shell, "-ExecutionPolicy", "Bypass", "-File", str(script_path)]
+
     def _write_launch_script(self, cwd: str, claude_argv: list[str],
                              initial_prompt: str, agent: str = "",
                              identity: str = "", env: dict | None = None) -> str:

@@ -2099,22 +2099,29 @@ class Handler(BaseHTTPRequestHandler):
         if not room:
             return
         sender = (result.get("message") or {}).get("from", "your partner")
+        wake = (f"[relay] New message from '{sender}' in your shared room. "
+                f"Use the chat_read tool to read it, then reply with chat_send "
+                f"— to your partner, or to \"user\" if you need the human's "
+                f"input.")
         for ident in recipients:
             part = next((x for x in room["participants"]
                          if x.get("identity") == ident), None)
             if not part:
                 continue
-            pid = self._resolve_live_pid(part)
-            if not pid:
+            # Headless PTY session → the doorbell is a PTY write.
+            pty_id = part.get("ptyId")
+            if pty_id:
+                sess = ptyrun.get(pty_id)
+                if sess and sess.alive():
+                    sess.write(wake + "\r")
                 continue
-            wake = (f"[relay] New message from '{sender}' in your shared room. "
-                    f"Use the chat_read tool to read it, then reply with "
-                    f"chat_send — to your partner, or to \"user\" if you need "
-                    f"the human's input.")
-            try:
-                BACKEND.send_text(int(pid), wake, submit=True)
-            except (OSError, ValueError):
-                pass
+            # Legacy visible-terminal session → keystroke injection.
+            pid = self._resolve_live_pid(part)
+            if pid:
+                try:
+                    BACKEND.send_text(int(pid), wake, submit=True)
+                except (OSError, ValueError):
+                    pass
 
     def _mcp_url(self) -> str:
         port = self.server.server_address[1]
@@ -2184,6 +2191,72 @@ class Handler(BaseHTTPRequestHandler):
                                agent="claude", identity=ident,
                                extra_args=claude_extra)
         return {"sessionId": new_sid, "cwd": cwd, "launch": res}
+
+    def _launch_room_agent_pty(self, room_full: dict, part: dict, task: str) -> dict:
+        """Headless variant: spawn the agent in a dashboard-owned PTY (no
+        terminal window), pre-wired to the chat MCP. Returns {ptyId, cwd,
+        sessionId}. This is the new execution model — the PtySession owns
+        liveness, and the doorbell is a PTY write."""
+        ident = part["identity"]
+        agent_key = part["agent"]
+        model = (part.get("model") or "").strip()
+        token = next((t for t, i in room_full.get("tokens", {}).items()
+                      if i == ident), "")
+        url = self._mcp_url()
+        base = room_full.get("cwd") or str(CS_ROOT)
+        cwd = os.path.join(base, ident)
+        try:
+            os.makedirs(cwd, exist_ok=True)
+        except OSError:
+            pass
+        partners = ", ".join(p["identity"] for p in room_full["participants"]
+                             if p.get("kind") == "agent" and p["identity"] != ident)
+        briefing = (
+            f"You are '{ident}', collaborating with {partners or 'your partner'} "
+            f"to find the best possible solution to the task below. Coordinate "
+            f"ONLY through the 'chat' MCP tools — you have no direct human at "
+            f"this terminal. Use chat_send to message your partner (end each turn "
+            f"by sending them your findings/critique/proposal), chat_read to read "
+            f"replies, and chat_send with to=\"user\" whenever you need the "
+            f"human's decision, input, or clarification. Do not ask questions "
+            f"here in the terminal — the human only sees chat_send. Begin now by "
+            f"sending your partner your initial approach.\n\nTASK:\n{task}"
+        )
+        ag = agents.get_agent(agent_key)
+        if hasattr(ag, "ensure_trusted"):
+            ag.ensure_trusted(cwd)
+        label = f"{room_full['title'][:40]} · {ident}"
+        meta = {"room": room_full["id"], "identity": ident, "agent": agent_key}
+        if agent_key == "codex":
+            argv = ["codex",
+                    # Skip ALL confirmation prompts (incl. MCP tool approval) and
+                    # the sandbox — autonomous collaboration in a scratch folder.
+                    # (approval_policy="never" would instead *block* MCP tools.)
+                    "--dangerously-bypass-approvals-and-sandbox",
+                    "-c", "check_for_update_on_startup=false",
+                    "-c", f'mcp_servers.chat.url="{url}"',
+                    "-c", 'mcp_servers.chat.bearer_token_env_var="CHAT_TOKEN"']
+            if model:
+                argv += ["-c", f'model="{model}"']
+            cmd = BACKEND.headless_launch(cwd, argv, briefing)
+            sess = ptyrun.create(cmd, cwd=cwd, env={"CHAT_TOKEN": token},
+                                 label=label, meta=meta)
+            return {"ptyId": sess.id, "cwd": cwd, "sessionId": ""}
+        # claude (and claude-N)
+        cfg = {"mcpServers": {"chat": {"type": "http", "url": url,
+                                       "headers": {"Authorization": f"Bearer {token}"}}}}
+        mcp_dir = DASHBOARD_DIR / "_mcp"
+        mcp_dir.mkdir(parents=True, exist_ok=True)
+        cfg_path = mcp_dir / f"{uuid.uuid4().hex}.json"
+        cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+        new_sid = str(uuid.uuid4())
+        argv = claude_cmd_args("--session-id", new_sid,
+                               "--mcp-config", str(cfg_path), "--strict-mcp-config")
+        if model:
+            argv += ["--model", model]
+        cmd = BACKEND.headless_launch(cwd, argv, briefing)
+        sess = ptyrun.create(cmd, cwd=cwd, label=label, meta=meta)
+        return {"ptyId": sess.id, "cwd": cwd, "sessionId": new_sid}
 
     def _brief_agents(self, room_id: str) -> None:
         """Introduce the room to each agent: its identity, partner(s), and the
@@ -2536,11 +2609,12 @@ class Handler(BaseHTTPRequestHandler):
             launched = []
             for part in [pp for pp in room_full["participants"]
                          if pp.get("kind") == "agent"]:
-                info = self._launch_room_agent(room_full, part, task)
+                info = self._launch_room_agent_pty(room_full, part, task)
                 part["sessionId"] = info["sessionId"]
                 part["cwd"] = info["cwd"]
+                part["ptyId"] = info["ptyId"]
                 launched.append({"identity": part["identity"],
-                                 "result": info["launch"]})
+                                 "ptyId": info["ptyId"]})
             chatroom.update_room(room_full)
             self._send_json(200, {"ok": True,
                                   "room": chatroom.get_room(room["id"]),

@@ -142,6 +142,16 @@ class Backend:
                  env: dict | None = None, extra_args: list[str] | None = None) -> str:
         return "unsupported"
 
+    def headless_launch(self, cwd: str, argv: list[str], prompt: str = ""):
+        """Build a command to run `argv` in a headless PTY (backends/ptyrun).
+        Default (POSIX): return the argv list with the prompt appended as a
+        positional; ptyrun spawns it directly under a Unix pty. Windows overrides
+        to wrap it in a one-shot .ps1 (robust multiline-prompt quoting)."""
+        cmd = list(argv)
+        if prompt:
+            cmd.append(prompt)
+        return cmd
+
     def close(self, session: dict) -> str:
         """Default: just terminate the process (no window geometry)."""
         pid = session.get("pid")

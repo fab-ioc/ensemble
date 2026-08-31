@@ -58,10 +58,12 @@ class PtySession:
         full_env = {**os.environ, **(env or {})}
         if IS_WINDOWS:
             from winpty import PtyProcess  # lazy: Windows-only dependency
-            cmdline = (self.argv if isinstance(self.argv, str)
-                       else subprocess.list2cmdline(self.argv))
+            # Pass argv through as-is: pywinpty accepts a str (it shlex-splits,
+            # posix=False) or a list (argv[0] resolved via PATH, the rest quoted
+            # with list2cmdline). Pre-joining a list to a string would double-
+            # quote argv[0] and break executable resolution — so keep the list.
             self._proc = PtyProcess.spawn(
-                cmdline, cwd=self.cwd, env=full_env,
+                self.argv, cwd=self.cwd, env=full_env,
                 dimensions=(self.rows, self.cols))
         else:
             from ptyprocess import PtyProcess  # lazy: Unix dependency (macOS)
