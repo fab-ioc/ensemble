@@ -306,6 +306,7 @@
     border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
     border-radius: 8px; margin: 4px 0; cursor: pointer; }
   .rp-room:hover { background: color-mix(in srgb, currentColor 7%, transparent); }
+  .rp-room.ended { opacity: 0.55; }
   .rp-open { flex: 0 0 auto; }
   .actions .pin-btn.is-pinned {
     background: color-mix(in srgb, var(--live-busy) 16%, transparent);
@@ -2347,14 +2348,15 @@ async function renderRoomsPanel() {
   const list = rooms.length ? rooms.map(r => {
     const agents = (r.participants || []).filter(x => x.kind === 'agent')
       .map(x => x.identity).join(' + ');
-    return `<div class="rp-room" data-room="${esc(r.id)}">
+    const ended = r.live === false;
+    return `<div class="rp-room ${ended ? 'ended' : ''}" data-room="${esc(r.id)}">
       <div style="flex:1;min-width:0">
         <div style="font-weight:600">${esc(r.title || r.id)}</div>
         <div class="rp-hint">${esc(agents)} · ${(r.messages||[]).length} msgs</div>
       </div>
       <span class="rp-status ${esc(r.status)}">${esc((r.status||'').replace('_',' '))}</span>
       <button class="rp-open">Open ↗</button>
-      <button class="rp-end" title="End collaboration (stops the agents)">✕</button>
+      <button class="rp-end" title="${ended ? 'Dismiss ended collaboration' : 'End collaboration (stops the agents)'}">✕</button>
     </div>`;
   }).join('') : '<div class="rp-hint" style="padding:12px">No collaborations yet. Use “+ New” with two or more agents.</div>';
   p.innerHTML = `
@@ -2386,8 +2388,9 @@ async function renderRoomsPanel() {
 async function updateRoomsBadge() {
   let rooms = [];
   try { rooms = await api('/api/rooms'); } catch {}
+  const live = rooms.filter(r => r.live !== false).length;
   const btn = $('#duo-btn');
-  if (btn) btn.textContent = rooms.length ? `💬 Chats (${rooms.length})` : '💬 Chats';
+  if (btn) btn.textContent = live ? `💬 Chats (${live})` : '💬 Chats';
 }
 setInterval(updateRoomsBadge, 4000);
 updateRoomsBadge();

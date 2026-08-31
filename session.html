@@ -146,9 +146,16 @@ async function refresh() {
   const st = room.status || '';
   const sb = $('#status'); sb.className = 'status ' + st; sb.textContent = st.replace('_', ' ');
   $('#hop').textContent = `hop ${room.hopCount || 0}/${room.maxHops || 0}`;
-  $('#hint').textContent = (st === 'waiting_human' || st === 'paused')
-    ? 'The agents are waiting for you — reply to resume.' : '';
-  const pb = $('#pause'); pb.textContent = st === 'paused' ? 'Resume' : 'Pause';
+  const ended = st === 'ended' || room.live === false;
+  $('#hint').textContent = ended
+    ? 'This collaboration has ended — the agents have stopped. The transcript is preserved.'
+    : (st === 'waiting_human' || st === 'paused')
+      ? 'The agents are waiting for you — reply to resume.' : '';
+  $('#send').disabled = ended;
+  $('#input').disabled = ended;
+  const pb = $('#pause');
+  pb.style.display = ended ? 'none' : '';
+  pb.textContent = st === 'paused' ? 'Resume' : 'Pause';
   pb.onclick = () => jpost('/api/room/status', { roomId: ROOM, status: st === 'paused' ? 'active' : 'paused' }).then(refresh);
   if (!agentsBuilt && room.participants.some(p => p.kind === 'agent' && p.ptyId)) buildAgents(room);
   renderMsgs(room);

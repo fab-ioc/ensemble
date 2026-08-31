@@ -58,6 +58,31 @@ _read_agent_session_files = read_agent_session_files
 _is_workspace_cwd = is_workspace_cwd
 
 
+def _room_is_live(room: dict) -> bool:
+    """True if any of a room's agents still has a live PTY. A dashboard restart
+    orphans the PTYs (they're the server's children, registry is in-memory), so
+    a pre-restart room reads as not-live — we mark those 'ended'."""
+    for pp in room.get("participants", []):
+        if pp.get("kind") != "agent":
+            continue
+        pid = pp.get("ptyId")
+        if pid:
+            sess = ptyrun.get(pid)
+            if sess and sess.alive():
+                return True
+    return False
+
+
+def _annotate_room_liveness(room: dict) -> dict:
+    """Add a `live` flag and persist an 'ended' status once the agents are gone."""
+    live = _room_is_live(room)
+    room["live"] = live
+    if not live and room.get("status") != "ended":
+        chatroom.set_status(room.get("id", ""), "ended")
+        room["status"] = "ended"
+    return room
+
+
 def _allocate_agent_identity(agent_key: str) -> str:
     """Pick a unique identity for a newly launched agent session, e.g.
     ``codex`` then ``codex-2`` if one is already live. Identities are the
@@ -1674,6 +1699,8 @@ def load_sessions(n: int = 200) -> list[dict]:
     collab_cwds: set[str] = set()
     try:
         for rm in chatroom.list_rooms():
+            if not _room_is_live(rm):
+                continue  # ended room → let its agents show as history
             for pp in rm.get("participants", []):
                 if pp.get("sessionId"):
                     collab_sids.add(pp["sessionId"])
@@ -1912,7 +1939,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, agents.agents_info())
             return
         if p == "/api/rooms":
-            self._send_json(200, chatroom.list_rooms())
+            rooms = [_annotate_room_liveness(r) for r in chatroom.list_rooms()]
+            self._send_json(200, rooms)
             return
         if p == "/api/room":
             rid = (parse_qs(u.query).get("id", [""])[0]).strip()
@@ -1920,7 +1948,7 @@ class Handler(BaseHTTPRequestHandler):
             if room is None:
                 self._send_json(404, {"error": "no_such_room"})
                 return
-            self._send_json(200, room)
+            self._send_json(200, _annotate_room_liveness(room))
             return
         if p == "/api/ptys":
             ptyrun.reap()
