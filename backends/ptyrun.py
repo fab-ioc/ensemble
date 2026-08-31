@@ -48,6 +48,7 @@ class PtySession:
         self._lock = threading.Lock()
         self._alive = True
         self._exit_code = None
+        self._last_output = time.time()
         self._spawn(env)
         self._reader = threading.Thread(target=self._pump, daemon=True)
         self._reader.start()
@@ -130,6 +131,7 @@ class PtySession:
                 if not self.alive():
                     break
                 continue
+            self._last_output = time.time()
             with self._lock:
                 self._buf.extend(chunk)
                 if len(self._buf) > _BUFFER_MAX:
@@ -188,6 +190,9 @@ class PtySession:
             "pid": self.pid, "alive": self.alive(),
             "rows": self.rows, "cols": self.cols,
             "created": self.created, "meta": self.meta,
+            # Seconds since the process last produced output — a cheap
+            # "is it working" signal for the UI (agentchattr-style activity).
+            "idleSeconds": round(time.time() - self._last_output, 1),
         }
 
 

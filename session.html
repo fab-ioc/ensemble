@@ -35,6 +35,9 @@
   .agent .ah { display:flex; align-items:center; gap:8px; padding:8px 10px; cursor:pointer; user-select:none; }
   .agent .ah:hover { background:#ffffff08; }
   .agent .ah .nm { font-weight:700; }
+  .adot { font-size:10px; color:#6b7280; }
+  .adot.working { color:#16a34a; } .adot.idle { color:#6b7280; } .adot.dead { color:#ef4444; }
+  .astat { font-size:11px; }
   .agent .term { height:300px; display:none; background:#0b0b0b; padding:4px; }
   .agent.open .term { display:block; }
   button { background:#2a2a2a; color:var(--fg); border:1px solid #444; padding:4px 12px; border-radius:6px; cursor:pointer; font:inherit; }
@@ -80,8 +83,10 @@ function buildAgents(room) {
   room.participants.filter(p => p.kind === 'agent').forEach(p => {
     const div = document.createElement('div');
     div.className = 'agent';
-    div.innerHTML = `<div class="ah"><span class="nm">${esc(p.identity)}</span>`
+    div.innerHTML = `<div class="ah"><span class="adot" data-pty="${esc(p.ptyId||'')}">●</span> `
+      + `<span class="nm">${esc(p.identity)}</span>`
       + `<span class="dim">${esc(p.agent)}${p.model ? ' · ' + esc(p.model) : ''}</span>`
+      + `<span class="astat dim" data-pty="${esc(p.ptyId||'')}"></span>`
       + `<span class="grow"></span><span class="dim toggle">▸ terminal</span></div>`
       + `<div class="term"></div>`;
     div.querySelector('.ah').onclick = () => toggleTerm(div, p.ptyId);
@@ -159,6 +164,26 @@ async function refresh() {
   pb.onclick = () => jpost('/api/room/status', { roomId: ROOM, status: st === 'paused' ? 'active' : 'paused' }).then(refresh);
   if (!agentsBuilt && room.participants.some(p => p.kind === 'agent' && p.ptyId)) buildAgents(room);
   renderMsgs(room);
+  updateAgentStatus();
+}
+
+// Live per-agent status dot: working (recent output) / idle / stopped.
+async function updateAgentStatus() {
+  let ptys = [];
+  try { ptys = await fetch('/api/ptys').then(r => r.json()); } catch(e) { return; }
+  const map = {};
+  ptys.forEach(x => map[x.id] = x);
+  document.querySelectorAll('.adot').forEach(dot => {
+    const info = map[dot.dataset.pty];
+    let cls = 'dead', txt = 'stopped';
+    if (info && info.alive) {
+      if (info.idleSeconds < 2.5) { cls = 'working'; txt = 'working…'; }
+      else { cls = 'idle'; txt = 'idle'; }
+    }
+    dot.className = 'adot ' + cls;
+    const stat = document.querySelector('.astat[data-pty="' + dot.dataset.pty + '"]');
+    if (stat) stat.textContent = txt;
+  });
 }
 $('#send').onclick = async () => {
   const t = $('#input').value.trim(); if (!t) return;
