@@ -1666,9 +1666,11 @@ function renderHeadlessRow(r, parsed, now) {
   const liveClasses = r.isLive ? `live ${r.status === 'busy' ? 'busy' : 'idle'}` : '';
   const statusDot = r.isLive
     ? `<span class="status ${r.status === 'busy' ? 'busy' : 'idle'}" title="${esc(r.status || 'live')}"></span>` : '';
-  const badges = (r.agents || []).map(id =>
-    `<span class="badge-agent ${esc(id.replace(/-\d+$/, ''))}" title="${esc(id)}">${esc(id)}</span>`).join('');
-  const modeBadge = `<span class="badge-headless" title="headless session">${r.mode === 'solo' ? 'solo' : 'duo'}</span>`;
+  const members = r.members || (r.agents || []).map(id => ({ identity: id, agent: id.replace(/-\d+$/, ''), model: '' }));
+  const badges = members.map(m => {
+    const label = m.model ? `${esc(m.agent)} ${esc(m.model)}` : esc(m.agent);
+    return `<span class="badge-agent ${esc(m.agent)}" title="${esc(m.identity)}${m.model ? ' · ' + esc(m.model) : ''}">${label}</span>`;
+  }).join('');
   const liveBadge = r.isLive ? '<span class="badge-live">live</span>'
     : '<span class="badge-headless ended" title="ended — transcript preserved">ended</span>';
   const actions = `<button class="room-open" data-room="${esc(r.roomId)}" title="Open session window">▶ Open ↗</button>`
@@ -1677,7 +1679,7 @@ function renderHeadlessRow(r, parsed, now) {
   const actionsTd = DETAIL_MODE ? '' : `<td>${actions}</td>`;
   return `<tr class="row headless ${liveClasses}" data-room="${esc(r.roomId)}" data-sid="${esc(r.sessionId)}" draggable="false">
     <td>${statusDot}</td>
-    <td class="sid">${badges}${modeBadge}${liveBadge}</td>
+    <td class="sid">${badges}${liveBadge}</td>
     <td class="ago turns">${r.turns || 0}</td>
     <td class="ago">${fmtAgo(now - r.updatedAt)}</td>
     <td class="ago">${r.isLive ? fmtAgo(r.idleSeconds) : '-'}</td>
@@ -2289,12 +2291,30 @@ function agentSelect(sel) {
 }
 // Unified new-session modal: add 1..N agents (each with its own model). One
 // agent → a normal session; two or more → a collaborating room (same UI).
+// Model suggestions per agent (the model field is free-text; these just fill
+// the dropdown). Codex was wrongly showing Claude's list.
+const MODEL_PRESETS = {
+  claude: ['opus', 'sonnet', 'haiku', 'fable'],
+  codex: ['gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-codex'],
+};
 function addAgentRow(container, sel, model) {
   const div = document.createElement('div');
   div.className = 'duo-row';
+  const dlId = 'ml-' + Math.random().toString(36).slice(2, 9);
   div.innerHTML = `${agentSelect(sel)}
-    <input type="text" class="duo-model" list="model-presets" placeholder="model (optional)" value="${esc(model || '')}" autocomplete="off" spellcheck="false">
+    <input type="text" class="duo-model" list="${dlId}" placeholder="model (optional)" value="${esc(model || '')}" autocomplete="off" spellcheck="false">
+    <datalist id="${dlId}"></datalist>
     <button type="button" class="duo-remove secondary" title="Remove this agent">✕</button>`;
+  const agentSel = div.querySelector('.duo-agent');
+  const modelInput = div.querySelector('.duo-model');
+  const datalist = div.querySelector('datalist');
+  const fillModels = () => {
+    const opts = MODEL_PRESETS[agentSel.value] || [];
+    datalist.innerHTML = opts.map(o => `<option value="${esc(o)}"></option>`).join('');
+    modelInput.placeholder = opts.length ? `model (e.g. ${opts[0]})` : 'model (optional)';
+  };
+  agentSel.addEventListener('change', () => { modelInput.value = ''; fillModels(); });
+  fillModels();
   div.querySelector('.duo-remove').onclick = () => {
     const rows = container.querySelectorAll('.duo-row');
     if (rows.length > 1) div.remove();

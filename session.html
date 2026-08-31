@@ -18,6 +18,10 @@
   .status.waiting_human { color:#eab308; background:#eab30822; border-color:#eab30855; }
   .status.paused { color:#ef4444; background:#ef444422; border-color:#ef444455; }
   .dim { color:var(--dim); font-size:11px; }
+  #info { flex:0 0 auto; display:flex; gap:12px; align-items:center; flex-wrap:wrap;
+    padding:5px 12px; border-bottom:1px solid var(--border); font-size:11px; color:var(--dim); }
+  #info .ib-agent { color:var(--fg); }
+  #info .ib-agent.claude { color:#d97757; } #info .ib-agent.codex { color:#10a37f; }
   main { flex:1; display:flex; min-height:0; }
   #chatcol { flex:1; display:flex; flex-direction:column; min-width:0; border-right:1px solid var(--border); }
   #msgs { flex:1; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:10px; }
@@ -62,6 +66,7 @@
   <button id="pause">Pause</button>
   <button id="end" title="Stop the agent(s) and end this session">End</button>
 </header>
+<div id="info"></div>
 <main>
   <div id="chatcol">
     <div id="msgs"></div>
@@ -82,6 +87,7 @@ const qs = new URLSearchParams(location.search);
 const ROOM = qs.get('id');
 const $ = s => document.querySelector(s);
 const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const tildeify = p => (p || '').replace(/^[A-Za-z]:\\Users\\[^\\]+/i, '~').replace(/^\/(Users|home)\/[^/]+/, '~');
 const jpost = (path, body) => fetch(path, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) }).then(r=>r.json());
 const b64bytes = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 // Strip terminal query REPLIES (fg/bg color = OSC 10/11, device attributes =
@@ -214,6 +220,13 @@ async function refresh() {
   const soloMode = room.mode === 'solo' ||
     room.participants.filter(p => p.kind === 'agent').length === 1;
   document.body.classList.toggle('solo', soloMode);
+  // Basic session info (parity with a single-agent's detail view).
+  const mem = room.participants.filter(p => p.kind === 'agent');
+  const cwd = room.cwd || '';
+  $('#info').innerHTML =
+    (cwd ? `<span title="${esc(cwd)}">📁 ${esc(tildeify(cwd))}</span>` : '')
+    + mem.map(m => `<span class="ib-agent ${esc(m.agent)}" title="${esc(m.identity)}">${esc(m.agent)}${m.model ? ' · ' + esc(m.model) : ''}</span>`).join('')
+    + (soloMode ? '' : `<span>${room.messages.length} messages · hop ${room.hopCount || 0}/${room.maxHops || 0}</span>`);
   if (!agentsBuilt && room.participants.some(p => p.kind === 'agent' && p.ptyId)) buildAgents(room);
   if (!soloMode) renderMsgs(room);
   updateAgentStatus();
