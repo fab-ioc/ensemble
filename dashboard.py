@@ -1690,22 +1690,49 @@ def load_sessions(n: int = 200) -> list[dict]:
             tier = 0 if r.get("status") == "busy" else 1
             return (tier, -r["updatedAt"])
         return (2, -r["updatedAt"])
-    out.sort(key=_key)
-    # A collaboration is ONE session, viewed in its own window — so hide its
-    # per-agent sub-sessions from the main list (they'd otherwise scatter as a
-    # live claude row + a codex history row per room). Matched by the agent's
-    # session id and its per-agent subfolder cwd, gathered from active rooms.
+    # Each headless session (solo or collaboration) becomes ONE row that opens
+    # its window; its per-agent sub-sessions are hidden (they'd otherwise scatter
+    # as a live claude row + a codex history row). Matched by agent session id
+    # and per-agent subfolder cwd.
     collab_sids: set[str] = set()
     collab_cwds: set[str] = set()
+    room_rows: list[dict] = []
     try:
         for rm in chatroom.list_rooms():
-            if not _room_is_live(rm):
-                continue  # ended room → let its agents show as history
-            for pp in rm.get("participants", []):
+            agents_in = [p for p in rm.get("participants", [])
+                         if p.get("kind") == "agent"]
+            for pp in agents_in:
                 if pp.get("sessionId"):
                     collab_sids.add(pp["sessionId"])
                 if pp.get("cwd"):
                     collab_cwds.add(os.path.normcase(os.path.normpath(pp["cwd"])))
+            live = _room_is_live(rm)
+            idle = None
+            busy = False
+            for pp in agents_in:
+                pid = pp.get("ptyId")
+                sess = ptyrun.get(pid) if pid else None
+                if sess:
+                    isec = sess.info().get("idleSeconds")
+                    if isec is not None:
+                        idle = isec if idle is None else min(idle, isec)
+                        if isec < 2.5:
+                            busy = True
+            room_rows.append({
+                "sessionId": rm["id"], "roomId": rm["id"], "headless": True,
+                "mode": rm.get("mode", ""),
+                "agent": (agents_in[0]["agent"] if len(agents_in) == 1 else "duo"),
+                "agents": [p.get("identity", "") for p in agents_in],
+                "label": rm.get("title", ""), "cwd": rm.get("cwd", ""),
+                "isLive": live, "status": "busy" if (live and busy) else "idle",
+                "updatedAt": rm.get("updatedAt", rm.get("createdAt", 0)),
+                "startedAt": rm.get("createdAt", 0),
+                "turns": len(rm.get("messages", [])),
+                "idleSeconds": (idle if live else None),
+                "pid": None, "pinned": False, "category": "", "archived": False,
+                "parent": "", "jira": [], "cost": 0.0, "currentTheme": "",
+                "first": "", "last": "", "transcriptPath": "",
+            })
     except Exception:
         pass
     if collab_sids or collab_cwds:
@@ -1713,6 +1740,8 @@ def load_sessions(n: int = 200) -> list[dict]:
                if r.get("sessionId") not in collab_sids
                and os.path.normcase(os.path.normpath(r.get("cwd", "") or "."))
                    not in collab_cwds]
+    out.extend(room_rows)
+    out.sort(key=_key)
     return out[:n]
 
 

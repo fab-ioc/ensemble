@@ -253,6 +253,17 @@
     background: color-mix(in srgb, #10a37f 14%, transparent);
     border-color: color-mix(in srgb, #10a37f 30%, transparent);
   }
+  .badge-headless {
+    margin-left: 8px; padding: 1px 6px; border-radius: 10px;
+    font-size: 9.5px; font-weight: 700; vertical-align: middle;
+    letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--accent, #c25d3c);
+    background: color-mix(in srgb, var(--accent, #c25d3c) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent, #c25d3c) 30%, transparent);
+  }
+  .badge-headless.ended { color: #9a9a9a; background: color-mix(in srgb, #9a9a9a 12%, transparent); border-color: color-mix(in srgb, #9a9a9a 26%, transparent); }
+  tr.row.headless { cursor: pointer; }
+  .room-open, .room-end { font-size: 12px; padding: 2px 8px; }
   /* ---- Multiagent "Duo" creator + chat panel ---- */
   #duo-btn { white-space: nowrap; }
   .duo-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
@@ -1591,6 +1602,7 @@ function rowMatches(r, parsed) {
 }
 
 function renderRow(r, parsed, now) {
+  if (r.headless) return renderHeadlessRow(r, parsed, now);
   const depth = r._depth || 0;
   const liveClasses = r.isLive ? `live ${r.status === 'busy' ? 'busy' : 'idle'}` : '';
   const statusDot = r.isLive
@@ -1611,6 +1623,31 @@ function renderRow(r, parsed, now) {
     <td class="ago">${fmtAgo(now - r.updatedAt)}</td>
     <td class="ago">${r.isLive ? fmtAgo(r.idleSeconds) : '-'}</td>
     <td class="topic" title="${esc(r.cwd)}">${topicCellHL(r, parsed)}</td>
+    ${actionsTd}
+  </tr>`;
+}
+
+// A headless agent session (solo or collaboration) shown as one list row that
+// opens its window. No terminal to focus/close — Open ↗ pops the window, ✕ ends.
+function renderHeadlessRow(r, parsed, now) {
+  const liveClasses = r.isLive ? `live ${r.status === 'busy' ? 'busy' : 'idle'}` : '';
+  const statusDot = r.isLive
+    ? `<span class="status ${r.status === 'busy' ? 'busy' : 'idle'}" title="${esc(r.status || 'live')}"></span>` : '';
+  const badges = (r.agents || []).map(id =>
+    `<span class="badge-agent ${esc(id.replace(/-\d+$/, ''))}" title="${esc(id)}">${esc(id)}</span>`).join('');
+  const modeBadge = `<span class="badge-headless" title="headless session">${r.mode === 'solo' ? 'solo' : 'duo'}</span>`;
+  const liveBadge = r.isLive ? '<span class="badge-live">live</span>'
+    : '<span class="badge-headless ended" title="ended — transcript preserved">ended</span>';
+  const actions = `<button class="room-open" data-room="${esc(r.roomId)}" title="Open session window">▶ Open ↗</button>`
+    + `<button class="room-end" data-room="${esc(r.roomId)}" title="${r.isLive ? 'End session (stops agents)' : 'Dismiss'}">✕</button>`;
+  const actionsTd = DETAIL_MODE ? '' : `<td>${actions}</td>`;
+  return `<tr class="row headless ${liveClasses}" data-room="${esc(r.roomId)}" data-sid="${esc(r.sessionId)}" draggable="false">
+    <td>${statusDot}</td>
+    <td class="sid">${badges}${modeBadge}${liveBadge}</td>
+    <td class="ago turns">${r.turns || 0}</td>
+    <td class="ago">${fmtAgo(now - r.updatedAt)}</td>
+    <td class="ago">${r.isLive ? fmtAgo(r.idleSeconds) : '-'}</td>
+    <td class="topic" title="${esc(r.cwd)}">${esc(r.label || '(session)')}</td>
     ${actionsTd}
   </tr>`;
 }
@@ -2809,6 +2846,27 @@ async function autoRename(btn) {
 }
 
 document.addEventListener('click', async (ev) => {
+  // Headless session rows: Open ↗ pops the window, ✕ ends/dismisses, and a
+  // click anywhere on the row opens it.
+  const roomOpen = ev.target.closest('.room-open');
+  if (roomOpen) { ev.stopPropagation(); openSessionWindow(roomOpen.dataset.room); return; }
+  const roomEnd = ev.target.closest('.room-end');
+  if (roomEnd) {
+    ev.stopPropagation();
+    if (!confirm('End this session and stop its agent(s)?')) return;
+    try {
+      await api('/api/room/close', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: roomEnd.dataset.room }) });
+      await refresh(); updateRoomsBadge();
+    } catch (e) { toast('end failed: ' + e.message, 4000, 'err'); }
+    return;
+  }
+  const headlessRow = ev.target.closest('tr.row.headless');
+  if (headlessRow) {
+    // Open the window and block the later detail-panel / select handlers.
+    ev.stopImmediatePropagation();
+    openSessionWindow(headlessRow.dataset.room);
+    return;
+  }
   // Action buttons
   const renameBtn = ev.target.closest('.rename-btn');
   if (renameBtn) {
