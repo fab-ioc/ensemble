@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ensemble: start/stop/restart/status the Claude session dashboard.
+# ensemble: start/stop/restart/status the Ensemble agent dashboard.
 #
 # Usage:
 #   ensemble start [--port N]
@@ -14,7 +14,7 @@
 #   Logs:     ~/Library/Logs/ensemble.log
 #
 # Tip: symlink this script onto your PATH so you can run it from anywhere:
-#   ln -s "$(pwd)/ensemble" ~/.claude/bin/
+#   ln -s "$(pwd)/ensemble" ~/.local/bin/
 
 set -euo pipefail
 
@@ -66,6 +66,15 @@ cmd_start() {
   if [[ ! -f "$SCRIPT" ]]; then
     echo "error: $SCRIPT not found" >&2
     exit 1
+  fi
+  # Ensure the headless-PTY dependency (ptyprocess) is installed for this python3;
+  # without it, launching an agent fails. --break-system-packages covers PEP 668
+  # (externally-managed) Pythons (homebrew / recent macOS).
+  if ! python3 -c "import ptyprocess" 2>/dev/null; then
+    echo "Installing dependencies (ptyprocess)…"
+    python3 -m pip install --user -r "$DIR/requirements.txt" 2>/dev/null \
+      || python3 -m pip install --user --break-system-packages -r "$DIR/requirements.txt" \
+      || echo "warning: could not auto-install ptyprocess — run 'python3 -m pip install -r $DIR/requirements.txt'" >&2
   fi
   # Detach: new session via setsid-equivalent (`nohup` + `&` + `disown`), redirect stdio.
   nohup python3 "$SCRIPT" --port "$PORT" >>"$LOG" 2>&1 </dev/null &

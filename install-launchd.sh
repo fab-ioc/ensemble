@@ -33,6 +33,15 @@ case "$action" in
       exit 1
     fi
 
+    # Install the headless-PTY dependency (ptyprocess) for this python3.
+    REQ="$DIR/requirements.txt"
+    if [[ -f "$REQ" ]]; then
+      echo "Installing Python dependencies…"
+      "$PYTHON" -m pip install --user -r "$REQ" 2>/dev/null \
+        || "$PYTHON" -m pip install --user --break-system-packages -r "$REQ" \
+        || echo "warning: pip install failed — run '$PYTHON -m pip install -r $REQ' manually" >&2
+    fi
+
     mkdir -p "$(dirname "$PLIST")" "$(dirname "$LOG")"
 
     sed \

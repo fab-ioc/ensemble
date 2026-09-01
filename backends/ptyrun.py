@@ -96,7 +96,12 @@ class PtySession:
             full_env.pop(k, None)
         if IS_WINDOWS:
             _ensure_windows_console()        # ConPTY needs a console (pythonw has none)
-            from winpty import PtyProcess  # lazy: Windows-only dependency
+            try:
+                from winpty import PtyProcess  # lazy: Windows-only dependency
+            except ImportError as e:
+                raise RuntimeError(
+                    "pywinpty is not installed — headless agents need it. Run: "
+                    "py -m pip install -r requirements.txt") from e
             # Pass argv through as-is: pywinpty accepts a str (it shlex-splits,
             # posix=False) or a list (argv[0] resolved via PATH, the rest quoted
             # with list2cmdline). Pre-joining a list to a string would double-
@@ -105,7 +110,12 @@ class PtySession:
                 self.argv, cwd=self.cwd, env=full_env,
                 dimensions=(self.rows, self.cols))
         else:
-            from ptyprocess import PtyProcess  # lazy: Unix dependency (macOS)
+            try:
+                from ptyprocess import PtyProcess  # lazy: Unix dependency (macOS)
+            except ImportError as e:
+                raise RuntimeError(
+                    "ptyprocess is not installed — headless agents need it. Run: "
+                    "python3 -m pip install -r requirements.txt") from e
             argv = self.argv if isinstance(self.argv, list) else [self.argv]
             self._proc = PtyProcess.spawn(
                 argv, cwd=self.cwd, env=full_env,
