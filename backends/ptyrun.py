@@ -86,6 +86,14 @@ class PtySession:
 
     def _spawn(self, env):
         full_env = {**os.environ, **(env or {})}
+        # Never propagate our own Claude Code child-session markers to a spawned
+        # agent. Inheriting CLAUDE_CODE_CHILD_SESSION makes the agent think it's a
+        # nested child session and turns its transcript saving OFF — so the
+        # dashboard can't see the agent's history/cost or resume it. A
+        # dashboard-launched agent must be its own top-level session. (Harmless
+        # for non-Claude agents, which ignore these vars.)
+        for k in [k for k in full_env if k.startswith("CLAUDE_CODE_CHILD")]:
+            full_env.pop(k, None)
         if IS_WINDOWS:
             _ensure_windows_console()        # ConPTY needs a console (pythonw has none)
             from winpty import PtyProcess  # lazy: Windows-only dependency
