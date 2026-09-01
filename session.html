@@ -224,9 +224,12 @@ function mountTerm(el, ptyId) {
     if (e.type !== 'keydown' || !(e.ctrlKey && e.shiftKey)) return true;
     if (e.code === 'KeyC') {
       const sel = term.getSelection();
-      if (sel) { navigator.clipboard.writeText(sel).catch(() => {}); return false; }
+      if (sel) { e.preventDefault(); navigator.clipboard.writeText(sel).catch(() => {}); return false; }
     }
     if (e.code === 'KeyV') {
+      // preventDefault stops the browser's OWN paste action — without it the
+      // clipboard lands twice (once here, once via xterm's native paste event).
+      e.preventDefault();
       navigator.clipboard.readText().then(t => term.paste(t)).catch(() => {});
       return false;
     }
