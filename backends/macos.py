@@ -14,6 +14,7 @@ from .base import (
     Backend, CS_ROOT, ICON_CACHE_DIR, NUMBERED_RE, PRESETS_DIR, app_slug,
 )
 from .shared import SESS_DIR, claude_cmd, load_geometries, save_geometry
+from . import themes
 
 # shlex only needed to quote the initial prompt for the shell `write text` call.
 import os
@@ -598,12 +599,19 @@ class MacBackend(Backend):
     # ---------- themes ----------
 
     def list_themes(self) -> list[dict]:
-        if not PRESETS_DIR.is_dir():
-            return []
-        return [
-            {"name": p.stem, "file": p.name}
-            for p in sorted(PRESETS_DIR.glob("*.itermcolors"))
-        ]
+        # iTerm `.itermcolors` presets (for theming a real iTerm tab) PLUS the
+        # cross-platform built-in palette (used to recolor the headless chat
+        # window, so the picker works even with no presets installed).
+        out: list[dict] = []
+        seen: set[str] = set()
+        if PRESETS_DIR.is_dir():
+            for p in sorted(PRESETS_DIR.glob("*.itermcolors")):
+                out.append({"name": p.stem, "file": p.name})
+                seen.add(p.stem.lower())
+        for n in themes.names():
+            if n.lower() not in seen:
+                out.append({"name": n, "file": n})
+        return out
 
     def current_theme_for_cwd(self, cwd: str) -> str:
         """Read the active preset from <cwd>/.iterm-preset (cs convention).

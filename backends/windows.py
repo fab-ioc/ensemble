@@ -25,6 +25,7 @@ from pathlib import Path
 
 from .base import Backend, DASHBOARD_DIR
 from .shared import AGENT_SESS_DIR, claude_cmd_args
+from . import themes
 
 LAUNCH_DIR = DASHBOARD_DIR / "_launch"
 SCHEME_MARKER = ".wt-scheme"
@@ -173,120 +174,6 @@ _user32.MapVirtualKeyW.argtypes = (wintypes.UINT, wintypes.UINT)
 # Windows Terminal's top-level window class.
 _WT_WINDOW_CLASS = "CASCADIA_HOSTING_WINDOW_CLASS"
 _SW_RESTORE = 9
-
-# Windows Terminal's built-in color schemes (shipped in the app's defaults.json,
-# not the user's settings.json, but usable as --colorScheme values everywhere).
-_WT_BUILTIN_SCHEMES = [
-    "Campbell", "Campbell Powershell", "Vintage",
-    "One Half Dark", "One Half Light",
-    "Solarized Dark", "Solarized Light",
-    "Tango Dark", "Tango Light",
-]
-
-# Color values for the built-in schemes (WT ships these in its defaults.json,
-# not the user's settings.json). Used to recolor the headless chat window, which
-# has no OS terminal tab for --colorScheme to act on. Keys mirror WT's scheme
-# JSON so the same normalizer handles built-ins and user schemes.
-_WT_BUILTIN_COLORS: dict[str, dict] = {
-    "Campbell": {
-        "background": "#0C0C0C", "foreground": "#CCCCCC", "cursorColor": "#FFFFFF",
-        "black": "#0C0C0C", "red": "#C50F1F", "green": "#13A10E", "yellow": "#C19C00",
-        "blue": "#0037DA", "purple": "#881798", "cyan": "#3A96DD", "white": "#CCCCCC",
-        "brightBlack": "#767676", "brightRed": "#E74856", "brightGreen": "#16C60C",
-        "brightYellow": "#F9F1A5", "brightBlue": "#3B78FF", "brightPurple": "#B4009E",
-        "brightCyan": "#61D6D6", "brightWhite": "#F2F2F2",
-    },
-    "Campbell Powershell": {
-        "background": "#012456", "foreground": "#CCCCCC", "cursorColor": "#FFFFFF",
-        "black": "#0C0C0C", "red": "#C50F1F", "green": "#13A10E", "yellow": "#C19C00",
-        "blue": "#0037DA", "purple": "#881798", "cyan": "#3A96DD", "white": "#CCCCCC",
-        "brightBlack": "#767676", "brightRed": "#E74856", "brightGreen": "#16C60C",
-        "brightYellow": "#F9F1A5", "brightBlue": "#3B78FF", "brightPurple": "#B4009E",
-        "brightCyan": "#61D6D6", "brightWhite": "#F2F2F2",
-    },
-    "Vintage": {
-        "background": "#000000", "foreground": "#C0C0C0", "cursorColor": "#FFFFFF",
-        "black": "#000000", "red": "#800000", "green": "#008000", "yellow": "#808000",
-        "blue": "#000080", "purple": "#800080", "cyan": "#008080", "white": "#C0C0C0",
-        "brightBlack": "#808080", "brightRed": "#FF0000", "brightGreen": "#00FF00",
-        "brightYellow": "#FFFF00", "brightBlue": "#0000FF", "brightPurple": "#FF00FF",
-        "brightCyan": "#00FFFF", "brightWhite": "#FFFFFF",
-    },
-    "One Half Dark": {
-        "background": "#282C34", "foreground": "#DCDFE4", "cursorColor": "#DCDFE4",
-        "black": "#282C34", "red": "#E06C75", "green": "#98C379", "yellow": "#E5C07B",
-        "blue": "#61AFEF", "purple": "#C678DD", "cyan": "#56B6C2", "white": "#DCDFE4",
-        "brightBlack": "#5A6374", "brightRed": "#E06C75", "brightGreen": "#98C379",
-        "brightYellow": "#E5C07B", "brightBlue": "#61AFEF", "brightPurple": "#C678DD",
-        "brightCyan": "#56B6C2", "brightWhite": "#DCDFE4",
-    },
-    "One Half Light": {
-        "background": "#FAFAFA", "foreground": "#383A42", "cursorColor": "#383A42",
-        "black": "#383A42", "red": "#E45649", "green": "#50A14F", "yellow": "#C18401",
-        "blue": "#0184BC", "purple": "#A626A4", "cyan": "#0997B3", "white": "#FAFAFA",
-        "brightBlack": "#4F525D", "brightRed": "#E06C75", "brightGreen": "#98C379",
-        "brightYellow": "#E5C07B", "brightBlue": "#61AFEF", "brightPurple": "#C678DD",
-        "brightCyan": "#56B6C2", "brightWhite": "#FFFFFF",
-    },
-    "Solarized Dark": {
-        "background": "#002B36", "foreground": "#839496", "cursorColor": "#839496",
-        "black": "#002B36", "red": "#DC322F", "green": "#859900", "yellow": "#B58900",
-        "blue": "#268BD2", "purple": "#D33682", "cyan": "#2AA198", "white": "#EEE8D5",
-        "brightBlack": "#073642", "brightRed": "#CB4B16", "brightGreen": "#586E75",
-        "brightYellow": "#657B83", "brightBlue": "#839496", "brightPurple": "#6C71C4",
-        "brightCyan": "#93A1A1", "brightWhite": "#FDF6E3",
-    },
-    "Solarized Light": {
-        "background": "#FDF6E3", "foreground": "#657B83", "cursorColor": "#657B83",
-        "black": "#073642", "red": "#DC322F", "green": "#859900", "yellow": "#B58900",
-        "blue": "#268BD2", "purple": "#D33682", "cyan": "#2AA198", "white": "#EEE8D5",
-        "brightBlack": "#002B36", "brightRed": "#CB4B16", "brightGreen": "#586E75",
-        "brightYellow": "#657B83", "brightBlue": "#839496", "brightPurple": "#6C71C4",
-        "brightCyan": "#93A1A1", "brightWhite": "#FDF6E3",
-    },
-    "Tango Dark": {
-        "background": "#000000", "foreground": "#D3D7CF", "cursorColor": "#FFFFFF",
-        "black": "#000000", "red": "#CC0000", "green": "#4E9A06", "yellow": "#C4A000",
-        "blue": "#3465A4", "purple": "#75507B", "cyan": "#06989A", "white": "#D3D7CF",
-        "brightBlack": "#555753", "brightRed": "#EF2929", "brightGreen": "#8AE234",
-        "brightYellow": "#FCE94F", "brightBlue": "#729FCF", "brightPurple": "#AD7FA8",
-        "brightCyan": "#34E2E2", "brightWhite": "#EEEEEC",
-    },
-    "Tango Light": {
-        "background": "#FFFFFF", "foreground": "#555753", "cursorColor": "#000000",
-        "black": "#000000", "red": "#CC0000", "green": "#4E9A06", "yellow": "#C4A000",
-        "blue": "#3465A4", "purple": "#75507B", "cyan": "#06989A", "white": "#D3D7CF",
-        "brightBlack": "#555753", "brightRed": "#EF2929", "brightGreen": "#8AE234",
-        "brightYellow": "#FCE94F", "brightBlue": "#729FCF", "brightPurple": "#AD7FA8",
-        "brightCyan": "#34E2E2", "brightWhite": "#EEEEEC",
-    },
-}
-
-
-def _normalize_scheme(s: dict) -> dict:
-    """Map a Windows-Terminal scheme dict to the chat window's color keys
-    (purple→magenta, cursorColor→cursor)."""
-    if not isinstance(s, dict):
-        return {}
-    def g(*keys):
-        for k in keys:
-            v = s.get(k)
-            if isinstance(v, str) and v:
-                return v
-        return ""
-    return {
-        "background": g("background"), "foreground": g("foreground"),
-        "cursor": g("cursorColor", "cursor"),
-        "selection": g("selectionBackground", "selection"),
-        "black": g("black"), "red": g("red"), "green": g("green"),
-        "yellow": g("yellow"), "blue": g("blue"),
-        "magenta": g("purple", "magenta"), "cyan": g("cyan"), "white": g("white"),
-        "brightBlack": g("brightBlack"), "brightRed": g("brightRed"),
-        "brightGreen": g("brightGreen"), "brightYellow": g("brightYellow"),
-        "brightBlue": g("brightBlue"),
-        "brightMagenta": g("brightPurple", "brightMagenta"),
-        "brightCyan": g("brightCyan"), "brightWhite": g("brightWhite"),
-    }
 
 # ---------- process-tree helpers (Toolhelp32, for Close) ----------
 
@@ -709,10 +596,10 @@ class WindowsBackend(Backend):
     # ---------- themes ----------
 
     def list_themes(self) -> list[dict]:
-        # Merge the user's custom schemes (settings.json) with WT's built-in
-        # schemes — the built-ins live in the app's defaults.json, not the
-        # user's settings, but are all valid `--colorScheme` values.
-        names = set(_read_wt_scheme_names()) | set(_WT_BUILTIN_SCHEMES)
+        # The user's custom WT schemes (settings.json) + the cross-platform
+        # built-in palette. All are valid chat-window themes; WT-native names are
+        # also valid `--colorScheme` values for a real terminal tab.
+        names = set(_read_wt_scheme_names()) | set(themes.names())
         return [{"name": n, "file": n} for n in sorted(names, key=str.lower)]
 
     def current_theme_for_cwd(self, cwd: str) -> str:
@@ -725,16 +612,14 @@ class WindowsBackend(Backend):
 
     def theme_colors(self, name: str) -> dict:
         """Resolve a scheme name to normalized colors for the headless chat
-        window — user schemes from settings.json, else the built-in table."""
+        window — the user's WT schemes (settings.json) first, else the shared
+        built-in palette."""
         if not name:
             return {}
         raw = _read_wt_scheme(name)
         if raw:
-            return _normalize_scheme(raw)
-        for key, val in _WT_BUILTIN_COLORS.items():
-            if key.lower() == name.lower():
-                return _normalize_scheme(val)
-        return {}
+            return themes.normalize(raw)
+        return themes.colors_for(name)
 
     def apply_theme(self, session: dict, theme: str, cwd: str = "") -> str:
         return self.set_theme_for_cwd(cwd, theme)

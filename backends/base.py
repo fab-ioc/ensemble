@@ -19,6 +19,8 @@ import signal
 import time
 from pathlib import Path
 
+from . import themes
+
 HOME = Path.home()
 # Ensemble keeps its own state in a neutral, agent-agnostic home — NOT nested
 # inside any single agent's config dir. (Agent adapters still read each agent's
@@ -202,7 +204,9 @@ class Backend:
     # ---------- themes ----------
 
     def list_themes(self) -> list[dict]:
-        return []
+        # Cross-platform built-in palette — every platform can offer these; a
+        # platform may override to merge its own scheme source (WT / iTerm).
+        return [{"name": n, "file": n} for n in themes.names()]
 
     def apply_theme(self, session: dict, theme: str, cwd: str = "") -> str:
         return "unsupported"
@@ -217,8 +221,8 @@ class Backend:
 
     def theme_colors(self, name: str) -> dict:
         """Resolve a theme/scheme name to normalized colors for the headless
-        chat window. Empty when the backend can't map colors."""
-        return {}
+        chat window, from the cross-platform built-in palette."""
+        return themes.colors_for(name)
 
     def prepare_session_theme(self, target_dir: Path) -> None:
         """Hook for `+ New`: seed a theme marker in a freshly created session dir."""

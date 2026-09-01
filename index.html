@@ -1516,11 +1516,12 @@ function detailActions(r, isLive, isRoom, isOrphan) {
          <button class="delete-btn room-delete" data-room="${esc(r.roomId)}" title="Delete — transcripts, room record, and the ~/cs scratch folder">🗑 Delete</button>`;
     const pinBtn = `<button class="pin-btn ${r.pinned ? 'is-pinned' : ''}" data-sid="${esc(r.sessionId)}" data-pinned="${r.pinned ? 1 : 0}" title="${r.pinned ? 'Unpin from quick-access' : 'Pin this session for quick access'}">${r.pinned ? '📌 Unpin' : '📌 Pin'}</button>`;
     const renameBtn = `<button class="rename-btn" data-sid="${esc(r.sessionId)}" title="Rename this session">✎ Rename</button>`;
+    const autoBtn = `<button class="auto-btn" data-sid="${esc(r.sessionId)}" title="Ask Claude to suggest a label from the conversation">✨ Auto</button>`;
     const finderBtn = cwd ? `<button class="finder-btn" data-path="${esc(cwd)}" title="Open cwd in ${esc(FM())}">📂 ${esc(FM())}</button>` : '';
     const ijBtn = cwd ? `<button class="ij-btn" data-sid="${esc(r.sessionId)}" title="Open the project in its preferred editor">🧠 IDE</button>` : '';
     const themeBtn = (feat('themes') && cwd)
       ? `<button type="button" class="theme-dd-trigger" data-pid="" data-cwd="${esc(cwd)}" data-current="${esc(current)}" title="Pick a color theme for this session">${current ? '🎨 ' + esc(current) : '🎨 Theme…'}</button>` : '';
-    return `<div class="dp-actions"><div class="actions">${lifecycle}${pinBtn}${renameBtn}${finderBtn}${ijBtn}${themeBtn}</div></div>`;
+    return `<div class="dp-actions"><div class="actions">${lifecycle}${pinBtn}${renameBtn}${autoBtn}${finderBtn}${ijBtn}${themeBtn}</div></div>`;
   }
   return `<div class="dp-actions">${actionsCell(r, isLive)}</div>`;
 }

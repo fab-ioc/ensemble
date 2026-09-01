@@ -3424,7 +3424,19 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p.startswith("/api/label/") and p.endswith("/auto"):
             sid = p[len("/api/label/"):-len("/auto")]
-            label = claude_rename(sid)
+            # A room has no transcript of its own — summarise a member's instead
+            # (prefer a Claude member, whose transcript claude_rename can read),
+            # but save the suggested label under the room id.
+            rename_sid = sid
+            if sid.startswith("room-"):
+                rm = chatroom.get_room(sid, public=False)
+                members = chatroom.agent_participants(rm) if rm else []
+                chosen = (next((m for m in members
+                                if m.get("agent") == "claude" and m.get("sessionId")), None)
+                          or next((m for m in members if m.get("sessionId")), None))
+                if chosen:
+                    rename_sid = chosen["sessionId"]
+            label = claude_rename(rename_sid)
             if not label:
                 self._send_json(500, {"error": "rename_failed"})
                 return
