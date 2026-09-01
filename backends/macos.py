@@ -578,9 +578,9 @@ class MacBackend(Backend):
     # ---------- self-update ----------
 
     def self_update(self, install_dir) -> dict:
-        """Spawn `claude-dashboard update` detached so it survives our restart
+        """Spawn `ensemble update` detached so it survives our restart
         (launchctl kickstart -k SIGKILLs us as part of the refresh)."""
-        cli = Path(install_dir) / "claude-dashboard"
+        cli = Path(install_dir) / "ensemble"
         if not cli.exists():
             return {"started": False, "error": f"{cli} not found"}
         try:

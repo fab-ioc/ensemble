@@ -14,13 +14,25 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import signal
 import time
 from pathlib import Path
 
 HOME = Path.home()
-DASHBOARD_DIR = HOME / ".claude" / "dashboard"
-PRESETS_DIR = HOME / ".claude" / "iterm-presets"   # macOS / iTerm only
+# Ensemble keeps its own state in a neutral, agent-agnostic home — NOT nested
+# inside any single agent's config dir. (Agent adapters still read each agent's
+# own data, e.g. ~/.claude/projects or ~/.codex/sessions.)
+DASHBOARD_DIR = HOME / ".ensemble"
+_LEGACY_DASHBOARD_DIR = HOME / ".claude" / "dashboard"
+# One-time migration from the old Claude-nested location, so existing rooms,
+# labels, pins, categories and the agent registry carry over on first run.
+if not DASHBOARD_DIR.exists() and _LEGACY_DASHBOARD_DIR.exists():
+    try:
+        shutil.move(str(_LEGACY_DASHBOARD_DIR), str(DASHBOARD_DIR))
+    except OSError:
+        pass
+PRESETS_DIR = DASHBOARD_DIR / "iterm-presets"   # macOS / iTerm only
 CS_ROOT = HOME / "cs"
 EDITOR_MAP_FILE = DASHBOARD_DIR / "editors.json"
 ICON_CACHE_DIR = DASHBOARD_DIR / "static" / "editors"

@@ -670,26 +670,26 @@ class WindowsBackend(Backend):
 
     def self_update(self, install_dir) -> dict:
         """git fetch+reset the install dir, then restart the server. If we're
-        running under the ClaudeDashboard scheduled task, bouncing the task
-        kills this process and relaunches it windowless; otherwise fall back to
-        `claude-dashboard.ps1 restart`. Runs detached so it survives our exit."""
+        running under the Ensemble scheduled task, bouncing the task kills this
+        process and relaunches it windowless; otherwise fall back to
+        `ensemble.ps1 restart`. Runs detached so it survives our exit."""
         install_dir = Path(install_dir)
         shell = shutil.which("pwsh") or shutil.which("powershell")
         if not shell:
             return {"started": False, "error": "PowerShell not found"}
         LAUNCH_DIR.mkdir(parents=True, exist_ok=True)
         script_path = LAUNCH_DIR / f"update-{uuid.uuid4().hex}.ps1"
-        ps1 = install_dir / "claude-dashboard.ps1"
+        ps1 = install_dir / "ensemble.ps1"
         body = (
             f"Set-Location -LiteralPath {_ps_quote(str(install_dir))}\n"
             "git fetch --quiet 2>$null\n"
             "$up = (git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>$null)\n"
             "if ($up) { git reset --hard $up 2>$null }\n"
-            "$t = Get-ScheduledTask -TaskName ClaudeDashboard -ErrorAction SilentlyContinue\n"
+            "$t = Get-ScheduledTask -TaskName Ensemble -ErrorAction SilentlyContinue\n"
             "if ($t) {\n"
-            "  try { Stop-ScheduledTask -TaskName ClaudeDashboard -ErrorAction SilentlyContinue } catch {}\n"
+            "  try { Stop-ScheduledTask -TaskName Ensemble -ErrorAction SilentlyContinue } catch {}\n"
             "  Start-Sleep -Seconds 1\n"
-            "  Start-ScheduledTask -TaskName ClaudeDashboard\n"
+            "  Start-ScheduledTask -TaskName Ensemble\n"
             f"}} elseif (Test-Path {_ps_quote(str(ps1))}) {{\n"
             f"  & {_ps_quote(str(ps1))} restart\n"
             "}\n"

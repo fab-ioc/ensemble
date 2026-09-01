@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 """
-claude-dashboard: web dashboard for Claude Code sessions.
+Ensemble: a multi-agent collaboration & coordination dashboard for coding agents.
+
+Drives and coordinates multiple coding agents (Claude Code, Codex, …) — running
+them headless, letting them collaborate through a shared room, and managing every
+session from one surface. Agent-agnostic: each agent is a pluggable adapter.
 
 Run:
     python3 dashboard.py [--port 8765]
 
 Then open http://127.0.0.1:8765 in Chrome.
 
-Data sources mirror ~/.claude/bin/claude-sessions:
+Per-agent data is read from each agent's own store, e.g. for Claude:
   ~/.claude/sessions/<pid>.json               — one per running session (live state)
   ~/.claude/projects/<slug>/<session-id>.jsonl — full transcripts (history)
+Ensemble's own state lives in ~/.ensemble.
 """
 from __future__ import annotations
 
@@ -111,9 +116,9 @@ STATIC_DIR = Path(__file__).parent
 # Default log location per platform (macOS keeps the historical ~/Library/Logs
 # path; Windows/Linux log under the dashboard state dir, matching the CLIs).
 if sys.platform == "darwin":
-    DEFAULT_LOG_FILE = HOME / "Library" / "Logs" / "claude-dashboard.log"
+    DEFAULT_LOG_FILE = HOME / "Library" / "Logs" / "ensemble.log"
 else:
-    DEFAULT_LOG_FILE = DASHBOARD_DIR / "logs" / "claude-dashboard.log"
+    DEFAULT_LOG_FILE = DASHBOARD_DIR / "logs" / "ensemble.log"
 _LOG_FILE = None  # set by main() when --log is passed
 # HOME, DASHBOARD_DIR, PRESETS_DIR, CS_ROOT, _NUMBERED_RE come from backends.base;
 # SESS_DIR, RENAME_WORKSPACE, GEOMETRIES_FILE from backends.shared.
@@ -739,7 +744,7 @@ def rename_session_folder(cwd: str, new_slug: str) -> tuple[bool, str, str]:
     return True, str(new_path), "ok"
 
 
-RENAME_PROMPT_PREFIX = "[claude-dashboard-rename] "
+RENAME_PROMPT_PREFIX = "[ensemble-rename] "
 
 _CLAUDE_BIN: str | None = None
 
@@ -2726,7 +2731,7 @@ class Handler(BaseHTTPRequestHandler):
             return ok({
                 "protocolVersion": params.get("protocolVersion", "2025-06-18"),
                 "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {"name": "claude-dashboard-chat", "version": "1.0"},
+                "serverInfo": {"name": "ensemble-chat", "version": "1.0"},
             })
         if method is not None and method.startswith("notifications/"):
             return None  # notifications get no JSON-RPC response
@@ -3453,7 +3458,7 @@ def main():
     if cleaned:
         print(f"cleaned up {cleaned} rename artifact session(s)", flush=True)
     srv = ThreadingHTTPServer(addr, Handler)
-    print(f"claude-dashboard [{BACKEND.os_name}]: http://{addr[0]}:{addr[1]}", flush=True)
+    print(f"ensemble [{BACKEND.os_name}]: http://{addr[0]}:{addr[1]}", flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

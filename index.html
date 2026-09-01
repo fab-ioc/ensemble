@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>claude dashboard</title>
+<title>Ensemble</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 0 C13 8 16 11 24 12 C16 13 13 16 12 24 C11 16 8 13 0 12 C8 11 11 8 12 0 Z' fill='%23D97757'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1058,7 +1058,7 @@
 </div>
 <div id="update-overlay" hidden>
   <div class="update-modal">
-    <h3>Updating claude-dashboard</h3>
+    <h3>Updating Ensemble</h3>
     <div class="update-progress"><div class="update-progress-bar"></div></div>
     <p class="update-stage" id="update-stage">Fetching from origin…</p>
     <p class="update-hint">The server will restart and the page will reload automatically.</p>
@@ -1068,9 +1068,13 @@
   <button id="sidebar-toggle" title="Toggle sidebar" aria-label="Toggle sidebar">☰</button>
   <h1>
     <svg class="logo" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <path d="M12 0 C13 8 16 11 24 12 C16 13 13 16 12 24 C11 16 8 13 0 12 C8 11 11 8 12 0 Z" fill="#D97757"/>
+      <path d="M12 5 L5.5 18 M12 5 L18.5 18 M5.5 18 L18.5 18" fill="none"
+            stroke="var(--accent)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+      <circle cx="12" cy="5" r="2.7" fill="var(--accent)"/>
+      <circle cx="5.5" cy="18" r="2.7" fill="var(--accent)"/>
+      <circle cx="18.5" cy="18" r="2.7" fill="var(--accent)"/>
     </svg>
-    claude dashboard
+    Ensemble
   </h1>
   <button id="new-btn" title="Create a new ~/cs/NN_<slug> session and open it in iTerm">+ New</button>
   <div class="search-wrap">
@@ -2027,7 +2031,7 @@ async function triggerUpdate() {
   UPDATE_IN_PROGRESS = false;
   if (overlay) overlay.hidden = true;
   if (banner) banner.hidden = false;
-  toast('update timed out — check `claude-dashboard logs`', 6000, 'err');
+  toast('update timed out — check `ensemble logs`', 6000, 'err');
 }
 function renderRuntimeConfig() {
   if (!RUNTIME_CFG) return;
@@ -2061,7 +2065,7 @@ function renderRuntimeConfig() {
       h1.appendChild(badge);
     }
     badge.textContent = c.instance;
-    document.title = `claude dashboard [${c.instance}]`;
+    document.title = `Ensemble [${c.instance}]`;
   }
 }
 
