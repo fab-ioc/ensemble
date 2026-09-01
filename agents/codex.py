@@ -195,6 +195,34 @@ class CodexAgent(AgentType):
             pass
         return ""
 
+    def delete_session(self, session_id: str) -> list[str]:
+        """Remove every rollout file belonging to ``session_id`` (a resumed
+        session writes several under the same id). Returns the deleted paths;
+        empty when nothing matched. Used by the dashboard's unified Delete so a
+        removed collaboration doesn't resurface as a Codex history row."""
+        removed: list[str] = []
+        root = self.sessions_dir()
+        if not session_id or not root.exists():
+            return removed
+        for f in root.glob("*/*/*/rollout-*.jsonl"):
+            s = _parse_rollout(f)
+            if s is not None and s.session_id == session_id:
+                try:
+                    f.unlink()
+                    removed.append(str(f))
+                except OSError:
+                    pass
+        return removed
+
+    def cwd_for_session(self, session_id: str) -> str:
+        """The cwd a rollout ran in, for the given session id (best-effort)."""
+        if not session_id:
+            return ""
+        for s in self.list_sessions(limit=400):
+            if s.session_id == session_id:
+                return s.cwd or ""
+        return ""
+
     def resume_argv(self, session_id: str,
                     extra: list[str] | None = None) -> list[str]:
         argv = ["codex", "resume", session_id]

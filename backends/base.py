@@ -203,6 +203,11 @@ class Backend:
     def current_theme_for_cwd(self, cwd: str) -> str:
         return ""
 
+    def theme_colors(self, name: str) -> dict:
+        """Resolve a theme/scheme name to normalized colors for the headless
+        chat window. Empty when the backend can't map colors."""
+        return {}
+
     def prepare_session_theme(self, target_dir: Path) -> None:
         """Hook for `+ New`: seed a theme marker in a freshly created session dir."""
         return None

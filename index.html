@@ -650,6 +650,38 @@
     font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; word-wrap: break-word;
     font-family: ui-monospace, "SF Mono", monospace;
   }
+  /* Collapsible "Details" disclosure — restores the full session metadata
+     without letting it crowd out the conversation. */
+  .dp-details { border: 1px solid var(--border); border-radius: 8px; padding: 0 12px; }
+  .dp-details > summary {
+    cursor: pointer; padding: 8px 0; list-style: none;
+    font-size: 10.5px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--muted-2);
+  }
+  .dp-details > summary::-webkit-details-marker { display: none; }
+  .dp-details > summary::before { content: '▸ '; color: var(--muted-2); }
+  .dp-details[open] > summary::before { content: '▾ '; }
+  .dp-details[open] { padding-bottom: 12px; }
+  .dp-details .dp-section + .dp-section { margin-top: 14px; }
+  .dp-conv-empty { font-size: 12px; color: var(--muted-2); font-style: italic; }
+  /* Chat-window theming: the chosen terminal scheme recolors the conversation
+     surface (background/foreground), scoped so the dashboard chrome stays put. */
+  .dp-conv.themed { background: var(--chat-bg); color: var(--chat-fg);
+    border: 1px solid color-mix(in srgb, var(--chat-fg) 16%, var(--chat-bg));
+    border-radius: 10px; padding: 12px 14px; }
+  .dp-conv.themed > h3 { color: var(--chat-fg); opacity: .6; }
+  .dp-conv.themed .dp-conv-empty { color: var(--chat-fg); opacity: .6; }
+  .dp-conv.themed .tx-turn { background: color-mix(in srgb, var(--chat-fg) 7%, var(--chat-bg));
+    border-left-color: var(--chat-accent); }
+  .dp-conv.themed .tx-turn.user { border-left-color: var(--chat-accent); }
+  .dp-conv.themed .tx-turn .tx-text { color: var(--chat-fg); }
+  .dp-conv.themed .tx-turn .tx-role { color: var(--chat-accent); }
+  .dp-conv.themed .tx-turn .tx-ts { color: var(--chat-fg); opacity: .5; }
+  /* Live embed: the header/meta/actions chrome sits in a padded band above the
+     flush /session iframe. */
+  .dp-live { display: flex; flex-direction: column; gap: 10px; padding: 16px 18px 12px; border-bottom: 1px solid var(--border); }
+  #detail-panel:has(iframe.dp-session) { gap: 0; }
+  #detail-panel:has(iframe.dp-session) .dp-live .dp-head { padding: 0; }
   .dp-actions { display: flex; flex-wrap: wrap; gap: 6px; }
   .dp-actions button, .dp-actions select {
     background: var(--bg); border: 1px solid var(--border);
@@ -1053,6 +1085,7 @@
     <button data-mode="pinned" class="active">📌 Pinned</button>
     <button data-mode="history" class="active">History</button>
     <button data-mode="archived" title="Show archived sessions">🗄 Archived</button>
+    <button id="ext-toggle" title="Hide sessions run outside the dashboard (cwd not under ~/cs)">🏠 Workspace only</button>
   </div>
   <span id="status" hidden></span>
   <span id="meta"></span>
@@ -1272,6 +1305,8 @@ function actionsCell(r, isLive) {
 let ALL_ROWS = [];
 let SEARCH_QUERY = '';
 let FILTERS = new Set(['live', 'pinned', 'history']); // multi-select
+// When on, hide sessions run outside the dashboard (cwd not under ~/cs).
+let HIDE_EXTERNAL = localStorage.getItem('cd-hide-external') === '1';
 // Category sidebar selection. Sentinel values: '__all__' (everything),
 // '__uncat__' (no category); anything else is the literal category name.
 let SELECTED_CAT = localStorage.getItem('cd-cat') || '__all__';
@@ -1326,17 +1361,23 @@ const detailWMax = () => Math.max(DETAIL_W_MIN, Math.floor(window.innerWidth * 0
 
 function openDetail(sid) {
   if (sid !== SELECTED_SID) {
-    // Selecting a different session — drop any expanded transcript.
+    // Selecting a different session — drop any cached conversation/cost.
     TRANSCRIPT_SID = null;
     TRANSCRIPT_DATA = null;
     COST_DETAIL_SID = null;
     COST_DETAIL_DATA = null;
+    CONV_SID = null;
+    CONV_DATA = null;
+    CHAT_THEME = null;
   }
   SELECTED_SID = sid;
+  const p = $('#detail-panel'); if (p) p.dataset.sig = '';
   document.body.classList.add('detail-open');
   renderDetail();
   renderRows();
   loadCostDetail(sid);
+  const row = ALL_ROWS.find(x => x.sessionId === sid);
+  loadChatTheme(row ? row.cwd : '');
 }
 
 let COST_DETAIL_SID = null;
@@ -1383,135 +1424,105 @@ function closeDetail() {
   SELECTED_SID = null;
   TRANSCRIPT_SID = null;
   TRANSCRIPT_DATA = null;
+  CONV_SID = null;
+  CONV_DATA = null;
+  const p = $('#detail-panel'); if (p) p.dataset.sig = '';
   document.body.classList.remove('detail-open');
   renderRows();
 }
 
-// The docked view of a headless session: the SAME /session page embedded in the
-// panel. Idempotent — refresh() re-renders the panel every 2s, so we keep the
-// iframe (and its live terminals) instead of reloading it.
-function renderHeadlessDetail(r, panel) {
-  if (r.orphan) {
-    // No live room — show a summary; resuming is an explicit action, not a
-    // side effect of selecting the row.
-    panel.innerHTML = `
-      <div class="dp-head"><h2>${esc(r.label || 'session')}</h2><button class="dp-close" title="Close">×</button></div>
-      <div style="padding:14px; display:flex; flex-direction:column; gap:10px">
-        <div class="dp-meta">${(r.members || []).map(m => `<span class="chip">${esc(m.agent)}${m.model ? ' · ' + esc(m.model) : ''}</span>`).join('')}</div>
-        <div style="font-size:12px; color:var(--muted); word-break:break-all">${esc(r.cwd || '')}</div>
-        <p style="font-size:12.5px; color:var(--muted); margin:0">This collaboration has ended and its agents aren't running. Resume it to continue where it left off.</p>
-        <div><button class="orphan-open" data-grp="${esc(r.sessionId)}">▶ Open (resume)</button></div>
-      </div>`;
-    return;
-  }
-  const existing = panel.querySelector('iframe.dp-session');
-  if (existing && existing.dataset.room === r.roomId) {
-    const h = panel.querySelector('.dp-head h2');
-    if (h) h.textContent = r.label || r.roomId;
-    return;
-  }
-  panel.innerHTML = `
-    <div class="dp-head">
-      <h2>${esc(r.label || r.roomId)}</h2>
-      <button class="dp-popout" data-room="${esc(r.roomId)}" title="Pop out to a floating window">⧉ Pop out</button>
-      <button class="dp-close" title="Close">×</button>
-    </div>
-    <iframe class="dp-session" data-room="${esc(r.roomId)}" src="/session?id=${encodeURIComponent(r.roomId)}" title="session"></iframe>`;
-}
+// --- Unified session detail --------------------------------------------------
+// One detail view for EVERY row — 1 agent or N, live or not, room or legacy.
+// Structure is always the same: header, meta pills, action bar, a collapsible
+// Details disclosure, and the conversation (history bubbles, or the live
+// /session embed when running). Only the conversation's data source and the
+// action set vary. renderDetail() runs on every 2s poll, so it guards on a
+// signature to avoid clobbering the live iframe (and resetting scroll).
 
-async function toggleTranscript() {
-  if (!SELECTED_SID) return;
-  if (TRANSCRIPT_SID === SELECTED_SID) {
-    TRANSCRIPT_SID = null;
-    TRANSCRIPT_DATA = null;
-    renderDetail();
-    return;
-  }
+let CONV_SID = null;    // sessionId whose conversation history is loaded
+let CONV_DATA = null;   // { items: [{who,to,text,ts}] }
+let CHAT_THEME = null;  // resolved scheme colors for the selected session's chat
+
+// Fetch the chosen color scheme for a session's cwd and recolor the history
+// conversation to match (the live view themes itself inside /session). Applied
+// to the conversation surface only, so the dashboard chrome stays put.
+async function loadChatTheme(cwd) {
+  if (!cwd) { CHAT_THEME = null; return; }
   try {
-    const data = await api('/api/session/' + SELECTED_SID + '?full=1');
-    TRANSCRIPT_SID = SELECTED_SID;
-    TRANSCRIPT_DATA = data;
-    renderDetail();
-  } catch (e) {
-    toast('failed to load transcript: ' + e.message, 4000, 'err');
-  }
+    const t = await fetch('/api/theme-colors?cwd=' + encodeURIComponent(cwd)).then(r => r.json());
+    CHAT_THEME = (t && t.colors && t.colors.background && t.colors.foreground) ? t.colors : null;
+  } catch (e) { CHAT_THEME = null; }
+  const p = $('#detail-panel'); if (p) p.dataset.sig = '';
+  if (SELECTED_SID) renderDetail();
 }
 
-// Compact, consistent detail for any NOT-running session (a single-agent
-// history session, same shape as a multi-agent one): header, cwd, ▶ Open to
-// resume headless, and an optional conversation view. No launching on select.
-function renderNotRunningDetail(r, panel) {
-  const now = Date.now() / 1000;
-  const title = r.label || r.first
+function detailTitle(r) {
+  return r.label || r.first
     || ((r.cwd || '').split(/[\\/]/).pop().replace(/^\d+_/, '').replace(/_/g, ' '))
-    || r.sessionId.slice(0, 8);
-  panel.innerHTML = `
-    <div class="dp-head"><h2>${esc(title)}</h2><button class="dp-close" title="Close (Esc)">×</button></div>
-    <div class="dp-meta">
-      ${r.agent ? `<span class="chip">${esc(r.agent)}</span>` : ''}
-      <span class="chip">${r.turns || 0} turns</span>
-      <span class="chip">${fmtAgo(now - r.updatedAt)} ago</span>
-      <span class="chip mono">${esc(r.sessionId.slice(0, 8))}</span>
-      ${r.pinned ? '<span class="chip pinned">📌 pinned</span>' : ''}
-      ${r.category ? `<span class="chip category">📁 ${esc(r.category)}</span>` : ''}
-    </div>
-    ${r.cwd ? `<div class="dp-section"><h3>cwd</h3><div class="dp-cwd" title="${esc(r.cwd)}">${esc(tildeify(r.cwd))}</div></div>` : ''}
-    <div class="dp-actions"><div class="actions">
-      <button class="open-btn" data-sid="${esc(r.sessionId)}" data-cwd="${esc(r.cwd)}" data-agent="${esc(r.agent || '')}" data-label="${esc(r.label || '')}" title="Open headless (no terminal window)">▶ Open</button>
-      <button class="terminal-btn" data-sid="${esc(r.sessionId)}" data-cwd="${esc(r.cwd)}" data-agent="${esc(r.agent || '')}" title="Open in a real terminal window">🖥 Terminal</button>
-      <button class="rename-btn" data-sid="${esc(r.sessionId)}" title="Rename">✎ Rename</button>
-      <button class="delete-btn" data-sid="${esc(r.sessionId)}" title="Delete transcript">🗑 Delete</button>
-    </div></div>
-    <div class="dp-section">
-      <button id="dp-transcript-toggle" style="background: var(--bg); border: 1px solid var(--border); padding: 6px 12px; border-radius: 6px; cursor: pointer; font: inherit; font-size: 12px; color: var(--fg); font-weight: 500;">
-        ${TRANSCRIPT_SID === r.sessionId ? '▲ Hide conversation' : '📜 Show conversation'}
-      </button>
-    </div>
-    ${TRANSCRIPT_SID === r.sessionId && TRANSCRIPT_DATA ? `
-    <div class="dp-section"><div class="dp-transcript">
-      ${TRANSCRIPT_DATA.turns.map(t => `
-        <div class="tx-turn ${esc(t.role || 'user')}">
-          <span class="tx-role">${esc(t.role || 'user')}<span class="tx-ts">${esc((t.timestamp || '').slice(0, 19).replace('T', ' '))}</span></span>
-          <div class="tx-text">${esc(t.text)}</div>
-        </div>`).join('')}
-    </div></div>` : ''}`;
+    || (r.sessionId || '').replace(/^grp:/, '').slice(0, 8) || 'session';
 }
 
-function renderDetail() {
-  const sid = SELECTED_SID;
-  if (!sid) { closeDetail(); return; }
-  const r = ALL_ROWS.find(x => x.sessionId === sid);
-  const panel = $('#detail-panel');
-  if (!r) { panel.innerHTML = `<div class="dp-head"><h2>Session not found</h2><button class="dp-close">×</button></div>`; return; }
-  if (r.headless) { renderHeadlessDetail(r, panel); return; }
-  // A not-running legacy session shows the SAME compact summary as any other
-  // not-running session — select shows detail, ▶ Open resumes it headless.
-  if (!r.isLive) { renderNotRunningDetail(r, panel); return; }
-  const now = Date.now() / 1000;
-  const pills = [];
-  if (r.isLive) pills.push(`<span class="chip ${r.status === 'busy' ? 'busy' : 'live'}">${r.status === 'busy' ? '✻ busy' : '● live'}</span>`);
-  else pills.push(`<span class="chip">historical</span>`);
-  if (r.pinned) pills.push(`<span class="chip pinned">📌 pinned</span>`);
-  if (r.archived) pills.push(`<span class="chip">🗄 archived</span>`);
-  if (r.category) pills.push(`<span class="chip category">📁 ${esc(r.category)}</span>`);
-  pills.push(`<span class="chip">${r.turns || 0} turns</span>`);
-  pills.push(`<span class="chip">${fmtAgo(now - r.updatedAt)} ago</span>`);
-  if (r.isLive) pills.push(`<span class="chip">idle ${fmtAgo(r.idleSeconds)}</span>`);
-  if (r.isLive && r.pid) pills.push(`<span class="chip mono">pid ${r.pid}</span>`);
-  pills.push(`<span class="chip mono">${r.sessionId.slice(0,8)}</span>`);
+function agentBadges(r) {
+  const members = (r.members && r.members.length) ? r.members
+    : (r.agent ? [{ agent: r.agent, model: '', identity: r.agent }] : []);
+  return members.map(m => {
+    const label = m.model ? `${esc(m.agent)} ${esc(m.model)}` : esc(m.agent);
+    return `<span class="badge-agent ${esc(m.agent)}" title="${esc(m.identity || m.agent)}">${label}</span>`;
+  }).join('');
+}
 
-  panel.innerHTML = `
-    <div class="dp-head">
-      <h2>${esc(r.label || r.first || ((r.cwd||'').split('/').pop().replace(/^\d+_/, '').replace(/_/g, ' ')) || '(no turns yet)')}</h2>
+function detailHead(r, isRoom) {
+  return `<div class="dp-head">
+      <h2>${esc(detailTitle(r))}</h2>
+      ${isRoom && r.roomId ? `<button class="dp-popout" data-room="${esc(r.roomId)}" title="Pop out to a floating window">⧉ Pop out</button>` : ''}
       <button class="dp-close" title="Close (Esc)">×</button>
-    </div>
-    <div class="dp-meta">${pills.join('')}</div>
+    </div>`;
+}
 
-    <div class="dp-actions">
-      ${actionsCell(r, r.isLive)}
-    </div>
+function detailMeta(r, isLive, isRoom, now) {
+  const pills = [];
+  pills.push(isLive
+    ? `<span class="chip ${r.status === 'busy' ? 'busy' : 'live'}">${r.status === 'busy' ? '✻ busy' : '● live'}</span>`
+    : `<span class="chip">not running</span>`);
+  if (r.pinned) pills.push(`<span class="chip pinned">📌 pinned</span>`);
+  if (r.category) pills.push(`<span class="chip category">📁 ${esc(r.category)}</span>`);
+  pills.push(`<span class="chip">${r.turns || 0} ${isRoom ? 'msgs' : 'turns'}</span>`);
+  pills.push(`<span class="chip">${fmtAgo(now - r.updatedAt)} ago</span>`);
+  if (isLive && r.idleSeconds != null) pills.push(`<span class="chip">idle ${fmtAgo(r.idleSeconds)}</span>`);
+  if (isLive && r.pid) pills.push(`<span class="chip mono">pid ${r.pid}</span>`);
+  pills.push(`<span class="chip mono">${(r.sessionId || '').replace(/^grp:/, '').slice(0, 8)}</span>`);
+  return `<div class="dp-meta">${agentBadges(r)}${pills.join('')}</div>`;
+}
 
-    ${JIRA_ENABLED ? `<div class="dp-section">
+function detailActions(r, isLive, isRoom, isOrphan) {
+  if (isOrphan) {
+    return `<div class="dp-actions">
+      <button class="open-btn orphan-open" data-grp="${esc(r.sessionId)}" title="Resume this collaboration headless">▶ Open</button>
+      <button class="delete-btn orphan-delete" data-grp="${esc(r.sessionId)}" title="Delete — every agent transcript and the ~/cs scratch folder">🗑 Delete</button>
+    </div>`;
+  }
+  if (isRoom) {
+    const cwd = r.cwd || '';
+    const current = r.currentTheme || '';
+    // Rename and Pin ride the same label/pin sidecars a single-agent session
+    // uses (keyed by the room id), so the shared handlers work unchanged.
+    const lifecycle = isLive
+      ? `<button class="room-end delete-btn" data-room="${esc(r.roomId)}" title="Stop the agent(s), keep the session">✕ End</button>`
+      : `<button class="open-btn room-resume-inline" data-room="${esc(r.roomId)}" title="Relaunch the agent(s) with their conversation">▶ Open</button>
+         <button class="delete-btn room-delete" data-room="${esc(r.roomId)}" title="Delete — transcripts, room record, and the ~/cs scratch folder">🗑 Delete</button>`;
+    const pinBtn = `<button class="pin-btn ${r.pinned ? 'is-pinned' : ''}" data-sid="${esc(r.sessionId)}" data-pinned="${r.pinned ? 1 : 0}" title="${r.pinned ? 'Unpin from quick-access' : 'Pin this session for quick access'}">${r.pinned ? '📌 Unpin' : '📌 Pin'}</button>`;
+    const renameBtn = `<button class="rename-btn" data-sid="${esc(r.sessionId)}" title="Rename this session">✎ Rename</button>`;
+    const finderBtn = cwd ? `<button class="finder-btn" data-path="${esc(cwd)}" title="Open cwd in ${esc(FM())}">📂 ${esc(FM())}</button>` : '';
+    const ijBtn = cwd ? `<button class="ij-btn" data-sid="${esc(r.sessionId)}" title="Open the project in its preferred editor">🧠 IDE</button>` : '';
+    const themeBtn = (feat('themes') && cwd)
+      ? `<button type="button" class="theme-dd-trigger" data-pid="" data-cwd="${esc(cwd)}" data-current="${esc(current)}" title="Pick a color theme for this session">${current ? '🎨 ' + esc(current) : '🎨 Theme…'}</button>` : '';
+    return `<div class="dp-actions"><div class="actions">${lifecycle}${pinBtn}${renameBtn}${finderBtn}${ijBtn}${themeBtn}</div></div>`;
+  }
+  return `<div class="dp-actions">${actionsCell(r, isLive)}</div>`;
+}
+
+function jiraSection(r) {
+  return `<div class="dp-section">
       <h3>Jira</h3>
       <div id="dp-jira-list" style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center;">
         ${(r.jira || []).map(t => `<span class="dp-jira-pill">
@@ -1520,44 +1531,135 @@ function renderDetail() {
         </span>`).join('')}
         <button id="dp-jira-add" title="Link a Jira ticket to this session">+ Link</button>
       </div>
-    </div>` : ''}
+    </div>`;
+}
 
-    ${r.cwd ? `<div class="dp-section">
-      <h3>cwd</h3>
-      <div class="dp-cwd" title="${esc(r.cwd)}">${esc(tildeify(r.cwd))}</div>
-    </div>` : ''}
+// The metadata that used to fill the single-agent panel — restored, but tucked
+// into a collapsible disclosure so it never crowds out the conversation. The
+// open/closed choice is remembered across sessions.
+function detailInfo(r) {
+  const parts = [];
+  if (r.members && r.members.length > 1) {
+    parts.push(`<div class="dp-section"><h3>Participants</h3><div style="display: flex; flex-wrap: wrap; gap: 6px;">${r.members.map(m => `<span class="badge-agent ${esc(m.agent)}" title="${esc(m.identity || '')}">${esc(m.identity || m.agent)}${m.model ? ' · ' + esc(m.model) : ''}</span>`).join('')}</div></div>`);
+  }
+  if (JIRA_ENABLED) parts.push(jiraSection(r));
+  if (r.cwd) parts.push(`<div class="dp-section"><h3>cwd</h3><div class="dp-cwd" title="${esc(r.cwd)}">${esc(tildeify(r.cwd))}</div></div>`);
+  const cost = renderCostSection(r); if (cost) parts.push(cost);
+  if (r.first) parts.push(`<div class="dp-section"><h3>First user turn</h3><div class="dp-quote">${esc(r.first)}</div></div>`);
+  if (r.last && r.last !== r.first) parts.push(`<div class="dp-section"><h3>Last user turn</h3><div class="dp-quote">${esc(r.last)}</div></div>`);
+  const inner = parts.filter(Boolean).join('');
+  if (!inner) return '';
+  let open = true;
+  try { open = localStorage.getItem('cd-details-open') !== '0'; } catch (e) {}
+  return `<details class="dp-details" ${open ? 'open' : ''} ontoggle="try{localStorage.setItem('cd-details-open', this.open?'1':'0')}catch(e){}">
+      <summary>Details</summary>
+      ${inner}
+    </details>`;
+}
 
-    ${renderCostSection(r)}
+function fmtTs(ts) {
+  if (ts == null || ts === '') return '';
+  if (typeof ts === 'number') {
+    try { return new Date(ts * 1000).toISOString().slice(0, 19).replace('T', ' '); } catch (e) { return ''; }
+  }
+  return String(ts).slice(0, 19).replace('T', ' ');
+}
 
-    ${r.first ? `<div class="dp-section">
-      <h3>First user turn</h3>
-      <div class="dp-quote">${esc(r.first)}</div>
-    </div>` : ''}
+// The conversation, rendered the same way for room messages and legacy
+// transcript turns — one bubble style for both.
+function convThemeAttrs() {
+  const c = CHAT_THEME;
+  if (!c || !c.background || !c.foreground) return { cls: '', style: '' };
+  return {
+    cls: ' themed',
+    style: ` style="--chat-bg:${esc(c.background)}; --chat-fg:${esc(c.foreground)}; --chat-accent:${esc(c.blue || c.cyan || c.foreground)}"`,
+  };
+}
+function convBody(r, sid) {
+  const th = convThemeAttrs();
+  if (CONV_SID !== sid || !CONV_DATA) {
+    return `<div class="dp-section dp-conv${th.cls}"${th.style}><h3>Conversation</h3><div class="dp-conv-empty">Loading…</div></div>`;
+  }
+  const items = CONV_DATA.items || [];
+  if (!items.length) {
+    return `<div class="dp-section dp-conv${th.cls}"${th.style}><h3>Conversation</h3><div class="dp-conv-empty">No messages yet.</div></div>`;
+  }
+  const rows = items.map(m => {
+    const who = m.who || 'user';
+    const cls = who === 'user' ? 'user' : 'assistant';
+    const to = (m.to && m.to !== 'all') ? ` → ${esc(m.to)}` : '';
+    const ts = fmtTs(m.ts);
+    return `<div class="tx-turn ${cls}">
+        <span class="tx-role">${esc(who)}${esc(to)}${ts ? `<span class="tx-ts">${esc(ts)}</span>` : ''}</span>
+        <div class="tx-text">${esc(m.text)}</div>
+      </div>`;
+  }).join('');
+  return `<div class="dp-section dp-conv${th.cls}"${th.style}><h3>Conversation · ${items.length}</h3><div class="dp-transcript">${rows}</div></div>`;
+}
 
-    ${r.last && r.last !== r.first ? `<div class="dp-section">
-      <h3>Last user turn</h3>
-      <div class="dp-quote">${esc(r.last)}</div>
-    </div>` : ''}
+// Load the conversation history for the non-embedded body — room messages for a
+// collaboration, the transcript for a legacy session. Shown immediately on
+// select; no Resume needed.
+async function loadConversation(r) {
+  const sid = r.sessionId;
+  try {
+    let items;
+    if (r.headless && r.roomId) {
+      const room = await api('/api/room?id=' + encodeURIComponent(r.roomId));
+      items = (room.messages || []).map(m => ({ who: m.from, to: m.to, text: m.text, ts: m.ts }));
+    } else {
+      const d = await api('/api/session/' + encodeURIComponent(sid) + '?full=1');
+      items = (d.turns || []).map(t => ({ who: t.role || 'user', text: t.text, ts: t.timestamp }));
+    }
+    if (SELECTED_SID !== sid) return;   // selection moved on while loading
+    CONV_SID = sid; CONV_DATA = { items };
+    const panel = $('#detail-panel'); if (panel) panel.dataset.sig = '';
+    renderDetail();
+  } catch (e) { /* keep the "Loading…" placeholder */ }
+}
 
-    <div class="dp-section">
-      <button id="dp-transcript-toggle" style="background: var(--bg); border: 1px solid var(--border); padding: 6px 12px; border-radius: 6px; cursor: pointer; font: inherit; font-size: 12px; color: var(--fg); font-weight: 500;">
-        ${TRANSCRIPT_SID === sid ? '▲ Hide conversation' : '📜 Show full conversation'}
-      </button>
-    </div>
+function renderDetail() {
+  const sid = SELECTED_SID;
+  if (!sid) { closeDetail(); return; }
+  const r = ALL_ROWS.find(x => x.sessionId === sid);
+  const panel = $('#detail-panel');
+  if (!r) {
+    panel.dataset.sig = '';
+    panel.innerHTML = `<div class="dp-head"><h2>Session not found</h2><button class="dp-close">×</button></div>`;
+    return;
+  }
+  const isLive = !!r.isLive;
+  const isRoom = !!(r.headless && r.roomId);
+  const isOrphan = !!r.orphan;
+  const liveEmbed = isLive && isRoom;   // only a room we own can embed a live view
+  const convReady = (CONV_SID === sid && !!CONV_DATA);
+  // Rebuild when identity-affecting fields change too (rename → label, pin), so
+  // the header/actions reflect them without waiting for a reselect.
+  const themeTok = (CHAT_THEME && CHAT_THEME.background) || '-';
+  const base = [sid, isLive ? 1 : 0, r.pinned ? 'p' : '-', r.label || '', themeTok].join('|');
+  const sig = liveEmbed ? base + '|embed' : base + '|hist|' + (convReady ? 'c' : '-');
+  // Nothing changed since the last render — keep the DOM (and the live iframe,
+  // and the conversation scroll position) intact.
+  if (panel.dataset.sig === sig) return;
+  // Kick off the history load once per selection (not for the live embed).
+  if (!liveEmbed && !isOrphan && CONV_SID !== sid) loadConversation(r);
+  panel.dataset.sig = sig;
+  const now = Date.now() / 1000;
 
-    ${TRANSCRIPT_SID === sid && TRANSCRIPT_DATA ? `
-    <div class="dp-section">
-      <h3>Conversation · ${TRANSCRIPT_DATA.turns.length} turns</h3>
-      <div class="dp-transcript">
-        ${TRANSCRIPT_DATA.turns.map(t => `
-          <div class="tx-turn ${esc(t.role || 'user')}">
-            <span class="tx-role">${esc(t.role || 'user')}<span class="tx-ts">${esc((t.timestamp || '').slice(0,19).replace('T',' '))}</span></span>
-            <div class="tx-text">${esc(t.text)}</div>
-          </div>
-        `).join('')}
-      </div>
-    </div>` : ''}
-  `;
+  if (liveEmbed) {
+    panel.innerHTML =
+      `<div class="dp-live">${detailHead(r, isRoom)}${detailMeta(r, isLive, isRoom, now)}${detailActions(r, isLive, isRoom, isOrphan)}</div>`
+      + `<iframe class="dp-session" data-room="${esc(r.roomId)}" src="/session?id=${encodeURIComponent(r.roomId)}&embed=1" title="session"></iframe>`;
+    return;
+  }
+  panel.innerHTML =
+    detailHead(r, isRoom)
+    + detailMeta(r, isLive, isRoom, now)
+    + detailActions(r, isLive, isRoom, isOrphan)
+    + detailInfo(r)
+    + (isOrphan
+        ? `<div class="dp-section"><p style="font-size: 12.5px; color: var(--muted); margin: 0">This collaboration has ended and its agents aren't running. Open to resume where it left off.</p></div>`
+        : convBody(r, sid));
 }
 
 // Single unified layout — list on left, detail panel on right.
@@ -1729,11 +1831,12 @@ function renderHeadlessRow(r, parsed, now) {
   const liveBadge = r.isLive ? '<span class="badge-live">live</span>' : '';
   const actions = r.orphan
     ? `<button class="orphan-open" data-grp="${esc(r.sessionId)}" title="Resume this collaboration headless (its room record is gone)">▶ Open</button>`
+      + `<button class="orphan-delete" data-grp="${esc(r.sessionId)}" title="Delete — every agent transcript and the ~/cs scratch folder">🗑</button>`
     : `<button class="room-open" data-room="${esc(r.roomId)}" title="Open in a floating window">▶ Open ↗</button>`
       + (r.isLive
           ? `<button class="room-end" data-room="${esc(r.roomId)}" title="End — stop the agent(s), keep the session">✕ End</button>`
           : `<button class="room-resume" data-room="${esc(r.roomId)}" title="Resume — relaunch the agent(s) with their conversation">↻ Resume</button>`
-            + `<button class="room-dismiss" data-room="${esc(r.roomId)}" title="Dismiss — remove this session from the list">🗑</button>`);
+            + `<button class="room-delete" data-room="${esc(r.roomId)}" title="Delete — transcripts, room record, and the ~/cs scratch folder">🗑</button>`);
   const actionsTd = DETAIL_MODE ? '' : `<td>${actions}</td>`;
   return `<tr class="row headless ${liveClasses}" data-room="${esc(r.roomId || '')}" data-orphan="${r.orphan ? '1' : ''}" data-sid="${esc(r.sessionId)}" draggable="false">
     <td>${statusDot}</td>
@@ -1783,6 +1886,8 @@ function passesFilter(r) {
   // Sidebar category gate first
   if (SELECTED_CAT === '__uncat__' && r.category) return false;
   if (SELECTED_CAT !== '__all__' && SELECTED_CAT !== '__uncat__' && r.category !== SELECTED_CAT) return false;
+  // Workspace-only: drop sessions run outside the dashboard.
+  if (HIDE_EXTERNAL && r.external) return false;
   // Then the chips
   if (FILTERS.size === 0) return false;
   if (r.archived) return FILTERS.has('archived');
@@ -2470,6 +2575,49 @@ async function adoptOrphan(grpSid) {
   } catch (e) { toast('resume failed: ' + e.message, 5000, 'err'); }
 }
 
+// The ~/cs/<NN_slug> scratch folder a cwd belongs to, for display in the delete
+// confirm. Mirrors the backend's _scratch_root_for; the backend enforces the
+// real safety (a real project folder is never a target).
+function scratchRootOf(cwd) {
+  if (!cwd) return null;
+  const parts = cwd.split(/[\\/]/);
+  const i = parts.map(p => p.toLowerCase()).lastIndexOf('cs');
+  if (i >= 0 && parts[i + 1] && /^\d+_/.test(parts[i + 1])) {
+    return parts.slice(0, i + 2).join('\\');
+  }
+  return null;
+}
+
+// Unified Delete for a collaboration (room) or a grouped orphan: removes the
+// room record + every agent transcript, and the ~/cs scratch folder.
+async function deleteRoom(row) {
+  if (!row) return;
+  const scratch = scratchRootOf(row.cwd || '');
+  const n = (row.members || []).length;
+  let msg = 'This permanently removes:\n'
+    + (row.roomId ? '• the room record\n' : '')
+    + `• ${n || 'all'} agent transcript${n === 1 ? '' : 's'} and dashboard sidecars`;
+  if (scratch) msg += `\n• the working folder ${tildeify(scratch)}`;
+  msg += '\n\nReal project folders are never deleted. There is no undo.';
+  const ok = await showConfirmDialog({
+    title: `Delete “${row.label || row.sessionId}”?`,
+    message: msg, confirmLabel: '🗑 Delete permanently', danger: true,
+  });
+  if (!ok) return;
+  const payload = row.roomId ? { roomId: row.roomId }
+                             : { members: row.members || [], cwd: row.cwd || '' };
+  try {
+    const r = await api('/api/room/delete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const nt = (r.transcripts || []).length, nf = (r.folders || []).length;
+    toast(`deleted (${nt} transcript${nt === 1 ? '' : 's'}${nf ? `, ${nf} folder${nf === 1 ? '' : 's'}` : ''})`, 2600, 'ok');
+    if (SELECTED_SID === row.sessionId) closeDetail();
+    await refresh(); updateRoomsBadge();
+  } catch (e) { toast('delete failed: ' + e.message, 4000, 'err'); }
+}
+
 // Open a collaboration in its own pop-out window (movable to another screen).
 function openSessionWindow(roomId) {
   window.open('/session?id=' + encodeURIComponent(roomId), 'session-' + roomId,
@@ -2600,10 +2748,6 @@ window.addEventListener('message', (ev) => {
   const d = ev.data;
   if (d && d.type === 'dock-session' && d.roomId) openDetail(d.roomId);
 });
-// Toggle full-conversation inside the detail panel
-document.addEventListener('click', (ev) => {
-  if (ev.target.closest('#dp-transcript-toggle')) toggleTranscript();
-});
 document.addEventListener('keydown', (ev) => {
   if (ev.key !== 'Escape') return;
   if (THEME_MENU || $('#modal').open) return;
@@ -2611,6 +2755,14 @@ document.addEventListener('keydown', (ev) => {
 });
 
 $('#filter').addEventListener('click', (ev) => {
+  const tog = ev.target.closest('#ext-toggle');
+  if (tog) {
+    HIDE_EXTERNAL = !HIDE_EXTERNAL;
+    localStorage.setItem('cd-hide-external', HIDE_EXTERNAL ? '1' : '0');
+    tog.classList.toggle('active', HIDE_EXTERNAL);
+    renderRows();
+    return;
+  }
   const btn = ev.target.closest('button[data-mode]');
   if (!btn) return;
   const mode = btn.dataset.mode;
@@ -2619,6 +2771,8 @@ $('#filter').addEventListener('click', (ev) => {
   btn.classList.toggle('active', FILTERS.has(mode));
   renderRows();
 });
+// Reflect the persisted workspace-only state on the toggle at load.
+if (HIDE_EXTERNAL) { const t = document.getElementById('ext-toggle'); if (t) t.classList.add('active'); }
 
 // Sidebar collapse — persisted in localStorage
 if (localStorage.getItem('cd-sidebar') === 'collapsed') {
@@ -2933,6 +3087,21 @@ document.addEventListener('click', async (ev) => {
     } catch (e) { toast('resume failed: ' + e.message, 4000, 'err'); }
     return;
   }
+  // Resume from the detail panel — relaunch and stay docked (the panel body
+  // swaps from history to the live embedded view) instead of popping a window.
+  const roomResumeInline = ev.target.closest('.room-resume-inline');
+  if (roomResumeInline) {
+    ev.stopPropagation();
+    const rid = roomResumeInline.dataset.room;
+    toast('resuming session…', 0, 'busy');
+    try {
+      await api('/api/room/resume', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: rid }) });
+      toast('resumed', 2000, 'ok');
+      await refresh(); updateRoomsBadge();
+      openDetail(rid);
+    } catch (e) { toast('resume failed: ' + e.message, 4000, 'err'); }
+    return;
+  }
   const roomEnd = ev.target.closest('.room-end');
   if (roomEnd) {
     ev.stopPropagation();
@@ -2943,15 +3112,16 @@ document.addEventListener('click', async (ev) => {
     } catch (e) { toast('end failed: ' + e.message, 4000, 'err'); }
     return;
   }
-  const roomDismiss = ev.target.closest('.room-dismiss');
-  if (roomDismiss) {
+  const roomDelete = ev.target.closest('.room-delete');
+  if (roomDelete) {
     ev.stopPropagation();
-    if (!confirm('Remove this session from the list? (Its transcripts stay on disk as history.)')) return;
-    try {
-      await api('/api/room/dismiss', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: roomDismiss.dataset.room }) });
-      if (SELECTED_SID === roomDismiss.dataset.room) closeDetail();
-      await refresh(); updateRoomsBadge();
-    } catch (e) { toast('dismiss failed: ' + e.message, 4000, 'err'); }
+    await deleteRoom(ALL_ROWS.find(x => x.roomId === roomDelete.dataset.room));
+    return;
+  }
+  const orphanDelete = ev.target.closest('.orphan-delete');
+  if (orphanDelete) {
+    ev.stopPropagation();
+    await deleteRoom(ALL_ROWS.find(x => x.sessionId === orphanDelete.dataset.grp));
     return;
   }
   const headlessRow = ev.target.closest('tr.row.headless');
@@ -3073,9 +3243,13 @@ document.addEventListener('click', async (ev) => {
   if (deleteBtnEl) {
     ev.stopPropagation();
     const sid = deleteBtnEl.dataset.sid;
+    const row = ALL_ROWS.find(x => x.sessionId === sid);
+    const scratch = scratchRootOf(row ? row.cwd : '');
     const confirmed = await showConfirmDialog({
       title: 'Permanently delete this session?',
-      message: 'This removes the transcript JSONL and the dashboard\'s sidecar entries (label, parent, geometry, pin, archive, category). Your code in the cwd folder is NOT touched.\n\nThere is no undo.',
+      message: 'This removes the transcript JSONL and the dashboard\'s sidecar entries (label, parent, geometry, pin, archive, category).'
+        + (scratch ? `\n\nIt also deletes the working folder ${tildeify(scratch)} (a ~/cs scratch dir).` : '\n\nYour code in the cwd folder is NOT touched.')
+        + '\n\nReal project folders are never deleted. There is no undo.',
       confirmLabel: '🗑 Delete permanently',
       danger: true,
     });
@@ -3083,8 +3257,8 @@ document.addEventListener('click', async (ev) => {
     deleteBtnEl.classList.add('busy');
     try {
       const r = await api('/api/session/' + sid, { method: 'DELETE' });
-      const n = (r.files || []).length;
-      toast(`deleted (${n} transcript file${n === 1 ? '' : 's'})`, 2500, 'ok');
+      const n = (r.files || []).length, nf = (r.folders || []).length;
+      toast(`deleted (${n} transcript${n === 1 ? '' : 's'}${nf ? `, ${nf} folder` : ''})`, 2500, 'ok');
       ALL_ROWS = ALL_ROWS.filter(x => x.sessionId !== sid);
       if (SELECTED_SID === sid) closeDetail();
       else renderRows();
@@ -3108,6 +3282,7 @@ document.addEventListener('click', async (ev) => {
       const row = ALL_ROWS.find(x => x.sessionId === sid);
       if (row) row.pinned = pinning;
       renderRows();
+      if (SELECTED_SID === sid) renderDetail();
       toast(pinning ? 'pinned' : 'unpinned', 1800, 'ok');
     } catch (e) { toast('pin failed: ' + e.message, 4000, 'err'); }
     return;
@@ -3306,8 +3481,11 @@ document.addEventListener('click', async (ev) => {
         body: JSON.stringify(payload),
       });
       if (r.result === 'ok') toast(`applied ${theme}`, 2200, 'ok');
-      else if (r.result === 'queued') toast(`${theme} set — applies next time you Open this session`, 3500, 'ok');
+      else if (r.result === 'queued') toast(`applied ${theme} to the chat`, 2200, 'ok');
       else toast(`theme: ${r.result}`, 5000, 'err');
+      // Recolor the chat window now (the live /session iframe repaints on its
+      // own 2s poll; the history view here needs a nudge).
+      if (cwd) loadChatTheme(cwd);
     } catch (e) { toast('error: ' + e.message, 5000, 'err'); }
     return;
   }

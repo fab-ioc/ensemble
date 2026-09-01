@@ -267,6 +267,41 @@ def find_transcript(session_id: str) -> Path | None:
     return hits[0] if hits else None
 
 
+def compute_room_cost(room: dict) -> dict:
+    """Aggregate cost across a collaboration's agent members — sum each member's
+    transcript cost and merge the per-model breakdowns — so a room shows the same
+    Cost section a single-agent session does. Codex members have no Claude-format
+    transcript (and no pricing entry), so they contribute 0; Claude members carry
+    the real numbers. Same shape as compute_session_cost."""
+    total = {
+        "dollars": 0.0,
+        "tokens": {"input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0},
+        "byModel": {},
+    }
+    for pp in (room.get("participants") or []):
+        if pp.get("kind") != "agent":
+            continue
+        sid = pp.get("sessionId")
+        path = find_transcript(sid) if sid else None
+        c = compute_session_cost(path)
+        total["dollars"] += c.get("dollars", 0.0)
+        for k, v in (c.get("tokens") or {}).items():
+            total["tokens"][k] = total["tokens"].get(k, 0) + v
+        for mid, mv in (c.get("byModel") or {}).items():
+            b = total["byModel"].get(mid)
+            if b is None:
+                b = {"dollars": 0.0,
+                     "tokens": {"input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0}}
+                total["byModel"][mid] = b
+            b["dollars"] = round(b["dollars"] + mv.get("dollars", 0.0), 4)
+            for k, v in (mv.get("tokens") or {}).items():
+                b["tokens"][k] = b["tokens"].get(k, 0) + v
+            if mv.get("unknownPricing"):
+                b["unknownPricing"] = True
+    total["dollars"] = round(total["dollars"], 4)
+    return total
+
+
 def _extract_text(c):
     if isinstance(c, str):
         return c
@@ -660,6 +695,16 @@ def sanitize_slug(s: str, max_len: int = 60) -> str:
 
 def cwd_for_session(session_id: str) -> str:
     """Best-effort cwd lookup: live metadata first, then transcript."""
+    # A collaboration room is addressed by its room id (not a transcript) — its
+    # cwd lives in the room record. Lets room rows reuse the cwd-based tools
+    # (Explorer, IDE) exactly as a single-agent session does.
+    if session_id.startswith("room-"):
+        try:
+            rm = chatroom.get_room(session_id, public=False)
+            if rm:
+                return rm.get("cwd", "") or ""
+        except Exception:
+            pass
     for s in _read_session_files():
         if s.get("sessionId") == session_id:
             return s.get("cwd", "") or ""
@@ -954,6 +999,43 @@ def delete_session(sid: str) -> dict:
         save_archived(arch)
         deleted["archived"] = True
     return deleted
+
+
+def _scratch_root_for(cwd: str) -> Path | None:
+    """The ~/cs/<NN_slug> scratch folder that owns `cwd`, or None when `cwd`
+    isn't a dashboard-created scratch dir — so a real project folder is NEVER a
+    deletion target. Handles both the collab root and a per-agent subfolder."""
+    if not cwd:
+        return None
+    try:
+        root = CS_ROOT.resolve()
+        cur = Path(cwd).resolve()
+    except OSError:
+        return None
+    for _ in range(4):
+        try:
+            if cur.parent == root and _NUMBERED_RE.match(cur.name):
+                return cur
+        except OSError:
+            break
+        if cur == cur.parent:
+            break
+        cur = cur.parent
+    return None
+
+
+def _delete_scratch_root(cwd: str) -> str | None:
+    """Recursively remove the ~/cs/<NN_slug> scratch folder owning `cwd`.
+    Returns the deleted path, or None if `cwd` isn't a scratch dir / removal
+    failed. Never touches a real project folder."""
+    root = _scratch_root_for(cwd)
+    if not root:
+        return None
+    try:
+        shutil.rmtree(root)
+        return str(root)
+    except OSError:
+        return None
 
 
 def cleanup_rename_artifacts() -> int:
@@ -1715,23 +1797,33 @@ def load_sessions(n: int = 200) -> list[dict]:
                         idle = isec if idle is None else min(idle, isec)
                         if isec < 2.5:
                             busy = True
+            rid = rm["id"]
+            # Rename and pin apply to a room via the same label/pin sidecars a
+            # single-agent session uses (keyed by the room id), so the shared
+            # rename/pin buttons "just work" — read them back here.
+            msgs = rm.get("messages", []) or []
+            _user_msgs = [m for m in msgs
+                          if m.get("from") == "user" and (m.get("text") or "").strip()]
+            first_txt = ((_user_msgs[0] if _user_msgs else (msgs[0] if msgs else {})).get("text") or "")[:200]
+            last_txt = ((msgs[-1] if msgs else {}).get("text") or "")[:200]
             room_rows.append({
-                "sessionId": rm["id"], "roomId": rm["id"], "headless": True,
+                "sessionId": rid, "roomId": rid, "headless": True,
                 "mode": rm.get("mode", ""),
                 "agent": (agents_in[0]["agent"] if len(agents_in) == 1 else "duo"),
                 "agents": [p.get("identity", "") for p in agents_in],
                 "members": [{"identity": p.get("identity", ""),
                              "agent": p.get("agent", ""),
                              "model": p.get("model", "")} for p in agents_in],
-                "label": rm.get("title", ""), "cwd": rm.get("cwd", ""),
+                "label": labels.get(rid) or rm.get("title", ""), "cwd": rm.get("cwd", ""),
                 "isLive": live, "status": "busy" if (live and busy) else "idle",
                 "updatedAt": rm.get("updatedAt", rm.get("createdAt", 0)),
                 "startedAt": rm.get("createdAt", 0),
                 "turns": len(rm.get("messages", [])),
                 "idleSeconds": (idle if live else None),
-                "pid": None, "pinned": False, "category": "", "archived": False,
-                "parent": "", "jira": [], "cost": 0.0, "currentTheme": "",
-                "first": "", "last": "", "transcriptPath": "",
+                "pid": None, "pinned": rid in pinned_set, "category": "", "archived": False,
+                "parent": "", "jira": [], "cost": compute_room_cost(rm).get("dollars", 0.0),
+                "currentTheme": "",
+                "first": first_txt, "last": last_txt, "transcriptPath": "",
             })
     except Exception:
         pass
@@ -1784,6 +1876,13 @@ def load_sessions(n: int = 200) -> list[dict]:
             "currentTheme": "", "first": "", "last": "", "transcriptPath": "",
         })
     out.extend(room_rows)
+    # Flag sessions run OUTSIDE the dashboard (cwd not under ~/cs) so the UI can
+    # optionally hide them. Headless rooms/orphans are always dashboard-managed.
+    cs_root_n2 = os.path.normcase(os.path.normpath(str(CS_ROOT)))
+    for r in out:
+        cwd_n = os.path.normcase(os.path.normpath(r.get("cwd", "") or "."))
+        under_cs = cwd_n == cs_root_n2 or cwd_n.startswith(cs_root_n2 + os.sep)
+        r["external"] = (not r.get("headless")) and not under_cs
     out.sort(key=_key)
     return out[:n]
 
@@ -2033,6 +2132,20 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/themes":
             self._send_json(200, list_presets())
             return
+        if p == "/api/theme-colors":
+            # Colors for the chat window of a headless session: resolve the
+            # session's chosen scheme (by cwd) to concrete colors so the chat
+            # view can recolor itself — there's no OS terminal tab to theme.
+            q = parse_qs(u.query)
+            cwd = (q.get("cwd", [""])[0] or "").strip()
+            name = current_theme_for_cwd(cwd) if cwd else ""
+            colors = {}
+            try:
+                colors = BACKEND.theme_colors(name) or {}
+            except Exception:
+                colors = {}
+            self._send_json(200, {"theme": name, "colors": colors})
+            return
         if p == "/api/jira-config":
             self._send_json(200, {"enabled": JIRA_ENABLED, "base": JIRA_BASE,
                                   "prefixes": sorted(JIRA_PREFIXES)})
@@ -2045,6 +2158,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p.startswith("/api/cost/"):
             sid = p[len("/api/cost/"):]
+            if sid.startswith("room-"):
+                rm = chatroom.get_room(sid, public=False)
+                self._send_json(200, compute_room_cost(rm) if rm
+                                else compute_session_cost(None))
+                return
             self._send_json(200, compute_session_cost(find_transcript(sid)))
             return
         if p == "/api/config":
@@ -2173,6 +2291,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         u = urlparse(self.path)
         p = u.path
+        if p == "/mcp":
+            # MCP clients DELETE /mcp to end a session; nothing to tear down.
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if p.startswith("/api/label/"):
             sid = p[len("/api/label/"):]
             labels = load_labels()
@@ -2187,7 +2311,29 @@ class Handler(BaseHTTPRequestHandler):
                 if s.get("sessionId") == sid:
                     self._send_json(409, {"error": "session_is_live"})
                     return
-            self._send_json(200, delete_session(sid))
+            cwd = cwd_for_session(sid)
+            cx = agents.get_agent("codex")
+            # Resolve a Codex session's cwd BEFORE deleting its rollout (after,
+            # there's nothing left to resolve it from).
+            if not cwd and cx is not None and hasattr(cx, "cwd_for_session"):
+                try:
+                    cwd = cx.cwd_for_session(sid)
+                except Exception:
+                    pass
+            result = delete_session(sid)         # Claude transcript + sidecars
+            # A Codex session has no Claude transcript, so delete_session finds
+            # nothing and its row never clears — also remove its rollout files.
+            try:
+                if cx is not None and hasattr(cx, "delete_session"):
+                    removed = cx.delete_session(sid)
+                    if removed:
+                        result.setdefault("files", []).extend(removed)
+            except Exception:
+                pass
+            folder = _delete_scratch_root(cwd)   # only ~/cs scratch dirs; never real code
+            if folder:
+                result.setdefault("folders", []).append(folder)
+            self._send_json(200, result)
             return
         self.send_error(404)
 
@@ -2628,14 +2774,6 @@ class Handler(BaseHTTPRequestHandler):
                        "isError": False})
         return err(-32602, f"unknown tool: {name}")
 
-    def do_DELETE(self):
-        # MCP clients DELETE /mcp to end a session; nothing to tear down.
-        if urlparse(self.path).path == "/mcp":
-            self.send_response(200)
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-            return
-        self.send_error(404)
 
     def do_POST(self):
         u = urlparse(self.path)
@@ -2841,10 +2979,6 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send_json(200, {"ok": True, "room": room})
             return
-        if p == "/api/room/delete":
-            rid = (data.get("roomId") or "").strip()
-            self._send_json(200, {"ok": chatroom.delete_room(rid)})
-            return
         if p == "/api/session/adopt":
             # Bring existing (legacy / orphaned) session(s) into the headless
             # model: resume them in PTYs as a room, opened in the window.
@@ -2943,17 +3077,55 @@ class Handler(BaseHTTPRequestHandler):
             # Killing the PTYs makes the room not-live; no explicit 'ended' state.
             self._send_json(200, {"ok": room is not None})
             return
-        if p == "/api/room/dismiss":
-            # Remove a room record entirely (kills any lingering PTYs). Its
-            # agents' transcripts then surface as normal history.
+        if p == "/api/room/delete" or p == "/api/room/dismiss":
+            # Unified Delete for a collaboration (or a grouped orphan): stop the
+            # agents, remove the room record AND every member's transcript (so it
+            # can't resurface as an orphan/history row), and — when the working
+            # dir is a dashboard ~/cs/<NN_slug> scratch folder — delete that
+            # folder too. A real project folder is NEVER removed.
             rid = (data.get("roomId") or "").strip()
-            room = chatroom.get_room(rid, public=False)
+            members = data.get("members") or []
+            room = chatroom.get_room(rid, public=False) if rid else None
+            result = {"transcripts": [], "folders": [], "ok": True}
+            cwds: list[str] = []
             if room:
                 for part in room.get("participants", []):
                     pid = part.get("ptyId")
                     if pid:
-                        ptyrun.kill(pid)
-            self._send_json(200, {"ok": chatroom.delete_room(rid)})
+                        try:
+                            ptyrun.kill(pid)
+                        except Exception:
+                            pass
+                cwds.append(room.get("cwd", "") or "")
+                members = [{"agent": pp.get("agent", ""),
+                            "sessionId": pp.get("sessionId", ""),
+                            "cwd": pp.get("cwd", "")}
+                           for pp in room.get("participants", [])
+                           if pp.get("kind") == "agent"]
+            for m in members:
+                sid = (m.get("sessionId") or "").strip()
+                agent = (m.get("agent") or "claude").strip() or "claude"
+                cwds.append(m.get("cwd", "") or "")
+                if not sid:
+                    continue
+                if agent == "claude":
+                    result["transcripts"] += delete_session(sid).get("files", [])
+                else:
+                    ag = agents.get_agent(agent)
+                    if ag is not None and hasattr(ag, "delete_session"):
+                        try:
+                            result["transcripts"] += ag.delete_session(sid)
+                        except Exception:
+                            pass
+            if rid:
+                chatroom.delete_room(rid)
+            seen: set[str] = set()
+            for c in cwds:
+                folder = _delete_scratch_root(c)
+                if folder and folder not in seen:
+                    seen.add(folder)
+                    result["folders"].append(folder)
+            self._send_json(200, result)
             return
         if p == "/api/fork":
             sid = data.get("sessionId")

@@ -42,7 +42,7 @@
   .adot { font-size:10px; color:#6b7280; }
   .adot.working { color:#16a34a; } .adot.idle { color:#6b7280; } .adot.dead { color:#ef4444; }
   .astat { font-size:11px; }
-  .agent .term { height:300px; display:none; background:#0b0b0b; padding:4px; }
+  .agent .term { height:300px; display:none; background:var(--term-bg, #0b0b0b); padding:4px; }
   .agent.open .term { display:block; }
   /* Solo session: one agent, driven directly — hide the chat, terminal fills. */
   body.solo #chatcol { display:none; }
@@ -53,6 +53,13 @@
   body.solo .agent .term { display:block; flex:1; height:auto; }
   button { background:#2a2a2a; color:var(--fg); border:1px solid #444; padding:4px 12px; border-radius:6px; cursor:pointer; font:inherit; }
   button:hover { background:#333; }
+  /* Embedded in the dashboard's detail panel: the parent card owns the title,
+     info and actions, so drop our own header/info bar and just be the surface. */
+  body.embed > header, body.embed > #info { display:none; }
+  /* A not-running solo session still shows its stored transcript (don't collapse
+     the chat column to a blank terminal). */
+  body.solo.notrunning #chatcol { display:flex; }
+  body.solo.notrunning #agentcol { display:none; }
 </style>
 </head>
 <body>
@@ -85,6 +92,7 @@
 <script>
 const qs = new URLSearchParams(location.search);
 const ROOM = qs.get('id');
+if (qs.get('embed')) document.body.classList.add('embed');
 const $ = s => document.querySelector(s);
 const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const tildeify = p => (p || '').replace(/^[A-Za-z]:\\Users\\[^\\]+/i, '~').replace(/^\/(Users|home)\/[^/]+/, '~');
@@ -100,6 +108,60 @@ function cleanSeq(s) {
 
 const terms = {};          // ptyId -> {term, es}
 let agentsBuilt = false;
+
+// --- chat-window theming -------------------------------------------------
+// A headless session has no OS terminal tab, so the chosen color scheme is
+// applied to the chat window here: the scheme's background/foreground recolor
+// the session view live (no relaunch). Re-checked each refresh; only re-applied
+// when the scheme actually changes.
+let THEME_NAME = null;
+let CUR_COLORS = null;     // full scheme palette, for xterm + chat
+async function ensureTheme(cwd) {
+  if (!cwd) return;
+  let t;
+  try { t = await fetch('/api/theme-colors?cwd=' + encodeURIComponent(cwd)).then(r => r.json()); }
+  catch (e) { return; }
+  const name = (t && t.theme) || '';
+  if (name === (THEME_NAME || '')) return;
+  THEME_NAME = name;
+  applyTheme((t && t.colors) || {});
+}
+// Build an xterm.js theme from the scheme — the terminal IS the chat window for
+// a solo session, so it takes the full ANSI palette, not just bg/fg.
+function xtermThemeFrom(c) {
+  if (!c || !c.background) return { background: '#0b0b0b' };
+  const th = {
+    background: c.background, foreground: c.foreground || '#ededed',
+    cursor: c.cursor || c.foreground || '#ededed', cursorAccent: c.background,
+    black: c.black, red: c.red, green: c.green, yellow: c.yellow, blue: c.blue,
+    magenta: c.magenta, cyan: c.cyan, white: c.white,
+    brightBlack: c.brightBlack, brightRed: c.brightRed, brightGreen: c.brightGreen,
+    brightYellow: c.brightYellow, brightBlue: c.brightBlue, brightMagenta: c.brightMagenta,
+    brightCyan: c.brightCyan, brightWhite: c.brightWhite,
+  };
+  if (c.selection) th.selectionBackground = c.selection;
+  return th;
+}
+function applyTheme(c) {
+  const s = document.documentElement.style;
+  const vars = ['--bg', '--surface', '--fg', '--border', '--dim', '--accent', '--term-bg'];
+  CUR_COLORS = (c && c.background && c.foreground) ? c : null;
+  if (CUR_COLORS) {
+    const bg = c.background, fg = c.foreground;
+    s.setProperty('--bg', bg);
+    s.setProperty('--fg', fg);
+    s.setProperty('--surface', `color-mix(in srgb, ${fg} 7%, ${bg})`);
+    s.setProperty('--border', `color-mix(in srgb, ${fg} 20%, ${bg})`);
+    s.setProperty('--dim', `color-mix(in srgb, ${fg} 55%, ${bg})`);
+    s.setProperty('--term-bg', bg);
+    if (c.blue) s.setProperty('--accent', c.blue);
+  } else {
+    vars.forEach(v => s.removeProperty(v));   // no scheme → revert to defaults
+  }
+  // Repaint every mounted terminal with the new palette (live, no relaunch).
+  const xt = xtermThemeFrom(CUR_COLORS);
+  Object.values(terms).forEach(t => { try { t.term.options.theme = xt; } catch (e) {} });
+}
 
 function buildAgents(room) {
   const col = $('#agentcol'); col.innerHTML = '';
@@ -150,7 +212,7 @@ function mountTerm(el, ptyId) {
   const term = new Terminal({
     fontSize: 13, convertEol: false, scrollback: 8000, cursorBlink: true,
     fontFamily: 'Consolas, "Cascadia Mono", "DejaVu Sans Mono", monospace',
-    theme: { background: '#0b0b0b' },
+    theme: xtermThemeFrom(CUR_COLORS),
   });
   let fit = null;
   try { fit = new FitAddon.FitAddon(); term.loadAddon(fit); } catch(e) {}
@@ -222,15 +284,17 @@ async function refresh() {
   const soloMode = room.mode === 'solo' ||
     room.participants.filter(p => p.kind === 'agent').length === 1;
   document.body.classList.toggle('solo', soloMode);
+  document.body.classList.toggle('notrunning', notRunning);
   // Basic session info (parity with a single-agent's detail view).
   const mem = room.participants.filter(p => p.kind === 'agent');
   const cwd = room.cwd || '';
+  ensureTheme(cwd);
   $('#info').innerHTML =
     (cwd ? `<span title="${esc(cwd)}">📁 ${esc(tildeify(cwd))}</span>` : '')
     + mem.map(m => `<span class="ib-agent ${esc(m.agent)}" title="${esc(m.identity)}">${esc(m.agent)}${m.model ? ' · ' + esc(m.model) : ''}</span>`).join('')
     + (soloMode ? '' : `<span>${room.messages.length} messages · hop ${room.hopCount || 0}/${room.maxHops || 0}</span>`);
   if (!agentsBuilt && room.participants.some(p => p.kind === 'agent' && p.ptyId)) buildAgents(room);
-  if (!soloMode) renderMsgs(room);
+  if (!soloMode || notRunning) renderMsgs(room);
   updateAgentStatus();
 }
 
