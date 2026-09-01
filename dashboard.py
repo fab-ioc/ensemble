@@ -2943,6 +2943,10 @@ class Handler(BaseHTTPRequestHandler):
             # terminal-primary window). 2+ → an autonomous collaboration.
             solo = len(specs) < 2
             room_full["mode"] = "solo" if solo else "collab"
+            # Persist cwd/mode BEFORE launching so that if the launch is
+            # interrupted (e.g. the server is bounced mid-spawn) the room is left
+            # in a resumable "not running" state, not a corrupt one with no cwd.
+            chatroom.update_room(room_full)
             launched = []
             for part in [pp for pp in room_full["participants"]
                          if pp.get("kind") == "agent"]:

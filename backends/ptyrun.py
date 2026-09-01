@@ -25,6 +25,35 @@ IS_WINDOWS = os.name == "nt"
 # Keep the last ~512 KB of output so a fresh viewer can repaint the screen.
 _BUFFER_MAX = 512 * 1024
 
+_console_ready = False
+_console_lock = threading.Lock()
+
+
+def _ensure_windows_console() -> None:
+    """pywinpty's ConPTY (CreatePseudoConsole) needs the host process to have a
+    console. A windowless host — pythonw.exe, or a service/scheduled-task launch
+    without an attached console — has none, and the spawn then panics with
+    HRESULT 0x800700BB ("The specified system semaphore name was not found").
+    Allocate a hidden console once so every headless spawn succeeds regardless of
+    how the server was started. No-op if a console is already attached."""
+    global _console_ready
+    if _console_ready or not IS_WINDOWS:
+        return
+    with _console_lock:
+        if _console_ready:
+            return
+        try:
+            import ctypes
+            k32 = ctypes.windll.kernel32
+            if not k32.GetConsoleWindow():
+                if k32.AllocConsole():
+                    hwnd = k32.GetConsoleWindow()
+                    if hwnd:
+                        ctypes.windll.user32.ShowWindow(hwnd, 0)  # SW_HIDE
+        except Exception:
+            pass
+        _console_ready = True
+
 _REGISTRY: dict[str, "PtySession"] = {}
 _REG_LOCK = threading.Lock()
 
@@ -58,6 +87,7 @@ class PtySession:
     def _spawn(self, env):
         full_env = {**os.environ, **(env or {})}
         if IS_WINDOWS:
+            _ensure_windows_console()        # ConPTY needs a console (pythonw has none)
             from winpty import PtyProcess  # lazy: Windows-only dependency
             # Pass argv through as-is: pywinpty accepts a str (it shlex-splits,
             # posix=False) or a list (argv[0] resolved via PATH, the rest quoted
