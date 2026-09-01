@@ -126,6 +126,33 @@ cmd_logs() { exec tail -n 50 -f "$LOG"; }
 
 cmd_open() { open "$(url)"; }
 
+# Pull the latest code and restart. Invoked by the in-app "Update now" button
+# (the server spawns `ensemble update` detached so it survives the restart).
+cmd_update() {
+  echo "Updating…"
+  git -C "$DIR" fetch --quiet || { echo "git fetch failed" >&2; exit 1; }
+  local up
+  up="$(git -C "$DIR" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+  if [[ -n "$up" ]]; then
+    git -C "$DIR" reset --hard "$up" --quiet
+  else
+    echo "warning: no upstream to update from" >&2
+  fi
+  # Refresh deps in case requirements changed.
+  python3 -c "import ptyprocess" 2>/dev/null \
+    || python3 -m pip install --user -r "$DIR/requirements.txt" 2>/dev/null \
+    || python3 -m pip install --user --break-system-packages -r "$DIR/requirements.txt" 2>/dev/null \
+    || true
+  # Restart: prefer the LaunchAgent if it's loaded, else the manual process.
+  local label="com.ensemble.dashboard"
+  if launchctl print "gui/${UID}/${label}" >/dev/null 2>&1; then
+    launchctl kickstart -k "gui/${UID}/${label}"
+    echo "Restarted via launchd ($label)."
+  else
+    cmd_stop; cmd_start
+  fi
+}
+
 action="${1:-status}"
 shift || true
 
@@ -136,11 +163,12 @@ case "$action" in
   status)  cmd_status ;;
   logs)    cmd_logs ;;
   open)    cmd_open ;;
+  update)  cmd_update ;;
   -h|--help|help)
     sed -n '2,12p' "$0"
     ;;
   *)
-    echo "Usage: $0 {start [--port N] | stop | restart [--port N] | status | logs | open}" >&2
+    echo "Usage: $0 {start [--port N] | stop | restart [--port N] | status | logs | open | update}" >&2
     exit 2
     ;;
 esac
