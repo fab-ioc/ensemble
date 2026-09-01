@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Register a Scheduled Task so claude-dashboard starts at logon and keeps running
+  Register a Scheduled Task so ensemble starts at logon and keeps running
   (the Windows counterpart of install-launchd.sh). Runs in your interactive user
   session so it can drive Windows Terminal.
 
@@ -10,8 +10,8 @@
   .\install-task.ps1 status    # show task + recent log
 
 .NOTES
-  Task name: ClaudeDashboard
-  Logs:      %USERPROFILE%\.claude\dashboard\logs\claude-dashboard.log
+  Task name: Ensemble
+  Logs:      %USERPROFILE%\.ensemble\logs\ensemble.log
 #>
 [CmdletBinding()]
 param(
@@ -28,14 +28,14 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$TaskName  = 'ClaudeDashboard'
+$TaskName  = 'Ensemble'
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Server    = Join-Path $ScriptDir 'dashboard.py'
-$StateDir  = Join-Path $env:USERPROFILE '.claude\dashboard'
-$Log       = Join-Path $StateDir 'logs\claude-dashboard.log'
+$StateDir  = Join-Path $env:USERPROFILE '.ensemble'
+$Log       = Join-Path $StateDir 'logs\ensemble.log'
 
 if ($Port -eq 0) {
-  $Port = if ($env:CLAUDE_DASHBOARD_PORT) { [int]$env:CLAUDE_DASHBOARD_PORT } else { 8765 }
+  $Port = if ($env:ENSEMBLE_PORT) { [int]$env:ENSEMBLE_PORT } else { 8765 }
 }
 
 function Resolve-Python {

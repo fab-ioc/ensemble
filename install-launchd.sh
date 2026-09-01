@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the claude-dashboard LaunchAgent so the server starts at login and
+# Install the ensemble LaunchAgent so the server starts at login and
 # restarts itself if it crashes.
 #
 # Usage:
@@ -7,17 +7,17 @@
 #   ./install-launchd.sh uninstall # unload + remove
 #   ./install-launchd.sh status    # show status
 #
-# Logs: ~/Library/Logs/claude-dashboard.log
-# Plist: ~/Library/LaunchAgents/com.claude-code.dashboard.plist
+# Logs: ~/Library/Logs/ensemble.log
+# Plist: ~/Library/LaunchAgents/com.ensemble.dashboard.plist
 set -euo pipefail
 
-LABEL="com.claude-code.dashboard"
+LABEL="com.ensemble.dashboard"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 SCRIPT="$DIR/dashboard.py"
-TEMPLATE="$DIR/com.claude-code.dashboard.plist.template"
+TEMPLATE="$DIR/com.ensemble.dashboard.plist.template"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-LOG="$HOME/Library/Logs/claude-dashboard.log"
-PORT="${CLAUDE_DASHBOARD_PORT:-8765}"
+LOG="$HOME/Library/Logs/ensemble.log"
+PORT="${ENSEMBLE_PORT:-8765}"
 
 action="${1:-install}"
 

@@ -1,20 +1,20 @@
 <#
 .SYNOPSIS
-  claude-dashboard: start/stop/restart/status/logs/open the Claude session
-  dashboard on Windows (PowerShell counterpart of the macOS/Linux `claude-dashboard`
+  ensemble: start/stop/restart/status/logs/open the Claude session
+  dashboard on Windows (PowerShell counterpart of the macOS/Linux `ensemble`
   bash script).
 
 .USAGE
-  .\claude-dashboard.ps1 start   [-Port N]
-  .\claude-dashboard.ps1 stop
-  .\claude-dashboard.ps1 restart [-Port N]
-  .\claude-dashboard.ps1 status
-  .\claude-dashboard.ps1 logs        # tail -f the log file
-  .\claude-dashboard.ps1 open        # open the dashboard in the default browser
+  .\ensemble.ps1 start   [-Port N]
+  .\ensemble.ps1 stop
+  .\ensemble.ps1 restart [-Port N]
+  .\ensemble.ps1 status
+  .\ensemble.ps1 logs        # tail -f the log file
+  .\ensemble.ps1 open        # open the dashboard in the default browser
 
 .STATE
-  PID file: %USERPROFILE%\.claude\dashboard\server.pid
-  Logs:     %USERPROFILE%\.claude\dashboard\logs\claude-dashboard.log
+  PID file: %USERPROFILE%\.ensemble\server.pid
+  Logs:     %USERPROFILE%\.ensemble\logs\ensemble.log
 #>
 [CmdletBinding()]
 param(
@@ -28,13 +28,13 @@ $ErrorActionPreference = 'Stop'
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Server    = Join-Path $ScriptDir 'dashboard.py'
-$StateDir  = Join-Path $env:USERPROFILE '.claude\dashboard'
+$StateDir  = Join-Path $env:USERPROFILE '.ensemble'
 $LogDir    = Join-Path $StateDir 'logs'
 $PidFile   = Join-Path $StateDir 'server.pid'
-$Log       = Join-Path $LogDir 'claude-dashboard.log'
+$Log       = Join-Path $LogDir 'ensemble.log'
 
 if ($Port -eq 0) {
-  $Port = if ($env:CLAUDE_DASHBOARD_PORT) { [int]$env:CLAUDE_DASHBOARD_PORT } else { 8765 }
+  $Port = if ($env:ENSEMBLE_PORT) { [int]$env:ENSEMBLE_PORT } else { 8765 }
 }
 $Url = "http://127.0.0.1:$Port"
 
@@ -122,7 +122,7 @@ function Invoke-Doctor {
     if ($ok) { Write-Host ("  [OK]   {0}  {1}" -f $label, $detail) }
     else     { Write-Host ("  [FAIL] {0}  {1}" -f $label, $detail); $script:fail++ }
   }
-  Write-Host "claude-dashboard doctor"
+  Write-Host "ensemble doctor"
   Write-Host ""
 
   $py = Resolve-Python
@@ -141,7 +141,7 @@ function Invoke-Doctor {
   Check "dashboard.py" (Test-Path $Server) $Server
 
   $running = Get-RunningPid
-  Check "server running" ($null -ne $running) ($(if ($running) { "pid $running - $Url" } else { "not running (start it: claude-dashboard.ps1 start)" }))
+  Check "server running" ($null -ne $running) ($(if ($running) { "pid $running - $Url" } else { "not running (start it: ensemble.ps1 start)" }))
 
   if ($running) {
     $responds = $false
@@ -152,8 +152,8 @@ function Invoke-Doctor {
     Check "server responds" $responds "$Url/api/platform"
   }
 
-  $task = Get-ScheduledTask -TaskName 'ClaudeDashboard' -ErrorAction SilentlyContinue
-  Check "autostart task" ($null -ne $task) ($(if ($task) { "ClaudeDashboard ($($task.State))" } else { "not installed (optional: install-task.ps1)" }))
+  $task = Get-ScheduledTask -TaskName 'Ensemble' -ErrorAction SilentlyContinue
+  Check "autostart task" ($null -ne $task) ($(if ($task) { "Ensemble ($($task.State))" } else { "not installed (optional: install-task.ps1)" }))
 
   Write-Host ""
   if ($fail -eq 0) { Write-Host "All checks passed." }

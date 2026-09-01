@@ -1,4 +1,4 @@
-"""Platform backend interface for claude-dashboard.
+"""Platform backend interface for ensemble.
 
 `Backend` defines every OS-specific operation the dashboard needs: process
 introspection, terminal control (open/focus/close/themes), and desktop

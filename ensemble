@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# claude-dashboard: start/stop/restart/status the Claude session dashboard.
+# ensemble: start/stop/restart/status the Claude session dashboard.
 #
 # Usage:
-#   claude-dashboard start [--port N]
-#   claude-dashboard stop
-#   claude-dashboard restart [--port N]
-#   claude-dashboard status
-#   claude-dashboard logs       # tail -f the log file
-#   claude-dashboard open       # open the dashboard in the default browser
+#   ensemble start [--port N]
+#   ensemble stop
+#   ensemble restart [--port N]
+#   ensemble status
+#   ensemble logs       # tail -f the log file
+#   ensemble open       # open the dashboard in the default browser
 #
 # State:
-#   PID file: ~/.claude/dashboard/server.pid
-#   Logs:     ~/Library/Logs/claude-dashboard.log
+#   PID file: ~/.ensemble/server.pid
+#   Logs:     ~/Library/Logs/ensemble.log
 #
 # Tip: symlink this script onto your PATH so you can run it from anywhere:
-#   ln -s "$(pwd)/claude-dashboard" ~/.claude/bin/
+#   ln -s "$(pwd)/ensemble" ~/.claude/bin/
 
 set -euo pipefail
 
@@ -27,10 +27,10 @@ while [ -L "$SOURCE" ]; do
 done
 DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null && pwd)"
 SCRIPT="$DIR/dashboard.py"
-PORT="${CLAUDE_DASHBOARD_PORT:-8765}"
-STATE_DIR="$HOME/.claude/dashboard"
+PORT="${ENSEMBLE_PORT:-8765}"
+STATE_DIR="$HOME/.ensemble"
 PID_FILE="$STATE_DIR/server.pid"
-LOG="$HOME/Library/Logs/claude-dashboard.log"
+LOG="$HOME/Library/Logs/ensemble.log"
 
 mkdir -p "$STATE_DIR" "$(dirname "$LOG")"
 

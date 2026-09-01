@@ -1,6 +1,6 @@
 """macOS backend: drives iTerm2 via AppleScript (osascript), resolves processes
 via lsof/ps, and opens the desktop via `open`. This is the original
-claude-dashboard behavior, relocated behind the Backend interface unchanged."""
+ensemble behavior, relocated behind the Backend interface unchanged."""
 from __future__ import annotations
 
 import plistlib
@@ -19,7 +19,7 @@ from .shared import SESS_DIR, claude_cmd, load_geometries, save_geometry
 import os
 import shlex
 
-IJ_APP = os.environ.get("CLAUDE_DASHBOARD_IJ_APP", "IntelliJ IDEA")  # legacy fallback
+IJ_APP = os.environ.get("ENSEMBLE_IJ_APP", "IntelliJ IDEA")  # legacy fallback
 
 
 _FOCUS_SCRIPT = """

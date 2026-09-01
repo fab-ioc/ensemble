@@ -1185,18 +1185,18 @@ def live_cwd_of_pid(pid: int) -> str | None:
 # ---------- repo discovery + Finder/IJ opening ----------
 
 _PATH_RE = re.compile(r"/Users/[A-Za-z0-9_./-]+")
-IJ_APP = os.environ.get("CLAUDE_DASHBOARD_IJ_APP", "IntelliJ IDEA")  # legacy fallback
+IJ_APP = os.environ.get("ENSEMBLE_IJ_APP", "IntelliJ IDEA")  # legacy fallback
 
 # Jira auto-detection is OPT-IN and configured at install time (or via env).
 # Precedence: settings.json (jiraEnabled / jiraBase / jiraPrefixes) then the
-# CLAUDE_DASHBOARD_JIRA_* env vars. When no base is configured, Jira is off and
+# ENSEMBLE_JIRA_* env vars. When no base is configured, Jira is off and
 # the whole feature is hidden in the UI (via /api/jira-config → enabled:false).
 def _load_jira_config() -> tuple[bool, str, set[str]]:
     s = load_settings()
-    base = (s.get("jiraBase") or os.environ.get("CLAUDE_DASHBOARD_JIRA_BASE", "") or "").strip()
+    base = (s.get("jiraBase") or os.environ.get("ENSEMBLE_JIRA_BASE", "") or "").strip()
     raw_prefixes = s.get("jiraPrefixes")
     if raw_prefixes is None:
-        raw_prefixes = os.environ.get("CLAUDE_DASHBOARD_JIRA_PREFIXES", "")
+        raw_prefixes = os.environ.get("ENSEMBLE_JIRA_PREFIXES", "")
     if isinstance(raw_prefixes, list):
         prefixes = {str(p).strip().upper() for p in raw_prefixes if str(p).strip()}
     else:
@@ -1389,7 +1389,7 @@ EDITOR_MAP_FILE = DASHBOARD_DIR / "editors.json"
 ICON_CACHE_DIR = DASHBOARD_DIR / "static" / "editors"
 
 # Defaults — user can override per-language by writing {"java": "Cursor", ...}
-# to ~/.claude/dashboard/editors.json. Keys are language tokens emitted by
+# to ~/.ensemble/editors.json. Keys are language tokens emitted by
 # detect_repo_language(); the "default" key handles any unknown language.
 DEFAULT_EDITOR_MAP = {
     "java":       "IntelliJ IDEA",
@@ -1412,8 +1412,8 @@ def resolve_editor_for_repo(repo_path: Path) -> tuple[str, str, str | None]:
 
 # Permission mode for sessions the dashboard launches. "bypassPermissions"
 # auto-approves everything (no "yes?" prompts). Override with the env var, e.g.
-# CLAUDE_DASHBOARD_PERMISSION_MODE=acceptEdits  (or "" to disable the flag).
-PERMISSION_MODE = os.environ.get("CLAUDE_DASHBOARD_PERMISSION_MODE", "bypassPermissions")
+# ENSEMBLE_PERMISSION_MODE=acceptEdits  (or "" to disable the flag).
+PERMISSION_MODE = os.environ.get("ENSEMBLE_PERMISSION_MODE", "bypassPermissions")
 
 
 def _claude_cmd(*extra: str) -> str:
@@ -2827,7 +2827,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"ok": ptyrun.kill((data.get("id") or "").strip())})
             return
         if p == "/api/update":
-            # Fire and forget — the spawned `claude-dashboard update`
+            # Fire and forget — the spawned `ensemble update`
             # restarts the server via launchctl kickstart -k. Send the 202
             # before that SIGKILL arrives.
             result = trigger_update()
@@ -3440,11 +3440,11 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     global _LOG_FILE
     args = sys.argv[1:]
-    # Port: --port wins, else CLAUDE_DASHBOARD_PORT, else 8765.
+    # Port: --port wins, else ENSEMBLE_PORT, else 8765.
     if "--port" in args:
         port = int(args[args.index("--port") + 1])
     else:
-        port = int(os.environ.get("CLAUDE_DASHBOARD_PORT", "8765"))
+        port = int(os.environ.get("ENSEMBLE_PORT", "8765"))
     # --log <path>: redirect stdout/stderr to a file. Required under pythonw.exe
     # (Windows autostart), which has no console to write to.
     if "--log" in args:

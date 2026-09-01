@@ -15,8 +15,8 @@ static/claude.ico
 static/editors/
 
 # Imported macOS build artifacts (the app's source already lives in this repo)
-claude-dashboard.zip
-claude-dashboard-installer.sh
+ensemble.zip
+ensemble-installer.sh
 
 # Per-machine local state
 .wt-scheme

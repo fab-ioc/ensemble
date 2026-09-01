@@ -21,8 +21,8 @@ AGENT_SESS_DIR = DASHBOARD_DIR / "agents"
 
 # Permission mode for sessions the dashboard launches. "bypassPermissions"
 # auto-approves everything (no "yes?" prompts). Override with the env var, e.g.
-# CLAUDE_DASHBOARD_PERMISSION_MODE=acceptEdits  (or "" to disable the flag).
-PERMISSION_MODE = os.environ.get("CLAUDE_DASHBOARD_PERMISSION_MODE", "bypassPermissions")
+# ENSEMBLE_PERMISSION_MODE=acceptEdits  (or "" to disable the flag).
+PERMISSION_MODE = os.environ.get("ENSEMBLE_PERMISSION_MODE", "bypassPermissions")
 
 
 def claude_cmd_args(*extra: str) -> list[str]:

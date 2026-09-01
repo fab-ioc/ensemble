@@ -4,7 +4,7 @@
 # Files that MUST stay LF everywhere (POSIX shell scripts / launchers run on
 # macOS & Linux and break with CRLF), regardless of the checkout platform.
 *.sh            text eol=lf
-claude-dashboard text eol=lf
+ensemble text eol=lf
 install-launchd.sh text eol=lf
 *.py            text eol=lf
 

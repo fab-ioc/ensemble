@@ -1,6 +1,6 @@
-# claude-dashboard
+# Ensemble
 
-A local web dashboard for your [Claude Code](https://claude.com/claude-code) sessions. One browser tab that surfaces every live and historical session, with one-click controls to focus, resume, fork, theme, label, categorise, pin, archive, search, track cost, and (optionally) link Jira tickets — backed by the same data Claude Code already writes to disk. The server binds to `127.0.0.1` only; no network exposure.
+A local, multi-agent collaboration & coordination dashboard for coding agents — [Claude Code](https://claude.com/claude-code) and Codex today, any agent tomorrow (each is a pluggable adapter). One browser tab that surfaces every live and historical session across agents, runs them headless, lets multiple agents collaborate in a shared room, and gives one-click controls to open, resume, fork, theme, label, categorise, pin, archive, search, track cost, and (optionally) link Jira tickets — backed by the data each agent already writes to disk. The server binds to `127.0.0.1` only; no network exposure.
 
 Cross-platform: **macOS** (iTerm2) and **Windows** (Windows Terminal) are supported today; Linux terminal control is stubbed and coming. Everything except the terminal-driving bits (session list, history, transcripts, labels, categories, pins, archive, search, cost, Jira, repo/editor opening, folder opening) works everywhere. All OS-specific behavior lives behind a platform backend in `backends/`, selected by `sys.platform`.
 
@@ -75,23 +75,23 @@ scheme is saved and applied the next time you Open the session.
 
 Four steps. The whole thing takes about 30 seconds.
 
-### 1. Clone the repo into `~/.claude/dashboard`
+### 1. Clone the repo into `~/.ensemble`
 
 ```sh
-git clone https://github.com/fab-ioc/claude-dashboard.git ~/.claude/dashboard
+git clone https://github.com/fab-ioc/agent-ensemble.git ~/.ensemble
 ```
 
 ### 2. Put the CLI on your PATH
 
 ```sh
 mkdir -p ~/.local/bin
-ln -s ~/.claude/dashboard/claude-dashboard ~/.local/bin/claude-dashboard
+ln -s ~/.ensemble/ensemble ~/.local/bin/ensemble
 ```
 
 Make sure `~/.local/bin` is on your `PATH` (most shells already have it; otherwise add `export PATH="$HOME/.local/bin:$PATH"` to your `~/.zshrc` or `~/.bashrc`). Verify:
 
 ```sh
-which claude-dashboard       # should print the symlink path
+which ensemble       # should print the symlink path
 ```
 
 ### 3. Start the server
@@ -99,9 +99,9 @@ which claude-dashboard       # should print the symlink path
 Manual (foreground or one-shot):
 
 ```sh
-claude-dashboard start       # starts detached on port 8765
-claude-dashboard status      # verify it's running
-claude-dashboard open        # opens http://127.0.0.1:8765 in your default browser
+ensemble start       # starts detached on port 8765
+ensemble status      # verify it's running
+ensemble open        # opens http://127.0.0.1:8765 in your default browser
 ```
 
 ### 4. (Optional) Autostart at login
@@ -109,14 +109,14 @@ claude-dashboard open        # opens http://127.0.0.1:8765 in your default brows
 Recommended — survives reboots, restarts on crash, no need to ever `start` it again:
 
 ```sh
-~/.claude/dashboard/install-launchd.sh
+~/.ensemble/install-launchd.sh
 ```
 
-That installs a LaunchAgent at `~/Library/LaunchAgents/com.claude-code.dashboard.plist` and starts it immediately. To check / uninstall later:
+That installs a LaunchAgent at `~/Library/LaunchAgents/com.ensemble.dashboard.plist` and starts it immediately. To check / uninstall later:
 
 ```sh
-~/.claude/dashboard/install-launchd.sh status
-~/.claude/dashboard/install-launchd.sh uninstall
+~/.ensemble/install-launchd.sh status
+~/.ensemble/install-launchd.sh uninstall
 ```
 
 ### First-time iTerm permission prompt
@@ -130,8 +130,8 @@ Click **Allow**. You can review/change this later in **System Settings → Priva
 ### Updating
 
 ```sh
-cd ~/.claude/dashboard && git pull
-~/.claude/dashboard/install-launchd.sh   # re-runs to pick up plist changes; safe to repeat
+cd ~/.ensemble && git pull
+~/.ensemble/install-launchd.sh   # re-runs to pick up plist changes; safe to repeat
 ```
 
 ## Install (Windows)
@@ -139,23 +139,23 @@ cd ~/.claude/dashboard && git pull
 ### 1. Clone the repo
 
 ```powershell
-git clone https://github.com/fab-ioc/claude-dashboard.git "$env:USERPROFILE\.claude\dashboard"
-cd "$env:USERPROFILE\.claude\dashboard"
+git clone https://github.com/fab-ioc/agent-ensemble.git "$env:USERPROFILE\.ensemble"
+cd "$env:USERPROFILE\.ensemble"
 ```
 
 ### 2. Start the server
 
 ```powershell
-.\claude-dashboard.ps1 start     # starts detached on port 8765
-.\claude-dashboard.ps1 status    # verify it's running
-.\claude-dashboard.ps1 open      # opens http://127.0.0.1:8765 in your browser
+.\ensemble.ps1 start     # starts detached on port 8765
+.\ensemble.ps1 status    # verify it's running
+.\ensemble.ps1 open      # opens http://127.0.0.1:8765 in your browser
 ```
 
 If PowerShell blocks the script, allow local scripts for your user once:
 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 
 The server runs windowless via `pythonw.exe` (no console pops up), logging to
-`%USERPROFILE%\.claude\dashboard\logs\claude-dashboard.log`.
+`%USERPROFILE%\.ensemble\logs\ensemble.log`.
 
 ### 3. (Optional) Autostart at logon
 
@@ -169,12 +169,12 @@ The server runs windowless via `pythonw.exe` (no console pops up), logging to
 ```
 
 The task runs in your interactive session (so it can open Windows Terminal) and
-restarts on crash. State and logs live under `%USERPROFILE%\.claude\dashboard\`.
+restarts on crash. State and logs live under `%USERPROFILE%\.ensemble\`.
 
 ### Health check
 
 ```powershell
-.\claude-dashboard.ps1 doctor    # green/red check of python, claude, wt.exe, server, task
+.\ensemble.ps1 doctor    # green/red check of python, claude, wt.exe, server, task
 ```
 
 ## CLI
@@ -182,16 +182,16 @@ restarts on crash. State and logs live under `%USERPROFILE%\.claude\dashboard\`.
 macOS / Linux:
 
 ```
-claude-dashboard {start|stop|restart|status|logs|open|doctor}
+ensemble {start|stop|restart|status|logs|open|doctor}
 ```
 
 Windows (PowerShell):
 
 ```
-.\claude-dashboard.ps1 {start|stop|restart|status|logs|open|doctor} [-Port N]
+.\ensemble.ps1 {start|stop|restart|status|logs|open|doctor} [-Port N]
 ```
 
-State lives in `~/.claude/dashboard/`:
+State lives in `~/.ensemble/`:
 - `labels.json` · `categories.json` · `pinned.json` · `archived.json` · `parents.json` — your session metadata
 - `settings.json` — preferences (open mode, default model, Jira config)
 - `geometries.json` — saved iTerm window bounds per session (macOS)
@@ -199,23 +199,23 @@ State lives in `~/.claude/dashboard/`:
 - `jira_links.json` / `jira_unlinks.json` — manual Jira link overrides
 - `server.pid` — when running manually (not under launchd/Task Scheduler)
 
-Logs: `~/Library/Logs/claude-dashboard.log` (macOS) · `~/.claude/dashboard/logs/claude-dashboard.log` (Windows).
+Logs: `~/Library/Logs/ensemble.log` (macOS) · `~/.ensemble/logs/ensemble.log` (Windows).
 
 ## Configuration
 
-- `CLAUDE_DASHBOARD_PORT` — port to bind (default `8765`)
-- `CLAUDE_DASHBOARD_PERMISSION_MODE` — permission mode for launched sessions (default `bypassPermissions`; set to `acceptEdits`, or empty to omit the flag)
-- `CLAUDE_DASHBOARD_IJ_APP` — macOS only; application name for IntelliJ (default `IntelliJ IDEA`)
+- `ENSEMBLE_PORT` — port to bind (default `8765`)
+- `ENSEMBLE_PERMISSION_MODE` — permission mode for launched sessions (default `bypassPermissions`; set to `acceptEdits`, or empty to omit the flag)
+- `ENSEMBLE_IJ_APP` — macOS only; application name for IntelliJ (default `IntelliJ IDEA`)
 
-**Jira integration is opt-in** and off unless configured. Precedence: `~/.claude/dashboard/settings.json` then environment. In `settings.json`:
+**Jira integration is opt-in** and off unless configured. Precedence: `~/.ensemble/settings.json` then environment. In `settings.json`:
 
 ```json
 { "jiraEnabled": true, "jiraBase": "https://your-org.atlassian.net/browse/", "jiraPrefixes": ["PTECH", "PLAT"] }
 ```
 
-or via env: `CLAUDE_DASHBOARD_JIRA_BASE` and `CLAUDE_DASHBOARD_JIRA_PREFIXES` (comma-separated). On Windows, `install-task.ps1 -JiraBase … -JiraPrefixes …` writes these for you. When no base is set, the whole Jira UI is hidden.
+or via env: `ENSEMBLE_JIRA_BASE` and `ENSEMBLE_JIRA_PREFIXES` (comma-separated). On Windows, `install-task.ps1 -JiraBase … -JiraPrefixes …` writes these for you. When no base is set, the whole Jira UI is hidden.
 
-Editor choice per language is configurable for any platform via `~/.claude/dashboard/editors.json` (e.g. `{"python": "code", "rust": "code"}`). On macOS the values are app names; on Windows/Linux they are launcher commands resolved on PATH.
+Editor choice per language is configurable for any platform via `~/.ensemble/editors.json` (e.g. `{"python": "code", "rust": "code"}`). On macOS the values are app names; on Windows/Linux they are launcher commands resolved on PATH.
 
 ## How it works
 
@@ -225,7 +225,7 @@ Editor choice per language is configurable for any platform via `~/.claude/dashb
   - **macOS** (`backends/macos.py`) — controls iTerm via `osascript` (AppleScript): finds sessions by tty, sets colors, focuses windows, opens/closes windows, reads/writes bounds.
   - **Windows** (`backends/windows.py`) — opens Windows Terminal (`wt.exe`) running `claude` via a one-shot PowerShell launcher; process checks/termination use the Win32 API; folders open in Explorer.
   - **Linux** (`backends/linux.py`) — process + desktop (`xdg-open`) work; terminal control is not wired up yet.
-- Stores its own state (labels, geometries, favorites) in `~/.claude/dashboard/`.
+- Stores its own state (labels, geometries, favorites) in `~/.ensemble/`.
 
 The server binds to `127.0.0.1` only — no network exposure. On macOS, the OS will prompt for Automation permission the first time the python process tries to send Apple Events to iTerm; approve it.
 

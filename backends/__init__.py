@@ -1,4 +1,4 @@
-"""Platform backend selection for claude-dashboard."""
+"""Platform backend selection for ensemble."""
 from __future__ import annotations
 
 import sys

@@ -1,4 +1,4 @@
-"""Agent-type abstraction for claude-dashboard.
+"""Agent-type abstraction for ensemble.
 
 This is a *second* axis, orthogonal to the OS `backends/` package:
 
