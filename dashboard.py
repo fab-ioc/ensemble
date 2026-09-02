@@ -18,16 +18,19 @@ Ensemble's own state lives in ~/.ensemble.
 """
 from __future__ import annotations
 
+import hmac
 import json
 import os
 import plistlib
 import random
 import re
+import secrets
 import shlex
 import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -54,6 +57,45 @@ import chatroom
 from backends import ptyrun
 
 BACKEND = get_backend()
+
+# --- Remote-access gate ------------------------------------------------------
+# When the server is bound to anything other than loopback (e.g. exposed on a
+# Tailscale interface so other machines can reach it), every non-loopback
+# request must present this access token. Loopback requests (the local browser
+# and the agents' own /mcp calls on 127.0.0.1) are always allowed, so nothing
+# local changes. Empty token => open (the historical local-only behaviour).
+ACCESS_TOKEN = ""
+TOKEN_COOKIE = "ensemble_token"
+_LOOPBACK = {"127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost", ""}
+
+
+def _addr_is_loopback(host: str) -> bool:
+    h = (host or "").strip().lower()
+    if h.startswith("::ffff:"):
+        h = h[7:]
+    return h in _LOOPBACK
+
+
+def _detect_tailscale_ip() -> str | None:
+    """Best-effort lookup of this machine's Tailscale IPv4, for --bind tailscale."""
+    candidates = [
+        "tailscale",
+        r"C:\Program Files\Tailscale\tailscale.exe",
+        "/usr/bin/tailscale",
+        "/usr/local/bin/tailscale",
+        "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+    ]
+    for exe in candidates:
+        try:
+            out = subprocess.run([exe, "ip", "-4"], capture_output=True,
+                                 text=True, timeout=5)
+        except (FileNotFoundError, OSError, subprocess.SubprocessError):
+            continue
+        ip = (out.stdout or "").strip().splitlines()
+        if ip and ip[0].strip():
+            return ip[0].strip()
+    return None
+
 
 # Live-session reading + workspace filtering live in backends.shared (so the
 # backends can use them without importing dashboard.py). Aliased to the private
@@ -1989,6 +2031,61 @@ class Handler(BaseHTTPRequestHandler):
         except (OSError, ValueError):
             pass
 
+    # --- Access gate ---------------------------------------------------------
+    def _client_ip(self) -> str:
+        ip = self.client_address[0] if self.client_address else ""
+        return ip[7:] if ip.startswith("::ffff:") else ip
+
+    def _presented_token(self, u) -> str:
+        q = parse_qs(u.query)
+        if q.get("token"):
+            return q["token"][0]
+        h = self.headers.get("X-Ensemble-Token")
+        if h:
+            return h.strip()
+        auth = self.headers.get("Authorization", "")
+        if auth[:7].lower() == "bearer ":
+            return auth[7:].strip()
+        for part in (self.headers.get("Cookie", "") or "").split(";"):
+            part = part.strip()
+            if part.startswith(TOKEN_COOKIE + "="):
+                return part[len(TOKEN_COOKIE) + 1:]
+        return ""
+
+    def _gate(self) -> bool:
+        """Return True if the request may proceed. When an ACCESS_TOKEN is set,
+        non-loopback requests must present it; a matching ?token= on a GET is
+        swapped for an HttpOnly cookie via redirect so the URL stays clean."""
+        if not ACCESS_TOKEN or _addr_is_loopback(self._client_ip()):
+            return True
+        u = urlparse(self.path)
+        tok = self._presented_token(u)
+        if tok and hmac.compare_digest(tok, ACCESS_TOKEN):
+            q = parse_qs(u.query)
+            if q.get("token") and self.command == "GET":
+                rest = "&".join(f"{k}={v[0]}" for k, v in q.items() if k != "token")
+                dest = u.path + (("?" + rest) if rest else "")
+                self.send_response(303)
+                self.send_header("Location", dest or "/")
+                self.send_header(
+                    "Set-Cookie",
+                    f"{TOKEN_COOKIE}={ACCESS_TOKEN}; HttpOnly; SameSite=Lax; "
+                    f"Path=/; Max-Age=31536000")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return False
+            return True
+        self.send_response(401)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        body = b"401 Unauthorized: append ?token=<your token> to the URL.\n"
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except OSError:
+            pass
+        return False
+
     def _send_json(self, code: int, payload):
         body = json.dumps(payload).encode()
         self.send_response(code)
@@ -2012,6 +2109,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_GET(self):
+        if not self._gate():
+            return
         u = urlparse(self.path)
         p = u.path
         if p == "/mcp":
@@ -2294,6 +2393,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_DELETE(self):
+        if not self._gate():
+            return
         u = urlparse(self.path)
         p = u.path
         if p == "/mcp":
@@ -2781,6 +2882,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
     def do_POST(self):
+        if not self._gate():
+            return
         u = urlparse(self.path)
         p = u.path
         ln = int(self.headers.get("Content-Length", "0"))
@@ -3450,13 +3553,23 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global _LOG_FILE
+    global _LOG_FILE, ACCESS_TOKEN
     args = sys.argv[1:]
     # Port: --port wins, else ENSEMBLE_PORT, else 8765.
     if "--port" in args:
         port = int(args[args.index("--port") + 1])
     else:
         port = int(os.environ.get("ENSEMBLE_PORT", "8765"))
+    # Bind: --bind wins, else ENSEMBLE_BIND, else 127.0.0.1 (local only).
+    # The literal "tailscale"/"ts" means "expose on this machine's tailnet IP".
+    # We DON'T resolve it eagerly: at logon Tailscale may still be connecting, so
+    # resolving is deferred to a background thread (below) that attaches the
+    # tailnet listener once the IP appears. Loopback always comes up immediately.
+    if "--bind" in args:
+        host = args[args.index("--bind") + 1]
+    else:
+        host = os.environ.get("ENSEMBLE_BIND", "127.0.0.1")
+    tailnet = host.lower() in ("tailscale", "ts")
     # --log <path>: redirect stdout/stderr to a file. Required under pythonw.exe
     # (Windows autostart), which has no console to write to.
     if "--log" in args:
@@ -3469,14 +3582,84 @@ def main():
             _LOG_FILE = log_path
         except OSError:
             pass
-    addr = ("127.0.0.1", port)
+    # Remote bind, if any. Loopback is always served (agents reach /mcp on
+    # 127.0.0.1, and so does the local browser) — a non-loopback bind adds a
+    # SECOND, token-gated listener on that interface only (e.g. the tailnet IP),
+    # so the LAN is never exposed. "0.0.0.0"/"::" is the exception: it already
+    # covers loopback, so it replaces the loopback listener rather than doubling.
+    # `tailnet` means the remote address is resolved lazily (see below).
+    remote_host = None
+    if tailnet:
+        remote_host = _detect_tailscale_ip()  # may be None now; retried in a thread
+    elif not _addr_is_loopback(host):
+        remote_host = host
+    want_remote = tailnet or remote_host is not None
+    wildcard = remote_host in ("0.0.0.0", "::")
+
+    # Access token: required for every non-loopback request. Explicit
+    # ENSEMBLE_TOKEN wins; otherwise, when the server will expose a remote
+    # listener (now or once Tailscale is up), load-or-mint a stable token
+    # persisted under the state dir so URLs/cookies survive a restart.
+    ACCESS_TOKEN = os.environ.get("ENSEMBLE_TOKEN", "").strip()
+    if want_remote:
+        tok_file = DASHBOARD_DIR / "access-token.txt"
+        if not ACCESS_TOKEN and tok_file.exists():
+            ACCESS_TOKEN = tok_file.read_text(encoding="utf-8").strip()
+        if not ACCESS_TOKEN:
+            ACCESS_TOKEN = secrets.token_urlsafe(24)
+            try:
+                tok_file.write_text(ACCESS_TOKEN, encoding="utf-8")
+            except OSError:
+                pass
+
     cleaned = cleanup_rename_artifacts()
     if cleaned:
         print(f"cleaned up {cleaned} rename artifact session(s)", flush=True)
-    srv = ThreadingHTTPServer(addr, Handler)
-    print(f"ensemble [{BACKEND.os_name}]: http://{addr[0]}:{addr[1]}", flush=True)
+
+    def _announce_remote(ip: str) -> None:
+        print(f"ensemble [{BACKEND.os_name}]: http://{ip}:{port} (remote)", flush=True)
+        if ACCESS_TOKEN:
+            print(f"remote access token: {ACCESS_TOKEN}", flush=True)
+            print(f"open from another device: http://{ip}:{port}/"
+                  f"?token={ACCESS_TOKEN}", flush=True)
+
+    servers = []
+    if wildcard:
+        servers.append(ThreadingHTTPServer((remote_host, port), Handler))
+        _announce_remote(remote_host)
+    else:
+        loop = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+        servers.append(loop)
+        print(f"ensemble [{BACKEND.os_name}]: http://127.0.0.1:{port}", flush=True)
+        if remote_host:
+            servers.append(ThreadingHTTPServer((remote_host, port), Handler))
+            _announce_remote(remote_host)
+
+    # Tailnet requested but not up yet: keep retrying in the background and attach
+    # the remote listener the moment Tailscale comes online. Never blocks startup.
+    if tailnet and not remote_host and not wildcard:
+        def _await_tailnet():
+            for _ in range(150):  # ~5 min of 2s polls
+                time.sleep(2)
+                ip = _detect_tailscale_ip()
+                if not ip:
+                    continue
+                try:
+                    s = ThreadingHTTPServer((ip, port), Handler)
+                except OSError as e:
+                    print(f"tailnet listener bind failed ({ip}): {e}", flush=True)
+                    return
+                _announce_remote(ip)
+                s.serve_forever()
+                return
+            print("gave up waiting for Tailscale; serving loopback only", flush=True)
+        threading.Thread(target=_await_tailnet, daemon=True).start()
+
+    # Serve every listener; extra ones run in daemon threads, the last inline.
+    for s in servers[:-1]:
+        threading.Thread(target=s.serve_forever, daemon=True).start()
     try:
-        srv.serve_forever()
+        servers[-1].serve_forever()
     except KeyboardInterrupt:
         print()
 
