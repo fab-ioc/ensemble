@@ -73,6 +73,8 @@
   #cmt-tray .cmt-item-x { position:absolute; top:6px; right:6px; background:none; border:none; color:var(--dim); cursor:pointer; font-size:12px; padding:2px 5px; }
   #cmt-tray .cmt-item-x:hover { color:#ef4444; }
   .to { font-weight:400; opacity:.6; text-transform:none; }
+  .mention { color:var(--accent); font-weight:600; background:color-mix(in srgb, var(--accent) 16%, transparent); border-radius:4px; padding:0 3px; }
+  .msg .from .mention { text-transform:none; letter-spacing:0; }
   #compose { border-top:1px solid var(--border); padding:10px; display:flex; flex-direction:column; gap:6px; flex:0 0 auto; }
   #compose textarea { width:100%; min-height:48px; resize:vertical; background:var(--surface); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:6px; font:inherit; }
   #agentcol { flex:0 0 46%; display:flex; flex-direction:column; min-width:0; overflow-y:auto; }
@@ -140,6 +142,9 @@
 <script>
 const qs = new URLSearchParams(location.search);
 const ROOM = qs.get('id');
+let OPERATOR = 'you';   // how the human ("user") is shown — nickname / git name
+fetch('/api/settings').then(r => r.json()).then(s => { OPERATOR = s.operatorName || s.operatorNickname || 'you'; }).catch(() => {});
+const identLabel = id => id === 'user' ? `<span class="mention">@${esc(OPERATOR)}</span>` : esc(id);
 if (qs.get('embed')) document.body.classList.add('embed');
 document.body.classList.add('term-hidden');   // raw agent terminals off by default
 const $ = s => document.querySelector(s);
@@ -173,7 +178,8 @@ function mdToHtml(src) {
       (_, pre, pth) => `${pre}<a href="${fileHref(pth)}" target="_blank" rel="noopener" class="file-link">${pth}</a>`)
     .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?]|$)/g, '$1<em>$2</em>')
-    .replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,!?]|$)/g, '$1<em>$2</em>');
+    .replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,!?]|$)/g, '$1<em>$2</em>')
+    .replace(/(^|[\s(])@([a-zA-Z][\w-]*)/g, '$1<span class="mention">@$2</span>');
   // Block structure, line by line.
   const lines = s.split('\n');
   const out = [];
@@ -377,8 +383,8 @@ function renderMsgs(room) {
   const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 50;
   box.innerHTML = room.messages.map(m => {
     const cls = m.from === 'user' ? 'user' : esc(m.from);
-    const to = m.to && m.to !== 'all' ? ` <span class="to">→ ${esc(m.to)}</span>` : '';
-    return `<div class="msg ${cls}" data-mid="${esc(m.id || '')}" data-from="${esc(m.from || '')}"><div class="from">${esc(m.from)}${to}</div><div class="text md">${mdToHtml(m.text)}</div></div>`;
+    const to = m.to && m.to !== 'all' ? ` <span class="to">→ ${identLabel(m.to)}</span>` : '';
+    return `<div class="msg ${cls}" data-mid="${esc(m.id || '')}" data-from="${esc(m.from || '')}"><div class="from">${identLabel(m.from)}${to}</div><div class="text md">${mdToHtml(m.text)}</div></div>`;
   }).join('');
   if (atBottom) box.scrollTop = box.scrollHeight;
   applyComments();

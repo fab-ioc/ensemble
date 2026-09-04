@@ -2400,7 +2400,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, check_for_update())
             return
         if p == "/api/settings":
-            self._send_json(200, load_settings())
+            # Include the *resolved* operator display name so the UI can show the
+            # human by name (nickname, else git user.name) instead of "user".
+            self._send_json(200, {**load_settings(), "operatorName": operator_name()})
             return
         if p.startswith("/api/cost/"):
             sid = p[len("/api/cost/"):]
