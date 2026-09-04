@@ -97,6 +97,7 @@ def create_room(title: str, members: list[dict], max_hops: int = DEFAULT_MAX_HOP
                 "kind": "agent",
                 "agent": m.get("agent", ""),
                 "model": m.get("model", ""),
+                "role": (m.get("role") or "").strip(),   # engineer | reviewer | pair | custom text
                 "pid": m.get("pid"),
                 "sessionId": m.get("sessionId", ""),
                 "cwd": m.get("cwd", ""),
@@ -235,16 +236,24 @@ def post_message(room_id: str, sender: str, text: str, to: str = "") -> dict | N
             room["hopCount"] = 0
             room["status"] = "active"
             room["waitingFor"] = ""
-        elif human_addressed:
-            # An agent tagged the human → pause and wait for input.
+        elif human_addressed and not agent_recipients:
+            # An agent tagged ONLY the human → pause and wait for input.
             room["status"] = "waiting_human"
             room["waitingFor"] = HUMAN_IDENTITY
         else:
-            # Agent → agent hand-off. Advance the loop guard.
+            # Agent → agent hand-off (a direct message, or a broadcast that also
+            # cc's the human). Ring the addressed teammate and keep the relay
+            # alive even if we were previously waiting on the human — the team is
+            # actively collaborating (e.g. the engineer asks the PO for sign-off
+            # AND hands the reviewer a deliverable in parallel). The hop guard
+            # still caps runaway loops.
             room["hopCount"] = room.get("hopCount", 0) + 1
             if room["hopCount"] >= room.get("maxHops", DEFAULT_MAX_HOPS):
                 room["status"] = "paused"
                 room["waitingFor"] = HUMAN_IDENTITY
+            else:
+                room["status"] = "active"
+                room["waitingFor"] = ""
 
         # Only ring agents when the room isn't paused / waiting on the human.
         ring = agent_recipients if room["status"] == "active" else []
@@ -284,10 +293,10 @@ MCP_TOOLS = [
     {
         "name": "chat_send",
         "description": (
-            "Send a message to your collaboration partner(s) or the human. This "
+            "Send a message to your collaboration partner(s) or the user. This "
             "is how you hand off your turn: after you finish a step of thinking "
             "or work, send your partner your findings/critique/proposal. To pull "
-            "the human in for a decision, question, or clarification, set "
+            "the user in for a decision, question, or clarification, set "
             "to=\"user\" — that pauses the collaboration until they reply."
         ),
         "inputSchema": {
@@ -297,7 +306,7 @@ MCP_TOOLS = [
                             "description": "The message text to send."},
                 "to": {"type": "string",
                        "description": "Recipient identity: your partner's name, "
-                                      "\"user\" for the human, or omit / \"all\" "
+                                      "\"user\" for the user, or omit / \"all\" "
                                       "to address everyone."},
             },
             "required": ["message"],
@@ -316,7 +325,7 @@ MCP_TOOLS = [
         "name": "chat_whoami",
         "description": (
             "Return your identity, your collaboration partner(s), and the room's "
-            "current status (active / waiting on the human / paused)."
+            "current status (active / waiting on the user / paused)."
         ),
         "inputSchema": {"type": "object", "properties": {}},
     },

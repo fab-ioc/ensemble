@@ -1,0 +1,286 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>file</title>
+<style>
+  :root { --bg:#0e0e0e; --surface:#161616; --fg:#ededed; --border:#2a2a2a; --accent:#c25d3c; --dim:#9a9a9a; }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; background:var(--bg); color:var(--fg);
+    font:14px/1.6 system-ui,-apple-system,sans-serif; }
+  header { position:sticky; top:0; display:flex; align-items:center; gap:10px;
+    padding:9px 14px; background:var(--surface); border-bottom:1px solid var(--border); z-index:5; }
+  header .name { font-weight:600; font-size:13px; word-break:break-all; }
+  header .grow { flex:1; }
+  header a.btn { color:var(--fg); text-decoration:none; font-size:12px; border:1px solid var(--border);
+    padding:4px 10px; border-radius:6px; background:#ffffff08; white-space:nowrap; }
+  header a.btn:hover { background:#ffffff14; }
+  main { max-width:900px; margin:0 auto; padding:22px 20px 60px; }
+  .err { color:#ef4444; padding:20px; }
+  pre.raw { background:#0b0b0b; border:1px solid var(--border); border-radius:8px;
+    padding:14px 16px; overflow-x:auto; font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    white-space:pre; color:var(--fg); }
+  img.file, iframe.file { max-width:100%; border:1px solid var(--border); border-radius:8px; background:#fff; }
+  iframe.file { width:100%; height:calc(100vh - 120px); }
+  /* Rendered markdown */
+  .md { }
+  .md .ln { white-space:pre-wrap; word-break:break-word; margin:0 0 2px; }
+  .md .ln-gap { height:.7em; }
+  .md h1,.md h2,.md h3 { font-weight:700; line-height:1.25; }
+  .md h1 { font-size:24px; margin:18px 0 10px; padding-bottom:5px; border-bottom:1px solid var(--border); }
+  .md h2 { font-size:19px; margin:20px 0 8px; padding-bottom:4px; border-bottom:1px solid var(--border); }
+  .md h3 { font-size:16px; margin:16px 0 6px; }
+  .md h4,.md h5,.md h6 { font-weight:700; font-size:14px; margin:12px 0 5px; }
+  .md > :first-child { margin-top:0; }
+  .md ul,.md ol { margin:6px 0; padding-left:24px; }
+  .md li { margin:2px 0; }
+  .md code.ic { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.9em;
+    background:#ffffff14; border:1px solid #ffffff24; border-radius:4px; padding:0 4px; word-break:break-word; }
+  .md pre.cb { margin:10px 0; background:#0b0b0b; border:1px solid var(--border); border-radius:8px;
+    padding:10px 12px; overflow-x:auto; }
+  .md pre.cb code { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12.5px; line-height:1.45; white-space:pre; }
+  .md pre.cb[data-lang]::before { content:attr(data-lang); display:block; font-size:9px;
+    text-transform:uppercase; letter-spacing:.05em; color:var(--dim); margin-bottom:6px; }
+  .md blockquote { margin:8px 0; padding:2px 12px; border-left:3px solid var(--border); color:var(--dim); }
+  .md a { color:var(--accent); }
+  .md hr { border:0; border-top:1px solid var(--border); margin:14px 0; }
+  .md table { border-collapse:collapse; margin:10px 0; display:block; overflow-x:auto; }
+  .md th,.md td { border:1px solid var(--border); padding:5px 9px; text-align:left; }
+  .md th { background:#ffffff0d; }
+  /* In-place review comments */
+  mark.cmt-hl { background:#f5c84240; border-bottom:2px solid #f5c842; border-radius:2px; color:inherit; cursor:pointer; }
+  .cmt-selbtn { position:fixed; z-index:60; font-size:12px; padding:5px 11px; background:var(--accent); color:#fff; border:none; border-radius:6px; box-shadow:0 3px 12px rgba(0,0,0,.4); cursor:pointer; }
+  .cmt-composer { position:fixed; z-index:61; top:50%; left:50%; transform:translate(-50%,-50%); width:min(440px,92vw); background:var(--surface); border:1px solid var(--border); border-radius:10px; box-shadow:0 14px 44px rgba(0,0,0,.55); padding:14px; }
+  .cmt-composer .cmt-quote { font-size:12px; color:var(--dim); border-left:3px solid var(--accent); padding:5px 9px; margin-bottom:9px; max-height:96px; overflow-y:auto; white-space:pre-wrap; }
+  .cmt-composer textarea { width:100%; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:8px; font:inherit; resize:vertical; }
+  .cmt-composer .cmt-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:10px; }
+  .cmt-composer button { background:#2a2a2a; color:var(--fg); border:1px solid #444; padding:5px 12px; border-radius:6px; cursor:pointer; font:inherit; }
+  .cmt-composer .cmt-add { background:var(--accent); color:#fff; border:none; }
+  #cmt-tray { position:fixed; right:12px; bottom:12px; z-index:55; width:min(330px,92vw); max-height:60vh; display:flex; flex-direction:column; background:var(--surface); border:1px solid var(--border); border-radius:10px; box-shadow:0 10px 34px rgba(0,0,0,.45); overflow:hidden; }
+  #cmt-tray .cmt-tray-head { display:flex; align-items:center; gap:6px; padding:9px 11px; border-bottom:1px solid var(--border); font-size:13px; }
+  #cmt-tray .grow { flex:1; }
+  #cmt-tray .cmt-submit { background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font:inherit; font-size:12px; }
+  #cmt-tray .cmt-clear { background:#2a2a2a; color:var(--fg); border:1px solid #444; font-size:12px; padding:4px 10px; border-radius:6px; cursor:pointer; }
+  #cmt-tray .cmt-list { overflow-y:auto; }
+  #cmt-tray .cmt-item { position:relative; padding:8px 26px 8px 11px; border-bottom:1px solid var(--border); cursor:pointer; }
+  #cmt-tray .cmt-item:hover { background:#ffffff08; }
+  #cmt-tray .cmt-item-q { font-size:11px; color:var(--accent); margin-bottom:2px; word-break:break-word; }
+  #cmt-tray .cmt-item-n { font-size:12px; color:var(--fg); word-break:break-word; }
+  #cmt-tray .cmt-item-x { position:absolute; top:6px; right:6px; background:none; border:none; color:var(--dim); cursor:pointer; font-size:12px; padding:2px 5px; }
+  #cmt-tray .cmt-item-x:hover { color:#ef4444; }
+  .cmt-toast { position:fixed; left:50%; bottom:20px; transform:translateX(-50%); z-index:70; background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:9px 16px; font-size:13px; box-shadow:0 8px 26px rgba(0,0,0,.5); }
+</style>
+</head>
+<body>
+<header>
+  <span class="name" id="name">file</span>
+  <span class="grow"></span>
+  <a class="btn" id="raw" target="_blank">Raw</a>
+</header>
+<main id="main"><div class="err">Loading…</div></main>
+<script>
+const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const _MDA = String.fromCharCode(0xE000), _MDZ = String.fromCharCode(0xE001);
+const ROOM = new URLSearchParams(location.search).get('room') || '';
+function looksPath(s) { return /^(?:[A-Za-z]:\\|\\\\|~\/|\/)\S+\.\w{1,8}$/.test((s || '').trim()); }
+function fileLink(p) { return '/fileview?path=' + encodeURIComponent(p) + (ROOM ? '&room=' + encodeURIComponent(ROOM) : ''); }
+function mdToHtml(src) {
+  const codes = [];
+  const ph = h => _MDA + (codes.push(h) - 1) + _MDZ;
+  let s = (src ?? '').replace(/\r\n/g, '\n');
+  s = s.replace(/```([\w+-]*)\n?([\s\S]*?)```/g, (_, lang, body) =>
+    ph(`<pre class="cb"${lang ? ` data-lang="${esc(lang)}"` : ''}><code>${esc(body.replace(/\n$/, ''))}</code></pre>`));
+  s = s.replace(/`([^`\n]+)`/g, (_, body) => {
+    const t = body.trim();
+    if (looksPath(t)) return ph(`<a href="${fileLink(t)}" target="_blank" rel="noopener"><code class="ic">${esc(body)}</code></a>`);
+    return ph(`<code class="ic">${esc(body)}</code>`);
+  });
+  s = esc(s);
+  const inline = t => t
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, (_, txt, url) => `<a href="${esc(url)}" target="_blank" rel="noopener">${txt}</a>`)
+    .replace(/(^|[\s(])((?:https?:\/\/)[^\s<)]+)/g, (_, pre, url) => `${pre}<a href="${url}" target="_blank" rel="noopener">${url}</a>`)
+    .replace(/(^|[\s(])((?:[A-Za-z]:\\|\\\\|~\/|\/)[^\s"'<>|?*,;)\]]*\.\w{1,8})/g,
+      (_, pre, pth) => `${pre}<a href="${fileLink(pth)}" target="_blank" rel="noopener">${pth}</a>`)
+    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?]|$)/g, '$1<em>$2</em>')
+    .replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,!?]|$)/g, '$1<em>$2</em>');
+  const isBlockPh = t => new RegExp('^' + _MDA + '(\\d+)' + _MDZ + '$').test(t) && /^<pre/.test(codes[+t.slice(1, -1)] || '');
+  const out = [];
+  let list = null;
+  const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  const tableSep = l => /^[\s|:-]+$/.test(l.trim()) && l.includes('|') && l.includes('-');
+  const rowCells = l => { let r = l.trim(); if (r.startsWith('|')) r = r.slice(1); if (r.endsWith('|')) r = r.slice(0, -1); return r.split('|').map(c => c.trim()); };
+  const lines = s.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const t = line.trim();
+    let m;
+    if (isBlockPh(t)) { closeList(); out.push(t); continue; }
+    if (line.includes('|') && i + 1 < lines.length && tableSep(lines[i + 1])) {
+      closeList();
+      const heads = rowCells(line);
+      const aligns = rowCells(lines[i + 1]).map(c => { const L = c.startsWith(':'), R = c.endsWith(':'); return (L && R) ? 'center' : R ? 'right' : L ? 'left' : ''; });
+      const body = [];
+      let j = i + 2;
+      while (j < lines.length && lines[j].includes('|') && lines[j].trim() !== '') { body.push(rowCells(lines[j])); j++; }
+      const cell = (c, tag, al) => `<${tag}${al ? ` style="text-align:${al}"` : ''}>${inline(c || '')}</${tag}>`;
+      let tbl = '<table><thead><tr>' + heads.map((h, k) => cell(h, 'th', aligns[k])).join('') + '</tr></thead>';
+      if (body.length) tbl += '<tbody>' + body.map(row => '<tr>' + heads.map((_, k) => cell(row[k], 'td', aligns[k])).join('') + '</tr>').join('') + '</tbody>';
+      out.push(tbl + '</table>');
+      i = j - 1;
+      continue;
+    }
+    if ((m = line.match(/^(#{1,6})\s+(.*)$/))) { closeList(); out.push(`<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`); continue; }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { closeList(); out.push('<hr>'); continue; }
+    if ((m = line.match(/^\s*>\s?(.*)$/))) { closeList(); out.push(`<blockquote>${inline(m[1])}</blockquote>`); continue; }
+    if ((m = line.match(/^\s*[-*+]\s+(.*)$/))) { if (list !== 'ul') { closeList(); out.push('<ul>'); list = 'ul'; } out.push(`<li>${inline(m[1])}</li>`); continue; }
+    if ((m = line.match(/^\s*\d+[.)]\s+(.*)$/))) { if (list !== 'ol') { closeList(); out.push('<ol>'); list = 'ol'; } out.push(`<li>${inline(m[1])}</li>`); continue; }
+    if (t === '') { closeList(); if (out.length && out[out.length - 1] !== '<div class="ln-gap"></div>') out.push('<div class="ln-gap"></div>'); continue; }
+    closeList(); out.push(`<div class="ln">${inline(line)}</div>`);
+  }
+  closeList();
+  return out.join('\n').replace(new RegExp(_MDA + '(\\d+)' + _MDZ, 'g'), (_, i) => codes[+i]);
+}
+// ---- In-place review comments (same idea as the chat bubbles) -----------
+// Select text in the document → attach a comment; collect several; send them
+// all to the room the file was opened from (carried in ?room=), or copy them.
+const CMTS = [];               // {cid, start, end, quote, note}
+let _cseq = 1, _composerOpen = false, _selBtn = null, _cRoot = null;
+function _off(root, node, o) {
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null); let off = 0, n;
+  while ((n = w.nextNode())) { if (n === node) return off + o; off += n.nodeValue.length; }
+  return -1;
+}
+function _mark(root, start, end, cid) {
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null); let off = 0, n; const ts = [];
+  while ((n = w.nextNode())) { const len = n.nodeValue.length, s = Math.max(start, off), e = Math.min(end, off + len); if (s < e) ts.push({ node: n, s: s - off, e: e - off }); off += len; }
+  for (const t of ts.reverse()) { try { const r = document.createRange(); r.setStart(t.node, t.s); r.setEnd(t.node, t.e); const m = document.createElement('mark'); m.className = 'cmt-hl'; m.dataset.cid = cid; r.surroundContents(m); } catch (e) {} }
+}
+function clearHl() { document.querySelectorAll('mark.cmt-hl').forEach(m => { const p = m.parentNode; while (m.firstChild) p.insertBefore(m.firstChild, m); p.removeChild(m); p.normalize(); }); }
+function hideSelBtn() { if (_selBtn) { _selBtn.remove(); _selBtn = null; } }
+function _onSel() {
+  setTimeout(() => {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount) { hideSelBtn(); return; }
+    const r = sel.getRangeAt(0);
+    if (!_cRoot || !_cRoot.contains(r.commonAncestorContainer)) { hideSelBtn(); return; }
+    let start = _off(_cRoot, r.startContainer, r.startOffset), end = _off(_cRoot, r.endContainer, r.endOffset);
+    if (start > end) { const t = start; start = end; end = t; }
+    if (start < 0 || end <= start) { hideSelBtn(); return; }
+    showSelBtn(r.getBoundingClientRect(), { start, end, quote: (_cRoot.textContent || '').slice(start, end) });
+  }, 10);
+}
+function showSelBtn(rect, data) {
+  hideSelBtn();
+  const b = document.createElement('button'); b.className = 'cmt-selbtn'; b.textContent = '💬 Comment';
+  document.body.appendChild(b);
+  b.style.top = (rect.bottom + 6) + 'px'; b.style.left = Math.max(6, Math.min(rect.left, window.innerWidth - 130)) + 'px';
+  b.addEventListener('mousedown', e => e.preventDefault());
+  b.onclick = () => { hideSelBtn(); openComposer(data); };
+  _selBtn = b;
+}
+function openComposer(data) {
+  _composerOpen = true;
+  const q = data.quote.length > 200 ? data.quote.slice(0, 200) + '…' : data.quote;
+  const p = document.createElement('div'); p.className = 'cmt-composer';
+  p.innerHTML = `<div class="cmt-quote"></div><textarea class="cmt-note" rows="3" placeholder="Your comment on this passage…"></textarea><div class="cmt-actions"><button class="cmt-cancel">Cancel</button><button class="cmt-add">Add comment</button></div>`;
+  p.querySelector('.cmt-quote').textContent = '“' + q + '”';
+  document.body.appendChild(p);
+  const ta = p.querySelector('.cmt-note'); ta.focus();
+  const close = () => { p.remove(); _composerOpen = false; };
+  p.querySelector('.cmt-cancel').onclick = close;
+  p.querySelector('.cmt-add').onclick = () => {
+    const note = ta.value.trim(); if (!note) { ta.focus(); return; }
+    const cid = _cseq++; CMTS.push({ cid, start: data.start, end: data.end, quote: data.quote, note });
+    _mark(_cRoot, data.start, data.end, cid); close(); renderTray();
+    const s = window.getSelection(); if (s) s.removeAllRanges();
+  };
+  ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); p.querySelector('.cmt-add').click(); } if (e.key === 'Escape') { e.preventDefault(); close(); } });
+}
+function renderTray() {
+  let tray = document.getElementById('cmt-tray');
+  if (!CMTS.length) { if (tray) tray.remove(); return; }
+  if (!tray) { tray = document.createElement('div'); tray.id = 'cmt-tray'; document.body.appendChild(tray); }
+  tray.innerHTML = `<div class="cmt-tray-head"><strong>${CMTS.length} comment${CMTS.length > 1 ? 's' : ''}</strong><span class="grow"></span><button class="cmt-submit">${ROOM ? 'Send to chat' : 'Copy'}</button><button class="cmt-clear">Clear</button></div><div class="cmt-list"></div>`;
+  const list = tray.querySelector('.cmt-list');
+  CMTS.forEach(c => {
+    const it = document.createElement('div'); it.className = 'cmt-item'; it.dataset.cid = c.cid;
+    const q = document.createElement('div'); q.className = 'cmt-item-q'; q.textContent = '“' + (c.quote.length > 60 ? c.quote.slice(0, 60) + '…' : c.quote) + '”';
+    const nn = document.createElement('div'); nn.className = 'cmt-item-n'; nn.textContent = c.note;
+    const x = document.createElement('button'); x.className = 'cmt-item-x'; x.textContent = '✕';
+    it.append(q, nn, x);
+    x.onclick = (e) => { e.stopPropagation(); const i = CMTS.findIndex(z => z.cid === c.cid); if (i >= 0) CMTS.splice(i, 1); clearHl(); CMTS.forEach(cc => _mark(_cRoot, cc.start, cc.end, cc.cid)); renderTray(); };
+    it.onclick = () => { const m = document.querySelector(`mark.cmt-hl[data-cid="${c.cid}"]`); if (m) m.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+    list.appendChild(it);
+  });
+  tray.querySelector('.cmt-submit').onclick = submitCmts;
+  tray.querySelector('.cmt-clear').onclick = () => { CMTS.length = 0; clearHl(); renderTray(); };
+}
+function buildBody() {
+  const base = document.getElementById('name').textContent || 'file';
+  const path = new URLSearchParams(location.search).get('path') || '';
+  return `## Review comments on \`${base}\` (${CMTS.length})\nFile: \`${path}\`\n\n` +
+    CMTS.map((c, i) => `**${i + 1}.** > ${c.quote.replace(/\s*\n\s*/g, ' ').trim()}\n\n${c.note}`).join('\n\n');
+}
+async function submitCmts() {
+  if (!CMTS.length) return;
+  const body = buildBody();
+  if (!ROOM) {
+    try { await navigator.clipboard.writeText(body); toast('No room to send to — comments copied. Paste them into the chat.'); }
+    catch (e) { alert('Your comments:\n\n' + body); }
+    return;
+  }
+  try {
+    const r = await fetch('/api/room/say', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: ROOM, text: body, to: '' }) });
+    if (!r.ok) throw new Error(r.status);
+    CMTS.length = 0; clearHl(); renderTray(); toast('✓ Comments sent to the chat');
+  } catch (e) { alert('Failed to send. Your comments:\n\n' + body); }
+}
+function toast(msg) { const n = document.createElement('div'); n.className = 'cmt-toast'; n.textContent = msg; document.body.appendChild(n); setTimeout(() => n.remove(), 2800); }
+function enableComments(root) {
+  _cRoot = root;
+  root.addEventListener('mouseup', _onSel);
+  root.addEventListener('touchend', _onSel);
+  root.addEventListener('mousedown', hideSelBtn);
+  document.addEventListener('mousedown', e => { if (_selBtn && e.target !== _selBtn) hideSelBtn(); });
+}
+(async function () {
+  const path = new URLSearchParams(location.search).get('path') || '';
+  const main = document.getElementById('main');
+  const nameEl = document.getElementById('name');
+  const base = path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path;
+  nameEl.textContent = base;
+  document.title = base || 'file';
+  const src = '/api/file?path=' + encodeURIComponent(path);
+  document.getElementById('raw').href = src;
+  if (!path) { main.innerHTML = '<div class="err">No path given.</div>'; return; }
+  const ext = (base.match(/\.(\w+)$/) || [,''])[1].toLowerCase();
+  const imgExt = ['png','jpg','jpeg','gif','webp','svg','bmp','ico'];
+  if (imgExt.includes(ext)) { main.innerHTML = `<img class="file" src="${src}" alt="${esc(base)}">`; return; }
+  if (ext === 'pdf') { main.innerHTML = `<iframe class="file" src="${src}"></iframe>`; return; }
+  let text;
+  try {
+    const r = await fetch(src, { cache: 'no-store' });
+    if (!r.ok) { main.innerHTML = `<div class="err">Could not open file (${r.status}). It may not exist on the hub.</div>`; return; }
+    text = await r.text();
+  } catch (e) { main.innerHTML = `<div class="err">Failed to load: ${esc(String(e))}</div>`; return; }
+  if (ext === 'md' || ext === 'markdown') {
+    const div = document.createElement('div');
+    div.className = 'md';
+    div.innerHTML = mdToHtml(text);
+    main.innerHTML = '';
+    main.appendChild(div);
+    enableComments(div);
+  } else {
+    const pre = document.createElement('pre');
+    pre.className = 'raw';
+    pre.textContent = text;
+    main.innerHTML = '';
+    main.appendChild(pre);
+    enableComments(pre);
+  }
+})();
+</script>
+</body>
+</html>

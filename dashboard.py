@@ -461,6 +461,7 @@ def save_archived(arch: set[str]) -> None:
 _SETTINGS_DEFAULTS = {
     "openMode": "window",   # "window" (new iTerm window) | "tab" (new tab in front window)
     "defaultModel": "",     # e.g. "opus" | "sonnet" | "haiku" | "fable" | full ID; empty = claude default
+    "operatorNickname": "", # what the agents call you; empty = fall back to git user.name
 }
 _SETTINGS_ALLOWED_VALUES = {
     "openMode": {"window", "tab"},
@@ -498,12 +499,119 @@ def save_settings(settings: dict) -> dict:
             if not isinstance(v, str) or len(v) > 80:
                 continue
             v = v.strip()
+        if k == "operatorNickname":
+            if not isinstance(v, str) or len(v) > 60:
+                continue
+            v = v.strip()
         current[k] = v
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
     tmp = SETTINGS_FILE.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(current, indent=2, sort_keys=True), encoding="utf-8")
     tmp.replace(SETTINGS_FILE)
     return current
+
+
+_GIT_NAME_CACHE: list = []
+def operator_name() -> str:
+    """What the collaborating agents should call the person running the dashboard:
+    an explicit nickname from settings, else the git user.name, else a neutral
+    fallback. The git lookup is cached for the process lifetime."""
+    nick = load_settings().get("operatorNickname", "")
+    if isinstance(nick, str) and nick.strip():
+        return nick.strip()
+    if not _GIT_NAME_CACHE:
+        name = ""
+        try:
+            out = subprocess.run(["git", "config", "user.name"],
+                                 capture_output=True, text=True, timeout=3)
+            name = (out.stdout or "").strip()
+        except (FileNotFoundError, OSError, subprocess.SubprocessError):
+            name = ""
+        _GIT_NAME_CACHE.append(name)
+    return _GIT_NAME_CACHE[0] or "the user"
+
+
+# ---------------------------------------------------------------------------
+# Team roles — each agent in a collaboration plays a role with a behavior
+# charter, so the team divides labor like a real software team instead of every
+# agent racing to do everything. The product owner is always the human (`user`).
+# ---------------------------------------------------------------------------
+ROLE_TITLES = {
+    "engineer": "engineer",
+    "reviewer": "reviewer",
+    "pair": "collaborator",
+    "": "collaborator",
+}
+
+
+def role_title(role: str) -> str:
+    return ROLE_TITLES.get(role, (role or "collaborator"))
+
+
+def role_charter(role: str, teammates: list) -> str:
+    """The behavior contract for a role. ``teammates`` is the OTHER agents as
+    [{identity, role}] so the charter can name the engineer/reviewer directly."""
+    eng = next((t["identity"] for t in teammates if t.get("role") == "engineer"), "the engineer")
+    rev = next((t["identity"] for t in teammates if t.get("role") == "reviewer"), "the reviewer")
+    if role == "engineer":
+        return (
+            f"You own design and implementation. Break the product owner's request "
+            f"into steps and do the actual work — write the code, the plan, the diffs. "
+            f"When a piece is ready, send it to {rev} for review before you consider it "
+            f"done, and fold in the findings you get back. Go back to the product owner "
+            f"only for requirements decisions or final sign-off."
+        )
+    if role == "reviewer":
+        return (
+            f"You are the reviewer. Do NOT design, plan, or implement — that is {eng}'s "
+            f"job. Wait until {eng} sends a deliverable (a plan, a diff, code, or a "
+            f"claim); then review it: check it against the product owner's requirements, "
+            f"hunt for bugs, edge cases, risks, and gaps, verify claims by reading the "
+            f"actual code or running tests, and reply with a concise, structured critique "
+            f"— what is correct, what is wrong, what is missing, and what to change. If "
+            f"anyone asks you to build something, decline and redirect: {eng} builds, you "
+            f"review. When the product owner posts to the whole team, do NOT answer first "
+            f"— let {eng} respond and produce; weigh in only once there is a deliverable "
+            f"to review, or when the product owner addresses you directly. Never start "
+            f"work on the task ahead of {eng}."
+        )
+    if role and role not in ROLE_TITLES:
+        # Custom role: the value itself is the charter the user wrote.
+        return role
+    return (
+        "Collaborate as an equal partner: share findings and critique, and converge "
+        "on the best solution together."
+    )
+
+
+def collab_briefing(ident: str, role: str, teammates: list, task: str,
+                    wire_mcp: bool = True) -> str:
+    """Assemble a role-aware collaboration briefing. ``teammates`` is the other
+    agents as [{identity, role}]."""
+    op = operator_name()
+    title = role_title(role)
+    mates = ", ".join(f"{t['identity']} (the {role_title(t.get('role',''))})"
+                      for t in teammates) or "your partner"
+    parts = [
+        f"You are '{ident}', the {title} on a small software team.",
+        role_charter(role, teammates),
+        (f"Team: {mates}. The product owner is {op} — they set requirements and "
+         f"priorities and accept or reject the work; reach them with chat_send "
+         f"to=\"user\"."),
+        ("Coordinate ONLY through the 'chat' MCP tools: chat_send to hand off your "
+         "turn (end each turn by sending a teammate a message), chat_read to read "
+         "replies. Write every chat message as GitHub-flavored Markdown (headings, "
+         "bullet and numbered lists, inline code for identifiers/paths/commands, "
+         "fenced code blocks for code, and tables where useful)."),
+    ]
+    if role == "reviewer":
+        eng = next((t["identity"] for t in teammates if t.get("role") == "engineer"), "the engineer")
+        parts.append(f"Start by acknowledging your role in one line, then wait for "
+                     f"{eng}'s first deliverable — do not begin working the task yourself.")
+    else:
+        parts.append("Begin now by sending a teammate your initial plan or approach.")
+    parts.append(f"TASK:\n{task}")
+    return "\n\n".join(parts)
 
 
 def load_categories() -> dict[str, str]:
@@ -2207,6 +2315,40 @@ class Handler(BaseHTTPRequestHandler):
                 "label": labels.get(sid, ""),
             })
             return
+        if p == "/fileview":
+            self._send_file(STATIC_DIR / "fileview.html",
+                            "text/html; charset=utf-8")
+            return
+        if p == "/api/file":
+            # Stream a local file the agents referenced, so it can be viewed in
+            # the browser (remote-friendly). Token-gated like everything else; a
+            # token holder already has full access to this machine.
+            q = parse_qs(u.query)
+            raw = (q.get("path", [""])[0]).strip()
+            if not raw:
+                self._send_json(400, {"error": "missing_path"})
+                return
+            try:
+                fp = Path(raw).expanduser()
+            except (ValueError, OSError):
+                self._send_json(400, {"error": "bad_path"})
+                return
+            if not fp.is_file():
+                self._send_json(404, {"error": "not_found"})
+                return
+            ext = fp.suffix.lower()
+            img = {".png": "image/png", ".jpg": "image/jpeg",
+                   ".jpeg": "image/jpeg", ".gif": "image/gif",
+                   ".webp": "image/webp", ".svg": "image/svg+xml",
+                   ".ico": "image/x-icon", ".bmp": "image/bmp"}
+            if ext in img:
+                self._send_file(fp, img[ext])
+            elif ext == ".pdf":
+                self._send_file(fp, "application/pdf")
+            else:
+                # Everything else (md, code, text, unknown) as inline UTF-8 text.
+                self._send_file(fp, "text/plain; charset=utf-8")
+            return
         if p == "/api/platform":
             self._send_json(200, BACKEND.info())
             return
@@ -2477,7 +2619,7 @@ class Handler(BaseHTTPRequestHandler):
         sender = (result.get("message") or {}).get("from", "your partner")
         wake = (f"[relay] New message from '{sender}' in your shared room. "
                 f"Use the chat_read tool to read it, then reply with chat_send "
-                f"— to your partner, or to \"user\" if you need the human's "
+                f"— to your partner, or to \"user\" if you need {operator_name()}'s "
                 f"input.")
         for ident in recipients:
             part = next((x for x in room["participants"]
@@ -2518,20 +2660,10 @@ class Handler(BaseHTTPRequestHandler):
             os.makedirs(cwd, exist_ok=True)
         except OSError:
             pass
-        partners = ", ".join(p["identity"] for p in room_full["participants"]
-                             if p.get("kind") == "agent" and p["identity"] != ident)
-        briefing = (
-            f"You are '{ident}', collaborating with {partners or 'your partner'} "
-            f"in a shared workspace to find the best possible solution to the "
-            f"task below. Coordinate through the 'chat' MCP tools: call chat_send "
-            f"to message your partner (end each of your turns by sending them "
-            f"your findings, critique, or proposal), chat_read to read their "
-            f"replies, and chat_send with to=\"user\" whenever you need the "
-            f"human's decision, input, or clarification. Do not stop until you "
-            f"have converged on a solution together or tagged the human. Begin "
-            f"now by sending your partner your initial approach.\n\n"
-            f"TASK:\n{task}"
-        )
+        teammates = [{"identity": p["identity"], "role": p.get("role", "")}
+                     for p in room_full["participants"]
+                     if p.get("kind") == "agent" and p["identity"] != ident]
+        briefing = collab_briefing(ident, part.get("role", ""), teammates, task)
         ag = agents.get_agent(agent_key)
         label = room_full["title"][:60]
         model = (part.get("model") or "").strip()
@@ -2592,19 +2724,10 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             pass
         if wire_mcp:
-            partners = ", ".join(p["identity"] for p in room_full["participants"]
-                                 if p.get("kind") == "agent" and p["identity"] != ident)
-            briefing = (
-                f"You are '{ident}', collaborating with {partners or 'your partner'} "
-                f"to find the best possible solution to the task below. Coordinate "
-                f"ONLY through the 'chat' MCP tools — you have no direct human at "
-                f"this terminal. Use chat_send to message your partner (end each turn "
-                f"by sending them your findings/critique/proposal), chat_read to read "
-                f"replies, and chat_send with to=\"user\" whenever you need the "
-                f"human's decision, input, or clarification. Do not ask questions "
-                f"here in the terminal — the human only sees chat_send. Begin now by "
-                f"sending your partner your initial approach.\n\nTASK:\n{task}"
-            )
+            teammates = [{"identity": p["identity"], "role": p.get("role", "")}
+                         for p in room_full["participants"]
+                         if p.get("kind") == "agent" and p["identity"] != ident]
+            briefing = collab_briefing(ident, part.get("role", ""), teammates, task)
         else:
             briefing = task  # solo: the task is just the first prompt
         ag = agents.get_agent(agent_key)
@@ -2712,16 +2835,23 @@ class Handler(BaseHTTPRequestHandler):
             pid = part.get("pid")
             if not pid:
                 continue
-            partners = [a["identity"] for a in agents_in
-                        if a["identity"] != part["identity"]]
+            teammates = [{"identity": a["identity"], "role": a.get("role", "")}
+                         for a in agents_in if a["identity"] != part["identity"]]
+            role = part.get("role", "")
+            mates = ", ".join(f"{t['identity']} (the {role_title(t['role'])})"
+                              for t in teammates) or "your partner"
+            closing = ("Acknowledge your role in one line and wait for the engineer's "
+                       "next deliverable before doing any work yourself."
+                       if role == "reviewer"
+                       else "Pick up the collaboration with chat_send.")
             brief = (
-                f"[room '{room['title']}'] You are '{part['identity']}', "
-                f"collaborating with {', '.join(partners) or 'your partner'} to "
-                f"find the best possible solution. Coordinate via the chat tools: "
-                f"call chat_read to see new messages and chat_send to reply. End "
-                f"each turn by sending your partner a message. When you need input "
-                f"from the human, chat_send to \"user\". Start by introducing your "
-                f"approach with chat_send."
+                f"[room '{room['title']}'] You are '{part['identity']}', the "
+                f"{role_title(role)} on this team. {role_charter(role, teammates)} "
+                f"Team: {mates}. The product owner is {operator_name()} — reach them "
+                f"with chat_send to=\"user\". Coordinate via chat_read / chat_send and "
+                f"end each turn by messaging a teammate. Write every chat message as "
+                f"GitHub-flavored Markdown (headings, lists, inline code, fenced code "
+                f"blocks, tables). {closing}"
             )
             try:
                 BACKEND.send_text(int(pid), brief, submit=True)
@@ -3020,25 +3150,26 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "need_an_agent"})
                 return
             # Each item is either a plain agent key ("claude") or an object
-            # {agent, model}. Normalize to (agent_key, model) pairs.
+            # {agent, model, role}. Normalize to (agent_key, model, role) tuples.
             specs = []
             for item in agent_list:
                 if isinstance(item, dict):
                     ak = (item.get("agent") or "").strip()
                     mdl = (item.get("model") or "").strip()
+                    role = (item.get("role") or "").strip()
                 else:
-                    ak, mdl = str(item).strip(), ""
+                    ak, mdl, role = str(item).strip(), "", ""
                 ag = agents.get_agent(ak)
                 if ag is None or not ag.installed():
                     self._send_json(400, {"error": f"agent_unavailable:{ak}"})
                     return
-                specs.append((ak, mdl))
+                specs.append((ak, mdl, role))
             ok, base, msg = create_cs_session(title)
             if not ok:
                 self._send_json(400, {"error": msg})
                 return
-            members = [{"identity": ak, "agent": ak, "model": mdl}
-                       for ak, mdl in specs]
+            members = [{"identity": ak, "agent": ak, "model": mdl, "role": role}
+                       for ak, mdl, role in specs]
             room = chatroom.create_room(title, members)
             room_full = chatroom.get_room(room["id"], public=False)
             room_full["cwd"] = base
@@ -3078,6 +3209,24 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._ring_recipients(rid, result)
             self._send_json(200, {"ok": True, "result": result})
+            return
+        if p == "/api/room/roles":
+            # Assign/clear team roles on an existing room's agents:
+            # {roomId, roles: {identity: "engineer"|"reviewer"|"pair"|"<custom>"}}.
+            rid = (data.get("roomId") or "").strip()
+            roles = data.get("roles") or {}
+            if not rid or not isinstance(roles, dict):
+                self._send_json(400, {"error": "missing_fields"})
+                return
+            room_full = chatroom.get_room(rid, public=False)
+            if room_full is None:
+                self._send_json(404, {"error": "no_such_room"})
+                return
+            for part in room_full.get("participants", []):
+                if part.get("kind") == "agent" and part["identity"] in roles:
+                    part["role"] = (str(roles[part["identity"]]) or "").strip()[:400]
+            chatroom.update_room(room_full)
+            self._send_json(200, {"ok": True, "room": chatroom.get_room(rid)})
             return
         if p == "/api/room/status":
             rid = (data.get("roomId") or "").strip()

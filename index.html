@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Ensemble</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 0 C13 8 16 11 24 12 C16 13 13 16 12 24 C11 16 8 13 0 12 C8 11 11 8 12 0 Z' fill='%23D97757'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -266,9 +267,11 @@
   .room-open, .room-end { font-size: 12px; padding: 2px 8px; }
   /* ---- Multiagent "Duo" creator + chat panel ---- */
   #duo-btn { white-space: nowrap; }
-  .duo-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .duo-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
   .duo-row select, .duo-row input { flex: 1; }
   .duo-row .duo-agent { flex: 0 0 130px; }
+  .duo-row .duo-role { flex: 0 0 118px; }
+  .duo-row .duo-role-custom { flex: 1 1 140px; }
   #rooms-panel {
     position: fixed; top: 0; right: 0; bottom: 0; width: min(460px, 92vw);
     background: var(--surface, #161616); color: var(--fg, #ededed);
@@ -644,6 +647,32 @@
     font-family: var(--font-mono); font-size: 11.5px; line-height: 1.5;
     color: var(--fg); white-space: pre-wrap; word-wrap: break-word;
   }
+  /* Markdown-rendered conversation content (see mdToHtml). */
+  .tx-text.md { white-space: normal; }
+  .tx-text.md .ln { white-space: pre-wrap; word-wrap: break-word; margin: 0 0 1px; }
+  .tx-text.md ul, .tx-text.md ol { margin: 4px 0; padding-left: 20px; }
+  .tx-text.md li { margin: 1px 0; }
+  .tx-text.md h3, .tx-text.md h4, .tx-text.md h5, .tx-text.md h6 { font-weight: 700; text-transform: none; letter-spacing: 0; color: var(--fg); }
+  .tx-text.md h3 { font-size: 14px; margin: 13px 0 6px; padding-bottom: 3px; border-bottom: 1px solid var(--border); }
+  .tx-text.md h4 { font-size: 12.5px; margin: 11px 0 4px; }
+  .tx-text.md h5, .tx-text.md h6 { font-size: 11.5px; margin: 9px 0 3px; }
+  .tx-text.md > :first-child { margin-top: 0; }
+  .tx-text.md .ln-gap { height: 0.6em; }
+  .tx-text.md code.ic { font-size: 0.92em; background: color-mix(in srgb, var(--fg) 10%, transparent); border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent); border-radius: 4px; padding: 0 4px; word-break: break-word; }
+  .tx-text.md pre.cb { margin: 6px 0; background: color-mix(in srgb, var(--fg) 6%, var(--bg)); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; overflow-x: auto; }
+  .tx-text.md pre.cb code { font-size: 11px; line-height: 1.45; white-space: pre; }
+  .tx-text.md pre.cb[data-lang]::before { content: attr(data-lang); display: block; font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted-2); margin-bottom: 5px; }
+  .tx-text.md blockquote { margin: 4px 0; padding: 2px 10px; border-left: 3px solid var(--border); color: var(--muted-2); }
+  .tx-text.md a { color: var(--accent); }
+  .tx-text.md hr { border: 0; border-top: 1px solid var(--border); margin: 8px 0; }
+  .tx-text.md table { border-collapse: collapse; margin: 8px 0; display: block; overflow-x: auto; max-width: 100%; }
+  .tx-text.md th, .tx-text.md td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; vertical-align: top; }
+  .tx-text.md th { background: color-mix(in srgb, var(--fg) 8%, transparent); font-weight: 700; }
+  .dp-conv.themed .tx-text.md th, .dp-conv.themed .tx-text.md td { border-color: color-mix(in srgb, var(--chat-fg) 22%, transparent); }
+  .dp-conv.themed .tx-text.md th { background: color-mix(in srgb, var(--chat-fg) 10%, transparent); }
+  .dp-conv.themed .tx-text.md code.ic { background: color-mix(in srgb, var(--chat-fg) 12%, transparent); border-color: color-mix(in srgb, var(--chat-fg) 22%, transparent); }
+  .dp-conv.themed .tx-text.md pre.cb { background: color-mix(in srgb, var(--chat-fg) 8%, var(--chat-bg)); }
+  .dp-conv.themed .tx-text.md a { color: var(--chat-accent); }
   .dp-quote {
     background: var(--turn-bg); border-left: 3px solid var(--accent);
     padding: 10px 12px; border-radius: 0 6px 6px 0;
@@ -882,6 +911,7 @@
   }
   #settings-panel .pref-seg { width: 100%; }
   #settings-panel .pref-seg button { flex: 1; font-size: 12px; padding: 6px 10px; }
+  #settings-panel #pref-nickname,
   #settings-panel #pref-default-model {
     width: 100%; padding: 5px 10px;
     border: 1px solid var(--border); border-radius: 6px;
@@ -889,6 +919,7 @@
     font-family: var(--font-mono); font-size: 12px;
     outline: none;
   }
+  #settings-panel #pref-nickname:focus,
   #settings-panel #pref-default-model:focus {
     border-color: var(--accent);
     box-shadow: 0 0 0 3px var(--accent-soft);
@@ -1048,6 +1079,97 @@
     color: var(--muted-2); font-size: 11px; display: block; margin-bottom: 6px;
     font-family: -apple-system, sans-serif; letter-spacing: 0.02em;
   }
+  /* ================= Phone layout (one screen at a time) =================
+     On narrow screens the three fixed panes (category sidebar, session list,
+     detail) can't coexist. Collapse to: full-width list by default; sidebar as
+     an overlay drawer over a scrim; detail as a full-screen overlay you close
+     to return to the list. Header condenses to a single tidy row. */
+  #scrim { display: none; }
+  /* Mobile = narrow screens OR any touch device up to tablet size (so a large
+     phone in landscape, ~950px wide, still gets the one-screen-at-a-time layout
+     instead of the cramped desktop slide-over). Keep this selector in sync with
+     MOBILE_MQ in the script. */
+  @media (max-width: 640px), (max-width: 1024px) and (pointer: coarse) {
+    /* Header: ONE fixed-height row (panels below assume a 49px header, so it
+       must not wrap/grow). Logo-only brand, hide desktop-only filler, let the
+       search flex and the filter chips scroll horizontally. */
+    header { gap: 8px; padding: 0 10px; }
+    header h1 { font-size: 0; flex: 0 0 auto; }   /* hide wordmark, keep icon */
+    header h1 .logo { width: 22px; height: 22px; }
+    #new-btn { display: none; }
+    #meta, #status { display: none !important; }
+    .search-wrap { flex: 1 1 auto; min-width: 0; max-width: none; }
+    #search { min-width: 0; padding-right: 12px; }
+    #search::placeholder { color: transparent; }   /* field stays usable */
+    .seg#filter {
+      flex: 0 1 auto; overflow-x: auto;
+      -webkit-overflow-scrolling: touch; scrollbar-width: none;
+    }
+    .seg#filter::-webkit-scrollbar { display: none; }
+
+    /* List takes the whole width — no room reserved for side panes */
+    main { padding-left: 0 !important; padding-right: 0 !important; }
+    main { padding: 8px 12px 40px; }
+
+    /* Sidebar becomes an overlay drawer (starts hidden via .sidebar-collapsed) */
+    #sidebar {
+      width: min(84vw, 320px); z-index: 45;
+      box-shadow: 8px 0 32px rgba(0,0,0,.28);
+    }
+    /* Scrim behind the open drawer */
+    #scrim {
+      display: block; position: fixed; inset: 49px 0 0 0;
+      background: rgba(0,0,0,.42); z-index: 40; border: 0;
+      opacity: 0; pointer-events: none; transition: opacity .2s;
+    }
+    body:not(.sidebar-collapsed) #scrim { opacity: 1; pointer-events: auto; }
+    /* On phone the scrim only makes sense while the drawer is open; when the
+       sidebar is collapsed (default) it's inert (handled above). */
+
+    /* Detail becomes a true full-screen overlay: cover from the very top
+       (top:0, not below the 49px header) with no card chrome, so nothing of
+       the page behind leaks above it. */
+    #detail-panel {
+      top: 0; width: 100vw; height: 100%;
+      border-left: 0; border-radius: 0; box-shadow: none;
+      padding: 14px 14px 24px;
+    }
+    #detail-panel-resize { display: none !important; }
+    body.detail-open main { padding-right: 0; }
+    /* While a session is open full-screen, hide the app header so nothing of
+       the list/header shows above the overlay. The panel's × returns to it. */
+    body.detail-open header { display: none !important; }
+
+    /* Live-embed header: shrink it so the terminal gets the room. Chips and the
+       action buttons scroll horizontally in one row instead of stacking. */
+    .dp-live { padding: 8px 10px !important; gap: 6px !important; }
+    #detail-panel:has(iframe.dp-session) .dp-head { padding: 6px 10px !important; }
+    .dp-head h2 { font-size: 17px; }
+    .dp-meta {
+      flex-wrap: nowrap; overflow-x: auto; gap: 5px; font-size: 10.5px;
+      -webkit-overflow-scrolling: touch; scrollbar-width: none;
+    }
+    .dp-meta::-webkit-scrollbar { display: none; }
+    .dp-meta > * { flex: 0 0 auto; }
+    .dp-actions, .dp-actions .actions {
+      flex-wrap: nowrap; overflow-x: auto;
+      -webkit-overflow-scrolling: touch; scrollbar-width: none;
+    }
+    .dp-actions::-webkit-scrollbar, .dp-actions .actions::-webkit-scrollbar { display: none; }
+    .dp-actions button, .dp-actions select { flex: 0 0 auto; }
+
+    /* Bigger touch targets */
+    #sidebar-toggle { padding: 6px 12px; font-size: 16px; }
+    .sb-item { padding: 10px 16px; font-size: 14px; }
+    .dp-close { font-size: 24px; padding: 6px 10px; }
+
+    /* No sideways scroll / accidental zoom on the page itself */
+    html, body { overflow-x: hidden; max-width: 100vw; }
+    /* The rooms ("chat") panel is also a slide-over — full-screen it too */
+    #rooms-panel { width: 100vw !important; }
+    /* Any embedded live session iframe fills the full-screen panel */
+    iframe.dp-session { width: 100%; }
+  }
 </style>
 </head>
 <body>
@@ -1133,6 +1255,12 @@
       </datalist>
     </div>
     <p class="cfg-hint">Passed as <code>claude --model &lt;value&gt;</code> for + New sessions. Aliases (<code>opus</code>, <code>sonnet</code>, …) or full IDs both work. Empty = let claude pick.</p>
+    <div class="pref-row" style="margin-top: 14px;">
+      <span class="pref-label">What the agents call you</span>
+      <input type="text" id="pref-nickname" placeholder="your git user name (default)"
+             autocomplete="off" spellcheck="false" maxlength="60">
+    </div>
+    <p class="cfg-hint">Used in the collaboration briefing, so agents address you by name instead of “the human.” Empty = your git <code>user.name</code>.</p>
     <div class="pref-row" id="pref-rearrange-row" style="margin-top: 14px;">
       <span class="pref-label">Rearrange existing sessions</span>
       <div class="pref-btn-row">
@@ -1148,6 +1276,7 @@
     <p class="cfg-hint">Read-only. Override with <code>ENSEMBLE_*</code> env vars at start time — see the README.</p>
   </div>
 </div>
+<div id="scrim" hidden></div>
 <aside id="sidebar"></aside>
 <main>
   <section id="view"></section>
@@ -1185,6 +1314,70 @@ const fmtCost = usd => {
 };
 const fmtInt = n => (n == null ? '0' : n.toLocaleString());
 const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+// Minimal, self-contained markdown → HTML for conversation bubbles. Escape-first
+// (XSS-safe): code is pulled to sentinel placeholders, text is escaped, inline
+// spans + block structure applied, then code restored (already escaped).
+const _MDA = String.fromCharCode(0xE000), _MDZ = String.fromCharCode(0xE001);
+// A local file path (drive-letter, UNC, ~, or absolute) ending in an extension.
+const looksFilePath = s => /^(?:[A-Za-z]:\\|\\\\|~\/|\/)\S+\.\w{1,8}$/.test((s || '').trim());
+let FILE_LINK_ROOM = '';   // room id woven into file links so /fileview can send comments back
+const fileHref = p => '/fileview?path=' + encodeURIComponent(p) + (FILE_LINK_ROOM ? '&room=' + encodeURIComponent(FILE_LINK_ROOM) : '');
+function mdToHtml(src) {
+  const codes = [];
+  const ph = h => _MDA + (codes.push(h) - 1) + _MDZ;
+  let s = (src ?? '').replace(/\r\n/g, '\n');
+  s = s.replace(/```([\w+-]*)\n?([\s\S]*?)```/g, (_, lang, body) =>
+    ph(`<pre class="cb"${lang ? ` data-lang="${esc(lang)}"` : ''}><code>${esc(body.replace(/\n$/, ''))}</code></pre>`));
+  s = s.replace(/`([^`\n]+)`/g, (_, body) => {
+    const code = `<code class="ic">${esc(body)}</code>`;
+    return ph(looksFilePath(body) ? `<a href="${fileHref(body.trim())}" target="_blank" rel="noopener">${code}</a>` : code);
+  });
+  s = esc(s);
+  const inline = t => t
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, (_, txt, url) => `<a href="${esc(url)}" target="_blank" rel="noopener">${txt}</a>`)
+    .replace(/(^|[\s(])((?:https?:\/\/)[^\s<)]+)/g, (_, pre, url) => `${pre}<a href="${url}" target="_blank" rel="noopener">${url}</a>`)
+    .replace(/(^|[\s(])((?:[A-Za-z]:\\|\\\\|~\/|\/)[^\s"'<>|?*,;)\]]*\.\w{1,8})/g,
+      (_, pre, pth) => `${pre}<a href="${fileHref(pth)}" target="_blank" rel="noopener" class="file-link">${pth}</a>`)
+    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?]|$)/g, '$1<em>$2</em>')
+    .replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,!?]|$)/g, '$1<em>$2</em>');
+  const isBlockPh = t => new RegExp('^' + _MDA + '(\\d+)' + _MDZ + '$').test(t) && /^<pre/.test(codes[+t.slice(1, -1)] || '');
+  const out = [];
+  let list = null;
+  const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  const tableSep = l => /^[\s|:-]+$/.test(l.trim()) && l.includes('|') && l.includes('-');
+  const rowCells = l => { let r = l.trim(); if (r.startsWith('|')) r = r.slice(1); if (r.endsWith('|')) r = r.slice(0, -1); return r.split('|').map(c => c.trim()); };
+  const lines = s.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const t = line.trim();
+    let m;
+    if (isBlockPh(t)) { closeList(); out.push(t); continue; }
+    if (line.includes('|') && i + 1 < lines.length && tableSep(lines[i + 1])) {
+      closeList();
+      const heads = rowCells(line);
+      const aligns = rowCells(lines[i + 1]).map(c => { const L = c.startsWith(':'), R = c.endsWith(':'); return (L && R) ? 'center' : R ? 'right' : L ? 'left' : ''; });
+      const body = [];
+      let j = i + 2;
+      while (j < lines.length && lines[j].includes('|') && lines[j].trim() !== '') { body.push(rowCells(lines[j])); j++; }
+      const cell = (c, tag, al) => `<${tag}${al ? ` style="text-align:${al}"` : ''}>${inline(c || '')}</${tag}>`;
+      let tbl = '<table><thead><tr>' + heads.map((h, k) => cell(h, 'th', aligns[k])).join('') + '</tr></thead>';
+      if (body.length) tbl += '<tbody>' + body.map(row => '<tr>' + heads.map((_, k) => cell(row[k], 'td', aligns[k])).join('') + '</tr>').join('') + '</tbody>';
+      out.push(tbl + '</table>');
+      i = j - 1;
+      continue;
+    }
+    if ((m = line.match(/^(#{1,4})\s+(.*)$/))) { closeList(); const n = Math.min(m[1].length + 2, 6); out.push(`<h${n}>${inline(m[2])}</h${n}>`); continue; }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { closeList(); out.push('<hr>'); continue; }
+    if ((m = line.match(/^\s*>\s?(.*)$/))) { closeList(); out.push(`<blockquote>${inline(m[1])}</blockquote>`); continue; }
+    if ((m = line.match(/^\s*[-*+]\s+(.*)$/))) { if (list !== 'ul') { closeList(); out.push('<ul>'); list = 'ul'; } out.push(`<li>${inline(m[1])}</li>`); continue; }
+    if ((m = line.match(/^\s*\d+[.)]\s+(.*)$/))) { if (list !== 'ol') { closeList(); out.push('<ol>'); list = 'ol'; } out.push(`<li>${inline(m[1])}</li>`); continue; }
+    if (t === '') { closeList(); if (out.length && out[out.length - 1] !== '<div class="ln-gap"></div>') out.push('<div class="ln-gap"></div>'); continue; }
+    closeList(); out.push(`<div class="ln">${inline(line)}</div>`);
+  }
+  closeList();
+  return out.join('\n').replace(new RegExp(_MDA + '(\\d+)' + _MDZ, 'g'), (_, i) => codes[+i]);
+}
 const toast = (msg, ms=2500, kind='') => {
   const s = $('#status');
   // Build content: message + dismiss button
@@ -1581,6 +1774,7 @@ function convThemeAttrs() {
   };
 }
 function convBody(r, sid) {
+  FILE_LINK_ROOM = (r && r.headless && r.roomId) ? r.roomId : '';
   const th = convThemeAttrs();
   if (CONV_SID !== sid || !CONV_DATA) {
     return `<div class="dp-section dp-conv${th.cls}"${th.style}><h3>Conversation</h3><div class="dp-conv-empty">Loading…</div></div>`;
@@ -1596,7 +1790,7 @@ function convBody(r, sid) {
     const ts = fmtTs(m.ts);
     return `<div class="tx-turn ${cls}">
         <span class="tx-role">${esc(who)}${esc(to)}${ts ? `<span class="tx-ts">${esc(ts)}</span>` : ''}</span>
-        <div class="tx-text">${esc(m.text)}</div>
+        <div class="tx-text md">${mdToHtml(m.text)}</div>
       </div>`;
   }).join('');
   return `<div class="dp-section dp-conv${th.cls}"${th.style}><h3>Conversation · ${items.length}</h3><div class="dp-transcript">${rows}</div></div>`;
@@ -1944,6 +2138,10 @@ function renderPrefs() {
   const modelInput = document.getElementById('pref-default-model');
   if (modelInput && document.activeElement !== modelInput) {
     modelInput.value = PREFS.defaultModel || '';
+  }
+  const nickInput = document.getElementById('pref-nickname');
+  if (nickInput && document.activeElement !== nickInput) {
+    nickInput.value = PREFS.operatorNickname || '';
   }
 }
 async function setPref(key, val) {
@@ -2465,16 +2663,32 @@ const MODEL_PRESETS = {
   claude: ['opus', 'sonnet', 'haiku', 'fable'],
   codex: ['gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-codex'],
 };
-function addAgentRow(container, sel, model) {
+function roleSelect(role) {
+  const known = ['', 'engineer', 'reviewer'];
+  const isCustom = role && !known.includes(role);
+  const opt = (v, label) => `<option value="${esc(v)}"${(isCustom ? '__custom__' : role) === v ? ' selected' : ''}>${esc(label)}</option>`;
+  return `<select class="duo-role" title="Team role">${opt('', 'Collaborator')}${opt('engineer', 'Engineer')}${opt('reviewer', 'Reviewer')}${opt('__custom__', 'Custom…')}</select>`;
+}
+function addAgentRow(container, sel, model, role) {
   const div = document.createElement('div');
   div.className = 'duo-row';
   const dlId = 'ml-' + Math.random().toString(36).slice(2, 9);
+  const known = ['', 'engineer', 'reviewer'];
+  const isCustom = role && !known.includes(role);
   div.innerHTML = `${agentSelect(sel)}
     <input type="text" class="duo-model" list="${dlId}" placeholder="model (optional)" value="${esc(model || '')}" autocomplete="off" spellcheck="false">
     <datalist id="${dlId}"></datalist>
+    ${roleSelect(role || '')}
+    <input type="text" class="duo-role-custom" placeholder="role / charter" value="${isCustom ? esc(role) : ''}" autocomplete="off" spellcheck="false"${isCustom ? '' : ' hidden'}>
     <button type="button" class="duo-remove secondary" title="Remove this agent">✕</button>`;
   const agentSel = div.querySelector('.duo-agent');
   const modelInput = div.querySelector('.duo-model');
+  const roleSel = div.querySelector('.duo-role');
+  const roleCustom = div.querySelector('.duo-role-custom');
+  roleSel.addEventListener('change', () => {
+    roleCustom.hidden = roleSel.value !== '__custom__';
+    if (!roleCustom.hidden) roleCustom.focus();
+  });
   const datalist = div.querySelector('datalist');
   const fillModels = () => {
     const opts = MODEL_PRESETS[agentSel.value] || [];
@@ -2523,12 +2737,14 @@ function showNewSessionModal(category) {
     </div>`;
   dlg.showModal();
   const agentsBox = $('#ns-agents');
-  addAgentRow(agentsBox, 'claude', def);
+  addAgentRow(agentsBox, 'claude', def, 'engineer');
   $('#ns-title').focus();
   $('#ns-add').onclick = () => {
     const second = AGENT_OPTIONS.find(o => o.key !== 'claude')?.key
       || AGENT_OPTIONS[0]?.key || 'claude';
-    addAgentRow(agentsBox, second, '');
+    // Second agent defaults to reviewer only if no reviewer exists yet.
+    const haveReviewer = [...agentsBox.querySelectorAll('.duo-role')].some(s => s.value === 'reviewer');
+    addAgentRow(agentsBox, second, '', haveReviewer ? '' : 'reviewer');
   };
   const close = () => dlg.close();
   $('#ns-cancel').onclick = close;
@@ -2536,10 +2752,17 @@ function showNewSessionModal(category) {
   $('#ns-ok').onclick = async () => {
     const title = $('#ns-title').value.trim();
     const task = $('#ns-task').value.trim();
-    const specs = [...agentsBox.querySelectorAll('.duo-row')].map(r => ({
-      agent: r.querySelector('.duo-agent').value,
-      model: r.querySelector('.duo-model').value.trim(),
-    }));
+    const specs = [...agentsBox.querySelectorAll('.duo-row')].map(r => {
+      const roleSel = r.querySelector('.duo-role');
+      const role = roleSel.value === '__custom__'
+        ? r.querySelector('.duo-role-custom').value.trim()
+        : roleSel.value;
+      return {
+        agent: r.querySelector('.duo-agent').value,
+        model: r.querySelector('.duo-model').value.trim(),
+        role,
+      };
+    });
     if (!specs.length) return;
     if (!title) { toast('a title is required', 3000, 'err'); return; }
     if (specs.length >= 2 && !task) { toast('a task is required for a collaboration', 3000, 'err'); return; }
@@ -2787,6 +3010,23 @@ $('#sidebar-toggle').addEventListener('click', () => {
   const collapsed = document.body.classList.toggle('sidebar-collapsed');
   localStorage.setItem('cd-sidebar', collapsed ? 'collapsed' : 'open');
 });
+
+// Phone: the sidebar is an overlay drawer, not a pinned column. Start it
+// collapsed regardless of the desktop-persisted state, and close it when the
+// scrim or a category is tapped so you're back to one screen at a time.
+// Keep in sync with the mobile @media query in the stylesheet.
+const MOBILE_MQ = '(max-width: 640px), (max-width: 1024px) and (pointer: coarse)';
+const isPhone = () => window.matchMedia(MOBILE_MQ).matches;
+if (isPhone()) document.body.classList.add('sidebar-collapsed');
+{
+  const scrimEl = document.getElementById('scrim');
+  if (scrimEl) scrimEl.addEventListener('click', () =>
+    document.body.classList.add('sidebar-collapsed'));
+  $('#sidebar').addEventListener('click', (ev) => {
+    if (isPhone() && ev.target.closest('.sb-item'))
+      document.body.classList.add('sidebar-collapsed');
+  });
+}
 
 // Sidebar: select category, or create one
 $('#sidebar').addEventListener('click', async (ev) => {
@@ -3572,6 +3812,18 @@ async function loadThemes() {
     modelInput.addEventListener('blur', commit);
     modelInput.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter') { ev.preventDefault(); modelInput.blur(); }
+    });
+  }
+  // Operator nickname: what the agents call you (save on blur/Enter)
+  const nickInput = document.getElementById('pref-nickname');
+  if (nickInput) {
+    const commitNick = () => {
+      const v = nickInput.value.trim();
+      if (v !== (PREFS?.operatorNickname || '')) setPref('operatorNickname', v);
+    };
+    nickInput.addEventListener('blur', commitNick);
+    nickInput.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); nickInput.blur(); }
     });
   }
   // One-shot rearrange actions

@@ -2,6 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Ensemble — session</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
@@ -31,6 +32,46 @@
   .msg.codex { border-color:#10a37f55; } .msg.codex .from { color:#10a37f; }
   .msg.user { align-self:flex-end; border-color:var(--accent); background:#c25d3c1a; }
   .msg .text { white-space:pre-wrap; word-break:break-word; line-height:1.45; }
+  /* Markdown-rendered bubble content (see mdToHtml). */
+  .msg .text.md { white-space:normal; line-height:1.5; }
+  .msg .text.md .ln { white-space:pre-wrap; word-break:break-word; margin:0 0 1px; }
+  .msg .text.md ul, .msg .text.md ol { margin:4px 0; padding-left:20px; }
+  .msg .text.md li { margin:1px 0; }
+  .msg .text.md h3 { font-size:15px; font-weight:700; margin:13px 0 6px; padding-bottom:3px; border-bottom:1px solid var(--border); }
+  .msg .text.md h4 { font-size:13px; font-weight:700; margin:11px 0 4px; }
+  .msg .text.md h5, .msg .text.md h6 { font-size:12px; font-weight:700; margin:9px 0 3px; }
+  .msg .text.md > :first-child { margin-top:0; }
+  .msg .text.md .ln-gap { height:.6em; }
+  .msg .text.md code.ic { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.9em; background:#ffffff14; border:1px solid #ffffff24; border-radius:4px; padding:0 4px; word-break:break-word; }
+  .msg .text.md pre.cb { margin:6px 0; background:#0b0b0b; border:1px solid var(--border); border-radius:8px; padding:8px 10px; overflow-x:auto; }
+  .msg .text.md pre.cb code { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px; line-height:1.45; white-space:pre; }
+  .msg .text.md pre.cb[data-lang]::before { content:attr(data-lang); display:block; font-size:9px; text-transform:uppercase; letter-spacing:.05em; color:var(--dim); margin-bottom:5px; }
+  .msg .text.md blockquote { margin:4px 0; padding:2px 10px; border-left:3px solid var(--border); color:var(--dim); }
+  .msg .text.md a { color:var(--accent); }
+  .msg .text.md hr { border:0; border-top:1px solid var(--border); margin:8px 0; }
+  .msg .text.md table { border-collapse:collapse; margin:8px 0; display:block; overflow-x:auto; max-width:100%; }
+  .msg .text.md th, .msg .text.md td { border:1px solid var(--border); padding:4px 8px; text-align:left; vertical-align:top; }
+  .msg .text.md th { background:#ffffff12; font-weight:700; }
+  /* In-place review comments */
+  mark.cmt-hl { background:#f5c84240; border-bottom:2px solid #f5c842; border-radius:2px; color:inherit; cursor:pointer; }
+  .cmt-selbtn { position:fixed; z-index:60; font-size:12px; padding:5px 11px; background:var(--accent); color:#fff; border:none; border-radius:6px; box-shadow:0 3px 12px rgba(0,0,0,.4); cursor:pointer; }
+  .cmt-composer { position:fixed; z-index:61; top:50%; left:50%; transform:translate(-50%,-50%); width:min(440px,92vw); background:var(--surface); border:1px solid var(--border); border-radius:10px; box-shadow:0 14px 44px rgba(0,0,0,.55); padding:14px; }
+  .cmt-composer .cmt-quote { font-size:12px; color:var(--dim); border-left:3px solid var(--accent); padding:5px 9px; margin-bottom:9px; max-height:96px; overflow-y:auto; white-space:pre-wrap; }
+  .cmt-composer textarea { width:100%; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:8px; font:inherit; resize:vertical; }
+  .cmt-composer .cmt-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:10px; }
+  .cmt-composer .cmt-add { background:var(--accent); color:#fff; border:none; }
+  #cmt-tray { position:fixed; right:12px; bottom:12px; z-index:55; width:min(330px,92vw); max-height:60vh; display:flex; flex-direction:column; background:var(--surface); border:1px solid var(--border); border-radius:10px; box-shadow:0 10px 34px rgba(0,0,0,.45); overflow:hidden; }
+  #cmt-tray .cmt-tray-head { display:flex; align-items:center; gap:6px; padding:9px 11px; border-bottom:1px solid var(--border); font-size:13px; }
+  #cmt-tray .grow { flex:1; }
+  #cmt-tray .cmt-submit { background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font:inherit; font-size:12px; }
+  #cmt-tray .cmt-clear { font-size:12px; padding:4px 10px; }
+  #cmt-tray .cmt-list { overflow-y:auto; }
+  #cmt-tray .cmt-item { position:relative; padding:8px 26px 8px 11px; border-bottom:1px solid var(--border); cursor:pointer; }
+  #cmt-tray .cmt-item:hover { background:#ffffff08; }
+  #cmt-tray .cmt-item-q { font-size:11px; color:var(--accent); margin-bottom:2px; word-break:break-word; }
+  #cmt-tray .cmt-item-n { font-size:12px; color:var(--fg); word-break:break-word; }
+  #cmt-tray .cmt-item-x { position:absolute; top:6px; right:6px; background:none; border:none; color:var(--dim); cursor:pointer; font-size:12px; padding:2px 5px; }
+  #cmt-tray .cmt-item-x:hover { color:#ef4444; }
   .to { font-weight:400; opacity:.6; text-transform:none; }
   #compose { border-top:1px solid var(--border); padding:10px; display:flex; flex-direction:column; gap:6px; flex:0 0 auto; }
   #compose textarea { width:100%; min-height:48px; resize:vertical; background:var(--surface); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:6px; font:inherit; }
@@ -60,6 +101,12 @@
      the chat column to a blank terminal). */
   body.solo.notrunning #chatcol { display:flex; }
   body.solo.notrunning #agentcol { display:none; }
+  /* Collaboration: the raw per-agent terminals duplicate the chat and eat width
+     (badly on phones), so they're hidden by default. The header "Terminals"
+     button toggles them; solo mode always shows its terminal. */
+  body:not(.solo).term-hidden #agentcol { display:none; }
+  body:not(.solo).term-hidden #chatcol { border-right:none; }
+  #terms.on { background:var(--accent); border-color:var(--accent); color:#fff; }
 </style>
 </head>
 <body>
@@ -70,6 +117,7 @@
   <span class="grow"></span>
   <button id="dock" hidden title="Dock this session back into the dashboard panel">⧉ Dock</button>
   <button id="resume" hidden title="Relaunch the agent(s) with their conversation">↻ Resume</button>
+  <button id="terms" hidden title="Show/hide the raw per-agent terminals">🖥 Terminals</button>
   <button id="pause">Pause</button>
   <button id="end" title="Stop the agent(s) and end this session">End</button>
 </header>
@@ -93,8 +141,77 @@
 const qs = new URLSearchParams(location.search);
 const ROOM = qs.get('id');
 if (qs.get('embed')) document.body.classList.add('embed');
+document.body.classList.add('term-hidden');   // raw agent terminals off by default
 const $ = s => document.querySelector(s);
 const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+// Minimal, self-contained markdown → HTML for chat bubbles. Escape-first so it's
+// XSS-safe: fenced/inline code is pulled out to placeholders, the rest is escaped,
+// then inline spans + block structure are applied, then code is restored (escaped).
+// A local file path (drive-letter, UNC, ~, or absolute) ending in an extension.
+const looksFilePath = s => /^(?:[A-Za-z]:\\|\\\\|~\/|\/)\S+\.\w{1,8}$/.test((s || '').trim());
+const fileHref = p => '/fileview?path=' + encodeURIComponent(p) + (ROOM ? '&room=' + encodeURIComponent(ROOM) : '');
+function mdToHtml(src) {
+  const codes = [];
+  let s = (src ?? '').replace(/\r\n/g, '\n');
+  // Fenced code blocks ```lang\n...\n```
+  s = s.replace(/```([\w+-]*)\n?([\s\S]*?)```/g, (_, lang, body) => {
+    const i = codes.push(`<pre class="cb"${lang ? ` data-lang="${esc(lang)}"` : ''}><code>${esc(body.replace(/\n$/, ''))}</code></pre>`) - 1;
+    return ` B${i} `;
+  });
+  // Inline code `...`
+  s = s.replace(/`([^`\n]+)`/g, (_, body) => {
+    const code = `<code class="ic">${esc(body)}</code>`;
+    const i = codes.push(looksFilePath(body) ? `<a href="${fileHref(body.trim())}" target="_blank" rel="noopener">${code}</a>` : code) - 1;
+    return ` I${i} `;
+  });
+  s = esc(s);
+  // Inline spans (operate on escaped text; placeholders are safe).
+  const inline = t => t
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, (_, txt, url) => `<a href="${esc(url)}" target="_blank" rel="noopener">${txt}</a>`)
+    .replace(/(^|[\s(])((?:https?:\/\/)[^\s<)]+)/g, (_, pre, url) => `${pre}<a href="${url}" target="_blank" rel="noopener">${url}</a>`)
+    .replace(/(^|[\s(])((?:[A-Za-z]:\\|\\\\|~\/|\/)[^\s"'<>|?*,;)\]]*\.\w{1,8})/g,
+      (_, pre, pth) => `${pre}<a href="${fileHref(pth)}" target="_blank" rel="noopener" class="file-link">${pth}</a>`)
+    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?]|$)/g, '$1<em>$2</em>')
+    .replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,!?]|$)/g, '$1<em>$2</em>');
+  // Block structure, line by line.
+  const lines = s.split('\n');
+  const out = [];
+  let list = null; // 'ul' | 'ol'
+  const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  const tableSep = l => /^[\s|:-]+$/.test(l.trim()) && l.includes('|') && l.includes('-');
+  const rowCells = l => { let r = l.trim(); if (r.startsWith('|')) r = r.slice(1); if (r.endsWith('|')) r = r.slice(0, -1); return r.split('|').map(c => c.trim()); };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^ B\d+ $/.test(line.trim())) { closeList(); out.push(line.trim()); continue; }
+    let m;
+    if (line.includes('|') && i + 1 < lines.length && tableSep(lines[i + 1])) {
+      closeList();
+      const heads = rowCells(line);
+      const aligns = rowCells(lines[i + 1]).map(c => { const L = c.startsWith(':'), R = c.endsWith(':'); return (L && R) ? 'center' : R ? 'right' : L ? 'left' : ''; });
+      const body = [];
+      let j = i + 2;
+      while (j < lines.length && lines[j].includes('|') && lines[j].trim() !== '') { body.push(rowCells(lines[j])); j++; }
+      const cell = (c, tag, al) => `<${tag}${al ? ` style="text-align:${al}"` : ''}>${inline(c || '')}</${tag}>`;
+      let tbl = '<table><thead><tr>' + heads.map((h, k) => cell(h, 'th', aligns[k])).join('') + '</tr></thead>';
+      if (body.length) tbl += '<tbody>' + body.map(row => '<tr>' + heads.map((_, k) => cell(row[k], 'td', aligns[k])).join('') + '</tr>').join('') + '</tbody>';
+      out.push(tbl + '</table>');
+      i = j - 1;
+      continue;
+    }
+    if ((m = line.match(/^(#{1,4})\s+(.*)$/))) { closeList(); const n = m[1].length + 2; out.push(`<h${n}>${inline(m[2])}</h${n}>`); continue; }
+    if (/^\s*([-*_])\1{1,}\s*$/.test(line)) { closeList(); out.push('<hr>'); continue; }
+    if ((m = line.match(/^\s*>\s?(.*)$/))) { closeList(); out.push(`<blockquote>${inline(m[1])}</blockquote>`); continue; }
+    if ((m = line.match(/^\s*[-*+]\s+(.*)$/))) { if (list !== 'ul') { closeList(); out.push('<ul>'); list = 'ul'; } out.push(`<li>${inline(m[1])}</li>`); continue; }
+    if ((m = line.match(/^\s*\d+[.)]\s+(.*)$/))) { if (list !== 'ol') { closeList(); out.push('<ol>'); list = 'ol'; } out.push(`<li>${inline(m[1])}</li>`); continue; }
+    if (line.trim() === '') { closeList(); if (out.length && out[out.length - 1] !== '<div class="ln-gap"></div>') out.push('<div class="ln-gap"></div>'); continue; }
+    closeList(); out.push(`<div class="ln">${inline(line)}</div>`);
+  }
+  closeList();
+  let html = out.join('\n');
+  html = html.replace(/ ([BI])(\d+) /g, (_, __, i) => codes[+i]);
+  return html;
+}
 const tildeify = p => (p || '').replace(/^[A-Za-z]:\\Users\\[^\\]+/i, '~').replace(/^\/(Users|home)\/[^/]+/, '~');
 const jpost = (path, body) => fetch(path, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) }).then(r=>r.json());
 const b64bytes = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
@@ -251,13 +368,20 @@ function mountTerm(el, ptyId) {
 
 function renderMsgs(room) {
   const box = $('#msgs');
+  // Don't blow away the DOM while the user is mid-comment (it would drop their
+  // selection / the open composer). Highlights are re-applied after each render.
+  if (_cmtComposerOpen || _selBtn) return;
+  const _liveSel = window.getSelection();
+  if (_liveSel && !_liveSel.isCollapsed && _liveSel.rangeCount &&
+      box.contains(_liveSel.getRangeAt(0).commonAncestorContainer)) return;
   const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 50;
   box.innerHTML = room.messages.map(m => {
     const cls = m.from === 'user' ? 'user' : esc(m.from);
     const to = m.to && m.to !== 'all' ? ` <span class="to">→ ${esc(m.to)}</span>` : '';
-    return `<div class="msg ${cls}"><div class="from">${esc(m.from)}${to}</div><div class="text">${esc(m.text)}</div></div>`;
+    return `<div class="msg ${cls}" data-mid="${esc(m.id || '')}" data-from="${esc(m.from || '')}"><div class="from">${esc(m.from)}${to}</div><div class="text md">${mdToHtml(m.text)}</div></div>`;
   }).join('');
   if (atBottom) box.scrollTop = box.scrollHeight;
+  applyComments();
 }
 
 async function refresh() {
@@ -296,9 +420,12 @@ async function refresh() {
     (cwd ? `<span title="${esc(cwd)}">📁 ${esc(tildeify(cwd))}</span>` : '')
     + mem.map(m => `<span class="ib-agent ${esc(m.agent)}" title="${esc(m.identity)}">${esc(m.agent)}${m.model ? ' · ' + esc(m.model) : ''}</span>`).join('')
     + (soloMode ? '' : `<span>${room.messages.length} messages · hop ${room.hopCount || 0}/${room.maxHops || 0}</span>`);
-  if (!agentsBuilt && room.participants.some(p => p.kind === 'agent' && p.ptyId)) buildAgents(room);
+  const showTerms = soloMode || !document.body.classList.contains('term-hidden');
+  $('#terms').hidden = soloMode || notRunning;
+  $('#terms').classList.toggle('on', !document.body.classList.contains('term-hidden'));
+  if (!agentsBuilt && showTerms && room.participants.some(p => p.kind === 'agent' && p.ptyId)) buildAgents(room);
   if (!soloMode || notRunning) renderMsgs(room);
-  updateAgentStatus();
+  if (showTerms) updateAgentStatus();
 }
 
 // Live per-agent status dot: working (recent output) / idle / stopped.
@@ -334,6 +461,160 @@ $('#send').onclick = async () => {
 $('#input').addEventListener('keydown', e => {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $('#send').click(); }
 });
+$('#terms').onclick = () => {
+  const hidden = document.body.classList.toggle('term-hidden');
+  $('#terms').classList.toggle('on', !hidden);
+  if (!hidden) refresh();   // revealing → build/stream the terminals now
+};
+
+// ---- In-place review comments -------------------------------------------
+// Select text inside an agent bubble → attach a comment; collect several across
+// a long message; submit them all as one structured reply. Comments live in the
+// browser until submitted, and their highlights are re-applied after each poll.
+const COMMENTS = [];        // {cid, mid, from, start, end, quote, note}
+let _cmtSeq = 1;
+let _cmtComposerOpen = false;
+let _selBtn = null;
+
+function _offsetInEl(root, node, nodeOffset) {
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  let off = 0, n;
+  while ((n = w.nextNode())) {
+    if (n === node) return off + nodeOffset;
+    off += n.nodeValue.length;
+  }
+  return -1;
+}
+function _markRange(root, start, end, cid) {
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  let off = 0, n; const targets = [];
+  while ((n = w.nextNode())) {
+    const len = n.nodeValue.length;
+    const s = Math.max(start, off), e = Math.min(end, off + len);
+    if (s < e) targets.push({ node: n, s: s - off, e: e - off });
+    off += len;
+  }
+  for (const t of targets.reverse()) {           // back-to-front keeps offsets valid
+    try {
+      const r = document.createRange();
+      r.setStart(t.node, t.s); r.setEnd(t.node, t.e);
+      const mk = document.createElement('mark');
+      mk.className = 'cmt-hl'; mk.dataset.cid = cid;
+      r.surroundContents(mk);
+    } catch (e) {}
+  }
+}
+function clearHighlights() {
+  document.querySelectorAll('#msgs mark.cmt-hl').forEach(mk => {
+    const p = mk.parentNode;
+    while (mk.firstChild) p.insertBefore(mk.firstChild, mk);
+    p.removeChild(mk); p.normalize();
+  });
+}
+function applyComments() {
+  for (const c of COMMENTS) {
+    const el = document.querySelector(`#msgs .msg[data-mid="${c.mid}"] .text`);
+    if (!el || el.querySelector(`mark.cmt-hl[data-cid="${c.cid}"]`)) continue;
+    _markRange(el, c.start, c.end, c.cid);
+  }
+  renderCmtTray();
+}
+function hideSelBtn() { if (_selBtn) { _selBtn.remove(); _selBtn = null; } }
+
+function _onSelect() {
+  setTimeout(() => {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount) { hideSelBtn(); return; }
+    const range = sel.getRangeAt(0);
+    const a = range.startContainer.parentElement?.closest('.msg .text.md');
+    const b = range.endContainer.parentElement?.closest('.msg .text.md');
+    if (!a || a !== b) { hideSelBtn(); return; }   // selection must sit in one bubble
+    let start = _offsetInEl(a, range.startContainer, range.startOffset);
+    let end = _offsetInEl(a, range.endContainer, range.endOffset);
+    if (start > end) { const t = start; start = end; end = t; }
+    if (start < 0 || end <= start) { hideSelBtn(); return; }
+    const msgEl = a.closest('.msg');
+    const data = { mid: msgEl.dataset.mid, from: msgEl.dataset.from, start, end,
+                   quote: (a.textContent || '').slice(start, end) };
+    const rect = range.getBoundingClientRect();
+    showSelBtn(rect, data);
+  }, 10);
+}
+function showSelBtn(rect, data) {
+  hideSelBtn();
+  const btn = document.createElement('button');
+  btn.className = 'cmt-selbtn'; btn.textContent = '💬 Comment';
+  document.body.appendChild(btn);
+  const top = rect.bottom + 6, left = Math.min(rect.left, window.innerWidth - 130);
+  btn.style.top = top + 'px'; btn.style.left = Math.max(6, left) + 'px';
+  btn.addEventListener('mousedown', e => e.preventDefault());  // keep the selection
+  btn.onclick = () => { hideSelBtn(); openComposer(data); };
+  _selBtn = btn;
+}
+function openComposer(data) {
+  _cmtComposerOpen = true;
+  const q = data.quote.length > 200 ? data.quote.slice(0, 200) + '…' : data.quote;
+  const pop = document.createElement('div');
+  pop.className = 'cmt-composer';
+  pop.innerHTML = `<div class="cmt-quote"></div>
+    <textarea class="cmt-note" rows="3" placeholder="Your comment on this passage…"></textarea>
+    <div class="cmt-actions"><button class="cmt-cancel">Cancel</button><button class="cmt-add">Add comment</button></div>`;
+  pop.querySelector('.cmt-quote').textContent = '“' + q + '”';
+  document.body.appendChild(pop);
+  const ta = pop.querySelector('.cmt-note'); ta.focus();
+  const close = () => { pop.remove(); _cmtComposerOpen = false; };
+  pop.querySelector('.cmt-cancel').onclick = close;
+  pop.querySelector('.cmt-add').onclick = () => {
+    const note = ta.value.trim(); if (!note) { ta.focus(); return; }
+    const cid = _cmtSeq++;
+    COMMENTS.push({ cid, mid: data.mid, from: data.from, start: data.start, end: data.end, quote: data.quote, note });
+    const el = document.querySelector(`#msgs .msg[data-mid="${data.mid}"] .text`);
+    if (el) _markRange(el, data.start, data.end, cid);
+    close();
+    renderCmtTray();
+    const s = window.getSelection(); if (s) s.removeAllRanges();
+  };
+  ta.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); pop.querySelector('.cmt-add').click(); }
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
+  });
+}
+function renderCmtTray() {
+  let tray = document.getElementById('cmt-tray');
+  if (!COMMENTS.length) { if (tray) tray.remove(); return; }
+  if (!tray) { tray = document.createElement('div'); tray.id = 'cmt-tray'; document.body.appendChild(tray); }
+  tray.innerHTML = `<div class="cmt-tray-head"><strong>${COMMENTS.length} comment${COMMENTS.length > 1 ? 's' : ''}</strong><span class="grow"></span><button class="cmt-submit">Submit</button><button class="cmt-clear">Clear</button></div><div class="cmt-list"></div>`;
+  const list = tray.querySelector('.cmt-list');
+  COMMENTS.forEach(c => {
+    const item = document.createElement('div');
+    item.className = 'cmt-item'; item.dataset.cid = c.cid;
+    const q = document.createElement('div'); q.className = 'cmt-item-q';
+    q.textContent = '“' + (c.quote.length > 60 ? c.quote.slice(0, 60) + '…' : c.quote) + '”';
+    const nn = document.createElement('div'); nn.className = 'cmt-item-n'; nn.textContent = c.note;
+    const x = document.createElement('button'); x.className = 'cmt-item-x'; x.textContent = '✕'; x.title = 'Remove';
+    item.append(q, nn, x);
+    x.onclick = (e) => { e.stopPropagation(); const i = COMMENTS.findIndex(z => z.cid === c.cid); if (i >= 0) COMMENTS.splice(i, 1); clearHighlights(); applyComments(); };
+    item.onclick = () => { const mk = document.querySelector(`#msgs mark.cmt-hl[data-cid="${c.cid}"]`); if (mk) mk.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+    list.appendChild(item);
+  });
+  tray.querySelector('.cmt-submit').onclick = submitComments;
+  tray.querySelector('.cmt-clear').onclick = () => { COMMENTS.length = 0; clearHighlights(); renderCmtTray(); };
+}
+async function submitComments() {
+  if (!COMMENTS.length) return;
+  const authors = [...new Set(COMMENTS.map(c => c.from))];
+  const to = authors.length === 1 ? authors[0] : '';
+  const body = `## Review comments (${COMMENTS.length})\n\n` +
+    COMMENTS.map((c, i) => `**${i + 1}.** > ${c.quote.replace(/\s*\n\s*/g, ' ').trim()}\n\n${c.note}`).join('\n\n');
+  try {
+    await jpost('/api/room/say', { roomId: ROOM, text: body, to });
+    COMMENTS.length = 0; clearHighlights(); renderCmtTray(); refresh();
+  } catch (e) { alert('Failed to submit comments — try again.'); }
+}
+$('#msgs').addEventListener('mouseup', _onSelect);
+$('#msgs').addEventListener('touchend', _onSelect);
+$('#msgs').addEventListener('mousedown', () => hideSelBtn());
+document.addEventListener('mousedown', e => { if (_selBtn && e.target !== _selBtn) hideSelBtn(); });
 $('#end').onclick = async () => {
   if (!confirm('End this session and stop the agent(s)?')) return;
   try { await jpost('/api/room/close', { roomId: ROOM }); } catch(e) {}
