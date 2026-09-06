@@ -201,8 +201,8 @@ function mdToHtml(src) {
   // Inline spans (operate on escaped text; placeholders are safe).
   const inline = t => t
     .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, (_, txt, url) => `<a href="${esc(url)}" target="_blank" rel="noopener">${txt}</a>`)
-    .replace(/(^|[\s(])((?:https?:\/\/)[^\s<)]+)/g, (_, pre, url) => `${pre}<a href="${url}" target="_blank" rel="noopener">${url}</a>`)
-    .replace(/(^|[\s(])((?:[A-Za-z]:\\|\\\\|~\/|\/)[^\s"'<>|?*,;)\]]*\.\w{1,8})/g,
+    .replace(/(^|[\s(*_])((?:https?:\/\/)[^\s<)*]+)/g, (_, pre, url) => `${pre}<a href="${url}" target="_blank" rel="noopener">${url}</a>`)
+    .replace(/(^|[\s(*_])((?:[A-Za-z]:\\|\\\\|~\/|\/)[^\s"'<>|?*,;)\]]*\.\w{1,8})/g,
       (_, pre, pth) => `${pre}<a href="${fileHref(pth)}" target="_blank" rel="noopener" class="file-link">${pth}</a>`)
     .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?]|$)/g, '$1<em>$2</em>')

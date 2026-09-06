@@ -100,8 +100,8 @@ function mdToHtml(src) {
   s = esc(s);
   const inline = t => t
     .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, (_, txt, url) => `<a href="${esc(url)}" target="_blank" rel="noopener">${txt}</a>`)
-    .replace(/(^|[\s(])((?:https?:\/\/)[^\s<)]+)/g, (_, pre, url) => `${pre}<a href="${url}" target="_blank" rel="noopener">${url}</a>`)
-    .replace(/(^|[\s(])((?:[A-Za-z]:\\|\\\\|~\/|\/)[^\s"'<>|?*,;)\]]*\.\w{1,8})/g,
+    .replace(/(^|[\s(*_])((?:https?:\/\/)[^\s<)*]+)/g, (_, pre, url) => `${pre}<a href="${url}" target="_blank" rel="noopener">${url}</a>`)
+    .replace(/(^|[\s(*_])((?:[A-Za-z]:\\|\\\\|~\/|\/)[^\s"'<>|?*,;)\]]*\.\w{1,8})/g,
       (_, pre, pth) => `${pre}<a href="${fileLink(pth)}" target="_blank" rel="noopener">${pth}</a>`)
     .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?]|$)/g, '$1<em>$2</em>')
@@ -267,6 +267,18 @@ function enableComments(root) {
     if (!r.ok) { main.innerHTML = `<div class="err">Could not open file (${r.status}). It may not exist on the hub.</div>`; return; }
     text = await r.text();
   } catch (e) { main.innerHTML = `<div class="err">Failed to load: ${esc(String(e))}</div>`; return; }
+  if (ext === 'html' || ext === 'htm') {
+    // Render the page (sandboxed: styles/fonts load, scripts don't) rather than
+    // showing source. No in-place comments on a rendered page.
+    const ifr = document.createElement('iframe');
+    ifr.className = 'file';
+    ifr.setAttribute('sandbox', 'allow-same-origin');
+    ifr.style.height = 'calc(100vh - 96px)';
+    ifr.srcdoc = text;
+    main.innerHTML = '';
+    main.appendChild(ifr);
+    return;
+  }
   if (ext === 'md' || ext === 'markdown') {
     const div = document.createElement('div');
     div.className = 'md';

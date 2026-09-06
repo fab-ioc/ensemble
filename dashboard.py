@@ -615,6 +615,90 @@ def collab_briefing(ident: str, role: str, teammates: list, task: str,
     return "\n\n".join(parts)
 
 
+# ---------------------------------------------------------------------------
+# Projects — group sessions/rooms by their git repo root (the "project").
+# ---------------------------------------------------------------------------
+_GIT_ROOT_CACHE: dict = {}
+_GIT_STAT_CACHE: dict = {}   # root -> (ts, changed_count)
+
+
+def git_root(cwd: str) -> str:
+    """The git top-level for ``cwd`` (cached), or ``cwd`` itself if not a repo."""
+    if not cwd:
+        return ""
+    if cwd in _GIT_ROOT_CACHE:
+        return _GIT_ROOT_CACHE[cwd]
+    root = cwd
+    try:
+        out = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"],
+                             capture_output=True, text=True, timeout=4)
+        r = (out.stdout or "").strip()
+        if r:
+            root = os.path.normpath(r)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    _GIT_ROOT_CACHE[cwd] = root
+    return root
+
+
+def git_changed_count(root: str) -> int:
+    """Number of changed (dirty) files in ``root``; cached ~12s (git status is
+    slow on large repos, and dirtiness doesn't change second-to-second)."""
+    now = time.time()
+    hit = _GIT_STAT_CACHE.get(root)
+    if hit and now - hit[0] < 12:
+        return hit[1]
+    n = 0
+    try:
+        out = subprocess.run(["git", "-C", root, "status", "--porcelain"],
+                             capture_output=True, text=True, timeout=6)
+        n = sum(1 for ln in (out.stdout or "").splitlines() if ln.strip())
+    except (OSError, subprocess.SubprocessError):
+        n = 0
+    _GIT_STAT_CACHE[root] = (now, n)
+    return n
+
+
+def build_projects() -> dict:
+    """Group every session/room by git root into projects, with a summary for
+    the status strip (sessions waiting on the human, live agents, dirty files)."""
+    rows = load_sessions(500)
+    groups: dict = {}
+    needs_you = 0
+    agents_live = 0
+    for s in rows:
+        root = git_root(s.get("cwd", "")) or "(no workspace)"
+        g = groups.get(root)
+        if g is None:
+            g = groups[root] = {"path": root,
+                                "name": os.path.basename(root.rstrip("/\\")) or root,
+                                "sessions": [], "live": 0, "waiting": 0, "updatedAt": 0}
+        g["sessions"].append(s)
+        if s.get("isLive"):
+            g["live"] += 1
+            agents_live += len(s.get("agents") or [1])
+        if s.get("status") in ("waiting", "waiting_human"):
+            g["waiting"] += 1
+            needs_you += 1
+        g["updatedAt"] = max(g["updatedAt"], s.get("updatedAt") or 0)
+    keep = ("sessionId", "roomId", "label", "status", "isLive", "idleSeconds",
+            "updatedAt", "agents", "members", "mode", "headless")
+    projects = []
+    total_changed = 0
+    for root, g in groups.items():
+        g["changed"] = git_changed_count(root) if root != "(no workspace)" else 0
+        total_changed += g["changed"]
+        g["count"] = len(g["sessions"])
+        g["sessions"] = [{k: s.get(k) for k in keep}
+                         for s in sorted(g["sessions"],
+                                         key=lambda x: x.get("updatedAt") or 0, reverse=True)]
+        projects.append(g)
+    projects.sort(key=lambda x: x["updatedAt"], reverse=True)
+    return {"projects": projects,
+            "summary": {"needsYou": needs_you, "agentsLive": agents_live,
+                        "changed": total_changed, "projects": len(projects)}}
+
+
 def load_categories() -> dict[str, str]:
     try:
         d = json.loads(CATEGORIES_FILE.read_text(encoding="utf-8"))
@@ -2374,6 +2458,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p == "/api/agents":
             self._send_json(200, agents.agents_info())
+            return
+        if p == "/api/projects":
+            self._send_json(200, build_projects())
             return
         if p == "/api/rooms":
             rooms = [_annotate_room_liveness(r) for r in chatroom.list_rooms()]

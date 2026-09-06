@@ -665,6 +665,43 @@
   .tx-text.md blockquote { margin: 4px 0; padding: 2px 10px; border-left: 3px solid var(--border); color: var(--muted-2); }
   .tx-text.md a { color: var(--accent); }
   .mention { color: var(--accent); font-weight: 600; background: color-mix(in srgb, var(--accent) 16%, transparent); border-radius: 4px; padding: 0 3px; }
+  /* Projects-first shell */
+  .statusbar { display: flex; align-items: center; gap: 14px; padding: 10px 4px 4px; font-size: 12.5px; color: var(--muted); flex-wrap: wrap; }
+  .statusbar .stat { display: inline-flex; align-items: center; gap: 6px; }
+  .statusbar .stat.needs { color: #3a2a00; background: #f2c14e; font-weight: 700; padding: 3px 11px; border-radius: 20px; }
+  .statusbar .stat.okstat { color: #3a8a4a; }
+  .live-dot { width: 8px; height: 8px; border-radius: 50%; background: #22a06b; animation: livep 1.6s infinite; }
+  @keyframes livep { 0% { box-shadow: 0 0 0 0 rgba(34,160,107,.45); } 70% { box-shadow: 0 0 0 6px rgba(34,160,107,0); } 100% { box-shadow: 0 0 0 0 rgba(34,160,107,0); } }
+  .listctl { display: flex; align-items: center; gap: 10px; padding: 6px 4px 12px; font-size: 12px; color: var(--muted); }
+  .seg.gb { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg.gb button { background: transparent; border: 0; color: var(--muted); font: inherit; font-size: 12px; padding: 5px 12px; cursor: pointer; }
+  .seg.gb button.on { background: var(--accent); color: #fff; font-weight: 600; }
+  .crumbs { display: flex; align-items: center; gap: 8px; padding: 8px 4px 12px; font-size: 13px; color: var(--muted); }
+  .crumbs .crumb-back { color: var(--accent); text-decoration: none; font-weight: 600; }
+  .crumbs .sep { color: var(--muted-2); } .crumbs b { color: var(--fg); }
+  .proj-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; padding: 4px 2px 20px; }
+  .proj { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 15px; display: flex; flex-direction: column; gap: 10px; cursor: pointer; transition: border-color .12s, transform .12s; }
+  .proj:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .proj.hot { border-color: color-mix(in srgb, #f2c14e 40%, var(--border)); }
+  .proj .row1 { display: flex; align-items: center; gap: 8px; }
+  .proj h3 { margin: 0; font-size: 15px; font-weight: 650; }
+  .proj .ppath { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--muted-2); word-break: break-all; }
+  .proj .live { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
+  .proj .live.off { color: var(--muted-2); }
+  .waitchip { font-size: 10.5px; font-weight: 700; color: #3a2a00; background: #f2c14e; padding: 2px 9px; border-radius: 20px; }
+  .srows { display: flex; flex-direction: column; gap: 1px; }
+  .srow { display: flex; align-items: center; gap: 9px; padding: 5px 7px; border-radius: 7px; font-size: 12.5px; cursor: pointer; }
+  .srow:hover { background: var(--hover); }
+  .sdot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+  .sdot.work { background: #22a06b; animation: livep 1.6s infinite; }
+  .sdot.wait { background: #f2c14e; } .sdot.idle { background: #6b7280; } .sdot.off { background: var(--muted-2); }
+  .srow .stitle { color: var(--fg); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .srow .stime { color: var(--muted-2); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .proj .metarow { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
+  .proj .badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px; }
+  .proj .badge.changed { color: #8a6d00; background: color-mix(in srgb, #f2c14e 20%, transparent); border: 1px solid color-mix(in srgb, #f2c14e 45%, transparent); }
+  .proj .badge.clean { color: var(--muted-2); border: 1px solid var(--border); }
+  .proj .ago { margin-left: auto; color: var(--muted-2); font-size: 11px; font-variant-numeric: tabular-nums; }
   .tx-role .mention { text-transform: none; letter-spacing: 0; }
   .tx-role .mention:first-child { background: transparent; padding: 0; color: inherit; }
   .tx-text.md hr { border: 0; border-top: 1px solid var(--border); margin: 8px 0; }
@@ -1341,8 +1378,8 @@ function mdToHtml(src) {
   s = esc(s);
   const inline = t => t
     .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, (_, txt, url) => `<a href="${esc(url)}" target="_blank" rel="noopener">${txt}</a>`)
-    .replace(/(^|[\s(])((?:https?:\/\/)[^\s<)]+)/g, (_, pre, url) => `${pre}<a href="${url}" target="_blank" rel="noopener">${url}</a>`)
-    .replace(/(^|[\s(])((?:[A-Za-z]:\\|\\\\|~\/|\/)[^\s"'<>|?*,;)\]]*\.\w{1,8})/g,
+    .replace(/(^|[\s(*_])((?:https?:\/\/)[^\s<)*]+)/g, (_, pre, url) => `${pre}<a href="${url}" target="_blank" rel="noopener">${url}</a>`)
+    .replace(/(^|[\s(*_])((?:[A-Za-z]:\\|\\\\|~\/|\/)[^\s"'<>|?*,;)\]]*\.\w{1,8})/g,
       (_, pre, pth) => `${pre}<a href="${fileHref(pth)}" target="_blank" rel="noopener" class="file-link">${pth}</a>`)
     .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?]|$)/g, '$1<em>$2</em>')
@@ -1507,6 +1544,10 @@ function actionsCell(r, isLive) {
 }
 
 let ALL_ROWS = [];
+// Projects-first shell: group sessions by git-root. PROJ_GROUPBY 'project' shows
+// the projects landing; a SELECTED_PROJECT drills into one project's sessions.
+let PROJECTS = null, _projTs = 0, SELECTED_PROJECT = null, _projFailed = false;
+let PROJ_GROUPBY = localStorage.getItem('cd-groupby') || 'project';
 let SEARCH_QUERY = '';
 let FILTERS = new Set(['live', 'pinned', 'history']); // multi-select
 // When on, hide sessions run outside the dashboard (cwd not under ~/cs).
@@ -2093,6 +2134,11 @@ function nestForks(rows) {
 }
 
 function passesFilter(r) {
+  // Drilled into a project: only its sessions (cwd under the project root).
+  if (SELECTED_PROJECT) {
+    const c = r.cwd || '';
+    if (!(c === SELECTED_PROJECT || c.startsWith(SELECTED_PROJECT + '\\') || c.startsWith(SELECTED_PROJECT + '/'))) return false;
+  }
   // Sidebar category gate first
   if (SELECTED_CAT === '__uncat__' && r.category) return false;
   if (SELECTED_CAT !== '__all__' && SELECTED_CAT !== '__uncat__' && r.category !== SELECTED_CAT) return false;
@@ -2328,8 +2374,73 @@ function renderSidebar() {
   $('#sidebar').innerHTML = out.join('');
 }
 
+// Status strip + group-by control (landing) or breadcrumb (inside a project).
+function projectsChromeHtml() {
+  const s = PROJECTS && PROJECTS.summary;
+  const needs = s ? s.needsYou : 0;
+  const strip = `<div class="statusbar">
+    ${needs ? `<span class="stat needs">🔔 ${needs} need${needs > 1 ? '' : 's'} you</span>`
+            : `<span class="stat okstat">✓ nothing waiting</span>`}
+    <span class="stat"><span class="live-dot"></span> ${s ? s.agentsLive : 0} agents live</span>
+    <span class="stat">◆ ${s ? s.changed : 0} changed</span>
+  </div>`;
+  if (SELECTED_PROJECT) {
+    const pj = (PROJECTS && PROJECTS.projects || []).find(p => p.path === SELECTED_PROJECT);
+    const nm = pj ? pj.name : SELECTED_PROJECT.split(/[\\/]/).filter(Boolean).pop();
+    return strip + `<div class="crumbs"><a href="#" class="crumb-back">← Projects</a><span class="sep">/</span><b>${esc(nm || SELECTED_PROJECT)}</b></div>`;
+  }
+  return strip + `<div class="listctl"><span>Group by</span>
+    <div class="seg gb">${['project', 'time', 'none'].map(g => `<button data-gb="${g}" class="${PROJ_GROUPBY === g ? 'on' : ''}">${g[0].toUpperCase() + g.slice(1)}</button>`).join('')}</div></div>`;
+}
+function projectSessionState(sn) {
+  if (sn.status === 'waiting' || sn.status === 'waiting_human') return 'wait';
+  if (sn.isLive) return (sn.idleSeconds != null && sn.idleSeconds < 2.5) ? 'work' : 'idle';
+  return 'off';
+}
+function projectsLandingHtml() {
+  if (!PROJECTS) return '<p class="empty">Loading projects…</p>';
+  if (!PROJECTS.projects.length) return '<p class="empty">No sessions yet.</p>';
+  return '<div class="proj-grid">' + PROJECTS.projects.map(p => {
+    const rows = (p.sessions || []).slice(0, 4).map(sn => {
+      const st = projectSessionState(sn);
+      return `<div class="srow" data-sid="${esc(sn.roomId || sn.sessionId || '')}"><span class="sdot ${st}"></span><span class="stitle">${esc(sn.label || sn.sessionId || 'session')}</span><span class="stime">${esc(fmtAgo(sn.updatedAt))}</span></div>`;
+    }).join('');
+    const wait = p.waiting ? `<span class="waitchip">⚠ ${p.waiting} waiting</span>` : '';
+    const live = p.live ? `<span class="live"><span class="live-dot"></span>${p.live} live</span>` : `<span class="live off">idle</span>`;
+    const changed = p.changed ? `<span class="badge changed">◆ ${p.changed} changed</span>` : `<span class="badge clean">clean</span>`;
+    return `<div class="proj ${p.waiting ? 'hot' : ''}" data-proj="${esc(p.path)}">
+      <div class="row1"><h3>${esc(p.name)}</h3>${wait}${live}</div>
+      <div class="ppath" title="${esc(p.path)}">${esc(tildeify(p.path))}</div>
+      <div class="srows">${rows}</div>
+      <div class="metarow">${changed}<span class="ago">${esc(fmtAgo(p.updatedAt))}</span></div>
+    </div>`;
+  }).join('') + '</div>';
+}
+function wireProjectsChrome() {
+  document.querySelectorAll('.gb button[data-gb]').forEach(b => b.onclick = () => {
+    PROJ_GROUPBY = b.dataset.gb; try { localStorage.setItem('cd-groupby', PROJ_GROUPBY); } catch (e) {}
+    SELECTED_PROJECT = null; renderRows();
+  });
+  document.querySelectorAll('.proj[data-proj]').forEach(c => c.onclick = (e) => {
+    if (e.target.closest('.srow')) return;
+    SELECTED_PROJECT = c.dataset.proj; renderRows();
+  });
+  document.querySelectorAll('.proj .srow[data-sid]').forEach(r => r.onclick = (e) => {
+    e.stopPropagation(); if (r.dataset.sid) openDetail(r.dataset.sid);
+  });
+  const back = document.querySelector('.crumb-back');
+  if (back) back.onclick = (e) => { e.preventDefault(); SELECTED_PROJECT = null; renderRows(); };
+}
 function renderRows() {
   renderSidebar();
+  // Projects landing (default). A selected project or a non-project grouping
+  // falls through to the existing session table below.
+  if (!SELECTED_PROJECT && PROJ_GROUPBY === 'project' && !_projFailed) {
+    $('#view').innerHTML = projectsChromeHtml() + projectsLandingHtml();
+    $('#meta').textContent = PROJECTS ? `${PROJECTS.projects.length} projects · ${PROJECTS.summary.needsYou} need you` : 'loading…';
+    wireProjectsChrome();
+    return;
+  }
   const parsed = parseSearchQuery(SEARCH_QUERY);
   const active = parsed.groups.length > 0;
   const modeFiltered = ALL_ROWS.filter(passesFilter);
@@ -2356,18 +2467,20 @@ function renderRows() {
     pageHeader = `<div class="page-header">${title}${actions}</div>`;
   }
   if (!filtered.length) {
-    view.innerHTML = pageHeader + '<p class="empty">' + (active ? 'No matches.' : 'No sessions.') + '</p>';
+    view.innerHTML = projectsChromeHtml() + pageHeader + '<p class="empty">' + (active ? 'No matches.' : 'No sessions.') + '</p>';
+    wireProjectsChrome();
     return;
   }
   const now = Date.now() / 1000;
   const ordered = nestForks(filtered);
   const headExtra = DETAIL_MODE ? '' : '<th></th>';
-  view.innerHTML = pageHeader + `<table>
+  view.innerHTML = projectsChromeHtml() + pageHeader + `<table>
     <thead><tr>
       <th></th><th>Session</th><th class="num turns">Turns</th><th class="num">Updated</th><th class="num">Idle</th><th>Topic</th>${headExtra}
     </tr></thead>
     <tbody>${renderGroupedRows(ordered, parsed, now)}</tbody>
   </table>`;
+  wireProjectsChrome();
 }
 
 // Custom theme dropdown state.
@@ -2491,6 +2604,11 @@ async function refresh() {
     } else {
       ALL_ROWS = data;
       DISPLAYED_ORDER = data.map(r => r.sessionId);
+    }
+    if (Date.now() - _projTs > 5000) {   // projects grouping refreshes on a slower cadence (git status is heavy)
+      _projTs = Date.now();
+      api('/api/projects').then(p => { PROJECTS = p; _projFailed = false; if (!SELECTED_PROJECT && PROJ_GROUPBY === 'project') renderRows(); })
+        .catch(() => { _projFailed = true; if (PROJ_GROUPBY === 'project') renderRows(); });   // older server without /api/projects → fall back to the flat list
     }
     renderRows();
     if (SELECTED_SID) renderDetail();
