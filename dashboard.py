@@ -3882,31 +3882,40 @@ def main():
                   f"?token={ACCESS_TOKEN}", flush=True)
 
     servers = []
+    remote_bound = False
     if wildcard:
         servers.append(ThreadingHTTPServer((remote_host, port), Handler))
         _announce_remote(remote_host)
+        remote_bound = True
     else:
-        loop = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-        servers.append(loop)
+        servers.append(ThreadingHTTPServer(("127.0.0.1", port), Handler))
         print(f"ensemble [{BACKEND.os_name}]: http://127.0.0.1:{port}", flush=True)
         if remote_host:
-            servers.append(ThreadingHTTPServer((remote_host, port), Handler))
-            _announce_remote(remote_host)
+            # The remote (tailnet) bind must NEVER kill the hub. Right after a
+            # reboot Tailscale's IP is often detectable but not yet assigned to an
+            # interface, so bind() raises WinError 10049 — serve loopback now and
+            # attach the remote listener in the background once it's bindable.
+            try:
+                servers.append(ThreadingHTTPServer((remote_host, port), Handler))
+                _announce_remote(remote_host)
+                remote_bound = True
+            except OSError as e:
+                print(f"remote bind {remote_host}:{port} failed ({e}); "
+                      f"serving loopback, retrying in background", flush=True)
 
-    # Tailnet requested but not up yet: keep retrying in the background and attach
-    # the remote listener the moment Tailscale comes online. Never blocks startup.
-    if tailnet and not remote_host and not wildcard:
+    # Tailnet requested but its listener isn't up yet (never resolved, or bind
+    # failed above): keep retrying in the background, without ever blocking startup.
+    if tailnet and not remote_bound and not wildcard:
         def _await_tailnet():
-            for _ in range(150):  # ~5 min of 2s polls
+            for _ in range(300):  # ~10 min of 2s polls
                 time.sleep(2)
-                ip = _detect_tailscale_ip()
+                ip = _detect_tailscale_ip() or remote_host
                 if not ip:
                     continue
                 try:
                     s = ThreadingHTTPServer((ip, port), Handler)
-                except OSError as e:
-                    print(f"tailnet listener bind failed ({ip}): {e}", flush=True)
-                    return
+                except OSError:
+                    continue   # IP not bindable yet — keep waiting, don't give up
                 _announce_remote(ip)
                 s.serve_forever()
                 return
