@@ -666,6 +666,7 @@
   .tx-text.md a { color: var(--accent); }
   .mention { color: var(--accent); font-weight: 600; background: color-mix(in srgb, var(--accent) 16%, transparent); border-radius: 4px; padding: 0 3px; }
   .tx-role .mention { text-transform: none; letter-spacing: 0; }
+  .tx-role .mention:first-child { background: transparent; padding: 0; color: inherit; }
   .tx-text.md hr { border: 0; border-top: 1px solid var(--border); margin: 8px 0; }
   .tx-text.md table { border-collapse: collapse; margin: 8px 0; display: block; overflow-x: auto; max-width: 100%; }
   .tx-text.md th, .tx-text.md td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; vertical-align: top; }
@@ -1326,7 +1327,7 @@ let FILE_LINK_ROOM = '';   // room id woven into file links so /fileview can sen
 const fileHref = p => '/fileview?path=' + encodeURIComponent(p) + (FILE_LINK_ROOM ? '&room=' + encodeURIComponent(FILE_LINK_ROOM) : '');
 // Show the human ("user") by their configured name as a highlighted @mention.
 const operatorLabel = () => (typeof PREFS !== 'undefined' && PREFS && (PREFS.operatorName || PREFS.operatorNickname)) || 'you';
-const identLabel = id => id === 'user' ? `<span class="mention">@${esc(operatorLabel())}</span>` : esc(id);
+const identLabel = id => `<span class="mention">@${esc(id === 'user' ? operatorLabel() : id)}</span>`;
 function mdToHtml(src) {
   const codes = [];
   const ph = h => _MDA + (codes.push(h) - 1) + _MDZ;
@@ -1720,7 +1721,11 @@ function detailActions(r, isLive, isRoom, isOrphan) {
     const ijBtn = cwd ? `<button class="ij-btn" data-sid="${esc(r.sessionId)}" title="Open the project in its preferred editor">🧠 IDE</button>` : '';
     const themeBtn = (feat('themes') && cwd)
       ? `<button type="button" class="theme-dd-trigger" data-pid="" data-cwd="${esc(cwd)}" data-current="${esc(current)}" title="Pick a color theme for this session">${current ? '🎨 ' + esc(current) : '🎨 Theme…'}</button>` : '';
-    return `<div class="dp-actions"><div class="actions">${lifecycle}${pinBtn}${renameBtn}${autoBtn}${finderBtn}${ijBtn}${themeBtn}</div></div>`;
+    // Terminals + Pause were previously only in the popup's own header (hidden when
+    // docked). Surface them here too so the docked toolbar matches the popup.
+    const termsBtn = isLive ? `<button class="dp-terms-btn" title="Show/hide the raw per-agent terminals">🖥 Terminals</button>` : '';
+    const pauseBtn = isLive ? `<button class="dp-pause-btn" data-room="${esc(r.roomId)}" data-status="${esc(r.status || '')}" title="Pause or resume the collaboration">${r.status === 'paused' ? '▶ Resume' : '⏸ Pause'}</button>` : '';
+    return `<div class="dp-actions"><div class="actions">${lifecycle}${termsBtn}${pauseBtn}${pinBtn}${renameBtn}${autoBtn}${finderBtn}${ijBtn}${themeBtn}</div></div>`;
   }
   return `<div class="dp-actions">${actionsCell(r, isLive)}</div>`;
 }
@@ -3351,6 +3356,23 @@ document.addEventListener('click', async (ev) => {
       await refresh(); updateRoomsBadge();
       openDetail(rid);
     } catch (e) { toast('resume failed: ' + e.message, 4000, 'err'); }
+    return;
+  }
+  const dpTerms = ev.target.closest('.dp-terms-btn');
+  if (dpTerms) {
+    ev.stopPropagation();
+    const ifr = document.querySelector('#detail-panel iframe.dp-session');
+    if (ifr && ifr.contentWindow) ifr.contentWindow.postMessage({ ensemble: 'toggleTerms' }, '*');
+    return;
+  }
+  const dpPause = ev.target.closest('.dp-pause-btn');
+  if (dpPause) {
+    ev.stopPropagation();
+    const next = dpPause.dataset.status === 'paused' ? 'active' : 'paused';
+    try {
+      await api('/api/room/status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: dpPause.dataset.room, status: next }) });
+      await refresh();
+    } catch (e) { toast('pause failed: ' + e.message, 4000, 'err'); }
     return;
   }
   const roomEnd = ev.target.closest('.room-end');

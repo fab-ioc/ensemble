@@ -75,6 +75,28 @@
   .to { font-weight:400; opacity:.6; text-transform:none; }
   .mention { color:var(--accent); font-weight:600; background:color-mix(in srgb, var(--accent) 16%, transparent); border-radius:4px; padding:0 3px; }
   .msg .from .mention { text-transform:none; letter-spacing:0; }
+  /* Sender (direct child) keeps its agent colour, no pill; recipient gets the pill. */
+  .msg .from > .mention { background:transparent; padding:0; color:inherit; }
+  /* Live activity bar — agent working/idle/stopped, visible without the terminal. */
+  #activity { display:flex; flex-wrap:wrap; gap:14px; padding:5px 12px; border-top:1px solid var(--border); font-size:11px; color:var(--dim); flex:0 0 auto; }
+  #activity .act { display:inline-flex; align-items:center; gap:5px; }
+  #activity .act-dot { width:7px; height:7px; border-radius:50%; background:#6b7280; flex:0 0 auto; }
+  #activity .act.working .act-dot { background:#16a34a; animation:actpulse 1.1s ease-in-out infinite; }
+  #activity .act.working .act-txt { color:#16a34a; }
+  #activity .act.idle .act-txt { color:var(--dim); }
+  #activity .act.dead .act-dot { background:#ef4444; }
+  #activity .act.dead .act-txt { color:#ef4444; }
+  #activity .act.needs .act-dot { background:#eab308; animation:actpulse 1.1s ease-in-out infinite; }
+  #activity .act.needs .act-txt { color:#eab308; font-weight:600; }
+  @keyframes actpulse { 0%,100%{ opacity:1; transform:scale(1); } 50%{ opacity:.3; transform:scale(1.55); } }
+  /* Pending-prompt card: the question the agent is blocked on, shown in the chat. */
+  #promptcard { flex:0 0 auto; margin:0 12px 8px; border:1px solid #eab30866; background:#eab3081f; border-radius:10px; padding:10px 12px; }
+  #promptcard .pc-head { font-size:12px; font-weight:700; color:#eab308; margin-bottom:6px; }
+  #promptcard .pc-body { margin:0; max-height:220px; overflow:auto; font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; white-space:pre-wrap; word-break:break-word; color:var(--fg); }
+  #promptcard .pc-opts { display:flex; flex-wrap:wrap; gap:6px; margin-top:9px; }
+  #promptcard .pc-opt { background:#eab308; color:#111; border:none; font-size:12px; font-weight:600; padding:4px 11px; border-radius:6px; cursor:pointer; }
+  #promptcard .pc-opt:hover { filter:brightness(1.12); }
+  #promptcard .pc-hint { font-size:11px; color:var(--dim); margin-top:7px; }
   #compose { border-top:1px solid var(--border); padding:10px; display:flex; flex-direction:column; gap:6px; flex:0 0 auto; }
   #compose textarea { width:100%; min-height:48px; resize:vertical; background:var(--surface); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:6px; font:inherit; }
   #agentcol { flex:0 0 46%; display:flex; flex-direction:column; min-width:0; overflow-y:auto; }
@@ -87,9 +109,8 @@
   .astat { font-size:11px; }
   .agent .term { height:300px; display:none; background:var(--term-bg, #0b0b0b); padding:4px; }
   .agent.open .term { display:block; }
-  /* Solo session: one agent, driven directly — hide the chat, terminal fills. */
-  body.solo #chatcol { display:none; }
-  body.solo #agentcol { flex:1; }
+  /* Solo session: one agent. It now uses the same balloon chat as a room (its
+     live transcript), with the raw terminal available via the Terminals toggle. */
   body.solo .agent { border-bottom:none; height:100%; display:flex; flex-direction:column; }
   body.solo .agent .ah { cursor:default; }
   body.solo .agent .ah .toggle { display:none; }
@@ -99,16 +120,15 @@
   /* Embedded in the dashboard's detail panel: the parent card owns the title,
      info and actions, so drop our own header/info bar and just be the surface. */
   body.embed > header, body.embed > #info { display:none; }
-  /* A not-running solo session still shows its stored transcript (don't collapse
-     the chat column to a blank terminal). */
-  body.solo.notrunning #chatcol { display:flex; }
-  body.solo.notrunning #agentcol { display:none; }
-  /* Collaboration: the raw per-agent terminals duplicate the chat and eat width
-     (badly on phones), so they're hidden by default. The header "Terminals"
-     button toggles them; solo mode always shows its terminal. */
-  body:not(.solo).term-hidden #agentcol { display:none; }
-  body:not(.solo).term-hidden #chatcol { border-right:none; }
+  /* The raw per-agent terminals duplicate the chat and eat width (badly on
+     phones), so they're hidden by default for both rooms and solo sessions. The
+     header "Terminals" button toggles them. */
+  body.term-hidden #agentcol { display:none; }
+  body.term-hidden #chatcol { border-right:none; }
   #terms.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+  #theme-menu-s { position:fixed; z-index:70; max-height:50vh; overflow-y:auto; background:var(--surface); border:1px solid var(--border); border-radius:8px; box-shadow:0 10px 34px rgba(0,0,0,.5); padding:4px; min-width:150px; }
+  #theme-menu-s .tm-item { padding:6px 12px; border-radius:5px; cursor:pointer; font-size:12px; white-space:nowrap; }
+  #theme-menu-s .tm-item:hover { background:#ffffff12; color:var(--accent); }
 </style>
 </head>
 <body>
@@ -121,12 +141,20 @@
   <button id="resume" hidden title="Relaunch the agent(s) with their conversation">↻ Resume</button>
   <button id="terms" hidden title="Show/hide the raw per-agent terminals">🖥 Terminals</button>
   <button id="pause">Pause</button>
+  <button id="pin" hidden title="Pin this session for quick access">📌 Pin</button>
+  <button id="rename" hidden title="Rename this session">✎ Rename</button>
+  <button id="autolabel" hidden title="Ask Claude to suggest a label from the conversation">✨ Auto</button>
+  <button id="explorer" hidden title="Open the working folder on the host">📂 Files</button>
+  <button id="ide" hidden title="Open the project in its editor (on the host)">🧠 IDE</button>
+  <button id="theme" hidden title="Pick a color theme for this session">🎨 Theme</button>
   <button id="end" title="Stop the agent(s) and end this session">End</button>
 </header>
 <div id="info"></div>
 <main>
   <div id="chatcol">
     <div id="msgs"></div>
+    <div id="promptcard" hidden></div>
+    <div id="activity" hidden></div>
     <div id="compose">
       <div class="dim" id="hint"></div>
       <textarea id="input" placeholder="Message the agents — Ctrl+Enter to send. Start with @codex or @claude to direct it to one."></textarea>
@@ -144,7 +172,7 @@ const qs = new URLSearchParams(location.search);
 const ROOM = qs.get('id');
 let OPERATOR = 'you';   // how the human ("user") is shown — nickname / git name
 fetch('/api/settings').then(r => r.json()).then(s => { OPERATOR = s.operatorName || s.operatorNickname || 'you'; }).catch(() => {});
-const identLabel = id => id === 'user' ? `<span class="mention">@${esc(OPERATOR)}</span>` : esc(id);
+const identLabel = id => `<span class="mention">@${esc(id === 'user' ? OPERATOR : id)}</span>`;
 if (qs.get('embed')) document.body.classList.add('embed');
 document.body.classList.add('term-hidden');   // raw agent terminals off by default
 const $ = s => document.querySelector(s);
@@ -231,6 +259,8 @@ function cleanSeq(s) {
 
 const terms = {};          // ptyId -> {term, es}
 let agentsBuilt = false;
+let ROOM_AGENTS = [];   // [{identity, agent, ptyId}] for the live activity bar
+let ROOM_LIVE = false;
 
 // --- chat-window theming -------------------------------------------------
 // A headless session has no OS terminal tab, so the chosen color scheme is
@@ -372,7 +402,7 @@ function mountTerm(el, ptyId) {
   try { new ResizeObserver(() => syncSize(ptyId)).observe(el); } catch(e) {}
 }
 
-function renderMsgs(room) {
+function renderBubbles(items) {
   const box = $('#msgs');
   // Don't blow away the DOM while the user is mid-comment (it would drop their
   // selection / the open composer). Highlights are re-applied after each render.
@@ -381,13 +411,55 @@ function renderMsgs(room) {
   if (_liveSel && !_liveSel.isCollapsed && _liveSel.rangeCount &&
       box.contains(_liveSel.getRangeAt(0).commonAncestorContainer)) return;
   const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 50;
-  box.innerHTML = room.messages.map(m => {
+  box.innerHTML = items.map(m => {
     const cls = m.from === 'user' ? 'user' : esc(m.from);
     const to = m.to && m.to !== 'all' ? ` <span class="to">→ ${identLabel(m.to)}</span>` : '';
     return `<div class="msg ${cls}" data-mid="${esc(m.id || '')}" data-from="${esc(m.from || '')}"><div class="from">${identLabel(m.from)}${to}</div><div class="text md">${mdToHtml(m.text)}</div></div>`;
   }).join('');
   if (atBottom) box.scrollTop = box.scrollHeight;
   applyComments();
+}
+function renderMsgs(room) { renderBubbles(room.messages); }
+// Solo session: render its live transcript (user + assistant turns) as bubbles,
+// fetched once per completed turn (see the activity-driven trigger in refresh).
+let SOLO_TURN_COUNT = -1, SOLO_FETCHING = false, SOLO_SID = '', SOLO_AGENT = '', SOLO_PTY = '', _prevWorking = {}, _soloStatKey = '';
+// Poll a cheap size+mtime signal; re-render the transcript only when it actually
+// grows. Reliable (catches every new turn, even while the agent is still working)
+// and light (the full transcript is fetched only on a real change).
+async function checkSolo() {
+  if (!SOLO_SID) return;
+  try {
+    const s = await fetch('/api/session/' + encodeURIComponent(SOLO_SID) + '?stat=1').then(r => r.json());
+    if (s && typeof s.size === 'number') {
+      const key = s.size + ':' + (s.mtime || 0);
+      if (key === _soloStatKey) return;
+      _soloStatKey = key;
+      renderSolo(SOLO_SID, SOLO_AGENT, true);
+    } else {
+      // Older server without the stat endpoint → fall back to a full fetch that
+      // re-renders only when the turn count changed (heavier, but reliable).
+      renderSolo(SOLO_SID, SOLO_AGENT, false);
+    }
+  } catch (e) {}
+}
+let ROOM_OBJ = null;   // last room payload, so we can mount the terminal on demand to read a prompt
+async function renderSolo(sid, agentId, force) {
+  if (!sid || SOLO_FETCHING) return;
+  SOLO_FETCHING = true;
+  try {
+    const d = await fetch('/api/session/' + encodeURIComponent(sid) + '?full=1').then(r => r.json());
+    const raw = d.turns || [];
+    if (!force && raw.length === SOLO_TURN_COUNT) return;   // nothing new
+    SOLO_TURN_COUNT = raw.length;
+    // Drop consecutive identical turns (the transcript sometimes double-records).
+    const turns = raw.filter((t, i) => i === 0 || t.role !== raw[i - 1].role || t.text !== raw[i - 1].text);
+    const items = turns.slice(-120).map((t, i) => ({
+      id: 's' + (turns.length - Math.min(120, turns.length) + i),
+      from: (t.role === 'user') ? 'user' : agentId,
+      to: '', text: t.text,
+    }));
+    renderBubbles(items);
+  } catch (e) {} finally { SOLO_FETCHING = false; }
 }
 
 async function refresh() {
@@ -420,40 +492,159 @@ async function refresh() {
   document.body.classList.toggle('notrunning', notRunning);
   // Basic session info (parity with a single-agent's detail view).
   const mem = room.participants.filter(p => p.kind === 'agent');
+  ROOM_AGENTS = mem.map(m => ({ identity: m.identity, agent: m.agent, ptyId: m.ptyId, sessionId: m.sessionId }));
+  ROOM_LIVE = !notRunning;
+  ROOM_OBJ = room;
   const cwd = room.cwd || '';
   ensureTheme(cwd);
   $('#info').innerHTML =
     (cwd ? `<span title="${esc(cwd)}">📁 ${esc(tildeify(cwd))}</span>` : '')
     + mem.map(m => `<span class="ib-agent ${esc(m.agent)}" title="${esc(m.identity)}">${esc(m.agent)}${m.model ? ' · ' + esc(m.model) : ''}</span>`).join('')
     + (soloMode ? '' : `<span>${room.messages.length} messages · hop ${room.hopCount || 0}/${room.maxHops || 0}</span>`);
-  const showTerms = soloMode || !document.body.classList.contains('term-hidden');
-  $('#terms').hidden = soloMode || notRunning;
-  $('#terms').classList.toggle('on', !document.body.classList.contains('term-hidden'));
+  const showTerms = !document.body.classList.contains('term-hidden');
+  $('#terms').hidden = notRunning;
+  $('#terms').classList.toggle('on', showTerms);
+  // Rich actions (header is hidden when embedded, so these show only in the popup;
+  // the docked panel provides the same set in its own toolbar).
+  const hasCwd = !!actCwd();
+  $('#pin').hidden = false;
+  $('#rename').hidden = false;
+  $('#autolabel').hidden = notRunning;
+  $('#explorer').hidden = !hasCwd;
+  $('#ide').hidden = !hasCwd;
+  $('#theme').hidden = !hasCwd;
+  if (!_pinInit) { _pinInit = true; refreshPinLabel(); }
   if (!agentsBuilt && showTerms && room.participants.some(p => p.kind === 'agent' && p.ptyId)) buildAgents(room);
-  if (!soloMode || notRunning) renderMsgs(room);
-  if (showTerms) updateAgentStatus();
+  if (soloMode) {
+    const a = mem[0] || {};
+    SOLO_SID = a.sessionId || ''; SOLO_AGENT = a.identity || 'claude'; SOLO_PTY = a.ptyId || '';
+    checkSolo();   // stat-driven: first load + every new turn
+  } else {
+    SOLO_SID = '';
+    renderMsgs(room);
+  }
+  updateAgentStatus();
 }
 
-// Live per-agent status dot: working (recent output) / idle / stopped.
+// Live per-agent status: working (recent output) / idle / stopped. Drives both
+// the terminal-header dots (when shown) and the always-visible chat activity bar.
+function ptyState(info) {
+  if (!info || !info.alive) return { cls: 'dead', txt: 'stopped' };
+  if (info.idleSeconds < 2.5) return { cls: 'working', txt: 'working…' };
+  return { cls: 'idle', txt: 'idle' };
+}
+// Prefer Claude's own session status (busy/idle, and any other value = blocked
+// waiting for the user) over raw PTY output-timing; fall back to the PTY for
+// non-Claude agents (e.g. codex) that have no session-state file.
+function agentState(a, ptyMap, liveMap) {
+  // Claude session status: busy / shell (=working), idle, waiting (=blocked on a
+  // permission/plan/confirmation prompt). Non-Claude agents fall back to PTY timing.
+  const cs = a.sessionId ? liveMap[a.sessionId] : null;
+  if (cs === 'busy' || cs === 'shell') return { cls: 'working', txt: 'working…' };
+  if (cs === 'waiting') return { cls: 'needs', txt: '⚠ waiting for you' };
+  if (cs === 'idle') return { cls: 'idle', txt: 'idle' };
+  return ptyState(ptyMap[a.ptyId]);
+}
 async function updateAgentStatus() {
-  let ptys = [];
-  try { ptys = await fetch('/api/ptys').then(r => r.json()); } catch(e) { return; }
-  const map = {};
-  ptys.forEach(x => map[x.id] = x);
+  let ptys = [], live = [];
+  try {
+    [ptys, live] = await Promise.all([
+      fetch('/api/ptys').then(r => r.json()).catch(() => []),
+      fetch('/api/live').then(r => r.json()).catch(() => []),
+    ]);
+  } catch(e) { return; }
+  const map = {}; ptys.forEach(x => map[x.id] = x);
+  const lmap = {}; (live || []).forEach(x => { if (x.sessionId) lmap[x.sessionId] = x.status; });
+  // Terminal-header dots (present only when terminals are built/shown).
   document.querySelectorAll('.adot').forEach(dot => {
-    const info = map[dot.dataset.pty];
-    let cls = 'dead', txt = 'stopped';
-    if (info && info.alive) {
-      if (info.idleSeconds < 2.5) { cls = 'working'; txt = 'working…'; }
-      else { cls = 'idle'; txt = 'idle'; }
-    }
-    dot.className = 'adot ' + cls;
+    const s = ptyState(map[dot.dataset.pty]);
+    dot.className = 'adot ' + s.cls;
     const stat = document.querySelector('.astat[data-pty="' + dot.dataset.pty + '"]');
-    if (stat) stat.textContent = txt;
+    if (stat) stat.textContent = s.txt;
   });
+  renderActivity(map, lmap);
+  // Solo: when the agent finishes a turn (leaves the working state), pull the new
+  // transcript once — avoids constantly re-fetching a large transcript.
+  if (SOLO_SID) {
+    const st = agentState({ sessionId: SOLO_SID, ptyId: SOLO_PTY }, map, lmap);
+    if (st.cls === 'needs') renderPromptCard(); else hidePromptCard();
+  }
+}
+// The always-visible activity bar above the composer, so you can tell at a glance
+// whether an agent is working — or waiting on you — without opening its terminal.
+function renderActivity(ptyMap, liveMap) {
+  const bar = document.getElementById('activity');
+  if (!bar) return;
+  const agents = ROOM_AGENTS.filter(a => a.ptyId || a.sessionId);
+  if (!ROOM_LIVE || !agents.length) { bar.hidden = true; return; }
+  bar.hidden = false;
+  bar.innerHTML = agents.map(a => {
+    const s = agentState(a, ptyMap, liveMap || {});
+    return `<span class="act ${s.cls}"><span class="act-dot"></span>${esc(a.identity)} <span class="act-txt">${s.txt}</span></span>`;
+  }).join('');
+}
+// ---- Surface the agent's current prompt when it's waiting on you ----------
+// Read the terminal's emulated screen (xterm buffer = clean text, unlike the raw
+// byte stream) and show the pending question as a card in the chat.
+function readScreen(ptyId) {
+  const t = terms[ptyId]; if (!t || !t.term) return [];
+  const term = t.term, buf = term.buffer.active, out = [];
+  for (let y = 0; y < term.rows; y++) {
+    const line = buf.getLine(buf.baseY + y);
+    out.push(line ? line.translateToString(true).replace(/\s+$/, '') : '');
+  }
+  return out;
+}
+function ensureSoloTerm() {
+  if (terms[SOLO_PTY]) return true;
+  if (ROOM_OBJ && !agentsBuilt) buildAgents(ROOM_OBJ);   // mounts the (hidden) terminal so its buffer fills
+  return !!terms[SOLO_PTY];
+}
+function renderPromptCard() {
+  const card = document.getElementById('promptcard');
+  if (!card) return;
+  ensureSoloTerm();
+  let lines = readScreen(SOLO_PTY);
+  let a = 0, b = lines.length;
+  while (a < b && !lines[a].trim()) a++;
+  while (b > a && !lines[b - 1].trim()) b--;
+  lines = lines.slice(a, b);
+  const opts = [];
+  lines.forEach(l => { const m = l.match(/^\s*[❯>*\-❯]?\s*(\d+)[.)]\s+(.{1,70})/); if (m) opts.push({ n: m[1], label: m[2].trim() }); });
+  const body = lines.length ? lines.join('\n')
+    : 'Claude is waiting for your input. Reveal the terminal (🖥) to see the exact prompt, or answer below.';
+  card.innerHTML =
+    `<div class="pc-head">⚠ Claude is waiting for your answer</div>`
+    + `<pre class="pc-body">${esc(body)}</pre>`
+    + (opts.length ? `<div class="pc-opts">${opts.map(o => `<button class="pc-opt" data-n="${esc(o.n)}">${esc(o.n)}. ${esc(o.label)}</button>`).join('')}</div>` : '')
+    + `<div class="pc-hint">Tap an option, or type your answer in the box below.</div>`;
+  card.querySelectorAll('.pc-opt').forEach(bt => bt.onclick = () => jpost('/api/pty/input', { id: SOLO_PTY, data: bt.dataset.n }));
+  card.hidden = false;
+}
+function hidePromptCard() {
+  const card = document.getElementById('promptcard');
+  if (card && !card.hidden) card.hidden = true;
+}
+// Solo: deliver a message to the agent by typing into its terminal (the same
+// path the xterm uses). Bracketed paste keeps multi-line input from submitting
+// line-by-line; the trailing CR submits.
+async function sendSolo(text) {
+  // A TUI treats a trailing CR in the SAME write as pasted content (it lands in
+  // the input unsubmitted). Type the text, then send Enter as a SEPARATE write —
+  // the same two-step the server-side doorbell (send_line) uses.
+  const body = text.includes('\n') ? '\x1b[200~' + text + '\x1b[201~' : text;
+  await jpost('/api/pty/input', { id: SOLO_PTY, data: body });
+  await new Promise(r => setTimeout(r, 300));
+  await jpost('/api/pty/input', { id: SOLO_PTY, data: '\r' });
 }
 $('#send').onclick = async () => {
   const t = $('#input').value.trim(); if (!t) return;
+  if (SOLO_SID) {
+    await sendSolo(t);
+    $('#input').value = '';
+    setTimeout(checkSolo, 1200);
+    return;
+  }
   let to = $('#to') ? $('#to').value : '';
   // A leading @<identity> overrides the To picker: "@codex do X" → codex only.
   const m = t.match(/^@([\w-]+)\b/);
@@ -471,6 +662,73 @@ $('#terms').onclick = () => {
   const hidden = document.body.classList.toggle('term-hidden');
   $('#terms').classList.toggle('on', !hidden);
   if (!hidden) refresh();   // revealing → build/stream the terminals now
+};
+// When embedded in the dashboard's docked panel, its toolbar postMessages control
+// actions down to us (session.html owns the terminal UI + room controls).
+window.addEventListener('message', (e) => {
+  const d = e.data || {};
+  if (d.ensemble === 'toggleTerms') $('#terms').click();
+  else if (d.ensemble === 'pause') { const pb = $('#pause'); if (pb && pb.onclick) pb.onclick(); }
+});
+
+// ---- Rich session actions (parity with the dashboard's docked toolbar) -------
+// A solo session keys on its sessionId; a room keys on the room id (label/pin
+// sidecars are keyed that way). cwd comes from the room payload.
+function actSid() { return SOLO_SID || ROOM; }
+function actCwd() { return (ROOM_OBJ && ROOM_OBJ.cwd) || ''; }
+let PINNED = false, _pinInit = false;
+async function refreshPinLabel() {
+  try {
+    const pins = await fetch('/api/pinned').then(r => r.json());
+    const set = Array.isArray(pins) ? pins : (pins.pinned || Object.keys(pins || {}));
+    PINNED = set.includes(actSid());
+  } catch (e) {}
+  const b = $('#pin'); if (b) b.textContent = PINNED ? '📌 Unpin' : '📌 Pin';
+}
+$('#pin').onclick = async () => {
+  const pinning = !PINNED;
+  try { await jpost('/api/pinned', { sessionId: actSid(), pinned: pinning }); PINNED = pinning; $('#pin').textContent = PINNED ? '📌 Unpin' : '📌 Pin'; }
+  catch (e) { alert('Pin failed'); }
+};
+$('#rename').onclick = async () => {
+  const label = prompt('Label for this session (empty to clear):', (ROOM_OBJ && ROOM_OBJ.title) || '');
+  if (label === null) return;
+  try { await fetch('/api/label/' + encodeURIComponent(actSid()), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: label.trim() }) }); refresh(); }
+  catch (e) { alert('Rename failed'); }
+};
+$('#autolabel').onclick = async () => {
+  $('#autolabel').disabled = true;
+  try { await fetch('/api/label/' + encodeURIComponent(actSid()) + '/auto', { method: 'POST' }); setTimeout(refresh, 800); }
+  catch (e) { alert('Auto-label failed'); }
+  finally { $('#autolabel').disabled = false; }
+};
+$('#explorer').onclick = () => { const cwd = actCwd(); if (cwd) jpost('/api/open-path', { path: cwd, app: 'finder' }); };
+$('#ide').onclick = async () => {
+  try {
+    const repos = await fetch('/api/repos/' + encodeURIComponent(actSid())).then(r => r.json());
+    if (repos && repos.length) jpost('/api/open-path', { path: repos[0].path, app: repos[0].editor || 'default' });
+    else { const cwd = actCwd(); if (cwd) jpost('/api/open-path', { path: cwd, app: 'default' }); }
+  } catch (e) { alert('IDE open failed'); }
+};
+function closeThemeMenuS() { const m = document.getElementById('theme-menu-s'); if (m) m.remove(); document.removeEventListener('mousedown', _themeMenuOutS); }
+function _themeMenuOutS(e) { if (!e.target.closest('#theme-menu-s') && e.target.id !== 'theme') closeThemeMenuS(); }
+$('#theme').onclick = async () => {
+  const cwd = actCwd(); if (!cwd) return;
+  if (document.getElementById('theme-menu-s')) { closeThemeMenuS(); return; }
+  let themes = [];
+  try { themes = await fetch('/api/themes').then(r => r.json()); } catch (e) {}
+  const names = (themes || []).map(t => typeof t === 'string' ? t : (t.name || t.id)).filter(Boolean);
+  if (!names.length) return;
+  const menu = document.createElement('div'); menu.id = 'theme-menu-s';
+  menu.innerHTML = names.map(n => `<div class="tm-item">${esc(n)}</div>`).join('');
+  document.body.appendChild(menu);
+  const rect = $('#theme').getBoundingClientRect();
+  menu.style.top = (rect.bottom + 4) + 'px'; menu.style.right = Math.max(6, window.innerWidth - rect.right) + 'px';
+  menu.querySelectorAll('.tm-item').forEach((it, i) => it.onclick = async () => {
+    const theme = names[i]; closeThemeMenuS();
+    try { await jpost('/api/theme', { cwd, theme }); ensureTheme(cwd); } catch (e) {}
+  });
+  setTimeout(() => document.addEventListener('mousedown', _themeMenuOutS), 0);
 };
 
 // ---- In-place review comments -------------------------------------------
@@ -613,6 +871,12 @@ async function submitComments() {
   const body = `## Review comments (${COMMENTS.length})\n\n` +
     COMMENTS.map((c, i) => `**${i + 1}.** > ${c.quote.replace(/\s*\n\s*/g, ' ').trim()}\n\n${c.note}`).join('\n\n');
   try {
+    if (SOLO_SID) {
+      await sendSolo(body);
+      COMMENTS.length = 0; clearHighlights(); renderCmtTray();
+      setTimeout(checkSolo, 1200);
+      return;
+    }
     await jpost('/api/room/say', { roomId: ROOM, text: body, to });
     COMMENTS.length = 0; clearHighlights(); renderCmtTray(); refresh();
   } catch (e) { alert('Failed to submit comments — try again.'); }

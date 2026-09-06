@@ -28,6 +28,7 @@ import secrets
 import shlex
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -2129,6 +2130,15 @@ def trigger_update() -> dict:
 # ---------- HTTP server ----------
 
 class Handler(BaseHTTPRequestHandler):
+    def setup(self):
+        super().setup()
+        # Disable Nagle's algorithm — tiny terminal-keystroke packets must go out
+        # immediately, otherwise interactive typing lags ~200ms-1s on a LAN.
+        try:
+            self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except OSError:
+            pass
+
     def log_message(self, fmt, *args):
         # Guard against a missing/closed stderr — under pythonw.exe (Windows,
         # windowless) there is no console stream, and writes would raise.
@@ -2273,6 +2283,16 @@ class Handler(BaseHTTPRequestHandler):
             tpath = find_transcript(sid)
             if not tpath:
                 self._send_json(404, {"error": "not_found"})
+                return
+            # Cheap change-signal: the transcript's size+mtime. Clients poll this
+            # to know when new turns exist without re-fetching the whole transcript.
+            if qs.get("stat", ["0"])[0] in ("1", "true", "yes"):
+                try:
+                    st = tpath.stat()
+                    self._send_json(200, {"sessionId": sid, "size": st.st_size,
+                                          "mtime": round(st.st_mtime, 3)})
+                except OSError:
+                    self._send_json(200, {"sessionId": sid, "size": 0, "mtime": 0})
                 return
             if full:
                 # User + assistant text turns, with timestamps and roles.
