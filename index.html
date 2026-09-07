@@ -714,6 +714,33 @@
   .gitmark { display: inline-block; font-size: 9.5px; font-weight: 700; letter-spacing: .04em; padding: 1px 5px; border-radius: 4px; margin-left: 5px; color: var(--muted); border: 1px solid var(--border); vertical-align: 1px; }
   .srow.more, .srow.none { color: var(--muted-2); cursor: default; font-size: 11.5px; }
   .srow.more:hover, .srow.none:hover { background: transparent; }
+  /* Project tabs (Tasks | Workspace) under the breadcrumb. */
+  .ptabs { display: flex; gap: 2px; margin: 4px 0 10px; border-bottom: 1px solid var(--border); }
+  .ptabs button { background: transparent; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px; padding: 6px 12px; font-size: 12.5px; font-weight: 600; color: var(--muted); cursor: pointer; }
+  .ptabs button:hover { color: var(--fg); }
+  .ptabs button.on { color: var(--fg); border-bottom-color: var(--accent); }
+  /* Workspace: lazy file tree (left) + rendered file (right). */
+  .wsp { display: grid; grid-template-columns: minmax(220px, 300px) 1fr; height: calc(100vh - 230px); min-height: 420px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
+  .wsp-tree { overflow: auto; border-right: 1px solid var(--border); padding: 8px 6px; font-size: 12.5px; }
+  .wsp-rootlbl { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--muted-2); padding: 4px 6px 8px; word-break: break-all; }
+  .wsk { padding-left: 14px; }
+  #wsp-rootkids { padding-left: 0; }
+  .wse { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+  .wse:hover { background: var(--hover); }
+  .wse.on { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+  .wse .tw { width: 12px; flex: 0 0 auto; color: var(--muted-2); font-size: 10px; }
+  .wse .nm { overflow: hidden; text-overflow: ellipsis; }
+  .wse.dir .nm { font-weight: 600; }
+  .wse .sz { margin-left: auto; padding-left: 8px; color: var(--muted-2); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+  .wse.none { color: var(--muted-2); cursor: default; }
+  .wse.none:hover { background: transparent; }
+  .wsp-view { display: flex; flex-direction: column; min-width: 0; }
+  .wsp-empty { color: var(--muted); padding: 24px; font-size: 13px; }
+  .wsp-bar { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-bottom: 1px solid var(--border); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--muted); }
+  .wsp-path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wsp-bar a { color: var(--muted); text-decoration: none; font-size: 14px; }
+  .wsp-bar a:hover { color: var(--accent); }
+  .wsp-frame { flex: 1; width: 100%; border: 0; }
   .proj .ago { margin-left: auto; color: var(--muted-2); font-size: 11px; font-variant-numeric: tabular-nums; }
   .tx-role .mention { text-transform: none; letter-spacing: 0; }
   .tx-role .mention:first-child { background: transparent; padding: 0; color: inherit; }
@@ -1314,6 +1341,22 @@
              autocomplete="off" spellcheck="false" maxlength="60">
     </div>
     <p class="cfg-hint">Used in the collaboration briefing, so agents address you by name instead of “the human.” Empty = your git <code>user.name</code>.</p>
+  </div>
+  <div class="settings-section" id="settings-backup">
+    <h4>Backup of your projects</h4>
+    <p class="cfg-hint" id="backup-root-hint">Your projects and their tasks live in one folder that the app keeps as a git repository. Give it a remote and it commits &amp; pushes on a schedule — so a new machine gets every project and the knowledge built inside it.</p>
+    <div class="pref-row" style="margin-top: 10px;">
+      <span class="pref-label">Git remote (optional)</span>
+      <input type="text" id="pref-backup-remote" placeholder="git@github.com:you/ensemble-projects.git" autocomplete="off" spellcheck="false" maxlength="300">
+    </div>
+    <p class="cfg-hint">Only the URL is stored. Authentication uses this machine's git credential manager or SSH key — the app never sees a password or token.</p>
+    <div class="pref-row" style="margin-top: 10px;">
+      <span class="pref-label">Every</span>
+      <input type="number" id="pref-backup-interval" min="5" max="1440" step="5" style="width: 80px;"> <span class="dim">minutes</span>
+      <label style="margin-left: 14px;"><input type="checkbox" id="pref-backup-enabled"> enabled</label>
+      <button type="button" id="backup-now-btn" class="secondary" style="margin-left: auto;">Back up now</button>
+    </div>
+    <p class="cfg-hint" id="backup-status">—</p>
     <div class="pref-row" id="pref-rearrange-row" style="margin-top: 14px;">
       <span class="pref-label">Rearrange existing sessions</span>
       <div class="pref-btn-row">
@@ -2221,6 +2264,47 @@ function renderPrefs() {
   if (nickInput && document.activeElement !== nickInput) {
     nickInput.value = PREFS.operatorNickname || '';
   }
+  // Backup of the projects root (git). Only the remote URL is stored server-side.
+  const br = document.getElementById('pref-backup-remote');
+  if (br && document.activeElement !== br) br.value = PREFS.backupRemote || '';
+  const bi = document.getElementById('pref-backup-interval');
+  if (bi && document.activeElement !== bi) bi.value = PREFS.backupIntervalMin || 60;
+  const be = document.getElementById('pref-backup-enabled');
+  if (be) be.checked = !!PREFS.backupEnabled;
+  wireBackupPrefs();
+  refreshBackupStatus();
+}
+let _backupWired = false;
+function wireBackupPrefs() {
+  if (_backupWired) return;
+  _backupWired = true;
+  const br = document.getElementById('pref-backup-remote');
+  const bi = document.getElementById('pref-backup-interval');
+  const be = document.getElementById('pref-backup-enabled');
+  const bn = document.getElementById('backup-now-btn');
+  if (br) br.onchange = () => setPref('backupRemote', br.value.trim());
+  if (bi) bi.onchange = () => setPref('backupIntervalMin', Math.max(5, Math.min(1440, parseInt(bi.value, 10) || 60)));
+  if (be) be.onchange = () => setPref('backupEnabled', be.checked);
+  if (bn) bn.onclick = async () => {
+    bn.disabled = true; setBackupStatus('backing up…');
+    try {
+      const r = await api('/api/backup/now', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      toast('backup: ' + r.msg, 3500, 'ok');
+    } catch (e) { toast('backup failed: ' + e.message, 6000, 'err'); }
+    finally { bn.disabled = false; refreshBackupStatus(); }
+  };
+}
+function setBackupStatus(t) { const el = document.getElementById('backup-status'); if (el) el.textContent = t; }
+function minsFrom(epochS) { return Math.round(Math.abs(Date.now() / 1000 - epochS) / 60); }
+async function refreshBackupStatus() {
+  try {
+    const s = await api('/api/backup/status');
+    const last = s.lastRun
+      ? `last run ${minsFrom(s.lastRun)} min ago — ${s.lastOk === false ? '⚠ ' : ''}${s.lastMsg || ''}`
+      : 'never run yet';
+    const next = s.enabled ? (s.nextRun ? ` · next in ~${minsFrom(s.nextRun)} min` : '') : ' · scheduler off';
+    setBackupStatus(`${tildeify(s.root)} — ${last}${next}${s.running ? ' · running…' : ''}`);
+  } catch (e) { setBackupStatus('backup status unavailable — the server needs a restart to pick up backup support'); }
 }
 async function setPref(key, val) {
   try {
@@ -2419,7 +2503,13 @@ function projectsChromeHtml() {
     const pj = projectById(SELECTED_PROJECT);
     const nm = pj ? pj.name : 'Project';
     const newTask = SELECTED_PROJECT === UNASSIGNED_ID ? '' : `<button class="crumb-newtask" title="Create a task in this project and fire agents at it">+ New task</button>`;
-    return strip + `<div class="crumbs"><a href="#" class="crumb-back">← Projects</a><span class="sep">/</span><b>${esc(nm)}</b>${newTask}</div>`;
+    // Tabs only when the project has a folder to browse (Unassigned has none).
+    const hasFolder = !!(pj && pj.path);
+    const tabs = hasFolder ? `<div class="ptabs">`
+      + `<button data-ptab="tasks" class="${PROJECT_TAB === 'tasks' ? 'on' : ''}">Tasks</button>`
+      + `<button data-ptab="workspace" class="${PROJECT_TAB === 'workspace' ? 'on' : ''}" title="Browse this project's folder like an IDE — files render, and you can comment in place">Workspace</button>`
+      + `</div>` : '';
+    return strip + `<div class="crumbs"><a href="#" class="crumb-back">← Projects</a><span class="sep">/</span><b>${esc(nm)}</b>${newTask}</div>` + tabs;
   }
   return strip + `<div class="listctl"><span>Group by</span>
     <div class="seg gb">${['project', 'time', 'none'].map(g => `<button data-gb="${g}" class="${PROJ_GROUPBY === g ? 'on' : ''}">${g[0].toUpperCase() + g.slice(1)}</button>`).join('')}</div>
@@ -2463,7 +2553,10 @@ function wireProjectsChrome() {
   });
   document.querySelectorAll('.proj[data-proj]').forEach(c => c.onclick = (e) => {
     if (e.target.closest('.srow') || e.target.closest('.newtask')) return;
-    SELECTED_PROJECT = c.dataset.proj; renderRows();
+    SELECTED_PROJECT = c.dataset.proj; PROJECT_TAB = 'tasks'; renderRows();
+  });
+  document.querySelectorAll('.ptabs button[data-ptab]').forEach(b => b.onclick = () => {
+    PROJECT_TAB = b.dataset.ptab; renderRows();
   });
   document.querySelectorAll('.proj .srow[data-sid]').forEach(r => r.onclick = (e) => {
     e.stopPropagation(); if (r.dataset.sid) openDetail(r.dataset.sid);
@@ -2540,6 +2633,64 @@ async function moveSessionToProject(sid) {
     await refreshProjects(); await refresh();
   } catch (e) { toast('move failed: ' + e.message, 5000, 'err'); }
 }
+
+// ---- Workspace tab: IDE-like, read-only view of a project's folder ----------
+// Lazy tree from /api/dir; a selected file renders in the existing fileview
+// (markdown/HTML + in-place comments) — one renderer, not two.
+let PROJECT_TAB = 'tasks';   // tasks | workspace  (per drill-in; reset on selecting a project)
+function wsFmtSize(n) {
+  if (n == null) return '';
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1048576).toFixed(1) + ' MB';
+}
+function wsJoin(dir, name) { const sep = dir.includes('\\') ? '\\' : '/'; return dir.replace(/[\\/]+$/, '') + sep + name; }
+function workspacePanelHtml(pj) {
+  const root = (pj && pj.path) || '';
+  if (!root) return '<p class="empty">This project has no folder.</p>';
+  return `<div class="wsp">
+    <div class="wsp-tree" id="wsp-tree" data-root="${esc(root)}">
+      <div class="wsp-rootlbl" title="${esc(root)}">📁 ${esc(tildeify(root))}</div>
+      <div class="wsk" id="wsp-rootkids"><div class="wse none">loading…</div></div>
+    </div>
+    <div class="wsp-view" id="wsp-view"><div class="wsp-empty">Select a file to view it. Markdown and HTML render; select text to comment in place.</div></div>
+  </div>`;
+}
+async function wsLoadDir(container, path) {
+  try {
+    const d = await api('/api/dir?path=' + encodeURIComponent(path));
+    const ents = d.entries || [];
+    container.innerHTML = ents.length ? ents.map(e => {
+      const p = wsJoin(path, e.name);
+      return e.type === 'dir'
+        ? `<div class="wse dir" data-path="${esc(p)}"><span class="tw">▸</span><span class="nm">${esc(e.name)}</span></div><div class="wsk" hidden></div>`
+        : `<div class="wse file" data-path="${esc(p)}"><span class="tw"></span><span class="nm">${esc(e.name)}</span><span class="sz">${wsFmtSize(e.size)}</span></div>`;
+    }).join('') : '<div class="wse none">(empty)</div>';
+  } catch (e) { container.innerHTML = `<div class="wse none">can't read: ${esc(e.message)}</div>`; }
+}
+function wsOpenFile(path) {
+  const v = $('#wsp-view'); if (!v) return;
+  document.querySelectorAll('#wsp-tree .wse.file.on').forEach(x => x.classList.remove('on'));
+  const row = [...document.querySelectorAll('#wsp-tree .wse.file')].find(x => x.dataset.path === path);
+  if (row) row.classList.add('on');
+  const src = '/fileview?path=' + encodeURIComponent(path);
+  v.innerHTML = `<div class="wsp-bar"><span class="wsp-path" title="${esc(path)}">${esc(tildeify(path))}</span><a href="${src}" target="_blank" title="Open in its own tab">⧉</a></div><iframe class="wsp-frame" src="${src}"></iframe>`;
+}
+function wireWorkspacePanel() {
+  const tree = $('#wsp-tree'); if (!tree) return;
+  wsLoadDir($('#wsp-rootkids'), tree.dataset.root);
+  tree.onclick = async (e) => {
+    const d = e.target.closest('.wse.dir');
+    if (d) {
+      const kids = d.nextElementSibling, tw = d.querySelector('.tw');
+      if (kids.hidden) { if (!kids.childElementCount) await wsLoadDir(kids, d.dataset.path); kids.hidden = false; tw.textContent = '▾'; }
+      else { kids.hidden = true; tw.textContent = '▸'; }
+      return;
+    }
+    const f = e.target.closest('.wse.file');
+    if (f) wsOpenFile(f.dataset.path);
+  };
+}
 function renderRows() {
   renderSidebar();
   // Projects landing (default). A selected project or a non-project grouping
@@ -2548,6 +2699,15 @@ function renderRows() {
     $('#view').innerHTML = projectsChromeHtml() + projectsLandingHtml();
     $('#meta').textContent = PROJECTS ? `${PROJECTS.projects.length} projects · ${PROJECTS.summary.needsYou} need you` : 'loading…';
     wireProjectsChrome();
+    return;
+  }
+  // Drilled into a project on the Workspace tab: file tree + viewer instead of
+  // the task table.
+  if (SELECTED_PROJECT && PROJECT_TAB === 'workspace') {
+    const pj = projectById(SELECTED_PROJECT);
+    $('#view').innerHTML = projectsChromeHtml() + workspacePanelHtml(pj);
+    $('#meta').textContent = pj ? `${pj.name} · workspace` : 'workspace';
+    wireProjectsChrome(); wireWorkspacePanel();
     return;
   }
   const parsed = parseSearchQuery(SEARCH_QUERY);

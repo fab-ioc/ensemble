@@ -36,6 +36,14 @@ if not DASHBOARD_DIR.exists() and _LEGACY_DASHBOARD_DIR.exists():
         pass
 PRESETS_DIR = DASHBOARD_DIR / "iterm-presets"   # macOS / iTerm only
 CS_ROOT = HOME / "cs"
+# The product name lives in ONE place; user-facing folder names derive from it,
+# so a future rename is a single edit here (plus a migration of existing
+# folders). ~/.ensemble (state) and the OS task/scripts are swept later.
+APP_NAME = "Ensemble"
+# Where the user's projects live — and, under each project, its tasks/sessions.
+# Successor of CS_ROOT (~/cs). Meant to be a git repo the user backs up, so a
+# rebuilt machine recovers every project and the knowledge built inside it.
+PROJECTS_ROOT = HOME / f"{APP_NAME}Projects"
 EDITOR_MAP_FILE = DASHBOARD_DIR / "editors.json"
 ICON_CACHE_DIR = DASHBOARD_DIR / "static" / "editors"
 NUMBERED_RE = re.compile(r"^(\d+)_")

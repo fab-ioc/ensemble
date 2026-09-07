@@ -42,7 +42,8 @@ from urllib.parse import parse_qs, urlparse
 # integration) lives behind a platform backend, selected by sys.platform.
 from backends import get_backend
 from backends.base import (
-    HOME, DASHBOARD_DIR, PRESETS_DIR, CS_ROOT, NUMBERED_RE as _NUMBERED_RE,
+    HOME, DASHBOARD_DIR, PRESETS_DIR, CS_ROOT, PROJECTS_ROOT, APP_NAME,
+    NUMBERED_RE as _NUMBERED_RE,
 )
 from backends.shared import (
     SESS_DIR, AGENT_SESS_DIR, RENAME_WORKSPACE, GEOMETRIES_FILE, PERMISSION_MODE,
@@ -53,6 +54,7 @@ from backends.shared import (
 # (WHERE it runs). Codex discovery + the claude/codex registry live here.
 import agents
 # Multi-agent chat rooms (pairing live sessions into a collaborating "duo").
+import backup
 import chatroom
 # Headless PTY runtime — dashboard-owned agent processes streamed to the browser.
 from backends import ptyrun
@@ -465,6 +467,10 @@ _SETTINGS_DEFAULTS = {
     "openMode": "window",   # "window" (new iTerm window) | "tab" (new tab in front window)
     "defaultModel": "",     # e.g. "opus" | "sonnet" | "haiku" | "fable" | full ID; empty = claude default
     "operatorNickname": "", # what the agents call you; empty = fall back to git user.name
+    # Projects backup (see backup.py). Only the remote URL is stored — never credentials.
+    "backupRemote": "",      # git remote for the projects root; empty = commit locally only
+    "backupIntervalMin": 60, # how often to commit (+push if a remote is set)
+    "backupEnabled": False,  # scheduler on/off
 }
 _SETTINGS_ALLOWED_VALUES = {
     "openMode": {"window", "tab"},
@@ -506,6 +512,18 @@ def save_settings(settings: dict) -> dict:
             if not isinstance(v, str) or len(v) > 60:
                 continue
             v = v.strip()
+        if k == "backupRemote":
+            if not isinstance(v, str) or len(v) > 300 or any(ch in v for ch in " \n\r\t"):
+                continue
+            v = v.strip()
+        if k == "backupIntervalMin":
+            try:
+                v = int(v)
+            except (TypeError, ValueError):
+                continue
+            v = max(5, min(1440, v))
+        if k == "backupEnabled":
+            v = bool(v)
         current[k] = v
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
     tmp = SETTINGS_FILE.with_suffix(".json.tmp")
@@ -633,7 +651,7 @@ def git_root(cwd: str) -> str:
     root = cwd
     try:
         out = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"],
-                             capture_output=True, text=True, timeout=4)
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=4)
         r = (out.stdout or "").strip()
         if r:
             root = os.path.normpath(r)
@@ -653,7 +671,7 @@ def git_changed_count(root: str) -> int:
     n = 0
     try:
         out = subprocess.run(["git", "-C", root, "status", "--porcelain"],
-                             capture_output=True, text=True, timeout=6)
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=6)
         n = sum(1 for ln in (out.stdout or "").splitlines() if ln.strip())
     except (OSError, subprocess.SubprocessError):
         n = 0
@@ -666,24 +684,61 @@ def path_is_git(path: str) -> bool:
     or simply contains a .git entry. Cheap: prefer the .git check, fall back to git."""
     if not path:
         return False
+    # A repo root has a .git entry (a directory, or a file for a worktree).
+    # Do NOT fall back to comparing git_root(): for a folder with no repo
+    # anywhere above it, git_root() returns the folder itself, which would
+    # misreport a plain folder as a repo (seen with a project inside
+    # ~/EnsembleProjects before that root was initialised).
     try:
-        if (Path(path) / ".git").exists():
-            return True
+        return (Path(path) / ".git").exists()
     except OSError:
-        pass
-    return git_root(path) == os.path.normpath(path)
+        return False
 
 
 def load_projects() -> list[dict]:
-    """The registered project folders. Explicit — never guessed. Each is
-    {id, name, path, isGit, createdAt}."""
+    """The registered projects — explicit, never guessed. Two sources, merged
+    (deduped by normalized path):
+      1. layout v2: every <PROJECTS_ROOT>/<dir>/project.json — the project's
+         identity lives WITH its data, so a cloned projects root is
+         self-describing on a new machine (no sidecar to restore);
+      2. projects.json — external projects (absolute paths outside the root,
+         e.g. a code repo) and legacy entries.
+    Each is {id, name, path, isGit, createdAt}."""
+    out: list[dict] = []
+    seen: set[str] = set()
+
+    def _add(p: dict) -> None:
+        key = os.path.normcase(os.path.normpath(p["path"]))
+        if key not in seen:
+            seen.add(key)
+            out.append(p)
+
+    try:
+        if PROJECTS_ROOT.is_dir():
+            for d in sorted(PROJECTS_ROOT.iterdir()):
+                pj = d / "project.json"
+                if not d.is_dir() or not pj.is_file():
+                    continue
+                try:
+                    meta = json.loads(pj.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if not isinstance(meta, dict) or not meta.get("id"):
+                    continue
+                _add({"id": meta["id"], "name": meta.get("name") or d.name,
+                      "path": os.path.normpath(str(d)), "isGit": path_is_git(str(d)),
+                      "createdAt": meta.get("createdAt", 0)})
+    except OSError:
+        pass
     try:
         d = json.loads(PROJECTS_FILE.read_text(encoding="utf-8"))
         if isinstance(d, list):
-            return [p for p in d if isinstance(p, dict) and p.get("id") and p.get("path")]
+            for p in d:
+                if isinstance(p, dict) and p.get("id") and p.get("path"):
+                    _add(p)
     except (FileNotFoundError, json.JSONDecodeError):
         pass
-    return []
+    return out
 
 
 def save_projects(projects: list[dict]) -> None:
@@ -700,6 +755,12 @@ def register_project(path: str, name: str = "") -> tuple[bool, dict, str]:
     if not raw:
         return False, {}, "empty path"
     p = Path(os.path.expanduser(raw))
+    if not p.is_absolute():
+        # A bare name is a project under the projects root — NEVER relative to
+        # the hub's cwd (that once created a project folder inside the app repo).
+        if any(sep in raw for sep in ("/", "\\")) or raw in (".", "..") or ".." in raw.split("/"):
+            return False, {}, "use a plain project name, or an absolute path"
+        p = PROJECTS_ROOT / raw
     norm = os.path.normpath(str(p))
     try:
         p.mkdir(parents=True, exist_ok=True)
@@ -718,6 +779,15 @@ def register_project(path: str, name: str = "") -> tuple[bool, dict, str]:
     }
     projects.append(proj)
     save_projects(projects)
+    if _in_projects_root(norm):
+        # Layout v2: the project's identity lives WITH its data, so a clone of
+        # the projects root on a new machine is self-describing.
+        try:
+            (Path(norm) / "project.json").write_text(
+                json.dumps({k: proj[k] for k in ("id", "name", "createdAt")}, indent=2),
+                encoding="utf-8")
+        except OSError:
+            pass
     return True, proj, "ok"
 
 
@@ -773,6 +843,58 @@ def _project_for_cwd(cwd: str, projects: list[dict]) -> str:
             if len(pp) > best_len:
                 best_id, best_len = p["id"], len(pp)
     return best_id
+
+
+def _write_task_json(folder: str, data: dict) -> None:
+    """The task's portable record (spec, agents, ids) — lives in the task folder
+    so a backup of the projects root carries it."""
+    try:
+        Path(folder).mkdir(parents=True, exist_ok=True)
+        (Path(folder) / "task.json").write_text(json.dumps(data, indent=2, ensure_ascii=False),
+                                                encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _export_task_chats() -> int:
+    """Backup hook: write every project-linked room's chat (PUBLIC view — tokens
+    are never included) into its task folder as chat.json, so the backup carries
+    the knowledge, not just the files. Rooms whose folder is outside the projects
+    root (linked legacy sessions, inplace tasks) go under <project>/_linked/<room>/."""
+    links = load_session_projects()
+    projects = {p["id"]: p for p in load_projects()}
+    n = 0
+    for rid, pid in links.items():
+        if not rid.startswith("room-"):
+            continue
+        pj = projects.get(pid)
+        if not pj or not _in_projects_root(pj.get("path", "")):
+            continue
+        try:
+            room = chatroom.get_room(rid)            # public=True → no tokens
+        except Exception:
+            room = None
+        if not room:
+            continue
+        cwd = room.get("cwd") or ""
+        own_folder = cwd and _in_projects_root(cwd) and \
+            os.path.normcase(os.path.normpath(cwd)) != os.path.normcase(os.path.normpath(pj["path"]))
+        folder = cwd if own_folder else os.path.join(pj["path"], "_linked", rid)
+        payload = {
+            "roomId": rid, "title": room.get("title", ""), "mode": room.get("mode", ""),
+            "createdAt": room.get("createdAt"), "updatedAt": room.get("updatedAt"),
+            "participants": [{k: p.get(k) for k in ("identity", "agent", "model", "role")}
+                             for p in room.get("participants", []) if p.get("kind") == "agent"],
+            "messages": room.get("messages", []),
+        }
+        try:
+            Path(folder).mkdir(parents=True, exist_ok=True)
+            (Path(folder) / "chat.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False),
+                                                    encoding="utf-8")
+            n += 1
+        except OSError:
+            continue
+    return n
 
 
 def build_projects() -> dict:
@@ -918,7 +1040,7 @@ def git_status(path: str) -> tuple[int, dict]:
     files = []
     try:
         out = subprocess.run(["git", "-C", root, "status", "--porcelain=v1", "-z"],
-                             capture_output=True, text=True, timeout=8)
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8)
         parts = (out.stdout or "").split("\x00")   # NUL-separated records
         i = 0
         while i < len(parts):
@@ -949,7 +1071,7 @@ def git_diff(path: str, file: str) -> tuple[int, dict]:
     if file:
         argv.append(file)
     try:
-        out = subprocess.run(argv, capture_output=True, text=True, timeout=10)
+        out = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
         diff = out.stdout or ""
         # Untracked files don't show in `git diff HEAD`; surface their content as
         # an all-added diff so the reviewer still sees the new file.
@@ -1195,6 +1317,58 @@ def create_cs_session(description: str) -> tuple[bool, str, str]:
     return True, str(target), "ok"
 
 
+def _in_projects_root(path: str) -> bool:
+    """True if ``path`` is inside PROJECTS_ROOT (a layout-v2 project or task)."""
+    if not path:
+        return False
+    try:
+        c = os.path.normcase(os.path.realpath(path))
+        r = os.path.normcase(os.path.realpath(str(PROJECTS_ROOT)))
+    except OSError:
+        return False
+    return c == r or c.startswith(r + os.sep)
+
+
+def _task_dir_for(project: dict, title: str) -> Path:
+    """A new task's folder: <project>/<slug>[-N]. Plain names, no NN_ prefix —
+    the project folder is the namespace."""
+    slug = sanitize_slug(title) or "task"
+    base = Path(project["path"])
+    dest = base / slug
+    n = 2
+    while dest.exists():
+        dest = base / f"{slug}-{n}"
+        n += 1
+    return dest
+
+
+def _init_task_folder(target: Path) -> tuple[bool, str]:
+    """Create a task folder with the same per-session niceties create_cs_session
+    gives ~/cs scratch dirs (terminal theme, Claude theme)."""
+    try:
+        target.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        return False, f"already exists: {target}"
+    except OSError as e:
+        return False, f"mkdir failed: {e}"
+    BACKEND.prepare_session_theme(target)
+    settings_dir = target / ".claude"
+    try:
+        settings_dir.mkdir(exist_ok=True)
+        sf = settings_dir / "settings.json"
+        existing = {}
+        if sf.exists():
+            try:
+                existing = json.loads(sf.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                pass
+        existing["theme"] = random.choice(_CLAUDE_THEMES)
+        sf.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+    return True, "ok"
+
+
 def setup_session_workspace(project: dict, mode: str, title: str) -> tuple[bool, str, dict, str]:
     """Provision a session's own workspace for a project. The framework does NOT
     force a code checkout — the mode is the user's per-session choice, because a
@@ -1209,14 +1383,28 @@ def setup_session_workspace(project: dict, mode: str, title: str) -> tuple[bool,
     ``base_path`` becomes the room cwd; project-backed modes also imply a shared
     cwd (agents work on the same files, not per-identity subdirs)."""
     mode = (mode or "empty").strip()
-    if mode == "empty" or not project:
+    if not project:
+        # No project: legacy scratch under ~/cs (Unassigned).
         ok, base, msg = create_cs_session(title)
         return ok, base, {"mode": "empty"}, msg
     ppath = project.get("path", "")
     if not ppath or not os.path.isdir(ppath):
         return False, "", {}, "project folder missing"
+    in_root = _in_projects_root(ppath)
+    if mode == "empty":
+        # Layout v2: the task's own folder lives UNDER its project, so a git
+        # backup of the projects root carries every task with it.
+        dest = _task_dir_for(project, title)
+        ok, msg = _init_task_folder(dest)
+        return ok, (str(dest) if ok else ""), {"mode": "empty"}, msg
     if mode == "inplace":
         return True, os.path.normpath(ppath), {"mode": "inplace"}, "ok"
+    if in_root and mode in ("copy", "worktree"):
+        # A project inside the projects root is a container of tasks, not a
+        # code tree: copying/worktree-ing it makes no sense (and copytree into
+        # its own subfolder would recurse). Code goes in <task>/repo/.
+        return False, "", {}, (f"'{mode}' is for external code projects; for a project in "
+                               f"{APP_NAME}Projects create an empty task and clone into repo/")
     slug = sanitize_slug(title)
     n = next_cs_counter()
     dest = CS_ROOT / f"{n:02d}_{slug}"
@@ -1236,12 +1424,12 @@ def setup_session_workspace(project: dict, mode: str, title: str) -> tuple[bool,
         try:
             out = subprocess.run(
                 ["git", "-C", ppath, "worktree", "add", str(dest), "-b", branch],
-                capture_output=True, text=True, timeout=30)
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
             if out.returncode != 0:
                 # Branch may already exist → attach without -b.
                 out2 = subprocess.run(
                     ["git", "-C", ppath, "worktree", "add", str(dest), branch],
-                    capture_output=True, text=True, timeout=30)
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
                 if out2.returncode != 0:
                     return False, "", {}, f"worktree failed: {(out.stderr or out2.stderr or '').strip()[:200]}"
         except (OSError, subprocess.SubprocessError) as e:
@@ -2789,7 +2977,10 @@ class Handler(BaseHTTPRequestHandler):
             path = (q.get("path", [""])[0] or "").strip()
             self._send_json(*list_dir(path))
             return
-        if p == "/api/file":
+        if p == "/api/ws/file":
+            # JSON text read with size cap + binary detection (workspace tools).
+            # NOTE: distinct from the older raw-stream /api/file that fileview
+            # uses — routing is top-down, so sharing the path would shadow it.
             q = parse_qs(u.query)
             path = (q.get("path", [""])[0] or "").strip()
             self._send_json(*read_workspace_file(path))
@@ -2848,6 +3039,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p == "/api/update-check":
             self._send_json(200, check_for_update())
+            return
+        if p == "/api/backup/status":
+            bs = load_settings()
+            self._send_json(200, {**backup.status(), "root": str(PROJECTS_ROOT),
+                                  "remote": bs.get("backupRemote", ""),
+                                  "intervalMin": bs.get("backupIntervalMin", 60),
+                                  "enabled": bool(bs.get("backupEnabled"))})
             return
         if p == "/api/settings":
             # Include the *resolved* operator display name so the UI can show the
@@ -2923,6 +3121,11 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(body) if body else {}
         except json.JSONDecodeError:
             self._send_json(400, {"error": "bad_json"})
+            return
+        if p == "/api/backup/now":
+            bs = load_settings()
+            r = backup.run_backup(PROJECTS_ROOT, bs.get("backupRemote", ""), _export_task_chats)
+            self._send_json(200 if r.get("ok") else 500, r)
             return
         if p == "/api/settings":
             if not isinstance(data, dict):
@@ -3668,6 +3871,11 @@ class Handler(BaseHTTPRequestHandler):
             room_full["sharedCwd"] = ws_meta.get("mode", "empty") != "empty"
             if project_id:
                 assign_session_project(room["id"], project_id)
+            if ws_meta.get("mode") in ("empty", "copy", "worktree"):
+                _write_task_json(base, {
+                    "roomId": room["id"], "projectId": project_id, "title": title,
+                    "spec": task, "agents": members, "workspace": ws_meta,
+                    "createdAt": int(time.time())})
             # 1 agent → a solo session the human drives directly (no chat MCP,
             # terminal-primary window). 2+ → an autonomous collaboration.
             solo = len(specs) < 2
@@ -4307,6 +4515,23 @@ def main():
                 return
             print("gave up waiting for Tailscale; serving loopback only", flush=True)
         threading.Thread(target=_await_tailnet, daemon=True).start()
+
+    # Projects backup: the app owns the projects-root repo. Init it now
+    # (idempotent; remote only if configured) and start the scheduler, which
+    # re-reads settings every tick so changes apply without a restart.
+    try:
+        _bs = load_settings()
+        _r = backup.ensure_repo(PROJECTS_ROOT, _bs.get("backupRemote", ""))
+        if _r.get("notes"):
+            print("projects backup: " + "; ".join(_r["notes"]), flush=True)
+    except Exception as e:
+        print(f"projects backup init skipped: {e}", flush=True)
+
+    def _backup_config():
+        s = load_settings()
+        return (PROJECTS_ROOT, s.get("backupRemote", ""), s.get("backupIntervalMin", 60),
+                bool(s.get("backupEnabled")))
+    backup.start_scheduler(_backup_config, _export_task_chats)
 
     # Serve every listener; extra ones run in daemon threads, the last inline.
     for s in servers[:-1]:
