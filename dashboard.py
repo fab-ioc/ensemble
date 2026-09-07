@@ -155,6 +155,8 @@ CATEGORIES_FILE = DASHBOARD_DIR / "categories.json"  # {sid: "category name"}
 KNOWN_CATEGORIES_FILE = DASHBOARD_DIR / "known_categories.json"  # explicit category list
 ARCHIVED_FILE = DASHBOARD_DIR / "archived.json"      # list of archived session ids
 SETTINGS_FILE = DASHBOARD_DIR / "settings.json"      # user preferences (openMode, …)
+PROJECTS_FILE = DASHBOARD_DIR / "projects.json"      # registered projects: [{id,name,path,isGit,createdAt}]
+SESSION_PROJECTS_FILE = DASHBOARD_DIR / "session_projects.json"  # {sessionId|roomId: projectId}
 STATIC_DIR = Path(__file__).parent
 # Default log location per platform (macOS keeps the historical ~/Library/Logs
 # path; Windows/Linux log under the dashboard state dir, matching the CLIs).
@@ -659,20 +661,149 @@ def git_changed_count(root: str) -> int:
     return n
 
 
+def path_is_git(path: str) -> bool:
+    """True if ``path`` is (inside) a git repo whose top-level is ``path`` itself,
+    or simply contains a .git entry. Cheap: prefer the .git check, fall back to git."""
+    if not path:
+        return False
+    try:
+        if (Path(path) / ".git").exists():
+            return True
+    except OSError:
+        pass
+    return git_root(path) == os.path.normpath(path)
+
+
+def load_projects() -> list[dict]:
+    """The registered project folders. Explicit — never guessed. Each is
+    {id, name, path, isGit, createdAt}."""
+    try:
+        d = json.loads(PROJECTS_FILE.read_text(encoding="utf-8"))
+        if isinstance(d, list):
+            return [p for p in d if isinstance(p, dict) and p.get("id") and p.get("path")]
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    return []
+
+
+def save_projects(projects: list[dict]) -> None:
+    DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = PROJECTS_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(projects, indent=2), encoding="utf-8")
+    tmp.replace(PROJECTS_FILE)
+
+
+def register_project(path: str, name: str = "") -> tuple[bool, dict, str]:
+    """Register a folder as a project (idempotent by normalized path). The folder
+    is created if missing. Returns (ok, project, message)."""
+    raw = (path or "").strip()
+    if not raw:
+        return False, {}, "empty path"
+    p = Path(os.path.expanduser(raw))
+    norm = os.path.normpath(str(p))
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        return False, {}, f"cannot create/access folder: {e}"
+    projects = load_projects()
+    for existing in projects:
+        if os.path.normcase(os.path.normpath(existing["path"])) == os.path.normcase(norm):
+            return True, existing, "already registered"
+    proj = {
+        "id": "proj-" + uuid.uuid4().hex[:8],
+        "name": (name.strip() or os.path.basename(norm.rstrip("/\\")) or norm),
+        "path": norm,
+        "isGit": path_is_git(norm),
+        "createdAt": int(time.time()),
+    }
+    projects.append(proj)
+    save_projects(projects)
+    return True, proj, "ok"
+
+
+def unregister_project(project_id: str) -> bool:
+    """Drop a project from the registry (does NOT touch its folder or sessions)."""
+    projects = load_projects()
+    kept = [p for p in projects if p.get("id") != project_id]
+    if len(kept) == len(projects):
+        return False
+    save_projects(kept)
+    return True
+
+
+def load_session_projects() -> dict[str, str]:
+    """Sidecar map {sessionId|roomId: projectId} — the recorded membership link.
+    Explicit, so drill-in is never guessed (the Phase-A bug). Porting a legacy
+    session = adding an entry here."""
+    try:
+        d = json.loads(SESSION_PROJECTS_FILE.read_text(encoding="utf-8"))
+        if isinstance(d, dict):
+            return {k: v for k, v in d.items() if isinstance(k, str) and isinstance(v, str) and v}
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    return {}
+
+
+def save_session_projects(m: dict[str, str]) -> None:
+    DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = SESSION_PROJECTS_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(m, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.replace(SESSION_PROJECTS_FILE)
+
+
+def assign_session_project(sid: str, project_id: str) -> None:
+    m = load_session_projects()
+    if project_id:
+        m[sid] = project_id
+    else:
+        m.pop(sid, None)
+    save_session_projects(m)
+
+
+def _project_for_cwd(cwd: str, projects: list[dict]) -> str:
+    """Best-effort membership for a session with no explicit link: the registered
+    project whose folder contains the session's cwd (longest match wins)."""
+    if not cwd:
+        return ""
+    c = os.path.normcase(os.path.normpath(cwd))
+    best_id, best_len = "", -1
+    for p in projects:
+        pp = os.path.normcase(os.path.normpath(p["path"]))
+        if c == pp or c.startswith(pp + os.sep):
+            if len(pp) > best_len:
+                best_id, best_len = p["id"], len(pp)
+    return best_id
+
+
 def build_projects() -> dict:
-    """Group every session/room by git root into projects, with a summary for
-    the status strip (sessions waiting on the human, live agents, dirty files)."""
+    """Registry-driven: group sessions under the projects the user has registered,
+    linked by the explicit session→project sidecar (falling back to path
+    containment for legacy sessions). Everything unmatched lands in an
+    'Unassigned' bucket so nothing disappears (those get ported later)."""
+    projects_reg = load_projects()
+    links = load_session_projects()
     rows = load_sessions(500)
+    keep = ("sessionId", "roomId", "label", "status", "isLive", "idleSeconds",
+            "updatedAt", "agents", "members", "mode", "headless", "cwd")
+    # One group per registered project, plus a synthetic unassigned bucket.
     groups: dict = {}
+    for p in projects_reg:
+        groups[p["id"]] = {"id": p["id"], "name": p["name"], "path": p["path"],
+                           "isGit": p.get("isGit", False), "registered": True,
+                           "sessions": [], "live": 0, "waiting": 0, "updatedAt": 0}
+    UNASSIGNED = "__unassigned__"
     needs_you = 0
     agents_live = 0
     for s in rows:
-        root = git_root(s.get("cwd", "")) or "(no workspace)"
-        g = groups.get(root)
-        if g is None:
-            g = groups[root] = {"path": root,
-                                "name": os.path.basename(root.rstrip("/\\")) or root,
-                                "sessions": [], "live": 0, "waiting": 0, "updatedAt": 0}
+        sid = s.get("roomId") or s.get("sessionId") or ""
+        pid = links.get(sid) or _project_for_cwd(s.get("cwd", ""), projects_reg)
+        if pid not in groups:
+            pid = UNASSIGNED
+            if UNASSIGNED not in groups:
+                groups[UNASSIGNED] = {"id": UNASSIGNED, "name": "Unassigned",
+                                      "path": "", "isGit": False, "registered": False,
+                                      "sessions": [], "live": 0, "waiting": 0, "updatedAt": 0}
+        g = groups[pid]
         g["sessions"].append(s)
         if s.get("isLive"):
             g["live"] += 1
@@ -681,22 +812,158 @@ def build_projects() -> dict:
             g["waiting"] += 1
             needs_you += 1
         g["updatedAt"] = max(g["updatedAt"], s.get("updatedAt") or 0)
-    keep = ("sessionId", "roomId", "label", "status", "isLive", "idleSeconds",
-            "updatedAt", "agents", "members", "mode", "headless")
     projects = []
     total_changed = 0
-    for root, g in groups.items():
-        g["changed"] = git_changed_count(root) if root != "(no workspace)" else 0
+    for gid, g in groups.items():
+        g["changed"] = git_changed_count(g["path"]) if (g.get("isGit") and g.get("path")) else 0
         total_changed += g["changed"]
         g["count"] = len(g["sessions"])
         g["sessions"] = [{k: s.get(k) for k in keep}
                          for s in sorted(g["sessions"],
                                          key=lambda x: x.get("updatedAt") or 0, reverse=True)]
         projects.append(g)
-    projects.sort(key=lambda x: x["updatedAt"], reverse=True)
+    # Registered projects first (even when empty, so the landing isn't blank),
+    # most-recently-active first; Unassigned always last.
+    projects.sort(key=lambda x: (x["id"] == UNASSIGNED, -(x["updatedAt"] or 0),
+                                 x["name"].lower()))
     return {"projects": projects,
             "summary": {"needsYou": needs_you, "agentsLive": agents_live,
-                        "changed": total_changed, "projects": len(projects)}}
+                        "changed": total_changed,
+                        "projects": len([p for p in projects if p.get("registered")])}}
+
+
+# ---- Workspace file browsing (read-only, scoped to projects + ~/cs) ----------
+
+def _within(child: str, parent: str) -> bool:
+    try:
+        c = os.path.normcase(os.path.realpath(child))
+        pr = os.path.normcase(os.path.realpath(parent))
+    except OSError:
+        return False
+    return c == pr or c.startswith(pr + os.sep)
+
+
+def workspace_access_ok(path: str) -> bool:
+    """A path is browsable only if it lives inside a registered project or under
+    the collaboration-session root (~/cs). Keeps the read-only file APIs from
+    wandering the whole disk even though the hub is single-user + token-gated."""
+    if not path:
+        return False
+    roots = [p["path"] for p in load_projects()]
+    roots.append(str(CS_ROOT))
+    return any(_within(path, r) for r in roots)
+
+
+_TEXT_MAX = 512 * 1024   # 512 KB read cap for the file viewer
+
+
+def list_dir(path: str) -> tuple[int, dict]:
+    if not path or not workspace_access_ok(path):
+        return 403, {"error": "path_not_allowed"}
+    d = Path(path)
+    if not d.exists():
+        return 404, {"error": "not_found"}
+    if not d.is_dir():
+        return 400, {"error": "not_a_directory"}
+    entries = []
+    try:
+        for child in d.iterdir():
+            if child.name == ".git":         # never descend into the git db
+                continue
+            try:
+                st = child.stat()
+                is_dir = child.is_dir()
+            except OSError:
+                continue
+            entries.append({"name": child.name, "type": "dir" if is_dir else "file",
+                            "size": 0 if is_dir else st.st_size,
+                            "mtime": int(st.st_mtime)})
+    except OSError as e:
+        return 500, {"error": f"read_failed: {e}"}
+    entries.sort(key=lambda e: (e["type"] != "dir", e["name"].lower()))
+    parent = str(d.parent) if workspace_access_ok(str(d.parent)) else ""
+    return 200, {"path": str(d), "parent": parent, "entries": entries[:2000]}
+
+
+def read_workspace_file(path: str) -> tuple[int, dict]:
+    if not path or not workspace_access_ok(path):
+        return 403, {"error": "path_not_allowed"}
+    f = Path(path)
+    if not f.exists() or not f.is_file():
+        return 404, {"error": "not_found"}
+    try:
+        raw = f.read_bytes()
+        size = f.stat().st_size
+    except OSError as e:
+        return 500, {"error": f"read_failed: {e}"}
+    truncated = len(raw) > _TEXT_MAX
+    raw = raw[:_TEXT_MAX]
+    if b"\x00" in raw:
+        return 200, {"path": str(f), "binary": True, "text": "",
+                     "size": size, "truncated": truncated}
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw.decode("utf-8", errors="replace")
+    return 200, {"path": str(f), "binary": False, "text": text,
+                 "size": size, "truncated": truncated}
+
+
+def git_status(path: str) -> tuple[int, dict]:
+    if not path or not workspace_access_ok(path):
+        return 403, {"error": "path_not_allowed"}
+    root = git_root(path)
+    if not root or not path_is_git(root):
+        return 200, {"root": root, "isGit": False, "files": []}
+    files = []
+    try:
+        out = subprocess.run(["git", "-C", root, "status", "--porcelain=v1", "-z"],
+                             capture_output=True, text=True, timeout=8)
+        parts = (out.stdout or "").split("\x00")   # NUL-separated records
+        i = 0
+        while i < len(parts):
+            rec = parts[i]
+            if not rec:
+                i += 1
+                continue
+            xy, name = rec[:2], rec[3:]
+            if xy and xy[0] == "R":                # rename: new path is next part
+                i += 1
+                name = parts[i] if i < len(parts) else name
+            files.append({"path": name, "status": xy.strip() or "?",
+                          "staged": xy[0] not in (" ", "?")})
+            i += 1
+    except (OSError, subprocess.SubprocessError) as e:
+        return 500, {"error": f"git_status_failed: {e}"}
+    files.sort(key=lambda f: f["path"].lower())
+    return 200, {"root": root, "isGit": True, "files": files}
+
+
+def git_diff(path: str, file: str) -> tuple[int, dict]:
+    if not path or not workspace_access_ok(path):
+        return 403, {"error": "path_not_allowed"}
+    root = git_root(path)
+    if not root or not path_is_git(root):
+        return 200, {"root": root, "isGit": False, "diff": ""}
+    argv = ["git", "-C", root, "diff", "HEAD", "--"]
+    if file:
+        argv.append(file)
+    try:
+        out = subprocess.run(argv, capture_output=True, text=True, timeout=10)
+        diff = out.stdout or ""
+        # Untracked files don't show in `git diff HEAD`; surface their content as
+        # an all-added diff so the reviewer still sees the new file.
+        if file and not diff.strip():
+            fpath = os.path.join(root, file)
+            if os.path.isfile(fpath) and workspace_access_ok(fpath):
+                st, payload = read_workspace_file(fpath)
+                if st == 200 and not payload.get("binary"):
+                    lines = payload["text"].split("\n")
+                    body = "".join("+" + ln + "\n" for ln in lines)
+                    diff = f"--- /dev/null\n+++ b/{file}\n@@ -0,0 +1,{len(lines)} @@\n{body}"
+    except (OSError, subprocess.SubprocessError) as e:
+        return 500, {"error": f"git_diff_failed: {e}"}
+    return 200, {"root": root, "isGit": True, "file": file, "diff": diff}
 
 
 def load_categories() -> dict[str, str]:
@@ -926,6 +1193,61 @@ def create_cs_session(description: str) -> tuple[bool, str, str]:
         pass
 
     return True, str(target), "ok"
+
+
+def setup_session_workspace(project: dict, mode: str, title: str) -> tuple[bool, str, dict, str]:
+    """Provision a session's own workspace for a project. The framework does NOT
+    force a code checkout — the mode is the user's per-session choice, because a
+    project (or a session) may have no code at all:
+
+        empty     a fresh scratch dir under ~/cs (no code) — the default
+        inplace   work directly in the project folder (shared with the project)
+        copy      a full copy of the project folder into a session dir
+        worktree  a git worktree on its own branch (git projects only)
+
+    Returns (ok, base_path, meta, msg). ``meta`` may carry {branch, mode}.
+    ``base_path`` becomes the room cwd; project-backed modes also imply a shared
+    cwd (agents work on the same files, not per-identity subdirs)."""
+    mode = (mode or "empty").strip()
+    if mode == "empty" or not project:
+        ok, base, msg = create_cs_session(title)
+        return ok, base, {"mode": "empty"}, msg
+    ppath = project.get("path", "")
+    if not ppath or not os.path.isdir(ppath):
+        return False, "", {}, "project folder missing"
+    if mode == "inplace":
+        return True, os.path.normpath(ppath), {"mode": "inplace"}, "ok"
+    slug = sanitize_slug(title)
+    n = next_cs_counter()
+    dest = CS_ROOT / f"{n:02d}_{slug}"
+    if dest.exists():
+        return False, "", {}, f"already exists: {dest.name}"
+    if mode == "copy":
+        try:
+            shutil.copytree(ppath, dest,
+                            ignore=shutil.ignore_patterns(".git", "node_modules", "__pycache__"))
+        except OSError as e:
+            return False, "", {}, f"copy failed: {e}"
+        return True, str(dest), {"mode": "copy"}, "ok"
+    if mode == "worktree":
+        if not path_is_git(ppath):
+            return False, "", {}, "worktree needs a git project"
+        branch = "sess/" + (slug or "session")
+        try:
+            out = subprocess.run(
+                ["git", "-C", ppath, "worktree", "add", str(dest), "-b", branch],
+                capture_output=True, text=True, timeout=30)
+            if out.returncode != 0:
+                # Branch may already exist → attach without -b.
+                out2 = subprocess.run(
+                    ["git", "-C", ppath, "worktree", "add", str(dest), branch],
+                    capture_output=True, text=True, timeout=30)
+                if out2.returncode != 0:
+                    return False, "", {}, f"worktree failed: {(out.stderr or out2.stderr or '').strip()[:200]}"
+        except (OSError, subprocess.SubprocessError) as e:
+            return False, "", {}, f"worktree failed: {e}"
+        return True, str(dest), {"mode": "worktree", "branch": branch}, "ok"
+    return False, "", {}, f"unknown workspace mode: {mode}"
 
 
 def sanitize_slug(s: str, max_len: int = 60) -> str:
@@ -2462,6 +2784,27 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/projects":
             self._send_json(200, build_projects())
             return
+        if p == "/api/dir":
+            q = parse_qs(u.query)
+            path = (q.get("path", [""])[0] or "").strip()
+            self._send_json(*list_dir(path))
+            return
+        if p == "/api/file":
+            q = parse_qs(u.query)
+            path = (q.get("path", [""])[0] or "").strip()
+            self._send_json(*read_workspace_file(path))
+            return
+        if p == "/api/git/status":
+            q = parse_qs(u.query)
+            path = (q.get("path", [""])[0] or "").strip()
+            self._send_json(*git_status(path))
+            return
+        if p == "/api/git/diff":
+            q = parse_qs(u.query)
+            path = (q.get("path", [""])[0] or "").strip()
+            fpath = (q.get("file", [""])[0] or "").strip()
+            self._send_json(*git_diff(path, fpath))
+            return
         if p == "/api/rooms":
             rooms = [_annotate_room_liveness(r) for r in chatroom.list_rooms()]
             self._send_json(200, rooms)
@@ -2764,7 +3107,9 @@ class Handler(BaseHTTPRequestHandler):
                       if i == ident), "")
         url = self._mcp_url()
         base = room_full.get("cwd") or str(CS_ROOT)
-        cwd = os.path.join(base, ident)
+        # Project-backed sessions share one workspace (agents work on the same
+        # files); ad-hoc scratch collaborations keep per-identity subdirs.
+        cwd = base if room_full.get("sharedCwd") else os.path.join(base, ident)
         try:
             os.makedirs(cwd, exist_ok=True)
         except OSError:
@@ -2827,7 +3172,9 @@ class Handler(BaseHTTPRequestHandler):
                       if i == ident), "")
         url = self._mcp_url()
         base = room_full.get("cwd") or str(CS_ROOT)
-        cwd = os.path.join(base, ident)
+        # Project-backed sessions share one workspace (agents work on the same
+        # files); ad-hoc scratch collaborations keep per-identity subdirs.
+        cwd = base if room_full.get("sharedCwd") else os.path.join(base, ident)
         try:
             os.makedirs(cwd, exist_ok=True)
         except OSError:
@@ -3249,6 +3596,27 @@ class Handler(BaseHTTPRequestHandler):
             self._brief_agents(room["id"])
             self._send_json(200, {"ok": True, "room": chatroom.get_room(room["id"])})
             return
+        if p == "/api/projects/new":
+            ok, proj, msg = register_project(data.get("path", ""), data.get("name", ""))
+            if not ok:
+                self._send_json(400, {"error": msg})
+                return
+            self._send_json(200, {"ok": True, "project": proj})
+            return
+        if p == "/api/projects/assign":
+            sid = (data.get("sessionId") or data.get("roomId") or "").strip()
+            pid = (data.get("projectId") or "").strip()
+            if not sid:
+                self._send_json(400, {"error": "missing_session"})
+                return
+            assign_session_project(sid, pid)
+            self._send_json(200, {"ok": True})
+            return
+        if p == "/api/projects/delete":
+            pid = (data.get("projectId") or "").strip()
+            ok = unregister_project(pid)
+            self._send_json(200 if ok else 404, {"ok": ok})
+            return
         if p == "/api/room/new":
             # Create a multiagent room AND launch its agents pre-wired to the
             # chat MCP (each with its own identity token), seeded with the task.
@@ -3273,7 +3641,18 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(400, {"error": f"agent_unavailable:{ak}"})
                     return
                 specs.append((ak, mdl, role))
-            ok, base, msg = create_cs_session(title)
+            # A session belongs to a project (optional) and gets its own workspace.
+            # The workspace mode is the caller's choice — the framework never forces
+            # a code checkout (a project or a session may have no code).
+            project_id = (data.get("projectId") or "").strip()
+            ws_mode = (data.get("workspace") or "empty").strip()
+            project = None
+            if project_id:
+                project = next((pr for pr in load_projects() if pr["id"] == project_id), None)
+                if project is None:
+                    self._send_json(400, {"error": "no_such_project"})
+                    return
+            ok, base, ws_meta, msg = setup_session_workspace(project, ws_mode, title)
             if not ok:
                 self._send_json(400, {"error": msg})
                 return
@@ -3282,6 +3661,13 @@ class Handler(BaseHTTPRequestHandler):
             room = chatroom.create_room(title, members)
             room_full = chatroom.get_room(room["id"], public=False)
             room_full["cwd"] = base
+            room_full["projectId"] = project_id
+            room_full["workspace"] = ws_meta
+            # Project-backed workspaces (inplace/copy/worktree) are shared: agents
+            # collaborate on the same files, not isolated per-identity subdirs.
+            room_full["sharedCwd"] = ws_meta.get("mode", "empty") != "empty"
+            if project_id:
+                assign_session_project(room["id"], project_id)
             # 1 agent → a solo session the human drives directly (no chat MCP,
             # terminal-primary window). 2+ → an autonomous collaboration.
             solo = len(specs) < 2

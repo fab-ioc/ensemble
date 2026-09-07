@@ -701,6 +701,19 @@
   .proj .badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px; }
   .proj .badge.changed { color: #8a6d00; background: color-mix(in srgb, #f2c14e 20%, transparent); border: 1px solid color-mix(in srgb, #f2c14e 45%, transparent); }
   .proj .badge.clean { color: var(--muted-2); border: 1px solid var(--border); }
+  /* Project actions: "+ New task" on a card, "+ New project" (card + bar button),
+     and the drilled-in crumb button. */
+  .proj .newtask, .newproj-btn, .crumb-newtask { font-size: 11.5px; font-weight: 600; padding: 4px 10px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface); color: var(--fg); cursor: pointer; white-space: nowrap; }
+  .proj .newtask:hover, .newproj-btn:hover, .crumb-newtask:hover { border-color: var(--accent); color: var(--accent); }
+  .proj .newtask { margin-left: auto; }
+  .newproj-btn { margin-left: auto; }
+  .crumb-newtask { margin-left: 10px; }
+  .proj.newproj { border-style: dashed; color: var(--muted); }
+  .proj.newproj:hover { border-color: var(--accent); color: var(--fg); }
+  .proj.unassigned { border-style: dashed; }
+  .gitmark { display: inline-block; font-size: 9.5px; font-weight: 700; letter-spacing: .04em; padding: 1px 5px; border-radius: 4px; margin-left: 5px; color: var(--muted); border: 1px solid var(--border); vertical-align: 1px; }
+  .srow.more, .srow.none { color: var(--muted-2); cursor: default; font-size: 11.5px; }
+  .srow.more:hover, .srow.none:hover { background: transparent; }
   .proj .ago { margin-left: auto; color: var(--muted-2); font-size: 11px; font-variant-numeric: tabular-nums; }
   .tx-role .mention { text-transform: none; letter-spacing: 0; }
   .tx-role .mention:first-child { background: transparent; padding: 0; color: inherit; }
@@ -1536,6 +1549,7 @@ function actionsCell(r, isLive) {
     ${archiveBtn}
     ${deleteBtn}
     <button class="rename-btn" data-sid="${sid}" title="Edit the label manually (also updates the iTerm tab name when live)">✎ Rename</button>
+    <button class="moveproj-btn" data-sid="${sid}" title="File this session under a project (or remove it from one)">📁 Move to project</button>
     <button class="auto-btn" data-sid="${sid}" title="Ask Claude to suggest a label based on the conversation">✨ Auto</button>
     ${finderBtn}
     ${ijBtn}
@@ -1766,7 +1780,10 @@ function detailActions(r, isLive, isRoom, isOrphan) {
     // docked). Surface them here too so the docked toolbar matches the popup.
     const termsBtn = isLive ? `<button class="dp-terms-btn" title="Show/hide the raw per-agent terminals">🖥 Terminals</button>` : '';
     const pauseBtn = isLive ? `<button class="dp-pause-btn" data-room="${esc(r.roomId)}" data-status="${esc(r.status || '')}" title="Pause or resume the collaboration">${r.status === 'paused' ? '▶ Resume' : '⏸ Pause'}</button>` : '';
-    return `<div class="dp-actions"><div class="actions">${lifecycle}${termsBtn}${pauseBtn}${pinBtn}${renameBtn}${autoBtn}${finderBtn}${ijBtn}${themeBtn}</div></div>`;
+    // File the session under a project (or pull it out of one) — porting opten
+    // and friends into their projects happens here.
+    const moveBtn = `<button class="moveproj-btn" data-sid="${esc(r.sessionId)}" title="File this session under a project (or remove it from one)">📁 Move to project</button>`;
+    return `<div class="dp-actions"><div class="actions">${lifecycle}${termsBtn}${pauseBtn}${pinBtn}${renameBtn}${moveBtn}${autoBtn}${finderBtn}${ijBtn}${themeBtn}</div></div>`;
   }
   return `<div class="dp-actions">${actionsCell(r, isLive)}</div>`;
 }
@@ -2134,10 +2151,14 @@ function nestForks(rows) {
 }
 
 function passesFilter(r) {
-  // Drilled into a project: only its sessions (cwd under the project root).
+  // Drilled into a project: only the sessions the server recorded as members
+  // (explicit sidecar link, or path fallback for legacy rows). Never re-derived
+  // here from cwd — that mismatch is what produced empty drill-ins before.
   if (SELECTED_PROJECT) {
-    const c = r.cwd || '';
-    if (!(c === SELECTED_PROJECT || c.startsWith(SELECTED_PROJECT + '\\') || c.startsWith(SELECTED_PROJECT + '/'))) return false;
+    const pj = projectById(SELECTED_PROJECT);
+    if (!pj) return false;
+    const ids = new Set((pj.sessions || []).map(s => s.roomId || s.sessionId));
+    if (!ids.has(r.roomId || r.sessionId)) return false;
   }
   // Sidebar category gate first
   if (SELECTED_CAT === '__uncat__' && r.category) return false;
@@ -2375,6 +2396,16 @@ function renderSidebar() {
 }
 
 // Status strip + group-by control (landing) or breadcrumb (inside a project).
+// SELECTED_PROJECT holds a project ID (from the registry, or '__unassigned__').
+// Membership comes from the server's per-project session list — recorded, not
+// re-derived from cwd — so drilling in can never show an empty table.
+const UNASSIGNED_ID = '__unassigned__';
+function projectById(id) { return (PROJECTS && PROJECTS.projects || []).find(p => p.id === id) || null; }
+function registeredProjects() { return (PROJECTS && PROJECTS.projects || []).filter(p => p.registered); }
+async function refreshProjects() {
+  try { PROJECTS = await api('/api/projects'); _projFailed = false; _projTs = Date.now(); }
+  catch (e) { _projFailed = true; }
+}
 function projectsChromeHtml() {
   const s = PROJECTS && PROJECTS.summary;
   const needs = s ? s.needsYou : 0;
@@ -2385,12 +2416,14 @@ function projectsChromeHtml() {
     <span class="stat">◆ ${s ? s.changed : 0} changed</span>
   </div>`;
   if (SELECTED_PROJECT) {
-    const pj = (PROJECTS && PROJECTS.projects || []).find(p => p.path === SELECTED_PROJECT);
-    const nm = pj ? pj.name : SELECTED_PROJECT.split(/[\\/]/).filter(Boolean).pop();
-    return strip + `<div class="crumbs"><a href="#" class="crumb-back">← Projects</a><span class="sep">/</span><b>${esc(nm || SELECTED_PROJECT)}</b></div>`;
+    const pj = projectById(SELECTED_PROJECT);
+    const nm = pj ? pj.name : 'Project';
+    const newTask = SELECTED_PROJECT === UNASSIGNED_ID ? '' : `<button class="crumb-newtask" title="Create a task in this project and fire agents at it">+ New task</button>`;
+    return strip + `<div class="crumbs"><a href="#" class="crumb-back">← Projects</a><span class="sep">/</span><b>${esc(nm)}</b>${newTask}</div>`;
   }
   return strip + `<div class="listctl"><span>Group by</span>
-    <div class="seg gb">${['project', 'time', 'none'].map(g => `<button data-gb="${g}" class="${PROJ_GROUPBY === g ? 'on' : ''}">${g[0].toUpperCase() + g.slice(1)}</button>`).join('')}</div></div>`;
+    <div class="seg gb">${['project', 'time', 'none'].map(g => `<button data-gb="${g}" class="${PROJ_GROUPBY === g ? 'on' : ''}">${g[0].toUpperCase() + g.slice(1)}</button>`).join('')}</div>
+    <button class="newproj-btn" title="Register a folder as a project (any folder — a repo, or just notes)">+ New project</button></div>`;
 }
 function projectSessionState(sn) {
   if (sn.status === 'waiting' || sn.status === 'waiting_human') return 'wait';
@@ -2399,22 +2432,29 @@ function projectSessionState(sn) {
 }
 function projectsLandingHtml() {
   if (!PROJECTS) return '<p class="empty">Loading projects…</p>';
-  if (!PROJECTS.projects.length) return '<p class="empty">No sessions yet.</p>';
-  return '<div class="proj-grid">' + PROJECTS.projects.map(p => {
+  const cards = PROJECTS.projects.map(p => {
     const rows = (p.sessions || []).slice(0, 4).map(sn => {
       const st = projectSessionState(sn);
       return `<div class="srow" data-sid="${esc(sn.roomId || sn.sessionId || '')}"><span class="sdot ${st}"></span><span class="stitle">${esc(sn.label || sn.sessionId || 'session')}</span><span class="stime">${esc(fmtAgo(sn.updatedAt))}</span></div>`;
     }).join('');
+    const more = (p.count || 0) > 4 ? `<div class="srow more">… ${p.count - 4} more</div>` : '';
     const wait = p.waiting ? `<span class="waitchip">⚠ ${p.waiting} waiting</span>` : '';
     const live = p.live ? `<span class="live"><span class="live-dot"></span>${p.live} live</span>` : `<span class="live off">idle</span>`;
-    const changed = p.changed ? `<span class="badge changed">◆ ${p.changed} changed</span>` : `<span class="badge clean">clean</span>`;
-    return `<div class="proj ${p.waiting ? 'hot' : ''}" data-proj="${esc(p.path)}">
+    const changed = p.isGit ? (p.changed ? `<span class="badge changed">◆ ${p.changed} changed</span>` : `<span class="badge clean">clean</span>`) : '';
+    const unassigned = p.id === UNASSIGNED_ID;
+    const sub = unassigned
+      ? `<div class="ppath">sessions not in a project yet — use “Move to project” to file them</div>`
+      : `<div class="ppath" title="${esc(p.path)}">${esc(tildeify(p.path))}${p.isGit ? ' <span class="gitmark" title="git repository">git</span>' : ''}</div>`;
+    const newTask = unassigned ? '' : `<button class="newtask" data-proj="${esc(p.id)}" title="Create a task in this project and fire agents at it">+ New task</button>`;
+    return `<div class="proj ${p.waiting ? 'hot' : ''} ${unassigned ? 'unassigned' : ''}" data-proj="${esc(p.id)}">
       <div class="row1"><h3>${esc(p.name)}</h3>${wait}${live}</div>
-      <div class="ppath" title="${esc(p.path)}">${esc(tildeify(p.path))}</div>
-      <div class="srows">${rows}</div>
-      <div class="metarow">${changed}<span class="ago">${esc(fmtAgo(p.updatedAt))}</span></div>
+      ${sub}
+      <div class="srows">${rows}${more}${(p.count || 0) === 0 ? '<div class="srow none">no tasks yet</div>' : ''}</div>
+      <div class="metarow">${changed}<span class="ago">${esc(fmtAgo(p.updatedAt))}</span>${newTask}</div>
     </div>`;
-  }).join('') + '</div>';
+  }).join('');
+  const addCard = `<div class="proj newproj" title="Register a folder as a project"><div class="row1"><h3>+ New project</h3></div><div class="ppath">Any folder — a repo, or just notes and specs. Then add tasks to it.</div></div>`;
+  return '<div class="proj-grid">' + cards + addCard + '</div>';
 }
 function wireProjectsChrome() {
   document.querySelectorAll('.gb button[data-gb]').forEach(b => b.onclick = () => {
@@ -2422,14 +2462,83 @@ function wireProjectsChrome() {
     SELECTED_PROJECT = null; renderRows();
   });
   document.querySelectorAll('.proj[data-proj]').forEach(c => c.onclick = (e) => {
-    if (e.target.closest('.srow')) return;
+    if (e.target.closest('.srow') || e.target.closest('.newtask')) return;
     SELECTED_PROJECT = c.dataset.proj; renderRows();
   });
   document.querySelectorAll('.proj .srow[data-sid]').forEach(r => r.onclick = (e) => {
     e.stopPropagation(); if (r.dataset.sid) openDetail(r.dataset.sid);
   });
+  document.querySelectorAll('.newtask[data-proj]').forEach(b => b.onclick = (e) => {
+    e.stopPropagation(); showNewSessionModal('', b.dataset.proj);
+  });
+  const np = document.querySelector('.proj.newproj');
+  if (np) np.onclick = () => registerProjectFlow();
+  const npb = document.querySelector('.newproj-btn');
+  if (npb) npb.onclick = () => registerProjectFlow();
+  const ct = document.querySelector('.crumb-newtask');
+  if (ct) ct.onclick = () => showNewSessionModal('', SELECTED_PROJECT);
   const back = document.querySelector('.crumb-back');
   if (back) back.onclick = (e) => { e.preventDefault(); SELECTED_PROJECT = null; renderRows(); };
+}
+// Register a folder as a project. Any folder works (created if missing) — a
+// git repo, or just a place for specs/notes. Returns the project or null.
+async function registerProjectFlow(prefillPath) {
+  const path = prompt('Project folder (created if missing).\nAny folder — a repo, or just notes/specs:', prefillPath || '');
+  if (path === null || !path.trim()) return null;
+  const guess = path.trim().split(/[\\/]/).filter(Boolean).pop() || '';
+  const name = prompt('Project name:', guess);
+  if (name === null) return null;
+  try {
+    const r = await api('/api/projects/new', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: path.trim(), name: name.trim() }),
+    });
+    toast(`project “${r.project.name}” registered`, 2500, 'ok');
+    await refreshProjects(); renderRows();
+    return r.project;
+  } catch (e) { toast('register failed: ' + e.message, 5000, 'err'); return null; }
+}
+// Modal project picker → resolves to a project id ('' = none) or null if cancelled.
+function pickProject(title, allowNone) {
+  return new Promise(resolve => {
+    const dlg = $('#modal');
+    const projs = registeredProjects();
+    dlg.innerHTML = `
+      <h3>${esc(title)}</h3>
+      <div class="im-field">
+        <label>Project</label>
+        <select id="pp-sel">
+          ${allowNone ? '<option value="">(no project — Unassigned)</option>' : ''}
+          ${projs.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}
+          <option value="__new__">+ New project…</option>
+        </select>
+      </div>
+      <div class="actions"><button id="pp-ok">OK</button><button id="pp-cancel" class="secondary">Cancel</button></div>`;
+    dlg.showModal();
+    const done = v => { dlg.close(); resolve(v); };
+    $('#pp-cancel').onclick = () => done(null);
+    dlg.addEventListener('cancel', () => done(null), { once: true });
+    $('#pp-ok').onclick = async () => {
+      const v = $('#pp-sel').value;
+      if (v === '__new__') { dlg.close(); const p = await registerProjectFlow(); resolve(p ? p.id : null); return; }
+      done(v);
+    };
+  });
+}
+// Port an existing session into a project (or out of one). Records the link
+// in the session→project sidecar; the session's folder is left untouched.
+async function moveSessionToProject(sid) {
+  const projectId = await pickProject('Move session to project', true);
+  if (projectId === null) return;
+  try {
+    await api('/api/projects/assign', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: sid, projectId }),
+    });
+    const pj = projectById(projectId);
+    toast(projectId ? `moved to “${pj ? pj.name : 'project'}”` : 'removed from project', 2500, 'ok');
+    await refreshProjects(); await refresh();
+  } catch (e) { toast('move failed: ' + e.message, 5000, 'err'); }
 }
 function renderRows() {
   renderSidebar();
@@ -2841,14 +2950,29 @@ function updateNsHint(container) {
     ? `${n} agents will collaborate in a shared room and tag you when they need input.`
     : `1 agent — a normal session.`;
 }
-function showNewSessionModal(category) {
+// A task (Jira-style): pick the project it belongs to, write the specification,
+// fire agents at it. The task gets its own workspace folder; what goes in it
+// (docs, a cloned repo with commits, anything) is the agents' business.
+function showNewSessionModal(category, projectId) {
   const dlg = $('#modal');
   const def = (PREFS && PREFS.defaultModel) || '';
+  const curProj = (projectId && projectId !== UNASSIGNED_ID) ? projectId : '';
+  const projOpts = (sel) => '<option value="">(no project — Unassigned)</option>'
+    + registeredProjects().map(p => `<option value="${esc(p.id)}"${p.id === sel ? ' selected' : ''}>${esc(p.name)}</option>`).join('')
+    + '<option value="__new__">+ New project…</option>';
   dlg.innerHTML = `
-    <h3>New session${category ? ` in "${esc(category)}"` : ''}</h3>
+    <h3>New task${category ? ` in "${esc(category)}"` : ''}</h3>
     <div class="im-field">
-      <label>Title <small>becomes ~/cs/NN_&lt;slug&gt; and the session name</small></label>
+      <label>Project <small>the board this task belongs to</small></label>
+      <select id="ns-proj">${projOpts(curProj)}</select>
+    </div>
+    <div class="im-field">
+      <label>Task <small>short title — becomes the session name and its folder</small></label>
       <input type="text" id="ns-title" value="">
+    </div>
+    <div class="im-field">
+      <label>Specification <small>what you want done — the agents' briefing</small></label>
+      <textarea id="ns-task" rows="7" placeholder="Describe the goal, constraints, and what “done” looks like. Agents may write docs, clone repos, commit — whatever the task needs."></textarea>
     </div>
     <div class="im-field">
       <label>Agents <small>add one or more; each can run a different model</small></label>
@@ -2857,8 +2981,9 @@ function showNewSessionModal(category) {
       <p class="cfg-hint" id="ns-hint"></p>
     </div>
     <div class="im-field">
-      <label>Task / prompt <small>the goal or first message</small></label>
-      <textarea id="ns-task" rows="6"></textarea>
+      <label>Workspace <small>this task's own folder — your choice, never enforced</small></label>
+      <select id="ns-ws"></select>
+      <p class="cfg-hint" id="ns-ws-hint"></p>
     </div>
     <div class="actions">
       <button id="ns-ok">Start</button>
@@ -2868,6 +2993,34 @@ function showNewSessionModal(category) {
   const agentsBox = $('#ns-agents');
   addAgentRow(agentsBox, 'claude', def, 'engineer');
   $('#ns-title').focus();
+  // Workspace modes: 'empty' is always available (a task may have no code at
+  // all); project-backed modes appear only with a project; worktree only if git.
+  const WS = {
+    empty:    ['Empty scratch folder (default)', 'A fresh folder under ~/cs. Agents clone or create whatever the task needs.'],
+    inplace:  ['Work in the project folder', 'Agents edit the project folder directly (shared with other tasks in it).'],
+    copy:     ['Copy of the project', 'A full copy of the project folder into this task\'s own folder.'],
+    worktree: ['Git worktree on its own branch', 'Isolated checkout on branch sess/<task> — merge back when done.'],
+  };
+  const wsSel = $('#ns-ws'), wsHint = $('#ns-ws-hint');
+  const fillWs = () => {
+    const pj = projectById($('#ns-proj').value);
+    const modes = pj ? ['empty', 'inplace', 'copy'].concat(pj.isGit ? ['worktree'] : []) : ['empty'];
+    wsSel.innerHTML = modes.map(m => `<option value="${m}">${esc(WS[m][0])}</option>`).join('');
+    wsSel.disabled = !pj;
+    const upd = () => { wsHint.textContent = WS[wsSel.value][1]; };
+    wsSel.onchange = upd; upd();
+  };
+  fillWs();
+  $('#ns-proj').onchange = async () => {
+    const ps = $('#ns-proj');
+    if (ps.value === '__new__') {
+      // Register inline, then re-populate and select the new project. The
+      // modal stays open (registerProjectFlow only re-renders the page behind it).
+      const p = await registerProjectFlow();
+      ps.innerHTML = projOpts(p ? p.id : '');
+    }
+    fillWs();
+  };
   $('#ns-add').onclick = () => {
     const second = AGENT_OPTIONS.find(o => o.key !== 'claude')?.key
       || AGENT_OPTIONS[0]?.key || 'claude';
@@ -2895,17 +3048,23 @@ function showNewSessionModal(category) {
     if (!specs.length) return;
     if (!title) { toast('a title is required', 3000, 'err'); return; }
     if (specs.length >= 2 && !task) { toast('a task is required for a collaboration', 3000, 'err'); return; }
+    // The task's project + workspace mode. '__new__' only appears transiently
+    // while registering; treat it as no project.
+    const psv = $('#ns-proj').value;
+    const projectIdSel = psv === '__new__' ? '' : psv;
+    const workspace = $('#ns-ws').value || 'empty';
     dlg.close();
     // Unified: 1 or N agents both launch headless (no terminal window) and open
     // in the session window. 1 agent = a solo session you drive directly; 2+ =
     // a collaboration.
-    toast(specs.length >= 2 ? 'launching collaboration…' : 'launching session…', 0, 'busy');
+    toast(specs.length >= 2 ? 'launching collaboration…' : 'launching task…', 0, 'busy');
     try {
       const resp = await api('/api/room/new', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, task, agents: specs }),
+        body: JSON.stringify({ title, task, agents: specs, projectId: projectIdSel, workspace }),
       });
       toast('launched', 2000, 'ok');
+      await refreshProjects();   // the new task shows under its project immediately
       await refresh(); updateRoomsBadge();
       if (resp.room && resp.room.id) openDetail(resp.room.id);
       setTimeout(() => { refresh(); updateRoomsBadge(); }, 2500);
@@ -3523,6 +3682,12 @@ document.addEventListener('click', async (ev) => {
     return;
   }
   // Action buttons
+  const moveProjBtn = ev.target.closest('.moveproj-btn');
+  if (moveProjBtn) {
+    ev.stopPropagation();
+    await moveSessionToProject(moveProjBtn.dataset.sid);
+    return;
+  }
   const renameBtn = ev.target.closest('.rename-btn');
   if (renameBtn) {
     ev.stopPropagation();

@@ -91,11 +91,24 @@
   @keyframes actpulse { 0%,100%{ opacity:1; transform:scale(1); } 50%{ opacity:.3; transform:scale(1.55); } }
   /* Pending-prompt card: the question the agent is blocked on, shown in the chat. */
   #promptcard { flex:0 0 auto; margin:0 12px 8px; border:1px solid #eab30866; background:#eab3081f; border-radius:10px; padding:10px 12px; }
-  #promptcard .pc-head { font-size:12px; font-weight:700; color:#eab308; margin-bottom:6px; }
-  #promptcard .pc-body { margin:0; max-height:220px; overflow:auto; font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; white-space:pre-wrap; word-break:break-word; color:var(--fg); }
-  #promptcard .pc-opts { display:flex; flex-wrap:wrap; gap:6px; margin-top:9px; }
-  #promptcard .pc-opt { background:#eab308; color:#111; border:none; font-size:12px; font-weight:600; padding:4px 11px; border-radius:6px; cursor:pointer; }
-  #promptcard .pc-opt:hover { filter:brightness(1.12); }
+  #promptcard .pc-head { font-size:12px; font-weight:700; color:#eab308; margin-bottom:6px; display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  #promptcard .pc-x { background:transparent; border:none; color:var(--dim); font-size:15px; line-height:1; cursor:pointer; padding:2px 4px; border-radius:5px; }
+  #promptcard .pc-x:hover { color:#ef4444; background:#ef44441a; }
+  #promptcard .pc-body { margin:0; max-height:42vh; overflow:auto; -webkit-overflow-scrolling:touch; font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; white-space:pre-wrap; word-break:break-word; color:var(--fg); }
+  /* Options stacked vertically, each a full-width tap target: one tap chooses
+     and confirms. Works for AskUserQuestion, plan approval, trust, permissions. */
+  #promptcard .pc-opts { display:flex; flex-direction:column; gap:6px; margin-top:9px; }
+  #promptcard .pc-opt { display:block; width:100%; text-align:left; background:var(--surface); color:var(--fg); border:1px solid var(--border); font-size:13px; font-weight:600; padding:9px 12px; border-radius:8px; cursor:pointer; line-height:1.35; }
+  #promptcard .pc-opt:hover { border-color:#eab308; background:#eab3081a; }
+  #promptcard .pc-opt.sel { border-color:#eab308; background:#eab30826; box-shadow:inset 3px 0 0 #eab308; }
+  #promptcard .pc-opt:active { background:#eab308; color:#111; }
+  #promptcard .pc-opt .pc-onum { color:#eab308; margin-right:8px; font-weight:700; }
+  #promptcard .pc-opt:active .pc-onum { color:#111; }
+  #promptcard .pc-ctl { display:flex; gap:8px; margin-top:9px; }
+  #promptcard .pc-btn { background:var(--surface); color:var(--fg); border:1px solid var(--border); font-size:12px; font-weight:600; padding:6px 14px; border-radius:7px; cursor:pointer; }
+  #promptcard .pc-btn:hover { border-color:#eab308; }
+  #promptcard .pc-btn.go { background:#eab308; color:#111; border-color:#eab308; }
+  #promptcard .pc-btn.esc:hover { border-color:#ef4444; color:#ef4444; }
   #promptcard .pc-hint { font-size:11px; color:var(--dim); margin-top:7px; }
   #compose { border-top:1px solid var(--border); padding:10px; display:flex; flex-direction:column; gap:6px; flex:0 0 auto; }
   #compose textarea { width:100%; min-height:48px; resize:vertical; background:var(--surface); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:6px; font:inherit; }
@@ -567,7 +580,11 @@ async function updateAgentStatus() {
   // transcript once — avoids constantly re-fetching a large transcript.
   if (SOLO_SID) {
     const st = agentState({ sessionId: SOLO_SID, ptyId: SOLO_PTY }, map, lmap);
-    if (st.cls === 'needs') renderPromptCard(); else hidePromptCard();
+    // Show the prompt card ONLY when the session genuinely reports it's blocked
+    // on you (status 'waiting'). The earlier screen-scrape fallback produced
+    // phantom cards on leftover terminal content — removed.
+    if (st.cls !== 'needs') { _pcDismissed = false; hidePromptCard(); }
+    else if (!_pcDismissed) renderPromptCard();
   }
 }
 // The always-visible activity bar above the composer, so you can tell at a glance
@@ -600,6 +617,58 @@ function ensureSoloTerm() {
   if (ROOM_OBJ && !agentsBuilt) buildAgents(ROOM_OBJ);   // mounts the (hidden) terminal so its buffer fills
   return !!terms[SOLO_PTY];
 }
+// Forward a raw keystroke to the solo agent's PTY (the same path the xterm uses).
+// This is how the balloon drives any interactive prompt without a keyboard.
+const PC_KEYS = { up: '\x1b[A', down: '\x1b[B', left: '\x1b[D', right: '\x1b[C', enter: '\r', esc: '\x1b', tab: '\t', space: ' ' };
+function sendKey(seq) { if (SOLO_PTY) jpost('/api/pty/input', { id: SOLO_PTY, data: seq }); }
+// A selectable TUI widget is on screen (arrow-navigated list, plan/trust/permission
+// prompt, or numbered options). Used as a fallback trigger when the session status
+// itself doesn't flip to "waiting" (e.g. AskUserQuestion).
+function looksLikePrompt(lines) {
+  const text = lines.join('\n');
+  if (/[❯➤▶]/.test(text)) return true;                                   // arrow cursor
+  if (/\bDo you want\b|\bWould you like\b|approve this plan|trust the (files|folder)|Yes, (and|proceed)|❯?\s*\d+\.\s/i.test(text)) return true;
+  return false;
+}
+// Parse the on-screen selectable list into ordered options plus which one is
+// currently highlighted (the ❯ cursor). Handles numbered ("1. foo") and
+// arrow-marked ("❯ foo") forms.
+function parseOptions(lines) {
+  let items = [];
+  lines.forEach(l => {
+    const m = l.match(/^\s*([❯➤▶])?\s*(\d+)[.)]\s+(.+?)\s*$/);
+    if (m) items.push({ label: m[3].trim(), cursor: !!m[1] || /[❯➤▶]/.test(l) });
+  });
+  if (items.length >= 2) return finalizeOptions(items);
+  // Arrow-marked cluster around the ❯ cursor.
+  items = [];
+  const curLine = lines.findIndex(l => /[❯➤▶]/.test(l));
+  if (curLine < 0) return { opts: [], cur: 0 };
+  const col = lines[curLine].search(/[❯➤▶]/);
+  const sib = l => { const t = l.replace(/^[\s❯➤▶]+/, ''); return t && !/^[─│╭╮╰╯├┤┬┴┼=_.\s]+$/.test(t) && l.length > col; };
+  let a = curLine, b = curLine;
+  while (a - 1 >= 0 && sib(lines[a - 1])) a--;
+  while (b + 1 < lines.length && sib(lines[b + 1])) b++;
+  for (let i = a; i <= b; i++) items.push({ label: lines[i].replace(/^[\s❯➤▶]+/, '').replace(/\s+$/, ''), cursor: i === curLine });
+  return items.length >= 2 ? finalizeOptions(items) : { opts: [], cur: 0 };
+}
+function finalizeOptions(items) {
+  let cur = items.findIndex(x => x.cursor);
+  if (cur < 0) cur = 0;
+  return { opts: items.map(x => ({ label: x.label })), cur };
+}
+// Move the highlight to the target option using RELATIVE arrow steps from where
+// it currently sits — never a blind burst (that walks off the option list into
+// clarify/other controls, which is what triggered "clarify" before). Selecting
+// does NOT confirm; the user taps Confirm to submit.
+let PC_SEL = 0;
+let _pcDismissed = false;   // user closed the card; stay closed until the next real prompt
+function moveSelection(target) {
+  const d = target - PC_SEL;
+  if (d > 0) sendKey(PC_KEYS.down.repeat(d));
+  else if (d < 0) sendKey(PC_KEYS.up.repeat(-d));
+  PC_SEL = target;
+}
 function renderPromptCard() {
   const card = document.getElementById('promptcard');
   if (!card) return;
@@ -609,16 +678,32 @@ function renderPromptCard() {
   while (a < b && !lines[a].trim()) a++;
   while (b > a && !lines[b - 1].trim()) b--;
   lines = lines.slice(a, b);
-  const opts = [];
-  lines.forEach(l => { const m = l.match(/^\s*[❯>*\-❯]?\s*(\d+)[.)]\s+(.{1,70})/); if (m) opts.push({ n: m[1], label: m[2].trim() }); });
-  const body = lines.length ? lines.join('\n')
-    : 'Claude is waiting for your input. Reveal the terminal (🖥) to see the exact prompt, or answer below.';
+  const parsed = parseOptions(lines);
+  const opts = parsed.opts;
+  PC_SEL = parsed.cur;                       // sync to the on-screen highlight
+  const body = lines.length ? lines.join('\n') : 'The agent is waiting for your input.';
+  const total = opts.length;
+  const optsHtml = total
+    ? `<div class="pc-opts">` + opts.map((o, i) =>
+        `<button class="pc-opt${i === parsed.cur ? ' sel' : ''}" data-i="${i}"><span class="pc-onum">${i + 1}</span>${esc(o.label)}</button>`).join('') + `</div>`
+    : '';
   card.innerHTML =
-    `<div class="pc-head">⚠ Claude is waiting for your answer</div>`
+    `<div class="pc-head">⚠ The agent is waiting for your answer<button class="pc-x" title="Dismiss this card">✕</button></div>`
     + `<pre class="pc-body">${esc(body)}</pre>`
-    + (opts.length ? `<div class="pc-opts">${opts.map(o => `<button class="pc-opt" data-n="${esc(o.n)}">${esc(o.n)}. ${esc(o.label)}</button>`).join('')}</div>` : '')
-    + `<div class="pc-hint">Tap an option, or type your answer in the box below.</div>`;
-  card.querySelectorAll('.pc-opt').forEach(bt => bt.onclick = () => jpost('/api/pty/input', { id: SOLO_PTY, data: bt.dataset.n }));
+    + optsHtml
+    + `<div class="pc-ctl">`
+    + `<button class="pc-btn go" data-k="enter" title="Submit the highlighted option">⏎ Confirm</button>`
+    + `<button class="pc-btn esc" data-k="esc" title="Cancel / dismiss this prompt">Esc / Cancel</button>`
+    + `</div>`
+    + `<div class="pc-hint">${total ? 'Tap an option, then Confirm' : 'Use Confirm/Cancel'} — or type a full answer below.</div>`;
+  card.querySelectorAll('.pc-opt').forEach(bt => bt.onclick = () => {
+    const i = +bt.dataset.i;
+    moveSelection(i);
+    card.querySelectorAll('.pc-opt').forEach(x => x.classList.toggle('sel', +x.dataset.i === i));
+  });
+  card.querySelectorAll('.pc-btn[data-k]').forEach(bt => bt.onclick = () => sendKey(PC_KEYS[bt.dataset.k]));
+  const x = card.querySelector('.pc-x');
+  if (x) x.onclick = () => { _pcDismissed = true; hidePromptCard(); };
   card.hidden = false;
 }
 function hidePromptCard() {
