@@ -233,6 +233,13 @@
     margin-left: 8px; vertical-align: middle; font-weight: 600;
     letter-spacing: 0.04em; text-transform: uppercase;
   }
+  /* A task created (e.g. by a planning agent) but never launched. */
+  .badge-draft {
+    background: var(--muted, #888); color: white; opacity: .85;
+    padding: 1px 7px; border-radius: 10px; font-size: 10px;
+    margin-left: 8px; vertical-align: middle; font-weight: 600;
+    letter-spacing: 0.04em; text-transform: uppercase;
+  }
   .badge-pin {
     margin-left: 6px; font-size: 11px; vertical-align: middle;
     filter: saturate(1.4);
@@ -1848,7 +1855,7 @@ function detailMeta(r, isLive, isRoom, now) {
   const pills = [];
   pills.push(isLive
     ? `<span class="chip ${r.status === 'busy' ? 'busy' : 'live'}">${r.status === 'busy' ? '✻ busy' : '● live'}</span>`
-    : `<span class="chip">not running</span>`);
+    : `<span class="chip">${r.draft ? 'draft — not started' : 'not running'}</span>`);
   if (r.pinned) pills.push(`<span class="chip pinned">📌 pinned</span>`);
   if (r.category) pills.push(`<span class="chip category">📁 ${esc(r.category)}</span>`);
   pills.push(`<span class="chip">${r.turns || 0} ${isRoom ? 'msgs' : 'turns'}</span>`);
@@ -1873,7 +1880,7 @@ function detailActions(r, isLive, isRoom, isOrphan) {
     // uses (keyed by the room id), so the shared handlers work unchanged.
     const lifecycle = isLive
       ? `<button class="room-end delete-btn" data-room="${esc(r.roomId)}" title="Stop the agent(s), keep the session">✕ End</button>`
-      : `<button class="open-btn room-resume-inline" data-room="${esc(r.roomId)}" title="Relaunch the agent(s) with their conversation">▶ Open</button>
+      : `<button class="open-btn room-resume-inline" data-room="${esc(r.roomId)}" title="${r.draft ? 'Start — launch the agent(s) with the task spec' : 'Relaunch the agent(s) with their conversation'}">${r.draft ? '▶ Start' : '▶ Open'}</button>
          <button class="delete-btn room-delete" data-room="${esc(r.roomId)}" title="Delete — transcripts, room record, and the ~/cs scratch folder">🗑 Delete</button>`;
     const pinBtn = `<button class="pin-btn ${r.pinned ? 'is-pinned' : ''}" data-sid="${esc(r.sessionId)}" data-pinned="${r.pinned ? 1 : 0}" title="${r.pinned ? 'Unpin from quick-access' : 'Pin this session for quick access'}">${r.pinned ? '📌 Unpin' : '📌 Pin'}</button>`;
     const renameBtn = `<button class="rename-btn" data-sid="${esc(r.sessionId)}" title="Rename this session">✎ Rename</button>`;
@@ -2201,14 +2208,17 @@ function renderHeadlessRow(r, parsed, now) {
   const liveClasses = r.isLive ? `live ${r.status === 'busy' ? 'busy' : 'idle'}` : '';
   const statusDot = r.isLive
     ? `<span class="status ${r.status === 'busy' ? 'busy' : 'idle'}" title="${esc(r.status || 'live')}"></span>` : '';
-  const liveBadge = r.isLive ? '<span class="badge-live">live</span>' : '';
+  const liveBadge = r.isLive ? '<span class="badge-live">live</span>'
+    : (r.draft ? '<span class="badge-draft" title="Created but not started yet">draft</span>' : '');
   const actions = r.orphan
     ? `<button class="orphan-open" data-grp="${esc(r.sessionId)}" title="Resume this collaboration headless (its room record is gone)">▶ Open</button>`
       + `<button class="orphan-delete" data-grp="${esc(r.sessionId)}" title="Delete — every agent transcript and the ~/cs scratch folder">🗑</button>`
     : `<button class="room-open" data-room="${esc(r.roomId)}" title="Open in a floating window">▶ Open ↗</button>`
       + (r.isLive
           ? `<button class="room-end" data-room="${esc(r.roomId)}" title="End — stop the agent(s), keep the session">✕ End</button>`
-          : `<button class="room-resume" data-room="${esc(r.roomId)}" title="Resume — relaunch the agent(s) with their conversation">↻ Resume</button>`
+          : (r.draft
+              ? `<button class="room-resume" data-room="${esc(r.roomId)}" title="Start — launch the agent(s) with the task spec">▶ Start</button>`
+              : `<button class="room-resume" data-room="${esc(r.roomId)}" title="Resume — relaunch the agent(s) with their conversation">↻ Resume</button>`)
             + `<button class="room-delete" data-room="${esc(r.roomId)}" title="Delete — transcripts, room record, and the ~/cs scratch folder">🗑</button>`);
   const actionsTd = DETAIL_MODE ? '' : `<td>${actions}</td>`;
   return `<tr class="row headless ${liveClasses}" data-room="${esc(r.roomId || '')}" data-orphan="${r.orphan ? '1' : ''}" data-sid="${esc(r.sessionId)}" draggable="false">
@@ -3334,16 +3344,16 @@ const MODEL_PRESETS = {
   codex: ['gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-codex'],
 };
 function roleSelect(role) {
-  const known = ['', 'engineer', 'reviewer'];
+  const known = ['', 'engineer', 'reviewer', 'planner'];
   const isCustom = role && !known.includes(role);
   const opt = (v, label) => `<option value="${esc(v)}"${(isCustom ? '__custom__' : role) === v ? ' selected' : ''}>${esc(label)}</option>`;
-  return `<select class="duo-role" title="Team role">${opt('', 'Collaborator')}${opt('engineer', 'Engineer')}${opt('reviewer', 'Reviewer')}${opt('__custom__', 'Custom…')}</select>`;
+  return `<select class="duo-role" title="Team role">${opt('', 'Collaborator')}${opt('engineer', 'Engineer')}${opt('reviewer', 'Reviewer')}${opt('planner', 'Planner')}${opt('__custom__', 'Custom…')}</select>`;
 }
 function addAgentRow(container, sel, model, role) {
   const div = document.createElement('div');
   div.className = 'duo-row';
   const dlId = 'ml-' + Math.random().toString(36).slice(2, 9);
-  const known = ['', 'engineer', 'reviewer'];
+  const known = ['', 'engineer', 'reviewer', 'planner'];
   const isCustom = role && !known.includes(role);
   div.innerHTML = `${agentSelect(sel)}
     <input type="text" class="duo-model" list="${dlId}" placeholder="model (optional)" value="${esc(model || '')}" autocomplete="off" spellcheck="false">

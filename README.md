@@ -229,6 +229,19 @@ Editor choice per language is configurable for any platform via `~/.ensemble/edi
 
 The server binds to `127.0.0.1` only — no network exposure. On macOS, the OS will prompt for Automation permission the first time the python process tries to send Apple Events to iTerm; approve it.
 
+## Agents managing tasks (the Ensemble MCP server)
+
+Ensemble is itself an MCP server (`POST /mcp`, streamable HTTP). Every headless agent it launches — solo or collaboration, Claude or Codex — is wired to it as the server named `ensemble`, with a per-agent bearer token that tells the server who is calling and which task/project it belongs to. Two tool families are served:
+
+- **Chat tools** (`chat_send`, `chat_read`, `chat_whoami`) — the collaboration protocol; only offered in multi-agent tasks.
+- **Task tools** (`ensemble_*`) — the board itself: `ensemble_whoami`, `ensemble_list_projects`, `ensemble_list_tasks`, `ensemble_get_task`, `ensemble_create_task`, `ensemble_update_task`, `ensemble_start_task`, `ensemble_stop_task`, `ensemble_move_task`, `ensemble_delete_task`. Schemas and dispatch live in `ensemble_tools.py`; the REST endpoints the UI calls share the same implementation.
+
+This is what lets you give an agent a task like *"plan the work for this project"*: it reads the existing tasks, creates new ones as **drafts** (complete specs, suggested agents/roles, workspace mode), and you review and start them from the dashboard (drafts show a `draft` badge and a **▶ Start** button). A `planner` role is available in the new-task dialog with a charter that says exactly that.
+
+Scope rules are enforced server-side: read anywhere; write only inside the caller's own project (a task with no project may write anywhere); a task can never stop, start, move or delete itself; a running task cannot be deleted. Deleting removes the task record, chat and agent transcripts — task folders under the projects root and real code folders are never removed.
+
+Agents are taught the tools by the **`ensemble` skill** (`skills/ensemble/SKILL.md`), which the server installs/refreshes at startup into `~/.claude/skills/ensemble/` and, if the Codex CLI is present, `~/.codex/skills/ensemble/`.
+
 ## Acknowledgements
 
 Inspired by the `claude-sessions` (`cs`) CLI script that ships with my personal Claude Code setup — same data sources, web frontend.

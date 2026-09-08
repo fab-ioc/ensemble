@@ -56,10 +56,15 @@ import agents
 # Multi-agent chat rooms (pairing live sessions into a collaborating "duo").
 import backup
 import chatroom
+# Task-management MCP tools (ensemble_*) served next to the chat tools.
+import ensemble_tools
 # Headless PTY runtime — dashboard-owned agent processes streamed to the browser.
 from backends import ptyrun
 
 BACKEND = get_backend()
+# The tools module calls back into this module's task/launch primitives; the
+# dashboard runs as __main__, so hand it the live module object.
+ensemble_tools.bind(sys.modules[__name__])
 
 # --- Remote-access gate ------------------------------------------------------
 # When the server is bound to anything other than loopback (e.g. exposed on a
@@ -621,6 +626,7 @@ def operator_name() -> str:
 ROLE_TITLES = {
     "engineer": "engineer",
     "reviewer": "reviewer",
+    "planner": "planner",
     "pair": "collaborator",
     "": "collaborator",
 }
@@ -657,6 +663,18 @@ def role_charter(role: str, teammates: list) -> str:
             f"to review, or when the product owner addresses you directly. Never start "
             f"work on the task ahead of {eng}."
         )
+    if role == "planner":
+        return (
+            "You are the planner. Do NOT implement — you shape the work. Study the "
+            "project (its code, notes and existing tasks — ensemble_whoami, "
+            "ensemble_list_tasks, ensemble_get_task), break the product owner's goal "
+            "into well-scoped tasks, and create them with ensemble_create_task as "
+            "DRAFTS with complete specs (goal, context, acceptance criteria, "
+            "constraints, suggested agents/roles). Keep each task independently "
+            "workable and small enough for one session. Present the plan to the "
+            "product owner for review before starting anything; only start tasks "
+            "when they ask you to. Amend or delete drafts as the plan evolves."
+        )
     if role and role not in ROLE_TITLES:
         # Custom role: the value itself is the charter the user wrote.
         return role
@@ -680,11 +698,14 @@ def collab_briefing(ident: str, role: str, teammates: list, task: str,
         (f"Team: {mates}. The product owner is {op} — they set requirements and "
          f"priorities and accept or reject the work; reach them with chat_send "
          f"to=\"user\"."),
-        ("Coordinate ONLY through the 'chat' MCP tools: chat_send to hand off your "
-         "turn (end each turn by sending a teammate a message), chat_read to read "
-         "replies. Write every chat message as GitHub-flavored Markdown (headings, "
-         "bullet and numbered lists, inline code for identifiers/paths/commands, "
-         "fenced code blocks for code, and tables where useful)."),
+        ("Coordinate ONLY through the 'ensemble' MCP chat tools: chat_send to hand "
+         "off your turn (end each turn by sending a teammate a message), chat_read "
+         "to read replies. Write every chat message as GitHub-flavored Markdown "
+         "(headings, bullet and numbered lists, inline code for identifiers/paths/"
+         "commands, fenced code blocks for code, and tables where useful)."),
+        ("The same MCP server also offers the ensemble_* task tools (list/read/"
+         "create/amend/start/stop/delete tasks in this project); the 'ensemble' "
+         "skill explains how to use them."),
     ]
     if role == "reviewer":
         eng = next((t["identity"] for t in teammates if t.get("role") == "engineer"), "the engineer")
@@ -2843,6 +2864,9 @@ def load_sessions(n: int = 200) -> list[dict]:
                              "model": p.get("model", "")} for p in agents_in],
                 "label": labels.get(rid) or rm.get("title", ""), "cwd": rm.get("cwd", ""),
                 "spec": rm.get("spec", ""), "taskDir": rm.get("taskDir", ""),
+                # A draft is a task created (e.g. by a planning agent) but never
+                # launched; Open/Start launches it fresh with its spec.
+                "draft": not rm.get("launched", True),
                 "isLive": live, "status": "busy" if (live and busy) else "idle",
                 "updatedAt": rm.get("updatedAt", rm.get("createdAt", 0)),
                 "startedAt": rm.get("createdAt", 0),
@@ -3000,6 +3024,246 @@ def trigger_update() -> dict:
 
 
 # ---------- HTTP server ----------
+
+# ---------------------------------------------------------------------------
+# Task service — the ONE implementation behind both the REST endpoints the UI
+# calls and the ensemble_* MCP tools agents call. A task is a room (plus its
+# folder under the project home); "launching" it is a separate step owned by
+# the Handler (it needs the server port for the MCP URL).
+# ---------------------------------------------------------------------------
+
+def normalize_agent_specs(agent_list) -> tuple[list[tuple[str, str, str]], str]:
+    """Turn the caller's agent list — plain keys ("claude") or objects
+    {agent, model, role} — into (agent_key, model, role) tuples, checking each
+    agent is installed. Returns (specs, error)."""
+    specs = []
+    if not isinstance(agent_list, list) or len(agent_list) < 1:
+        return [], "need_an_agent"
+    for item in agent_list:
+        if isinstance(item, dict):
+            ak = (item.get("agent") or "").strip()
+            mdl = (item.get("model") or "").strip()
+            role = (item.get("role") or "").strip()
+        else:
+            ak, mdl, role = str(item).strip(), "", ""
+        ag = agents.get_agent(ak)
+        if ag is None or not ag.installed():
+            return [], f"agent_unavailable:{ak}"
+        specs.append((ak, mdl, role))
+    return specs, ""
+
+
+def find_project(project_id: str) -> dict | None:
+    pid = (project_id or "").strip()
+    if not pid:
+        return None
+    return next((pr for pr in load_projects() if pr["id"] == pid), None)
+
+
+def create_task(title: str, spec: str, project_id: str, agent_list,
+                workspace: str = "empty") -> tuple[bool, dict | None, str]:
+    """Create a task: its room, workspace and task folder — WITHOUT launching
+    the agents (``launched`` is False until the Handler starts it). Returns
+    (ok, room_full, error)."""
+    title = (title or "multiagent session").strip()[:120]
+    spec = (spec or "").strip()
+    specs, err = normalize_agent_specs(agent_list)
+    if err:
+        return False, None, err
+    project_id = (project_id or "").strip()
+    project = None
+    if project_id:
+        project = find_project(project_id)
+        if project is None:
+            return False, None, "no_such_project"
+    ok, base, ws_meta, msg = setup_session_workspace(project, workspace or "empty", title)
+    if not ok:
+        return False, None, msg
+    members = [{"identity": ak, "agent": ak, "model": mdl, "role": role}
+               for ak, mdl, role in specs]
+    room = chatroom.create_room(title, members)
+    room_full = chatroom.get_room(room["id"], public=False)
+    room_full["cwd"] = base
+    room_full["projectId"] = project_id
+    room_full["workspace"] = ws_meta
+    room_full["spec"] = spec            # the task's specification, shown in the UI
+    room_full["taskDir"] = ws_meta.get("taskDir", "")
+    # Project-backed workspaces (inplace/copy/worktree) are shared: agents
+    # collaborate on the same files, not isolated per-identity subdirs.
+    room_full["sharedCwd"] = ws_meta.get("mode", "empty") != "empty"
+    # 1 agent → a solo session the human drives directly (no chat tools,
+    # terminal-primary window). 2+ → an autonomous collaboration.
+    room_full["mode"] = "solo" if len(specs) < 2 else "collab"
+    room_full["launched"] = False
+    if project_id:
+        assign_session_project(room["id"], project_id)
+    if ws_meta.get("taskDir"):
+        _write_task_json(ws_meta["taskDir"], {
+            "roomId": room["id"], "projectId": project_id, "title": title,
+            "spec": spec, "agents": members, "workspace": ws_meta,
+            "createdAt": int(time.time())})
+    # Persist BEFORE any launch so an interrupted spawn leaves a resumable
+    # draft, not a corrupt room with no cwd.
+    chatroom.update_room(room_full)
+    return True, room_full, ""
+
+
+def _patch_task_json(folder: str, **fields) -> None:
+    if not folder:
+        return
+    p = Path(folder) / "task.json"
+    try:
+        data = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    data.update(fields)
+    _write_task_json(folder, data)
+
+
+def update_task(rid: str, title=None, spec=None) -> tuple[bool, dict | None, str]:
+    """Amend a task's title and/or spec (room record, task.json and any label
+    override the user set from the UI)."""
+    room = chatroom.get_room(rid, public=False)
+    if room is None:
+        return False, None, "no_such_room"
+    patch = {}
+    if title is not None:
+        t = str(title).strip()[:120]
+        if not t:
+            return False, None, "empty_title"
+        room["title"] = t
+        patch["title"] = t
+        labels = load_labels()
+        if rid in labels:              # a UI rename would otherwise mask the change
+            labels[rid] = t
+            save_labels(labels)
+    if spec is not None:
+        s = str(spec).strip()
+        if not s:
+            return False, None, "empty_spec"
+        room["spec"] = s
+        patch["spec"] = s
+    if not patch:
+        return False, None, "nothing_to_change"
+    chatroom.update_room(room)
+    _patch_task_json(room.get("taskDir", ""), **patch)
+    return True, room, ""
+
+
+def stop_task(rid: str) -> bool:
+    """End a task's agents (kill their PTYs) but KEEP the room, so it stays one
+    row with its spec and chat and can be resumed."""
+    room = chatroom.get_room(rid, public=False)
+    if not room:
+        return False
+    for part in room.get("participants", []):
+        pid = part.get("ptyId")
+        if pid:
+            try:
+                ptyrun.kill(pid)
+            except Exception:
+                pass
+    return True
+
+
+def delete_task(rid: str, members=None) -> dict:
+    """Unified delete for a task/collaboration (or a grouped orphan): stop the
+    agents, remove the room record AND every member's transcript (so it can't
+    resurface as an orphan/history row), and — when the working dir is a
+    dashboard ~/cs/<NN_slug> scratch folder — delete that folder too. A real
+    project folder (and a task folder under the projects root) is NEVER removed."""
+    members = list(members or [])
+    room = chatroom.get_room(rid, public=False) if rid else None
+    result = {"transcripts": [], "folders": [], "ok": True}
+    cwds: list[str] = []
+    if room:
+        stop_task(rid)
+        cwds.append(room.get("cwd", "") or "")
+        members = [{"agent": pp.get("agent", ""),
+                    "sessionId": pp.get("sessionId", ""),
+                    "cwd": pp.get("cwd", "")}
+                   for pp in room.get("participants", [])
+                   if pp.get("kind") == "agent"]
+    for m in members:
+        sid = (m.get("sessionId") or "").strip()
+        agent = (m.get("agent") or "claude").strip() or "claude"
+        cwds.append(m.get("cwd", "") or "")
+        if not sid:
+            continue
+        if agent == "claude":
+            result["transcripts"] += delete_session(sid).get("files", [])
+        else:
+            ag = agents.get_agent(agent)
+            if ag is not None and hasattr(ag, "delete_session"):
+                try:
+                    result["transcripts"] += ag.delete_session(sid)
+                except Exception:
+                    pass
+    if rid:
+        chatroom.delete_room(rid)
+        links = load_session_projects()
+        if rid in links:
+            links.pop(rid, None)
+            save_session_projects(links)
+    seen: set[str] = set()
+    for c in cwds:
+        folder = _delete_scratch_root(c)
+        if folder and folder not in seen:
+            seen.add(folder)
+            result["folders"].append(folder)
+    return result
+
+
+def move_task(rid: str, project_id: str) -> bool:
+    """Re-link a task to another project (the folder stays where it is)."""
+    room = chatroom.get_room(rid, public=False)
+    if room is None:
+        return False
+    assign_session_project(rid, project_id)
+    room["projectId"] = project_id
+    chatroom.update_room(room)
+    _patch_task_json(room.get("taskDir", ""), projectId=project_id)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Agent skills — the 'ensemble' skill teaches an agent how to use the task
+# tools. Installed (refreshed) at startup into each installed agent's user-level
+# skills folder, so it is available whatever the task's working directory is.
+# ---------------------------------------------------------------------------
+SKILLS_SRC = STATIC_DIR / "skills"
+
+
+def install_agent_skills() -> list[str]:
+    """Copy skills/<name>/SKILL.md into ~/.claude/skills/<name>/ and (when the
+    codex CLI is present) ~/.codex/skills/<name>/. Idempotent: rewrites only
+    when the content differs. Returns the paths written."""
+    written = []
+    if not SKILLS_SRC.is_dir():
+        return written
+    targets = [HOME / ".claude" / "skills"]
+    if shutil.which("codex"):
+        targets.append(HOME / ".codex" / "skills")
+    for src_dir in sorted(SKILLS_SRC.iterdir()):
+        src = src_dir / "SKILL.md"
+        if not src_dir.is_dir() or not src.is_file():
+            continue
+        try:
+            body = src.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for root in targets:
+            dest = root / src_dir.name / "SKILL.md"
+            try:
+                if dest.exists() and dest.read_text(encoding="utf-8") == body:
+                    continue
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_text(body, encoding="utf-8")
+                written.append(str(dest))
+            except OSError:
+                continue
+    return written
+
 
 class Handler(BaseHTTPRequestHandler):
     def setup(self):
@@ -3639,8 +3903,8 @@ class Handler(BaseHTTPRequestHandler):
                        # never prompt for tool approval — the whole point is
                        # autonomous collaboration; the workspace is a scratch dir.
                        "-c", 'approval_policy="never"',
-                       "-c", f'mcp_servers.chat.url="{url}"',
-                       "-c", 'mcp_servers.chat.bearer_token_env_var="CHAT_TOKEN"']
+                       "-c", f'mcp_servers.ensemble.url="{url}"',
+                       "-c", 'mcp_servers.ensemble.bearer_token_env_var="CHAT_TOKEN"']
             if model:
                 command += ["-c", f'model="{model}"']
             res = BACKEND.open_new(cwd, briefing, label=label, command=command,
@@ -3648,7 +3912,7 @@ class Handler(BaseHTTPRequestHandler):
                                    env={"CHAT_TOKEN": token})
             return {"sessionId": "", "cwd": cwd, "launch": res}
         # claude (and claude-N)
-        cfg = {"mcpServers": {"chat": {"type": "http", "url": url,
+        cfg = {"mcpServers": {"ensemble": {"type": "http", "url": url,
                                        "headers": {"Authorization": f"Bearer {token}"}}}}
         mcp_dir = DASHBOARD_DIR / "_mcp"
         mcp_dir.mkdir(parents=True, exist_ok=True)
@@ -3663,23 +3927,50 @@ class Handler(BaseHTTPRequestHandler):
                                extra_args=claude_extra)
         return {"sessionId": new_sid, "cwd": cwd, "launch": res}
 
+    def _mcp_wiring(self, token: str, collab: bool) -> tuple[list[str], list[str], dict]:
+        """The per-agent bits that connect it to the Ensemble MCP server
+        (chat + ensemble_* task tools) with its own bearer token. EVERY headless
+        agent gets the server — solo tasks included, so an agent can plan and
+        manage tasks. Returns (codex_args, claude_args, env).
+
+        collab: an autonomous collaboration additionally bypasses Codex's
+        approval prompts (incl. MCP tool approval) and sandbox — nobody is there
+        to answer them. A solo agent is human-driven, so its prompts stay."""
+        url = self._mcp_url()
+        codex_args = ["-c", f'mcp_servers.ensemble.url="{url}"',
+                      "-c", 'mcp_servers.ensemble.bearer_token_env_var="CHAT_TOKEN"']
+        if collab:
+            # (approval_policy="never" would *block* MCP tools.)
+            codex_args = ["--dangerously-bypass-approvals-and-sandbox"] + codex_args
+        cfg = {"mcpServers": {"ensemble": {"type": "http", "url": url,
+                                           "headers": {"Authorization": f"Bearer {token}"}}}}
+        mcp_dir = DASHBOARD_DIR / "_mcp"
+        mcp_dir.mkdir(parents=True, exist_ok=True)
+        cfg_path = mcp_dir / f"{uuid.uuid4().hex}.json"
+        cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+        claude_args = ["--mcp-config", str(cfg_path)]
+        if collab:
+            # Autonomous agents see ONLY our server; a human-driven solo agent
+            # keeps the user's own configured MCP servers (Jira etc.) as well.
+            claude_args.append("--strict-mcp-config")
+        return codex_args, claude_args, {"CHAT_TOKEN": token}
+
     def _launch_room_agent_pty(self, room_full: dict, part: dict, task: str,
-                               wire_mcp: bool = True) -> dict:
+                               collab: bool = True) -> dict:
         """Headless variant: spawn the agent in a dashboard-owned PTY (no
         terminal window). Returns {ptyId, cwd, sessionId}. The PtySession owns
         liveness; the doorbell is a PTY write.
 
-        wire_mcp=True (collaboration): wire the chat MCP + a collaboration
-        briefing, and (codex) bypass approvals for autonomy. wire_mcp=False
-        (solo): a plain headless agent the human drives directly through the
-        embedded terminal — no chat tools, no approval bypass, task as the
-        first message."""
+        collab=True: a collaboration briefing (roles, teammates, chat protocol)
+        and, for codex, approval bypass for autonomy. collab=False (solo): a
+        headless agent the human drives directly through the embedded
+        terminal — the task is simply the first message. Both get the Ensemble
+        MCP server (task tools always; chat tools only in a collaboration)."""
         ident = part["identity"]
         agent_key = part["agent"]
         model = (part.get("model") or "").strip()
         token = next((t for t, i in room_full.get("tokens", {}).items()
                       if i == ident), "")
-        url = self._mcp_url()
         base = room_full.get("cwd") or str(CS_ROOT)
         # Project-backed sessions share one workspace (agents work on the same
         # files); ad-hoc scratch collaborations keep per-identity subdirs.
@@ -3688,7 +3979,7 @@ class Handler(BaseHTTPRequestHandler):
             os.makedirs(cwd, exist_ok=True)
         except OSError:
             pass
-        if wire_mcp:
+        if collab:
             teammates = [{"identity": p["identity"], "role": p.get("role", "")}
                          for p in room_full["participants"]
                          if p.get("kind") == "agent" and p["identity"] != ident]
@@ -3700,33 +3991,17 @@ class Handler(BaseHTTPRequestHandler):
             ag.ensure_trusted(cwd)
         label = f"{room_full['title'][:40]} · {ident}"
         meta = {"room": room_full["id"], "identity": ident, "agent": agent_key}
+        codex_mcp, claude_mcp, env = self._mcp_wiring(token, collab)
         if agent_key == "codex":
-            argv = ["codex", "-c", "check_for_update_on_startup=false"]
-            if wire_mcp:
-                # Autonomous: skip approval prompts (incl. MCP tool approval) and
-                # the sandbox. (approval_policy="never" would *block* MCP tools.)
-                argv += ["--dangerously-bypass-approvals-and-sandbox",
-                         "-c", f'mcp_servers.chat.url="{url}"',
-                         "-c", 'mcp_servers.chat.bearer_token_env_var="CHAT_TOKEN"']
+            argv = ["codex", "-c", "check_for_update_on_startup=false"] + codex_mcp
             if model:
                 argv += ["-c", f'model="{model}"']
             cmd = BACKEND.headless_launch(cwd, argv, briefing)
-            sess = ptyrun.create(cmd, cwd=cwd,
-                                 env=({"CHAT_TOKEN": token} if wire_mcp else None),
-                                 label=label, meta=meta)
+            sess = ptyrun.create(cmd, cwd=cwd, env=env, label=label, meta=meta)
             return {"ptyId": sess.id, "cwd": cwd, "sessionId": ""}
         # claude (and claude-N)
-        claude_extra = []
-        if wire_mcp:
-            cfg = {"mcpServers": {"chat": {"type": "http", "url": url,
-                                           "headers": {"Authorization": f"Bearer {token}"}}}}
-            mcp_dir = DASHBOARD_DIR / "_mcp"
-            mcp_dir.mkdir(parents=True, exist_ok=True)
-            cfg_path = mcp_dir / f"{uuid.uuid4().hex}.json"
-            cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
-            claude_extra = ["--mcp-config", str(cfg_path), "--strict-mcp-config"]
         new_sid = str(uuid.uuid4())
-        argv = claude_cmd_args("--session-id", new_sid, *claude_extra)
+        argv = claude_cmd_args("--session-id", new_sid, *claude_mcp)
         if model:
             argv += ["--model", model]
         cmd = BACKEND.headless_launch(cwd, argv, briefing)
@@ -3734,7 +4009,7 @@ class Handler(BaseHTTPRequestHandler):
         return {"ptyId": sess.id, "cwd": cwd, "sessionId": new_sid}
 
     def _resume_room_agent_pty(self, room_full: dict, part: dict,
-                               wire_mcp: bool = True, seed: str = "") -> dict:
+                               collab: bool = True, seed: str = "") -> dict:
         """Relaunch an agent in a fresh PTY, RESUMING its prior conversation
         (claude --resume / codex resume). Used to recover a session after a
         dashboard restart killed its PTY. Returns {ptyId, cwd, sessionId}."""
@@ -3743,7 +4018,6 @@ class Handler(BaseHTTPRequestHandler):
         model = (part.get("model") or "").strip()
         token = next((t for t, i in room_full.get("tokens", {}).items()
                       if i == ident), "")
-        url = self._mcp_url()
         base = room_full.get("cwd") or str(CS_ROOT)
         cwd = part.get("cwd") or os.path.join(base, ident)
         ag = agents.get_agent(agent_key)
@@ -3751,12 +4025,9 @@ class Handler(BaseHTTPRequestHandler):
             ag.ensure_trusted(cwd)
         label = f"{room_full['title'][:40]} · {ident}"
         meta = {"room": room_full["id"], "identity": ident, "agent": agent_key}
+        codex_mcp, claude_mcp, env = self._mcp_wiring(token, collab)
         if agent_key == "codex":
-            argv = ["codex", "-c", "check_for_update_on_startup=false"]
-            if wire_mcp:
-                argv += ["--dangerously-bypass-approvals-and-sandbox",
-                         "-c", f'mcp_servers.chat.url="{url}"',
-                         "-c", 'mcp_servers.chat.bearer_token_env_var="CHAT_TOKEN"']
+            argv = ["codex", "-c", "check_for_update_on_startup=false"] + codex_mcp
             if model:
                 argv += ["-c", f'model="{model}"']
             codex_sid = part.get("sessionId") or (
@@ -3765,28 +4036,62 @@ class Handler(BaseHTTPRequestHandler):
             if codex_sid:
                 argv += ["resume", codex_sid]   # subcommand goes last
             cmd = BACKEND.headless_launch(cwd, argv, "" if codex_sid else seed)
-            sess = ptyrun.create(cmd, cwd=cwd,
-                                 env=({"CHAT_TOKEN": token} if wire_mcp else None),
-                                 label=label, meta=meta)
+            sess = ptyrun.create(cmd, cwd=cwd, env=env, label=label, meta=meta)
             return {"ptyId": sess.id, "cwd": cwd, "sessionId": part.get("sessionId", "")}
         # claude
-        claude_extra = []
-        if wire_mcp:
-            cfg = {"mcpServers": {"chat": {"type": "http", "url": url,
-                                           "headers": {"Authorization": f"Bearer {token}"}}}}
-            mcp_dir = DASHBOARD_DIR / "_mcp"
-            mcp_dir.mkdir(parents=True, exist_ok=True)
-            cfg_path = mcp_dir / f"{uuid.uuid4().hex}.json"
-            cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
-            claude_extra = ["--mcp-config", str(cfg_path), "--strict-mcp-config"]
         sid = part.get("sessionId", "")
         resume = ["--resume", sid] if sid else []
-        argv = claude_cmd_args(*resume, *claude_extra)
+        argv = claude_cmd_args(*resume, *claude_mcp)
         if model:
             argv += ["--model", model]
         cmd = BACKEND.headless_launch(cwd, argv, "")
         sess = ptyrun.create(cmd, cwd=cwd, label=label, meta=meta)
         return {"ptyId": sess.id, "cwd": cwd, "sessionId": sid}
+
+    def _start_room(self, room_full: dict) -> list[dict]:
+        """First launch of a task's agents (a fresh conversation seeded with the
+        spec / collaboration briefing). Marks the room launched. Returns
+        [{identity, ptyId}]."""
+        task = room_full.get("spec", "") or ""
+        collab = room_full.get("mode") != "solo"
+        launched = []
+        for part in [pp for pp in room_full["participants"] if pp.get("kind") == "agent"]:
+            info = self._launch_room_agent_pty(room_full, part, task, collab=collab)
+            part["sessionId"] = info["sessionId"]
+            part["cwd"] = info["cwd"]
+            part["ptyId"] = info["ptyId"]
+            launched.append({"identity": part["identity"], "ptyId": info["ptyId"]})
+        room_full["launched"] = True
+        room_full["status"] = "active"
+        room_full["hopCount"] = 0
+        room_full["waitingFor"] = ""
+        chatroom.update_room(room_full)
+        return launched
+
+    def _start_or_resume_room(self, room_full: dict) -> list[dict]:
+        """Bring a not-running task up: a draft (never launched) starts fresh,
+        anything else relaunches its agents resuming their prior conversations.
+        Returns [{identity, ptyId}]."""
+        if not room_full.get("launched", True):
+            return self._start_room(room_full)
+        agents_in = [pp for pp in room_full.get("participants", [])
+                     if pp.get("kind") == "agent"]
+        solo = room_full.get("mode") == "solo" or len(agents_in) < 2
+        # A solo task whose agent never actually got going (no messages yet)
+        # is (re)started WITH its specification as the first prompt —
+        # otherwise "Open" would bring up a blank agent that idles.
+        seed = (room_full.get("spec") or "") if (solo and not room_full.get("messages")) else ""
+        resumed = []
+        for part in agents_in:
+            info = self._resume_room_agent_pty(room_full, part, collab=not solo, seed=seed)
+            part["ptyId"] = info["ptyId"]
+            part["cwd"] = info["cwd"]
+            resumed.append({"identity": part["identity"], "ptyId": info["ptyId"]})
+        room_full["status"] = "active"
+        room_full["hopCount"] = 0
+        room_full["waitingFor"] = ""
+        chatroom.update_room(room_full)
+        return resumed
 
     def _brief_agents(self, room_id: str) -> None:
         """Introduce the room to each agent: its identity, partner(s), and the
@@ -3927,14 +4232,20 @@ class Handler(BaseHTTPRequestHandler):
             return ok({
                 "protocolVersion": params.get("protocolVersion", "2025-06-18"),
                 "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {"name": "ensemble-chat", "version": "1.0"},
+                "serverInfo": {"name": "ensemble", "version": "2.0"},
             })
         if method is not None and method.startswith("notifications/"):
             return None  # notifications get no JSON-RPC response
         if method == "ping":
             return ok({})
         if method == "tools/list":
-            return ok({"tools": chatroom.MCP_TOOLS})
+            # Task tools for everyone; chat tools only make sense in a
+            # collaboration (a solo agent has no teammate to hand off to).
+            room = chatroom.get_room(room_id)
+            tools = list(ensemble_tools.TOOLS)
+            if room and room.get("mode") != "solo":
+                tools = list(chatroom.MCP_TOOLS) + tools
+            return ok({"tools": tools})
         if method == "tools/call":
             return self._mcp_tool_call(params.get("name"),
                                        params.get("arguments") or {},
@@ -3942,6 +4253,10 @@ class Handler(BaseHTTPRequestHandler):
         return err(-32601, f"method not found: {method}")
 
     def _mcp_tool_call(self, name, args, room_id, identity, ok, err):
+        if name in ensemble_tools.NAMES:
+            text, is_err = ensemble_tools.call(name, args, room_id, identity, self)
+            return ok({"content": [{"type": "text", "text": text}],
+                       "isError": is_err})
         if name == "chat_send":
             text = (args.get("message") or "").strip()
             to = (args.get("to") or "").strip()
@@ -4127,84 +4442,20 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200 if ok else 404, {"ok": ok})
             return
         if p == "/api/room/new":
-            # Create a multiagent room AND launch its agents pre-wired to the
-            # chat MCP (each with its own identity token), seeded with the task.
-            title = (data.get("title") or "multiagent session").strip()[:120]
-            task = (data.get("task") or "").strip()
-            agent_list = data.get("agents") or []
-            if not isinstance(agent_list, list) or len(agent_list) < 1:
-                self._send_json(400, {"error": "need_an_agent"})
-                return
-            # Each item is either a plain agent key ("claude") or an object
-            # {agent, model, role}. Normalize to (agent_key, model, role) tuples.
-            specs = []
-            for item in agent_list:
-                if isinstance(item, dict):
-                    ak = (item.get("agent") or "").strip()
-                    mdl = (item.get("model") or "").strip()
-                    role = (item.get("role") or "").strip()
-                else:
-                    ak, mdl, role = str(item).strip(), "", ""
-                ag = agents.get_agent(ak)
-                if ag is None or not ag.installed():
-                    self._send_json(400, {"error": f"agent_unavailable:{ak}"})
-                    return
-                specs.append((ak, mdl, role))
-            # A session belongs to a project (optional) and gets its own workspace.
-            # The workspace mode is the caller's choice — the framework never forces
-            # a code checkout (a project or a session may have no code).
-            project_id = (data.get("projectId") or "").strip()
-            ws_mode = (data.get("workspace") or "empty").strip()
-            project = None
-            if project_id:
-                project = next((pr for pr in load_projects() if pr["id"] == project_id), None)
-                if project is None:
-                    self._send_json(400, {"error": "no_such_project"})
-                    return
-            ok, base, ws_meta, msg = setup_session_workspace(project, ws_mode, title)
+            # Create a task (room + workspace + task folder) and — unless
+            # start:false asks for a draft — launch its agents pre-wired to the
+            # Ensemble MCP (each with its own identity token), seeded with the
+            # spec. The workspace mode is the caller's choice: the framework
+            # never forces a code checkout (a project or task may have no code).
+            ok, room_full, err = create_task(
+                data.get("title"), data.get("task"), data.get("projectId"),
+                data.get("agents") or [], data.get("workspace") or "empty")
             if not ok:
-                self._send_json(400, {"error": msg})
+                self._send_json(400, {"error": err})
                 return
-            members = [{"identity": ak, "agent": ak, "model": mdl, "role": role}
-                       for ak, mdl, role in specs]
-            room = chatroom.create_room(title, members)
-            room_full = chatroom.get_room(room["id"], public=False)
-            room_full["cwd"] = base
-            room_full["projectId"] = project_id
-            room_full["workspace"] = ws_meta
-            room_full["spec"] = task            # the task's specification, shown in the UI
-            room_full["taskDir"] = ws_meta.get("taskDir", "")
-            # Project-backed workspaces (inplace/copy/worktree) are shared: agents
-            # collaborate on the same files, not isolated per-identity subdirs.
-            room_full["sharedCwd"] = ws_meta.get("mode", "empty") != "empty"
-            if project_id:
-                assign_session_project(room["id"], project_id)
-            if ws_meta.get("taskDir"):
-                _write_task_json(ws_meta["taskDir"], {
-                    "roomId": room["id"], "projectId": project_id, "title": title,
-                    "spec": task, "agents": members, "workspace": ws_meta,
-                    "createdAt": int(time.time())})
-            # 1 agent → a solo session the human drives directly (no chat MCP,
-            # terminal-primary window). 2+ → an autonomous collaboration.
-            solo = len(specs) < 2
-            room_full["mode"] = "solo" if solo else "collab"
-            # Persist cwd/mode BEFORE launching so that if the launch is
-            # interrupted (e.g. the server is bounced mid-spawn) the room is left
-            # in a resumable "not running" state, not a corrupt one with no cwd.
-            chatroom.update_room(room_full)
-            launched = []
-            for part in [pp for pp in room_full["participants"]
-                         if pp.get("kind") == "agent"]:
-                info = self._launch_room_agent_pty(room_full, part, task,
-                                                   wire_mcp=not solo)
-                part["sessionId"] = info["sessionId"]
-                part["cwd"] = info["cwd"]
-                part["ptyId"] = info["ptyId"]
-                launched.append({"identity": part["identity"],
-                                 "ptyId": info["ptyId"]})
-            chatroom.update_room(room_full)
+            launched = [] if data.get("start") is False else self._start_room(room_full)
             self._send_json(200, {"ok": True,
-                                  "room": chatroom.get_room(room["id"]),
+                                  "room": chatroom.get_room(room_full["id"]),
                                   "launched": launched})
             return
         if p == "/api/room/say":
@@ -4274,7 +4525,7 @@ class Handler(BaseHTTPRequestHandler):
                     part["sessionId"] = (m.get("sessionId") or "").strip()
                     part["cwd"] = (m.get("cwd") or "").strip()
                     info = self._resume_room_agent_pty(room_full, part,
-                                                       wire_mcp=not solo)
+                                                       collab=not solo)
                     part["ptyId"] = info["ptyId"]
                 chatroom.update_room(room_full)
                 self._send_json(200, {"ok": True,
@@ -4302,7 +4553,7 @@ class Handler(BaseHTTPRequestHandler):
                         if p.get("kind") == "agent")
             part["sessionId"] = sid
             part["cwd"] = cwd          # resume in place (no per-agent subfolder)
-            info = self._resume_room_agent_pty(room_full, part, wire_mcp=False)
+            info = self._resume_room_agent_pty(room_full, part, collab=False)
             part["ptyId"] = info["ptyId"]
             chatroom.update_room(room_full)
             self._send_json(200, {"ok": True,
@@ -4316,25 +4567,9 @@ class Handler(BaseHTTPRequestHandler):
             if room_full is None:
                 self._send_json(404, {"error": "no_such_room"})
                 return
-            agents_in = [pp for pp in room_full.get("participants", [])
-                         if pp.get("kind") == "agent"]
-            solo = room_full.get("mode") == "solo" or len(agents_in) < 2
-            # A solo task whose agent never actually got going (no messages
-            # yet) is (re)started WITH its specification as the first prompt —
-            # otherwise "Open" would bring up a blank agent that idles.
-            seed = (room_full.get("spec") or "") if (solo and not room_full.get("messages")) else ""
-            resumed = []
-            for part in agents_in:
-                info = self._resume_room_agent_pty(room_full, part,
-                                                   wire_mcp=not solo, seed=seed)
-                part["ptyId"] = info["ptyId"]
-                part["cwd"] = info["cwd"]
-                resumed.append({"identity": part["identity"],
-                                "ptyId": info["ptyId"]})
-            room_full["status"] = "active"
-            room_full["hopCount"] = 0
-            room_full["waitingFor"] = ""
-            chatroom.update_room(room_full)
+            # A draft (created but never launched, e.g. by a planning agent)
+            # starts fresh; anything else resumes its agents' conversations.
+            resumed = self._start_or_resume_room(room_full)
             self._send_json(200, {"ok": True, "resumed": resumed,
                                   "room": chatroom.get_room(rid)})
             return
@@ -4344,64 +4579,14 @@ class Handler(BaseHTTPRequestHandler):
             # instead of its per-agent sub-sessions reappearing separately. Use
             # /api/room/dismiss to actually remove it.
             rid = (data.get("roomId") or "").strip()
-            room = chatroom.get_room(rid, public=False)
-            if room:
-                for part in room.get("participants", []):
-                    pid = part.get("ptyId")
-                    if pid:
-                        ptyrun.kill(pid)
             # Killing the PTYs makes the room not-live; no explicit 'ended' state.
-            self._send_json(200, {"ok": room is not None})
+            self._send_json(200, {"ok": stop_task(rid)})
             return
         if p == "/api/room/delete" or p == "/api/room/dismiss":
-            # Unified Delete for a collaboration (or a grouped orphan): stop the
-            # agents, remove the room record AND every member's transcript (so it
-            # can't resurface as an orphan/history row), and — when the working
-            # dir is a dashboard ~/cs/<NN_slug> scratch folder — delete that
-            # folder too. A real project folder is NEVER removed.
+            # Unified Delete for a task/collaboration (or a grouped orphan) —
+            # see delete_task for exactly what is (and is never) removed.
             rid = (data.get("roomId") or "").strip()
-            members = data.get("members") or []
-            room = chatroom.get_room(rid, public=False) if rid else None
-            result = {"transcripts": [], "folders": [], "ok": True}
-            cwds: list[str] = []
-            if room:
-                for part in room.get("participants", []):
-                    pid = part.get("ptyId")
-                    if pid:
-                        try:
-                            ptyrun.kill(pid)
-                        except Exception:
-                            pass
-                cwds.append(room.get("cwd", "") or "")
-                members = [{"agent": pp.get("agent", ""),
-                            "sessionId": pp.get("sessionId", ""),
-                            "cwd": pp.get("cwd", "")}
-                           for pp in room.get("participants", [])
-                           if pp.get("kind") == "agent"]
-            for m in members:
-                sid = (m.get("sessionId") or "").strip()
-                agent = (m.get("agent") or "claude").strip() or "claude"
-                cwds.append(m.get("cwd", "") or "")
-                if not sid:
-                    continue
-                if agent == "claude":
-                    result["transcripts"] += delete_session(sid).get("files", [])
-                else:
-                    ag = agents.get_agent(agent)
-                    if ag is not None and hasattr(ag, "delete_session"):
-                        try:
-                            result["transcripts"] += ag.delete_session(sid)
-                        except Exception:
-                            pass
-            if rid:
-                chatroom.delete_room(rid)
-            seen: set[str] = set()
-            for c in cwds:
-                folder = _delete_scratch_root(c)
-                if folder and folder not in seen:
-                    seen.add(folder)
-                    result["folders"].append(folder)
-            self._send_json(200, result)
+            self._send_json(200, delete_task(rid, data.get("members") or []))
             return
         if p == "/api/fork":
             sid = data.get("sessionId")
@@ -4779,6 +4964,13 @@ def main():
     cleaned = cleanup_rename_artifacts()
     if cleaned:
         print(f"cleaned up {cleaned} rename artifact session(s)", flush=True)
+    # Refresh the agent skills (the 'ensemble' skill teaches agents the task
+    # tools) into each installed agent's user-level skills folder.
+    try:
+        for pth in install_agent_skills():
+            print(f"installed agent skill: {pth}", flush=True)
+    except Exception as e:
+        print(f"agent skill install skipped: {e}", flush=True)
 
     def _announce_remote(ip: str) -> None:
         print(f"ensemble [{BACKEND.os_name}]: http://{ip}:{port} (remote)", flush=True)
