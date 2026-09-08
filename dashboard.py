@@ -911,14 +911,71 @@ def resolve_file_ref(raw: str, room_id: str = "", cwd: str = "") -> Path | None:
     if fp.is_absolute():
         return fp if fp.is_file() else None
     rel = raw.replace("/", os.sep)
-    for b in _file_ref_bases(room_id, cwd):
+    bases = _file_ref_bases(room_id, cwd)
+    for b in bases:
         try:
             cand = Path(os.path.expanduser(b)) / rel
             if cand.is_file():
                 return cand
         except (ValueError, OSError):
             continue
-    return None
+    # "navigation.html" mentioned after "docs/ui/sketches/console.html": the
+    # agent dropped the folder. Look for the name (or trailing path) under the
+    # same folders, bounded, and take the shallowest / newest match.
+    return _find_file_by_tail(rel, bases)
+
+
+_FILE_SEARCH_SKIP = {"node_modules", ".venv", "venv", "__pycache__", "target", "dist",
+                     "build", ".idea", ".tox", "site-packages", ".git"}
+
+
+def _find_file_by_tail(rel: str, bases: list[str], max_depth: int = 6,
+                       max_entries: int = 40000) -> Path | None:
+    """First file under any base whose path ends with ``rel`` (a bare name or a
+    partial path like ``sketches/navigation.html``). Bounded walk: hidden and
+    dependency folders are skipped, depth and total entries are capped."""
+    parts = [x for x in rel.replace("/", os.sep).split(os.sep) if x and x != "."]
+    if not parts or ".." in parts:
+        return None
+    name = parts[-1].lower()
+    tail = os.sep.join(parts).lower()
+    best: tuple[int, float, Path] | None = None
+    seen_roots: set[str] = set()
+    budget = max_entries
+    for b in bases:
+        try:
+            root = os.path.expanduser(b)
+            key = os.path.normcase(os.path.normpath(root))
+        except (ValueError, OSError):
+            continue
+        if key in seen_roots or not os.path.isdir(root):
+            continue
+        seen_roots.add(key)
+        base_depth = root.rstrip("\\/").count(os.sep)
+        for dirpath, dirnames, filenames in os.walk(root, topdown=True):
+            depth = dirpath.rstrip("\\/").count(os.sep) - base_depth
+            dirnames[:] = [d for d in dirnames
+                           if not d.startswith(".") and d.lower() not in _FILE_SEARCH_SKIP] \
+                if depth < max_depth else []
+            budget -= len(filenames) + len(dirnames)
+            for fn in filenames:
+                if fn.lower() != name:
+                    continue
+                full = os.path.join(dirpath, fn)
+                if not full.lower().endswith(tail):
+                    continue
+                try:
+                    mtime = os.stat(full).st_mtime
+                except OSError:
+                    continue
+                cand = (depth, -mtime, Path(full))
+                if best is None or cand[:2] < best[:2]:
+                    best = cand
+            if budget <= 0:
+                break
+        if best is not None and best[0] == 0:
+            break
+    return best[2] if best else None
 
 
 def load_session_projects() -> dict[str, str]:
