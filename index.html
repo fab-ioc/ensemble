@@ -1478,7 +1478,7 @@ function resolvePath(p, base) {
 }
 let FILE_LINK_ROOM = '';   // room id woven into file links so /fileview can send comments back
 let FILE_LINK_BASE = '';   // the task folder relative paths resolve against
-const fileHref = p => '/fileview?path=' + encodeURIComponent(resolvePath(p, FILE_LINK_BASE)) + (FILE_LINK_ROOM ? '&room=' + encodeURIComponent(FILE_LINK_ROOM) : '');
+const fileHref = p => '/fileview?path=' + encodeURIComponent((p || '').trim()) + (FILE_LINK_ROOM ? '&room=' + encodeURIComponent(FILE_LINK_ROOM) : '') + (FILE_LINK_BASE ? '&cwd=' + encodeURIComponent(FILE_LINK_BASE) : '');
 // Show the human ("user") by their configured name as a highlighted @mention.
 const operatorLabel = () => (typeof PREFS !== 'undefined' && PREFS && (PREFS.operatorName || PREFS.operatorNickname)) || 'you';
 const identLabel = id => `<span class="mention">@${esc(id === 'user' ? operatorLabel() : id)}</span>`;

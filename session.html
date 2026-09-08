@@ -212,7 +212,7 @@ function resolvePath(p, base) {
   return base.replace(/[\\\/]+$/, '') + sep + p.replace(/^\.[\\\/]/, '').replace(/[\\\/]/g, sep);
 }
 const fileBase = () => (ROOM_OBJ && ROOM_OBJ.cwd) || '';
-const fileHref = p => '/fileview?path=' + encodeURIComponent(resolvePath(p, fileBase())) + (ROOM ? '&room=' + encodeURIComponent(ROOM) : '');
+const fileHref = p => '/fileview?path=' + encodeURIComponent((p || '').trim()) + (ROOM ? '&room=' + encodeURIComponent(ROOM) : '') + (fileBase() ? '&cwd=' + encodeURIComponent(fileBase()) : '');
 function mdToHtml(src) {
   const codes = [];
   let s = (src ?? '').replace(/\r\n/g, '\n');

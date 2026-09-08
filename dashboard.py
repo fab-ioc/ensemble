@@ -770,8 +770,8 @@ def load_projects() -> list[dict]:
 
     def _add(p: dict) -> None:
         key = os.path.normcase(os.path.normpath(p["path"]))
-        if key not in seen:
-            seen.add(key)
+        if key not in seen and p["id"] not in seen:
+            seen.add(key); seen.add(p["id"])
             out.append(p)
 
     try:
@@ -865,6 +865,60 @@ def unregister_project(project_id: str) -> bool:
         return False
     save_projects(kept)
     return True
+
+
+def _file_ref_bases(room_id: str = "", cwd: str = "") -> list[str]:
+    """Folders a relative file mention ("docs/plan.md") may be relative to, in
+    order: an explicit cwd, then the room's own folders (cwd, task dir, each
+    agent's cwd), then its project's code folder and home."""
+    bases: list[str] = []
+
+    def add(x) -> None:
+        x = (x or "").strip() if isinstance(x, str) else ""
+        if x and x not in bases:
+            bases.append(x)
+
+    add(cwd)
+    if room_id:
+        try:
+            rm = chatroom.get_room(room_id) or {}
+        except Exception:
+            rm = {}
+        add(rm.get("cwd")); add(rm.get("taskDir")); add(rm.get("sharedCwd"))
+        for part in rm.get("participants") or []:
+            if isinstance(part, dict):
+                add(part.get("cwd"))
+        pid = rm.get("projectId") or load_session_projects().get(room_id)
+        if pid:
+            for pj in load_projects():
+                if pj.get("id") == pid:
+                    add(pj.get("path"))
+                    add(pj.get("home") or project_home(pj, create=False))
+                    break
+    return bases
+
+
+def resolve_file_ref(raw: str, room_id: str = "", cwd: str = "") -> Path | None:
+    """The file an agent mentioned: absolute paths as-is; a relative one is
+    tried against ``_file_ref_bases`` and the first existing file wins."""
+    raw = (raw or "").strip().strip("\"'")
+    if not raw:
+        return None
+    try:
+        fp = Path(os.path.expanduser(raw))
+    except (ValueError, OSError):
+        return None
+    if fp.is_absolute():
+        return fp if fp.is_file() else None
+    rel = raw.replace("/", os.sep)
+    for b in _file_ref_bases(room_id, cwd):
+        try:
+            cand = Path(os.path.expanduser(b)) / rel
+            if cand.is_file():
+                return cand
+        except (ValueError, OSError):
+            continue
+    return None
 
 
 def load_session_projects() -> dict[str, str]:
@@ -3129,12 +3183,11 @@ class Handler(BaseHTTPRequestHandler):
             if not raw:
                 self._send_json(400, {"error": "missing_path"})
                 return
-            try:
-                fp = Path(raw).expanduser()
-            except (ValueError, OSError):
-                self._send_json(400, {"error": "bad_path"})
-                return
-            if not fp.is_file():
+            # Relative mentions ("docs/plan.md") resolve against the room's
+            # folders and its project, so agents needn't spell out full paths.
+            fp = resolve_file_ref(raw, room_id=(q.get("room", [""])[0]).strip(),
+                                  cwd=(q.get("cwd", [""])[0]).strip())
+            if fp is None:
                 self._send_json(404, {"error": "not_found"})
                 return
             ext = fp.suffix.lower()

@@ -103,7 +103,9 @@ function resolvePath(p, base) {
 const looksPath = looksFilePath;
 // Relative links inside a document resolve against the document's own folder.
 const FILE_BASE = (new URLSearchParams(location.search).get('path') || '').replace(/[\\\/][^\\\/]*$/, '');
-function fileLink(p) { return '/fileview?path=' + encodeURIComponent(resolvePath(p, FILE_BASE)) + (ROOM ? '&room=' + encodeURIComponent(ROOM) : ''); }
+const CWD = new URLSearchParams(location.search).get('cwd') || '';
+const CTX = (ROOM ? '&room=' + encodeURIComponent(ROOM) : '') + (CWD ? '&cwd=' + encodeURIComponent(CWD) : '');
+function fileLink(p) { return '/fileview?path=' + encodeURIComponent(resolvePath(p, FILE_BASE)) + CTX; }
 function mdToHtml(src) {
   const codes = [];
   const ph = h => _MDA + (codes.push(h) - 1) + _MDZ;
@@ -273,7 +275,7 @@ function enableComments(root) {
   const base = path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path;
   nameEl.textContent = base;
   document.title = base || 'file';
-  const src = '/api/file?path=' + encodeURIComponent(path);
+  const src = '/api/file?path=' + encodeURIComponent(path) + CTX;
   document.getElementById('raw').href = src;
   if (!path) { main.innerHTML = '<div class="err">No path given.</div>'; return; }
   const ext = (base.match(/\.(\w+)$/) || [,''])[1].toLowerCase();
