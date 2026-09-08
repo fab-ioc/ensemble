@@ -26,6 +26,7 @@
   main { flex:1; display:flex; min-height:0; }
   #chatcol { flex:1; display:flex; flex-direction:column; min-width:0; border-right:1px solid var(--border); }
   #msgs { flex:1; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:10px; }
+  .msg.pending { opacity:.72; }   /* sent, not yet in the transcript */
   .msg { border:1px solid var(--border); border-radius:10px; padding:8px 10px; max-width:92%; background:#ffffff08; }
   .msg .from { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; opacity:.85; margin-bottom:3px; }
   .msg.claude { border-color:#d9775755; } .msg.claude .from { color:#d97757; }
@@ -424,15 +425,47 @@ function renderBubbles(items) {
   if (_liveSel && !_liveSel.isCollapsed && _liveSel.rangeCount &&
       box.contains(_liveSel.getRangeAt(0).commonAncestorContainer)) return;
   const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 50;
+  items = withTaskBubble(items, ROOM_OBJ && ROOM_OBJ.spec, 'from');
   box.innerHTML = items.map(m => {
     const cls = m.from === 'user' ? 'user' : esc(m.from);
     const to = m.to && m.to !== 'all' ? ` <span class="to">→ ${identLabel(m.to)}</span>` : '';
     return `<div class="msg ${cls}" data-mid="${esc(m.id || '')}" data-from="${esc(m.from || '')}"><div class="from">${identLabel(m.from)}${to}</div><div class="text md">${mdToHtml(m.text)}</div></div>`;
   }).join('');
+  // Messages you just sent that the transcript hasn't recorded yet (a long
+  // agent turn delays the flush): keep showing them until they appear for real.
+  // Some never will — a "/command", or a digit answering a prompt — so an echo
+  // also goes once the conversation has moved on (anything new arrived after
+  // it was sent), or after two minutes, instead of sticking as a phantom
+  // "latest message".
+  const nowS = Date.now() / 1000;
+  PENDING_USER.forEach(p => { if (p.n == null) p.n = items.length; });
+  PENDING_USER = PENDING_USER.filter(p =>
+    !items.some(m => m.from === 'user' && (m.text || '').trim() === p.text)
+    && items.length <= p.n
+    && (nowS - p.ts) < 120);
+  box.insertAdjacentHTML('beforeend', PENDING_USER.map(p =>
+    `<div class="msg user pending" data-from="user"><div class="from">${identLabel('user')}</div><div class="text md">${mdToHtml(p.text)}</div></div>`).join(''));
   if (atBottom) box.scrollTop = box.scrollHeight;
   applyComments();
 }
 function renderMsgs(room) { renderBubbles(room.messages); }
+// The task text is the first message of the conversation. Prepend it as a user
+// bubble unless the history already records it verbatim.
+function withTaskBubble(items, spec, key) {
+  const t = (spec || '').trim();
+  if (!t) return items;
+  if (items.some(m => m[key] === 'user' && (m.text || '').trim() === t)) return items;
+  return [{ id: 'task', from: 'user', who: 'user', to: '', text: spec }].concat(items);
+}
+let PENDING_USER = [];   // optimistic echo of what you sent (solo sessions)
+function showPendingUser(text) {
+  const t = (text || '').trim(); if (!t) return;
+  PENDING_USER.push({ text: t, ts: Date.now() / 1000 });
+  const box = $('#msgs'); if (!box) return;
+  box.insertAdjacentHTML('beforeend',
+    `<div class="msg user pending" data-from="user"><div class="from">${identLabel('user')}</div><div class="text md">${mdToHtml(t)}</div></div>`);
+  box.scrollTop = box.scrollHeight;
+}
 // Solo session: render its live transcript (user + assistant turns) as bubbles,
 // fetched once per completed turn (see the activity-driven trigger in refresh).
 let SOLO_TURN_COUNT = -1, SOLO_FETCHING = false, SOLO_SID = '', SOLO_AGENT = '', SOLO_PTY = '', _prevWorking = {}, _soloStatKey = '';
@@ -440,7 +473,7 @@ let SOLO_TURN_COUNT = -1, SOLO_FETCHING = false, SOLO_SID = '', SOLO_AGENT = '',
 // grows. Reliable (catches every new turn, even while the agent is still working)
 // and light (the full transcript is fetched only on a real change).
 async function checkSolo() {
-  if (!SOLO_SID) return;
+  if (!SOLO_SID) { renderBubbles([]); return; }
   try {
     const s = await fetch('/api/session/' + encodeURIComponent(SOLO_SID) + '?stat=1').then(r => r.json());
     if (s && typeof s.size === 'number') {
@@ -533,7 +566,7 @@ async function refresh() {
     SOLO_SID = a.sessionId || ''; SOLO_AGENT = a.identity || 'claude'; SOLO_PTY = a.ptyId || '';
     checkSolo();   // stat-driven: first load + every new turn
   } else {
-    SOLO_SID = '';
+    SOLO_SID = ''; SOLO_PTY = '';
     renderMsgs(room);
   }
   updateAgentStatus();
@@ -578,7 +611,7 @@ async function updateAgentStatus() {
   renderActivity(map, lmap);
   // Solo: when the agent finishes a turn (leaves the working state), pull the new
   // transcript once — avoids constantly re-fetching a large transcript.
-  if (SOLO_SID) {
+  if (SOLO_PTY) {
     const st = agentState({ sessionId: SOLO_SID, ptyId: SOLO_PTY }, map, lmap);
     // Show the prompt card ONLY when the session genuinely reports it's blocked
     // on you (status 'waiting'). The earlier screen-scrape fallback produced
@@ -633,29 +666,35 @@ function looksLikePrompt(lines) {
 // Parse the on-screen selectable list into ordered options plus which one is
 // currently highlighted (the ❯ cursor). Handles numbered ("1. foo") and
 // arrow-marked ("❯ foo") forms.
+// Cursor markers: Claude Code draws ❯ (or ➤/▶); some terminals fall back to a
+// plain ASCII ">" at the start of the line (that is how the resume dialog came
+// out), so that counts too — but only in the leading position.
+const CUR_RE = /[❯➤▶]/;
+function isCursorLine(l) { return CUR_RE.test(l) || /^\s*>\s/.test(l); }
+function stripCursor(l) { return l.replace(/^[\s❯➤▶>]+/, ''); }
 function parseOptions(lines) {
   let items = [];
-  lines.forEach(l => {
-    const m = l.match(/^\s*([❯➤▶])?\s*(\d+)[.)]\s+(.+?)\s*$/);
-    if (m) items.push({ label: m[3].trim(), cursor: !!m[1] || /[❯➤▶]/.test(l) });
+  lines.forEach((l, i) => {
+    const m = l.match(/^\s*([❯➤▶>])?\s*(\d+)[.)]\s+(.+?)\s*$/);
+    if (m) items.push({ label: m[3].trim(), num: m[2], line: i, cursor: !!m[1] || CUR_RE.test(l) });
   });
   if (items.length >= 2) return finalizeOptions(items);
   // Arrow-marked cluster around the ❯ cursor.
   items = [];
-  const curLine = lines.findIndex(l => /[❯➤▶]/.test(l));
-  if (curLine < 0) return { opts: [], cur: 0 };
-  const col = lines[curLine].search(/[❯➤▶]/);
-  const sib = l => { const t = l.replace(/^[\s❯➤▶]+/, ''); return t && !/^[─│╭╮╰╯├┤┬┴┼=_.\s]+$/.test(t) && l.length > col; };
+  const curLine = lines.findIndex(isCursorLine);
+  if (curLine < 0) return { opts: [], cur: 0, first: -1 };
+  const col = lines[curLine].search(/[❯➤▶>]/);
+  const sib = l => { const t = stripCursor(l); return t && !/^[─│╭╮╰╯├┤┬┴┼=_.\s]+$/.test(t) && l.length > col; };
   let a = curLine, b = curLine;
   while (a - 1 >= 0 && sib(lines[a - 1])) a--;
   while (b + 1 < lines.length && sib(lines[b + 1])) b++;
-  for (let i = a; i <= b; i++) items.push({ label: lines[i].replace(/^[\s❯➤▶]+/, '').replace(/\s+$/, ''), cursor: i === curLine });
-  return items.length >= 2 ? finalizeOptions(items) : { opts: [], cur: 0 };
+  for (let i = a; i <= b; i++) items.push({ label: stripCursor(lines[i]).replace(/\s+$/, ''), num: String(i - a + 1), line: i, cursor: i === curLine });
+  return items.length >= 2 ? finalizeOptions(items) : { opts: [], cur: 0, first: -1 };
 }
 function finalizeOptions(items) {
   let cur = items.findIndex(x => x.cursor);
   if (cur < 0) cur = 0;
-  return { opts: items.map(x => ({ label: x.label })), cur };
+  return { opts: items.map(x => ({ label: x.label, num: x.num })), cur, first: items[0].line };
 }
 // Move the highlight to the target option using RELATIVE arrow steps from where
 // it currently sits — never a blind burst (that walks off the option list into
@@ -681,11 +720,23 @@ function renderPromptCard() {
   const parsed = parseOptions(lines);
   const opts = parsed.opts;
   PC_SEL = parsed.cur;                       // sync to the on-screen highlight
-  const body = lines.length ? lines.join('\n') : 'The agent is waiting for your input.';
+  // Show the prompt itself, not the whole scrollback above it: cut at the last
+  // horizontal rule before the options, else keep a few lines of context.
+  let shown = lines;
+  if (parsed.first > 0) {
+    let start = parsed.first;
+    for (let i = parsed.first - 1; i >= 0 && parsed.first - i <= 12; i--) {
+      if (/^[\s─━═\-_]{4,}$/.test(lines[i])) { start = i + 1; break; }
+      start = i;
+    }
+    while (start < parsed.first && !lines[start].trim()) start++;
+    shown = lines.slice(start);
+  }
+  const body = shown.length ? shown.join('\n') : 'The agent is waiting for your input.';
   const total = opts.length;
   const optsHtml = total
     ? `<div class="pc-opts">` + opts.map((o, i) =>
-        `<button class="pc-opt${i === parsed.cur ? ' sel' : ''}" data-i="${i}"><span class="pc-onum">${i + 1}</span>${esc(o.label)}</button>`).join('') + `</div>`
+        `<button class="pc-opt${i === parsed.cur ? ' sel' : ''}" data-i="${i}"><span class="pc-onum">${esc(o.num || String(i + 1))}</span>${esc(o.label)}</button>`).join('') + `</div>`
     : '';
   card.innerHTML =
     `<div class="pc-head">⚠ The agent is waiting for your answer<button class="pc-x" title="Dismiss this card">✕</button></div>`
@@ -724,8 +775,14 @@ async function sendSolo(text) {
 }
 $('#send').onclick = async () => {
   const t = $('#input').value.trim(); if (!t) return;
-  if (SOLO_SID) {
+  // Solo routes straight into the agent's PTY. Key on the PTY, not SOLO_SID:
+  // codex mints its own session id and only reveals it once it has written a
+  // rollout, so early in a solo codex session there is a terminal to type into
+  // but no id yet — and the room relay ("use chat_read") is meaningless here,
+  // a solo agent has no chat tools.
+  if (SOLO_PTY) {
     await sendSolo(t);
+    showPendingUser(t);        // show it now; the transcript catches up later
     $('#input').value = '';
     setTimeout(checkSolo, 1200);
     return;
@@ -956,7 +1013,7 @@ async function submitComments() {
   const body = `## Review comments (${COMMENTS.length})\n\n` +
     COMMENTS.map((c, i) => `**${i + 1}.** > ${c.quote.replace(/\s*\n\s*/g, ' ').trim()}\n\n${c.note}`).join('\n\n');
   try {
-    if (SOLO_SID) {
+    if (SOLO_PTY) {
       await sendSolo(body);
       COMMENTS.length = 0; clearHighlights(); renderCmtTray();
       setTimeout(checkSolo, 1200);

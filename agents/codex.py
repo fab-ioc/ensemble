@@ -70,6 +70,30 @@ def _text_of(content) -> str:
     return ""
 
 
+def _read_meta(path: Path) -> dict:
+    """The `session_meta` payload (line 1) only — id, cwd, start timestamp.
+
+    Reading one line is orders of magnitude cheaper than `_parse_rollout`, which
+    walks the whole file; use this whenever only the session's identity or cwd
+    is needed (id lookup, cwd lookup, liveness backfill).
+    """
+    try:
+        with path.open(encoding="utf-8", errors="replace") as fh:
+            d = json.loads(fh.readline() or "{}")
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if d.get("type") != "session_meta":
+        return {}
+    return d.get("payload") or {}
+
+
+def _mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def _parse_rollout(path: Path) -> AgentSession | None:
     """Read one rollout file into a normalized AgentSession."""
     session_id = ""
@@ -181,17 +205,114 @@ class CodexAgent(AgentType):
             argv.append(prompt)
         return argv
 
-    def latest_session_id_for_cwd(self, cwd: str) -> str:
+    def rollout_files(self) -> list[Path]:
+        """Every rollout file, newest first (by mtime)."""
+        root = self.sessions_dir()
+        if not root.exists():
+            return []
+        files = list(root.glob("*/*/*/rollout-*.jsonl"))
+        files.sort(key=_mtime, reverse=True)
+        return files
+
+    def rollouts_for_session(self, session_id: str) -> list[Path]:
+        """Every rollout belonging to ``session_id``, oldest first.
+
+        The id is the uuid in the filename, so a targeted glob finds it without
+        touching the rest of the history — this runs on the dashboard's poll
+        loop, so it must not cost a full scan. Only when that misses (older
+        layouts, or a resume that forked a file under a different name) do we
+        fall back to reading each rollout's `session_meta` line."""
+        root = self.sessions_dir()
+        if not session_id or not root.exists():
+            return []
+        hits = list(root.glob(f"*/*/*/rollout-*-{session_id}.jsonl"))
+        if not hits:
+            hits = [f for f in self.rollout_files()
+                    if (_read_meta(f).get("session_id")
+                        or _read_meta(f).get("id")) == session_id]
+        hits.sort(key=_mtime)
+        return hits
+
+    def session_stat(self, session_id: str) -> dict | None:
+        """Aggregate size + newest mtime across the session's rollouts, or None
+        when it has none yet. Backs the dashboard's cheap "did the transcript
+        grow?" poll, the same signal a Claude session's .jsonl provides."""
+        files = self.rollouts_for_session(session_id)
+        if not files:
+            return None
+        size, mtime = 0, 0.0
+        for f in files:
+            try:
+                st = f.stat()
+            except OSError:
+                continue
+            size += st.st_size
+            mtime = max(mtime, st.st_mtime)
+        return {"size": size, "mtime": mtime}
+
+    def read_turns(self, session_id: str) -> list[dict]:
+        """User + assistant text turns, chronological — the shape the chat view
+        renders as bubbles: ``{timestamp, role, text}``.
+
+        Only `response_item` messages are read: codex records each one a second
+        time as an `event_msg`/`item_completed`, so taking both would double
+        every bubble. `developer` messages (skills, harness preamble) and
+        injected `<environment_context>`-style user blocks are dropped — they're
+        plumbing, not conversation."""
+        turns: list[dict] = []
+        seen: set[str] = set()
+        for path in self.rollouts_for_session(session_id):
+            try:
+                with path.open(encoding="utf-8", errors="replace") as fh:
+                    for ln in fh:
+                        ln = ln.strip()
+                        if not ln:
+                            continue
+                        try:
+                            d = json.loads(ln)
+                        except json.JSONDecodeError:
+                            continue
+                        if d.get("type") != "response_item":
+                            continue
+                        payload = d.get("payload") or {}
+                        if payload.get("type") != "message":
+                            continue
+                        role = payload.get("role")
+                        if role not in ("user", "assistant"):
+                            continue
+                        text = _text_of(payload.get("content"))
+                        if not text or (role == "user" and _is_synthetic(text)):
+                            continue
+                        key = payload.get("id") or f"{role}:{text}"
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        turns.append({"timestamp": d.get("timestamp", ""),
+                                      "role": role, "text": text})
+            except OSError:
+                continue
+        return turns
+
+    def latest_session_id_for_cwd(self, cwd: str, since: float = 0.0) -> str:
         """The most recent codex session id whose rollout ran in `cwd` — used to
-        `codex resume <id>` a headless session after a dashboard restart."""
+        `codex resume <id>` a headless session after a dashboard restart, and to
+        learn the id of a session the dashboard just launched (codex, unlike
+        claude, won't take a caller-supplied one). `since` skips rollouts older
+        than that epoch, which keeps a "which session did I just start?" lookup
+        to the handful of files written after the launch."""
         if not cwd:
             return ""
         target = os.path.normcase(os.path.normpath(cwd))
         try:
-            for s in self.list_sessions(limit=300):
-                if os.path.normcase(os.path.normpath(s.cwd or "")) == target:
-                    return s.session_id
-        except Exception:
+            for f in self.rollout_files():        # newest first
+                if since and _mtime(f) < since:
+                    break
+                meta = _read_meta(f)
+                if not meta:
+                    continue
+                if os.path.normcase(os.path.normpath(meta.get("cwd") or "")) == target:
+                    return meta.get("session_id") or meta.get("id") or ""
+        except OSError:
             pass
         return ""
 
@@ -201,26 +322,20 @@ class CodexAgent(AgentType):
         empty when nothing matched. Used by the dashboard's unified Delete so a
         removed collaboration doesn't resurface as a Codex history row."""
         removed: list[str] = []
-        root = self.sessions_dir()
-        if not session_id or not root.exists():
-            return removed
-        for f in root.glob("*/*/*/rollout-*.jsonl"):
-            s = _parse_rollout(f)
-            if s is not None and s.session_id == session_id:
-                try:
-                    f.unlink()
-                    removed.append(str(f))
-                except OSError:
-                    pass
+        for f in self.rollouts_for_session(session_id):
+            try:
+                f.unlink()
+                removed.append(str(f))
+            except OSError:
+                pass
         return removed
 
     def cwd_for_session(self, session_id: str) -> str:
         """The cwd a rollout ran in, for the given session id (best-effort)."""
-        if not session_id:
-            return ""
-        for s in self.list_sessions(limit=400):
-            if s.session_id == session_id:
-                return s.cwd or ""
+        for f in self.rollouts_for_session(session_id):
+            cwd = (_read_meta(f).get("cwd") or "").strip()
+            if cwd:
+                return cwd
         return ""
 
     def resume_argv(self, session_id: str,

@@ -143,8 +143,8 @@
   }
   /* Numeric / timestamp columns: narrow, right-aligned, non-wrapping. */
   th.num, td.ago { width: 60px; text-align: right; padding-left: 4px; padding-right: 10px; white-space: nowrap; }
-  th.num.turns, td.ago.turns { width: 44px; }
-  td.sid { width: 130px; padding-right: 4px; }
+  td.tag { width: 1%; white-space: nowrap; padding-left: 4px; }
+  td.tag .badge-live { margin-left: 0; }
   tr.row { cursor: pointer; transition: background .08s; }
   tr.row:hover td { background: var(--hover); }
   tr.row.live td:first-child {
@@ -720,9 +720,15 @@
   .ptabs button:hover { color: var(--fg); }
   .ptabs button.on { color: var(--fg); border-bottom-color: var(--accent); }
   /* Workspace: lazy file tree (left) + rendered file (right). */
-  .wsp { display: grid; grid-template-columns: minmax(220px, 300px) 1fr; height: calc(100vh - 230px); min-height: 420px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
+  .wsp { display: grid; grid-template-columns: minmax(220px, 300px) 1fr; height: calc(100vh - 266px); min-height: 420px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
   .wsp-tree { overflow: auto; border-right: 1px solid var(--border); padding: 8px 6px; font-size: 12.5px; }
   .wsp-rootlbl { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--muted-2); padding: 4px 6px 8px; word-break: break-all; }
+  .scopebar { display: flex; align-items: center; gap: 8px; padding: 8px 0 4px; font-size: 12px; color: var(--muted); min-width: 0; }
+  .scopebar .lbl { font-weight: 600; white-space: nowrap; }
+  .scopebar select, .chp-repo { font: inherit; font-size: 12px; padding: 2px 6px; border-radius: 6px; border: 1px solid var(--border, #8884); background: var(--card, transparent); color: var(--fg); max-width: 44ch; }
+  .scope-path { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--muted-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chp-repo1 { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 500; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chp-count { margin-left: auto; font-weight: 500; white-space: nowrap; }
   .wsk { padding-left: 14px; }
   #wsp-rootkids { padding-left: 0; }
   .wse { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
@@ -741,6 +747,45 @@
   .wsp-bar a { color: var(--muted); text-decoration: none; font-size: 14px; }
   .wsp-bar a:hover { color: var(--accent); }
   .wsp-frame { flex: 1; width: 100%; border: 0; }
+  /* Changes tab: changed files (left) + unified diff with line comments (right). */
+  .chp { display: grid; grid-template-columns: minmax(220px, 320px) 1fr; height: calc(100vh - 266px); min-height: 420px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
+  .chp-files { overflow: auto; border-right: 1px solid var(--border); padding: 8px 6px; font-size: 12.5px; }
+  .chp-head { display: flex; align-items: center; gap: 8px; padding: 4px 6px 8px; color: var(--muted); font-size: 11.5px; font-weight: 600; }
+  .chp-refresh { margin-left: auto; background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); cursor: pointer; padding: 1px 7px; }
+  .chp-refresh:hover { border-color: var(--accent); color: var(--accent); }
+  .chf { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+  .chf:hover { background: var(--hover); }
+  .chf.on { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+  .chf.none { color: var(--muted-2); cursor: default; }
+  .chf.none:hover { background: transparent; }
+  .chf .nm { overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+  .chst { flex: 0 0 auto; min-width: 20px; text-align: center; font-size: 10.5px; font-weight: 700; border-radius: 4px; padding: 1px 3px; color: var(--muted); border: 1px solid var(--border); }
+  .chst.st-M { color: #b7791f; } .chst.st-A, .chst.st-\? { color: #22a06b; } .chst.st-D { color: #ef4444; } .chst.st-R { color: #3b82f6; }
+  .chp-diff { overflow: auto; min-width: 0; }
+  .diff-head { display: flex; align-items: center; gap: 12px; padding: 6px 10px; border-bottom: 1px solid var(--border); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--muted); position: sticky; top: 0; background: var(--surface); z-index: 1; }
+  .diff { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5; }
+  .dl { display: grid; grid-template-columns: 44px 44px 1fr; cursor: pointer; }
+  .dl .no { text-align: right; padding-right: 8px; color: var(--muted-2); user-select: none; font-variant-numeric: tabular-nums; }
+  .dl .tx { white-space: pre-wrap; word-break: break-all; padding-left: 8px; }
+  .dl.add { background: color-mix(in srgb, #22a06b 14%, transparent); }
+  .dl.del { background: color-mix(in srgb, #ef4444 14%, transparent); }
+  .dl.hunk { background: color-mix(in srgb, #3b82f6 12%, transparent); color: #3b82f6; cursor: default; }
+  .dl.meta { color: var(--muted-2); cursor: default; }
+  .dl:hover:not(.hunk):not(.meta) { outline: 1px solid var(--accent); outline-offset: -1px; }
+  .dl.cmt { box-shadow: inset 3px 0 0 var(--accent); }
+  .dl-composer { padding: 6px 10px 8px 96px; background: var(--hover); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+  .dl-composer textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 12.5px; }
+  .dl-cbtns { display: flex; gap: 8px; margin-top: 6px; }
+  #ch-tray { position: fixed; right: 14px; bottom: 14px; z-index: 60; width: min(440px, 92vw); max-height: 50vh; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 34px rgba(0,0,0,.35); overflow: hidden; }
+  .ch-tray-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .ch-tray-head .grow { flex: 1; }
+  .ch-tray-head select { max-width: 150px; font-size: 11.5px; }
+  .ch-list { overflow: auto; padding: 6px 10px; font-size: 12px; }
+  .ch-item { display: flex; gap: 8px; align-items: flex-start; padding: 4px 0; border-bottom: 1px dashed var(--border); }
+  .ch-loc { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--muted); flex: 0 0 auto; }
+  .ch-txt { flex: 1; }
+  .ch-x { background: transparent; border: none; color: var(--muted-2); cursor: pointer; }
+  .ch-x:hover { color: #ef4444; }
   .proj .ago { margin-left: auto; color: var(--muted-2); font-size: 11px; font-variant-numeric: tabular-nums; }
   .tx-role .mention { text-transform: none; letter-spacing: 0; }
   .tx-role .mention:first-child { background: transparent; padding: 0; color: inherit; }
@@ -1604,6 +1649,7 @@ let ALL_ROWS = [];
 // Projects-first shell: group sessions by git-root. PROJ_GROUPBY 'project' shows
 // the projects landing; a SELECTED_PROJECT drills into one project's sessions.
 let PROJECTS = null, _projTs = 0, SELECTED_PROJECT = null, _projFailed = false;
+let WS_SCOPE = '';   // Workspace/Changes tabs: '' = the project folder, else one task's workspace path
 let PROJ_GROUPBY = localStorage.getItem('cd-groupby') || 'project';
 let SEARCH_QUERY = '';
 let FILTERS = new Set(['live', 'pinned', 'history']); // multi-select
@@ -1854,6 +1900,7 @@ function detailInfo(r) {
   }
   if (JIRA_ENABLED) parts.push(jiraSection(r));
   if (r.cwd) parts.push(`<div class="dp-section"><h3>cwd</h3><div class="dp-cwd" title="${esc(r.cwd)}">${esc(tildeify(r.cwd))}</div></div>`);
+  if (r.taskDir && r.taskDir !== r.cwd) parts.push(`<div class="dp-section"><h3>Task folder</h3><div class="dp-cwd" title="${esc(r.taskDir)}">${esc(tildeify(r.taskDir))}</div></div>`);
   const cost = renderCostSection(r); if (cost) parts.push(cost);
   if (r.first) parts.push(`<div class="dp-section"><h3>First user turn</h3><div class="dp-quote">${esc(r.first)}</div></div>`);
   if (r.last && r.last !== r.first) parts.push(`<div class="dp-section"><h3>Last user turn</h3><div class="dp-quote">${esc(r.last)}</div></div>`);
@@ -1923,6 +1970,11 @@ async function loadConversation(r) {
       items = (d.turns || []).map(t => ({ who: t.role || 'user', text: t.text, ts: t.timestamp }));
     }
     if (SELECTED_SID !== sid) return;   // selection moved on while loading
+    // The task text is the first message of the chat: show it as the first
+    // user bubble unless the history already records it verbatim.
+    const spec = (r.spec || '').trim();
+    if (spec && !items.some(m => m.who === 'user' && (m.text || '').trim() === spec))
+      items.unshift({ who: 'user', to: '', text: r.spec, ts: r.startedAt || null });
     CONV_SID = sid; CONV_DATA = { items };
     const panel = $('#detail-panel'); if (panel) panel.dataset.sig = '';
     renderDetail();
@@ -2119,11 +2171,8 @@ function renderRow(r, parsed, now) {
   const actionsTd = DETAIL_MODE ? '' : `<td>${actionsCell(r, r.isLive)}</td>`;
   return `<tr class="row${selected} ${liveClasses} ${depth ? 'is-fork' : ''}" ${dataAttrs} draggable="true">
     <td>${statusDot}</td>
-    <td class="sid">${indent}${highlight(r.sessionId.slice(0,8), parsed)}${r.agent ? `<span class="badge-agent ${esc(r.agent)}" title="${esc(r.agent)} session">${esc(r.agent)}</span>` : ''}${r.isLive ? '<span class="badge-live">live</span>' : ''}${r.pinned ? '<span class="badge-pin" title="pinned">📌</span>' : ''}</td>
-    <td class="ago turns">${r.turns || 0}</td>
-    <td class="ago">${fmtAgo(now - r.updatedAt)}</td>
-    <td class="ago">${r.isLive ? fmtAgo(r.idleSeconds) : '-'}</td>
-    <td class="topic" title="${esc(r.cwd)}">${topicCellHL(r, parsed)}</td>
+    <td class="topic" title="${esc(r.cwd)}">${indent}${topicCellHL(r, parsed)}</td>
+    <td class="tag">${r.isLive ? '<span class="badge-live">live</span>' : ''}</td>
     ${actionsTd}
   </tr>`;
 }
@@ -2134,11 +2183,6 @@ function renderHeadlessRow(r, parsed, now) {
   const liveClasses = r.isLive ? `live ${r.status === 'busy' ? 'busy' : 'idle'}` : '';
   const statusDot = r.isLive
     ? `<span class="status ${r.status === 'busy' ? 'busy' : 'idle'}" title="${esc(r.status || 'live')}"></span>` : '';
-  const members = r.members || (r.agents || []).map(id => ({ identity: id, agent: id.replace(/-\d+$/, ''), model: '' }));
-  const badges = members.map(m => {
-    const label = m.model ? `${esc(m.agent)} ${esc(m.model)}` : esc(m.agent);
-    return `<span class="badge-agent ${esc(m.agent)}" title="${esc(m.identity)}${m.model ? ' · ' + esc(m.model) : ''}">${label}</span>`;
-  }).join('');
   const liveBadge = r.isLive ? '<span class="badge-live">live</span>' : '';
   const actions = r.orphan
     ? `<button class="orphan-open" data-grp="${esc(r.sessionId)}" title="Resume this collaboration headless (its room record is gone)">▶ Open</button>`
@@ -2151,11 +2195,8 @@ function renderHeadlessRow(r, parsed, now) {
   const actionsTd = DETAIL_MODE ? '' : `<td>${actions}</td>`;
   return `<tr class="row headless ${liveClasses}" data-room="${esc(r.roomId || '')}" data-orphan="${r.orphan ? '1' : ''}" data-sid="${esc(r.sessionId)}" draggable="false">
     <td>${statusDot}</td>
-    <td class="sid">${badges}${liveBadge}</td>
-    <td class="ago turns">${r.turns || 0}</td>
-    <td class="ago">${fmtAgo(now - r.updatedAt)}</td>
-    <td class="ago">${r.isLive ? fmtAgo(r.idleSeconds) : '-'}</td>
     <td class="topic" title="${esc(r.cwd)}">${esc(r.label || '(session)')}</td>
+    <td class="tag">${liveBadge}</td>
     ${actionsTd}
   </tr>`;
 }
@@ -2553,8 +2594,20 @@ function wireProjectsChrome() {
   });
   document.querySelectorAll('.proj[data-proj]').forEach(c => c.onclick = (e) => {
     if (e.target.closest('.srow') || e.target.closest('.newtask')) return;
-    SELECTED_PROJECT = c.dataset.proj; PROJECT_TAB = 'tasks'; renderRows();
+    SELECTED_PROJECT = c.dataset.proj; PROJECT_TAB = 'tasks'; WS_SCOPE = ''; renderRows();
   });
+  // Changes tab: for every project with a folder — the repo may be the
+  // project folder itself or live inside a task's workspace (the tab finds it).
+  const ptabsEl = document.querySelector('.ptabs');
+  const pjc = SELECTED_PROJECT ? projectById(SELECTED_PROJECT) : null;
+  if (ptabsEl && pjc && pjc.path && !ptabsEl.querySelector('[data-ptab="changes"]')) {
+    const cb = document.createElement('button');
+    cb.dataset.ptab = 'changes'; cb.textContent = 'Changes';
+    cb.title = 'Uncommitted changes in the project folder or in a task\'s workspace: git status, per-file diff, line comments you can send to a task chat';
+    if (PROJECT_TAB === 'changes') cb.classList.add('on');
+    ptabsEl.appendChild(cb);
+  }
+  if (typeof chRenderTray === 'function') chRenderTray();   // hides the comment tray off the Changes tab
   document.querySelectorAll('.ptabs button[data-ptab]').forEach(b => b.onclick = () => {
     PROJECT_TAB = b.dataset.ptab; renderRows();
   });
@@ -2645,10 +2698,33 @@ function wsFmtSize(n) {
   return (n / 1048576).toFixed(1) + ' MB';
 }
 function wsJoin(dir, name) { const sep = dir.includes('\\') ? '\\' : '/'; return dir.replace(/[\\/]+$/, '') + sep + name; }
+// Where the Workspace/Changes tabs look: the project's own folder, or one
+// task's workspace — every task has its own folder, and that is where agents
+// write their notes and clone repos.
+function scopeOptions(pj) {
+  const opts = [{ path: pj.path, label: 'Project folder' }];
+  (pj.sessions || []).forEach(sn => {
+    if (sn.cwd && sn.cwd !== pj.path) opts.push({ path: sn.cwd, label: 'Task: ' + (sn.label || sn.sessionId || 'session') });
+  });
+  return opts;
+}
+function scopePath(pj) {
+  return (WS_SCOPE && scopeOptions(pj).some(o => o.path === WS_SCOPE)) ? WS_SCOPE : pj.path;
+}
+function scopeBarHtml(pj) {
+  const cur = scopePath(pj);
+  return `<div class="scopebar"><span class="lbl">Looking at</span><select class="scope-sel" title="Browse the project folder or one task's workspace">`
+    + scopeOptions(pj).map(o => `<option value="${esc(o.path)}"${o.path === cur ? ' selected' : ''}>${esc(o.label)}</option>`).join('')
+    + `</select><span class="scope-path" title="${esc(cur)}">${esc(tildeify(cur))}</span></div>`;
+}
+function wireScopeBar() {
+  const s = document.querySelector('.scope-sel');
+  if (s) s.onchange = () => { WS_SCOPE = s.value; CH_ROOT = ''; CH_FILE = ''; renderRows(); };
+}
 function workspacePanelHtml(pj) {
-  const root = (pj && pj.path) || '';
-  if (!root) return '<p class="empty">This project has no folder.</p>';
-  return `<div class="wsp">
+  if (!pj || !pj.path) return '<p class="empty">This project has no folder.</p>';
+  const root = scopePath(pj);
+  return scopeBarHtml(pj) + `<div class="wsp">
     <div class="wsp-tree" id="wsp-tree" data-root="${esc(root)}">
       <div class="wsp-rootlbl" title="${esc(root)}">📁 ${esc(tildeify(root))}</div>
       <div class="wsk" id="wsp-rootkids"><div class="wse none">loading…</div></div>
@@ -2677,6 +2753,7 @@ function wsOpenFile(path) {
   v.innerHTML = `<div class="wsp-bar"><span class="wsp-path" title="${esc(path)}">${esc(tildeify(path))}</span><a href="${src}" target="_blank" title="Open in its own tab">⧉</a></div><iframe class="wsp-frame" src="${src}"></iframe>`;
 }
 function wireWorkspacePanel() {
+  wireScopeBar();
   const tree = $('#wsp-tree'); if (!tree) return;
   wsLoadDir($('#wsp-rootkids'), tree.dataset.root);
   tree.onclick = async (e) => {
@@ -2691,6 +2768,175 @@ function wireWorkspacePanel() {
     if (f) wsOpenFile(f.dataset.path);
   };
 }
+
+// ---- Changes tab: uncommitted changes of a git project — status, per-file
+// unified diff, and line comments batched to a task's chat. ------------------
+let CH_FILE = '', CH_COMMENTS = [];   // [{file, line, side, code, text}]
+let CH_ROOT = '';                     // the repository currently shown (found within the scope)
+function changesPanelHtml(pj) {
+  if (!pj || !pj.path) return '<p class="empty">This project has no folder.</p>';
+  return scopeBarHtml(pj) + '<div class="chp">'
+    + '<div class="chp-files" id="chp-files" data-scope="' + esc(scopePath(pj)) + '" data-root=""><div class="chf none">loading…</div></div>'
+    + '<div class="chp-diff" id="chp-diff"><div class="wsp-empty">Select a changed file to review its diff. Click a line to comment; send the batch to a task chat.</div></div>'
+    + '</div>';
+}
+async function chLoadStatus() {
+  const box = document.getElementById('chp-files'); if (!box) return;
+  try {
+    // Find the repo(s) in scope first: the folder itself may be a repo, or a
+    // task may hold clones a few levels down (e.g. <task>/claude/<name>/).
+    const rr = await api('/api/git/roots?path=' + encodeURIComponent(box.dataset.scope));
+    const roots = rr.roots || [];
+    if (!roots.length) {
+      CH_ROOT = ''; box.dataset.root = '';
+      box.innerHTML = '<div class="chf none">No git repository here yet. When an agent clones one into this folder, its changes show up here.</div>';
+      return;
+    }
+    if (!CH_ROOT || !roots.some(function (r) { return r.path === CH_ROOT; })) CH_ROOT = roots[0].path;
+    box.dataset.root = CH_ROOT;
+    const repoSel = roots.length > 1
+      ? '<select class="chp-repo" title="Which repository">' + roots.map(function (r) {
+          return '<option value="' + esc(r.path) + '"' + (r.path === CH_ROOT ? ' selected' : '') + '>' + esc(r.name) + '</option>';
+        }).join('') + '</select>'
+      : '<span class="chp-repo1" title="' + esc(CH_ROOT) + '">' + esc(roots[0].name) + '</span>';
+    const st = await api('/api/git/status?path=' + encodeURIComponent(CH_ROOT));
+    const files = st.files || [];
+    box.innerHTML = '<div class="chp-head">' + repoSel + '<span class="chp-count">' + files.length + ' changed</span>'
+      + '<button class="chp-refresh" title="Refresh">↻</button></div>'
+      + (files.length ? files.map(function (f) {
+          const code = (f.status || '?').replace(/\s/g, '') || '?';
+          return '<div class="chf' + (f.path === CH_FILE ? ' on' : '') + '" data-file="' + esc(f.path) + '">'
+            + '<span class="chst st-' + esc(code[0]) + '">' + esc(code) + '</span><span class="nm">' + esc(f.path) + '</span></div>';
+        }).join('') : '<div class="chf none">working tree clean</div>');
+    const rb = box.querySelector('.chp-refresh'); if (rb) rb.onclick = chLoadStatus;
+    const rs = box.querySelector('.chp-repo'); if (rs) rs.onchange = function () { CH_ROOT = rs.value; CH_FILE = ''; chLoadStatus(); };
+  } catch (e) { box.innerHTML = '<div class="chf none">status unavailable: ' + esc(e.message) + '</div>'; }
+}
+function parseUnifiedDiff(text) {
+  // Rows: {kind: hunk|meta|ctx|add|del, oldNo, newNo, text}
+  const rows = []; let o = 0, n = 0;
+  const lines = (text || '').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const ln = lines[i].replace(/\r$/, '');
+    if (ln.startsWith('@@')) {
+      const m = ln.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (m) { o = parseInt(m[1], 10); n = parseInt(m[2], 10); }
+      rows.push({ kind: 'hunk', text: ln }); continue;
+    }
+    if (ln.startsWith('diff --git') || ln.startsWith('index ') || ln.startsWith('--- ') || ln.startsWith('+++ ') || ln.startsWith('\\ No newline')) {
+      rows.push({ kind: 'meta', text: ln }); continue;
+    }
+    if (ln === '' && i === lines.length - 1) continue;          // trailing newline
+    if (ln.startsWith('+')) { rows.push({ kind: 'add', newNo: n++, text: ln.slice(1) }); continue; }
+    if (ln.startsWith('-')) { rows.push({ kind: 'del', oldNo: o++, text: ln.slice(1) }); continue; }
+    rows.push({ kind: 'ctx', oldNo: o++, newNo: n++, text: ln.startsWith(' ') ? ln.slice(1) : ln });
+  }
+  return rows;
+}
+function renderDiff(file, text) {
+  const rows = parseUnifiedDiff(text);
+  if (!rows.length) return '<div class="wsp-empty">No differences.</div>';
+  return '<div class="diff-head"><span class="wsp-path" title="' + esc(file) + '">' + esc(file) + '</span><span class="dim">click a line to comment</span></div>'
+    + '<div class="diff" id="diff-body">' + rows.map(function (r) {
+      if (r.kind === 'hunk' || r.kind === 'meta') {
+        return '<div class="dl ' + r.kind + '"><span class="no"></span><span class="no"></span><span class="tx">' + esc(r.text) + '</span></div>';
+      }
+      const line = r.kind === 'del' ? r.oldNo : r.newNo;
+      const side = r.kind === 'del' ? '-' : '+';
+      const hasC = CH_COMMENTS.some(function (c) { return c.file === file && c.line === line && c.side === side; });
+      return '<div class="dl ' + r.kind + (hasC ? ' cmt' : '') + '" data-line="' + line + '" data-side="' + side + '">'
+        + '<span class="no">' + (r.oldNo != null ? r.oldNo : '') + '</span><span class="no">' + (r.newNo != null ? r.newNo : '') + '</span>'
+        + '<span class="tx">' + esc(r.text) + '</span></div>';
+    }).join('') + '</div>';
+}
+async function chOpenDiff(file) {
+  const box = document.getElementById('chp-diff'); if (!box) return;
+  CH_FILE = file;
+  document.querySelectorAll('#chp-files .chf').forEach(function (x) { x.classList.toggle('on', x.dataset.file === file); });
+  box.innerHTML = '<div class="wsp-empty">loading diff…</div>';
+  try {
+    const root = document.getElementById('chp-files').dataset.root;
+    const d = await api('/api/git/diff?path=' + encodeURIComponent(root) + '&file=' + encodeURIComponent(file));
+    box.innerHTML = renderDiff(file, d.diff || '');
+    const body = document.getElementById('diff-body');
+    if (body) body.onclick = function (e) {
+      const dl = e.target.closest('.dl'); if (!dl || !dl.dataset.line) return;
+      chCommentPrompt(file, parseInt(dl.dataset.line, 10), dl.dataset.side, dl.querySelector('.tx').textContent, dl);
+    };
+  } catch (e) { box.innerHTML = '<div class="wsp-empty">diff unavailable: ' + esc(e.message) + '</div>'; }
+}
+function chCommentPrompt(file, line, side, code, dl) {
+  // Inline composer under the clicked line (no window.prompt — it misbehaves on remote setups).
+  const old = document.querySelector('.dl-composer'); if (old) old.remove();
+  const box = document.createElement('div'); box.className = 'dl-composer';
+  box.innerHTML = '<textarea rows="2" placeholder="Comment on line ' + line + ' — Ctrl+Enter to add"></textarea>'
+    + '<div class="dl-cbtns"><button class="dl-ok">Add comment</button><button class="dl-cancel secondary">Cancel</button></div>';
+  dl.insertAdjacentElement('afterend', box);
+  const ta = box.querySelector('textarea'); ta.focus();
+  box.querySelector('.dl-cancel').onclick = function () { box.remove(); };
+  box.querySelector('.dl-ok').onclick = function () {
+    const t = ta.value.trim(); if (!t) return;
+    CH_COMMENTS.push({ file: file, line: line, side: side, code: code, text: t });
+    dl.classList.add('cmt'); box.remove(); chRenderTray();
+  };
+  ta.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); box.querySelector('.dl-ok').click(); }
+    if (ev.key === 'Escape') box.remove();
+  });
+}
+function chFormat() {
+  const byFile = {};
+  CH_COMMENTS.forEach(function (c) { (byFile[c.file] = byFile[c.file] || []).push(c); });
+  return '📝 Review comments on the working-tree diff (' + CH_COMMENTS.length + '):\n'
+    + Object.keys(byFile).map(function (f) {
+        return '\n**' + f + '**\n' + byFile[f].slice().sort(function (a, b) { return a.line - b.line; }).map(function (c) {
+          return '- L' + c.line + ' (' + c.side + ') "' + c.code.trim().slice(0, 120) + '"\n  → ' + c.text;
+        }).join('\n');
+      }).join('\n');
+}
+function chRenderTray() {
+  let tray = document.getElementById('ch-tray');
+  if (!CH_COMMENTS.length || PROJECT_TAB !== 'changes') { if (tray) tray.remove(); return; }
+  if (!tray) { tray = document.createElement('div'); tray.id = 'ch-tray'; document.body.appendChild(tray); }
+  const pj = projectById(SELECTED_PROJECT);
+  const rooms = ((pj && pj.sessions) || []).filter(function (s) { return s.roomId; });
+  tray.innerHTML = '<div class="ch-tray-head"><strong>' + CH_COMMENTS.length + ' review comment' + (CH_COMMENTS.length > 1 ? 's' : '') + '</strong><span class="grow"></span>'
+    + '<select id="ch-to" title="Which task chat receives the comments">'
+    + (rooms.length ? rooms.map(function (r) { return '<option value="' + esc(r.roomId) + '">' + esc(r.label || r.roomId) + '</option>'; }).join('')
+                    : '<option value="">(no task chat in this project)</option>')
+    + '</select>'
+    + '<button class="ch-send">Send to chat</button><button class="ch-copy secondary">Copy</button><button class="ch-clear secondary">Clear</button></div>'
+    + '<div class="ch-list">' + CH_COMMENTS.map(function (c, i) {
+        return '<div class="ch-item"><span class="ch-loc">' + esc(c.file) + ':' + c.line + ' (' + c.side + ')</span><span class="ch-txt">' + esc(c.text) + '</span><button class="ch-x" data-i="' + i + '" title="Remove">✕</button></div>';
+      }).join('') + '</div>';
+  tray.querySelectorAll('.ch-x').forEach(function (b) {
+    b.onclick = function () { CH_COMMENTS.splice(parseInt(b.dataset.i, 10), 1); chRenderTray(); if (CH_FILE) chOpenDiff(CH_FILE); };
+  });
+  tray.querySelector('.ch-clear').onclick = function () { CH_COMMENTS = []; chRenderTray(); if (CH_FILE) chOpenDiff(CH_FILE); };
+  tray.querySelector('.ch-copy').onclick = function () {
+    navigator.clipboard.writeText(chFormat()).then(function () { toast('comments copied', 1500, 'ok'); }, function () { toast('copy failed', 3000, 'err'); });
+  };
+  tray.querySelector('.ch-send').onclick = async function () {
+    const rid = document.getElementById('ch-to').value;
+    if (!rid) { toast('no task chat to send to — use Copy', 3000, 'err'); return; }
+    try {
+      await api('/api/room/say', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: rid, text: chFormat(), to: '' }) });
+      toast('sent ' + CH_COMMENTS.length + ' comment(s) to chat', 2500, 'ok');
+      CH_COMMENTS = []; chRenderTray(); if (CH_FILE) chOpenDiff(CH_FILE);
+    } catch (e) { toast('send failed: ' + e.message, 5000, 'err'); }
+  };
+}
+function wireChangesPanel(pj) {
+  wireScopeBar();
+  const files = document.getElementById('chp-files'); if (!files) return;
+  CH_FILE = '';
+  chLoadStatus();
+  files.onclick = function (e) {
+    const f = e.target.closest('.chf'); if (!f || !f.dataset.file) return;
+    chOpenDiff(f.dataset.file);
+  };
+  chRenderTray();
+}
 function renderRows() {
   renderSidebar();
   // Projects landing (default). A selected project or a non-project grouping
@@ -2699,6 +2945,14 @@ function renderRows() {
     $('#view').innerHTML = projectsChromeHtml() + projectsLandingHtml();
     $('#meta').textContent = PROJECTS ? `${PROJECTS.projects.length} projects · ${PROJECTS.summary.needsYou} need you` : 'loading…';
     wireProjectsChrome();
+    return;
+  }
+  // Drilled into a project on the Changes tab: changed files + diff review.
+  if (SELECTED_PROJECT && PROJECT_TAB === 'changes') {
+    const pj = projectById(SELECTED_PROJECT);
+    document.getElementById('view').innerHTML = projectsChromeHtml() + changesPanelHtml(pj);
+    document.getElementById('meta').textContent = pj ? (pj.name + ' · changes') : 'changes';
+    wireProjectsChrome(); wireChangesPanel(pj);
     return;
   }
   // Drilled into a project on the Workspace tab: file tree + viewer instead of
@@ -2745,7 +2999,7 @@ function renderRows() {
   const headExtra = DETAIL_MODE ? '' : '<th></th>';
   view.innerHTML = projectsChromeHtml() + pageHeader + `<table>
     <thead><tr>
-      <th></th><th>Session</th><th class="num turns">Turns</th><th class="num">Updated</th><th class="num">Idle</th><th>Topic</th>${headExtra}
+      <th></th><th>Task</th><th></th>${headExtra}
     </tr></thead>
     <tbody>${renderGroupedRows(ordered, parsed, now)}</tbody>
   </table>`;
@@ -3156,15 +3410,18 @@ function showNewSessionModal(category, projectId) {
   // Workspace modes: 'empty' is always available (a task may have no code at
   // all); project-backed modes appear only with a project; worktree only if git.
   const WS = {
-    empty:    ['Empty scratch folder (default)', 'A fresh folder under ~/cs. Agents clone or create whatever the task needs.'],
-    inplace:  ['Work in the project folder', 'Agents edit the project folder directly (shared with other tasks in it).'],
-    copy:     ['Copy of the project', 'A full copy of the project folder into this task\'s own folder.'],
-    worktree: ['Git worktree on its own branch', 'Isolated checkout on branch sess/<task> — merge back when done.'],
+    empty:    ['Empty task folder (default)', 'The task gets its own folder under the project. Agents clone or create whatever the task needs.'],
+    inplace:  ['Work in the project\'s code folder', 'Agents edit the project\'s code folder directly (shared with other tasks in it).'],
+    copy:     ['Copy of the code', 'A full copy of the project\'s code into this task\'s folder (repo/).'],
+    worktree: ['Git worktree on its own branch', 'Checkout of branch sess/<task> in this task\'s folder (repo/) — merge back when done.'],
   };
   const wsSel = $('#ns-ws'), wsHint = $('#ns-ws-hint');
   const fillWs = () => {
     const pj = projectById($('#ns-proj').value);
-    const modes = pj ? ['empty', 'inplace', 'copy'].concat(pj.isGit ? ['worktree'] : []) : ['empty'];
+    // copy/worktree need an external code folder; an in-root project (its home
+    // IS its path) is a container of tasks, not code.
+    const hasCode = !!(pj && pj.home && pj.path && pj.home !== pj.path);
+    const modes = pj ? ['empty', 'inplace'].concat(hasCode ? ['copy'] : []).concat(hasCode && pj.isGit ? ['worktree'] : []) : ['empty'];
     wsSel.innerHTML = modes.map(m => `<option value="${m}">${esc(WS[m][0])}</option>`).join('');
     wsSel.disabled = !pj;
     const upd = () => { wsHint.textContent = WS[wsSel.value][1]; };
@@ -3224,9 +3481,24 @@ function showNewSessionModal(category, projectId) {
         body: JSON.stringify({ title, task, agents: specs, projectId: projectIdSel, workspace }),
       });
       toast('launched', 2000, 'ok');
-      await refreshProjects();   // the new task shows under its project immediately
-      await refresh(); updateRoomsBadge();
-      if (resp.room && resp.room.id) openDetail(resp.room.id);
+      // Open the task right away from the response (the list refreshes are slow
+      // on a big hub — don't make the user wait for them, or hunt for Open).
+      const rm = resp.room;
+      if (rm && rm.id) {
+        const mem = (rm.participants || []).filter(p => p.kind === 'agent');
+        if (!ALL_ROWS.some(x => x.sessionId === rm.id)) ALL_ROWS.unshift({
+          sessionId: rm.id, roomId: rm.id, headless: true, mode: rm.mode || 'solo',
+          agent: mem.length === 1 ? mem[0].agent : 'duo', agents: mem.map(p => p.identity),
+          members: mem.map(p => ({ identity: p.identity, agent: p.agent, model: p.model || '' })),
+          label: rm.title || title, cwd: rm.cwd || '', spec: rm.spec || task, taskDir: rm.taskDir || '',
+          isLive: true, status: 'busy', updatedAt: rm.createdAt || Date.now() / 1000,
+          startedAt: rm.createdAt || Date.now() / 1000, turns: 0, idleSeconds: 0, pid: null,
+          pinned: false, category: '', archived: false, parent: '', jira: [], cost: 0,
+          currentTheme: '', first: '', last: '', transcriptPath: '',
+        });
+        openDetail(rm.id);
+      }
+      refreshProjects(); refresh(); updateRoomsBadge();
       setTimeout(() => { refresh(); updateRoomsBadge(); }, 2500);
     } catch (e) {
       toast('launch failed: ' + e.message, 5000, 'err');

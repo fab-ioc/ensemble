@@ -123,10 +123,71 @@ def _room_is_live(room: dict) -> bool:
     return False
 
 
+# Rooms whose codex session id we've recently looked for and not found, so a
+# poll loop doesn't rescan the rollout dir every second: {roomId: last try}.
+_CODEX_SID_TRIED: dict[str, float] = {}
+_CODEX_SID_RETRY = 5.0
+
+
+def _backfill_codex_session_ids(room: dict) -> None:
+    """Fill in a codex participant's missing ``sessionId``.
+
+    Claude takes a caller-supplied ``--session-id``, so the dashboard knows a
+    Claude agent's id the moment it launches. Codex mints its own and prints it
+    nowhere, so a freshly spawned codex agent's ``sessionId`` starts empty —
+    which left a solo codex session with no transcript to render (an empty
+    balloon chat) and no conversation to resume. Codex does write a rollout file
+    tagged with its cwd, so once it exists we can recover the id from there and
+    persist it on the room.
+    """
+    pending = [pp for pp in room.get("participants", [])
+               if pp.get("kind") == "agent" and pp.get("agent") == "codex"
+               and not (pp.get("sessionId") or "").strip()]
+    if not pending:
+        return
+    rid = room.get("id", "")
+    now = time.time()
+    if now - _CODEX_SID_TRIED.get(rid, 0.0) < _CODEX_SID_RETRY:
+        return
+    _CODEX_SID_TRIED[rid] = now
+    cx = agents.get_agent("codex")
+    if cx is None:
+        return
+    # Only rollouts written after the room was created can belong to it; that
+    # bound keeps this to the few files codex has touched since the launch.
+    since = float(room.get("createdAt") or 0.0)
+    # Two codex agents can share one workspace, so never hand the same rollout
+    # to both — a claimed id is off the table for the rest of the room.
+    taken = {(pp.get("sessionId") or "").strip()
+             for pp in room.get("participants", [])} - {""}
+    found = {}
+    for pp in pending:
+        cwd = pp.get("cwd") or room.get("cwd") or ""
+        try:
+            sid = cx.latest_session_id_for_cwd(cwd, since=since)
+        except Exception:
+            sid = ""
+        if sid and sid not in taken:
+            taken.add(sid)
+            found[pp["identity"]] = sid
+            pp["sessionId"] = sid
+    if not found:
+        return
+    # Persist on the full room (the caller holds the token-stripped view).
+    full = chatroom.get_room(rid, public=False)
+    if full is None:
+        return
+    for pp in full.get("participants", []):
+        if pp.get("identity") in found:
+            pp["sessionId"] = found[pp["identity"]]
+    chatroom.update_room(full)
+
+
 def _annotate_room_liveness(room: dict) -> dict:
     """Add a `live` flag: True if any agent PTY is running. Not live simply means
     the session isn't running — there's no separate 'ended' state."""
     room["live"] = _room_is_live(room)
+    _backfill_codex_session_ids(room)
     return room
 
 
@@ -725,8 +786,13 @@ def load_projects() -> list[dict]:
                     continue
                 if not isinstance(meta, dict) or not meta.get("id"):
                     continue
+                home = os.path.normpath(str(d))
+                # A project registered from an external code folder keeps its
+                # tasks/notes/chats HERE (its home) while ``path`` stays the code.
+                code = (meta.get("code") or "").strip()
+                path = os.path.normpath(code) if code and os.path.isdir(code) else home
                 _add({"id": meta["id"], "name": meta.get("name") or d.name,
-                      "path": os.path.normpath(str(d)), "isGit": path_is_git(str(d)),
+                      "path": path, "home": home, "isGit": path_is_git(path),
                       "createdAt": meta.get("createdAt", 0)})
     except OSError:
         pass
@@ -868,7 +934,7 @@ def _export_task_chats() -> int:
         if not rid.startswith("room-"):
             continue
         pj = projects.get(pid)
-        if not pj or not _in_projects_root(pj.get("path", "")):
+        if not pj:
             continue
         try:
             room = chatroom.get_room(rid)            # public=True → no tokens
@@ -876,10 +942,13 @@ def _export_task_chats() -> int:
             room = None
         if not room:
             continue
+        home = project_home(pj)                      # created on demand
+        task_dir = room.get("taskDir") or ""
         cwd = room.get("cwd") or ""
-        own_folder = cwd and _in_projects_root(cwd) and \
-            os.path.normcase(os.path.normpath(cwd)) != os.path.normcase(os.path.normpath(pj["path"]))
-        folder = cwd if own_folder else os.path.join(pj["path"], "_linked", rid)
+        own_folder = cwd and _within(cwd, home) and \
+            os.path.normcase(os.path.normpath(cwd)) != os.path.normcase(os.path.normpath(home))
+        folder = task_dir if (task_dir and _within(task_dir, home)) else \
+            (cwd if own_folder else os.path.join(home, "_linked", rid))
         payload = {
             "roomId": rid, "title": room.get("title", ""), "mode": room.get("mode", ""),
             "createdAt": room.get("createdAt"), "updatedAt": room.get("updatedAt"),
@@ -911,6 +980,7 @@ def build_projects() -> dict:
     groups: dict = {}
     for p in projects_reg:
         groups[p["id"]] = {"id": p["id"], "name": p["name"], "path": p["path"],
+                           "home": project_home(p, create=False),
                            "isGit": p.get("isGit", False), "registered": True,
                            "sessions": [], "live": 0, "waiting": 0, "updatedAt": 0}
     UNASSIGNED = "__unassigned__"
@@ -973,6 +1043,7 @@ def workspace_access_ok(path: str) -> bool:
         return False
     roots = [p["path"] for p in load_projects()]
     roots.append(str(CS_ROOT))
+    roots.append(str(PROJECTS_ROOT))   # every project home and task folder
     return any(_within(path, r) for r in roots)
 
 
@@ -1059,6 +1130,52 @@ def git_status(path: str) -> tuple[int, dict]:
         return 500, {"error": f"git_status_failed: {e}"}
     files.sort(key=lambda f: f["path"].lower())
     return 200, {"root": root, "isGit": True, "files": files}
+
+
+_GIT_ROOTS_SKIP = {"node_modules", ".venv", "venv", "__pycache__", "target", "dist",
+                   "build", ".idea", ".tox", "site-packages"}
+
+
+def git_roots(path: str, depth: int = 3) -> tuple[int, dict]:
+    """Git repositories in scope for a Workspace/Changes view: the enclosing
+    repo if ``path`` sits inside one, else every repo found up to ``depth``
+    levels below it. A task's workspace usually isn't a repo itself — agents
+    clone into it (``<task>/repo/``, legacy ``<task>/<agent>/<name>/``)."""
+    if not path or not workspace_access_ok(path):
+        return 403, {"error": "path_not_allowed"}
+    base = Path(path)
+    if not base.is_dir():
+        return 404, {"error": "not_found"}
+    enclosing = git_root(path)
+    # The projects root is the backup repo, not code: skip it and look inside.
+    if enclosing and path_is_git(enclosing) and not _within(str(PROJECTS_ROOT), enclosing):
+        name = os.path.basename(enclosing.rstrip("\\/")) or enclosing
+        return 200, {"roots": [{"path": enclosing, "name": name}]}
+    found: list[dict] = []
+
+    def walk(d: Path, lvl: int) -> None:
+        if len(found) >= 50:
+            return
+        try:
+            kids = sorted(d.iterdir(), key=lambda c: c.name.lower())
+        except OSError:
+            return
+        for c in kids:
+            try:
+                if not c.is_dir():
+                    continue
+            except OSError:
+                continue
+            if c.name.startswith(".") or c.name.lower() in _GIT_ROOTS_SKIP:
+                continue
+            if (c / ".git").exists():        # dir, or a file for worktrees
+                found.append({"path": str(c), "name": str(c.relative_to(base)).replace("\\", "/")})
+                continue
+            if lvl < depth:
+                walk(c, lvl + 1)
+
+    walk(base, 1)
+    return 200, {"roots": found}
 
 
 def git_diff(path: str, file: str) -> tuple[int, dict]:
@@ -1329,11 +1446,58 @@ def _in_projects_root(path: str) -> bool:
     return c == r or c.startswith(r + os.sep)
 
 
+_UNSAFE_DIR_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def _safe_dir_name(name: str) -> str:
+    s = _UNSAFE_DIR_CHARS.sub("_", (name or "").strip()).strip(". ")
+    return s[:80] or "project"
+
+
+def project_home(project: dict, create: bool = True) -> str:
+    """The project's folder under PROJECTS_ROOT: where its tasks, notes and
+    chat exports live — what the backup carries. A project registered from an
+    external code folder (``path`` outside the root) gets a home created on
+    demand; its project.json records the code path so a restored root is still
+    self-describing. In-root projects are their own home."""
+    ppath = project.get("path", "")
+    if _in_projects_root(ppath):
+        return os.path.normpath(ppath)
+    home = project.get("home") or ""
+    if not home:
+        base = PROJECTS_ROOT / _safe_dir_name(project.get("name") or os.path.basename(ppath))
+        home = str(base)
+        n = 2
+        while True:                          # same name, different project → -2, -3…
+            pj = Path(home) / "project.json"
+            if not pj.exists():
+                break
+            try:
+                if json.loads(pj.read_text(encoding="utf-8")).get("id") == project.get("id"):
+                    break
+            except (OSError, json.JSONDecodeError):
+                pass
+            home = f"{base}-{n}"
+            n += 1
+    if create:
+        try:
+            Path(home).mkdir(parents=True, exist_ok=True)
+            pj = Path(home) / "project.json"
+            if not pj.exists():
+                pj.write_text(json.dumps({"id": project.get("id", ""), "name": project.get("name", ""),
+                                          "code": os.path.normpath(ppath) if ppath else "",
+                                          "createdAt": project.get("createdAt") or int(time.time())},
+                                         indent=2), encoding="utf-8")
+        except OSError:
+            pass
+    return os.path.normpath(home)
+
+
 def _task_dir_for(project: dict, title: str) -> Path:
-    """A new task's folder: <project>/<slug>[-N]. Plain names, no NN_ prefix —
-    the project folder is the namespace."""
+    """A new task's folder: <project home>/<slug>[-N]. Plain names, no NN_
+    prefix — the project folder is the namespace."""
     slug = sanitize_slug(title) or "task"
-    base = Path(project["path"])
+    base = Path(project_home(project))
     dest = base / slug
     n = 2
     while dest.exists():
@@ -1391,32 +1555,34 @@ def setup_session_workspace(project: dict, mode: str, title: str) -> tuple[bool,
     if not ppath or not os.path.isdir(ppath):
         return False, "", {}, "project folder missing"
     in_root = _in_projects_root(ppath)
+    # Every task gets its own folder under the project's home in the projects
+    # root (task.json, notes, chat export) — so the backup carries every task.
+    task_dir = _task_dir_for(project, title)
+    ok, msg = _init_task_folder(task_dir)
+    if not ok:
+        return False, "", {}, msg
+    tmeta = {"taskDir": str(task_dir)}
     if mode == "empty":
-        # Layout v2: the task's own folder lives UNDER its project, so a git
-        # backup of the projects root carries every task with it.
-        dest = _task_dir_for(project, title)
-        ok, msg = _init_task_folder(dest)
-        return ok, (str(dest) if ok else ""), {"mode": "empty"}, msg
+        return True, str(task_dir), {"mode": "empty", **tmeta}, "ok"
     if mode == "inplace":
-        return True, os.path.normpath(ppath), {"mode": "inplace"}, "ok"
+        return True, os.path.normpath(ppath), {"mode": "inplace", **tmeta}, "ok"
     if in_root and mode in ("copy", "worktree"):
         # A project inside the projects root is a container of tasks, not a
         # code tree: copying/worktree-ing it makes no sense (and copytree into
         # its own subfolder would recurse). Code goes in <task>/repo/.
-        return False, "", {}, (f"'{mode}' is for external code projects; for a project in "
-                               f"{APP_NAME}Projects create an empty task and clone into repo/")
+        return False, "", {}, (f"'{mode}' is for projects with an external code folder; "
+                               f"create an empty task and clone into repo/")
     slug = sanitize_slug(title)
-    n = next_cs_counter()
-    dest = CS_ROOT / f"{n:02d}_{slug}"
-    if dest.exists():
-        return False, "", {}, f"already exists: {dest.name}"
+    # The checkout lives INSIDE the task folder; repo/ is ignored by the backup
+    # (the code has its own remote), the task's spec/notes/chat are not.
+    dest = task_dir / "repo"
     if mode == "copy":
         try:
             shutil.copytree(ppath, dest,
                             ignore=shutil.ignore_patterns(".git", "node_modules", "__pycache__"))
         except OSError as e:
             return False, "", {}, f"copy failed: {e}"
-        return True, str(dest), {"mode": "copy"}, "ok"
+        return True, str(dest), {"mode": "copy", **tmeta}, "ok"
     if mode == "worktree":
         if not path_is_git(ppath):
             return False, "", {}, "worktree needs a git project"
@@ -1434,7 +1600,7 @@ def setup_session_workspace(project: dict, mode: str, title: str) -> tuple[bool,
                     return False, "", {}, f"worktree failed: {(out.stderr or out2.stderr or '').strip()[:200]}"
         except (OSError, subprocess.SubprocessError) as e:
             return False, "", {}, f"worktree failed: {e}"
-        return True, str(dest), {"mode": "worktree", "branch": branch}, "ok"
+        return True, str(dest), {"mode": "worktree", "branch": branch, **tmeta}, "ok"
     return False, "", {}, f"unknown workspace mode: {mode}"
 
 
@@ -2565,6 +2731,7 @@ def load_sessions(n: int = 200) -> list[dict]:
                              "agent": p.get("agent", ""),
                              "model": p.get("model", "")} for p in agents_in],
                 "label": labels.get(rid) or rm.get("title", ""), "cwd": rm.get("cwd", ""),
+                "spec": rm.get("spec", ""), "taskDir": rm.get("taskDir", ""),
                 "isLive": live, "status": "busy" if (live and busy) else "idle",
                 "updatedAt": rm.get("updatedAt", rm.get("createdAt", 0)),
                 "startedAt": rm.get("createdAt", 0),
@@ -2875,12 +3042,32 @@ class Handler(BaseHTTPRequestHandler):
             qs = parse_qs(u.query)
             full = qs.get("full", ["0"])[0] in ("1", "true", "yes")
             tpath = find_transcript(sid)
+            want_stat = qs.get("stat", ["0"])[0] in ("1", "true", "yes")
             if not tpath:
-                self._send_json(404, {"error": "not_found"})
+                # No Claude transcript — this may be a Codex session, which keeps
+                # its own rollout files. Serve those in the same shape so the
+                # solo chat view renders a codex session's turns as bubbles too.
+                cx = agents.get_agent("codex")
+                st = cx.session_stat(sid) if cx is not None else None
+                if st is None:
+                    self._send_json(404, {"error": "not_found"})
+                    return
+                if want_stat:
+                    self._send_json(200, {"sessionId": sid, "size": st["size"],
+                                          "mtime": round(st["mtime"], 3)})
+                    return
+                turns = cx.read_turns(sid)
+                if not full:
+                    turns = [{"timestamp": t["timestamp"], "text": t["text"]}
+                             for t in turns if t["role"] == "user"]
+                self._send_json(200, {"sessionId": sid,
+                                      "cwd": cx.cwd_for_session(sid),
+                                      "turns": turns,
+                                      "label": load_labels().get(sid, "")})
                 return
             # Cheap change-signal: the transcript's size+mtime. Clients poll this
             # to know when new turns exist without re-fetching the whole transcript.
-            if qs.get("stat", ["0"])[0] in ("1", "true", "yes"):
+            if want_stat:
                 try:
                     st = tpath.stat()
                     self._send_json(200, {"sessionId": sid, "size": st.st_size,
@@ -2995,6 +3182,15 @@ class Handler(BaseHTTPRequestHandler):
             path = (q.get("path", [""])[0] or "").strip()
             fpath = (q.get("file", [""])[0] or "").strip()
             self._send_json(*git_diff(path, fpath))
+            return
+        if p == "/api/git/roots":
+            q = parse_qs(u.query)
+            path = (q.get("path", [""])[0] or "").strip()
+            try:
+                depth = max(1, min(5, int(q.get("depth", ["3"])[0])))
+            except ValueError:
+                depth = 3
+            self._send_json(*git_roots(path, depth))
             return
         if p == "/api/rooms":
             rooms = [_annotate_room_liveness(r) for r in chatroom.list_rooms()]
@@ -3428,7 +3624,7 @@ class Handler(BaseHTTPRequestHandler):
         return {"ptyId": sess.id, "cwd": cwd, "sessionId": new_sid}
 
     def _resume_room_agent_pty(self, room_full: dict, part: dict,
-                               wire_mcp: bool = True) -> dict:
+                               wire_mcp: bool = True, seed: str = "") -> dict:
         """Relaunch an agent in a fresh PTY, RESUMING its prior conversation
         (claude --resume / codex resume). Used to recover a session after a
         dashboard restart killed its PTY. Returns {ptyId, cwd, sessionId}."""
@@ -3458,7 +3654,7 @@ class Handler(BaseHTTPRequestHandler):
                 if hasattr(ag, "latest_session_id_for_cwd") else "")
             if codex_sid:
                 argv += ["resume", codex_sid]   # subcommand goes last
-            cmd = BACKEND.headless_launch(cwd, argv, "")
+            cmd = BACKEND.headless_launch(cwd, argv, "" if codex_sid else seed)
             sess = ptyrun.create(cmd, cwd=cwd,
                                  env=({"CHAT_TOKEN": token} if wire_mcp else None),
                                  label=label, meta=meta)
@@ -3866,13 +4062,15 @@ class Handler(BaseHTTPRequestHandler):
             room_full["cwd"] = base
             room_full["projectId"] = project_id
             room_full["workspace"] = ws_meta
+            room_full["spec"] = task            # the task's specification, shown in the UI
+            room_full["taskDir"] = ws_meta.get("taskDir", "")
             # Project-backed workspaces (inplace/copy/worktree) are shared: agents
             # collaborate on the same files, not isolated per-identity subdirs.
             room_full["sharedCwd"] = ws_meta.get("mode", "empty") != "empty"
             if project_id:
                 assign_session_project(room["id"], project_id)
-            if ws_meta.get("mode") in ("empty", "copy", "worktree"):
-                _write_task_json(base, {
+            if ws_meta.get("taskDir"):
+                _write_task_json(ws_meta["taskDir"], {
                     "roomId": room["id"], "projectId": project_id, "title": title,
                     "spec": task, "agents": members, "workspace": ws_meta,
                     "createdAt": int(time.time())})
@@ -4011,10 +4209,14 @@ class Handler(BaseHTTPRequestHandler):
             agents_in = [pp for pp in room_full.get("participants", [])
                          if pp.get("kind") == "agent"]
             solo = room_full.get("mode") == "solo" or len(agents_in) < 2
+            # A solo task whose agent never actually got going (no messages
+            # yet) is (re)started WITH its specification as the first prompt —
+            # otherwise "Open" would bring up a blank agent that idles.
+            seed = (room_full.get("spec") or "") if (solo and not room_full.get("messages")) else ""
             resumed = []
             for part in agents_in:
                 info = self._resume_room_agent_pty(room_full, part,
-                                                   wire_mcp=not solo)
+                                                   wire_mcp=not solo, seed=seed)
                 part["ptyId"] = info["ptyId"]
                 part["cwd"] = info["cwd"]
                 resumed.append({"identity": part["identity"],

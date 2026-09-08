@@ -474,7 +474,7 @@ class WindowsBackend(Backend):
         script_path = LAUNCH_DIR / f"pty-{uuid.uuid4().hex}.ps1"
         line = " ".join(_ps_quote(a) for a in argv)
         if prompt:
-            line += " @'\n" + prompt.replace("\r\n", "\n") + "\n'@"
+            line += " @'\n" + _native_text(prompt) + "\n'@"
         body = (
             f"Set-Location -LiteralPath {_ps_quote(cwd)}\n"
             f"& {line}\n"
@@ -504,7 +504,7 @@ class WindowsBackend(Backend):
         # the only free-form part and goes in a literal here-string.
         claude_line = " ".join(_ps_quote(a) for a in claude_argv)
         if initial_prompt:
-            here = "@'\n" + initial_prompt.replace("\r\n", "\n") + "\n'@"
+            here = "@'\n" + _native_text(initial_prompt) + "\n'@"
             claude_line = f"{claude_line} {here}"
         # After the agent exits, reset any terminal modes it left enabled (xterm
         # mouse tracking 1000/1002/1003/1006, bracketed paste 2004, focus
@@ -686,6 +686,18 @@ class WindowsBackend(Backend):
 
 
 # ---------- module helpers ----------
+
+def _native_text(text: str) -> str:
+    """Prompt text for a here-string that PowerShell hands to a NATIVE program
+    (claude/codex). Windows PowerShell 5.1 wraps the argument in double quotes
+    but does NOT escape the double quotes inside it, so a prompt containing
+    "quoted words" shatters into several arguments on the child's command line
+    (codex: "unexpected argument 'fire' found"). The MSVC/Rust argv parser
+    reads \" as a literal quote, and backslashes right before a quote must be
+    doubled. pwsh 7.3+ does this itself; 5.1 needs it done here."""
+    text = (text or "").replace("\r\n", "\n")
+    return re.sub(r'(\\*)"', lambda m: m.group(1) * 2 + '\\"', text)
+
 
 def _ps_quote(s: str) -> str:
     """Single-quote a string for PowerShell (doubling embedded single quotes)."""
