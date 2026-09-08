@@ -84,8 +84,26 @@
 const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const _MDA = String.fromCharCode(0xE000), _MDZ = String.fromCharCode(0xE001);
 const ROOM = new URLSearchParams(location.search).get('room') || '';
-function looksPath(s) { return /^(?:[A-Za-z]:\\|\\\\|~\/|\/)\S+\.\w{1,8}$/.test((s || '').trim()); }
-function fileLink(p) { return '/fileview?path=' + encodeURIComponent(p) + (ROOM ? '&room=' + encodeURIComponent(ROOM) : ''); }
+// File links: absolute paths always; relative ones ("docs/plan.md", "NOTES.md")
+// are resolved against the task folder, so agents needn't spell out full paths.
+const ABS_PATH_RE = /^(?:[A-Za-z]:\\|\\\\|~\/|\/)/;
+const REL_PATH_RE = /(^|[\s(*_])((?:\.\.?[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}|[\w-]+\.(?:md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|png|jpg|jpeg|gif|svg|sh|ps1|sql|xml|log|ini|cfg))(?=[\s.,;:)\]]|$)/g;
+const looksFilePath = s => {
+  const t = (s || '').trim();
+  if (ABS_PATH_RE.test(t)) return /\S+\.\w{1,8}$/.test(t);
+  return /^(?:\.\.?[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}$/.test(t)
+      || /^[\w-]+\.(?:md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|png|jpg|jpeg|gif|svg|sh|ps1|sql|xml|log|ini|cfg)$/.test(t);
+};
+function resolvePath(p, base) {
+  p = (p || '').trim();
+  if (ABS_PATH_RE.test(p) || !base) return p;
+  const sep = base.includes('\\') ? '\\' : '/';
+  return base.replace(/[\\\/]+$/, '') + sep + p.replace(/^\.[\\\/]/, '').replace(/[\\\/]/g, sep);
+}
+const looksPath = looksFilePath;
+// Relative links inside a document resolve against the document's own folder.
+const FILE_BASE = (new URLSearchParams(location.search).get('path') || '').replace(/[\\\/][^\\\/]*$/, '');
+function fileLink(p) { return '/fileview?path=' + encodeURIComponent(resolvePath(p, FILE_BASE)) + (ROOM ? '&room=' + encodeURIComponent(ROOM) : ''); }
 function mdToHtml(src) {
   const codes = [];
   const ph = h => _MDA + (codes.push(h) - 1) + _MDZ;
@@ -103,6 +121,7 @@ function mdToHtml(src) {
     .replace(/(^|[\s(*_])((?:https?:\/\/)[^\s<)*]+)/g, (_, pre, url) => `${pre}<a href="${url}" target="_blank" rel="noopener">${url}</a>`)
     .replace(/(^|[\s(*_])((?:[A-Za-z]:\\|\\\\|~\/|\/)[^\s"'<>|?*,;)\]]*\.\w{1,8})/g,
       (_, pre, pth) => `${pre}<a href="${fileLink(pth)}" target="_blank" rel="noopener">${pth}</a>`)
+    .replace(REL_PATH_RE, (_, pre, pth) => `${pre}<a href="${fileLink(pth)}" target="_blank" rel="noopener">${pth}</a>`)
     .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?]|$)/g, '$1<em>$2</em>')
     .replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,!?]|$)/g, '$1<em>$2</em>')

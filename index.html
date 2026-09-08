@@ -1460,9 +1460,25 @@ const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':
 // spans + block structure applied, then code restored (already escaped).
 const _MDA = String.fromCharCode(0xE000), _MDZ = String.fromCharCode(0xE001);
 // A local file path (drive-letter, UNC, ~, or absolute) ending in an extension.
-const looksFilePath = s => /^(?:[A-Za-z]:\\|\\\\|~\/|\/)\S+\.\w{1,8}$/.test((s || '').trim());
+// File links: absolute paths always; relative ones ("docs/plan.md", "NOTES.md")
+// are resolved against the task folder, so agents needn't spell out full paths.
+const ABS_PATH_RE = /^(?:[A-Za-z]:\\|\\\\|~\/|\/)/;
+const REL_PATH_RE = /(^|[\s(*_])((?:\.\.?[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}|[\w-]+\.(?:md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|png|jpg|jpeg|gif|svg|sh|ps1|sql|xml|log|ini|cfg))(?=[\s.,;:)\]]|$)/g;
+const looksFilePath = s => {
+  const t = (s || '').trim();
+  if (ABS_PATH_RE.test(t)) return /\S+\.\w{1,8}$/.test(t);
+  return /^(?:\.\.?[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}$/.test(t)
+      || /^[\w-]+\.(?:md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|png|jpg|jpeg|gif|svg|sh|ps1|sql|xml|log|ini|cfg)$/.test(t);
+};
+function resolvePath(p, base) {
+  p = (p || '').trim();
+  if (ABS_PATH_RE.test(p) || !base) return p;
+  const sep = base.includes('\\') ? '\\' : '/';
+  return base.replace(/[\\\/]+$/, '') + sep + p.replace(/^\.[\\\/]/, '').replace(/[\\\/]/g, sep);
+}
 let FILE_LINK_ROOM = '';   // room id woven into file links so /fileview can send comments back
-const fileHref = p => '/fileview?path=' + encodeURIComponent(p) + (FILE_LINK_ROOM ? '&room=' + encodeURIComponent(FILE_LINK_ROOM) : '');
+let FILE_LINK_BASE = '';   // the task folder relative paths resolve against
+const fileHref = p => '/fileview?path=' + encodeURIComponent(resolvePath(p, FILE_LINK_BASE)) + (FILE_LINK_ROOM ? '&room=' + encodeURIComponent(FILE_LINK_ROOM) : '');
 // Show the human ("user") by their configured name as a highlighted @mention.
 const operatorLabel = () => (typeof PREFS !== 'undefined' && PREFS && (PREFS.operatorName || PREFS.operatorNickname)) || 'you';
 const identLabel = id => `<span class="mention">@${esc(id === 'user' ? operatorLabel() : id)}</span>`;
@@ -1482,6 +1498,7 @@ function mdToHtml(src) {
     .replace(/(^|[\s(*_])((?:https?:\/\/)[^\s<)*]+)/g, (_, pre, url) => `${pre}<a href="${url}" target="_blank" rel="noopener">${url}</a>`)
     .replace(/(^|[\s(*_])((?:[A-Za-z]:\\|\\\\|~\/|\/)[^\s"'<>|?*,;)\]]*\.\w{1,8})/g,
       (_, pre, pth) => `${pre}<a href="${fileHref(pth)}" target="_blank" rel="noopener" class="file-link">${pth}</a>`)
+    .replace(REL_PATH_RE, (_, pre, pth) => `${pre}<a href="${fileHref(pth)}" target="_blank" rel="noopener" class="file-link">${pth}</a>`)
     .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?]|$)/g, '$1<em>$2</em>')
     .replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,!?]|$)/g, '$1<em>$2</em>')
@@ -1934,6 +1951,7 @@ function convThemeAttrs() {
 }
 function convBody(r, sid) {
   FILE_LINK_ROOM = (r && r.headless && r.roomId) ? r.roomId : '';
+  FILE_LINK_BASE = (r && r.cwd) || '';
   const th = convThemeAttrs();
   if (CONV_SID !== sid || !CONV_DATA) {
     return `<div class="dp-section dp-conv${th.cls}"${th.style}><h3>Conversation</h3><div class="dp-conv-empty">Loading…</div></div>`;
