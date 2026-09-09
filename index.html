@@ -4161,7 +4161,7 @@ document.addEventListener('visibilitychange', () => {
 // cost chip, which really is per-task.
 //
 // The server has already applied both staleness guards (usage.py) — this file
-// only renders what it is told, and honours two per-window flags:
+// only renders what it is told, and honours three per-window flags:
 //   * window.trusted === false  → the reading is frozen (a Codex rollout is
 //     only written when that agent takes a turn). Shown greyed with its age and
 //     read as "at least N%", never as a fresh measurement. Trust is per window,
@@ -4169,6 +4169,9 @@ document.addEventListener('visibilitychange', () => {
 //     nothing at all against the weekly one.
 //   * window.rolledOver         → that window already reset; its last value is
 //     dead, so it is shown as "—", never as a number.
+//   * window.resetUnknown       → the reading carried no reset time, so there
+//     is no telling whether it has rolled. Shown as "?"; the last value is
+//     withheld rather than passed off as current.
 // Self-contained, like the notifications block above it: all the markup, CSS
 // and JS live under the `usage` name so the Jira-style board can lift it whole.
 const USAGE_POLL_MS = 30000;         // the server refreshes on its own timer
