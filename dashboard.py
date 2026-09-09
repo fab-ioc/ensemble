@@ -3139,7 +3139,10 @@ def create_task(title: str, spec: str, project_id: str, agent_list,
     (ok, room_full, error)."""
     title = (title or "multiagent session").strip()[:120]
     spec = (spec or "").strip()
-    prio = DEFAULT_PRIORITY if priority is None else normalize_priority(priority)
+    # "" is a caller who didn't say, not a caller who said something wrong —
+    # the same reading the MCP layer takes.
+    prio = (DEFAULT_PRIORITY if priority is None or priority == ""
+            else normalize_priority(priority))
     if prio is None:
         return False, None, "bad_priority"
     specs, err = normalize_agent_specs(agent_list)

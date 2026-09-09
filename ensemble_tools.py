@@ -43,7 +43,9 @@ _PRIORITY_DOC = ("Priority: \"highest\", \"high\", \"medium\", \"low\" or \"lowe
 
 
 def _priority_spec(tail: str) -> dict:
-    return {"type": ["string", "integer"], "description": f"{_PRIORITY_DOC} {tail}"}
+    # A plain string type — every other schema here is scalar, and the server
+    # takes "2" and 2 alike, so nothing is lost by not declaring a union.
+    return {"type": "string", "description": f"{_PRIORITY_DOC} {tail}"}
 
 _AGENT_SPEC = {
     "type": "object",

@@ -404,11 +404,12 @@
   /* Detail panel: pick a level. Five arrows, the current one filled in. */
   .dp-prio {
     display: flex; align-items: center; gap: 6px;
+    flex-wrap: wrap;    /* the panel is resizable — five arrows don't fit at 380px */
     padding: 0 16px 10px; font-size: 11.5px; color: var(--muted);
   }
   .dp-prio-label { font-weight: 600; letter-spacing: .02em; }
   .dp-prio button {
-    display: inline-flex; align-items: center; gap: 4px;
+    display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto;
     padding: 2px 7px; border-radius: 6px; cursor: pointer;
     border: 1px solid transparent; background: transparent;
     font-size: 11px; color: var(--muted); line-height: 16px;
