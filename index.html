@@ -3393,11 +3393,18 @@ function wsMount(el, ctx) {
 // The tree keeps itself current on its own timer, decoupled from renderRows —
 // so the status strip above it goes on ticking every 2.5s while the tree, the
 // open folders and the file being read stay exactly where they are.
+// A tree nobody is looking at costs nothing: offsetParent is null for a
+// detached mount and for a pane that is display:none. Closing the detail panel
+// is the exception — it only slides the panel off-screen with a transform, so
+// its contents stay laid out and a mounted tree would poll forever.
+function wsOnScreen(v) {
+  if (!v.el || !v.el.isConnected || !v.el.offsetParent) return false;
+  if (v.el.closest('#detail-panel')) return document.body.classList.contains('detail-open');
+  return true;
+}
 setInterval(() => {
   if (document.hidden) return;
-  // offsetParent is null for a detached mount, a hidden pane and a closed
-  // detail panel alike — a tree nobody is looking at costs nothing.
-  WS_VIEWS.forEach(v => { if (v.el && v.el.isConnected && v.el.offsetParent) wsSync(v); });
+  WS_VIEWS.forEach(v => { if (wsOnScreen(v)) wsSync(v); });
 }, 4000);
 
 
