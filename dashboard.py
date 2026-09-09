@@ -60,6 +60,9 @@ import backup
 import chatroom
 # Task-management MCP tools (ensemble_*) served next to the chat tools.
 import ensemble_tools
+# Plan-allowance readings (account-wide, per agent kind), refreshed in the
+# background so no request path ever waits on the network.
+import usage
 # Headless PTY runtime — dashboard-owned agent processes streamed to the browser.
 from backends import ptyrun
 
@@ -3894,6 +3897,13 @@ class Handler(BaseHTTPRequestHandler):
                                   "intervalMin": bs.get("backupIntervalMin", 60),
                                   "enabled": bool(bs.get("backupEnabled"))})
             return
+        if p == "/api/usage":
+            # Cached plan allowance, both agent kinds. A dict copy and nothing
+            # else — the HTTPS call and the rollout scan happen on usage.py's
+            # background thread, so this answers instantly and the page's poll
+            # never waits on the network.
+            self._send_json(200, usage.snapshot())
+            return
         if p == "/api/settings":
             # Include the *resolved* operator display name so the UI can show the
             # human by name (nickname, else git user.name) instead of "user".
@@ -5381,6 +5391,9 @@ def main():
         return (PROJECTS_ROOT, s.get("backupRemote", ""), s.get("backupIntervalMin", 60),
                 bool(s.get("backupEnabled")))
     backup.start_scheduler(_backup_config, _export_task_chats)
+
+    # Plan allowance: refreshed on its own thread so /api/usage is a cache read.
+    usage.start_scheduler()
 
     # Serve every listener; extra ones run in daemon threads, the last inline.
     for s in servers[:-1]:

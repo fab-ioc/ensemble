@@ -1081,6 +1081,97 @@
     max-height: 130px; overflow-y: auto; color: var(--muted);
   }
   .notif-empty { padding: 10px 8px 12px; font-size: 12px; color: var(--muted); }
+  /* --- Plan allowance: one chip for the whole board ---------------------
+     Account-wide, never per-card: the five-hour and seven-day windows are one
+     number for the machine, so a percentage on a task card would read as caused
+     by that task. Self-contained (markup, CSS and JS all under the `usage`
+     name) so the Jira-style board can lift the whole thing into its own
+     chrome without unpicking it. */
+  #usage-chip {
+    display: flex; align-items: center; gap: 7px;
+    background: transparent; border: 1px solid var(--border);
+    padding: 4px 9px; border-radius: 6px; cursor: pointer;
+    color: var(--muted); font: inherit; font-size: 11px; line-height: 1;
+    white-space: nowrap;
+    transition: color .1s, border-color .1s, background .1s;
+  }
+  #usage-chip:hover { border-color: var(--accent); background: var(--hover); }
+  #usage-chip[hidden] { display: none; }
+  #usage-chip.warn { color: var(--accent); border-color: var(--accent); }
+  #usage-chip.alarm { color: var(--danger); border-color: var(--danger); }
+  .usage-chip-label {
+    font-size: 9px; text-transform: uppercase; letter-spacing: .07em;
+    color: var(--muted-2);
+  }
+  .usage-chip-kind { font-variant-numeric: tabular-nums; }
+  .usage-chip-kind b { font-weight: 600; }
+  /* A reading we do not trust (frozen Codex file) or cannot get (Claude token)
+     is greyed and dimmed — never rendered as if it were a current number. */
+  .usage-chip-kind.untrusted, .usage-chip-kind.gone { color: var(--muted-2); opacity: .75; }
+  #usage-tray {
+    position: absolute; top: 56px; right: 16px; z-index: 60; width: 380px;
+    max-height: 70vh; overflow-y: auto; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: 0 12px 36px rgba(0,0,0,.18); padding: 8px;
+  }
+  #usage-tray[hidden] { display: none; }
+  .usage-head {
+    font-size: 11px; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .06em; padding: 4px 6px 8px;
+  }
+  .usage-src { padding: 6px 6px 10px; }
+  .usage-src + .usage-src { border-top: 1px solid var(--border); padding-top: 10px; }
+  .usage-src-head { display: flex; align-items: baseline; gap: 6px; }
+  .usage-src-name { font-size: 12px; font-weight: 600; }
+  .usage-src-plan { font-size: 10px; color: var(--muted-2); }
+  .usage-src-age { margin-left: auto; font-size: 10px; color: var(--muted); }
+  .usage-src-age.untrusted { color: var(--danger); }
+  .usage-win { display: flex; align-items: center; gap: 8px; margin-top: 7px; }
+  .usage-win-label {
+    font-size: 10px; color: var(--muted); width: 62px; flex: none;
+  }
+  .usage-bar {
+    flex: 1; height: 6px; border-radius: 3px; background: var(--hover);
+    overflow: hidden;
+  }
+  .usage-bar > i { display: block; height: 100%; background: var(--live-idle); }
+  .usage-bar > i.warn { background: var(--accent); }
+  .usage-bar > i.alarm { background: var(--danger); }
+  .usage-bar > i.untrusted { background: var(--muted-2); opacity: .6; }
+  .usage-win-pct {
+    font-size: 11px; font-variant-numeric: tabular-nums; width: 42px;
+    text-align: right; flex: none;
+  }
+  .usage-win-pct.unknown { color: var(--muted-2); }
+  .usage-win-reset { font-size: 10px; color: var(--muted-2); width: 96px; flex: none; }
+  .usage-why {
+    font-size: 11px; color: var(--muted); margin-top: 5px; line-height: 1.45;
+  }
+  .usage-why.bad { color: var(--danger); }
+  .usage-foot {
+    font-size: 10px; color: var(--muted-2); padding: 8px 6px 2px;
+    border-top: 1px solid var(--border); line-height: 1.5;
+  }
+  /* Banner: only a *trusted* window that is genuinely hot right now. */
+  #usage-banner {
+    display: flex; align-items: center; gap: 12px; padding: 8px 16px;
+    background: color-mix(in srgb, var(--danger) 10%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--danger) 40%, var(--border));
+    color: var(--fg); font-size: 13px;
+    position: sticky; top: 0; z-index: 99;
+  }
+  #usage-banner[hidden] { display: none; }
+  #usage-banner.warn {
+    background: var(--accent-soft);
+    border-bottom-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  }
+  #usage-banner-text { flex: 1; }
+  #usage-banner-dismiss {
+    background: transparent; border: 0; color: var(--muted-2);
+    font-size: 16px; line-height: 1; padding: 4px 6px;
+    cursor: pointer; border-radius: 3px;
+  }
+  #usage-banner-dismiss:hover { color: var(--fg); background: var(--hover); }
   /* A row whose task needs you, marked in the list itself. */
   tr.row.needs-you td.topic::before {
     content: '⚠'; color: var(--danger); margin-right: 5px; font-size: 11px;
@@ -1416,6 +1507,10 @@
   <button id="update-banner-go">Update now</button>
   <button id="update-banner-dismiss" title="Dismiss for this session" aria-label="Dismiss">×</button>
 </div>
+<div id="usage-banner" hidden>
+  <span id="usage-banner-text"></span>
+  <button id="usage-banner-dismiss" title="Dismiss until it gets worse" aria-label="Dismiss">×</button>
+</div>
 <div id="update-overlay" hidden>
   <div class="update-modal">
     <h3>Updating Ensemble</h3>
@@ -1453,6 +1548,15 @@
   </div>
   <span id="status" hidden></span>
   <span id="meta"></span>
+  <!-- Plan allowance: ONE chip for the whole board, next to the notifications
+       bell. Account-wide by nature — deliberately not on task cards. Everything
+       it needs is under the `usage` name (see the CSS block and the JS section
+       of the same name), so it can be moved as a unit. -->
+  <button id="usage-chip" title="Plan allowance — click for detail"
+          aria-label="Plan allowance" hidden>
+    <span class="usage-chip-label">Plan</span>
+    <span id="usage-chip-body"></span>
+  </button>
   <!-- Notifications: tasks that need a human. Self-contained (markup, CSS and
        JS all under the `notif` name) so the Jira-style board can lift the whole
        thing into a proper notifications area without unpicking it. -->
@@ -1464,6 +1568,11 @@
 <div id="notif-tray" hidden>
   <div class="notif-head">Needs you <span id="notif-sub"></span></div>
   <div id="notif-list"></div>
+</div>
+<div id="usage-tray" hidden>
+  <div class="usage-head">Plan allowance <span id="usage-sub"></span></div>
+  <div id="usage-list"></div>
+  <div class="usage-foot" id="usage-foot"></div>
 </div>
 <div id="settings-panel" hidden>
   <div class="settings-section">
@@ -4040,6 +4149,221 @@ setInterval(() => { if (!document.hidden) updateRoomsBadge(); }, 5000);
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) updateRoomsBadge();
 });
+
+// --- Plan allowance ------------------------------------------------------
+// How much of each agent kind's subscription is spent. ONE chip for the whole
+// board: the five-hour and seven-day windows are account-wide, so a percentage
+// on a task card would read as caused by that task. Task cards keep their own
+// cost chip, which really is per-task.
+//
+// The server has already applied both staleness guards (usage.py) — this file
+// only renders what it is told, and honours two per-window flags:
+//   * window.trusted === false  → the reading is frozen (a Codex rollout is
+//     only written when that agent takes a turn). Shown greyed with its age and
+//     read as "at least N%", never as a fresh measurement. Trust is per window,
+//     not per source: half an hour is a tenth of the five-hour window and
+//     nothing at all against the weekly one.
+//   * window.rolledOver         → that window already reset; its last value is
+//     dead, so it is shown as "—", never as a number.
+// Self-contained, like the notifications block above it: all the markup, CSS
+// and JS live under the `usage` name so the Jira-style board can lift it whole.
+const USAGE_POLL_MS = 30000;         // the server refreshes on its own timer
+let USAGE = { state: 'loading', sources: [], alerts: [] };
+let _usageInFlight = false;
+let _usageBannerDismissedAt = 0;     // highest percent the user has waved away
+const USAGE_SRC_NAME = { claude: 'Claude', codex: 'Codex' };
+const USAGE_SRC_SHORT = { claude: 'C', codex: 'X' };
+const USAGE_WIN_NAME = {
+  five_hour: '5-hour', seven_day: 'Weekly', seven_day_model: 'Weekly',
+};
+
+async function refreshUsage() {
+  if (_usageInFlight) return;
+  _usageInFlight = true;
+  try {
+    // A cache read on the server: it never waits on the usage endpoint.
+    USAGE = await api('/api/usage') || USAGE;
+    renderUsage();
+  } catch (e) {
+    // Keep the last known state. A failed poll is not "allowance unavailable",
+    // and the chip is never allowed to take the rest of the page down with it.
+  } finally {
+    _usageInFlight = false;
+  }
+}
+
+// The short number a source contributes to the chip: its five-hour window,
+// which is the one that bites first.
+function usageChipPart(src) {
+  const short = USAGE_SRC_SHORT[src.source] || src.source;
+  if (src.state !== 'ok') {
+    return `<span class="usage-chip-kind gone" title="${esc(src.error || 'unavailable')}"
+      >${esc(short)} n/a</span>`;
+  }
+  const win = (src.windows || []).find(w => w.kind === 'five_hour');
+  if (!win || (win.percent == null && !win.rolledOver)) return '';
+  if (win.rolledOver) {
+    return `<span class="usage-chip-kind untrusted"
+      title="that window has already reset — unknown until ${esc(USAGE_SRC_NAME[src.source] || src.source)} runs again"
+      >${esc(short)} <b>—</b></span>`;
+  }
+  // "≥" is the honest prefix for a frozen reading: these windows are anchored
+  // with a fixed reset, so within one window the percentage only ever climbs.
+  const cls = win.trusted ? '' : ' untrusted';
+  const at = win.trusted ? '' : '≥';
+  const age = win.trusted ? '' : ` — frozen ${fmtAgo(win.ageSeconds)} ago, so at least this much`;
+  return `<span class="usage-chip-kind${cls}"
+    title="${esc(USAGE_SRC_NAME[src.source] || src.source)} 5-hour window${esc(age)}"
+    >${esc(short)} <b>${at}${Math.round(win.percent)}%</b></span>`;
+}
+
+function usageWindowRow(win, srcName) {
+  const name = USAGE_WIN_NAME[win.kind] || win.kind;
+  const label = win.model ? `${name} · ${win.model}` : name;
+  let pct = '—', barPct = 0, barCls = 'untrusted', pctCls = 'unknown', why = '';
+  if (win.rolledOver) {
+    // The last value is dead and the current one is genuinely unknown.
+    why = `rolled — unknown until ${srcName} runs again`;
+  } else if (win.percent != null) {
+    pct = (win.trusted ? '' : '≥') + Math.round(win.percent) + '%';
+    barPct = Math.max(0, Math.min(100, win.percent));
+    if (win.percent >= (USAGE.alarmPercent ?? 95)) barCls = 'alarm';
+    else if (win.percent >= (USAGE.warnPercent ?? 80)) barCls = 'warn';
+    else barCls = win.trusted ? '' : 'untrusted';
+    pctCls = win.trusted ? '' : 'unknown';
+  }
+  const reset = !win.rolledOver && win.resetsAt ? usageResetText(win.resetsAt) : '';
+  return `<div class="usage-win" title="${esc(why || reset)}">
+    <span class="usage-win-label">${esc(label)}</span>
+    <span class="usage-bar"><i class="${barCls}" style="width:${barPct}%"></i></span>
+    <span class="usage-win-pct ${pctCls}">${esc(pct)}</span>
+    <span class="usage-win-reset">${esc(win.rolledOver ? 'reset passed' : reset)}</span>
+  </div>`;
+}
+
+// "resets 16:30" while it is today, "resets Tue 12:00" further out, and
+// "reset passed" for one the server has already marked rolled over.
+function usageResetText(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return 'resets ' + (sameDay ? t
+    : d.toLocaleDateString([], { weekday: 'short' }) + ' ' + t);
+}
+
+function usageSourceHtml(src) {
+  const name = USAGE_SRC_NAME[src.source] || src.source;
+  if (src.state !== 'ok') {
+    return `<div class="usage-src">
+      <div class="usage-src-head"><span class="usage-src-name">${esc(name)}</span>
+        <span class="usage-src-plan">unavailable</span></div>
+      <div class="usage-why bad">${esc(src.error || 'no reading')}</div>
+    </div>`;
+  }
+  // Age matters only for Codex, whose file freezes when its agents stop; the
+  // Claude reading is a live HTTPS call, so it is always "just now".
+  const wins = src.windows || [];
+  const showAge = src.ageSeconds != null && src.ageSeconds > 60;
+  const age = showAge
+    ? `<span class="usage-src-age${src.trusted ? '' : ' untrusted'}"
+        >as of ${esc(fmtAgo(src.ageSeconds))} ago</span>` : '';
+  const frozen = wins.some(w => !w.trusted && !w.rolledOver)
+    ? `<div class="usage-why">A “≥” number is frozen: ${esc(name)} only writes
+        its usage when one of its agents takes a turn, and none has for
+        ${esc(fmtAgo(src.ageSeconds))}. Because a window only ever fills up
+        until it resets, that number is a floor — the real one is at least
+        that high.</div>` : '';
+  const rolled = wins.some(w => w.rolledOver)
+    ? `<div class="usage-why">A window shown as “—” has reset since this reading
+        was written, so its old value means nothing and the new one is unknown
+        until ${esc(name)} runs again.</div>` : '';
+  return `<div class="usage-src">
+    <div class="usage-src-head">
+      <span class="usage-src-name">${esc(name)}</span>
+      ${src.planType ? `<span class="usage-src-plan">${esc(src.planType)}</span>` : ''}
+      ${age}
+    </div>
+    ${wins.map(w => usageWindowRow(w, name)).join('')}
+    ${frozen}${rolled}
+  </div>`;
+}
+
+function renderUsage() {
+  const chip = $('#usage-chip'), body = $('#usage-chip-body');
+  const sources = USAGE.sources || [];
+  if (USAGE.state === 'loading' || !sources.length) {
+    chip.hidden = true;                       // nothing worth a chip yet
+    return;
+  }
+  chip.hidden = false;
+  const parts = sources.map(usageChipPart).filter(Boolean);
+  body.innerHTML = parts.join('<span class="usage-chip-label">·</span>');
+
+  const alerts = USAGE.alerts || [];
+  const worst = alerts.length ? alerts[0] : null;
+  chip.classList.toggle('alarm', !!worst && worst.level === 'alarm');
+  chip.classList.toggle('warn', !!worst && worst.level === 'warn');
+  chip.title = worst
+    ? `${USAGE_SRC_NAME[worst.source] || worst.source} ${USAGE_WIN_NAME[worst.kind] || worst.kind}`
+      + ` window ${Math.round(worst.percent)}% used`
+    : 'Plan allowance — click for detail';
+
+  $('#usage-sub').textContent = '— account-wide, not per task';
+  $('#usage-list').innerHTML = sources.map(usageSourceHtml).join('');
+  $('#usage-foot').textContent =
+    'Claude and Codex have separate allowances — they are never added together. '
+    + 'These windows are shared by every task on this machine, so they say nothing '
+    + 'about what any one task cost.';
+
+  renderUsageBanner(worst);
+}
+
+// Which windows shout is the server's call (`alerts`), not this file's. A
+// window that has rolled over never does — its value is dead. A frozen one
+// does, qualified: the windows are anchored with a fixed reset, so an old
+// reading that has not rolled is a floor, and "at least 95%" is exactly the
+// warning this feature exists to give.
+function renderUsageBanner(worst) {
+  const banner = $('#usage-banner');
+  if (!worst || worst.percent <= _usageBannerDismissedAt) {
+    banner.hidden = true;
+    return;
+  }
+  banner.hidden = false;
+  banner.classList.toggle('warn', worst.level === 'warn');
+  const who = USAGE_SRC_NAME[worst.source] || worst.source;
+  const win = (USAGE_WIN_NAME[worst.kind] || worst.kind).toLowerCase();
+  const reset = worst.resetsAt ? ' · ' + usageResetText(worst.resetsAt) : '';
+  const pct = Math.round(worst.percent) + '%';
+  $('#usage-banner-text').textContent = worst.atLeast
+    ? `${who} ${win} window at least ${pct} used — reading frozen `
+      + `${fmtAgo(worst.ageSeconds)} ago${reset}`
+    : `${who} ${win} window ${pct} used${reset}`;
+  banner.dataset.pct = worst.percent;
+}
+
+$('#usage-banner-dismiss').addEventListener('click', () => {
+  // Dismiss this level only: it comes back if the window climbs further.
+  _usageBannerDismissedAt = Number($('#usage-banner').dataset.pct || 0);
+  $('#usage-banner').hidden = true;
+});
+$('#usage-chip').addEventListener('click', (ev) => {
+  ev.stopPropagation();
+  const tray = $('#usage-tray');
+  tray.hidden = !tray.hidden;
+  if (!tray.hidden) refreshUsage();
+});
+document.addEventListener('click', (ev) => {
+  if (ev.target.closest('#usage-chip') || ev.target.closest('#usage-tray')) return;
+  $('#usage-tray').hidden = true;
+});
+setInterval(() => { if (!document.hidden) refreshUsage(); }, USAGE_POLL_MS);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) refreshUsage();
+});
+refreshUsage();
 
 // Accent color customization
 function applyAccent(color) {
