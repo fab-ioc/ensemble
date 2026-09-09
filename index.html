@@ -615,6 +615,21 @@
   iframe.dp-session { width: 100%; flex: 1; border: 0; display: block; background: #0e0e0e; }
   #detail-panel:has(iframe.dp-session) { display: flex; flex-direction: column; padding: 0; }
   #detail-panel:has(iframe.dp-session) .dp-head { padding: 8px 12px; margin: 0; }
+  /* Conversation | Files. Both panes stay mounted; only `hidden` moves, so a
+     live terminal is never torn down by looking at a file. */
+  #detail-panel .dp-tabs { display: flex; gap: 4px; padding: 0 12px; border-bottom: 1px solid var(--border); }
+  #detail-panel .dp-tabs button {
+    background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted);
+    font: inherit; font-size: 12.5px; font-weight: 600; padding: 7px 4px; margin-bottom: -1px; cursor: pointer;
+  }
+  #detail-panel .dp-tabs button:hover { color: var(--fg); }
+  #detail-panel .dp-tabs button.on { color: var(--fg); border-bottom-color: var(--accent); }
+  #detail-panel .dp-pane { min-height: 0; }
+  #detail-panel .dp-pane[data-pane="files"] { flex: 1; display: flex; flex-direction: column; padding: 10px 12px; min-height: 360px; }
+  #detail-panel:has(iframe.dp-session) .dp-pane[data-pane="conv"] { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  /* The panel is a narrow, user-resized column: same component, stacked. */
+  #detail-panel .wsp { grid-template-columns: 1fr; grid-template-rows: minmax(120px, 34vh) 1fr; height: 100%; min-height: 340px; }
+  #detail-panel .wsp-tree { border-right: 0; border-bottom: 1px solid var(--border); }
   .dp-meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: 11.5px; color: var(--muted); }
   .dp-meta .chip {
     background: var(--bg); border: 1px solid var(--border);
@@ -773,7 +788,6 @@
   /* Workspace: lazy file tree (left) + rendered file (right). */
   .wsp { display: grid; grid-template-columns: minmax(220px, 300px) 1fr; height: calc(100vh - 266px); min-height: 420px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
   .wsp-tree { overflow: auto; border-right: 1px solid var(--border); padding: 8px 6px; font-size: 12.5px; }
-  .wsp-rootlbl { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--muted-2); padding: 4px 6px 8px; word-break: break-all; }
   .scopebar { display: flex; align-items: center; gap: 8px; padding: 8px 0 4px; font-size: 12px; color: var(--muted); min-width: 0; }
   .scopebar .lbl { font-weight: 600; white-space: nowrap; }
   .scopebar select, .chp-repo { font: inherit; font-size: 12px; padding: 2px 6px; border-radius: 6px; border: 1px solid var(--border, #8884); background: var(--card, transparent); color: var(--fg); max-width: 44ch; }
@@ -781,7 +795,13 @@
   .chp-repo1 { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 500; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .chp-count { margin-left: auto; font-weight: 500; white-space: nowrap; }
   .wsk { padding-left: 14px; }
-  #wsp-rootkids { padding-left: 0; }
+  /* One tree, several roots — the task you are in and its project, or the
+     project and every task under it. A root reads as a heading, not a folder. */
+  .wse.wsroot { margin-top: 6px; padding: 4px 6px; border-top: 1px solid var(--border); border-radius: 0; }
+  .wsp-tree > .wse.wsroot:first-child { margin-top: 0; border-top: 0; }
+  .wse.wsroot .nm { font-weight: 700; overflow: hidden; text-overflow: ellipsis; }
+  .wse.wsroot .wsroot-kind { margin-left: auto; padding-left: 8px; font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted-2); }
+  .wsp-tree > .wsk { padding-left: 6px; }
   .wse { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
   .wse:hover { background: var(--hover); }
   .wse.on { background: color-mix(in srgb, var(--accent) 18%, transparent); }
@@ -1802,8 +1822,7 @@ let ALL_ROWS = [];
 // Projects-first shell: group sessions by git-root. PROJ_GROUPBY 'project' shows
 // the projects landing; a SELECTED_PROJECT drills into one project's sessions.
 let PROJECTS = null, _projTs = 0, SELECTED_PROJECT = null, _projFailed = false;
-let WS_SCOPE = '';       // Workspace/Changes tabs: '' = the project folder, else one task's workspace path
-let WS_MOUNT_SIG = '';   // what the Workspace panel is mounted for; keeps the tree alive across refreshes
+let WS_SCOPE = '';       // Changes tab: '' = the project folder, else one task's workspace path
 let PROJ_GROUPBY = localStorage.getItem('cd-groupby') || 'project';
 let SEARCH_QUERY = '';
 let FILTERS = new Set(['live', 'pinned', 'history']); // multi-select
@@ -2166,6 +2185,28 @@ async function loadConversation(r) {
   } catch (e) { /* keep the "Loading…" placeholder */ }
 }
 
+// Which pane of the task panel is showing. Not part of the panel's signature —
+// see renderDetail.
+let DETAIL_TAB = 'conv';
+function wireDetailTabs(sid, hasFiles) {
+  const panel = $('#detail-panel');
+  if (!hasFiles) { DETAIL_TAB = 'conv'; return; }
+  panel.querySelectorAll('.dp-tabs button[data-dtab]').forEach(b => {
+    b.onclick = () => { DETAIL_TAB = b.dataset.dtab; showDetailTab(sid); };
+  });
+  showDetailTab(sid);
+}
+function showDetailTab(sid) {
+  const panel = $('#detail-panel');
+  panel.querySelectorAll('.dp-tabs button[data-dtab]').forEach(b => b.classList.toggle('on', b.dataset.dtab === DETAIL_TAB));
+  panel.querySelectorAll('.dp-pane').forEach(p => { p.hidden = p.dataset.pane !== DETAIL_TAB; });
+  const files = panel.querySelector('.dp-pane[data-pane="files"]');
+  if (DETAIL_TAB === 'files' && files && !files.querySelector('.wsp')) {
+    files.innerHTML = wsPanelHtml();
+    wsMount(files.querySelector('.wsp'), { kind: 'task', sid });
+  }
+}
+
 function renderDetail() {
   const sid = SELECTED_SID;
   if (!sid) { closeDetail(); return; }
@@ -2194,10 +2235,23 @@ function renderDetail() {
   panel.dataset.sig = sig;
   const now = Date.now() / 1000;
 
+  // Files is a sibling pane, not a re-render. DETAIL_TAB is deliberately kept
+  // out of `sig`: switching tabs must never rebuild the panel, because that
+  // would tear down and reconnect a live agent's terminal iframe.
+  const hasFiles = wsRoots({ kind: 'task', sid }).length > 0;
+  const tabs = hasFiles ? `<div class="dp-tabs">`
+    + `<button data-dtab="conv">${liveEmbed ? 'Session' : 'Conversation'}</button>`
+    + `<button data-dtab="files" title="This task's folder and its project's — code highlighted, comment anywhere">Files</button>`
+    + `</div>` : '';
+  const filesPane = hasFiles ? `<div class="dp-pane" data-pane="files" hidden></div>` : '';
+
   if (liveEmbed) {
     panel.innerHTML =
       `<div class="dp-live">${detailHead(r, isRoom)}${detailMeta(r, isLive, isRoom, now)}${detailActions(r, isLive, isRoom, isOrphan)}${detailPriority(r, isRoom)}</div>`
-      + `<iframe class="dp-session" data-room="${esc(r.roomId)}" src="/session?id=${encodeURIComponent(r.roomId)}&embed=1" title="session" allow="clipboard-read; clipboard-write"></iframe>`;
+      + tabs
+      + `<div class="dp-pane" data-pane="conv"><iframe class="dp-session" data-room="${esc(r.roomId)}" src="/session?id=${encodeURIComponent(r.roomId)}&embed=1" title="session" allow="clipboard-read; clipboard-write"></iframe></div>`
+      + filesPane;
+    wireDetailTabs(sid, hasFiles);
     return;
   }
   panel.innerHTML =
@@ -2205,10 +2259,15 @@ function renderDetail() {
     + detailMeta(r, isLive, isRoom, now)
     + detailActions(r, isLive, isRoom, isOrphan)
     + detailPriority(r, isRoom)
+    + tabs
+    + `<div class="dp-pane" data-pane="conv">`
     + detailInfo(r)
     + (isOrphan
         ? `<div class="dp-section"><p style="font-size: 12.5px; color: var(--muted); margin: 0">This collaboration has ended and its agents aren't running. Open to resume where it left off.</p></div>`
-        : convBody(r, sid));
+        : convBody(r, sid))
+    + `</div>`
+    + filesPane;
+  wireDetailTabs(sid, hasFiles);
 }
 
 // Single unified layout — list on left, detail panel on right.
@@ -2962,53 +3021,272 @@ function wireScopeBar() {
   const s = document.querySelector('.scope-sel');
   if (s) s.onchange = () => { WS_SCOPE = s.value; CH_ROOT = ''; CH_FILE = ''; renderRows(); };
 }
-function workspacePanelHtml(pj) {
-  if (!pj || !pj.path) return '<p class="empty">This project has no folder.</p>';
-  const root = scopePath(pj);
-  return scopeBarHtml(pj) + `<div class="wsp">
-    <div class="wsp-tree" id="wsp-tree" data-root="${esc(root)}">
-      <div class="wsp-rootlbl" title="${esc(root)}">📁 ${esc(tildeify(root))}</div>
-      <div class="wsk" id="wsp-rootkids"><div class="wse none">loading…</div></div>
-    </div>
-    <div class="wsp-view" id="wsp-view"><div class="wsp-empty">Select a file to view it. Markdown and HTML render; select text to comment in place.</div></div>
+// ---- Workspace: file tree + viewer -----------------------------------------
+// One component, two mount points — a project's Workspace tab and a task's
+// detail panel. What it shows follows the context: inside a task you see that
+// task's folder and the project's, nothing else; at project level you see the
+// project folder and every task under it.
+//
+// The tree is STATE, not a view of the session list. Expanded folders, the
+// selected file and the scroll position live in WS_VIEWS and outlive every
+// re-render of the chrome around them, every tab switch, and the refresh tick.
+const WS_VIEWS = new Map();          // key -> view
+const wsNorm = p => (p || '').replace(/[\\/]+$/, '').replace(/\\/g, '/').toLowerCase();
+const wsSame = (a, b) => wsNorm(a) === wsNorm(b);
+
+// A task's folder, not its cwd. An `empty` task is just a folder; `copy` and
+// `worktree` tasks put the checkout in <taskDir>/repo; an `inplace` task runs
+// straight in the project. Only taskDir names the folder in every case — the
+// server now sends it on both /api/sessions rows and /api/projects sessions;
+// the fallbacks keep this honest against an older hub that sends neither.
+function wsTaskFolder(sn) {
+  if (sn.taskDir) return sn.taskDir;
+  const id = sn.roomId || sn.sessionId || '';
+  const row = ALL_ROWS.find(r => (r.roomId || r.sessionId) === id);
+  if (row && row.taskDir) return row.taskDir;
+  const m = (sn.cwd || '').match(/^(.+)[\\/]repo[\\/]?$/);   // copy/worktree
+  return m ? m[1] : '';
+}
+function wsProjectForRow(r) {
+  const id = (r && (r.roomId || r.sessionId)) || '';
+  return ((PROJECTS && PROJECTS.projects) || [])
+    .find(p => (p.sessions || []).some(s => (s.roomId || s.sessionId) === id)) || null;
+}
+// The task folders of a project. An in-root project IS its own task container,
+// so at task scope these are exactly the folders that must not show under the
+// project root — the other tasks because they are none of your business here,
+// and your own because it is already the root above.
+function wsTaskDirsOf(pj) {
+  const out = new Set();
+  ((pj && pj.sessions) || []).forEach(sn => {
+    const f = wsTaskFolder(sn);
+    if (f && !wsSame(f, pj.path)) out.add(wsNorm(f));
+  });
+  return out;
+}
+// The roots this context is allowed to see, in the order they are shown.
+//   task    — this task's folder, then the project's, with sibling tasks hidden
+//   project — the project folder, plus its home when that is a separate folder
+function wsRoots(ctx) {
+  const out = [];
+  const push = (path, label, kind) => {
+    if (path && !out.some(o => wsSame(o.path, path))) out.push({ path, label, kind });
+  };
+  if (ctx.kind === 'task') {
+    const r = ALL_ROWS.find(x => x.sessionId === ctx.sid || x.roomId === ctx.sid);
+    if (!r) return out;
+    push(r.taskDir || wsTaskFolder(r), 'This task', 'task');
+    const pj = wsProjectForRow(r);
+    if (pj && pj.path) push(pj.path, pj.name || 'Project', 'project');
+    return out;
+  }
+  const pj = projectById(ctx.projectId);
+  if (!pj || !pj.path) return out;
+  push(pj.path, pj.name || 'Project', 'project');
+  // An out-of-root project's code tree is not where its tasks, notes and chat
+  // exports live — root that folder too, or project level would not show
+  // "everything".
+  push(pj.home || '', 'Tasks & notes', 'home');
+  return out;
+}
+// At task scope the project root is filtered: an in-root project's children
+// include every other task, and "only project level files and task level
+// files" means none of those belong here.
+function wsHidden(v, dir) {
+  if (v.ctx.kind !== 'task' || !v.hide || !v.hide.size) return null;
+  const root = v.roots.find(r => r.kind === 'project');
+  return (root && wsSame(root.path, dir)) ? v.hide : null;
+}
+function wsCtxKey(ctx) { return ctx.kind === 'task' ? 'task:' + ctx.sid : 'project:' + ctx.projectId; }
+function wsView(ctx) {
+  const key = wsCtxKey(ctx);
+  let v = WS_VIEWS.get(key);
+  if (!v) {
+    v = { key, ctx, el: null, open: new Set(), sel: '', dirs: new Map(), roots: [], hide: new Set(), busy: false };
+    try {
+      const s = JSON.parse(localStorage.getItem('cd-ws:' + key) || '{}');
+      (s.open || []).forEach(p => v.open.add(p));
+      v.sel = s.sel || '';
+    } catch (e) {}
+    WS_VIEWS.set(key, v);
+  }
+  v.ctx = ctx;
+  return v;
+}
+function wsPersist(v) {
+  try { localStorage.setItem('cd-ws:' + v.key, JSON.stringify({ open: [...v.open], sel: v.sel })); } catch (e) {}
+}
+function wsPanelHtml() {
+  return `<div class="wsp">
+    <div class="wsp-tree"></div>
+    <div class="wsp-view"><div class="wsp-empty">Select a file to view it. Code is highlighted, Markdown and HTML render, and you can comment on any of it in place.</div></div>
   </div>`;
 }
-async function wsLoadDir(container, path) {
+// The tree's HTML is a pure function of the view's state, so expanded folders
+// and the selection are preserved by construction. It is written to the DOM
+// only when it actually differs — the refresh tick normally touches nothing.
+function wsRowsHtml(v, dir) {
+  const c = v.dirs.get(dir);
+  if (!c) return '<div class="wse none">loading…</div>';
+  if (c.error) return `<div class="wse none">can't read: ${esc(c.error)}</div>`;
+  const hide = wsHidden(v, dir);
+  const ents = hide ? c.entries.filter(e => !hide.has(wsNorm(wsJoin(dir, e.name)))) : c.entries;
+  if (!ents.length) return '<div class="wse none">(empty)</div>';
+  // mtime rides along in the row so a file rewritten in place — same name, same
+  // size — still changes the tree's signature and gets repainted.
+  const rows = ents.map(e => {
+    const p = wsJoin(dir, e.name);
+    if (e.type === 'dir') {
+      const open = v.open.has(p);
+      return `<div class="wse dir" data-path="${esc(p)}" data-mt="${e.mtime || 0}"><span class="tw">${open ? '▾' : '▸'}</span><span class="nm">${esc(e.name)}</span></div>`
+        + `<div class="wsk" data-dir="${esc(p)}"${open ? '' : ' hidden'}>${open ? wsRowsHtml(v, p) : ''}</div>`;
+    }
+    return `<div class="wse file${wsSame(v.sel, p) ? ' on' : ''}" data-path="${esc(p)}" data-mt="${e.mtime || 0}"><span class="tw"></span><span class="nm">${esc(e.name)}</span><span class="sz">${wsFmtSize(e.size)}</span></div>`;
+  }).join('');
+  // The server stops at 2000 entries. Say so rather than quietly showing a
+  // folder that looks complete and isn't.
+  return rows + (c.entries.length >= 2000 ? '<div class="wse none">…first 2000 entries only</div>' : '');
+}
+function wsTreeHtml(v) {
+  if (!v.roots.length) return '<div class="wse none">Nothing to browse here yet.</div>';
+  return v.roots.map(r => {
+    const open = v.open.has(r.path);
+    return `<div class="wse dir wsroot ${esc(r.kind)}" data-path="${esc(r.path)}" title="${esc(r.path)}">`
+      + `<span class="tw">${open ? '▾' : '▸'}</span><span class="nm">${esc(r.label)}</span>`
+      + `<span class="wsroot-kind">${esc(r.kind)}</span></div>`
+      + `<div class="wsk" data-dir="${esc(r.path)}"${open ? '' : ' hidden'}>${open ? wsRowsHtml(v, r.path) : ''}</div>`;
+  }).join('');
+}
+function wsPaintTree(v) {
+  const tree = v.el && v.el.querySelector('.wsp-tree');
+  if (!tree) return;
+  const html = wsTreeHtml(v);
+  if (tree.dataset.sig === html) return;      // nothing moved on disk — leave the DOM alone
+  const keep = tree.scrollTop;
+  tree.dataset.sig = html;
+  tree.innerHTML = html;
+  tree.scrollTop = keep;                      // a repaint must not scroll you back to the root
+}
+// Where comments from the viewer should land: the task that owns the file, so
+// they reach that task's chat exactly as a file link from the chat does.
+// The deepest task folder containing the file wins, so a file under
+// <task>/repo/... goes to that task and nothing else can claim it.
+function wsRoomForPath(v, path) {
+  if (v.ctx.kind === 'task') {
+    const r = ALL_ROWS.find(x => x.sessionId === v.ctx.sid || x.roomId === v.ctx.sid);
+    return (r && r.headless && r.roomId) ? { id: r.roomId, name: r.label || 'this task' } : null;
+  }
+  const pj = projectById(v.ctx.projectId);
+  let best = null, bestLen = -1;
+  ((pj && pj.sessions) || []).forEach(sn => {
+    if (!sn.roomId) return;
+    const n = wsNorm(wsTaskFolder(sn));
+    if (n && wsNorm(path).startsWith(n + '/') && n.length > bestLen) {
+      best = { id: sn.roomId, name: sn.label || sn.sessionId || 'task' }; bestLen = n.length;
+    }
+  });
+  return best;
+}
+function wsFileUrl(v, path) {
+  const room = wsRoomForPath(v, path);
+  // The viewer names the chat it will post to, so nobody sends a review into a
+  // task they didn't mean.
+  return '/fileview?path=' + encodeURIComponent(path)
+    + (room ? '&room=' + encodeURIComponent(room.id) + '&roomName=' + encodeURIComponent(room.name) : '');
+}
+function wsPaintView(v) {
+  const box = v.el && v.el.querySelector('.wsp-view');
+  if (!box || !v.sel) return;
+  const src = wsFileUrl(v, v.sel);
+  const cur = box.querySelector('iframe.wsp-frame');
+  if (cur && cur.dataset.src === src) return;   // already showing it — reloading would lose the reader's place
+  box.innerHTML = `<div class="wsp-bar"><span class="wsp-path" title="${esc(v.sel)}">${esc(tildeify(v.sel))}</span>`
+    + `<a href="${src}" target="_blank" title="Open in its own tab">⧉</a></div>`
+    + `<iframe class="wsp-frame" data-src="${esc(src)}" src="${src}" allow="clipboard-write"></iframe>`;
+}
+// Every directory currently on screen: a root that is open, and every open
+// directory whose ancestors are open too. Folders opened inside a collapsed
+// parent stay remembered but aren't polled.
+function wsVisibleDirs(v) {
+  const out = [];
+  const walk = dir => {
+    out.push(dir);
+    const c = v.dirs.get(dir);
+    if (!c || !c.entries) return;
+    c.entries.forEach(e => {
+      if (e.type !== 'dir') return;
+      const p = wsJoin(dir, e.name);
+      if (v.open.has(p)) walk(p);
+    });
+  };
+  v.roots.forEach(r => { if (v.open.has(r.path)) walk(r.path); });
+  return out;
+}
+async function wsFetchDir(v, dir) {
   try {
-    const d = await api('/api/dir?path=' + encodeURIComponent(path));
-    const ents = d.entries || [];
-    container.innerHTML = ents.length ? ents.map(e => {
-      const p = wsJoin(path, e.name);
-      return e.type === 'dir'
-        ? `<div class="wse dir" data-path="${esc(p)}"><span class="tw">▸</span><span class="nm">${esc(e.name)}</span></div><div class="wsk" hidden></div>`
-        : `<div class="wse file" data-path="${esc(p)}"><span class="tw"></span><span class="nm">${esc(e.name)}</span><span class="sz">${wsFmtSize(e.size)}</span></div>`;
-    }).join('') : '<div class="wse none">(empty)</div>';
-  } catch (e) { container.innerHTML = `<div class="wse none">can't read: ${esc(e.message)}</div>`; }
+    const d = await api('/api/dir?path=' + encodeURIComponent(dir));
+    v.dirs.set(dir, { entries: d.entries || [], error: '' });
+  } catch (e) {
+    v.dirs.set(dir, { entries: [], error: e.message || 'failed' });
+  }
 }
-function wsOpenFile(path) {
-  const v = $('#wsp-view'); if (!v) return;
-  document.querySelectorAll('#wsp-tree .wse.file.on').forEach(x => x.classList.remove('on'));
-  const row = [...document.querySelectorAll('#wsp-tree .wse.file')].find(x => x.dataset.path === path);
-  if (row) row.classList.add('on');
-  const src = '/fileview?path=' + encodeURIComponent(path);
-  v.innerHTML = `<div class="wsp-bar"><span class="wsp-path" title="${esc(path)}">${esc(tildeify(path))}</span><a href="${src}" target="_blank" title="Open in its own tab">⧉</a></div><iframe class="wsp-frame" src="${src}"></iframe>`;
+// Re-read what is on screen and repaint if it changed. This is what picks up a
+// file an agent just wrote, without collapsing anything the person opened.
+// The roots and the sibling-task filter both follow from data that arrives on
+// the refresh, so recompute them before every paint.
+function wsRecompute(v) {
+  v.roots = wsRoots(v.ctx);
+  if (v.ctx.kind === 'task') {
+    const r = ALL_ROWS.find(x => x.sessionId === v.ctx.sid || x.roomId === v.ctx.sid);
+    const pj = r ? wsProjectForRow(r) : null;
+    v.hide = pj ? wsTaskDirsOf(pj) : new Set();
+  }
 }
-function wireWorkspacePanel() {
-  wireScopeBar();
-  const tree = $('#wsp-tree'); if (!tree) return;
-  wsLoadDir($('#wsp-rootkids'), tree.dataset.root);
-  tree.onclick = async (e) => {
+async function wsSync(v) {
+  if (v.busy) return;
+  v.busy = true;
+  try {
+    wsRecompute(v);
+    const dirs = wsVisibleDirs(v);
+    if (dirs.length) await Promise.all(dirs.map(d => wsFetchDir(v, d)));
+    wsPaintTree(v);
+  } finally { v.busy = false; }
+}
+function wsMount(el, ctx) {
+  const v = wsView(ctx);
+  v.el = el;
+  wsRecompute(v);
+  if (!v.open.size && v.roots.length) v.open.add(v.roots[0].path);   // first visit: open where you are
+  wsPaintTree(v);
+  wsPaintView(v);
+  el.querySelector('.wsp-tree').onclick = async (e) => {
     const d = e.target.closest('.wse.dir');
     if (d) {
-      const kids = d.nextElementSibling, tw = d.querySelector('.tw');
-      if (kids.hidden) { if (!kids.childElementCount) await wsLoadDir(kids, d.dataset.path); kids.hidden = false; tw.textContent = '▾'; }
-      else { kids.hidden = true; tw.textContent = '▸'; }
+      const p = d.dataset.path;
+      if (v.open.has(p)) v.open.delete(p);
+      else {
+        v.open.add(p);
+        if (!v.dirs.has(p)) { wsPaintTree(v); await wsFetchDir(v, p); }
+      }
+      wsPersist(v); wsPaintTree(v);
       return;
     }
     const f = e.target.closest('.wse.file');
-    if (f) wsOpenFile(f.dataset.path);
+    if (f) { v.sel = f.dataset.path; wsPersist(v); wsPaintTree(v); wsPaintView(v); }
   };
+  wsSync(v);
+  return v;
 }
+// The tree keeps itself current on its own timer, decoupled from renderRows —
+// so the status strip above it goes on ticking every 2.5s while the tree, the
+// open folders and the file being read stay exactly where they are.
+setInterval(() => {
+  if (document.hidden) return;
+  // offsetParent is null for a detached mount, a hidden pane and a closed
+  // detail panel alike — a tree nobody is looking at costs nothing.
+  WS_VIEWS.forEach(v => { if (v.el && v.el.isConnected && v.el.offsetParent) wsSync(v); });
+}, 4000);
+
 
 // ---- Changes tab: uncommitted changes of a git project — status, per-file
 // unified diff, and line comments batched to a task's chat. ------------------
@@ -3200,16 +3478,29 @@ function renderRows() {
   // the task table.
   if (SELECTED_PROJECT && PROJECT_TAB === 'workspace') {
     const pj = projectById(SELECTED_PROJECT);
-    // The tree and the open file are STATE, not a view of the session list.
-    // Rebuilding them on the 2.5s refresh collapsed every folder you had
-    // opened and threw away the file you were reading before it could load.
-    // Re-render only when what the panel is looking at actually changes.
-    const sig = ['ws', SELECTED_PROJECT, pj ? scopePath(pj) : ''].join('|');
-    if (WS_MOUNT_SIG === sig && document.getElementById('wsp-tree')) return;
-    WS_MOUNT_SIG = sig;
-    $('#view').innerHTML = projectsChromeHtml() + workspacePanelHtml(pj);
     $('#meta').textContent = pj ? `${pj.name} · workspace` : 'workspace';
-    wireProjectsChrome(); wireWorkspacePanel();
+    // Two containers with two lifetimes. The chrome above the panel — status
+    // strip, crumbs, tabs — is a view of live data and is rewritten on every
+    // tick. The panel below is STATE: the tree, the folders you opened and the
+    // file you are reading, mounted once and left alone. Rebuilding both
+    // together is what collapsed the tree and killed the viewer's iframe
+    // before it could finish loading.
+    const view = $('#view');
+    if (!document.getElementById('ws-chrome')) {
+      view.innerHTML = '<div id="ws-chrome"></div><div id="ws-panel"></div>';
+    }
+    document.getElementById('ws-chrome').innerHTML = projectsChromeHtml();
+    wireProjectsChrome();
+    const panel = document.getElementById('ws-panel');
+    const key = pj && pj.path ? wsCtxKey({ kind: 'project', projectId: SELECTED_PROJECT }) : 'none';
+    if (panel.dataset.wskey !== key) {
+      panel.dataset.wskey = key;
+      if (!pj || !pj.path) panel.innerHTML = '<p class="empty">This project has no folder.</p>';
+      else {
+        panel.innerHTML = wsPanelHtml();
+        wsMount(panel.querySelector('.wsp'), { kind: 'project', projectId: SELECTED_PROJECT });
+      }
+    }
     return;
   }
   const parsed = parseSearchQuery(SEARCH_QUERY);
@@ -3384,7 +3675,11 @@ async function refresh() {
     renderRows();
     if (SELECTED_SID) renderDetail();
   } catch (e) {
-    $('#view').innerHTML = `<p class="empty">Error: ${esc(e.message)}</p>`;
+    // A dropped poll must not cost you the workspace. The tree, the folders you
+    // opened and the file you are reading are state, not a view of /api/sessions
+    // — so say it in the status line and leave the panel where it is.
+    if (document.getElementById('ws-panel')) $('#meta').textContent = 'refresh failed: ' + e.message;
+    else $('#view').innerHTML = `<p class="empty">Error: ${esc(e.message)}</p>`;
   }
 }
 
