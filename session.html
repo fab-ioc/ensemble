@@ -88,6 +88,26 @@
   #activity .act.dead .act-dot { background:#ef4444; }
   #activity .act.dead .act-txt { color:#ef4444; }
   #activity .act.needs .act-dot { background:#eab308; animation:actpulse 1.1s ease-in-out infinite; }
+  /* Live tail — what the working agent is doing right now, as the last few
+     terminal lines. Replaced in place; never part of the conversation. */
+  #livetail { flex:0 0 auto; padding:2px 12px 0; display:flex; flex-direction:column; gap:5px; }
+  #livetail .lt { border-left:2px solid #16a34a66; padding:1px 0 1px 8px; min-width:0; }
+  #livetail .lt-head { display:flex; align-items:center; gap:6px; font-size:10px;
+    text-transform:uppercase; letter-spacing:.04em; color:var(--dim); }
+  #livetail .lt-head .act-dot { width:6px; height:6px; border-radius:50%; background:#16a34a;
+    flex:0 0 auto; animation:actpulse 1.1s ease-in-out infinite; }
+  #livetail .lt-who { color:#16a34a; font-weight:700; }
+  #livetail .lt-more { background:none; border:none; color:var(--dim); font-size:10px;
+    cursor:pointer; padding:0 2px; letter-spacing:.04em; }
+  #livetail .lt-more:hover { color:var(--fg); }
+  .lt-line { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:11px;
+    line-height:1.55; color:var(--dim); white-space:pre; overflow:hidden; text-overflow:ellipsis; }
+  #livetail .lt-lines .lt-line:last-child { color:var(--fg); }
+  /* Borderless popup with more of the same screen. */
+  #tailpop { position:fixed; z-index:60; left:50%; transform:translateX(-50%); bottom:104px;
+    width:min(780px,94vw); max-height:48vh; overflow:auto; background:var(--surface);
+    border:none; border-radius:12px; padding:12px 16px; box-shadow:0 12px 44px #000b; }
+  #tailpop .lt-line { font-size:11.5px; color:var(--fg); }
   #activity .act.needs .act-txt { color:#eab308; font-weight:600; }
   @keyframes actpulse { 0%,100%{ opacity:1; transform:scale(1); } 50%{ opacity:.3; transform:scale(1.55); } }
   /* Pending-prompt card: the question the agent is blocked on, shown in the chat. */
@@ -168,6 +188,7 @@
   <div id="chatcol">
     <div id="msgs"></div>
     <div id="promptcard" hidden></div>
+    <div id="livetail" hidden></div>
     <div id="activity" hidden></div>
     <div id="compose">
       <div class="dim" id="hint"></div>
@@ -181,6 +202,7 @@
   </div>
   <div id="agentcol"></div>
 </main>
+<div id="tailpop" hidden></div>
 <script>
 const qs = new URLSearchParams(location.search);
 const ROOM = qs.get('id');
@@ -399,7 +421,9 @@ function syncSize(ptyId) {
   try { t.fit && t.fit.fit(); } catch(e) {}
   jpost('/api/pty/resize', { id: ptyId, rows: t.term.rows, cols: t.term.cols });
 }
+let _mountQuiet = false;   // mounting to read the screen, not to type in it
 function mountTerm(el, ptyId) {
+  const quiet = _mountQuiet;
   const term = new Terminal({
     fontSize: 13, convertEol: false, scrollback: 8000, cursorBlink: true,
     fontFamily: 'Consolas, "Cascadia Mono", "DejaVu Sans Mono", monospace',
@@ -436,7 +460,7 @@ function mountTerm(el, ptyId) {
   term.onData(d => jpost('/api/pty/input', { id: ptyId, data: d }));
   terms[ptyId] = { term, es, fit };
   // Size the PTY to the terminal once it has laid out; focus it for typing.
-  setTimeout(() => { syncSize(ptyId); term.focus(); }, 60);
+  setTimeout(() => { syncSize(ptyId); if (!quiet) term.focus(); }, 60);
   try { new ResizeObserver(() => syncSize(ptyId)).observe(el); } catch(e) {}
 }
 
@@ -650,13 +674,149 @@ function renderActivity(ptyMap, liveMap) {
   const bar = document.getElementById('activity');
   if (!bar) return;
   const agents = ROOM_AGENTS.filter(a => a.ptyId || a.sessionId);
-  if (!ROOM_LIVE || !agents.length) { bar.hidden = true; return; }
+  if (!ROOM_LIVE || !agents.length) { bar.hidden = true; TAIL_WORKING = []; renderLiveTail(); return; }
+  TAIL_WORKING = agents.filter(a => a.ptyId && agentState(a, ptyMap, liveMap || {}).cls === 'working');
+  renderLiveTail();
   bar.hidden = false;
   bar.innerHTML = agents.map(a => {
     const s = agentState(a, ptyMap, liveMap || {});
     return `<span class="act ${s.cls}"><span class="act-dot"></span>${esc(a.identity)} <span class="act-txt">${s.txt}</span></span>`;
   }).join('');
 }
+// ---- Live tail: the working agent's last terminal lines, in the chat ------
+// A green dot and "working…" says nothing about what is happening. While an
+// agent works, show the tail of its terminal as one quiet block that rewrites
+// itself in place (never a new message), plus a button that opens a borderless
+// popup with more of the screen. Everything here reads the local xterm buffer,
+// so the ticking costs no server calls.
+const TAIL_LINES = 3, TAIL_POP_LINES = 40;
+let TAIL_WORKING = [];   // agents currently working: [{identity, ptyId, ...}]
+let TAIL_POP_PTY = '';   // pty whose popup is open ('' = closed)
+
+// The agent's terminal has to be mounted for its buffer to fill. Mount it
+// hidden and WITHOUT taking focus — the user may be typing in the composer.
+function ensureTermFor(ptyId) {
+  if (!ptyId) return false;
+  if (terms[ptyId]) return true;
+  _mountQuiet = true;
+  try {
+    if (ROOM_OBJ && !agentsBuilt) buildAgents(ROOM_OBJ);
+    if (!terms[ptyId]) {
+      let host = null;
+      document.querySelectorAll('#agentcol .agent').forEach(div => {
+        const dot = div.querySelector('.adot');
+        if (dot && dot.dataset.pty === ptyId) host = div.querySelector('.term');
+      });
+      if (host) mountTerm(host, ptyId);
+    }
+  } finally { _mountQuiet = false; }
+  return !!terms[ptyId];
+}
+
+// Screen → the lines worth reading: drop box edges and rules, unwrap boxed
+// content, drop the empty composer and the shortcuts footer.
+function tailLines(ptyId, n) {
+  let raw = readScreen(ptyId).map(l => l.replace(/\s+$/, ''));
+  // Cut the composer and everything below it. Claude Code draws it either as a
+  // box or as a pair of full-width rules, with the mode banner, the tip line and
+  // the shortcut hint underneath — none of which says what the agent is doing.
+  for (let i = Math.max(0, raw.length - 10); i < raw.length; i++) {
+    const t = raw[i].trim();
+    if (/^[\u256d\u250c]/.test(t) || /^[\u2500\u2501\u2550]{10,}$/.test(t)) { raw = raw.slice(0, i); break; }
+  }
+  const out = [];
+  for (const l of raw) {
+    if (!l.replace(/[\u2500-\u257f\s]/g, '')) continue;           // box drawing / rules only
+    const inner = l.replace(/^\s*[\u2502\u2503]\s?/, '').replace(/\s*[\u2502\u2503]\s*$/, '').trim();
+    if (!inner || /^>\s*$/.test(inner)) continue;
+    if (/^\?\s*for shortcuts/i.test(inner)) continue;
+    if (/^[\u23f4\u23f5]/.test(inner)) continue;                  // mode banner (bypass permissions, plan mode)
+    if (/^[\u23bf\s]*Tip:/.test(inner)) continue;
+    out.push(inner);
+  }
+  return out.slice(-n);
+}
+
+function lineHtml(lines, empty) {
+  return lines.length ? lines.map(l => `<div class="lt-line">${esc(l)}</div>`).join('')
+                      : `<div class="lt-line">${esc(empty)}</div>`;
+}
+
+function renderLiveTail() {
+  const box = document.getElementById('livetail');
+  if (!box) return;
+  const pc = document.getElementById('promptcard');
+  // While the prompt card is up it already shows the screen — don't double it.
+  const show = ROOM_LIVE && TAIL_WORKING.length && (!pc || pc.hidden);
+  if (!show) {
+    if (!box.hidden) { box.hidden = true; box.innerHTML = ''; box.dataset.key = ''; }
+    if (TAIL_POP_PTY) closeTailPop();
+    return;
+  }
+  const key = TAIL_WORKING.map(a => a.identity + '\u0001' + a.ptyId).join('|');
+  if (box.dataset.key !== key) {
+    box.dataset.key = key;
+    box.innerHTML = TAIL_WORKING.map(a =>
+      `<div class="lt"><div class="lt-head"><span class="act-dot"></span>`
+      + `<span class="lt-who">${esc(a.identity)}</span><span class="grow"></span>`
+      + `<button class="lt-more" data-pty="${esc(a.ptyId)}" title="Show more of the terminal">\u2921 more</button>`
+      + `</div><div class="lt-lines"></div></div>`).join('');
+    Array.from(box.querySelectorAll('.lt')).forEach((el, i) => {
+      el.dataset.pty = (TAIL_WORKING[i] || {}).ptyId || '';
+    });
+  }
+  box.hidden = false;
+  Array.from(box.querySelectorAll('.lt')).forEach(el => {
+    const pty = el.dataset.pty;
+    const lines = ensureTermFor(pty) ? tailLines(pty, TAIL_LINES) : [];
+    const txt = lines.join('\n');
+    const body = el.querySelector('.lt-lines');
+    if (body.dataset.txt !== txt) {
+      body.dataset.txt = txt;
+      body.innerHTML = lineHtml(lines, '\u2026');
+    }
+  });
+}
+
+function openTailPop(ptyId) { TAIL_POP_PTY = ptyId; updateTailPop(); }
+function closeTailPop() {
+  TAIL_POP_PTY = '';
+  const p = document.getElementById('tailpop');
+  if (p) { p.hidden = true; p.innerHTML = ''; p.dataset.txt = ''; }
+}
+function updateTailPop() {
+  const p = document.getElementById('tailpop');
+  if (!p) return;
+  if (!TAIL_POP_PTY) { p.hidden = true; return; }
+  const lines = ensureTermFor(TAIL_POP_PTY) ? tailLines(TAIL_POP_PTY, TAIL_POP_LINES) : [];
+  const txt = lines.join('\n');
+  const atBottom = p.hidden || (p.scrollTop + p.clientHeight >= p.scrollHeight - 24);
+  if (p.dataset.txt !== txt) {
+    p.dataset.txt = txt;
+    p.innerHTML = lineHtml(lines, 'Nothing on screen yet.');
+  }
+  p.hidden = false;
+  // Sit just above the tail block, whatever the composer's height.
+  const anchor = document.getElementById('livetail');
+  if (anchor && !anchor.hidden) {
+    p.style.bottom = Math.max(12, window.innerHeight - anchor.getBoundingClientRect().top + 8) + 'px';
+  }
+  if (atBottom) p.scrollTop = p.scrollHeight;
+}
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest && e.target.closest('.lt-more');
+  if (btn) {
+    e.stopPropagation();
+    const pty = btn.dataset.pty;
+    if (TAIL_POP_PTY === pty) closeTailPop(); else openTailPop(pty);
+    return;
+  }
+  const pop = document.getElementById('tailpop');
+  if (TAIL_POP_PTY && pop && !pop.contains(e.target)) closeTailPop();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && TAIL_POP_PTY) closeTailPop(); });
+setInterval(() => { renderLiveTail(); updateTailPop(); }, 600);
+
 // ---- Surface the agent's current prompt when it's waiting on you ----------
 // Read the terminal's emulated screen (xterm buffer = clean text, unlike the raw
 // byte stream) and show the pending question as a card in the chat.
