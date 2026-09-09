@@ -4177,11 +4177,14 @@ document.addEventListener('visibilitychange', () => {
 const USAGE_POLL_MS = 30000;         // the server refreshes on its own timer
 let USAGE = { state: 'loading', sources: [], alerts: [] };
 let _usageInFlight = false;
-// What the user has waved away, per window: key -> the percent it was at when
-// dismissed. Keyed per window rather than by a bare number, because the banner
-// only ever renders the worst alert: a single number would let a dismissal on
-// one window silently suppress every other window at or below it, on either
-// source, including ones the user has never seen.
+// What the user has waved away, per window: key -> {pct, resetsAt} at the
+// moment of dismissal. Keyed per window rather than by a bare number, because
+// the banner only ever renders the worst alert: a single number would let a
+// dismissal on one window silently suppress every other window at or below it,
+// on either source, including ones the user has never seen. `resetsAt` is kept
+// alongside so a dismissal expires when its window does — otherwise dismissing
+// at 96%, then the window resetting and refilling to 85%, would stay silent on
+// what is a genuinely new window.
 const _usageDismissed = new Map();
 const usageAlertKey = a => [a.source, a.kind, a.model || ''].join('|');
 const USAGE_SRC_NAME = { claude: 'Claude', codex: 'Codex' };
@@ -4383,11 +4386,13 @@ function renderUsage() {
 // warning this feature exists to give.
 function renderUsageBanner(alerts) {
   const banner = $('#usage-banner');
-  // The loudest alert the user has not already waved away at this level. A
-  // dismissal covers only its own window, and lapses if that window climbs.
+  // The loudest alert the user has not already waved away. A dismissal covers
+  // only its own window, and lapses when that window climbs further or resets.
   const worst = (alerts || []).find(a => {
-    const at = _usageDismissed.get(usageAlertKey(a));
-    return at == null || a.percent > at;
+    const d = _usageDismissed.get(usageAlertKey(a));
+    if (!d) return true;
+    if (d.resetsAt !== (a.resetsAt || '')) return true;   // a new window
+    return a.percent > d.pct;
   });
   if (!worst) {
     banner.hidden = true;
@@ -4408,14 +4413,19 @@ function renderUsageBanner(alerts) {
     : `${who} ${win} window ${pct} used${reset}`;
   banner.dataset.pct = worst.percent;
   banner.dataset.key = usageAlertKey(worst);
+  banner.dataset.resets = worst.resetsAt || '';
 }
 
 $('#usage-banner-dismiss').addEventListener('click', () => {
-  // Dismiss this window at this level only. It returns when this window climbs
-  // further, and it never silences a different window or the other agent kind.
+  // Dismiss this window, in this window's current cycle, at this level. It
+  // returns when the window climbs further or when the window resets, and it
+  // never silences a different window or the other agent kind.
   const banner = $('#usage-banner');
   if (banner.dataset.key) {
-    _usageDismissed.set(banner.dataset.key, Number(banner.dataset.pct || 0));
+    _usageDismissed.set(banner.dataset.key, {
+      pct: Number(banner.dataset.pct || 0),
+      resetsAt: banner.dataset.resets || '',
+    });
   }
   banner.hidden = true;
   renderUsageBanner(USAGE.alerts || []);   // another window may still be hot

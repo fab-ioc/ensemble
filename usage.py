@@ -111,7 +111,15 @@ ALARM_PERCENT = 95         # banner, louder
 # Honour `Retry-After` when the response carries one; otherwise wait this long.
 DEFAULT_BACKOFF_S = 600
 MAX_BACKOFF_S = 3600
+# Consecutive refusals double the wait. One 429 answered with `Retry-After` is
+# the server saying what it wants, and inventing a ladder on top of that would
+# be second-guessing it — but a *second* refusal after we honoured the first
+# says the hint was not enough, which is new information. The asymmetry settles
+# it: waiting too long costs a chip for an hour, waiting too little risks an
+# undocumented endpoint being closed to this machine with no warning and no
+# appeal. Any success resets the ladder.
 _claude_backoff_until = 0.0
+_claude_consecutive_429 = 0
 
 # Claude's `limits[]` kinds -> our shared vocabulary. Anything else is ignored,
 # which is what keeps an endpoint change from breaking the surface.
@@ -265,7 +273,7 @@ def _retry_after_seconds(exc) -> float:
 
 def read_claude(now: float | None = None) -> dict:
     """One HTTPS GET, mapped into the shared shape. Never raises."""
-    global _claude_backoff_until
+    global _claude_backoff_until, _claude_consecutive_429
     now = time.time() if now is None else now
     if now < _claude_backoff_until:
         # Rate-limited recently. Say so plainly and make no call at all — the
@@ -290,10 +298,15 @@ def read_claude(now: float | None = None) -> dict:
             why = ("Claude Code's login token was rejected — it refreshes "
                    "itself when a Claude session runs")
         elif e.code == 429:
-            wait = _retry_after_seconds(e)
+            _claude_consecutive_429 += 1
+            # Double per consecutive refusal, from whatever the server asked
+            # for, capped. The first 429 behaves exactly as `Retry-After` says.
+            wait = min(MAX_BACKOFF_S,
+                       _retry_after_seconds(e) * 2 ** (_claude_consecutive_429 - 1))
             _claude_backoff_until = now + wait
-            why = ("the usage endpoint is rate-limiting us — pausing for "
-                   f"{int(wait // 60)} min")
+            again = " again" if _claude_consecutive_429 > 1 else ""
+            why = (f"the usage endpoint is rate-limiting us{again} — pausing for "
+                   f"{max(1, int(wait // 60))} min")
         else:
             why = f"the usage endpoint returned HTTP {e.code}"
         return _unavailable("claude", _scrub(why, token))
@@ -306,8 +319,9 @@ def read_claude(now: float | None = None) -> dict:
     finally:
         token = ""
 
-    # A successful call clears any standing backoff.
+    # A successful call clears any standing backoff and resets the ladder.
     _claude_backoff_until = 0.0
+    _claude_consecutive_429 = 0
     windows = []
     for limit in (payload.get("limits") or []):
         mapped = _CLAUDE_KINDS.get(limit.get("kind"))
