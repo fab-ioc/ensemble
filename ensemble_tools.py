@@ -468,6 +468,9 @@ def _update_task(ctx, args, handler):
         if _status(room2) in ("running", "waiting_user", "paused") and spec is not None:
             notes.append("the task is running — its agents will not re-read the spec")
     if agent_list is not None:
+        # "That task is running" would be true of your own task too, but it is
+        # not the useful answer.
+        _not_self(ctx, room, "reassign the agents on")
         if not isinstance(agent_list, list) or not agent_list:
             raise ToolError("agents must be a non-empty list — a task needs at least one agent")
         ok, room3, err = _d.reassign_task(room["id"], agent_list)

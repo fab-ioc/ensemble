@@ -142,6 +142,20 @@ def _room_has_live_pty(rid: str) -> bool:
     return False
 
 
+def _room_has_linked_agent(room: dict) -> bool:
+    """True if the room holds an agent in a visible terminal we don't own.
+
+    ``/api/room/create`` adopts agents already running in their own terminals:
+    those participants carry a real ``pid`` and no ``ptyId``, and no PTY of ours
+    reports them — so neither PTY check sees them. They are still someone's
+    working agent, and rewriting their token underneath them is exactly the
+    thing we refuse to do."""
+    for pp in room.get("participants", []):
+        if pp.get("kind") == "agent" and pp.get("pid") and not pp.get("ptyId"):
+            return True
+    return False
+
+
 # Rooms whose codex session id we've recently looked for and not found, so a
 # poll loop doesn't rescan the rollout dir every second: {roomId: last try}.
 _CODEX_SID_TRIED: dict[str, float] = {}
@@ -3115,7 +3129,15 @@ def create_task(title: str, spec: str, project_id: str, agent_list,
     if ws_meta.get("taskDir"):
         _write_task_json(ws_meta["taskDir"], {
             "roomId": room["id"], "projectId": project_id, "title": title,
-            "spec": spec, "agents": members, "workspace": ws_meta,
+            "spec": spec,
+            # The room's participants, not the requested list: create_room
+            # de-duplicates identities (claude, claude-2), and task.json is
+            # meant to mirror the room record — which is what reassignment
+            # keeps it in step with.
+            "agents": [{"identity": p["identity"], "agent": p.get("agent", ""),
+                        "model": p.get("model", ""), "role": p.get("role", "")}
+                       for p in chatroom.agent_participants(room_full)],
+            "mode": room_full["mode"], "workspace": ws_meta,
             "createdAt": int(time.time())})
     # Persist BEFORE any launch so an interrupted spawn leaves a resumable
     # draft, not a corrupt room with no cwd.
@@ -3181,7 +3203,7 @@ def reassign_task(rid: str, agent_list) -> tuple[bool, dict | None, str]:
     room = chatroom.get_room(rid, public=False)
     if room is None:
         return False, None, "no_such_room"
-    if _room_is_live(room) or _room_has_live_pty(rid):
+    if _room_is_live(room) or _room_has_live_pty(rid) or _room_has_linked_agent(room):
         return False, None, "task_is_running"
     specs, err = normalize_agent_specs(agent_list)
     if err:
@@ -3192,11 +3214,10 @@ def reassign_task(rid: str, agent_list) -> tuple[bool, dict | None, str]:
               for a in agent_list]
     members = [{"identity": ident, "agent": ak, "model": mdl, "role": role}
                for ident, (ak, mdl, role) in zip(idents, specs)]
-    room = chatroom.set_agents(rid, members)
+    mode = "solo" if len(specs) < 2 else "collab"
+    room = chatroom.set_agents(rid, members, mode=mode)
     if room is None:
         return False, None, "no_such_room"
-    room["mode"] = "solo" if len(specs) < 2 else "collab"
-    chatroom.update_room(room)
     assigned = [{"identity": pp["identity"], "agent": pp.get("agent", ""),
                  "model": pp.get("model", ""), "role": pp.get("role", "")}
                 for pp in chatroom.agent_participants(room)]

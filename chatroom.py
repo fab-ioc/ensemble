@@ -133,16 +133,26 @@ def _unique_identity(base: str, used: set[str]) -> str:
     return ident
 
 
-def set_agents(room_id: str, members: list[dict]) -> dict | None:
+def set_agents(room_id: str, members: list[dict],
+               mode: str = "") -> dict | None:
     """Replace a room's agent line-up, keeping the agents that are staying.
 
     ``members`` are the same ``{identity?, agent, model, role}`` dicts
     :func:`create_room` takes. An entry is matched to an existing participant —
     which keeps that agent's identity, bearer token, session id and working dir,
-    so its transcript and any live MCP client survive — by:
+    so its transcript and any live MCP client survive — by its ``identity``,
+    naming an existing agent **of the same kind**.
 
-    1. an explicit ``identity`` naming an existing agent **of the same kind**;
-    2. failing that, position among the unclaimed participants of that kind.
+    A pin that doesn't resolve does NOT fall back to anything: it means the
+    agent it named is gone, or has changed kind, and the entry is a new agent.
+    Falling back would let one row walk off with a *different* row's identity,
+    token and transcript — a change to one agent silently rewriting another.
+    For the same reason, once ANY entry carries an identity, an entry without
+    one is taken at its word: a new agent.
+
+    Positional matching — first unclaimed participant of the same kind — is the
+    fallback only for a wholly identity-free list, which is what a plain
+    ``["claude", "codex"]`` or an older client sends.
 
     An identity whose ``agent`` kind changed is deliberately NOT reused: claude
     and codex are different agents, and handing one the other's transcript would
@@ -150,6 +160,9 @@ def set_agents(room_id: str, members: list[dict]) -> dict | None:
     fresh token, and a ``fresh`` flag so the launcher starts it from the task
     briefing instead of trying to resume a conversation it never had. Agents
     that dropped out lose their participant record and their token.
+
+    ``mode`` ("solo" / "collab"), when given, is written in the same breath, so
+    the file is never briefly on disk with a new line-up and the old mode.
 
     Returns the updated full room (tokens included), or None if there is no
     such room. Messages are untouched: a removed agent's turns stay in the log.
@@ -159,33 +172,35 @@ def set_agents(room_id: str, members: list[dict]) -> dict | None:
         if room is None:
             return None
         existing = [p for p in room.get("participants", []) if p.get("kind") == "agent"]
-        by_identity = {p.get("identity", ""): p for p in existing}
+        by_identity = {p.get("identity", ""): i for i, p in enumerate(existing)}
         claimed: set[int] = set()
-
-        def _claim(want_ident: str, kind: str) -> dict | None:
-            part = by_identity.get(want_ident)
-            if part is not None and part.get("agent", "") == kind:
-                i = existing.index(part)
-                if i not in claimed:
-                    claimed.add(i)
-                    return part
-            for i, p in enumerate(existing):
-                if i not in claimed and p.get("agent", "") == kind:
-                    claimed.add(i)
-                    return p
-            return None
-
-        # Two passes so an explicitly pinned identity is never stolen by an
-        # earlier unpinned entry of the same kind.
         matched: list[dict | None] = [None] * len(members)
-        order = ([i for i, m in enumerate(members) if (m.get("identity") or "").strip()]
-                 + [i for i, m in enumerate(members) if not (m.get("identity") or "").strip()])
-        for i in order:
-            m = members[i]
-            matched[i] = _claim((m.get("identity") or "").strip(),
-                                (m.get("agent") or "").strip())
 
-        used = {HUMAN_IDENTITY} | {p.get("identity", "") for p in matched if p}
+        pins = [(m.get("identity") or "").strip() for m in members]
+        if any(pins):
+            for i, m in enumerate(members):
+                j = by_identity.get(pins[i], -1) if pins[i] else -1
+                if j >= 0 and j not in claimed and \
+                        existing[j].get("agent", "") == (m.get("agent") or "").strip():
+                    claimed.add(j)
+                    matched[i] = existing[j]
+        else:
+            for i, m in enumerate(members):
+                kind = (m.get("agent") or "").strip()
+                for j, p in enumerate(existing):
+                    if j not in claimed and p.get("agent", "") == kind:
+                        claimed.add(j)
+                        matched[i] = p
+                        break
+
+        # An identity that has already spoken, or already read the room, is
+        # spent: recycling it would relabel someone else's messages and hand
+        # the newcomer the departed agent's read cursor, so its first
+        # chat_read would skip the whole conversation.
+        used = ({HUMAN_IDENTITY}
+                | {p.get("identity", "") for p in matched if p}
+                | {m.get("from", "") for m in room.get("messages", [])}
+                | set(room.get("reads", {})))
         tokens_by_identity = {ident: tok for tok, ident in room.get("tokens", {}).items()}
         participants: list[dict] = []
         tokens: dict[str, str] = {}
@@ -230,6 +245,8 @@ def set_agents(room_id: str, members: list[dict]) -> dict | None:
         participants.append({"identity": HUMAN_IDENTITY, "kind": "human"})
         room["participants"] = participants
         room["tokens"] = tokens
+        if mode:
+            room["mode"] = mode
         room["updatedAt"] = _now()
         _write(room)
         return room
