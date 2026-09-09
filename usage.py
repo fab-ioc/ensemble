@@ -384,12 +384,18 @@ def _newest_rate_limits(files) -> tuple[dict | None, float | None]:
     return best, best_at
 
 
-def _iso_to_epoch(ts: str) -> float | None:
-    if not ts:
+def _iso_to_epoch(ts) -> float | None:
+    """Codex's ISO-8601 timestamps ('2026-09-09T11:50:28.610Z') to epoch.
+
+    Returns None for anything it cannot read — including a non-string, should
+    the field ever become numeric. A record we cannot date is skipped rather
+    than dated wrongly, which keeps the age (and so guard 1) honest.
+    """
+    if not isinstance(ts, str) or not ts:
         return None
     try:
         return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
-    except ValueError:
+    except (ValueError, OSError, OverflowError):
         return None
 
 
