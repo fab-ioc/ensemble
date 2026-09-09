@@ -221,9 +221,13 @@ def _quote_at(text: str, start: int, end: int, limit: int = 260) -> str:
     if chrome:
         after = after[:chrome.start()]
     stop = end + len(after)
+    # Extend over a second sentence only when the first is too short to be the
+    # whole message — and never past the end of a screen line, because what
+    # follows there is the agent talking, not more of the banner. (A wrapped
+    # banner has no sentence end at its wrap points, so this never cuts one.)
     for m in re.finditer(r"[.!?](?=\s|$)", after):
         stop = end + m.end()
-        if m.end() >= 60:      # one short sentence is rarely the whole message
+        if m.end() >= 60 or after[m.end():m.end() + 1] == "\n":
             break
     quote = " ".join(text[begin:stop].split())
     return _TRAILING_GLYPHS.sub("", _LEADING_GLYPHS.sub("", quote)[:limit])
@@ -531,24 +535,32 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
     if room.get("status") != "active":
         return None                # the room is waiting on the human, not on it
     asked, how = _owed_since(room, identity)
-    waited = now - asked if asked else 0
+    if not asked:
+        return None
     idle = ev["idleSeconds"]
+    waited = now - asked
+    # What the threshold measures has to match what the reason claims, and the
+    # two asks are not alike. A message has a timestamp, so the wait is real
+    # elapsed time. A launch was a single event that may be days old: measuring
+    # from it would make every solo task older than the threshold permanently
+    # eligible, leaving only the 60-second floor to gate it — the setting would
+    # do nothing and a minute at the prompt would raise an alarm. There, the
+    # silence *is* the measurement.
+    elapsed = waited if how == "message" else (idle if idle is not None else waited)
     quiet_enough = idle is None or idle >= min(_MIN_QUIET, stall_seconds)
-    if not (asked and waited >= stall_seconds and quiet_enough):
+    if elapsed < stall_seconds or not quiet_enough:
         return None
     extra = {"waitedSeconds": int(waited), "idleSeconds": idle}
     if how == "message":
         return ("stalled",
                 f"{who} was asked to do something {_ago(waited)} ago, isn't "
                 f"working, and hasn't reported back", extra)
-    # The only ask was the launch, which may have been days ago. From outside
-    # there is no telling "finished quietly" from "stuck" — so say what is
-    # actually known (the terminal has been silent this long, and it never
-    # reported anything) rather than claiming it is mid-task.
+    # The only ask was the launch. From outside there is no telling "finished
+    # quietly" from "stuck", so say what is actually known — the terminal has
+    # been silent this long, and it never reported anything.
     return ("stalled",
-            f"{who} has been idle at its prompt for "
-            f"{_ago(idle if idle is not None else waited)} and never reported "
-            f"back since it started", extra)
+            f"{who} has been idle at its prompt for {_ago(elapsed)} and never "
+            f"reported back since it started", extra)
 
 
 def _ago(seconds) -> str:
@@ -593,7 +605,9 @@ def _room_level(room: dict, live_agents: list[str]) -> tuple[str, str, dict] | N
 
 # When each (task, state) was first seen, so the tray can say how long a task
 # has been in trouble rather than when its chat last moved. Reset the moment a
-# state clears, so a state that comes back reads as new.
+# state clears, so a state that comes back reads as new. An unguarded dict is
+# safe here because `_items()` has exactly one caller, `snapshot()`, and it
+# runs under `_COMPUTE_LOCK` — keep it that way.
 _FIRST_SEEN: dict[tuple[str, str], float] = {}
 
 

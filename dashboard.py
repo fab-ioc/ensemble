@@ -3193,7 +3193,6 @@ def stop_task(rid: str) -> bool:
     room = chatroom.get_room(rid, public=False)
     if not room:
         return False
-    cleared = False
     for part in room.get("participants", []):
         pid = part.get("ptyId")
         if pid:
@@ -3202,10 +3201,9 @@ def stop_task(rid: str) -> bool:
             except Exception:
                 pass
             ptyrun.forget_death(pid)
-        if part.pop("lastExit", None):
-            cleared = True
-    if cleared:
-        chatroom.update_room(room)
+    # Cleared through the room lock, and only after the kills: writing the room
+    # we read before a slow kill loop would drop a chat message posted during it.
+    chatroom.clear_exits(rid)
     return True
 
 
