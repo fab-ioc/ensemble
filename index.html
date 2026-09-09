@@ -624,8 +624,14 @@
   }
   #detail-panel .dp-tabs button:hover { color: var(--fg); }
   #detail-panel .dp-tabs button.on { color: var(--fg); border-bottom-color: var(--accent); }
-  #detail-panel .dp-top { flex: 0 0 auto; }
+  /* The header slot has to carry the spacing the panel used to give these
+     rows directly, now that they are its children rather than the panel's. */
+  #detail-panel .dp-top { flex: 0 0 auto; display: flex; flex-direction: column; gap: 16px; }
   #detail-panel .dp-pane { min-height: 0; }
+  /* The live-session rule below sets display on this pane, which outranks the
+     UA's [hidden] { display: none } — without this the hidden pane stays on
+     screen and both tabs show at once. */
+  #detail-panel .dp-pane[hidden] { display: none !important; }
   #detail-panel .dp-pane[data-pane="files"] { flex: 1; display: flex; flex-direction: column; padding: 10px 12px; min-height: 360px; }
   #detail-panel:has(iframe.dp-session) .dp-pane[data-pane="conv"] { flex: 1; display: flex; flex-direction: column; min-height: 0; }
   /* The panel is a narrow, user-resized column: same component, stacked. */
@@ -2248,18 +2254,26 @@ function renderDetail() {
   // with it, and with it the viewer's iframe and any comment written but not
   // yet sent. DETAIL_TAB is deliberately not in `sig`: switching tabs only
   // flips `hidden`.
+  // Deliberately NOT keyed on liveEmbed: starting or stopping the task flips it,
+  // and rebuilding the shell there would throw away the Files pane — and any
+  // comment written but not sent — at exactly the moment a task finishes and you
+  // are part-way through reviewing what it produced. The conv pane already
+  // handles both shapes against the same node, and the only thing liveEmbed
+  // decides out here is the first tab's label, which is set per render below.
   const hasFiles = wsRoots({ kind: 'task', sid }).length > 0;
-  const shellKey = [sid, hasFiles ? 'f' : '-', liveEmbed ? 'embed' : 'hist'].join('|');
+  const shellKey = [sid, hasFiles ? 'f' : '-'].join('|');
   if (panel.dataset.shell !== shellKey) {
     panel.dataset.shell = shellKey;
     panel.innerHTML = '<div class="dp-top"></div>'
       + (hasFiles ? '<div class="dp-tabs">'
-          + `<button data-dtab="conv">${liveEmbed ? 'Session' : 'Conversation'}</button>`
+          + '<button data-dtab="conv"></button>'
           + '<button data-dtab="files" title="This task\'s folder and its project\'s — code highlighted, comment anywhere">Files</button>'
           + '</div>' : '')
       + '<div class="dp-pane" data-pane="conv"></div>'
       + (hasFiles ? '<div class="dp-pane" data-pane="files" hidden></div>' : '');
   }
+  const convTab = panel.querySelector('.dp-tabs button[data-dtab="conv"]');
+  if (convTab) convTab.textContent = liveEmbed ? 'Session' : 'Conversation';
   panel.querySelector('.dp-top').innerHTML = liveEmbed
     ? `<div class="dp-live">${detailHead(r, isRoom)}${detailMeta(r, isLive, isRoom, now)}${detailActions(r, isLive, isRoom, isOrphan)}${detailPriority(r, isRoom)}</div>`
     : detailHead(r, isRoom) + detailMeta(r, isLive, isRoom, now) + detailActions(r, isLive, isRoom, isOrphan) + detailPriority(r, isRoom);
