@@ -22,9 +22,11 @@ running agent:
 
 Prints a redacted summary. Never prints, logs or returns a token.
 
-Usage:
-    python scratch_usage_probe.py            # both sources
-    python scratch_usage_probe.py --json     # machine-readable
+Usage (`py`, not `python` — on this machine `python.exe` is the WindowsApps
+stub and fails with "The system cannot find the path specified"):
+
+    py scratch_usage_probe.py            # both sources
+    py scratch_usage_probe.py --json     # machine-readable
 """
 from __future__ import annotations
 
@@ -42,11 +44,15 @@ CLAUDE_HOME = os.path.join(os.path.expanduser("~"), ".claude")
 CREDENTIALS = os.path.join(CLAUDE_HOME, ".credentials.json")
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 
-# Claude Code sends these on its own OAuth calls; the endpoint 403s without the
-# beta header. The version in the UA only has to look like a CLI build.
+# The bearer token is the only thing this endpoint requires. Measured: with the
+# beta header + a spoofed claude-cli User-Agent, with the beta header alone, and
+# with neither (plain Python-urllib) all returned HTTP 200 and identical bodies.
+# So no User-Agent spoof — it bought nothing, hardcoded a version string that
+# rots, and there is no reason to impersonate the CLI on an endpoint we
+# authenticate to legitimately. The beta header is kept only because it is what
+# Claude Code itself sends; it is not required.
 _HEADERS = {
     "anthropic-beta": "oauth-2025-04-20",
-    "User-Agent": "claude-cli/2.1.266 (external, cli)",
     "Accept": "application/json",
 }
 
@@ -165,21 +171,48 @@ def _later(current: dict | None, candidate: dict) -> dict:
     return candidate if candidate.get("timestamp", "") > current.get("timestamp", "") else current
 
 
+def _age_seconds(timestamp: str | None, now: datetime) -> int | None:
+    """How old a Codex reading is. Its timestamps are ISO-8601 with a 'Z'."""
+    if not timestamp:
+        return None
+    try:
+        return int((now - datetime.fromisoformat(timestamp.replace("Z", "+00:00"))).total_seconds())
+    except ValueError:
+        return None
+
+
 def summarise_codex(probe: dict) -> dict:
-    """used_percent / window / reset per rate-limit window, plus context fill."""
+    """used_percent / window / reset per rate-limit window, plus context fill.
+
+    Codex numbers are a *last-write snapshot*, not a live feed: the rollout is
+    only appended when that agent takes a turn, so a reading's age is unbounded
+    and it goes stale exactly when an agent has stopped — which is the case we
+    care about. Two guards, and any caller must honour both:
+
+      * every reading carries `age_seconds`, so a render path can qualify it
+        ("as of 68 min ago") or suppress it past a threshold;
+      * a window whose `resets_at` is in the past has already rolled over, so
+        its `used_percent` is reported as None rather than as the last value
+        seen. Without this a dead agent's 100% is shown forever, and looks
+        identical to a live one.
+    """
     limits = probe.get("rate_limits") or {}
+    now = datetime.now(timezone.utc)
     windows = []
     for key in ("primary", "secondary"):
         win = limits.get(key)
         if not win:
             continue
         resets = win.get("resets_at")
+        resets_dt = datetime.fromtimestamp(resets, timezone.utc) if resets else None
+        rolled = bool(resets_dt and resets_dt < now)
         windows.append({
             "which": key,
-            "used_percent": win.get("used_percent"),
+            "used_percent": None if rolled else win.get("used_percent"),
+            "stale_used_percent": win.get("used_percent") if rolled else None,
+            "window_rolled_over": rolled,
             "window_minutes": win.get("window_minutes"),
-            "resets_at": datetime.fromtimestamp(resets, timezone.utc).isoformat()
-                         if resets else None,
+            "resets_at": resets_dt.isoformat() if resets_dt else None,
         })
     info = probe.get("info") or {}
     total = info.get("total_token_usage") or {}
@@ -188,6 +221,7 @@ def summarise_codex(probe: dict) -> dict:
     return {
         "as_of": probe.get("timestamp"),
         "rate_limits_as_of": probe.get("rate_limits_as_of"),
+        "age_seconds": _age_seconds(probe.get("rate_limits_as_of"), now),
         "plan_type": limits.get("plan_type"),
         "windows": windows,
         "total_tokens": total.get("total_tokens"),
@@ -215,11 +249,16 @@ def main() -> int:
     except Exception as exc:                                  # noqa: BLE001
         result["claude"] = {"error": f"{type(exc).__name__}: {exc}"}
 
-    probe = codex_plan_usage()
-    if probe is None:
-        result["codex"] = {"error": "no token_count event in the recent rollouts"}
-    else:
-        result["codex"] = probe if args.json else summarise_codex(probe)
+    # Guarded the same way as the Claude branch: an unreadable or malformed
+    # rollout must not take down the half of the probe that was working.
+    try:
+        probe = codex_plan_usage()
+        if probe is None:
+            result["codex"] = {"error": "no populated token_count event in the recent rollouts"}
+        else:
+            result["codex"] = probe if args.json else summarise_codex(probe)
+    except Exception as exc:                                  # noqa: BLE001
+        result["codex"] = {"error": f"{type(exc).__name__}: {exc}"}
 
     json.dump(result, sys.stdout, indent=2)
     sys.stdout.write("\n")
