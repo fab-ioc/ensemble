@@ -3183,10 +3183,17 @@ def update_task(rid: str, title=None, spec=None) -> tuple[bool, dict | None, str
 
 def stop_task(rid: str) -> bool:
     """End a task's agents (kill their PTYs) but KEEP the room, so it stays one
-    row with its spec and chat and can be resumed."""
+    row with its spec and chat and can be resumed.
+
+    Stopping is also how the product owner says "I've seen this and dealt with
+    it", so it clears any recorded death: an agent that had already died on its
+    own would otherwise keep its `agent_gone` notification forever — Stop can't
+    relabel a record that was written once, at death, so it removes it.
+    """
     room = chatroom.get_room(rid, public=False)
     if not room:
         return False
+    cleared = False
     for part in room.get("participants", []):
         pid = part.get("ptyId")
         if pid:
@@ -3194,6 +3201,11 @@ def stop_task(rid: str) -> bool:
                 ptyrun.kill(pid)
             except Exception:
                 pass
+            ptyrun.forget_death(pid)
+        if part.pop("lastExit", None):
+            cleared = True
+    if cleared:
+        chatroom.update_room(room)
     return True
 
 

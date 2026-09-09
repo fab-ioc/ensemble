@@ -85,6 +85,12 @@ STALL_SECONDS_DEFAULT = 900
 # caught mid-turn (status file a second out of date) is never accused.
 _MIN_QUIET = 60
 
+# How long a death stays newsworthy. Stopping a task clears its record — that is
+# the "I've dealt with it" gesture — but a task nobody ever touches would sit in
+# the tray forever, and a list that only grows is exactly the uselessness this
+# module exists to fix. After a week it is history, not news.
+_DEATH_MAX_AGE = 7 * 86400
+
 
 # ---------------------------------------------------------------------------
 # Reading a terminal's last screen
@@ -131,12 +137,18 @@ _BLOCK_RULES: list[tuple[re.Pattern, str, str]] = [
 # very thing this module exists to show.
 _BLOCK_EXEMPT = _phrase(r"usage limit reset available|/usage to use one")
 
-# An agent editing THIS file — or reading a transcript that discusses it — puts
-# the patterns above on its own screen. Text that reads as code or as a diff is
-# not the agent speaking, so it never raises an alarm.
+# An agent editing THIS file puts the patterns above on its own screen. Only
+# *structural* evidence counts — regex source, a diff line — and only on the
+# same screen line as the match.
+#
+# It used to include the words "regex" and "pattern", checked across a ±320
+# character window. That is worse than the disease: an agent that says "next
+# I'll tune the pattern list" anywhere near a real usage-limit banner would
+# suppress it entirely, and on this board agents discuss regexes constantly.
+# A guard against a cosmetic false positive must never hide a real one.
 _CODE_LOOKING = re.compile(
-    r"re\.compile|_phrase\(|\\s\*|\\b|re\.I\b|^\s*[+\-]\s*[(\"']|regex|pattern",
-    re.I | re.MULTILINE,
+    r"re\.compile|_phrase\(|\\s\*|\\b|re\.I\b|^\s*[+\-]\s*[(\"']",
+    re.I,
 )
 
 # The agent is mid-thought: both CLIs paint an interruptible working indicator
@@ -164,6 +176,7 @@ _CURSOR_LINE = re.compile(r"^\s*[❯➤▶>]\s*\S")
 _NUMBERED_OPTION = re.compile(r"^\s*[❯➤▶>]?\s*\d+[.)]\s+\S")
 
 _LEADING_GLYPHS = re.compile(r"^[\s•■⏺⏵❯➤▶>*\-|]+")
+_TRAILING_GLYPHS = re.compile(r"[\s•■⏺⏵❯➤▶>*|]+$")
 
 
 def _tail_lines(tail: str) -> list[str]:
@@ -173,6 +186,19 @@ def _tail_lines(tail: str) -> list[str]:
 # Where a quote must stop: the TUI chrome that surrounds a message (an input
 # box, a bullet, the next widget) is not part of what the agent said.
 _CHROME = re.compile(r"[›❯➤▶■⏺]|\s{3,}")
+
+
+def _screen_line(text: str, start: int, end: int) -> str:
+    """The screen line(s) a match sits on — nothing above or below it.
+
+    Scope matters more than the pattern here: a diff line looks like code on
+    its own line, whereas a neighbouring relay message from a teammate is just
+    someone talking. Widening this to a character window is how a real alarm
+    gets suppressed by unrelated text.
+    """
+    begin = text.rfind("\n", 0, start) + 1
+    stop = text.find("\n", end)
+    return text[begin:stop if stop != -1 else len(text)]
 
 
 def _quote_at(text: str, start: int, end: int, limit: int = 260) -> str:
@@ -200,7 +226,7 @@ def _quote_at(text: str, start: int, end: int, limit: int = 260) -> str:
         if m.end() >= 60:      # one short sentence is rarely the whole message
             break
     quote = " ".join(text[begin:stop].split())
-    return _LEADING_GLYPHS.sub("", quote)[:limit].strip()
+    return _TRAILING_GLYPHS.sub("", _LEADING_GLYPHS.sub("", quote)[:limit])
 
 
 # One refusal often trips several rules — "You've hit your usage limit. Upgrade
@@ -226,8 +252,7 @@ def find_block(tail: str) -> tuple[str, str, str] | None:
         for m in pat.finditer(text):
             if _BLOCK_EXEMPT.search(text[max(0, m.start() - 60):m.end() + 60]):
                 continue
-            window = text[max(0, m.start() - 120):m.end() + 200]
-            if _CODE_LOOKING.search(window):
+            if _CODE_LOOKING.search(_screen_line(text, m.start(), m.end())):
                 continue        # the agent is looking at code, not hitting a wall
             hits.append((m.start(), m.end(), why, cause))
     if not hits:
@@ -425,26 +450,30 @@ def _evidence(part: dict, statuses: dict[str, str]) -> dict:
     }
 
 
-def _owed_since(room: dict, identity: str) -> float:
-    """When this agent was last asked for something it hasn't delivered, or 0.
+def _owed_since(room: dict, identity: str) -> tuple[float, str]:
+    """When this agent was last asked for something it hasn't delivered.
+
+    Returns ``(when, "launch" | "message")``, or ``(0, "")`` if it owes nothing.
 
     This is what keeps ``stalled`` honest, and it has to cover the commonest
     shape of task on the board: a **solo** agent with no teammate to hand off
     to, and often no messages at all. For that one the ask is the launch itself
     — the spec was its first prompt — so an agent that has never said anything
-    since it started owes its first report.
+    since it started owes its first report. The caller needs to know which case
+    it is, because only one of them can honestly be described as "asked N ago":
+    a launch was a single event that may be days old.
     """
     last = room.get("lastMessage") or {}
     sender = last.get("from", "")
     if not sender:
         # Nothing has ever been said in this room: the spec was the ask.
-        return float(room.get("createdAt") or 0)
+        return float(room.get("createdAt") or 0), "launch"
     if sender == identity:
-        return 0.0                 # it spoke last — the ball is elsewhere
+        return 0.0, ""             # it spoke last — the ball is elsewhere
     to = (last.get("to") or "").strip().lower()
     if to and to not in ("all", "everyone", "*") and to != identity:
-        return 0.0                 # somebody else was addressed
-    return float(last.get("ts") or 0)
+        return 0.0, ""             # somebody else was addressed
+    return float(last.get("ts") or 0), "message"
 
 
 def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
@@ -467,6 +496,8 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
             return None            # never ran here, or orphaned by a restart
         if death.get("killed"):
             return None            # we stopped it on purpose
+        if now - float(death.get("endedAt") or 0) > _DEATH_MAX_AGE:
+            return None            # old enough to be history rather than news
         code = death.get("exitCode")
         exit_txt = "exit status unknown" if code is None else f"exit status {code}"
         extra = {"exitCode": code, "endedAt": death.get("endedAt"),
@@ -499,16 +530,25 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
         return None                # thinking is not a problem, however long
     if room.get("status") != "active":
         return None                # the room is waiting on the human, not on it
-    asked = _owed_since(room, identity)
+    asked, how = _owed_since(room, identity)
     waited = now - asked if asked else 0
     idle = ev["idleSeconds"]
     quiet_enough = idle is None or idle >= min(_MIN_QUIET, stall_seconds)
-    if asked and waited >= stall_seconds and quiet_enough:
+    if not (asked and waited >= stall_seconds and quiet_enough):
+        return None
+    extra = {"waitedSeconds": int(waited), "idleSeconds": idle}
+    if how == "message":
         return ("stalled",
                 f"{who} was asked to do something {_ago(waited)} ago, isn't "
-                f"working, and hasn't reported back",
-                {"waitedSeconds": int(waited), "idleSeconds": idle})
-    return None
+                f"working, and hasn't reported back", extra)
+    # The only ask was the launch, which may have been days ago. From outside
+    # there is no telling "finished quietly" from "stuck" — so say what is
+    # actually known (the terminal has been silent this long, and it never
+    # reported anything) rather than claiming it is mid-task.
+    return ("stalled",
+            f"{who} has been idle at its prompt for "
+            f"{_ago(idle if idle is not None else waited)} and never reported "
+            f"back since it started", extra)
 
 
 def _ago(seconds) -> str:
@@ -551,6 +591,16 @@ def _room_level(room: dict, live_agents: list[str]) -> tuple[str, str, dict] | N
     return None
 
 
+# When each (task, state) was first seen, so the tray can say how long a task
+# has been in trouble rather than when its chat last moved. Reset the moment a
+# state clears, so a state that comes back reads as new.
+_FIRST_SEEN: dict[tuple[str, str], float] = {}
+
+
+def _first_seen(room_id: str, state: str, now: float) -> float:
+    return _FIRST_SEEN.setdefault((room_id, state), now)
+
+
 def _stall_seconds() -> int:
     try:
         v = int(_d.load_settings().get("attentionStallSeconds", STALL_SECONDS_DEFAULT))
@@ -569,6 +619,7 @@ def _items() -> list[dict]:
     labels = _d.load_labels()
     all_projects = list(projects.values())
     items: list[dict] = []
+    seen_now: set[tuple[str, str]] = set()
 
     for room in rooms:
         if not room.get("launched", True):
@@ -609,14 +660,22 @@ def _items() -> list[dict]:
             # of the registry — so the notification carries the last screen.
             "ptyId": (part.get("ptyId", "") if part and state != "agent_gone" else ""),
             "sessionId": part.get("sessionId", "") if part else "",
-            "since": float(extra.get("endedAt") or room.get("updatedAt")
-                           or room.get("createdAt") or 0),
+            # When this became true — a death knows exactly; for the rest it is
+            # when we first saw the state, which is what "blocked · 4 min ago"
+            # has to mean. Room `updatedAt` would be the last chat message, and
+            # would read as 4 minutes for an agent blocked for an hour.
+            "since": float(extra.get("endedAt") or _first_seen(rid, state, now)),
             "otherStates": sorted({f[0] for f in found[1:]}),
         }
+        seen_now.add((rid, state))
         for k in ("quote", "cause", "exitCode", "lastLines", "waitedSeconds"):
             if k in extra and extra[k] not in (None, ""):
                 item[k] = extra[k]
         items.append(item)
+    # Forget states that have cleared, so the same trouble returning later
+    # reads as new rather than inheriting an old start time.
+    for gone in [k for k in _FIRST_SEEN if k not in seen_now]:
+        _FIRST_SEEN.pop(gone, None)
     items.sort(key=lambda it: (_SEVERITY.get(it["state"], 99), -(it.get("since") or 0)))
     return items
 
@@ -675,6 +734,11 @@ def on_pty_death(rec: dict) -> None:
     written onto the room. Runs on the dead session's reader thread, through the
     narrow :func:`chatroom.record_exit` (a full room rewrite from here would
     race an incoming chat message).
+
+    The room file lives under ``DASHBOARD_DIR``, never under the projects root.
+    Raw terminal text stays out of the backed-up folder because
+    ``dashboard._export_task_chats`` whitelists participant fields down to
+    identity/agent/model/role — keep that whitelist a whitelist if you edit it.
     """
     meta = rec.get("meta") or {}
     rid, identity = meta.get("room", ""), meta.get("identity", "")

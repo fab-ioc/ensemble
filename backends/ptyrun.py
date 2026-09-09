@@ -96,26 +96,20 @@ def set_death_hook(fn) -> None:
 
 
 def _record_death(sess: "PtySession") -> dict:
-    """Build (once) the evidence of why a terminal ended and remember it."""
-    if sess._death is not None:
-        return sess._death
-    # NB: never infer *why* it died from the exit code — a deliberate stop goes
-    # through `taskkill /F /T`, so the code is arbitrary. The tail is the
-    # evidence; the code is only ever reported alongside it.
-    code = sess.exit_code()
-    rec = {
-        "ptyId": sess.id,
-        "label": sess.label,
-        "meta": dict(sess.meta),
-        "cwd": sess.cwd or "",
-        "pid": sess.pid,
-        "exitCode": code,
-        "killed": bool(sess._killed),
-        "endedAt": time.time(),
-        "startedAt": sess.created,
-        "tail": sess.tail(),
-    }
-    sess._death = rec
+    """Build (once) the evidence of why a terminal ended and remember it.
+
+    The reader thread and `reap()` can both arrive here for the same session,
+    so the "once" is enforced under the session's own lock — otherwise the hook
+    fires twice and the task record is written twice."""
+    with sess._death_lock:
+        if sess._death is not None:
+            return sess._death
+        # NB: never infer *why* it died from the exit code — a deliberate stop
+        # goes through `taskkill /F /T`, so the code is arbitrary. The tail is
+        # the evidence; the code is only ever reported alongside it.
+        code = sess.exit_code()
+        rec = _build_death(sess, code)
+        sess._death = rec
     with _DEATH_LOCK:
         _DEATHS[sess.id] = rec
         while len(_DEATHS) > _DEATHS_MAX:
@@ -129,10 +123,36 @@ def _record_death(sess: "PtySession") -> dict:
     return rec
 
 
+def _build_death(sess: "PtySession", code) -> dict:
+    return {
+        "ptyId": sess.id,
+        "label": sess.label,
+        "meta": dict(sess.meta),
+        "cwd": sess.cwd or "",
+        "pid": sess.pid,
+        "exitCode": code,
+        "killed": bool(sess._killed),
+        "endedAt": time.time(),
+        "startedAt": sess.created,
+        "tail": sess.tail(),
+    }
+
+
 def death_for(pty_id: str) -> dict | None:
     """The death record of a terminal that is no longer in the registry."""
     with _DEATH_LOCK:
         return _DEATHS.get(pty_id)
+
+
+def forget_death(pty_id: str) -> None:
+    """Drop a death record — the death has been dealt with.
+
+    Marking the session killed after the fact would not do it: the record is
+    built once, at death, and never rewritten. So stopping a task that had
+    already died has to remove the evidence rather than relabel it, or the
+    dashboard would keep reporting a death nobody can dismiss."""
+    with _DEATH_LOCK:
+        _DEATHS.pop(pty_id, None)
 
 
 class PtySession:
@@ -157,6 +177,7 @@ class PtySession:
         self._last_output = time.time()
         self._killed = False        # True once someone deliberately killed it
         self._death = None          # the death record, built once at exit
+        self._death_lock = threading.Lock()
         self._spawn(env)
         self._reader = threading.Thread(target=self._pump, daemon=True)
         self._reader.start()
