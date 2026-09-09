@@ -4334,7 +4334,10 @@ function renderUsageBanner(worst) {
   banner.hidden = false;
   banner.classList.toggle('warn', worst.level === 'warn');
   const who = USAGE_SRC_NAME[worst.source] || worst.source;
-  const win = (USAGE_WIN_NAME[worst.kind] || worst.kind).toLowerCase();
+  // Name the model when the hot window is a per-model weekly cap, so that one
+  // is not mistaken for the account-wide weekly window sitting next to it.
+  const win = (USAGE_WIN_NAME[worst.kind] || worst.kind).toLowerCase()
+    + (worst.model ? ` (${worst.model})` : '');
   const reset = worst.resetsAt ? ' · ' + usageResetText(worst.resetsAt) : '';
   const pct = Math.round(worst.percent) + '%';
   $('#usage-banner-text').textContent = worst.atLeast

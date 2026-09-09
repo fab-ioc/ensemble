@@ -178,9 +178,15 @@ def _stale_after(window_minutes) -> float:
     A tenth of the window, floored at 5 minutes. See ``STALE_FRACTION``.
     """
     try:
-        return max(STALE_FLOOR_S, STALE_FRACTION * float(window_minutes) * 60)
+        minutes = float(window_minutes)
     except (TypeError, ValueError):
         return STALE_FALLBACK_S
+    # A window has to be a plausible length. Anything outside a minute-to-a-
+    # month gets the fixed fallback rather than a threshold derived from it —
+    # otherwise a garbage value could make *every* reading count as current.
+    if not (1 <= minutes <= 31 * 24 * 60):
+        return STALE_FALLBACK_S
+    return max(STALE_FLOOR_S, STALE_FRACTION * minutes * 60)
 
 
 def _window(kind: str, label: str, *, percent=None, stale_percent=None,
@@ -333,6 +339,7 @@ def _newest_rate_limits(files) -> tuple[dict | None, float | None]:
     """
     best: dict | None = None
     best_at: float | None = None
+    extra = 0
     for path in files:
         try:
             with open(path, encoding="utf-8", errors="replace") as fh:
@@ -357,9 +364,16 @@ def _newest_rate_limits(files) -> tuple[dict | None, float | None]:
         except OSError:
             continue
         if best is not None:
-            # Files are newest-first, so the first one holding a populated
-            # record holds the newest reading. Stop rather than walk history.
-            break
+            # Files are ordered by mtime, but the record we want is ordered by
+            # its own timestamp, and the two can disagree: a rollout touched a
+            # minute ago may hold nothing newer than an hour-old reading, while
+            # the file behind it was appended to more recently than that. So
+            # don't stop at the first hit — look at a couple more files and keep
+            # the newest record across all of them. Bounded, so this stays a
+            # handful of reads and not a walk through the history.
+            extra += 1
+            if extra >= 3:
+                break
     return best, best_at
 
 
