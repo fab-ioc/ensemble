@@ -4356,8 +4356,17 @@ $('#usage-chip').addEventListener('click', (ev) => {
   ev.stopPropagation();
   const tray = $('#usage-tray');
   tray.hidden = !tray.hidden;
-  if (!tray.hidden) refreshUsage();
+  if (!tray.hidden) {
+    // Both trays hang off the same corner, so only one may be open. This is the
+    // one line that reaches outside the `usage` name; guarded so that removing
+    // the notifications block cannot break this one.
+    const other = $('#notif-tray');
+    if (other) other.hidden = true;
+    refreshUsage();
+  }
 });
+// Symmetrically: opening the notifications tray closes this one.
+$('#notif-btn').addEventListener('click', () => { $('#usage-tray').hidden = true; });
 document.addEventListener('click', (ev) => {
   if (ev.target.closest('#usage-chip') || ev.target.closest('#usage-tray')) return;
   $('#usage-tray').hidden = true;
