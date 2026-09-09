@@ -624,6 +624,7 @@
   }
   #detail-panel .dp-tabs button:hover { color: var(--fg); }
   #detail-panel .dp-tabs button.on { color: var(--fg); border-bottom-color: var(--accent); }
+  #detail-panel .dp-top { flex: 0 0 auto; }
   #detail-panel .dp-pane { min-height: 0; }
   #detail-panel .dp-pane[data-pane="files"] { flex: 1; display: flex; flex-direction: column; padding: 10px 12px; min-height: 360px; }
   #detail-panel:has(iframe.dp-session) .dp-pane[data-pane="conv"] { flex: 1; display: flex; flex-direction: column; min-height: 0; }
@@ -2219,6 +2220,7 @@ function renderDetail() {
   const panel = $('#detail-panel');
   if (!r) {
     panel.dataset.sig = '';
+    panel.dataset.shell = '';
     panel.innerHTML = `<div class="dp-head"><h2>Session not found</h2><button class="dp-close">×</button></div>`;
     return;
   }
@@ -2240,38 +2242,43 @@ function renderDetail() {
   panel.dataset.sig = sig;
   const now = Date.now() / 1000;
 
-  // Files is a sibling pane, not a re-render. DETAIL_TAB is deliberately kept
-  // out of `sig`: switching tabs must never rebuild the panel, because that
-  // would tear down and reconnect a live agent's terminal iframe.
+  // The panel is a shell — header slot, tabs, two panes — built once per
+  // selection and then written into. Replacing the whole panel on every sig
+  // change (a rename, a pin, an agent going idle) would take the Files pane
+  // with it, and with it the viewer's iframe and any comment written but not
+  // yet sent. DETAIL_TAB is deliberately not in `sig`: switching tabs only
+  // flips `hidden`.
   const hasFiles = wsRoots({ kind: 'task', sid }).length > 0;
-  const tabs = hasFiles ? `<div class="dp-tabs">`
-    + `<button data-dtab="conv">${liveEmbed ? 'Session' : 'Conversation'}</button>`
-    + `<button data-dtab="files" title="This task's folder and its project's — code highlighted, comment anywhere">Files</button>`
-    + `</div>` : '';
-  const filesPane = hasFiles ? `<div class="dp-pane" data-pane="files" hidden></div>` : '';
-
-  if (liveEmbed) {
-    panel.innerHTML =
-      `<div class="dp-live">${detailHead(r, isRoom)}${detailMeta(r, isLive, isRoom, now)}${detailActions(r, isLive, isRoom, isOrphan)}${detailPriority(r, isRoom)}</div>`
-      + tabs
-      + `<div class="dp-pane" data-pane="conv"><iframe class="dp-session" data-room="${esc(r.roomId)}" src="/session?id=${encodeURIComponent(r.roomId)}&embed=1" title="session" allow="clipboard-read; clipboard-write"></iframe></div>`
-      + filesPane;
-    wireDetailTabs(sid, hasFiles);
-    return;
+  const shellKey = [sid, hasFiles ? 'f' : '-', liveEmbed ? 'embed' : 'hist'].join('|');
+  if (panel.dataset.shell !== shellKey) {
+    panel.dataset.shell = shellKey;
+    panel.innerHTML = '<div class="dp-top"></div>'
+      + (hasFiles ? '<div class="dp-tabs">'
+          + `<button data-dtab="conv">${liveEmbed ? 'Session' : 'Conversation'}</button>`
+          + '<button data-dtab="files" title="This task\'s folder and its project\'s — code highlighted, comment anywhere">Files</button>'
+          + '</div>' : '')
+      + '<div class="dp-pane" data-pane="conv"></div>'
+      + (hasFiles ? '<div class="dp-pane" data-pane="files" hidden></div>' : '');
   }
-  panel.innerHTML =
-    detailHead(r, isRoom)
-    + detailMeta(r, isLive, isRoom, now)
-    + detailActions(r, isLive, isRoom, isOrphan)
-    + detailPriority(r, isRoom)
-    + tabs
-    + `<div class="dp-pane" data-pane="conv">`
-    + detailInfo(r)
-    + (isOrphan
-        ? `<div class="dp-section"><p style="font-size: 12.5px; color: var(--muted); margin: 0">This collaboration has ended and its agents aren't running. Open to resume where it left off.</p></div>`
-        : convBody(r, sid))
-    + `</div>`
-    + filesPane;
+  panel.querySelector('.dp-top').innerHTML = liveEmbed
+    ? `<div class="dp-live">${detailHead(r, isRoom)}${detailMeta(r, isLive, isRoom, now)}${detailActions(r, isLive, isRoom, isOrphan)}${detailPriority(r, isRoom)}</div>`
+    : detailHead(r, isRoom) + detailMeta(r, isLive, isRoom, now) + detailActions(r, isLive, isRoom, isOrphan) + detailPriority(r, isRoom);
+
+  const conv = panel.querySelector('.dp-pane[data-pane="conv"]');
+  if (liveEmbed) {
+    // Only the room identity may rebuild the terminal. A label, a pin or an
+    // idle flip must not reconnect a running agent's session.
+    if (conv.dataset.room !== r.roomId) {
+      conv.dataset.room = r.roomId;
+      conv.innerHTML = `<iframe class="dp-session" data-room="${esc(r.roomId)}" src="/session?id=${encodeURIComponent(r.roomId)}&embed=1" title="session" allow="clipboard-read; clipboard-write"></iframe>`;
+    }
+  } else {
+    conv.removeAttribute('data-room');
+    conv.innerHTML = detailInfo(r)
+      + (isOrphan
+          ? `<div class="dp-section"><p style="font-size: 12.5px; color: var(--muted); margin: 0">This collaboration has ended and its agents aren't running. Open to resume where it left off.</p></div>`
+          : convBody(r, sid));
+  }
   wireDetailTabs(sid, hasFiles);
 }
 
@@ -3191,12 +3198,19 @@ function wsPaintTree(v) {
   // as a property, not an attribute: it is the whole tree, and there is no
   // reason to serialise it into the DOM.
   if (tree._wsSig === html) return;           // nothing moved on disk — leave the DOM alone
-  // A repaint must not scroll you back to the root; a first paint into a fresh
-  // element should land where you left off last time.
-  const keep = tree._wsSig === undefined ? v.scroll : tree.scrollTop;
+  const keep = tree.scrollTop;
   tree._wsSig = html;
   tree.innerHTML = html;
-  tree.scrollTop = keep;
+  // A repaint must not scroll you back to the root. A fresh element should land
+  // where this view was left — but the first paint into one is usually just the
+  // roots and "loading…", too short to scroll, so the restore is retried on
+  // each paint until the content is tall enough to honour it.
+  if (v.scrollPending) {
+    tree.scrollTop = v.scroll;
+    v.scrollPending = tree.scrollTop !== v.scroll;
+  } else {
+    tree.scrollTop = keep;
+  }
 }
 // Where comments from the viewer should land: the task that owns the file, so
 // they reach that task's chat exactly as a file link from the chat does.
@@ -3293,7 +3307,9 @@ function wsRecompute(v) {
 }
 const WS_POLL_BATCH = 12;   // directories re-read per tick, so a wide tree can't flood the hub
 async function wsSync(v) {
-  if (v.busy) return;
+  // A click that lands while the 4s poll is in flight must not be dropped —
+  // "I clicked and nothing happened" is the complaint that started this.
+  if (v.busy) { v.again = true; return; }
   v.busy = true;
   try {
     wsRecompute(v);
@@ -3317,10 +3333,12 @@ async function wsSync(v) {
     if (batch.length) await Promise.all(batch.map(d => wsFetchDir(v, d)));
     wsPaintTree(v);
   } finally { v.busy = false; }
+  if (v.again) { v.again = false; await wsSync(v); }
 }
 function wsMount(el, ctx) {
   const v = wsView(ctx);
   v.el = el;
+  v.scrollPending = v.scroll > 0;    // a fresh element has to be put back where it was
   wsRecompute(v);
   if (!v.open.size && v.roots.length) v.open.add(v.roots[0].path);   // first visit: open where you are
   wsPaintTree(v);
@@ -3344,10 +3362,14 @@ function wsMount(el, ctx) {
     const f = e.target.closest('.wse.file');
     if (f) { v.sel = f.dataset.path; wsPersist(v); wsPaintTree(v); wsPaintView(v); }
   };
-  // Where you scrolled to is part of what you were looking at.
+  // Where you scrolled to is part of what you were looking at. A tree too short
+  // to scroll reports 0, and that is not a position — recording it would wipe
+  // the saved one the moment a fresh mount paints its first "loading…" rows.
   let scrollTimer = 0;
   tree.onscroll = () => {
+    if (tree.scrollHeight <= tree.clientHeight) return;
     v.scroll = tree.scrollTop;
+    v.scrollPending = false;
     clearTimeout(scrollTimer);
     scrollTimer = setTimeout(() => wsPersist(v), 400);
   };

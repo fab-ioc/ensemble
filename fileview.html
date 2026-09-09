@@ -387,6 +387,10 @@ const RAW_CAP = 512 * 1024;   // the fallback reader's own cap, matching the hub
 // reader exists to prevent. Never trust Content-Length alone; just stop reading.
 async function readCapped(res) {
   const reader = res.body && res.body.getReader ? res.body.getReader() : null;
+  // No streaming body: nothing to cap against, so this branch does read the
+  // whole response. Unreachable in any browser that can run the rest of this
+  // page — res.body has been in Chrome since 43 — and kept only so the viewer
+  // degrades rather than throws.
   if (!reader) { const t = await res.text(); return { bytes: new TextEncoder().encode(t).slice(0, RAW_CAP), truncated: t.length > RAW_CAP }; }
   const chunks = [];
   let n = 0, truncated = false;
