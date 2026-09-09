@@ -1135,7 +1135,8 @@ def build_projects() -> dict:
     links = load_session_projects()
     rows = load_sessions(500)
     keep = ("sessionId", "roomId", "label", "status", "isLive", "idleSeconds",
-            "updatedAt", "agents", "members", "mode", "headless", "cwd")
+            "updatedAt", "agents", "members", "mode", "headless", "cwd",
+            "priority", "priorityName")
     # One group per registered project, plus a synthetic unassigned bucket.
     groups: dict = {}
     for p in projects_reg:
@@ -1170,9 +1171,12 @@ def build_projects() -> dict:
         g["changed"] = git_changed_count(g["path"]) if (g.get("isGit") and g.get("path")) else 0
         total_changed += g["changed"]
         g["count"] = len(g["sessions"])
+        # Priority first, most-recently-active first inside a priority — the
+        # same rule the flat task list uses.
         g["sessions"] = [{k: s.get(k) for k in keep}
                          for s in sorted(g["sessions"],
-                                         key=lambda x: x.get("updatedAt") or 0, reverse=True)]
+                                         key=lambda x: (x.get("priority") or DEFAULT_PRIORITY,
+                                                        -(x.get("updatedAt") or 0)))]
         projects.append(g)
     # Registered projects first (even when empty, so the landing isn't blank),
     # most-recently-active first; Unassigned always last.
@@ -2833,18 +2837,21 @@ def load_sessions(n: int = 200) -> list[dict]:
             "cost": 0.0,
         })
         out.append(row)
-    # Sort: tiered by activity, then by updatedAt desc within each tier.
+    # Sort: the owner's priority first (1 = highest), then — as the tie-break
+    # inside one priority — the activity tiering the list has always used:
     # Tier 0: live & busy   (orange blinker — claude is doing something)
     # Tier 1: live & idle
     # Tier 2: historical
-    # Within each tier, most-recently-updated first. Combined with the
-    # hover-freeze on the client, this gives "busy on top" without rows
-    # shuffling out from under your mouse.
+    # and most-recently-updated first within each tier. Combined with the
+    # hover-freeze on the client, this gives "important on top" without rows
+    # shuffling out from under your mouse. Note the consequence: a low-priority
+    # running task now sorts below a higher-priority idle one.
     def _key(r):
+        prio = r.get("priority") or DEFAULT_PRIORITY
         if r["isLive"]:
             tier = 0 if r.get("status") == "busy" else 1
-            return (tier, -r["updatedAt"])
-        return (2, -r["updatedAt"])
+            return (prio, tier, -r["updatedAt"])
+        return (prio, 2, -r["updatedAt"])
     # Each headless session (solo or collaboration) becomes ONE row that opens
     # its window; its per-agent sub-sessions are hidden (they'd otherwise scatter
     # as a live claude row + a codex history row). Matched by agent session id
@@ -2893,6 +2900,8 @@ def load_sessions(n: int = 200) -> list[dict]:
                              "role": p.get("role", "")} for p in agents_in],
                 "label": labels.get(rid) or rm.get("title", ""), "cwd": rm.get("cwd", ""),
                 "spec": rm.get("spec", ""), "taskDir": rm.get("taskDir", ""),
+                "priority": priority_of(rm),
+                "priorityName": PRIORITY_NAMES[priority_of(rm)],
                 # A draft is a task created (e.g. by a planning agent) but never
                 # launched; Open/Start launches it fresh with its spec.
                 "draft": not rm.get("launched", True),
@@ -2964,6 +2973,10 @@ def load_sessions(n: int = 200) -> list[dict]:
         cwd_n = os.path.normcase(os.path.normpath(r.get("cwd", "") or "."))
         under_cs = cwd_n == cs_root_n2 or cwd_n.startswith(cs_root_n2 + os.sep)
         r["external"] = (not r.get("headless")) and not under_cs
+        # Rows that aren't tasks (legacy transcripts, orphan groups) have no
+        # room record to carry a priority — they read as medium.
+        r.setdefault("priority", DEFAULT_PRIORITY)
+        r.setdefault("priorityName", PRIORITY_NAMES[r["priority"]])
     out.sort(key=_key)
     return out[:n]
 
@@ -3061,6 +3074,35 @@ def trigger_update() -> dict:
 # the Handler (it needs the server port for the MCP URL).
 # ---------------------------------------------------------------------------
 
+# Task priority — the five Jira levels, stored as a small int so it sorts
+# naturally (1 = highest through 5 = lowest) with the name kept for display.
+# A task without the field reads as medium, so tasks created before priorities
+# existed need no migration: they are only rewritten when someone sets one.
+PRIORITY_NAMES = {1: "highest", 2: "high", 3: "medium", 4: "low", 5: "lowest"}
+PRIORITY_NUMBERS = {name: n for n, name in PRIORITY_NAMES.items()}
+DEFAULT_PRIORITY = 3
+PRIORITY_CHOICES = ", ".join(PRIORITY_NAMES[n] for n in sorted(PRIORITY_NAMES))
+
+
+def normalize_priority(value) -> int | None:
+    """A caller's priority — a name ("high") or a number (2, "2") — as the
+    stored int. None when it isn't a valid priority, so callers can reject it."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value) if float(value).is_integer() and int(value) in PRIORITY_NAMES else None
+    s = str(value).strip().lower()
+    if s.isdigit():
+        return int(s) if int(s) in PRIORITY_NAMES else None
+    return PRIORITY_NUMBERS.get(s)
+
+
+def priority_of(record: dict) -> int:
+    """The priority of a room/task record — medium for anything that predates
+    the field or carries a value we can't read."""
+    return normalize_priority((record or {}).get("priority")) or DEFAULT_PRIORITY
+
+
 def normalize_agent_specs(agent_list) -> tuple[list[tuple[str, str, str]], str]:
     """Turn the caller's agent list — plain keys ("claude") or objects
     {agent, model, role} — into (agent_key, model, role) tuples, checking each
@@ -3090,12 +3132,16 @@ def find_project(project_id: str) -> dict | None:
 
 
 def create_task(title: str, spec: str, project_id: str, agent_list,
-                workspace: str = "empty") -> tuple[bool, dict | None, str]:
+                workspace: str = "empty",
+                priority=None) -> tuple[bool, dict | None, str]:
     """Create a task: its room, workspace and task folder — WITHOUT launching
     the agents (``launched`` is False until the Handler starts it). Returns
     (ok, room_full, error)."""
     title = (title or "multiagent session").strip()[:120]
     spec = (spec or "").strip()
+    prio = DEFAULT_PRIORITY if priority is None else normalize_priority(priority)
+    if prio is None:
+        return False, None, "bad_priority"
     specs, err = normalize_agent_specs(agent_list)
     if err:
         return False, None, err
@@ -3116,6 +3162,7 @@ def create_task(title: str, spec: str, project_id: str, agent_list,
     room_full["projectId"] = project_id
     room_full["workspace"] = ws_meta
     room_full["spec"] = spec            # the task's specification, shown in the UI
+    room_full["priority"] = prio        # 1 = highest … 5 = lowest (medium by default)
     room_full["taskDir"] = ws_meta.get("taskDir", "")
     # Project-backed workspaces (inplace/copy/worktree) are shared: agents
     # collaborate on the same files, not isolated per-identity subdirs.
@@ -3129,7 +3176,7 @@ def create_task(title: str, spec: str, project_id: str, agent_list,
     if ws_meta.get("taskDir"):
         _write_task_json(ws_meta["taskDir"], {
             "roomId": room["id"], "projectId": project_id, "title": title,
-            "spec": spec,
+            "spec": spec, "priority": prio,
             # The room's participants, not the requested list: create_room
             # de-duplicates identities (claude, claude-2), and task.json is
             # meant to mirror the room record — which is what reassignment
@@ -3157,9 +3204,10 @@ def _patch_task_json(folder: str, **fields) -> None:
     _write_task_json(folder, data)
 
 
-def update_task(rid: str, title=None, spec=None) -> tuple[bool, dict | None, str]:
-    """Amend a task's title and/or spec (room record, task.json and any label
-    override the user set from the UI)."""
+def update_task(rid: str, title=None, spec=None,
+                priority=None) -> tuple[bool, dict | None, str]:
+    """Amend a task's title, spec and/or priority (room record, task.json and
+    any label override the user set from the UI)."""
     room = chatroom.get_room(rid, public=False)
     if room is None:
         return False, None, "no_such_room"
@@ -3180,6 +3228,12 @@ def update_task(rid: str, title=None, spec=None) -> tuple[bool, dict | None, str
             return False, None, "empty_spec"
         room["spec"] = s
         patch["spec"] = s
+    if priority is not None:
+        n = normalize_priority(priority)
+        if n is None:
+            return False, None, "bad_priority"
+        room["priority"] = n
+        patch["priority"] = n
     if not patch:
         return False, None, "nothing_to_change"
     chatroom.update_room(room)
@@ -4533,7 +4587,8 @@ class Handler(BaseHTTPRequestHandler):
             # never forces a code checkout (a project or task may have no code).
             ok, room_full, err = create_task(
                 data.get("title"), data.get("task"), data.get("projectId"),
-                data.get("agents") or [], data.get("workspace") or "empty")
+                data.get("agents") or [], data.get("workspace") or "empty",
+                data.get("priority"))
             if not ok:
                 self._send_json(400, {"error": err})
                 return
@@ -4585,6 +4640,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(code, {"error": err})
                 return
             self._send_json(200, {"ok": True, "room": chatroom.get_room(rid)})
+            return
+        if p == "/api/room/priority":
+            # Set the product owner's priority on a task: 1-5 or a level name.
+            rid = (data.get("roomId") or "").strip()
+            n = normalize_priority(data.get("priority"))
+            if n is None:
+                self._send_json(400, {"error": "bad_priority",
+                                      "expected": PRIORITY_CHOICES})
+                return
+            ok, room, err = update_task(rid, priority=n)
+            if not ok:
+                self._send_json(404 if err == "no_such_room" else 400, {"error": err})
+                return
+            self._send_json(200, {"ok": True, "priority": n,
+                                  "priorityName": PRIORITY_NAMES[n]})
             return
         if p == "/api/room/status":
             rid = (data.get("roomId") or "").strip()

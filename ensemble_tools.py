@@ -38,6 +38,13 @@ def bind(dashboard_module) -> None:
 # Tool schemas
 # ---------------------------------------------------------------------------
 
+_PRIORITY_DOC = ("Priority: \"highest\", \"high\", \"medium\", \"low\" or \"lowest\" "
+                 "(a number 1-5 also works, 1 = highest).")
+
+
+def _priority_spec(tail: str) -> dict:
+    return {"type": ["string", "integer"], "description": f"{_PRIORITY_DOC} {tail}"}
+
 _AGENT_SPEC = {
     "type": "object",
     "properties": {
@@ -80,9 +87,11 @@ TOOLS = [
         "name": "ensemble_list_tasks",
         "description": (
             "List the tasks of a project — by default your own project. Each row "
-            "carries id, title, status (draft | running | waiting_user | paused | "
-            "stopped), agents, and a spec preview. Pass projectId to look at "
-            "another project, or \"*\" for every task."
+            "carries id, title, priority, status (draft | running | waiting_user | "
+            "paused | stopped), agents, and a spec preview. Rows come back "
+            "highest-priority first, most-recently-updated first within a "
+            "priority. Pass projectId to look at another project, or \"*\" for "
+            "every task."
         ),
         "inputSchema": {
             "type": "object",
@@ -97,9 +106,9 @@ TOOLS = [
     {
         "name": "ensemble_get_task",
         "description": (
-            "Read one task in full: title, complete spec, project, status, agents "
-            "and roles, workspace mode, working directory, task folder, and the "
-            "most recent chat messages."
+            "Read one task in full: title, complete spec, priority, project, "
+            "status, agents and roles, workspace mode, working directory, task "
+            "folder, and the most recent chat messages."
         ),
         "inputSchema": {
             "type": "object",
@@ -137,6 +146,7 @@ TOOLS = [
                               "description": "Workspace mode: empty (own task folder, no code — the default), "
                                              "inplace (work in the project's code folder), copy (a copy of "
                                              "the code folder), worktree (a git worktree on its own branch)."},
+                "priority": _priority_spec("Defaults to medium."),
                 "start": {"type": "boolean",
                           "description": "Launch the agents now (default false = leave as a draft)."},
             },
@@ -146,14 +156,15 @@ TOOLS = [
     {
         "name": "ensemble_update_task",
         "description": (
-            "Amend a task's title, spec and/or assigned agents. Title and spec "
-            "work on drafts and on stopped or running tasks (a running agent does "
-            "not re-read the spec; tell it in chat if it must know). Reassigning "
-            "agents — adding one, dropping one, changing a model or a role — is "
-            "allowed only while the task is NOT running: stop it first, reassign, "
-            "start it again. Agents that stay keep their identity and their "
-            "conversation; pass their \"identity\" to be sure which is which. One "
-            "agent left makes the task solo, two or more a collaboration."
+            "Amend a task's title, spec, priority and/or assigned agents. "
+            "Title, spec and priority work on drafts and on stopped or running "
+            "tasks (a running agent does not re-read the spec; tell it in chat "
+            "if it must know). Reassigning agents — adding one, dropping one, "
+            "changing a model or a role — is allowed only while the task is NOT "
+            "running: stop it first, reassign, start it again. Agents that stay "
+            "keep their identity and their conversation; pass their \"identity\" "
+            "to be sure which is which. One agent left makes the task solo, two "
+            "or more a collaboration."
         ),
         "inputSchema": {
             "type": "object",
@@ -161,6 +172,7 @@ TOOLS = [
                 "taskId": {"type": "string"},
                 "title": {"type": "string", "description": "New title (omit to keep)."},
                 "spec": {"type": "string", "description": "New full spec (omit to keep). Replaces the old one."},
+                "priority": _priority_spec("Omit to keep the current one."),
                 "agents": {"type": "array", "items": _AGENT_SPEC,
                            "description": "The task's complete new agent line-up, replacing the old "
                                           "one (omit to keep it). List every agent that should be on "
@@ -272,9 +284,12 @@ def _title(room: dict, labels: dict | None = None) -> str:
 def _row(room: dict, projects: dict, links: dict, labels: dict) -> dict:
     pid = _project_of_room(room, links)
     spec = room.get("spec", "") or ""
+    prio = _d.priority_of(room)
     return {
         "id": room["id"],
         "title": _title(room, labels),
+        "priority": prio,
+        "priorityName": _d.PRIORITY_NAMES[prio],
         "status": _status(room),
         "mode": room.get("mode", ""),
         "projectId": pid,
@@ -318,6 +333,18 @@ def _check_write_scope(ctx: dict, target_pid: str, what: str) -> None:
 def _not_self(ctx: dict, room: dict, what: str) -> None:
     if room["id"] == ctx["room"]["id"]:
         raise ToolError(f"you cannot {what} your own task")
+
+
+def _priority(value):
+    """A caller's priority as the stored int, or None when they didn't give one.
+    Raises so the agent gets a readable message instead of a silent default."""
+    if value is None or value == "":
+        return None
+    n = _d.normalize_priority(value)
+    if n is None:
+        raise ToolError(f"priority must be one of {_d.PRIORITY_CHOICES} "
+                        f"(or 1-{len(_d.PRIORITY_NAMES)}, 1 = highest); got {value!r}")
+    return n
 
 
 def _text(obj) -> str:
@@ -385,7 +412,8 @@ def _list_tasks(ctx, args, handler):
         if not include_stopped and row["status"] == "stopped":
             continue
         rows.append(row)
-    rows.sort(key=lambda x: x.get("updatedAt") or 0, reverse=True)
+    # Priority first (1 = highest), then the previous recency order inside it.
+    rows.sort(key=lambda x: (x["priority"], -(x.get("updatedAt") or 0)))
     scope = "all projects" if pid == "*" else (projects.get(pid, {}).get("name") or "Unassigned")
     return {"scope": scope, "projectId": ("" if pid == "*" else pid), "tasks": rows}
 
@@ -435,7 +463,9 @@ def _create_task(ctx, args, handler):
     if not agent_list:
         agent_list = [{"agent": ctx["part"].get("agent") or "claude"}]
     workspace = (args.get("workspace") or "empty").strip()
-    ok, room_full, err = _d.create_task(title, spec, pid, agent_list, workspace)
+    priority = _priority(args.get("priority"))
+    ok, room_full, err = _d.create_task(title, spec, pid, agent_list, workspace,
+                                        priority)
     if not ok:
         raise ToolError(err)
     started = False
@@ -444,6 +474,7 @@ def _create_task(ctx, args, handler):
         started = True
     return {"ok": True, "taskId": room_full["id"], "title": room_full["title"],
             "status": "running" if started else "draft",
+            "priority": _d.PRIORITY_NAMES[_d.priority_of(room_full)],
             "projectId": pid, "taskDir": room_full.get("taskDir", ""),
             "cwd": room_full.get("cwd", ""),
             "note": ("launched" if started else
@@ -456,13 +487,15 @@ def _update_task(ctx, args, handler):
     _check_write_scope(ctx, _project_of_room(room), "update_task")
     title = args.get("title")
     spec = args.get("spec")
+    priority = _priority(args.get("priority"))
     agent_list = args.get("agents")
-    if title is None and spec is None and agent_list is None:
-        raise ToolError("give a new title, spec and/or agents")
+    if title is None and spec is None and priority is None and agent_list is None:
+        raise ToolError("give a new title, spec, priority and/or agents")
     notes = []
     room2 = room
-    if title is not None or spec is not None:
-        ok, room2, err = _d.update_task(room["id"], title=title, spec=spec)
+    if title is not None or spec is not None or priority is not None:
+        ok, room2, err = _d.update_task(room["id"], title=title, spec=spec,
+                                        priority=priority)
         if not ok:
             raise ToolError(err)
         if _status(room2) in ("running", "waiting_user", "paused") and spec is not None:
@@ -483,6 +516,7 @@ def _update_task(ctx, args, handler):
                                for a in _agents_view(room2))
                      + f" — the task is now {room2.get('mode', '')}")
     return {"ok": True, "taskId": room2["id"], "title": _title(room2),
+            "priority": _d.PRIORITY_NAMES[_d.priority_of(room2)],
             "status": _status(room2), "agents": _agents_view(room2),
             "mode": room2.get("mode", ""), "note": "; ".join(notes)}
 

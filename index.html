@@ -379,6 +379,49 @@
   @media (prefers-color-scheme: dark) {
     .row-cost-chip { background: rgba(255, 255, 255, .06); color: var(--muted); }
   }
+  /* Priority — a Jira-style arrow per level. Its own narrow column so the
+     marker never eats into the task text, and it stays put when the window
+     gets narrow. Medium (the default) is muted so the outliers are what the
+     eye lands on. */
+  td.prio, th.prio { width: 18px; padding-right: 0; text-align: center; }
+  .prio-ico {
+    display: block; margin: 0 auto; width: 12px; height: 12px;
+    fill: none; stroke: currentColor; stroke-width: 2;
+    stroke-linecap: round; stroke-linejoin: round;
+  }
+  .prio-1 { color: #cd1317; }
+  .prio-2 { color: #e9494a; }
+  .prio-3 { color: #b8901a; opacity: .55; }
+  .prio-4 { color: #2898bd; }
+  .prio-5 { color: #0b62d0; }
+  @media (prefers-color-scheme: dark) {
+    .prio-1 { color: #ff6b63; }
+    .prio-2 { color: #ff8f7a; }
+    .prio-3 { color: #d6b04a; opacity: .5; }
+    .prio-4 { color: #5cc0e0; }
+    .prio-5 { color: #6ea8ef; }
+  }
+  /* Detail panel: pick a level. Five arrows, the current one filled in. */
+  .dp-prio {
+    display: flex; align-items: center; gap: 6px;
+    padding: 0 16px 10px; font-size: 11.5px; color: var(--muted);
+  }
+  .dp-prio-label { font-weight: 600; letter-spacing: .02em; }
+  .dp-prio button {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 7px; border-radius: 6px; cursor: pointer;
+    border: 1px solid transparent; background: transparent;
+    font-size: 11px; color: var(--muted); line-height: 16px;
+  }
+  .dp-prio button:hover { background: var(--accent-soft); }
+  .dp-prio button.on {
+    border-color: var(--border); background: var(--accent-soft);
+    color: var(--fg); font-weight: 600;
+  }
+  .dp-prio button .prio-ico { opacity: 1; }
+  /* Project card rows carry the same marker, so the landing reads the same
+     way as the task list. */
+  .proj .srow .prio-ico { display: inline-block; flex: 0 0 auto; }
   .actions {
     display: flex; gap: 5px; align-items: center;
     flex-wrap: wrap; justify-content: flex-start;
@@ -1920,6 +1963,18 @@ function detailActions(r, isLive, isRoom, isOrphan) {
   return `<div class="dp-actions">${actionsCell(r, isLive)}</div>`;
 }
 
+// The product owner sets a task's priority here: five arrows, the current one
+// filled in. A row of buttons rather than a <select> so an open dropdown can
+// never be swallowed by the next refresh.
+function detailPriority(r, isRoom) {
+  if (!isRoom || !r.roomId) return '';
+  const cur = prioOf(r);
+  const btns = PRIORITY_LEVELS.map(l =>
+    `<button class="dp-prio-btn${l.n === cur ? ' on' : ''}" data-room="${esc(r.roomId)}" data-prio="${l.n}" title="Set priority: ${l.name}">${prioIcon(l.n, l.name)}${l.name}</button>`
+  ).join('');
+  return `<div class="dp-prio"><span class="dp-prio-label">Priority</span>${btns}</div>`;
+}
+
 function jiraSection(r) {
   return `<div class="dp-section">
       <h3>Jira</h3>
@@ -2061,7 +2116,7 @@ function renderDetail() {
 
   if (liveEmbed) {
     panel.innerHTML =
-      `<div class="dp-live">${detailHead(r, isRoom)}${detailMeta(r, isLive, isRoom, now)}${detailActions(r, isLive, isRoom, isOrphan)}</div>`
+      `<div class="dp-live">${detailHead(r, isRoom)}${detailMeta(r, isLive, isRoom, now)}${detailActions(r, isLive, isRoom, isOrphan)}${detailPriority(r, isRoom)}</div>`
       + `<iframe class="dp-session" data-room="${esc(r.roomId)}" src="/session?id=${encodeURIComponent(r.roomId)}&embed=1" title="session" allow="clipboard-read; clipboard-write"></iframe>`;
     return;
   }
@@ -2069,6 +2124,7 @@ function renderDetail() {
     detailHead(r, isRoom)
     + detailMeta(r, isLive, isRoom, now)
     + detailActions(r, isLive, isRoom, isOrphan)
+    + detailPriority(r, isRoom)
     + detailInfo(r)
     + (isOrphan
         ? `<div class="dp-section"><p style="font-size: 12.5px; color: var(--muted); margin: 0">This collaboration has ended and its agents aren't running. Open to resume where it left off.</p></div>`
@@ -2204,6 +2260,38 @@ function rowMatches(r, parsed) {
   return haystackMatches(rowHaystack(r), parsed);
 }
 
+// Task priority — the five Jira levels. The server sends both the number
+// (1 = highest … 5 = lowest, the sort key) and the name; a row from an older
+// server carries neither and reads as medium.
+const PRIORITY_LEVELS = [
+  {n: 1, name: 'highest'}, {n: 2, name: 'high'}, {n: 3, name: 'medium'},
+  {n: 4, name: 'low'}, {n: 5, name: 'lowest'},
+];
+const PRIORITY_PATHS = {
+  1: 'M2.5 5.5 L6 2 L9.5 5.5 M2.5 10 L6 6.5 L9.5 10',
+  2: 'M2.5 8 L6 4 L9.5 8',
+  3: 'M2.5 6 L9.5 6',
+  4: 'M2.5 4 L6 8 L9.5 4',
+  5: 'M2.5 2 L6 5.5 L9.5 2 M2.5 6.5 L6 10 L9.5 6.5',
+};
+function prioOf(r) {
+  const n = Number((r && r.priority) || 0);
+  return (n >= 1 && n <= 5) ? n : 3;
+}
+function prioName(n) { return (PRIORITY_LEVELS[n - 1] || PRIORITY_LEVELS[2]).name; }
+// The marker itself: a small arrow, coloured by level. Title-only text, so it
+// costs the row no width beyond its own column.
+function prioIcon(n, title) {
+  return `<svg class="prio-ico prio-${n}" viewBox="0 0 12 12" aria-hidden="true"><title>${esc(title || ('priority: ' + prioName(n)))}</title><path d="${PRIORITY_PATHS[n]}"/></svg>`;
+}
+// Only real tasks (a room) carry a priority; a legacy transcript row gets an
+// empty cell so the columns still line up.
+function prioCell(r) {
+  if (!(r.headless && r.roomId)) return '<td class="prio"></td>';
+  const n = prioOf(r);
+  return `<td class="prio">${prioIcon(n)}</td>`;
+}
+
 function renderRow(r, parsed, now) {
   if (r.headless) return renderHeadlessRow(r, parsed, now);
   const depth = r._depth || 0;
@@ -2221,6 +2309,7 @@ function renderRow(r, parsed, now) {
   const actionsTd = DETAIL_MODE ? '' : `<td>${actionsCell(r, r.isLive)}</td>`;
   return `<tr class="row${selected} ${liveClasses} ${depth ? 'is-fork' : ''}" ${dataAttrs} draggable="true">
     <td>${statusDot}</td>
+    ${prioCell(r)}
     <td class="topic" title="${esc(r.cwd)}">${indent}${topicCellHL(r, parsed)}</td>
     <td class="tag">${r.isLive ? '<span class="badge-live">live</span>' : ''}</td>
     ${actionsTd}
@@ -2248,6 +2337,7 @@ function renderHeadlessRow(r, parsed, now) {
   const actionsTd = DETAIL_MODE ? '' : `<td>${actions}</td>`;
   return `<tr class="row headless ${liveClasses}" data-room="${esc(r.roomId || '')}" data-orphan="${r.orphan ? '1' : ''}" data-sid="${esc(r.sessionId)}" draggable="false">
     <td>${statusDot}</td>
+    ${prioCell(r)}
     <td class="topic" title="${esc(r.cwd)}">${esc(r.label || '(session)')}${agentBadges(r)}</td>
     <td class="tag">${liveBadge}</td>
     ${actionsTd}
@@ -2619,7 +2709,7 @@ function projectsLandingHtml() {
   const cards = PROJECTS.projects.map(p => {
     const rows = (p.sessions || []).slice(0, 4).map(sn => {
       const st = projectSessionState(sn);
-      return `<div class="srow" data-sid="${esc(sn.roomId || sn.sessionId || '')}"><span class="sdot ${st}"></span><span class="stitle">${esc(sn.label || sn.sessionId || 'session')}</span><span class="stime">${esc(fmtAgo(sn.updatedAt))}</span></div>`;
+      return `<div class="srow" data-sid="${esc(sn.roomId || sn.sessionId || '')}"><span class="sdot ${st}"></span>${sn.roomId ? prioIcon(prioOf(sn)) : ''}<span class="stitle">${esc(sn.label || sn.sessionId || 'session')}</span><span class="stime">${esc(fmtAgo(sn.updatedAt))}</span></div>`;
     }).join('');
     const more = (p.count || 0) > 4 ? `<div class="srow more">… ${p.count - 4} more</div>` : '';
     const wait = p.waiting ? `<span class="waitchip">⚠ ${p.waiting} waiting</span>` : '';
@@ -3052,7 +3142,7 @@ function renderRows() {
   const headExtra = DETAIL_MODE ? '' : '<th></th>';
   view.innerHTML = projectsChromeHtml() + pageHeader + `<table>
     <thead><tr>
-      <th></th><th>Task</th><th></th>${headExtra}
+      <th></th><th class="prio"></th><th>Task</th><th></th>${headExtra}
     </tr></thead>
     <tbody>${renderGroupedRows(ordered, parsed, now)}</tbody>
   </table>`;
@@ -4221,6 +4311,24 @@ document.addEventListener('click', async (ev) => {
       await refresh(); updateRoomsBadge();
       openDetail(rid);
     } catch (e) { toast('resume failed: ' + e.message, 4000, 'err'); }
+    return;
+  }
+  const prioBtn = ev.target.closest('.dp-prio-btn');
+  if (prioBtn) {
+    ev.stopPropagation();
+    const rid = prioBtn.dataset.room, n = Number(prioBtn.dataset.prio);
+    // Paint the choice straight away — the list re-sorts on the next refresh,
+    // and the row model is patched so a frozen (hovered) list agrees with it.
+    const row = ALL_ROWS.find(x => x.roomId === rid);
+    if (row) { row.priority = n; row.priorityName = prioName(n); }
+    // Move the highlight by hand rather than re-rendering the panel: a live
+    // task's panel holds the session iframe, and rebuilding it would reload it.
+    prioBtn.parentElement.querySelectorAll('.dp-prio-btn')
+      .forEach(b => b.classList.toggle('on', b === prioBtn));
+    try {
+      await api('/api/room/priority', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: rid, priority: n }) });
+      await refresh();
+    } catch (e) { toast('priority failed: ' + e.message, 4000, 'err'); await refresh(); }
     return;
   }
   const dpTerms = ev.target.closest('.dp-terms-btn');

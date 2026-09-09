@@ -27,7 +27,7 @@ and teammates, and the **write scope** your tool calls are limited to. Then:
 | See the tasks of your project (or another, or `"*"`) | `ensemble_list_tasks` |
 | Read one task in full (spec, agents, status, recent chat) | `ensemble_get_task` |
 | Create a task | `ensemble_create_task` |
-| Change a task's title, spec, or assigned agents | `ensemble_update_task` |
+| Change a task's title, spec, priority, or assigned agents | `ensemble_update_task` |
 | Launch a draft, or relaunch a stopped task | `ensemble_start_task` |
 | Stop a running task (keeps everything) | `ensemble_stop_task` |
 | Move a task to another project | `ensemble_move_task` |
@@ -36,6 +36,14 @@ and teammates, and the **write scope** your tool calls are limited to. Then:
 Task statuses: `draft` (created, never launched), `running`, `waiting_user`
 (its agents asked the product owner and are paused), `paused` (turn limit
 reached), `stopped`.
+
+Task priorities: `highest`, `high`, `medium` (the default), `low`, `lowest` —
+the product owner's ordering. `ensemble_create_task` and `ensemble_update_task`
+take either the name or the number (1 = highest to 5 = lowest); anything else
+is rejected. `ensemble_list_tasks` returns rows highest-priority first, and
+most-recently-updated first inside one priority — so the top of the list is the
+work that matters most. Priority is the owner's call: set one when they asked
+for it, and otherwise leave the default alone.
 
 ## Scope and safety rules (enforced by the server, respect them anyway)
 
@@ -126,6 +134,12 @@ Amend a draft's spec after review:
 
 ```json
 {"taskId": "room-1a2b3c4d", "spec": "# Goal\n(revised)…"}
+```
+
+Raise a task's priority (the name or the number — `2` means the same thing):
+
+```json
+{"taskId": "room-1a2b3c4d", "priority": "high"}
 ```
 
 List everything running anywhere:
