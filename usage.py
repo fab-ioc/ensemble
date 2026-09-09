@@ -17,7 +17,9 @@ Two sources, deliberately not symmetrical:
     affected. The stored token expires in ~3 hours and Claude Code refreshes it
     in place, so we re-read the file on every poll and report "unavailable"
     (with the reason) when it has gone stale rather than implementing an OAuth
-    refresh we would then have to maintain.
+    refresh we would then have to maintain. It also **rate-limits** — observed
+    live, an HTTP 429 after a burst of calls — so a 429 stops the poller calling
+    for a while rather than being retried on the next tick.
 
 ``read_codex()``
     No network, no credentials: the newest ``token_count`` event in the Codex
@@ -102,6 +104,14 @@ RESET_SANITY_S = 60 * 86400
 
 WARN_PERCENT = 80          # banner
 ALARM_PERCENT = 95         # banner, louder
+
+# The usage endpoint rate-limits — observed live, an HTTP 429 after a burst of
+# calls. It is an undocumented internal endpoint and we are a guest on it, so a
+# 429 stops us calling rather than being absorbed and retried on the next tick.
+# Honour `Retry-After` when the response carries one; otherwise wait this long.
+DEFAULT_BACKOFF_S = 600
+MAX_BACKOFF_S = 3600
+_claude_backoff_until = 0.0
 
 # Claude's `limits[]` kinds -> our shared vocabulary. Anything else is ignored,
 # which is what keeps an endpoint change from breaking the surface.
@@ -239,8 +249,31 @@ def _unavailable(source: str, reason: str) -> dict:
 # Claude — live account-wide plan windows
 # ---------------------------------------------------------------------------
 
-def read_claude() -> dict:
+def _retry_after_seconds(exc) -> float:
+    """The `Retry-After` header as seconds, clamped. Falls back to the default.
+
+    Only the delta-seconds form is handled; an HTTP-date would fall back, which
+    is the safe direction (we wait, we do not hammer).
+    """
+    try:
+        raw = (exc.headers or {}).get("Retry-After")
+        wait = float(str(raw).strip())
+    except (AttributeError, TypeError, ValueError):
+        return DEFAULT_BACKOFF_S
+    return min(MAX_BACKOFF_S, max(60.0, wait))
+
+
+def read_claude(now: float | None = None) -> dict:
     """One HTTPS GET, mapped into the shared shape. Never raises."""
+    global _claude_backoff_until
+    now = time.time() if now is None else now
+    if now < _claude_backoff_until:
+        # Rate-limited recently. Say so plainly and make no call at all — the
+        # point of a backoff is not to send the request.
+        wait = int(_claude_backoff_until - now)
+        return _unavailable(
+            "claude", f"the usage endpoint asked us to slow down — not retrying "
+                      f"for another {max(1, wait // 60)} min")
     token = ""
     try:
         token = _access_token()
@@ -251,11 +284,18 @@ def read_claude() -> dict:
     except LookupError as e:
         return _unavailable("claude", _scrub(e, token))
     except urllib.error.HTTPError as e:
-        # 401 is the expected shape of a token that went stale between the
-        # expiresAt check and the call, so name it in the user's terms.
-        why = ("Claude Code's login token was rejected — it refreshes itself "
-               "when a Claude session runs") if e.code == 401 else \
-              f"the usage endpoint returned HTTP {e.code}"
+        if e.code == 401:
+            # The expected shape of a token that went stale between the
+            # expiresAt check and the call. Name it in the user's terms.
+            why = ("Claude Code's login token was rejected — it refreshes "
+                   "itself when a Claude session runs")
+        elif e.code == 429:
+            wait = _retry_after_seconds(e)
+            _claude_backoff_until = now + wait
+            why = ("the usage endpoint is rate-limiting us — pausing for "
+                   f"{int(wait // 60)} min")
+        else:
+            why = f"the usage endpoint returned HTTP {e.code}"
         return _unavailable("claude", _scrub(why, token))
     except urllib.error.URLError as e:
         return _unavailable("claude", _scrub(f"cannot reach the usage endpoint ({e.reason})", token))
@@ -266,6 +306,8 @@ def read_claude() -> dict:
     finally:
         token = ""
 
+    # A successful call clears any standing backoff.
+    _claude_backoff_until = 0.0
     windows = []
     for limit in (payload.get("limits") or []):
         mapped = _CLAUDE_KINDS.get(limit.get("kind"))
