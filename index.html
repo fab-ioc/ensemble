@@ -3992,12 +3992,13 @@ function openAttentionItem(roomId) {
   const it = ATTENTION_BY_ROOM.get(roomId);
   if (!it) return;
   $('#notif-tray').hidden = true;
-  openSessionWindow(it.roomId, it.agentIdentity || '');
-  SELECTED_SID = it.roomId;
   if (it.projectId && projectById(it.projectId)) {
     SELECTED_PROJECT = it.projectId; PROJECT_TAB = 'tasks';
   }
   renderRows();
+  // In the page, not a pop-out window: the window was unasked-for, and the
+  // selection moved the page under you a moment later anyway.
+  openDetail(it.roomId);
 }
 
 $('#notif-btn').addEventListener('click', (ev) => {

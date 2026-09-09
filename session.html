@@ -31,7 +31,9 @@
   .msg .from { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; opacity:.85; margin-bottom:3px; }
   .msg.claude { border-color:#d9775755; } .msg.claude .from { color:#d97757; }
   .msg.codex { border-color:#10a37f55; } .msg.codex .from { color:#10a37f; }
-  .msg.user { align-self:flex-end; border-color:var(--accent); background:#c25d3c1a; }
+  /* Your messages read left-aligned like everyone else's — right-aligning them
+     wasted the width of the column. The accent edge is what marks them. */
+  .msg.user { border-left:3px solid var(--accent); border-color:var(--border); background:#c25d3c14; }
   .msg .text { white-space:pre-wrap; word-break:break-word; line-height:1.45; }
   /* Markdown-rendered bubble content (see mdToHtml). */
   .msg .text.md { white-space:normal; line-height:1.5; }
@@ -61,7 +63,9 @@
   .cmt-composer textarea { width:100%; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:8px; font:inherit; resize:vertical; }
   .cmt-composer .cmt-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:10px; }
   .cmt-composer .cmt-add { background:var(--accent); color:#fff; border:none; }
-  #cmt-tray { position:fixed; right:12px; bottom:12px; z-index:55; width:min(330px,92vw); max-height:60vh; display:flex; flex-direction:column; background:var(--surface); border:1px solid var(--border); border-radius:10px; box-shadow:0 10px 34px rgba(0,0,0,.45); overflow:hidden; }
+  /* Docked above the composer, not floating over the chat — as an overlay it
+     covered the messages you were commenting on. */
+  #cmt-tray { flex:0 0 auto; margin:0 12px 6px; max-height:36vh; display:flex; flex-direction:column; background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
   #cmt-tray .cmt-tray-head { display:flex; align-items:center; gap:6px; padding:9px 11px; border-bottom:1px solid var(--border); font-size:13px; }
   #cmt-tray .grow { flex:1; }
   #cmt-tray .cmt-submit { background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font:inherit; font-size:12px; }
@@ -1189,7 +1193,13 @@ function openComposer(data) {
 function renderCmtTray() {
   let tray = document.getElementById('cmt-tray');
   if (!COMMENTS.length) { if (tray) tray.remove(); return; }
-  if (!tray) { tray = document.createElement('div'); tray.id = 'cmt-tray'; document.body.appendChild(tray); }
+  if (!tray) {
+    tray = document.createElement('div'); tray.id = 'cmt-tray';
+    // Docked in the chat column above the composer, so it takes its own space
+    // instead of covering the messages being commented on.
+    const col = document.getElementById('chatcol'), compose = document.getElementById('compose');
+    if (col && compose) col.insertBefore(tray, compose); else document.body.appendChild(tray);
+  }
   tray.innerHTML = `<div class="cmt-tray-head"><strong>${COMMENTS.length} comment${COMMENTS.length > 1 ? 's' : ''}</strong><span class="grow"></span><button class="cmt-submit">Submit</button><button class="cmt-clear">Clear</button></div><div class="cmt-list"></div>`;
   const list = tray.querySelector('.cmt-list');
   COMMENTS.forEach(c => {
