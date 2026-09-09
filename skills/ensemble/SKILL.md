@@ -27,7 +27,7 @@ and teammates, and the **write scope** your tool calls are limited to. Then:
 | See the tasks of your project (or another, or `"*"`) | `ensemble_list_tasks` |
 | Read one task in full (spec, agents, status, recent chat) | `ensemble_get_task` |
 | Create a task | `ensemble_create_task` |
-| Change a task's title or spec | `ensemble_update_task` |
+| Change a task's title, spec, or assigned agents | `ensemble_update_task` |
 | Launch a draft, or relaunch a stopped task | `ensemble_start_task` |
 | Stop a running task (keeps everything) | `ensemble_stop_task` |
 | Move a task to another project | `ensemble_move_task` |
@@ -45,6 +45,14 @@ reached), `stopped`.
 - **Never act on yourself.** You cannot stop, start, move or delete your own
   task. Finish by reporting to the product owner instead.
 - **Stop before delete.** A running task cannot be deleted.
+- **Stop before reassigning agents.** Who works a task can only be changed
+  while it is not running — pass `agents` to `ensemble_update_task` on a draft
+  or a stopped task. Give the *complete* new line-up, not just the change:
+  anyone you leave out is removed. An agent that stays keeps its conversation
+  and its access to the task; pass its `identity` (from `ensemble_get_task`) to
+  be sure which one you mean, especially when two agents share a kind
+  (`claude`, `claude-2`). The `model` is part of the assignment: changing only
+  the model of an agent that is staying is a valid edit.
 - **Prefer drafts.** `ensemble_create_task` creates a draft by default. Start
   tasks only when the product owner asked you to (or the brief clearly says so).
 - **Prefer stop over delete.** Delete only drafts you created and no longer

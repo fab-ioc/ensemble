@@ -128,6 +128,20 @@ def _room_is_live(room: dict) -> bool:
     return False
 
 
+def _room_has_live_pty(rid: str) -> bool:
+    """True if any live PTY says it belongs to this room.
+
+    :func:`_room_is_live` asks the room record which PTYs its agents hold, and a
+    room record can be wrong in both directions — it keeps a dead ``ptyId``
+    after a stop, and it loses one if a participant is rewritten. The PTY list
+    is the authority on what is actually running, so anything that must not
+    touch a working agent asks here as well."""
+    for info in ptyrun.list_sessions():
+        if info.get("alive") and (info.get("meta") or {}).get("room") == rid:
+            return True
+    return False
+
+
 # Rooms whose codex session id we've recently looked for and not found, so a
 # poll loop doesn't rescan the rollout dir every second: {roomId: last try}.
 _CODEX_SID_TRIED: dict[str, float] = {}
@@ -2861,7 +2875,8 @@ def load_sessions(n: int = 200) -> list[dict]:
                 "agents": [p.get("identity", "") for p in agents_in],
                 "members": [{"identity": p.get("identity", ""),
                              "agent": p.get("agent", ""),
-                             "model": p.get("model", "")} for p in agents_in],
+                             "model": p.get("model", ""),
+                             "role": p.get("role", "")} for p in agents_in],
                 "label": labels.get(rid) or rm.get("title", ""), "cwd": rm.get("cwd", ""),
                 "spec": rm.get("spec", ""), "taskDir": rm.get("taskDir", ""),
                 # A draft is a task created (e.g. by a planning agent) but never
@@ -3147,6 +3162,45 @@ def update_task(rid: str, title=None, spec=None) -> tuple[bool, dict | None, str
         return False, None, "nothing_to_change"
     chatroom.update_room(room)
     _patch_task_json(room.get("taskDir", ""), **patch)
+    return True, room, ""
+
+
+def reassign_task(rid: str, agent_list) -> tuple[bool, dict | None, str]:
+    """Change WHO works a task — add an agent, drop one, or change an agent's
+    model or role — on a task that is not running.
+
+    Refused outright while the task is live: hot-swapping an agent under a
+    running collaboration is a product decision we've taken the other way. Stop
+    the task first, reassign, start it again.
+
+    Agents that stay keep their identity, bearer token, session id and working
+    dir (see :func:`chatroom.set_agents`), so a retained agent resumes its own
+    transcript and an unrelated change never invalidates its MCP client. The
+    room's mode follows the head-count (one agent = solo, two or more = collab)
+    and ``task.json`` is patched to match. Returns (ok, room_full, error)."""
+    room = chatroom.get_room(rid, public=False)
+    if room is None:
+        return False, None, "no_such_room"
+    if _room_is_live(room) or _room_has_live_pty(rid):
+        return False, None, "task_is_running"
+    specs, err = normalize_agent_specs(agent_list)
+    if err:
+        return False, None, err
+    # normalize_agent_specs validates and drops the identity; recover it from the
+    # caller's own list (same order) so a retained agent can be pinned by name.
+    idents = [(a.get("identity") or "").strip() if isinstance(a, dict) else ""
+              for a in agent_list]
+    members = [{"identity": ident, "agent": ak, "model": mdl, "role": role}
+               for ident, (ak, mdl, role) in zip(idents, specs)]
+    room = chatroom.set_agents(rid, members)
+    if room is None:
+        return False, None, "no_such_room"
+    room["mode"] = "solo" if len(specs) < 2 else "collab"
+    chatroom.update_room(room)
+    assigned = [{"identity": pp["identity"], "agent": pp.get("agent", ""),
+                 "model": pp.get("model", ""), "role": pp.get("role", "")}
+                for pp in chatroom.agent_participants(room)]
+    _patch_task_json(room.get("taskDir", ""), agents=assigned, mode=room["mode"])
     return True, room, ""
 
 
@@ -4056,6 +4110,7 @@ class Handler(BaseHTTPRequestHandler):
         collab = room_full.get("mode") != "solo"
         launched = []
         for part in [pp for pp in room_full["participants"] if pp.get("kind") == "agent"]:
+            part.pop("fresh", None)     # launching IS its first conversation
             info = self._launch_room_agent_pty(room_full, part, task, collab=collab)
             part["sessionId"] = info["sessionId"]
             part["cwd"] = info["cwd"]
@@ -4083,7 +4138,15 @@ class Handler(BaseHTTPRequestHandler):
         seed = (room_full.get("spec") or "") if (solo and not room_full.get("messages")) else ""
         resumed = []
         for part in agents_in:
-            info = self._resume_room_agent_pty(room_full, part, collab=not solo, seed=seed)
+            if part.pop("fresh", False):
+                # Assigned to the task after it had already run: there is no
+                # conversation to resume, so give it the same first prompt a
+                # launch would have (the collaboration briefing, or the spec).
+                info = self._launch_room_agent_pty(
+                    room_full, part, room_full.get("spec", "") or "", collab=not solo)
+                part["sessionId"] = info["sessionId"]
+            else:
+                info = self._resume_room_agent_pty(room_full, part, collab=not solo, seed=seed)
             part["ptyId"] = info["ptyId"]
             part["cwd"] = info["cwd"]
             resumed.append({"identity": part["identity"], "ptyId": info["ptyId"]})
@@ -4488,6 +4551,18 @@ class Handler(BaseHTTPRequestHandler):
                 if part.get("kind") == "agent" and part["identity"] in roles:
                     part["role"] = (str(roles[part["identity"]]) or "").strip()[:400]
             chatroom.update_room(room_full)
+            self._send_json(200, {"ok": True, "room": chatroom.get_room(rid)})
+            return
+        if p == "/api/room/agents":
+            # Reassign a task's agents: {roomId, agents:[{identity?, agent,
+            # model, role}]}. Agents that stay keep their identity and token;
+            # refused while the task is running.
+            rid = (data.get("roomId") or "").strip()
+            ok, room_full, err = reassign_task(rid, data.get("agents") or [])
+            if not ok:
+                code = {"no_such_room": 404, "task_is_running": 409}.get(err, 400)
+                self._send_json(code, {"error": err})
+                return
             self._send_json(200, {"ok": True, "room": chatroom.get_room(rid)})
             return
         if p == "/api/room/status":

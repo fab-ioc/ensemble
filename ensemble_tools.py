@@ -43,6 +43,10 @@ _AGENT_SPEC = {
     "properties": {
         "agent": {"type": "string",
                   "description": "Agent kind: \"claude\" or \"codex\"."},
+        "identity": {"type": "string",
+                     "description": "Only when reassigning an existing task: the identity of an "
+                                    "agent already on it (e.g. \"claude-2\") that is staying, so it "
+                                    "keeps its transcript. Omit for a new agent."},
         "model": {"type": "string",
                   "description": "Optional model id for that agent (omit for the default)."},
         "role": {"type": "string",
@@ -142,9 +146,14 @@ TOOLS = [
     {
         "name": "ensemble_update_task",
         "description": (
-            "Amend a task's title and/or spec. Works on drafts and on stopped or "
-            "running tasks (a running agent does not re-read the spec; tell it in "
-            "chat if it must know)."
+            "Amend a task's title, spec and/or assigned agents. Title and spec "
+            "work on drafts and on stopped or running tasks (a running agent does "
+            "not re-read the spec; tell it in chat if it must know). Reassigning "
+            "agents — adding one, dropping one, changing a model or a role — is "
+            "allowed only while the task is NOT running: stop it first, reassign, "
+            "start it again. Agents that stay keep their identity and their "
+            "conversation; pass their \"identity\" to be sure which is which. One "
+            "agent left makes the task solo, two or more a collaboration."
         ),
         "inputSchema": {
             "type": "object",
@@ -152,6 +161,10 @@ TOOLS = [
                 "taskId": {"type": "string"},
                 "title": {"type": "string", "description": "New title (omit to keep)."},
                 "spec": {"type": "string", "description": "New full spec (omit to keep). Replaces the old one."},
+                "agents": {"type": "array", "items": _AGENT_SPEC,
+                           "description": "The task's complete new agent line-up, replacing the old "
+                                          "one (omit to keep it). List every agent that should be on "
+                                          "the task, not just the change; anyone left out is removed."},
             },
             "required": ["taskId"],
         },
@@ -443,16 +456,47 @@ def _update_task(ctx, args, handler):
     _check_write_scope(ctx, _project_of_room(room), "update_task")
     title = args.get("title")
     spec = args.get("spec")
-    if title is None and spec is None:
-        raise ToolError("give a new title and/or spec")
-    ok, room2, err = _d.update_task(room["id"], title=title, spec=spec)
-    if not ok:
-        raise ToolError(err)
-    note = ""
-    if _status(room2) in ("running", "waiting_user", "paused") and spec is not None:
-        note = "the task is running — its agents will not re-read the spec"
+    agent_list = args.get("agents")
+    if title is None and spec is None and agent_list is None:
+        raise ToolError("give a new title, spec and/or agents")
+    notes = []
+    room2 = room
+    if title is not None or spec is not None:
+        ok, room2, err = _d.update_task(room["id"], title=title, spec=spec)
+        if not ok:
+            raise ToolError(err)
+        if _status(room2) in ("running", "waiting_user", "paused") and spec is not None:
+            notes.append("the task is running — its agents will not re-read the spec")
+    if agent_list is not None:
+        if not isinstance(agent_list, list) or not agent_list:
+            raise ToolError("agents must be a non-empty list — a task needs at least one agent")
+        ok, room3, err = _d.reassign_task(room["id"], agent_list)
+        if not ok:
+            raise ToolError(_reassign_error(err))
+        room2 = room3
+        notes.append("agents reassigned: " +
+                     ", ".join(f"{a['identity']} ({a['agent']}"
+                               + (f", {a['role']}" if a["role"] else "") + ")"
+                               for a in _agents_view(room2))
+                     + f" — the task is now {room2.get('mode', '')}")
     return {"ok": True, "taskId": room2["id"], "title": _title(room2),
-            "status": _status(room2), "note": note}
+            "status": _status(room2), "agents": _agents_view(room2),
+            "mode": room2.get("mode", ""), "note": "; ".join(notes)}
+
+
+def _reassign_error(err: str) -> str:
+    """Turn reassign_task's error code into something an agent can act on."""
+    if err == "task_is_running":
+        return ("that task is running — agents cannot be reassigned under a live "
+                "task; stop it (ensemble_stop_task), reassign, then start it again")
+    if err == "need_an_agent":
+        return "a task needs at least one agent"
+    if err.startswith("agent_unavailable:"):
+        key = err.split(":", 1)[1]
+        return (f"no such agent, or it is not installed on this machine: "
+                f"'{key}' — use one of the agent kinds already on the board "
+                f"(e.g. \"claude\", \"codex\")")
+    return err
 
 
 def _start_task(ctx, args, handler):
