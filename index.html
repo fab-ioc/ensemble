@@ -1802,7 +1802,8 @@ let ALL_ROWS = [];
 // Projects-first shell: group sessions by git-root. PROJ_GROUPBY 'project' shows
 // the projects landing; a SELECTED_PROJECT drills into one project's sessions.
 let PROJECTS = null, _projTs = 0, SELECTED_PROJECT = null, _projFailed = false;
-let WS_SCOPE = '';   // Workspace/Changes tabs: '' = the project folder, else one task's workspace path
+let WS_SCOPE = '';       // Workspace/Changes tabs: '' = the project folder, else one task's workspace path
+let WS_MOUNT_SIG = '';   // what the Workspace panel is mounted for; keeps the tree alive across refreshes
 let PROJ_GROUPBY = localStorage.getItem('cd-groupby') || 'project';
 let SEARCH_QUERY = '';
 let FILTERS = new Set(['live', 'pinned', 'history']); // multi-select
@@ -3199,6 +3200,13 @@ function renderRows() {
   // the task table.
   if (SELECTED_PROJECT && PROJECT_TAB === 'workspace') {
     const pj = projectById(SELECTED_PROJECT);
+    // The tree and the open file are STATE, not a view of the session list.
+    // Rebuilding them on the 2.5s refresh collapsed every folder you had
+    // opened and threw away the file you were reading before it could load.
+    // Re-render only when what the panel is looking at actually changes.
+    const sig = ['ws', SELECTED_PROJECT, pj ? scopePath(pj) : ''].join('|');
+    if (WS_MOUNT_SIG === sig && document.getElementById('wsp-tree')) return;
+    WS_MOUNT_SIG = sig;
     $('#view').innerHTML = projectsChromeHtml() + workspacePanelHtml(pj);
     $('#meta').textContent = pj ? `${pj.name} · workspace` : 'workspace';
     wireProjectsChrome(); wireWorkspacePanel();
