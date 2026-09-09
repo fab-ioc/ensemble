@@ -1570,6 +1570,11 @@
 <aside id="sidebar"></aside>
 <main>
   <section id="view"></section>
+  <!-- The workspace panel is a sibling of #view, not part of it. Every other
+       view writes #view.innerHTML wholesale; if the tree lived in there, a tab
+       switch would destroy the folders you opened, your scroll position and any
+       comments you had not sent yet. It is hidden, never rebuilt. -->
+  <section id="ws-panel" hidden></section>
 </main>
 <dialog id="modal"></dialog>
 <aside id="detail-panel"></aside>
@@ -3089,24 +3094,33 @@ function wsRoots(ctx) {
   push(pj.home || '', 'Tasks & notes', 'home');
   return out;
 }
-// At task scope the project root is filtered: an in-root project's children
-// include every other task, and "only project level files and task level
-// files" means none of those belong here.
+// At task scope the project root is filtered: "only project level files and
+// task level files" means no other task's folder belongs here.
+//
+// For an in-root project (path === home) the filter is structural, not a list
+// of known tasks: every subdirectory of that folder is a task container —
+// task folders go there, and so does the `_linked` folder holding other rooms'
+// chat exports. Deriving the set from pj.sessions instead would only hide tasks
+// whose room still exists, and would leak every abandoned folder plus _linked.
+// Files at that level are the project's own and stay.
 function wsHidden(v, dir) {
-  if (v.ctx.kind !== 'task' || !v.hide || !v.hide.size) return null;
+  if (v.ctx.kind !== 'task') return null;
   const root = v.roots.find(r => r.kind === 'project');
-  return (root && wsSame(root.path, dir)) ? v.hide : null;
+  if (!root || !wsSame(root.path, dir)) return null;
+  return { dirs: !!v.hideAllDirs, set: v.hide || new Set() };
 }
 function wsCtxKey(ctx) { return ctx.kind === 'task' ? 'task:' + ctx.sid : 'project:' + ctx.projectId; }
 function wsView(ctx) {
   const key = wsCtxKey(ctx);
   let v = WS_VIEWS.get(key);
   if (!v) {
-    v = { key, ctx, el: null, open: new Set(), sel: '', dirs: new Map(), roots: [], hide: new Set(), busy: false };
+    v = { key, ctx, el: null, open: new Set(), sel: '', scroll: 0, dirs: new Map(),
+          roots: [], hide: new Set(), hideAllDirs: false, hideReady: true, busy: false, cursor: 0 };
     try {
       const s = JSON.parse(localStorage.getItem('cd-ws:' + key) || '{}');
       (s.open || []).forEach(p => v.open.add(p));
       v.sel = s.sel || '';
+      v.scroll = s.scroll || 0;
     } catch (e) {}
     WS_VIEWS.set(key, v);
   }
@@ -3114,7 +3128,7 @@ function wsView(ctx) {
   return v;
 }
 function wsPersist(v) {
-  try { localStorage.setItem('cd-ws:' + v.key, JSON.stringify({ open: [...v.open], sel: v.sel })); } catch (e) {}
+  try { localStorage.setItem('cd-ws:' + v.key, JSON.stringify({ open: [...v.open], sel: v.sel, scroll: v.scroll })); } catch (e) {}
 }
 function wsPanelHtml() {
   return `<div class="wsp">
@@ -3128,9 +3142,16 @@ function wsPanelHtml() {
 function wsRowsHtml(v, dir) {
   const c = v.dirs.get(dir);
   if (!c) return '<div class="wse none">loading…</div>';
+  // Don't paint the project root at task scope before we know what to leave out.
+  if (v.ctx.kind === 'task' && !v.hideReady) {
+    const root = v.roots.find(r => r.kind === 'project');
+    if (root && wsSame(root.path, dir)) return '<div class="wse none">loading…</div>';
+  }
   if (c.error) return `<div class="wse none">can't read: ${esc(c.error)}</div>`;
   const hide = wsHidden(v, dir);
-  const ents = hide ? c.entries.filter(e => !hide.has(wsNorm(wsJoin(dir, e.name)))) : c.entries;
+  const ents = hide
+    ? c.entries.filter(e => !((hide.dirs && e.type === 'dir') || hide.set.has(wsNorm(wsJoin(dir, e.name)))))
+    : c.entries;
   if (!ents.length) return '<div class="wse none">(empty)</div>';
   // mtime rides along in the row so a file rewritten in place — same name, same
   // size — still changes the tree's signature and gets repainted.
@@ -3161,11 +3182,17 @@ function wsPaintTree(v) {
   const tree = v.el && v.el.querySelector('.wsp-tree');
   if (!tree) return;
   const html = wsTreeHtml(v);
-  if (tree.dataset.sig === html) return;      // nothing moved on disk — leave the DOM alone
-  const keep = tree.scrollTop;
-  tree.dataset.sig = html;
+  // The signature hangs off the node rather than the view, so a remount into a
+  // fresh element repaints instead of believing it is already up to date. Kept
+  // as a property, not an attribute: it is the whole tree, and there is no
+  // reason to serialise it into the DOM.
+  if (tree._wsSig === html) return;           // nothing moved on disk — leave the DOM alone
+  // A repaint must not scroll you back to the root; a first paint into a fresh
+  // element should land where you left off last time.
+  const keep = tree._wsSig === undefined ? v.scroll : tree.scrollTop;
+  tree._wsSig = html;
   tree.innerHTML = html;
-  tree.scrollTop = keep;                      // a repaint must not scroll you back to the root
+  tree.scrollTop = keep;
 }
 // Where comments from the viewer should land: the task that owns the file, so
 // they reach that task's chat exactly as a file link from the chat does.
@@ -3207,20 +3234,34 @@ function wsPaintView(v) {
 // Every directory currently on screen: a root that is open, and every open
 // directory whose ancestors are open too. Folders opened inside a collapsed
 // parent stay remembered but aren't polled.
+//
+// Visibility is decided on the paths themselves rather than by walking the
+// cached listings, so a tree restored from a previous visit fetches all of its
+// levels in one round instead of uncovering one level per poll. A folder that
+// has since been deleted drops out as soon as its parent's listing says so.
 function wsVisibleDirs(v) {
-  const out = [];
-  const walk = dir => {
-    out.push(dir);
-    const c = v.dirs.get(dir);
-    if (!c || !c.entries) return;
-    c.entries.forEach(e => {
-      if (e.type !== 'dir') return;
-      const p = wsJoin(dir, e.name);
-      if (v.open.has(p)) walk(p);
-    });
+  const roots = v.roots.map(r => r.path);
+  const isRoot = p => roots.some(r => wsSame(r, p));
+  const parentOf = p => { const m = p.match(/^(.*)[\\/][^\\/]+$/); return m ? m[1] : ''; };
+  const stillThere = (parent, p) => {
+    const c = v.dirs.get(parent);
+    if (!c || !c.entries) return true;                    // not read yet — give it the benefit
+    return c.entries.some(e => e.type === 'dir' && wsSame(wsJoin(parent, e.name), p));
   };
-  v.roots.forEach(r => { if (v.open.has(r.path)) walk(r.path); });
-  return out;
+  const visible = p => {
+    if (isRoot(p)) return v.open.has(p);
+    let cur = p;
+    for (let guard = 0; guard < 64; guard++) {
+      const par = parentOf(cur);
+      if (!par) return false;
+      if (!stillThere(par, cur)) return false;
+      if (isRoot(par)) return v.open.has(par);
+      if (!v.open.has(par)) return false;
+      cur = par;
+    }
+    return false;
+  };
+  return [...new Set([...roots.filter(r => v.open.has(r)), ...[...v.open].filter(visible)])];
 }
 async function wsFetchDir(v, dir) {
   try {
@@ -3240,15 +3281,36 @@ function wsRecompute(v) {
     const r = ALL_ROWS.find(x => x.sessionId === v.ctx.sid || x.roomId === v.ctx.sid);
     const pj = r ? wsProjectForRow(r) : null;
     v.hide = pj ? wsTaskDirsOf(pj) : new Set();
+    v.hideAllDirs = !!(pj && pj.home && wsSame(pj.path, pj.home));
+    // Until /api/projects lands there is no project to filter against, and the
+    // root would briefly show every sibling. Say "loading" instead.
+    v.hideReady = !!pj;
   }
 }
+const WS_POLL_BATCH = 12;   // directories re-read per tick, so a wide tree can't flood the hub
 async function wsSync(v) {
   if (v.busy) return;
   v.busy = true;
   try {
     wsRecompute(v);
-    const dirs = wsVisibleDirs(v);
-    if (dirs.length) await Promise.all(dirs.map(d => wsFetchDir(v, d)));
+    const all = wsVisibleDirs(v);
+    // Anything not read yet goes first — that is what an expand or a restored
+    // tree is waiting on. The rest is re-read a window at a time, rotating, so
+    // twenty open folders cost twelve requests a tick rather than twenty.
+    const fresh = all.filter(d => !v.dirs.has(d));
+    const known = all.filter(d => v.dirs.has(d));
+    let batch = fresh;
+    if (batch.length < WS_POLL_BATCH && known.length) {
+      const room = WS_POLL_BATCH - batch.length;
+      if (known.length <= room) batch = batch.concat(known);
+      else {
+        v.cursor = v.cursor % known.length;
+        const rotated = known.slice(v.cursor).concat(known.slice(0, v.cursor));
+        batch = batch.concat(rotated.slice(0, room));
+        v.cursor = (v.cursor + room) % known.length;
+      }
+    }
+    if (batch.length) await Promise.all(batch.map(d => wsFetchDir(v, d)));
     wsPaintTree(v);
   } finally { v.busy = false; }
 }
@@ -3259,20 +3321,31 @@ function wsMount(el, ctx) {
   if (!v.open.size && v.roots.length) v.open.add(v.roots[0].path);   // first visit: open where you are
   wsPaintTree(v);
   wsPaintView(v);
-  el.querySelector('.wsp-tree').onclick = async (e) => {
+  const tree = el.querySelector('.wsp-tree');
+  tree.onclick = async (e) => {
     const d = e.target.closest('.wse.dir');
     if (d) {
       const p = d.dataset.path;
       if (v.open.has(p)) v.open.delete(p);
       else {
         v.open.add(p);
-        if (!v.dirs.has(p)) { wsPaintTree(v); await wsFetchDir(v, p); }
+        wsPaintTree(v);
+        // Expanding can reveal descendants this view remembers as open, so read
+        // the whole newly-visible set rather than only the folder clicked.
+        await wsSync(v);
       }
       wsPersist(v); wsPaintTree(v);
       return;
     }
     const f = e.target.closest('.wse.file');
     if (f) { v.sel = f.dataset.path; wsPersist(v); wsPaintTree(v); wsPaintView(v); }
+  };
+  // Where you scrolled to is part of what you were looking at.
+  let scrollTimer = 0;
+  tree.onscroll = () => {
+    v.scroll = tree.scrollTop;
+    clearTimeout(scrollTimer);
+    scrollTimer = setTimeout(() => wsPersist(v), 400);
   };
   wsSync(v);
   return v;
@@ -3458,6 +3531,10 @@ function wireChangesPanel(pj) {
 }
 function renderRows() {
   renderSidebar();
+  // The workspace panel is shown, never rebuilt — every branch below is free to
+  // replace #view without touching it.
+  const wsp = document.getElementById('ws-panel');
+  if (wsp) wsp.hidden = !(SELECTED_PROJECT && PROJECT_TAB === 'workspace');
   // Projects landing (default). A selected project or a non-project grouping
   // falls through to the existing session table below.
   if (!SELECTED_PROJECT && PROJ_GROUPBY === 'project' && !_projFailed) {
@@ -3479,17 +3556,10 @@ function renderRows() {
   if (SELECTED_PROJECT && PROJECT_TAB === 'workspace') {
     const pj = projectById(SELECTED_PROJECT);
     $('#meta').textContent = pj ? `${pj.name} · workspace` : 'workspace';
-    // Two containers with two lifetimes. The chrome above the panel — status
-    // strip, crumbs, tabs — is a view of live data and is rewritten on every
-    // tick. The panel below is STATE: the tree, the folders you opened and the
-    // file you are reading, mounted once and left alone. Rebuilding both
-    // together is what collapsed the tree and killed the viewer's iframe
-    // before it could finish loading.
-    const view = $('#view');
-    if (!document.getElementById('ws-chrome')) {
-      view.innerHTML = '<div id="ws-chrome"></div><div id="ws-panel"></div>';
-    }
-    document.getElementById('ws-chrome').innerHTML = projectsChromeHtml();
+    // The chrome — status strip, crumbs, tabs — is a view of live data and is
+    // rewritten on every tick. The panel is STATE and lives outside #view
+    // entirely (see the markup), so nothing here can destroy it.
+    $('#view').innerHTML = projectsChromeHtml();
     wireProjectsChrome();
     const panel = document.getElementById('ws-panel');
     const key = pj && pj.path ? wsCtxKey({ kind: 'project', projectId: SELECTED_PROJECT }) : 'none';
@@ -3678,7 +3748,8 @@ async function refresh() {
     // A dropped poll must not cost you the workspace. The tree, the folders you
     // opened and the file you are reading are state, not a view of /api/sessions
     // — so say it in the status line and leave the panel where it is.
-    if (document.getElementById('ws-panel')) $('#meta').textContent = 'refresh failed: ' + e.message;
+    const wsp = document.getElementById('ws-panel');
+    if (wsp && !wsp.hidden) $('#meta').textContent = 'refresh failed: ' + e.message;
     else $('#view').innerHTML = `<p class="empty">Error: ${esc(e.message)}</p>`;
   }
 }
