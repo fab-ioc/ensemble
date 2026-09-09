@@ -25,6 +25,7 @@ and teammates, and the **write scope** your tool calls are limited to. Then:
 |---|---|
 | See the projects | `ensemble_list_projects` |
 | See the tasks of your project (or another, or `"*"`) | `ensemble_list_tasks` |
+| See which tasks need a human, and why | `ensemble_list_attention` |
 | Read one task in full (spec, agents, status, recent chat) | `ensemble_get_task` |
 | Create a task | `ensemble_create_task` |
 | Change a task's title or spec | `ensemble_update_task` |
@@ -36,6 +37,27 @@ and teammates, and the **write scope** your tool calls are limited to. Then:
 Task statuses: `draft` (created, never launched), `running`, `waiting_user`
 (its agents asked the product owner and are paused), `paused` (turn limit
 reached), `stopped`.
+
+## Checking what needs a human
+
+A task's `status` says what it is *meant* to be doing. It does not say whether
+that is actually happening — an agent can die, run out of usage, or sit on a
+permission prompt while its task still reads `running`. `ensemble_list_attention`
+answers the other question, and every `ensemble_list_tasks` row carries the same
+verdict in its `attention` field.
+
+| State | What happened | What it usually needs |
+|---|---|---|
+| `agent_gone` | its terminal died and nobody asked it to — carries `exitCode` and the last lines it printed | relaunching, once you know why |
+| `blocked` | still running, but its own output says it cannot continue: a usage or credit limit, an expired login. The offending line is in `quote`, the kind in `cause` | waiting for a reset, or the product owner logging in |
+| `waiting_for_you` | it asked a question, hit a permission prompt, or the collaboration paused at its hop limit | a human answer |
+| `stalled` | it was asked to do something, is not working, and never reported back | a look, then a nudge or a restart |
+
+Use it whenever you are asked what happened to work that was started, and
+**before** planning follow-up work: a task that died at its usage limit is not a
+task that needs re-specifying. Reporting what you found is the job — the tools
+never restart or resume anything on their own, and neither should you without
+being asked.
 
 ## Scope and safety rules (enforced by the server, respect them anyway)
 

@@ -77,8 +77,10 @@ TOOLS = [
         "description": (
             "List the tasks of a project — by default your own project. Each row "
             "carries id, title, status (draft | running | waiting_user | paused | "
-            "stopped), agents, and a spec preview. Pass projectId to look at "
-            "another project, or \"*\" for every task."
+            "stopped), agents, and a spec preview. A row whose task needs a human "
+            "also carries `attention` — {state, reason, agent} — with state one of "
+            "agent_gone | blocked | waiting_for_you | stalled. Pass projectId to "
+            "look at another project, or \"*\" for every task."
         ),
         "inputSchema": {
             "type": "object",
@@ -87,6 +89,32 @@ TOOLS = [
                               "description": "Project id, \"*\" for all, omit for your own project."},
                 "includeStopped": {"type": "boolean",
                                    "description": "Include stopped tasks (default true)."},
+            },
+        },
+    },
+    {
+        "name": "ensemble_list_attention",
+        "description": (
+            "List the tasks that need a human right now, and why — the same "
+            "answer the dashboard's notifications show. Use it to find out what "
+            "happened to work you started: an agent that died (agent_gone, with "
+            "its exit status and the last lines it printed), one that cannot "
+            "continue (blocked — a usage or credit limit, an expired login; the "
+            "offending line is quoted), one waiting on a human answer "
+            "(waiting_for_you), or one that was asked to do something, isn't "
+            "working, and never reported back (stalled). Defaults to your own "
+            "project; pass projectId for another, or \"*\" for every project. "
+            "Nothing here is acted on automatically — deciding what to do is "
+            "yours or the product owner's."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "projectId": {"type": "string",
+                              "description": "Project id, \"*\" for all, omit for your own project."},
+                "state": {"type": "string",
+                          "description": "Only this state: agent_gone | blocked | "
+                                         "waiting_for_you | stalled."},
             },
         },
     },
@@ -256,11 +284,34 @@ def _title(room: dict, labels: dict | None = None) -> str:
     return labels.get(room["id"]) or room.get("title", "")
 
 
-def _row(room: dict, projects: dict, links: dict, labels: dict) -> dict:
+def _attention_by_room() -> dict:
+    """Attention items keyed by task id. Cached in the attention module, so
+    asking for it per listing costs nothing."""
+    try:
+        return _d.attention.by_room()
+    except Exception:
+        return {}
+
+
+def _attention_view(item: dict | None) -> dict | None:
+    """The compact form carried on a task row: what is wrong and why."""
+    if not item:
+        return None
+    out = {"state": item["state"], "reason": item["reason"],
+           "agent": item.get("agentIdentity", ""), "since": item.get("since", 0)}
+    for k in ("quote", "cause", "exitCode"):
+        if k in item:
+            out[k] = item[k]
+    return out
+
+
+def _row(room: dict, projects: dict, links: dict, labels: dict,
+         attn: dict | None = None) -> dict:
     pid = _project_of_room(room, links)
     spec = room.get("spec", "") or ""
     return {
         "id": room["id"],
+        "attention": _attention_view((attn or {}).get(room["id"])),
         "title": _title(room, labels),
         "status": _status(room),
         "mode": room.get("mode", ""),
@@ -363,18 +414,51 @@ def _list_tasks(ctx, args, handler):
         raise ToolError(f"no such project: {pid}")
     links = _d.load_session_projects()
     labels = _d.load_labels()
+    attn = _attention_by_room()
     rows = []
     for r in _d.chatroom.list_rooms():
         rpid = _project_of_room(r, links)
         if pid != "*" and rpid != pid:
             continue
-        row = _row(r, projects, links, labels)
+        row = _row(r, projects, links, labels, attn)
         if not include_stopped and row["status"] == "stopped":
             continue
         rows.append(row)
     rows.sort(key=lambda x: x.get("updatedAt") or 0, reverse=True)
     scope = "all projects" if pid == "*" else (projects.get(pid, {}).get("name") or "Unassigned")
     return {"scope": scope, "projectId": ("" if pid == "*" else pid), "tasks": rows}
+
+
+def _list_attention(ctx, args, handler):
+    """The tasks that need a human, and why.
+
+    Scoped exactly like :func:`_list_tasks` — your own project by default, any
+    project by id, ``"*"`` for all — because it answers the same question about
+    the same rows and a second, different rule would only surprise the caller.
+    """
+    pid = args.get("projectId")
+    pid = ctx["projectId"] if pid is None or pid == "" else str(pid).strip()
+    projects = _projects()
+    if pid != "*" and pid and pid not in projects:
+        raise ToolError(f"no such project: {pid}")
+    want = (args.get("state") or "").strip()
+    if want and want not in _d.attention.STATES:
+        raise ToolError(f"no such state: {want} (one of {', '.join(_d.attention.STATES)})")
+    snap = _d.attention.snapshot()
+    items = [dict(it) for it in snap["items"]
+             if (pid == "*" or it.get("projectId", "") == pid)
+             and (not want or it["state"] == want)]
+    for it in items:
+        it.pop("ptyId", None)          # a browser handle, meaningless to an agent
+        if not it.get("otherStates"):
+            it.pop("otherStates", None)
+    scope = "all projects" if pid == "*" else (projects.get(pid, {}).get("name") or "Unassigned")
+    return {"scope": scope, "projectId": ("" if pid == "*" else pid),
+            "count": len(items), "needAttention": items,
+            "states": {"agent_gone": "its terminal died and nobody asked it to",
+                       "blocked": "running, but it says it cannot continue",
+                       "waiting_for_you": "it is waiting on a human answer",
+                       "stalled": "asked to do something, not working, never reported back"}}
 
 
 def _get_task(ctx, args, handler):
@@ -511,6 +595,7 @@ _IMPL = {
     "ensemble_whoami": _whoami,
     "ensemble_list_projects": _list_projects,
     "ensemble_list_tasks": _list_tasks,
+    "ensemble_list_attention": _list_attention,
     "ensemble_get_task": _get_task,
     "ensemble_create_task": _create_task,
     "ensemble_update_task": _update_task,
