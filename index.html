@@ -4174,7 +4174,13 @@ document.addEventListener('visibilitychange', () => {
 const USAGE_POLL_MS = 30000;         // the server refreshes on its own timer
 let USAGE = { state: 'loading', sources: [], alerts: [] };
 let _usageInFlight = false;
-let _usageBannerDismissedAt = 0;     // highest percent the user has waved away
+// What the user has waved away, per window: key -> the percent it was at when
+// dismissed. Keyed per window rather than by a bare number, because the banner
+// only ever renders the worst alert: a single number would let a dismissal on
+// one window silently suppress every other window at or below it, on either
+// source, including ones the user has never seen.
+const _usageDismissed = new Map();
+const usageAlertKey = a => [a.source, a.kind, a.model || ''].join('|');
 const USAGE_SRC_NAME = { claude: 'Claude', codex: 'Codex' };
 const USAGE_SRC_SHORT = { claude: 'C', codex: 'X' };
 const USAGE_WIN_NAME = {
@@ -4200,6 +4206,7 @@ async function refreshUsage() {
 // reading (a floor, not a measurement), "—" for one that has already reset.
 function usageChipValue(win) {
   if (win.rolledOver) return '—';
+  if (win.resetUnknown) return '?';
   if (win.percent == null) return '';
   return (win.trusted ? '' : '≥') + Math.round(win.percent) + '%';
 }
@@ -4211,6 +4218,10 @@ function usageChipTip(win, srcName) {
     + (win.model ? ` (${win.model})` : '');
   if (win.rolledOver) {
     return `${name}: already reset — unknown until ${srcName} runs again`;
+  }
+  if (win.resetUnknown) {
+    return `${name}: the reading carried no reset time, so there is no telling `
+      + 'whether this window has already reset — no value shown';
   }
   if (win.percent == null) return `${name}: no reading`;
   const reset = win.resetsAt ? `, ${usageResetText(win.resetsAt)}` : '';
@@ -4232,9 +4243,16 @@ function usageChipPart(src) {
   }
   // Five-hour first, then the weekly windows in the order the source gave them.
   const wins = (src.windows || [])
-    .filter(w => w.percent != null || w.rolledOver)
+    .filter(w => w.percent != null || w.rolledOver || w.resetUnknown)
     .sort((a, b) => (a.kind === 'five_hour' ? 0 : 1) - (b.kind === 'five_hour' ? 0 : 1));
-  if (!wins.length) return '';
+  // A source that reported ok but gave nothing renderable still has to account
+  // for itself — vanishing silently from the chip is the one thing it must not
+  // do, since that is indistinguishable from an agent kind not being installed.
+  if (!wins.length) {
+    return `<span class="usage-chip-kind gone"
+      title="${esc(name)} — the reading carried no usable window"
+      >${esc(short)} n/a</span>`;
+  }
   const body = wins.map(w =>
     `<span class="${w.trusted && !w.rolledOver ? '' : 'untrusted'}">${usageChipValue(w)}</span>`
   ).join('<i class="usage-chip-sep">/</i>');
@@ -4250,6 +4268,10 @@ function usageWindowRow(win, srcName) {
   if (win.rolledOver) {
     // The last value is dead and the current one is genuinely unknown.
     why = `rolled — unknown until ${srcName} runs again`;
+  } else if (win.resetUnknown) {
+    // No reset time to check, so there is no telling whether the value is live.
+    pct = '?';
+    why = 'no reset time in the reading, so this cannot be checked against now';
   } else if (win.percent != null) {
     pct = (win.trusted ? '' : '≥') + Math.round(win.percent) + '%';
     barPct = Math.max(0, Math.min(100, win.percent));
@@ -4263,7 +4285,8 @@ function usageWindowRow(win, srcName) {
     <span class="usage-win-label">${esc(label)}</span>
     <span class="usage-bar"><i class="${barCls}" style="width:${barPct}%"></i></span>
     <span class="usage-win-pct ${pctCls}">${esc(pct)}</span>
-    <span class="usage-win-reset">${esc(win.rolledOver ? 'reset passed' : reset)}</span>
+    <span class="usage-win-reset">${esc(win.rolledOver ? 'reset passed'
+      : win.resetUnknown ? 'no reset time' : reset)}</span>
   </div>`;
 }
 
@@ -4305,6 +4328,10 @@ function usageSourceHtml(src) {
     ? `<div class="usage-why">A window shown as “—” has reset since this reading
         was written, so its old value means nothing and the new one is unknown
         until ${esc(name)} runs again.</div>` : '';
+  const unverifiable = wins.some(w => w.resetUnknown)
+    ? `<div class="usage-why">A window shown as “?” came without a reset time,
+        so there is no way to tell whether it has already rolled over. Its last
+        value is withheld rather than shown as if it were current.</div>` : '';
   return `<div class="usage-src">
     <div class="usage-src-head">
       <span class="usage-src-name">${esc(name)}</span>
@@ -4312,7 +4339,7 @@ function usageSourceHtml(src) {
       ${age}
     </div>
     ${wins.map(w => usageWindowRow(w, name)).join('')}
-    ${frozen}${rolled}
+    ${frozen}${rolled}${unverifiable}
   </div>`;
 }
 
@@ -4343,7 +4370,7 @@ function renderUsage() {
     + 'These windows are shared by every task on this machine, so they say nothing '
     + 'about what any one task cost.';
 
-  renderUsageBanner(worst);
+  renderUsageBanner(alerts);
 }
 
 // Which windows shout is the server's call (`alerts`), not this file's. A
@@ -4351,9 +4378,15 @@ function renderUsage() {
 // does, qualified: the windows are anchored with a fixed reset, so an old
 // reading that has not rolled is a floor, and "at least 95%" is exactly the
 // warning this feature exists to give.
-function renderUsageBanner(worst) {
+function renderUsageBanner(alerts) {
   const banner = $('#usage-banner');
-  if (!worst || worst.percent <= _usageBannerDismissedAt) {
+  // The loudest alert the user has not already waved away at this level. A
+  // dismissal covers only its own window, and lapses if that window climbs.
+  const worst = (alerts || []).find(a => {
+    const at = _usageDismissed.get(usageAlertKey(a));
+    return at == null || a.percent > at;
+  });
+  if (!worst) {
     banner.hidden = true;
     return;
   }
@@ -4371,12 +4404,18 @@ function renderUsageBanner(worst) {
       + `${fmtAgo(worst.ageSeconds)} ago${reset}`
     : `${who} ${win} window ${pct} used${reset}`;
   banner.dataset.pct = worst.percent;
+  banner.dataset.key = usageAlertKey(worst);
 }
 
 $('#usage-banner-dismiss').addEventListener('click', () => {
-  // Dismiss this level only: it comes back if the window climbs further.
-  _usageBannerDismissedAt = Number($('#usage-banner').dataset.pct || 0);
-  $('#usage-banner').hidden = true;
+  // Dismiss this window at this level only. It returns when this window climbs
+  // further, and it never silences a different window or the other agent kind.
+  const banner = $('#usage-banner');
+  if (banner.dataset.key) {
+    _usageDismissed.set(banner.dataset.key, Number(banner.dataset.pct || 0));
+  }
+  banner.hidden = true;
+  renderUsageBanner(USAGE.alerts || []);   // another window may still be hot
 });
 $('#usage-chip').addEventListener('click', (ev) => {
   ev.stopPropagation();

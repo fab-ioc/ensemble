@@ -190,13 +190,17 @@ def _stale_after(window_minutes) -> float:
 
 
 def _window(kind: str, label: str, *, percent=None, stale_percent=None,
-            rolled_over: bool = False, window_minutes=None, resets_at=None,
+            rolled_over: bool = False, reset_unknown: bool = False,
+            window_minutes=None, resets_at=None,
             model: str | None = None, age_seconds=None) -> dict:
     # Trust is per window, not per source: the same reading can be current for
     # the weekly window and out of date for the five-hour one.
     stale_after = _stale_after(window_minutes)
     # An unknown age is not a fresh one: a reading we cannot date is not current.
-    trusted = age_seconds is not None and age_seconds < stale_after
+    # Neither is one whose reset time we could not verify — the rollover guard
+    # could not run on it, so it must never be presented as a live number.
+    trusted = (age_seconds is not None and age_seconds < stale_after
+               and not reset_unknown)
     return {
         "kind": kind,
         "label": label,
@@ -208,6 +212,9 @@ def _window(kind: str, label: str, *, percent=None, stale_percent=None,
         "percent": percent,
         "stalePercent": stale_percent,
         "rolledOver": rolled_over,
+        # True when the reading carried no reset time, so we cannot tell whether
+        # this window has already rolled. `percent` is withheld either way.
+        "resetUnknown": reset_unknown,
         "resetsAt": resets_at,
         "ageSeconds": age_seconds,
         "trusted": bool(trusted),
@@ -409,9 +416,20 @@ def read_codex(now: float | None = None, files=None) -> dict:
         win = limits.get(key)
         if not win:
             continue
-        resets = win.get("resets_at")                 # epoch seconds
+        # Guard 2 rests entirely on the reset time, so the shape of that field
+        # decides everything. The invariant: **a window whose reset time we
+        # cannot verify is never reported as current.** Without that, an
+        # unparseable reset silently switches the guard off and a dead agent's
+        # 100% is served as live — the precise bug this reader exists to avoid.
+        resets = win.get("resets_at")
         resets_dt = None
-        if isinstance(resets, (int, float)) and not isinstance(resets, bool):
+        reset_unknown = False
+        if resets is None:
+            # Nothing to check against. The value may be current or may be a
+            # dead number from a window that reset an hour ago; we cannot tell,
+            # so we do not claim.
+            reset_unknown = True
+        elif isinstance(resets, (int, float)) and not isinstance(resets, bool):
             # Sanity-check before believing it. If this field ever changes
             # meaning — a duration instead of an epoch, say — the parse yields
             # 1970, every window reads "rolled over", and the chip goes
@@ -423,16 +441,28 @@ def read_codex(now: float | None = None, files=None) -> dict:
             try:
                 resets_dt = datetime.fromtimestamp(resets, timezone.utc)
             except (OverflowError, OSError, ValueError):
-                resets_dt = None
-        # Guard 2: a window whose reset has passed has already rolled to 0. Its
-        # last value is dead — preserve it separately, never report it as now.
+                return _unavailable(
+                    "codex", "Codex reported a reset time that could not be read "
+                             "as a date — the rollout format has probably changed")
+        else:
+            # Present but not a number — an ISO string is the likeliest way this
+            # field ever mutates. Fail the source loudly rather than let the
+            # value fall through the guard unchecked.
+            return _unavailable(
+                "codex", "Codex reported a reset time in an unfamiliar format — "
+                         "the rollout format has probably changed")
+        # A window whose reset has passed has already rolled to 0. Its last value
+        # is dead — preserve it separately, never report it as now.
         rolled = bool(resets_dt and resets_dt.timestamp() < now)
         value = _as_percent(win.get("used_percent"))
+        # Withheld in both unverifiable cases: rolled over, or no reset to check.
+        withheld = rolled or reset_unknown
         windows.append(_window(
             kind, label,
-            percent=None if rolled else value,
-            stale_percent=value if rolled else None,
+            percent=None if withheld else value,
+            stale_percent=value if withheld else None,
             rolled_over=rolled,
+            reset_unknown=reset_unknown,
             window_minutes=win.get("window_minutes"),
             resets_at=resets_dt.isoformat() if resets_dt else None,
             # Guard 1: each window carries the reading's age and decides for
@@ -502,9 +532,11 @@ def alerts(sources) -> list[dict]:
 
     What does and does not alert, and why:
 
-    * **Rolled over → never.** The window has already reset; its last value is
-      dead and the current one is genuinely unknown. This is the guard that
-      stops a dead agent's 100% shouting for ever.
+    * **Rolled over, or no verifiable reset time → never.** Either the window
+      has already reset and its last value is dead, or we could not check
+      whether it had. Both withhold ``percent`` upstream, so both land here as
+      "no current value" — which is the guard that stops a dead agent's 100%
+      shouting for ever.
     * **Stale but not rolled over → yes, marked ``atLeast``.** Codex windows are
       anchored with a fixed reset, not sliding, so within one window
       ``used_percent`` only ever goes up. A reading of 95% from three hours ago

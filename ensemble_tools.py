@@ -142,13 +142,19 @@ TOOLS = [
             "are **account-wide**: every task on this machine shares them, so they "
             "say nothing about what one task cost (that is the per-task cost "
             "chip). Claude and Codex have separate allowances — read them "
-            "separately and never add them up. Each source carries `trusted` and "
-            "`ageSeconds`: Codex readings come from a file that is only written "
-            "when a Codex agent takes a turn, so a reading freezes when the agents "
-            "stop. Do not act on a reading whose `trusted` is false, and treat a "
-            "window with `rolledOver` as unknown rather than as its last value. "
-            "Nothing here is enforced — deciding what to do is yours or the "
-            "product owner's."
+            "separately and never add them up. **Judge each window on its own "
+            "`windows[].trusted`**, not on the source-level flag, which is only "
+            "the conjunction: Codex writes its usage to a file only when one of "
+            "its agents takes a turn, so the same reading can be out of date for "
+            "the five-hour window and still exact for the weekly one. A window "
+            "with `trusted: false` is frozen — `ageSeconds` says how long ago it "
+            "was written, and because a window only fills up until it resets, its "
+            "`percent` is a floor (\"at least this much\"), not a measurement. A "
+            "window with `percent: null` has no current "
+            "value at all: either `rolledOver` (it has already reset) or "
+            "`resetUnknown` (no reset time to check against) — treat both as "
+            "unknown and never fall back to `stalePercent`. Nothing here is "
+            "enforced — deciding what to do is yours or the product owner's."
         ),
         "inputSchema": {"type": "object", "properties": {}},
     },
@@ -535,9 +541,14 @@ def _plan_usage(ctx, args, handler):
         **snap,
         "note": ("Account-wide, not per-task: every task on this machine shares "
                  "these windows. Claude and Codex allowances are separate — never "
-                 "sum them. A source with trusted=false is a frozen reading; a "
-                 "window with rolledOver=true has already reset and its last "
-                 "value is dead."),
+                 "sum them. Judge freshness per window (windows[].trusted), not "
+                 "per source: the source flag is only the conjunction, and one "
+                 "Codex reading can be stale for the five-hour window while still "
+                 "exact for the weekly one. trusted=false means the percent is a "
+                 "floor, not a measurement. percent=null means there is no current "
+                 "value — rolledOver (already reset) or resetUnknown (no reset "
+                 "time to check) — and stalePercent is a dead number kept only "
+                 "for context, never a fallback."),
     }
 
 
