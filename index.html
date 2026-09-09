@@ -1105,9 +1105,13 @@
   }
   .usage-chip-kind { font-variant-numeric: tabular-nums; }
   .usage-chip-kind b { font-weight: 600; }
+  .usage-chip-sep { font-style: normal; color: var(--muted-2); font-weight: 400; margin: 0 1px; }
   /* A reading we do not trust (frozen Codex file) or cannot get (Claude token)
-     is greyed and dimmed — never rendered as if it were a current number. */
-  .usage-chip-kind.untrusted, .usage-chip-kind.gone { color: var(--muted-2); opacity: .75; }
+     is greyed and dimmed — never rendered as if it were a current number.
+     Applied per window, since one reading can be current for the weekly window
+     and out of date for the five-hour one. */
+  .usage-chip-kind b .untrusted { color: var(--muted-2); opacity: .8; font-weight: 500; }
+  .usage-chip-kind.gone { color: var(--muted-2); opacity: .75; }
   #usage-tray {
     position: absolute; top: 56px; right: 16px; z-index: 60; width: 380px;
     max-height: 70vh; overflow-y: auto; background: var(--surface);
@@ -4192,29 +4196,51 @@ async function refreshUsage() {
   }
 }
 
-// The short number a source contributes to the chip: its five-hour window,
-// which is the one that bites first.
+// One window's value as it appears on the chip face: "26%", "≥96%" for a frozen
+// reading (a floor, not a measurement), "—" for one that has already reset.
+function usageChipValue(win) {
+  if (win.rolledOver) return '—';
+  if (win.percent == null) return '';
+  return (win.trusted ? '' : '≥') + Math.round(win.percent) + '%';
+}
+
+// One window's line in the chip's tooltip, where the reset times live: the face
+// stays readable, and hovering gives the whole picture without a click.
+function usageChipTip(win, srcName) {
+  const name = (USAGE_WIN_NAME[win.kind] || win.kind)
+    + (win.model ? ` (${win.model})` : '');
+  if (win.rolledOver) {
+    return `${name}: already reset — unknown until ${srcName} runs again`;
+  }
+  if (win.percent == null) return `${name}: no reading`;
+  const reset = win.resetsAt ? `, ${usageResetText(win.resetsAt)}` : '';
+  const frozen = win.trusted ? ''
+    : ` (at least — frozen ${fmtAgo(win.ageSeconds)} ago)`;
+  return `${name}: ${Math.round(win.percent)}%${frozen}${reset}`;
+}
+
+// What one agent kind contributes to the chip: both of its windows, five-hour
+// first. Percentages on the face, reset times in the tooltip — four windows and
+// four timestamps spelled out would not fit a header chip, and the tray below
+// gives the whole thing labelled.
 function usageChipPart(src) {
   const short = USAGE_SRC_SHORT[src.source] || src.source;
+  const name = USAGE_SRC_NAME[src.source] || src.source;
   if (src.state !== 'ok') {
-    return `<span class="usage-chip-kind gone" title="${esc(src.error || 'unavailable')}"
+    return `<span class="usage-chip-kind gone" title="${esc(name)} — ${esc(src.error || 'unavailable')}"
       >${esc(short)} n/a</span>`;
   }
-  const win = (src.windows || []).find(w => w.kind === 'five_hour');
-  if (!win || (win.percent == null && !win.rolledOver)) return '';
-  if (win.rolledOver) {
-    return `<span class="usage-chip-kind untrusted"
-      title="that window has already reset — unknown until ${esc(USAGE_SRC_NAME[src.source] || src.source)} runs again"
-      >${esc(short)} <b>—</b></span>`;
-  }
-  // "≥" is the honest prefix for a frozen reading: these windows are anchored
-  // with a fixed reset, so within one window the percentage only ever climbs.
-  const cls = win.trusted ? '' : ' untrusted';
-  const at = win.trusted ? '' : '≥';
-  const age = win.trusted ? '' : ` — frozen ${fmtAgo(win.ageSeconds)} ago, so at least this much`;
-  return `<span class="usage-chip-kind${cls}"
-    title="${esc(USAGE_SRC_NAME[src.source] || src.source)} 5-hour window${esc(age)}"
-    >${esc(short)} <b>${at}${Math.round(win.percent)}%</b></span>`;
+  // Five-hour first, then the weekly windows in the order the source gave them.
+  const wins = (src.windows || [])
+    .filter(w => w.percent != null || w.rolledOver)
+    .sort((a, b) => (a.kind === 'five_hour' ? 0 : 1) - (b.kind === 'five_hour' ? 0 : 1));
+  if (!wins.length) return '';
+  const body = wins.map(w =>
+    `<span class="${w.trusted && !w.rolledOver ? '' : 'untrusted'}">${usageChipValue(w)}</span>`
+  ).join('<i class="usage-chip-sep">/</i>');
+  const tip = name + ' — ' + wins.map(w => usageChipTip(w, name)).join(' · ');
+  return `<span class="usage-chip-kind" title="${esc(tip)}"
+    >${esc(short)} <b>${body}</b></span>`;
 }
 
 function usageWindowRow(win, srcName) {
