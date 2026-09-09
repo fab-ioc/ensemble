@@ -86,7 +86,10 @@ const _MDA = String.fromCharCode(0xE000), _MDZ = String.fromCharCode(0xE001);
 const ROOM = new URLSearchParams(location.search).get('room') || '';
 // File links: absolute paths always; relative ones ("docs/plan.md", "NOTES.md")
 // are resolved against the task folder, so agents needn't spell out full paths.
-const ABS_PATH_RE = /^(?:[A-Za-z]:\\|\\\\|~\/|\/)/;
+const ABS_PATH_RE = /^(?:[A-Za-z]:[\\\/]|\\\\|~\/|\/)/;   // C:\dir, C:/dir, \\unc, ~/x, /x
+// mdToHtml escapes before linkifying, so a path arrives with entities in it.
+const unescPath = s => (s || '').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+  .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
 const REL_PATH_RE = /(^|[\s(*_])((?:\.\.?[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}|[\w-]+\.(?:md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|png|jpg|jpeg|gif|svg|sh|ps1|sql|xml|log|ini|cfg))(?=[\s.,;:)\]]|$)/g;
 const looksFilePath = s => {
   const t = (s || '').trim();
@@ -105,7 +108,7 @@ const looksPath = looksFilePath;
 const FILE_BASE = (new URLSearchParams(location.search).get('path') || '').replace(/[\\\/][^\\\/]*$/, '');
 const CWD = new URLSearchParams(location.search).get('cwd') || '';
 const CTX = (ROOM ? '&room=' + encodeURIComponent(ROOM) : '') + (CWD ? '&cwd=' + encodeURIComponent(CWD) : '');
-function fileLink(p) { return '/fileview?path=' + encodeURIComponent(resolvePath(p, FILE_BASE)) + CTX; }
+function fileLink(p) { return '/fileview?path=' + encodeURIComponent(resolvePath(unescPath(p), FILE_BASE)) + CTX; }
 function mdToHtml(src) {
   const codes = [];
   const ph = h => _MDA + (codes.push(h) - 1) + _MDZ;
@@ -119,9 +122,13 @@ function mdToHtml(src) {
   });
   s = esc(s);
   const inline = t => t
-    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, (_, txt, url) => `<a href="${esc(url)}" target="_blank" rel="noopener">${txt}</a>`)
+    .replace(/\[([^\]\n]+)\]\(([^)\n]+)\)/g, (m, txt, url) => {
+      const t = url.trim();
+      if (/^(?:https?:|mailto:|#)/i.test(t)) return `<a href="${t}" target="_blank" rel="noopener">${txt}</a>`;
+      return looksFilePath(t) ? `<a href="${fileLink(t)}" target="_blank" rel="noopener" class="file-link">${txt}</a>` : m;
+    })
     .replace(/(^|[\s(*_])((?:https?:\/\/)[^\s<)*]+)/g, (_, pre, url) => `${pre}<a href="${url}" target="_blank" rel="noopener">${url}</a>`)
-    .replace(/(^|[\s(*_])((?:[A-Za-z]:\\|\\\\|~\/|\/)[^\s"'<>|?*,;)\]]*\.\w{1,8})/g,
+    .replace(/(^|[\s(*_])((?:[A-Za-z]:[\\\/]|\\\\|~\/|\/)[^\s"'<>|?*,;)\]]*\.\w{1,8})/g,
       (_, pre, pth) => `${pre}<a href="${fileLink(pth)}" target="_blank" rel="noopener">${pth}</a>`)
     .replace(REL_PATH_RE, (_, pre, pth) => `${pre}<a href="${fileLink(pth)}" target="_blank" rel="noopener">${pth}</a>`)
     .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
