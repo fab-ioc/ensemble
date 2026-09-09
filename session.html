@@ -160,6 +160,8 @@
   body.term-hidden #agentcol { display:none; }
   body.term-hidden #chatcol { border-right:none; }
   #terms.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+  /* The agent a notification pointed at. */
+  .agent.focus-agent { outline:1px solid var(--accent); border-radius:6px; }
   #theme-menu-s { position:fixed; z-index:70; max-height:50vh; overflow-y:auto; background:var(--surface); border:1px solid var(--border); border-radius:8px; box-shadow:0 10px 34px rgba(0,0,0,.5); padding:4px; min-width:150px; }
   #theme-menu-s .tm-item { padding:6px 12px; border-radius:5px; cursor:pointer; font-size:12px; white-space:nowrap; }
   #theme-menu-s .tm-item:hover { background:#ffffff12; color:var(--accent); }
@@ -210,7 +212,10 @@ let OPERATOR = 'you';   // how the human ("user") is shown — nickname / git na
 fetch('/api/settings').then(r => r.json()).then(s => { OPERATOR = s.operatorName || s.operatorNickname || 'you'; }).catch(() => {});
 const identLabel = id => `<span class="mention">@${esc(id === 'user' ? OPERATOR : id)}</span>`;
 if (qs.get('embed')) document.body.classList.add('embed');
-document.body.classList.add('term-hidden');   // raw agent terminals off by default
+// ?agent=<identity> — arrived from a notification about that specific agent, so
+// land on its terminal rather than on a page with the terminals switched off.
+const FOCUS_AGENT = (qs.get('agent') || '').trim();
+if (!FOCUS_AGENT) document.body.classList.add('term-hidden');   // terminals off by default
 const $ = s => document.querySelector(s);
 const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 // Minimal, self-contained markdown → HTML for chat bubbles. Escape-first so it's
@@ -405,6 +410,18 @@ function buildAgents(room) {
     div.classList.add('open');
     const tog = div.querySelector('.toggle'); if (tog) tog.textContent = '▾ terminal';
     if (p && p.ptyId && !terms[p.ptyId]) mountTerm(div.querySelector('.term'), p.ptyId);
+  }
+  // Arrived from a notification about one agent: open that agent's terminal and
+  // scroll to it, so the link lands on the evidence instead of near it.
+  if (FOCUS_AGENT) {
+    const parts = room.participants.filter(p => p.kind === 'agent');
+    const idx = parts.findIndex(p => p.identity === FOCUS_AGENT);
+    const div = idx >= 0 ? agentDivs[idx] : null;
+    if (div) {
+      if (!div.classList.contains('open')) toggleTerm(div, parts[idx].ptyId);
+      div.classList.add('focus-agent');
+      div.scrollIntoView({ block: 'nearest' });
+    }
   }
   agentsBuilt = true;
 }

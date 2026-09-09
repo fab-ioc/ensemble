@@ -1026,6 +1026,65 @@
     transition: color .1s, border-color .1s, background .1s;
   }
   #settings-btn:hover { color: var(--accent); border-color: var(--accent); background: var(--hover); }
+  /* --- Notifications: tasks that need you ------------------------------- */
+  #notif-btn {
+    position: relative; background: transparent; border: 1px solid var(--border);
+    padding: 4px 10px; border-radius: 6px; cursor: pointer;
+    color: var(--muted); font-size: 14px; line-height: 1;
+    transition: color .1s, border-color .1s, background .1s;
+  }
+  #notif-btn:hover { color: var(--accent); border-color: var(--accent); background: var(--hover); }
+  #notif-btn.has-items { color: var(--danger); border-color: var(--danger); }
+  #notif-count {
+    position: absolute; top: -6px; right: -6px; min-width: 16px; height: 16px;
+    padding: 0 4px; border-radius: 8px; background: var(--danger); color: #fff;
+    font-size: 10px; font-weight: 600; line-height: 16px; text-align: center;
+  }
+  #notif-count[hidden] { display: none; }
+  #notif-tray {
+    position: absolute; top: 56px; right: 16px; z-index: 60; width: 420px;
+    max-height: 70vh; overflow-y: auto; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: 0 12px 36px rgba(0,0,0,.18); padding: 8px;
+  }
+  #notif-tray[hidden] { display: none; }
+  .notif-head {
+    font-size: 11px; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .06em; padding: 4px 6px 8px;
+  }
+  .notif-head #notif-sub { text-transform: none; letter-spacing: 0; font-weight: 400; }
+  .notif-item {
+    display: block; width: 100%; text-align: left; cursor: pointer;
+    background: transparent; border: 0; border-radius: 8px;
+    padding: 8px; font: inherit; color: inherit;
+  }
+  .notif-item:hover { background: var(--hover); }
+  .notif-row1 { display: flex; align-items: baseline; gap: 6px; }
+  .notif-chip {
+    font-size: 10px; font-weight: 600; border-radius: 4px; padding: 1px 5px;
+    white-space: nowrap; border: 1px solid currentColor;
+  }
+  .notif-chip.agent_gone, .notif-chip.blocked { color: var(--danger); }
+  .notif-chip.waiting_for_you { color: var(--accent); }
+  .notif-chip.stalled { color: var(--muted); }
+  .notif-title {
+    font-size: 13px; font-weight: 500; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+  }
+  .notif-when { margin-left: auto; font-size: 10px; color: var(--muted); white-space: nowrap; }
+  .notif-why { font-size: 11px; color: var(--muted); margin-top: 3px; line-height: 1.45; }
+  .notif-proj { font-size: 10px; color: var(--muted); margin-top: 2px; }
+  .notif-screen {
+    margin-top: 6px; padding: 6px; border-radius: 6px; background: var(--hover);
+    font-family: Consolas, "Cascadia Mono", monospace; font-size: 10px;
+    line-height: 1.35; white-space: pre-wrap; word-break: break-word;
+    max-height: 130px; overflow-y: auto; color: var(--muted);
+  }
+  .notif-empty { padding: 10px 8px 12px; font-size: 12px; color: var(--muted); }
+  /* A row whose task needs you, marked in the list itself. */
+  tr.row.needs-you td.topic::before {
+    content: '⚠'; color: var(--danger); margin-right: 5px; font-size: 11px;
+  }
   #settings-panel {
     position: absolute; top: 56px; right: 16px; z-index: 50;
     background: var(--surface); border: 1px solid var(--border);
@@ -1088,6 +1147,7 @@
   #settings-panel .pref-seg { width: 100%; }
   #settings-panel .pref-seg button { flex: 1; font-size: 12px; padding: 6px 10px; }
   #settings-panel #pref-nickname,
+  #settings-panel #pref-stall-seconds,
   #settings-panel #pref-default-model {
     width: 100%; padding: 5px 10px;
     border: 1px solid var(--border); border-radius: 6px;
@@ -1095,7 +1155,9 @@
     font-family: var(--font-mono); font-size: 12px;
     outline: none;
   }
+  #settings-panel #pref-stall-seconds { width: 6em; }
   #settings-panel #pref-nickname:focus,
+  #settings-panel #pref-stall-seconds:focus,
   #settings-panel #pref-default-model:focus {
     border-color: var(--accent);
     box-shadow: 0 0 0 3px var(--accent-soft);
@@ -1391,8 +1453,18 @@
   </div>
   <span id="status" hidden></span>
   <span id="meta"></span>
+  <!-- Notifications: tasks that need a human. Self-contained (markup, CSS and
+       JS all under the `notif` name) so the Jira-style board can lift the whole
+       thing into a proper notifications area without unpicking it. -->
+  <button id="notif-btn" title="Tasks that need you" aria-label="Tasks that need you">
+    🔔<span id="notif-count" hidden>0</span>
+  </button>
   <button id="settings-btn" title="Settings — accent color &amp; runtime info" aria-label="Settings">⚙</button>
 </header>
+<div id="notif-tray" hidden>
+  <div class="notif-head">Needs you <span id="notif-sub"></span></div>
+  <div id="notif-list"></div>
+</div>
 <div id="settings-panel" hidden>
   <div class="settings-section">
     <h4>Accent color</h4>
@@ -1437,6 +1509,12 @@
              autocomplete="off" spellcheck="false" maxlength="60">
     </div>
     <p class="cfg-hint">Used in the collaboration briefing, so agents address you by name instead of “the human.” Empty = your git <code>user.name</code>.</p>
+    <div class="pref-row" style="margin-top: 14px;">
+      <span class="pref-label">Call an agent stalled after</span>
+      <input type="number" id="pref-stall-seconds" min="60" max="86400" step="60"
+             placeholder="900" autocomplete="off"> <span class="pref-label">seconds</span>
+    </div>
+    <p class="cfg-hint">🔔 An agent that was asked to do something, isn't working, and hasn't reported back for this long is listed as needing you. Both CLIs redraw a working indicator while they think, so an agent busy for hours is never counted.</p>
   </div>
   <div class="settings-section" id="settings-backup">
     <h4>Backup of your projects</h4>
@@ -2343,11 +2421,18 @@ function renderHeadlessRow(r, parsed, now) {
               : `<button class="room-resume" data-room="${esc(r.roomId)}" title="Resume — relaunch the agent(s) with their conversation">↻ Resume</button>`)
             + `<button class="room-delete" data-room="${esc(r.roomId)}" title="Delete — transcripts, room record, and the ~/cs scratch folder">🗑</button>`);
   const actionsTd = DETAIL_MODE ? '' : `<td>${actions}</td>`;
-  return `<tr class="row headless ${liveClasses}" data-room="${esc(r.roomId || '')}" data-orphan="${r.orphan ? '1' : ''}" data-sid="${esc(r.sessionId)}" draggable="false">
+  // Needs-you marker: from the notifications poll if it has run, else from the
+  // row itself (/api/sessions carries the same state, so a fresh page is right
+  // before the first poll lands).
+  const attn = ATTENTION_BY_ROOM.get(r.roomId) || r.attention || null;
+  const attnCls = attn ? ' needs-you' : '';
+  const attnBadge = attn
+    ? `<span class="notif-chip ${esc(attn.state)}" title="${esc(attn.reason)}">${esc(ATTN_LABEL[attn.state] || attn.state)}</span>` : '';
+  return `<tr class="row headless${attnCls} ${liveClasses}" data-room="${esc(r.roomId || '')}" data-orphan="${r.orphan ? '1' : ''}" data-sid="${esc(r.sessionId)}" draggable="false">
     <td>${statusDot}</td>
     ${prioCell(r)}
-    <td class="topic" title="${esc(r.cwd)}">${esc(r.label || '(session)')}${agentBadges(r)}</td>
-    <td class="tag">${liveBadge}</td>
+    <td class="topic" title="${esc(attn ? attn.reason : r.cwd)}">${esc(r.label || '(session)')}${agentBadges(r)}</td>
+    <td class="tag">${attnBadge}${liveBadge}</td>
     ${actionsTd}
   </tr>`;
 }
@@ -2455,6 +2540,10 @@ function renderPrefs() {
   const nickInput = document.getElementById('pref-nickname');
   if (nickInput && document.activeElement !== nickInput) {
     nickInput.value = PREFS.operatorNickname || '';
+  }
+  const stallInput = document.getElementById('pref-stall-seconds');
+  if (stallInput && document.activeElement !== stallInput) {
+    stallInput.value = PREFS.attentionStallSeconds || 900;
   }
   // Backup of the projects root (git). Only the remote URL is stored server-side.
   const br = document.getElementById('pref-backup-remote');
@@ -3821,14 +3910,112 @@ async function deleteRoom(row) {
 }
 
 // Open a collaboration in its own pop-out window (movable to another screen).
-function openSessionWindow(roomId) {
-  window.open('/session?id=' + encodeURIComponent(roomId), 'session-' + roomId,
-              'width=1200,height=820');
+// `agent` (an identity) makes the window land on that agent's terminal — how a
+// notification about one agent gets you to the evidence in one click.
+function openSessionWindow(roomId, agent) {
+  const q = '/session?id=' + encodeURIComponent(roomId)
+    + (agent ? '&agent=' + encodeURIComponent(agent) : '');
+  window.open(q, 'session-' + roomId, 'width=1200,height=820');
 }
 
-// Sessions now live in the main list (no separate Chats panel). Kept as a no-op
-// so the handful of callers don't need touching.
-function updateRoomsBadge() {}
+// --- Notifications: tasks that need you ------------------------------------
+// One cheap endpoint (/api/attention) answers "what needs me, and why". It is
+// independent of /api/sessions and /api/projects — both take seconds — so this
+// can poll often. Everything below is namespaced `notif`/`ATTENTION` and lives
+// in one block, ready to be moved into the coming notifications area.
+let ATTENTION = { items: [], count: 0 };
+let ATTENTION_BY_ROOM = new Map();
+let _attnInFlight = false;      // never let a slow poll stack up on itself
+let _attnSig = '';              // re-render the list only when the set changes
+const ATTN_LABEL = {
+  agent_gone: 'agent gone', blocked: 'blocked',
+  waiting_for_you: 'waiting for you', stalled: 'stalled',
+};
+
+async function updateRoomsBadge() {
+  if (_attnInFlight) return;
+  _attnInFlight = true;
+  try {
+    const snap = await api('/api/attention');
+    ATTENTION = snap || { items: [], count: 0 };
+    ATTENTION_BY_ROOM = new Map((ATTENTION.items || []).map(i => [i.roomId, i]));
+    renderAttention();
+  } catch (e) {
+    // Keep showing the last known state: a failed poll is not "all clear".
+  } finally {
+    _attnInFlight = false;
+  }
+}
+
+function renderAttention() {
+  const items = ATTENTION.items || [];
+  const btn = $('#notif-btn'), count = $('#notif-count');
+  count.textContent = items.length;
+  count.hidden = items.length === 0;
+  btn.classList.toggle('has-items', items.length > 0);
+  btn.title = items.length
+    ? `${items.length} task${items.length === 1 ? '' : 's'} need${items.length === 1 ? 's' : ''} you`
+    : 'Nothing needs you';
+  $('#notif-sub').textContent = items.length ? '' : '— all clear';
+  $('#notif-list').innerHTML = items.length
+    ? items.map(notifItemHtml).join('')
+    : '<div class="notif-empty">No task is waiting on you, stuck, or dead.</div>';
+  $('#notif-list').querySelectorAll('.notif-item').forEach(el => {
+    el.onclick = () => openAttentionItem(el.dataset.room);
+  });
+  // The rows carry their own marker, so redraw the list when the set changed.
+  const sig = items.map(i => i.roomId + ':' + i.state).join('|');
+  if (sig !== _attnSig) { _attnSig = sig; renderRows(); }
+}
+
+function notifItemHtml(it) {
+  // fmtAgo takes an elapsed duration, not a timestamp.
+  const when = it.since ? fmtAgo(Date.now() / 1000 - it.since) + ' ago' : '';
+  // agent_gone has no terminal left to open, so the last screen comes along.
+  const screen = it.lastLines
+    ? `<div class="notif-screen">${esc(it.lastLines)}</div>` : '';
+  const where = [it.project, it.agentIdentity].filter(Boolean).join(' · ');
+  return `<button class="notif-item" data-room="${esc(it.roomId)}">
+    <div class="notif-row1">
+      <span class="notif-chip ${esc(it.state)}">${esc(ATTN_LABEL[it.state] || it.state)}</span>
+      <span class="notif-title">${esc(it.title)}</span>
+      <span class="notif-when">${esc(when)}</span>
+    </div>
+    <div class="notif-why">${esc(it.reason)}</div>
+    ${where ? `<div class="notif-proj">${esc(where)}</div>` : ''}
+    ${screen}
+  </button>`;
+}
+
+// Straight to the task, and to the agent when the item names one.
+function openAttentionItem(roomId) {
+  const it = ATTENTION_BY_ROOM.get(roomId);
+  if (!it) return;
+  $('#notif-tray').hidden = true;
+  openSessionWindow(it.roomId, it.agentIdentity || '');
+  SELECTED_SID = it.roomId;
+  if (it.projectId && projectById(it.projectId)) {
+    SELECTED_PROJECT = it.projectId; PROJECT_TAB = 'tasks';
+  }
+  renderRows();
+}
+
+$('#notif-btn').addEventListener('click', (ev) => {
+  ev.stopPropagation();
+  const tray = $('#notif-tray');
+  tray.hidden = !tray.hidden;
+  if (!tray.hidden) updateRoomsBadge();
+});
+document.addEventListener('click', (ev) => {
+  if (ev.target.closest('#notif-btn') || ev.target.closest('#notif-tray')) return;
+  $('#notif-tray').hidden = true;
+});
+// Poll while the tab is in front. Nothing here interrupts: no sound, no desktop
+// notification, no stealing focus — the badge just changes.
+setInterval(() => { if (!document.hidden) updateRoomsBadge(); }, 5000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) updateRoomsBadge();
+});
 
 // Accent color customization
 function applyAccent(color) {
@@ -4847,6 +5034,20 @@ async function loadThemes() {
       if (ev.key === 'Enter') { ev.preventDefault(); nickInput.blur(); }
     });
   }
+  // How long silence counts as stalled (the server clamps to 60s–24h).
+  const stallInput = document.getElementById('pref-stall-seconds');
+  if (stallInput) {
+    const commitStall = () => {
+      const v = parseInt(stallInput.value, 10);
+      if (!Number.isNaN(v) && v !== (PREFS?.attentionStallSeconds ?? null)) {
+        setPref('attentionStallSeconds', v);
+      }
+    };
+    stallInput.addEventListener('blur', commitStall);
+    stallInput.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); stallInput.blur(); }
+    });
+  }
   // One-shot rearrange actions
   const runItermAction = async (path, label, btn) => {
     btn.disabled = true;
@@ -4883,6 +5084,7 @@ async function loadThemes() {
   checkForUpdate();
   setInterval(checkForUpdate, UPDATE_CHECK_INTERVAL_MS);
   await refresh();
+  updateRoomsBadge();     // paint the needs-you badge on the first screen
 })();
 setInterval(refresh, 2500);
 

@@ -53,6 +53,8 @@ from backends.shared import (
 # Agent-type abstraction (WHAT runs in a session), orthogonal to the OS backend
 # (WHERE it runs). Codex discovery + the claude/codex registry live here.
 import agents
+# Which tasks need a human, and why (the /api/attention join).
+import attention
 # Multi-agent chat rooms (pairing live sessions into a collaborating "duo").
 import backup
 import chatroom
@@ -65,6 +67,10 @@ BACKEND = get_backend()
 # The tools module calls back into this module's task/launch primitives; the
 # dashboard runs as __main__, so hand it the live module object.
 ensemble_tools.bind(sys.modules[__name__])
+attention.bind(sys.modules[__name__])
+# Capture each agent terminal's dying screen onto its task, before the reaper
+# drops the buffer — that evidence is why a death is visible at all.
+attention.install()
 
 # --- Remote-access gate ------------------------------------------------------
 # When the server is bound to anything other than loopback (e.g. exposed on a
@@ -565,6 +571,11 @@ _SETTINGS_DEFAULTS = {
     "backupRemote": "",      # git remote for the projects root; empty = commit locally only
     "backupIntervalMin": 60, # how often to commit (+push if a remote is set)
     "backupEnabled": False,  # scheduler on/off
+    # How long an agent that owes a turn may print nothing before the dashboard
+    # calls it stalled. Both CLIs repaint a working indicator every second while
+    # they think, so real silence is the signal — but how much of it counts as
+    # trouble is a judgement call, hence a setting.
+    "attentionStallSeconds": attention.STALL_SECONDS_DEFAULT,
 }
 _SETTINGS_ALLOWED_VALUES = {
     "openMode": {"window", "tab"},
@@ -616,6 +627,12 @@ def save_settings(settings: dict) -> dict:
             except (TypeError, ValueError):
                 continue
             v = max(5, min(1440, v))
+        if k == "attentionStallSeconds":
+            try:
+                v = int(v)
+            except (TypeError, ValueError):
+                continue
+            v = max(60, min(24 * 3600, v))
         if k == "backupEnabled":
             v = bool(v)
         current[k] = v
@@ -1136,7 +1153,7 @@ def build_projects() -> dict:
     rows = load_sessions(500)
     keep = ("sessionId", "roomId", "label", "status", "isLive", "idleSeconds",
             "updatedAt", "agents", "members", "mode", "headless", "cwd",
-            "priority", "priorityName")
+            "priority", "priorityName", "attention")
     # One group per registered project, plus a synthetic unassigned bucket.
     groups: dict = {}
     for p in projects_reg:
@@ -1161,7 +1178,9 @@ def build_projects() -> dict:
         if s.get("isLive"):
             g["live"] += 1
             agents_live += len(s.get("agents") or [1])
-        if s.get("status") in ("waiting", "waiting_human"):
+        # "Needs you" now means what the notifications mean — a dead agent or
+        # one at its usage limit counts, not just a task that says it's waiting.
+        if s.get("attention") or s.get("status") in ("waiting", "waiting_human"):
             g["waiting"] += 1
             needs_you += 1
         g["updatedAt"] = max(g["updatedAt"], s.get("updatedAt") or 0)
@@ -2859,6 +2878,13 @@ def load_sessions(n: int = 200) -> list[dict]:
     collab_sids: set[str] = set()
     collab_cwds: set[str] = set()
     room_rows: list[dict] = []
+    # Attention states for the same rooms, so a row can be marked without a
+    # second lookup. Cached and independent of everything above — this adds no
+    # measurable work to an already-slow endpoint.
+    try:
+        att_by_room = attention.by_room()
+    except Exception:
+        att_by_room = {}
     try:
         for rm in chatroom.list_rooms():
             agents_in = [p for p in rm.get("participants", [])
@@ -2914,6 +2940,10 @@ def load_sessions(n: int = 200) -> list[dict]:
                 "parent": "", "jira": [], "cost": compute_room_cost(rm).get("dollars", 0.0),
                 "currentTheme": "",
                 "first": first_txt, "last": last_txt, "transcriptPath": "",
+                # {state, reason, agentIdentity} when this task needs a human.
+                "attention": ({k: v for k, v in att_by_room[rid].items()
+                               if k in ("state", "reason", "agentIdentity", "since")}
+                              if rid in att_by_room else None),
             })
     except Exception:
         pass
@@ -3284,7 +3314,13 @@ def reassign_task(rid: str, agent_list) -> tuple[bool, dict | None, str]:
 
 def stop_task(rid: str) -> bool:
     """End a task's agents (kill their PTYs) but KEEP the room, so it stays one
-    row with its spec and chat and can be resumed."""
+    row with its spec and chat and can be resumed.
+
+    Stopping is also how the product owner says "I've seen this and dealt with
+    it", so it clears any recorded death: an agent that had already died on its
+    own would otherwise keep its `agent_gone` notification forever — Stop can't
+    relabel a record that was written once, at death, so it removes it.
+    """
     room = chatroom.get_room(rid, public=False)
     if not room:
         return False
@@ -3295,6 +3331,10 @@ def stop_task(rid: str) -> bool:
                 ptyrun.kill(pid)
             except Exception:
                 pass
+            ptyrun.forget_death(pid)
+    # Cleared through the room lock, and only after the kills: writing the room
+    # we read before a slow kill loop would drop a chat message posted during it.
+    chatroom.clear_exits(rid)
     return True
 
 
@@ -3709,6 +3749,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(404, {"error": "no_such_room"})
                 return
             self._send_json(200, _annotate_room_liveness(room))
+            return
+        if p == "/api/attention":
+            # "What needs me, and why" — one item per task. Deliberately cheap
+            # (rooms + live-session files + the in-memory PTY registry, all
+            # cached) so the page can poll it every few seconds; it shares
+            # nothing with /api/sessions or /api/projects, which are slow.
+            self._send_json(200, attention.snapshot())
             return
         if p == "/api/ptys":
             ptyrun.reap()
@@ -4193,6 +4240,7 @@ class Handler(BaseHTTPRequestHandler):
             part["sessionId"] = info["sessionId"]
             part["cwd"] = info["cwd"]
             part["ptyId"] = info["ptyId"]
+            part.pop("lastExit", None)   # a fresh agent isn't the dead one
             launched.append({"identity": part["identity"], "ptyId": info["ptyId"]})
         room_full["launched"] = True
         room_full["status"] = "active"
@@ -4227,6 +4275,9 @@ class Handler(BaseHTTPRequestHandler):
                 info = self._resume_room_agent_pty(room_full, part, collab=not solo, seed=seed)
             part["ptyId"] = info["ptyId"]
             part["cwd"] = info["cwd"]
+            # Drop any recorded death: this agent is running again, and an
+            # alert about the previous run is one nobody could ever dismiss.
+            part.pop("lastExit", None)
             resumed.append({"identity": part["identity"], "ptyId": info["ptyId"]})
         room_full["status"] = "active"
         room_full["hopCount"] = 0

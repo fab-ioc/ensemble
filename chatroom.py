@@ -260,6 +260,52 @@ def update_room(room: dict) -> None:
         _write(room)
 
 
+def record_exit(room_id: str, identity: str, exit_rec: dict) -> bool:
+    """Stamp one agent's last exit onto the room — read-modify-write under the
+    room lock.
+
+    Deliberately narrow. The caller is a dying PTY's reader thread, and a
+    ``get_room`` → mutate → :func:`update_room` from there would race
+    :func:`post_message`: both rewrite the whole file, so a chat message posted
+    in between would be silently dropped. Doing the read and the write inside
+    the same lock makes that impossible.
+    """
+    with _LOCK:
+        room = _read(room_id)
+        if room is None:
+            return False
+        hit = False
+        for p in room.get("participants", []):
+            if p.get("identity") == identity:
+                p["lastExit"] = exit_rec
+                hit = True
+        if not hit:
+            return False
+        _write(room)                 # NB: not update_room — no updatedAt bump;
+        return True                  # a death is not activity on the task.
+
+
+def clear_exits(room_id: str) -> bool:
+    """Forget every recorded exit on a room — the human has dealt with it.
+
+    Same read-modify-write-under-the-lock as :func:`record_exit`, and for the
+    same reason: the caller has been away killing processes (`taskkill /F /T`
+    with a 5-second timeout apiece), and rewriting the whole room after that
+    would silently drop any chat message posted in the meantime.
+    """
+    with _LOCK:
+        room = _read(room_id)
+        if room is None:
+            return False
+        cleared = False
+        for p in room.get("participants", []):
+            if p.pop("lastExit", None) is not None:
+                cleared = True
+        if cleared:
+            _write(room)
+        return cleared
+
+
 def list_rooms() -> list[dict]:
     ROOMS_DIR.mkdir(parents=True, exist_ok=True)
     out = []

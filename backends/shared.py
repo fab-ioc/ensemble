@@ -42,7 +42,7 @@ def claude_cmd(*extra: str) -> str:
 
 def load_geometries() -> dict[str, dict]:
     try:
-        return json.loads(GEOMETRIES_FILE.read_text())
+        return json.loads(GEOMETRIES_FILE.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
@@ -80,7 +80,10 @@ def read_session_files() -> list[dict]:
         return out
     for f in SESS_DIR.glob("*.json"):
         try:
-            d = json.loads(f.read_text())
+            # Explicit encoding: the Windows default is cp1252, which throws on
+            # a session whose cwd or label carries a non-Latin-1 character —
+            # silently dropping that session from every live view.
+            d = json.loads(f.read_text(encoding="utf-8-sig"))
         except (json.JSONDecodeError, OSError):
             continue
         pid = d.get("pid")
