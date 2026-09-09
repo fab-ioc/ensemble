@@ -3170,7 +3170,11 @@ function wsRowsHtml(v, dir) {
 }
 function wsTreeHtml(v) {
   if (!v.roots.length) return '<div class="wse none">Nothing to browse here yet.</div>';
-  return v.roots.map(r => {
+  // A task that never got a folder of its own — a draft, or one running in
+  // place — would otherwise just be missing its first root with no explanation.
+  const noTaskRoot = v.ctx.kind === 'task' && !v.roots.some(r => r.kind === 'task')
+    ? '<div class="wse none">This task has no folder of its own — showing the project.</div>' : '';
+  return noTaskRoot + v.roots.map(r => {
     const open = v.open.has(r.path);
     return `<div class="wse dir wsroot ${esc(r.kind)}" data-path="${esc(r.path)}" title="${esc(r.path)}">`
       + `<span class="tw">${open ? '▾' : '▸'}</span><span class="nm">${esc(r.label)}</span>`
