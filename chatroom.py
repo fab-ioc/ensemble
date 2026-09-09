@@ -123,6 +123,135 @@ def create_room(title: str, members: list[dict], max_hops: int = DEFAULT_MAX_HOP
         return room
 
 
+def _unique_identity(base: str, used: set[str]) -> str:
+    """First free identity for ``base``: ``claude``, then ``claude-2``, …"""
+    ident = base
+    n = 2
+    while ident in used:
+        ident = f"{base}-{n}"
+        n += 1
+    return ident
+
+
+def set_agents(room_id: str, members: list[dict],
+               mode: str = "") -> dict | None:
+    """Replace a room's agent line-up, keeping the agents that are staying.
+
+    ``members`` are the same ``{identity?, agent, model, role}`` dicts
+    :func:`create_room` takes. An entry is matched to an existing participant —
+    which keeps that agent's identity, bearer token, session id and working dir,
+    so its transcript and any live MCP client survive — by its ``identity``,
+    naming an existing agent **of the same kind**.
+
+    A pin that doesn't resolve does NOT fall back to anything: it means the
+    agent it named is gone, or has changed kind, and the entry is a new agent.
+    Falling back would let one row walk off with a *different* row's identity,
+    token and transcript — a change to one agent silently rewriting another.
+    For the same reason, once ANY entry carries an identity, an entry without
+    one is taken at its word: a new agent.
+
+    Positional matching — first unclaimed participant of the same kind — is the
+    fallback only for a wholly identity-free list, which is what a plain
+    ``["claude", "codex"]`` or an older client sends.
+
+    An identity whose ``agent`` kind changed is deliberately NOT reused: claude
+    and codex are different agents, and handing one the other's transcript would
+    be wrong. Anything unmatched is a new agent — it gets a fresh identity, a
+    fresh token, and a ``fresh`` flag so the launcher starts it from the task
+    briefing instead of trying to resume a conversation it never had. Agents
+    that dropped out lose their participant record and their token.
+
+    ``mode`` ("solo" / "collab"), when given, is written in the same breath, so
+    the file is never briefly on disk with a new line-up and the old mode.
+
+    Returns the updated full room (tokens included), or None if there is no
+    such room. Messages are untouched: a removed agent's turns stay in the log.
+    """
+    with _LOCK:
+        room = _read(room_id)
+        if room is None:
+            return None
+        existing = [p for p in room.get("participants", []) if p.get("kind") == "agent"]
+        by_identity = {p.get("identity", ""): i for i, p in enumerate(existing)}
+        claimed: set[int] = set()
+        matched: list[dict | None] = [None] * len(members)
+
+        pins = [(m.get("identity") or "").strip() for m in members]
+        if any(pins):
+            for i, m in enumerate(members):
+                j = by_identity.get(pins[i], -1) if pins[i] else -1
+                if j >= 0 and j not in claimed and \
+                        existing[j].get("agent", "") == (m.get("agent") or "").strip():
+                    claimed.add(j)
+                    matched[i] = existing[j]
+        else:
+            for i, m in enumerate(members):
+                kind = (m.get("agent") or "").strip()
+                for j, p in enumerate(existing):
+                    if j not in claimed and p.get("agent", "") == kind:
+                        claimed.add(j)
+                        matched[i] = p
+                        break
+
+        # An identity that has already spoken, or already read the room, is
+        # spent: recycling it would relabel someone else's messages and hand
+        # the newcomer the departed agent's read cursor, so its first
+        # chat_read would skip the whole conversation.
+        used = ({HUMAN_IDENTITY}
+                | {p.get("identity", "") for p in matched if p}
+                | {m.get("from", "") for m in room.get("messages", [])}
+                | set(room.get("reads", {})))
+        tokens_by_identity = {ident: tok for tok, ident in room.get("tokens", {}).items()}
+        participants: list[dict] = []
+        tokens: dict[str, str] = {}
+        for m, part in zip(members, matched):
+            if part is not None:
+                part = dict(part)
+                part["model"] = m.get("model", "")
+                part["role"] = (m.get("role") or "").strip()
+                # These two name a process that is already gone — a stopped room
+                # keeps them, which is exactly what makes it read as live. Drop
+                # them here so the record stops lying. ``sessionId`` and ``cwd``
+                # deliberately survive: they are not liveness, they are how the
+                # agent finds its own transcript again when the task restarts.
+                part["pid"] = None
+                part.pop("ptyId", None)
+                tok = tokens_by_identity.get(part["identity"])
+                if not tok:                     # shouldn't happen; don't strand it
+                    tok = secrets.token_urlsafe(18)
+                tokens[tok] = part["identity"]
+            else:
+                # A new agent is named after its kind, never after the
+                # identity hint: that hint means "reuse this one", and it only
+                # got here because nothing matched it.
+                base = (m.get("agent") or "").strip() or "agent"
+                ident = _unique_identity(base, used)
+                used.add(ident)
+                part = {
+                    "identity": ident,
+                    "kind": "agent",
+                    "agent": m.get("agent", ""),
+                    "model": m.get("model", ""),
+                    "role": (m.get("role") or "").strip(),
+                    "pid": None,
+                    "sessionId": "",
+                    "cwd": "",
+                    "label": "",
+                    # No conversation to resume — start it from the briefing.
+                    "fresh": True,
+                }
+                tokens[secrets.token_urlsafe(18)] = ident
+            participants.append(part)
+        participants.append({"identity": HUMAN_IDENTITY, "kind": "human"})
+        room["participants"] = participants
+        room["tokens"] = tokens
+        if mode:
+            room["mode"] = mode
+        room["updatedAt"] = _now()
+        _write(room)
+        return room
+
+
 def update_room(room: dict) -> None:
     """Persist a full (non-public) room dict — used by the launcher to record
     the working dir and each participant's session id/pid after spawning."""

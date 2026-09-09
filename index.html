@@ -379,6 +379,50 @@
   @media (prefers-color-scheme: dark) {
     .row-cost-chip { background: rgba(255, 255, 255, .06); color: var(--muted); }
   }
+  /* Priority — a Jira-style arrow per level. Its own narrow column so the
+     marker never eats into the task text, and it stays put when the window
+     gets narrow. Medium (the default) is muted so the outliers are what the
+     eye lands on. */
+  td.prio, th.prio { width: 18px; padding-right: 0; text-align: center; }
+  .prio-ico {
+    display: block; margin: 0 auto; width: 12px; height: 12px;
+    fill: none; stroke: currentColor; stroke-width: 2;
+    stroke-linecap: round; stroke-linejoin: round;
+  }
+  .prio-1 { color: #cd1317; }
+  .prio-2 { color: #e9494a; }
+  .prio-3 { color: #b8901a; opacity: .55; }
+  .prio-4 { color: #2898bd; }
+  .prio-5 { color: #0b62d0; }
+  @media (prefers-color-scheme: dark) {
+    .prio-1 { color: #ff6b63; }
+    .prio-2 { color: #ff8f7a; }
+    .prio-3 { color: #d6b04a; opacity: .5; }
+    .prio-4 { color: #5cc0e0; }
+    .prio-5 { color: #6ea8ef; }
+  }
+  /* Detail panel: pick a level. Five arrows, the current one filled in. */
+  .dp-prio {
+    display: flex; align-items: center; gap: 6px;
+    flex-wrap: wrap;    /* the panel is resizable — five arrows don't fit at 380px */
+    padding: 0 16px 10px; font-size: 11.5px; color: var(--muted);
+  }
+  .dp-prio-label { font-weight: 600; letter-spacing: .02em; }
+  .dp-prio button {
+    display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto;
+    padding: 2px 7px; border-radius: 6px; cursor: pointer;
+    border: 1px solid transparent; background: transparent;
+    font-size: 11px; color: var(--muted); line-height: 16px;
+  }
+  .dp-prio button:hover { background: var(--accent-soft); }
+  .dp-prio button.on {
+    border-color: var(--border); background: var(--accent-soft);
+    color: var(--fg); font-weight: 600;
+  }
+  .dp-prio button .prio-ico { opacity: 1; }
+  /* Project card rows carry the same marker, so the landing reads the same
+     way as the task list. */
+  .proj .srow .prio-ico { display: inline-block; flex: 0 0 auto; }
   .actions {
     display: flex; gap: 5px; align-items: center;
     flex-wrap: wrap; justify-content: flex-start;
@@ -1846,7 +1890,11 @@ function agentBadges(r) {
     : (r.agent ? [{ agent: r.agent, model: '', identity: r.agent }] : []);
   return members.map(m => {
     const label = m.model ? `${esc(m.agent)} ${esc(m.model)}` : esc(m.agent);
-    return `<span class="badge-agent ${esc(m.agent)}" title="${esc(m.identity || m.agent)}">${label}</span>`;
+    // Tooltip carries what the badge has no room for: who this is and what
+    // charter they were given.
+    const tip = [m.identity || m.agent, m.model || 'default model', m.role || '']
+      .filter(Boolean).join(' · ');
+    return `<span class="badge-agent ${esc(m.agent)}" title="${esc(tip)}">${label}</span>`;
   }).join('');
 }
 
@@ -1903,9 +1951,29 @@ function detailActions(r, isLive, isRoom, isOrphan) {
     // File the session under a project (or pull it out of one) — porting opten
     // and friends into their projects happens here.
     const moveBtn = `<button class="moveproj-btn" data-sid="${esc(r.sessionId)}" title="File this session under a project (or remove it from one)">📁 Move to project</button>`;
-    return `<div class="dp-actions"><div class="actions">${lifecycle}${termsBtn}${pauseBtn}${pinBtn}${renameBtn}${moveBtn}${autoBtn}${finderBtn}${ijBtn}${themeBtn}</div></div>`;
+    // Change who works this task, and on which model. Refused while it runs —
+    // swapping an agent under a live collaboration is not something we do.
+    const agentsWhy = isLive
+      ? 'This task is running — agents cannot be reassigned under a live task. End it first, then reassign.'
+      : 'Change who is assigned to this task and which model each one runs';
+    // The wrapping span carries the tooltip: a disabled button shows none of
+    // its own, and the reason is the whole point of disabling it.
+    const agentsBtn = `<span title="${esc(agentsWhy)}"><button class="agents-btn" data-room="${esc(r.roomId)}"${isLive ? ' disabled' : ''} title="${esc(agentsWhy)}">👥 Agents</button></span>`;
+    return `<div class="dp-actions"><div class="actions">${lifecycle}${termsBtn}${pauseBtn}${pinBtn}${renameBtn}${agentsBtn}${moveBtn}${autoBtn}${finderBtn}${ijBtn}${themeBtn}</div></div>`;
   }
   return `<div class="dp-actions">${actionsCell(r, isLive)}</div>`;
+}
+
+// The product owner sets a task's priority here: five arrows, the current one
+// filled in. A row of buttons rather than a <select> so an open dropdown can
+// never be swallowed by the next refresh.
+function detailPriority(r, isRoom) {
+  if (!isRoom || !r.roomId) return '';
+  const cur = prioOf(r);
+  const btns = PRIORITY_LEVELS.map(l =>
+    `<button class="dp-prio-btn${l.n === cur ? ' on' : ''}" data-room="${esc(r.roomId)}" data-prio="${l.n}" title="Set priority: ${l.name}">${prioIcon(l.n, l.name, true)}${l.name}</button>`
+  ).join('');
+  return `<div class="dp-prio"><span class="dp-prio-label">Priority</span>${btns}</div>`;
 }
 
 function jiraSection(r) {
@@ -1926,8 +1994,14 @@ function jiraSection(r) {
 // open/closed choice is remembered across sessions.
 function detailInfo(r) {
   const parts = [];
-  if (r.members && r.members.length > 1) {
-    parts.push(`<div class="dp-section"><h3>Participants</h3><div style="display: flex; flex-wrap: wrap; gap: 6px;">${r.members.map(m => `<span class="badge-agent ${esc(m.agent)}" title="${esc(m.identity || '')}">${esc(m.identity || m.agent)}${m.model ? ' · ' + esc(m.model) : ''}</span>`).join('')}</div></div>`);
+  if (r.members && r.members.length) {
+    // Who is on this task, and — just as important — which model each one
+    // runs. "claude" alone doesn't say what is doing the work.
+    parts.push(`<div class="dp-section"><h3>Assigned</h3><div style="display: flex; flex-wrap: wrap; gap: 6px;">${r.members.map(m => {
+      const bits = [esc(m.identity || m.agent), esc(m.model || 'default model')];
+      if (m.role) bits.push(esc(m.role));
+      return `<span class="badge-agent ${esc(m.agent)}" title="${esc(m.agent)}">${bits.join(' · ')}</span>`;
+    }).join('')}</div></div>`);
   }
   if (JIRA_ENABLED) parts.push(jiraSection(r));
   if (r.cwd) parts.push(`<div class="dp-section"><h3>cwd</h3><div class="dp-cwd" title="${esc(r.cwd)}">${esc(tildeify(r.cwd))}</div></div>`);
@@ -2043,7 +2117,7 @@ function renderDetail() {
 
   if (liveEmbed) {
     panel.innerHTML =
-      `<div class="dp-live">${detailHead(r, isRoom)}${detailMeta(r, isLive, isRoom, now)}${detailActions(r, isLive, isRoom, isOrphan)}</div>`
+      `<div class="dp-live">${detailHead(r, isRoom)}${detailMeta(r, isLive, isRoom, now)}${detailActions(r, isLive, isRoom, isOrphan)}${detailPriority(r, isRoom)}</div>`
       + `<iframe class="dp-session" data-room="${esc(r.roomId)}" src="/session?id=${encodeURIComponent(r.roomId)}&embed=1" title="session" allow="clipboard-read; clipboard-write"></iframe>`;
     return;
   }
@@ -2051,6 +2125,7 @@ function renderDetail() {
     detailHead(r, isRoom)
     + detailMeta(r, isLive, isRoom, now)
     + detailActions(r, isLive, isRoom, isOrphan)
+    + detailPriority(r, isRoom)
     + detailInfo(r)
     + (isOrphan
         ? `<div class="dp-section"><p style="font-size: 12.5px; color: var(--muted); margin: 0">This collaboration has ended and its agents aren't running. Open to resume where it left off.</p></div>`
@@ -2186,6 +2261,45 @@ function rowMatches(r, parsed) {
   return haystackMatches(rowHaystack(r), parsed);
 }
 
+// Task priority — the five Jira levels. The server sends both the number
+// (1 = highest … 5 = lowest, the sort key) and the name; a row from an older
+// server carries neither and reads as medium.
+const PRIORITY_LEVELS = [
+  {n: 1, name: 'highest'}, {n: 2, name: 'high'}, {n: 3, name: 'medium'},
+  {n: 4, name: 'low'}, {n: 5, name: 'lowest'},
+];
+const PRIORITY_PATHS = {
+  1: 'M2.5 5.5 L6 2 L9.5 5.5 M2.5 10 L6 6.5 L9.5 10',
+  2: 'M2.5 8 L6 4 L9.5 8',
+  3: 'M2.5 6 L9.5 6',
+  4: 'M2.5 4 L6 8 L9.5 4',
+  5: 'M2.5 2 L6 5.5 L9.5 2 M2.5 6.5 L6 10 L9.5 6.5',
+};
+function prioOf(r) {
+  const n = Number((r && r.priority) || 0);
+  return (n >= 1 && n <= 5) ? n : 3;
+}
+function prioName(n) { return (PRIORITY_LEVELS[n - 1] || PRIORITY_LEVELS[2]).name; }
+// The marker itself: a small arrow, coloured by level. Title-only text, so it
+// costs the row no width beyond its own column. On a row the arrow is the only
+// thing carrying the priority, so it announces itself; next to a text label
+// (the detail picker) it is decorative and would only be read twice.
+function prioIcon(n, title, decorative) {
+  const label = esc(title || ('priority: ' + prioName(n)));
+  // Decorative: no name and no <title> either — the button it sits in already
+  // carries both the visible word and its own tooltip.
+  const a11y = decorative ? 'aria-hidden="true"' : `role="img" aria-label="${label}"`;
+  const tip = decorative ? '' : `<title>${label}</title>`;
+  return `<svg class="prio-ico prio-${n}" viewBox="0 0 12 12" ${a11y}>${tip}<path d="${PRIORITY_PATHS[n]}"/></svg>`;
+}
+// Only real tasks (a room) carry a priority; a legacy transcript row gets an
+// empty cell so the columns still line up.
+function prioCell(r) {
+  if (!(r.headless && r.roomId)) return '<td class="prio"></td>';
+  const n = prioOf(r);
+  return `<td class="prio">${prioIcon(n)}</td>`;
+}
+
 function renderRow(r, parsed, now) {
   if (r.headless) return renderHeadlessRow(r, parsed, now);
   const depth = r._depth || 0;
@@ -2203,6 +2317,7 @@ function renderRow(r, parsed, now) {
   const actionsTd = DETAIL_MODE ? '' : `<td>${actionsCell(r, r.isLive)}</td>`;
   return `<tr class="row${selected} ${liveClasses} ${depth ? 'is-fork' : ''}" ${dataAttrs} draggable="true">
     <td>${statusDot}</td>
+    ${prioCell(r)}
     <td class="topic" title="${esc(r.cwd)}">${indent}${topicCellHL(r, parsed)}</td>
     <td class="tag">${r.isLive ? '<span class="badge-live">live</span>' : ''}</td>
     ${actionsTd}
@@ -2230,7 +2345,8 @@ function renderHeadlessRow(r, parsed, now) {
   const actionsTd = DETAIL_MODE ? '' : `<td>${actions}</td>`;
   return `<tr class="row headless ${liveClasses}" data-room="${esc(r.roomId || '')}" data-orphan="${r.orphan ? '1' : ''}" data-sid="${esc(r.sessionId)}" draggable="false">
     <td>${statusDot}</td>
-    <td class="topic" title="${esc(r.cwd)}">${esc(r.label || '(session)')}</td>
+    ${prioCell(r)}
+    <td class="topic" title="${esc(r.cwd)}">${esc(r.label || '(session)')}${agentBadges(r)}</td>
     <td class="tag">${liveBadge}</td>
     ${actionsTd}
   </tr>`;
@@ -2601,7 +2717,7 @@ function projectsLandingHtml() {
   const cards = PROJECTS.projects.map(p => {
     const rows = (p.sessions || []).slice(0, 4).map(sn => {
       const st = projectSessionState(sn);
-      return `<div class="srow" data-sid="${esc(sn.roomId || sn.sessionId || '')}"><span class="sdot ${st}"></span><span class="stitle">${esc(sn.label || sn.sessionId || 'session')}</span><span class="stime">${esc(fmtAgo(sn.updatedAt))}</span></div>`;
+      return `<div class="srow" data-sid="${esc(sn.roomId || sn.sessionId || '')}"><span class="sdot ${st}"></span>${sn.roomId ? prioIcon(prioOf(sn)) : ''}<span class="stitle">${esc(sn.label || sn.sessionId || 'session')}</span><span class="stime">${esc(fmtAgo(sn.updatedAt))}</span></div>`;
     }).join('');
     const more = (p.count || 0) > 4 ? `<div class="srow more">… ${p.count - 4} more</div>` : '';
     const wait = p.waiting ? `<span class="waitchip">⚠ ${p.waiting} waiting</span>` : '';
@@ -3034,7 +3150,7 @@ function renderRows() {
   const headExtra = DETAIL_MODE ? '' : '<th></th>';
   view.innerHTML = projectsChromeHtml() + pageHeader + `<table>
     <thead><tr>
-      <th></th><th>Task</th><th></th>${headExtra}
+      <th></th><th class="prio"></th><th>Task</th><th></th>${headExtra}
     </tr></thead>
     <tbody>${renderGroupedRows(ordered, parsed, now)}</tbody>
   </table>`;
@@ -3338,7 +3454,13 @@ async function loadAgentOptions() {
   } catch {}
 }
 function agentSelect(sel) {
-  return `<select class="duo-agent">` + AGENT_OPTIONS.map(o =>
+  // An agent already on a task but no longer installed here still has to show
+  // up, or reopening the picker would silently swap it for whatever sorts
+  // first. Offering it means the save fails loudly instead.
+  const opts = AGENT_OPTIONS.some(o => o.key === sel) || !sel
+    ? AGENT_OPTIONS
+    : AGENT_OPTIONS.concat([{ key: sel, displayName: sel + ' (not installed)' }]);
+  return `<select class="duo-agent">` + opts.map(o =>
     `<option value="${esc(o.key)}"${o.key === sel ? ' selected' : ''}>${esc(o.displayName || o.key)}</option>`
   ).join('') + `</select>`;
 }
@@ -3356,9 +3478,12 @@ function roleSelect(role) {
   const opt = (v, label) => `<option value="${esc(v)}"${(isCustom ? '__custom__' : role) === v ? ' selected' : ''}>${esc(label)}</option>`;
   return `<select class="duo-role" title="Team role">${opt('', 'Collaborator')}${opt('engineer', 'Engineer')}${opt('reviewer', 'Reviewer')}${opt('planner', 'Planner')}${opt('__custom__', 'Custom…')}</select>`;
 }
-function addAgentRow(container, sel, model, role) {
+// `identity` is set only when reassigning an existing task: it pins the row to
+// an agent already on it, so that agent keeps its transcript and its token.
+function addAgentRow(container, sel, model, role, identity) {
   const div = document.createElement('div');
   div.className = 'duo-row';
+  if (identity) div.dataset.identity = identity;
   const dlId = 'ml-' + Math.random().toString(36).slice(2, 9);
   const known = ['', 'engineer', 'reviewer', 'planner'];
   const isCustom = role && !known.includes(role);
@@ -3382,7 +3507,13 @@ function addAgentRow(container, sel, model, role) {
     datalist.innerHTML = opts.map(o => `<option value="${esc(o)}"></option>`).join('');
     modelInput.placeholder = opts.length ? `model (e.g. ${opts[0]})` : 'model (optional)';
   };
-  agentSel.addEventListener('change', () => { modelInput.value = ''; fillModels(); });
+  agentSel.addEventListener('change', () => {
+    modelInput.value = '';
+    // Picking a different CLI makes this a different agent — it must not
+    // inherit the old one's identity, and with it the old one's conversation.
+    delete div.dataset.identity;
+    fillModels();
+  });
   fillModels();
   div.querySelector('.duo-remove').onclick = () => {
     const rows = container.querySelectorAll('.duo-row');
@@ -3391,6 +3522,23 @@ function addAgentRow(container, sel, model, role) {
   };
   container.appendChild(div);
   updateNsHint(container);
+}
+// The picker's rows as {identity?, agent, model, role} — the shape both
+// /api/room/new and /api/room/agents take.
+function readAgentRows(container) {
+  return [...container.querySelectorAll('.duo-row')].map(r => {
+    const roleSel = r.querySelector('.duo-role');
+    const role = roleSel.value === '__custom__'
+      ? r.querySelector('.duo-role-custom').value.trim()
+      : roleSel.value;
+    const spec = {
+      agent: r.querySelector('.duo-agent').value,
+      model: r.querySelector('.duo-model').value.trim(),
+      role,
+    };
+    if (r.dataset.identity) spec.identity = r.dataset.identity;
+    return spec;
+  });
 }
 function updateNsHint(container) {
   const n = container.querySelectorAll('.duo-row').length;
@@ -3486,17 +3634,7 @@ function showNewSessionModal(category, projectId) {
   $('#ns-ok').onclick = async () => {
     const title = $('#ns-title').value.trim();
     const task = $('#ns-task').value.trim();
-    const specs = [...agentsBox.querySelectorAll('.duo-row')].map(r => {
-      const roleSel = r.querySelector('.duo-role');
-      const role = roleSel.value === '__custom__'
-        ? r.querySelector('.duo-role-custom').value.trim()
-        : roleSel.value;
-      return {
-        agent: r.querySelector('.duo-agent').value,
-        model: r.querySelector('.duo-model').value.trim(),
-        role,
-      };
-    });
+    const specs = readAgentRows(agentsBox);
     if (!specs.length) return;
     if (!title) { toast('a title is required', 3000, 'err'); return; }
     if (specs.length >= 2 && !task) { toast('a task is required for a collaboration', 3000, 'err'); return; }
@@ -3539,6 +3677,87 @@ function showNewSessionModal(category, projectId) {
       toast('launch failed: ' + e.message, 5000, 'err');
     }
   };
+}
+
+// Change who works an existing task — add an agent, drop one, or move one to a
+// different model or role. Same picker as the new-task modal, pre-filled with
+// the current line-up; an agent that stays keeps its identity (a hidden field
+// on its row), and with it its conversation and its bearer token.
+function showAgentsModal(roomId) {
+  const row = ALL_ROWS.find(x => x.roomId === roomId);
+  if (!row) { toast('task not found', 3000, 'err'); return; }
+  if (row.isLive) {
+    toast('this task is running — end it first, then reassign its agents', 5000, 'err');
+    return;
+  }
+  const dlg = $('#modal');
+  dlg.innerHTML = `
+    <h3>Agents on "${esc(detailTitle(row))}"</h3>
+    <div class="im-field">
+      <label>Assigned <small>who works this task; each can run a different model</small></label>
+      <div id="ra-agents"></div>
+      <button type="button" id="ra-add" class="secondary">+ Add agent</button>
+      <p class="cfg-hint" id="ns-hint"></p>
+      <p class="cfg-hint">An agent you keep resumes its own conversation. One you remove loses its access to the task — its messages stay in the log.</p>
+    </div>
+    <div class="actions">
+      <button id="ra-ok">Save</button>
+      <button id="ra-cancel" class="secondary">Cancel</button>
+    </div>`;
+  dlg.showModal();
+  const box = $('#ra-agents');
+  const mem = (row.members && row.members.length)
+    ? row.members
+    : [{ identity: '', agent: row.agent || 'claude', model: '', role: '' }];
+  mem.forEach(m => addAgentRow(box, m.agent, m.model || '', m.role || '', m.identity || ''));
+  $('#ra-add').onclick = () => {
+    const second = AGENT_OPTIONS.find(o => o.key !== 'claude')?.key
+      || AGENT_OPTIONS[0]?.key || 'claude';
+    const haveReviewer = [...box.querySelectorAll('.duo-role')].some(s => s.value === 'reviewer');
+    addAgentRow(box, second, '', haveReviewer ? '' : 'reviewer');
+  };
+  const close = () => dlg.close();
+  $('#ra-cancel').onclick = close;
+  dlg.addEventListener('cancel', close, { once: true });
+  $('#ra-ok').onclick = async () => {
+    const specs = readAgentRows(box);
+    if (!specs.length) { toast('a task needs at least one agent', 3000, 'err'); return; }
+    toast('reassigning…', 0, 'busy');
+    try {
+      const resp = await api('/api/room/agents', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId, agents: specs }),
+      });
+      dlg.close();
+      // Show the new line-up now: a full refresh on a busy hub is slow, and
+      // the panel the user is looking at is the one that changed.
+      const rm = resp.room || {};
+      const parts = (rm.participants || []).filter(p => p.kind === 'agent');
+      if (parts.length) {
+        row.members = parts.map(p => ({ identity: p.identity, agent: p.agent,
+                                        model: p.model || '', role: p.role || '' }));
+        row.agents = parts.map(p => p.identity);
+        row.agent = parts.length === 1 ? parts[0].agent : 'duo';
+        row.mode = rm.mode || row.mode;
+        renderRows();
+        if (SELECTED_SID === roomId) renderDetail();
+      }
+      toast('agents updated', 2500, 'ok');
+      refresh();
+    } catch (e) {
+      toast('reassign failed: ' + reassignErrorText(e.message), 6000, 'err');
+    }
+  };
+}
+// The endpoint answers in error codes; say them in words.
+function reassignErrorText(msg) {
+  const s = String(msg || '');
+  if (s.includes('task_is_running')) return 'this task is running — end it first, then reassign';
+  if (s.includes('need_an_agent')) return 'a task needs at least one agent';
+  if (s.includes('no_such_room')) return 'this task no longer exists';
+  const m = s.match(/agent_unavailable:([\w.-]+)/);
+  if (m) return `"${m[1]}" is not installed on this machine`;
+  return s;
 }
 
 // Resume an orphaned collaboration (its room record is gone) by re-adopting its
@@ -4102,6 +4321,24 @@ document.addEventListener('click', async (ev) => {
     } catch (e) { toast('resume failed: ' + e.message, 4000, 'err'); }
     return;
   }
+  const prioBtn = ev.target.closest('.dp-prio-btn');
+  if (prioBtn) {
+    ev.stopPropagation();
+    const rid = prioBtn.dataset.room, n = Number(prioBtn.dataset.prio);
+    // Paint the choice straight away — the list re-sorts on the next refresh,
+    // and the row model is patched so a frozen (hovered) list agrees with it.
+    const row = ALL_ROWS.find(x => x.roomId === rid);
+    if (row) { row.priority = n; row.priorityName = prioName(n); }
+    // Move the highlight by hand rather than re-rendering the panel: a live
+    // task's panel holds the session iframe, and rebuilding it would reload it.
+    prioBtn.parentElement.querySelectorAll('.dp-prio-btn')
+      .forEach(b => b.classList.toggle('on', b === prioBtn));
+    try {
+      await api('/api/room/priority', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: rid, priority: n }) });
+      await refresh();
+    } catch (e) { toast('priority failed: ' + e.message, 4000, 'err'); await refresh(); }
+    return;
+  }
   const dpTerms = ev.target.closest('.dp-terms-btn');
   if (dpTerms) {
     ev.stopPropagation();
@@ -4149,6 +4386,12 @@ document.addEventListener('click', async (ev) => {
     return;
   }
   // Action buttons
+  const agentsBtn = ev.target.closest('.agents-btn');
+  if (agentsBtn) {
+    ev.stopPropagation();
+    showAgentsModal(agentsBtn.dataset.room);
+    return;
+  }
   const moveProjBtn = ev.target.closest('.moveproj-btn');
   if (moveProjBtn) {
     ev.stopPropagation();
