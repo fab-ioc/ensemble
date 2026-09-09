@@ -1971,7 +1971,7 @@ function detailPriority(r, isRoom) {
   if (!isRoom || !r.roomId) return '';
   const cur = prioOf(r);
   const btns = PRIORITY_LEVELS.map(l =>
-    `<button class="dp-prio-btn${l.n === cur ? ' on' : ''}" data-room="${esc(r.roomId)}" data-prio="${l.n}" title="Set priority: ${l.name}">${prioIcon(l.n, l.name)}${l.name}</button>`
+    `<button class="dp-prio-btn${l.n === cur ? ' on' : ''}" data-room="${esc(r.roomId)}" data-prio="${l.n}" title="Set priority: ${l.name}">${prioIcon(l.n, l.name, true)}${l.name}</button>`
   ).join('');
   return `<div class="dp-prio"><span class="dp-prio-label">Priority</span>${btns}</div>`;
 }
@@ -2281,9 +2281,16 @@ function prioOf(r) {
 }
 function prioName(n) { return (PRIORITY_LEVELS[n - 1] || PRIORITY_LEVELS[2]).name; }
 // The marker itself: a small arrow, coloured by level. Title-only text, so it
-// costs the row no width beyond its own column.
-function prioIcon(n, title) {
-  return `<svg class="prio-ico prio-${n}" viewBox="0 0 12 12" aria-hidden="true"><title>${esc(title || ('priority: ' + prioName(n)))}</title><path d="${PRIORITY_PATHS[n]}"/></svg>`;
+// costs the row no width beyond its own column. On a row the arrow is the only
+// thing carrying the priority, so it announces itself; next to a text label
+// (the detail picker) it is decorative and would only be read twice.
+function prioIcon(n, title, decorative) {
+  const label = esc(title || ('priority: ' + prioName(n)));
+  // Decorative: no name and no <title> either — the button it sits in already
+  // carries both the visible word and its own tooltip.
+  const a11y = decorative ? 'aria-hidden="true"' : `role="img" aria-label="${label}"`;
+  const tip = decorative ? '' : `<title>${label}</title>`;
+  return `<svg class="prio-ico prio-${n}" viewBox="0 0 12 12" ${a11y}>${tip}<path d="${PRIORITY_PATHS[n]}"/></svg>`;
 }
 // Only real tasks (a room) carry a priority; a legacy transcript row gets an
 // empty cell so the columns still line up.
