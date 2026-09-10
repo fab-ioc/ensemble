@@ -59,6 +59,8 @@ import attention
 # Multi-agent chat rooms (pairing live sessions into a collaborating "duo").
 import backup
 import chatroom
+# The PO's timed progress digest (only when something changed).
+import digest
 # Task-management MCP tools (ensemble_*) served next to the chat tools.
 import ensemble_tools
 # Plan-allowance readings (account-wide, per agent kind), refreshed in the
@@ -72,6 +74,7 @@ BACKEND = get_backend()
 # dashboard runs as __main__, so hand it the live module object.
 ensemble_tools.bind(sys.modules[__name__])
 attention.bind(sys.modules[__name__])
+digest.bind(sys.modules[__name__])
 # Capture each agent terminal's dying screen onto its task, before the reaper
 # drops the buffer — that evidence is why a death is visible at all.
 attention.install()
@@ -696,6 +699,11 @@ _SETTINGS_DEFAULTS = {
     # they think, so real silence is the signal — but how much of it counts as
     # trouble is a judgement call, hence a setting.
     "attentionStallSeconds": attention.STALL_SECONDS_DEFAULT,
+    # The PO's progress digest (digest.py): how often each project is checked,
+    # in minutes (0 = off; a project's own project.json can override it), and
+    # the cheap model that writes it up.
+    "digestIntervalMin": digest.DEFAULT_INTERVAL_MIN,
+    "digestModel": digest.DEFAULT_MODEL,
     # The dashboard theme, shared by every device on this hub. Empty = never
     # chosen here; the pages then hand up whatever their browser had.
     "theme": "",
@@ -757,6 +765,14 @@ def save_settings(settings: dict) -> dict:
             except (TypeError, ValueError):
                 continue
             v = max(60, min(24 * 3600, v))
+        if k == "digestIntervalMin":
+            v = digest.clamp_interval(v)
+            if v is None:
+                continue
+        if k == "digestModel":
+            if not isinstance(v, str) or not v.strip() or len(v) > 80:
+                continue
+            v = v.strip()
         if k == "backupEnabled":
             v = bool(v)
         current[k] = v
@@ -1225,7 +1241,10 @@ def load_projects() -> list[dict]:
                       "createdAt": meta.get("createdAt", 0),
                       # The task that is this project's product owner: every
                       # other task reports into it (ensemble_report).
-                      "poRoomId": (meta.get("poRoomId") or "").strip()})
+                      "poRoomId": (meta.get("poRoomId") or "").strip(),
+                      # Its own progress-digest interval, when it set one.
+                      **({"digestIntervalMin": meta["digestIntervalMin"]}
+                         if "digestIntervalMin" in meta else {})})
     except OSError:
         pass
     try:
@@ -1295,12 +1314,29 @@ def set_project_po(project_id: str, room_id: str) -> tuple[bool, str]:
     Stored as ``poRoomId`` in the project's own ``project.json`` in its home —
     the PO belongs to the project's data, so it travels with a backup or a
     clone of the projects root. Only that one key is touched."""
-    proj = find_project(project_id)
-    if proj is None:
-        return False, "no_such_project"
     rid = (room_id or "").strip()
     if rid and chatroom.get_room(rid) is None:
         return False, "no_such_room"
+    return _set_project_meta(project_id, "poRoomId", rid or None)
+
+
+def set_project_digest_interval(project_id: str, minutes) -> tuple[bool, str]:
+    """A project's own progress-digest interval in minutes (0 = off), or None
+    to fall back to the hub default. Kept in its ``project.json`` next to the
+    PO it concerns; the scheduler re-reads it every tick, so no restart."""
+    if minutes is not None:
+        minutes = digest.clamp_interval(minutes)
+        if minutes is None:
+            return False, "interval_must_be_minutes"
+    return _set_project_meta(project_id, "digestIntervalMin", minutes)
+
+
+def _set_project_meta(project_id: str, key: str, value) -> tuple[bool, str]:
+    """Set (or, with None, remove) one key of a project's own ``project.json``
+    in its home. Only that one key is touched."""
+    proj = find_project(project_id)
+    if proj is None:
+        return False, "no_such_project"
     home = project_home(proj, create=True)
     pj = Path(home) / "project.json"
     try:
@@ -1311,10 +1347,10 @@ def set_project_po(project_id: str, room_id: str) -> tuple[bool, str]:
         meta = {k: proj.get(k) for k in ("id", "name", "createdAt")}
     if meta.get("id") != proj["id"]:
         return False, "project_json_belongs_to_another_project"
-    if rid:
-        meta["poRoomId"] = rid
+    if value is None:
+        meta.pop(key, None)
     else:
-        meta.pop("poRoomId", None)
+        meta[key] = value
     try:
         tmp = pj.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(meta, indent=2), encoding="utf-8")
@@ -4577,6 +4613,9 @@ class Handler(BaseHTTPRequestHandler):
                                   "intervalMin": bs.get("backupIntervalMin", 60),
                                   "enabled": bool(bs.get("backupEnabled"))})
             return
+        if p == "/api/digest/status":
+            self._send_json(200, digest.status())
+            return
         if p == "/api/usage":
             # Cached plan allowance, both agent kinds. A dict copy and nothing
             # else — the HTTPS call and the rollout scan happen on usage.py's
@@ -5557,6 +5596,23 @@ class Handler(BaseHTTPRequestHandler):
             code = {"no_such_project": 404, "no_such_room": 404}.get(msg, 400)
             self._send_json(200 if ok else code, {"ok": ok} if ok else {"error": msg})
             return
+        if p == "/api/projects/digest":
+            # {projectId, intervalMin}: the project's own progress-digest
+            # interval in minutes (0 = off, null = the hub default).
+            ok, msg = set_project_digest_interval(data.get("projectId", ""),
+                                                  data.get("intervalMin"))
+            self._send_json(200 if ok else (404 if msg == "no_such_project" else 400),
+                            {"ok": ok} if ok else {"error": msg})
+            return
+        if p == "/api/digest/check":
+            # {projectId, force?}: run the progress check now. Without force it
+            # sends only when something changed, exactly like the timer.
+            proj = find_project((data.get("projectId") or "").strip())
+            if proj is None:
+                self._send_json(404, {"error": "no_such_project"})
+                return
+            self._send_json(200, digest.check(proj, force=bool(data.get("force"))))
+            return
         if p == "/api/projects/delete":
             pid = (data.get("projectId") or "").strip()
             ok = unregister_project(pid)
@@ -6232,6 +6288,10 @@ def main():
 
     # Plan allowance: refreshed on its own thread so /api/usage is a cache read.
     usage.start_scheduler()
+
+    # The PO's progress digest: checks each project with a PO on its interval,
+    # wakes the PO only when something changed.
+    digest.start_scheduler()
 
     # Serve every listener; extra ones run in daemon threads, the last inline.
     for s in servers[:-1]:
