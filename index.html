@@ -3320,6 +3320,8 @@ function detailInfo(r) {
     parts.push(`<div class="dp-section"><h3>Assigned</h3><div style="display: flex; flex-wrap: wrap; gap: 6px;">${r.members.map(m => {
       const bits = [esc(m.identity || m.agent), esc(m.model || 'default model')];
       if (m.role) bits.push(esc(m.role));
+      // A reviewer on mention is not a running agent: it starts per request.
+      if (m.onMention) bits.push(m.reviewing ? 'reviewing now' : 'on mention');
       return `<span class="badge-agent ${esc(m.agent)}" title="${esc(m.agent)}">${bits.join(' · ')}</span>`;
     }).join('')}</div></div>`);
   }
@@ -3836,7 +3838,8 @@ function cardAgents(r) {
     const kind = (m.agent || '').toLowerCase();
     const cls = kind === 'claude' ? 'claude' : (kind === 'codex' ? 'codex' : 'other');
     const model = shortModel(m.model);
-    const tip = [m.identity || m.agent, m.model || 'default model', m.role || ''].filter(Boolean).join(' · ');
+    const tip = [m.identity || m.agent, m.model || 'default model', m.role || '',
+                 m.onMention ? (m.reviewing ? 'reviewing now' : 'on mention') : ''].filter(Boolean).join(' · ');
     return `<span class="cagent" title="${esc(tip)}"><span class="av ${cls}">${esc((m.agent || '?')[0])}</span>`
          + `<span class="cagent-t">${esc(m.agent)}${model ? ' ' + esc(model) : ''}</span></span>`;
   }).join('');

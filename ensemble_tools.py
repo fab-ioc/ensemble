@@ -370,6 +370,37 @@ TOOLS = [
     },
 ]
 
+# Offered only to a reviewer on mention (see chatroom.is_on_mention): the one
+# way its review ends. Kept literal — no `_d.` at import time.
+REVIEW_VERDICT_NAMES = ("approve", "changes_requested", "comment")
+REVIEW_TOOLS = [
+    {
+        "name": "review_done",
+        "description": (
+            "Finish your review: give your verdict and findings. The hub appends "
+            "them to the task's REVIEW-LOG.md (which the next reviewer reads), "
+            "sends them to whoever asked for the review and to the project's PO, "
+            "and then ends your session. Call it exactly once, when the review is "
+            "complete; do not also send the verdict with chat_send."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "verdict": {"type": "string", "enum": list(REVIEW_VERDICT_NAMES),
+                            "description": "approve | changes_requested | comment."},
+                "summary": {"type": "string",
+                            "description": "One line: the verdict in a sentence."},
+                "findings": {"type": "string",
+                             "description": "The review, Markdown: what is right, what is "
+                                            "wrong, what is missing, what to change (file:line "
+                                            "where you can), and the status of each earlier "
+                                            "finding from the review log."},
+            },
+            "required": ["verdict", "findings"],
+        },
+    },
+]
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -441,9 +472,17 @@ def _status(room: dict) -> str:
 
 
 def _agents_view(room: dict) -> list[dict]:
-    return [{"identity": p.get("identity", ""), "agent": p.get("agent", ""),
+    out = []
+    for p in room.get("participants", []):
+        if p.get("kind") != "agent":
+            continue
+        a = {"identity": p.get("identity", ""), "agent": p.get("agent", ""),
              "model": p.get("model", ""), "role": p.get("role", "")}
-            for p in room.get("participants", []) if p.get("kind") == "agent"]
+        if _d.chatroom.is_on_mention(room, p):
+            # Not a running agent: started fresh for each review request.
+            a["runs"] = "reviewing now" if _d._pty_alive(p.get("ptyId")) else "on mention"
+        out.append(a)
+    return out
 
 
 def _title(room: dict, labels: dict | None = None) -> str:
@@ -650,6 +689,78 @@ def _report(ctx, args, handler):
             "note": ("delivered, and the PO was woken" if rung else
                      "delivered to the PO's room, but the PO is not running, so it "
                      "was not woken — it will see the report when it next reads")}
+
+
+def _review_done(ctx, args, handler):
+    """A reviewer on mention hands in its review: log it, send it to whoever
+    asked and to the PO, and end the session."""
+    room, me, part = ctx["room"], ctx["identity"], ctx["part"]
+    if not _d.chatroom.is_on_mention(room, part):
+        raise ToolError("review_done is for a reviewer started on mention — "
+                        "reply with chat_send instead")
+    verdict = (args.get("verdict") or "").strip().lower()
+    if verdict not in REVIEW_VERDICT_NAMES:
+        raise ToolError(f"verdict must be one of: {', '.join(REVIEW_VERDICT_NAMES)}")
+    findings = (args.get("findings") or "").strip()
+    if not findings:
+        raise ToolError("findings are required — write the review itself")
+    summary = " ".join((args.get("summary") or "").split())[:300]
+    review = part.get("review") or {}
+    if review.get("endedAt"):
+        raise ToolError("this review is already recorded and your session is ending")
+    log_text = _d.read_review_log(room)
+    n = review.get("n") or (_d.review_count(log_text) + 1)
+    label = _d.REVIEW_VERDICTS[verdict]
+    asker = review.get("askedBy") or ""
+    title = _title(room)
+    when = time.strftime("%Y-%m-%d %H:%M", time.localtime())
+    where = ""
+    if review.get("branch") or review.get("head"):
+        where = (f"- Reviewed: branch `{review.get('branch') or '?'}` at "
+                 f"`{review.get('head') or '?'}`"
+                 + (f" (against `{review['base']}`)" if review.get("base") else "") + "\n")
+    question = " ".join((review.get("question") or "").split())[:400]
+    entry = (f"## Review {n} — {label} — {when}\n\n"
+             f"- Reviewer: {me} ({part.get('agent', '')}"
+             + (f" {part.get('model')}" if part.get("model") else "") + ")\n"
+             + (f"- Asked by: {asker} — “{question}”\n" if asker else "")
+             + where
+             + (f"- Summary: {summary}\n" if summary else "")
+             + f"\n{findings}\n")
+    path = _d.append_review_log(room, entry)
+
+    # To whoever asked, in the task's own chat.
+    po = _project_po(_projects().get(ctx["projectId"]))
+    if po and (po.get("missing") or po["roomId"] == room["id"] or not po.get("identity")):
+        po = None
+    idents = {p.get("identity") for p in room.get("participants", [])}
+    to = asker if asker in idents and asker != me else ""
+    head = f"**Review {n}: {label}**" + (f" — {summary}" if summary else "")
+    tail = f"\n\n_Added to `{_d.REVIEW_LOG_NAME}`" + ("; sent to the PO._" if po else "._")
+    res = _d.chatroom.post_message(room["id"], me, f"{head}\n\n{findings}{tail}", to=to)
+    if res:
+        handler._ring_recipients(room["id"], res)
+
+    # To the PO, as a report into its room (it wakes the PO).
+    po_woken = False
+    if po:
+        body = (f"**review {n} — {label}** of task *{title}* (`{room['id']}`, by {me}"
+                + (f", asked by {asker}" if asker else "") + f"):\n\n"
+                + (f"{summary}\n\n" if summary else "") + findings)
+        pres = _d.chatroom.post_report(po["roomId"], f"{me}@{room['id']}", po["identity"], body,
+                                       {"reportKind": "review", "verdict": verdict,
+                                        "taskId": room["id"], "taskTitle": title,
+                                        "reporter": me})
+        po_woken = bool(handler._ring_report(po["roomId"], pres, room["id"], title, me,
+                                             f"review {n} ({label})",
+                                             summary or findings)) if pres else False
+
+    _d.finish_review(room["id"], me, verdict)
+    return {"ok": True, "review": n, "verdict": verdict, "log": str(path),
+            "sentTo": to or "everyone",
+            "po": ({"roomId": po["roomId"], "identity": po["identity"], "woken": po_woken}
+                   if po else "none — this project has no PO"),
+            "note": "recorded. Your session ends in a few seconds; there is nothing more to do."}
 
 
 def _list_projects(ctx, args, handler):
@@ -988,6 +1099,7 @@ _IMPL = {
     "ensemble_move_task": _move_task,
     "ensemble_get_roadmap": _get_roadmap,
     "ensemble_update_roadmap": _update_roadmap,
+    "review_done": _review_done,
 }
 
 NAMES = frozenset(_IMPL)

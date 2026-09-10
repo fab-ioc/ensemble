@@ -784,15 +784,29 @@ function applyTheme(c) {
   Object.values(terms).forEach(t => { try { t.term.options.theme = xt; } catch (e) {} });
 }
 
+// Which terminal each agent holds. A reviewer on mention gets a new one for
+// every review, so a change here means the terminal headers must be rebuilt.
+let AGENTS_SIG = '';
+function agentsSig(room) {
+  return room.participants.filter(p => p.kind === 'agent')
+    .map(p => p.identity + ':' + (p.ptyId || '')).join('|');
+}
+// A reviewer on mention with no live terminal is not "stopped" — it starts
+// when someone asks it for a review.
+function onMentionState(a, ptyMap) {
+  return (a.onMention && !(ptyMap[a.ptyId] || {}).alive) ? { cls: 'dead', txt: 'on mention' } : null;
+}
+
 function buildAgents(room) {
   const col = $('#agentcol'); col.innerHTML = '';
   room.participants.filter(p => p.kind === 'agent').forEach(p => {
     const div = document.createElement('div');
     div.className = 'agent';
-    div.innerHTML = `<div class="ah"><span class="adot" data-pty="${esc(p.ptyId||'')}">●</span> `
+    const om = p.onMention ? ' data-onmention="1"' : '';
+    div.innerHTML = `<div class="ah"><span class="adot" data-pty="${esc(p.ptyId||'')}"${om}>●</span> `
       + `<span class="nm">${esc(p.identity)}</span>`
       + `<span class="dim">${esc(p.agent)}${p.model ? ' · ' + esc(p.model) : ''}</span>`
-      + `<span class="astat dim" data-pty="${esc(p.ptyId||'')}"></span>`
+      + `<span class="astat dim" data-pty="${esc(p.ptyId||'')}"${om}></span>`
       + `<span class="grow"></span><span class="dim toggle">▸ terminal</span></div>`
       + `<div class="term"></div>`;
     div.querySelector('.ah').onclick = () => toggleTerm(div, p.ptyId);
@@ -826,6 +840,7 @@ function buildAgents(room) {
       div.scrollIntoView({ block: 'nearest' });
     }
   }
+  AGENTS_SIG = agentsSig(room);
   agentsBuilt = true;
 }
 function toggleTerm(div, ptyId) {
@@ -1006,14 +1021,14 @@ async function refresh() {
   document.body.classList.toggle('notrunning', notRunning);
   // Basic session info (parity with a single-agent's detail view).
   const mem = room.participants.filter(p => p.kind === 'agent');
-  ROOM_AGENTS = mem.map(m => ({ identity: m.identity, agent: m.agent, ptyId: m.ptyId, sessionId: m.sessionId }));
+  ROOM_AGENTS = mem.map(m => ({ identity: m.identity, agent: m.agent, ptyId: m.ptyId, sessionId: m.sessionId, onMention: !!m.onMention }));
   ROOM_LIVE = !notRunning;
   ROOM_OBJ = room;
   const cwd = room.cwd || '';
   ensureTheme(cwd);
   $('#info').innerHTML =
     (cwd ? `<span title="${esc(cwd)}">📁 ${esc(tildeify(cwd))}</span>` : '')
-    + mem.map(m => `<span class="ib-agent ${esc(m.agent)}" title="${esc(m.identity)}">${esc(m.agent)}${m.model ? ' · ' + esc(m.model) : ''}</span>`).join('')
+    + mem.map(m => `<span class="ib-agent ${esc(m.agent)}" title="${esc(m.identity)}${m.onMention ? ' — started fresh for each review request' : ''}">${esc(m.agent)}${m.model ? ' · ' + esc(m.model) : ''}${m.onMention ? ' · on mention' : ''}</span>`).join('')
     + (soloMode ? '' : `<span>${room.messages.length} messages · hop ${room.hopCount || 0}/${room.maxHops || 0}</span>`);
   const showTerms = !document.body.classList.contains('term-hidden');
   $('#terms').hidden = notRunning;
@@ -1028,6 +1043,12 @@ async function refresh() {
   $('#ide').hidden = !hasCwd;
   $('#theme').hidden = !hasCwd;
   if (!_pinInit) { _pinInit = true; refreshPinLabel(); }
+  if (agentsBuilt && agentsSig(room) !== AGENTS_SIG) {
+    // A review started (a new terminal): drop the mounted ones and rebuild.
+    Object.values(terms).forEach(t => { try { t.es.close(); } catch(e) {} });
+    for (const k in terms) delete terms[k];
+    agentsBuilt = false;
+  }
   if (!agentsBuilt && showTerms && room.participants.some(p => p.kind === 'agent' && p.ptyId)) buildAgents(room);
   if (soloMode) {
     const a = mem[0] || {};
@@ -1071,7 +1092,8 @@ async function updateAgentStatus() {
   const lmap = {}; (live || []).forEach(x => { if (x.sessionId) lmap[x.sessionId] = x.status; });
   // Terminal-header dots (present only when terminals are built/shown).
   document.querySelectorAll('.adot').forEach(dot => {
-    const s = ptyState(map[dot.dataset.pty]);
+    const s = onMentionState({ onMention: !!dot.dataset.onmention, ptyId: dot.dataset.pty }, map)
+      || ptyState(map[dot.dataset.pty]);
     dot.className = 'adot ' + s.cls;
     const stat = document.querySelector('.astat[data-pty="' + dot.dataset.pty + '"]');
     if (stat) stat.textContent = s.txt;
@@ -1099,7 +1121,7 @@ function renderActivity(ptyMap, liveMap) {
   renderLiveTail();
   bar.hidden = false;
   bar.innerHTML = agents.map(a => {
-    const s = agentState(a, ptyMap, liveMap || {});
+    const s = onMentionState(a, ptyMap) || agentState(a, ptyMap, liveMap || {});
     return `<span class="act ${s.cls}"><span class="act-dot"></span>${esc(a.identity)} <span class="act-txt">${s.txt}</span></span>`;
   }).join('');
 }
