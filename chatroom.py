@@ -292,6 +292,20 @@ def record_exit(room_id: str, identity: str, exit_rec: dict) -> bool:
         return True                  # a death is not activity on the task.
 
 
+def patch_room(room_id: str, **fields) -> dict | None:
+    """Set a few fields on a room — read-modify-write under the room lock, for
+    the same reason as :func:`record_exit`. No ``updatedAt`` bump: the hub
+    noting something about a task is not activity on it. Returns the full
+    room, or None when it no longer exists."""
+    with _LOCK:
+        room = _read(room_id)
+        if room is None:
+            return None
+        room.update(fields)
+        _write(room)
+        return room
+
+
 def clear_exits(room_id: str) -> bool:
     """Forget every recorded exit on a room — the human has dealt with it.
 

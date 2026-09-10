@@ -4040,6 +4040,9 @@ def update_task(rid: str, title=None, spec=None,
         if w is None:
             return False, None, "bad_workflow"
         room["workflow"] = w
+        # When the card was last moved, by anyone: a merge only moves a card
+        # nobody has moved since (digest._settle_merges).
+        room["workflowAt"] = time.time()
         patch["workflow"] = w
     if not patch:
         return False, None, "nothing_to_change"

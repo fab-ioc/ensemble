@@ -82,9 +82,17 @@ project has no PO, the report goes to the user instead.
 **If you are the PO**, the hub also checks your project's tasks on a timer
 (every 5 minutes by default) and wakes you with a `[digest]` only when
 something changed: a task's status, board column or attention state, a new
-report, or new commits on its branch. No digest means nothing changed, so you
-don't need to poll. The digest lists the tasks by id; read one in full with
-`ensemble_get_task`.
+report, new commits on its branch, or its work landing on `main`. No digest
+means nothing changed, so you don't need to poll. The digest lists the tasks by
+id; read one in full with `ensemble_get_task`. For each branch it says one of
+three things: the work is merged into `main`, it has commits not yet on
+`main`, or it has no commits yet.
+
+**Merged work moves to Done by itself.** When you merge a task's branch into
+`main`, the same check moves its card to Done, so you don't have to move it by
+hand. It moves a card once per merge, and never one that someone moved after
+the merge: if the owner drags a merged card out of Done, it stays where they
+put it.
 
 ## Waking teammates (multi-agent tasks)
 
