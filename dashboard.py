@@ -18,6 +18,7 @@ Ensemble's own state lives in ~/.ensemble.
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import os
@@ -1785,6 +1786,75 @@ def project_home(project: dict, create: bool = True) -> str:
         except OSError:
             pass
     return os.path.normpath(home)
+
+
+# ---- Roadmap: ROADMAP.md in the project's home ------------------------------
+# Plain Markdown next to the project's tasks, so it travels with the project
+# and the projects backup carries it. The owner edits it in the dashboard, the
+# project's PO through the MCP tools; neither may silently overwrite the other.
+# Every read hands out a version (a hash of the file's bytes) and every write
+# must name the version it was based on. A mismatch is refused and the newer
+# text is returned, so both edits survive. A hash, not the mtime: it cannot
+# collide on a coarse clock, and a file rewritten with the same bytes is not
+# a conflict because nothing would be lost.
+ROADMAP_NAME = "ROADMAP.md"
+ROADMAP_MAX_BYTES = 1_000_000
+_ROADMAP_LOCK = threading.Lock()
+
+
+def roadmap_path(project: dict, create: bool = False) -> Path:
+    return Path(project_home(project, create=create)) / ROADMAP_NAME
+
+
+def _roadmap_state(fp: Path) -> dict:
+    try:
+        raw = fp.read_bytes()
+        mtime = fp.stat().st_mtime
+    except FileNotFoundError:
+        return {"exists": False, "text": "", "version": "", "mtime": None}
+    return {"exists": True,
+            "text": raw.decode("utf-8", errors="replace").replace("\r\n", "\n"),
+            "version": hashlib.sha256(raw).hexdigest()[:16],
+            "mtime": round(mtime, 3)}
+
+
+def read_roadmap(project: dict) -> dict:
+    """The project's roadmap: {path, exists, text, version, mtime}. A roadmap
+    nobody has written yet is exists=False with version ""."""
+    fp = roadmap_path(project)
+    return {"projectId": project.get("id", ""), "path": str(fp), **_roadmap_state(fp)}
+
+
+def write_roadmap(project: dict, text: str, base_version: str) -> tuple[bool, dict]:
+    """Save the roadmap if it is still the version the writer read.
+
+    ``base_version`` is the version the writer's text started from ("" for a
+    roadmap that did not exist yet). Returns (True, state after the write) or
+    (False, {"error": ..., "current": state now}) — on a conflict the caller
+    gets the newer text back and nothing on disk is touched."""
+    if not isinstance(text, str):
+        return False, {"error": "text must be a string"}
+    data = text.replace("\r\n", "\n").encode("utf-8")
+    if len(data) > ROADMAP_MAX_BYTES:
+        return False, {"error": f"roadmap is too large ({len(data)} bytes, "
+                                f"the limit is {ROADMAP_MAX_BYTES})"}
+    fp = roadmap_path(project, create=True)
+    with _ROADMAP_LOCK:
+        cur = _roadmap_state(fp)
+        if (base_version or "") != cur["version"]:
+            return False, {"error": "conflict", "current": {"path": str(fp), **cur}}
+        tmp = fp.with_name(f".{ROADMAP_NAME}.{os.getpid()}.tmp")
+        try:
+            tmp.write_bytes(data)
+            os.replace(tmp, fp)
+        except OSError as e:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            return False, {"error": f"could not write {fp}: {e}"}
+        return True, {"projectId": project.get("id", ""), "path": str(fp),
+                      **_roadmap_state(fp)}
 
 
 def _task_dir_for(project: dict, title: str) -> Path:
@@ -3929,6 +3999,14 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/projects":
             self._send_json(200, build_projects())
             return
+        if p == "/api/roadmap":
+            pid = (parse_qs(u.query).get("project", [""])[0]).strip()
+            proj = next((x for x in load_projects() if x["id"] == pid), None)
+            if proj is None:
+                self._send_json(404, {"error": "no_such_project"})
+                return
+            self._send_json(200, read_roadmap(proj))
+            return
         if p == "/api/dir":
             q = parse_qs(u.query)
             path = (q.get("path", [""])[0] or "").strip()
@@ -4896,6 +4974,20 @@ class Handler(BaseHTTPRequestHandler):
             pid = (data.get("projectId") or "").strip()
             ok = unregister_project(pid)
             self._send_json(200 if ok else 404, {"ok": ok})
+            return
+        if p == "/api/roadmap":
+            # Refused with 409 and the newer text when the file changed since
+            # the editor opened it (see write_roadmap).
+            pid = (data.get("projectId") or "").strip()
+            proj = next((x for x in load_projects() if x["id"] == pid), None)
+            if proj is None:
+                self._send_json(404, {"error": "no_such_project"})
+                return
+            ok, res = write_roadmap(proj, data.get("text"), data.get("baseVersion") or "")
+            if ok:
+                self._send_json(200, {"ok": True, **res})
+            else:
+                self._send_json(409 if res.get("error") == "conflict" else 400, res)
             return
         if p == "/api/room/new":
             # Create a task (room + workspace + task folder) and — unless

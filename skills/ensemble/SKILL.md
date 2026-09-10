@@ -33,6 +33,8 @@ and teammates, and the **write scope** your tool calls are limited to. Then:
 | Stop a running task (keeps everything) | `ensemble_stop_task` |
 | Move a task to another project | `ensemble_move_task` |
 | Delete a task permanently | `ensemble_delete_task` |
+| Read a project's roadmap | `ensemble_get_roadmap` |
+| Replace your project's roadmap | `ensemble_update_roadmap` |
 
 Task statuses: `draft` (created, never launched), `running`, `waiting_user`
 (its agents asked the product owner and are paused), `paused` (turn limit
@@ -88,6 +90,27 @@ being asked.
 - **Prefer stop over delete.** Delete only drafts you created and no longer
   need, or when the product owner explicitly asks. Deleting removes the task
   record, chat and agent transcripts; the task folder and code are kept.
+
+## The project roadmap
+
+Each project has one roadmap: `ROADMAP.md`, plain Markdown, in the project's
+home folder (`project.home`). The product owner reads and edits it on the
+project's **Roadmap** tab; the project's PO keeps it current through the tools.
+
+- **If you are the project's PO, you own the roadmap**, alongside the
+  project's documentation. When a task lands, a plan changes, or the product
+  owner decides something about direction, update it. Keep it about what the
+  project is for, what is next and why — not a copy of the task list.
+- **Read before you write.** `ensemble_get_roadmap` returns the text and a
+  `version`. Pass that version as `baseVersion` to `ensemble_update_roadmap`,
+  with the **whole** new document. A roadmap that does not exist yet has
+  version `""`; the first update creates the file.
+- **A refused update is not an error to retry blindly.** If the product owner
+  saved since you read it, the write is refused with `"error": "conflict"` and
+  their current text. Merge your change into *their* text — their edit wins
+  where you disagree — and try again with the new version.
+- Only your own project's roadmap can be written; any project's can be read.
+  Mention files by path (`docs/plan.md`) and they open in the file view.
 
 ## Planning work for a project
 
