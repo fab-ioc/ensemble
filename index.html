@@ -1257,6 +1257,150 @@
     font: inherit; font-size: var(--fs-100); font-weight: 500;
   }
   #status .dismiss:hover { background: var(--hover); color: var(--fg); }
+  /* --- Board ------------------------------------------------------------- */
+  /* Columns never wrap and never shrink below 248px; horizontal scroll is the
+     escape valve, which is what Jira does and what stays legible. A card never
+     drops a signal to fit - the column scrolls, the card stays whole. */
+  .board {
+    display: grid; grid-auto-flow: column;
+    grid-auto-columns: minmax(248px, 1fr);
+    gap: var(--s-300); overflow-x: auto; padding-bottom: var(--s-200);
+    align-items: start;
+  }
+  .col { min-width: 248px; display: flex; flex-direction: column; }
+  .col-head {
+    display: flex; align-items: center; gap: var(--s-200);
+    height: 40px; padding: 0 var(--s-200);
+    border-top: 2px solid var(--c-neutral-bold);
+    /* .board is overflow-x:auto, so IT is the sticky container, not the
+       viewport — offsetting by --header-h here pushed the header 49px down
+       into the board and painted it over the first card's title. Within this
+       scrollport the header belongs at the top. */
+    position: sticky; top: 0; background: var(--bg); z-index: 4;
+  }
+  .col.progress  .col-head { border-top-color: var(--c-progress-bold); }
+  .col.discovery .col-head { border-top-color: var(--c-discovery-bold); }
+  .col.success   .col-head { border-top-color: var(--c-success-bold); }
+  .col-name {
+    font-size: var(--fs-100); font-weight: 600; text-transform: uppercase;
+    letter-spacing: .05em; color: var(--fg-muted);
+  }
+  .col-count {
+    background: var(--c-neutral-bg); color: var(--c-neutral-fg);
+    border-radius: var(--r-full); padding: 0 6px;
+    font-size: var(--fs-100); font-weight: 600; font-variant-numeric: tabular-nums;
+  }
+  .col-body {
+    flex: 1; background: var(--surface-sunken); border-radius: var(--r-300);
+    padding: var(--s-200); display: flex; flex-direction: column; gap: var(--s-200);
+    min-height: 88px;
+  }
+  /* A drop target is a live affordance - release here and it lands - not a
+     surface saying "you are here". It is allowed the accent; what was wrong
+     with the old ones was their weight, not their hue. */
+  .col-body.over { background: var(--selected-bg); box-shadow: inset 0 0 0 2px var(--accent); }
+  .col-empty {
+    border: 1px dashed var(--border); border-radius: var(--r-200);
+    padding: var(--s-300); text-align: center;
+    color: var(--fg-muted); font-size: var(--fs-200);
+  }
+  .col-older {
+    background: transparent; border: 0; color: var(--fg-muted);
+    font: inherit; font-size: var(--fs-200); cursor: pointer;
+    padding: var(--s-200); border-radius: var(--r-200); text-align: left;
+  }
+  .col-older:hover { background: var(--hover); color: var(--fg); }
+  .card {
+    position: relative; background: var(--surface); border-radius: var(--r-200);
+    box-shadow: var(--e-100); padding: var(--s-300); cursor: pointer;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .card:hover { box-shadow: var(--e-200); }
+  /* The only rail on a card, and only while an agent is actually working. */
+  .card.working::before {
+    content: ''; position: absolute; inset: 0 auto 0 0; width: 2px;
+    border-radius: var(--r-200) 0 0 var(--r-200); background: var(--run-working);
+  }
+  .card.dragging { opacity: .9; box-shadow: var(--e-200); transform: rotate(2deg); }
+  .ctitle {
+    font-size: var(--fs-300); line-height: var(--lh-300); color: var(--fg);
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .crow1, .crow2 { display: flex; align-items: center; gap: var(--s-200); min-width: 0; }
+  .crow1 .prio-ico { display: inline-block; margin: 0; flex: 0 0 auto; }
+  .run { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-200); color: var(--fg-subtle); }
+  .run.off { color: var(--fg-muted); }
+  .run .dot { width: 8px; height: 8px; border-radius: var(--r-full); background: var(--run-off); }
+  .run .dot.working { background: var(--run-working); animation: cardpulse 2s infinite; }
+  .run .dot.idle { background: var(--run-idle); }
+  @keyframes cardpulse {
+    0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run-working) 45%, transparent); }
+    70%  { box-shadow: 0 0 0 5px color-mix(in srgb, var(--run-working) 0%, transparent); }
+    100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run-working) 0%, transparent); }
+  }
+  @media (prefers-reduced-motion: reduce) { .run .dot.working { animation: none; } }
+  .cproj {
+    margin-left: auto; font-size: var(--fs-100); color: var(--fg-muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%;
+  }
+  .cagent { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+  /* An avatar is a SOLID fill with light text; a lozenge is a pale wash with
+     dark text. That difference is what stops the two reading as each other
+     when their hues are neighbours. */
+  .av {
+    width: 20px; height: 20px; border-radius: var(--r-full);
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: var(--fs-100); font-weight: 600; text-transform: uppercase;
+    flex: 0 0 auto;
+  }
+  .av.claude { background: var(--agent-claude-bg); color: var(--agent-claude-fg); }
+  .av.codex  { background: var(--agent-codex-bg);  color: var(--agent-codex-fg); }
+  .av.other  { background: var(--c-neutral-bold);  color: var(--surface); }
+  .cagent-t { font-size: var(--fs-100); color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cagent-more { font-size: var(--fs-100); color: var(--fg-muted); }
+  .cwhen { margin-left: auto; font-size: var(--fs-100); color: var(--fg-muted); white-space: nowrap; }
+  .loz {
+    align-self: flex-start; display: inline-flex; align-items: center; height: 16px;
+    padding: 0 6px; border-radius: var(--r-100);
+    font-size: var(--fs-100); font-weight: 600; line-height: 16px;
+    letter-spacing: .05em; text-transform: uppercase;
+  }
+  .loz.warning   { background: var(--c-warning-bg);   color: var(--c-warning-fg); }
+  .loz.danger    { background: var(--c-danger-bg);    color: var(--c-danger-fg); }
+  .loz.neutral   { background: var(--c-neutral-bg);   color: var(--c-neutral-fg); }
+  .loz.progress  { background: var(--c-progress-bg);  color: var(--c-progress-fg); }
+  .loz.discovery { background: var(--c-discovery-bg); color: var(--c-discovery-fg); }
+  /* An offer, not a modal: the move already happened and ignoring this is a
+     valid outcome. */
+  .offer {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    margin-top: 2px; padding: var(--s-200);
+    background: var(--surface-sunken); border-radius: var(--r-200);
+    font-size: var(--fs-200); color: var(--fg-subtle);
+  }
+  .offer button {
+    border: 1px solid var(--border-strong); background: var(--surface);
+    color: var(--fg); font: inherit; font-size: var(--fs-100);
+    padding: 3px 8px; border-radius: var(--r-200); cursor: pointer;
+  }
+  .offer button.ok { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+  .offer button:hover { filter: brightness(.97); }
+  /* Board / List - what you are LOOKING AT, so it sits in the header opposite
+     the project name, not in the filter row which says what is included. */
+  .viewsw { margin-left: auto; display: inline-flex; border: 1px solid var(--border); border-radius: var(--r-200); overflow: hidden; }
+  .viewsw button {
+    background: transparent; border: 0; padding: 4px 12px; cursor: pointer;
+    font: inherit; font-size: var(--fs-200); color: var(--fg-subtle);
+  }
+  .viewsw button + button { border-left: 1px solid var(--border); }
+  .viewsw button:hover { background: var(--hover); color: var(--fg); }
+  .viewsw button.on { background: var(--selected-bg); color: var(--selected-fg); font-weight: 500; }
+  /* Narrow: the board scrolls sideways rather than squeezing a column. */
+  @media (max-width: 900px) {
+    .board { grid-auto-columns: minmax(248px, 0.9fr); scroll-snap-type: x proximity; }
+    .col { scroll-snap-align: start; }
+  }
   /* --- Notifications: tasks that need you ------------------------------- */
   /* The bell takes .bar-btn.icon like every other icon control up here; only
      the count badge is its own. A bell with nothing in it says nothing, so
@@ -2198,6 +2342,59 @@ function saveFilters() {
   try { localStorage.setItem('cd-filters', JSON.stringify([...FILTERS])); } catch (e) {}
 }
 let FILTERS = loadFilters();
+
+// ---------------------------------------------------------------------------
+// The board. Columns are a task's stored `workflow` — a place the owner PUT
+// the card — never its run state, which is computed from a live PTY registry
+// that empties on every hub restart. The dot on the card carries what is
+// running; the column carries what was decided. They are allowed to disagree,
+// and after a restart they will.
+// ---------------------------------------------------------------------------
+const WORKFLOW_COLS = [
+  { k: 'backlog',    name: 'Backlog',     tone: 'neutral'   },
+  { k: 'todo',       name: 'To do',       tone: 'neutral'   },
+  { k: 'inprogress', name: 'In progress', tone: 'progress'  },
+  { k: 'inreview',   name: 'In review',   tone: 'discovery' },
+  { k: 'done',       name: 'Done',        tone: 'success'   },
+];
+const WORKFLOW_KEYS = WORKFLOW_COLS.map(c => c.k);
+const DONE_AGE_DAYS = 14;
+
+let VIEW_MODE = localStorage.getItem('cd-view') === 'board' ? 'board' : 'list';
+function setViewMode(m) {
+  VIEW_MODE = m;
+  try { localStorage.setItem('cd-view', m); } catch (e) {}
+  BOARD_SIG = '';          // force a remount: we are changing what is on screen
+  renderRows();
+}
+
+// Mirrors dashboard.workflow_of. The server only started sending `workflow`
+// with the task-column change, and that needs a hub restart — so until then
+// every row arrives without one and the board would be empty. Deriving the
+// same default here means the board is correct before the restart and simply
+// starts honouring stored values after it.
+function workflowOf(r) {
+  const w = (r && r.workflow || '').toString().toLowerCase();
+  if (WORKFLOW_KEYS.includes(w)) return w;
+  if (r && r.draft) return 'backlog';
+  return (r && r.isLive) ? 'inprogress' : 'done';
+}
+
+// The grouping freeze. DISPLAYED_ORDER stops rows re-sorting under the mouse;
+// this stops a card CHANGING COLUMN under it, which agent-driven transitions
+// made possible — an agent can move its own task to In review while you are
+// reaching for the card. Frozen and thawed in exactly the same place and on
+// exactly the same condition as the order, so the two can never disagree.
+//
+// It freezes PLACEMENT ONLY. Run dots, attention lozenges and elapsed times
+// keep updating while you hover: a board that goes stale under the cursor
+// fails at "what is running now" just as badly as one whose cards move.
+let DISPLAYED_WORKFLOW = new Map();
+function frozenWorkflowOf(r, frozen) {
+  if (!frozen) return workflowOf(r);
+  const was = DISPLAYED_WORKFLOW.get(r.roomId || r.sessionId);
+  return was || workflowOf(r);
+}
 // When on, hide sessions run outside the dashboard (cwd not under ~/cs).
 let HIDE_EXTERNAL = localStorage.getItem('cd-hide-external') === '1';
 // Category sidebar selection. Sentinel values: '__all__' (everything),
@@ -2883,6 +3080,230 @@ function renderHeadlessRow(r, parsed, now) {
   </tr>`;
 }
 
+// ---------------------------------------------------------------------------
+// Board rendering. A second renderer over the SAME filtered rows the list
+// uses, so the two views can never disagree about what is included — the
+// board groups them, and never sorts them: ordering happens in exactly one
+// place (refresh's freeze) and a second sort here would defeat it.
+// ---------------------------------------------------------------------------
+function runChip(r) {
+  if (r.draft) return `<span class="run"><span class="dot off"></span>not started</span>`;
+  if (r.isLive && r.status === 'busy') return `<span class="run"><span class="dot working"></span>working</span>`;
+  if (r.isLive) return `<span class="run"><span class="dot idle"></span>idle</span>`;
+  // Calm on purpose: this is the whole board for a minute after every hub
+  // restart. No red, no border, no icon — if it reads as an error, it is wrong.
+  return `<span class="run off"><span class="dot off"></span>not running</span>`;
+}
+
+function shortModel(m) {
+  // A card has room for the distinguishing part, not the vendor's full string.
+  const t = (m || '').trim();
+  if (!t) return '';
+  const bits = t.split(/[-_\s]+/).filter(Boolean);
+  return bits.length > 1 ? bits[bits.length - 1] : t;
+}
+
+function cardAgents(r) {
+  const members = (r.members && r.members.length) ? r.members
+    : (r.agent ? [{ agent: r.agent, model: '', identity: r.agent }] : []);
+  const shown = members.slice(0, 2).map(m => {
+    const kind = (m.agent || '').toLowerCase();
+    const cls = kind === 'claude' ? 'claude' : (kind === 'codex' ? 'codex' : 'other');
+    const model = shortModel(m.model);
+    const tip = [m.identity || m.agent, m.model || 'default model', m.role || ''].filter(Boolean).join(' · ');
+    return `<span class="cagent" title="${esc(tip)}"><span class="av ${cls}">${esc((m.agent || '?')[0])}</span>`
+         + `<span class="cagent-t">${esc(m.agent)}${model ? ' ' + esc(model) : ''}</span></span>`;
+  }).join('');
+  const extra = members.length > 2 ? `<span class="cagent-more">+${members.length - 2}</span>` : '';
+  return shown + extra;
+}
+
+function cardHtml(r, now) {
+  const attn = ATTENTION_BY_ROOM.get(r.roomId) || r.attention || null;
+  const tone = (attn && (attn.state === 'agent_gone' || attn.state === 'blocked')) ? 'danger'
+             : (attn && attn.state === 'stalled') ? 'neutral' : 'warning';
+  // The attention lozenge goes FIRST, above the title: it is the reason you
+  // would look at this card at all.
+  const loz = attn
+    ? `<span class="loz ${tone}" title="${esc(attn.reason || '')}">${esc(ATTN_LABEL[attn.state] || attn.state)}</span>` : '';
+  const proj = (!SELECTED_PROJECT && r.projectName)
+    ? `<span class="cproj" title="${esc(r.projectName)}">${esc(r.projectName)}</span>` : '';
+  const working = r.isLive && r.status === 'busy' ? ' working' : '';
+  return `<article class="card${working}" draggable="true" data-room="${esc(r.roomId || '')}" data-sid="${esc(r.sessionId)}">
+    ${loz}
+    <div class="ctitle">${esc(r.label || '(session)')}</div>
+    <div class="crow1">${r.roomId ? prioIcon(prioOf(r)) : ''}${runChip(r)}${proj}</div>
+    <div class="crow2">${cardAgents(r)}<span class="cwhen">${esc(fmtAgo(now - r.updatedAt))}</span></div>
+  </article>`;
+}
+
+function boardHtml(rows, now, frozen) {
+  const byCol = new Map(WORKFLOW_KEYS.map(k => [k, []]));
+  for (const r of rows) {
+    const k = frozenWorkflowOf(r, frozen);
+    (byCol.get(k) || byCol.get('backlog')).push(r);
+  }
+  const cutoff = now - DONE_AGE_DAYS * 86400;
+  return `<div class="board">` + WORKFLOW_COLS.map(c => {
+    let items = byCol.get(c.k) || [];
+    const total = items.length;
+    let aged = 0;
+    if (c.k === 'done' && !DONE_SHOW_ALL) {
+      const fresh = items.filter(r => (r.updatedAt || 0) >= cutoff);
+      aged = items.length - fresh.length;
+      items = fresh;
+    }
+    const cards = items.map(r => cardHtml(r, now)).join('')
+      || `<div class="col-empty">Nothing here</div>`;
+    // The header counts everything in the column; "+ N older" explains the
+    // gap between that and what is drawn — the same contract as the filter
+    // chips, which explain the gap between shown and total.
+    const older = aged ? `<button class="col-older" data-older="1">+ ${aged} older</button>` : '';
+    return `<section class="col ${c.tone}" data-col="${c.k}">
+      <div class="col-head"><span class="col-name">${esc(c.name)}</span><span class="col-count">${total}</span></div>
+      <div class="col-body" data-col="${c.k}">${cards}${older}</div>
+    </section>`;
+  }).join('') + `</div>`;
+}
+
+let DONE_SHOW_ALL = false;
+let BOARD_SIG = '';
+
+// Placement is frozen while the mouse is over the board; content is not. This
+// is what keeps "what is running now" true under the cursor — a dot going
+// green to grey in place moves nothing and costs nothing, while a card
+// changing column would take the thing you were reaching for.
+function patchCards(rows, now) {
+  const view = document.getElementById('view');
+  if (!view) return;
+  for (const r of rows) {
+    const el = view.querySelector(`.card[data-sid="${CSS.escape(r.sessionId)}"]`);
+    if (!el) continue;
+    const fresh = document.createElement('div');
+    fresh.innerHTML = cardHtml(r, now);
+    const next = fresh.firstElementChild;
+    for (const sel of ['.crow1', '.crow2', '.ctitle']) {
+      const a = el.querySelector(sel), b = next.querySelector(sel);
+      if (a && b && a.innerHTML !== b.innerHTML) a.innerHTML = b.innerHTML;
+    }
+    // The attention lozenge appears and disappears, so it is add/remove
+    // rather than a content swap.
+    const curLoz = el.querySelector('.loz'), newLoz = next.querySelector('.loz');
+    if (newLoz && !curLoz) el.insertBefore(newLoz, el.firstChild);
+    else if (!newLoz && curLoz) curLoz.remove();
+    else if (newLoz && curLoz && curLoz.outerHTML !== newLoz.outerHTML) curLoz.replaceWith(newLoz);
+    el.classList.toggle('working', !!(r.isLive && r.status === 'busy'));
+  }
+}
+
+// Drag: the only gesture that changes a column. Optimistic like the priority
+// picker — write locally, POST, and on failure toast and refresh back to
+// server truth rather than leaving the card somewhere it is not.
+let _dragRoom = null;
+function wireBoard() {
+  const view = document.getElementById('view');
+  if (!view) return;
+  view.querySelectorAll('.card').forEach(card => {
+    card.addEventListener('dragstart', (ev) => {
+      _dragRoom = card.dataset.room || '';
+      if (!_dragRoom) { ev.preventDefault(); return; }   // legacy rows have no task record
+      card.classList.add('dragging');
+      ev.dataTransfer.effectAllowed = 'move';
+      try { ev.dataTransfer.setData('text/plain', _dragRoom); } catch (e) {}
+    });
+    card.addEventListener('dragend', () => {
+      _dragRoom = null;
+      card.classList.remove('dragging');
+      view.querySelectorAll('.col-body.over').forEach(c => c.classList.remove('over'));
+    });
+  });
+  view.querySelectorAll('.col-body').forEach(body => {
+    body.addEventListener('dragover', (ev) => {
+      if (!_dragRoom) return;
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = 'move';
+      body.classList.add('over');
+    });
+    body.addEventListener('dragleave', (ev) => {
+      if (!body.contains(ev.relatedTarget)) body.classList.remove('over');
+    });
+    body.addEventListener('drop', (ev) => {
+      ev.preventDefault();
+      body.classList.remove('over');
+      const rid = _dragRoom;
+      _dragRoom = null;
+      if (rid) moveTask(rid, body.dataset.col);
+    });
+  });
+  const older = view.querySelector('.col-older');
+  if (older) older.onclick = () => { DONE_SHOW_ALL = true; BOARD_SIG = ''; renderRows(); };
+}
+
+async function moveTask(rid, col) {
+  const row = ALL_ROWS.find(x => x.roomId === rid);
+  if (!row) return;
+  const from = workflowOf(row);
+  if (from === col) return;
+  row.workflow = col;                                   // optimistic
+  DISPLAYED_WORKFLOW.set(rid, col);
+  BOARD_SIG = '';
+  renderRows();
+  try {
+    await api('/api/room/workflow', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId: rid, workflow: col }),
+    });
+    offerTransition(rid, col, row);
+  } catch (e) {
+    row.workflow = from;                                // put it back
+    DISPLAYED_WORKFLOW.set(rid, from);
+    BOARD_SIG = '';
+    // An older server has no /api/room/workflow — say so plainly rather than
+    // letting the card snap back with no explanation.
+    toast(/404|not found/i.test(e.message)
+      ? 'Moving cards needs the hub restarted — the column did not stick'
+      : 'move failed: ' + e.message, 5000, 'err');
+    renderRows();
+  }
+}
+
+// Dropping a card says where the work BELONGS; it never starts or kills a
+// process on its own. But the common case should stay one gesture, so the
+// card offers the matching action inline — dismissable, and ignoring it
+// leaves the card exactly where it was dropped.
+function offerTransition(rid, col, row) {
+  const view = document.getElementById('view');
+  const card = view && view.querySelector(`.card[data-room="${CSS.escape(rid)}"]`);
+  if (!card || card.querySelector('.offer')) return;
+  let html = '';
+  if (col === 'inprogress' && !row.isLive) {
+    html = `<div class="offer">Nothing is running. Start the agents?`
+         + `<button class="ok" data-act="start">Start</button>`
+         + `<button class="no">Not now</button></div>`;
+  } else if ((col === 'done' || col === 'backlog') && row.isLive) {
+    html = `<div class="offer">Still running. Stop it?`
+         + `<button class="ok" data-act="stop">Stop</button>`
+         + `<button class="no">Leave running</button></div>`;
+  }
+  if (!html) return;
+  card.insertAdjacentHTML('beforeend', html);
+  const offer = card.querySelector('.offer');
+  offer.addEventListener('click', async (ev) => {
+    const btn = ev.target.closest('button');
+    if (!btn) return;
+    ev.stopPropagation();
+    offer.remove();
+    if (!btn.dataset.act) return;
+    const url = btn.dataset.act === 'start' ? '/api/room/resume' : '/api/room/close';
+    try {
+      await api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                       body: JSON.stringify({ roomId: rid }) });
+      await refresh();
+    } catch (e) { toast('failed: ' + e.message, 4000, 'err'); }
+  });
+}
+
+
 function renderGroupedRows(rows, parsed, now) {
   // Sidebar handles category context now — main view is just a flat list.
   return rows.map(r => renderRow(r, parsed, now)).join('');
@@ -3218,6 +3639,10 @@ async function refreshProjects() {
   try { PROJECTS = await api('/api/projects'); _projFailed = false; _projTs = Date.now(); }
   catch (e) { _projFailed = true; }
 }
+function viewSwitchHtml() {
+  const b = (m, label) => `<button data-view="${m}" class="${VIEW_MODE === m ? 'on' : ''}">${label}</button>`;
+  return `<div class="viewsw">${b('board', 'Board')}${b('list', 'List')}</div>`;
+}
 function projectsChromeHtml() {
   const s = PROJECTS && PROJECTS.summary;
   const needs = s ? s.needsYou : 0;
@@ -3237,11 +3662,12 @@ function projectsChromeHtml() {
       + `<button data-ptab="tasks" class="${PROJECT_TAB === 'tasks' ? 'on' : ''}">Tasks</button>`
       + `<button data-ptab="workspace" class="${PROJECT_TAB === 'workspace' ? 'on' : ''}" title="Browse this project's folder like an IDE — files render, and you can comment in place">Workspace</button>`
       + `</div>` : '';
-    return strip + `<div class="crumbs"><a href="#" class="crumb-back">← Projects</a><span class="sep">/</span><b>${esc(nm)}</b>${newTask}</div>` + tabs;
+    return strip + `<div class="crumbs"><a href="#" class="crumb-back">← Projects</a><span class="sep">/</span><b>${esc(nm)}</b>${newTask}`
+      + (PROJECT_TAB === 'tasks' ? viewSwitchHtml() : '') + `</div>` + tabs;
   }
   return strip + `<div class="listctl"><span>Group by</span>
     <div class="seg gb">${['project', 'time', 'none'].map(g => `<button data-gb="${g}" class="${PROJ_GROUPBY === g ? 'on' : ''}">${g[0].toUpperCase() + g.slice(1)}</button>`).join('')}</div>
-    <button class="newproj-btn" title="Register a folder as a project (any folder — a repo, or just notes)">+ New project</button></div>`;
+    <button class="newproj-btn" title="Register a folder as a project (any folder — a repo, or just notes)">+ New project</button>${viewSwitchHtml()}</div>`;
 }
 function projectSessionState(sn) {
   if (sn.status === 'waiting' || sn.status === 'waiting_human') return 'wait';
@@ -4021,6 +4447,28 @@ function renderRows() {
     return;
   }
   const now = Date.now() / 1000;
+  if (VIEW_MODE === 'board') {
+    // #view is rebuilt wholesale on the 2.5s refresh, which would tear the
+    // DOM out from under an in-flight drag. Same problem the Workspace tab
+    // hit, same guard: remount only when PLACEMENT changes. Card contents are
+    // patched in place below, so dots and lozenges stay live while hovering.
+    const frozen = view.matches(':hover');
+    const sig = [SELECTED_PROJECT || '', SELECTED_CAT, SEARCH_QUERY, DONE_SHOW_ALL,
+                 filtered.map(r => (r.roomId || r.sessionId) + ':' + frozenWorkflowOf(r, frozen)).join(',')].join('|');
+    if (sig !== BOARD_SIG || !view.querySelector('.board')) {
+      BOARD_SIG = sig;
+      view.innerHTML = projectsChromeHtml() + pageHeader + filterRowHtml()
+        + boardHtml(filtered, now, frozen);
+      wireProjectsChrome();
+      wireBoard();
+    } else {
+      patchCards(filtered, now);
+      const fr = view.querySelector('.filterbar');
+      if (fr) fr.outerHTML = filterRowHtml();
+    }
+    setViewCount(_viewCount);
+    return;
+  }
   const ordered = nestForks(filtered);
   const headExtra = DETAIL_MODE ? '' : '<th></th>';
   view.innerHTML = projectsChromeHtml() + pageHeader + filterRowHtml() + `<table>
@@ -4160,9 +4608,12 @@ async function refresh() {
       }
       for (const r of byId.values()) ordered.push(r); // newcomers
       ALL_ROWS = ordered;
+      // Placement is frozen; the rows themselves are the fresh ones from the
+      // server, so dots, lozenges and elapsed times stay live under the mouse.
     } else {
       ALL_ROWS = data;
       DISPLAYED_ORDER = data.map(r => r.sessionId);
+      DISPLAYED_WORKFLOW = new Map(data.map(r => [r.roomId || r.sessionId, workflowOf(r)]));
     }
     if (!_projInFlight && Date.now() - _projTs > 5000) {   // projects grouping refreshes on a slower cadence (git status is heavy)
       _projTs = Date.now();
