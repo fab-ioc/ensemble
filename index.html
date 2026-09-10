@@ -239,13 +239,11 @@
   tr.row { cursor: pointer; transition: background .08s; }
   tr.row:hover td { background: var(--hover); }
   tr.row.live td:first-child {
-    box-shadow: inset 3px 0 0 0 var(--run-idle);
+    box-shadow: inset 2px 0 0 0 var(--run-idle);
   }
   tr.row.live.busy td:first-child {
-    box-shadow: inset 3px 0 0 0 var(--run-working);
+    box-shadow: inset 2px 0 0 0 var(--run-working);
   }
-  tr.row.live { background: linear-gradient(90deg, color-mix(in srgb, var(--run-idle) 5%, transparent), transparent 30%); }
-  tr.row.live.busy { background: linear-gradient(90deg, color-mix(in srgb, var(--run-working) 6%, transparent), transparent 30%); }
   mark.match {
     background: var(--match-bg); color: var(--match-fg);
     padding: 1px 3px; border-radius: var(--r-100); font-weight: 500;
@@ -280,9 +278,9 @@
     margin-right: 6px;
     color: var(--fg-muted); font-family: -apple-system, sans-serif;
   }
-  tr.row.is-fork td:first-child { box-shadow: inset 3px 0 0 0 var(--fg-muted); }
-  tr.row.is-fork.live td:first-child { box-shadow: inset 3px 0 0 0 var(--run-idle); }
-  tr.row.is-fork.live.busy td:first-child { box-shadow: inset 3px 0 0 0 var(--run-working); }
+  tr.row.is-fork td:first-child { box-shadow: inset 2px 0 0 0 var(--fg-muted); }
+  tr.row.is-fork.live td:first-child { box-shadow: inset 2px 0 0 0 var(--run-idle); }
+  tr.row.is-fork.live.busy td:first-child { box-shadow: inset 2px 0 0 0 var(--run-working); }
   .cwd { color: var(--fg-subtle); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 11.5px; }
   .topic { max-width: 560px; }
   .topic .first { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; color: var(--fg); }
@@ -1693,14 +1691,14 @@
   <div class="settings-section">
     <h4>Accent color</h4>
     <div class="swatch-row">
-      <button class="swatch is-default" data-color="" style="background:#c25d3c" title="Terracotta (default)"></button>
-      <button class="swatch" data-color="#3b82f6" style="background:#3b82f6" title="Blue"></button>
-      <button class="swatch" data-color="#0ea5a5" style="background:#0ea5a5" title="Teal"></button>
-      <button class="swatch" data-color="#16a34a" style="background:#16a34a" title="Green"></button>
-      <button class="swatch" data-color="#7c3aed" style="background:#7c3aed" title="Violet"></button>
-      <button class="swatch" data-color="#db2777" style="background:#db2777" title="Pink"></button>
-      <button class="swatch" data-color="#ea580c" style="background:#ea580c" title="Orange"></button>
-      <button class="swatch" data-color="#525252" style="background:#525252" title="Neutral"></button>
+      <button class="swatch is-default" data-color="" style="background:#0C66E4" title="Blue (default)"></button>
+      <button class="swatch" data-color="#0055CC" style="background:#0055CC" title="Deep blue"></button>
+      <button class="swatch" data-color="#1F845A" style="background:#1F845A" title="Green"></button>
+      <button class="swatch" data-color="#1D7AFC" style="background:#1D7AFC" title="Bright blue"></button>
+      <button class="swatch" data-color="#6E5DC6" style="background:#6E5DC6" title="Violet"></button>
+      <button class="swatch" data-color="#943D73" style="background:#943D73" title="Magenta"></button>
+      <button class="swatch" data-color="#C25D3C" style="background:#C25D3C" title="Terracotta (was the default)"></button>
+      <button class="swatch" data-color="#44546F" style="background:#44546F" title="Neutral"></button>
     </div>
     <input type="text" id="accent-input" placeholder="#xxxxxx or color name" spellcheck="false" autocomplete="off">
   </div>
