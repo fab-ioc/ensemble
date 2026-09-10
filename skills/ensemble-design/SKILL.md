@@ -27,7 +27,7 @@ There are **two kinds of colour** and they are never the same variable.
 | Layer | Tokens | Themeable | Means |
 |---|---|---|---|
 | **Interaction** | `--accent`, `--accent-*`, `--selected-*`, `--link` | **Yes** — the user's accent picker | *What you can do.* Primary button, links, focus-adjacent borders, selected tab, selected row. |
-| **Semantic** | `--c-*`, `--run-*`, `--prio-*`, `--agent-*`, `--match-*`, `--focus-ring` | **No** — fixed in both themes | *What is true.* Status, priority, health, identity, warnings. |
+| **Semantic** | `--c-*`, `--run-*`, `--prio-*`, `--agent-*`, `--match-*`, `--focus-ring` | **No** — fixed in meaning in every theme | *What is true.* Status, priority, health, identity, warnings. |
 
 The user can set `--accent` to hot pink. **After that, every status colour must still mean what it
 meant.** If a change you make would repaint a status, a priority arrow, a run dot or the focus ring
@@ -69,17 +69,32 @@ The product owner approved a light design, and for four slices the build silentl
 machine set to dark mode — including his and both agents' — so nobody saw the approved design until
 his first look, and it looked nothing like the mockup.
 
-- Light tokens live on bare `:root`. Dark tokens live **once**, under `:root[data-theme="dark"]`.
-- The choice (Light / Dark / System) is stored in `localStorage['cd-theme']`. A small script in
-  `<head>`, before first paint, resolves System through `matchMedia` and sets `data-theme` on `<html>`.
-- **Never key a colour off `@media (prefers-color-scheme)` directly.** It needs a second copy of the
-  dark block, and a build that follows the OS by default is exactly how this one drifted from its
+- **A theme is a complete token set.** Light lives on bare `:root`. Every other theme lives **once**,
+  under `:root[data-theme="<name>"]`, and sets every colour token for its ground: neutrals,
+  interaction, and the semantic tokens' shades. The themes are Light (default), Dark, Dim, Paper,
+  High contrast (`contrast`) and Fjord, plus System, which resolves to Light or Dark.
+- **A theme changes a semantic colour's shade, never its meaning.** Amber is "needs you" in every
+  theme and red is "wrong" in every theme. Each theme's pairs are measured on that theme's ground.
+- **Adding a theme:** add its block to all three pages with the same token names as the Dark block,
+  add its name and ground (`light` or `dark`) to the `SCHEME` map in each page's head script, add it
+  to the avatar menu and to the hub's allowed `theme` values in `dashboard.py`, then measure every
+  pair in §3 on it. The ground picks the code-highlight stylesheet and which way the accent's hover
+  mixes.
+- **The choice follows the person, not the browser.** It is stored on the hub (`settings.theme`) so
+  every device agrees. `localStorage['cd-theme']` is only the first-paint cache: the head script
+  applies it before first paint, then fetches the hub's value and adopts it if it differs. If the
+  hub has none yet, the page hands the hub its own, so a choice made before is kept.
+- **Never key a colour off `@media (prefers-color-scheme)` directly.** It needs a second copy of a
+  theme block, and a build that follows the OS by default is exactly how this one drifted from its
   mockup.
-- `index.html`, `session.html` and `fileview.html` read the same key and listen for `storage` events,
-  so the dashboard, the balloon and the file view never disagree.
+- `index.html`, `session.html` and `fileview.html` carry the same head script and listen for
+  `storage` events, so the dashboard, the balloon and the file view never disagree.
+- **The chat follows the theme.** A task folder's terminal colour scheme recolours its chat only
+  when the owner switches it on for that task ("Chat in terminal colours" in the task's ⋯ menu,
+  "🎨 Chat colours" in the balloon). It is off by default.
 - Wrap storage access in `try/catch`. If the script fails or storage is blocked, no `data-theme` is
   set and `:root` gives light — the safe default.
-- **Review in both themes, and the owner's first.** Four slices were built and reviewed only in dark
+- **Review in every theme, and the owner's first.** Four slices were built and reviewed only in dark
   because both agents' environments were dark-mode.
 
 ### Neutrals
@@ -139,7 +154,7 @@ not draw the eye.
 outside the semantic six. They were briefly `--c-discovery` and `--c-progress` and produced an avatar
 rendering the *identical* fill as the `In review` lozenge in the same row.
 
-**Adding a third agent kind: its pair must clear 4.5:1 in both themes.** The avatar letter is 11px
+**Adding a third agent kind: its pair must clear 4.5:1 in every theme.** The avatar letter is 11px
 bold, below the large-text threshold, so there is no exemption. Note that `claude` and `codex` both
 begin with **C** — colour is load-bearing in that circle, not decorative.
 
@@ -396,7 +411,7 @@ you change transition behaviour, change both, or they drift.
 - [ ] No raw hex in any rule — tokens only
 - [ ] `--accent` used only where §1 allows
 - [ ] Nothing new is red unless it is wrong or destructive
-- [ ] Any new colour pair measured, ≥ 4.5:1 in **both** themes
+- [ ] Any new colour pair measured, ≥ 4.5:1 in **every** theme
 - [ ] No new `box-shadow`, radius, font weight or spacing value outside the scale
 - [ ] No `opacity` on text, and nothing below `--fs-100`
 - [ ] A state that is fine carries no colour; an uncertain one is amber and marked by a glyph
@@ -407,5 +422,5 @@ you change transition behaviour, change both, or they drift.
 - [ ] No hard-coded header/chrome offset
 - [ ] At most two lozenges on a card or row
 - [ ] Nothing added to the top bar that belongs to a view
-- [ ] Checked at a narrow laptop width **and** wide, in light **and** dark
+- [ ] Checked at a narrow laptop width **and** wide, in Light first and then every other theme
 - [ ] The list still does not reorder while the mouse is over it

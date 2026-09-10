@@ -8,17 +8,50 @@
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
 <script>
-// Same appearance as the dashboard: light unless chosen otherwise.
+// Appearance, resolved before first paint so the page never flashes the wrong
+// theme. A theme is a complete token set under :root[data-theme="<name>"].
+// Light is the default whatever the OS says; "system" follows the OS between
+// Light and Dark. The choice follows the person, not the browser: it lives on
+// the hub (settings.theme), and localStorage['cd-theme'] is only its
+// first-paint cache. index.html, session.html and fileview.html carry the same
+// script; change all three together.
 (function () {
-  function apply() {
-    var pref = 'light';
-    try { pref = localStorage.getItem('cd-theme') || 'light'; } catch (e) {}
-    var dark = pref === 'dark' ||
-      (pref === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
-    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  var SCHEME = { light: 'light', dark: 'dark', dim: 'dark', paper: 'light', contrast: 'light', fjord: 'dark' };
+  var mq = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null;
+  function stored() {
+    try { return localStorage.getItem('cd-theme') || 'light'; } catch (e) { return 'light'; }
   }
+  function apply() {
+    var pref = stored();
+    var name = pref === 'system' ? (mq && mq.matches ? 'dark' : 'light') : (SCHEME[pref] ? pref : 'light');
+    var root = document.documentElement;
+    root.dataset.theme = name;
+    root.dataset.scheme = SCHEME[name];
+    try { window.dispatchEvent(new CustomEvent('cd-theme', { detail: { pref: pref, theme: name } })); } catch (e) {}
+  }
+  // Adopt the hub's choice, which another device may have changed. If the hub
+  // has none yet, hand it this browser's so a choice made before is kept.
+  function sync() {
+    fetch('/api/settings', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (s) {
+        if (!s || typeof s.theme !== 'string') return;
+        var local = stored();
+        if (s.theme && s.theme !== local) {
+          try { localStorage.setItem('cd-theme', s.theme); } catch (e) {}
+          apply();
+        } else if (!s.theme && local !== 'light') {
+          fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                                   body: JSON.stringify({ theme: local }) }).catch(function () {});
+        }
+      }).catch(function () {});
+  }
+  window.cdTheme = { apply: apply, sync: sync, stored: stored, scheme: SCHEME };
   apply();
+  if (mq && mq.addEventListener) mq.addEventListener('change', apply);
   window.addEventListener('storage', function (ev) { if (ev.key === 'cd-theme') apply(); });
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) sync(); });
+  sync();
 })();
 </script>
 <style>
@@ -119,7 +152,7 @@
     --surface-overlay: #282E33;
     --fg: #C7D1DB;
     --fg-subtle: #9FADBC;
-    --fg-muted: #8C9BAB;
+    --fg-muted: #94A2B2;
     --fg-disabled: #738496;
     --border: #38414A;
     --border-strong: #596773;
@@ -161,6 +194,215 @@
     --match-fg: #FFF7D6;
     --e-100: 0 1px 1px rgba(3,4,4,.5), 0 0 1px rgba(3,4,4,.6);
     --e-200: 0 8px 12px rgba(3,4,4,.4), 0 0 1px rgba(3,4,4,.6);
+  }
+  /* Dim: a softer dark for long evenings. Warm grey ground, no pure white. */
+  :root[data-theme="dim"] {
+    color-scheme: dark;
+    --bg: #242320;
+    --surface: #2B2A27;
+    --surface-sunken: #201F1D;
+    --surface-overlay: #33322E;
+    --fg: #D2CCC1;
+    --fg-subtle: #B4AEA3;
+    --fg-muted: #A8A297;
+    --fg-disabled: #7A756D;
+    --border: #3D3B37;
+    --border-strong: #5E5A53;
+    --hover: rgba(236, 226, 206, .07);
+    --pressed: rgba(236, 226, 206, .13);
+    --accent: #8DB0DC;
+    --accent-hover: color-mix(in srgb, var(--accent) 86%, white);
+    --accent-pressed: color-mix(in srgb, var(--accent) 72%, white);
+    --accent-fg: #1F1E1C;
+    --focus-ring: #9CC0F0;
+    --c-neutral-bg: #36342F;
+    --c-neutral-fg: #BCB6AA;
+    --c-neutral-bold: #A19B90;
+    --c-progress-bg: #22324A;
+    --c-progress-fg: #9DC0EC;
+    --c-progress-bold: #7AA7E0;
+    --c-success-bg: #1F3B2F;
+    --c-success-fg: #98D8B6;
+    --c-success-bold: #67BD93;
+    --c-warning-bg: #41351A;
+    --c-warning-fg: #E6C878;
+    --c-warning-bold: #D1AA45;
+    --c-danger-bg: #4B2724;
+    --c-danger-fg: #F3AAA2;
+    --c-danger-bold: #E4837A;
+    --c-discovery-bg: #342E46;
+    --c-discovery-fg: #C8BCF0;
+    --c-discovery-bold: #A695E0;
+    --prio-1: #F07A72;
+    --prio-2: #F29B87;
+    --prio-3: #CDB064;
+    --prio-4: #74C2DA;
+    --prio-5: #8AB2E8;
+    --agent-claude-bg: #D2825F;
+    --agent-claude-fg: #1F1E1C;
+    --agent-codex-bg: #4FA8BC;
+    --agent-codex-fg: #1F1E1C;
+    --match-bg: #5E4A12;
+    --match-fg: #F6E7B8;
+    --e-100: 0 1px 1px rgba(0,0,0,.45), 0 0 1px rgba(0,0,0,.55);
+    --e-200: 0 8px 12px rgba(0,0,0,.35), 0 0 1px rgba(0,0,0,.55);
+  }
+  /* Paper: a warmer light. Cream ground, ink-brown text. */
+  :root[data-theme="paper"] {
+    color-scheme: light;
+    --bg: #F6F3EC;
+    --surface: #FFFDF8;
+    --surface-sunken: #EFEADF;
+    --surface-overlay: #FFFDF8;
+    --fg: #2B2620;
+    --fg-subtle: #534B41;
+    --fg-muted: #696055;
+    --fg-disabled: #9A9082;
+    --border: #E3DCCF;
+    --border-strong: #C2B8A8;
+    --hover: rgba(70, 50, 20, .06);
+    --pressed: rgba(70, 50, 20, .12);
+    --accent: #2A5DA8;
+    --accent-hover: color-mix(in srgb, var(--accent) 86%, black);
+    --accent-pressed: color-mix(in srgb, var(--accent) 72%, black);
+    --accent-fg: #FFFFFF;
+    --focus-ring: #2677F0;
+    --c-neutral-bg: #EDE7DB;
+    --c-neutral-fg: #534B41;
+    --c-neutral-bold: #696055;
+    --c-progress-bg: #E5EDF9;
+    --c-progress-fg: #1D4F9E;
+    --c-progress-bold: #2F6FD0;
+    --c-success-bg: #DDF2E4;
+    --c-success-fg: #1E6443;
+    --c-success-bold: #2A8A5A;
+    --c-warning-bg: #FAEDC6;
+    --c-warning-fg: #6B4F00;
+    --c-warning-bold: #B08400;
+    --c-danger-bg: #FAE4DF;
+    --c-danger-fg: #A02C21;
+    --c-danger-bold: #C0392B;
+    --c-discovery-bg: #EEE8F8;
+    --c-discovery-fg: #58449C;
+    --c-discovery-bold: #7A62C6;
+    --prio-1: #CD1317;
+    --prio-2: #E0413F;
+    --prio-3: #A8820F;
+    --prio-4: #1F8BAE;
+    --prio-5: #0B62D0;
+    --agent-claude-bg: #A9502F;
+    --agent-claude-fg: #FFFFFF;
+    --agent-codex-bg: #166A7C;
+    --agent-codex-fg: #FFFFFF;
+    --match-bg: #FBE39A;
+    --match-fg: #2B2620;
+    --e-100: 0 1px 1px rgba(60,40,10,.22), 0 0 1px rgba(60,40,10,.30);
+    --e-200: 0 8px 12px rgba(60,40,10,.14), 0 0 1px rgba(60,40,10,.30);
+  }
+  /* High contrast: black on white, every text pair 7:1 or better. The
+     elevations are outlines, so a card has an edge without a border. */
+  :root[data-theme="contrast"] {
+    color-scheme: light;
+    --bg: #FFFFFF;
+    --surface: #FFFFFF;
+    --surface-sunken: #EDEDED;
+    --surface-overlay: #FFFFFF;
+    --fg: #000000;
+    --fg-subtle: #1C1C1C;
+    --fg-muted: #383838;
+    --fg-disabled: #6B6B6B;
+    --border: #767676;
+    --border-strong: #303030;
+    --hover: rgba(0, 0, 0, .08);
+    --pressed: rgba(0, 0, 0, .16);
+    --accent: #003DA8;
+    --accent-hover: color-mix(in srgb, var(--accent) 86%, black);
+    --accent-pressed: color-mix(in srgb, var(--accent) 72%, black);
+    --accent-fg: #FFFFFF;
+    --focus-ring: #000000;
+    --c-neutral-bg: #E3E3E3;
+    --c-neutral-fg: #1C1C1C;
+    --c-neutral-bold: #4A4A4A;
+    --c-progress-bg: #DCE7FF;
+    --c-progress-fg: #002C85;
+    --c-progress-bold: #0050D0;
+    --c-success-bg: #D2F4E1;
+    --c-success-fg: #073F26;
+    --c-success-bold: #0B7141;
+    --c-warning-bg: #FFEAA8;
+    --c-warning-fg: #3F2D00;
+    --c-warning-bold: #7A5800;
+    --c-danger-bg: #FFDCD8;
+    --c-danger-fg: #700F08;
+    --c-danger-bold: #B3150A;
+    --c-discovery-bg: #E8E0FF;
+    --c-discovery-fg: #33207A;
+    --c-discovery-bold: #5537BD;
+    --prio-1: #A80B0E;
+    --prio-2: #C4282A;
+    --prio-3: #6E5600;
+    --prio-4: #0B6280;
+    --prio-5: #0043A0;
+    --agent-claude-bg: #823618;
+    --agent-claude-fg: #FFFFFF;
+    --agent-codex-bg: #0B4E5C;
+    --agent-codex-fg: #FFFFFF;
+    --match-bg: #FFE066;
+    --match-fg: #000000;
+    --e-100: 0 0 0 1px #303030;
+    --e-200: 0 0 0 2px #000000, 0 8px 12px rgba(0,0,0,.25);
+  }
+  /* Fjord: a cool polar night with frost blues and aurora hues. */
+  :root[data-theme="fjord"] {
+    color-scheme: dark;
+    --bg: #2E3440;
+    --surface: #3B4252;
+    --surface-sunken: #2A2F3A;
+    --surface-overlay: #434C5E;
+    --fg: #ECEFF4;
+    --fg-subtle: #D8DEE9;
+    --fg-muted: #BCC4D0;
+    --fg-disabled: #7E889A;
+    --border: #4C566A;
+    --border-strong: #69758B;
+    --hover: rgba(216, 222, 233, .08);
+    --pressed: rgba(216, 222, 233, .14);
+    --accent: #93CBDB;
+    --accent-hover: color-mix(in srgb, var(--accent) 86%, white);
+    --accent-pressed: color-mix(in srgb, var(--accent) 72%, white);
+    --accent-fg: #2E3440;
+    --focus-ring: #A8D8E6;
+    --c-neutral-bg: #4C566A;
+    --c-neutral-fg: #E5E9F0;
+    --c-neutral-bold: #AEB7C6;
+    --c-progress-bg: #34445E;
+    --c-progress-fg: #A9C7EC;
+    --c-progress-bold: #81A1C1;
+    --c-success-bg: #374838;
+    --c-success-fg: #BFD9A8;
+    --c-success-bold: #A3BE8C;
+    --c-warning-bg: #4D4531;
+    --c-warning-fg: #EBCB8B;
+    --c-warning-bold: #EBCB8B;
+    --c-danger-bg: #533A41;
+    --c-danger-fg: #F2AEB4;
+    --c-danger-bold: #DB7E87;
+    --c-discovery-bg: #4A3E54;
+    --c-discovery-fg: #DCC0D6;
+    --c-discovery-bold: #B48EAD;
+    --prio-1: #E6848C;
+    --prio-2: #D99A80;
+    --prio-3: #D8BE83;
+    --prio-4: #8FBCBB;
+    --prio-5: #81A1C1;
+    --agent-claude-bg: #E5A28A;
+    --agent-claude-fg: #2E3440;
+    --agent-codex-bg: #8FBCBB;
+    --agent-codex-fg: #2E3440;
+    --match-bg: #6B5A2E;
+    --match-fg: #F6ECCF;
+    --e-100: 0 1px 1px rgba(15,18,24,.5), 0 0 1px rgba(15,18,24,.6);
+    --e-200: 0 8px 12px rgba(15,18,24,.4), 0 0 1px rgba(15,18,24,.6);
   }
   * { box-sizing: border-box; }
   body { margin:0; height:100vh; display:flex; flex-direction:column; background:var(--bg); color:var(--fg); font:13px system-ui,-apple-system,sans-serif; }
@@ -322,6 +564,8 @@
   #theme-menu-s { position:fixed; z-index:70; max-height:50vh; overflow-y:auto; background:var(--surface); border:1px solid var(--border); border-radius:8px; box-shadow:0 10px 34px rgba(0,0,0,.5); padding:4px; min-width:150px; }
   #theme-menu-s .tm-item { padding:6px 12px; border-radius:5px; cursor:pointer; font-size:12px; white-space:nowrap; }
   #theme-menu-s .tm-item:hover { background:var(--hover); color:var(--fg); }
+  #theme-menu-s .tm-item.on { color:var(--selected-fg); font-weight:500; }
+  #theme-menu-s .tm-rule { height:1px; background:var(--border); margin:var(--s-100) 0; }
 </style>
 </head>
 <body>
@@ -339,7 +583,7 @@
   <button id="autolabel" hidden title="Ask Claude to suggest a label from the conversation">✨ Auto</button>
   <button id="explorer" hidden title="Open the working folder on the host">📂 Files</button>
   <button id="ide" hidden title="Open the project in its editor (on the host)">🧠 IDE</button>
-  <button id="theme" hidden title="Pick a color theme for this session">🎨 Theme</button>
+  <button id="theme" hidden title="The chat follows the dashboard theme; switch this task's chat to its folder's terminal colours instead">🎨 Chat colours</button>
   <button id="end" title="Stop the agent(s) and end this session">End</button>
 </header>
 <div id="info"></div>
@@ -485,21 +729,23 @@ let ROOM_AGENTS = [];   // [{identity, agent, ptyId}] for the live activity bar
 let ROOM_LIVE = false;
 
 // --- chat-window theming -------------------------------------------------
-// A headless session has no OS terminal tab, so the chosen color scheme is
-// applied to the chat window here: the scheme's background/foreground recolor
-// the session view live (no relaunch). Re-checked each refresh; only re-applied
-// when the scheme actually changes.
-let THEME_NAME = null;
+// The chat follows the dashboard theme. A task's folder colour scheme recolours
+// it only when the owner switched that on for the task (/api/chat-scheme); then
+// the scheme's background/foreground recolour the session view live (no
+// relaunch). Re-checked each refresh; only re-applied when that changes.
+let THEME_NAME = null;     // the scheme applied, '' when following the theme
+let SCHEME_ON = false;     // the folder's scheme is switched on for this chat
 let CUR_COLORS = null;     // full scheme palette, for xterm + chat
 async function ensureTheme(cwd) {
   if (!cwd) return;
   let t;
   try { t = await fetch('/api/theme-colors?cwd=' + encodeURIComponent(cwd)).then(r => r.json()); }
   catch (e) { return; }
-  const name = (t && t.theme) || '';
+  SCHEME_ON = !!(t && t.override);
+  const name = SCHEME_ON ? ((t && t.theme) || '') : '';
   if (name === (THEME_NAME || '')) return;
   THEME_NAME = name;
-  applyTheme((t && t.colors) || {});
+  applyTheme(SCHEME_ON ? ((t && t.colors) || {}) : {});
 }
 // Build an xterm.js theme from the scheme — the terminal IS the chat window for
 // a solo session, so it takes the full ANSI palette, not just bg/fg.
@@ -1220,13 +1466,24 @@ $('#theme').onclick = async () => {
   const names = (themes || []).map(t => typeof t === 'string' ? t : (t.name || t.id)).filter(Boolean);
   if (!names.length) return;
   const menu = document.createElement('div'); menu.id = 'theme-menu-s';
-  menu.innerHTML = names.map(n => `<div class="tm-item">${esc(n)}</div>`).join('');
+  // First the switch, then the schemes. Picking a scheme here switches it on:
+  // this menu's only job is the chat's colours.
+  menu.innerHTML = `<div class="tm-item tm-follow${SCHEME_ON ? '' : ' on'}" role="menuitemradio" aria-checked="${!SCHEME_ON}">${SCHEME_ON ? '' : '✓ '}Follow the dashboard theme</div><div class="tm-rule"></div>`
+    + names.map(n => `<div class="tm-item tm-scheme${SCHEME_ON && n === THEME_NAME ? ' on' : ''}">${SCHEME_ON && n === THEME_NAME ? '✓ ' : ''}${esc(n)}</div>`).join('');
   document.body.appendChild(menu);
   const rect = $('#theme').getBoundingClientRect();
   menu.style.top = (rect.bottom + 4) + 'px'; menu.style.right = Math.max(6, window.innerWidth - rect.right) + 'px';
-  menu.querySelectorAll('.tm-item').forEach((it, i) => it.onclick = async () => {
+  menu.querySelector('.tm-follow').onclick = async () => {
+    closeThemeMenuS();
+    try { await jpost('/api/chat-scheme', { cwd, on: false }); ensureTheme(cwd); } catch (e) {}
+  };
+  menu.querySelectorAll('.tm-scheme').forEach((it, i) => it.onclick = async () => {
     const theme = names[i]; closeThemeMenuS();
-    try { await jpost('/api/theme', { cwd, theme }); ensureTheme(cwd); } catch (e) {}
+    try {
+      await jpost('/api/theme', { cwd, theme });
+      await jpost('/api/chat-scheme', { cwd, on: true });
+      ensureTheme(cwd);
+    } catch (e) {}
   });
   setTimeout(() => document.addEventListener('mousedown', _themeMenuOutS), 0);
 };

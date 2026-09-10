@@ -18,20 +18,61 @@
 <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
 <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/languages/powershell.min.js"></script>
 <script>
-// Same appearance as the dashboard: light unless chosen otherwise.
+// Appearance, resolved before first paint so the page never flashes the wrong
+// theme. A theme is a complete token set under :root[data-theme="<name>"].
+// Light is the default whatever the OS says; "system" follows the OS between
+// Light and Dark. The choice follows the person, not the browser: it lives on
+// the hub (settings.theme), and localStorage['cd-theme'] is only its
+// first-paint cache. index.html, session.html and fileview.html carry the same
+// script; change all three together.
 (function () {
-  function apply() {
-    var pref = 'light';
-    try { pref = localStorage.getItem('cd-theme') || 'light'; } catch (e) {}
-    var dark = pref === 'dark' ||
-      (pref === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
-    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-    var hl = document.getElementById('hl-light'), hd = document.getElementById('hl-dark');
-    if (hl) hl.disabled = dark;
-    if (hd) hd.disabled = !dark;
+  var SCHEME = { light: 'light', dark: 'dark', dim: 'dark', paper: 'light', contrast: 'light', fjord: 'dark' };
+  var mq = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null;
+  function stored() {
+    try { return localStorage.getItem('cd-theme') || 'light'; } catch (e) { return 'light'; }
   }
+  function apply() {
+    var pref = stored();
+    var name = pref === 'system' ? (mq && mq.matches ? 'dark' : 'light') : (SCHEME[pref] ? pref : 'light');
+    var root = document.documentElement;
+    root.dataset.theme = name;
+    root.dataset.scheme = SCHEME[name];
+    try { window.dispatchEvent(new CustomEvent('cd-theme', { detail: { pref: pref, theme: name } })); } catch (e) {}
+  }
+  // Adopt the hub's choice, which another device may have changed. If the hub
+  // has none yet, hand it this browser's so a choice made before is kept.
+  function sync() {
+    fetch('/api/settings', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (s) {
+        if (!s || typeof s.theme !== 'string') return;
+        var local = stored();
+        if (s.theme && s.theme !== local) {
+          try { localStorage.setItem('cd-theme', s.theme); } catch (e) {}
+          apply();
+        } else if (!s.theme && local !== 'light') {
+          fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                                   body: JSON.stringify({ theme: local }) }).catch(function () {});
+        }
+      }).catch(function () {});
+  }
+  window.cdTheme = { apply: apply, sync: sync, stored: stored, scheme: SCHEME };
   apply();
+  if (mq && mq.addEventListener) mq.addEventListener('change', apply);
   window.addEventListener('storage', function (ev) { if (ev.key === 'cd-theme') apply(); });
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) sync(); });
+  sync();
+})();
+// Two highlight stylesheets, one enabled: the one matching the theme's ground.
+(function () {
+  function hl() {
+    var dark = document.documentElement.dataset.scheme === 'dark';
+    var l = document.getElementById('hl-light'), d = document.getElementById('hl-dark');
+    if (l) l.disabled = dark;
+    if (d) d.disabled = !dark;
+  }
+  hl();
+  window.addEventListener('cd-theme', hl);
 })();
 </script>
 <style>
@@ -79,7 +120,7 @@
     --surface-overlay: #282E33;
     --fg: #C7D1DB;
     --fg-subtle: #9FADBC;
-    --fg-muted: #8C9BAB;
+    --fg-muted: #94A2B2;
     --border: #38414A;
     --border-strong: #596773;
     --hover: rgba(166, 197, 226, .10);
@@ -97,6 +138,119 @@
     --match-fg: #FFF7D6;
     --e-100: 0 1px 1px rgba(3,4,4,.5), 0 0 1px rgba(3,4,4,.6);
     --e-200: 0 8px 12px rgba(3,4,4,.4), 0 0 1px rgba(3,4,4,.6);
+  }
+  /* Dim: a softer dark for long evenings. Warm grey ground, no pure white. */
+  :root[data-theme="dim"] {
+    color-scheme: dark;
+    --bg: #242320;
+    --surface: #2B2A27;
+    --surface-sunken: #201F1D;
+    --surface-overlay: #33322E;
+    --fg: #D2CCC1;
+    --fg-subtle: #B4AEA3;
+    --fg-muted: #A8A297;
+    --border: #3D3B37;
+    --border-strong: #5E5A53;
+    --hover: rgba(236, 226, 206, .07);
+    --pressed: rgba(236, 226, 206, .13);
+    --accent: #8DB0DC;
+    --accent-hover: color-mix(in srgb, var(--accent) 86%, white);
+    --accent-fg: #1F1E1C;
+    --focus-ring: #9CC0F0;
+    --c-warning-bold: #D1AA45;
+    --c-danger-bg: #4B2724;
+    --c-danger-fg: #F3AAA2;
+    --c-discovery-bg: #342E46;
+    --c-discovery-fg: #C8BCF0;
+    --match-bg: #5E4A12;
+    --match-fg: #F6E7B8;
+    --e-100: 0 1px 1px rgba(0,0,0,.45), 0 0 1px rgba(0,0,0,.55);
+    --e-200: 0 8px 12px rgba(0,0,0,.35), 0 0 1px rgba(0,0,0,.55);
+  }
+  /* Paper: a warmer light. Cream ground, ink-brown text. */
+  :root[data-theme="paper"] {
+    color-scheme: light;
+    --bg: #F6F3EC;
+    --surface: #FFFDF8;
+    --surface-sunken: #EFEADF;
+    --surface-overlay: #FFFDF8;
+    --fg: #2B2620;
+    --fg-subtle: #534B41;
+    --fg-muted: #696055;
+    --border: #E3DCCF;
+    --border-strong: #C2B8A8;
+    --hover: rgba(70, 50, 20, .06);
+    --pressed: rgba(70, 50, 20, .12);
+    --accent: #2A5DA8;
+    --accent-hover: color-mix(in srgb, var(--accent) 86%, black);
+    --accent-fg: #FFFFFF;
+    --focus-ring: #2677F0;
+    --c-warning-bold: #B08400;
+    --c-danger-bg: #FAE4DF;
+    --c-danger-fg: #A02C21;
+    --c-discovery-bg: #EEE8F8;
+    --c-discovery-fg: #58449C;
+    --match-bg: #FBE39A;
+    --match-fg: #2B2620;
+    --e-100: 0 1px 1px rgba(60,40,10,.22), 0 0 1px rgba(60,40,10,.30);
+    --e-200: 0 8px 12px rgba(60,40,10,.14), 0 0 1px rgba(60,40,10,.30);
+  }
+  /* High contrast: black on white, every text pair 7:1 or better. The
+     elevations are outlines, so a card has an edge without a border. */
+  :root[data-theme="contrast"] {
+    color-scheme: light;
+    --bg: #FFFFFF;
+    --surface: #FFFFFF;
+    --surface-sunken: #EDEDED;
+    --surface-overlay: #FFFFFF;
+    --fg: #000000;
+    --fg-subtle: #1C1C1C;
+    --fg-muted: #383838;
+    --border: #767676;
+    --border-strong: #303030;
+    --hover: rgba(0, 0, 0, .08);
+    --pressed: rgba(0, 0, 0, .16);
+    --accent: #003DA8;
+    --accent-hover: color-mix(in srgb, var(--accent) 86%, black);
+    --accent-fg: #FFFFFF;
+    --focus-ring: #000000;
+    --c-warning-bold: #7A5800;
+    --c-danger-bg: #FFDCD8;
+    --c-danger-fg: #700F08;
+    --c-discovery-bg: #E8E0FF;
+    --c-discovery-fg: #33207A;
+    --match-bg: #FFE066;
+    --match-fg: #000000;
+    --e-100: 0 0 0 1px #303030;
+    --e-200: 0 0 0 2px #000000, 0 8px 12px rgba(0,0,0,.25);
+  }
+  /* Fjord: a cool polar night with frost blues and aurora hues. */
+  :root[data-theme="fjord"] {
+    color-scheme: dark;
+    --bg: #2E3440;
+    --surface: #3B4252;
+    --surface-sunken: #2A2F3A;
+    --surface-overlay: #434C5E;
+    --fg: #ECEFF4;
+    --fg-subtle: #D8DEE9;
+    --fg-muted: #BCC4D0;
+    --border: #4C566A;
+    --border-strong: #69758B;
+    --hover: rgba(216, 222, 233, .08);
+    --pressed: rgba(216, 222, 233, .14);
+    --accent: #93CBDB;
+    --accent-hover: color-mix(in srgb, var(--accent) 86%, white);
+    --accent-fg: #2E3440;
+    --focus-ring: #A8D8E6;
+    --c-warning-bold: #EBCB8B;
+    --c-danger-bg: #533A41;
+    --c-danger-fg: #F2AEB4;
+    --c-discovery-bg: #4A3E54;
+    --c-discovery-fg: #DCC0D6;
+    --match-bg: #6B5A2E;
+    --match-fg: #F6ECCF;
+    --e-100: 0 1px 1px rgba(15,18,24,.5), 0 0 1px rgba(15,18,24,.6);
+    --e-200: 0 8px 12px rgba(15,18,24,.4), 0 0 1px rgba(15,18,24,.6);
   }
   * { box-sizing: border-box; }
   body { margin:0; min-height:100vh; background:var(--bg); color:var(--fg);
