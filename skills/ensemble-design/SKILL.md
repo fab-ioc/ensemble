@@ -316,6 +316,15 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
    for both either freezes the header on a stale "● working" or rebuilds the panes and loses their
    state. Key the shell on the task alone, and never rewrite a slot while a menu inside it is open.
 
+   **Nothing a person can click is replaced on a timer.** Text that changes on its own, such as an
+   elapsed time like "updated 11s ago", is kept out of every render signature and patched in place;
+   a view is rebuilt only when what it shows changes. A click whose press and release straddle a
+   replacement lands on two different elements and the browser never fires it, so a rebuild on every
+   refresh makes controls silently dead on exactly the busy tasks people watch. It also drops keyboard
+   focus to `<body>`. When a genuine change does rebuild a header, put focus back on the equivalent
+   control. The board's cards are the reference: `.cwhen` updates in place and the card stays the
+   same element.
+
 4. **A filter may persist only while its state is visible in the filter row.** Filters survive a
    reload, which is safe *because* the chips show what is active — the menu hides the controls, never
    the state. If the chips are ever removed, persistence must go with them, or the user returns to a
@@ -333,6 +342,13 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
    design must survive being printed in grey.
 8. **A card never drops a signal to fit.** Board columns never wrap and never shrink below 248px;
    horizontal scroll is the escape valve. Page gutter 24px, 16px below 900px.
+9. **A destination replaces whatever view is showing.** `Needs you` and `Active` must open from
+   anywhere: the home page, and a project's Tasks, Changes or Workspace tab. So their branch runs
+   first when the view is drawn, and anything that navigates into a project clears them. They once
+   worked only from inside a project's Tasks tab, which is where they had been tested: from the page
+   the owner opens on, the sidebar item highlighted and nothing else changed. A control that looks as
+   if it responded and does nothing is worse than one that is visibly off. Test a destination from
+   every starting view, not just one.
 
 ### Attention vs. columns — a boundary that will decay if you let it
 
@@ -379,6 +395,9 @@ you change transition behaviour, change both, or they drift.
 - [ ] No `opacity` on text, and nothing below `--fs-100`
 - [ ] A state that is fine carries no colour; an uncertain one is amber and marked by a glyph
 - [ ] A panel's header updates on a status change without rebuilding its panes
+- [ ] Nothing clickable is replaced on a timer: ticking text is patched in place, and a refresh
+      keeps the same elements
+- [ ] Needs you and Active open from the home page and from every project tab
 - [ ] No hard-coded header/chrome offset
 - [ ] At most two lozenges on a card or row
 - [ ] Nothing added to the top bar that belongs to a view
