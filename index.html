@@ -204,7 +204,7 @@
     text-transform: uppercase; letter-spacing: .02em;
   }
   .avatar-btn:hover { background: var(--c-neutral-bg); filter: brightness(.96); }
-  #plan-usage-slot:empty { display: none; }
+  #plan-usage-slot { display: flex; align-items: center; }
   /* Menus dropped from the bar. One shape, three users. */
   #me-menu, #proj-menu, #search-help-pop, #filters-menu {
     position: fixed; z-index: 60; background: var(--surface-overlay);
@@ -323,6 +323,7 @@
      gives up its label instead — the name lives in the tooltip. */
   @media (max-width: 900px) {
     #proj-switch-name { display: none; }
+    #plan-usage-slot .usage-chip-label { display: none; }   /* the numbers stay; the word goes */
     #proj-switch { max-width: none; padding: 0 8px; }
     .search-wrap { min-width: 140px; }
   }
@@ -1655,93 +1656,102 @@
      name) so the Jira-style board can lift the whole thing into its own
      chrome without unpicking it. */
   #usage-chip {
-    display: flex; align-items: center; gap: 7px;
+    display: flex; align-items: center; gap: 7px; height: 28px;
     background: transparent; border: 1px solid var(--border);
-    padding: 4px 9px; border-radius: 6px; cursor: pointer;
-    color: var(--fg-subtle); font: inherit; font-size: 11px; line-height: 1;
+    padding: 0 9px; border-radius: var(--r-200); cursor: pointer;
+    color: var(--fg-subtle); font: inherit; font-size: var(--fs-100); line-height: 1;
     white-space: nowrap;
     transition: color .1s, border-color .1s, background .1s;
   }
-  #usage-chip:hover { border-color: var(--accent); background: var(--hover); }
+  /* Hover is never the accent: hovering a control is not a primary action. */
+  #usage-chip:hover { border-color: var(--border-strong); background: var(--hover); }
   #usage-chip[hidden] { display: none; }
-  #usage-chip.warn { color: var(--accent); border-color: var(--accent); }
-  #usage-chip.alarm { color: var(--c-danger-fg); border-color: var(--c-danger-fg); }
+  /* The chip carries meaning only when a window needs you: amber, then red. */
+  #usage-chip.warn { color: var(--c-warning-fg); border-color: var(--c-warning-bold); }
+  #usage-chip.alarm { color: var(--c-danger-fg); border-color: var(--c-danger-bold); }
   .usage-chip-label {
-    font-size: 9px; text-transform: uppercase; letter-spacing: .07em;
+    font-size: var(--fs-100); text-transform: uppercase; letter-spacing: .05em;
     color: var(--fg-muted);
   }
   .usage-chip-kind { font-variant-numeric: tabular-nums; }
   .usage-chip-kind b { font-weight: 600; }
   .usage-chip-sep { font-style: normal; color: var(--fg-muted); font-weight: 400; margin: 0 1px; }
-  .usage-chip-wname { font-style: normal; font-size: 9px; color: var(--fg-muted); font-weight: 500; margin-right: 3px; }
+  .usage-chip-wname { font-style: normal; font-size: var(--fs-100); color: var(--fg-muted); font-weight: 500; margin-right: 3px; }
   /* A reading we do not trust (frozen Codex file) or cannot get (Claude token)
-     is greyed and dimmed — never rendered as if it were a current number.
-     Applied per window, since one reading can be current for the weekly window
-     and out of date for the five-hour one. */
-  .usage-chip-kind b .untrusted { color: var(--fg-muted); opacity: .8; font-weight: 500; }
-  .usage-chip-kind.gone { color: var(--fg-muted); opacity: .75; }
+     is never rendered as if it were a current number. The glyph carries it —
+     "≥" for a frozen reading, which is a floor rather than an estimate, and
+     "—" and "?" for the other two — and colour only supports it, so it
+     survives print in grey. No opacity: it would void the contrast the tokens
+     were measured at. Applied per window, since one reading can be current for
+     the weekly window and out of date for the five-hour one. */
+  .usage-chip-kind b .untrusted { color: var(--fg-muted); font-weight: 500; }
+  .usage-chip-kind.gone { color: var(--fg-muted); }
   #usage-tray {
-    position: absolute; top: 56px; right: 16px; z-index: 60; width: 380px;
-    max-height: 70vh; overflow-y: auto; background: var(--surface);
-    border: 1px solid var(--border); border-radius: 10px;
-    box-shadow: 0 12px 36px rgba(0,0,0,.18); padding: 8px;
+    position: absolute; top: calc(var(--header-h) + var(--s-200)); right: 16px; z-index: 60; width: 380px;
+    max-height: 70vh; overflow-y: auto; background: var(--surface-overlay);
+    border: 1px solid var(--border); border-radius: var(--r-300);
+    box-shadow: var(--e-200); padding: 8px;
   }
   #usage-tray[hidden] { display: none; }
   .usage-head {
-    font-size: 11px; font-weight: 600; color: var(--fg-subtle);
+    font-size: var(--fs-100); font-weight: 600; color: var(--fg-subtle);
     text-transform: uppercase; letter-spacing: .06em; padding: 4px 6px 8px;
   }
   .usage-src { padding: 6px 6px 10px; }
   .usage-src + .usage-src { border-top: 1px solid var(--border); padding-top: 10px; }
   .usage-src-head { display: flex; align-items: baseline; gap: 6px; }
-  .usage-src-name { font-size: 12px; font-weight: 600; }
-  .usage-src-plan { font-size: 10px; color: var(--fg-muted); }
-  .usage-src-age { margin-left: auto; font-size: 10px; color: var(--fg-subtle); }
-  .usage-src-age.untrusted { color: var(--c-danger-fg); }
+  .usage-src-name { font-size: var(--fs-200); font-weight: 600; }
+  .usage-src-plan { font-size: var(--fs-100); color: var(--fg-muted); }
+  .usage-src-age { margin-left: auto; font-size: var(--fs-100); color: var(--fg-subtle); }
+  /* A stale reading is uncertain, not wrong: red stays unambiguous for the
+     alarm, when a limit is actually reached. */
+  .usage-src-age.untrusted { color: var(--c-warning-fg); }
   .usage-win { display: flex; align-items: center; gap: 8px; margin-top: 7px; }
   .usage-win-label {
-    font-size: 10px; color: var(--fg-subtle); width: 62px; flex: none;
+    font-size: var(--fs-100); color: var(--fg-subtle); width: 62px; flex: none;
   }
   .usage-bar {
-    flex: 1; height: 6px; border-radius: 3px; background: var(--hover);
+    flex: 1; height: 6px; border-radius: 3px; background: var(--surface-sunken);
     overflow: hidden;
   }
-  .usage-bar > i { display: block; height: 100%; background: var(--run-idle); }
-  .usage-bar > i.warn { background: var(--accent); }
-  .usage-bar > i.alarm { background: var(--c-danger-fg); }
-  .usage-bar > i.untrusted { background: var(--fg-muted); opacity: .6; }
+  /* Grey until it needs you, then amber, then red. Allowance used is not
+     success, and it is not an agent working. */
+  .usage-bar > i { display: block; height: 100%; background: var(--c-neutral-bold); }
+  .usage-bar > i.warn { background: var(--c-warning-bold); }
+  .usage-bar > i.alarm { background: var(--c-danger-bold); }
+  .usage-bar > i.untrusted { background: var(--border-strong); }
   .usage-win-pct {
-    font-size: 11px; font-variant-numeric: tabular-nums; width: 42px;
+    font-size: var(--fs-100); font-variant-numeric: tabular-nums; width: 42px;
     text-align: right; flex: none;
   }
   .usage-win-pct.unknown { color: var(--fg-muted); }
-  .usage-win-reset { font-size: 10px; color: var(--fg-muted); width: 96px; flex: none; }
+  .usage-win-reset { font-size: var(--fs-100); color: var(--fg-muted); width: 96px; flex: none; }
   .usage-why {
-    font-size: 11px; color: var(--fg-subtle); margin-top: 5px; line-height: 1.45;
+    font-size: var(--fs-100); color: var(--fg-subtle); margin-top: 5px; line-height: 1.45;
   }
   .usage-why.bad { color: var(--c-danger-fg); }
   .usage-foot {
-    font-size: 10px; color: var(--fg-muted); padding: 8px 6px 2px;
+    font-size: var(--fs-100); color: var(--fg-muted); padding: 8px 6px 2px;
     border-top: 1px solid var(--border); line-height: 1.5;
   }
   /* Banner: only a *trusted* window that is genuinely hot right now. */
   #usage-banner {
     display: flex; align-items: center; gap: 12px; padding: 8px 16px;
-    background: color-mix(in srgb, var(--c-danger-fg) 10%, transparent);
-    border-bottom: 1px solid color-mix(in srgb, var(--c-danger-fg) 40%, var(--border));
+    background: var(--c-danger-bg);
+    border-bottom: 1px solid color-mix(in srgb, var(--c-danger-bold) 40%, var(--border));
     color: var(--fg); font-size: 13px;
     position: sticky; top: 0; z-index: 99;
   }
   #usage-banner[hidden] { display: none; }
   #usage-banner.warn {
     background: var(--c-warning-bg);
-    border-bottom-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+    border-bottom-color: color-mix(in srgb, var(--c-warning-bold) 45%, var(--border));
   }
   #usage-banner-text { flex: 1; }
   #usage-banner-dismiss {
     background: transparent; border: 0; color: var(--fg-muted);
     font-size: 16px; line-height: 1; padding: 4px 6px;
-    cursor: pointer; border-radius: 3px;
+    cursor: pointer; border-radius: var(--r-100);
   }
   #usage-banner-dismiss:hover { color: var(--fg); background: var(--hover); }
   /* A row whose task needs you, marked in the list itself. */
