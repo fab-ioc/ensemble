@@ -2292,6 +2292,50 @@ const fmtAgo = secs => {
   if (secs < 86400*2) return Math.floor(secs/3600) + 'h';
   return Math.floor(secs/86400) + 'd';
 };
+// Elapsed times change on every refresh and nothing else in a view does, so
+// they must never be the reason a view is rewritten: a rewrite replaces the
+// element under a click in progress (press and release land on different
+// nodes, so no click fires), drops focus to <body>, and loses hover. They
+// render into <span data-ago="epoch seconds">, are left out of every render
+// signature, and are patched in place, the way the board's .cwhen always was.
+const agoSpan = ts => `<span data-ago="${ts == null ? '' : Number(ts)}">`
+  + `${esc(fmtAgo(ts == null ? null : Date.now() / 1000 - ts))}</span>`;
+const withoutAgo = html => html.replace(/(<span data-ago="[^"]*">)[^<]*/g, '$1');
+function tickAgo(root) {
+  const now = Date.now() / 1000;
+  root.querySelectorAll('[data-ago]').forEach(el => {
+    const t = el.dataset.ago === '' ? '-' : fmtAgo(now - Number(el.dataset.ago));
+    if (el.textContent !== t) el.textContent = t;
+  });
+}
+// Write html into el only when something other than an elapsed time changed;
+// otherwise just tick the ages. Returns whether it wrote, so the caller wires
+// handlers only onto new nodes. The first-child check notices when some other
+// code path has written el since, so a stale signature never skips a write.
+function writeSlot(el, html) {
+  const sig = withoutAgo(html);
+  if (el._sig === sig && el._first === el.firstElementChild) { tickAgo(el); return false; }
+  el.innerHTML = html;
+  el._sig = sig;
+  el._first = el.firstElementChild;
+  return true;
+}
+// A genuine rewrite (a real status change) must not throw a keyboard user to
+// <body>. Note which control had focus and give it to its equivalent in the
+// new markup: the same control if it survived, else the one in its place.
+const FOCUSABLE = 'button:not([disabled]), a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+const controlId = el => [el.tagName, el.classList[0] || '', el.dataset.wf || '', el.dataset.itab || ''].join('|');
+function focusKeyIn(root) {
+  const a = document.activeElement;
+  if (!a || a === root || !root.contains(a)) return null;
+  return { id: controlId(a), index: [...root.querySelectorAll(FOCUSABLE)].indexOf(a) };
+}
+function restoreFocus(root, key) {
+  if (!key) return;
+  const all = [...root.querySelectorAll(FOCUSABLE)];
+  const el = all.find(x => controlId(x) === key.id) || all[Math.min(Math.max(key.index, 0), all.length - 1)];
+  if (el) el.focus({ preventScroll: true });
+}
 // Collapse the home dir to ~ across platforms: /Users/<u> (macOS),
 // /home/<u> (Linux), C:\Users\<u> (Windows).
 const tildeify = p => (p || '')
@@ -2832,7 +2876,7 @@ function detailMeta(r, isLive, isRoom, now) {
   const prio = isRoom && r.roomId
     ? `<span class="dp-prio-inline" title="Priority: ${esc(prioName(prioOf(r)))}">${prioIcon(prioOf(r), '', true)}${esc(prioName(prioOf(r)))}</span>` : '';
   return `<div class="dp-meta">${workflowPicker(r, isRoom)}${attnLoz}${prio}${runChip(r)}
-    <span class="dp-when">updated ${esc(fmtAgo(now - r.updatedAt))} ago</span></div>`;
+    <span class="dp-when">updated ${agoSpan(r.updatedAt)} ago</span></div>`;
 }
 
 // The summary answers "what did this task do" in one line, before any tab is
@@ -3151,15 +3195,19 @@ function renderDetail() {
   detailHeadOverflow = detailOverflow(r, isLive, isRoom);
   const topHtml = detailHead(r, isRoom) + detailMeta(r, isLive, isRoom, now)
     + detailActions(r, isLive, isRoom, isOrphan) + detailSummary(r, isRoom);
-  if (top._html !== topHtml) {
+  const topSig = withoutAgo(topHtml);
+  if (top._html !== topSig) {
     if (top.querySelector('.wf-menu:not([hidden]), .ov-menu:not([hidden])')) {
       panel.dataset.topPending = '1';     // apply once the menu closes
     } else {
-      top._html = topHtml;
+      const focus = focusKeyIn(top);
+      top._html = topSig;
       top.innerHTML = topHtml;
+      restoreFocus(top, focus);
       delete panel.dataset.topPending;
     }
   }
+  tickAgo(top);
 
   // Tabs: fixed four, fixed labels. Only which one is on moves.
   const cur = issueTab(r);
@@ -3568,7 +3616,7 @@ function needsYouHtml() {
   }
   const groups = [...byProj.entries()].map(([proj, list]) => {
     const rows = list.map(it => {
-      const when = it.since ? fmtAgo(Date.now() / 1000 - it.since) + ' ago' : '';
+      const when = it.since ? agoSpan(it.since) + ' ago' : '';
       const tone = (it.state === 'agent_gone' || it.state === 'blocked') ? 'danger'
                  : (it.state === 'stalled') ? 'neutral' : 'warning';
       const who = [it.agentIdentity, it.agentModel].filter(Boolean).join(' ');
@@ -3576,7 +3624,7 @@ function needsYouHtml() {
         <span class="dest-cell"><span class="loz ${tone}">${esc(ATTN_LABEL[it.state] || it.state)}</span></span>
         <span class="dest-title">${esc(it.title)}</span>
         <span class="dest-who">${esc(who)}</span>
-        <span class="dest-when">${esc(when)}</span>
+        <span class="dest-when">${when}</span>
         <span class="dest-why">${esc(it.reason)}</span>
       </button>`;
     }).join('');
@@ -3596,7 +3644,6 @@ function activeHtml() {
     return `<div class="dest-head"><h2>Active</h2></div>`
       + `<div class="dest-empty">No agent is running right now.</div>`;
   }
-  const now = Date.now() / 1000;
   const busy = live.filter(r => r.status === 'busy');
   const idle = live.filter(r => r.status !== 'busy');
   const section = (title, rows) => rows.length ? `<section class="dest-group">
@@ -3605,7 +3652,7 @@ function activeHtml() {
         ${runChip(r)}
         <span class="dest-title">${esc(r.label || '(session)')}</span>
         <span class="dest-who">${cardAgents(r)}</span>
-        <span class="dest-when">${esc(fmtAgo(now - r.updatedAt))}</span>
+        <span class="dest-when">${agoSpan(r.updatedAt)}</span>
         <span class="dest-why">${esc(r.projectName || '')}</span>
       </button>`).join('')}
     </section>` : '';
@@ -4142,7 +4189,7 @@ function projectsLandingHtml() {
   const cards = PROJECTS.projects.map(p => {
     const rows = (p.sessions || []).slice(0, 4).map(sn => {
       const st = projectSessionState(sn);
-      return `<div class="srow" data-sid="${esc(sn.roomId || sn.sessionId || '')}"><span class="sdot ${st}"></span>${sn.roomId ? prioIcon(prioOf(sn)) : ''}<span class="stitle">${esc(sn.label || sn.sessionId || 'session')}</span><span class="stime">${esc(fmtAgo(Date.now() / 1000 - sn.updatedAt))}</span></div>`;
+      return `<div class="srow" data-sid="${esc(sn.roomId || sn.sessionId || '')}"><span class="sdot ${st}"></span>${sn.roomId ? prioIcon(prioOf(sn)) : ''}<span class="stitle">${esc(sn.label || sn.sessionId || 'session')}</span><span class="stime">${agoSpan(sn.updatedAt)}</span></div>`;
     }).join('');
     const more = (p.count || 0) > 4 ? `<div class="srow more">… ${p.count - 4} more</div>` : '';
     const wait = p.waiting ? `<span class="waitchip">⚠ ${p.waiting} waiting</span>` : '';
@@ -4157,7 +4204,7 @@ function projectsLandingHtml() {
       <div class="row1"><h3>${esc(p.name)}</h3>${wait}${live}</div>
       ${sub}
       <div class="srows">${rows}${more}${(p.count || 0) === 0 ? '<div class="srow none">no tasks yet</div>' : ''}</div>
-      <div class="metarow">${changed}<span class="ago">${esc(fmtAgo(Date.now() / 1000 - p.updatedAt))}</span>${newTask}</div>
+      <div class="metarow">${changed}<span class="ago">${agoSpan(p.updatedAt)}</span>${newTask}</div>
     </div>`;
   }).join('');
   const addCard = `<div class="proj newproj" title="Register a folder as a project"><div class="row1"><h3>+ New project</h3></div><div class="ppath">Any folder — a repo, or just notes and specs. Then add tasks to it.</div></div>`;
@@ -4166,11 +4213,11 @@ function projectsLandingHtml() {
 function wireProjectsChrome() {
   document.querySelectorAll('.gb button[data-gb]').forEach(b => b.onclick = () => {
     PROJ_GROUPBY = b.dataset.gb; try { localStorage.setItem('cd-groupby', PROJ_GROUPBY); } catch (e) {}
-    SELECTED_PROJECT = null; renderRows();
+    SELECTED_PROJECT = null; SB_DEST = ''; renderRows();
   });
   document.querySelectorAll('.proj[data-proj]').forEach(c => c.onclick = (e) => {
     if (e.target.closest('.srow') || e.target.closest('.newtask')) return;
-    SELECTED_PROJECT = c.dataset.proj; PROJECT_TAB = 'tasks'; WS_SCOPE = ''; renderRows();
+    SELECTED_PROJECT = c.dataset.proj; PROJECT_TAB = 'tasks'; WS_SCOPE = ''; SB_DEST = ''; renderRows();
   });
   // Changes tab: for every project with a folder — the repo may be the
   // project folder itself or live inside a task's workspace (the tab finds it).
@@ -4200,7 +4247,7 @@ function wireProjectsChrome() {
   const ct = document.querySelector('.crumb-newtask');
   if (ct) ct.onclick = () => showNewSessionModal('', SELECTED_PROJECT);
   const back = document.querySelector('.crumb-back');
-  if (back) back.onclick = (e) => { e.preventDefault(); SELECTED_PROJECT = null; renderRows(); };
+  if (back) back.onclick = (e) => { e.preventDefault(); SELECTED_PROJECT = null; SB_DEST = ''; renderRows(); };
 }
 // Register a folder as a project. Any folder works (created if missing) — a
 // git repo, or just a place for specs/notes. Returns the project or null.
@@ -4785,7 +4832,7 @@ function chFormat() {
 }
 function chRenderTray() {
   let tray = document.getElementById('ch-tray');
-  if (!CH_COMMENTS.length || PROJECT_TAB !== 'changes') { if (tray) tray.remove(); return; }
+  if (!CH_COMMENTS.length || PROJECT_TAB !== 'changes' || SB_DEST) { if (tray) tray.remove(); return; }
   if (!tray) { tray = document.createElement('div'); tray.id = 'ch-tray'; document.body.appendChild(tray); }
   const pj = projectById(SELECTED_PROJECT);
   const rooms = ((pj && pj.sessions) || []).filter(function (s) { return s.roomId; });
@@ -4835,12 +4882,21 @@ function renderRows() {
   // A sidebar destination (Needs you, Active) owns the whole view, so the
   // project's workspace panel steps aside even if its tab was last open.
   if (wsp) wsp.hidden = !(SELECTED_PROJECT && PROJECT_TAB === 'workspace') || Boolean(SB_DEST);
+  // A destination replaces whatever view is showing, the home page and a
+  // project's Workspace and Changes included, so it runs before all of them;
+  // entering a project clears it. Its entries are there to be clicked, so they
+  // are written only when what they show changes.
+  if (SB_DEST) {
+    writeSlot($('#view'), `<div class="dest">${SB_DEST === 'needsyou' ? needsYouHtml() : activeHtml()}</div>`);
+    setViewCount('');
+    chRenderTray();                   // the Changes comment tray steps aside too
+    return;
+  }
   // Projects landing (default). A selected project or a non-project grouping
   // falls through to the existing session table below.
   if (!SELECTED_PROJECT && PROJ_GROUPBY === 'project' && !_projFailed) {
-    $('#view').innerHTML = projectsChromeHtml() + projectsLandingHtml();
+    if (writeSlot($('#view'), projectsChromeHtml() + projectsLandingHtml())) wireProjectsChrome();
     setViewCount(PROJECTS ? `${PROJECTS.projects.length} projects` : 'loading…');
-    wireProjectsChrome();
     return;
   }
   // Drilled into a project on the Changes tab: changed files + diff review.
@@ -4871,12 +4927,6 @@ function renderRows() {
         wsMount(panel.querySelector('.wsp'), { kind: 'project', projectId: SELECTED_PROJECT });
       }
     }
-    return;
-  }
-  // A destination owns the whole view when it is selected.
-  if (SB_DEST) {
-    $('#view').innerHTML = `<div class="dest">${SB_DEST === 'needsyou' ? needsYouHtml() : activeHtml()}</div>`;
-    setViewCount('');
     return;
   }
   const parsed = parseSearchQuery(SEARCH_QUERY);
@@ -4911,9 +4961,8 @@ function renderRows() {
     pageHeader = `<div class="page-header">${title}${actions}</div>`;
   }
   if (!filtered.length) {
-    view.innerHTML = projectsChromeHtml() + pageHeader + filterRowHtml()
-      + '<p class="empty">' + (active ? 'No matches.' : 'No sessions.') + '</p>';
-    wireProjectsChrome();
+    if (writeSlot(view, projectsChromeHtml() + pageHeader + filterRowHtml()
+      + '<p class="empty">' + (active ? 'No matches.' : 'No sessions.') + '</p>')) wireProjectsChrome();
     setViewCount(total ? `0 of ${total}` : '0 tasks');
     return;
   }
@@ -4942,13 +4991,13 @@ function renderRows() {
   }
   const ordered = nestForks(filtered);
   const headExtra = DETAIL_MODE ? '' : '<th></th>';
-  view.innerHTML = projectsChromeHtml() + pageHeader + filterRowHtml() + `<table>
+  const listHtml = projectsChromeHtml() + pageHeader + filterRowHtml() + `<table>
     <thead><tr>
       <th></th><th class="prio"></th><th>Task</th><th></th>${headExtra}
     </tr></thead>
     <tbody>${renderGroupedRows(ordered, parsed, now)}</tbody>
   </table>`;
-  wireProjectsChrome();
+  if (writeSlot(view, listHtml)) wireProjectsChrome();
   setViewCount(_viewCount);
 }
 
@@ -5686,10 +5735,11 @@ function renderAttention() {
     ? `${items.length} task${items.length === 1 ? '' : 's'} need${items.length === 1 ? 's' : ''} you`
     : 'Nothing needs you';
   $('#notif-sub').textContent = items.length ? '' : '— all clear';
-  $('#notif-list').innerHTML = items.length
+  const list = $('#notif-list');
+  const listed = writeSlot(list, items.length
     ? items.map(notifItemHtml).join('')
-    : '<div class="notif-empty">No task is waiting on you, stuck, or dead.</div>';
-  $('#notif-list').querySelectorAll('.notif-item').forEach(el => {
+    : '<div class="notif-empty">No task is waiting on you, stuck, or dead.</div>');
+  if (listed) list.querySelectorAll('.notif-item').forEach(el => {
     el.onclick = () => openAttentionItem(el.dataset.room);
   });
   // The rows carry their own marker, so redraw the list when the set changed.
@@ -5698,8 +5748,7 @@ function renderAttention() {
 }
 
 function notifItemHtml(it) {
-  // fmtAgo takes an elapsed duration, not a timestamp.
-  const when = it.since ? fmtAgo(Date.now() / 1000 - it.since) + ' ago' : '';
+  const when = it.since ? agoSpan(it.since) + ' ago' : '';
   // agent_gone has no terminal left to open, so the last screen comes along.
   const screen = it.lastLines
     ? `<div class="notif-screen">${esc(it.lastLines)}</div>` : '';
@@ -5708,7 +5757,7 @@ function notifItemHtml(it) {
     <div class="notif-row1">
       <span class="notif-chip ${esc(it.state)}">${esc(ATTN_LABEL[it.state] || it.state)}</span>
       <span class="notif-title">${esc(it.title)}</span>
-      <span class="notif-when">${esc(when)}</span>
+      <span class="notif-when">${when}</span>
     </div>
     <div class="notif-why">${esc(it.reason)}</div>
     ${where ? `<div class="notif-proj">${esc(where)}</div>` : ''}
@@ -6117,6 +6166,7 @@ $('#proj-menu').addEventListener('click', (ev) => {
   SELECTED_PROJECT = it.dataset.proj || null;
   PROJECT_TAB = 'tasks';
   WS_SCOPE = '';
+  SB_DEST = '';
   syncProjSwitch();
   renderRows();
 });
