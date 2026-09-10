@@ -65,7 +65,7 @@
      and page padding above them. */
   :root {
     --header-h: 49px;    /* 48px bar + 1px bottom border */
-    --chrome-h: 266px;   /* --header-h + crumbs + tabs + page padding */
+    --chrome-h: calc(var(--header-h) + 217px);   /* + crumbs, tabs, page padding */
   }
   * { box-sizing: border-box; }
   body {
