@@ -252,6 +252,9 @@ INSTANCE = ""
 PROJ_DIR = HOME / ".claude" / "projects"           # shared (claude-owned)
 LABELS_FILE = DASHBOARD_DIR / "labels.json"
 FAVORITE_THEMES_FILE = DASHBOARD_DIR / "favorite_themes.json"
+# Task folders whose chat uses the folder's own colour scheme instead of the
+# dashboard theme. Off unless listed: the chat follows the global theme.
+CHAT_SCHEME_FILE = DASHBOARD_DIR / "chat_scheme_override.json"
 JIRA_LINKS_FILE = DASHBOARD_DIR / "jira_links.json"  # {sid: [tickets]} user-added links (override scan)
 JIRA_UNLINKS_FILE = DASHBOARD_DIR / "jira_unlinks.json"  # {sid: [tickets]} user-removed from auto-scan
 PARENTS_FILE = DASHBOARD_DIR / "parents.json"  # child_sid -> parent_sid
@@ -648,9 +651,13 @@ _SETTINGS_DEFAULTS = {
     # they think, so real silence is the signal — but how much of it counts as
     # trouble is a judgement call, hence a setting.
     "attentionStallSeconds": attention.STALL_SECONDS_DEFAULT,
+    # The dashboard theme, shared by every device on this hub. Empty = never
+    # chosen here; the pages then hand up whatever their browser had.
+    "theme": "",
 }
 _SETTINGS_ALLOWED_VALUES = {
     "openMode": {"window", "tab"},
+    "theme": {"", "light", "dark", "dim", "paper", "contrast", "fjord", "system"},
     # defaultModel is free-form — anything claude --model accepts.
 }
 
@@ -1572,6 +1579,34 @@ def save_favorite_themes(favs: list[str]) -> None:
     tmp = FAVORITE_THEMES_FILE.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(favs, indent=2), encoding="utf-8")
     tmp.replace(FAVORITE_THEMES_FILE)
+
+
+def _cwd_key(cwd: str) -> str:
+    return os.path.normcase(os.path.normpath(cwd)) if cwd else ""
+
+
+def load_chat_scheme_cwds() -> set[str]:
+    try:
+        data = json.loads(CHAT_SCHEME_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return {_cwd_key(x) for x in data if isinstance(x, str) and x}
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    return set()
+
+
+def set_chat_scheme(cwd: str, on: bool) -> bool:
+    cwds = load_chat_scheme_cwds()
+    key = _cwd_key(cwd)
+    if on:
+        cwds.add(key)
+    else:
+        cwds.discard(key)
+    DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = CHAT_SCHEME_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(sorted(cwds), indent=2), encoding="utf-8")
+    tmp.replace(CHAT_SCHEME_FILE)
+    return key in cwds
 
 
 _CLAUDE_THEMES = ["dark", "light", "dark-ansi", "light-ansi", "dark-daltonized", "light-daltonized"]
@@ -3969,7 +4004,10 @@ class Handler(BaseHTTPRequestHandler):
                 colors = BACKEND.theme_colors(name) or {}
             except Exception:
                 colors = {}
-            self._send_json(200, {"theme": name, "colors": colors})
+            # The chat uses these colours only when the owner switched the
+            # folder's scheme on for it; otherwise it follows the global theme.
+            override = bool(cwd) and _cwd_key(cwd) in load_chat_scheme_cwds()
+            self._send_json(200, {"theme": name, "colors": colors, "override": override})
             return
         if p == "/api/jira-config":
             self._send_json(200, {"enabled": JIRA_ENABLED, "base": JIRA_BASE,
@@ -5307,6 +5345,13 @@ class Handler(BaseHTTPRequestHandler):
                 pins.discard(sid)
             save_pinned(pins)
             self._send_json(200, {"pinned": sorted(pins)})
+            return
+        if p == "/api/chat-scheme":
+            cwd = (data.get("cwd") or "").strip()
+            if not cwd:
+                self._send_json(400, {"error": "missing_cwd"})
+                return
+            self._send_json(200, {"override": set_chat_scheme(cwd, bool(data.get("on")))})
             return
         if p == "/api/theme":
             pid = data.get("pid")
