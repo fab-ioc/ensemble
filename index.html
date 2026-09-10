@@ -834,13 +834,6 @@
   #detail-panel:has(iframe.dp-session) .dp-head { padding: 8px 12px; margin: 0; }
   /* Conversation | Files. Both panes stay mounted; only `hidden` moves, so a
      live terminal is never torn down by looking at a file. */
-  #detail-panel .dp-tabs { display: flex; gap: 4px; padding: 0 12px; border-bottom: 1px solid var(--border); }
-  #detail-panel .dp-tabs button {
-    background: none; border: 0; border-bottom: 2px solid transparent; color: var(--fg-subtle);
-    font: inherit; font-size: 12.5px; font-weight: 600; padding: 7px 4px; margin-bottom: -1px; cursor: pointer;
-  }
-  #detail-panel .dp-tabs button:hover { color: var(--fg); }
-  #detail-panel .dp-tabs button.on { color: var(--fg); border-bottom-color: var(--accent); }
   /* The header slot has to carry the spacing the panel used to give these
      rows directly, now that they are its children rather than the panel's. */
   #detail-panel .dp-top { flex: 0 0 auto; display: flex; flex-direction: column; gap: 16px; }
@@ -849,8 +842,8 @@
      UA's [hidden] { display: none } — without this the hidden pane stays on
      screen and both tabs show at once. */
   #detail-panel .dp-pane[hidden] { display: none !important; }
-  #detail-panel .dp-pane[data-pane="files"] { flex: 1; display: flex; flex-direction: column; padding: 10px 12px; min-height: 360px; }
-  #detail-panel:has(iframe.dp-session) .dp-pane[data-pane="conv"] { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  #detail-panel .dp-pane[data-pane="workspace"] { flex: 1; display: flex; flex-direction: column; padding: 10px 12px; min-height: 360px; }
+  #detail-panel:has(iframe.dp-session) .dp-pane[data-pane="activity"] { flex: 1; display: flex; flex-direction: column; min-height: 0; }
   /* The panel is a narrow, user-resized column: same component, stacked. */
   #detail-panel .wsp { grid-template-columns: 1fr; grid-template-rows: minmax(120px, 34vh) 1fr; height: 100%; min-height: 340px; }
   #detail-panel .wsp-tree { border-right: 0; border-bottom: 1px solid var(--border); }
@@ -1589,7 +1582,10 @@
   .ov-item.danger:hover { background: var(--c-danger-bg); }
   .ov-rule { height: 1px; background: var(--border); margin: var(--s-100) 0; }
   .ov-menu span { display: block; }
-  .dp-live-details { border-top: 1px solid var(--border); }
+  /* With a live session the panel drops its own padding so the terminal runs
+     edge to edge; the slots around it carry their own. */
+  #detail-panel.is-live .dp-top { padding: 16px 18px 12px; }
+  #detail-panel.is-live .dp-details { padding: 12px 18px 16px; border-top: 1px solid var(--border); }
   #me-menu .me-head {
     font-size: var(--fs-100); font-weight: 600; text-transform: uppercase;
     letter-spacing: .05em; color: var(--fg-muted); padding: 6px 10px 2px;
@@ -2878,11 +2874,6 @@ function issueTab(r) {
   }
   return ISSUE_TAB || defaultIssueTab(r);
 }
-function issueTabsHtml(r) {
-  const cur = issueTab(r);
-  return `<div class="dp-tabs">${ISSUE_TABS.map(t =>
-    `<button class="dp-tab${t.k === cur ? ' on' : ''}" data-itab="${t.k}">${esc(t.name)}</button>`).join('')}</div>`;
-}
 
 // An empty tab names what would fill it and why it is empty — never a blank
 // panel, and never --fg-disabled, which clears no contrast threshold here.
@@ -3097,56 +3088,31 @@ async function loadConversation(r) {
   } catch (e) { /* keep the "Loading…" placeholder */ }
 }
 
-// Which pane of the task panel is showing. Not part of the panel's signature —
-// see renderDetail.
-let DETAIL_TAB = 'conv';
-function wireDetailTabs(sid, hasFiles) {
-  const panel = $('#detail-panel');
-  if (!hasFiles) { DETAIL_TAB = 'conv'; return; }
-  panel.querySelectorAll('.dp-tabs button[data-dtab]').forEach(b => {
-    b.onclick = () => { DETAIL_TAB = b.dataset.dtab; showDetailTab(sid); };
-  });
-  showDetailTab(sid);
-}
-function showDetailTab(sid) {
-  const panel = $('#detail-panel');
-  panel.querySelectorAll('.dp-tabs button[data-dtab]').forEach(b => b.classList.toggle('on', b.dataset.dtab === DETAIL_TAB));
-  panel.querySelectorAll('.dp-pane').forEach(p => { p.hidden = p.dataset.pane !== DETAIL_TAB; });
-  const files = panel.querySelector('.dp-pane[data-pane="files"]');
-  if (DETAIL_TAB === 'files' && files && !files.querySelector('.wsp')) {
-    files.innerHTML = wsPanelHtml();
-    wsMount(files.querySelector('.wsp'), { kind: 'task', sid });
-  }
-}
 
-// One tab's content. Everything that is absent says WHY it is absent — the
-// same contract the filter chips and "+ N older" have with their counts.
-function issueTabBody(r, sid, isLive, isRoom, liveShell) {
-  const tab = issueTab(r);
-  if (tab === 'spec') {
-    const spec = (r.spec || '').trim();
-    if (!spec) return issueEmpty('No spec — this task was not created from one.');
-    return `<div class="dp-spec">${mdToHtml(spec)}</div>`;
-  }
-  if (tab === 'changes') {
-    if (!r.cwd) return issueEmpty('No branch yet \u2014 nothing has run.');
-    return `<div class="dp-tabnote">The diff for this task lives on the project's Changes tab, `
-      + `which reviews the whole repository rather than one task's slice of it.</div>`
-      + `<div class="dp-cwd" title="${esc(r.cwd)}">${esc(tildeify(r.cwd))}</div>`;
-  }
-  if (tab === 'workspace') {
-    if (!r.cwd) return issueEmpty('No worktree yet \u2014 it is created when the task starts.');
-    return `<div class="dp-tabnote">This task's working directory.</div>`
-      + `<div class="dp-cwd" title="${esc(r.cwd)}">${esc(tildeify(r.cwd))}</div>`
-      + (r.taskDir && r.taskDir !== r.cwd
-          ? `<div class="dp-tabnote">Task folder</div><div class="dp-cwd" title="${esc(r.taskDir)}">${esc(tildeify(r.taskDir))}</div>` : '');
-  }
-  // Activity
-  if (liveShell) return issueEmpty('Switch to Activity to see the running session.');
-  if (!(r.turns || 0)) return issueEmpty("No messages yet. The spec is the agents' first prompt.");
-  return convBody(r, sid);
-}
 
+// The task panel is a SHELL, built once per task and then written into slot
+// by slot. That is main's design and it is kept: rebuilding the panel would
+// take the Workspace pane's file viewer, and any comment written but not yet
+// sent, with it. Each slot has its own guard, so what changed is rewritten
+// and nothing else:
+//   top       header, lozenge row, one action, summary. Its signature is its
+//             own rendered HTML, so run status, attention, workflow,
+//             priority, the agent's last word, who is on it and the minute
+//             all keep it true, but it is never rewritten while a menu inside
+//             it is open.
+//   activity  the live session (rebuilt only when the room changes) or the
+//             conversation (rebuilt only when it loads or grows), so an idle
+//             flip never costs the conversation its scroll.
+//   changes, spec   cheap, rebuilt on their own content.
+//   workspace main's Files pane: mounted once, lazily, the first time it is
+//             shown with a folder to show. Never rebuilt.
+//   details   the priority picker and who is on the task.
+// The shell is keyed on the task alone. main also keyed it on whether the
+// task had a folder, which flips the moment a task starts, rebuilding the
+// shell and reconnecting the live session at exactly the moment its own
+// comment said must not happen. The tab set is fixed and so are its labels:
+// what a tab shows may change shape when a task starts, what it is called
+// does not.
 function renderDetail() {
   const sid = SELECTED_SID;
   if (!sid) { closeDetail(); return; }
@@ -3163,49 +3129,103 @@ function renderDetail() {
   const isOrphan = !!r.orphan;
   const liveEmbed = isLive && isRoom;   // only a room we own can embed a live view
   const convReady = (CONV_SID === sid && !!CONV_DATA);
-  // Rebuild when identity-affecting fields change too (rename → label, pin), so
-  // the header/actions reflect them without waiting for a reselect.
-  const themeTok = (CHAT_THEME && CHAT_THEME.background) || '-';
-  const base = [sid, isLive ? 1 : 0, r.pinned ? 'p' : '-', r.label || '', themeTok].join('|');
-  const sig = (liveEmbed ? base + '|embed' : base + '|hist|' + (convReady ? 'c' : '-'))
-    + '|' + issueTab(r) + '|' + workflowOf(r);
-  // Nothing changed since the last render — keep the DOM (and the live iframe,
-  // and the conversation scroll position) intact.
-  if (panel.dataset.sig === sig) return;
   // Kick off the history load once per selection (not for the live embed).
   if (!liveEmbed && !isOrphan && CONV_SID !== sid) loadConversation(r);
-  panel.dataset.sig = sig;
   const now = Date.now() / 1000;
 
-  if (liveEmbed) {
-    const tab = issueTab(r);
-    detailHeadOverflow = detailOverflow(r, isLive, isRoom);
-    panel.innerHTML =
-      `<div class="dp-live">${detailHead(r, isRoom)}${detailMeta(r, isLive, isRoom, now)}`
-      + `${detailActions(r, isLive, isRoom, isOrphan)}${detailPriority(r, isRoom)}${detailSummary(r, isRoom)}${issueTabsHtml(r)}</div>`
-      + (tab === 'activity'
-          // A live task's Activity IS its session: the balloon, embedded, so
-          // you can answer it here rather than in another window.
-          ? `<iframe class="dp-session" data-room="${esc(r.roomId)}" src="/session?id=${encodeURIComponent(r.roomId)}&embed=1" title="session" allow="clipboard-read; clipboard-write"></iframe>`
-          : `<div class="dp-tabbody">${issueTabBody(r, sid, isLive, isRoom, true)}</div>`)
-      // Details belong to every task, not only the stopped ones. Who is on a
-      // running collaboration and which model each runs is precisely what you
-      // open a live task to find out.
-      + `<div class="dp-live-details">${detailPriority(r, isRoom)}${detailInfo(r)}</div>`;
-    return;
+  if (panel.dataset.shell !== sid) {
+    panel.dataset.shell = sid;
+    delete panel.dataset.topPending;
+    panel.innerHTML = '<div class="dp-top"></div>'
+      + '<div class="dp-tabs">' + ISSUE_TABS.map(t =>
+          `<button class="dp-tab" data-itab="${t.k}">${esc(t.name)}</button>`).join('') + '</div>'
+      + ISSUE_TABS.map(t => `<div class="dp-pane" data-pane="${t.k}" hidden></div>`).join('')
+      + '<div class="dp-details"></div>';
   }
+  panel.classList.toggle('is-live', liveEmbed);
+
+  // Top slot.
+  const top = panel.querySelector('.dp-top');
   detailHeadOverflow = detailOverflow(r, isLive, isRoom);
-  panel.innerHTML =
-    detailHead(r, isRoom)
-    + detailMeta(r, isLive, isRoom, now)
-    + detailActions(r, isLive, isRoom, isOrphan)
-    + detailSummary(r, isRoom)
-    + issueTabsHtml(r)
-    + (isOrphan
+  const topHtml = detailHead(r, isRoom) + detailMeta(r, isLive, isRoom, now)
+    + detailActions(r, isLive, isRoom, isOrphan) + detailSummary(r, isRoom);
+  if (top._html !== topHtml) {
+    if (top.querySelector('.wf-menu:not([hidden]), .ov-menu:not([hidden])')) {
+      panel.dataset.topPending = '1';     // apply once the menu closes
+    } else {
+      top._html = topHtml;
+      top.innerHTML = topHtml;
+      delete panel.dataset.topPending;
+    }
+  }
+
+  // Tabs: fixed four, fixed labels. Only which one is on moves.
+  const cur = issueTab(r);
+  panel.querySelectorAll('.dp-tab[data-itab]').forEach(b => b.classList.toggle('on', b.dataset.itab === cur));
+  panel.querySelectorAll('.dp-pane').forEach(p => { p.hidden = p.dataset.pane !== cur; });
+
+  // Activity.
+  const act = panel.querySelector('.dp-pane[data-pane="activity"]');
+  if (liveEmbed) {
+    // Only the room identity may rebuild the terminal. A label, a pin or an
+    // idle flip must not reconnect a running agent's session.
+    if (act.dataset.room !== r.roomId) {
+      act.dataset.room = r.roomId;
+      act._sig = '';
+      act.innerHTML = `<iframe class="dp-session" data-room="${esc(r.roomId)}" src="/session?id=${encodeURIComponent(r.roomId)}&embed=1" title="session" allow="clipboard-read; clipboard-write"></iframe>`;
+    }
+  } else {
+    const themeTok = (CHAT_THEME && CHAT_THEME.background) || '-';
+    const aSig = [isOrphan ? 'orphan' : 'hist', r.turns || 0, convReady ? 'c' : '-', themeTok].join('|');
+    if (act.dataset.room || act._sig !== aSig) {
+      act.removeAttribute('data-room');
+      act._sig = aSig;
+      act.innerHTML = isOrphan
         ? issueEmpty("This collaboration has ended and its agents aren't running. Open to resume where it left off.")
-        : issueTabBody(r, sid, isLive, isRoom, false))
-    + detailPriority(r, isRoom)
-    + detailInfo(r);
+        : ((r.turns || 0) ? convBody(r, sid) : issueEmpty("No messages yet. The spec is the agents' first prompt."));
+    }
+  }
+
+  // Changes and Spec.
+  const ch = panel.querySelector('.dp-pane[data-pane="changes"]');
+  const chHtml = changesPaneHtml(r);
+  if (ch._html !== chHtml) { ch._html = chHtml; ch.innerHTML = chHtml; }
+  const sp = panel.querySelector('.dp-pane[data-pane="spec"]');
+  const spHtml = specPaneHtml(r);
+  if (sp._html !== spHtml) { sp._html = spHtml; sp.innerHTML = spHtml; }
+
+  // Workspace: main's Files pane, mounted once when it is first shown with a
+  // folder to show, and never rebuilt after that.
+  const ws = panel.querySelector('.dp-pane[data-pane="workspace"]');
+  if (cur === 'workspace' && !ws.querySelector('.wsp')) {
+    if (wsRoots({ kind: 'task', sid }).length) {
+      ws.innerHTML = wsPanelHtml();
+      wsMount(ws.querySelector('.wsp'), { kind: 'task', sid });
+    } else if (!ws._empty) {
+      ws._empty = true;
+      ws.innerHTML = issueEmpty('This task has no folder of its own, and no project folder to show instead.');
+    }
+  }
+
+  // Details.
+  const det = panel.querySelector('.dp-details');
+  const detHtml = detailPriority(r, isRoom) + detailInfo(r);
+  if (det._html !== detHtml) { det._html = detHtml; det.innerHTML = detHtml; }
+}
+
+// The Changes pane, until per-task changes land: say where the diff lives.
+function changesPaneHtml(r) {
+  if (!r.cwd) return issueEmpty('No branch yet \u2014 nothing has run.');
+  return `<div class="dp-tabnote">The diff for this task lives on the project's Changes tab, `
+    + `which reviews the whole repository rather than one task's slice of it.</div>`
+    + `<div class="dp-cwd" title="${esc(r.cwd)}">${esc(tildeify(r.cwd))}</div>`;
+}
+
+// The Spec pane: for a draft this IS the content, the agents' first prompt.
+function specPaneHtml(r) {
+  const spec = (r.spec || '').trim();
+  if (!spec) return issueEmpty('No spec \u2014 this task was not created from one.');
+  return `<div class="dp-spec">${mdToHtml(spec)}</div>`;
 }
 
 // Single unified layout — list on left, detail panel on right.
@@ -6436,6 +6456,10 @@ document.addEventListener('click', (ev) => {
   document.querySelectorAll('.wf-menu:not([hidden])').forEach(m => {
     if (!ev.target.closest('.wf-wrap')) m.hidden = true;
   });
+  // The panel's top slot waited for a menu to close; apply it now it has.
+  const dpp = document.getElementById('detail-panel');
+  if (dpp && dpp.dataset.topPending
+      && !dpp.querySelector('.wf-menu:not([hidden]), .ov-menu:not([hidden])')) setTimeout(renderDetail, 0);
   // A destination entry opens the task it names, in the page.
   const destRow = ev.target.closest('.dest-row');
   if (destRow) {
