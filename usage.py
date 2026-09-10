@@ -577,12 +577,20 @@ def read_codex(now: float | None = None, files=None) -> dict:
     newest_at = max(at for _, at in buckets.values())
     # Only buckets still being reported: co-reported ones are a millisecond
     # apart, and one that trails by more than BUCKET_TOGETHER_S has stopped.
-    # Account-wide first, so its windows lead.
+    # Never the account-wide bucket, though. A model's bucket can write on its
+    # own — on this machine Spark ran up to 43 s ahead of the account's — and a
+    # longer run must not drop the one number the chip exists for. Nothing is
+    # lost by exempting it: across a plan change it stays "codex", so the
+    # change is handled by taking its whole record, and its own staleness and
+    # rollover guards still apply. Account-wide first, so its windows lead.
     current = sorted(
         ((bucket, limits, at) for bucket, (limits, at) in buckets.items()
-         if newest_at - at <= BUCKET_TOGETHER_S),
+         if bucket == "codex" or newest_at - at <= BUCKET_TOGETHER_S),
         key=lambda t: (t[0] != "codex", t[0]))
-    plan = max(buckets.values(), key=lambda v: v[1])[0].get("plan_type")
+    # The plan is the account's. Model buckets carry a null plan_type, so
+    # taking it from whichever bucket wrote last would make the label flicker.
+    plan = (buckets.get("codex")
+            or max(buckets.values(), key=lambda v: v[1]))[0].get("plan_type")
 
     entries = []
     for bucket, limits, at in current:
