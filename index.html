@@ -4,6 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Ensemble</title>
+<script>
+// Appearance, resolved before first paint so the page never flashes the wrong
+// theme. Light unless the owner chose otherwise; "system" follows the OS.
+(function () {
+  var pref = 'light';
+  try { pref = localStorage.getItem('cd-theme') || 'light'; } catch (e) {}
+  var dark = pref === 'dark' ||
+    (pref === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+})();
+</script>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 0 C13 8 16 11 24 12 C16 13 13 16 12 24 C11 16 8 13 0 12 C8 11 11 8 12 0 Z' fill='%23D97757'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -28,7 +39,7 @@
      paint for controls.
      ------------------------------------------------------------------ */
   :root {
-    color-scheme: light dark;
+    color-scheme: light;
 
     /* — neutrals, blue-cast — */
     --bg: #F7F8F9;
@@ -106,8 +117,12 @@
     --chrome-h: calc(var(--header-h) + 217px);   /* + crumbs, tabs, padding */
   }
 
-  @media (prefers-color-scheme: dark) {
-    :root {
+  /* Dark is applied by data-theme on <html>, never by the OS alone. The
+     head script resolves the stored choice — light (default), dark, or
+     system — before first paint, so there is ONE dark block rather than a
+     second copy under a media query, and no flash of the wrong theme. */
+  :root[data-theme="dark"] {
+    color-scheme: dark;
       --bg: #1D2125;
       --surface: #22272B;
       --surface-sunken: #1D2125;
@@ -144,7 +159,6 @@
 
       --e-100: 0 1px 1px rgba(3,4,4,.5), 0 0 1px rgba(3,4,4,.6);
       --e-200: 0 8px 12px rgba(3,4,4,.4), 0 0 1px rgba(3,4,4,.6);
-    }
   }
   * { box-sizing: border-box; }
   body {
@@ -773,7 +787,6 @@
     position: fixed; right: 0; top: var(--header-h); bottom: 0;
     width: var(--detail-w);
     background: var(--surface); border-left: 1px solid var(--border);
-    box-shadow: -14px 0 36px rgba(40,20,10,.10);
     overflow-y: auto; padding: 22px 22px 28px; z-index: 20;
     display: flex; flex-direction: column; gap: 16px;
     transform: translateX(100%);
@@ -947,7 +960,7 @@
   .statusbar .stat.needs { color: var(--c-warning-fg); background: var(--c-warning-bg); font-weight: 600; padding: 3px 11px; border-radius: var(--r-full); }
   .statusbar .stat.okstat { color: var(--c-success-fg); }
   .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--run-working); animation: livep 1.6s infinite; }
-  @keyframes livep { 0% { box-shadow: 0 0 0 0 rgba(34,160,107,.45); } 70% { box-shadow: 0 0 0 6px rgba(34,160,107,0); } 100% { box-shadow: 0 0 0 0 rgba(34,160,107,0); } }
+  @keyframes livep { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run-working) 45%, transparent); } 70% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--run-working) 0%, transparent); } 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run-working) 0%, transparent); } }
   .listctl { display: flex; align-items: center; gap: 10px; padding: 6px 4px 12px; font-size: 12px; color: var(--fg-subtle); }
   .seg.gb { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
   .seg.gb button { background: transparent; border: 0; color: var(--fg-subtle); font: inherit; font-size: 12px; padding: 5px 12px; cursor: pointer; }
@@ -1196,8 +1209,8 @@
     color: var(--fg-muted); font-size: 14px; line-height: 1;
     padding: 2px 6px; border-radius: 4px; flex-shrink: 0;
   }
-  .theme-dd-item .star:hover { background: color-mix(in srgb, var(--run-working) 18%, transparent); color: var(--run-working); }
-  .theme-dd-item .star.is-fav { color: var(--run-working); }
+  .theme-dd-item .star:hover { background: var(--selected-bg); color: var(--selected-fg); }
+  .theme-dd-item .star.is-fav { color: var(--selected-fg); }
   .theme-dd-item .name {
     flex: 1; cursor: pointer; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap;
@@ -1576,6 +1589,12 @@
   .ov-rule { height: 1px; background: var(--border); margin: var(--s-100) 0; }
   .ov-menu span { display: block; }
   .dp-live-details { border-top: 1px solid var(--border); }
+  #me-menu .me-head {
+    font-size: var(--fs-100); font-weight: 600; text-transform: uppercase;
+    letter-spacing: .05em; color: var(--fg-muted); padding: 6px 10px 2px;
+  }
+  #me-menu .me-rule { height: 1px; background: var(--border); margin: var(--s-100) 0; }
+  #me-menu .me-item.on { background: var(--selected-bg); color: var(--selected-fg); font-weight: 500; }
   /* --- Notifications: tasks that need you ------------------------------- */
   /* The bell takes .bar-btn.icon like every other icon control up here; only
      the count badge is its own. A bell with nothing in it says nothing, so
@@ -2143,8 +2162,13 @@
   <div class="shp-eg">"prop-risk" replay OR quoting</div>
 </div>
 <div id="me-menu" hidden>
-  <button class="me-item" data-me="settings">⚙ Settings</button>
-  <button class="me-item" data-me="theme">🎨 Accent colour</button>
+  <div class="me-head">Theme</div>
+  <button class="me-item" data-appearance="light">Light</button>
+  <button class="me-item" data-appearance="dark">Dark</button>
+  <button class="me-item" data-appearance="system">Match system</button>
+  <div class="me-rule"></div>
+  <button class="me-item" data-me="theme">Accent colour</button>
+  <button class="me-item" data-me="settings">Settings</button>
 </div>
 <div id="proj-menu" hidden></div>
 <div id="notif-tray" hidden>
@@ -2443,7 +2467,7 @@ function applyPlatformChrome() {
 function actionsCell(r, isLive) {
   const sid = r.sessionId;
   const current = r.currentTheme || '';
-  const placeholder = current ? `🎨 ${current}` : '🎨 Theme…';
+  const placeholder = current ? `Terminal colours: ${current}` : 'Terminal colours…';
   const themeTitle = current ? `Active ${T()} theme: ${current}` : `Pick a ${T()} color theme for this session`;
   // Show the theme picker on any theming platform for any session with a pid
   // or cwd. A live session (pid) themes the running tab on macOS / queues on
@@ -2878,7 +2902,7 @@ function detailActions(r, isLive, isRoom, isOrphan) {
     const finderBtn = cwd ? `<button class="finder-btn" data-path="${esc(cwd)}" title="Open cwd in ${esc(FM())}">📂 ${esc(FM())}</button>` : '';
     const ijBtn = cwd ? `<button class="ij-btn" data-sid="${esc(r.sessionId)}" title="Open the project in its preferred editor">🧠 IDE</button>` : '';
     const themeBtn = (feat('themes') && cwd)
-      ? `<button type="button" class="theme-dd-trigger" data-pid="" data-cwd="${esc(cwd)}" data-current="${esc(current)}" title="Pick a color theme for this session">${current ? '🎨 ' + esc(current) : '🎨 Theme…'}</button>` : '';
+      ? `<button type="button" class="theme-dd-trigger" data-pid="" data-cwd="${esc(cwd)}" data-current="${esc(current)}" title="Pick the terminal colour scheme for this task's folder">${current ? 'Terminal colours: ' + esc(current) : 'Terminal colours…'}</button>` : '';
     // Terminals + Pause were previously only in the popup's own header (hidden when
     // docked). Surface them here too so the docked toolbar matches the popup.
     const termsBtn = isLive ? `<button class="dp-terms-btn" title="Show/hide the raw per-agent terminals">🖥 Terminals</button>` : '';
@@ -2927,7 +2951,7 @@ function detailOverflow(r, isLive, isRoom) {
     items.push(`<button class="ov-item ij-btn" data-sid="${esc(r.sessionId)}">Open in editor</button>`);
   }
   if (feat('themes') && cwd) {
-    items.push(`<button type="button" class="ov-item theme-dd-trigger" data-pid="" data-cwd="${esc(cwd)}" data-current="${esc(current)}">${current ? 'Theme: ' + esc(current) : 'Theme…'}</button>`);
+    items.push(`<button type="button" class="ov-item theme-dd-trigger" data-pid="" data-cwd="${esc(cwd)}" data-current="${esc(current)}" title="Pick the terminal colour scheme for this task's folder">${current ? 'Terminal colours: ' + esc(current) : 'Terminal colours…'}</button>`);
   }
   // Destructive last and set apart, never adjacent to the primary action.
   if (!isLive) {
@@ -3725,7 +3749,12 @@ function nestForks(rows) {
   return out;
 }
 
-function passesFilter(r) {
+// WHERE the user is — the project they drilled into and the sidebar category —
+// kept apart from the filter chips, because the view's count needs it on its
+// own: its denominator is "tasks in this scope", not "every task anywhere".
+// Inside a project, counting all tasks read "12 of 38" and implied filters were
+// hiding 26 tasks that were simply in other projects.
+function inScope(r) {
   // Drilled into a project: only the sessions the server recorded as members
   // (explicit sidecar link, or path fallback for legacy rows). Never re-derived
   // here from cwd — that mismatch is what produced empty drill-ins before.
@@ -3735,9 +3764,14 @@ function passesFilter(r) {
     const ids = new Set((pj.sessions || []).map(s => s.roomId || s.sessionId));
     if (!ids.has(r.roomId || r.sessionId)) return false;
   }
-  // Sidebar category gate first
+  // Sidebar category gate
   if (SELECTED_CAT === '__uncat__' && r.category) return false;
   if (SELECTED_CAT !== '__all__' && SELECTED_CAT !== '__uncat__' && r.category !== SELECTED_CAT) return false;
+  return true;
+}
+
+function passesFilter(r) {
+  if (!inScope(r)) return false;
   // Workspace-only: drop sessions run outside the dashboard.
   if (HIDE_EXTERNAL && r.external) return false;
   // Then the chips
@@ -4077,7 +4111,7 @@ function projectsLandingHtml() {
   const cards = PROJECTS.projects.map(p => {
     const rows = (p.sessions || []).slice(0, 4).map(sn => {
       const st = projectSessionState(sn);
-      return `<div class="srow" data-sid="${esc(sn.roomId || sn.sessionId || '')}"><span class="sdot ${st}"></span>${sn.roomId ? prioIcon(prioOf(sn)) : ''}<span class="stitle">${esc(sn.label || sn.sessionId || 'session')}</span><span class="stime">${esc(fmtAgo(sn.updatedAt))}</span></div>`;
+      return `<div class="srow" data-sid="${esc(sn.roomId || sn.sessionId || '')}"><span class="sdot ${st}"></span>${sn.roomId ? prioIcon(prioOf(sn)) : ''}<span class="stitle">${esc(sn.label || sn.sessionId || 'session')}</span><span class="stime">${esc(fmtAgo(Date.now() / 1000 - sn.updatedAt))}</span></div>`;
     }).join('');
     const more = (p.count || 0) > 4 ? `<div class="srow more">… ${p.count - 4} more</div>` : '';
     const wait = p.waiting ? `<span class="waitchip">⚠ ${p.waiting} waiting</span>` : '';
@@ -4092,7 +4126,7 @@ function projectsLandingHtml() {
       <div class="row1"><h3>${esc(p.name)}</h3>${wait}${live}</div>
       ${sub}
       <div class="srows">${rows}${more}${(p.count || 0) === 0 ? '<div class="srow none">no tasks yet</div>' : ''}</div>
-      <div class="metarow">${changed}<span class="ago">${esc(fmtAgo(p.updatedAt))}</span>${newTask}</div>
+      <div class="metarow">${changed}<span class="ago">${esc(fmtAgo(Date.now() / 1000 - p.updatedAt))}</span>${newTask}</div>
     </div>`;
   }).join('');
   const addCard = `<div class="proj newproj" title="Register a folder as a project"><div class="row1"><h3>+ New project</h3></div><div class="ppath">Any folder — a repo, or just notes and specs. Then add tasks to it.</div></div>`;
@@ -4824,7 +4858,7 @@ function renderRows() {
   // are out of the denominator too. Counting them in produced "38 of 54" with
   // nothing on screen to explain the 16 — which is precisely the false alarm
   // this number exists to prevent.
-  const pool = FILTERS.has('archived') ? ALL_ROWS : ALL_ROWS.filter(r => !r.archived);
+  const pool = ALL_ROWS.filter(r => inScope(r) && (FILTERS.has('archived') || !r.archived));
   const total = pool.length;
   const shown = filtered.length;
   const scope = modeFiltered.length;   // still feeds the category page header
@@ -6072,6 +6106,29 @@ document.addEventListener('click', (ev) => {
   if (!ev.target.closest('#proj-switch') && !ev.target.closest('#proj-menu')) closeProjMenu();
 });
 
+// Appearance: light (default), dark, or system. Stored alongside the accent,
+// applied as data-theme on <html>, and kept in step across the dashboard, the
+// embedded balloon and any popped-out window — they share this origin, so a
+// change here reaches them through the storage event.
+const _darkMQ = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null;
+function appearancePref() {
+  try { return localStorage.getItem('cd-theme') || 'light'; } catch (e) { return 'light'; }
+}
+function applyAppearance() {
+  const pref = appearancePref();
+  const dark = pref === 'dark' || (pref === 'system' && _darkMQ && _darkMQ.matches);
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  document.querySelectorAll('#me-menu .me-item[data-appearance]').forEach(b =>
+    b.classList.toggle('on', b.dataset.appearance === pref));
+}
+function setAppearance(pref) {
+  try { localStorage.setItem('cd-theme', pref); } catch (e) {}
+  applyAppearance();
+}
+if (_darkMQ && _darkMQ.addEventListener) _darkMQ.addEventListener('change', applyAppearance);
+window.addEventListener('storage', (ev) => { if (ev.key === 'cd-theme') applyAppearance(); });
+queueMicrotask(applyAppearance);
+
 // Accent color customization
 function applyAccent(color) {
   if (color) document.documentElement.style.setProperty('--accent', color);
@@ -6121,6 +6178,11 @@ $('#me-menu').addEventListener('click', (ev) => {
   const it = ev.target.closest('.me-item');
   if (!it) return;
   ev.stopPropagation();
+  if (it.dataset.appearance) {
+    setAppearance(it.dataset.appearance);
+    closeMeMenu();
+    return;
+  }
   closeMeMenu();
   openSettingsPanel($('#me-btn'));
   if (it.dataset.me === 'theme') {
