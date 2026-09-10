@@ -26,6 +26,8 @@ from __future__ import annotations
 import json
 import time
 
+from chatroom import REPORT_KINDS   # a plain module, safe to import here
+
 _d = None  # the dashboard module, set by bind()
 
 
@@ -76,11 +78,38 @@ TOOLS = [
         "description": (
             "Describe your own situation in Ensemble: your identity, agent kind and "
             "role, the task (room) you are running in, its project, working "
-            "directory and task folder, and your teammates. Call this first when "
+            "directory and task folder, your teammates, and your project's PO "
+            "(`projectPO` — the task your reports go to). Call this first when "
             "you need to plan or manage work — it tells you which project your "
             "writes are scoped to."
         ),
         "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "ensemble_report",
+        "description": (
+            "Report on your task to the people responsible for it. Call it when "
+            "you have FINISHED (kind \"completed\"), when you are BLOCKED and need "
+            "help (\"blocked\"), when you need a decision (\"question\"), or for a "
+            "milestone worth knowing (\"update\"). The report goes to your "
+            "project's PO — it is posted in the PO's room and wakes the PO — or, "
+            "if the project has no PO, to the user. It is also recorded on your "
+            "task, so the board shows it: after completed / question / blocked "
+            "your task reads as waiting on a human, not as stalled. Write the "
+            "text as a self-contained Markdown summary — what was done or what is "
+            "needed, where (branch, commit, paths), how you verified it — because "
+            "the PO does not see your conversation. One report per event; do not "
+            "repeat it to be sure it arrived."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "enum": list(REPORT_KINDS),
+                         "description": "completed | blocked | question | update."},
+                "text": {"type": "string", "description": "The report, Markdown."},
+            },
+            "required": ["kind", "text"],
+        },
     },
     {
         "name": "ensemble_list_projects",
@@ -324,7 +353,35 @@ def _project_view(p: dict | None) -> dict | None:
     if not p:
         return None
     return {"id": p["id"], "name": p.get("name", ""), "path": p.get("path", ""),
-            "home": _d.project_home(p, create=False), "isGit": bool(p.get("isGit"))}
+            "home": _d.project_home(p, create=False), "isGit": bool(p.get("isGit")),
+            "poRoomId": p.get("poRoomId", "")}
+
+
+def _project_po(project: dict | None) -> dict | None:
+    """The project's PO as a caller sees it, or None when it has none.
+
+    ``identity`` is who in that room a report is addressed to; ``live`` says
+    whether anyone is there to be woken right now."""
+    rid = ((project or {}).get("poRoomId") or "").strip()
+    if not rid:
+        return None
+    room = _d.chatroom.get_room(rid)
+    if room is None:
+        return {"roomId": rid, "missing": True,
+                "note": "the project names a PO task that no longer exists"}
+    return {"roomId": rid, "title": _title(room),
+            "identity": _d.chatroom.po_identity(room),
+            "live": _d._room_is_live(room), "projectId": project["id"]}
+
+
+def _report_view(room: dict) -> dict | None:
+    rep = room.get("lastReport")
+    if not isinstance(rep, dict):
+        return None
+    text = rep.get("text", "") or ""
+    return {"kind": rep.get("kind", ""), "identity": rep.get("identity", ""),
+            "ts": rep.get("ts"), "to": rep.get("to"),
+            "text": (text[:300] + "…") if len(text) > 300 else text}
 
 
 def _status(room: dict) -> str:
@@ -392,6 +449,7 @@ def _row(room: dict, projects: dict, links: dict, labels: dict,
         "agents": _agents_view(room),
         "specPreview": (spec[:160] + "…") if len(spec) > 160 else spec,
         "messages": len(room.get("messages", []) or []),
+        "lastReport": _report_view(room),
         "createdAt": room.get("createdAt"),
         "updatedAt": room.get("updatedAt"),
     }
@@ -483,6 +541,14 @@ def _whoami(ctx, args, handler):
     projects = _projects()
     part = ctx["part"]
     mates = [a for a in _agents_view(room) if a["identity"] != ctx["identity"]]
+    proj = projects.get(ctx["projectId"])
+    po = _project_po(proj)
+    if po and po.get("roomId") == room["id"]:
+        reports_to = "the user — you are this project's PO"
+    elif po and not po.get("missing"):
+        reports_to = f"the PO: '{po['identity']}' in task {po['roomId']} ({po['title']})"
+    else:
+        reports_to = "the user — this project has no PO"
     return {
         "identity": ctx["identity"],
         "agent": part.get("agent", ""),
@@ -495,11 +561,52 @@ def _whoami(ctx, args, handler):
         "workflow": _d.workflow_of(room),
         "cwd": part.get("cwd") or room.get("cwd", ""),
         "taskDir": room.get("taskDir", ""),
-        "project": _project_view(projects.get(ctx["projectId"])),
+        "project": _project_view(proj),
+        "projectPO": po,
+        "reportsTo": reports_to,
+        "isProjectPO": bool(po and po.get("roomId") == room["id"]),
         "writeScope": (ctx["projectId"] or "any project (your task has no project)"),
         "teammates": mates,
         "productOwner": _d.operator_name(),
     }
+
+
+def _report(ctx, args, handler):
+    """Record a report on the caller's task and deliver it to the project's PO.
+
+    The task record comes first: even if the PO room is gone or asleep, the
+    board shows the task as waiting on a human with the report quoted."""
+    kind = (args.get("kind") or "").strip().lower()
+    if kind not in REPORT_KINDS:
+        raise ToolError(f"kind must be one of: {', '.join(REPORT_KINDS)}")
+    text = (args.get("text") or "").strip()
+    if not text:
+        raise ToolError("text is required — write the report itself")
+    room, me = ctx["room"], ctx["identity"]
+    title = _title(room)
+    po = _project_po(_projects().get(ctx["projectId"]))
+    if po and (po.get("missing") or po["roomId"] == room["id"] or not po.get("identity")):
+        po = None                   # no PO to route to: the report goes to the user
+    routed = ({"roomId": po["roomId"], "identity": po["identity"], "title": po["title"]}
+              if po else None)
+    heading = (f"**Report — {kind}**, sent to the PO (*{po['title']}*)" if po
+               else f"**Report — {kind}**")
+    _d.chatroom.record_report(room["id"], me, kind, text, routed, heading=heading)
+    if not po:
+        return {"ok": True, "kind": kind, "deliveredTo": "user",
+                "note": "recorded on your task; the board shows it to the user"}
+    body = f"**{kind}** — report from task *{title}* (`{room['id']}`, {me}):\n\n{text}"
+    res = _d.chatroom.post_report(po["roomId"], f"{me}@{room['id']}", po["identity"], body,
+                                  {"reportKind": kind, "taskId": room["id"],
+                                   "taskTitle": title, "reporter": me})
+    rung = handler._ring_report(po["roomId"], res, room["id"], title, me, kind, text) if res else []
+    return {"ok": True, "kind": kind,
+            "deliveredTo": {"roomId": po["roomId"], "identity": po["identity"],
+                            "title": po["title"]},
+            "poWoken": bool(rung),
+            "note": ("delivered, and the PO was woken" if rung else
+                     "delivered to the PO's room, but the PO is not running, so it "
+                     "was not woken — it will see the report when it next reads")}
 
 
 def _list_projects(ctx, args, handler):
@@ -571,7 +678,8 @@ def _list_attention(ctx, args, handler):
             "count": len(items), "needAttention": items,
             "states": {"agent_gone": "its terminal died and nobody asked it to",
                        "blocked": "running, but it says it cannot continue",
-                       "waiting_for_you": "it is waiting on a human answer",
+                       "waiting_for_you": "it is waiting on a human answer — including "
+                                          "a task that reported it finished or asked a question",
                        "stalled": "asked to do something, not working, never reported back"}}
 
 
@@ -772,6 +880,7 @@ def _move_task(ctx, args, handler):
 
 _IMPL = {
     "ensemble_whoami": _whoami,
+    "ensemble_report": _report,
     "ensemble_list_projects": _list_projects,
     "ensemble_list_tasks": _list_tasks,
     "ensemble_list_attention": _list_attention,

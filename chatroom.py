@@ -17,6 +17,12 @@ Design notes
 * **Loop guard.** `hop_count` tracks consecutive agent→agent hands-off with no
   human turn; once it reaches `max_hops` the room pauses and waits for the
   human, so a two-agent loop can't run away.
+* **Who gets woken.** Every ring re-sends an agent's whole conversation, so a
+  message wakes as few agents as it can: a direct message wakes its addressee;
+  a message to everyone wakes only the task's *owner* (see :func:`owners`), and
+  a specialist — a reviewer, a designer — only when the user, an owner or the
+  PO @mentions it. :func:`wake_targets` is the one rule; the attention detector
+  uses it too, so "was it asked?" means "was it woken?".
 * **Persistence.** Each room is a JSON file under ``DASHBOARD_DIR/rooms`` so
   rooms (and their transcripts) survive a server restart. All mutation goes
   through a single process-wide lock — duo-scale volume, so read-modify-write
@@ -28,6 +34,7 @@ the doorbell live in ``dashboard.py`` (which injects a ``ring`` callback).
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import threading
 import time
@@ -368,6 +375,89 @@ def agent_participants(room: dict) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Roles that decide who is woken
+# ---------------------------------------------------------------------------
+
+PRODUCT_OWNER_ROLE = "productowner"
+BROADCAST = ("", "all", "everyone", "*")
+REPORT_KINDS = ("completed", "blocked", "question", "update")
+
+# The same shape session.html highlights: "@name" at the start, after a space
+# or after "(".
+_MENTION = re.compile(r"(?:^|[\s(])@([A-Za-z][\w-]*)")
+_ENGINEER = re.compile(r"\bengineer\b")
+
+
+def role_key(role: str) -> str:
+    return (role or "").strip().lower().replace(" ", "")
+
+
+def is_product_owner_part(part: dict) -> bool:
+    return role_key((part or {}).get("role", "")) == PRODUCT_OWNER_ROLE
+
+
+def _role_head(role: str) -> str:
+    """A role's name without its charter: "designer and engineer: follows the
+    skill…" → "designer and engineer"."""
+    return (role or "").split(":", 1)[0].strip().lower()
+
+
+def owners(room: dict) -> list[str]:
+    """The agents a message to everyone wakes: the one agent of a solo task;
+    otherwise every agent whose role is an engineer ("engineer", "designer and
+    engineer"); failing that the ProductOwner; failing that every agent — a
+    room of equal partners has no specialists to spare."""
+    agents = agent_participants(room)
+    if len(agents) <= 1:
+        return [p["identity"] for p in agents]
+    eng = [p["identity"] for p in agents if _ENGINEER.search(_role_head(p.get("role", "")))]
+    if eng:
+        return eng
+    po = [p["identity"] for p in agents if is_product_owner_part(p)]
+    return po or [p["identity"] for p in agents]
+
+
+def po_identity(room: dict) -> str:
+    """Who a report into this room is addressed to: its ProductOwner agent,
+    else its owner. Empty for a room with no agents."""
+    agents = agent_participants(room)
+    po = next((p["identity"] for p in agents if is_product_owner_part(p)), "")
+    if po:
+        return po
+    own = owners(room)
+    return own[0] if own else ""
+
+
+def mentions(room: dict, text: str) -> set[str]:
+    """Agents @mentioned in ``text``, by identity ("@codex") or by role name
+    ("@reviewer")."""
+    names = {m.group(1).lower() for m in _MENTION.finditer(text or "")}
+    if not names:
+        return set()
+    return {p["identity"] for p in agent_participants(room)
+            if p["identity"].lower() in names or _role_head(p.get("role", "")) in names}
+
+
+def wake_targets(room: dict, sender: str, to: str, text: str) -> list[str]:
+    """The agents a message wakes, before any pause is taken into account.
+
+    * Addressed to one participant: that participant, if it is an agent.
+    * Addressed to everyone: the owners (:func:`owners`), plus any specialist
+      the user, an owner or the PO @mentions. A specialist mentioned by
+      another specialist stays asleep — that is how two reviewers talking
+      about each other would otherwise wake each other forever.
+    """
+    others = [p["identity"] for p in agent_participants(room) if p["identity"] != sender]
+    t = (to or "").strip()
+    if t.lower() not in BROADCAST:
+        return [t] if t in others else []
+    own = set(owners(room))
+    authority = sender == HUMAN_IDENTITY or sender in own or sender == po_identity(room)
+    named = mentions(room, text) if authority else set()
+    return [i for i in others if i in own or i in named]
+
+
+# ---------------------------------------------------------------------------
 # Messaging
 # ---------------------------------------------------------------------------
 
@@ -395,16 +485,21 @@ def post_message(room_id: str, sender: str, text: str, to: str = "") -> dict | N
         room["messages"].append(msg)
         room["updatedAt"] = _now()
 
-        # Work out recipients.
+        # Who it is addressed to, and — separately — which agents it wakes. A
+        # message to everyone reaches every reader, but wakes only the owner
+        # and whoever was @mentioned (see wake_targets). An agent that is
+        # addressed but not woken is not waiting on anything, so a broadcast
+        # that wakes nobody is, in effect, a message to the human.
         idents = [p["identity"] for p in room["participants"]
                   if p["identity"] != sender]
-        if to_norm and to_norm.lower() not in ("all", "everyone", "*"):
+        if to_norm and to_norm.lower() not in BROADCAST:
             recipients = [i for i in idents if i == to_norm]
         else:
             recipients = idents
 
         human_addressed = HUMAN_IDENTITY in recipients
-        agent_recipients = [i for i in recipients if i != HUMAN_IDENTITY]
+        agent_recipients = wake_targets(room, sender, to_norm, text)
+        msg["rang"] = agent_recipients
 
         if sender == HUMAN_IDENTITY:
             # Human spoke → reset the loop guard and resume autonomous relay.
@@ -441,6 +536,59 @@ def post_message(room_id: str, sender: str, text: str, to: str = "") -> dict | N
         }
 
 
+def record_report(room_id: str, identity: str, kind: str, text: str,
+                  routed_to: dict | None = None, heading: str = "") -> dict | None:
+    """Put a task agent's report on its own task: a chat message to the human
+    (so the task's chat shows it) and ``lastReport`` (so the attention detector
+    and the task tools can read it without walking the log).
+
+    Deliberately leaves status and the hop count alone: a report is not a
+    hand-off inside the team, and whether it leaves the task waiting on a human
+    is the attention detector's call, which it makes from ``lastReport``.
+    ``routed_to`` is ``{roomId, identity, project}`` of the PO it went to, or
+    None when it went to the user."""
+    with _LOCK:
+        room = _read(room_id)
+        if room is None:
+            return None
+        now = _now()
+        msg = {"id": uuid.uuid4().hex[:12], "from": identity, "to": HUMAN_IDENTITY,
+               "text": f"{heading}\n\n{text}" if heading else text, "ts": now,
+               "kind": "report", "reportKind": kind, "rang": []}
+        if routed_to:
+            msg["reportTo"] = routed_to
+        room.setdefault("messages", []).append(msg)
+        room["lastReport"] = {"kind": kind, "text": text[:4000], "ts": now,
+                              "identity": identity, "messageId": msg["id"],
+                              "to": routed_to or {"identity": HUMAN_IDENTITY}}
+        room["updatedAt"] = now
+        _write(room)
+        return msg
+
+
+def post_report(room_id: str, sender: str, to: str, text: str, meta: dict) -> dict | None:
+    """Deliver a report from another task into this (the PO's) room, addressed
+    to ``to``. Returns the same shape as :func:`post_message`.
+
+    Unlike a chat hand-off it always wakes its addressee — being woken by the
+    tasks it runs is the PO's whole job — and it leaves the PO room's status
+    and hop count alone: the report came from outside the room, so it is
+    neither a turn inside it nor a loop the guard could stop."""
+    with _LOCK:
+        room = _read(room_id)
+        if room is None:
+            return None
+        msg = {"id": uuid.uuid4().hex[:12], "from": sender, "to": to, "text": text,
+               "ts": _now(), "kind": "report", **meta}
+        is_agent = any(p.get("identity") == to for p in agent_participants(room))
+        msg["rang"] = [to] if is_agent else []
+        room.setdefault("messages", []).append(msg)
+        room["updatedAt"] = _now()
+        _write(room)
+        return {"message": msg, "recipients": msg["rang"],
+                "status": room.get("status", "active"), "hopCount": room.get("hopCount", 0)}
+
+
 def read_messages(room_id: str, since_ts: float = 0.0, for_identity: str = "") -> list[dict]:
     """Return messages after ``since_ts``. If ``for_identity`` is given, only
     messages that identity should see (addressed to it, to all, or its own)."""
@@ -472,7 +620,10 @@ MCP_TOOLS = [
             "is how you hand off your turn: after you finish a step of thinking "
             "or work, send your partner your findings/critique/proposal. To pull "
             "the user in for a decision, question, or clarification, set "
-            "to=\"user\" — that pauses the collaboration until they reply."
+            "to=\"user\" — that pauses the collaboration until they reply. A "
+            "message to everyone wakes only the task's owner (the engineer); "
+            "to wake a reviewer or another specialist, address it with `to` or "
+            "@mention it (\"@reviewer\", \"@codex\")."
         ),
         "inputSchema": {
             "type": "object",

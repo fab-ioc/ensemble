@@ -175,7 +175,8 @@ class PtySession:
         self._alive = True
         self._exit_code = None
         self._last_output = time.time()
-        self._killed = False        # True once someone deliberately killed it
+        self._last_submit = 0.0     # when something was last submitted (see write)
+        self._killed = False       # True once someone deliberately killed it
         self._death = None          # the death record, built once at exit
         self._death_lock = threading.Lock()
         self._spawn(env)
@@ -233,6 +234,11 @@ class PtySession:
         if isinstance(data, bytes):
             data = data.decode("utf-8", "replace")
         payload = data if IS_WINDOWS else data.encode("utf-8", "replace")
+        if "\r" in data or "\n" in data:
+            # Something was submitted to the agent — a human answer typed in
+            # the terminal, or the chat doorbell. Keystrokes without an Enter
+            # (focus events, a half-typed line) are not an answer.
+            self._last_submit = time.time()
         try:
             self._proc.write(payload)
         except (OSError, EOFError):
@@ -264,6 +270,11 @@ class PtySession:
         analysis of the screen against it — an idle PTY is scanned once, not on
         every poll."""
         return self._last_output
+
+    def last_submit(self) -> float:
+        """When something was last submitted to it (0 if never) — how the
+        attention detector knows a report has been answered in the terminal."""
+        return getattr(self, "_last_submit", 0.0)
 
     def alive(self) -> bool:
         try:

@@ -19,10 +19,13 @@ running under Ensemble — say so instead of guessing.
 ## Orientation: always start with `ensemble_whoami`
 
 It returns your identity, role, task id, project, working directory, task folder
-and teammates, and the **write scope** your tool calls are limited to. Then:
+and teammates, the **write scope** your tool calls are limited to, and your
+project's PO (`projectPO`, with `reportsTo` saying in words where your reports
+go). Then:
 
 | Need | Tool |
 |---|---|
+| Report that you finished, are blocked, or need a decision | `ensemble_report` |
 | See the projects | `ensemble_list_projects` |
 | See the tasks of your project (or another, or `"*"`) | `ensemble_list_tasks` |
 | See which tasks need a human, and why | `ensemble_list_attention` |
@@ -46,6 +49,44 @@ most-recently-updated first inside one priority — so the top of the list is th
 work that matters most. Priority is the owner's call: set one when they asked
 for it, and otherwise leave the default alone.
 
+## Reporting: `ensemble_report`
+
+Each project can have a **PO**: one task whose agent runs the project for the
+human. Every other task reports into it. Nobody watches your terminal, and your
+final reply reaches only whoever happens to open it. Report through the tool:
+
+| When | `kind` |
+|---|---|
+| The work is finished and handed back | `completed` |
+| You cannot go on without help: a missing permission, a failing dependency, an unclear requirement | `blocked` |
+| You need a decision before you continue | `question` |
+| A milestone worth knowing, while you keep working | `update` |
+
+The report is posted in the PO's room and **wakes the PO**. It is also recorded
+on your task, so after `completed`, `question` or `blocked` the board shows your
+task as waiting on a human, with your report quoted, not as stalled. If the
+project has no PO, the report goes to the user instead.
+
+- **Report once per event.** Every wake costs the PO its whole conversation
+  again. Never send a second report just to be sure the first one arrived.
+- **Make it self-contained.** The PO does not see your conversation. Say what
+  was done or what is needed, where it is (branch, commit, paths), how you
+  verified it, and what you left out.
+- **In a team, the owner reports.** That is the engineer, or the only agent.
+  A reviewer tells the engineer, not the PO.
+- Use `ensemble_update_task` to move your own task to `inreview` as well when
+  you hand the work back.
+
+## Waking teammates (multi-agent tasks)
+
+A chat message wakes as few agents as it can. A message to one participant
+(`to`) wakes that participant. A message to everyone wakes only the task's
+**owner**: the engineer, or a designer-and-engineer. A reviewer or other
+specialist is woken only when you address it with `to`, or when the user, the
+owner or the PO **@mentions** it by identity or role (`@codex`, `@reviewer`).
+When you want a review, name the reviewer; otherwise it sleeps, and that is
+the point.
+
 ## Checking what needs a human
 
 A task's `status` says what it is *meant* to be doing. It does not say whether
@@ -57,9 +98,9 @@ verdict in its `attention` field.
 | State | What happened | What it usually needs |
 |---|---|---|
 | `agent_gone` | its terminal died and nobody asked it to — carries `exitCode` and the last lines it printed | relaunching, once you know why |
-| `blocked` | still running, but its own output says it cannot continue: a usage or credit limit, an expired login. The offending line is in `quote`, the kind in `cause` | waiting for a reset, or the product owner logging in |
-| `waiting_for_you` | it asked a question, hit a permission prompt, or the collaboration paused at its hop limit | a human answer |
-| `stalled` | it was asked to do something, is not working, and never reported back | a look, then a nudge or a restart |
+| `blocked` | still running, but it cannot continue: its own output shows a usage or credit limit or an expired login, or it reported `blocked` (`cause: "reported"`). The offending line or the report is in `quote` | waiting for a reset, the product owner logging in, or the help it asked for |
+| `waiting_for_you` | it reported `completed` or asked a question, sent something to the user nobody answered, hit a permission prompt, or the collaboration paused at its hop limit. The report or message is in `quote` | a human answer |
+| `stalled` | it was woken to do something, is not working, and never answered anyone. A one-agent task idle at its prompt has only finished its turn and is not stalled | a look, then a nudge or a restart |
 
 Use it whenever you are asked what happened to work that was started, and
 **before** planning follow-up work: a task that died at its usage limit is not a
@@ -73,7 +114,7 @@ being asked.
   project, you can only create/amend/start/stop/move/delete tasks in that
   project. If your task has no project, you can write anywhere.
 - **Never act on yourself.** You cannot stop, start, move or delete your own
-  task. Finish by reporting to the product owner instead.
+  task. Finish by reporting with `ensemble_report` instead.
 - **Stop before delete.** A running task cannot be deleted.
 - **Stop before reassigning agents.** Who works a task can only be changed
   while it is not running — pass `agents` to `ensemble_update_task` on a draft
@@ -126,8 +167,8 @@ see your conversation. Write it in Markdown with:
 - **Acceptance criteria** — checkable bullets (tests pass, file exists, endpoint
   returns X).
 - **Constraints** — conventions, files not to touch, how to report back
-  (for a collaboration: "send the product owner a summary with `chat_send
-  to=\"user\"` when done").
+  ("report with `ensemble_report` when you finish or are blocked"; for a
+  team, say which agent owns the report).
 
 Titles: short, imperative, unique within the project (they become folder names).
 
@@ -135,8 +176,10 @@ Titles: short, imperative, unique within the project (they become folder names).
 
 `chat_send` hands off your turn (to a teammate, or `to="user"` to pause and ask
 the product owner), `chat_read` reads new messages, `chat_whoami` shows the room
-status. End every turn in a collaboration with a `chat_send`. These tools are
-absent in a solo task: report to the human in your normal reply instead.
+status. End every turn in a collaboration with a `chat_send`, and remember
+that a message to everyone wakes only the owner (see *Waking teammates*).
+These tools are absent in a solo task. There, `ensemble_report` is how
+finished or blocked work reaches anyone.
 
 ## Examples
 
