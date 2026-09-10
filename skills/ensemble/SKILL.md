@@ -191,6 +191,74 @@ project's **Roadmap** tab; the project's PO keeps it current through the tools.
 - Only your own project's roadmap can be written; any project's can be read.
   Mention files by path (`docs/plan.md`) and they open in the file view.
 
+## Running a project as its PO
+
+The PO is one long-lived session per project (`poRoomId` in the project's
+`project.json`). The product owner talks mainly to it, tasks report to it, and
+it reports to the product owner. What keeps that cheap and reliable:
+
+**Keep a living handover.** `PO-HANDOVER.md` in the project home holds what a
+successor with no memory would need: how the product owner likes to work,
+priorities and decisions with the why, what is running, what waits on whom,
+and what you have promised. Update it whenever one of those changes, not only
+when asked. Past the rotation limit (200k tokens by default) the hub asks you
+to bring it up to date, then starts a fresh PO whose first prompt is to read it
+and `ROADMAP.md`. Anything in neither file is lost. Never hand a task's spec to
+a fresh session as an instruction: it redoes the work.
+
+**The line-up of a task.** One owner does the work end to end, in its own
+`worktree`. A reviewer is optional and runs only on mention (see *The reviewer
+runs on mention*): add one where a second opinion is worth a review's cost
+(money, safety, data, a shared contract), and have the owner ask for the review
+before it reports. Every spec ends by telling the owner to report with
+`ensemble_report` when finished or blocked — never `chat_send to="user"`, which
+reaches nobody who is watching.
+
+**Allocate with the allowance in view.** Claude and Codex have separate plan
+allowances, and either can be the owner or the reviewer. Read
+`ensemble_plan_usage` before you start work, and spread the load:
+
+- Give the owner seat to the kind with more room left, and the reviewer, if
+  any, to the other kind, so one task does not spend one allowance twice.
+- When one kind passes the warning (80%), start new work on the other; past
+  the alarm (95%), start nothing more on it.
+- A Codex window with `trusted: false` is a floor, not a reading: Codex writes
+  its usage only when one of its agents takes a turn. Codex doing work is what
+  refreshes it.
+- Choose the model for the job and name it in the line-up: Opus for ambiguous,
+  design-heavy or risky work; Codex or a cheaper model for well-specified
+  implementation; Fable only where it is known to do well.
+- When you tell the product owner what you started, say who got each task and
+  why whenever it is not the obvious choice.
+
+**Closing a task.** When a task reports `completed`: read the whole report
+(`ensemble_get_task`), review the diff, merge its branch into the project's
+main branch with a merge commit, prove it the way the project proves changes
+(its tests, a real start), push, then stop the task. The progress check sees
+the merge and moves the card to Done. A Done card whose branch still has
+commits not on main is not done: merge them, reopen the task with a reason, or
+record in the handover why they are dropped.
+
+**Wakes cost your whole conversation.** Reports and the `[digest]` wake you;
+never poll. Keep turns short and the history small: hand large reading to a
+subagent, and don't re-read what you already have.
+
+### Bringing a project onto this model
+
+For a project that ran the old way (standing reviewers, reports by chat, no
+handover):
+
+1. Write `PO-HANDOVER.md` and `ROADMAP.md` in the project home from the
+   project's own plans and what you know. The roadmap is direction; the
+   handover is state.
+2. Every task not in Done: a line-up by the rules above with the allowance in
+   view, `workspace: worktree` for code, and a spec that ends with
+   `ensemble_report`. Amend drafts with `ensemble_update_task`.
+3. Every Done task whose branch has commits not on main (the digest says so):
+   merged, reopened with a reason, or recorded in the handover as dropped.
+4. Report to the product owner with `ensemble_report`: what changed, what you
+   decided for each task, and what needs them.
+
 ## The hub is not yours to restart
 
 The Ensemble hub (the `Ensemble` scheduled task, a `python`/`pythonw` process
@@ -226,8 +294,9 @@ When asked to plan (or when your role is `planner`):
 4. Create each with `ensemble_create_task` as a **draft**. Choose agents:
    - one agent (`[{"agent": "claude"}]`) for a task the product owner will
      drive interactively;
-   - two agents with roles for autonomous work, typically
-     `[{"agent":"claude","role":"engineer"},{"agent":"codex","role":"reviewer"}]`;
+   - for autonomous work, one owner (`"role": "engineer"`), plus a reviewer
+     of the other kind when the work merits one — which kind takes which seat
+     follows the allowance (see *Allocate with the allowance in view*);
    - `workspace`: `empty` for research/writing tasks, `worktree` for code
      changes in a git project (own branch), `inplace` only when the product
      owner wants edits directly in the project folder.
