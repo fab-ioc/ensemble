@@ -429,6 +429,11 @@
   /* Your messages read left-aligned like everyone else's — right-aligning them
      wasted the width of the column. The accent edge is what marks them. */
   .msg.user { border-left:3px solid var(--border-strong); border-color:var(--border); background:var(--hover); }
+  /* A PO rotation: where one session ends and a fresh one starts. */
+  .rot-line { display:flex; align-items:center; gap:var(--s-200); color:var(--fg-muted);
+    font-size:var(--fs-200); line-height:16px; }
+  .rot-line::before, .rot-line::after { content:''; flex:1 1 24px; border-top:1px solid var(--border-strong); }
+  .rot-line span { flex:0 1 auto; max-width:80%; text-align:center; }
   .msg .text { white-space:pre-wrap; word-break:break-word; line-height:1.45; }
   /* Markdown-rendered bubble content (see mdToHtml). */
   .msg .text.md { white-space:normal; line-height:1.5; }
@@ -910,6 +915,9 @@ function renderBubbles(items) {
   const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 50;
   items = withTaskBubble(items, ROOM_OBJ && ROOM_OBJ.spec, 'from');
   box.innerHTML = items.map(m => {
+    if (m.divider || (m.kind === 'notice' && m.rotation)) {
+      return `<div class="rot-line" role="separator" data-mid="${esc(m.id || '')}"><span>${esc(rotationText(m.rotation || m.divider))}</span></div>`;
+    }
     const cls = m.from === 'user' ? 'user' : esc(m.from);
     const to = m.to && m.to !== 'all' ? ` <span class="to">→ ${identLabel(m.to)}</span>` : '';
     return `<div class="msg ${cls}" data-mid="${esc(m.id || '')}" data-from="${esc(m.from || '')}"><div class="from">${identLabel(m.from)}${to}</div><div class="text md">${mdToHtml(m.text)}</div></div>`;
@@ -952,6 +960,25 @@ function showPendingUser(text) {
 // Solo session: render its live transcript (user + assistant turns) as bubbles,
 // fetched once per completed turn (see the activity-driven trigger in refresh).
 let SOLO_TURN_COUNT = -1, SOLO_FETCHING = false, SOLO_SID = '', SOLO_AGENT = '', SOLO_PTY = '', _prevWorking = {}, _soloStatKey = '';
+// A rotated PO: its latest rotation, and the session it was rotated out of
+// (fetched once — a finished transcript never changes).
+let SOLO_ROT = null, SOLO_PREV = { sid: '', items: [] };
+const PREV_TURNS_SHOWN = 60;
+function rotationText(r) {
+  const k = n => Math.round((n || 0) / 1000) + 'k';
+  const at = r.at ? new Date(r.at * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) + ' — ' : '';
+  return `New PO session · ${at}the conversation had reached ${k(r.tokens)} tokens `
+    + `(limit ${k(r.threshold)}), so a fresh session took over from PO-HANDOVER.md and ROADMAP.md. `
+    + `Earlier conversation above.`;
+}
+async function prevSessionItems(sid, agentId) {
+  if (SOLO_PREV.sid === sid) return SOLO_PREV.items;
+  const d = await fetch('/api/session/' + encodeURIComponent(sid) + '?full=1').then(r => r.json());
+  const turns = (d.turns || []).slice(-PREV_TURNS_SHOWN);
+  SOLO_PREV = { sid, items: turns.map((t, i) => ({
+    id: 'p' + i, from: (t.role === 'user') ? 'user' : agentId, to: '', text: t.text })) };
+  return SOLO_PREV.items;
+}
 // Poll a cheap size+mtime signal; re-render the transcript only when it actually
 // grows. Reliable (catches every new turn, even while the agent is still working)
 // and light (the full transcript is fetched only on a real change).
@@ -982,11 +1009,18 @@ async function renderSolo(sid, agentId, force) {
     SOLO_TURN_COUNT = raw.length;
     // Drop consecutive identical turns (the transcript sometimes double-records).
     const turns = raw.filter((t, i) => i === 0 || t.role !== raw[i - 1].role || t.text !== raw[i - 1].text);
-    const items = turns.slice(-120).map((t, i) => ({
+    let items = turns.slice(-120).map((t, i) => ({
       id: 's' + (turns.length - Math.min(120, turns.length) + i),
       from: (t.role === 'user') ? 'user' : agentId,
       to: '', text: t.text,
     }));
+    // A PO rotated into this session: the end of the one before, then the line.
+    const rot = SOLO_ROT && SOLO_ROT.toSessionId === sid ? SOLO_ROT : null;
+    if (rot && rot.fromSessionId) {
+      let prev = [];
+      try { prev = await prevSessionItems(rot.fromSessionId, agentId); } catch (e) {}
+      items = prev.concat([{ id: 'rot' + (rot.n || ''), divider: rot }], items);
+    }
     renderBubbles(items);
   } catch (e) {} finally { SOLO_FETCHING = false; }
 }
@@ -1053,6 +1087,7 @@ async function refresh() {
   if (soloMode) {
     const a = mem[0] || {};
     SOLO_SID = a.sessionId || ''; SOLO_AGENT = a.identity || 'claude'; SOLO_PTY = a.ptyId || '';
+    SOLO_ROT = (a.rotations || []).slice(-1)[0] || null;
     checkSolo();   // stat-driven: first load + every new turn
   } else {
     SOLO_SID = ''; SOLO_PTY = '';

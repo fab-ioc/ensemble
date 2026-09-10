@@ -63,6 +63,8 @@ import chatroom
 import digest
 # Task-management MCP tools (ensemble_*) served next to the chat tools.
 import ensemble_tools
+# A fresh PO session from its written handover when its conversation gets long.
+import rotation
 # Plan-allowance readings (account-wide, per agent kind), refreshed in the
 # background so no request path ever waits on the network.
 import usage
@@ -75,6 +77,7 @@ BACKEND = get_backend()
 ensemble_tools.bind(sys.modules[__name__])
 attention.bind(sys.modules[__name__])
 digest.bind(sys.modules[__name__])
+rotation.bind(sys.modules[__name__])
 # Capture each agent terminal's dying screen onto its task, before the reaper
 # drops the buffer — that evidence is why a death is visible at all.
 attention.install()
@@ -260,6 +263,22 @@ def _backfill_codex_session_ids(room: dict) -> None:
         if pp.get("identity") in found:
             pp["sessionId"] = found[pp["identity"]]
     chatroom.update_room(full)
+
+
+# The port this hub serves on, set by main(). A background job that launches an
+# agent (the PO's rotation) wires it to this hub's MCP endpoint.
+HUB_PORT = 0
+
+
+def hub_launcher() -> "Handler":
+    """A Handler with no request behind it, for background jobs that need the
+    launch primitives (``_launch_room_agent_pty`` and friends). Those only ask
+    the handler for the hub's own MCP address, so a stand-in server with the
+    serving port is all it needs."""
+    import types
+    h = object.__new__(Handler)
+    h.server = types.SimpleNamespace(server_address=("127.0.0.1", HUB_PORT))
+    return h
 
 
 def _pty_alive(pty_id) -> bool:
@@ -704,6 +723,10 @@ _SETTINGS_DEFAULTS = {
     # the cheap model that writes it up.
     "digestIntervalMin": digest.DEFAULT_INTERVAL_MIN,
     "digestModel": digest.DEFAULT_MODEL,
+    # The PO's rotation (rotation.py): past this many tokens of context per
+    # model call, the PO writes its handover and a fresh session takes over
+    # from it. 0 = off.
+    "poRotateTokens": rotation.DEFAULT_TOKENS,
     # The dashboard theme, shared by every device on this hub. Empty = never
     # chosen here; the pages then hand up whatever their browser had.
     "theme": "",
@@ -773,6 +796,10 @@ def save_settings(settings: dict) -> dict:
             if not isinstance(v, str) or not v.strip() or len(v) > 80:
                 continue
             v = v.strip()
+        if k == "poRotateTokens":
+            v = rotation.clamp_tokens(v)
+            if v is None:
+                continue
         if k == "backupEnabled":
             v = bool(v)
         current[k] = v
@@ -1129,9 +1156,12 @@ def finish_review(room_id: str, identity: str, verdict: str) -> dict | None:
 
 def participant_session_ids(part: dict) -> list[str]:
     """Every conversation an agent has had on its task: its current one and,
-    for a reviewer on mention, one per earlier review."""
+    for a reviewer on mention, one per earlier review; for a rotated PO, each
+    session it was rotated out of."""
     sids = [part.get("sessionId") or ""]
     sids += [r.get("sessionId") or "" for r in part.get("reviews") or []
+             if isinstance(r, dict)]
+    sids += [r.get("fromSessionId") or "" for r in part.get("rotations") or []
              if isinstance(r, dict)]
     out: list[str] = []
     for s in sids:
@@ -4613,6 +4643,9 @@ class Handler(BaseHTTPRequestHandler):
                                   "intervalMin": bs.get("backupIntervalMin", 60),
                                   "enabled": bool(bs.get("backupEnabled"))})
             return
+        if p == "/api/rotation/status":
+            self._send_json(200, rotation.status())
+            return
         if p == "/api/digest/status":
             self._send_json(200, digest.status())
             return
@@ -5613,6 +5646,17 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send_json(200, digest.check(proj, force=bool(data.get("force"))))
             return
+        if p == "/api/rotation/check":
+            # {projectId, force?, immediate?}: check the PO's size now. force
+            # ignores the threshold (it still asks for the handover first);
+            # immediate rotates at once, without asking.
+            proj = find_project((data.get("projectId") or "").strip())
+            if proj is None:
+                self._send_json(404, {"error": "no_such_project"})
+                return
+            self._send_json(200, rotation.check(proj, force=bool(data.get("force")),
+                                                immediate=bool(data.get("immediate"))))
+            return
         if p == "/api/projects/delete":
             pid = (data.get("projectId") or "").strip()
             ok = unregister_project(pid)
@@ -6151,13 +6195,14 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global _LOG_FILE, ACCESS_TOKEN
+    global _LOG_FILE, ACCESS_TOKEN, HUB_PORT
     args = sys.argv[1:]
     # Port: --port wins, else ENSEMBLE_PORT, else 8765.
     if "--port" in args:
         port = int(args[args.index("--port") + 1])
     else:
         port = int(os.environ.get("ENSEMBLE_PORT", "8765"))
+    HUB_PORT = port
     # Bind: --bind wins, else ENSEMBLE_BIND, else 127.0.0.1 (local only).
     # The literal "tailscale"/"ts" means "expose on this machine's tailnet IP".
     # We DON'T resolve it eagerly: at logon Tailscale may still be connecting, so
@@ -6292,6 +6337,9 @@ def main():
     # The PO's progress digest: checks each project with a PO on its interval,
     # wakes the PO only when something changed.
     digest.start_scheduler()
+
+    # The PO's rotation: a fresh session from its handover when it gets long.
+    rotation.start_scheduler()
 
     # Serve every listener; extra ones run in daemon threads, the last inline.
     for s in servers[:-1]:
