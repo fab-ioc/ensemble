@@ -311,6 +311,18 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
    search, what-needs-me, me, create. Filters, counts, grouping and sort belong to the view that owns
    them. This rule is what keeps the bar thin after the next five features — it is the reason the bar
    got heavy the first time.
+
+   **The PO pill is identity, not view state.** It names who you talk to about the current project,
+   the way the avatar names you: it reads the same on every page, and nothing about the view below
+   (filters, tab, board or list) changes it. It opens the PO's conversation as a drawer over the page
+   you are on, so reading a task never costs you the PO. It shows no count or status: anything that
+   needs you already reaches the bell. On the project's Overview tab, where the PO already leads the
+   page, the pill focuses its composer instead of opening a second copy.
+
+   **A live session is built once and never re-parented.** The PO's conversation is one iframe in
+   `#po-panel`, a sibling of `#view`. It is a grid cell on the Overview tab and a fixed drawer
+   everywhere else, and only its classes change between the two. Moving an iframe in the DOM reloads
+   it, so navigating must restyle it, never move it.
 2. **The board groups; it never sorts.** Priority first, then most recently updated, in *both* views.
    The hover-freeze works by being the **only** place ordering happens — any second sort defeats it and
    cards move under the cursor. Two tasks must never swap places because someone flipped the view
@@ -364,7 +376,7 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
 8. **A card never drops a signal to fit.** Board columns never wrap and never shrink below 248px;
    horizontal scroll is the escape valve. Page gutter 24px, 16px below 900px.
 9. **A destination replaces whatever view is showing.** `Needs you` and `Active` must open from
-   anywhere: the home page, and a project's Tasks, Changes or Workspace tab. So their branch runs
+   anywhere: the home page, and a project's Overview, Changes, Workspace or Roadmap tab. So their branch runs
    first when the view is drawn, and anything that navigates into a project clears them. They once
    worked only from inside a project's Tasks tab, which is where they had been tested: from the page
    the owner opens on, the sidebar item highlighted and nothing else changed. A control that looks as
