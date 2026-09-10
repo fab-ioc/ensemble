@@ -413,6 +413,13 @@ regardless of who moves a card:
   already documents this surrender in `attention.py`.
 - **The owner's drag always wins**, and is always available for every column.
 
+The hub moves a card by itself in one case: **merged work goes to Done.** When a task's branch has
+commits of its own and all of them are on `main`, the PO's progress check (`digest.py`) moves the card
+to Done. This is the PO's merge acting — a fact in git — not an inference from silence. It moves a card
+once per merge, and not at all if the card was moved after the merge (`workflowAt` against the time
+`main` first held the work), so a card the owner drags back out of Done stays out. A branch with no
+commits yet is never read as merged, although it too has nothing ahead of `main`.
+
 Agent-driven transitions are also described in the **`ensemble` skill**, which every agent reads. If
 you change transition behaviour, change both, or they drift.
 

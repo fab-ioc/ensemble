@@ -55,7 +55,7 @@ _WAKE_MAX = 900             # the doorbell carries the digest on one line
 
 # The fields whose change is news. Idle time and attention *reasons* (which
 # carry durations) are facts, not triggers.
-_WATCHED = ("status", "column", "attention", "report", "head", "title")
+_WATCHED = ("status", "column", "attention", "report", "head", "title", "merged")
 
 _LOCK = threading.Lock()    # one check at a time: scheduler vs "check now"
 _STATE: dict[str, dict] = {}   # projectId -> {lastCheck, nextCheck, lastResult, ...}
@@ -140,9 +140,29 @@ def _idle_seconds(room: dict, now: float) -> float:
     return max(0.0, now - float(room.get("updatedAt") or now))
 
 
+# Branch reflog entries that record a commit made on the branch itself, as
+# opposed to it being created, fast-forwarded, reset or rebased onto main.
+_OWN_COMMIT = ("commit", "cherry-pick", "revert", "am:")
+
+
+def _has_own_commits(cwd: str, branch: str) -> bool:
+    """Whether the branch has ever had commits of its own.
+
+    Nothing ahead of main reads the same for a task that has not committed yet
+    and for one whose work was merged, so ahead-counting cannot tell them apart.
+    The branch's reflog can: it records every commit made on the branch. A
+    branch with no reflog (or one git has expired) counts as having none —
+    better a merge not noticed than a new task read as finished."""
+    log = _d._git_out(cwd, "reflog", "show", "--format=%gs", "refs/heads/" + branch)
+    return any(s.startswith(_OWN_COMMIT) for s in log.splitlines())
+
+
 def _git_facts(room: dict) -> dict:
     """The task's branch and what is on it, when it works in a repo of its own
-    branch. A task on the main line has no commits of its own to count."""
+    branch. A task on the main line has no commits of its own to count.
+
+    ``merged`` is true when the branch has commits of its own and all of them
+    are on the base (nothing ahead of it); ``commits`` then reads 0."""
     cwd = (room.get("cwd") or "").strip()
     if not cwd or not (Path(cwd) / ".git").exists():
         return {}
@@ -150,10 +170,62 @@ def _git_facts(room: dict) -> dict:
     if not b.get("base"):
         return {}
     out = {"branch": b.get("branch", ""), "base": b["base"], "commits": b.get("ahead", 0),
-           "head": _d._git_out(cwd, "rev-parse", "--short", "HEAD")}
-    if out["commits"]:
+           "merged": False, "sha": _d._git_out(cwd, "rev-parse", "HEAD")}
+    out["head"] = out["sha"][:7]
+    if not out["commits"] and out["branch"] not in ("", "HEAD"):
+        out["merged"] = _has_own_commits(cwd, out["branch"])
+    if out["commits"] or out["merged"]:
         out["lastCommit"] = _d._git_out(cwd, "log", "-1", "--format=%s (%cr)")
     return out
+
+
+def _merged_at(cwd: str, base: str, sha: str) -> float:
+    """When ``base`` first held ``sha``, from the base's reflog; 0 when it
+    cannot tell (no reflog, or the merge is older than what it keeps)."""
+    later = set(_d._git_out(cwd, "rev-list", "--ancestry-path", f"{sha}..{base}").split())
+    later.add(sha)
+    at = 0.0
+    # Newest first: walk back while the base still held the work.
+    for line in _d._git_out(cwd, "reflog", "show", "--date=unix", "--format=%H %gd",
+                            "refs/heads/" + base).splitlines():
+        h, _, sel = line.partition(" ")
+        if h not in later:
+            break
+        try:
+            at = float(sel.rsplit("@{", 1)[1].rstrip("}"))
+        except (IndexError, ValueError):
+            break
+    return at
+
+
+def _settle_merges(tasks: list[dict]) -> list[str]:
+    """Move each task whose work was merged into its base to Done — once per
+    merge, and only when nobody moved the card after the merge: the owner's
+    drag always wins, so a card dragged back out of Done stays out. This acts
+    on the PO's merge, a fact in git, not on a task going quiet. Updates the
+    facts in place and returns the ids it moved."""
+    moved = []
+    for t in tasks:
+        if not t.get("merged") or not t.get("sha"):
+            continue
+        room = _d.chatroom.get_room(t["id"], public=False)
+        if room is None or room.get("mergedHead") == t["sha"]:
+            continue                        # this merge was already dealt with
+        now = time.time()
+        at = _merged_at(room.get("cwd", ""), t["base"], t["sha"]) or now
+        fields = {"mergedHead": t["sha"], "mergedAt": at}
+        move = t["column"] != "done" and float(room.get("workflowAt") or 0) <= at
+        if move:
+            fields.update(workflow="done", workflowAt=now)
+        if _d.chatroom.patch_room(t["id"], **fields) is None:
+            continue
+        if move:
+            _d._patch_task_json(room.get("taskDir", ""), workflow="done")
+            _log(f"{t['title']} ({t['id']}): merged into {t['base']} — moved "
+                 f"{t['column']} → done")
+            t["column"] = "done"
+            moved.append(t["id"])
+    return moved
 
 
 def _task_facts(room: dict, attn: dict, labels: dict, now: float) -> dict:
@@ -170,7 +242,10 @@ def _task_facts(room: dict, attn: dict, labels: dict, now: float) -> dict:
         "attentionReason": item.get("reason", ""),
         "idleSeconds": round(_idle_seconds(room, now)),
         "branch": g.get("branch", ""),
+        "base": g.get("base", ""),
         "commits": g.get("commits", 0),
+        "merged": g.get("merged", False),
+        "sha": g.get("sha", ""),
         "lastCommit": g.get("lastCommit", ""),
         "head": g.get("head", ""),
         # A report is identified by when it was made; its kind and gist are facts.
@@ -231,7 +306,10 @@ def diff(before: dict, tasks: list[dict]) -> list[dict]:
         if (old.get("report") or 0) != t["report"] and t["report"]:
             what.append(f"reported {t['reportKind']}")
             finished |= t["reportKind"] == "completed"
-        if old.get("head") != t["head"] and t["head"]:
+        if t["merged"] and not old.get("merged"):
+            what.append(f"its work merged into {t['base']}")
+            finished = True
+        elif old.get("head") != t["head"] and t["head"] and not t["merged"]:
             what.append("new commits" if old.get("head") else "first commits on its branch")
         if what:
             changes.append({"id": t["id"], "title": t["title"], "what": what, "finished": finished})
@@ -272,7 +350,14 @@ def plain_facts(project: dict, tasks: list[dict], changes: list[dict], since: fl
         if t["attention"]:
             bits.append(f"needs attention — {t['attention']}: {t['attentionReason'][:200]}")
         if t["branch"]:
-            c = f"{t['commits']} commit(s) on {t['branch']}"
+            # Three different facts, never one number: zero commits ahead is
+            # both "merged" and "not started", and must not be left to guess.
+            if t["merged"]:
+                c = f"work merged into {t['base']} (branch {t['branch']}, nothing left to merge)"
+            elif t["commits"]:
+                c = f"{t['commits']} commit(s) on {t['branch']} not yet in {t['base']}"
+            else:
+                c = f"no commits yet on {t['branch']}"
             if t["lastCommit"]:
                 c += f", last: {t['lastCommit']}"
             bits.append(c)
@@ -289,7 +374,10 @@ def plain_facts(project: dict, tasks: list[dict], changes: list[dict], since: fl
 _PROMPT = (
     "You write a progress digest for the product owner (PO) of a software "
     "project, who runs the tasks listed below and will read this between other "
-    "work. Use ONLY the facts given; never guess or add anything. Lead with what "
+    "work. Use ONLY the facts given; never guess or add anything. State only "
+    "what the facts say about branches and merges: a task is merged only when "
+    "the facts say its work is merged, and never write that work is awaiting a "
+    "merge, a hub restart or a deploy unless the facts say so. Lead with what "
     "finished or changed since the last digest, then call out any task that "
     "needs attention and why. Name tasks by title with their id in "
     "parentheses. Plain text, at most 8 short lines, no headings, no greeting, "
@@ -382,6 +470,9 @@ def _check(project: dict, force: bool) -> dict:
     st["lastCheck"] = now
     base = _load_baselines().get(pid)
     tasks = gather(project)
+    # Before anything else, and whether or not a digest goes out: the board
+    # follows a merge even while the PO is not running.
+    _settle_merges(tasks)
     stable = {t["id"]: _stable(t) for t in tasks}
 
     def done(result: str, **extra) -> dict:
