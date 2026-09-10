@@ -4081,7 +4081,6 @@ function projectsChromeHtml() {
   const strip = `<div class="statusbar">
     ${needs ? `<span class="stat needs">🔔 ${needs} need${needs > 1 ? '' : 's'} you</span>`
             : `<span class="stat okstat">✓ nothing waiting</span>`}
-    <span class="stat"><span class="live-dot"></span> ${s ? s.agentsLive : 0} agents live</span>
     <span class="stat">◆ ${s ? s.changed : 0} changed</span>
   </div>`;
   if (SELECTED_PROJECT) {
