@@ -2178,6 +2178,7 @@
   #settings-panel .pref-seg button { flex: 1; font-size: 12px; padding: 6px 10px; }
   #settings-panel #pref-nickname,
   #settings-panel #pref-stall-seconds,
+  #settings-panel #pref-po-rotate,
   #settings-panel #pref-default-model {
     width: 100%; padding: 5px 10px;
     border: 1px solid var(--border); border-radius: 6px;
@@ -2186,8 +2187,10 @@
     outline: none;
   }
   #settings-panel #pref-stall-seconds { width: 6em; }
+  #settings-panel #pref-po-rotate { width: 8em; }
   #settings-panel #pref-nickname:focus,
   #settings-panel #pref-stall-seconds:focus,
+  #settings-panel #pref-po-rotate:focus,
   #settings-panel #pref-default-model:focus {
     border-color: var(--focus-ring);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus-ring) 40%, transparent);
@@ -2605,6 +2608,12 @@
              placeholder="900" autocomplete="off"> <span class="pref-label">seconds</span>
     </div>
     <p class="cfg-hint">🔔 An agent that was asked to do something, isn't working, and hasn't reported back for this long is listed as needing you. Both CLIs redraw a working indicator while they think, so an agent busy for hours is never counted.</p>
+    <div class="pref-row" style="margin-top: 14px;">
+      <span class="pref-label">Start the PO afresh past</span>
+      <input type="number" id="pref-po-rotate" min="0" max="5000000" step="10000"
+             placeholder="200000" autocomplete="off"> <span class="pref-label">tokens</span>
+    </div>
+    <p class="cfg-hint">Every wake of a project's PO re-sends its whole conversation. Past this size the PO brings <code>PO-HANDOVER.md</code> up to date and a fresh session picks up from it and <code>ROADMAP.md</code>; the old conversation is kept. 0 = never.</p>
   </div>
   <div class="settings-section" id="settings-backup">
     <h4>Backup of your projects</h4>
@@ -4322,6 +4331,10 @@ function renderPrefs() {
   const stallInput = document.getElementById('pref-stall-seconds');
   if (stallInput && document.activeElement !== stallInput) {
     stallInput.value = PREFS.attentionStallSeconds || 900;
+  }
+  const rotInput = document.getElementById('pref-po-rotate');
+  if (rotInput && document.activeElement !== rotInput) {
+    rotInput.value = PREFS.poRotateTokens ?? 200000;
   }
   // Backup of the projects root (git). Only the remote URL is stored server-side.
   const br = document.getElementById('pref-backup-remote');
@@ -8515,6 +8528,20 @@ async function loadThemes() {
     stallInput.addEventListener('blur', commitStall);
     stallInput.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter') { ev.preventDefault(); stallInput.blur(); }
+    });
+  }
+  // When the PO is rotated to a fresh session (the server clamps; 0 = never).
+  const rotInput = document.getElementById('pref-po-rotate');
+  if (rotInput) {
+    const commitRot = () => {
+      const v = parseInt(rotInput.value, 10);
+      if (!Number.isNaN(v) && v !== (PREFS?.poRotateTokens ?? null)) {
+        setPref('poRotateTokens', v);
+      }
+    };
+    rotInput.addEventListener('blur', commitRot);
+    rotInput.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); rotInput.blur(); }
     });
   }
   // One-shot rearrange actions
