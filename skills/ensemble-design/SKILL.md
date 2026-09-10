@@ -220,11 +220,22 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
    switch.
 3. **Nothing moves under the cursor.** Order *and* grouping are frozen while the mouse is over the
    view. Applies to agent-driven column changes too.
-4. **One badge per question.** `Needs you` has a count, `Active` has a count, a project has a count. No
+
+   **The freeze holds placement, not content.** A card's column and its position in that column are
+   frozen; its run dot, attention lozenge and elapsed time keep updating. The cheapest way to stop
+   things moving is to stop re-rendering, and that is wrong — *what is running now* is one of the four
+   questions this design answers, so a board that goes stale under the cursor fails as badly as one
+   whose cards move under it. A dot changing colour in place moves nothing.
+
+4. **A filter may persist only while its state is visible in the filter row.** Filters survive a
+   reload, which is safe *because* the chips show what is active — the menu hides the controls, never
+   the state. If the chips are ever removed, persistence must go with them, or the user returns to a
+   list silently hiding rows with nothing on screen saying why.
+5. **One badge per question.** `Needs you` has a count, `Active` has a count, a project has a count. No
    other number in the chrome.
-5. **Colour is never the only signal.** Every lozenge is a word; every dot has a chip beside it. The
+6. **Colour is never the only signal.** Every lozenge is a word; every dot has a chip beside it. The
    design must survive being printed in grey.
-6. **A card never drops a signal to fit.** Board columns never wrap and never shrink below 248px;
+7. **A card never drops a signal to fit.** Board columns never wrap and never shrink below 248px;
    horizontal scroll is the escape valve. Page gutter 24px, 16px below 900px.
 
 ### Attention vs. columns — a boundary that will decay if you let it
