@@ -226,10 +226,19 @@ def _backfill_codex_session_ids(room: dict) -> None:
     chatroom.update_room(full)
 
 
+def _pty_alive(pty_id) -> bool:
+    sess = ptyrun.get(pty_id) if pty_id else None
+    return bool(sess and sess.alive())
+
+
 def _annotate_room_liveness(room: dict) -> dict:
     """Add a `live` flag: True if any agent PTY is running. Not live simply means
-    the session isn't running — there's no separate 'ended' state."""
+    the session isn't running — there's no separate 'ended' state. A reviewer
+    that is started per request is flagged `onMention`."""
     room["live"] = _room_is_live(room)
+    room["participants"] = [
+        {**p, "onMention": True} if chatroom.is_on_mention(room, p) else p
+        for p in room.get("participants", [])]
     _backfill_codex_session_ids(room)
     return room
 
@@ -450,12 +459,14 @@ def compute_room_cost(room: dict) -> dict:
         "tokens": {"input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0},
         "byModel": {},
     }
+    costs = []
     for pp in (room.get("participants") or []):
         if pp.get("kind") != "agent":
             continue
-        sid = pp.get("sessionId")
-        path = find_transcript(sid) if sid else None
-        c = compute_session_cost(path)
+        # A reviewer on mention has one conversation per review.
+        for sid in participant_session_ids(pp):
+            costs.append(compute_session_cost(find_transcript(sid)))
+    for c in costs:
         total["dollars"] += c.get("dollars", 0.0)
         for k, v in (c.get("tokens") or {}).items():
             total["tokens"][k] = total["tokens"].get(k, 0) + v
@@ -843,6 +854,15 @@ def collab_briefing(ident: str, role: str, teammates: list, task: str,
          "reports it with ensemble_report (kind completed | blocked | question) — "
          "that reaches the project's PO."),
     ]
+    if any(chatroom._role_head(t.get("role", "")) == chatroom.REVIEWER_ROLE
+           for t in teammates):
+        parts.append(
+            "The reviewer is not kept running. Each time you address it or @mention "
+            "it, the hub starts a fresh reviewer that reads the spec, your branch's "
+            "diff, your message and the task's REVIEW-LOG.md — nothing else of this "
+            "conversation. So make every review request self-contained: what to "
+            "review, what changed since the last review, what you want checked. Its "
+            "verdict comes back to you and to the PO, and is added to REVIEW-LOG.md.")
     if role == "reviewer":
         eng = next((t["identity"] for t in teammates if t.get("role") == "engineer"), "the engineer")
         parts.append(f"Start by acknowledging your role in one line, then wait for "
@@ -851,6 +871,225 @@ def collab_briefing(ident: str, role: str, teammates: list, task: str,
         parts.append("Begin now by sending a teammate your initial plan or approach.")
     parts.append(f"TASK:\n{task}")
     return "\n\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Reviews on mention. A reviewer is not kept running in its room: every wake of
+# a long-lived session re-sends its whole conversation (measured 2026-09-10: a
+# message-triggered reviewer call averaged ~90k tokens early in a task and
+# ~220k late), and a resume reloads the same history. So each request starts a
+# fresh reviewer with a short brief, and the task's REVIEW-LOG.md carries what
+# earlier reviews found. The reviewer ends its session with review_done.
+# ---------------------------------------------------------------------------
+REVIEW_LOG_NAME = "REVIEW-LOG.md"
+REVIEW_VERDICTS = {"approve": "approved", "changes_requested": "changes requested",
+                   "comment": "comments"}
+_REVIEW_LAUNCH_LOCK = threading.Lock()
+_REVIEW_LOG_LOCK = threading.Lock()
+# The brief is the agent's first prompt, passed on its command line, so it is
+# kept well under Windows' 32k limit: a diff is inlined only when small, the
+# log and the spec are cut to their newest / first part (the files hold all).
+_BRIEF_DIFF_MAX = 6000
+_BRIEF_LOG_MAX = 8000
+_BRIEF_SPEC_MAX = 6000
+# How long after review_done its session is ended — long enough for the tool's
+# answer to reach the agent.
+_REVIEW_END_DELAY = 5.0
+
+
+def review_log_path(room: dict) -> Path:
+    """The task's review log: REVIEW-LOG.md in its task folder (its working
+    dir for a task without one)."""
+    base = room.get("taskDir") or room.get("cwd") or ""
+    if base:
+        return Path(base) / REVIEW_LOG_NAME
+    return DASHBOARD_DIR / "reviews" / f"{room.get('id', 'room')}-{REVIEW_LOG_NAME}"
+
+
+def read_review_log(room: dict) -> str:
+    try:
+        return review_log_path(room).read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def review_count(log_text: str) -> int:
+    return len(re.findall(r"^## Review \d+", log_text or "", re.M))
+
+
+def append_review_log(room: dict, entry: str) -> Path:
+    p = review_log_path(room)
+    with _REVIEW_LOG_LOCK:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        head = "" if p.exists() else (
+            f"# Review log — {room.get('title', '')}\n\n"
+            "Every review of this task, oldest first. Each reviewer is a fresh "
+            "session that reads this log before it starts.\n")
+        with p.open("a", encoding="utf-8", newline="\n") as f:
+            f.write(head + "\n" + entry.rstrip() + "\n")
+    return p
+
+
+def review_repo(room: dict) -> str:
+    """The git checkout a review looks at: the owner's or the task's working dir
+    when it is one, else the first checkout found inside them."""
+    own = set(chatroom.owners(room))
+    cands = [p.get("cwd", "") for p in chatroom.agent_participants(room)
+             if p["identity"] in own]
+    cands += [room.get("cwd", ""), room.get("taskDir", "")]
+    for c in cands:
+        if not c or not os.path.isdir(c):
+            continue
+        root = git_root(c)
+        if root and path_is_git(root) and not _within(str(PROJECTS_ROOT), root):
+            return root
+        code, res = git_roots(c, 3)
+        if code == 200 and res.get("roots"):
+            return res["roots"][0]["path"]
+    return ""
+
+
+def review_git_context(root: str) -> dict:
+    """Branch, base, commits and diff of the work under review."""
+    if not root:
+        return {}
+    info = git_branch_base(root)
+    mb = info.get("mergeBase") or ""
+    against = mb or "HEAD"
+    return {
+        "root": root, **info, "against": against,
+        "head": _git_out(root, "rev-parse", "--short", "HEAD"),
+        "status": _git_out(root, "status", "--short")[:2000],
+        "commits": _git_out(root, "log", "--oneline", f"{mb}..HEAD")[:2000] if mb else "",
+        "stat": _git_out(root, "diff", "--stat", against)[:3000],
+        "diff": _git_out(root, "diff", against, timeout=20),
+    }
+
+
+def _quote_block(text: str) -> str:
+    return "\n".join("> " + ln for ln in (text or "").strip().splitlines()) or "> (empty)"
+
+
+def review_brief(room: dict, part: dict, msg: dict, n: int, git: dict,
+                 log_text: str) -> str:
+    """The first prompt of a fresh reviewer: who asked what, the work to
+    review, the task's spec and every earlier review, and how to finish."""
+    ident = part["identity"]
+    sender = msg.get("from", "") or "someone"
+    if sender == chatroom.HUMAN_IDENTITY:
+        who = f"{operator_name()}, the product owner (chat identity \"user\")"
+    else:
+        sp = chatroom.participant(room, sender) or {}
+        role = chatroom._role_head(sp.get("role", "")) or "teammate"
+        who = f"{sender}, the {role}"
+    msgs = room.get("messages") or []
+    idx = next((i for i, m in enumerate(msgs) if m.get("id") == msg.get("id")), len(msgs))
+    context = "\n".join(
+        f"- **{m.get('from', '')}** → {m.get('to') or 'everyone'}: "
+        + " ".join((m.get("text") or "").split())[:500]
+        for m in msgs[max(0, idx - 6):idx]) or "(none)"
+    spec = (room.get("spec") or "").strip() or "(no written spec)"
+    if len(spec) > _BRIEF_SPEC_MAX:
+        spec = spec[:_BRIEF_SPEC_MAX] + "\n\n… (cut — read the full spec with ensemble_get_task)"
+    log_path = review_log_path(room)
+    if not log_text.strip():
+        log = "(empty — this is the first review of this task)"
+    elif len(log_text) > _BRIEF_LOG_MAX:
+        log = (f"… (older entries cut — the whole log is {log_path})\n"
+               + log_text[-_BRIEF_LOG_MAX:])
+    else:
+        log = log_text.strip()
+    if git.get("root"):
+        diff = git.get("diff", "")
+        lines = [f"Checkout: `{git['root']}`",
+                 f"Branch `{git.get('branch') or '?'}` at `{git.get('head') or '?'}`"
+                 + (f", compared with `{git['base']}` from merge-base `{git['mergeBase'][:10]}` "
+                    f"({git.get('ahead', 0)} commits ahead)" if git.get("base") else
+                    " (on the main line — the change is what is uncommitted)"),
+                 f"Diff command: `git -C \"{git['root']}\" diff {git['against']}` "
+                 "(committed and uncommitted changes together)."]
+        if git.get("commits"):
+            lines.append("Commits:\n```\n" + git["commits"] + "\n```")
+        if git.get("status"):
+            lines.append("Uncommitted:\n```\n" + git["status"] + "\n```")
+        lines.append("Diff stat:\n```\n" + (git.get("stat") or "(no changes)") + "\n```")
+        if diff and len(diff) <= _BRIEF_DIFF_MAX:
+            lines.append("Diff:\n````diff\n" + diff + "\n````")
+        elif diff:
+            lines.append(f"The diff is {len(diff):,} characters — read it with the "
+                         "command above, file by file.")
+        work = "\n\n".join(lines)
+    else:
+        work = ("No git checkout was found for this task. Review what the request "
+                f"points at; the task's folder is `{room.get('taskDir') or room.get('cwd', '')}`.")
+    verdicts = " | ".join(REVIEW_VERDICTS)
+    brief = f"""You are '{ident}', the reviewer on the task "{room.get('title', '')}" ({room.get('id', '')}). This is review {n} of this task.
+
+You are a fresh session started for this ONE review. You remember nothing of earlier reviews: the review log below is what they found. When you have given your verdict with review_done, this session ends.
+
+Do NOT design or implement — the engineer builds, you review. Check the work against the spec and the question, hunt for bugs, edge cases, risks and gaps, and verify claims by reading the actual code or running tests.
+
+## What you were asked
+From {who}:
+
+{_quote_block(msg.get('text', ''))}
+
+Recent conversation before it:
+{context}
+
+## The work to review
+{work}
+
+## Task specification
+{spec}
+
+## Review log ({log_path})
+{log}
+
+## How to finish
+1. Where an earlier review raised findings, say for each whether it is now fixed, still open, or no longer relevant, naming the review it came from.
+2. Call the review_done tool exactly once: verdict ({verdicts}), a one-line summary, and your findings as Markdown (what is right, what is wrong, what is missing, what to change — with file:line where you can). The hub appends it to the review log, sends it to {sender} and to the project's PO, and ends this session.
+3. Do not also send the verdict with chat_send, and do not call ensemble_report — review_done does both jobs. If you cannot review (nothing to look at, the question is unclear), call review_done with verdict "comment" saying what you need.
+"""
+    # The brief travels in a PowerShell here-string, which a line starting
+    # with '@ would end early.
+    return re.sub(r"(?m)^'@", " '@", brief)
+
+
+def finish_review(room_id: str, identity: str, verdict: str) -> dict | None:
+    """Close the reviewer's current review on its record and end its session a
+    moment later (after the tool's answer has reached it). Returns the review."""
+    room = chatroom.get_room(room_id, public=False)
+    part = chatroom.participant(room or {}, identity)
+    if part is None:
+        return None
+    review = dict(part.get("review") or {})
+    review.update(endedAt=time.time(), verdict=verdict,
+                  sessionId=part.get("sessionId") or review.get("sessionId", ""))
+    hist = {k: review.get(k) for k in ("n", "askedBy", "startedAt", "endedAt", "verdict",
+                                         "sessionId", "branch", "head")}
+    chatroom.patch_participant(room_id, identity, {"review": review},
+                               append={"reviews": hist})
+    pty_id = part.get("ptyId") or ""
+    if pty_id:
+        t = threading.Timer(_REVIEW_END_DELAY, ptyrun.kill, args=(pty_id,))
+        t.daemon = True
+        t.start()
+    return review
+
+
+def participant_session_ids(part: dict) -> list[str]:
+    """Every conversation an agent has had on its task: its current one and,
+    for a reviewer on mention, one per earlier review."""
+    sids = [part.get("sessionId") or ""]
+    sids += [r.get("sessionId") or "" for r in part.get("reviews") or []
+             if isinstance(r, dict)]
+    out: list[str] = []
+    for s in sids:
+        s = s.strip()
+        if s and s not in out:
+            out.append(s)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -3273,7 +3512,11 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 "members": [{"identity": p.get("identity", ""),
                              "agent": p.get("agent", ""),
                              "model": p.get("model", ""),
-                             "role": p.get("role", "")} for p in agents_in],
+                             "role": p.get("role", ""),
+                             **({"onMention": True,
+                                 "reviewing": _pty_alive(p.get("ptyId"))}
+                                if chatroom.is_on_mention(rm, p) else {})}
+                            for p in agents_in],
                 "label": labels.get(rid) or rm.get("title", ""), "cwd": rm.get("cwd", ""),
                 "spec": rm.get("spec", ""), "taskDir": rm.get("taskDir", ""),
                 "priority": priority_of(rm),
@@ -3777,11 +4020,11 @@ def delete_task(rid: str, members=None) -> dict:
     if room:
         stop_task(rid)
         cwds.append(room.get("cwd", "") or "")
-        members = [{"agent": pp.get("agent", ""),
-                    "sessionId": pp.get("sessionId", ""),
+        members = [{"agent": pp.get("agent", ""), "sessionId": sid,
                     "cwd": pp.get("cwd", "")}
                    for pp in room.get("participants", [])
-                   if pp.get("kind") == "agent"]
+                   if pp.get("kind") == "agent"
+                   for sid in (participant_session_ids(pp) or [""])]
     for m in members:
         sid = (m.get("sessionId") or "").strip()
         agent = (m.get("agent") or "claude").strip() or "claude"
@@ -4479,12 +4722,60 @@ class Handler(BaseHTTPRequestHandler):
         recipients = (result or {}).get("recipients") or []
         if not recipients:
             return
-        sender = (result.get("message") or {}).get("from", "your partner")
+        msg = result.get("message") or {}
+        room = chatroom.get_room(room_id) or {}
+        # A reviewer on mention that isn't mid-review is not rung — it is not
+        # running. The message starts a fresh reviewer briefed with it.
+        rest = []
+        for ident in recipients:
+            part = chatroom.participant(room, ident) or {}
+            if chatroom.is_on_mention(room, part) and not _pty_alive(part.get("ptyId")):
+                try:
+                    self._start_review(room_id, ident, msg)
+                except Exception as e:      # a failed launch must not fail the send
+                    print(f"[review] could not start {ident} in {room_id}: {e}", flush=True)
+            else:
+                rest.append(ident)
+        if not rest:
+            return
+        sender = msg.get("from", "your partner")
         wake = (f"[relay] New message from '{sender}' in your shared room. "
                 f"Use the chat_read tool to read it, then reply with chat_send "
                 f"— to your partner, or to \"user\" if you need {operator_name()}'s "
                 f"input.")
-        self._ring(room_id, recipients, wake)
+        self._ring(room_id, rest, wake)
+
+    def _start_review(self, room_id: str, ident: str, msg: dict) -> dict | None:
+        """Start a fresh reviewer session for one request: its first prompt is
+        the review brief (the question, the branch and its diff, the spec and
+        REVIEW-LOG.md), it runs in the checkout under review, and it ends when
+        it calls review_done. Returns the review record, or None when it was
+        already running (the caller then rings it like anyone else)."""
+        with _REVIEW_LAUNCH_LOCK:
+            room_full = chatroom.get_room(room_id, public=False)
+            part = chatroom.participant(room_full or {}, ident)
+            if part is None or _pty_alive(part.get("ptyId")):
+                return None
+            log_text = read_review_log(room_full)
+            n = review_count(log_text) + 1
+            root = review_repo(room_full)
+            git = review_git_context(root)
+            brief = review_brief(room_full, part, msg, n, git, log_text)
+            info = self._launch_room_agent_pty(room_full, part, "", collab=True,
+                                               prompt=brief, cwd=root or None)
+            review = {"n": n, "askedBy": msg.get("from", ""), "messageId": msg.get("id", ""),
+                      "question": (msg.get("text") or "")[:1000], "startedAt": time.time(),
+                      "ptyId": info["ptyId"], "sessionId": info["sessionId"],
+                      "repo": root, "branch": git.get("branch", ""),
+                      "head": git.get("head", ""), "base": git.get("base", "")}
+            chatroom.patch_participant(
+                room_id, ident,
+                {"ptyId": info["ptyId"], "sessionId": info["sessionId"],
+                 "cwd": info["cwd"], "pid": None, "review": review},
+                drop=("lastExit", "fresh"))
+            print(f"[review] started review {n} by {ident} in {room_id} "
+                  f"(pty {info['ptyId']}, asked by {review['askedBy']})", flush=True)
+            return review
 
     def _ring(self, room_id: str, idents: list, wake: str) -> list[str]:
         """Type ``wake`` into each named agent's terminal and submit it — the
@@ -4623,7 +4914,8 @@ class Handler(BaseHTTPRequestHandler):
         return codex_args, claude_args, {"CHAT_TOKEN": token}
 
     def _launch_room_agent_pty(self, room_full: dict, part: dict, task: str,
-                               collab: bool = True) -> dict:
+                               collab: bool = True, prompt: str | None = None,
+                               cwd: str | None = None) -> dict:
         """Headless variant: spawn the agent in a dashboard-owned PTY (no
         terminal window). Returns {ptyId, cwd, sessionId}. The PtySession owns
         liveness; the doorbell is a PTY write.
@@ -4632,7 +4924,11 @@ class Handler(BaseHTTPRequestHandler):
         and, for codex, approval bypass for autonomy. collab=False (solo): a
         headless agent the human drives directly through the embedded
         terminal — the task is simply the first message. Both get the Ensemble
-        MCP server (task tools always; chat tools only in a collaboration)."""
+        MCP server (task tools always; chat tools only in a collaboration).
+
+        ``prompt`` replaces the briefing outright and ``cwd`` the working dir —
+        how a reviewer on mention is started with its review brief, in the
+        checkout it reviews."""
         ident = part["identity"]
         agent_key = part["agent"]
         model = (part.get("model") or "").strip()
@@ -4641,12 +4937,15 @@ class Handler(BaseHTTPRequestHandler):
         base = room_full.get("cwd") or str(CS_ROOT)
         # Project-backed sessions share one workspace (agents work on the same
         # files); ad-hoc scratch collaborations keep per-identity subdirs.
-        cwd = base if room_full.get("sharedCwd") else os.path.join(base, ident)
+        if not cwd:
+            cwd = base if room_full.get("sharedCwd") else os.path.join(base, ident)
         try:
             os.makedirs(cwd, exist_ok=True)
         except OSError:
             pass
-        if collab:
+        if prompt is not None:
+            briefing = prompt
+        elif collab:
             teammates = [{"identity": p["identity"], "role": p.get("role", "")}
                          for p in room_full["participants"]
                          if p.get("kind") == "agent" and p["identity"] != ident]
@@ -4727,6 +5026,8 @@ class Handler(BaseHTTPRequestHandler):
         launched = []
         for part in [pp for pp in room_full["participants"] if pp.get("kind") == "agent"]:
             part.pop("fresh", None)     # launching IS its first conversation
+            if chatroom.is_on_mention(room_full, part):
+                continue                # started per request (_start_review)
             info = self._launch_room_agent_pty(room_full, part, task, collab=collab)
             part["sessionId"] = info["sessionId"]
             part["cwd"] = info["cwd"]
@@ -4758,6 +5059,11 @@ class Handler(BaseHTTPRequestHandler):
         seed = (room_full.get("spec") or "") if (solo and not room_full.get("messages")) else ""
         resumed = []
         for part in agents_in:
+            if chatroom.is_on_mention(room_full, part):
+                # Never resumed: a reviewer is started fresh for each request,
+                # and resuming would reload the very history this avoids.
+                part.pop("fresh", None)
+                continue
             if part.pop("fresh", False):
                 # Assigned to the task after it had already run: there is no
                 # conversation to resume, so give it the same first prompt a
@@ -4931,6 +5237,8 @@ class Handler(BaseHTTPRequestHandler):
             tools = list(ensemble_tools.TOOLS)
             if room and room.get("mode") != "solo":
                 tools = list(chatroom.MCP_TOOLS) + tools
+            if room and chatroom.is_on_mention(room, chatroom.participant(room, identity) or {}):
+                tools += list(ensemble_tools.REVIEW_TOOLS)
             return ok({"tools": tools})
         if method == "tools/call":
             return self._mcp_tool_call(params.get("name"),

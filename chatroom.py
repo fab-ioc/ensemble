@@ -428,6 +428,46 @@ def po_identity(room: dict) -> str:
     return own[0] if own else ""
 
 
+REVIEWER_ROLE = "reviewer"
+
+
+def is_on_mention(room: dict, part: dict) -> bool:
+    """Whether this agent is started fresh for each request instead of being
+    kept running in the room: a reviewer on a team.
+
+    Every wake of a long-lived session re-sends its whole conversation, and a
+    resume reloads the same history, so a reviewer is launched only when a
+    message wakes it (see :func:`wake_targets`), briefed from the task's spec,
+    diff and review log, and ends once it has given its verdict. A task's only
+    agent is its owner, never on mention, whatever its role says."""
+    if (part or {}).get("kind") != "agent" or len(agent_participants(room)) < 2:
+        return False
+    return _role_head(part.get("role", "")) == REVIEWER_ROLE
+
+
+def patch_participant(room_id: str, identity: str, fields: dict,
+                      append: dict | None = None, drop: tuple = ()) -> dict | None:
+    """Update one participant's record — read-modify-write under the room lock,
+    so a chat message posted meanwhile is never lost (see :func:`record_exit`).
+    ``append`` adds items to list fields; ``drop`` removes keys. Returns the
+    updated participant, or None when the room or the participant is gone."""
+    with _LOCK:
+        room = _read(room_id)
+        if room is None:
+            return None
+        part = participant(room, identity)
+        if part is None:
+            return None
+        part.update(fields)
+        for k, v in (append or {}).items():
+            part.setdefault(k, []).append(v)
+        for k in drop:
+            part.pop(k, None)
+        room["updatedAt"] = _now()
+        _write(room)
+        return dict(part)
+
+
 def mentions(room: dict, text: str) -> set[str]:
     """Agents @mentioned in ``text``, by identity ("@codex") or by role name
     ("@reviewer")."""

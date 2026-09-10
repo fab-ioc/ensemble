@@ -89,6 +89,29 @@ owner or the PO **@mentions** it by identity or role (`@codex`, `@reviewer`).
 When you want a review, name the reviewer; otherwise it sleeps, and that is
 the point.
 
+### The reviewer runs on mention
+
+A reviewer is not kept running. Every wake of a long-lived session re-sends
+its whole conversation, and a resume reloads the same history, so each time a
+reviewer is addressed or @mentioned the hub starts a **fresh reviewer session**
+for that one review. Its first prompt is the task's spec, the branch and its
+diff, the message that asked, and `REVIEW-LOG.md` from the task folder. The
+board shows it as *on mention*, and as *reviewing now* while a review runs.
+
+- **Asking for a review:** make the request self-contained. The reviewer sees
+  the spec, the diff, your message and the review log, and nothing else of
+  the chat. Say what to review, what changed since the last review and what
+  you want checked.
+- **As the reviewer:** read the log first and say, for each earlier finding,
+  whether it is fixed, still open or no longer relevant. Then call
+  `review_done` once with `verdict` (`approve`, `changes_requested` or
+  `comment`), a one-line `summary` and your `findings`. The hub appends the
+  review to `REVIEW-LOG.md`, sends it to whoever asked and to the project's
+  PO, and ends your session. Don't send it with `chat_send` or
+  `ensemble_report` as well.
+- A message to the reviewer while a review is running reaches that same
+  session. It is not a second review.
+
 ## Checking what needs a human
 
 A task's `status` says what it is *meant* to be doing. It does not say whether
