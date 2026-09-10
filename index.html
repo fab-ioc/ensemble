@@ -1865,6 +1865,23 @@
      an overlay drawer over a scrim; detail as a full-screen overlay you close
      to return to the list. Header condenses to a single tidy row. */
   #scrim { display: none; }
+  /* Below 900 the sidebar is a DRAWER: it floats over the content with a
+     scrim, rather than pushing it aside. These rules used to start at 640,
+     which left 641-900 with a full-width column and no scrim - an open
+     sidebar ate a third of a small laptop window. */
+  @media (max-width: 900px) {
+    #sidebar {
+      width: min(84vw, 320px); z-index: 45;
+      box-shadow: 8px 0 32px rgba(0, 0, 0, .28);
+    }
+    main { padding-left: 0; }
+    #scrim {
+      display: block; position: fixed; inset: var(--header-h) 0 0 0;
+      background: rgba(0, 0, 0, .42); z-index: 40; border: 0;
+      opacity: 0; pointer-events: none; transition: opacity .2s;
+    }
+    body:not(.sidebar-collapsed) #scrim { opacity: 1; pointer-events: auto; }
+  }
   /* Mobile = narrow screens OR any touch device up to tablet size (so a large
      phone in landscape, ~950px wide, still gets the one-screen-at-a-time layout
      instead of the cramped desktop slide-over). Keep this selector in sync with
@@ -6116,13 +6133,17 @@ $('#sidebar-toggle').addEventListener('click', () => {
 // Keep in sync with the mobile @media query in the stylesheet.
 const MOBILE_MQ = '(max-width: 640px), (max-width: 1024px) and (pointer: coarse)';
 const isPhone = () => window.matchMedia(MOBILE_MQ).matches;
-if (isPhone()) document.body.classList.add('sidebar-collapsed');
+// Wherever the sidebar is a drawer it starts closed and closes behind you —
+// a drawer left open is just a column that covers things.
+const DRAWER_MQ = '(max-width: 900px)';
+const isDrawer = () => window.matchMedia(DRAWER_MQ).matches || isPhone();
+if (isDrawer()) document.body.classList.add('sidebar-collapsed');
 {
   const scrimEl = document.getElementById('scrim');
   if (scrimEl) scrimEl.addEventListener('click', () =>
     document.body.classList.add('sidebar-collapsed'));
   $('#sidebar').addEventListener('click', (ev) => {
-    if (isPhone() && ev.target.closest('.sb-item'))
+    if (isDrawer() && ev.target.closest('.sb-item'))
       document.body.classList.add('sidebar-collapsed');
   });
 }
