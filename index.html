@@ -54,6 +54,19 @@
     --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
     --font-display: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   }
+  /* Layout metrics. The header's height is load-bearing: the sidebar, the
+     detail panel and its resize handle hang off it, the sticky table head
+     offsets by it, and the notification tray and settings panel position
+     against it. It used to be the literal 49px repeated at each of those
+     sites, so changing the bar's height silently broke seven surfaces.
+     Change it here and they all follow.
+       --chrome-h is what the Workspace and Changes panes subtract from the
+     viewport to get their own height: the header plus the breadcrumbs, tabs
+     and page padding above them. */
+  :root {
+    --header-h: 49px;    /* 48px bar + 1px bottom border */
+    --chrome-h: 266px;   /* --header-h + crumbs + tabs + page padding */
+  }
   * { box-sizing: border-box; }
   body {
     font: 13.5px/1.5 var(--font-sans);
@@ -130,7 +143,7 @@
   #meta { color: var(--muted); margin-left: auto; font-variant-numeric: tabular-nums; font-size: 12px; }
   main { padding: 8px 20px 40px; }
   table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-  thead { position: sticky; top: 49px; background: var(--bg); z-index: 5; }
+  thead { position: sticky; top: var(--header-h); background: var(--bg); z-index: 5; }
   th {
     text-align: left; font-size: 10.5px; text-transform: uppercase;
     color: var(--muted-2); padding: 9px 8px 7px;
@@ -494,7 +507,7 @@
     padding-left: 0;
   }
   #sidebar {
-    position: fixed; left: 0; top: 49px; bottom: 0;
+    position: fixed; left: 0; top: var(--header-h); bottom: 0;
     width: 248px; box-sizing: border-box;
     border-right: 1px solid var(--border);
     background: var(--surface);
@@ -567,7 +580,7 @@
   }
   .sb-add-cat:hover { color: var(--accent); border-color: var(--accent); border-style: solid; }
   #detail-panel {
-    position: fixed; right: 0; top: 49px; bottom: 0;
+    position: fixed; right: 0; top: var(--header-h); bottom: 0;
     width: var(--detail-w);
     background: var(--surface); border-left: 1px solid var(--border);
     box-shadow: -14px 0 36px rgba(40,20,10,.10);
@@ -581,7 +594,7 @@
      survives panel re-renders. Hidden when the panel is closed. Hover/drag
      paints it in the accent colour. Drag updates --detail-w on <body>. */
   #detail-panel-resize {
-    position: fixed; top: 49px; bottom: 0;
+    position: fixed; top: var(--header-h); bottom: 0;
     right: calc(var(--detail-w) - 3px); width: 6px;
     cursor: ew-resize; z-index: 22; background: transparent;
     transition: background .15s;
@@ -793,7 +806,7 @@
   .ptabs button:hover { color: var(--fg); }
   .ptabs button.on { color: var(--fg); border-bottom-color: var(--accent); }
   /* Workspace: lazy file tree (left) + rendered file (right). */
-  .wsp { display: grid; grid-template-columns: minmax(220px, 300px) 1fr; height: calc(100vh - 266px); min-height: 420px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
+  .wsp { display: grid; grid-template-columns: minmax(220px, 300px) 1fr; height: calc(100vh - var(--chrome-h)); min-height: 420px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
   .wsp-tree { overflow: auto; border-right: 1px solid var(--border); padding: 8px 6px; font-size: 12.5px; }
   .scopebar { display: flex; align-items: center; gap: 8px; padding: 8px 0 4px; font-size: 12px; color: var(--muted); min-width: 0; }
   .scopebar .lbl { font-weight: 600; white-space: nowrap; }
@@ -826,7 +839,7 @@
   .wsp-bar a:hover { color: var(--accent); }
   .wsp-frame { flex: 1; width: 100%; border: 0; }
   /* Changes tab: changed files (left) + unified diff with line comments (right). */
-  .chp { display: grid; grid-template-columns: minmax(220px, 320px) 1fr; height: calc(100vh - 266px); min-height: 420px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
+  .chp { display: grid; grid-template-columns: minmax(220px, 320px) 1fr; height: calc(100vh - var(--chrome-h)); min-height: 420px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
   .chp-files { overflow: auto; border-right: 1px solid var(--border); padding: 8px 6px; font-size: 12.5px; }
   .chp-head { display: flex; align-items: center; gap: 8px; padding: 4px 6px 8px; color: var(--muted); font-size: 11.5px; font-weight: 600; }
   .chp-refresh { margin-left: auto; background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); cursor: pointer; padding: 1px 7px; }
@@ -1069,7 +1082,7 @@
   }
   #notif-count[hidden] { display: none; }
   #notif-tray {
-    position: absolute; top: 56px; right: 16px; z-index: 60; width: 420px;
+    position: absolute; top: calc(var(--header-h) + 7px); right: 16px; z-index: 60; width: 420px;
     max-height: 70vh; overflow-y: auto; background: var(--surface);
     border: 1px solid var(--border); border-radius: 10px;
     box-shadow: 0 12px 36px rgba(0,0,0,.18); padding: 8px;
@@ -1209,7 +1222,7 @@
     content: '⚠'; color: var(--danger); margin-right: 5px; font-size: 11px;
   }
   #settings-panel {
-    position: absolute; top: 56px; right: 16px; z-index: 50;
+    position: absolute; top: calc(var(--header-h) + 7px); right: 16px; z-index: 50;
     background: var(--surface); border: 1px solid var(--border);
     border-radius: 10px; box-shadow: 0 12px 36px rgba(0,0,0,.12);
     padding: 16px; min-width: 280px;
@@ -1451,7 +1464,7 @@
      instead of the cramped desktop slide-over). Keep this selector in sync with
      MOBILE_MQ in the script. */
   @media (max-width: 640px), (max-width: 1024px) and (pointer: coarse) {
-    /* Header: ONE fixed-height row (panels below assume a 49px header, so it
+    /* Header: ONE fixed-height row (panels below hang off --header-h, so it
        must not wrap/grow). Logo-only brand, hide desktop-only filler, let the
        search flex and the filter chips scroll horizontally. */
     header { gap: 8px; padding: 0 10px; }
@@ -1479,7 +1492,7 @@
     }
     /* Scrim behind the open drawer */
     #scrim {
-      display: block; position: fixed; inset: 49px 0 0 0;
+      display: block; position: fixed; inset: var(--header-h) 0 0 0;
       background: rgba(0,0,0,.42); z-index: 40; border: 0;
       opacity: 0; pointer-events: none; transition: opacity .2s;
     }
@@ -1488,7 +1501,7 @@
        sidebar is collapsed (default) it's inert (handled above). */
 
     /* Detail becomes a true full-screen overlay: cover from the very top
-       (top:0, not below the 49px header) with no card chrome, so nothing of
+       (top:0, not below the header) with no card chrome, so nothing of
        the page behind leaks above it. */
     #detail-panel {
       top: 0; width: 100vw; height: 100%;
