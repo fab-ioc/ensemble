@@ -1214,6 +1214,105 @@
   .ptabs button { background: transparent; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px; padding: 6px 12px; font-size: 12.5px; font-weight: 600; color: var(--fg-subtle); cursor: pointer; }
   .ptabs button:hover { color: var(--fg); }
   .ptabs button.on { color: var(--fg); border-bottom-color: var(--accent); }
+  /* ---- The PO ------------------------------------------------------------
+     One element, #po-panel, in two places: a grid cell beside the board on a
+     project's Overview tab, and a drawer the bar's pill opens anywhere else.
+     Only its classes change between the two. Moving an iframe in the DOM
+     reloads it, so the live session inside is never moved, only restyled. */
+  #po-pill {
+    height: 28px; padding: 0 var(--s-300) 0 var(--s-100); gap: var(--s-200);
+    border-color: var(--border-strong); border-radius: var(--r-full);
+    color: var(--fg); font-weight: 500;
+  }
+  #po-pill[hidden] { display: none; }
+  #po-pill.none { padding-left: var(--s-300); color: var(--fg-subtle); }
+  #po-pill .po-pill-p { color: var(--fg-muted); font-weight: 400; overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
+  #po-pill[aria-expanded="true"] { background: var(--selected-bg); color: var(--selected-fg); }
+  /* --fg-muted on --selected-bg measured 4.41:1 in Light; the pill's own colour clears it. */
+  #po-pill[aria-expanded="true"] .po-pill-p { color: inherit; }
+  /* The name goes first when the bar runs short (it is in the tooltip and the
+     accessible name), then the word, from where the project switcher also
+     gives up its label: the PO's avatar alone still says who. */
+  @media (max-width: 1100px) { #po-pill .po-pill-p { display: none; } }
+  @media (max-width: 900px), (max-width: 1024px) and (pointer: coarse) {
+    .bar-gap { min-width: var(--s-100); }   /* 641px overflowed by 5px with the pill */
+    #po-pill:not(.none) { padding: 0 var(--s-100); }
+    #po-pill:not(.none) .po-pill-t { display: none; }
+  }
+  #po-pill:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  #po-panel {
+    display: flex; flex-direction: column; min-width: 0; min-height: 0;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--r-300); overflow: hidden;
+  }
+  #po-panel[hidden] { display: none !important; }
+  .po-head {
+    flex: 0 0 auto; display: flex; align-items: center; gap: var(--s-200);
+    min-width: 0; padding: var(--s-200) var(--s-300); border-bottom: 1px solid var(--border);
+  }
+  .po-who { flex: 1 1 auto; min-width: 0; }
+  .po-name, .po-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .po-name { font-size: var(--fs-300); font-weight: 600; color: var(--fg); }
+  .po-sub { font-size: var(--fs-100); line-height: 16px; color: var(--fg-muted); }
+  .po-acts { flex: 0 0 auto; display: flex; align-items: center; gap: var(--s-100); }
+  .po-btn {
+    height: 24px; padding: 0 var(--s-200); border-radius: var(--r-200);
+    border: 1px solid transparent; background: transparent; color: var(--fg-subtle);
+    font: inherit; font-size: var(--fs-200); cursor: pointer; white-space: nowrap;
+  }
+  .po-btn:hover { background: var(--hover); color: var(--fg); }
+  .po-btn.def { border-color: var(--border-strong); background: var(--surface); color: var(--fg); }
+  .po-btn.def:hover { background: var(--hover); }
+  .po-btn.x { width: 24px; padding: 0; font-size: var(--fs-400); line-height: 1; }
+  .po-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .po-frames { flex: 1 1 auto; min-height: 0; display: flex; }
+  .po-frames iframe { flex: 1 1 auto; width: 100%; min-height: 0; border: 0; display: block; background: var(--bg); }
+  .po-frames iframe[hidden] { display: none; }
+  /* A project with no PO keeps today's board, and says how to get one. */
+  .po-note {
+    display: flex; align-items: center; gap: var(--s-300); flex-wrap: wrap;
+    margin: 0 0 var(--s-300); padding: var(--s-200) var(--s-300);
+    background: var(--surface-sunken); border-radius: var(--r-200);
+    font-size: var(--fs-200); color: var(--fg-subtle);
+  }
+  .po-note span { flex: 1 1 320px; }
+  /* The project page: the PO leads, the board sits beside it. #view becomes
+     display:contents so its chrome and board can share main's grid with the
+     PO panel, which lives outside #view for the same reason the workspace does. */
+  body.po-split main {
+    display: grid; column-gap: var(--s-400);
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas: "chrome chrome" "po board";
+    height: calc(100dvh - var(--top-h)); padding-bottom: var(--s-400);
+  }
+  body.po-split #view { display: contents; }
+  body.po-split .po-chrome { grid-area: chrome; min-width: 0; }
+  body.po-split #po-panel { grid-area: po; }
+  /* The pane scrolls both ways, so the board's sideways scrollbar is at the
+     pane's edge, not under a column of cards taller than the screen. */
+  body.po-split .po-board { grid-area: board; min-width: 0; min-height: 0; overflow: auto; }
+  body.po-split .po-board .board { overflow-x: visible; }
+  body.po-split .po-board thead { top: 0; }
+  @media (max-width: 900px) {
+    body.po-split main {
+      grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto;
+      grid-template-areas: "chrome" "po" "board"; row-gap: var(--s-300); height: auto;
+    }
+    body.po-split #po-panel { height: min(70dvh, 640px); min-height: 360px; }
+    body.po-split .po-board { overflow: visible; }
+    body.po-split .po-board .board { overflow-x: auto; }   /* stacked: the page scrolls down, the board sideways */
+  }
+  /* The peek: a drawer under the bar. Beside an open task, not over it. */
+  body.po-peek #po-panel {
+    position: fixed; top: var(--top-h); bottom: 0; right: 0; z-index: 30;
+    width: min(440px, 100vw); border-width: 0 0 0 1px; border-radius: 0;
+    box-shadow: var(--e-200);
+  }
+  body.po-peek.detail-open #po-panel { right: var(--detail-w); }
+  @media (max-width: 640px), (max-width: 1024px) and (pointer: coarse) {
+    body.po-peek #po-panel, body.po-peek.detail-open #po-panel { left: 0; right: 0; width: auto; border-left-width: 0; }
+  }
   /* Workspace: lazy file tree (left) + rendered file (right). */
   .wsp { display: grid; grid-template-columns: minmax(220px, 300px) 1fr; height: calc(100vh - var(--chrome-h)); min-height: 420px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
   .wsp-tree { overflow: auto; border-right: 1px solid var(--border); padding: 8px 6px; font-size: 12.5px; }
@@ -2399,6 +2498,10 @@
     <button id="search-help" type="button" title="Search syntax" aria-label="Search syntax">?</button>
   </div>
   <div class="bar-gap"></div>
+  <!-- The PO: who you talk to about the current project. Identity, like the
+       avatar beside it, not view state: it names a person-like owner, reads the
+       same on every page, and opens the conversation without leaving the page. -->
+  <button id="po-pill" class="bar-btn" aria-expanded="false" hidden></button>
   <!-- Plan allowance: ONE chip for the whole board, next to the notifications
        bell. Account-wide by nature, so top bar only and never on a task card.
        Everything it needs is under the `usage` name (the CSS block and the JS
@@ -2544,6 +2647,8 @@
   <section id="ws-panel" hidden></section>
   <!-- The roadmap panel, for the same reason: an unsaved draft is state. -->
   <section id="rm-panel" hidden></section>
+  <!-- The PO's conversation, for the same reason again: it is a live session. -->
+  <section id="po-panel" hidden aria-label="The project's PO"></section>
 </main>
 <dialog id="modal"></dialog>
 <aside id="detail-panel"></aside>
@@ -4485,7 +4590,7 @@ function projectsChromeHtml() {
     // Tabs only when the project has a folder to browse (Unassigned has none).
     const hasFolder = !!(pj && pj.path);
     const tabs = hasFolder ? `<div class="ptabs">`
-      + `<button data-ptab="tasks" class="${PROJECT_TAB === 'tasks' ? 'on' : ''}">Tasks</button>`
+      + `<button data-ptab="tasks" class="${PROJECT_TAB === 'tasks' ? 'on' : ''}" title="The project's PO and its tasks">Overview</button>`
       + `<button data-ptab="workspace" class="${PROJECT_TAB === 'workspace' ? 'on' : ''}" title="Browse this project's folder like an IDE — files render, and you can comment in place">Workspace</button>`
       + `<button data-ptab="changes" class="${PROJECT_TAB === 'changes' ? 'on' : ''}" title="Uncommitted changes in the project folder or in a task's workspace: git status, per-file diff, line comments you can send to a task chat">Changes</button>`
       + `<button data-ptab="roadmap" class="${PROJECT_TAB === 'roadmap' ? 'on' : ''}" title="The project's roadmap — ROADMAP.md in its folder. You and the project's PO both edit it">Roadmap</button>`
@@ -5517,9 +5622,232 @@ setInterval(() => {
   TCH_VIEWS.forEach(v => { if (v.el && v.el.isConnected && v.el.offsetParent) tchSync(v); });
 }, 10000);
 
+// ---- The PO -----------------------------------------------------------------
+// A project's PO is one of its tasks (poRoomId in project.json) whose agent
+// runs the project for the owner: every other task reports to it. Its
+// conversation leads the project's Overview tab, beside the board, and the pill
+// in the bar peeks at it from any other page. Both are #po-panel, a sibling of
+// #view, built once: the session inside is created once per PO and only ever
+// hidden or restyled, so navigating never reconnects it.
+var PO_PEEK = false;
+var PO_LAST = (() => { try { return localStorage.getItem('cd-po-last') || ''; } catch (e) { return ''; } })();
+function poRowOf(pj) {
+  const rid = pj && pj.poRoomId;
+  return rid ? (ALL_ROWS.find(r => r.roomId === rid) || null) : null;
+}
+function projectOfRoom(rid) {
+  if (!rid) return null;
+  return registeredProjects().find(p => (p.sessions || []).some(s => (s.roomId || s.sessionId) === rid)) || null;
+}
+// The Overview tab leads with the PO when the project names one that exists.
+function poSplitProject() {
+  if (!SELECTED_PROJECT || PROJECT_TAB !== 'tasks' || SB_DEST) return null;
+  const pj = projectById(SELECTED_PROJECT);
+  return pj && poRowOf(pj) ? pj : null;
+}
+// "The current project" for the pill: the one whose PO is on screen, else the
+// open task's, else the one you are in, else the last PO you visited, else the
+// first project that has one. Null only when no project anywhere has a PO.
+function poContext() {
+  const split = poSplitProject();
+  if (split) return split;
+  if (SELECTED_SID) {
+    const r = ALL_ROWS.find(x => x.sessionId === SELECTED_SID);
+    const pj = r && projectOfRoom(r.roomId || r.sessionId);
+    if (pj) return pj;
+  }
+  if (SELECTED_PROJECT && SELECTED_PROJECT !== UNASSIGNED_ID) {
+    const pj = projectById(SELECTED_PROJECT);
+    if (pj) return pj;
+  }
+  const last = projectById(PO_LAST);
+  if (last && poRowOf(last)) return last;
+  return registeredProjects().find(p => poRowOf(p)) || null;
+}
+function poAgent(row) {
+  const m = (row.members && row.members[0]) || { agent: row.agent || '', model: '' };
+  const kind = (m.agent || '').toLowerCase();
+  return { m, cls: kind === 'claude' ? 'claude' : (kind === 'codex' ? 'codex' : 'other') };
+}
+function poHeadHtml(pj, row, peek) {
+  const { m, cls } = poAgent(row);
+  const model = shortModel(m.model);
+  const sub = [m.agent || '', model, row.label || ''].filter(Boolean).map(esc).join(' · ');
+  const acts = [];
+  if (!row.isLive && !row.draft) acts.push(`<button class="po-btn def" data-po="resume" title="Relaunch the PO with its conversation">Resume</button>`);
+  acts.push(`<button class="po-btn" data-po="open" title="Open the PO's own task: spec, changes and files">Task</button>`);
+  acts.push(`<button class="po-btn" data-po="popout" title="Open the PO in its own window">Pop out</button>`);
+  acts.push(`<button class="po-btn" data-po="change" title="Choose which task is this project's PO">Change</button>`);
+  if (peek) acts.push(`<button class="po-btn x" data-po="close" title="Close (Esc)" aria-label="Close the PO">×</button>`);
+  return `<span class="av ${cls}">${esc((m.agent || '?')[0])}</span>`
+    + `<div class="po-who"><div class="po-name">${esc(pj.name)} · PO</div><div class="po-sub">${sub}</div></div>`
+    + runChip(row) + `<div class="po-acts">${acts.join('')}</div>`;
+}
+function renderPoPill(ctx) {
+  const b = document.getElementById('po-pill');
+  if (!b) return;
+  if (!ctx) { b.hidden = true; return; }
+  const row = poRowOf(ctx);
+  let html;
+  if (row) {
+    const { m, cls } = poAgent(row);
+    html = `<span class="av ${cls}">${esc((m.agent || '?')[0])}</span><span class="po-pill-t">PO</span><span class="po-pill-p">${esc(ctx.name)}</span>`;
+    b.title = `${ctx.name}'s PO — ${row.label || 'its task'}. Opens the conversation over this page`;
+    b.setAttribute('aria-label', `${ctx.name} PO`);
+  } else {
+    html = `<span>No PO</span><span class="po-pill-p">${esc(ctx.name)}</span>`;
+    b.title = `${ctx.name} has no PO yet. Opens the project, where you can choose one`;
+    b.setAttribute('aria-label', `${ctx.name} has no PO`);
+  }
+  if (b._html !== html) { b._html = html; b.innerHTML = html; }
+  b.classList.toggle('none', !row);
+  b.setAttribute('aria-expanded', PO_PEEK ? 'true' : 'false');
+  b.hidden = false;
+}
+function renderPo() {
+  const panel = document.getElementById('po-panel');
+  if (!panel) return;
+  const split = poSplitProject();
+  const ctx = poContext();
+  // A peek has nothing to show once its project has no PO, and none is needed
+  // where the PO already leads the page. On a phone an open task covers the
+  // whole screen, bar included, so the peek steps aside for it.
+  if (split || !(ctx && poRowOf(ctx))
+      || (SELECTED_SID && window.matchMedia('(max-width: 640px), (max-width: 1024px) and (pointer: coarse)').matches)) PO_PEEK = false;
+  const pj = split || (PO_PEEK ? ctx : null);
+  document.body.classList.toggle('po-split', !!split);
+  document.body.classList.toggle('po-peek', !split && !!pj);
+  renderPoPill(ctx);
+  if (!pj) { panel.hidden = true; return; }
+  if (pj.id !== PO_LAST) { PO_LAST = pj.id; try { localStorage.setItem('cd-po-last', pj.id); } catch (e) {} }
+  const row = poRowOf(pj);
+  if (!panel.querySelector('.po-frames')) panel.innerHTML = '<div class="po-head"></div><div class="po-frames"></div>';
+  panel.hidden = false;
+  // The header follows the PO's state; it is rewritten only when that changes,
+  // and keeps keyboard focus on the equivalent control when it is.
+  const head = panel.querySelector('.po-head');
+  const hh = poHeadHtml(pj, row, !split);
+  if (head._html !== hh) {
+    const focus = focusKeyIn(head);
+    head._html = hh; head.innerHTML = hh;
+    head.dataset.proj = pj.id; head.dataset.room = row.roomId; head.dataset.sid = row.sessionId;
+    restoreFocus(head, focus);
+  }
+  // One session per PO, created the first time it is shown and never rebuilt.
+  const frames = panel.querySelector('.po-frames');
+  const poRooms = new Set(registeredProjects().map(p => p.poRoomId).filter(Boolean));
+  let cur = null;
+  frames.querySelectorAll('iframe.po-session').forEach(f => {
+    if (!poRooms.has(f.dataset.room)) f.remove();   // no longer anyone's PO
+    else if (f.dataset.room === row.roomId) cur = f;
+  });
+  if (!cur) {
+    cur = document.createElement('iframe');
+    cur.className = 'po-session';
+    cur.dataset.room = row.roomId;
+    cur.title = `${pj.name} PO conversation`;
+    cur.allow = 'clipboard-read; clipboard-write';
+    cur.src = '/session?id=' + encodeURIComponent(row.roomId) + '&embed=1';
+    frames.appendChild(cur);
+  }
+  frames.querySelectorAll('iframe.po-session').forEach(f => { f.hidden = f !== cur; });
+}
+// A project without a PO keeps its board and says how to get one.
+function poNoteHtml() {
+  if (!SELECTED_PROJECT || SELECTED_PROJECT === UNASSIGNED_ID || PROJECT_TAB !== 'tasks' || SB_DEST) return '';
+  const pj = projectById(SELECTED_PROJECT);
+  if (!pj || poRowOf(pj)) return '';
+  const hasTasks = (pj.sessions || []).some(s => s.roomId);
+  const what = pj.poRoomId ? 'This project’s PO was a task that no longer exists.' : 'This project has no PO.';
+  const how = hasTasks ? 'Choose one of its tasks, or create a task for the role first.'
+                       : 'Create a task for the role with + New task, then choose it here.';
+  return `<div class="po-note"><span>${what} The PO is the task you talk to about the project: the other tasks report to it, and its conversation leads this page. ${how}</span>`
+    + `<button class="po-btn def po-choose" data-proj="${esc(pj.id)}"${hasTasks ? '' : ' disabled'}>Choose the PO…</button></div>`;
+}
+function poFocusComposer() {
+  const f = document.querySelector('#po-panel iframe.po-session:not([hidden])');
+  try { const i = f && f.contentDocument && f.contentDocument.getElementById('input'); if (i) i.focus(); } catch (e) {}
+}
+function poClosePeek() {
+  PO_PEEK = false;
+  renderPo();
+  const b = document.getElementById('po-pill');
+  if (b && !b.hidden) b.focus();
+}
+// Choose (or clear) a project's PO from its own tasks.
+async function poChoose(pid) {
+  const pj = projectById(pid);
+  if (!pj) return;
+  const tasks = (pj.sessions || []).filter(s => s.roomId);
+  const dlg = $('#modal');
+  dlg.innerHTML = `
+    <h3>Choose ${esc(pj.name)}’s PO</h3>
+    <p class="cfg-hint">The other tasks in this project report to it, and its conversation leads the project page.</p>
+    <div class="im-field">
+      <label>Task</label>
+      <select id="po-sel">
+        <option value="">(no PO)</option>
+        ${tasks.map(s => `<option value="${esc(s.roomId)}"${s.roomId === pj.poRoomId ? ' selected' : ''}>${esc(s.label || s.roomId)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="actions"><button id="po-ok">Save</button><button id="po-cancel" class="secondary">Cancel</button></div>`;
+  dlg.showModal();
+  const roomId = await new Promise(resolve => {
+    $('#po-cancel').onclick = () => resolve(null);
+    dlg.addEventListener('cancel', () => resolve(null), { once: true });
+    $('#po-ok').onclick = () => resolve($('#po-sel').value);
+  });
+  dlg.close();
+  if (roomId === null) return;
+  try {
+    await api('/api/projects/po', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ projectId: pid, roomId }) });
+    toast(roomId ? 'PO set' : 'PO cleared', 2000, 'ok');
+    await refreshProjects(); renderRows();
+  } catch (e) { toast('could not set the PO: ' + e.message, 5000, 'err'); }
+}
+document.addEventListener('click', async (ev) => {
+  const pill = ev.target.closest('#po-pill');
+  if (pill) {
+    const ctx = poContext();
+    if (!ctx) return;
+    if (!poRowOf(ctx)) {           // no PO: go where the page says how to choose one
+      SELECTED_PROJECT = ctx.id; PROJECT_TAB = 'tasks'; WS_SCOPE = ''; SB_DEST = '';
+      renderRows(); return;
+    }
+    if (poSplitProject()) { poFocusComposer(); return; }   // already leading the page
+    PO_PEEK = !PO_PEEK; renderPo();
+    if (PO_PEEK) poFocusComposer();
+    return;
+  }
+  const choose = ev.target.closest('.po-choose');
+  if (choose) { poChoose(choose.dataset.proj); return; }
+  const act = ev.target.closest('#po-panel .po-head [data-po]');
+  if (act) {
+    const head = act.closest('.po-head'), what = act.dataset.po;
+    if (what === 'close') poClosePeek();
+    else if (what === 'popout') openSessionWindow(head.dataset.room);
+    else if (what === 'open') openDetail(head.dataset.sid);
+    else if (what === 'change') poChoose(head.dataset.proj);
+    else if (what === 'resume') {
+      act.disabled = true;
+      try {
+        await api('/api/room/resume', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ roomId: head.dataset.room }) });
+        toast('PO resumed', 2000, 'ok'); await refresh();
+      } catch (e) { toast('resume failed: ' + e.message, 4000, 'err'); act.disabled = false; }
+    }
+    return;
+  }
+  // A peek closes when you click beside it — but not in the task it sits
+  // beside, the bar, or a dialog it opened.
+  if (PO_PEEK && !ev.target.closest('#po-panel, #detail-panel, #modal, header, #detail-panel-resize')) poClosePeek();
+});
+
 function renderRows() {
   renderSidebar();
   syncProjSwitch();
+  renderPo();
   // The workspace panel is shown, never rebuilt — every branch below is free to
   // replace #view without touching it.
   const wsp = document.getElementById('ws-panel');
@@ -5620,9 +5948,16 @@ function renderRows() {
       </div>`;
     pageHeader = `<div class="page-header">${title}${actions}</div>`;
   }
+  // A project with a PO puts the board beside it (see #po-panel); one without
+  // gets today's board under a note saying how to give it one.
+  const poSplit = !!poSplitProject();
+  const poNote = poSplit ? '' : poNoteHtml();
+  const frame = inner => poSplit
+    ? `<div class="po-chrome">${projectsChromeHtml()}</div><div class="po-board">${inner}</div>`
+    : projectsChromeHtml() + poNote + inner;
   if (!filtered.length) {
-    if (writeSlot(view, projectsChromeHtml() + pageHeader + filterRowHtml()
-      + '<p class="empty">' + (active ? 'No matches.' : 'No sessions.') + '</p>')) wireProjectsChrome();
+    if (writeSlot(view, frame(pageHeader + filterRowHtml()
+      + '<p class="empty">' + (active ? 'No matches.' : 'No sessions.') + '</p>'))) wireProjectsChrome();
     setViewCount(total ? `0 of ${total}` : '0 tasks');
     return;
   }
@@ -5633,12 +5968,11 @@ function renderRows() {
     // hit, same guard: remount only when PLACEMENT changes. Card contents are
     // patched in place below, so dots and lozenges stay live while hovering.
     const frozen = view.matches(':hover');
-    const sig = [SELECTED_PROJECT || '', SELECTED_CAT, SEARCH_QUERY, DONE_SHOW_ALL,
+    const sig = [SELECTED_PROJECT || '', SELECTED_CAT, SEARCH_QUERY, DONE_SHOW_ALL, poSplit, poNote,
                  filtered.map(r => (r.roomId || r.sessionId) + ':' + frozenWorkflowOf(r, frozen)).join(',')].join('|');
     if (sig !== BOARD_SIG || !view.querySelector('.board')) {
       BOARD_SIG = sig;
-      view.innerHTML = projectsChromeHtml() + pageHeader + filterRowHtml()
-        + boardHtml(filtered, now, frozen);
+      view.innerHTML = frame(pageHeader + filterRowHtml() + boardHtml(filtered, now, frozen));
       wireProjectsChrome();
       wireBoard();
     } else {
@@ -5651,12 +5985,12 @@ function renderRows() {
   }
   const ordered = nestForks(filtered);
   const headExtra = DETAIL_MODE ? '' : '<th></th>';
-  const listHtml = projectsChromeHtml() + pageHeader + filterRowHtml() + `<table>
+  const listHtml = frame(pageHeader + filterRowHtml() + `<table>
     <thead><tr>
       <th></th><th class="prio"></th><th>Task</th><th></th>${headExtra}
     </tr></thead>
     <tbody>${renderGroupedRows(ordered, parsed, now)}</tbody>
-  </table>`;
+  </table>`);
   if (writeSlot(view, listHtml)) wireProjectsChrome();
   setViewCount(_viewCount);
 }
@@ -7079,6 +7413,7 @@ window.addEventListener('message', (ev) => {
 document.addEventListener('keydown', (ev) => {
   if (ev.key !== 'Escape') return;
   if (THEME_MENU || $('#modal').open) return;
+  if (PO_PEEK) { poClosePeek(); return; }   // the topmost thing closes first
   if (SELECTED_SID) closeDetail();
 });
 
