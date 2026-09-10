@@ -211,7 +211,12 @@ TOOLS = [
     {
         "name": "ensemble_update_task",
         "description": (
-            "Amend a task's title, spec, priority and/or assigned agents. "
+            "Amend a task's title, spec, priority, board column and/or assigned "
+            "agents. Move your OWN task to \"inreview\" when you hand the work "
+            "back — that is a thing you know and the board cannot infer, because "
+            "an agent that has finished and one that is stuck both just go quiet. "
+            "Only a ProductOwner moves a task to \"done\"; it means accepted after "
+            "testing, not handed over. "
             "Title, spec and priority work on drafts and on stopped or running "
             "tasks (a running agent does not re-read the spec; tell it in chat "
             "if it must know). Reassigning agents — adding one, dropping one, "
@@ -228,6 +233,12 @@ TOOLS = [
                 "title": {"type": "string", "description": "New title (omit to keep)."},
                 "spec": {"type": "string", "description": "New full spec (omit to keep). Replaces the old one."},
                 "priority": _priority_spec("Omit to keep the current one."),
+                "workflow": {"type": "string",
+                             "enum": list(_d.WORKFLOW_NAMES),
+                             "description": "Board column (omit to keep). backlog | todo | "
+                                            "inprogress | inreview | done. Move your own task to "
+                                            "\"inreview\" when you hand work back. \"done\" is "
+                                            "the ProductOwner's alone."},
                 "agents": {"type": "array", "items": _AGENT_SPEC,
                            "description": "The task's complete new agent line-up, replacing the old "
                                           "one (omit to keep it). List every agent that should be on "
@@ -369,6 +380,7 @@ def _row(room: dict, projects: dict, links: dict, labels: dict,
         "priority": prio,
         "priorityName": _d.PRIORITY_NAMES[prio],
         "status": _status(room),
+        "workflow": _d.workflow_of(room),
         "mode": room.get("mode", ""),
         "projectId": pid,
         "project": (projects.get(pid) or {}).get("name", "") if pid else "",
@@ -378,6 +390,34 @@ def _row(room: dict, projects: dict, links: dict, labels: dict,
         "createdAt": room.get("createdAt"),
         "updatedAt": room.get("updatedAt"),
     }
+
+
+def _workflow(value, ctx):
+    """Validate a requested board column, and enforce who may set it.
+
+    Accepting work is the ProductOwner's call, so "done" is refused to anyone
+    else. This is a real check rather than an honour system, and it is worth
+    saying why: ``ctx["identity"]`` comes from ``chatroom.resolve_token`` — the
+    bearer token minted per participant at room creation — so an agent cannot
+    answer "who am I" with someone else's name. The other half is that the
+    role cannot be self-granted: ``normalize_agent_specs`` refuses
+    ProductOwner from every agent-side caller, so it only ever arrives from
+    the human's own UI.
+
+    Everything short of "done" stays open to the working agent, which is the
+    point — an agent that finishes moves its own task to "inreview" and the
+    owner decides whether that is true."""
+    if value is None:
+        return None
+    w = _d.normalize_workflow(value)
+    if w is None:
+        raise ToolError(f"workflow must be one of: {_d.WORKFLOW_CHOICES}")
+    if w in _d.OWNER_ONLY_WORKFLOW and not _d.is_product_owner(ctx["room"], ctx["identity"]):
+        raise ToolError(
+            f"only a ProductOwner moves a task to {_d.WORKFLOW_LABELS[w]} — it is "
+            "accepted after testing, not when the work is handed over. Move it to "
+            "\"inreview\" and say so in chat.")
+    return w
 
 
 def _caller(room_id: str, identity: str) -> dict:
@@ -447,6 +487,7 @@ def _whoami(ctx, args, handler):
         "title": _title(room),
         "mode": room.get("mode", ""),
         "status": _status(room),
+        "workflow": _d.workflow_of(room),
         "cwd": part.get("cwd") or room.get("cwd", ""),
         "taskDir": room.get("taskDir", ""),
         "project": _project_view(projects.get(ctx["projectId"])),
@@ -622,14 +663,16 @@ def _update_task(ctx, args, handler):
     title = args.get("title")
     spec = args.get("spec")
     priority = _priority(args.get("priority"))
+    workflow = _workflow(args.get("workflow"), ctx)
     agent_list = args.get("agents")
-    if title is None and spec is None and priority is None and agent_list is None:
-        raise ToolError("give a new title, spec, priority and/or agents")
+    if (title is None and spec is None and priority is None
+            and workflow is None and agent_list is None):
+        raise ToolError("give a new title, spec, priority, workflow and/or agents")
     notes = []
     room2 = room
-    if title is not None or spec is not None or priority is not None:
+    if title is not None or spec is not None or priority is not None or workflow is not None:
         ok, room2, err = _d.update_task(room["id"], title=title, spec=spec,
-                                        priority=priority)
+                                        priority=priority, workflow=workflow)
         if not ok:
             raise ToolError(err)
         if _status(room2) in ("running", "waiting_user", "paused") and spec is not None:

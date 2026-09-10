@@ -1228,7 +1228,8 @@ def build_projects() -> dict:
     # itself. The workspace tree needs the folder, not the cwd, so carry both.
     keep = ("sessionId", "roomId", "label", "status", "isLive", "idleSeconds",
             "updatedAt", "agents", "members", "mode", "headless", "cwd",
-            "taskDir", "priority", "priorityName", "attention")
+            "taskDir", "priority", "priorityName", "workflow", "workflowName",
+            "lastAgent", "attention")
     # One group per registered project, plus a synthetic unassigned bucket.
     groups: dict = {}
     for p in projects_reg:
@@ -3019,6 +3020,13 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                           if m.get("from") == "user" and (m.get("text") or "").strip()]
             first_txt = ((_user_msgs[0] if _user_msgs else (msgs[0] if msgs else {})).get("text") or "")[:200]
             last_txt = ((msgs[-1] if msgs else {}).get("text") or "")[:200]
+            # The issue view's summary answers "what did this task do", so it
+            # needs the last thing an AGENT said. `last` is the last message
+            # from anyone, which would happily caption your own question as
+            # "what happened".
+            _agent_msgs = [m for m in msgs
+                           if m.get("from") != "user" and (m.get("text") or "").strip()]
+            last_agent_txt = ((_agent_msgs[-1] if _agent_msgs else {}).get("text") or "")[:400]
             room_rows.append({
                 "sessionId": rid, "roomId": rid, "headless": True,
                 "mode": rm.get("mode", ""),
@@ -3032,6 +3040,8 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 "spec": rm.get("spec", ""), "taskDir": rm.get("taskDir", ""),
                 "priority": priority_of(rm),
                 "priorityName": PRIORITY_NAMES[priority_of(rm)],
+                "workflow": workflow_of(rm),
+                "workflowName": WORKFLOW_LABELS[workflow_of(rm)],
                 # A draft is a task created (e.g. by a planning agent) but never
                 # launched; Open/Start launches it fresh with its spec.
                 "draft": not rm.get("launched", True),
@@ -3043,7 +3053,8 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 "pid": None, "pinned": rid in pinned_set, "category": "", "archived": False,
                 "parent": "", "jira": [], "cost": compute_room_cost(rm).get("dollars", 0.0),
                 "currentTheme": "",
-                "first": first_txt, "last": last_txt, "transcriptPath": "",
+                "first": first_txt, "last": last_txt,
+                "lastAgent": last_agent_txt, "transcriptPath": "",
                 # {state, reason, agentIdentity} when this task needs a human.
                 "attention": ({k: v for k, v in att_by_room[rid].items()
                                if k in ("state", "reason", "agentIdentity", "since")}
@@ -3111,6 +3122,8 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
         # room record to carry a priority — they read as medium.
         r.setdefault("priority", DEFAULT_PRIORITY)
         r.setdefault("priorityName", PRIORITY_NAMES[r["priority"]])
+        r.setdefault("workflow", "backlog")
+        r.setdefault("workflowName", WORKFLOW_LABELS[r["workflow"]])
     out.sort(key=_key)
     return out[:n]
 
@@ -3237,7 +3250,68 @@ def priority_of(record: dict) -> int:
     return normalize_priority((record or {}).get("priority")) or DEFAULT_PRIORITY
 
 
-def normalize_agent_specs(agent_list) -> tuple[list[tuple[str, str, str]], str]:
+# Workflow — the board column a task sits in. Unlike run state (draft /
+# running / paused / stopped) this is CHOSEN, stored, and only ever changed by
+# someone deciding to change it.
+#
+# The distinction is load-bearing. Run state is computed from a live PTY in an
+# in-memory registry, so it resets on every hub restart and flips as agents
+# finish asynchronously. Columns built on it would empty into "Done" whenever
+# the hub restarted, and would move a card out from under the mouse mid-click.
+# The dot on the card still tells the truth about what is running; the column
+# tells the truth about what was decided. They are allowed to disagree.
+WORKFLOW_NAMES = ("backlog", "todo", "inprogress", "inreview", "done")
+WORKFLOW_LABELS = {"backlog": "Backlog", "todo": "To do",
+                   "inprogress": "In progress", "inreview": "In review",
+                   "done": "Done"}
+WORKFLOW_CHOICES = ", ".join(WORKFLOW_NAMES)
+# Only a ProductOwner may accept work. Assigned by the human alone — see
+# normalize_agent_specs, which refuses the role from an agent-side caller.
+PRODUCT_OWNER_ROLE = "productowner"
+OWNER_ONLY_WORKFLOW = ("done",)
+
+
+def normalize_workflow(value) -> str | None:
+    """A caller's column — "inprogress", "In progress", "in-progress" — as the
+    stored key. None when it isn't one, so callers can reject it."""
+    if value is None or isinstance(value, bool):
+        return None
+    s = str(value).strip().lower().replace(" ", "").replace("-", "").replace("_", "")
+    return s if s in WORKFLOW_NAMES else None
+
+
+def workflow_of(record: dict) -> str:
+    """The column a task sits in. A task that predates the field — or one
+    created before it was pinned — has no stored value, so we DERIVE one from
+    its run state rather than migrating anything. Nothing is written until
+    someone moves the card, exactly the way priority_of defaults to medium.
+
+    Note the asymmetry that makes this safe: _start_room pins "inprogress" the
+    moment a task launches, so anything that has ever run carries a real
+    value. Only never-launched tasks fall through to the derived default, and
+    `launched` is itself persisted — so their column is stable across a
+    restart, which is the failure this whole design exists to avoid."""
+    stored = normalize_workflow((record or {}).get("workflow"))
+    if stored:
+        return stored
+    if not (record or {}).get("launched", True):
+        return "backlog"
+    return "done" if not _room_is_live(record or {}) else "inprogress"
+
+
+def is_product_owner(room: dict, identity: str) -> bool:
+    """Whether this caller holds the ProductOwner role in its own room.
+
+    ``identity`` reaches us from ``chatroom.resolve_token`` — the bearer token
+    minted per participant at room creation — so an agent cannot answer this
+    question by claiming to be someone else. Combined with the role being
+    unassignable from the agent side, that makes the check a real one rather
+    than an honour system."""
+    part = chatroom.participant(room or {}, identity) or {}
+    return (part.get("role") or "").strip().lower().replace(" ", "") == PRODUCT_OWNER_ROLE
+
+
+def normalize_agent_specs(agent_list, human: bool = False) -> tuple[list[tuple[str, str, str]], str]:
     """Turn the caller's agent list — plain keys ("claude") or objects
     {agent, model, role} — into (agent_key, model, role) tuples, checking each
     agent is installed. Returns (specs, error)."""
@@ -3254,6 +3328,11 @@ def normalize_agent_specs(agent_list) -> tuple[list[tuple[str, str, str]], str]:
         ag = agents.get_agent(ak)
         if ag is None or not ag.installed():
             return [], f"agent_unavailable:{ak}"
+        # The ProductOwner accepts work, so it is the one role an agent may not
+        # hand out — including to itself. Only the human assigns it, from the
+        # UI, where `human` is true.
+        if not human and (role or "").strip().lower().replace(" ", "") == PRODUCT_OWNER_ROLE:
+            return [], "role_reserved:productowner"
         specs.append((ak, mdl, role))
     return specs, ""
 
@@ -3267,7 +3346,7 @@ def find_project(project_id: str) -> dict | None:
 
 def create_task(title: str, spec: str, project_id: str, agent_list,
                 workspace: str = "empty",
-                priority=None) -> tuple[bool, dict | None, str]:
+                priority=None, human: bool = False) -> tuple[bool, dict | None, str]:
     """Create a task: its room, workspace and task folder — WITHOUT launching
     the agents (``launched`` is False until the Handler starts it). Returns
     (ok, room_full, error)."""
@@ -3279,7 +3358,7 @@ def create_task(title: str, spec: str, project_id: str, agent_list,
             else normalize_priority(priority))
     if prio is None:
         return False, None, "bad_priority"
-    specs, err = normalize_agent_specs(agent_list)
+    specs, err = normalize_agent_specs(agent_list, human=human)
     if err:
         return False, None, err
     project_id = (project_id or "").strip()
@@ -3342,9 +3421,9 @@ def _patch_task_json(folder: str, **fields) -> None:
 
 
 def update_task(rid: str, title=None, spec=None,
-                priority=None) -> tuple[bool, dict | None, str]:
-    """Amend a task's title, spec and/or priority (room record, task.json and
-    any label override the user set from the UI)."""
+                priority=None, workflow=None) -> tuple[bool, dict | None, str]:
+    """Amend a task's title, spec, priority and/or workflow column (room
+    record, task.json and any label override the user set from the UI)."""
     room = chatroom.get_room(rid, public=False)
     if room is None:
         return False, None, "no_such_room"
@@ -3371,6 +3450,12 @@ def update_task(rid: str, title=None, spec=None,
             return False, None, "bad_priority"
         room["priority"] = n
         patch["priority"] = n
+    if workflow is not None:
+        w = normalize_workflow(workflow)
+        if w is None:
+            return False, None, "bad_workflow"
+        room["workflow"] = w
+        patch["workflow"] = w
     if not patch:
         return False, None, "nothing_to_change"
     chatroom.update_room(room)
@@ -3378,7 +3463,7 @@ def update_task(rid: str, title=None, spec=None,
     return True, room, ""
 
 
-def reassign_task(rid: str, agent_list) -> tuple[bool, dict | None, str]:
+def reassign_task(rid: str, agent_list, human: bool = False) -> tuple[bool, dict | None, str]:
     """Change WHO works a task — add an agent, drop one, or change an agent's
     model or role — on a task that is not running.
 
@@ -3396,7 +3481,7 @@ def reassign_task(rid: str, agent_list) -> tuple[bool, dict | None, str]:
         return False, None, "no_such_room"
     if _room_is_live(room) or _room_has_live_pty(rid) or _room_has_linked_agent(room):
         return False, None, "task_is_running"
-    specs, err = normalize_agent_specs(agent_list)
+    specs, err = normalize_agent_specs(agent_list, human=human)
     if err:
         return False, None, err
     # normalize_agent_specs validates and drops the identity; recover it from the
@@ -4375,6 +4460,9 @@ class Handler(BaseHTTPRequestHandler):
         room_full["status"] = "active"
         room_full["hopCount"] = 0
         room_full["waitingFor"] = ""
+        # Pin the column on launch rather than on the owner's first drag:
+        # correctness must not depend on a gesture nobody has a reason to make.
+        room_full.setdefault("workflow", "inprogress")
         chatroom.update_room(room_full)
         return launched
 
@@ -4780,7 +4868,7 @@ class Handler(BaseHTTPRequestHandler):
             ok, room_full, err = create_task(
                 data.get("title"), data.get("task"), data.get("projectId"),
                 data.get("agents") or [], data.get("workspace") or "empty",
-                data.get("priority"))
+                data.get("priority"), human=True)
             if not ok:
                 self._send_json(400, {"error": err})
                 return
@@ -4826,7 +4914,7 @@ class Handler(BaseHTTPRequestHandler):
             # model, role}]}. Agents that stay keep their identity and token;
             # refused while the task is running.
             rid = (data.get("roomId") or "").strip()
-            ok, room_full, err = reassign_task(rid, data.get("agents") or [])
+            ok, room_full, err = reassign_task(rid, data.get("agents") or [], human=True)
             if not ok:
                 code = {"no_such_room": 404, "task_is_running": 409}.get(err, 400)
                 self._send_json(code, {"error": err})
@@ -4847,6 +4935,23 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send_json(200, {"ok": True, "priority": n,
                                   "priorityName": PRIORITY_NAMES[n]})
+            return
+        if p == "/api/room/workflow":
+            # The owner moving a card. This endpoint is the UI's, and the UI is
+            # the human — agents come in through /mcp, where the ProductOwner
+            # check applies. So every column is available here, including Done.
+            rid = (data.get("roomId") or "").strip()
+            w = normalize_workflow(data.get("workflow"))
+            if w is None:
+                self._send_json(400, {"error": "bad_workflow",
+                                      "expected": WORKFLOW_CHOICES})
+                return
+            ok, room, err = update_task(rid, workflow=w)
+            if not ok:
+                self._send_json(404 if err == "no_such_room" else 400, {"error": err})
+                return
+            self._send_json(200, {"ok": True, "workflow": w,
+                                  "workflowName": WORKFLOW_LABELS[w]})
             return
         if p == "/api/room/status":
             rid = (data.get("roomId") or "").strip()

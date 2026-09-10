@@ -10,11 +10,94 @@
      session page already loads xterm from. If these never arrive — this hub can
      run on a tailnet with no route out — the viewer still renders the file and
      the comment layer still works; nothing is gated on them. -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css">
+<!-- Two highlight themes, one enabled at a time: the appearance script below
+     turns on the one matching data-theme. github-dark alone put pale token
+     colours on the light default's pale code well. -->
+<link rel="stylesheet" id="hl-light" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css">
+<link rel="stylesheet" id="hl-dark" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css">
 <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
 <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/languages/powershell.min.js"></script>
+<script>
+// Same appearance as the dashboard: light unless chosen otherwise.
+(function () {
+  function apply() {
+    var pref = 'light';
+    try { pref = localStorage.getItem('cd-theme') || 'light'; } catch (e) {}
+    var dark = pref === 'dark' ||
+      (pref === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    var hl = document.getElementById('hl-light'), hd = document.getElementById('hl-dark');
+    if (hl) hl.disabled = dark;
+    if (hd) hd.disabled = !dark;
+  }
+  apply();
+  window.addEventListener('storage', function (ev) { if (ev.key === 'cd-theme') apply(); });
+})();
+</script>
 <style>
-  :root { --bg:#0e0e0e; --surface:#161616; --fg:#ededed; --border:#2a2a2a; --accent:#c25d3c; --dim:#9a9a9a; }
+  /* Design system tokens — see skills/ensemble-design/SKILL.md. Values are
+     copied from index.html, which is the source of truth; one file per page
+     means each page carries its own copy, so change them there first. */
+  :root {
+    color-scheme: light;
+    --bg: #F7F8F9;
+    --surface: #FFFFFF;
+    --surface-sunken: #F1F2F4;
+    --surface-overlay: #FFFFFF;
+    --fg: #172B4D;
+    --fg-subtle: #44546F;
+    --fg-muted: #626F86;
+    --border: #DCDFE4;
+    --border-strong: #B3B9C4;
+    --hover: rgba(9, 30, 66, .06);
+    --pressed: rgba(9, 30, 66, .12);
+    --accent: #0C66E4;
+    --accent-hover: color-mix(in srgb, var(--accent) 86%, black);
+    --accent-fg: #FFFFFF;
+    --link: var(--accent);
+    --selected-fg: var(--accent);
+    --focus-ring: #2684FF;
+    --c-warning-bold: #E2B203;
+    --c-danger-bg: #FFECEB;
+    --c-danger-fg: #AE2E24;
+    --c-discovery-bg: #F3F0FF;
+    --c-discovery-fg: #5E4DB2;
+    --match-bg: #FFF0B3;
+    --match-fg: var(--fg);
+    --r-100: 3px;
+    --r-200: 6px;
+    --r-300: 8px;
+    --e-100: 0 1px 1px rgba(9,30,66,.25), 0 0 1px rgba(9,30,66,.31);
+    --e-200: 0 8px 12px rgba(9,30,66,.15), 0 0 1px rgba(9,30,66,.31);
+    --dim: var(--fg-muted);   /* legacy name, kept so existing rules still read */
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #1D2125;
+    --surface: #22272B;
+    --surface-sunken: #1D2125;
+    --surface-overlay: #282E33;
+    --fg: #C7D1DB;
+    --fg-subtle: #9FADBC;
+    --fg-muted: #8C9BAB;
+    --border: #38414A;
+    --border-strong: #596773;
+    --hover: rgba(166, 197, 226, .10);
+    --pressed: rgba(166, 197, 226, .16);
+    --accent: #579DFF;
+    --accent-hover: color-mix(in srgb, var(--accent) 86%, white);
+    --accent-fg: #1D2125;
+    --focus-ring: #579DFF;
+    --c-warning-bold: #E2B203;
+    --c-danger-bg: #5D1F1A;
+    --c-danger-fg: #FD9891;
+    --c-discovery-bg: #2B273F;
+    --c-discovery-fg: #B8ACF6;
+    --match-bg: #7F5F01;
+    --match-fg: #FFF7D6;
+    --e-100: 0 1px 1px rgba(3,4,4,.5), 0 0 1px rgba(3,4,4,.6);
+    --e-200: 0 8px 12px rgba(3,4,4,.4), 0 0 1px rgba(3,4,4,.6);
+  }
   * { box-sizing: border-box; }
   body { margin:0; min-height:100vh; background:var(--bg); color:var(--fg);
     font:14px/1.6 system-ui,-apple-system,sans-serif; }
@@ -23,26 +106,26 @@
   header .name { font-weight:600; font-size:13px; word-break:break-all; }
   header .grow { flex:1; }
   header a.btn { color:var(--fg); text-decoration:none; font-size:12px; border:1px solid var(--border);
-    padding:4px 10px; border-radius:6px; background:#ffffff08; white-space:nowrap; }
-  header a.btn:hover { background:#ffffff14; }
+    padding:4px 10px; border-radius:var(--r-200); background:transparent; white-space:nowrap; }
+  header a.btn:hover { background:var(--hover); }
   header button.btn { color:var(--fg); font:inherit; font-size:12px; border:1px solid var(--border);
-    padding:4px 10px; border-radius:6px; background:#ffffff08; cursor:pointer; white-space:nowrap; }
-  header button.btn:hover { background:#ffffff14; }
+    padding:4px 10px; border-radius:var(--r-200); background:transparent; cursor:pointer; white-space:nowrap; }
+  header button.btn:hover { background:var(--hover); }
   main { max-width:900px; margin:0 auto; padding:22px 20px 60px; }
-  .err { color:#ef4444; padding:20px; }
+  .err { color:var(--c-danger-fg); padding:20px; }
   /* What the viewer could not do, said out loud rather than silently. */
-  .note { margin:0 0 12px; padding:7px 11px; border:1px solid var(--border); border-left:3px solid var(--accent);
-    border-radius:6px; background:#ffffff08; font-size:12px; color:var(--dim); }
+  .note { margin:0 0 12px; padding:7px 11px; border:1px solid var(--border); border-left:3px solid var(--border-strong);
+    border-radius:var(--r-200); background:var(--surface-sunken); font-size:12px; color:var(--dim); }
   .note div + div { margin-top:4px; }
-  pre.raw { background:#0b0b0b; border:1px solid var(--border); border-radius:8px;
+  pre.raw { background:var(--surface-sunken); border:1px solid var(--border); border-radius:var(--r-300);
     padding:14px 16px; overflow-x:auto; font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
     white-space:pre; color:var(--fg); }
   /* Keep the highlighter's token colours, drop its background and padding so
      the code sits in this page's own frame. */
   .hljs { background:transparent !important; padding:0 !important; color:inherit; }
   pre.raw code { display:block; font:inherit; }
-  img.file, iframe.file { max-width:100%; border:1px solid var(--border); border-radius:8px; background:#fff; }
-  iframe.file { width:100%; height:calc(100vh - 120px); }
+  img.file, iframe.file { max-width:100%; border:1px solid var(--border); border-radius:var(--r-300); background:#FFFFFF; } /* document paper, not chrome */
+  iframe.file { width:100%; height:calc(100vh - 96px); }
   /* Rendered markdown */
   .md { }
   .md .ln { white-space:pre-wrap; word-break:break-word; margin:0 0 2px; }
@@ -56,41 +139,41 @@
   .md ul,.md ol { margin:6px 0; padding-left:24px; }
   .md li { margin:2px 0; }
   .md code.ic { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.9em;
-    background:#ffffff14; border:1px solid #ffffff24; border-radius:4px; padding:0 4px; word-break:break-word; }
-  .md pre.cb { margin:10px 0; background:#0b0b0b; border:1px solid var(--border); border-radius:8px;
+    background:var(--surface-sunken); border:1px solid var(--border); border-radius:var(--r-100); padding:0 4px; word-break:break-word; }
+  .md pre.cb { margin:10px 0; background:var(--surface-sunken); border:1px solid var(--border); border-radius:var(--r-300);
     padding:10px 12px; overflow-x:auto; }
   .md pre.cb code { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12.5px; line-height:1.45; white-space:pre; }
   .md pre.cb[data-lang]::before { content:attr(data-lang); display:block; font-size:9px;
     text-transform:uppercase; letter-spacing:.05em; color:var(--dim); margin-bottom:6px; }
   .md blockquote { margin:8px 0; padding:2px 12px; border-left:3px solid var(--border); color:var(--dim); }
-  .md a { color:var(--accent); }
-  .mention { color:var(--accent); font-weight:600; background:color-mix(in srgb, var(--accent) 16%, transparent); border-radius:4px; padding:0 3px; }
+  .md a { color:var(--link); }
+  .mention { color:var(--c-discovery-fg); font-weight:600; background:var(--c-discovery-bg); border-radius:var(--r-100); padding:0 3px; }
   .md hr { border:0; border-top:1px solid var(--border); margin:14px 0; }
   .md table { border-collapse:collapse; margin:10px 0; display:block; overflow-x:auto; }
   .md th,.md td { border:1px solid var(--border); padding:5px 9px; text-align:left; }
-  .md th { background:#ffffff0d; }
+  .md th { background:var(--surface-sunken); }
   /* In-place review comments */
-  mark.cmt-hl { background:#f5c84240; border-bottom:2px solid #f5c842; border-radius:2px; color:inherit; cursor:pointer; }
-  .cmt-selbtn { position:fixed; z-index:60; font-size:12px; padding:5px 11px; background:var(--accent); color:#fff; border:none; border-radius:6px; box-shadow:0 3px 12px rgba(0,0,0,.4); cursor:pointer; }
-  .cmt-composer { position:fixed; z-index:61; top:50%; left:50%; transform:translate(-50%,-50%); width:min(440px,92vw); background:var(--surface); border:1px solid var(--border); border-radius:10px; box-shadow:0 14px 44px rgba(0,0,0,.55); padding:14px; }
-  .cmt-composer .cmt-quote { font-size:12px; color:var(--dim); border-left:3px solid var(--accent); padding:5px 9px; margin-bottom:9px; max-height:96px; overflow-y:auto; white-space:pre-wrap; }
+  mark.cmt-hl { background:var(--match-bg); border-bottom:2px solid var(--c-warning-bold); border-radius:2px; color:var(--match-fg); cursor:pointer; }
+  .cmt-selbtn { position:fixed; z-index:60; font-size:12px; padding:5px 11px; background:var(--accent); color:var(--accent-fg); border:none; border-radius:var(--r-200); box-shadow:var(--e-200); cursor:pointer; }
+  .cmt-composer { position:fixed; z-index:61; top:50%; left:50%; transform:translate(-50%,-50%); width:min(440px,92vw); background:var(--surface-overlay); border:1px solid var(--border); border-radius:var(--r-300); box-shadow:var(--e-200); padding:14px; }
+  .cmt-composer .cmt-quote { font-size:12px; color:var(--dim); border-left:3px solid var(--selected-fg); padding:5px 9px; margin-bottom:9px; max-height:96px; overflow-y:auto; white-space:pre-wrap; }
   .cmt-composer textarea { width:100%; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:8px; font:inherit; resize:vertical; }
   .cmt-composer .cmt-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:10px; }
-  .cmt-composer button { background:#2a2a2a; color:var(--fg); border:1px solid #444; padding:5px 12px; border-radius:6px; cursor:pointer; font:inherit; }
-  .cmt-composer .cmt-add { background:var(--accent); color:#fff; border:none; }
-  #cmt-tray { position:fixed; right:12px; bottom:12px; z-index:55; width:min(330px,92vw); max-height:60vh; display:flex; flex-direction:column; background:var(--surface); border:1px solid var(--border); border-radius:10px; box-shadow:0 10px 34px rgba(0,0,0,.45); overflow:hidden; }
+  .cmt-composer button { background:var(--surface); color:var(--fg); border:1px solid var(--border-strong); padding:5px 12px; border-radius:var(--r-200); cursor:pointer; font:inherit; }
+  .cmt-composer .cmt-add { background:var(--accent); color:var(--accent-fg); border:none; }
+  #cmt-tray { position:fixed; right:12px; bottom:12px; z-index:55; width:min(330px,92vw); max-height:60vh; display:flex; flex-direction:column; background:var(--surface-overlay); border:1px solid var(--border); border-radius:var(--r-300); box-shadow:var(--e-200); overflow:hidden; }
   #cmt-tray .cmt-tray-head { display:flex; align-items:center; gap:6px; padding:9px 11px; border-bottom:1px solid var(--border); font-size:13px; }
   #cmt-tray .grow { flex:1; }
-  #cmt-tray .cmt-submit { background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font:inherit; font-size:12px; }
-  #cmt-tray .cmt-clear { background:#2a2a2a; color:var(--fg); border:1px solid #444; font-size:12px; padding:4px 10px; border-radius:6px; cursor:pointer; }
+  #cmt-tray .cmt-submit { background:var(--accent); color:var(--accent-fg); border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font:inherit; font-size:12px; }
+  #cmt-tray .cmt-clear { background:var(--surface); color:var(--fg); border:1px solid var(--border-strong); font-size:12px; padding:4px 10px; border-radius:6px; cursor:pointer; }
   #cmt-tray .cmt-list { overflow-y:auto; }
   #cmt-tray .cmt-item { position:relative; padding:8px 26px 8px 11px; border-bottom:1px solid var(--border); cursor:pointer; }
-  #cmt-tray .cmt-item:hover { background:#ffffff08; }
-  #cmt-tray .cmt-item-q { font-size:11px; color:var(--accent); margin-bottom:2px; word-break:break-word; }
+  #cmt-tray .cmt-item:hover { background:var(--hover); }
+  #cmt-tray .cmt-item-q { font-size:11px; color:var(--fg-muted); margin-bottom:2px; word-break:break-word; }
   #cmt-tray .cmt-item-n { font-size:12px; color:var(--fg); word-break:break-word; }
   #cmt-tray .cmt-item-x { position:absolute; top:6px; right:6px; background:none; border:none; color:var(--dim); cursor:pointer; font-size:12px; padding:2px 5px; }
-  #cmt-tray .cmt-item-x:hover { color:#ef4444; }
-  .cmt-toast { position:fixed; left:50%; bottom:20px; transform:translateX(-50%); z-index:70; background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:9px 16px; font-size:13px; box-shadow:0 8px 26px rgba(0,0,0,.5); }
+  #cmt-tray .cmt-item-x:hover { color:var(--c-danger-fg); }
+  .cmt-toast { position:fixed; left:50%; bottom:20px; transform:translateX(-50%); z-index:70; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-300); padding:9px 16px; font-size:13px; box-shadow:var(--e-200); }
 </style>
 </head>
 <body>
