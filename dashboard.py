@@ -94,6 +94,39 @@ def _addr_is_loopback(host: str) -> bool:
     return h in _LOOPBACK
 
 
+# --- Who may restart the hub -------------------------------------------------
+# POST /api/update pulls the code and restarts the hub, ending every agent on
+# the machine. The loopback exemption above would let any agent do that with
+# one curl, so the route asks for its own proof, from this machine too:
+#   * the bearer token of the PO agent in a room listed here (by default the
+#     Ensemble Dashboard PO, the project where the hub itself is built), or
+#   * the dashboard page: a key minted per hub process, kept in memory only and
+#     handed to a browser as an HttpOnly cookie when it navigates to the page.
+# Every agent runs as the same OS user as the hub, so an agent set on it can
+# get either one (room tokens sit on disk under the state dir; the cookie goes
+# to anything that mimics a browser opening the page). This stops accidental
+# and casual restarts, not a determined agent. The env var exists so a test hub
+# can name its own stand-in PO room; agents cannot change a running hub's env.
+HUB_RESTART_ROOMS = frozenset(
+    r.strip() for r in os.environ.get("ENSEMBLE_RESTART_ROOMS", "room-8d56cd21").split(",")
+    if r.strip())
+RESTART_REFUSED = (
+    f"Only the Ensemble Dashboard PO ({', '.join(sorted(HUB_RESTART_ROOMS))}) may "
+    "restart the hub, or the CEO with the Update now button in the dashboard. "
+    "If you think the hub needs a restart, tell your PO why.")
+_UI_KEY = secrets.token_urlsafe(32)
+
+
+def may_restart_hub(room_id: str, identity: str) -> bool:
+    """Whether an agent, as resolved from its bearer token, may restart the hub:
+    only the PO agent of a room in HUB_RESTART_ROOMS (its ProductOwner, or its
+    owner when it has none — the agent that reports into that room reach)."""
+    if room_id not in HUB_RESTART_ROOMS or not identity:
+        return False
+    room = chatroom.get_room(room_id, public=False)
+    return bool(room) and chatroom.po_identity(room) == identity
+
+
 def _detect_tailscale_ip() -> str | None:
     """Best-effort lookup of this machine's Tailscale IPv4, for --bind tailscale."""
     candidates = [
@@ -3442,7 +3475,13 @@ def check_for_update(force: bool = False) -> dict:
 
 def trigger_update() -> dict:
     """Pull latest + restart via the platform backend (launchd on macOS,
-    Task Scheduler on Windows). Returns immediately."""
+    Task Scheduler on Windows). Returns immediately.
+
+    ENSEMBLE_UPDATE_DRY_RUN answers as if the update had started, without
+    running it: on a test hub the real one would reset that hub's checkout and
+    bounce the machine's Ensemble scheduled task — the REAL hub."""
+    if os.environ.get("ENSEMBLE_UPDATE_DRY_RUN"):
+        return {"started": True, "dryRun": True, "pid": os.getpid()}
     result = BACKEND.self_update(STATIC_DIR)
     if result.get("started"):
         global _UPDATE_CHECK_CACHE
@@ -3898,10 +3937,67 @@ class Handler(BaseHTTPRequestHandler):
         auth = self.headers.get("Authorization", "")
         if auth[:7].lower() == "bearer ":
             return auth[7:].strip()
+        return self._cookie(TOKEN_COOKIE)
+
+    def _cookie(self, name: str) -> str:
         for part in (self.headers.get("Cookie", "") or "").split(";"):
             part = part.strip()
-            if part.startswith(TOKEN_COOKIE + "="):
-                return part[len(TOKEN_COOKIE) + 1:]
+            if part.startswith(name + "="):
+                return part[len(name) + 1:]
+        return ""
+
+    # --- Who may restart the hub (see HUB_RESTART_ROOMS) ----------------------
+    def _ui_cookie(self) -> str:
+        # Named per port: cookies ignore the port, so two hubs on one machine
+        # would otherwise overwrite each other's key in the same browser.
+        return f"ensemble_ui_{self.server.server_address[1]}"
+
+    def _is_page_navigation(self) -> bool:
+        # Browsers send Sec-Fetch-* only to secure origins (https, or this
+        # machine's loopback), so a page opened over the tailnet's plain http
+        # has none; there a navigation still says Upgrade-Insecure-Requests and
+        # asks for HTML. A bare curl sends neither.
+        mode = self.headers.get("Sec-Fetch-Mode")
+        if mode is not None:
+            return mode == "navigate" and self.headers.get("Sec-Fetch-Dest") == "document"
+        return (self.headers.get("Upgrade-Insecure-Requests") == "1"
+                and "text/html" in (self.headers.get("Accept") or ""))
+
+    def _ui_key_headers(self) -> list[tuple[str, str]]:
+        """The cookie that lets this browser use the Update now button. Only
+        for a page navigation, so a script that merely fetches the page does
+        not pick the key up by accident."""
+        if self._is_page_navigation():
+            return [("Set-Cookie", f"{self._ui_cookie()}={_UI_KEY}; HttpOnly; "
+                                   "SameSite=Strict; Path=/")]
+        return []
+
+    def _same_origin_request(self) -> bool:
+        # A browser sends Origin on every POST, on http origins too. Matching
+        # it to our own Host keeps out a page on another local port: that is
+        # same-site, so SameSite alone would let its request carry the cookie.
+        origin, host = self.headers.get("Origin") or "", self.headers.get("Host") or ""
+        if not host or origin not in (f"http://{host}", f"https://{host}"):
+            return False
+        return self.headers.get("Sec-Fetch-Site") in (None, "same-origin")
+
+    def _restart_refusal(self) -> str:
+        """Empty when this request may restart the hub, else why it may not.
+        Passes for the PO's room bearer token, or for the dashboard page: its
+        key cookie on a request from the page's own origin."""
+        auth = self.headers.get("Authorization", "")
+        token = auth[7:].strip() if auth[:7].lower() == "bearer " else ""
+        if token:
+            resolved = chatroom.resolve_token(token)
+            return "" if resolved and may_restart_hub(*resolved) else RESTART_REFUSED
+        key = self._cookie(self._ui_cookie())
+        if not key:
+            return RESTART_REFUSED
+        if not hmac.compare_digest(key, _UI_KEY):
+            # The page was opened before the hub last restarted.
+            return RESTART_REFUSED + " Reload the dashboard page and try again."
+        if not self._same_origin_request():
+            return RESTART_REFUSED
         return ""
 
     def _gate(self) -> bool:
@@ -3947,7 +4043,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_file(self, path: Path, content_type: str):
+    def _send_file(self, path: Path, content_type: str, extra_headers=()):
         try:
             data = path.read_bytes()
         except FileNotFoundError:
@@ -3957,6 +4053,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        for name, value in extra_headers:
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(data)
 
@@ -3982,7 +4080,10 @@ class Handler(BaseHTTPRequestHandler):
                             "text/html; charset=utf-8")
             return
         if p in ("/", "/index.html"):
-            self._send_file(STATIC_DIR / "index.html", "text/html; charset=utf-8")
+            # The Update now button lives on this page; hand the browser the
+            # key that /api/update asks for.
+            self._send_file(STATIC_DIR / "index.html", "text/html; charset=utf-8",
+                            self._ui_key_headers())
             return
         if p.startswith("/static/"):
             sub = p[len("/static/"):]
@@ -5039,6 +5140,12 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"ok": ptyrun.kill((data.get("id") or "").strip())})
             return
         if p == "/api/update":
+            # Only the Ensemble Dashboard PO or the dashboard page — even from
+            # this machine, where the gate lets everything through.
+            refusal = self._restart_refusal()
+            if refusal:
+                self._send_json(403, {"error": "not_allowed", "message": refusal})
+                return
             # Fire and forget — the spawned `ensemble update`
             # restarts the server via launchctl kickstart -k. Send the 202
             # before that SIGKILL arrives.
@@ -5504,6 +5611,12 @@ class Handler(BaseHTTPRequestHandler):
             pid = data.get("pid")
             if not isinstance(pid, int):
                 self._send_json(400, {"error": "missing_pid"})
+                return
+            if pid in (os.getpid(), os.getppid()):
+                # Closing kills the pid's whole tree (taskkill /T on Windows),
+                # so the hub or its launcher here would stop the hub.
+                self._send_json(403, {"error": "not_allowed",
+                                      "message": "That is the hub itself. " + RESTART_REFUSED})
                 return
             sid = ""
             for s in _read_session_files():

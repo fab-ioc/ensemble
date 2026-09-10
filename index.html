@@ -4308,14 +4308,29 @@ async function triggerUpdate() {
   setUpdateStage('Fetching from origin…');
 
   const startPid = RUNTIME_CFG && RUNTIME_CFG.pid;
+  // The hub only restarts for this page (it holds the key the hub handed it
+  // when the page opened) or the Ensemble Dashboard PO. A 403 is a real no —
+  // e.g. the key is from before a restart and the page needs a reload — so
+  // say why instead of waiting a minute for a restart that never comes.
+  let refused = '';
   try {
     const r = await fetch('/api/update', { method: 'POST' });
-    if (!r.ok && r.status !== 202) {
+    if (r.status === 403) {
+      const body = await r.json().catch(() => ({}));
+      refused = body.message || 'the hub refused the update';
+    } else if (!r.ok && r.status !== 202) {
       const body = await r.text();
       throw new Error(`/api/update returned ${r.status}: ${body}`);
     }
   } catch {
     // Network error here is expected — the server may have died mid-request.
+  }
+  if (refused) {
+    UPDATE_IN_PROGRESS = false;
+    if (overlay) overlay.hidden = true;
+    if (banner) banner.hidden = false;
+    toast(refused, 8000, 'err');
+    return;
   }
 
   setUpdateStage('Restarting server…');
