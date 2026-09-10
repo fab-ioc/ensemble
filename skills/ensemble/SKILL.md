@@ -89,6 +89,24 @@ being asked.
   need, or when the product owner explicitly asks. Deleting removes the task
   record, chat and agent transcripts; the task folder and code are kept.
 
+## The hub is not yours to restart
+
+The Ensemble hub (the `Ensemble` scheduled task, a `python`/`pythonw` process
+serving port 8765) runs every agent on this machine, in every project.
+Stopping it ends all of them mid-work. **Only the Ensemble Dashboard PO
+(`room-8d56cd21`) may restart, stop or kill the hub** — that project is where
+the hub itself is built. Everyone else, whatever their project or role:
+
+- never stop, end or restart the `Ensemble` scheduled task;
+- never kill `python`/`pythonw` processes you did not start yourself — kill
+  your own by PID, never by name;
+- never free port 8765, and never call the hub's `/api/update`;
+- never do any of these indirectly (a script, another shell, an interpreter).
+
+If you believe the hub needs a restart, stop and tell the product owner why.
+No Ensemble tool offers hub control. This rule is not yet enforced by the
+machine, so it rests on you keeping it.
+
 ## Planning work for a project
 
 When asked to plan (or when your role is `planner`):
