@@ -840,6 +840,12 @@
      rows directly, now that they are its children rather than the panel's. */
   #detail-panel .dp-top { flex: 0 0 auto; display: flex; flex-direction: column; gap: 16px; }
   #detail-panel .dp-pane { min-height: 0; }
+  /* The panel scrolls as one column, so its parts keep their natural height.
+     A flex item may otherwise shrink below its content; the overflow then
+     paints over the next part, and a long Spec ran right under the priority
+     row and the details block. The live chat pane keeps its own fill-the-height
+     rule below, which is more specific and wins. */
+  #detail-panel > .dp-tabs, #detail-panel > .dp-pane, #detail-panel > .dp-details { flex-shrink: 0; }
   /* The live-session rule below sets display on this pane, which outranks the
      UA's [hidden] { display: none } — without this the hidden pane stays on
      screen and both tabs show at once. */
@@ -5104,7 +5110,9 @@ let DISPLAYED_ORDER = []; // session IDs in their last-rendered order
 let _refreshInFlight = false, _projInFlight = false;
 async function refresh() {
   if (selectInteracting()) return;
-  if (_refreshInFlight || document.hidden) return;
+  // A hidden tab skips repeat polls, never the first load: a dashboard opened
+  // in a background tab must not sit empty until someone looks at it.
+  if (_refreshInFlight || (document.hidden && ALL_ROWS.length)) return;
   _refreshInFlight = true;
   try {
     const data = await api('/api/sessions?n=300');
