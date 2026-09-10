@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Ensemble</title>
 <script>
 // Appearance, resolved before first paint so the page never flashes the wrong
@@ -153,6 +153,7 @@
     --banner-h: 0px;                             /* visible banners; set by script */
     --top-h: calc(var(--header-h) + var(--banner-h));   /* where content below the bar starts */
     --chrome-h: calc(var(--top-h) + 217px);      /* + crumbs, tabs, padding */
+    --touch-min: 44px;                           /* the smallest thing a finger taps, on a phone */
   }
 
   /* Every other theme is applied by data-theme on <html>, never by the OS
@@ -422,6 +423,8 @@
     cursor: pointer; line-height: 1;
   }
   #search-help:hover { background: var(--hover); color: var(--fg); }
+  /* Phone-only controls (the phone block below shows them). */
+  #search-open, #search-close, .me-item.me-phone { display: none; }
   /* The filter row — it belongs to the view, not to the bar. */
   .filterbar {
     display: flex; align-items: center; gap: var(--s-200);
@@ -2413,27 +2416,29 @@
     /* On phone the scrim only makes sense while the drawer is open; when the
        sidebar is collapsed (default) it's inert (handled above). */
 
-    /* Detail becomes a true full-screen overlay: cover from the very top
-       (top:0, not below the header) with no card chrome, so nothing of
-       the page behind leaks above it. */
+    /* An open task takes the whole width under the bar, with no card chrome.
+       The bar stays: it is the way to the PO (its pill opens the PO over the
+       task) and to the project. The task used to cover the bar too, which left
+       no way to the PO until the task was closed. Its height follows the
+       visible viewport (--vv-h, set by script), so the on-screen keyboard
+       never covers the chat composer at the bottom of the panel. */
     #detail-panel {
-      top: 0; width: 100vw; height: 100%;
+      top: calc(var(--top-h) + var(--vv-top, 0px)); bottom: auto; width: 100vw;
+      height: calc(var(--vv-h, 100dvh) - var(--top-h));
       border-left: 0; border-radius: 0; box-shadow: none;
-      padding: 14px 14px 24px;
+      padding: var(--s-300) var(--s-300) var(--s-600);
     }
     #detail-panel-resize { display: none !important; }
     body.detail-open main { padding-right: 0; }
-    /* While a session is open full-screen, hide the app header so nothing of
-       the list/header shows above the overlay. The panel's × returns to it. */
-    body.detail-open header { display: none !important; }
+    body.po-peek #po-panel { top: calc(var(--top-h) + var(--vv-top, 0px)); bottom: auto; height: calc(var(--vv-h, 100dvh) - var(--top-h)); }
 
     /* Live-embed header: shrink it so the terminal gets the room. Chips and the
        action buttons scroll horizontally in one row instead of stacking. */
     .dp-live { padding: 8px 10px !important; gap: 6px !important; }
     #detail-panel:has(iframe.dp-session) .dp-head { padding: 6px 10px !important; }
-    .dp-head h2 { font-size: 17px; }
+    .dp-head h2 { font-size: var(--fs-400); line-height: var(--lh-400); }
     .dp-meta {
-      flex-wrap: nowrap; overflow-x: auto; gap: 5px; font-size: 10.5px;
+      flex-wrap: nowrap; overflow-x: auto; gap: var(--s-100); font-size: var(--fs-100);
       -webkit-overflow-scrolling: touch; scrollbar-width: none;
     }
     .dp-meta::-webkit-scrollbar { display: none; }
@@ -2456,6 +2461,106 @@
     #rooms-panel { width: 100vw !important; }
     /* Any embedded live session iframe fills the full-screen panel */
     iframe.dp-session { width: 100%; }
+
+    /* ---- Phone rules (SKILL.md §8) -------------------------------------
+       Anything a finger taps is at least --touch-min in both directions, no
+       text is below --fs-100, nothing needs hover, and the bar fits 360px. */
+
+    /* The bar: identity goes, search folds into a button that opens over the
+       bar, and the plan chip moves into the avatar menu (a warning still
+       reaches the banner above the bar). What is left is six 44px targets
+       and Create: 360px measured the bar at search 0px wide and Create cut
+       off by 19px before this. */
+    header { gap: 0; padding: 0 var(--s-100); }
+    header h1 { display: none; }
+    #plan-usage-slot { display: none; }
+    .me-item.me-phone { display: flex; }
+    #sidebar-toggle, #proj-switch, #search-open, #notif-btn, #me-btn {
+      width: var(--touch-min); min-width: var(--touch-min); height: var(--touch-min);
+      padding: 0; justify-content: center; border-color: transparent; border-radius: var(--r-200);
+    }
+    #search-open { display: inline-flex; margin-left: auto; }
+    #sidebar-toggle { font-size: var(--fs-400); }
+    #proj-switch { max-width: none; }
+    #po-pill { height: var(--touch-min); min-width: var(--touch-min); justify-content: center; }
+    #po-pill:not(.none) { padding: 0; border-color: transparent; }
+    #me-btn { background: transparent; }
+    #me-btn:hover { filter: none; background: var(--hover); }
+    #me-initials {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 28px; height: 28px; border-radius: var(--r-full);
+      background: var(--c-neutral-bg); color: var(--c-neutral-fg);
+    }
+    #notif-count { top: var(--s-100); right: var(--s-100); }
+    #new-btn { height: var(--touch-min); padding: 0 var(--s-300); margin-left: var(--s-100); }
+    /* Search, opened. It stays open while it holds a query, so a list that
+       search is filtering always shows why. */
+    .search-wrap { display: none; }
+    body.search-open .search-wrap {
+      display: flex; position: absolute; inset: 0; z-index: 1; gap: var(--s-100);
+      padding: 0 var(--s-100) 0 var(--s-200); background: var(--surface);
+    }
+    #search { height: 40px; }
+    .search-state { right: calc(var(--touch-min) + var(--s-300)); }
+    #search-close {
+      display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
+      width: var(--touch-min); height: var(--touch-min); border: 0; border-radius: var(--r-200);
+      background: transparent; color: var(--fg-subtle); font: inherit; font-size: var(--fs-400); cursor: pointer;
+    }
+    /* A phone zooms the page into any field whose text is under 16px, and
+       leaves it zoomed: every field is --fs-400 here. */
+    input, select, textarea { font-size: var(--fs-400) !important; }
+
+    /* Trays and menus fit the screen, and their rows are finger-sized. */
+    #notif-tray, #usage-tray, #settings-panel { left: var(--s-200); right: var(--s-200); width: auto; }
+    .me-item, .pm-item, .fm-item, .notif-item, .wf-item, .ov-menu button { min-height: var(--touch-min); }
+
+    /* Touch targets in the page, the task panel and the PO's drawer. */
+    .ptabs button, .viewsw button, .fbtn, .fchip, .crumb-back, .crumb-newtask, .proj .newtask,
+    .newproj-btn, .rm-btn, .po-btn, .dp-tab, .dp-popout, .dp-prio-btn, .dp-actions button,
+    .dp-actions select, .scopebar select, .chp-repo, .sb-add-cat, .srow, .sb-item, .wse, .chf,
+    .dest-row, .dl-cbtns button, #usage-banner-dismiss, #update-banner-dismiss, #update-banner-go,
+    .seg button, .dp-details > summary {
+      min-height: var(--touch-min);
+    }
+    .po-btn { min-width: var(--touch-min); }
+    /* Home's "Group by" row: at 360 its last button sat under "+ New project". */
+    .listctl { flex-wrap: wrap; row-gap: var(--s-200); }
+    .po-btn.x, .dp-close, .dp-ov-btn, .chp-refresh, .sb-cat-actions button,
+    #usage-banner-dismiss, #update-banner-dismiss {
+      min-width: var(--touch-min); min-height: var(--touch-min);
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .dp-close { padding: 0; }
+    tr.row > td { height: var(--touch-min); }
+    /* The workflow lozenge keeps its 16px look; an invisible margin makes it a
+       44px target. The row it sits in scrolls sideways, which clips anything
+       outside it, so the row carries the margin as padding. */
+    .wf-btn { position: relative; }
+    .wf-btn::after { content: ''; position: absolute; inset: calc((16px - var(--touch-min)) / 2) 0; }
+    .dp-meta { padding-top: var(--s-400); margin-top: calc(-1 * var(--s-400)); }
+    #detail-panel .dp-meta { padding-bottom: var(--s-400); margin-bottom: calc(-1 * var(--s-100)); }
+
+    /* Nothing needs hover: what a pointer reveals on hover is always shown. */
+    .sb-cat-actions, tr.category-header .cat-add { opacity: 1; }
+
+    /* Workspace and Changes: the tree above the file, not beside it. Beside
+       it, a 390px phone left the file 79px wide. */
+    .wsp, .chp { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(120px, 35%) minmax(0, 1fr); }
+    .wsp-tree, .chp-files { border-right: 0; border-bottom: 1px solid var(--border); }
+    .scopebar { flex-wrap: wrap; }
+    .scopebar select, .chp-repo { max-width: 100%; min-width: 0; }
+    .dl-composer { padding-left: var(--s-300); }
+
+    /* Text below the scale, lifted to --fs-100. */
+    .bar-btn .caret, .fbtn .caret, .wf-btn .caret, th, tr.category-header .chev, .badge-agent,
+    .badge-headless, #rooms-panel .rp-status, .rp-msg .rp-from, .sb-section, .dp-section h3,
+    .dp-cost .cost-tokens, .tx-turn .tx-role, .tx-turn .tx-ts, .tx-text .mention,
+    .tx-text.md code.ic, .tx-text.md pre.cb[data-lang]::before, .gitmark, .wse.wsroot .wsroot-kind,
+    .wse .tw, .wse .sz, .chst, .dp-details > summary, .theme-dd-section, #notif-count, .notif-when,
+    .notif-proj, .notif-screen, #settings-panel .cfg-hint code {
+      font-size: var(--fs-100);
+    }
   }
 </style>
 </head>
@@ -2494,11 +2599,15 @@
     <span id="proj-switch-name">All projects</span><span class="caret">▾</span>
   </button>
   <div class="bar-gap"></div>
+  <!-- Phone only: the bar has no room for a search box, so search folds into
+       this button and opens over the bar. -->
+  <button id="search-open" class="bar-btn icon" type="button" title="Search tasks" aria-label="Search tasks">🔍</button>
   <div class="search-wrap">
     <input id="search" type="search" placeholder="Search tasks" autofocus>
     <span id="search-state" class="search-state" hidden></span>
     <!-- A placeholder is not documentation: the grep syntax lives behind this. -->
     <button id="search-help" type="button" title="Search syntax" aria-label="Search syntax">?</button>
+    <button id="search-close" type="button" title="Close search" aria-label="Close search">✕</button>
   </div>
   <div class="bar-gap"></div>
   <!-- The PO: who you talk to about the current project. Identity, like the
@@ -2545,6 +2654,8 @@
   <button class="me-item" role="menuitemradio" data-appearance="fjord">Fjord</button>
   <button class="me-item" role="menuitemradio" data-appearance="system">Match system</button>
   <div class="me-rule"></div>
+  <!-- Phone only: the plan chip has no room in the bar there, so its tray opens from here. -->
+  <button class="me-item me-phone" data-me="usage">Plan allowance</button>
   <button class="me-item" data-me="theme">Accent colour</button>
   <button class="me-item" data-me="settings">Settings</button>
 </div>
@@ -3114,6 +3225,9 @@ function openDetail(sid) {
   SELECTED_SID = sid;
   const p = $('#detail-panel'); if (p) p.dataset.sig = '';
   document.body.classList.add('detail-open');
+  // On a phone the PO's drawer is full width: a task opened from it comes to
+  // the front, and the pill brings the PO back over it.
+  if (PO_PEEK && isPhone()) { PO_PEEK = false; renderPo(); }
   renderDetail();
   renderRows();
   loadCostDetail(sid);
@@ -5723,13 +5837,15 @@ function renderPoPill(ctx) {
 function renderPo() {
   const panel = document.getElementById('po-panel');
   if (!panel) return;
-  const split = poSplitProject();
+  let split = poSplitProject();
+  // On a phone an open task covers the page the PO leads, so there the pill
+  // peeks at the PO over the task; the same panel, restyled, never moved.
+  if (split && PO_PEEK && SELECTED_SID && isPhone()) split = null;
   const ctx = poContext();
   // A peek has nothing to show once its project has no PO, and none is needed
-  // where the PO already leads the page. On a phone an open task covers the
-  // whole screen, bar included, so the peek steps aside for it.
-  if (split || !(ctx && poRowOf(ctx))
-      || (SELECTED_SID && window.matchMedia('(max-width: 640px), (max-width: 1024px) and (pointer: coarse)').matches)) PO_PEEK = false;
+  // where the PO already leads the page. On a phone an open task keeps the bar,
+  // so the pill opens the PO over the task and its × returns to it.
+  if (split || !(ctx && poRowOf(ctx))) PO_PEEK = false;
   const pj = split || (PO_PEEK ? ctx : null);
   document.body.classList.toggle('po-split', !!split);
   document.body.classList.toggle('po-peek', !split && !!pj);
@@ -5831,9 +5947,11 @@ document.addEventListener('click', async (ev) => {
       SELECTED_PROJECT = ctx.id; PROJECT_TAB = 'tasks'; WS_SCOPE = ''; SB_DEST = '';
       renderRows(); return;
     }
-    if (poSplitProject()) { poFocusComposer(); return; }   // already leading the page
+    // Already leading the page — unless a task covers it, as it does on a phone.
+    if (poSplitProject() && !(SELECTED_SID && isPhone())) { poFocusComposer(); return; }
     PO_PEEK = !PO_PEEK; renderPo();
-    if (PO_PEEK) poFocusComposer();
+    // Not on a phone: focus raises the keyboard over the conversation you came to read.
+    if (PO_PEEK && !isPhone()) poFocusComposer();
     return;
   }
   const choose = ev.target.closest('.po-choose');
@@ -6307,6 +6425,29 @@ $('#search').addEventListener('keydown', async (ev) => {
     setSearchBadge('', '');
     toast('search failed: ' + e.message, 4000, 'err');
   }
+});
+
+// Phone: search is a button in the bar that opens the box over the bar. The box
+// closes when it loses focus empty, or on ✕, which also clears the query — so
+// whenever search is filtering the list, the box saying so is on screen.
+function closeSearch() {
+  const s = $('#search');
+  if (s.value) { s.value = ''; s.dispatchEvent(new Event('input')); }
+  document.body.classList.remove('search-open');
+}
+$('#search-open').addEventListener('click', () => {
+  document.body.classList.add('search-open');
+  $('#search').focus();
+});
+// Keep focus in the box while ✕ is pressed, or the blur below would close the
+// box and move the button out from under the finger before the click lands.
+$('#search-close').addEventListener('pointerdown', (ev) => ev.preventDefault());
+$('#search-close').addEventListener('click', () => { closeSearch(); $('#search-open').focus(); });
+$('#search').addEventListener('blur', () => {
+  if (!$('#search').value.trim()) document.body.classList.remove('search-open');
+});
+$('#search').addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && document.body.classList.contains('search-open')) { closeSearch(); $('#search-open').focus(); }
 });
 
 // Kept as the single entry point used by "+ New" and the per-category "+ New
@@ -7327,6 +7468,13 @@ $('#me-menu').addEventListener('click', (ev) => {
     closeMeMenu();
     return;
   }
+  if (it.dataset.me === 'usage') {        // phone: the plan chip's tray, from here
+    closeMeMenu();
+    $('#notif-tray').hidden = true;
+    $('#usage-tray').hidden = false;
+    refreshUsage();
+    return;
+  }
   closeMeMenu();
   openSettingsPanel($('#me-btn'));
   if (it.dataset.me === 'theme') {
@@ -7636,6 +7784,42 @@ const isPhone = () => window.matchMedia(MOBILE_MQ).matches;
 const DRAWER_MQ = '(max-width: 900px)';
 const isDrawer = () => window.matchMedia(DRAWER_MQ).matches || isPhone();
 if (isDrawer()) document.body.classList.add('sidebar-collapsed');
+
+// The on-screen keyboard. Android (with interactive-widget=resizes-content in
+// the viewport tag) shrinks the page when it opens; iOS instead shrinks only the
+// visual viewport and scrolls it, leaving fixed panels running on behind the
+// keyboard. --vv-h and --vv-top follow the visual viewport either way, and the
+// phone rules size the task panel and the PO's drawer from them, so the chat
+// composer at their bottom edge stays above the keyboard.
+// Set only while the visible viewport is actually shorter than the page (the
+// iOS keyboard); otherwise the rules fall back to 100dvh, so a stale reading
+// can never leave the panel shorter than the screen.
+function fitVisualViewport() {
+  const vv = window.visualViewport;
+  const root = document.documentElement.style;
+  if (!vv) return;
+  if (vv.height < window.innerHeight - 1) {
+    root.setProperty('--vv-h', Math.round(vv.height) + 'px');
+    root.setProperty('--vv-top', Math.round(vv.offsetTop) + 'px');
+  } else {
+    root.removeProperty('--vv-h');
+    root.removeProperty('--vv-top');
+  }
+}
+// With the keyboard up, the chat you are typing in comes fully into view. Its
+// composer is at its foot, and above it the task's header and tabs took 264px
+// of a 420px screen: the panel scrolls so the chat's foot meets the keyboard.
+function keepComposerInView() {
+  const f = document.activeElement;
+  if (!f || f.tagName !== 'IFRAME' || !isPhone()) return;
+  if (f.closest('#detail-panel, #po-panel')) f.scrollIntoView({ block: 'end' });
+}
+if (window.visualViewport) {
+  visualViewport.addEventListener('resize', () => { fitVisualViewport(); keepComposerInView(); });
+  visualViewport.addEventListener('scroll', fitVisualViewport);
+}
+window.addEventListener('resize', keepComposerInView);
+fitVisualViewport();
 {
   const scrimEl = document.getElementById('scrim');
   if (scrimEl) scrimEl.addEventListener('click', () =>
