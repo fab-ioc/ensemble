@@ -1265,6 +1265,60 @@
   .dp-conv.themed .tx-text.md code.ic { background: color-mix(in srgb, var(--chat-fg) 12%, transparent); border-color: color-mix(in srgb, var(--chat-fg) 22%, transparent); }
   .dp-conv.themed .tx-text.md pre.cb { background: color-mix(in srgb, var(--chat-fg) 8%, var(--chat-bg)); }
   .dp-conv.themed .tx-text.md a { color: var(--chat-accent); }
+  /* Roadmap tab: the project's ROADMAP.md, rendered; in edit mode the source
+     sits beside a live preview. The document reuses the chat's Markdown
+     rules (.tx-text.md) and only resizes the headings for a page — these
+     rules sit after those on purpose, at equal specificity. */
+  .rm { display: flex; flex-direction: column; height: calc(100vh - var(--chrome-h)); min-height: 420px; border: 1px solid var(--border); border-radius: var(--r-300); overflow: hidden; background: var(--surface); }
+  .rm-bar { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-200); padding: var(--s-200) var(--s-300); border-bottom: 1px solid var(--border); font-size: var(--fs-200); line-height: var(--lh-200); color: var(--fg-subtle); min-width: 0; }
+  .rm-file { font-family: var(--font-mono); font-weight: 500; color: var(--fg); }
+  .rm-path { font-family: var(--font-mono); color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 0 1 auto; }
+  .rm-meta { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .rm-acts { margin-left: auto; display: flex; gap: var(--s-200); }
+  .rm-btn { height: 32px; padding: 0 var(--s-300); border-radius: var(--r-200); border: 1px solid var(--border-strong); background: var(--surface); color: var(--fg); font: inherit; font-size: var(--fs-300); font-weight: 500; cursor: pointer; white-space: nowrap; }
+  .rm-btn:hover { background: var(--hover); }
+  .rm-btn:active { background: var(--pressed); }
+  .rm-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .rm-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+  .rm-btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .rm-btn.danger { background: transparent; border-color: transparent; color: var(--c-danger-fg); }
+  .rm-btn.danger:hover { background: var(--c-danger-bg); }
+  .rm-btn.subtle { height: 24px; padding: 0 var(--s-200); background: transparent; border-color: transparent; color: var(--fg-subtle); font-size: var(--fs-200); }
+  .rm-btn.subtle:hover { background: var(--hover); color: var(--fg); }
+  .rm-btn:disabled { cursor: progress; }
+  .rm-note { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-200) var(--s-300); padding: var(--s-200) var(--s-300); border-bottom: 1px solid var(--border); background: var(--c-warning-bg); color: var(--c-warning-fg); font-size: var(--fs-300); line-height: var(--lh-300); }
+  .rm-note.err { background: var(--c-danger-bg); color: var(--c-danger-fg); }
+  .rm-note-txt { flex: 1 1 320px; min-width: 0; }
+  .rm-note-acts { display: flex; flex-wrap: wrap; gap: var(--s-200); }
+  .rm-note .rm-btn { background: var(--surface); }
+  .rm-note .rm-btn:hover { background: var(--hover); }
+  .rm-note .rm-btn.danger { border-color: var(--border-strong); }
+  .rm-view, .rm-pane { flex: 1; min-width: 0; min-height: 0; overflow: auto; }
+  .rm-doc { max-width: 80ch; padding: var(--s-400) var(--s-600) var(--s-800); font-family: var(--font-sans); font-size: var(--fs-300); line-height: var(--lh-300); color: var(--fg); overflow-wrap: anywhere; }
+  .rm-doc.md h3 { font-size: var(--fs-500); line-height: var(--lh-500); font-weight: 600; margin: var(--s-600) 0 var(--s-300); padding-bottom: var(--s-100); }
+  .rm-doc.md h4 { font-size: var(--fs-400); line-height: var(--lh-400); font-weight: 600; margin: var(--s-400) 0 var(--s-200); }
+  .rm-doc.md h5, .rm-doc.md h6 { font-size: var(--fs-300); line-height: var(--lh-300); font-weight: 600; margin: var(--s-300) 0 var(--s-100); }
+  .rm-doc.md ul, .rm-doc.md ol { padding-left: var(--s-600); }
+  .rm-doc.md pre.cb code { font-size: var(--fs-200); }
+  .rm-doc.md pre.cb[data-lang]::before { font-size: var(--fs-100); }
+  .rm-doc.md th { font-weight: 600; }
+  .rm-empty { margin: var(--s-600); padding: var(--s-800) var(--s-600); max-width: 60ch; border: 1px dashed var(--border); border-radius: var(--r-300); color: var(--fg-muted); font-size: var(--fs-300); line-height: var(--lh-300); }
+  .rm-empty-title { font-size: var(--fs-400); line-height: var(--lh-400); font-weight: 600; color: var(--fg); margin-bottom: var(--s-200); }
+  .rm-empty p { margin: 0 0 var(--s-400); }
+  .rm-empty code { font-family: var(--font-mono); font-size: var(--fs-200); }
+  .rm-edit { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .rm-src { min-height: 0; resize: none; border: 0; border-right: 1px solid var(--border); border-radius: 0; margin: 0; padding: var(--s-400); background: var(--surface-sunken); color: var(--fg); font-family: var(--font-mono); font-size: var(--fs-200); line-height: var(--lh-300); tab-size: 2; }
+  .rm-src:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+  .rm-pane { display: flex; flex-direction: column; }
+  .rm-plabel { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: var(--s-200); min-height: 32px; padding: var(--s-100) var(--s-600); background: var(--surface); border-bottom: 1px solid var(--border); font-size: var(--fs-100); line-height: var(--lh-100); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--fg-muted); }
+  .rm-plabel .rm-btn { margin-left: auto; text-transform: none; letter-spacing: 0; }
+  @media (max-width: 900px) {
+    .rm-edit { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+    .rm-src { border-right: 0; border-bottom: 1px solid var(--border); }
+    .rm-doc { padding: var(--s-300) var(--s-400) var(--s-600); }
+    .rm-plabel { padding: var(--s-100) var(--s-400); }
+    .rm-empty { margin: var(--s-400); padding: var(--s-600) var(--s-400); }
+  }
   .dp-quote {
     background: var(--hover); border-left: 3px solid var(--border-strong);
     padding: 10px 12px; border-radius: 0 6px 6px 0;
@@ -2459,6 +2513,8 @@
        switch would destroy the folders you opened, your scroll position and any
        comments you had not sent yet. It is hidden, never rebuilt. -->
   <section id="ws-panel" hidden></section>
+  <!-- The roadmap panel, for the same reason: an unsaved draft is state. -->
+  <section id="rm-panel" hidden></section>
 </main>
 <dialog id="modal"></dialog>
 <aside id="detail-panel"></aside>
@@ -4359,6 +4415,8 @@ function projectsChromeHtml() {
     const tabs = hasFolder ? `<div class="ptabs">`
       + `<button data-ptab="tasks" class="${PROJECT_TAB === 'tasks' ? 'on' : ''}">Tasks</button>`
       + `<button data-ptab="workspace" class="${PROJECT_TAB === 'workspace' ? 'on' : ''}" title="Browse this project's folder like an IDE — files render, and you can comment in place">Workspace</button>`
+      + `<button data-ptab="changes" class="${PROJECT_TAB === 'changes' ? 'on' : ''}" title="Uncommitted changes in the project folder or in a task's workspace: git status, per-file diff, line comments you can send to a task chat">Changes</button>`
+      + `<button data-ptab="roadmap" class="${PROJECT_TAB === 'roadmap' ? 'on' : ''}" title="The project's roadmap — ROADMAP.md in its folder. You and the project's PO both edit it">Roadmap</button>`
       + `</div>` : '';
     return strip + `<div class="crumbs"><a href="#" class="crumb-back">← Projects</a><span class="sep">/</span><b>${esc(nm)}</b>${newTask}`
       + (PROJECT_TAB === 'tasks' ? viewSwitchHtml() : '') + `</div>` + tabs;
@@ -4407,17 +4465,6 @@ function wireProjectsChrome() {
     if (e.target.closest('.srow') || e.target.closest('.newtask')) return;
     SELECTED_PROJECT = c.dataset.proj; PROJECT_TAB = 'tasks'; WS_SCOPE = ''; SB_DEST = ''; renderRows();
   });
-  // Changes tab: for every project with a folder — the repo may be the
-  // project folder itself or live inside a task's workspace (the tab finds it).
-  const ptabsEl = document.querySelector('.ptabs');
-  const pjc = SELECTED_PROJECT ? projectById(SELECTED_PROJECT) : null;
-  if (ptabsEl && pjc && pjc.path && !ptabsEl.querySelector('[data-ptab="changes"]')) {
-    const cb = document.createElement('button');
-    cb.dataset.ptab = 'changes'; cb.textContent = 'Changes';
-    cb.title = 'Uncommitted changes in the project folder or in a task\'s workspace: git status, per-file diff, line comments you can send to a task chat';
-    if (PROJECT_TAB === 'changes') cb.classList.add('on');
-    ptabsEl.appendChild(cb);
-  }
   if (typeof chRenderTray === 'function') chRenderTray();   // hides the comment tray off the Changes tab
   document.querySelectorAll('.ptabs button[data-ptab]').forEach(b => b.onclick = () => {
     PROJECT_TAB = b.dataset.ptab; renderRows();
@@ -4501,7 +4548,7 @@ async function moveSessionToProject(sid) {
 // ---- Workspace tab: IDE-like, read-only view of a project's folder ----------
 // Lazy tree from /api/dir; a selected file renders in the existing fileview
 // (markdown/HTML + in-place comments) — one renderer, not two.
-let PROJECT_TAB = 'tasks';   // tasks | workspace  (per drill-in; reset on selecting a project)
+let PROJECT_TAB = 'tasks';   // tasks | workspace | changes | roadmap  (per drill-in; reset on selecting a project)
 function wsFmtSize(n) {
   if (n == null) return '';
   if (n < 1024) return n + ' B';
@@ -5061,6 +5108,188 @@ function wireChangesPanel(pj) {
   };
   chRenderTray();
 }
+
+// ---- Roadmap tab: the project's ROADMAP.md, read and edited in place --------
+// The file lives in the project's home, so it travels with the project and the
+// backup carries it. The owner edits it here, the project's PO through MCP. A
+// save names the version it started from and the hub refuses it if the file
+// has moved on since, so neither edit can silently erase the other: the
+// refused text stays in the editor and the newer one is shown beside it.
+// Drafts are kept per project, so switching tabs or projects loses nothing.
+const RM = new Map();   // project id -> state
+function rmState(pid) {
+  if (!RM.has(pid)) RM.set(pid, { data: null, err: '', editing: false, draft: '', orig: '', base: '',
+                                  conflict: null, showMine: false, saving: false,
+                                  inFlight: false, polledAt: 0 });
+  return RM.get(pid);
+}
+const rmDirty = st => st.editing && st.draft !== st.orig;
+const rmDir = p => (p || '').replace(/[\\/][^\\/]*$/, '');
+// Relative mentions in the roadmap ("docs/plan.md") resolve against the
+// project's home, where ROADMAP.md itself lives.
+function rmMd(st, text) {
+  const room = FILE_LINK_ROOM, base = FILE_LINK_BASE;
+  FILE_LINK_ROOM = ''; FILE_LINK_BASE = rmDir(st.data && st.data.path);
+  try { return mdToHtml(text); } finally { FILE_LINK_ROOM = room; FILE_LINK_BASE = base; }
+}
+function rmBuild(panel, pid) {
+  const st = rmState(pid);
+  panel.dataset.mode = st.editing ? 'edit' : 'view';
+  panel.innerHTML = `<div class="rm">
+    <div class="rm-bar"><span class="rm-file">ROADMAP.md</span><span class="rm-path"></span><span class="rm-meta"></span><span class="rm-acts"></span></div>
+    <div class="rm-note" role="status" hidden></div>
+    ${st.editing
+      ? `<div class="rm-edit"><textarea class="rm-src" spellcheck="true" aria-label="Roadmap source, Markdown"></textarea>`
+        + `<div class="rm-pane"><div class="rm-plabel"></div><div class="rm-doc tx-text md"></div></div></div>`
+      : `<div class="rm-view"><div class="rm-doc tx-text md"></div></div>`}
+  </div>`;
+  if (st.editing) {
+    const ta = panel.querySelector('.rm-src');
+    ta.value = st.draft;
+    ta.oninput = () => {
+      st.draft = ta.value;
+      clearTimeout(ta._t);
+      ta._t = setTimeout(() => rmPaint(panel, pid), 120);
+    };
+    ta.onkeydown = e => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); if (!st.conflict) rmSave(pid, false); }
+    };
+  }
+  panel.onclick = e => {
+    const b = e.target.closest('button[data-rm]');
+    if (b && !b.disabled) rmAction(pid, b.dataset.rm);
+  };
+  rmPaint(panel, pid);
+}
+// Everything but the textarea, written only when it changed (writeSlot), so
+// a poll never replaces a button under the cursor or moves the caret.
+function rmPaint(panel, pid) {
+  if (!panel || panel.dataset.rmkey !== pid) return;
+  const st = rmState(pid);
+  if ((panel.dataset.mode === 'edit') !== st.editing) { rmBuild(panel, pid); return; }
+  const d = st.data;
+  const home = rmDir(d && d.path);
+  const pathEl = panel.querySelector('.rm-path');
+  if (pathEl.textContent !== tildeify(home)) { pathEl.textContent = home ? tildeify(home) : ''; pathEl.title = (d && d.path) || ''; }
+  const dirty = rmDirty(st);
+  writeSlot(panel.querySelector('.rm-meta'), st.editing
+    ? (dirty ? 'Editing · unsaved changes' : 'Editing')
+    : (d && d.exists ? `saved ${agoSpan(d.mtime)} ago` : ''));
+  writeSlot(panel.querySelector('.rm-acts'), st.editing
+    ? `<button type="button" class="rm-btn${dirty ? ' danger' : ''}" data-rm="cancel">${dirty ? 'Discard changes' : 'Cancel'}</button>`
+      + (st.conflict ? '' : `<button type="button" class="rm-btn primary" data-rm="save"${st.saving ? ' disabled' : ''} title="Save (Ctrl+S)">${st.saving ? 'Saving…' : 'Save'}</button>`)
+    : (d && d.exists ? `<button type="button" class="rm-btn" data-rm="edit">Edit</button>` : ''));
+  const note = panel.querySelector('.rm-note');
+  let noteHtml = '', noteCls = 'rm-note';
+  if (st.editing && st.conflict) {
+    const c = st.conflict;
+    const what = c.exists
+      ? `ROADMAP.md changed since you opened it — saved ${agoSpan(c.mtime)} ago, perhaps by the PO.`
+      : 'ROADMAP.md was deleted since you opened it.';
+    noteHtml = `<span class="rm-note-txt">⚠ <b>${st.saving ? 'Saving…' : 'Not saved.'}</b> ${what} Your text is still here${c.exists ? ' and the newer version is beside it: copy what you need across, then save yours over it — or use theirs' : ''}.</span>`
+      + `<span class="rm-note-acts"><button type="button" class="rm-btn danger" data-rm="force"${st.saving ? ' disabled' : ''}>Save mine over it</button>`
+      + (c.exists ? `<button type="button" class="rm-btn danger" data-rm="theirs">Use theirs, drop mine</button>` : '')
+      + `</span>`;
+  } else if (st.err && (st.editing || d)) {
+    noteCls = 'rm-note err';
+    noteHtml = `<span class="rm-note-txt">${esc(st.err)}</span>`;
+  }
+  note.className = noteCls;
+  note.hidden = !noteHtml;
+  writeSlot(note, noteHtml);
+  const doc = panel.querySelector('.rm-doc');
+  if (st.editing) {
+    const theirs = st.conflict && st.conflict.exists && !st.showMine;
+    writeSlot(panel.querySelector('.rm-plabel'), theirs
+      ? `Newer version on disk — read-only<button type="button" class="rm-btn subtle" data-rm="mine">Preview mine</button>`
+      : `Preview${st.conflict && st.conflict.exists ? `<button type="button" class="rm-btn subtle" data-rm="mine">Show the newer version</button>` : ''}`);
+    writeSlot(doc, rmMd(st, theirs ? st.conflict.text : st.draft));
+  } else if (!d) {
+    writeSlot(doc, st.err ? `<div class="rm-empty"><div class="rm-empty-title">Couldn’t read the roadmap</div><p>${esc(st.err)}</p></div>` : '<p>Loading…</p>');
+  } else if (!d.exists) {
+    writeSlot(doc, `<div class="rm-empty"><div class="rm-empty-title">No roadmap yet</div>`
+      + `<p>The roadmap is <code>ROADMAP.md</code> in this project’s folder. The project’s PO keeps it current, and you can write or change it here. The file is created the first time someone saves.</p>`
+      + `<button type="button" class="rm-btn primary" data-rm="edit">Write the roadmap</button></div>`);
+  } else {
+    writeSlot(doc, rmMd(st, d.text));
+  }
+}
+// The file is read when the tab is drawn and on every refresh while it shows,
+// at most every few seconds and never twice at once. A new version redraws the
+// page when you are reading; while you edit it raises the notice before you
+// try to save, instead of after.
+async function rmLoad(pid, force) {
+  const st = rmState(pid);
+  if (st.inFlight || (!force && Date.now() - st.polledAt < 4000)) return;
+  st.inFlight = true; st.polledAt = Date.now();
+  try {
+    const j = await api('/api/roadmap?project=' + encodeURIComponent(pid));
+    st.err = '';
+    if (!st.editing) st.data = j;
+    else if (j.version !== st.base && (!st.conflict || st.conflict.version !== j.version)) {
+      st.conflict = j; st.showMine = false;
+    }
+  } catch (e) {
+    st.err = 'Couldn’t read the roadmap: ' + e.message;
+  } finally {
+    st.inFlight = false;
+    rmPaint(document.getElementById('rm-panel'), pid);
+  }
+}
+async function rmSave(pid, overTheirs) {
+  const st = rmState(pid);
+  if (st.saving) return;
+  const base = overTheirs && st.conflict ? st.conflict.version : st.base;
+  st.saving = true; rmPaint(document.getElementById('rm-panel'), pid);
+  try {
+    const r = await fetch('/api/roadmap', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: pid, text: st.draft, baseVersion: base }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok) {
+      Object.assign(st, { data: j, editing: false, draft: '', orig: '', base: '', conflict: null, err: '' });
+      toast('Roadmap saved', 2000, 'ok');
+    } else if (r.status === 409 && j.current) {
+      st.conflict = j.current; st.showMine = false;
+    } else {
+      st.err = 'Not saved: ' + (j.error || r.status + ' ' + r.statusText) + '. Your text is still here.';
+    }
+  } catch (e) {
+    st.err = 'Not saved: ' + e.message + '. Your text is still here.';
+  } finally {
+    st.saving = false;
+    rmPaint(document.getElementById('rm-panel'), pid);
+  }
+}
+function rmAction(pid, act) {
+  const st = rmState(pid);
+  const panel = document.getElementById('rm-panel');
+  if (act === 'edit') {
+    const d = st.data || {};
+    const pj = projectById(pid);
+    const text = d.exists ? d.text : `# ${(pj && pj.name) || 'Project'} roadmap\n\n`;
+    Object.assign(st, { editing: true, draft: text, orig: text, base: d.version || '', conflict: null, showMine: false, err: '' });
+    rmBuild(panel, pid);
+    const ta = panel.querySelector('.rm-src');
+    if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+  } else if (act === 'cancel') {
+    Object.assign(st, { editing: false, draft: '', orig: '', base: '', conflict: null, err: '' });
+    rmBuild(panel, pid);
+    rmLoad(pid, true);
+  } else if (act === 'save') rmSave(pid, false);
+  else if (act === 'force') rmSave(pid, true);
+  else if (act === 'theirs') {
+    const c = st.conflict;
+    Object.assign(st, { draft: c.text, orig: c.text, base: c.version, conflict: null, showMine: false });
+    rmBuild(panel, pid);
+  } else if (act === 'mine') { st.showMine = !st.showMine; rmPaint(panel, pid); }
+}
+// Leaving the page with an unsaved roadmap asks first — the one place a draft
+// could still be lost.
+window.addEventListener('beforeunload', e => {
+  for (const st of RM.values()) if (rmDirty(st)) { e.preventDefault(); e.returnValue = ''; return; }
+});
 function renderRows() {
   renderSidebar();
   syncProjSwitch();
@@ -5070,6 +5299,8 @@ function renderRows() {
   // A sidebar destination (Needs you, Active) owns the whole view, so the
   // project's workspace panel steps aside even if its tab was last open.
   if (wsp) wsp.hidden = !(SELECTED_PROJECT && PROJECT_TAB === 'workspace') || Boolean(SB_DEST);
+  const rmp = document.getElementById('rm-panel');
+  if (rmp) rmp.hidden = !(SELECTED_PROJECT && PROJECT_TAB === 'roadmap') || Boolean(SB_DEST);
   // A destination replaces whatever view is showing, the home page and a
   // project's Workspace and Changes included, so it runs before all of them;
   // entering a project clears it. Its entries are there to be clicked, so they
@@ -5093,6 +5324,20 @@ function renderRows() {
     document.getElementById('view').innerHTML = projectsChromeHtml() + changesPanelHtml(pj);
     setViewCount('');
     wireProjectsChrome(); wireChangesPanel(pj);
+    return;
+  }
+  // Drilled into a project on the Roadmap tab. Same shape as the Workspace tab
+  // below: #view carries only the chrome, the panel beside it is state.
+  if (SELECTED_PROJECT && PROJECT_TAB === 'roadmap') {
+    setViewCount('');
+    if (writeSlot($('#view'), projectsChromeHtml())) wireProjectsChrome();
+    const panel = document.getElementById('rm-panel');
+    if (panel.dataset.rmkey !== SELECTED_PROJECT) {
+      panel.dataset.rmkey = SELECTED_PROJECT;
+      rmBuild(panel, SELECTED_PROJECT);
+    }
+    tickAgo(panel);
+    rmLoad(SELECTED_PROJECT, !rmState(SELECTED_PROJECT).data);
     return;
   }
   // Drilled into a project on the Workspace tab: file tree + viewer instead of
@@ -5338,8 +5583,8 @@ async function refresh() {
     // A dropped poll must not cost you the workspace. The tree, the folders you
     // opened and the file you are reading are state, not a view of /api/sessions
     // — so say it in a toast and leave the panel where it is.
-    const wsp = document.getElementById('ws-panel');
-    if (wsp && !wsp.hidden) toast('refresh failed: ' + e.message, 4000, 'err');
+    const wsp = document.getElementById('ws-panel'), rmp = document.getElementById('rm-panel');
+    if ((wsp && !wsp.hidden) || (rmp && !rmp.hidden)) toast('refresh failed: ' + e.message, 4000, 'err');
     else $('#view').innerHTML = `<p class="empty">Error: ${esc(e.message)}</p>`;
   } finally {
     _refreshInFlight = false;

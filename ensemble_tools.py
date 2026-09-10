@@ -1,6 +1,7 @@
 """Ensemble task-management MCP tools — how an agent running under Ensemble
 reads and shapes the board it lives on: list projects and tasks, read a task's
-spec and chat, create/amend/start/stop/move/delete tasks.
+spec and chat, create/amend/start/stop/move/delete tasks, read and update a
+project's roadmap.
 
 These tools are served from the same ``/mcp`` endpoint as the chat tools, so
 every headless agent (solo or collaboration) gets them automatically; the
@@ -311,6 +312,48 @@ TOOLS = [
         ),
         "inputSchema": {"type": "object", "properties": {"taskId": {"type": "string"}},
                         "required": ["taskId"]},
+    },
+    {
+        "name": "ensemble_get_roadmap",
+        "description": (
+            "Read a project's roadmap — ROADMAP.md in the project's home folder, "
+            "the same text the product owner sees and edits on the project's "
+            "Roadmap tab. Defaults to your own project. Returns the Markdown "
+            "text, the file path, whether it exists yet, and its `version`: pass "
+            "that version to ensemble_update_roadmap so a newer edit is never "
+            "overwritten."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "projectId": {"type": "string",
+                              "description": "Project id (omit for your own project)."},
+            },
+        },
+    },
+    {
+        "name": "ensemble_update_roadmap",
+        "description": (
+            "Replace a project's roadmap (ROADMAP.md in the project's home) with "
+            "new Markdown. Only your own project's roadmap. Read it first with "
+            "ensemble_get_roadmap and pass its `version` as baseVersion (\"\" "
+            "when it does not exist yet): if the product owner saved since you "
+            "read it, the write is refused and their newer text is returned — "
+            "merge your change into it and try again with the new version. "
+            "Send the whole document, not just the change."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "The full new roadmap, Markdown."},
+                "baseVersion": {"type": "string",
+                                "description": "The `version` from ensemble_get_roadmap that "
+                                               "your text is based on (\"\" for a new roadmap)."},
+                "projectId": {"type": "string",
+                              "description": "Project id (omit for your own project)."},
+            },
+            "required": ["text", "baseVersion"],
+        },
     },
     {
         "name": "ensemble_move_task",
@@ -878,6 +921,57 @@ def _move_task(ctx, args, handler):
             "project": projects[dest].get("name", "")}
 
 
+def _roadmap_project(ctx, args) -> dict:
+    pid = args.get("projectId")
+    pid = ctx["projectId"] if pid is None or pid == "" else str(pid).strip()
+    if not pid:
+        raise ToolError("your task has no project — pass projectId")
+    proj = _projects().get(pid)
+    if proj is None:
+        raise ToolError(f"no such project: {pid}")
+    return proj
+
+
+def _get_roadmap(ctx, args, handler):
+    proj = _roadmap_project(ctx, args)
+    out = _d.read_roadmap(proj)
+    out["project"] = proj.get("name", "")
+    if not out["exists"]:
+        out["note"] = ("no roadmap yet — ensemble_update_roadmap with baseVersion \"\" "
+                       "creates it")
+    return out
+
+
+def _update_roadmap(ctx, args, handler):
+    proj = _roadmap_project(ctx, args)
+    own = ctx["projectId"]
+    if own and proj["id"] != own:
+        raise ToolError(f"update_roadmap is out of scope: that roadmap belongs to project "
+                        f"'{proj['id']}', you are scoped to '{own}'")
+    text = args.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise ToolError("text is required — the whole roadmap, Markdown")
+    base = args.get("baseVersion")
+    if base is None:
+        raise ToolError("baseVersion is required — read the roadmap with "
+                        "ensemble_get_roadmap and pass its version (\"\" for a new one)")
+    ok, res = _d.write_roadmap(proj, text, str(base).strip())
+    if ok:
+        return {"ok": True, "projectId": proj["id"], "path": res["path"],
+                "version": res["version"], "mtime": res["mtime"]}
+    if res.get("error") != "conflict":
+        raise ToolError(res.get("error") or "could not save the roadmap")
+    # Refused, so it is an error result — but one that carries the newer text,
+    # because the agent's next move is to merge into it.
+    cur = res["current"]
+    raise ToolError(
+        "conflict: the roadmap changed since you read it (the product owner may have "
+        "edited it) — nothing was written. Merge your change into the current text "
+        "below and call ensemble_update_roadmap again with its version as baseVersion.\n"
+        + _text({"current": {"exists": cur["exists"], "version": cur["version"],
+                             "mtime": cur["mtime"], "text": cur["text"]}}))
+
+
 _IMPL = {
     "ensemble_whoami": _whoami,
     "ensemble_report": _report,
@@ -892,6 +986,8 @@ _IMPL = {
     "ensemble_stop_task": _stop_task,
     "ensemble_delete_task": _delete_task,
     "ensemble_move_task": _move_task,
+    "ensemble_get_roadmap": _get_roadmap,
+    "ensemble_update_roadmap": _update_roadmap,
 }
 
 NAMES = frozenset(_IMPL)
