@@ -110,6 +110,17 @@ Every hue is `-bg` (lozenge wash) / `-fg` (text on that wash) / `-bold` (solid d
 **There is exactly one red.** `--c-danger` means something is wrong or this control destroys data.
 Nothing else is red, ever.
 
+**A state that is fine shows no colour.** Colour appears only when something needs someone. A meter
+(the plan-usage bar is the model) is `--c-neutral-bold` while the allowance is fine, `--c-warning-bold`
+when it warns, and `--c-danger-bold` only when a limit is actually reached. "Fine" is not
+`--c-success` (nothing succeeded) and not `--c-progress` (consumption is not "under way").
+
+**Uncertain is not wrong.** A stale or untrusted reading is `--c-warning`, never `--c-danger`, so red
+stays unambiguous for the state that is actually broken. Mark it with a glyph, not a shade, and pick
+the glyph that states what is known: the usage chip writes `≥ N%` for a reading that is a floor, `—`
+for rolled over, `?` for reset unknown. "Approximately" (`~`) was proposed once and would have
+misstated a floor.
+
 ### Run state — what a process is doing
 
 `--run-working` (pulses) · `--run-idle` · `--run-off`. This is **separate from workflow status** and is
@@ -149,7 +160,10 @@ Workspace and Changes tab heights to the bar's height. Use the token.
 ### Type, space, shape
 
 - `--fs-100` 11/16 · `--fs-200` 12/16 · `--fs-300` **14/20, the body default** · `--fs-400` 16/24 ·
-  `--fs-500` 20/24. Weights are **400 / 500 / 600 only**.
+  `--fs-500` 20/24. Weights are **400 / 500 / 600 only**. **Nothing smaller than `--fs-100`**: a
+  9px label arrived with a sibling feature and sat below the scale.
+- **No `opacity` on text.** It turns the colour you measured into one you didn't: a muted colour at
+  0.75 opacity no longer clears 4.5:1. Use `--fg-muted` directly.
 - Spacing is a 4px grid: `--s-050 100 200 300 400 600 800`. Nothing between the steps — if a gap wants
   10px it is 8 or 12.
 - `--r-100` 3px (lozenges) · `--r-200` 6px (buttons, inputs, cards) · `--r-300` 8px (panels, trays) ·
@@ -255,6 +269,14 @@ the issue view. Three or more agents show two, then `+1`.
 styling: it is what stops an avatar reading as a lozenge. Overlap −6px when stacked with a
 `2px solid var(--surface)` ring.
 
+### Tabs
+
+A tab set is **fixed**: the same tabs, in the same order, with the same names, whatever state the
+thing is in. The task panel is always `Activity · Changes · Workspace · Spec`. What may change is the
+pane behind a tab (a live session or a transcript under Activity; files, or "this task has no folder
+yet", under Workspace) and which tab is selected by default. Never the set, the order or a label. A
+tab that renames itself when a task starts is a quieter version of tabs that reorder.
+
 ### Run chip
 
 `● working` · `● idle` · `not started` · `not running`.
@@ -286,6 +308,13 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
    things moving is to stop re-rendering, and that is wrong — *what is running now* is one of the four
    questions this design answers, so a board that goes stale under the cursor fails as badly as one
    whose cards move under it. A dot changing colour in place moves nothing.
+
+   **The same holds inside a panel built once.** The task panel is a shell (a header slot and panes)
+   built once per task, so its live session, its file viewer and an unsent comment survive a refresh.
+   Give each slot its **own** signature: the header is rewritten whenever status, attention, workflow,
+   priority or the summary change; a pane is rebuilt only when what it shows changes. One signature
+   for both either freezes the header on a stale "● working" or rebuilds the panes and loses their
+   state. Key the shell on the task alone, and never rewrite a slot while a menu inside it is open.
 
 4. **A filter may persist only while its state is visible in the filter row.** Filters survive a
    reload, which is safe *because* the chips show what is active — the menu hides the controls, never
@@ -347,6 +376,9 @@ you change transition behaviour, change both, or they drift.
 - [ ] Nothing new is red unless it is wrong or destructive
 - [ ] Any new colour pair measured, ≥ 4.5:1 in **both** themes
 - [ ] No new `box-shadow`, radius, font weight or spacing value outside the scale
+- [ ] No `opacity` on text, and nothing below `--fs-100`
+- [ ] A state that is fine carries no colour; an uncertain one is amber and marked by a glyph
+- [ ] A panel's header updates on a status change without rebuilding its panes
 - [ ] No hard-coded header/chrome offset
 - [ ] At most two lozenges on a card or row
 - [ ] Nothing added to the top bar that belongs to a view
