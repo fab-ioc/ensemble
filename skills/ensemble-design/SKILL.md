@@ -39,12 +39,20 @@ custom accent silently removed the visible focus indicator. Focus is not decorat
 ### Where `--accent` is allowed
 
 Primary buttons · links · the selected tab's underline · selected row / selected nav background
-(via `--selected-bg` / `--selected-fg`) · focus-adjacent input borders.
+(via `--selected-bg` / `--selected-fg`) · focus-adjacent input borders · **the active drop target**.
 
-**Nowhere else.** In particular, never for: hover states (use `--hover`), drag/drop targets, category
-headers, tree selection, search highlights, chips that carry status, the user's own chat bubbles, or
-"live" indicators. If you are reaching for the accent to say *"this one is special"*, you want
-`--selected-bg` or a semantic token instead.
+**Nowhere else.** In particular, never for: hover states (use `--hover`), category headers, tree
+selection, search highlights, chips that carry status, the user's own chat bubbles, or "live"
+indicators. If you are reaching for the accent to say *"this one is special"*, you want `--selected-bg`
+or a semantic token instead.
+
+**The drop target is deliberately on the allowed list**, and it is the one case worth explaining
+because the first draft of this file got it wrong. A drop target is not decoration saying "this is
+highlighted" — it is a live affordance saying *"release here and it lands"*, which is squarely "what
+you can do". What was wrong before was its **weight**, not its hue: a 12–14% accent fill across a whole
+row shouts. The calm form is `--selected-bg` plus a 2px `--accent` inset, and it is the same in every
+view — board column wells and list rows alike. One treatment, because a user dragging something should
+not have to learn two.
 
 ---
 
