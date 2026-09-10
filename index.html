@@ -4810,7 +4810,9 @@ function renderRows() {
   // The workspace panel is shown, never rebuilt — every branch below is free to
   // replace #view without touching it.
   const wsp = document.getElementById('ws-panel');
-  if (wsp) wsp.hidden = !(SELECTED_PROJECT && PROJECT_TAB === 'workspace');
+  // A sidebar destination (Needs you, Active) owns the whole view, so the
+  // project's workspace panel steps aside even if its tab was last open.
+  if (wsp) wsp.hidden = !(SELECTED_PROJECT && PROJECT_TAB === 'workspace') || Boolean(SB_DEST);
   // Projects landing (default). A selected project or a non-project grouping
   // falls through to the existing session table below.
   if (!SELECTED_PROJECT && PROJ_GROUPBY === 'project' && !_projFailed) {
