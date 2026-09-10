@@ -670,6 +670,9 @@ def _items() -> list[dict]:
             "reason": reason,
             "agentIdentity": part.get("identity", "") if part else "",
             "agent": part.get("agent", "") if part else "",
+            # The model, so an entry can name WHO is stuck in the terms the
+            # rest of the UI uses — "claude opus", not just "claude".
+            "agentModel": part.get("model", "") if part else "",
             # An agent_gone item has no terminal left to open — its pty is out
             # of the registry — so the notification carries the last screen.
             "ptyId": (part.get("ptyId", "") if part and state != "agent_gone" else ""),

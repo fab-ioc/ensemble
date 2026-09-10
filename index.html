@@ -1401,6 +1401,79 @@
     .board { grid-auto-columns: minmax(248px, 0.9fr); scroll-snap-type: x proximity; }
     .col { scroll-snap-align: start; }
   }
+  /* --- Sidebar destinations ---------------------------------------------- */
+  /* "What needs me" and "what is running now" are two of the four questions
+     this redesign exists to answer, so they are addresses you can point at,
+     not a tray you have to remember to open. */
+  .sb-badge {
+    margin-left: auto; border-radius: var(--r-full); padding: 0 6px;
+    font-size: var(--fs-100); font-weight: 600; font-variant-numeric: tabular-nums;
+    background: var(--c-neutral-bg); color: var(--c-neutral-fg);
+  }
+  .sb-badge.warn { background: var(--c-warning-bg); color: var(--c-warning-fg); }
+  .sb-badge.ok   { background: var(--c-success-bg); color: var(--c-success-fg); }
+  .sb-badge:empty { display: none; }
+  .dest { padding: var(--s-200) 0 var(--s-800); }
+  .dest-head { display: flex; align-items: center; gap: var(--s-300); margin-bottom: var(--s-400); }
+  .dest-head h2 { margin: 0; font-size: var(--fs-500); line-height: var(--lh-500); font-weight: 600; }
+  .dest-count {
+    background: var(--c-neutral-bg); color: var(--c-neutral-fg);
+    border-radius: var(--r-full); padding: 1px 8px;
+    font-size: var(--fs-200); font-weight: 600; font-variant-numeric: tabular-nums;
+  }
+  .dest-empty {
+    padding: var(--s-600); border: 1px dashed var(--border); border-radius: var(--r-300);
+    color: var(--fg-muted); font-size: var(--fs-300); text-align: center;
+  }
+  .dest-group + .dest-group { margin-top: var(--s-600); }
+  .dest-group-head {
+    display: flex; align-items: center; gap: var(--s-200);
+    font-size: var(--fs-100); font-weight: 600; text-transform: uppercase;
+    letter-spacing: .05em; color: var(--fg-muted);
+    padding: 0 var(--s-200) var(--s-200);
+  }
+  .dest-group-n {
+    background: var(--c-neutral-bg); color: var(--c-neutral-fg);
+    border-radius: var(--r-full); padding: 0 6px; font-variant-numeric: tabular-nums;
+  }
+  /* One entry = project, task, agent, elapsed, and the reason underneath. */
+  .dest-row {
+    display: grid; width: 100%; text-align: left; cursor: pointer;
+    /* A fixed first column so every title starts on the same x. Each row is
+       its own grid, so "auto" let a wide lozenge ("WAITING FOR YOU") push its
+       title right while a narrow one ("STALLED") did not — a ragged left edge
+       down a list you are meant to scan. */
+    grid-template-columns: 116px 1fr auto auto;
+    gap: 2px var(--s-300); align-items: center;
+    padding: var(--s-300); margin-bottom: var(--s-200);
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--r-200); font: inherit; color: var(--fg);
+  }
+  .dest-row:hover { background: var(--hover); }
+  .dest-cell { display: flex; align-items: center; min-width: 0; }
+  .dest-title { font-size: var(--fs-300); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dest-who { font-size: var(--fs-100); color: var(--fg-muted); display: inline-flex; align-items: center; gap: 4px; }
+  .dest-when { font-size: var(--fs-100); color: var(--fg-muted); white-space: nowrap; }
+  .dest-why {
+    grid-column: 2 / -1; grid-row: 2; font-size: var(--fs-200); color: var(--fg-subtle);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* Between the drawer breakpoint and full width the sidebar keeps its place
+     as a 56px rail. The labels are what it gives up — the counts are the
+     reason it is there at all, so an address you can only see on a wide
+     screen is not a permanent address. */
+  @media (min-width: 901px) and (max-width: 1279px) {
+    body:not(.sidebar-collapsed) #sidebar { width: 56px; overflow: hidden; }
+    body:not(.sidebar-collapsed) #sidebar .sb-name,
+    body:not(.sidebar-collapsed) #sidebar .sb-section,
+    body:not(.sidebar-collapsed) #sidebar .sb-add-cat { display: none; }
+    body:not(.sidebar-collapsed) #sidebar .sb-item { justify-content: center; padding: 8px 0; position: relative; }
+    body:not(.sidebar-collapsed) #sidebar .sb-badge {
+      position: absolute; top: 2px; right: 6px; margin: 0;
+      padding: 0 4px; font-size: 9px;
+    }
+    body:not(.sidebar-collapsed) main { padding-left: 56px; }
+  }
   /* --- Notifications: tasks that need you ------------------------------- */
   /* The bell takes .bar-btn.icon like every other icon control up here; only
      the count badge is its own. A bell with nothing in it says nothing, so
@@ -3169,6 +3242,73 @@ function boardHtml(rows, now, frozen) {
 let DONE_SHOW_ALL = false;
 let BOARD_SIG = '';
 
+// A sidebar destination, when one is selected, replaces the task view. '' is
+// "no destination" — the ordinary category/project browsing the app had.
+let SB_DEST = '';
+
+// "What needs me", across every project, in one place. Each entry names the
+// project, the task and the agent, and clicking it opens the task in the page.
+function needsYouHtml() {
+  const items = (ATTENTION.items || []);
+  if (!items.length) {
+    return `<div class="dest-head"><h2>Needs you</h2></div>`
+      + `<div class="dest-empty">Nothing is waiting on you, stuck, or dead.</div>`;
+  }
+  // Grouped by project, because "which of my projects is stuck" is the next
+  // question after "is anything stuck".
+  const byProj = new Map();
+  for (const it of items) {
+    const k = it.project || 'Unassigned';
+    if (!byProj.has(k)) byProj.set(k, []);
+    byProj.get(k).push(it);
+  }
+  const groups = [...byProj.entries()].map(([proj, list]) => {
+    const rows = list.map(it => {
+      const when = it.since ? fmtAgo(Date.now() / 1000 - it.since) + ' ago' : '';
+      const tone = (it.state === 'agent_gone' || it.state === 'blocked') ? 'danger'
+                 : (it.state === 'stalled') ? 'neutral' : 'warning';
+      const who = [it.agentIdentity, it.agentModel].filter(Boolean).join(' ');
+      return `<button class="dest-row" data-room="${esc(it.roomId)}">
+        <span class="dest-cell"><span class="loz ${tone}">${esc(ATTN_LABEL[it.state] || it.state)}</span></span>
+        <span class="dest-title">${esc(it.title)}</span>
+        <span class="dest-who">${esc(who)}</span>
+        <span class="dest-when">${esc(when)}</span>
+        <span class="dest-why">${esc(it.reason)}</span>
+      </button>`;
+    }).join('');
+    return `<section class="dest-group">
+      <div class="dest-group-head">${esc(proj)}<span class="dest-group-n">${list.length}</span></div>
+      ${rows}
+    </section>`;
+  }).join('');
+  return `<div class="dest-head"><h2>Needs you</h2><span class="dest-count">${items.length}</span></div>${groups}`;
+}
+
+// "What is running now", across every project. The other question the top bar
+// used to answer with a number nobody could click.
+function activeHtml() {
+  const live = ALL_ROWS.filter(r => r.isLive);
+  if (!live.length) {
+    return `<div class="dest-head"><h2>Active</h2></div>`
+      + `<div class="dest-empty">No agent is running right now.</div>`;
+  }
+  const now = Date.now() / 1000;
+  const busy = live.filter(r => r.status === 'busy');
+  const idle = live.filter(r => r.status !== 'busy');
+  const section = (title, rows) => rows.length ? `<section class="dest-group">
+      <div class="dest-group-head">${esc(title)}<span class="dest-group-n">${rows.length}</span></div>
+      ${rows.map(r => `<button class="dest-row" data-room="${esc(r.roomId || '')}" data-sid="${esc(r.sessionId)}">
+        ${runChip(r)}
+        <span class="dest-title">${esc(r.label || '(session)')}</span>
+        <span class="dest-who">${cardAgents(r)}</span>
+        <span class="dest-when">${esc(fmtAgo(now - r.updatedAt))}</span>
+        <span class="dest-why">${esc(r.projectName || '')}</span>
+      </button>`).join('')}
+    </section>` : '';
+  return `<div class="dest-head"><h2>Active</h2><span class="dest-count">${live.length}</span></div>`
+    + section('Working', busy) + section('Idle', idle);
+}
+
 // Placement is frozen while the mouse is over the board; content is not. This
 // is what keeps "what is running now" true under the cursor — a dot going
 // green to grey in place moves nothing and costs nothing, while a card
@@ -3604,27 +3744,37 @@ function renderSidebar() {
   const catSet = new Set([...counts.keys(), ...KNOWN_CATS]);
   const cats = [...catSet].sort((a, b) => a.localeCompare(b));
   const item = (cat, icon, label) => {
-    const active = SELECTED_CAT === cat ? ' active' : '';
+    const active = (!SB_DEST && SELECTED_CAT === cat) ? ' active' : '';
     return `<button class="sb-item${active}" data-cat="${esc(cat)}">
       <span class="sb-icon">${icon}</span>
       <span class="sb-name">${esc(label)}</span>
     </button>`;
   };
+  // Two of the four questions this redesign exists to answer — "what needs
+  // me" and "what is running now" — are permanent addresses, not a tray you
+  // have to remember to open. They come first because they are what you open
+  // the dashboard to find out.
+  const needsCount = (ATTENTION.items || []).length;
+  const activeCount = liveCount;
+  const dest = (key, icon, label, count, tone) => {
+    const active = SB_DEST === key ? ' active' : '';
+    const badge = count
+      ? `<span class="sb-badge ${tone}">${count}</span>` : '';
+    return `<button class="sb-item sb-dest${active}" data-dest="${key}">
+      <span class="sb-icon">${icon}</span>
+      <span class="sb-name">${esc(label)}</span>${badge}
+    </button>`;
+  };
   const out = [];
+  out.push(dest('needsyou', '◉', 'Needs you', needsCount, 'warn'));
+  out.push(dest('active',   '◉', 'Active',    activeCount, 'ok'));
+  out.push(`<div class="sb-divider"></div>`);
   out.push(`<div class="sb-section">Views</div>`);
   out.push(item('__all__',   '◉',  'All sessions'));
   out.push(item('__uncat__', '○',  'Uncategorized'));
   out.push(`<div class="sb-section">Categories</div>`);
   for (const c of cats) out.push(item(c, '◆', c));
   out.push(`<button id="sb-add-cat" class="sb-add-cat">+ New category</button>`);
-  out.push(`<div class="sb-divider"></div>`);
-  out.push(`<div class="sb-section">Footprint</div>`);
-  out.push(`<div style="padding: 2px 16px 4px; font-size: 11px; color: var(--fg-subtle); display: flex; justify-content: space-between;">
-    <span>● live</span><span style="font-variant-numeric: tabular-nums; color: var(--run-idle); font-weight: 500;">${liveCount}</span></div>`);
-  out.push(`<div style="padding: 2px 16px 4px; font-size: 11px; color: var(--fg-subtle); display: flex; justify-content: space-between;">
-    <span>📌 pinned</span><span style="font-variant-numeric: tabular-nums; font-weight: 500;">${pinnedCount}</span></div>`);
-  out.push(`<div style="padding: 2px 16px 4px; font-size: 11px; color: var(--fg-subtle); display: flex; justify-content: space-between;">
-    <span>🗄 archived</span><span style="font-variant-numeric: tabular-nums; font-weight: 500;">${archivedCount}</span></div>`);
   $('#sidebar').innerHTML = out.join('');
 }
 
@@ -4406,6 +4556,12 @@ function renderRows() {
         wsMount(panel.querySelector('.wsp'), { kind: 'project', projectId: SELECTED_PROJECT });
       }
     }
+    return;
+  }
+  // A destination owns the whole view when it is selected.
+  if (SB_DEST) {
+    $('#view').innerHTML = `<div class="dest">${SB_DEST === 'needsyou' ? needsYouHtml() : activeHtml()}</div>`;
+    setViewCount('');
     return;
   }
   const parsed = parseSearchQuery(SEARCH_QUERY);
@@ -5903,6 +6059,16 @@ function closeFiltersMenu() {
 }
 
 document.addEventListener('click', (ev) => {
+  // A destination entry opens the task it names, in the page.
+  const destRow = ev.target.closest('.dest-row');
+  if (destRow) {
+    ev.stopPropagation();
+    const rid = destRow.dataset.room;
+    if (rid && ATTENTION_BY_ROOM.has(rid)) { openAttentionItem(rid); return; }
+    const sid = destRow.dataset.sid || rid;
+    if (sid) { SELECTED_SID = sid; openDetail(sid); }
+    return;
+  }
   // Dismiss a filter straight from its chip: the fastest answer to "why can't
   // I see my task?" is the filter that is hiding it, with an × on it.
   const chip = ev.target.closest('.fchip[data-drop]');
@@ -5984,8 +6150,15 @@ $('#sidebar').addEventListener('click', async (ev) => {
     } catch (e) { toast('create failed: ' + e.message, 4000, 'err'); }
     return;
   }
+  const destBtn = ev.target.closest('.sb-item[data-dest]');
+  if (destBtn) {
+    SB_DEST = SB_DEST === destBtn.dataset.dest ? '' : destBtn.dataset.dest;
+    renderRows();
+    return;
+  }
   const item = ev.target.closest('.sb-item');
   if (!item) return;
+  SB_DEST = '';                       // a category is a different question
   SELECTED_CAT = item.dataset.cat;
   localStorage.setItem('cd-cat', SELECTED_CAT);
   renderRows();
