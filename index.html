@@ -227,6 +227,7 @@
     background: var(--surface-sunken); font-family: var(--font-mono);
     font-size: var(--fs-200); color: var(--fg-subtle);
   }
+  .search-wrap:has(.search-state:not([hidden])) #search { padding-right: 92px; }
   #search-help {
     position: absolute; right: 6px; width: 20px; height: 20px;
     border-radius: var(--r-full); border: 0; background: transparent;
@@ -285,24 +286,42 @@
   }
   #new-btn:hover { background: var(--accent-hover); }
   #new-btn:active { background: var(--accent-pressed); }
+  /* A flex item's min-width defaults to auto, which for a wrapper around an
+     <input> resolves to the input's intrinsic width — so the bar refused to
+     shrink and overflowed the viewport at 820px. min-width:0 alone fixes the
+     overflow by collapsing search to 93px, which is narrower than its own
+     placeholder: that trades a layout bug for a useless control. The floor
+     here is the actual fix. */
   .search-wrap {
-    flex: 1; max-width: 460px; position: relative;
+    flex: 1 1 0; max-width: 460px; min-width: 160px; position: relative;
     display: flex; align-items: center;
   }
   #search {
-    flex: 1; padding: 6px 12px; padding-right: 80px;
-    border: 1px solid var(--border); border-radius: 6px;
+    flex: 1; min-width: 0; padding: 6px 12px; padding-right: 34px;
+    height: 32px;
+    border: 1px solid var(--border); border-radius: var(--r-200);
     background: var(--surface); color: var(--fg); font: inherit;
+    font-size: var(--fs-200);
     transition: border-color .12s, box-shadow .12s;
+  }
+  /* Narrow laptop / side-by-side split. Below the sidebar's drawer breakpoint
+     the switcher is the ONLY way to change project, so it keeps its place and
+     gives up its label instead — the name lives in the tooltip. */
+  @media (max-width: 900px) {
+    #proj-switch-name { display: none; }
+    #proj-switch { max-width: none; padding: 0 8px; }
+    .search-wrap { min-width: 140px; }
   }
   #search:focus {
     outline: none; border-color: var(--focus-ring);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus-ring) 40%, transparent);
   }
+  /* Sits left of the ? button, and the input only reserves the room while the
+     badge is actually there — otherwise every query types into a gap. */
   .search-state {
-    position: absolute; right: 8px;
-    font-size: 10.5px; color: var(--fg-subtle);
-    background: var(--bg); padding: 2px 8px; border-radius: 4px;
+    position: absolute; right: 30px;
+    font-size: var(--fs-100); color: var(--fg-subtle);
+    background: var(--surface-sunken); padding: 2px 8px; border-radius: var(--r-100);
     pointer-events: none; user-select: none;
     border: 1px solid var(--border);
     font-weight: 500;
