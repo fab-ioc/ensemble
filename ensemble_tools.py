@@ -134,6 +134,31 @@ TOOLS = [
         },
     },
     {
+        "name": "ensemble_plan_usage",
+        "description": (
+            "How much of each agent kind's plan allowance is spent, and when the "
+            "windows reset — the same reading the board header shows. Use it "
+            "before starting more work, to see whether there is room. The numbers "
+            "are **account-wide**: every task on this machine shares them, so they "
+            "say nothing about what one task cost (that is the per-task cost "
+            "chip). Claude and Codex have separate allowances — read them "
+            "separately and never add them up. **Judge each window on its own "
+            "`windows[].trusted`**, not on the source-level flag, which is only "
+            "the conjunction: Codex writes its usage to a file only when one of "
+            "its agents takes a turn, so the same reading can be out of date for "
+            "the five-hour window and still exact for the weekly one. A window "
+            "with `trusted: false` is frozen — `ageSeconds` says how long ago it "
+            "was written, and because a window only fills up until it resets, its "
+            "`percent` is a floor (\"at least this much\"), not a measurement. A "
+            "window with `percent: null` has no current "
+            "value at all: either `rolledOver` (it has already reset) or "
+            "`resetUnknown` (no reset time to check against) — treat both as "
+            "unknown and never fall back to `stalePercent`. Nothing here is "
+            "enforced — deciding what to do is yours or the product owner's."
+        ),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "ensemble_get_task",
         "description": (
             "Read one task in full: title, complete spec, priority, project, "
@@ -504,6 +529,29 @@ def _list_attention(ctx, args, handler):
                        "stalled": "asked to do something, not working, never reported back"}}
 
 
+def _plan_usage(ctx, args, handler):
+    """The board header's own reading, unchanged.
+
+    Deliberately the same `usage.snapshot()` the chip and `/api/usage` read —
+    one reader, one cache, one set of staleness guards. Like the endpoint this
+    is a cache read: it does no network call and cannot block the agent's turn.
+    """
+    snap = _d.usage.snapshot()
+    return {
+        **snap,
+        "note": ("Account-wide, not per-task: every task on this machine shares "
+                 "these windows. Claude and Codex allowances are separate — never "
+                 "sum them. Judge freshness per window (windows[].trusted), not "
+                 "per source: the source flag is only the conjunction, and one "
+                 "Codex reading can be stale for the five-hour window while still "
+                 "exact for the weekly one. trusted=false means the percent is a "
+                 "floor, not a measurement. percent=null means there is no current "
+                 "value — rolledOver (already reset) or resetUnknown (no reset "
+                 "time to check) — and stalePercent is a dead number kept only "
+                 "for context, never a fallback."),
+    }
+
+
 def _get_task(ctx, args, handler):
     room = _load_target(args.get("taskId"))
     projects = _projects()
@@ -679,6 +727,7 @@ _IMPL = {
     "ensemble_list_projects": _list_projects,
     "ensemble_list_tasks": _list_tasks,
     "ensemble_list_attention": _list_attention,
+    "ensemble_plan_usage": _plan_usage,
     "ensemble_get_task": _get_task,
     "ensemble_create_task": _create_task,
     "ensemble_update_task": _update_task,
