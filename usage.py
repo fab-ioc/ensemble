@@ -96,11 +96,20 @@ AGE_QUALIFY_S = 60
 # sits just past them.
 CODEX_MAX_FILES = 60
 
-# A parsed reset that lands this far from now is not a reset time — most likely
-# the field changed meaning (a duration rather than an epoch, say). Reporting
-# "rolled over" off a misparse would blank the chip confidently and for ever, so
-# an implausible value fails the whole source loudly instead.
+# A reset time that could not belong to its record is not a reset time — most
+# likely the field changed meaning (a duration rather than an epoch, say).
+# Reporting "rolled over" off a misparse would blank the chip confidently and
+# for ever, so an implausible value fails the whole source loudly instead. See
+# _reset_plausible: judged against the record's own time and the window's own
+# length. RESET_SANITY_S is the reach allowed when the length is unknown.
 RESET_SANITY_S = 60 * 86400
+RESET_SLACK_S = 86400
+
+# Limit buckets reported together are written about a millisecond apart. One
+# whose newest record trails the newest overall by more than this has stopped
+# being reported — a model no longer in use, a plan that has changed — and its
+# windows are no longer a statement about now.
+BUCKET_TOGETHER_S = 300
 
 WARN_PERCENT = 80          # banner
 ALARM_PERCENT = 95         # banner, louder
@@ -389,15 +398,26 @@ def _rollout_files(limit: int) -> list[Path]:
     return files[:limit]
 
 
-def _newest_rate_limits(files) -> tuple[dict | None, float | None]:
-    """The newest populated ``rate_limits`` payload, and when it was written.
+def _newest_rate_limits(files) -> dict[str, tuple[dict, float]]:
+    """The newest whole ``rate_limits`` record of each limit bucket.
 
-    The whole record, deliberately — not the newest reading of each window
-    stitched together from different records. A record is Codex's statement of
-    which limits apply right now, and that set changes: when this account moved
-    to a plan with only a weekly limit, its records stopped carrying a
-    five-hour window at all, and stitching across records would have brought
-    the previous plan's five-hour window back.
+    Returns ``{bucket: (rate_limits, epoch)}``. The bucket is the record's
+    ``limit_id``; absent or ``"codex"`` is the account-wide one.
+
+    Whole records within a bucket, deliberately — not the newest reading of
+    each window stitched together from different records. A record is Codex's
+    statement of which limits apply right now, and that set changes: when this
+    account moved to a plan with only a weekly limit, its records stopped
+    carrying a five-hour window at all, and stitching across records would
+    have brought the previous plan's five-hour window back.
+
+    But one record states one bucket, and Codex writes more than one: a model
+    with a limit of its own gets its own bucket (``codex_bengalfox``, named
+    "GPT-5.3-Codex-Spark", on this machine), written alongside the account's
+    within the same millisecond, turn after turn. Taking only the newest
+    record overall showed whichever bucket happened to write last, so the
+    account's weekly figure and the model's swapped back and forth under the
+    same label. Hence per bucket; read_codex decides which are still current.
 
     About one ``token_count`` record in a hundred has null windows — turns that
     never reached the API — so a record only counts when it actually carries
@@ -408,8 +428,7 @@ def _newest_rate_limits(files) -> tuple[dict | None, float | None]:
     fractional seconds today, but ``...:40Z`` sorts above ``...:40.401Z``
     lexicographically, so a format change would silently pick the older record.
     """
-    best: dict | None = None
-    best_at: float | None = None
+    best: dict[str, tuple[dict, float]] = {}
     extra = 0
     for path in files:
         try:
@@ -430,22 +449,24 @@ def _newest_rate_limits(files) -> tuple[dict | None, float | None]:
                     at = _iso_to_epoch(rec.get("timestamp"))
                     if at is None:
                         continue
-                    if best_at is None or at > best_at:
-                        best, best_at = limits, at
+                    bucket = limits.get("limit_id") or "codex"
+                    if bucket not in best or at > best[bucket][1]:
+                        best[bucket] = (limits, at)
         except OSError:
             continue
-        if best is not None:
-            # Files are ordered by mtime, but the record we want is ordered by
-            # its own timestamp, and the two can disagree: a rollout touched a
-            # minute ago may hold nothing newer than an hour-old reading, while
-            # the file behind it was appended to more recently than that. So
-            # don't stop at the first hit — look at a couple more files and keep
-            # the newest record across all of them. Bounded, so this stays a
-            # handful of reads and not a walk through the history.
+        if best:
+            # Files are ordered by mtime, but the records we want are ordered
+            # by their own timestamps, and the two can disagree: a rollout
+            # touched a minute ago may hold nothing newer than an hour-old
+            # reading, while the file behind it was appended to more recently.
+            # So don't stop at the first hit — look at a couple more files and
+            # keep the newest record of each bucket across all of them.
+            # Bounded, so this stays a handful of reads and not a walk through
+            # the history.
             extra += 1
             if extra >= 3:
                 break
-    return best, best_at
+    return best
 
 
 def _iso_to_epoch(ts) -> float | None:
@@ -485,6 +506,58 @@ def _codex_window_kind(minutes) -> tuple[str, str]:
     return f"window_{m}", label
 
 
+def _listed_windows(limits: dict) -> list[tuple[dict, str, str]]:
+    """The windows one record lists, each identified by its length.
+
+    Never by its slot: Codex lists whichever limits apply in `primary`, then
+    `secondary` — usually the five-hour window first and the weekly one second,
+    but a plan with only a weekly limit reports it as `primary` with nothing
+    after it. Seen on this machine: every record since the account moved to
+    "prolite", and a stretch of "plus" records on 2026-08-06. Reading the slot
+    as the window labelled a weekly number "5-hour" and judged its staleness
+    against five hours instead of a week. Codex's own RateLimitWindow is
+    exactly {used_percent, window_minutes, resets_at}: the length is the
+    identity.
+
+    The same length listed twice has never been seen (0 of 4,164 records). If
+    it ever is, the higher reading is kept: on a surface whose job is to warn,
+    the safe mistake is to over-warn.
+    """
+    def pct(win):
+        v = _as_percent(win.get("used_percent"))
+        return -1.0 if v is None else v
+
+    chosen: dict[str, tuple[dict, str, str]] = {}
+    for slot in ("primary", "secondary"):
+        win = limits.get(slot)
+        if not win:
+            continue
+        kind, label = _codex_window_kind(win.get("window_minutes"))
+        if kind not in chosen or pct(win) > pct(chosen[kind][0]):
+            chosen[kind] = (win, kind, label)
+    return list(chosen.values())
+
+
+def _reset_plausible(resets: float, written_at: float, window_minutes) -> bool:
+    """Whether a reset time can belong to a record written at ``written_at``.
+
+    Judged against the record's own time, not against now, and against the
+    window's own length, not a fixed bound. A reset is set when a window opens,
+    so when the record is written it lies ahead by at most the window's length.
+    Checked that way it still catches what the check exists for — a duration
+    read as an epoch lands in 1970 — without rejecting a window longer than
+    some fixed bound, or a reading that is simply old: a Codex left idle for
+    two months writes nothing, and its last, long-past reset is a rolled-over
+    window, not a format change.
+    """
+    try:
+        minutes = float(window_minutes)
+    except (TypeError, ValueError):
+        minutes = 0.0
+    reach = minutes * 60 if 1 <= minutes <= 366 * 24 * 60 else RESET_SANITY_S
+    return written_at - RESET_SLACK_S <= resets <= written_at + reach + RESET_SLACK_S
+
+
 def read_codex(now: float | None = None, files=None) -> dict:
     """Newest Codex rate-limit reading, with both staleness guards.
 
@@ -493,34 +566,35 @@ def read_codex(now: float | None = None, files=None) -> dict:
     """
     now = time.time() if now is None else now
     try:
-        limits, as_of = _newest_rate_limits(
+        buckets = _newest_rate_limits(
             _rollout_files(CODEX_MAX_FILES) if files is None else files)
     except Exception as e:                                   # noqa: BLE001
         return _unavailable("codex", _scrub(f"cannot read Codex rollouts ({type(e).__name__})"))
-    if limits is None:
+    if not buckets:
         return _unavailable(
             "codex", "no Codex session has reported its limits recently")
 
-    age = int(now - as_of)
+    newest_at = max(at for _, at in buckets.values())
+    # Only buckets still being reported: co-reported ones are a millisecond
+    # apart, and one that trails by more than BUCKET_TOGETHER_S has stopped.
+    # Account-wide first, so its windows lead.
+    current = sorted(
+        ((bucket, limits, at) for bucket, (limits, at) in buckets.items()
+         if newest_at - at <= BUCKET_TOGETHER_S),
+        key=lambda t: (t[0] != "codex", t[0]))
+    plan = max(buckets.values(), key=lambda v: v[1])[0].get("plan_type")
+
+    entries = []
+    for bucket, limits, at in current:
+        # A model's own limit is labelled with the model's name — the same
+        # path Claude's per-model weekly cap takes through the tray and banner.
+        model = None if bucket == "codex" else (limits.get("limit_name") or bucket)
+        for win, kind, label in _listed_windows(limits):
+            entries.append((win, kind, label, model, at))
+
     windows = []
-    seen = set()
-    # Windows are identified by their length, never by their slot. Codex lists
-    # whichever limits apply in `primary`, then `secondary`: usually the
-    # five-hour window first and the weekly one second — but a plan with only a
-    # weekly limit reports it as `primary` with nothing after it. Seen on this
-    # machine: every record since the account moved to "prolite", and a
-    # stretch of "plus" records on 2026-08-06. Reading the slot as the window
-    # labelled a weekly number "5-hour" and judged its staleness against five
-    # hours instead of a week. Codex's own RateLimitWindow is exactly
-    # {used_percent, window_minutes, resets_at}: the length is the identity.
-    for slot in ("primary", "secondary"):
-        win = limits.get(slot)
-        if not win:
-            continue
-        kind, label = _codex_window_kind(win.get("window_minutes"))
-        if kind in seen:
-            continue          # the same window listed twice: keep the first
-        seen.add(kind)
+    for win, kind, label, model, at in entries:
+        age = int(now - at)
         # Guard 2 rests entirely on the reset time, so the shape of that field
         # decides everything. The invariant: **a window whose reset time we
         # cannot verify is never reported as current.** Without that, an
@@ -539,7 +613,7 @@ def read_codex(now: float | None = None, files=None) -> dict:
             # meaning — a duration instead of an epoch, say — the parse yields
             # 1970, every window reads "rolled over", and the chip goes
             # confidently and permanently blank. Fail the source instead.
-            if abs(float(resets) - now) > RESET_SANITY_S:
+            if not _reset_plausible(float(resets), at, win.get("window_minutes")):
                 return _unavailable(
                     "codex", "Codex reported a reset time that is not a plausible "
                              "date — the rollout format has probably changed")
@@ -568,6 +642,7 @@ def read_codex(now: float | None = None, files=None) -> dict:
             stale_percent=value if withheld else None,
             rolled_over=rolled,
             reset_unknown=reset_unknown,
+            model=model,
             window_minutes=win.get("window_minutes"),
             resets_at=resets_dt.isoformat() if resets_dt else None,
             # Guard 1: each window carries the reading's age and decides for
@@ -582,9 +657,9 @@ def read_codex(now: float | None = None, files=None) -> dict:
         "source": "codex",
         "state": "ok",
         "error": None,
-        "planType": limits.get("plan_type"),
-        "asOf": as_of,
-        "ageSeconds": age,
+        "planType": plan,
+        "asOf": newest_at,
+        "ageSeconds": int(now - newest_at),
         # Source-level summary only: true when *every* window is still current.
         # The render path uses each window's own `trusted`.
         "trusted": all(w["trusted"] for w in windows),

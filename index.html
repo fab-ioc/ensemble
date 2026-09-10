@@ -4248,10 +4248,13 @@ function usageChipPart(src) {
     return `<span class="usage-chip-kind gone" title="${esc(name)} — ${esc(src.error || 'unavailable')}"
       >${esc(short)} n/a</span>`;
   }
-  // Five-hour first, then the weekly windows in the order the source gave them.
+  // Account-wide windows before per-model ones (Claude's Fable cap, a Codex
+  // model's own limit), and the five-hour window first within each, so "a/b"
+  // reads the same way for both agent kinds.
+  const rank = w => (w.model ? 2 : 0) + (w.kind === 'five_hour' ? 0 : 1);
   const wins = (src.windows || [])
     .filter(w => w.percent != null || w.rolledOver || w.resetUnknown)
-    .sort((a, b) => (a.kind === 'five_hour' ? 0 : 1) - (b.kind === 'five_hour' ? 0 : 1));
+    .sort((a, b) => rank(a) - rank(b));
   // A source that reported ok but gave nothing renderable still has to account
   // for itself — vanishing silently from the chip is the one thing it must not
   // do, since that is indistinguishable from an agent kind not being installed.
