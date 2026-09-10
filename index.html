@@ -1544,6 +1544,38 @@
   }
   .dp-spec h3, .dp-spec h4 { color: var(--fg); font-size: var(--fs-300); margin: var(--s-300) 0 4px; }
   .dp-spec code { font-family: var(--font-mono); font-size: var(--fs-100); }
+  /* The header carries identity and state; the body carries content. Anything
+     that is not the NEXT action lives here, so the summary is not pushed below
+     a wall of ten buttons. */
+  .ov-wrap { position: relative; display: inline-flex; }
+  .dp-ov-btn {
+    background: transparent; border: 1px solid transparent; cursor: pointer;
+    color: var(--fg-subtle); font: inherit; font-size: 15px; line-height: 1;
+    width: 28px; height: 28px; border-radius: var(--r-200);
+  }
+  .dp-ov-btn:hover { background: var(--hover); color: var(--fg); }
+  .ov-menu {
+    position: absolute; top: calc(100% + 4px); right: 0; z-index: 70;
+    min-width: 190px; display: flex; flex-direction: column;
+    background: var(--surface-overlay); border: 1px solid var(--border);
+    border-radius: var(--r-300); box-shadow: var(--e-200); padding: var(--s-100);
+  }
+  .ov-menu[hidden] { display: none; }
+  .ov-item {
+    background: transparent; border: 0; text-align: left; width: 100%;
+    font: inherit; font-size: var(--fs-200); color: var(--fg);
+    padding: 7px 10px; border-radius: var(--r-200); cursor: pointer;
+    white-space: nowrap;
+  }
+  .ov-item:hover { background: var(--hover); }
+  .ov-item[disabled] { color: var(--fg-disabled); cursor: not-allowed; }
+  .ov-item[disabled]:hover { background: transparent; }
+  /* Danger is transparent at rest and never sits beside the primary action. */
+  .ov-item.danger { color: var(--c-danger-fg); }
+  .ov-item.danger:hover { background: var(--c-danger-bg); }
+  .ov-rule { height: 1px; background: var(--border); margin: var(--s-100) 0; }
+  .ov-menu span { display: block; }
+  .dp-live-details { border-top: 1px solid var(--border); }
   /* --- Notifications: tasks that need you ------------------------------- */
   /* The bell takes .bar-btn.icon like every other icon control up here; only
      the count badge is its own. A bell with nothing in it says nothing, so
@@ -2571,8 +2603,11 @@ document.body.classList.toggle('detail-mode', DETAIL_MODE);
 
 // Restore the detail-panel width from the previous session. Clamp on load
 // in case the viewport shrank since.
-const DETAIL_W_MIN = 320;
-const detailWMax = () => Math.max(DETAIL_W_MIN, Math.floor(window.innerWidth * 0.8));
+const DETAIL_W_MIN = 360;
+// 80vw left 288px of content on a 1440 screen — one board column. The panel
+// is a companion to the view, not a replacement for it.
+const detailWMax = () =>
+  Math.max(DETAIL_W_MIN, Math.min(720, Math.floor(window.innerWidth * 0.56)));
 {
   const saved = parseInt(localStorage.getItem('cd-detail-w') || '', 10);
   if (Number.isFinite(saved)) {
@@ -2725,9 +2760,11 @@ function agentBadges(r) {
   }).join('');
 }
 
+let detailHeadOverflow = '';
 function detailHead(r, isRoom) {
   return `<div class="dp-head">
       <h2>${esc(detailTitle(r))}</h2>
+      ${detailHeadOverflow || ''}
       ${isRoom && r.roomId ? `<button class="dp-popout" data-room="${esc(r.roomId)}" title="Pop out to a floating window">⧉ Pop out</button>` : ''}
       <button class="dp-close" title="Close (Esc)">×</button>
     </div>`;
@@ -2857,9 +2894,50 @@ function detailActions(r, isLive, isRoom, isOrphan) {
     // The wrapping span carries the tooltip: a disabled button shows none of
     // its own, and the reason is the whole point of disabling it.
     const agentsBtn = `<span title="${esc(agentsWhy)}"><button class="agents-btn" data-room="${esc(r.roomId)}"${isLive ? ' disabled' : ''} title="${esc(agentsWhy)}">👥 Agents</button></span>`;
-    return `<div class="dp-actions"><div class="actions">${lifecycle}${termsBtn}${pauseBtn}${pinBtn}${renameBtn}${agentsBtn}${moveBtn}${autoBtn}${finderBtn}${ijBtn}${themeBtn}</div></div>`;
+    // A draft's Start lives in the summary, where it reads as the next step
+    // rather than as one of ten equal options. Repeating it here is the
+    // two-primaries bug.
+    const contextual = r.draft ? '' : lifecycle;
+    return contextual ? `<div class="dp-actions"><div class="actions">${contextual}</div></div>` : '';
   }
   return `<div class="dp-actions">${actionsCell(r, isLive)}</div>`;
+}
+
+// Everything that is not the next action. Words, not emoji: the labels were
+// already there, the pictures were decoration.
+function detailOverflow(r, isLive, isRoom) {
+  if (!isRoom || !r.roomId) return '';
+  const cwd = r.cwd || '';
+  const current = r.currentTheme || '';
+  const items = [];
+  if (isLive) {
+    items.push(`<button class="ov-item dp-terms-btn">Show terminals</button>`);
+    items.push(`<button class="ov-item dp-pause-btn" data-room="${esc(r.roomId)}" data-status="${esc(r.status || '')}">${r.status === 'paused' ? 'Resume' : 'Pause'}</button>`);
+  }
+  items.push(`<button class="ov-item pin-btn ${r.pinned ? 'is-pinned' : ''}" data-sid="${esc(r.sessionId)}" data-pinned="${r.pinned ? 1 : 0}">${r.pinned ? 'Unpin' : 'Pin'}</button>`);
+  items.push(`<button class="ov-item rename-btn" data-sid="${esc(r.sessionId)}">Rename</button>`);
+  items.push(`<button class="ov-item auto-btn" data-sid="${esc(r.sessionId)}">Suggest a name</button>`);
+  const agentsWhy = isLive
+    ? 'This task is running — agents cannot be reassigned under a live task. End it first, then reassign.'
+    : 'Change who is assigned to this task and which model each one runs';
+  items.push(`<span title="${esc(agentsWhy)}"><button class="ov-item agents-btn" data-room="${esc(r.roomId)}"${isLive ? ' disabled' : ''}>Agents and models</button></span>`);
+  items.push(`<button class="ov-item moveproj-btn" data-sid="${esc(r.sessionId)}">Move to project</button>`);
+  if (cwd) {
+    items.push(`<button class="ov-item finder-btn" data-path="${esc(cwd)}">Open in ${esc(FM())}</button>`);
+    items.push(`<button class="ov-item ij-btn" data-sid="${esc(r.sessionId)}">Open in editor</button>`);
+  }
+  if (feat('themes') && cwd) {
+    items.push(`<button type="button" class="ov-item theme-dd-trigger" data-pid="" data-cwd="${esc(cwd)}" data-current="${esc(current)}">${current ? 'Theme: ' + esc(current) : 'Theme…'}</button>`);
+  }
+  // Destructive last and set apart, never adjacent to the primary action.
+  if (!isLive) {
+    items.push(`<div class="ov-rule"></div>`);
+    items.push(`<button class="ov-item danger room-delete" data-room="${esc(r.roomId)}">Delete task</button>`);
+  }
+  return `<span class="ov-wrap">
+    <button class="dp-ov-btn" title="More actions" aria-haspopup="true">⋯</button>
+    <span class="ov-menu" hidden>${items.join('')}</span>
+  </span>`;
 }
 
 // The product owner sets a task's priority here: five arrows, the current one
@@ -3067,6 +3145,7 @@ function renderDetail() {
 
   if (liveEmbed) {
     const tab = issueTab(r);
+    detailHeadOverflow = detailOverflow(r, isLive, isRoom);
     panel.innerHTML =
       `<div class="dp-live">${detailHead(r, isRoom)}${detailMeta(r, isLive, isRoom, now)}`
       + `${detailActions(r, isLive, isRoom, isOrphan)}${detailPriority(r, isRoom)}${detailSummary(r, isRoom)}${issueTabsHtml(r)}</div>`
@@ -3074,9 +3153,14 @@ function renderDetail() {
           // A live task's Activity IS its session: the balloon, embedded, so
           // you can answer it here rather than in another window.
           ? `<iframe class="dp-session" data-room="${esc(r.roomId)}" src="/session?id=${encodeURIComponent(r.roomId)}&embed=1" title="session" allow="clipboard-read; clipboard-write"></iframe>`
-          : `<div class="dp-tabbody">${issueTabBody(r, sid, isLive, isRoom, true)}</div>`);
+          : `<div class="dp-tabbody">${issueTabBody(r, sid, isLive, isRoom, true)}</div>`)
+      // Details belong to every task, not only the stopped ones. Who is on a
+      // running collaboration and which model each runs is precisely what you
+      // open a live task to find out.
+      + `<div class="dp-live-details">${detailPriority(r, isRoom)}${detailInfo(r)}</div>`;
     return;
   }
+  detailHeadOverflow = detailOverflow(r, isLive, isRoom);
   panel.innerHTML =
     detailHead(r, isRoom)
     + detailMeta(r, isLive, isRoom, now)
@@ -6223,6 +6307,25 @@ function closeFiltersMenu() {
 }
 
 document.addEventListener('click', (ev) => {
+  const ovBtn = ev.target.closest('.dp-ov-btn');
+  if (ovBtn) {
+    ev.stopPropagation();
+    const m = ovBtn.parentElement.querySelector('.ov-menu');
+    if (m) m.hidden = !m.hidden;
+    return;
+  }
+  const ovItem = ev.target.closest('.ov-item');
+  if (ovItem) {
+    // Close, but do NOT stop propagation: the item's own handler is what
+    // actually does the work, and it lives further down this same listener
+    // chain. Swallowing the event here would give a menu of dead buttons.
+    const m = ovItem.closest('.ov-menu');
+    if (m) m.hidden = true;
+  } else {
+    document.querySelectorAll('.ov-menu:not([hidden])').forEach(m => {
+      if (!ev.target.closest('.ov-wrap')) m.hidden = true;
+    });
+  }
   // Issue view: tab switch. The panel's signature includes the tab, so this
   // re-renders rather than fighting the refresh loop.
   const itab = ev.target.closest('.dp-tab[data-itab]');
