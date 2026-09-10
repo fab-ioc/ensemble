@@ -157,6 +157,17 @@ Two techniques that work here, both learned the hard way:
 - **Overflow: compare `scrollWidth` to the viewport**, and remember that content inside a horizontal
   scrollport (the board) is *supposed* to extend past it. A 1px difference is usually the scrollbar,
   not a defect.
+- **`getComputedStyle` lies while anything is transitioning.** `main` and `#sidebar` both animate, so
+  once you toggle classes to force a state you are reading the animation, not the cascade — a computed
+  `padding-left: 0px` was observed while every matching rule said `248px`. When you need to know *which
+  rule wins*, walk `document.styleSheets` and collect every rule where `el.matches(r.selectorText)`,
+  reporting `{selector, value, media, matchMedia(media).matches}`. Match against the **whole**
+  `selectorText` — `split(',')[0]` silently drops comma lists. And take baselines from a **fresh page
+  load**; a page you have already poked has transitions in flight and every reading is fiction.
+- **Check the cascade, not just the specificity.** A media block placed *above* the base rule it needs
+  to override loses on source order at equal specificity. This shipped once as a drawer that got its
+  overlay but not its scrim — an overlay you cannot dismiss by clicking beside it, which measured as a
+  pass on every metric except the one nobody thought to check.
 
 ### Contrast
 
@@ -248,11 +259,18 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
    reload, which is safe *because* the chips show what is active — the menu hides the controls, never
    the state. If the chips are ever removed, persistence must go with them, or the user returns to a
    list silently hiding rows with nothing on screen saying why.
-5. **One badge per question.** `Needs you` has a count, `Active` has a count, a project has a count. No
+5. **Never show an absence without its reason.** Whenever the UI shows less than everything, the cause
+   is on screen next to the gap — a dismissable chip for each active filter, `+ N older` under an aged
+   Done column, and an empty tab that says what would fill it (*"No branch yet — nothing has run."*).
+   A gap with no visible cause is read as a bug, and it is the single most common navigation failure:
+   a task looks like it vanished when in fact something is hiding it. This rule generalises three
+   separate cases; treat any new one the same way.
+
+6. **One badge per question.** `Needs you` has a count, `Active` has a count, a project has a count. No
    other number in the chrome.
-6. **Colour is never the only signal.** Every lozenge is a word; every dot has a chip beside it. The
+7. **Colour is never the only signal.** Every lozenge is a word; every dot has a chip beside it. The
    design must survive being printed in grey.
-7. **A card never drops a signal to fit.** Board columns never wrap and never shrink below 248px;
+8. **A card never drops a signal to fit.** Board columns never wrap and never shrink below 248px;
    horizontal scroll is the escape valve. Page gutter 24px, 16px below 900px.
 
 ### Attention vs. columns — a boundary that will decay if you let it
