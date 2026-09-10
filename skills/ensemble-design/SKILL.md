@@ -188,6 +188,18 @@ Two techniques that work here, both learned the hard way:
   to override loses on source order at equal specificity. This shipped once as a drawer that got its
   overlay but not its scrim — an overlay you cannot dismiss by clicking beside it, which measured as a
   pass on every metric except the one nobody thought to check.
+- **Check tokens by their computed value, never by their text.** The balloon and the file view once
+  computed `--accent` as `a pale accent erased it */ --c-neutral-bg: #F1F2F4`: a script copying tokens
+  between pages read the tail of a comment (`/* was --accent: a pale accent erased it */`) as a
+  declaration. Every textual check passed. `--accent:` was "declared", the swallowed `--c-neutral-bg:`
+  still appeared as text, and `--accent: #0C66E4` was present in the balloon even though a later line
+  overrode it. Only `getComputedStyle(document.documentElement).getPropertyValue('--accent')` showed the
+  garbage, and only painting a button showed the result: white text on a transparent background, in
+  the default theme. To compare pages, read every token's computed value on each page in each theme and
+  diff it against `index.html`. To check a control, paint it and read its colours. Any tool that reads
+  a token block must strip comments and take the **last** declaration of each name.
+- **Never write a custom-property name followed by a colon inside a comment.** Write "was the accent",
+  not "was --accent:". It is a trap for every tool that reads CSS as text, including a plain grep.
 
 ### Contrast
 
