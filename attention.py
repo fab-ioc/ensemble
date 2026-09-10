@@ -17,10 +17,14 @@ answers *can it continue on its own?*; the reason answers *why not?*:
     Still running, but its own output says it cannot get any further: a usage or
     credit limit, an expired login, an authentication failure. The line is quoted.
 ``waiting_for_you``
-    The agent asked a question, is sitting on a permission prompt, or the room
-    is waiting on the human (including a collaboration paused at its hop limit).
+    The agent asked a question, is sitting on a permission prompt, reported
+    that it finished (``ensemble_report``) or sent something to the user that
+    nobody has answered, or the room is waiting on the human (including a
+    collaboration paused at its hop limit).
 ``stalled``
-    Alive, was asked to do something, isn't working, and never came back.
+    Alive, was asked to do something — woken by a message, or the owner of a
+    team at launch — isn't working, and never answered anyone. A one-agent
+    task idle at its prompt has only finished its turn, and is not stalled.
 
 Reading a terminal
 ------------------
@@ -84,6 +88,11 @@ STALL_SECONDS_DEFAULT = 900
 # A floor on terminal silence before anything is called stalled, so an agent
 # caught mid-turn (status file a second out of date) is never accused.
 _MIN_QUIET = 60
+
+# How long after being rung a one-agent task's terminal must still be printing
+# to count as having answered there. Typing the doorbell prints at once; a turn
+# spent on the ask keeps the screen moving for longer than this.
+_ANSWER_AFTER = 5
 
 # How long a death stays newsworthy. Stopping a task clears its record — that is
 # the "I've dealt with it" gesture — but a task nobody ever touches would sit in
@@ -338,10 +347,48 @@ _SUMMARY_CACHE: dict[str, tuple[float, dict]] = {}
 _CACHE_LOCK = threading.Lock()
 
 
+def _open_to_human(room: dict, msgs: list) -> dict | None:
+    """The newest thing an agent put to the human that no human has answered
+    in chat: a report of completed / question / blocked, or a message sent
+    to "user". None once the human has spoken since, or once the agent's own
+    later report says it is merely giving an update (it is working again).
+
+    Teammate chatter after it does not answer it — the redesign pair sent
+    "ready to merge" to the user, then a thank-you to the designer, and the
+    merge was still waiting on a human."""
+    agents = {p.get("identity") for p in room.get("participants", [])
+              if p.get("kind") == "agent"}
+    rep = room.get("lastReport") or {}
+    for m in reversed(msgs):
+        frm = m.get("from", "")
+        if frm == "user":
+            return None
+        if frm not in agents:
+            continue
+        if m.get("kind") == "report":
+            kind = m.get("reportKind", "")
+            if kind == "update":
+                return None
+            text = rep.get("text", "") if rep.get("messageId") == m.get("id") else m.get("text", "")
+        elif (m.get("to") or "") == "user":
+            kind, text = "message", m.get("text", "")
+        else:
+            continue
+        return {"from": frm, "ts": m.get("ts", 0), "kind": kind,
+                "text": " ".join((text or "").split())[:400]}
+    return None
+
+
 def _summarize(room: dict) -> dict:
     """The few room fields attention needs, without its whole message log."""
     msgs = room.get("messages") or []
     last = msgs[-1] if msgs else {}
+    cr = _d.chatroom
+    rang = last.get("rang")
+    if last and not isinstance(rang, list):
+        # A message from before the wake rules recorded who they woke.
+        rang = cr.wake_targets(room, last.get("from", ""), last.get("to", ""),
+                               last.get("text", ""))
     return {
         "id": room.get("id", ""),
         "title": room.get("title", ""),
@@ -354,13 +401,17 @@ def _summarize(room: dict) -> dict:
         "projectId": room.get("projectId", ""),
         "createdAt": room.get("createdAt", 0),
         "updatedAt": room.get("updatedAt", 0),
+        "mode": room.get("mode", ""),
+        "owners": cr.owners(room),
         "participants": [
-            {k: p.get(k) for k in ("identity", "kind", "agent",
+            {k: p.get(k) for k in ("identity", "kind", "agent", "role",
                                    "ptyId", "sessionId", "lastExit")}
             for p in room.get("participants", [])
         ],
         "lastMessage": {"from": last.get("from", ""), "to": last.get("to", ""),
-                        "text": (last.get("text") or "")[:400], "ts": last.get("ts", 0)},
+                        "text": (last.get("text") or "")[:400], "ts": last.get("ts", 0),
+                        "rang": rang or []},
+        "openToHuman": _open_to_human(room, msgs),
     }
 
 
@@ -425,13 +476,17 @@ def _evidence(part: dict, statuses: dict[str, str]) -> dict:
     pty_id = (part.get("ptyId") or "").strip()
     sess = ptyrun.get(pty_id) if pty_id else None
     alive = bool(sess and sess.alive())
-    tail, idle, death = "", None, None
+    tail, idle, death, submitted = "", None, None, 0.0
     if alive:
         tail, scan = _analyse_live(sess)
         try:
             idle = sess.info().get("idleSeconds")
         except Exception:
             idle = None
+        try:
+            submitted = float(sess.last_submit() or 0)
+        except Exception:
+            submitted = 0.0
     else:
         scan = None
     if not alive and pty_id:
@@ -449,7 +504,7 @@ def _evidence(part: dict, statuses: dict[str, str]) -> dict:
             scan = analyse(tail)
     return {
         "ptyId": pty_id, "alive": alive, "tail": tail, "idleSeconds": idle,
-        "death": death, "scan": scan or {"block": None, "busy": False, "prompt": False},
+        "lastSubmit": submitted, "death": death, "scan": scan or {"block": None, "busy": False, "prompt": False},
         "claudeStatus": statuses.get((part.get("sessionId") or "").strip(), ""),
     }
 
@@ -470,13 +525,18 @@ def _owed_since(room: dict, identity: str) -> tuple[float, str]:
     last = room.get("lastMessage") or {}
     sender = last.get("from", "")
     if not sender:
-        # Nothing has ever been said in this room: the spec was the ask.
+        # Nothing has ever been said in this room. In a one-agent task the
+        # human drives the agent through its terminal, and an agent idle at
+        # its prompt has simply finished its turn — not an alarm. In a team
+        # the spec was the ask, but only of the owner: a reviewer waits for
+        # a deliverable by design.
+        if room.get("mode") == "solo" or identity not in (room.get("owners") or []):
+            return 0.0, ""
         return float(room.get("createdAt") or 0), "launch"
     if sender == identity:
         return 0.0, ""             # it spoke last — the ball is elsewhere
-    to = (last.get("to") or "").strip().lower()
-    if to and to not in ("all", "everyone", "*") and to != identity:
-        return 0.0, ""             # somebody else was addressed
+    if identity not in (last.get("rang") or []):
+        return 0.0, ""             # it was never woken, so nothing was asked of it
     return float(last.get("ts") or 0), "message"
 
 
@@ -532,6 +592,25 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
 
     if status == "busy" or ev["scan"]["busy"]:
         return None                # thinking is not a problem, however long
+
+    # It put something to a human — a report, a question, "ready to merge" —
+    # and nobody has answered. That is the human's move, never a stall. A
+    # one-agent task is answered in its terminal as often as in chat, so for
+    # one anything submitted to it since counts as the answer.
+    put = room.get("openToHuman")
+    if put and put.get("from") == identity and not (
+            room.get("mode") == "solo" and ev.get("lastSubmit", 0) > float(put.get("ts") or 0)):
+        q = put.get("text", "")
+        if put["kind"] == "blocked":
+            return ("blocked", f"{who} reported it is blocked and needs help: “{q}”",
+                    {"quote": q, "cause": "reported"})
+        if put["kind"] == "completed":
+            return ("waiting_for_you", f"{who} reported the work is finished: “{q}”",
+                    {"quote": q})
+        if put["kind"] == "question":
+            return ("waiting_for_you", f"{who} asked: “{q}”", {"quote": q})
+        return ("waiting_for_you", f"{who} is waiting on your reply: “{q}”", {"quote": q})
+
     if room.get("status") != "active":
         return None                # the room is waiting on the human, not on it
     asked, how = _owed_since(room, identity)
@@ -539,6 +618,12 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
         return None
     idle = ev["idleSeconds"]
     waited = now - asked
+    if room.get("mode") == "solo" and idle is not None and waited - idle > _ANSWER_AFTER:
+        # A one-agent task answers in its terminal: it kept printing well
+        # after it was asked, so it worked on it and answered — just not in
+        # chat. (The doorbell's own keystrokes print at the moment of asking,
+        # which is why "printed since" needs a margin.)
+        return None
     # What the threshold measures has to match what the reason claims, and the
     # two asks are not alike. A message has a timestamp, so the wait is real
     # elapsed time. A launch was a single event that may be days old: measuring

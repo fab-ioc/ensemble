@@ -782,10 +782,10 @@ def role_charter(role: str, teammates: list) -> str:
             f"actual code or running tests, and reply with a concise, structured critique "
             f"— what is correct, what is wrong, what is missing, and what to change. If "
             f"anyone asks you to build something, decline and redirect: {eng} builds, you "
-            f"review. When the product owner posts to the whole team, do NOT answer first "
-            f"— let {eng} respond and produce; weigh in only once there is a deliverable "
-            f"to review, or when the product owner addresses you directly. Never start "
-            f"work on the task ahead of {eng}."
+            f"review. You are woken only when someone addresses you or @mentions you — "
+            f"a message to the whole team goes to {eng}, who produces; weigh in once "
+            f"there is a deliverable to review. Never start work on the task ahead of "
+            f"{eng}."
         )
     if role == "planner":
         return (
@@ -806,6 +806,12 @@ def role_charter(role: str, teammates: list) -> str:
         "Collaborate as an equal partner: share findings and critique, and converge "
         "on the best solution together."
     )
+
+
+SOLO_REPORT_NOTE = (
+    "\n\n---\nWhen you finish this task, or get blocked and need help, report it "
+    "with the ensemble_report tool (kind completed | blocked | question) — it "
+    "reaches the project's PO, who otherwise cannot see your reply.")
 
 
 def collab_briefing(ident: str, role: str, teammates: list, task: str,
@@ -830,6 +836,11 @@ def collab_briefing(ident: str, role: str, teammates: list, task: str,
         ("The same MCP server also offers the ensemble_* task tools (list/read/"
          "create/amend/start/stop/delete tasks in this project); the 'ensemble' "
          "skill explains how to use them."),
+        ("A message to everyone wakes only the task's owner (the engineer); to "
+         "wake a reviewer or another specialist, address it or @mention it. When "
+         "the task is finished, or the team is blocked and needs help, the owner "
+         "reports it with ensemble_report (kind completed | blocked | question) — "
+         "that reaches the project's PO."),
     ]
     if role == "reviewer":
         eng = next((t["identity"] for t in teammates if t.get("role") == "engineer"), "the engineer")
@@ -938,7 +949,10 @@ def load_projects() -> list[dict]:
                 path = os.path.normpath(code) if code and os.path.isdir(code) else home
                 _add({"id": meta["id"], "name": meta.get("name") or d.name,
                       "path": path, "home": home, "isGit": path_is_git(path),
-                      "createdAt": meta.get("createdAt", 0)})
+                      "createdAt": meta.get("createdAt", 0),
+                      # The task that is this project's product owner: every
+                      # other task reports into it (ensemble_report).
+                      "poRoomId": (meta.get("poRoomId") or "").strip()})
     except OSError:
         pass
     try:
@@ -1000,6 +1014,41 @@ def register_project(path: str, name: str = "") -> tuple[bool, dict, str]:
         except OSError:
             pass
     return True, proj, "ok"
+
+
+def set_project_po(project_id: str, room_id: str) -> tuple[bool, str]:
+    """Name the task (room) that is a project's PO, or clear it with "".
+
+    Stored as ``poRoomId`` in the project's own ``project.json`` in its home —
+    the PO belongs to the project's data, so it travels with a backup or a
+    clone of the projects root. Only that one key is touched."""
+    proj = find_project(project_id)
+    if proj is None:
+        return False, "no_such_project"
+    rid = (room_id or "").strip()
+    if rid and chatroom.get_room(rid) is None:
+        return False, "no_such_room"
+    home = project_home(proj, create=True)
+    pj = Path(home) / "project.json"
+    try:
+        meta = json.loads(pj.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        meta = None
+    if not isinstance(meta, dict):
+        meta = {k: proj.get(k) for k in ("id", "name", "createdAt")}
+    if meta.get("id") != proj["id"]:
+        return False, "project_json_belongs_to_another_project"
+    if rid:
+        meta["poRoomId"] = rid
+    else:
+        meta.pop("poRoomId", None)
+    try:
+        tmp = pj.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        tmp.replace(pj)
+    except OSError as e:
+        return False, f"cannot write {pj}: {e}"
+    return True, "ok"
 
 
 def unregister_project(project_id: str) -> bool:
@@ -1242,6 +1291,7 @@ def build_projects() -> dict:
     for p in projects_reg:
         groups[p["id"]] = {"id": p["id"], "name": p["name"], "path": p["path"],
                            "home": project_home(p, create=False),
+                           "poRoomId": p.get("poRoomId", ""),
                            "isGit": p.get("isGit", False), "registered": True,
                            "sessions": [], "live": 0, "waiting": 0, "updatedAt": 0}
     UNASSIGNED = "__unassigned__"
@@ -3302,7 +3352,7 @@ WORKFLOW_LABELS = {"backlog": "Backlog", "todo": "To do",
 WORKFLOW_CHOICES = ", ".join(WORKFLOW_NAMES)
 # Only a ProductOwner may accept work. Assigned by the human alone — see
 # normalize_agent_specs, which refuses the role from an agent-side caller.
-PRODUCT_OWNER_ROLE = "productowner"
+PRODUCT_OWNER_ROLE = chatroom.PRODUCT_OWNER_ROLE
 OWNER_ONLY_WORKFLOW = ("done",)
 
 
@@ -3342,8 +3392,7 @@ def is_product_owner(room: dict, identity: str) -> bool:
     question by claiming to be someone else. Combined with the role being
     unassignable from the agent side, that makes the check a real one rather
     than an honour system."""
-    part = chatroom.participant(room or {}, identity) or {}
-    return (part.get("role") or "").strip().lower().replace(" ", "") == PRODUCT_OWNER_ROLE
+    return chatroom.is_product_owner_part(chatroom.participant(room or {}, identity) or {})
 
 
 def normalize_agent_specs(agent_list, human: bool = False) -> tuple[list[tuple[str, str, str]], str]:
@@ -4269,15 +4318,23 @@ class Handler(BaseHTTPRequestHandler):
         recipients = (result or {}).get("recipients") or []
         if not recipients:
             return
-        room = chatroom.get_room(room_id)
-        if not room:
-            return
         sender = (result.get("message") or {}).get("from", "your partner")
         wake = (f"[relay] New message from '{sender}' in your shared room. "
                 f"Use the chat_read tool to read it, then reply with chat_send "
                 f"— to your partner, or to \"user\" if you need {operator_name()}'s "
                 f"input.")
-        for ident in recipients:
+        self._ring(room_id, recipients, wake)
+
+    def _ring(self, room_id: str, idents: list, wake: str) -> list[str]:
+        """Type ``wake`` into each named agent's terminal and submit it — the
+        one thing that wakes an agent, and every wake re-sends its whole
+        conversation, so callers ring as few as they can. Returns the
+        identities actually rung (a stopped agent cannot be)."""
+        room = chatroom.get_room(room_id)
+        if not room:
+            return []
+        rung = []
+        for ident in idents:
             part = next((x for x in room["participants"]
                          if x.get("identity") == ident), None)
             if not part:
@@ -4288,14 +4345,32 @@ class Handler(BaseHTTPRequestHandler):
                 sess = ptyrun.get(pty_id)
                 if sess and sess.alive():
                     sess.send_line(wake)   # type + discrete Enter to submit
+                    rung.append(ident)
                 continue
             # Legacy visible-terminal session → keystroke injection.
             pid = self._resolve_live_pid(part)
             if pid:
                 try:
                     BACKEND.send_text(int(pid), wake, submit=True)
+                    rung.append(ident)
                 except (OSError, ValueError):
                     pass
+        return rung
+
+    def _ring_report(self, po_room_id: str, result: dict, task_id: str,
+                     task_title: str, reporter: str, kind: str, text: str) -> list[str]:
+        """Wake a PO with a task's report. The doorbell carries the report
+        itself, on one line — a PO that is a one-agent task has no chat_read
+        to fetch it with, and a multi-line paste lands unsubmitted in a TUI."""
+        recipients = (result or {}).get("recipients") or []
+        if not recipients:
+            return []
+        flat = " ".join((text or "").split())
+        if len(flat) > 700:
+            flat = flat[:700] + "…"
+        wake = (f"[report] {kind} from task '{task_title}' ({task_id}, {reporter}): "
+                f"{flat} — read it in full with ensemble_get_task taskId={task_id}.")
+        return self._ring(po_room_id, recipients, wake)
 
     def _mcp_url(self) -> str:
         port = self.server.server_address[1]
@@ -4416,7 +4491,10 @@ class Handler(BaseHTTPRequestHandler):
                          if p.get("kind") == "agent" and p["identity"] != ident]
             briefing = collab_briefing(ident, part.get("role", ""), teammates, task)
         else:
-            briefing = task  # solo: the task is just the first prompt
+            # solo: the task is just the first prompt, plus how to report —
+            # a one-agent task has no chat, so without the tool its finished
+            # work is only visible to whoever is watching this terminal.
+            briefing = task + SOLO_REPORT_NOTE
         ag = agents.get_agent(agent_key)
         if hasattr(ag, "ensure_trusted"):
             ag.ensure_trusted(cwd)
@@ -4721,6 +4799,10 @@ class Handler(BaseHTTPRequestHandler):
             elif status == "paused":
                 note = ("delivered, but the room reached its turn limit and is "
                         "paused for human review — stop and wait.")
+            if to.lower() in chatroom.BROADCAST and not result["recipients"]:
+                note += (" No teammate was woken: a message to everyone wakes only "
+                         "the task's owner. To wake a reviewer or another "
+                         "specialist, address it with `to` or @mention it.")
             return ok({"content": [{"type": "text", "text": note}],
                        "isError": False})
         if name == "chat_read":
@@ -4891,6 +4973,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
             assign_session_project(sid, pid)
             self._send_json(200, {"ok": True})
+            return
+        if p == "/api/projects/po":
+            # {projectId, roomId}: name the task that is the project's PO
+            # (roomId "" clears it). Every other task reports into it.
+            ok, msg = set_project_po(data.get("projectId", ""), data.get("roomId", ""))
+            code = {"no_such_project": 404, "no_such_room": 404}.get(msg, 400)
+            self._send_json(200 if ok else code, {"ok": ok} if ok else {"error": msg})
             return
         if p == "/api/projects/delete":
             pid = (data.get("projectId") or "").strip()
