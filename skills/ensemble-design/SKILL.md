@@ -141,7 +141,24 @@ Workspace and Changes tab heights to the bar's height. Use the token.
 
 ---
 
-## 3. Contrast — measure, don't eyeball
+## 3. Measure, don't eyeball
+
+**A screenshot is not evidence.** Every visual defect found in this redesign looked like "a bit off" in
+a screenshot and only became a bug when the DOM was asked for numbers: a sticky column header painting
+over the first card's title read as *missing titles*; a priority icon taking a whole row read as
+*loose spacing*; an avatar failing AA by 0.12 was invisible entirely. Ask the DOM.
+
+Two techniques that work here, both learned the hard way:
+
+- **Responsive: use an `<iframe>`, not a window resize.** Resizing the browser window in this
+  environment leaves the layout viewport untouched — `innerWidth` does not change — so media queries
+  never fire and you measure the desktop rules at every width without knowing it. An iframe has its own
+  viewport, so `matchMedia` inside it is real. Check the boundary from both sides (901 and 899).
+- **Overflow: compare `scrollWidth` to the viewport**, and remember that content inside a horizontal
+  scrollport (the board) is *supposed* to extend past it. A 1px difference is usually the scrollbar,
+  not a defect.
+
+### Contrast
 
 **Every colour pair must be measured before it is written down.** "It looks fine" is how a 4.38:1
 avatar got recorded as checked; it failed AA by 0.12, invisible by eye.
