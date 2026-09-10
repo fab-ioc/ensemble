@@ -62,6 +62,26 @@ Copy from `index.html`'s `:root`. Never introduce a raw hex in a rule. If you ne
 here, you are either misusing an existing meaning or the system needs a new token — raise it, don't
 inline it.
 
+### Theme — light unless the user chooses otherwise
+
+**The dashboard is light by default. It does not follow the OS setting unless the user picks System.**
+The product owner approved a light design, and for four slices the build silently went dark on every
+machine set to dark mode — including his and both agents' — so nobody saw the approved design until
+his first look, and it looked nothing like the mockup.
+
+- Light tokens live on bare `:root`. Dark tokens live **once**, under `:root[data-theme="dark"]`.
+- The choice (Light / Dark / System) is stored in `localStorage['cd-theme']`. A small script in
+  `<head>`, before first paint, resolves System through `matchMedia` and sets `data-theme` on `<html>`.
+- **Never key a colour off `@media (prefers-color-scheme)` directly.** It needs a second copy of the
+  dark block, and a build that follows the OS by default is exactly how this one drifted from its
+  mockup.
+- `index.html`, `session.html` and `fileview.html` read the same key and listen for `storage` events,
+  so the dashboard, the balloon and the file view never disagree.
+- Wrap storage access in `try/catch`. If the script fails or storage is blocked, no `data-theme` is
+  set and `:root` gives light — the safe default.
+- **Review in both themes, and the owner's first.** Four slices were built and reviewed only in dark
+  because both agents' environments were dark-mode.
+
 ### Neutrals
 
 ```
