@@ -1368,12 +1368,92 @@ def read_workspace_file(path: str) -> tuple[int, dict]:
                  "size": size, "truncated": truncated}
 
 
-def git_status(path: str) -> tuple[int, dict]:
+def _git_out(root: str, *args: str, timeout: int = 8) -> str:
+    """stdout of ``git -C root <args>``, stripped; "" when git fails."""
+    try:
+        out = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return (out.stdout or "").strip() if out.returncode == 0 else ""
+
+
+def git_branch_base(root: str) -> dict:
+    """What a task's branch is compared against: the branch it was cut from.
+
+    A task works on its own branch and commits as it goes, so its changes are
+    everything since it left the main line, committed or not — not just what is
+    uncommitted right now. The base is the first of main, master or the
+    remote's default branch that exists and is not the branch itself; the diff
+    is taken from the merge-base, so work landed on main since does not show
+    up as this task's. A repo sitting on its main branch has no base, and its
+    changes are the uncommitted ones."""
+    branch = _git_out(root, "rev-parse", "--abbrev-ref", "HEAD")
+    remote_head = _git_out(root, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+    for cand in ("main", "master", remote_head):
+        if not cand or cand == branch:
+            continue
+        if not _git_out(root, "rev-parse", "--verify", "--quiet", cand + "^{commit}"):
+            continue
+        mb = _git_out(root, "merge-base", "HEAD", cand)
+        if not mb:
+            continue
+        ahead = _git_out(root, "rev-list", "--count", mb + "..HEAD")
+        return {"branch": branch, "base": cand, "mergeBase": mb,
+                "ahead": int(ahead) if ahead.isdigit() else 0}
+    return {"branch": branch, "base": "", "mergeBase": "", "ahead": 0}
+
+
+def _git_branch_files(root: str, mb: str) -> list[dict] | None:
+    """Files that differ between the merge-base and the working tree, plus
+    untracked ones: a branch's whole change, committed and not."""
+    try:
+        out = subprocess.run(["git", "-C", root, "diff", "--name-status", "-z", mb],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
+        if out.returncode != 0:
+            return None
+        parts = (out.stdout or "").split("\x00")
+        files, i = [], 0
+        while i < len(parts):
+            code = parts[i]
+            if not code:
+                i += 1
+                continue
+            if code[0] in ("R", "C") and i + 2 < len(parts):   # old path, then new path
+                files.append({"path": parts[i + 2], "status": code[0]})
+                i += 3
+                continue
+            if i + 1 < len(parts):
+                files.append({"path": parts[i + 1], "status": code[0]})
+            i += 2
+        un = subprocess.run(["git", "-C", root, "ls-files", "--others", "--exclude-standard", "-z"],
+                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
+        seen = {f["path"] for f in files}
+        files += [{"path": p, "status": "?"} for p in (un.stdout or "").split("\x00") if p and p not in seen]
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return files
+
+
+def git_status(path: str, branch: bool = False) -> tuple[int, dict]:
     if not path or not workspace_access_ok(path):
         return 403, {"error": "path_not_allowed"}
     root = git_root(path)
     if not root or not path_is_git(root):
         return 200, {"root": root, "isGit": False, "files": []}
+    if branch:
+        info = git_branch_base(root)
+        if info["mergeBase"]:
+            files = _git_branch_files(root, info["mergeBase"])
+            if files is None:
+                return 500, {"error": "git_diff_failed"}
+            files.sort(key=lambda f: f["path"].lower())
+            return 200, {"root": root, "isGit": True, "files": files, **info}
+        # On the main line itself: the branch's change is what is uncommitted.
+        code, payload = git_status(path)
+        if code == 200:
+            payload.update(info)
+        return code, payload
     files = []
     try:
         out = subprocess.run(["git", "-C", root, "status", "--porcelain=v1", "-z"],
@@ -1444,13 +1524,16 @@ def git_roots(path: str, depth: int = 3) -> tuple[int, dict]:
     return 200, {"roots": found}
 
 
-def git_diff(path: str, file: str) -> tuple[int, dict]:
+def git_diff(path: str, file: str, branch: bool = False) -> tuple[int, dict]:
     if not path or not workspace_access_ok(path):
         return 403, {"error": "path_not_allowed"}
     root = git_root(path)
     if not root or not path_is_git(root):
         return 200, {"root": root, "isGit": False, "diff": ""}
-    argv = ["git", "-C", root, "diff", "HEAD", "--"]
+    # A branch diff runs from where the branch left the main line to the
+    # working tree, so it carries the commits and the uncommitted edits alike.
+    against = (git_branch_base(root)["mergeBase"] if branch else "") or "HEAD"
+    argv = ["git", "-C", root, "diff", against, "--"]
     if file:
         argv.append(file)
     try:
@@ -3945,13 +4028,13 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/git/status":
             q = parse_qs(u.query)
             path = (q.get("path", [""])[0] or "").strip()
-            self._send_json(*git_status(path))
+            self._send_json(*git_status(path, q.get("branch", [""])[0] == "1"))
             return
         if p == "/api/git/diff":
             q = parse_qs(u.query)
             path = (q.get("path", [""])[0] or "").strip()
             fpath = (q.get("file", [""])[0] or "").strip()
-            self._send_json(*git_diff(path, fpath))
+            self._send_json(*git_diff(path, fpath, q.get("branch", [""])[0] == "1"))
             return
         if p == "/api/git/roots":
             q = parse_qs(u.query)
