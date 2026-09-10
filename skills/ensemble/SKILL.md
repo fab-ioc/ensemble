@@ -79,6 +79,13 @@ project has no PO, the report goes to the user instead.
 - Use `ensemble_update_task` to move your own task to `inreview` as well when
   you hand the work back.
 
+**If you are the PO**, the hub also checks your project's tasks on a timer
+(every 5 minutes by default) and wakes you with a `[digest]` only when
+something changed: a task's status, board column or attention state, a new
+report, or new commits on its branch. No digest means nothing changed, so you
+don't need to poll. The digest lists the tasks by id; read one in full with
+`ensemble_get_task`.
+
 ## Waking teammates (multi-agent tasks)
 
 A chat message wakes as few agents as it can. A message to one participant
