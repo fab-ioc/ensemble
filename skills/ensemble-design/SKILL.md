@@ -325,6 +325,12 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
    control. The board's cards are the reference: `.cwhen` updates in place and the card stays the
    same element.
 
+   **Strip the text, keep the timestamp.** The signature drops only the ticking *text* and keeps the
+   timestamp it is computed from: `<span data-ago="1788975798">` keeps its attribute. Then the clock
+   passing changes nothing, while a real new timestamp, such as an agent posting, still counts as a
+   change and resets the age. Stripping the whole span would freeze every age at its first value,
+   trading dead clicks for stale content. `withoutAgo()` in `index.html` is the reference.
+
 4. **A filter may persist only while its state is visible in the filter row.** Filters survive a
    reload, which is safe *because* the chips show what is active — the menu hides the controls, never
    the state. If the chips are ever removed, persistence must go with them, or the user returns to a
