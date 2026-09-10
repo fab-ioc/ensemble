@@ -8,32 +8,52 @@
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
 <style>
-  :root { --bg:#0e0e0e; --surface:#161616; --fg:#ededed; --border:#2a2a2a; --accent:#c25d3c; --dim:#9a9a9a; }
+  /* Design system tokens — see skills/ensemble-design/SKILL.md. The balloon
+     is always dark, so it takes the dark values directly. Same names as
+     index.html so the two surfaces cannot drift apart again. */
+  :root {
+    --bg:#1D2125; --surface:#22272B; --surface-overlay:#282E33;
+    --fg:#C7D1DB; --fg-subtle:#9FADBC; --fg-muted:#8C9BAB;
+    --border:#38414A; --border-strong:#596773;
+    --hover:rgba(166,197,226,.10);
+    --accent:#579DFF; --accent-fg:#1D2125;
+    --accent-hover:color-mix(in srgb, var(--accent) 86%, white);
+    --link:var(--accent); --focus-ring:#579DFF;
+    --c-neutral-bg:#2C333A;   --c-neutral-fg:#9FADBC;
+    --c-progress-bg:#092957;  --c-progress-fg:#85B8FF;
+    --c-success-bg:#164B35;   --c-success-fg:#7EE2B8;
+    --c-warning-bg:#533F04;   --c-warning-fg:#F5CD47;
+    --c-danger-bg:#5D1F1A;    --c-danger-fg:#FD9891;
+    --c-discovery-bg:#2B273F; --c-discovery-fg:#B8ACF6;
+    --agent-claude-bg:#D27954; --agent-codex-bg:#3DA3BC;
+    --r-100:3px; --r-200:6px; --r-300:8px;
+    --dim:var(--fg-muted);   /* legacy name, kept so existing rules still read */
+  }
   * { box-sizing: border-box; }
   body { margin:0; height:100vh; display:flex; flex-direction:column; background:var(--bg); color:var(--fg); font:13px system-ui,-apple-system,sans-serif; }
   header { display:flex; align-items:center; gap:10px; padding:8px 12px; border-bottom:1px solid var(--border); flex:0 0 auto; }
   header h1 { font-size:14px; margin:0; }
   .grow { flex:1; }
   .status { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; padding:2px 8px; border-radius:10px; border:1px solid transparent; }
-  .status.active { color:#16a34a; background:#16a34a22; border-color:#16a34a55; }
-  .status.waiting_human { color:#eab308; background:#eab30822; border-color:#eab30855; }
-  .status.paused { color:#ef4444; background:#ef444422; border-color:#ef444455; }
+  .status.active { color:var(--c-success-fg); background:var(--c-success-bg); border-color:transparent; }
+  .status.waiting_human { color:var(--c-warning-fg); background:var(--c-warning-bg); border-color:transparent; }
+  .status.paused { color:var(--c-neutral-fg); background:var(--c-neutral-bg); border-color:transparent; }
   .dim { color:var(--dim); font-size:11px; }
   #info { flex:0 0 auto; display:flex; gap:12px; align-items:center; flex-wrap:wrap;
     padding:5px 12px; border-bottom:1px solid var(--border); font-size:11px; color:var(--dim); }
   #info .ib-agent { color:var(--fg); }
-  #info .ib-agent.claude { color:#d97757; } #info .ib-agent.codex { color:#10a37f; }
+  #info .ib-agent.claude { color:var(--agent-claude-bg); } #info .ib-agent.codex { color:var(--agent-codex-bg); }
   main { flex:1; display:flex; min-height:0; }
   #chatcol { flex:1; display:flex; flex-direction:column; min-width:0; border-right:1px solid var(--border); }
   #msgs { flex:1; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:10px; }
   .msg.pending { opacity:.72; }   /* sent, not yet in the transcript */
-  .msg { border:1px solid var(--border); border-radius:10px; padding:8px 10px; max-width:92%; background:#ffffff08; }
+  .msg { border:1px solid var(--border); border-radius:var(--r-300); padding:8px 10px; max-width:92%; background:var(--surface); }
   .msg .from { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; opacity:.85; margin-bottom:3px; }
-  .msg.claude { border-color:#d9775755; } .msg.claude .from { color:#d97757; }
-  .msg.codex { border-color:#10a37f55; } .msg.codex .from { color:#10a37f; }
+  .msg.claude { border-color:color-mix(in srgb, var(--agent-claude-bg) 45%, transparent); } .msg.claude .from { color:var(--agent-claude-bg); }
+  .msg.codex { border-color:color-mix(in srgb, var(--agent-codex-bg) 45%, transparent); } .msg.codex .from { color:var(--agent-codex-bg); }
   /* Your messages read left-aligned like everyone else's — right-aligning them
      wasted the width of the column. The accent edge is what marks them. */
-  .msg.user { border-left:3px solid var(--accent); border-color:var(--border); background:#c25d3c14; }
+  .msg.user { border-left:3px solid var(--border-strong); border-color:var(--border); background:var(--hover); }
   .msg .text { white-space:pre-wrap; word-break:break-word; line-height:1.45; }
   /* Markdown-rendered bubble content (see mdToHtml). */
   .msg .text.md { white-space:normal; line-height:1.5; }
@@ -50,35 +70,35 @@
   .msg .text.md pre.cb code { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px; line-height:1.45; white-space:pre; }
   .msg .text.md pre.cb[data-lang]::before { content:attr(data-lang); display:block; font-size:9px; text-transform:uppercase; letter-spacing:.05em; color:var(--dim); margin-bottom:5px; }
   .msg .text.md blockquote { margin:4px 0; padding:2px 10px; border-left:3px solid var(--border); color:var(--dim); }
-  .msg .text.md a { color:var(--accent); }
+  .msg .text.md a { color:var(--link); }
   .msg .text.md hr { border:0; border-top:1px solid var(--border); margin:8px 0; }
   .msg .text.md table { border-collapse:collapse; margin:8px 0; display:block; overflow-x:auto; max-width:100%; }
   .msg .text.md th, .msg .text.md td { border:1px solid var(--border); padding:4px 8px; text-align:left; vertical-align:top; }
   .msg .text.md th { background:#ffffff12; font-weight:700; }
   /* In-place review comments */
   mark.cmt-hl { background:#f5c84240; border-bottom:2px solid #f5c842; border-radius:2px; color:inherit; cursor:pointer; }
-  .cmt-selbtn { position:fixed; z-index:60; font-size:12px; padding:5px 11px; background:var(--accent); color:#fff; border:none; border-radius:6px; box-shadow:0 3px 12px rgba(0,0,0,.4); cursor:pointer; }
+  .cmt-selbtn { position:fixed; z-index:60; font-size:12px; padding:5px 11px; background:var(--accent); color:var(--accent-fg); border:none; border-radius:6px; box-shadow:0 3px 12px rgba(0,0,0,.4); cursor:pointer; }
   .cmt-composer { position:fixed; z-index:61; top:50%; left:50%; transform:translate(-50%,-50%); width:min(440px,92vw); background:var(--surface); border:1px solid var(--border); border-radius:10px; box-shadow:0 14px 44px rgba(0,0,0,.55); padding:14px; }
-  .cmt-composer .cmt-quote { font-size:12px; color:var(--dim); border-left:3px solid var(--accent); padding:5px 9px; margin-bottom:9px; max-height:96px; overflow-y:auto; white-space:pre-wrap; }
+  .cmt-composer .cmt-quote { font-size:12px; color:var(--dim); border-left:3px solid var(--border-strong); padding:5px 9px; margin-bottom:9px; max-height:96px; overflow-y:auto; white-space:pre-wrap; }
   .cmt-composer textarea { width:100%; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:8px; font:inherit; resize:vertical; }
   .cmt-composer .cmt-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:10px; }
-  .cmt-composer .cmt-add { background:var(--accent); color:#fff; border:none; }
+  .cmt-composer .cmt-add { background:var(--accent); color:var(--accent-fg); border:none; }
   /* Docked above the composer, not floating over the chat — as an overlay it
      covered the messages you were commenting on. */
   #cmt-tray { flex:0 0 auto; margin:0 12px 6px; max-height:36vh; display:flex; flex-direction:column; background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
   #cmt-tray .cmt-tray-head { display:flex; align-items:center; gap:6px; padding:9px 11px; border-bottom:1px solid var(--border); font-size:13px; }
   #cmt-tray .grow { flex:1; }
-  #cmt-tray .cmt-submit { background:var(--accent); color:#fff; border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font:inherit; font-size:12px; }
+  #cmt-tray .cmt-submit { background:var(--accent); color:var(--accent-fg); border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font:inherit; font-size:12px; }
   #cmt-tray .cmt-clear { font-size:12px; padding:4px 10px; }
   #cmt-tray .cmt-list { overflow-y:auto; }
   #cmt-tray .cmt-item { position:relative; padding:8px 26px 8px 11px; border-bottom:1px solid var(--border); cursor:pointer; }
   #cmt-tray .cmt-item:hover { background:#ffffff08; }
-  #cmt-tray .cmt-item-q { font-size:11px; color:var(--accent); margin-bottom:2px; word-break:break-word; }
+  #cmt-tray .cmt-item-q { font-size:11px; color:var(--fg-muted); margin-bottom:2px; word-break:break-word; }
   #cmt-tray .cmt-item-n { font-size:12px; color:var(--fg); word-break:break-word; }
   #cmt-tray .cmt-item-x { position:absolute; top:6px; right:6px; background:none; border:none; color:var(--dim); cursor:pointer; font-size:12px; padding:2px 5px; }
   #cmt-tray .cmt-item-x:hover { color:#ef4444; }
   .to { font-weight:400; opacity:.6; text-transform:none; }
-  .mention { color:var(--accent); font-weight:600; background:color-mix(in srgb, var(--accent) 16%, transparent); border-radius:4px; padding:0 3px; }
+  .mention { color:var(--c-discovery-fg); font-weight:600; background:var(--c-discovery-bg); border-radius:var(--r-100); padding:0 3px; }
   .msg .from .mention { text-transform:none; letter-spacing:0; }
   /* Sender (direct child) keeps its agent colour, no pill; recipient gets the pill. */
   .msg .from > .mention { background:transparent; padding:0; color:inherit; }
@@ -163,12 +183,12 @@
      header "Terminals" button toggles them. */
   body.term-hidden #agentcol { display:none; }
   body.term-hidden #chatcol { border-right:none; }
-  #terms.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+  #terms.on { background:var(--accent); border-color:var(--accent); color:var(--accent-fg); }
   /* The agent a notification pointed at. */
   .agent.focus-agent { outline:1px solid var(--accent); border-radius:6px; }
   #theme-menu-s { position:fixed; z-index:70; max-height:50vh; overflow-y:auto; background:var(--surface); border:1px solid var(--border); border-radius:8px; box-shadow:0 10px 34px rgba(0,0,0,.5); padding:4px; min-width:150px; }
   #theme-menu-s .tm-item { padding:6px 12px; border-radius:5px; cursor:pointer; font-size:12px; white-space:nowrap; }
-  #theme-menu-s .tm-item:hover { background:#ffffff12; color:var(--accent); }
+  #theme-menu-s .tm-item:hover { background:var(--hover); color:var(--fg); }
 </style>
 </head>
 <body>
