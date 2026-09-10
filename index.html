@@ -114,7 +114,9 @@
 
     /* — layout. Never hard-code a header offset; nine literals used to. — */
     --header-h: 49px;                            /* 48px bar + 1px border */
-    --chrome-h: calc(var(--header-h) + 217px);   /* + crumbs, tabs, padding */
+    --banner-h: 0px;                             /* visible banners; set by script */
+    --top-h: calc(var(--header-h) + var(--banner-h));   /* where content below the bar starts */
+    --chrome-h: calc(var(--top-h) + 217px);      /* + crumbs, tabs, padding */
   }
 
   /* Dark is applied by data-theme on <html>, never by the OS alone. The
@@ -176,7 +178,7 @@
     height: var(--header-h);
     padding: 0 var(--s-400); border-bottom: 1px solid var(--border);
     display: flex; gap: var(--s-200); align-items: center;
-    position: sticky; top: 0; background: var(--surface); z-index: 10;
+    position: sticky; top: var(--banner-h); background: var(--surface); z-index: 10;
   }
   header h1 {
     font: 600 var(--fs-300)/1 var(--font-sans);
@@ -360,7 +362,7 @@
   .seg button.active { background: var(--selected-bg); color: var(--selected-fg); font-weight: 500; }
   main { padding: 8px 20px 40px; }
   table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-  thead { position: sticky; top: var(--header-h); background: var(--bg); z-index: 5; }
+  thead { position: sticky; top: var(--top-h); background: var(--bg); z-index: 5; }
   th {
     text-align: left; font-size: 10.5px; text-transform: uppercase;
     color: var(--fg-muted); padding: 9px 8px 7px;
@@ -712,7 +714,7 @@
     padding-left: 0;
   }
   #sidebar {
-    position: fixed; left: 0; top: var(--header-h); bottom: 0;
+    position: fixed; left: 0; top: var(--top-h); bottom: 0;
     width: 248px; box-sizing: border-box;
     border-right: 1px solid var(--border);
     background: var(--surface);
@@ -785,7 +787,7 @@
   }
   .sb-add-cat:hover { color: var(--fg); border-color: var(--border-strong); border-style: solid; }
   #detail-panel {
-    position: fixed; right: 0; top: var(--header-h); bottom: 0;
+    position: fixed; right: 0; top: var(--top-h); bottom: 0;
     width: var(--detail-w);
     background: var(--surface); border-left: 1px solid var(--border);
     overflow-y: auto; padding: 22px 22px 28px; z-index: 20;
@@ -798,7 +800,7 @@
      survives panel re-renders. Hidden when the panel is closed. Hover/drag
      paints it in the accent colour. Drag updates --detail-w on <body>. */
   #detail-panel-resize {
-    position: fixed; top: var(--header-h); bottom: 0;
+    position: fixed; top: var(--top-h); bottom: 0;
     right: calc(var(--detail-w) - 3px); width: 6px;
     cursor: ew-resize; z-index: 22; background: transparent;
     transition: background .15s;
@@ -1604,7 +1606,7 @@
   }
   #notif-count[hidden] { display: none; }
   #notif-tray {
-    position: absolute; top: calc(var(--header-h) + var(--s-200)); right: 16px; z-index: 60; width: 420px;
+    position: absolute; top: calc(var(--top-h) + var(--s-200)); right: 16px; z-index: 60; width: 420px;
     max-height: 70vh; overflow-y: auto; background: var(--surface);
     border: 1px solid var(--border); border-radius: var(--r-300);
     box-shadow: var(--e-200); padding: 8px;
@@ -1683,7 +1685,7 @@
   .usage-chip-kind b .untrusted { color: var(--fg-muted); font-weight: 500; }
   .usage-chip-kind.gone { color: var(--fg-muted); }
   #usage-tray {
-    position: absolute; top: calc(var(--header-h) + var(--s-200)); right: 16px; z-index: 60; width: 380px;
+    position: absolute; top: calc(var(--top-h) + var(--s-200)); right: 16px; z-index: 60; width: 380px;
     max-height: 70vh; overflow-y: auto; background: var(--surface-overlay);
     border: 1px solid var(--border); border-radius: var(--r-300);
     box-shadow: var(--e-200); padding: 8px;
@@ -1755,7 +1757,7 @@
     content: '⚠'; color: var(--c-danger-fg); margin-right: 5px; font-size: 11px;
   }
   #settings-panel {
-    position: absolute; top: calc(var(--header-h) + var(--s-200)); right: 16px; z-index: 50;
+    position: absolute; top: calc(var(--top-h) + var(--s-200)); right: 16px; z-index: 50;
     background: var(--surface); border: 1px solid var(--border);
     border-radius: 10px; box-shadow: 0 12px 36px rgba(0,0,0,.12);
     padding: 16px; min-width: 280px;
@@ -2003,7 +2005,7 @@
     }
     main { padding-left: 0; }
     #scrim {
-      display: block; position: fixed; inset: var(--header-h) 0 0 0;
+      display: block; position: fixed; inset: var(--top-h) 0 0 0;
       background: rgba(0, 0, 0, .42); z-index: 40; border: 0;
       opacity: 0; pointer-events: none; transition: opacity .2s;
     }
@@ -2041,7 +2043,7 @@
     }
     /* Scrim behind the open drawer */
     #scrim {
-      display: block; position: fixed; inset: var(--header-h) 0 0 0;
+      display: block; position: fixed; inset: var(--top-h) 0 0 0;
       background: rgba(0,0,0,.42); z-index: 40; border: 0;
       opacity: 0; pointer-events: none; transition: opacity .2s;
     }
@@ -6159,6 +6161,29 @@ function setAppearance(pref) {
 if (_darkMQ && _darkMQ.addEventListener) _darkMQ.addEventListener('change', applyAppearance);
 window.addEventListener('storage', (ev) => { if (ev.key === 'cd-theme') applyAppearance(); });
 queueMicrotask(applyAppearance);
+
+// The banners sit above the bar and push it down; everything hung off the
+// bar reads --top-h, so --banner-h has to say how much room they take right
+// now. A ResizeObserver sees a banner appear, grow or hide.
+(function trackBanners() {
+  const ids = ['update-banner', 'usage-banner'];
+  const apply = () => {
+    const h = ids.reduce((sum, id) => {
+      const el = document.getElementById(id);
+      return sum + (el && !el.hidden ? el.offsetHeight : 0);
+    }, 0);
+    document.documentElement.style.setProperty('--banner-h', h + 'px');
+  };
+  if (window.ResizeObserver) {
+    const ro = new ResizeObserver(apply);
+    ids.forEach(id => { const el = document.getElementById(id); if (el) ro.observe(el); });
+  }
+  if (window.MutationObserver) {
+    const mo = new MutationObserver(apply);
+    ids.forEach(id => { const el = document.getElementById(id); if (el) mo.observe(el, { attributes: true, attributeFilter: ['hidden'] }); });
+  }
+  apply();
+})();
 
 // Accent color customization
 function applyAccent(color) {
