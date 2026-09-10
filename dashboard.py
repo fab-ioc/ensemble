@@ -414,9 +414,22 @@ def compute_session_cost(jsonl_path: Path | None) -> dict:
     return result
 
 
+_TRANSCRIPT_PATHS: dict[str, Path] = {}
+
+
 def find_transcript(session_id: str) -> Path | None:
+    """A session's transcript. Remembered once found, so the task list does not
+    glob every project folder for every live session on every refresh; checked
+    for existence on each use, so a deleted transcript is looked up afresh."""
+    hit = _TRANSCRIPT_PATHS.get(session_id)
+    if hit is not None and hit.exists():
+        return hit
     hits = list(PROJ_DIR.glob(f"*/{session_id}.jsonl"))
-    return hits[0] if hits else None
+    if hits:
+        _TRANSCRIPT_PATHS[session_id] = hits[0]
+        return hits[0]
+    _TRANSCRIPT_PATHS.pop(session_id, None)
+    return None
 
 
 def compute_room_cost(room: dict) -> dict:
@@ -464,39 +477,95 @@ def _extract_text(c):
     return None
 
 
+def _user_turn(line: str):
+    """(timestamp, normalised text) when a transcript line is a real user
+    message, else None. The one definition of "a user turn", shared by the full
+    reader and the incremental one so they can never disagree."""
+    try:
+        d = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(d, dict) or d.get("type") != "user" or d.get("isMeta"):
+        return None
+    msg = d.get("message")
+    if not isinstance(msg, dict):
+        return None
+    text = _extract_text(msg.get("content"))
+    if not text:
+        return None
+    text = text.strip()
+    if not text or text.startswith("<") or text.startswith("Caveat:"):
+        return None
+    return d.get("timestamp", ""), " ".join(text.split())
+
+
 def iter_user_turns(path: Path):
     try:
         with path.open(encoding="utf-8", errors="replace") as f:
             for line in f:
-                try:
-                    d = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if d.get("type") != "user" or d.get("isMeta"):
-                    continue
-                msg = d.get("message")
-                if not isinstance(msg, dict):
-                    continue
-                text = _extract_text(msg.get("content"))
-                if not text:
-                    continue
-                text = text.strip()
-                if not text or text.startswith("<") or text.startswith("Caveat:"):
-                    continue
-                yield d.get("timestamp", ""), " ".join(text.split())
+                t = _user_turn(line)
+                if t:
+                    yield t
     except FileNotFoundError:
         return
 
 
+# str(path) -> [bytes consumed, first, last, count, max_len, file identity]
+_FLU_CACHE: dict[str, list] = {}
+
+
+def _flu_take(st: list, raw: bytes, max_len: int) -> None:
+    if not raw.strip():
+        return
+    t = _user_turn(raw.decode("utf-8", errors="replace"))
+    if not t:
+        return
+    text = t[1]
+    snippet = text[:max_len] + ("…" if len(text) > max_len else "")
+    st[3] += 1
+    if not st[1]:
+        st[1] = snippet
+    st[2] = snippet
+
+
 def first_last_user(path: Path, max_len: int = 200):
-    first = last = ""
-    count = 0
-    for _, text in iter_user_turns(path):
-        count += 1
-        snippet = text[:max_len] + ("…" if len(text) > max_len else "")
-        if not first:
-            first = snippet
-        last = snippet
+    """First and last user message of a transcript, and how many there are.
+
+    The task list asks this of every transcript on every refresh, and re-parsing
+    each file from the start was most of its cost — worst exactly when agents
+    are busy, because their transcripts are the big, growing ones. Transcripts
+    only ever grow, so the lines already seen are remembered and only the bytes
+    appended since the last call are parsed. A file that shrank or was replaced
+    starts over; an unterminated last line is counted but not remembered, so it
+    is read again once it is complete."""
+    key = str(path)
+    try:
+        stt = path.stat()
+    except OSError:
+        return "", "", 0
+    size, ident = stt.st_size, (stt.st_ino, stt.st_dev)
+    st = _FLU_CACHE.get(key)
+    if st is None or st[4] != max_len or st[5] != ident or size < st[0]:
+        st = [0, "", "", 0, max_len, ident]
+    tail = b""
+    if size > st[0]:
+        try:
+            with path.open("rb") as fb:
+                fb.seek(st[0])
+                data = fb.read(size - st[0])
+        except OSError:
+            data = b""
+        cut = data.rfind(b"\n")
+        done, tail = (data[:cut + 1], data[cut + 1:]) if cut >= 0 else (b"", data)
+        st = list(st)
+        for raw in done.split(b"\n"):
+            _flu_take(st, raw, max_len)
+        st[0] += len(done)
+    _FLU_CACHE[key] = st
+    res = list(st)
+    if tail.strip():
+        _flu_take(res, tail, max_len)
+    first, last, count = res[1], res[2], res[3]
     if last == first:
         last = ""
     return first, last, count
@@ -2669,7 +2738,36 @@ def load_recent(n: int = 100) -> list[dict]:
     return out
 
 
+# The task list is asked for by every open dashboard tab every 2.5 s and by the
+# project grouping on top. Concurrent callers wait for the one computation in
+# flight and share its answer instead of each redoing it; the answer is kept for
+# a couple of seconds, and dropped as soon as any write request completes, so an
+# action is never followed by a stale list.
+_SESS_TTL = 2.0
+_SESS_GEN = 0
+_SESS_CACHE: dict[int, tuple[float, int, list]] = {}
+_SESS_LOCKS: dict[int, threading.Lock] = {}
+
+
+def invalidate_session_listing() -> None:
+    global _SESS_GEN
+    _SESS_GEN += 1
+
+
 def load_sessions(n: int = 200) -> list[dict]:
+    lock = _SESS_LOCKS.setdefault(n, threading.Lock())
+    with lock:
+        hit = _SESS_CACHE.get(n)
+        if hit and hit[1] == _SESS_GEN and time.time() - hit[0] < _SESS_TTL:
+            rows = hit[2]
+        else:
+            gen = _SESS_GEN
+            rows = _load_sessions_uncached(n)
+            _SESS_CACHE[n] = (time.time(), gen, rows)
+    return [dict(r) for r in rows]      # callers may annotate rows; never the cached ones
+
+
+def _load_sessions_uncached(n: int = 200) -> list[dict]:
     """Unified view: recent transcripts with live-state overlaid where applicable.
     Sorted by updatedAt desc, so active live sessions naturally float to the top."""
     live_by_sid = {s["sessionId"]: s for s in load_live()}
@@ -3861,7 +3959,16 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.send_error(404)
 
+    # Any write can change what the task list shows — a rename, a priority,
+    # a new task, a chat message — so the cached listing is dropped the
+    # moment the write finishes.
     def do_PUT(self):
+        try:
+            self._do_PUT()
+        finally:
+            invalidate_session_listing()
+
+    def _do_PUT(self):
         u = urlparse(self.path)
         p = u.path
         ln = int(self.headers.get("Content-Length", "0"))
@@ -3938,7 +4045,16 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.send_error(404)
 
+    # Any write can change what the task list shows — a rename, a priority,
+    # a new task, a chat message — so the cached listing is dropped the
+    # moment the write finishes.
     def do_DELETE(self):
+        try:
+            self._do_DELETE()
+        finally:
+            invalidate_session_listing()
+
+    def _do_DELETE(self):
         if not self._gate():
             return
         u = urlparse(self.path)
@@ -4483,7 +4599,16 @@ class Handler(BaseHTTPRequestHandler):
         return err(-32602, f"unknown tool: {name}")
 
 
+    # Any write can change what the task list shows — a rename, a priority,
+    # a new task, a chat message — so the cached listing is dropped the
+    # moment the write finishes.
     def do_POST(self):
+        try:
+            self._do_POST()
+        finally:
+            invalidate_session_listing()
+
+    def _do_POST(self):
         if not self._gate():
             return
         u = urlparse(self.path)

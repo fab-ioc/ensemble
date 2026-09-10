@@ -3348,8 +3348,17 @@ function selectInteracting() {
 
 let DISPLAYED_ORDER = []; // session IDs in their last-rendered order
 
+// The task list used to be re-requested every 2.5 s whether or not the previous
+// answer had arrived. When an answer took longer than that, requests from every
+// open tab piled up on the hub and starved everything behind them — session
+// chats and terminals included, which is what "sessions not loading" was.
+// One request in flight per tab, none from a hidden tab, and the project
+// grouping never stacks either.
+let _refreshInFlight = false, _projInFlight = false;
 async function refresh() {
   if (selectInteracting()) return;
+  if (_refreshInFlight || document.hidden) return;
+  _refreshInFlight = true;
   try {
     const data = await api('/api/sessions?n=300');
     if (selectInteracting()) return; // user opened a dropdown mid-fetch
@@ -3376,17 +3385,23 @@ async function refresh() {
       ALL_ROWS = data;
       DISPLAYED_ORDER = data.map(r => r.sessionId);
     }
-    if (Date.now() - _projTs > 5000) {   // projects grouping refreshes on a slower cadence (git status is heavy)
+    if (!_projInFlight && Date.now() - _projTs > 5000) {   // projects grouping refreshes on a slower cadence (git status is heavy)
       _projTs = Date.now();
+      _projInFlight = true;
       api('/api/projects').then(p => { PROJECTS = p; _projFailed = false; if (!SELECTED_PROJECT && PROJ_GROUPBY === 'project') renderRows(); })
-        .catch(() => { _projFailed = true; if (PROJ_GROUPBY === 'project') renderRows(); });   // older server without /api/projects → fall back to the flat list
+        .catch(() => { _projFailed = true; if (PROJ_GROUPBY === 'project') renderRows(); })   // older server without /api/projects → fall back to the flat list
+        .finally(() => { _projInFlight = false; });
     }
     renderRows();
     if (SELECTED_SID) renderDetail();
   } catch (e) {
     $('#view').innerHTML = `<p class="empty">Error: ${esc(e.message)}</p>`;
+  } finally {
+    _refreshInFlight = false;
   }
 }
+// A hidden tab stops polling; bring it up to date the moment it is looked at.
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
 
 let _searchVersion = 0;
 function setSearchBadge(state, label) {

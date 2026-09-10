@@ -14,6 +14,7 @@ CODEX_HOME overrides the default `~/.codex` location, matching the CLI.
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
 import shutil
@@ -94,7 +95,30 @@ def _mtime(path: Path) -> float:
         return 0.0
 
 
+_ROLLOUT_CACHE: dict[str, tuple] = {}
+
+
 def _parse_rollout(path: Path) -> AgentSession | None:
+    """One rollout file as an AgentSession, remembered per file on its size and
+    modification time: the task list asks for every rollout on every refresh,
+    and an unchanged file always parses the same. A copy is returned, so a
+    caller marking a session live can never change the remembered one."""
+    try:
+        stt = path.stat()
+        sig = (stt.st_mtime_ns, stt.st_size)
+    except OSError:
+        sig = None
+    if sig is not None:
+        hit = _ROLLOUT_CACHE.get(str(path))
+        if hit and hit[0] == sig:
+            return copy.copy(hit[1]) if hit[1] is not None else None
+    res = _parse_rollout_uncached(path)
+    if sig is not None:
+        _ROLLOUT_CACHE[str(path)] = (sig, res)
+    return copy.copy(res) if res is not None else None
+
+
+def _parse_rollout_uncached(path: Path) -> AgentSession | None:
     """Read one rollout file into a normalized AgentSession."""
     session_id = ""
     cwd = ""
