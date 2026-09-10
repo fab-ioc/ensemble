@@ -1474,6 +1474,76 @@
     }
     body:not(.sidebar-collapsed) main { padding-left: 56px; }
   }
+  /* --- Issue view --------------------------------------------------------- */
+  /* One row that says what this task IS: where it sits, how urgent, what is
+     running, whether it needs you. The old row was ten chips of mixed kinds
+     with nothing to say which mattered. */
+  .dp-meta { display: flex; align-items: center; gap: var(--s-200); flex-wrap: wrap; padding: 0 var(--s-400) var(--s-300); }
+  .dp-when { margin-left: auto; font-size: var(--fs-100); color: var(--fg-muted); }
+  .dp-prio-inline { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-200); color: var(--fg-subtle); }
+  .dp-prio-inline .prio-ico { display: inline-block; margin: 0; }
+  .wf-wrap { position: relative; display: inline-flex; }
+  .wf-btn { border: 0; cursor: pointer; font: inherit; display: inline-flex; align-items: center; gap: 5px; }
+  .wf-btn .caret { font-size: 9px; opacity: .7; }
+  .wf-menu {
+    position: absolute; top: calc(100% + 4px); left: 0; z-index: 70;
+    background: var(--surface-overlay); border: 1px solid var(--border);
+    border-radius: var(--r-300); box-shadow: var(--e-200); padding: var(--s-100);
+    min-width: 150px; display: flex; flex-direction: column;
+  }
+  .wf-menu[hidden] { display: none; }
+  .wf-item {
+    background: transparent; border: 0; text-align: left; cursor: pointer;
+    font: inherit; font-size: var(--fs-200); color: var(--fg);
+    padding: 6px 10px; border-radius: var(--r-200);
+  }
+  .wf-item:hover { background: var(--hover); }
+  .wf-item.on { background: var(--selected-bg); color: var(--selected-fg); font-weight: 500; }
+  /* The summary answers "what did this task do" before any tab is opened. */
+  .dp-summary {
+    margin: 0 var(--s-400) var(--s-300); padding: var(--s-300);
+    background: var(--surface-sunken); border-radius: var(--r-200);
+  }
+  .dp-summary.draft { display: flex; align-items: center; gap: var(--s-300); flex-wrap: wrap; }
+  .dp-summary-h {
+    font-size: var(--fs-100); font-weight: 600; text-transform: uppercase;
+    letter-spacing: .05em; color: var(--fg-muted); margin-bottom: 4px;
+  }
+  .dp-summary-t { font-size: var(--fs-200); line-height: var(--lh-300); color: var(--fg-subtle); flex: 1; min-width: 0; }
+  .dp-summary.draft .dp-summary-t { color: var(--fg); }
+  /* Fixed tab set, moving default. Tabs that reorder themselves break
+     "nothing moves" exactly where a habit is forming. */
+  .dp-tabs {
+    display: flex; gap: 2px; margin: 0 var(--s-400);
+    border-bottom: 1px solid var(--border);
+  }
+  .dp-tab {
+    background: transparent; border: 0; border-bottom: 2px solid transparent;
+    margin-bottom: -1px; padding: 6px 12px; cursor: pointer;
+    font: inherit; font-size: var(--fs-200); font-weight: 600; color: var(--fg-muted);
+  }
+  .dp-tab:hover { color: var(--fg); }
+  .dp-tab.on { color: var(--fg); border-bottom-color: var(--accent); }
+  .dp-tabbody { flex: 1; overflow-y: auto; }
+  /* An absence always names its cause — never a blank panel, and never
+     --fg-disabled, which clears no threshold on a sunken surface. */
+  .dp-empty {
+    margin: var(--s-400); padding: var(--s-600);
+    border: 1px dashed var(--border); border-radius: var(--r-300);
+    color: var(--fg-muted); font-size: var(--fs-200); text-align: center;
+  }
+  .dp-tabnote {
+    margin: var(--s-300) var(--s-400) 4px; font-size: var(--fs-100);
+    color: var(--fg-muted); text-transform: uppercase; letter-spacing: .05em; font-weight: 600;
+  }
+  .dp-spec {
+    margin: var(--s-300) var(--s-400) var(--s-600); padding: var(--s-300);
+    background: var(--surface-sunken); border-radius: var(--r-200);
+    font-size: var(--fs-200); line-height: var(--lh-300); color: var(--fg-subtle);
+    overflow-wrap: anywhere;
+  }
+  .dp-spec h3, .dp-spec h4 { color: var(--fg); font-size: var(--fs-300); margin: var(--s-300) 0 4px; }
+  .dp-spec code { font-family: var(--font-mono); font-size: var(--fs-100); }
   /* --- Notifications: tasks that need you ------------------------------- */
   /* The bell takes .bar-btn.icon like every other icon control up here; only
      the count badge is its own. A bell with nothing in it says nothing, so
@@ -2663,19 +2733,90 @@ function detailHead(r, isRoom) {
     </div>`;
 }
 
+// The workflow lozenge is a picker — the Jira idiom, status as a dropdown in
+// the issue header. It is also the one place a task can be moved WITHOUT the
+// board, which matters because this is where you have just read what happened
+// and can actually judge which column is true.
+function workflowPicker(r, isRoom) {
+  if (!isRoom || !r.roomId) return '';
+  const cur = workflowOf(r);
+  const col = WORKFLOW_COLS.find(c => c.k === cur) || WORKFLOW_COLS[0];
+  const items = WORKFLOW_COLS.map(c =>
+    `<button class="wf-item${c.k === cur ? ' on' : ''}" data-wf="${c.k}">${esc(c.name)}</button>`).join('');
+  return `<span class="wf-wrap">
+    <button class="wf-btn loz ${col.tone}" data-room="${esc(r.roomId)}" aria-haspopup="true">${esc(col.name)}<span class="caret">▾</span></button>
+    <span class="wf-menu" hidden>${items}</span>
+  </span>`;
+}
+
+// One row that answers "what is this task": where it sits, how urgent, what is
+// running, and whether it needs you. The old row was ten chips of mixed kinds
+// — status, pin, category, message count, pid, id — with nothing to say which
+// mattered. Identity details moved to Details, where they are reference rather
+// than headline.
 function detailMeta(r, isLive, isRoom, now) {
-  const pills = [];
-  pills.push(isLive
-    ? `<span class="chip ${r.status === 'busy' ? 'busy' : 'live'}">${r.status === 'busy' ? '✻ busy' : '● live'}</span>`
-    : `<span class="chip">${r.draft ? 'draft — not started' : 'not running'}</span>`);
-  if (r.pinned) pills.push(`<span class="chip pinned">📌 pinned</span>`);
-  if (r.category) pills.push(`<span class="chip category">📁 ${esc(r.category)}</span>`);
-  pills.push(`<span class="chip">${r.turns || 0} ${isRoom ? 'msgs' : 'turns'}</span>`);
-  pills.push(`<span class="chip">${fmtAgo(now - r.updatedAt)} ago</span>`);
-  if (isLive && r.idleSeconds != null) pills.push(`<span class="chip">idle ${fmtAgo(r.idleSeconds)}</span>`);
-  if (isLive && r.pid) pills.push(`<span class="chip mono">pid ${r.pid}</span>`);
-  pills.push(`<span class="chip mono">${(r.sessionId || '').replace(/^grp:/, '').slice(0, 8)}</span>`);
-  return `<div class="dp-meta">${agentBadges(r)}${pills.join('')}</div>`;
+  const attn = ATTENTION_BY_ROOM.get(r.roomId) || r.attention || null;
+  const tone = (attn && (attn.state === 'agent_gone' || attn.state === 'blocked')) ? 'danger'
+             : (attn && attn.state === 'stalled') ? 'neutral' : 'warning';
+  const attnLoz = attn
+    ? `<span class="loz ${tone}" title="${esc(attn.reason || '')}">${esc(ATTN_LABEL[attn.state] || attn.state)}</span>` : '';
+  const prio = isRoom && r.roomId
+    ? `<span class="dp-prio-inline" title="Priority: ${esc(prioName(prioOf(r)))}">${prioIcon(prioOf(r), '', true)}${esc(prioName(prioOf(r)))}</span>` : '';
+  return `<div class="dp-meta">${workflowPicker(r, isRoom)}${attnLoz}${prio}${runChip(r)}
+    <span class="dp-when">updated ${esc(fmtAgo(now - r.updatedAt))} ago</span></div>`;
+}
+
+// The summary answers "what did this task do" in one line, before any tab is
+// opened. For a task that never ran there is no answer, and printing a dash is
+// worse than saying nothing — so it carries the truth and the way forward.
+function detailSummary(r, isRoom) {
+  if (r.draft) {
+    return `<div class="dp-summary draft">
+      <div class="dp-summary-t">Not started. The spec below is what the agents will be given.</div>
+      ${isRoom && r.roomId ? `<button class="open-btn room-resume-inline" data-room="${esc(r.roomId)}">▶ Start</button>` : ''}
+    </div>`;
+  }
+  const last = (r.lastAgent || '').trim();
+  if (!last) return '';
+  return `<div class="dp-summary">
+    <div class="dp-summary-h">What happened</div>
+    <div class="dp-summary-t">${esc(last.length > 400 ? last.slice(0, 400) + '\u2026' : last)}</div>
+  </div>`;
+}
+
+// The tab set never changes and never reorders: tabs that rearrange themselves
+// break "nothing moves" exactly where someone is building a habit. What moves
+// is the DEFAULT — a task with messages opens on Activity, a draft opens on
+// Spec, because for a draft the spec IS the content.
+const ISSUE_TABS = [
+  { k: 'activity',  name: 'Activity' },
+  { k: 'changes',   name: 'Changes' },
+  { k: 'workspace', name: 'Workspace' },
+  { k: 'spec',      name: 'Spec' },
+];
+let ISSUE_TAB = '';
+let ISSUE_TAB_SID = '';
+
+function defaultIssueTab(r) {
+  return (r.turns || 0) > 0 ? 'activity' : 'spec';
+}
+function issueTab(r) {
+  if (ISSUE_TAB_SID !== r.sessionId) {
+    ISSUE_TAB_SID = r.sessionId;
+    ISSUE_TAB = defaultIssueTab(r);
+  }
+  return ISSUE_TAB || defaultIssueTab(r);
+}
+function issueTabsHtml(r) {
+  const cur = issueTab(r);
+  return `<div class="dp-tabs">${ISSUE_TABS.map(t =>
+    `<button class="dp-tab${t.k === cur ? ' on' : ''}" data-itab="${t.k}">${esc(t.name)}</button>`).join('')}</div>`;
+}
+
+// An empty tab names what would fill it and why it is empty — never a blank
+// panel, and never --fg-disabled, which clears no contrast threshold here.
+function issueEmpty(msg) {
+  return `<div class="dp-empty">${esc(msg)}</div>`;
 }
 
 function detailActions(r, isLive, isRoom, isOrphan) {
@@ -2866,6 +3007,34 @@ function showDetailTab(sid) {
   }
 }
 
+// One tab's content. Everything that is absent says WHY it is absent — the
+// same contract the filter chips and "+ N older" have with their counts.
+function issueTabBody(r, sid, isLive, isRoom, liveShell) {
+  const tab = issueTab(r);
+  if (tab === 'spec') {
+    const spec = (r.spec || '').trim();
+    if (!spec) return issueEmpty('No spec — this task was not created from one.');
+    return `<div class="dp-spec">${mdToHtml(spec)}</div>`;
+  }
+  if (tab === 'changes') {
+    if (!r.cwd) return issueEmpty('No branch yet \u2014 nothing has run.');
+    return `<div class="dp-tabnote">The diff for this task lives on the project's Changes tab, `
+      + `which reviews the whole repository rather than one task's slice of it.</div>`
+      + `<div class="dp-cwd" title="${esc(r.cwd)}">${esc(tildeify(r.cwd))}</div>`;
+  }
+  if (tab === 'workspace') {
+    if (!r.cwd) return issueEmpty('No worktree yet \u2014 it is created when the task starts.');
+    return `<div class="dp-tabnote">This task's working directory.</div>`
+      + `<div class="dp-cwd" title="${esc(r.cwd)}">${esc(tildeify(r.cwd))}</div>`
+      + (r.taskDir && r.taskDir !== r.cwd
+          ? `<div class="dp-tabnote">Task folder</div><div class="dp-cwd" title="${esc(r.taskDir)}">${esc(tildeify(r.taskDir))}</div>` : '');
+  }
+  // Activity
+  if (liveShell) return issueEmpty('Switch to Activity to see the running session.');
+  if (!(r.turns || 0)) return issueEmpty("No messages yet. The spec is the agents' first prompt.");
+  return convBody(r, sid);
+}
+
 function renderDetail() {
   const sid = SELECTED_SID;
   if (!sid) { closeDetail(); return; }
@@ -2886,7 +3055,8 @@ function renderDetail() {
   // the header/actions reflect them without waiting for a reselect.
   const themeTok = (CHAT_THEME && CHAT_THEME.background) || '-';
   const base = [sid, isLive ? 1 : 0, r.pinned ? 'p' : '-', r.label || '', themeTok].join('|');
-  const sig = liveEmbed ? base + '|embed' : base + '|hist|' + (convReady ? 'c' : '-');
+  const sig = (liveEmbed ? base + '|embed' : base + '|hist|' + (convReady ? 'c' : '-'))
+    + '|' + issueTab(r) + '|' + workflowOf(r);
   // Nothing changed since the last render — keep the DOM (and the live iframe,
   // and the conversation scroll position) intact.
   if (panel.dataset.sig === sig) return;
@@ -2895,52 +3065,29 @@ function renderDetail() {
   panel.dataset.sig = sig;
   const now = Date.now() / 1000;
 
-  // The panel is a shell — header slot, tabs, two panes — built once per
-  // selection and then written into. Replacing the whole panel on every sig
-  // change (a rename, a pin, an agent going idle) would take the Files pane
-  // with it, and with it the viewer's iframe and any comment written but not
-  // yet sent. DETAIL_TAB is deliberately not in `sig`: switching tabs only
-  // flips `hidden`.
-  // Deliberately NOT keyed on liveEmbed: starting or stopping the task flips it,
-  // and rebuilding the shell there would throw away the Files pane — and any
-  // comment written but not sent — at exactly the moment a task finishes and you
-  // are part-way through reviewing what it produced. The conv pane already
-  // handles both shapes against the same node, and the only thing liveEmbed
-  // decides out here is the first tab's label, which is set per render below.
-  const hasFiles = wsRoots({ kind: 'task', sid }).length > 0;
-  const shellKey = [sid, hasFiles ? 'f' : '-'].join('|');
-  if (panel.dataset.shell !== shellKey) {
-    panel.dataset.shell = shellKey;
-    panel.innerHTML = '<div class="dp-top"></div>'
-      + (hasFiles ? '<div class="dp-tabs">'
-          + '<button data-dtab="conv"></button>'
-          + '<button data-dtab="files" title="This task\'s folder and its project\'s — code highlighted, comment anywhere">Files</button>'
-          + '</div>' : '')
-      + '<div class="dp-pane" data-pane="conv"></div>'
-      + (hasFiles ? '<div class="dp-pane" data-pane="files" hidden></div>' : '');
-  }
-  const convTab = panel.querySelector('.dp-tabs button[data-dtab="conv"]');
-  if (convTab) convTab.textContent = liveEmbed ? 'Session' : 'Conversation';
-  panel.querySelector('.dp-top').innerHTML = liveEmbed
-    ? `<div class="dp-live">${detailHead(r, isRoom)}${detailMeta(r, isLive, isRoom, now)}${detailActions(r, isLive, isRoom, isOrphan)}${detailPriority(r, isRoom)}</div>`
-    : detailHead(r, isRoom) + detailMeta(r, isLive, isRoom, now) + detailActions(r, isLive, isRoom, isOrphan) + detailPriority(r, isRoom);
-
-  const conv = panel.querySelector('.dp-pane[data-pane="conv"]');
   if (liveEmbed) {
-    // Only the room identity may rebuild the terminal. A label, a pin or an
-    // idle flip must not reconnect a running agent's session.
-    if (conv.dataset.room !== r.roomId) {
-      conv.dataset.room = r.roomId;
-      conv.innerHTML = `<iframe class="dp-session" data-room="${esc(r.roomId)}" src="/session?id=${encodeURIComponent(r.roomId)}&embed=1" title="session" allow="clipboard-read; clipboard-write"></iframe>`;
-    }
-  } else {
-    conv.removeAttribute('data-room');
-    conv.innerHTML = detailInfo(r)
-      + (isOrphan
-          ? `<div class="dp-section"><p style="font-size: 12.5px; color: var(--fg-subtle); margin: 0">This collaboration has ended and its agents aren't running. Open to resume where it left off.</p></div>`
-          : convBody(r, sid));
+    const tab = issueTab(r);
+    panel.innerHTML =
+      `<div class="dp-live">${detailHead(r, isRoom)}${detailMeta(r, isLive, isRoom, now)}`
+      + `${detailActions(r, isLive, isRoom, isOrphan)}${detailPriority(r, isRoom)}${detailSummary(r, isRoom)}${issueTabsHtml(r)}</div>`
+      + (tab === 'activity'
+          // A live task's Activity IS its session: the balloon, embedded, so
+          // you can answer it here rather than in another window.
+          ? `<iframe class="dp-session" data-room="${esc(r.roomId)}" src="/session?id=${encodeURIComponent(r.roomId)}&embed=1" title="session" allow="clipboard-read; clipboard-write"></iframe>`
+          : `<div class="dp-tabbody">${issueTabBody(r, sid, isLive, isRoom, true)}</div>`);
+    return;
   }
-  wireDetailTabs(sid, hasFiles);
+  panel.innerHTML =
+    detailHead(r, isRoom)
+    + detailMeta(r, isLive, isRoom, now)
+    + detailActions(r, isLive, isRoom, isOrphan)
+    + detailSummary(r, isRoom)
+    + issueTabsHtml(r)
+    + (isOrphan
+        ? issueEmpty("This collaboration has ended and its agents aren't running. Open to resume where it left off.")
+        : issueTabBody(r, sid, isLive, isRoom, false))
+    + detailPriority(r, isRoom)
+    + detailInfo(r);
 }
 
 // Single unified layout — list on left, detail panel on right.
@@ -6076,6 +6223,43 @@ function closeFiltersMenu() {
 }
 
 document.addEventListener('click', (ev) => {
+  // Issue view: tab switch. The panel's signature includes the tab, so this
+  // re-renders rather than fighting the refresh loop.
+  const itab = ev.target.closest('.dp-tab[data-itab]');
+  if (itab) {
+    ev.stopPropagation();
+    ISSUE_TAB = itab.dataset.itab;
+    const panel = document.getElementById('detail-panel');
+    if (panel) panel.dataset.sig = '';
+    renderDetail();
+    return;
+  }
+  // The workflow lozenge is a picker: status as a dropdown in the issue
+  // header, which is the Jira idiom and the one place you can move a task
+  // having just read what it did.
+  const wfBtn = ev.target.closest('.wf-btn');
+  if (wfBtn) {
+    ev.stopPropagation();
+    const menu = wfBtn.parentElement.querySelector('.wf-menu');
+    if (menu) menu.hidden = !menu.hidden;
+    return;
+  }
+  const wfItem = ev.target.closest('.wf-item[data-wf]');
+  if (wfItem) {
+    ev.stopPropagation();
+    const wrap = wfItem.closest('.wf-wrap');
+    const rid = wrap && wrap.querySelector('.wf-btn') ? wrap.querySelector('.wf-btn').dataset.room : '';
+    wrap.querySelector('.wf-menu').hidden = true;
+    if (rid) {
+      const panel = document.getElementById('detail-panel');
+      if (panel) panel.dataset.sig = '';
+      moveTask(rid, wfItem.dataset.wf).then(() => renderDetail());
+    }
+    return;
+  }
+  document.querySelectorAll('.wf-menu:not([hidden])').forEach(m => {
+    if (!ev.target.closest('.wf-wrap')) m.hidden = true;
+  });
   // A destination entry opens the task it names, in the page.
   const destRow = ev.target.closest('.dest-row');
   if (destRow) {

@@ -1228,7 +1228,8 @@ def build_projects() -> dict:
     # itself. The workspace tree needs the folder, not the cwd, so carry both.
     keep = ("sessionId", "roomId", "label", "status", "isLive", "idleSeconds",
             "updatedAt", "agents", "members", "mode", "headless", "cwd",
-            "taskDir", "priority", "priorityName", "workflow", "workflowName", "attention")
+            "taskDir", "priority", "priorityName", "workflow", "workflowName",
+            "lastAgent", "attention")
     # One group per registered project, plus a synthetic unassigned bucket.
     groups: dict = {}
     for p in projects_reg:
@@ -3019,6 +3020,13 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                           if m.get("from") == "user" and (m.get("text") or "").strip()]
             first_txt = ((_user_msgs[0] if _user_msgs else (msgs[0] if msgs else {})).get("text") or "")[:200]
             last_txt = ((msgs[-1] if msgs else {}).get("text") or "")[:200]
+            # The issue view's summary answers "what did this task do", so it
+            # needs the last thing an AGENT said. `last` is the last message
+            # from anyone, which would happily caption your own question as
+            # "what happened".
+            _agent_msgs = [m for m in msgs
+                           if m.get("from") != "user" and (m.get("text") or "").strip()]
+            last_agent_txt = ((_agent_msgs[-1] if _agent_msgs else {}).get("text") or "")[:400]
             room_rows.append({
                 "sessionId": rid, "roomId": rid, "headless": True,
                 "mode": rm.get("mode", ""),
@@ -3045,7 +3053,8 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 "pid": None, "pinned": rid in pinned_set, "category": "", "archived": False,
                 "parent": "", "jira": [], "cost": compute_room_cost(rm).get("dollars", 0.0),
                 "currentTheme": "",
-                "first": first_txt, "last": last_txt, "transcriptPath": "",
+                "first": first_txt, "last": last_txt,
+                "lastAgent": last_agent_txt, "transcriptPath": "",
                 # {state, reason, agentIdentity} when this task needs a human.
                 "attention": ({k: v for k, v in att_by_room[rid].items()
                                if k in ("state", "reason", "agentIdentity", "since")}
