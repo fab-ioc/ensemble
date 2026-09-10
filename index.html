@@ -154,19 +154,125 @@
     text-rendering: optimizeLegibility;
     font-feature-settings: "ss01", "cv11";
   }
+  /* The bar carries identity, where-am-I, find, what-needs-me, me, create —
+     and nothing about the current view, which is the rule that keeps it thin
+     after the next five features. Its height is --header-h rather than an
+     accident of padding, because eight other surfaces hang off that number. */
   header {
-    padding: 12px 20px; border-bottom: 1px solid var(--border);
-    display: flex; gap: 12px; align-items: center;
-    position: sticky; top: 0; background: var(--bg); z-index: 10;
-    backdrop-filter: saturate(180%) blur(8px);
+    height: var(--header-h);
+    padding: 0 var(--s-400); border-bottom: 1px solid var(--border);
+    display: flex; gap: var(--s-200); align-items: center;
+    position: sticky; top: 0; background: var(--surface); z-index: 10;
   }
   header h1 {
-    font: 600 17px/1 var(--font-sans);
+    font: 600 var(--fs-300)/1 var(--font-sans);
     margin: 0; flex-shrink: 0;
-    letter-spacing: -0.03em;
+    letter-spacing: -0.01em;
     color: var(--fg);
-    display: inline-flex; align-items: center; gap: 9px;
+    display: inline-flex; align-items: center; gap: var(--s-200);
   }
+  .bar-gap { flex: 1 1 0; min-width: var(--s-200); }
+  .bar-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    height: 32px; padding: 0 10px; border-radius: var(--r-200);
+    background: transparent; border: 1px solid transparent;
+    color: var(--fg-subtle); font: inherit; font-size: var(--fs-200);
+    cursor: pointer; white-space: nowrap; max-width: 220px;
+  }
+  .bar-btn:hover { background: var(--hover); color: var(--fg); }
+  .bar-btn .caret { color: var(--fg-muted); font-size: 9px; }
+  .bar-btn.icon { width: 32px; padding: 0; justify-content: center; position: relative; font-size: 14px; }
+  #proj-switch #proj-switch-name { overflow: hidden; text-overflow: ellipsis; }
+  .avatar-btn {
+    width: 28px; height: 28px; padding: 0; justify-content: center;
+    border-radius: var(--r-full); background: var(--c-neutral-bg);
+    color: var(--c-neutral-fg); font-size: var(--fs-100); font-weight: 600;
+    text-transform: uppercase; letter-spacing: .02em;
+  }
+  .avatar-btn:hover { background: var(--c-neutral-bg); filter: brightness(.96); }
+  #plan-usage-slot:empty { display: none; }
+  /* Menus dropped from the bar. One shape, three users. */
+  #me-menu, #proj-menu, #search-help-pop, #filters-menu {
+    position: fixed; z-index: 60; background: var(--surface-overlay);
+    border: 1px solid var(--border); border-radius: var(--r-300);
+    box-shadow: var(--e-200); padding: var(--s-100); min-width: 200px;
+  }
+  #me-menu[hidden], #proj-menu[hidden], #search-help-pop[hidden] { display: none; }
+  .me-item, .pm-item {
+    display: flex; align-items: center; gap: var(--s-200); width: 100%;
+    padding: 7px 10px; border: 0; border-radius: var(--r-200);
+    background: transparent; color: var(--fg); font: inherit;
+    font-size: var(--fs-200); text-align: left; cursor: pointer;
+  }
+  .me-item:hover, .pm-item:hover { background: var(--hover); }
+  .pm-item.on { background: var(--selected-bg); color: var(--selected-fg); font-weight: 500; }
+  .pm-item .pm-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pm-item .pm-needs {
+    margin-left: auto; background: var(--c-warning-bg); color: var(--c-warning-fg);
+    border-radius: var(--r-full); padding: 0 6px; font-size: var(--fs-100); font-weight: 600;
+  }
+  .pm-rule { height: 1px; background: var(--border); margin: var(--s-100) 0; }
+  #proj-menu { max-height: 60vh; overflow-y: auto; max-width: 320px; }
+  /* Search syntax. A placeholder is not documentation. */
+  #search-help-pop { width: 300px; padding: var(--s-300); }
+  #search-help-pop .shp-title {
+    font-size: var(--fs-100); font-weight: 600; text-transform: uppercase;
+    letter-spacing: .05em; color: var(--fg-muted); margin-bottom: var(--s-200);
+  }
+  #search-help-pop dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px var(--s-300); }
+  #search-help-pop dt { font-family: var(--font-mono); font-size: var(--fs-200); color: var(--fg); }
+  #search-help-pop dd { margin: 0; font-size: var(--fs-200); color: var(--fg-subtle); }
+  #search-help-pop .shp-eg {
+    margin-top: var(--s-300); padding: 6px 8px; border-radius: var(--r-200);
+    background: var(--surface-sunken); font-family: var(--font-mono);
+    font-size: var(--fs-200); color: var(--fg-subtle);
+  }
+  #search-help {
+    position: absolute; right: 6px; width: 20px; height: 20px;
+    border-radius: var(--r-full); border: 0; background: transparent;
+    color: var(--fg-muted); font: inherit; font-size: var(--fs-200);
+    cursor: pointer; line-height: 1;
+  }
+  #search-help:hover { background: var(--hover); color: var(--fg); }
+  /* The filter row — it belongs to the view, not to the bar. */
+  .filterbar {
+    display: flex; align-items: center; gap: var(--s-200);
+    padding: var(--s-200) 0 var(--s-300);
+  }
+  .fbtn {
+    display: inline-flex; align-items: center; gap: 5px;
+    height: 28px; padding: 0 10px; border-radius: var(--r-200);
+    border: 1px solid var(--border-strong); background: var(--surface);
+    color: var(--fg); font: inherit; font-size: var(--fs-200); cursor: pointer;
+  }
+  .fbtn:hover { background: var(--hover); }
+  .fbtn .caret { color: var(--fg-muted); font-size: 9px; }
+  .fchip {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 24px; padding: 0 6px 0 10px; border-radius: var(--r-full);
+    border: 0; background: var(--c-neutral-bg); color: var(--c-neutral-fg);
+    font: inherit; font-size: var(--fs-200); cursor: pointer;
+  }
+  .fchip:hover { filter: brightness(.96); }
+  .fchip .x { font-size: 13px; line-height: 1; opacity: .7; }
+  .fchip.more { padding: 0 10px; }
+  .viewcount {
+    margin-left: auto; color: var(--fg-muted); font-size: var(--fs-200);
+    font-variant-numeric: tabular-nums;
+  }
+  #filters-menu { min-width: 210px; padding: var(--s-200); }
+  .fm-group + .fm-group { border-top: 1px solid var(--border); margin-top: var(--s-200); padding-top: var(--s-200); }
+  .fm-head {
+    font-size: var(--fs-100); font-weight: 600; text-transform: uppercase;
+    letter-spacing: .05em; color: var(--fg-muted); padding: 2px 8px 4px;
+  }
+  .fm-item {
+    display: flex; align-items: center; gap: var(--s-200);
+    padding: 6px 8px; border-radius: var(--r-200);
+    font-size: var(--fs-200); color: var(--fg); cursor: pointer;
+  }
+  .fm-item:hover { background: var(--hover); }
+  .fm-item input { accent-color: var(--accent); margin: 0; }
   header h1 .logo {
     width: 20px; height: 20px;
     display: inline-block; vertical-align: middle;
@@ -218,7 +324,6 @@
   .seg button + button { border-left: 1px solid var(--border); }
   .seg button:hover { background: var(--hover); }
   .seg button.active { background: var(--selected-bg); color: var(--selected-fg); font-weight: 500; }
-  #meta { color: var(--fg-subtle); margin-left: auto; font-variant-numeric: tabular-nums; font-size: 12px; }
   main { padding: 8px 20px 40px; }
   table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
   thead { position: sticky; top: var(--header-h); background: var(--bg); z-index: 5; }
@@ -1109,38 +1214,35 @@
     content: '∅'; display: block; font-size: 32px;
     color: var(--fg-muted); margin-bottom: 12px; opacity: .6;
   }
+  /* A transient message is not chrome. #status used to be a span wedged into
+     the top bar; it floats clear of the layout now, so a toast never widens
+     the bar or pushes a control sideways as it appears. */
   #status {
-    padding: 4px 12px; font-size: 12px; font-weight: 500;
-    border-radius: 6px;
-    display: inline-flex; align-items: center; gap: 10px;
-    margin-left: auto;
-    background: var(--fg-subtle); color: white;
-    box-shadow: 0 1px 2px rgba(0,0,0,.06);
+    position: fixed; bottom: var(--s-600); left: 50%; transform: translateX(-50%);
+    z-index: 80; padding: 8px var(--s-300);
+    font-size: var(--fs-200); font-weight: 500;
+    border-radius: var(--r-300);
+    display: inline-flex; align-items: center; gap: var(--s-300);
+    background: var(--surface-overlay); color: var(--fg);
+    border: 1px solid var(--border); box-shadow: var(--e-200);
+    max-width: min(560px, calc(100vw - var(--s-800)));
   }
   #status[hidden] { display: none; }
-  #status.ok   { background: var(--run-idle); }
-  #status.busy { background: var(--run-working); }
-  #status.err  { background: var(--c-danger-fg); }
-  #status .dismiss { background: rgba(255,255,255,.2); color: inherit; border: 0; padding: 2px 8px; border-radius: 4px; cursor: pointer; font: inherit; font-size: 11px; font-weight: 500; }
-  #status .dismiss:hover { background: rgba(255,255,255,.35); }
-  #meta { margin-left: 0 !important; }
-  /* Settings */
-  #settings-btn {
-    background: transparent; border: 1px solid var(--border);
-    padding: 4px 10px; border-radius: 6px; cursor: pointer;
-    color: var(--fg-subtle); font-size: 14px; line-height: 1;
-    transition: color .1s, border-color .1s, background .1s;
+  #status .msg { overflow: hidden; text-overflow: ellipsis; }
+  #status.ok   { border-color: var(--c-success-bold); }
+  #status.busy { border-color: var(--c-progress-bold); }
+  #status.err  { border-color: var(--c-danger-bold); background: var(--c-danger-bg); color: var(--c-danger-fg); }
+  #status .dismiss {
+    background: transparent; color: var(--fg-muted); border: 0;
+    padding: 2px 6px; border-radius: var(--r-200); cursor: pointer;
+    font: inherit; font-size: var(--fs-100); font-weight: 500;
   }
-  #settings-btn:hover { color: var(--fg); border-color: var(--border-strong); background: var(--hover); }
+  #status .dismiss:hover { background: var(--hover); color: var(--fg); }
   /* --- Notifications: tasks that need you ------------------------------- */
-  #notif-btn {
-    position: relative; background: transparent; border: 1px solid var(--border);
-    padding: 4px 10px; border-radius: 6px; cursor: pointer;
-    color: var(--fg-subtle); font-size: 14px; line-height: 1;
-    transition: color .1s, border-color .1s, background .1s;
-  }
-  #notif-btn:hover { color: var(--fg); border-color: var(--border-strong); background: var(--hover); }
-  #notif-btn.has-items { color: var(--c-danger-fg); border-color: var(--c-danger-fg); }
+  /* The bell takes .bar-btn.icon like every other icon control up here; only
+     the count badge is its own. A bell with nothing in it says nothing, so
+     the button itself never changes colour — the badge carries the state. */
+  #notif-btn.has-items { color: var(--fg); }
   #notif-count {
     position: absolute; top: -6px; right: -6px; min-width: 16px; height: 16px;
     padding: 0 4px; border-radius: var(--r-full); background: var(--c-danger-bg); color: var(--c-danger-fg);
@@ -1148,7 +1250,7 @@
   }
   #notif-count[hidden] { display: none; }
   #notif-tray {
-    position: absolute; top: calc(var(--header-h) + 7px); right: 16px; z-index: 60; width: 420px;
+    position: absolute; top: calc(var(--header-h) + var(--s-200)); right: 16px; z-index: 60; width: 420px;
     max-height: 70vh; overflow-y: auto; background: var(--surface);
     border: 1px solid var(--border); border-radius: var(--r-300);
     box-shadow: var(--e-200); padding: 8px;
@@ -1290,7 +1392,7 @@
     content: '⚠'; color: var(--c-danger-fg); margin-right: 5px; font-size: 11px;
   }
   #settings-panel {
-    position: absolute; top: calc(var(--header-h) + 7px); right: 16px; z-index: 50;
+    position: absolute; top: calc(var(--header-h) + var(--s-200)); right: 16px; z-index: 50;
     background: var(--surface); border: 1px solid var(--border);
     border-radius: 10px; box-shadow: 0 12px 36px rgba(0,0,0,.12);
     padding: 16px; min-width: 280px;
@@ -1533,21 +1635,20 @@
      MOBILE_MQ in the script. */
   @media (max-width: 640px), (max-width: 1024px) and (pointer: coarse) {
     /* Header: ONE fixed-height row (panels below hang off --header-h, so it
-       must not wrap/grow). Logo-only brand, hide desktop-only filler, let the
-       search flex and the filter chips scroll horizontally. */
-    header { gap: 8px; padding: 0 10px; }
+       must not wrap/grow). Logo-only brand, and search takes what is left.
+       The five filter buttons that used to have to scroll horizontally here
+       are gone — they live in the view's own filter row now. */
+    header { gap: 6px; padding: 0 10px; }
     header h1 { font-size: 0; flex: 0 0 auto; }   /* hide wordmark, keep icon */
     header h1 .logo { width: 22px; height: 22px; }
-    #new-btn { display: none; }
-    #meta, #status { display: none !important; }
+    .bar-gap { display: none; }                   /* no room to centre anything */
+    #proj-switch { max-width: 96px; }
     .search-wrap { flex: 1 1 auto; min-width: 0; max-width: none; }
-    #search { min-width: 0; padding-right: 12px; }
-    #search::placeholder { color: transparent; }   /* field stays usable */
-    .seg#filter {
-      flex: 0 1 auto; overflow-x: auto;
-      -webkit-overflow-scrolling: touch; scrollbar-width: none;
-    }
-    .seg#filter::-webkit-scrollbar { display: none; }
+    #search { min-width: 0; }
+    #search-help { display: none; }               /* the popover needs a pointer */
+    /* Create stays: it is the reason you opened the dashboard on a phone. */
+    #new-btn { padding: 0 10px; }
+    .filterbar { flex-wrap: wrap; }
 
     /* List takes the whole width — no room reserved for side panes */
     main { padding-left: 0 !important; padding-right: 0 !important; }
@@ -1644,40 +1745,53 @@
     </svg>
     Ensemble
   </h1>
-  <button id="new-btn" title="Create a new ~/cs/NN_<slug> session and open it in iTerm">+ New</button>
-  <div class="search-wrap">
-    <input id="search" type="search"
-           placeholder='filter — Enter to grep transcripts. Space = AND · OR = OR · "quoted phrase" = literal'
-           title='Search syntax:&#10;  space-separated terms → AND (all must appear)&#10;  OR (uppercase) → OR&#10;  &quot;quoted phrase&quot; → literal, keeps spaces&#10;example: &quot;prop-risk&quot; replay OR quoting review'
-           autofocus>
-    <span id="search-state" class="search-state" hidden></span>
-  </div>
-  <div class="seg" id="filter">
-    <button data-mode="live" class="active">Live</button>
-    <button data-mode="pinned" class="active">📌 Pinned</button>
-    <button data-mode="history" class="active">History</button>
-    <button data-mode="archived" title="Show archived sessions">🗄 Archived</button>
-    <button id="ext-toggle" title="Hide sessions run outside the dashboard (cwd not under ~/cs)">🏠 Workspace only</button>
-  </div>
-  <span id="status" hidden></span>
-  <span id="meta"></span>
-  <!-- Plan allowance: ONE chip for the whole board, next to the notifications
-       bell. Account-wide by nature — deliberately not on task cards. Everything
-       it needs is under the `usage` name (see the CSS block and the JS section
-       of the same name), so it can be moved as a unit. -->
-  <button id="usage-chip" title="Plan allowance — click for detail"
-          aria-label="Plan allowance" hidden>
-    <span class="usage-chip-label">Plan</span>
-    <span id="usage-chip-body"></span>
+  <!-- Where am I. Jump projects without going home first. -->
+  <button id="proj-switch" class="bar-btn" title="Switch project" aria-haspopup="true" aria-expanded="false">
+    <span id="proj-switch-name">All projects</span><span class="caret">▾</span>
   </button>
-  <!-- Notifications: tasks that need a human. Self-contained (markup, CSS and
-       JS all under the `notif` name) so the Jira-style board can lift the whole
-       thing into a proper notifications area without unpicking it. -->
-  <button id="notif-btn" title="Tasks that need you" aria-label="Tasks that need you">
+  <div class="bar-gap"></div>
+  <div class="search-wrap">
+    <input id="search" type="search" placeholder="Search tasks" autofocus>
+    <span id="search-state" class="search-state" hidden></span>
+    <!-- A placeholder is not documentation: the grep syntax lives behind this. -->
+    <button id="search-help" type="button" title="Search syntax" aria-label="Search syntax">?</button>
+  </div>
+  <div class="bar-gap"></div>
+  <!-- Plan allowance: ONE chip for the whole board, next to the notifications
+       bell. Account-wide by nature, so top bar only and never on a task card.
+       Everything it needs is under the `usage` name (the CSS block and the JS
+       section of the same name), so it moves as a unit. -->
+  <div id="plan-usage-slot">
+    <button id="usage-chip" title="Plan allowance — click for detail"
+            aria-label="Plan allowance" hidden>
+      <span class="usage-chip-label">Plan</span>
+      <span id="usage-chip-body"></span>
+    </button>
+  </div>
+  <!-- Notifications: tasks that need a human. Self-contained under the `notif`
+       name; the sidebar's "Needs you" is the full view of the same data. -->
+  <button id="notif-btn" class="bar-btn icon" title="Tasks that need you" aria-label="Tasks that need you">
     🔔<span id="notif-count" hidden>0</span>
   </button>
-  <button id="settings-btn" title="Settings — accent color &amp; runtime info" aria-label="Settings">⚙</button>
+  <button id="me-btn" class="bar-btn avatar-btn" title="You — settings and preferences"
+          aria-haspopup="true" aria-expanded="false"><span id="me-initials">··</span></button>
+  <button id="new-btn" title="Create a task">Create</button>
 </header>
+<div id="search-help-pop" hidden>
+  <div class="shp-title">Search syntax</div>
+  <dl>
+    <dt>two words</dt><dd>both must appear</dd>
+    <dt>a <b>OR</b> b</dt><dd>either — uppercase OR</dd>
+    <dt>"a phrase"</dt><dd>literal, keeps spaces</dd>
+    <dt>Enter</dt><dd>grep the transcripts, not just the titles</dd>
+  </dl>
+  <div class="shp-eg">"prop-risk" replay OR quoting</div>
+</div>
+<div id="me-menu" hidden>
+  <button class="me-item" data-me="settings">⚙ Settings</button>
+  <button class="me-item" data-me="theme">🎨 Accent colour</button>
+</div>
+<div id="proj-menu" hidden></div>
 <div id="notif-tray" hidden>
   <div class="notif-head">Needs you <span id="notif-sub"></span></div>
   <div id="notif-list"></div>
@@ -1903,8 +2017,21 @@ function mdToHtml(src) {
   closeList();
   return out.join('\n').replace(new RegExp(_MDA + '(\\d+)' + _MDZ, 'g'), (_, i) => codes[+i]);
 }
+// #status used to be a span wedged into the top bar. A transient message is
+// not chrome, so it is a toast now — created on demand, floating clear of the
+// layout. Same call signature, so every existing toast() caller is unchanged.
+function _toastEl() {
+  let s = document.getElementById('status');
+  if (!s) {
+    s = document.createElement('div');
+    s.id = 'status';
+    s.hidden = true;
+    document.body.appendChild(s);
+  }
+  return s;
+}
 const toast = (msg, ms=2500, kind='') => {
-  const s = $('#status');
+  const s = _toastEl();
   // Build content: message + dismiss button
   s.innerHTML = `<span class="msg"></span><button class="dismiss" type="button">dismiss</button>`;
   s.querySelector('.msg').textContent = msg;
@@ -2032,7 +2159,26 @@ let PROJECTS = null, _projTs = 0, SELECTED_PROJECT = null, _projFailed = false;
 let WS_SCOPE = '';       // Changes tab: '' = the project folder, else one task's workspace path
 let PROJ_GROUPBY = localStorage.getItem('cd-groupby') || 'project';
 let SEARCH_QUERY = '';
-let FILTERS = new Set(['live', 'pinned', 'history']); // multi-select
+// Multi-select inclusion filters. Persisted now that they live behind a menu
+// rather than as five always-visible buttons: a filter you can't see is a
+// filter you forget you set, and coming back to a list that silently hides
+// rows is worse than coming back to the one you left. Defaults are unchanged,
+// so a first run looks exactly as it did.
+const FILTER_KEYS = ['live', 'pinned', 'history', 'archived'];
+function loadFilters() {
+  try {
+    const raw = localStorage.getItem('cd-filters');
+    if (!raw) return new Set(['live', 'pinned', 'history']);
+    const arr = JSON.parse(raw).filter(k => FILTER_KEYS.includes(k));
+    // An empty set shows nothing at all; treat a stored empty as "unset"
+    // rather than handing back a blank screen with no obvious cause.
+    return new Set(arr.length ? arr : ['live', 'pinned', 'history']);
+  } catch (e) { return new Set(['live', 'pinned', 'history']); }
+}
+function saveFilters() {
+  try { localStorage.setItem('cd-filters', JSON.stringify([...FILTERS])); } catch (e) {}
+}
+let FILTERS = loadFilters();
 // When on, hide sessions run outside the dashboard (cwd not under ~/cs).
 let HIDE_EXTERNAL = localStorage.getItem('cd-hide-external') === '1';
 // Category sidebar selection. Sentinel values: '__all__' (everything),
@@ -2822,6 +2968,7 @@ function renderPrefs() {
   if (nickInput && document.activeElement !== nickInput) {
     nickInput.value = PREFS.operatorNickname || '';
   }
+  syncMeInitials();
   const stallInput = document.getElementById('pref-stall-seconds');
   if (stallInput && document.activeElement !== stallInput) {
     stallInput.value = PREFS.attentionStallSeconds || 900;
@@ -3773,6 +3920,7 @@ function wireChangesPanel(pj) {
 }
 function renderRows() {
   renderSidebar();
+  syncProjSwitch();
   // The workspace panel is shown, never rebuilt — every branch below is free to
   // replace #view without touching it.
   const wsp = document.getElementById('ws-panel');
@@ -3781,7 +3929,7 @@ function renderRows() {
   // falls through to the existing session table below.
   if (!SELECTED_PROJECT && PROJ_GROUPBY === 'project' && !_projFailed) {
     $('#view').innerHTML = projectsChromeHtml() + projectsLandingHtml();
-    $('#meta').textContent = PROJECTS ? `${PROJECTS.projects.length} projects · ${PROJECTS.summary.needsYou} need you` : 'loading…';
+    setViewCount(PROJECTS ? `${PROJECTS.projects.length} projects` : 'loading…');
     wireProjectsChrome();
     return;
   }
@@ -3789,7 +3937,7 @@ function renderRows() {
   if (SELECTED_PROJECT && PROJECT_TAB === 'changes') {
     const pj = projectById(SELECTED_PROJECT);
     document.getElementById('view').innerHTML = projectsChromeHtml() + changesPanelHtml(pj);
-    document.getElementById('meta').textContent = pj ? (pj.name + ' · changes') : 'changes';
+    setViewCount('');
     wireProjectsChrome(); wireChangesPanel(pj);
     return;
   }
@@ -3797,7 +3945,7 @@ function renderRows() {
   // the task table.
   if (SELECTED_PROJECT && PROJECT_TAB === 'workspace') {
     const pj = projectById(SELECTED_PROJECT);
-    $('#meta').textContent = pj ? `${pj.name} · workspace` : 'workspace';
+    setViewCount('');
     // The chrome — status strip, crumbs, tabs — is a view of live data and is
     // rewritten on every tick. The panel is STATE and lives outside #view
     // entirely (see the markup), so nothing here can destroy it.
@@ -3819,13 +3967,19 @@ function renderRows() {
   const active = parsed.groups.length > 0;
   const modeFiltered = ALL_ROWS.filter(passesFilter);
   const filtered = active ? modeFiltered.filter(r => rowMatches(r, parsed)) : modeFiltered;
-  const liveCount = ALL_ROWS.filter(r => r.isLive).length;
-  const pinnedCount = ALL_ROWS.filter(r => r.pinned).length;
-  const total = ALL_ROWS.length;
-  const scope = modeFiltered.length;
-  $('#meta').textContent = active
-    ? `${filtered.length} / ${scope} match · ${liveCount} live · ${pinnedCount} pinned · ${total} total`
-    : `${scope} shown · ${liveCount} live · ${pinnedCount} pinned · ${total} total`;
+  // One number, not four. "3 live" duplicated the sidebar's Active count and
+  // "2 pinned" was a filter's own state; both went. What survives answers the
+  // question a filtered list actually raises — am I looking at everything, or
+  // a subset? — which is why a task can seem to vanish when a filter is on.
+  // Archived rows are out of the working set unless you ask for them, so they
+  // are out of the denominator too. Counting them in produced "38 of 54" with
+  // nothing on screen to explain the 16 — which is precisely the false alarm
+  // this number exists to prevent.
+  const pool = FILTERS.has('archived') ? ALL_ROWS : ALL_ROWS.filter(r => !r.archived);
+  const total = pool.length;
+  const shown = filtered.length;
+  const scope = modeFiltered.length;   // still feeds the category page header
+  setViewCount(shown === total ? `${total} tasks` : `${shown} of ${total}`);
   const view = $('#view');
   // Page header for category context
   let pageHeader = '';
@@ -3841,20 +3995,23 @@ function renderRows() {
     pageHeader = `<div class="page-header">${title}${actions}</div>`;
   }
   if (!filtered.length) {
-    view.innerHTML = projectsChromeHtml() + pageHeader + '<p class="empty">' + (active ? 'No matches.' : 'No sessions.') + '</p>';
+    view.innerHTML = projectsChromeHtml() + pageHeader + filterRowHtml()
+      + '<p class="empty">' + (active ? 'No matches.' : 'No sessions.') + '</p>';
     wireProjectsChrome();
+    setViewCount(total ? `0 of ${total}` : '0 tasks');
     return;
   }
   const now = Date.now() / 1000;
   const ordered = nestForks(filtered);
   const headExtra = DETAIL_MODE ? '' : '<th></th>';
-  view.innerHTML = projectsChromeHtml() + pageHeader + `<table>
+  view.innerHTML = projectsChromeHtml() + pageHeader + filterRowHtml() + `<table>
     <thead><tr>
       <th></th><th class="prio"></th><th>Task</th><th></th>${headExtra}
     </tr></thead>
     <tbody>${renderGroupedRows(ordered, parsed, now)}</tbody>
   </table>`;
   wireProjectsChrome();
+  setViewCount(_viewCount);
 }
 
 // Custom theme dropdown state.
@@ -4000,9 +4157,9 @@ async function refresh() {
   } catch (e) {
     // A dropped poll must not cost you the workspace. The tree, the folders you
     // opened and the file you are reading are state, not a view of /api/sessions
-    // — so say it in the status line and leave the panel where it is.
+    // — so say it in a toast and leave the panel where it is.
     const wsp = document.getElementById('ws-panel');
-    if (wsp && !wsp.hidden) $('#meta').textContent = 'refresh failed: ' + e.message;
+    if (wsp && !wsp.hidden) toast('refresh failed: ' + e.message, 4000, 'err');
     else $('#view').innerHTML = `<p class="empty">Error: ${esc(e.message)}</p>`;
   } finally {
     _refreshInFlight = false;
@@ -4961,6 +5118,86 @@ document.addEventListener('visibilitychange', () => {
 });
 refreshUsage();
 
+// ---------------------------------------------------------------------------
+// Project switcher + search-syntax popover. Both answer "where am I / how do
+// I use this" without spending permanent room in the bar on the answer.
+// ---------------------------------------------------------------------------
+// The avatar carries whatever the agents call you — the nickname you already
+// set, or the git user behind it. Initials, because the bar has no room for a
+// name and the menu says it in full.
+function syncMeInitials() {
+  const el = document.getElementById('me-initials');
+  if (!el) return;
+  const who = ((PREFS && (PREFS.operatorNickname || PREFS.gitUser)) || '').trim();
+  if (!who) { el.textContent = '··'; el.parentElement.title = 'You — settings and preferences'; return; }
+  const parts = who.split(/[\s._-]+/).filter(Boolean);
+  const initials = (parts.length > 1 ? parts[0][0] + parts[1][0] : who.slice(0, 2));
+  el.textContent = initials.toLowerCase();
+  el.parentElement.title = who + ' — settings and preferences';
+}
+
+function projSwitchLabel() {
+  if (!SELECTED_PROJECT) return 'All projects';
+  const pj = projectById(SELECTED_PROJECT);
+  return pj ? pj.name : 'Project';
+}
+function syncProjSwitch() {
+  const el = document.getElementById('proj-switch-name');
+  if (el) el.textContent = projSwitchLabel();
+}
+function closeProjMenu() {
+  $('#proj-menu').hidden = true;
+  $('#proj-switch').setAttribute('aria-expanded', 'false');
+}
+$('#proj-switch').addEventListener('click', (ev) => {
+  ev.stopPropagation();
+  const m = $('#proj-menu');
+  if (!m.hidden) { closeProjMenu(); return; }
+  const list = (PROJECTS && PROJECTS.projects) || [];
+  m.innerHTML = `<button class="pm-item${!SELECTED_PROJECT ? ' on' : ''}" data-proj="">All projects</button>`
+    + (list.length ? '<div class="pm-rule"></div>' : '')
+    + list.map(pj => {
+        const needs = (pj.sessions || []).filter(x => x.attention).length;
+        return `<button class="pm-item${SELECTED_PROJECT === pj.id ? ' on' : ''}" data-proj="${esc(pj.id)}">`
+          + `<span class="pm-name">${esc(pj.name)}</span>`
+          + (needs ? `<span class="pm-needs">${needs}</span>` : '') + '</button>';
+      }).join('');
+  m.hidden = false;
+  const r = ev.currentTarget.getBoundingClientRect();
+  m.style.top = Math.round(r.bottom + 6) + 'px';
+  m.style.left = Math.round(r.left) + 'px';
+  $('#proj-switch').setAttribute('aria-expanded', 'true');
+});
+$('#proj-menu').addEventListener('click', (ev) => {
+  const it = ev.target.closest('.pm-item');
+  if (!it) return;
+  ev.stopPropagation();
+  closeProjMenu();
+  SELECTED_PROJECT = it.dataset.proj || null;
+  PROJECT_TAB = 'tasks';
+  WS_SCOPE = '';
+  syncProjSwitch();
+  renderRows();
+});
+$('#search-help').addEventListener('click', (ev) => {
+  ev.stopPropagation();
+  const pop = $('#search-help-pop');
+  const opening = pop.hidden;
+  pop.hidden = !opening;
+  if (opening) {
+    const r = ev.currentTarget.getBoundingClientRect();
+    pop.style.top = Math.round(r.bottom + 8) + 'px';
+    pop.style.left = Math.round(Math.min(r.left - 200, window.innerWidth - 320)) + 'px';
+  }
+});
+document.addEventListener('click', (ev) => {
+  if (!ev.target.closest('#search-help') && !ev.target.closest('#search-help-pop')) {
+    const pop = document.getElementById('search-help-pop');
+    if (pop) pop.hidden = true;
+  }
+  if (!ev.target.closest('#proj-switch') && !ev.target.closest('#proj-menu')) closeProjMenu();
+});
+
 // Accent color customization
 function applyAccent(color) {
   if (color) document.documentElement.style.setProperty('--accent', color);
@@ -4978,17 +5215,43 @@ queueMicrotask(() => {
   $('#accent-input').value = _storedAccent;
 });
 
-$('#settings-btn').addEventListener('click', (ev) => {
-  ev.stopPropagation();
+// Settings used to be a ⚙ of its own in the bar. It lives behind the avatar
+// now — "everything about me" in one place — which is one control fewer up
+// there and the conventional home for it.
+function openSettingsPanel(anchor) {
   const panel = $('#settings-panel');
-  const opening = panel.hidden;
-  panel.hidden = !opening;
+  panel.hidden = false;
+  const r = anchor.getBoundingClientRect();
+  panel.style.top = Math.round(r.bottom + 6) + 'px';
+  panel.style.right = Math.round(window.innerWidth - r.right) + 'px';
+  panel.style.left = 'auto';
+}
+function closeMeMenu() {
+  $('#me-menu').hidden = true;
+  $('#me-btn').setAttribute('aria-expanded', 'false');
+}
+$('#me-btn').addEventListener('click', (ev) => {
+  ev.stopPropagation();
+  const m = $('#me-menu');
+  const opening = m.hidden;
+  $('#settings-panel').hidden = true;
+  m.hidden = !opening;
+  $('#me-btn').setAttribute('aria-expanded', opening ? 'true' : 'false');
   if (opening) {
-    // Anchor right-edge to the button so the panel drops directly under it.
     const r = ev.currentTarget.getBoundingClientRect();
-    panel.style.top = Math.round(r.bottom + 6) + 'px';
-    panel.style.right = Math.round(window.innerWidth - r.right) + 'px';
-    panel.style.left = 'auto';
+    m.style.top = Math.round(r.bottom + 6) + 'px';
+    m.style.right = Math.round(window.innerWidth - r.right) + 'px';
+  }
+});
+$('#me-menu').addEventListener('click', (ev) => {
+  const it = ev.target.closest('.me-item');
+  if (!it) return;
+  ev.stopPropagation();
+  closeMeMenu();
+  openSettingsPanel($('#me-btn'));
+  if (it.dataset.me === 'theme') {
+    const inp = document.getElementById('accent-input');
+    if (inp) inp.focus();
   }
 });
 $('#settings-panel').addEventListener('click', (ev) => {
@@ -5017,7 +5280,9 @@ $('#accent-input').addEventListener('input', (ev) => {
   }
 });
 document.addEventListener('click', (ev) => {
-  if (ev.target.closest('#settings-btn') || ev.target.closest('#settings-panel')) return;
+  if (ev.target.closest('#me-btn') || ev.target.closest('#me-menu')
+      || ev.target.closest('#settings-panel')) return;
+  closeMeMenu();
   $('#settings-panel').hidden = true;
 });
 
@@ -5087,25 +5352,118 @@ document.addEventListener('keydown', (ev) => {
   if (SELECTED_SID) closeDetail();
 });
 
-$('#filter').addEventListener('click', (ev) => {
-  const tog = ev.target.closest('#ext-toggle');
-  if (tog) {
+// ---------------------------------------------------------------------------
+// The filter row. These five were a segmented control in the global top bar,
+// which lied twice: a segmented control means "pick one" and these are
+// inclusion filters you combine, and nothing about the *current view* belongs
+// in a *global* bar. Same filters, same defaults, same persistence — a
+// different control, in the view that owns them.
+// ---------------------------------------------------------------------------
+const FILTER_LABELS = { live: 'Live', pinned: 'Pinned', history: 'History', archived: 'Archived' };
+const FILTER_DEFAULTS = ['live', 'pinned', 'history'];
+
+function filterChips() {
+  // What is NARROWING the view — not what is switched on. With the defaults
+  // all three "which rows" filters are on and nothing is being hidden, so the
+  // row stays empty until a choice actually costs you rows.
+  const chips = [];
+  for (const k of FILTER_DEFAULTS) {
+    if (!FILTERS.has(k)) chips.push({ k, label: 'No ' + FILTER_LABELS[k].toLowerCase() });
+  }
+  if (FILTERS.has('archived')) chips.push({ k: 'archived', label: 'Archived shown' });
+  if (HIDE_EXTERNAL) chips.push({ k: '__ext__', label: 'Workspace only' });
+  return chips;
+}
+
+function filterRowHtml() {
+  const chips = filterChips();
+  const shown = chips.slice(0, 2).map(c =>
+    `<button class="fchip" data-drop="${esc(c.k)}" title="Remove this filter">${esc(c.label)}<span class="x">×</span></button>`
+  ).join('');
+  const more = chips.length > 2
+    ? `<button class="fchip more" data-openfilters="1">${chips.length} filters</button>` : '';
+  return `<div class="filterbar">
+    <button class="fbtn" id="filters-btn" aria-haspopup="true" aria-expanded="false">Filters<span class="caret">▾</span></button>
+    ${shown}${more}
+    <span class="viewcount" id="viewcount"></span>
+  </div>`;
+}
+
+// The count is written by renderRows AFTER the row exists, so it survives the
+// filter row being rebuilt on every render.
+let _viewCount = '';
+function setViewCount(txt) {
+  _viewCount = txt;
+  const el = document.getElementById('viewcount');
+  if (el) el.textContent = txt;
+}
+
+function filtersMenuHtml() {
+  // Two groups with a rule between them, because they are two different
+  // axes — WHICH ROWS you want, and WHERE they may come from. Stacking those
+  // in one strip was the other half of what made the old control unreadable.
+  const row = (k, label) =>
+    `<label class="fm-item"><input type="checkbox" data-f="${k}"${FILTERS.has(k) ? ' checked' : ''}> ${esc(label)}</label>`;
+  return `<div class="fm-group"><div class="fm-head">Which rows</div>
+      ${row('live', 'Live')}${row('pinned', 'Pinned')}${row('history', 'History')}${row('archived', 'Archived')}
+    </div>
+    <div class="fm-group"><div class="fm-head">Where</div>
+      <label class="fm-item"><input type="checkbox" data-f="__ext__"${HIDE_EXTERNAL ? ' checked' : ''}> Workspace only</label>
+    </div>`;
+}
+
+function toggleFilter(key) {
+  if (key === '__ext__') {
     HIDE_EXTERNAL = !HIDE_EXTERNAL;
     localStorage.setItem('cd-hide-external', HIDE_EXTERNAL ? '1' : '0');
-    tog.classList.toggle('active', HIDE_EXTERNAL);
-    renderRows();
+  } else if (FILTERS.has(key)) {
+    FILTERS.delete(key);
+  } else {
+    FILTERS.add(key);
+  }
+  saveFilters();
+  renderRows();
+}
+
+function closeFiltersMenu() {
+  const m = document.getElementById('filters-menu');
+  if (m) m.remove();
+  const b = document.getElementById('filters-btn');
+  if (b) b.setAttribute('aria-expanded', 'false');
+}
+
+document.addEventListener('click', (ev) => {
+  // Dismiss a filter straight from its chip: the fastest answer to "why can't
+  // I see my task?" is the filter that is hiding it, with an × on it.
+  const chip = ev.target.closest('.fchip[data-drop]');
+  if (chip) { ev.stopPropagation(); toggleFilter(chip.dataset.drop); return; }
+  if (ev.target.closest('.fchip.more')) { ev.stopPropagation(); openFiltersMenu(); return; }
+  const fb = ev.target.closest('#filters-btn');
+  if (fb) {
+    ev.stopPropagation();
+    if (document.getElementById('filters-menu')) closeFiltersMenu(); else openFiltersMenu();
     return;
   }
-  const btn = ev.target.closest('button[data-mode]');
-  if (!btn) return;
-  const mode = btn.dataset.mode;
-  if (FILTERS.has(mode)) FILTERS.delete(mode);
-  else FILTERS.add(mode);
-  btn.classList.toggle('active', FILTERS.has(mode));
-  renderRows();
+  const menu = document.getElementById('filters-menu');
+  if (menu && !ev.target.closest('#filters-menu')) closeFiltersMenu();
 });
-// Reflect the persisted workspace-only state on the toggle at load.
-if (HIDE_EXTERNAL) { const t = document.getElementById('ext-toggle'); if (t) t.classList.add('active'); }
+
+function openFiltersMenu() {
+  closeFiltersMenu();
+  const btn = document.getElementById('filters-btn');
+  if (!btn) return;
+  const m = document.createElement('div');
+  m.id = 'filters-menu';
+  m.innerHTML = filtersMenuHtml();
+  document.body.appendChild(m);
+  const r = btn.getBoundingClientRect();
+  m.style.top = (r.bottom + 6) + 'px';
+  m.style.left = Math.min(r.left, window.innerWidth - m.offsetWidth - 12) + 'px';
+  btn.setAttribute('aria-expanded', 'true');
+  m.querySelectorAll('input[data-f]').forEach(cb => {
+    cb.addEventListener('change', () => toggleFilter(cb.dataset.f));
+  });
+}
 
 // Sidebar collapse — persisted in localStorage
 if (localStorage.getItem('cd-sidebar') === 'collapsed') {
