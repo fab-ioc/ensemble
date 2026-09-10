@@ -443,3 +443,50 @@ you change transition behaviour, change both, or they drift.
 - [ ] Nothing added to the top bar that belongs to a view
 - [ ] Checked at a narrow laptop width **and** wide, in Light first and then every other theme
 - [ ] The list still does not reorder while the mouse is over it
+- [ ] Checked at 360 and 430px in an iframe, and at a landscape phone size: §8 holds, and 1280 and
+      1440 measure the same as before the change
+
+---
+
+## 8. Phone
+
+The dashboard, the chat and the file view are used from a phone. A phone is a touch screen of 360–430px
+in portrait, about 390px tall in landscape, with an on-screen keyboard that takes half the height. The
+audit that wrote this section is `phone-audit.md` in the task folder for *Make Ensemble work properly on
+a phone*.
+
+**Which query.** `index.html` switches to its phone layout at
+`(max-width: 640px), (max-width: 1024px) and (pointer: coarse)` — `MOBILE_MQ` in the script, the same
+text in the stylesheet. `session.html` and `fileview.html` use **`(pointer: coarse)` alone**: on a
+desktop they sit in the task panel, the PO's drawer and the Workspace pane, all narrower than 640px, and
+a width query would restyle them there. Phone rules go inside those blocks and nowhere else, so the
+desktop is untouched by construction.
+
+1. **Every tap target is at least `--touch-min` (44px)** in both directions. When the look must stay
+   small (a 16px lozenge that is also a picker), give it an invisible `::after` margin instead of a
+   bigger box — and remember a sideways-scrolling row clips that margin, so the row carries it as
+   padding.
+2. **Every field is `--fs-400` (16px) on a phone.** A phone zooms the page into any focused field
+   smaller than that and leaves it zoomed.
+3. **Nothing needs hover.** Whatever a pointer reveals on hover is simply shown. A `title` tooltip may
+   add detail, never carry the only copy of something.
+4. **The bar fits 360px: six 44px targets and Create.** Identity goes; search folds into a button and
+   opens over the bar, and stays open while it holds a query (§5.5: a filtered list shows why); the
+   plan chip moves into the avatar menu, and its warnings still reach the banner. Anything new for the
+   bar on a phone must replace something, not squeeze it.
+5. **An open task never covers the bar.** The bar is the way to the PO and to the project. On a phone
+   the task takes the whole width *under* the bar, and the PO's pill opens the PO over it.
+6. **The keyboard never covers a composer.** The viewport tag carries
+   `interactive-widget=resizes-content` (Android then shrinks the page); for iOS, which shrinks only
+   the visual viewport, the pages set `--vv-h`/`--vv-top` from `visualViewport` and size anything
+   pinned to the bottom from them. Never pin a composer with `100vh`.
+7. **A popover or comment box opens at the top, not the middle.** Centred, it sits under the keyboard
+   it opens.
+8. **Touch selection is followed through `selectionchange`**, not `touchend`: the handles adjust the
+   selection after the finger lifts.
+9. **Two panes side by side become one above the other** below the phone breakpoint (Workspace,
+   Changes). Beside each other on 390px, the file got 79px.
+10. **Measure it.** In this environment `(pointer: coarse)` never matches, so to measure a phone's
+    landscape layout rewrite the query in a test copy of the page (the audit's proxy does it for
+    `?_coarse=1`), and give the frame's scrollbars zero width: a desktop frame's 9px scrollbar makes
+    every layout 9px narrower than on the phone it stands for.

@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Ensemble — session</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
@@ -62,6 +62,9 @@
      it keep their own dark terminal theme, which is correct for a terminal. */
   :root {
     color-scheme: light;
+    --fs-100: 11px;
+    --fs-400: 16px;
+    --touch-min: 44px;   /* the smallest thing a finger taps, on a phone */
     --bg: #F7F8F9;
     --surface: #FFFFFF;
     --surface-sunken: #F1F2F4;
@@ -405,7 +408,9 @@
     --e-200: 0 8px 12px rgba(15,18,24,.4), 0 0 1px rgba(15,18,24,.6);
   }
   * { box-sizing: border-box; }
-  body { margin:0; height:100vh; display:flex; flex-direction:column; background:var(--bg); color:var(--fg); font:13px system-ui,-apple-system,sans-serif; }
+  /* --vv-h is the visible viewport on a touch screen (set by script), so the
+     composer at the foot of the page stays above the on-screen keyboard. */
+  body { margin:0; height:100vh; height:var(--vv-h, 100dvh); display:flex; flex-direction:column; background:var(--bg); color:var(--fg); font:13px system-ui,-apple-system,sans-serif; }
   header { display:flex; align-items:center; gap:10px; padding:8px 12px; border-bottom:1px solid var(--border); flex:0 0 auto; }
   header h1 { font-size:14px; margin:0; }
   .grow { flex:1; }
@@ -571,6 +576,36 @@
   #theme-menu-s .tm-item:hover { background:var(--hover); color:var(--fg); }
   #theme-menu-s .tm-item.on { color:var(--selected-fg); font-weight:500; }
   #theme-menu-s .tm-rule { height:1px; background:var(--border); margin:var(--s-100) 0; }
+  /* ---- Phone (SKILL.md §8) ---------------------------------------------
+     Keyed on a touch screen, not on width: on a desktop this page sits in the
+     dashboard's task panel and the PO's drawer, both narrower than a phone
+     breakpoint, and a width query would restyle them there. */
+  @media (pointer: coarse) {
+    /* The window's own header (hidden when embedded) holds a dozen buttons:
+       in one row they ran 264px past the edge of a 360px phone, and wrapped
+       they took three rows and pushed Send under the keyboard. One row that
+       scrolls sideways keeps every button reachable and the chat its height. */
+    header { overflow-x: auto; scrollbar-width: none; }
+    header::-webkit-scrollbar { display: none; }
+    header > * { flex: 0 0 auto; }
+    header h1 { flex: 0 1 auto; max-width: 60vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    header .grow { display: none; }
+    /* While you type, the header and info bar step aside: a landscape phone
+       with its keyboard up leaves about 200px, and Send ended 1px under the
+       keyboard at 300px with them showing. */
+    body:has(#input:focus) > header, body:has(#input:focus) > #info { display: none; }
+    #compose { padding: 8px; gap: 4px; }
+    button, select, .agent .ah { min-height: var(--touch-min); }
+    button { min-width: var(--touch-min); }
+    #promptcard .pc-x, #cmt-tray .cmt-item-x, #livetail .lt-more { min-width: var(--touch-min); }
+    /* A phone zooms into any field under 16px and stays zoomed. The ids and
+       classes are here because those fields' own rules set font: inherit. */
+    textarea, select, input, #compose textarea, .cmt-composer textarea { font-size: var(--fs-400); }
+    .status, .msg .from, #livetail .lt-head, #livetail .lt-more,
+    .msg .text.md pre.cb[data-lang]::before, .adot { font-size: var(--fs-100); }
+    /* Centred, the comment box sat under the keyboard it opens. */
+    .cmt-composer { top: var(--s-300, 12px); transform: translateX(-50%); }
+  }
 </style>
 </head>
 <body>
@@ -622,6 +657,23 @@ if (qs.get('embed')) document.body.classList.add('embed');
 // land on its terminal rather than on a page with the terminals switched off.
 const FOCUS_AGENT = (qs.get('agent') || '').trim();
 if (!FOCUS_AGENT) document.body.classList.add('term-hidden');   // terminals off by default
+// The on-screen keyboard. Android shrinks the page when it opens (the viewport
+// tag asks for that); iOS shrinks only the visual viewport and scrolls it. The
+// page is kept exactly as tall as what is visible, and back at the top, so the
+// composer at its foot is never under the keyboard. Touch screens only.
+const TOUCH = window.matchMedia('(pointer: coarse)').matches;
+if (TOUCH && window.visualViewport) {
+  // Set only while the visible viewport is shorter than the page (the iOS
+  // keyboard); otherwise 100dvh, so a stale reading can never shorten the page.
+  const fitVisualViewport = () => {
+    const root = document.documentElement.style;
+    if (visualViewport.height < window.innerHeight - 1) root.setProperty('--vv-h', Math.round(visualViewport.height) + 'px');
+    else root.removeProperty('--vv-h');
+    if (visualViewport.offsetTop > 0) window.scrollTo(0, 0);
+  };
+  visualViewport.addEventListener('resize', fitVisualViewport);
+  fitVisualViewport();
+}
 const $ = s => document.querySelector(s);
 const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 // Minimal, self-contained markdown → HTML for chat bubbles. Escape-first so it's
@@ -1704,6 +1756,12 @@ async function submitComments() {
 $('#msgs').addEventListener('mouseup', _onSelect);
 $('#msgs').addEventListener('touchend', _onSelect);
 $('#msgs').addEventListener('mousedown', () => hideSelBtn());
+// A touch selection is made with its handles after the finger lifts, so
+// touchend sees an empty or half-made selection. Follow the selection itself.
+if (TOUCH) {
+  let selTimer = 0;
+  document.addEventListener('selectionchange', () => { clearTimeout(selTimer); selTimer = setTimeout(_onSelect, 300); });
+}
 document.addEventListener('mousedown', e => { if (_selBtn && e.target !== _selBtn) hideSelBtn(); });
 $('#end').onclick = async () => {
   if (!confirm('End this session and stop the agent(s)?')) return;

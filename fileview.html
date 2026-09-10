@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>file</title>
 <!-- Syntax highlighting: the common bundle (37 languages — python, javascript,
      typescript, xml/html, css/scss, json, yaml, markdown, bash, sql, ini/toml,
@@ -81,6 +81,10 @@
      means each page carries its own copy, so change them there first. */
   :root {
     color-scheme: light;
+    --fs-100: 11px;
+    --fs-400: 16px;
+    --s-300: 12px;
+    --touch-min: 44px;   /* the smallest thing a finger taps, on a phone */
     --bg: #F7F8F9;
     --surface: #FFFFFF;
     --surface-sunken: #F1F2F4;
@@ -328,6 +332,23 @@
   #cmt-tray .cmt-item-x { position:absolute; top:6px; right:6px; background:none; border:none; color:var(--dim); cursor:pointer; font-size:12px; padding:2px 5px; }
   #cmt-tray .cmt-item-x:hover { color:var(--c-danger-fg); }
   .cmt-toast { position:fixed; left:50%; bottom:20px; transform:translateX(-50%); z-index:70; background:var(--surface); border:1px solid var(--border); border-radius:var(--r-300); padding:9px 16px; font-size:13px; box-shadow:var(--e-200); }
+  /* ---- Phone (SKILL.md §8) ---------------------------------------------
+     Keyed on a touch screen, not on width: on a desktop this page sits in the
+     dashboard's Workspace pane, which can be narrower than a phone. */
+  @media (pointer: coarse) {
+    header a.btn, header button.btn, .cmt-selbtn, .cmt-composer button, #cmt-tray button {
+      min-height: var(--touch-min); display: inline-flex; align-items: center; justify-content: center;
+    }
+    header a.btn, header button.btn { min-width: var(--touch-min); }
+    #cmt-tray .cmt-item-x { min-width: var(--touch-min); top: 0; right: 0; }
+    #cmt-tray .cmt-item { padding-right: var(--touch-min); }
+    /* A phone zooms into any field under 16px and stays zoomed. The comment
+       box's own rule sets font: inherit, so it is named here. */
+    textarea, input, select, .cmt-composer textarea { font-size: var(--fs-400); }
+    .md pre.cb[data-lang]::before { font-size: var(--fs-100); }
+    /* Centred, the comment box sat under the keyboard it opens. */
+    .cmt-composer { top: var(--s-300); transform: translateX(-50%); }
+  }
 </style>
 </head>
 <body>
@@ -568,6 +589,12 @@ function enableComments(root) {
   if (_cDocWired) return;                       // one document listener, not one per render
   _cDocWired = true;
   document.addEventListener('mousedown', e => { if (_selBtn && e.target !== _selBtn) hideSelBtn(); });
+  // A touch selection is made with its handles after the finger lifts, so
+  // touchend sees an empty or half-made selection. Follow the selection itself.
+  if (window.matchMedia('(pointer: coarse)').matches) {
+    let selTimer = 0;
+    document.addEventListener('selectionchange', () => { clearTimeout(selTimer); selTimer = setTimeout(_onSel, 300); });
+  }
 }
 
 // ---- Rendering ------------------------------------------------------------
