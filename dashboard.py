@@ -1223,9 +1223,12 @@ def build_projects() -> dict:
     projects_reg = load_projects()
     links = load_session_projects()
     rows = load_sessions(500)
+    # taskDir is the task's own folder; cwd is where its agents run, which for a
+    # `copy`/`worktree` task is <taskDir>/repo and for `inplace` is the project
+    # itself. The workspace tree needs the folder, not the cwd, so carry both.
     keep = ("sessionId", "roomId", "label", "status", "isLive", "idleSeconds",
             "updatedAt", "agents", "members", "mode", "headless", "cwd",
-            "priority", "priorityName", "attention")
+            "taskDir", "priority", "priorityName", "attention")
     # One group per registered project, plus a synthetic unassigned bucket.
     groups: dict = {}
     for p in projects_reg:

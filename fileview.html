@@ -4,6 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>file</title>
+<!-- Syntax highlighting: the common bundle (37 languages — python, javascript,
+     typescript, xml/html, css/scss, json, yaml, markdown, bash, sql, ini/toml,
+     diff) plus powershell, which the common bundle leaves out. Same CDN the
+     session page already loads xterm from. If these never arrive — this hub can
+     run on a tailnet with no route out — the viewer still renders the file and
+     the comment layer still works; nothing is gated on them. -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/languages/powershell.min.js"></script>
 <style>
   :root { --bg:#0e0e0e; --surface:#161616; --fg:#ededed; --border:#2a2a2a; --accent:#c25d3c; --dim:#9a9a9a; }
   * { box-sizing: border-box; }
@@ -16,11 +25,22 @@
   header a.btn { color:var(--fg); text-decoration:none; font-size:12px; border:1px solid var(--border);
     padding:4px 10px; border-radius:6px; background:#ffffff08; white-space:nowrap; }
   header a.btn:hover { background:#ffffff14; }
+  header button.btn { color:var(--fg); font:inherit; font-size:12px; border:1px solid var(--border);
+    padding:4px 10px; border-radius:6px; background:#ffffff08; cursor:pointer; white-space:nowrap; }
+  header button.btn:hover { background:#ffffff14; }
   main { max-width:900px; margin:0 auto; padding:22px 20px 60px; }
   .err { color:#ef4444; padding:20px; }
+  /* What the viewer could not do, said out loud rather than silently. */
+  .note { margin:0 0 12px; padding:7px 11px; border:1px solid var(--border); border-left:3px solid var(--accent);
+    border-radius:6px; background:#ffffff08; font-size:12px; color:var(--dim); }
+  .note div + div { margin-top:4px; }
   pre.raw { background:#0b0b0b; border:1px solid var(--border); border-radius:8px;
     padding:14px 16px; overflow-x:auto; font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
     white-space:pre; color:var(--fg); }
+  /* Keep the highlighter's token colours, drop its background and padding so
+     the code sits in this page's own frame. */
+  .hljs { background:transparent !important; padding:0 !important; color:inherit; }
+  pre.raw code { display:block; font:inherit; }
   img.file, iframe.file { max-width:100%; border:1px solid var(--border); border-radius:8px; background:#fff; }
   iframe.file { width:100%; height:calc(100vh - 120px); }
   /* Rendered markdown */
@@ -77,6 +97,8 @@
 <header>
   <span class="name" id="name">file</span>
   <span class="grow"></span>
+  <button class="btn" id="mode" hidden></button>
+  <button class="btn" id="cmt-file" title="Comment on this file as a whole">💬 Comment</button>
   <a class="btn" id="raw" target="_blank">Raw</a>
 </header>
 <main id="main"><div class="err">Loading…</div></main>
@@ -84,6 +106,9 @@
 const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const _MDA = String.fromCharCode(0xE000), _MDZ = String.fromCharCode(0xE001);
 const ROOM = new URLSearchParams(location.search).get('room') || '';
+// Which task's chat the comments will land in, named so the sender can see it
+// before they press the button.
+const ROOM_NAME = new URLSearchParams(location.search).get('roomName') || '';
 // File links: absolute paths always; relative ones ("docs/plan.md", "NOTES.md")
 // are resolved against the task folder, so agents needn't spell out full paths.
 const ABS_PATH_RE = /^(?:[A-Za-z]:[\\\/]|\\\\|~\/|\/)/;   // C:\dir, C:/dir, \\unc, ~/x, /x
@@ -210,12 +235,16 @@ function showSelBtn(rect, data) {
   b.onclick = () => { hideSelBtn(); openComposer(data); };
   _selBtn = b;
 }
+// data.start < 0 means a comment on the file as a whole — the only kind an
+// image, a PDF or a rendered page can carry, and always available from the
+// header button whatever the file turns out to be.
 function openComposer(data) {
   _composerOpen = true;
+  const whole = data.start < 0;
   const q = data.quote.length > 200 ? data.quote.slice(0, 200) + '…' : data.quote;
   const p = document.createElement('div'); p.className = 'cmt-composer';
-  p.innerHTML = `<div class="cmt-quote"></div><textarea class="cmt-note" rows="3" placeholder="Your comment on this passage…"></textarea><div class="cmt-actions"><button class="cmt-cancel">Cancel</button><button class="cmt-add">Add comment</button></div>`;
-  p.querySelector('.cmt-quote').textContent = '“' + q + '”';
+  p.innerHTML = `<div class="cmt-quote"></div><textarea class="cmt-note" rows="3" placeholder="${whole ? 'Your comment on this file…' : 'Your comment on this passage…'}"></textarea><div class="cmt-actions"><button class="cmt-cancel">Cancel</button><button class="cmt-add">Add comment</button></div>`;
+  p.querySelector('.cmt-quote').textContent = whole ? 'On this file as a whole' : '“' + q + '”';
   document.body.appendChild(p);
   const ta = p.querySelector('.cmt-note'); ta.focus();
   const close = () => { p.remove(); _composerOpen = false; };
@@ -223,7 +252,8 @@ function openComposer(data) {
   p.querySelector('.cmt-add').onclick = () => {
     const note = ta.value.trim(); if (!note) { ta.focus(); return; }
     const cid = _cseq++; CMTS.push({ cid, start: data.start, end: data.end, quote: data.quote, note });
-    _mark(_cRoot, data.start, data.end, cid); close(); renderTray();
+    if (!whole && _cRoot) _mark(_cRoot, data.start, data.end, cid);
+    close(); renderTray();
     const s = window.getSelection(); if (s) s.removeAllRanges();
   };
   ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); p.querySelector('.cmt-add').click(); } if (e.key === 'Escape') { e.preventDefault(); close(); } });
@@ -232,48 +262,176 @@ function renderTray() {
   let tray = document.getElementById('cmt-tray');
   if (!CMTS.length) { if (tray) tray.remove(); return; }
   if (!tray) { tray = document.createElement('div'); tray.id = 'cmt-tray'; document.body.appendChild(tray); }
-  tray.innerHTML = `<div class="cmt-tray-head"><strong>${CMTS.length} comment${CMTS.length > 1 ? 's' : ''}</strong><span class="grow"></span><button class="cmt-submit">${ROOM ? 'Send to chat' : 'Copy'}</button><button class="cmt-clear">Clear</button></div><div class="cmt-list"></div>`;
+  const dest = ROOM ? (ROOM_NAME ? 'Send to “' + ROOM_NAME + '”' : 'Send to chat') : 'Copy';
+  tray.innerHTML = `<div class="cmt-tray-head"><strong>${CMTS.length} comment${CMTS.length > 1 ? 's' : ''}</strong><span class="grow"></span><button class="cmt-submit" title="${ROOM ? esc(dest) : 'No task chat owns this file — copy the comments instead'}">${esc(dest)}</button><button class="cmt-clear">Clear</button></div><div class="cmt-list"></div>`;
   const list = tray.querySelector('.cmt-list');
   CMTS.forEach(c => {
     const it = document.createElement('div'); it.className = 'cmt-item'; it.dataset.cid = c.cid;
-    const q = document.createElement('div'); q.className = 'cmt-item-q'; q.textContent = '“' + (c.quote.length > 60 ? c.quote.slice(0, 60) + '…' : c.quote) + '”';
+    const q = document.createElement('div'); q.className = 'cmt-item-q';
+    q.textContent = c.start < 0 ? 'this file' : '“' + (c.quote.length > 60 ? c.quote.slice(0, 60) + '…' : c.quote) + '”';
     const nn = document.createElement('div'); nn.className = 'cmt-item-n'; nn.textContent = c.note;
     const x = document.createElement('button'); x.className = 'cmt-item-x'; x.textContent = '✕';
     it.append(q, nn, x);
-    x.onclick = (e) => { e.stopPropagation(); const i = CMTS.findIndex(z => z.cid === c.cid); if (i >= 0) CMTS.splice(i, 1); clearHl(); CMTS.forEach(cc => _mark(_cRoot, cc.start, cc.end, cc.cid)); renderTray(); };
+    x.onclick = (e) => { e.stopPropagation(); const i = CMTS.findIndex(z => z.cid === c.cid); if (i >= 0) CMTS.splice(i, 1); clearHl(); remarkAll(); renderTray(); };
     it.onclick = () => { const m = document.querySelector(`mark.cmt-hl[data-cid="${c.cid}"]`); if (m) m.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
     list.appendChild(it);
   });
   tray.querySelector('.cmt-submit').onclick = submitCmts;
   tray.querySelector('.cmt-clear').onclick = () => { CMTS.length = 0; clearHl(); renderTray(); };
 }
+// Re-apply the highlights for every comment that has a passage. Called after
+// anything replaces the comment root's content — switching an HTML file between
+// preview and source, or removing one comment from the tray.
+function remarkAll() {
+  if (!_cRoot) return;
+  CMTS.forEach(c => { if (c.start >= 0) _mark(_cRoot, c.start, c.end, c.cid); });
+}
 function buildBody() {
   const base = document.getElementById('name').textContent || 'file';
   const path = new URLSearchParams(location.search).get('path') || '';
   return `## Review comments on \`${base}\` (${CMTS.length})\nFile: \`${path}\`\n\n` +
-    CMTS.map((c, i) => `**${i + 1}.** > ${c.quote.replace(/\s*\n\s*/g, ' ').trim()}\n\n${c.note}`).join('\n\n');
+    CMTS.map((c, i) => c.start < 0
+      ? `**${i + 1}.** (on the file as a whole)\n\n${c.note}`
+      : `**${i + 1}.** > ${c.quote.replace(/\s*\n\s*/g, ' ').trim()}\n\n${c.note}`).join('\n\n');
+}
+// No alert() and no reliance on the clipboard: this page runs inside the
+// workspace panel's iframe, where a modal freezes the parent page too and
+// clipboard writes can be refused outright. Show the text and let it be copied.
+function showFallback(intro, body) {
+  const p = document.createElement('div'); p.className = 'cmt-composer';
+  p.innerHTML = `<div class="cmt-quote"></div><textarea class="cmt-note" rows="9"></textarea><div class="cmt-actions"><button class="cmt-cancel">Close</button></div>`;
+  p.querySelector('.cmt-quote').textContent = intro;
+  const ta = p.querySelector('.cmt-note');
+  ta.value = body;
+  document.body.appendChild(p);
+  ta.focus(); ta.select();
+  p.querySelector('.cmt-cancel').onclick = () => p.remove();
 }
 async function submitCmts() {
   if (!CMTS.length) return;
   const body = buildBody();
   if (!ROOM) {
-    try { await navigator.clipboard.writeText(body); toast('No room to send to — comments copied. Paste them into the chat.'); }
-    catch (e) { alert('Your comments:\n\n' + body); }
+    try { await navigator.clipboard.writeText(body); toast('No task chat to send to — comments copied.'); }
+    catch (e) { showFallback('No task chat to send to. Copy your comments:', body); }
     return;
   }
   try {
     const r = await fetch('/api/room/say', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: ROOM, text: body, to: '' }) });
     if (!r.ok) throw new Error(r.status);
     CMTS.length = 0; clearHl(); renderTray(); toast('✓ Comments sent to the chat');
-  } catch (e) { alert('Failed to send. Your comments:\n\n' + body); }
+  } catch (e) { showFallback('Couldn’t send to the chat. Copy your comments:', body); }
 }
 function toast(msg) { const n = document.createElement('div'); n.className = 'cmt-toast'; n.textContent = msg; document.body.appendChild(n); setTimeout(() => n.remove(), 2800); }
+let _cDocWired = false;
 function enableComments(root) {
   _cRoot = root;
   root.addEventListener('mouseup', _onSel);
   root.addEventListener('touchend', _onSel);
   root.addEventListener('mousedown', hideSelBtn);
+  if (_cDocWired) return;                       // one document listener, not one per render
+  _cDocWired = true;
   document.addEventListener('mousedown', e => { if (_selBtn && e.target !== _selBtn) hideSelBtn(); });
+}
+
+// ---- Rendering ------------------------------------------------------------
+// One page renders every file the tree can offer. What changes is the shape:
+// highlighted source, rendered markdown, a rendered page, an image, a PDF — or
+// a plain statement of why it cannot be shown. The comment layer is on in all
+// of them.
+const HL_LANG = {
+  py: 'python', pyw: 'python', pyi: 'python',
+  js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript',
+  ts: 'typescript', tsx: 'typescript',
+  json: 'json', jsonc: 'json', map: 'json',
+  html: 'xml', htm: 'xml', xml: 'xml', svg: 'xml', xhtml: 'xml', plist: 'xml',
+  css: 'css', scss: 'scss', sass: 'scss', less: 'less',
+  yml: 'yaml', yaml: 'yaml',
+  md: 'markdown', markdown: 'markdown',
+  sh: 'bash', bash: 'bash', zsh: 'bash', ksh: 'bash',
+  ps1: 'powershell', psm1: 'powershell', psd1: 'powershell',
+  sql: 'sql',
+  ini: 'ini', cfg: 'ini', conf: 'ini', toml: 'ini', env: 'ini', properties: 'ini',
+  diff: 'diff', patch: 'diff',
+  txt: 'plaintext', log: 'plaintext', text: 'plaintext',
+};
+const HL_MAX = 300 * 1024;      // bytes; beyond this the highlighter costs more than it gives
+const byteLen = s => new TextEncoder().encode(s).length;
+function hlLang(ext) { return HL_LANG[ext] || ''; }
+function fmtSize(n) {
+  if (n == null) return 'unknown size';
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1048576).toFixed(1) + ' MB';
+}
+function noteEl(lines) {
+  const d = document.createElement('div'); d.className = 'note';
+  lines.forEach(t => { const l = document.createElement('div'); l.textContent = t; d.appendChild(l); });
+  return d;
+}
+// Fill `el` with `text`, highlighted when we can. Returns a note to show, or ''.
+// Never called twice on the same element: hljs rewrites innerHTML, which would
+// drop every comment highlight while CMTS still held live offsets.
+function highlightInto(el, text, lang, bytes) {
+  el.textContent = text;
+  if (!lang || typeof hljs === 'undefined' || !hljs.getLanguage(lang)) return '';
+  const size = bytes == null ? byteLen(text) : bytes;
+  if (size > HL_MAX) return `Syntax highlighting is off above ${Math.round(HL_MAX / 1024)} KB — this is ${fmtSize(size)} of text.`;
+  try { el.innerHTML = hljs.highlight(text, { language: lang, ignoreIllegals: true }).value; }
+  catch (e) { el.textContent = text; }
+  return '';
+}
+const RAW_CAP = 512 * 1024;   // the fallback reader's own cap, matching the hub's
+// Read at most RAW_CAP bytes of a response and stop pulling. The raw endpoint
+// streams whole files with no cap of its own, so reading it with .text() would
+// pull a multi-hundred-megabyte log into the page — the exact hang the workspace
+// reader exists to prevent. Never trust Content-Length alone; just stop reading.
+async function readCapped(res) {
+  const reader = res.body && res.body.getReader ? res.body.getReader() : null;
+  // No streaming body: nothing to cap against, so this branch does read the
+  // whole response. Unreachable in any browser that can run the rest of this
+  // page — res.body has been in Chrome since 43 — and kept only so the viewer
+  // degrades rather than throws.
+  if (!reader) { const t = await res.text(); return { bytes: new TextEncoder().encode(t).slice(0, RAW_CAP), truncated: t.length > RAW_CAP }; }
+  const chunks = [];
+  let n = 0, truncated = false;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value); n += value.length;
+    if (n >= RAW_CAP) { truncated = true; try { await reader.cancel(); } catch (e) {} break; }
+  }
+  const buf = new Uint8Array(n);
+  let o = 0;
+  for (const c of chunks) { buf.set(c, o); o += c.length; }
+  return { bytes: buf.slice(0, RAW_CAP), truncated };
+}
+// Read a file as text. The workspace reader caps the read at 512 KB server-side,
+// reports the real size, and flags binary content — so neither a huge file nor a
+// binary one can reach this page and hang it. It only accepts absolute paths
+// inside the folders the dashboard may read; a relative mention from a chat link
+// is not one, so those fall back to the raw reader, which resolves them against
+// the room's folders — under the same cap, applied here.
+async function loadText(path, rawSrc) {
+  if (ABS_PATH_RE.test(path)) {
+    try {
+      const r = await fetch('/api/ws/file?path=' + encodeURIComponent(path), { cache: 'no-store' });
+      if (r.ok) {
+        const j = await r.json();
+        return { ok: true, text: j.text || '', size: j.size, truncated: !!j.truncated, binary: !!j.binary };
+      }
+      if (r.status === 403 || r.status === 404) return { ok: false, status: r.status };
+    } catch (e) { /* the hub may be older than /api/ws/file — try the raw reader */ }
+  }
+  try {
+    const r = await fetch(rawSrc, { cache: 'no-store' });
+    if (!r.ok) return { ok: false, status: r.status };
+    const declared = parseInt(r.headers.get('content-length') || '', 10);
+    const { bytes, truncated } = await readCapped(r);
+    const binary = bytes.includes(0);
+    const text = binary ? '' : new TextDecoder('utf-8').decode(bytes);
+    return { ok: true, text, binary, truncated,
+             size: Number.isFinite(declared) ? declared : bytes.length };
+  } catch (e) { return { ok: false, status: 0, why: String(e) }; }
 }
 (async function () {
   const path = new URLSearchParams(location.search).get('path') || '';
@@ -284,44 +442,97 @@ function enableComments(root) {
   document.title = base || 'file';
   const src = '/api/file?path=' + encodeURIComponent(path) + CTX;
   document.getElementById('raw').href = src;
+  // The comment facility is wired before anything is loaded, so it is present
+  // for every file — including the ones with no text to select in.
+  document.getElementById('cmt-file').onclick = () => openComposer({ start: -1, end: -1, quote: '' });
   if (!path) { main.innerHTML = '<div class="err">No path given.</div>'; return; }
-  const ext = (base.match(/\.(\w+)$/) || [,''])[1].toLowerCase();
-  const imgExt = ['png','jpg','jpeg','gif','webp','svg','bmp','ico'];
+  const ext = (base.match(/\.(\w+)$/) || [, ''])[1].toLowerCase();
+
+  const imgExt = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'];
   if (imgExt.includes(ext)) { main.innerHTML = `<img class="file" src="${src}" alt="${esc(base)}">`; return; }
   if (ext === 'pdf') { main.innerHTML = `<iframe class="file" src="${src}"></iframe>`; return; }
-  let text;
-  try {
-    const r = await fetch(src, { cache: 'no-store' });
-    if (!r.ok) { main.innerHTML = `<div class="err">Could not open file (${r.status}). It may not exist on the hub.</div>`; return; }
-    text = await r.text();
-  } catch (e) { main.innerHTML = `<div class="err">Failed to load: ${esc(String(e))}</div>`; return; }
-  if (ext === 'html' || ext === 'htm') {
-    // Render the page (sandboxed: styles/fonts load, scripts don't) rather than
-    // showing source. No in-place comments on a rendered page.
-    const ifr = document.createElement('iframe');
-    ifr.className = 'file';
-    ifr.setAttribute('sandbox', 'allow-same-origin');
-    ifr.style.height = 'calc(100vh - 96px)';
-    ifr.srcdoc = text;
-    main.innerHTML = '';
-    main.appendChild(ifr);
+
+  const res = await loadText(path, src);
+  if (!res.ok) {
+    // Say which of the two it is, rather than making the reader guess.
+    if (res.status === 404) main.innerHTML = '<div class="err">Could not open file (404) — it does not exist on the hub.</div>';
+    else if (res.status === 403) main.innerHTML = '<div class="err">Could not open file (403) — it sits outside the folders the dashboard is allowed to read: registered projects and their task folders.</div>';
+    else main.innerHTML = `<div class="err">Could not open file${res.status ? ' (' + res.status + ')' : ''}.${res.why ? ' ' + esc(res.why) : ''}</div>`;
     return;
   }
+  if (res.binary) {
+    main.innerHTML = '';
+    main.appendChild(noteEl([`This file is binary (${fmtSize(res.size)}), so it can't be shown as text.`,
+                             'Use Raw to download it. You can still comment on it as a whole.']));
+    return;
+  }
+  const notes = [];
+  // Everything about size is counted in bytes: res.size is bytes, and a
+  // character count would under-report any file that isn't pure ASCII. How much
+  // came back IS the hub's read cap, so quote that rather than a number
+  // hard-coded here, which would start lying the day the cap moves.
+  const shownBytes = byteLen(res.text);
+  if (res.truncated) notes.push(`Showing the first ${fmtSize(shownBytes)} of ${fmtSize(res.size)} — use Raw for the whole file.`);
+
+  // Highlight first, then hand the finished element to the comment layer: its
+  // offsets are counted through the element's text, and hljs leaves text exactly
+  // as it found it.
+  function renderCode(text, lang) {
+    main.innerHTML = '';
+    const pre = document.createElement('pre'); pre.className = 'raw';
+    const code = document.createElement('code');
+    const hlNote = highlightInto(code, text, lang, shownBytes);
+    pre.appendChild(code);
+    const all = notes.concat(hlNote ? [hlNote] : []);
+    if (all.length) main.appendChild(noteEl(all));
+    main.appendChild(pre);
+    enableComments(code);
+    remarkAll();
+  }
+
+  if (ext === 'html' || ext === 'htm') {
+    // A page is more useful rendered, so that stays the default — but the
+    // source is one click away and carries in-place comments, and the header's
+    // whole-file comment works in either.
+    const btn = document.getElementById('mode');
+    btn.hidden = false;
+    let mode = 'preview';
+    const paint = () => {
+      btn.textContent = mode === 'preview' ? '</> Source' : '👁 Preview';
+      if (mode === 'source') { renderCode(res.text, 'xml'); return; }
+      _cRoot = null;
+      main.innerHTML = '';
+      if (notes.length) main.appendChild(noteEl(notes));
+      const ifr = document.createElement('iframe');
+      ifr.className = 'file';
+      ifr.setAttribute('sandbox', 'allow-same-origin');   // styles and fonts load, scripts don't
+      ifr.style.height = 'calc(100vh - 150px)';
+      ifr.srcdoc = res.text;
+      main.appendChild(ifr);
+    };
+    btn.onclick = () => { clearHl(); mode = mode === 'preview' ? 'source' : 'preview'; paint(); };
+    paint();
+    return;
+  }
+
   if (ext === 'md' || ext === 'markdown') {
     const div = document.createElement('div');
     div.className = 'md';
-    div.innerHTML = mdToHtml(text);
+    div.innerHTML = mdToHtml(res.text);
+    // Fenced blocks get the same treatment as a source file — before the
+    // comment layer is attached, and only once.
+    div.querySelectorAll('pre.cb > code').forEach(cd => {
+      highlightInto(cd, cd.textContent, hlLang((cd.parentNode.dataset.lang || '').toLowerCase()));
+    });
     main.innerHTML = '';
+    if (notes.length) main.appendChild(noteEl(notes));
     main.appendChild(div);
     enableComments(div);
-  } else {
-    const pre = document.createElement('pre');
-    pre.className = 'raw';
-    pre.textContent = text;
-    main.innerHTML = '';
-    main.appendChild(pre);
-    enableComments(pre);
+    remarkAll();
+    return;
   }
+
+  renderCode(res.text, hlLang(ext));
 })();
 </script>
 </body>
