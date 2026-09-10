@@ -168,8 +168,10 @@ the hub itself is built. Everyone else, whatever their project or role:
 - never do any of these indirectly (a script, another shell, an interpreter).
 
 If you believe the hub needs a restart, stop and tell the product owner why.
-No Ensemble tool offers hub control. This rule is not yet enforced by the
-machine, so it rests on you keeping it.
+No Ensemble tool offers hub control. The hub refuses `/api/update` from
+anyone but the Ensemble Dashboard PO and the dashboard's Update now button,
+but the rest of this rule is not enforced by the machine, so it rests on you
+keeping it.
 
 ## Planning work for a project
 
