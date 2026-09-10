@@ -1022,7 +1022,40 @@
      screen and both tabs show at once. */
   #detail-panel .dp-pane[hidden] { display: none !important; }
   #detail-panel .dp-pane[data-pane="workspace"] { flex: 1; display: flex; flex-direction: column; padding: 10px 12px; min-height: 360px; }
-  #detail-panel:has(iframe.dp-session) .dp-pane[data-pane="activity"] { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  /* The live chat is the one pane sized to the screen rather than to its
+     content. A zero-basis flex: 1 only grew into free space, and a long title,
+     summary and Details left none, so the chat collapsed to a sliver in a
+     scrolling column. Instead it is exactly as tall as the panel below the
+     header and tabs (--dp-fill, set by fitLiveChat()), so on open the composer
+     sits at the panel's bottom edge and Details wait below the fold. It never
+     drops below --dp-chat-min, the embed's 124px composer plus about eight
+     lines of messages: when the header is taller than that allows, the panel
+     scrolls to reach the rest of the chat rather than squeezing it. */
+  #detail-panel { --dp-chat-min: 280px; }
+  #detail-panel.is-live .dp-pane[data-pane="activity"] {
+    display: flex; flex-direction: column;
+    flex: 0 0 auto; height: max(var(--dp-chat-min), var(--dp-fill, 100vh));
+  }
+  #detail-panel.is-live .dp-pane[data-pane="activity"] iframe.dp-session { flex: 1 1 auto; height: auto; min-height: 0; }
+  /* While the chat is live, its latest message is in the chat itself, so the
+     summary above it keeps three lines and yields the rest of its height. */
+  #detail-panel.is-live .dp-summary-t {
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+  }
+  /* A task's own Changes: its branch against the line it left, stacked for the
+     narrow panel like the Workspace pane. */
+  #detail-panel .dp-pane[data-pane="changes"] { padding: var(--s-200) var(--s-300); }
+  .tch[hidden] { display: none; }
+  .tch { display: grid; grid-template-rows: auto minmax(120px, 30vh) minmax(0, 1fr) auto;
+    height: max(420px, calc(var(--dp-fill, 100vh) - 2 * var(--s-200))); border: 1px solid var(--border); border-radius: var(--r-300); overflow: hidden; background: var(--surface); }
+  .tch-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-100) var(--s-200); padding: var(--s-200) var(--s-300); border-bottom: 1px solid var(--border); font-size: var(--fs-200); color: var(--fg-subtle); min-width: 0; }
+  .tch-branch { font-family: var(--font-mono); color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .tch-head .chp-refresh { margin-left: auto; }
+  .tch-files { overflow: auto; border-bottom: 1px solid var(--border); padding: var(--s-100); font-size: var(--fs-200); }
+  .tch-diff { overflow: auto; min-width: 0; min-height: 200px; }
+  .tch-tray { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-200); padding: var(--s-200) var(--s-300); border-top: 1px solid var(--border); font-size: var(--fs-200); color: var(--fg-subtle); }
+  .tch-tray[hidden] { display: none; }
+  .tch-tray .grow { flex: 1; }
   /* The panel is a narrow, user-resized column: same component, stacked. */
   #detail-panel .wsp { grid-template-columns: 1fr; grid-template-rows: minmax(120px, 34vh) 1fr; height: 100%; min-height: 340px; }
   #detail-panel .wsp-tree { border-right: 0; border-bottom: 1px solid var(--border); }
@@ -1771,10 +1804,6 @@
     margin: var(--s-400); padding: var(--s-600);
     border: 1px dashed var(--border); border-radius: var(--r-300);
     color: var(--fg-muted); font-size: var(--fs-200); text-align: center;
-  }
-  .dp-tabnote {
-    margin: var(--s-300) var(--s-400) 4px; font-size: var(--fs-100);
-    color: var(--fg-muted); text-transform: uppercase; letter-spacing: .05em; font-weight: 600;
   }
   .dp-spec {
     margin: var(--s-300) var(--s-400) var(--s-600); padding: var(--s-300);
@@ -3480,10 +3509,17 @@ function renderDetail() {
     }
   }
 
-  // Changes and Spec.
+  // Changes: this task's branch, mounted the first time the tab is shown and
+  // re-read each time it is shown again.
   const ch = panel.querySelector('.dp-pane[data-pane="changes"]');
-  const chHtml = changesPaneHtml(r);
-  if (ch._html !== chHtml) { ch._html = chHtml; ch.innerHTML = chHtml; }
+  const chShown = cur === 'changes';
+  if (chShown && !ch._shown) {
+    const tv = TCH_VIEWS.get(sid);
+    if (ch.querySelector('.tch') && tv && tv.el === ch) tchSync(tv);
+    else tchMount(ch, sid);
+  }
+  ch._shown = chShown;
+  // Spec.
   const sp = panel.querySelector('.dp-pane[data-pane="spec"]');
   const spHtml = specPaneHtml(r);
   if (sp._html !== spHtml) { sp._html = spHtml; sp.innerHTML = spHtml; }
@@ -3505,14 +3541,35 @@ function renderDetail() {
   const det = panel.querySelector('.dp-details');
   const detHtml = detailPriority(r, isRoom) + detailInfo(r);
   if (det._html !== detHtml) { det._html = detHtml; det.innerHTML = detHtml; }
+
+  if (panel._fitFor !== sid) { panel._fitFor = sid; watchLiveChatFit(panel); }
+  fitLiveChat();
 }
 
-// The Changes pane, until per-task changes land: say where the diff lives.
-function changesPaneHtml(r) {
-  if (!r.cwd) return issueEmpty('No branch yet \u2014 nothing has run.');
-  return `<div class="dp-tabnote">The diff for this task lives on the project's Changes tab, `
-    + `which reviews the whole repository rather than one task's slice of it.</div>`
-    + `<div class="dp-cwd" title="${esc(r.cwd)}">${esc(tildeify(r.cwd))}</div>`;
+// The live chat is exactly as tall as the panel below the header and tabs, so
+// the composer sits at the panel's bottom edge; CSS keeps a floor under it.
+// The header's height changes with the title, the summary and the panel width,
+// so it is observed rather than guessed.
+// The Changes pane uses the same measure, so a long diff scrolls inside the
+// pane and its file list stays in reach instead of the panel running on for
+// the length of the diff.
+let DP_FIT_RO = null;
+function fitLiveChat() {
+  const panel = $('#detail-panel'); if (!panel) return;
+  const pane = panel.querySelector('.dp-pane:not([hidden])');
+  if (!pane) return;
+  const fits = pane.dataset.pane === 'changes' || (pane.dataset.pane === 'activity' && panel.classList.contains('is-live'));
+  if (!fits) return;
+  const padB = parseFloat(getComputedStyle(panel).paddingBottom) || 0;
+  const v = Math.max(0, Math.round(panel.clientHeight - pane.offsetTop - padB)) + 'px';
+  if (panel.style.getPropertyValue('--dp-fill') !== v) panel.style.setProperty('--dp-fill', v);
+}
+function watchLiveChatFit(panel) {
+  if (!('ResizeObserver' in window)) return;
+  if (!DP_FIT_RO) DP_FIT_RO = new ResizeObserver(() => fitLiveChat());
+  DP_FIT_RO.disconnect();
+  [panel, panel.querySelector('.dp-top'), panel.querySelector('.dp-tabs')]
+    .forEach(el => { if (el) DP_FIT_RO.observe(el); });
 }
 
 // The Spec pane: for a draft this IS the content, the agents' first prompt.
@@ -5004,17 +5061,18 @@ function parseUnifiedDiff(text) {
   }
   return rows;
 }
-function renderDiff(file, text) {
+function renderDiff(file, text, comments) {
+  comments = comments || CH_COMMENTS;
   const rows = parseUnifiedDiff(text);
   if (!rows.length) return '<div class="wsp-empty">No differences.</div>';
   return '<div class="diff-head"><span class="wsp-path" title="' + esc(file) + '">' + esc(file) + '</span><span class="dim">click a line to comment</span></div>'
-    + '<div class="diff" id="diff-body">' + rows.map(function (r) {
+    + '<div class="diff">' + rows.map(function (r) {
       if (r.kind === 'hunk' || r.kind === 'meta') {
         return '<div class="dl ' + r.kind + '"><span class="no"></span><span class="no"></span><span class="tx">' + esc(r.text) + '</span></div>';
       }
       const line = r.kind === 'del' ? r.oldNo : r.newNo;
       const side = r.kind === 'del' ? '-' : '+';
-      const hasC = CH_COMMENTS.some(function (c) { return c.file === file && c.line === line && c.side === side; });
+      const hasC = comments.some(function (c) { return c.file === file && c.line === line && c.side === side; });
       return '<div class="dl ' + r.kind + (hasC ? ' cmt' : '') + '" data-line="' + line + '" data-side="' + side + '">'
         + '<span class="no">' + (r.oldNo != null ? r.oldNo : '') + '</span><span class="no">' + (r.newNo != null ? r.newNo : '') + '</span>'
         + '<span class="tx">' + esc(r.text) + '</span></div>';
@@ -5029,14 +5087,17 @@ async function chOpenDiff(file) {
     const root = document.getElementById('chp-files').dataset.root;
     const d = await api('/api/git/diff?path=' + encodeURIComponent(root) + '&file=' + encodeURIComponent(file));
     box.innerHTML = renderDiff(file, d.diff || '');
-    const body = document.getElementById('diff-body');
+    const body = box.querySelector('.diff');
     if (body) body.onclick = function (e) {
       const dl = e.target.closest('.dl'); if (!dl || !dl.dataset.line) return;
       chCommentPrompt(file, parseInt(dl.dataset.line, 10), dl.dataset.side, dl.querySelector('.tx').textContent, dl);
     };
   } catch (e) { box.innerHTML = '<div class="wsp-empty">diff unavailable: ' + esc(e.message) + '</div>'; }
 }
-function chCommentPrompt(file, line, side, code, dl) {
+// The comments land in `list` (the project tab's batch unless a task pane
+// passes its own), and `after` repaints whatever tray shows that list.
+function chCommentPrompt(file, line, side, code, dl, list, after) {
+  list = list || CH_COMMENTS; after = after || chRenderTray;
   // Inline composer under the clicked line (no window.prompt — it misbehaves on remote setups).
   const old = document.querySelector('.dl-composer'); if (old) old.remove();
   const box = document.createElement('div'); box.className = 'dl-composer';
@@ -5047,18 +5108,19 @@ function chCommentPrompt(file, line, side, code, dl) {
   box.querySelector('.dl-cancel').onclick = function () { box.remove(); };
   box.querySelector('.dl-ok').onclick = function () {
     const t = ta.value.trim(); if (!t) return;
-    CH_COMMENTS.push({ file: file, line: line, side: side, code: code, text: t });
-    dl.classList.add('cmt'); box.remove(); chRenderTray();
+    list.push({ file: file, line: line, side: side, code: code, text: t });
+    dl.classList.add('cmt'); box.remove(); after();
   };
   ta.addEventListener('keydown', function (ev) {
     if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); box.querySelector('.dl-ok').click(); }
     if (ev.key === 'Escape') box.remove();
   });
 }
-function chFormat() {
+function chFormat(list, what) {
+  list = list || CH_COMMENTS;
   const byFile = {};
-  CH_COMMENTS.forEach(function (c) { (byFile[c.file] = byFile[c.file] || []).push(c); });
-  return '📝 Review comments on the working-tree diff (' + CH_COMMENTS.length + '):\n'
+  list.forEach(function (c) { (byFile[c.file] = byFile[c.file] || []).push(c); });
+  return '📝 Review comments on ' + (what || 'the working-tree diff') + ' (' + list.length + '):\n'
     + Object.keys(byFile).map(function (f) {
         return '\n**' + f + '**\n' + byFile[f].slice().sort(function (a, b) { return a.line - b.line; }).map(function (c) {
           return '- L' + c.line + ' (' + c.side + ') "' + c.code.trim().slice(0, 120) + '"\n  → ' + c.text;
@@ -5290,6 +5352,156 @@ function rmAction(pid, act) {
 window.addEventListener('beforeunload', e => {
   for (const st of RM.values()) if (rmDirty(st)) { e.preventDefault(); e.returnValue = ''; return; }
 });
+
+// ---- A task's own Changes: its branch against the line it left ------------
+// The project tab reviews a whole repository's uncommitted edits. A task's
+// work is its branch: everything since it left main, committed or not, in the
+// repository under its own folder (or the project itself for an in-place
+// task). Mounted once per panel like the Workspace pane and never rebuilt, so
+// the open diff and unsent comments survive every refresh; the file list is
+// rewritten only when what it lists changes, so nothing under the cursor is
+// replaced on the poll. Comments go to this task's chat and no other.
+const TCH_VIEWS = new Map();   // sid -> view
+function tchRow(v) { return ALL_ROWS.find(x => x.sessionId === v.sid || x.roomId === v.sid) || null; }
+function tchMount(el, sid) {
+  let v = TCH_VIEWS.get(sid);
+  if (!v) {
+    v = { sid, root: '', roots: [], files: [], info: null, file: '', comments: [], busy: false, again: false };
+    TCH_VIEWS.set(sid, v);
+  }
+  v.el = el;
+  el.innerHTML = '<div class="tch-none" hidden></div><div class="tch">'
+    + '<div class="tch-head"><span>loading…</span></div>'
+    + '<div class="tch-files"></div>'
+    + '<div class="tch-diff"><div class="wsp-empty">Select a changed file to review its diff. Click a line to comment; the comments go to this task\'s chat.</div></div>'
+    + '<div class="tch-tray" hidden></div></div>';
+  el.querySelector('.tch-files').onclick = e => {
+    const f = e.target.closest('.chf'); if (f && f.dataset.file) tchOpenDiff(v, f.dataset.file);
+  };
+  const head = el.querySelector('.tch-head');
+  head.onclick = e => { if (e.target.closest('.chp-refresh')) tchSync(v); };
+  head.onchange = e => {
+    const s = e.target.closest('.chp-repo'); if (!s) return;
+    v.root = s.value; v.file = ''; v.comments.length = 0; tchTray(v);
+    el.querySelector('.tch-diff').innerHTML = '<div class="wsp-empty">Select a changed file to review its diff.</div>';
+    tchSync(v);
+  };
+  tchSync(v).then(() => { if (v.file) tchOpenDiff(v, v.file); });
+  tchTray(v);
+  return v;
+}
+function tchWrite(node, html) { if (node && node._sig !== html) { node._sig = html; node.innerHTML = html; } }
+function tchPaintList(v) {
+  const box = v.el && v.el.querySelector('.tch-files'); if (!box) return;
+  tchWrite(box, v.files.length ? v.files.map(f => {
+    const code = (f.status || '?').replace(/\s/g, '') || '?';
+    return '<div class="chf' + (f.path === v.file ? ' on' : '') + '" data-file="' + esc(f.path) + '">'
+      + '<span class="chst st-' + esc(code[0]) + '">' + esc(code) + '</span><span class="nm">' + esc(f.path) + '</span></div>';
+  }).join('') : '<div class="chf none">No changes on this branch yet.</div>');
+}
+function tchHeadHtml(v) {
+  const i = v.info || {};
+  const repo = v.roots.length > 1
+    ? '<select class="chp-repo" title="Which repository">' + v.roots.map(x =>
+        '<option value="' + esc(x.path) + '"' + (x.path === v.root ? ' selected' : '') + '>' + esc(x.name) + '</option>').join('') + '</select>'
+    : '';
+  const n = v.files.length;
+  const files = n + ' file' + (n === 1 ? '' : 's');
+  // Say what the list is measured against, so a short list is never mistaken
+  // for the whole story.
+  const against = i.base
+    ? 'vs ' + esc(i.base) + ' · ' + i.ahead + ' commit' + (i.ahead === 1 ? '' : 's') + ' · ' + files
+    : (i.branch ? 'uncommitted on ' + esc(i.branch) + ' · ' + files : files);
+  return repo + (i.branch ? '<span class="tch-branch" title="' + esc(v.root) + '">' + esc(i.branch) + '</span>' : '')
+    + '<span>' + against + '</span><button class="chp-refresh" title="Refresh">↻</button>';
+}
+function tchEmpty(v, msg) {
+  const none = v.el.querySelector('.tch-none'), grid = v.el.querySelector('.tch');
+  if (msg) tchWrite(none, issueEmpty(msg));
+  none.hidden = !msg; grid.hidden = !!msg;
+}
+async function tchSync(v) {
+  // A refresh clicked while the poll is in flight runs once it lands.
+  if (v.busy) { v.again = true; return; }
+  v.busy = true;
+  try { await tchRead(v); } finally { v.busy = false; }
+  if (v.again) { v.again = false; await tchSync(v); }
+}
+async function tchRead(v) {
+  try {
+    const r = tchRow(v);
+    const scope = r ? (r.cwd || r.taskDir || '') : '';
+    if (!scope) { tchEmpty(v, 'No branch yet — nothing has run.'); return; }
+    const rr = await api('/api/git/roots?path=' + encodeURIComponent(scope));
+    v.roots = rr.roots || [];
+    if (!v.roots.length) {
+      v.root = '';
+      tchEmpty(v, "No git repository in this task's folder yet. When an agent clones one here, its branch shows up here.");
+      return;
+    }
+    if (!v.roots.some(x => x.path === v.root)) v.root = v.roots[0].path;
+    const st = await api('/api/git/status?branch=1&path=' + encodeURIComponent(v.root));
+    v.files = st.files || [];
+    v.info = { branch: st.branch || '', base: st.base || '', ahead: st.ahead || 0 };
+    tchEmpty(v, '');
+    // A menu that is open is left alone until it closes, like the header's.
+    const head = v.el.querySelector('.tch-head');
+    if (document.activeElement !== head.querySelector('.chp-repo')) tchWrite(head, tchHeadHtml(v));
+    tchPaintList(v);
+  } catch (e) {
+    tchEmpty(v, '');
+    tchWrite(v.el.querySelector('.tch-files'), '<div class="chf none">changes unavailable: ' + esc(e.message) + '</div>');
+  }
+}
+async function tchOpenDiff(v, file) {
+  const box = v.el && v.el.querySelector('.tch-diff'); if (!box || !v.root) return;
+  v.file = file;
+  tchPaintList(v);
+  box.innerHTML = '<div class="wsp-empty">loading diff…</div>';
+  try {
+    const d = await api('/api/git/diff?branch=1&path=' + encodeURIComponent(v.root) + '&file=' + encodeURIComponent(file));
+    if (v.file !== file) return;              // another file was picked meanwhile
+    box.innerHTML = renderDiff(file, d.diff || '', v.comments);
+    const body = box.querySelector('.diff');
+    if (body) body.onclick = e => {
+      const dl = e.target.closest('.dl'); if (!dl || !dl.dataset.line) return;
+      chCommentPrompt(file, parseInt(dl.dataset.line, 10), dl.dataset.side, dl.querySelector('.tx').textContent, dl,
+        v.comments, () => tchTray(v));
+    };
+  } catch (e) { box.innerHTML = '<div class="wsp-empty">diff unavailable: ' + esc(e.message) + '</div>'; }
+}
+function tchTray(v) {
+  const tray = v.el && v.el.querySelector('.tch-tray'); if (!tray) return;
+  const n = v.comments.length;
+  tray.hidden = !n;
+  if (!n) { tray.innerHTML = ''; return; }
+  const r = tchRow(v);
+  const rid = r && r.headless && r.roomId ? r.roomId : '';
+  const what = 'the branch' + (v.info && v.info.branch ? ' ' + v.info.branch : '');
+  const redraw = () => { tchTray(v); if (v.file) tchOpenDiff(v, v.file); };
+  tray.innerHTML = '<span>' + n + ' review comment' + (n > 1 ? 's' : '') + '</span><span class="grow"></span><span class="dp-actions">'
+    + (rid ? '<button class="tch-send">Send to this task\'s chat</button>' : '')
+    + '<button class="tch-copy">Copy</button><button class="tch-clear">Clear</button></span>';
+  tray.querySelector('.tch-clear').onclick = () => { v.comments.length = 0; redraw(); };
+  tray.querySelector('.tch-copy').onclick = () => navigator.clipboard.writeText(chFormat(v.comments, what))
+    .then(() => toast('comments copied', 1500, 'ok'), () => toast('copy failed', 3000, 'err'));
+  const send = tray.querySelector('.tch-send');
+  if (send) send.onclick = async () => {
+    try {
+      await api('/api/room/say', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId: rid, text: chFormat(v.comments, what), to: '' }) });
+      toast('sent ' + n + ' comment(s) to the chat', 2500, 'ok');
+      v.comments.length = 0; redraw();
+    } catch (e) { toast('send failed: ' + e.message, 5000, 'err'); }
+  };
+}
+// Poll only the pane someone is looking at; a closed panel slides off-screen
+// with a transform and stays laid out, so check that too.
+setInterval(() => {
+  if (document.hidden || !document.body.classList.contains('detail-open')) return;
+  TCH_VIEWS.forEach(v => { if (v.el && v.el.isConnected && v.el.offsetParent) tchSync(v); });
+}, 10000);
+
 function renderRows() {
   renderSidebar();
   syncProjSwitch();
