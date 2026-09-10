@@ -10,7 +10,11 @@
      session page already loads xterm from. If these never arrive — this hub can
      run on a tailnet with no route out — the viewer still renders the file and
      the comment layer still works; nothing is gated on them. -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css">
+<!-- Two highlight themes, one enabled at a time: the appearance script below
+     turns on the one matching data-theme. github-dark alone put pale token
+     colours on the light default's pale code well. -->
+<link rel="stylesheet" id="hl-light" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css">
+<link rel="stylesheet" id="hl-dark" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css">
 <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
 <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/languages/powershell.min.js"></script>
 <script>
@@ -22,6 +26,9 @@
     var dark = pref === 'dark' ||
       (pref === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    var hl = document.getElementById('hl-light'), hd = document.getElementById('hl-dark');
+    if (hl) hl.disabled = dark;
+    if (hd) hd.disabled = !dark;
   }
   apply();
   window.addEventListener('storage', function (ev) { if (ev.key === 'cd-theme') apply(); });
@@ -48,6 +55,7 @@
     --accent-hover: color-mix(in srgb, var(--accent) 86%, black);
     --accent-fg: #FFFFFF;
     --link: var(--accent);
+    --selected-fg: var(--accent);
     --focus-ring: #2684FF;
     --c-warning-bold: #E2B203;
     --c-danger-bg: #FFECEB;
@@ -98,16 +106,16 @@
   header .name { font-weight:600; font-size:13px; word-break:break-all; }
   header .grow { flex:1; }
   header a.btn { color:var(--fg); text-decoration:none; font-size:12px; border:1px solid var(--border);
-    padding:4px 10px; border-radius:6px; background:var(--surface); white-space:nowrap; }
+    padding:4px 10px; border-radius:var(--r-200); background:transparent; white-space:nowrap; }
   header a.btn:hover { background:var(--hover); }
   header button.btn { color:var(--fg); font:inherit; font-size:12px; border:1px solid var(--border);
-    padding:4px 10px; border-radius:6px; background:var(--surface); cursor:pointer; white-space:nowrap; }
+    padding:4px 10px; border-radius:var(--r-200); background:transparent; cursor:pointer; white-space:nowrap; }
   header button.btn:hover { background:var(--hover); }
   main { max-width:900px; margin:0 auto; padding:22px 20px 60px; }
   .err { color:var(--c-danger-fg); padding:20px; }
   /* What the viewer could not do, said out loud rather than silently. */
-  .note { margin:0 0 12px; padding:7px 11px; border:1px solid var(--border); border-left:3px solid var(--accent);
-    border-radius:6px; background:var(--surface); font-size:12px; color:var(--dim); }
+  .note { margin:0 0 12px; padding:7px 11px; border:1px solid var(--border); border-left:3px solid var(--border-strong);
+    border-radius:var(--r-200); background:var(--surface-sunken); font-size:12px; color:var(--dim); }
   .note div + div { margin-top:4px; }
   pre.raw { background:var(--surface-sunken); border:1px solid var(--border); border-radius:var(--r-300);
     padding:14px 16px; overflow-x:auto; font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
@@ -148,7 +156,7 @@
   mark.cmt-hl { background:var(--match-bg); border-bottom:2px solid var(--c-warning-bold); border-radius:2px; color:var(--match-fg); cursor:pointer; }
   .cmt-selbtn { position:fixed; z-index:60; font-size:12px; padding:5px 11px; background:var(--accent); color:var(--accent-fg); border:none; border-radius:var(--r-200); box-shadow:var(--e-200); cursor:pointer; }
   .cmt-composer { position:fixed; z-index:61; top:50%; left:50%; transform:translate(-50%,-50%); width:min(440px,92vw); background:var(--surface-overlay); border:1px solid var(--border); border-radius:var(--r-300); box-shadow:var(--e-200); padding:14px; }
-  .cmt-composer .cmt-quote { font-size:12px; color:var(--dim); border-left:3px solid var(--border-strong); padding:5px 9px; margin-bottom:9px; max-height:96px; overflow-y:auto; white-space:pre-wrap; }
+  .cmt-composer .cmt-quote { font-size:12px; color:var(--dim); border-left:3px solid var(--selected-fg); padding:5px 9px; margin-bottom:9px; max-height:96px; overflow-y:auto; white-space:pre-wrap; }
   .cmt-composer textarea { width:100%; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:8px; font:inherit; resize:vertical; }
   .cmt-composer .cmt-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:10px; }
   .cmt-composer button { background:var(--surface); color:var(--fg); border:1px solid var(--border-strong); padding:5px 12px; border-radius:var(--r-200); cursor:pointer; font:inherit; }
