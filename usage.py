@@ -129,10 +129,11 @@ _CLAUDE_KINDS = {
     "weekly_scoped": ("seven_day_model", "7d"),
 }
 
-# Codex names its windows by position; `window_minutes` says which is which.
-_CODEX_WINDOWS = {
-    "primary": ("five_hour", "5h"),
-    "secondary": ("seven_day", "7d"),
+# Codex windows by length in minutes. Never by slot: which window sits in
+# `primary` depends on the plan (see read_codex).
+_CODEX_KINDS = {
+    300: ("five_hour", "5h"),
+    10080: ("seven_day", "7d"),
 }
 
 _LOCK = threading.Lock()
@@ -391,6 +392,13 @@ def _rollout_files(limit: int) -> list[Path]:
 def _newest_rate_limits(files) -> tuple[dict | None, float | None]:
     """The newest populated ``rate_limits`` payload, and when it was written.
 
+    The whole record, deliberately — not the newest reading of each window
+    stitched together from different records. A record is Codex's statement of
+    which limits apply right now, and that set changes: when this account moved
+    to a plan with only a weekly limit, its records stopped carrying a
+    five-hour window at all, and stitching across records would have brought
+    the previous plan's five-hour window back.
+
     About one ``token_count`` record in a hundred has null windows — turns that
     never reached the API — so a record only counts when it actually carries
     numbers. Those nulls cluster per agent, which is why the caller passes a
@@ -419,7 +427,7 @@ def _newest_rate_limits(files) -> tuple[dict | None, float | None]:
                     limits = payload.get("rate_limits") or {}
                     if not (limits.get("primary") or limits.get("secondary")):
                         continue
-                    at = _iso_to_epoch(rec.get("timestamp") or "")
+                    at = _iso_to_epoch(rec.get("timestamp"))
                     if at is None:
                         continue
                     if best_at is None or at > best_at:
@@ -455,8 +463,30 @@ def _iso_to_epoch(ts) -> float | None:
         return None
 
 
+def _codex_window_kind(minutes) -> tuple[str, str]:
+    """A Codex window's kind and short label, from its length.
+
+    The two lengths seen so far map onto the shared vocabulary. Anything else
+    is still a real limit, so it is kept and labelled by its length rather than
+    dropped or forced into a window it is not.
+    """
+    try:
+        m = int(minutes)
+    except (TypeError, ValueError):
+        return "window", "?"
+    if m in _CODEX_KINDS:
+        return _CODEX_KINDS[m]
+    if m > 0 and m % 1440 == 0:
+        label = f"{m // 1440}d"
+    elif m > 0 and m % 60 == 0:
+        label = f"{m // 60}h"
+    else:
+        label = f"{m}m"
+    return f"window_{m}", label
+
+
 def read_codex(now: float | None = None, files=None) -> dict:
-    """Newest populated Codex rate-limit reading, with both staleness guards.
+    """Newest Codex rate-limit reading, with both staleness guards.
 
     ``now`` and ``files`` are injectable so the guards can be tested against a
     fixed clock and a synthetic record. Never raises.
@@ -471,13 +501,26 @@ def read_codex(now: float | None = None, files=None) -> dict:
         return _unavailable(
             "codex", "no Codex session has reported its limits recently")
 
-    age = int(now - as_of) if as_of is not None else None
-
+    age = int(now - as_of)
     windows = []
-    for key, (kind, label) in _CODEX_WINDOWS.items():
-        win = limits.get(key)
+    seen = set()
+    # Windows are identified by their length, never by their slot. Codex lists
+    # whichever limits apply in `primary`, then `secondary`: usually the
+    # five-hour window first and the weekly one second — but a plan with only a
+    # weekly limit reports it as `primary` with nothing after it. Seen on this
+    # machine: every record since the account moved to "prolite", and a
+    # stretch of "plus" records on 2026-08-06. Reading the slot as the window
+    # labelled a weekly number "5-hour" and judged its staleness against five
+    # hours instead of a week. Codex's own RateLimitWindow is exactly
+    # {used_percent, window_minutes, resets_at}: the length is the identity.
+    for slot in ("primary", "secondary"):
+        win = limits.get(slot)
         if not win:
             continue
+        kind, label = _codex_window_kind(win.get("window_minutes"))
+        if kind in seen:
+            continue          # the same window listed twice: keep the first
+        seen.add(kind)
         # Guard 2 rests entirely on the reset time, so the shape of that field
         # decides everything. The invariant: **a window whose reset time we
         # cannot verify is never reported as current.** Without that, an

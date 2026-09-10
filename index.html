@@ -1106,6 +1106,7 @@
   .usage-chip-kind { font-variant-numeric: tabular-nums; }
   .usage-chip-kind b { font-weight: 600; }
   .usage-chip-sep { font-style: normal; color: var(--muted-2); font-weight: 400; margin: 0 1px; }
+  .usage-chip-wname { font-style: normal; font-size: 9px; color: var(--muted-2); font-weight: 500; margin-right: 3px; }
   /* A reading we do not trust (frozen Codex file) or cannot get (Claude token)
      is greyed and dimmed — never rendered as if it were a current number.
      Applied per window, since one reading can be current for the weekly window
@@ -4220,7 +4221,7 @@ function usageChipValue(win) {
 // One window's line in the chip's tooltip, where the reset times live: the face
 // stays readable, and hovering gives the whole picture without a click.
 function usageChipTip(win, srcName) {
-  const name = (USAGE_WIN_NAME[win.kind] || win.kind)
+  const name = (USAGE_WIN_NAME[win.kind] || (win.label + ' window'))
     + (win.model ? ` (${win.model})` : '');
   if (win.rolledOver) {
     return `${name}: already reset — unknown until ${srcName} runs again`;
@@ -4259,8 +4260,14 @@ function usageChipPart(src) {
       title="${esc(name)} — the reading carried no usable window"
       >${esc(short)} n/a</span>`;
   }
+  // The face's "a/b" relies on the five-hour window coming first. When a kind
+  // has no five-hour window at all — a Codex plan with only a weekly limit —
+  // a bare number would read as the five-hour one, so each value names its
+  // window instead.
+  const named = !wins.some(w => w.kind === 'five_hour');
   const body = wins.map(w =>
-    `<span class="${w.trusted && !w.rolledOver ? '' : 'untrusted'}">${usageChipValue(w)}</span>`
+    (named ? `<i class="usage-chip-wname">${esc(w.label)}</i>` : '')
+    + `<span class="${w.trusted && !w.rolledOver ? '' : 'untrusted'}">${usageChipValue(w)}</span>`
   ).join('<i class="usage-chip-sep">/</i>');
   const tip = name + ' — ' + wins.map(w => usageChipTip(w, name)).join(' · ');
   return `<span class="usage-chip-kind" title="${esc(tip)}"
@@ -4268,7 +4275,7 @@ function usageChipPart(src) {
 }
 
 function usageWindowRow(win, srcName) {
-  const name = USAGE_WIN_NAME[win.kind] || win.kind;
+  const name = USAGE_WIN_NAME[win.kind] || (win.label + ' window');
   const label = win.model ? `${name} · ${win.model}` : name;
   let pct = '—', barPct = 0, barCls = 'untrusted', pctCls = 'unknown', why = '';
   if (win.rolledOver) {
@@ -4296,7 +4303,7 @@ function usageWindowRow(win, srcName) {
   </div>`;
 }
 
-// "resets 16:30" while it is today, "resets Tue 12:00" further out, and
+// "resets 16:30" while it is today, "resets Tue 16 Sep 12:00" further out, and
 // "reset passed" for one the server has already marked rolled over.
 function usageResetText(iso) {
   const d = new Date(iso);
@@ -4304,8 +4311,10 @@ function usageResetText(iso) {
   const now = new Date();
   const sameDay = d.toDateString() === now.toDateString();
   const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  // A weekday alone is ambiguous for the weekly windows: six days out, "Wed"
+  // reads as yesterday as easily as next week. Name the date too.
   return 'resets ' + (sameDay ? t
-    : d.toLocaleDateString([], { weekday: 'short' }) + ' ' + t);
+    : d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }) + ' ' + t);
 }
 
 function usageSourceHtml(src) {
@@ -4365,7 +4374,7 @@ function renderUsage() {
   chip.classList.toggle('alarm', !!worst && worst.level === 'alarm');
   chip.classList.toggle('warn', !!worst && worst.level === 'warn');
   chip.title = worst
-    ? `${USAGE_SRC_NAME[worst.source] || worst.source} ${USAGE_WIN_NAME[worst.kind] || worst.kind}`
+    ? `${USAGE_SRC_NAME[worst.source] || worst.source} ${USAGE_WIN_NAME[worst.kind] || (worst.label + ' window')}`
       + ` window ${Math.round(worst.percent)}% used`
     : 'Plan allowance — click for detail';
 
@@ -4403,7 +4412,7 @@ function renderUsageBanner(alerts) {
   const who = USAGE_SRC_NAME[worst.source] || worst.source;
   // Name the model when the hot window is a per-model weekly cap, so that one
   // is not mistaken for the account-wide weekly window sitting next to it.
-  const win = (USAGE_WIN_NAME[worst.kind] || worst.kind).toLowerCase()
+  const win = (USAGE_WIN_NAME[worst.kind] || (worst.label + ' window')).toLowerCase()
     + (worst.model ? ` (${worst.model})` : '');
   const reset = worst.resetsAt ? ' · ' + usageResetText(worst.resetsAt) : '';
   const pct = Math.round(worst.percent) + '%';
