@@ -3260,7 +3260,7 @@ def priority_of(record: dict) -> int:
 # the hub restarted, and would move a card out from under the mouse mid-click.
 # The dot on the card still tells the truth about what is running; the column
 # tells the truth about what was decided. They are allowed to disagree.
-WORKFLOW_NAMES = ("backlog", "todo", "inprogress", "inreview", "done")
+WORKFLOW_NAMES = ensemble_tools.WORKFLOW_NAMES   # one list of columns, owned by the tools module
 WORKFLOW_LABELS = {"backlog": "Backlog", "todo": "To do",
                    "inprogress": "In progress", "inreview": "In review",
                    "done": "Done"}

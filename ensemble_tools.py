@@ -38,6 +38,11 @@ def bind(dashboard_module) -> None:
 # Tool schemas
 # ---------------------------------------------------------------------------
 
+# The board's columns. Defined here, not read from the dashboard: this module
+# is imported before the dashboard binds itself, so any `_d.` lookup at import
+# time crashes the hub on start. The dashboard takes its copy from here.
+WORKFLOW_NAMES = ("backlog", "todo", "inprogress", "inreview", "done")
+
 _PRIORITY_DOC = ("Priority: \"highest\", \"high\", \"medium\", \"low\" or \"lowest\" "
                  "(a number 1-5 also works, 1 = highest).")
 
@@ -234,7 +239,7 @@ TOOLS = [
                 "spec": {"type": "string", "description": "New full spec (omit to keep). Replaces the old one."},
                 "priority": _priority_spec("Omit to keep the current one."),
                 "workflow": {"type": "string",
-                             "enum": list(_d.WORKFLOW_NAMES),
+                             "enum": list(WORKFLOW_NAMES),
                              "description": "Board column (omit to keep). backlog | todo | "
                                             "inprogress | inreview | done. Move your own task to "
                                             "\"inreview\" when you hand work back. \"done\" is "
