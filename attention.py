@@ -404,7 +404,9 @@ def _open_to_human(room: dict, msgs: list) -> dict | None:
 def _summarize(room: dict) -> dict:
     """The few room fields attention needs, without its whole message log."""
     msgs = room.get("messages") or []
-    last = msgs[-1] if msgs else {}
+    # The hub's "new session" notice is for the human and asks nothing of
+    # anyone: the rotation itself is the ask (the participant's rotatedAt).
+    last = next((m for m in reversed(msgs) if m.get("noticeKind") != "rotation"), {})
     cr = _d.chatroom
     rang = last.get("rang")
     if last and not isinstance(rang, list):

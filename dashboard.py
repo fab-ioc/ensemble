@@ -4136,6 +4136,9 @@ def stop_task(rid: str) -> bool:
     room = chatroom.get_room(rid, public=False)
     if not room:
         return False
+    # An agent being rotated has a fresh terminal not yet on the room: the
+    # rotation ends it rather than record it.
+    rotation.note_stopped(rid)
     for part in room.get("participants", []):
         pid = part.get("ptyId")
         if pid:
@@ -5001,6 +5004,11 @@ class Handler(BaseHTTPRequestHandler):
             part = next((x for x in room["participants"]
                          if x.get("identity") == ident), None)
             if not part:
+                continue
+            if rotation.is_rotating(room_id, ident):
+                # Its old session is being ended: a wake now would start a turn
+                # that is then killed. The message stays in the room, and the
+                # fresh session reads it (its first prompt says to).
                 continue
             # Headless PTY session → the doorbell is a PTY write.
             pty_id = part.get("ptyId")

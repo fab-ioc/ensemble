@@ -77,6 +77,8 @@ _SPEC_MAX = 6000            # the first prompt goes on a command line
 _LOCK = threading.Lock()    # one check at a time: scheduler vs "check now"
 _STATE: dict[str, dict] = {}  # projectId -> {phase, askedAt, ..., lastResult}
 _TASK_STATE: dict[str, dict] = {}  # "roomId/identity" -> the same, for owners
+_ROT_LOCK = threading.Lock()
+_ROTATING: dict[tuple, dict] = {}  # (roomId, identity) -> {stopped}, mid-rotation
 
 
 # ---------------------------------------------------------------------------
@@ -196,8 +198,17 @@ def read_transcript(path: Path | None, since: int = -1) -> dict:
                 out["tokens"] = _context_of(msg["usage"])
             if out["tokens"] is not None and (since < 0 or off < since):
                 return out
-        if start == 0 or out["tokens"] is not None:
+        # Only a scan that reached ``since`` can say no prompt came after it.
+        if start == 0 or (out["tokens"] is not None and (since < 0 or start <= since)):
             return out
+    return _grew_past(out, since, start)
+
+
+def _grew_past(out: dict, since: int, start: int) -> dict:
+    """The widest tail did not reach back to ``since``: the conversation grew
+    by more than that since the ask, so a turn has followed it."""
+    if since >= 0 and start > since:
+        out["promptSince"] = True
     return out
 
 
@@ -250,9 +261,10 @@ def read_rollout(path: Path | None, since: int = -1) -> dict:
                     out["tokens"] = int(last.get("input_tokens") or 0)
             if out["tokens"] is not None and last_seen and (since < 0 or off < since):
                 return out
-        if start == 0 or (out["tokens"] is not None and last_seen):
+        if start == 0 or (out["tokens"] is not None and last_seen
+                          and (since < 0 or start <= since)):
             return out
-    return out
+    return _grew_past(out, since, start)
 
 
 def _transcript_of(part: dict):
@@ -641,28 +653,64 @@ def _report_to_po(room: dict, ident: str, rec: dict, how: str) -> bool:
 
 
 def _rotate(s: dict, tr: dict, done, answered: bool, asked: bool = True) -> dict:
-    st, who, room, part = s["state"], s["who"], s["room"], s["part"]
-    rid, ident = room["id"], part["identity"]
+    """End the old session and start the fresh one. While it runs the agent is
+    marked as rotating: the doorbell holds off (see the dashboard's ``_ring``)
+    and a Stop or Delete is noted, until the fresh terminal is on the room."""
+    key = (s["room"]["id"], s["part"]["identity"])
+    flags = {"stopped": False}
+    with _ROT_LOCK:
+        _ROTATING[key] = flags
+    try:
+        return _rotate_marked(s, tr, done, answered, asked, key, flags)
+    finally:
+        with _ROT_LOCK:
+            _ROTATING.pop(key, None)
+
+
+def is_rotating(room_id: str, identity: str) -> bool:
+    with _ROT_LOCK:
+        return (room_id, identity) in _ROTATING
+
+
+def note_stopped(room_id: str) -> None:
+    """A Stop (or Delete) of this task: a rotation under way ends its fresh
+    session instead of leaving the task running."""
+    with _ROT_LOCK:
+        for (rid, _), flags in _ROTATING.items():
+            if rid == room_id:
+                flags["stopped"] = True
+
+
+def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
+                   key: tuple, flags: dict) -> dict:
+    st, who, part = s["state"], s["who"], s["part"]
+    rid, ident = key
     old_sid, old_pty = part["sessionId"], part.get("ptyId") or ""
     hp, hname, limit = s["handover"], s["handoverName"], s["limit"]
     tokens = st.get("tokensAtAsk") if asked else tr["tokens"]
     tokens = tokens or tr["tokens"] or 0
     updated = _mtime(hp) > float(st.get("handoverAtAsk") or 0) if asked else False
+    owner = s["kind"] == "owner"
 
+    # A last look, now that no doorbell can reach it: never end a turn.
+    tpath, reader = _transcript_of(part)
+    if not _idle(part, reader(tpath)):
+        return done(f"{who} started working again — will rotate once it is idle")
     if old_pty:
         _d.ptyrun.kill(old_pty)
         _await_death(old_pty)
     room_full = _d.chatroom.get_room(rid, public=False)
     fpart = _d.chatroom.participant(room_full or {}, ident)
-    if fpart is None:
+    if fpart is None or flags["stopped"]:
         st["phase"] = "watching"
-        return done(f"{s['whose']} task changed while rotating — nothing started")
+        return done(f"{s['whose']} task changed or was stopped while rotating — "
+                    f"nothing started")
     agents_in = _d.chatroom.agent_participants(room_full)
     solo = room_full.get("mode") == "solo" or len(agents_in) < 2
     launcher = _d.hub_launcher()
     cwd = fpart.get("cwd") or None
     started = time.time()
-    if s["kind"] == "po":
+    if not owner:
         prompt = first_prompt(s["project"], room_full, old_sid, tokens)
         if solo:
             info = launcher._launch_room_agent_pty(room_full, fpart, "", collab=False,
@@ -676,16 +724,35 @@ def _rotate(s: dict, tr: dict, done, answered: bool, asked: bool = True) -> dict
         text = task_first_prompt(room_full, old_sid, tokens, hp, solo)
         info = launcher._launch_room_agent_pty(room_full, fpart, text, collab=not solo,
                                                cwd=cwd)
-        if fpart.get("agent") == "codex" and not info["sessionId"]:
-            taken = set()
-            for p in agents_in:
-                taken.update(_d.participant_session_ids(p))
-            info["sessionId"] = _await_codex_session(info["cwd"], started, taken)
     now = time.time()
     n = len(fpart.get("rotations") or []) + 1
     rec = {"n": n, "at": now, "fromSessionId": old_sid, "toSessionId": info["sessionId"],
            "tokens": tokens, "threshold": limit, "handover": str(hp),
            "handoverUpdated": updated, "asked": asked, "answered": answered}
+    fields = {"sessionId": info["sessionId"], "ptyId": info["ptyId"],
+              "cwd": info["cwd"], "pid": None}
+    drop = ("lastExit", "fresh")
+    if owner:
+        rec.update(agent=fpart.get("agent", ""), startedAt=started)
+        # The fresh session's ask dates from its launch: anything it says
+        # after that is an answer to it.
+        fields["rotatedAt"] = started
+        drop += ("resumedAt",)
+    # On the room at once, so a message rings the fresh terminal and a Stop
+    # ends it. (A Codex session id is learnt below.)
+    patched = _d.chatroom.patch_participant(rid, ident, fields,
+                                            append={"rotations": rec}, drop=drop)
+    with _ROT_LOCK:
+        _ROTATING.pop(key, None)
+    if patched is None:
+        _d.ptyrun.kill(info["ptyId"])
+        st["phase"] = "watching"
+        return done(f"{s['whose']} task went away while rotating — the fresh session "
+                    f"was ended")
+    if flags["stopped"]:
+        _d.stop_task(rid)
+        st["phase"] = "watching"
+        return done("the task was stopped while rotating — the fresh session was ended")
     if not asked:
         how = "without asking for a handover first"
     elif not answered:
@@ -694,31 +761,26 @@ def _rotate(s: dict, tr: dict, done, answered: bool, asked: bool = True) -> dict
         how = f"after {who} brought {hname} up to date"
     else:
         how = f"after {who} confirmed {hname} was current"
-    if s["kind"] == "po":
-        _d.chatroom.patch_participant(rid, ident,
-                                      {"sessionId": info["sessionId"], "ptyId": info["ptyId"],
-                                       "cwd": info["cwd"], "pid": None},
-                                      append={"rotations": rec}, drop=("lastExit", "fresh"))
+    if not owner:
         text = (f"**New PO session** — the conversation had reached {_k(tokens)} tokens "
                 f"(limit {_k(limit)}), so the hub started a fresh session {how}. It "
                 f"picks up from `{HANDOVER_NAME}` and `ROADMAP.md`. The previous conversation "
                 f"is kept (session `{old_sid}`).")
         _d.chatroom.post_notice(rid, SENDER, text, {"noticeKind": "rotation", "rotation": rec})
     else:
-        rec.update(agent=fpart.get("agent", ""), startedAt=started)
         text = (f"**New session for {ident}** — its conversation had reached {_k(tokens)} "
                 f"tokens (limit {_k(limit)}), so the hub started a fresh session {how}. It "
                 f"continues from `{TASK_HANDOVER_NAME}`. The previous conversation is kept "
                 f"(session `{old_sid}`).")
         _d.chatroom.post_notice(rid, SENDER, text, {"noticeKind": "rotation", "rotation": rec})
-        # After the notice: rotatedAt is when attention dates the fresh
-        # session's ask from, so the notice must not read as newer than it.
-        _d.chatroom.patch_participant(rid, ident,
-                                      {"sessionId": info["sessionId"], "ptyId": info["ptyId"],
-                                       "cwd": info["cwd"], "pid": None,
-                                       "rotatedAt": time.time()},
-                                      append={"rotations": rec},
-                                      drop=("lastExit", "fresh", "resumedAt"))
+        if fpart.get("agent") == "codex" and not info["sessionId"]:
+            taken = set()
+            for p in agents_in:
+                taken.update(_d.participant_session_ids(p))
+            sid = _await_codex_session(info["cwd"], started, taken)
+            if sid:
+                rec["toSessionId"] = info["sessionId"] = _learn_session(rid, ident,
+                                                                        info["ptyId"], sid)
         try:
             rec["poWoken"] = _report_to_po(room_full, ident, rec, how)
         except Exception as e:          # the rotation itself has happened
@@ -729,6 +791,22 @@ def _rotate(s: dict, tr: dict, done, answered: bool, asked: bool = True) -> dict
     return done(f"rotated at {_k(tokens)} tokens {how} — new session "
                 f"{info['sessionId'] or '(not known yet)'} (pty {info['ptyId']})",
                 rotation=rec)
+
+
+def _learn_session(rid: str, ident: str, pty_id: str, sid: str) -> str:
+    """Record a fresh Codex session's id on the participant and its rotation,
+    unless the backfill got there first (its id wins) or the agent has moved
+    on to another terminal since. Returns the id recorded."""
+    room = _d.chatroom.get_room(rid, public=False)
+    part = _d.chatroom.participant(room or {}, ident)
+    if not part or part.get("ptyId") != pty_id:
+        return sid
+    sid = (part.get("sessionId") or "").strip() or sid
+    rots = list(part.get("rotations") or [])
+    if rots and isinstance(rots[-1], dict):
+        rots[-1] = {**rots[-1], "toSessionId": sid}
+    _d.chatroom.patch_participant(rid, ident, {"sessionId": sid, "rotations": rots})
+    return sid
 
 
 # ---------------------------------------------------------------------------
