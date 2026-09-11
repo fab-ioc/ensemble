@@ -38,7 +38,7 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse
 
 # All OS-specific behavior (terminal control, process introspection, desktop
 # integration) lives behind a platform backend, selected by sys.platform.
@@ -4707,7 +4707,10 @@ class Handler(BaseHTTPRequestHandler):
         if tok and hmac.compare_digest(tok, ACCESS_TOKEN):
             q = parse_qs(u.query)
             if q.get("token") and self.command == "GET":
-                rest = "&".join(f"{k}={v[0]}" for k, v in q.items() if k != "token")
+                # Re-encoded: a file link's path= holds \, spaces, & and #,
+                # which a raw k=v join turned into a different URL.
+                rest = urlencode([(k, v) for k, v in parse_qsl(u.query, keep_blank_values=True)
+                                  if k != "token"])
                 dest = u.path + (("?" + rest) if rest else "")
                 self.send_response(303)
                 self.send_header("Location", dest or "/")
