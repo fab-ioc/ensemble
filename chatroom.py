@@ -482,6 +482,31 @@ def patch_participant(room_id: str, identity: str, fields: dict,
         return dict(part)
 
 
+def apply_review_allocation(room_id: str, identity: str, agent: str, model: str,
+                            allocation: dict, limit: int = 20) -> dict | None:
+    """Atomically update a reviewer's kind/model and append its room audit.
+
+    Review allocation happens on a live room, so rewriting a previously read
+    room can discard chat posted during the allowance check.  Re-read, mutate
+    and write under the room lock, and return the complete updated room the
+    caller must use to build the review brief.
+    """
+    with _LOCK:
+        room = _read(room_id)
+        if room is None:
+            return None
+        part = participant(room, identity)
+        if part is None:
+            return None
+        part.update(agent=agent, model=model)
+        history = list(room.get("reviewAllocations") or [])
+        history.append(allocation)
+        room["reviewAllocations"] = history[-max(1, int(limit)):]
+        room["updatedAt"] = _now()
+        _write(room)
+        return room
+
+
 def mentions(room: dict, text: str) -> set[str]:
     """Agents @mentioned in ``text``, by identity ("@codex") or by role name
     ("@reviewer")."""
