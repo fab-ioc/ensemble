@@ -3056,14 +3056,18 @@ function codeSpanHtml(body) {
 // Running text, already escaped, in one pass so nothing is linked twice. The
 // links are parked in `keep` and put back by unlinkify, after bold and italics.
 // A Windows path may have spaces in its folder and file names ("Ensemble
-// Dashboard\My File.md"), up to four words a name, but a name never runs on
-// into a word like "is" or "to": "C:\foo is copied to docs\readme.md" is a
-// sentence, not one path. A path's & arrives escaped, as &amp;.
+// Dashboard\Terms and Conditions.md"), and a sentence may begin with one
+// ("C:\foo please check docs\readme.md"). What is taken from the drive to the
+// extension is linked whole when it is sure to be a path, and otherwise left
+// as text, all of it, so that no piece of it opens a different file: a name
+// with spaces reads as a name when it starts with a capital or a digit and
+// has at most four words ("New folder", "War of the Worlds.md"). A code span
+// or [text](target) takes any path as written. A path's & arrives as &amp;.
 // A markdown target may hold one level of brackets: [x](https://w/Foo_(bar)).
+const winPathSure = p => p.split(/[\\\/]/).every(s => !s.includes(' ') || (/^[A-Z0-9]/.test(s) && s.split(' ').length <= 4));
 const LINK_RE = (() => {
   const c = String.raw`(?:[^\s"'<>|?*,;:)\]\\\/&]|&amp;)`, f = String.raw`(?:[^\s"'<>|?*,;:)\]\\\/&.]|&amp;)`;
-  const word = String.raw`(?!(?:a|an|and|are|as|at|be|by|for|from|if|in|into|is|it|of|on|or|so|than|that|the|then|to|via|was|were|with)(?![^\s\\\/]))`;
-  const dir = `${c}+(?: ${word}${c}+){0,3}`, file = `(?:${f}+ ${word}){0,3}${c}*\\.\\w{1,8}`;
+  const dir = `${c}+(?: ${c}+)*`, file = `(?:${f}+ )*${c}*\\.\\w{1,8}`;
   const line = String.raw`(?::\d+(?::\d+)?)?`, pre = String.raw`(^|[\s(*_])`;
   return new RegExp([
     String.raw`\[([^\]\n]+)\]\(((?:[^()\n]|\([^()\n]*\))+)\)`,
@@ -3086,6 +3090,7 @@ function linkify(t, keep) {
     if (mdTxt != null) { const h = mdLinkHtml(m, mdTxt, mdUrl); return h === m ? m : put(h); }
     if (url != null) { const [u, tail] = trimUrlTail(url); return p1 + put(urlLinkHtml(u, u)) + tail; }
     if (room != null) return put(taskLinkHtml(room, room));
+    if (win != null && !winPathSure(win)) return m;
     const pth = win ?? nix ?? rel, s = splitLine(unescPath(pth));
     return (p2 ?? p3 ?? p4) + put(fileLinkHtml(s.path, pth, s.line));
   });
@@ -5607,8 +5612,12 @@ let CH_ROOT = '';                     // the repository currently shown (found w
 // batch and its chosen chat, so moving to another project or repository never
 // sends one's comments to the other's chat, and coming back finds both as they
 // were. CH_COMMENTS is the batch on screen; it is emptied in place, not replaced.
-const CH_BATCHES = new Map();         // 'project id|repo root' -> {comments, to}
+const CH_BATCHES = new Map();         // 'project id|repo root' -> {comments, to, sending}
 let CH_CTX = '';
+// Only the latest status load and the latest diff may write the panel: a
+// repository picked twice, or a file and then another, can answer in any order.
+let CH_LOAD = 0, CH_DIFF = 0;
+const CH_DIFF_EMPTY = '<div class="wsp-empty">Select a changed file to review its diff. Click a line to comment; send the batch to a task chat.</div>';
 function chUseContext(ctx) {
   if (!CH_BATCHES.has(ctx)) CH_BATCHES.set(ctx, { comments: [], to: '' });
   CH_CTX = ctx;
@@ -5618,17 +5627,32 @@ function changesPanelHtml(pj) {
   if (!pj || !pj.path) return '<p class="empty">This project has no folder.</p>';
   return scopeBarHtml(pj) + '<div class="chp">'
     + '<div class="chp-files" id="chp-files" data-project="' + esc(pj.id) + '" data-scope="' + esc(scopePath(pj)) + '" data-root=""><div class="chf none">loading…</div></div>'
-    + '<div class="chp-diff" id="chp-diff"><div class="wsp-empty">Select a changed file to review its diff. Click a line to comment; send the batch to a task chat.</div></div>'
+    + '<div class="chp-diff" id="chp-diff">' + CH_DIFF_EMPTY + '</div>'
     + '</div>';
+}
+// Another repository of the same project: its comments, chat and an empty
+// diff take over at once, before its files arrive, so nothing on screen still
+// belongs to the one before.
+function chPickRepo(root) {
+  const box = document.getElementById('chp-files'), diff = document.getElementById('chp-diff');
+  if (!box) return;
+  CH_ROOT = root; CH_FILE = ''; CH_DIFF++;
+  box.dataset.root = root;
+  box.innerHTML = '<div class="chf none">loading…</div>';
+  if (diff) diff.innerHTML = CH_DIFF_EMPTY;
+  chUseContext(box.dataset.project + '|' + root);
+  chRenderTray();
+  chLoadStatus();
 }
 async function chLoadStatus() {
   const box = document.getElementById('chp-files'); if (!box) return;
+  const gen = ++CH_LOAD, stale = () => gen !== CH_LOAD || !box.isConnected;
   try {
     // Find the repo(s) in scope first: the folder itself may be a repo, or a
     // task may hold clones a few levels down (e.g. <task>/claude/<name>/).
     const rr = await api('/api/git/roots?path=' + encodeURIComponent(box.dataset.scope));
     const roots = rr.roots || [];
-    if (!box.isConnected) return;       // another project or scope took the panel meanwhile
+    if (stale()) return;                // a newer load, or another project or scope, took the panel
     if (!roots.length) {
       CH_ROOT = ''; box.dataset.root = '';
       chUseContext(box.dataset.project + '|'); chRenderTray();
@@ -5644,6 +5668,7 @@ async function chLoadStatus() {
         }).join('') + '</select>'
       : '<span class="chp-repo1" title="' + esc(CH_ROOT) + '">' + esc(roots[0].name) + '</span>';
     const st = await api('/api/git/status?path=' + encodeURIComponent(CH_ROOT));
+    if (stale()) return;
     const files = st.files || [];
     box.innerHTML = '<div class="chp-head">' + repoSel + '<span class="chp-count">' + files.length + ' changed</span>'
       + '<button class="chp-refresh" title="Refresh">↻</button></div>'
@@ -5653,8 +5678,8 @@ async function chLoadStatus() {
             + '<span class="chst st-' + esc(code[0]) + '">' + esc(code) + '</span><span class="nm">' + esc(f.path) + '</span></div>';
         }).join('') : '<div class="chf none">working tree clean</div>');
     const rb = box.querySelector('.chp-refresh'); if (rb) rb.onclick = chLoadStatus;
-    const rs = box.querySelector('.chp-repo'); if (rs) rs.onchange = function () { CH_ROOT = rs.value; CH_FILE = ''; chLoadStatus(); };
-  } catch (e) { box.innerHTML = '<div class="chf none">status unavailable: ' + esc(e.message) + '</div>'; }
+    const rs = box.querySelector('.chp-repo'); if (rs) rs.onchange = function () { chPickRepo(rs.value); };
+  } catch (e) { if (!stale()) box.innerHTML = '<div class="chf none">status unavailable: ' + esc(e.message) + '</div>'; }
 }
 function parseUnifiedDiff(text) {
   // Rows: {kind: hunk|meta|ctx|add|del, oldNo, newNo, text}
@@ -5703,18 +5728,22 @@ function renderDiff(file, text, comments, root) {
 async function chOpenDiff(file) {
   const box = document.getElementById('chp-diff'); if (!box) return;
   CH_FILE = file;
+  // The diff belongs to this repository's batch: a comment on it lands there,
+  // whatever is on screen by the time it is added.
+  const seq = ++CH_DIFF, root = document.getElementById('chp-files').dataset.root;
+  const list = CH_BATCHES.get(CH_CTX).comments;
   document.querySelectorAll('#chp-files .chf').forEach(function (x) { x.classList.toggle('on', x.dataset.file === file); });
   box.innerHTML = '<div class="wsp-empty">loading diff…</div>';
   try {
-    const root = document.getElementById('chp-files').dataset.root;
     const d = await api('/api/git/diff?path=' + encodeURIComponent(root) + '&file=' + encodeURIComponent(file));
-    box.innerHTML = renderDiff(file, d.diff || '', null, root);
+    if (seq !== CH_DIFF || !box.isConnected) return;   // another file, repository or project since
+    box.innerHTML = renderDiff(file, d.diff || '', list, root);
     const body = box.querySelector('.diff');
     if (body) body.onclick = function (e) {
       const dl = e.target.closest('.dl'); if (!dl || !dl.dataset.line) return;
-      chCommentPrompt(file, parseInt(dl.dataset.line, 10), dl.dataset.side, dl.querySelector('.tx').textContent, dl);
+      chCommentPrompt(file, parseInt(dl.dataset.line, 10), dl.dataset.side, dl.querySelector('.tx').textContent, dl, list);
     };
-  } catch (e) { box.innerHTML = '<div class="wsp-empty">diff unavailable: ' + esc(e.message) + '</div>'; }
+  } catch (e) { if (seq === CH_DIFF && box.isConnected) box.innerHTML = '<div class="wsp-empty">diff unavailable: ' + esc(e.message) + '</div>'; }
 }
 // The comments land in `list` (the project tab's batch unless a task pane
 // passes its own), and `after` repaints whatever tray shows that list.
@@ -5785,12 +5814,20 @@ function chRenderTray() {
   tray.querySelector('.ch-send').onclick = async function () {
     const rid = document.getElementById('ch-to').value;
     if (!rid) { toast('no task chat to send to — use Copy', 3000, 'err'); return; }
-    const batch = CH_COMMENTS, n = batch.length;   // the batch sent is the one emptied, even if you move on meanwhile
+    // One send at a time, and the comments taken off the batch are exactly the
+    // ones sent: the tray stays editable while the hub answers, and you may
+    // have moved to another repository or project by then.
+    const rec = CH_BATCHES.get(CH_CTX);
+    if (rec.sending) { toast('still sending the last batch', 2000); return; }
+    const items = rec.comments.slice();
+    rec.sending = true;
     try {
-      await api('/api/room/say', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: rid, text: chFormat(batch), to: '' }) });
-      toast('sent ' + n + ' comment(s) to chat', 2500, 'ok');
-      batch.splice(0, n); chRenderTray(); if (CH_FILE) chOpenDiff(CH_FILE);
+      await api('/api/room/say', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: rid, text: chFormat(items), to: '' }) });
+      toast('sent ' + items.length + ' comment(s) to chat', 2500, 'ok');
+      items.forEach(function (c) { const k = rec.comments.indexOf(c); if (k >= 0) rec.comments.splice(k, 1); });
+      chRenderTray(); if (CH_FILE) chOpenDiff(CH_FILE);
     } catch (e) { toast('send failed: ' + e.message, 5000, 'err'); }
+    finally { rec.sending = false; }
   };
 }
 function wireChangesPanel(pj) {

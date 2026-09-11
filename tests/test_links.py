@@ -99,6 +99,14 @@ CASES = [
     "C:\\Users\\ceo\\New folder\\notes.md is there",
     "Saved to C:\\temp\\a.md and C:\\temp\\b.md",
     "[doc](C:\\Users\\ceo\\Ensemble Dashboard\\a (1).md)",
+    # 26-: review 2 — names with little words in them, and prose after a drive
+    "C:\\Users\\ceo\\Terms and Conditions.md",
+    "C:\\Books\\War of the Worlds.md is here",
+    "Meme: C:\\x\\This is Fine.md",
+    "C:\\foo please check docs\\readme.md",
+    "C:\\x\\my notes.md here",
+    "C:\\Foo is copied To the docs\\readme.md",
+    "Use C:\\temp for scratch and docs\\b.md for notes",
 ]
 
 
@@ -143,10 +151,17 @@ class GeneratedLinks(unittest.TestCase):
         # Spaces in the file name as well as the folders.
         self.assertEqual(paths(CASES[17]), ["C:\\Users\\ceo\\Ensemble Dashboard\\My File.md"])
         self.assertEqual(paths(CASES[23]), ["C:\\Users\\ceo\\New folder\\notes.md"])
-        # A sentence is not a path: only the relative file in it is a link.
-        self.assertEqual(paths(CASES[18]), ["docs\\readme.md"])
-        self.assertTrue(r[CASES[18]].startswith("C:\\foo is copied to "), r[CASES[18]])
         self.assertEqual(paths(CASES[24]), ["C:\\temp\\a.md", "C:\\temp\\b.md"])
+        # Names with little words in them, linked whole.
+        self.assertEqual(paths(CASES[26]), ["C:\\Users\\ceo\\Terms and Conditions.md"])
+        self.assertEqual(paths(CASES[27]), ["C:\\Books\\War of the Worlds.md"])
+        self.assertEqual(paths(CASES[28]), ["C:\\x\\This is Fine.md"])
+        # A sentence after a drive is not a path, and no piece of it is linked
+        # on its own either: "notes.md" or "docs\readme.md" alone would open
+        # some other file.
+        for c in (CASES[18], CASES[29], CASES[30], CASES[31], CASES[32]):
+            self.assertEqual(hrefs(r[c]), [], c)
+            self.assertEqual(r[c], c.replace("&", "&amp;"), c)
         # An & in a path, which arrives escaped.
         self.assertEqual(paths(CASES[19]), ["C:\\Users\\me\\a&b\\x.md"])
         # Brackets in a markdown target, a URL's and a path's.
@@ -391,10 +406,14 @@ class El {
   get innerHTML() { return this._h; }
   remove() { reg.delete(this.id); if (this.id === 'ch-tray') reg.delete('ch-to'); this.isConnected = false; }
   querySelectorAll() { return []; }
-  querySelector(s) { return this._q[s] || (this._q[s] = {}); }
+  querySelector(s) {
+    return this._q[s] || (this._q[s] = { value: '', focus() {}, addEventListener() {}, click() {},
+                                         classList: { add() {}, remove() {}, toggle() {} } });
+  }
 }
+let lastCreated = null;
 globalThis.document = {
-  getElementById: id => reg.get(id) || null, createElement: () => new El(),
+  getElementById: id => reg.get(id) || null, createElement: () => (lastCreated = new El()),
   body: { appendChild(n) { n.isConnected = true; reg.set(n.id, n); } },
   querySelector: () => null, querySelectorAll: () => [],
 };
@@ -407,8 +426,19 @@ const PROJECTS = {
 };
 const projectById = id => PROJECTS[id];
 let PROJECT_TAB = 'changes', SB_DEST = '', SELECTED_PROJECT = 'pA';
-const sent = []; let hold = null;
-const api = (url, o) => { sent.push(JSON.parse(o.body)); return hold ? hold.p : Promise.resolve({}); };
+// The hub: two repositories in project A's folder; `slow[root]` holds that
+// root's answers back, `hold` holds back a send.
+const sent = []; let hold = null; const slow = {};
+const api = async (url, o) => {
+  if (url.startsWith('/api/room/say')) { sent.push(JSON.parse(o.body)); return hold ? hold.p : {}; }
+  if (url.startsWith('/api/git/roots')) return { roots: [{ path: '/r1', name: 'r1' }, { path: '/r2', name: 'r2' }] };
+  const root = decodeURIComponent((url.match(/path=([^&]*)/) || [])[1] || '');
+  if (slow[root]) await slow[root];
+  if (url.startsWith('/api/git/status')) return { files: [{ path: root === '/r1' ? 'a.py' : 'b.py', status: 'M' }] };
+  return { diff: '@@ -1 +1 @@\n+x' + root + '\n' };
+};
+const tick = () => new Promise(r => setTimeout(r, 0));
+const later = () => { let free; const p = new Promise(r => { free = r; }); return [p, free]; };
 %s
 const out = {};
 const tray = () => document.getElementById('ch-tray');
@@ -436,6 +466,49 @@ const say = (text, file) => CH_COMMENTS.push({ file: file || 'a.py', line: 1, si
   release({}); await sending;
   out.aAfterMove = CH_BATCHES.get('pA|/repoA').comments.length;
   out.cAfterMove = CH_BATCHES.get('pC|/repoC').comments.map(c => c.text);
+  hold = null;
+
+  // Two repositories of project A, through the real panel code.
+  SELECTED_PROJECT = 'pA'; PROJECT_TAB = 'changes'; CH_ROOT = '';
+  const files = new El(); files.id = 'chp-files'; files.isConnected = true;
+  files.dataset = { project: 'pA', scope: '/s', root: '' }; reg.set('chp-files', files);
+  const diff = new El(); diff.id = 'chp-diff'; diff.isConnected = true; reg.set('chp-diff', diff);
+  wireChangesPanel(projectById('pA')); await tick();
+  out.r1 = [CH_CTX, files.dataset.root, files.innerHTML.includes('a.py')];
+  // A line of r1's diff clicked, then r2 picked before the comment is added.
+  await chOpenDiff('a.py');
+  const dl = { dataset: { line: '1', side: '+' }, querySelector: () => ({ textContent: 'x/r1' }),
+               insertAdjacentElement() {}, classList: { add() {} } };
+  diff.querySelector('.diff').onclick({ target: { closest: () => dl } });
+  const composer = lastCreated;
+  files.querySelector('.chp-repo').value = '/r2'; files.querySelector('.chp-repo').onchange();
+  out.pickNow = [CH_CTX, diff.innerHTML.includes('class="diff"'), files.innerHTML.includes('a.py')];
+  composer.querySelector('textarea').value = 'on r1'; composer.querySelector('.dl-ok').onclick();
+  await tick();
+  out.r2 = [CH_CTX, files.dataset.root, files.innerHTML.includes('b.py'), files.innerHTML.includes('a.py')];
+  out.r1Batch = CH_BATCHES.get('pA|/r1').comments.map(c => c.text);
+  out.r2Batch = CH_BATCHES.get('pA|/r2').comments.map(c => c.text);
+  // r1 picked and slow to list its files, then r2: r1's late answer is dropped.
+  let freeR1; [slow['/r1'], freeR1] = later();
+  chPickRepo('/r1'); await tick(); chPickRepo('/r2'); await tick(); freeR1(); await tick();
+  out.outOfOrder = [CH_CTX, files.dataset.root, files.innerHTML.includes('b.py'), files.innerHTML.includes('a.py')];
+  // r2's diff slow to arrive, r1 picked meanwhile: the late diff is dropped.
+  let freeR2; [slow['/r2'], freeR2] = later();
+  const pend = chOpenDiff('b.py'); chPickRepo('/r1'); await tick(); freeR2(); await pend; await tick();
+  out.lateDiff = diff.innerHTML.includes('x/r2');
+  delete slow['/r1']; delete slow['/r2'];
+  // Same batch, a send pending: Clear, add C, Send again. Only the sent go.
+  const r1 = CH_BATCHES.get('pA|/r1');
+  out.r1Ctx = CH_CTX;
+  say('A2'); chRenderTray();
+  const n0 = sent.length; let answer; hold = { p: new Promise(r => { answer = r; }) };
+  const first = tray().querySelector('.ch-send').onclick();
+  tray().querySelector('.ch-clear').onclick(); say('C'); chRenderTray();
+  await tray().querySelector('.ch-send').onclick();
+  out.sendsWhilePending = sent.length - n0;
+  answer({}); await first;
+  out.afterPendingSend = r1.comments.map(c => c.text);
+  out.sentPending = sent[n0].text.includes('on r1') && sent[n0].text.includes('A2') && !sent[n0].text.includes('→ C');
   console.log(JSON.stringify(out));
 })().catch(e => { console.error(e); process.exit(1); });
 """
@@ -462,6 +535,19 @@ class ChangesComments(unittest.TestCase):
         self.assertEqual(r["sentTo"], ["room-aaaaaaa2"])
         self.assertTrue(r["sentHasA"])
         self.assertEqual(r["aAfterSend"], 0)
+        # Repositories of one project.
+        self.assertEqual(r["r1"], ["pA|/r1", "/r1", True])
+        self.assertEqual(r["pickNow"], ["pA|/r2", False, False], "r1's diff or files still up after picking r2")
+        self.assertEqual(r["r2"], ["pA|/r2", "/r2", True, False])
+        self.assertEqual(r["r1Batch"], ["on r1"], "a comment on r1's diff belongs to r1")
+        self.assertEqual(r["r2Batch"], [])
+        self.assertEqual(r["outOfOrder"], ["pA|/r2", "/r2", True, False], "a late answer took over the panel")
+        self.assertFalse(r["lateDiff"], "a late diff was drawn over another repository")
+        # A send pending on the same batch.
+        self.assertEqual(r["r1Ctx"], "pA|/r1")
+        self.assertEqual(r["sendsWhilePending"], 1, "a second send went out while the first was pending")
+        self.assertEqual(r["afterPendingSend"], ["C"], "a comment added during the send was lost")
+        self.assertTrue(r["sentPending"])
         self.assertEqual(r["aAfterMove"], 0, "the batch sent is the one emptied")
         self.assertEqual(r["cAfterMove"], ["fix C"], "C's new comment was dropped")
 

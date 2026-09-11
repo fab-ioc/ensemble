@@ -491,14 +491,18 @@ function codeSpanHtml(body) {
 // Running text, already escaped, in one pass so nothing is linked twice. The
 // links are parked in `keep` and put back by unlinkify, after bold and italics.
 // A Windows path may have spaces in its folder and file names ("Ensemble
-// Dashboard\My File.md"), up to four words a name, but a name never runs on
-// into a word like "is" or "to": "C:\foo is copied to docs\readme.md" is a
-// sentence, not one path. A path's & arrives escaped, as &amp;.
+// Dashboard\Terms and Conditions.md"), and a sentence may begin with one
+// ("C:\foo please check docs\readme.md"). What is taken from the drive to the
+// extension is linked whole when it is sure to be a path, and otherwise left
+// as text, all of it, so that no piece of it opens a different file: a name
+// with spaces reads as a name when it starts with a capital or a digit and
+// has at most four words ("New folder", "War of the Worlds.md"). A code span
+// or [text](target) takes any path as written. A path's & arrives as &amp;.
 // A markdown target may hold one level of brackets: [x](https://w/Foo_(bar)).
+const winPathSure = p => p.split(/[\\\/]/).every(s => !s.includes(' ') || (/^[A-Z0-9]/.test(s) && s.split(' ').length <= 4));
 const LINK_RE = (() => {
   const c = String.raw`(?:[^\s"'<>|?*,;:)\]\\\/&]|&amp;)`, f = String.raw`(?:[^\s"'<>|?*,;:)\]\\\/&.]|&amp;)`;
-  const word = String.raw`(?!(?:a|an|and|are|as|at|be|by|for|from|if|in|into|is|it|of|on|or|so|than|that|the|then|to|via|was|were|with)(?![^\s\\\/]))`;
-  const dir = `${c}+(?: ${word}${c}+){0,3}`, file = `(?:${f}+ ${word}){0,3}${c}*\\.\\w{1,8}`;
+  const dir = `${c}+(?: ${c}+)*`, file = `(?:${f}+ )*${c}*\\.\\w{1,8}`;
   const line = String.raw`(?::\d+(?::\d+)?)?`, pre = String.raw`(^|[\s(*_])`;
   return new RegExp([
     String.raw`\[([^\]\n]+)\]\(((?:[^()\n]|\([^()\n]*\))+)\)`,
@@ -521,6 +525,7 @@ function linkify(t, keep) {
     if (mdTxt != null) { const h = mdLinkHtml(m, mdTxt, mdUrl); return h === m ? m : put(h); }
     if (url != null) { const [u, tail] = trimUrlTail(url); return p1 + put(urlLinkHtml(u, u)) + tail; }
     if (room != null) return put(taskLinkHtml(room, room));
+    if (win != null && !winPathSure(win)) return m;
     const pth = win ?? nix ?? rel, s = splitLine(unescPath(pth));
     return (p2 ?? p3 ?? p4) + put(fileLinkHtml(s.path, pth, s.line));
   });
