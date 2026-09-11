@@ -8443,6 +8443,13 @@ document.addEventListener('click', async (ev) => {
     openDetail(headlessRow.dataset.orphan ? headlessRow.dataset.sid : headlessRow.dataset.room);
     return;
   }
+  // A board card opens its task the same way (its own buttons keep their jobs).
+  const card = ev.target.closest('.board .card');
+  if (card && !ev.target.closest('button, a, input, select, textarea')) {
+    ev.stopImmediatePropagation();
+    openDetail(card.dataset.room || card.dataset.sid);
+    return;
+  }
   // Action buttons
   const agentsBtn = ev.target.closest('.agents-btn');
   if (agentsBtn) {
