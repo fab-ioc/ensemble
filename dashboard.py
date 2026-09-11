@@ -18,6 +18,7 @@ Ensemble's own state lives in ~/.ensemble.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import hmac
 import json
@@ -1739,7 +1740,7 @@ def build_projects() -> dict:
     keep = ("sessionId", "roomId", "label", "status", "isLive", "idleSeconds",
             "updatedAt", "agents", "members", "mode", "headless", "cwd",
             "taskDir", "priority", "priorityName", "workflow", "workflowName",
-            "lastAgent", "attention")
+            "lastAgent", "attention", "allocation")
     # One group per registered project, plus a synthetic unassigned bucket.
     groups: dict = {}
     for p in projects_reg:
@@ -3750,6 +3751,7 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 "currentTheme": "",
                 "first": first_txt, "last": last_txt,
                 "lastAgent": last_agent_txt, "transcriptPath": "",
+                "allocation": rm.get("allocation"),
                 # {state, reason, agentIdentity} when this task needs a human.
                 "attention": ({k: v for k, v in att_by_room[rid].items()
                                if k in ("state", "reason", "agentIdentity", "since")}
@@ -3969,6 +3971,12 @@ WORKFLOW_CHOICES = ", ".join(WORKFLOW_NAMES)
 # Only a ProductOwner may accept work. Assigned by the human alone — see
 # normalize_agent_specs, which refuses the role from an agent-side caller.
 PRODUCT_OWNER_ROLE = chatroom.PRODUCT_OWNER_ROLE
+
+
+class StartRoomError(Exception):
+    """A first launch that cannot be satisfied by an installed agent kind."""
+
+
 OWNER_ONLY_WORKFLOW = ("done",)
 
 
@@ -4037,6 +4045,245 @@ def normalize_agent_specs(agent_list, human: bool = False) -> tuple[list[tuple[s
     return specs, ""
 
 
+def normalize_agent_preferences(agent_list, human: bool = False) -> tuple[list[dict], str]:
+    """The stored first-launch preference for each seat.
+
+    The existing ``agent`` / ``model`` / ``role`` shape remains the preferred
+    line-up. A seat may additionally name ``alt: {agent, model}``, so a model
+    chosen specifically for the other kind survives an allowance-driven swap.
+    An unavailable alternative is valid as a preference but can never be
+    selected on this machine.
+    """
+    specs, err = normalize_agent_specs(agent_list, human=human)
+    if err:
+        return [], err
+    out = []
+    for item, (agent_key, model, role) in zip(agent_list, specs):
+        pref = {"agent": agent_key, "model": model, "role": role}
+        alt = item.get("alt") if isinstance(item, dict) else None
+        if alt is not None:
+            if not isinstance(alt, dict):
+                return [], "alt_must_be_an_agent"
+            alt_agent = (alt.get("agent") or "").strip()
+            alt_model = (alt.get("model") or "").strip()
+            if not alt_agent or agents.get_agent(alt_agent) is None:
+                return [], f"agent_unavailable:{alt_agent}"
+            pref["alt"] = {"agent": alt_agent, "model": alt_model}
+        out.append(pref)
+    return out, ""
+
+
+def _allocation_owner_index(lineup: list[dict]) -> int:
+    """The one seat whose allowance drives a first-launch decision."""
+    if len(lineup) <= 1:
+        return 0
+    for i, seat in enumerate(lineup):
+        role = (seat.get("role") or "").split(":", 1)[0].strip().lower()
+        if re.search(r"\bengineer\b", role):
+            return i
+    for i, seat in enumerate(lineup):
+        if chatroom.role_key(seat.get("role", "")) == PRODUCT_OWNER_ROLE:
+            return i
+    return 0
+
+
+def _allocation_reviewer_index(lineup: list[dict], owner_index: int) -> int | None:
+    for i, seat in enumerate(lineup):
+        if i == owner_index:
+            continue
+        role = (seat.get("role") or "").split(":", 1)[0].strip().lower()
+        if role == chatroom.REVIEWER_ROLE:
+            return i
+    return None
+
+
+def _kind_usage(snapshot: dict, kind: str) -> dict:
+    """Worst usable account window for ``kind`` from the cached snapshot.
+
+    Unknown values are skipped, while an untrusted value remains usable as a
+    floor. Model-specific limits are not an agent-kind allowance and therefore
+    do not participate in this decision.
+    """
+    source = next((s for s in snapshot.get("sources", [])
+                   if s.get("source") == kind), None)
+    if not source or source.get("state") != "ok":
+        return {"state": "unknown", "error": (source or {}).get("error", "source unavailable")}
+    windows = []
+    for window in source.get("windows") or []:
+        if window.get("kind") not in ("five_hour", "seven_day"):
+            continue
+        if (window.get("percent") is None or window.get("rolledOver")
+                or window.get("resetUnknown")):
+            continue
+        windows.append(window)
+    if not windows:
+        return {"state": "unknown", "error": "no current 5-hour or 7-day reading"}
+    worst = max(windows, key=lambda w: float(w.get("percent") or 0))
+    return {
+        "state": "known",
+        "percent": worst.get("percent"),
+        "window": worst.get("kind"),
+        "label": "5-hour" if worst.get("kind") == "five_hour" else "7-day",
+        "trusted": bool(worst.get("trusted")),
+        "atLeast": not bool(worst.get("trusted")),
+    }
+
+
+def _agent_kind_name(kind: str) -> str:
+    agent = agents.get_agent(kind)
+    return (agent.display_name if agent is not None else kind.title())
+
+
+def _usage_reason_phrase(kind: str, reading: dict) -> str:
+    percent = reading.get("percent")
+    value = f"{float(percent):g}" if percent is not None else "?"
+    floor = "at least " if reading.get("atLeast") else ""
+    return (f"{_agent_kind_name(kind)} {reading.get('label', 'usage')} window "
+            f"at {floor}{value}%")
+
+
+def _seat_for_kind(preference: dict, kind: str) -> dict:
+    """Copy a preferred seat onto ``kind`` without leaking another kind's model."""
+    model = ""
+    if preference.get("agent") == kind:
+        model = preference.get("model", "")
+    else:
+        alt = preference.get("alt") or {}
+        if alt.get("agent") == kind:
+            model = alt.get("model", "")
+    return {"agent": kind, "model": model, "role": preference.get("role", "")}
+
+
+def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
+                                   installed=None) -> tuple[list[dict], dict]:
+    """Choose the first-launch line-up and return it with its audit record."""
+    preferred = copy.deepcopy(preferred)
+    chosen = [{"agent": seat.get("agent", ""),
+               "model": seat.get("model", ""),
+               "role": seat.get("role", "")}
+              for seat in preferred]
+    warn = snapshot.get("warnPercent", usage.WARN_PERCENT)
+    alarm = snapshot.get("alarmPercent", usage.ALARM_PERCENT)
+    figures = {kind: _kind_usage(snapshot, kind) for kind in ("claude", "codex")}
+    owner_i = _allocation_owner_index(preferred)
+    owner_kind = preferred[owner_i].get("agent", "")
+    other_kind = {"claude": "codex", "codex": "claude"}.get(owner_kind, "")
+    owner_usage = figures.get(owner_kind, {"state": "unknown"})
+    other_usage = figures.get(other_kind, {"state": "unknown"})
+    installed = installed or (lambda kind: bool(
+        agents.get_agent(kind) and agents.get_agent(kind).installed()))
+
+    def result(reason: str, changed: bool) -> tuple[list[dict], dict]:
+        return chosen, {
+            "preferred": preferred,
+            "chosen": copy.deepcopy(chosen),
+            "reason": reason,
+            "changed": changed,
+            "at": time.time(),
+            "usage": {"snapshotState": snapshot.get("state"),
+                      "checkedAt": snapshot.get("checkedAt"),
+                      "warnPercent": warn, "alarmPercent": alarm, "kinds": figures},
+        }
+
+    unavailable_seats = [i for i, seat in enumerate(preferred)
+                         if not installed(seat.get("agent", ""))]
+    if unavailable_seats:
+        switched = []
+        for i in unavailable_seats:
+            old_kind = preferred[i].get("agent", "")
+            new_kind = {"claude": "codex", "codex": "claude"}.get(old_kind, "")
+            if not new_kind or not installed(new_kind):
+                raise StartRoomError(f"agent_unavailable:{old_kind}")
+            chosen[i] = _seat_for_kind(preferred[i], new_kind)
+            switched.append(f"{_agent_kind_name(old_kind)} to {_agent_kind_name(new_kind)}")
+        reason = (f"Unavailable agent seat switched from {', '.join(switched)} because its "
+                  f"preferred kind is not installed on this machine.")
+        return result(reason, True)
+
+    both_alarm = all(figures[k].get("state") == "known"
+                     and float(figures[k]["percent"]) >= alarm
+                     for k in ("claude", "codex"))
+    if both_alarm:
+        reason = (f"Preferred line-up kept although Claude and Codex are both at or above "
+                  f"the {float(alarm):g}% alarm.")
+    elif owner_usage.get("state") != "known" or other_usage.get("state") != "known":
+        reason = "Preferred line-up kept because a current allowance reading is unavailable."
+    elif not other_kind or not installed(other_kind):
+        name = _agent_kind_name(other_kind) if other_kind else "The other agent kind"
+        reason = f"Preferred line-up kept because {name} is not installed on this machine."
+    elif (float(owner_usage["percent"]) >= warn
+          and float(other_usage["percent"]) < warn):
+        old_owner_kind = owner_kind
+        chosen[owner_i] = _seat_for_kind(preferred[owner_i], other_kind)
+        reviewer_i = _allocation_reviewer_index(preferred, owner_i)
+        if reviewer_i is not None:
+            chosen[reviewer_i] = _seat_for_kind(preferred[reviewer_i], old_owner_kind)
+        reason = (f"Owner switched to {_agent_kind_name(other_kind)}: "
+                  f"{_usage_reason_phrase(old_owner_kind, owner_usage)}.")
+        return result(reason, True)
+    elif float(owner_usage["percent"]) < warn:
+        reason = (f"Preferred line-up kept because {_usage_reason_phrase(owner_kind, owner_usage)} "
+                  f"is below the {float(warn):g}% warning.")
+    else:
+        reason = (f"Preferred line-up kept because both agent kinds are at or above "
+                  f"the {float(warn):g}% warning.")
+    return result(reason, False)
+
+
+def apply_first_launch_allocation(room_full: dict) -> dict | None:
+    """Choose and persist a new task's agents exactly once, before spawning."""
+    preferred = room_full.get("agentPreference")
+    if not isinstance(preferred, list) or not preferred:
+        return None                         # pre-feature room: historical behavior
+    if isinstance(room_full.get("allocation"), dict):
+        return room_full["allocation"]     # a failed spawn does not re-decide
+    for seat in preferred:
+        kind = seat.get("agent", "")
+        alternative = {"claude": "codex", "codex": "claude"}.get(kind, "")
+        agent = agents.get_agent(kind)
+        alt_agent = agents.get_agent(alternative) if alternative else None
+        if not (agent and agent.installed()) and not (alt_agent and alt_agent.installed()):
+            raise StartRoomError(f"agent_unavailable:{kind}")
+    snapshot = {}
+    try:
+        snapshot = usage.snapshot()
+        chosen, allocation = choose_first_launch_allocation(preferred, snapshot)
+    except StartRoomError:
+        raise
+    except Exception as exc:                              # noqa: BLE001
+        chosen = [{"agent": seat.get("agent", ""),
+                   "model": seat.get("model", ""),
+                   "role": seat.get("role", "")}
+                  for seat in preferred]
+        allocation = {
+            "preferred": copy.deepcopy(preferred),
+            "chosen": copy.deepcopy(chosen),
+            "reason": "Preferred line-up kept because the allowance check failed.",
+            "changed": False,
+            "at": time.time(),
+            "usage": {"snapshotState": snapshot.get("state"),
+                      "checkedAt": snapshot.get("checkedAt"),
+                      "warnPercent": snapshot.get("warnPercent", usage.WARN_PERCENT),
+                      "alarmPercent": snapshot.get("alarmPercent", usage.ALARM_PERCENT),
+                      "kinds": {}, "error": type(exc).__name__},
+        }
+    if allocation["changed"]:
+        updated = chatroom.set_agents(room_full["id"], chosen, mode=room_full.get("mode", ""))
+        if updated is not None:
+            room_full.clear()
+            room_full.update(updated)
+    allocation["chosen"] = [
+        {"identity": p.get("identity", ""), "agent": p.get("agent", ""),
+         "model": p.get("model", ""), "role": p.get("role", "")}
+        for p in chatroom.agent_participants(room_full)
+    ]
+    room_full["allocation"] = allocation
+    chatroom.update_room(room_full)
+    _patch_task_json(room_full.get("taskDir", ""),
+                     agents=allocation["chosen"], allocation=allocation)
+    return allocation
+
+
 def find_project(project_id: str) -> dict | None:
     pid = (project_id or "").strip()
     if not pid:
@@ -4058,7 +4305,7 @@ def create_task(title: str, spec: str, project_id: str, agent_list,
             else normalize_priority(priority))
     if prio is None:
         return False, None, "bad_priority"
-    specs, err = normalize_agent_specs(agent_list, human=human)
+    preferences, err = normalize_agent_preferences(agent_list, human=human)
     if err:
         return False, None, err
     project_id = (project_id or "").strip()
@@ -4070,8 +4317,9 @@ def create_task(title: str, spec: str, project_id: str, agent_list,
     ok, base, ws_meta, msg = setup_session_workspace(project, workspace or "empty", title)
     if not ok:
         return False, None, msg
-    members = [{"identity": ak, "agent": ak, "model": mdl, "role": role}
-               for ak, mdl, role in specs]
+    members = [{"identity": pref["agent"], "agent": pref["agent"],
+                "model": pref.get("model", ""), "role": pref.get("role", "")}
+               for pref in preferences]
     room = chatroom.create_room(title, members)
     room_full = chatroom.get_room(room["id"], public=False)
     room_full["cwd"] = base
@@ -4085,8 +4333,9 @@ def create_task(title: str, spec: str, project_id: str, agent_list,
     room_full["sharedCwd"] = ws_meta.get("mode", "empty") != "empty"
     # 1 agent → a solo session the human drives directly (no chat tools,
     # terminal-primary window). 2+ → an autonomous collaboration.
-    room_full["mode"] = "solo" if len(specs) < 2 else "collab"
+    room_full["mode"] = "solo" if len(preferences) < 2 else "collab"
     room_full["launched"] = False
+    room_full["agentPreference"] = preferences
     if project_id:
         assign_session_project(room["id"], project_id)
     if ws_meta.get("taskDir"):
@@ -4100,6 +4349,7 @@ def create_task(title: str, spec: str, project_id: str, agent_list,
             "agents": [{"identity": p["identity"], "agent": p.get("agent", ""),
                         "model": p.get("model", ""), "role": p.get("role", "")}
                        for p in chatroom.agent_participants(room_full)],
+            "agentPreference": preferences,
             "mode": room_full["mode"], "workspace": ws_meta,
             "createdAt": int(time.time())})
     # Persist BEFORE any launch so an interrupted spawn leaves a resumable
@@ -4184,23 +4434,30 @@ def reassign_task(rid: str, agent_list, human: bool = False) -> tuple[bool, dict
         return False, None, "no_such_room"
     if _room_is_live(room) or _room_has_live_pty(rid) or _room_has_linked_agent(room):
         return False, None, "task_is_running"
-    specs, err = normalize_agent_specs(agent_list, human=human)
+    preferences, err = normalize_agent_preferences(agent_list, human=human)
     if err:
         return False, None, err
     # normalize_agent_specs validates and drops the identity; recover it from the
     # caller's own list (same order) so a retained agent can be pinned by name.
     idents = [(a.get("identity") or "").strip() if isinstance(a, dict) else ""
               for a in agent_list]
-    members = [{"identity": ident, "agent": ak, "model": mdl, "role": role}
-               for ident, (ak, mdl, role) in zip(idents, specs)]
-    mode = "solo" if len(specs) < 2 else "collab"
+    members = [{"identity": ident, "agent": pref["agent"],
+                "model": pref.get("model", ""), "role": pref.get("role", "")}
+               for ident, pref in zip(idents, preferences)]
+    mode = "solo" if len(preferences) < 2 else "collab"
     room = chatroom.set_agents(rid, members, mode=mode)
     if room is None:
         return False, None, "no_such_room"
     assigned = [{"identity": pp["identity"], "agent": pp.get("agent", ""),
                  "model": pp.get("model", ""), "role": pp.get("role", "")}
                 for pp in chatroom.agent_participants(room)]
-    _patch_task_json(room.get("taskDir", ""), agents=assigned, mode=room["mode"])
+    if not room.get("launched", True):
+        room["agentPreference"] = preferences
+        room.pop("allocation", None)
+        chatroom.update_room(room)
+    _patch_task_json(room.get("taskDir", ""), agents=assigned, mode=room["mode"],
+                     **({"agentPreference": preferences, "allocation": None}
+                        if not room.get("launched", True) else {}))
     return True, room, ""
 
 
@@ -5350,6 +5607,7 @@ class Handler(BaseHTTPRequestHandler):
         """First launch of a task's agents (a fresh conversation seeded with the
         spec / collaboration briefing). Marks the room launched. Returns
         [{identity, ptyId}]."""
+        apply_first_launch_allocation(room_full)
         task = room_full.get("spec", "") or ""
         collab = room_full.get("mode") != "solo"
         launched = []
@@ -5362,7 +5620,9 @@ class Handler(BaseHTTPRequestHandler):
             part["cwd"] = info["cwd"]
             part["ptyId"] = info["ptyId"]
             part.pop("lastExit", None)   # a fresh agent isn't the dead one
-            launched.append({"identity": part["identity"], "ptyId": info["ptyId"]})
+            launched.append({"identity": part["identity"], "agent": part.get("agent", ""),
+                             "model": part.get("model", ""), "role": part.get("role", ""),
+                             "ptyId": info["ptyId"]})
         room_full["launched"] = True
         room_full["status"] = "active"
         room_full["hopCount"] = 0
@@ -5914,7 +6174,11 @@ class Handler(BaseHTTPRequestHandler):
             if not ok:
                 self._send_json(400, {"error": err})
                 return
-            launched = [] if data.get("start") is False else self._start_room(room_full)
+            try:
+                launched = [] if data.get("start") is False else self._start_room(room_full)
+            except StartRoomError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
             self._send_json(200, {"ok": True,
                                   "room": chatroom.get_room(room_full["id"]),
                                   "launched": launched})
@@ -6075,7 +6339,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
             # A draft (created but never launched, e.g. by a planning agent)
             # starts fresh; anything else resumes its agents' conversations.
-            resumed = self._start_or_resume_room(room_full)
+            try:
+                resumed = self._start_or_resume_room(room_full)
+            except StartRoomError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
             self._send_json(200, {"ok": True, "resumed": resumed,
                                   "room": chatroom.get_room(rid)})
             return

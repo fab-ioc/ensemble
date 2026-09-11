@@ -1106,6 +1106,7 @@
     text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 6px;
   }
   .dp-cwd { font-family: var(--font-mono); font-size: 12px; color: var(--fg-subtle); word-break: break-all; }
+  .dp-allocation { margin-top: var(--s-200); font-size: var(--fs-200); color: var(--fg-muted); }
   .dp-cost .cost-total {
     font: 600 22px/1 var(--font-sans); letter-spacing: -0.02em;
     color: var(--fg); font-variant-numeric: tabular-nums;
@@ -3673,13 +3674,15 @@ function detailInfo(r) {
   if (r.members && r.members.length) {
     // Who is on this task, and — just as important — which model each one
     // runs. "claude" alone doesn't say what is doing the work.
+    const allocation = r.allocation && r.allocation.changed && r.allocation.reason
+      ? `<div class="dp-allocation">${esc(r.allocation.reason)}</div>` : '';
     parts.push(`<div class="dp-section"><h3>Assigned</h3><div style="display: flex; flex-wrap: wrap; gap: 6px;">${r.members.map(m => {
       const bits = [esc(m.identity || m.agent), esc(m.model || 'default model')];
       if (m.role) bits.push(esc(m.role));
       // A reviewer on mention is not a running agent: it starts per request.
       if (m.onMention) bits.push(m.reviewing ? 'reviewing now' : 'on mention');
       return `<span class="badge-agent ${esc(m.agent)}" title="${esc(m.agent)}">${bits.join(' · ')}</span>`;
-    }).join('')}</div></div>`);
+    }).join('')}</div>${allocation}</div>`);
   }
   if (JIRA_ENABLED) parts.push(jiraSection(r));
   if (r.cwd) parts.push(`<div class="dp-section"><h3>cwd</h3><div class="dp-cwd" title="${esc(r.cwd)}">${esc(tildeify(r.cwd))}</div></div>`);
@@ -6834,7 +6837,7 @@ function showNewSessionModal(category, projectId) {
       <textarea id="ns-task" rows="7" placeholder="Describe the goal, constraints, and what “done” looks like. Agents may write docs, clone repos, commit — whatever the task needs."></textarea>
     </div>
     <div class="im-field">
-      <label>Agents <small>add one or more; each can run a different model</small></label>
+      <label>Preferred agents <small>the hub confirms the line-up from current allowance when it starts</small></label>
       <div id="ns-agents"></div>
       <button type="button" id="ns-add" class="secondary">+ Add agent</button>
       <p class="cfg-hint" id="ns-hint"></p>
@@ -6930,6 +6933,7 @@ function showNewSessionModal(category, projectId) {
           startedAt: rm.createdAt || Date.now() / 1000, turns: 0, idleSeconds: 0, pid: null,
           pinned: false, category: '', archived: false, parent: '', jira: [], cost: 0,
           currentTheme: '', first: '', last: '', transcriptPath: '',
+          allocation: rm.allocation || null,
         });
         openDetail(rm.id);
       }
