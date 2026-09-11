@@ -382,8 +382,9 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
    ceo can compare them. **Board wide** (the default) gives the board the whole Overview in Board
    view and keeps 248px columns; the PO becomes the pill's drawer, restyled and never moved.
    **Board beside the PO** keeps the split and narrows the columns to 208px, and a card wraps its
-   rows rather than dropping anything. Whenever columns lie past the pane's edge, both layouts show
-   a fade and a `›` naming them. Once ceo has chosen, the PO rewrites this rule and removes the
+   rows rather than dropping anything. On a desktop, whenever columns lie past the edge of whatever
+   scrolls the board (the pane, or the board itself when stacked under the PO below 900px), both
+   layouts show a fade and a `›` naming them. A phone swipes its board and gets neither. Once ceo has chosen, the PO rewrites this rule and removes the
    losing layout.
 9. **A destination replaces whatever view is showing.** `Needs you` and `Active` must open from
    anywhere: the home page, and a project's Overview, Changes, Workspace or Roadmap tab. So their branch runs

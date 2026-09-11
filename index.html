@@ -1368,6 +1368,10 @@
     body.po-split .po-board, body.po-wide .po-board { overflow: visible; }
     /* stacked: the page scrolls down, the board sideways */
     body.po-split .po-board .board, body.po-wide .po-board .board { overflow-x: auto; }
+    /* The edges run the board's whole height here, so the button follows
+       the page down instead of sitting halfway down a long column. */
+    .board-edge { align-items: flex-start; }
+    .board-edge button { position: sticky; top: 45vh; margin-top: var(--s-600); }
   }
   /* The peek: a drawer under the bar. Beside an open task, not over it. */
   body.po-peek #po-panel {
@@ -2580,6 +2584,9 @@
     .me-item, .pm-item, .fm-item, .notif-item, .wf-item, .ov-menu button { min-height: var(--touch-min); }
 
     /* Touch targets in the page, the task panel and the PO's drawer. */
+    /* A phone swipes its board a column at a time (scroll-snap); the edge
+       buttons are a desktop aid, and at 28px would be below --touch-min. */
+    .board-edge { display: none; }
     .colsel { flex: 1 1 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
     .colsel::-webkit-scrollbar { display: none; }
     .colchip { flex: 0 0 auto; }
@@ -4368,21 +4375,33 @@ function wireBoard() {
   if (older) older.onclick = () => { DONE_SHOW_ALL = true; BOARD_SIG = ''; renderRows(); };
   // The pane beside or under the PO scrolls sideways; its edges say when it can.
   if (_edgeRO) { _edgeRO.disconnect(); _edgeRO = null; }
-  const port = view.querySelector('.po-board');
-  if (!port) return;
-  port.addEventListener('scroll', boardEdges, { passive: true });
+  const pane = view.querySelector('.po-board');
+  if (!pane) return;
+  // Either may be the one scrolling sideways (see boardPort), so both report.
+  const board = pane.querySelector('.board');
+  for (const el of [pane, board]) if (el) el.addEventListener('scroll', boardEdges, { passive: true });
   view.querySelectorAll('.board-edge button').forEach(b => b.onclick = () => {
-    const col = port.querySelector('.board .col');
+    const { port } = boardPort();
+    const col = port && port.querySelector('.col');
     const step = col ? col.offsetWidth + parseFloat(getComputedStyle(col.parentElement).columnGap || 0) : 240;
-    port.scrollBy({ left: (b.dataset.dir === 'l' ? -1 : 1) * step, behavior: 'smooth' });
+    if (port) port.scrollBy({ left: (b.dataset.dir === 'l' ? -1 : 1) * step, behavior: 'smooth' });
   });
   if (window.ResizeObserver) {
     _edgeRO = new ResizeObserver(boardEdges);
-    _edgeRO.observe(port);
-    const board = port.querySelector('.board');
+    _edgeRO.observe(pane);
     if (board) _edgeRO.observe(board);
   }
   boardEdges();
+}
+
+// The element that scrolls the board sideways: the pane beside or under the
+// PO, except stacked under it (a narrow window), where the pane grows with the
+// page and the board scrolls itself, as it always has.
+function boardPort() {
+  const pane = document.querySelector('#view .po-board');
+  const board = pane && pane.querySelector('.board');
+  const port = pane && (board && getComputedStyle(pane).overflowX === 'visible' ? board : pane);
+  return { pane, board, port };
 }
 
 // A board wider than its pane says so: a fade and a button on each side that
@@ -4390,13 +4409,10 @@ function wireBoard() {
 // without this the columns past the edge were simply not there.
 let _edgeRO = null;
 function boardEdges() {
-  const port = document.querySelector('#view .po-board');
+  const { pane, board, port } = boardPort();
   const edges = { l: document.querySelector('#view .board-edge.l'), r: document.querySelector('#view .board-edge.r') };
   if (!port || !edges.l || !edges.r) return;
-  // Stacked under the PO (a narrow window) the pane does not scroll sideways;
-  // the board does, with its own scrollbar, as it always has.
-  const max = port.scrollWidth - port.clientWidth;
-  const scrolls = getComputedStyle(port).overflowX !== 'visible' && max > 1;
+  const scrolls = port.scrollWidth - port.clientWidth > 1;
   const pr = port.getBoundingClientRect();
   const cut = { l: [], r: [] };
   if (scrolls) port.querySelectorAll('.board .col').forEach(c => {
@@ -4414,11 +4430,10 @@ function boardEdges() {
   }
   // Over the columns only: inside the pane's scrollbars, and below the filter
   // row while it is on screen, so the fade never washes out the view count.
-  const board = port.querySelector('.board');
-  const top = board ? Math.max(0, Math.round(board.getBoundingClientRect().top - pr.top)) + 'px' : '0px';
+  const top = board ? Math.max(0, Math.round(board.getBoundingClientRect().top - pane.getBoundingClientRect().top)) + 'px' : '0px';
   edges.l.style.marginTop = edges.r.style.marginTop = top;
-  edges.r.style.marginRight = (port.offsetWidth - port.clientWidth - 2) + 'px';
-  const sbh = (port.offsetHeight - port.clientHeight - 2) + 'px';
+  edges.r.style.marginRight = Math.max(0, port.offsetWidth - port.clientWidth - 2) + 'px';
+  const sbh = Math.max(0, port.offsetHeight - port.clientHeight - 2) + 'px';
   edges.l.style.marginBottom = edges.r.style.marginBottom = sbh;
 }
 
@@ -6290,7 +6305,7 @@ function renderRows() {
     // hit, same guard: remount only when PLACEMENT changes. Card contents are
     // patched in place below, so dots and lozenges stay live while hovering.
     const sig = [SELECTED_PROJECT || '', SELECTED_CAT, SEARCH_QUERY, DONE_SHOW_ALL, poSplit, poNote,
-                 BOARD_FIT, [...hidden].join('.'),
+                 BOARD_FIT, isPhone(), [...hidden].join('.'),
                  filtered.map(r => (r.roomId || r.sessionId) + ':' + frozenWorkflowOf(r, frozen)).join(',')].join('|');
     if (sig !== BOARD_SIG || !view.querySelector('.board, .board-none')) {
       BOARD_SIG = sig;
@@ -8002,6 +8017,13 @@ $('#sidebar-toggle').addEventListener('click', () => {
 // Keep in sync with the mobile @media query in the stylesheet.
 const MOBILE_MQ = '(max-width: 640px), (max-width: 1024px) and (pointer: coarse)';
 const isPhone = () => window.matchMedia(MOBILE_MQ).matches;
+// The board's layouts and their switch are desktop-only, so crossing into or
+// out of the phone layout redraws the Overview rather than waiting for data.
+(() => {
+  const mq = window.matchMedia(MOBILE_MQ);
+  const redraw = () => { BOARD_SIG = ''; renderRows(); };
+  if (mq.addEventListener) mq.addEventListener('change', redraw); else if (mq.addListener) mq.addListener(redraw);
+})();
 // Wherever the sidebar is a drawer it starts closed and closes behind you —
 // a drawer left open is just a column that covers things.
 const DRAWER_MQ = '(max-width: 900px)';
