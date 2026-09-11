@@ -21,14 +21,19 @@ class _FakeAgent:
 class _FakeHandler:
     _start_room = dashboard.Handler._start_room
     _start_or_resume_room = dashboard.Handler._start_or_resume_room
+    _start_review = dashboard.Handler._start_review
 
     def __init__(self):
         self.launched = []
         self.resumed = []
         self.resume_notes = []
+        self.review_prompts = []
 
-    def _launch_room_agent_pty(self, room, part, task, collab=True):
+    def _launch_room_agent_pty(self, room, part, task, collab=True,
+                               prompt=None, cwd=None):
         self.launched.append((part["identity"], part["agent"], part.get("model", "")))
+        if prompt is not None:
+            self.review_prompts.append(prompt)
         return {"ptyId": len(self.launched), "cwd": room.get("cwd", ""),
                 "sessionId": f"session-{len(self.launched)}"}
 
@@ -217,6 +222,240 @@ class AllocationTests(unittest.TestCase):
             {"agent": "codex", "model": "gpt-owner", "role": "engineer"}])
         self.assertTrue(allocation["changed"])
         self.assertIn("not installed", allocation["reason"])
+
+    def test_human_created_solo_keeps_the_picked_agent_and_model(self):
+        task_dir = Path(self.temp.name) / "human-solo"
+        workspace = {"mode": "empty", "taskDir": str(task_dir)}
+        preference = [{"agent": "claude", "model": "opus", "role": "engineer",
+                       "alt": {"agent": "codex", "model": "gpt-owner"}}]
+        with mock.patch.object(dashboard, "setup_session_workspace",
+                               return_value=(True, str(task_dir), workspace, "")):
+            ok, room, error = dashboard.create_task(
+                "human solo", "Do the work.", "", preference, "empty", human=True)
+        self.assertTrue(ok, error)
+
+        with mock.patch.object(dashboard.usage, "snapshot",
+                               side_effect=AssertionError("human pick read usage")):
+            _FakeHandler()._start_room(room)
+
+        saved = chatroom.get_room(room["id"], public=False)
+        agent = chatroom.agent_participants(saved)[0]
+        self.assertEqual((agent["agent"], agent["model"]), ("claude", "opus"))
+        self.assertTrue(saved["lineupPickedByHuman"])
+        self.assertFalse(saved["allocation"]["changed"])
+        self.assertEqual(saved["allocation"]["reason"],
+                         "kept as picked: a one-agent task you created")
+
+    def test_agent_created_solo_is_reallocated(self):
+        task_dir = Path(self.temp.name) / "agent-solo"
+        workspace = {"mode": "empty", "taskDir": str(task_dir)}
+        preference = [{"agent": "claude", "model": "opus", "role": "engineer",
+                       "alt": {"agent": "codex", "model": "gpt-owner"}}]
+        with mock.patch.object(dashboard, "setup_session_workspace",
+                               return_value=(True, str(task_dir), workspace, "")):
+            ok, room, error = dashboard.create_task(
+                "agent solo", "Do the work.", "", preference, "empty")
+        self.assertTrue(ok, error)
+        snap = _snapshot([_window("five_hour", 84)], [_window("five_hour", 10)])
+
+        with mock.patch.object(dashboard.usage, "snapshot", return_value=snap):
+            _FakeHandler()._start_room(room)
+
+        saved = chatroom.get_room(room["id"], public=False)
+        agent = chatroom.agent_participants(saved)[0]
+        self.assertEqual((agent["agent"], agent["model"]), ("codex", "gpt-owner"))
+        self.assertFalse(saved["lineupPickedByHuman"])
+        self.assertTrue(saved["allocation"]["changed"])
+
+    def test_human_draft_reassignment_marks_the_lineup_as_picked(self):
+        preference = [{"agent": "codex", "model": "gpt-owner", "role": "engineer"}]
+        room = self.room(preference)
+
+        ok, reassigned, error = dashboard.reassign_task(
+            room["id"], [{"agent": "claude", "model": "opus", "role": "engineer"}],
+            human=True)
+
+        self.assertTrue(ok, error)
+        self.assertTrue(reassigned["lineupPickedByHuman"])
+        with mock.patch.object(dashboard.usage, "snapshot",
+                               side_effect=AssertionError("human reassignment read usage")):
+            _FakeHandler()._start_room(reassigned)
+        saved = chatroom.get_room(room["id"], public=False)
+        self.assertEqual(chatroom.agent_participants(saved)[0]["agent"], "claude")
+        self.assertEqual(saved["allocation"]["reason"],
+                         "kept as picked: a one-agent task you created")
+
+    def test_old_room_without_human_pick_marker_keeps_allowance_behavior(self):
+        preference = [{"agent": "claude", "model": "opus", "role": "engineer",
+                       "alt": {"agent": "codex", "model": "gpt-owner"}}]
+        room = self.room(preference)
+        self.assertNotIn("lineupPickedByHuman", room)
+        snap = _snapshot([_window("five_hour", 81)], [_window("five_hour", 10)])
+
+        with mock.patch.object(dashboard.usage, "snapshot", return_value=snap):
+            _FakeHandler()._start_room(room)
+
+        saved = chatroom.get_room(room["id"], public=False)
+        self.assertEqual(chatroom.agent_participants(saved)[0]["agent"], "codex")
+        self.assertTrue(saved["allocation"]["changed"])
+
+    def test_review_swaps_away_from_the_owners_kind_before_launch(self):
+        room = self.room([
+            {"agent": "claude", "model": "opus", "role": "engineer"},
+            {"agent": "claude", "model": "sonnet", "role": "reviewer",
+             "alt": {"agent": "codex", "model": "gpt-review"}},
+        ], launched=True)
+        reviewer = next(p for p in chatroom.agent_participants(room)
+                        if p["role"] == "reviewer")
+        identity = reviewer["identity"]
+        snap = _snapshot([_window("five_hour", 25)], [_window("five_hour", 20)])
+        handler = _FakeHandler()
+
+        with mock.patch.object(dashboard.usage, "snapshot", return_value=snap):
+            review = handler._start_review(
+                room["id"], identity,
+                {"id": "msg-1", "from": "claude", "text": "Please review."})
+
+        saved = chatroom.get_room(room["id"], public=False)
+        chosen = chatroom.participant(saved, identity)
+        self.assertEqual((chosen["identity"], chosen["agent"], chosen["model"]),
+                         (identity, "codex", "gpt-review"))
+        self.assertEqual(handler.launched[0], (identity, "codex", "gpt-review"))
+        self.assertTrue(review["allocation"]["changed"])
+        self.assertEqual(saved["reviewAllocations"][-1]["chosen"]["agent"], "codex")
+
+    def test_review_uses_owner_kind_when_other_is_past_warning(self):
+        room = self.room([
+            {"agent": "claude", "model": "opus", "role": "engineer"},
+            {"agent": "codex", "model": "gpt-review", "role": "reviewer"},
+        ], launched=True)
+        reviewer = next(p for p in chatroom.agent_participants(room)
+                        if p["role"] == "reviewer")
+        identity = reviewer["identity"]
+        snap = _snapshot([_window("five_hour", 20)], [_window("five_hour", 82)])
+
+        with mock.patch.object(dashboard.usage, "snapshot", return_value=snap):
+            _FakeHandler()._start_review(
+                room["id"], identity,
+                {"id": "msg-2", "from": "claude", "text": "Please review."})
+
+        saved = chatroom.get_room(room["id"], public=False)
+        chosen = chatroom.participant(saved, identity)
+        self.assertEqual((chosen["identity"], chosen["agent"], chosen["model"]),
+                         (identity, "claude", ""))
+        self.assertIn("the owner's kind", saved["reviewAllocations"][-1]["reason"])
+
+    def test_unknown_review_reading_keeps_current_reviewer(self):
+        room = self.room([
+            {"agent": "claude", "model": "opus", "role": "engineer"},
+            {"agent": "codex", "model": "gpt-review", "role": "reviewer"},
+        ], launched=True)
+        reviewer = next(p for p in chatroom.agent_participants(room)
+                        if p["role"] == "reviewer")
+        snap = _snapshot([_window("five_hour", 20)],
+                         [_window("five_hour", None, rolled_over=True)])
+
+        with mock.patch.object(dashboard.usage, "snapshot", return_value=snap):
+            review = _FakeHandler()._start_review(
+                room["id"], reviewer["identity"],
+                {"id": "msg-3", "from": "claude", "text": "Please review."})
+
+        saved = chatroom.get_room(room["id"], public=False)
+        chosen = chatroom.participant(saved, reviewer["identity"])
+        self.assertEqual((chosen["agent"], chosen["model"]), ("codex", "gpt-review"))
+        self.assertFalse(review["allocation"]["changed"])
+        self.assertIn("unavailable", review["allocation"]["reason"])
+
+    def test_failed_review_reading_keeps_current_reviewer_and_launches(self):
+        room = self.room([
+            {"agent": "claude", "model": "opus", "role": "engineer"},
+            {"agent": "codex", "model": "gpt-review", "role": "reviewer"},
+        ], launched=True)
+        reviewer = next(p for p in chatroom.agent_participants(room)
+                        if p["role"] == "reviewer")
+        handler = _FakeHandler()
+
+        with mock.patch.object(dashboard.usage, "snapshot", side_effect=OSError("cache")):
+            review = handler._start_review(
+                room["id"], reviewer["identity"],
+                {"id": "msg-failed", "from": "claude", "text": "Please review."})
+
+        self.assertIsNotNone(review)
+        self.assertEqual(handler.launched[0][1:], ("codex", "gpt-review"))
+        self.assertEqual(review["allocation"]["usage"]["error"], "OSError")
+        self.assertIn("check failed", review["allocation"]["reason"])
+
+    def test_both_review_kinds_past_alarm_uses_preferred_other_kind(self):
+        room = self.room([
+            {"agent": "claude", "model": "opus", "role": "engineer"},
+            {"agent": "claude", "model": "sonnet", "role": "reviewer",
+             "alt": {"agent": "codex", "model": "gpt-review"}},
+        ], launched=True)
+        reviewer = next(p for p in chatroom.agent_participants(room)
+                        if p["role"] == "reviewer")
+        snap = _snapshot([_window("five_hour", 96)], [_window("seven_day", 97)])
+
+        with mock.patch.object(dashboard.usage, "snapshot", return_value=snap):
+            review = _FakeHandler()._start_review(
+                room["id"], reviewer["identity"],
+                {"id": "msg-alarm", "from": "claude", "text": "Please review."})
+
+        self.assertEqual(review["allocation"]["chosen"]["agent"], "codex")
+        self.assertIn("95% alarm", review["allocation"]["reason"])
+
+    def test_review_never_chooses_an_uninstalled_kind(self):
+        room = self.room([
+            {"agent": "claude", "model": "opus", "role": "engineer"},
+            {"agent": "codex", "model": "gpt-review", "role": "reviewer"},
+        ], launched=True)
+        reviewer = next(p for p in chatroom.agent_participants(room)
+                        if p["role"] == "reviewer")
+        snap = _snapshot([_window("five_hour", 20)], [_window("five_hour", 15)])
+
+        def installed_agent(kind):
+            return _FakeAgent(kind) if kind == "claude" else None
+
+        with mock.patch.object(dashboard.usage, "snapshot", return_value=snap), \
+                mock.patch.object(dashboard.agents, "get_agent", side_effect=installed_agent):
+            review = _FakeHandler()._start_review(
+                room["id"], reviewer["identity"],
+                {"id": "msg-install", "from": "claude", "text": "Please review."})
+
+        self.assertEqual(review["allocation"]["chosen"]["agent"], "claude")
+        self.assertIn("not installed", review["allocation"]["reason"])
+
+    def test_review_allocation_history_is_capped(self):
+        room = self.room([
+            {"agent": "claude", "model": "opus", "role": "engineer"},
+            {"agent": "codex", "model": "gpt-review", "role": "reviewer"},
+        ], launched=True)
+        reviewer = next(p for p in chatroom.agent_participants(room)
+                        if p["role"] == "reviewer")
+        snap = _snapshot([_window("five_hour", 20)], [_window("five_hour", 15)])
+
+        with mock.patch.object(dashboard.usage, "snapshot", return_value=snap):
+            for _ in range(23):
+                room, reviewer, _allocation = dashboard.apply_review_allocation(
+                    room, reviewer["identity"])
+
+        saved = chatroom.get_room(room["id"], public=False)
+        self.assertEqual(len(saved["reviewAllocations"]), 20)
+
+    def test_old_room_without_preference_still_allocates_a_review(self):
+        room = self.room(None, launched=True)
+        reviewer = next(p for p in chatroom.agent_participants(room)
+                        if p["role"] == "reviewer")
+        snap = _snapshot([_window("five_hour", 20)], [_window("five_hour", 25)])
+
+        with mock.patch.object(dashboard.usage, "snapshot", return_value=snap):
+            review = _FakeHandler()._start_review(
+                room["id"], reviewer["identity"],
+                {"id": "msg-4", "from": "claude", "text": "Please review."})
+
+        saved = chatroom.get_room(room["id"], public=False)
+        self.assertIsNotNone(review)
+        self.assertEqual(chatroom.participant(saved, reviewer["identity"])["agent"], "codex")
+        self.assertEqual(len(saved["reviewAllocations"]), 1)
 
     def test_resumed_task_keeps_its_existing_kind(self):
         preference = [{"agent": "claude", "model": "opus", "role": "engineer"}]
