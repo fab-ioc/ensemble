@@ -917,6 +917,7 @@ RTK_DIR = DASHBOARD_DIR / "rtk"
 RTK_CLAUDE_SETTINGS = RTK_DIR / "claude-task-settings.json"
 RTK_TELEMETRY_ENV = "RTK_TELEMETRY_DISABLED"
 RTK_RECALL_DB = RTK_DIR / "recall.db"
+_RTK_SETTINGS_LOCK = threading.Lock()
 RTK_BRIEF = {
     "claude": (
         "RTK is enabled for this task. Bash git/test/search commands are rewritten "
@@ -949,21 +950,26 @@ def _rtk_task_room(room: dict) -> bool:
 
 def _rtk_claude_settings() -> Path:
     """Write the hub-owned, launch-only Claude hook settings file."""
-    RTK_DIR.mkdir(parents=True, exist_ok=True)
     command = f'"{RTK_BIN.as_posix()}" hook claude'
     settings = {"hooks": {"PreToolUse": [{
         "matcher": "Bash",
         "hooks": [{"type": "command", "command": command}],
     }]}}
     text = json.dumps(settings, indent=2) + "\n"
-    try:
-        current = RTK_CLAUDE_SETTINGS.read_text(encoding="utf-8")
-    except OSError:
-        current = ""
-    if current != text:
-        tmp = RTK_CLAUDE_SETTINGS.with_suffix(".json.tmp")
-        tmp.write_text(text, encoding="utf-8")
-        tmp.replace(RTK_CLAUDE_SETTINGS)
+    with _RTK_SETTINGS_LOCK:
+        RTK_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            current = RTK_CLAUDE_SETTINGS.read_text(encoding="utf-8")
+        except OSError:
+            current = ""
+        if current != text:
+            tmp = RTK_CLAUDE_SETTINGS.with_name(
+                f".{RTK_CLAUDE_SETTINGS.name}.{uuid.uuid4().hex}.tmp")
+            try:
+                tmp.write_text(text, encoding="utf-8")
+                tmp.replace(RTK_CLAUDE_SETTINGS)
+            finally:
+                tmp.unlink(missing_ok=True)
     return RTK_CLAUDE_SETTINGS
 
 
