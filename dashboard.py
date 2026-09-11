@@ -901,6 +901,16 @@ SOLO_REPORT_NOTE = (
     "with the ensemble_report tool (kind completed | blocked | question) — it "
     "reaches the project's PO, who otherwise cannot see your reply.")
 
+# The line typed into a task's owner when the task is started again. A resumed
+# conversation comes back at an empty prompt and nothing else would wake it.
+# It never repeats the spec: a session told its spec again redoes the work.
+RESUME_NOTE = (
+    "[resumed] Your task was started again. Your spec may have changed while you "
+    "were stopped: read it again with ensemble_get_task, then carry on from where "
+    "you were; do not start over. Report with ensemble_report when you finish or "
+    "are blocked.")
+RESUME_NOTE_WAIT_S = 180    # a terminal that never settles gets the line anyway
+
 
 def collab_briefing(ident: str, role: str, teammates: list, task: str,
                     wire_mcp: bool = True) -> str:
@@ -5061,19 +5071,25 @@ class Handler(BaseHTTPRequestHandler):
                                extra_args=claude_extra)
         return {"sessionId": new_sid, "cwd": cwd, "launch": res}
 
-    def _mcp_wiring(self, token: str, collab: bool) -> tuple[list[str], list[str], dict]:
+    def _mcp_wiring(self, token: str, collab: bool,
+                    human: bool = False) -> tuple[list[str], list[str], dict]:
         """The per-agent bits that connect it to the Ensemble MCP server
         (chat + ensemble_* task tools) with its own bearer token. EVERY headless
         agent gets the server — solo tasks included, so an agent can plan and
         manage tasks. Returns (codex_args, claude_args, env).
 
-        collab: an autonomous collaboration additionally bypasses Codex's
-        approval prompts (incl. MCP tool approval) and sandbox — nobody is there
-        to answer them. A solo agent is human-driven, so its prompts stay."""
+        Codex bypasses its approval prompts (incl. MCP tool approval) and
+        sandbox, whatever the number of agents: a task runs headless and nobody
+        watches its terminal, so a prompt there freezes it for good. (Claude
+        gets the same from ``claude_cmd_args``' bypassPermissions mode.)
+        ``human`` keeps Codex's prompts: only for a past session a person
+        opened from the history to drive it themselves (/api/session/adopt).
+
+        collab: an autonomous collaboration sees only our MCP server."""
         url = self._mcp_url()
         codex_args = ["-c", f'mcp_servers.ensemble.url="{url}"',
                       "-c", 'mcp_servers.ensemble.bearer_token_env_var="CHAT_TOKEN"']
-        if collab:
+        if not human:
             # (approval_policy="never" would *block* MCP tools.)
             codex_args = ["--dangerously-bypass-approvals-and-sandbox"] + codex_args
         cfg = {"mcpServers": {"ensemble": {"type": "http", "url": url,
@@ -5154,10 +5170,13 @@ class Handler(BaseHTTPRequestHandler):
         return {"ptyId": sess.id, "cwd": cwd, "sessionId": new_sid}
 
     def _resume_room_agent_pty(self, room_full: dict, part: dict,
-                               collab: bool = True, seed: str = "") -> dict:
+                               collab: bool = True, seed: str = "",
+                               human: bool = False) -> dict:
         """Relaunch an agent in a fresh PTY, RESUMING its prior conversation
         (claude --resume / codex resume). Used to recover a session after a
-        dashboard restart killed its PTY. Returns {ptyId, cwd, sessionId}."""
+        dashboard restart killed its PTY. Returns {ptyId, cwd, sessionId,
+        prompted} — ``prompted`` when there was nothing to resume and it was
+        started with ``seed`` as its first prompt instead."""
         ident = part["identity"]
         agent_key = part["agent"]
         model = (part.get("model") or "").strip()
@@ -5170,7 +5189,7 @@ class Handler(BaseHTTPRequestHandler):
             ag.ensure_trusted(cwd)
         label = f"{room_full['title'][:40]} · {ident}"
         meta = {"room": room_full["id"], "identity": ident, "agent": agent_key}
-        codex_mcp, claude_mcp, env = self._mcp_wiring(token, collab)
+        codex_mcp, claude_mcp, env = self._mcp_wiring(token, collab, human=human)
         if agent_key == "codex":
             argv = ["codex", "-c", "check_for_update_on_startup=false"] + codex_mcp
             if model:
@@ -5182,7 +5201,8 @@ class Handler(BaseHTTPRequestHandler):
                 argv += ["resume", codex_sid]   # subcommand goes last
             cmd = BACKEND.headless_launch(cwd, argv, "" if codex_sid else seed)
             sess = ptyrun.create(cmd, cwd=cwd, env=env, label=label, meta=meta)
-            return {"ptyId": sess.id, "cwd": cwd, "sessionId": part.get("sessionId", "")}
+            return {"ptyId": sess.id, "cwd": cwd, "sessionId": part.get("sessionId", ""),
+                    "prompted": bool(seed and not codex_sid)}
         # claude
         sid = part.get("sessionId", "")
         resume = ["--resume", sid] if sid else []
@@ -5191,7 +5211,7 @@ class Handler(BaseHTTPRequestHandler):
             argv += ["--model", model]
         cmd = BACKEND.headless_launch(cwd, argv, "")
         sess = ptyrun.create(cmd, cwd=cwd, label=label, meta=meta)
-        return {"ptyId": sess.id, "cwd": cwd, "sessionId": sid}
+        return {"ptyId": sess.id, "cwd": cwd, "sessionId": sid, "prompted": False}
 
     def _start_room(self, room_full: dict) -> list[dict]:
         """First launch of a task's agents (a fresh conversation seeded with the
@@ -5233,8 +5253,15 @@ class Handler(BaseHTTPRequestHandler):
         # is (re)started WITH its specification as the first prompt —
         # otherwise "Open" would bring up a blank agent that idles.
         seed = (room_full.get("spec") or "") if (solo and not room_full.get("messages")) else ""
+        # Who is told to carry on: an owner whose conversation was resumed. Not
+        # a project's PO (the rotation and the restart helper brief it), not a
+        # reviewer, not an agent given a first prompt just now.
+        is_po = any((p.get("poRoomId") or "") == room_full["id"] for p in load_projects())
+        own = set(chatroom.owners(room_full))
+        notify = []
         resumed = []
         for part in agents_in:
+            part.pop("resumedAt", None)     # set again once the note is typed
             if chatroom.is_on_mention(room_full, part):
                 # Never resumed: a reviewer is started fresh for each request,
                 # and resuming would reload the very history this avoids.
@@ -5249,6 +5276,8 @@ class Handler(BaseHTTPRequestHandler):
                 part["sessionId"] = info["sessionId"]
             else:
                 info = self._resume_room_agent_pty(room_full, part, collab=not solo, seed=seed)
+                if part["identity"] in own and not is_po and not info.get("prompted"):
+                    notify.append((part["identity"], info["ptyId"]))
             part["ptyId"] = info["ptyId"]
             part["cwd"] = info["cwd"]
             # Drop any recorded death: this agent is running again, and an
@@ -5259,7 +5288,40 @@ class Handler(BaseHTTPRequestHandler):
         room_full["hopCount"] = 0
         room_full["waitingFor"] = ""
         chatroom.update_room(room_full)
+        for ident, pty_id in notify:
+            self._send_resume_note(room_full["id"], ident, pty_id)
         return resumed
+
+    def _send_resume_note(self, room_id: str, ident: str, pty_id: str) -> None:
+        """Type RESUME_NOTE into a resumed agent once its TUI is up: it has drawn
+        its screen and then been quiet for rotation.IDLE_S, the quiet the PO
+        rotation waits for (a line typed during start-up can be lost; a turn
+        repaints its timer every second, so quiet also means not working). Not
+        on top of a prompt. In the background, so the start returns at once;
+        the time it was typed goes on the participant, which is how attention
+        knows it was asked to carry on."""
+        def run():
+            end = time.time() + RESUME_NOTE_WAIT_S
+            while True:
+                time.sleep(1)
+                sess = ptyrun.get(pty_id)
+                if sess is None or not sess.alive():
+                    return
+                tail = sess.tail()
+                settled = bool(tail) and time.time() - sess.last_output >= rotation.IDLE_S
+                if attention.looks_like_prompt(tail):
+                    if time.time() > end:
+                        print(f"[resume] {room_id}/{ident}: a prompt is on screen — "
+                              f"the resume note was not typed", flush=True)
+                        return
+                    continue
+                if settled or time.time() > end:
+                    break
+            sess.send_line(RESUME_NOTE)
+            chatroom.patch_participant(room_id, ident, {"resumedAt": time.time()})
+            print(f"[resume] {room_id}/{ident}: typed the resume note (pty {pty_id})",
+                  flush=True)
+        threading.Thread(target=run, daemon=True, name=f"resume-note-{pty_id}").start()
 
     def _brief_agents(self, room_id: str) -> None:
         """Introduce the room to each agent: its identity, partner(s), and the
@@ -5836,7 +5898,8 @@ class Handler(BaseHTTPRequestHandler):
                         if p.get("kind") == "agent")
             part["sessionId"] = sid
             part["cwd"] = cwd          # resume in place (no per-agent subfolder)
-            info = self._resume_room_agent_pty(room_full, part, collab=False)
+            # A past session opened to drive by hand: its prompts stay.
+            info = self._resume_room_agent_pty(room_full, part, collab=False, human=True)
             part["ptyId"] = info["ptyId"]
             chatroom.update_room(room_full)
             self._send_json(200, {"ok": True,
