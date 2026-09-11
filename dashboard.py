@@ -3753,7 +3753,10 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 "first": first_txt, "last": last_txt,
                 "lastAgent": last_agent_txt, "transcriptPath": "",
                 "allocation": rm.get("allocation"),
-                "reviewAllocations": rm.get("reviewAllocations") or [],
+                # Only the latest swap: the panel shows no more, and every
+                # board poll carries this row.
+                "reviewAllocations": [a for a in (rm.get("reviewAllocations") or [])
+                                      if isinstance(a, dict) and a.get("changed")][-1:],
                 # {state, reason, agentIdentity} when this task needs a human.
                 "attention": ({k: v for k, v in att_by_room[rid].items()
                                if k in ("state", "reason", "agentIdentity", "since")}
