@@ -353,6 +353,30 @@ class RotateOwnerTests(_Base):
                          ("codex", "gpt-5", "codex-sid-new"))
         self.delete_session.assert_called_once_with("claude-sid-1")
 
+    def test_a_failed_cleanup_still_falls_back(self):
+        self.dead = {"pty-1"}
+        room = self.room()
+        with mock.patch.object(_FakeAgent, "delete_session", side_effect=OSError("locked")):
+            self.rotate(room, _snap(86, 20))
+        own = chatroom.participant(self.saved(room), "claude")
+        self.assertEqual((own["agent"], own["ptyId"]), ("claude", "pty-2"))
+
+    def test_the_po_line_names_the_kind_after_a_fallback(self):
+        self.dead = {"pty-1"}
+        po_created = chatroom.create_room(
+            "PO", [{"identity": "claude", "agent": "claude", "role": "ProductOwner"}])
+        room = self.room()
+        room["projectId"] = "p1"
+        chatroom.update_room(room)
+        with mock.patch.object(dashboard, "find_project",
+                               return_value={"id": "p1", "poRoomId": po_created["id"]}):
+            self.rotate(self.saved(room), _snap(86, 20))
+        self.assertEqual(len(self.launcher.rings), 1)
+        line = self.launcher.rings[0][1]
+        self.assertTrue(line.startswith(
+            "claude was handed to a fresh Claude session (switching to Codex failed: "
+            "its terminal ended as it started)"), line)
+
     def test_a_live_switch_is_left_alone(self):
         room = self.room()
         self.rotate(room, _snap(86, 20))

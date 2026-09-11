@@ -729,39 +729,57 @@ def _watch_switch(key: tuple, flags: dict, w: dict) -> None:
     its start, the switch did not take: under the rotation mark again (wakes
     held, Stop and Delete noted), its session is ended and deleted (a Codex
     one's rollout too) and the owner is started as its old kind. A Stop, a
-    restart or another handover meanwhile ends the watch."""
+    restart or another handover meanwhile ends the watch. The PO's one line
+    goes once the outcome is known, naming the kind the owner ended up on."""
     rid, ident = key
+    rec = w["rec"]
     try:
-        while True:
-            with GATE:
-                if _WATCHING.get(key) is not flags or flags["stopped"]:
-                    return
-                part = _d.chatroom.participant(
-                    _d.chatroom.get_room(rid, public=False) or {}, ident)
-                if (part is None or part.get("ptyId") != w["info"]["ptyId"]
-                        or key in _ROTATING):
-                    return
-                sess = _d.ptyrun.get(w["info"]["ptyId"])
-                if sess is None or not sess.alive():
-                    _ROTATING[key] = flags
-                    break
-                if time.time() >= w["started"] + _LAUNCH_SETTLE_S:
-                    return
-            time.sleep(0.25)
-        try:
-            _fall_back(key, flags, w)
-        finally:
-            _release(key)
+        if _switch_died(key, flags, w):
+            try:
+                rec = _fall_back(key, flags, w) or rec
+            finally:
+                _release(key)
     except Exception as e:
         _log(f"{rid}/{ident}: the check of its switch failed: {str(e)[:200]}")
     finally:
         with GATE:
             if _WATCHING.get(key) is flags:
                 _WATCHING.pop(key)
+    if _d.chatroom.get_room(rid) is None:
+        return
+    try:
+        rec["poWoken"] = _report_to_po(w["room"], ident, rec, w["how"])
+    except Exception as e:
+        _log(f"{rid}/{ident}: could not report the rotation to the PO: {str(e)[:200]}")
 
 
-def _fall_back(key: tuple, flags: dict, w: dict) -> None:
-    """Undo a switch whose terminal ended as it started (see _watch_switch)."""
+def _switch_died(key: tuple, flags: dict, w: dict) -> bool:
+    """Watch the switched terminal until _LAUNCH_SETTLE_S after its start.
+    True when it ended while still the owner's, the task neither stopped nor
+    handed over meanwhile — the rotation mark is then set again, in the same
+    step, for the fallback."""
+    rid, ident = key
+    while True:
+        with GATE:
+            if _WATCHING.get(key) is not flags or flags["stopped"]:
+                return False
+            part = _d.chatroom.participant(
+                _d.chatroom.get_room(rid, public=False) or {}, ident)
+            if (part is None or part.get("ptyId") != w["info"]["ptyId"]
+                    or key in _ROTATING):
+                return False
+            sess = _d.ptyrun.get(w["info"]["ptyId"])
+            if sess is None or not sess.alive():
+                _ROTATING[key] = flags
+                return True
+            if time.time() >= w["started"] + _LAUNCH_SETTLE_S:
+                return False
+        time.sleep(0.25)
+
+
+def _fall_back(key: tuple, flags: dict, w: dict) -> dict | None:
+    """Undo a switch whose terminal ended as it started (see _watch_switch).
+    Returns the rotation record as it now is, or None if the task went away."""
     rid, ident = key
     old, rec, new_kind = w["old"], w["rec"], w["rec"]["agent"]
     old_kind = old.get("agent", "")
@@ -778,7 +796,7 @@ def _fall_back(key: tuple, flags: dict, w: dict) -> None:
             _log(f"{rid}/{ident}: could not move the reviewer back: {str(e)[:200]}")
     room = _d.chatroom.get_room(rid, public=False)
     if room is None:
-        return
+        return None
     started = time.time()
     info = _d.hub_launcher()._launch_room_agent_pty(
         room, old, w["text_for"](old_kind), collab=not w["solo"], cwd=w["cwd"])
@@ -802,7 +820,7 @@ def _fall_back(key: tuple, flags: dict, w: dict) -> None:
         patched = _d.chatroom.patch_participant(rid, ident, fields, drop=drop)
     if patched is None:
         _discard_fresh(info, old_kind, started, w["agentsIn"])
-        return
+        return None
     if old_kind == "codex" and not info["sessionId"]:
         sid = _await_codex_session(info["cwd"], started, _taken(w["agentsIn"]))
         if sid:
@@ -811,7 +829,7 @@ def _fall_back(key: tuple, flags: dict, w: dict) -> None:
         stopped = flags["stopped"]
     if stopped:
         _d.stop_task(rid)
-        return
+        return rec
     _d.chatroom.post_notice(
         rid, SENDER, f"**{ident}'s {_d._agent_kind_name(new_kind)} session ended as it "
                      f"started** — the hub started {_kind_note(rec)} instead. It continues "
@@ -821,6 +839,7 @@ def _fall_back(key: tuple, flags: dict, w: dict) -> None:
         _record_allocation(rid, ident, rec)
     except Exception as e:
         _log(f"{rid}/{ident}: could not record the kind decision: {str(e)[:200]}")
+    return rec
 
 
 def _allocation_rec(choice: dict, failed: str, reviewer: dict | None) -> dict:
@@ -1259,15 +1278,20 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
             _record_allocation(rid, ident, rec)
         except Exception as e:          # the rotation itself has happened
             _log(f"{s['name']}: could not record the kind decision: {str(e)[:200]}")
-        try:
-            rec["poWoken"] = _report_to_po(room_full, ident, rec, how)
-        except Exception as e:          # the rotation itself has happened
-            _log(f"{s['name']}: could not report the rotation to the PO: {str(e)[:200]}")
         if switched:
+            # The PO's line waits for the switch to hold (or fall back), in
+            # the background: it names the kind the owner really runs on.
             _spawn(_watch_switch, key, wflags, {
                 "info": info, "started": started, "old": fpart, "rec": rec,
                 "choice": choice, "reviewer": reviewer, "text_for": text_for,
-                "solo": solo, "cwd": cwd, "agentsIn": agents_in})
+                "solo": solo, "cwd": cwd, "agentsIn": agents_in,
+                "room": room_full, "how": how})
+        else:
+            try:
+                rec["poWoken"] = _report_to_po(room_full, ident, rec, how)
+            except Exception as e:      # the rotation itself has happened
+                _log(f"{s['name']}: could not report the rotation to the PO: "
+                     f"{str(e)[:200]}")
     st.update(phase="watching", sessionId=info["sessionId"], lastRotation=now)
     for k in ("askedAt", "askSize", "askPath", "handoverAtAsk", "tokensAtAsk", "askSubmit"):
         st.pop(k, None)
@@ -1286,17 +1310,24 @@ def _taken(agents_in: list) -> set:
 
 def _discard_fresh(info: dict, agent: str, started: float, agents_in: list) -> None:
     """The task went away while its fresh session started: end it and delete
-    its conversation, so nothing of it outlives the task."""
-    _d.ptyrun.kill(info["ptyId"])
-    _await_death(info["ptyId"])
+    its conversation, so nothing of it outlives the task. Best effort: a step
+    that fails is logged, never raised, so what follows it still happens."""
+    try:
+        _d.ptyrun.kill(info["ptyId"])
+        _await_death(info["ptyId"])
+    except Exception as e:
+        _log(f"could not end terminal {info['ptyId']}: {str(e)[:200]}")
     sid = info["sessionId"]
-    if agent == "codex":
-        sid = sid or _await_codex_session(info["cwd"], started, _taken(agents_in))
-        cx = _d.agents.get_agent("codex")
-        if sid and cx is not None:
-            cx.delete_session(sid)
-    elif sid:
-        _d.delete_session(sid)
+    try:
+        if agent == "codex":
+            sid = sid or _await_codex_session(info["cwd"], started, _taken(agents_in))
+            cx = _d.agents.get_agent("codex")
+            if sid and cx is not None:
+                cx.delete_session(sid)
+        elif sid:
+            _d.delete_session(sid)
+    except Exception as e:
+        _log(f"could not delete {agent} session {sid or '(unknown)'}: {str(e)[:200]}")
 
 
 def _learn_session(rid: str, ident: str, pty_id: str, sid: str) -> str:
