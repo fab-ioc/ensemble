@@ -2801,6 +2801,14 @@
              placeholder="200000" autocomplete="off"> <span class="pref-label">tokens</span>
     </div>
     <p class="cfg-hint">Every wake of a project's PO re-sends its whole conversation. Past this size the PO brings <code>PO-HANDOVER.md</code> up to date and a fresh session picks up from it and <code>ROADMAP.md</code>; the old conversation is kept. 0 = never.</p>
+    <div class="pref-row" style="margin-top: 14px;">
+      <span class="pref-label">RTK for task agents</span>
+      <div class="seg pref-seg" id="pref-rtk-tasks">
+        <button type="button" data-val="on">On</button>
+        <button type="button" data-val="off">Off</button>
+      </div>
+    </div>
+    <p class="cfg-hint">Compresses command output for task owners and reviewers on their next launch. PO rooms, adopted sessions and your own terminals are never changed.</p>
   </div>
   <div class="settings-section" id="settings-backup">
     <h4>Backup of your projects</h4>
@@ -4624,6 +4632,13 @@ function renderPrefs() {
   const rotInput = document.getElementById('pref-po-rotate');
   if (rotInput && document.activeElement !== rotInput) {
     rotInput.value = PREFS.poRotateTokens ?? 200000;
+  }
+  const rtkSeg = document.getElementById('pref-rtk-tasks');
+  if (rtkSeg) {
+    const value = PREFS.rtkForTasks === false ? 'off' : 'on';
+    rtkSeg.querySelectorAll('button').forEach(b => {
+      b.classList.toggle('active', b.dataset.val === value);
+    });
   }
   // Backup of the projects root (git). Only the remote URL is stored server-side.
   const br = document.getElementById('pref-backup-remote');
@@ -8927,6 +8942,10 @@ async function loadThemes() {
   document.getElementById('pref-open-mode')?.addEventListener('click', (ev) => {
     const b = ev.target.closest('button[data-val]');
     if (b) setPref('openMode', b.dataset.val);
+  });
+  document.getElementById('pref-rtk-tasks')?.addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-val]');
+    if (b) setPref('rtkForTasks', b.dataset.val === 'on');
   });
   // Default model: save on blur, or on Enter
   const modelInput = document.getElementById('pref-default-model');

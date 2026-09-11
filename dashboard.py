@@ -727,6 +727,9 @@ _SETTINGS_DEFAULTS = {
     # model call, the PO writes its handover and a fresh session takes over
     # from it. 0 = off.
     "poRotateTokens": rotation.DEFAULT_TOKENS,
+    # Compress noisy command output for hub-launched task owners/reviewers.
+    # PO rooms, adopted sessions and ordinary user terminals are never wired.
+    "rtkForTasks": True,
     # The dashboard theme, shared by every device on this hub. Empty = never
     # chosen here; the pages then hand up whatever their browser had.
     "theme": "",
@@ -800,7 +803,7 @@ def save_settings(settings: dict) -> dict:
             v = rotation.clamp_tokens(v)
             if v is None:
                 continue
-        if k == "backupEnabled":
+        if k in ("backupEnabled", "rtkForTasks"):
             v = bool(v)
         current[k] = v
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
@@ -904,6 +907,83 @@ SOLO_REPORT_NOTE = (
     f"\n\n---\n{OWNER_OUTPUT_NOTE} When you finish this task, or get blocked and need help, report it "
     "with the ensemble_report tool (kind completed | blocked | question) — it "
     "reaches the project's PO, who otherwise cannot see your reply.")
+
+# RTK is deliberately launch-scoped.  Never run ``rtk init -g`` here: that
+# edits user-level Claude/Codex files and would also affect PO rooms and the
+# operator's own terminals.  Claude's --settings file is an *additional*
+# settings source, so the user's settings remain loaded alongside this hook.
+RTK_BIN = DASHBOARD_DIR / "bin" / ("rtk.exe" if os.name == "nt" else "rtk")
+RTK_DIR = DASHBOARD_DIR / "rtk"
+RTK_CLAUDE_SETTINGS = RTK_DIR / "claude-task-settings.json"
+RTK_TELEMETRY_ENV = "RTK_TELEMETRY_DISABLED"
+RTK_RECALL_DB = RTK_DIR / "recall.db"
+_RTK_SETTINGS_LOCK = threading.Lock()
+RTK_BRIEF = {
+    "claude": (
+        "RTK is enabled for this task. Bash git/test/search commands are rewritten "
+        "automatically; in PowerShell, prefix noisy git, test, search, listing, and "
+        "log commands with `rtk`. If a recovery hint names hidden output you need, "
+        "run `rtk recall <hash> --full`."
+    ),
+    "codex": (
+        "RTK is available for this task's command output. Prefix noisy git, test, "
+        "search, listing, and log commands with `rtk` (for example `rtk git status`, "
+        "`rtk pytest`, `rtk grep`, or `rtk ls`). If a recovery hint names hidden "
+        "output you need, run `rtk recall <hash> --full`."
+    ),
+}
+
+
+def _rtk_task_room(room: dict) -> bool:
+    """Whether ``room`` is a hub-created task covered by the RTK pilot."""
+    if not load_settings().get("rtkForTasks", True) or room.get("adopted"):
+        return False
+    # create_task writes ``launched`` before the first launch.  Older tasks have
+    # a task folder; ad-hoc/PO rooms and sessions adopted from history do not.
+    if "launched" not in room and not room.get("taskDir"):
+        return False
+    rid = room.get("id", "")
+    if any((p.get("poRoomId") or "") == rid for p in load_projects()):
+        return False
+    return RTK_BIN.is_file()
+
+
+def _rtk_claude_settings() -> Path:
+    """Write the hub-owned, launch-only Claude hook settings file."""
+    command = f'"{RTK_BIN.as_posix()}" hook claude'
+    settings = {"hooks": {"PreToolUse": [{
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": command}],
+    }]}}
+    text = json.dumps(settings, indent=2) + "\n"
+    with _RTK_SETTINGS_LOCK:
+        RTK_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            current = RTK_CLAUDE_SETTINGS.read_text(encoding="utf-8")
+        except OSError:
+            current = ""
+        if current != text:
+            tmp = RTK_CLAUDE_SETTINGS.with_name(
+                f".{RTK_CLAUDE_SETTINGS.name}.{uuid.uuid4().hex}.tmp")
+            try:
+                tmp.write_text(text, encoding="utf-8")
+                tmp.replace(RTK_CLAUDE_SETTINGS)
+            finally:
+                tmp.unlink(missing_ok=True)
+    return RTK_CLAUDE_SETTINGS
+
+
+def _rtk_task_wiring(room: dict, agent_key: str) -> tuple[list[str], dict, str]:
+    """Return (agent argv, environment, brief) for a covered task launch."""
+    if not _rtk_task_room(room):
+        return [], {}, ""
+    env = {
+        RTK_TELEMETRY_ENV: "1",
+        "RTK_RECALL_DB": str(RTK_RECALL_DB),
+        "PATH": str(RTK_BIN.parent) + os.pathsep + os.environ.get("PATH", ""),
+    }
+    args = ["--settings", str(_rtk_claude_settings())] if agent_key == "claude" else []
+    return args, env, RTK_BRIEF.get(agent_key, RTK_BRIEF["codex"])
 
 # The line typed into a task's owner when the task is started again. A resumed
 # conversation comes back at an empty prompt and nothing else would wake it.
@@ -5051,7 +5131,10 @@ class Handler(BaseHTTPRequestHandler):
         teammates = [{"identity": p["identity"], "role": p.get("role", "")}
                      for p in room_full["participants"]
                      if p.get("kind") == "agent" and p["identity"] != ident]
+        rtk_args, rtk_env, rtk_brief = _rtk_task_wiring(room_full, agent_key)
         briefing = collab_briefing(ident, part.get("role", ""), teammates, task)
+        if rtk_brief:
+            briefing += "\n\n" + rtk_brief
         ag = agents.get_agent(agent_key)
         label = room_full["title"][:60]
         model = (part.get("model") or "").strip()
@@ -5070,7 +5153,7 @@ class Handler(BaseHTTPRequestHandler):
                 command += ["-c", f'model="{model}"']
             res = BACKEND.open_new(cwd, briefing, label=label, command=command,
                                    agent="codex", identity=ident,
-                                   env={"CHAT_TOKEN": token})
+                                   env={"CHAT_TOKEN": token, **rtk_env})
             return {"sessionId": "", "cwd": cwd, "launch": res}
         # claude (and claude-N)
         cfg = {"mcpServers": {"ensemble": {"type": "http", "url": url,
@@ -5080,12 +5163,12 @@ class Handler(BaseHTTPRequestHandler):
         cfg_path = mcp_dir / f"{uuid.uuid4().hex}.json"
         cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
         new_sid = str(uuid.uuid4())
-        claude_extra = ["--mcp-config", str(cfg_path), "--strict-mcp-config"]
+        claude_extra = ["--mcp-config", str(cfg_path), "--strict-mcp-config", *rtk_args]
         if model:
             claude_extra += ["--model", model]
         res = BACKEND.open_new(cwd, briefing, label=label, session_id=new_sid,
                                agent="claude", identity=ident,
-                               extra_args=claude_extra)
+                               extra_args=claude_extra, env=rtk_env)
         return {"sessionId": new_sid, "cwd": cwd, "launch": res}
 
     def _mcp_wiring(self, token: str, collab: bool,
@@ -5152,6 +5235,7 @@ class Handler(BaseHTTPRequestHandler):
             os.makedirs(cwd, exist_ok=True)
         except OSError:
             pass
+        rtk_args, rtk_env, rtk_brief = _rtk_task_wiring(room_full, agent_key)
         if prompt is not None:
             briefing = prompt
         elif collab:
@@ -5164,12 +5248,15 @@ class Handler(BaseHTTPRequestHandler):
             # a one-agent task has no chat, so without the tool its finished
             # work is only visible to whoever is watching this terminal.
             briefing = task + SOLO_REPORT_NOTE
+        if rtk_brief:
+            briefing += "\n\n" + rtk_brief
         ag = agents.get_agent(agent_key)
         if hasattr(ag, "ensure_trusted"):
             ag.ensure_trusted(cwd)
         label = f"{room_full['title'][:40]} · {ident}"
         meta = {"room": room_full["id"], "identity": ident, "agent": agent_key}
         codex_mcp, claude_mcp, env = self._mcp_wiring(token, collab)
+        env.update(rtk_env)
         if agent_key == "codex":
             argv = ["codex", "-c", "check_for_update_on_startup=false"] + codex_mcp
             if model:
@@ -5179,11 +5266,11 @@ class Handler(BaseHTTPRequestHandler):
             return {"ptyId": sess.id, "cwd": cwd, "sessionId": ""}
         # claude (and claude-N)
         new_sid = str(uuid.uuid4())
-        argv = claude_cmd_args("--session-id", new_sid, *claude_mcp)
+        argv = claude_cmd_args("--session-id", new_sid, *claude_mcp, *rtk_args)
         if model:
             argv += ["--model", model]
         cmd = BACKEND.headless_launch(cwd, argv, briefing)
-        sess = ptyrun.create(cmd, cwd=cwd, label=label, meta=meta)
+        sess = ptyrun.create(cmd, cwd=cwd, env=env, label=label, meta=meta)
         return {"ptyId": sess.id, "cwd": cwd, "sessionId": new_sid}
 
     def _resume_room_agent_pty(self, room_full: dict, part: dict,
@@ -5207,6 +5294,8 @@ class Handler(BaseHTTPRequestHandler):
         label = f"{room_full['title'][:40]} · {ident}"
         meta = {"room": room_full["id"], "identity": ident, "agent": agent_key}
         codex_mcp, claude_mcp, env = self._mcp_wiring(token, collab, human=human)
+        rtk_args, rtk_env, _ = _rtk_task_wiring(room_full, agent_key)
+        env.update(rtk_env)
         if agent_key == "codex":
             argv = ["codex", "-c", "check_for_update_on_startup=false"] + codex_mcp
             if model:
@@ -5223,11 +5312,11 @@ class Handler(BaseHTTPRequestHandler):
         # claude
         sid = part.get("sessionId", "")
         resume = ["--resume", sid] if sid else []
-        argv = claude_cmd_args(*resume, *claude_mcp)
+        argv = claude_cmd_args(*resume, *claude_mcp, *rtk_args)
         if model:
             argv += ["--model", model]
         cmd = BACKEND.headless_launch(cwd, argv, "")
-        sess = ptyrun.create(cmd, cwd=cwd, label=label, meta=meta)
+        sess = ptyrun.create(cmd, cwd=cwd, env=env, label=label, meta=meta)
         return {"ptyId": sess.id, "cwd": cwd, "sessionId": sid, "prompted": False}
 
     def _start_room(self, room_full: dict) -> list[dict]:

@@ -131,6 +131,8 @@ Every agent the hub starts for a task runs without approval prompts, one-agent
 tasks included: nobody watches a task's terminal. Only a past session someone
 opens from the history to drive by hand keeps Codex's prompts.
 
+Task sessions may also have RTK enabled by the hub. In a shell that is not transparently hooked, prefix noisy git, test, search, listing and log commands with `rtk` (for example `rtk git status`, `rtk pytest`, `rtk grep` or `rtk ls`); if a recovery hint names hidden output you need, run `rtk recall <hash> --full`. Do not install it globally or edit global agent configuration: the hub's `rtkForTasks` setting controls future task launches.
+
 ## Waking teammates (multi-agent tasks)
 
 A chat message wakes as few agents as it can. A message to one participant
