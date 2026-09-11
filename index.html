@@ -447,6 +447,34 @@
   .fchip:hover { filter: brightness(.96); }
   .fchip .x { font-size: 13px; line-height: 1; opacity: .7; }
   .fchip.more { padding: 0 10px; }
+  /* Column toggles: a shown column is a plain chip, a hidden one is dashed,
+     muted and struck through, so the difference survives print in grey. */
+  .filterbar { flex-wrap: wrap; row-gap: var(--s-200); }
+  .colsel { display: inline-flex; align-items: center; gap: var(--s-100); flex-wrap: wrap; }
+  .colchip {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 24px; padding: 0 var(--s-100) 0 10px; border-radius: var(--r-full);
+    border: 1px solid var(--border-strong); background: var(--surface); color: var(--fg);
+    font: inherit; font-size: var(--fs-200); cursor: pointer; white-space: nowrap;
+  }
+  .colchip:hover { background: var(--hover); }
+  .colchip .n {
+    background: var(--c-neutral-bg); color: var(--c-neutral-fg);
+    border-radius: var(--r-full); padding: 0 6px;
+    font-size: var(--fs-100); font-weight: 600; font-variant-numeric: tabular-nums;
+  }
+  .colchip.off { border-style: dashed; background: transparent; color: var(--fg-muted); }
+  .colchip.off .nm { text-decoration: line-through; }
+  .colchip.off .n { background: transparent; color: var(--fg-muted); }
+  .colnote { font-size: var(--fs-200); color: var(--fg-muted); white-space: nowrap; }
+  .colall {
+    background: transparent; border: 0; padding: 0 var(--s-100); border-radius: var(--r-200);
+    color: var(--link); font: inherit; font-size: var(--fs-200); cursor: pointer; white-space: nowrap;
+  }
+  .colall:hover { text-decoration: underline; }
+  .colchip:focus-visible, .colall:focus-visible, .board-edge button:focus-visible {
+    outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring);
+  }
   .viewcount {
     margin-left: auto; color: var(--fg-muted); font-size: var(--fs-200);
     font-variant-numeric: tabular-nums;
@@ -1167,6 +1195,10 @@
   .statusbar { display: flex; align-items: center; gap: 14px; padding: 10px 4px 4px; font-size: 12.5px; color: var(--fg-subtle); flex-wrap: wrap; }
   .statusbar .stat { display: inline-flex; align-items: center; gap: 6px; }
   .statusbar .stat.needs { color: var(--c-warning-fg); background: var(--c-warning-bg); font-weight: 600; padding: 3px 11px; border-radius: var(--r-full); }
+  /* It looks like a chip, so it acts like one: it opens Needs you. */
+  .statusbar button.stat.needs { border: 0; font: inherit; font-weight: 600; cursor: pointer; }
+  .statusbar button.stat.needs:hover { filter: brightness(.96); }
+  .statusbar button.stat.needs:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   .statusbar .stat.okstat { color: var(--c-success-fg); }
   .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--run-working); animation: livep 1.6s infinite; }
   @keyframes livep { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run-working) 45%, transparent); } 70% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--run-working) 0%, transparent); } 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run-working) 0%, transparent); } }
@@ -1282,29 +1314,60 @@
   /* The project page: the PO leads, the board sits beside it. #view becomes
      display:contents so its chrome and board can share main's grid with the
      PO panel, which lives outside #view for the same reason the workspace does. */
-  body.po-split main {
+  body.po-split main, body.po-wide main {
     display: grid; column-gap: var(--s-400);
     grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
     grid-template-areas: "chrome chrome" "po board";
     height: calc(100dvh - var(--top-h)); padding-bottom: var(--s-400);
   }
-  body.po-split #view { display: contents; }
-  body.po-split .po-chrome { grid-area: chrome; min-width: 0; }
+  /* Board wide: the board has the Overview to itself, and #po-panel is the
+     drawer (body.po-peek) the pill opens, or hidden. */
+  body.po-wide main { grid-template-columns: minmax(0, 1fr); grid-template-areas: "chrome" "board"; }
+  body.po-split #view, body.po-wide #view { display: contents; }
+  body.po-split .po-chrome, body.po-wide .po-chrome { grid-area: chrome; min-width: 0; }
   body.po-split #po-panel { grid-area: po; }
   /* The pane scrolls both ways, so the board's sideways scrollbar is at the
      pane's edge, not under a column of cards taller than the screen. */
-  body.po-split .po-board { grid-area: board; min-width: 0; min-height: 0; overflow: auto; }
-  body.po-split .po-board .board { overflow-x: visible; }
+  body.po-split .po-board, body.po-wide .po-board { grid-area: board; min-width: 0; min-height: 0; overflow: auto; }
+  body.po-split .po-board .board, body.po-wide .po-board .board { overflow-x: visible; }
   body.po-split .po-board thead { top: 0; }
+  /* The pane's edges: a fade and a button on each side with more columns.
+     They share the pane's grid cell, over it, and let the pointer through
+     everywhere but the button. */
+  .board-edge {
+    grid-area: board; z-index: 5; width: var(--s-800); display: flex; align-items: center;
+    pointer-events: none;
+  }
+  .board-edge[hidden] { display: none; }
+  .board-edge.r { justify-self: end; justify-content: flex-end; background: linear-gradient(to left, var(--bg), transparent); }
+  .board-edge.l { justify-self: start; justify-content: flex-start; background: linear-gradient(to right, var(--bg), transparent); }
+  .board-edge button {
+    pointer-events: auto; width: 28px; height: 28px; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid var(--border-strong); border-radius: var(--r-full);
+    background: var(--surface); color: var(--fg); box-shadow: var(--e-100);
+    font: inherit; font-size: var(--fs-400); line-height: 1; cursor: pointer;
+  }
+  .board-edge button:hover { background: var(--hover); }
+  /* Board beside the PO: an experiment against rule 8's 248px (see
+     ensemble-design). The columns narrow to 208px so a third fits beside the
+     PO on a wide screen, and a card wraps its rows rather than drop a signal. */
+  @media (min-width: 901px) {
+    body.fit-beside .po-board .board { grid-auto-columns: minmax(208px, 1fr); }
+    body.fit-beside .po-board .col { min-width: 208px; }
+    body.fit-beside .po-board .crow1, body.fit-beside .po-board .crow2 { flex-wrap: wrap; row-gap: var(--s-100); }
+  }
   @media (max-width: 900px) {
-    body.po-split main {
+    body.po-split main, body.po-wide main {
       grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto;
       grid-template-areas: "chrome" "po" "board"; row-gap: var(--s-300); height: auto;
     }
+    body.po-wide main { grid-template-rows: auto auto; grid-template-areas: "chrome" "board"; }
     body.po-split #po-panel { height: min(70dvh, 640px); min-height: 360px; }
-    body.po-split .po-board { overflow: visible; }
-    body.po-split .po-board .board { overflow-x: auto; }   /* stacked: the page scrolls down, the board sideways */
+    body.po-split .po-board, body.po-wide .po-board { overflow: visible; }
+    /* stacked: the page scrolls down, the board sideways */
+    body.po-split .po-board .board, body.po-wide .po-board .board { overflow-x: auto; }
   }
   /* The peek: a drawer under the bar. Beside an open task, not over it. */
   body.po-peek #po-panel {
@@ -1771,6 +1834,7 @@
   .viewsw button + button { border-left: 1px solid var(--border); }
   .viewsw button:hover { background: var(--hover); color: var(--fg); }
   .viewsw button.on { background: var(--selected-bg); color: var(--selected-fg); font-weight: 500; }
+  .fitsw + .viewsw { margin-left: var(--s-200); }
   /* Narrow: the board scrolls sideways rather than squeezing a column. */
   @media (max-width: 900px) {
     .board { grid-auto-columns: minmax(248px, 0.9fr); scroll-snap-type: x proximity; }
@@ -2516,7 +2580,10 @@
     .me-item, .pm-item, .fm-item, .notif-item, .wf-item, .ov-menu button { min-height: var(--touch-min); }
 
     /* Touch targets in the page, the task panel and the PO's drawer. */
-    .ptabs button, .viewsw button, .fbtn, .fchip, .crumb-back, .crumb-newtask, .proj .newtask,
+    .colsel { flex: 1 1 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+    .colsel::-webkit-scrollbar { display: none; }
+    .colchip { flex: 0 0 auto; }
+    .ptabs button, .viewsw button, .fbtn, .fchip, .colchip, .colall, .crumb-back, .crumb-newtask, .proj .newtask,
     .newproj-btn, .rm-btn, .po-btn, .dp-tab, .dp-popout, .dp-prio-btn, .dp-actions button,
     .dp-actions select, .scopebar select, .chp-repo, .sb-add-cat, .srow, .sb-item, .wse, .chf,
     .dest-row, .dl-cbtns button, #usage-banner-dismiss, #update-banner-dismiss, #update-banner-go,
@@ -2538,6 +2605,8 @@
        outside it, so the row carries the margin as padding. */
     .wf-btn { position: relative; }
     .wf-btn::after { content: ''; position: absolute; inset: calc((16px - var(--touch-min)) / 2) 0; }
+    .statusbar button.stat.needs { position: relative; }
+    .statusbar button.stat.needs::after { content: ''; position: absolute; inset: calc((100% - var(--touch-min)) / 2) 0; }
     .dp-meta { padding-top: var(--s-400); margin-top: calc(-1 * var(--s-400)); }
     #detail-panel .dp-meta { padding-bottom: var(--s-400); margin-bottom: calc(-1 * var(--s-100)); }
 
@@ -3125,6 +3194,41 @@ function setViewMode(m) {
   try { localStorage.setItem('cd-view', m); } catch (e) {}
   BOARD_SIG = '';          // force a remount: we are changing what is on screen
   renderRows();
+}
+// How the board fits on a project's Overview with a PO: two layouts to try
+// side by side until the owner picks one. "wide": in Board view the board
+// takes the whole Overview and the PO becomes the drawer the pill opens.
+// "beside": the PO stays beside the board and the columns narrow to fit more
+// (an experiment against ensemble-design rule 8). A phone keeps today's page.
+let BOARD_FIT = (() => { try { return localStorage.getItem('cd-board-fit') === 'beside' ? 'beside' : 'wide'; } catch (e) { return 'wide'; } })();
+function setBoardFit(f) {
+  BOARD_FIT = f === 'beside' ? 'beside' : 'wide';
+  try { localStorage.setItem('cd-board-fit', BOARD_FIT); } catch (e) {}
+  BOARD_SIG = '';
+  renderRows();
+}
+function boardWide() { return VIEW_MODE === 'board' && BOARD_FIT === 'wide' && !isPhone(); }
+// Which columns are on screen, per project. Hiding one is a filter like the
+// chips beside it, so it is always announced there with a way back (§5.4-5).
+const colsKey = () => 'cd-cols:' + (SELECTED_PROJECT || '*');
+function hiddenCols() {
+  try {
+    const v = JSON.parse(localStorage.getItem(colsKey()) || '[]');
+    return new Set(Array.isArray(v) ? v.filter(k => WORKFLOW_KEYS.includes(k)) : []);
+  } catch (e) { return new Set(); }
+}
+function setHiddenCols(set) {
+  try {
+    if (set.size) localStorage.setItem(colsKey(), JSON.stringify(WORKFLOW_KEYS.filter(k => set.has(k))));
+    else localStorage.removeItem(colsKey());
+  } catch (e) {}
+  BOARD_SIG = '';
+  renderRows();
+}
+function toggleCol(k) {
+  const h = hiddenCols();
+  if (h.has(k)) h.delete(k); else h.add(k);
+  setHiddenCols(h);
 }
 
 // Mirrors dashboard.workflow_of. The server only started sending `workflow`
@@ -4094,14 +4198,16 @@ function cardHtml(r, now) {
   </article>`;
 }
 
-function boardHtml(rows, now, frozen) {
+function boardHtml(rows, now, frozen, hidden) {
   const byCol = new Map(WORKFLOW_KEYS.map(k => [k, []]));
   for (const r of rows) {
     const k = frozenWorkflowOf(r, frozen);
     (byCol.get(k) || byCol.get('backlog')).push(r);
   }
   const cutoff = now - DONE_AGE_DAYS * 86400;
-  return `<div class="board">` + WORKFLOW_COLS.map(c => {
+  const cols = WORKFLOW_COLS.filter(c => !(hidden && hidden.has(c.k)));
+  if (!cols.length) return `<p class="empty board-none">Every column is hidden. <button class="colall">Show all columns</button></p>`;
+  return `<div class="board">` + cols.map(c => {
     let items = byCol.get(c.k) || [];
     const total = items.length;
     let aged = 0;
@@ -4260,6 +4366,60 @@ function wireBoard() {
   });
   const older = view.querySelector('.col-older');
   if (older) older.onclick = () => { DONE_SHOW_ALL = true; BOARD_SIG = ''; renderRows(); };
+  // The pane beside or under the PO scrolls sideways; its edges say when it can.
+  if (_edgeRO) { _edgeRO.disconnect(); _edgeRO = null; }
+  const port = view.querySelector('.po-board');
+  if (!port) return;
+  port.addEventListener('scroll', boardEdges, { passive: true });
+  view.querySelectorAll('.board-edge button').forEach(b => b.onclick = () => {
+    const col = port.querySelector('.board .col');
+    const step = col ? col.offsetWidth + parseFloat(getComputedStyle(col.parentElement).columnGap || 0) : 240;
+    port.scrollBy({ left: (b.dataset.dir === 'l' ? -1 : 1) * step, behavior: 'smooth' });
+  });
+  if (window.ResizeObserver) {
+    _edgeRO = new ResizeObserver(boardEdges);
+    _edgeRO.observe(port);
+    const board = port.querySelector('.board');
+    if (board) _edgeRO.observe(board);
+  }
+  boardEdges();
+}
+
+// A board wider than its pane says so: a fade and a button on each side that
+// has more columns, naming them. macOS hides scrollbars until you scroll, so
+// without this the columns past the edge were simply not there.
+let _edgeRO = null;
+function boardEdges() {
+  const port = document.querySelector('#view .po-board');
+  const edges = { l: document.querySelector('#view .board-edge.l'), r: document.querySelector('#view .board-edge.r') };
+  if (!port || !edges.l || !edges.r) return;
+  // Stacked under the PO (a narrow window) the pane does not scroll sideways;
+  // the board does, with its own scrollbar, as it always has.
+  const max = port.scrollWidth - port.clientWidth;
+  const scrolls = getComputedStyle(port).overflowX !== 'visible' && max > 1;
+  const pr = port.getBoundingClientRect();
+  const cut = { l: [], r: [] };
+  if (scrolls) port.querySelectorAll('.board .col').forEach(c => {
+    const r = c.getBoundingClientRect(), name = c.querySelector('.col-name');
+    if (r.left < pr.left - 1) cut.l.push(name ? name.textContent : c.dataset.col);
+    else if (r.right > pr.left + port.clientWidth + 1) cut.r.push(name ? name.textContent : c.dataset.col);
+  });
+  for (const d of ['l', 'r']) {
+    const e = edges[d], show = cut[d].length > 0;
+    if (e.hidden === show) e.hidden = !show;
+    if (!show) continue;
+    const tip = (d === 'l' ? 'More columns to the left: ' : 'More columns to the right: ') + cut[d].join(', ');
+    const b = e.querySelector('button');
+    if (b.title !== tip) { b.title = tip; b.setAttribute('aria-label', tip); }
+  }
+  // Over the columns only: inside the pane's scrollbars, and below the filter
+  // row while it is on screen, so the fade never washes out the view count.
+  const board = port.querySelector('.board');
+  const top = board ? Math.max(0, Math.round(board.getBoundingClientRect().top - pr.top)) + 'px' : '0px';
+  edges.l.style.marginTop = edges.r.style.marginTop = top;
+  edges.r.style.marginRight = (port.offsetWidth - port.clientWidth - 2) + 'px';
+  const sbh = (port.offsetHeight - port.clientHeight - 2) + 'px';
+  edges.l.style.marginBottom = edges.r.style.marginBottom = sbh;
 }
 
 async function moveTask(rid, col) {
@@ -4705,11 +4865,20 @@ function viewSwitchHtml() {
   const b = (m, label) => `<button data-view="${m}" class="${VIEW_MODE === m ? 'on' : ''}">${label}</button>`;
   return `<div class="viewsw">${b('board', 'Board')}${b('list', 'List')}</div>`;
 }
+// The two board layouts, offered only where they differ: Board view of a
+// project whose PO leads its Overview, on a screen that is not a phone.
+function fitSwitchHtml() {
+  if (VIEW_MODE !== 'board' || !poSplitProject() || isPhone()) return '';
+  const b = (f, label, tip) => `<button data-fit="${f}" class="${BOARD_FIT === f ? 'on' : ''}" aria-pressed="${BOARD_FIT === f}" title="${tip}">${label}</button>`;
+  return `<div class="viewsw fitsw" role="group" aria-label="Board layout">`
+    + b('wide', 'Board wide', 'The board takes the page; the PO opens from its pill in the bar')
+    + b('beside', 'Board beside the PO', 'The PO stays beside the board; the columns narrow to fit') + `</div>`;
+}
 function projectsChromeHtml() {
   const s = PROJECTS && PROJECTS.summary;
   const needs = s ? s.needsYou : 0;
   const strip = `<div class="statusbar">
-    ${needs ? `<span class="stat needs">🔔 ${needs} need${needs > 1 ? '' : 's'} you</span>`
+    ${needs ? `<button class="stat needs" title="Open Needs you">🔔 ${needs} need${needs > 1 ? '' : 's'} you</button>`
             : `<span class="stat okstat">✓ nothing waiting</span>`}
     <span class="stat">◆ ${s ? s.changed : 0} changed</span>
   </div>`;
@@ -4726,7 +4895,7 @@ function projectsChromeHtml() {
       + `<button data-ptab="roadmap" class="${PROJECT_TAB === 'roadmap' ? 'on' : ''}" title="The project's roadmap — ROADMAP.md in its folder. You and the project's PO both edit it">Roadmap</button>`
       + `</div>` : '';
     return strip + `<div class="crumbs"><a href="#" class="crumb-back">← Projects</a><span class="sep">/</span><b>${esc(nm)}</b>${newTask}`
-      + (PROJECT_TAB === 'tasks' ? viewSwitchHtml() : '') + `</div>` + tabs;
+      + (PROJECT_TAB === 'tasks' ? fitSwitchHtml() + viewSwitchHtml() : '') + `</div>` + tabs;
   }
   return strip + `<div class="listctl"><span>Group by</span>
     <div class="seg gb">${['project', 'time', 'none'].map(g => `<button data-gb="${g}" class="${PROJ_GROUPBY === g ? 'on' : ''}">${g[0].toUpperCase() + g.slice(1)}</button>`).join('')}</div>
@@ -4777,6 +4946,7 @@ function wireProjectsChrome() {
     PROJECT_TAB = b.dataset.ptab; renderRows();
   });
   document.querySelectorAll('.viewsw button[data-view]').forEach(b => b.onclick = () => setViewMode(b.dataset.view));
+  document.querySelectorAll('.fitsw button[data-fit]').forEach(b => b.onclick = () => setBoardFit(b.dataset.fit));
   document.querySelectorAll('.proj .srow[data-sid]').forEach(r => r.onclick = (e) => {
     e.stopPropagation(); if (r.dataset.sid) openDetail(r.dataset.sid);
   });
@@ -5842,6 +6012,10 @@ function renderPo() {
   // On a phone an open task covers the page the PO leads, so there the pill
   // peeks at the PO over the task; the same panel, restyled, never moved.
   if (split && PO_PEEK && SELECTED_SID && isPhone()) split = null;
+  // Board wide: the board takes the Overview and the PO is the drawer the pill
+  // opens, as on every other page. Same panel, other classes.
+  const wide = !!split && boardWide();
+  if (wide) split = null;
   const ctx = poContext();
   // A peek has nothing to show once its project has no PO, and none is needed
   // where the PO already leads the page. On a phone an open task keeps the bar,
@@ -5849,6 +6023,8 @@ function renderPo() {
   if (split || !(ctx && poRowOf(ctx))) PO_PEEK = false;
   const pj = split || (PO_PEEK ? ctx : null);
   document.body.classList.toggle('po-split', !!split);
+  document.body.classList.toggle('po-wide', wide);
+  document.body.classList.toggle('fit-beside', !!split && VIEW_MODE === 'board' && !isPhone());
   document.body.classList.toggle('po-peek', !split && !!pj);
   renderPoPill(ctx);
   if (!pj) { panel.hidden = true; return; }
@@ -5949,7 +6125,7 @@ document.addEventListener('click', async (ev) => {
       renderRows(); return;
     }
     // Already leading the page — unless a task covers it, as it does on a phone.
-    if (poSplitProject() && !(SELECTED_SID && isPhone())) { poFocusComposer(); return; }
+    if (poSplitProject() && !boardWide() && !(SELECTED_SID && isPhone())) { poFocusComposer(); return; }
     PO_PEEK = !PO_PEEK; renderPo();
     // Not on a phone: focus raises the keyboard over the conversation you came to read.
     if (PO_PEEK && !isPhone()) poFocusComposer();
@@ -6065,11 +6241,19 @@ function renderRows() {
   // nothing on screen to explain the 16 — which is precisely the false alarm
   // this number exists to prevent.
   const pool = ALL_ROWS.filter(r => inScope(r) && (FILTERS.has('archived') || !r.archived));
+  const view = $('#view');
+  // Hidden columns narrow both views: the board leaves them out, the list
+  // leaves out their rows. The chips count every column, hidden or not.
+  const frozen = view.matches(':hover');
+  const hidden = hiddenCols();
+  const colCounts = {};
+  for (const r of filtered) { const k = frozenWorkflowOf(r, frozen); colCounts[k] = (colCounts[k] || 0) + 1; }
+  const cols = { counts: colCounts, hidden };
+  const colShown = hidden.size ? filtered.filter(r => !hidden.has(frozenWorkflowOf(r, frozen))) : filtered;
   const total = pool.length;
-  const shown = filtered.length;
+  const shown = colShown.length;
   const scope = modeFiltered.length;   // still feeds the category page header
   setViewCount(shown === total ? `${total} tasks` : `${shown} of ${total}`);
-  const view = $('#view');
   // Page header for category context
   let pageHeader = '';
   if (SELECTED_CAT !== '__all__') {
@@ -6087,11 +6271,14 @@ function renderRows() {
   // gets today's board under a note saying how to give it one.
   const poSplit = !!poSplitProject();
   const poNote = poSplit ? '' : poNoteHtml();
+  // The board's pane gets an edge on each side, shown while columns lie past it.
+  const edges = VIEW_MODE === 'board'
+    ? `<div class="board-edge l" hidden><button data-dir="l">‹</button></div><div class="board-edge r" hidden><button data-dir="r">›</button></div>` : '';
   const frame = inner => poSplit
-    ? `<div class="po-chrome">${projectsChromeHtml()}</div><div class="po-board">${inner}</div>`
+    ? `<div class="po-chrome">${projectsChromeHtml()}</div><div class="po-board">${inner}</div>${edges}`
     : projectsChromeHtml() + poNote + inner;
   if (!filtered.length) {
-    if (writeSlot(view, frame(pageHeader + filterRowHtml()
+    if (writeSlot(view, frame(pageHeader + filterRowHtml(cols)
       + '<p class="empty">' + (active ? 'No matches.' : 'No sessions.') + '</p>'))) wireProjectsChrome();
     setViewCount(total ? `0 of ${total}` : '0 tasks');
     return;
@@ -6102,25 +6289,36 @@ function renderRows() {
     // DOM out from under an in-flight drag. Same problem the Workspace tab
     // hit, same guard: remount only when PLACEMENT changes. Card contents are
     // patched in place below, so dots and lozenges stay live while hovering.
-    const frozen = view.matches(':hover');
     const sig = [SELECTED_PROJECT || '', SELECTED_CAT, SEARCH_QUERY, DONE_SHOW_ALL, poSplit, poNote,
+                 BOARD_FIT, [...hidden].join('.'),
                  filtered.map(r => (r.roomId || r.sessionId) + ':' + frozenWorkflowOf(r, frozen)).join(',')].join('|');
-    if (sig !== BOARD_SIG || !view.querySelector('.board')) {
+    if (sig !== BOARD_SIG || !view.querySelector('.board, .board-none')) {
       BOARD_SIG = sig;
-      view.innerHTML = frame(pageHeader + filterRowHtml() + boardHtml(filtered, now, frozen));
+      const fhtml = filterRowHtml(cols);
+      view.innerHTML = frame(pageHeader + fhtml + boardHtml(filtered, now, frozen, hidden));
+      view.querySelector('.filterbar')._html = fhtml;
       wireProjectsChrome();
       wireBoard();
     } else {
       patchCards(filtered, now);
-      const fr = view.querySelector('.filterbar');
-      if (fr) fr.outerHTML = filterRowHtml();
+      // Only when it changed: a row replaced on every tick drops the clicks
+      // that straddle the swap (§5 rule 3).
+      const fr = view.querySelector('.filterbar'), html = filterRowHtml(cols);
+      if (fr && fr._html !== html) { fr.outerHTML = html; view.querySelector('.filterbar')._html = html; }
+      boardEdges();
     }
     setViewCount(_viewCount);
     return;
   }
-  const ordered = nestForks(filtered);
+  if (!colShown.length) {
+    if (writeSlot(view, frame(pageHeader + filterRowHtml(cols)
+      + `<p class="empty">All ${filtered.length} task${filtered.length > 1 ? 's' : ''} here are in hidden columns. <button class="colall">Show all columns</button></p>`))) wireProjectsChrome();
+    setViewCount(_viewCount);
+    return;
+  }
+  const ordered = nestForks(colShown);
   const headExtra = DETAIL_MODE ? '' : '<th></th>';
-  const listHtml = frame(pageHeader + filterRowHtml() + `<table>
+  const listHtml = frame(pageHeader + filterRowHtml(cols) + `<table>
     <thead><tr>
       <th></th><th class="prio"></th><th>Task</th><th></th>${headExtra}
     </tr></thead>
@@ -7605,7 +7803,7 @@ function filterChips() {
   return chips;
 }
 
-function filterRowHtml() {
+function filterRowHtml(cols) {
   const chips = filterChips();
   const shown = chips.slice(0, 2).map(c =>
     `<button class="fchip" data-drop="${esc(c.k)}" title="Remove this filter">${esc(c.label)}<span class="x">×</span></button>`
@@ -7614,9 +7812,29 @@ function filterRowHtml() {
     ? `<button class="fchip more" data-openfilters="1">${chips.length} filters</button>` : '';
   return `<div class="filterbar">
     <button class="fbtn" id="filters-btn" aria-haspopup="true" aria-expanded="false">Filters<span class="caret">▾</span></button>
-    ${shown}${more}
+    ${shown}${more}${colChipsHtml(cols)}
     <span class="viewcount" id="viewcount"></span>
   </div>`;
+}
+
+// One toggle per board column, with its count: click to hide or show it. A
+// hidden column is struck through here and summed up beside the chips with
+// a way back, so the row always says why a task is not on screen (§5.5).
+function colChipsHtml(cols) {
+  if (!cols) return '';
+  const { counts, hidden } = cols;
+  const chips = WORKFLOW_COLS.map(c => {
+    const off = hidden.has(c.k);
+    return `<button class="colchip${off ? ' off' : ''}" data-colk="${c.k}" aria-pressed="${!off}" title="${off ? 'Show' : 'Hide'} the ${esc(c.name)} column">`
+      + `<span class="nm">${esc(c.name)}</span><span class="n">${counts[c.k] || 0}</span></button>`;
+  }).join('');
+  let note = '';
+  if (hidden.size) {
+    const tasks = [...hidden].reduce((n, k) => n + (counts[k] || 0), 0);
+    note = `<span class="colnote">${hidden.size} column${hidden.size > 1 ? 's' : ''} hidden`
+      + (tasks ? ` · ${tasks} task${tasks > 1 ? 's' : ''}` : '') + `</span><button class="colall">Show all</button>`;
+  }
+  return `<div class="colsel" role="group" aria-label="Columns shown">${chips}</div>${note}`;
 }
 
 // The count is written by renderRows AFTER the row exists, so it survives the
@@ -7738,6 +7956,10 @@ document.addEventListener('click', (ev) => {
   const chip = ev.target.closest('.fchip[data-drop]');
   if (chip) { ev.stopPropagation(); toggleFilter(chip.dataset.drop); return; }
   if (ev.target.closest('.fchip.more')) { ev.stopPropagation(); openFiltersMenu(); return; }
+  if (ev.target.closest('.statusbar .stat.needs')) { ev.stopPropagation(); SB_DEST = 'needsyou'; renderRows(); return; }
+  const colChip = ev.target.closest('.colchip[data-colk]');
+  if (colChip) { ev.stopPropagation(); toggleCol(colChip.dataset.colk); return; }
+  if (ev.target.closest('.colall')) { ev.stopPropagation(); setHiddenCols(new Set()); return; }
   const fb = ev.target.closest('#filters-btn');
   if (fb) {
     ev.stopPropagation();

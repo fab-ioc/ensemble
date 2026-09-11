@@ -317,7 +317,9 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
    (filters, tab, board or list) changes it. It opens the PO's conversation as a drawer over the page
    you are on, so reading a task never costs you the PO. It shows no count or status: anything that
    needs you already reaches the bell. On the project's Overview tab, where the PO already leads the
-   page, the pill focuses its composer instead of opening a second copy.
+   page, the pill focuses its composer instead of opening a second copy. (While the *Board wide*
+   experiment in rule 8 is running, the PO does not lead the Overview's Board view, so there the pill
+   opens the drawer.)
 
    **A live session is built once and never re-parented.** The PO's conversation is one iframe in
    `#po-panel`, a sibling of `#view`. It is a grid cell on the Overview tab and a fixed drawer
@@ -375,6 +377,14 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
    design must survive being printed in grey.
 8. **A card never drops a signal to fit.** Board columns never wrap and never shrink below 248px;
    horizontal scroll is the escape valve. Page gutter 24px, 16px below 900px.
+
+   *Experiment, September 2026. Not a rule yet.* A project's Overview offers two board layouts so
+   ceo can compare them. **Board wide** (the default) gives the board the whole Overview in Board
+   view and keeps 248px columns; the PO becomes the pill's drawer, restyled and never moved.
+   **Board beside the PO** keeps the split and narrows the columns to 208px, and a card wraps its
+   rows rather than dropping anything. Whenever columns lie past the pane's edge, both layouts show
+   a fade and a `›` naming them. Once ceo has chosen, the PO rewrites this rule and removes the
+   losing layout.
 9. **A destination replaces whatever view is showing.** `Needs you` and `Active` must open from
    anywhere: the home page, and a project's Overview, Changes, Workspace or Roadmap tab. So their branch runs
    first when the view is drawn, and anything that navigates into a project clears them. They once
