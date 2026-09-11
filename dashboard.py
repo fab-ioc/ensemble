@@ -1287,6 +1287,13 @@ def participant_session_ids(part: dict) -> list[str]:
     return out
 
 
+def session_agent(part: dict, sid: str) -> str:
+    """The kind one of an agent's conversations was had as: an owner handed to
+    the other kind at a rotation (or its reviewer, moved with it) keeps its
+    earlier sessions' kinds in ``sessionKinds``."""
+    return (part.get("sessionKinds") or {}).get(sid) or part.get("agent", "")
+
+
 # ---------------------------------------------------------------------------
 # Projects — group sessions/rooms by their git repo root (the "project").
 # ---------------------------------------------------------------------------
@@ -4512,7 +4519,7 @@ def delete_task(rid: str, members=None) -> dict:
                     "transcripts": [], "folders": []}
         room = chatroom.get_room(rid, public=False) or room
         cwds.append(room.get("cwd", "") or "")
-        members = [{"agent": pp.get("agent", ""), "sessionId": sid,
+        members = [{"agent": session_agent(pp, sid), "sessionId": sid,
                     "cwd": pp.get("cwd", "")}
                    for pp in room.get("participants", [])
                    if pp.get("kind") == "agent"

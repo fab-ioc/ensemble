@@ -3674,10 +3674,16 @@ function detailInfo(r) {
   if (r.members && r.members.length) {
     // Who is on this task, and — just as important — which model each one
     // runs. "claude" alone doesn't say what is doing the work.
-    const allocation = r.allocation && r.allocation.changed && r.allocation.reason
-      ? `<div class="dp-allocation">${esc(r.allocation.reason)}</div>` : '';
+    const handover = r.allocation && r.allocation.handover;
+    const allocation = (r.allocation && r.allocation.changed && r.allocation.reason
+      ? `<div class="dp-allocation">${esc(r.allocation.reason)}</div>` : '')
+      + (handover && handover.reason && (handover.changed || handover.alarm || handover.switchFailed)
+        ? `<div class="dp-allocation">Handover ${esc(String(handover.n || ''))}: ${esc(handover.reason)}</div>` : '');
     parts.push(`<div class="dp-section"><h3>Assigned</h3><div style="display: flex; flex-wrap: wrap; gap: 6px;">${r.members.map(m => {
-      const bits = [esc(m.identity || m.agent), esc(m.model || 'default model')];
+      // A seat keeps its name when a handover moves it to the other kind.
+      const who = m.identity || m.agent;
+      const kind = m.agent && who.split('-')[0] !== m.agent ? ` (${m.agent})` : '';
+      const bits = [esc(who + kind), esc(m.model || 'default model')];
       if (m.role) bits.push(esc(m.role));
       // A reviewer on mention is not a running agent: it starts per request.
       if (m.onMention) bits.push(m.reviewing ? 'reviewing now' : 'on mention');
