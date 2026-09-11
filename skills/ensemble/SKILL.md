@@ -138,14 +138,23 @@ you got, decisions and why, branch and commits, changed files, tests run and
 their results, open review findings, blockers, and the exact next action. Write
 it, then end your turn without messaging anyone.
 
-The hub then ends your session and starts a fresh one (same identity, agent,
-model and folder) whose first prompt, starting `[rotation]`, says to read
+The hub then ends your session and starts a fresh one (same identity, token
+and folder) whose first prompt, starting `[rotation]`, says to read
 `TASK-HANDOVER.md` and carry on with its next action. The handover is its
 state; the spec (`ensemble_get_task`) is reference only. It does not start the
 task over or redo finished work, and does not load the old conversation, which
 is kept on disk. The task's chat shows a notice and the project's PO gets a
 one-line update. Reviewers, paused or stopped tasks and PO rooms are not
 rotated this way.
+
+The fresh session is usually the same agent kind and model. It is the other kind
+(Claude ↔ Codex) only by the first-launch rule below: your kind at or above the
+80% warning while the other installed kind is below it. It then uses the
+preference's alternative model for that kind or its default; the reviewer's
+next review then runs on the kind the owner left. Unknown readings, both kinds
+past the alarm, or a one-agent task a human picked keep the kind. A kind that
+fails to start, or whose session ends in its first seconds, falls back to the
+old one. The notice, the PO's line and the task panel give the reason.
 
 Every agent the hub starts for a task runs without approval prompts, one-agent
 tasks included: nobody watches a task's terminal. Only a past session someone

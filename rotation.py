@@ -37,6 +37,16 @@ settings; 0 turns them off):
 Only Claude POs are rotated: a PO is started from a prompt that holds its
 spec, which a Codex command line has no room for. Owners of both kinds are.
 
+A task owner's fresh session may be **the other kind** (Claude ↔ Codex): it
+starts from a written file, not the old conversation, so the hub applies the
+first-launch allowance rule (:func:`choose_owner_kind`). A switch keeps the
+seat's identity and token, takes the other kind's model from the task's
+preferred line-up (``alt``) or its default, and falls back to the old kind if
+the new one does not start. A one-agent task a human picked keeps its kind. A
+reviewer on mention needs nothing here: each review start picks the kind other
+than the owner's current one (the dashboard's ``apply_review_allocation``). The
+PO always stays as it is.
+
 Bound to the dashboard module like ``digest``: nothing here reads ``_d`` at
 import time.
 """
@@ -73,6 +83,8 @@ _KILL_WAIT_S = 8.0
 _CODEX_SID_WAIT_S = 20.0    # Codex mints its own id: wait this long to learn it
 _TAIL_BYTES = (1 << 20, 8 << 20)
 _SPEC_MAX = 6000            # the first prompt goes on a command line
+_LAUNCH_SETTLE_S = 3.0      # a switched-to kind whose terminal ends by then failed
+_OTHER_KIND = {"claude": "codex", "codex": "claude"}
 
 _LOCK = threading.Lock()    # one check at a time: scheduler vs "check now"
 _STATE: dict[str, dict] = {}  # projectId -> {phase, askedAt, ..., lastResult}
@@ -82,6 +94,7 @@ _TASK_STATE: dict[str, dict] = {}  # "roomId/identity" -> the same, for owners
 # read-and-kill each run as one step under it.
 GATE = threading.RLock()
 _ROTATING: dict[tuple, dict] = {}  # (roomId, identity) -> {stopped}, mid-rotation
+_WATCHING: dict[tuple, dict] = {}  # the same, for an owner just switched to the other kind
 _HELD: dict[tuple, list] = {}      # (roomId, identity) -> wakes held meanwhile
 REPLAY_WAIT_S = 15 * 60            # a fresh session that never settles gets them anyway
 
@@ -538,6 +551,289 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# The fresh owner's kind
+# ---------------------------------------------------------------------------
+
+def _installed(kind: str) -> bool:
+    try:
+        ag = _d.agents.get_agent(kind)
+        return bool(ag is not None and ag.installed())
+    except Exception:
+        return False
+
+
+def _preferred_seats(room: dict) -> tuple[dict | None, dict | None]:
+    """The owner's and the reviewer's seats in the task's preferred line-up
+    (``agentPreference``, where a seat may name an ``alt`` model for the other
+    kind). None for a task created before preferences were kept."""
+    pref = room.get("agentPreference")
+    if not isinstance(pref, list) or not pref:
+        return None, None
+    oi = _d._allocation_owner_index(pref)
+    ri = _d._allocation_reviewer_index(pref, oi)
+    return pref[oi], (pref[ri] if ri is not None else None)
+
+
+def _model_for(seat: dict | None, kind: str) -> str:
+    """A seat's model on ``kind``: the one its preference names for that kind,
+    else the kind's default ("")."""
+    return _d._seat_for_kind(seat, kind)["model"] if seat else ""
+
+
+def choose_owner_kind(room: dict, part: dict, snapshot: dict | None = None,
+                      installed=None) -> dict:
+    """The fresh owner's kind at a handover, by the first-launch rule: the
+    other kind only when the current one is at or past the warning and the
+    other is below it. Unknown readings, the other kind not installed, or both
+    past the alarm keep the current kind (the alarm is noted). Returns {agent,
+    model, fromAgent, fromModel, changed, alarm, reason, why, usage}; never
+    raises — a failed check keeps the current kind."""
+    cur, cur_model = part.get("agent", ""), part.get("model", "")
+    out = {"agent": cur, "model": cur_model, "fromAgent": cur, "fromModel": cur_model,
+           "changed": False, "alarm": False, "why": "", "usage": {}}
+    name = _d._agent_kind_name
+    pref = room.get("agentPreference")
+    if room.get("lineupPickedByHuman") is True and isinstance(pref, list) and len(pref) == 1:
+        # As at first launch: a one-agent task a human created keeps its kind.
+        out.update(reason=f"Owner kept on {name(cur)}: kept as picked, a one-agent "
+                          f"task you created.", usage={"skipped": "human-picked solo"})
+        return out
+    try:
+        snap = _d.usage.snapshot() if snapshot is None else snapshot
+        installed = installed or _installed
+        warn = float(snap.get("warnPercent", _d.usage.WARN_PERCENT))
+        alarm = float(snap.get("alarmPercent", _d.usage.ALARM_PERCENT))
+        figures = {k: _d._kind_usage(snap, k) for k in ("claude", "codex")}
+        out["usage"] = {"checkedAt": snap.get("checkedAt"), "warnPercent": warn,
+                        "alarmPercent": alarm, "kinds": figures}
+        other = _OTHER_KIND.get(cur, "")
+        mine, theirs = figures.get(cur, {}), figures.get(other, {})
+
+        def known(r):
+            return r.get("state") == "known"
+
+        if all(known(r) and float(r["percent"]) >= alarm for r in figures.values()):
+            out.update(alarm=True, reason=f"Owner kept on {name(cur)} although Claude and "
+                                          f"Codex are both at or above the {alarm:g}% alarm.")
+        elif not (other and known(mine) and known(theirs)):
+            out["reason"] = (f"Owner kept on {name(cur)} because a current allowance "
+                             f"reading is unavailable.")
+        elif not installed(other):
+            out["reason"] = (f"Owner kept on {name(cur)} because {name(other)} is not "
+                             f"installed on this machine.")
+        elif float(mine["percent"]) >= warn and float(theirs["percent"]) < warn:
+            seat, _ = _preferred_seats(room)
+            why = _d._usage_reason_phrase(cur, mine)
+            out.update(agent=other, model=_model_for(seat, other), changed=True, why=why,
+                       reason=f"Owner switched to {name(other)}: {why}.")
+        elif float(mine["percent"]) < warn:
+            out["reason"] = (f"Owner kept on {name(cur)} because "
+                             f"{_d._usage_reason_phrase(cur, mine)} is below the "
+                             f"{warn:g}% warning.")
+        else:
+            out["reason"] = (f"Owner kept on {name(cur)} because both agent kinds are at "
+                             f"or above the {warn:g}% warning.")
+    except Exception as e:                  # the handover goes ahead as before
+        out.update(agent=cur, model=cur_model, changed=False, alarm=False, why="",
+                   reason=f"Owner kept on {name(cur)} because the allowance check failed.")
+        out["usage"] = {**out["usage"], "error": type(e).__name__}
+    return out
+
+
+def session_kinds(part: dict) -> dict:
+    """Every conversation the agent has had, with the kind it had it as —
+    kept before its kind changes (an owner's handover, a reviewer's per-review
+    choice), so each is still found and deleted as the right kind (see the
+    dashboard's ``session_agent``)."""
+    kinds = dict(part.get("sessionKinds") or {})
+    for sid in _d.participant_session_ids(part):
+        kinds.setdefault(sid, part.get("agent", ""))
+    return kinds
+
+
+def _launch_owner(launcher, room: dict, fpart: dict, text_for, solo: bool, cwd,
+                  choice: dict) -> tuple[dict, dict, str]:
+    """Start the fresh owner as the chosen kind; if that launch raises, as its
+    old kind. Returns (launch info, the participant as started, why the switch
+    failed or ""). A terminal that ends as it starts is caught afterwards, in
+    the background (``_watch_switch``), so the handover is never held up."""
+    failed = ""
+    if choice["changed"]:
+        part = {**fpart, "agent": choice["agent"], "model": choice["model"]}
+        try:
+            info = launcher._launch_room_agent_pty(room, part, text_for(part["agent"]),
+                                                   collab=not solo, cwd=cwd)
+            return info, part, ""
+        except Exception as e:
+            failed = str(e)[:200] or type(e).__name__
+        _log(f"{room['id']}/{fpart['identity']}: could not start it as "
+             f"{choice['agent']} ({failed}) — starting it as {fpart.get('agent')}")
+    info = launcher._launch_room_agent_pty(room, fpart, text_for(fpart.get("agent", "")),
+                                           collab=not solo, cwd=cwd)
+    return info, fpart, failed
+
+
+def _spawn(fn, *args) -> None:
+    threading.Thread(target=fn, args=args, daemon=True, name="rotation-switch").start()
+
+
+def _watch_switch(key: tuple, flags: dict, w: dict) -> None:
+    """The first seconds of an owner switched to the other kind, after its
+    handover has completed. If its terminal ends within _LAUNCH_SETTLE_S of
+    its start, the switch did not take: under the rotation mark again (wakes
+    held, Stop and Delete noted), its session is ended and deleted (a Codex
+    one's rollout too) and the owner is started as its old kind. A Stop, a
+    restart or another handover meanwhile ends the watch. The PO's one line
+    goes once the outcome is known, naming the kind the owner ended up on."""
+    rid, ident = key
+    rec = w["rec"]
+    try:
+        if _switch_died(key, flags, w):
+            try:
+                rec = _fall_back(key, flags, w) or rec
+            finally:
+                _release(key)
+    except Exception as e:
+        _log(f"{rid}/{ident}: the check of its switch failed: {str(e)[:200]}")
+    finally:
+        with GATE:
+            if _WATCHING.get(key) is flags:
+                _WATCHING.pop(key)
+    if _d.chatroom.get_room(rid) is None:
+        return
+    try:
+        rec["poWoken"] = _report_to_po(w["room"], ident, rec, w["how"])
+    except Exception as e:
+        _log(f"{rid}/{ident}: could not report the rotation to the PO: {str(e)[:200]}")
+
+
+def _switch_died(key: tuple, flags: dict, w: dict) -> bool:
+    """Watch the switched terminal until _LAUNCH_SETTLE_S after its start.
+    True when it ended while still the owner's, the task neither stopped nor
+    handed over meanwhile — the rotation mark is then set again, in the same
+    step, for the fallback."""
+    rid, ident = key
+    while True:
+        with GATE:
+            if _WATCHING.get(key) is not flags or flags["stopped"]:
+                return False
+            part = _d.chatroom.participant(
+                _d.chatroom.get_room(rid, public=False) or {}, ident)
+            if (part is None or part.get("ptyId") != w["info"]["ptyId"]
+                    or key in _ROTATING):
+                return False
+            sess = _d.ptyrun.get(w["info"]["ptyId"])
+            if sess is None or not sess.alive():
+                _ROTATING[key] = flags
+                return True
+            if time.time() >= w["started"] + _LAUNCH_SETTLE_S:
+                return False
+        time.sleep(0.25)
+
+
+def _fall_back(key: tuple, flags: dict, w: dict) -> dict | None:
+    """Undo a switch whose terminal ended as it started (see _watch_switch).
+    Returns the rotation record as it now is, or None if the task went away."""
+    rid, ident = key
+    old, rec, new_kind = w["old"], w["rec"], w["rec"]["agent"]
+    old_kind = old.get("agent", "")
+    failed = "its terminal ended as it started"
+    _log(f"{rid}/{ident}: its {new_kind} terminal ended as it started — starting it "
+         f"as {old_kind}")
+    _discard_fresh(w["info"], new_kind, w["started"], w["agentsIn"])
+    room = _d.chatroom.get_room(rid, public=False)
+    if room is None:
+        return None
+    started = time.time()
+    info = _d.hub_launcher()._launch_room_agent_pty(
+        room, old, w["text_for"](old_kind), collab=not w["solo"], cwd=w["cwd"])
+    rec = {**rec, "toSessionId": info["sessionId"], "agent": old_kind,
+           "model": old.get("model", ""),
+           "allocation": _allocation_rec(w["choice"], failed)}
+    fields = {"sessionId": info["sessionId"], "ptyId": info["ptyId"],
+              "cwd": info["cwd"], "pid": None, "agent": old_kind,
+              "model": old.get("model", "")}
+    drop = ("lastExit", "fresh")
+    if old.get("sessionKinds"):
+        fields["sessionKinds"] = old["sessionKinds"]
+    else:
+        drop += ("sessionKinds",)
+    with GATE:
+        cur = _d.chatroom.participant(_d.chatroom.get_room(rid, public=False) or {}, ident)
+        rots = list((cur or {}).get("rotations") or [])
+        if rots and isinstance(rots[-1], dict) and rots[-1].get("n") == rec["n"]:
+            rots[-1] = rec
+        fields["rotations"] = rots
+        patched = _d.chatroom.patch_participant(rid, ident, fields, drop=drop)
+    if patched is None:
+        _discard_fresh(info, old_kind, started, w["agentsIn"])
+        return None
+    if old_kind == "codex" and not info["sessionId"]:
+        sid = _await_codex_session(info["cwd"], started, _taken(w["agentsIn"]))
+        if sid:
+            rec["toSessionId"] = _learn_session(rid, ident, info["ptyId"], sid)
+    with GATE:
+        stopped = flags["stopped"]
+    if stopped:
+        _d.stop_task(rid)
+        return rec
+    _d.chatroom.post_notice(
+        rid, SENDER, f"**{ident}'s {_d._agent_kind_name(new_kind)} session ended as it "
+                     f"started** — the hub started {_kind_note(rec)} instead. It continues "
+                     f"from `{TASK_HANDOVER_NAME}`.",
+        {"noticeKind": "rotation", "rotation": rec})
+    try:
+        _record_allocation(rid, ident, rec)
+    except Exception as e:
+        _log(f"{rid}/{ident}: could not record the kind decision: {str(e)[:200]}")
+    return rec
+
+
+def _allocation_rec(choice: dict, failed: str) -> dict:
+    """What the rotation record and the task keep of the decision."""
+    rec = {k: choice[k] for k in ("agent", "model", "fromAgent", "fromModel", "changed",
+                                  "alarm", "reason", "why")}
+    rec["usage"] = choice.get("usage") or {}
+    if failed:
+        rec.update(switchFailed=failed, changed=False,
+                   reason=f"{choice['reason']} It did not start ({failed}), so the owner "
+                          f"stayed on {_d._agent_kind_name(choice['fromAgent'])}.")
+    return rec
+
+
+def _kind_note(rec: dict) -> str:
+    """How a rotation report names the fresh session: "a fresh Codex session
+    (Claude 5-hour window at 86%)", or plainly "a fresh session"."""
+    a = rec.get("allocation") or {}
+    name = _d._agent_kind_name
+    if a.get("switchFailed"):
+        return (f"a fresh {name(rec.get('agent', ''))} session (switching to "
+                f"{name(a.get('agent', ''))} failed: {a['switchFailed']})")
+    if a.get("changed"):
+        return f"a fresh {name(a['agent'])} session ({a.get('why') or ''})"
+    if a.get("alarm"):
+        pct = (a.get("usage") or {}).get("alarmPercent", _d.usage.ALARM_PERCENT)
+        return f"a fresh session (Claude and Codex are both past the {float(pct):g}% alarm)"
+    return "a fresh session"
+
+
+def _record_allocation(rid: str, ident: str, rec: dict) -> None:
+    """Keep the latest handover decision on the task (``allocation.handover``,
+    beside the first-launch record) and its kinds in task.json."""
+    room = _d.chatroom.get_room(rid, public=False)
+    if room is None:
+        return
+    alloc = dict(room.get("allocation") or {})
+    alloc["handover"] = {"n": rec["n"], "at": rec["at"], "identity": ident,
+                         **(rec.get("allocation") or {})}
+    room = _d.chatroom.patch_room(rid, allocation=alloc) or room
+    agents = [{"identity": p["identity"], "agent": p.get("agent", ""),
+               "model": p.get("model", ""), "role": p.get("role", "")}
+              for p in _d.chatroom.agent_participants(room)]
+    _d._patch_task_json(room.get("taskDir", ""), agents=agents, allocation=alloc)
+
+
+# ---------------------------------------------------------------------------
 # The rotation itself
 # ---------------------------------------------------------------------------
 
@@ -576,17 +872,25 @@ def first_prompt(project: dict, room: dict, old_sid: str, tokens) -> str:
     return "\n\n".join(parts)
 
 
-def task_first_prompt(room: dict, old_sid: str, tokens, hp: Path, solo: bool) -> str:
+def task_first_prompt(room: dict, old_sid: str, tokens, hp: Path, solo: bool,
+                      kinds: tuple[str, str] | None = None) -> str:
     """A rotated owner's first prompt. It never carries the spec: a fresh
     session handed its spec as an instruction does the task again (seen
-    2026-09-10). The handover is its state; the spec is only a reference."""
+    2026-09-10). The handover is its state; the spec is only a reference.
+    ``kinds`` (old, new) when the fresh session is the other kind."""
     rid = room["id"]
     title = room.get("title") or rid
     parts = [
         f"[rotation] You are taking over the task '{title}' ({rid}) from your previous "
         f"session on it. Its conversation had grown to {_k(tokens)} tokens, and every "
         f"model call re-sends the whole conversation, so the hub started you fresh. The "
-        f"old conversation is kept on disk (session {old_sid}); do not load it.",
+        f"old conversation is kept on disk (session {old_sid}); do not load it."]
+    if kinds:
+        name = _d._agent_kind_name
+        parts[0] += (f" The previous session ran on {name(kinds[0])}; you run on "
+                     f"{name(kinds[1])}, chosen from the plan allowance, under the same "
+                     f"name and with the same tools.")
+    parts += [
         f"Your state is {hp}: the handover your previous session wrote just before it "
         f"stopped: the goal and how far it got, decisions and why, branch and commits, "
         f"changed files, tests and results, open review findings, blockers, and the "
@@ -646,7 +950,7 @@ def _report_to_po(room: dict, ident: str, rec: dict, how: str) -> bool:
     if not po_ident:
         return False
     title = room.get("title") or room["id"]
-    line = (f"{ident} was handed to a fresh session at {_k(rec['tokens'])} tokens "
+    line = (f"{ident} was handed to {_kind_note(rec)} at {_k(rec['tokens'])} tokens "
             f"(limit {_k(rec['threshold'])}) {how}; it continues from "
             f"{TASK_HANDOVER_NAME}. The old conversation is kept (session "
             f"{rec['fromSessionId']}).")
@@ -747,7 +1051,7 @@ def note_stopped(room_id: str) -> None:
     """A Stop (or Delete) of this task: a rotation under way ends its fresh
     session instead of leaving the task running."""
     with GATE:
-        for (rid, _), flags in _ROTATING.items():
+        for (rid, _), flags in [*_ROTATING.items(), *_WATCHING.items()]:
             if rid == room_id:
                 flags["stopped"] = True
 
@@ -801,6 +1105,7 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
     launcher = _d.hub_launcher()
     cwd = fpart.get("cwd") or None
     started = time.time()
+    used, old_kind = fpart, fpart.get("agent", "")
     if not owner:
         prompt = first_prompt(s["project"], room_full, old_sid, tokens)
         if solo:
@@ -811,10 +1116,17 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
                                                    cwd=cwd)
     else:
         # The rotation text goes where the spec would: a team owner gets its
-        # collaboration briefing around it, a solo one how to report.
-        text = task_first_prompt(room_full, old_sid, tokens, hp, solo)
-        info = launcher._launch_room_agent_pty(room_full, fpart, text, collab=not solo,
-                                               cwd=cwd)
+        # collaboration briefing around it, a solo one how to report. Its kind
+        # is chosen from the allowance; a kind that fails to start falls back.
+        choice = choose_owner_kind(room_full, fpart)
+
+        def text_for(kind: str) -> str:
+            return task_first_prompt(room_full, old_sid, tokens, hp, solo,
+                                     kinds=(old_kind, kind) if kind != old_kind else None)
+
+        info, used, failed = _launch_owner(launcher, room_full, fpart, text_for, solo,
+                                           cwd, choice)
+        allocation = _allocation_rec(choice, failed)
     now = time.time()
     n = len(fpart.get("rotations") or []) + 1
     rec = {"n": n, "at": now, "fromSessionId": old_sid, "toSessionId": info["sessionId"],
@@ -824,11 +1136,18 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
               "cwd": info["cwd"], "pid": None}
     drop = ("lastExit", "fresh")
     if owner:
-        rec.update(agent=fpart.get("agent", ""), startedAt=started)
+        rec.update(agent=used.get("agent", ""), model=used.get("model", ""),
+                   fromAgent=old_kind, fromModel=fpart.get("model", ""),
+                   allocation=allocation, startedAt=started)
         # The fresh session's ask dates from its launch: anything it says
         # after that is an answer to it.
         fields["rotatedAt"] = started
         drop += ("resumedAt",)
+        if used.get("agent") != old_kind:
+            # Same identity and token (messages and reports still reach it);
+            # the new kind and model, and the kind of each earlier session.
+            fields.update(agent=used["agent"], model=used.get("model", ""),
+                          sessionKinds=session_kinds(fpart))
     # On the room at once, so a doorbell is held for the fresh terminal and a
     # Stop ends it. The mark is cleared only once the stopped or clean-up path
     # and a Codex session's id are settled: a Delete waiting on it then sees
@@ -837,24 +1156,31 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
         patched = _d.chatroom.patch_participant(rid, ident, fields,
                                                 append={"rotations": rec}, drop=drop)
     if patched is None:
-        _discard_fresh(info, fpart.get("agent", ""), started, agents_in)
+        _discard_fresh(info, used.get("agent", ""), started, agents_in)
         st["phase"] = "watching"
         return done(f"{s['whose']} task went away while rotating — the fresh session "
                     f"was ended")
-    if owner and fpart.get("agent") == "codex" and not info["sessionId"]:
+    if owner and used.get("agent") == "codex" and not info["sessionId"]:
         sid = _await_codex_session(info["cwd"], started, _taken(agents_in))
         if sid:
             rec["toSessionId"] = info["sessionId"] = _learn_session(rid, ident,
                                                                     info["ptyId"], sid)
+    switched = owner and used.get("agent") != old_kind
     with GATE:
         stopped = flags["stopped"]
         if not stopped:
             _release(key)
+            if switched:
+                # From here a Stop is noted for the switch's watch too, so a
+                # terminal a Stop ends is never taken for a failed start.
+                _WATCHING[key] = wflags = {"stopped": False}
     if stopped:
         _d.stop_task(rid)
         st["phase"] = "watching"
         return done("the task was stopped while rotating — the fresh session was ended")
     if _d.chatroom.get_room(rid) is None:
+        with GATE:
+            _WATCHING.pop(key, None)
         st["phase"] = "watching"
         return done(f"{s['whose']} task was deleted as it rotated — nothing posted")
     if not asked:
@@ -873,14 +1199,28 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
         _d.chatroom.post_notice(rid, SENDER, text, {"noticeKind": "rotation", "rotation": rec})
     else:
         text = (f"**New session for {ident}** — its conversation had reached {_k(tokens)} "
-                f"tokens (limit {_k(limit)}), so the hub started a fresh session {how}. It "
-                f"continues from `{TASK_HANDOVER_NAME}`. The previous conversation is kept "
-                f"(session `{old_sid}`).")
+                f"tokens (limit {_k(limit)}), so the hub started {_kind_note(rec)} {how}. "
+                f"It continues from `{TASK_HANDOVER_NAME}`. The previous conversation is "
+                f"kept (session `{old_sid}`).")
         _d.chatroom.post_notice(rid, SENDER, text, {"noticeKind": "rotation", "rotation": rec})
         try:
-            rec["poWoken"] = _report_to_po(room_full, ident, rec, how)
+            _record_allocation(rid, ident, rec)
         except Exception as e:          # the rotation itself has happened
-            _log(f"{s['name']}: could not report the rotation to the PO: {str(e)[:200]}")
+            _log(f"{s['name']}: could not record the kind decision: {str(e)[:200]}")
+        if switched:
+            # The PO's line waits for the switch to hold (or fall back), in
+            # the background: it names the kind the owner really runs on.
+            _spawn(_watch_switch, key, wflags, {
+                "info": info, "started": started, "old": fpart, "rec": rec,
+                "choice": choice, "text_for": text_for,
+                "solo": solo, "cwd": cwd, "agentsIn": agents_in,
+                "room": room_full, "how": how})
+        else:
+            try:
+                rec["poWoken"] = _report_to_po(room_full, ident, rec, how)
+            except Exception as e:      # the rotation itself has happened
+                _log(f"{s['name']}: could not report the rotation to the PO: "
+                     f"{str(e)[:200]}")
     st.update(phase="watching", sessionId=info["sessionId"], lastRotation=now)
     for k in ("askedAt", "askSize", "askPath", "handoverAtAsk", "tokensAtAsk", "askSubmit"):
         st.pop(k, None)
@@ -899,17 +1239,24 @@ def _taken(agents_in: list) -> set:
 
 def _discard_fresh(info: dict, agent: str, started: float, agents_in: list) -> None:
     """The task went away while its fresh session started: end it and delete
-    its conversation, so nothing of it outlives the task."""
-    _d.ptyrun.kill(info["ptyId"])
-    _await_death(info["ptyId"])
+    its conversation, so nothing of it outlives the task. Best effort: a step
+    that fails is logged, never raised, so what follows it still happens."""
+    try:
+        _d.ptyrun.kill(info["ptyId"])
+        _await_death(info["ptyId"])
+    except Exception as e:
+        _log(f"could not end terminal {info['ptyId']}: {str(e)[:200]}")
     sid = info["sessionId"]
-    if agent == "codex":
-        sid = sid or _await_codex_session(info["cwd"], started, _taken(agents_in))
-        cx = _d.agents.get_agent("codex")
-        if sid and cx is not None:
-            cx.delete_session(sid)
-    elif sid:
-        _d.delete_session(sid)
+    try:
+        if agent == "codex":
+            sid = sid or _await_codex_session(info["cwd"], started, _taken(agents_in))
+            cx = _d.agents.get_agent("codex")
+            if sid and cx is not None:
+                cx.delete_session(sid)
+        elif sid:
+            _d.delete_session(sid)
+    except Exception as e:
+        _log(f"could not delete {agent} session {sid or '(unknown)'}: {str(e)[:200]}")
 
 
 def _learn_session(rid: str, ident: str, pty_id: str, sid: str) -> str:
