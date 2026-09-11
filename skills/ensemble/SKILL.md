@@ -298,9 +298,17 @@ the final choice without a network call:
 - The task records the preferred and chosen line-ups, the cached figures, the
   time and a one-sentence reason. A task that has run keeps those agents when it
   resumes because the conversations belong to their kinds.
+- Choose the preferred model for the job: Opus for ambiguous, design-heavy or
+  risky work; Codex or a cheaper model for well-specified implementation; Fable
+  only where it is known to do well.
+- A Codex window with `trusted: false` is a floor because Codex writes its usage
+  only when one of its agents takes a turn. Codex doing work is what refreshes
+  it.
 - Before starting many tasks at once, still read `ensemble_plan_usage`: each
   launch decides correctly in isolation, but only the product owner can decide
   how much concurrent work the remaining allowance should fund.
+- When you tell the product owner what you started, say who got each task and
+  why whenever the chosen line-up differs from the preference.
 
 **Closing a task.** When a task reports `completed`: read the whole report
 (`ensemble_get_task`), review the diff, merge its branch into the project's

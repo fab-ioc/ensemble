@@ -112,6 +112,7 @@ class AllocationTests(unittest.TestCase):
              "alt": {"agent": "codex", "model": "gpt-owner"}},
             {"agent": "codex", "model": "gpt-review", "role": "reviewer"},
         ])
+        original_tokens = dict(room["tokens"])
         snap = _snapshot([_window("five_hour", 80), _window("seven_day", 20)],
                          [_window("five_hour", 12), _window("seven_day", 18)])
         with mock.patch.object(dashboard.usage, "snapshot", return_value=snap):
@@ -126,6 +127,11 @@ class AllocationTests(unittest.TestCase):
         self.assertTrue(saved["allocation"]["changed"])
         self.assertEqual(saved["allocation"]["reason"],
                          "Owner switched to Codex: Claude 5-hour window at 80%.")
+        self.assertEqual(saved["tokens"], original_tokens)
+        self.assertEqual(chatroom.owners(saved), ["codex"])
+        reviewer = next(p for p in chatroom.agent_participants(saved)
+                        if p["role"] == "reviewer")
+        self.assertTrue(chatroom.is_on_mention(saved, reviewer))
 
     def test_both_past_alarm_starts_as_preferred_and_says_so(self):
         room = self.room([
@@ -155,6 +161,35 @@ class AllocationTests(unittest.TestCase):
         saved = chatroom.get_room(room["id"], public=False)
         self.assertFalse(saved["allocation"]["changed"])
         self.assertIn("unavailable", saved["allocation"]["reason"])
+
+    def test_malformed_cached_reading_never_blocks_start(self):
+        room = self.room([
+            {"agent": "claude", "model": "opus", "role": "engineer"},
+            {"agent": "codex", "model": "gpt-review", "role": "reviewer"},
+        ])
+        snap = _snapshot([_window("five_hour", "not-a-number")],
+                         [_window("five_hour", 10)])
+        with mock.patch.object(dashboard.usage, "snapshot", return_value=snap):
+            _FakeHandler()._start_room(room)
+
+        saved = chatroom.get_room(room["id"], public=False)
+        self.assertTrue(saved["launched"])
+        self.assertFalse(saved["allocation"]["changed"])
+        self.assertEqual(saved["allocation"]["reason"],
+                         "Preferred line-up kept because the allowance check failed.")
+        self.assertEqual(saved["allocation"]["usage"]["error"], "ValueError")
+
+    def test_snapshot_failure_never_blocks_start(self):
+        room = self.room([
+            {"agent": "claude", "model": "opus", "role": "engineer"},
+            {"agent": "codex", "model": "gpt-review", "role": "reviewer"},
+        ])
+        with mock.patch.object(dashboard.usage, "snapshot", side_effect=OSError("cache")):
+            _FakeHandler()._start_room(room)
+
+        saved = chatroom.get_room(room["id"], public=False)
+        self.assertTrue(saved["launched"])
+        self.assertEqual(saved["allocation"]["usage"]["error"], "OSError")
 
     def test_untrusted_window_counts_at_its_floor(self):
         room = self.room([
@@ -229,6 +264,20 @@ class AllocationTests(unittest.TestCase):
         self.assertEqual(result["note"],
                          "Owner switched to Codex: Claude 5-hour window at 82%.")
 
+    def test_start_tool_reports_unavailable_kind_cleanly(self):
+        room = self.room([
+            {"agent": "claude", "model": "opus", "role": "engineer"},
+        ])
+        caller_created = chatroom.create_room(
+            "caller", [{"identity": "claude", "agent": "claude", "role": "planner"}])
+        caller = chatroom.get_room(caller_created["id"], public=False)
+        ctx = {"room": caller, "identity": "claude",
+               "part": chatroom.participant(caller, "claude"), "projectId": ""}
+        with mock.patch.object(dashboard.agents, "get_agent", return_value=None):
+            with self.assertRaisesRegex(ensemble_tools.ToolError,
+                                        "agent_unavailable:claude"):
+                ensemble_tools._start_task(ctx, {"taskId": room["id"]}, _FakeHandler())
+
     def test_new_task_persists_preference_and_alternative(self):
         task_dir = Path(self.temp.name) / "task"
         agent_list = [{"agent": "claude", "model": "opus", "role": "engineer",
@@ -243,6 +292,33 @@ class AllocationTests(unittest.TestCase):
         self.assertEqual(room["agentPreference"], agent_list)
         task_json = (task_dir / "task.json").read_text(encoding="utf-8")
         self.assertIn('"agentPreference"', task_json)
+
+    def test_create_task_start_result_names_chosen_agents_and_reason(self):
+        caller_created = chatroom.create_room(
+            "caller", [{"identity": "claude", "agent": "claude", "role": "planner"}])
+        caller = chatroom.get_room(caller_created["id"], public=False)
+        ctx = {"room": caller, "identity": "claude",
+               "part": chatroom.participant(caller, "claude"), "projectId": ""}
+        task_dir = Path(self.temp.name) / "started-task"
+        workspace = {"mode": "empty", "taskDir": str(task_dir)}
+        args = {
+            "title": "start now", "spec": "Do the work.", "workspace": "empty",
+            "start": True,
+            "agents": [
+                {"agent": "claude", "model": "opus", "role": "engineer"},
+                {"agent": "codex", "model": "gpt-review", "role": "reviewer"},
+            ],
+        }
+        snap = _snapshot([_window("five_hour", 80)], [_window("five_hour", 10)])
+        with mock.patch.object(dashboard, "setup_session_workspace",
+                               return_value=(True, str(task_dir), workspace, "")), \
+                mock.patch.object(dashboard.usage, "snapshot", return_value=snap):
+            result = ensemble_tools._create_task(ctx, args, _FakeHandler())
+
+        self.assertEqual([(a["agent"], a["role"]) for a in result["agents"]],
+                         [("codex", "engineer"), ("claude", "reviewer")])
+        self.assertEqual(result["note"],
+                         "Owner switched to Codex: Claude 5-hour window at 80%.")
 
 
 if __name__ == "__main__":

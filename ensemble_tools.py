@@ -1021,7 +1021,10 @@ def _create_task(ctx, args, handler):
         raise ToolError(err)
     started = False
     if args.get("start") is True:
-        handler._start_room(room_full)
+        try:
+            handler._start_room(room_full)
+        except _d.StartRoomError as exc:
+            raise ToolError(str(exc)) from exc
         started = True
     allocation = room_full.get("allocation") if started else None
     return {"ok": True, "taskId": room_full["id"], "title": room_full["title"],
@@ -1107,7 +1110,10 @@ def _start_task(ctx, args, handler):
     if _d._room_is_live(room):
         raise ToolError("that task is already running")
     first_launch = not room.get("launched", True)
-    handler._start_or_resume_room(room)
+    try:
+        handler._start_or_resume_room(room)
+    except _d.StartRoomError as exc:
+        raise ToolError(str(exc)) from exc
     active = _d.chatroom.get_room(room["id"], public=False) or room
     allocation = active.get("allocation") if first_launch else None
     chosen = _agents_view(active)

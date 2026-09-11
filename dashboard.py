@@ -3971,6 +3971,12 @@ WORKFLOW_CHOICES = ", ".join(WORKFLOW_NAMES)
 # Only a ProductOwner may accept work. Assigned by the human alone — see
 # normalize_agent_specs, which refuses the role from an agent-side caller.
 PRODUCT_OWNER_ROLE = chatroom.PRODUCT_OWNER_ROLE
+
+
+class StartRoomError(Exception):
+    """A first launch that cannot be satisfied by an installed agent kind."""
+
+
 OWNER_ONLY_WORKFLOW = ("done",)
 
 
@@ -4166,7 +4172,18 @@ def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
     other_usage = figures.get(other_kind, {"state": "unknown"})
     installed = installed or (lambda kind: bool(
         agents.get_agent(kind) and agents.get_agent(kind).installed()))
-    changed = False
+
+    def result(reason: str, changed: bool) -> tuple[list[dict], dict]:
+        return chosen, {
+            "preferred": preferred,
+            "chosen": copy.deepcopy(chosen),
+            "reason": reason,
+            "changed": changed,
+            "at": time.time(),
+            "usage": {"snapshotState": snapshot.get("state"),
+                      "checkedAt": snapshot.get("checkedAt"),
+                      "warnPercent": warn, "alarmPercent": alarm, "kinds": figures},
+        }
 
     unavailable_seats = [i for i, seat in enumerate(preferred)
                          if not installed(seat.get("agent", ""))]
@@ -4176,52 +4193,41 @@ def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
             old_kind = preferred[i].get("agent", "")
             new_kind = {"claude": "codex", "codex": "claude"}.get(old_kind, "")
             if not new_kind or not installed(new_kind):
-                raise RuntimeError(f"no installed agent kind can fill the {old_kind} seat")
+                raise StartRoomError(f"agent_unavailable:{old_kind}")
             chosen[i] = _seat_for_kind(preferred[i], new_kind)
             switched.append(f"{_agent_kind_name(old_kind)} to {_agent_kind_name(new_kind)}")
-        changed = True
         reason = (f"Unavailable agent seat switched from {', '.join(switched)} because its "
                   f"preferred kind is not installed on this machine.")
-    else:
-        both_alarm = all(figures[k].get("state") == "known"
-                         and float(figures[k]["percent"]) >= alarm
-                         for k in ("claude", "codex"))
-    if not unavailable_seats and both_alarm:
+        return result(reason, True)
+
+    both_alarm = all(figures[k].get("state") == "known"
+                     and float(figures[k]["percent"]) >= alarm
+                     for k in ("claude", "codex"))
+    if both_alarm:
         reason = (f"Preferred line-up kept although Claude and Codex are both at or above "
                   f"the {float(alarm):g}% alarm.")
-    elif not unavailable_seats and (owner_usage.get("state") != "known"
-                                    or other_usage.get("state") != "known"):
+    elif owner_usage.get("state") != "known" or other_usage.get("state") != "known":
         reason = "Preferred line-up kept because a current allowance reading is unavailable."
-    elif not unavailable_seats and (not other_kind or not installed(other_kind)):
+    elif not other_kind or not installed(other_kind):
         name = _agent_kind_name(other_kind) if other_kind else "The other agent kind"
         reason = f"Preferred line-up kept because {name} is not installed on this machine."
-    elif (not unavailable_seats and float(owner_usage["percent"]) >= warn
+    elif (float(owner_usage["percent"]) >= warn
           and float(other_usage["percent"]) < warn):
         old_owner_kind = owner_kind
         chosen[owner_i] = _seat_for_kind(preferred[owner_i], other_kind)
         reviewer_i = _allocation_reviewer_index(preferred, owner_i)
         if reviewer_i is not None:
             chosen[reviewer_i] = _seat_for_kind(preferred[reviewer_i], old_owner_kind)
-        changed = True
         reason = (f"Owner switched to {_agent_kind_name(other_kind)}: "
                   f"{_usage_reason_phrase(old_owner_kind, owner_usage)}.")
-    elif not unavailable_seats and float(owner_usage["percent"]) < warn:
+        return result(reason, True)
+    elif float(owner_usage["percent"]) < warn:
         reason = (f"Preferred line-up kept because {_usage_reason_phrase(owner_kind, owner_usage)} "
                   f"is below the {float(warn):g}% warning.")
-    elif not unavailable_seats:
+    else:
         reason = (f"Preferred line-up kept because both agent kinds are at or above "
                   f"the {float(warn):g}% warning.")
-
-    return chosen, {
-        "preferred": preferred,
-        "chosen": copy.deepcopy(chosen),
-        "reason": reason,
-        "changed": changed,
-        "at": time.time(),
-        "usage": {"snapshotState": snapshot.get("state"),
-                  "checkedAt": snapshot.get("checkedAt"),
-                  "warnPercent": warn, "alarmPercent": alarm, "kinds": figures},
-    }
+    return result(reason, False)
 
 
 def apply_first_launch_allocation(room_full: dict) -> dict | None:
@@ -4231,7 +4237,36 @@ def apply_first_launch_allocation(room_full: dict) -> dict | None:
         return None                         # pre-feature room: historical behavior
     if isinstance(room_full.get("allocation"), dict):
         return room_full["allocation"]     # a failed spawn does not re-decide
-    chosen, allocation = choose_first_launch_allocation(preferred, usage.snapshot())
+    for seat in preferred:
+        kind = seat.get("agent", "")
+        alternative = {"claude": "codex", "codex": "claude"}.get(kind, "")
+        agent = agents.get_agent(kind)
+        alt_agent = agents.get_agent(alternative) if alternative else None
+        if not (agent and agent.installed()) and not (alt_agent and alt_agent.installed()):
+            raise StartRoomError(f"agent_unavailable:{kind}")
+    snapshot = {}
+    try:
+        snapshot = usage.snapshot()
+        chosen, allocation = choose_first_launch_allocation(preferred, snapshot)
+    except StartRoomError:
+        raise
+    except Exception as exc:                              # noqa: BLE001
+        chosen = [{"agent": seat.get("agent", ""),
+                   "model": seat.get("model", ""),
+                   "role": seat.get("role", "")}
+                  for seat in preferred]
+        allocation = {
+            "preferred": copy.deepcopy(preferred),
+            "chosen": copy.deepcopy(chosen),
+            "reason": "Preferred line-up kept because the allowance check failed.",
+            "changed": False,
+            "at": time.time(),
+            "usage": {"snapshotState": snapshot.get("state"),
+                      "checkedAt": snapshot.get("checkedAt"),
+                      "warnPercent": snapshot.get("warnPercent", usage.WARN_PERCENT),
+                      "alarmPercent": snapshot.get("alarmPercent", usage.ALARM_PERCENT),
+                      "kinds": {}, "error": type(exc).__name__},
+        }
     if allocation["changed"]:
         updated = chatroom.set_agents(room_full["id"], chosen, mode=room_full.get("mode", ""))
         if updated is not None:
@@ -6139,7 +6174,11 @@ class Handler(BaseHTTPRequestHandler):
             if not ok:
                 self._send_json(400, {"error": err})
                 return
-            launched = [] if data.get("start") is False else self._start_room(room_full)
+            try:
+                launched = [] if data.get("start") is False else self._start_room(room_full)
+            except StartRoomError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
             self._send_json(200, {"ok": True,
                                   "room": chatroom.get_room(room_full["id"]),
                                   "launched": launched})
@@ -6300,7 +6339,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
             # A draft (created but never launched, e.g. by a planning agent)
             # starts fresh; anything else resumes its agents' conversations.
-            resumed = self._start_or_resume_room(room_full)
+            try:
+                resumed = self._start_or_resume_room(room_full)
+            except StartRoomError as exc:
+                self._send_json(400, {"error": str(exc)})
+                return
             self._send_json(200, {"ok": True, "resumed": resumed,
                                   "room": chatroom.get_room(rid)})
             return
