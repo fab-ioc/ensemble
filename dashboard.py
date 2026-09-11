@@ -4247,7 +4247,9 @@ def delete_task(rid: str, members=None) -> dict:
     cwds: list[str] = []
     if room:
         stop_task(rid)
-        # Read again: a rotation may have put a fresh session on it meanwhile.
+        # Stop tells a rotation under way to end its fresh session; wait for
+        # it, then read again, so the session it added is deleted too.
+        rotation.await_rotation(rid)
         room = chatroom.get_room(rid, public=False) or room
         cwds.append(room.get("cwd", "") or "")
         members = [{"agent": pp.get("agent", ""), "sessionId": sid,
@@ -5706,6 +5708,8 @@ class Handler(BaseHTTPRequestHandler):
             if sess is None:
                 self._send_json(404, {"error": "no_such_pty"})
                 return
+            # Someone at its terminal: an owner rotation waits (rotation.py).
+            sess.last_input = time.time()
             sess.write(data.get("data", ""))
             self._send_json(200, {"ok": True})
             return

@@ -526,9 +526,13 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
                f"exact next action. Anything that is not in that file, the repo or the "
                f"task's spec will be forgotten. When it is written, end your turn without "
                f"messaging anyone; the hub rotates you as soon as you are idle.")
-    _pty(part).send_line(ask)
+    sess = _pty(part)
+    sess.send_line(ask)
+    # The ask's own submit: anything typed into the terminal after it means
+    # someone is working with the agent, and the rotation waits.
     st.update(phase="asked", askedAt=now, askSize=tr["size"], askPath=str(tpath),
-              handoverAtAsk=_mtime(hp), tokensAtAsk=tr["tokens"])
+              handoverAtAsk=_mtime(hp), tokensAtAsk=tr["tokens"],
+              askSubmit=float(sess.last_submit() or time.time()))
     return done(f"{_k(tr['tokens'])} tokens, over the {_k(limit)} limit — "
                 f"asked {who} to update its handover")
 
@@ -665,12 +669,18 @@ def _rotate(s: dict, tr: dict, done, answered: bool, asked: bool = True) -> dict
     Delete is noted and ends the fresh session."""
     key = (s["room"]["id"], s["part"]["identity"])
     flags = {"stopped": False}
+    st, part = s["state"], s["part"]
     with GATE:
-        # The last look, in the same step as the mark: no doorbell or Stop
-        # can come between them, so a turn is never ended.
-        tpath, reader = _transcript_of(s["part"])
-        if not _settled(s["part"], reader(tpath)):
-            return done(f"{s['who']} started working again — will rotate once it is idle")
+        # The last look, in the same step as the mark: its turn over, the
+        # screen quiet, and nobody at its terminal since the handover ask.
+        # Otherwise this attempt is dropped and made again after the cool-down.
+        sess = _pty(part)
+        tpath, reader = _transcript_of(part)
+        since = float(st.get("askSubmit") or 0) if asked else time.time() - IDLE_S
+        if sess is None or not _idle(part, reader(tpath)) or _typed_since(sess, since):
+            st.update(phase="watching", lastAttempt=time.time())
+            return done(f"{s['who']} was typed to or started working again — this "
+                        f"attempt is dropped and made again later")
         _ROTATING[key] = flags
     try:
         return _rotate_marked(s, tr, done, answered, asked, key, flags)
@@ -688,16 +698,26 @@ def _release(key: tuple) -> None:
         _replay(key[0], key[1], held)
 
 
-def _settled(part: dict, tr: dict) -> bool:
-    """Idle, and nothing typed into it lately: a doorbell rung just before the
-    gate was taken may not have reached the transcript yet."""
-    sess = _pty(part)
-    if sess is None or not _idle(part, tr):
-        return False
+def _typed_since(sess, since: float) -> bool:
+    """Someone typed into its terminal (``/api/pty/input``) after ``since``, or
+    anything was submitted to it within IDLE_S — a doorbell rung just before
+    the gate was taken may not have reached the transcript yet."""
     try:
-        return time.time() - float(sess.last_submit() or 0) >= IDLE_S
+        return (float(getattr(sess, "last_input", 0) or 0) > since
+                or time.time() - float(sess.last_submit() or 0) < IDLE_S)
     except Exception:
-        return False
+        return True
+
+
+def await_rotation(room_id: str, timeout: float = 60.0) -> None:
+    """Wait for a rotation of this task under way to finish (a Delete, after
+    its Stop, so it sees the session the rotation added)."""
+    end = time.time() + timeout
+    while time.time() < end:
+        with GATE:
+            if not any(rid == room_id for rid, _ in _ROTATING):
+                return
+        time.sleep(0.2)
 
 
 def is_rotating(room_id: str, identity: str) -> bool:
@@ -850,7 +870,7 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
         except Exception as e:          # the rotation itself has happened
             _log(f"{s['name']}: could not report the rotation to the PO: {str(e)[:200]}")
     st.update(phase="watching", sessionId=info["sessionId"], lastRotation=now)
-    for k in ("askedAt", "askSize", "askPath", "handoverAtAsk", "tokensAtAsk"):
+    for k in ("askedAt", "askSize", "askPath", "handoverAtAsk", "tokensAtAsk", "askSubmit"):
         st.pop(k, None)
     return done(f"rotated at {_k(tokens)} tokens {how} — new session "
                 f"{info['sessionId'] or '(not known yet)'} (pty {info['ptyId']})",
