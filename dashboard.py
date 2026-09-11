@@ -857,15 +857,15 @@ def role_charter(role: str, teammates: list) -> str:
         return (
             f"You own design and implementation. Break the product owner's request "
             f"into steps and do the actual work — write the code, the plan, the diffs. "
-            f"When a piece is ready, send it to {rev} for review before you consider it "
+            f"When a piece is committed, send the commit to {rev} for review before you consider it "
             f"done, and fold in the findings you get back. Go back to the product owner "
             f"only for requirements decisions or final sign-off."
         )
     if role == "reviewer":
         return (
             f"You are the reviewer. Do NOT design, plan, or implement — that is {eng}'s "
-            f"job. Wait until {eng} sends a deliverable (a plan, a diff, code, or a "
-            f"claim); then review it: check it against the product owner's requirements, "
+            f"job. Wait until {eng} sends a commit to review or a specific review "
+            f"question; then review it: check it against the product owner's requirements, "
             f"hunt for bugs, edge cases, risks, and gaps, verify claims by reading the "
             f"actual code or running tests, and reply with a concise, structured critique "
             f"— what is correct, what is wrong, what is missing, and what to change. If "
@@ -896,8 +896,12 @@ def role_charter(role: str, teammates: list) -> str:
     )
 
 
+OWNER_OUTPUT_NOTE = (
+    "No progress narration; tool calls need no preamble. Reports: outcome, evidence "
+    "and tests, files or commit, blocker or next decision. Do not repeat the spec.")
+
 SOLO_REPORT_NOTE = (
-    "\n\n---\nWhen you finish this task, or get blocked and need help, report it "
+    f"\n\n---\n{OWNER_OUTPUT_NOTE} When you finish this task, or get blocked and need help, report it "
     "with the ensemble_report tool (kind completed | blocked | question) — it "
     "reaches the project's PO, who otherwise cannot see your reply.")
 
@@ -907,7 +911,7 @@ SOLO_REPORT_NOTE = (
 RESUME_NOTE = (
     "[resumed] Your task was started again. Your spec may have changed while you "
     "were stopped: read it again with ensemble_get_task, then carry on from where "
-    "you were; do not start over. Report with ensemble_report when you finish or "
+    f"you were; do not start over. {OWNER_OUTPUT_NOTE} Report with ensemble_report when you finish or "
     "are blocked.")
 RESUME_NOTE_WAIT_S = 180    # a terminal that never settles gets the line anyway
 
@@ -931,11 +935,14 @@ def collab_briefing(ident: str, role: str, teammates: list, task: str,
          "to read replies. Write every chat message as GitHub-flavored Markdown "
          "(headings, bullet and numbered lists, inline code for identifiers/paths/"
          "commands, fenced code blocks for code, and tables where useful)."),
-        ("The same MCP server also offers the ensemble_* task tools (list/read/"
-         "create/amend/start/stop/delete tasks in this project); the 'ensemble' "
-         "skill explains how to use them."),
+        ("The same MCP server offers the ensemble_* task tools appropriate to "
+         "your role. Owners and reviewers get read/report tools and may move their "
+         "own task to In review; project POs and planners also get board "
+         "administration. The 'ensemble' skill explains the opt-ins and limits."),
         ("A message to everyone wakes only the task's owner (the engineer); to "
-         "wake a reviewer or another specialist, address it or @mention it. When "
+         "wake another specialist, address it or @mention it. Mention a reviewer "
+         "only for a commit to review or a specific question, never for a plan, an "
+         "acknowledgement, thanks, or a restatement of its verdict. When "
          "the task is finished, or the team is blocked and needs help, the owner "
          "reports it with ensemble_report (kind completed | blocked | question) — "
          "that reaches the project's PO."),
@@ -948,13 +955,23 @@ def collab_briefing(ident: str, role: str, teammates: list, task: str,
             "diff, your message and the task's REVIEW-LOG.md — nothing else of this "
             "conversation. So make every review request self-contained: what to "
             "review, what changed since the last review, what you want checked. Its "
-            "verdict comes back to you and to the PO, and is added to REVIEW-LOG.md.")
+            "verdict comes back to you and to the PO, and is added to REVIEW-LOG.md. "
+            "Do not address or mention a sleeping reviewer for a plan, acknowledgement, "
+            "thanks, or to restate its verdict. Mention it again only with a new commit "
+            "or evidence, an unresolved finding, or a specific new review question.")
     if role == "reviewer":
         eng = next((t["identity"] for t in teammates if t.get("role") == "engineer"), "the engineer")
         parts.append(f"Start by acknowledging your role in one line, then wait for "
                      f"{eng}'s first deliverable — do not begin working the task yourself.")
     else:
-        parts.append("Begin now by sending a teammate your initial plan or approach.")
+        parts.append(OWNER_OUTPUT_NOTE)
+        non_reviewers = [t for t in teammates
+                         if chatroom._role_head(t.get("role", "")) != chatroom.REVIEWER_ROLE]
+        if non_reviewers:
+            parts.append("Begin now by sending a non-reviewer teammate your initial plan or approach.")
+        else:
+            parts.append("Begin work now. Do not wake the reviewer until you have a commit "
+                         "to review or a specific review question.")
     parts.append(f"TASK:\n{task}")
     return "\n\n".join(parts)
 
@@ -5007,7 +5024,7 @@ class Handler(BaseHTTPRequestHandler):
         if len(flat) > 700:
             flat = flat[:700] + "…"
         wake = (f"[report] {kind} from task '{task_title}' ({task_id}, {reporter}): "
-                f"{flat} — read it in full with ensemble_get_task taskId={task_id}.")
+                f"{flat} — read it in full with ensemble_get_task taskId={task_id} messages=0.")
         return self._ring(po_room_id, recipients, wake)
 
     def _mcp_url(self) -> str:
@@ -5340,10 +5357,19 @@ class Handler(BaseHTTPRequestHandler):
             role = part.get("role", "")
             mates = ", ".join(f"{t['identity']} (the {role_title(t['role'])})"
                               for t in teammates) or "your partner"
-            closing = ("Acknowledge your role in one line and wait for the engineer's "
-                       "next deliverable before doing any work yourself."
-                       if role == "reviewer"
-                       else "Pick up the collaboration with chat_send.")
+            reviewer = chatroom._role_head(role) == chatroom.REVIEWER_ROLE
+            has_reviewer = any(chatroom._role_head(t.get("role", "")) ==
+                               chatroom.REVIEWER_ROLE for t in teammates)
+            if reviewer:
+                closing = ("Acknowledge your role in one line and wait for the engineer's "
+                           "next deliverable before doing any work yourself.")
+            elif has_reviewer:
+                closing = (
+                    f"{OWNER_OUTPUT_NOTE} Mention the reviewer only for a commit to review "
+                    "or a specific question, never for a plan, acknowledgement, thanks, or "
+                    "verdict restatement. Begin work without waking it.")
+            else:
+                closing = f"{OWNER_OUTPUT_NOTE} Pick up the collaboration with chat_send."
             brief = (
                 f"[room '{room['title']}'] You are '{part['identity']}', the "
                 f"{role_title(role)} on this team. {role_charter(role, teammates)} "
@@ -5469,14 +5495,13 @@ class Handler(BaseHTTPRequestHandler):
         if method == "ping":
             return ok({})
         if method == "tools/list":
-            # Task tools for everyone; chat tools only make sense in a
-            # collaboration (a solo agent has no teammate to hand off to).
+            # Read/report tools are common; board administration belongs to a
+            # project's PO and explicitly delegated planners. Chat tools only
+            # make sense in a collaboration.
             room = chatroom.get_room(room_id)
-            tools = list(ensemble_tools.TOOLS)
+            tools = ensemble_tools.tool_schemas(room or {}, identity)
             if room and room.get("mode") != "solo":
                 tools = list(chatroom.MCP_TOOLS) + tools
-            if room and chatroom.is_on_mention(room, chatroom.participant(room, identity) or {}):
-                tools += list(ensemble_tools.REVIEW_TOOLS)
             return ok({"tools": tools})
         if method == "tools/call":
             return self._mcp_tool_call(params.get("name"),
