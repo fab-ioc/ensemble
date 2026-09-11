@@ -490,10 +490,33 @@ function codeSpanHtml(body) {
 }
 // Running text, already escaped, in one pass so nothing is linked twice. The
 // links are parked in `keep` and put back by unlinkify, after bold and italics.
-const LINK_RE = /\[([^\]\n]+)\]\(([^)\n]+)\)|(^|[\s(*_])((?:https?|file):\/\/[^\s<*]+)|(^|[\s(*_])((?:[A-Za-z]:[\\\/]|\\\\)(?:[^\s"'<>|?*,;:)\]\\\/]+(?: [^\s"'<>|?*,;:)\]\\\/]+)*[\\\/])*[^\s"'<>|?*,;:)\]\\\/]*\.\w{1,8}(?::\d+(?::\d+)?)?)(?![\w\\\/-])|(^|[\s(*_])((?:~\/|\/)[^\s"'<>|?*,;)\]]*\.\w{1,8}(?::\d+(?::\d+)?)?)(?![\w\\\/-])|(^|[\s(*_])((?:\.\.?[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}(?::\d+(?::\d+)?)?|[\w-]+\.(?:md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|png|jpg|jpeg|gif|svg|sh|ps1|sql|xml|log|ini|cfg)(?::\d+(?::\d+)?)?)(?=[\s.,;:)\]]|$)|\b(room-[0-9a-f]{8})\b/g;
+// A Windows path may have spaces in its folder and file names ("Ensemble
+// Dashboard\My File.md"), up to four words a name, but a name never runs on
+// into a word like "is" or "to": "C:\foo is copied to docs\readme.md" is a
+// sentence, not one path. A path's & arrives escaped, as &amp;.
+// A markdown target may hold one level of brackets: [x](https://w/Foo_(bar)).
+const LINK_RE = (() => {
+  const c = String.raw`(?:[^\s"'<>|?*,;:)\]\\\/&]|&amp;)`, f = String.raw`(?:[^\s"'<>|?*,;:)\]\\\/&.]|&amp;)`;
+  const word = String.raw`(?!(?:a|an|and|are|as|at|be|by|for|from|if|in|into|is|it|of|on|or|so|than|that|the|then|to|via|was|were|with)(?![^\s\\\/]))`;
+  const dir = `${c}+(?: ${word}${c}+){0,3}`, file = `(?:${f}+ ${word}){0,3}${c}*\\.\\w{1,8}`;
+  const line = String.raw`(?::\d+(?::\d+)?)?`, pre = String.raw`(^|[\s(*_])`;
+  return new RegExp([
+    String.raw`\[([^\]\n]+)\]\(((?:[^()\n]|\([^()\n]*\))+)\)`,
+    pre + String.raw`((?:https?|file):\/\/[^\s<*]+)`,
+    pre + String.raw`((?:[A-Za-z]:[\\\/]|\\\\)(?:` + dir + String.raw`[\\\/])*` + file + line + String.raw`)(?![\w\\\/-])`,
+    pre + String.raw`((?:~\/|\/)(?:[^\s"'<>|?*,;)\]&]|&amp;)*\.\w{1,8}` + line + String.raw`)(?![\w\\\/-])`,
+    pre + String.raw`((?:\.\.?[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}` + line
+      + String.raw`|[\w-]+\.(?:md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|png|jpg|jpeg|gif|svg|sh|ps1|sql|xml|log|ini|cfg)` + line + String.raw`)(?=[\s.,;:)\]]|$)`,
+    String.raw`\b(room-[0-9a-f]{8})\b`,
+  ].join('|'), 'g');
+})();
 const LINK_A = String.fromCharCode(0xE002), LINK_Z = String.fromCharCode(0xE003);
+const LINK_MARK_RE = new RegExp('[' + LINK_A + LINK_Z + ']', 'g');
 function linkify(t, keep) {
   const put = h => LINK_A + (keep.push(h) - 1) + LINK_Z;
+  // The text's own marker characters, if it has any, are parked too, so what
+  // unlinkify puts back is only ever what this call parked.
+  t = t.replace(LINK_MARK_RE, put);
   return t.replace(LINK_RE, (m, mdTxt, mdUrl, p1, url, p2, win, p3, nix, p4, rel, room) => {
     if (mdTxt != null) { const h = mdLinkHtml(m, mdTxt, mdUrl); return h === m ? m : put(h); }
     if (url != null) { const [u, tail] = trimUrlTail(url); return p1 + put(urlLinkHtml(u, u)) + tail; }
@@ -502,7 +525,7 @@ function linkify(t, keep) {
     return (p2 ?? p3 ?? p4) + put(fileLinkHtml(s.path, pth, s.line));
   });
 }
-const unlinkify = (t, keep) => t.replace(new RegExp(LINK_A + '(\\d+)' + LINK_Z, 'g'), (_, i) => keep[+i]);
+const unlinkify = (t, keep) => t.replace(new RegExp(LINK_A + '(\\d+)' + LINK_Z, 'g'), (m, i) => keep[+i] ?? m);
 // ---- Links in rendered text: end shared block ------------------------------
 // Relative links inside a document resolve against the document's own folder.
 // A bare name ("NOTES.md") has none: the hub resolves it in the task instead —
@@ -911,8 +934,8 @@ function wireFrameLinks(ifr) {
   document.getElementById('cmt-file').onclick = () => openComposer({ start: -1, end: -1, quote: '' });
   if (!path) { main.innerHTML = '<div class="err">No path given.</div>'; return; }
   const ext = (base.match(/\.(\w+)$/) || [, ''])[1].toLowerCase();
-  // A folder: an absolute path ending in a separator, or with no extension.
-  const absPath = /^(?:[A-Za-z]:[\\\/]|\\\\|\/)/.test(path);
+  // A folder: an absolute or home (~/) path ending in a separator, or with no extension.
+  const absPath = /^(?:[A-Za-z]:[\\\/]|\\\\|~\/|\/)/.test(path);
   if (absPath && (/[\\\/]$/.test(path) || !ext)) {
     const listed = await showDir(path, main);
     if (listed === true) return;

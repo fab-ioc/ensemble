@@ -1822,6 +1822,8 @@ _TEXT_MAX = 512 * 1024   # 512 KB read cap for the file viewer
 
 
 def list_dir(path: str) -> tuple[int, dict]:
+    if path.startswith("~"):             # a home path from a chat link: ~/notes/
+        path = os.path.expanduser(path)
     if not path or not workspace_access_ok(path):
         return 403, {"error": "path_not_allowed"}
     d = Path(path)

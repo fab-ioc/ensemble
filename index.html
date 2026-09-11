@@ -3055,10 +3055,33 @@ function codeSpanHtml(body) {
 }
 // Running text, already escaped, in one pass so nothing is linked twice. The
 // links are parked in `keep` and put back by unlinkify, after bold and italics.
-const LINK_RE = /\[([^\]\n]+)\]\(([^)\n]+)\)|(^|[\s(*_])((?:https?|file):\/\/[^\s<*]+)|(^|[\s(*_])((?:[A-Za-z]:[\\\/]|\\\\)(?:[^\s"'<>|?*,;:)\]\\\/]+(?: [^\s"'<>|?*,;:)\]\\\/]+)*[\\\/])*[^\s"'<>|?*,;:)\]\\\/]*\.\w{1,8}(?::\d+(?::\d+)?)?)(?![\w\\\/-])|(^|[\s(*_])((?:~\/|\/)[^\s"'<>|?*,;)\]]*\.\w{1,8}(?::\d+(?::\d+)?)?)(?![\w\\\/-])|(^|[\s(*_])((?:\.\.?[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}(?::\d+(?::\d+)?)?|[\w-]+\.(?:md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|png|jpg|jpeg|gif|svg|sh|ps1|sql|xml|log|ini|cfg)(?::\d+(?::\d+)?)?)(?=[\s.,;:)\]]|$)|\b(room-[0-9a-f]{8})\b/g;
+// A Windows path may have spaces in its folder and file names ("Ensemble
+// Dashboard\My File.md"), up to four words a name, but a name never runs on
+// into a word like "is" or "to": "C:\foo is copied to docs\readme.md" is a
+// sentence, not one path. A path's & arrives escaped, as &amp;.
+// A markdown target may hold one level of brackets: [x](https://w/Foo_(bar)).
+const LINK_RE = (() => {
+  const c = String.raw`(?:[^\s"'<>|?*,;:)\]\\\/&]|&amp;)`, f = String.raw`(?:[^\s"'<>|?*,;:)\]\\\/&.]|&amp;)`;
+  const word = String.raw`(?!(?:a|an|and|are|as|at|be|by|for|from|if|in|into|is|it|of|on|or|so|than|that|the|then|to|via|was|were|with)(?![^\s\\\/]))`;
+  const dir = `${c}+(?: ${word}${c}+){0,3}`, file = `(?:${f}+ ${word}){0,3}${c}*\\.\\w{1,8}`;
+  const line = String.raw`(?::\d+(?::\d+)?)?`, pre = String.raw`(^|[\s(*_])`;
+  return new RegExp([
+    String.raw`\[([^\]\n]+)\]\(((?:[^()\n]|\([^()\n]*\))+)\)`,
+    pre + String.raw`((?:https?|file):\/\/[^\s<*]+)`,
+    pre + String.raw`((?:[A-Za-z]:[\\\/]|\\\\)(?:` + dir + String.raw`[\\\/])*` + file + line + String.raw`)(?![\w\\\/-])`,
+    pre + String.raw`((?:~\/|\/)(?:[^\s"'<>|?*,;)\]&]|&amp;)*\.\w{1,8}` + line + String.raw`)(?![\w\\\/-])`,
+    pre + String.raw`((?:\.\.?[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}` + line
+      + String.raw`|[\w-]+\.(?:md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|png|jpg|jpeg|gif|svg|sh|ps1|sql|xml|log|ini|cfg)` + line + String.raw`)(?=[\s.,;:)\]]|$)`,
+    String.raw`\b(room-[0-9a-f]{8})\b`,
+  ].join('|'), 'g');
+})();
 const LINK_A = String.fromCharCode(0xE002), LINK_Z = String.fromCharCode(0xE003);
+const LINK_MARK_RE = new RegExp('[' + LINK_A + LINK_Z + ']', 'g');
 function linkify(t, keep) {
   const put = h => LINK_A + (keep.push(h) - 1) + LINK_Z;
+  // The text's own marker characters, if it has any, are parked too, so what
+  // unlinkify puts back is only ever what this call parked.
+  t = t.replace(LINK_MARK_RE, put);
   return t.replace(LINK_RE, (m, mdTxt, mdUrl, p1, url, p2, win, p3, nix, p4, rel, room) => {
     if (mdTxt != null) { const h = mdLinkHtml(m, mdTxt, mdUrl); return h === m ? m : put(h); }
     if (url != null) { const [u, tail] = trimUrlTail(url); return p1 + put(urlLinkHtml(u, u)) + tail; }
@@ -3067,7 +3090,7 @@ function linkify(t, keep) {
     return (p2 ?? p3 ?? p4) + put(fileLinkHtml(s.path, pth, s.line));
   });
 }
-const unlinkify = (t, keep) => t.replace(new RegExp(LINK_A + '(\\d+)' + LINK_Z, 'g'), (_, i) => keep[+i]);
+const unlinkify = (t, keep) => t.replace(new RegExp(LINK_A + '(\\d+)' + LINK_Z, 'g'), (m, i) => keep[+i] ?? m);
 // ---- Links in rendered text: end shared block ------------------------------
 let FILE_LINK_ROOM = '';   // room id woven into file links so /fileview can send comments back
 let FILE_LINK_BASE = '';   // the task folder relative paths resolve against
@@ -3766,7 +3789,9 @@ function jiraSection(r) {
       <h3>Jira</h3>
       <div id="dp-jira-list" style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center;">
         ${(r.jira || []).map(t => `<span class="dp-jira-pill">
-          <a class="row-jira-chip" href="${esc(JIRA_BASE) + esc(t)}" target="_blank" rel="noopener" style="line-height: 22px; padding: 0 10px; font-size: 11.5px;">${esc(t)}</a>
+          ${JIRA_BASE
+            ? `<a class="row-jira-chip" href="${esc(JIRA_BASE) + esc(t)}" target="_blank" rel="noopener" style="line-height: 22px; padding: 0 10px; font-size: 11.5px;" title="Open ${esc(t)} in Jira">${esc(t)}</a>`
+            : `<span class="row-jira-chip" style="line-height: 22px; padding: 0 10px; font-size: 11.5px; cursor: default;">${esc(t)}</span>`}
           <button class="dp-jira-remove" data-ticket="${esc(t)}" title="Unlink ${esc(t)} from this session">×</button>
         </span>`).join('')}
         <button id="dp-jira-add" title="Link a Jira ticket to this session">+ Link</button>
@@ -5578,10 +5603,21 @@ setInterval(() => {
 // unified diff, and line comments batched to a task's chat. ------------------
 let CH_FILE = '', CH_COMMENTS = [];   // [{file, line, side, code, text}]
 let CH_ROOT = '';                     // the repository currently shown (found within the scope)
+// Review comments belong to one repository of one project. Each keeps its own
+// batch and its chosen chat, so moving to another project or repository never
+// sends one's comments to the other's chat, and coming back finds both as they
+// were. CH_COMMENTS is the batch on screen; it is emptied in place, not replaced.
+const CH_BATCHES = new Map();         // 'project id|repo root' -> {comments, to}
+let CH_CTX = '';
+function chUseContext(ctx) {
+  if (!CH_BATCHES.has(ctx)) CH_BATCHES.set(ctx, { comments: [], to: '' });
+  CH_CTX = ctx;
+  CH_COMMENTS = CH_BATCHES.get(ctx).comments;
+}
 function changesPanelHtml(pj) {
   if (!pj || !pj.path) return '<p class="empty">This project has no folder.</p>';
   return scopeBarHtml(pj) + '<div class="chp">'
-    + '<div class="chp-files" id="chp-files" data-scope="' + esc(scopePath(pj)) + '" data-root=""><div class="chf none">loading…</div></div>'
+    + '<div class="chp-files" id="chp-files" data-project="' + esc(pj.id) + '" data-scope="' + esc(scopePath(pj)) + '" data-root=""><div class="chf none">loading…</div></div>'
     + '<div class="chp-diff" id="chp-diff"><div class="wsp-empty">Select a changed file to review its diff. Click a line to comment; send the batch to a task chat.</div></div>'
     + '</div>';
 }
@@ -5592,13 +5628,16 @@ async function chLoadStatus() {
     // task may hold clones a few levels down (e.g. <task>/claude/<name>/).
     const rr = await api('/api/git/roots?path=' + encodeURIComponent(box.dataset.scope));
     const roots = rr.roots || [];
+    if (!box.isConnected) return;       // another project or scope took the panel meanwhile
     if (!roots.length) {
       CH_ROOT = ''; box.dataset.root = '';
+      chUseContext(box.dataset.project + '|'); chRenderTray();
       box.innerHTML = '<div class="chf none">No git repository here yet. When an agent clones one into this folder, its changes show up here.</div>';
       return;
     }
     if (!CH_ROOT || !roots.some(function (r) { return r.path === CH_ROOT; })) CH_ROOT = roots[0].path;
     box.dataset.root = CH_ROOT;
+    chUseContext(box.dataset.project + '|' + CH_ROOT); chRenderTray();
     const repoSel = roots.length > 1
       ? '<select class="chp-repo" title="Which repository">' + roots.map(function (r) {
           return '<option value="' + esc(r.path) + '"' + (r.path === CH_ROOT ? ' selected' : '') + '>' + esc(r.name) + '</option>';
@@ -5712,13 +5751,15 @@ function chFormat(list, what) {
 }
 function chRenderTray() {
   let tray = document.getElementById('ch-tray');
-  if (!CH_COMMENTS.length || PROJECT_TAB !== 'changes' || SB_DEST) { if (tray) tray.remove(); return; }
+  if (!CH_COMMENTS.length || PROJECT_TAB !== 'changes' || SB_DEST || CH_CTX.split('|')[0] !== SELECTED_PROJECT) {
+    if (tray) tray.remove();
+    return;
+  }
   if (!tray) { tray = document.createElement('div'); tray.id = 'ch-tray'; document.body.appendChild(tray); }
-  const pj = projectById(SELECTED_PROJECT);
+  const pj = projectById(CH_CTX.split('|')[0]);   // the batch's own project, whatever is selected
   const rooms = ((pj && pj.sessions) || []).filter(function (s) { return s.roomId; });
   // Rebuilt only when it changes, and the chat you picked stays picked: this
   // runs on every render, and a rebuild put "Send" back on the first chat.
-  const toSel = document.getElementById('ch-to'), keepTo = toSel ? toSel.value : '';
   const html = '<div class="ch-tray-head"><strong>' + CH_COMMENTS.length + ' review comment' + (CH_COMMENTS.length > 1 ? 's' : '') + '</strong><span class="grow"></span>'
     + '<select id="ch-to" title="Which task chat receives the comments">'
     + (rooms.length ? rooms.map(function (r) { return '<option value="' + esc(r.roomId) + '">' + esc(r.label || r.roomId) + '</option>'; }).join('')
@@ -5728,31 +5769,35 @@ function chRenderTray() {
     + '<div class="ch-list">' + CH_COMMENTS.map(function (c, i) {
         return '<div class="ch-item"><span class="ch-loc">' + esc(c.file) + ':' + c.line + ' (' + c.side + ')</span><span class="ch-txt">' + esc(c.text) + '</span><button class="ch-x" data-i="' + i + '" title="Remove">✕</button></div>';
       }).join('') + '</div>';
-  if (tray._html === html) return;
-  tray._html = html;
+  if (tray._html === CH_CTX + html) return;
+  tray._html = CH_CTX + html;
   tray.innerHTML = html;
-  const to = document.getElementById('ch-to');
-  if (keepTo && [...to.options].some(function (o) { return o.value === keepTo; })) to.value = keepTo;
+  const to = document.getElementById('ch-to'), picked = CH_BATCHES.get(CH_CTX).to;
+  if (picked && [...to.options].some(function (o) { return o.value === picked; })) to.value = picked;
+  to.onchange = function () { CH_BATCHES.get(CH_CTX).to = to.value; };
   tray.querySelectorAll('.ch-x').forEach(function (b) {
     b.onclick = function () { CH_COMMENTS.splice(parseInt(b.dataset.i, 10), 1); chRenderTray(); if (CH_FILE) chOpenDiff(CH_FILE); };
   });
-  tray.querySelector('.ch-clear').onclick = function () { CH_COMMENTS = []; chRenderTray(); if (CH_FILE) chOpenDiff(CH_FILE); };
+  tray.querySelector('.ch-clear').onclick = function () { CH_COMMENTS.length = 0; chRenderTray(); if (CH_FILE) chOpenDiff(CH_FILE); };
   tray.querySelector('.ch-copy').onclick = function () {
     navigator.clipboard.writeText(chFormat()).then(function () { toast('comments copied', 1500, 'ok'); }, function () { toast('copy failed', 3000, 'err'); });
   };
   tray.querySelector('.ch-send').onclick = async function () {
     const rid = document.getElementById('ch-to').value;
     if (!rid) { toast('no task chat to send to — use Copy', 3000, 'err'); return; }
+    const batch = CH_COMMENTS, n = batch.length;   // the batch sent is the one emptied, even if you move on meanwhile
     try {
-      await api('/api/room/say', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: rid, text: chFormat(), to: '' }) });
-      toast('sent ' + CH_COMMENTS.length + ' comment(s) to chat', 2500, 'ok');
-      CH_COMMENTS = []; chRenderTray(); if (CH_FILE) chOpenDiff(CH_FILE);
+      await api('/api/room/say', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: rid, text: chFormat(batch), to: '' }) });
+      toast('sent ' + n + ' comment(s) to chat', 2500, 'ok');
+      batch.splice(0, n); chRenderTray(); if (CH_FILE) chOpenDiff(CH_FILE);
     } catch (e) { toast('send failed: ' + e.message, 5000, 'err'); }
   };
 }
 function wireChangesPanel(pj) {
   wireScopeBar();
-  const files = document.getElementById('chp-files'); if (!files) return;
+  // No repository yet, so nothing to comment on until the status names one.
+  chUseContext(((pj && pj.id) || '') + '|');
+  const files = document.getElementById('chp-files'); if (!files) { chRenderTray(); return; }
   CH_FILE = '';
   chLoadStatus();
   files.onclick = function (e) {

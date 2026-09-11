@@ -89,6 +89,16 @@ CASES = [
     "see [below](#setup)",
     "`C:\\Users\\ceo\\Ensemble Dashboard\\task\\`",
     "[the preview](http://127.0.0.1:8797/)",
+    # 17-: the review's adversarial cases
+    "Wrote C:\\Users\\ceo\\Ensemble Dashboard\\My File.md today",
+    "C:\\foo is copied to docs\\readme.md",
+    "see C:\\Users\\me\\a&b\\x.md",
+    "[paren](https://en.wikipedia.org/wiki/Foo_(bar))",
+    "x \ue0020\ue003 y",
+    "see https://a.example/ then \ue0020\ue003",
+    "C:\\Users\\ceo\\New folder\\notes.md is there",
+    "Saved to C:\\temp\\a.md and C:\\temp\\b.md",
+    "[doc](C:\\Users\\ceo\\Ensemble Dashboard\\a (1).md)",
 ]
 
 
@@ -126,6 +136,28 @@ class GeneratedLinks(unittest.TestCase):
         self.assertEqual(hrefs(r[CASES[14]]), ["#setup"])
         self.assertNotIn("_blank", r[CASES[14]], "an in-page anchor must not open a new tab")
         self.assertEqual(viewer_path(hrefs(r[CASES[15]])[0])[0], "C:\\Users\\ceo\\Ensemble Dashboard\\task\\")
+
+    def test_paths_and_markers_in_running_text(self):
+        r = self.render("http://hub-host:8765/")
+        paths = lambda c: [viewer_path(h)[0] for h in hrefs(r[c])]
+        # Spaces in the file name as well as the folders.
+        self.assertEqual(paths(CASES[17]), ["C:\\Users\\ceo\\Ensemble Dashboard\\My File.md"])
+        self.assertEqual(paths(CASES[23]), ["C:\\Users\\ceo\\New folder\\notes.md"])
+        # A sentence is not a path: only the relative file in it is a link.
+        self.assertEqual(paths(CASES[18]), ["docs\\readme.md"])
+        self.assertTrue(r[CASES[18]].startswith("C:\\foo is copied to "), r[CASES[18]])
+        self.assertEqual(paths(CASES[24]), ["C:\\temp\\a.md", "C:\\temp\\b.md"])
+        # An & in a path, which arrives escaped.
+        self.assertEqual(paths(CASES[19]), ["C:\\Users\\me\\a&b\\x.md"])
+        # Brackets in a markdown target, a URL's and a path's.
+        self.assertEqual(hrefs(r[CASES[20]]), ["https://en.wikipedia.org/wiki/Foo_(bar)"])
+        self.assertTrue(r[CASES[20]].endswith(">paren</a>"), r[CASES[20]])
+        self.assertEqual(paths(CASES[25]), ["C:\\Users\\ceo\\Ensemble Dashboard\\a (1).md"])
+        # The text's own marker characters come back as they were, and never
+        # stand in for a link.
+        self.assertEqual(r[CASES[21]], CASES[21])
+        self.assertEqual(hrefs(r[CASES[22]]), ["https://a.example/"])
+        self.assertTrue(r[CASES[22]].endswith(" then \ue0020\ue003"), r[CASES[22]])
 
     def test_on_the_hub_machine(self):
         r = self.render("http://127.0.0.1:8765/")
@@ -318,6 +350,120 @@ class TokenRedirect(unittest.TestCase):
         loc = urlparse(h.sent["Location"])
         self.assertEqual(loc.path, "/fileview")
         self.assertEqual(parse_qs(loc.query), {"path": [path], "room": ["room-35d21def"]})
+
+
+class HomePaths(unittest.TestCase):
+    """A chat link to ~/notes/ or ~/notes/a.md opens on the hub: the folder as
+    a listing (/api/dir), the file through the raw reader (/api/file)."""
+
+    def test_home_folder_and_file(self):
+        import os
+        import tempfile
+        from unittest import mock
+        import dashboard
+
+        with tempfile.TemporaryDirectory() as home:
+            notes = Path(home) / "notes"
+            notes.mkdir()
+            (notes / "a.md").write_text("hi", encoding="utf-8")
+            env = {"USERPROFILE": home, "HOME": home}
+            allowed = lambda p: os.path.normcase(p).startswith(os.path.normcase(home))
+            with mock.patch.dict(os.environ, env), mock.patch.object(dashboard, "workspace_access_ok", allowed):
+                status, d = dashboard.list_dir("~/notes/")
+                self.assertEqual(status, 200, d)
+                self.assertEqual([e["name"] for e in d["entries"]], ["a.md"])
+                self.assertEqual(Path(d["path"]), notes)
+                self.assertEqual(dashboard.resolve_file_ref("~/notes/a.md"), notes / "a.md")
+            self.assertEqual(dashboard.list_dir("~/notes/")[0], 403, "outside the readable folders")
+
+
+CHANGES_JS = r"""
+const reg = new Map();
+class El {
+  constructor() { this.dataset = {}; this.isConnected = false; this._q = {}; this._h = ''; }
+  set innerHTML(h) {
+    this._h = h; this._q = {};
+    if (this.id === 'ch-tray') {
+      const options = [...h.matchAll(/<option value="([^"]*)"/g)].map(m => ({ value: m[1] }));
+      reg.set('ch-to', { options, value: options.length ? options[0].value : '' });
+    }
+  }
+  get innerHTML() { return this._h; }
+  remove() { reg.delete(this.id); if (this.id === 'ch-tray') reg.delete('ch-to'); this.isConnected = false; }
+  querySelectorAll() { return []; }
+  querySelector(s) { return this._q[s] || (this._q[s] = {}); }
+}
+globalThis.document = {
+  getElementById: id => reg.get(id) || null, createElement: () => new El(),
+  body: { appendChild(n) { n.isConnected = true; reg.set(n.id, n); } },
+  querySelector: () => null, querySelectorAll: () => [],
+};
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const toast = () => {}, wireScopeBar = () => {};
+const PROJECTS = {
+  pA: { id: 'pA', sessions: [{ roomId: 'room-aaaaaaa1' }, { roomId: 'room-aaaaaaa2' }] },
+  pB: { id: 'pB', sessions: [{ roomId: 'room-bbbbbbb1' }] },
+  pC: { id: 'pC', sessions: [{ roomId: 'room-ccccccc1' }] },
+};
+const projectById = id => PROJECTS[id];
+let PROJECT_TAB = 'changes', SB_DEST = '', SELECTED_PROJECT = 'pA';
+const sent = []; let hold = null;
+const api = (url, o) => { sent.push(JSON.parse(o.body)); return hold ? hold.p : Promise.resolve({}); };
+%s
+const out = {};
+const tray = () => document.getElementById('ch-tray');
+const say = (text, file) => CH_COMMENTS.push({ file: file || 'a.py', line: 1, side: '+', code: 'x', text });
+(async () => {
+  chUseContext('pA|/repoA'); say('fix A'); chRenderTray();
+  out.aOptions = document.getElementById('ch-to').options.map(o => o.value);
+  const to = document.getElementById('ch-to'); to.value = 'room-aaaaaaa2'; to.onchange();
+  // Project B selected, before its panel is wired: A's tray is not shown on B.
+  SELECTED_PROJECT = 'pB'; chRenderTray(); out.staleTray = !!tray();
+  wireChangesPanel(projectById('pB'));            // no #chp-files in this stub: B's empty context
+  out.bCtx = CH_CTX; out.bComments = CH_COMMENTS.length; out.bTray = !!tray();
+  // The Changes tab left and entered again, back on A: A's batch and its chosen chat.
+  PROJECT_TAB = 'tasks'; chRenderTray(); PROJECT_TAB = 'changes';
+  SELECTED_PROJECT = 'pA'; chUseContext('pA|/repoA'); chRenderTray();
+  out.aBack = CH_COMMENTS.map(c => c.text); out.aTo = document.getElementById('ch-to').value;
+  await tray().querySelector('.ch-send').onclick();
+  out.sentTo = sent.map(s => s.roomId); out.sentHasA = sent[0].text.includes('fix A');
+  out.aAfterSend = CH_BATCHES.get('pA|/repoA').comments.length;
+  // Sent from A, moved to C before the hub answered, commented on C.
+  say('second A'); chRenderTray();
+  let release; hold = { p: new Promise(r => { release = r; }) };
+  const sending = tray().querySelector('.ch-send').onclick();
+  SELECTED_PROJECT = 'pC'; chUseContext('pC|/repoC'); say('fix C', 'c.py');
+  release({}); await sending;
+  out.aAfterMove = CH_BATCHES.get('pA|/repoA').comments.length;
+  out.cAfterMove = CH_BATCHES.get('pC|/repoC').comments.map(c => c.text);
+  console.log(JSON.stringify(out));
+})().catch(e => { console.error(e); process.exit(1); });
+"""
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class ChangesComments(unittest.TestCase):
+    """Review comments on the Changes tab stay with their own project and
+    repository: switching never sends one project's comments to another's chat."""
+
+    def test_comments_follow_their_project(self):
+        src = PAGES["index.html"].replace("\r\n", "\n")
+        i = src.index("// ---- Changes tab")
+        j = src.index("// ---- Roadmap tab", i)
+        out = subprocess.run([NODE, "-e", CHANGES_JS.replace("%s", src[i:j], 1)], capture_output=True,
+                             text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        r = json.loads(out.stdout)
+        self.assertEqual(r["aOptions"], ["room-aaaaaaa1", "room-aaaaaaa2"])
+        self.assertFalse(r["staleTray"], "project A's comments shown on project B")
+        self.assertEqual((r["bCtx"], r["bComments"], r["bTray"]), ("pB|", 0, False))
+        self.assertEqual(r["aBack"], ["fix A"])
+        self.assertEqual(r["aTo"], "room-aaaaaaa2", "the chosen chat was lost")
+        self.assertEqual(r["sentTo"], ["room-aaaaaaa2"])
+        self.assertTrue(r["sentHasA"])
+        self.assertEqual(r["aAfterSend"], 0)
+        self.assertEqual(r["aAfterMove"], 0, "the batch sent is the one emptied")
+        self.assertEqual(r["cAfterMove"], ["fix C"], "C's new comment was dropped")
 
 
 if __name__ == "__main__":
