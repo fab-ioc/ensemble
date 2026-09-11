@@ -427,7 +427,8 @@ def _summarize(room: dict) -> dict:
         "owners": cr.owners(room),
         "participants": [
             {k: p.get(k) for k in ("identity", "kind", "agent", "role",
-                                   "ptyId", "sessionId", "lastExit", "resumedAt")}
+                                   "ptyId", "sessionId", "lastExit", "resumedAt",
+                                   "rotatedAt")}
             for p in room.get("participants", [])
         ],
         "lastMessage": {"from": last.get("from", ""), "to": last.get("to", ""),
@@ -548,12 +549,14 @@ def _owed_since(room: dict, identity: str) -> tuple[float, str]:
     sender = last.get("from", "")
     part = next((p for p in room.get("participants") or []
                  if p.get("identity") == identity), {})
-    resumed = float(part.get("resumedAt") or 0)
+    resumed = max(float(part.get("resumedAt") or 0), float(part.get("rotatedAt") or 0))
     if resumed > float(last.get("ts") or 0):
         # Started again: the hub typed it a line to carry on (see the
-        # dashboard's RESUME_NOTE). That is an ask like a message, dated from
-        # when it was typed; an agent left idle at an empty prompt after it is
-        # exactly what nobody noticed before.
+        # dashboard's RESUME_NOTE), or handed it to a fresh session that
+        # continues from its handover (rotation.py). That is an ask like a
+        # message, dated from when it was made — so a fresh session reading
+        # its handover is not stalled over an older ask — and an agent left
+        # idle at an empty prompt after it is exactly what nobody noticed.
         return resumed, "message"
     if not sender:
         # Nothing has ever been said in this room. In a one-agent task the

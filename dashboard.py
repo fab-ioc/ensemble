@@ -240,13 +240,18 @@ def _backfill_codex_session_ids(room: dict) -> None:
     since = float(room.get("createdAt") or 0.0)
     # Two codex agents can share one workspace, so never hand the same rollout
     # to both — a claimed id is off the table for the rest of the room.
-    taken = {(pp.get("sessionId") or "").strip()
-             for pp in room.get("participants", [])} - {""}
+    # Nor an agent's own earlier conversations: a rotated agent's old rollout
+    # is still the newest in its cwd until the fresh session writes one.
+    taken = set()
+    for pp in room.get("participants", []):
+        taken.update(participant_session_ids(pp))
     found = {}
     for pp in pending:
         cwd = pp.get("cwd") or room.get("cwd") or ""
+        rots = [r for r in pp.get("rotations") or [] if isinstance(r, dict)]
+        p_since = max(since, float(rots[-1].get("startedAt") or 0)) if rots else since
         try:
-            sid = cx.latest_session_id_for_cwd(cwd, since=since)
+            sid = cx.latest_session_id_for_cwd(cwd, since=p_since)
         except Exception:
             sid = ""
         if sid and sid not in taken:
@@ -727,6 +732,9 @@ _SETTINGS_DEFAULTS = {
     # model call, the PO writes its handover and a fresh session takes over
     # from it. 0 = off.
     "poRotateTokens": rotation.DEFAULT_TOKENS,
+    # The same for a running task's owner (its engineer, or its only agent),
+    # from TASK-HANDOVER.md in the task folder. 0 = off.
+    "taskRotateTokens": rotation.DEFAULT_TOKENS,
     # The dashboard theme, shared by every device on this hub. Empty = never
     # chosen here; the pages then hand up whatever their browser had.
     "theme": "",
@@ -796,7 +804,7 @@ def save_settings(settings: dict) -> dict:
             if not isinstance(v, str) or not v.strip() or len(v) > 80:
                 continue
             v = v.strip()
-        if k == "poRotateTokens":
+        if k in ("poRotateTokens", "taskRotateTokens"):
             v = rotation.clamp_tokens(v)
             if v is None:
                 continue
@@ -1183,8 +1191,8 @@ def finish_review(room_id: str, identity: str, verdict: str) -> dict | None:
 
 def participant_session_ids(part: dict) -> list[str]:
     """Every conversation an agent has had on its task: its current one and,
-    for a reviewer on mention, one per earlier review; for a rotated PO, each
-    session it was rotated out of."""
+    for a reviewer on mention, one per earlier review; for a rotated PO or task
+    owner, each session it was rotated out of."""
     sids = [part.get("sessionId") or ""]
     sids += [r.get("sessionId") or "" for r in part.get("reviews") or []
              if isinstance(r, dict)]
@@ -5739,7 +5747,17 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/rotation/check":
             # {projectId, force?, immediate?}: check the PO's size now. force
             # ignores the threshold (it still asks for the handover first);
-            # immediate rotates at once, without asking.
+            # immediate rotates at once, without asking. {roomId, identity?,
+            # ...} checks that task's owner instead.
+            rid = (data.get("roomId") or "").strip()
+            if rid:
+                if chatroom.get_room(rid) is None:
+                    self._send_json(404, {"error": "no_such_room"})
+                    return
+                self._send_json(200, rotation.check_task(
+                    rid, (data.get("identity") or "").strip(),
+                    force=bool(data.get("force")), immediate=bool(data.get("immediate"))))
+                return
             proj = find_project((data.get("projectId") or "").strip())
             if proj is None:
                 self._send_json(404, {"error": "no_such_project"})
