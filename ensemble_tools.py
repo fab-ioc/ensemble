@@ -1105,6 +1105,8 @@ def _delete_task(ctx, args, handler):
     if _d._room_is_live(room):
         raise ToolError("that task is running — stop it first (ensemble_stop_task)")
     res = _d.delete_task(room["id"])
+    if not res.get("ok", True):
+        raise ToolError(res.get("error") or "the task could not be deleted")
     return {"ok": True, "taskId": room["id"], "deleted": True,
             "transcriptsRemoved": len(res.get("transcripts", [])),
             "taskDirKept": room.get("taskDir", "")}

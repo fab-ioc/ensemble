@@ -4249,7 +4249,10 @@ def delete_task(rid: str, members=None) -> dict:
         stop_task(rid)
         # Stop tells a rotation under way to end its fresh session; wait for
         # it, then read again, so the session it added is deleted too.
-        rotation.await_rotation(rid)
+        if not rotation.await_rotation(rid):
+            return {"ok": False, "error": "the task is being handed over to a fresh "
+                                          "session — try again shortly",
+                    "transcripts": [], "folders": []}
         room = chatroom.get_room(rid, public=False) or room
         cwds.append(room.get("cwd", "") or "")
         members = [{"agent": pp.get("agent", ""), "sessionId": sid,
@@ -5708,9 +5711,16 @@ class Handler(BaseHTTPRequestHandler):
             if sess is None:
                 self._send_json(404, {"error": "no_such_pty"})
                 return
-            # Someone at its terminal: an owner rotation waits (rotation.py).
-            sess.last_input = time.time()
-            sess.write(data.get("data", ""))
+            # One step with a rotation's mark (rotation.GATE): input to a task
+            # being handed over is refused rather than reach the session being
+            # ended, and input before it is seen by the rotation's last check.
+            with rotation.GATE:
+                if rotation.room_rotating((sess.meta or {}).get("room", "")):
+                    self._send_json(409, {"error": "handing over to a fresh session, "
+                                                   "try again shortly"})
+                    return
+                sess.last_input = time.time()
+                sess.write(data.get("data", ""))
             self._send_json(200, {"ok": True})
             return
         if p == "/api/pty/resize":
@@ -6082,7 +6092,8 @@ class Handler(BaseHTTPRequestHandler):
             # Unified Delete for a task/collaboration (or a grouped orphan) —
             # see delete_task for exactly what is (and is never) removed.
             rid = (data.get("roomId") or "").strip()
-            self._send_json(200, delete_task(rid, data.get("members") or []))
+            res = delete_task(rid, data.get("members") or [])
+            self._send_json(200 if res.get("ok", True) else 409, res)
             return
         if p == "/api/fork":
             sid = data.get("sessionId")

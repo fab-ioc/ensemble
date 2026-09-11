@@ -709,14 +709,22 @@ def _typed_since(sess, since: float) -> bool:
         return True
 
 
-def await_rotation(room_id: str, timeout: float = 60.0) -> None:
+def room_rotating(room_id: str) -> bool:
+    """An agent of this task is being handed to a fresh session."""
+    with GATE:
+        return any(rid == room_id for rid, _ in _ROTATING)
+
+
+def await_rotation(room_id: str, timeout: float = 60.0) -> bool:
     """Wait for a rotation of this task under way to finish (a Delete, after
-    its Stop, so it sees the session the rotation added)."""
+    its Stop, so it sees the session the rotation added). False if it has not
+    finished by ``timeout``."""
     end = time.time() + timeout
-    while time.time() < end:
-        with GATE:
-            if not any(rid == room_id for rid, _ in _ROTATING):
-                return
+    while True:
+        if not room_rotating(room_id):
+            return True
+        if time.time() >= end:
+            return False
         time.sleep(0.2)
 
 
@@ -821,22 +829,34 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
         # after that is an answer to it.
         fields["rotatedAt"] = started
         drop += ("resumedAt",)
-    # On the room and unmarked in one step, so from here a doorbell rings the
-    # fresh terminal and a Stop ends it. (A Codex session id is learnt below.)
+    # On the room at once, so a doorbell is held for the fresh terminal and a
+    # Stop ends it. The mark is cleared only once the stopped or clean-up path
+    # and a Codex session's id are settled: a Delete waiting on it then sees
+    # the fresh session and deletes it too.
     with GATE:
         patched = _d.chatroom.patch_participant(rid, ident, fields,
                                                 append={"rotations": rec}, drop=drop)
-        stopped = flags["stopped"]
-        _release(key)
     if patched is None:
-        _d.ptyrun.kill(info["ptyId"])
+        _discard_fresh(info, fpart.get("agent", ""), started, agents_in)
         st["phase"] = "watching"
         return done(f"{s['whose']} task went away while rotating — the fresh session "
                     f"was ended")
+    if owner and fpart.get("agent") == "codex" and not info["sessionId"]:
+        sid = _await_codex_session(info["cwd"], started, _taken(agents_in))
+        if sid:
+            rec["toSessionId"] = info["sessionId"] = _learn_session(rid, ident,
+                                                                    info["ptyId"], sid)
+    with GATE:
+        stopped = flags["stopped"]
+        if not stopped:
+            _release(key)
     if stopped:
         _d.stop_task(rid)
         st["phase"] = "watching"
         return done("the task was stopped while rotating — the fresh session was ended")
+    if _d.chatroom.get_room(rid) is None:
+        st["phase"] = "watching"
+        return done(f"{s['whose']} task was deleted as it rotated — nothing posted")
     if not asked:
         how = "without asking for a handover first"
     elif not answered:
@@ -857,14 +877,6 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
                 f"continues from `{TASK_HANDOVER_NAME}`. The previous conversation is kept "
                 f"(session `{old_sid}`).")
         _d.chatroom.post_notice(rid, SENDER, text, {"noticeKind": "rotation", "rotation": rec})
-        if fpart.get("agent") == "codex" and not info["sessionId"]:
-            taken = set()
-            for p in agents_in:
-                taken.update(_d.participant_session_ids(p))
-            sid = _await_codex_session(info["cwd"], started, taken)
-            if sid:
-                rec["toSessionId"] = info["sessionId"] = _learn_session(rid, ident,
-                                                                        info["ptyId"], sid)
         try:
             rec["poWoken"] = _report_to_po(room_full, ident, rec, how)
         except Exception as e:          # the rotation itself has happened
@@ -875,6 +887,29 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
     return done(f"rotated at {_k(tokens)} tokens {how} — new session "
                 f"{info['sessionId'] or '(not known yet)'} (pty {info['ptyId']})",
                 rotation=rec)
+
+
+def _taken(agents_in: list) -> set:
+    """Every session id the task's agents have had: never a fresh one."""
+    taken = set()
+    for p in agents_in:
+        taken.update(_d.participant_session_ids(p))
+    return taken
+
+
+def _discard_fresh(info: dict, agent: str, started: float, agents_in: list) -> None:
+    """The task went away while its fresh session started: end it and delete
+    its conversation, so nothing of it outlives the task."""
+    _d.ptyrun.kill(info["ptyId"])
+    _await_death(info["ptyId"])
+    sid = info["sessionId"]
+    if agent == "codex":
+        sid = sid or _await_codex_session(info["cwd"], started, _taken(agents_in))
+        cx = _d.agents.get_agent("codex")
+        if sid and cx is not None:
+            cx.delete_session(sid)
+    elif sid:
+        _d.delete_session(sid)
 
 
 def _learn_session(rid: str, ident: str, pty_id: str, sid: str) -> str:
