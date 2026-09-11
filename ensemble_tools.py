@@ -12,9 +12,9 @@ Scope rules (deliberately conservative — a planner for project A must not be
 able to reshape project B):
 
 * **Read anywhere.** Listing and reading tasks in any project is allowed.
-* **Write inside your own project.** Create/update/start/stop/delete/move are
-  allowed only on tasks of the caller's project. A caller whose task has no
-  project (Unassigned) may write anywhere — that's the "general planner" case.
+* **Write inside your own project.** For callers with administration tools,
+  create/update/start/stop/delete/move are allowed only on tasks of the caller's
+  project. An administrator whose task has no project may write anywhere.
 * **Never touch yourself.** A task may not stop, delete or move itself.
 * **Stop before delete.** A running task is never deleted underneath its agents.
 
@@ -423,6 +423,7 @@ REVIEW_TOOLS = [
         },
     },
 ]
+REVIEW_TOOL_NAMES = frozenset(t["name"] for t in REVIEW_TOOLS)
 
 
 def _role_head(part: dict) -> str:
@@ -431,8 +432,10 @@ def _role_head(part: dict) -> str:
 
 def is_admin_caller(room: dict, identity: str) -> bool:
     """Whether the caller administers the board: its project's PO or a planner."""
+    if not (room or {}).get("id"):
+        return False
     part = _d.chatroom.participant(room or {}, identity) or {}
-    if _role_head(part) == "planner":
+    if _role_head(part) == "planner" or _d.is_product_owner(room, identity):
         return True
     pid = _project_of_room(room or {})
     project = _projects().get(pid)
@@ -666,8 +669,8 @@ def _load_target(task_id: str) -> dict:
 
 
 def _check_write_scope(ctx: dict, target_pid: str, what: str) -> None:
-    """A caller with a project may only write inside it; a project-less caller
-    may write anywhere."""
+    """An administrator with a project may write only inside it; an allowed
+    project-less administrator may write anywhere."""
     own = ctx["projectId"]
     if own and target_pid != own:
         raise ToolError(f"{what} is out of scope: that task belongs to project "
@@ -1209,6 +1212,9 @@ def call(name: str, args: dict, room_id: str, identity: str, handler) -> tuple[s
         ctx = _caller(room_id, identity)
         if name not in _allowed_names(ctx):
             role = _role_head(ctx["part"]) or "task owner"
+            if name in REVIEW_TOOL_NAMES:
+                raise ToolError(
+                    f"{name} is available only to a reviewer during an active review")
             raise ToolError(
                 f"{name} is not available to role '{role}': board administration "
                 "tools are reserved for a project's PO room or an agent whose "
