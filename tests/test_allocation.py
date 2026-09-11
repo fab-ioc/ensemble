@@ -441,6 +441,83 @@ class AllocationTests(unittest.TestCase):
         saved = chatroom.get_room(room["id"], public=False)
         self.assertEqual(len(saved["reviewAllocations"]), 20)
 
+    def test_review_allocation_preserves_a_message_posted_during_usage_read(self):
+        room = self.room([
+            {"agent": "claude", "model": "opus", "role": "engineer"},
+            {"agent": "codex", "model": "gpt-review", "role": "reviewer"},
+        ], launched=True)
+        reviewer = next(p for p in chatroom.agent_participants(room)
+                        if p["role"] == "reviewer")
+        snap = _snapshot([_window("five_hour", 20)], [_window("five_hour", 15)])
+
+        def post_while_reading():
+            chatroom.post_message(room["id"], "claude", "posted during allowance read")
+            return snap
+
+        with mock.patch.object(dashboard.usage, "snapshot", side_effect=post_while_reading):
+            dashboard.apply_review_allocation(room, reviewer["identity"])
+
+        saved = chatroom.get_room(room["id"], public=False)
+        self.assertEqual(saved["messages"][-1]["text"], "posted during allowance read")
+
+    def test_reviewer_listed_first_is_not_mistaken_for_the_owner(self):
+        room = self.room([
+            {"agent": "codex", "model": "gpt-review", "role": "reviewer"},
+            {"agent": "claude", "model": "opus", "role": "developer"},
+        ], launched=True)
+        reviewer = chatroom.agent_participants(room)[0]
+        identity = reviewer["identity"]
+        snap = _snapshot([_window("five_hour", 20)], [_window("five_hour", 15)])
+
+        with mock.patch.object(dashboard.usage, "snapshot", return_value=snap):
+            room, reviewer, first = dashboard.apply_review_allocation(room, identity)
+            room, reviewer, second = dashboard.apply_review_allocation(room, identity)
+
+        self.assertEqual((reviewer["identity"], reviewer["agent"]), (identity, "codex"))
+        self.assertEqual(first["owner"]["agent"], "claude")
+        self.assertEqual(second["owner"]["agent"], "claude")
+        self.assertFalse(first["changed"])
+        self.assertFalse(second["changed"])
+
+    def test_both_review_kinds_at_warning_still_uses_other_kind(self):
+        room = self.room([
+            {"agent": "claude", "model": "opus", "role": "engineer"},
+            {"agent": "claude", "model": "sonnet", "role": "reviewer",
+             "alt": {"agent": "codex", "model": "gpt-review"}},
+        ], launched=True)
+        reviewer = next(p for p in chatroom.agent_participants(room)
+                        if p["role"] == "reviewer")
+        snap = _snapshot([_window("five_hour", 84)], [_window("five_hour", 82)])
+
+        with mock.patch.object(dashboard.usage, "snapshot", return_value=snap):
+            _room, _reviewer, allocation = dashboard.apply_review_allocation(
+                room, reviewer["identity"])
+
+        self.assertEqual(allocation["chosen"]["agent"], "codex")
+        self.assertIn("both agent kinds", allocation["reason"])
+
+    def test_review_kind_round_trip_restores_primary_and_alt_models(self):
+        room = self.room([
+            {"agent": "claude", "model": "opus", "role": "engineer"},
+            {"agent": "codex", "model": "gpt-review", "role": "reviewer",
+             "alt": {"agent": "claude", "model": "sonnet"}},
+        ], launched=True)
+        reviewer = next(p for p in chatroom.agent_participants(room)
+                        if p["role"] == "reviewer")
+        identity = reviewer["identity"]
+        use_owner = _snapshot([_window("five_hour", 20)], [_window("five_hour", 83)])
+        use_other = _snapshot([_window("five_hour", 20)], [_window("five_hour", 25)])
+
+        with mock.patch.object(dashboard.usage, "snapshot", return_value=use_owner):
+            room, reviewer, first = dashboard.apply_review_allocation(room, identity)
+        with mock.patch.object(dashboard.usage, "snapshot", return_value=use_other):
+            room, reviewer, second = dashboard.apply_review_allocation(room, identity)
+
+        self.assertEqual((first["chosen"]["agent"], first["chosen"]["model"]),
+                         ("claude", "sonnet"))
+        self.assertEqual((second["chosen"]["agent"], second["chosen"]["model"]),
+                         ("codex", "gpt-review"))
+
     def test_old_room_without_preference_still_allocates_a_review(self):
         room = self.room(None, launched=True)
         reviewer = next(p for p in chatroom.agent_participants(room)

@@ -4299,12 +4299,9 @@ def apply_first_launch_allocation(room_full: dict) -> dict | None:
         agent = agents.get_agent(seat.get("agent", ""))
         if not (agent and agent.installed()):
             raise StartRoomError(f"agent_unavailable:{seat.get('agent', '')}")
-        chosen = [{"agent": seat.get("agent", ""),
-                   "model": seat.get("model", ""),
-                   "role": seat.get("role", "")}]
         allocation = {
             "preferred": copy.deepcopy(preferred),
-            "chosen": copy.deepcopy(chosen),
+            "chosen": [],
             "reason": "kept as picked: a one-agent task you created",
             "changed": False,
             "at": time.time(),
@@ -4371,8 +4368,8 @@ def _participant_seat_preference(room_full: dict, identity: str, part: dict) -> 
     """The stored preference belonging to ``identity``, with legacy fallback."""
     preferred = room_full.get("agentPreference")
     if isinstance(preferred, list):
-        first_chosen = (room_full.get("allocation") or {}).get("chosen") or []
-        i = next((n for n, seat in enumerate(first_chosen)
+        participants = chatroom.agent_participants(room_full)
+        i = next((n for n, seat in enumerate(participants)
                   if seat.get("identity") == identity), None)
         if i is not None and i < len(preferred):
             return copy.deepcopy(preferred[i])
@@ -4440,8 +4437,15 @@ def apply_review_allocation(room_full: dict, identity: str) -> tuple[dict, dict,
     if part is None:
         raise StartRoomError(f"agent_unavailable:{identity}")
     participants = chatroom.agent_participants(room_full)
-    owner_i = _allocation_owner_index(participants)
-    owner = participants[owner_i]
+    owner_identity = next((owner for owner in chatroom.owners(room_full)
+                           if owner != identity), "")
+    owner = (chatroom.participant(room_full, owner_identity)
+             if owner_identity else None)
+    if owner is None:
+        owner = next((p for p in participants if p.get("identity") != identity), None)
+    if owner is None:
+        raise StartRoomError("review_owner_unavailable")
+    owner = dict(owner)  # part may change below; the audit describes this owner.
     owner_kind = owner.get("agent", "")
     preferred_kind = {"claude": "codex", "codex": "claude"}.get(owner_kind, "")
     current_kind = part.get("agent", "")
@@ -4497,10 +4501,13 @@ def apply_review_allocation(room_full: dict, identity: str) -> tuple[dict, dict,
             **({"error": decision["error"]} if decision.get("error") else {}),
         },
     }
-    history = list(room_full.get("reviewAllocations") or [])
-    history.append(allocation)
-    room_full["reviewAllocations"] = history[-_REVIEW_ALLOCATION_LIMIT:]
-    chatroom.update_room(room_full)
+    updated = chatroom.apply_review_allocation(
+        room_full["id"], identity, chosen["agent"], chosen["model"], allocation,
+        limit=_REVIEW_ALLOCATION_LIMIT)
+    if updated is None:
+        raise StartRoomError(f"agent_unavailable:{identity}")
+    room_full = updated
+    part = chatroom.participant(room_full, identity)
     assigned = [
         {"identity": p.get("identity", ""), "agent": p.get("agent", ""),
          "model": p.get("model", ""), "role": p.get("role", "")}
@@ -4683,14 +4690,14 @@ def reassign_task(rid: str, agent_list, human: bool = False) -> tuple[bool, dict
                  "model": pp.get("model", ""), "role": pp.get("role", "")}
                 for pp in chatroom.agent_participants(room)]
     room["lineupPickedByHuman"] = bool(human)
+    room["agentPreference"] = preferences
     if not room.get("launched", True):
-        room["agentPreference"] = preferences
         room.pop("allocation", None)
     chatroom.update_room(room)
     _patch_task_json(room.get("taskDir", ""), agents=assigned, mode=room["mode"],
                      lineupPickedByHuman=bool(human),
-                     **({"agentPreference": preferences, "allocation": None}
-                        if not room.get("launched", True) else {}))
+                     agentPreference=preferences,
+                     **({"allocation": None} if not room.get("launched", True) else {}))
     return True, room, ""
 
 

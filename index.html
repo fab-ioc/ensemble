@@ -3674,12 +3674,14 @@ function detailInfo(r) {
   if (r.members && r.members.length) {
     // Who is on this task, and — just as important — which model each one
     // runs. "claude" alone doesn't say what is doing the work.
-    const reviewAllocation = (r.reviewAllocations || []).slice(-1)[0];
-    const shownAllocation = reviewAllocation && reviewAllocation.changed
-      ? reviewAllocation
-      : (r.allocation && r.allocation.changed ? r.allocation : null);
-    const allocation = shownAllocation && shownAllocation.reason
-      ? `<div class="dp-allocation">${esc(shownAllocation.reason)}</div>` : '';
+    const reviewAllocation = [...(r.reviewAllocations || [])].reverse()
+      .find(a => a && a.changed && a.reason);
+    const allocationNotes = [
+      r.allocation && r.allocation.changed ? r.allocation.reason : '',
+      reviewAllocation ? reviewAllocation.reason : '',
+    ].filter(Boolean);
+    const allocation = allocationNotes
+      .map(reason => `<div class="dp-allocation">${esc(reason)}</div>`).join('');
     parts.push(`<div class="dp-section"><h3>Assigned</h3><div style="display: flex; flex-wrap: wrap; gap: 6px;">${r.members.map(m => {
       const bits = [esc(m.identity || m.agent), esc(m.model || 'default model')];
       if (m.role) bits.push(esc(m.role));
