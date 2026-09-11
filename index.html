@@ -4776,6 +4776,7 @@ function wireProjectsChrome() {
   document.querySelectorAll('.ptabs button[data-ptab]').forEach(b => b.onclick = () => {
     PROJECT_TAB = b.dataset.ptab; renderRows();
   });
+  document.querySelectorAll('.viewsw button[data-view]').forEach(b => b.onclick = () => setViewMode(b.dataset.view));
   document.querySelectorAll('.proj .srow[data-sid]').forEach(r => r.onclick = (e) => {
     e.stopPropagation(); if (r.dataset.sid) openDetail(r.dataset.sid);
   });
