@@ -55,6 +55,17 @@ def _priority_spec(tail: str) -> dict:
     # takes "2" and 2 alike, so nothing is lost by not declaring a union.
     return {"type": "string", "description": f"{_PRIORITY_DOC} {tail}"}
 
+_ALT_AGENT_SPEC = {
+    "type": "object",
+    "properties": {
+        "agent": {"type": "string",
+                  "description": "Alternative agent kind for this seat: \"claude\" or \"codex\"."},
+        "model": {"type": "string",
+                  "description": "Optional model to use if this alternative kind is chosen."},
+    },
+    "required": ["agent"],
+}
+
 _AGENT_SPEC = {
     "type": "object",
     "properties": {
@@ -69,6 +80,7 @@ _AGENT_SPEC = {
         "role": {"type": "string",
                  "description": "Optional role: \"engineer\", \"reviewer\", \"planner\", "
                                 "\"pair\", or free text used verbatim as the role's charter."},
+        "alt": _ALT_AGENT_SPEC,
     },
     "required": ["agent"],
 }
@@ -179,7 +191,9 @@ _ALL_TOOLS = [
         "description": (
             "How much of each agent kind's plan allowance is spent, and when the "
             "windows reset — the same reading the board header shows. Use it "
-            "before starting more work, to see whether there is room. The numbers "
+            "before starting many tasks at once, to see whether there is room. "
+            "A draft's first launch also uses this cached snapshot to make its "
+            "final owner/reviewer allocation; reading it makes no network call. The numbers "
             "are **account-wide**: every task on this machine shares them, so they "
             "say nothing about what one task cost (that is the per-task cost "
             "chip). Claude and Codex have separate allowances — read them "
@@ -194,8 +208,7 @@ _ALL_TOOLS = [
             "window with `percent: null` has no current "
             "value at all: either `rolledOver` (it has already reset) or "
             "`resetUnknown` (no reset time to check against) — treat both as "
-            "unknown and never fall back to `stalePercent`. Nothing here is "
-            "enforced — deciding what to do is yours or the product owner's."
+            "unknown and never fall back to `stalePercent`."
         ),
         "inputSchema": {"type": "object", "properties": {}},
     },
@@ -222,9 +235,12 @@ _ALL_TOOLS = [
             "Create a new task in a project: a title, a full specification (this "
             "becomes the agent's first prompt, so write it as a complete brief in "
             "Markdown — goal, context, acceptance criteria, constraints), and the "
-            "agents that will work it. By default the task is created as a DRAFT "
+            "preferred agent line-up. By default the task is created as a DRAFT "
             "(not launched) so the product owner can review it in the dashboard; "
-            "set start=true to launch it immediately. One agent = a solo task the "
+            "set start=true to launch it immediately. On that first launch the hub "
+            "checks the latest cached plan allowance and may swap owner/reviewer "
+            "kinds; a seat can name `alt: {agent, model}` when its alternative kind "
+            "needs a particular model. One agent = a solo task the "
             "human drives; two or more = an autonomous collaboration (give them "
             "roles, e.g. engineer + reviewer). Returns the new task id."
         ),
@@ -236,7 +252,8 @@ _ALL_TOOLS = [
                 "projectId": {"type": "string",
                               "description": "Project to create the task in (default: your own project)."},
                 "agents": {"type": "array", "items": _AGENT_SPEC,
-                           "description": "Agents for the task (default: one agent of your own kind)."},
+                           "description": "Preferred agents for the task (default: one agent of your "
+                                          "own kind); the hub makes the final choice at first launch."},
                 "workspace": {"type": "string",
                               "enum": ["empty", "inplace", "copy", "worktree"],
                               "description": "Workspace mode: empty (own task folder, no code — the default), "
@@ -294,7 +311,10 @@ _ALL_TOOLS = [
         "name": "ensemble_start_task",
         "description": (
             "Launch a draft task's agents, or relaunch a stopped task's agents "
-            "resuming their previous conversation; its owner is then told to re-read "
+            "resuming their previous conversation. A draft's first launch checks "
+            "the latest cached plan allowance, records the preferred and chosen "
+            "line-ups, and returns the reason; a relaunch keeps the kinds that own "
+            "the existing conversations. A resumed owner is then told to re-read "
             "its spec and carry on (the spec itself is not sent again). Fails if the "
             "task is already running."
         ),
@@ -613,6 +633,7 @@ def _row(room: dict, projects: dict, links: dict, labels: dict,
         "projectId": pid,
         "project": (projects.get(pid) or {}).get("name", "") if pid else "",
         "agents": _agents_view(room),
+        "allocation": room.get("allocation"),
         "specPreview": (spec[:160] + "…") if len(spec) > 160 else spec,
         "messages": len(room.get("messages", []) or []),
         "lastReport": _report_view(room),
@@ -1002,12 +1023,15 @@ def _create_task(ctx, args, handler):
     if args.get("start") is True:
         handler._start_room(room_full)
         started = True
+    allocation = room_full.get("allocation") if started else None
     return {"ok": True, "taskId": room_full["id"], "title": room_full["title"],
             "status": "running" if started else "draft",
             "priority": _d.PRIORITY_NAMES[_d.priority_of(room_full)],
             "projectId": pid, "taskDir": room_full.get("taskDir", ""),
             "cwd": room_full.get("cwd", ""),
-            "note": ("launched" if started else
+            "agents": _agents_view(room_full),
+            **({"allocation": allocation} if allocation else {}),
+            "note": ((allocation or {}).get("reason", "launched") if started else
                      "created as a draft — the product owner can start it from the "
                      "dashboard, or call ensemble_start_task")}
 
@@ -1082,9 +1106,16 @@ def _start_task(ctx, args, handler):
     _not_self(ctx, room, "start")
     if _d._room_is_live(room):
         raise ToolError("that task is already running")
-    launched = handler._start_or_resume_room(room)
+    first_launch = not room.get("launched", True)
+    handler._start_or_resume_room(room)
+    active = _d.chatroom.get_room(room["id"], public=False) or room
+    allocation = active.get("allocation") if first_launch else None
+    chosen = _agents_view(active)
     return {"ok": True, "taskId": room["id"], "status": "running",
-            "agents": [x["identity"] for x in launched]}
+            "agents": [a["identity"] for a in chosen],
+            "chosenAgents": chosen,
+            **({"allocation": allocation, "note": allocation.get("reason", "")}
+               if allocation else {"note": "resumed with the existing agent line-up"})}
 
 
 def _stop_task(ctx, args, handler):

@@ -278,22 +278,29 @@ before it reports. Every spec ends by telling the owner to report with
 `ensemble_report` when finished or blocked — never `chat_send to="user"`, which
 reaches nobody who is watching.
 
-**Allocate with the allowance in view.** Claude and Codex have separate plan
-allowances, and either can be the owner or the reviewer. Read
-`ensemble_plan_usage` before you start work, and spread the load:
+**Allocate when the task starts.** Claude and Codex have separate plan
+allowances, and either can be the owner or the reviewer. A draft's line-up is a
+preference, not a reservation: name the kind and model you would choose for each
+seat, plus an alternative kind/model where the model matters. On the first
+launch the hub reads the same cached allowance snapshot as the header and makes
+the final choice without a network call:
 
-- Give the owner seat to the kind with more room left, and the reviewer, if
-  any, to the other kind, so one task does not spend one allowance twice.
-- When one kind passes the warning (80%), start new work on the other; past
-  the alarm (95%), start nothing more on it.
-- A Codex window with `trusted: false` is a floor, not a reading: Codex writes
-  its usage only when one of its agents takes a turn. Codex doing work is what
-  refreshes it.
-- Choose the model for the job and name it in the line-up: Opus for ambiguous,
-  design-heavy or risky work; Codex or a cheaper model for well-specified
-  implementation; Fable only where it is known to do well.
-- When you tell the product owner what you started, say who got each task and
-  why whenever it is not the obvious choice.
+- It keeps the preference unless the preferred owner kind is at or above the
+  warning (80%) while the other installed kind is below it. Then it swaps the
+  kinds between owner and reviewer, so one task still does not spend one
+  allowance twice. A changed seat uses that kind's default model unless the
+  preference names an alternative model for it.
+- It judges each kind by its worst 5-hour or 7-day window. An untrusted value is
+  a floor and still counts; an unavailable, rolled-over, reset-unknown or null
+  value never causes a swap.
+- If both kinds are at or above the alarm (95%), it still starts as preferred
+  and says so. The product owner decides whether the work should run.
+- The task records the preferred and chosen line-ups, the cached figures, the
+  time and a one-sentence reason. A task that has run keeps those agents when it
+  resumes because the conversations belong to their kinds.
+- Before starting many tasks at once, still read `ensemble_plan_usage`: each
+  launch decides correctly in isolation, but only the product owner can decide
+  how much concurrent work the remaining allowance should fund.
 
 **Closing a task.** When a task reports `completed`: read the whole report
 (`ensemble_get_task`), review the diff, merge its branch into the project's
@@ -315,8 +322,8 @@ handover):
 1. Write `PO-HANDOVER.md` and `ROADMAP.md` in the project home from the
    project's own plans and what you know. The roadmap is direction; the
    handover is state.
-2. Every task not in Done: a line-up by the rules above with the allowance in
-   view, `workspace: worktree` for code, and a spec that ends with
+2. Every task not in Done: a preferred line-up by the rules above,
+   `workspace: worktree` for code, and a spec that ends with
    `ensemble_report`. Amend drafts with `ensemble_update_task`.
 3. Every Done task whose branch has commits not on main (the digest says so):
    merged, reopened with a reason, or recorded in the handover as dropped.
@@ -355,12 +362,15 @@ When asked to plan (or when your role is `planner`):
 3. Break the goal into tasks that are **independently workable**, small enough
    for one agent session, and ordered by dependency. Name dependencies in the
    spec ("depends on: <task title/id>") — Ensemble does not enforce them.
-4. Create each with `ensemble_create_task` as a **draft**. Choose agents:
+4. Create each with `ensemble_create_task` as a **draft**. Name a preferred line-up:
    - one agent (`[{"agent": "claude"}]`) for a task the product owner will
      drive interactively;
    - for autonomous work, one owner (`"role": "engineer"`), plus a reviewer
-     of the other kind when the work merits one — which kind takes which seat
-     follows the allowance (see *Allocate with the allowance in view*);
+     of the other kind when the work merits one. Choose each preferred kind for
+     the job and name its model; when a seat needs a specific model under the
+     other kind too, add `"alt": {"agent": "…", "model": "…"}`. The hub
+     makes the final allowance-aware choice at first launch (see *Allocate when
+     the task starts*);
    - `workspace`: `empty` for research/writing tasks, `worktree` for code
      changes in a git project (own branch), `inplace` only when the product
      owner wants edits directly in the project folder.
