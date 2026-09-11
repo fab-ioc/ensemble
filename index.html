@@ -3675,10 +3675,16 @@ function detailInfo(r) {
     // Who is on this task, and — just as important — which model each one
     // runs. "claude" alone doesn't say what is doing the work.
     const handover = r.allocation && r.allocation.handover;
-    const allocation = (r.allocation && r.allocation.changed && r.allocation.reason
-      ? `<div class="dp-allocation">${esc(r.allocation.reason)}</div>` : '')
-      + (handover && handover.reason && (handover.changed || handover.alarm || handover.switchFailed)
-        ? `<div class="dp-allocation">Handover ${esc(String(handover.n || ''))}: ${esc(handover.reason)}</div>` : '');
+    const reviewAllocation = [...(r.reviewAllocations || [])].reverse()
+      .find(a => a && a.changed && a.reason);
+    const allocationNotes = [
+      r.allocation && r.allocation.changed ? r.allocation.reason : '',
+      handover && handover.reason && (handover.changed || handover.alarm || handover.switchFailed)
+        ? `Handover ${handover.n || ''}: ${handover.reason}` : '',
+      reviewAllocation ? reviewAllocation.reason : '',
+    ].filter(Boolean);
+    const allocation = allocationNotes
+      .map(reason => `<div class="dp-allocation">${esc(reason)}</div>`).join('');
     parts.push(`<div class="dp-section"><h3>Assigned</h3><div style="display: flex; flex-wrap: wrap; gap: 6px;">${r.members.map(m => {
       // A seat keeps its name when a handover moves it to the other kind.
       const who = m.identity || m.agent;
@@ -6940,6 +6946,7 @@ function showNewSessionModal(category, projectId) {
           pinned: false, category: '', archived: false, parent: '', jira: [], cost: 0,
           currentTheme: '', first: '', last: '', transcriptPath: '',
           allocation: rm.allocation || null,
+          reviewAllocations: rm.reviewAllocations || [],
         });
         openDetail(rm.id);
       }

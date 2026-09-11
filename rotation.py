@@ -41,9 +41,11 @@ A task owner's fresh session may be **the other kind** (Claude ↔ Codex): it
 starts from a written file, not the old conversation, so the hub applies the
 first-launch allowance rule (:func:`choose_owner_kind`). A switch keeps the
 seat's identity and token, takes the other kind's model from the task's
-preferred line-up (``alt``) or its default, moves a reviewer on mention of the
-new kind to the old one, and falls back to the old kind if the new one does
-not start. The PO always stays as it is.
+preferred line-up (``alt``) or its default, and falls back to the old kind if
+the new one does not start. A one-agent task a human picked keeps its kind. A
+reviewer on mention needs nothing here: each review start picks the kind other
+than the owner's current one (the dashboard's ``apply_review_allocation``). The
+PO always stays as it is.
 
 Bound to the dashboard module like ``digest``: nothing here reads ``_d`` at
 import time.
@@ -590,6 +592,12 @@ def choose_owner_kind(room: dict, part: dict, snapshot: dict | None = None,
     out = {"agent": cur, "model": cur_model, "fromAgent": cur, "fromModel": cur_model,
            "changed": False, "alarm": False, "why": "", "usage": {}}
     name = _d._agent_kind_name
+    pref = room.get("agentPreference")
+    if room.get("lineupPickedByHuman") is True and isinstance(pref, list) and len(pref) == 1:
+        # As at first launch: a one-agent task a human created keeps its kind.
+        out.update(reason=f"Owner kept on {name(cur)}: kept as picked, a one-agent "
+                          f"task you created.", usage={"skipped": "human-picked solo"})
+        return out
     try:
         snap = _d.usage.snapshot() if snapshot is None else snapshot
         installed = installed or _installed
@@ -632,69 +640,15 @@ def choose_owner_kind(room: dict, part: dict, snapshot: dict | None = None,
     return out
 
 
-def _session_kinds(part: dict) -> dict:
+def session_kinds(part: dict) -> dict:
     """Every conversation the agent has had, with the kind it had it as —
-    kept before its kind changes, so each is still found and deleted as the
-    right kind (see the dashboard's ``session_agent``)."""
+    kept before its kind changes (an owner's handover, a reviewer's per-review
+    choice), so each is still found and deleted as the right kind (see the
+    dashboard's ``session_agent``)."""
     kinds = dict(part.get("sessionKinds") or {})
     for sid in _d.participant_session_ids(part):
         kinds.setdefault(sid, part.get("agent", ""))
     return kinds
-
-
-def _move_reviewer(rid: str, owner: str, to_kind: str, from_kind: str,
-                   only: str = "") -> dict | None:
-    """A reviewer on mention of the kind the owner moved to goes to the kind
-    the owner left, so the other kind still reviews the work. One reviewing
-    right now keeps its kind for that review and moves at its next start
-    (``pendingKind``, applied by ``apply_pending_kind``). ``only`` limits it to
-    one reviewer (to move it back). None when there is no such reviewer.
-
-    Under the dashboard's review-launch lock, on the room as it is now, so a
-    review started meanwhile is seen as running and never retagged under it."""
-    cr = _d.chatroom
-    with _d._REVIEW_LAUNCH_LOCK:
-        room = cr.get_room(rid, public=False) or {}
-        for p in cr.agent_participants(room):
-            ident = p["identity"]
-            kind = (p.get("pendingKind") or {}).get("agent") or p.get("agent")
-            if (ident == owner or (only and ident != only) or kind != to_kind
-                    or not cr.is_on_mention(room, p)):
-                continue
-            _, seat = _preferred_seats(room)
-            model = _model_for(seat, from_kind)
-            rv = {"identity": ident, "agent": from_kind, "model": model,
-                  "fromAgent": to_kind, "fromModel": p.get("model", "")}
-            if p.get("agent") == from_kind:     # a move still pending, undone
-                done = cr.patch_participant(rid, ident, {}, drop=("pendingKind",))
-                rv.update(moved=True, fromModel=model)
-            elif _pty(p) is not None:
-                done = cr.patch_participant(rid, ident, {"pendingKind": {
-                    "agent": from_kind, "model": model}})
-                rv.update(moved=False, pending=True)
-            else:
-                done = cr.patch_participant(rid, ident, {
-                    "agent": from_kind, "model": model,
-                    "sessionKinds": _session_kinds(p)}, drop=("pendingKind",))
-                rv["moved"] = True
-            return rv if done is not None else None
-    return None
-
-
-def apply_pending_kind(rid: str, part: dict) -> dict:
-    """A reviewer's move to the other kind that waited for its review to end,
-    made as its next review starts (the dashboard's ``_start_review``, under
-    its review-launch lock). Returns the participant as it now is."""
-    pend = part.get("pendingKind") or {}
-    if not pend.get("agent"):
-        return part
-    fields = {"agent": pend["agent"], "model": pend.get("model", "")}
-    if pend["agent"] != part.get("agent"):
-        fields["sessionKinds"] = _session_kinds(part)
-    patched = _d.chatroom.patch_participant(rid, part["identity"], fields,
-                                            drop=("pendingKind",))
-    out = {k: v for k, v in part.items() if k != "pendingKind"}
-    return {**out, **fields} if patched is not None else part
 
 
 def _launch_owner(launcher, room: dict, fpart: dict, text_for, solo: bool, cwd,
@@ -787,13 +741,6 @@ def _fall_back(key: tuple, flags: dict, w: dict) -> dict | None:
     _log(f"{rid}/{ident}: its {new_kind} terminal ended as it started — starting it "
          f"as {old_kind}")
     _discard_fresh(w["info"], new_kind, w["started"], w["agentsIn"])
-    reviewer = w["reviewer"]
-    if reviewer and (reviewer.get("moved") or reviewer.get("pending")):
-        try:
-            _move_reviewer(rid, ident, old_kind, new_kind, only=reviewer["identity"])
-            reviewer = None
-        except Exception as e:
-            _log(f"{rid}/{ident}: could not move the reviewer back: {str(e)[:200]}")
     room = _d.chatroom.get_room(rid, public=False)
     if room is None:
         return None
@@ -802,7 +749,7 @@ def _fall_back(key: tuple, flags: dict, w: dict) -> dict | None:
         room, old, w["text_for"](old_kind), collab=not w["solo"], cwd=w["cwd"])
     rec = {**rec, "toSessionId": info["sessionId"], "agent": old_kind,
            "model": old.get("model", ""),
-           "allocation": _allocation_rec(w["choice"], failed, reviewer)}
+           "allocation": _allocation_rec(w["choice"], failed)}
     fields = {"sessionId": info["sessionId"], "ptyId": info["ptyId"],
               "cwd": info["cwd"], "pid": None, "agent": old_kind,
               "model": old.get("model", "")}
@@ -842,7 +789,7 @@ def _fall_back(key: tuple, flags: dict, w: dict) -> dict | None:
     return rec
 
 
-def _allocation_rec(choice: dict, failed: str, reviewer: dict | None) -> dict:
+def _allocation_rec(choice: dict, failed: str) -> dict:
     """What the rotation record and the task keep of the decision."""
     rec = {k: choice[k] for k in ("agent", "model", "fromAgent", "fromModel", "changed",
                                   "alarm", "reason", "why")}
@@ -851,8 +798,6 @@ def _allocation_rec(choice: dict, failed: str, reviewer: dict | None) -> dict:
         rec.update(switchFailed=failed, changed=False,
                    reason=f"{choice['reason']} It did not start ({failed}), so the owner "
                           f"stayed on {_d._agent_kind_name(choice['fromAgent'])}.")
-    if reviewer:
-        rec["reviewer"] = reviewer
     return rec
 
 
@@ -865,17 +810,7 @@ def _kind_note(rec: dict) -> str:
         return (f"a fresh {name(rec.get('agent', ''))} session (switching to "
                 f"{name(a.get('agent', ''))} failed: {a['switchFailed']})")
     if a.get("changed"):
-        why = a.get("why") or ""
-        rv = a.get("reviewer") or {}
-        if rv.get("moved"):
-            why += f"; its reviewer {rv['identity']} now runs on {name(rv['agent'])}"
-        elif rv.get("pending"):
-            why += (f"; its reviewer {rv['identity']} moves to {name(rv['agent'])} "
-                    f"after the review it is doing")
-        elif rv:
-            why += (f"; its reviewer {rv['identity']} stays on {name(rv['agent'])} "
-                    f"as {rv['why']}")
-        return f"a fresh {name(a['agent'])} session ({why})"
+        return f"a fresh {name(a['agent'])} session ({a.get('why') or ''})"
     if a.get("alarm"):
         pct = (a.get("usage") or {}).get("alarmPercent", _d.usage.ALARM_PERCENT)
         return f"a fresh session (Claude and Codex are both past the {float(pct):g}% alarm)"
@@ -1191,13 +1126,7 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
 
         info, used, failed = _launch_owner(launcher, room_full, fpart, text_for, solo,
                                            cwd, choice)
-        reviewer = None
-        if used.get("agent") != old_kind:
-            try:
-                reviewer = _move_reviewer(rid, ident, used["agent"], old_kind)
-            except Exception as e:      # the owner's switch stands without it
-                _log(f"{s['name']}: could not move the reviewer: {str(e)[:200]}")
-        allocation = _allocation_rec(choice, failed, reviewer)
+        allocation = _allocation_rec(choice, failed)
     now = time.time()
     n = len(fpart.get("rotations") or []) + 1
     rec = {"n": n, "at": now, "fromSessionId": old_sid, "toSessionId": info["sessionId"],
@@ -1218,7 +1147,7 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
             # Same identity and token (messages and reports still reach it);
             # the new kind and model, and the kind of each earlier session.
             fields.update(agent=used["agent"], model=used.get("model", ""),
-                          sessionKinds=_session_kinds(fpart))
+                          sessionKinds=session_kinds(fpart))
     # On the room at once, so a doorbell is held for the fresh terminal and a
     # Stop ends it. The mark is cleared only once the stopped or clean-up path
     # and a Codex session's id are settled: a Delete waiting on it then sees
@@ -1283,7 +1212,7 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
             # the background: it names the kind the owner really runs on.
             _spawn(_watch_switch, key, wflags, {
                 "info": info, "started": started, "old": fpart, "rec": rec,
-                "choice": choice, "reviewer": reviewer, "text_for": text_for,
+                "choice": choice, "text_for": text_for,
                 "solo": solo, "cwd": cwd, "agentsIn": agents_in,
                 "room": room_full, "how": how})
         else:

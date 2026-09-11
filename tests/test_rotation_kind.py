@@ -175,6 +175,16 @@ class ChooseOwnerKindTests(_Base):
         self.assertFalse(c["changed"])
         self.assertEqual(c["usage"]["error"], "OSError")
 
+    def test_a_human_picked_one_agent_task_keeps_its_kind(self):
+        room = self.room(reviewer=None,
+                         preference=[{"agent": "claude", "model": "opus", "role": "engineer"}])
+        room["lineupPickedByHuman"] = True
+        c = self.choose(room, _snap(90, 10))
+        self.assertFalse(c["changed"])
+        self.assertIn("kept as picked", c["reason"])
+        room["lineupPickedByHuman"] = False
+        self.assertTrue(self.choose(room, _snap(90, 10))["changed"])
+
 
 class RotateOwnerTests(_Base):
     def setUp(self):
@@ -243,7 +253,7 @@ class RotateOwnerTests(_Base):
         self.assertEqual((rec["agent"], rec["fromAgent"]), ("claude", "claude"))
         self.assertNotIn("previous session ran on", self.launcher.launched[0]["text"])
 
-    def test_switches_claude_to_codex_and_moves_the_reviewer(self):
+    def test_switches_claude_to_codex(self):
         room = self.room()      # claude engineer, codex reviewer on mention
         out = self.rotate(room, _snap(86, 20))
         saved = self.saved(room)
@@ -255,9 +265,8 @@ class RotateOwnerTests(_Base):
         self.assertEqual(own["sessionKinds"], {"old-sid": "claude"})
         self.assertEqual(dashboard.session_agent(own, "old-sid"), "claude")
         self.assertEqual(dashboard.session_agent(own, "codex-sid-new"), "codex")
-        rev = chatroom.participant(saved, "codex")
-        self.assertEqual(rev["agent"], "claude")
-        self.assertTrue(chatroom.is_on_mention(saved, rev))
+        # The reviewer is left to its next review's own choice.
+        self.assertEqual(chatroom.participant(saved, "codex")["agent"], "codex")
         # The first prompt is still the handover prompt, never the spec.
         text = self.launcher.launched[0]["text"]
         self.assertIn(rotation.TASK_HANDOVER_NAME, text)
@@ -266,13 +275,11 @@ class RotateOwnerTests(_Base):
         rec = out["rotation"]
         self.assertEqual((rec["agent"], rec["fromAgent"]), ("codex", "claude"))
         self.assertTrue(rec["allocation"]["changed"])
-        self.assertTrue(rec["allocation"]["reviewer"]["moved"])
         # Kept on the task for the panel, beside the first-launch record.
         self.assertEqual(saved["allocation"]["handover"]["reason"],
                          "Owner switched to Codex: Claude 5-hour window at 86%.")
         notice = saved["messages"][-1]["text"]
-        self.assertIn("a fresh Codex session (Claude 5-hour window at 86%; its reviewer "
-                      "codex now runs on Claude)", notice)
+        self.assertIn("a fresh Codex session (Claude 5-hour window at 86%)", notice)
 
     def test_switches_codex_to_claude(self):
         room = self.room(owner="codex", owner_model="gpt-5", reviewer="claude")
@@ -281,7 +288,6 @@ class RotateOwnerTests(_Base):
         own = chatroom.participant(saved, "codex")
         self.assertEqual((own["agent"], own["sessionId"]), ("claude", "claude-sid-1"))
         self.assertEqual(own["sessionKinds"], {"old-sid": "codex"})
-        self.assertEqual(chatroom.participant(saved, "claude")["agent"], "codex")
         self.assertEqual(out["rotation"]["toSessionId"], "claude-sid-1")
 
     def test_reviewer_of_the_other_kind_is_left_alone(self):
@@ -333,10 +339,6 @@ class RotateOwnerTests(_Base):
         self.assertEqual((rot["agent"], rot["toSessionId"]), ("claude", "claude-sid-2"))
         self.assertEqual(rot["allocation"]["switchFailed"], "its terminal ended as it started")
         self.assertFalse(rot["allocation"]["changed"])
-        # Its reviewer, moved to Claude with it, goes back to Codex.
-        rev = chatroom.participant(saved, "codex")
-        self.assertEqual(rev["agent"], "codex")
-        self.assertNotIn("reviewer", rot["allocation"])
         self.assertEqual(saved["allocation"]["handover"]["switchFailed"],
                          "its terminal ended as it started")
         self.assertIn("**claude's Codex session ended as it started** — the hub started a "
@@ -396,54 +398,21 @@ class RotateOwnerTests(_Base):
         self.assertEqual(chatroom.participant(self.saved(room), "claude")["agent"], "codex")
         self.assertEqual(_FakeAgent.deleted, [])
 
-    def test_a_reviewer_mid_review_moves_at_its_next_review(self):
+    def test_the_next_review_runs_on_the_kind_the_owner_left(self):
+        # main's per-review choice takes the kind other than the owner's
+        # current one; the reviewer's earlier session keeps its own kind.
         room = self.room()
         rev = chatroom.participant(room, "codex")
-        rev.update(ptyId="rev-pty", sessionId="rev-sid")
+        rev.update(sessionId="rev-sid")
         chatroom.update_room(room)
-        out = self.rotate(self.saved(room), _snap(86, 20))
-        saved = self.saved(room)
-        rev = chatroom.participant(saved, "codex")
-        self.assertEqual(rev["agent"], "codex")          # this review keeps its kind
-        self.assertEqual(rev["pendingKind"], {"agent": "claude", "model": ""})
-        self.assertTrue(out["rotation"]["allocation"]["reviewer"]["pending"])
-        self.assertIn("its reviewer codex moves to Claude after the review it is doing",
-                      saved["messages"][-1]["text"])
-        moved = rotation.apply_pending_kind(room["id"], rev)
-        rev = chatroom.participant(self.saved(room), "codex")
-        self.assertEqual((moved["agent"], rev["agent"]), ("claude", "claude"))
-        self.assertNotIn("pendingKind", rev)
-        self.assertEqual(rev["sessionKinds"], {"rev-sid": "codex"})
-        self.assertEqual(dashboard.session_agent(rev, "rev-sid"), "codex")
-
-    def test_a_review_started_during_the_switch_is_not_retagged(self):
-        room = self.room()
-        launch = self.launcher._launch_room_agent_pty
-
-        def launch_and_mention(room_, part, *a, **kw):
-            info = launch(room_, part, *a, **kw)
-            # A mention starts the reviewer while the owner starts.
-            chatroom.patch_participant(room["id"], "codex",
-                                       {"ptyId": "rev-pty", "sessionId": "rev-sid"})
-            return info
-
-        self.launcher._launch_room_agent_pty = launch_and_mention
-        self.rotate(room, _snap(86, 20))
-        rev = chatroom.participant(self.saved(room), "codex")
-        self.assertEqual(rev["agent"], "codex")
-        self.assertNotIn("sessionKinds", rev)
-        self.assertEqual(rev["pendingKind"]["agent"], "claude")
-
-    def test_a_pending_reviewer_move_is_undone_when_the_switch_fails(self):
-        room = self.room()
-        rev = chatroom.participant(room, "codex")
-        rev.update(ptyId="rev-pty", sessionId="rev-sid")
-        chatroom.update_room(room)
-        self.dead = {"pty-1"}
         self.rotate(self.saved(room), _snap(86, 20))
+        with mock.patch.object(dashboard.usage, "snapshot", return_value=_snap(50, 20)):
+            _, part, alloc = dashboard.apply_review_allocation(self.saved(room), "codex")
+        self.assertTrue(alloc["changed"])
+        self.assertEqual(part["agent"], "claude")
         rev = chatroom.participant(self.saved(room), "codex")
-        self.assertEqual(rev["agent"], "codex")
-        self.assertNotIn("pendingKind", rev)
+        self.assertEqual((rev["agent"], rev["sessionKinds"]), ("claude", {"rev-sid": "codex"}))
+        self.assertEqual(dashboard.session_agent(rev, "rev-sid"), "codex")
 
     def test_po_is_told_in_one_line(self):
         po_created = chatroom.create_room(
@@ -456,8 +425,8 @@ class RotateOwnerTests(_Base):
             self.rotate(self.saved(room), _snap(86, 20))
         line = self.launcher.rings[-1][1]
         self.assertTrue(line.startswith(
-            "claude was handed to a fresh Codex session (Claude 5-hour window at 86%; "
-            "its reviewer codex now runs on Claude) at 212k tokens"), line)
+            "claude was handed to a fresh Codex session (Claude 5-hour window at 86%) "
+            "at 212k tokens"), line)
 
 
 class PoRotationUnchangedTests(_Base):
