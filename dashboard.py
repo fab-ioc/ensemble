@@ -5323,6 +5323,8 @@ class Handler(BaseHTTPRequestHandler):
             part = chatroom.participant(room_full or {}, ident)
             if part is None or _pty_alive(part.get("ptyId")):
                 return None
+            # Moved to the other kind by its owner's handover while reviewing.
+            part = rotation.apply_pending_kind(room_id, part)
             log_text = read_review_log(room_full)
             n = review_count(log_text) + 1
             root = review_repo(room_full)

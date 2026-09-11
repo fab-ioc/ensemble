@@ -14,12 +14,26 @@ import rotation
 
 
 class _FakeAgent:
+    deleted: list = []      # Codex rollouts deleted, across instances
+
     def __init__(self, kind: str, installed: bool = True):
         self.display_name = kind.title()
         self._installed = installed
 
     def installed(self) -> bool:
         return self._installed
+
+    def delete_session(self, sid):
+        _FakeAgent.deleted.append(sid)
+        return [sid]
+
+
+class _FakePty:
+    def __init__(self, alive: bool):
+        self._alive = alive
+
+    def alive(self) -> bool:
+        return self._alive
 
 
 class _FakeLauncher:
@@ -166,18 +180,35 @@ class RotateOwnerTests(_Base):
     def setUp(self):
         super().setUp()
         self.launcher = _FakeLauncher()
-        self.alive = True
+        self.dead = set()       # terminals that ended as they started
+        self.spawned = []       # the switch watches, run inline unless held
+        self.hold_watch = False
+        _FakeAgent.deleted = []
+        self.delete_session = mock.patch.object(dashboard, "delete_session").start()
         for p in [
             mock.patch.object(dashboard, "hub_launcher", side_effect=lambda: self.launcher),
             mock.patch.object(dashboard.ptyrun, "kill"),
+            mock.patch.object(dashboard.ptyrun, "get", side_effect=lambda pid: _FakePty(
+                pid not in self.dead) if pid else None),
             mock.patch.object(rotation, "_await_death"),
-            mock.patch.object(rotation, "_launch_alive", side_effect=lambda pid: self.alive),
+            mock.patch.object(rotation, "_LAUNCH_SETTLE_S", 0.0),
+            mock.patch.object(rotation, "_spawn", side_effect=self.spawn),
             mock.patch.object(rotation, "_await_codex_session", return_value="codex-sid-new"),
-            mock.patch.object(dashboard, "delete_session"),
             mock.patch.object(dashboard, "find_project", return_value=None),
         ]:
             p.start()
             self.patches.append(p)
+        self.patches.append(self.delete_session)
+
+    def spawn(self, fn, *args):
+        self.spawned.append((fn, args))
+        if not self.hold_watch:
+            fn(*args)
+
+    def tearDown(self):
+        self.assertFalse(rotation._ROTATING)
+        self.assertFalse(rotation._WATCHING)
+        super().tearDown()
 
     def subject(self, room, ident="claude"):
         return {"kind": "owner", "name": f"t / {ident}", "project": None, "room": room,
@@ -283,14 +314,112 @@ class RotateOwnerTests(_Base):
         self.assertNotIn("previous session ran on", self.launcher.launched[1]["text"])
         self.assertIn("switching to Codex failed", saved["messages"][-1]["text"])
 
-    def test_a_terminal_that_ends_at_once_falls_back(self):
-        self.alive = False
+    def test_a_codex_terminal_that_ends_at_once_falls_back_after_the_handover(self):
+        self.dead = {"pty-1"}
         room = self.room()
         out = self.rotate(room, _snap(86, 20))
-        own = chatroom.participant(self.saved(room), "claude")
-        self.assertEqual(own["agent"], "claude")
-        self.assertEqual(out["rotation"]["allocation"]["switchFailed"],
+        # The handover completed as Codex; the watch then undid it.
+        self.assertEqual(out["rotation"]["agent"], "codex")
+        self.assertEqual([l["agent"] for l in self.launcher.launched], ["codex", "claude"])
+        saved = self.saved(room)
+        own = chatroom.participant(saved, "claude")
+        self.assertEqual((own["agent"], own["model"], own["sessionId"], own["ptyId"]),
+                         ("claude", "opus", "claude-sid-2", "pty-2"))
+        self.assertNotIn("sessionKinds", own)
+        # The Codex rollout it had already written is deleted, not orphaned.
+        self.assertEqual(_FakeAgent.deleted, ["codex-sid-new"])
+        self.assertEqual(dashboard.participant_session_ids(own), ["claude-sid-2", "old-sid"])
+        rot = own["rotations"][-1]
+        self.assertEqual((rot["agent"], rot["toSessionId"]), ("claude", "claude-sid-2"))
+        self.assertEqual(rot["allocation"]["switchFailed"], "its terminal ended as it started")
+        self.assertFalse(rot["allocation"]["changed"])
+        # Its reviewer, moved to Claude with it, goes back to Codex.
+        rev = chatroom.participant(saved, "codex")
+        self.assertEqual(rev["agent"], "codex")
+        self.assertNotIn("reviewer", rot["allocation"])
+        self.assertEqual(saved["allocation"]["handover"]["switchFailed"],
                          "its terminal ended as it started")
+        self.assertIn("**claude's Codex session ended as it started** — the hub started a "
+                      "fresh Claude session (switching to Codex failed",
+                      saved["messages"][-1]["text"])
+        self.assertNotIn("previous session ran on", self.launcher.launched[1]["text"])
+
+    def test_a_claude_terminal_that_ends_at_once_falls_back_to_codex(self):
+        self.dead = {"pty-1"}
+        room = self.room(owner="codex", owner_model="gpt-5", reviewer="claude")
+        self.rotate(room, _snap(10, 92), ident="codex")
+        own = chatroom.participant(self.saved(room), "codex")
+        self.assertEqual((own["agent"], own["model"], own["sessionId"]),
+                         ("codex", "gpt-5", "codex-sid-new"))
+        self.delete_session.assert_called_once_with("claude-sid-1")
+
+    def test_a_live_switch_is_left_alone(self):
+        room = self.room()
+        self.rotate(room, _snap(86, 20))
+        self.assertEqual(len(self.spawned), 1)
+        self.assertEqual(len(self.launcher.launched), 1)
+        self.assertEqual(chatroom.participant(self.saved(room), "claude")["agent"], "codex")
+
+    def test_a_stop_during_the_watch_is_not_taken_for_a_failed_start(self):
+        self.hold_watch = True
+        room = self.room()
+        self.rotate(room, _snap(86, 20))
+        rotation.note_stopped(room["id"])
+        self.dead = {"pty-1"}           # the Stop ended it
+        fn, args = self.spawned[0]
+        fn(*args)
+        self.assertEqual(len(self.launcher.launched), 1)
+        self.assertEqual(chatroom.participant(self.saved(room), "claude")["agent"], "codex")
+        self.assertEqual(_FakeAgent.deleted, [])
+
+    def test_a_reviewer_mid_review_moves_at_its_next_review(self):
+        room = self.room()
+        rev = chatroom.participant(room, "codex")
+        rev.update(ptyId="rev-pty", sessionId="rev-sid")
+        chatroom.update_room(room)
+        out = self.rotate(self.saved(room), _snap(86, 20))
+        saved = self.saved(room)
+        rev = chatroom.participant(saved, "codex")
+        self.assertEqual(rev["agent"], "codex")          # this review keeps its kind
+        self.assertEqual(rev["pendingKind"], {"agent": "claude", "model": ""})
+        self.assertTrue(out["rotation"]["allocation"]["reviewer"]["pending"])
+        self.assertIn("its reviewer codex moves to Claude after the review it is doing",
+                      saved["messages"][-1]["text"])
+        moved = rotation.apply_pending_kind(room["id"], rev)
+        rev = chatroom.participant(self.saved(room), "codex")
+        self.assertEqual((moved["agent"], rev["agent"]), ("claude", "claude"))
+        self.assertNotIn("pendingKind", rev)
+        self.assertEqual(rev["sessionKinds"], {"rev-sid": "codex"})
+        self.assertEqual(dashboard.session_agent(rev, "rev-sid"), "codex")
+
+    def test_a_review_started_during_the_switch_is_not_retagged(self):
+        room = self.room()
+        launch = self.launcher._launch_room_agent_pty
+
+        def launch_and_mention(room_, part, *a, **kw):
+            info = launch(room_, part, *a, **kw)
+            # A mention starts the reviewer while the owner starts.
+            chatroom.patch_participant(room["id"], "codex",
+                                       {"ptyId": "rev-pty", "sessionId": "rev-sid"})
+            return info
+
+        self.launcher._launch_room_agent_pty = launch_and_mention
+        self.rotate(room, _snap(86, 20))
+        rev = chatroom.participant(self.saved(room), "codex")
+        self.assertEqual(rev["agent"], "codex")
+        self.assertNotIn("sessionKinds", rev)
+        self.assertEqual(rev["pendingKind"]["agent"], "claude")
+
+    def test_a_pending_reviewer_move_is_undone_when_the_switch_fails(self):
+        room = self.room()
+        rev = chatroom.participant(room, "codex")
+        rev.update(ptyId="rev-pty", sessionId="rev-sid")
+        chatroom.update_room(room)
+        self.dead = {"pty-1"}
+        self.rotate(self.saved(room), _snap(86, 20))
+        rev = chatroom.participant(self.saved(room), "codex")
+        self.assertEqual(rev["agent"], "codex")
+        self.assertNotIn("pendingKind", rev)
 
     def test_po_is_told_in_one_line(self):
         po_created = chatroom.create_room(

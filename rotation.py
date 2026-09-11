@@ -92,6 +92,7 @@ _TASK_STATE: dict[str, dict] = {}  # "roomId/identity" -> the same, for owners
 # read-and-kill each run as one step under it.
 GATE = threading.RLock()
 _ROTATING: dict[tuple, dict] = {}  # (roomId, identity) -> {stopped}, mid-rotation
+_WATCHING: dict[tuple, dict] = {}  # the same, for an owner just switched to the other kind
 _HELD: dict[tuple, list] = {}      # (roomId, identity) -> wakes held meanwhile
 REPLAY_WAIT_S = 15 * 60            # a fresh session that never settles gets them anyway
 
@@ -641,68 +642,185 @@ def _session_kinds(part: dict) -> dict:
     return kinds
 
 
-def _move_reviewer(rid: str, room: dict, owner: str, to_kind: str, from_kind: str) -> dict | None:
+def _move_reviewer(rid: str, owner: str, to_kind: str, from_kind: str,
+                   only: str = "") -> dict | None:
     """A reviewer on mention of the kind the owner moved to goes to the kind
-    the owner left, so the other kind still reviews the work. Not while it is
-    reviewing: that review keeps its kind. None when there is no such reviewer."""
+    the owner left, so the other kind still reviews the work. One reviewing
+    right now keeps its kind for that review and moves at its next start
+    (``pendingKind``, applied by ``apply_pending_kind``). ``only`` limits it to
+    one reviewer (to move it back). None when there is no such reviewer.
+
+    Under the dashboard's review-launch lock, on the room as it is now, so a
+    review started meanwhile is seen as running and never retagged under it."""
     cr = _d.chatroom
-    for p in cr.agent_participants(room):
-        if (p["identity"] == owner or p.get("agent") != to_kind
-                or not cr.is_on_mention(room, p)):
-            continue
-        ident = p["identity"]
-        if _pty(p) is not None:
-            return {"identity": ident, "moved": False, "agent": to_kind,
-                    "why": "it was reviewing"}
-        _, seat = _preferred_seats(room)
-        model = _model_for(seat, from_kind)
-        if cr.patch_participant(rid, ident, {"agent": from_kind, "model": model,
-                                             "sessionKinds": _session_kinds(p)}) is None:
-            return None
-        return {"identity": ident, "moved": True, "agent": from_kind, "model": model,
-                "fromAgent": to_kind, "fromModel": p.get("model", "")}
+    with _d._REVIEW_LAUNCH_LOCK:
+        room = cr.get_room(rid, public=False) or {}
+        for p in cr.agent_participants(room):
+            ident = p["identity"]
+            kind = (p.get("pendingKind") or {}).get("agent") or p.get("agent")
+            if (ident == owner or (only and ident != only) or kind != to_kind
+                    or not cr.is_on_mention(room, p)):
+                continue
+            _, seat = _preferred_seats(room)
+            model = _model_for(seat, from_kind)
+            rv = {"identity": ident, "agent": from_kind, "model": model,
+                  "fromAgent": to_kind, "fromModel": p.get("model", "")}
+            if p.get("agent") == from_kind:     # a move still pending, undone
+                done = cr.patch_participant(rid, ident, {}, drop=("pendingKind",))
+                rv.update(moved=True, fromModel=model)
+            elif _pty(p) is not None:
+                done = cr.patch_participant(rid, ident, {"pendingKind": {
+                    "agent": from_kind, "model": model}})
+                rv.update(moved=False, pending=True)
+            else:
+                done = cr.patch_participant(rid, ident, {
+                    "agent": from_kind, "model": model,
+                    "sessionKinds": _session_kinds(p)}, drop=("pendingKind",))
+                rv["moved"] = True
+            return rv if done is not None else None
     return None
 
 
-def _launch_alive(pty_id) -> bool:
-    """The fresh terminal is still running a moment after its start."""
-    end = time.time() + _LAUNCH_SETTLE_S
-    while True:
-        sess = _d.ptyrun.get(pty_id or "")
-        if sess is None or not sess.alive():
-            return False
-        if time.time() >= end:
-            return True
-        time.sleep(0.25)
+def apply_pending_kind(rid: str, part: dict) -> dict:
+    """A reviewer's move to the other kind that waited for its review to end,
+    made as its next review starts (the dashboard's ``_start_review``, under
+    its review-launch lock). Returns the participant as it now is."""
+    pend = part.get("pendingKind") or {}
+    if not pend.get("agent"):
+        return part
+    fields = {"agent": pend["agent"], "model": pend.get("model", "")}
+    if pend["agent"] != part.get("agent"):
+        fields["sessionKinds"] = _session_kinds(part)
+    patched = _d.chatroom.patch_participant(rid, part["identity"], fields,
+                                            drop=("pendingKind",))
+    out = {k: v for k, v in part.items() if k != "pendingKind"}
+    return {**out, **fields} if patched is not None else part
 
 
 def _launch_owner(launcher, room: dict, fpart: dict, text_for, solo: bool, cwd,
                   choice: dict) -> tuple[dict, dict, str]:
-    """Start the fresh owner as the chosen kind; if that fails to start, as
-    its old kind. Returns (launch info, the participant as started, why the
-    switch failed or "")."""
+    """Start the fresh owner as the chosen kind; if that launch raises, as its
+    old kind. Returns (launch info, the participant as started, why the switch
+    failed or ""). A terminal that ends as it starts is caught afterwards, in
+    the background (``_watch_switch``), so the handover is never held up."""
     failed = ""
     if choice["changed"]:
         part = {**fpart, "agent": choice["agent"], "model": choice["model"]}
-        info = None
         try:
             info = launcher._launch_room_agent_pty(room, part, text_for(part["agent"]),
                                                    collab=not solo, cwd=cwd)
-            if _launch_alive(info["ptyId"]):
-                return info, part, ""
-            failed = "its terminal ended as it started"
+            return info, part, ""
         except Exception as e:
             failed = str(e)[:200] or type(e).__name__
         _log(f"{room['id']}/{fpart['identity']}: could not start it as "
              f"{choice['agent']} ({failed}) — starting it as {fpart.get('agent')}")
-        if info:
-            _d.ptyrun.kill(info["ptyId"])
-            _await_death(info["ptyId"])
-            if part["agent"] == "claude" and info.get("sessionId"):
-                _d.delete_session(info["sessionId"])
     info = launcher._launch_room_agent_pty(room, fpart, text_for(fpart.get("agent", "")),
                                            collab=not solo, cwd=cwd)
     return info, fpart, failed
+
+
+def _spawn(fn, *args) -> None:
+    threading.Thread(target=fn, args=args, daemon=True, name="rotation-switch").start()
+
+
+def _watch_switch(key: tuple, flags: dict, w: dict) -> None:
+    """The first seconds of an owner switched to the other kind, after its
+    handover has completed. If its terminal ends within _LAUNCH_SETTLE_S of
+    its start, the switch did not take: under the rotation mark again (wakes
+    held, Stop and Delete noted), its session is ended and deleted (a Codex
+    one's rollout too) and the owner is started as its old kind. A Stop, a
+    restart or another handover meanwhile ends the watch."""
+    rid, ident = key
+    try:
+        while True:
+            with GATE:
+                if _WATCHING.get(key) is not flags or flags["stopped"]:
+                    return
+                part = _d.chatroom.participant(
+                    _d.chatroom.get_room(rid, public=False) or {}, ident)
+                if (part is None or part.get("ptyId") != w["info"]["ptyId"]
+                        or key in _ROTATING):
+                    return
+                sess = _d.ptyrun.get(w["info"]["ptyId"])
+                if sess is None or not sess.alive():
+                    _ROTATING[key] = flags
+                    break
+                if time.time() >= w["started"] + _LAUNCH_SETTLE_S:
+                    return
+            time.sleep(0.25)
+        try:
+            _fall_back(key, flags, w)
+        finally:
+            _release(key)
+    except Exception as e:
+        _log(f"{rid}/{ident}: the check of its switch failed: {str(e)[:200]}")
+    finally:
+        with GATE:
+            if _WATCHING.get(key) is flags:
+                _WATCHING.pop(key)
+
+
+def _fall_back(key: tuple, flags: dict, w: dict) -> None:
+    """Undo a switch whose terminal ended as it started (see _watch_switch)."""
+    rid, ident = key
+    old, rec, new_kind = w["old"], w["rec"], w["rec"]["agent"]
+    old_kind = old.get("agent", "")
+    failed = "its terminal ended as it started"
+    _log(f"{rid}/{ident}: its {new_kind} terminal ended as it started — starting it "
+         f"as {old_kind}")
+    _discard_fresh(w["info"], new_kind, w["started"], w["agentsIn"])
+    reviewer = w["reviewer"]
+    if reviewer and (reviewer.get("moved") or reviewer.get("pending")):
+        try:
+            _move_reviewer(rid, ident, old_kind, new_kind, only=reviewer["identity"])
+            reviewer = None
+        except Exception as e:
+            _log(f"{rid}/{ident}: could not move the reviewer back: {str(e)[:200]}")
+    room = _d.chatroom.get_room(rid, public=False)
+    if room is None:
+        return
+    started = time.time()
+    info = _d.hub_launcher()._launch_room_agent_pty(
+        room, old, w["text_for"](old_kind), collab=not w["solo"], cwd=w["cwd"])
+    rec = {**rec, "toSessionId": info["sessionId"], "agent": old_kind,
+           "model": old.get("model", ""),
+           "allocation": _allocation_rec(w["choice"], failed, reviewer)}
+    fields = {"sessionId": info["sessionId"], "ptyId": info["ptyId"],
+              "cwd": info["cwd"], "pid": None, "agent": old_kind,
+              "model": old.get("model", "")}
+    drop = ("lastExit", "fresh")
+    if old.get("sessionKinds"):
+        fields["sessionKinds"] = old["sessionKinds"]
+    else:
+        drop += ("sessionKinds",)
+    with GATE:
+        cur = _d.chatroom.participant(_d.chatroom.get_room(rid, public=False) or {}, ident)
+        rots = list((cur or {}).get("rotations") or [])
+        if rots and isinstance(rots[-1], dict) and rots[-1].get("n") == rec["n"]:
+            rots[-1] = rec
+        fields["rotations"] = rots
+        patched = _d.chatroom.patch_participant(rid, ident, fields, drop=drop)
+    if patched is None:
+        _discard_fresh(info, old_kind, started, w["agentsIn"])
+        return
+    if old_kind == "codex" and not info["sessionId"]:
+        sid = _await_codex_session(info["cwd"], started, _taken(w["agentsIn"]))
+        if sid:
+            rec["toSessionId"] = _learn_session(rid, ident, info["ptyId"], sid)
+    with GATE:
+        stopped = flags["stopped"]
+    if stopped:
+        _d.stop_task(rid)
+        return
+    _d.chatroom.post_notice(
+        rid, SENDER, f"**{ident}'s {_d._agent_kind_name(new_kind)} session ended as it "
+                     f"started** — the hub started {_kind_note(rec)} instead. It continues "
+                     f"from `{TASK_HANDOVER_NAME}`.",
+        {"noticeKind": "rotation", "rotation": rec})
+    try:
+        _record_allocation(rid, ident, rec)
+    except Exception as e:
+        _log(f"{rid}/{ident}: could not record the kind decision: {str(e)[:200]}")
 
 
 def _allocation_rec(choice: dict, failed: str, reviewer: dict | None) -> dict:
@@ -732,6 +850,9 @@ def _kind_note(rec: dict) -> str:
         rv = a.get("reviewer") or {}
         if rv.get("moved"):
             why += f"; its reviewer {rv['identity']} now runs on {name(rv['agent'])}"
+        elif rv.get("pending"):
+            why += (f"; its reviewer {rv['identity']} moves to {name(rv['agent'])} "
+                    f"after the review it is doing")
         elif rv:
             why += (f"; its reviewer {rv['identity']} stays on {name(rv['agent'])} "
                     f"as {rv['why']}")
@@ -976,7 +1097,7 @@ def note_stopped(room_id: str) -> None:
     """A Stop (or Delete) of this task: a rotation under way ends its fresh
     session instead of leaving the task running."""
     with GATE:
-        for (rid, _), flags in _ROTATING.items():
+        for (rid, _), flags in [*_ROTATING.items(), *_WATCHING.items()]:
             if rid == room_id:
                 flags["stopped"] = True
 
@@ -1054,7 +1175,7 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
         reviewer = None
         if used.get("agent") != old_kind:
             try:
-                reviewer = _move_reviewer(rid, room_full, ident, used["agent"], old_kind)
+                reviewer = _move_reviewer(rid, ident, used["agent"], old_kind)
             except Exception as e:      # the owner's switch stands without it
                 _log(f"{s['name']}: could not move the reviewer: {str(e)[:200]}")
         allocation = _allocation_rec(choice, failed, reviewer)
@@ -1096,15 +1217,22 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
         if sid:
             rec["toSessionId"] = info["sessionId"] = _learn_session(rid, ident,
                                                                     info["ptyId"], sid)
+    switched = owner and used.get("agent") != old_kind
     with GATE:
         stopped = flags["stopped"]
         if not stopped:
             _release(key)
+            if switched:
+                # From here a Stop is noted for the switch's watch too, so a
+                # terminal a Stop ends is never taken for a failed start.
+                _WATCHING[key] = wflags = {"stopped": False}
     if stopped:
         _d.stop_task(rid)
         st["phase"] = "watching"
         return done("the task was stopped while rotating — the fresh session was ended")
     if _d.chatroom.get_room(rid) is None:
+        with GATE:
+            _WATCHING.pop(key, None)
         st["phase"] = "watching"
         return done(f"{s['whose']} task was deleted as it rotated — nothing posted")
     if not asked:
@@ -1135,6 +1263,11 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
             rec["poWoken"] = _report_to_po(room_full, ident, rec, how)
         except Exception as e:          # the rotation itself has happened
             _log(f"{s['name']}: could not report the rotation to the PO: {str(e)[:200]}")
+        if switched:
+            _spawn(_watch_switch, key, wflags, {
+                "info": info, "started": started, "old": fpart, "rec": rec,
+                "choice": choice, "reviewer": reviewer, "text_for": text_for,
+                "solo": solo, "cwd": cwd, "agentsIn": agents_in})
     st.update(phase="watching", sessionId=info["sessionId"], lastRotation=now)
     for k in ("askedAt", "askSize", "askPath", "handoverAtAsk", "tokensAtAsk", "askSubmit"):
         st.pop(k, None)
