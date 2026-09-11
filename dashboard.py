@@ -4133,20 +4133,22 @@ def stop_task(rid: str) -> bool:
     own would otherwise keep its `agent_gone` notification forever — Stop can't
     relabel a record that was written once, at death, so it removes it.
     """
-    room = chatroom.get_room(rid, public=False)
-    if not room:
-        return False
-    # An agent being rotated has a fresh terminal not yet on the room: the
-    # rotation ends it rather than record it.
-    rotation.note_stopped(rid)
-    for part in room.get("participants", []):
-        pid = part.get("ptyId")
-        if pid:
-            try:
-                ptyrun.kill(pid)
-            except Exception:
-                pass
-            ptyrun.forget_death(pid)
+    # Under the rotation's gate, the room read inside it: a rotation under way
+    # is told and ends its fresh terminal itself, and one that has already put
+    # its fresh terminal on the room is seen here.
+    with rotation.GATE:
+        rotation.note_stopped(rid)
+        room = chatroom.get_room(rid, public=False)
+        if not room:
+            return False
+        for part in room.get("participants", []):
+            pid = part.get("ptyId")
+            if pid:
+                try:
+                    ptyrun.kill(pid)
+                except Exception:
+                    pass
+                ptyrun.forget_death(pid)
     # Cleared through the room lock, and only after the kills: writing the room
     # we read before a slow kill loop would drop a chat message posted during it.
     chatroom.clear_exits(rid)
@@ -4165,6 +4167,8 @@ def delete_task(rid: str, members=None) -> dict:
     cwds: list[str] = []
     if room:
         stop_task(rid)
+        # Read again: a rotation may have put a fresh session on it meanwhile.
+        room = chatroom.get_room(rid, public=False) or room
         cwds.append(room.get("cwd", "") or "")
         members = [{"agent": pp.get("agent", ""), "sessionId": sid,
                     "cwd": pp.get("cwd", "")}
@@ -5001,23 +5005,25 @@ class Handler(BaseHTTPRequestHandler):
             return []
         rung = []
         for ident in idents:
-            part = next((x for x in room["participants"]
-                         if x.get("identity") == ident), None)
-            if not part:
-                continue
-            if rotation.is_rotating(room_id, ident):
-                # Its old session is being ended: a wake now would start a turn
-                # that is then killed. The message stays in the room, and the
-                # fresh session reads it (its first prompt says to).
-                continue
-            # Headless PTY session → the doorbell is a PTY write.
-            pty_id = part.get("ptyId")
-            if pty_id:
-                sess = ptyrun.get(pty_id)
-                if sess and sess.alive():
-                    sess.send_line(wake)   # type + discrete Enter to submit
+            # One step under the rotation's gate: a wake for an agent whose old
+            # session is being ended is held for its fresh one (it would start
+            # a turn that is then killed), and the terminal is read afresh, so
+            # it is never one a rotation has just replaced.
+            with rotation.GATE:
+                if rotation.hold_wake(room_id, ident, wake):
                     rung.append(ident)
-                continue
+                    continue
+                part = chatroom.participant(chatroom.get_room(room_id) or room, ident)
+                if not part:
+                    continue
+                # Headless PTY session → the doorbell is a PTY write.
+                pty_id = part.get("ptyId")
+                if pty_id:
+                    sess = ptyrun.get(pty_id)
+                    if sess and sess.alive():
+                        sess.send_line(wake)   # type + discrete Enter to submit
+                        rung.append(ident)
+                    continue
             # Legacy visible-terminal session → keystroke injection.
             pid = self._resolve_live_pid(part)
             if pid:

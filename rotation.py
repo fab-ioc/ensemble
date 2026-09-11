@@ -77,8 +77,13 @@ _SPEC_MAX = 6000            # the first prompt goes on a command line
 _LOCK = threading.Lock()    # one check at a time: scheduler vs "check now"
 _STATE: dict[str, dict] = {}  # projectId -> {phase, askedAt, ..., lastResult}
 _TASK_STATE: dict[str, dict] = {}  # "roomId/identity" -> the same, for owners
-_ROT_LOCK = threading.Lock()
+# The lifecycle gate: a rotation's last idle check, its mark and its hand-over
+# to the fresh terminal, every doorbell's check-and-send, and every Stop's
+# read-and-kill each run as one step under it.
+GATE = threading.RLock()
 _ROTATING: dict[tuple, dict] = {}  # (roomId, identity) -> {stopped}, mid-rotation
+_HELD: dict[tuple, list] = {}      # (roomId, identity) -> wakes held meanwhile
+REPLAY_WAIT_S = 15 * 60            # a fresh session that never settles gets them anyway
 
 
 # ---------------------------------------------------------------------------
@@ -653,32 +658,94 @@ def _report_to_po(room: dict, ident: str, rec: dict, how: str) -> bool:
 
 
 def _rotate(s: dict, tr: dict, done, answered: bool, asked: bool = True) -> dict:
-    """End the old session and start the fresh one. While it runs the agent is
-    marked as rotating: the doorbell holds off (see the dashboard's ``_ring``)
-    and a Stop or Delete is noted, until the fresh terminal is on the room."""
+    """End the old session and start the fresh one. From the last idle check
+    until the fresh terminal is on the room, the agent is marked as rotating
+    under GATE: a doorbell for it is held and typed into the fresh session
+    once that has settled (see the dashboard's ``_ring``), and a Stop or
+    Delete is noted and ends the fresh session."""
     key = (s["room"]["id"], s["part"]["identity"])
     flags = {"stopped": False}
-    with _ROT_LOCK:
+    with GATE:
+        # The last look, in the same step as the mark: no doorbell or Stop
+        # can come between them, so a turn is never ended.
+        tpath, reader = _transcript_of(s["part"])
+        if not _settled(s["part"], reader(tpath)):
+            return done(f"{s['who']} started working again — will rotate once it is idle")
         _ROTATING[key] = flags
     try:
         return _rotate_marked(s, tr, done, answered, asked, key, flags)
     finally:
-        with _ROT_LOCK:
-            _ROTATING.pop(key, None)
+        _release(key)
+
+
+def _release(key: tuple) -> None:
+    """Clear the mark. The wakes held meanwhile go to whatever session the
+    agent now has (none, if the task was stopped)."""
+    with GATE:
+        _ROTATING.pop(key, None)
+        held = _HELD.pop(key, [])
+    if held:
+        _replay(key[0], key[1], held)
+
+
+def _settled(part: dict, tr: dict) -> bool:
+    """Idle, and nothing typed into it lately: a doorbell rung just before the
+    gate was taken may not have reached the transcript yet."""
+    sess = _pty(part)
+    if sess is None or not _idle(part, tr):
+        return False
+    try:
+        return time.time() - float(sess.last_submit() or 0) >= IDLE_S
+    except Exception:
+        return False
 
 
 def is_rotating(room_id: str, identity: str) -> bool:
-    with _ROT_LOCK:
+    with GATE:
         return (room_id, identity) in _ROTATING
+
+
+def hold_wake(room_id: str, identity: str, wake: str) -> bool:
+    """Hold a doorbell for an agent being rotated (True); it is typed into the
+    fresh session. A caller that also sends holds GATE across both."""
+    with GATE:
+        if (room_id, identity) not in _ROTATING:
+            return False
+        _HELD.setdefault((room_id, identity), []).append(wake)
+        return True
 
 
 def note_stopped(room_id: str) -> None:
     """A Stop (or Delete) of this task: a rotation under way ends its fresh
     session instead of leaving the task running."""
-    with _ROT_LOCK:
+    with GATE:
         for (rid, _), flags in _ROTATING.items():
             if rid == room_id:
                 flags["stopped"] = True
+
+
+def _replay(rid: str, ident: str, wakes: list) -> None:
+    """Type held doorbells into the agent's current session once it has
+    settled (drawn its screen, then quiet for IDLE_S, as for the resume note),
+    one at a time, in the background."""
+    def run():
+        for wake in wakes:
+            end = time.time() + REPLAY_WAIT_S
+            while True:
+                time.sleep(1)
+                part = _d.chatroom.participant(_d.chatroom.get_room(rid) or {}, ident)
+                sess = _pty(part or {})
+                if sess is None:
+                    _log(f"{rid}/{ident}: not running — {len(wakes)} held wake(s) dropped")
+                    return
+                tail = sess.tail()
+                quiet = bool(tail) and time.time() - sess.last_output >= IDLE_S
+                if (quiet and not _d.attention.looks_like_prompt(tail)) or time.time() > end:
+                    break
+            with GATE:
+                sess.send_line(wake)
+        _log(f"{rid}/{ident}: typed {len(wakes)} held wake(s) into the fresh session")
+    threading.Thread(target=run, daemon=True, name=f"rotation-replay-{rid}-{ident}").start()
 
 
 def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
@@ -692,10 +759,6 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
     updated = _mtime(hp) > float(st.get("handoverAtAsk") or 0) if asked else False
     owner = s["kind"] == "owner"
 
-    # A last look, now that no doorbell can reach it: never end a turn.
-    tpath, reader = _transcript_of(part)
-    if not _idle(part, reader(tpath)):
-        return done(f"{who} started working again — will rotate once it is idle")
     if old_pty:
         _d.ptyrun.kill(old_pty)
         _await_death(old_pty)
@@ -738,18 +801,19 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
         # after that is an answer to it.
         fields["rotatedAt"] = started
         drop += ("resumedAt",)
-    # On the room at once, so a message rings the fresh terminal and a Stop
-    # ends it. (A Codex session id is learnt below.)
-    patched = _d.chatroom.patch_participant(rid, ident, fields,
-                                            append={"rotations": rec}, drop=drop)
-    with _ROT_LOCK:
-        _ROTATING.pop(key, None)
+    # On the room and unmarked in one step, so from here a doorbell rings the
+    # fresh terminal and a Stop ends it. (A Codex session id is learnt below.)
+    with GATE:
+        patched = _d.chatroom.patch_participant(rid, ident, fields,
+                                                append={"rotations": rec}, drop=drop)
+        stopped = flags["stopped"]
+        _release(key)
     if patched is None:
         _d.ptyrun.kill(info["ptyId"])
         st["phase"] = "watching"
         return done(f"{s['whose']} task went away while rotating — the fresh session "
                     f"was ended")
-    if flags["stopped"]:
+    if stopped:
         _d.stop_task(rid)
         st["phase"] = "watching"
         return done("the task was stopped while rotating — the fresh session was ended")
