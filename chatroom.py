@@ -693,7 +693,9 @@ MCP_TOOLS = [
             "to=\"user\" — that pauses the collaboration until they reply. A "
             "message to everyone wakes only the task's owner (the engineer); "
             "to wake a reviewer or another specialist, address it with `to` or "
-            "@mention it (\"@reviewer\", \"@codex\")."
+            "@mention it (\"@reviewer\", \"@codex\"). Mention a reviewer only "
+            "for a commit to review or a specific question — never for a plan, "
+            "acknowledgement, thanks, or verdict restatement."
         ),
         "inputSchema": {
             "type": "object",

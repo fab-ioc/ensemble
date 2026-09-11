@@ -27,9 +27,9 @@ go). Then:
 |---|---|
 | Report that you finished, are blocked, or need a decision | `ensemble_report` |
 | See the projects | `ensemble_list_projects` |
-| See the tasks of your project (or another, or `"*"`) | `ensemble_list_tasks` |
+| See slim task rows for your project (or another, or `"*"`) | `ensemble_list_tasks` |
 | See which tasks need a human, and why | `ensemble_list_attention` |
-| Read one task in full (spec, agents, status, recent chat) | `ensemble_get_task` |
+| Read one task in full (spec, agents, status, latest report) | `ensemble_get_task` |
 | Create a task | `ensemble_create_task` |
 | Change a task's title, spec, priority, or assigned agents | `ensemble_update_task` |
 | Launch a draft, or relaunch a stopped task (its owner is told to carry on) | `ensemble_start_task` |
@@ -50,6 +50,18 @@ is rejected. `ensemble_list_tasks` returns rows highest-priority first, and
 most-recently-updated first inside one priority — so the top of the list is the
 work that matters most. Priority is the owner's call: set one when they asked
 for it, and otherwise leave the default alone.
+
+Task reads are purpose-specific. `ensemble_list_tasks` returns only the fields
+needed to scan the board; pass `detail: true` for spec/report previews, message
+counts and the other full row metadata. `ensemble_get_task` includes no chat by
+default; pass `messages` from 1 to 200 only when recent chat is needed. Its
+`lastReport` is included in full without that opt-in.
+
+The tool list is also role-specific. Owners and reviewers get the common read,
+report and roadmap tools, plus `ensemble_update_task` only to move their own
+task to `inreview`. A project's PO room and agents whose role is `planner` also
+get project/task administration tools. A cached client calling an unavailable
+tool is refused; it does not bypass the role check.
 
 ## Reporting: `ensemble_report`
 
@@ -74,6 +86,9 @@ project has no PO, the report goes to the user instead.
 - **Make it self-contained.** The PO does not see your conversation. Say what
   was done or what is needed, where it is (branch, commit, paths), how you
   verified it, and what you left out.
+- **Be terse by default.** No progress narration; tool calls need no preamble.
+  Reports: outcome, evidence and tests, files or commit, blocker or next
+  decision. Do not repeat the spec. Concise English is the working language.
 - **In a team, the owner reports.** That is the engineer, or the only agent.
   A reviewer tells the engineer, not the PO.
 - Use `ensemble_update_task` to move your own task to `inreview` as well when
@@ -139,6 +154,11 @@ board shows it as *on mention*, and as *reviewing now* while a review runs.
   the spec, the diff, your message and the review log, and nothing else of
   the chat. Say what to review, what changed since the last review and what
   you want checked.
+- **Wake it only for review work.** Mention a reviewer only for a commit to
+  review or a specific question, never for a plan, acknowledgement, thanks or
+  verdict restatement. Do not address or mention a sleeping reviewer to
+  acknowledge, thank, or restate its verdict. Mention it again only with a new
+  commit or evidence, an unresolved finding, or a specific new review question.
 - **As the reviewer:** read the log first and say, for each earlier finding,
   whether it is fixed, still open or no longer relevant. Then call
   `review_done` once with `verdict` (`approve`, `changes_requested` or

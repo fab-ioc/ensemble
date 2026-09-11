@@ -340,6 +340,7 @@ def first_prompt(project: dict, room: dict, old_sid: str, tokens) -> str:
         f"Keep {HANDOVER_NAME} current as you work — the next fresh session starts "
         f"from it too. Task reports and progress digests will wake you; the ensemble_* "
         f"tools show the tasks.",
+        _d.OWNER_OUTPUT_NOTE,
         f"Now, before anything else, read {hp} (your handover) and {rp} (the roadmap). "
         f"They are everything you know about this project: priorities, decisions and "
         f"why, what is in flight, what has been promised to {_d.operator_name()}. "

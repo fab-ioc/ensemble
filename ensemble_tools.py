@@ -12,9 +12,9 @@ Scope rules (deliberately conservative — a planner for project A must not be
 able to reshape project B):
 
 * **Read anywhere.** Listing and reading tasks in any project is allowed.
-* **Write inside your own project.** Create/update/start/stop/delete/move are
-  allowed only on tasks of the caller's project. A caller whose task has no
-  project (Unassigned) may write anywhere — that's the "general planner" case.
+* **Write inside your own project.** For callers with administration tools,
+  create/update/start/stop/delete/move are allowed only on tasks of the caller's
+  project. An administrator whose task has no project may write anywhere.
 * **Never touch yourself.** A task may not stop, delete or move itself.
 * **Stop before delete.** A running task is never deleted underneath its agents.
 
@@ -73,7 +73,7 @@ _AGENT_SPEC = {
     "required": ["agent"],
 }
 
-TOOLS = [
+_ALL_TOOLS = [
     {
         "name": "ensemble_whoami",
         "description": (
@@ -124,8 +124,11 @@ TOOLS = [
         "name": "ensemble_list_tasks",
         "description": (
             "List the tasks of a project — by default your own project. Each row "
-            "carries id, title, priority, status (draft | running | waiting_user | "
-            "paused | stopped), agents, and a spec preview. Rows come back "
+            "is slim by default: id, title, priority, status (draft | running | "
+            "waiting_user | paused | stopped), workflow, attention, agents and "
+            "updatedAt; project is added only for a multi-project result. Set "
+            "detail=true for the previous full rows, including spec previews, "
+            "report previews and message counts. Rows come back "
             "highest-priority first, most-recently-updated first within a "
             "priority. A row whose task needs a human also carries `attention` — "
             "{state, reason, agent} — with state one of agent_gone | blocked | "
@@ -139,6 +142,9 @@ TOOLS = [
                               "description": "Project id, \"*\" for all, omit for your own project."},
                 "includeStopped": {"type": "boolean",
                                    "description": "Include stopped tasks (default true)."},
+                "detail": {"type": "boolean",
+                           "description": "Include full row metadata, spec/report previews and "
+                                          "message counts (default false)."},
             },
         },
     },
@@ -198,14 +204,14 @@ TOOLS = [
         "description": (
             "Read one task in full: title, complete spec, priority, project, "
             "status, agents and roles, workspace mode, working directory, task "
-            "folder, and the most recent chat messages."
+            "folder, and its latest report in full. Chat messages are opt-in."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "taskId": {"type": "string", "description": "The task (room) id, e.g. room-1a2b3c4d."},
                 "messages": {"type": "integer",
-                             "description": "How many recent chat messages to include (default 20, max 200)."},
+                             "description": "How many recent chat messages to include (default 0, max 200)."},
             },
             "required": ["taskId"],
         },
@@ -247,7 +253,9 @@ TOOLS = [
         "name": "ensemble_update_task",
         "description": (
             "Amend a task's title, spec, priority, board column and/or assigned "
-            "agents. Move your OWN task to \"inreview\" when you hand the work "
+            "agents. Task owners and reviewers may only move their OWN task to "
+            "\"inreview\"; project POs and planners can administer tasks. Move "
+            "your OWN task to \"inreview\" when you hand the work "
             "back — that is a thing you know and the board cannot infer, because "
             "an agent that has finished and one that is stuck both just go quiet. "
             "Only a ProductOwner moves a task to \"done\"; it means accepted after "
@@ -372,6 +380,19 @@ TOOLS = [
     },
 ]
 
+# Most agents only need to read the board, report, and hand their own work back.
+# Project POs and explicitly delegated planners additionally administer it.
+# Keep the combined alias for code that needs to inspect every schema.
+COMMON_TOOL_NAMES = frozenset({
+    "ensemble_whoami", "ensemble_report", "ensemble_list_tasks",
+    "ensemble_list_attention", "ensemble_plan_usage", "ensemble_get_task",
+    "ensemble_update_task", "ensemble_get_roadmap",
+})
+ADMIN_TOOL_NAMES = frozenset(t["name"] for t in _ALL_TOOLS) - COMMON_TOOL_NAMES
+COMMON_TOOLS = [t for t in _ALL_TOOLS if t["name"] in COMMON_TOOL_NAMES]
+ADMIN_TOOLS = [t for t in _ALL_TOOLS if t["name"] in ADMIN_TOOL_NAMES]
+TOOLS = COMMON_TOOLS + ADMIN_TOOLS
+
 # Offered only to a reviewer on mention (see chatroom.is_on_mention): the one
 # way its review ends. Kept literal — no `_d.` at import time.
 REVIEW_VERDICT_NAMES = ("approve", "changes_requested", "comment")
@@ -402,6 +423,38 @@ REVIEW_TOOLS = [
         },
     },
 ]
+REVIEW_TOOL_NAMES = frozenset(t["name"] for t in REVIEW_TOOLS)
+
+
+def _role_head(part: dict) -> str:
+    return ((part or {}).get("role") or "").split(":", 1)[0].strip().lower()
+
+
+def is_admin_caller(room: dict, identity: str) -> bool:
+    """Whether the caller administers the board: its project's PO or a planner."""
+    if not (room or {}).get("id"):
+        return False
+    part = _d.chatroom.participant(room or {}, identity) or {}
+    if _role_head(part) == "planner" or _d.is_product_owner(room, identity):
+        return True
+    pid = _project_of_room(room or {})
+    project = _projects().get(pid)
+    return bool(project and (project.get("poRoomId") or "").strip() == room.get("id"))
+
+
+def tool_schemas(room: dict, identity: str) -> list[dict]:
+    """Task schemas offered to this authenticated participant."""
+    tools = list(COMMON_TOOLS)
+    if is_admin_caller(room, identity):
+        tools += list(ADMIN_TOOLS)
+    part = _d.chatroom.participant(room or {}, identity) or {}
+    if _d.chatroom.is_on_mention(room or {}, part):
+        tools += list(REVIEW_TOOLS)
+    return tools
+
+
+def _allowed_names(ctx: dict) -> frozenset[str]:
+    return frozenset(t["name"] for t in tool_schemas(ctx["room"], ctx["identity"]))
 
 
 # ---------------------------------------------------------------------------
@@ -450,14 +503,14 @@ def _project_po(project: dict | None) -> dict | None:
             "live": _d._room_is_live(room), "projectId": project["id"]}
 
 
-def _report_view(room: dict) -> dict | None:
+def _report_view(room: dict, full: bool = False) -> dict | None:
     rep = room.get("lastReport")
     if not isinstance(rep, dict):
         return None
     text = rep.get("text", "") or ""
     return {"kind": rep.get("kind", ""), "identity": rep.get("identity", ""),
             "ts": rep.get("ts"), "to": rep.get("to"),
-            "text": (text[:300] + "…") if len(text) > 300 else text}
+            "text": text if full else ((text[:300] + "…") if len(text) > 300 else text)}
 
 
 def _status(room: dict) -> str:
@@ -482,6 +535,20 @@ def _agents_view(room: dict) -> list[dict]:
              "model": p.get("model", ""), "role": p.get("role", "")}
         if _d.chatroom.is_on_mention(room, p):
             # Not a running agent: started fresh for each review request.
+            a["runs"] = "reviewing now" if _d._pty_alive(p.get("ptyId")) else "on mention"
+        out.append(a)
+    return out
+
+
+def _agents_summary(room: dict) -> list[dict]:
+    """Only the role information useful while scanning task rows."""
+    out = []
+    for p in room.get("participants", []):
+        if p.get("kind") != "agent":
+            continue
+        a = {"kind": p.get("agent", ""), "model": p.get("model", ""),
+             "role": p.get("role", "")}
+        if _d.chatroom.is_on_mention(room, p):
             a["runs"] = "reviewing now" if _d._pty_alive(p.get("ptyId")) else "on mention"
         out.append(a)
     return out
@@ -515,10 +582,25 @@ def _attention_view(item: dict | None) -> dict | None:
 
 
 def _row(room: dict, projects: dict, links: dict, labels: dict,
-         attn: dict | None = None) -> dict:
+         attn: dict | None = None, detail: bool = False,
+         include_project: bool = False) -> dict:
     pid = _project_of_room(room, links)
     spec = room.get("spec", "") or ""
     prio = _d.priority_of(room)
+    compact = {
+        "id": room["id"],
+        "title": _title(room, labels),
+        "priority": prio,
+        "status": _status(room),
+        "workflow": _d.workflow_of(room),
+        "attention": _attention_view((attn or {}).get(room["id"])),
+        "agents": _agents_summary(room),
+        "updatedAt": room.get("updatedAt"),
+    }
+    if include_project:
+        compact["project"] = (projects.get(pid) or {}).get("name", "") if pid else ""
+    if not detail:
+        return compact
     return {
         "id": room["id"],
         "attention": _attention_view((attn or {}).get(room["id"])),
@@ -587,8 +669,8 @@ def _load_target(task_id: str) -> dict:
 
 
 def _check_write_scope(ctx: dict, target_pid: str, what: str) -> None:
-    """A caller with a project may only write inside it; a project-less caller
-    may write anywhere."""
+    """An administrator with a project may write only inside it; an allowed
+    project-less administrator may write anywhere."""
     own = ctx["projectId"]
     if own and target_pid != own:
         raise ToolError(f"{what} is out of scope: that task belongs to project "
@@ -791,14 +873,17 @@ def _list_tasks(ctx, args, handler):
     links = _d.load_session_projects()
     labels = _d.load_labels()
     attn = _attention_by_room()
-    rows = []
+    detail = args.get("detail") is True
+    selected = []
     for r in _d.chatroom.list_rooms():
         rpid = _project_of_room(r, links)
-        if pid != "*" and rpid != pid:
-            continue
-        row = _row(r, projects, links, labels, attn)
-        if not include_stopped and row["status"] == "stopped":
-            continue
+        if (pid == "*" or rpid == pid) and (include_stopped or _status(r) != "stopped"):
+            selected.append((r, rpid))
+    include_project = len({rpid for _, rpid in selected}) > 1
+    rows = []
+    for r, _ in selected:
+        row = _row(r, projects, links, labels, attn, detail=detail,
+                   include_project=include_project)
         rows.append(row)
     # Priority first (1 = highest), then the previous recency order inside it.
     rows.sort(key=lambda x: (x["priority"], -(x.get("updatedAt") or 0)))
@@ -867,15 +952,15 @@ def _get_task(ctx, args, handler):
     projects = _projects()
     links = _d.load_session_projects()
     labels = _d.load_labels()
-    n = args.get("messages", 20)
+    n = args.get("messages", 0)
     try:
         n = max(0, min(200, int(n)))
     except (TypeError, ValueError):
-        n = 20
+        n = 0
     msgs = room.get("messages", []) or []
     tail = [{"from": m.get("from"), "to": m.get("to", ""), "ts": m.get("ts"),
              "text": (m.get("text") or "")[:2000]} for m in msgs[-n:]] if n else []
-    row = _row(room, projects, links, labels)
+    row = _row(room, projects, links, labels, detail=True)
     row.pop("specPreview", None)
     row.update({
         "spec": room.get("spec", "") or "",
@@ -886,6 +971,7 @@ def _get_task(ctx, args, handler):
         "recentMessages": tail,
         "isYou": room["id"] == ctx["room"]["id"],
     })
+    row["lastReport"] = _report_view(room, full=True)
     return row
 
 
@@ -929,6 +1015,14 @@ def _create_task(ctx, args, handler):
 def _update_task(ctx, args, handler):
     room = _load_target(args.get("taskId"))
     _check_write_scope(ctx, _project_of_room(room), "update_task")
+    if not is_admin_caller(ctx["room"], ctx["identity"]):
+        changes_other_than_workflow = any(args.get(k) is not None
+                                          for k in ("title", "spec", "priority", "agents"))
+        if (room["id"] != ctx["room"]["id"] or changes_other_than_workflow
+                or _d.normalize_workflow(args.get("workflow")) != "inreview"):
+            raise ToolError(
+                "task owners and reviewers may use update_task only to move their "
+                "own task to In review; project POs and planners administer tasks")
     title = args.get("title")
     spec = args.get("spec")
     priority = _priority(args.get("priority"))
@@ -1116,6 +1210,15 @@ def call(name: str, args: dict, room_id: str, identity: str, handler) -> tuple[s
         return f"unknown tool: {name}", True
     try:
         ctx = _caller(room_id, identity)
+        if name not in _allowed_names(ctx):
+            role = _role_head(ctx["part"]) or "task owner"
+            if name in REVIEW_TOOL_NAMES:
+                raise ToolError(
+                    f"{name} is available only to a reviewer during an active review")
+            raise ToolError(
+                f"{name} is not available to role '{role}': board administration "
+                "tools are reserved for a project's PO room or an agent whose "
+                "role is planner")
         result = fn(ctx, args or {}, handler)
         return _text(result), False
     except ToolError as e:
