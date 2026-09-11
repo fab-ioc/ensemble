@@ -2945,19 +2945,42 @@ const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':
 // (XSS-safe): code is pulled to sentinel placeholders, text is escaped, inline
 // spans + block structure applied, then code restored (already escaped).
 const _MDA = String.fromCharCode(0xE000), _MDZ = String.fromCharCode(0xE001);
-// A local file path (drive-letter, UNC, ~, or absolute) ending in an extension.
-// File links: absolute paths always; relative ones ("docs/plan.md", "NOTES.md")
-// are resolved against the task folder, so agents needn't spell out full paths.
+// ---- Links in rendered text: begin shared block ----------------------------
+// index.html, session.html and fileview.html carry this block word for word;
+// tests/test_links.py fails when the copies drift. The page supplies esc() and
+// fileHref(path, line). Whatever an agent writes that names a place becomes a
+// link that works for the person reading it, wherever they are reading it:
+//   * the hub's own loopback address (http://127.0.0.1:8765/...) becomes this
+//     page's address, so it opens from another computer on the tailnet too;
+//   * file://... and local paths (C:\..., \\server\..., ~/..., /..., docs/a.md,
+//     and name.py:120 with a line) open in the file viewer, which reads them
+//     through the hub; a folder opens as a listing;
+//   * a task id (room-1a2b3c4d) opens that task;
+//   * a loopback address on another port works only on the hub machine, so
+//     anywhere else it is plain text that says so, not a link that fails.
 const ABS_PATH_RE = /^(?:[A-Za-z]:[\\\/]|\\\\|~\/|\/)/;   // C:\dir, C:/dir, \\unc, ~/x, /x
 // mdToHtml escapes before linkifying, so a path arrives with entities in it.
 const unescPath = s => (s || '').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
   .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
-const REL_PATH_RE = /(^|[\s(*_])((?:\.\.?[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}|[\w-]+\.(?:md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|png|jpg|jpeg|gif|svg|sh|ps1|sql|xml|log|ini|cfg))(?=[\s.,;:)\]]|$)/g;
+// "dashboard.py:4620" or ":4620:8": the file, and the line for the viewer.
+function splitLine(s) {
+  const m = (s || '').match(/:(\d+)(?::\d+)?$/);
+  return m && /\.\w{1,8}$/.test(s.slice(0, m.index))
+    ? { path: s.slice(0, m.index), line: +m[1] } : { path: s || '', line: 0 };
+}
 const looksFilePath = s => {
-  const t = (s || '').trim();
+  const t = splitLine((s || '').trim()).path;
   if (ABS_PATH_RE.test(t)) return /\S+\.\w{1,8}$/.test(t);
   return /^(?:\.\.?[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}$/.test(t)
       || /^[\w-]+\.(?:md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|png|jpg|jpeg|gif|svg|sh|ps1|sql|xml|log|ini|cfg)$/.test(t);
+};
+// A folder: a Windows, UNC or home path with no extension, or a macOS/Linux
+// home path ending in a separator. Only where it stands alone (a code span, a
+// link target): in running text "C:\temp and" would swallow the sentence.
+const looksDirPath = s => {
+  const t = (s || '').trim();
+  return (/^(?:[A-Za-z]:[\\\/]|\\\\[^\\\/\s]|~\/)/.test(t) && !/\.\w{1,8}$/.test(t) && !/[<>|?*"]|\s{2}/.test(t))
+      || /^\/(?:Users|home)\/\S*\/$/.test(t);
 };
 function resolvePath(p, base) {
   p = (p || '').trim();
@@ -2965,9 +2988,126 @@ function resolvePath(p, base) {
   const sep = base.includes('\\') ? '\\' : '/';
   return base.replace(/[\\\/]+$/, '') + sep + p.replace(/^\.[\\\/]/, '').replace(/[\\\/]/g, sep);
 }
+const LOOPBACK_HOST_RE = /^(?:127(?:\.\d{1,3}){3}|localhost|\[::1\])$/i;
+let HUB_PORT = '';   // the hub's port, from /api/config; until it arrives, this page's own
+const hubPort = () => HUB_PORT || location.port || (location.protocol === 'https:' ? '443' : '80');
+const onHubMachine = () => LOOPBACK_HOST_RE.test(location.hostname);
+// file:///C:/a%20b.md is C:/a b.md; file://srv/share/x is \\srv\share\x; file:///home/x is /home/x
+function filePathOfUrl(u) {
+  let p = u.replace(/^file:/i, '');
+  try { p = decodeURIComponent(p); } catch (e) {}
+  if (/^\/\/\/[A-Za-z]:/.test(p)) return p.slice(3);
+  if (/^\/\/[^\/]/.test(p)) return '\\\\' + p.slice(2).replace(/\//g, '\\');
+  return p.replace(/^\/\//, '');
+}
+// What a URL an agent wrote opens for the person reading it here: a file
+// {file, line}, a page {href}, or {dead} when it only exists on the hub machine.
+function urlTarget(raw) {
+  const u = unescPath(raw);
+  if (/^file:/i.test(u)) { const s = splitLine(filePathOfUrl(u)); return { file: s.path, line: s.line }; }
+  let x = null;
+  try { x = new URL(u); } catch (e) { return { href: u }; }
+  if (LOOPBACK_HOST_RE.test(x.hostname)) {
+    const port = x.port || (x.protocol === 'https:' ? '443' : '80');
+    if (port === hubPort()) return { href: location.origin + x.pathname + x.search + x.hash };
+    if (!onHubMachine()) return { dead: x.host };
+  }
+  return { href: u };
+}
+// A sentence's full stop, comma or closing bracket is not part of its URL.
+function trimUrlTail(u) {
+  let tail = '', m;
+  for (;;) {
+    if ((m = u.match(/(?:[.,;:!?]|&quot;|&#39;|&gt;)$/))) { tail = m[0] + tail; u = u.slice(0, -m[0].length); }
+    else if (u.endsWith(')') && u.split('(').length < u.split(')').length) { tail = ')' + tail; u = u.slice(0, -1); }
+    else return [u, tail];
+  }
+}
+const A_NEW = ' target="_blank" rel="noopener"';
+const taskLinkHtml = (id, text) => `<a href="/?task=${id}" data-task="${id}"${A_NEW} class="task-link">${text}</a>`;
+const fileLinkHtml = (p, text, line) => `<a href="${fileHref(p, line)}"${A_NEW} class="file-link">${text}</a>`;
+function urlLinkHtml(raw, text) {
+  const t = urlTarget(raw);
+  if (t.file != null) return fileLinkHtml(t.file, text, t.line);
+  if (t.dead) return `<span class="dead-link" title="${esc(t.dead)} is an address on the hub machine itself">${text} (only on the hub machine)</span>`;
+  return `<a href="${esc(t.href)}"${A_NEW}>${text}</a>`;
+}
+// [text](target): a web or file URL, an #anchor on this page, a dashboard
+// page, a task, a file or a folder. Anything else stays as it was written.
+function mdLinkHtml(m, txt, target) {
+  const t = unescPath(target.trim().replace(/^&lt;([\s\S]*)&gt;$/, '$1'));
+  if (/^#/.test(t) || /^mailto:/i.test(t)) return `<a href="${esc(t)}">${txt}</a>`;
+  if (/^(?:https?|file):/i.test(t)) return urlLinkHtml(t, txt);
+  const task = t.match(/^(?:\/?\?task=)?(room-[0-9a-f]{8})$/);
+  if (task) return taskLinkHtml(task[1], txt);
+  if (/^\/(?:fileview|session)?(?:\?|$)/.test(t)) return `<a href="${esc(t)}"${A_NEW}>${txt}</a>`;
+  if (looksFilePath(t) || looksDirPath(t)) { const s = splitLine(t); return fileLinkHtml(s.path, txt, s.line); }
+  return m;
+}
+// A `code span` that names a place is a link too, and still reads as code.
+function codeSpanHtml(body) {
+  const code = `<code class="ic">${esc(body)}</code>`;
+  const t = body.trim();
+  if (/^room-[0-9a-f]{8}$/.test(t)) return taskLinkHtml(t, code);
+  if (/^(?:https?|file):\/\/\S+$/i.test(t)) return urlLinkHtml(t, code);
+  if (looksFilePath(t) || looksDirPath(t)) { const s = splitLine(t); return fileLinkHtml(s.path, code, s.line); }
+  return code;
+}
+// Running text, already escaped, in one pass so nothing is linked twice. The
+// links are parked in `keep` and put back by unlinkify, after bold and italics.
+// A Windows path may have spaces in its folder and file names ("Ensemble
+// Dashboard\Terms and Conditions.md"), and a sentence may begin with one
+// ("C:\foo please check docs\readme.md"). What is taken from the drive to the
+// extension is linked whole when it is sure to be a path, and otherwise left
+// as text, all of it, so that no piece of it opens a different file: a name
+// with spaces reads as a name when it starts with a capital or a digit and
+// has at most four words ("New folder", "War of the Worlds.md"). A code span
+// or [text](target) takes any path as written. A path's & arrives as &amp;.
+// A markdown target may hold one level of brackets: [x](https://w/Foo_(bar)).
+const winPathSure = p => p.split(/[\\\/]/).every(s => !s.includes(' ') || (/^[A-Z0-9]/.test(s) && s.split(' ').length <= 4));
+const LINK_RE = (() => {
+  const c = String.raw`(?:[^\s"'<>|?*,;:)\]\\\/&]|&amp;)`, f = String.raw`(?:[^\s"'<>|?*,;:)\]\\\/&.]|&amp;)`;
+  const dir = `${c}+(?: ${c}+)*`, file = `(?:${f}+ )*${c}*\\.\\w{1,8}`;
+  const line = String.raw`(?::\d+(?::\d+)?)?`, pre = String.raw`(^|[\s(*_])`;
+  return new RegExp([
+    String.raw`\[([^\]\n]+)\]\(((?:[^()\n]|\([^()\n]*\))+)\)`,
+    pre + String.raw`((?:https?|file):\/\/[^\s<*]+)`,
+    pre + String.raw`((?:[A-Za-z]:[\\\/]|\\\\)(?:` + dir + String.raw`[\\\/])*` + file + line + String.raw`)(?![\w\\\/-])`,
+    pre + String.raw`((?:~\/|\/)(?:[^\s"'<>|?*,;)\]&]|&amp;)*\.\w{1,8}` + line + String.raw`)(?![\w\\\/-])`,
+    pre + String.raw`((?:\.\.?[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}` + line
+      + String.raw`|[\w-]+\.(?:md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|png|jpg|jpeg|gif|svg|sh|ps1|sql|xml|log|ini|cfg)` + line + String.raw`)(?=[\s.,;:)\]]|$)`,
+    String.raw`\b(room-[0-9a-f]{8})\b`,
+  ].join('|'), 'g');
+})();
+const LINK_A = String.fromCharCode(0xE002), LINK_Z = String.fromCharCode(0xE003);
+const LINK_MARK_RE = new RegExp('[' + LINK_A + LINK_Z + ']', 'g');
+function linkify(t, keep) {
+  const put = h => LINK_A + (keep.push(h) - 1) + LINK_Z;
+  // The text's own marker characters, if it has any, are parked too, so what
+  // unlinkify puts back is only ever what this call parked.
+  t = t.replace(LINK_MARK_RE, put);
+  return t.replace(LINK_RE, (m, mdTxt, mdUrl, p1, url, p2, win, p3, nix, p4, rel, room) => {
+    if (mdTxt != null) { const h = mdLinkHtml(m, mdTxt, mdUrl); return h === m ? m : put(h); }
+    if (url != null) { const [u, tail] = trimUrlTail(url); return p1 + put(urlLinkHtml(u, u)) + tail; }
+    if (room != null) return put(taskLinkHtml(room, room));
+    if (win != null && !winPathSure(win)) return m;
+    const pth = win ?? nix ?? rel, s = splitLine(unescPath(pth));
+    return (p2 ?? p3 ?? p4) + put(fileLinkHtml(s.path, pth, s.line));
+  });
+}
+const unlinkify = (t, keep) => t.replace(new RegExp(LINK_A + '(\\d+)' + LINK_Z, 'g'), (m, i) => keep[+i] ?? m);
+// ---- Links in rendered text: end shared block ------------------------------
 let FILE_LINK_ROOM = '';   // room id woven into file links so /fileview can send comments back
 let FILE_LINK_BASE = '';   // the task folder relative paths resolve against
-const fileHref = p => '/fileview?path=' + encodeURIComponent(unescPath(p).trim()) + (FILE_LINK_ROOM ? '&room=' + encodeURIComponent(FILE_LINK_ROOM) : '') + (FILE_LINK_BASE ? '&cwd=' + encodeURIComponent(FILE_LINK_BASE) : '');
+const fileHref = (p, line) => '/fileview?path=' + encodeURIComponent((p || '').trim()) + (line ? '&line=' + line : '')
+  + (FILE_LINK_ROOM ? '&room=' + encodeURIComponent(FILE_LINK_ROOM) : '') + (FILE_LINK_BASE ? '&cwd=' + encodeURIComponent(FILE_LINK_BASE) : '');
+// Markdown for one task: its relative file mentions resolve against its own
+// folder, whatever task was rendered last.
+function mdIn(r, text) {
+  const room = FILE_LINK_ROOM, base = FILE_LINK_BASE;
+  FILE_LINK_ROOM = (r && r.headless && r.roomId) || ''; FILE_LINK_BASE = (r && r.cwd) || '';
+  try { return mdToHtml(text); } finally { FILE_LINK_ROOM = room; FILE_LINK_BASE = base; }
+}
 // Show the human ("user") by their configured name as a highlighted @mention.
 const operatorLabel = () => (typeof PREFS !== 'undefined' && PREFS && (PREFS.operatorName || PREFS.operatorNickname)) || 'you';
 const identLabel = id => `<span class="mention">@${esc(id === 'user' ? operatorLabel() : id)}</span>`;
@@ -2977,25 +3117,16 @@ function mdToHtml(src) {
   let s = (src ?? '').replace(/\r\n/g, '\n');
   s = s.replace(/```([\w+-]*)\n?([\s\S]*?)```/g, (_, lang, body) =>
     ph(`<pre class="cb"${lang ? ` data-lang="${esc(lang)}"` : ''}><code>${esc(body.replace(/\n$/, ''))}</code></pre>`));
-  s = s.replace(/`([^`\n]+)`/g, (_, body) => {
-    const code = `<code class="ic">${esc(body)}</code>`;
-    return ph(looksFilePath(body) ? `<a href="${fileHref(body.trim())}" target="_blank" rel="noopener">${code}</a>` : code);
-  });
+  s = s.replace(/`([^`\n]+)`/g, (_, body) => ph(codeSpanHtml(body)));
   s = esc(s);
-  const inline = t => t
-    .replace(/\[([^\]\n]+)\]\(([^)\n]+)\)/g, (m, txt, url) => {
-      const t = url.trim();
-      if (/^(?:https?:|mailto:|#)/i.test(t)) return `<a href="${t}" target="_blank" rel="noopener">${txt}</a>`;
-      return looksFilePath(t) ? `<a href="${fileHref(t)}" target="_blank" rel="noopener" class="file-link">${txt}</a>` : m;
-    })
-    .replace(/(^|[\s(*_])((?:https?:\/\/)[^\s<)*]+)/g, (_, pre, url) => `${pre}<a href="${url}" target="_blank" rel="noopener">${url}</a>`)
-    .replace(/(^|[\s(*_])((?:[A-Za-z]:[\\\/]|\\\\|~\/|\/)[^\s"'<>|?*,;)\]]*\.\w{1,8})/g,
-      (_, pre, pth) => `${pre}<a href="${fileHref(pth)}" target="_blank" rel="noopener" class="file-link">${pth}</a>`)
-    .replace(REL_PATH_RE, (_, pre, pth) => `${pre}<a href="${fileHref(pth)}" target="_blank" rel="noopener" class="file-link">${pth}</a>`)
-    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?]|$)/g, '$1<em>$2</em>')
-    .replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,!?]|$)/g, '$1<em>$2</em>')
-    .replace(/(^|[\s(])@([a-zA-Z][\w-]*)/g, '$1<span class="mention">@$2</span>');
+  const inline = t => {
+    const keep = [];
+    return unlinkify(linkify(t, keep)
+      .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?]|$)/g, '$1<em>$2</em>')
+      .replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,!?]|$)/g, '$1<em>$2</em>')
+      .replace(/(^|[\s(])@([a-zA-Z][\w-]*)/g, '$1<span class="mention">@$2</span>'), keep);
+  };
   const isBlockPh = t => new RegExp('^' + _MDA + '(\\d+)' + _MDZ + '$').test(t) && /^<pre/.test(codes[+t.slice(1, -1)] || '');
   const out = [];
   let list = null;
@@ -3085,6 +3216,9 @@ async function loadPlatform() {
 const feat = k => !!(PLATFORM.features && PLATFORM.features[k]);
 const T = () => PLATFORM.terminalName || 'terminal';
 const FM = () => PLATFORM.fileManagerName || 'file manager';
+// The file manager opens on the hub's own screen: from any other computer the
+// same control browses the folder in the file viewer instead.
+const finderLabel = () => onHubMachine() ? `Open in ${FM()}` : 'Browse the folder';
 
 // Hide OS-specific controls the current platform can't do. Called once after
 // loadPlatform(), before the first render.
@@ -3112,9 +3246,11 @@ function actionsCell(r, isLive) {
   const themeSelect = (feat('themes') && (r.pid || r.cwd)) ? `
     <button type="button" class="theme-dd-trigger" data-pid="${r.pid || ''}" data-cwd="${esc(r.cwd || '')}" data-current="${esc(current)}" title="${esc(themeTitle)}">${esc(placeholder)}</button>` : '';
   const finderBtn = r.cwd
-    ? `<button class="finder-btn" data-path="${esc(r.cwd)}" title="Open cwd in ${esc(FM())}">📂 ${esc(FM())}</button>`
+    ? (onHubMachine()
+        ? `<button class="finder-btn" data-path="${esc(r.cwd)}" title="Open cwd in ${esc(FM())}">📂 ${esc(FM())}</button>`
+        : `<button class="finder-btn" data-path="${esc(r.cwd)}" title="Browse this folder in the file viewer">📂 Browse</button>`)
     : '';
-  const ijBtn = `<button class="ij-btn" data-sid="${sid}" title="Open the project in its preferred editor (auto-detected by language)">🧠 IDE</button>`;
+  const ijBtn = `<button class="ij-btn" data-sid="${sid}" title="Open the project in its preferred editor (auto-detected by language)${onHubMachine() ? '' : ' — on the hub machine, not this one'}">🧠 IDE</button>`;
   // Focus requires a tty→tab mapping (macOS/iTerm only); hidden where unsupported.
   const focusBtn = (isLive && feat('focus'))
     ? `<button class="focus-btn" data-pid="${r.pid}" title="Bring this session's ${esc(T())} window to the front">🪟 Focus</button>`
@@ -3620,8 +3756,8 @@ function detailOverflow(r, isLive, isRoom) {
   items.push(`<span title="${esc(agentsWhy)}"><button class="ov-item agents-btn" data-room="${esc(r.roomId)}"${isLive ? ' disabled' : ''}>Agents and models</button></span>`);
   items.push(`<button class="ov-item moveproj-btn" data-sid="${esc(r.sessionId)}">Move to project</button>`);
   if (cwd) {
-    items.push(`<button class="ov-item finder-btn" data-path="${esc(cwd)}">Open in ${esc(FM())}</button>`);
-    items.push(`<button class="ov-item ij-btn" data-sid="${esc(r.sessionId)}">Open in editor</button>`);
+    items.push(`<button class="ov-item finder-btn" data-path="${esc(cwd)}">${esc(finderLabel())}</button>`);
+    items.push(`<button class="ov-item ij-btn" data-sid="${esc(r.sessionId)}">${onHubMachine() ? 'Open in editor' : 'Open in editor on the hub'}</button>`);
   }
   if (feat('themes') && cwd) {
     items.push(`<button type="button" class="ov-item theme-dd-trigger" data-pid="" data-cwd="${esc(cwd)}" data-current="${esc(current)}" title="Pick the terminal colour scheme for this task's folder">${current ? 'Terminal colours: ' + esc(current) : 'Terminal colours…'}</button>`);
@@ -3658,7 +3794,9 @@ function jiraSection(r) {
       <h3>Jira</h3>
       <div id="dp-jira-list" style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center;">
         ${(r.jira || []).map(t => `<span class="dp-jira-pill">
-          <a class="row-jira-chip" href="${esc(JIRA_BASE) + esc(t)}" target="_blank" rel="noopener" style="line-height: 22px; padding: 0 10px; font-size: 11.5px;">${esc(t)}</a>
+          ${JIRA_BASE
+            ? `<a class="row-jira-chip" href="${esc(JIRA_BASE) + esc(t)}" target="_blank" rel="noopener" style="line-height: 22px; padding: 0 10px; font-size: 11.5px;" title="Open ${esc(t)} in Jira">${esc(t)}</a>`
+            : `<span class="row-jira-chip" style="line-height: 22px; padding: 0 10px; font-size: 11.5px; cursor: default;">${esc(t)}</span>`}
           <button class="dp-jira-remove" data-ticket="${esc(t)}" title="Unlink ${esc(t)} from this session">×</button>
         </span>`).join('')}
         <button id="dp-jira-add" title="Link a Jira ticket to this session">+ Link</button>
@@ -3731,8 +3869,6 @@ function convThemeAttrs() {
   };
 }
 function convBody(r, sid) {
-  FILE_LINK_ROOM = (r && r.headless && r.roomId) ? r.roomId : '';
-  FILE_LINK_BASE = (r && r.cwd) || '';
   const th = convThemeAttrs();
   if (CONV_SID !== sid || !CONV_DATA) {
     return `<div class="dp-section dp-conv${th.cls}"${th.style}><h3>Conversation</h3><div class="dp-conv-empty">Loading…</div></div>`;
@@ -3748,7 +3884,7 @@ function convBody(r, sid) {
     const ts = fmtTs(m.ts);
     return `<div class="tx-turn ${cls}">
         <span class="tx-role">${identLabel(who)}${to}${ts ? `<span class="tx-ts">${esc(ts)}</span>` : ''}</span>
-        <div class="tx-text md">${mdToHtml(m.text)}</div>
+        <div class="tx-text md">${mdIn(r, m.text)}</div>
       </div>`;
   }).join('');
   return `<div class="dp-section dp-conv${th.cls}"${th.style}><h3>Conversation · ${items.length}</h3><div class="dp-transcript">${rows}</div></div>`;
@@ -3949,7 +4085,7 @@ function watchLiveChatFit(panel) {
 function specPaneHtml(r) {
   const spec = (r.spec || '').trim();
   if (!spec) return issueEmpty('No spec \u2014 this task was not created from one.');
-  return `<div class="dp-spec">${mdToHtml(spec)}</div>`;
+  return `<div class="dp-spec">${mdIn(r, spec)}</div>`;
 }
 
 // Single unified layout — list on left, detail panel on right.
@@ -4039,8 +4175,11 @@ function topicCellHL(r, parsed) {
   const catChip = showCat ? ` <span class="row-cat-chip">${esc(r.category)}</span>` : '';
   const allJira = r.jira || [];
   const shownJira = allJira.slice(0, 3);
-  const jiraChips = shownJira.map(t =>
-    `<a class="row-jira-chip" href="${esc(JIRA_BASE) + esc(t)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Open ${esc(t)} in Jira">${esc(t)}</a>`
+  // Without a Jira base URL a ticket has nowhere to go: say the ticket, don't
+  // link it to a relative path on the hub.
+  const jiraChips = shownJira.map(t => JIRA_BASE
+    ? `<a class="row-jira-chip" href="${esc(JIRA_BASE) + esc(t)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Open ${esc(t)} in Jira">${esc(t)}</a>`
+    : `<span class="row-jira-chip" style="cursor: default;">${esc(t)}</span>`
   ).join('') + (allJira.length > shownJira.length
     ? ` <span class="row-jira-chip" style="opacity: .7; cursor: default;" title="${esc(allJira.slice(3).join(', '))}">+${allJira.length - shownJira.length}</span>`
     : '');
@@ -4615,6 +4754,7 @@ let RUNTIME_CFG = null;
 async function loadRuntimeConfig() {
   try {
     RUNTIME_CFG = await api('/api/config');
+    if (RUNTIME_CFG && RUNTIME_CFG.port) HUB_PORT = String(RUNTIME_CFG.port);
     renderRuntimeConfig();
   } catch {}
 }
@@ -5480,33 +5620,67 @@ setInterval(() => {
 // unified diff, and line comments batched to a task's chat. ------------------
 let CH_FILE = '', CH_COMMENTS = [];   // [{file, line, side, code, text}]
 let CH_ROOT = '';                     // the repository currently shown (found within the scope)
+// Review comments belong to one repository of one project. Each keeps its own
+// batch and its chosen chat, so moving to another project or repository never
+// sends one's comments to the other's chat, and coming back finds both as they
+// were. CH_COMMENTS is the batch on screen; it is emptied in place, not replaced.
+const CH_BATCHES = new Map();         // 'project id|repo root' -> {comments, to, sending}
+let CH_CTX = '';
+// Only the latest status load and the latest diff may write the panel: a
+// repository picked twice, or a file and then another, can answer in any order.
+let CH_LOAD = 0, CH_DIFF = 0;
+const CH_DIFF_EMPTY = '<div class="wsp-empty">Select a changed file to review its diff. Click a line to comment; send the batch to a task chat.</div>';
+function chUseContext(ctx) {
+  if (!CH_BATCHES.has(ctx)) CH_BATCHES.set(ctx, { comments: [], to: '' });
+  CH_CTX = ctx;
+  CH_COMMENTS = CH_BATCHES.get(ctx).comments;
+}
 function changesPanelHtml(pj) {
   if (!pj || !pj.path) return '<p class="empty">This project has no folder.</p>';
   return scopeBarHtml(pj) + '<div class="chp">'
-    + '<div class="chp-files" id="chp-files" data-scope="' + esc(scopePath(pj)) + '" data-root=""><div class="chf none">loading…</div></div>'
-    + '<div class="chp-diff" id="chp-diff"><div class="wsp-empty">Select a changed file to review its diff. Click a line to comment; send the batch to a task chat.</div></div>'
+    + '<div class="chp-files" id="chp-files" data-project="' + esc(pj.id) + '" data-scope="' + esc(scopePath(pj)) + '" data-root=""><div class="chf none">loading…</div></div>'
+    + '<div class="chp-diff" id="chp-diff">' + CH_DIFF_EMPTY + '</div>'
     + '</div>';
+}
+// Another repository of the same project: its comments, chat and an empty
+// diff take over at once, before its files arrive, so nothing on screen still
+// belongs to the one before.
+function chPickRepo(root) {
+  const box = document.getElementById('chp-files'), diff = document.getElementById('chp-diff');
+  if (!box) return;
+  CH_ROOT = root; CH_FILE = ''; CH_DIFF++;
+  box.dataset.root = root;
+  box.innerHTML = '<div class="chf none">loading…</div>';
+  if (diff) diff.innerHTML = CH_DIFF_EMPTY;
+  chUseContext(box.dataset.project + '|' + root);
+  chRenderTray();
+  chLoadStatus();
 }
 async function chLoadStatus() {
   const box = document.getElementById('chp-files'); if (!box) return;
+  const gen = ++CH_LOAD, stale = () => gen !== CH_LOAD || !box.isConnected;
   try {
     // Find the repo(s) in scope first: the folder itself may be a repo, or a
     // task may hold clones a few levels down (e.g. <task>/claude/<name>/).
     const rr = await api('/api/git/roots?path=' + encodeURIComponent(box.dataset.scope));
     const roots = rr.roots || [];
+    if (stale()) return;                // a newer load, or another project or scope, took the panel
     if (!roots.length) {
       CH_ROOT = ''; box.dataset.root = '';
+      chUseContext(box.dataset.project + '|'); chRenderTray();
       box.innerHTML = '<div class="chf none">No git repository here yet. When an agent clones one into this folder, its changes show up here.</div>';
       return;
     }
     if (!CH_ROOT || !roots.some(function (r) { return r.path === CH_ROOT; })) CH_ROOT = roots[0].path;
     box.dataset.root = CH_ROOT;
+    chUseContext(box.dataset.project + '|' + CH_ROOT); chRenderTray();
     const repoSel = roots.length > 1
       ? '<select class="chp-repo" title="Which repository">' + roots.map(function (r) {
           return '<option value="' + esc(r.path) + '"' + (r.path === CH_ROOT ? ' selected' : '') + '>' + esc(r.name) + '</option>';
         }).join('') + '</select>'
       : '<span class="chp-repo1" title="' + esc(CH_ROOT) + '">' + esc(roots[0].name) + '</span>';
     const st = await api('/api/git/status?path=' + encodeURIComponent(CH_ROOT));
+    if (stale()) return;
     const files = st.files || [];
     box.innerHTML = '<div class="chp-head">' + repoSel + '<span class="chp-count">' + files.length + ' changed</span>'
       + '<button class="chp-refresh" title="Refresh">↻</button></div>'
@@ -5516,8 +5690,8 @@ async function chLoadStatus() {
             + '<span class="chst st-' + esc(code[0]) + '">' + esc(code) + '</span><span class="nm">' + esc(f.path) + '</span></div>';
         }).join('') : '<div class="chf none">working tree clean</div>');
     const rb = box.querySelector('.chp-refresh'); if (rb) rb.onclick = chLoadStatus;
-    const rs = box.querySelector('.chp-repo'); if (rs) rs.onchange = function () { CH_ROOT = rs.value; CH_FILE = ''; chLoadStatus(); };
-  } catch (e) { box.innerHTML = '<div class="chf none">status unavailable: ' + esc(e.message) + '</div>'; }
+    const rs = box.querySelector('.chp-repo'); if (rs) rs.onchange = function () { chPickRepo(rs.value); };
+  } catch (e) { if (!stale()) box.innerHTML = '<div class="chf none">status unavailable: ' + esc(e.message) + '</div>'; }
 }
 function parseUnifiedDiff(text) {
   // Rows: {kind: hunk|meta|ctx|add|del, oldNo, newNo, text}
@@ -5540,10 +5714,16 @@ function parseUnifiedDiff(text) {
   }
   return rows;
 }
-function renderDiff(file, text, comments) {
+function renderDiff(file, text, comments, root) {
   comments = comments || CH_COMMENTS;
   const rows = parseUnifiedDiff(text);
-  if (!rows.length) return '<div class="wsp-empty">No differences.</div>';
+  // An empty diff still answers the click: an untracked folder is one entry to
+  // git, so it opens as a folder instead; anything else says why there are no lines.
+  if (!rows.length && /\/$/.test(file) && root) {
+    return '<div class="wsp-empty">An untracked folder: git lists it as one entry, not the files in it. '
+      + '<a href="/fileview?path=' + encodeURIComponent(wsJoin(root, file.replace(/\/$/, ''))) + '" target="_blank" rel="noopener">Browse the folder</a></div>';
+  }
+  if (!rows.length) return '<div class="wsp-empty">No text differences to show: a binary file, or a change git has no lines for.</div>';
   return '<div class="diff-head"><span class="wsp-path" title="' + esc(file) + '">' + esc(file) + '</span><span class="dim">click a line to comment</span></div>'
     + '<div class="diff">' + rows.map(function (r) {
       if (r.kind === 'hunk' || r.kind === 'meta') {
@@ -5560,18 +5740,22 @@ function renderDiff(file, text, comments) {
 async function chOpenDiff(file) {
   const box = document.getElementById('chp-diff'); if (!box) return;
   CH_FILE = file;
+  // The diff belongs to this repository's batch: a comment on it lands there,
+  // whatever is on screen by the time it is added.
+  const seq = ++CH_DIFF, root = document.getElementById('chp-files').dataset.root;
+  const list = CH_BATCHES.get(CH_CTX).comments;
   document.querySelectorAll('#chp-files .chf').forEach(function (x) { x.classList.toggle('on', x.dataset.file === file); });
   box.innerHTML = '<div class="wsp-empty">loading diff…</div>';
   try {
-    const root = document.getElementById('chp-files').dataset.root;
     const d = await api('/api/git/diff?path=' + encodeURIComponent(root) + '&file=' + encodeURIComponent(file));
-    box.innerHTML = renderDiff(file, d.diff || '');
+    if (seq !== CH_DIFF || !box.isConnected) return;   // another file, repository or project since
+    box.innerHTML = renderDiff(file, d.diff || '', list, root);
     const body = box.querySelector('.diff');
     if (body) body.onclick = function (e) {
       const dl = e.target.closest('.dl'); if (!dl || !dl.dataset.line) return;
-      chCommentPrompt(file, parseInt(dl.dataset.line, 10), dl.dataset.side, dl.querySelector('.tx').textContent, dl);
+      chCommentPrompt(file, parseInt(dl.dataset.line, 10), dl.dataset.side, dl.querySelector('.tx').textContent, dl, list);
     };
-  } catch (e) { box.innerHTML = '<div class="wsp-empty">diff unavailable: ' + esc(e.message) + '</div>'; }
+  } catch (e) { if (seq === CH_DIFF && box.isConnected) box.innerHTML = '<div class="wsp-empty">diff unavailable: ' + esc(e.message) + '</div>'; }
 }
 // The comments land in `list` (the project tab's batch unless a task pane
 // passes its own), and `after` repaints whatever tray shows that list.
@@ -5608,11 +5792,16 @@ function chFormat(list, what) {
 }
 function chRenderTray() {
   let tray = document.getElementById('ch-tray');
-  if (!CH_COMMENTS.length || PROJECT_TAB !== 'changes' || SB_DEST) { if (tray) tray.remove(); return; }
+  if (!CH_COMMENTS.length || PROJECT_TAB !== 'changes' || SB_DEST || CH_CTX.split('|')[0] !== SELECTED_PROJECT) {
+    if (tray) tray.remove();
+    return;
+  }
   if (!tray) { tray = document.createElement('div'); tray.id = 'ch-tray'; document.body.appendChild(tray); }
-  const pj = projectById(SELECTED_PROJECT);
+  const pj = projectById(CH_CTX.split('|')[0]);   // the batch's own project, whatever is selected
   const rooms = ((pj && pj.sessions) || []).filter(function (s) { return s.roomId; });
-  tray.innerHTML = '<div class="ch-tray-head"><strong>' + CH_COMMENTS.length + ' review comment' + (CH_COMMENTS.length > 1 ? 's' : '') + '</strong><span class="grow"></span>'
+  // Rebuilt only when it changes, and the chat you picked stays picked: this
+  // runs on every render, and a rebuild put "Send" back on the first chat.
+  const html = '<div class="ch-tray-head"><strong>' + CH_COMMENTS.length + ' review comment' + (CH_COMMENTS.length > 1 ? 's' : '') + '</strong><span class="grow"></span>'
     + '<select id="ch-to" title="Which task chat receives the comments">'
     + (rooms.length ? rooms.map(function (r) { return '<option value="' + esc(r.roomId) + '">' + esc(r.label || r.roomId) + '</option>'; }).join('')
                     : '<option value="">(no task chat in this project)</option>')
@@ -5621,26 +5810,43 @@ function chRenderTray() {
     + '<div class="ch-list">' + CH_COMMENTS.map(function (c, i) {
         return '<div class="ch-item"><span class="ch-loc">' + esc(c.file) + ':' + c.line + ' (' + c.side + ')</span><span class="ch-txt">' + esc(c.text) + '</span><button class="ch-x" data-i="' + i + '" title="Remove">✕</button></div>';
       }).join('') + '</div>';
+  if (tray._html === CH_CTX + html) return;
+  tray._html = CH_CTX + html;
+  tray.innerHTML = html;
+  const to = document.getElementById('ch-to'), picked = CH_BATCHES.get(CH_CTX).to;
+  if (picked && [...to.options].some(function (o) { return o.value === picked; })) to.value = picked;
+  to.onchange = function () { CH_BATCHES.get(CH_CTX).to = to.value; };
   tray.querySelectorAll('.ch-x').forEach(function (b) {
     b.onclick = function () { CH_COMMENTS.splice(parseInt(b.dataset.i, 10), 1); chRenderTray(); if (CH_FILE) chOpenDiff(CH_FILE); };
   });
-  tray.querySelector('.ch-clear').onclick = function () { CH_COMMENTS = []; chRenderTray(); if (CH_FILE) chOpenDiff(CH_FILE); };
+  tray.querySelector('.ch-clear').onclick = function () { CH_COMMENTS.length = 0; chRenderTray(); if (CH_FILE) chOpenDiff(CH_FILE); };
   tray.querySelector('.ch-copy').onclick = function () {
     navigator.clipboard.writeText(chFormat()).then(function () { toast('comments copied', 1500, 'ok'); }, function () { toast('copy failed', 3000, 'err'); });
   };
   tray.querySelector('.ch-send').onclick = async function () {
     const rid = document.getElementById('ch-to').value;
     if (!rid) { toast('no task chat to send to — use Copy', 3000, 'err'); return; }
+    // One send at a time, and the comments taken off the batch are exactly the
+    // ones sent: the tray stays editable while the hub answers, and you may
+    // have moved to another repository or project by then.
+    const rec = CH_BATCHES.get(CH_CTX);
+    if (rec.sending) { toast('still sending the last batch', 2000); return; }
+    const items = rec.comments.slice();
+    rec.sending = true;
     try {
-      await api('/api/room/say', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: rid, text: chFormat(), to: '' }) });
-      toast('sent ' + CH_COMMENTS.length + ' comment(s) to chat', 2500, 'ok');
-      CH_COMMENTS = []; chRenderTray(); if (CH_FILE) chOpenDiff(CH_FILE);
+      await api('/api/room/say', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: rid, text: chFormat(items), to: '' }) });
+      toast('sent ' + items.length + ' comment(s) to chat', 2500, 'ok');
+      items.forEach(function (c) { const k = rec.comments.indexOf(c); if (k >= 0) rec.comments.splice(k, 1); });
+      chRenderTray(); if (CH_FILE) chOpenDiff(CH_FILE);
     } catch (e) { toast('send failed: ' + e.message, 5000, 'err'); }
+    finally { rec.sending = false; }
   };
 }
 function wireChangesPanel(pj) {
   wireScopeBar();
-  const files = document.getElementById('chp-files'); if (!files) return;
+  // No repository yet, so nothing to comment on until the status names one.
+  chUseContext(((pj && pj.id) || '') + '|');
+  const files = document.getElementById('chp-files'); if (!files) { chRenderTray(); return; }
   CH_FILE = '';
   chLoadStatus();
   files.onclick = function (e) {
@@ -5940,7 +6146,7 @@ async function tchOpenDiff(v, file) {
   try {
     const d = await api('/api/git/diff?branch=1&path=' + encodeURIComponent(v.root) + '&file=' + encodeURIComponent(file));
     if (v.file !== file) return;              // another file was picked meanwhile
-    box.innerHTML = renderDiff(file, d.diff || '', v.comments);
+    box.innerHTML = renderDiff(file, d.diff || '', v.comments, v.root);
     const body = box.querySelector('.diff');
     if (body) body.onclick = e => {
       const dl = e.target.closest('.dl'); if (!dl || !dl.dataset.line) return;
@@ -6243,11 +6449,25 @@ function renderRows() {
     return;
   }
   // Drilled into a project on the Changes tab: changed files + diff review.
+  // The chrome above is a view of live data; the panel is state — the diff you
+  // opened and the line you are commenting on. Rewriting both on every tick
+  // wiped the diff 2.5 s after it loaded. The panel is rebuilt only when what
+  // it shows changes (the project or the folder in scope).
   if (SELECTED_PROJECT && PROJECT_TAB === 'changes') {
     const pj = projectById(SELECTED_PROJECT);
-    document.getElementById('view').innerHTML = projectsChromeHtml() + changesPanelHtml(pj);
+    const view = $('#view');
+    const key = SELECTED_PROJECT + '|' + (pj && pj.path ? scopePath(pj) : '');
+    let chrome = view.querySelector(':scope > .view-chrome'), body = view.querySelector(':scope > .ch-body');
+    if (!chrome || !body || body.dataset.key !== key) {
+      view.innerHTML = '<div class="view-chrome"></div><div class="ch-body"></div>';
+      view._sig = null;
+      chrome = view.firstElementChild; body = view.lastElementChild;
+      body.dataset.key = key;
+      body.innerHTML = changesPanelHtml(pj);
+      wireChangesPanel(pj);
+    }
     setViewCount('');
-    wireProjectsChrome(); wireChangesPanel(pj);
+    if (writeSlot(chrome, projectsChromeHtml())) wireProjectsChrome();
     return;
   }
   // Drilled into a project on the Roadmap tab. Same shape as the Workspace tab
@@ -6269,11 +6489,11 @@ function renderRows() {
   if (SELECTED_PROJECT && PROJECT_TAB === 'workspace') {
     const pj = projectById(SELECTED_PROJECT);
     setViewCount('');
-    // The chrome — status strip, crumbs, tabs — is a view of live data and is
-    // rewritten on every tick. The panel is STATE and lives outside #view
-    // entirely (see the markup), so nothing here can destroy it.
-    $('#view').innerHTML = projectsChromeHtml();
-    wireProjectsChrome();
+    // The chrome — status strip, crumbs, tabs — is a view of live data, written
+    // only when it changes so a tab is never replaced under a click. The panel
+    // is STATE and lives outside #view entirely (see the markup), so nothing
+    // here can destroy it.
+    if (writeSlot($('#view'), projectsChromeHtml())) wireProjectsChrome();
     const panel = document.getElementById('ws-panel');
     const key = pj && pj.path ? wsCtxKey({ kind: 'project', projectId: SELECTED_PROJECT }) : 'none';
     if (panel.dataset.wskey !== key) {
@@ -7832,7 +8052,25 @@ document.addEventListener('click', (ev) => {
 window.addEventListener('message', (ev) => {
   const d = ev.data;
   if (d && d.type === 'dock-session' && d.roomId) openDetail(d.roomId);
+  // A task link clicked inside a session or file viewer framed in this page.
+  if (d && d.type === 'open-task' && d.roomId && ev.origin === location.origin) openTaskLink(d.roomId);
 });
+// A task named in text (room-1a2b3c4d) opens here, in the page; with a
+// modifier key it opens in a new tab, which lands on the same task.
+function openTaskLink(rid) {
+  if (!ALL_ROWS.some(r => r.sessionId === rid || r.roomId === rid)) {
+    toast(`${rid} is not a task on this hub`, 4000, 'err');
+    return;
+  }
+  openDetail(rid);
+}
+document.addEventListener('click', (ev) => {
+  const a = ev.target.closest && ev.target.closest('a[data-task]');
+  if (!a || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  openTaskLink(a.dataset.task);
+}, true);
 document.addEventListener('keydown', (ev) => {
   if (ev.key !== 'Escape') return;
   if (THEME_MENU || $('#modal').open) return;
@@ -8008,7 +8246,7 @@ document.addEventListener('click', (ev) => {
     const rid = destRow.dataset.room;
     if (rid && ATTENTION_BY_ROOM.has(rid)) { openAttentionItem(rid); return; }
     const sid = destRow.dataset.sid || rid;
-    if (sid) { SELECTED_SID = sid; openDetail(sid); }
+    if (sid) openDetail(sid);
     return;
   }
   // Dismiss a filter straight from its chip: the fastest answer to "why can't
@@ -8427,7 +8665,9 @@ document.addEventListener('click', async (ev) => {
       const resp = await api('/api/room/resume', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: roomResume.dataset.room }) });
       toast('resumed', 2000, 'ok');
       await refresh(); updateRoomsBadge();
-      if (resp.room && resp.room.id) openSessionWindow(resp.room.id);
+      // In the page: a window opened after these awaits is no longer the
+      // click's, and the browser blocks it as a pop-up.
+      if (resp.room && resp.room.id) openDetail(resp.room.id);
     } catch (e) { toast('resume failed: ' + e.message, 4000, 'err'); }
     return;
   }
@@ -8762,6 +9002,9 @@ document.addEventListener('click', async (ev) => {
   if (finderBtn) {
     ev.stopPropagation();
     const path = finderBtn.dataset.path;
+    // From another computer, a file manager opening on the hub's screen is
+    // nothing you can see. Show the folder here instead.
+    if (!onHubMachine()) { window.open('/fileview?path=' + encodeURIComponent(path), '_blank', 'noopener'); return; }
     finderBtn.classList.add('busy');
     try {
       const r = await api('/api/open-path', {
@@ -9080,6 +9323,12 @@ async function loadThemes() {
   setInterval(checkForUpdate, UPDATE_CHECK_INTERVAL_MS);
   await refresh();
   updateRoomsBadge();     // paint the needs-you badge on the first screen
+  // /?task=room-... — a task link opened in a tab of its own.
+  const deepTask = new URLSearchParams(location.search).get('task');
+  if (deepTask) {
+    history.replaceState(null, '', location.pathname);
+    openTaskLink(deepTask);
+  }
 })();
 setInterval(refresh, 2500);
 
