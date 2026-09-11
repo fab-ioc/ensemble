@@ -127,6 +127,26 @@ through that line. A reviewer on mention is not resumed, an agent added since
 the last run starts fresh with its brief, and a project's PO does not get the
 line (the rotation and the restart helper brief it).
 
+## Long tasks: the handover
+
+Every model call re-sends the whole conversation, so a task's owner (the
+engineer, or the only agent) is not kept on one conversation forever. Past the
+task rotation limit (`taskRotateTokens`, 200k tokens by default) the hub waits
+until you are idle and asks you, with a line starting `[handover]`, to write
+`TASK-HANDOVER.md` in the task folder. It must hold the current goal and how far
+you got, decisions and why, branch and commits, changed files, tests run and
+their results, open review findings, blockers, and the exact next action. Write
+it, then end your turn without messaging anyone.
+
+The hub then ends your session and starts a fresh one (same identity, agent,
+model and folder) whose first prompt, starting `[rotation]`, says to read
+`TASK-HANDOVER.md` and carry on with its next action. The handover is its
+state; the spec (`ensemble_get_task`) is reference only. It does not start the
+task over or redo finished work, and does not load the old conversation, which
+is kept on disk. The task's chat shows a notice and the project's PO gets a
+one-line update. Reviewers, paused or stopped tasks and PO rooms are not
+rotated this way.
+
 Every agent the hub starts for a task runs without approval prompts, one-agent
 tasks included: nobody watches a task's terminal. Only a past session someone
 opens from the history to drive by hand keeps Codex's prompts.
@@ -184,7 +204,7 @@ verdict in its `attention` field.
 | `agent_gone` | its terminal died and nobody asked it to — carries `exitCode` and the last lines it printed | relaunching, once you know why |
 | `blocked` | still running, but it cannot continue: its own output shows a usage or credit limit or an expired login, or it reported `blocked` (`cause: "reported"`). The offending line or the report is in `quote` | waiting for a reset, the product owner logging in, or the help it asked for |
 | `waiting_for_you` | it reported `completed` or asked a question, sent something to the user nobody answered, hit a permission, tool-approval or folder-trust prompt (Claude's or Codex's), or the collaboration paused at its hop limit. The report or message is in `quote` | a human answer |
-| `stalled` | it was woken to do something, or started again and told to carry on, is not working, and never answered anyone. A one-agent task idle at its prompt has only finished its turn and is not stalled, unless it was started again and has done nothing since | a look, then a nudge or a restart |
+| `stalled` | it was woken to do something, or started again or handed to a fresh session and told to carry on, is not working, and never answered anyone. A one-agent task idle at its prompt has only finished its turn and is not stalled, unless it was started again and has done nothing since | a look, then a nudge or a restart |
 
 Use it whenever you are asked what happened to work that was started, and
 **before** planning follow-up work: a task that died at its usage limit is not a
