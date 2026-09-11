@@ -286,7 +286,9 @@ TOOLS = [
         "name": "ensemble_start_task",
         "description": (
             "Launch a draft task's agents, or relaunch a stopped task's agents "
-            "resuming their previous conversation. Fails if the task is already running."
+            "resuming their previous conversation; its owner is then told to re-read "
+            "its spec and carry on (the spec itself is not sent again). Fails if the "
+            "task is already running."
         ),
         "inputSchema": {"type": "object", "properties": {"taskId": {"type": "string"}},
                         "required": ["taskId"]},

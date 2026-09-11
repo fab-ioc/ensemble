@@ -162,7 +162,10 @@ _CODE_LOOKING = re.compile(
 
 # The agent is mid-thought: both CLIs paint an interruptible working indicator
 # while a turn runs. Seeing it means "busy", never "waiting" or "stalled".
-_BUSY_MARKERS = _phrase(r"esc to interrupt|esc to cancel|ctrl\+c to (?:stop|interrupt)")
+# ("esc to cancel" is not one: it is how an approval prompt ends — codex's MCP
+# tool approval says "enter to submit | esc to cancel" — and counting it as
+# busy hid a task frozen on that prompt for 13 hours.)
+_BUSY_MARKERS = _phrase(r"esc to interrupt|ctrl\+c to (?:stop|interrupt)")
 
 # An interactive prompt is on screen and it wants a human. The explicit phrases
 # are what Claude Code and codex actually print; the structural fallback (a
@@ -179,10 +182,13 @@ _PROMPT_PHRASES = _phrase(
     r"|ready to code\?"
     r"|and don'?t ask again"
     r"|trust the (?:files|folder)"
+    r"|do you trust the contents"
     r"|no, and tell (?:claude|codex)"
+    r"|allow the \S+ mcp server to run tool"
+    r"|enter to submit"
 )
-_CURSOR_LINE = re.compile(r"^\s*[❯➤▶>]\s*\S")
-_NUMBERED_OPTION = re.compile(r"^\s*[❯➤▶>]?\s*\d+[.)]\s+\S")
+_CURSOR_LINE = re.compile(r"^\s*[❯➤▶›>]\s*\S")
+_NUMBERED_OPTION = re.compile(r"^\s*[❯➤▶›>]?\s*\d+[.)]\s+\S")
 
 _LEADING_GLYPHS = re.compile(r"^[\s•■⏺⏵❯➤▶>*\-|]+")
 _TRAILING_GLYPHS = re.compile(r"[\s•■⏺⏵❯➤▶>*|]+$")
@@ -282,23 +288,39 @@ def find_block(tail: str) -> tuple[str, str, str] | None:
     return (why, cause, _quote_at(text, start, end))
 
 
+def _last_at(pat: re.Pattern, text: str) -> int:
+    """Where the last match of ``pat`` starts in ``text``, or -1."""
+    at = -1
+    for m in pat.finditer(text):
+        at = m.start()
+    return at
+
+
 def looks_busy(tail: str) -> bool:
     """The screen shows a running turn. Only the bottom of it counts — an
-    interruptible indicator that scrolled off the top means nothing."""
-    return bool(_BUSY_MARKERS.search("\n".join(_tail_lines(tail)[-6:])))
+    interruptible indicator that scrolled off the top means nothing — and a
+    prompt drawn after it means the turn stopped to ask."""
+    text = "\n".join(_tail_lines(tail)[-6:])
+    busy = _last_at(_BUSY_MARKERS, text)
+    return busy >= 0 and busy > _last_at(_PROMPT_PHRASES, text)
 
 
 def looks_like_prompt(tail: str) -> bool:
     """An interactive prompt is waiting for an answer. Bottom of the screen
-    only: a prompt already answered has scrolled up."""
+    only: a prompt already answered has scrolled up.
+
+    Whichever comes last wins, a prompt or a working indicator: codex redraws
+    in place, so its "Working (esc to interrupt)" and the approval prompt that
+    stopped that turn end up on the same stripped line, the prompt after it."""
     lines = _tail_lines(tail)[-14:]
     if not lines:
         return False
     text = "\n".join(lines)
-    if _BUSY_MARKERS.search(text):
-        return False               # a working indicator outranks a stale prompt
-    if _PROMPT_PHRASES.search(text):
+    prompt, busy = _last_at(_PROMPT_PHRASES, text), _last_at(_BUSY_MARKERS, text)
+    if prompt > busy:
         return True
+    if busy >= 0:
+        return False               # a working indicator outranks a stale prompt
     # Structural fallback: a selection cursor AND at least two numbered choices.
     # Requiring both keeps ordinary numbered prose out of the notifications.
     has_cursor = any(_CURSOR_LINE.match(ln) for ln in lines)
@@ -405,7 +427,7 @@ def _summarize(room: dict) -> dict:
         "owners": cr.owners(room),
         "participants": [
             {k: p.get(k) for k in ("identity", "kind", "agent", "role",
-                                   "ptyId", "sessionId", "lastExit")}
+                                   "ptyId", "sessionId", "lastExit", "resumedAt")}
             for p in room.get("participants", [])
         ],
         "lastMessage": {"from": last.get("from", ""), "to": last.get("to", ""),
@@ -524,6 +546,15 @@ def _owed_since(room: dict, identity: str) -> tuple[float, str]:
     """
     last = room.get("lastMessage") or {}
     sender = last.get("from", "")
+    part = next((p for p in room.get("participants") or []
+                 if p.get("identity") == identity), {})
+    resumed = float(part.get("resumedAt") or 0)
+    if resumed > float(last.get("ts") or 0):
+        # Started again: the hub typed it a line to carry on (see the
+        # dashboard's RESUME_NOTE). That is an ask like a message, dated from
+        # when it was typed; an agent left idle at an empty prompt after it is
+        # exactly what nobody noticed before.
+        return resumed, "message"
     if not sender:
         # Nothing has ever been said in this room. In a one-agent task the
         # human drives the agent through its terminal, and an agent idle at
@@ -590,7 +621,12 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
         # thinking agent.
         return ("waiting_for_you", f"{who} has a prompt on screen waiting for you", {})
 
-    if status == "busy" or ev["scan"]["busy"]:
+    # A working indicator on a screen that has been still for a while is a
+    # leftover: both CLIs repaint theirs every second while a turn runs, and
+    # codex's in-place redraws leave its start-up "esc to interrupt" in the
+    # stripped text of a session idle at its prompt.
+    idle = ev["idleSeconds"]
+    if status == "busy" or (ev["scan"]["busy"] and (idle is None or idle < _MIN_QUIET)):
         return None                # thinking is not a problem, however long
 
     # It put something to a human — a report, a question, "ready to merge" —

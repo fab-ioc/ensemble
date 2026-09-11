@@ -29,6 +29,16 @@ def _codex_home() -> Path:
     return Path(env) if env else (Path.home() / ".codex")
 
 
+def _git_root(path: str) -> str:
+    """The nearest folder at or above ``path`` holding a ``.git`` (a directory,
+    or a worktree's file), or ""."""
+    p = Path(os.path.normpath(path))
+    for d in (p, *p.parents):
+        if (d / ".git").exists():
+            return str(d)
+    return ""
+
+
 def _iso_to_epoch(ts: str) -> float:
     """Parse Codex's ISO-8601 timestamps (e.g. '2026-08-06T09:09:06.301Z')."""
     if not ts:
@@ -375,9 +385,20 @@ class CodexAgent(AgentType):
         otherwise blocks the session before it ever starts). Codex persists
         trust as `[projects.'<path>']` with `trust_level = "trusted"`, keying on
         the lowercased path — we match that. Idempotent; returns True if the
-        entry is present (already there or freshly written)."""
+        entry is present (already there or freshly written).
+
+        Inside a git repository Codex asks about the repository's root, not the
+        folder — a task folder in the projects' backup repo stopped at "Trusting
+        will apply to the repository root" — so that root is trusted too."""
         if not cwd:
             return False
+        ok = self._trust(cwd)
+        root = _git_root(cwd)
+        if root and os.path.normcase(root) != os.path.normcase(os.path.normpath(cwd)):
+            ok = self._trust(root) and ok
+        return ok
+
+    def _trust(self, cwd: str) -> bool:
         key = os.path.normpath(cwd).lower()
         cfg = _codex_home() / "config.toml"
         try:

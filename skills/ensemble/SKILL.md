@@ -32,7 +32,7 @@ go). Then:
 | Read one task in full (spec, agents, status, recent chat) | `ensemble_get_task` |
 | Create a task | `ensemble_create_task` |
 | Change a task's title, spec, priority, or assigned agents | `ensemble_update_task` |
-| Launch a draft, or relaunch a stopped task | `ensemble_start_task` |
+| Launch a draft, or relaunch a stopped task (its owner is told to carry on) | `ensemble_start_task` |
 | Stop a running task (keeps everything) | `ensemble_stop_task` |
 | Move a task to another project | `ensemble_move_task` |
 | Delete a task permanently | `ensemble_delete_task` |
@@ -94,6 +94,28 @@ hand. It moves a card once per merge, and never one that someone moved after
 the merge: if the owner drags a merged card out of Done, it stays where they
 put it.
 
+## Starting a task again
+
+`ensemble_start_task` (or Start on the dashboard) on a task that has run before
+resumes each agent's conversation where it stopped. A resumed session comes
+back at an empty prompt, so once its terminal has settled the hub types one
+line into the task's owner:
+
+> [resumed] Your task was started again. Your spec may have changed while you
+> were stopped: read it again with ensemble_get_task, then carry on from where
+> you were; do not start over. Report with ensemble_report when you finish or
+> are blocked.
+
+The spec itself is never sent again: a session told its spec again redoes the
+work. So when you change a stopped task's spec, the change reaches its owner
+through that line. A reviewer on mention is not resumed, an agent added since
+the last run starts fresh with its brief, and a project's PO does not get the
+line (the rotation and the restart helper brief it).
+
+Every agent the hub starts for a task runs without approval prompts, one-agent
+tasks included: nobody watches a task's terminal. Only a past session someone
+opens from the history to drive by hand keeps Codex's prompts.
+
 ## Waking teammates (multi-agent tasks)
 
 A chat message wakes as few agents as it can. A message to one participant
@@ -139,8 +161,8 @@ verdict in its `attention` field.
 |---|---|---|
 | `agent_gone` | its terminal died and nobody asked it to — carries `exitCode` and the last lines it printed | relaunching, once you know why |
 | `blocked` | still running, but it cannot continue: its own output shows a usage or credit limit or an expired login, or it reported `blocked` (`cause: "reported"`). The offending line or the report is in `quote` | waiting for a reset, the product owner logging in, or the help it asked for |
-| `waiting_for_you` | it reported `completed` or asked a question, sent something to the user nobody answered, hit a permission prompt, or the collaboration paused at its hop limit. The report or message is in `quote` | a human answer |
-| `stalled` | it was woken to do something, is not working, and never answered anyone. A one-agent task idle at its prompt has only finished its turn and is not stalled | a look, then a nudge or a restart |
+| `waiting_for_you` | it reported `completed` or asked a question, sent something to the user nobody answered, hit a permission, tool-approval or folder-trust prompt (Claude's or Codex's), or the collaboration paused at its hop limit. The report or message is in `quote` | a human answer |
+| `stalled` | it was woken to do something, or started again and told to carry on, is not working, and never answered anyone. A one-agent task idle at its prompt has only finished its turn and is not stalled, unless it was started again and has done nothing since | a look, then a nudge or a restart |
 
 Use it whenever you are asked what happened to work that was started, and
 **before** planning follow-up work: a task that died at its usage limit is not a
