@@ -190,7 +190,9 @@ log.owner = [
 
 // The two pages read a tab's state alike.
 const samples = [null, 'x', { view: 'source', wrap: true, marks: { source: 4, pretty: 0 }, top: 12.6 }, { view: 'raw', wrap: 1, marks: 'm', top: '5' },
-                 { view: 'pretty', marks: { pretty: 9 } }, { top: -1, marks: { source: 1.5 } }];
+                 { view: 'pretty', marks: { pretty: 9 } }, { top: -1, marks: { source: 1.5 } },
+                 { view: 'source', marks: { source: 3 }, hit: { line: 3, col: 4, len: 6 } }, { hit: { line: 3, col: -1, len: 6 } },
+                 { hit: { line: 0, col: 0, len: 1 } }, { hit: { line: 2, col: 1.5, len: 1 } }, { hit: { line: 2, col: 0, len: 0 } }, { hit: 'x' }];
 log.alike = samples.map(s => [JSON.stringify(wsTabState(s)), JSON.stringify(fvStartState(JSON.stringify(s)))]);
 log.badJson = fvStartState('{not json');
 console.log(JSON.stringify(log));
@@ -354,7 +356,7 @@ class TabsAreWired(unittest.TestCase):
         self.assertIn('src="${url}"', media)
         self.assertNotIn('src="${src}"', media)
         self.assertIn("ifr.contentDocument.addEventListener('scroll', onScroll, true)", FILEVIEW)
-        self.assertIn("{ view, wrap: WRAP, marks: { ...marked } }", FILEVIEW)
+        self.assertIn("{ view, wrap: WRAP, marks: { ...marked }, ...(hitNow() ? { hit: hitNow() } : {}) }", FILEVIEW)
 
     def test_closing_a_missing_files_tab_keeps_focus(self):
         mount = INDEX[INDEX.index("function wsMount("):]

@@ -1024,8 +1024,9 @@
   .tch-files { overflow: auto; border-bottom: 1px solid var(--border); padding: var(--s-100); font-size: var(--fs-200); }
   .tch-diff { overflow: auto; min-width: 0; min-height: 200px; }
   /* The panel is a narrow, user-resized column: same component, stacked. */
-  #detail-panel .wsp { grid-template-columns: 1fr; grid-template-rows: minmax(96px, 28%) minmax(0, 1fr); height: auto; flex: 1; min-height: 0; }
-  #detail-panel .wsp-tree { border-right: 0; border-bottom: 1px solid var(--border); }
+  #detail-panel .wsp { grid-template-columns: 1fr; grid-template-rows: minmax(168px, 34%) minmax(0, 1fr); height: auto; flex: 1; min-height: 0; }
+  #detail-panel .wsp.wsf-on { grid-template-rows: minmax(200px, 50%) minmax(0, 1fr); }
+  #detail-panel .wsp-side { border-right: 0; border-bottom: 1px solid var(--border); }
   .dp-meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: 11.5px; color: var(--fg-subtle); }
   .dp-meta .chip {
     background: var(--bg); border: 1px solid var(--border);
@@ -1322,7 +1323,38 @@
   }
   /* Workspace: lazy file tree (left) + rendered file (right). */
   .wsp { display: grid; grid-template-columns: minmax(220px, 300px) 1fr; height: calc(100vh - var(--chrome-h)); min-height: 420px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
-  .wsp-tree { overflow: auto; border-right: 1px solid var(--border); padding: 8px 6px; font-size: 12.5px; }
+  .wsp-side { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--border); }
+  .wsp-tree { flex: 1; min-height: 0; overflow: auto; padding: 8px 6px; font-size: 12.5px; }
+  /* Find: Go to file and Search in files, above the tree (see the design
+     skill's "Find in a Workspace"). Results take the tree's place while there
+     is a query; a text search gets a wider column for its lines. */
+  .wsp.wsf-text { grid-template-columns: minmax(260px, 40%) 1fr; }
+  .wsf { flex: none; display: flex; flex-direction: column; gap: var(--s-100); padding: var(--s-200); border-bottom: 1px solid var(--border); }
+  .wsf-row { display: flex; align-items: center; gap: var(--s-100); min-width: 0; }
+  .wsf-mode button { height: 24px; padding: 0 var(--s-200); font-size: var(--fs-200); }
+  .wsf-mode button:focus-visible, .wsf-opt:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+  .wsf-opts { display: flex; gap: var(--s-050); margin-left: auto; }
+  .wsf-opt { height: 24px; min-width: 28px; padding: 0 var(--s-100); border: 1px solid transparent; border-radius: var(--r-200); background: transparent; color: var(--fg-subtle); font-family: var(--font-mono); font-size: var(--fs-200); cursor: pointer; }
+  .wsf-opt:hover { background: var(--hover); color: var(--fg); }
+  .wsf-opt[aria-pressed="true"] { background: var(--selected-bg); color: var(--selected-fg); border-color: var(--border-strong); }
+  .wsf-opt[hidden], .wsf-state[hidden], .wsf-res[hidden], .wsp-tree[hidden] { display: none; }
+  .wsf-q { width: 100%; min-width: 0; height: 32px; padding: 0 var(--s-200); border: 1px solid var(--border-strong); border-radius: var(--r-200); background: var(--surface); color: var(--fg); font: inherit; font-size: var(--fs-300); }
+  .wsf-q::placeholder { color: var(--fg-muted); }
+  .wsf-q:focus { outline: none; border-color: var(--focus-ring); box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus-ring) 40%, transparent); }
+  .wsf-state { font-size: var(--fs-200); line-height: 16px; color: var(--fg-muted); overflow-wrap: anywhere; }
+  .wsf-res { position: relative; flex: 1; min-height: 0; overflow: auto; padding: var(--s-100); font-size: var(--fs-200); }
+  .wsr, .wsr-file { display: flex; align-items: baseline; gap: var(--s-200); min-width: 0; padding: var(--s-050) var(--s-200); white-space: nowrap; }
+  .wsr { border-radius: var(--r-200); cursor: pointer; }
+  .wsr:hover { background: var(--hover); }
+  .wsr.on { background: var(--selected-bg); color: var(--selected-fg); }
+  .wsr-file { padding-top: var(--s-200); }
+  .wsr-nm { flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+  .wsr-dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--fg-muted); }
+  .wsr-n { margin-left: auto; padding-left: var(--s-200); color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+  .wsr-ln { flex: none; min-width: 4ch; text-align: right; color: var(--fg-muted); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .wsr-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; font-family: var(--font-mono); }
+  .wsr.on .wsr-dir, .wsr.on .wsr-ln { color: inherit; }
+  .wsr mark.match { padding: 0; border-radius: var(--r-100); font-weight: inherit; }
   .scopebar { display: flex; align-items: center; gap: 8px; padding: 8px 0 4px; font-size: 12px; color: var(--fg-subtle); min-width: 0; }
   .scopebar .lbl { font-weight: 600; white-space: nowrap; }
   .scopebar select, .chp-repo { font: inherit; font-size: 12px; padding: 2px 6px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--fg); max-width: 44ch; }
@@ -2638,7 +2670,16 @@
     /* Workspace and Changes: the tree above the file, not beside it. Beside
        it, a 390px phone left the file 79px wide. */
     .wsp, .chp { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(120px, 35%) minmax(0, 1fr); }
-    .wsp-tree, .chp-files { border-right: 0; border-bottom: 1px solid var(--border); }
+    .wsp-side, .chp-files { border-right: 0; border-bottom: 1px solid var(--border); }
+    /* Find: the box and a few rows fit above the file; with a query the
+       results get most of the height, and every control is finger-sized. */
+    .wsp { grid-template-rows: minmax(220px, 45%) minmax(0, 1fr); }
+    .wsp.wsf-on, .wsp.wsf-text { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(260px, 60%) minmax(0, 1fr); }
+    .wsf-q { height: var(--touch-min); font-size: var(--fs-400); }
+    .wsf-mode button, .wsf-opt { height: var(--touch-min); min-width: var(--touch-min); }
+    .wsr { min-height: var(--touch-min); align-items: center; }
+    /* A matching line wraps rather than cutting its match off the edge. */
+    .wsr-t { white-space: pre-wrap; overflow-wrap: anywhere; }
     /* File tabs: a finger-sized tab and close target; the row swipes sideways. */
     .wst { scrollbar-width: none; }
     .wst-tab { height: auto; min-height: var(--touch-min); padding-right: 0; }
@@ -5397,9 +5438,13 @@ function wsTabState(o) {
     for (const k of ['source', 'pretty']) if (Number.isInteger(o.marks[k]) && o.marks[k] > 0) out.marks[k] = o.marks[k];
   }
   if (Number.isFinite(o.top) && o.top > 0) out.top = Math.round(o.top);
+  // A search result opened here: where its match is, so the viewer marks it.
+  const h = o.hit;
+  if (h && typeof h === 'object' && [h.line, h.col, h.len].every(Number.isInteger) && h.line > 0 && h.col >= 0
+      && h.len > 0 && h.col + h.len <= 1e6) out.hit = { line: h.line, col: h.col, len: h.len };
   return out;
 }
-const wsNewTab = (path, st) => ({ path, st: wsTabState(st), missing: false, gone404: false, goneSig: null, goneGen: -1, retrySig: null, seen: null });
+const wsNewTab =(path, st) => ({ path, st: wsTabState(st), missing: false, gone404: false, goneSig: null, goneGen: -1, retrySig: null, seen: null });
 // The tree part of what is saved: the folders opened and how far it was
 // scrolled. Only bounded paths get through; one bad entry drops that entry.
 const WS_OPEN_MAX = 500;
@@ -5528,6 +5573,218 @@ function wsTabsCheck(t, dirs) {
 }
 // ---- Workspace tabs: end --------------------------------------------------
 
+// ---- Workspace find: begin ------------------------------------------------
+// The box above a Workspace's tree. Files: the letters of a name, in order,
+// find the file (IntelliJ-style, "wsptabs" finds workspace_tabs.py), best
+// first, the letters that matched marked. Text: the hub searches the text of
+// the files (/api/ws/search). Plain data and pure functions down to the end
+// marker, so tests/test_workspace_find.py runs them in Node.
+const WSF_SHOWN = 200;        // files listed for a query; the rest are counted
+const WSF_Q_MAX = 500;        // the hub's own limit on a query
+const WSF_MIN_TEXT = 2;       // characters before a text search runs
+const WSF_LIST_TTL = 30000;   // a file list older than this is read again when the box is used
+// What a letter is worth where it lands: at the start of the file's name, of
+// a word (after / \ _ - . or a space) or of a camelCase hump; inside the
+// file's own name; right after the letter before it. Letters jumped over cost
+// a little each.
+const WSF_AT_NAME = 12, WSF_AT_WORD = 8, WSF_IN_NAME = 3, WSF_NEXT = 6, WSF_GAP = 0.15;
+// A query as matched: spaces ignored, either slash matching a folder break.
+const wsfNormQ = q => String(q || '').replace(/\s+/g, '').replace(/\\/g, '/');
+// A path in lower case, letter for letter: a letter whose lower case is longer
+// (İ) stays as it is, so every index still points at the same letter.
+function wsfLower(path) {
+  const lp = path.toLowerCase();
+  return lp.length === path.length ? lp : [...path].map(c => { const l = c.toLowerCase(); return l.length === c.length ? l : c; }).join('');
+}
+// Scratch rows for wsFuzzy, grown as needed and reused, so ranking 50,000
+// paths on every key allocates next to nothing.
+const WSF_BUF = { n: 0, cells: 0, prev: null, cur: null, from: null };
+// Where a query's letters fall in a path: {score, hits} with hits the index
+// of each letter, or null when the letters are not all there in order.
+// Case never matters. The best placement is found, not the first: a DP over
+// query letter × path position. `lower` is the path through wsfLower, when
+// the caller has it already.
+function wsFuzzy(query, path, lower) {
+  const q = wsfNormQ(query);
+  if (!q) return { score: 0, hits: [] };
+  const n = path.length, m = q.length;
+  if (m > n) return null;
+  const lp = lower || wsfLower(path), lq = q.toLowerCase();
+  let k = 0;
+  for (let j = 0; j < n && k < m; j++) if (lp.charCodeAt(j) === lq.charCodeAt(k)) k++;
+  if (k < m) return null;
+  const base = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1;
+  const bonus = j => {
+    const p = j ? path.charCodeAt(j - 1) : 47, c = path.charCodeAt(j);
+    const word = p === 47 || p === 92 || p === 95 || p === 45 || p === 46 || p === 32
+      || (((p >= 97 && p <= 122) || (p >= 48 && p <= 57)) && c >= 65 && c <= 90);
+    return (j === base ? WSF_AT_NAME : word ? WSF_AT_WORD : 0) + (j >= base ? WSF_IN_NAME : 0);
+  };
+  const B = WSF_BUF;
+  if (B.n < n) { B.n = n; B.prev = new Float64Array(n); B.cur = new Float64Array(n); }
+  if (B.cells < m * n) { B.cells = m * n; B.from = new Int32Array(m * n); }
+  const NEG = -1e9, from = B.from;
+  let prev = B.prev, cur = B.cur;
+  const c0 = lq.charCodeAt(0);
+  for (let j = 0; j < n; j++) prev[j] = lp.charCodeAt(j) === c0 ? 1 + bonus(j) - WSF_GAP * (j >= base ? j - base : j) : NEG;
+  for (let i = 1; i < m; i++) {
+    const want = lq.charCodeAt(i);
+    let run = NEG, runJ = -1;             // best earlier letter at least one back, less its gap
+    for (let j = 0; j < i; j++) cur[j] = NEG;
+    for (let j = i; j < n; j++) {
+      cur[j] = NEG;
+      if (j >= 2) {
+        run -= WSF_GAP;
+        const c = prev[j - 2] - WSF_GAP;
+        if (c > run) { run = c; runJ = j - 2; }
+      }
+      if (lp.charCodeAt(j) !== want) continue;
+      let best = run, bj = runJ;
+      if (prev[j - 1] > NEG / 2 && prev[j - 1] + WSF_NEXT >= best) { best = prev[j - 1] + WSF_NEXT; bj = j - 1; }
+      if (bj < 0 || best < NEG / 2) continue;
+      cur[j] = best + 1 + bonus(j);
+      from[i * n + j] = bj;
+    }
+    const t = prev; prev = cur; cur = t;
+  }
+  let end = -1, top = NEG;
+  for (let j = m - 1; j < n; j++) if (prev[j] > top) { top = prev[j]; end = j; }
+  if (end < 0 || top < NEG / 2) return null;
+  const hits = new Array(m);
+  for (let i = m - 1, j = end; i >= 0; i--) { hits[i] = j; if (i) j = from[i * n + j]; }
+  let score = top;
+  if (hits[0] >= base) score += WSF_AT_NAME;           // every letter in the file's own name
+  if (lp.startsWith(lq, base)) score += WSF_AT_NAME;   // and the name starts with the query
+  return { score: score - n * 0.01, hits };            // then the shorter path
+}
+// The files a query finds, best first: the first `max`, how many in all, and
+// every path found (a longer query only ever finds fewer, so the next letter
+// typed searches those alone). `lower` is the paths through wsfLower, in the
+// same order, when the caller keeps them.
+function wsFuzzyRank(query, files, max, lower) {
+  const all = [];
+  for (let i = 0; i < files.length; i++) {
+    const p = files[i], lp = lower ? lower[i] : undefined, r = wsFuzzy(query, p, lp);
+    if (r) all.push({ path: p, score: r.score, hits: r.hits, lp });
+  }
+  const pool = all.map(x => x.path), poolLower = lower ? all.map(x => x.lp) : null;
+  all.sort((a, b) => b.score - a.score || a.path.length - b.path.length || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return { items: all.slice(0, max || WSF_SHOWN).map(x => ({ path: x.path, score: x.score, hits: x.hits })), total: all.length, pool, poolLower };
+}
+// "name.py:120" goes to line 120 of what "name.py" finds.
+function wsGotoQuery(raw) {
+  const s = String(raw || '').trim();
+  const m = s.match(/^(.*?):(\d{1,7})(?::\d{1,7})?$/);
+  return m && m[1] ? { q: m[1], line: parseInt(m[2], 10) } : { q: s, line: 0 };
+}
+// Text with the letters at the given indexes marked; `from` is where the text
+// starts in the string the indexes count through.
+function wsMarkAt(text, hits, from) {
+  const set = new Set(hits || []);
+  let out = '', open = false;
+  for (let i = 0; i < text.length; i++) {
+    const on = set.has(from + i);
+    if (on !== open) { out += on ? '<mark class="match">' : '</mark>'; open = on; }
+    out += esc(text[i]);
+  }
+  return out + (open ? '</mark>' : '');
+}
+// Text with [start, length] ranges marked, in order; anything out of order or
+// empty is left unmarked.
+function wsMarkRanges(text, ranges) {
+  let out = '', at = 0;
+  for (const r of ranges || []) {
+    const s = r && r[0], l = r && r[1];
+    if (!Number.isInteger(s) || !Number.isInteger(l) || s < at || l <= 0 || s >= text.length) continue;
+    out += esc(text.slice(at, s)) + '<mark class="match">' + esc(text.slice(s, s + l)) + '</mark>';
+    at = s + l;
+  }
+  return out + esc(text.slice(at));
+}
+// The box as it was left in a Workspace: which mode, the query, the options.
+function wsFindFrom(saved) {
+  const out = { mode: 'files', q: '', cs: false, rx: false };
+  if (!saved || typeof saved !== 'object') return out;
+  if (saved.mode === 'text') out.mode = 'text';
+  if (typeof saved.q === 'string' && saved.q.length <= WSF_Q_MAX) out.q = saved.q;
+  out.cs = saved.cs === true;
+  out.rx = saved.rx === true;
+  return out;
+}
+// A search's results as rows: a heading per file, then its matching lines.
+// `hits` is the lines alone, in the same order, which is what the arrow keys
+// and a result's index count through.
+function wsHitRows(res) {
+  const rows = [], hits = [];
+  for (const f of (res && res.files) || []) {
+    rows.push({ kind: 'file', path: f.path, count: f.matches.reduce((a, m) => a + (m.n || m.ranges.length), 0) });
+    for (const m of f.matches) {
+      const h = { kind: 'hit', path: f.path, i: hits.length, ...m };
+      rows.push(h); hits.push(h);
+    }
+  }
+  return { rows, hits };
+}
+const wsfCount = (n, one, many) => n.toLocaleString('en-US') + ' ' + (n === 1 ? one : many);
+// The line under the box: what the results are, and why there are fewer than
+// everything whenever there are (a cap, a deadline, files skipped, a query too
+// short, a regex that is not one).
+function wsFindNote(f) {
+  if (f.mode === 'files') {
+    if (!f.q.trim()) return '';
+    const l = f.list, r = f.ranked;
+    if (l && l.error) return "Can't list the files: " + l.error;
+    if (!l || !l.files) return 'Reading the list of files…';
+    const cut = l.truncated ? ` Only the first ${l.max.toLocaleString('en-US')} files are listed.` : '';
+    if (!r || !r.total) return `No file matches “${wsGotoQuery(f.q).q}”.` + cut;
+    return (r.total > r.items.length ? `The best ${r.items.length} of ${wsfCount(r.total, 'file', 'files')}.` : wsfCount(r.total, 'file', 'files') + '.') + cut;
+  }
+  if (!f.q) return '';
+  if (f.q.length < WSF_MIN_TEXT) return `Type ${WSF_MIN_TEXT} or more characters to search the files.`;
+  const r = f.res;
+  if (!r || r.busy) return 'Searching…';
+  if (r.error === 'bad_regex') return 'Not a valid regular expression: ' + (r.detail || '');
+  if (r.error) return "The search didn't finish: " + r.error;
+  const parts = [];
+  const files = wsfCount(r.files.length, 'file', 'files');
+  if (r.truncated) parts.push(`The first ${wsfCount(r.limit, 'match', 'matches')}, in ${files}; more results not shown.`);
+  else parts.push(r.matches ? `${wsfCount(r.matches, 'match', 'matches')} in ${files}.` : `No matches in ${wsfCount(r.filesSearched, 'file', 'files')}.`);
+  if (r.timedOut) parts.push(`Stopped after ${r.deadline} s, with what was found by then.`);
+  const sk = r.skipped || {}, bits = [];
+  if (sk.binary) bits.push(wsfCount(sk.binary, 'binary file', 'binary files'));
+  if (sk.large) bits.push(wsfCount(sk.large, 'file', 'files') + ' over ' + Math.round(r.largeBytes / 1048576) + ' MB');
+  if (sk.unreadable) bits.push(wsfCount(sk.unreadable, 'unreadable file', 'unreadable files'));
+  if (bits.length) parts.push('Skipped ' + bits.join(', ') + '.');
+  if (r.listTruncated) parts.push(`Only the first ${wsfCount(r.filesListed, 'file', 'files')} were searched.`);
+  return parts.join(' ');
+}
+// The rows a query finds, as HTML: name first, then its folder, both marked.
+function wsGotoHtml(uid, items) {
+  return items.map((it, i) => {
+    const b = it.path.lastIndexOf('/') + 1;
+    return `<div class="wsr" role="option" id="${uid}-r${i}" aria-selected="false" data-i="${i}" title="${esc(it.path)}">`
+      + `<span class="wsr-nm">${wsMarkAt(it.path.slice(b), it.hits, b)}</span>`
+      + (b ? `<span class="wsr-dir">${wsMarkAt(it.path.slice(0, b - 1), it.hits, 0)}</span>` : '') + '</div>';
+  }).join('');
+}
+function wsHitsHtml(uid, rows) {
+  let html = '', open = false;
+  for (const r of rows) {
+    if (r.kind === 'file') {
+      const b = r.path.lastIndexOf('/') + 1;
+      html += (open ? '</div>' : '') + `<div role="group" aria-label="${esc(r.path)}">`
+        + `<div class="wsr-file" title="${esc(r.path)}"><span class="wsr-nm">${esc(r.path.slice(b))}</span>`
+        + (b ? `<span class="wsr-dir">${esc(r.path.slice(0, b - 1))}</span>` : '') + `<span class="wsr-n">${r.count}</span></div>`;
+      open = true;
+      continue;
+    }
+    html += `<div class="wsr hit" role="option" id="${uid}-r${r.i}" aria-selected="false" data-i="${r.i}">`
+      + `<span class="wsr-ln">${r.line}</span><span class="wsr-t">${r.cutStart ? '…' : ''}${wsMarkRanges(r.text, r.ranges)}${r.cutEnd ? '…' : ''}</span></div>`;
+  }
+  return html + (open ? '</div>' : '');
+}
+// ---- Workspace find: end --------------------------------------------------
+
 let WS_UID = 0, WS_DIR_GEN = 0;
 function wsView(ctx) {
   const key = wsCtxKey(ctx);
@@ -5546,6 +5803,8 @@ function wsView(ctx) {
       v.tabs = tb.tabs;
       v.sel = tb.active;
     } catch (e) {}
+    v.find = { ...wsFindFrom(s && s.find), list: null, listing: '', pool: null, ranked: null, res: null,
+               active: 0, gen: 0, ctl: null, timer: 0, pending: false };
     WS_VIEWS.set(key, v);
   }
   v.ctx = ctx;
@@ -5553,12 +5812,29 @@ function wsView(ctx) {
 }
 function wsPersist(v) {
   clearTimeout(v.persistTimer);
-  try { localStorage.setItem('cd-ws:' + v.key, JSON.stringify({ open: [...v.open], sel: v.sel, scroll: v.scroll, ...wsTabsSaved(v) })); } catch (e) {}
+  const f = v.find;
+  try { localStorage.setItem('cd-ws:' + v.key, JSON.stringify({ open: [...v.open], sel: v.sel, scroll: v.scroll, ...wsTabsSaved(v),
+    find: { mode: f.mode, q: f.q, cs: f.cs, rx: f.rx } })); } catch (e) {}
 }
 const WS_EMPTY = 'Open a file from the tree. Each file opens in a tab of its own; code is highlighted, Markdown and HTML render, and you can comment on any of it in place.';
 function wsPanelHtml() {
   return `<div class="wsp">
-    <div class="wsp-tree"></div>
+    <div class="wsp-side">
+      <div class="wsf">
+        <div class="wsf-row">
+          <div class="seg wsf-mode" role="group" aria-label="Find">`
+    + `<button type="button" data-mode="files" aria-pressed="true" title="Go to a file by typing part of its name">Files</button>`
+    + `<button type="button" data-mode="text" aria-pressed="false" title="Search the text of the files">Text</button></div>
+          <span class="wsf-opts">`
+    + `<button type="button" class="wsf-opt" data-opt="cs" aria-pressed="false" title="Match case" aria-label="Match case" hidden>Aa</button>`
+    + `<button type="button" class="wsf-opt" data-opt="rx" aria-pressed="false" title="Regular expression" aria-label="Regular expression" hidden>.*</button></span>
+        </div>
+        <input class="wsf-q" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-label="Go to file or search in files" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go">
+        <div class="wsf-state" aria-live="polite" hidden></div>
+      </div>
+      <div class="wsp-tree"></div>
+      <div class="wsf-res" role="listbox" aria-label="Results" hidden></div>
+    </div>
     <div class="wsp-view">
       <div class="wst" role="tablist" aria-label="Open files" hidden></div>
       <div class="wsp-bar" hidden><span class="wsp-path"></span><a class="wsp-own" target="_blank" title="Open in its own tab">⧉</a></div>
@@ -5766,15 +6042,17 @@ function wsShowTab(v, path) {
   wsRevealTab(strip, strip && wsTabEl(strip, path));
 }
 function wsOpenTab(v, path) { wsOpenTabAt(v, path, 0); }
-// Open a file, at a line when one is given (from a diff): its tab shows the
-// source with that line marked and scrolled to, and a viewer already loaded is
-// loaded again to get there.
-function wsOpenTabAt(v, path, line) {
+// Open a file, at a line when one is given (from a diff, Go to file's
+// "name:120" or a search result): its tab shows the source with that line
+// marked and scrolled to, and a viewer already loaded is loaded again to get
+// there. A search result also gives where its match is on the line
+// ({col, len}), and the viewer marks it.
+function wsOpenTabAt(v, path, line, hit) {
   const t = wsTabOpen(v, path);
   // Picked from the tree or a diff, so it is there now, whatever was said before.
   t.gone404 = false; t.goneSig = null; t.retrySig = null; t.seen = null;
   if (line > 0) {
-    t.st = wsTabState({ view: 'source', wrap: t.st.wrap, marks: { ...t.st.marks, source: line } });
+    t.st = wsTabState({ view: 'source', wrap: t.st.wrap, marks: { ...t.st.marks, source: line }, hit: hit ? { line, ...hit } : null });
     const k = wsNorm(t.path), f = v.frames.get(k);
     if (f) {
       f.remove(); v.frames.delete(k);
@@ -5874,6 +6152,8 @@ async function wsSync(v) {
     if (batch.length) await Promise.all(batch.map(d => wsFetchDir(v, d)));
     wsPaintTree(v);
     if (wsTabsCheck(v, v.dirs)) wsPaintView(v);
+    wsfEnsure(v);
+    wsfPaint(v);
   } finally { v.busy = false; }
   if (v.again) { v.again = false; await wsSync(v); }
 }
@@ -5967,8 +6247,226 @@ function wsMount(el, ctx) {
     clearTimeout(scrollTimer);
     scrollTimer = setTimeout(() => wsPersist(v), 400);
   };
+  wsfMount(v);
   wsSync(v);
   return v;
+}
+// ---- Workspace find: the box on screen -------------------------------------
+// It looks in the Workspace's first root: the task's folder in a task, the
+// project's folder in a project.
+const WSF_PAGE = Math.random().toString(36).slice(2);   // a search is cancelled only by the same box on the same page
+const wsfRoot = v => v.roots[0] || null;
+const wsfAbs = (root, rel) => wsJoin(root, root.includes('\\') ? rel.split('/').join('\\') : rel);
+const wsfOn = f => f.mode === 'files' ? !!f.q.trim() : !!f.q;
+const wsfHits = res => res._rows || (res._rows = wsHitRows(res));
+function wsfSize(v) {
+  const f = v.find;
+  return f.mode === 'files' ? (f.ranked ? f.ranked.items.length : 0) : (f.res && f.res.files ? wsfHits(f.res).hits.length : 0);
+}
+// The file list for Go to file, read when the box is used and again once it
+// is WSF_LIST_TTL old. A list that comes back the same repaints nothing.
+async function wsfList(v) {
+  const f = v.find, root = wsfRoot(v);
+  if (!root) return;
+  const key = wsNorm(root.path);
+  if (f.listing === key || (f.list && f.list.key === key && !f.list.error && Date.now() - f.list.at < WSF_LIST_TTL)) return;
+  f.listing = key;
+  let list;
+  try {
+    const d = await api('/api/ws/files?root=' + encodeURIComponent(root.path));
+    list = { key, root: d.root || root.path, files: d.files || [], truncated: !!d.truncated, max: d.max || 0, at: Date.now(), error: '' };
+  } catch (e) {
+    list = { key, root: root.path, files: null, truncated: false, max: 0, at: Date.now(), error: e.message || 'failed' };
+  } finally {
+    if (f.listing === key) f.listing = '';
+  }
+  const old = f.list;
+  if (old && old.key === key && old.files && list.files && old.files.length === list.files.length
+      && old.files.join('\n') === list.files.join('\n')) { old.at = list.at; return; }
+  f.list = list;
+  f.pool = null;
+  if (f.mode === 'files' && wsfRoot(v) && wsNorm(wsfRoot(v).path) === key) { wsfRank(v); wsfPaint(v); }
+}
+function wsfRank(v) {
+  const f = v.find, l = f.list, q = wsGotoQuery(f.q).q;
+  if (!l || !l.files || !wsfNormQ(q)) { f.ranked = null; return; }
+  const lq = wsfNormQ(q).toLowerCase();
+  if (!l.lower) l.lower = l.files.map(wsfLower);
+  const narrow = f.pool && f.pool.at === l.at && lq.startsWith(f.pool.q);
+  const r = wsFuzzyRank(q, narrow ? f.pool.paths : l.files, WSF_SHOWN, narrow ? f.pool.lower : l.lower);
+  f.pool = { at: l.at, q: lq, paths: r.pool, lower: r.poolLower };
+  f.ranked = { items: r.items, total: r.total, root: l.root };
+  f.active = 0;
+}
+// Typing in Text mode waits a moment and then searches; typing again, or
+// leaving Text, drops the search in flight, here and on the hub.
+function wsfSchedule(v) {
+  const f = v.find;
+  clearTimeout(f.timer);
+  f.pending = false;
+  if (f.ctl) { f.ctl.abort(); f.ctl = null; }
+  f.gen++;
+  f.res = null;
+  if (f.mode !== 'text' || f.q.length < WSF_MIN_TEXT) return;
+  f.res = { busy: true };
+  f.pending = true;
+  f.timer = setTimeout(() => wsfSearch(v), 250);
+}
+async function wsfSearch(v) {
+  const f = v.find, root = wsfRoot(v);
+  clearTimeout(f.timer);
+  f.pending = false;
+  if (f.ctl) { f.ctl.abort(); f.ctl = null; }
+  if (!root || f.mode !== 'text' || f.q.length < WSF_MIN_TEXT) return;
+  const gen = ++f.gen, ctl = new AbortController(), q = f.q, t0 = performance.now();
+  f.ctl = ctl;
+  f.res = { busy: true };
+  wsfPaint(v);
+  let res;
+  try {
+    // The box's own count goes with it: the hub runs the newest search even
+    // when two arrive the other way round.
+    const qs = new URLSearchParams({ root: root.path, q, case: f.cs ? '1' : '', regex: f.rx ? '1' : '', tag: v.uid + ':' + WSF_PAGE, n: String(gen) });
+    const r = await fetch('/api/ws/search?' + qs, { signal: ctl.signal });
+    const d = await r.json().catch(() => ({}));
+    res = r.ok ? d : { error: d.error || String(r.status), detail: d.detail || '' };
+  } catch (e) {
+    if (ctl.signal.aborted) return;
+    res = { error: e.message || 'failed' };
+  }
+  if (gen !== f.gen) return;
+  f.ctl = null;
+  res.root = res.root || root.path;
+  res.ms = Math.round(performance.now() - t0);
+  f.res = res;
+  f.active = 0;
+  wsfPaint(v);
+}
+// A query remembered from before, or one whose folder was not known yet when
+// the box was put on screen, gets its results.
+function wsfEnsure(v) {
+  const f = v.find, root = wsfRoot(v);
+  if (!root || !wsfOn(f)) return;
+  if (f.mode === 'files') {
+    if (!f.list || f.list.key !== wsNorm(root.path)) wsfList(v);
+    else if (!f.ranked) wsfRank(v);
+  } else if (!f.res && !f.pending && f.q.length >= WSF_MIN_TEXT) wsfSearch(v);
+}
+function wsfPaint(v) {
+  const el = v.el, box = el && el.querySelector('.wsf');
+  if (!box) return;
+  const f = v.find, on = wsfOn(f), root = wsfRoot(v);
+  const input = box.querySelector('.wsf-q'), res = el.querySelector('.wsf-res'), tree = el.querySelector('.wsp-tree');
+  if (input.value !== f.q) input.value = f.q;
+  const where = !root ? '' : root.kind === 'task' ? ' in this task' : ' in ' + root.label;
+  const ph = (f.mode === 'files' ? 'Go to file' : 'Search in files') + where;
+  if (input.placeholder !== ph) input.placeholder = ph;
+  box.querySelectorAll('.wsf-mode button').forEach(b => {
+    const p = b.dataset.mode === f.mode;
+    b.classList.toggle('active', p);
+    b.setAttribute('aria-pressed', String(p));
+  });
+  box.querySelectorAll('.wsf-opt').forEach(b => { b.hidden = f.mode !== 'text'; b.setAttribute('aria-pressed', String(!!f[b.dataset.opt])); });
+  const note = box.querySelector('.wsf-state'), msg = wsFindNote(f);
+  if (note.textContent !== msg) note.textContent = msg;
+  note.hidden = !msg;
+  el.classList.toggle('wsf-on', on);
+  el.classList.toggle('wsf-text', on && f.mode === 'text');
+  tree.hidden = on;
+  res.hidden = !on;
+  input.setAttribute('aria-expanded', String(on));
+  const html = !on ? ''
+    : f.mode === 'files' ? (f.ranked ? wsGotoHtml(v.uid, f.ranked.items) : '')
+    : (f.res && f.res.files ? wsHitsHtml(v.uid, wsfHits(f.res).rows) : '');
+  if (res._sig !== html) { res._sig = html; res.innerHTML = html; res.scrollTop = 0; }
+  wsfMark(v, false);
+}
+// The result the arrow keys are on: selected, and scrolled into the list.
+function wsfMark(v, scroll) {
+  const res = v.el && v.el.querySelector('.wsf-res'), input = v.el && v.el.querySelector('.wsf-q');
+  if (!res) return;
+  res.querySelectorAll('.wsr.on').forEach(r => { r.classList.remove('on'); r.setAttribute('aria-selected', 'false'); });
+  const r = res.querySelector(`.wsr[data-i="${v.find.active}"]`);
+  if (!r) { input.removeAttribute('aria-activedescendant'); return; }
+  r.classList.add('on');
+  r.setAttribute('aria-selected', 'true');
+  input.setAttribute('aria-activedescendant', r.id);
+  if (!scroll) return;
+  const head = r.parentElement.firstElementChild;   // a match's file heading stays in view with its first line
+  const top = head && head.classList.contains('wsr-file') && head.nextElementSibling === r ? head.offsetTop : r.offsetTop;
+  if (top < res.scrollTop) res.scrollTop = top;
+  else if (r.offsetTop + r.offsetHeight > res.scrollTop + res.clientHeight) res.scrollTop = r.offsetTop + r.offsetHeight - res.clientHeight;
+}
+// Open a result in a tab, through the same path as a diff's "Open at line".
+function wsfOpen(v, i) {
+  const f = v.find;
+  if (f.mode === 'files') {
+    const it = f.ranked && f.ranked.items[i];
+    if (!it) return;
+    wsOpenTabAt(v, wsfAbs(f.ranked.root, it.path), wsGotoQuery(f.q).line);
+  } else {
+    const h = f.res && f.res.files && wsfHits(f.res).hits[i];
+    if (!h) return;
+    const r0 = h.ranges[0];
+    wsOpenTabAt(v, wsfAbs(f.res.root, h.path), h.line, r0 ? { col: h.at + r0[0], len: r0[1] } : null);
+  }
+  f.active = i;
+  wsfMark(v, false);
+}
+function wsfMount(v) {
+  const el = v.el, box = el.querySelector('.wsf');
+  if (!box) return;
+  const f = v.find, input = box.querySelector('.wsf-q'), res = el.querySelector('.wsf-res');
+  res.id = v.uid + '-res';
+  input.setAttribute('aria-controls', res.id);
+  const fine = () => matchMedia('(pointer: fine)').matches;
+  const changed = () => {
+    f.active = 0;
+    wsfSchedule(v);
+    if (f.mode === 'files') { wsfList(v); wsfRank(v); }
+    clearTimeout(v.persistTimer);
+    v.persistTimer = setTimeout(() => wsPersist(v), 400);
+    wsfPaint(v);
+  };
+  input.oninput = () => { f.q = input.value.slice(0, WSF_Q_MAX); changed(); };
+  input.onfocus = () => { if (f.mode === 'files') wsfList(v); };
+  // Keys act on the focused box only: arrows move through the results, Enter
+  // opens one (or, in Text, searches now), Escape clears the query.
+  input.onkeydown = (e) => {
+    if (e.isComposing || e.altKey || e.ctrlKey || e.metaKey) return;
+    const n = wsfSize(v);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!n) return;
+      e.preventDefault();
+      f.active = (f.active + (e.key === 'ArrowDown' ? 1 : -1) + n) % n;
+      wsfMark(v, true);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (f.mode === 'text' && f.pending) wsfSearch(v);
+      else if (n) wsfOpen(v, Math.min(f.active, n - 1));
+    } else if (e.key === 'Escape') {
+      if (!f.q) return;
+      e.preventDefault();
+      f.q = '';
+      changed();
+    }
+  };
+  box.querySelector('.wsf-mode').onclick = (e) => {
+    const b = e.target.closest('button[data-mode]');
+    if (!b || b.dataset.mode === f.mode) return;
+    f.mode = b.dataset.mode;
+    changed();
+    if (fine()) input.focus({ preventScroll: true });
+  };
+  box.querySelectorAll('.wsf-opt').forEach(b => {
+    b.onclick = () => { f[b.dataset.opt] = !f[b.dataset.opt]; changed(); if (fine()) input.focus({ preventScroll: true }); };
+  });
+  // With a mouse, a click on a result leaves the typing where it was.
+  res.onmousedown = (e) => { if (fine() && document.activeElement === input && e.target.closest('.wsr')) e.preventDefault(); };
+  res.onclick = (e) => { const r = e.target.closest('.wsr'); if (r) wsfOpen(v, +r.dataset.i); };
+  res._sig = null;
+  wsfEnsure(v);
+  wsfPaint(v);
 }
 // The tree keeps itself current on its own timer, decoupled from renderRows —
 // so the status strip above it goes on ticking every 2.5s while the tree, the
