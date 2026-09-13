@@ -613,17 +613,23 @@ function codeSpanHtml(body) {
 // has at most four words ("New folder", "War of the Worlds.md"). A code span
 // or [text](target) takes any path as written. A path's & arrives as &amp;.
 // A markdown target may hold one level of brackets: [x](https://w/Foo_(bar)).
+// Linear on any line: the expression is tried from every character, so no
+// part of it may scan past the place where the next try would start. A link's
+// text stops at a [, and a path starts at a ( or _ only where that character
+// could not be inside the path itself; otherwise a 50,000-character line of
+// [ or (/ took seconds, one scan to its end per opener.
 const winPathSure = p => p.split(/[\\\/]/).every(s => !s.includes(' ') || (/^[A-Z0-9]/.test(s) && s.split(' ').length <= 4));
 const LINK_RE = (() => {
   const c = String.raw`(?:[^\s"'<>|?*,;:)\]\\\/&]|&amp;)`, f = String.raw`(?:[^\s"'<>|?*,;:)\]\\\/&.]|&amp;)`;
   const dir = `${c}+(?: ${c}+)*`, file = `(?:${f}+ )*${c}*\\.\\w{1,8}`;
   const line = String.raw`(?::\d+(?::\d+)?)?`, pre = String.raw`(^|[\s(*_])`;
+  const nixCh = String.raw`(?:[^\s"'<>|?*,;)\]&]|&amp;)`;
   return new RegExp([
-    String.raw`\[([^\]\n]+)\]\(((?:[^()\n]|\([^()\n]*\))+)\)`,
+    String.raw`\[([^\[\]\n]+)\]\(((?:[^()\n]|\([^()\n]*\))+)\)`,
     pre + String.raw`((?:https?|file):\/\/[^\s<*]+)`,
     pre + String.raw`((?:[A-Za-z]:[\\\/]|\\\\)(?:` + dir + String.raw`[\\\/])*` + file + line + String.raw`)(?![\w\\\/-])`,
-    pre + String.raw`((?:~\/|\/)(?:[^\s"'<>|?*,;)\]&]|&amp;)*\.\w{1,8}` + line + String.raw`)(?![\w\\\/-])`,
-    pre + String.raw`((?:\.\.?[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}` + line
+    String.raw`(^|[\s*]|(?<!` + nixCh + String.raw`)[(_])((?:~\/|\/)` + nixCh + String.raw`*\.\w{1,8}` + line + String.raw`)(?![\w\\\/-])`,
+    String.raw`(^|[\s(*]|(?<![\w.\\\/-])_)((?:\.\.?[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}` + line
       + String.raw`|[\w-]+\.(?:md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|png|jpg|jpeg|gif|svg|sh|ps1|sql|xml|log|ini|cfg)` + line + String.raw`)(?=[\s.,;:)\]]|$)`,
     String.raw`\b(room-[0-9a-f]{8})\b`,
   ].join('|'), 'g');
@@ -655,6 +661,43 @@ const CWD = new URLSearchParams(location.search).get('cwd') || '';
 const CTX = (ROOM ? '&room=' + encodeURIComponent(ROOM) : '') + (CWD ? '&cwd=' + encodeURIComponent(CWD) : '');
 // The line a link pointed at ("name.py:120"): marked, and scrolled into view.
 const LINE = parseInt(new URLSearchParams(location.search).get('line') || '', 10) || 0;
+// A tab in the dashboard's Workspace reopens a file as it was left: its view,
+// Wrap, marked lines and scroll position, handed over as ?st={...} and read
+// the way index.html's wsTabState reads it. Anything unexpected is dropped.
+function fvStartState(raw) {
+  let o = null;
+  try { o = JSON.parse(raw || 'null'); } catch (e) {}
+  const out = { view: '', wrap: null, marks: {}, top: 0 };
+  if (!o || typeof o !== 'object') return out;
+  if (typeof o.view === 'string' && /^(?:preview|source|table|pretty)$/.test(o.view)) out.view = o.view;
+  if (typeof o.wrap === 'boolean') out.wrap = o.wrap;
+  if (o.marks && typeof o.marks === 'object') {
+    for (const k of ['source', 'pretty']) if (Number.isInteger(o.marks[k]) && o.marks[k] > 0) out.marks[k] = o.marks[k];
+  }
+  if (Number.isFinite(o.top) && o.top > 0) out.top = Math.round(o.top);
+  return out;
+}
+const START = fvStartState(new URLSearchParams(location.search).get('st'));
+// The dashboard page this viewer is framed in, when it is one.
+function hostPage() {
+  try { if (window.parent !== window && window.parent.location.origin === location.origin) return window.parent; } catch (e) {}
+  return null;
+}
+// What scrolls in the viewer, so a tab can be put back where it was left: the
+// code box, a table's box, a rendered page's own document, or else this page.
+function fvScrollOwner(main) {
+  const box = main.querySelector('.code, .csv-wrap');
+  if (box) return box;
+  const f = main.querySelector('iframe.file');
+  if (f) { try { return f.contentDocument ? f.contentDocument.scrollingElement : null; } catch (e) { return null; } }
+  return document.scrollingElement;
+}
+// The status the hub answers a read with, without reading the body.
+async function fvStatusOf(url) {
+  const ac = new AbortController();
+  try { const r = await fetch(url, { cache: 'no-store', signal: ac.signal }); ac.abort(); return r.status; }
+  catch (e) { return 0; }
+}
 function fileHref(p, line) { return '/fileview?path=' + encodeURIComponent(resolvePath(p, FILE_BASE)) + (line ? '&line=' + line : '') + CTX; }
 // ---- Code highlighting: begin ---------------------------------------------
 // A highlighter of this page's own, so a file is coloured wherever the hub is
@@ -1537,6 +1580,7 @@ function noteEl(lines) {
 // Long lines wrap unless the reader turned it off; the choice is kept.
 let WRAP = true;
 try { WRAP = localStorage.getItem('cd-fv-wrap') !== '0'; } catch (e) {}
+if (START.wrap != null) WRAP = START.wrap;   // a reopened tab keeps its own
 // The line a link pointed at (name.py:120), or the one clicked in the gutter:
 // marked, and, for a link, scrolled a third of the way down.
 function markRow(box, n, scroll) {
@@ -1613,8 +1657,7 @@ function showTrayItem(cid) {
 document.addEventListener('click', ev => {
   const a = ev.target.closest && ev.target.closest('a[data-task]');
   if (!a || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;
-  let host = null;
-  try { if (window.parent !== window && window.parent.location.origin === location.origin) host = window.parent; } catch (e) {}
+  const host = hostPage();
   if (!host) return;
   ev.preventDefault();
   host.postMessage({ type: 'open-task', roomId: a.dataset.task }, location.origin);
@@ -1696,8 +1739,37 @@ function wireFrameLinks(ifr) {
     }
   }
 
+  // Not on the hub: said here, and to the Workspace tab this viewer is in.
+  const notFound = () => {
+    main.innerHTML = '<div class="err">Could not open file (404) — it does not exist on the hub.</div>';
+    const host = hostPage();
+    if (host) host.postMessage({ type: 'fv-missing' }, location.origin);
+  };
+  // A Workspace tab reopens where it was left and hears where the reader
+  // scrolls to. Nothing is said until the start state is applied; until a
+  // rendered page has loaded, the place to go back to is still the one given.
+  let pendingTop = START.top, reporting = false, stateOf = () => ({});
+  const scrolledTop = () => { const s = fvScrollOwner(main); return pendingTop || (s ? Math.round(s.scrollTop) : 0); };
+  function report() {
+    const host = reporting && hostPage();
+    if (host) host.postMessage({ type: 'fv-state', st: { ...stateOf(), top: scrolledTop() } }, location.origin);
+  }
+  function putBack() { const s = fvScrollOwner(main); if (pendingTop && s) s.scrollTop = pendingTop; pendingTop = 0; }
+  let scrollTimer = 0;
+  const onScroll = () => { clearTimeout(scrollTimer); scrollTimer = setTimeout(report, 250); };
+  document.addEventListener('scroll', onScroll, true);
+
+  // The browser shows an image or a PDF itself and says nothing when it is
+  // not there, so the hub is asked first.
   const imgExt = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'];
-  if (imgExt.includes(ext)) { main.innerHTML = `<img class="file" src="${src}" alt="${esc(base)}">`; return; }
+  if ((imgExt.includes(ext) || ext === 'pdf') && (await fvStatusOf(src)) === 404) { notFound(); return; }
+  if (imgExt.includes(ext)) {
+    main.innerHTML = `<img class="file" src="${src}" alt="${esc(base)}">`;
+    main.querySelector('img').addEventListener('load', () => { putBack(); reporting = true; report(); }, { once: true });
+    return;
+  }
+  // A PDF's place is inside the browser's own viewer, out of this page's reach:
+  // it is kept while the tab's viewer stays loaded.
   if (ext === 'pdf') { main.innerHTML = `<iframe class="file" src="${src}"></iframe>`; return; }
 
   const res = await loadText(path, src);
@@ -1705,7 +1777,7 @@ function wireFrameLinks(ifr) {
     // A folder with a dot in its name ("C:\Users\me\.ensemble") looked like a file.
     if (res.status === 404 && absPath && (await showDir(path, main)) === true) return;
     // Say which of the two it is, rather than making the reader guess.
-    if (res.status === 404) main.innerHTML = '<div class="err">Could not open file (404) — it does not exist on the hub.</div>';
+    if (res.status === 404) notFound();
     else if (res.status === 403) main.innerHTML = '<div class="err">Could not open file (403) — it sits outside the folders the dashboard is allowed to read: registered projects and their task folders.</div>';
     else main.innerHTML = `<div class="err">Could not open file${res.status ? ' (' + res.status + ')' : ''}.${res.why ? ' ' + esc(res.why) : ''}</div>`;
     return;
@@ -1736,10 +1808,13 @@ function wireFrameLinks(ifr) {
     : isCsv ? [['table', 'Table'], ['source', 'Source']]
     : laidOut ? [['pretty', 'Formatted'], ['source', 'As written']] : null;
   let view = views && !LINE ? views[0][0] : 'source';
+  if (START.view === 'source' || (views && views.some(v => v[0] === START.view))) view = START.view;
   // The marked line of each code view: the linked one to start with, then the
   // last one clicked, so it is still marked after a trip to another view.
-  const marked = { source: LINE, pretty: 0 };
+  const marked = { source: START.marks.source || LINE, pretty: START.marks.pretty || 0 };
   const wrapBtn = document.getElementById('wrap');
+  // How this tab is left, beyond its scroll position.
+  stateOf = () => ({ view, wrap: WRAP, marks: { ...marked } });
 
   // Highlight first, then hand the finished element to the comment layer: its
   // offsets are counted through the element's text, which is the file's text.
@@ -1766,6 +1841,7 @@ function wireFrameLinks(ifr) {
       if (ev.clientX - box.getBoundingClientRect().left > parseFloat(getComputedStyle(row).paddingLeft)) return;
       markRow(box, +row.dataset.n, false);
       marked[view] = +row.dataset.n;
+      report();
       // Only a line of the file as written can be linked to: a formatted JSON
       // row has no line of its own on disk.
       if (view !== 'source') return;
@@ -1798,7 +1874,14 @@ function wireFrameLinks(ifr) {
     ifr.className = 'file';
     ifr.setAttribute('sandbox', 'allow-same-origin');   // styles and fonts load, scripts don't
     ifr.style.height = 'calc(100vh - 150px)';
-    ifr.addEventListener('load', () => wireFrameLinks(ifr));
+    // The page scrolls inside its own document, whose scrolling this page's
+    // listener does not hear: listen there, and put a reopened tab back.
+    ifr.addEventListener('load', () => {
+      wireFrameLinks(ifr);
+      try { ifr.contentDocument.addEventListener('scroll', onScroll, true); } catch (e) {}
+      putBack();
+      report();
+    });
     ifr.srcdoc = text;
     main.appendChild(ifr);
   }
@@ -1842,6 +1925,7 @@ function wireFrameLinks(ifr) {
     else if (view === 'table') renderTable();
     else if (isMd) { renderMd(); setMeta('Markdown · ' + linesOf(countLines(text))); }
     else { renderPage(); setMeta('HTML · ' + linesOf(countLines(text))); }
+    report();
   }
   if (views) {
     const seg = document.getElementById('views');
@@ -1851,7 +1935,7 @@ function wireFrameLinks(ifr) {
       b.className = 'btn';
       b.dataset.view = v;
       b.textContent = label;
-      b.onclick = () => { if (view !== v) { view = v; paint(); } };
+      b.onclick = () => { if (view !== v) { view = v; pendingTop = 0; paint(); } };
       seg.appendChild(b);
     });
   }
@@ -1868,9 +1952,15 @@ function wireFrameLinks(ifr) {
     const top = hit && hit.closest && hit.closest('.ln-row');
     box.classList.toggle('wrap', WRAP);
     if (top) box.scrollTop = top.offsetTop - 8;
+    report();
   };
   if (isMd) await cfg;
   paint();
+  // Put a reopened tab back where it was scrolled to, then follow the reader.
+  // A rendered page is put back once it has loaded.
+  if (!main.querySelector('iframe.file')) putBack();
+  reporting = true;
+  report();
 })();
 </script>
 </body>

@@ -20,6 +20,7 @@ import json
 import re
 import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -182,6 +183,56 @@ class GeneratedLinks(unittest.TestCase):
         for text, html in r.items():
             for h in hrefs(html):
                 self.assertFalse(h.lower().startswith("file:"), f"{text!r} links to {h}")
+
+
+LINEAR_JS = r"""
+globalThis.location = new URL('http://hub-host:8765/');
+const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fileHref = (p, line) => '/fileview?path=' + encodeURIComponent(p) + (line ? '&line=' + line : '');
+%s
+const render = t => { const keep = []; return unlinkify(linkify(esc(t), keep), keep); };
+const { shapes, cases } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+const ms = {};
+for (const [unit, n] of shapes) {
+  // Built here: a 50,000-character line would bloat the JSON on stdin.
+  const text = unit.repeat(n);
+  const t0 = Date.now();
+  render(text);
+  ms[unit] = Date.now() - t0;
+}
+console.log(JSON.stringify({ ms, out: Object.fromEntries(cases.map(c => [c, render(c)])) }));
+"""
+
+# 50,000 characters of openers that never close. The expression is tried from
+# every character, so any part of it that scans on past the next opener makes
+# the whole line quadratic: before this test "[" took 0.9 to 1.8 s and "(/"
+# 2.5 s, on every render of a chat bubble or a Markdown file.
+LINEAR_SHAPES = ["[", "[a", " [", "[a](b ", "(/", "(~/", "_a/", "_/", "*(/", "a_/", "&(/",
+                 "(C:\\a", "_\\\\a", " C:\\a b", "x(y/", "._a/", "room-", " http://"]
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class LinearLinks(unittest.TestCase):
+    def test_a_long_line_of_openers_is_linear_in_all_three_pages(self):
+        cases = ["see (/home/me/notes.md) and (docs/a.md)", "b.py_x.md: done", "[a [b](https://example.com/b)"]
+        for name, src in PAGES.items():
+            with self.subTest(page=name):
+                shapes = [[u, 50_000 // len(u)] for u in LINEAR_SHAPES]
+                with tempfile.TemporaryDirectory() as tmp:
+                    script = Path(tmp) / "linear.cjs"
+                    script.write_text(LINEAR_JS % shared_block(src), encoding="utf-8")
+                    proc = subprocess.run([NODE, str(script)], input=json.dumps({"shapes": shapes, "cases": cases}),
+                                          capture_output=True, text=True, encoding="utf-8", timeout=120)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                r = json.loads(proc.stdout)
+                for unit, ms in r["ms"].items():
+                    self.assertLess(ms, 250, f"{name}: a 50,000-character line of {unit!r} took {ms} ms")
+                out = r["out"]
+                # Where a path can start is narrower, and no piece of a name is linked.
+                self.assertEqual([viewer_path(h)[0] for h in hrefs(out[cases[0]])], ["/home/me/notes.md", "docs/a.md"])
+                self.assertEqual(hrefs(out[cases[1]]), [], "x.md alone would open another file")
+                self.assertEqual(hrefs(out[cases[2]]), ["https://example.com/b"])
+                self.assertTrue(out[cases[2]].startswith("[a <a "), out[cases[2]])
 
 
 class NoHardCodedLoopback(unittest.TestCase):

@@ -1313,13 +1313,35 @@
   .wse .sz { margin-left: auto; padding-left: 8px; color: var(--fg-muted); font-size: 10.5px; font-variant-numeric: tabular-nums; }
   .wse.none { color: var(--fg-muted); cursor: default; }
   .wse.none:hover { background: transparent; }
-  .wsp-view { display: flex; flex-direction: column; min-width: 0; }
+  .wsp-view { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  /* Open files, as tabs above the viewer. A row that does not fit scrolls
+     sideways within itself, never the page. */
+  .wst { position: relative; display: flex; flex: none; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
+    scrollbar-width: thin; background: var(--surface-sunken); border-bottom: 1px solid var(--border); }
+  .wst-tab { display: flex; align-items: center; gap: var(--s-100); flex: none; max-width: 200px; height: 32px;
+    padding: 0 var(--s-100) 0 var(--s-300); border-right: 1px solid var(--border); border-bottom: 2px solid transparent;
+    color: var(--fg-muted); font-size: var(--fs-200); white-space: nowrap; cursor: pointer; user-select: none; -webkit-user-select: none; }
+  .wst-tab:hover { background: var(--hover); color: var(--fg); }
+  .wst-tab.on { background: var(--surface); color: var(--fg); border-bottom-color: var(--accent); }
+  .wst-tab:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+  .wst-nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .wst-tab.gone .wst-nm { text-decoration: line-through; font-style: italic; }
+  .wst-x { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px;
+    border-radius: var(--r-100); color: var(--fg-muted); font-size: var(--fs-300); line-height: 1; }
+  .wst-x:hover { background: var(--pressed); color: var(--fg); }
+  .wst[hidden], .wsp-bar[hidden], .wsp-own[hidden] { display: none; }
+  .wsp-frames { position: relative; flex: 1; min-height: 0; }
+  .wsp-gone p { margin: 0 0 var(--s-200); }
+  .wsp-gone-path { font-family: var(--font-mono); font-size: var(--fs-200); color: var(--fg-muted); overflow-wrap: anywhere; }
   .wsp-empty { color: var(--fg-subtle); padding: 24px; font-size: 13px; }
   .wsp-bar { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-bottom: 1px solid var(--border); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--fg-subtle); }
   .wsp-path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .wsp-bar a { color: var(--fg-subtle); text-decoration: none; font-size: 14px; }
   .wsp-bar a:hover { color: var(--link); }
-  .wsp-frame { flex: 1; width: 100%; border: 0; }
+  /* Each loaded tab's viewer, stacked; only the one showing is visible. Hidden
+     by visibility, not display, so a hidden viewer keeps its scroll position. */
+  .wsp-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; visibility: hidden; }
+  .wsp-frame.on { visibility: visible; }
   /* Changes tab: changed files (left) + unified diff with line comments (right). */
   .chp { display: grid; grid-template-columns: minmax(220px, 320px) 1fr; height: calc(100vh - var(--chrome-h)); min-height: 420px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
   .chp-files { overflow: auto; border-right: 1px solid var(--border); padding: 8px 6px; font-size: 12.5px; }
@@ -2530,6 +2552,10 @@
        it, a 390px phone left the file 79px wide. */
     .wsp, .chp { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(120px, 35%) minmax(0, 1fr); }
     .wsp-tree, .chp-files { border-right: 0; border-bottom: 1px solid var(--border); }
+    /* File tabs: a finger-sized tab and close target; the row swipes sideways. */
+    .wst { scrollbar-width: none; }
+    .wst-tab { height: auto; min-height: var(--touch-min); padding-right: 0; }
+    .wst-x { width: var(--touch-min); height: var(--touch-min); }
     .scopebar { flex-wrap: wrap; }
     .scopebar select, .chp-repo { max-width: 100%; min-width: 0; }
     .dl-composer { padding-left: var(--s-300); }
@@ -2966,17 +2992,23 @@ function codeSpanHtml(body) {
 // has at most four words ("New folder", "War of the Worlds.md"). A code span
 // or [text](target) takes any path as written. A path's & arrives as &amp;.
 // A markdown target may hold one level of brackets: [x](https://w/Foo_(bar)).
+// Linear on any line: the expression is tried from every character, so no
+// part of it may scan past the place where the next try would start. A link's
+// text stops at a [, and a path starts at a ( or _ only where that character
+// could not be inside the path itself; otherwise a 50,000-character line of
+// [ or (/ took seconds, one scan to its end per opener.
 const winPathSure = p => p.split(/[\\\/]/).every(s => !s.includes(' ') || (/^[A-Z0-9]/.test(s) && s.split(' ').length <= 4));
 const LINK_RE = (() => {
   const c = String.raw`(?:[^\s"'<>|?*,;:)\]\\\/&]|&amp;)`, f = String.raw`(?:[^\s"'<>|?*,;:)\]\\\/&.]|&amp;)`;
   const dir = `${c}+(?: ${c}+)*`, file = `(?:${f}+ )*${c}*\\.\\w{1,8}`;
   const line = String.raw`(?::\d+(?::\d+)?)?`, pre = String.raw`(^|[\s(*_])`;
+  const nixCh = String.raw`(?:[^\s"'<>|?*,;)\]&]|&amp;)`;
   return new RegExp([
-    String.raw`\[([^\]\n]+)\]\(((?:[^()\n]|\([^()\n]*\))+)\)`,
+    String.raw`\[([^\[\]\n]+)\]\(((?:[^()\n]|\([^()\n]*\))+)\)`,
     pre + String.raw`((?:https?|file):\/\/[^\s<*]+)`,
     pre + String.raw`((?:[A-Za-z]:[\\\/]|\\\\)(?:` + dir + String.raw`[\\\/])*` + file + line + String.raw`)(?![\w\\\/-])`,
-    pre + String.raw`((?:~\/|\/)(?:[^\s"'<>|?*,;)\]&]|&amp;)*\.\w{1,8}` + line + String.raw`)(?![\w\\\/-])`,
-    pre + String.raw`((?:\.\.?[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}` + line
+    String.raw`(^|[\s*]|(?<!` + nixCh + String.raw`)[(_])((?:~\/|\/)` + nixCh + String.raw`*\.\w{1,8}` + line + String.raw`)(?![\w\\\/-])`,
+    String.raw`(^|[\s(*]|(?<![\w.\\\/-])_)((?:\.\.?[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}` + line
       + String.raw`|[\w-]+\.(?:md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|png|jpg|jpeg|gif|svg|sh|ps1|sql|xml|log|ini|cfg)` + line + String.raw`)(?=[\s.,;:)\]]|$)`,
     String.raw`\b(room-[0-9a-f]{8})\b`,
   ].join('|'), 'g');
@@ -5244,17 +5276,175 @@ function wsHidden(v, dir) {
   return { dirs: !!v.hideAllDirs, set: v.hide || new Set() };
 }
 function wsCtxKey(ctx) { return ctx.kind === 'task' ? 'task:' + ctx.sid : 'project:' + ctx.projectId; }
+
+// ---- Workspace tabs: begin ------------------------------------------------
+// The files open in a Workspace are tabs above the viewer, as in an editor.
+// This block is plain data and pure functions, so tests/test_workspace_tabs.py
+// runs it in Node: which files are open and in what order, which one shows,
+// and how each was left (its view, Wrap, marked lines and scroll position,
+// which the viewer reports). wsPaintTabs and wsPaintView put it on screen.
+const WS_TABS_MAX = 30;    // past this, opening a file closes the leftmost tab
+const WS_LIVE_MAX = 4;     // viewers kept loaded; any other tab reloads from its saved state when shown
+// What the viewer reports of a tab, with anything unexpected dropped: it comes
+// back from browser storage and from a framed page. fileview.html's
+// fvStartState reads it the same way.
+function wsTabState(o) {
+  const out = { view: '', wrap: null, marks: {}, top: 0 };
+  if (!o || typeof o !== 'object') return out;
+  if (typeof o.view === 'string' && /^(?:preview|source|table|pretty)$/.test(o.view)) out.view = o.view;
+  if (typeof o.wrap === 'boolean') out.wrap = o.wrap;
+  if (o.marks && typeof o.marks === 'object') {
+    for (const k of ['source', 'pretty']) if (Number.isInteger(o.marks[k]) && o.marks[k] > 0) out.marks[k] = o.marks[k];
+  }
+  if (Number.isFinite(o.top) && o.top > 0) out.top = Math.round(o.top);
+  return out;
+}
+const wsNewTab = (path, st) => ({ path, st: wsTabState(st), missing: false, gone404: false, goneSig: null, goneGen: -1, retrySig: null, seen: null });
+// The tree part of what is saved: the folders opened and how far it was
+// scrolled. Only bounded paths get through; one bad entry drops that entry.
+const WS_OPEN_MAX = 500;
+function wsTreeFrom(saved) {
+  const out = { open: [], scroll: 0 };
+  if (!saved || typeof saved !== 'object') return out;
+  if (Array.isArray(saved.open)) {
+    for (const p of saved.open) {
+      if (typeof p === 'string' && p && p.length <= 4096 && !out.open.includes(p)) out.open.push(p);
+      if (out.open.length >= WS_OPEN_MAX) break;
+    }
+  }
+  if (Number.isFinite(saved.scroll) && saved.scroll > 0) out.scroll = Math.round(saved.scroll);
+  return out;
+}
+// The tabs saved for a view. A view saved before tabs existed had one file
+// selected, and that file becomes its one tab.
+function wsTabsFrom(saved) {
+  const out = { tabs: [], active: '' };
+  if (!saved || typeof saved !== 'object') return out;
+  const list = Array.isArray(saved.tabs) ? saved.tabs
+    : (typeof saved.sel === 'string' && saved.sel ? [{ path: saved.sel }] : []);
+  for (const t of list) {
+    const path = t && typeof t.path === 'string' ? t.path : '';
+    if (!path || out.tabs.some(x => wsSame(x.path, path))) continue;
+    out.tabs.push(wsNewTab(path, t.st));
+    if (out.tabs.length >= WS_TABS_MAX) break;
+  }
+  const want = typeof saved.active === 'string' ? saved.active : (typeof saved.sel === 'string' ? saved.sel : '');
+  const hit = out.tabs.find(x => wsSame(x.path, want));
+  out.active = hit ? hit.path : (out.tabs.length ? out.tabs[0].path : '');
+  return out;
+}
+const wsTabsSaved = t => ({ tabs: t.tabs.map(x => ({ path: x.path, st: x.st })), active: t.sel });
+const wsTabAt = (t, path) => t.tabs.findIndex(x => wsSame(x.path, path));
+// Open a file: switch to its tab if it has one, otherwise add one at the end.
+function wsTabOpen(t, path) {
+  let i = wsTabAt(t, path);
+  if (i < 0) {
+    t.tabs.push(wsNewTab(path, null));
+    i = t.tabs.length - 1;
+    if (t.tabs.length > WS_TABS_MAX) { t.tabs.shift(); i--; }
+  }
+  t.sel = t.tabs[i].path;
+  return t.tabs[i];
+}
+// Close a tab. Closing the one showing shows its right-hand neighbour, or the
+// left-hand one at the end of the row.
+function wsTabClose(t, path) {
+  const i = wsTabAt(t, path);
+  if (i < 0) return t.sel;
+  const showing = wsSame(t.sel, path);
+  t.tabs.splice(i, 1);
+  if (showing) t.sel = t.tabs.length ? t.tabs[Math.min(i, t.tabs.length - 1)].path : '';
+  return t.sel;
+}
+// Mark a viewer as just shown; returns the ones to unload, least recently
+// shown first. The one showing is last, so it is never among them.
+function wsLiveTouch(live, key, max) {
+  const i = live.indexOf(key);
+  if (i >= 0) live.splice(i, 1);
+  live.push(key);
+  const drop = [];
+  while (live.length > Math.max(1, max)) drop.push(live.shift());
+  return drop;
+}
+const wsParentOf = p => { const m = (p || '').match(/^(.*)[\\/][^\\/]+$/); return m ? m[1] : ''; };
+// A file's entry in its folder's listing: the entry, false when the listing
+// says it is not there, or null when the listing is not there to say (not read
+// yet, unreadable, or cut off).
+function wsListingOf(dirs, path) {
+  const parent = wsParentOf(path);
+  if (!parent) return null;
+  let c = dirs.get(parent);
+  if (!c) for (const [k, x] of dirs) if (wsSame(k, parent)) { c = x; break; }
+  return c || null;
+}
+function wsFileEntry(dirs, path) {
+  const c = wsListingOf(dirs, path), parent = wsParentOf(path);
+  if (!c) return null;
+  if (c.error) return /^404\b/.test(c.error) ? false : null;
+  const name = path.slice(parent.length + 1);
+  const e = c.entries.find(e => e.type !== 'dir' && e.name === name);
+  if (e) return e;
+  return c.entries.length >= 2000 ? null : false;
+}
+function wsFilePresent(dirs, path) { const e = wsFileEntry(dirs, path); return e === null ? null : !!e; }
+// Which version of a file a listing shows: '' when it shows none, null when
+// it cannot say.
+const wsEntrySig = e => e === null ? null : e ? (e.mtime || 0) + ':' + (e.size || 0) : '';
+// Which reading of a folder a listing is (wsFetchDir numbers them); -1 for none.
+const wsListingGen = (dirs, path) => { const c = wsListingOf(dirs, path); return c ? c.gen || 0 : -1; };
+// The viewer was told 404. The listing's version of the file at that moment,
+// and which reading of the folder that was, are kept with it, so a later
+// listing can tell a file that came back from one it still merely lists.
+function wsTabGone(t, dirs) {
+  t.gone404 = true;
+  t.goneSig = wsEntrySig(wsFileEntry(dirs, t.path));
+  t.goneGen = wsListingGen(dirs, t.path);
+}
+// A tab's file is gone when its folder's listing says so, or when the viewer
+// was told 404. The viewer's word stands until the listing shows a version of
+// the file other than the one it showed then (absent and back, or written
+// again), or until a reading of the folder made after the 404 still shows the
+// file: the listing's times are whole seconds, so a file written again within
+// the second looks the same. That second chance is given once per version,
+// so a file the listing shows but the reader cannot find does not flap. True
+// when any tab changed.
+function wsTabsCheck(t, dirs) {
+  let changed = false;
+  for (const x of t.tabs) {
+    const e = wsFileEntry(dirs, x.path), p = e === null ? null : !!e;
+    if (p === false) x.retrySig = null;
+    if (x.gone404) {
+      const sig = wsEntrySig(e), fresh = wsListingGen(dirs, x.path) > x.goneGen;
+      if (p === true && (sig !== x.goneSig || (fresh && x.retrySig !== sig))) {
+        x.retrySig = x.goneSig === null || x.goneSig === sig ? sig : null;
+        x.gone404 = false; x.goneSig = null;
+      } else if (p === false) x.goneSig = '';
+    }
+    if (p !== null) x.seen = p;
+    const missing = x.seen === false || x.gone404;
+    if (missing !== x.missing) { x.missing = missing; changed = true; }
+  }
+  return changed;
+}
+// ---- Workspace tabs: end --------------------------------------------------
+
+let WS_UID = 0, WS_DIR_GEN = 0;
 function wsView(ctx) {
   const key = wsCtxKey(ctx);
   let v = WS_VIEWS.get(key);
   if (!v) {
     v = { key, ctx, el: null, open: new Set(), sel: '', scroll: 0, dirs: new Map(),
-          roots: [], hide: new Set(), hideAllDirs: false, hideReady: true, busy: false, cursor: 0 };
+          roots: [], hide: new Set(), hideAllDirs: false, hideReady: true, busy: false, cursor: 0,
+          tabs: [], frames: new Map(), live: [], uid: 'wst' + (++WS_UID) };
+    let s = {};
+    try { s = JSON.parse(localStorage.getItem('cd-ws:' + key) || '{}') || {}; } catch (e) {}
     try {
-      const s = JSON.parse(localStorage.getItem('cd-ws:' + key) || '{}');
-      (s.open || []).forEach(p => v.open.add(p));
-      v.sel = s.sel || '';
-      v.scroll = s.scroll || 0;
+      const tr = wsTreeFrom(s);
+      tr.open.forEach(p => v.open.add(p));
+      v.scroll = tr.scroll;
+      const tb = wsTabsFrom(s);
+      v.tabs = tb.tabs;
+      v.sel = tb.active;
     } catch (e) {}
     WS_VIEWS.set(key, v);
   }
@@ -5262,12 +5452,18 @@ function wsView(ctx) {
   return v;
 }
 function wsPersist(v) {
-  try { localStorage.setItem('cd-ws:' + v.key, JSON.stringify({ open: [...v.open], sel: v.sel, scroll: v.scroll })); } catch (e) {}
+  clearTimeout(v.persistTimer);
+  try { localStorage.setItem('cd-ws:' + v.key, JSON.stringify({ open: [...v.open], sel: v.sel, scroll: v.scroll, ...wsTabsSaved(v) })); } catch (e) {}
 }
+const WS_EMPTY = 'Open a file from the tree. Each file opens in a tab of its own; code is highlighted, Markdown and HTML render, and you can comment on any of it in place.';
 function wsPanelHtml() {
   return `<div class="wsp">
     <div class="wsp-tree"></div>
-    <div class="wsp-view"><div class="wsp-empty">Select a file to view it. Code is highlighted, Markdown and HTML render, and you can comment on any of it in place.</div></div>
+    <div class="wsp-view">
+      <div class="wst" role="tablist" aria-label="Open files" hidden></div>
+      <div class="wsp-bar" hidden><span class="wsp-path"></span><a class="wsp-own" target="_blank" title="Open in its own tab">⧉</a></div>
+      <div class="wsp-frames" role="tabpanel"><div class="wsp-note"><div class="wsp-empty">${esc(WS_EMPTY)}</div></div></div>
+    </div>
   </div>`;
 }
 // The tree's HTML is a pure function of the view's state, so expanded folders
@@ -5366,15 +5562,119 @@ function wsFileUrl(v, path) {
   return '/fileview?path=' + encodeURIComponent(path)
     + (room ? '&room=' + encodeURIComponent(room.id) + '&roomName=' + encodeURIComponent(room.name) : '');
 }
+const wsTabName = p => (p || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p;
+const wsTabEl = (strip, path) => [...strip.querySelectorAll('.wst-tab')].find(e => wsSame(e.dataset.path, path));
+// The tab row, rewritten only when a tab opens, closes, switches or goes
+// missing, so a refresh never replaces a tab under the pointer. Keyboard focus
+// stays on the same tab, or moves to the one showing if its own closed.
+function wsPaintTabs(v) {
+  const strip = v.el && v.el.querySelector('.wst');
+  if (!strip) return;
+  const html = v.tabs.map((t, i) => {
+    const on = wsSame(t.path, v.sel), name = wsTabName(t.path);
+    return `<div class="wst-tab${on ? ' on' : ''}${t.missing ? ' gone' : ''}" role="tab" id="${v.uid}-${i}" aria-selected="${on}" tabindex="${on ? 0 : -1}"`
+      + ` data-path="${esc(t.path)}" title="${esc(tildeify(t.path) + (t.missing ? ' (no longer exists)' : ''))}" aria-label="${esc(name + (t.missing ? ', no longer exists' : ''))}">`
+      + `<span class="wst-nm">${esc(name)}</span><span class="wst-x" aria-hidden="true" title="Close">×</span></div>`;
+  }).join('');
+  strip.hidden = !v.tabs.length;
+  if (strip._sig === html) return;
+  const f = document.activeElement;
+  const focused = f && strip.contains(f) ? (f.dataset.path || '') : null;
+  strip._sig = html;
+  strip.innerHTML = html;
+  if (focused != null) {
+    const t = wsTabEl(strip, focused) || strip.querySelector('.wst-tab.on');
+    if (t) t.focus({ preventScroll: true });
+  }
+}
+// Scroll the row, and only the row, so a tab is in view.
+function wsRevealTab(strip, tab) {
+  if (!strip || !tab) return;
+  const l = tab.offsetLeft, r = l + tab.offsetWidth;
+  if (l < strip.scrollLeft) strip.scrollLeft = l;
+  else if (r > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = r - strip.clientWidth;
+}
+// The viewer under the tabs. Every open tab's viewer that is loaded stays
+// loaded, stacked and hidden, so switching back finds it exactly as it was.
+// Only the WS_LIVE_MAX most recently shown are kept; one unloaded, or one from
+// before a reload, is loaded again with the state it last reported. A viewer
+// is never moved in the page (that reloads it), only shown or hidden.
 function wsPaintView(v) {
   const box = v.el && v.el.querySelector('.wsp-view');
-  if (!box || !v.sel) return;
-  const src = wsFileUrl(v, v.sel);
-  const cur = box.querySelector('iframe.wsp-frame');
-  if (cur && cur.dataset.src === src) return;   // already showing it — reloading would lose the reader's place
-  box.innerHTML = `<div class="wsp-bar"><span class="wsp-path" title="${esc(v.sel)}">${esc(tildeify(v.sel))}</span>`
-    + `<a href="${src}" target="_blank" title="Open in its own tab">⧉</a></div>`
-    + `<iframe class="wsp-frame" data-src="${esc(src)}" src="${src}" allow="clipboard-write"></iframe>`;
+  if (!box) return;
+  wsPaintTabs(v);
+  const stage = box.querySelector('.wsp-frames'), bar = box.querySelector('.wsp-bar');
+  const t = v.tabs.find(x => wsSame(x.path, v.sel)) || null;
+  const key = t && !t.missing ? wsNorm(t.path) : '';
+  // A viewer whose tab closed or whose file went is dropped: if the file comes
+  // back, it is read again rather than shown as it was.
+  v.frames.forEach((f, k) => {
+    if (!v.tabs.some(x => wsNorm(x.path) === k && !x.missing)) {
+      f.remove(); v.frames.delete(k);
+      const i = v.live.indexOf(k); if (i >= 0) v.live.splice(i, 1);
+    }
+  });
+  writeSlot(stage.querySelector('.wsp-note'), !t ? `<div class="wsp-empty">${esc(WS_EMPTY)}</div>`
+    : t.missing ? `<div class="wsp-empty wsp-gone"><p><b>${esc(wsTabName(t.path))}</b> no longer exists on the hub. It was moved, renamed or deleted since the tab was opened.</p>`
+      + `<p class="wsp-gone-path">${esc(tildeify(t.path))}</p><button type="button" class="rm-btn wsp-gone-close">Close tab</button></div>`
+    : '');
+  bar.hidden = !t;
+  if (t) {
+    const p = bar.querySelector('.wsp-path'), own = bar.querySelector('.wsp-own');
+    if (p.title !== t.path) { p.title = t.path; p.textContent = tildeify(t.path); }
+    own.href = wsFileUrl(v, t.path);
+    own.hidden = t.missing;
+  }
+  const tabEl = t && v.el.querySelector('.wst') && wsTabEl(v.el.querySelector('.wst'), t.path);
+  if (tabEl) stage.setAttribute('aria-labelledby', tabEl.id); else stage.removeAttribute('aria-labelledby');
+  if (key && !v.frames.has(key)) {
+    const f = document.createElement('iframe');
+    f.className = 'wsp-frame';
+    f.title = wsTabName(t.path);
+    f.setAttribute('allow', 'clipboard-write');
+    f.src = wsFileUrl(v, t.path) + '&st=' + encodeURIComponent(JSON.stringify(t.st));
+    stage.appendChild(f);
+    v.frames.set(key, f);
+  }
+  v.frames.forEach((f, k) => { const on = k === key; f.classList.toggle('on', on); f.inert = !on; });
+  if (key) wsLiveTouch(v.live, key, WS_LIVE_MAX).forEach(k => {
+    const f = v.frames.get(k);
+    if (f) f.remove();
+    v.frames.delete(k);
+  });
+}
+// A viewer reports how its tab was left, or that its file is not on the hub.
+function wsFrameMessage(src, d) {
+  WS_VIEWS.forEach(v => v.frames.forEach((f, k) => {
+    if (f.contentWindow !== src) return;
+    const t = v.tabs.find(x => wsNorm(x.path) === k);
+    if (!t) return;
+    if (d.type === 'fv-state') {
+      t.st = wsTabState(d.st);
+      clearTimeout(v.persistTimer);
+      v.persistTimer = setTimeout(() => wsPersist(v), 400);
+    } else if (d.type === 'fv-missing') {
+      wsTabGone(t, v.dirs);
+      if (wsTabsCheck(v, v.dirs)) wsPaintView(v);
+    }
+  }));
+}
+function wsShowTab(v, path) {
+  v.sel = path;
+  wsPersist(v); wsPaintTree(v); wsPaintView(v);
+  const strip = v.el && v.el.querySelector('.wst');
+  wsRevealTab(strip, strip && wsTabEl(strip, path));
+}
+function wsOpenTab(v, path) {
+  const t = wsTabOpen(v, path);
+  // Picked from the tree, so it is there now, whatever was said before.
+  t.gone404 = false; t.goneSig = null; t.retrySig = null; t.seen = null;
+  wsTabsCheck(v, v.dirs);
+  wsShowTab(v, t.path);
+}
+function wsCloseTab(v, path) {
+  wsTabClose(v, path);
+  wsShowTab(v, v.sel);
 }
 // Every directory currently on screen: a root that is open, and every open
 // directory whose ancestors are open too. Folders opened inside a collapsed
@@ -5411,9 +5711,9 @@ function wsVisibleDirs(v) {
 async function wsFetchDir(v, dir) {
   try {
     const d = await api('/api/dir?path=' + encodeURIComponent(dir));
-    v.dirs.set(dir, { entries: d.entries || [], error: '' });
+    v.dirs.set(dir, { entries: d.entries || [], error: '', gen: ++WS_DIR_GEN });
   } catch (e) {
-    v.dirs.set(dir, { entries: [], error: e.message || 'failed' });
+    v.dirs.set(dir, { entries: [], error: e.message || 'failed', gen: ++WS_DIR_GEN });
   }
 }
 // Re-read what is on screen and repaint if it changed. This is what picks up a
@@ -5441,6 +5741,8 @@ async function wsSync(v) {
   try {
     wsRecompute(v);
     const all = wsVisibleDirs(v);
+    // Each open tab's folder is read too, so a tab whose file went away says so.
+    v.tabs.forEach(t => { const p = wsParentOf(t.path); if (p && !all.some(d => wsSame(d, p))) all.push(p); });
     // Anything not read yet goes first — that is what an expand or a restored
     // tree is waiting on. The rest is re-read a window at a time, rotating, so
     // twenty open folders cost twelve requests a tick rather than twenty.
@@ -5459,6 +5761,7 @@ async function wsSync(v) {
     }
     if (batch.length) await Promise.all(batch.map(d => wsFetchDir(v, d)));
     wsPaintTree(v);
+    if (wsTabsCheck(v, v.dirs)) wsPaintView(v);
   } finally { v.busy = false; }
   if (v.again) { v.again = false; await wsSync(v); }
 }
@@ -5466,10 +5769,62 @@ function wsMount(el, ctx) {
   const v = wsView(ctx);
   v.el = el;
   v.scrollPending = v.scroll > 0;    // a fresh element has to be put back where it was
+  // The viewers of an earlier mount went with its element; this one loads its
+  // tabs' viewers afresh, each where it was left.
+  v.frames = new Map(); v.live = [];
   wsRecompute(v);
   if (!v.open.size && v.roots.length) v.open.add(v.roots[0].path);   // first visit: open where you are
+  wsTabsCheck(v, v.dirs);
   wsPaintTree(v);
   wsPaintView(v);
+  const strip = el.querySelector('.wst');
+  wsRevealTab(strip, strip.querySelector('.wst-tab.on'));
+  strip.onclick = (e) => {
+    const tab = e.target.closest('.wst-tab');
+    if (!tab) return;
+    if (e.target.closest('.wst-x')) wsCloseTab(v, tab.dataset.path);
+    else wsShowTab(v, tab.dataset.path);
+  };
+  // A middle click closes a tab, as in an editor or a browser; its press would
+  // otherwise start the browser's autoscroll.
+  strip.onmousedown = (e) => { if (e.button === 1 && e.target.closest('.wst-tab')) e.preventDefault(); };
+  strip.onauxclick = (e) => {
+    const tab = e.button === 1 && e.target.closest('.wst-tab');
+    if (tab) { e.preventDefault(); wsCloseTab(v, tab.dataset.path); }
+  };
+  // Arrows, Home and End move along the row; Enter or Space shows the tab;
+  // Delete closes it. Keys only act on a focused tab: no page-wide shortcuts.
+  strip.onkeydown = (e) => {
+    const tab = e.target.closest('.wst-tab');
+    if (!tab || e.altKey || e.ctrlKey || e.metaKey) return;
+    const tabs = [...strip.querySelectorAll('.wst-tab')], i = tabs.indexOf(tab);
+    let to = -1;
+    if (e.key === 'ArrowRight') to = (i + 1) % tabs.length;
+    else if (e.key === 'ArrowLeft') to = (i - 1 + tabs.length) % tabs.length;
+    else if (e.key === 'Home') to = 0;
+    else if (e.key === 'End') to = tabs.length - 1;
+    else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); wsShowTab(v, tab.dataset.path); return; }
+    else if (e.key === 'Delete') { e.preventDefault(); wsCloseTab(v, tab.dataset.path); return; }
+    else return;
+    e.preventDefault();
+    tabs[to].focus({ preventScroll: true });
+    wsRevealTab(strip, tabs[to]);
+  };
+  // A mouse wheel scrolls a row of tabs that does not fit sideways.
+  strip.onwheel = (e) => {
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX) || strip.scrollWidth <= strip.clientWidth) return;
+    e.preventDefault();
+    strip.scrollLeft += e.deltaY;
+  };
+  // The button goes with the note, so focus moves to the tab now showing, or
+  // to the pane when no tab is left, rather than dropping to the page.
+  el.querySelector('.wsp-frames').onclick = (e) => {
+    if (!e.target.closest('.wsp-gone-close')) return;
+    wsCloseTab(v, v.sel);
+    const on = strip.querySelector('.wst-tab.on'), pane = el.querySelector('.wsp-frames');
+    if (on) on.focus({ preventScroll: true });
+    else { pane.tabIndex = -1; pane.focus({ preventScroll: true }); }
+  };
   const tree = el.querySelector('.wsp-tree');
   tree.onclick = async (e) => {
     const d = e.target.closest('.wse.dir');
@@ -5487,7 +5842,7 @@ function wsMount(el, ctx) {
       return;
     }
     const f = e.target.closest('.wse.file');
-    if (f) { v.sel = f.dataset.path; wsPersist(v); wsPaintTree(v); wsPaintView(v); }
+    if (f) wsOpenTab(v, f.dataset.path);
   };
   // Where you scrolled to is part of what you were looking at. A tree too short
   // to scroll reports 0, and that is not a position — recording it would wipe
@@ -7971,6 +8326,8 @@ window.addEventListener('message', (ev) => {
   if (d && d.type === 'dock-session' && d.roomId) openDetail(d.roomId);
   // A task link clicked inside a session or file viewer framed in this page.
   if (d && d.type === 'open-task' && d.roomId && ev.origin === location.origin) openTaskLink(d.roomId);
+  // A file viewer in a Workspace tab, saying how the tab was left.
+  if (d && (d.type === 'fv-state' || d.type === 'fv-missing') && ev.origin === location.origin) wsFrameMessage(ev.source, d);
 });
 // A task named in text (room-1a2b3c4d) opens here, in the page; with a
 // modifier key it opens in a new tab, which lands on the same task.
