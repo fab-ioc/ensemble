@@ -337,26 +337,45 @@ class StoppedTerminalInput(unittest.TestCase):
     def test_a_terminal_write_says_whether_it_went(self):
         from backends import ptyrun
 
+        from unittest import mock
+
         class Proc:
-            def __init__(self, error=None):
-                self.error, self.got = error, []
+            """Returns what the real adapters return: ptyprocess the bytes it
+            wrote (`took` of them), pywinpty always 0."""
+            def __init__(self, error=None, took="all"):
+                self.error, self.took, self.got = error, took, []
 
             def write(self, payload):
                 if self.error:
                     raise self.error
                 self.got.append(payload)
+                if ptyrun.IS_WINDOWS:
+                    return 0
+                return len(payload) if self.took == "all" else self.took
 
-        for error in (EOFError("Pty is closed"), OSError("broken pipe")):
-            with self.subTest(error=type(error).__name__):
-                s = ptyrun.PtySession.__new__(ptyrun.PtySession)
-                s._proc = Proc(error)
-                self.assertFalse(s.write("\r"))
-                self.assertEqual(s.last_submit(), 0.0, "a failed Enter counted as an answer")
-        s = ptyrun.PtySession.__new__(ptyrun.PtySession)
-        s._proc = Proc()
-        self.assertTrue(s.write("hi\r"))
-        self.assertEqual(len(s._proc.got), 1)
-        self.assertGreater(s.last_submit(), 0.0)
+        def session(proc):
+            s = ptyrun.PtySession.__new__(ptyrun.PtySession)
+            s._proc = proc
+            return s
+
+        for windows in (True, False):
+            with mock.patch.object(ptyrun, "IS_WINDOWS", windows):
+                for error in (EOFError("Pty is closed"), OSError("broken pipe")):
+                    with self.subTest(windows=windows, error=type(error).__name__):
+                        s = session(Proc(error))
+                        self.assertFalse(s.write("\r"))
+                        self.assertEqual(s.last_submit(), 0.0, "a failed Enter counted as an answer")
+                with self.subTest(windows=windows, case="all taken"):
+                    s = session(Proc())
+                    self.assertTrue(s.write("hé\r"))
+                    self.assertEqual(len(s._proc.got), 1)
+                    self.assertGreater(s.last_submit(), 0.0)
+        with mock.patch.object(ptyrun, "IS_WINDOWS", False):
+            for took in (0, 2, None):
+                with self.subTest(windows=False, took=took):
+                    s = session(Proc(took=took))
+                    self.assertFalse(s.write("hé\r"), "a terminal that took %r of 4 bytes counted as sent" % took)
+                    self.assertEqual(s.last_submit(), 0.0)
 
 
 if __name__ == "__main__":
