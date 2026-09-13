@@ -1399,10 +1399,25 @@
   .wsp-gone p { margin: 0 0 var(--s-200); }
   .wsp-gone-path { font-family: var(--font-mono); font-size: var(--fs-200); color: var(--fg-muted); overflow-wrap: anywhere; }
   .wsp-empty { color: var(--fg-subtle); padding: 24px; font-size: 13px; }
-  .wsp-bar { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-bottom: 1px solid var(--border); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--fg-subtle); }
-  .wsp-path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .wsp-bar a { color: var(--fg-subtle); text-decoration: none; font-size: 14px; }
-  .wsp-bar a:hover { color: var(--link); }
+  /* Where am I: the file showing as a path of crumbs (see the design skill's
+     "Breadcrumb"). A path too long for the bar keeps its end in view and
+     scrolls sideways within itself; a fade says the start is cut. */
+  .wsp:focus { outline: none; }
+  .wsp-bar { display: flex; align-items: center; gap: var(--s-100); padding: var(--s-050) var(--s-200); border-bottom: 1px solid var(--border); font-size: var(--fs-200); color: var(--fg-subtle); }
+  .wsc { flex: 1; min-width: 0; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none; }
+  .wsc::-webkit-scrollbar { display: none; }
+  .wsp-bar.cut .wsc { -webkit-mask-image: linear-gradient(to right, transparent, black var(--s-600)); mask-image: linear-gradient(to right, transparent, black var(--s-600)); }
+  .wsc-list { display: flex; align-items: center; width: max-content; margin: 0; padding: 0; list-style: none; font-family: var(--font-mono); }
+  .wsc-list li { display: flex; align-items: center; flex: none; white-space: nowrap; }
+  .wsc-list li + li::before { content: '›'; content: '›' / ''; padding: 0 var(--s-050); color: var(--fg-muted); }
+  .wsc-dir { height: 24px; padding: 0 var(--s-100); border: 0; border-radius: var(--r-100); background: transparent; color: var(--fg-subtle); font: inherit; cursor: pointer; }
+  .wsc-dir:hover { background: var(--hover); color: var(--fg); }
+  .wsc-file { padding: 0 var(--s-100); color: var(--fg); font-weight: 500; }
+  .wsp-btn, .wsp-own { flex: none; display: inline-flex; align-items: center; justify-content: center; height: 24px; min-width: 24px; padding: 0 var(--s-100);
+    border: 1px solid transparent; border-radius: var(--r-200); background: transparent; color: var(--fg-subtle); font: inherit; font-size: var(--fs-200); text-decoration: none; cursor: pointer; }
+  .wsp-btn:hover, .wsp-own:hover { background: var(--hover); color: var(--fg); }
+  .wsp-follow[aria-pressed="true"] { background: var(--selected-bg); color: var(--selected-fg); border-color: var(--border-strong); }
+  .wsc-dir:focus-visible, .wsp-btn:focus-visible, .wsp-own:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
   /* Each loaded tab's viewer, stacked; only the one showing is visible. Hidden
      by visibility, not display, so a hidden viewer keeps its scroll position. */
   .wsp-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; visibility: hidden; }
@@ -1821,6 +1836,7 @@
     margin-left: auto; font-size: var(--fs-100); color: var(--fg-muted);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%;
   }
+  .ccost { font-size: var(--fs-100); color: var(--fg-muted); white-space: nowrap; font-variant-numeric: tabular-nums; cursor: default; }
   .cagent { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
   /* An avatar is a SOLID fill with light text; a lozenge is a pale wash with
      dark text. That difference is what stops the two reading as each other
@@ -2684,6 +2700,10 @@
     .wst { scrollbar-width: none; }
     .wst-tab { height: auto; min-height: var(--touch-min); padding-right: 0; }
     .wst-x { width: var(--touch-min); height: var(--touch-min); }
+    /* The path above the file: every crumb and button finger-sized; the path
+       is cut from the left and swipes sideways within itself. */
+    .wsp-bar { padding-block: 0; }
+    .wsc-dir, .wsp-btn, .wsp-own { height: var(--touch-min); min-width: var(--touch-min); }
     .scopebar { flex-wrap: wrap; }
     .scopebar select, .chp-repo { max-width: 100%; min-width: 0; }
     /* Diffs: a line is a finger-sized target, since a tap on it starts a
@@ -4246,6 +4266,38 @@ function highlight(text, parsedOrQuery) {
   return out;
 }
 
+// ---- Cost chip: begin -------------------------------------------------------
+// A task's cost on its row: dollars where they are known, else the tokens it
+// used, since Codex's have no price and "$0.00" would say it used nothing.
+// tests/test_cost_chip.py runs this block in Node.
+const COST_KINDS = [['input', 'in'], ['output', 'out'], ['cacheWrite', 'cache w'], ['cacheRead', 'cache r']];
+const costTokenTotal = t => (t && typeof t === 'object')
+  ? COST_KINDS.reduce((a, [k]) => a + (Number.isFinite(t[k]) && t[k] > 0 ? t[k] : 0), 0) : 0;
+// 950, 12.3k, 450k, 4.5M, 12M.
+function fmtTokens(n) {
+  if (n < 1000) return String(Math.round(n));
+  const [d, u] = n < 999500 ? [1e3, 'k'] : [1e6, 'M'];
+  const x = n / d;
+  return (x < 9.95 ? x.toFixed(1).replace(/\.0$/, '') : String(Math.round(x))) + u;
+}
+// What a task cost: dollars where they are known, else the tokens it used
+// (Codex has no price), the split in the tooltip. null while it has used none.
+function costChip(r) {
+  const t = r && r.costTokens, total = costTokenTotal(t);
+  const split = total ? COST_KINDS.map(([k, l]) => `${l} ${(Number.isFinite(t[k]) && t[k] > 0 ? t[k] : 0).toLocaleString('en-US')}`).join(' · ') : '';
+  if (r && r.cost != null && r.cost >= 0.01) {
+    return { text: fmtCost(r.cost), title: `Retail per-token estimate (tokens × published Anthropic pricing). Not your actual bill on a subscription plan.${total ? ' Tokens: ' + split + '.' : ''}` };
+  }
+  if (!total) return null;
+  return { text: `${fmtTokens(total)} tokens`, title: `Tokens used: ${split}. No price is known for them: Codex has none, and a model without a published price has none either.` };
+}
+// A List row's chip, or with `cls` a board card's.
+function costChipHtml(r, cls) {
+  const c = costChip(r);
+  return c ? ` <span class="${cls || 'row-cost-chip'}" title="${c.title}">${c.text}</span>` : '';
+}
+// ---- Cost chip: end ---------------------------------------------------------
+
 function topicCellHL(r, parsed) {
   // Only show the category chip in views where category isn't already implied
   // by the sidebar selection (so "All sessions" view shows it; a specific
@@ -4262,9 +4314,7 @@ function topicCellHL(r, parsed) {
   ).join('') + (allJira.length > shownJira.length
     ? ` <span class="row-jira-chip" style="opacity: .7; cursor: default;" title="${esc(allJira.slice(3).join(', '))}">+${allJira.length - shownJira.length}</span>`
     : '');
-  const costChip = (r.cost != null && r.cost >= 0.01)
-    ? ` <span class="row-cost-chip" title="Retail per-token estimate (tokens × published Anthropic pricing). Not your actual bill on a subscription plan.">${fmtCost(r.cost)}</span>`
-    : '';
+  const costChip = costChipHtml(r);
   const label = r.label ? `<span class="label">${highlight(r.label, parsed)}${catChip}${jiraChips}${costChip}</span>` : '';
   const first = r.first && !r.label ? `<span class="first">${highlight(r.first, parsed)}${catChip}${jiraChips}${costChip}</span>` : (r.first ? `<span class="first">${highlight(r.first, parsed)}</span>` : '');
   const last = r.last ? `<span class="last">${highlight(r.last, parsed)}</span>` : '';
@@ -4450,7 +4500,7 @@ function cardHtml(r, now) {
   return `<article class="card${working}" draggable="true" data-room="${esc(r.roomId || '')}" data-sid="${esc(r.sessionId)}">
     ${loz}
     <div class="ctitle">${esc(r.label || '(session)')}</div>
-    <div class="crow1">${r.roomId ? prioIcon(prioOf(r)) : ''}${runChip(r)}${proj}</div>
+    <div class="crow1">${r.roomId ? prioIcon(prioOf(r)) : ''}${runChip(r)}${costChipHtml(r, 'ccost')}${proj}</div>
     <div class="crow2">${cardAgents(r)}<span class="cwhen">${esc(fmtAgo(now - r.updatedAt))}</span></div>
   </article>`;
 }
@@ -5481,10 +5531,13 @@ function wsTabsFrom(saved) {
 const wsTabsSaved = t => ({ tabs: t.tabs.map(x => ({ path: x.path, st: x.st })), active: t.sel });
 const wsTabAt = (t, path) => t.tabs.findIndex(x => wsSame(x.path, path));
 // Open a file: switch to its tab if it has one, otherwise add one at the end.
+// A file opened again after its tab was closed opens as it was left, when the
+// Workspace's recent files remember it.
 function wsTabOpen(t, path) {
   let i = wsTabAt(t, path);
   if (i < 0) {
-    t.tabs.push(wsNewTab(path, null));
+    const was = (t.recent || []).find(x => wsSame(x.path, path));
+    t.tabs.push(wsNewTab(path, was ? was.st : null));
     i = t.tabs.length - 1;
     if (t.tabs.length > WS_TABS_MAX) { t.tabs.shift(); i--; }
   }
@@ -5785,6 +5838,153 @@ function wsHitsHtml(uid, rows) {
 }
 // ---- Workspace find: end --------------------------------------------------
 
+// ---- Workspace recent and where: begin --------------------------------------
+// Recent files: the files shown in a Workspace, most recent first, closed tabs
+// included, each with how it was left, so one opened again from the list opens
+// where it was. Where am I: the file showing as a path of its root and folders,
+// and the folders to expand to show a file or a folder in the tree. Plain data
+// and pure functions down to the end marker, so tests/test_workspace_recent.py
+// runs them in Node.
+const WS_RECENT_MAX = 30;
+// The recent files saved for a view. One saved before Recent existed starts
+// from its tabs: the one showing, then the others in their order.
+function wsRecentFrom(saved, tabs, active) {
+  const out = [];
+  const add = (path, st) => {
+    if (typeof path !== 'string' || !path || path.length > 4096 || out.length >= WS_RECENT_MAX) return;
+    if (!out.some(x => wsSame(x.path, path))) out.push({ path, st: wsTabState(st) });
+  };
+  if (saved && typeof saved === 'object' && Array.isArray(saved.recent)) {
+    for (const r of saved.recent) if (r && typeof r === 'object') add(r.path, r.st);
+    return out;
+  }
+  const list = tabs || [];
+  const on = list.find(x => wsSame(x.path, active));
+  if (on) add(on.path, on.st);
+  for (const x of list) add(x.path, x.st);
+  return out;
+}
+// A file was shown: first in the list, with the state given (or the one it
+// had). The oldest goes past the cap.
+function wsRecentTouch(recent, path, st) {
+  if (!path) return null;
+  const i = recent.findIndex(x => wsSame(x.path, path));
+  const e = i >= 0 ? recent.splice(i, 1)[0] : { path, st: wsTabState(null) };
+  if (st) e.st = wsTabState(st);
+  recent.unshift(e);
+  if (recent.length > WS_RECENT_MAX) recent.length = WS_RECENT_MAX;
+  return e;
+}
+// How a recent file was left changed; its place in the list does not.
+function wsRecentNote(recent, path, st) {
+  const e = recent.find(x => wsSame(x.path, path));
+  if (e) e.st = wsTabState(st);
+  return e || null;
+}
+function wsRecentDrop(recent, path) {
+  const i = recent.findIndex(x => wsSame(x.path, path));
+  if (i >= 0) recent.splice(i, 1);
+  return i >= 0;
+}
+// The root a path is in: the deepest one, so a task's folder wins over the
+// project folder it sits in.
+function wsRootOf(roots, path) {
+  const n = wsNorm(path);
+  let best = null;
+  for (const r of roots || []) {
+    const k = wsNorm(r.path);
+    if (k && (n === k || n.startsWith(k + '/')) && (!best || k.length > wsNorm(best.path).length)) best = r;
+  }
+  return best;
+}
+// The names under a root down to a path: "C:\t\a\b.py" in "C:\t" is [a, b.py].
+const wsNamesUnder = (rootPath, path) => path.slice(rootPath.replace(/[\\/]+$/, '').length).split(/[\\/]+/).filter(Boolean);
+// A path as crumbs: its root, each folder, then the file. A folder's path is
+// built from the root's own spelling, the way the tree builds it. null when the
+// path is in none of the roots.
+function wsCrumbs(roots, path) {
+  const root = wsRootOf(roots, path);
+  if (!root) return null;
+  const out = [{ kind: 'root', name: root.label, path: root.path }];
+  let cur = root.path;
+  const names = wsNamesUnder(root.path, path);
+  names.forEach((name, i) => {
+    cur = wsJoin(cur, name);
+    out.push({ kind: i === names.length - 1 ? 'file' : 'dir', name, path: cur });
+  });
+  return out;
+}
+// The folders to open so a path shows in the tree, and the path as the tree
+// spells it. Each name is taken from its folder's listing when that has been
+// read, so a path typed in another case ("Static/HL.js") still lands on the
+// row; `self` opens the path itself too (a folder revealed shows what is in it).
+function wsRevealDirs(dirs, rootPath, path, self) {
+  const open = [rootPath];
+  let cur = rootPath;
+  const names = wsNamesUnder(rootPath, path);
+  names.forEach((name, i) => {
+    const c = dirs.get(cur);
+    const ents = c && !c.error ? c.entries : [];
+    const e = ents.find(x => x.name === name) || ents.find(x => x.name.toLowerCase() === name.toLowerCase());
+    cur = wsJoin(cur, e ? e.name : name);
+    if (i < names.length - 1 || self) open.push(cur);
+  });
+  return { open, target: cur };
+}
+// Folders a reveal opened on its way (`tmp`) are checked against the listings
+// read since, from the root down, each name as it is spelled. Every folder on
+// the way listed, and listing it: it stays open and leaves `tmp`. A listing
+// read that does not hold it (spelled otherwise, or not there): it is closed.
+// A folder on the way not read yet, or whose read failed: it waits in `tmp`
+// for the next check (a reveal's, or the tree's next refresh), and is not saved
+// as open meanwhile (wsPersist). The number closed.
+function wsRevealTidy(open, tmp, dirs, roots) {
+  let closed = 0;
+  [...tmp].forEach(d => {
+    const root = wsRootOf(roots, d);
+    if (!root) { tmp.delete(d); return; }
+    let cur = root.path, state = 'there';
+    for (const name of wsNamesUnder(root.path, d)) {
+      const c = dirs.get(cur);
+      if (!c || c.error) { state = 'unknown'; break; }
+      if (!c.entries.some(x => x.name === name)) { state = 'gone'; break; }
+      cur = wsJoin(cur, name);
+    }
+    if (state === 'unknown') return;
+    tmp.delete(d);
+    if (state === 'gone') { open.delete(d); closed++; }
+  });
+  return closed;
+}
+// The recent files a filter finds, most recent first (a filter narrows the
+// list, it never reorders it). Each is shown as its path under its root, with
+// the root's name in front when that is not the Workspace's first root.
+function wsRecentItems(recent, roots, q) {
+  const out = [];
+  for (const r of recent) {
+    const root = wsRootOf(roots, r.path);
+    const rel = root ? wsNamesUnder(root.path, r.path).join('/') : r.path.replace(/\\/g, '/');
+    const shown = root && roots[0] && root !== roots[0] ? root.label + '/' + rel : rel;
+    const m = wsFuzzy(q, shown);
+    if (m) out.push({ abs: r.path, path: shown, hits: m.hits });
+  }
+  return out;
+}
+// The line under the box while it lists recent files.
+function wsRecentNoteText(n, shown, q, where) {
+  if (!n) return `No files shown ${where} yet. Each file you open is listed here, most recent first.`;
+  if (!wsfNormQ(q)) return `${wsfCount(n, 'recent file', 'recent files')}, most recent first.`;
+  if (!shown) return `No recent file matches “${q.trim()}”.`;
+  return `${shown.toLocaleString('en-US')} of ${wsfCount(n, 'recent file', 'recent files')}, most recent first.`;
+}
+// The Recent shortcut: Alt+R (⌥R on a Mac). Browsers leave it free on
+// Windows, Linux and a Mac, where Chrome and Safari use ⌘ and Ctrl+E is taken.
+// Matched by the key's place, since ⌥R types ® on a Mac; AltGr (Ctrl+Alt) is
+// a character on many layouts, so it does not count; nor does a key that is
+// part of composing a character (an IME).
+const wsIsRecentKey = e => !!e && !e.isComposing && e.keyCode !== 229 && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.code === 'KeyR';
+// ---- Workspace recent and where: end ----------------------------------------
+
 let WS_UID = 0, WS_DIR_GEN = 0;
 function wsView(ctx) {
   const key = wsCtxKey(ctx);
@@ -5792,7 +5992,8 @@ function wsView(ctx) {
   if (!v) {
     v = { key, ctx, el: null, open: new Set(), sel: '', scroll: 0, dirs: new Map(),
           roots: [], hide: new Set(), hideAllDirs: false, hideReady: true, busy: false, cursor: 0,
-          tabs: [], frames: new Map(), live: [], uid: 'wst' + (++WS_UID) };
+          tabs: [], frames: new Map(), live: [], uid: 'wst' + (++WS_UID),
+          recent: [], follow: false, mark: '', revealGen: 0, revealPending: '', revealTmp: new Set() };
     let s = {};
     try { s = JSON.parse(localStorage.getItem('cd-ws:' + key) || '{}') || {}; } catch (e) {}
     try {
@@ -5802,9 +6003,11 @@ function wsView(ctx) {
       const tb = wsTabsFrom(s);
       v.tabs = tb.tabs;
       v.sel = tb.active;
+      v.recent = wsRecentFrom(s, tb.tabs, tb.active);
+      v.follow = !!(s && s.follow === true);
     } catch (e) {}
     v.find = { ...wsFindFrom(s && s.find), list: null, listing: '', pool: null, ranked: null, res: null,
-               active: 0, gen: 0, ctl: null, timer: 0, pending: false };
+               active: 0, gen: 0, ctl: null, timer: 0, pending: false, recent: false, rq: '', ritems: [], ractive: 0 };
     WS_VIEWS.set(key, v);
   }
   v.ctx = ctx;
@@ -5813,18 +6016,26 @@ function wsView(ctx) {
 function wsPersist(v) {
   clearTimeout(v.persistTimer);
   const f = v.find;
-  try { localStorage.setItem('cd-ws:' + v.key, JSON.stringify({ open: [...v.open], sel: v.sel, scroll: v.scroll, ...wsTabsSaved(v),
-    find: { mode: f.mode, q: f.q, cs: f.cs, rx: f.rx } })); } catch (e) {}
+  // A folder a reveal opened is saved once its listings say it is there.
+  try { localStorage.setItem('cd-ws:' + v.key, JSON.stringify({ open: [...v.open].filter(p => !v.revealTmp.has(p)), sel: v.sel, scroll: v.scroll, ...wsTabsSaved(v),
+    find: { mode: f.mode, q: f.q, cs: f.cs, rx: f.rx },
+    recent: v.recent.map(x => ({ path: x.path, st: x.st })), follow: v.follow })); } catch (e) {}
 }
 const WS_EMPTY = 'Open a file from the tree. Each file opens in a tab of its own; code is highlighted, Markdown and HTML render, and you can comment on any of it in place.';
+const WS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
+const WS_RECENT_KEY = WS_MAC ? '⌥R' : 'Alt+R';
+const WS_ICON_TREE = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="5"/><circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/><path d="M8 1v2.5M8 12.5V15M1 8h2.5M12.5 8H15"/></svg>';
 function wsPanelHtml() {
-  return `<div class="wsp">
+  // tabindex -1: a click anywhere in the pane gives it focus, so the Recent
+  // shortcut, which acts only inside the pane, works after clicking the tree.
+  return `<div class="wsp" tabindex="-1">
     <div class="wsp-side">
       <div class="wsf">
         <div class="wsf-row">
           <div class="seg wsf-mode" role="group" aria-label="Find">`
     + `<button type="button" data-mode="files" aria-pressed="true" title="Go to a file by typing part of its name">Files</button>`
-    + `<button type="button" data-mode="text" aria-pressed="false" title="Search the text of the files">Text</button></div>
+    + `<button type="button" data-mode="text" aria-pressed="false" title="Search the text of the files">Text</button>`
+    + `<button type="button" data-mode="recent" aria-pressed="false" aria-keyshortcuts="Alt+R" title="Files shown recently, most recent first (${WS_RECENT_KEY})">Recent</button></div>
           <span class="wsf-opts">`
     + `<button type="button" class="wsf-opt" data-opt="cs" aria-pressed="false" title="Match case" aria-label="Match case" hidden>Aa</button>`
     + `<button type="button" class="wsf-opt" data-opt="rx" aria-pressed="false" title="Regular expression" aria-label="Regular expression" hidden>.*</button></span>
@@ -5837,7 +6048,10 @@ function wsPanelHtml() {
     </div>
     <div class="wsp-view">
       <div class="wst" role="tablist" aria-label="Open files" hidden></div>
-      <div class="wsp-bar" hidden><span class="wsp-path"></span><a class="wsp-own" target="_blank" title="Open in its own tab">⧉</a></div>
+      <div class="wsp-bar" hidden><nav class="wsc" aria-label="Where the file is"><ol class="wsc-list"></ol></nav>`
+    + `<button type="button" class="wsp-btn wsp-reveal" title="Show in the tree" aria-label="Show in the tree">${WS_ICON_TREE}</button>`
+    + `<button type="button" class="wsp-btn wsp-follow" aria-pressed="false" title="Keep the tree on the file showing">Follow</button>`
+    + `<a class="wsp-own" target="_blank" title="Open in its own tab" aria-label="Open in its own tab">⧉</a></div>
       <div class="wsp-frames" role="tabpanel"><div class="wsp-note"><div class="wsp-empty">${esc(WS_EMPTY)}</div></div></div>
     </div>
   </div>`;
@@ -5865,10 +6079,10 @@ function wsRowsHtml(v, dir) {
     const p = wsJoin(dir, e.name);
     if (e.type === 'dir') {
       const open = v.open.has(p);
-      return `<div class="wse dir" data-path="${esc(p)}" data-mt="${e.mtime || 0}"><span class="tw">${open ? '▾' : '▸'}</span><span class="nm">${esc(e.name)}</span></div>`
+      return `<div class="wse dir${v.mark && wsSame(v.mark, p) ? ' on' : ''}" data-path="${esc(p)}" data-mt="${e.mtime || 0}"><span class="tw">${open ? '▾' : '▸'}</span><span class="nm">${esc(e.name)}</span></div>`
         + `<div class="wsk" data-dir="${esc(p)}"${open ? '' : ' hidden'}>${open ? wsRowsHtml(v, p) : ''}</div>`;
     }
-    return `<div class="wse file${wsSame(v.sel, p) ? ' on' : ''}" data-path="${esc(p)}" data-mt="${e.mtime || 0}"><span class="tw"></span><span class="nm">${esc(e.name)}</span><span class="sz">${wsFmtSize(e.size)}</span></div>`;
+    return `<div class="wse file${wsSame(v.mark || v.sel, p) ? ' on' : ''}" data-path="${esc(p)}" data-mt="${e.mtime || 0}"><span class="tw"></span><span class="nm">${esc(e.name)}</span><span class="sz">${wsFmtSize(e.size)}</span></div>`;
   }).join('');
   // The server stops at 2000 entries. Say so rather than quietly showing a
   // folder that looks complete and isn't.
@@ -5882,7 +6096,7 @@ function wsTreeHtml(v) {
     ? '<div class="wse none">This task has no folder of its own — showing the project.</div>' : '';
   return noTaskRoot + v.roots.map(r => {
     const open = v.open.has(r.path);
-    return `<div class="wse dir wsroot ${esc(r.kind)}" data-path="${esc(r.path)}" title="${esc(r.path)}">`
+    return `<div class="wse dir wsroot ${esc(r.kind)}${v.mark && wsSame(v.mark, r.path) ? ' on' : ''}" data-path="${esc(r.path)}" title="${esc(r.path)}">`
       + `<span class="tw">${open ? '▾' : '▸'}</span><span class="nm">${esc(r.label)}</span>`
       + `<span class="wsroot-kind">${esc(r.kind)}</span></div>`
       + `<div class="wsk" data-dir="${esc(r.path)}"${open ? '' : ' hidden'}>${open ? wsRowsHtml(v, r.path) : ''}</div>`;
@@ -5996,11 +6210,11 @@ function wsPaintView(v) {
     : '');
   bar.hidden = !t;
   if (t) {
-    const p = bar.querySelector('.wsp-path'), own = bar.querySelector('.wsp-own');
-    if (p.title !== t.path) { p.title = t.path; p.textContent = tildeify(t.path); }
+    const own = bar.querySelector('.wsp-own');
     own.href = wsFileUrl(v, t.path);
     own.hidden = t.missing;
   }
+  wsPaintCrumbs(v);
   const tabEl = t && v.el.querySelector('.wst') && wsTabEl(v.el.querySelector('.wst'), t.path);
   if (tabEl) stage.setAttribute('aria-labelledby', tabEl.id); else stage.removeAttribute('aria-labelledby');
   if (key && !v.frames.has(key)) {
@@ -6019,14 +6233,101 @@ function wsPaintView(v) {
     v.frames.delete(k);
   });
 }
-// A viewer reports how its tab was left, or that its file is not on the hub.
+// The path above the viewer: the file showing as its root, folders and name,
+// rewritten only when it changes (a tab shown, the roots arriving). A path too
+// long for the bar keeps its end in view and is cut from the left.
+function wsCrumbsHtml(v, path) {
+  const c = wsCrumbs(v.roots, path);
+  if (!c) return `<li class="wsc-file" aria-current="location" title="${esc(path)}">${esc(tildeify(path))}</li>`;
+  return c.map(x => x.kind === 'file'
+    ? `<li class="wsc-file" aria-current="location" title="${esc(tildeify(path))}">${esc(x.name)}</li>`
+    : `<li><button type="button" class="wsc-dir" data-path="${esc(x.path)}" title="Show ${esc(tildeify(x.path))} in the tree">${esc(x.name)}</button></li>`).join('');
+}
+function wsCrumbsEnd(bar) {
+  const nav = bar && bar.querySelector('.wsc');
+  if (!nav) return;
+  nav.scrollLeft = nav.scrollWidth;
+  bar.classList.toggle('cut', nav.scrollLeft > 0);
+}
+function wsPaintCrumbs(v) {
+  const bar = v.el && v.el.querySelector('.wsp-bar');
+  if (!bar) return;
+  bar.querySelector('.wsp-follow').setAttribute('aria-pressed', String(v.follow));
+  const t = v.tabs.find(x => wsSame(x.path, v.sel));
+  if (!t) return;
+  const list = bar.querySelector('.wsc-list'), html = wsCrumbsHtml(v, t.path);
+  if (list._sig === html) return;
+  list._sig = html;
+  list.innerHTML = html;
+  wsCrumbsEnd(bar);
+}
+// Scroll the tree, and only the tree, so a row is in view. False when the row
+// is not on screen to scroll to (the tree hidden by the find box, or not read).
+function wsScrollTreeTo(v, path) {
+  const tree = v.el && v.el.querySelector('.wsp-tree');
+  if (!tree || tree.hidden || !tree.clientHeight) return false;
+  const row = [...tree.querySelectorAll('.wse[data-path]')].find(e => wsSame(e.dataset.path, path));
+  if (!row) return false;
+  const top = row.getBoundingClientRect().top - tree.getBoundingClientRect().top + tree.scrollTop;
+  if (top < tree.scrollTop || top + row.offsetHeight > tree.scrollTop + tree.clientHeight) {
+    tree.scrollTop = Math.max(0, Math.round(top - (tree.clientHeight - row.offsetHeight) / 2));
+  }
+  v.scroll = tree.scrollTop;
+  v.scrollPending = false;
+  v.revealPending = '';
+  return true;
+}
+// Show a file or a folder in the tree: open the folders down to it (and a
+// folder itself, so what is in it shows), mark it, and scroll the tree to it.
+// Asked for by a click, the find box makes way for the tree. Following the tab
+// showing leaves a query alone; the tree scrolls to the file once it is back.
+async function wsReveal(v, path, opts) {
+  const o = opts || {};
+  const root = path ? wsRootOf(v.roots, path) : null;
+  if (!root) return false;
+  const gen = ++v.revealGen, f = v.find;
+  if (o.clear !== false) {
+    f.recent = false; f.rq = '';
+    if (f.q) { f.q = ''; wsfSchedule(v); }
+    wsfPaint(v);
+  }
+  let plan = null;
+  // Each round reads the folders not read yet; the next takes their real names
+  // from the listings. Two rounds unless a name was typed in another case.
+  for (let round = 0; round < 64; round++) {
+    plan = wsRevealDirs(v.dirs, root.path, path, !!o.dir);
+    plan.open.forEach(d => { if (!v.open.has(d)) { v.open.add(d); v.revealTmp.add(d); } });
+    const unread = plan.open.filter(d => !v.dirs.has(d));
+    if (!unread.length) break;
+    wsPaintTree(v);
+    await Promise.all(unread.map(d => wsFetchDir(v, d)));
+    if (gen !== v.revealGen) {
+      // Overtaken: a folder opened here that its listing does not hold is
+      // closed now; what cannot be told yet is checked later.
+      if (wsRevealTidy(v.open, v.revealTmp, v.dirs, v.roots)) { wsPersist(v); wsPaintTree(v); }
+      return false;
+    }
+  }
+  // A folder opened under a spelling its listing then corrected is closed again.
+  wsRevealTidy(v.open, v.revealTmp, v.dirs, v.roots);
+  v.mark = o.clear === false ? '' : plan.target;
+  wsPersist(v);
+  wsPaintTree(v);
+  if (!wsScrollTreeTo(v, plan.target)) v.revealPending = plan.target;
+  return true;
+}
+// A viewer reports how its tab was left, or that its file is not on the hub,
+// or that the Recent shortcut was pressed in it.
 function wsFrameMessage(src, d) {
   WS_VIEWS.forEach(v => v.frames.forEach((f, k) => {
     if (f.contentWindow !== src) return;
     const t = v.tabs.find(x => wsNorm(x.path) === k);
     if (!t) return;
-    if (d.type === 'fv-state') {
+    if (d.type === 'fv-key') {
+      if (d.key === 'recent') wsRecentToggle(v, undefined, true);
+    } else if (d.type === 'fv-state') {
       t.st = wsTabState(d.st);
+      wsRecentNote(v.recent, t.path, t.st);
       clearTimeout(v.persistTimer);
       v.persistTimer = setTimeout(() => wsPersist(v), 400);
     } else if (d.type === 'fv-missing') {
@@ -6035,11 +6336,17 @@ function wsFrameMessage(src, d) {
     }
   }));
 }
+// Showing a tab puts its file first in Recent, and with Follow on, shows it in
+// the tree.
 function wsShowTab(v, path) {
   v.sel = path;
+  v.mark = '';
+  const t = v.tabs.find(x => wsSame(x.path, path));
+  if (t) wsRecentTouch(v.recent, t.path, t.st);
   wsPersist(v); wsPaintTree(v); wsPaintView(v);
   const strip = v.el && v.el.querySelector('.wst');
   wsRevealTab(strip, strip && wsTabEl(strip, path));
+  if (t && v.follow) wsReveal(v, t.path, { clear: false });
 }
 function wsOpenTab(v, path) { wsOpenTabAt(v, path, 0); }
 // Open a file, at a line when one is given (from a diff, Go to file's
@@ -6150,8 +6457,11 @@ async function wsSync(v) {
       }
     }
     if (batch.length) await Promise.all(batch.map(d => wsFetchDir(v, d)));
+    // Folders a reveal opened before their listings could say: settled now.
+    if (v.revealTmp.size && wsRevealTidy(v.open, v.revealTmp, v.dirs, v.roots)) wsPersist(v);
     wsPaintTree(v);
     if (wsTabsCheck(v, v.dirs)) wsPaintView(v);
+    else wsPaintCrumbs(v);   // the roots may have arrived since the path was drawn
     wsfEnsure(v);
     wsfPaint(v);
   } finally { v.busy = false; }
@@ -6212,6 +6522,7 @@ function wsMount(el, ctx) {
   // to the pane when no tab is left, rather than dropping to the page.
   el.querySelector('.wsp-frames').onclick = (e) => {
     if (!e.target.closest('.wsp-gone-close')) return;
+    wsRecentDrop(v.recent, v.sel);   // a file that is gone is not offered again
     wsCloseTab(v, v.sel);
     const on = strip.querySelector('.wst-tab.on'), pane = el.querySelector('.wsp-frames');
     if (on) on.focus({ preventScroll: true });
@@ -6236,6 +6547,28 @@ function wsMount(el, ctx) {
     const f = e.target.closest('.wse.file');
     if (f) wsOpenTab(v, f.dataset.path);
   };
+  // The path above the viewer: a folder shows in the tree; so does the file,
+  // from the button beside it; Follow keeps the tree on the tab showing.
+  const bar = el.querySelector('.wsp-bar'), nav = bar.querySelector('.wsc');
+  bar.onclick = (e) => {
+    const d = e.target.closest('.wsc-dir');
+    if (d) { wsReveal(v, d.dataset.path, { dir: true }); return; }
+    if (e.target.closest('.wsp-reveal')) { wsReveal(v, v.sel); return; }
+    if (e.target.closest('.wsp-follow')) {
+      v.follow = !v.follow;
+      wsPersist(v);
+      wsPaintCrumbs(v);
+      if (v.follow && v.sel) wsReveal(v, v.sel, { clear: false });
+    }
+  };
+  nav.onscroll = () => bar.classList.toggle('cut', nav.scrollLeft > 0);
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => wsCrumbsEnd(bar)).observe(nav);
+  // Recent files: Alt+R (⌥R on a Mac), only while the pane has focus.
+  el.onkeydown = (e) => {
+    if (!wsIsRecentKey(e)) return;
+    e.preventDefault();
+    wsRecentToggle(v, undefined, true);
+  };
   // Where you scrolled to is part of what you were looking at. A tree too short
   // to scroll reports 0, and that is not a position — recording it would wipe
   // the saved one the moment a fresh mount paints its first "loading…" rows.
@@ -6257,10 +6590,14 @@ function wsMount(el, ctx) {
 const WSF_PAGE = Math.random().toString(36).slice(2);   // a search is cancelled only by the same box on the same page
 const wsfRoot = v => v.roots[0] || null;
 const wsfAbs = (root, rel) => wsJoin(root, root.includes('\\') ? rel.split('/').join('\\') : rel);
-const wsfOn = f => f.mode === 'files' ? !!f.q.trim() : !!f.q;
+const wsfOn = f => f.recent || (f.mode === 'files' ? !!f.q.trim() : !!f.q);
+// Recent has a selection of its own: Go to file's and the text search's is
+// waiting under it, and their answers arriving move only theirs.
+const wsfSel = f => f.recent ? 'ractive' : 'active';
 const wsfHits = res => res._rows || (res._rows = wsHitRows(res));
 function wsfSize(v) {
   const f = v.find;
+  if (f.recent) return f.ritems.length;
   return f.mode === 'files' ? (f.ranked ? f.ranked.items.length : 0) : (f.res && f.res.files ? wsfHits(f.res).hits.length : 0);
 }
 // The file list for Go to file, read when the box is used and again once it
@@ -6359,30 +6696,55 @@ function wsfEnsure(v) {
     else if (!f.ranked) wsfRank(v);
   } else if (!f.res && !f.pending && f.q.length >= WSF_MIN_TEXT) wsfSearch(v);
 }
+// Recent files in the box: the list takes the tree's place with its own
+// filter, so a Go to file or text query waits, untouched, for it to close.
+function wsRecentRank(v) { v.find.ritems = wsRecentItems(v.recent, v.roots, v.find.rq); }
+// Recent on or off. It opens on the file shown before the one showing, so
+// Enter goes back to it. `focus` puts the typing in the filter (the shortcut,
+// a click with a mouse); a tap leaves the phone's keyboard down.
+function wsRecentToggle(v, on, focus) {
+  const f = v.find, input = v.el && v.el.querySelector('.wsf-q');
+  f.recent = on === undefined ? !f.recent : !!on;
+  f.rq = '';
+  f.ractive = 0;
+  if (f.recent) {
+    wsRecentRank(v);
+    if (f.ritems.length > 1 && wsSame(f.ritems[0].abs, v.sel)) f.ractive = 1;
+  }
+  wsfPaint(v);
+  if (f.recent && focus && input) input.focus({ preventScroll: true });
+  wsfMark(v, true);
+}
 function wsfPaint(v) {
   const el = v.el, box = el && el.querySelector('.wsf');
   if (!box) return;
   const f = v.find, on = wsfOn(f), root = wsfRoot(v);
   const input = box.querySelector('.wsf-q'), res = el.querySelector('.wsf-res'), tree = el.querySelector('.wsp-tree');
-  if (input.value !== f.q) input.value = f.q;
+  if (f.recent) wsRecentRank(v);
+  const typed = f.recent ? f.rq : f.q;
+  if (input.value !== typed) input.value = typed;
   const where = !root ? '' : root.kind === 'task' ? ' in this task' : ' in ' + root.label;
-  const ph = (f.mode === 'files' ? 'Go to file' : 'Search in files') + where;
+  const ph = f.recent ? 'Filter recent files' : (f.mode === 'files' ? 'Go to file' : 'Search in files') + where;
   if (input.placeholder !== ph) input.placeholder = ph;
   box.querySelectorAll('.wsf-mode button').forEach(b => {
-    const p = b.dataset.mode === f.mode;
+    const p = b.dataset.mode === (f.recent ? 'recent' : f.mode);
     b.classList.toggle('active', p);
     b.setAttribute('aria-pressed', String(p));
   });
-  box.querySelectorAll('.wsf-opt').forEach(b => { b.hidden = f.mode !== 'text'; b.setAttribute('aria-pressed', String(!!f[b.dataset.opt])); });
-  const note = box.querySelector('.wsf-state'), msg = wsFindNote(f);
+  box.querySelectorAll('.wsf-opt').forEach(b => { b.hidden = f.recent || f.mode !== 'text'; b.setAttribute('aria-pressed', String(!!f[b.dataset.opt])); });
+  const note = box.querySelector('.wsf-state');
+  const msg = f.recent ? wsRecentNoteText(v.recent.length, f.ritems.length, f.rq, v.ctx.kind === 'task' ? 'in this task' : 'in this project') : wsFindNote(f);
   if (note.textContent !== msg) note.textContent = msg;
   note.hidden = !msg;
   el.classList.toggle('wsf-on', on);
-  el.classList.toggle('wsf-text', on && f.mode === 'text');
+  el.classList.toggle('wsf-text', on && !f.recent && f.mode === 'text');
   tree.hidden = on;
   res.hidden = !on;
   input.setAttribute('aria-expanded', String(on));
+  // The tree is back: a file followed while it was hidden is scrolled to now.
+  if (!on && v.revealPending) wsScrollTreeTo(v, v.revealPending);
   const html = !on ? ''
+    : f.recent ? wsGotoHtml(v.uid, f.ritems)
     : f.mode === 'files' ? (f.ranked ? wsGotoHtml(v.uid, f.ranked.items) : '')
     : (f.res && f.res.files ? wsHitsHtml(v.uid, wsfHits(f.res).rows) : '');
   if (res._sig !== html) { res._sig = html; res.innerHTML = html; res.scrollTop = 0; }
@@ -6393,7 +6755,7 @@ function wsfMark(v, scroll) {
   const res = v.el && v.el.querySelector('.wsf-res'), input = v.el && v.el.querySelector('.wsf-q');
   if (!res) return;
   res.querySelectorAll('.wsr.on').forEach(r => { r.classList.remove('on'); r.setAttribute('aria-selected', 'false'); });
-  const r = res.querySelector(`.wsr[data-i="${v.find.active}"]`);
+  const r = res.querySelector(`.wsr[data-i="${v.find[wsfSel(v.find)]}"]`);
   if (!r) { input.removeAttribute('aria-activedescendant'); return; }
   r.classList.add('on');
   r.setAttribute('aria-selected', 'true');
@@ -6407,6 +6769,15 @@ function wsfMark(v, scroll) {
 // Open a result in a tab, through the same path as a diff's "Open at line".
 function wsfOpen(v, i) {
   const f = v.find;
+  if (f.recent) {
+    // As it was left: its tab if it is open, else a new tab with its saved state.
+    const it = f.ritems[i];
+    if (!it) return;
+    f.recent = false; f.rq = ''; f.ractive = 0;
+    wsOpenTabAt(v, it.abs, 0);
+    wsfPaint(v);
+    return;
+  }
   if (f.mode === 'files') {
     const it = f.ranked && f.ranked.items[i];
     if (!it) return;
@@ -6435,22 +6806,29 @@ function wsfMount(v) {
     v.persistTimer = setTimeout(() => wsPersist(v), 400);
     wsfPaint(v);
   };
-  input.oninput = () => { f.q = input.value.slice(0, WSF_Q_MAX); changed(); };
-  input.onfocus = () => { if (f.mode === 'files') wsfList(v); };
+  input.oninput = () => {
+    if (f.recent) { f.rq = input.value.slice(0, WSF_Q_MAX); f.ractive = 0; wsfPaint(v); wsfMark(v, true); return; }
+    f.q = input.value.slice(0, WSF_Q_MAX); changed();
+  };
+  input.onfocus = () => { if (!f.recent && f.mode === 'files') wsfList(v); };
   // Keys act on the focused box only: arrows move through the results, Enter
-  // opens one (or, in Text, searches now), Escape clears the query.
+  // opens one (or, in Text, searches now), Escape clears the query, and with
+  // nothing typed closes Recent.
   input.onkeydown = (e) => {
     if (e.isComposing || e.altKey || e.ctrlKey || e.metaKey) return;
-    const n = wsfSize(v);
+    const n = wsfSize(v), sel = wsfSel(f);
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       if (!n) return;
       e.preventDefault();
-      f.active = (f.active + (e.key === 'ArrowDown' ? 1 : -1) + n) % n;
+      f[sel] = (f[sel] + (e.key === 'ArrowDown' ? 1 : -1) + n) % n;
       wsfMark(v, true);
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      if (f.mode === 'text' && f.pending) wsfSearch(v);
-      else if (n) wsfOpen(v, Math.min(f.active, n - 1));
+      if (!f.recent && f.mode === 'text' && f.pending) wsfSearch(v);
+      else if (n) wsfOpen(v, Math.min(f[sel], n - 1));
+    } else if (e.key === 'Escape' && f.recent) {
+      e.preventDefault();
+      if (f.rq) { f.rq = ''; f.ractive = 0; wsfPaint(v); wsfMark(v, true); } else wsRecentToggle(v, false);
     } else if (e.key === 'Escape') {
       if (!f.q) return;
       e.preventDefault();
@@ -6460,7 +6838,9 @@ function wsfMount(v) {
   };
   box.querySelector('.wsf-mode').onclick = (e) => {
     const b = e.target.closest('button[data-mode]');
-    if (!b || b.dataset.mode === f.mode) return;
+    if (b && b.dataset.mode === 'recent') { wsRecentToggle(v, undefined, fine()); return; }
+    if (!b || (!f.recent && b.dataset.mode === f.mode)) return;
+    f.recent = false; f.rq = '';
     f.mode = b.dataset.mode;
     changed();
     if (fine()) input.focus({ preventScroll: true });
@@ -9351,7 +9731,7 @@ window.addEventListener('message', (ev) => {
   // A task link clicked inside a session or file viewer framed in this page.
   if (d && d.type === 'open-task' && d.roomId && ev.origin === location.origin) openTaskLink(d.roomId);
   // A file viewer in a Workspace tab, saying how the tab was left.
-  if (d && (d.type === 'fv-state' || d.type === 'fv-missing') && ev.origin === location.origin) wsFrameMessage(ev.source, d);
+  if (d && (d.type === 'fv-state' || d.type === 'fv-missing' || d.type === 'fv-key') && ev.origin === location.origin) wsFrameMessage(ev.source, d);
 });
 // A task named in text (room-1a2b3c4d) opens here, in the page; with a
 // modifier key it opens in a new tab, which lands on the same task.

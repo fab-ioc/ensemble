@@ -1287,6 +1287,20 @@ document.addEventListener('click', ev => {
   ev.preventDefault();
   host.postMessage({ type: 'open-task', roomId: a.dataset.task }, location.origin);
 });
+// The Workspace's Recent shortcut (Alt+R, ⌥R on a Mac: index.html's
+// wsIsRecentKey) works while reading a file there too: the Workspace hears it.
+// Not while typing a comment or composing a character: ⌥R types ® on a Mac.
+function fvOnKey(ev) {
+  if (ev.isComposing || ev.keyCode === 229) return;
+  if (!(ev.altKey && !ev.ctrlKey && !ev.metaKey && !ev.shiftKey && ev.code === 'KeyR')) return;
+  const t = ev.target;
+  if (t && (t.isContentEditable || (t.closest && t.closest('input, textarea, select')))) return;
+  const host = hostPage();
+  if (!host) return;
+  ev.preventDefault();
+  host.postMessage({ type: 'fv-key', key: 'recent' }, location.origin);
+}
+document.addEventListener('keydown', fvOnKey, true);
 // A folder, listed; each entry opens in this viewer. true when it listed it,
 // 'forbidden' when the hub may not read there, false when it is not a folder.
 async function showDir(path, main) {
@@ -1515,7 +1529,7 @@ function wireFrameLinks(ifr) {
     // listener does not hear: listen there, and put a reopened tab back.
     ifr.addEventListener('load', () => {
       wireFrameLinks(ifr);
-      try { ifr.contentDocument.addEventListener('scroll', onScroll, true); } catch (e) {}
+      try { ifr.contentDocument.addEventListener('scroll', onScroll, true); ifr.contentDocument.addEventListener('keydown', fvOnKey, true); } catch (e) {}
       putBack();
       report();
     });

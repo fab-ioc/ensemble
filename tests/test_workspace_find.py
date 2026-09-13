@@ -724,7 +724,7 @@ class PageWiring(unittest.TestCase):
 
     def test_results_open_through_the_one_tab_path(self):
         opener = _fn(INDEX, "function wsfOpen(")
-        self.assertEqual(opener.count("wsOpenTabAt(v, "), 2)
+        self.assertEqual(opener.count("wsOpenTabAt(v, "), 3, "a file, a text match and a recent file")
         self.assertNotIn("iframe", opener)
         self.assertEqual(INDEX.count("f.className = 'wsp-frame';"), 1, "one place makes a viewer")
         at = _fn(INDEX, "function wsOpenTabAt(")
