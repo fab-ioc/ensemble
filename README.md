@@ -1,6 +1,6 @@
 # Ensemble
 
-A local, multi-agent collaboration & coordination dashboard for coding agents — [Claude Code](https://claude.com/claude-code) and Codex today, any agent tomorrow (each is a pluggable adapter). One browser tab that surfaces every live and historical session across agents, runs them headless, lets multiple agents collaborate in a shared room, and gives one-click controls to open, resume, fork, theme, label, categorise, pin, archive, search, track cost, and (optionally) link Jira tickets — backed by the data each agent already writes to disk. The server binds to `127.0.0.1` only; no network exposure.
+A local, multi-agent collaboration & coordination dashboard for coding agents — [Claude Code](https://claude.com/claude-code) and Codex today, any agent tomorrow (each is a pluggable adapter). One browser tab that surfaces every live and historical session across agents, runs them headless, lets multiple agents collaborate in a shared room, and gives one-click controls to open, resume, theme, label, categorise, pin, archive, search, track cost, and (optionally) link Jira tickets — backed by the data each agent already writes to disk. The server binds to `127.0.0.1` only; no network exposure.
 
 Cross-platform: **macOS** (iTerm2) and **Windows** (Windows Terminal) are supported today; Linux terminal control is stubbed and coming. Everything except the terminal-driving bits (session list, history, transcripts, labels, categories, pins, archive, search, cost, Jira, repo/editor opening, folder opening) works everywhere. All OS-specific behavior lives behind a platform backend in `backends/`, selected by `sys.platform`.
 
@@ -22,7 +22,6 @@ Cross-platform: **macOS** (iTerm2) and **Windows** (Windows Terminal) are suppor
 - **▶ Open** a historical session → new terminal window with `claude --resume <sid>`, restoring the saved theme (and, on macOS, the window position).
 - **⛔ Close** a live session → macOS saves window geometry then kills claude; Windows kills the process.
 - **+ New** → creates `~/cs/NN_<slug>/`, opens a new terminal window, runs `claude "<your prompt>"` (optional `--model` picker).
-- **🍴 Fork** → copies the transcript into a sibling workspace (git worktrees where possible) and resumes there; original untouched.
 - **✎ Rename / ✨ Auto** → label manually or have Claude propose a name from the conversation (also becomes the terminal tab title on macOS).
 - **🎨 Theme** → macOS: any `~/.claude/iterm-presets/*.itermcolors`, applied live. Windows: any Windows Terminal color scheme, applied at the next Open.
 - **📂 Finder / Explorer** → opens the session's actual cwd (resolved via `lsof` on macOS if the recorded path is stale).
@@ -58,7 +57,7 @@ Optional everywhere: an IDE for the 🧠 IDE button (auto-detected per language)
 | Search, categories, pin, archive, cost, detail panel | ✅ | ✅ |
 | Jira integration (opt-in) | ✅ | ✅ |
 | Self-update banner (git checkouts only) | ✅ launchd | ✅ Task Scheduler |
-| Open / Fork (new window, `claude --resume`) | ✅ | ✅ |
+| Open (new window, `claude --resume`) | ✅ | ✅ |
 | Close (kill session) | ✅ saves window position | ✅ kills process |
 | New session (`~/cs/NN_<slug>`) | ✅ | ✅ |
 | Open folder | ✅ Finder | ✅ Explorer |

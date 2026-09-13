@@ -306,7 +306,7 @@ styling: it is what stops an avatar reading as a lozenge. Overlap −6px when st
 ### Tabs
 
 A tab set is **fixed**: the same tabs, in the same order, with the same names, whatever state the
-thing is in. The task panel is always `Activity · Changes · Workspace · Spec`. What may change is the
+thing is in. The task panel is always `Activity · Changes · Workspace · Spec · Details`. What may change is the
 pane behind a tab (a live session or a transcript under Activity; files, or "this task has no folder
 yet", under Workspace) and which tab is selected by default. Never the set, the order or a label. A
 tab that renames itself when a task starts is a quieter version of tabs that reorder.

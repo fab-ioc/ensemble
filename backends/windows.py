@@ -389,16 +389,11 @@ class WindowsBackend(Backend):
                                open_mode=open_mode, command=command,
                                agent=agent, identity=identity, env=env)
 
-    def open_resume(self, cwd: str, session_id: str, fork: bool = False,
-                    new_session_id: str | None = None, initial_prompt: str = "",
+    def open_resume(self, cwd: str, session_id: str, initial_prompt: str = "",
                     label: str = "", command: list[str] | None = None,
                     agent: str = "", identity: str = "") -> str:
         extra = ["--resume", session_id]
-        if fork:
-            extra.append("--fork-session")
-        if new_session_id:
-            extra += ["--session-id", new_session_id]
-        # Resumed/forked sessions always open in a new window.
+        # Resumed sessions always open in a new window.
         return self._launch_wt(cwd, extra, initial_prompt, label,
                                open_mode="window", command=command,
                                agent=agent, identity=identity)

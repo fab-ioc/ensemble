@@ -404,25 +404,17 @@ class MacBackend(Backend):
             self._set_iterm_name(new_tty, label)
         return "ok"
 
-    def open_resume(self, cwd: str, session_id: str, fork: bool = False,
-                    new_session_id: str | None = None, initial_prompt: str = "",
+    def open_resume(self, cwd: str, session_id: str, initial_prompt: str = "",
                     label: str = "", command: list[str] | None = None,
                     agent: str = "", identity: str = "") -> str:
         if command:
             # Non-Claude agent (e.g. `codex resume <id>`): run verbatim.
             cmd = shlex.join(command)
         else:
-            extra = ["--resume", session_id]
-            if fork:
-                extra.append("--fork-session")
-            if new_session_id:
-                extra += ["--session-id", new_session_id]
-            cmd = claude_cmd(*extra)
+            cmd = claude_cmd("--resume", session_id)
             if initial_prompt:
                 cmd = f"{cmd} {shlex.quote(initial_prompt)}"
-        # A fork is a brand-new session — don't reuse the original's saved window
-        # bounds, or the two windows would land exactly on top of each other.
-        geom = None if fork else load_geometries().get(session_id)
+        geom = load_geometries().get(session_id)
         # Resumed sessions always reopen as a window (never a tab) so saved
         # geometry can be restored.
         args = ["osascript", "-e", _OPEN_SCRIPT, cwd, cmd, "window"]
