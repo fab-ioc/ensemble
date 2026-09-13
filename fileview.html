@@ -30,27 +30,91 @@
     root.dataset.scheme = SCHEME[name];
     try { window.dispatchEvent(new CustomEvent('cd-theme', { detail: { pref: pref, theme: name } })); } catch (e) {}
   }
-  // Adopt the hub's choice, which another device may have changed. If the hub
+  // The accent colour follows the person the same way: settings.accent on the
+  // hub, localStorage['cd-accent'] its first-paint cache. Nothing stored, or
+  // the hub's "default", keeps the theme's own accent. The text on a custom
+  // accent is picked from the accent itself, so a primary button stays
+  // readable in every theme (dark themes put dark text on their pale accent).
+  var ink = null;
+  function storedAccent() {
+    try { return localStorage.getItem('cd-accent') || ''; } catch (e) { return ''; }
+  }
+  // [r, g, b] of a CSS colour, or null when the browser does not take it.
+  function rgbOf(color) {
+    try {
+      ink = ink || document.createElement('canvas').getContext('2d');
+      ink.fillStyle = '#010203';
+      ink.fillStyle = String(color || '');
+      var v = String(ink.fillStyle), m;
+      if (v === '#010203' && !/^\s*#010203\s*$/i.test(color)) return null;
+      if ((m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(v))) {
+        return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
+      }
+      m = v.match(/[\d.]+/g);
+      return m && m.length >= 3 ? [+m[0], +m[1], +m[2]] : null;
+    } catch (e) { return null; }
+  }
+  function accentFg(rgb) {
+    function lin(v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }
+    var L = 0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2]);
+    // Contrast against white and against near-black #101214 (luminance ~.006).
+    return (1.05 / (L + 0.05)) >= ((L + 0.05) / 0.056) ? '#FFFFFF' : '#101214';
+  }
+  function applyAccent() {
+    var color = storedAccent(), rgb = color ? rgbOf(color) : null;
+    var s = document.documentElement.style;
+    if (rgb) {
+      s.setProperty('--accent', color);
+      s.setProperty('--accent-fg', accentFg(rgb));
+    } else {
+      s.removeProperty('--accent');
+      s.removeProperty('--accent-fg');
+    }
+    try { window.dispatchEvent(new CustomEvent('cd-accent', { detail: { accent: rgb ? color : '' } })); } catch (e) {}
+  }
+  function put(body) {
+    return fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify(body) });
+  }
+  // Adopt the hub's choices, which another device may have changed. If the hub
   // has none yet, hand it this browser's so a choice made before is kept.
   function sync() {
     fetch('/api/settings', { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (s) {
-        if (!s || typeof s.theme !== 'string') return;
-        var local = stored();
-        if (s.theme && s.theme !== local) {
-          try { localStorage.setItem('cd-theme', s.theme); } catch (e) {}
-          apply();
-        } else if (!s.theme && local !== 'light') {
-          fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
-                                   body: JSON.stringify({ theme: local }) }).catch(function () {});
+        if (!s) return;
+        if (typeof s.theme === 'string') {
+          var local = stored();
+          if (s.theme && s.theme !== local) {
+            try { localStorage.setItem('cd-theme', s.theme); } catch (e) {}
+            apply();
+          } else if (!s.theme && local !== 'light') {
+            put({ theme: local }).catch(function () {});
+          }
+        }
+        // A hub from before the accent was synced sends none: leave it be.
+        if (typeof s.accent === 'string') {
+          var mine = storedAccent(), want = s.accent === 'default' ? '' : s.accent;
+          if (s.accent && want !== mine) {
+            try {
+              if (want) localStorage.setItem('cd-accent', want); else localStorage.removeItem('cd-accent');
+            } catch (e) {}
+            applyAccent();
+          } else if (!s.accent && mine) {
+            put({ accent: mine }).catch(function () {});
+          }
         }
       }).catch(function () {});
   }
-  window.cdTheme = { apply: apply, sync: sync, stored: stored, scheme: SCHEME };
+  window.cdTheme = { apply: apply, sync: sync, stored: stored, scheme: SCHEME,
+                     applyAccent: applyAccent, storedAccent: storedAccent, rgbOf: rgbOf, put: put };
   apply();
+  applyAccent();
   if (mq && mq.addEventListener) mq.addEventListener('change', apply);
-  window.addEventListener('storage', function (ev) { if (ev.key === 'cd-theme') apply(); });
+  window.addEventListener('storage', function (ev) {
+    if (ev.key === 'cd-theme') apply();
+    if (ev.key === 'cd-accent') applyAccent();
+  });
   document.addEventListener('visibilitychange', function () { if (!document.hidden) sync(); });
   sync();
 })();

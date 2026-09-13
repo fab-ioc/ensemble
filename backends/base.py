@@ -208,6 +208,12 @@ class Backend:
         (launchd on macOS, Task Scheduler on Windows). Default: not wired up."""
         return {"started": False, "error": "self-update not supported on this platform"}
 
+    def self_restart(self, plan: dict) -> dict:
+        """Stop and start the running server on the code on disk, no git, from
+        a helper that outlives it (see dashboard.restart_plan). Default: not
+        wired up."""
+        return {"started": False, "error": "a plain restart is not supported on this platform"}
+
     # ---------- themes ----------
 
     def list_themes(self) -> list[dict]:

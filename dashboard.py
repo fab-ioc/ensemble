@@ -848,7 +848,14 @@ _SETTINGS_DEFAULTS = {
     # The dashboard theme, shared by every device on this hub. Empty = never
     # chosen here; the pages then hand up whatever their browser had.
     "theme": "",
+    # The accent colour, shared the same way: a CSS colour, or "default" for
+    # the theme's own accent. Empty = never chosen here (a page then hands up
+    # its browser's), which is why the default is a word and not "".
+    "accent": "",
 }
+# A colour a page can hand to style.setProperty: hex, a name, or rgb()/hsl().
+_ACCENT_RE = re.compile(r"^(?:default|#[0-9a-fA-F]{3,8}|[a-zA-Z]{3,30}"
+                        r"|(?:rgb|rgba|hsl|hsla)\([0-9.,%/\sa-z-]{1,60}\))$")
 _SETTINGS_ALLOWED_VALUES = {
     "openMode": {"window", "tab"},
     "theme": {"", "light", "dark", "dim", "paper", "contrast", "fjord", "system"},
@@ -920,6 +927,12 @@ def save_settings(settings: dict) -> dict:
                 continue
         if k in ("backupEnabled", "rtkForTasks"):
             v = bool(v)
+        if k == "accent":
+            # Never back to "": that reads as never chosen, and the next page
+            # would hand up its own browser's colour over the choice.
+            if not isinstance(v, str) or not _ACCENT_RE.match(v.strip()):
+                continue
+            v = v.strip()
         current[k] = v
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
     tmp = SETTINGS_FILE.with_suffix(".json.tmp")
@@ -4217,6 +4230,104 @@ def trigger_update() -> dict:
     return result
 
 
+# --- A plain restart ---------------------------------------------------------
+# Stop and start the hub on the code already on disk: no fetch, reset or pull,
+# so a merge not yet pushed survives (the Update path resets main to its
+# upstream). A detached helper (restart-hub.ps1) first starts that code on a
+# spare port and gives up, leaving the hub alone, if it does not serve; then
+# waits RESTART_GRACE_S so the caller's reply reaches the user, restarts the
+# hub, resumes the PO and types it a note. Same lock as /api/update.
+RESTART_GRACE_S = 45
+RESTART_BUSY_S = 180            # a second request this soon is refused
+_RESTART_STARTED = 0.0
+
+
+def _spare_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def restart_plan(room_id: str = "") -> dict:
+    """What the helper needs: how this hub was started (to start it again the
+    same way), where to preflight, whom to resume and what to tell them.
+    ``room_id`` is the calling PO's room; without one (the dashboard page) the
+    restart rooms that have a live terminal are resumed, and nobody is told."""
+    if room_id:
+        resume = [room_id]
+    else:
+        live = {(s.get("meta") or {}).get("room") for s in ptyrun.list_sessions()
+                if s.get("alive")}
+        resume = sorted(r for r in HUB_RESTART_ROOMS if r in live)
+    wake = ""
+    if room_id:
+        room = chatroom.get_room(room_id, public=False) or {}
+        project = {p["id"]: p for p in load_projects()}.get(
+            ensemble_tools._project_of_room(room) if room else "")
+        handover = str(rotation.handover_path(project)) if project else rotation.HANDOVER_NAME
+        who = operator_name()
+        wake = (f"[from the restart helper, not {who}] The hub restarted on the code "
+                "already on disk (a plain restart: nothing was fetched, reset or pulled) "
+                "after a passing preflight, and you, the PO, were resumed. First verify "
+                "that /, /session, /fileview, /api/usage and /api/settings answer. Then "
+                f"start what {handover} lists to start now, resume any other room that was "
+                f"running, and tell {who} what is running. Do not restart the hub again.")
+    try:
+        grace = max(0, min(300, int(os.environ.get("ENSEMBLE_RESTART_GRACE", RESTART_GRACE_S))))
+    except ValueError:
+        grace = RESTART_GRACE_S
+    logs = DASHBOARD_DIR / "logs"
+    return {
+        "repo": str(STATIC_DIR),
+        "python": sys.executable,
+        "script": str(Path(__file__).resolve()),
+        "args": sys.argv[1:],
+        "port": HUB_PORT,
+        "hubPid": os.getpid(),
+        "preflightPort": _spare_port(),
+        "taskName": APP_NAME,
+        # A test hub never touches the machine's scheduled task, whatever port.
+        "noTask": bool(os.environ.get("ENSEMBLE_RESTART_NO_TASK")),
+        "graceSeconds": grace,
+        "resumeRooms": resume,
+        "wakeRoom": room_id if wake else "",
+        "wakeText": wake,
+        "log": str(logs / "restart.log"),
+        "preflightLog": str(logs / "preflight.log"),
+        "env": dict(os.environ),
+    }
+
+
+def trigger_restart(room_id: str = "") -> dict:
+    """Start a plain restart; returns at once. ``status`` is the HTTP code.
+
+    ENSEMBLE_RESTART_DRY_RUN answers with the plan instead of running it."""
+    global _RESTART_STARTED
+    since = time.time() - _RESTART_STARTED
+    if since < RESTART_BUSY_S:
+        return {"started": False, "status": 409,
+                "error": f"a restart began {int(since)}s ago; if the hub is still this one, "
+                         f"its preflight failed — see {DASHBOARD_DIR / 'logs' / 'restart.log'}. "
+                         f"Try again after {int(RESTART_BUSY_S - since)}s."}
+    plan = restart_plan(room_id)
+    if os.environ.get("ENSEMBLE_RESTART_DRY_RUN"):
+        view = {k: v for k, v in plan.items() if k != "env"}
+        return {"started": True, "status": 202, "dryRun": True, "plan": view}
+    result = BACKEND.self_restart(plan)
+    if not result.get("started"):
+        return {**result, "status": 500}
+    _RESTART_STARTED = time.time()
+    return {**result, "status": 202, "graceSeconds": plan["graceSeconds"],
+            "preflightPort": plan["preflightPort"], "resumeRooms": plan["resumeRooms"],
+            "log": plan["log"],
+            "message": (f"Restart started. In about {plan['graceSeconds']}s, once the code "
+                        f"on disk has served on port {plan['preflightPort']}, the hub stops "
+                        "and starts again; every agent on it stops with it. "
+                        + ("You will be resumed and told when it is back. "
+                           if plan["wakeRoom"] else "")
+                        + f"Progress: {plan['log']}")}
+
+
 # ---------- HTTP server ----------
 
 # ---------------------------------------------------------------------------
@@ -5220,12 +5331,15 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return self.headers.get("Sec-Fetch-Site") in (None, "same-origin")
 
+    def _bearer_token(self) -> str:
+        auth = self.headers.get("Authorization", "")
+        return auth[7:].strip() if auth[:7].lower() == "bearer " else ""
+
     def _restart_refusal(self) -> str:
         """Empty when this request may restart the hub, else why it may not.
         Passes for the PO's room bearer token, or for the dashboard page: its
         key cookie on a request from the page's own origin."""
-        auth = self.headers.get("Authorization", "")
-        token = auth[7:].strip() if auth[:7].lower() == "bearer " else ""
+        token = self._bearer_token()
         if token:
             resolved = chatroom.resolve_token(token)
             return "" if resolved and may_restart_hub(*resolved) else RESTART_REFUSED
@@ -6581,6 +6695,16 @@ class Handler(BaseHTTPRequestHandler):
             # before that SIGKILL arrives.
             result = trigger_update()
             self._send_json(202 if result.get("started") else 500, result)
+            return
+        if p == "/api/restart":
+            # The same lock; stops and starts the hub on the code on disk.
+            refusal = self._restart_refusal()
+            if refusal:
+                self._send_json(403, {"error": "not_allowed", "message": refusal})
+                return
+            resolved = chatroom.resolve_token(self._bearer_token()) if self._bearer_token() else None
+            result = trigger_restart(resolved[0] if resolved else "")
+            self._send_json(result.pop("status"), result)
             return
         if p == "/api/iterm/consolidate":
             ok, msg = BACKEND.consolidate_windows()
