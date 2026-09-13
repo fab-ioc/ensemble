@@ -4,19 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>file</title>
-<!-- Syntax highlighting: the common bundle (37 languages — python, javascript,
-     typescript, xml/html, css/scss, json, yaml, markdown, bash, sql, ini/toml,
-     diff) plus powershell, which the common bundle leaves out. Same CDN the
-     session page already loads xterm from. If these never arrive — this hub can
-     run on a tailnet with no route out — the viewer still renders the file and
-     the comment layer still works; nothing is gated on them. -->
-<!-- Two highlight themes, one enabled at a time: the appearance script below
-     turns on the one matching data-theme. github-dark alone put pale token
-     colours on the light default's pale code well. -->
-<link rel="stylesheet" id="hl-light" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css">
-<link rel="stylesheet" id="hl-dark" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css">
-<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
-<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/languages/powershell.min.js"></script>
+<!-- Syntax highlighting is this page's own (HL, below), coloured by the
+     --code-* tokens of each theme. Nothing is fetched from a CDN: the hub is
+     read over a tailnet that may have no route out, and a highlighter that
+     never arrived left every file grey. -->
 <script>
 // Appearance, resolved before first paint so the page never flashes the wrong
 // theme. A theme is a complete token set under :root[data-theme="<name>"].
@@ -63,17 +54,6 @@
   document.addEventListener('visibilitychange', function () { if (!document.hidden) sync(); });
   sync();
 })();
-// Two highlight stylesheets, one enabled: the one matching the theme's ground.
-(function () {
-  function hl() {
-    var dark = document.documentElement.dataset.scheme === 'dark';
-    var l = document.getElementById('hl-light'), d = document.getElementById('hl-dark');
-    if (l) l.disabled = dark;
-    if (d) d.disabled = !dark;
-  }
-  hl();
-  window.addEventListener('cd-theme', hl);
-})();
 </script>
 <style>
   /* Design system tokens — see skills/ensemble-design/SKILL.md. Values are
@@ -115,6 +95,32 @@
     --e-100: 0 1px 1px rgba(9,30,66,.25), 0 0 1px rgba(9,30,66,.31);
     --e-200: 0 8px 12px rgba(9,30,66,.15), 0 0 1px rgba(9,30,66,.31);
     --dim: var(--fg-muted);   /* legacy name, kept so existing rules still read */
+    --selected-bg: color-mix(in srgb, var(--accent) 10%, var(--surface));
+    --c-success-bg: #DCFFF1;
+    --c-warning-fg: #7F5F01;
+    --c-progress-bg: #E9F2FF;
+    --c-progress-fg: #0055CC;
+    --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --fs-200: 12px; --lh-200: 16px;
+    --fs-300: 14px; --lh-300: 20px;
+    --lh-400: 24px;
+    --fs-500: 20px;
+    --s-050: 2px; --s-100: 4px; --s-200: 8px; --s-400: 16px; --s-600: 24px;
+    /* Code. Only this page highlights code, so these live here and nowhere
+       else. One hue per job and no red, which means "wrong". Every colour is
+       measured on --surface, --surface-sunken and --bg of its theme: 5:1 or
+       better (7:1 in High contrast; 6:1 on the dark grounds, where a colour
+       at the bare minimum reads as dim). Comments are --fg-muted. */
+    --code-kw: #883FD2;    /* keyword */
+    --code-str: #227537;   /* string */
+    --code-num: #136BAA;   /* number, literal, constant, builtin */
+    --code-fn: #245DE0;    /* function or method name */
+    --code-ty: #915B10;    /* type, class, section */
+    --code-attr: #177082;  /* key, attribute, property, variable */
+    --code-meta: #A94C1E;  /* decorator, annotation, directive */
+    --code-tag: #1D7457;   /* markup tag */
+    --code-com: var(--fg-muted);
   }
   :root[data-theme="dark"] {
     color-scheme: dark;
@@ -140,6 +146,12 @@
     --c-discovery-fg: #B8ACF6;
     --match-bg: #7F5F01;
     --match-fg: #FFF7D6;
+    --c-success-bg: #164B35;
+    --c-warning-fg: #F5CD47;
+    --c-progress-bg: #092957;
+    --c-progress-fg: #85B8FF;
+    --code-kw: #BE96E6; --code-str: #37BE59; --code-num: #57AEEC; --code-fn: #87A5EE;
+    --code-ty: #E79523; --code-attr: #25B7D4; --code-meta: #E59269; --code-tag: #2FBC8D;
     --e-100: 0 1px 1px rgba(3,4,4,.5), 0 0 1px rgba(3,4,4,.6);
     --e-200: 0 8px 12px rgba(3,4,4,.4), 0 0 1px rgba(3,4,4,.6);
   }
@@ -168,6 +180,12 @@
     --c-discovery-fg: #C8BCF0;
     --match-bg: #5E4A12;
     --match-fg: #F6E7B8;
+    --c-success-bg: #1F3B2F;
+    --c-warning-fg: #E6C878;
+    --c-progress-bg: #22324A;
+    --c-progress-fg: #9DC0EC;
+    --code-kw: #C29CE8; --code-str: #39C45C; --code-num: #61B3ED; --code-fn: #8DAAEF;
+    --code-ty: #E89A2E; --code-attr: #26BBD9; --code-meta: #E69972; --code-tag: #30C291;
     --e-100: 0 1px 1px rgba(0,0,0,.45), 0 0 1px rgba(0,0,0,.55);
     --e-200: 0 8px 12px rgba(0,0,0,.35), 0 0 1px rgba(0,0,0,.55);
   }
@@ -196,6 +214,12 @@
     --c-discovery-fg: #58449C;
     --match-bg: #FBE39A;
     --match-fg: #2B2620;
+    --c-success-bg: #DDF2E4;
+    --c-warning-fg: #6B4F00;
+    --c-progress-bg: #E5EDF9;
+    --c-progress-fg: #1D4F9E;
+    --code-kw: #8539D0; --code-str: #217135; --code-num: #1267A3; --code-fn: #1F57DB;
+    --code-ty: #8A570F; --code-attr: #166C7E; --code-meta: #A0481C; --code-tag: #1C7054;
     --e-100: 0 1px 1px rgba(60,40,10,.22), 0 0 1px rgba(60,40,10,.30);
     --e-200: 0 8px 12px rgba(60,40,10,.14), 0 0 1px rgba(60,40,10,.30);
   }
@@ -225,6 +249,14 @@
     --c-discovery-fg: #33207A;
     --match-bg: #FFE066;
     --match-fg: #000000;
+    --c-success-bg: #D2F4E1;
+    --c-warning-fg: #3F2D00;
+    --c-progress-bg: #DCE7FF;
+    --c-progress-fg: #002C85;
+    /* Fully saturated, so a hue still reads as itself at 7:1. Green and teal
+       that dark read as black, so strings, the commonest token, are blue. */
+    --code-kw: #7300C4; --code-str: #0038C0; --code-num: #784000; --code-fn: #005C0F;
+    --code-ty: #784000; --code-attr: #005761; --code-meta: #784000; --code-tag: #005C0F;
     --e-100: 0 0 0 1px #303030;
     --e-200: 0 0 0 2px #000000, 0 8px 12px rgba(0,0,0,.25);
   }
@@ -253,63 +285,147 @@
     --c-discovery-fg: #DCC0D6;
     --match-bg: #6B5A2E;
     --match-fg: #F6ECCF;
+    --c-success-bg: #374838;
+    --c-warning-fg: #EBCB8B;
+    --c-progress-bg: #34445E;
+    --c-progress-fg: #A9C7EC;
+    /* Nord's frost and aurora hues; 5:1 on this lighter ground reads clearly. */
+    --code-kw: #A4BED8; --code-str: #A1C680; --code-num: #D5B1CE; --code-fn: #8EC3D2;
+    --code-ty: #DFB562; --code-attr: #88C6C5; --code-meta: #E0B0A1; --code-tag: #8EC3D2;
     --e-100: 0 1px 1px rgba(15,18,24,.5), 0 0 1px rgba(15,18,24,.6);
     --e-200: 0 8px 12px rgba(15,18,24,.4), 0 0 1px rgba(15,18,24,.6);
   }
   * { box-sizing: border-box; }
-  body { margin:0; min-height:100vh; background:var(--bg); color:var(--fg);
-    font:14px/1.6 system-ui,-apple-system,sans-serif; }
-  header { position:sticky; top:0; display:flex; align-items:center; gap:10px;
-    padding:9px 14px; background:var(--surface); border-bottom:1px solid var(--border); z-index:5; }
-  header .name { font-weight:600; font-size:13px; word-break:break-all; }
+  [hidden] { display:none !important; }
+  body { margin:0; min-height:100vh; background:var(--surface); color:var(--fg);
+    font:var(--fs-300)/var(--lh-300) var(--font-sans); }
+  header { position:sticky; top:0; display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-200);
+    padding:var(--s-200) var(--s-400); background:var(--surface); border-bottom:1px solid var(--border); z-index:5; }
+  header .name { font-weight:600; word-break:break-all; }
+  /* What the file is, at a glance: language, lines, size. */
+  header .meta { color:var(--fg-muted); font-size:var(--fs-200); white-space:nowrap; font-variant-numeric:tabular-nums; }
   header .grow { flex:1; }
-  header a.btn { color:var(--fg); text-decoration:none; font-size:12px; border:1px solid var(--border);
-    padding:4px 10px; border-radius:var(--r-200); background:transparent; white-space:nowrap; }
-  header a.btn:hover { background:var(--hover); }
-  header button.btn { color:var(--fg); font:inherit; font-size:12px; border:1px solid var(--border);
-    padding:4px 10px; border-radius:var(--r-200); background:transparent; cursor:pointer; white-space:nowrap; }
-  header button.btn:hover { background:var(--hover); }
-  main { max-width:900px; margin:0 auto; padding:22px 20px 60px; }
-  .err { color:var(--c-danger-fg); padding:20px; }
+  header .btn { display:inline-flex; align-items:center; height:24px; color:var(--fg); text-decoration:none; font:inherit;
+    font-size:var(--fs-200); border:1px solid var(--border-strong); padding:0 var(--s-200); border-radius:var(--r-200);
+    background:var(--surface); white-space:nowrap; }
+  header button.btn { cursor:pointer; }
+  header .btn:hover { background:var(--hover); }
+  header .btn:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  /* A choice between two ways of showing the same file, and the wrap switch:
+     the one showing is selected. */
+  header .btn[aria-pressed="true"] { background:var(--selected-bg); color:var(--selected-fg); border-color:var(--selected-fg); }
+  /* In a narrow pane (the task panel's Workspace is about 350px) the header
+     keeps to one row: the name gives way first, then the details, then the
+     Comment label, which its icon and title still carry. */
+  @media (max-width: 520px) {
+    header { flex-wrap:nowrap; padding:var(--s-100) var(--s-200); gap:var(--s-100); }
+    header .name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; word-break:normal; }
+    header .grow { flex:1 1 0; min-width:0; }
+    header .btn { flex:none; }
+    #cmt-file .lbl { display:none; }
+  }
+  @media (max-width: 440px) { header .meta { display:none; } }
+  .seg { display:inline-flex; }
+  .seg .btn + .btn { margin-left:-1px; }
+  .seg .btn:first-child { border-top-right-radius:0; border-bottom-right-radius:0; }
+  .seg .btn:last-child { border-top-left-radius:0; border-bottom-left-radius:0; }
+  main { max-width:1040px; margin:0 auto; padding:var(--s-600) var(--s-400) 60px; }
+  .err { color:var(--c-danger-fg); padding:var(--s-400); }
   /* What the viewer could not do, said out loud rather than silently. */
-  .note { margin:0 0 12px; padding:7px 11px; border:1px solid var(--border); border-left:3px solid var(--border-strong);
-    border-radius:var(--r-200); background:var(--surface-sunken); font-size:12px; color:var(--dim); }
-  .note div + div { margin-top:4px; }
-  pre.raw { background:var(--surface-sunken); border:1px solid var(--border); border-radius:var(--r-300);
-    padding:14px 16px; overflow-x:auto; font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-    white-space:pre; color:var(--fg); }
-  /* Keep the highlighter's token colours, drop its background and padding so
-     the code sits in this page's own frame. */
-  .hljs { background:transparent !important; padding:0 !important; color:inherit; }
-  pre.raw code { display:block; font:inherit; }
+  .note { margin:0 0 var(--s-300); padding:var(--s-200) var(--s-300); border:1px solid var(--border); border-left:3px solid var(--border-strong);
+    border-radius:var(--r-200); background:var(--surface-sunken); font-size:var(--fs-200); color:var(--fg-muted); }
+  .note div + div { margin-top:var(--s-100); }
+  .note a { color:var(--link); }
   img.file, iframe.file { max-width:100%; border:1px solid var(--border); border-radius:var(--r-300); background:#FFFFFF; } /* document paper, not chrome */
   iframe.file { width:100%; height:calc(100vh - 96px); }
-  /* Rendered markdown */
-  .md { }
-  .md .ln { white-space:pre-wrap; word-break:break-word; margin:0 0 2px; }
-  .md .ln-gap { height:.7em; }
-  .md h1,.md h2,.md h3 { font-weight:700; line-height:1.25; }
-  .md h1 { font-size:24px; margin:18px 0 10px; padding-bottom:5px; border-bottom:1px solid var(--border); }
-  .md h2 { font-size:19px; margin:20px 0 8px; padding-bottom:4px; border-bottom:1px solid var(--border); }
-  .md h3 { font-size:16px; margin:16px 0 6px; }
-  .md h4,.md h5,.md h6 { font-weight:700; font-size:14px; margin:12px 0 5px; }
+
+  /* ---- Code: an editor, not a card ---------------------------------------
+     The code fills the page under the header and scrolls on its own, so the
+     line numbers and the header stay put. Every line is a row that carries
+     its number; the number is drawn, never text, so selecting, copying and
+     commenting see exactly the file. */
+  body.code-mode { height:100vh; height:100dvh; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
+  body.code-mode header { position:static; flex:none; }
+  body.code-mode main { flex:1; min-height:0; max-width:none; width:100%; margin:0; padding:0; display:flex; flex-direction:column; }
+  body.code-mode main > .note { margin:var(--s-200) var(--s-400) 0; }
+  .code { position:relative; flex:1; min-height:0; overflow:auto; padding:var(--s-200) 0 var(--s-600);
+    font-family:var(--font-mono); font-size:var(--fs-200); line-height:var(--lh-300); tab-size:4; color:var(--fg);
+    font-variant-ligatures:none; }
+  .ln-row { position:relative; padding-left:calc(var(--gw, 3ch) + var(--s-600)); padding-right:var(--s-400);
+    min-height:var(--lh-300); white-space:pre; width:max-content; min-width:100%; }
+  .code.wrap .ln-row { white-space:pre-wrap; overflow-wrap:anywhere; width:auto; }
+  .ln-row::before { content:attr(data-n); display:inline-block; box-sizing:border-box; position:sticky; left:0; z-index:1;
+    width:calc(var(--gw, 3ch) + var(--s-600)); margin-left:calc(-1 * (var(--gw, 3ch) + var(--s-600)));
+    padding-right:var(--s-400); text-align:right; color:var(--fg-muted); background:var(--surface);
+    font-variant-numeric:tabular-nums; user-select:none; -webkit-user-select:none; cursor:pointer; vertical-align:top; }
+  .ln-row:hover::before { color:var(--fg); }
+  /* The line a link pointed at (name.py:120), or the one clicked in the gutter. */
+  .ln-row.is-marked { background:color-mix(in srgb, var(--match-bg) 45%, var(--surface)); }
+  .ln-row.is-marked::before { color:var(--match-fg); background:var(--match-bg); font-weight:600; }
+  /* Diff rows, the same washes as the Changes tab. */
+  .ln-row.r-ins, .ln-row.r-ins::before { background:var(--c-success-bg); }
+  .ln-row.r-del, .ln-row.r-del::before { background:var(--c-danger-bg); }
+  .ln-row.r-hunk, .ln-row.r-hunk::before { background:var(--c-progress-bg); color:var(--c-progress-fg); }
+  .tk-kw { color:var(--code-kw); }
+  .tk-str { color:var(--code-str); }
+  .tk-num, .tk-bi { color:var(--code-num); }
+  .tk-fn { color:var(--code-fn); }
+  .tk-ty { color:var(--code-ty); }
+  .tk-attr { color:var(--code-attr); }
+  .tk-meta { color:var(--code-meta); }
+  .tk-tag { color:var(--code-tag); }
+  .tk-com { color:var(--code-com); font-style:italic; }
+  .tk-ts { color:var(--code-com); }
+  .tk-hd, .tk-strong, .tk-dh { font-weight:600; }
+  .tk-hd { color:var(--code-kw); }
+  .tk-em { font-style:italic; }
+  .tk-lv { font-weight:600; color:var(--fg-subtle); }
+  .tk-err { color:var(--c-danger-fg); font-weight:600; }
+  .tk-warn { color:var(--c-warning-fg); font-weight:600; }
+  mark.cmt-hl [class^="tk-"] { color:inherit; }
+
+  /* A table of comma- or tab-separated values. */
+  .csv-wrap { overflow:auto; width:fit-content; max-width:100%; border:1px solid var(--border); border-radius:var(--r-200); max-height:calc(100vh - 140px); }
+  table.csv { border-collapse:collapse; font-size:var(--fs-200); font-variant-numeric:tabular-nums; }
+  table.csv th, table.csv td { border-bottom:1px solid var(--border); border-right:1px solid var(--border);
+    padding:var(--s-100) var(--s-300); text-align:left; white-space:nowrap; max-width:480px; overflow:hidden; text-overflow:ellipsis; }
+  table.csv thead th { position:sticky; top:0; background:var(--surface-sunken); font-weight:600; z-index:1; }
+  table.csv td.n, table.csv th.n { text-align:right; }
+  table.csv .rn { color:var(--fg-muted); text-align:right; background:var(--surface-sunken); user-select:none; }
+
+  /* ---- Rendered markdown: a document, set for reading ------------------- */
+  .md { max-width:820px; margin:0 auto; line-height:var(--lh-400); overflow-wrap:break-word; }
+  .md p { margin:0 0 var(--s-400); }
+  .md h1,.md h2,.md h3,.md h4,.md h5,.md h6 { font-weight:600; line-height:var(--lh-400); margin:var(--s-600) 0 var(--s-300); scroll-margin-top:var(--s-400); }
+  .md h1 { font-size:var(--fs-500); padding-bottom:var(--s-200); border-bottom:1px solid var(--border); }
+  .md h2 { font-size:var(--fs-400); padding-bottom:var(--s-100); border-bottom:1px solid var(--border); }
+  .md h3 { font-size:var(--fs-300); }
+  .md h4,.md h5,.md h6 { font-size:var(--fs-300); color:var(--fg-subtle); }
   .md > :first-child { margin-top:0; }
-  .md ul,.md ol { margin:6px 0; padding-left:24px; }
-  .md li { margin:2px 0; }
-  .md code.ic { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.9em;
-    background:var(--surface-sunken); border:1px solid var(--border); border-radius:var(--r-100); padding:0 4px; word-break:break-word; }
-  .md pre.cb { margin:10px 0; background:var(--surface-sunken); border:1px solid var(--border); border-radius:var(--r-300);
-    padding:10px 12px; overflow-x:auto; }
-  .md pre.cb code { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12.5px; line-height:1.45; white-space:pre; }
-  .md pre.cb[data-lang]::before { content:attr(data-lang); display:block; font-size:9px;
-    text-transform:uppercase; letter-spacing:.05em; color:var(--dim); margin-bottom:6px; }
-  .md blockquote { margin:8px 0; padding:2px 12px; border-left:3px solid var(--border); color:var(--dim); }
+  .md ul,.md ol { margin:0 0 var(--s-400); padding-left:var(--s-600); }
+  .md li { margin:var(--s-050) 0; }
+  .md li > ul, .md li > ol { margin:var(--s-050) 0 0; }
+  .md li > p { margin:0 0 var(--s-200); }
+  .md li.task { list-style:none; margin-left:calc(-1 * var(--s-400)); }
+  .md li.task input { margin:0 var(--s-200) 0 0; vertical-align:middle; }
+  .md code.ic { font-family:var(--font-mono); font-size:var(--fs-200);
+    background:var(--surface-sunken); border:1px solid var(--border); border-radius:var(--r-100); padding:0 var(--s-100); }
+  .md a code.ic { color:var(--link); }
+  .md pre.cb { position:relative; margin:0 0 var(--s-400); background:var(--surface-sunken); border:1px solid var(--border); border-radius:var(--r-200);
+    padding:var(--s-300) var(--s-400); overflow-x:auto; line-height:var(--lh-300); }
+  .md pre.cb code { font-family:var(--font-mono); font-size:var(--fs-200); white-space:pre; font-variant-ligatures:none; }
+  .md pre.cb.fm code { white-space:pre-wrap; overflow-wrap:anywhere; }
+  .md pre.cb[data-lang]::before { content:attr(data-lang); position:absolute; top:var(--s-100); right:var(--s-200); font-size:var(--fs-100); line-height:var(--lh-200);
+    text-transform:uppercase; letter-spacing:.05em; color:var(--fg-muted); font-family:var(--font-sans); }
+  .md blockquote { margin:0 0 var(--s-400); padding:0 var(--s-400); border-left:3px solid var(--border-strong); color:var(--fg-subtle); }
+  .md blockquote > :last-child { margin-bottom:0; }
   .md a { color:var(--link); }
+  .md img.md-img { max-width:100%; border-radius:var(--r-200); }
   .mention { color:var(--c-discovery-fg); font-weight:600; background:var(--c-discovery-bg); border-radius:var(--r-100); padding:0 3px; }
-  .md hr { border:0; border-top:1px solid var(--border); margin:14px 0; }
-  .md table { border-collapse:collapse; margin:10px 0; display:block; overflow-x:auto; }
-  .md th,.md td { border:1px solid var(--border); padding:5px 9px; text-align:left; }
-  .md th { background:var(--surface-sunken); }
+  .md hr { border:0; border-top:1px solid var(--border); margin:var(--s-600) 0; }
+  .md table { border-collapse:collapse; margin:0 0 var(--s-400); display:block; overflow-x:auto; line-height:var(--lh-300); }
+  .md th,.md td { border:1px solid var(--border); padding:var(--s-100) var(--s-300); text-align:left; vertical-align:top; }
+  .md th { background:var(--surface-sunken); font-weight:600; }
   /* In-place review comments */
   mark.cmt-hl { background:var(--match-bg); border-bottom:2px solid var(--c-warning-bold); border-radius:2px; color:var(--match-fg); cursor:pointer; }
   .cmt-selbtn { position:fixed; z-index:60; font-size:12px; padding:5px 11px; background:var(--accent); color:var(--accent-fg); border:none; border-radius:var(--r-200); box-shadow:var(--e-200); cursor:pointer; }
@@ -327,10 +443,6 @@
   #cmt-tray .cmt-list { overflow-y:auto; }
   #cmt-tray .cmt-item { position:relative; padding:8px 26px 8px 11px; border-bottom:1px solid var(--border); cursor:pointer; }
   #cmt-tray .cmt-item:hover, #cmt-tray .cmt-item.hit { background:var(--hover); }
-  /* The line a link pointed at (name.py:120): a band behind the code. */
-  pre.raw { position:relative; }
-  pre.raw code { position:relative; }
-  .line-mark { position:absolute; left:0; right:0; background:var(--match-bg); pointer-events:none; }
   /* A folder, listed: every entry opens in this viewer. */
   .dir { border:1px solid var(--border); border-radius:var(--r-300); background:var(--surface); overflow:hidden; }
   .dir-row { display:flex; align-items:center; gap:12px; padding:5px 12px; border-bottom:1px solid var(--border);
@@ -351,7 +463,7 @@
     header a.btn, header button.btn, .cmt-selbtn, .cmt-composer button, #cmt-tray button {
       min-height: var(--touch-min); display: inline-flex; align-items: center; justify-content: center;
     }
-    header a.btn, header button.btn { min-width: var(--touch-min); }
+    header a.btn, header button.btn { min-width: var(--touch-min); height: auto; }
     #cmt-tray .cmt-item-x { min-width: var(--touch-min); top: 0; right: 0; }
     .dir-row { min-height: var(--touch-min); }
     #cmt-tray .cmt-item { padding-right: var(--touch-min); }
@@ -367,9 +479,11 @@
 <body>
 <header>
   <span class="name" id="name">file</span>
+  <span class="meta" id="meta"></span>
   <span class="grow"></span>
-  <button class="btn" id="mode" hidden></button>
-  <button class="btn" id="cmt-file" title="Comment on this file as a whole">💬 Comment</button>
+  <span class="seg" id="views" hidden></span>
+  <button class="btn" id="wrap" hidden aria-pressed="true" title="Wrap long lines to the width of the view">Wrap</button>
+  <button class="btn" id="cmt-file" title="Comment on this file as a whole">💬<span class="lbl">&nbsp;Comment</span></button>
   <a class="btn" id="raw" target="_blank">Raw</a>
 </header>
 <main id="main"><div class="err">Loading…</div></main>
@@ -542,64 +656,700 @@ const CTX = (ROOM ? '&room=' + encodeURIComponent(ROOM) : '') + (CWD ? '&cwd=' +
 // The line a link pointed at ("name.py:120"): marked, and scrolled into view.
 const LINE = parseInt(new URLSearchParams(location.search).get('line') || '', 10) || 0;
 function fileHref(p, line) { return '/fileview?path=' + encodeURIComponent(resolvePath(p, FILE_BASE)) + (line ? '&line=' + line : '') + CTX; }
+// ---- Code highlighting: begin ---------------------------------------------
+// A highlighter of this page's own, so a file is coloured wherever the hub is
+// read from, CDN or not. Each language is a list of regular expressions tried
+// left to right; a match is a token, and what matches nothing is plain text.
+// It is not a parser and need not be one: it has to make a file easy to read,
+// on a 500 KB file in well under a second. Tokens are [class, text] pairs whose
+// texts add up to the file exactly, so the comment layer's offsets, a copy and
+// a selection all see the file as written.
+const HL = (() => {
+  const EOF = String.raw`(?![\s\S])`;
+  const DQ = String.raw`"(?:[^"\\\n]|\\.)*"?`;
+  const SQ = String.raw`'(?:[^'\\\n]|\\.)*'?`;
+  const NUM = String.raw`\b(?:0[xX][\da-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?[a-zA-Z]*)\b`;
+  const C_LINE = String.raw`\/\/.*`, C_BLOCK = String.raw`\/\*[\s\S]*?(?:\*\/|${EOF})`;
+  const W = s => new Set(s.split(/\s+/));
+  const LANGS = {};
+  const lastSig = s => { for (let i = s.length - 1; i >= 0; i--) { const c = s[i]; if (c !== ' ' && c !== '\t' && c !== '\n' && c !== '\r') return c; } return ''; };
+  const nextCh = (t, i) => { while (t[i] === ' ' || t[i] === '\t') i++; return t[i]; };
+
+  // An identifier: a keyword, a literal, the name a def or a class introduces,
+  // a builtin, a CONSTANT, a Type, or a call. A name after a dot is a property.
+  function word(d) {
+    return (s, st, end, start) => {
+      const k = d.ci ? s.toLowerCase() : s, prev = st.prev;
+      st.prev = k;
+      st.sig = 'a';
+      if (st.text[start - 1] === '.') return d.calls !== false && nextCh(st.text, end) === '(' ? 'fn' : '';
+      if (d.kw.has(k)) { if (d.sigAfter && d.sigAfter.has(k)) st.sig = '('; return 'kw'; }
+      if (d.lit && d.lit.has(k)) return 'num';
+      if (d.defFn && d.defFn.has(prev)) return 'fn';
+      if (d.defTy && d.defTy.has(prev)) return 'ty';
+      if (d.bi && d.bi.has(k)) return 'bi';
+      if (d.caps !== false && /^[A-Z]/.test(s)) return s.length > 1 && /^[A-Z][A-Z0-9_]*$/.test(s) ? 'num' : 'ty';
+      if (d.calls !== false && nextCh(st.text, end) === '(') return 'fn';
+      return '';
+    };
+  }
+  function scan(text, lang, out) {
+    const d = LANGS[lang];
+    if (!d) { out.push('', text); return; }
+    if (d.embed) { d.embed(text, out); return; }
+    if (!d.re) d.re = new RegExp(d.rules.map(r => '(' + r[0] + ')').join('|'), 'gm');
+    const re = d.re, rules = d.rules;
+    const st = { text, prev: '', sig: '(', depth: 0, inTag: false };
+    let pos = 0, m;
+    const gap = g => { out.push('', g); const c = lastSig(g); if (c) { st.sig = c; st.prev = ''; } };
+    re.lastIndex = 0;
+    while ((m = re.exec(text))) {
+      let s = m[0];
+      const start = m.index;
+      if (!s) { re.lastIndex++; continue; }
+      let i = 1;
+      while (m[i] === undefined) i++;
+      const rule = rules[i - 1];
+      if (start > pos) gap(text.slice(pos, start));
+      if (!rule[2]) st.prev = '';
+      let cls = rule[1];
+      if (typeof cls === 'function') {
+        cls = cls(s, st, start + s.length, start);
+        // [class, length]: the rule took less than it matched ("/" that is a
+        // division, not a regex); scanning resumes right after what it took.
+        if (Array.isArray(cls)) { s = s.slice(0, cls[1]); cls = cls[0]; re.lastIndex = start + s.length; }
+      }
+      if (!rule[2] && cls !== 'com') st.sig = cls ? 'a' : lastSig(s);
+      out.push(cls || '', s);
+      pos = start + s.length;
+    }
+    if (pos < text.length) gap(text.slice(pos));
+  }
+  const lang = (names, d) => { names.forEach(n => { LANGS[n] = d; }); return d; };
+
+  const py = lang(['python'], {
+    kw: W('and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield match case'),
+    lit: W('True False None'),
+    bi: W('self cls print len range str int float bool bytes dict list set frozenset tuple type isinstance issubclass super open enumerate zip map filter sorted reversed min max sum abs any all getattr setattr hasattr iter next repr round object'),
+    defFn: W('def'), defTy: W('class'),
+  });
+  py.rules = [
+    [String.raw`#.*`, 'com'],
+    [String.raw`[rRbBuUfF]{0,2}"""[\s\S]*?(?:"""|${EOF})`, 'str'],
+    [String.raw`[rRbBuUfF]{0,2}'''[\s\S]*?(?:'''|${EOF})`, 'str'],
+    [String.raw`[rRbBuUfF]{0,2}` + DQ, 'str'],
+    [String.raw`[rRbBuUfF]{0,2}` + SQ, 'str'],
+    [String.raw`^[ \t]*@[A-Za-z_][\w.]*`, 'meta'],
+    [NUM, 'num'],
+    [String.raw`[A-Za-z_]\w*`, word(py), true],
+  ];
+
+  const JS_KW = 'break case catch class const continue debugger default delete do else export extends finally for function if import in instanceof let new of return super switch this throw try typeof var void while with yield async await static get set from as';
+  const jsRules = d => [
+    [String.raw`^#!.*`, 'meta'],
+    [C_LINE, 'com'], [C_BLOCK, 'com'],
+    [String.raw`\x60(?:[^\x60\\]|\\[\s\S])*(?:\x60|${EOF})`, 'str'],
+    [DQ, 'str'], [SQ, 'str'],
+    // A regex literal, where an expression may start; otherwise "/" divides.
+    [String.raw`\/(?![*/])(?:[^/\\\n\[]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[dgimsuyv]*`,
+      (s, st) => /^$|[(,=:[!&|?{};+\-*%<>~^]$/.test(st.sig) ? 'str' : [null, 1]],
+    [String.raw`@[A-Za-z_]\w*`, 'meta'],
+    [NUM, 'num'],
+    [String.raw`[A-Za-z_$][\w$]*`, word(d), true],
+  ];
+  const JS_LIT = 'true false null undefined NaN Infinity';
+  const JS_BI = 'console window document globalThis Math JSON Object Array String Number Boolean Symbol Promise Map Set WeakMap Date RegExp Error fetch require module exports process';
+  const JS_SIG = W('return typeof instanceof in of new delete void throw case do else yield await');
+  const js = lang(['javascript'], { kw: W(JS_KW), lit: W(JS_LIT), bi: W(JS_BI), defFn: W('function'), defTy: W('class extends new'), sigAfter: JS_SIG });
+  js.rules = jsRules(js);
+  const ts = lang(['typescript'], {
+    kw: W(JS_KW + ' interface type enum implements declare readonly private public protected abstract namespace keyof infer is satisfies override'),
+    lit: W(JS_LIT), bi: W(JS_BI + ' string number boolean any unknown never object bigint'),
+    defFn: W('function'), defTy: W('class extends new interface type enum implements'), sigAfter: JS_SIG,
+  });
+  ts.rules = jsRules(ts);
+
+  const java = lang(['java'], {
+    kw: W('abstract assert break case catch class continue default do else enum extends final finally for if implements import instanceof interface native new package private protected public return static strictfp super switch synchronized this throw throws transient try volatile while var record sealed permits yield boolean byte char double float int long short void'),
+    lit: W('true false null'), defTy: W('class interface enum record extends implements new'),
+  });
+  const clikeRules = d => [
+    [String.raw`^[ \t]*#[ \t]*[A-Za-z]\w*.*|#!?\[[^\]\n]*\]`, 'meta'],
+    [C_LINE, 'com'], [C_BLOCK, 'com'],
+    [String.raw`"""[\s\S]*?(?:"""|${EOF})`, 'str'],
+    [String.raw`\x60[^\x60]*(?:\x60|${EOF})`, 'str'],
+    [DQ, 'str'], [String.raw`'(?:[^'\\\n]|\\.){1,8}'`, 'str'],
+    [String.raw`@[A-Za-z_]\w*`, 'meta'],
+    [NUM, 'num'],
+    [String.raw`[A-Za-z_$][\w$]*`, word(d), true],
+  ];
+  java.rules = clikeRules(java);
+  const clike = lang(['clike'], {
+    kw: W('auto break case char const continue default do double else enum extern float for goto if inline int long register return short signed sizeof static struct switch typedef union unsigned void volatile while bool class namespace template typename using virtual public private protected internal new delete this throw try catch finally operator override final package import type var func go chan select defer map range interface fn let mut impl trait pub use mod crate self match loop where as async await dyn move ref unsafe fun val when object companion data sealed is in out init guard extension protocol string byte rune uint uint8 int32 int64 float64 usize isize f64 i32 u8'),
+    lit: W('true false null nil None NULL nullptr'), defFn: W('func fn fun def'), defTy: W('class struct enum interface trait impl type record'),
+  });
+  clike.rules = clikeRules(clike);
+
+  lang(['json'], { rules: [
+    [C_LINE, 'com'], [C_BLOCK, 'com'],
+    [String.raw`"(?:[^"\\\n]|\\.)*"(?=[ \t]*:)`, 'attr'],
+    [DQ, 'str'],
+    [String.raw`-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b`, 'num'],
+    [String.raw`\b(?:true|false|null)\b`, 'num'],
+  ] });
+
+  const cssRules = scss => [
+    [C_BLOCK, 'com'],
+    ...(scss ? [[String.raw`(?<![:\w])\/\/.*`, 'com']] : []),
+    [DQ, 'str'], [SQ, 'str'],
+    [String.raw`@[\w-]+`, 'kw'],
+    [String.raw`--[\w-]+`, 'attr'],
+    [String.raw`[{}]`, (s, st) => { st.depth = Math.max(0, st.depth + (s === '{' ? 1 : -1)); return ''; }],
+    [String.raw`#[\w-]+`, (s, st) => st.depth > 0 ? (/^#[\da-fA-F]{3,8}$/.test(s) ? 'num' : '') : 'ty'],
+    [String.raw`-?(?:\d+\.?\d*|\.\d+)(?:%|[a-zA-Z]+)?`, (s, st, end, start) => /[\w-]/.test(st.text[start - 1] || '') ? [null, s.length] : 'num'],
+    [String.raw`\.[A-Za-z_-][\w-]*`, (s, st) => st.depth > 0 ? '' : 'ty'],
+    [String.raw`::?[A-Za-z-]+`, (s, st) => st.depth > 0 ? [null, 1] : 'kw'],
+    [String.raw`!important\b`, 'kw'],
+    [String.raw`[A-Za-z-][\w-]*(?=\()`, 'fn'],
+    [String.raw`[A-Za-z-][\w-]*(?=[ \t]*:(?!:))`, (s, st) => st.depth > 0 ? 'attr' : 'tag'],
+    [String.raw`[A-Za-z][\w-]*`, (s, st) => st.depth > 0 ? '' : 'tag'],
+  ];
+  lang(['css'], { rules: cssRules(false) });
+  lang(['scss'], { rules: cssRules(true) });
+
+  lang(['xml'], { rules: [
+    [String.raw`<!--[\s\S]*?(?:-->|${EOF})`, 'com'],
+    [String.raw`<!\[CDATA\[[\s\S]*?(?:\]\]>|${EOF})`, 'str'],
+    [String.raw`<[!?][^>]*>?`, 'meta'],
+    [String.raw`<\/?[A-Za-z][\w:.-]*`, (s, st) => { st.inTag = true; return 'tag'; }],
+    [String.raw`\/?>`, (s, st) => st.inTag ? (st.inTag = false, 'tag') : [null, s.length]],
+    [String.raw`[A-Za-z_:@][\w:.@-]*`, (s, st) => st.inTag ? 'attr' : ''],
+    [String.raw`"[^"]*"?|'[^']*'?`, (s, st) => st.inTag ? 'str' : [null, 1]],
+    [String.raw`&(?:#\d+|#x[\da-fA-F]+|[A-Za-z]\w*);`, 'num'],
+  ] });
+  // A page: markup, with its scripts and styles in their own languages.
+  lang(['html'], { embed(text, out) {
+    const open = /<(script|style)\b[^>]*>/gi;
+    let pos = 0, m;
+    while ((m = open.exec(text))) {
+      const bodyStart = m.index + m[0].length;
+      const close = new RegExp('</' + m[1] + '\\s*>', 'ig');
+      close.lastIndex = bodyStart;
+      const c = close.exec(text), bodyEnd = c ? c.index : text.length;
+      scan(text.slice(pos, bodyStart), 'xml', out);
+      const type = ((m[0].match(/\btype\s*=\s*["']?([^"'\s>]+)/i) || [])[1] || '').toLowerCase();
+      const sub = m[1].toLowerCase() === 'style' ? 'css'
+        : /json/.test(type) ? 'json' : (!type || /module|javascript|ecmascript/.test(type)) ? 'javascript' : '';
+      if (bodyEnd > bodyStart) { if (sub) scan(text.slice(bodyStart, bodyEnd), sub, out); else out.push('', text.slice(bodyStart, bodyEnd)); }
+      pos = bodyEnd;
+      open.lastIndex = bodyEnd;
+    }
+    if (pos < text.length) scan(text.slice(pos), 'xml', out);
+  } });
+
+  const AFTER_VALUE = String.raw`(?<=:[ \t]+|^[ \t]*-[ \t]+|[\[,][ \t]*)`;
+  lang(['yaml'], { rules: [
+    [String.raw`(?:^|(?<=[ \t]))#.*`, 'com'],
+    [String.raw`^(?:---|\.\.\.)(?=[ \t]|$)`, 'meta'],
+    [String.raw`^[ \t]*-(?=[ \t]|$)`, 'kw'],
+    [String.raw`(?<=^[ \t]*(?:-[ \t]+)?)(?:"(?:[^"\\\n]|\\.)*"|'[^'\n]*'|[^\s#'"{}\[\],&*!|>%@\x60-][^#\n]*?)(?=[ \t]*:(?:[ \t]|$))`, 'attr'],
+    [DQ, 'str'], [SQ, 'str'],
+    [String.raw`(?<=^|[\s\[,])[&*][A-Za-z_][\w-]*`, 'meta'],
+    [String.raw`(?<=^|[\s\[,])!{1,2}[\w/.-]*`, 'meta'],
+    [AFTER_VALUE + String.raw`(?:true|false|yes|no|on|off|null|True|False|Null|~)(?=[ \t]*(?:[,\]#]|$))`, 'num'],
+    [AFTER_VALUE + String.raw`[-+]?(?:0x[\da-fA-F]+|\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?)(?=[ \t]*(?:[,\]#]|$))`, 'num'],
+    [String.raw`(?<=:[ \t]+)[|>][-+]?\d*(?=[ \t]*(?:#.*)?$)`, 'kw'],
+  ] });
+  lang(['toml', 'ini'], { rules: [
+    [String.raw`(?:^|(?<=[ \t]))[#;].*`, 'com'],
+    [String.raw`^[ \t]*\[\[?[^\]\n]*\]\]?`, 'ty'],
+    [String.raw`(?<=^[ \t]*)[^\s=#;\[][^=\n]*?(?=[ \t]*=)`, 'attr'],
+    [String.raw`"""[\s\S]*?(?:"""|${EOF})`, 'str'], [String.raw`'''[\s\S]*?(?:'''|${EOF})`, 'str'],
+    [DQ, 'str'], [String.raw`'[^'\n]*'?`, 'str'],
+    [String.raw`\b\d{4}-\d\d-\d\d(?:[T ]\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d)?)?\b`, 'num'],
+    [String.raw`(?<=[=\[,][ \t]*)(?:true|false|on|off|yes|no)\b`, 'num'],
+    [String.raw`[-+]?\b(?:0x[\da-fA-F_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?)\b`, 'num'],
+  ] });
+
+  const sh = lang(['bash'], {
+    kw: W('if then else elif fi for while until do done case esac in function return exit local export readonly declare typeset set unset shift break continue source alias trap eval exec select time'),
+    bi: W('echo printf cd pwd read test cat grep sed awk git mkdir rm cp mv ls ln chmod chown sudo curl wget tar ssh launchctl brew npm npx node py python python3 pip kill sleep touch find xargs head tail sort uniq wc tr cut env which true false'),
+    caps: false, calls: false,
+  });
+  sh.rules = [
+    [String.raw`^#!.*`, 'meta'],
+    [String.raw`(?:^|(?<=[\s;|&(]))#.*`, 'com'],
+    [String.raw`\$\{[^}\n]*\}|\$[A-Za-z_]\w*|\$[@#?$!*\d-]`, 'attr'],
+    [DQ, 'str'],
+    [String.raw`'[^']*(?:'|${EOF})`, 'str'],
+    [String.raw`[A-Za-z_]\w*(?==)`, 'attr'],
+    [String.raw`(?<![\w-])--?[A-Za-z][\w-]*`, 'meta'],
+    [String.raw`\b\d+\b`, 'num'],
+    [String.raw`[A-Za-z_][\w.-]*`, word(sh), true],
+  ];
+  const ps = lang(['powershell'], {
+    ci: true, caps: false,
+    kw: W('begin break catch class continue data default do dynamicparam else elseif end enum exit filter finally for foreach from function if in param process return switch throw trap try until using var while workflow'),
+    defFn: W('function filter'),
+  });
+  ps.rules = [
+    [String.raw`<#[\s\S]*?(?:#>|${EOF})`, 'com'],
+    [String.raw`#.*`, 'com'],
+    [String.raw`@"[\s\S]*?(?:^"@|${EOF})`, 'str'], [String.raw`@'[\s\S]*?(?:^'@|${EOF})`, 'str'],
+    [String.raw`"(?:[^"\x60\n]|\x60.|"")*"?`, 'str'], [String.raw`'(?:[^'\n]|'')*'?`, 'str'],
+    [String.raw`\$(?:true|false|null|True|False|Null|TRUE|FALSE|NULL)\b`, 'num'],
+    [String.raw`\$(?:\{[^}\n]*\}|[\w:?]+)`, 'attr'],
+    [String.raw`\[[A-Za-z][\w.]*(?:\[\])?\]`, 'ty'],
+    [String.raw`(?<![\w-])-[A-Za-z]\w*`, 'meta'],
+    [NUM, 'num'],
+    [String.raw`[A-Za-z_]\w*-[A-Za-z]\w*`, 'fn'],
+    [String.raw`[A-Za-z_]\w*`, word(ps), true],
+  ];
+  const sql = lang(['sql'], {
+    ci: true, caps: false,
+    kw: W('select from where insert into values update set delete create table index join left right inner outer full cross on group by order having limit offset as and or not null is in exists union all distinct primary key foreign references default drop alter add column view begin commit rollback transaction case when then else end like between asc desc with returning if replace trigger unique check constraint integer int text varchar real blob boolean date timestamp'),
+    lit: W('true false'),
+  });
+  sql.rules = [
+    [String.raw`--.*`, 'com'], [C_BLOCK, 'com'],
+    [String.raw`'(?:[^']|'')*'?`, 'str'], [String.raw`"[^"\n]*"`, 'attr'],
+    [NUM, 'num'],
+    [String.raw`[A-Za-z_]\w*`, word(sql), true],
+  ];
+
+  lang(['md-inline'], { rules: [
+    [String.raw`<!--[\s\S]*?(?:-->|${EOF})`, 'com'],
+    [String.raw`^[ \t]{0,3}#{1,6}(?:[ \t].*)?$`, 'hd'],
+    [String.raw`^[ \t]*(?:[-*_][ \t]*){3,}$`, 'meta'],
+    [String.raw`^[ \t]*(?:[-*+]|\d{1,9}[.)])(?=[ \t])`, 'kw'],
+    [String.raw`^[ \t]*(?:>[ \t]?)+`, 'com'],
+    [String.raw`\x60+[^\x60\n]+\x60+`, 'str'],
+    [String.raw`!?\[[^\]\n]*\]\([^)\n]*\)`, 'fn'],
+    [String.raw`\*\*[^*\n]+\*\*|__[^_\n]+__`, 'strong'],
+    [String.raw`(?<![\w*])\*[^*\s](?:[^*\n]*[^*\s])?\*(?![\w*])|(?<![\w_])_[^_\s](?:[^_\n]*[^_\s])?_(?![\w_])`, 'em'],
+    [String.raw`\|`, 'meta'],
+  ] });
+  // Markdown source: its front matter and fenced blocks in their own languages.
+  lang(['markdown'], { embed(text, out) {
+    let from = 0;
+    const fm = text.match(/^---[ \t]*\n[\s\S]*?\n---[ \t]*(?:\n|$)/);
+    if (fm) { scan(fm[0], 'yaml', out); from = fm[0].length; }
+    const lines = text.slice(from).split('\n');
+    const nl = k => (k < lines.length - 1 ? '\n' : '');
+    let md = '';
+    for (let i = 0; i < lines.length; i++) {
+      const m = lines[i].match(/^[ \t]*(\x60{3,}|~{3,})[ \t]*([^\s\x60]*)/);
+      if (!m) { md += lines[i] + nl(i); continue; }
+      if (md) { scan(md, 'md-inline', out); md = ''; }
+      out.push('meta', lines[i] + nl(i));
+      const close = new RegExp('^[ \\t]*' + (m[1][0] === '~' ? '~' : '\\x60') + '{' + m[1].length + ',}[ \\t]*$');
+      let j = i + 1, body = '';
+      while (j < lines.length && !close.test(lines[j])) { body += lines[j] + nl(j); j++; }
+      const sub = langOfFence(m[2]);
+      if (body) { if (sub) scan(body, sub, out); else out.push('', body); }
+      if (j < lines.length) out.push('meta', lines[j] + nl(j));
+      i = j;
+    }
+    if (md) scan(md, 'md-inline', out);
+  } });
+
+  lang(['diff'], { rules: [
+    [String.raw`^(?:diff |index |--- |\+\+\+ |new file mode|deleted file mode|similarity index|rename (?:from|to) |old mode|new mode|Binary files).*|^---$`, 'dh'],
+    [String.raw`^(?:commit [0-9a-f]{7,}|Author:|Date:|Merge:).*`, 'dh'],
+    [String.raw`^@@.*`, 'hunk'],
+    [String.raw`^\+.*`, 'ins'],
+    [String.raw`^-.*`, 'del'],
+  ] });
+  lang(['log'], { rules: [
+    [String.raw`^\[?\d{4}-\d\d-\d\d[T ]\d\d:\d\d(?::\d\d)?(?:[.,]\d+)?(?:Z|[+-]\d\d:?\d\d)?\]?|^\[?\d\d:\d\d:\d\d(?:[.,]\d+)?\]?`, 'ts'],
+    [String.raw`\b(?:ERROR|ERR|FATAL|CRITICAL|CRIT|PANIC|FAIL(?:ED|URE)?|Traceback)\b|\b[A-Z]\w*(?:Error|Exception)\b`, 'err'],
+    [String.raw`\bWARN(?:ING)?\b`, 'warn'],
+    [String.raw`\b(?:INFO|NOTICE)\b`, 'lv'],
+    [String.raw`\b(?:DEBUG|TRACE|VERBOSE)\b`, 'com'],
+    [String.raw`^[ \t]+File "[^"\n]*", line \d+.*`, 'fn'],
+    [String.raw`\b(?:https?|file):\/\/[^\s"'<>]+`, 'fn'],
+    [String.raw`"(?:[^"\\\n]|\\.)*"`, 'str'],
+  ] });
+
+  const EXT = {
+    py: 'python', pyw: 'python', pyi: 'python',
+    js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript',
+    ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript',
+    json: 'json', jsonc: 'json', map: 'json', jsonl: 'json', ndjson: 'json', ipynb: 'json', webmanifest: 'json',
+    html: 'html', htm: 'html', xhtml: 'html', vue: 'html', svelte: 'html',
+    xml: 'xml', svg: 'xml', plist: 'xml', xsd: 'xml', xsl: 'xml', csproj: 'xml', iml: 'xml',
+    css: 'css', scss: 'scss', sass: 'scss', less: 'scss',
+    yml: 'yaml', yaml: 'yaml',
+    toml: 'toml', ini: 'ini', cfg: 'ini', conf: 'ini', env: 'ini', properties: 'ini', editorconfig: 'ini',
+    gitignore: 'ini', gitattributes: 'ini', dockerignore: 'ini', npmrc: 'ini',
+    md: 'markdown', markdown: 'markdown', mdx: 'markdown',
+    sh: 'bash', bash: 'bash', zsh: 'bash', ksh: 'bash', command: 'bash',
+    ps1: 'powershell', psm1: 'powershell', psd1: 'powershell',
+    java: 'java',
+    c: 'clike', h: 'clike', cc: 'clike', cpp: 'clike', hpp: 'clike', cs: 'clike', go: 'clike', rs: 'clike',
+    kt: 'clike', kts: 'clike', scala: 'clike', groovy: 'clike', gradle: 'clike', swift: 'clike', dart: 'clike', php: 'clike',
+    sql: 'sql', diff: 'diff', patch: 'diff', log: 'log', out: 'log',
+  };
+  const NAMES = { dockerfile: 'bash', makefile: 'bash', 'requirements.txt': 'ini', license: '', '.env': 'ini' };
+  const FENCE = { py: 'python', python3: 'python', node: 'javascript', shell: 'bash', console: 'bash', shellsession: 'bash',
+    pwsh: 'powershell', ps: 'powershell', rust: 'clike', golang: 'clike', kotlin: 'clike', csharp: 'clike', 'c++': 'clike', jsonc: 'json' };
+  const LABEL = { python: 'Python', javascript: 'JavaScript', typescript: 'TypeScript', json: 'JSON', html: 'HTML', xml: 'XML',
+    css: 'CSS', scss: 'SCSS', yaml: 'YAML', toml: 'TOML', ini: 'Settings', markdown: 'Markdown', bash: 'Shell',
+    powershell: 'PowerShell', java: 'Java', sql: 'SQL', diff: 'Diff', log: 'Log' };
+  function langOfFence(info) {
+    const k = (info || '').toLowerCase();
+    return FENCE[k] || (LANGS[k] && !LANGS[k].internal ? k : '') || EXT[k] || '';
+  }
+  LANGS['md-inline'].internal = true;
+  // The language of a file: by its name, its extension, or a #! first line.
+  function langOf(name, text) {
+    const base = (name || '').toLowerCase(), ext = (base.match(/\.([\w-]+)$/) || [, ''])[1];
+    if (base in NAMES) return NAMES[base];
+    if (EXT[ext]) return EXT[ext];
+    const sb = !ext && (text || '').match(/^#![ \t]*(\S+)(?:[ \t]+(\S+))?/);
+    if (!sb) return '';
+    const prog = /(?:^|\/)env$/.test(sb[1]) ? (sb[2] || '') : sb[1].split('/').pop();
+    return /^python/.test(prog) ? 'python' : /^node/.test(prog) ? 'javascript' : /^pwsh/.test(prog) ? 'powershell' : /sh$/.test(prog) ? 'bash' : '';
+  }
+  const label = (lng, ext) => LABEL[lng] || (lng === 'clike' ? ext.toUpperCase() : 'Text');
+
+  const escH = s => s.replace(/[&<>]/g, c => (c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;'));
+  const tokens = (text, lng) => { const out = []; scan(text, lng, out); return out; };
+  // Highlighted text with no line structure: a code block inside a document.
+  function html(text, lng) {
+    if (!LANGS[lng]) return escH(text);
+    const t = tokens(text, lng);
+    let h = '';
+    for (let i = 0; i < t.length; i += 2) h += t[i] ? `<span class="tk-${t[i]}">${escH(t[i + 1])}</span>` : escH(t[i + 1]);
+    return h;
+  }
+  // A file: one row per line, each carrying its number. A diff row whose
+  // line is an insertion, a deletion or a hunk header takes that as its class.
+  const ROW_CLS = { ins: 1, del: 1, hunk: 1 };
+  const CHUNK = 500;
+  function rows(text, lng) {
+    const t = tokens(text, lng), parts = [];
+    let cur = '', rowCls = '', atStart = true;
+    const emit = (cls, piece) => {
+      if (!piece) return;
+      if (atStart && ROW_CLS[cls]) rowCls = cls;
+      atStart = false;
+      cur += cls ? `<span class="tk-${cls}">${escH(piece)}</span>` : escH(piece);
+    };
+    const flush = nl => {
+      parts.push(`<div class="ln-row${rowCls ? ' r-' + rowCls : ''}" data-n="${parts.length + 1}">${cur}${nl ? '\n' : ''}</div>`);
+      cur = ''; rowCls = ''; atStart = true;
+    };
+    for (let i = 0; i < t.length; i += 2) {
+      const cls = t[i], s = t[i + 1];
+      let a = 0, b;
+      while ((b = s.indexOf('\n', a)) !== -1) { emit(cls, s.slice(a, b)); flush(true); a = b + 1; }
+      emit(cls, s.slice(a));
+    }
+    if (cur || !parts.length) flush(false);
+    // Long files come in chunks the browser may skip laying out until they
+    // scroll near, so a 10,000-line file opens as fast as a short one.
+    if (parts.length <= CHUNK * 2) return { html: parts.join(''), lines: parts.length };
+    let h = '';
+    for (let i = 0; i < parts.length; i += CHUNK) h += '<div class="ln-chunk">' + parts.slice(i, i + CHUNK).join('') + '</div>';
+    return { html: h, lines: parts.length };
+  }
+  return { rows, html, tokens, langOf, langOfFence, label, has: l => !!LANGS[l] };
+})();
+// ---- Code highlighting: end -----------------------------------------------
+
+// JSON that arrived as one long line, laid out one value per line. The text is
+// re-indented, never parsed and re-printed, so a number too big for JavaScript
+// (12345678901234567890) or a key order stays exactly as written.
+function prettyJson(t) {
+  const out = [];
+  let ind = 0, i = 0;
+  const n = t.length, pad = () => '\n' + '  '.repeat(ind);
+  while (i < n) {
+    const c = t[i];
+    if (c === '"') {
+      let j = i + 1;
+      while (j < n && t[j] !== '"') j += t[j] === '\\' ? 2 : 1;
+      out.push(t.slice(i, j + 1)); i = j + 1; continue;
+    }
+    if (c === '{' || c === '[') {
+      let j = i + 1;
+      while (j < n && /\s/.test(t[j])) j++;
+      if (t[j] === (c === '{' ? '}' : ']')) { out.push(c + t[j]); i = j + 1; continue; }
+      ind++; out.push(c + pad()); i++; continue;
+    }
+    if (c === '}' || c === ']') { ind = Math.max(0, ind - 1); out.push(pad() + c); i++; continue; }
+    if (c === ',') { out.push(',' + pad()); i++; continue; }
+    if (c === ':') { out.push(': '); i++; continue; }
+    if (c === ' ' || c === '\t' || c === '\n' || c === '\r') { i++; continue; }
+    let j = i;
+    while (j < n && !/[\s"{}\[\],:]/.test(t[j])) j++;
+    out.push(t.slice(i, j)); i = j;
+  }
+  return out.join('') + '\n';
+}
+function countLines(t) {
+  let n = 0, i = -1;
+  while ((i = t.indexOf('\n', i + 1)) !== -1) n++;
+  return n + (t && !t.endsWith('\n') ? 1 : 0);
+}
+// Whether a JSON file is better read laid out: it has a very long line, and
+// laying it out gives many more lines. A cut-off file (over the read cap) can't
+// be parsed, but is laid out all the same.
+function jsonLayout(t, truncated) {
+  if (!/^\s*[\[{]/.test(t)) return '';
+  let longest = 0, a = 0;
+  for (;;) {
+    const b = t.indexOf('\n', a), e = b === -1 ? t.length : b;
+    if (e - a > longest) longest = e - a;
+    if (b === -1) break;
+    a = b + 1;
+  }
+  if (longest <= 160) return '';
+  if (!truncated) { try { JSON.parse(t); } catch (e) { return ''; } }
+  const p = prettyJson(t);
+  return countLines(p) >= 2 * countLines(t) + 2 ? p : '';
+}
+// Comma- or tab-separated values, as rows of cells. Quoted cells may hold the
+// separator, a doubled quote or a line break.
+function parseCsv(t, sep, max) {
+  const rows = [];
+  let row = [], f = '', q = false, i = 0;
+  const n = t.length;
+  while (i < n) {
+    const c = t[i];
+    if (q) {
+      if (c === '"') { if (t[i + 1] === '"') { f += '"'; i += 2; continue; } q = false; i++; continue; }
+      f += c; i++; continue;
+    }
+    if (c === '"' && f === '') { q = true; i++; continue; }
+    if (c === sep) { row.push(f); f = ''; i++; continue; }
+    if (c === '\n' || c === '\r') {
+      row.push(f); f = ''; rows.push(row); row = [];
+      i += c === '\r' && t[i + 1] === '\n' ? 2 : 1;
+      if (rows.length >= max) return rows;
+      continue;
+    }
+    f += c; i++;
+  }
+  if (f !== '' || row.length) { row.push(f); rows.push(row); }
+  return rows;
+}
+// The source of an image in a document: a web address as written, anything
+// else through the hub, relative to the document.
+function mdImgSrc(u) {
+  if (/^(?:https?|file):/i.test(u)) {
+    const t = urlTarget(u);
+    return t.file != null ? '/api/file?path=' + encodeURIComponent(t.file) + CTX : (t.href || '');
+  }
+  if (/^data:image\//i.test(u)) return u;
+  let p = u;
+  try { p = decodeURIComponent(u); } catch (e) {}
+  return '/api/file?path=' + encodeURIComponent(resolvePath(p, FILE_BASE)) + CTX;
+}
+// Markdown to HTML, close to GitHub's: front matter, fenced and highlighted
+// code, headings with anchors, paragraphs that join their lines, nested and
+// task lists, block quotes, tables, images, and the links of the shared block.
 function mdToHtml(src) {
   const codes = [];
   const ph = h => _MDA + (codes.push(h) - 1) + _MDZ;
-  let s = (src ?? '').replace(/\r\n/g, '\n');
-  s = s.replace(/```([\w+-]*)\n?([\s\S]*?)```/g, (_, lang, body) =>
-    ph(`<pre class="cb"${lang ? ` data-lang="${esc(lang)}"` : ''}><code>${esc(body.replace(/\n$/, ''))}</code></pre>`));
-  s = s.replace(/`([^`\n]+)`/g, (_, body) => ph(codeSpanHtml(body)));
+  let s = (src ?? '').replace(/\r\n?/g, '\n');
+  s = s.replace(/^---[ \t]*\n([\s\S]*?)\n---[ \t]*(?=\n|$)/, (_, body) =>
+    ph(`<pre class="cb fm" data-lang="front matter"><code>${HL.html(body, 'yaml')}</code></pre>`));
+  // Fenced code. A fence inside a list item keeps its indent, so the block
+  // stays in the item.
+  {
+    const ls = s.split('\n'), kept = [];
+    for (let i = 0; i < ls.length; i++) {
+      const m = ls[i].match(/^([ \t]*)(`{3,}|~{3,})[ \t]*([^`\s]*)[^`\n]*$/);
+      if (!m) { kept.push(ls[i]); continue; }
+      const close = new RegExp('^[ \\t]*' + (m[2][0] === '~' ? '~' : '`') + '{' + m[2].length + ',}[ \\t]*$');
+      const body = [];
+      let j = i + 1;
+      for (; j < ls.length && !close.test(ls[j]); j++) {
+        let k = 0;
+        while (k < m[1].length && (ls[j][k] === ' ' || ls[j][k] === '\t')) k++;
+        body.push(ls[j].slice(k));
+      }
+      const lng = HL.langOfFence(m[3]), code = body.join('\n');
+      kept.push(m[1] + ph(`<pre class="cb"${m[3] ? ` data-lang="${esc(m[3])}"` : ''}><code>${lng ? HL.html(code, lng) : esc(code)}</code></pre>`));
+      i = j;
+    }
+    s = kept.join('\n');
+  }
+  s = s.replace(/<!--[\s\S]*?-->/g, '');
+  s = s.replace(/!\[([^\]\n]*)\]\(\s*<?([^()\s<>]+(?:\([^()\s]*\)[^()\s<>]*)*)>?(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*\)/g,
+    (_, alt, url) => ph(`<img class="md-img" src="${esc(mdImgSrc(url))}" alt="${esc(alt)}" loading="lazy">`));
+  s = s.replace(/(`+)([^`\n]|[^`\n][^\n]*?[^`\n])\1(?!`)/g, (_, ticks, body) => ph(codeSpanHtml(ticks.length > 1 ? body.trim() : body)));
   s = esc(s);
+
+  const BR = String.fromCharCode(0xE004);
   const inline = t => {
     const keep = [];
-    return unlinkify(linkify(t, keep)
-      .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
-      .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?]|$)/g, '$1<em>$2</em>')
-      .replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,!?]|$)/g, '$1<em>$2</em>')
-      .replace(/(^|[\s(])@([a-zA-Z][\w-]*)/g, '$1<span class="mention">@$2</span>'), keep);
+    t = linkify(t, keep)
+      // \* \_ \` and friends are the character itself, not markup.
+      .replace(/\\(&(?:lt|gt|amp|quot);|[!-\/:-@\[-`{-~])/g, (m, c) => LINK_A + (keep.push(c) - 1) + LINK_Z)
+      .replace(/\*\*\*(?=\S)([\s\S]*?\S)\*\*\*/g, '<strong><em>$1</em></strong>')
+      .replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[^\w_])__(?=\S)([\s\S]*?\S)__(?!\w)/g, '$1<strong>$2</strong>')
+      .replace(/(^|[^\w*])\*(?=[^\s*])([^*]*?[^\s*])\*(?![\w*])/g, '$1<em>$2</em>')
+      .replace(/(^|[^\w])_(?=[^\s_])([^_]*?[^\s_])_(?!\w)/g, '$1<em>$2</em>')
+      .replace(/~~(?=\S)([\s\S]*?\S)~~/g, '<del>$1</del>')
+      .replace(/(^|[\s(])@([a-zA-Z][\w-]*)/g, '$1<span class="mention">@$2</span>');
+    return unlinkify(t, keep);
   };
+  const phRe = new RegExp(_MDA + '(\\d+)' + _MDZ, 'g');
   const isBlockPh = t => new RegExp('^' + _MDA + '(\\d+)' + _MDZ + '$').test(t) && /^<pre/.test(codes[+t.slice(1, -1)] || '');
-  const out = [];
-  let list = null;
-  const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  const slugs = new Map();
+  const heading = (n, raw) => {
+    const plain = unescPath(raw.replace(phRe, (_, k) => (codes[+k] || '').replace(/<[^>]+>/g, '')));
+    let id = plain.toLowerCase().replace(/[*_`~]/g, '').replace(/[^\p{L}\p{N}\s-]/gu, '').trim().replace(/\s/g, '-');
+    const seen = slugs.get(id) || 0;
+    slugs.set(id, seen + 1);
+    if (seen) id += '-' + seen;
+    return `<h${n} id="${esc(id)}">${inline(raw.trim())}</h${n}>`;
+  };
+  const indentOf = l => { let w = 0; for (const c of l) { if (c === ' ') w++; else if (c === '\t') w += 4 - (w % 4); else break; } return w; };
+  const stripIndent = (l, n) => { let w = 0, i = 0; while (i < l.length && w < n && (l[i] === ' ' || l[i] === '\t')) { w += l[i] === '\t' ? 4 - (w % 4) : 1; i++; } return l.slice(i); };
+  const LIST_RE = /^([ \t]*)([-*+]|\d{1,9}[.)])(?:[ \t]+(.*))?$/;
+  const HR_RE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
+  const HEAD_RE = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/;
+  const QUOTE_RE = /^ {0,3}&gt;[ \t]?(.*)$/;
   const tableSep = l => /^[\s|:-]+$/.test(l.trim()) && l.includes('|') && l.includes('-');
-  const rowCells = l => { let r = l.trim(); if (r.startsWith('|')) r = r.slice(1); if (r.endsWith('|')) r = r.slice(0, -1); return r.split('|').map(c => c.trim()); };
-  const lines = s.split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const t = line.trim();
-    let m;
-    if (isBlockPh(t)) { closeList(); out.push(t); continue; }
-    if (line.includes('|') && i + 1 < lines.length && tableSep(lines[i + 1])) {
-      closeList();
-      const heads = rowCells(line);
-      const aligns = rowCells(lines[i + 1]).map(c => { const L = c.startsWith(':'), R = c.endsWith(':'); return (L && R) ? 'center' : R ? 'right' : L ? 'left' : ''; });
-      const body = [];
-      let j = i + 2;
-      while (j < lines.length && lines[j].includes('|') && lines[j].trim() !== '') { body.push(rowCells(lines[j])); j++; }
-      const cell = (c, tag, al) => `<${tag}${al ? ` style="text-align:${al}"` : ''}>${inline(c || '')}</${tag}>`;
-      let tbl = '<table><thead><tr>' + heads.map((h, k) => cell(h, 'th', aligns[k])).join('') + '</tr></thead>';
-      if (body.length) tbl += '<tbody>' + body.map(row => '<tr>' + heads.map((_, k) => cell(row[k], 'td', aligns[k])).join('') + '</tr>').join('') + '</tbody>';
-      out.push(tbl + '</table>');
-      i = j - 1;
-      continue;
+  const rowCells = l => {
+    let r = l.trim();
+    if (r.startsWith('|')) r = r.slice(1);
+    if (r.endsWith('|') && !r.endsWith('\\|')) r = r.slice(0, -1);
+    return r.split(/(?<!\\)\|/).map(c => c.trim().replace(/\\\|/g, '|'));
+  };
+  const isTable = (ls, i) => ls[i].includes('|') && i + 1 < ls.length && tableSep(ls[i + 1]);
+  const startsBlock = (ls, i) => {
+    const l = ls[i], m = l.match(LIST_RE);
+    return isBlockPh(l.trim()) || HEAD_RE.test(l) || HR_RE.test(l) || QUOTE_RE.test(l) || isTable(ls, i)
+      || (m && m[3] && (!/\d/.test(m[2]) || /^1[.)]$/.test(m[2])));
+  };
+  const paragraph = (para, tight) => {
+    const text = para.map((l, k) => {
+      let x = l.replace(/^[ \t]+/, '');
+      const hard = k < para.length - 1 && (/ {2,}$/.test(x) || /[^\\]\\$/.test(x));
+      x = x.replace(/[ \t]+$/, '');
+      if (hard && x.endsWith('\\')) x = x.slice(0, -1);
+      return x + (hard ? BR : '');
+    }).join('\n');
+    const h = inline(text).split(BR).join('<br>');
+    return tight ? h : `<p>${h}</p>`;
+  };
+  function list(ls, i, out) {
+    const first = ls[i].match(LIST_RE);
+    const base = indentOf(first[1]), ordered = /\d/.test(first[2]);
+    const items = [];
+    let loose = false;
+    while (i < ls.length) {
+      const line = ls[i], m = line.match(LIST_RE);
+      const it = items[items.length - 1];
+      if (m && !HR_RE.test(line) && /\d/.test(m[2]) === ordered && indentOf(m[1]) - base < 2 && indentOf(m[1]) >= base) {
+        const rest = m[3] || '', gapW = line.length - m[1].length - m[2].length - rest.length;
+        items.push({ ci: indentOf(m[1]) + m[2].length + (gapW >= 1 && gapW <= 4 ? gapW : 1), lines: [rest], start: parseInt(m[2], 10) || 1 });
+        i++; continue;
+      }
+      if (!it) break;
+      if (line.trim() === '') {
+        let j = i + 1;
+        while (j < ls.length && ls[j].trim() === '') j++;
+        if (j >= ls.length) break;
+        const nm = ls[j].match(LIST_RE);
+        const sibling = nm && /\d/.test(nm[2]) === ordered && indentOf(nm[1]) - base < 2 && indentOf(nm[1]) >= base;
+        if (sibling || indentOf(ls[j]) >= it.ci) {
+          if (sibling) loose = true;
+          for (; i < j; i++) it.lines.push('');
+          continue;
+        }
+        break;
+      }
+      if (indentOf(line) >= it.ci) { it.lines.push(stripIndent(line, it.ci)); i++; continue; }
+      // A nested list indented less than this item's text ("1. a" then "  - b").
+      if (m && indentOf(m[1]) > base) { it.lines.push(stripIndent(line, indentOf(m[1]))); i++; continue; }
+      const last = it.lines[it.lines.length - 1];
+      if (last != null && last.trim() !== '' && !startsBlock(ls, i)) { it.lines.push(line.trim()); i++; continue; }
+      break;
     }
-    if ((m = line.match(/^(#{1,6})\s+(.*)$/))) { closeList(); out.push(`<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`); continue; }
-    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { closeList(); out.push('<hr>'); continue; }
-    if ((m = line.match(/^\s*>\s?(.*)$/))) { closeList(); out.push(`<blockquote>${inline(m[1])}</blockquote>`); continue; }
-    if ((m = line.match(/^\s*[-*+]\s+(.*)$/))) { if (list !== 'ul') { closeList(); out.push('<ul>'); list = 'ul'; } out.push(`<li>${inline(m[1])}</li>`); continue; }
-    if ((m = line.match(/^\s*\d+[.)]\s+(.*)$/))) { if (list !== 'ol') { closeList(); out.push('<ol>'); list = 'ol'; } out.push(`<li>${inline(m[1])}</li>`); continue; }
-    if (t === '') { closeList(); if (out.length && out[out.length - 1] !== '<div class="ln-gap"></div>') out.push('<div class="ln-gap"></div>'); continue; }
-    closeList(); out.push(`<div class="ln">${inline(line)}</div>`);
+    const tag = ordered ? 'ol' : 'ul';
+    const startAttr = ordered && items[0].start !== 1 ? ` start="${items[0].start}"` : '';
+    out.push(`<${tag}${startAttr}>` + items.map(it => {
+      while (it.lines.length > 1 && it.lines[it.lines.length - 1].trim() === '') it.lines.pop();
+      let cls = '', box = '';
+      const tm = it.lines[0].match(/^\[([ xX])\][ \t]+/);
+      if (tm) {
+        cls = ' class="task"';
+        box = `<input type="checkbox" disabled${tm[1] === ' ' ? '' : ' checked'}> `;
+        it.lines[0] = it.lines[0].slice(tm[0].length);
+      }
+      return `<li${cls}>${box}${blocks(it.lines, !loose && !it.lines.includes(''))}</li>`;
+    }).join('') + `</${tag}>`);
+    return i;
   }
-  closeList();
-  return out.join('\n').replace(new RegExp(_MDA + '(\\d+)' + _MDZ, 'g'), (_, i) => codes[+i]);
+  function blocks(ls, tight) {
+    const out = [];
+    let i = 0;
+    while (i < ls.length) {
+      const line = ls[i], t = line.trim();
+      let m;
+      if (t === '') { i++; continue; }
+      if (isBlockPh(t)) { out.push(t); i++; continue; }
+      if (isTable(ls, i)) {
+        const heads = rowCells(line);
+        const aligns = rowCells(ls[i + 1]).map(c => { const L = c.startsWith(':'), R = c.endsWith(':'); return (L && R) ? 'center' : R ? 'right' : L ? 'left' : ''; });
+        const body = [];
+        let j = i + 2;
+        while (j < ls.length && ls[j].includes('|') && ls[j].trim() !== '') { body.push(rowCells(ls[j])); j++; }
+        const cell = (c, tag, al) => `<${tag}${al ? ` style="text-align:${al}"` : ''}>${inline(c || '')}</${tag}>`;
+        let tbl = '<table><thead><tr>' + heads.map((h, k) => cell(h, 'th', aligns[k])).join('') + '</tr></thead>';
+        if (body.length) tbl += '<tbody>' + body.map(row => '<tr>' + heads.map((_, k) => cell(row[k], 'td', aligns[k])).join('') + '</tr>').join('') + '</tbody>';
+        out.push(tbl + '</table>');
+        i = j;
+        continue;
+      }
+      if ((m = line.match(HEAD_RE))) { out.push(heading(m[1].length, m[2] || '')); i++; continue; }
+      if (HR_RE.test(line)) { out.push('<hr>'); i++; continue; }
+      if (QUOTE_RE.test(line)) {
+        const q = [];
+        while (i < ls.length) {
+          const qm = ls[i].match(QUOTE_RE);
+          if (qm) q.push(qm[1]);
+          else if (ls[i].trim() !== '' && q.length && q[q.length - 1].trim() !== '' && !startsBlock(ls, i)) q.push(ls[i]);
+          else break;
+          i++;
+        }
+        out.push(`<blockquote>${blocks(q, false)}</blockquote>`);
+        continue;
+      }
+      if (LIST_RE.test(line)) { i = list(ls, i, out); continue; }
+      const para = [line];
+      let setext = 0;
+      i++;
+      while (i < ls.length && ls[i].trim() !== '') {
+        const sm = ls[i].match(/^ {0,3}(=+|-+)[ \t]*$/);
+        if (sm) { setext = sm[1][0] === '=' ? 1 : 2; i++; break; }
+        if (startsBlock(ls, i)) break;
+        para.push(ls[i]);
+        i++;
+      }
+      out.push(setext ? heading(setext, para.map(x => x.trim()).join(' ')) : paragraph(para, tight));
+    }
+    return out.join('\n');
+  }
+  return blocks(s.split('\n'), false).replace(phRe, (_, i) => codes[+i]);
 }
+
 // ---- In-place review comments (same idea as the chat bubbles) -----------
 // Select text in the document → attach a comment; collect several; send them
 // all to the room the file was opened from (carried in ?room=), or copy them.
-const CMTS = [];               // {cid, start, end, quote, note}
+const CMTS = [];               // {cid, start, end, quote, note, view}
 let _cseq = 1, _composerOpen = false, _selBtn = null, _cRoot = null;
+// Which rendering of the file is showing. A passage's offsets count through
+// that rendering's text, so a comment is marked only in the view it was made in:
+// the same offsets in Markdown's source and its preview are different words.
+let CUR_VIEW = '';
 function _off(root, node, o) {
   const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null); let off = 0, n;
   while ((n = w.nextNode())) { if (n === node) return off + o; off += n.nodeValue.length; }
@@ -649,7 +1399,7 @@ function openComposer(data) {
   p.querySelector('.cmt-cancel').onclick = close;
   p.querySelector('.cmt-add').onclick = () => {
     const note = ta.value.trim(); if (!note) { ta.focus(); return; }
-    const cid = _cseq++; CMTS.push({ cid, start: data.start, end: data.end, quote: data.quote, note });
+    const cid = _cseq++; CMTS.push({ cid, start: data.start, end: data.end, quote: data.quote, note, view: CUR_VIEW });
     if (!whole && _cRoot) _mark(_cRoot, data.start, data.end, cid);
     close(); renderTray();
     const s = window.getSelection(); if (s) s.removeAllRanges();
@@ -682,7 +1432,7 @@ function renderTray() {
 // preview and source, or removing one comment from the tray.
 function remarkAll() {
   if (!_cRoot) return;
-  CMTS.forEach(c => { if (c.start >= 0) _mark(_cRoot, c.start, c.end, c.cid); });
+  CMTS.forEach(c => { if (c.start >= 0 && c.view === CUR_VIEW) _mark(_cRoot, c.start, c.end, c.cid); });
 }
 function buildBody() {
   const base = document.getElementById('name').textContent || 'file';
@@ -744,28 +1494,10 @@ function enableComments(root) {
 
 // ---- Rendering ------------------------------------------------------------
 // One page renders every file the tree can offer. What changes is the shape:
-// highlighted source, rendered markdown, a rendered page, an image, a PDF — or
-// a plain statement of why it cannot be shown. The comment layer is on in all
-// of them.
-const HL_LANG = {
-  py: 'python', pyw: 'python', pyi: 'python',
-  js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript',
-  ts: 'typescript', tsx: 'typescript',
-  json: 'json', jsonc: 'json', map: 'json',
-  html: 'xml', htm: 'xml', xml: 'xml', svg: 'xml', xhtml: 'xml', plist: 'xml',
-  css: 'css', scss: 'scss', sass: 'scss', less: 'less',
-  yml: 'yaml', yaml: 'yaml',
-  md: 'markdown', markdown: 'markdown',
-  sh: 'bash', bash: 'bash', zsh: 'bash', ksh: 'bash',
-  ps1: 'powershell', psm1: 'powershell', psd1: 'powershell',
-  sql: 'sql',
-  ini: 'ini', cfg: 'ini', conf: 'ini', toml: 'ini', env: 'ini', properties: 'ini',
-  diff: 'diff', patch: 'diff',
-  txt: 'plaintext', log: 'plaintext', text: 'plaintext',
-};
-const HL_MAX = 300 * 1024;      // bytes; beyond this the highlighter costs more than it gives
+// highlighted source, rendered markdown, a table, a rendered page, an image, a
+// PDF — or a plain statement of why it cannot be shown. The comment layer is on
+// in all of them.
 const byteLen = s => new TextEncoder().encode(s).length;
-function hlLang(ext) { return HL_LANG[ext] || ''; }
 function fmtSize(n) {
   if (n == null) return 'unknown size';
   if (n < 1024) return n + ' B';
@@ -777,17 +1509,17 @@ function noteEl(lines) {
   lines.forEach(t => { const l = document.createElement('div'); l.textContent = t; d.appendChild(l); });
   return d;
 }
-// Fill `el` with `text`, highlighted when we can. Returns a note to show, or ''.
-// Never called twice on the same element: hljs rewrites innerHTML, which would
-// drop every comment highlight while CMTS still held live offsets.
-function highlightInto(el, text, lang, bytes) {
-  el.textContent = text;
-  if (!lang || typeof hljs === 'undefined' || !hljs.getLanguage(lang)) return '';
-  const size = bytes == null ? byteLen(text) : bytes;
-  if (size > HL_MAX) return `Syntax highlighting is off above ${Math.round(HL_MAX / 1024)} KB — this is ${fmtSize(size)} of text.`;
-  try { el.innerHTML = hljs.highlight(text, { language: lang, ignoreIllegals: true }).value; }
-  catch (e) { el.textContent = text; }
-  return '';
+// Long lines wrap unless the reader turned it off; the choice is kept.
+let WRAP = true;
+try { WRAP = localStorage.getItem('cd-fv-wrap') !== '0'; } catch (e) {}
+// The line a link pointed at (name.py:120), or the one clicked in the gutter:
+// marked, and, for a link, scrolled a third of the way down.
+function markRow(box, n, scroll) {
+  box.querySelectorAll('.ln-row.is-marked').forEach(r => r.classList.remove('is-marked'));
+  const row = box.querySelector(`.ln-row[data-n="${n}"]`);
+  if (!row) return;
+  row.classList.add('is-marked');
+  if (scroll) box.scrollTop = Math.max(0, row.offsetTop - box.clientHeight / 3);
 }
 const RAW_CAP = 512 * 1024;   // the fallback reader's own cap, matching the hub's
 // Read at most RAW_CAP bytes of a response and stop pulling. The raw endpoint
@@ -885,17 +1617,6 @@ async function showDir(path, main) {
   main.appendChild(list);
   return true;
 }
-// The line a link pointed at: a band behind it, a third of the way down.
-function markLine(pre, n) {
-  const cs = getComputedStyle(pre);
-  const lh = parseFloat(cs.lineHeight) || 18.75, top = (parseFloat(cs.paddingTop) || 0) + (n - 1) * lh;
-  const band = document.createElement('div');
-  band.className = 'line-mark';
-  band.style.top = top + 'px';
-  band.style.height = lh + 'px';
-  pre.insertBefore(band, pre.firstChild);
-  window.scrollTo(0, Math.max(0, pre.getBoundingClientRect().top + window.scrollY + top - window.innerHeight / 3));
-}
 // Links in a rendered page. The page runs sandboxed without scripts, so a
 // click on a link only sent that frame to nowhere: every link opens in a tab
 // of its own instead, and the page's relative links open in this viewer.
@@ -970,84 +1691,154 @@ function wireFrameLinks(ifr) {
                              'Use Raw to download it. You can still comment on it as a whole.']));
     return;
   }
+  const text = res.text;
   const notes = [];
   // Everything about size is counted in bytes: res.size is bytes, and a
   // character count would under-report any file that isn't pure ASCII. How much
   // came back IS the hub's read cap, so quote that rather than a number
   // hard-coded here, which would start lying the day the cap moves.
-  const shownBytes = byteLen(res.text);
-  if (res.truncated) notes.push(`Showing the first ${fmtSize(shownBytes)} of ${fmtSize(res.size)} — use Raw for the whole file.`);
+  if (res.truncated) notes.push(`Showing the first ${fmtSize(byteLen(text))} of ${fmtSize(res.size)} — use Raw for the whole file.`);
+  const lang = HL.langOf(base, text);
+  const metaEl = document.getElementById('meta');
+  const setMeta = detail => { metaEl.textContent = [detail, fmtSize(res.size)].filter(Boolean).join(' · '); };
+  const linesOf = n => n.toLocaleString() + (n === 1 ? ' line' : ' lines');
+
+  // The ways to show this file, the first one the default. A link to a line
+  // wants the source, since that is where line numbers are.
+  const isMd = lang === 'markdown', isHtml = ext === 'html' || ext === 'htm', isCsv = ext === 'csv' || ext === 'tsv';
+  const laidOut = lang === 'json' && !['jsonl', 'ndjson'].includes(ext) ? jsonLayout(text, res.truncated) : '';
+  const views = isMd || isHtml ? [['preview', 'Preview'], ['source', 'Source']]
+    : isCsv ? [['table', 'Table'], ['source', 'Source']]
+    : laidOut ? [['pretty', 'Formatted'], ['source', 'As written']] : null;
+  let view = views && !LINE ? views[0][0] : 'source';
+  const wrapBtn = document.getElementById('wrap');
 
   // Highlight first, then hand the finished element to the comment layer: its
-  // offsets are counted through the element's text, and hljs leaves text exactly
-  // as it found it.
-  function renderCode(text, lang) {
-    main.innerHTML = '';
-    const pre = document.createElement('pre'); pre.className = 'raw';
-    const code = document.createElement('code');
-    const hlNote = highlightInto(code, text, lang, shownBytes);
-    pre.appendChild(code);
-    const all = notes.concat(hlNote ? [hlNote] : []);
-    if (all.length) main.appendChild(noteEl(all));
-    main.appendChild(pre);
-    if (LINE) markLine(pre, LINE);
-    enableComments(code);
-    remarkAll();
-  }
-  // A link to a line of a document wants its source; say so, with the way back.
-  function lineNote() {
-    const d = document.createElement('div'); d.className = 'note';
-    const u = new URLSearchParams(location.search); u.delete('line');
-    d.innerHTML = `Showing the source at line ${LINE}, where the link points. <a href="?${esc(u.toString())}">Show it rendered</a>`;
-    return d;
-  }
-
-  if (ext === 'html' || ext === 'htm') {
-    // A page is more useful rendered, so that stays the default — but the
-    // source is one click away and carries in-place comments, and the header's
-    // whole-file comment works in either.
-    const btn = document.getElementById('mode');
-    btn.hidden = false;
-    let mode = LINE ? 'source' : 'preview';
-    const paint = () => {
-      btn.textContent = mode === 'preview' ? '</> Source' : '👁 Preview';
-      if (mode === 'source') { renderCode(res.text, 'xml'); return; }
-      _cRoot = null;
-      main.innerHTML = '';
-      if (notes.length) main.appendChild(noteEl(notes));
-      const ifr = document.createElement('iframe');
-      ifr.className = 'file';
-      ifr.setAttribute('sandbox', 'allow-same-origin');   // styles and fonts load, scripts don't
-      ifr.style.height = 'calc(100vh - 150px)';
-      ifr.addEventListener('load', () => wireFrameLinks(ifr));
-      ifr.srcdoc = res.text;
-      main.appendChild(ifr);
-    };
-    btn.onclick = () => { clearHl(); mode = mode === 'preview' ? 'source' : 'preview'; paint(); };
-    paint();
-    return;
-  }
-
-  if (ext === 'md' || ext === 'markdown') {
-    if (LINE) { renderCode(res.text, 'markdown'); main.insertBefore(lineNote(), main.firstChild); return; }
-    await cfg;
-    const div = document.createElement('div');
-    div.className = 'md';
-    div.innerHTML = mdToHtml(res.text);
-    // Fenced blocks get the same treatment as a source file — before the
-    // comment layer is attached, and only once.
-    div.querySelectorAll('pre.cb > code').forEach(cd => {
-      highlightInto(cd, cd.textContent, hlLang((cd.parentNode.dataset.lang || '').toLowerCase()));
-    });
+  // offsets are counted through the element's text, which is the file's text.
+  function renderCode(src, lng) {
+    document.body.classList.add('code-mode');
     main.innerHTML = '';
     if (notes.length) main.appendChild(noteEl(notes));
+    const box = document.createElement('div');
+    box.className = 'code' + (WRAP ? ' wrap' : '');
+    const t0 = performance.now();
+    const r = HL.rows(src, lng);
+    box.style.setProperty('--gw', Math.max(2, String(r.lines).length) + 'ch');
+    box.innerHTML = r.html;
+    main.appendChild(box);
+    void box.offsetHeight;
+    window.__fvRenderMs = Math.round(performance.now() - t0);
+    // A click in the gutter marks that line and puts it in the address, so the
+    // link to it can be copied from "open in its own tab".
+    box.addEventListener('click', ev => {
+      const row = ev.target.closest && ev.target.closest('.ln-row');
+      if (!row) return;
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed) return;
+      if (ev.clientX - box.getBoundingClientRect().left > parseFloat(getComputedStyle(row).paddingLeft)) return;
+      markRow(box, +row.dataset.n, false);
+      try { const u = new URL(location.href); u.searchParams.set('line', row.dataset.n); history.replaceState(null, '', u); } catch (e) {}
+    });
+    if (LINE && view === 'source') markRow(box, LINE, true);
+    enableComments(box);
+    remarkAll();
+    return r.lines;
+  }
+  function renderMd() {
+    document.body.classList.remove('code-mode');
+    main.innerHTML = '';
+    if (notes.length) main.appendChild(noteEl(notes));
+    const div = document.createElement('div');
+    div.className = 'md';
+    div.innerHTML = mdToHtml(text);
     main.appendChild(div);
     enableComments(div);
     remarkAll();
-    return;
   }
-
-  renderCode(res.text, hlLang(ext));
+  // A page is more useful rendered, so that stays the default; its source is
+  // one click away and carries in-place comments.
+  function renderPage() {
+    document.body.classList.remove('code-mode');
+    _cRoot = null;
+    main.innerHTML = '';
+    if (notes.length) main.appendChild(noteEl(notes));
+    const ifr = document.createElement('iframe');
+    ifr.className = 'file';
+    ifr.setAttribute('sandbox', 'allow-same-origin');   // styles and fonts load, scripts don't
+    ifr.style.height = 'calc(100vh - 150px)';
+    ifr.addEventListener('load', () => wireFrameLinks(ifr));
+    ifr.srcdoc = text;
+    main.appendChild(ifr);
+  }
+  const CSV_MAX = 5000;
+  function renderTable() {
+    document.body.classList.remove('code-mode');
+    main.innerHTML = '';
+    const tabs = (text.slice(0, 2000).match(/\t/g) || []).length, semis = (text.slice(0, 2000).match(/;/g) || []).length;
+    const commas = (text.slice(0, 2000).match(/,/g) || []).length;
+    const sep = ext === 'tsv' || tabs > commas ? '\t' : semis > commas ? ';' : ',';
+    const rows = parseCsv(text, sep, CSV_MAX + 2);
+    const ns = notes.slice();
+    const head = rows.shift() || [];
+    if (rows.length > CSV_MAX) { rows.length = CSV_MAX; ns.push(`Showing the first ${CSV_MAX.toLocaleString()} rows. Source shows all of the text.`); }
+    if (ns.length) main.appendChild(noteEl(ns));
+    let cols = head.length;
+    rows.forEach(r => { if (r.length > cols) cols = r.length; });
+    const numeric = Array.from({ length: cols }, (_, k) => rows.length > 0
+      && rows.every(r => r[k] == null || r[k] === '' || /^[-+]?[\d.,]+(?:[eE][-+]?\d+)?%?$/.test(r[k].trim())));
+    const cell = (tag, v, k) => `<${tag}${numeric[k] ? ' class="n"' : ''}${v && v.length > 60 ? ` title="${esc(v)}"` : ''}>${esc(v || '')}</${tag}>`;
+    const wrap = document.createElement('div');
+    wrap.className = 'csv-wrap';
+    wrap.innerHTML = '<table class="csv"><thead><tr><th class="rn"></th>'
+      + Array.from({ length: cols }, (_, k) => cell('th', head[k], k)).join('') + '</tr></thead><tbody>'
+      + rows.map((r, n) => `<tr><td class="rn">${n + 1}</td>` + Array.from({ length: cols }, (_, k) => cell('td', r[k], k)).join('') + '</tr>').join('')
+      + '</tbody></table>';
+    main.appendChild(wrap);
+    setMeta(`CSV · ${rows.length.toLocaleString()} rows · ${cols} columns`);
+    enableComments(wrap);
+    remarkAll();
+  }
+  function paint() {
+    clearHl();
+    hideSelBtn();
+    CUR_VIEW = view;
+    if (views) [...document.getElementById('views').children].forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === view)));
+    wrapBtn.hidden = !(view === 'source' || view === 'pretty');
+    wrapBtn.setAttribute('aria-pressed', String(WRAP));
+    if (view === 'pretty') setMeta('JSON · formatted · ' + linesOf(renderCode(laidOut, 'json')));
+    else if (view === 'source') setMeta(HL.label(isHtml ? 'html' : lang, ext) + ' · ' + linesOf(renderCode(text, isHtml ? 'html' : lang)));
+    else if (view === 'table') renderTable();
+    else if (isMd) { renderMd(); setMeta('Markdown · ' + linesOf(countLines(text))); }
+    else { renderPage(); setMeta('HTML · ' + linesOf(countLines(text))); }
+  }
+  if (views) {
+    const seg = document.getElementById('views');
+    seg.hidden = false;
+    views.forEach(([v, label]) => {
+      const b = document.createElement('button');
+      b.className = 'btn';
+      b.dataset.view = v;
+      b.textContent = label;
+      b.onclick = () => { if (view !== v) { view = v; paint(); } };
+      seg.appendChild(b);
+    });
+  }
+  // Wrapping changes only how the rows lay out, not the text, so comments and
+  // the mark stay. The line at the top of the view stays at the top.
+  document.getElementById('wrap').onclick = () => {
+    WRAP = !WRAP;
+    try { localStorage.setItem('cd-fv-wrap', WRAP ? '1' : '0'); } catch (e) {}
+    wrapBtn.setAttribute('aria-pressed', String(WRAP));
+    const box = main.querySelector('.code');
+    if (!box) return;
+    const r = box.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + 12);
+    const top = hit && hit.closest && hit.closest('.ln-row');
+    box.classList.toggle('wrap', WRAP);
+    if (top) box.scrollTop = top.offsetTop - 8;
+  };
+  if (isMd) await cfg;
+  paint();
 })();
 </script>
 </body>

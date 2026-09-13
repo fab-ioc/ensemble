@@ -78,8 +78,8 @@ his first look, and it looked nothing like the mockup.
 - **Adding a theme:** add its block to all three pages with the same token names as the Dark block,
   add its name and ground (`light` or `dark`) to the `SCHEME` map in each page's head script, add it
   to the avatar menu and to the hub's allowed `theme` values in `dashboard.py`, then measure every
-  pair in §3 on it. The ground picks the code-highlight stylesheet and which way the accent's hover
-  mixes.
+  pair in §3 on it, including its `--code-*` set in `fileview.html` (see *Code* below). The ground
+  picks which way the accent's hover mixes.
 - **The choice follows the person, not the browser.** It is stored on the hub (`settings.theme`) so
   every device agrees. `localStorage['cd-theme']` is only the first-paint cache: the head script
   applies it before first paint, then fetches the hub's value and adopts it if it differs. If the
@@ -163,6 +163,25 @@ begin with **C** — colour is load-bearing in that circle, not decorative.
 `--match-bg` / `--match-fg`. Fixed, for the same reason as the focus ring. A match must be *found by
 eye on a quiet surface* — a neutral tint would be a few percent of contrast, and would vanish entirely
 on a hovered row, which is exactly when the user is pointing at it.
+
+### Code
+
+`--code-kw` · `--code-str` · `--code-num` · `--code-fn` · `--code-ty` · `--code-attr` · `--code-meta` ·
+`--code-tag` · `--code-com`. Syntax colours for the file viewer, which highlights code with its own
+highlighter (`HL` in `fileview.html`): **no CDN**, because the hub is read over a tailnet that may have
+no route out, and a highlighter that never arrived left every file grey. Only `fileview.html` highlights
+code, so the set lives there; a page that starts highlighting copies it.
+
+- **One hue per job, and no red.** Red means wrong, and a keyword is not wrong. A log's `ERROR` is, so
+  it is `--c-danger-fg`; `WARNING` is `--c-warning-fg`. A diff row uses the Changes tab's washes
+  (`--c-success-bg`, `--c-danger-bg`, `--c-progress-bg`), not code colours.
+- **Measured on every ground code sits on** (`--surface`, `--surface-sunken`, `--bg`): 5:1 or better on
+  the light grounds, 6:1 on Dark and Dim (a colour at the bare minimum reads as dim there), 5:1 on
+  Fjord, 7:1 in High contrast. Comments are `--fg-muted`, so they meet its floor.
+- **High contrast is the owner's theme; judge code there first.** At 7:1 a green or teal reads as black,
+  so its strings are blue and its hues are fully saturated.
+- Line numbers are drawn (`::before` with `attr(data-n)`), never text: selecting, copying and the
+  comment layer's offsets must see exactly the file.
 
 ### Layout
 

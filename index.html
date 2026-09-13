@@ -1052,7 +1052,10 @@
      UA's [hidden] { display: none } — without this the hidden pane stays on
      screen and both tabs show at once. */
   #detail-panel .dp-pane[hidden] { display: none !important; }
-  #detail-panel .dp-pane[data-pane="workspace"] { flex: 1; display: flex; flex-direction: column; padding: 10px 12px; min-height: 360px; }
+  /* Tall enough to read a file in: the pane takes most of a screen, and the
+     panel scrolls to what sits below it. At 360px the file got 150px, of
+     which its own header took half. */
+  #detail-panel .dp-pane[data-pane="workspace"] { flex: 1; display: flex; flex-direction: column; padding: 10px 12px; min-height: max(480px, calc(100vh - var(--top-h) - 120px)); }
   /* The live chat is the one pane sized to the screen rather than to its
      content. A zero-basis flex: 1 only grew into free space, and a long title,
      summary and Details left none, so the chat collapsed to a sliver in a
@@ -1088,7 +1091,7 @@
   .tch-tray[hidden] { display: none; }
   .tch-tray .grow { flex: 1; }
   /* The panel is a narrow, user-resized column: same component, stacked. */
-  #detail-panel .wsp { grid-template-columns: 1fr; grid-template-rows: minmax(120px, 34vh) 1fr; height: 100%; min-height: 340px; }
+  #detail-panel .wsp { grid-template-columns: 1fr; grid-template-rows: minmax(96px, 28%) minmax(0, 1fr); height: auto; flex: 1; min-height: 0; }
   #detail-panel .wsp-tree { border-right: 0; border-bottom: 1px solid var(--border); }
   .dp-meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: 11.5px; color: var(--fg-subtle); }
   .dp-meta .chip {
