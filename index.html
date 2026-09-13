@@ -1952,6 +1952,14 @@
   }
   .dp-tab:hover { color: var(--fg); }
   .dp-tab.on { color: var(--fg); border-bottom-color: var(--accent); }
+  /* All five tabs stay in view down to the narrowest panel (a 360px phone, or
+     the desktop panel dragged to its 360px minimum): the tabs close up rather
+     than a tab running off the edge. Measured on the strip itself, since the
+     panel's width is set by dragging, not by the window. */
+  .dp-tabs { container: dptabs / inline-size; }
+  @container dptabs (max-width: 356px) { .dp-tab { padding-inline: var(--s-200); } .dp-tabs { gap: 0; } }
+  @container dptabs (max-width: 308px) { .dp-tab { padding-inline: var(--s-100); } }
+  @container dptabs (max-width: 268px) { .dp-tab { padding-inline: var(--s-050); } }
   .dp-tabbody { flex: 1; overflow-y: auto; }
   /* An absence always names its cause — never a blank panel, and never
      --fg-disabled, which clears no threshold on a sunken surface. */
@@ -2587,7 +2595,7 @@
     .seg button {
       min-height: var(--touch-min);
     }
-    .po-btn { min-width: var(--touch-min); }
+    .po-btn, .dp-tab { min-width: var(--touch-min); }
     /* Home's "Group by" row: at 360 its last button sat under "+ New project". */
     .listctl { flex-wrap: wrap; row-gap: var(--s-200); }
     .po-btn.x, .dp-close, .dp-ov-btn, .chp-refresh, .sb-cat-actions button,
@@ -3540,9 +3548,9 @@ function closeDetail() {
 
 // --- Unified session detail --------------------------------------------------
 // One detail view for EVERY row — 1 agent or N, live or not, room or legacy.
-// Structure is always the same: header, meta pills, action bar, a collapsible
-// Details disclosure, and the conversation (history bubbles, or the live
-// /session embed when running). Only the conversation's data source and the
+// Structure is always the same: header, meta pills, action bar, then the five
+// tabs, whose Activity tab holds the conversation (history bubbles, or the
+// live /session embed when running). Only the conversation's data source and the
 // action set vary. renderDetail() runs on every 2s poll, so it guards on a
 // signature to avoid clobbering the live iframe (and resetting scroll).
 
@@ -3974,7 +3982,7 @@ function renderDetail() {
   }
   tickAgo(top);
 
-  // Tabs: fixed four, fixed labels. Only which one is on moves.
+  // Tabs: fixed five, fixed labels. Only which one is on moves.
   const cur = issueTab(r);
   panel.querySelectorAll('.dp-tab[data-itab]').forEach(b => b.classList.toggle('on', b.dataset.itab === cur));
   panel.querySelectorAll('.dp-pane').forEach(p => { p.hidden = p.dataset.pane !== cur; });
