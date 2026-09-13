@@ -1261,18 +1261,29 @@ function foldStart(items) {
   return start;
 }
 // What each item is drawn as: 'line' (a landmark), 'full' or 'row'. The fold
-// moves down only while the reader is at the end (stick): scrolled up, the
-// balloon they are reading never folds because something new arrived.
-// fold = { key: the first full item's key, open: keys the reader opened }.
+// is worked out again only while the reader is at the end (stick). Scrolled up,
+// every balloon keeps what it was last drawn as, whatever arrives or leaves:
+// nothing folds under the reader. What arrives after the known balloons is
+// drawn in full, what appears before them folded.
+// fold = { base: key → 'full' | 'row' as last drawn, open: keys the reader opened }.
+// A balloon holding a comment's passage (held) is opened, and stays open while
+// the reader is scrolled up even when the comment goes.
 function foldPlan(items, fold, stick, held) {
-  let start = -1;
-  if (!stick && fold.key != null) start = items.findIndex((m, i) => foldKey(m, i) === fold.key);
-  if (start < 0) {
-    start = foldStart(items);
-    fold.key = start < items.length ? foldKey(items[start], start) : null;
-  }
-  return items.map((m, i) => isLandmark(m) ? 'line'
-    : (i >= start || fold.open.has(foldKey(m, i)) || (held && held(m))) ? 'full' : 'row');
+  let prev = stick ? null : fold.base, last = -1;
+  if (prev) items.forEach((m, i) => { if (prev.has(foldKey(m, i))) last = i; });
+  if (last < 0) prev = null;          // nothing drawn before is still here
+  const start = prev ? -1 : foldStart(items);
+  const base = new Map();
+  const plan = items.map((m, i) => {
+    if (isLandmark(m)) return 'line';
+    const k = foldKey(m, i);
+    let b = prev ? (prev.get(k) || (i > last ? 'full' : 'row')) : (i >= start ? 'full' : 'row');
+    if (b === 'row' && held && held(m)) b = 'full';
+    base.set(k, b);
+    return (b === 'full' || fold.open.has(k)) ? 'full' : 'row';
+  });
+  fold.base = base;
+  return plan;
 }
 // A folded balloon's first line, as plain text.
 function foldLine(text) {
@@ -1286,7 +1297,7 @@ function foldLine(text) {
 // Loose text for finding a comment's quote in a balloon's markdown.
 const foldNorm = s => String(s || '').replace(/[*_`#>|~\\[\]]/g, '').replace(/\s+/g, ' ').trim();
 // ---- Folding a long conversation: end
-let FOLD = { key: null, open: new Set() };
+let FOLD = { base: null, open: new Set() };
 let STICK = true;          // at the end of the chat: new messages keep it there
 let LAST_ITEMS = null;     // what was last drawn, to draw it again after a click
 let SEEN = new Set(), NEW_N = 0;   // balloons seen at the end; how many came since
@@ -1451,7 +1462,10 @@ function showPendingUser(text) {
   const box = $('#msgs'); if (!box) return;
   box.insertAdjacentHTML('beforeend',
     `<div class="msg user pending" data-from="user"><div class="from">${identLabel('user')}</div><div class="text md">${mdToHtml(t)}</div></div>`);
-  box.scrollTop = box.scrollHeight;
+  // At the end the chat follows what you sent. Scrolled up, your place stays:
+  // the echo is added below it, and "Latest ↓" is the way down.
+  if (STICK) box.scrollTop = box.scrollHeight;
+  showLatest();
 }
 // Solo session: render its live transcript (user + assistant turns) as bubbles,
 // fetched once per completed turn (see the activity-driven trigger in refresh).
@@ -2015,6 +2029,9 @@ window.addEventListener('message', (e) => {
   const d = e.data || {};
   if (d.ensemble === 'toggleTerms') $('#terms').click();
   else if (d.ensemble === 'pause') { const pb = $('#pause'); if (pb && pb.onclick) pb.onclick(); }
+  // The dashboard opened this chat's panel again: a closed task panel only
+  // slides off screen, so its size never says so. Open at the latest message.
+  else if (d.ensemble === 'shown' && e.source === window.parent) toLatest();
 });
 
 // ---- Rich session actions (parity with the dashboard's docked toolbar) -------

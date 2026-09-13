@@ -5,9 +5,11 @@ The folding logic runs in Node, taken from the page, and these check that:
 * the latest exchange is drawn in full: at least the last 10 balloons, and back
   to the person's own last message when that is within 25;
 * rotation lines are landmarks, never folded and never counted;
-* scrolled up, the fold does not move when messages arrive, so the balloon
-  being read never folds under the reader; at the end it moves down;
+* scrolled up, no full balloon folds, whether messages arrive, a long
+  transcript's window slides or a comment goes; at the end the fold moves down;
 * a balloon the reader opened, or one holding a comment's passage, stays open;
+* sending while scrolled up leaves the view where it is;
+* reopening a task panel takes its chat to the latest message;
 * a folded row's first line is plain text;
 * patching the chat keeps every element that did not change, even when it
   moved, so links and selections survive a poll.
@@ -40,7 +42,7 @@ def fold_block(src: str) -> str:
 
 JS = r"""
 const vm = require('vm');
-const { code } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+const { code, showPending } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 class Node {
   constructor(h) { this._html = h; this.parent = null; }
   get nextElementSibling() { const k = this.parent.kids; return k[k.indexOf(this) + 1] || null; }
@@ -73,21 +75,46 @@ out.short = foldStart(msgs(5));
 out.empty = foldStart([]);
 const withLine = msgs(30); withLine.splice(25, 0, { id: 'rot1', divider: { n: 1 } });
 out.landmark = foldStart(withLine);
-out.landmarkPlan = foldPlan(withLine, { key: null, open: new Set() }, true, null);
+out.landmarkPlan = foldPlan(withLine, { base: null, open: new Set() }, true, null);
 
-const fold = { key: null, open: new Set() };
+const fold = { base: null, open: new Set() };
 const count = p => p.filter(x => x === 'full').length;
-out.first = count(foldPlan(msgs(30), fold, true, null));
-out.firstKey = fold.key;
-out.scrolledUp = count(foldPlan(msgs(35), fold, false, null));
-out.scrolledUpKey = fold.key;
-out.atEnd = count(foldPlan(msgs(35), fold, true, null));
-out.atEndKey = fold.key;
-// The first full balloon left a sliding window: the fold is worked out again.
-out.slid = count(foldPlan(msgs(60).slice(40), { key: 'm5', open: new Set() }, false, null));
+const firstFull = p => p.indexOf('full');
+let p = foldPlan(msgs(30), fold, true, null);
+out.first = [count(p), firstFull(p)];
+p = foldPlan(msgs(35), fold, false, null);
+out.scrolledUp = [count(p), firstFull(p)];
+p = foldPlan(msgs(35), fold, true, null);
+out.atEnd = [count(p), firstFull(p)];
+// A long transcript's window slid while scrolled up: the first full balloon
+// (m20) left it, and the full ones that are still there stay full.
+const slide = { base: null, open: new Set() };
+foldPlan(msgs(30), slide, true, null);
+p = foldPlan(msgs(150).slice(25), slide, false, null);
+out.slid = [p.slice(0, 5), count(p)];
+// Nothing drawn before is still there: worked out again.
+out.replaced = count(foldPlan(msgs(300).slice(200), slide, false, null));
 fold.open.add('m3');
 const opened = foldPlan(msgs(35), fold, true, m => m.id === 'm7');
 out.opened = [opened[3], opened[7], opened[8]];
+// The comment on m7 went while scrolled up: m7 stays open until the end.
+out.heldGoneUp = foldPlan(msgs(35), fold, false, null)[7];
+out.heldGoneEnd = foldPlan(msgs(35), fold, true, null)[7];
+// Fold pressed on an opened balloon while scrolled up: it folds.
+fold.open.delete('m3');
+out.foldedAgain = foldPlan(msgs(35), fold, false, null)[3];
+
+// Sending while scrolled up adds the echo below and leaves the view where it is.
+const sent = {};
+for (const stick of [false, true]) {
+  const pbox = { html: '', scrollTop: 400, scrollHeight: 5000, insertAdjacentHTML(w, h) { this.html += h; this.scrollHeight += 100; } };
+  let shown = 0;
+  const sctx = { $: () => pbox, identLabel: x => x, mdToHtml: x => x, showLatest: () => { shown++; }, Date };
+  vm.createContext(sctx);
+  vm.runInContext(`var PENDING_USER = [], STICK = ${stick};\n` + showPending + `\nshowPendingUser('hello');`, sctx);
+  sent[stick ? 'atEnd' : 'up'] = { top: pbox.scrollTop, echoed: pbox.html.includes('hello'), latest: shown };
+}
+out.sent = sent;
 
 out.lines = [
   foldLine('## Review 3\n\nAll good'),
@@ -121,7 +148,8 @@ class FoldALongConversation(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         code = fold_block(SRC) + js_function(SRC, "patchChildren")
-        out = subprocess.run([NODE, "-e", JS], input=json.dumps({"code": code}), capture_output=True,
+        payload = {"code": code, "showPending": js_function(SRC, "showPendingUser")}
+        out = subprocess.run([NODE, "-e", JS], input=json.dumps(payload), capture_output=True,
                              text=True, encoding="utf-8", timeout=60)
         if out.returncode != 0:
             raise AssertionError(out.stderr)
@@ -145,14 +173,26 @@ class FoldALongConversation(unittest.TestCase):
         self.assertEqual(plan.count("row"), 20)
 
     def test_the_fold_stays_while_scrolled_up(self):
-        self.assertEqual((self.r["first"], self.r["firstKey"]), (10, "m20"))
-        self.assertEqual((self.r["scrolledUp"], self.r["scrolledUpKey"]), (15, "m20"),
-                         "a balloon folded while the reader was scrolled up")
-        self.assertEqual((self.r["atEnd"], self.r["atEndKey"]), (10, "m25"))
-        self.assertEqual(self.r["slid"], 10)
+        self.assertEqual(self.r["first"], [10, 20])
+        self.assertEqual(self.r["scrolledUp"], [15, 20], "a balloon folded while the reader was scrolled up")
+        self.assertEqual(self.r["atEnd"], [10, 25])
+
+    def test_a_sliding_window_folds_nothing_under_the_reader(self):
+        survivors, full = self.r["slid"]
+        self.assertEqual(survivors, ["full"] * 5, "a full balloon still in the window was folded")
+        self.assertEqual(full, 125, "what arrived after the known balloons is drawn in full")
+        self.assertEqual(self.r["replaced"], 10, "a wholly new list is folded afresh")
 
     def test_opened_and_commented_balloons_stay_open(self):
         self.assertEqual(self.r["opened"], ["full", "full", "row"])
+        self.assertEqual(self.r["heldGoneUp"], "full", "a commented balloon folded under the reader")
+        self.assertEqual(self.r["heldGoneEnd"], "row")
+        self.assertEqual(self.r["foldedAgain"], "row", "Fold did not fold while scrolled up")
+
+    def test_sending_while_scrolled_up_keeps_the_place(self):
+        up, end = self.r["sent"]["up"], self.r["sent"]["atEnd"]
+        self.assertEqual(up, {"top": 400, "echoed": True, "latest": 1})
+        self.assertEqual(end, {"top": 5100, "echoed": True, "latest": 1})
 
     def test_first_line_is_plain_text(self):
         lines = self.r["lines"]
@@ -182,6 +222,11 @@ class ThePageUsesIt(unittest.TestCase):
         self.assertIn("MD_CACHE.get(", render)
         self.assertIn('id="to-latest"', SRC)
         self.assertRegex(SRC, r"#msgs \{[^}]*overflow-anchor:none")
+
+    def test_reopening_a_task_panel_goes_to_the_latest(self):
+        index = (ROOT / "index.html").read_text(encoding="utf-8").replace("\r\n", "\n")
+        self.assertIn("ensemble: 'shown'", js_function(index, "openDetail"))
+        self.assertRegex(SRC, r"d\.ensemble === 'shown' && e\.source === window\.parent\) toLatest\(\)")
 
 
 if __name__ == "__main__":
