@@ -1954,12 +1954,10 @@
   .dp-tab.on { color: var(--fg); border-bottom-color: var(--accent); }
   /* All five tabs stay in view down to the narrowest panel (a 360px phone, or
      the desktop panel dragged to its 360px minimum): the tabs close up rather
-     than a tab running off the edge. Measured on the strip itself, since the
-     panel's width is set by dragging, not by the window. */
-  .dp-tabs { container: dptabs / inline-size; }
-  @container dptabs (max-width: 356px) { .dp-tab { padding-inline: var(--s-200); } .dp-tabs { gap: 0; } }
-  @container dptabs (max-width: 308px) { .dp-tab { padding-inline: var(--s-100); } }
-  @container dptabs (max-width: 268px) { .dp-tab { padding-inline: var(--s-050); } }
+     than a tab running off the edge. fitTabs() sets the side padding from the
+     strip's measured width: 12px when there is room, shrinking smoothly to 2px,
+     so no panel width leaves a tab past the strip. */
+  .dp-tab { padding-inline: var(--dp-tab-pad, 12px); white-space: nowrap; }
   .dp-tabbody { flex: 1; overflow-y: auto; }
   /* An absence always names its cause — never a blank panel, and never
      --fg-disabled, which clears no threshold on a sunken surface. */
@@ -4054,8 +4052,28 @@ function renderDetail() {
 // pane and its file list stays in reach instead of the panel running on for
 // the length of the diff.
 let DP_FIT_RO = null;
+// The widest side padding (12px down to 2px) at which all five tabs fit the
+// strip, from the labels' measured text, so it holds for any font and for the
+// phone's 44px minimum tab width.
+function fitTabs(panel) {
+  const strip = panel.querySelector('.dp-tabs');
+  const avail = strip ? strip.getBoundingClientRect().width : 0;
+  if (!avail) return;
+  const tabs = [...strip.querySelectorAll('.dp-tab')];
+  const range = document.createRange();
+  const sizes = tabs.map(b => {
+    range.selectNodeContents(b);
+    return [range.getBoundingClientRect().width, parseFloat(getComputedStyle(b).minWidth) || 0];
+  });
+  const gaps = (parseFloat(getComputedStyle(strip).columnGap) || 0) * (tabs.length - 1);
+  let pad = 12;
+  while (pad > 2 && gaps + sizes.reduce((s, [t, m]) => s + Math.max(m, t + 2 * pad), 0) > avail) pad -= 0.5;
+  const v = pad + 'px';
+  if (strip.style.getPropertyValue('--dp-tab-pad') !== v) strip.style.setProperty('--dp-tab-pad', v);
+}
 function fitLiveChat() {
   const panel = $('#detail-panel'); if (!panel) return;
+  fitTabs(panel);
   const pane = panel.querySelector('.dp-pane:not([hidden])');
   if (!pane) return;
   const fits = pane.dataset.pane === 'changes' || (pane.dataset.pane === 'activity' && panel.classList.contains('is-live'));
