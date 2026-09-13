@@ -1247,7 +1247,9 @@ function mountTerm(el, ptyId) {
 // click. A rotation line is a landmark and always shows.
 const FOLD_MIN = 10, FOLD_MAX = 25;
 const isLandmark = m => !!(m.divider || (m.kind === 'notice' && m.rotation));
-const foldKey = (m, i) => m.id || ('#' + i);
+// A solo turn's id is its place in the window shown (s12), which another
+// session reuses for other text: its key (fk) names its session too.
+const foldKey = (m, i) => m.fk || m.id || ('#' + i);
 function foldStart(items) {
   let seen = 0, start = items.length, userSeen = false;
   for (let i = items.length - 1; i >= 0; i--) {
@@ -1278,7 +1280,7 @@ function foldPlan(items, fold, stick, held) {
     if (isLandmark(m)) return 'line';
     const k = foldKey(m, i);
     let b = prev ? (prev.get(k) || (i > last ? 'full' : 'row')) : (i >= start ? 'full' : 'row');
-    if (b === 'row' && held && held(m)) b = 'full';
+    if (b === 'row' && held && held(m, i)) b = 'full';
     base.set(k, b);
     return (b === 'full' || fold.open.has(k)) ? 'full' : 'row';
   });
@@ -1296,6 +1298,22 @@ function foldLine(text) {
 }
 // Loose text for finding a comment's quote in a balloon's markdown.
 const foldNorm = s => String(s || '').replace(/[*_`#>|~\\[\]]/g, '').replace(/\s+/g, ' ').trim();
+// The one balloon each comment's passage is in, as the highlight finds it: the
+// message it was made on while that still holds the quote, else the first of
+// the same author's that does, else the first that does. Their keys.
+function foldHeld(items, comments) {
+  const keys = new Set(), norm = new Map();
+  const has = (i, q) => { let t = norm.get(i); if (t == null) norm.set(i, t = foldNorm(items[i].text)); return t.includes(q); };
+  const ok = items.map((m, i) => i).filter(i => !isLandmark(items[i]));
+  for (const c of comments || []) {
+    const q = foldNorm(c.quote); if (!q) continue;
+    const at = ok.find(i => c.mid && items[i].id === c.mid && has(i, q))
+      ?? ok.find(i => items[i].from === c.from && has(i, q))
+      ?? ok.find(i => has(i, q));
+    if (at != null) keys.add(foldKey(items[at], at));
+  }
+  return keys;
+}
 // ---- Folding a long conversation: end
 let FOLD = { base: null, open: new Set() };
 let STICK = true;          // at the end of the chat: new messages keep it there
@@ -1330,8 +1348,8 @@ function renderBubbles(items, opt = {}) {
   const place = stick ? null : readingPlace(box, opt.anchor);
   items = withTaskBubble(items, ROOM_OBJ && ROOM_OBJ.spec, 'from');
   // A balloon holding a comment's passage stays open, so its highlight shows.
-  const quotes = COMMENTS.map(c => foldNorm(c.quote)).filter(Boolean);
-  const held = quotes.length ? m => { const t = foldNorm(m.text); return quotes.some(q => t.includes(q)); } : null;
+  const heldKeys = foldHeld(items, COMMENTS);
+  const held = heldKeys.size ? (m, i) => heldKeys.has(foldKey(m, i)) : null;
   const plan = foldPlan(items, FOLD, stick, held);
   // A balloon's markdown is drawn once and reused while its text, and what its
   // links depend on, stay the same: every poll used to redraw every balloon.
@@ -1483,12 +1501,24 @@ function rotationText(r) {
     + `(limit ${k(r.threshold)}), so a fresh session took over from PO-HANDOVER.md and ROADMAP.md. `
     + `Earlier conversation above.`;
 }
+// A solo transcript's latest turns as balloons, without consecutive identical
+// turns (the transcript sometimes double-records). id is the place in what is
+// shown (s<n> counted in the session, p<n> in the window: comments keep it);
+// fk is the place in the session with the session's id, so a session's turn
+// keeps its key when it moves above a rotation line, and no other session's
+// turn ever has it.
+function soloItems(raw, sid, agentId, keep, prefix) {
+  const turns = raw.filter((t, i) => i === 0 || t.role !== raw[i - 1].role || t.text !== raw[i - 1].text);
+  const off = Math.max(0, turns.length - keep);
+  return turns.slice(off).map((t, i) => ({
+    id: prefix + (prefix === 'p' ? i : off + i), fk: sid + ':' + (off + i),
+    from: (t.role === 'user') ? 'user' : agentId, to: '', text: t.text,
+  }));
+}
 async function prevSessionItems(sid, agentId) {
   if (SOLO_PREV.sid === sid) return SOLO_PREV.items;
   const d = await fetch('/api/session/' + encodeURIComponent(sid) + '?full=1').then(r => r.json());
-  const turns = (d.turns || []).slice(-PREV_TURNS_SHOWN);
-  SOLO_PREV = { sid, items: turns.map((t, i) => ({
-    id: 'p' + i, from: (t.role === 'user') ? 'user' : agentId, to: '', text: t.text })) };
+  SOLO_PREV = { sid, items: soloItems(d.turns || [], sid, agentId, PREV_TURNS_SHOWN, 'p') };
   return SOLO_PREV.items;
 }
 // Poll a cheap size+mtime signal; re-render the transcript only when it actually
@@ -1519,13 +1549,7 @@ async function renderSolo(sid, agentId, force) {
     const raw = d.turns || [];
     if (!force && raw.length === SOLO_TURN_COUNT) return;   // nothing new
     SOLO_TURN_COUNT = raw.length;
-    // Drop consecutive identical turns (the transcript sometimes double-records).
-    const turns = raw.filter((t, i) => i === 0 || t.role !== raw[i - 1].role || t.text !== raw[i - 1].text);
-    let items = turns.slice(-120).map((t, i) => ({
-      id: 's' + (turns.length - Math.min(120, turns.length) + i),
-      from: (t.role === 'user') ? 'user' : agentId,
-      to: '', text: t.text,
-    }));
+    let items = soloItems(raw, sid, agentId, 120, 's');
     // A PO rotated into this session: the end of the one before, then the line.
     const rot = SOLO_ROT && SOLO_ROT.toSessionId === sid ? SOLO_ROT : null;
     if (rot && rot.fromSessionId) {
@@ -2370,14 +2394,22 @@ $('#to-latest').addEventListener('click', toLatest);
 // Where the reader is: at the end the chat follows new messages; scrolled up it
 // stays put and "Latest ↓" offers the way back. A hidden frame scrolls to 0 and
 // says nothing about the reader, so it is not counted.
-$('#msgs').addEventListener('scroll', () => {
+// Coming back to the end draws the chat again once, so what stayed open while
+// the reader was up folds as it would at the end (a quiet solo chat has no
+// poll that would); the end stays where it is.
+function msgsScrolled() {
   const box = $('#msgs');
   if (!box.clientHeight) return;
   const at = nearEnd(box);
-  if (at && !STICK) { SEEN = new Set([...box.children].map(k => k.dataset.key).filter(Boolean)); NEW_N = 0; }
+  if (at && !STICK) {
+    STICK = true;
+    if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
+    SEEN = new Set([...box.children].map(k => k.dataset.key).filter(Boolean)); NEW_N = 0;
+  }
   STICK = at;
   showLatest();
-}, { passive: true });
+}
+$('#msgs').addEventListener('scroll', msgsScrolled, { passive: true });
 // A conversation opens at its end, also when its frame is shown again (the
 // PO's drawer closed and opened, another project's PO and back): a hidden frame
 // measures 0 high, so coming back from 0 is opening it. At the end, a change of

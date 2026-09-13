@@ -7,7 +7,9 @@ The folding logic runs in Node, taken from the page, and these check that:
 * rotation lines are landmarks, never folded and never counted;
 * scrolled up, no full balloon folds, whether messages arrive, a long
   transcript's window slides or a comment goes; at the end the fold moves down;
-* a balloon the reader opened, or one holding a comment's passage, stays open;
+* a balloon the reader opened, or the one balloon holding a comment's passage,
+  stays open; scrolling back to the end folds again;
+* another solo session's turns are other balloons, even at the same place;
 * sending while scrolled up leaves the view where it is;
 * reopening a task panel takes its chat to the latest message;
 * a folded row's first line is plain text;
@@ -42,7 +44,7 @@ def fold_block(src: str) -> str:
 
 JS = r"""
 const vm = require('vm');
-const { code, showPending } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+const { code, showPending, scrolled } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 class Node {
   constructor(h) { this._html = h; this.parent = null; }
   get nextElementSibling() { const k = this.parent.kids; return k[k.indexOf(this) + 1] || null; }
@@ -63,8 +65,8 @@ const box = new Box();
 const ctx = { document: { createElement: () => ({ set innerHTML(h) { box.created++; this.content = { firstElementChild: new Node(h) }; } }) } };
 vm.createContext(ctx);
 vm.runInContext(code + `
-  globalThis.t = { foldStart, foldPlan, foldLine, patchChildren };`, ctx);
-const { foldStart, foldPlan, foldLine, patchChildren } = ctx.t;
+  globalThis.t = { foldStart, foldPlan, foldLine, foldHeld, foldKey, soloItems, patchChildren };`, ctx);
+const { foldStart, foldPlan, foldLine, foldHeld, foldKey, soloItems, patchChildren } = ctx.t;
 const msgs = (n, users = []) => Array.from({ length: n }, (_, i) => ({ id: 'm' + i, from: users.includes(i) ? 'user' : 'claude', text: 't' + i }));
 const out = {};
 out.noUser = foldStart(msgs(30));
@@ -103,6 +105,42 @@ out.heldGoneEnd = foldPlan(msgs(35), fold, true, null)[7];
 // Fold pressed on an opened balloon while scrolled up: it folds.
 fold.open.delete('m3');
 out.foldedAgain = foldPlan(msgs(35), fold, false, null)[3];
+
+// Solo turns: another session's s<n> is another balloon.
+const turns = (n, tag) => Array.from({ length: n }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', text: tag + i }));
+const sw = { base: null, open: new Set() };
+foldPlan(soloItems(turns(20, 'A'), 'A', 'po', 120, 's'), sw, true, null);
+out.switched = count(foldPlan(soloItems(turns(120, 'B'), 'B', 'po', 120, 's'), sw, false, null));
+const sw1 = { base: null, open: new Set() };
+foldPlan(soloItems(turns(40, 'A'), 'A', 'po', 120, 's'), sw1, true, null);
+out.switchedToOne = foldPlan(soloItems(turns(1, 'C'), 'C', 'po', 120, 's'), sw1, false, null);
+// A second rotation: p3 is B's now, and A's opened p3 does not open it; B's
+// turns keep their keys when they move above the line.
+const rotA = soloItems(turns(80, 'A'), 'A', 'po', 60, 'p'), curB = soloItems(turns(30, 'B'), 'B', 'po', 120, 's');
+const rot = { base: null, open: new Set([foldKey(rotA[3], 3)]) };
+const line = n => ({ id: 'rot' + n, divider: { n } });
+foldPlan(rotA.concat([line(1)], curB), rot, true, null);
+const prevB = soloItems(turns(30, 'B'), 'B', 'po', 60, 'p'), curC = soloItems(turns(4, 'C'), 'C', 'po', 120, 's');
+const second = foldPlan(prevB.concat([line(2)], curC), rot, true, null);
+out.secondRotation = { p3: second[3], sameId: prevB[3].id === rotA[3].id, keysKept: prevB.every((m, i) => m.fk === curB[i].fk) };
+// A comment on a common word holds one balloon, not every one holding it.
+const common = Array.from({ length: 30 }, (_, i) => ({ id: 'm' + i, from: i % 3 ? 'claude' : 'codex', text: 'the note ' + i }));
+out.heldOne = [...foldHeld(common, [{ mid: 'm5', from: 'claude', quote: 'the' }])];
+out.heldMoved = [...foldHeld(common, [{ mid: 'm999', from: 'codex', quote: 'the' }])];
+out.heldNobody = [...foldHeld(common, [{ mid: '', from: 'ghost', quote: 'note 7' }])];
+out.heldNone = [...foldHeld(common, [{ mid: 'm1', from: 'claude', quote: 'absent' }, { quote: '' }])];
+
+// Scrolling back to the end draws the chat again, once.
+{
+  const sbox = { clientHeight: 500, scrollTop: 0, scrollHeight: 5000, children: [] };
+  let renders = 0;
+  const sctx = { $: () => sbox, renderBubbles: () => { renders++; }, showLatest: () => {} };
+  vm.createContext(sctx);
+  vm.runInContext(`var STICK = false, LAST_ITEMS = [1], SEEN = null, NEW_N = 3;
+    const nearEnd = box => box.scrollTop + box.clientHeight >= box.scrollHeight - 50;\n` + scrolled, sctx);
+  const step = top => { sbox.scrollTop = top; vm.runInContext('msgsScrolled()', sctx); return [renders, vm.runInContext('STICK', sctx)]; };
+  out.scrolled = [step(1000), step(4500), step(4500), step(1000), step(4490)];
+}
 
 // Sending while scrolled up adds the echo below and leaves the view where it is.
 const sent = {};
@@ -147,8 +185,9 @@ console.log(JSON.stringify(out));
 class FoldALongConversation(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        code = fold_block(SRC) + js_function(SRC, "patchChildren")
-        payload = {"code": code, "showPending": js_function(SRC, "showPendingUser")}
+        code = fold_block(SRC) + js_function(SRC, "soloItems") + js_function(SRC, "patchChildren")
+        payload = {"code": code, "showPending": js_function(SRC, "showPendingUser"),
+                   "scrolled": js_function(SRC, "msgsScrolled")}
         out = subprocess.run([NODE, "-e", JS], input=json.dumps(payload), capture_output=True,
                              text=True, encoding="utf-8", timeout=60)
         if out.returncode != 0:
@@ -188,6 +227,24 @@ class FoldALongConversation(unittest.TestCase):
         self.assertEqual(self.r["heldGoneUp"], "full", "a commented balloon folded under the reader")
         self.assertEqual(self.r["heldGoneEnd"], "row")
         self.assertEqual(self.r["foldedAgain"], "row", "Fold did not fold while scrolled up")
+
+    def test_another_session_is_other_balloons(self):
+        self.assertEqual(self.r["switched"], 10, "a new session's turns took the old session's fold")
+        self.assertEqual(self.r["switchedToOne"], ["full"], "a new session's only turn was folded")
+        s = self.r["secondRotation"]
+        self.assertTrue(s["sameId"], "the test needs p3 to be reused")
+        self.assertEqual(s["p3"], "row", "a balloon opened in one session opened another's")
+        self.assertTrue(s["keysKept"], "a session's turns changed key when they moved above the rotation line")
+
+    def test_a_comment_holds_one_balloon(self):
+        self.assertEqual(self.r["heldOne"], ["m5"])
+        self.assertEqual(self.r["heldMoved"], ["m0"], "not the same author's first")
+        self.assertEqual(self.r["heldNobody"], ["m7"])
+        self.assertEqual(self.r["heldNone"], [])
+
+    def test_scrolling_back_to_the_end_folds_again(self):
+        # up, to the end (draws), still at the end, up, back to the end (draws)
+        self.assertEqual(self.r["scrolled"], [[0, False], [1, True], [1, True], [1, False], [2, True]])
 
     def test_sending_while_scrolled_up_keeps_the_place(self):
         up, end = self.r["sent"]["up"], self.r["sent"]["atEnd"]
