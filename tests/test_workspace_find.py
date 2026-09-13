@@ -17,6 +17,7 @@ searches the text of the Workspace's files:
 from __future__ import annotations
 
 import contextlib
+import io
 import json
 import os
 import re
@@ -437,6 +438,24 @@ class Endpoints(unittest.TestCase):
         self.assertEqual(dashboard._WS_SEARCHES["gone:page"], (2, None))
         self.assertEqual(dashboard.ws_search(str(self.root), "needle", tag="gone:page", seq=3)[0], 200)
 
+    def test_a_cancel_is_remembered_when_the_registry_is_full(self):
+        saved = dict(dashboard._WS_SEARCHES)
+        keep = dashboard._WS_SEARCHES_KEEP
+        try:
+            dashboard._WS_SEARCHES.clear()
+            for i in range(keep):
+                dashboard._WS_SEARCHES[f"old{i}:page"] = (1, None)
+            self.assertEqual(dashboard.ws_search_cancel("victim:page", 2), (200, {"stopped": False}))
+            self.assertEqual(dashboard._WS_SEARCHES.get("victim:page"), (2, None), "the cancel just written is kept")
+            self.assertEqual(len(dashboard._WS_SEARCHES), keep)
+            self.assertNotIn("old0:page", dashboard._WS_SEARCHES, "the box heard from longest ago goes first")
+            self.assertIn("old1:page", dashboard._WS_SEARCHES, "and only as many as needed")
+            self.assertIsNone(dashboard._ws_search_start("victim:page", 1, [sys.executable, "-c", "pass"]),
+                              "a search asked for before the cancel still never starts")
+        finally:
+            dashboard._WS_SEARCHES.clear()
+            dashboard._WS_SEARCHES.update(saved)
+
     def test_what_a_search_started_ends_with_it(self):
         # A stand-in for a search stopped during its `git ls-files`: it starts a
         # process of its own, says its pid, and is then replaced by a newer search.
@@ -560,6 +579,36 @@ class Swaps(unittest.TestCase):
         self.assertEqual(res["filesListed"], 1, "nothing listed from the folder it now leads to")
         self.assertEqual(self.found(res), {("keep.txt", "needle inside")})
 
+    @unittest.skipUnless(os.name == "nt", "a Windows folder is listed by the path its handle reports")
+    def test_a_junction_repointed_after_its_target_was_checked(self):
+        inner, sub = self.root / "inner", self.root / "sub"
+        inner.mkdir()
+        (inner / "inside.txt").write_text("in\n", encoding="utf-8")
+        real_scan, real_final = workspace_search._scan, workspace_search._handle_final
+        step = [0]
+
+        def scan(d, real_root):
+            if os.path.basename(d) == "sub" and step[0] == 0:
+                shutil.rmtree(sub)                       # queued as a folder, now a junction to a folder inside
+                if not _junction(sub, inner):
+                    self.skipTest("this machine cannot make a junction")
+                self.links.append(sub)
+                step[0] = 1
+            return real_scan(d, real_root)
+
+        def final(h):
+            p = real_final(h)
+            if step[0] == 1 and p.lower().endswith("\\inner"):
+                os.rmdir(sub)                            # the junction only: approved, then pointed outside
+                self.assertTrue(_junction(sub, self.outside))
+                step[0] = 2
+            return p
+        with mock.patch.object(workspace_search, "_scan", scan), mock.patch.object(workspace_search, "_handle_final", final):
+            files, _ = workspace_search.list_files(str(self.root))
+        self.assertEqual(step[0], 2, "both swaps happened")
+        self.assertEqual(set(files), {"inner/inside.txt", "keep.txt", "sub/inside.txt"},
+                         "the folder that was checked is the one listed")
+
     def test_a_parent_folder_swapped_between_listing_and_reading(self):
         real_list = workspace_search.list_files
 
@@ -591,6 +640,40 @@ class Swaps(unittest.TestCase):
         res = workspace_search.search(str(self.root), "needle")
         self.assertEqual(self.found(res), {("keep.txt", "needle inside")})
         self.assertEqual(res["skipped"]["binary"], 1)
+
+
+class Job(unittest.TestCase):
+    """A search's git calls end with it, or the search does not run."""
+
+    @unittest.skipUnless(os.name == "nt", "the job is how Windows does it")
+    def test_a_job_that_cannot_be_made_or_joined_is_an_error(self):
+        for fails in ("CreateJobObjectW", "SetInformationJobObject", "AssignProcessToJobObject"):
+            k = mock.MagicMock()
+            k.CreateJobObjectW.return_value = 1234
+            k.SetInformationJobObject.return_value = 1
+            k.AssignProcessToJobObject.return_value = 1
+            getattr(k, fails).return_value = 0
+            with self.subTest(fails), mock.patch.object(workspace_search, "_k32", k), \
+                    mock.patch.object(workspace_search, "_JOB", None):
+                with self.assertRaises(OSError):
+                    workspace_search._children_die_with_me()
+                self.assertIsNone(workspace_search._JOB)
+                if fails != "CreateJobObjectW":
+                    k.CloseHandle.assert_called_once_with(1234)
+
+    def test_the_search_does_not_run_without_it(self):
+        stdin = io.TextIOWrapper(io.BytesIO(json.dumps({"root": str(ROOT), "q": "x"}).encode("utf-8")))
+        stdout = io.TextIOWrapper(io.BytesIO())
+        with mock.patch.object(workspace_search, "_children_die_with_me", side_effect=OSError("no job")), \
+                mock.patch.object(workspace_search, "search") as search, \
+                mock.patch.object(sys, "stdin", stdin), mock.patch.object(sys, "stdout", stdout):
+            code = workspace_search.main()
+        search.assert_not_called()
+        self.assertEqual(code, 1)
+        out = json.loads(stdout.buffer.getvalue().decode("utf-8"))
+        self.assertEqual(out["error"], "search_failed")
+        self.assertIn("no job", out["detail"])
+        self.assertIn('(500 if res["error"] == "search_failed" else 400)', DASHBOARD, "the hub passes it on as a failure")
 
 
 def _fn(src: str, head: str) -> str:

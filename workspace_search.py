@@ -67,32 +67,39 @@ if os.name == "nt":
     _k32.CloseHandle.argtypes = [wintypes.HANDLE]
     _INVALID_HANDLE = wintypes.HANDLE(-1).value
 
-    def _handle_real(h) -> str:
+    def _handle_final(h) -> str:
+        """Where what ``h`` opened really is, every link resolved, as Windows
+        writes it: ``\\\\?\\C:\\...`` or ``\\\\?\\UNC\\server\\...``."""
         buf = ctypes.create_unicode_buffer(32768)
         n = _k32.GetFinalPathNameByHandleW(h, buf, len(buf), 0)
         if not n or n >= len(buf):
             raise ctypes.WinError(ctypes.get_last_error())
-        p = buf.value
-        if p.startswith("\\\\?\\UNC\\"):
-            p = "\\\\" + p[8:]
-        elif p.startswith("\\\\?\\"):
-            p = p[4:]
-        return os.path.normcase(p)
+        return buf.value
+
+    def _plain(final: str) -> str:
+        if final.startswith("\\\\?\\UNC\\"):
+            final = "\\\\" + final[8:]
+        elif final.startswith("\\\\?\\"):
+            final = final[4:]
+        return os.path.normcase(final)
 
     def _fd_real(fd: int) -> str:
-        return _handle_real(msvcrt.get_osfhandle(fd))
+        return _plain(_handle_final(msvcrt.get_osfhandle(fd)))
 
     def _scan(d: str, real_root: str) -> list[os.DirEntry] | None:
         # Held open without FILE_SHARE_DELETE while it is listed: Windows then
-        # refuses to rename or remove it, or any folder above it, so no link
-        # can be swapped in between the check and the listing.
+        # refuses to rename or remove it, or any folder above it. And listed by
+        # where it really is, not by its name: a name that is a junction can be
+        # pointed elsewhere once its target has been checked, but the target,
+        # held, stays where it was checked.
         h = _k32.CreateFileW(d, 0x80000000, 0x1 | 0x2, None, 3, 0x02000000, None)  # GENERIC_READ, share read+write, OPEN_EXISTING, BACKUP_SEMANTICS
         if h == _INVALID_HANDLE:
             return None
         try:
-            if not _inside(_handle_real(h), real_root):
+            final = _handle_final(h)
+            if not _inside(_plain(final), real_root):
                 return None
-            with os.scandir(d) as it:
+            with os.scandir(final) as it:
                 return sorted(it, key=lambda e: e.name)
         except OSError:
             return None
@@ -117,7 +124,7 @@ if os.name == "nt":
         """Every process this one starts ends when it ends, however it ends:
         a search killed during its ``git ls-files`` leaves no git running. It
         joins a job that kills what is in it once the job's last handle, held
-        only here, is closed by this process ending."""
+        only here, is closed by this process ending. ``OSError`` when it cannot."""
         global _JOB
         _k32.CreateJobObjectW.restype = wintypes.HANDLE
         _k32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
@@ -126,14 +133,15 @@ if os.name == "nt":
         _k32.GetCurrentProcess.restype = wintypes.HANDLE
         job = _k32.CreateJobObjectW(None, None)
         if not job:
-            return
+            raise ctypes.WinError(ctypes.get_last_error())
         info = _ExtendedLimits()
         info.BasicLimitInformation.LimitFlags = 0x2000          # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-        if (_k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info))   # ExtendedLimitInformation
+        if not (_k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info))   # ExtendedLimitInformation
                 and _k32.AssignProcessToJobObject(job, _k32.GetCurrentProcess())):
-            _JOB = job
-        else:
+            err = ctypes.WinError(ctypes.get_last_error())
             _k32.CloseHandle(job)
+            raise err
+        _JOB = job
 else:
     def _fd_real(fd: int) -> str:
         if sys.platform == "darwin":
@@ -334,11 +342,19 @@ def search(root: str, q: str, case: bool = False, regex: bool = False, enclosing
             "ms": round((time.monotonic() - t0) * 1000)}
 
 
+def _answer(res: dict) -> None:
+    sys.stdout.buffer.write(json.dumps(res).encode("utf-8"))
+    sys.stdout.buffer.flush()
+
+
 def main() -> int:
     try:
         _children_die_with_me()
-    except OSError:
-        pass
+    except OSError as e:
+        # Searching anyway would leave git running whenever a search is
+        # stopped during its git call: say so instead.
+        _answer({"error": "search_failed", "detail": f"could not make the search's git calls end with it: {e}"})
+        return 1
     req = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     try:
         res = search(req["root"], req["q"], bool(req.get("case")), bool(req.get("regex")),
@@ -346,8 +362,7 @@ def main() -> int:
                      float(req.get("deadline", DEADLINE_S)))
     except re.error as e:
         res = {"error": "bad_regex", "detail": str(e)}
-    sys.stdout.buffer.write(json.dumps(res).encode("utf-8"))
-    sys.stdout.buffer.flush()
+    _answer(res)
     return 0
 
 

@@ -2311,16 +2311,20 @@ def _ws_search_start(tag: str, seq: int, argv: list[str]) -> subprocess.Popen | 
         if cur is not None and cur[0] > seq:
             return None
         proc = spawn()
-        _WS_SEARCHES[tag] = (seq, proc)
-        _ws_searches_prune()
+        _ws_searches_put(tag, seq, proc)
     _ws_stop(cur[1] if cur else None)
     return proc
 
 
-def _ws_searches_prune() -> None:
-    """Under the lock: past the limit, forget the tags with nothing running."""
-    if len(_WS_SEARCHES) > _WS_SEARCHES_KEEP:
-        for k in [k for k, (_, p) in _WS_SEARCHES.items() if p is None]:
+def _ws_searches_put(tag: str, seq: int, proc: subprocess.Popen | None) -> None:
+    """Under the lock: record a box's latest count, as its most recent entry.
+    Past the limit the boxes heard from longest ago, with nothing running,
+    are forgotten; never the one just recorded."""
+    _WS_SEARCHES.pop(tag, None)
+    _WS_SEARCHES[tag] = (seq, proc)
+    over = len(_WS_SEARCHES) - _WS_SEARCHES_KEEP
+    if over > 0:
+        for k in [k for k, (_, p) in _WS_SEARCHES.items() if p is None and k != tag][:over]:
             del _WS_SEARCHES[k]
 
 
@@ -2354,8 +2358,7 @@ def ws_search_cancel(tag: str, seq: int) -> tuple[int, dict]:
         cur = _WS_SEARCHES.get(tag)
         if cur is not None and cur[0] > seq:
             return 200, {"stopped": False}
-        _WS_SEARCHES[tag] = (seq, None)
-        _ws_searches_prune()
+        _ws_searches_put(tag, seq, None)
     return 200, {"stopped": _ws_stop(cur[1] if cur else None)}
 
 
@@ -2405,7 +2408,7 @@ def ws_search(root: str, q: str, case: bool = False, regex: bool = False, tag: s
     except (ValueError, UnicodeDecodeError):
         return 500, {"error": "search_failed", "detail": err.decode("utf-8", errors="replace")[-400:]}
     if res.get("error"):
-        return 400, res
+        return (500 if res["error"] == "search_failed" else 400), res
     res["root"] = root
     return 200, res
 
