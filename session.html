@@ -536,7 +536,12 @@
   #info .ib-agent.claude { color:var(--agent-claude-bg); } #info .ib-agent.codex { color:var(--agent-codex-bg); }
   main { flex:1; display:flex; min-height:0; }
   #chatcol { flex:1; display:flex; flex-direction:column; min-width:0; border-right:1px solid var(--border); }
-  #msgs { flex:1; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:10px; }
+  /* #msgpane holds the scrolling chat and the "Latest" control floating over
+     its foot. #msgs is positioned so a child's offsetTop is its place in the
+     chat, and the page keeps the reading position itself (keepPlace), so the
+     browser's own scroll anchoring is off rather than adjusting twice. */
+  #msgpane { flex:1; min-height:0; position:relative; display:flex; flex-direction:column; }
+  #msgs { flex:1; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:10px; position:relative; overflow-anchor:none; }
   .msg.pending { opacity:.72; }   /* sent, not yet in the transcript */
   .msg { border:1px solid var(--border); border-radius:var(--r-300); padding:8px 10px; max-width:92%; background:var(--surface); }
   .msg .from { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; opacity:.85; margin-bottom:3px; }
@@ -550,6 +555,28 @@
     font-size:var(--fs-200); line-height:16px; }
   .rot-line::before, .rot-line::after { content:''; flex:1 1 24px; border-top:1px solid var(--border-strong); }
   .rot-line span { flex:0 1 auto; max-width:80%; text-align:center; }
+  /* A folded balloon: who, and its first line. A click opens it in place.
+     Consecutive rows sit 4px apart (the chat's 10px gap less 3px each side). */
+  .fold-note { color:var(--fg-muted); font-size:var(--fs-200); line-height:16px; }
+  .msg-fold { display:flex; align-items:baseline; gap:var(--s-200); max-width:92%; min-height:24px; margin-block:-3px;
+    padding:var(--s-050) var(--s-200); background:transparent; color:var(--fg-subtle); border:1px solid var(--border);
+    border-radius:var(--r-200); font-size:var(--fs-200); line-height:16px; text-align:left; cursor:pointer; }
+  .msg-fold:hover { background:var(--hover); }
+  .msg-fold:focus-visible, .fold-btn:focus-visible, #to-latest:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .msg-fold.user { border-left:3px solid var(--border-strong); }
+  .msg-fold .from { flex:0 0 auto; font-size:var(--fs-100); font-weight:600; text-transform:uppercase; letter-spacing:.04em; color:var(--fg-muted); }
+  .msg-fold .from > .mention { background:transparent; padding:0; color:inherit; text-transform:none; letter-spacing:0; }
+  .msg-fold.claude .from { color:var(--agent-claude-bg); } .msg-fold.codex .from { color:var(--agent-codex-bg); }
+  .msg-fold .fl { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* A balloon opened from its row folds again from its header. */
+  .msg .from .fold-btn { float:right; margin:-2px -4px 0 var(--s-200); padding:0 var(--s-100); background:transparent; border:none;
+    color:var(--fg-muted); font-size:var(--fs-100); font-weight:400; text-transform:none; letter-spacing:0; line-height:16px; }
+  .msg .from .fold-btn:hover { background:var(--hover); color:var(--fg); }
+  /* Away from the end of the chat: back to it, with how many arrived since. */
+  #to-latest { position:absolute; right:var(--s-400); bottom:var(--s-300); z-index:5; height:24px; padding:0 var(--s-300);
+    border-radius:var(--r-full); background:var(--surface); color:var(--fg); border:1px solid var(--border-strong);
+    box-shadow:var(--e-200); font-size:var(--fs-200); line-height:16px; }
+  #to-latest:hover { background:var(--hover); }
   .msg .text { white-space:pre-wrap; word-break:break-word; line-height:1.45; }
   /* Markdown-rendered bubble content (see mdToHtml). */
   .msg .text.md { white-space:normal; line-height:1.5; }
@@ -718,6 +745,7 @@
     textarea, select, input, #compose textarea, .cmt-composer textarea { font-size: var(--fs-400); }
     .status, .msg .from, #livetail .lt-head, #livetail .lt-more,
     .msg .text.md pre.cb[data-lang]::before, .adot { font-size: var(--fs-100); }
+    #to-latest { height: auto; padding: 0 var(--s-400); }
     /* Centred, the comment box sat under the keyboard it opens. */
     .cmt-composer { top: var(--s-300, 12px); transform: translateX(-50%); }
   }
@@ -744,7 +772,10 @@
 <div id="info"></div>
 <main>
   <div id="chatcol">
-    <div id="msgs"></div>
+    <div id="msgpane">
+      <div id="msgs"></div>
+      <button type="button" id="to-latest" hidden>Latest ↓</button>
+    </div>
     <div id="promptcard" hidden></div>
     <div id="livetail" hidden></div>
     <div id="activity" hidden></div>
@@ -1209,24 +1240,140 @@ function mountTerm(el, ptyId) {
   try { new ResizeObserver(() => syncSize(ptyId)).observe(el); } catch(e) {}
 }
 
-function renderBubbles(items) {
+// ---- Folding a long conversation -----------------------------------------
+// The latest exchange is drawn in full: at least the last FOLD_MIN balloons,
+// and back to the person's own last message when that is within FOLD_MAX.
+// Everything older is one row each (who, first line), opened in place by a
+// click. A rotation line is a landmark and always shows.
+const FOLD_MIN = 10, FOLD_MAX = 25;
+const isLandmark = m => !!(m.divider || (m.kind === 'notice' && m.rotation));
+const foldKey = (m, i) => m.id || ('#' + i);
+function foldStart(items) {
+  let seen = 0, start = items.length, userSeen = false;
+  for (let i = items.length - 1; i >= 0; i--) {
+    const m = items[i];
+    if (isLandmark(m)) continue;
+    seen++;
+    if (seen <= FOLD_MIN) { start = i; userSeen = userSeen || m.from === 'user'; continue; }
+    if (userSeen || seen > FOLD_MAX) break;
+    if (m.from === 'user') { start = i; break; }
+  }
+  return start;
+}
+// What each item is drawn as: 'line' (a landmark), 'full' or 'row'. The fold
+// is worked out again only while the reader is at the end (stick). Scrolled up,
+// every balloon keeps what it was last drawn as, whatever arrives or leaves:
+// nothing folds under the reader. What arrives after the known balloons is
+// drawn in full, what appears before them folded.
+// fold = { base: key → 'full' | 'row' as last drawn, open: keys the reader opened }.
+// A balloon holding a comment's passage (held) is opened, and stays open while
+// the reader is scrolled up even when the comment goes.
+function foldPlan(items, fold, stick, held) {
+  let prev = stick ? null : fold.base, last = -1;
+  if (prev) items.forEach((m, i) => { if (prev.has(foldKey(m, i))) last = i; });
+  if (last < 0) prev = null;          // nothing drawn before is still here
+  const start = prev ? -1 : foldStart(items);
+  const base = new Map();
+  const plan = items.map((m, i) => {
+    if (isLandmark(m)) return 'line';
+    const k = foldKey(m, i);
+    let b = prev ? (prev.get(k) || (i > last ? 'full' : 'row')) : (i >= start ? 'full' : 'row');
+    if (b === 'row' && held && held(m, i)) b = 'full';
+    base.set(k, b);
+    return (b === 'full' || fold.open.has(k)) ? 'full' : 'row';
+  });
+  fold.base = base;
+  return plan;
+}
+// A folded balloon's first line, as plain text.
+function foldLine(text) {
+  const raw = String(text || '').replace(/\r/g, '');
+  const line = raw.replace(/```[\s\S]*?(?:```|$)/g, '\n').split('\n')
+    .map(l => l.replace(/^\s*(?:#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+)/, '')
+      .replace(/\[([^\]\n]*)\]\([^)\n]*\)/g, '$1').replace(/\*\*|__|`/g, '').trim())
+    .find(l => l && !/^[-*_|:\s]+$/.test(l)) || raw.trim().split('\n')[0] || '';
+  return line.length > 240 ? line.slice(0, 240) + '…' : line;
+}
+// Loose text for finding a comment's quote in a balloon's markdown.
+const foldNorm = s => String(s || '').replace(/[*_`#>|~\\[\]]/g, '').replace(/\s+/g, ' ').trim();
+// The one balloon each comment's passage is in, as the highlight finds it: the
+// message it was made on while that still holds the quote, else the first of
+// the same author's that does, else the first that does. Their keys.
+function foldHeld(items, comments) {
+  const keys = new Set(), norm = new Map();
+  const has = (i, q) => { let t = norm.get(i); if (t == null) norm.set(i, t = foldNorm(items[i].text)); return t.includes(q); };
+  const ok = items.map((m, i) => i).filter(i => !isLandmark(items[i]));
+  for (const c of comments || []) {
+    const q = foldNorm(c.quote); if (!q) continue;
+    const at = ok.find(i => c.mid && items[i].id === c.mid && has(i, q))
+      ?? ok.find(i => items[i].from === c.from && has(i, q))
+      ?? ok.find(i => has(i, q));
+    if (at != null) keys.add(foldKey(items[at], at));
+  }
+  return keys;
+}
+// ---- Folding a long conversation: end
+let FOLD = { base: null, open: new Set() };
+let STICK = true;          // at the end of the chat: new messages keep it there
+let LAST_ITEMS = null;     // what was last drawn, to draw it again after a click
+let SEEN = new Set(), NEW_N = 0;   // balloons seen at the end; how many came since
+let MD_CACHE = new Map(), MD_CTX = '';
+const nearEnd = box => box.scrollTop + box.clientHeight >= box.scrollHeight - 50;
+// The first child at or below the top of the view, and where it sits in it.
+function readingPlace(box, el) {
+  if (!el) {
+    const top = box.scrollTop;
+    for (const k of box.children) if (k.offsetTop + k.offsetHeight > top) { el = k; break; }
+  }
+  return el ? { el, key: el.dataset.key || '', off: el.offsetTop - box.scrollTop } : null;
+}
+function keepPlace(box, place) {
+  if (!place) return;
+  let el = place.el.isConnected ? place.el : null;
+  if (!el && place.key) el = [...box.children].find(k => k.dataset.key === place.key) || null;
+  if (el) box.scrollTop = el.offsetTop - place.off;
+}
+function renderBubbles(items, opt = {}) {
   const box = $('#msgs');
+  LAST_ITEMS = items;
   // Don't blow away the DOM while the user is mid-comment (it would drop their
   // selection / the open composer). Highlights are re-applied after each render.
   if (_cmtComposerOpen || _selBtn) return;
   const _liveSel = window.getSelection();
   if (_liveSel && !_liveSel.isCollapsed && _liveSel.rangeCount &&
       box.contains(_liveSel.getRangeAt(0).commonAncestorContainer)) return;
-  const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 50;
+  const stick = STICK && !opt.anchor;
+  const place = stick ? null : readingPlace(box, opt.anchor);
   items = withTaskBubble(items, ROOM_OBJ && ROOM_OBJ.spec, 'from');
-  const rows = items.map(m => {
-    if (m.divider || (m.kind === 'notice' && m.rotation)) {
-      return `<div class="rot-line" role="separator" data-mid="${esc(m.id || '')}"><span>${esc(rotationText(m.rotation || m.divider))}</span></div>`;
+  // A balloon holding a comment's passage stays open, so its highlight shows.
+  const heldKeys = foldHeld(items, COMMENTS);
+  const held = heldKeys.size ? (m, i) => heldKeys.has(foldKey(m, i)) : null;
+  const plan = foldPlan(items, FOLD, stick, held);
+  // A balloon's markdown is drawn once and reused while its text, and what its
+  // links depend on, stay the same: every poll used to redraw every balloon.
+  const ctx = HUB_PORT + '|' + fileBase() + '|' + ROOM;
+  if (ctx !== MD_CTX) { MD_CACHE = new Map(); MD_CTX = ctx; }
+  const used = new Map();
+  const md = t => { t = t || ''; let h = MD_CACHE.get(t); if (h == null) h = mdToHtml(t); used.set(t, h); return h; };
+  let folded = 0;
+  const keys = [];
+  const rows = items.map((m, i) => {
+    const key = esc(foldKey(m, i));
+    if (plan[i] === 'line') {
+      return `<div class="rot-line" role="separator" data-mid="${esc(m.id || '')}" data-key="${key}"><span>${esc(rotationText(m.rotation || m.divider))}</span></div>`;
     }
+    keys.push(foldKey(m, i));
     const cls = m.from === 'user' ? 'user' : esc(m.from);
     const to = m.to && m.to !== 'all' ? ` <span class="to">→ ${identLabel(m.to)}</span>` : '';
-    return `<div class="msg ${cls}" data-mid="${esc(m.id || '')}" data-from="${esc(m.from || '')}"><div class="from">${identLabel(m.from)}${to}</div><div class="text md">${mdToHtml(m.text)}</div></div>`;
+    if (plan[i] === 'row') {
+      folded++;
+      return `<button type="button" class="msg-fold ${cls}" data-key="${key}" data-mid="${esc(m.id || '')}" aria-expanded="false" title="Open this message"><span class="from">${identLabel(m.from)}${to}</span><span class="fl">${esc(foldLine(m.text))}</span></button>`;
+    }
+    const fb = FOLD.open.has(foldKey(m, i)) ? '<button type="button" class="fold-btn" title="Fold this message again" aria-expanded="true">Fold</button>' : '';
+    return `<div class="msg ${cls}" data-mid="${esc(m.id || '')}" data-key="${key}" data-from="${esc(m.from || '')}"><div class="from">${fb}${identLabel(m.from)}${to}</div><div class="text md">${md(m.text)}</div></div>`;
   });
+  // Never an absence without its reason: the rows say what they are.
+  if (folded) rows.unshift(`<div class="fold-note" data-key="fold-note">${folded} earlier message${folded > 1 ? 's' : ''} folded. Click one to read it.</div>`);
   // Messages you just sent that the transcript hasn't recorded yet (a long
   // agent turn delays the flush): keep showing them until they appear for real.
   // Some never will — a "/command", or a digit answering a prompt — so an echo
@@ -1240,27 +1387,80 @@ function renderBubbles(items) {
     && items.length <= p.n
     && (nowS - p.ts) < 120);
   PENDING_USER.forEach(p => rows.push(
-    `<div class="msg user pending" data-from="user"><div class="from">${identLabel('user')}</div><div class="text md">${mdToHtml(p.text)}</div></div>`));
+    `<div class="msg user pending" data-from="user"><div class="from">${identLabel('user')}</div><div class="text md">${md(p.text)}</div></div>`));
   patchChildren(box, rows);
-  if (atBottom) box.scrollTop = box.scrollHeight;
+  MD_CACHE = used;
+  if (stick) {
+    box.scrollTop = box.scrollHeight;
+    SEEN = new Set(keys); NEW_N = 0;
+  } else {
+    keepPlace(box, place);
+    NEW_N = keys.filter(k => !SEEN.has(k)).length;
+  }
   applyComments();
+  showLatest();
 }
 // Replace only the bubbles that changed. Rewriting every bubble on each 2 s
 // poll replaced every link in the chat under the pointer: a click whose press
 // and release straddled a poll landed on two different elements and never
-// arrived, and a tap on a phone was lost the same way.
+// arrived, and a tap on a phone was lost the same way. A bubble that only moved
+// (one folded above it, or the window of a long transcript slid) is moved, not
+// drawn again.
 function patchChildren(box, rows) {
-  const kids = [...box.children];
-  rows.forEach((h, i) => {
-    const k = kids[i];
-    if (k && k._h === h) return;
-    const t = document.createElement('template');
-    t.innerHTML = h;
-    const n = t.content.firstElementChild;
-    n._h = h;
-    if (k) box.replaceChild(n, k); else box.appendChild(n);
-  });
-  for (let i = rows.length; i < kids.length; i++) kids[i].remove();
+  const pool = new Map();
+  for (const k of box.children) {
+    const same = pool.get(k._h);
+    if (same) same.push(k); else pool.set(k._h, [k]);
+  }
+  let at = box.firstElementChild;
+  for (const h of rows) {
+    const same = pool.get(h);
+    let n = same && same.shift();
+    if (!n) {
+      const t = document.createElement('template');
+      t.innerHTML = h;
+      n = t.content.firstElementChild;
+      n._h = h;
+    }
+    if (n === at) at = at.nextElementSibling;
+    else box.insertBefore(n, at);
+  }
+  while (at) { const nx = at.nextElementSibling; at.remove(); at = nx; }
+}
+// "Latest ↓": shown only away from the end, with how many arrived since.
+function showLatest() {
+  const box = $('#msgs'), btn = $('#to-latest');
+  if (!box || !btn) return;
+  const away = !!box.clientHeight && !STICK;
+  btn.hidden = !away;
+  const label = NEW_N ? `${NEW_N} new · Latest ↓` : 'Latest ↓';
+  setText(btn, label);
+  const tip = NEW_N ? `Go to the latest message (${NEW_N} new since you scrolled up)` : 'Go to the latest message';
+  if (btn.title !== tip) btn.title = tip;
+}
+function toLatest() {
+  const box = $('#msgs');
+  STICK = true;
+  if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
+  box.scrollTop = box.scrollHeight;   // also when a selection held the render
+  SEEN = new Set([...box.children].map(k => k.dataset.key).filter(Boolean)); NEW_N = 0;
+  showLatest();
+}
+// Open a folded balloon in place, or fold an opened one again. The row stays
+// where it was on screen, and keyboard focus moves to its new self.
+function foldToggle(el, open) {
+  const key = el.dataset.key; if (!key) return;
+  const focused = el.contains(document.activeElement);
+  if (open) FOLD.open.add(key); else FOLD.open.delete(key);
+  const box = $('#msgs');
+  if (LAST_ITEMS) renderBubbles(LAST_ITEMS, { anchor: el });
+  STICK = nearEnd(box);
+  showLatest();
+  if (focused) {
+    const now = [...box.children].find(k => k.dataset.key === key);
+    const f = now && (now.matches('.msg-fold') ? now : now.querySelector('.fold-btn'));
+    if (f) f.focus({ preventScroll: true });
+  }
 }
 function renderMsgs(room) { renderBubbles(room.messages); }
 // The task text is the first message of the conversation. Prepend it as a user
@@ -1278,7 +1478,10 @@ function showPendingUser(text) {
   const box = $('#msgs'); if (!box) return;
   box.insertAdjacentHTML('beforeend',
     `<div class="msg user pending" data-from="user"><div class="from">${identLabel('user')}</div><div class="text md">${mdToHtml(t)}</div></div>`);
-  box.scrollTop = box.scrollHeight;
+  // At the end the chat follows what you sent. Scrolled up, your place stays:
+  // the echo is added below it, and "Latest ↓" is the way down.
+  if (STICK) box.scrollTop = box.scrollHeight;
+  showLatest();
 }
 // Solo session: render its live transcript (user + assistant turns) as bubbles,
 // fetched once per completed turn (see the activity-driven trigger in refresh).
@@ -1296,12 +1499,23 @@ function rotationText(r) {
     + `(limit ${k(r.threshold)}), so a fresh session took over from PO-HANDOVER.md and ROADMAP.md. `
     + `Earlier conversation above.`;
 }
+// A solo transcript's latest turns as balloons, without consecutive identical
+// turns (the transcript sometimes double-records). A turn's id is its session
+// and its place in it: it stays the same when the turn moves above a rotation
+// line, and no other session's turn ever has it, so a fold, an opened balloon
+// or a comment never lands on another session's text.
+function soloItems(raw, sid, agentId, keep) {
+  const turns = raw.filter((t, i) => i === 0 || t.role !== raw[i - 1].role || t.text !== raw[i - 1].text);
+  const off = Math.max(0, turns.length - keep);
+  return turns.slice(off).map((t, i) => ({
+    id: sid + ':' + (off + i),
+    from: (t.role === 'user') ? 'user' : agentId, to: '', text: t.text,
+  }));
+}
 async function prevSessionItems(sid, agentId) {
   if (SOLO_PREV.sid === sid) return SOLO_PREV.items;
   const d = await fetch('/api/session/' + encodeURIComponent(sid) + '?full=1').then(r => r.json());
-  const turns = (d.turns || []).slice(-PREV_TURNS_SHOWN);
-  SOLO_PREV = { sid, items: turns.map((t, i) => ({
-    id: 'p' + i, from: (t.role === 'user') ? 'user' : agentId, to: '', text: t.text })) };
+  SOLO_PREV = { sid, items: soloItems(d.turns || [], sid, agentId, PREV_TURNS_SHOWN) };
   return SOLO_PREV.items;
 }
 // Poll a cheap size+mtime signal; re-render the transcript only when it actually
@@ -1332,13 +1546,7 @@ async function renderSolo(sid, agentId, force) {
     const raw = d.turns || [];
     if (!force && raw.length === SOLO_TURN_COUNT) return;   // nothing new
     SOLO_TURN_COUNT = raw.length;
-    // Drop consecutive identical turns (the transcript sometimes double-records).
-    const turns = raw.filter((t, i) => i === 0 || t.role !== raw[i - 1].role || t.text !== raw[i - 1].text);
-    let items = turns.slice(-120).map((t, i) => ({
-      id: 's' + (turns.length - Math.min(120, turns.length) + i),
-      from: (t.role === 'user') ? 'user' : agentId,
-      to: '', text: t.text,
-    }));
+    let items = soloItems(raw, sid, agentId, 120);
     // A PO rotated into this session: the end of the one before, then the line.
     const rot = SOLO_ROT && SOLO_ROT.toSessionId === sid ? SOLO_ROT : null;
     if (rot && rot.fromSessionId) {
@@ -1842,6 +2050,9 @@ window.addEventListener('message', (e) => {
   const d = e.data || {};
   if (d.ensemble === 'toggleTerms') $('#terms').click();
   else if (d.ensemble === 'pause') { const pb = $('#pause'); if (pb && pb.onclick) pb.onclick(); }
+  // The dashboard opened this chat's panel again: a closed task panel only
+  // slides off screen, so its size never says so. Open at the latest message.
+  else if (d.ensemble === 'shown' && e.source === window.parent) toLatest();
 });
 
 // ---- Rich session actions (parity with the dashboard's docked toolbar) -------
@@ -2114,7 +2325,17 @@ function cmtTrayClick(e) {
   if (!item) return;
   const cid = item.dataset.cid;
   if (t.closest('.cmt-item-x')) { cmtRemove([cid]); return; }
-  const mk = document.querySelector(`#msgs mark.cmt-hl[data-cid="${cid}"]`);
+  let mk = document.querySelector(`#msgs mark.cmt-hl[data-cid="${cid}"]`);
+  // Its passage is in a folded balloon the quote could not be matched to: open
+  // the balloon it was made on.
+  const c = !mk && COMMENTS.find(x => x.cid === cid);
+  const row = c && [...document.querySelectorAll('#msgs .msg-fold')].find(r => r.dataset.mid === c.mid);
+  if (row) {
+    const key = row.dataset.key;
+    foldToggle(row, true);
+    mk = document.querySelector(`#msgs mark.cmt-hl[data-cid="${cid}"]`)
+      || [...document.querySelectorAll('#msgs .msg')].find(b => b.dataset.key === key);
+  }
   if (mk) mk.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 async function submitComments() {
@@ -2161,7 +2382,45 @@ function showTrayItem(cid) {
 $('#msgs').addEventListener('click', e => {
   const m = e.target.closest && e.target.closest('mark.cmt-hl');
   if (m) showTrayItem(m.dataset.cid);
+  const row = e.target.closest && e.target.closest('.msg-fold');
+  if (row) { foldToggle(row, true); return; }
+  const fb = e.target.closest && e.target.closest('.fold-btn');
+  if (fb) foldToggle(fb.closest('.msg'), false);
 });
+$('#to-latest').addEventListener('click', toLatest);
+// Where the reader is: at the end the chat follows new messages; scrolled up it
+// stays put and "Latest ↓" offers the way back. A hidden frame scrolls to 0 and
+// says nothing about the reader, so it is not counted.
+// Coming back to the end draws the chat again once, so what stayed open while
+// the reader was up folds as it would at the end (a quiet solo chat has no
+// poll that would); the end stays where it is.
+function msgsScrolled() {
+  const box = $('#msgs');
+  if (!box.clientHeight) return;
+  const at = nearEnd(box);
+  if (at && !STICK) {
+    STICK = true;
+    if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
+    SEEN = new Set([...box.children].map(k => k.dataset.key).filter(Boolean)); NEW_N = 0;
+  }
+  STICK = at;
+  showLatest();
+}
+$('#msgs').addEventListener('scroll', msgsScrolled, { passive: true });
+// A conversation opens at its end, also when its frame is shown again (the
+// PO's drawer closed and opened, another project's PO and back): a hidden frame
+// measures 0 high, so coming back from 0 is opening it. At the end, a change of
+// size (the tray, the prompt card, the keyboard) keeps the chat at the end.
+let _msgsH = -1;
+function msgsResized() {
+  const box = $('#msgs'), h = box.clientHeight;
+  if (h && _msgsH === 0) toLatest();
+  else if (h && STICK) box.scrollTop = box.scrollHeight;
+  _msgsH = h;
+  showLatest();
+}
+try { new ResizeObserver(msgsResized).observe($('#msgs')); } catch (e) {}
+window.addEventListener('resize', msgsResized);
 // A task link inside the dashboard (its task panel, the PO's drawer) opens the
 // task there, beside you. In a window of its own it opens the dashboard in a
 // new tab, on that task.

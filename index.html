@@ -3687,6 +3687,7 @@ const detailWMax = () =>
 })();
 
 function openDetail(sid) {
+  const reopened = !document.body.classList.contains('detail-open') || sid !== SELECTED_SID;
   if (sid !== SELECTED_SID) {
     // Selecting a different session — drop any cached conversation/cost.
     TRANSCRIPT_SID = null;
@@ -3704,6 +3705,10 @@ function openDetail(sid) {
   // the front, and the pill brings the PO back over it.
   if (PO_PEEK && isPhone()) { PO_PEEK = false; renderPo(); }
   renderDetail();
+  // A closed panel only slid off screen, so a live chat kept in it cannot tell
+  // it was opened again: say so, and it opens at its latest message.
+  const chat = reopened && p && p.querySelector('iframe.dp-session');
+  try { if (chat && chat.contentWindow) chat.contentWindow.postMessage({ ensemble: 'shown' }, location.origin); } catch (e) {}
   renderRows();
   loadCostDetail(sid);
   const row = ALL_ROWS.find(x => x.sessionId === sid);
