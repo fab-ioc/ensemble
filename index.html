@@ -591,25 +591,6 @@
     background: var(--match-bg); color: var(--match-fg);
     padding: 1px 3px; border-radius: var(--r-100); font-weight: 500;
   }
-  /* category grouping */
-  tr.category-header { cursor: pointer; }
-  tr.category-header td {
-    background: var(--surface);
-    font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
-    color: var(--fg-subtle); padding: 14px 8px 6px;
-    border-bottom: 1px solid var(--border);
-    user-select: none;
-  }
-  tr.category-header:hover td { background: var(--hover); }
-  tr.category-header .chev {
-    display: inline-block; width: 12px; margin-right: 2px;
-    color: var(--fg-muted); font-size: 9px; transition: transform .12s ease;
-    vertical-align: middle;
-  }
-  tr.category-header.collapsed .chev { transform: rotate(-90deg); }
-  tr.category-header .cat-name { color: var(--fg); letter-spacing: 0.04em; text-transform: none; }
-  tr.category-header .cat-count { color: var(--fg-muted); margin-left: 8px; font-weight: 400; }
-  tr.category-header.drop-target td { background: var(--selected-bg); color: var(--selected-fg); box-shadow: inset 0 0 0 2px var(--accent); }
   tr.row.drop-target td { background: var(--selected-bg); box-shadow: inset 0 2px 0 0 var(--accent); }
   tr.row.dragging { opacity: 0.4; }
   tr.row { user-select: none; }
@@ -708,63 +689,13 @@
   .badge-headless.ended { color: var(--c-neutral-fg); background: var(--c-neutral-bg); border-color: transparent; }
   tr.row.headless { cursor: pointer; }
   .room-open, .room-end { font-size: 12px; padding: 2px 8px; }
-  /* ---- Multiagent "Duo" creator + chat panel ---- */
+  /* ---- Multiagent "Duo" creator ---- */
   #duo-btn { white-space: nowrap; }
   .duo-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
   .duo-row select, .duo-row input { flex: 1; }
   .duo-row .duo-agent { flex: 0 0 130px; }
   .duo-row .duo-role { flex: 0 0 118px; }
   .duo-row .duo-role-custom { flex: 1 1 140px; }
-  #rooms-panel {
-    position: fixed; top: 0; right: 0; bottom: 0; width: min(460px, 92vw);
-    background: var(--surface); color: var(--fg);
-    border-left: 1px solid var(--border);
-    box-shadow: -8px 0 24px rgba(0,0,0,0.35);
-    display: flex; flex-direction: column; z-index: 60;
-  }
-  /* id selector above outranks a bare [hidden] reset — restore hide-on-hidden. */
-  #rooms-panel[hidden] { display: none; }
-  #rooms-panel .rp-head {
-    display: flex; align-items: center; gap: 8px; padding: 12px 14px;
-    border-bottom: 1px solid color-mix(in srgb, currentColor 14%, transparent);
-  }
-  #rooms-panel .rp-head h3 { margin: 0; font-size: 14px; flex: 1;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #rooms-panel .rp-status {
-    font-size: 10px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.05em; padding: 2px 8px; border-radius: 10px;
-    border: 1px solid transparent;
-  }
-  .rp-status.active { color: var(--c-success-fg); background: var(--c-success-bg); border-color: transparent; }
-  .rp-status.waiting_human { color: var(--c-warning-fg); background: var(--c-warning-bg); border-color: transparent; }
-  .rp-status.paused { color: var(--c-neutral-fg); background: var(--c-neutral-bg); border-color: transparent; }
-  #rooms-panel .rp-list { padding: 8px 10px; border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent); max-height: 120px; overflow-y: auto; }
-  #rooms-panel .rp-list button { display: block; width: 100%; text-align: left; margin: 2px 0; font-size: 12px; }
-  #rooms-panel .rp-list button.sel { outline: 2px solid var(--accent); }
-  #rooms-panel .rp-msgs { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
-  .rp-msg { border-radius: 10px; padding: 8px 10px; max-width: 92%;
-    border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
-    background: color-mix(in srgb, currentColor 5%, transparent); }
-  .rp-msg .rp-from { font-size: 10px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.04em; opacity: 0.85; margin-bottom: 3px; }
-  .rp-msg.claude { border-color: color-mix(in srgb, var(--agent-claude-bg) 32%, transparent); }
-  .rp-msg.claude .rp-from { color: var(--agent-claude-bg); }
-  .rp-msg.codex { border-color: color-mix(in srgb, var(--agent-codex-bg) 32%, transparent); }
-  .rp-msg.codex .rp-from { color: var(--agent-codex-bg); }
-  .rp-msg.user { border-color: var(--border); background: var(--hover); }
-  .rp-msg .rp-to { font-weight: 400; opacity: 0.6; text-transform: none; }
-  .rp-msg .rp-text { font-size: 12.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
-  #rooms-panel .rp-compose { padding: 10px 12px; border-top: 1px solid color-mix(in srgb, currentColor 14%, transparent); display: flex; flex-direction: column; gap: 6px; }
-  #rooms-panel .rp-compose textarea { width: 100%; resize: vertical; min-height: 46px; box-sizing: border-box; }
-  #rooms-panel .rp-compose .rp-actions { display: flex; gap: 8px; align-items: center; }
-  #rooms-panel .rp-hint { font-size: 11px; opacity: 0.7; }
-  #rooms-panel .rp-rooms { padding: 6px; overflow-y: auto; }
-  .rp-room { display: flex; align-items: center; gap: 8px; padding: 8px 10px;
-    border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
-    border-radius: 8px; margin: 4px 0; cursor: pointer; }
-  .rp-room:hover { background: color-mix(in srgb, currentColor 7%, transparent); }
-  .rp-room.ended { opacity: 0.55; }
-  .rp-open { flex: 0 0 auto; }
   .actions .pin-btn.is-pinned {
     background: color-mix(in srgb, var(--run-working) 16%, transparent);
     border-color: var(--run-working);
@@ -968,17 +899,6 @@
     background: var(--selected-bg);
     border-left-color: var(--accent); color: var(--selected-fg);
   }
-  .sb-cat-actions {
-    opacity: 0; display: inline-flex; gap: 2px;
-    transition: opacity .1s;
-  }
-  .sb-item:hover .sb-cat-actions { opacity: 1; }
-  .sb-cat-actions button {
-    background: transparent; border: 0; padding: 1px 5px;
-    cursor: pointer; color: var(--fg-subtle); font-size: 12px; line-height: 1;
-    border-radius: 3px;
-  }
-  .sb-cat-actions button:hover { color: var(--fg); background: var(--hover); }
   /* Footer "+ New category" affordance */
   .sb-add-cat {
     margin: 8px 12px 0;
@@ -2360,15 +2280,6 @@
   .update-hint {
     margin: 6px 0 0; font-size: 11.5px; color: var(--fg-muted);
   }
-  /* Category header gets a "+ New here" button on hover */
-  tr.category-header .cat-add {
-    margin-left: 8px; background: transparent; border: 1px dashed var(--border);
-    padding: 1px 8px; border-radius: 4px; font-size: 11px;
-    color: var(--fg-subtle); cursor: pointer; opacity: 0; transition: opacity .1s;
-    text-transform: none; letter-spacing: 0;
-  }
-  tr.category-header:hover .cat-add { opacity: 1; }
-  tr.category-header .cat-add:hover { color: var(--fg); border-color: var(--border-strong); border-style: solid; }
   .actions button.busy::before { content: '⏳ '; }
   .actions button.busy { opacity: .6; pointer-events: none; }
   dialog {
@@ -2529,8 +2440,6 @@
 
     /* No sideways scroll / accidental zoom on the page itself */
     html, body { overflow-x: hidden; max-width: 100vw; }
-    /* The rooms ("chat") panel is also a slide-over — full-screen it too */
-    #rooms-panel { width: 100vw !important; }
     /* Any embedded live session iframe fills the full-screen panel */
     iframe.dp-session { width: 100%; }
 
@@ -2604,7 +2513,7 @@
     .po-btn { min-width: var(--touch-min); }
     /* Home's "Group by" row: at 360 its last button sat under "+ New project". */
     .listctl { flex-wrap: wrap; row-gap: var(--s-200); }
-    .po-btn.x, .dp-close, .dp-ov-btn, .chp-refresh, .sb-cat-actions button,
+    .po-btn.x, .dp-close, .dp-ov-btn, .chp-refresh,
     #usage-banner-dismiss, #update-banner-dismiss {
       min-width: var(--touch-min); min-height: var(--touch-min);
       display: inline-flex; align-items: center; justify-content: center;
@@ -2621,9 +2530,6 @@
     .dp-meta { padding-top: var(--s-400); margin-top: calc(-1 * var(--s-400)); }
     #detail-panel .dp-meta { padding-bottom: var(--s-400); margin-bottom: calc(-1 * var(--s-100)); }
 
-    /* Nothing needs hover: what a pointer reveals on hover is always shown. */
-    .sb-cat-actions, tr.category-header .cat-add { opacity: 1; }
-
     /* Workspace and Changes: the tree above the file, not beside it. Beside
        it, a 390px phone left the file 79px wide. */
     .wsp, .chp { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(120px, 35%) minmax(0, 1fr); }
@@ -2633,8 +2539,8 @@
     .dl-composer { padding-left: var(--s-300); }
 
     /* Text below the scale, lifted to --fs-100. */
-    .bar-btn .caret, .fbtn .caret, .wf-btn .caret, th, tr.category-header .chev, .badge-agent,
-    .badge-headless, #rooms-panel .rp-status, .rp-msg .rp-from, .sb-section, .dp-section h3,
+    .bar-btn .caret, .fbtn .caret, .wf-btn .caret, th, .badge-agent,
+    .badge-headless, .sb-section, .dp-section h3,
     .dp-cost .cost-tokens, .tx-turn .tx-role, .tx-turn .tx-ts, .tx-text .mention,
     .tx-text.md code.ic, .tx-text.md pre.cb[data-lang]::before, .gitmark, .wse.wsroot .wsroot-kind,
     .wse .tw, .wse .sz, .chst, .dp-details > summary, .theme-dd-section, #notif-count, .notif-when,
@@ -3250,9 +3156,16 @@ function actionsCell(r, isLive) {
         ? `<button class="finder-btn" data-path="${esc(r.cwd)}" title="Open cwd in ${esc(FM())}">📂 ${esc(FM())}</button>`
         : `<button class="finder-btn" data-path="${esc(r.cwd)}" title="Browse this folder in the file viewer">📂 Browse</button>`)
     : '';
-  const ijBtn = `<button class="ij-btn" data-sid="${sid}" title="Open the project in its preferred editor (auto-detected by language)${onHubMachine() ? '' : ' — on the hub machine, not this one'}">🧠 IDE</button>`;
-  // Focus requires a tty→tab mapping (macOS/iTerm only); hidden where unsupported.
-  const focusBtn = (isLive && feat('focus'))
+  // IDE opens an editor on the hub's own screen. From any other computer it
+  // shows the session's files in the Workspace tab instead.
+  const hub = onHubMachine();
+  const ijBtn = hub
+    ? `<button class="ij-btn" data-sid="${sid}" title="Open the project in its preferred editor (auto-detected by language)">🧠 IDE</button>`
+    : `<button class="ij-btn" data-sid="${sid}" title="Show this session's files in the Workspace tab">🧠 IDE</button>`;
+  // Focus raises this session's terminal window on the hub's screen, where the
+  // platform maps a tty to its tab. From another computer there is no window to
+  // raise, and the hub does not capture a terminal it did not start: no button.
+  const focusBtn = (hub && isLive && feat('focus'))
     ? `<button class="focus-btn" data-pid="${r.pid}" title="Bring this session's ${esc(T())} window to the front">🪟 Focus</button>`
     : '';
   const closeTitle = feat('geometry')
@@ -3272,9 +3185,6 @@ function actionsCell(r, isLive) {
   const deleteBtn = isLive
     ? ''
     : `<button class="delete-btn" data-sid="${sid}" title="Permanently delete this session's transcript and sidecar data (irreversible)">🗑 Delete</button>`;
-  const forkBtn = r.cwd
-    ? `<button class="fork-btn" data-sid="${sid}" data-cwd="${esc(r.cwd)}" title="Duplicate into a new window — forks the conversation (new session ID), original keeps running untouched">⑂ Fork</button>`
-    : '';
   const pinBtn = `<button class="pin-btn ${r.pinned ? 'is-pinned' : ''}" data-sid="${sid}" data-pinned="${r.pinned ? 1 : 0}" title="${r.pinned ? 'Unpin from quick-access' : 'Pin this session for quick access'}">${r.pinned ? '📌 Unpin' : '📌 Pin'}</button>`;
   // Send: inject a prompt into a live session's terminal (the coordination doorbell).
   const sendBtn = (isLive && r.pid && feat('send'))
@@ -3282,9 +3192,12 @@ function actionsCell(r, isLive) {
     : '';
   // History sessions open HEADLESS by default (▶ Open). A real terminal is the
   // opt-in escape hatch. (Only history — resuming a live session would double
-  // it.)
+  // it.) A window on the hub's screen is nothing another computer sees, so
+  // there Terminal resumes the session headless and shows the terminal the hub
+  // captures.
+  const terminalTitle = hub ? `Open in a real ${T()} terminal window` : 'Resume it here, headless, and show its terminal';
   const terminalBtn = (!isLive && r.cwd)
-    ? `<button class="terminal-btn" data-sid="${sid}" data-cwd="${esc(r.cwd)}" data-agent="${esc(r.agent || '')}" title="Open in a real ${esc(T())} terminal window">🖥 Terminal</button>`
+    ? `<button class="terminal-btn" data-sid="${sid}" data-cwd="${esc(r.cwd)}" data-agent="${esc(r.agent || '')}" data-label="${esc(r.label || '')}" title="${esc(terminalTitle)}">🖥 Terminal</button>`
     : '';
   return `<div class="actions">
     ${pinBtn}
@@ -3292,7 +3205,6 @@ function actionsCell(r, isLive) {
     ${sendBtn}
     ${terminalBtn}
     ${openCloseBtn}
-    ${forkBtn}
     ${archiveBtn}
     ${deleteBtn}
     <button class="rename-btn" data-sid="${sid}" title="Edit the label manually (also updates the iTerm tab name when live)">✎ Rename</button>
@@ -3697,36 +3609,11 @@ function detailActions(r, isLive, isRoom, isOrphan) {
     </div>`;
   }
   if (isRoom) {
-    const cwd = r.cwd || '';
-    const current = r.currentTheme || '';
-    // Rename and Pin ride the same label/pin sidecars a single-agent session
-    // uses (keyed by the room id), so the shared handlers work unchanged.
+    // Everything else a task can do lives in the ⋯ menu (detailOverflow).
     const lifecycle = isLive
       ? `<button class="room-end delete-btn" data-room="${esc(r.roomId)}" title="Stop the agent(s), keep the session">✕ End</button>`
       : `<button class="open-btn room-resume-inline" data-room="${esc(r.roomId)}" title="${r.draft ? 'Start — launch the agent(s) with the task spec' : 'Relaunch the agent(s) with their conversation'}">${r.draft ? '▶ Start' : '▶ Open'}</button>
          <button class="delete-btn room-delete" data-room="${esc(r.roomId)}" title="Delete — transcripts, room record, and the ~/cs scratch folder">🗑 Delete</button>`;
-    const pinBtn = `<button class="pin-btn ${r.pinned ? 'is-pinned' : ''}" data-sid="${esc(r.sessionId)}" data-pinned="${r.pinned ? 1 : 0}" title="${r.pinned ? 'Unpin from quick-access' : 'Pin this session for quick access'}">${r.pinned ? '📌 Unpin' : '📌 Pin'}</button>`;
-    const renameBtn = `<button class="rename-btn" data-sid="${esc(r.sessionId)}" title="Rename this session">✎ Rename</button>`;
-    const autoBtn = `<button class="auto-btn" data-sid="${esc(r.sessionId)}" title="Ask Claude to suggest a label from the conversation">✨ Auto</button>`;
-    const finderBtn = cwd ? `<button class="finder-btn" data-path="${esc(cwd)}" title="Open cwd in ${esc(FM())}">📂 ${esc(FM())}</button>` : '';
-    const ijBtn = cwd ? `<button class="ij-btn" data-sid="${esc(r.sessionId)}" title="Open the project in its preferred editor">🧠 IDE</button>` : '';
-    const themeBtn = (feat('themes') && cwd)
-      ? `<button type="button" class="theme-dd-trigger" data-pid="" data-cwd="${esc(cwd)}" data-current="${esc(current)}" title="Pick the terminal colour scheme for this task's folder">${current ? 'Terminal colours: ' + esc(current) : 'Terminal colours…'}</button>` : '';
-    // Terminals + Pause were previously only in the popup's own header (hidden when
-    // docked). Surface them here too so the docked toolbar matches the popup.
-    const termsBtn = isLive ? `<button class="dp-terms-btn" title="Show/hide the raw per-agent terminals">🖥 Terminals</button>` : '';
-    const pauseBtn = isLive ? `<button class="dp-pause-btn" data-room="${esc(r.roomId)}" data-status="${esc(r.status || '')}" title="Pause or resume the collaboration">${r.status === 'paused' ? '▶ Resume' : '⏸ Pause'}</button>` : '';
-    // File the session under a project (or pull it out of one) — porting opten
-    // and friends into their projects happens here.
-    const moveBtn = `<button class="moveproj-btn" data-sid="${esc(r.sessionId)}" title="File this session under a project (or remove it from one)">📁 Move to project</button>`;
-    // Change who works this task, and on which model. Refused while it runs —
-    // swapping an agent under a live collaboration is not something we do.
-    const agentsWhy = isLive
-      ? 'This task is running — agents cannot be reassigned under a live task. End it first, then reassign.'
-      : 'Change who is assigned to this task and which model each one runs';
-    // The wrapping span carries the tooltip: a disabled button shows none of
-    // its own, and the reason is the whole point of disabling it.
-    const agentsBtn = `<span title="${esc(agentsWhy)}"><button class="agents-btn" data-room="${esc(r.roomId)}"${isLive ? ' disabled' : ''} title="${esc(agentsWhy)}">👥 Agents</button></span>`;
     // A draft's Start lives in the summary, where it reads as the next step
     // rather than as one of ten equal options. Repeating it here is the
     // two-primaries bug.
@@ -3744,7 +3631,13 @@ function detailOverflow(r, isLive, isRoom) {
   const current = r.currentTheme || '';
   const items = [];
   if (isLive) {
-    items.push(`<button class="ov-item dp-terms-btn">Show terminals</button>`);
+    // On the hub this shows or hides the agents' terminals. From another
+    // computer it is Terminal: it shows the terminal the hub captures, and
+    // pressed again brings it to the front, so hiding it is an item of its own
+    // (shown while the terminal is, set when the menu opens).
+    if (onHubMachine()) items.push(`<button class="ov-item dp-terms-btn">Show terminals</button>`);
+    else items.push(`<button class="ov-item dp-terms-btn" title="The agent's terminal, as the hub captures it. Pressed again, it comes to the front.">Terminal</button>`,
+                    `<button class="ov-item dp-terms-hide" hidden>Hide terminal</button>`);
     items.push(`<button class="ov-item dp-pause-btn" data-room="${esc(r.roomId)}" data-status="${esc(r.status || '')}">${r.status === 'paused' ? 'Resume' : 'Pause'}</button>`);
   }
   items.push(`<button class="ov-item pin-btn ${r.pinned ? 'is-pinned' : ''}" data-sid="${esc(r.sessionId)}" data-pinned="${r.pinned ? 1 : 0}">${r.pinned ? 'Unpin' : 'Pin'}</button>`);
@@ -3757,7 +3650,7 @@ function detailOverflow(r, isLive, isRoom) {
   items.push(`<button class="ov-item moveproj-btn" data-sid="${esc(r.sessionId)}">Move to project</button>`);
   if (cwd) {
     items.push(`<button class="ov-item finder-btn" data-path="${esc(cwd)}">${esc(finderLabel())}</button>`);
-    items.push(`<button class="ov-item ij-btn" data-sid="${esc(r.sessionId)}">${onHubMachine() ? 'Open in editor' : 'Open in editor on the hub'}</button>`);
+    items.push(`<button class="ov-item ij-btn" data-sid="${esc(r.sessionId)}">${onHubMachine() ? 'Open in editor' : 'Show in Workspace'}</button>`);
   }
   if (feat('themes') && cwd) {
     items.push(`<button type="button" class="ov-item theme-dd-trigger" data-pid="" data-cwd="${esc(cwd)}" data-current="${esc(current)}" title="Pick the terminal colour scheme for this task's folder">${current ? 'Terminal colours: ' + esc(current) : 'Terminal colours…'}</button>`);
@@ -8184,6 +8077,8 @@ document.addEventListener('click', (ev) => {
     ev.stopPropagation();
     const m = ovBtn.parentElement.querySelector('.ov-menu');
     if (m) m.hidden = !m.hidden;
+    const hideTerm = m && !m.hidden && m.querySelector('.dp-terms-hide');
+    if (hideTerm) hideTerm.hidden = !capturedTermsShown();
     return;
   }
   const ovItem = ev.target.closest('.ov-item');
@@ -8460,6 +8355,172 @@ async function focusByPid(pid) {
   } catch (e) { toast('error: ' + e.message, 4000, 'err'); }
 }
 
+// ---- IDE and Terminal, on the hub and from another computer ----------------
+// On the hub machine IDE opens an editor and Terminal a terminal window, both
+// on its own screen. From any other computer nobody sees that screen, so IDE
+// shows the session's files in its Workspace tab, and Terminal shows the
+// terminal the hub captures: the agent's pty, which the task's live session
+// page (the Activity tab's /session iframe) already draws. Pressed again,
+// Terminal brings that terminal to the front; that is what Focus was for.
+
+// IDE: the editor on the hub machine, the Workspace tab anywhere else.
+async function ideAction(btn) {
+  const sid = btn.dataset.sid;
+  closeIjMenu();
+  if (!onHubMachine()) { openWorkspaceTab(sid); return; }
+  btn.classList.add('busy');
+  try {
+    const repos = await api('/api/repos/' + sid);
+    btn.classList.remove('busy');
+    if (!repos.length) { toast('no project found in this session', 3000, 'err'); return; }
+    if (repos.length === 1) { await openInEditor(repos[0].path, repos[0].editor); return; }
+    showIjMenu(btn, repos);
+  } catch (e) {
+    btn.classList.remove('busy');
+    toast('repo lookup failed: ' + e.message);
+  }
+}
+
+// The session's files in its task panel's Workspace tab. A session with no
+// folder the Workspace tab can show (a transcript outside every project)
+// browses its working folder in the file viewer instead.
+function openWorkspaceTab(sid) {
+  const row = ALL_ROWS.find(x => x.sessionId === sid);
+  if (row && row.cwd && !wsRoots({ kind: 'task', sid }).length) {
+    window.open('/fileview?path=' + encodeURIComponent(row.cwd), '_blank', 'noopener');
+    return;
+  }
+  ISSUE_TAB_SID = sid;
+  ISSUE_TAB = 'workspace';
+  if (SELECTED_SID !== sid) openDetail(sid);
+  else { const p = $('#detail-panel'); if (p) p.dataset.sig = ''; renderDetail(); }
+  const tab = document.querySelector('#detail-panel .dp-tab[data-itab="workspace"]');
+  if (tab) tab.scrollIntoView({ block: 'nearest' });
+}
+
+// Terminal on a history session: a window on the hub machine; anywhere else,
+// the session resumed headless with its captured terminal showing.
+async function terminalAction(btn) {
+  const sid = btn.dataset.sid;
+  const cwd = btn.dataset.cwd;
+  const agent = btn.dataset.agent || '';
+  if (!cwd) { toast('no cwd for this session'); return; }
+  if (!onHubMachine()) {
+    const rid = await openHeadless(btn);
+    if (rid) await showCapturedTerminal(rid);
+    return;
+  }
+  btn.classList.add('busy');
+  toast(`opening ${agent === 'codex' ? 'Codex' : T()} window…`, 8000, 'busy');
+  try {
+    const r = await api('/api/open', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({sessionId: sid, cwd, agent}),
+    });
+    if (r.result === 'ok') toast(`opened in ${T()}`, 2200, 'ok');
+    else toast('open failed: ' + r.result, 5000, 'err');
+    setTimeout(refresh, 1000);
+  } catch (e) { toast('error: ' + e.message, 5000, 'err'); }
+  finally { btn.classList.remove('busy'); }
+}
+
+// ▶ Open on a history session: resume it headless (no terminal window) and
+// open its task panel. Returns the new task's id, or '' when it failed.
+async function openHeadless(btn) {
+  toast('opening headless…', 0, 'busy');
+  try {
+    const resp = await api('/api/session/adopt', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent: btn.dataset.agent || 'claude',
+        sessionId: btn.dataset.sid,
+        cwd: btn.dataset.cwd,
+        label: btn.dataset.label || '',
+      }),
+    });
+    toast('opened headless', 2000, 'ok');
+    await refresh(); updateRoomsBadge();
+    if (resp.room && resp.room.id) { openDetail(resp.room.id); return resp.room.id; }
+  } catch (e) { toast('open headless failed: ' + e.message, 5000, 'err'); }
+  return '';
+}
+
+// The task panel's terminals item: on the hub it shows or hides the agents'
+// terminals; anywhere else it is Terminal.
+function termsAction() {
+  if (onHubMachine()) { toggleCapturedTerms(); return null; }
+  return showCapturedTerminal(SELECTED_SID);
+}
+function toggleCapturedTerms() {
+  const ifr = document.querySelector('#detail-panel iframe.dp-session');
+  if (ifr && ifr.contentWindow) ifr.contentWindow.postMessage({ ensemble: 'toggleTerms' }, '*');
+}
+
+// The session page is same-origin, so these use its own controls: #terms and
+// the body's term-hidden class show the terminals, each .agent in #agentcol is
+// one agent's, and its .ah header opens it. tests/test_links.py checks that
+// session.html still has them.
+function capturedTermsShown() {
+  const ifr = document.querySelector('#detail-panel iframe.dp-session');
+  try {
+    const d = ifr && ifr.contentDocument;
+    return !!(d && d.getElementById('terms') && !d.body.classList.contains('term-hidden'));
+  } catch (e) { return false; }
+}
+
+// Resolves with fn()'s first truthy value, or null once `ms` have passed.
+async function waitFor(fn, ms = 10000) {
+  const end = Date.now() + ms;
+  for (;;) {
+    let v = null;
+    try { v = fn(); } catch (e) {}
+    if (v || Date.now() > end) return v || null;
+    await new Promise(r => setTimeout(r, 100));
+  }
+}
+
+// Show task `rid`'s captured terminal in the page, or bring it to the front
+// when it is already showing: the task panel on its Activity tab, the terminal
+// open and scrolled into view, and focused for typing. The agent whose
+// terminal is already open keeps it; otherwise the first one running.
+async function showCapturedTerminal(rid) {
+  const row = ALL_ROWS.find(x => x.sessionId === rid || x.roomId === rid);
+  if (!row || !row.roomId || !row.isLive) {
+    toast('This task is not running, so there is no terminal to show. Resume it first.', 4000, 'err');
+    return;
+  }
+  const sid = row.sessionId;
+  if (SELECTED_SID !== sid || issueTab(row) !== 'activity') {
+    ISSUE_TAB_SID = sid;
+    ISSUE_TAB = 'activity';
+    if (SELECTED_SID !== sid) openDetail(sid);
+    else { const p = $('#detail-panel'); if (p) p.dataset.sig = ''; renderDetail(); }
+  }
+  const ifr = document.querySelector(`#detail-panel iframe.dp-session[data-room="${CSS.escape(row.roomId)}"]`);
+  if (!ifr) { toast('This task has no terminal to show', 4000, 'err'); return; }
+  ifr.scrollIntoView({ block: 'nearest' });
+  const doc = await waitFor(() => {
+    const d = ifr.contentDocument;
+    return d && d.readyState !== 'loading' && d.getElementById('terms') ? d : null;
+  });
+  if (!doc) { toast('The terminal did not load', 4000, 'err'); return; }
+  if (doc.body.classList.contains('term-hidden')) doc.getElementById('terms').click();
+  const agents = await waitFor(() => {
+    const a = [...doc.querySelectorAll('#agentcol .agent')];
+    return a.length ? a : null;
+  });
+  if (!agents) { toast('No agent has a terminal yet', 4000, 'err'); return; }
+  const agent = agents.find(a => a.classList.contains('open'))
+    || agents.find(a => { const dot = a.querySelector('.adot'); return !(dot && dot.classList.contains('dead')); })
+    || agents[0];
+  if (!agent.classList.contains('open')) agent.querySelector('.ah').click();
+  agent.scrollIntoView({ block: 'nearest' });
+  const input = await waitFor(() => agent.querySelector('.xterm-helper-textarea'), 5000);
+  ifr.focus();
+  if (input) input.focus();
+}
+
 async function showTranscript(sid) {
   try {
     const data = await api('/api/session/' + sid);
@@ -8707,8 +8768,13 @@ document.addEventListener('click', async (ev) => {
   const dpTerms = ev.target.closest('.dp-terms-btn');
   if (dpTerms) {
     ev.stopPropagation();
-    const ifr = document.querySelector('#detail-panel iframe.dp-session');
-    if (ifr && ifr.contentWindow) ifr.contentWindow.postMessage({ ensemble: 'toggleTerms' }, '*');
+    termsAction();
+    return;
+  }
+  const dpTermsHide = ev.target.closest('.dp-terms-hide');
+  if (dpTermsHide) {
+    ev.stopPropagation();
+    if (capturedTermsShown()) toggleCapturedTerms();
     return;
   }
   const dpPause = ev.target.closest('.dp-pause-btn');
@@ -8793,21 +8859,7 @@ document.addEventListener('click', async (ev) => {
   const headlessBtn = ev.target.closest('.open-btn');
   if (headlessBtn) {
     ev.stopPropagation();
-    toast('opening headless…', 0, 'busy');
-    try {
-      const resp = await api('/api/session/adopt', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          agent: headlessBtn.dataset.agent || 'claude',
-          sessionId: headlessBtn.dataset.sid,
-          cwd: headlessBtn.dataset.cwd,
-          label: headlessBtn.dataset.label || '',
-        }),
-      });
-      toast('opened headless', 2000, 'ok');
-      await refresh(); updateRoomsBadge();
-      if (resp.room && resp.room.id) openDetail(resp.room.id);
-    } catch (e) { toast('open headless failed: ' + e.message, 5000, 'err'); }
+    await openHeadless(headlessBtn);
     return;
   }
   const sendBtn = ev.target.closest('.send-btn');
@@ -8829,26 +8881,10 @@ document.addEventListener('click', async (ev) => {
     finally { sendBtn.classList.remove('busy'); }
     return;
   }
-  const openBtn = ev.target.closest('.terminal-btn');
-  if (openBtn) {
+  const terminalBtn = ev.target.closest('.terminal-btn');
+  if (terminalBtn) {
     ev.stopPropagation();
-    const sid = openBtn.dataset.sid;
-    const cwd = openBtn.dataset.cwd;
-    const agent = openBtn.dataset.agent || '';
-    if (!cwd) { toast('no cwd for this session'); return; }
-    openBtn.classList.add('busy');
-    toast(`opening ${agent === 'codex' ? 'Codex' : T()} window…`, 8000, 'busy');
-    try {
-      const r = await api('/api/open', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({sessionId: sid, cwd, agent}),
-      });
-      if (r.result === 'ok') toast(`opened in ${T()}`, 2200, 'ok');
-      else toast('open failed: ' + r.result, 5000, 'err');
-      setTimeout(refresh, 1000);
-    } catch (e) { toast('error: ' + e.message, 5000, 'err'); }
-    finally { openBtn.classList.remove('busy'); }
+    await terminalAction(terminalBtn);
     return;
   }
   const archiveBtnEl = ev.target.closest('.archive-btn');
@@ -8925,40 +8961,6 @@ document.addEventListener('click', async (ev) => {
     } catch (e) { toast('pin failed: ' + e.message, 4000, 'err'); }
     return;
   }
-  const forkBtnEl = ev.target.closest('.fork-btn');
-  if (forkBtnEl) {
-    ev.stopPropagation();
-    const sid = forkBtnEl.dataset.sid;
-    const cwd = forkBtnEl.dataset.cwd;
-    if (!cwd) { toast('no cwd for this session', 4000, 'err'); return; }
-    const origRow = ALL_ROWS.find(x => x.sessionId === sid);
-    const origName = origRow?.label || origRow?.first || '';
-    const suggested = origName ? ('fork: ' + origName).slice(0, 60) : '';
-    const r = await showInputModal({
-      title: 'Fork session',
-      defaults: { title: suggested, prompt: '' },
-      okLabel: 'Fork',
-      titleHelp: "becomes the fork's label (and is sent to claude with the prompt)",
-      promptHelp: 'first message to the forked claude after it resumes',
-    });
-    if (!r) return;
-    forkBtnEl.classList.add('busy');
-    toast('forking session into a new window…', 8000, 'busy');
-    try {
-      const resp = await api('/api/fork', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({sessionId: sid, cwd, label: r.title, initialPrompt: r.prompt}),
-      });
-      if (resp.result === 'ok') {
-        const where = resp.newCwd ? ` → ${tildeify(resp.newCwd).split('/').pop()}` : '';
-        toast(`forked into isolated workspace${where}`, 3500, 'ok');
-      } else toast('fork failed: ' + resp.result, 5000, 'err');
-      setTimeout(refresh, 1500);
-    } catch (e) { toast('error: ' + e.message, 5000, 'err'); }
-    finally { forkBtnEl.classList.remove('busy'); }
-    return;
-  }
   const closeBtnEl = ev.target.closest('.close-btn');
   if (closeBtnEl) {
     ev.stopPropagation();
@@ -9021,19 +9023,7 @@ document.addEventListener('click', async (ev) => {
   const ijBtnEl = ev.target.closest('.ij-btn');
   if (ijBtnEl) {
     ev.stopPropagation();
-    const sid = ijBtnEl.dataset.sid;
-    closeIjMenu();
-    ijBtnEl.classList.add('busy');
-    try {
-      const repos = await api('/api/repos/' + sid);
-      ijBtnEl.classList.remove('busy');
-      if (!repos.length) { toast('no project found in this session', 3000, 'err'); return; }
-      if (repos.length === 1) { await openInEditor(repos[0].path, repos[0].editor); return; }
-      showIjMenu(ijBtnEl, repos);
-    } catch (e) {
-      ijBtnEl.classList.remove('busy');
-      toast('repo lookup failed: ' + e.message);
-    }
+    await ideAction(ijBtnEl);
     return;
   }
   // Click outside menu closes it
