@@ -577,13 +577,18 @@ const toast = (msg) => log.push('toast:' + msg);
 const closeIjMenu = () => {}, showIjMenu = () => log.push('ij-menu'), openInEditor = async p => log.push('editor:' + p);
 const updateRoomsBadge = () => {};
 let ALL_ROWS = [], SELECTED_SID = null, ISSUE_TAB = '', ISSUE_TAB_SID = '', NEW_ROOM = null, FRAME = null;
+// Refreshes that return the list from before the new task (a poll in flight).
+let STALE_REFRESHES = 0;
 const api = async (url) => {
   log.push('api:' + url);
   if (url.startsWith('/api/repos/')) return [{ path: '/code/x', editor: 'code' }];
   if (url === '/api/session/adopt') return { room: { id: 'room-0000new1' } };
   return { result: 'ok' };
 };
-const refresh = async () => { if (NEW_ROOM && !ALL_ROWS.includes(NEW_ROOM)) ALL_ROWS.push(NEW_ROOM); };
+const refresh = async () => {
+  if (STALE_REFRESHES > 0) { STALE_REFRESHES--; log.push('refresh:stale'); return; }
+  if (NEW_ROOM && !ALL_ROWS.includes(NEW_ROOM)) ALL_ROWS.push(NEW_ROOM);
+};
 const openDetail = sid => { SELECTED_SID = sid; log.push('detail:' + sid + ':' + ISSUE_TAB); };
 const renderDetail = () => log.push('render:' + ISSUE_TAB);
 const issueTab = () => ISSUE_TAB;
@@ -598,21 +603,30 @@ globalThis.document = {
   },
 };
 // A /session page: its terminals hidden or shown, its agents, whose terminals
-// appear once the page has built them.
+// appear once the page has built them. An agent's dot gets its state (dead or
+// idle) at once, or with `late` a while after the agents are built, as the
+// page's own status poll does; `pty: ''` is an agent with no terminal.
 function session(room, { hidden = true, agents = [{ name: 'claude' }, { name: 'codex' }] } = {}) {
-  const classes = set => ({ contains: c => set.has(c), add: c => set.add(c) });
+  const classes = set => ({ contains: c => set.has(c), add: c => set.add(c), get length() { return 1 + set.size; } });
   const bodySet = new Set(hidden ? ['term-hidden'] : []);
   let built = !hidden;
+  const states = [];
   const els = agents.map(a => {
     const set = new Set(a.open ? ['open'] : []);
+    const dotSet = new Set();
+    const state = () => dotSet.add(a.dead ? 'dead' : 'idle');
+    if (a.late) states.push(state); else state();
+    const dot = { classList: classes(dotSet), dataset: { pty: a.pty ?? 'pty-' + a.name } };
     const input = { focus: () => log.push('focus:' + a.name) };
     const el = { classList: classes(set), scrollIntoView: () => log.push('scroll:' + a.name) };
     el.querySelector = s => s === '.ah' ? { click: () => { set.add('open'); log.push('open:' + a.name); } }
-      : s === '.adot' ? { classList: classes(new Set(a.dead ? ['dead'] : [])) }
-      : s === '.xterm-helper-textarea' ? (set.has('open') ? input : null) : null;
+      : s === '.adot' ? dot
+      : s === '.xterm-helper-textarea' ? (set.has('open') && dot.dataset.pty ? input : null) : null;
     return el;
   });
-  const terms = { click: () => { log.push('terms'); bodySet.delete('term-hidden'); setTimeout(() => { built = true; }, 150); } };
+  const build = () => { built = true; setTimeout(() => states.forEach(f => f()), 400); };
+  if (built) build();
+  const terms = { click: () => { log.push('terms'); bodySet.delete('term-hidden'); setTimeout(build, 150); } };
   const doc = { readyState: 'complete', body: { classList: classes(bodySet) },
                 getElementById: id => id === 'terms' ? terms : null,
                 querySelectorAll: s => (s === '#agentcol .agent' && built) ? els : [] };
@@ -642,8 +656,11 @@ const take = () => log.splice(0);
 
   // Terminal on a history session
   NEW_ROOM = { sessionId: 'room-0000new1', roomId: 'room-0000new1', headless: true, isLive: true };
-  FRAME = session('room-0000new1', { agents: [{ name: 'claude' }] });
-  SELECTED_SID = null; ISSUE_TAB = '';
+  // The list answers from before the adoption twice, and the first agent is a
+  // reviewer with no terminal whose dot is coloured only after it is built.
+  FRAME = session('room-0000new1', { agents: [{ name: 'codex', pty: '', dead: true, late: true },
+                                              { name: 'claude', late: true }] });
+  SELECTED_SID = null; ISSUE_TAB = ''; STALE_REFRESHES = 2;
   await terminalAction(btn({ sid: history.sessionId, cwd: history.cwd, agent: 'claude', label: 'old' }));
   out.terminalHistory = take();
 
@@ -732,6 +749,9 @@ class HubMachineActions(unittest.TestCase):
         self.assertNotIn("api:/api/open", t)
         self.assertEqual([x for x in t if x in ("api:/api/session/adopt", "terms", "open:claude", "focus:claude")],
                          ["api:/api/session/adopt", "terms", "open:claude", "focus:claude"], t)
+        self.assertEqual(t.count("refresh:stale"), 2, "kept refreshing until the new task was listed")
+        self.assertNotIn("open:codex", t, "not the reviewer, which has no terminal")
+        self.assertFalse([x for x in t if x.startswith("toast:") and "headless" not in x], t)
         # The task panel's Terminal: shown on the Activity tab, the running
         # agent's terminal opened and focused...
         self.assertFalse(mac["shownBefore"])

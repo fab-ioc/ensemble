@@ -8440,8 +8440,17 @@ async function openHeadless(btn) {
       }),
     });
     toast('opened headless', 2000, 'ok');
-    await refresh(); updateRoomsBadge();
-    if (resp.room && resp.room.id) { openDetail(resp.room.id); return resp.room.id; }
+    const rid = resp.room && resp.room.id;
+    // refresh() skips while a poll is in flight, and that poll's answer can
+    // predate the new task: keep refreshing until the list has it.
+    const listed = () => !rid || ALL_ROWS.some(x => x.sessionId === rid || x.roomId === rid);
+    const end = Date.now() + 10000;
+    do {
+      await refresh();
+      if (!listed()) await new Promise(r => setTimeout(r, 250));
+    } while (!listed() && Date.now() < end);
+    updateRoomsBadge();
+    if (rid) { openDetail(rid); return rid; }
   } catch (e) { toast('open headless failed: ' + e.message, 5000, 'err'); }
   return '';
 }
@@ -8511,9 +8520,13 @@ async function showCapturedTerminal(rid) {
     return a.length ? a : null;
   });
   if (!agents) { toast('No agent has a terminal yet', 4000, 'err'); return; }
-  const agent = agents.find(a => a.classList.contains('open'))
-    || agents.find(a => { const dot = a.querySelector('.adot'); return !(dot && dot.classList.contains('dead')); })
-    || agents[0];
+  // The page builds the agents first and colours their dots a moment later
+  // (dead: no terminal running, like a reviewer waiting to be mentioned), so
+  // choose once every dot has its state.
+  const dots = () => agents.map(a => a.querySelector('.adot')).filter(Boolean);
+  await waitFor(() => dots().every(d => d.classList.length > 1), 3000);
+  const running = a => { const d = a.querySelector('.adot'); return !!(d && d.dataset.pty && !d.classList.contains('dead')); };
+  const agent = agents.find(a => a.classList.contains('open')) || agents.find(running) || agents[0];
   if (!agent.classList.contains('open')) agent.querySelector('.ah').click();
   agent.scrollIntoView({ block: 'nearest' });
   const input = await waitFor(() => agent.querySelector('.xterm-helper-textarea'), 5000);
