@@ -11,6 +11,7 @@ adapts):
 """
 from __future__ import annotations
 
+import base64
 import ctypes
 import json
 import os
@@ -587,6 +588,46 @@ class WindowsBackend(Backend):
         except (OSError, subprocess.SubprocessError) as e:
             return {"started": False, "error": f"{e.__class__.__name__}: {e}"}
         return {"started": True, "pid": os.getpid()}
+
+    def self_restart(self, plan: dict) -> dict:
+        """Run restart-hub.ps1 (a copy, so a checkout change mid-restart cannot
+        edit it) through WMI: a process created that way is not in the hub's
+        process tree or job, so stopping the Ensemble task does not end it.
+        WMI starts it with the user's default environment, so the plan carries
+        the hub's own (a test hub's USERPROFILE included) for the helper to
+        restore before it starts anything."""
+        shell = shutil.which("powershell") or shutil.which("pwsh")
+        src = Path(plan["repo"]) / "restart-hub.ps1"
+        if not shell:
+            return {"started": False, "error": "PowerShell not found"}
+        if not src.is_file():
+            return {"started": False, "error": f"missing {src}"}
+        LAUNCH_DIR.mkdir(parents=True, exist_ok=True)
+        tag = uuid.uuid4().hex
+        script = LAUNCH_DIR / f"restart-{tag}.ps1"
+        plan_path = LAUNCH_DIR / f"restart-{tag}.json"
+        cmdline = (f'"{shell}" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden '
+                   f'-File "{script}" -Plan "{plan_path}"')
+        ps = ("$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create "
+              f"-Arguments @{{ CommandLine = {_ps_quote(cmdline)} }}; "
+              "[Console]::Out.Write([string]$r.ReturnValue + ' ' + [string]$r.ProcessId)")
+        # Encoded, so the quotes in the command line survive the trip.
+        encoded = base64.b64encode(ps.encode("utf-16-le")).decode("ascii")
+        try:
+            shutil.copyfile(src, script)
+            plan_path.write_text(json.dumps(plan), encoding="utf-8")
+            out = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+                                 capture_output=True, text=True, encoding="utf-8",
+                                 errors="replace", timeout=60)
+        except (OSError, subprocess.SubprocessError) as e:
+            return {"started": False, "error": f"{e.__class__.__name__}: {e}"}
+        parts = (out.stdout or "").split()
+        if len(parts) != 2 or parts[0] != "0":
+            for f in (script, plan_path):
+                f.unlink(missing_ok=True)
+            return {"started": False,
+                    "error": f"could not start the helper: {(out.stdout or out.stderr or '').strip()[:300]}"}
+        return {"started": True, "helperPid": int(parts[1])}
 
     # ---------- themes ----------
 

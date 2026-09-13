@@ -848,7 +848,61 @@ _SETTINGS_DEFAULTS = {
     # The dashboard theme, shared by every device on this hub. Empty = never
     # chosen here; the pages then hand up whatever their browser had.
     "theme": "",
+    # The accent colour, shared the same way: a CSS colour, or "default" for
+    # the theme's own accent. Empty = never chosen here (a page then hands up
+    # its browser's), which is why the default is a word and not "".
+    "accent": "",
 }
+# An accent is an opaque colour a primary button can be painted with: #rgb or
+# #rrggbb, a CSS colour name, rgb(r g b) or hsl(h s% l%) (commas or spaces).
+# No alpha: a see-through accent has no text colour that is sure to read on it.
+_CSS_COLOUR_NAMES = frozenset("""
+aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue
+blueviolet brown burlywood cadetblue chartreuse chocolate coral cornflowerblue cornsilk
+crimson cyan darkblue darkcyan darkgoldenrod darkgray darkgreen darkgrey darkkhaki
+darkmagenta darkolivegreen darkorange darkorchid darkred darksalmon darkseagreen
+darkslateblue darkslategray darkslategrey darkturquoise darkviolet deeppink deepskyblue
+dimgray dimgrey dodgerblue firebrick floralwhite forestgreen fuchsia gainsboro ghostwhite
+gold goldenrod gray green greenyellow grey honeydew hotpink indianred indigo ivory khaki
+lavender lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan
+lightgoldenrodyellow lightgray lightgreen lightgrey lightpink lightsalmon lightseagreen
+lightskyblue lightslategray lightslategrey lightsteelblue lightyellow lime limegreen linen
+magenta maroon mediumaquamarine mediumblue mediumorchid mediumpurple mediumseagreen
+mediumslateblue mediumspringgreen mediumturquoise mediumvioletred midnightblue mintcream
+mistyrose moccasin navajowhite navy oldlace olive olivedrab orange orangered orchid
+palegoldenrod palegreen paleturquoise palevioletred papayawhip peachpuff peru pink plum
+powderblue purple rebeccapurple red rosybrown royalblue saddlebrown salmon sandybrown
+seagreen seashell sienna silver skyblue slateblue slategray slategrey snow springgreen
+steelblue tan teal thistle tomato turquoise violet wheat white whitesmoke yellow yellowgreen
+""".split())
+_HEX_ACCENT_RE = re.compile(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})")
+_NUM = r"(\d{1,3}(?:\.\d+)?)"
+_COLOUR_FN_RE = {
+    sep: re.compile(rf"(rgb|hsl)\(\s*{_NUM}(%?)(deg)?{sep}{_NUM}(%?){sep}{_NUM}(%?)\s*\)", re.I)
+    for sep in (r"\s*,\s*", r"\s+")
+}
+
+
+def valid_accent(v: str) -> bool:
+    """True for "default" or an opaque colour the pages can paint (see above)."""
+    if v == "default" or _HEX_ACCENT_RE.fullmatch(v) or v.lower() in _CSS_COLOUR_NAMES:
+        return True
+    for rx in _COLOUR_FN_RE.values():
+        m = rx.fullmatch(v)
+        if not m:
+            continue
+        fn, a, pa, deg, b, pb, c, pc = m.groups()
+        a, b, c = float(a), float(b), float(c)
+        if fn.lower() == "rgb":
+            if deg or len({pa, pb, pc}) != 1:          # all percentages or none
+                return False
+            top = 100 if pa else 255
+            return all(0 <= x <= top for x in (a, b, c))
+        return (not pa and pb == pc == "%" and 0 <= a <= 360
+                and 0 <= b <= 100 and 0 <= c <= 100)
+    return False
+
+
 _SETTINGS_ALLOWED_VALUES = {
     "openMode": {"window", "tab"},
     "theme": {"", "light", "dark", "dim", "paper", "contrast", "fjord", "system"},
@@ -856,12 +910,19 @@ _SETTINGS_ALLOWED_VALUES = {
 }
 
 
+# One read-merge-write at a time: two partial PUTs at once (a page hands up its
+# theme and its accent together) must both land. Reads take it too, so this
+# process never holds the file open while a save replaces it.
+_SETTINGS_LOCK = threading.RLock()
+
+
 def load_settings() -> dict:
     """Merge saved settings over the defaults so a missing key doesn't crash
     the caller after we add new preferences later."""
     out = dict(_SETTINGS_DEFAULTS)
     try:
-        saved = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        with _SETTINGS_LOCK:
+            saved = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
         if isinstance(saved, dict):
             for k, v in saved.items():
                 if k in _SETTINGS_DEFAULTS:
@@ -873,6 +934,11 @@ def load_settings() -> dict:
 
 def save_settings(settings: dict) -> dict:
     """Persist only known keys with validated values; ignore extras."""
+    with _SETTINGS_LOCK:
+        return _save_settings_locked(settings)
+
+
+def _save_settings_locked(settings: dict) -> dict:
     current = load_settings()
     for k, v in settings.items():
         if k not in _SETTINGS_DEFAULTS:
@@ -920,11 +986,30 @@ def save_settings(settings: dict) -> dict:
                 continue
         if k in ("backupEnabled", "rtkForTasks"):
             v = bool(v)
+        if k == "accent":
+            # Never back to "": that reads as never chosen, and the next page
+            # would hand up its own browser's colour over the choice.
+            if not isinstance(v, str) or not valid_accent(v.strip()):
+                continue
+            v = v.strip()
         current[k] = v
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = SETTINGS_FILE.with_suffix(".json.tmp")
+    # A temp file of its own, and a few tries at the swap: on Windows another
+    # process reading settings.json (a preflight hub) makes a replace fail.
+    tmp = SETTINGS_FILE.with_name(f"{SETTINGS_FILE.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(json.dumps(current, indent=2, sort_keys=True), encoding="utf-8")
-    tmp.replace(SETTINGS_FILE)
+    try:
+        for attempt in range(10):
+            try:
+                os.replace(tmp, SETTINGS_FILE)
+                break
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.05)
+    finally:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
     return current
 
 
@@ -4217,6 +4302,162 @@ def trigger_update() -> dict:
     return result
 
 
+# --- A plain restart ---------------------------------------------------------
+# Stop and start the hub on the code already on disk: no fetch, reset or pull,
+# so a merge not yet pushed survives (the Update path resets main to its
+# upstream). A detached helper (restart-hub.ps1) first starts that code on a
+# spare port and gives up, leaving the hub alone, if it does not serve; then
+# waits RESTART_GRACE_S so the caller's reply reaches the user, restarts the
+# hub, resumes the PO and types it a note. Same lock as /api/update.
+RESTART_GRACE_S = 45
+RESTART_BUSY_S = 180            # a second request this soon is refused
+_RESTART_LOCK = threading.Lock()
+
+
+# The restart lease: a file in the state dir, created exclusively, so two
+# requests at once cannot both start a helper and the hub that comes back still
+# refuses a second restart until it expires. The helper renews "at" at every
+# wait, so it cannot expire mid-restart, and last when the hub is back; it drops
+# it when its preflight fails (the hub was not touched, so trying again is
+# fine); a helper that could not be started drops it here.
+def _restart_lease_path() -> Path:
+    return DASHBOARD_DIR / "restart.lease"
+
+
+def _restart_lease_age(path: Path) -> float:
+    try:
+        return time.time() - float(json.loads(path.read_text(encoding="utf-8"))["at"])
+    except (OSError, ValueError, KeyError, TypeError):
+        try:
+            return time.time() - path.stat().st_mtime    # being written right now
+        except OSError:
+            return RESTART_BUSY_S                       # gone meanwhile
+
+
+def _take_restart_lease() -> tuple[str, float]:
+    """(lease id, 0) when taken; ("", age in seconds) while one is held."""
+    path = _restart_lease_path()
+    DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
+    with _RESTART_LOCK:
+        for _ in range(3):
+            try:
+                fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                age = _restart_lease_age(path)
+                if 0 <= age < RESTART_BUSY_S:
+                    return "", age
+                with contextlib.suppress(OSError):
+                    path.unlink()                       # expired
+                continue
+            lease = uuid.uuid4().hex
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump({"id": lease, "at": time.time(), "pid": os.getpid()}, f)
+            return lease, 0.0
+    return "", 0.0
+
+
+def _drop_restart_lease(lease: str) -> None:
+    path = _restart_lease_path()
+    with _RESTART_LOCK:
+        try:
+            if json.loads(path.read_text(encoding="utf-8")).get("id") == lease:
+                path.unlink()
+        except (OSError, ValueError, AttributeError):
+            pass
+
+
+def _spare_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def restart_plan(room_id: str = "") -> dict:
+    """What the helper needs: how this hub was started (to start it again the
+    same way), where to preflight, whom to resume and what to tell them.
+    ``room_id`` is the calling PO's room; without one (the dashboard page) the
+    restart rooms that have a live terminal are resumed, and nobody is told."""
+    if room_id:
+        resume = [room_id]
+    else:
+        live = {(s.get("meta") or {}).get("room") for s in ptyrun.list_sessions()
+                if s.get("alive")}
+        resume = sorted(r for r in HUB_RESTART_ROOMS if r in live)
+    wake = ""
+    if room_id:
+        room = chatroom.get_room(room_id, public=False) or {}
+        project = {p["id"]: p for p in load_projects()}.get(
+            ensemble_tools._project_of_room(room) if room else "")
+        handover = str(rotation.handover_path(project)) if project else rotation.HANDOVER_NAME
+        who = operator_name()
+        wake = (f"[from the restart helper, not {who}] The hub restarted on the code "
+                "already on disk (a plain restart: nothing was fetched, reset or pulled) "
+                "after a passing preflight, and you, the PO, were resumed. First verify "
+                "that /, /session, /fileview, /api/usage and /api/settings answer. Then "
+                f"start what {handover} lists to start now, resume any other room that was "
+                f"running, and tell {who} what is running. Do not restart the hub again.")
+    try:
+        grace = max(0, min(300, int(os.environ.get("ENSEMBLE_RESTART_GRACE", RESTART_GRACE_S))))
+    except ValueError:
+        grace = RESTART_GRACE_S
+    logs = DASHBOARD_DIR / "logs"
+    return {
+        "repo": str(STATIC_DIR),
+        "python": sys.executable,
+        "script": str(Path(__file__).resolve()),
+        "args": sys.argv[1:],
+        "port": HUB_PORT,
+        "hubPid": os.getpid(),
+        "preflightPort": _spare_port(),
+        "taskName": APP_NAME,
+        # A test hub never touches the machine's scheduled task, whatever port.
+        "noTask": bool(os.environ.get("ENSEMBLE_RESTART_NO_TASK")),
+        "graceSeconds": grace,
+        "resumeRooms": resume,
+        "wakeRoom": room_id if wake else "",
+        "wakeText": wake,
+        "log": str(logs / "restart.log"),
+        "preflightLog": str(logs / "preflight.log"),
+        "env": dict(os.environ),
+    }
+
+
+def trigger_restart(room_id: str = "") -> dict:
+    """Start a plain restart; returns at once. ``status`` is the HTTP code.
+
+    ENSEMBLE_RESTART_DRY_RUN answers with the plan instead of running it."""
+    lease, since = _take_restart_lease()
+    if not lease:
+        return {"started": False, "status": 409,
+                "error": f"a restart began {int(since)}s ago and is still under way or has just "
+                         f"finished — see {DASHBOARD_DIR / 'logs' / 'restart.log'}. "
+                         f"Try again after {int(RESTART_BUSY_S - since) + 1}s."}
+    try:
+        plan = restart_plan(room_id)
+        plan["leasePath"] = str(_restart_lease_path())
+        plan["leaseId"] = lease
+        if os.environ.get("ENSEMBLE_RESTART_DRY_RUN"):
+            _drop_restart_lease(lease)
+            view = {k: v for k, v in plan.items() if k != "env"}
+            return {"started": True, "status": 202, "dryRun": True, "plan": view}
+        result = BACKEND.self_restart(plan)
+    except BaseException:
+        _drop_restart_lease(lease)
+        raise
+    if not result.get("started"):
+        _drop_restart_lease(lease)
+        return {**result, "status": 500}
+    return {**result, "status": 202, "graceSeconds": plan["graceSeconds"],
+            "preflightPort": plan["preflightPort"], "resumeRooms": plan["resumeRooms"],
+            "log": plan["log"],
+            "message": (f"Restart started. In about {plan['graceSeconds']}s, once the code "
+                        f"on disk has served on port {plan['preflightPort']}, the hub stops "
+                        "and starts again; every agent on it stops with it. "
+                        + ("You will be resumed and told when it is back. "
+                           if plan["wakeRoom"] else "")
+                        + f"Progress: {plan['log']}")}
+
+
 # ---------- HTTP server ----------
 
 # ---------------------------------------------------------------------------
@@ -5220,12 +5461,15 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return self.headers.get("Sec-Fetch-Site") in (None, "same-origin")
 
+    def _bearer_token(self) -> str:
+        auth = self.headers.get("Authorization", "")
+        return auth[7:].strip() if auth[:7].lower() == "bearer " else ""
+
     def _restart_refusal(self) -> str:
         """Empty when this request may restart the hub, else why it may not.
         Passes for the PO's room bearer token, or for the dashboard page: its
         key cookie on a request from the page's own origin."""
-        auth = self.headers.get("Authorization", "")
-        token = auth[7:].strip() if auth[:7].lower() == "bearer " else ""
+        token = self._bearer_token()
         if token:
             resolved = chatroom.resolve_token(token)
             return "" if resolved and may_restart_hub(*resolved) else RESTART_REFUSED
@@ -6581,6 +6825,16 @@ class Handler(BaseHTTPRequestHandler):
             # before that SIGKILL arrives.
             result = trigger_update()
             self._send_json(202 if result.get("started") else 500, result)
+            return
+        if p == "/api/restart":
+            # The same lock; stops and starts the hub on the code on disk.
+            refusal = self._restart_refusal()
+            if refusal:
+                self._send_json(403, {"error": "not_allowed", "message": refusal})
+                return
+            resolved = chatroom.resolve_token(self._bearer_token()) if self._bearer_token() else None
+            result = trigger_restart(resolved[0] if resolved else "")
+            self._send_json(result.pop("status"), result)
             return
         if p == "/api/iterm/consolidate":
             ok, msg = BACKEND.consolidate_windows()

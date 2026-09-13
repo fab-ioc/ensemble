@@ -362,10 +362,18 @@ the hub itself is built. Everyone else, whatever their project or role:
 - never do any of these indirectly (a script, another shell, an interpreter).
 
 If you believe the hub needs a restart, stop and tell the product owner why.
-No Ensemble tool offers hub control. The hub refuses `/api/update` from
-anyone but the Ensemble Dashboard PO and the dashboard's Update now button,
-but the rest of this rule is not enforced by the machine, so it rests on you
-keeping it.
+The hub refuses `/api/update` and `/api/restart` from anyone but the Ensemble
+Dashboard PO and the dashboard page, but the rest of this rule is not enforced
+by the machine, so it rests on you keeping it.
+
+**The Ensemble Dashboard PO restarts the hub with `ensemble_restart_hub`**, a
+tool offered to it alone. It is a plain restart on the code already on disk:
+nothing is fetched, reset or pulled, so a merge not yet pushed survives. The
+hub first starts that code on a spare port and gives up if it does not serve;
+about 45 seconds later it stops and starts, resumes the PO and types it a note.
+Every other room stops with the hub: the PO resumes those. Progress is in
+`~/.ensemble/logs/restart.log`. The Update now button (pull the pushed code,
+then restart) stays ceo's.
 
 ## Planning work for a project
 

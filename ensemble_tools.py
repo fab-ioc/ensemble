@@ -445,6 +445,26 @@ REVIEW_TOOLS = [
 ]
 REVIEW_TOOL_NAMES = frozenset(t["name"] for t in REVIEW_TOOLS)
 
+# Offered only to the agent that may restart the hub (dashboard.may_restart_hub:
+# the PO of a room in HUB_RESTART_ROOMS, the Ensemble Dashboard PO by default).
+RESTART_TOOLS = [
+    {
+        "name": "ensemble_restart_hub",
+        "description": (
+            "Restart the Ensemble hub on the code already on disk: nothing is "
+            "fetched, reset or pulled, so a merge not yet pushed survives. The hub "
+            "first starts that code on a spare port and gives up, leaving itself "
+            "untouched, if it does not serve. Then, after about 45 seconds (time "
+            "for your reply to reach the user), it stops and starts again: every "
+            "agent on this machine stops with it. You are resumed and told when "
+            "it is back; resume the other rooms yourself. Progress is logged to "
+            "~/.ensemble/logs/restart.log. Call it once."
+        ),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+]
+RESTART_TOOL_NAMES = frozenset(t["name"] for t in RESTART_TOOLS)
+
 
 def _role_head(part: dict) -> str:
     return ((part or {}).get("role") or "").split(":", 1)[0].strip().lower()
@@ -470,6 +490,8 @@ def tool_schemas(room: dict, identity: str) -> list[dict]:
     part = _d.chatroom.participant(room or {}, identity) or {}
     if _d.chatroom.is_on_mention(room or {}, part):
         tools += list(REVIEW_TOOLS)
+    if _d.may_restart_hub((room or {}).get("id", ""), identity):
+        tools += list(RESTART_TOOLS)
     return tools
 
 
@@ -1218,6 +1240,14 @@ def _update_roadmap(ctx, args, handler):
                              "mtime": cur["mtime"], "text": cur["text"]}}))
 
 
+def _restart_hub(ctx, args, handler):
+    res = _d.trigger_restart(ctx["room"]["id"])
+    res.pop("status", None)
+    if not res.get("started"):
+        raise ToolError(res.get("error") or "the restart did not start")
+    return res
+
+
 _IMPL = {
     "ensemble_whoami": _whoami,
     "ensemble_report": _report,
@@ -1235,6 +1265,7 @@ _IMPL = {
     "ensemble_get_roadmap": _get_roadmap,
     "ensemble_update_roadmap": _update_roadmap,
     "review_done": _review_done,
+    "ensemble_restart_hub": _restart_hub,
 }
 
 NAMES = frozenset(_IMPL)
@@ -1254,6 +1285,8 @@ def call(name: str, args: dict, room_id: str, identity: str, handler) -> tuple[s
             if name in REVIEW_TOOL_NAMES:
                 raise ToolError(
                     f"{name} is available only to a reviewer during an active review")
+            if name in RESTART_TOOL_NAMES:
+                raise ToolError(_d.RESTART_REFUSED)
             raise ToolError(
                 f"{name} is not available to role '{role}': board administration "
                 "tools are reserved for a project's PO room or an agent whose "
