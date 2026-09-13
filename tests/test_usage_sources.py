@@ -208,6 +208,21 @@ class ClaudeReadingTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 2)
         self.assertEqual(src["via"], "endpoint")
 
+    def test_a_non_finite_retry_after_falls_back_to_the_default_wait(self):
+        for raw in ("inf", "1e309", "nan", "-inf"):
+            with self.subTest(raw=raw):
+                usage._reset_claude_state()
+                self.calls.clear()
+                self.answers = [_refusal(raw), _endpoint_payload()]
+                first = usage.read_claude(NOW, self.missing)
+                self.assertEqual(first["state"], "unavailable")
+                self.assertIn("rate-limiting", first["error"])
+                usage.read_claude(NOW + usage.DEFAULT_BACKOFF_S - 1, self.missing)
+                self.assertEqual(len(self.calls), 1)
+                src = usage.read_claude(NOW + usage.DEFAULT_BACKOFF_S, self.missing)
+                self.assertEqual(len(self.calls), 2)
+                self.assertEqual(src["via"], "endpoint")
+
     def test_a_second_refusal_waits_at_least_what_the_server_asked(self):
         self.answers = [_refusal("5000"), _refusal("5000"), _endpoint_payload()]
         usage.read_claude(NOW, self.missing)

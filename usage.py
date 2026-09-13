@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import os
 import threading
 import time
@@ -322,6 +323,10 @@ def _retry_after_seconds(exc, now: float | None = None) -> float:
             wait = when.timestamp() - (time.time() if now is None else now)
         except (TypeError, ValueError, IndexError):
             return DEFAULT_BACKOFF_S
+    # `float` also reads "inf", "nan" and "1e309": an endless wait would stop
+    # the endpoint for good and break the minutes arithmetic downstream.
+    if not math.isfinite(wait):
+        return DEFAULT_BACKOFF_S
     return max(60.0, wait)
 
 
