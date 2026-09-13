@@ -321,8 +321,8 @@ apply to them. Their rules instead:
 - Opened from the tree, added at the end; a file already open is switched to, never opened twice.
   The row is never re-sorted.
 - The one showing is `--surface` with the `--accent` underline; the rest sit on `--surface-sunken`
-  in `--fg-muted`. A long name truncates; the full path is the tooltip **and** the path bar under
-  the row, since a phone has no tooltip.
+  in `--fg-muted`. A long name truncates; the full path is the tooltip **and** the breadcrumb under
+  the row (see *Breadcrumb*), since a phone has no tooltip.
 - Every tab shows its `×`; hover reveals nothing. A middle click also closes. By keyboard the row is
   one stop (roving `tabindex`): arrows, Home and End move, Enter or Space shows, Delete closes. Keys
   act only on a focused tab: no page-wide shortcuts.
@@ -367,6 +367,48 @@ Workspace's first root only: the task's folder in a task, the project's folder i
 - **Phone:** the box and a few rows sit above the file (45% of the height, 60% with a query); the field
   is `--fs-400` and `--touch-min` tall, every toggle and result row `--touch-min`, and a matching line
   wraps instead of cutting its match off at the edge.
+
+### Recent files
+
+The files shown in a Workspace, most recent first, closed tabs included (`wsRecentToggle` in
+`index.html` is the reference). It is a list, not a find, but it lives in the same box so there is
+one place to go to a file.
+
+- **A third button in the find box's `.seg`:** Files · Text · **Recent**. Pressed, the list takes the
+  tree's place and the field filters it ("Filter recent files"); a Go to file or text query waits
+  untouched until Recent closes. It is not remembered across a reload; the list is.
+- **Rows are Go to file's rows** (`wsGotoHtml`): the name, then its folder under its root in
+  `--fg-muted`, the root's name in front when it is not the Workspace's first root, matched letters
+  `mark.match`. **A filter narrows, it never reorders**: most recent stays first.
+- **It opens on the file shown before the one showing**, so the shortcut and Enter go back to it.
+- **A recent file opens as it was left** (view, Wrap, marked line, scroll), through the one tab path
+  (`wsOpenTabAt`): its tab if open, else a new tab with the state it last reported. Capped at 30,
+  kept per Workspace with its tabs. A tab closed from "no longer exists" leaves the list.
+- **Keys:** arrows and Enter as in find; Escape clears the filter, then closes Recent. The shortcut is
+  **Alt+R (⌥R on a Mac)**, matched by `code` since ⌥R types ®, never with Ctrl (AltGr) or ⌘. It acts
+  only while the Workspace pane has focus (the pane is `tabindex="-1"`, so a click anywhere in it
+  counts) or its viewer does (`fv-key` from `fileview.html`). No page-wide shortcut. Ctrl/⌘+E was not
+  used: browsers own it.
+- The line under the box says how many, and "No recent file matches “x”" when a filter finds none.
+
+### Breadcrumb
+
+Where the file showing is: the bar under a Workspace's file tabs (`wsCrumbsHtml`).
+
+- **Root name › folder › … › file**, in `--font-mono` at `--fs-200`; separators `›` in `--fg-muted`,
+  not read aloud. The root and each folder is a Subtle button: a click shows that folder in the
+  tree, opened. The file is plain `--fg`, weight 500, `aria-current`; its full path is its tooltip.
+  A file in none of the Workspace's roots shows its whole path, with nothing to click.
+- **Cut from the left:** a path too long keeps its end in view and scrolls sideways within itself (no
+  scrollbar); a fade at the left edge (a mask, not a colour) says the start is cut.
+- **Show in the tree** (target icon) opens the folders down to the file, marks it and scrolls the
+  tree, and only the tree, to it. Marked is the tree's selection, `--selected-bg`: one row at a time,
+  the revealed folder or else the file showing. From a click the find box clears to make way for the
+  tree.
+- **Follow** is a toggle (pressed is `--selected-bg`, as `.wsf-opt`): the tree follows the tab showing.
+  It leaves a query alone and scrolls when the tree is back. Remembered per Workspace.
+- Rewritten only when the path changes; a poll never replaces a crumb under the pointer.
+- **Phone:** every crumb and button is `--touch-min`; the path swipes sideways within the bar.
 
 ### Diff
 

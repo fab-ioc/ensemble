@@ -341,7 +341,7 @@ class TabsAreWired(unittest.TestCase):
     def test_fileview_reports_its_state_to_the_workspace(self):
         self.assertIn("type: 'fv-state'", FILEVIEW)
         self.assertIn("type: 'fv-missing'", FILEVIEW)
-        self.assertIn("d.type === 'fv-state' || d.type === 'fv-missing') && ev.origin === location.origin", INDEX)
+        self.assertIn("d.type === 'fv-state' || d.type === 'fv-missing' || d.type === 'fv-key') && ev.origin === location.origin", INDEX)
         self.assertIn("wsTabGone(t, v.dirs);", INDEX, "a 404 keeps the listing's version it was said against")
         self.assertIn("tr.open.forEach(p => v.open.add(p));", INDEX, "saved folders go through wsTreeFrom")
 
