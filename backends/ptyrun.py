@@ -230,19 +230,28 @@ class PtySession:
             return data.encode("utf-8", "replace")
         return data                           # ptyprocess returns bytes
 
-    def write(self, data) -> None:
+    def write(self, data) -> bool:
+        """Type `data` into the terminal. False when it did not take all of it
+        (its process has ended, its pipe has closed, or it took fewer bytes),
+        so a caller can say so."""
         if isinstance(data, bytes):
             data = data.decode("utf-8", "replace")
         payload = data if IS_WINDOWS else data.encode("utf-8", "replace")
+        try:
+            n = self._proc.write(payload)
+        except (OSError, EOFError):
+            return False
+        # ptyprocess returns the bytes it wrote. pywinpty (3.0.5) returns 0
+        # for every write, including 20,000 characters that all arrived, so
+        # on Windows only its EOFError for an ended process says anything.
+        if not IS_WINDOWS and n != len(payload):
+            return False
         if "\r" in data or "\n" in data:
             # Something was submitted to the agent — a human answer typed in
             # the terminal, or the chat doorbell. Keystrokes without an Enter
             # (focus events, a half-typed line) are not an answer.
             self._last_submit = time.time()
-        try:
-            self._proc.write(payload)
-        except (OSError, EOFError):
-            pass
+        return True
 
     def send_line(self, text: str) -> None:
         """Type `text` then submit with Enter. The Enter is a SEPARATE write

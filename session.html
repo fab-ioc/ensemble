@@ -482,6 +482,10 @@
   #cmt-tray .cmt-item-n { font-size:12px; color:var(--fg); word-break:break-word; }
   #cmt-tray .cmt-item-x { position:absolute; top:6px; right:6px; background:none; border:none; color:var(--dim); cursor:pointer; font-size:12px; padding:2px 5px; }
   #cmt-tray .cmt-item-x:hover { color:var(--c-danger-fg); }
+  #cmt-tray .cmt-submit:disabled { background:var(--surface-sunken); color:var(--fg-disabled); cursor:default; }
+  /* Why Submit is off, or why the last send did not arrive. */
+  #cmt-tray .cmt-state { padding:8px 12px; border-bottom:1px solid var(--border); font-size:var(--fs-200); line-height:16px; color:var(--fg-muted); }
+  #cmt-tray .cmt-state.err { color:var(--c-danger-fg); }
   .to { font-weight:400; opacity:.6; text-transform:none; }
   .mention { color:var(--c-discovery-fg); font-weight:600; background:var(--c-discovery-bg); border-radius:var(--r-100); padding:0 3px; }
   .msg .from .mention { text-transform:none; letter-spacing:0; }
@@ -639,7 +643,7 @@
       <div style="display:flex; gap:8px; align-items:center">
         <span class="dim">To</span>
         <select id="to"><option value="">Everyone</option></select>
-        <button id="send">Send</button>
+        <button id="send" disabled>Send</button>
       </div>
     </div>
   </div>
@@ -677,6 +681,10 @@ if (TOUCH && window.visualViewport) {
   fitVisualViewport();
 }
 const $ = s => document.querySelector(s);
+// Write only what changed: a poll that rewrites the same text still replaces
+// the node, and the page repaints under whatever the person is doing.
+const setText = (el, s) => { if (el && el.textContent !== s) el.textContent = s; };
+const setHtml = (el, h) => { if (el && el._html !== h) { el._html = h; el.innerHTML = h; } };
 const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 // Minimal, self-contained markdown → HTML for chat bubbles. Escape-first so it's
 // XSS-safe: fenced/inline code is pulled out to placeholders, the rest is escaped,
@@ -1158,6 +1166,8 @@ function showPendingUser(text) {
 // Solo session: render its live transcript (user + assistant turns) as bubbles,
 // fetched once per completed turn (see the activity-driven trigger in refresh).
 let SOLO_TURN_COUNT = -1, SOLO_FETCHING = false, SOLO_SID = '', SOLO_AGENT = '', SOLO_PTY = '', _prevWorking = {}, _soloStatKey = '';
+let SOLO_MODE = false;   // one agent: what you send is typed into its terminal
+let SEND_ERR = '';       // why the last message did not arrive, shown in the hint
 // A rotated PO: its latest rotation, and the session it was rotated out of
 // (fetched once — a finished transcript never changes).
 let SOLO_ROT = null, SOLO_PREV = { sid: '', items: [] };
@@ -1227,25 +1237,25 @@ async function refresh() {
   let room;
   try { room = await fetch('/api/room?id=' + encodeURIComponent(ROOM)).then(r => r.json()); }
   catch(e) { return; }
-  if (!room || room.error) { $('#title').textContent = '(session not found)'; return; }
-  document.title = room.title + ' — session';
-  $('#title').textContent = room.title;
+  if (!room || room.error) { setText($('#title'), '(session not found)'); return; }
+  if (document.title !== room.title + ' — session') document.title = room.title + ' — session';
+  setText($('#title'), room.title);
   const st = room.status || '';
   const notRunning = room.live === false;
   const sb = $('#status');
-  sb.className = 'status ' + (notRunning ? '' : st);
-  sb.textContent = notRunning ? 'not running' : st.replace('_', ' ');
-  $('#hop').textContent = notRunning ? '' : `hop ${room.hopCount || 0}/${room.maxHops || 0}`;
-  $('#hint').textContent = notRunning
+  if (sb.className !== 'status ' + (notRunning ? '' : st)) sb.className = 'status ' + (notRunning ? '' : st);
+  setText(sb, notRunning ? 'not running' : st.replace('_', ' '));
+  setText($('#hop'), notRunning ? '' : `hop ${room.hopCount || 0}/${room.maxHops || 0}`);
+  setText($('#hint'), SEND_ERR || (notRunning
     ? 'Not running — Resume to continue where it left off.'
     : (st === 'waiting_human' || st === 'paused')
-      ? 'The agents are waiting for you — reply to resume.' : '';
+      ? 'The agents are waiting for you — reply to resume.' : ''));
   $('#send').disabled = notRunning;
   $('#input').disabled = notRunning;
   $('#resume').hidden = !notRunning;
   const pb = $('#pause');
   pb.style.display = notRunning ? 'none' : '';
-  pb.textContent = st === 'paused' ? 'Resume' : 'Pause';
+  setText(pb, st === 'paused' ? 'Resume' : 'Pause');
   pb.onclick = () => jpost('/api/room/status', { roomId: ROOM, status: st === 'paused' ? 'active' : 'paused' }).then(refresh);
   const soloMode = room.mode === 'solo' ||
     room.participants.filter(p => p.kind === 'agent').length === 1;
@@ -1256,12 +1266,13 @@ async function refresh() {
   ROOM_AGENTS = mem.map(m => ({ identity: m.identity, agent: m.agent, ptyId: m.ptyId, sessionId: m.sessionId, onMention: !!m.onMention }));
   ROOM_LIVE = !notRunning;
   ROOM_OBJ = room;
+  SOLO_MODE = soloMode;
   const cwd = room.cwd || '';
   ensureTheme(cwd);
-  $('#info').innerHTML =
+  setHtml($('#info'),
     (cwd ? `<span title="${esc(cwd)}">📁 ${esc(tildeify(cwd))}</span>` : '')
     + mem.map(m => `<span class="ib-agent ${esc(m.agent)}" title="${esc(m.identity)}${m.onMention ? ' — started fresh for each review request' : ''}">${esc(m.agent)}${m.model ? ' · ' + esc(m.model) : ''}${m.onMention ? ' · on mention' : ''}</span>`).join('')
-    + (soloMode ? '' : `<span>${room.messages.length} messages · hop ${room.hopCount || 0}/${room.maxHops || 0}</span>`);
+    + (soloMode ? '' : `<span>${room.messages.length} messages · hop ${room.hopCount || 0}/${room.maxHops || 0}</span>`));
   const showTerms = !document.body.classList.contains('term-hidden');
   $('#terms').hidden = notRunning;
   $('#terms').classList.toggle('on', showTerms);
@@ -1291,6 +1302,7 @@ async function refresh() {
     SOLO_SID = ''; SOLO_PTY = '';
     renderMsgs(room);
   }
+  renderCmtTray();   // Submit follows the session starting or stopping; otherwise a no-op
   updateAgentStatus();
 }
 
@@ -1329,7 +1341,7 @@ async function updateAgentStatus() {
       || ptyState(map[dot.dataset.pty]);
     dot.className = 'adot ' + s.cls;
     const stat = document.querySelector('.astat[data-pty="' + dot.dataset.pty + '"]');
-    if (stat) stat.textContent = s.txt;
+    setText(stat, s.txt);
   });
   renderActivity(map, lmap);
   // Solo: when the agent finishes a turn (leaves the working state), pull the new
@@ -1353,10 +1365,10 @@ function renderActivity(ptyMap, liveMap) {
   TAIL_WORKING = agents.filter(a => a.ptyId && agentState(a, ptyMap, liveMap || {}).cls === 'working');
   renderLiveTail();
   bar.hidden = false;
-  bar.innerHTML = agents.map(a => {
+  setHtml(bar, agents.map(a => {
     const s = onMentionState(a, ptyMap) || agentState(a, ptyMap, liveMap || {});
     return `<span class="act ${s.cls}"><span class="act-dot"></span>${esc(a.identity)} <span class="act-txt">${s.txt}</span></span>`;
-  }).join('');
+  }).join(''));
 }
 // ---- Live tail: the working agent's last terminal lines, in the chat ------
 // A green dot and "working…" says nothing about what is happening. While an
@@ -1623,24 +1635,61 @@ function hidePromptCard() {
 // Solo: deliver a message to the agent by typing into its terminal (the same
 // path the xterm uses). Bracketed paste keeps multi-line input from submitting
 // line-by-line; the trailing CR submits.
+// Resolves only when the agent's terminal took the text: a stopped terminal
+// (404, 410) or a task mid-handover (409) throws, and nothing may count as sent.
 async function sendSolo(text) {
   // A TUI treats a trailing CR in the SAME write as pasted content (it lands in
   // the input unsubmitted). Type the text, then send Enter as a SEPARATE write —
   // the same two-step the server-side doorbell (send_line) uses.
+  const pty = SOLO_PTY;
+  if (!pty) throw Object.assign(new Error('no terminal'), { status: 404 });
   const body = text.includes('\n') ? '\x1b[200~' + text + '\x1b[201~' : text;
-  await jpost('/api/pty/input', { id: SOLO_PTY, data: body });
+  await postOk('/api/pty/input', { id: pty, data: body });
   await new Promise(r => setTimeout(r, 300));
-  await jpost('/api/pty/input', { id: SOLO_PTY, data: '\r' });
+  try { await postOk('/api/pty/input', { id: pty, data: '\r' }); }
+  catch (e) { e.typed = true; throw e; }
 }
+// POST that throws unless the hub accepted it, with the hub's status and reason.
+async function postOk(path, body) {
+  const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  let d = null;
+  try { d = await r.json(); } catch (e) {}
+  if (!r.ok || !d || d.error) throw Object.assign(new Error((d && d.error) || ('error ' + r.status)), { status: r.status });
+  return d;
+}
+// Why a send did not arrive, in words.
+function sendErrorText(e) {
+  if (e && e.typed) return 'it was typed into the session but not submitted, so check its terminal before sending again';
+  const s = e && e.status;
+  if (!s) return 'the hub did not answer';
+  if (s === 404 || s === 410) return 'the session has stopped';
+  if (s === 409) return 'the task is handing over to a fresh session, so try again in a moment';
+  return (e.message || ('error ' + s));
+}
+$('#input').addEventListener('input', () => {
+  if (SEND_ERR) { SEND_ERR = ''; setText($('#hint'), ''); }
+});
 $('#send').onclick = async () => {
   const t = $('#input').value.trim(); if (!t) return;
-  // Solo routes straight into the agent's PTY. Key on the PTY, not SOLO_SID:
-  // codex mints its own session id and only reveals it once it has written a
-  // rollout, so early in a solo codex session there is a terminal to type into
-  // but no id yet — and the room relay ("use chat_read") is meaningless here,
-  // a solo agent has no chat tools.
-  if (SOLO_PTY) {
-    await sendSolo(t);
+  // Until the session has loaded, whether this is typed into a terminal or
+  // said in the room is not known (Send starts off, and turns on in refresh).
+  if (!ROOM_OBJ) {
+    SEND_ERR = 'Not sent: this session has not loaded yet. Your message is still in the box.';
+    setText($('#hint'), SEND_ERR);
+    return;
+  }
+  // Solo routes straight into the agent's PTY, never the room relay ("use
+  // chat_read"): a solo agent has no chat tools, and a solo view never shows
+  // the room's messages. Codex mints its own session id only once it has
+  // written a rollout, so early on there is a terminal to type into but no id.
+  if (SOLO_MODE) {
+    try { await sendSolo(t); }
+    catch (e) {
+      SEND_ERR = 'Not sent: ' + sendErrorText(e) + '. Your message is still in the box.';
+      setText($('#hint'), SEND_ERR);
+      return;
+    }
+    SEND_ERR = '';
     showPendingUser(t);        // show it now; the transcript catches up later
     $('#input').value = '';
     setTimeout(checkSolo, 1200);
@@ -1653,7 +1702,13 @@ $('#send').onclick = async () => {
     const idents = $('#to') ? [...$('#to').options].map(o => o.value) : [];
     if (idents.includes(m[1]) || m[1] === 'user') to = m[1];
   }
-  await jpost('/api/room/say', { roomId: ROOM, text: t, to });
+  try { await postOk('/api/room/say', { roomId: ROOM, text: t, to }); }
+  catch (e) {
+    SEND_ERR = 'Not sent: ' + sendErrorText(e) + '. Your message is still in the box.';
+    setText($('#hint'), SEND_ERR);
+    return;
+  }
+  SEND_ERR = '';
   $('#input').value = ''; if ($('#to')) $('#to').value = ''; refresh();
 };
 $('#input').addEventListener('keydown', e => {
@@ -1758,12 +1813,74 @@ $('#theme').onclick = async () => {
 
 // ---- In-place review comments -------------------------------------------
 // Select text inside an agent bubble → attach a comment; collect several across
-// a long message; submit them all as one structured reply. Comments live in the
-// browser until submitted, and their highlights are re-applied after each poll.
-const COMMENTS = [];        // {cid, mid, from, start, end, quote, note}
-let _cmtSeq = 1;
+// a long message; submit them all as one structured reply. Their highlights are
+// re-applied after each poll.
+//
+// Unsent comments are kept in this browser, per room, so a reload after a hub
+// restart, or the dashboard making this chat's frame again, never loses them.
+// They are dropped only once the agent really took them. The tray is drawn
+// again only when the comments, or what Submit can do, change: rebuilt on every
+// poll it lost the pointer's hover, its scroll and any click in progress.
+const COMMENTS = [];        // {cid, at, mid, from, start, end, quote, note}
+// One stored entry per comment. The same chat can be open twice (the PO's
+// drawer and its own window): adding writes only that comment's entry and
+// removing deletes only its own, so neither copy can overwrite the other's.
+const CMT_PREFIX = 'cd-comment:' + (ROOM || '') + ':';
+let CMT_SENDING = false, CMT_ERROR = '';
+// Comments this browser would not store (storage full or blocked): this page
+// keeps them, tries again on each change, and says a reload would lose them.
+const CMT_UNSTORED = new Map();
+// Comments removed here whose stored entry could not be deleted yet.
+const CMT_GONE = new Set();
 let _cmtComposerOpen = false;
 let _selBtn = null;
+let _cmtLastAt = 0;
+const cmtId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const cmtNow = () => (_cmtLastAt = Math.max(Date.now(), _cmtLastAt + 1));
+// The stored comments, or null when storage cannot be read.
+function cmtStored() {
+  try {
+    const out = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(CMT_PREFIX)) continue;
+      try {
+        const c = JSON.parse(localStorage.getItem(k));
+        if (c && c.cid && typeof c.quote === 'string' && typeof c.note === 'string') out.push(c);
+      } catch (e) {}
+    }
+    return out;
+  } catch (e) { return null; }
+}
+// COMMENTS again from what is stored plus what only this page holds. When
+// storage cannot be read at all, the page's own list stands.
+function cmtSync() {
+  for (const [cid, c] of CMT_UNSTORED) {
+    try { localStorage.setItem(CMT_PREFIX + cid, JSON.stringify(c)); CMT_UNSTORED.delete(cid); } catch (e) {}
+  }
+  for (const cid of CMT_GONE) {
+    try { localStorage.removeItem(CMT_PREFIX + cid); CMT_GONE.delete(cid); } catch (e) {}
+  }
+  const stored = cmtStored();
+  if (!stored) return;
+  const list = stored.filter(c => !CMT_GONE.has(c.cid) && !CMT_UNSTORED.has(c.cid)).concat([...CMT_UNSTORED.values()]);
+  list.sort((a, b) => (a.at || 0) - (b.at || 0) || (a.cid < b.cid ? -1 : a.cid > b.cid ? 1 : 0));
+  COMMENTS.splice(0, COMMENTS.length, ...list);
+}
+function cmtChanged() { cmtSync(); clearHighlights(); applyComments(); }
+function cmtAdd(c) {
+  COMMENTS.push(c);
+  try { localStorage.setItem(CMT_PREFIX + c.cid, JSON.stringify(c)); } catch (e) { CMT_UNSTORED.set(c.cid, c); }
+  cmtChanged();
+}
+function cmtRemove(cids) {
+  for (const cid of cids) {
+    const i = COMMENTS.findIndex(z => z.cid === cid); if (i >= 0) COMMENTS.splice(i, 1);
+    CMT_UNSTORED.delete(cid);
+    try { localStorage.removeItem(CMT_PREFIX + cid); } catch (e) { CMT_GONE.add(cid); }
+  }
+  cmtChanged();
+}
 
 function _offsetInEl(root, node, nodeOffset) {
   const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
@@ -1802,11 +1919,27 @@ function clearHighlights() {
 }
 function applyComments() {
   for (const c of COMMENTS) {
-    const el = document.querySelector(`#msgs .msg[data-mid="${c.mid}"] .text`);
-    if (!el || el.querySelector(`mark.cmt-hl[data-cid="${c.cid}"]`)) continue;
-    _markRange(el, c.start, c.end, c.cid);
+    if (document.querySelector(`#msgs mark.cmt-hl[data-cid="${c.cid}"]`)) continue;
+    const at = cmtFind(c);
+    if (at) _markRange(at.el, at.start, at.start + c.quote.length, c.cid);
   }
   renderCmtTray();
+}
+// Where a comment's passage is now. A bubble's id is its place in the
+// transcript, which moves as the transcript grows, and a reload can come back
+// to a different window of it: the place counts only while it still holds the
+// quote, else the quote is looked up, in the same author's bubbles first.
+function cmtFind(c) {
+  const el = document.querySelector(`#msgs .msg[data-mid="${c.mid}"] .text`);
+  if (el && (el.textContent || '').slice(c.start, c.end) === c.quote) return { el, start: c.start };
+  if (!c.quote) return null;
+  const all = [...document.querySelectorAll('#msgs .msg .text')];
+  const mine = all.filter(b => b.closest('.msg').dataset.from === c.from);
+  for (const b of mine.concat(all)) {
+    const i = (b.textContent || '').indexOf(c.quote);
+    if (i >= 0) return { el: b, start: i };
+  }
+  return null;
 }
 function hideSelBtn() { if (_selBtn) { _selBtn.remove(); _selBtn = null; } }
 
@@ -1855,12 +1988,8 @@ function openComposer(data) {
   pop.querySelector('.cmt-cancel').onclick = close;
   pop.querySelector('.cmt-add').onclick = () => {
     const note = ta.value.trim(); if (!note) { ta.focus(); return; }
-    const cid = _cmtSeq++;
-    COMMENTS.push({ cid, mid: data.mid, from: data.from, start: data.start, end: data.end, quote: data.quote, note });
-    const el = document.querySelector(`#msgs .msg[data-mid="${data.mid}"] .text`);
-    if (el) _markRange(el, data.start, data.end, cid);
     close();
-    renderCmtTray();
+    cmtAdd({ cid: cmtId(), at: cmtNow(), mid: data.mid, from: data.from, start: data.start, end: data.end, quote: data.quote, note });
     const s = window.getSelection(); if (s) s.removeAllRanges();
   };
   ta.addEventListener('keydown', e => {
@@ -1868,50 +1997,87 @@ function openComposer(data) {
     if (e.key === 'Escape') { e.preventDefault(); close(); }
   });
 }
+// What Submit can do now, and in words why not when it cannot. A stopped
+// session is not resumed from here: the hub types its own note into a resumed
+// agent once its screen has settled, and comments typed alongside would race
+// it. So Submit waits, the comments stay, and Resume is the session's own.
+function cmtSubmitState() {
+  const s = CMT_SENDING ? { can: false, label: 'Sending…', note: '' }
+    : !ROOM_OBJ ? { can: false, label: 'Submit', note: '' }
+    : !ROOM_LIVE ? { can: false, label: 'Submit', note: 'This session is not running, so comments cannot reach it. They are kept here: resume the session, then submit them.' }
+    : { can: true, label: 'Submit', note: CMT_ERROR, err: !!CMT_ERROR };
+  if (CMT_UNSTORED.size) s.note = (s.note ? s.note + ' ' : '') + 'This browser would not save some of them, so reloading this page would lose those.';
+  return s;
+}
 function renderCmtTray() {
   let tray = document.getElementById('cmt-tray');
-  if (!COMMENTS.length) { if (tray) tray.remove(); return; }
+  if (!COMMENTS.length) { CMT_ERROR = ''; if (tray) tray.remove(); return; }
+  const s = cmtSubmitState(), n = COMMENTS.length;
+  const html = `<div class="cmt-tray-head"><strong>${n} comment${n > 1 ? 's' : ''}</strong><span class="grow"></span>`
+    + `<button class="cmt-submit"${s.can ? '' : ' disabled'}>${esc(s.label)}</button><button class="cmt-clear">Clear</button></div>`
+    + (s.note ? `<div class="cmt-state${s.err ? ' err' : ''}" role="status">${esc(s.note)}</div>` : '')
+    + '<div class="cmt-list">' + COMMENTS.map(c => `<div class="cmt-item" data-cid="${esc(c.cid)}">`
+      + `<div class="cmt-item-q">${esc('“' + (c.quote.length > 60 ? c.quote.slice(0, 60) + '…' : c.quote) + '”')}</div>`
+      + `<div class="cmt-item-n">${esc(c.note)}</div><button class="cmt-item-x" title="Remove">✕</button></div>`).join('')
+    + '</div>';
   if (!tray) {
     tray = document.createElement('div'); tray.id = 'cmt-tray';
+    tray.addEventListener('click', cmtTrayClick);
     // Docked in the chat column above the composer, so it takes its own space
     // instead of covering the messages being commented on.
     const col = document.getElementById('chatcol'), compose = document.getElementById('compose');
     if (col && compose) col.insertBefore(tray, compose); else document.body.appendChild(tray);
   }
-  tray.innerHTML = `<div class="cmt-tray-head"><strong>${COMMENTS.length} comment${COMMENTS.length > 1 ? 's' : ''}</strong><span class="grow"></span><button class="cmt-submit">Submit</button><button class="cmt-clear">Clear</button></div><div class="cmt-list"></div>`;
-  const list = tray.querySelector('.cmt-list');
-  COMMENTS.forEach(c => {
-    const item = document.createElement('div');
-    item.className = 'cmt-item'; item.dataset.cid = c.cid;
-    const q = document.createElement('div'); q.className = 'cmt-item-q';
-    q.textContent = '“' + (c.quote.length > 60 ? c.quote.slice(0, 60) + '…' : c.quote) + '”';
-    const nn = document.createElement('div'); nn.className = 'cmt-item-n'; nn.textContent = c.note;
-    const x = document.createElement('button'); x.className = 'cmt-item-x'; x.textContent = '✕'; x.title = 'Remove';
-    item.append(q, nn, x);
-    x.onclick = (e) => { e.stopPropagation(); const i = COMMENTS.findIndex(z => z.cid === c.cid); if (i >= 0) COMMENTS.splice(i, 1); clearHighlights(); applyComments(); };
-    item.onclick = () => { const mk = document.querySelector(`#msgs mark.cmt-hl[data-cid="${c.cid}"]`); if (mk) mk.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
-    list.appendChild(item);
-  });
-  tray.querySelector('.cmt-submit').onclick = submitComments;
-  tray.querySelector('.cmt-clear').onclick = () => { COMMENTS.length = 0; clearHighlights(); renderCmtTray(); };
+  if (tray._html === html) return;
+  const list = tray.querySelector('.cmt-list'), top = list ? list.scrollTop : 0;
+  tray._html = html;
+  tray.innerHTML = html;
+  const nl = tray.querySelector('.cmt-list'); if (nl) nl.scrollTop = top;
+}
+function cmtTrayClick(e) {
+  const t = e.target;
+  if (t.closest('.cmt-submit')) { submitComments(); return; }
+  if (t.closest('.cmt-clear')) { cmtRemove(COMMENTS.map(c => c.cid)); return; }
+  const item = t.closest('.cmt-item');
+  if (!item) return;
+  const cid = item.dataset.cid;
+  if (t.closest('.cmt-item-x')) { cmtRemove([cid]); return; }
+  const mk = document.querySelector(`#msgs mark.cmt-hl[data-cid="${cid}"]`);
+  if (mk) mk.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 async function submitComments() {
-  if (!COMMENTS.length) return;
-  const authors = [...new Set(COMMENTS.map(c => c.from))];
+  if (CMT_SENDING || !COMMENTS.length) return;
+  if (!cmtSubmitState().can) { renderCmtTray(); return; }
+  cmtSync();                 // not what another copy of this chat already sent
+  if (!COMMENTS.length) { renderCmtTray(); return; }
+  const batch = COMMENTS.slice();
+  const authors = [...new Set(batch.map(c => c.from))];
   const to = authors.length === 1 ? authors[0] : '';
-  const body = `## Review comments (${COMMENTS.length})\n\n` +
-    COMMENTS.map((c, i) => `**${i + 1}.** > ${c.quote.replace(/\s*\n\s*/g, ' ').trim()}\n\n${c.note}`).join('\n\n');
+  const body = `## Review comments (${batch.length})\n\n` +
+    batch.map((c, i) => `**${i + 1}.** > ${c.quote.replace(/\s*\n\s*/g, ' ').trim()}\n\n${c.note}`).join('\n\n');
+  CMT_SENDING = true; CMT_ERROR = ''; renderCmtTray();
+  let sent = false;
   try {
-    if (SOLO_PTY) {
-      await sendSolo(body);
-      COMMENTS.length = 0; clearHighlights(); renderCmtTray();
-      setTimeout(checkSolo, 1200);
-      return;
-    }
-    await jpost('/api/room/say', { roomId: ROOM, text: body, to });
-    COMMENTS.length = 0; clearHighlights(); renderCmtTray(); refresh();
-  } catch (e) { alert('Failed to submit comments — try again.'); }
+    if (SOLO_MODE) await sendSolo(body);
+    else await postOk('/api/room/say', { roomId: ROOM, text: body, to });
+    sent = true;
+  } catch (e) {
+    CMT_ERROR = 'Not sent: ' + sendErrorText(e) + '. Your comments are kept.';
+  }
+  CMT_SENDING = false;
+  if (!sent) { renderCmtTray(); return; }
+  // Drop what went, and only that: a comment added during the send stays.
+  cmtRemove(batch.map(c => c.cid));
+  if (SOLO_MODE) setTimeout(checkSolo, 1200); else refresh();
 }
+// Another copy of this chat changed the comments.
+window.addEventListener('storage', e => {
+  if (e.key !== null && !String(e.key).startsWith(CMT_PREFIX)) return;
+  cmtChanged();
+});
+cmtSync();
+renderCmtTray();
+// ---- In-place review comments: end
 // A highlighted passage points at its comment in the tray.
 function showTrayItem(cid) {
   const it = document.querySelector(`#cmt-tray .cmt-item[data-cid="${cid}"]`);
