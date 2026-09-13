@@ -509,12 +509,112 @@ def find_transcript(session_id: str) -> Path | None:
     return None
 
 
+_CODEX_ROLLOUT_PATHS: dict[str, tuple[float, list[Path]]] = {}
+_CODEX_ROLLOUT_TTL_S = 30
+_CODEX_COST_CACHE: dict[str, tuple[tuple, dict]] = {}
+
+
+def _codex_rollouts(session_id: str) -> list[Path]:
+    """A Codex session's rollout files, by the targeted filename glob only.
+
+    This runs for every Codex conversation on every board poll, so it never
+    falls back to reading each rollout's first line (the adapter's slow path),
+    and a lookup is remembered for a few seconds."""
+    now = time.time()
+    hit = _CODEX_ROLLOUT_PATHS.get(session_id)
+    if hit and now - hit[0] < _CODEX_ROLLOUT_TTL_S:
+        return hit[1]
+    ag = agents.get_agent("codex")
+    root = ag.sessions_dir() if ag is not None and hasattr(ag, "sessions_dir") else None
+    paths = sorted(root.glob(f"*/*/*/rollout-*-{session_id}.jsonl")) if root and root.exists() else []
+    _CODEX_ROLLOUT_PATHS[session_id] = (now, paths)
+    return paths
+
+
+def compute_codex_session_cost(session_id: str) -> dict:
+    """Token counts of one Codex conversation, from its rollouts' ``token_count``
+    events, in compute_session_cost's shape. No prices: every model is
+    ``unknownPricing`` and adds 0 dollars.
+
+    Each event carries the request's own usage (``last_token_usage``) and the
+    running total; an event whose total has not moved repeats the one before
+    (a limits-only update) and is skipped. OpenAI counts cached input inside
+    ``input_tokens``, so it is split out as cacheRead here. Reasoning tokens are
+    already inside ``output_tokens``."""
+    empty = {"dollars": 0.0, "tokens": {"input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0},
+             "byModel": {}}
+    if not session_id:
+        return empty
+    files = _codex_rollouts(session_id)
+    sig = []
+    for f in files:
+        try:
+            st = f.stat()
+        except OSError:
+            continue
+        sig.append((str(f), st.st_mtime_ns, st.st_size))
+    sig = tuple(sig)
+    if not sig:
+        return empty
+    cached = _CODEX_COST_CACHE.get(session_id)
+    if cached and cached[0] == sig:
+        return cached[1]
+    by_model: dict[str, dict[str, int]] = {}
+    for name, _, _ in sig:
+        model = "codex"
+        prev_total = None
+        try:
+            with open(name, encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    if '"turn_context"' not in line and '"token_count"' not in line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    payload = rec.get("payload") if isinstance(rec, dict) else None
+                    if not isinstance(payload, dict):
+                        continue
+                    if rec.get("type") == "turn_context":
+                        model = payload.get("model") or model
+                        continue
+                    if payload.get("type") != "token_count":
+                        continue
+                    info = payload.get("info") or {}
+                    total, last = info.get("total_token_usage"), info.get("last_token_usage")
+                    if not isinstance(total, dict) or not isinstance(last, dict):
+                        continue
+                    if total == prev_total:
+                        continue
+                    prev_total = total
+                    cached_in = int(last.get("cached_input_tokens") or 0)
+                    bucket = by_model.setdefault(model, {
+                        "input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0})
+                    bucket["input"] += max(0, int(last.get("input_tokens") or 0) - cached_in)
+                    bucket["output"] += int(last.get("output_tokens") or 0)
+                    bucket["cacheWrite"] += int(last.get("cache_write_input_tokens") or 0)
+                    bucket["cacheRead"] += cached_in
+        except (OSError, ValueError, TypeError):
+            continue
+    tokens = {"input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0}
+    for t in by_model.values():
+        for k, v in t.items():
+            tokens[k] += v
+    result = {"dollars": 0.0, "tokens": tokens,
+              "byModel": {m: {"dollars": 0.0, "tokens": t, "unknownPricing": True}
+                          for m, t in by_model.items()}}
+    _CODEX_COST_CACHE[session_id] = (sig, result)
+    return result
+
+
 def compute_room_cost(room: dict) -> dict:
     """Aggregate cost across a collaboration's agent members — sum each member's
-    transcript cost and merge the per-model breakdowns — so a room shows the same
-    Cost section a single-agent session does. Codex members have no Claude-format
-    transcript (and no pricing entry), so they contribute 0; Claude members carry
-    the real numbers. Same shape as compute_session_cost."""
+    conversations and merge the per-model breakdowns — so a room shows the same
+    Cost section a single-agent session does. Every conversation counts: each
+    review, and each session a rotated owner or PO was handed out of. Claude
+    conversations carry dollars and tokens from their transcripts; Codex ones
+    carry tokens from their rollouts and no price. Same shape as
+    compute_session_cost."""
     total = {
         "dollars": 0.0,
         "tokens": {"input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0},
@@ -526,7 +626,10 @@ def compute_room_cost(room: dict) -> dict:
             continue
         # A reviewer on mention has one conversation per review.
         for sid in participant_session_ids(pp):
-            costs.append(compute_session_cost(find_transcript(sid)))
+            if session_agent(pp, sid) == "codex":
+                costs.append(compute_codex_session_cost(sid))
+            else:
+                costs.append(compute_session_cost(find_transcript(sid)))
     for c in costs:
         total["dollars"] += c.get("dollars", 0.0)
         for k, v in (c.get("tokens") or {}).items():
@@ -924,6 +1027,8 @@ SOLO_REPORT_NOTE = (
 RTK_BIN = DASHBOARD_DIR / "bin" / ("rtk.exe" if os.name == "nt" else "rtk")
 RTK_DIR = DASHBOARD_DIR / "rtk"
 RTK_CLAUDE_SETTINGS = RTK_DIR / "claude-task-settings.json"
+USAGE_CLAUDE_SETTINGS = DASHBOARD_DIR / "usage" / "claude-agent-settings.json"
+USAGE_STATUSLINE_SCRIPT = Path(__file__).resolve().parent / "usage_statusline.py"
 RTK_TELEMETRY_ENV = "RTK_TELEMETRY_DISABLED"
 RTK_RECALL_DB = RTK_DIR / "recall.db"
 _RTK_SETTINGS_LOCK = threading.Lock()
@@ -957,35 +1062,67 @@ def _rtk_task_room(room: dict) -> bool:
     return RTK_BIN.is_file()
 
 
-def _rtk_claude_settings() -> Path:
-    """Write the hub-owned, launch-only Claude hook settings file."""
-    command = f'"{RTK_BIN.as_posix()}" hook claude'
-    settings = {"hooks": {"PreToolUse": [{
-        "matcher": "Bash",
-        "hooks": [{"type": "command", "command": command}],
-    }]}}
+def _claude_status_line() -> dict:
+    """The status-line command every hub-launched Claude agent runs.
+
+    Claude Code hands it the plan windows (``rate_limits``) after each turn, and
+    it keeps the newest in the file ``usage.read_claude_statusline`` reads — so
+    Claude's allowance comes from Claude Code itself rather than from polling
+    the rate-limited usage endpoint. It prints nothing.
+    """
+    command = (f'"{Path(sys.executable).as_posix()}" "{USAGE_STATUSLINE_SCRIPT.as_posix()}" '
+               f'"{usage.CLAUDE_STATUSLINE_FILE.as_posix()}"')
+    return {"type": "command", "command": command, "padding": 0}
+
+
+def _write_settings_file(path: Path, settings: dict) -> Path:
     text = json.dumps(settings, indent=2) + "\n"
     with _RTK_SETTINGS_LOCK:
-        RTK_DIR.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            current = RTK_CLAUDE_SETTINGS.read_text(encoding="utf-8")
+            current = path.read_text(encoding="utf-8")
         except OSError:
             current = ""
         if current != text:
-            tmp = RTK_CLAUDE_SETTINGS.with_name(
-                f".{RTK_CLAUDE_SETTINGS.name}.{uuid.uuid4().hex}.tmp")
+            tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
             try:
                 tmp.write_text(text, encoding="utf-8")
-                tmp.replace(RTK_CLAUDE_SETTINGS)
+                tmp.replace(path)
             finally:
                 tmp.unlink(missing_ok=True)
-    return RTK_CLAUDE_SETTINGS
+    return path
+
+
+def _rtk_claude_settings() -> Path:
+    """Write the hub-owned, launch-only Claude settings file for RTK tasks: the
+    RTK hook, plus the usage status line every hub-launched Claude gets.
+    Claude takes one ``--settings`` source, so both live in this one file."""
+    command = f'"{RTK_BIN.as_posix()}" hook claude'
+    return _write_settings_file(RTK_CLAUDE_SETTINGS, {
+        "hooks": {"PreToolUse": [{
+            "matcher": "Bash",
+            "hooks": [{"type": "command", "command": command}],
+        }]},
+        "statusLine": _claude_status_line(),
+    })
+
+
+def _usage_claude_settings() -> Path:
+    """The launch-only Claude settings file for agents outside the RTK pilot
+    (POs, adopted sessions, tasks with RTK off): the usage status line only."""
+    return _write_settings_file(USAGE_CLAUDE_SETTINGS, {"statusLine": _claude_status_line()})
 
 
 def _rtk_task_wiring(room: dict, agent_key: str) -> tuple[list[str], dict, str]:
-    """Return (agent argv, environment, brief) for a covered task launch."""
+    """Return (agent argv, environment, brief) for a task launch.
+
+    The environment and brief are RTK's, for covered tasks only. The argv is
+    Claude's one ``--settings`` file, which every hub-launched Claude gets: it
+    carries the usage status line, and the RTK hook when the task is covered.
+    """
     if not _rtk_task_room(room):
-        return [], {}, ""
+        return (["--settings", str(_usage_claude_settings())]
+                if agent_key == "claude" else []), {}, ""
     env = {
         RTK_TELEMETRY_ENV: "1",
         "RTK_RECALL_DB": str(RTK_RECALL_DB),
@@ -3729,6 +3866,7 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
             _agent_msgs = [m for m in msgs
                            if m.get("from") != "user" and (m.get("text") or "").strip()]
             last_agent_txt = ((_agent_msgs[-1] if _agent_msgs else {}).get("text") or "")[:400]
+            room_cost = compute_room_cost(rm)
             room_rows.append({
                 "sessionId": rid, "roomId": rid, "headless": True,
                 "mode": rm.get("mode", ""),
@@ -3757,7 +3895,10 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 "turns": len(rm.get("messages", [])),
                 "idleSeconds": (idle if live else None),
                 "pid": None, "pinned": rid in pinned_set, "category": "", "archived": False,
-                "parent": "", "jira": [], "cost": compute_room_cost(rm).get("dollars", 0.0),
+                "parent": "", "jira": [], "cost": room_cost.get("dollars", 0.0),
+                # Tokens across every conversation, Codex's included (which
+                # have no price, so "cost" alone shows nothing for them).
+                "costTokens": room_cost.get("tokens"),
                 "currentTheme": "",
                 "first": first_txt, "last": last_txt,
                 "lastAgent": last_agent_txt, "transcriptPath": "",
