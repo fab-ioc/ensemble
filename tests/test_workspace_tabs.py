@@ -151,6 +151,23 @@ wsTabGone(u.tabs[0], ud); us.push(uchk());
 ud.set('C:\\u', { entries: [{ name: 'f.md', type: 'file', mtime: 1, size: 1 }], error: '' }); us.push(uchk());
 wsTabGone(u.tabs[0], ud); us.push(uchk(), uchk());
 log.goneUnread = us;
+// Written again within the second, same size: the listing shows the same
+// version. A reading made after the 404 lets it load once more; if that 404s
+// too, it stands until the listing shows the file absent or changed.
+const s = { tabs: [wsNewTab('C:\\s\\f.md')], sel: '' };
+const sd = new Map();
+const sread = entries => sd.set('C:\\s', { entries, error: '', gen: (sd.get('C:\\s') || { gen: 0 }).gen + 1 });
+const same = [{ name: 'f.md', type: 'file', mtime: 100, size: 5 }];
+const schk = () => [wsTabsCheck(s, sd), s.tabs[0].missing];
+const ss = [];
+sread(same); ss.push(schk());
+wsTabGone(s.tabs[0], sd); ss.push(schk(), schk());          // no new reading: stays gone
+sread(same); ss.push(schk());                               // a new reading still shows it: loads once more
+wsTabGone(s.tabs[0], sd); ss.push(schk());                  // and 404s again
+sread(same); ss.push(schk()); sread(same); ss.push(schk()); // no second chance for the same version
+sread([]); ss.push(schk());                                 // seen absent
+sread(same); ss.push(schk());                               // and back
+log.sameSig = ss;
 
 // The tree's saved folders and scroll.
 log.tree = [null, 'x', { open: [1, '', 'C:\\a', 'C:\\a', 'x'.repeat(5000), {}, ['C:\\n'], 'C:\\b'], scroll: 'x' },
@@ -264,6 +281,17 @@ class WorkspaceTabs(unittest.TestCase):
             [True, True], [False, True], [True, False],   # gone from the listing, then back
         ])
         self.assertEqual(self.r["goneUnread"], [[True, True], [True, False], [True, True], [False, True]])
+
+    def test_a_file_written_again_within_the_same_second(self):
+        self.assertEqual(self.r["sameSig"], [
+            [False, False],
+            [True, True], [False, True],    # gone; the old reading gives no second chance
+            [True, False],                  # a reading after the 404 still lists it: loads once more
+            [True, True],                   # 404 again
+            [False, True], [False, True],   # same version: no reload loop
+            [False, True],                  # absent: still gone
+            [True, False],                  # back
+        ])
 
     def test_malformed_tree_storage_is_dropped(self):
         empty = {"open": [], "scroll": 0}

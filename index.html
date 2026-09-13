@@ -5299,7 +5299,7 @@ function wsTabState(o) {
   if (Number.isFinite(o.top) && o.top > 0) out.top = Math.round(o.top);
   return out;
 }
-const wsNewTab = (path, st) => ({ path, st: wsTabState(st), missing: false, gone404: false, goneSig: null, seen: null });
+const wsNewTab = (path, st) => ({ path, st: wsTabState(st), missing: false, gone404: false, goneSig: null, goneGen: -1, retrySig: null, seen: null });
 // The tree part of what is saved: the folders opened and how far it was
 // scrolled. Only bounded paths get through; one bad entry drops that entry.
 const WS_OPEN_MAX = 500;
@@ -5370,11 +5370,15 @@ const wsParentOf = p => { const m = (p || '').match(/^(.*)[\\/][^\\/]+$/); retur
 // A file's entry in its folder's listing: the entry, false when the listing
 // says it is not there, or null when the listing is not there to say (not read
 // yet, unreadable, or cut off).
-function wsFileEntry(dirs, path) {
+function wsListingOf(dirs, path) {
   const parent = wsParentOf(path);
   if (!parent) return null;
   let c = dirs.get(parent);
   if (!c) for (const [k, x] of dirs) if (wsSame(k, parent)) { c = x; break; }
+  return c || null;
+}
+function wsFileEntry(dirs, path) {
+  const c = wsListingOf(dirs, path), parent = wsParentOf(path);
   if (!c) return null;
   if (c.error) return /^404\b/.test(c.error) ? false : null;
   const name = path.slice(parent.length + 1);
@@ -5386,27 +5390,35 @@ function wsFilePresent(dirs, path) { const e = wsFileEntry(dirs, path); return e
 // Which version of a file a listing shows: '' when it shows none, null when
 // it cannot say.
 const wsEntrySig = e => e === null ? null : e ? (e.mtime || 0) + ':' + (e.size || 0) : '';
-// The viewer was told 404. The listing's version of the file at that moment is
-// kept with it, so the listing can later tell a file that came back from one
-// it still merely lists.
+// Which reading of a folder a listing is (wsFetchDir numbers them); -1 for none.
+const wsListingGen = (dirs, path) => { const c = wsListingOf(dirs, path); return c ? c.gen || 0 : -1; };
+// The viewer was told 404. The listing's version of the file at that moment,
+// and which reading of the folder that was, are kept with it, so a later
+// listing can tell a file that came back from one it still merely lists.
 function wsTabGone(t, dirs) {
   t.gone404 = true;
   t.goneSig = wsEntrySig(wsFileEntry(dirs, t.path));
+  t.goneGen = wsListingGen(dirs, t.path);
 }
 // A tab's file is gone when its folder's listing says so, or when the viewer
 // was told 404. The viewer's word stands until the listing shows a version of
-// the file other than the one it showed then: one that was absent and is
-// back, or deleted and written again. A file the listing shows but the reader
-// cannot find does not flap: its version stays the same. True when any tab
-// changed.
+// the file other than the one it showed then (absent and back, or written
+// again), or until a reading of the folder made after the 404 still shows the
+// file: the listing's times are whole seconds, so a file written again within
+// the second looks the same. That second chance is given once per version,
+// so a file the listing shows but the reader cannot find does not flap. True
+// when any tab changed.
 function wsTabsCheck(t, dirs) {
   let changed = false;
   for (const x of t.tabs) {
     const e = wsFileEntry(dirs, x.path), p = e === null ? null : !!e;
+    if (p === false) x.retrySig = null;
     if (x.gone404) {
-      const sig = wsEntrySig(e);
-      if (p === true && sig !== x.goneSig) { x.gone404 = false; x.goneSig = null; }
-      else if (p === false) x.goneSig = '';
+      const sig = wsEntrySig(e), fresh = wsListingGen(dirs, x.path) > x.goneGen;
+      if (p === true && (sig !== x.goneSig || (fresh && x.retrySig !== sig))) {
+        x.retrySig = x.goneSig === null || x.goneSig === sig ? sig : null;
+        x.gone404 = false; x.goneSig = null;
+      } else if (p === false) x.goneSig = '';
     }
     if (p !== null) x.seen = p;
     const missing = x.seen === false || x.gone404;
@@ -5416,7 +5428,7 @@ function wsTabsCheck(t, dirs) {
 }
 // ---- Workspace tabs: end --------------------------------------------------
 
-let WS_UID = 0;
+let WS_UID = 0, WS_DIR_GEN = 0;
 function wsView(ctx) {
   const key = wsCtxKey(ctx);
   let v = WS_VIEWS.get(key);
@@ -5656,7 +5668,7 @@ function wsShowTab(v, path) {
 function wsOpenTab(v, path) {
   const t = wsTabOpen(v, path);
   // Picked from the tree, so it is there now, whatever was said before.
-  t.gone404 = false; t.goneSig = null; t.seen = null;
+  t.gone404 = false; t.goneSig = null; t.retrySig = null; t.seen = null;
   wsTabsCheck(v, v.dirs);
   wsShowTab(v, t.path);
 }
@@ -5699,9 +5711,9 @@ function wsVisibleDirs(v) {
 async function wsFetchDir(v, dir) {
   try {
     const d = await api('/api/dir?path=' + encodeURIComponent(dir));
-    v.dirs.set(dir, { entries: d.entries || [], error: '' });
+    v.dirs.set(dir, { entries: d.entries || [], error: '', gen: ++WS_DIR_GEN });
   } catch (e) {
-    v.dirs.set(dir, { entries: [], error: e.message || 'failed' });
+    v.dirs.set(dir, { entries: [], error: e.message || 'failed', gen: ++WS_DIR_GEN });
   }
 }
 // Re-read what is on screen and repaint if it changed. This is what picks up a
