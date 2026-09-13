@@ -2645,8 +2645,10 @@
     .wst-x { width: var(--touch-min); height: var(--touch-min); }
     .scopebar { flex-wrap: wrap; }
     .scopebar select, .chp-repo { max-width: 100%; min-width: 0; }
-    /* Diffs: comments span the width; every control is finger-sized, and a
+    /* Diffs: a line is a finger-sized target, since a tap on it starts a
+       comment; comments span the width; every control is finger-sized, and a
        comment field is 16px so the phone does not zoom into it. */
+    .dr { min-height: var(--touch-min); align-items: center; }
     .dc, .dcx, .drv-away .dc, .drv-away .dcx { margin-left: var(--s-200); margin-right: var(--s-200); }
     .dcx textarea { font-size: var(--fs-400); }
     .dc .rm-btn, .dcx .rm-btn, .drv-head .rm-btn, .cmt-tray .rm-btn, .cmt-selbtn, .cmt-to { height: auto; min-height: var(--touch-min); }
@@ -6145,7 +6147,9 @@ function drSendError(e) {
 }
 // ---- Diff review: the page ----------------------------------------------------
 const DR_REVIEWS = new Map();   // key -> {store, target, what, open, pick, tray, view, sending, error}
-const drCoarse = () => !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);
+// A finger on the phone layout, where every line is --touch-min tall: a tap
+// anywhere on a line starts a comment. Elsewhere only the line number does.
+const drCoarse = () => !!(window.matchMedia && matchMedia('(pointer: coarse)').matches && matchMedia(MOBILE_MQ).matches);
 // The review of one task (or one repository of a project): its comments and
 // where they go. Made once per key; the options are refreshed on every call.
 function drReview(key, opts) {
@@ -6409,26 +6413,67 @@ function drTrayClick(rv, e) {
   if (t.closest('.cmt-item-x')) { rv.store.remove([c.cid]); drChanged(rv); return; }
   if (rv.pick) rv.pick(c);
 }
+const DR_LEASE_MS = 60000;      // how long a send may hold a review before another copy takes over
+const DR_LEASE_SETTLE = 100;    // how long a claim waits to see whether another copy claimed too
+const drSleep = ms => new Promise(r => setTimeout(r, ms));
+// Run fn while no other copy of the page (another tab, the PO's drawer) is
+// sending this review's comments, so two Submits cannot both send the same
+// ones. The browser's lock where it has one: only a secure page does (https,
+// or the hub on localhost). Over plain http, a claim in storage: written,
+// then read back after other copies have had time to see it and write theirs,
+// renewed while the send runs, and let go when it ends or after DR_LEASE_MS.
+async function drExclusive(rv, fn) {
+  const name = 'cd-diffcmt-send:' + rv.key;
+  if (typeof navigator !== 'undefined' && navigator.locks && navigator.locks.request) return navigator.locks.request(name, () => fn());
+  const me = rv.store.id();
+  const read = () => { try { return JSON.parse(localStorage.getItem(name) || 'null'); } catch (e) { return null; } };
+  const claim = () => localStorage.setItem(name, JSON.stringify({ owner: me, until: Date.now() + DR_LEASE_MS }));
+  for (;;) {
+    const cur = read();
+    if (cur && cur.owner !== me && cur.until > Date.now()) { await drSleep(250); continue; }
+    try { claim(); } catch (e) { return fn(); }          // this browser stores nothing: no other copy to wait for
+    await drSleep(DR_LEASE_SETTLE);
+    const got = read();
+    if (!got || got.owner === me) break;
+  }
+  const renew = setInterval(() => { try { if ((read() || {}).owner === me) claim(); } catch (e) {} }, DR_LEASE_MS / 3);
+  try { return await fn(); }
+  finally {
+    clearInterval(renew);
+    try { if ((read() || {}).owner === me) localStorage.removeItem(name); } catch (e) {}
+  }
+}
+// What a comment says, to tell whether the copy that went is the one stored.
+const drRev = c => JSON.stringify([c.root, c.file, c.rows, c.span || 0, c.note]);
 async function drSubmit(rv) {
   if (rv.sending) return;
-  rv.store.sync();                // not what another copy of this task already sent
-  const batch = rv.store.list.filter(c => !c.sent);
-  const s = drSubmitState(rv);
-  if (!batch.length || !s.can) { drPaintTray(rv); return; }
+  rv.store.sync();
+  if (!rv.store.list.some(c => !c.sent) || !drSubmitState(rv).can) { drPaintTray(rv); return; }
   rv.sending = true; rv.error = '';
   drChanged(rv);
+  let sent = 0;
   try {
-    const r = await fetch('/api/room/say', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ roomId: s.roomId, text: drMessage(batch, rv.what ? rv.what() : ''), to: '' }) });
-    let j = null;
-    try { j = await r.json(); } catch (e) {}
-    if (!r.ok || !j || j.error) throw Object.assign(new Error((j && j.error) || ('error ' + r.status)), { status: r.status });
-    // What went is marked sent, and only that: a comment added meanwhile waits.
-    const at = Date.now();
-    rv.store.sync();
-    batch.forEach(c => { const cur = rv.store.list.find(z => z.cid === c.cid); if (cur && !cur.sent) rv.store.put({ ...cur, sent: at }); });
-    rv.store.remove(drStale(rv.store.list));
-    toast(`Sent ${batch.length} comment${batch.length > 1 ? 's' : ''} to the chat`, 2500, 'ok');
+    await drExclusive(rv, async () => {
+      // Picked once no other copy is sending: what one sent meanwhile is not sent again.
+      rv.store.sync();
+      const batch = rv.store.list.filter(c => !c.sent);
+      const s = drSubmitState({ ...rv, sending: false });
+      if (!batch.length || !s.can) return;
+      const went = new Map(batch.map(c => [c.cid, drRev(c)]));
+      const r = await fetch('/api/room/say', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId: s.roomId, text: drMessage(batch, rv.what ? rv.what() : ''), to: '' }) });
+      let j = null;
+      try { j = await r.json(); } catch (e) {}
+      if (!r.ok || !j || j.error) throw Object.assign(new Error((j && j.error) || ('error ' + r.status)), { status: r.status });
+      // What went is marked sent, and only as it went: a comment added or
+      // edited meanwhile, here or in another copy, waits for the next Submit.
+      const at = Date.now();
+      rv.store.sync();
+      for (const cur of rv.store.list.slice()) if (!cur.sent && went.get(cur.cid) === drRev(cur)) rv.store.put({ ...cur, sent: at });
+      rv.store.remove(drStale(rv.store.list));
+      sent = batch.length;
+    });
+    if (sent) toast(`Sent ${sent} comment${sent > 1 ? 's' : ''} to the chat`, 2500, 'ok');
   } catch (e) {
     rv.error = 'Not sent: ' + drSendError(e) + '. Your comments are kept.';
   } finally {

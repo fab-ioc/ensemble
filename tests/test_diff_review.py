@@ -55,15 +55,22 @@ const localStorage = {
 };
 let replies = [];
 const posts = [];
-function page() {
+// A send held open until released, the way a slow hub holds one.
+let hold = null;
+const gate = () => { let open; hold = new Promise(r => { open = r; }); return () => { hold = null; open(); }; };
+const until = async f => { while (!f()) await new Promise(r => setTimeout(r, 5)); };
+function page(extra) {
   const ctx = {
-    console, performance, localStorage, setTimeout, clearTimeout,
+    console, performance, localStorage, setTimeout, clearTimeout, setInterval, clearInterval,
     CSS: { escape: s => s }, matchMedia: () => ({ matches: false }),
     document: { addEventListener() {}, querySelector: () => null, querySelectorAll: () => [], activeElement: null },
     window: { addEventListener() {}, matchMedia: () => ({ matches: false }), getSelection: () => null, innerWidth: 1000, innerHeight: 800 },
     toast() {}, writeSlot() {}, wsJoin: (a, b) => a + '/' + b,
+    ...(extra || {}),
     fetch: async (url, o) => {
       posts.push([url, JSON.parse(o.body)]);
+      const h = hold;
+      if (h) await h;
       const r = replies.shift() || [200, { ok: true }];
       if (r === 'down') throw new TypeError('Failed to fetch');
       return { ok: r[0] < 400, status: r[0], json: async () => r[1] };
@@ -158,8 +165,12 @@ const plain = rows => rows.map(r => ({ k: r.k, o: r.o, n: r.n, t: r.t }));
   await P2.drSubmit(rv2);
   out.down = { notes: notes(rv2), error: rv2.error };
   replies = [[200, { ok: true }]];
+  let release = gate();
+  n0 = posts.length;
   const sending = P2.drSubmit(rv2);
+  await until(() => posts.length > n0);
   mk(rv2, 5, 5, 'third, added while it went');
+  release();
   await sending;
   out.sent = { post: posts[posts.length - 1], notes: notes(rv2), error: rv2.error };
 
@@ -172,6 +183,52 @@ const plain = rows => rows.map(r => ({ k: r.k, o: r.o, n: r.n, t: r.t }));
   n0 = posts.length;
   await P3.drSubmit(rv3);
   out.nothingLeft = posts.length - n0;
+
+  // Two copies of the page submit the same comments at the same moment: with
+  // the claim in storage (plain http), and with the browser's lock (https).
+  let locked = Promise.resolve();
+  const locks = { request: (name, fn) => { const run = locked.then(() => fn()); locked = run.catch(() => {}); return run; } };
+  out.twoTabs = {};
+  for (const [how, extra] of [['storage', null], ['lock', { navigator: { locks } }]]) {
+    const key = 'task:two-' + how;
+    const A = page(extra), B = page(extra), ra = A.drReview(key, opts), rb = B.drReview(key, opts);
+    const q = P.drRange(rows, 1, 1);
+    ra.store.put({ cid: 'one', at: 1, root: 'C:/r', file: 'app.py', rows: q.rows, span: q.span, note: 'only once', sent: 0 });
+    rb.store.sync();
+    replies = [[200, { ok: true }], [200, { ok: true }]];
+    n0 = posts.length;
+    release = gate();
+    const both = Promise.all([A.drSubmit(ra), B.drSubmit(rb)]);
+    await until(() => posts.length > n0);
+    await new Promise(r => setTimeout(r, 400));     // time enough for the other copy to send too, if it could
+    release();
+    await both;
+    rb.store.sync();
+    out.twoTabs[how] = { posts: posts.length - n0, a: notes(ra), b: notes(rb), errors: [ra.error, rb.error] };
+    replies = [];
+  }
+
+  // A comment edited (or removed) in another copy while the send is on its way
+  // was not delivered as it now reads: it is not marked sent.
+  {
+    const A = page(), B = page(), ra = A.drReview('task:edit', opts), rb = B.drReview('task:edit', opts);
+    for (const [cid, note, a] of [['e1', 'old words', 1], ['e2', 'unchanged', 2], ['e3', 'removed meanwhile', 3]]) {
+      const q = P.drRange(rows, a, a);
+      ra.store.put({ cid, at: a, root: 'C:/r', file: 'app.py', rows: q.rows, span: q.span, note, sent: 0 });
+    }
+    rb.store.sync();
+    replies = [[200, { ok: true }]];
+    n0 = posts.length;
+    release = gate();
+    const going = A.drSubmit(ra);
+    await until(() => posts.length > n0);
+    rb.store.put({ ...rb.store.list.find(c => c.cid === 'e1'), note: 'edited while sending' });
+    rb.store.remove(['e3']);
+    release();
+    await going;
+    const C = page(), rc = C.drReview('task:edit', opts);
+    out.editRace = { text: posts[posts.length - 1][1].text, notes: notes(ra), reloaded: notes(rc) };
+  }
 
   const sent = Array.from({ length: 105 }, (_, i) => ({ cid: 's' + i, sent: 1000 + i }));
   out.stale = P.drStale(sent.concat([{ cid: 'u', sent: 0 }]));
@@ -281,6 +338,28 @@ class DiffReview(unittest.TestCase):
         self.assertIn("third, added while it went", self.r["second"]["text"])
         self.assertNotIn("first", self.r["second"]["text"])
         self.assertEqual(self.r["nothingLeft"], 0)
+
+    def test_two_copies_submitting_at_once_send_one_message(self):
+        for how in ("storage", "lock"):
+            with self.subTest(how):
+                r = self.r["twoTabs"][how]
+                self.assertEqual(r["posts"], 1, "the same comments were sent twice")
+                self.assertEqual(r["a"], [["only once", True]])
+                self.assertEqual(r["b"], [["only once", True]])
+                self.assertEqual(r["errors"], ["", ""])
+
+    def test_a_comment_changed_during_a_send_is_not_marked_sent(self):
+        e = self.r["editRace"]
+        self.assertIn("old words", e["text"])
+        self.assertNotIn("edited while sending", e["text"])
+        expected = [["edited while sending", False], ["unchanged", True]]
+        self.assertEqual(e["notes"], expected)
+        self.assertEqual(e["reloaded"], expected)
+
+    def test_a_line_is_a_finger_sized_target_on_a_phone(self):
+        phone = INDEX[INDEX.index("/* Diffs: a line is a finger-sized target"):]
+        self.assertIn(".dr { min-height: var(--touch-min);", phone[:600])
+        self.assertIn("matchMedia(MOBILE_MQ).matches", review_block())
 
     def test_only_the_newest_sent_comments_are_kept(self):
         self.assertEqual(sorted(self.r["stale"]), sorted(["s0", "s1", "s2", "s3", "s4"]))

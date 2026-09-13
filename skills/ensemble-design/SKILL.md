@@ -374,9 +374,12 @@ them), the same tray, the same `## Review comments (N)` message.
 - **The tray** is docked under the diff (`.cmt-tray`): count, Submit (primary), Copy, Clear, the unsent
   comments, and a line saying why Submit is off (a task that is not running) or why a send failed. A
   project's tray also picks the task chat. Submit sends one message, marks what went sent, and leaves a
-  comment added meanwhile unsent.
-- **Phone:** comment cards span the width, every control is `--touch-min`, the comment field is
-  `--fs-400`.
+  comment added or edited meanwhile unsent. Only one copy of the page (another tab, the PO's drawer)
+  sends a review at a time (`drExclusive`: the browser's lock on https or localhost, a claim in storage
+  over plain http), and it picks the comments once it holds that, so none goes twice.
+- **Phone:** every diff line is `--touch-min` tall, since a tap on it starts a comment (a line that
+  wraps is taller anyway); comment cards span the width, every control is `--touch-min`, the comment
+  field is `--fs-400`.
 
 ### Run chip
 

@@ -553,6 +553,7 @@ const unsent = rv => (rv ? rv.store.list.filter(c => !c.sent).map(c => c.note) :
   const n0 = sent.length; let answer; hold = { p: new Promise(r => { answer = r; }) };
   const first = drSubmit(r1);
   await drSubmit(r1);
+  while (sent.length === n0) await tick();      // the first send is on its way
   put(r1, 'C');
   answer(); await first; hold = null;
   out.sendsWhilePending = sent.length - n0;
