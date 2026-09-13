@@ -146,8 +146,7 @@ class Backend:
     def focus(self, session: dict) -> str:
         return "unsupported"
 
-    def open_resume(self, cwd: str, session_id: str, fork: bool = False,
-                    new_session_id: str | None = None, initial_prompt: str = "",
+    def open_resume(self, cwd: str, session_id: str, initial_prompt: str = "",
                     label: str = "", command: list[str] | None = None,
                     agent: str = "", identity: str = "") -> str:
         # `command`, when given, is a fully-built argv (e.g. from a non-Claude
