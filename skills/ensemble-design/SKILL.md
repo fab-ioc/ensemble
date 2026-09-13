@@ -343,7 +343,7 @@ A changed file in a Changes tab (the task's and the project's) reads as in an ID
   its colour on the added line under it.
 - **Grounds:** `--diff-add-bg` and `--diff-del-bg` are the success and danger washes mixed with
   `--surface` by `--diff-wash`, set per theme to the strongest mix at which every code colour and
-  `--fg-muted` keep 4.5:1 (7:1 in High contrast): Light 90%, Dark 60%, High contrast 70%, Dim, Paper
+  `--fg-muted` keep 4.5:1 (7:1 in High contrast): Light 90%, Dark 60%, High contrast 65%, Dim, Paper
   and Fjord 100%. A theme added later measures its own. A full-strength wash failed Dark (4.1:1).
 - **Gutter:** old and new line numbers side by side, drawn from `data-o` / `data-n` by `::before` and
   `::after`, never text. Its width follows the largest number (`--gw`).
