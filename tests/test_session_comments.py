@@ -28,6 +28,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = (ROOT / "session.html").read_text(encoding="utf-8").replace("\r\n", "\n")
+# The comment store the page loads from /static/comments.js, shared with the
+# Changes tab's line comments.
+STORE = (ROOT / "static" / "comments.js").read_text(encoding="utf-8").replace("\r\n", "\n")
 NODE = shutil.which("node")
 PREFIX = "cd-comment:room-test0001:"
 
@@ -199,7 +202,8 @@ const tick = () => new Promise(r => setTimeout(r, 5));
 class ReviewComments(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        code = "\n".join(js_function(SRC, n) for n in ("sendSolo", "postOk", "sendErrorText")) + comments_block(SRC)
+        code = (STORE + "\n".join(js_function(SRC, n) for n in ("sendSolo", "postOk", "sendErrorText"))
+                + comments_block(SRC))
         out = subprocess.run([NODE, "-e", JS], input=json.dumps({"code": code, "prefix": PREFIX}), capture_output=True,
                              text=True, encoding="utf-8", timeout=60)
         if out.returncode != 0:

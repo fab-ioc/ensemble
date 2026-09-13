@@ -5130,7 +5130,9 @@ class Handler(BaseHTTPRequestHandler):
             ext = f.suffix.lower()
             mime = {".png": "image/png", ".ico": "image/x-icon",
                     ".svg": "image/svg+xml", ".jpg": "image/jpeg",
-                    ".jpeg": "image/jpeg", ".gif": "image/gif"}.get(ext, "application/octet-stream")
+                    ".jpeg": "image/jpeg", ".gif": "image/gif",
+                    # The scripts the pages share (static/hl.js, comments.js).
+                    ".js": "text/javascript; charset=utf-8"}.get(ext, "application/octet-stream")
             self._send_file(f, mime)
             return
         if p == "/api/live":

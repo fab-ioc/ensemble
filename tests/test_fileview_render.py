@@ -28,6 +28,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PAGE = (ROOT / "fileview.html").read_text(encoding="utf-8")
+# The highlighter the page loads from /static/hl.js, shared with index.html.
+HL = (ROOT / "static" / "hl.js").read_text(encoding="utf-8")
 NODE = shutil.which("node")
 
 
@@ -36,7 +38,7 @@ def render_code() -> str:
     block, the highlighter, the JSON and CSV helpers and mdToHtml."""
     start = PAGE.index("const esc = s =>")
     end = PAGE.index("// ---- In-place review comments")
-    return PAGE[start:end]
+    return HL + PAGE[start:end]
 
 
 JS = r"""
