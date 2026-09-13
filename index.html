@@ -1836,6 +1836,7 @@
     margin-left: auto; font-size: var(--fs-100); color: var(--fg-muted);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%;
   }
+  .ccost { font-size: var(--fs-100); color: var(--fg-muted); white-space: nowrap; font-variant-numeric: tabular-nums; cursor: default; }
   .cagent { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
   /* An avatar is a SOLID fill with light text; a lozenge is a pale wash with
      dark text. That difference is what stops the two reading as each other
@@ -4279,14 +4280,21 @@ function fmtTokens(n) {
   const x = n / d;
   return (x < 9.95 ? x.toFixed(1).replace(/\.0$/, '') : String(Math.round(x))) + u;
 }
-function costChipHtml(r) {
+// What a task cost: dollars where they are known, else the tokens it used
+// (Codex has no price), the split in the tooltip. null while it has used none.
+function costChip(r) {
   const t = r && r.costTokens, total = costTokenTotal(t);
   const split = total ? COST_KINDS.map(([k, l]) => `${l} ${(Number.isFinite(t[k]) && t[k] > 0 ? t[k] : 0).toLocaleString('en-US')}`).join(' · ') : '';
   if (r && r.cost != null && r.cost >= 0.01) {
-    return ` <span class="row-cost-chip" title="Retail per-token estimate (tokens × published Anthropic pricing). Not your actual bill on a subscription plan.${total ? ' Tokens: ' + split + '.' : ''}">${fmtCost(r.cost)}</span>`;
+    return { text: fmtCost(r.cost), title: `Retail per-token estimate (tokens × published Anthropic pricing). Not your actual bill on a subscription plan.${total ? ' Tokens: ' + split + '.' : ''}` };
   }
-  if (!total) return '';
-  return ` <span class="row-cost-chip" title="Tokens used: ${split}. No price is known for them: Codex has none, and a model without a published price has none either.">${fmtTokens(total)} tokens</span>`;
+  if (!total) return null;
+  return { text: `${fmtTokens(total)} tokens`, title: `Tokens used: ${split}. No price is known for them: Codex has none, and a model without a published price has none either.` };
+}
+// A List row's chip, or with `cls` a board card's.
+function costChipHtml(r, cls) {
+  const c = costChip(r);
+  return c ? ` <span class="${cls || 'row-cost-chip'}" title="${c.title}">${c.text}</span>` : '';
 }
 // ---- Cost chip: end ---------------------------------------------------------
 
@@ -4492,7 +4500,7 @@ function cardHtml(r, now) {
   return `<article class="card${working}" draggable="true" data-room="${esc(r.roomId || '')}" data-sid="${esc(r.sessionId)}">
     ${loz}
     <div class="ctitle">${esc(r.label || '(session)')}</div>
-    <div class="crow1">${r.roomId ? prioIcon(prioOf(r)) : ''}${runChip(r)}${proj}</div>
+    <div class="crow1">${r.roomId ? prioIcon(prioOf(r)) : ''}${runChip(r)}${costChipHtml(r, 'ccost')}${proj}</div>
     <div class="crow2">${cardAgents(r)}<span class="cwhen">${esc(fmtAgo(now - r.updatedAt))}</span></div>
   </article>`;
 }
@@ -5923,6 +5931,22 @@ function wsRevealDirs(dirs, rootPath, path, self) {
   });
   return { open, target: cur };
 }
+// Folders a reveal opened on its way (`tmp`) are checked against the listings
+// read since: one spelled otherwise there is closed again, one its folder's
+// listing has settled leaves `tmp`, one not settled yet waits for a later
+// check. Any reveal may check, the newest or one a newer reveal overtook, so
+// neither leaves a folder open that no row is drawn for. The number closed.
+function wsRevealTidy(open, tmp, dirs, roots) {
+  let closed = 0;
+  [...tmp].forEach(d => {
+    const root = wsRootOf(roots, d);
+    const plan = root ? wsRevealDirs(dirs, root.path, d, true) : null;
+    if (plan && plan.target !== d) { open.delete(d); tmp.delete(d); closed++; return; }
+    const up = plan && plan.open.length > 1 ? plan.open[plan.open.length - 2] : null;
+    if (!plan || !up || dirs.has(up)) tmp.delete(d);
+  });
+  return closed;
+}
 // The recent files a filter finds, most recent first (a filter narrows the
 // list, it never reorders it). Each is shown as its path under its root, with
 // the root's name in front when that is not the Workspace's first root.
@@ -5947,8 +5971,9 @@ function wsRecentNoteText(n, shown, q, where) {
 // The Recent shortcut: Alt+R (⌥R on a Mac). Browsers leave it free on
 // Windows, Linux and a Mac, where Chrome and Safari use ⌘ and Ctrl+E is taken.
 // Matched by the key's place, since ⌥R types ® on a Mac; AltGr (Ctrl+Alt) is
-// a character on many layouts, so it does not count.
-const wsIsRecentKey = e => !!e && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.code === 'KeyR';
+// a character on many layouts, so it does not count; nor does a key that is
+// part of composing a character (an IME).
+const wsIsRecentKey = e => !!e && !e.isComposing && e.keyCode !== 229 && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.code === 'KeyR';
 // ---- Workspace recent and where: end ----------------------------------------
 
 let WS_UID = 0, WS_DIR_GEN = 0;
@@ -5959,7 +5984,7 @@ function wsView(ctx) {
     v = { key, ctx, el: null, open: new Set(), sel: '', scroll: 0, dirs: new Map(),
           roots: [], hide: new Set(), hideAllDirs: false, hideReady: true, busy: false, cursor: 0,
           tabs: [], frames: new Map(), live: [], uid: 'wst' + (++WS_UID),
-          recent: [], follow: false, mark: '', revealGen: 0, revealPending: '' };
+          recent: [], follow: false, mark: '', revealGen: 0, revealPending: '', revealTmp: new Set() };
     let s = {};
     try { s = JSON.parse(localStorage.getItem('cd-ws:' + key) || '{}') || {}; } catch (e) {}
     try {
@@ -5973,7 +5998,7 @@ function wsView(ctx) {
       v.follow = !!(s && s.follow === true);
     } catch (e) {}
     v.find = { ...wsFindFrom(s && s.find), list: null, listing: '', pool: null, ranked: null, res: null,
-               active: 0, gen: 0, ctl: null, timer: 0, pending: false, recent: false, rq: '', ritems: [] };
+               active: 0, gen: 0, ctl: null, timer: 0, pending: false, recent: false, rq: '', ritems: [], ractive: 0 };
     WS_VIEWS.set(key, v);
   }
   v.ctx = ctx;
@@ -6256,21 +6281,25 @@ async function wsReveal(v, path, opts) {
     if (f.q) { f.q = ''; wsfSchedule(v); }
     wsfPaint(v);
   }
-  const added = new Set();
   let plan = null;
   // Each round reads the folders not read yet; the next takes their real names
   // from the listings. Two rounds unless a name was typed in another case.
   for (let round = 0; round < 64; round++) {
     plan = wsRevealDirs(v.dirs, root.path, path, !!o.dir);
-    plan.open.forEach(d => { if (!v.open.has(d)) { v.open.add(d); added.add(d); } });
+    plan.open.forEach(d => { if (!v.open.has(d)) { v.open.add(d); v.revealTmp.add(d); } });
     const unread = plan.open.filter(d => !v.dirs.has(d));
     if (!unread.length) break;
     wsPaintTree(v);
     await Promise.all(unread.map(d => wsFetchDir(v, d)));
-    if (gen !== v.revealGen) return false;
+    if (gen !== v.revealGen) {
+      // Overtaken: a folder opened here under a spelling its listing corrected
+      // is closed now; the newer reveal checks what is not read yet.
+      if (wsRevealTidy(v.open, v.revealTmp, v.dirs, v.roots)) { wsPersist(v); wsPaintTree(v); }
+      return false;
+    }
   }
   // A folder opened under a spelling its listing then corrected is closed again.
-  added.forEach(d => { if (!plan.open.includes(d)) v.open.delete(d); });
+  wsRevealTidy(v.open, v.revealTmp, v.dirs, v.roots);
   v.mark = o.clear === false ? '' : plan.target;
   wsPersist(v);
   wsPaintTree(v);
@@ -6550,6 +6579,9 @@ const WSF_PAGE = Math.random().toString(36).slice(2);   // a search is cancelled
 const wsfRoot = v => v.roots[0] || null;
 const wsfAbs = (root, rel) => wsJoin(root, root.includes('\\') ? rel.split('/').join('\\') : rel);
 const wsfOn = f => f.recent || (f.mode === 'files' ? !!f.q.trim() : !!f.q);
+// Recent has a selection of its own: Go to file's and the text search's is
+// waiting under it, and their answers arriving move only theirs.
+const wsfSel = f => f.recent ? 'ractive' : 'active';
 const wsfHits = res => res._rows || (res._rows = wsHitRows(res));
 function wsfSize(v) {
   const f = v.find;
@@ -6662,10 +6694,10 @@ function wsRecentToggle(v, on, focus) {
   const f = v.find, input = v.el && v.el.querySelector('.wsf-q');
   f.recent = on === undefined ? !f.recent : !!on;
   f.rq = '';
-  f.active = 0;
+  f.ractive = 0;
   if (f.recent) {
     wsRecentRank(v);
-    if (f.ritems.length > 1 && wsSame(f.ritems[0].abs, v.sel)) f.active = 1;
+    if (f.ritems.length > 1 && wsSame(f.ritems[0].abs, v.sel)) f.ractive = 1;
   }
   wsfPaint(v);
   if (f.recent && focus && input) input.focus({ preventScroll: true });
@@ -6711,7 +6743,7 @@ function wsfMark(v, scroll) {
   const res = v.el && v.el.querySelector('.wsf-res'), input = v.el && v.el.querySelector('.wsf-q');
   if (!res) return;
   res.querySelectorAll('.wsr.on').forEach(r => { r.classList.remove('on'); r.setAttribute('aria-selected', 'false'); });
-  const r = res.querySelector(`.wsr[data-i="${v.find.active}"]`);
+  const r = res.querySelector(`.wsr[data-i="${v.find[wsfSel(v.find)]}"]`);
   if (!r) { input.removeAttribute('aria-activedescendant'); return; }
   r.classList.add('on');
   r.setAttribute('aria-selected', 'true');
@@ -6729,7 +6761,7 @@ function wsfOpen(v, i) {
     // As it was left: its tab if it is open, else a new tab with its saved state.
     const it = f.ritems[i];
     if (!it) return;
-    f.recent = false; f.rq = ''; f.active = 0;
+    f.recent = false; f.rq = ''; f.ractive = 0;
     wsOpenTabAt(v, it.abs, 0);
     wsfPaint(v);
     return;
@@ -6763,7 +6795,7 @@ function wsfMount(v) {
     wsfPaint(v);
   };
   input.oninput = () => {
-    if (f.recent) { f.rq = input.value.slice(0, WSF_Q_MAX); f.active = 0; wsfPaint(v); wsfMark(v, true); return; }
+    if (f.recent) { f.rq = input.value.slice(0, WSF_Q_MAX); f.ractive = 0; wsfPaint(v); wsfMark(v, true); return; }
     f.q = input.value.slice(0, WSF_Q_MAX); changed();
   };
   input.onfocus = () => { if (!f.recent && f.mode === 'files') wsfList(v); };
@@ -6772,19 +6804,19 @@ function wsfMount(v) {
   // nothing typed closes Recent.
   input.onkeydown = (e) => {
     if (e.isComposing || e.altKey || e.ctrlKey || e.metaKey) return;
-    const n = wsfSize(v);
+    const n = wsfSize(v), sel = wsfSel(f);
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       if (!n) return;
       e.preventDefault();
-      f.active = (f.active + (e.key === 'ArrowDown' ? 1 : -1) + n) % n;
+      f[sel] = (f[sel] + (e.key === 'ArrowDown' ? 1 : -1) + n) % n;
       wsfMark(v, true);
     } else if (e.key === 'Enter') {
       e.preventDefault();
       if (!f.recent && f.mode === 'text' && f.pending) wsfSearch(v);
-      else if (n) wsfOpen(v, Math.min(f.active, n - 1));
+      else if (n) wsfOpen(v, Math.min(f[sel], n - 1));
     } else if (e.key === 'Escape' && f.recent) {
       e.preventDefault();
-      if (f.rq) { f.rq = ''; f.active = 0; wsfPaint(v); wsfMark(v, true); } else wsRecentToggle(v, false);
+      if (f.rq) { f.rq = ''; f.ractive = 0; wsfPaint(v); wsfMark(v, true); } else wsRecentToggle(v, false);
     } else if (e.key === 'Escape') {
       if (!f.q) return;
       e.preventDefault();

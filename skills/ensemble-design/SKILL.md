@@ -293,8 +293,12 @@ never 3**. A 2px left rail in `--run-working` appears **only** while an agent is
 gets a rail.
 
 Order, top to bottom: attention lozenge (only when present, and it goes **first**, above the title,
-because it is the reason you would look at the card) → title → priority arrow + run chip + project →
-agents with models + elapsed.
+because it is the reason you would look at the card) → title → priority arrow + run chip + cost +
+project → agents with models + elapsed.
+
+Cost is plain `--fs-100` `--fg-muted` text (`.ccost`), never a lozenge or a pill: dollars where a price
+is known, else the tokens used (`1.4M tokens`, which is what a Codex task has), the split in its
+tooltip; nothing while a task has used none.
 
 Four signals must be legible **without hovering**: status, priority, assignees with their models, and
 any attention state. Models are shortened on a card (`gpt-5.6-luna` → `luna`); the full string lives in

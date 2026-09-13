@@ -104,6 +104,11 @@ log.reveal = [
   wsRevealDirs(dirs, 'C:\\p\\tasks\\t1', 'C:\\p\\tasks\\t1\\repo\\static', true),
   wsRevealDirs(dirs, 'C:\\p\\tasks\\t1', 'C:\\p\\tasks\\t1', true),
 ];
+// Folders a reveal opened on its way, checked against the listings.
+const tOpen = new Set(['C:\\p\\tasks\\t1', 'C:\\p\\tasks\\t1\\REPO', 'C:\\p\\tasks\\t1\\repo', 'C:\\p\\tasks\\t1\\repo\\Static',
+                       'C:\\p\\tasks\\t1\\repo\\Static\\x', 'D:\\gone']);
+const tTmp = new Set(tOpen);
+log.tidy = [wsRevealTidy(tOpen, tTmp, dirs, roots), [...tOpen], [...tTmp]];
 
 // The list: order kept under a filter, folders under their root.
 const rec = ['C:\\p\\tasks\\t1\\repo\\index.html', 'C:\\p\\docs\\plan.md', 'C:\\p\\tasks\\t1\\repo\\tests\\test_links.py', 'D:\\x\\y.txt']
@@ -119,7 +124,7 @@ log.notes = [wsRecentNoteText(0, 0, '', 'in this task'), wsRecentNoteText(4, 4, 
 // The shortcut.
 const K = o => ({ altKey: true, ctrlKey: false, metaKey: false, shiftKey: false, code: 'KeyR', key: 'r', ...o });
 log.keys = [K({}), K({ key: '®' }), K({ ctrlKey: true }), K({ metaKey: true }), K({ shiftKey: true }), K({ altKey: false }),
-            K({ code: 'KeyE' }), null].map(wsIsRecentKey);
+            K({ code: 'KeyE' }), null, K({ isComposing: true }), K({ keyCode: 229 })].map(wsIsRecentKey);
 console.log(JSON.stringify(log));
 """
 
@@ -195,6 +200,14 @@ class RecentAndWhere(unittest.TestCase):
         self.assertEqual(folder["open"][-1], "C:\\p\\tasks\\t1\\repo\\Static", "a folder revealed opens too")
         self.assertEqual(root, {"open": ["C:\\p\\tasks\\t1"], "target": "C:\\p\\tasks\\t1"})
 
+    def test_folders_opened_on_the_way_are_checked(self):
+        closed, still_open, unchecked = self.r["tidy"]
+        self.assertEqual(closed, 1)
+        self.assertEqual(still_open, ["C:\\p\\tasks\\t1", "C:\\p\\tasks\\t1\\repo", "C:\\p\\tasks\\t1\\repo\\Static",
+                                      "C:\\p\\tasks\\t1\\repo\\Static\\x", "D:\\gone"],
+                         "the listing spells it repo, so REPO closes; the rest stay open")
+        self.assertEqual(unchecked, ["C:\\p\\tasks\\t1\\repo\\Static\\x"], "its folder is not read yet: checked later")
+
     def test_the_list_keeps_its_order_under_a_filter(self):
         self.assertEqual(self.r["items"], [
             ["C:\\p\\tasks\\t1\\repo\\index.html", "repo/index.html"],
@@ -218,7 +231,190 @@ class RecentAndWhere(unittest.TestCase):
         ])
 
     def test_the_shortcut_is_alt_r_alone(self):
-        self.assertEqual(self.r["keys"], [True, True, False, False, False, False, False, False])
+        self.assertEqual(self.r["keys"], [True, True, False, False, False, False, False, False, False, False],
+                         "nor while composing a character")
+
+
+ASYNC = r"""
+%s
+const log = {};
+const flush = async () => { for (let i = 0; i < 30; i++) await new Promise(r => setImmediate(r)); };
+// The page around the functions under test: painting does nothing, and every
+// read of the hub waits until the test answers it.
+function wsfSchedule() {} function wsfPaint() {} function wsfMark() {} function wsfCancel() {}
+function wsPaintTree() {} function wsPersist() {}
+function wsScrollTreeTo() { return true; }
+const opened = [];
+function wsOpenTabAt(v, path, line) { opened.push([path, line]); }
+const waiting = [];
+const later = what => new Promise(res => waiting.push({ what, res }));
+async function wsFetchDir(v, d) { const entries = await later('dir ' + d); v.dirs.set(d, { entries, error: '' }); }
+async function api(url) { return later('api ' + url.split('?')[0]); }
+async function fetch(url) { const d = await later('fetch ' + url.split('?')[0]); return { ok: true, status: 200, json: async () => d }; }
+async function answer(what, value) {
+  const i = waiting.findIndex(w => w.what === what);
+  if (i < 0) throw new Error('nothing waits for ' + what + '; waiting: ' + waiting.map(w => w.what).join(', '));
+  waiting.splice(i, 1)[0].res(value);
+  await flush();
+}
+const location = { origin: 'o' };
+
+const R = 'C:\\t';
+const D = (dirs, files) => [...dirs.map(name => ({ name, type: 'dir' })), ...(files || []).map(name => ({ name, type: 'file' }))];
+const rv = () => ({ roots: [{ path: R, label: 'T', kind: 'task' }], dirs: new Map(), open: new Set(), revealGen: 0,
+                    revealTmp: new Set(), revealPending: '', mark: '', find: { recent: false, rq: '', q: '' } });
+
+const fv = () => ({ uid: 'u', sel: R + '\\b.md', ctx: { kind: 'task' }, el: null, roots: [{ path: R, label: 'T', kind: 'task' }],
+  recent: ['b.md', 'a.md', 'c.md'].map(n => ({ path: R + '\\' + n, st: wsTabState(null) })),
+  find: { mode: 'files', q: 'md', cs: false, rx: false, list: null, listing: '', pool: null, ranked: null, res: null,
+          active: 0, gen: 0, ctl: null, timer: 0, pending: false, recent: false, rq: '', ritems: [], ractive: 0 } });
+
+(async () => {
+  // Two reveals overlapping: the older one mistyped and still reading when the newer one finishes.
+  let v = rv();
+  const a1 = wsReveal(v, R + '\\REPO\\a.py'); await flush();
+  const a2 = wsReveal(v, R + '\\docs\\b.md'); await flush();
+  await answer('dir C:\\t', D(['repo', 'docs']));
+  await answer('dir C:\\t', D(['repo', 'docs']));
+  await answer('dir C:\\t\\docs', D([], ['b.md']));
+  const a2done = await a2;
+  await answer('dir C:\\t\\REPO', D([], ['a.py']));
+  log.newerFirst = { a1: await a1, a2: a2done, open: [...v.open], mark: v.mark, tmp: [...v.revealTmp] };
+
+  // The older one, mistyped, finishes first; the newer one asked for the real spelling.
+  v = rv();
+  const b1 = wsReveal(v, R + '\\REPO\\a.py'); await flush();
+  const b2 = wsReveal(v, R + '\\repo\\a.py'); await flush();
+  await answer('dir C:\\t', D(['repo']));
+  await answer('dir C:\\t\\REPO', D([], ['a.py']));
+  const b1done = await b1, b1open = [...v.open];
+  await answer('dir C:\\t', D(['repo']));
+  await answer('dir C:\\t\\repo', D([], ['a.py']));
+  log.olderFirst = { b1: b1done, whenOverTaken: b1open, b2: await b2, open: [...v.open], mark: v.mark, tmp: [...v.revealTmp] };
+
+  // The same mistyped path twice.
+  v = rv();
+  const c1 = wsReveal(v, R + '\\REPO\\a.py'); await flush();
+  const c2 = wsReveal(v, R + '\\REPO\\a.py'); await flush();
+  await answer('dir C:\\t', D(['repo']));
+  await answer('dir C:\\t\\REPO', D([], ['a.py']));
+  await answer('dir C:\\t', D(['repo']));
+  await answer('dir C:\\t\\REPO', D([], ['a.py']));
+  await answer('dir C:\\t\\repo', D([], ['a.py']));
+  log.twice = { c1: await c1, c2: await c2, open: [...v.open], mark: v.mark, tmp: [...v.revealTmp] };
+
+  // Recent over Go to file: each keeps its own selection.
+  let w = fv();
+  w.find.active = 2;
+  wsRecentToggle(w, true);
+  const on = [w.find.ractive, w.find.active];
+  wsRecentToggle(w, false);
+  log.sel = { on, off: w.find.active };
+
+  // A file list arriving while Recent is open moves only Go to file's selection.
+  w = fv();
+  wsfList(w); await flush();
+  wsRecentToggle(w, true);
+  w.find.ractive = 2;
+  await answer('api /api/ws/files', { root: R, files: ['a.md', 'b.md', 'x.md'] });
+  log.files = { ractive: w.find.ractive, recent: w.find.recent, ranked: !!w.find.ranked };
+  wsfOpen(w, w.find.ractive);
+  log.files.opened = opened.pop();
+
+  // So does a text search's answer.
+  w = fv();
+  w.find.mode = 'text';
+  wsfSearch(w); await flush();
+  wsRecentToggle(w, true);
+  w.find.ractive = 2;
+  await answer('fetch /api/ws/search', { files: [], root: R });
+  log.text = { ractive: w.find.ractive, recent: w.find.recent, res: !!w.find.res.files };
+  wsfOpen(w, w.find.ractive);
+  log.text.opened = opened.pop();
+
+  // The viewer passes the shortcut on, but not from where a person types.
+  const posts = [];
+  globalThis.hostPage = () => ({ postMessage: m => posts.push(m) });
+  const target = (tag, editable) => ({ isContentEditable: !!editable, closest: sel => sel.split(', ').includes(tag) ? {} : null });
+  const key = o => {
+    let stopped = false;
+    fvOnKey({ altKey: true, ctrlKey: false, metaKey: false, shiftKey: false, code: 'KeyR', keyCode: 82, isComposing: false,
+              target: target('div'), preventDefault: () => { stopped = true; }, ...o });
+    return stopped;
+  };
+  log.viewer = [key({}), key({ target: target('textarea') }), key({ target: target('input') }), key({ target: target('p', true) }),
+                key({ isComposing: true }), key({ keyCode: 229 }), key({ ctrlKey: true })];
+  log.viewerPosts = posts;
+  console.log(JSON.stringify(log));
+})().catch(e => { console.error(e && e.stack || e); process.exit(1); });
+"""
+
+
+def fv_fn(head: str) -> str:
+    i = FILEVIEW.index(head)
+    return FILEVIEW[i:FILEVIEW.index("\n}\n", i) + 3]
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class RecentAndWhereInTime(unittest.TestCase):
+    """What arrives late: listings for reveals that overlap, and the find box's answers while Recent is open."""
+
+    @classmethod
+    def setUpClass(cls):
+        src = "\n".join([line(r"^const esc = .*$"), line(r"^const wsNorm = .*$"), line(r"^const wsSame = .*$"),
+                         line(r"^function wsJoin\(.*$"), block("Workspace tabs"), block("Workspace find"),
+                         block("Workspace recent and where"),
+                         line(r"^const WSF_PAGE = .*$"), line(r"^const wsfRoot = .*$"), line(r"^const wsfAbs = .*$"),
+                         line(r"^const wsfOn = .*$"), line(r"^const wsfSel = .*$"), line(r"^function wsRecentRank\(.*$"),
+                         fn(INDEX, "async function wsReveal("), fn(INDEX, "async function wsfList("),
+                         fn(INDEX, "function wsfRank("), fn(INDEX, "async function wsfSearch("),
+                         fn(INDEX, "function wsRecentToggle("), fn(INDEX, "function wsfOpen("),
+                         fv_fn("function fvOnKey(").replace("hostPage()", "globalThis.hostPage()")])
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "later.cjs"
+            script.write_text(ASYNC % src, encoding="utf-8")
+            proc = subprocess.run([NODE, str(script)], capture_output=True, text=True, encoding="utf-8", timeout=60)
+        if proc.returncode:
+            raise AssertionError(proc.stderr)
+        cls.r = json.loads(proc.stdout)
+
+    def test_an_overtaken_reveal_leaves_no_folder_open_under_a_wrong_name(self):
+        r = self.r["newerFirst"]
+        self.assertEqual([r["a1"], r["a2"]], [False, True])
+        self.assertEqual(r["open"], ["C:\\t", "C:\\t\\docs"], "REPO, opened by the overtaken reveal, is closed")
+        self.assertEqual(r["mark"], "C:\\t\\docs\\b.md")
+        self.assertEqual(r["tmp"], [])
+
+    def test_an_overtaken_reveal_finishing_first_keeps_the_newer_ones_folders(self):
+        r = self.r["olderFirst"]
+        self.assertFalse(r["b1"])
+        self.assertEqual(r["whenOverTaken"], ["C:\\t", "C:\\t\\repo"], "its own REPO closed, the newer reveal's repo kept")
+        self.assertTrue(r["b2"])
+        self.assertEqual(r["open"], ["C:\\t", "C:\\t\\repo"])
+        self.assertEqual(r["mark"], "C:\\t\\repo\\a.py")
+        self.assertEqual(r["tmp"], [])
+
+    def test_the_same_mistyped_path_twice(self):
+        r = self.r["twice"]
+        self.assertEqual([r["c1"], r["c2"]], [False, True])
+        self.assertEqual(r["open"], ["C:\\t", "C:\\t\\repo"])
+        self.assertEqual(r["mark"], "C:\\t\\repo\\a.py")
+        self.assertEqual(r["tmp"], [])
+
+    def test_recent_has_a_selection_of_its_own(self):
+        self.assertEqual(self.r["sel"], {"on": [1, 2], "off": 2},
+                         "Recent opens on the file before; Go to file's selection waits under it")
+
+    def test_a_file_list_arriving_does_not_move_recents_selection(self):
+        self.assertEqual(self.r["files"], {"ractive": 2, "recent": True, "ranked": True, "opened": ["C:\\t\\c.md", 0]})
+
+    def test_a_text_search_arriving_does_not_move_recents_selection(self):
+        self.assertEqual(self.r["text"], {"ractive": 2, "recent": True, "res": True, "opened": ["C:\\t\\c.md", 0]})
+
+    def test_the_viewer_leaves_typing_alone(self):
+        self.assertEqual(self.r["viewer"], [True, False, False, False, False, False, False],
+                         "a comment box, a field, an editable page, composing: ⌥R is a character there")
+        self.assertEqual(self.r["viewerPosts"], [{"type": "fv-key", "key": "recent"}])
 
 
 class RecentAndWhereAreWired(unittest.TestCase):
