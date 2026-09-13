@@ -754,25 +754,6 @@
   .prio-3 { color: var(--prio-3); opacity: .55; }
   .prio-4 { color: var(--prio-4); }
   .prio-5 { color: var(--prio-5); }
-  /* Detail panel: pick a level. Five arrows, the current one filled in. */
-  .dp-prio {
-    display: flex; align-items: center; gap: 6px;
-    flex-wrap: wrap;    /* the panel is resizable — five arrows don't fit at 380px */
-    padding: 0 16px 10px; font-size: 11.5px; color: var(--fg-subtle);
-  }
-  .dp-prio-label { font-weight: 600; letter-spacing: .02em; }
-  .dp-prio button {
-    display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto;
-    padding: 2px 7px; border-radius: 6px; cursor: pointer;
-    border: 1px solid transparent; background: transparent;
-    font-size: 11px; color: var(--fg-subtle); line-height: 16px;
-  }
-  .dp-prio button:hover { background: var(--hover); }
-  .dp-prio button.on {
-    border-color: var(--border); background: var(--selected-bg);
-    color: var(--fg); font-weight: 600;
-  }
-  .dp-prio button .prio-ico { opacity: 1; }
   /* Project card rows carry the same marker, so the landing reads the same
      way as the task list. */
   .proj .srow .prio-ico { display: inline-block; flex: 0 0 auto; }
@@ -964,21 +945,20 @@
   #detail-panel .dp-pane { min-height: 0; }
   /* The panel scrolls as one column, so its parts keep their natural height.
      A flex item may otherwise shrink below its content; the overflow then
-     paints over the next part, and a long Spec ran right under the priority
-     row and the details block. The live chat pane keeps its own fill-the-height
-     rule below, which is more specific and wins. */
-  #detail-panel > .dp-tabs, #detail-panel > .dp-pane, #detail-panel > .dp-details { flex-shrink: 0; }
+     paints over the next part. The live chat pane keeps its own
+     fill-the-height rule below, which is more specific and wins. */
+  #detail-panel > .dp-tabs, #detail-panel > .dp-pane { flex-shrink: 0; }
   /* The live-session rule below sets display on this pane, which outranks the
      UA's [hidden] { display: none } — without this the hidden pane stays on
      screen and both tabs show at once. */
   #detail-panel .dp-pane[hidden] { display: none !important; }
   #detail-panel .dp-pane[data-pane="workspace"] { flex: 1; display: flex; flex-direction: column; padding: 10px 12px; min-height: 360px; }
   /* The live chat is the one pane sized to the screen rather than to its
-     content. A zero-basis flex: 1 only grew into free space, and a long title,
-     summary and Details left none, so the chat collapsed to a sliver in a
-     scrolling column. Instead it is exactly as tall as the panel below the
-     header and tabs (--dp-fill, set by fitLiveChat()), so on open the composer
-     sits at the panel's bottom edge and Details wait below the fold. It never
+     content. A zero-basis flex: 1 only grew into free space, and a long title
+     and summary left none, so the chat collapsed to a sliver in a scrolling
+     column. Instead it is exactly as tall as the panel below the header and
+     tabs (--dp-fill, set by fitLiveChat()), so the composer sits at the
+     panel's bottom edge. It never
      drops below --dp-chat-min, the embed's 124px composer plus about eight
      lines of messages: when the header is taller than that allows, the panel
      scrolls to reach the rest of the chat rather than squeezing it. */
@@ -1448,19 +1428,9 @@
     font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; word-wrap: break-word;
     font-family: ui-monospace, "SF Mono", monospace;
   }
-  /* Collapsible "Details" disclosure — restores the full session metadata
-     without letting it crowd out the conversation. */
-  .dp-details { border: 1px solid var(--border); border-radius: 8px; padding: 0 12px; }
-  .dp-details > summary {
-    cursor: pointer; padding: 8px 0; list-style: none;
-    font-size: 10.5px; font-weight: 600; text-transform: uppercase;
-    letter-spacing: 0.06em; color: var(--fg-muted);
-  }
-  .dp-details > summary::-webkit-details-marker { display: none; }
-  .dp-details > summary::before { content: '▸ '; color: var(--fg-muted); }
-  .dp-details[open] > summary::before { content: '▾ '; }
-  .dp-details[open] { padding-bottom: 12px; }
-  .dp-details .dp-section + .dp-section { margin-top: 14px; }
+  /* The Details tab: who is on the task, its folders and its cost. */
+  .dp-info { margin: var(--s-300) var(--s-400) var(--s-600); }
+  .dp-info .dp-section + .dp-section { margin-top: var(--s-400); }
   .dp-conv-empty { font-size: 12px; color: var(--fg-muted); font-style: italic; }
   /* Chat-window theming: the chosen terminal scheme recolors the conversation
      surface (background/foreground), scoped so the dashboard chrome stays put. */
@@ -1844,25 +1814,39 @@
      with nothing to say which mattered. */
   .dp-meta { display: flex; align-items: center; gap: var(--s-200); flex-wrap: wrap; padding: 0 var(--s-400) var(--s-300); }
   .dp-when { margin-left: auto; font-size: var(--fs-100); color: var(--fg-muted); }
-  .dp-prio-inline { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-200); color: var(--fg-subtle); }
-  .dp-prio-inline .prio-ico { display: inline-block; margin: 0; }
-  .wf-wrap { position: relative; display: inline-flex; }
+  .wf-wrap, .pr-wrap { position: relative; display: inline-flex; }
   .wf-btn { border: 0; cursor: pointer; font: inherit; display: inline-flex; align-items: center; gap: 5px; }
   .wf-btn .caret { font-size: 9px; opacity: .7; }
-  .wf-menu {
+  /* Priority is a picker too: the arrow and its word, set in place. Not a
+     lozenge (the row already has its two), so it reads as quiet text until
+     pointed at. */
+  .pr-btn {
+    display: inline-flex; align-items: center; gap: var(--s-100);
+    background: transparent; border: 0; cursor: pointer; font: inherit;
+    font-size: var(--fs-200); line-height: var(--lh-200); color: var(--fg-subtle);
+    padding: var(--s-050) var(--s-100); border-radius: var(--r-100);
+  }
+  .pr-btn:hover { background: var(--hover); color: var(--fg); }
+  .pr-btn .prio-ico, .pr-item .prio-ico { display: inline-block; margin: 0; flex: 0 0 auto; }
+  .pr-btn .caret { font-size: var(--fs-100); color: var(--fg-muted); }
+  .pr-btn:focus-visible, .pr-item:focus-visible, .wf-item:focus-visible {
+    outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring);
+  }
+  .wf-menu, .pr-menu {
     position: absolute; top: calc(100% + 4px); left: 0; z-index: 70;
     background: var(--surface-overlay); border: 1px solid var(--border);
     border-radius: var(--r-300); box-shadow: var(--e-200); padding: var(--s-100);
     min-width: 150px; display: flex; flex-direction: column;
   }
-  .wf-menu[hidden] { display: none; }
-  .wf-item {
+  .wf-menu[hidden], .pr-menu[hidden] { display: none; }
+  .wf-item, .pr-item {
     background: transparent; border: 0; text-align: left; cursor: pointer;
     font: inherit; font-size: var(--fs-200); color: var(--fg);
     padding: 6px 10px; border-radius: var(--r-200);
   }
-  .wf-item:hover { background: var(--hover); }
-  .wf-item.on { background: var(--selected-bg); color: var(--selected-fg); font-weight: 500; }
+  .pr-item { display: flex; align-items: center; gap: var(--s-200); }
+  .wf-item:hover, .pr-item:hover { background: var(--hover); }
+  .wf-item.on, .pr-item.on { background: var(--selected-bg); color: var(--selected-fg); font-weight: 500; }
   /* The summary answers "what did this task do" before any tab is opened. */
   .dp-summary {
     margin: 0 var(--s-400) var(--s-300); padding: var(--s-300);
@@ -1888,6 +1872,12 @@
   }
   .dp-tab:hover { color: var(--fg); }
   .dp-tab.on { color: var(--fg); border-bottom-color: var(--accent); }
+  /* All five tabs stay in view down to the narrowest panel (a 360px phone, or
+     the desktop panel dragged to its 360px minimum): the tabs close up rather
+     than a tab running off the edge. fitTabs() sets the side padding from the
+     strip's measured width: 12px when there is room, shrinking smoothly to 2px,
+     so no panel width leaves a tab past the strip. */
+  .dp-tab { padding-inline: var(--dp-tab-pad, 12px); white-space: nowrap; }
   .dp-tabbody { flex: 1; overflow-y: auto; }
   /* An absence always names its cause — never a blank panel, and never
      --fg-disabled, which clears no threshold on a sunken surface. */
@@ -1938,7 +1928,6 @@
   /* With a live session the panel drops its own padding so the terminal runs
      edge to edge; the slots around it carry their own. */
   #detail-panel.is-live .dp-top { padding: 16px 18px 12px; }
-  #detail-panel.is-live .dp-details { padding: 12px 18px 16px; border-top: 1px solid var(--border); }
   #me-menu .me-head {
     font-size: var(--fs-100); font-weight: 600; text-transform: uppercase;
     letter-spacing: .05em; color: var(--fg-muted); padding: 6px 10px 2px;
@@ -2426,6 +2415,9 @@
     }
     .dp-meta::-webkit-scrollbar { display: none; }
     .dp-meta > * { flex: 0 0 auto; }
+    /* A sideways-scrolling row clips what hangs below it, so while its status
+       or priority menu is open the row wraps instead of scrolling. */
+    .dp-meta:has(.wf-menu:not([hidden]), .pr-menu:not([hidden])) { overflow: visible; flex-wrap: wrap; }
     .dp-actions, .dp-actions .actions {
       flex-wrap: nowrap; overflow-x: auto;
       -webkit-overflow-scrolling: touch; scrollbar-width: none;
@@ -2494,7 +2486,7 @@
 
     /* Trays and menus fit the screen, and their rows are finger-sized. */
     #notif-tray, #usage-tray, #settings-panel { left: var(--s-200); right: var(--s-200); width: auto; }
-    .me-item, .pm-item, .fm-item, .notif-item, .wf-item, .ov-menu button { min-height: var(--touch-min); }
+    .me-item, .pm-item, .fm-item, .notif-item, .wf-item, .pr-item, .ov-menu button { min-height: var(--touch-min); }
 
     /* Touch targets in the page, the task panel and the PO's drawer. */
     /* A phone swipes its board a column at a time (scroll-snap); the edge
@@ -2504,13 +2496,13 @@
     .colsel::-webkit-scrollbar { display: none; }
     .colchip { flex: 0 0 auto; }
     .ptabs button, .viewsw button, .fbtn, .fchip, .colchip, .colall, .crumb-back, .crumb-newtask, .proj .newtask,
-    .newproj-btn, .rm-btn, .po-btn, .dp-tab, .dp-popout, .dp-prio-btn, .dp-actions button,
+    .newproj-btn, .rm-btn, .po-btn, .dp-tab, .dp-popout, .dp-actions button,
     .dp-actions select, .scopebar select, .chp-repo, .sb-add-cat, .srow, .sb-item, .wse, .chf,
     .dest-row, .dl-cbtns button, #usage-banner-dismiss, #update-banner-dismiss, #update-banner-go,
-    .seg button, .dp-details > summary {
+    .seg button {
       min-height: var(--touch-min);
     }
-    .po-btn { min-width: var(--touch-min); }
+    .po-btn, .dp-tab { min-width: var(--touch-min); }
     /* Home's "Group by" row: at 360 its last button sat under "+ New project". */
     .listctl { flex-wrap: wrap; row-gap: var(--s-200); }
     .po-btn.x, .dp-close, .dp-ov-btn, .chp-refresh,
@@ -2523,8 +2515,9 @@
     /* The workflow lozenge keeps its 16px look; an invisible margin makes it a
        44px target. The row it sits in scrolls sideways, which clips anything
        outside it, so the row carries the margin as padding. */
-    .wf-btn { position: relative; }
+    .wf-btn, .pr-btn { position: relative; }
     .wf-btn::after { content: ''; position: absolute; inset: calc((16px - var(--touch-min)) / 2) 0; }
+    .pr-btn::after { content: ''; position: absolute; inset: calc((100% - var(--touch-min)) / 2) 0; }
     .statusbar button.stat.needs { position: relative; }
     .statusbar button.stat.needs::after { content: ''; position: absolute; inset: calc((100% - var(--touch-min)) / 2) 0; }
     .dp-meta { padding-top: var(--s-400); margin-top: calc(-1 * var(--s-400)); }
@@ -2543,7 +2536,7 @@
     .badge-headless, .sb-section, .dp-section h3,
     .dp-cost .cost-tokens, .tx-turn .tx-role, .tx-turn .tx-ts, .tx-text .mention,
     .tx-text.md code.ic, .tx-text.md pre.cb[data-lang]::before, .gitmark, .wse.wsroot .wsroot-kind,
-    .wse .tw, .wse .sz, .chst, .dp-details > summary, .theme-dd-section, #notif-count, .notif-when,
+    .wse .tw, .wse .sz, .chst, .theme-dd-section, #notif-count, .notif-when,
     .notif-proj, .notif-screen, #settings-panel .cfg-hint code {
       font-size: var(--fs-100);
     }
@@ -3465,9 +3458,9 @@ function closeDetail() {
 
 // --- Unified session detail --------------------------------------------------
 // One detail view for EVERY row — 1 agent or N, live or not, room or legacy.
-// Structure is always the same: header, meta pills, action bar, a collapsible
-// Details disclosure, and the conversation (history bubbles, or the live
-// /session embed when running). Only the conversation's data source and the
+// Structure is always the same: header, meta pills, action bar, then the five
+// tabs, whose Activity tab holds the conversation (history bubbles, or the
+// live /session embed when running). Only the conversation's data source and the
 // action set vary. renderDetail() runs on every 2s poll, so it guards on a
 // signature to avoid clobbering the live iframe (and resetting scroll).
 
@@ -3536,6 +3529,20 @@ function workflowPicker(r, isRoom) {
   </span>`;
 }
 
+// Priority is set where it is read: the arrow in the header row opens the five
+// levels. It used to be a row of buttons at the bottom of the panel, which took
+// height from the conversation to show something already shown up here.
+function priorityPicker(r, isRoom) {
+  if (!isRoom || !r.roomId) return '';
+  const cur = prioOf(r);
+  const items = PRIORITY_LEVELS.map(l =>
+    `<button class="pr-item${l.n === cur ? ' on' : ''}" data-prio="${l.n}" aria-pressed="${l.n === cur}">${prioIcon(l.n, '', true)}${esc(l.name)}</button>`).join('');
+  return `<span class="pr-wrap">
+    <button class="pr-btn" data-room="${esc(r.roomId)}" aria-haspopup="true" aria-expanded="false" title="Priority: ${esc(prioName(cur))}. Click to change">${prioIcon(cur, '', true)}${esc(prioName(cur))}<span class="caret" aria-hidden="true">▾</span></button>
+    <span class="pr-menu" hidden>${items}</span>
+  </span>`;
+}
+
 // One row that answers "what is this task": where it sits, how urgent, what is
 // running, and whether it needs you. The old row was ten chips of mixed kinds
 // — status, pin, category, message count, pid, id — with nothing to say which
@@ -3547,9 +3554,7 @@ function detailMeta(r, isLive, isRoom, now) {
              : (attn && attn.state === 'stalled') ? 'neutral' : 'warning';
   const attnLoz = attn
     ? `<span class="loz ${tone}" title="${esc(attn.reason || '')}">${esc(ATTN_LABEL[attn.state] || attn.state)}</span>` : '';
-  const prio = isRoom && r.roomId
-    ? `<span class="dp-prio-inline" title="Priority: ${esc(prioName(prioOf(r)))}">${prioIcon(prioOf(r), '', true)}${esc(prioName(prioOf(r)))}</span>` : '';
-  return `<div class="dp-meta">${workflowPicker(r, isRoom)}${attnLoz}${prio}${runChip(r)}
+  return `<div class="dp-meta">${workflowPicker(r, isRoom)}${attnLoz}${priorityPicker(r, isRoom)}${runChip(r)}
     <span class="dp-when">updated ${agoSpan(r.updatedAt)} ago</span></div>`;
 }
 
@@ -3580,6 +3585,7 @@ const ISSUE_TABS = [
   { k: 'changes',   name: 'Changes' },
   { k: 'workspace', name: 'Workspace' },
   { k: 'spec',      name: 'Spec' },
+  { k: 'details',   name: 'Details' },
 ];
 let ISSUE_TAB = '';
 let ISSUE_TAB_SID = '';
@@ -3670,18 +3676,6 @@ function detailOverflow(r, isLive, isRoom) {
   </span>`;
 }
 
-// The product owner sets a task's priority here: five arrows, the current one
-// filled in. A row of buttons rather than a <select> so an open dropdown can
-// never be swallowed by the next refresh.
-function detailPriority(r, isRoom) {
-  if (!isRoom || !r.roomId) return '';
-  const cur = prioOf(r);
-  const btns = PRIORITY_LEVELS.map(l =>
-    `<button class="dp-prio-btn${l.n === cur ? ' on' : ''}" data-room="${esc(r.roomId)}" data-prio="${l.n}" title="Set priority: ${l.name}">${prioIcon(l.n, l.name, true)}${l.name}</button>`
-  ).join('');
-  return `<div class="dp-prio"><span class="dp-prio-label">Priority</span>${btns}</div>`;
-}
-
 function jiraSection(r) {
   return `<div class="dp-section">
       <h3>Jira</h3>
@@ -3697,9 +3691,9 @@ function jiraSection(r) {
     </div>`;
 }
 
-// The metadata that used to fill the single-agent panel — restored, but tucked
-// into a collapsible disclosure so it never crowds out the conversation. The
-// open/closed choice is remembered across sessions.
+// The Details tab: who is on the task, identifiers, folders, cost. Reference
+// rather than reading, so it has its own tab instead of a block under the
+// conversation.
 function detailInfo(r) {
   const parts = [];
   if (r.members && r.members.length) {
@@ -3734,13 +3728,9 @@ function detailInfo(r) {
   if (r.first) parts.push(`<div class="dp-section"><h3>First user turn</h3><div class="dp-quote">${esc(r.first)}</div></div>`);
   if (r.last && r.last !== r.first) parts.push(`<div class="dp-section"><h3>Last user turn</h3><div class="dp-quote">${esc(r.last)}</div></div>`);
   const inner = parts.filter(Boolean).join('');
-  if (!inner) return '';
-  let open = true;
-  try { open = localStorage.getItem('cd-details-open') !== '0'; } catch (e) {}
-  return `<details class="dp-details" ${open ? 'open' : ''} ontoggle="try{localStorage.setItem('cd-details-open', this.open?'1':'0')}catch(e){}">
-      <summary>Details</summary>
-      ${inner}
-    </details>`;
+  return inner
+    ? `<div class="dp-info">${inner}</div>`
+    : issueEmpty('Nothing recorded yet. Who works on this task, its folders and its cost show here once it has them.');
 }
 
 function fmtTs(ts) {
@@ -3824,16 +3814,16 @@ async function loadConversation(r) {
 //   activity  the live session (rebuilt only when the room changes) or the
 //             conversation (rebuilt only when it loads or grows), so an idle
 //             flip never costs the conversation its scroll.
-//   changes, spec   cheap, rebuilt on their own content.
+//   changes, spec, details   cheap, rebuilt on their own content.
 //   workspace main's Files pane: mounted once, lazily, the first time it is
 //             shown with a folder to show. Never rebuilt.
-//   details   the priority picker and who is on the task.
 // The shell is keyed on the task alone. main also keyed it on whether the
 // task had a folder, which flips the moment a task starts, rebuilding the
 // shell and reconnecting the live session at exactly the moment its own
 // comment said must not happen. The tab set is fixed and so are its labels:
 // what a tab shows may change shape when a task starts, what it is called
 // does not.
+const DP_MENU_OPEN = '.wf-menu:not([hidden]), .ov-menu:not([hidden]), .pr-menu:not([hidden])';
 function renderDetail() {
   const sid = SELECTED_SID;
   if (!sid) { closeDetail(); return; }
@@ -3860,8 +3850,7 @@ function renderDetail() {
     panel.innerHTML = '<div class="dp-top"></div>'
       + '<div class="dp-tabs">' + ISSUE_TABS.map(t =>
           `<button class="dp-tab" data-itab="${t.k}">${esc(t.name)}</button>`).join('') + '</div>'
-      + ISSUE_TABS.map(t => `<div class="dp-pane" data-pane="${t.k}" hidden></div>`).join('')
-      + '<div class="dp-details"></div>';
+      + ISSUE_TABS.map(t => `<div class="dp-pane" data-pane="${t.k}" hidden></div>`).join('');
   }
   panel.classList.toggle('is-live', liveEmbed);
 
@@ -3872,7 +3861,7 @@ function renderDetail() {
     + detailActions(r, isLive, isRoom, isOrphan) + detailSummary(r, isRoom);
   const topSig = withoutAgo(topHtml);
   if (top._html !== topSig) {
-    if (top.querySelector('.wf-menu:not([hidden]), .ov-menu:not([hidden])')) {
+    if (top.querySelector(DP_MENU_OPEN)) {
       panel.dataset.topPending = '1';     // apply once the menu closes
     } else {
       const focus = focusKeyIn(top);
@@ -3884,7 +3873,7 @@ function renderDetail() {
   }
   tickAgo(top);
 
-  // Tabs: fixed four, fixed labels. Only which one is on moves.
+  // Tabs: fixed five, fixed labels. Only which one is on moves.
   const cur = issueTab(r);
   panel.querySelectorAll('.dp-tab[data-itab]').forEach(b => b.classList.toggle('on', b.dataset.itab === cur));
   panel.querySelectorAll('.dp-pane').forEach(p => { p.hidden = p.dataset.pane !== cur; });
@@ -3940,8 +3929,8 @@ function renderDetail() {
   }
 
   // Details.
-  const det = panel.querySelector('.dp-details');
-  const detHtml = detailPriority(r, isRoom) + detailInfo(r);
+  const det = panel.querySelector('.dp-pane[data-pane="details"]');
+  const detHtml = detailInfo(r);
   if (det._html !== detHtml) { det._html = detHtml; det.innerHTML = detHtml; }
 
   if (panel._fitFor !== sid) { panel._fitFor = sid; watchLiveChatFit(panel); }
@@ -3956,8 +3945,28 @@ function renderDetail() {
 // pane and its file list stays in reach instead of the panel running on for
 // the length of the diff.
 let DP_FIT_RO = null;
+// The widest side padding (12px down to 2px) at which all five tabs fit the
+// strip, from the labels' measured text, so it holds for any font and for the
+// phone's 44px minimum tab width.
+function fitTabs(panel) {
+  const strip = panel.querySelector('.dp-tabs');
+  const avail = strip ? strip.getBoundingClientRect().width : 0;
+  if (!avail) return;
+  const tabs = [...strip.querySelectorAll('.dp-tab')];
+  const range = document.createRange();
+  const sizes = tabs.map(b => {
+    range.selectNodeContents(b);
+    return [range.getBoundingClientRect().width, parseFloat(getComputedStyle(b).minWidth) || 0];
+  });
+  const gaps = (parseFloat(getComputedStyle(strip).columnGap) || 0) * (tabs.length - 1);
+  let pad = 12;
+  while (pad > 2 && gaps + sizes.reduce((s, [t, m]) => s + Math.max(m, t + 2 * pad), 0) > avail) pad -= 0.5;
+  const v = pad + 'px';
+  if (strip.style.getPropertyValue('--dp-tab-pad') !== v) strip.style.setProperty('--dp-tab-pad', v);
+}
 function fitLiveChat() {
   const panel = $('#detail-panel'); if (!panel) return;
+  fitTabs(panel);
   const pane = panel.querySelector('.dp-pane:not([hidden])');
   if (!pane) return;
   const fits = pane.dataset.pane === 'changes' || (pane.dataset.pane === 'activity' && panel.classList.contains('is-live'));
@@ -7977,8 +7986,29 @@ document.addEventListener('click', (ev) => {
   openTaskLink(a.dataset.task);
 }, true);
 document.addEventListener('keydown', (ev) => {
+  // Arrows move through the priority levels while its menu has focus.
+  if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+    const menu = ev.target.closest && ev.target.closest('.pr-menu');
+    if (!menu) return;
+    ev.preventDefault();
+    const items = [...menu.querySelectorAll('.pr-item')];
+    const i = items.indexOf(ev.target) + (ev.key === 'ArrowDown' ? 1 : -1);
+    items[(i + items.length) % items.length].focus();
+    return;
+  }
   if (ev.key !== 'Escape') return;
   if (THEME_MENU || $('#modal').open) return;
+  // A menu in the task panel's header closes before the panel does, and hands
+  // focus back to the control that opened it.
+  const menu = document.querySelector('#detail-panel .dp-top :is(.wf-menu, .ov-menu, .pr-menu):not([hidden])');
+  if (menu) {
+    dpMenuHide(menu);
+    const opener = menu.parentElement.querySelector('.wf-btn, .dp-ov-btn, .pr-btn');
+    if (opener) opener.focus({ preventScroll: true });
+    const dpp = $('#detail-panel');
+    if (dpp.dataset.topPending) setTimeout(renderDetail, 0);
+    return;
+  }
   if (PO_PEEK) { poClosePeek(); return; }   // the topmost thing closes first
   if (SELECTED_SID) closeDetail();
 });
@@ -8083,7 +8113,20 @@ function closeFiltersMenu() {
   if (b) b.setAttribute('aria-expanded', 'false');
 }
 
+// The task panel's header menus (status, priority, more actions): one open at a
+// time, closed by a click anywhere outside the picker it belongs to.
+function dpMenuHide(m) {
+  m.hidden = true;
+  const b = m.parentElement && m.parentElement.querySelector('[aria-expanded]');
+  if (b) b.setAttribute('aria-expanded', 'false');
+}
 document.addEventListener('click', (ev) => {
+  document.querySelectorAll(DP_MENU_OPEN).forEach(m => {
+    if (!m.parentElement.contains(ev.target)) dpMenuHide(m);
+  });
+  // The panel's top slot waited for a menu to close; apply it now it has.
+  const dpp = document.getElementById('detail-panel');
+  if (dpp && dpp.dataset.topPending && !dpp.querySelector(DP_MENU_OPEN)) setTimeout(renderDetail, 0);
   const ovBtn = ev.target.closest('.dp-ov-btn');
   if (ovBtn) {
     ev.stopPropagation();
@@ -8100,10 +8143,6 @@ document.addEventListener('click', (ev) => {
     // chain. Swallowing the event here would give a menu of dead buttons.
     const m = ovItem.closest('.ov-menu');
     if (m) m.hidden = true;
-  } else {
-    document.querySelectorAll('.ov-menu:not([hidden])').forEach(m => {
-      if (!ev.target.closest('.ov-wrap')) m.hidden = true;
-    });
   }
   // Issue view: tab switch. The panel's signature includes the tab, so this
   // re-renders rather than fighting the refresh loop.
@@ -8139,13 +8178,19 @@ document.addEventListener('click', (ev) => {
     }
     return;
   }
-  document.querySelectorAll('.wf-menu:not([hidden])').forEach(m => {
-    if (!ev.target.closest('.wf-wrap')) m.hidden = true;
-  });
-  // The panel's top slot waited for a menu to close; apply it now it has.
-  const dpp = document.getElementById('detail-panel');
-  if (dpp && dpp.dataset.topPending
-      && !dpp.querySelector('.wf-menu:not([hidden]), .ov-menu:not([hidden])')) setTimeout(renderDetail, 0);
+  // Priority, the same way. Opened from the keyboard, focus goes to the level
+  // it is on, so the arrows start from there.
+  const prBtn = ev.target.closest('.pr-btn');
+  if (prBtn) {
+    ev.stopPropagation();
+    const menu = prBtn.parentElement.querySelector('.pr-menu');
+    if (!menu) return;
+    if (!menu.hidden) { dpMenuHide(menu); return; }
+    menu.hidden = false;
+    prBtn.setAttribute('aria-expanded', 'true');
+    if (ev.detail === 0) (menu.querySelector('.pr-item.on') || menu.querySelector('.pr-item')).focus();
+    return;
+  }
   // A destination entry opens the task it names, in the page.
   const destRow = ev.target.closest('.dest-row');
   if (destRow) {
@@ -8803,18 +8848,22 @@ document.addEventListener('click', async (ev) => {
     } catch (e) { toast('resume failed: ' + e.message, 4000, 'err'); }
     return;
   }
-  const prioBtn = ev.target.closest('.dp-prio-btn');
-  if (prioBtn) {
+  const prItem = ev.target.closest('.pr-item[data-prio]');
+  if (prItem) {
     ev.stopPropagation();
-    const rid = prioBtn.dataset.room, n = Number(prioBtn.dataset.prio);
+    const wrap = prItem.closest('.pr-wrap');
+    const btn = wrap && wrap.querySelector('.pr-btn');
+    if (!btn) return;
+    const rid = btn.dataset.room, n = Number(prItem.dataset.prio);
+    dpMenuHide(wrap.querySelector('.pr-menu'));
+    btn.focus({ preventScroll: true });   // the rewrite below puts focus back on the new button
     // Paint the choice straight away — the list re-sorts on the next refresh,
     // and the row model is patched so a frozen (hovered) list agrees with it.
     const row = ALL_ROWS.find(x => x.roomId === rid);
     if (row) { row.priority = n; row.priorityName = prioName(n); }
-    // Move the highlight by hand rather than re-rendering the panel: a live
-    // task's panel holds the session iframe, and rebuilding it would reload it.
-    prioBtn.parentElement.querySelectorAll('.dp-prio-btn')
-      .forEach(b => b.classList.toggle('on', b === prioBtn));
+    // Only the top slot is rewritten: the panes, and a live task's session,
+    // are untouched.
+    renderDetail();
     try {
       await api('/api/room/priority', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: rid, priority: n }) });
       await refresh();
