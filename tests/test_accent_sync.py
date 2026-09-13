@@ -221,7 +221,7 @@ class HeadScript(unittest.TestCase):
         self.assertEqual(r["storage"]["cd-accent"], "#6E5DC6")
 
     def test_a_colour_the_browser_rejects_is_not_applied(self):
-        for bad in ("notacolour", "transparent", "rgba(1, 2, 3, 0.5)"):
+        for bad in ("notacolour", "transparent", "rgba(1, 2, 3, 0.5)", "currentColor"):
             r = self.run_head({"cd-accent": bad}, {})
             self.assertEqual(r["style"], {}, bad)
 

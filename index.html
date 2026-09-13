@@ -39,6 +39,7 @@
   // it or it is see-through (no text colour is sure to read on that).
   function rgbOf(color) {
     try {
+      if (/currentcolor/i.test(color)) return null;   // the canvas reads it as black
       ink = ink || document.createElement('canvas').getContext('2d');
       // A colour the canvas refuses leaves the previous one: two different
       // starting colours then read back differently.
