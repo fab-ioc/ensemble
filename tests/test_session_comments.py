@@ -103,6 +103,7 @@ function page() {
 }
 const stored = () => [...store].filter(([k]) => k.startsWith(prefix)).map(([, v]) => JSON.parse(v))
   .sort((a, b) => a.at - b.at).map(c => c.note);
+const html = T => T.tray() ? T.tray().innerHTML : '';
 const tick = () => new Promise(r => setTimeout(r, 5));
 (async () => {
   const out = {};
@@ -115,17 +116,17 @@ const tick = () => new Promise(r => setTimeout(r, 5));
 
   const B = page();                                   // the page loaded again
   out.reloaded = B.notes();
-  out.reloadedItems = (B.tray().innerHTML.match(/class="cmt-item"/g) || []).length;
+  out.reloadedItems = (html(B).match(/class="cmt-item"/g) || []).length;
 
   B.set('ROOM_LIVE', false); B.renderCmtTray();
-  out.stoppedHtml = B.tray().innerHTML;
+  out.stoppedHtml = html(B);
   let n0 = posts.length; await B.submitComments();
   out.stoppedPosts = posts.length - n0; out.stoppedKept = B.notes();
   B.set('ROOM_LIVE', true);
 
   const fail = async reply => {
     replies = reply; await B.submitComments(); replies = [];
-    return { kept: B.notes(), stored: stored(), html: B.tray() ? B.tray().innerHTML : '' };
+    return { kept: B.notes(), stored: stored(), html: html(B) };
   };
   out.gone = await fail([[404, { error: 'no_such_pty' }]]);
   out.dead = await fail([[410, { error: 'the session has stopped' }]]);
@@ -143,7 +144,7 @@ const tick = () => new Promise(r => setTimeout(r, 5));
   await sending;
   out.afterSend = B.notes(); out.storedAfterSend = stored();
   out.sentTyped = posts.slice(n0).map(p => p[1].data);
-  out.errorCleared = !/Not sent/.test(B.tray().innerHTML);
+  out.errorCleared = !/Not sent/.test(html(B));
 
   A.storage.forEach(f => f({ key: prefix + 'x' }));   // the other copy hears of it
   out.otherCopy = A.notes();
@@ -160,10 +161,10 @@ const tick = () => new Promise(r => setTimeout(r, 5));
   broken.set = true;
   const W = page();
   W.add('first'); W.add('second');
-  out.writeFails = { notes: W.notes(), stored: stored(), html: W.tray().innerHTML };
+  out.writeFails = { notes: W.notes(), stored: stored(), html: html(W) };
   broken.set = false;
   W.add('third');
-  out.writeRecovers = { notes: W.notes(), stored: stored(), html: W.tray().innerHTML };
+  out.writeRecovers = { notes: W.notes(), stored: stored(), html: html(W) };
   replies = [[200, { ok: true }], [200, { ok: true }]];
   await W.submitComments();
   out.writeCleared = stored();
@@ -281,6 +282,7 @@ class SendBeforeTheSessionLoads(unittest.TestCase):
         self.assertRegex(SRC, r'<button id="send" disabled>')
         handler = SRC[SRC.index("$('#send').onclick"):]
         handler = handler[:handler.index("\n};\n")]
+        self.assertIn("if (!ROOM_OBJ)", handler, "Send does not wait for the session to load")
         guard = handler.index("if (!ROOM_OBJ)")
         self.assertLess(guard, handler.index("if (SOLO_MODE)"))
         self.assertNotIn("value = ''", handler[guard:handler.index("if (SOLO_MODE)")])
