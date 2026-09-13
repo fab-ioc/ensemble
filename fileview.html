@@ -847,27 +847,31 @@ const HL = (() => {
     if (pos < text.length) scan(text.slice(pos), 'xml', out);
   } });
 
-  const AFTER_VALUE = String.raw`(?<=:[ \t]+|^[ \t]*-[ \t]+|[\[,][ \t]*)`;
+  // Blanks around a key or a value are counted to at most 64. An open-ended run
+  // in a lookbehind or lookahead is walked again from every position of a long
+  // run of blanks, which is quadratic: one line of 50,000 spaces took seconds.
+  const B0 = String.raw`[ \t]{0,64}`, B1 = String.raw`[ \t]{1,64}`;
+  const AFTER_VALUE = String.raw`(?<=:${B1}|^${B0}-${B1}|[\[,]${B0})`;
   lang(['yaml'], { rules: [
     [String.raw`(?:^|(?<=[ \t]))#.*`, 'com'],
     [String.raw`^(?:---|\.\.\.)(?=[ \t]|$)`, 'meta'],
     [String.raw`^[ \t]*-(?=[ \t]|$)`, 'kw'],
-    [String.raw`(?<=^[ \t]*(?:-[ \t]+)?)(?:"(?:[^"\\\n]|\\.)*"|'[^'\n]*'|[^\s#'"{}\[\],&*!|>%@\x60-][^#\n]*?)(?=[ \t]*:(?:[ \t]|$))`, 'attr'],
+    [String.raw`(?<=^${B0}(?:-${B1})?)(?:"(?:[^"\\\n]|\\.)*"|'[^'\n]*'|[^\s#'"{}\[\],&*!|>%@\x60-][^#\n]*?)(?=${B0}:(?:[ \t]|$))`, 'attr'],
     [DQ, 'str'], [SQ, 'str'],
     [String.raw`(?<=^|[\s\[,])[&*][A-Za-z_][\w-]*`, 'meta'],
     [String.raw`(?<=^|[\s\[,])!{1,2}[\w/.-]*`, 'meta'],
-    [AFTER_VALUE + String.raw`(?:true|false|yes|no|on|off|null|True|False|Null|~)(?=[ \t]*(?:[,\]#]|$))`, 'num'],
-    [AFTER_VALUE + String.raw`[-+]?(?:0x[\da-fA-F]+|\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?)(?=[ \t]*(?:[,\]#]|$))`, 'num'],
-    [String.raw`(?<=:[ \t]+)[|>][-+]?\d*(?=[ \t]*(?:#.*)?$)`, 'kw'],
+    [AFTER_VALUE + String.raw`(?:true|false|yes|no|on|off|null|True|False|Null|~)(?=${B0}(?:[,\]#]|$))`, 'num'],
+    [AFTER_VALUE + String.raw`[-+]?(?:0x[\da-fA-F]+|\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?)(?=${B0}(?:[,\]#]|$))`, 'num'],
+    [String.raw`(?<=:${B1})[|>][-+]?\d*(?=${B0}(?:#.*)?$)`, 'kw'],
   ] });
   lang(['toml', 'ini'], { rules: [
     [String.raw`(?:^|(?<=[ \t]))[#;].*`, 'com'],
     [String.raw`^[ \t]*\[\[?[^\]\n]*\]\]?`, 'ty'],
-    [String.raw`(?<=^[ \t]*)[^\s=#;\[][^=\n]*?(?=[ \t]*=)`, 'attr'],
+    [String.raw`(?<=^${B0})[^\s=#;\[][^=\n]*?(?=${B0}=)`, 'attr'],
     [String.raw`"""[\s\S]*?(?:"""|${EOF})`, 'str'], [String.raw`'''[\s\S]*?(?:'''|${EOF})`, 'str'],
     [DQ, 'str'], [String.raw`'[^'\n]*'?`, 'str'],
     [String.raw`\b\d{4}-\d\d-\d\d(?:[T ]\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d)?)?\b`, 'num'],
-    [String.raw`(?<=[=\[,][ \t]*)(?:true|false|on|off|yes|no)\b`, 'num'],
+    [String.raw`(?<=[=\[,]${B0})(?:true|false|on|off|yes|no)\b`, 'num'],
     [String.raw`[-+]?\b(?:0x[\da-fA-F_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?)\b`, 'num'],
   ] });
 
@@ -924,7 +928,7 @@ const HL = (() => {
     [String.raw`^[ \t]*(?:[-*+]|\d{1,9}[.)])(?=[ \t])`, 'kw'],
     [String.raw`^[ \t]*(?:>[ \t]?)+`, 'com'],
     [String.raw`\x60+[^\x60\n]+\x60+`, 'str'],
-    [String.raw`!?\[[^\]\n]*\]\([^)\n]*\)`, 'fn'],
+    [String.raw`!?\[[^\[\]\n]*\]\([^)\n]*\)`, 'fn'],
     [String.raw`\*\*[^*\n]+\*\*|__[^_\n]+__`, 'strong'],
     [String.raw`(?<![\w*])\*[^*\s](?:[^*\n]*[^*\s])?\*(?![\w*])|(?<![\w_])_[^_\s](?:[^_\n]*[^_\s])?_(?![\w_])`, 'em'],
     [String.raw`\|`, 'meta'],
@@ -1178,9 +1182,14 @@ function mdToHtml(src) {
     s = kept.join('\n');
   }
   s = s.replace(/<!--[\s\S]*?-->/g, '');
-  s = s.replace(/!\[([^\]\n]*)\]\(\s*<?([^()\s<>]+(?:\([^()\s]*\)[^()\s<>]*)*)>?(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*\)/g,
-    (_, alt, url) => ph(`<img class="md-img" src="${esc(mdImgSrc(url))}" alt="${esc(alt)}" loading="lazy">`));
-  s = s.replace(/(`+)([^`\n]|[^`\n][^\n]*?[^`\n])\1(?!`)/g, (_, ticks, body) => ph(codeSpanHtml(ticks.length > 1 ? body.trim() : body)));
+  // In one left-to-right pass, so whichever starts first wins: \` \[ \] \! are
+  // the character itself and start no code span, image or link, while a code
+  // span keeps its backslashes (`C:\dir\`). The other escapes are undone in
+  // inline(), after the links, so a path such as docs\_build\x.md stays whole.
+  s = s.replace(/\\([`\[\]!])|(`+)([^`\n]|[^`\n][^\n]*?[^`\n])\2(?!`)|!\[([^\[\]\n]*)\]\(\s*<?([^()\s<>]+(?:\([^()\s]*\)[^()\s<>]*)*)>?(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*\)/g,
+    (_, escaped, ticks, body, alt, url) => escaped != null ? ph(esc(escaped))
+      : ticks != null ? ph(codeSpanHtml(ticks.length > 1 ? body.trim() : body))
+      : ph(`<img class="md-img" src="${esc(mdImgSrc(url))}" alt="${esc(alt)}" loading="lazy">`));
   s = esc(s);
 
   const BR = String.fromCharCode(0xE004);
@@ -1189,12 +1198,14 @@ function mdToHtml(src) {
     t = linkify(t, keep)
       // \* \_ \` and friends are the character itself, not markup.
       .replace(/\\(&(?:lt|gt|amp|quot);|[!-\/:-@\[-`{-~])/g, (m, c) => LINK_A + (keep.push(c) - 1) + LINK_Z)
-      .replace(/\*\*\*(?=\S)([\s\S]*?\S)\*\*\*/g, '<strong><em>$1</em></strong>')
-      .replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, '<strong>$1</strong>')
-      .replace(/(^|[^\w_])__(?=\S)([\s\S]*?\S)__(?!\w)/g, '$1<strong>$2</strong>')
+      // A span stops at the next opener, so a paragraph of unclosed ** is not
+      // searched to its end once per opener.
+      .replace(/\*\*\*(?=\S)((?:[^*]|\*(?!\*\*))*?\S)\*\*\*/g, '<strong><em>$1</em></strong>')
+      .replace(/\*\*(?=\S)((?:[^*]|\*(?!\*))*?\S)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[^\w_])__(?=\S)((?:[^_]|_(?!_))*?\S)__(?!\w)/g, '$1<strong>$2</strong>')
       .replace(/(^|[^\w*])\*(?=[^\s*])([^*]*?[^\s*])\*(?![\w*])/g, '$1<em>$2</em>')
       .replace(/(^|[^\w])_(?=[^\s_])([^_]*?[^\s_])_(?!\w)/g, '$1<em>$2</em>')
-      .replace(/~~(?=\S)([\s\S]*?\S)~~/g, '<del>$1</del>')
+      .replace(/~~(?=\S)((?:[^~]|~(?!~))*?\S)~~/g, '<del>$1</del>')
       .replace(/(^|[\s(])@([a-zA-Z][\w-]*)/g, '$1<span class="mention">@$2</span>');
     return unlinkify(t, keep);
   };
@@ -1213,7 +1224,18 @@ function mdToHtml(src) {
   const stripIndent = (l, n) => { let w = 0, i = 0; while (i < l.length && w < n && (l[i] === ' ' || l[i] === '\t')) { w += l[i] === '\t' ? 4 - (w % 4) : 1; i++; } return l.slice(i); };
   const LIST_RE = /^([ \t]*)([-*+]|\d{1,9}[.)])(?:[ \t]+(.*))?$/;
   const HR_RE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
-  const HEAD_RE = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/;
+  // Blanks at the end of a line are cut by hand: /[ \t]+$/ is tried again from
+  // every blank of a long run that does not end the line, which is quadratic.
+  const trimBlanksEnd = l => { let e = l.length; while (e && (l[e - 1] === ' ' || l[e - 1] === '\t')) e--; return l.slice(0, e); };
+  // "## Title ##": the level, and the title without its closing hashes.
+  const headOf = l => {
+    const m = l.match(/^ {0,3}(#{1,6})(?=[ \t]|$)/);
+    if (!m) return null;
+    let t = trimBlanksEnd(l.slice(m[0].length)), e = t.length;
+    while (e && t[e - 1] === '#') e--;
+    if (e === 0 || t[e - 1] === ' ' || t[e - 1] === '\t') t = trimBlanksEnd(t.slice(0, e));
+    return [m[1], t.replace(/^[ \t]+/, '')];
+  };
   const QUOTE_RE = /^ {0,3}&gt;[ \t]?(.*)$/;
   const tableSep = l => /^[\s|:-]+$/.test(l.trim()) && l.includes('|') && l.includes('-');
   const rowCells = l => {
@@ -1225,14 +1247,14 @@ function mdToHtml(src) {
   const isTable = (ls, i) => ls[i].includes('|') && i + 1 < ls.length && tableSep(ls[i + 1]);
   const startsBlock = (ls, i) => {
     const l = ls[i], m = l.match(LIST_RE);
-    return isBlockPh(l.trim()) || HEAD_RE.test(l) || HR_RE.test(l) || QUOTE_RE.test(l) || isTable(ls, i)
+    return isBlockPh(l.trim()) || headOf(l) || HR_RE.test(l) || QUOTE_RE.test(l) || isTable(ls, i)
       || (m && m[3] && (!/\d/.test(m[2]) || /^1[.)]$/.test(m[2])));
   };
   const paragraph = (para, tight) => {
     const text = para.map((l, k) => {
       let x = l.replace(/^[ \t]+/, '');
-      const hard = k < para.length - 1 && (/ {2,}$/.test(x) || /[^\\]\\$/.test(x));
-      x = x.replace(/[ \t]+$/, '');
+      const hard = k < para.length - 1 && (x.endsWith('  ') || /[^\\]\\$/.test(x));
+      x = trimBlanksEnd(x);
       if (hard && x.endsWith('\\')) x = x.slice(0, -1);
       return x + (hard ? BR : '');
     }).join('\n');
@@ -1309,7 +1331,7 @@ function mdToHtml(src) {
         i = j;
         continue;
       }
-      if ((m = line.match(HEAD_RE))) { out.push(heading(m[1].length, m[2] || '')); i++; continue; }
+      if ((m = headOf(line))) { out.push(heading(m[0].length, m[1])); i++; continue; }
       if (HR_RE.test(line)) { out.push('<hr>'); i++; continue; }
       if (QUOTE_RE.test(line)) {
         const q = [];
@@ -1711,6 +1733,9 @@ function wireFrameLinks(ifr) {
     : isCsv ? [['table', 'Table'], ['source', 'Source']]
     : laidOut ? [['pretty', 'Formatted'], ['source', 'As written']] : null;
   let view = views && !LINE ? views[0][0] : 'source';
+  // The marked line of each code view: the linked one to start with, then the
+  // last one clicked, so it is still marked after a trip to another view.
+  const marked = { source: LINE, pretty: 0 };
   const wrapBtn = document.getElementById('wrap');
 
   // Highlight first, then hand the finished element to the comment layer: its
@@ -1737,9 +1762,13 @@ function wireFrameLinks(ifr) {
       if (sel && !sel.isCollapsed) return;
       if (ev.clientX - box.getBoundingClientRect().left > parseFloat(getComputedStyle(row).paddingLeft)) return;
       markRow(box, +row.dataset.n, false);
+      marked[view] = +row.dataset.n;
+      // Only a line of the file as written can be linked to: a formatted JSON
+      // row has no line of its own on disk.
+      if (view !== 'source') return;
       try { const u = new URL(location.href); u.searchParams.set('line', row.dataset.n); history.replaceState(null, '', u); } catch (e) {}
     });
-    if (LINE && view === 'source') markRow(box, LINE, true);
+    if (marked[view]) markRow(box, marked[view], true);
     enableComments(box);
     remarkAll();
     return r.lines;

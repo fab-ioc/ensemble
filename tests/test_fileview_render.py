@@ -50,6 +50,13 @@ for (const c of cases) {
   else if (c.kind === 'md') out[c.name] = { html: mdToHtml(c.text), ms: Date.now() - t0 };
   else if (c.kind === 'pretty') out[c.name] = { text: jsonLayout(c.text, false) };
   else if (c.kind === 'lang') out[c.name] = { lang: HL.langOf(c.text, c.body || '') };
+  else if (c.kind === 'slow') {
+    // Built here: a 50,000-character line would bloat the JSON on stdin.
+    const text = c.head + c.unit.repeat(c.n) + c.tail;
+    const t1 = Date.now();
+    const r = c.lang ? HL.rows(text, c.lang).html : mdToHtml(text);
+    out[c.name] = { ms: Date.now() - t1, whole: !c.lang || r.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&') === text };
+  }
 }
 console.log(JSON.stringify(out));
 """
@@ -116,6 +123,35 @@ SAMPLES = {
 }
 
 
+ESCAPES = r'''\[safe](https://example.com)
+
+\![alt](img.png)
+
+\`code\`
+
+`C:\dir\` and \*not em\*
+'''
+
+# Lines that make a careless pattern quadratic: long runs of blanks between a
+# key and its value, before a heading's end, and openers that never close.
+# Before review 1, one line of 50,000 blanks took YAML over 16 seconds.
+SLOW_LINES = {
+    "blanks_after_colon": {"head": "a:", "unit": " ", "tail": "123\n"},
+    "blanks_before_colon": {"head": "a", "unit": " ", "tail": ": 1\n"},
+    "indent": {"head": "", "unit": " ", "tail": "- a: 1\n"},
+    "blanks_after_dash": {"head": "-", "unit": " ", "tail": "true\n"},
+    "blanks_after_equals": {"head": "a =", "unit": "\t", "tail": "true\n"},
+    "blanks_after_bracket": {"head": "[", "unit": " ", "tail": "1\n"},
+    "blanks_mid_line": {"head": "a", "unit": " ", "tail": "b\nc\n"},
+}
+SLOW_MARKDOWN = {
+    "heading_blanks": {"head": "# a", "unit": " ", "tail": "#b\n"},
+    "unclosed_strong": {"head": "", "unit": "**a ", "tail": "\n"},
+    "unclosed_del": {"head": "", "unit": "~~a ", "tail": "\n"},
+    "unclosed_image": {"head": "", "unit": "![a", "tail": "\n"},
+}
+
+
 def text_of(rows_html: str) -> str:
     return html.unescape(re.sub(r"<[^>]+>", "", rows_html))
 
@@ -134,7 +170,15 @@ class FileViewRendering(unittest.TestCase):
             {"kind": "lang", "name": "lang_py", "text": "backup.py"},
             {"kind": "lang", "name": "lang_dockerfile", "text": "Dockerfile"},
             {"kind": "lang", "name": "lang_shebang", "text": "run", "body": "#!/usr/bin/env python3\nprint(1)\n"},
-        ] + [{"kind": "rows", "name": "lang:" + k, "lang": k, "text": v} for k, v in SAMPLES.items()]
+            {"kind": "md", "name": "escapes", "text": ESCAPES},
+        ] + [{"kind": "rows", "name": "lang:" + k, "lang": k, "text": v} for k, v in SAMPLES.items()] + [
+            {"kind": "slow", "name": f"slow:{lang}:{name}", "lang": lang, "n": 50_000, **shape}
+            for lang in ("yaml", "toml", "ini", "markdown", "python", "javascript", "css", "bash")
+            for name, shape in SLOW_LINES.items()
+        ] + [
+            {"kind": "slow", "name": f"slow:md:{name}", "lang": "", "n": 50_000 // len(shape["unit"]), **shape}
+            for name, shape in {**SLOW_LINES, **SLOW_MARKDOWN}.items()
+        ]
         cls.big = big
         cls.cases = {c["name"]: c for c in cases}
         # The script is too long for a Windows command line: run it from a file.
@@ -195,6 +239,25 @@ class FileViewRendering(unittest.TestCase):
         self.assertIn('<img class="md-img" src="/api/file?path=C%3A%5Cp%5Cdocs%5Cimg%5Cshot.png"', h)
         self.assertIn('<pre class="cb" data-lang="python"><code><span class="tk-kw">def</span> <span class="tk-fn">hello</span>', h)
         self.assertIn('<span class="tk-com"># greet</span>', h)
+
+    def test_backslash_escapes_start_no_link_image_or_code(self):
+        h = self.out["escapes"]["html"]
+        self.assertIn("<p>[safe](", h)
+        self.assertNotIn(">safe</a>", h, "an escaped [ starts no link")
+        self.assertIn('<p>!<a href="/fileview?path=C%3A%5Cp%5Cdocs%5Cimg.png"', h, "what is left is a link, as on GitHub")
+        self.assertNotIn("<img", h, "an escaped ! starts no image")
+        self.assertIn("<p>`code`</p>", h)
+        self.assertIn(r'<code class="ic">C:\dir\</code>', h, "a code span keeps its backslashes")
+        self.assertIn(" and *not em*</p>", h)
+        self.assertNotIn("\\[", h)
+
+    def test_long_lines_are_not_quadratic(self):
+        for name, r in self.out.items():
+            if not name.startswith("slow:"):
+                continue
+            with self.subTest(case=name):
+                self.assertLess(r["ms"], 800, f"{name} took {r['ms']} ms")
+                self.assertTrue(r["whole"], "the rows must hold the line exactly")
 
     def test_one_line_json_is_laid_out_as_written(self):
         t = self.out["json"]["text"]
