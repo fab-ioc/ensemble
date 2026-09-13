@@ -6600,15 +6600,18 @@ let DISPLAYED_ORDER = []; // session IDs in their last-rendered order
 // One request in flight per tab, none from a hidden tab, and the project
 // grouping never stacks either.
 let _refreshInFlight = false, _projInFlight = false;
-async function refresh() {
-  if (selectInteracting()) return;
+// `now`: a user action needs the list as it is after its own change, so it
+// waits out a poll in flight (whose answer may predate the change) and ignores
+// the reasons a poll holds off.
+async function refresh({ now = false } = {}) {
+  if (now) { while (_refreshInFlight) await new Promise(r => setTimeout(r, 50)); }
   // A hidden tab skips repeat polls, never the first load: a dashboard opened
   // in a background tab must not sit empty until someone looks at it.
-  if (_refreshInFlight || (document.hidden && ALL_ROWS.length)) return;
+  else if (selectInteracting() || _refreshInFlight || (document.hidden && ALL_ROWS.length)) return;
   _refreshInFlight = true;
   try {
     const data = await api('/api/sessions?n=300');
-    if (selectInteracting()) return; // user opened a dropdown mid-fetch
+    if (!now && selectInteracting()) return; // user opened a dropdown mid-fetch
     // If the mouse is inside the dashboard window, keep the existing row
     // positions so the user's click target doesn't slide out from under them.
     // Only field values (label, status, idle, theme) get refreshed. Any new
@@ -8426,32 +8429,48 @@ async function terminalAction(btn) {
 }
 
 // ▶ Open on a history session: resume it headless (no terminal window) and
-// open its task panel. Returns the new task's id, or '' when it failed.
+// open its task panel. Returns the new task's id, or '' when it failed or the
+// task list has not shown the task within ADOPT_WAIT_MS.
+// Every adopt starts another agent, so a session already being opened (a
+// double click, or the row re-rendered under the mouse) is not opened again.
+const ADOPTING = new Set();
+const ADOPT_WAIT_MS = 10000;
 async function openHeadless(btn) {
+  const sid = btn.dataset.sid;
+  if (ADOPTING.has(sid)) { toast('already opening this session…', 2000, 'busy'); return ''; }
+  ADOPTING.add(sid);
+  closeThemeMenu();
   toast('opening headless…', 0, 'busy');
   try {
     const resp = await api('/api/session/adopt', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         agent: btn.dataset.agent || 'claude',
-        sessionId: btn.dataset.sid,
+        sessionId: sid,
         cwd: btn.dataset.cwd,
         label: btn.dataset.label || '',
       }),
     });
     toast('opened headless', 2000, 'ok');
     const rid = resp.room && resp.room.id;
-    // refresh() skips while a poll is in flight, and that poll's answer can
-    // predate the new task: keep refreshing until the list has it.
-    const listed = () => !rid || ALL_ROWS.some(x => x.sessionId === rid || x.roomId === rid);
-    const end = Date.now() + 10000;
-    do {
-      await refresh();
-      if (!listed()) await new Promise(r => setTimeout(r, 250));
-    } while (!listed() && Date.now() < end);
+    if (!rid) { await refresh({ now: true }); updateRoomsBadge(); return ''; }
+    const listed = () => ALL_ROWS.some(x => x.sessionId === rid || x.roomId === rid);
+    const sleep = ms => new Promise(r => setTimeout(r, Math.max(0, ms)));
+    const end = Date.now() + ADOPT_WAIT_MS;
+    while (!listed() && Date.now() < end) {
+      // Bounded: a request that never answers must not hold the action.
+      await Promise.race([refresh({ now: true }), sleep(end - Date.now())]);
+      if (!listed()) await sleep(Math.min(250, end - Date.now()));
+    }
     updateRoomsBadge();
-    if (rid) { openDetail(rid); return rid; }
+    if (!listed()) {
+      toast('The session is open, but the task list has not shown it yet. Open it from the list once it appears.', 6000, 'err');
+      return '';
+    }
+    openDetail(rid);
+    return rid;
   } catch (e) { toast('open headless failed: ' + e.message, 5000, 'err'); }
+  finally { ADOPTING.delete(sid); }
   return '';
 }
 
@@ -8521,12 +8540,16 @@ async function showCapturedTerminal(rid) {
   });
   if (!agents) { toast('No agent has a terminal yet', 4000, 'err'); return; }
   // The page builds the agents first and colours their dots a moment later
-  // (dead: no terminal running, like a reviewer waiting to be mentioned), so
-  // choose once every dot has its state.
+  // (dead: not running), so choose once every dot has its state. An agent with
+  // no pty (a reviewer waiting to be mentioned) never has a terminal to show.
   const dots = () => agents.map(a => a.querySelector('.adot')).filter(Boolean);
   await waitFor(() => dots().every(d => d.classList.length > 1), 3000);
-  const running = a => { const d = a.querySelector('.adot'); return !!(d && d.dataset.pty && !d.classList.contains('dead')); };
-  const agent = agents.find(a => a.classList.contains('open')) || agents.find(running) || agents[0];
+  const dotOf = a => a.querySelector('.adot');
+  const hasPty = a => !!(dotOf(a) && dotOf(a).dataset.pty);
+  const agent = agents.find(a => hasPty(a) && a.classList.contains('open'))
+    || agents.find(a => hasPty(a) && !dotOf(a).classList.contains('dead'))
+    || agents.find(hasPty);
+  if (!agent) { toast('No agent in this task has a terminal', 4000, 'err'); return; }
   if (!agent.classList.contains('open')) agent.querySelector('.ah').click();
   agent.scrollIntoView({ block: 'nearest' });
   const input = await waitFor(() => agent.querySelector('.xterm-helper-textarea'), 5000);

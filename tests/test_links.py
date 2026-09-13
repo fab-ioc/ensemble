@@ -574,18 +574,23 @@ const T = () => PLATFORM.terminalName, FM = () => PLATFORM.fileManagerName;
 const CHAT_SCHEME_ON = {};
 const CSS = { escape: s => s };
 const toast = (msg) => log.push('toast:' + msg);
+const ADOPT_WAIT_MS = 1500;
+const closeThemeMenu = () => {};
 const closeIjMenu = () => {}, showIjMenu = () => log.push('ij-menu'), openInEditor = async p => log.push('editor:' + p);
 const updateRoomsBadge = () => {};
 let ALL_ROWS = [], SELECTED_SID = null, ISSUE_TAB = '', ISSUE_TAB_SID = '', NEW_ROOM = null, FRAME = null;
-// Refreshes that return the list from before the new task (a poll in flight).
-let STALE_REFRESHES = 0;
+// Refreshes that return the list from before the new task (a poll in flight);
+// polls held off (a theme menu open, a hidden tab); a request that never answers.
+let STALE_REFRESHES = 0, POLLS_HELD = false, HUNG = false, ADOPT_ID = 'room-0000new1';
 const api = async (url) => {
   log.push('api:' + url);
   if (url.startsWith('/api/repos/')) return [{ path: '/code/x', editor: 'code' }];
-  if (url === '/api/session/adopt') return { room: { id: 'room-0000new1' } };
+  if (url === '/api/session/adopt') { await new Promise(r => setTimeout(r, 50)); return { room: { id: ADOPT_ID } }; }
   return { result: 'ok' };
 };
-const refresh = async () => {
+const refresh = async ({ now = false } = {}) => {
+  if (POLLS_HELD && !now) { log.push('refresh:held'); return; }
+  if (HUNG) { log.push('refresh:hung'); return new Promise(() => {}); }
   if (STALE_REFRESHES > 0) { STALE_REFRESHES--; log.push('refresh:stale'); return; }
   if (NEW_ROOM && !ALL_ROWS.includes(NEW_ROOM)) ALL_ROWS.push(NEW_ROOM);
 };
@@ -656,13 +661,21 @@ const take = () => log.splice(0);
 
   // Terminal on a history session
   NEW_ROOM = { sessionId: 'room-0000new1', roomId: 'room-0000new1', headless: true, isLive: true };
-  // The list answers from before the adoption twice, and the first agent is a
-  // reviewer with no terminal whose dot is coloured only after it is built.
+  // Pressed twice at once, with polls held off; the list answers from before
+  // the adoption twice, and the first agent is a reviewer with no terminal
+  // whose dot is coloured only after it is built.
   FRAME = session('room-0000new1', { agents: [{ name: 'codex', pty: '', dead: true, late: true },
                                               { name: 'claude', late: true }] });
-  SELECTED_SID = null; ISSUE_TAB = ''; STALE_REFRESHES = 2;
-  await terminalAction(btn({ sid: history.sessionId, cwd: history.cwd, agent: 'claude', label: 'old' }));
-  out.terminalHistory = take();
+  SELECTED_SID = null; ISSUE_TAB = ''; STALE_REFRESHES = 2; POLLS_HELD = true;
+  const histBtn = () => btn({ sid: history.sessionId, cwd: history.cwd, agent: 'claude', label: 'old' });
+  await Promise.all([terminalAction(histBtn()), terminalAction(histBtn())]);
+  out.terminalHistory = take(); out.adoptingLeft = ADOPTING.size; POLLS_HELD = false;
+
+  // The task list never answers: the action gives up in time and opens nothing.
+  ADOPT_ID = 'room-0000hung'; HUNG = true;
+  const t0 = Date.now();
+  await terminalAction(btn({ sid: 's-hist2', cwd: 'C:\\code\\z', agent: 'claude' }));
+  out.hung = [take(), Date.now() - t0]; HUNG = false;
 
   // The task panel's Terminal: first press shows it, the next brings it to the front.
   FRAME = session(liveRoom.roomId, { agents: [{ name: 'claude', dead: true }, { name: 'codex' }] });
@@ -671,6 +684,17 @@ const take = () => log.splice(0);
   await termsAction(); out.firstPress = [take(), ISSUE_TAB];
   out.shownAfter = capturedTermsShown();
   await termsAction(); out.secondPress = take();
+  // Which agent: never one with no terminal, even when its status failed
+  // (every dot dead) or its empty pane is the one open.
+  const pick = async agents => {
+    FRAME = session(liveRoom.roomId, { agents });
+    SELECTED_SID = ISSUE_TAB_SID = liveRoom.sessionId; ISSUE_TAB = 'activity';
+    await showCapturedTerminal(liveRoom.roomId);
+    return take();
+  };
+  out.statusFailed = await pick([{ name: 'codex', pty: '', dead: true }, { name: 'claude', dead: true }]);
+  out.openEmptyReviewer = await pick([{ name: 'codex', pty: '', dead: true, open: true }, { name: 'claude' }]);
+  out.noPty = await pick([{ name: 'codex', pty: '', dead: true }]);
   // Not running: nothing to show.
   await showCapturedTerminal(endedRoom.roomId); out.ended = [take(), SELECTED_SID];
   console.log(JSON.stringify(out));
@@ -702,7 +726,8 @@ class HubMachineActions(unittest.TestCase):
         src = PAGES["index.html"].replace("\r\n", "\n")
         defs = [re.search(r"^const LOOPBACK_HOST_RE = .*$", src, re.M).group(0),
                 re.search(r"^const onHubMachine = .*$", src, re.M).group(0),
-                re.search(r"^const finderLabel = .*$", src, re.M).group(0)]
+                re.search(r"^const finderLabel = .*$", src, re.M).group(0),
+                re.search(r"^const ADOPTING = .*$", src, re.M).group(0)]
         prog = HUB_ACTIONS_JS % "\n".join(defs + [top_level_function(src, n) for n in HUB_ACTION_FUNCTIONS])
 
         def run(location):
@@ -749,9 +774,26 @@ class HubMachineActions(unittest.TestCase):
         self.assertNotIn("api:/api/open", t)
         self.assertEqual([x for x in t if x in ("api:/api/session/adopt", "terms", "open:claude", "focus:claude")],
                          ["api:/api/session/adopt", "terms", "open:claude", "focus:claude"], t)
+        self.assertEqual(t.count("api:/api/session/adopt"), 1, "a second press while opening starts no second agent")
+        self.assertIn("toast:already opening this session…", t)
+        self.assertEqual(mac["adoptingLeft"], 0)
         self.assertEqual(t.count("refresh:stale"), 2, "kept refreshing until the new task was listed")
+        self.assertNotIn("refresh:held", t, "a user action refreshes even while polls hold off")
         self.assertNotIn("open:codex", t, "not the reviewer, which has no terminal")
-        self.assertFalse([x for x in t if x.startswith("toast:") and "headless" not in x], t)
+        self.assertFalse([x for x in t if x.startswith("toast:") and "opening" not in x and "headless" not in x], t)
+        # The list never answers: given up within the wait, nothing opened.
+        log, elapsed = mac["hung"]
+        self.assertIn("refresh:hung", log)
+        self.assertTrue(any("has not shown it yet" in x for x in log), log)
+        self.assertFalse([x for x in log if x.startswith(("detail:", "terms", "open:"))], log)
+        self.assertLess(elapsed, 2500)
+        # Which agent's terminal: one that has a pty, whatever the dots say.
+        for case in ("statusFailed", "openEmptyReviewer"):
+            self.assertIn("open:claude", mac[case], case)
+            self.assertEqual(mac[case][-1], "focus:claude", case)
+            self.assertNotIn("open:codex", mac[case], case)
+        self.assertIn("toast:No agent in this task has a terminal", mac["noPty"])
+        self.assertFalse([x for x in mac["noPty"] if x.startswith(("open:", "focus:"))], mac["noPty"])
         # The task panel's Terminal: shown on the Activity tab, the running
         # agent's terminal opened and focused...
         self.assertFalse(mac["shownBefore"])
