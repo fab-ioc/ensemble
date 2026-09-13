@@ -19,6 +19,7 @@ that fails must not disturb the agent.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sys
@@ -56,15 +57,6 @@ def record(data: dict, target: Path) -> bool:
     as_of = _as_of(data)
     if as_of is None:
         return False
-    try:
-        with open(target, encoding="utf-8") as fh:
-            held = float((json.load(fh) or {}).get("asOf") or 0)
-    except (OSError, ValueError, TypeError, AttributeError):
-        held = 0.0
-    # Every hub agent writes here. Keep the newest reading, not the last writer:
-    # an agent resumed after a long pause redraws with its old numbers.
-    if held >= as_of:
-        return False
     model = data.get("model")
     text = json.dumps({
         "asOf": as_of,
@@ -75,6 +67,78 @@ def record(data: dict, target: Path) -> bool:
         "rateLimits": limits,
     })
     target.parent.mkdir(parents=True, exist_ok=True)
+    # Every hub agent writes here. Keep the newest reading, not the last writer:
+    # an agent resumed after a long pause redraws with its old numbers. The
+    # check and the write happen under one lock, or two agents could both pass
+    # the check and the older one land last.
+    with _lock(target) as held_lock:
+        if not held_lock:
+            return False
+        try:
+            with open(target, encoding="utf-8") as fh:
+                held = float((json.load(fh) or {}).get("asOf") or 0)
+        except (OSError, ValueError, TypeError, AttributeError):
+            held = 0.0
+        if held >= as_of:
+            return False
+        return _publish(target, text)
+
+
+@contextlib.contextmanager
+def _lock(target: Path, timeout: float = 3.0):
+    """An exclusive lock between processes on ``<target>.lock``; yields whether
+    it was taken. The OS drops it if the holder dies, so a crashed agent cannot
+    leave it stuck. Gives up after ``timeout``: a missed reading is replaced by
+    the next turn's, a status line that hangs is not."""
+    try:
+        fh = open(target.with_name(target.name + ".lock"), "a+b")
+    except OSError:
+        yield False
+        return
+    try:
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                _try_lock(fh)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    yield False
+                    return
+                time.sleep(0.02)
+        try:
+            yield True
+        finally:
+            _unlock(fh)
+    finally:
+        fh.close()
+
+
+if os.name == "nt":
+    import msvcrt
+
+    def _try_lock(fh) -> None:
+        fh.seek(0)
+        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+
+    def _unlock(fh) -> None:
+        fh.seek(0)
+        try:
+            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+else:
+    import fcntl
+
+    def _try_lock(fh) -> None:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def _unlock(fh) -> None:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+def _publish(target: Path, text: str) -> bool:
+    """Swap ``text`` in as ``target`` whole, so the hub never reads half a file."""
     tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
     try:
         tmp.write_text(text, encoding="utf-8")

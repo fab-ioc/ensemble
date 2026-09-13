@@ -132,6 +132,7 @@ ALARM_PERCENT = 95         # banner, louder
 # 429 stops us calling rather than being absorbed and retried on the next tick.
 # Honour `Retry-After` when the response carries one; otherwise wait this long.
 DEFAULT_BACKOFF_S = 600
+# Cap on our own doubling, never on a longer wait the server asked for.
 MAX_BACKOFF_S = 3600
 # Consecutive refusals double the wait. One 429 answered with `Retry-After` is
 # the server saying what it wants, and inventing a ladder on top of that would
@@ -299,10 +300,13 @@ def _unavailable(source: str, reason: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def _retry_after_seconds(exc, now: float | None = None) -> float:
-    """The `Retry-After` header as seconds, clamped. Falls back to the default.
+    """The `Retry-After` header as seconds, at least a minute. Falls back to the
+    default.
 
     Both forms HTTP allows: delta-seconds and an HTTP-date. Anything unreadable
-    falls back, which is the safe direction (we wait, we do not hammer).
+    falls back, which is the safe direction (we wait, we do not hammer). There
+    is no upper cap: a server that asks for two hours gets two hours, and the
+    statusline file covers the gap.
     """
     try:
         raw = str((exc.headers or {}).get("Retry-After")).strip()
@@ -318,7 +322,7 @@ def _retry_after_seconds(exc, now: float | None = None) -> float:
             wait = when.timestamp() - (time.time() if now is None else now)
         except (TypeError, ValueError, IndexError):
             return DEFAULT_BACKOFF_S
-    return min(MAX_BACKOFF_S, max(60.0, wait))
+    return max(60.0, wait)
 
 
 def _reset_epoch(value):
@@ -476,9 +480,11 @@ def _fetch_endpoint(now: float) -> tuple[dict | None, str]:
         elif e.code == 429:
             _claude_consecutive_429 += 1
             # Double per consecutive refusal, from whatever the server asked
-            # for, capped. The first 429 behaves exactly as `Retry-After` says.
-            wait = min(MAX_BACKOFF_S,
-                       _retry_after_seconds(e, now) * 2 ** (_claude_consecutive_429 - 1))
+            # for; the doubling is capped, the server's own ask never is. The
+            # first 429 behaves exactly as `Retry-After` says.
+            asked = _retry_after_seconds(e, now)
+            wait = max(asked, min(MAX_BACKOFF_S,
+                                  asked * 2 ** (_claude_consecutive_429 - 1)))
             _claude_backoff_until = now + wait
             again = " again" if _claude_consecutive_429 > 1 else ""
             why = (f"the usage endpoint is rate-limiting us{again} — pausing for "
@@ -557,7 +563,11 @@ def read_claude(now: float | None = None, statusline_path=None) -> dict:
     """
     now = time.time() if now is None else now
     local = read_claude_statusline(now, statusline_path)
-    if local["state"] == "ok" and local["trusted"]:
+    # Current means every window is recent AND still has a number: a window
+    # that has rolled over withholds its percent, and only the endpoint can say
+    # what the new window holds until an agent takes another turn.
+    if local["state"] == "ok" and all(
+            w["trusted"] and w["percent"] is not None for w in local["windows"]):
         return local
     remote = read_claude_endpoint(now)
     usable = [s for s in (local, remote) if s["state"] == "ok"]

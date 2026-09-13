@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import urllib.error
@@ -127,6 +128,15 @@ class ClaudeReadingTests(unittest.TestCase):
         self.assertIsNone(five["percent"])
         self.assertEqual(five["stalePercent"], 40.0)
 
+    def test_rolled_over_local_window_asks_the_endpoint_for_the_new_one(self):
+        path = _statusline_file(self.tmp, age=60, five_reset=NOW - 10)
+        self.answers = [_endpoint_payload(five=3.0)]
+        src = usage.read_claude(NOW, path)
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(src["via"], "endpoint")
+        five = next(w for w in src["windows"] if w["kind"] == "five_hour")
+        self.assertEqual(five["percent"], 3.0)
+
     def test_local_reading_with_an_implausible_reset_fails_loudly(self):
         path = _statusline_file(self.tmp, age=60, five_reset=18000)   # a duration
         src = usage.read_claude_statusline(NOW, path)
@@ -186,6 +196,28 @@ class ClaudeReadingTests(unittest.TestCase):
         err = _refusal("Sun, 13 Sep 2026 07:13:20 GMT")          # NOW + 1 h
         self.assertEqual(usage._retry_after_seconds(err, NOW), 3600)
 
+    def test_a_retry_after_longer_than_an_hour_is_not_shortened(self):
+        err = _refusal("Sun, 13 Sep 2026 08:13:20 GMT")          # NOW + 2 h
+        self.assertEqual(usage._retry_after_seconds(err, NOW), 7200)
+        self.answers = [_refusal("7200"), _endpoint_payload()]
+        usage.read_claude(NOW, self.missing)
+        usage.read_claude(NOW + 3601, self.missing)
+        usage.read_claude(NOW + 7199, self.missing)
+        self.assertEqual(len(self.calls), 1)
+        src = usage.read_claude(NOW + 7200, self.missing)
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(src["via"], "endpoint")
+
+    def test_a_second_refusal_waits_at_least_what_the_server_asked(self):
+        self.answers = [_refusal("5000"), _refusal("5000"), _endpoint_payload()]
+        usage.read_claude(NOW, self.missing)
+        usage.read_claude(NOW + 5000, self.missing)
+        self.assertEqual(len(self.calls), 2)
+        usage.read_claude(NOW + 5000 + 4999, self.missing)
+        self.assertEqual(len(self.calls), 2)
+        usage.read_claude(NOW + 10000, self.missing)
+        self.assertEqual(len(self.calls), 3)
+
     def test_newer_endpoint_reading_beats_a_stale_local_one(self):
         path = _statusline_file(self.tmp, age=3 * 3600)
         self.answers = [_endpoint_payload(five=12.0)]
@@ -244,6 +276,34 @@ class StatuslineWriterTests(unittest.TestCase):
         self.assertFalse(usage_statusline.record(self.payload(five=99), self.target))
         held = json.loads(self.target.read_text(encoding="utf-8"))
         self.assertEqual(held["rateLimits"]["five_hour"]["used_percentage"], 7)
+
+    def test_concurrent_writers_cannot_land_the_older_reading_last(self):
+        # The older writer passes its check first and stalls before publishing;
+        # the newer one runs meanwhile. Unserialized, the older lands last.
+        old_transcript = self.tmp / "old.jsonl"
+        old_transcript.write_text("{}\n", encoding="utf-8")
+        old = time.time() - 3600
+        os.utime(old_transcript, (old, old))
+        older = dict(self.payload(five=99), transcript_path=str(old_transcript))
+        newer = self.payload(five=10)
+        real_publish = usage_statusline._publish
+        older_checked = threading.Event()
+
+        def publish(target, text):
+            if threading.current_thread().name == "older":
+                older_checked.set()
+                time.sleep(0.5)
+            return real_publish(target, text)
+
+        with mock.patch.object(usage_statusline, "_publish", side_effect=publish):
+            first = threading.Thread(name="older",
+                                     target=usage_statusline.record, args=(older, self.target))
+            first.start()
+            self.assertTrue(older_checked.wait(5))
+            usage_statusline.record(newer, self.target)
+            first.join(5)
+        held = json.loads(self.target.read_text(encoding="utf-8"))
+        self.assertEqual(held["rateLimits"]["five_hour"]["used_percentage"], 10)
 
     def test_nothing_is_written_without_limits_or_a_transcript(self):
         data = self.payload()
