@@ -6231,6 +6231,11 @@ class Handler(BaseHTTPRequestHandler):
             if sess is None:
                 self._send_json(404, {"error": "no_such_pty"})
                 return
+            if not sess.alive():
+                # Still listed until it is reaped, but the write would vanish:
+                # say so, or the page counts a message as sent that never was.
+                self._send_json(410, {"error": "the session has stopped"})
+                return
             # One step with a rotation's mark (rotation.GATE): input to a task
             # being handed over is refused rather than reach the session being
             # ended, and input before it is seen by the rotation's last check.
