@@ -683,6 +683,21 @@ function hostPage() {
   try { if (window.parent !== window && window.parent.location.origin === location.origin) return window.parent; } catch (e) {}
   return null;
 }
+// What scrolls in the viewer, so a tab can be put back where it was left: the
+// code box, a table's box, a rendered page's own document, or else this page.
+function fvScrollOwner(main) {
+  const box = main.querySelector('.code, .csv-wrap');
+  if (box) return box;
+  const f = main.querySelector('iframe.file');
+  if (f) { try { return f.contentDocument ? f.contentDocument.scrollingElement : null; } catch (e) { return null; } }
+  return document.scrollingElement;
+}
+// The status the hub answers a read with, without reading the body.
+async function fvStatusOf(url) {
+  const ac = new AbortController();
+  try { const r = await fetch(url, { cache: 'no-store', signal: ac.signal }); ac.abort(); return r.status; }
+  catch (e) { return 0; }
+}
 function fileHref(p, line) { return '/fileview?path=' + encodeURIComponent(resolvePath(p, FILE_BASE)) + (line ? '&line=' + line : '') + CTX; }
 // ---- Code highlighting: begin ---------------------------------------------
 // A highlighter of this page's own, so a file is coloured wherever the hub is
@@ -1724,8 +1739,37 @@ function wireFrameLinks(ifr) {
     }
   }
 
+  // Not on the hub: said here, and to the Workspace tab this viewer is in.
+  const notFound = () => {
+    main.innerHTML = '<div class="err">Could not open file (404) — it does not exist on the hub.</div>';
+    const host = hostPage();
+    if (host) host.postMessage({ type: 'fv-missing' }, location.origin);
+  };
+  // A Workspace tab reopens where it was left and hears where the reader
+  // scrolls to. Nothing is said until the start state is applied; until a
+  // rendered page has loaded, the place to go back to is still the one given.
+  let pendingTop = START.top, reporting = false, stateOf = () => ({});
+  const scrolledTop = () => { const s = fvScrollOwner(main); return pendingTop || (s ? Math.round(s.scrollTop) : 0); };
+  function report() {
+    const host = reporting && hostPage();
+    if (host) host.postMessage({ type: 'fv-state', st: { ...stateOf(), top: scrolledTop() } }, location.origin);
+  }
+  function putBack() { const s = fvScrollOwner(main); if (pendingTop && s) s.scrollTop = pendingTop; pendingTop = 0; }
+  let scrollTimer = 0;
+  const onScroll = () => { clearTimeout(scrollTimer); scrollTimer = setTimeout(report, 250); };
+  document.addEventListener('scroll', onScroll, true);
+
+  // The browser shows an image or a PDF itself and says nothing when it is
+  // not there, so the hub is asked first.
   const imgExt = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'];
-  if (imgExt.includes(ext)) { main.innerHTML = `<img class="file" src="${src}" alt="${esc(base)}">`; return; }
+  if ((imgExt.includes(ext) || ext === 'pdf') && (await fvStatusOf(src)) === 404) { notFound(); return; }
+  if (imgExt.includes(ext)) {
+    main.innerHTML = `<img class="file" src="${src}" alt="${esc(base)}">`;
+    main.querySelector('img').addEventListener('load', () => { putBack(); reporting = true; report(); }, { once: true });
+    return;
+  }
+  // A PDF's place is inside the browser's own viewer, out of this page's reach:
+  // it is kept while the tab's viewer stays loaded.
   if (ext === 'pdf') { main.innerHTML = `<iframe class="file" src="${src}"></iframe>`; return; }
 
   const res = await loadText(path, src);
@@ -1733,11 +1777,7 @@ function wireFrameLinks(ifr) {
     // A folder with a dot in its name ("C:\Users\me\.ensemble") looked like a file.
     if (res.status === 404 && absPath && (await showDir(path, main)) === true) return;
     // Say which of the two it is, rather than making the reader guess.
-    if (res.status === 404) {
-      main.innerHTML = '<div class="err">Could not open file (404) — it does not exist on the hub.</div>';
-      const host = hostPage();
-      if (host) host.postMessage({ type: 'fv-missing' }, location.origin);
-    }
+    if (res.status === 404) notFound();
     else if (res.status === 403) main.innerHTML = '<div class="err">Could not open file (403) — it sits outside the folders the dashboard is allowed to read: registered projects and their task folders.</div>';
     else main.innerHTML = `<div class="err">Could not open file${res.status ? ' (' + res.status + ')' : ''}.${res.why ? ' ' + esc(res.why) : ''}</div>`;
     return;
@@ -1773,16 +1813,8 @@ function wireFrameLinks(ifr) {
   // last one clicked, so it is still marked after a trip to another view.
   const marked = { source: START.marks.source || LINE, pretty: START.marks.pretty || 0 };
   const wrapBtn = document.getElementById('wrap');
-  // What scrolls: the code box in a code view, the page otherwise.
-  const scroller = () => main.querySelector('.code') || document.scrollingElement;
-  // Tell the Workspace how this tab is left, so switching back or reloading
-  // finds it the same. Nothing is said until the start state is applied.
-  let reporting = false;
-  function report() {
-    const host = reporting && hostPage();
-    if (!host) return;
-    host.postMessage({ type: 'fv-state', st: { view, wrap: WRAP, marks: { ...marked }, top: Math.round(scroller().scrollTop) } }, location.origin);
-  }
+  // How this tab is left, beyond its scroll position.
+  stateOf = () => ({ view, wrap: WRAP, marks: { ...marked } });
 
   // Highlight first, then hand the finished element to the comment layer: its
   // offsets are counted through the element's text, which is the file's text.
@@ -1842,7 +1874,14 @@ function wireFrameLinks(ifr) {
     ifr.className = 'file';
     ifr.setAttribute('sandbox', 'allow-same-origin');   // styles and fonts load, scripts don't
     ifr.style.height = 'calc(100vh - 150px)';
-    ifr.addEventListener('load', () => wireFrameLinks(ifr));
+    // The page scrolls inside its own document, whose scrolling this page's
+    // listener does not hear: listen there, and put a reopened tab back.
+    ifr.addEventListener('load', () => {
+      wireFrameLinks(ifr);
+      try { ifr.contentDocument.addEventListener('scroll', onScroll, true); } catch (e) {}
+      putBack();
+      report();
+    });
     ifr.srcdoc = text;
     main.appendChild(ifr);
   }
@@ -1896,7 +1935,7 @@ function wireFrameLinks(ifr) {
       b.className = 'btn';
       b.dataset.view = v;
       b.textContent = label;
-      b.onclick = () => { if (view !== v) { view = v; paint(); } };
+      b.onclick = () => { if (view !== v) { view = v; pendingTop = 0; paint(); } };
       seg.appendChild(b);
     });
   }
@@ -1918,11 +1957,10 @@ function wireFrameLinks(ifr) {
   if (isMd) await cfg;
   paint();
   // Put a reopened tab back where it was scrolled to, then follow the reader.
-  if (START.top) scroller().scrollTop = START.top;
+  // A rendered page is put back once it has loaded.
+  if (!main.querySelector('iframe.file')) putBack();
   reporting = true;
   report();
-  let scrollTimer = 0;
-  document.addEventListener('scroll', () => { clearTimeout(scrollTimer); scrollTimer = setTimeout(report, 250); }, true);
 })();
 </script>
 </body>

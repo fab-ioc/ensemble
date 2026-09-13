@@ -44,9 +44,13 @@ def tabs_block() -> str:
     return norm + "\n" + same + "\n" + INDEX[i:j]
 
 
-def fileview_start_state() -> str:
-    i = FILEVIEW.index("function fvStartState(")
+def fileview_fn(name: str) -> str:
+    i = FILEVIEW.index(f"function {name}(")
     return FILEVIEW[i:FILEVIEW.index("\n}\n", i) + 3]
+
+
+def fileview_start_state() -> str:
+    return fileview_fn("fvStartState") + fileview_fn("fvScrollOwner")
 
 
 JS = r"""
@@ -123,6 +127,49 @@ steps.push([wsTabsCheck(m, dirs), m.tabs.map(x => x.missing)]);
 dirs.get('C:\\unread').entries.push({ name: 'x.md', type: 'file' });  // and back
 steps.push([wsTabsCheck(m, dirs), m.tabs.map(x => x.missing)]);
 log.missing = steps;
+
+// A 404 while the listing still shows the file: gone, and no reload every
+// poll while the listing shows the same version; back once it is written again.
+const g = { tabs: [wsNewTab('C:\\q\\f.md')], sel: '' };
+const gd = new Map([['C:\\q', { entries: [{ name: 'f.md', type: 'file', mtime: 100, size: 5 }], error: '' }]]);
+const gchk = () => [wsTabsCheck(g, gd), g.tabs[0].missing];
+const gs = [gchk()];
+wsTabGone(g.tabs[0], gd); gs.push(gchk(), gchk(), gchk());
+gd.get('C:\\q').entries = [{ name: 'f.md', type: 'file', mtime: 160, size: 5 }];   // deleted and written again between polls
+gs.push(gchk(), gchk());
+wsTabGone(g.tabs[0], gd); gs.push(gchk());
+gd.get('C:\\q').entries = []; gs.push(gchk());                                    // a poll sees it gone
+gd.get('C:\\q').entries = [{ name: 'f.md', type: 'file', mtime: 160, size: 5 }]; gs.push(gchk());   // and back, same version
+log.gone = gs;
+// A 404 before the folder was read: the first listing showing the file lets it
+// load once more; a second 404 against that listing stands.
+const u = { tabs: [wsNewTab('C:\\u\\f.md')], sel: '' };
+const ud = new Map();
+const uchk = () => [wsTabsCheck(u, ud), u.tabs[0].missing];
+const us = [];
+wsTabGone(u.tabs[0], ud); us.push(uchk());
+ud.set('C:\\u', { entries: [{ name: 'f.md', type: 'file', mtime: 1, size: 1 }], error: '' }); us.push(uchk());
+wsTabGone(u.tabs[0], ud); us.push(uchk(), uchk());
+log.goneUnread = us;
+
+// The tree's saved folders and scroll.
+log.tree = [null, 'x', { open: [1, '', 'C:\\a', 'C:\\a', 'x'.repeat(5000), {}, ['C:\\n'], 'C:\\b'], scroll: 'x' },
+            { open: 'C:\\a', scroll: -5 }, { open: ['/r'], scroll: 40.6 }, { scroll: Infinity }]
+  .map(s => wsTreeFrom(s));
+log.treeCap = wsTreeFrom({ open: Array.from({ length: 600 }, (_, i) => '/d' + i) }).open.length;
+log.treeMax = WS_OPEN_MAX;
+
+// What scrolls in each view of the viewer.
+globalThis.document = { scrollingElement: { id: 'page' } };
+const fakeMain = found => ({ querySelector: sel => { for (const s of sel.split(',')) if (found[s.trim()]) return found[s.trim()]; return null; } });
+log.owner = [
+  fvScrollOwner(fakeMain({ '.code': { id: 'code' } })),
+  fvScrollOwner(fakeMain({ '.csv-wrap': { id: 'table' } })),
+  fvScrollOwner(fakeMain({ 'iframe.file': { contentDocument: { scrollingElement: { id: 'rendered' } } } })),
+  fvScrollOwner(fakeMain({ 'iframe.file': { get contentDocument() { throw new Error('cross-origin'); } } })),
+  fvScrollOwner(fakeMain({ 'iframe.file': { contentDocument: null } })),
+  fvScrollOwner(fakeMain({})),
+].map(o => o ? o.id : null);
 
 // The two pages read a tab's state alike.
 const samples = [null, 'x', { view: 'source', wrap: true, marks: { source: 4, pretty: 0 }, top: 12.6 }, { view: 'raw', wrap: 1, marks: 'm', top: '5' },
@@ -209,6 +256,29 @@ class WorkspaceTabs(unittest.TestCase):
         self.assertEqual(steps[4], [False, [False, False, True]])
         self.assertEqual(steps[5], [True, [False, False, False]], "x.md came back, and the 404 is forgotten")
 
+    def test_a_404_against_a_listing_that_shows_the_file(self):
+        self.assertEqual(self.r["gone"], [
+            [False, False],
+            [True, True], [False, True], [False, True],   # same version listed: stays gone, no reload each poll
+            [True, False], [False, False],                # written again: back
+            [True, True], [False, True], [True, False],   # gone from the listing, then back
+        ])
+        self.assertEqual(self.r["goneUnread"], [[True, True], [True, False], [True, True], [False, True]])
+
+    def test_malformed_tree_storage_is_dropped(self):
+        empty = {"open": [], "scroll": 0}
+        tree = self.r["tree"]
+        self.assertEqual(tree[0], empty)
+        self.assertEqual(tree[1], empty)
+        self.assertEqual(tree[2], {"open": ["C:\\a", "C:\\b"], "scroll": 0}, "only bounded string paths, once each")
+        self.assertEqual(tree[3], empty)
+        self.assertEqual(tree[4], {"open": ["/r"], "scroll": 41})
+        self.assertEqual(tree[5], empty)
+        self.assertEqual(self.r["treeCap"], self.r["treeMax"])
+
+    def test_each_view_scrolls_where_it_actually_scrolls(self):
+        self.assertEqual(self.r["owner"], ["code", "table", "rendered", None, None, "page"])
+
     def test_both_pages_read_a_tab_state_alike(self):
         for idx, (a, b) in enumerate(self.r["alike"]):
             self.assertEqual(a, b, f"sample {idx}")
@@ -242,6 +312,20 @@ class TabsAreWired(unittest.TestCase):
         self.assertIn("type: 'fv-state'", FILEVIEW)
         self.assertIn("type: 'fv-missing'", FILEVIEW)
         self.assertIn("d.type === 'fv-state' || d.type === 'fv-missing') && ev.origin === location.origin", INDEX)
+        self.assertIn("wsTabGone(t, v.dirs);", INDEX, "a 404 keeps the listing's version it was said against")
+        self.assertIn("tr.open.forEach(p => v.open.add(p));", INDEX, "saved folders go through wsTreeFrom")
+
+    def test_images_and_pdfs_say_when_missing_and_pages_follow_their_own_scroll(self):
+        self.assertIn("(imgExt.includes(ext) || ext === 'pdf') && (await fvStatusOf(src)) === 404) { notFound(); return; }", FILEVIEW)
+        self.assertIn("ifr.contentDocument.addEventListener('scroll', onScroll, true)", FILEVIEW)
+        self.assertIn("{ view, wrap: WRAP, marks: { ...marked } }", FILEVIEW)
+
+    def test_closing_a_missing_files_tab_keeps_focus(self):
+        mount = INDEX[INDEX.index("function wsMount("):]
+        gone = mount[mount.index(".wsp-frames').onclick"):]
+        gone = gone[:gone.index("\n  };\n")]
+        self.assertIn("on.focus(", gone)
+        self.assertIn("pane.focus(", gone)
 
 
 if __name__ == "__main__":

@@ -5299,7 +5299,22 @@ function wsTabState(o) {
   if (Number.isFinite(o.top) && o.top > 0) out.top = Math.round(o.top);
   return out;
 }
-const wsNewTab = (path, st) => ({ path, st: wsTabState(st), missing: false, gone404: false, seen: null });
+const wsNewTab = (path, st) => ({ path, st: wsTabState(st), missing: false, gone404: false, goneSig: null, seen: null });
+// The tree part of what is saved: the folders opened and how far it was
+// scrolled. Only bounded paths get through; one bad entry drops that entry.
+const WS_OPEN_MAX = 500;
+function wsTreeFrom(saved) {
+  const out = { open: [], scroll: 0 };
+  if (!saved || typeof saved !== 'object') return out;
+  if (Array.isArray(saved.open)) {
+    for (const p of saved.open) {
+      if (typeof p === 'string' && p && p.length <= 4096 && !out.open.includes(p)) out.open.push(p);
+      if (out.open.length >= WS_OPEN_MAX) break;
+    }
+  }
+  if (Number.isFinite(saved.scroll) && saved.scroll > 0) out.scroll = Math.round(saved.scroll);
+  return out;
+}
 // The tabs saved for a view. A view saved before tabs existed had one file
 // selected, and that file becomes its one tab.
 function wsTabsFrom(saved) {
@@ -5352,9 +5367,10 @@ function wsLiveTouch(live, key, max) {
   return drop;
 }
 const wsParentOf = p => { const m = (p || '').match(/^(.*)[\\/][^\\/]+$/); return m ? m[1] : ''; };
-// Whether a file is still in its folder's listing: true, false, or null when
-// the listing is not there to say (not read yet, unreadable, or cut off).
-function wsFilePresent(dirs, path) {
+// A file's entry in its folder's listing: the entry, false when the listing
+// says it is not there, or null when the listing is not there to say (not read
+// yet, unreadable, or cut off).
+function wsFileEntry(dirs, path) {
   const parent = wsParentOf(path);
   if (!parent) return null;
   let c = dirs.get(parent);
@@ -5362,17 +5378,36 @@ function wsFilePresent(dirs, path) {
   if (!c) return null;
   if (c.error) return /^404\b/.test(c.error) ? false : null;
   const name = path.slice(parent.length + 1);
-  if (c.entries.some(e => e.type !== 'dir' && e.name === name)) return true;
+  const e = c.entries.find(e => e.type !== 'dir' && e.name === name);
+  if (e) return e;
   return c.entries.length >= 2000 ? null : false;
 }
+function wsFilePresent(dirs, path) { const e = wsFileEntry(dirs, path); return e === null ? null : !!e; }
+// Which version of a file a listing shows: '' when it shows none, null when
+// it cannot say.
+const wsEntrySig = e => e === null ? null : e ? (e.mtime || 0) + ':' + (e.size || 0) : '';
+// The viewer was told 404. The listing's version of the file at that moment is
+// kept with it, so the listing can later tell a file that came back from one
+// it still merely lists.
+function wsTabGone(t, dirs) {
+  t.gone404 = true;
+  t.goneSig = wsEntrySig(wsFileEntry(dirs, t.path));
+}
 // A tab's file is gone when its folder's listing says so, or when the viewer
-// was told 404. The viewer's word stands until the listing sees the file come
-// back. True when any tab changed.
+// was told 404. The viewer's word stands until the listing shows a version of
+// the file other than the one it showed then: one that was absent and is
+// back, or deleted and written again. A file the listing shows but the reader
+// cannot find does not flap: its version stays the same. True when any tab
+// changed.
 function wsTabsCheck(t, dirs) {
   let changed = false;
   for (const x of t.tabs) {
-    const p = wsFilePresent(dirs, x.path);
-    if (p === true && x.seen === false) x.gone404 = false;
+    const e = wsFileEntry(dirs, x.path), p = e === null ? null : !!e;
+    if (x.gone404) {
+      const sig = wsEntrySig(e);
+      if (p === true && sig !== x.goneSig) { x.gone404 = false; x.goneSig = null; }
+      else if (p === false) x.goneSig = '';
+    }
     if (p !== null) x.seen = p;
     const missing = x.seen === false || x.gone404;
     if (missing !== x.missing) { x.missing = missing; changed = true; }
@@ -5392,8 +5427,9 @@ function wsView(ctx) {
     let s = {};
     try { s = JSON.parse(localStorage.getItem('cd-ws:' + key) || '{}') || {}; } catch (e) {}
     try {
-      (s.open || []).forEach(p => v.open.add(p));
-      v.scroll = s.scroll || 0;
+      const tr = wsTreeFrom(s);
+      tr.open.forEach(p => v.open.add(p));
+      v.scroll = tr.scroll;
       const tb = wsTabsFrom(s);
       v.tabs = tb.tabs;
       v.sel = tb.active;
@@ -5606,7 +5642,7 @@ function wsFrameMessage(src, d) {
       clearTimeout(v.persistTimer);
       v.persistTimer = setTimeout(() => wsPersist(v), 400);
     } else if (d.type === 'fv-missing') {
-      t.gone404 = true;
+      wsTabGone(t, v.dirs);
       if (wsTabsCheck(v, v.dirs)) wsPaintView(v);
     }
   }));
@@ -5620,7 +5656,7 @@ function wsShowTab(v, path) {
 function wsOpenTab(v, path) {
   const t = wsTabOpen(v, path);
   // Picked from the tree, so it is there now, whatever was said before.
-  t.gone404 = false; t.seen = null;
+  t.gone404 = false; t.goneSig = null; t.seen = null;
   wsTabsCheck(v, v.dirs);
   wsShowTab(v, t.path);
 }
@@ -5768,8 +5804,14 @@ function wsMount(el, ctx) {
     e.preventDefault();
     strip.scrollLeft += e.deltaY;
   };
+  // The button goes with the note, so focus moves to the tab now showing, or
+  // to the pane when no tab is left, rather than dropping to the page.
   el.querySelector('.wsp-frames').onclick = (e) => {
-    if (e.target.closest('.wsp-gone-close')) wsCloseTab(v, v.sel);
+    if (!e.target.closest('.wsp-gone-close')) return;
+    wsCloseTab(v, v.sel);
+    const on = strip.querySelector('.wst-tab.on'), pane = el.querySelector('.wsp-frames');
+    if (on) on.focus({ preventScroll: true });
+    else { pane.tabIndex = -1; pane.focus({ preventScroll: true }); }
   };
   const tree = el.querySelector('.wsp-tree');
   tree.onclick = async (e) => {
