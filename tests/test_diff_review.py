@@ -184,8 +184,9 @@ const plain = rows => rows.map(r => ({ k: r.k, o: r.o, n: r.n, t: r.t }));
   await P3.drSubmit(rv3);
   out.nothingLeft = posts.length - n0;
 
-  // Two copies of the page submit the same comments at the same moment: with
-  // the claim in storage (plain http), and with the browser's lock (https).
+  // Two copies of the page submit the same comments at the same moment: over
+  // plain http both may send, with the same key, so the hub posts once; with
+  // the browser's lock (https, localhost) the second finds them sent.
   let locked = Promise.resolve();
   const locks = { request: (name, fn) => { const run = locked.then(() => fn()); locked = run.catch(() => {}); return run; } };
   out.twoTabs = {};
@@ -204,7 +205,8 @@ const plain = rows => rows.map(r => ({ k: r.k, o: r.o, n: r.n, t: r.t }));
     release();
     await both;
     rb.store.sync();
-    out.twoTabs[how] = { posts: posts.length - n0, a: notes(ra), b: notes(rb), errors: [ra.error, rb.error] };
+    out.twoTabs[how] = { posts: posts.length - n0, keys: [...new Set(posts.slice(n0).map(p => p[1].key))],
+                         a: notes(ra), b: notes(rb), errors: [ra.error, rb.error] };
     replies = [];
   }
 
@@ -343,7 +345,10 @@ class DiffReview(unittest.TestCase):
         for how in ("storage", "lock"):
             with self.subTest(how):
                 r = self.r["twoTabs"][how]
-                self.assertEqual(r["posts"], 1, "the same comments were sent twice")
+                if how == "lock":
+                    self.assertEqual(r["posts"], 1, "the same comments were sent twice")
+                self.assertEqual(len(r["keys"]), 1, "the same comments went with different keys")
+                self.assertTrue(r["keys"][0].startswith("review:"))
                 self.assertEqual(r["a"], [["only once", True]])
                 self.assertEqual(r["b"], [["only once", True]])
                 self.assertEqual(r["errors"], ["", ""])
@@ -364,6 +369,55 @@ class DiffReview(unittest.TestCase):
     def test_only_the_newest_sent_comments_are_kept(self):
         self.assertEqual(sorted(self.r["stale"]), sorted(["s0", "s1", "s2", "s3", "s4"]))
         self.assertEqual(self.r["valid"], [True, False, False])
+
+
+class TheHubPostsAKeyOnce(unittest.TestCase):
+    """Two tabs over plain http, or a retry whose answer was lost, send the
+    same review comments with the same key: the hub posts them once."""
+
+    def setUp(self):
+        import chatroom
+        self.chatroom = chatroom
+        self.temp = tempfile.TemporaryDirectory()
+        self.old = chatroom.ROOMS_DIR
+        chatroom.ROOMS_DIR = Path(self.temp.name) / "rooms"
+        self.rid = chatroom.create_room("say test", [{"identity": "claude", "agent": "claude", "model": "", "role": "engineer"}])["id"]
+
+    def tearDown(self):
+        self.chatroom.ROOMS_DIR = self.old
+        self.temp.cleanup()
+
+    def say(self, body):
+        import io
+        from unittest import mock
+        import dashboard
+        raw = json.dumps(body).encode()
+        h = dashboard.Handler.__new__(dashboard.Handler)
+        h.path, h.command, h.request_version = "/api/room/say", "POST", "HTTP/1.1"
+        h.requestline = "POST /api/room/say HTTP/1.1"
+        h.headers = {"Content-Length": str(len(raw)), "Content-Type": "application/json", "Host": "127.0.0.1"}
+        h.rfile, h.wfile = io.BytesIO(raw), io.BytesIO()
+        h.client_address = ("127.0.0.1", 50000)
+        h.log_message = lambda *a: None
+        with mock.patch.object(dashboard.Handler, "_ring_recipients", lambda *a: None):
+            h.do_POST()
+        head, _, payload = h.wfile.getvalue().partition(b"\r\n\r\n")
+        return head.split(b" ", 2)[1], json.loads(payload)
+
+    def texts(self):
+        return [m["text"] for m in self.chatroom.read_messages(self.rid) if m.get("from") == self.chatroom.HUMAN_IDENTITY]
+
+    def test_the_same_key_is_posted_once(self):
+        body = {"roomId": self.rid, "text": "## Review comments (1)", "to": "", "key": "review:abc:1"}
+        self.assertEqual(self.say(body)[0], b"200")
+        status, again = self.say(body)
+        self.assertEqual(status, b"200")
+        self.assertTrue(again.get("duplicate"))
+        self.assertEqual(self.texts(), ["## Review comments (1)"])
+        self.say({**body, "key": "review:other:1", "text": "## Review comments (2)"})
+        self.say({"roomId": self.rid, "text": "plain", "to": ""})
+        self.say({"roomId": self.rid, "text": "plain", "to": ""})
+        self.assertEqual(self.texts(), ["## Review comments (1)", "## Review comments (2)", "plain", "plain"])
 
 
 class SharedScriptsAreWired(unittest.TestCase):

@@ -6413,38 +6413,29 @@ function drTrayClick(rv, e) {
   if (t.closest('.cmt-item-x')) { rv.store.remove([c.cid]); drChanged(rv); return; }
   if (rv.pick) rv.pick(c);
 }
-const DR_LEASE_MS = 60000;      // how long a send may hold a review before another copy takes over
-const DR_LEASE_SETTLE = 100;    // how long a claim waits to see whether another copy claimed too
-const drSleep = ms => new Promise(r => setTimeout(r, ms));
 // Run fn while no other copy of the page (another tab, the PO's drawer) is
-// sending this review's comments, so two Submits cannot both send the same
-// ones. The browser's lock where it has one: only a secure page does (https,
-// or the hub on localhost). Over plain http, a claim in storage: written,
-// then read back after other copies have had time to see it and write theirs,
-// renewed while the send runs, and let go when it ends or after DR_LEASE_MS.
-async function drExclusive(rv, fn) {
-  const name = 'cd-diffcmt-send:' + rv.key;
-  if (typeof navigator !== 'undefined' && navigator.locks && navigator.locks.request) return navigator.locks.request(name, () => fn());
-  const me = rv.store.id();
-  const read = () => { try { return JSON.parse(localStorage.getItem(name) || 'null'); } catch (e) { return null; } };
-  const claim = () => localStorage.setItem(name, JSON.stringify({ owner: me, until: Date.now() + DR_LEASE_MS }));
-  for (;;) {
-    const cur = read();
-    if (cur && cur.owner !== me && cur.until > Date.now()) { await drSleep(250); continue; }
-    try { claim(); } catch (e) { return fn(); }          // this browser stores nothing: no other copy to wait for
-    await drSleep(DR_LEASE_SETTLE);
-    const got = read();
-    if (!got || got.owner === me) break;
-  }
-  const renew = setInterval(() => { try { if ((read() || {}).owner === me) claim(); } catch (e) {} }, DR_LEASE_MS / 3);
-  try { return await fn(); }
-  finally {
-    clearInterval(renew);
-    try { if ((read() || {}).owner === me) localStorage.removeItem(name); } catch (e) {}
-  }
+// sending this review's comments, where the browser has a lock for that: only
+// a secure page does (https, or the hub on localhost). Over plain http the
+// hub's key (drKey) is what keeps the same comments from being posted twice.
+function drExclusive(rv, fn) {
+  if (typeof navigator !== 'undefined' && navigator.locks && navigator.locks.request) return navigator.locks.request('cd-diffcmt-send:' + rv.key, () => fn());
+  return fn();
 }
 // What a comment says, to tell whether the copy that went is the one stored.
 const drRev = c => JSON.stringify([c.root, c.file, c.rows, c.span || 0, c.note]);
+// The key a send carries: the same comments, as they read, make the same key,
+// so the hub posts them once however many tabs or retries send them.
+function drKey(batch) {
+  const s = JSON.stringify(batch.map(c => [c.cid, drRev(c)]).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)));
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return 'review:' + (h2 >>> 0).toString(36) + (h1 >>> 0).toString(36) + ':' + batch.length;
+}
 async function drSubmit(rv) {
   if (rv.sending) return;
   rv.store.sync();
@@ -6461,7 +6452,7 @@ async function drSubmit(rv) {
       if (!batch.length || !s.can) return;
       const went = new Map(batch.map(c => [c.cid, drRev(c)]));
       const r = await fetch('/api/room/say', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: s.roomId, text: drMessage(batch, rv.what ? rv.what() : ''), to: '' }) });
+        body: JSON.stringify({ roomId: s.roomId, text: drMessage(batch, rv.what ? rv.what() : ''), to: '', key: drKey(batch) }) });
       let j = null;
       try { j = await r.json(); } catch (e) {}
       if (!r.ok || !j || j.error) throw Object.assign(new Error((j && j.error) || ('error ' + r.status)), { status: r.status });

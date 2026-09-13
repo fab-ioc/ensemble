@@ -18,6 +18,7 @@ Ensemble's own state lives in ~/.ensemble.
 """
 from __future__ import annotations
 
+import contextlib
 import copy
 import hashlib
 import hmac
@@ -1215,6 +1216,19 @@ REVIEW_VERDICTS = {"approve": "approved", "changes_requested": "changes requeste
                    "comment": "comments"}
 _REVIEW_LAUNCH_LOCK = threading.Lock()
 _REVIEW_LOG_LOCK = threading.Lock()
+# A message said with a key (review comments carry one made from the comments
+# they send) is posted once: the same key again, from another tab or a retry
+# whose first answer was lost, is answered ok and posts nothing. Kept a day.
+_SAY_KEYS: dict = {}
+_SAY_KEYS_LOCK = threading.Lock()
+_SAY_KEY_TTL = 24 * 3600
+
+
+def _say_key_seen(rid: str, key: str) -> bool:
+    now = time.time()
+    for k in [k for k, at in _SAY_KEYS.items() if now - at > _SAY_KEY_TTL]:
+        del _SAY_KEYS[k]
+    return (rid, key) in _SAY_KEYS
 # The brief is the agent's first prompt, passed on its command line, so it is
 # kept well under Windows' 32k limit: a diff is inlined only when small, the
 # log and the spec are cut to their newest / first part (the files hold all).
@@ -6538,10 +6552,17 @@ class Handler(BaseHTTPRequestHandler):
             rid = (data.get("roomId") or "").strip()
             text = (data.get("text") or "").strip()
             to = (data.get("to") or "").strip()
+            key = str(data.get("key") or "").strip()[:200]
             if not rid or not text:
                 self._send_json(400, {"error": "missing_fields"})
                 return
-            result = chatroom.post_message(rid, chatroom.HUMAN_IDENTITY, text, to=to)
+            with _SAY_KEYS_LOCK if key else contextlib.nullcontext():
+                if key and _say_key_seen(rid, key):
+                    self._send_json(200, {"ok": True, "duplicate": True})
+                    return
+                result = chatroom.post_message(rid, chatroom.HUMAN_IDENTITY, text, to=to)
+                if result is not None and key:
+                    _SAY_KEYS[(rid, key)] = time.time()
             if result is None:
                 self._send_json(404, {"error": "no_such_room"})
                 return
