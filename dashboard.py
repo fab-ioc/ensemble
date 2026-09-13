@@ -70,6 +70,8 @@ import rotation
 # Plan-allowance readings (account-wide, per agent kind), refreshed in the
 # background so no request path ever waits on the network.
 import usage
+# Go to file and search in files for a Workspace; a search runs as a child.
+import workspace_search
 # Headless PTY runtime — dashboard-owned agent processes streamed to the browser.
 from backends import ptyrun
 
@@ -1978,6 +1980,26 @@ def workspace_access_ok(path: str) -> bool:
 
 
 _TEXT_MAX = 512 * 1024   # 512 KB read cap for the file viewer
+_TEXT_AFTER_LINE = 64 * 1024   # opened at a line past the cap: this much of what follows it
+
+
+def _text_cap(raw: bytes, line: int) -> int:
+    """How much of a file the viewer gets: the first 512 KB or, when it opens
+    at a line further in (a search result, a link to name.py:120), as far as
+    that line and a little after it, within the largest file a search reads. So
+    any line a search found can be shown and marked."""
+    if line <= 0 or raw.count(b"\n", 0, _TEXT_MAX) >= line:
+        return _TEXT_MAX
+    # Line N ends at its Nth newline: the shortest start of the file holding N.
+    lo, hi = _TEXT_MAX, len(raw)
+    if raw.count(b"\n") >= line:
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if raw.count(b"\n", 0, mid) >= line:
+                hi = mid
+            else:
+                lo = mid + 1
+    return min(workspace_search.FILE_BYTES_MAX, max(_TEXT_MAX, hi + _TEXT_AFTER_LINE))
 
 
 def list_dir(path: str) -> tuple[int, dict]:
@@ -2010,19 +2032,21 @@ def list_dir(path: str) -> tuple[int, dict]:
     return 200, {"path": str(d), "parent": parent, "entries": entries[:2000]}
 
 
-def read_workspace_file(path: str) -> tuple[int, dict]:
+def read_workspace_file(path: str, line: int = 0) -> tuple[int, dict]:
     if not path or not workspace_access_ok(path):
         return 403, {"error": "path_not_allowed"}
     f = Path(path)
     if not f.exists() or not f.is_file():
         return 404, {"error": "not_found"}
     try:
-        raw = f.read_bytes()
+        with f.open("rb") as fh:
+            raw = fh.read((workspace_search.FILE_BYTES_MAX if line > 0 else _TEXT_MAX) + 1)
         size = f.stat().st_size
     except OSError as e:
         return 500, {"error": f"read_failed: {e}"}
-    truncated = len(raw) > _TEXT_MAX
-    raw = raw[:_TEXT_MAX]
+    cap = _text_cap(raw, line)
+    truncated = len(raw) > cap
+    raw = raw[:cap]
     if b"\x00" in raw:
         return 200, {"path": str(f), "binary": True, "text": "",
                      "size": size, "truncated": truncated}
@@ -2218,6 +2242,175 @@ def git_diff(path: str, file: str, branch: bool = False) -> tuple[int, dict]:
     except (OSError, subprocess.SubprocessError) as e:
         return 500, {"error": f"git_diff_failed: {e}"}
     return 200, {"root": root, "isGit": True, "file": file, "diff": diff}
+
+
+# ---- Workspace find: go to file, search in files (workspace_search.py) ------
+
+def _ws_find_root(root: str) -> tuple[int, dict] | None:
+    """Why a folder cannot be searched, or None when it can: it must be an
+    absolute folder the file APIs may read."""
+    if not root or not workspace_access_ok(root):
+        return 403, {"error": "path_not_allowed"}
+    if not os.path.isdir(root):
+        return 404, {"error": "not_found"}
+    return None
+
+
+def _ws_enclosing_ignores(root: str) -> bool:
+    """Whether ``root`` sits inside a code repo whose ignore rules apply to it.
+    The projects root is the backup repo, not code: its rules would hide a
+    task's checkout, so they never apply."""
+    top = git_root(root)
+    return bool(top and not _within(top, root) and path_is_git(top)
+                and not _within(str(PROJECTS_ROOT), top))
+
+
+def _ws_abs(root: str) -> str:
+    """An absolute folder with any ``..`` folded away before it is checked; a
+    relative one is refused, not resolved against the hub's own folder."""
+    return os.path.abspath(root) if root and os.path.isabs(root) else ""
+
+
+def ws_files(root: str) -> tuple[int, dict]:
+    root = _ws_abs(root)
+    bad = _ws_find_root(root)
+    if bad:
+        return bad
+    t0 = time.monotonic()
+    files, cut = workspace_search.list_files(root, _ws_enclosing_ignores(root))
+    return 200, {"root": root, "files": files, "truncated": cut, "max": workspace_search.FILES_MAX,
+                 "ms": round((time.monotonic() - t0) * 1000)}
+
+
+# tag -> (the highest seq seen, its child while it runs)
+_WS_SEARCHES: dict[str, tuple[int, subprocess.Popen | None]] = {}
+_WS_SEARCHES_LOCK = threading.Lock()
+_WS_SEARCHES_KEEP = 500    # finished tags remembered; past this the finished ones are forgotten
+
+
+def _ws_search_start(tag: str, seq: int, argv: list[str]) -> subprocess.Popen | None:
+    """Start a search child, or None when a newer one is already under way.
+
+    A box searches one thing at a time: the search it asked for last runs,
+    and anything it asked for before is stopped or never started. "Last" is
+    the box's own count (``seq``), not the order requests reach the hub: two
+    searches typed in quick succession can arrive, or get this far, the other
+    way round."""
+    def spawn() -> subprocess.Popen:
+        # Its own process group off Windows, so ending it ends what it started
+        # (on Windows the child puts itself in a job that does the same).
+        p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                             start_new_session=os.name != "nt")
+        p.ws_cancelled = False
+        return p
+    if not tag:
+        return spawn()
+    with _WS_SEARCHES_LOCK:
+        cur = _WS_SEARCHES.get(tag)
+        if cur is not None and cur[0] > seq:
+            return None
+        proc = spawn()
+        _ws_searches_put(tag, seq, proc)
+    _ws_stop(cur[1] if cur else None)
+    return proc
+
+
+def _ws_searches_put(tag: str, seq: int, proc: subprocess.Popen | None) -> None:
+    """Under the lock: record a box's latest count, as its most recent entry.
+    Past the limit the boxes heard from longest ago, with nothing running,
+    are forgotten; never the one just recorded."""
+    _WS_SEARCHES.pop(tag, None)
+    _WS_SEARCHES[tag] = (seq, proc)
+    over = len(_WS_SEARCHES) - _WS_SEARCHES_KEEP
+    if over > 0:
+        for k in [k for k, (_, p) in _WS_SEARCHES.items() if p is None and k != tag][:over]:
+            del _WS_SEARCHES[k]
+
+
+def _ws_kill(proc: subprocess.Popen) -> None:
+    """End a search child and whatever it started."""
+    with contextlib.suppress(OSError):
+        if os.name == "nt":
+            proc.kill()
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)
+
+
+def _ws_stop(proc: subprocess.Popen | None) -> bool:
+    """End a search that is no longer wanted; whether one was still running."""
+    if proc is None or proc.poll() is not None:
+        return False
+    proc.ws_cancelled = True
+    _ws_kill(proc)
+    return True
+
+
+def ws_search_cancel(tag: str, seq: int) -> tuple[int, dict]:
+    """The box no longer wants a search (its query was cleared or cut short,
+    or Files was chosen): the one running ends now rather than when it is done
+    or timed out, and one it asked for before that reaches the hub late never
+    starts."""
+    tag = tag[:200]
+    if not tag:
+        return 400, {"error": "no_tag"}
+    with _WS_SEARCHES_LOCK:
+        cur = _WS_SEARCHES.get(tag)
+        if cur is not None and cur[0] > seq:
+            return 200, {"stopped": False}
+        _ws_searches_put(tag, seq, None)
+    return 200, {"stopped": _ws_stop(cur[1] if cur else None)}
+
+
+def _ws_search_done(tag: str, proc: subprocess.Popen) -> None:
+    if tag:
+        with _WS_SEARCHES_LOCK:
+            cur = _WS_SEARCHES.get(tag)
+            if cur is not None and cur[1] is proc:
+                _WS_SEARCHES[tag] = (cur[0], None)
+
+
+def ws_search(root: str, q: str, case: bool = False, regex: bool = False, tag: str = "", seq: int = 0,
+              limit: int = workspace_search.MATCH_MAX, deadline: float = workspace_search.DEADLINE_S) -> tuple[int, dict]:
+    root = _ws_abs(root)
+    bad = _ws_find_root(root)
+    if bad:
+        return bad
+    if not q:
+        return 400, {"error": "empty_query"}
+    if len(q) > workspace_search.QUERY_MAX:
+        return 400, {"error": "query_too_long", "max": workspace_search.QUERY_MAX}
+    try:
+        workspace_search.compile_query(q, case, regex)
+    except re.error as e:
+        return 400, {"error": "bad_regex", "detail": str(e)}
+    req = json.dumps({"root": root, "q": q, "case": case, "regex": regex, "limit": limit, "deadline": deadline,
+                      "enclosingIgnores": _ws_enclosing_ignores(root)}).encode("utf-8")
+    argv = [sys.executable, "-X", "utf8", str(Path(workspace_search.__file__).resolve())]
+    try:
+        proc = _ws_search_start(tag[:200], seq, argv)
+    except OSError as e:
+        return 500, {"error": f"search_failed: {e}"}
+    if proc is None:
+        return 409, {"error": "cancelled"}
+    try:
+        out, err = proc.communicate(req, timeout=deadline + 4)
+    except subprocess.TimeoutExpired:
+        _ws_kill(proc)
+        proc.communicate()
+        return 504, {"error": "search_timed_out", "seconds": deadline + 4}
+    finally:
+        _ws_search_done(tag[:200], proc)
+    if proc.ws_cancelled:
+        return 409, {"error": "cancelled"}
+    try:
+        res = json.loads(out.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return 500, {"error": "search_failed", "detail": err.decode("utf-8", errors="replace")[-400:]}
+    if res.get("error"):
+        return (500 if res["error"] == "search_failed" else 400), res
+    res["root"] = root
+    return 200, res
 
 
 def load_categories() -> dict[str, str]:
@@ -5302,7 +5495,24 @@ class Handler(BaseHTTPRequestHandler):
             # uses — routing is top-down, so sharing the path would shadow it.
             q = parse_qs(u.query)
             path = (q.get("path", [""])[0] or "").strip()
-            self._send_json(*read_workspace_file(path))
+            line = q.get("line", ["0"])[0]
+            self._send_json(*read_workspace_file(path, int(line) if line.isdigit() else 0))
+            return
+        if p == "/api/ws/files":
+            # Every file of a Workspace folder, for Go to file.
+            q = parse_qs(u.query)
+            self._send_json(*ws_files((q.get("root", [""])[0] or "").strip()))
+            return
+        if p == "/api/ws/search":
+            # Search the text of a Workspace folder's files.
+            q = parse_qs(u.query)
+            n = q.get("n", ["0"])[0]
+            if q.get("cancel", [""])[0] == "1":
+                self._send_json(*ws_search_cancel((q.get("tag", [""])[0] or "").strip(), int(n) if n.isdigit() else 0))
+                return
+            self._send_json(*ws_search((q.get("root", [""])[0] or "").strip(), q.get("q", [""])[0] or "",
+                                       q.get("case", [""])[0] == "1", q.get("regex", [""])[0] == "1",
+                                       (q.get("tag", [""])[0] or "").strip(), int(n) if n.isdigit() else 0))
             return
         if p == "/api/git/status":
             q = parse_qs(u.query)

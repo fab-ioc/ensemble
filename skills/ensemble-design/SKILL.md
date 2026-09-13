@@ -333,6 +333,41 @@ apply to them. Their rules instead:
 - The row scrolls sideways within itself, never the page; on a phone each tab and its `×` are
   `--touch-min`.
 
+### Find in a Workspace
+
+The box above a Workspace's tree (`.wsf` in `index.html`; `wsfMount` is the reference). It looks in the
+Workspace's first root only: the task's folder in a task, the project's folder in a project.
+
+- **Two modes, one box:** a `.seg` of **Files** (Go to file) and **Text** (Search in files). The
+  placeholder says which, and where ("Go to file in this task"). Text adds two toggles, `Aa` (match
+  case) and `.*` (regular expression): pressed is `--selected-bg`, as a selection. Files needs no
+  options, so they are hidden there, not disabled.
+- **Results take the tree's place** while there is a query, and the tree comes back when it is
+  cleared. A text search widens the column to 40% for its lines.
+- **Go to file:** the letters typed, in order, anywhere in the path (`wsptabs` finds
+  `workspace_tabs.py`), best first: the file's own name, word starts and runs of letters count most.
+  Each row is the name, then its folder in `--fg-muted`; the matched letters are `mark.match`
+  (`--match-bg`). `name:120` opens at line 120.
+- **Search in files:** a heading per file (name, folder, count), then its lines: line number in the
+  gutter's mono, the line from a little before its first match, every match `mark.match`. Leading
+  indentation is dropped; a cut line shows `…`.
+- **The line under the box always says what the results are** and, per §5.5, why there are fewer than
+  everything: "The first 1,000 matches, in 8 files; more results not shown", files skipped as binary or
+  over 2 MB, a search stopped at its deadline, a query too short, a regex that is not one. It is
+  `--fg-muted`, never red: a bad regex is not broken, just not yet a regex.
+- **Keys act on the focused box only:** arrows move the selected result (`--selected-bg`, kept in view),
+  Enter opens it (in Text before the search has started, it searches now), Escape clears the query.
+  With a mouse a click opens a result and keeps the typing; on a touch screen it does not hold the
+  keyboard up over the file.
+- **A result opens through the one tab path** (`wsOpenTabAt`), at its line. A text match is also
+  marked in the file (`mark.fv-hit` in `fileview.html`: `--match-bg` with a `--match-fg` underline, so it
+  still stands out on the marked line's wash).
+- **Typing again cancels** the search in flight, in the page and on the hub. The query, mode and options
+  are remembered per Workspace with its tabs.
+- **Phone:** the box and a few rows sit above the file (45% of the height, 60% with a query); the field
+  is `--fs-400` and `--touch-min` tall, every toggle and result row `--touch-min`, and a matching line
+  wraps instead of cutting its match off at the edge.
+
 ### Diff
 
 A changed file in a Changes tab (the task's and the project's) reads as in an IDE. The reference is

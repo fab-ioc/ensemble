@@ -362,6 +362,9 @@
   /* The line a link pointed at (name.py:120), or the one clicked in the gutter. */
   .ln-row.is-marked { background:color-mix(in srgb, var(--match-bg) 45%, var(--surface)); }
   .ln-row.is-marked::before { color:var(--match-fg); background:var(--match-bg); font-weight:600; }
+  /* A search result's match on its marked line: the match colour, underlined
+     so it still stands out on the line's own match wash. */
+  mark.fv-hit { background:var(--match-bg); color:var(--match-fg); border-bottom:2px solid var(--match-fg); border-radius:var(--r-100); }
   /* Diff rows, the same washes as the Changes tab. */
   .ln-row.r-ins, .ln-row.r-ins::before { background:var(--c-success-bg); }
   .ln-row.r-del, .ln-row.r-del::before { background:var(--c-danger-bg); }
@@ -676,9 +679,13 @@ function fvStartState(raw) {
     for (const k of ['source', 'pretty']) if (Number.isInteger(o.marks[k]) && o.marks[k] > 0) out.marks[k] = o.marks[k];
   }
   if (Number.isFinite(o.top) && o.top > 0) out.top = Math.round(o.top);
+  // A search result opened here: where its match is, so the viewer marks it.
+  const h = o.hit;
+  if (h && typeof h === 'object' && [h.line, h.col, h.len].every(Number.isInteger) && h.line > 0 && h.col >= 0
+      && h.len > 0 && h.col + h.len <= 1e6) out.hit = { line: h.line, col: h.col, len: h.len };
   return out;
 }
-const START = fvStartState(new URLSearchParams(location.search).get('st'));
+const START =fvStartState(new URLSearchParams(location.search).get('st'));
 // The dashboard page this viewer is framed in, when it is one.
 function hostPage() {
   try { if (window.parent !== window && window.parent.location.origin === location.origin) return window.parent; } catch (e) {}
@@ -1181,6 +1188,30 @@ function markRow(box, n, scroll) {
   row.classList.add('is-marked');
   if (scroll) box.scrollTop = Math.max(0, row.offsetTop - box.clientHeight / 3);
 }
+// Mark a search result's match on its line ({line, col, len}, counted in the
+// line's text), and scroll a long line sideways to it; null takes the mark
+// away. The text is not changed, so the comment layer's offsets still hold.
+function markHit(box, hit) {
+  box.querySelectorAll('mark.fv-hit').forEach(m => { const p = m.parentNode; while (m.firstChild) p.insertBefore(m.firstChild, m); p.removeChild(m); p.normalize(); });
+  const row = hit && box.querySelector(`.ln-row[data-n="${hit.line}"]`);
+  if (!row) return;
+  const walk = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+  const range = document.createRange();
+  let at = 0, started = false, node;
+  while ((node = walk.nextNode())) {
+    const len = node.data.length;
+    if (!started && hit.col < at + len) { range.setStart(node, hit.col - at); started = true; }
+    if (started && hit.col + hit.len <= at + len) { range.setEnd(node, hit.col + hit.len - at); break; }
+    at += len;
+  }
+  if (!started || !node) return;
+  const mark = document.createElement('mark');
+  mark.className = 'fv-hit';
+  mark.appendChild(range.extractContents());
+  range.insertNode(mark);
+  const left = mark.getBoundingClientRect().left - box.getBoundingClientRect().left;
+  if (left > box.clientWidth * 0.8) box.scrollLeft += left - box.clientWidth / 3;
+}
 const RAW_CAP = 512 * 1024;   // the fallback reader's own cap, matching the hub's
 // Read at most RAW_CAP bytes of a response and stop pulling. The raw endpoint
 // streams whole files with no cap of its own, so reading it with .text() would
@@ -1212,12 +1243,15 @@ async function readCapped(res) {
 // inside the folders the dashboard may read; a relative mention from a chat link
 // is not one, so those fall back to the raw reader, which resolves them against
 // the room's folders — under the same cap, applied here.
+// The line the file opens at (a link's, a search result's, or the one marked
+// when the tab was left): the hub reads a large file as far as that line.
+const AT_LINE = Math.max(LINE, START.marks.source || 0, START.hit ? START.hit.line : 0);
 async function loadText(path, rawSrc) {
   // Not ~/...: the workspace reader cannot expand it and refused it outright,
   // though the raw reader resolves it.
   if (/^(?:[A-Za-z]:[\\\/]|\\\\|\/)/.test(path)) {
     try {
-      const r = await fetch('/api/ws/file?path=' + encodeURIComponent(path), { cache: 'no-store' });
+      const r = await fetch('/api/ws/file?path=' + encodeURIComponent(path) + (AT_LINE ? '&line=' + AT_LINE : ''), { cache: 'no-store' });
       if (r.ok) {
         const j = await r.json();
         return { ok: true, text: j.text || '', size: j.size, truncated: !!j.truncated, binary: !!j.binary };
@@ -1411,9 +1445,11 @@ function wireFrameLinks(ifr) {
   // The marked line of each code view: the linked one to start with, then the
   // last one clicked, so it is still marked after a trip to another view.
   const marked = { source: START.marks.source || LINE, pretty: START.marks.pretty || 0 };
+  // A search result's match, marked on its line until another line is marked.
+  const hitNow = () => START.hit && marked.source === START.hit.line ? START.hit : null;
   const wrapBtn = document.getElementById('wrap');
   // How this tab is left, beyond its scroll position.
-  stateOf = () => ({ view, wrap: WRAP, marks: { ...marked } });
+  stateOf = () => ({ view, wrap: WRAP, marks: { ...marked }, ...(hitNow() ? { hit: hitNow() } : {}) });
 
   // Highlight first, then hand the finished element to the comment layer: its
   // offsets are counted through the element's text, which is the file's text.
@@ -1440,6 +1476,7 @@ function wireFrameLinks(ifr) {
       if (ev.clientX - box.getBoundingClientRect().left > parseFloat(getComputedStyle(row).paddingLeft)) return;
       markRow(box, +row.dataset.n, false);
       marked[view] = +row.dataset.n;
+      if (view === 'source' && !hitNow()) markHit(box, null);
       report();
       // Only a line of the file as written can be linked to: a formatted JSON
       // row has no line of its own on disk.
@@ -1447,6 +1484,7 @@ function wireFrameLinks(ifr) {
       try { const u = new URL(location.href); u.searchParams.set('line', row.dataset.n); history.replaceState(null, '', u); } catch (e) {}
     });
     if (marked[view]) markRow(box, marked[view], true);
+    if (view === 'source' && hitNow()) markHit(box, hitNow());
     enableComments(box);
     remarkAll();
     return r.lines;
