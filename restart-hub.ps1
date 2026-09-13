@@ -44,6 +44,16 @@ function HubProcs([int]$onPort) {
   $procs | Where-Object { ($ids -contains $_.ProcessId) -and ($_.CommandLine -like '*dashboard.py*') }
 }
 function Head { try { return (& git -C $cfg.repo rev-parse HEAD 2>$null) } catch { return '?' } }
+# The hub's restart lease refuses a second restart while this one runs. When the
+# hub is left alone (a failed preflight) it is dropped, so trying again is fine;
+# only this restart's own lease, never a newer one.
+function DropLease {
+  if (-not $cfg.leasePath) { return }
+  try {
+    $l = Get-Content -LiteralPath $cfg.leasePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($l.id -eq $cfg.leaseId) { Remove-Item -LiteralPath $cfg.leasePath -Force -ErrorAction Stop; L "restart lease dropped" }
+  } catch {}
+}
 
 $t0 = Get-Date
 $head0 = Head
@@ -56,6 +66,8 @@ try {
   $pfp = Start-Process -FilePath $cfg.python -ArgumentList $pfArgs -WorkingDirectory $cfg.repo -WindowStyle Hidden -PassThru -ErrorAction Stop
 } catch {
   L "PREFLIGHT FAILED - could not start $($cfg.python): $_; the hub was NOT touched"
+  DropLease
+  Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
   exit 1
 }
 $pfUp = $false
@@ -65,6 +77,8 @@ try { Stop-Process -Id $pfp.Id -Force -ErrorAction Stop } catch {}
 HubProcs $pf | ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {} }
 if (-not $pfOk) {
   L "PREFLIGHT FAILED - the code on disk does not start or serve on port $pf; the hub was NOT touched. See $($cfg.preflightLog)"
+  DropLease
+  Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
   exit 1
 }
 L "preflight passed on port $pf"

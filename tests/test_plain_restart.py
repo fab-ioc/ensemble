@@ -13,10 +13,14 @@ caller gets 403) runs on a spare-port hub; see the task's report.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -98,38 +102,108 @@ class Plan(unittest.TestCase):
 
 class Trigger(unittest.TestCase):
     def setUp(self):
-        p = mock.patch.object(dashboard, "_RESTART_STARTED", 0.0)
-        p.start()
-        self.addCleanup(p.stop)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+        env = {k: v for k, v in os.environ.items() if k != "ENSEMBLE_RESTART_DRY_RUN"}
+        for p in (mock.patch.object(dashboard, "DASHBOARD_DIR", self.dir),
+                  mock.patch.dict(os.environ, env, clear=True),
+                  mock.patch.object(dashboard.ptyrun, "list_sessions", return_value=[])):
+            p.start()
+            self.addCleanup(p.stop)
+        self.lease = self.dir / "restart.lease"
+
+    def started(self, **kw):
+        return mock.patch.object(dashboard.BACKEND, "self_restart",
+                                 return_value={"started": True, "helperPid": 1}, **kw)
 
     def test_dry_run_answers_with_the_plan(self):
         with mock.patch.dict(os.environ, {"ENSEMBLE_RESTART_DRY_RUN": "1"}), \
              mock.patch.object(dashboard.BACKEND, "self_restart") as real:
             res = dashboard.trigger_restart()
+            again = dashboard.trigger_restart()
         real.assert_not_called()
         self.assertEqual((res["status"], res["dryRun"]), (202, True))
+        self.assertEqual(again["status"], 202)          # a dry run holds no lease
         self.assertNotIn("env", res["plan"])
+        self.assertFalse(self.lease.exists())
 
     def test_started_then_busy(self):
-        env = {k: v for k, v in os.environ.items() if k != "ENSEMBLE_RESTART_DRY_RUN"}
-        with mock.patch.dict(os.environ, env, clear=True), \
-             mock.patch.object(dashboard.BACKEND, "self_restart",
-                               return_value={"started": True, "helperPid": 1}) as real:
+        with self.started() as real:
             first = dashboard.trigger_restart()
             second = dashboard.trigger_restart()
         self.assertEqual(real.call_count, 1)
         self.assertEqual(first["status"], 202)
         self.assertIn("Restart started", first["message"])
         self.assertEqual((second["status"], second["started"]), (409, False))
+        plan = real.call_args[0][0]
+        self.assertEqual(Path(plan["leasePath"]), self.lease)
+        self.assertEqual(json.loads(self.lease.read_text(encoding="utf-8"))["id"], plan["leaseId"])
+
+    def test_requests_at_once_start_one_helper(self):
+        gate = threading.Barrier(6)
+        results = []
+
+        def slow(plan):
+            time.sleep(0.2)
+            return {"started": True}
+
+        def call():
+            gate.wait()
+            results.append(dashboard.trigger_restart()["status"])
+        with mock.patch.object(dashboard.BACKEND, "self_restart", side_effect=slow) as real:
+            ts = [threading.Thread(target=call) for _ in range(6)]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join()
+        self.assertEqual(real.call_count, 1)
+        self.assertEqual(sorted(results), [202, 409, 409, 409, 409, 409])
+
+    def test_the_hub_that_comes_back_still_refuses(self):
+        # Nothing is kept in memory: the lease file another process wrote refuses.
+        self.lease.write_text(json.dumps({"id": "earlier", "at": time.time() - 30, "pid": 1}),
+                              encoding="utf-8")
+        with self.started() as real:
+            res = dashboard.trigger_restart()
+        real.assert_not_called()
+        self.assertEqual(res["status"], 409)
+        self.assertIn("30s ago", res["error"])
+
+    def test_an_expired_lease_is_taken_over(self):
+        self.lease.write_text(json.dumps({"id": "old", "at": time.time() - dashboard.RESTART_BUSY_S - 1}),
+                              encoding="utf-8")
+        with self.started() as real:
+            self.assertEqual(dashboard.trigger_restart()["status"], 202)
+        self.assertEqual(json.loads(self.lease.read_text(encoding="utf-8"))["id"],
+                         real.call_args[0][0]["leaseId"])
+
+    def test_a_lease_being_written_counts_as_held(self):
+        self.lease.write_text("", encoding="utf-8")
+        with self.started() as real:
+            self.assertEqual(dashboard.trigger_restart()["status"], 409)
+        real.assert_not_called()
 
     def test_a_failed_start_is_not_busy(self):
-        env = {k: v for k, v in os.environ.items() if k != "ENSEMBLE_RESTART_DRY_RUN"}
-        with mock.patch.dict(os.environ, env, clear=True), \
-             mock.patch.object(dashboard.BACKEND, "self_restart",
+        with mock.patch.object(dashboard.BACKEND, "self_restart",
                                return_value={"started": False, "error": "no"}) as real:
             self.assertEqual(dashboard.trigger_restart()["status"], 500)
             self.assertEqual(dashboard.trigger_restart()["status"], 500)
         self.assertEqual(real.call_count, 2)
+        self.assertFalse(self.lease.exists())
+
+    def test_a_crash_drops_the_lease(self):
+        with mock.patch.object(dashboard.BACKEND, "self_restart", side_effect=OSError("boom")):
+            with self.assertRaises(OSError):
+                dashboard.trigger_restart()
+        self.assertFalse(self.lease.exists())
+
+    def test_only_its_own_lease_is_dropped(self):
+        self.lease.write_text(json.dumps({"id": "newer", "at": time.time()}), encoding="utf-8")
+        dashboard._drop_restart_lease("older")
+        self.assertTrue(self.lease.exists())
+        dashboard._drop_restart_lease("newer")
+        self.assertFalse(self.lease.exists())
 
 
 class Lock(unittest.TestCase):
@@ -203,6 +277,37 @@ class WindowsBackend(unittest.TestCase):
         run.assert_not_called()
         self.assertFalse(res["started"])
         self.assertIn("restart-hub.ps1", res["error"])
+
+    def test_a_failed_preflight_drops_only_its_own_lease(self):
+        # The real helper, with a Python that does not exist: the preflight fails
+        # before anything else, the hub is left alone and the lease is dropped.
+        shell = __import__("shutil").which("powershell")
+        if not shell:
+            self.skipTest("powershell not found")
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            for lease_id, want_left in (("mine", False), ("someone-else", True)):
+                lease = d / "restart.lease"
+                lease.write_text(json.dumps({"id": lease_id, "at": time.time()}), encoding="utf-8")
+                script = d / "restart-copy.ps1"
+                script.write_bytes(SCRIPT)
+                plan = d / "plan.json"
+                plan.write_text(json.dumps({
+                    "repo": str(d), "python": str(d / "no-such-python.exe"), "script": "x.py",
+                    "args": [], "port": 1, "hubPid": 0, "preflightPort": 1, "taskName": "none",
+                    "noTask": True, "graceSeconds": 0, "resumeRooms": [], "wakeRoom": "",
+                    "wakeText": "", "log": str(d / "restart.log"),
+                    "preflightLog": str(d / "preflight.log"), "env": {},
+                    "leasePath": str(lease), "leaseId": "mine"}), encoding="utf-8")
+                out = subprocess.run([shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                                      str(script), "-Plan", str(plan)],
+                                     capture_output=True, text=True, encoding="utf-8", timeout=60)
+                self.assertEqual(out.returncode, 1, out.stdout + out.stderr)
+                self.assertEqual(lease.exists(), want_left, lease_id)
+                self.assertFalse(script.exists())
+                self.assertFalse(plan.exists())
+                self.assertIn("PREFLIGHT FAILED", (d / "restart.log").read_text(encoding="utf-8-sig"))
+                lease.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

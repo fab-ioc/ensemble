@@ -39,26 +39,34 @@
   function storedAccent() {
     try { return localStorage.getItem('cd-accent') || ''; } catch (e) { return ''; }
   }
-  // [r, g, b] of a CSS colour, or null when the browser does not take it.
+  // [r, g, b] of an opaque CSS colour, or null when the browser does not take
+  // it or it is see-through (no text colour is sure to read on that).
   function rgbOf(color) {
     try {
       ink = ink || document.createElement('canvas').getContext('2d');
-      ink.fillStyle = '#010203';
-      ink.fillStyle = String(color || '');
+      // A colour the canvas refuses leaves the previous one: two different
+      // starting colours then read back differently.
+      ink.fillStyle = '#010203'; ink.fillStyle = String(color || '');
       var v = String(ink.fillStyle), m;
-      if (v === '#010203' && !/^\s*#010203\s*$/i.test(color)) return null;
+      ink.fillStyle = '#040506'; ink.fillStyle = String(color || '');
+      if (String(ink.fillStyle) !== v) return null;
       if ((m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(v))) {
         return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
       }
       m = v.match(/[\d.]+/g);
-      return m && m.length >= 3 ? [+m[0], +m[1], +m[2]] : null;
+      if (!m || m.length < 3 || (m.length > 3 && +m[3] < 1)) return null;
+      return [+m[0], +m[1], +m[2]];
     } catch (e) { return null; }
   }
+  // The text colour on the accent that clears 4.5:1: white or the near-black
+  // #101214, whichever reads better, and pure black for the mid tones where
+  // neither does (black clears 4.6:1 on every one of those).
   function accentFg(rgb) {
     function lin(v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }
-    var L = 0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2]);
-    // Contrast against white and against near-black #101214 (luminance ~.006).
-    return (1.05 / (L + 0.05)) >= ((L + 0.05) / 0.056) ? '#FFFFFF' : '#101214';
+    function lum(c) { return 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]); }
+    var L = lum(rgb) + 0.05, onWhite = 1.05 / L, onInk = L / (lum([16, 18, 20]) + 0.05);
+    if (Math.max(onWhite, onInk) >= 4.5) return onWhite >= onInk ? '#FFFFFF' : '#101214';
+    return '#000000';
   }
   function applyAccent() {
     var color = storedAccent(), rgb = color ? rgbOf(color) : null;
@@ -76,9 +84,44 @@
     return fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify(body) });
   }
+  // A choice made here is not undone by a hub reply that was already on its
+  // way: `epoch` moves with every choice (here or in another tab) and every
+  // finished save, and sync() takes the hub's accent only when it did not move
+  // while the reply was out and every choice has been saved.
+  var epoch = 0, chosen = 0, saved = 0, saving = false, queued = null;
+  function chooseAccent(color) {
+    try { if (color) localStorage.setItem('cd-accent', color); else localStorage.removeItem('cd-accent'); } catch (e) {}
+    epoch++; chosen++;
+    applyAccent();
+  }
+  // Saves reach the hub one at a time and only the newest waiting one is sent,
+  // so the hub ends on the last choice. Resolves with the hub's settings, or
+  // with null when a newer save took this one's place.
+  function saveAccent(color) {
+    return new Promise(function (resolve, reject) {
+      if (queued) queued.resolve(null);
+      queued = { want: color || 'default', chosen: chosen, resolve: resolve, reject: reject };
+      pump();
+    });
+  }
+  function pump() {
+    if (saving || !queued) return;
+    var job = queued;
+    queued = null; saving = true;
+    put({ accent: job.want }).then(function (r) {
+      return r.json().catch(function () { return null; }).then(function (b) {
+        if (!r.ok) throw new Error(r.status + ' ' + (b ? JSON.stringify(b) : ''));
+        return b;
+      });
+    }).then(job.resolve, job.reject).then(function () {
+      saving = false; saved = Math.max(saved, job.chosen); epoch++;
+      pump();
+    });
+  }
   // Adopt the hub's choices, which another device may have changed. If the hub
   // has none yet, hand it this browser's so a choice made before is kept.
   function sync() {
+    var at = epoch;
     fetch('/api/settings', { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (s) {
@@ -93,27 +136,29 @@
           }
         }
         // A hub from before the accent was synced sends none: leave it be.
-        if (typeof s.accent === 'string') {
+        var settled = at === epoch && !saving && !queued && saved === chosen;
+        if (typeof s.accent === 'string' && settled) {
           var mine = storedAccent(), want = s.accent === 'default' ? '' : s.accent;
           if (s.accent && want !== mine) {
             try {
               if (want) localStorage.setItem('cd-accent', want); else localStorage.removeItem('cd-accent');
             } catch (e) {}
             applyAccent();
-          } else if (!s.accent && mine) {
-            put({ accent: mine }).catch(function () {});
+          } else if (!s.accent && mine && rgbOf(mine)) {
+            saveAccent(mine).catch(function () {});
           }
         }
       }).catch(function () {});
   }
   window.cdTheme = { apply: apply, sync: sync, stored: stored, scheme: SCHEME,
-                     applyAccent: applyAccent, storedAccent: storedAccent, rgbOf: rgbOf, put: put };
+                     applyAccent: applyAccent, storedAccent: storedAccent, rgbOf: rgbOf, put: put,
+                     chooseAccent: chooseAccent, saveAccent: saveAccent };
   apply();
   applyAccent();
   if (mq && mq.addEventListener) mq.addEventListener('change', apply);
   window.addEventListener('storage', function (ev) {
     if (ev.key === 'cd-theme') apply();
-    if (ev.key === 'cd-accent') applyAccent();
+    if (ev.key === 'cd-accent') { epoch++; applyAccent(); }
   });
   document.addEventListener('visibilitychange', function () { if (!document.hidden) sync(); });
   sync();
