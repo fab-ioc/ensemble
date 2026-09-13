@@ -6602,15 +6602,22 @@ let DISPLAYED_ORDER = []; // session IDs in their last-rendered order
 let _refreshInFlight = false, _projInFlight = false;
 // `now`: a user action needs the list as it is after its own change, so it
 // waits out a poll in flight (whose answer may predate the change) and ignores
-// the reasons a poll holds off.
-async function refresh({ now = false } = {}) {
-  if (now) { while (_refreshInFlight) await new Promise(r => setTimeout(r, 50)); }
+// the reasons a poll holds off. `until` (a Date.now() time) bounds both the
+// wait and the request, so a request that never answers cannot keep the lock.
+async function refresh({ now = false, until = 0 } = {}) {
+  if (now) {
+    while (_refreshInFlight) {
+      if (until && Date.now() >= until) return;
+      await new Promise(r => setTimeout(r, 50));
+    }
+  }
   // A hidden tab skips repeat polls, never the first load: a dashboard opened
   // in a background tab must not sit empty until someone looks at it.
   else if (selectInteracting() || _refreshInFlight || (document.hidden && ALL_ROWS.length)) return;
   _refreshInFlight = true;
   try {
-    const data = await api('/api/sessions?n=300');
+    const data = await api('/api/sessions?n=300',
+      until ? { signal: AbortSignal.timeout(Math.max(1, until - Date.now())) } : undefined);
     if (!now && selectInteracting()) return; // user opened a dropdown mid-fetch
     // If the mouse is inside the dashboard window, keep the existing row
     // positions so the user's click target doesn't slide out from under them.
@@ -6648,6 +6655,8 @@ async function refresh({ now = false } = {}) {
     renderRows();
     if (SELECTED_SID) renderDetail();
   } catch (e) {
+    // Out of time: the action that asked gives up and says so itself.
+    if (e && e.name === 'TimeoutError') return;
     // A dropped poll must not cost you the workspace. The tree, the folders you
     // opened and the file you are reading are state, not a view of /api/sessions
     // — so say it in a toast and leave the panel where it is.
@@ -8432,34 +8441,43 @@ async function terminalAction(btn) {
 // open its task panel. Returns the new task's id, or '' when it failed or the
 // task list has not shown the task within ADOPT_WAIT_MS.
 // Every adopt starts another agent, so a session already being opened (a
-// double click, or the row re-rendered under the mouse) is not opened again.
+// double click, or the row re-rendered under the mouse) is not opened again,
+// and one adopted whose task the list has not shown yet is waited for, not
+// adopted a second time.
 const ADOPTING = new Set();
+const ADOPTED = new Map();   // session id → its new task's id, until the list shows it
 const ADOPT_WAIT_MS = 10000;
 async function openHeadless(btn) {
   const sid = btn.dataset.sid;
-  if (ADOPTING.has(sid)) { toast('already opening this session…', 2000, 'busy'); return ''; }
+  if (ADOPTING.has(sid)) { toast('already opening this session…', 2000); return ''; }
   ADOPTING.add(sid);
   closeThemeMenu();
   toast('opening headless…', 0, 'busy');
+  const end = Date.now() + ADOPT_WAIT_MS;
   try {
-    const resp = await api('/api/session/adopt', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        agent: btn.dataset.agent || 'claude',
-        sessionId: sid,
-        cwd: btn.dataset.cwd,
-        label: btn.dataset.label || '',
-      }),
-    });
-    toast('opened headless', 2000, 'ok');
-    const rid = resp.room && resp.room.id;
-    if (!rid) { await refresh({ now: true }); updateRoomsBadge(); return ''; }
+    let rid = ADOPTED.get(sid);
+    if (!rid) {
+      const resp = await api('/api/session/adopt', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agent: btn.dataset.agent || 'claude',
+          sessionId: sid,
+          cwd: btn.dataset.cwd,
+          label: btn.dataset.label || '',
+        }),
+      });
+      rid = resp.room && resp.room.id;
+      if (!rid) {
+        await refresh({ now: true, until: end }); updateRoomsBadge();
+        toast('opened headless', 2000, 'ok');
+        return '';
+      }
+      ADOPTED.set(sid, rid);
+    }
     const listed = () => ALL_ROWS.some(x => x.sessionId === rid || x.roomId === rid);
     const sleep = ms => new Promise(r => setTimeout(r, Math.max(0, ms)));
-    const end = Date.now() + ADOPT_WAIT_MS;
     while (!listed() && Date.now() < end) {
-      // Bounded: a request that never answers must not hold the action.
-      await Promise.race([refresh({ now: true }), sleep(end - Date.now())]);
+      await Promise.race([refresh({ now: true, until: end }), sleep(end - Date.now())]);
       if (!listed()) await sleep(Math.min(250, end - Date.now()));
     }
     updateRoomsBadge();
@@ -8467,6 +8485,8 @@ async function openHeadless(btn) {
       toast('The session is open, but the task list has not shown it yet. Open it from the list once it appears.', 6000, 'err');
       return '';
     }
+    ADOPTED.delete(sid);
+    toast('opened headless', 2000, 'ok');
     openDetail(rid);
     return rid;
   } catch (e) { toast('open headless failed: ' + e.message, 5000, 'err'); }

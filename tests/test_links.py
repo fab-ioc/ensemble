@@ -676,6 +676,12 @@ const take = () => log.splice(0);
   const t0 = Date.now();
   await terminalAction(btn({ sid: 's-hist2', cwd: 'C:\\code\\z', agent: 'claude' }));
   out.hung = [take(), Date.now() - t0]; HUNG = false;
+  // Pressed again once the list answers: the task already made is shown, no
+  // second one is started.
+  NEW_ROOM = { sessionId: 'room-0000hung', roomId: 'room-0000hung', headless: true, isLive: true };
+  FRAME = session('room-0000hung', { agents: [{ name: 'claude' }] });
+  await terminalAction(btn({ sid: 's-hist2', cwd: 'C:\\code\\z', agent: 'claude' }));
+  out.retry = take(); out.adoptedLeft = ADOPTED.size;
 
   // The task panel's Terminal: first press shows it, the next brings it to the front.
   FRAME = session(liveRoom.roomId, { agents: [{ name: 'claude', dead: true }, { name: 'codex' }] });
@@ -727,7 +733,8 @@ class HubMachineActions(unittest.TestCase):
         defs = [re.search(r"^const LOOPBACK_HOST_RE = .*$", src, re.M).group(0),
                 re.search(r"^const onHubMachine = .*$", src, re.M).group(0),
                 re.search(r"^const finderLabel = .*$", src, re.M).group(0),
-                re.search(r"^const ADOPTING = .*$", src, re.M).group(0)]
+                re.search(r"^const ADOPTING = .*$", src, re.M).group(0),
+                re.search(r"^const ADOPTED = .*$", src, re.M).group(0)]
         prog = HUB_ACTIONS_JS % "\n".join(defs + [top_level_function(src, n) for n in HUB_ACTION_FUNCTIONS])
 
         def run(location):
@@ -787,6 +794,12 @@ class HubMachineActions(unittest.TestCase):
         self.assertTrue(any("has not shown it yet" in x for x in log), log)
         self.assertFalse([x for x in log if x.startswith(("detail:", "terms", "open:"))], log)
         self.assertLess(elapsed, 2500)
+        # Pressed again: the task already made, not a second adopt.
+        retry = mac["retry"]
+        self.assertNotIn("api:/api/session/adopt", retry)
+        self.assertEqual([x for x in retry if x in ("toast:opened headless", "terms", "open:claude", "focus:claude")],
+                         ["toast:opened headless", "terms", "open:claude", "focus:claude"], retry)
+        self.assertEqual(mac["adoptedLeft"], 0)
         # Which agent's terminal: one that has a pty, whatever the dots say.
         for case in ("statusFailed", "openEmptyReviewer"):
             self.assertIn("open:claude", mac[case], case)
@@ -813,6 +826,57 @@ class HubMachineActions(unittest.TestCase):
         log, selected = mac["ended"]
         self.assertTrue(log and log[0].startswith("toast:This task is not running"), log)
         self.assertEqual(selected, "room-0000aaa1", "an ended task does not take over the panel")
+
+    @unittest.skipUnless(NODE, "node is not installed")
+    def test_forced_refresh_gives_up_in_time(self):
+        """The real refresh(): a user action's refresh that runs out of time
+        lets go of the list, so polling carries on, and waits for a poll that
+        never answers only until its own time is up."""
+        src = PAGES["index.html"].replace("\r\n", "\n")
+        defs = [re.search(r"^let _refreshInFlight = .*$", src, re.M).group(0), top_level_function(src, "refresh")]
+        out = subprocess.run([NODE, "-e", REAL_REFRESH_JS % "\n".join(defs)], capture_output=True, text=True,
+                             encoding="utf-8", timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        r = json.loads(out.stdout)
+        took, locked, view = r["gaveUp"]
+        self.assertLess(took, 1000)
+        self.assertFalse(locked, "the list lock is released")
+        self.assertEqual(view, "", "running out of time is not shown as an error in the list")
+        self.assertEqual(r["resumed"], ["new"], "the next poll still updates the list")
+        self.assertLess(r["waitedBehindHung"], 1000)
+
+
+REAL_REFRESH_JS = r"""
+let ALL_ROWS = [], DISPLAYED_ORDER = [], DISPLAYED_WORKFLOW = new Map(), SELECTED_SID = null;
+let _projTs = Date.now() + 1e9, PROJECTS = [], _projFailed = false, SELECTED_PROJECT = null, PROJ_GROUPBY = '';
+const selectInteracting = () => false, workflowOf = () => '', renderRows = () => {}, renderDetail = () => {};
+const toast = () => {}, esc = s => String(s);
+const VIEW = { matches: () => false, innerHTML: '' };
+const $ = () => VIEW;
+globalThis.document = { hidden: false, getElementById: () => null };
+let ANSWER = false;
+// The task list: answers only once ANSWER is set; otherwise fails when aborted.
+const api = (url, opts) => new Promise((resolve, reject) => {
+  if (ANSWER) return resolve([{ sessionId: 'new' }]);
+  if (opts && opts.signal) opts.signal.addEventListener('abort', () => reject(opts.signal.reason));
+});
+%s
+// Node does not stay up for AbortSignal.timeout's timer alone; a browser tab does.
+setInterval(() => {}, 1000);
+(async () => {
+  const out = {};
+  let t0 = Date.now();
+  await refresh({ now: true, until: Date.now() + 300 });
+  out.gaveUp = [Date.now() - t0, _refreshInFlight, VIEW.innerHTML];
+  ANSWER = true; await refresh(); out.resumed = ALL_ROWS.map(r => r.sessionId);
+  ANSWER = false; refresh();          // a poll that never answers
+  t0 = Date.now();
+  await refresh({ now: true, until: Date.now() + 300 });
+  out.waitedBehindHung = Date.now() - t0;
+  console.log(JSON.stringify(out));
+  process.exit(0);
+})().catch(e => { console.error(e); process.exit(1); });
+"""
 
 
 if __name__ == "__main__":
