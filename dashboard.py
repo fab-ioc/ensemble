@@ -4316,9 +4316,10 @@ _RESTART_LOCK = threading.Lock()
 
 # The restart lease: a file in the state dir, created exclusively, so two
 # requests at once cannot both start a helper and the hub that comes back still
-# refuses a second restart until it expires. The helper drops it when its
-# preflight fails (the hub was not touched, so trying again is fine); a helper
-# that could not be started drops it here.
+# refuses a second restart until it expires. The helper renews "at" at every
+# wait, so it cannot expire mid-restart, and last when the hub is back; it drops
+# it when its preflight fails (the hub was not touched, so trying again is
+# fine); a helper that could not be started drops it here.
 def _restart_lease_path() -> Path:
     return DASHBOARD_DIR / "restart.lease"
 

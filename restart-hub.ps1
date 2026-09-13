@@ -54,6 +54,20 @@ function DropLease {
     if ($l.id -eq $cfg.leaseId) { Remove-Item -LiteralPath $cfg.leasePath -Force -ErrorAction Stop; L "restart lease dropped" }
   } catch {}
 }
+# The lease expires RESTART_BUSY_S after its "at"; renewed at every wait, it
+# cannot expire while this restart runs, and the last renewal (hub up) refuses
+# another restart for that long after it.
+function RenewLease {
+  if (-not $cfg.leasePath) { return }
+  try {
+    $l = Get-Content -LiteralPath $cfg.leasePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($l.id -ne $cfg.leaseId) { return }
+    $at = ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0).ToString([Globalization.CultureInfo]::InvariantCulture)
+    $json = '{"id": "' + $cfg.leaseId + '", "at": ' + $at + ', "pid": ' + $PID + '}'
+    [IO.File]::WriteAllText([string]$cfg.leasePath, $json, (New-Object Text.UTF8Encoding $false))
+  } catch {}
+}
+function Nap([int]$s) { Start-Sleep -Seconds $s; RenewLease }
 
 $t0 = Get-Date
 $head0 = Head
@@ -71,7 +85,7 @@ try {
   exit 1
 }
 $pfUp = $false
-for ($i = 0; $i -lt 30 -and -not $pfUp; $i++) { Start-Sleep -Seconds 2; $pfUp = Ok "http://127.0.0.1:$pf/api/platform" }
+for ($i = 0; $i -lt 30 -and -not $pfUp; $i++) { Nap 2; $pfUp = Ok "http://127.0.0.1:$pf/api/platform" }
 $pfOk = $pfUp -and (Ok "http://127.0.0.1:$pf/api/sessions?n=5") -and (Ok "http://127.0.0.1:$pf/") -and (Ok "http://127.0.0.1:$pf/api/projects")
 try { Stop-Process -Id $pfp.Id -Force -ErrorAction Stop } catch {}
 HubProcs $pf | ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {} }
@@ -85,7 +99,8 @@ L "preflight passed on port $pf"
 
 # --- 2. Give the caller's reply time to reach the user before the hub goes down. ---
 $left = [double]$cfg.graceSeconds - ((Get-Date) - $t0).TotalSeconds
-if ($left -gt 0) { Start-Sleep -Seconds ([int][math]::Ceiling($left)) }
+RenewLease
+while ($left -gt 0) { $s = [int][math]::Min(10, [math]::Ceiling($left)); Nap $s; $left -= $s }
 
 # --- 3. Stop the hub and start it again the way it was started. ---
 $useTask = $false
@@ -108,7 +123,7 @@ foreach ($v in ($victims | Where-Object { $_ } | Sort-Object ProcessId -Unique))
 }
 $free = $false
 for ($i = 0; $i -lt 15 -and -not $free; $i++) {
-  Start-Sleep -Seconds 1
+  Nap 1
   $free = -not (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
 }
 $hubArgs = @(Q $cfg.script) + @($cfg.args | ForEach-Object { Q $_ })
@@ -121,12 +136,13 @@ function StartDirect {
 $up = $false
 if ($useTask) {
   try { Start-ScheduledTask -TaskName $cfg.taskName -ErrorAction Stop; L "started task" } catch { L "start-task err: $_" }
-  for ($i = 0; $i -lt 20 -and -not $up; $i++) { Start-Sleep -Seconds 2; $up = Ok "$base/api/platform" }
+  for ($i = 0; $i -lt 20 -and -not $up; $i++) { Nap 2; $up = Ok "$base/api/platform" }
   if (-not $up) { L "not up after the task; starting it directly the way it ran"; StartDirect }
 } else {
   StartDirect
 }
-for ($i = 0; $i -lt 30 -and -not $up; $i++) { Start-Sleep -Seconds 2; $up = Ok "$base/api/platform" }
+for ($i = 0; $i -lt 30 -and -not $up; $i++) { Nap 2; $up = Ok "$base/api/platform" }
+if ($up) { RenewLease }
 L "hub up: $up; code at $(Head) (was $head0)"
 if (-not $up) {
   L "HUB STILL DOWN - start the '$($cfg.taskName)' scheduled task by hand"

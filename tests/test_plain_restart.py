@@ -278,6 +278,32 @@ class WindowsBackend(unittest.TestCase):
         self.assertFalse(res["started"])
         self.assertIn("restart-hub.ps1", res["error"])
 
+    def test_the_helper_renews_only_its_own_lease(self):
+        shell = __import__("shutil").which("powershell")
+        if not shell:
+            self.skipTest("powershell not found")
+        text = SCRIPT.decode("ascii").replace("\r\n", "\n")
+        i = text.index("function RenewLease {")
+        func = text[i:text.index("\n}\n", i) + 3]
+        # Every wait up to the hub being back renews it: no plain sleeps left there.
+        main = text[text.index("# --- 1. Preflight"):text.index("# --- 4. Resume")]
+        self.assertNotIn("Start-Sleep -Seconds 2;", main)
+        self.assertIn("Nap 2; $pfUp", main)
+        self.assertIn("if ($up) { RenewLease }", main)
+        with tempfile.TemporaryDirectory() as tmp:
+            lease = Path(tmp) / "restart.lease"
+            for owner, want_renewed in (("mine", True), ("someone-else", False)):
+                lease.write_text(json.dumps({"id": owner, "at": time.time() - 170}), encoding="utf-8")
+                ps = (f"$cfg = [pscustomobject]@{{ leasePath = '{lease}'; leaseId = 'mine' }}\n"
+                      f"{func}\nRenewLease\n")
+                out = subprocess.run([shell, "-NoProfile", "-Command", ps], capture_output=True,
+                                     text=True, encoding="utf-8", timeout=60)
+                self.assertEqual(out.returncode, 0, out.stderr)
+                with mock.patch.object(dashboard, "DASHBOARD_DIR", Path(tmp)):
+                    age = dashboard._restart_lease_age(lease)
+                self.assertEqual(age < 30, want_renewed, (owner, age))
+                self.assertEqual(json.loads(lease.read_text(encoding="utf-8"))["id"], owner)
+
     def test_a_failed_preflight_drops_only_its_own_lease(self):
         # The real helper, with a Python that does not exist: the preflight fails
         # before anything else, the hub is left alone and the lease is dropped.
