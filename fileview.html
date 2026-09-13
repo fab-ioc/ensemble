@@ -364,7 +364,7 @@
   .ln-row.is-marked::before { color:var(--match-fg); background:var(--match-bg); font-weight:600; }
   /* A search result's match on its marked line: the match colour, underlined
      so it still stands out on the line's own match wash. */
-  mark.fv-hit { background:var(--match-bg); color:var(--match-fg); border-bottom:2px solid var(--match-fg); border-radius:2px; }
+  mark.fv-hit { background:var(--match-bg); color:var(--match-fg); border-bottom:2px solid var(--match-fg); border-radius:var(--r-100); }
   /* Diff rows, the same washes as the Changes tab. */
   .ln-row.r-ins, .ln-row.r-ins::before { background:var(--c-success-bg); }
   .ln-row.r-del, .ln-row.r-del::before { background:var(--c-danger-bg); }
@@ -1243,12 +1243,15 @@ async function readCapped(res) {
 // inside the folders the dashboard may read; a relative mention from a chat link
 // is not one, so those fall back to the raw reader, which resolves them against
 // the room's folders — under the same cap, applied here.
+// The line the file opens at (a link's, a search result's, or the one marked
+// when the tab was left): the hub reads a large file as far as that line.
+const AT_LINE = Math.max(LINE, START.marks.source || 0, START.hit ? START.hit.line : 0);
 async function loadText(path, rawSrc) {
   // Not ~/...: the workspace reader cannot expand it and refused it outright,
   // though the raw reader resolves it.
   if (/^(?:[A-Za-z]:[\\\/]|\\\\|\/)/.test(path)) {
     try {
-      const r = await fetch('/api/ws/file?path=' + encodeURIComponent(path), { cache: 'no-store' });
+      const r = await fetch('/api/ws/file?path=' + encodeURIComponent(path) + (AT_LINE ? '&line=' + AT_LINE : ''), { cache: 'no-store' });
       if (r.ok) {
         const j = await r.json();
         return { ok: true, text: j.text || '', size: j.size, truncated: !!j.truncated, binary: !!j.binary };

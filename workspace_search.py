@@ -6,7 +6,10 @@ project's) and searches their text. Both stay inside that folder:
 * the walk never descends into ``.git`` or ``node_modules``, nor into what a
   repo's own ``.gitignore`` excludes (git decides, per repo met on the way);
 * a folder reached through a symlink or a junction is never entered, and a
-  linked file counts only when its target is inside the folder too.
+  linked file counts only when its target is inside the folder too;
+* a folder is listed, and a file read, only when what was actually opened is
+  inside the folder: a name can be swapped for a link, or a folder above it
+  can, between being listed and being read.
 
 The hub lists files in its own process (one git call per repo, fast), but runs
 a search as a child process (``python workspace_search.py`` reading a JSON
@@ -35,6 +38,9 @@ QUERY_MAX = 500
 DEADLINE_S = 8.0              # a search stops here and returns what it found
 
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+# A FIFO opened for reading would wait for a writer; this way it opens at once
+# and is then passed over as not a regular file.
+_READ_FLAGS = getattr(os, "O_NONBLOCK", 0)
 
 
 def _inside(real: str, real_root: str) -> bool:
@@ -43,6 +49,118 @@ def _inside(real: str, real_root: str) -> bool:
 
 def _real(path: str) -> str:
     return os.path.normcase(os.path.realpath(path))
+
+
+# ---- Where an opened file or folder really is -------------------------------
+
+if os.name == "nt":
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _k32.CreateFileW.restype = wintypes.HANDLE
+    _k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                 wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    _k32.GetFinalPathNameByHandleW.restype = wintypes.DWORD
+    _k32.GetFinalPathNameByHandleW.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD]
+    _k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    _INVALID_HANDLE = wintypes.HANDLE(-1).value
+
+    def _handle_real(h) -> str:
+        buf = ctypes.create_unicode_buffer(32768)
+        n = _k32.GetFinalPathNameByHandleW(h, buf, len(buf), 0)
+        if not n or n >= len(buf):
+            raise ctypes.WinError(ctypes.get_last_error())
+        p = buf.value
+        if p.startswith("\\\\?\\UNC\\"):
+            p = "\\\\" + p[8:]
+        elif p.startswith("\\\\?\\"):
+            p = p[4:]
+        return os.path.normcase(p)
+
+    def _fd_real(fd: int) -> str:
+        return _handle_real(msvcrt.get_osfhandle(fd))
+
+    def _scan(d: str, real_root: str) -> list[os.DirEntry] | None:
+        # Held open without FILE_SHARE_DELETE while it is listed: Windows then
+        # refuses to rename or remove it, or any folder above it, so no link
+        # can be swapped in between the check and the listing.
+        h = _k32.CreateFileW(d, 0x80000000, 0x1 | 0x2, None, 3, 0x02000000, None)  # GENERIC_READ, share read+write, OPEN_EXISTING, BACKUP_SEMANTICS
+        if h == _INVALID_HANDLE:
+            return None
+        try:
+            if not _inside(_handle_real(h), real_root):
+                return None
+            with os.scandir(d) as it:
+                return sorted(it, key=lambda e: e.name)
+        except OSError:
+            return None
+        finally:
+            _k32.CloseHandle(h)
+
+    class _BasicLimits(ctypes.Structure):
+        _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                    ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                    ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                    ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                    ("SchedulingClass", wintypes.DWORD)]
+
+    class _ExtendedLimits(ctypes.Structure):
+        _fields_ = [("BasicLimitInformation", _BasicLimits), ("IoInfo", ctypes.c_uint64 * 6),
+                    ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                    ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+    _JOB = None
+
+    def _children_die_with_me() -> None:
+        """Every process this one starts ends when it ends, however it ends:
+        a search killed during its ``git ls-files`` leaves no git running. It
+        joins a job that kills what is in it once the job's last handle, held
+        only here, is closed by this process ending."""
+        global _JOB
+        _k32.CreateJobObjectW.restype = wintypes.HANDLE
+        _k32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+        _k32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+        _k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        _k32.GetCurrentProcess.restype = wintypes.HANDLE
+        job = _k32.CreateJobObjectW(None, None)
+        if not job:
+            return
+        info = _ExtendedLimits()
+        info.BasicLimitInformation.LimitFlags = 0x2000          # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if (_k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info))   # ExtendedLimitInformation
+                and _k32.AssignProcessToJobObject(job, _k32.GetCurrentProcess())):
+            _JOB = job
+        else:
+            _k32.CloseHandle(job)
+else:
+    def _fd_real(fd: int) -> str:
+        if sys.platform == "darwin":
+            import fcntl
+            buf = fcntl.fcntl(fd, 50, b"\0" * 1024)                  # F_GETPATH
+            return os.path.normcase(buf.split(b"\0", 1)[0].decode("utf-8", "surrogateescape"))
+        return os.path.normcase(os.readlink(f"/proc/self/fd/{fd}"))
+
+    def _scan(d: str, real_root: str) -> list[os.DirEntry] | None:
+        # Listed through the very folder that was opened and checked.
+        try:
+            fd = os.open(d, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        except OSError:
+            return None
+        try:
+            if not _inside(_fd_real(fd), real_root):
+                return None
+            with os.scandir(fd) as it:
+                return sorted(it, key=lambda e: e.name)
+        except OSError:
+            return None
+        finally:
+            os.close(fd)
+
+    def _children_die_with_me() -> None:
+        """The hub starts a search in a process group of its own and ends the
+        whole group, so nothing is needed here."""
 
 
 def _git_ignored(d: str, rel: str) -> set[str]:
@@ -78,10 +196,8 @@ def list_files(root: str, enclosing_ignores: bool = False, limit: int = FILES_MA
     stack = [(root, "")]
     while stack:
         d, rel = stack.pop()
-        try:
-            with os.scandir(d) as it:
-                entries = sorted(it, key=lambda e: e.name)
-        except OSError:
+        entries = _scan(d, real_root)
+        if entries is None:
             continue
         if any(e.name == ".git" for e in entries) and not (rel == "" and enclosing_ignores):
             ignored |= _git_ignored(d, rel)
@@ -90,6 +206,7 @@ def list_files(root: str, enclosing_ignores: bool = False, limit: int = FILES_MA
             r = rel + e.name
             if e.name in SKIP_DIRS or r in ignored:
                 continue
+            path = os.path.join(d, e.name)
             link = _is_link(e)
             try:
                 is_dir = e.is_dir(follow_symlinks=False)
@@ -99,12 +216,12 @@ def list_files(root: str, enclosing_ignores: bool = False, limit: int = FILES_MA
                 # Never walk a linked folder: it can lead out of the root, or
                 # round in a loop. A linked file counts when it lands inside.
                 try:
-                    if not os.path.isfile(e.path) or not _inside(_real(e.path), real_root):
+                    if not os.path.isfile(path) or not _inside(_real(path), real_root):
                         continue
                 except OSError:
                     continue
             elif is_dir:
-                dirs.append((e.path, r + "/"))
+                dirs.append((path, r + "/"))
                 continue
             if len(files) >= limit:
                 return files, True
@@ -146,6 +263,10 @@ def _line_hit(line: str, spans: list[tuple[int, int]]) -> dict:
             "cutStart": bool(line[:start].strip()), "cutEnd": end < len(line)}
 
 
+def _open_read(path: str, flags: int) -> int:
+    return os.open(path, flags | _READ_FLAGS)
+
+
 def search(root: str, q: str, case: bool = False, regex: bool = False, enclosing_ignores: bool = False,
            limit: int = MATCH_MAX, deadline_s: float = DEADLINE_S) -> dict:
     t0 = time.monotonic()
@@ -159,26 +280,28 @@ def search(root: str, q: str, case: bool = False, regex: bool = False, enclosing
         if time.monotonic() - t0 > deadline_s:
             timed_out = True
             break
-        p = os.path.join(root, rel)
         try:
-            st = os.lstat(p)
-            if stat.S_ISLNK(st.st_mode) or getattr(st, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0):
-                # Listed as inside; checked again, since it can change between.
-                if not _inside(_real(p), real_root):
+            with open(os.path.join(root, rel), "rb", opener=_open_read) as f:
+                # Judged by the file that opened, not by its name: a link put
+                # at that name, or at a folder above it, since it was listed
+                # leads here to a file outside, which is passed over.
+                if not _inside(_fd_real(f.fileno()), real_root):
                     continue
-                st = os.stat(p)
-            if not stat.S_ISREG(st.st_mode):
-                continue
-            if st.st_size > FILE_BYTES_MAX:
-                large += 1
-                continue
-            with open(p, "rb") as f:
+                st = os.fstat(f.fileno())
+                if not stat.S_ISREG(st.st_mode):
+                    continue
+                if st.st_size > FILE_BYTES_MAX:
+                    large += 1
+                    continue
                 raw = f.read(FILE_BYTES_MAX + 1)
         except OSError:
             unreadable += 1
             continue
+        if len(raw) > FILE_BYTES_MAX:             # grew since it was measured
+            large += 1
+            continue
         searched += 1
-        if b"\x00" in raw[:8192]:
+        if b"\x00" in raw:
             binary += 1
             continue
         # Windows line ends read as plain ones, so a regex's $ ends a line there too.
@@ -212,6 +335,10 @@ def search(root: str, q: str, case: bool = False, regex: bool = False, enclosing
 
 
 def main() -> int:
+    try:
+        _children_die_with_me()
+    except OSError:
+        pass
     req = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     try:
         res = search(req["root"], req["q"], bool(req.get("case")), bool(req.get("regex")),

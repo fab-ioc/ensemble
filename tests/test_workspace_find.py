@@ -16,6 +16,7 @@ searches the text of the Workspace's files:
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -413,10 +414,70 @@ class Endpoints(unittest.TestCase):
                 p.communicate()
                 dashboard._ws_search_done("box:page", p)
                 dashboard._ws_search_done("other:page", p)
-        self.assertEqual({k: p for k, (_, p) in dashboard._WS_SEARCHES.items()}, {"box:page": None, "other:page": None},
+        self.assertEqual({k: p for k, (_, p) in dashboard._WS_SEARCHES.items() if k in ("box:page", "other:page")},
+                         {"box:page": None, "other:page": None},
                          "finished searches hold no child")
         code, d = dashboard.ws_search(str(self.root), "needle", tag="box:page", seq=4)
         self.assertEqual(code, 200, d)
+
+    def test_a_search_no_longer_wanted_is_stopped(self):
+        slow = [sys.executable, "-c", "import time; time.sleep(30)"]
+        running = dashboard._ws_search_start("gone:page", 1, slow)
+        try:
+            self.assertEqual(dashboard.ws_search_cancel("gone:page", 2), (200, {"stopped": True}))
+            running.wait(timeout=10)
+            self.assertTrue(running.ws_cancelled)
+            self.assertIsNone(dashboard._ws_search_start("gone:page", 1, slow), "one asked for before, arriving late")
+            self.assertEqual(dashboard.ws_search_cancel("gone:page", 1), (200, {"stopped": False}), "an old cancel changes nothing")
+            self.assertEqual(dashboard.ws_search_cancel("", 9)[0], 400)
+        finally:
+            if running.poll() is None:
+                running.kill()
+            running.communicate()
+        self.assertEqual(dashboard._WS_SEARCHES["gone:page"], (2, None))
+        self.assertEqual(dashboard.ws_search(str(self.root), "needle", tag="gone:page", seq=3)[0], 200)
+
+    def test_what_a_search_started_ends_with_it(self):
+        # A stand-in for a search stopped during its `git ls-files`: it starts a
+        # process of its own, says its pid, and is then replaced by a newer search.
+        script = ("import subprocess, sys, time; sys.path.insert(0, %r); import workspace_search; "
+                  "workspace_search._children_die_with_me(); "
+                  "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+                  "print(p.pid, flush=True); time.sleep(60)") % str(ROOT)
+        first = dashboard._ws_search_start("tree:page", 1, [sys.executable, "-c", script])
+        grandchild = int(first.stdout.readline())
+        second = dashboard._ws_search_start("tree:page", 2, [sys.executable, "-c", "pass"])
+        try:
+            first.wait(timeout=10)
+            self.assertTrue(_gone_within(grandchild, 10), "the process the search started was left running")
+        finally:
+            for p in (first, second):
+                if p.poll() is None:
+                    p.kill()
+                p.communicate()
+                dashboard._ws_search_done("tree:page", p)
+
+    def test_the_viewer_reaches_the_line_a_search_found(self):
+        d = Path(tempfile.mkdtemp(prefix="wsfv", dir=self.tmp))
+        big = d / "long.txt"
+        big.write_bytes(b"line\n" * 110_000 + b"x needle y\n" + b"tail\n" * 20_000)   # the hit at line 110001, past 512 KB
+        with mock.patch.object(dashboard, "workspace_access_ok", lambda p: True):
+            hits = workspace_search.search(str(d), "needle")["files"]
+            self.assertEqual([m["line"] for m in hits[0]["matches"]], [110_001])
+            code, plain = dashboard.read_workspace_file(str(big))
+            self.assertEqual(code, 200)
+            self.assertTrue(plain["truncated"])
+            self.assertNotIn("needle", plain["text"], "without a line, the first 512 KB")
+            code, at = dashboard.read_workspace_file(str(big), 110_001)
+            self.assertEqual(code, 200)
+            self.assertEqual(at["text"].split("\n")[110_000], "x needle y")
+            self.assertEqual(len(at["text"].encode("utf-8")), 110_000 * 5 + 11 + dashboard._TEXT_AFTER_LINE)
+            self.assertTrue(at["truncated"])
+            self.assertEqual(dashboard.read_workspace_file(str(big), 3)[1]["text"], plain["text"], "a line in the first 512 KB reads no more")
+            huge = d / "huge.txt"
+            huge.write_bytes(b"z\n" * 1_500_000)                                   # 3 MB
+            self.assertEqual(len(dashboard.read_workspace_file(str(huge), 1_400_000)[1]["text"]),
+                             workspace_search.FILE_BYTES_MAX, "never past the largest file a search reads")
 
     def test_a_search_of_this_repo_is_quick(self):
         with mock.patch.object(dashboard, "workspace_access_ok", lambda p: True):
@@ -426,6 +487,110 @@ class Endpoints(unittest.TestCase):
         self.assertEqual(code, 200, d)
         self.assertGreater(d["matches"], 0)
         self.assertLess(ms, 1000, f"{ms:.0f} ms")
+
+
+def _gone_within(pid: int, seconds: float) -> bool:
+    if os.name == "nt":
+        import ctypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.OpenProcess.restype = ctypes.c_void_p
+        k32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        k32.CloseHandle.argtypes = [ctypes.c_void_p]
+        h = k32.OpenProcess(0x100000, False, pid)                   # SYNCHRONIZE
+        if not h:
+            return True
+        try:
+            return k32.WaitForSingleObject(h, int(seconds * 1000)) == 0
+        finally:
+            k32.CloseHandle(h)
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return True
+        time.sleep(0.05)
+    return False
+
+
+class Swaps(unittest.TestCase):
+    """A name listed as an ordinary file or folder, swapped for a link out of
+    the folder before it is read: what opens is outside, so it is passed over."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="wss"))
+        self.root, self.outside = self.tmp / "task", self.tmp / "outside"
+        (self.root / "sub").mkdir(parents=True)
+        (self.root / "sub" / "victim.txt").write_text("plain\n", encoding="utf-8")
+        (self.root / "keep.txt").write_text("needle inside\n", encoding="utf-8")
+        self.outside.mkdir()
+        (self.outside / "victim.txt").write_text("needle outside\n", encoding="utf-8")
+        (self.outside / "secret.txt").write_text("needle secret\n", encoding="utf-8")
+        self.links: list[Path] = []
+
+    def tearDown(self):
+        for link in self.links:
+            with contextlib.suppress(OSError):
+                if link.is_dir() and os.name == "nt":
+                    os.rmdir(link)
+                else:
+                    link.unlink()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def swap_sub_for_junction(self):
+        sub = self.root / "sub"
+        shutil.rmtree(sub)
+        if not _junction(sub, self.outside):
+            self.skipTest("this machine cannot make a junction")
+        self.links.append(sub)
+
+    def found(self, res):
+        return {(f["path"], m["text"]) for f in res["files"] for m in f["matches"]}
+
+    def test_a_folder_swapped_after_it_was_listed_is_not_walked(self):
+        real_scan = workspace_search._scan
+
+        def scan(d, real_root):
+            if os.path.basename(d) == "sub" and not self.links:
+                self.swap_sub_for_junction()             # queued as a folder, a junction by the time it is opened
+            return real_scan(d, real_root)
+        with mock.patch.object(workspace_search, "_scan", scan):
+            res = workspace_search.search(str(self.root), "needle")
+        self.assertTrue(self.links, "the swap happened")
+        self.assertEqual(res["filesListed"], 1, "nothing listed from the folder it now leads to")
+        self.assertEqual(self.found(res), {("keep.txt", "needle inside")})
+
+    def test_a_parent_folder_swapped_between_listing_and_reading(self):
+        real_list = workspace_search.list_files
+
+        def listed(root, enclosing_ignores=False, limit=workspace_search.FILES_MAX):
+            out = real_list(root, enclosing_ignores, limit)
+            self.assertIn("sub/victim.txt", out[0])
+            self.swap_sub_for_junction()
+            return out
+        with mock.patch.object(workspace_search, "list_files", listed):
+            res = workspace_search.search(str(self.root), "needle")
+        self.assertEqual(self.found(res), {("keep.txt", "needle inside")})
+
+    def test_a_file_swapped_for_a_link_between_listing_and_reading(self):
+        real_list = workspace_search.list_files
+        victim = self.root / "sub" / "victim.txt"
+
+        def listed(root, enclosing_ignores=False, limit=workspace_search.FILES_MAX):
+            out = real_list(root, enclosing_ignores, limit)
+            victim.unlink()
+            if not _symlink(victim, self.outside / "victim.txt"):
+                self.skipTest("this machine cannot make a symlink")
+            return out
+        with mock.patch.object(workspace_search, "list_files", listed):
+            res = workspace_search.search(str(self.root), "needle")
+        self.assertEqual(self.found(res), {("keep.txt", "needle inside")})
+
+    def test_a_nul_anywhere_makes_a_file_binary(self):
+        (self.root / "late.dat").write_bytes(b"a" * 9000 + b"\x00needle\n")
+        res = workspace_search.search(str(self.root), "needle")
+        self.assertEqual(self.found(res), {("keep.txt", "needle inside")})
+        self.assertEqual(res["skipped"]["binary"], 1)
 
 
 def _fn(src: str, head: str) -> str:
@@ -463,7 +628,11 @@ class PageWiring(unittest.TestCase):
         self.assertIn("new AbortController()", search)
         self.assertIn("tag: v.uid + ':' + WSF_PAGE", search)
         self.assertIn("if (gen !== f.gen) return;", search, "an answer to an older query is dropped")
-        self.assertIn("f.ctl.abort()", _fn(INDEX, "function wsfSchedule("))
+        schedule = _fn(INDEX, "function wsfSchedule(")
+        self.assertIn("f.ctl.abort()", schedule)
+        self.assertLess(schedule.index("f.gen++;"), schedule.index("if (sent) wsfCancel(v);"), "the hub stops it too, with the newer count")
+        self.assertIn("cancel: '1', tag: v.uid + ':' + WSF_PAGE, n: String(v.find.gen)", _fn(INDEX, "function wsfCancel("))
+        self.assertIn('if q.get("cancel", [""])[0] == "1":', DASHBOARD)
 
     def test_the_query_is_remembered_per_workspace(self):
         self.assertIn("find: { mode: f.mode, q: f.q, cs: f.cs, rx: f.rx }", _fn(INDEX, "function wsPersist("))
@@ -482,6 +651,8 @@ class PageWiring(unittest.TestCase):
     def test_the_viewer_marks_the_match(self):
         self.assertIn("if (view === 'source' && hitNow()) markHit(box, hitNow());", FILEVIEW)
         self.assertIn("mark.fv-hit {", FILEVIEW)
+        self.assertIn("border-radius:var(--r-100); }", FILEVIEW[FILEVIEW.index("mark.fv-hit {"):FILEVIEW.index("mark.fv-hit {") + 160])
+        self.assertIn("(AT_LINE ? '&line=' + AT_LINE : '')", _fn(FILEVIEW, "async function loadText("))
         self.assertIn("range.extractContents()", _fn(FILEVIEW, "function markHit("))
 
     def test_the_hub_serves_both_endpoints(self):

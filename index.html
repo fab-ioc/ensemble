@@ -6301,16 +6301,23 @@ function wsfRank(v) {
 // Typing in Text mode waits a moment and then searches; typing again, or
 // leaving Text, drops the search in flight, here and on the hub.
 function wsfSchedule(v) {
-  const f = v.find;
+  const f = v.find, sent = !!f.ctl;
   clearTimeout(f.timer);
   f.pending = false;
   if (f.ctl) { f.ctl.abort(); f.ctl = null; }
   f.gen++;
+  if (sent) wsfCancel(v);
   f.res = null;
   if (f.mode !== 'text' || f.q.length < WSF_MIN_TEXT) return;
   f.res = { busy: true };
   f.pending = true;
   f.timer = setTimeout(() => wsfSearch(v), 250);
+}
+// Dropping the answer is not enough: the hub stops the search it is running
+// for this box now, instead of when it finishes or times out.
+function wsfCancel(v) {
+  const qs = new URLSearchParams({ cancel: '1', tag: v.uid + ':' + WSF_PAGE, n: String(v.find.gen) });
+  fetch('/api/ws/search?' + qs, { keepalive: true }).catch(() => {});
 }
 async function wsfSearch(v) {
   const f = v.find, root = wsfRoot(v);

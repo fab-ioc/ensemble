@@ -1980,6 +1980,26 @@ def workspace_access_ok(path: str) -> bool:
 
 
 _TEXT_MAX = 512 * 1024   # 512 KB read cap for the file viewer
+_TEXT_AFTER_LINE = 64 * 1024   # opened at a line past the cap: this much of what follows it
+
+
+def _text_cap(raw: bytes, line: int) -> int:
+    """How much of a file the viewer gets: the first 512 KB or, when it opens
+    at a line further in (a search result, a link to name.py:120), as far as
+    that line and a little after it, within the largest file a search reads. So
+    any line a search found can be shown and marked."""
+    if line <= 0 or raw.count(b"\n", 0, _TEXT_MAX) >= line:
+        return _TEXT_MAX
+    # Line N ends at its Nth newline: the shortest start of the file holding N.
+    lo, hi = _TEXT_MAX, len(raw)
+    if raw.count(b"\n") >= line:
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if raw.count(b"\n", 0, mid) >= line:
+                hi = mid
+            else:
+                lo = mid + 1
+    return min(workspace_search.FILE_BYTES_MAX, max(_TEXT_MAX, hi + _TEXT_AFTER_LINE))
 
 
 def list_dir(path: str) -> tuple[int, dict]:
@@ -2012,19 +2032,21 @@ def list_dir(path: str) -> tuple[int, dict]:
     return 200, {"path": str(d), "parent": parent, "entries": entries[:2000]}
 
 
-def read_workspace_file(path: str) -> tuple[int, dict]:
+def read_workspace_file(path: str, line: int = 0) -> tuple[int, dict]:
     if not path or not workspace_access_ok(path):
         return 403, {"error": "path_not_allowed"}
     f = Path(path)
     if not f.exists() or not f.is_file():
         return 404, {"error": "not_found"}
     try:
-        raw = f.read_bytes()
+        with f.open("rb") as fh:
+            raw = fh.read((workspace_search.FILE_BYTES_MAX if line > 0 else _TEXT_MAX) + 1)
         size = f.stat().st_size
     except OSError as e:
         return 500, {"error": f"read_failed: {e}"}
-    truncated = len(raw) > _TEXT_MAX
-    raw = raw[:_TEXT_MAX]
+    cap = _text_cap(raw, line)
+    truncated = len(raw) > cap
+    raw = raw[:cap]
     if b"\x00" in raw:
         return 200, {"path": str(f), "binary": True, "text": "",
                      "size": size, "truncated": truncated}
@@ -2275,8 +2297,11 @@ def _ws_search_start(tag: str, seq: int, argv: list[str]) -> subprocess.Popen | 
     searches typed in quick succession can arrive, or get this far, the other
     way round."""
     def spawn() -> subprocess.Popen:
+        # Its own process group off Windows, so ending it ends what it started
+        # (on Windows the child puts itself in a job that does the same).
         p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                             start_new_session=os.name != "nt")
         p.ws_cancelled = False
         return p
     if not tag:
@@ -2287,15 +2312,51 @@ def _ws_search_start(tag: str, seq: int, argv: list[str]) -> subprocess.Popen | 
             return None
         proc = spawn()
         _WS_SEARCHES[tag] = (seq, proc)
-        if len(_WS_SEARCHES) > _WS_SEARCHES_KEEP:
-            for k in [k for k, (_, p) in _WS_SEARCHES.items() if p is None]:
-                del _WS_SEARCHES[k]
-    old = cur[1] if cur else None
-    if old is not None and old.poll() is None:
-        old.ws_cancelled = True
-        with contextlib.suppress(OSError):
-            old.kill()
+        _ws_searches_prune()
+    _ws_stop(cur[1] if cur else None)
     return proc
+
+
+def _ws_searches_prune() -> None:
+    """Under the lock: past the limit, forget the tags with nothing running."""
+    if len(_WS_SEARCHES) > _WS_SEARCHES_KEEP:
+        for k in [k for k, (_, p) in _WS_SEARCHES.items() if p is None]:
+            del _WS_SEARCHES[k]
+
+
+def _ws_kill(proc: subprocess.Popen) -> None:
+    """End a search child and whatever it started."""
+    with contextlib.suppress(OSError):
+        if os.name == "nt":
+            proc.kill()
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)
+
+
+def _ws_stop(proc: subprocess.Popen | None) -> bool:
+    """End a search that is no longer wanted; whether one was still running."""
+    if proc is None or proc.poll() is not None:
+        return False
+    proc.ws_cancelled = True
+    _ws_kill(proc)
+    return True
+
+
+def ws_search_cancel(tag: str, seq: int) -> tuple[int, dict]:
+    """The box no longer wants a search (its query was cleared or cut short,
+    or Files was chosen): the one running ends now rather than when it is done
+    or timed out, and one it asked for before that reaches the hub late never
+    starts."""
+    tag = tag[:200]
+    if not tag:
+        return 400, {"error": "no_tag"}
+    with _WS_SEARCHES_LOCK:
+        cur = _WS_SEARCHES.get(tag)
+        if cur is not None and cur[0] > seq:
+            return 200, {"stopped": False}
+        _WS_SEARCHES[tag] = (seq, None)
+        _ws_searches_prune()
+    return 200, {"stopped": _ws_stop(cur[1] if cur else None)}
 
 
 def _ws_search_done(tag: str, proc: subprocess.Popen) -> None:
@@ -2332,7 +2393,7 @@ def ws_search(root: str, q: str, case: bool = False, regex: bool = False, tag: s
     try:
         out, err = proc.communicate(req, timeout=deadline + 4)
     except subprocess.TimeoutExpired:
-        proc.kill()
+        _ws_kill(proc)
         proc.communicate()
         return 504, {"error": "search_timed_out", "seconds": deadline + 4}
     finally:
@@ -5431,7 +5492,8 @@ class Handler(BaseHTTPRequestHandler):
             # uses — routing is top-down, so sharing the path would shadow it.
             q = parse_qs(u.query)
             path = (q.get("path", [""])[0] or "").strip()
-            self._send_json(*read_workspace_file(path))
+            line = q.get("line", ["0"])[0]
+            self._send_json(*read_workspace_file(path, int(line) if line.isdigit() else 0))
             return
         if p == "/api/ws/files":
             # Every file of a Workspace folder, for Go to file.
@@ -5442,6 +5504,9 @@ class Handler(BaseHTTPRequestHandler):
             # Search the text of a Workspace folder's files.
             q = parse_qs(u.query)
             n = q.get("n", ["0"])[0]
+            if q.get("cancel", [""])[0] == "1":
+                self._send_json(*ws_search_cancel((q.get("tag", [""])[0] or "").strip(), int(n) if n.isdigit() else 0))
+                return
             self._send_json(*ws_search((q.get("root", [""])[0] or "").strip(), q.get("q", [""])[0] or "",
                                        q.get("case", [""])[0] == "1", q.get("regex", [""])[0] == "1",
                                        (q.get("tag", [""])[0] or "").strip(), int(n) if n.isdigit() else 0))
