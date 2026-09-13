@@ -1184,10 +1184,13 @@ function mdToHtml(src) {
   s = s.replace(/<!--[\s\S]*?-->/g, '');
   // In one left-to-right pass, so whichever starts first wins: \` \[ \] \! are
   // the character itself and start no code span, image or link, while a code
-  // span keeps its backslashes (`C:\dir\`). The other escapes are undone in
-  // inline(), after the links, so a path such as docs\_build\x.md stays whole.
-  s = s.replace(/\\([`\[\]!])|(`+)([^`\n]|[^`\n][^\n]*?[^`\n])\2(?!`)|!\[([^\[\]\n]*)\]\(\s*<?([^()\s<>]+(?:\([^()\s]*\)[^()\s<>]*)*)>?(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*\)/g,
-    (_, escaped, ticks, body, alt, url) => escaped != null ? ph(esc(escaped))
+  // span keeps its backslashes (`C:\dir\`). An escaped backslash is passed over
+  // as a pair, so after \\ the [ ! or ` still counts. The other escapes, \\
+  // among them, are undone in inline(), after the links, so a path such as
+  // docs\_build\x.md or \\server\share\x.md stays whole.
+  s = s.replace(/\\\\|\\([`\[\]!])|(`+)([^`\n]|[^`\n][^\n]*?[^`\n])\2(?!`)|!\[([^\[\]\n]*)\]\(\s*<?([^()\s<>]+(?:\([^()\s]*\)[^()\s<>]*)*)>?(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*\)/g,
+    (m, escaped, ticks, body, alt, url) => m === '\\\\' ? m
+      : escaped != null ? ph(esc(escaped))
       : ticks != null ? ph(codeSpanHtml(ticks.length > 1 ? body.trim() : body))
       : ph(`<img class="md-img" src="${esc(mdImgSrc(url))}" alt="${esc(alt)}" loading="lazy">`));
   s = esc(s);

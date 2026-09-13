@@ -130,6 +130,14 @@ ESCAPES = r'''\[safe](https://example.com)
 \`code\`
 
 `C:\dir\` and \*not em\*
+
+\\[x](https://example.com)
+
+\\![alt](img.png)
+
+\\`y`
+
+\\\[z](https://example.org)
 '''
 
 # Lines that make a careless pattern quadratic: long runs of blanks between a
@@ -241,15 +249,23 @@ class FileViewRendering(unittest.TestCase):
         self.assertIn('<span class="tk-com"># greet</span>', h)
 
     def test_backslash_escapes_start_no_link_image_or_code(self):
-        h = self.out["escapes"]["html"]
-        self.assertIn("<p>[safe](", h)
-        self.assertNotIn(">safe</a>", h, "an escaped [ starts no link")
-        self.assertIn('<p>!<a href="/fileview?path=C%3A%5Cp%5Cdocs%5Cimg.png"', h, "what is left is a link, as on GitHub")
-        self.assertNotIn("<img", h, "an escaped ! starts no image")
-        self.assertIn("<p>`code`</p>", h)
-        self.assertIn(r'<code class="ic">C:\dir\</code>', h, "a code span keeps its backslashes")
-        self.assertIn(" and *not em*</p>", h)
-        self.assertNotIn("\\[", h)
+        p = self.out["escapes"]["html"].split("\n")
+        self.assertEqual(len(p), 8, p)
+        # One backslash: the opener is a character.
+        self.assertTrue(p[0].startswith("<p>[safe]("), p[0])
+        self.assertNotIn(">safe</a>", p[0], "an escaped [ starts no link")
+        self.assertTrue(p[1].startswith('<p>!<a href="/fileview?path=C%3A%5Cp%5Cdocs%5Cimg.png"'), "what is left is a link, as on GitHub")
+        self.assertNotIn("<img", p[1], "an escaped ! starts no image")
+        self.assertEqual(p[2], "<p>`code`</p>")
+        self.assertIn(r'<code class="ic">C:\dir\</code>', p[3], "a code span keeps its backslashes")
+        self.assertTrue(p[3].endswith(" and *not em*</p>"), p[3])
+        # Two backslashes are one, and the opener after them still counts.
+        self.assertRegex(p[4], r'^<p>\\<a href="https://example\.com"[^>]*>x</a></p>$')
+        self.assertTrue(p[5].startswith('<p>\\<img class="md-img"'), p[5])
+        self.assertEqual(p[6], '<p>\\<code class="ic">y</code></p>')
+        # Three: a backslash, then an escaped [.
+        self.assertTrue(p[7].startswith("<p>\\[z]("), p[7])
+        self.assertNotIn(">z</a>", p[7])
 
     def test_long_lines_are_not_quadratic(self):
         for name, r in self.out.items():
