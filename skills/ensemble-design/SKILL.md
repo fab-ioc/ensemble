@@ -311,6 +311,25 @@ pane behind a tab (a live session or a transcript under Activity; files, or "thi
 yet", under Workspace) and which tab is selected by default. Never the set, the order or a label. A
 tab that renames itself when a task starts is a quieter version of tabs that reorder.
 
+**File tabs are not panel tabs.** Inside the Workspace pane, each open file is a tab above the viewer,
+as in an editor; these come and go as files are opened and closed, so the fixed-set rule does not
+apply to them. Their rules instead:
+
+- Opened from the tree, added at the end; a file already open is switched to, never opened twice.
+  The row is never re-sorted.
+- The one showing is `--surface` with the `--accent` underline; the rest sit on `--surface-sunken`
+  in `--fg-muted`. A long name truncates; the full path is the tooltip **and** the path bar under
+  the row, since a phone has no tooltip.
+- Every tab shows its `×`; hover reveals nothing. A middle click also closes. By keyboard the row is
+  one stop (roving `tabindex`): arrows, Home and End move, Enter or Space shows, Delete closes. Keys
+  act only on a focused tab: no page-wide shortcuts.
+- A tab keeps its place: its viewer stays loaded (hidden by `visibility`, never `display`, and never
+  moved in the DOM), and reports its view, Wrap, marked lines and scroll so a reload restores them.
+- A tab whose file has gone keeps its place and says so: struck-through name, "no longer exists" in
+  its label, and a plain note with **Close tab** where the file was. Not red: nothing is broken.
+- The row scrolls sideways within itself, never the page; on a phone each tab and its `×` are
+  `--touch-min`.
+
 ### Run chip
 
 `● working` · `● idle` · `not started` · `not running`.

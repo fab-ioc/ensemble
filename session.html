@@ -808,17 +808,23 @@ function codeSpanHtml(body) {
 // has at most four words ("New folder", "War of the Worlds.md"). A code span
 // or [text](target) takes any path as written. A path's & arrives as &amp;.
 // A markdown target may hold one level of brackets: [x](https://w/Foo_(bar)).
+// Linear on any line: the expression is tried from every character, so no
+// part of it may scan past the place where the next try would start. A link's
+// text stops at a [, and a path starts at a ( or _ only where that character
+// could not be inside the path itself; otherwise a 50,000-character line of
+// [ or (/ took seconds, one scan to its end per opener.
 const winPathSure = p => p.split(/[\\\/]/).every(s => !s.includes(' ') || (/^[A-Z0-9]/.test(s) && s.split(' ').length <= 4));
 const LINK_RE = (() => {
   const c = String.raw`(?:[^\s"'<>|?*,;:)\]\\\/&]|&amp;)`, f = String.raw`(?:[^\s"'<>|?*,;:)\]\\\/&.]|&amp;)`;
   const dir = `${c}+(?: ${c}+)*`, file = `(?:${f}+ )*${c}*\\.\\w{1,8}`;
   const line = String.raw`(?::\d+(?::\d+)?)?`, pre = String.raw`(^|[\s(*_])`;
+  const nixCh = String.raw`(?:[^\s"'<>|?*,;)\]&]|&amp;)`;
   return new RegExp([
-    String.raw`\[([^\]\n]+)\]\(((?:[^()\n]|\([^()\n]*\))+)\)`,
+    String.raw`\[([^\[\]\n]+)\]\(((?:[^()\n]|\([^()\n]*\))+)\)`,
     pre + String.raw`((?:https?|file):\/\/[^\s<*]+)`,
     pre + String.raw`((?:[A-Za-z]:[\\\/]|\\\\)(?:` + dir + String.raw`[\\\/])*` + file + line + String.raw`)(?![\w\\\/-])`,
-    pre + String.raw`((?:~\/|\/)(?:[^\s"'<>|?*,;)\]&]|&amp;)*\.\w{1,8}` + line + String.raw`)(?![\w\\\/-])`,
-    pre + String.raw`((?:\.\.?[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}` + line
+    String.raw`(^|[\s*]|(?<!` + nixCh + String.raw`)[(_])((?:~\/|\/)` + nixCh + String.raw`*\.\w{1,8}` + line + String.raw`)(?![\w\\\/-])`,
+    String.raw`(^|[\s(*]|(?<![\w.\\\/-])_)((?:\.\.?[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}` + line
       + String.raw`|[\w-]+\.(?:md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|png|jpg|jpeg|gif|svg|sh|ps1|sql|xml|log|ini|cfg)` + line + String.raw`)(?=[\s.,;:)\]]|$)`,
     String.raw`\b(room-[0-9a-f]{8})\b`,
   ].join('|'), 'g');
