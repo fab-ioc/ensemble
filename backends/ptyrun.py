@@ -230,19 +230,22 @@ class PtySession:
             return data.encode("utf-8", "replace")
         return data                           # ptyprocess returns bytes
 
-    def write(self, data) -> None:
+    def write(self, data) -> bool:
+        """Type `data` into the terminal. False when it would not take it (its
+        process has ended or its pipe has closed), so a caller can say so."""
         if isinstance(data, bytes):
             data = data.decode("utf-8", "replace")
         payload = data if IS_WINDOWS else data.encode("utf-8", "replace")
+        try:
+            self._proc.write(payload)
+        except (OSError, EOFError):
+            return False
         if "\r" in data or "\n" in data:
             # Something was submitted to the agent — a human answer typed in
             # the terminal, or the chat doorbell. Keystrokes without an Enter
             # (focus events, a half-typed line) are not an answer.
             self._last_submit = time.time()
-        try:
-            self._proc.write(payload)
-        except (OSError, EOFError):
-            pass
+        return True
 
     def send_line(self, text: str) -> None:
         """Type `text` then submit with Enter. The Enter is a SEPARATE write

@@ -484,7 +484,7 @@
   #cmt-tray .cmt-item-x:hover { color:var(--c-danger-fg); }
   #cmt-tray .cmt-submit:disabled { background:var(--surface-sunken); color:var(--fg-disabled); cursor:default; }
   /* Why Submit is off, or why the last send did not arrive. */
-  #cmt-tray .cmt-state { padding:8px 11px; border-bottom:1px solid var(--border); font-size:var(--fs-200); line-height:16px; color:var(--fg-muted); }
+  #cmt-tray .cmt-state { padding:8px 12px; border-bottom:1px solid var(--border); font-size:var(--fs-200); line-height:16px; color:var(--fg-muted); }
   #cmt-tray .cmt-state.err { color:var(--c-danger-fg); }
   .to { font-weight:400; opacity:.6; text-transform:none; }
   .mention { color:var(--c-discovery-fg); font-weight:600; background:var(--c-discovery-bg); border-radius:var(--r-100); padding:0 3px; }
@@ -643,7 +643,7 @@
       <div style="display:flex; gap:8px; align-items:center">
         <span class="dim">To</span>
         <select id="to"><option value="">Everyone</option></select>
-        <button id="send">Send</button>
+        <button id="send" disabled>Send</button>
       </div>
     </div>
   </div>
@@ -1671,6 +1671,13 @@ $('#input').addEventListener('input', () => {
 });
 $('#send').onclick = async () => {
   const t = $('#input').value.trim(); if (!t) return;
+  // Until the session has loaded, whether this is typed into a terminal or
+  // said in the room is not known (Send starts off, and turns on in refresh).
+  if (!ROOM_OBJ) {
+    SEND_ERR = 'Not sent: this session has not loaded yet. Your message is still in the box.';
+    setText($('#hint'), SEND_ERR);
+    return;
+  }
   // Solo routes straight into the agent's PTY, never the room relay ("use
   // chat_read"): a solo agent has no chat tools, and a solo view never shows
   // the room's messages. Codex mints its own session id only once it has
@@ -1814,33 +1821,65 @@ $('#theme').onclick = async () => {
 // They are dropped only once the agent really took them. The tray is drawn
 // again only when the comments, or what Submit can do, change: rebuilt on every
 // poll it lost the pointer's hover, its scroll and any click in progress.
-const COMMENTS = [];        // {cid, mid, from, start, end, quote, note}
-const CMT_KEY = 'cd-comments:' + (ROOM || '');
+const COMMENTS = [];        // {cid, at, mid, from, start, end, quote, note}
+// One stored entry per comment. The same chat can be open twice (the PO's
+// drawer and its own window): adding writes only that comment's entry and
+// removing deletes only its own, so neither copy can overwrite the other's.
+const CMT_PREFIX = 'cd-comment:' + (ROOM || '') + ':';
 let CMT_SENDING = false, CMT_ERROR = '';
+// Comments this browser would not store (storage full or blocked): this page
+// keeps them, tries again on each change, and says a reload would lose them.
+const CMT_UNSTORED = new Map();
+// Comments removed here whose stored entry could not be deleted yet.
+const CMT_GONE = new Set();
 let _cmtComposerOpen = false;
 let _selBtn = null;
+let _cmtLastAt = 0;
 const cmtId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-// The stored comments, or null when storage cannot be read (the page's own
-// copy then stands).
+const cmtNow = () => (_cmtLastAt = Math.max(Date.now(), _cmtLastAt + 1));
+// The stored comments, or null when storage cannot be read.
 function cmtStored() {
   try {
-    const v = JSON.parse(localStorage.getItem(CMT_KEY) || '[]');
-    return Array.isArray(v) ? v.filter(c => c && c.cid && typeof c.quote === 'string' && typeof c.note === 'string') : [];
+    const out = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(CMT_PREFIX)) continue;
+      try {
+        const c = JSON.parse(localStorage.getItem(k));
+        if (c && c.cid && typeof c.quote === 'string' && typeof c.note === 'string') out.push(c);
+      } catch (e) {}
+    }
+    return out;
   } catch (e) { return null; }
 }
-function cmtAdopt(list) { if (list) COMMENTS.splice(0, COMMENTS.length, ...list); }
-// Every change starts from what is stored: the same chat can be open twice
-// (the PO's drawer and its own window), and one copy must not drop comments
-// the other added.
-function cmtChange(fn) {
-  cmtAdopt(cmtStored());
-  fn();
-  try {
-    if (COMMENTS.length) localStorage.setItem(CMT_KEY, JSON.stringify(COMMENTS));
-    else localStorage.removeItem(CMT_KEY);
-  } catch (e) {}
-  clearHighlights();
-  applyComments();
+// COMMENTS again from what is stored plus what only this page holds. When
+// storage cannot be read at all, the page's own list stands.
+function cmtSync() {
+  for (const [cid, c] of CMT_UNSTORED) {
+    try { localStorage.setItem(CMT_PREFIX + cid, JSON.stringify(c)); CMT_UNSTORED.delete(cid); } catch (e) {}
+  }
+  for (const cid of CMT_GONE) {
+    try { localStorage.removeItem(CMT_PREFIX + cid); CMT_GONE.delete(cid); } catch (e) {}
+  }
+  const stored = cmtStored();
+  if (!stored) return;
+  const list = stored.filter(c => !CMT_GONE.has(c.cid) && !CMT_UNSTORED.has(c.cid)).concat([...CMT_UNSTORED.values()]);
+  list.sort((a, b) => (a.at || 0) - (b.at || 0) || (a.cid < b.cid ? -1 : a.cid > b.cid ? 1 : 0));
+  COMMENTS.splice(0, COMMENTS.length, ...list);
+}
+function cmtChanged() { cmtSync(); clearHighlights(); applyComments(); }
+function cmtAdd(c) {
+  COMMENTS.push(c);
+  try { localStorage.setItem(CMT_PREFIX + c.cid, JSON.stringify(c)); } catch (e) { CMT_UNSTORED.set(c.cid, c); }
+  cmtChanged();
+}
+function cmtRemove(cids) {
+  for (const cid of cids) {
+    const i = COMMENTS.findIndex(z => z.cid === cid); if (i >= 0) COMMENTS.splice(i, 1);
+    CMT_UNSTORED.delete(cid);
+    try { localStorage.removeItem(CMT_PREFIX + cid); } catch (e) { CMT_GONE.add(cid); }
+  }
+  cmtChanged();
 }
 
 function _offsetInEl(root, node, nodeOffset) {
@@ -1950,7 +1989,7 @@ function openComposer(data) {
   pop.querySelector('.cmt-add').onclick = () => {
     const note = ta.value.trim(); if (!note) { ta.focus(); return; }
     close();
-    cmtChange(() => COMMENTS.push({ cid: cmtId(), mid: data.mid, from: data.from, start: data.start, end: data.end, quote: data.quote, note }));
+    cmtAdd({ cid: cmtId(), at: cmtNow(), mid: data.mid, from: data.from, start: data.start, end: data.end, quote: data.quote, note });
     const s = window.getSelection(); if (s) s.removeAllRanges();
   };
   ta.addEventListener('keydown', e => {
@@ -1963,10 +2002,12 @@ function openComposer(data) {
 // agent once its screen has settled, and comments typed alongside would race
 // it. So Submit waits, the comments stay, and Resume is the session's own.
 function cmtSubmitState() {
-  if (CMT_SENDING) return { can: false, label: 'Sending…', note: '' };
-  if (!ROOM_OBJ) return { can: false, label: 'Submit', note: '' };
-  if (!ROOM_LIVE) return { can: false, label: 'Submit', note: 'This session is not running, so comments cannot reach it. They are kept here: resume the session, then submit them.' };
-  return { can: true, label: 'Submit', note: CMT_ERROR, err: !!CMT_ERROR };
+  const s = CMT_SENDING ? { can: false, label: 'Sending…', note: '' }
+    : !ROOM_OBJ ? { can: false, label: 'Submit', note: '' }
+    : !ROOM_LIVE ? { can: false, label: 'Submit', note: 'This session is not running, so comments cannot reach it. They are kept here: resume the session, then submit them.' }
+    : { can: true, label: 'Submit', note: CMT_ERROR, err: !!CMT_ERROR };
+  if (CMT_UNSTORED.size) s.note = (s.note ? s.note + ' ' : '') + 'This browser would not save some of them, so reloading this page would lose those.';
+  return s;
 }
 function renderCmtTray() {
   let tray = document.getElementById('cmt-tray');
@@ -1996,20 +2037,19 @@ function renderCmtTray() {
 function cmtTrayClick(e) {
   const t = e.target;
   if (t.closest('.cmt-submit')) { submitComments(); return; }
-  if (t.closest('.cmt-clear')) { cmtChange(() => { COMMENTS.length = 0; }); return; }
+  if (t.closest('.cmt-clear')) { cmtRemove(COMMENTS.map(c => c.cid)); return; }
   const item = t.closest('.cmt-item');
   if (!item) return;
   const cid = item.dataset.cid;
-  if (t.closest('.cmt-item-x')) {
-    cmtChange(() => { const i = COMMENTS.findIndex(z => z.cid === cid); if (i >= 0) COMMENTS.splice(i, 1); });
-    return;
-  }
+  if (t.closest('.cmt-item-x')) { cmtRemove([cid]); return; }
   const mk = document.querySelector(`#msgs mark.cmt-hl[data-cid="${cid}"]`);
   if (mk) mk.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 async function submitComments() {
   if (CMT_SENDING || !COMMENTS.length) return;
   if (!cmtSubmitState().can) { renderCmtTray(); return; }
+  cmtSync();                 // not what another copy of this chat already sent
+  if (!COMMENTS.length) { renderCmtTray(); return; }
   const batch = COMMENTS.slice();
   const authors = [...new Set(batch.map(c => c.from))];
   const to = authors.length === 1 ? authors[0] : '';
@@ -2027,19 +2067,15 @@ async function submitComments() {
   CMT_SENDING = false;
   if (!sent) { renderCmtTray(); return; }
   // Drop what went, and only that: a comment added during the send stays.
-  cmtChange(() => {
-    for (const c of batch) { const i = COMMENTS.findIndex(z => z.cid === c.cid); if (i >= 0) COMMENTS.splice(i, 1); }
-  });
+  cmtRemove(batch.map(c => c.cid));
   if (SOLO_MODE) setTimeout(checkSolo, 1200); else refresh();
 }
 // Another copy of this chat changed the comments.
 window.addEventListener('storage', e => {
-  if (e.key !== CMT_KEY && e.key !== null) return;
-  const list = cmtStored();
-  if (!list) return;
-  cmtAdopt(list); clearHighlights(); applyComments();
+  if (e.key !== null && !String(e.key).startsWith(CMT_PREFIX)) return;
+  cmtChanged();
 });
-cmtAdopt(cmtStored());
+cmtSync();
 renderCmtTray();
 // ---- In-place review comments: end
 // A highlighted passage points at its comment in the tray.

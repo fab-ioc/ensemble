@@ -6245,7 +6245,10 @@ class Handler(BaseHTTPRequestHandler):
                                                    "try again shortly"})
                     return
                 sess.last_input = time.time()
-                sess.write(data.get("data", ""))
+                if not sess.write(data.get("data", "")):
+                    # It ended after the check above: the input went nowhere.
+                    self._send_json(410, {"error": "the session has stopped"})
+                    return
             self._send_json(200, {"ok": True})
             return
         if p == "/api/pty/resize":

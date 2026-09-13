@@ -1,8 +1,9 @@
 """Review comments in the chat page (session.html) are never lost and never
 flicker.
 
-The comment code runs in Node against a small stand-in for the page, twice
-over one shared localStorage (a reload), and checks that:
+The comment code runs in Node against a small stand-in for the page, several
+times over one shared localStorage (a reload, or the same chat open twice),
+and checks that:
 
 * the tray is drawn once and not again while polls re-render with the same
   comments;
@@ -10,7 +11,9 @@ over one shared localStorage (a reload), and checks that:
 * a stopped session's Submit is off, says why and sends nothing;
 * a send the hub refused (a stopped terminal, a handover, no answer, Enter
   not taken) keeps every comment and says so in the tray;
-* a send that went drops exactly what went, and a comment added meanwhile stays.
+* a send that went drops exactly what went, and a comment added meanwhile stays;
+* storage that will not write, or will not read, loses nothing in the page;
+* two copies of the chat, one of them out of date, never drop each other's.
 
 Skipped without Node.
 """
@@ -26,7 +29,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SRC = (ROOT / "session.html").read_text(encoding="utf-8").replace("\r\n", "\n")
 NODE = shutil.which("node")
-KEY = "cd-comments:room-test0001"
+PREFIX = "cd-comment:room-test0001:"
 
 
 def js_function(src: str, name: str) -> str:
@@ -41,8 +44,16 @@ def comments_block(src: str) -> str:
 
 JS = r"""
 const vm = require('vm');
-const { code, key } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+const { code, prefix } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const store = new Map();
+const broken = { set: false, get: false };
+const localStorage = {
+  get length() { if (broken.get) throw new Error('SecurityError'); return store.size; },
+  key: i => { if (broken.get) throw new Error('SecurityError'); return [...store.keys()][i] ?? null; },
+  getItem: k => { if (broken.get) throw new Error('SecurityError'); return store.has(k) ? store.get(k) : null; },
+  setItem: (k, v) => { if (broken.set) throw new Error('QuotaExceededError'); store.set(k, String(v)); },
+  removeItem: k => { if (broken.set) throw new Error('QuotaExceededError'); store.delete(k); },
+};
 let replies = [];
 const posts = [];
 function page() {
@@ -57,9 +68,7 @@ function page() {
   }
   const storage = [];
   const ctx = {
-    console, setTimeout,
-    localStorage: { getItem: k => store.has(k) ? store.get(k) : null,
-                    setItem: (k, v) => store.set(k, String(v)), removeItem: k => store.delete(k) },
+    console, setTimeout, localStorage,
     document: { getElementById: id => els[id] || null, createElement: () => new El(),
                 querySelector: () => null, querySelectorAll: () => [],
                 body: { appendChild(n) { els[n.id] = n; } } },
@@ -84,18 +93,21 @@ function page() {
     globalThis.t = {
       set: (k, v) => eval(k + ' = v'),
       notes: () => COMMENTS.map(c => c.note),
-      add: note => cmtChange(() => COMMENTS.push({ cid: cmtId(), mid: 's1', from: 'claude', start: 0, end: 5, quote: 'hello', note })),
+      add: note => cmtAdd({ cid: cmtId(), at: cmtNow(), mid: 's1', from: 'claude', start: 0, end: 5, quote: 'hello', note }),
       applyComments, renderCmtTray, submitComments,
       tray: () => document.getElementById('cmt-tray'),
     };`, ctx);
   ctx.t.storage = storage;
+  ctx.t.hear = () => storage.forEach(f => f({ key: null }));
   return ctx.t;
 }
-const stored = () => JSON.parse(store.get(key) || '[]').map(c => c.note);
+const stored = () => [...store].filter(([k]) => k.startsWith(prefix)).map(([, v]) => JSON.parse(v))
+  .sort((a, b) => a.at - b.at).map(c => c.note);
+const tick = () => new Promise(r => setTimeout(r, 5));
 (async () => {
   const out = {};
   const A = page();
-  A.add('one'); A.add('two');
+  A.add('one'); await tick(); A.add('two');
   const w = A.tray().writes;
   for (let i = 0; i < 10; i++) { A.applyComments(); A.renderCmtTray(); }   // what each poll does
   out.pollWrites = A.tray().writes - w;
@@ -133,14 +145,50 @@ const stored = () => JSON.parse(store.get(key) || '[]').map(c => c.note);
   out.sentTyped = posts.slice(n0).map(p => p[1].data);
   out.errorCleared = !/Not sent/.test(B.tray().innerHTML);
 
-  A.storage.forEach(f => f({ key }));                  // the other copy hears of it
+  A.storage.forEach(f => f({ key: prefix + 'x' }));   // the other copy hears of it
   out.otherCopy = A.notes();
 
   B.set('SOLO_MODE', false);
   replies = [[200, { ok: true }]];
   await B.submitComments();
-  out.roomSent = B.notes(); out.keyGone = !store.has(key); out.roomPost = posts[posts.length - 1];
+  out.roomSent = B.notes(); out.storeEmpty = stored().length === 0; out.roomPost = posts[posts.length - 1];
   out.trayGone = !B.tray();
+  A.hear();
+
+  // Storage that will not write: nothing is lost in the page, and it says a
+  // reload would lose them; once storage works again they are stored.
+  broken.set = true;
+  const W = page();
+  W.add('first'); W.add('second');
+  out.writeFails = { notes: W.notes(), stored: stored(), html: W.tray().innerHTML };
+  broken.set = false;
+  W.add('third');
+  out.writeRecovers = { notes: W.notes(), stored: stored(), html: W.tray().innerHTML };
+  replies = [[200, { ok: true }], [200, { ok: true }]];
+  await W.submitComments();
+  out.writeCleared = stored();
+
+  // Storage that will not read: the page's own list stands.
+  broken.get = true;
+  const R = page();
+  R.add('x'); R.add('y');
+  out.readFails = R.notes();
+  broken.get = false;
+  replies = [[200, { ok: true }], [200, { ok: true }]];
+  await R.submitComments();
+  out.readCleared = { notes: R.notes(), stored: stored() };
+
+  // The same chat open twice, and Q never hears of P's changes: P sends while
+  // Q adds, then Q adds again from its out-of-date list.
+  const P = page(), Q = page();
+  P.add('one'); await tick(); P.add('two'); await tick();
+  replies = [[200, { ok: true }], [200, { ok: true }]];
+  const pSending = P.submitComments();
+  Q.add('three');
+  out.midSend = stored();
+  await pSending;
+  await tick(); Q.add('four');
+  out.twoCopies = { p: P.notes(), q: Q.notes(), stored: stored() };
   console.log(JSON.stringify(out));
 })().catch(e => { console.error(e); process.exit(1); });
 """
@@ -151,7 +199,7 @@ class ReviewComments(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         code = "\n".join(js_function(SRC, n) for n in ("sendSolo", "postOk", "sendErrorText")) + comments_block(SRC)
-        out = subprocess.run([NODE, "-e", JS], input=json.dumps({"code": code, "key": KEY}), capture_output=True,
+        out = subprocess.run([NODE, "-e", JS], input=json.dumps({"code": code, "prefix": PREFIX}), capture_output=True,
                              text=True, encoding="utf-8", timeout=60)
         if out.returncode != 0:
             raise AssertionError(out.stderr)
@@ -195,17 +243,53 @@ class ReviewComments(unittest.TestCase):
         self.assertEqual(url, "/api/room/say")
         self.assertEqual(body["to"], "claude")
         self.assertEqual(self.r["roomSent"], [])
-        self.assertTrue(self.r["keyGone"])
+        self.assertTrue(self.r["storeEmpty"])
         self.assertTrue(self.r["trayGone"])
+
+    def test_storage_that_will_not_write_loses_nothing(self):
+        r = self.r["writeFails"]
+        self.assertEqual(r["notes"], ["first", "second"], "a comment the browser would not store was dropped")
+        self.assertEqual(r["stored"], [])
+        self.assertIn("reloading this page would lose", r["html"])
+        r = self.r["writeRecovers"]
+        self.assertEqual(r["notes"], ["first", "second", "third"])
+        self.assertEqual(r["stored"], ["first", "second", "third"], "not stored once storage worked again")
+        self.assertNotIn("reloading this page would lose", r["html"])
+        self.assertEqual(self.r["writeCleared"], [])
+
+    def test_storage_that_will_not_read_loses_nothing(self):
+        self.assertEqual(self.r["readFails"], ["x", "y"])
+        self.assertEqual(self.r["readCleared"], {"notes": [], "stored": []})
+
+    def test_two_copies_never_drop_each_others(self):
+        self.assertEqual(self.r["midSend"], ["one", "two", "three"], "an out-of-date copy overwrote the other's")
+        r = self.r["twoCopies"]
+        self.assertEqual(r["stored"], ["three", "four"], "the send's clean-up or a stale add dropped a comment")
+        self.assertEqual(r["p"], ["three"])
+        self.assertEqual(r["q"], ["three", "four"])
 
     def test_only_render_cmt_tray_writes_the_tray(self):
         self.assertEqual(len(re.findall(r"tray\.innerHTML\s*=", SRC)), 1)
 
 
+class SendBeforeTheSessionLoads(unittest.TestCase):
+    """Before the first refresh the page cannot tell a solo session (typed
+    into its terminal) from a room (said in the chat), so Send starts off and
+    refuses, keeping the text, until the session has loaded."""
+
+    def test_send_starts_off_and_waits_for_the_session(self):
+        self.assertRegex(SRC, r'<button id="send" disabled>')
+        handler = SRC[SRC.index("$('#send').onclick"):]
+        handler = handler[:handler.index("\n};\n")]
+        guard = handler.index("if (!ROOM_OBJ)")
+        self.assertLess(guard, handler.index("if (SOLO_MODE)"))
+        self.assertNotIn("value = ''", handler[guard:handler.index("if (SOLO_MODE)")])
+
+
 class StoppedTerminalInput(unittest.TestCase):
-    """Typing into a terminal whose process has ended, but which is still
-    listed until it is reaped, is refused (410) rather than answered 200 for a
-    write that went nowhere."""
+    """Typing into a terminal whose process has ended is refused (410) rather
+    than answered 200 for a write that went nowhere: whether it is still listed
+    until it is reaped, or it ended just as the input was written."""
 
     def post(self, sess):
         import io
@@ -230,21 +314,47 @@ class StoppedTerminalInput(unittest.TestCase):
             meta: dict = {}
             got = None
 
-            def __init__(self, alive):
-                self._alive = alive
+            def __init__(self, alive, takes=True):
+                self._alive, self._takes = alive, takes
 
             def alive(self):
                 return self._alive
 
             def write(self, data):
                 self.got = data
+                return self._takes
 
-        dead, live = Term(False), Term(True)
+        dead, ended, live = Term(False), Term(True, takes=False), Term(True)
         self.assertEqual(self.post(None), b"404")
         self.assertEqual(self.post(dead), b"410")
         self.assertIsNone(dead.got)
+        self.assertEqual(self.post(ended), b"410")
         self.assertEqual(self.post(live), b"200")
         self.assertEqual(live.got, "hi")
+
+    def test_a_terminal_write_says_whether_it_went(self):
+        from backends import ptyrun
+
+        class Proc:
+            def __init__(self, error=None):
+                self.error, self.got = error, []
+
+            def write(self, payload):
+                if self.error:
+                    raise self.error
+                self.got.append(payload)
+
+        for error in (EOFError("Pty is closed"), OSError("broken pipe")):
+            with self.subTest(error=type(error).__name__):
+                s = ptyrun.PtySession.__new__(ptyrun.PtySession)
+                s._proc = Proc(error)
+                self.assertFalse(s.write("\r"))
+                self.assertEqual(s.last_submit(), 0.0, "a failed Enter counted as an answer")
+        s = ptyrun.PtySession.__new__(ptyrun.PtySession)
+        s._proc = Proc()
+        self.assertTrue(s.write("hi\r"))
+        self.assertEqual(len(s._proc.got), 1)
+        self.assertGreater(s.last_submit(), 0.0)
 
 
 if __name__ == "__main__":
