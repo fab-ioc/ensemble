@@ -167,14 +167,17 @@ on a hovered row, which is exactly when the user is pointing at it.
 ### Code
 
 `--code-kw` · `--code-str` · `--code-num` · `--code-fn` · `--code-ty` · `--code-attr` · `--code-meta` ·
-`--code-tag` · `--code-com`. Syntax colours for the file viewer, which highlights code with its own
-highlighter (`HL` in `fileview.html`): **no CDN**, because the hub is read over a tailnet that may have
-no route out, and a highlighter that never arrived left every file grey. Only `fileview.html` highlights
-code, so the set lives there; a page that starts highlighting copies it.
+`--code-tag` · `--code-com`. Syntax colours for code, highlighted by the product's own highlighter,
+`static/hl.js` (the global `HL`): **no CDN**, because the hub is read over a tailnet that may have no
+route out, and a highlighter that never arrived left every file grey. `fileview.html` (the Workspace
+viewer) and `index.html` (the Changes tab's diffs) both load that one file; **never copy it into a
+page**. Tokens, though, are per page: each page that highlights carries the `--code-*` set in every
+theme block, with the same values, and its own `.tk-*` rules.
 
 - **One hue per job, and no red.** Red means wrong, and a keyword is not wrong. A log's `ERROR` is, so
-  it is `--c-danger-fg`; `WARNING` is `--c-warning-fg`. A diff row uses the Changes tab's washes
-  (`--c-success-bg`, `--c-danger-bg`, `--c-progress-bg`), not code colours.
+  it is `--c-danger-fg`; `WARNING` is `--c-warning-fg`. A diff row's ground is `--diff-add-bg` /
+  `--diff-del-bg` (see *Diff* in §4), a hunk header `--c-progress-bg`; the code on them keeps its code
+  colours.
 - **Measured on every ground code sits on** (`--surface`, `--surface-sunken`, `--bg`): 5:1 or better on
   the light grounds, 6:1 on Dark and Dim (a colour at the bare minimum reads as dim there), 5:1 on
   Fjord, 7:1 in High contrast. Comments are `--fg-muted`, so they meet its floor.
@@ -329,6 +332,54 @@ apply to them. Their rules instead:
   its label, and a plain note with **Close tab** where the file was. Not red: nothing is broken.
 - The row scrolls sideways within itself, never the page; on a phone each tab and its `×` are
   `--touch-min`.
+
+### Diff
+
+A changed file in a Changes tab (the task's and the project's) reads as in an IDE. The reference is
+`drShow` in `index.html`.
+
+- **Highlighted by `static/hl.js`**, each run of changed lines twice over: as the new file (context and
+  added lines) and as the old (context and removed lines), so a string opened on a context line keeps
+  its colour on the added line under it.
+- **Grounds:** `--diff-add-bg` and `--diff-del-bg` are the success and danger washes mixed with
+  `--surface` by `--diff-wash`, set per theme to the strongest mix at which every code colour and
+  `--fg-muted` keep 4.5:1 (7:1 in High contrast): Light 90%, Dark 60%, High contrast 65%, Dim, Paper
+  and Fjord 100%. A theme added later measures its own. A full-strength wash failed Dark (4.1:1).
+- **Gutter:** old and new line numbers side by side, drawn from `data-o` / `data-n` by `::before` and
+  `::after`, never text. Its width follows the largest number (`--gw`).
+- **A sign before each changed line** (`+`, `−`), drawn by `::before`: colour is never the only signal,
+  and a copy of the code carries no signs.
+- **Long lines wrap** within the diff; the page never scrolls sideways. Rows are laid out in chunks of
+  500 with `content-visibility: auto`, so a 5,000-line diff opens at once.
+- The file bar says what the diff is (path, `+N −N`, how to comment) and offers **Open file**, which
+  opens it in a Workspace tab at its first changed line. `diff --git`/`index`/`---`/`+++` lines are not
+  shown: the bar says it.
+
+### Line comments
+
+Comments on a diff's lines reach the task's owner. They are the chat's review comments, not a second
+mechanism: the same store (`static/comments.js`: one stored entry per comment, kept until the hub has
+them), the same tray, the same `## Review comments (N)` message.
+
+- **Start:** a click on a line number, or a selection across lines (followed through
+  `selectionchange`). On a touch screen a tap anywhere on a line. **Range:** Shift-click, or on a touch
+  screen a second tap, while a new comment is open. The lines under it take `--selected-bg` in the
+  gutter and a 2px `--accent` inset: selection, as §1 allows.
+- **The comment box opens under the last line**, not as a popover, with **Open at line N**, Cancel and
+  Add comment. Ctrl/⌘+Enter adds, Escape cancels.
+- **A comment shows under its line** as a card lined up with the code: `Not sent` (warning lozenge:
+  it needs Submit) with Edit and Remove, or `Sent` (neutral lozenge) with when, and no controls. A diff
+  that changed since keeps a comment under the same code nearby, else lists it above the diff under
+  "On lines no longer in this diff". Nothing is lost silently.
+- **The tray** is docked under the diff (`.cmt-tray`): count, Submit (primary), Copy, Clear, the unsent
+  comments, and a line saying why Submit is off (a task that is not running) or why a send failed. A
+  project's tray also picks the task chat. Submit sends one message, marks what went sent, and leaves a
+  comment added or edited meanwhile unsent. A send carries a key made from the comments as they read
+  (`drKey`), and the hub posts a key once, so two tabs or a retry never deliver the same comments
+  twice; where the browser has a lock (https, localhost) a second tab also waits and sends nothing.
+- **Phone:** every diff line is `--touch-min` tall, since a tap on it starts a comment (a line that
+  wraps is taller anyway); comment cards span the width, every control is `--touch-min`, the comment
+  field is `--fs-400`.
 
 ### Run chip
 

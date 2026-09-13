@@ -344,7 +344,15 @@ class TabsAreWired(unittest.TestCase):
         self.assertIn("tr.open.forEach(p => v.open.add(p));", INDEX, "saved folders go through wsTreeFrom")
 
     def test_images_and_pdfs_say_when_missing_and_pages_follow_their_own_scroll(self):
-        self.assertIn("(imgExt.includes(ext) || ext === 'pdf') && (await fvStatusOf(src)) === 404) { notFound(); return; }", FILEVIEW)
+        # Read once: the copy read is what is shown, so a file deleted in
+        # between says it is missing instead of showing a broken image.
+        media = FILEVIEW[FILEVIEW.index("if (MEDIA[ext]) {"):]
+        media = media[:media.index("\n  }\n")]
+        self.assertEqual(media.count("fetch("), 1)
+        self.assertIn("if (r && r.status === 404) { notFound(); return; }", media)
+        self.assertIn("URL.createObjectURL(", media)
+        self.assertIn('src="${url}"', media)
+        self.assertNotIn('src="${src}"', media)
         self.assertIn("ifr.contentDocument.addEventListener('scroll', onScroll, true)", FILEVIEW)
         self.assertIn("{ view, wrap: WRAP, marks: { ...marked } }", FILEVIEW)
 

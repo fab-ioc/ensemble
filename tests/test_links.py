@@ -446,41 +446,39 @@ CHANGES_JS = r"""
 const reg = new Map();
 class El {
   constructor() { this.dataset = {}; this.isConnected = false; this._q = {}; this._h = ''; }
-  set innerHTML(h) {
-    this._h = h; this._q = {};
-    if (this.id === 'ch-tray') {
-      const options = [...h.matchAll(/<option value="([^"]*)"/g)].map(m => ({ value: m[1] }));
-      reg.set('ch-to', { options, value: options.length ? options[0].value : '' });
-    }
-  }
+  set innerHTML(h) { this._h = h; this._q = {}; }
   get innerHTML() { return this._h; }
-  remove() { reg.delete(this.id); if (this.id === 'ch-tray') reg.delete('ch-to'); this.isConnected = false; }
   querySelectorAll() { return []; }
   querySelector(s) {
-    return this._q[s] || (this._q[s] = { value: '', focus() {}, addEventListener() {}, click() {},
+    return this._q[s] || (this._q[s] = { value: '', focus() {}, addEventListener() {},
                                          classList: { add() {}, remove() {}, toggle() {} } });
   }
 }
-let lastCreated = null;
-globalThis.document = {
-  getElementById: id => reg.get(id) || null, createElement: () => (lastCreated = new El()),
-  body: { appendChild(n) { n.isConnected = true; reg.set(n.id, n); } },
-  querySelector: () => null, querySelectorAll: () => [],
-};
+globalThis.document = { getElementById: id => reg.get(id) || null, querySelector: () => null, querySelectorAll: () => [],
+                        addEventListener() {}, activeElement: null };
+globalThis.window = { addEventListener() {}, matchMedia: () => ({ matches: false }), getSelection: () => null };
+globalThis.matchMedia = () => ({ matches: false });
+const mem = new Map();
+globalThis.localStorage = { get length() { return mem.size; }, key: i => [...mem.keys()][i] ?? null,
+  getItem: k => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: k => mem.delete(k) };
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const toast = () => {}, wireScopeBar = () => {};
+const toast = () => {}, wireScopeBar = () => {}, writeSlot = () => {}, wsJoin = (a, b) => a + '/' + b;
 const PROJECTS = {
-  pA: { id: 'pA', sessions: [{ roomId: 'room-aaaaaaa1' }, { roomId: 'room-aaaaaaa2' }] },
-  pB: { id: 'pB', sessions: [{ roomId: 'room-bbbbbbb1' }] },
-  pC: { id: 'pC', sessions: [{ roomId: 'room-ccccccc1' }] },
+  pA: { id: 'pA', sessions: [{ roomId: 'room-aaaaaaa1', isLive: true }, { roomId: 'room-aaaaaaa2', isLive: true }] },
+  pB: { id: 'pB', sessions: [{ roomId: 'room-bbbbbbb1', isLive: true }] },
+  pC: { id: 'pC', sessions: [{ roomId: 'room-ccccccc1', isLive: true }] },
 };
 const projectById = id => PROJECTS[id];
 let PROJECT_TAB = 'changes', SB_DEST = '', SELECTED_PROJECT = 'pA';
 // The hub: two repositories in project A's folder; `slow[root]` holds that
 // root's answers back, `hold` holds back a send.
 const sent = []; let hold = null; const slow = {};
-const api = async (url, o) => {
-  if (url.startsWith('/api/room/say')) { sent.push(JSON.parse(o.body)); return hold ? hold.p : {}; }
+globalThis.fetch = async (url, o) => {
+  sent.push(JSON.parse(o.body));
+  if (hold) await hold.p;
+  return { ok: true, status: 200, json: async () => ({ ok: true }) };
+};
+const api = async url => {
   if (url.startsWith('/api/git/roots')) return { roots: [{ path: '/r1', name: 'r1' }, { path: '/r2', name: 'r2' }] };
   const root = decodeURIComponent((url.match(/path=([^&]*)/) || [])[1] || '');
   if (slow[root]) await slow[root];
@@ -491,74 +489,76 @@ const tick = () => new Promise(r => setTimeout(r, 0));
 const later = () => { let free; const p = new Promise(r => { free = r; }); return [p, free]; };
 %s
 const out = {};
-const tray = () => document.getElementById('ch-tray');
-const say = (text, file) => CH_COMMENTS.push({ file: file || 'a.py', line: 1, side: '+', code: 'x', text });
+const put = (rv, note, file) => {
+  const q = drRange(drParse('@@ -1 +1 @@\n+x\n'), 1, 1);
+  rv.store.put({ cid: rv.store.id(), at: rv.store.now(), root: rv.key.split('|')[1], file: file || 'a.py', rows: q.rows, span: q.span, note, sent: 0 });
+};
+const unsent = rv => (rv ? rv.store.list.filter(c => !c.sent).map(c => c.note) : null);
 (async () => {
-  chUseContext('pA|/repoA'); say('fix A'); chRenderTray();
-  out.aOptions = document.getElementById('ch-to').options.map(o => o.value);
-  const to = document.getElementById('ch-to'); to.value = 'room-aaaaaaa2'; to.onchange();
-  // Project B selected, before its panel is wired: A's tray is not shown on B.
-  SELECTED_PROJECT = 'pB'; chRenderTray(); out.staleTray = !!tray();
+  chUseContext('pA', '/repoA');
+  const A = CH_RV;
+  put(A, 'fix A');
+  out.aOptions = A.rooms().map(r => r.id);
+  A.to = 'room-aaaaaaa2';
+  // Project B's panel: B's own review, empty.
   wireChangesPanel(projectById('pB'));            // no #chp-files in this stub: B's empty context
-  out.bCtx = CH_CTX; out.bComments = CH_COMMENTS.length; out.bTray = !!tray();
-  // The Changes tab left and entered again, back on A: A's batch and its chosen chat.
-  PROJECT_TAB = 'tasks'; chRenderTray(); PROJECT_TAB = 'changes';
-  SELECTED_PROJECT = 'pA'; chUseContext('pA|/repoA'); chRenderTray();
-  out.aBack = CH_COMMENTS.map(c => c.text); out.aTo = document.getElementById('ch-to').value;
-  await tray().querySelector('.ch-send').onclick();
+  out.bKey = CH_RV.key; out.bComments = CH_RV.store.list.length;
+  // Back on A: A's comments and its chosen chat.
+  chUseContext('pA', '/repoA');
+  out.aSame = CH_RV === A; out.aBack = unsent(CH_RV); out.aTo = CH_RV.to;
+  await drSubmit(CH_RV);
   out.sentTo = sent.map(s => s.roomId); out.sentHasA = sent[0].text.includes('fix A');
-  out.aAfterSend = CH_BATCHES.get('pA|/repoA').comments.length;
+  out.aAfterSend = unsent(A).length;
   // Sent from A, moved to C before the hub answered, commented on C.
-  say('second A'); chRenderTray();
+  put(A, 'second A');
   let release; hold = { p: new Promise(r => { release = r; }) };
-  const sending = tray().querySelector('.ch-send').onclick();
-  SELECTED_PROJECT = 'pC'; chUseContext('pC|/repoC'); say('fix C', 'c.py');
-  release({}); await sending;
-  out.aAfterMove = CH_BATCHES.get('pA|/repoA').comments.length;
-  out.cAfterMove = CH_BATCHES.get('pC|/repoC').comments.map(c => c.text);
-  hold = null;
+  const sending = drSubmit(A);
+  chUseContext('pC', '/repoC'); put(CH_RV, 'fix C', 'c.py');
+  release(); await sending; hold = null;
+  out.aAfterMove = unsent(A).length;
+  out.cAfterMove = unsent(DR_REVIEWS.get('project:pC|/repoC'));
 
   // Two repositories of project A, through the real panel code.
-  SELECTED_PROJECT = 'pA'; PROJECT_TAB = 'changes'; CH_ROOT = '';
+  SELECTED_PROJECT = 'pA'; CH_ROOT = '';
   const files = new El(); files.id = 'chp-files'; files.isConnected = true;
   files.dataset = { project: 'pA', scope: '/s', root: '' }; reg.set('chp-files', files);
   const diff = new El(); diff.id = 'chp-diff'; diff.isConnected = true; reg.set('chp-diff', diff);
   wireChangesPanel(projectById('pA')); await tick();
-  out.r1 = [CH_CTX, files.dataset.root, files.innerHTML.includes('a.py')];
-  // A line of r1's diff clicked, then r2 picked before the comment is added.
+  out.r1 = [CH_RV.key, files.dataset.root, files.innerHTML.includes('a.py')];
+  // A line of r1's diff taken for a comment, then r2 picked before it is added.
   await chOpenDiff('a.py');
-  const dl = { dataset: { line: '1', side: '+' }, querySelector: () => ({ textContent: 'x/r1' }),
-               insertAdjacentElement() {}, classList: { add() {} } };
-  diff.querySelector('.diff').onclick({ target: { closest: () => dl } });
-  const composer = lastCreated;
+  const v = CH_RV.view;
+  v.draft = { a: 1, b: 1, note: 'on r1' };
   files.querySelector('.chp-repo').value = '/r2'; files.querySelector('.chp-repo').onchange();
-  out.pickNow = [CH_CTX, diff.innerHTML.includes('class="diff"'), files.innerHTML.includes('a.py')];
-  composer.querySelector('textarea').value = 'on r1'; composer.querySelector('.dl-ok').onclick();
+  out.pickNow = [CH_RV.key, diff.innerHTML.includes('class="drv"'), files.innerHTML.includes('a.py')];
+  drSave(v);
   await tick();
-  out.r2 = [CH_CTX, files.dataset.root, files.innerHTML.includes('b.py'), files.innerHTML.includes('a.py')];
-  out.r1Batch = CH_BATCHES.get('pA|/r1').comments.map(c => c.text);
-  out.r2Batch = CH_BATCHES.get('pA|/r2').comments.map(c => c.text);
+  out.r2 = [CH_RV.key, files.dataset.root, files.innerHTML.includes('b.py'), files.innerHTML.includes('a.py')];
+  out.r1Batch = unsent(DR_REVIEWS.get('project:pA|/r1'));
+  out.r2Batch = unsent(DR_REVIEWS.get('project:pA|/r2'));
   // r1 picked and slow to list its files, then r2: r1's late answer is dropped.
   let freeR1; [slow['/r1'], freeR1] = later();
   chPickRepo('/r1'); await tick(); chPickRepo('/r2'); await tick(); freeR1(); await tick();
-  out.outOfOrder = [CH_CTX, files.dataset.root, files.innerHTML.includes('b.py'), files.innerHTML.includes('a.py')];
+  out.outOfOrder = [CH_RV.key, files.dataset.root, files.innerHTML.includes('b.py'), files.innerHTML.includes('a.py')];
   // r2's diff slow to arrive, r1 picked meanwhile: the late diff is dropped.
   let freeR2; [slow['/r2'], freeR2] = later();
   const pend = chOpenDiff('b.py'); chPickRepo('/r1'); await tick(); freeR2(); await pend; await tick();
   out.lateDiff = diff.innerHTML.includes('x/r2');
   delete slow['/r1']; delete slow['/r2'];
-  // Same batch, a send pending: Clear, add C, Send again. Only the sent go.
-  const r1 = CH_BATCHES.get('pA|/r1');
-  out.r1Ctx = CH_CTX;
-  say('A2'); chRenderTray();
+  // A send pending on the same review: Submit again sends nothing, and a
+  // comment added meanwhile stays unsent.
+  const r1 = CH_RV;
+  out.r1Key = r1.key;
+  put(r1, 'A2');
   const n0 = sent.length; let answer; hold = { p: new Promise(r => { answer = r; }) };
-  const first = tray().querySelector('.ch-send').onclick();
-  tray().querySelector('.ch-clear').onclick(); say('C'); chRenderTray();
-  await tray().querySelector('.ch-send').onclick();
+  const first = drSubmit(r1);
+  await drSubmit(r1);
+  while (sent.length === n0) await tick();      // the first send is on its way
+  put(r1, 'C');
+  answer(); await first; hold = null;
   out.sendsWhilePending = sent.length - n0;
-  answer({}); await first;
-  out.afterPendingSend = r1.comments.map(c => c.text);
-  out.sentPending = sent[n0].text.includes('on r1') && sent[n0].text.includes('A2') && !sent[n0].text.includes('→ C');
+  out.afterPendingSend = unsent(r1);
+  out.sentPending = sent[n0].text.includes('on r1') && sent[n0].text.includes('A2') && !sent[n0].text.includes('\n\nC');
   console.log(JSON.stringify(out));
 })().catch(e => { console.error(e); process.exit(1); });
 """
@@ -566,39 +566,43 @@ const say = (text, file) => CH_COMMENTS.push({ file: file || 'a.py', line: 1, si
 
 @unittest.skipUnless(NODE, "node is not installed")
 class ChangesComments(unittest.TestCase):
-    """Review comments on the Changes tab stay with their own project and
-    repository: switching never sends one project's comments to another's chat."""
+    """Review comments on a project's Changes tab stay with their own project
+    and repository: switching never sends one project's comments to another's
+    chat, and a late answer never takes over the panel."""
 
     def test_comments_follow_their_project(self):
         src = PAGES["index.html"].replace("\r\n", "\n")
-        i = src.index("// ---- Changes tab")
+        i = src.index("// ---- Diff review: begin")
         j = src.index("// ---- Roadmap tab", i)
-        out = subprocess.run([NODE, "-e", CHANGES_JS.replace("%s", src[i:j], 1)], capture_output=True,
-                             text=True, encoding="utf-8", timeout=60)
+        store = (ROOT / "static" / "comments.js").read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "changes.cjs"
+            script.write_text(CHANGES_JS.replace("%s", store + src[i:j], 1), encoding="utf-8")
+            out = subprocess.run([NODE, str(script)], capture_output=True, text=True, encoding="utf-8", timeout=60)
         self.assertEqual(out.returncode, 0, out.stderr)
         r = json.loads(out.stdout)
         self.assertEqual(r["aOptions"], ["room-aaaaaaa1", "room-aaaaaaa2"])
-        self.assertFalse(r["staleTray"], "project A's comments shown on project B")
-        self.assertEqual((r["bCtx"], r["bComments"], r["bTray"]), ("pB|", 0, False))
+        self.assertEqual((r["bKey"], r["bComments"]), ("project:pB|", 0))
+        self.assertTrue(r["aSame"])
         self.assertEqual(r["aBack"], ["fix A"])
         self.assertEqual(r["aTo"], "room-aaaaaaa2", "the chosen chat was lost")
         self.assertEqual(r["sentTo"], ["room-aaaaaaa2"])
         self.assertTrue(r["sentHasA"])
         self.assertEqual(r["aAfterSend"], 0)
         # Repositories of one project.
-        self.assertEqual(r["r1"], ["pA|/r1", "/r1", True])
-        self.assertEqual(r["pickNow"], ["pA|/r2", False, False], "r1's diff or files still up after picking r2")
-        self.assertEqual(r["r2"], ["pA|/r2", "/r2", True, False])
+        self.assertEqual(r["r1"], ["project:pA|/r1", "/r1", True])
+        self.assertEqual(r["pickNow"], ["project:pA|/r2", False, False], "r1's diff or files still up after picking r2")
+        self.assertEqual(r["r2"], ["project:pA|/r2", "/r2", True, False])
         self.assertEqual(r["r1Batch"], ["on r1"], "a comment on r1's diff belongs to r1")
         self.assertEqual(r["r2Batch"], [])
-        self.assertEqual(r["outOfOrder"], ["pA|/r2", "/r2", True, False], "a late answer took over the panel")
+        self.assertEqual(r["outOfOrder"], ["project:pA|/r2", "/r2", True, False], "a late answer took over the panel")
         self.assertFalse(r["lateDiff"], "a late diff was drawn over another repository")
-        # A send pending on the same batch.
-        self.assertEqual(r["r1Ctx"], "pA|/r1")
+        # A send pending on the same review.
+        self.assertEqual(r["r1Key"], "project:pA|/r1")
         self.assertEqual(r["sendsWhilePending"], 1, "a second send went out while the first was pending")
         self.assertEqual(r["afterPendingSend"], ["C"], "a comment added during the send was lost")
         self.assertTrue(r["sentPending"])
-        self.assertEqual(r["aAfterMove"], 0, "the batch sent is the one emptied")
+        self.assertEqual(r["aAfterMove"], 0, "the comments sent are the ones marked sent")
         self.assertEqual(r["cAfterMove"], ["fix C"], "C's new comment was dropped")
 
 

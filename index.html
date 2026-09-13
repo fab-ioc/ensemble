@@ -127,6 +127,17 @@
        accent would make matches vanish, and a neutral tint disappears
        entirely on a hovered row — exactly when you are pointing at it. */
     --match-bg: #FFF0B3; --match-fg: var(--fg);
+    /* Code, for the Changes tab's diffs (static/hl.js colours them). The same
+       set as fileview.html, where it is measured on each theme's grounds. */
+    --code-kw: #883FD2; --code-str: #227537; --code-num: #136BAA; --code-fn: #245DE0;
+    --code-ty: #915B10; --code-attr: #177082; --code-meta: #A94C1E; --code-tag: #1D7457;
+    --code-com: var(--fg-muted);
+    /* A diff's added and removed lines: the success and danger washes, mixed
+       with the surface as far as each theme's code colours and line numbers
+       keep 4.5:1 on them (7:1 in High contrast). Measured per theme. */
+    --diff-wash: 90%;
+    --diff-add-bg: color-mix(in srgb, var(--c-success-bg) var(--diff-wash), var(--surface));
+    --diff-del-bg: color-mix(in srgb, var(--c-danger-bg) var(--diff-wash), var(--surface));
 
     /* Priority — Jira's ramp. Do not restyle the arrows. */
     --prio-1: #CD1317; --prio-2: #E9494A; --prio-3: #B8901A;
@@ -197,6 +208,11 @@
       --agent-claude-bg: #D27954; --agent-claude-fg: #1D2125;
       --agent-codex-bg:  #3DA3BC; --agent-codex-fg:  #1D2125;
       --match-bg: #7F5F01; --match-fg: #FFF7D6;
+      --code-kw: #BE96E6; --code-str: #37BE59; --code-num: #57AEEC; --code-fn: #87A5EE;
+      --code-ty: #E79523; --code-attr: #25B7D4; --code-meta: #E59269; --code-tag: #2FBC8D;
+      --diff-wash: 60%;
+      --diff-add-bg: color-mix(in srgb, var(--c-success-bg) var(--diff-wash), var(--surface));
+      --diff-del-bg: color-mix(in srgb, var(--c-danger-bg) var(--diff-wash), var(--surface));
 
       --e-100: 0 1px 1px rgba(3,4,4,.5), 0 0 1px rgba(3,4,4,.6);
       --e-200: 0 8px 12px rgba(3,4,4,.4), 0 0 1px rgba(3,4,4,.6);
@@ -231,6 +247,11 @@
     --agent-claude-bg: #D2825F;  --agent-claude-fg: #1F1E1C;
     --agent-codex-bg: #4FA8BC;  --agent-codex-fg: #1F1E1C;
     --match-bg: #5E4A12;  --match-fg: #F6E7B8;
+    --code-kw: #C29CE8; --code-str: #39C45C; --code-num: #61B3ED; --code-fn: #8DAAEF;
+    --code-ty: #E89A2E; --code-attr: #26BBD9; --code-meta: #E69972; --code-tag: #30C291;
+    --diff-wash: 100%;
+    --diff-add-bg: color-mix(in srgb, var(--c-success-bg) var(--diff-wash), var(--surface));
+    --diff-del-bg: color-mix(in srgb, var(--c-danger-bg) var(--diff-wash), var(--surface));
     --e-100: 0 1px 1px rgba(0,0,0,.45), 0 0 1px rgba(0,0,0,.55);
     --e-200: 0 8px 12px rgba(0,0,0,.35), 0 0 1px rgba(0,0,0,.55);
   }
@@ -264,6 +285,11 @@
     --agent-claude-bg: #A9502F;  --agent-claude-fg: #FFFFFF;
     --agent-codex-bg: #166A7C;  --agent-codex-fg: #FFFFFF;
     --match-bg: #FBE39A;  --match-fg: #2B2620;
+    --code-kw: #8539D0; --code-str: #217135; --code-num: #1267A3; --code-fn: #1F57DB;
+    --code-ty: #8A570F; --code-attr: #166C7E; --code-meta: #A0481C; --code-tag: #1C7054;
+    --diff-wash: 100%;
+    --diff-add-bg: color-mix(in srgb, var(--c-success-bg) var(--diff-wash), var(--surface));
+    --diff-del-bg: color-mix(in srgb, var(--c-danger-bg) var(--diff-wash), var(--surface));
     --e-100: 0 1px 1px rgba(60,40,10,.22), 0 0 1px rgba(60,40,10,.30);
     --e-200: 0 8px 12px rgba(60,40,10,.14), 0 0 1px rgba(60,40,10,.30);
   }
@@ -298,6 +324,11 @@
     --agent-claude-bg: #823618;  --agent-claude-fg: #FFFFFF;
     --agent-codex-bg: #0B4E5C;  --agent-codex-fg: #FFFFFF;
     --match-bg: #FFE066;  --match-fg: #000000;
+    --code-kw: #7300C4; --code-str: #0038C0; --code-num: #784000; --code-fn: #005C0F;
+    --code-ty: #784000; --code-attr: #005761; --code-meta: #784000; --code-tag: #005C0F;
+    --diff-wash: 65%;
+    --diff-add-bg: color-mix(in srgb, var(--c-success-bg) var(--diff-wash), var(--surface));
+    --diff-del-bg: color-mix(in srgb, var(--c-danger-bg) var(--diff-wash), var(--surface));
     --e-100: 0 0 0 1px #303030;
     --e-200: 0 0 0 2px #000000, 0 8px 12px rgba(0,0,0,.25);
   }
@@ -331,6 +362,11 @@
     --agent-claude-bg: #E5A28A;  --agent-claude-fg: #2E3440;
     --agent-codex-bg: #8FBCBB;  --agent-codex-fg: #2E3440;
     --match-bg: #6B5A2E;  --match-fg: #F6ECCF;
+    --code-kw: #A4BED8; --code-str: #A1C680; --code-num: #D5B1CE; --code-fn: #8EC3D2;
+    --code-ty: #DFB562; --code-attr: #88C6C5; --code-meta: #E0B0A1; --code-tag: #8EC3D2;
+    --diff-wash: 100%;
+    --diff-add-bg: color-mix(in srgb, var(--c-success-bg) var(--diff-wash), var(--surface));
+    --diff-del-bg: color-mix(in srgb, var(--c-danger-bg) var(--diff-wash), var(--surface));
     --e-100: 0 1px 1px rgba(15,18,24,.5), 0 0 1px rgba(15,18,24,.6);
     --e-200: 0 8px 12px rgba(15,18,24,.4), 0 0 1px rgba(15,18,24,.6);
   }
@@ -987,9 +1023,6 @@
   .tch-head .chp-refresh { margin-left: auto; }
   .tch-files { overflow: auto; border-bottom: 1px solid var(--border); padding: var(--s-100); font-size: var(--fs-200); }
   .tch-diff { overflow: auto; min-width: 0; min-height: 200px; }
-  .tch-tray { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-200); padding: var(--s-200) var(--s-300); border-top: 1px solid var(--border); font-size: var(--fs-200); color: var(--fg-subtle); }
-  .tch-tray[hidden] { display: none; }
-  .tch-tray .grow { flex: 1; }
   /* The panel is a narrow, user-resized column: same component, stacked. */
   #detail-panel .wsp { grid-template-columns: 1fr; grid-template-rows: minmax(96px, 28%) minmax(0, 1fr); height: auto; flex: 1; min-height: 0; }
   #detail-panel .wsp-tree { border-right: 0; border-bottom: 1px solid var(--border); }
@@ -1356,31 +1389,85 @@
   .chf .nm { overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
   .chst { flex: 0 0 auto; min-width: 20px; text-align: center; font-size: 10.5px; font-weight: 700; border-radius: 4px; padding: 1px 3px; color: var(--fg-subtle); border: 1px solid var(--border); }
   .chst.st-M { color: var(--c-warning-fg); } .chst.st-A, .chst.st-\? { color: var(--c-success-fg); } .chst.st-D { color: var(--c-danger-fg); } .chst.st-R { color: var(--c-progress-fg); }
-  .chp-diff { overflow: auto; min-width: 0; }
-  .diff-head { display: flex; align-items: center; gap: 12px; padding: 6px 10px; border-bottom: 1px solid var(--border); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--fg-subtle); position: sticky; top: 0; background: var(--surface); z-index: 1; }
-  .diff { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5; }
-  .dl { display: grid; grid-template-columns: 44px 44px 1fr; cursor: pointer; }
-  .dl .no { text-align: right; padding-right: 8px; color: var(--fg-muted); user-select: none; font-variant-numeric: tabular-nums; }
-  .dl .tx { white-space: pre-wrap; word-break: break-all; padding-left: 8px; }
-  .dl.add { background: var(--c-success-bg); }
-  .dl.del { background: var(--c-danger-bg); }
-  .dl.hunk { background: var(--c-progress-bg); color: var(--c-progress-fg); cursor: default; }
-  .dl.meta { color: var(--fg-muted); cursor: default; }
-  .dl:hover:not(.hunk):not(.meta) { outline: 1px solid var(--border-strong); outline-offset: -1px; }
-  .dl.cmt { box-shadow: inset 3px 0 0 var(--c-discovery-bold); }
-  .dl-composer { padding: 6px 10px 8px 96px; background: var(--hover); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
-  .dl-composer textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 12.5px; }
-  .dl-cbtns { display: flex; gap: 8px; margin-top: 6px; }
-  #ch-tray { position: fixed; right: 14px; bottom: 14px; z-index: 60; width: min(440px, 92vw); max-height: 50vh; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 34px rgba(0,0,0,.35); overflow: hidden; }
-  .ch-tray-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 12px; }
-  .ch-tray-head .grow { flex: 1; }
-  .ch-tray-head select { max-width: 150px; font-size: 11.5px; }
-  .ch-list { overflow: auto; padding: 6px 10px; font-size: 12px; }
-  .ch-item { display: flex; gap: 8px; align-items: flex-start; padding: 4px 0; border-bottom: 1px dashed var(--border); }
-  .ch-loc { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--fg-subtle); flex: 0 0 auto; }
-  .ch-txt { flex: 1; }
-  .ch-x { background: transparent; border: none; color: var(--fg-muted); cursor: pointer; }
-  .ch-x:hover { color: var(--c-danger-fg); }
+  .chp-diff { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .chp-dbox { flex: 1; min-height: 0; overflow: auto; }
+  /* A diff, read as in an IDE. Coloured by static/hl.js with this page's
+     code tokens; both line numbers drawn in the gutter (never text, so a copy
+     is the code); a sign before each changed line, so colour is not the only
+     signal; long lines wrap within the diff, never widen the page. */
+  .drv-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-100) var(--s-300); padding: var(--s-100) var(--s-300); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 2; background: var(--surface); font-size: var(--fs-200); color: var(--fg-muted); }
+  .drv-head .grow { flex: 1; }
+  .drv-path { font-family: var(--font-mono); color: var(--fg); overflow-wrap: anywhere; min-width: 0; }
+  .drv-count { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .drv { --gw: 3ch; font-family: var(--font-mono); font-size: var(--fs-200); line-height: var(--lh-300); color: var(--fg); tab-size: 4; font-variant-ligatures: none; padding-bottom: var(--s-400); }
+  .drv-chunk { content-visibility: auto; contain-intrinsic-size: auto 10000px; }
+  .dr { display: flex; min-height: var(--lh-300); }
+  .dr .dg { flex: none; display: flex; color: var(--fg-muted); font-variant-numeric: tabular-nums; cursor: pointer; user-select: none; -webkit-user-select: none; }
+  .dr .dg::before, .dr .dg::after { box-sizing: content-box; width: var(--gw); padding: 0 var(--s-100) 0 var(--s-200); text-align: right; }
+  .dr .dg::before { content: attr(data-o); }
+  .dr .dg::after { content: attr(data-n); }
+  .dr .dg:hover { color: var(--fg); }
+  .dr .dt { flex: 1; min-width: 0; position: relative; padding: 0 var(--s-300) 0 var(--s-600); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .dr .dt::before { content: ''; position: absolute; left: var(--s-200); color: var(--fg-muted); user-select: none; -webkit-user-select: none; }
+  .dr.k-add { background: var(--diff-add-bg); }
+  .dr.k-del { background: var(--diff-del-bg); }
+  .dr.k-add .dt::before { content: '+'; }
+  .dr.k-del .dt::before { content: '−'; }
+  .dr.k-hunk { background: var(--c-progress-bg); color: var(--c-progress-fg); }
+  .dr.k-meta { color: var(--fg-muted); }
+  .dr.k-hunk .dg, .dr.k-meta .dg { cursor: default; }
+  /* The lines a comment being written is on. */
+  .dr.sel { box-shadow: inset 2px 0 0 var(--accent); }
+  .dr.sel .dg { background: var(--selected-bg); color: var(--selected-fg); }
+  .drv .tk-kw { color: var(--code-kw); }
+  .drv .tk-str { color: var(--code-str); }
+  .drv .tk-num, .drv .tk-bi { color: var(--code-num); }
+  .drv .tk-fn { color: var(--code-fn); }
+  .drv .tk-ty { color: var(--code-ty); }
+  .drv .tk-attr { color: var(--code-attr); }
+  .drv .tk-meta { color: var(--code-meta); }
+  .drv .tk-tag { color: var(--code-tag); }
+  .drv .tk-com { color: var(--code-com); font-style: italic; }
+  .drv .tk-ts { color: var(--code-com); }
+  .drv .tk-hd, .drv .tk-strong, .drv .tk-dh { font-weight: 600; }
+  .drv .tk-hd { color: var(--code-kw); }
+  .drv .tk-em { font-style: italic; }
+  .drv .tk-lv { font-weight: 600; color: var(--fg-subtle); }
+  .drv .tk-err { color: var(--c-danger-fg); font-weight: 600; }
+  .drv .tk-warn { color: var(--c-warning-fg); font-weight: 600; }
+  /* Line comments: under their lines, lined up with the code. */
+  .dc, .dcx { margin: var(--s-100) var(--s-300) var(--s-200) calc(2 * (var(--gw) + var(--s-300)) + var(--s-600)); padding: var(--s-200) var(--s-300); border: 1px solid var(--border); border-radius: var(--r-200); background: var(--surface); font-family: var(--font-sans); font-size: var(--fs-300); line-height: var(--lh-300); white-space: normal; }
+  .dcx { border-color: var(--border-strong); }
+  .dc-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-100) var(--s-200); font-size: var(--fs-200); color: var(--fg-muted); }
+  .dc-head .grow { flex: 1; }
+  .dc-loc { font-family: var(--font-mono); color: var(--fg-subtle); }
+  .dc-note { margin-top: var(--s-100); color: var(--fg); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .dcx textarea { display: block; width: 100%; box-sizing: border-box; margin: var(--s-200) 0; padding: var(--s-200); font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--r-200); resize: vertical; }
+  .dcx textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .dcx-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-200); }
+  .dcx-foot .grow { flex: 1; }
+  .dcx-hint { font-size: var(--fs-200); color: var(--fg-muted); }
+  .drv-away { padding: var(--s-200) 0; border-bottom: 1px solid var(--border); }
+  .drv-away-h { padding: 0 var(--s-300); font-size: var(--fs-200); color: var(--fg-muted); }
+  .drv-away .dc, .drv-away .dcx { margin-left: var(--s-300); }
+  .cmt-selbtn { position: fixed; z-index: 60; height: 32px; padding: 0 var(--s-300); border: 0; border-radius: var(--r-200); background: var(--accent); color: var(--accent-fg); font: inherit; font-size: var(--fs-300); font-weight: 500; box-shadow: var(--e-200); cursor: pointer; }
+  /* The unsent comments and the one Submit, docked under the diff as the
+     chat's tray is docked above its composer. */
+  .cmt-tray { flex: 0 0 auto; max-height: 36vh; display: flex; flex-direction: column; background: var(--surface); border-top: 1px solid var(--border); overflow: hidden; }
+  .cmt-tray[hidden] { display: none; }
+  .cmt-tray-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-200); padding: var(--s-200) var(--s-300); border-bottom: 1px solid var(--border); font-size: var(--fs-300); }
+  .cmt-tray-head .grow { flex: 1; }
+  .cmt-tray .rm-btn.primary:disabled { background: var(--surface-sunken); border-color: var(--border); color: var(--fg-muted); cursor: default; }
+  .cmt-to { font: inherit; font-size: var(--fs-200); max-width: 20ch; height: 32px; padding: 0 var(--s-200); border: 1px solid var(--border-strong); border-radius: var(--r-200); background: var(--surface); color: var(--fg); }
+  .cmt-state { padding: var(--s-200) var(--s-300); border-bottom: 1px solid var(--border); font-size: var(--fs-200); line-height: var(--lh-200); color: var(--fg-muted); }
+  .cmt-state.err { color: var(--c-danger-fg); }
+  .cmt-list { overflow-y: auto; }
+  .cmt-item { position: relative; padding: var(--s-200) var(--s-800) var(--s-200) var(--s-300); border-bottom: 1px solid var(--border); cursor: pointer; }
+  .cmt-item:hover { background: var(--hover); }
+  .cmt-item-q { font-family: var(--font-mono); font-size: var(--fs-100); color: var(--fg-muted); overflow-wrap: anywhere; }
+  .cmt-item-n { font-size: var(--fs-200); color: var(--fg); overflow-wrap: anywhere; }
+  .cmt-item-x { position: absolute; top: var(--s-100); right: var(--s-100); width: 24px; height: 24px; border: 0; border-radius: var(--r-200); background: transparent; color: var(--fg-muted); cursor: pointer; }
+  .cmt-item-x:hover { background: var(--c-danger-bg); color: var(--c-danger-fg); }
   .proj .ago { margin-left: auto; color: var(--fg-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
   .tx-role .mention { text-transform: none; letter-spacing: 0; }
   .tx-role .mention:first-child { background: transparent; padding: 0; color: inherit; }
@@ -2558,7 +2645,15 @@
     .wst-x { width: var(--touch-min); height: var(--touch-min); }
     .scopebar { flex-wrap: wrap; }
     .scopebar select, .chp-repo { max-width: 100%; min-width: 0; }
-    .dl-composer { padding-left: var(--s-300); }
+    /* Diffs: a line is a finger-sized target, since a tap on it starts a
+       comment; comments span the width; every control is finger-sized, and a
+       comment field is 16px so the phone does not zoom into it. */
+    .dr { min-height: var(--touch-min); align-items: center; }
+    .dc, .dcx, .drv-away .dc, .drv-away .dcx { margin-left: var(--s-200); margin-right: var(--s-200); }
+    .dcx textarea { font-size: var(--fs-400); }
+    .dc .rm-btn, .dcx .rm-btn, .drv-head .rm-btn, .cmt-tray .rm-btn, .cmt-selbtn, .cmt-to { height: auto; min-height: var(--touch-min); }
+    .cmt-item { padding-right: calc(var(--touch-min) + var(--s-100)); }
+    .cmt-item-x { top: 0; right: 0; width: var(--touch-min); height: var(--touch-min); }
 
     /* Text below the scale, lifted to --fs-100. */
     .bar-btn .caret, .fbtn .caret, .wf-btn .caret, th, .badge-agent,
@@ -2571,6 +2666,10 @@
     }
   }
 </style>
+<!-- Shared with fileview.html and session.html: the code highlighter, and the
+     store that keeps review comments until they are delivered. -->
+<script src="/static/hl.js"></script>
+<script src="/static/comments.js"></script>
 </head>
 <body>
 <div id="update-banner" hidden>
@@ -3945,6 +4044,8 @@ function renderDetail() {
     else tchMount(ch, sid);
   }
   ch._shown = chShown;
+  const chView = TCH_VIEWS.get(sid);
+  if (chView && chView.el === ch) drPaintTray(chView.rv);   // Submit follows the task starting or stopping
   // Spec.
   const sp = panel.querySelector('.dp-pane[data-pane="spec"]');
   const spHtml = specPaneHtml(r);
@@ -5076,7 +5177,6 @@ function wireProjectsChrome() {
     if (e.target.closest('.srow') || e.target.closest('.newtask')) return;
     SELECTED_PROJECT = c.dataset.proj; PROJECT_TAB = 'tasks'; WS_SCOPE = ''; SB_DEST = ''; renderRows();
   });
-  if (typeof chRenderTray === 'function') chRenderTray();   // hides the comment tray off the Changes tab
   document.querySelectorAll('.ptabs button[data-ptab]').forEach(b => b.onclick = () => {
     PROJECT_TAB = b.dataset.ptab; renderRows();
   });
@@ -5665,10 +5765,22 @@ function wsShowTab(v, path) {
   const strip = v.el && v.el.querySelector('.wst');
   wsRevealTab(strip, strip && wsTabEl(strip, path));
 }
-function wsOpenTab(v, path) {
+function wsOpenTab(v, path) { wsOpenTabAt(v, path, 0); }
+// Open a file, at a line when one is given (from a diff): its tab shows the
+// source with that line marked and scrolled to, and a viewer already loaded is
+// loaded again to get there.
+function wsOpenTabAt(v, path, line) {
   const t = wsTabOpen(v, path);
-  // Picked from the tree, so it is there now, whatever was said before.
+  // Picked from the tree or a diff, so it is there now, whatever was said before.
   t.gone404 = false; t.goneSig = null; t.retrySig = null; t.seen = null;
+  if (line > 0) {
+    t.st = wsTabState({ view: 'source', wrap: t.st.wrap, marks: { ...t.st.marks, source: line } });
+    const k = wsNorm(t.path), f = v.frames.get(k);
+    if (f) {
+      f.remove(); v.frames.delete(k);
+      const i = v.live.indexOf(k); if (i >= 0) v.live.splice(i, 1);
+    }
+  }
   wsTabsCheck(v, v.dirs);
   wsShowTab(v, t.path);
 }
@@ -5876,30 +5988,571 @@ setInterval(() => {
 }, 4000);
 
 
+// ---- Diff review: begin -------------------------------------------------------
+// A diff read as in an IDE, in a task's Changes tab and a project's: coloured
+// by the Workspace viewer's own highlighter (static/hl.js), old and new line
+// numbers drawn in the gutter, long lines wrapped within the diff. A click on a
+// line number (on a phone, a tap on the line) or a selection across lines
+// opens a comment on that line or range. Comments show under their lines and
+// are kept in this browser by the chat's own store (static/comments.js) until
+// the hub has them; one Submit sends them all as one "## Review comments (N)"
+// message, like the chat's, and a sent comment stays under its line, marked
+// sent. Plain data and functions down to drShow, so tests/test_diff_review.py
+// runs them in Node.
+const DR_QUOTE_MAX = 40;     // rows of code kept with a comment
+const DR_QUOTE_SHOWN = 12;   // rows of it quoted in the message
+const DR_SENT_KEEP = 100;    // sent comments kept per review, newest first
+const DR_NEAR = 50;          // how far a changed diff may have moved a commented line
+const DR_CHUNK = 500;        // rows laid out together; the rest wait until scrolled near
+// The rows of a unified diff: {k: hunk|meta|add|del|ctx, o, n, t}. Inside a
+// hunk every line is content, so a removed "-- comment" is not a header.
+function drParse(text) {
+  const rows = [], lines = (text || '').split('\n');
+  let o = 0, n = 0, inHunk = false;
+  for (let i = 0; i < lines.length; i++) {
+    const ln = lines[i].replace(/\r$/, '');
+    if (ln === '' && i === lines.length - 1) continue;          // the final newline
+    if (ln.startsWith('@@')) {
+      const m = ln.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (m) { o = +m[1]; n = +m[2]; inHunk = true; }
+      rows.push({ k: 'hunk', t: ln });
+      continue;
+    }
+    if (inHunk && ln.startsWith('\\')) { rows.push({ k: 'meta', t: ln }); continue; }
+    if (inHunk && ln[0] === '+') { rows.push({ k: 'add', n: n++, t: ln.slice(1) }); continue; }
+    if (inHunk && ln[0] === '-') { rows.push({ k: 'del', o: o++, t: ln.slice(1) }); continue; }
+    if (inHunk && (ln[0] === ' ' || ln === '')) { rows.push({ k: 'ctx', o: o++, n: n++, t: ln.slice(1) }); continue; }
+    inHunk = false;
+    rows.push({ k: 'meta', t: ln });
+  }
+  return rows;
+}
+const drContent = r => r.k === 'add' || r.k === 'del' || r.k === 'ctx';
+// Each row's HTML (r.h). A run of content rows is highlighted twice over, as
+// the new file (context and added lines) and as the old (context and removed
+// lines), so a string or a comment spanning lines keeps its colour, and each
+// row takes its line from the side it belongs to.
+function drHighlight(rows, lang) {
+  const hl = lang && typeof HL !== 'undefined' && HL.has(lang);
+  let i = 0;
+  while (i < rows.length) {
+    if (!drContent(rows[i]) || !hl) { rows[i].h = esc(rows[i].t); i++; continue; }
+    let j = i;
+    while (j < rows.length && drContent(rows[j])) j++;
+    const side = (keep, take) => {
+      const idx = [];
+      for (let x = i; x < j; x++) if (keep(rows[x])) idx.push(x);
+      if (!idx.some(x => take(rows[x]))) return;
+      const h = HL.lines(idx.map(x => rows[x].t).join('\n'), lang);
+      idx.forEach((x, q) => { if (take(rows[x])) rows[x].h = h[q] || ''; });
+    };
+    side(r => r.k !== 'del', r => r.k !== 'del');
+    side(r => r.k !== 'add', r => r.k === 'del');
+    i = j;
+  }
+}
+// The content rows between two rows of the diff, as a comment keeps them: at
+// most DR_QUOTE_MAX, the last always among them, and how many there were.
+function drRange(rows, a, b) {
+  const lo = Math.max(0, Math.min(a, b)), hi = Math.min(rows.length - 1, Math.max(a, b));
+  const all = [];
+  for (let i = lo; i <= hi; i++) {
+    const r = rows[i];
+    if (!drContent(r)) continue;
+    const q = { k: r.k, t: r.t.slice(0, 500) };
+    if (r.o != null) q.o = r.o;
+    if (r.n != null) q.n = r.n;
+    all.push(q);
+  }
+  const kept = all.length > DR_QUOTE_MAX ? all.slice(0, DR_QUOTE_MAX - 1).concat(all.slice(-1)) : all;
+  return { rows: kept, span: all.length };
+}
+// "line 12", "lines 12–14", or for removed lines only, their old numbers.
+function drLoc(rows) {
+  const span = (xs, one, many) => {
+    const a = Math.min(...xs), b = Math.max(...xs);
+    return a === b ? one + ' ' + a : many + ' ' + a + '–' + b;
+  };
+  const ns = rows.filter(r => r.n != null).map(r => r.n);
+  if (ns.length) return span(ns, 'line', 'lines');
+  const os = rows.filter(r => r.o != null).map(r => r.o);
+  return os.length ? span(os, 'removed line', 'removed lines') : '';
+}
+// The line of the file to open for some rows: the first they show of the new
+// file, else the new line nearest the first of them in the diff.
+function drLineOf(rows, a, b) {
+  const lo = Math.min(a, b), hi = Math.max(a, b);
+  for (let i = lo; i <= hi; i++) if (rows[i] && rows[i].n != null) return rows[i].n;
+  for (let i = hi + 1; i < rows.length; i++) if (rows[i].n != null) return rows[i].n;
+  for (let i = lo - 1; i >= 0; i--) if (rows[i].n != null) return Math.max(1, rows[i].n);
+  return 1;
+}
+// Where a comment shows in a diff that may have changed since it was written:
+// under the row it was written on, if that row is still there with the same
+// code, else under the nearest row with that code; -1 when there is none.
+function drAnchor(rows, c) {
+  const q = c.rows[c.rows.length - 1], o = q.o ?? null, n = q.n ?? null;
+  let best = -1, dist = DR_NEAR + 1;
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    if (r.k !== q.k || r.t !== q.t) continue;
+    if ((r.o ?? null) === o && (r.n ?? null) === n) return i;
+    const d = Math.abs((n != null ? (r.n ?? r.o) : (r.o ?? r.n)) - (n ?? o));
+    if (d < dist) { dist = d; best = i; }
+  }
+  return best;
+}
+// The message the owner receives: the chat's review-comment format, each
+// comment with its file, its line or lines and the code it is about.
+function drMessage(list, what) {
+  const roots = new Set(list.map(c => c.root));
+  const items = list.map((c, i) => {
+    const where = (roots.size > 1 ? c.root.replace(/[\\/]+$/, '').split(/[\\/]/).pop() + '/' : '') + c.file;
+    const code = c.rows.slice(0, DR_QUOTE_SHOWN).map(r => (r.k === 'add' ? '+' : r.k === 'del' ? '-' : ' ') + r.t);
+    const more = (c.span || c.rows.length) - Math.min(c.rows.length, DR_QUOTE_SHOWN);
+    if (more > 0) code.push(`… ${more} more line${more > 1 ? 's' : ''}`);
+    let run = 2;
+    code.forEach(l => (l.match(/`+/g) || []).forEach(m => { run = Math.max(run, m.length); }));
+    const fence = '`'.repeat(run + 1);
+    return `**${i + 1}.** \`${where}\` ${drLoc(c.rows)}\n\n${fence}diff\n${code.join('\n')}\n${fence}\n\n${c.note}`;
+  });
+  return `## Review comments (${list.length})\n\n` + (what ? `On ${what}.\n\n` : '') + items.join('\n\n');
+}
+function drValid(c) {
+  return typeof c.root === 'string' && typeof c.file === 'string' && typeof c.note === 'string'
+    && Array.isArray(c.rows) && c.rows.length > 0
+    && c.rows.every(r => r && typeof r.t === 'string' && (r.k === 'add' || r.k === 'del' || r.k === 'ctx'));
+}
+// The newest DR_SENT_KEEP sent comments stay; the cids of the rest.
+function drStale(list) {
+  return list.filter(c => c.sent).sort((a, b) => b.sent - a.sent).slice(DR_SENT_KEEP).map(c => c.cid);
+}
+// What Submit can do, and in words why not. A task that is not running is not
+// sent to, as in the chat: its comments stay until it is resumed.
+function drSubmitState(rv) {
+  const t = rv.target ? rv.target(rv) : null;
+  const s = rv.sending ? { can: false, label: 'Sending…', note: '' }
+    : !t ? { can: false, label: 'Submit', note: 'There is no task chat to send them to. Copy them instead.' }
+    : !t.live ? { can: false, label: 'Submit', note: `${t.name} is not running, so the comments cannot reach its owner. They are kept here: resume the task, then submit them.` }
+    : { can: true, label: 'Submit', note: rv.error, err: !!rv.error };
+  s.roomId = t ? t.roomId : '';
+  if (rv.store.unstored.size) s.note = (s.note ? s.note + ' ' : '') + 'This browser would not save some of them, so reloading this page would lose those.';
+  return s;
+}
+function drSendError(e) {
+  const s = e && e.status;
+  if (!s) return 'the hub did not answer';
+  if (s === 404) return 'the task\'s chat no longer exists';
+  return (e.message || ('error ' + s));
+}
+// ---- Diff review: the page ----------------------------------------------------
+const DR_REVIEWS = new Map();   // key -> {store, target, what, open, pick, tray, view, sending, error}
+// A finger on the phone layout, where every line is --touch-min tall: a tap
+// anywhere on a line starts a comment. Elsewhere only the line number does.
+const drCoarse = () => !!(window.matchMedia && matchMedia('(pointer: coarse)').matches && matchMedia(MOBILE_MQ).matches);
+// The review of one task (or one repository of a project): its comments and
+// where they go. Made once per key; the options are refreshed on every call.
+function drReview(key, opts) {
+  let rv = DR_REVIEWS.get(key);
+  if (!rv) {
+    rv = { key, store: cmtStore('cd-diffcmt:' + key + ':', drValid), sending: false, error: '', to: '', view: null, tray: null };
+    rv.store.sync();
+    DR_REVIEWS.set(key, rv);
+  }
+  Object.assign(rv, opts);
+  return rv;
+}
+function drSetTray(rv, el) {
+  rv.tray = el;
+  if (el) { el._rv = rv; el._html = null; }
+  drPaintTray(rv);
+}
+function drChanged(rv) {
+  rv.store.sync();
+  if (rv.view) drPaint(rv.view);
+  drPaintTray(rv);
+}
+function drRowHtml(r, i) {
+  const g = drContent(r) ? ` data-o="${r.o ?? ''}" data-n="${r.n ?? ''}"` : '';
+  return `<div class="dr k-${r.k}" data-i="${i}"><span class="dg"${g}></span><span class="dt">${r.h}</span></div>`;
+}
+// Show a file's diff in `box` for review. The rows are written once; comments,
+// the selection and the comment box are laid over them by drPaint.
+function drShow(rv, box, root, file, text) {
+  const t0 = performance.now();
+  const rows = drParse(text);
+  const base = file.replace(/\/$/, '').split('/').pop();
+  drHighlight(rows, typeof HL !== 'undefined' ? HL.langOf(base, '') : '');
+  let top = 0, adds = 0, dels = 0;
+  for (const r of rows) {
+    if (r.k === 'add') adds++; else if (r.k === 'del') dels++;
+    top = Math.max(top, r.o || 0, r.n || 0);
+  }
+  const v = { rv, box, root, file, rows, draft: null, els: [] };
+  rv.view = v;
+  const content = rows.some(drContent);
+  let body = '';
+  if (!content && /\/$/.test(file) && root) {
+    // An untracked folder is one entry to git: it opens as a folder instead.
+    body = '<div class="wsp-empty">An untracked folder: git lists it as one entry, not the files in it. '
+      + '<a href="/fileview?path=' + encodeURIComponent(wsJoin(root, file.replace(/\/$/, ''))) + '" target="_blank" rel="noopener">Browse the folder</a></div>';
+  } else if (!content) {
+    body = '<div class="wsp-empty">No text differences to show: a binary file, or a change git has no lines for.</div>';
+  } else {
+    // The header lines say again what the file bar says; the rest are shown.
+    const parts = [];
+    rows.forEach((r, i) => { if (!(r.k === 'meta' && /^(?:diff --git|index |--- |\+\+\+ )/.test(r.t))) parts.push(drRowHtml(r, i)); });
+    for (let i = 0; i < parts.length; i += DR_CHUNK) body += '<div class="drv-chunk">' + parts.slice(i, i + DR_CHUNK).join('') + '</div>';
+  }
+  const hint = drCoarse() ? 'Tap a line to comment on it' : 'Click a line number to comment · Shift-click for a range';
+  box.innerHTML = '<div class="drv-head">'
+    + `<span class="drv-path" title="${esc(file)}">${esc(file)}</span>`
+    + (content ? `<span class="drv-count">+${adds} −${dels}</span><span class="drv-hint">${hint}</span>` : '')
+    + '<span class="grow"></span>'
+    + (rv.open && !/\/$/.test(file) ? '<button type="button" class="rm-btn subtle drv-open">Open file</button>' : '')
+    + '</div><div class="drv-away" hidden></div>'
+    + `<div class="drv" style="--gw:${Math.max(3, String(top).length)}ch">${body}</div>`;
+  // The bar tells whether the box still shows this diff: a repository or file
+  // picked since wrote over it, and nothing may be painted there any more.
+  v.head = box.querySelector('.drv-head');
+  box.querySelectorAll('.drv .dr').forEach(el => { v.els[+el.dataset.i] = el; });
+  box.onmousedown = e => { if (e.shiftKey && e.target.closest('.dg')) e.preventDefault(); };
+  box.onclick = e => drClick(v, e);
+  box.oninput = e => { if (v.draft && e.target.matches('.dcx textarea')) v.draft.note = e.target.value; };
+  box.onkeydown = e => {
+    if (!e.target.matches('.dcx textarea')) return;
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); drSave(v); }
+    else if (e.key === 'Escape') { e.preventDefault(); v.draft = null; drPaint(v); }
+  };
+  drPaint(v);
+  window.__drRenderMs = Math.round(performance.now() - t0);
+  return v;
+}
+function drClick(v, e) {
+  const { rv } = v, t = e.target;
+  if (t.closest('.drv-open')) { rv.open(v.root, v.file, drLineOf(v.rows, 0, v.rows.findIndex(r => r.k === 'add' || r.k === 'del'))); return; }
+  const card = t.closest('.dc');
+  if (card) {
+    const c = rv.store.list.find(z => z.cid === card.dataset.cid);
+    if (!c || rv.sending) return;
+    if (t.closest('.dc-edit')) {
+      const i = drAnchor(v.rows, c);
+      v.draft = { cid: c.cid, a: i < 0 ? -1 : Math.max(0, i - (c.span || c.rows.length) + 1), b: i, note: c.note, focus: true };
+      drPaint(v);
+    } else if (t.closest('.dc-del')) {
+      rv.store.remove([c.cid]);
+      drChanged(rv);
+    }
+    return;
+  }
+  if (t.closest('.dcx')) {
+    if (t.closest('.dcx-cancel')) { v.draft = null; drPaint(v); }
+    else if (t.closest('.dcx-add')) drSave(v);
+    else if (t.closest('.dcx-open') && v.draft) rv.open(v.root, v.file, drLineOf(v.rows, v.draft.a, v.draft.b));
+    return;
+  }
+  const row = t.closest('.dr');
+  if (!row || !drContent(v.rows[+row.dataset.i] || {})) return;
+  const onGutter = !!t.closest('.dg'), coarse = drCoarse();
+  if (!onGutter) {
+    if (!coarse) return;
+    const s = window.getSelection();
+    if (s && !s.isCollapsed) return;
+  }
+  const i = +row.dataset.i, d = v.draft;
+  // A second line while a new comment is open covers the range between them;
+  // otherwise the comment moves to the line clicked and keeps what was typed.
+  if (d && !d.cid && (e.shiftKey || coarse)) { d.b = i; d.focus = true; }
+  else v.draft = { a: i, b: i, note: d && !d.cid ? d.note : '', focus: true };
+  drPaint(v);
+}
+function drSave(v) {
+  const { rv } = v, d = v.draft;
+  if (!d) return;
+  const note = (d.note || '').trim();
+  const ta = v.box.querySelector('.dcx textarea');
+  if (!note) { if (ta) ta.focus(); return; }
+  if (d.cid) {
+    const c = rv.store.list.find(z => z.cid === d.cid);
+    if (c && !c.sent) rv.store.put({ ...c, note });
+  } else {
+    const q = drRange(v.rows, d.a, d.b);
+    if (!q.rows.length) return;
+    rv.store.put({ cid: rv.store.id(), at: rv.store.now(), root: v.root, file: v.file, rows: q.rows, span: q.span, note, sent: 0 });
+  }
+  v.draft = null;
+  drChanged(rv);
+}
+function drCardHtml(rv, c) {
+  const sent = !!c.sent;
+  const when = sent ? new Date(c.sent).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '';
+  return `<div class="dc${sent ? ' sent' : ''}" data-cid="${esc(c.cid)}"><div class="dc-head">`
+    + `<span class="loz ${sent ? 'neutral' : 'warning'}">${sent ? 'Sent' : 'Not sent'}</span>`
+    + `<span class="dc-loc">${esc(drLoc(c.rows))}</span>`
+    + (sent ? `<span class="dc-when">${esc(when)}</span>` : '')
+    + '<span class="grow"></span>'
+    + (sent ? '' : `<button type="button" class="rm-btn subtle dc-edit"${rv.sending ? ' disabled' : ''}>Edit</button>`
+      + `<button type="button" class="rm-btn subtle danger dc-del"${rv.sending ? ' disabled' : ''}>Remove</button>`)
+    + `</div><div class="dc-note">${esc(c.note)}</div></div>`;
+}
+function drComposer(v, d) {
+  const q = d.cid ? (v.rv.store.list.find(z => z.cid === d.cid) || { rows: [] }) : drRange(v.rows, d.a, d.b);
+  const loc = drLoc(q.rows), line = d.b >= 0 ? drLineOf(v.rows, d.a, d.b) : 0;
+  const el = document.createElement('div');
+  el.className = 'dcx';
+  el.innerHTML = `<div class="dc-head"><span class="dc-loc">${esc((d.cid ? 'Edit the comment on ' : 'Comment on ') + loc)}</span><span class="grow"></span>`
+    + (v.rv.open && line ? `<button type="button" class="rm-btn subtle dcx-open">Open at line ${line}</button>` : '') + '</div>'
+    + `<textarea rows="3" aria-label="Your comment on ${esc(loc)}" placeholder="Your comment on ${esc(loc)}…"></textarea>`
+    + '<div class="dcx-foot"><span class="dcx-hint">'
+    + (d.cid ? '' : drCoarse() ? 'Tap another line to cover a range.' : 'Shift-click another line number to cover a range.')
+    + '</span><span class="grow"></span><button type="button" class="rm-btn dcx-cancel">Cancel</button>'
+    + `<button type="button" class="rm-btn primary dcx-add">${d.cid ? 'Save' : 'Add comment'}</button></div>`;
+  el.querySelector('textarea').value = d.note || '';
+  return el;
+}
+// Comments, the selected lines and the comment box, laid over the rows. Done
+// on a change, never on a timer, and the rows themselves are left alone.
+function drPaint(v) {
+  const { rv, box, rows } = v;
+  if (!box.isConnected || rv.view !== v || !v.head || !v.head.isConnected) return;
+  const typing = box.querySelector('.dcx textarea');
+  const hadFocus = typing && document.activeElement === typing;
+  box.querySelectorAll('.drv .dc, .drv .dcx').forEach(n => n.remove());
+  box.querySelectorAll('.dr.sel').forEach(n => n.classList.remove('sel'));
+  const d = v.draft, at = new Map(), away = [];
+  for (const c of rv.store.list) {
+    if (c.root !== v.root || c.file !== v.file) continue;
+    const i = drAnchor(rows, c);
+    if (i >= 0 && v.els[i]) { if (!at.has(i)) at.set(i, []); at.get(i).push(c); }
+    else away.push(c);
+  }
+  for (const [i, cs] of at) v.els[i].insertAdjacentHTML('afterend', cs.map(c => d && d.cid === c.cid ? '<div class="dcx"></div>' : drCardHtml(rv, c)).join(''));
+  const aw = box.querySelector('.drv-away');
+  aw.hidden = !away.length;
+  aw.innerHTML = away.length ? '<div class="drv-away-h">On lines no longer in this diff</div>' + away.map(c => d && d.cid === c.cid ? '<div class="dcx"></div>' : drCardHtml(rv, c)).join('') : '';
+  if (d) {
+    let slot = box.querySelector('.dcx');
+    const el = drComposer(v, d);
+    if (slot) slot.replaceWith(el);
+    else if (d.cid) { v.draft = null; }           // its comment is gone: another copy removed or sent it
+    else {
+      const a = Math.min(d.a, d.b), b = Math.max(d.a, d.b);
+      for (let i = a; i <= b; i++) if (v.els[i]) v.els[i].classList.add('sel');
+      let ref = v.els[b];
+      while (ref && ref.nextElementSibling && ref.nextElementSibling.classList.contains('dc')) ref = ref.nextElementSibling;
+      if (ref) ref.insertAdjacentElement('afterend', el); else v.draft = null;
+    }
+    const ta = v.draft && el.isConnected ? el.querySelector('textarea') : null;
+    if (ta && (d.focus || hadFocus)) {
+      d.focus = false;
+      ta.focus({ preventScroll: true });
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+      el.scrollIntoView({ block: 'nearest' });
+    }
+  }
+  if (v.scrollTo) {
+    const card = box.querySelector(`.dc[data-cid="${CSS.escape(v.scrollTo)}"]`);
+    v.scrollTo = '';
+    if (card) card.scrollIntoView({ block: 'center' });
+  }
+}
+// The unsent comments of a review and the one Submit. Docked under the diff,
+// as the chat's tray sits above its composer; rewritten only when it changes.
+function drPaintTray(rv) {
+  const tray = rv.tray;
+  if (!tray || !tray.isConnected || tray._rv !== rv) return;
+  const list = rv.store.list.filter(c => !c.sent), n = list.length;
+  if (!n) {
+    rv.error = '';
+    tray.hidden = true;
+    if (tray._html !== '') { tray._html = ''; tray.innerHTML = ''; }
+    return;
+  }
+  const s = drSubmitState(rv), rooms = rv.rooms ? rv.rooms() : null;
+  const html = `<div class="cmt-tray-head"><strong>${n} comment${n > 1 ? 's' : ''}</strong><span class="grow"></span>`
+    + (rooms ? '<select class="cmt-to" aria-label="The task chat that receives them">'
+      + (rooms.length ? rooms.map(r => `<option value="${esc(r.id)}"${r.id === s.roomId ? ' selected' : ''}>${esc(r.name)}</option>`).join('')
+                      : '<option value="">(no task chat in this project)</option>') + '</select>' : '')
+    + `<button type="button" class="rm-btn primary cmt-submit"${s.can ? '' : ' disabled'}>${esc(s.label)}</button>`
+    + '<button type="button" class="rm-btn cmt-copy">Copy</button><button type="button" class="rm-btn cmt-clear">Clear</button></div>'
+    + (s.note ? `<div class="cmt-state${s.err ? ' err' : ''}" role="status">${esc(s.note)}</div>` : '')
+    + '<div class="cmt-list">' + list.map(c => `<div class="cmt-item" data-cid="${esc(c.cid)}">`
+      + `<div class="cmt-item-q">${esc(c.file + ' · ' + drLoc(c.rows))}</div><div class="cmt-item-n">${esc(c.note)}</div>`
+      + `<button type="button" class="cmt-item-x" title="Remove" aria-label="Remove"${rv.sending ? ' disabled' : ''}>✕</button></div>`).join('')
+    + '</div>';
+  tray.hidden = false;
+  // A menu that is open is left alone until it closes.
+  if (tray._html === html || (document.activeElement && document.activeElement.matches('.cmt-to') && tray.contains(document.activeElement))) return;
+  const l = tray.querySelector('.cmt-list'), top = l ? l.scrollTop : 0;
+  tray._html = html;
+  tray.innerHTML = html;
+  const nl = tray.querySelector('.cmt-list');
+  if (nl) nl.scrollTop = top;
+  if (!tray._wired) {
+    tray._wired = true;
+    tray.addEventListener('click', e => drTrayClick(tray._rv, e));
+    tray.addEventListener('change', e => { if (e.target.matches('.cmt-to')) { tray._rv.to = e.target.value; tray._rv.error = ''; drPaintTray(tray._rv); } });
+  }
+}
+function drTrayClick(rv, e) {
+  const t = e.target;
+  if (!rv || t.closest('.cmt-to')) return;
+  const unsent = () => rv.store.list.filter(c => !c.sent);
+  if (t.closest('.cmt-submit')) { drSubmit(rv); return; }
+  if (t.closest('.cmt-copy')) {
+    navigator.clipboard.writeText(drMessage(unsent(), rv.what ? rv.what() : ''))
+      .then(() => toast('comments copied', 1500, 'ok'), () => toast('copy failed', 3000, 'err'));
+    return;
+  }
+  if (rv.sending) return;
+  if (t.closest('.cmt-clear')) { rv.store.remove(unsent().map(c => c.cid)); drChanged(rv); return; }
+  const item = t.closest('.cmt-item');
+  if (!item) return;
+  const c = rv.store.list.find(z => z.cid === item.dataset.cid);
+  if (!c) return;
+  if (t.closest('.cmt-item-x')) { rv.store.remove([c.cid]); drChanged(rv); return; }
+  if (rv.pick) rv.pick(c);
+}
+// Run fn while no other copy of the page (another tab, the PO's drawer) is
+// sending this review's comments, where the browser has a lock for that: only
+// a secure page does (https, or the hub on localhost). Over plain http the
+// hub's key (drKey) is what keeps the same comments from being posted twice.
+function drExclusive(rv, fn) {
+  if (typeof navigator !== 'undefined' && navigator.locks && navigator.locks.request) return navigator.locks.request('cd-diffcmt-send:' + rv.key, () => fn());
+  return fn();
+}
+// What a comment says, to tell whether the copy that went is the one stored.
+const drRev = c => JSON.stringify([c.root, c.file, c.rows, c.span || 0, c.note]);
+// The key a send carries: the same comments, as they read, make the same key,
+// so the hub posts them once however many tabs or retries send them.
+function drKey(batch) {
+  const s = JSON.stringify(batch.map(c => [c.cid, drRev(c)]).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)));
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return 'review:' + (h2 >>> 0).toString(36) + (h1 >>> 0).toString(36) + ':' + batch.length;
+}
+async function drSubmit(rv) {
+  if (rv.sending) return;
+  rv.store.sync();
+  if (!rv.store.list.some(c => !c.sent) || !drSubmitState(rv).can) { drPaintTray(rv); return; }
+  rv.sending = true; rv.error = '';
+  drChanged(rv);
+  let sent = 0;
+  try {
+    await drExclusive(rv, async () => {
+      // Picked once no other copy is sending: what one sent meanwhile is not sent again.
+      rv.store.sync();
+      const batch = rv.store.list.filter(c => !c.sent);
+      const s = drSubmitState({ ...rv, sending: false });
+      if (!batch.length || !s.can) return;
+      const went = new Map(batch.map(c => [c.cid, drRev(c)]));
+      const r = await fetch('/api/room/say', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId: s.roomId, text: drMessage(batch, rv.what ? rv.what() : ''), to: '', key: drKey(batch) }) });
+      let j = null;
+      try { j = await r.json(); } catch (e) {}
+      if (!r.ok || !j || j.error) throw Object.assign(new Error((j && j.error) || ('error ' + r.status)), { status: r.status });
+      // What went is marked sent, and only as it went: a comment added or
+      // edited meanwhile, here or in another copy, waits for the next Submit.
+      const at = Date.now();
+      rv.store.sync();
+      for (const cur of rv.store.list.slice()) if (!cur.sent && went.get(cur.cid) === drRev(cur)) rv.store.put({ ...cur, sent: at });
+      rv.store.remove(drStale(rv.store.list));
+      sent = batch.length;
+    });
+    if (sent) toast(`Sent ${sent} comment${sent > 1 ? 's' : ''} to the chat`, 2500, 'ok');
+  } catch (e) {
+    rv.error = 'Not sent: ' + drSendError(e) + '. Your comments are kept.';
+  } finally {
+    rv.sending = false;
+    drChanged(rv);
+  }
+}
+// A selection across lines of a diff offers a comment on them, as a selection
+// in the chat does. Followed through selectionchange, so a phone's handles,
+// which move after the finger lifts, count.
+let DR_SELBTN = null, DR_SEL_T = 0;
+function drHideSel() { if (DR_SELBTN) { DR_SELBTN.remove(); DR_SELBTN = null; } }
+document.addEventListener('selectionchange', () => { clearTimeout(DR_SEL_T); DR_SEL_T = setTimeout(drOnSelect, 150); });
+function drOnSelect() {
+  const s = window.getSelection();
+  if (!s || s.isCollapsed || !s.rangeCount) { drHideSel(); return; }
+  const rg = s.getRangeAt(0);
+  const rowOf = n => { const el = n && (n.nodeType === 1 ? n : n.parentElement); return el ? el.closest('.drv .dr') : null; };
+  const ra = rowOf(rg.startContainer), rb = rowOf(rg.endContainer);
+  let v = null;
+  if (ra && rb) DR_REVIEWS.forEach(rv => { if (rv.view && rv.view.box.contains(ra) && rv.view.box.contains(rb)) v = rv.view; });
+  if (!v) { drHideSel(); return; }
+  const a = +ra.dataset.i;
+  let b = +rb.dataset.i;
+  if (b > a && rg.endOffset === 0) b--;            // a selection that ends where the next line starts
+  if (!drRange(v.rows, a, b).rows.length) { drHideSel(); return; }
+  if (!DR_SELBTN) {
+    DR_SELBTN = document.createElement('button');
+    DR_SELBTN.type = 'button';
+    DR_SELBTN.className = 'cmt-selbtn';
+    DR_SELBTN.textContent = '💬 Comment';
+    DR_SELBTN.addEventListener('mousedown', e => e.preventDefault());   // keep the selection
+    document.body.appendChild(DR_SELBTN);
+  }
+  const rect = rg.getBoundingClientRect();
+  DR_SELBTN.style.top = Math.min(window.innerHeight - 52, Math.max(8, rect.bottom + 8)) + 'px';
+  DR_SELBTN.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - 150)) + 'px';
+  DR_SELBTN.onclick = () => {
+    drHideSel();
+    s.removeAllRanges();
+    const d = v.draft;
+    v.draft = { a: Math.min(a, b), b: Math.max(a, b), note: d && !d.cid ? d.note : '', focus: true };
+    drPaint(v);
+  };
+}
+// Another copy of the page changed a review's comments.
+window.addEventListener('storage', e => {
+  DR_REVIEWS.forEach(rv => { if (rv.store.hears(e.key)) drChanged(rv); });
+});
+// A file of a repository, as a path on the hub.
+function drPath(root, file) {
+  const sep = root.includes('\\') ? '\\' : '/';
+  return root.replace(/[\\/]+$/, '') + sep + file.replace(/\//g, sep);
+}
+// ---- Diff review: end ---------------------------------------------------------
+
 // ---- Changes tab: uncommitted changes of a git project — status, per-file
-// unified diff, and line comments batched to a task's chat. ------------------
-let CH_FILE = '', CH_COMMENTS = [];   // [{file, line, side, code, text}]
+// unified diff, and line comments sent to a task's chat. ---------------------
+let CH_FILE = '';
 let CH_ROOT = '';                     // the repository currently shown (found within the scope)
 // Review comments belong to one repository of one project. Each keeps its own
-// batch and its chosen chat, so moving to another project or repository never
-// sends one's comments to the other's chat, and coming back finds both as they
-// were. CH_COMMENTS is the batch on screen; it is emptied in place, not replaced.
-const CH_BATCHES = new Map();         // 'project id|repo root' -> {comments, to, sending}
-let CH_CTX = '';
+// comments and its chosen chat, so moving to another project or repository
+// never sends one's comments to the other's chat, and coming back finds both
+// as they were.
+let CH_RV = null;
 // Only the latest status load and the latest diff may write the panel: a
 // repository picked twice, or a file and then another, can answer in any order.
 let CH_LOAD = 0, CH_DIFF = 0;
-const CH_DIFF_EMPTY = '<div class="wsp-empty">Select a changed file to review its diff. Click a line to comment; send the batch to a task chat.</div>';
-function chUseContext(ctx) {
-  if (!CH_BATCHES.has(ctx)) CH_BATCHES.set(ctx, { comments: [], to: '' });
-  CH_CTX = ctx;
-  CH_COMMENTS = CH_BATCHES.get(ctx).comments;
+const CH_DIFF_EMPTY = '<div class="wsp-empty">Select a changed file to review its diff. Click a line number to comment; submit the comments to a task\'s chat.</div>';
+function chUseContext(pid, root) {
+  CH_RV = drReview('project:' + pid + '|' + root, {
+    rooms: () => ((projectById(pid) || {}).sessions || []).filter(s => s.roomId).map(s => ({ id: s.roomId, name: s.label || s.roomId })),
+    target: rv => {
+      const rooms = ((projectById(pid) || {}).sessions || []).filter(s => s.roomId);
+      const s = rooms.find(x => x.roomId === rv.to) || rooms[0];
+      return s ? { roomId: s.roomId, live: !!s.isLive, name: s.label || 'That task' } : null;
+    },
+    what: () => 'the uncommitted changes',
+    open: (r, file, line) => chOpenInWorkspace(pid, r, file, line),
+    pick: c => { if (c.root === CH_ROOT) chOpenDiff(c.file, c.cid); },
+  });
+  drSetTray(CH_RV, document.getElementById('chp-tray'));
 }
 function changesPanelHtml(pj) {
   if (!pj || !pj.path) return '<p class="empty">This project has no folder.</p>';
   return scopeBarHtml(pj) + '<div class="chp">'
     + '<div class="chp-files" id="chp-files" data-project="' + esc(pj.id) + '" data-scope="' + esc(scopePath(pj)) + '" data-root=""><div class="chf none">loading…</div></div>'
-    + '<div class="chp-diff" id="chp-diff">' + CH_DIFF_EMPTY + '</div>'
+    + '<div class="chp-diff"><div class="chp-dbox" id="chp-diff">' + CH_DIFF_EMPTY + '</div><div class="cmt-tray" id="chp-tray" hidden></div></div>'
     + '</div>';
 }
 // Another repository of the same project: its comments, chat and an empty
@@ -5912,8 +6565,7 @@ function chPickRepo(root) {
   box.dataset.root = root;
   box.innerHTML = '<div class="chf none">loading…</div>';
   if (diff) diff.innerHTML = CH_DIFF_EMPTY;
-  chUseContext(box.dataset.project + '|' + root);
-  chRenderTray();
+  chUseContext(box.dataset.project, root);
   chLoadStatus();
 }
 async function chLoadStatus() {
@@ -5927,13 +6579,13 @@ async function chLoadStatus() {
     if (stale()) return;                // a newer load, or another project or scope, took the panel
     if (!roots.length) {
       CH_ROOT = ''; box.dataset.root = '';
-      chUseContext(box.dataset.project + '|'); chRenderTray();
+      chUseContext(box.dataset.project, '');
       box.innerHTML = '<div class="chf none">No git repository here yet. When an agent clones one into this folder, its changes show up here.</div>';
       return;
     }
     if (!CH_ROOT || !roots.some(function (r) { return r.path === CH_ROOT; })) CH_ROOT = roots[0].path;
     box.dataset.root = CH_ROOT;
-    chUseContext(box.dataset.project + '|' + CH_ROOT); chRenderTray();
+    chUseContext(box.dataset.project, CH_ROOT);
     const repoSel = roots.length > 1
       ? '<select class="chp-repo" title="Which repository">' + roots.map(function (r) {
           return '<option value="' + esc(r.path) + '"' + (r.path === CH_ROOT ? ' selected' : '') + '>' + esc(r.name) + '</option>';
@@ -5953,167 +6605,40 @@ async function chLoadStatus() {
     const rs = box.querySelector('.chp-repo'); if (rs) rs.onchange = function () { chPickRepo(rs.value); };
   } catch (e) { if (!stale()) box.innerHTML = '<div class="chf none">status unavailable: ' + esc(e.message) + '</div>'; }
 }
-function parseUnifiedDiff(text) {
-  // Rows: {kind: hunk|meta|ctx|add|del, oldNo, newNo, text}
-  const rows = []; let o = 0, n = 0;
-  const lines = (text || '').split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    const ln = lines[i].replace(/\r$/, '');
-    if (ln.startsWith('@@')) {
-      const m = ln.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-      if (m) { o = parseInt(m[1], 10); n = parseInt(m[2], 10); }
-      rows.push({ kind: 'hunk', text: ln }); continue;
-    }
-    if (ln.startsWith('diff --git') || ln.startsWith('index ') || ln.startsWith('--- ') || ln.startsWith('+++ ') || ln.startsWith('\\ No newline')) {
-      rows.push({ kind: 'meta', text: ln }); continue;
-    }
-    if (ln === '' && i === lines.length - 1) continue;          // trailing newline
-    if (ln.startsWith('+')) { rows.push({ kind: 'add', newNo: n++, text: ln.slice(1) }); continue; }
-    if (ln.startsWith('-')) { rows.push({ kind: 'del', oldNo: o++, text: ln.slice(1) }); continue; }
-    rows.push({ kind: 'ctx', oldNo: o++, newNo: n++, text: ln.startsWith(' ') ? ln.slice(1) : ln });
-  }
-  return rows;
-}
-function renderDiff(file, text, comments, root) {
-  comments = comments || CH_COMMENTS;
-  const rows = parseUnifiedDiff(text);
-  // An empty diff still answers the click: an untracked folder is one entry to
-  // git, so it opens as a folder instead; anything else says why there are no lines.
-  if (!rows.length && /\/$/.test(file) && root) {
-    return '<div class="wsp-empty">An untracked folder: git lists it as one entry, not the files in it. '
-      + '<a href="/fileview?path=' + encodeURIComponent(wsJoin(root, file.replace(/\/$/, ''))) + '" target="_blank" rel="noopener">Browse the folder</a></div>';
-  }
-  if (!rows.length) return '<div class="wsp-empty">No text differences to show: a binary file, or a change git has no lines for.</div>';
-  return '<div class="diff-head"><span class="wsp-path" title="' + esc(file) + '">' + esc(file) + '</span><span class="dim">click a line to comment</span></div>'
-    + '<div class="diff">' + rows.map(function (r) {
-      if (r.kind === 'hunk' || r.kind === 'meta') {
-        return '<div class="dl ' + r.kind + '"><span class="no"></span><span class="no"></span><span class="tx">' + esc(r.text) + '</span></div>';
-      }
-      const line = r.kind === 'del' ? r.oldNo : r.newNo;
-      const side = r.kind === 'del' ? '-' : '+';
-      const hasC = comments.some(function (c) { return c.file === file && c.line === line && c.side === side; });
-      return '<div class="dl ' + r.kind + (hasC ? ' cmt' : '') + '" data-line="' + line + '" data-side="' + side + '">'
-        + '<span class="no">' + (r.oldNo != null ? r.oldNo : '') + '</span><span class="no">' + (r.newNo != null ? r.newNo : '') + '</span>'
-        + '<span class="tx">' + esc(r.text) + '</span></div>';
-    }).join('') + '</div>';
-}
-async function chOpenDiff(file) {
+async function chOpenDiff(file, cid) {
   const box = document.getElementById('chp-diff'); if (!box) return;
   CH_FILE = file;
-  // The diff belongs to this repository's batch: a comment on it lands there,
+  // The diff belongs to this repository's review: a comment on it lands there,
   // whatever is on screen by the time it is added.
-  const seq = ++CH_DIFF, root = document.getElementById('chp-files').dataset.root;
-  const list = CH_BATCHES.get(CH_CTX).comments;
+  const seq = ++CH_DIFF, root = document.getElementById('chp-files').dataset.root, rv = CH_RV;
   document.querySelectorAll('#chp-files .chf').forEach(function (x) { x.classList.toggle('on', x.dataset.file === file); });
   box.innerHTML = '<div class="wsp-empty">loading diff…</div>';
   try {
     const d = await api('/api/git/diff?path=' + encodeURIComponent(root) + '&file=' + encodeURIComponent(file));
     if (seq !== CH_DIFF || !box.isConnected) return;   // another file, repository or project since
-    box.innerHTML = renderDiff(file, d.diff || '', list, root);
-    const body = box.querySelector('.diff');
-    if (body) body.onclick = function (e) {
-      const dl = e.target.closest('.dl'); if (!dl || !dl.dataset.line) return;
-      chCommentPrompt(file, parseInt(dl.dataset.line, 10), dl.dataset.side, dl.querySelector('.tx').textContent, dl, list);
-    };
+    const v = drShow(rv, box, root, file, d.diff || '');
+    if (cid) { v.scrollTo = cid; drPaint(v); }
   } catch (e) { if (seq === CH_DIFF && box.isConnected) box.innerHTML = '<div class="wsp-empty">diff unavailable: ' + esc(e.message) + '</div>'; }
 }
-// The comments land in `list` (the project tab's batch unless a task pane
-// passes its own), and `after` repaints whatever tray shows that list.
-function chCommentPrompt(file, line, side, code, dl, list, after) {
-  list = list || CH_COMMENTS; after = after || chRenderTray;
-  // Inline composer under the clicked line (no window.prompt — it misbehaves on remote setups).
-  const old = document.querySelector('.dl-composer'); if (old) old.remove();
-  const box = document.createElement('div'); box.className = 'dl-composer';
-  box.innerHTML = '<textarea rows="2" placeholder="Comment on line ' + line + ' — Ctrl+Enter to add"></textarea>'
-    + '<div class="dl-cbtns"><button class="dl-ok">Add comment</button><button class="dl-cancel secondary">Cancel</button></div>';
-  dl.insertAdjacentElement('afterend', box);
-  const ta = box.querySelector('textarea'); ta.focus();
-  box.querySelector('.dl-cancel').onclick = function () { box.remove(); };
-  box.querySelector('.dl-ok').onclick = function () {
-    const t = ta.value.trim(); if (!t) return;
-    list.push({ file: file, line: line, side: side, code: code, text: t });
-    dl.classList.add('cmt'); box.remove(); after();
-  };
-  ta.addEventListener('keydown', function (ev) {
-    if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); box.querySelector('.dl-ok').click(); }
-    if (ev.key === 'Escape') box.remove();
-  });
-}
-function chFormat(list, what) {
-  list = list || CH_COMMENTS;
-  const byFile = {};
-  list.forEach(function (c) { (byFile[c.file] = byFile[c.file] || []).push(c); });
-  return '📝 Review comments on ' + (what || 'the working-tree diff') + ' (' + list.length + '):\n'
-    + Object.keys(byFile).map(function (f) {
-        return '\n**' + f + '**\n' + byFile[f].slice().sort(function (a, b) { return a.line - b.line; }).map(function (c) {
-          return '- L' + c.line + ' (' + c.side + ') "' + c.code.trim().slice(0, 120) + '"\n  → ' + c.text;
-        }).join('\n');
-      }).join('\n');
-}
-function chRenderTray() {
-  let tray = document.getElementById('ch-tray');
-  if (!CH_COMMENTS.length || PROJECT_TAB !== 'changes' || SB_DEST || CH_CTX.split('|')[0] !== SELECTED_PROJECT) {
-    if (tray) tray.remove();
-    return;
-  }
-  if (!tray) { tray = document.createElement('div'); tray.id = 'ch-tray'; document.body.appendChild(tray); }
-  const pj = projectById(CH_CTX.split('|')[0]);   // the batch's own project, whatever is selected
-  const rooms = ((pj && pj.sessions) || []).filter(function (s) { return s.roomId; });
-  // Rebuilt only when it changes, and the chat you picked stays picked: this
-  // runs on every render, and a rebuild put "Send" back on the first chat.
-  const html = '<div class="ch-tray-head"><strong>' + CH_COMMENTS.length + ' review comment' + (CH_COMMENTS.length > 1 ? 's' : '') + '</strong><span class="grow"></span>'
-    + '<select id="ch-to" title="Which task chat receives the comments">'
-    + (rooms.length ? rooms.map(function (r) { return '<option value="' + esc(r.roomId) + '">' + esc(r.label || r.roomId) + '</option>'; }).join('')
-                    : '<option value="">(no task chat in this project)</option>')
-    + '</select>'
-    + '<button class="ch-send">Send to chat</button><button class="ch-copy secondary">Copy</button><button class="ch-clear secondary">Clear</button></div>'
-    + '<div class="ch-list">' + CH_COMMENTS.map(function (c, i) {
-        return '<div class="ch-item"><span class="ch-loc">' + esc(c.file) + ':' + c.line + ' (' + c.side + ')</span><span class="ch-txt">' + esc(c.text) + '</span><button class="ch-x" data-i="' + i + '" title="Remove">✕</button></div>';
-      }).join('') + '</div>';
-  if (tray._html === CH_CTX + html) return;
-  tray._html = CH_CTX + html;
-  tray.innerHTML = html;
-  const to = document.getElementById('ch-to'), picked = CH_BATCHES.get(CH_CTX).to;
-  if (picked && [...to.options].some(function (o) { return o.value === picked; })) to.value = picked;
-  to.onchange = function () { CH_BATCHES.get(CH_CTX).to = to.value; };
-  tray.querySelectorAll('.ch-x').forEach(function (b) {
-    b.onclick = function () { CH_COMMENTS.splice(parseInt(b.dataset.i, 10), 1); chRenderTray(); if (CH_FILE) chOpenDiff(CH_FILE); };
-  });
-  tray.querySelector('.ch-clear').onclick = function () { CH_COMMENTS.length = 0; chRenderTray(); if (CH_FILE) chOpenDiff(CH_FILE); };
-  tray.querySelector('.ch-copy').onclick = function () {
-    navigator.clipboard.writeText(chFormat()).then(function () { toast('comments copied', 1500, 'ok'); }, function () { toast('copy failed', 3000, 'err'); });
-  };
-  tray.querySelector('.ch-send').onclick = async function () {
-    const rid = document.getElementById('ch-to').value;
-    if (!rid) { toast('no task chat to send to — use Copy', 3000, 'err'); return; }
-    // One send at a time, and the comments taken off the batch are exactly the
-    // ones sent: the tray stays editable while the hub answers, and you may
-    // have moved to another repository or project by then.
-    const rec = CH_BATCHES.get(CH_CTX);
-    if (rec.sending) { toast('still sending the last batch', 2000); return; }
-    const items = rec.comments.slice();
-    rec.sending = true;
-    try {
-      await api('/api/room/say', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: rid, text: chFormat(items), to: '' }) });
-      toast('sent ' + items.length + ' comment(s) to chat', 2500, 'ok');
-      items.forEach(function (c) { const k = rec.comments.indexOf(c); if (k >= 0) rec.comments.splice(k, 1); });
-      chRenderTray(); if (CH_FILE) chOpenDiff(CH_FILE);
-    } catch (e) { toast('send failed: ' + e.message, 5000, 'err'); }
-    finally { rec.sending = false; }
-  };
+// A file of the diff, in the project's Workspace tab at a line.
+function chOpenInWorkspace(pid, root, file, line) {
+  if (SELECTED_PROJECT !== pid) return;
+  PROJECT_TAB = 'workspace';
+  renderRows();
+  const v = WS_VIEWS.get(wsCtxKey({ kind: 'project', projectId: pid }));
+  if (v && v.el && v.el.isConnected) wsOpenTabAt(v, drPath(root, file), line);
 }
 function wireChangesPanel(pj) {
   wireScopeBar();
   // No repository yet, so nothing to comment on until the status names one.
-  chUseContext(((pj && pj.id) || '') + '|');
-  const files = document.getElementById('chp-files'); if (!files) { chRenderTray(); return; }
+  chUseContext((pj && pj.id) || '', '');
+  const files = document.getElementById('chp-files'); if (!files) return;
   CH_FILE = '';
   chLoadStatus();
   files.onclick = function (e) {
     const f = e.target.closest('.chf'); if (!f || !f.dataset.file) return;
     chOpenDiff(f.dataset.file);
   };
-  chRenderTray();
 }
 
 // ---- Roadmap tab: the project's ROADMAP.md, read and edited in place --------
@@ -6311,15 +6836,25 @@ function tchRow(v) { return ALL_ROWS.find(x => x.sessionId === v.sid || x.roomId
 function tchMount(el, sid) {
   let v = TCH_VIEWS.get(sid);
   if (!v) {
-    v = { sid, root: '', roots: [], files: [], info: null, file: '', comments: [], busy: false, again: false };
+    v = { sid, root: '', roots: [], files: [], info: null, file: '', busy: false, again: false };
+    // This task's review: its comments go to its own chat and no other.
+    v.rv = drReview('task:' + sid, {
+      target: () => {
+        const r = tchRow(v);
+        return r && r.headless && r.roomId ? { roomId: r.roomId, live: !!r.isLive, name: r.label || 'This task' } : null;
+      },
+      what: () => v.info && v.info.branch ? '`' + v.info.branch + '`' + (v.info.base ? ' against `' + v.info.base + '`' : '') : '',
+      open: (root, file, line) => tchOpenInWorkspace(v.sid, root, file, line),
+      pick: c => { if (c.root === v.root) tchOpenDiff(v, c.file, c.cid); },
+    });
     TCH_VIEWS.set(sid, v);
   }
   v.el = el;
   el.innerHTML = '<div class="tch-none" hidden></div><div class="tch">'
     + '<div class="tch-head"><span>loading…</span></div>'
     + '<div class="tch-files"></div>'
-    + '<div class="tch-diff"><div class="wsp-empty">Select a changed file to review its diff. Click a line to comment; the comments go to this task\'s chat.</div></div>'
-    + '<div class="tch-tray" hidden></div></div>';
+    + '<div class="tch-diff"><div class="wsp-empty">Select a changed file to review its diff. Click a line number to comment; the comments go to this task\'s chat.</div></div>'
+    + '<div class="cmt-tray" hidden></div></div>';
   el.querySelector('.tch-files').onclick = e => {
     const f = e.target.closest('.chf'); if (f && f.dataset.file) tchOpenDiff(v, f.dataset.file);
   };
@@ -6327,12 +6862,12 @@ function tchMount(el, sid) {
   head.onclick = e => { if (e.target.closest('.chp-refresh')) tchSync(v); };
   head.onchange = e => {
     const s = e.target.closest('.chp-repo'); if (!s) return;
-    v.root = s.value; v.file = ''; v.comments.length = 0; tchTray(v);
+    v.root = s.value; v.file = '';
     el.querySelector('.tch-diff').innerHTML = '<div class="wsp-empty">Select a changed file to review its diff.</div>';
     tchSync(v);
   };
   tchSync(v).then(() => { if (v.file) tchOpenDiff(v, v.file); });
-  tchTray(v);
+  drSetTray(v.rv, el.querySelector('.cmt-tray'));
   return v;
 }
 function tchWrite(node, html) { if (node && node._sig !== html) { node._sig = html; node.innerHTML = html; } }
@@ -6398,53 +6933,37 @@ async function tchRead(v) {
     tchWrite(v.el.querySelector('.tch-files'), '<div class="chf none">changes unavailable: ' + esc(e.message) + '</div>');
   }
 }
-async function tchOpenDiff(v, file) {
+async function tchOpenDiff(v, file, cid) {
   const box = v.el && v.el.querySelector('.tch-diff'); if (!box || !v.root) return;
+  const root = v.root;
   v.file = file;
   tchPaintList(v);
   box.innerHTML = '<div class="wsp-empty">loading diff…</div>';
   try {
-    const d = await api('/api/git/diff?branch=1&path=' + encodeURIComponent(v.root) + '&file=' + encodeURIComponent(file));
-    if (v.file !== file) return;              // another file was picked meanwhile
-    box.innerHTML = renderDiff(file, d.diff || '', v.comments, v.root);
-    const body = box.querySelector('.diff');
-    if (body) body.onclick = e => {
-      const dl = e.target.closest('.dl'); if (!dl || !dl.dataset.line) return;
-      chCommentPrompt(file, parseInt(dl.dataset.line, 10), dl.dataset.side, dl.querySelector('.tx').textContent, dl,
-        v.comments, () => tchTray(v));
-    };
-  } catch (e) { box.innerHTML = '<div class="wsp-empty">diff unavailable: ' + esc(e.message) + '</div>'; }
+    const d = await api('/api/git/diff?branch=1&path=' + encodeURIComponent(root) + '&file=' + encodeURIComponent(file));
+    if (v.file !== file || v.root !== root || !box.isConnected) return;   // another file or repository was picked meanwhile
+    const dv = drShow(v.rv, box, root, file, d.diff || '');
+    if (cid) { dv.scrollTo = cid; drPaint(dv); }
+  } catch (e) { if (v.file === file) box.innerHTML = '<div class="wsp-empty">diff unavailable: ' + esc(e.message) + '</div>'; }
 }
-function tchTray(v) {
-  const tray = v.el && v.el.querySelector('.tch-tray'); if (!tray) return;
-  const n = v.comments.length;
-  tray.hidden = !n;
-  if (!n) { tray.innerHTML = ''; return; }
-  const r = tchRow(v);
-  const rid = r && r.headless && r.roomId ? r.roomId : '';
-  const what = 'the branch' + (v.info && v.info.branch ? ' ' + v.info.branch : '');
-  const redraw = () => { tchTray(v); if (v.file) tchOpenDiff(v, v.file); };
-  tray.innerHTML = '<span>' + n + ' review comment' + (n > 1 ? 's' : '') + '</span><span class="grow"></span><span class="dp-actions">'
-    + (rid ? '<button class="tch-send">Send to this task\'s chat</button>' : '')
-    + '<button class="tch-copy">Copy</button><button class="tch-clear">Clear</button></span>';
-  tray.querySelector('.tch-clear').onclick = () => { v.comments.length = 0; redraw(); };
-  tray.querySelector('.tch-copy').onclick = () => navigator.clipboard.writeText(chFormat(v.comments, what))
-    .then(() => toast('comments copied', 1500, 'ok'), () => toast('copy failed', 3000, 'err'));
-  const send = tray.querySelector('.tch-send');
-  if (send) send.onclick = async () => {
-    try {
-      await api('/api/room/say', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: rid, text: chFormat(v.comments, what), to: '' }) });
-      toast('sent ' + n + ' comment(s) to the chat', 2500, 'ok');
-      v.comments.length = 0; redraw();
-    } catch (e) { toast('send failed: ' + e.message, 5000, 'err'); }
-  };
+// A file of the branch, in this task's Workspace tab at a line. A task whose
+// folder the Workspace cannot show opens the file in a viewer of its own.
+function tchOpenInWorkspace(sid, root, file, line) {
+  const path = drPath(root, file);
+  if (!wsRoots({ kind: 'task', sid }).length) {
+    window.open('/fileview?path=' + encodeURIComponent(path) + (line ? '&line=' + line : ''), '_blank', 'noopener');
+    return;
+  }
+  openWorkspaceTab(sid);
+  const v = WS_VIEWS.get(wsCtxKey({ kind: 'task', sid }));
+  if (v && v.el && v.el.isConnected) wsOpenTabAt(v, path, line);
 }
 // Poll only the pane someone is looking at; a closed panel slides off-screen
-// with a transform and stays laid out, so check that too.
+// with a transform and stays laid out, so check that too. Submit follows the
+// task starting or stopping.
 setInterval(() => {
   if (document.hidden || !document.body.classList.contains('detail-open')) return;
-  TCH_VIEWS.forEach(v => { if (v.el && v.el.isConnected && v.el.offsetParent) tchSync(v); });
+  TCH_VIEWS.forEach(v => { if (v.el && v.el.isConnected && v.el.offsetParent) { tchSync(v); drPaintTray(v.rv); } });
 }, 10000);
 
 // ---- The PO -----------------------------------------------------------------
@@ -6698,7 +7217,6 @@ function renderRows() {
   if (SB_DEST) {
     writeSlot($('#view'), `<div class="dest">${SB_DEST === 'needsyou' ? needsYouHtml() : activeHtml()}</div>`);
     setViewCount('');
-    chRenderTray();                   // the Changes comment tray steps aside too
     return;
   }
   // Projects landing (default). A selected project or a non-project grouping
@@ -6726,6 +7244,7 @@ function renderRows() {
       body.innerHTML = changesPanelHtml(pj);
       wireChangesPanel(pj);
     }
+    if (CH_RV) drPaintTray(CH_RV);    // Submit follows the chosen task starting or stopping
     setViewCount('');
     if (writeSlot(chrome, projectsChromeHtml())) wireProjectsChrome();
     return;

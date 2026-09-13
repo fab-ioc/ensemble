@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Ensemble — session</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+<script src="/static/comments.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
 <script>
@@ -1827,66 +1828,21 @@ $('#theme').onclick = async () => {
 // They are dropped only once the agent really took them. The tray is drawn
 // again only when the comments, or what Submit can do, change: rebuilt on every
 // poll it lost the pointer's hover, its scroll and any click in progress.
-const COMMENTS = [];        // {cid, at, mid, from, start, end, quote, note}
-// One stored entry per comment. The same chat can be open twice (the PO's
-// drawer and its own window): adding writes only that comment's entry and
-// removing deletes only its own, so neither copy can overwrite the other's.
+// The store is static/comments.js, shared with the Changes tab's line comments:
+// one stored entry per comment, and what this browser would not store kept in
+// the page, tried again on each change, with a note that a reload would lose it.
 const CMT_PREFIX = 'cd-comment:' + (ROOM || '') + ':';
+const CMT = cmtStore(CMT_PREFIX, c => typeof c.quote === 'string' && typeof c.note === 'string');
+const COMMENTS = CMT.list;  // {cid, at, mid, from, start, end, quote, note}
+const CMT_UNSTORED = CMT.unstored;
 let CMT_SENDING = false, CMT_ERROR = '';
-// Comments this browser would not store (storage full or blocked): this page
-// keeps them, tries again on each change, and says a reload would lose them.
-const CMT_UNSTORED = new Map();
-// Comments removed here whose stored entry could not be deleted yet.
-const CMT_GONE = new Set();
 let _cmtComposerOpen = false;
 let _selBtn = null;
-let _cmtLastAt = 0;
-const cmtId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-const cmtNow = () => (_cmtLastAt = Math.max(Date.now(), _cmtLastAt + 1));
-// The stored comments, or null when storage cannot be read.
-function cmtStored() {
-  try {
-    const out = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (!k || !k.startsWith(CMT_PREFIX)) continue;
-      try {
-        const c = JSON.parse(localStorage.getItem(k));
-        if (c && c.cid && typeof c.quote === 'string' && typeof c.note === 'string') out.push(c);
-      } catch (e) {}
-    }
-    return out;
-  } catch (e) { return null; }
-}
-// COMMENTS again from what is stored plus what only this page holds. When
-// storage cannot be read at all, the page's own list stands.
-function cmtSync() {
-  for (const [cid, c] of CMT_UNSTORED) {
-    try { localStorage.setItem(CMT_PREFIX + cid, JSON.stringify(c)); CMT_UNSTORED.delete(cid); } catch (e) {}
-  }
-  for (const cid of CMT_GONE) {
-    try { localStorage.removeItem(CMT_PREFIX + cid); CMT_GONE.delete(cid); } catch (e) {}
-  }
-  const stored = cmtStored();
-  if (!stored) return;
-  const list = stored.filter(c => !CMT_GONE.has(c.cid) && !CMT_UNSTORED.has(c.cid)).concat([...CMT_UNSTORED.values()]);
-  list.sort((a, b) => (a.at || 0) - (b.at || 0) || (a.cid < b.cid ? -1 : a.cid > b.cid ? 1 : 0));
-  COMMENTS.splice(0, COMMENTS.length, ...list);
-}
+const cmtId = CMT.id, cmtNow = CMT.now;
+function cmtSync() { CMT.sync(); }
 function cmtChanged() { cmtSync(); clearHighlights(); applyComments(); }
-function cmtAdd(c) {
-  COMMENTS.push(c);
-  try { localStorage.setItem(CMT_PREFIX + c.cid, JSON.stringify(c)); } catch (e) { CMT_UNSTORED.set(c.cid, c); }
-  cmtChanged();
-}
-function cmtRemove(cids) {
-  for (const cid of cids) {
-    const i = COMMENTS.findIndex(z => z.cid === cid); if (i >= 0) COMMENTS.splice(i, 1);
-    CMT_UNSTORED.delete(cid);
-    try { localStorage.removeItem(CMT_PREFIX + cid); } catch (e) { CMT_GONE.add(cid); }
-  }
-  cmtChanged();
-}
+function cmtAdd(c) { CMT.put(c); cmtChanged(); }
+function cmtRemove(cids) { CMT.remove(cids); cmtChanged(); }
 
 function _offsetInEl(root, node, nodeOffset) {
   const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
