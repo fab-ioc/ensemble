@@ -109,6 +109,13 @@ const tOpen = new Set(['C:\\p\\tasks\\t1', 'C:\\p\\tasks\\t1\\REPO', 'C:\\p\\tas
                        'C:\\p\\tasks\\t1\\repo\\Static\\x', 'D:\\gone']);
 const tTmp = new Set(tOpen);
 log.tidy = [wsRevealTidy(tOpen, tTmp, dirs, roots), [...tOpen], [...tTmp]];
+// A listing that failed tells nothing; once read, a folder not in it closes.
+const eDirs = new Map([['C:\\p\\tasks\\t1', { entries: [], error: 'failed' }]]);
+const eOpen = new Set(['C:\\p\\tasks\\t1\\REPO', 'C:\\p\\tasks\\t1\\repo', 'C:\\p\\tasks\\t1\\gone\\deeper']);
+const eTmp = new Set(eOpen);
+const eFirst = [wsRevealTidy(eOpen, eTmp, eDirs, roots), [...eOpen], [...eTmp]];
+eDirs.set('C:\\p\\tasks\\t1', { entries: [{ name: 'repo', type: 'dir' }], error: '' });
+log.tidyLater = { first: eFirst, then: [wsRevealTidy(eOpen, eTmp, eDirs, roots), [...eOpen], [...eTmp]] };
 
 // The list: order kept under a filter, folders under their root.
 const rec = ['C:\\p\\tasks\\t1\\repo\\index.html', 'C:\\p\\docs\\plan.md', 'C:\\p\\tasks\\t1\\repo\\tests\\test_links.py', 'D:\\x\\y.txt']
@@ -208,6 +215,13 @@ class RecentAndWhere(unittest.TestCase):
                          "the listing spells it repo, so REPO closes; the rest stay open")
         self.assertEqual(unchecked, ["C:\\p\\tasks\\t1\\repo\\Static\\x"], "its folder is not read yet: checked later")
 
+    def test_a_failed_listing_settles_nothing(self):
+        later = self.r["tidyLater"]
+        three = ["C:\\p\\tasks\\t1\\REPO", "C:\\p\\tasks\\t1\\repo", "C:\\p\\tasks\\t1\\gone\\deeper"]
+        self.assertEqual(later["first"], [0, three, three], "the root's listing failed: all wait")
+        self.assertEqual(later["then"], [2, ["C:\\p\\tasks\\t1\\repo"], []],
+                         "read again: REPO is spelled repo there, and gone is not there at all")
+
     def test_the_list_keeps_its_order_under_a_filter(self):
         self.assertEqual(self.r["items"], [
             ["C:\\p\\tasks\\t1\\repo\\index.html", "repo/index.html"],
@@ -242,13 +256,18 @@ const flush = async () => { for (let i = 0; i < 30; i++) await new Promise(r => 
 // The page around the functions under test: painting does nothing, and every
 // read of the hub waits until the test answers it.
 function wsfSchedule() {} function wsfPaint() {} function wsfMark() {} function wsfCancel() {}
-function wsPaintTree() {} function wsPersist() {}
+function wsPaintTree() {}
+let saved = null;
+const localStorage = { setItem: (k, s) => { saved = JSON.parse(s); } };
 function wsScrollTreeTo() { return true; }
 const opened = [];
 function wsOpenTabAt(v, path, line) { opened.push([path, line]); }
 const waiting = [];
 const later = what => new Promise(res => waiting.push({ what, res }));
-async function wsFetchDir(v, d) { const entries = await later('dir ' + d); v.dirs.set(d, { entries, error: '' }); }
+async function wsFetchDir(v, d) {
+  const got = await later('dir ' + d);
+  v.dirs.set(d, Array.isArray(got) ? { entries: got, error: '' } : { entries: [], error: got.error });
+}
 async function api(url) { return later('api ' + url.split('?')[0]); }
 async function fetch(url) { const d = await later('fetch ' + url.split('?')[0]); return { ok: true, status: 200, json: async () => d }; }
 async function answer(what, value) {
@@ -261,8 +280,9 @@ const location = { origin: 'o' };
 
 const R = 'C:\\t';
 const D = (dirs, files) => [...dirs.map(name => ({ name, type: 'dir' })), ...(files || []).map(name => ({ name, type: 'file' }))];
-const rv = () => ({ roots: [{ path: R, label: 'T', kind: 'task' }], dirs: new Map(), open: new Set(), revealGen: 0,
-                    revealTmp: new Set(), revealPending: '', mark: '', find: { recent: false, rq: '', q: '' } });
+const rv = () => ({ key: 'k', roots: [{ path: R, label: 'T', kind: 'task' }], dirs: new Map(), open: new Set(), revealGen: 0,
+                    revealTmp: new Set(), revealPending: '', mark: '', tabs: [], sel: '', recent: [], follow: false, scroll: 0,
+                    find: { mode: 'files', q: '', cs: false, rx: false, recent: false, rq: '' } });
 
 const fv = () => ({ uid: 'u', sel: R + '\\b.md', ctx: { kind: 'task' }, el: null, roots: [{ path: R, label: 'T', kind: 'task' }],
   recent: ['b.md', 'a.md', 'c.md'].map(n => ({ path: R + '\\' + n, st: wsTabState(null) })),
@@ -302,6 +322,25 @@ const fv = () => ({ uid: 'u', sel: R + '\\b.md', ctx: { kind: 'task' }, el: null
   await answer('dir C:\\t\\REPO', D([], ['a.py']));
   await answer('dir C:\\t\\repo', D([], ['a.py']));
   log.twice = { c1: await c1, c2: await c2, open: [...v.open], mark: v.mark, tmp: [...v.revealTmp] };
+
+  // The root's listing fails: the mistyped folder cannot be told, so it is not saved as open...
+  v = rv();
+  const e1 = wsReveal(v, R + '\\REPO\\a.py'); await flush();
+  await answer('dir C:\\t', { error: 'failed' });
+  await answer('dir C:\\t\\REPO', D([], ['a.py']));
+  log.failed = { done: await e1, open: [...v.open], tmp: [...v.revealTmp], saved: saved.open };
+  // ...and the tree's next refresh, reading the root again, closes it.
+  v.dirs.set(R, { entries: D(['repo']), error: '' });
+  log.recovered = { closed: wsRevealTidy(v.open, v.revealTmp, v.dirs, v.roots), open: [...v.open], tmp: [...v.revealTmp] };
+  wsPersist(v);
+  log.recovered.saved = saved.open;
+
+  // A folder on the way that is not there at all.
+  v = rv();
+  const g1 = wsReveal(v, R + '\\gone\\a.py'); await flush();
+  await answer('dir C:\\t', D(['repo']));
+  await answer('dir C:\\t\\gone', { error: 'not_found' });
+  log.missing = { done: await g1, open: [...v.open], tmp: [...v.revealTmp], saved: saved.open };
 
   // Recent over Go to file: each keeps its own selection.
   let w = fv();
@@ -366,6 +405,7 @@ class RecentAndWhereInTime(unittest.TestCase):
                          block("Workspace recent and where"),
                          line(r"^const WSF_PAGE = .*$"), line(r"^const wsfRoot = .*$"), line(r"^const wsfAbs = .*$"),
                          line(r"^const wsfOn = .*$"), line(r"^const wsfSel = .*$"), line(r"^function wsRecentRank\(.*$"),
+                         fn(INDEX, "function wsPersist("),
                          fn(INDEX, "async function wsReveal("), fn(INDEX, "async function wsfList("),
                          fn(INDEX, "function wsfRank("), fn(INDEX, "async function wsfSearch("),
                          fn(INDEX, "function wsRecentToggle("), fn(INDEX, "function wsfOpen("),
@@ -400,6 +440,17 @@ class RecentAndWhereInTime(unittest.TestCase):
         self.assertEqual(r["open"], ["C:\\t", "C:\\t\\repo"])
         self.assertEqual(r["mark"], "C:\\t\\repo\\a.py")
         self.assertEqual(r["tmp"], [])
+
+    def test_a_failed_parent_listing_does_not_save_the_folder_as_open(self):
+        f = self.r["failed"]
+        self.assertTrue(f["done"])
+        self.assertEqual(f["open"], ["C:\\t", "C:\\t\\REPO"])
+        self.assertEqual(f["tmp"], ["C:\\t\\REPO"], "cannot be told yet")
+        self.assertEqual(f["saved"], ["C:\\t"], "so it is not saved as expanded")
+        self.assertEqual(self.r["recovered"], {"closed": 1, "open": ["C:\\t"], "tmp": [], "saved": ["C:\\t"]})
+
+    def test_a_folder_that_is_not_there_is_closed(self):
+        self.assertEqual(self.r["missing"], {"done": True, "open": ["C:\\t"], "tmp": [], "saved": ["C:\\t"]})
 
     def test_recent_has_a_selection_of_its_own(self):
         self.assertEqual(self.r["sel"], {"on": [1, 2], "off": 2},
@@ -450,6 +501,8 @@ class RecentAndWhereAreWired(unittest.TestCase):
         mount = fn(INDEX, "function wsMount(")
         self.assertIn("if (d) { wsReveal(v, d.dataset.path, { dir: true }); return; }", mount)
         self.assertIn("if (e.target.closest('.wsp-reveal')) { wsReveal(v, v.sel); return; }", mount)
+        self.assertIn("if (v.revealTmp.size && wsRevealTidy(v.open, v.revealTmp, v.dirs, v.roots)) wsPersist(v);",
+                      fn(INDEX, "async function wsSync("), "each refresh settles what a reveal could not")
         scroll = fn(INDEX, "function wsScrollTreeTo(")
         self.assertNotIn("scrollIntoView", scroll, "the tree scrolls, never the page")
         crumbs = fn(INDEX, "function wsPaintCrumbs(")

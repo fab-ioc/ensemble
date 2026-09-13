@@ -5932,18 +5932,27 @@ function wsRevealDirs(dirs, rootPath, path, self) {
   return { open, target: cur };
 }
 // Folders a reveal opened on its way (`tmp`) are checked against the listings
-// read since: one spelled otherwise there is closed again, one its folder's
-// listing has settled leaves `tmp`, one not settled yet waits for a later
-// check. Any reveal may check, the newest or one a newer reveal overtook, so
-// neither leaves a folder open that no row is drawn for. The number closed.
+// read since, from the root down, each name as it is spelled. Every folder on
+// the way listed, and listing it: it stays open and leaves `tmp`. A listing
+// read that does not hold it (spelled otherwise, or not there): it is closed.
+// A folder on the way not read yet, or whose read failed: it waits in `tmp`
+// for the next check (a reveal's, or the tree's next refresh), and is not saved
+// as open meanwhile (wsPersist). The number closed.
 function wsRevealTidy(open, tmp, dirs, roots) {
   let closed = 0;
   [...tmp].forEach(d => {
     const root = wsRootOf(roots, d);
-    const plan = root ? wsRevealDirs(dirs, root.path, d, true) : null;
-    if (plan && plan.target !== d) { open.delete(d); tmp.delete(d); closed++; return; }
-    const up = plan && plan.open.length > 1 ? plan.open[plan.open.length - 2] : null;
-    if (!plan || !up || dirs.has(up)) tmp.delete(d);
+    if (!root) { tmp.delete(d); return; }
+    let cur = root.path, state = 'there';
+    for (const name of wsNamesUnder(root.path, d)) {
+      const c = dirs.get(cur);
+      if (!c || c.error) { state = 'unknown'; break; }
+      if (!c.entries.some(x => x.name === name)) { state = 'gone'; break; }
+      cur = wsJoin(cur, name);
+    }
+    if (state === 'unknown') return;
+    tmp.delete(d);
+    if (state === 'gone') { open.delete(d); closed++; }
   });
   return closed;
 }
@@ -6007,7 +6016,8 @@ function wsView(ctx) {
 function wsPersist(v) {
   clearTimeout(v.persistTimer);
   const f = v.find;
-  try { localStorage.setItem('cd-ws:' + v.key, JSON.stringify({ open: [...v.open], sel: v.sel, scroll: v.scroll, ...wsTabsSaved(v),
+  // A folder a reveal opened is saved once its listings say it is there.
+  try { localStorage.setItem('cd-ws:' + v.key, JSON.stringify({ open: [...v.open].filter(p => !v.revealTmp.has(p)), sel: v.sel, scroll: v.scroll, ...wsTabsSaved(v),
     find: { mode: f.mode, q: f.q, cs: f.cs, rx: f.rx },
     recent: v.recent.map(x => ({ path: x.path, st: x.st })), follow: v.follow })); } catch (e) {}
 }
@@ -6292,8 +6302,8 @@ async function wsReveal(v, path, opts) {
     wsPaintTree(v);
     await Promise.all(unread.map(d => wsFetchDir(v, d)));
     if (gen !== v.revealGen) {
-      // Overtaken: a folder opened here under a spelling its listing corrected
-      // is closed now; the newer reveal checks what is not read yet.
+      // Overtaken: a folder opened here that its listing does not hold is
+      // closed now; what cannot be told yet is checked later.
       if (wsRevealTidy(v.open, v.revealTmp, v.dirs, v.roots)) { wsPersist(v); wsPaintTree(v); }
       return false;
     }
@@ -6447,6 +6457,8 @@ async function wsSync(v) {
       }
     }
     if (batch.length) await Promise.all(batch.map(d => wsFetchDir(v, d)));
+    // Folders a reveal opened before their listings could say: settled now.
+    if (v.revealTmp.size && wsRevealTidy(v.open, v.revealTmp, v.dirs, v.roots)) wsPersist(v);
     wsPaintTree(v);
     if (wsTabsCheck(v, v.dirs)) wsPaintView(v);
     else wsPaintCrumbs(v);   // the roots may have arrived since the path was drawn
