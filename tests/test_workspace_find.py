@@ -554,7 +554,7 @@ class Swaps(unittest.TestCase):
                     os.rmdir(link)
                 else:
                     link.unlink()
-        shutil.rmtree(self.tmp, ignore_errors=True)
+        shutil.rmtree("\\\\?\\" + str(self.tmp) if os.name == "nt" else self.tmp, ignore_errors=True)
 
     def swap_sub_for_junction(self):
         sub = self.root / "sub"
@@ -569,10 +569,10 @@ class Swaps(unittest.TestCase):
     def test_a_folder_swapped_after_it_was_listed_is_not_walked(self):
         real_scan = workspace_search._scan
 
-        def scan(d, real_root):
+        def scan(d, real_root, ignores_rel):
             if os.path.basename(d) == "sub" and not self.links:
                 self.swap_sub_for_junction()             # queued as a folder, a junction by the time it is opened
-            return real_scan(d, real_root)
+            return real_scan(d, real_root, ignores_rel)
         with mock.patch.object(workspace_search, "_scan", scan):
             res = workspace_search.search(str(self.root), "needle")
         self.assertTrue(self.links, "the swap happened")
@@ -584,17 +584,23 @@ class Swaps(unittest.TestCase):
         inner, sub = self.root / "inner", self.root / "sub"
         inner.mkdir()
         (inner / "inside.txt").write_text("in\n", encoding="utf-8")
+        (inner / ".git").mkdir()                         # so git is asked about it too
         real_scan, real_final = workspace_search._scan, workspace_search._handle_final
         step = [0]
+        git_asked = []
 
-        def scan(d, real_root):
+        def scan(d, real_root, ignores_rel):
             if os.path.basename(d) == "sub" and step[0] == 0:
                 shutil.rmtree(sub)                       # queued as a folder, now a junction to a folder inside
                 if not _junction(sub, inner):
                     self.skipTest("this machine cannot make a junction")
                 self.links.append(sub)
                 step[0] = 1
-            return real_scan(d, real_root)
+            return real_scan(d, real_root, ignores_rel)
+
+        def ignored(d, rel):
+            git_asked.append((rel, workspace_search._plain(os.path.realpath(d))))
+            return set()
 
         def final(h):
             p = real_final(h)
@@ -603,11 +609,29 @@ class Swaps(unittest.TestCase):
                 self.assertTrue(_junction(sub, self.outside))
                 step[0] = 2
             return p
-        with mock.patch.object(workspace_search, "_scan", scan), mock.patch.object(workspace_search, "_handle_final", final):
+        with mock.patch.object(workspace_search, "_scan", scan), mock.patch.object(workspace_search, "_handle_final", final), \
+                mock.patch.object(workspace_search, "_git_ignored", ignored):
             files, _ = workspace_search.list_files(str(self.root))
         self.assertEqual(step[0], 2, "both swaps happened")
         self.assertEqual(set(files), {"inner/inside.txt", "keep.txt", "sub/inside.txt"},
                          "the folder that was checked is the one listed")
+        want = workspace_search._plain(os.path.realpath(inner))
+        self.assertEqual(git_asked, [("inner/", want), ("sub/", want)], "git is asked about the folder that was checked")
+
+    @unittest.skipUnless(os.name == "nt", "Windows' 260-character path limit")
+    def test_a_file_deeper_than_260_characters(self):
+        parts = []
+        while len(str(self.root)) + sum(len(p) + 1 for p in parts) < 320:
+            parts.append("d" * 40)
+        deep = os.path.join("\\\\?\\" + str(self.root), *parts)
+        os.makedirs(deep)
+        with open(os.path.join(deep, "long-name.txt"), "w", encoding="utf-8") as f:
+            f.write("needle deep\n")
+        want = "/".join(parts + ["long-name.txt"])
+        self.assertGreater(len(str(self.root)) + len(want), 300)
+        files, _ = workspace_search.list_files(str(self.root))
+        self.assertIn(want, files)
+        self.assertIn((want, "needle deep"), self.found(workspace_search.search(str(self.root), "needle")))
 
     def test_a_parent_folder_swapped_between_listing_and_reading(self):
         real_list = workspace_search.list_files

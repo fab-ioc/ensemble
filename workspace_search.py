@@ -86,12 +86,20 @@ if os.name == "nt":
     def _fd_real(fd: int) -> str:
         return _plain(_handle_final(msvcrt.get_osfhandle(fd)))
 
-    def _scan(d: str, real_root: str) -> list[os.DirEntry] | None:
-        # Held open without FILE_SHARE_DELETE while it is listed: Windows then
-        # refuses to rename or remove it, or any folder above it. And listed by
-        # where it really is, not by its name: a name that is a junction can be
-        # pointed elsewhere once its target has been checked, but the target,
-        # held, stays where it was checked.
+    def _long(p: str) -> str:
+        """``p`` spelt the way Windows opens it past 260 characters."""
+        if p.startswith("\\\\?\\"):
+            return p
+        p = os.path.abspath(p)
+        return "\\\\?\\UNC\\" + p[2:] if p.startswith("\\\\") else "\\\\?\\" + p
+
+    def _scan(d: str, real_root: str, ignores_rel: str | None) -> tuple[str, list[os.DirEntry], set[str]] | None:
+        # Held open without FILE_SHARE_DELETE while it is listed and git is
+        # asked about it: Windows then refuses to rename or remove it, or any
+        # folder above it. And reached by where it really is, not by its name:
+        # a name that is a junction can be pointed elsewhere once its target
+        # has been checked, but the target, held, stays where it was checked.
+        # That spelling (\\?\...) also reaches past 260 characters.
         h = _k32.CreateFileW(d, 0x80000000, 0x1 | 0x2, None, 3, 0x02000000, None)  # GENERIC_READ, share read+write, OPEN_EXISTING, BACKUP_SEMANTICS
         if h == _INVALID_HANDLE:
             return None
@@ -99,8 +107,7 @@ if os.name == "nt":
             final = _handle_final(h)
             if not _inside(_plain(final), real_root):
                 return None
-            with os.scandir(final) as it:
-                return sorted(it, key=lambda e: e.name)
+            return _listed(final, final, ignores_rel)
         except OSError:
             return None
         finally:
@@ -150,17 +157,21 @@ else:
             return os.path.normcase(buf.split(b"\0", 1)[0].decode("utf-8", "surrogateescape"))
         return os.path.normcase(os.readlink(f"/proc/self/fd/{fd}"))
 
-    def _scan(d: str, real_root: str) -> list[os.DirEntry] | None:
-        # Listed through the very folder that was opened and checked.
+    def _long(p: str) -> str:
+        return p
+
+    def _scan(d: str, real_root: str, ignores_rel: str | None) -> tuple[str, list[os.DirEntry], set[str]] | None:
+        # Listed through the very folder that was opened and checked; git is
+        # asked about it by the path that folder reported.
         try:
             fd = os.open(d, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
         except OSError:
             return None
         try:
-            if not _inside(_fd_real(fd), real_root):
+            real = _fd_real(fd)
+            if not _inside(real, real_root):
                 return None
-            with os.scandir(fd) as it:
-                return sorted(it, key=lambda e: e.name)
+            return _listed(fd, real, ignores_rel)
         except OSError:
             return None
         finally:
@@ -186,6 +197,16 @@ def _git_ignored(d: str, rel: str) -> set[str]:
     return {rel + p.rstrip("/") for p in (out.stdout or "").split("\x00") if p}
 
 
+def _listed(source, base: str, ignores_rel: str | None) -> tuple[str, list[os.DirEntry], set[str]]:
+    """A checked folder, while it is still held: ``base``, the path its entries
+    are reached by; its entries, by name; and, when ``ignores_rel`` is given and
+    it is a repo, what git ignores in it."""
+    with os.scandir(source) as it:
+        entries = sorted(it, key=lambda e: e.name)
+    repo = ignores_rel is not None and any(e.name == ".git" for e in entries)
+    return base, entries, _git_ignored(base, ignores_rel) if repo else set()
+
+
 def _is_link(e: os.DirEntry) -> bool:
     try:
         return e.is_symlink() or bool(getattr(e, "is_junction", lambda: False)())
@@ -204,17 +225,17 @@ def list_files(root: str, enclosing_ignores: bool = False, limit: int = FILES_MA
     stack = [(root, "")]
     while stack:
         d, rel = stack.pop()
-        entries = _scan(d, real_root)
-        if entries is None:
+        scanned = _scan(d, real_root, None if rel == "" and enclosing_ignores else rel)
+        if scanned is None:
             continue
-        if any(e.name == ".git" for e in entries) and not (rel == "" and enclosing_ignores):
-            ignored |= _git_ignored(d, rel)
+        base, entries, found = scanned
+        ignored |= found
         dirs = []
         for e in entries:
             r = rel + e.name
             if e.name in SKIP_DIRS or r in ignored:
                 continue
-            path = os.path.join(d, e.name)
+            path = os.path.join(base, e.name)
             link = _is_link(e)
             try:
                 is_dir = e.is_dir(follow_symlinks=False)
@@ -289,7 +310,7 @@ def search(root: str, q: str, case: bool = False, regex: bool = False, enclosing
             timed_out = True
             break
         try:
-            with open(os.path.join(root, rel), "rb", opener=_open_read) as f:
+            with open(_long(os.path.join(root, rel)), "rb", opener=_open_read) as f:
                 # Judged by the file that opened, not by its name: a link put
                 # at that name, or at a folder above it, since it was listed
                 # leads here to a file outside, which is passed over.
