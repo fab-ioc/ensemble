@@ -205,7 +205,6 @@ ALLOW = {
     "actions": "its buttons carry the action classes wired in the document click handler",
     "offer": "its buttons are handled by the offer's own click listener",
     "pref-btn-row": "its buttons are wired by #pref-consolidate and #pref-split",
-    "dp-prio": "its buttons are .dp-prio-btn, wired in the document click handler",
 }
 
 
