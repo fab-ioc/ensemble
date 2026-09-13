@@ -106,23 +106,29 @@ out.heldGoneEnd = foldPlan(msgs(35), fold, true, null)[7];
 fold.open.delete('m3');
 out.foldedAgain = foldPlan(msgs(35), fold, false, null)[3];
 
-// Solo turns: another session's s<n> is another balloon.
-const turns = (n, tag) => Array.from({ length: n }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', text: tag + i }));
+// Solo turns: another session's turn at the same place is another balloon.
+const turns = (n, tag) => Array.from({ length: n }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', text: 'the ' + tag + i }));
 const sw = { base: null, open: new Set() };
-foldPlan(soloItems(turns(20, 'A'), 'A', 'po', 120, 's'), sw, true, null);
-out.switched = count(foldPlan(soloItems(turns(120, 'B'), 'B', 'po', 120, 's'), sw, false, null));
+foldPlan(soloItems(turns(20, 'A'), 'A', 'po', 120), sw, true, null);
+out.switched = count(foldPlan(soloItems(turns(120, 'B'), 'B', 'po', 120), sw, false, null));
 const sw1 = { base: null, open: new Set() };
-foldPlan(soloItems(turns(40, 'A'), 'A', 'po', 120, 's'), sw1, true, null);
-out.switchedToOne = foldPlan(soloItems(turns(1, 'C'), 'C', 'po', 120, 's'), sw1, false, null);
-// A second rotation: p3 is B's now, and A's opened p3 does not open it; B's
-// turns keep their keys when they move above the line.
-const rotA = soloItems(turns(80, 'A'), 'A', 'po', 60, 'p'), curB = soloItems(turns(30, 'B'), 'B', 'po', 120, 's');
+foldPlan(soloItems(turns(40, 'A'), 'A', 'po', 120), sw1, true, null);
+out.switchedToOne = foldPlan(soloItems(turns(1, 'C'), 'C', 'po', 120), sw1, false, null);
+// A second rotation: the third balloon is B's now, and the one opened in A's
+// window does not open it; B's turns keep their ids above the line.
+const rotA = soloItems(turns(80, 'A'), 'A', 'po', 60), curB = soloItems(turns(30, 'B'), 'B', 'po', 120);
 const rot = { base: null, open: new Set([foldKey(rotA[3], 3)]) };
 const line = n => ({ id: 'rot' + n, divider: { n } });
 foldPlan(rotA.concat([line(1)], curB), rot, true, null);
-const prevB = soloItems(turns(30, 'B'), 'B', 'po', 60, 'p'), curC = soloItems(turns(4, 'C'), 'C', 'po', 120, 's');
+const prevB = soloItems(turns(30, 'B'), 'B', 'po', 60), curC = soloItems(turns(4, 'C'), 'C', 'po', 120);
 const second = foldPlan(prevB.concat([line(2)], curC), rot, true, null);
-out.secondRotation = { p3: second[3], sameId: prevB[3].id === rotA[3].id, keysKept: prevB.every((m, i) => m.fk === curB[i].fk) };
+out.secondRotation = { third: second[3], idsKept: prevB.every((m, i) => m.id === curB[i].id) };
+// A comment made on A's sixth turn, then A rotates out: B's sixth turn holds
+// the same word, and only A's turn is held.
+const liveA = soloItems(turns(30, 'A'), 'A', 'po', 120);
+const cA = { mid: liveA[5].id, from: liveA[5].from, quote: 'the' };
+const afterRot = soloItems(turns(30, 'A'), 'A', 'po', 60).concat([line(1)], soloItems(turns(30, 'B'), 'B', 'po', 120));
+out.commentAfterRotation = [...foldHeld(afterRot, [cA])];
 // A comment on a common word holds one balloon, not every one holding it.
 const common = Array.from({ length: 30 }, (_, i) => ({ id: 'm' + i, from: i % 3 ? 'claude' : 'codex', text: 'the note ' + i }));
 out.heldOne = [...foldHeld(common, [{ mid: 'm5', from: 'claude', quote: 'the' }])];
@@ -232,9 +238,9 @@ class FoldALongConversation(unittest.TestCase):
         self.assertEqual(self.r["switched"], 10, "a new session's turns took the old session's fold")
         self.assertEqual(self.r["switchedToOne"], ["full"], "a new session's only turn was folded")
         s = self.r["secondRotation"]
-        self.assertTrue(s["sameId"], "the test needs p3 to be reused")
-        self.assertEqual(s["p3"], "row", "a balloon opened in one session opened another's")
-        self.assertTrue(s["keysKept"], "a session's turns changed key when they moved above the rotation line")
+        self.assertEqual(s["third"], "row", "a balloon opened in one session opened another's")
+        self.assertTrue(s["idsKept"], "a session's turns changed id when they moved above the rotation line")
+        self.assertEqual(self.r["commentAfterRotation"], ["A:5"], "a comment moved to another session's balloon")
 
     def test_a_comment_holds_one_balloon(self):
         self.assertEqual(self.r["heldOne"], ["m5"])

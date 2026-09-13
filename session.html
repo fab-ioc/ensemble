@@ -1247,9 +1247,7 @@ function mountTerm(el, ptyId) {
 // click. A rotation line is a landmark and always shows.
 const FOLD_MIN = 10, FOLD_MAX = 25;
 const isLandmark = m => !!(m.divider || (m.kind === 'notice' && m.rotation));
-// A solo turn's id is its place in the window shown (s12), which another
-// session reuses for other text: its key (fk) names its session too.
-const foldKey = (m, i) => m.fk || m.id || ('#' + i);
+const foldKey = (m, i) => m.id || ('#' + i);
 function foldStart(items) {
   let seen = 0, start = items.length, userSeen = false;
   for (let i = items.length - 1; i >= 0; i--) {
@@ -1502,23 +1500,22 @@ function rotationText(r) {
     + `Earlier conversation above.`;
 }
 // A solo transcript's latest turns as balloons, without consecutive identical
-// turns (the transcript sometimes double-records). id is the place in what is
-// shown (s<n> counted in the session, p<n> in the window: comments keep it);
-// fk is the place in the session with the session's id, so a session's turn
-// keeps its key when it moves above a rotation line, and no other session's
-// turn ever has it.
-function soloItems(raw, sid, agentId, keep, prefix) {
+// turns (the transcript sometimes double-records). A turn's id is its session
+// and its place in it: it stays the same when the turn moves above a rotation
+// line, and no other session's turn ever has it, so a fold, an opened balloon
+// or a comment never lands on another session's text.
+function soloItems(raw, sid, agentId, keep) {
   const turns = raw.filter((t, i) => i === 0 || t.role !== raw[i - 1].role || t.text !== raw[i - 1].text);
   const off = Math.max(0, turns.length - keep);
   return turns.slice(off).map((t, i) => ({
-    id: prefix + (prefix === 'p' ? i : off + i), fk: sid + ':' + (off + i),
+    id: sid + ':' + (off + i),
     from: (t.role === 'user') ? 'user' : agentId, to: '', text: t.text,
   }));
 }
 async function prevSessionItems(sid, agentId) {
   if (SOLO_PREV.sid === sid) return SOLO_PREV.items;
   const d = await fetch('/api/session/' + encodeURIComponent(sid) + '?full=1').then(r => r.json());
-  SOLO_PREV = { sid, items: soloItems(d.turns || [], sid, agentId, PREV_TURNS_SHOWN, 'p') };
+  SOLO_PREV = { sid, items: soloItems(d.turns || [], sid, agentId, PREV_TURNS_SHOWN) };
   return SOLO_PREV.items;
 }
 // Poll a cheap size+mtime signal; re-render the transcript only when it actually
@@ -1549,7 +1546,7 @@ async function renderSolo(sid, agentId, force) {
     const raw = d.turns || [];
     if (!force && raw.length === SOLO_TURN_COUNT) return;   // nothing new
     SOLO_TURN_COUNT = raw.length;
-    let items = soloItems(raw, sid, agentId, 120, 's');
+    let items = soloItems(raw, sid, agentId, 120);
     // A PO rotated into this session: the end of the one before, then the line.
     const rot = SOLO_ROT && SOLO_ROT.toSessionId === sid ? SOLO_ROT : null;
     if (rot && rot.fromSessionId) {
