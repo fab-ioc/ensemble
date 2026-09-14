@@ -141,8 +141,9 @@ out.holdRemount = [relC(), hv.hold, relD(), hv.hold];
 
 // Putting a deleted folder back.
 const heldL = { dirs: ['Leasing/2026', 'Leasing/2026/Q1', 'Leasing/Empty'], files: ['Leasing/offer.pdf', 'Leasing/2026/march.pdf', 'Leasing/nokept.pdf'], complete: true };
-const delRows = [{ path: 'Leasing/offer.pdf', from: 'r1' }, { path: 'Leasing/2026/march.pdf', from: 'r1' }, { path: 'Leasing2/x.pdf', from: 'r1' }, { path: 'Leasing/offer.pdf', from: 'r0' }];
-const pl = docsRestorePlan(delRows, 'Leasing', heldL);
+const delRows = [{ path: 'Leasing/offer.pdf', rev: 'r1', from: 'r1' }, { path: 'Leasing/2026/march.pdf', rev: 'r1', from: 'r1' },
+                 { path: 'Leasing2/x.pdf', rev: 'r1', from: 'r1' }, { path: 'Leasing/offer.pdf', rev: 'r0', from: 'r0' }];
+const pl = docsRestorePlan(delRows, 'Leasing', heldL, 'r1');
 out.plan = [pl.rows.map(d => d.path + '@' + d.from), pl.mkdirs, pl.missing, pl.sure];
 // A file deleted from the folder before is not brought back with it.
 const boxRows = [{ path: 'Box/current.txt', rev: 'bbb222' }, { path: 'Box/sub/deep.txt', rev: 'bbb222' }, { path: 'Box/old.txt', rev: 'aaa111' },
@@ -154,17 +155,24 @@ out.planRev = [paths(docsRestorePlan(boxRows, 'Box', boxHeld, 'bbb222')), paths(
                paths(docsRestorePlan(boxRows, 'Box', boxHeld, '')), paths(docsRestorePlan(boxRows, 'Box', boxPart, 'bbb222')),
                paths(docsRestorePlan(boxRows, 'Box', boxPart, '')), docsRestorePlan(boxRows, 'Box', boxPart, 'bbb222').sure,
                docsRestorePlan(boxRows, 'Box', boxHeld, 'bbb222').sure];
+// No snapshot of the delete: an older deletion of the same path (Box/old.txt
+// deleted, made again, deleted unrecorded) would come back, so nothing does.
+const unrec = docsRestorePlan([{ path: 'Box/old.txt', rev: 'aaa111' }], 'Box', { dirs: [], files: ['Box/old.txt'], unread: [], complete: true }, '');
+out.planUnrecorded = [unrec.rows.length, unrec.mkdirs, unrec.sure, unrec.unrecorded, docsRestorePlan(boxRows, 'Box', boxHeld, 'bbb222').unrecorded];
+// A folder read whole that held only a file too big to keep is not "back, empty as it was".
+const pbig = docsRestorePlan(delRows, 'Movies', { dirs: [], files: [], unread: [], unkept: 1, complete: true }, 'r1');
+out.planUnkept = [pbig.rows.length, pbig.mkdirs, pbig.missing, pbig.sure];
 // A row renamed while another name is typed: it and its folder's rows wait.
 const node = ds => { const n = { dataset: ds, cls: [], attrs: {}, inert: false, draggable: true }; n.classList = { add: c => n.cls.push(c) }; n.setAttribute = (k, val) => { n.attrs[k] = val; }; return n; };
 const rowA = node({ path: 'C:\\P\\M\\Leasing' });
 const kA = node({ dir: 'C:\\P\\M\\Leasing' }), kA2 = node({ dir: 'C:\\P\\M\\Leasing\\2026' }), kB = node({ dir: 'C:\\P\\M\\Leasing2' });
 docsSettle({ querySelectorAll: () => [kA, kA2, kB] }, rowA);
 out.settle = [rowA.inert, rowA.draggable, rowA.cls, kA.inert, kA2.inert, kB.inert, rowA.attrs['aria-busy']];
-const pe = docsRestorePlan(delRows, 'Empty', { dirs: [], files: [], complete: true });
+const pe = docsRestorePlan(delRows, 'Empty', { dirs: [], files: [], complete: true }, 'r1');
 out.planEmpty = [pe.rows.length, pe.mkdirs, pe.missing];
-const pn = docsRestorePlan(delRows, 'Leasing', Object.assign({}, heldL, { complete: false }));
+const pn = docsRestorePlan(delRows, 'Leasing', Object.assign({}, heldL, { complete: false }), 'r1');
 out.planPartialWalk = [pn.missing, pn.sure];
-const pu = docsRestorePlan(delRows, 'Leasing', null);
+const pu = docsRestorePlan(delRows, 'Leasing', null, 'r1');
 out.planUnknown = [pu.rows.length, pu.mkdirs, pu.missing, pu.sure];
 out.names = [upKeepName('ads/photo.jpg', 2), upKeepName('README', 2), upKeepName('.env', 3), upKeepName('a/b.tar.gz', 2)];
 out.nameErr = ['', ' ', 'a/b', 'a\\b', '..', 'Leasing 2026.pdf'].map(upNameErr);
@@ -229,7 +237,7 @@ out.who = [histWho({ kind: 'user', name: 'ceo', reason: 'upload' }), histDid({ k
   const w3 = await docsWalk(r => r === 'Ads' ? Promise.reject(new Error('x')) : rd(r), '');
   out.walkFail = [w3.complete, w3.dirs.includes('Leasing/2026/Q1'), w3.unread];
   const w4 = await docsWalk(rd, 'Leasing');
-  out.walkFolder = [w4.dirs, w4.files];
+  out.walkFolder = [w4.dirs, w4.files, w4.unkept];
 
   // The Deleted list is read to its end for a folder of more than a page.
   const all = Array.from({ length: 450 }, (_, i) => ({ rev: 'r' + (i %% 7), path: `Big/f${String(i).padStart(3, '0')}.txt`, from: 'p' }));
@@ -241,7 +249,7 @@ out.who = [histWho({ kind: 'user', name: 'ceo', reason: 'upload' }), histDid({ k
     return { files: all.slice(i, i + 200), more: i + 200 < all.length };
   };
   const got = await docsDeletedRows('p-docs');
-  out.pages = [got.length, asked.length, new Set(got.map(x => x.path)).size, docsRestorePlan(got, 'Big', null).rows.length];
+  out.pages = [got.length, asked.length, new Set(got.map(x => x.path)).size, docsRestorePlan(got, 'Big', null, 'r3').rows.map(d => d.path).pop()];
   asked.length = 0;
   const one = await docsDeletedRows('p-docs', d => d.path === 'Big/f005.txt');
   out.pagesStop = [one.length, asked.length];
@@ -345,7 +353,8 @@ class ThePureParts(unittest.TestCase):
         self.assertEqual(o["walkFolders"], ["Ads", "Leasing", "Leasing/2026", "Leasing/2026/Q1"])
         self.assertEqual(o["walkMax"], [2, False, ["sort_papers", "Leasing/2026"]])
         self.assertEqual(o["walkFail"], [False, True, ["Ads", "sort_papers/x"]])
-        self.assertEqual(o["walkFolder"], [["Leasing/2026", "Leasing/2026/Q1"], ["Leasing/offer.pdf"]])
+        self.assertEqual(o["walkFolder"], [["Leasing/2026", "Leasing/2026/Q1"], ["Leasing/offer.pdf"], 1],
+                         "big.mov counts as not kept; .DS_Store, ~$ and .tmp files do not")
 
     def test_a_folder_is_restored_whole_or_says_what_is_missing(self):
         o = self.out
@@ -356,12 +365,14 @@ class ThePureParts(unittest.TestCase):
         by_rev, short_rev, no_rev, part_rev, part_no_rev, part_sure, full_sure = o["planRev"]
         self.assertEqual(by_rev, ["Box/current.txt", "Box/sub/deep.txt"], "only the rows this delete recorded")
         self.assertEqual(short_rev, by_rev)
-        self.assertEqual(no_rev, by_rev, "without the snapshot, only files the reading saw")
+        self.assertEqual(no_rev, [], "without the delete's snapshot nothing tells its rows from older ones")
         self.assertEqual(part_rev, by_rev)
-        self.assertEqual(part_no_rev, ["Box/current.txt", "Box/sub/deep.txt", "Box/sub/older.txt"],
-                         "under a folder not read, nothing tells them apart")
+        self.assertEqual(part_no_rev, [])
         self.assertEqual((part_sure, full_sure), (False, True))
-        self.assertEqual(o["pages"], [450, 3, 450, 450], "every page of the Deleted list")
+        self.assertEqual(o["planUnrecorded"], [0, [], False, True, False],
+                         "an older deletion of the same path is not put back when the delete was not recorded")
+        self.assertEqual(o["planUnkept"], [0, ["Movies"], 1, True], "a file too big to keep counts as missing")
+        self.assertEqual(o["pages"], [450, 3, 450, "Big/f444.txt"], "every page of the Deleted list")
         self.assertEqual(o["pagesStop"], [200, 1], "a file stops at the page that has it")
 
     def test_another_projects_questions_and_progress_wait_for_it(self):

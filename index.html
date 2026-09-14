@@ -8768,10 +8768,11 @@ const docsKept = e => (e.size || 0) <= UP_MAX && !UP_SKIP.has(e.name) && !/^~\$|
 // Every folder under start (a path in the project, '' its top) and every file
 // the history keeps there, read a folder at a time with read(rel) -> entries,
 // six at once, at most max folders. complete is false when a folder could not
-// be read or there were more; unread lists those folders.
+// be read or there were more; unread lists those folders; unkept counts the
+// files too big for the history (not what Finder, Explorer or Office leave).
 async function docsWalk(read, start, o) {
   const max = (o && o.max) || 400, skip = (o && o.skip) || (() => false);
-  const out = { dirs: [], files: [], unread: [], complete: true };
+  const out = { dirs: [], files: [], unread: [], unkept: 0, complete: true };
   for (let level = [start]; level.length;) {
     const next = [];
     for (let i = 0; i < level.length; i += 6) {
@@ -8780,7 +8781,7 @@ async function docsWalk(read, start, o) {
         if (!es) { out.complete = false; out.unread.push(rel); continue; }
         for (const e of es) {
           const r = upJoin(rel, e.name);
-          if (e.type !== 'dir') { if (docsKept(e)) out.files.push(r); continue; }
+          if (e.type !== 'dir') { if (docsKept(e)) out.files.push(r); else if ((e.size || 0) > UP_MAX) out.unkept++; continue; }
           if (skip(r, e)) continue;
           if (out.dirs.length >= max) { out.complete = false; out.unread.push(r); continue; }
           out.dirs.push(r); next.push(r);
@@ -8797,23 +8798,22 @@ const docsSameRev = (a, b) => !!a && !!b && (a.startsWith(b) || b.startsWith(a))
 // innermost; a folder is made with its parents), how many files it held that
 // have no kept version, and whether that is sure. held is docsWalk's reading
 // of the folder before it was deleted, or null; rev the delete's snapshot, or
-// ''. A file deleted from the folder before is not brought back: without rev,
-// only files the reading saw, or under folders it could not read.
+// '' when none was recorded: then nothing tells this delete's rows from an
+// older one's, and the plan puts nothing back (unrecorded).
 function docsRestorePlan(rows, rel, held, rev) {
+  if (!rev) return { rows: [], mkdirs: [], missing: 0, sure: false, unrecorded: true };
   const under = (p, d) => p === d || p.startsWith(d + '/');
-  const saw = new Set(held ? held.files : []), unread = held ? held.unread || [] : [rel];
-  const ours = d => rev ? docsSameRev(d.rev, rev) : saw.has(d.path) || unread.some(u => under(d.path, u));
   const seen = new Set(), mine = [];
   (rows || []).forEach(d => {
-    if (under(d.path, rel) && !seen.has(d.path)) { seen.add(d.path); if (ours(d)) mine.push(d); }
+    if (under(d.path, rel) && !seen.has(d.path)) { seen.add(d.path); if (docsSameRev(d.rev, rev)) mine.push(d); }
   });
   const back = new Set(mine.map(d => d.path)), made = new Set();
   mine.forEach(d => { for (let p = upDir(d.path); p && !made.has(p); p = upDir(p)) made.add(p); });
   const want = held ? [rel].concat(held.dirs).filter(d => !made.has(d)) : [];
   const mkdirs = want.filter(d => !want.some(x => x.startsWith(d + '/')));
   const sure = !!(held && held.complete);
-  const missing = sure ? held.files.filter(f => !back.has(f)).length : 0;
-  return { rows: mine, mkdirs, missing, sure };
+  const missing = (sure ? held.files.filter(f => !back.has(f)).length : 0) + ((held && held.unkept) || 0);
+  return { rows: mine, mkdirs, missing, sure, unrecorded: false };
 }
 // ---- Files panel, pure: end
 
@@ -9341,10 +9341,14 @@ async function docsDeletedRows(pid, found) {
 // does; a folder with its empty folders, and said so only when it all is.
 async function docsUndelete(el, pid, c) {
   const rel = c.rel, name = upBase(rel);
+  // Without the delete's snapshot an older deletion of the same path could be
+  // put back in its place, so nothing is.
+  if (!c.rev) { toast(`The history did not record deleting ${name}, so Restore cannot tell it from older versions. The Deleted list under Recent changes shows what can be put back.`, 10000, 'err'); return; }
+  const ours = d => d.path === rel && docsSameRev(d.rev, c.rev);
   let rows;
-  try { rows = await docsDeletedRows(pid, c.dir ? null : d => d.path === rel); }
+  try { rows = await docsDeletedRows(pid, c.dir ? null : ours); }
   catch (e) { toast('restore failed: ' + histErr(e), 8000, 'err'); return; }
-  const plan = c.dir ? docsRestorePlan(rows, rel, c.held, c.rev) : { rows: rows.filter(d => d.path === rel).slice(0, 1), mkdirs: [], missing: 0, sure: true };
+  const plan = c.dir ? docsRestorePlan(rows, rel, c.held, c.rev) : { rows: rows.filter(ours).slice(0, 1), mkdirs: [], missing: 0, sure: true };
   const mine = plan.rows;
   if (!mine.length && !plan.mkdirs.length) { toast(`No kept version of ${name} was found; the Deleted list under Recent changes shows what can be put back.`, 8000, 'err'); return; }
   if (!c.dir) await histRestore(pid, mine[0].from, mine[0].path);
@@ -9360,7 +9364,7 @@ async function docsUndelete(el, pid, c) {
     }
     const files = n => `${n} file${n === 1 ? '' : 's'}`;
     if (ok < mine.length || err) toast(`${ok} of ${files(mine.length)} of ${name} are back. ${err}`, 8000, 'err');
-    else if (plan.missing) toast(`${name} is back with ${ok} of its ${files(ok + plan.missing)}; the others had no kept version.`, 8000, 'err');
+    else if (plan.missing) toast(`${name} is back with ${ok} of its ${files(ok + plan.missing)}; ${plan.missing} had no kept version${plan.sure ? '' : ', and not all of it could be read before it was deleted'}.`, 10000, 'err');
     else if (!plan.sure) toast(`${name}: ${files(ok)} back. Not all of it could be read before it was deleted, so an empty folder or a file with no kept version may be missing.`, 10000, 'err');
     else toast(ok ? `${name} is back: ${files(ok)}` : `${name} is back, empty as it was`, 6000, 'ok');
   }
