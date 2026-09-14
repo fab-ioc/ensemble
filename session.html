@@ -1068,8 +1068,15 @@ const unlinkify = (t, keep) => t.replace(new RegExp(LINK_A + '(\\d+)' + LINK_Z, 
 const REF_URL_RE = /https?:\/\/[^\s<>()\[\]{}"'`*|\\]+/gi;
 const REF_A = String.fromCharCode(0xE004), REF_Z = String.fromCharCode(0xE005);
 const REF_MARK_RE = new RegExp(REF_A + '(\\d+)' + REF_Z, 'g');
-const REF_BLOCKS_RE = /(?:\n\n\[ref https?:\/\/\S+\] [^\n]*(?:\n>[^\n]*)*)+\s*$/i;
-const stripRefBlocks = t => String(t || '').replace(REF_BLOCKS_RE, '');
+// The last block the hub wrote out under a link, in exactly its shape
+// (message_refs.py). It counts only when its link is also in the words before
+// it, so a person's own "[ref …]" lines stay.
+const REF_BLOCK_RE = /\n\n\[ref (https?:\/\/[^\s\]]+)\] (?:not found: no message \S+ in \S+ on this hub|from [^\n]* in "[^\n]*" at (?:\d{4}-\d\d-\d\d \d\d:\d\d|an unknown time):(?:\n>(?: [^\n]*)?)+)\s*$/;
+function stripRefBlocks(t) {
+  t = String(t || '');
+  for (let m; (m = REF_BLOCK_RE.exec(t)) && t.slice(0, m.index).includes(m[1]);) t = t.slice(0, m.index);
+  return t;
+}
 function refOfUrl(u) {
   const url = String(u || '').replace(/[.,;:!?_]+$/, '');
   let x = null;
@@ -1676,6 +1683,7 @@ function renderBubbles(items, opt = {}) {
   }
   applyComments();
   showLatest();
+  markLanded();
   landPending();
 }
 // The bar over a transcript the hub types into: what is folded, and Just us.
@@ -1764,7 +1772,8 @@ function renderMsgs(room) { CHAT_DRAWN = true; renderBubbles(room.messages); }
 // ---- Copy link, and landing on a linked balloon ----------------------------
 let CHAT_DRAWN = false;    // the conversation itself has been drawn, not just the page
 let GOTO = (qs.get('msg') || '').trim();   // the balloon to land on once it is drawn
-let SOLO_WANT = null;      // {sid, n}: an older transcript turn than shown, asked for by a link
+let SOLO_WANT = null;      // {sid, n, loaded}: an older transcript turn than shown, asked for by a link
+let LANDED = null;         // {mid, at}: the balloon just landed on, marked again if a redraw replaces it
 let _landing = false;
 function copyLinkHtml(m) {
   if (!ROOM || !m || !m.id || m.id === 'task') return '';
@@ -1846,11 +1855,13 @@ function landPending() {
     if (!el) {
       // A turn of a solo transcript older than the chat shows: draw back to it.
       const t = mid.match(/^(.+):(\d+)$/);
-      if (t && SOLO_SID && !(SOLO_WANT && SOLO_WANT.sid === t[1] && SOLO_WANT.n === +t[2])
-          && (t[1] === SOLO_SID || (SOLO_ROT && t[1] === SOLO_ROT.fromSessionId))) {
-        SOLO_WANT = { sid: t[1], n: +t[2] };
-        renderSolo(SOLO_SID, SOLO_AGENT, true);
-        return;
+      if (t && SOLO_SID && (t[1] === SOLO_SID || (SOLO_ROT && t[1] === SOLO_ROT.fromSessionId))) {
+        if (!(SOLO_WANT && SOLO_WANT.sid === t[1] && SOLO_WANT.n === +t[2])) {
+          SOLO_WANT = { sid: t[1], n: +t[2] };
+          renderSolo(SOLO_SID, SOLO_AGENT, true);
+          return;
+        }
+        if (!SOLO_WANT.loaded) return;   // not found only once the wider window is drawn
       }
       GOTO = '';
       showGotoNote('The linked message was not found in this conversation.');
@@ -1861,11 +1872,25 @@ function landPending() {
     STICK = nearEnd(box);
     showLatest();
     el.classList.remove('landed');
+    el.style.animationDelay = '';
     void el.offsetWidth;          // start the fade again on a second landing
-    el.classList.add('landed');
-    clearTimeout(el._landed);
-    el._landed = setTimeout(() => el.classList.remove('landed'), 2600);
+    LANDED = { mid, at: Date.now() };
+    markLanded(el);
   } finally { _landing = false; }
+}
+// The landed mark, on the balloon or on the node a redraw put in its place
+// (a chip resolving changes its HTML), where the fade has got to.
+function markLanded(el) {
+  if (!LANDED) return;
+  const age = Date.now() - LANDED.at;
+  if (age >= 2600) { LANDED = null; return; }
+  const box = $('#msgs');
+  el = el || (box && [...box.querySelectorAll('.msg[data-mid]')].find(e => e.dataset.mid === LANDED.mid));
+  if (!el || el.classList.contains('landed')) return;
+  el.style.animationDelay = age ? -age + 'ms' : '';
+  el.classList.add('landed');
+  clearTimeout(el._landed);
+  el._landed = setTimeout(() => { el.classList.remove('landed'); el.style.animationDelay = ''; }, 2600 - age);
 }
 // The task text is the first message of the conversation. Prepend it as a user
 // bubble unless the history already records it verbatim.
@@ -1951,8 +1976,10 @@ async function checkSolo() {
   } catch (e) {}
 }
 let ROOM_OBJ = null;   // last room payload, so we can mount the terminal on demand to read a prompt
+let SOLO_AGAIN = false;   // a forced render was asked for while one was fetching
 async function renderSolo(sid, agentId, force) {
-  if (!sid || SOLO_FETCHING) return;
+  if (!sid) return;
+  if (SOLO_FETCHING) { if (force) SOLO_AGAIN = true; return; }
   SOLO_FETCHING = true;
   try {
     const d = await fetch('/api/session/' + encodeURIComponent(sid) + '?full=1').then(r => r.json());
@@ -1960,7 +1987,8 @@ async function renderSolo(sid, agentId, force) {
     if (!force && raw.length === SOLO_TURN_COUNT) return;   // nothing new
     SOLO_TURN_COUNT = raw.length;
     // A link to an older turn than the last 120 draws back to it.
-    const want = SOLO_WANT && SOLO_WANT.sid === sid ? raw.length - SOLO_WANT.n : 0;
+    const w = SOLO_WANT;
+    const want = w && w.sid === sid ? raw.length - w.n : 0;
     let items = soloItems(raw, sid, agentId, Math.max(120, want));
     // A PO rotated into this session: the end of the one before, then the line.
     const rot = SOLO_ROT && SOLO_ROT.toSessionId === sid ? SOLO_ROT : null;
@@ -1969,12 +1997,16 @@ async function renderSolo(sid, agentId, force) {
       try { prev = await prevSessionItems(rot.fromSessionId, agentId); } catch (e) {}
       items = prev.concat([{ id: 'rot' + (rot.n || ''), divider: rot }], items);
     }
+    if (w && (w.sid === sid || (rot && w.sid === rot.fromSessionId))) w.loaded = true;
     // What the hub wrote out under a balloon link is the agent's copy: the
     // balloon shows the words as they were sent, and the link as its chip.
     items.forEach(m => { if (m.from === 'user' && m.text) m.text = stripRefBlocks(m.text); });
     CHAT_DRAWN = true;
     renderBubbles(items);
-  } catch (e) {} finally { SOLO_FETCHING = false; }
+  } catch (e) {} finally {
+    SOLO_FETCHING = false;
+    if (SOLO_AGAIN) { SOLO_AGAIN = false; renderSolo(SOLO_SID, SOLO_AGENT, true); }
+  }
 }
 
 async function refresh() {

@@ -1339,6 +1339,17 @@ def resolve_message_ref(room_id: str, msg_id: str) -> dict | None:
     sid, sep, n = msg_id.rpartition(":")
     if not sep or not sid or not n.isdigit() or "/" in sid or "\\" in sid:
         return None
+    # Only a solo chat shows transcript turns, and only its own agent's sessions
+    # (the current one or one it was rotated from) are this room's: a link
+    # naming another session gets nothing, not that session's text.
+    agents_in = chatroom.agent_participants(room)
+    if room.get("mode") != "solo" and len(agents_in) != 1:
+        return None
+    owner = next((p for p in agents_in if p.get("sessionId") == sid
+                  or any(sid in (r.get("fromSessionId"), r.get("toSessionId")) for r in p.get("rotations") or [])),
+                 None)
+    if owner is None:
+        return None
     raw = read_session_turns(sid)
     if not raw:
         return None
@@ -1347,10 +1358,6 @@ def resolve_message_ref(room_id: str, msg_id: str) -> dict | None:
     if int(n) >= len(turns):
         return None
     t = turns[int(n)]
-    agents_in = chatroom.agent_participants(room)
-    owner = next((p for p in agents_in if p.get("sessionId") == sid
-                  or any(sid in (r.get("fromSessionId"), r.get("toSessionId")) for r in p.get("rotations") or [])),
-                 agents_in[0] if agents_in else {})
     frm = chatroom.HUMAN_IDENTITY if t.get("role") == "user" else (owner.get("identity") or "agent")
     text = t.get("text") or ""
     if frm == chatroom.HUMAN_IDENTITY:
@@ -1408,6 +1415,14 @@ def read_session_turns(sid: str) -> list[dict] | None:
 def with_message_refs(text: str) -> str:
     """A chat message as the agent receives it: its balloon links written out."""
     return message_refs.expand_message_refs(text, resolve_message_ref)
+
+
+def refs_expanded_for(room: dict, sender: str) -> bool:
+    """Whose messages reach an agent with their balloon links written out: the
+    person's and the room's ProductOwner's."""
+    return sender == chatroom.HUMAN_IDENTITY or any(
+        chatroom.is_product_owner_part(p) and p.get("identity") == sender
+        for p in chatroom.agent_participants(room or {}))
 
 
 class _NotTyped(Exception):
@@ -1713,7 +1728,7 @@ Do NOT design or implement — the engineer builds, you review. Check the work a
 ## What you were asked
 From {who}:
 
-{_quote_block(with_message_refs(msg.get('text', '')) if sender == chatroom.HUMAN_IDENTITY else msg.get('text', ''))}
+{_quote_block(with_message_refs(msg.get('text', '')) if refs_expanded_for(room, sender) else msg.get('text', ''))}
 
 Recent conversation before it:
 {context}
@@ -7887,11 +7902,9 @@ class Handler(BaseHTTPRequestHandler):
                 # What the person or the PO sent comes with its balloon links
                 # written out; the room keeps the words as they were sent.
                 room = chatroom.get_room(room_id) or {}
-                po = chatroom.po_identity(room) if any(
-                    chatroom.is_product_owner_part(p) for p in chatroom.agent_participants(room)) else ""
                 body = "\n".join(
                     f"[from {m['from']}] "
-                    + (with_message_refs(m["text"]) if m["from"] in (chatroom.HUMAN_IDENTITY, po) else m["text"])
+                    + (with_message_refs(m["text"]) if refs_expanded_for(room, m["from"]) else m["text"])
                     for m in msgs)
             return ok({"content": [{"type": "text", "text": body}],
                        "isError": False})

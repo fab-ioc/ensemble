@@ -21,9 +21,15 @@ QUOTE_MAX = 4000
 # was read at. It stops at whatever Markdown or a sentence puts around it.
 _URL = re.compile(r"https?://[^\s<>()\[\]{}\"'`*|\\]+", re.I)
 _TAIL = re.compile(r"[.,;:!?_]+$")
-# The blocks expand_message_refs appends, at the end of a text: what a
-# transcript records of a message sent with links.
-_BLOCKS = re.compile(r"(?:\n\n\[ref https?://\S+\] [^\n]*(?:\n>[^\n]*)*)+\s*$", re.I)
+# The last block expand_message_refs appended to a text, in exactly the shape
+# it writes (what a transcript records of a message sent with links). A block
+# counts only when its link is also in the words before it, so a person's own
+# "[ref …]" lines stay.
+_BLOCK = re.compile(
+    r"\n\n\[ref (https?://[^\s\]]+)\] "
+    r"(?:not found: no message \S+ in \S+ on this hub"
+    r"|from [^\n]* in \"[^\n]*\" at (?:\d{4}-\d\d-\d\d \d\d:\d\d|an unknown time):(?:\n>(?: [^\n]*)?)+)"
+    r"\s*$")
 
 
 def find_message_refs(text: str) -> list[tuple[str, str, str]]:
@@ -51,7 +57,12 @@ def find_message_refs(text: str) -> list[tuple[str, str, str]]:
 
 def strip_message_refs(text: str) -> str:
     """``text`` without the reference blocks the hub appended to it."""
-    return _BLOCKS.sub("", text or "")
+    text = text or ""
+    while True:
+        m = _BLOCK.search(text)
+        if not m or m.group(1) not in text[:m.start()]:
+            return text
+        text = text[:m.start()]
 
 
 def _when(ts) -> str:

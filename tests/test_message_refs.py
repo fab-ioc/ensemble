@@ -93,6 +93,15 @@ class ExpandTest(unittest.TestCase):
         t = f"Look at {URL}\n- and {URL2}"
         self.assertEqual(mr.strip_message_refs(mr.expand_message_refs(t, lookup)), t)
         self.assertEqual(mr.strip_message_refs("no refs\n\n> quoted"), "no refs\n\n> quoted")
+        gone = "http://h/session?room=room-deadbeef&msg=0123456789ab"
+        self.assertEqual(mr.strip_message_refs(mr.expand_message_refs(f"see {gone}", lookup)), f"see {gone}")
+
+    def test_a_persons_own_ref_lines_stay(self):
+        for t in (f"My own note\n\n[ref {URL}] this is ordinary text\n> keep this",
+                  # The shape of a block, but its link is not in the words before it.
+                  f"My own note\n\n[ref {URL}] from claude in \"Docs\" at {WHEN}:\n> keep this",
+                  f"see {URL}\n\n[ref {URL}] from claude in \"Docs\" at yesterday:\n> keep this"):
+            self.assertEqual(mr.strip_message_refs(t), t)
 
 
 class ResolveTest(unittest.TestCase):
@@ -132,9 +141,9 @@ class ResolveTest(unittest.TestCase):
         turns = [{"role": "user", "text": "go", "timestamp": "2026-09-14T10:00:00Z", "kind": "human"},
                  {"role": "user", "text": "go", "timestamp": "2026-09-14T10:00:01Z", "kind": "human"},
                  {"role": "assistant", "text": "on it", "timestamp": "2026-09-14T10:00:05Z"},
-                 {"role": "user", "text": f"see {URL}\n\n[ref {URL}] from x in \"y\" at z:\n> q",
+                 {"role": "user", "text": f"see {URL}\n\n[ref {URL}] from x in \"y\" at 2026-09-14 10:00:\n> q",
                   "timestamp": "2026-09-14T10:01:00Z", "kind": "human"}]
-        with mock.patch.object(dashboard, "read_session_turns", lambda sid: turns if sid == "s-old" else None):
+        with mock.patch.object(dashboard, "read_session_turns", lambda sid: None if sid == "s-gone" else turns):
             r = dashboard.resolve_message_ref("room-00000002", "s-old:1")
             self.assertEqual((r["who"], r["taskTitle"], r["text"], r["isPo"]), ("codex", "PO", "on it", True))
             self.assertAlmostEqual(r["ts"], datetime(2026, 9, 14, 10, 0, 5, tzinfo=timezone.utc).timestamp())
@@ -142,6 +151,34 @@ class ResolveTest(unittest.TestCase):
             self.assertEqual(dashboard.resolve_message_ref("room-00000002", "s-old:0")["who"], "ceo")
             self.assertIsNone(dashboard.resolve_message_ref("room-00000002", "s-old:3"))
             self.assertIsNone(dashboard.resolve_message_ref("room-00000002", "s-gone:0"))
+            self.assertEqual(dashboard.resolve_message_ref("room-00000002", "s-new:1")["text"], "on it")
+
+    def test_a_transcript_of_another_session_is_not_this_rooms(self):
+        self.write({"id": "room-00000003", "title": "Team", "mode": "collab", "participants": [
+            {"identity": "claude", "kind": "agent", "sessionId": "s-team"},
+            {"identity": "codex", "kind": "agent", "sessionId": "s-rev"}], "messages": []})
+        turns = [{"role": "assistant", "text": "secret from another room", "timestamp": ""}]
+        with mock.patch.object(dashboard, "read_session_turns", lambda sid: turns):
+            # The transcript exists, but the room's agent never had that session.
+            self.assertIsNone(dashboard.resolve_message_ref("room-00000002", "unrelated:0"))
+            self.assertIsNone(dashboard.resolve_message_ref("room-00000001", "unrelated:0"))
+            # A team chat shows room messages, not its agents' transcripts.
+            self.assertIsNone(dashboard.resolve_message_ref("room-00000003", "s-team:0"))
+
+    def test_the_person_and_the_po_get_links_written_out(self):
+        room = {"id": "room-00000004", "title": "T", "participants": [
+            {"identity": "po", "kind": "agent", "role": chatroom.PRODUCT_OWNER_ROLE},
+            {"identity": "claude", "kind": "agent", "role": "engineer"},
+            {"identity": "codex", "kind": "agent", "role": "reviewer"}], "messages": []}
+        self.assertTrue(dashboard.refs_expanded_for(room, "user"))
+        self.assertTrue(dashboard.refs_expanded_for(room, "po"))
+        self.assertFalse(dashboard.refs_expanded_for(room, "claude"))
+        url = "http://127.0.0.1:8765/session?room=room-00000001&msg=bbbbbbbbbbbb"
+        for sender, expanded in (("po", True), ("user", True), ("claude", False)):
+            msg = {"id": "cccccccccccc", "from": sender, "to": "codex", "text": f"@codex check {url}"}
+            with mock.patch.object(dashboard, "review_log_path", lambda r: "REVIEW-LOG.md"):
+                brief = dashboard.review_brief(room, room["participants"][2], msg, 1, {}, "")
+            self.assertEqual(f"[ref {url}] from claude" in brief, expanded, sender)
 
     def test_with_message_refs_uses_the_hub_lookup(self):
         url = "http://127.0.0.1:8765/session?room=room-00000001&msg=bbbbbbbbbbbb"
