@@ -2318,6 +2318,9 @@ def build_projects() -> dict:
                            "isGit": p.get("isGit", False), "registered": True,
                            "sessions": [], "live": 0, "waiting": 0, "updatedAt": 0}
     UNASSIGNED = "__unassigned__"
+    # A project's PO is not one of its tasks: it stays in `sessions` (the page
+    # finds and chooses the PO there) but counts as no task live or waiting.
+    po_rooms = {p.get("poRoomId") for p in projects_reg if p.get("poRoomId")}
     needs_you = 0
     agents_live = 0
     for s in rows:
@@ -2331,6 +2334,9 @@ def build_projects() -> dict:
                                       "sessions": [], "live": 0, "waiting": 0, "updatedAt": 0}
         g = groups[pid]
         g["sessions"].append(s)
+        g["updatedAt"] = max(g["updatedAt"], s.get("updatedAt") or 0)
+        if s.get("roomId") and s.get("roomId") in po_rooms:
+            continue
         if s.get("isLive"):
             g["live"] += 1
             agents_live += len(s.get("agents") or [1])
@@ -2339,7 +2345,6 @@ def build_projects() -> dict:
         if s.get("attention") or s.get("status") in ("waiting", "waiting_human"):
             g["waiting"] += 1
             needs_you += 1
-        g["updatedAt"] = max(g["updatedAt"], s.get("updatedAt") or 0)
     projects = []
     total_changed = 0
     for gid, g in groups.items():

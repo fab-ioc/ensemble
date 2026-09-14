@@ -4547,6 +4547,12 @@ function poRoomIds(projects) {
   return new Set((projects || []).filter(p => p.registered).map(p => p.poRoomId).filter(Boolean));
 }
 function isPoRoom(rid, poRooms) { return !!rid && poRooms.has(rid); }
+// A project's tasks: its sessions without its PO. Only the PO picker reads
+// pj.sessions whole, since there the PO is one of the choices.
+function projectTasks(pj) {
+  const pos = poRoomIds(pj ? [pj] : []);
+  return ((pj && pj.sessions) || []).filter(s => !isPoRoom(s.roomId, pos));
+}
 
 // What a quick search reads: what the row shows. A task shows its title; its
 // folder, room id and the start and end of its chat are not on its card or row.
@@ -5490,10 +5496,9 @@ function projectSessionState(sn) {
 }
 function projectsLandingHtml() {
   if (!PROJECTS) return '<p class="empty">Loading projects…</p>';
-  const pos = currentPoRooms();
   const cards = PROJECTS.projects.map(p => {
-    const tasks = (p.sessions || []).filter(sn => !isPoRoom(sn.roomId, pos));
-    const count = Math.max(0, (p.count || 0) - ((p.sessions || []).length - tasks.length));
+    const tasks = projectTasks(p);
+    const count = tasks.length;
     const rows = tasks.slice(0, 4).map(sn => {
       const st = projectSessionState(sn);
       return `<div class="srow" data-sid="${esc(sn.roomId || sn.sessionId || '')}"><span class="sdot ${st}"></span>${sn.roomId ? prioIcon(prioOf(sn)) : ''}<span class="stitle">${esc(sn.label || sn.sessionId || 'session')}</span><span class="stime">${agoSpan(sn.updatedAt)}</span></div>`;
@@ -5627,7 +5632,7 @@ function wsJoin(dir, name) { const sep = dir.includes('\\') ? '\\' : '/'; return
 // write their notes and clone repos.
 function scopeOptions(pj) {
   const opts = [{ path: pj.path, label: 'Project folder' }];
-  (pj.sessions || []).forEach(sn => {
+  projectTasks(pj).forEach(sn => {
     if (sn.cwd && sn.cwd !== pj.path) opts.push({ path: sn.cwd, label: 'Task: ' + (sn.label || sn.sessionId || 'session') });
   });
   return opts;
@@ -7716,9 +7721,9 @@ let CH_LOAD = 0, CH_DIFF = 0;
 const CH_DIFF_EMPTY = '<div class="wsp-empty">Select a changed file to review its diff. Click a line number to comment; submit the comments to a task\'s chat.</div>';
 function chUseContext(pid, root) {
   CH_RV = drReview('project:' + pid + '|' + root, {
-    rooms: () => ((projectById(pid) || {}).sessions || []).filter(s => s.roomId).map(s => ({ id: s.roomId, name: s.label || s.roomId })),
+    rooms: () => projectTasks(projectById(pid)).filter(s => s.roomId).map(s => ({ id: s.roomId, name: s.label || s.roomId })),
     target: rv => {
-      const rooms = ((projectById(pid) || {}).sessions || []).filter(s => s.roomId);
+      const rooms = projectTasks(projectById(pid)).filter(s => s.roomId);
       const s = rooms.find(x => x.roomId === rv.to) || rooms[0];
       return s ? { roomId: s.roomId, live: !!s.isLive, name: s.label || 'That task' } : null;
     },
@@ -10208,7 +10213,7 @@ $('#proj-switch').addEventListener('click', (ev) => {
   m.innerHTML = `<button class="pm-item${!SELECTED_PROJECT ? ' on' : ''}" data-proj="">All projects</button>`
     + (list.length ? '<div class="pm-rule"></div>' : '')
     + list.map(pj => {
-        const needs = (pj.sessions || []).filter(x => x.attention).length;
+        const needs = projectTasks(pj).filter(x => x.attention).length;
         return `<button class="pm-item${SELECTED_PROJECT === pj.id ? ' on' : ''}" data-proj="${esc(pj.id)}">`
           + `<span class="pm-name">${esc(pj.name)}</span>`
           + (needs ? `<span class="pm-needs">${needs}</span>` : '') + '</button>';

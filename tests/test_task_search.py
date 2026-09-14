@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import dashboard
 
@@ -50,6 +51,8 @@ const ALL = [
   { roomId: '', sessionId: 'abc-123', label: 'An old session', cwd: 'C:\\work\\sigmatrader' },
 ];
 log.pos = [...poRoomIds(PROJECTS.projects)].sort();
+log.tasks = PROJECTS.projects.map(p => projectTasks(p).map(s => s.roomId));
+log.noProject = projectTasks(null);
 log.poIn = ALL.filter(inScope).map(r => r.roomId);
 SELECTED_PROJECT = ''; log.poAll = ALL.filter(inScope).map(r => r.sessionId);
 SELECTED_PROJECT = 'p1';
@@ -107,6 +110,19 @@ class TaskSearchPage(unittest.TestCase):
         self.assertNotIn("room-po", self.r["poAll"], "nor in the list of every project")
         self.assertIn("abc-123", self.r["poAll"])
 
+    def test_a_projects_tasks_leave_out_its_po(self):
+        self.assertEqual(self.r["tasks"], [["room-a", "room-b", "room-c"], ["room-x"], []])
+        self.assertEqual(self.r["noProject"], [])
+        for head in ("function scopeOptions(", "function chUseContext(", "function projectsLandingHtml("):
+            body = fn(INDEX, head)
+            self.assertIn("projectTasks(", body, head)
+            self.assertNotIn(".sessions", body, head + " lists the PO as a task")
+        switch = INDEX[INDEX.index("$('#proj-switch').addEventListener('click'"):]
+        self.assertIn("projectTasks(pj).filter(x => x.attention)", switch[:switch.index("\n});\n")],
+                      "the project menu's needs count")
+        self.assertIn("(pj.sessions || []).filter(s => s.roomId)", fn(INDEX, "async function poChoose("),
+                      "the PO picker still offers the PO")
+
     def test_the_po_is_not_a_search_result(self):
         self.assertNotIn("room-po", self.r["en"])
         self.assertNotIn("room-po", self.r["deep"], "not even when the deep search found its conversation")
@@ -144,13 +160,40 @@ class TaskSearchPage(unittest.TestCase):
         self.assertIn("isPoRoom(r.roomId, pos)", fn(INDEX, "function activeHtml("))
         self.assertIn("attentionItems()", fn(INDEX, "function needsYouHtml("))
         self.assertIn("attentionItems()", fn(INDEX, "function renderAttention("))
-        self.assertIn("isPoRoom(sn.roomId, pos)", fn(INDEX, "function projectsLandingHtml("))
         self.assertIn("!parseSearchQuery(SEARCH_QUERY).groups.length", fn(INDEX, "function boardHtml("),
                       "a search shows old Done matches too")
 
     def test_the_po_stays_reachable(self):
         self.assertIn("ALL_ROWS.find(r => r.roomId === rid)", fn(INDEX, "function poRowOf("),
                       "the pill and pane find the PO among every row, not the listed ones")
+
+
+class ProjectCountsLeaveOutThePo(unittest.TestCase):
+    def build(self, rows):
+        reg = [{"id": "p1", "name": "One", "path": "", "poRoomId": "room-po"}]
+        links = {r["roomId"]: "p1" for r in rows}
+        with mock.patch.object(dashboard, "load_projects", return_value=reg), \
+                mock.patch.object(dashboard, "load_session_projects", return_value=links), \
+                mock.patch.object(dashboard, "load_sessions", return_value=rows), \
+                mock.patch.object(dashboard, "project_home", return_value=""):
+            return dashboard.build_projects()
+
+    def test_a_po_alone_is_nothing_live_or_waiting(self):
+        out = self.build([{"roomId": "room-po", "sessionId": "room-po", "isLive": True,
+                           "status": "waiting", "attention": {"state": "waiting_for_you"}, "updatedAt": 5}])
+        p = out["projects"][0]
+        self.assertEqual((p["live"], p["waiting"], out["summary"]["needsYou"]), (0, 0, 0))
+        self.assertEqual([s["roomId"] for s in p["sessions"]], ["room-po"], "the page still finds the PO")
+        self.assertEqual(p["updatedAt"], 5)
+
+    def test_its_tasks_still_count(self):
+        out = self.build([
+            {"roomId": "room-po", "sessionId": "room-po", "isLive": True, "attention": {"state": "blocked"}},
+            {"roomId": "room-a", "sessionId": "room-a", "isLive": True, "status": "waiting_human"},
+            {"roomId": "room-b", "sessionId": "room-b", "attention": {"state": "agent_gone"}},
+        ])
+        p = out["projects"][0]
+        self.assertEqual((p["live"], p["waiting"], out["summary"]["needsYou"]), (1, 2, 2))
 
 
 class AttachSearchRooms(unittest.TestCase):
