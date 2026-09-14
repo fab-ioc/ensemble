@@ -43,12 +43,14 @@ def js_const(name: str) -> str:
 HARNESS = r"""
 const out = { fetches: [], notes: [] };
 let GOTO = '', SOLO_WANT = null, LANDED = null, _landing = false, CHAT_DRAWN = false, SOLO_AGAIN = false;
-let SOLO_TURN_COUNT = -1, SOLO_FETCHING = false, SOLO_SID = 's-new', SOLO_AGENT = 'claude', SOLO_ROT = null;
-let SOLO_PREV = { sid: '', items: [] };
+let SOLO_TURN_COUNT = -1, SOLO_FETCHING = false, SOLO_SID = 's-new', SOLO_AGENT = 'claude', SOLO_ROT = null, SOLO_ROTS = [];
+const SOLO_PREV = new Map();
 const PREV_TURNS_SHOWN = 60;
 let _cmtComposerOpen = false, _selBtn = null, STICK = false, LAST_ITEMS = [];
 const FOLD = { open: new Set() };
-const setTimeout = () => 0, clearTimeout = () => {};
+// A retry of the transcript runs at once; the landed mark's fade never ends.
+const setTimeout = (f, ms, ...a) => { if (f === renderSolo) setImmediate(() => f(...a)); return 0; };
+const clearTimeout = () => {};
 function showGotoNote(t) { if (t) out.notes.push(t); }
 function nearEnd() { return false; }
 function showLatest() {}
@@ -67,12 +69,16 @@ const $ = s => s === '#msgs' ? box : null;
 function renderBubbles(items) { LAST_ITEMS = items; drawn = items.filter(m => !m.divider).map(m => m.id); markLanded(); landPending(); }
 const turns = n => Array.from({ length: n }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', text: 'turn ' + i }));
 let TURNS = {};
+let FAILS = [];   // {sid, skip, times}: after `skip` good fetches of sid, `times` fail
 function fetch(url) {
   out.fetches.push(url);
   const sid = decodeURIComponent(url.split('/api/session/')[1].split('?')[0]);
+  const f = FAILS.find(x => x.sid === sid);
+  if (f && f.skip) f.skip--;
+  else if (f && f.times > 0) { f.times--; return Promise.reject(new Error('network')); }
   return Promise.resolve({ json: () => Promise.resolve({ turns: TURNS[sid] || [] }) });
 }
-const settle = async () => { for (let i = 0; i < 20; i++) await new Promise(r => setImmediate(r)); };
+const settle = async () => { for (let i = 0; i < 80; i++) await new Promise(r => setImmediate(r)); };
 """
 
 SCENARIOS = {
@@ -83,7 +89,15 @@ renderSolo(SOLO_SID, SOLO_AGENT, true);
 """,
     "rotated": r"""
 TURNS = { 's-new': turns(4), 's-old': turns(200) };
-SOLO_ROT = { toSessionId: 's-new', fromSessionId: 's-old', n: 1 };
+SOLO_ROT = { toSessionId: 's-new', fromSessionId: 's-old', n: 1 }; SOLO_ROTS = [SOLO_ROT];
+GOTO = 's-old:3';
+renderSolo(SOLO_SID, SOLO_AGENT, true);
+""",
+    "two-rotations": r"""
+TURNS = { 's-new': turns(4), 's-mid': turns(200), 's-old': turns(200) };
+SOLO_ROTS = [{ toSessionId: 's-mid', fromSessionId: 's-old', n: 1 },
+             { toSessionId: 's-new', fromSessionId: 's-mid', n: 2 }];
+SOLO_ROT = SOLO_ROTS[1];
 GOTO = 's-old:3';
 renderSolo(SOLO_SID, SOLO_AGENT, true);
 """,
@@ -92,12 +106,32 @@ TURNS = { 's-new': turns(300) };
 GOTO = 's-new:999';
 renderSolo(SOLO_SID, SOLO_AGENT, true);
 """,
+    "fails-once": r"""
+TURNS = { 's-new': turns(300) };
+FAILS = [{ sid: 's-new', skip: 1, times: 1 }];
+GOTO = 's-new:5';
+renderSolo(SOLO_SID, SOLO_AGENT, true);
+""",
+    "fails-always": r"""
+TURNS = { 's-new': turns(300) };
+FAILS = [{ sid: 's-new', skip: 1, times: 99 }];
+GOTO = 's-new:5';
+renderSolo(SOLO_SID, SOLO_AGENT, true);
+""",
+    "prev-fails": r"""
+TURNS = { 's-new': turns(4), 's-old': turns(200) };
+FAILS = [{ sid: 's-old', skip: 0, times: 99 }];
+SOLO_ROT = { toSessionId: 's-new', fromSessionId: 's-old', n: 1 }; SOLO_ROTS = [SOLO_ROT];
+GOTO = 's-old:3';
+renderSolo(SOLO_SID, SOLO_AGENT, true);
+""",
 }
 
 TAIL = r"""
 (async () => {
   await settle();
   out.drawn = drawn.length;
+  out.first = drawn[0];
   out.goto = GOTO;
   out.landed = LANDED && LANDED.mid;
   out.marked = drawn.filter(id => node(id).classList.contains('landed'));
@@ -114,7 +148,8 @@ TAIL = r"""
 
 def run_scenario(name: str) -> dict:
     code = "\n".join([HARNESS, js_const("REF_BLOCK_RE")] + [js_function(n) for n in (
-        "stripRefBlocks", "soloItems", "prevSessionItems", "renderSolo", "landPending", "markLanded")]
+        "stripRefBlocks", "soloItems", "prevSessionItems", "soloOwns", "soloWantFailed",
+        "renderSolo", "landPending", "markLanded")]
         + [SCENARIOS[name], TAIL])
     res = subprocess.run([NODE, "-"], input=code, capture_output=True, text=True, encoding="utf-8", timeout=30)
     assert res.returncode == 0, res.stderr
@@ -135,6 +170,26 @@ class LandOnALinkedBalloon(unittest.TestCase):
         out = run_scenario("rotated")
         self.assertEqual(out["notes"], [])
         self.assertEqual(out["marked"], ["s-old:3"])
+
+    def test_a_turn_from_two_rotations_ago_lands(self):
+        out = run_scenario("two-rotations")
+        self.assertEqual(out["notes"], [])
+        self.assertEqual(out["marked"], ["s-old:3"])
+        self.assertEqual(out["first"], "s-old:3")
+
+    def test_a_failed_fetch_of_the_wider_window_is_tried_again(self):
+        out = run_scenario("fails-once")
+        self.assertEqual(out["notes"], [])
+        self.assertEqual(out["marked"], ["s-new:5"])
+        self.assertEqual(len(out["fetches"]), 3, out["fetches"])
+
+    def test_a_window_that_never_loads_says_so_and_stops(self):
+        for name in ("fails-always", "prev-fails"):
+            out = run_scenario(name)
+            self.assertEqual(out["notes"], ["The linked message could not be loaded. Reload the page to try again."], name)
+            self.assertEqual(out["goto"], "", name)
+            self.assertIsNone(out["landed"], name)
+            self.assertLessEqual(len(out["fetches"]), 8, (name, out["fetches"]))
 
     def test_a_turn_that_is_not_there_is_not_found_after_widening(self):
         out = run_scenario("missing")

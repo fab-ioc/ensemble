@@ -1835,6 +1835,7 @@ function showGotoNote(text) {
 // the chat has a height (a hidden frame has none).
 function gotoMsg(mid) {
   GOTO = String(mid || '').trim();
+  if (SOLO_WANT && SOLO_WANT.failed) SOLO_WANT = null;   // a new try loads it again
   showGotoNote('');
   landPending();
 }
@@ -1855,16 +1856,19 @@ function landPending() {
     if (!el) {
       // A turn of a solo transcript older than the chat shows: draw back to it.
       const t = mid.match(/^(.+):(\d+)$/);
-      if (t && SOLO_SID && (t[1] === SOLO_SID || (SOLO_ROT && t[1] === SOLO_ROT.fromSessionId))) {
+      let failed = false;
+      if (t && SOLO_SID && soloOwns(t[1])) {
         if (!(SOLO_WANT && SOLO_WANT.sid === t[1] && SOLO_WANT.n === +t[2])) {
           SOLO_WANT = { sid: t[1], n: +t[2] };
           renderSolo(SOLO_SID, SOLO_AGENT, true);
           return;
         }
         if (!SOLO_WANT.loaded) return;   // not found only once the wider window is drawn
+        failed = !!SOLO_WANT.failed;
       }
       GOTO = '';
-      showGotoNote('The linked message was not found in this conversation.');
+      showGotoNote(failed ? 'The linked message could not be loaded. Reload the page to try again.'
+        : 'The linked message was not found in this conversation.');
       return;
     }
     GOTO = '';
@@ -1921,9 +1925,10 @@ let SEND_KEY = '';       // the hub's key for the message in the box: sent twice
 // What the hub holds for this session while it is resumed (room.pending):
 // {state: 'resuming'|'failed', error, items:[{text,to,at}]}, or null.
 let ROOM_PENDING = null, ROOM_RESUMING = false, PENDING_SIG = 'null';
-// A rotated PO: its latest rotation, and the session it was rotated out of
-// (fetched once — a finished transcript never changes).
-let SOLO_ROT = null, SOLO_PREV = { sid: '', items: [] };
+// A rotated PO: its latest rotation, every rotation, and the sessions it was
+// rotated out of (sid → {items, from}; a finished transcript never changes).
+let SOLO_ROT = null, SOLO_ROTS = [];
+const SOLO_PREV = new Map();
 const PREV_TURNS_SHOWN = 60;
 function rotationText(r) {
   const k = n => Math.round((n || 0) / 1000) + 'k';
@@ -1949,12 +1954,26 @@ function soloItems(raw, sid, agentId, keep) {
 async function prevSessionItems(sid, agentId) {
   // A link to an older turn than those shown draws back to it.
   const want = SOLO_WANT && SOLO_WANT.sid === sid ? SOLO_WANT.n : -1;
-  if (SOLO_PREV.sid === sid && (want < 0 || SOLO_PREV.from <= want)) return SOLO_PREV.items;
+  const had = SOLO_PREV.get(sid);
+  if (had && (want < 0 || had.from <= want)) return had.items;
   const d = await fetch('/api/session/' + encodeURIComponent(sid) + '?full=1').then(r => r.json());
   const turns = d.turns || [];
   const items = soloItems(turns, sid, agentId, Math.max(PREV_TURNS_SHOWN, want < 0 ? 0 : turns.length - want));
-  SOLO_PREV = { sid, items, from: items.length ? +String(items[0].id).split(':').pop() : 0 };
-  return SOLO_PREV.items;
+  SOLO_PREV.set(sid, { items, from: items.length ? +String(items[0].id).split(':').pop() : 0 });
+  return items;
+}
+// The sessions of this chat a link may point into: the current one and every
+// one it was rotated out of.
+function soloOwns(sid) {
+  return sid === SOLO_SID || SOLO_ROTS.some(r => r.fromSessionId === sid);
+}
+// A transcript a link needs would not load: try again twice, then say so.
+function soloWantFailed(w) {
+  if (!w || w.loaded || w !== SOLO_WANT) return;
+  w.tries = (w.tries || 0) + 1;
+  if (w.tries < 3) { setTimeout(renderSolo, 2000 * w.tries, SOLO_SID, SOLO_AGENT, true); return; }
+  w.loaded = w.failed = true;
+  landPending();
 }
 // Poll a cheap size+mtime signal; re-render the transcript only when it actually
 // grows. Reliable (catches every new turn, even while the agent is still working)
@@ -1992,18 +2011,29 @@ async function renderSolo(sid, agentId, force) {
     let items = soloItems(raw, sid, agentId, Math.max(120, want));
     // A PO rotated into this session: the end of the one before, then the line.
     const rot = SOLO_ROT && SOLO_ROT.toSessionId === sid ? SOLO_ROT : null;
+    let wantOk = true;
     if (rot && rot.fromSessionId) {
       let prev = [];
-      try { prev = await prevSessionItems(rot.fromSessionId, agentId); } catch (e) {}
+      try { prev = await prevSessionItems(rot.fromSessionId, agentId); } catch (e) { if (w && w.sid === rot.fromSessionId) wantOk = false; }
       items = prev.concat([{ id: 'rot' + (rot.n || ''), divider: rot }], items);
     }
-    if (w && (w.sid === sid || (rot && w.sid === rot.fromSessionId))) w.loaded = true;
+    // A link into a session from before that one: its turns from the linked
+    // one on, and the line that ended it, above the rest.
+    const old = w && w.sid !== sid && !(rot && w.sid === rot.fromSessionId)
+      ? SOLO_ROTS.find(r => r.fromSessionId === w.sid) : null;
+    if (old) {
+      try {
+        items = (await prevSessionItems(old.fromSessionId, agentId)).concat([{ id: 'rot' + (old.n || ''), divider: old }], items);
+      } catch (e) { wantOk = false; }
+    }
+    if (w && wantOk) w.loaded = true;
     // What the hub wrote out under a balloon link is the agent's copy: the
     // balloon shows the words as they were sent, and the link as its chip.
     items.forEach(m => { if (m.from === 'user' && m.text) m.text = stripRefBlocks(m.text); });
     CHAT_DRAWN = true;
     renderBubbles(items);
-  } catch (e) {} finally {
+    if (!wantOk) soloWantFailed(w);
+  } catch (e) { soloWantFailed(SOLO_WANT); } finally {
     SOLO_FETCHING = false;
     if (SOLO_AGAIN) { SOLO_AGAIN = false; renderSolo(SOLO_SID, SOLO_AGENT, true); }
   }
@@ -2079,7 +2109,8 @@ async function refresh() {
   if (soloMode) {
     const a = mem[0] || {};
     SOLO_SID = a.sessionId || ''; SOLO_AGENT = a.identity || 'claude'; SOLO_PTY = a.ptyId || '';
-    SOLO_ROT = (a.rotations || []).slice(-1)[0] || null;
+    SOLO_ROTS = a.rotations || [];
+    SOLO_ROT = SOLO_ROTS.slice(-1)[0] || null;
     // What the hub holds for it changed (sent, delivered, failed): draw again.
     if (pendChanged && SOLO_SID) renderSolo(SOLO_SID, SOLO_AGENT, true);
     else checkSolo();   // stat-driven: first load + every new turn
