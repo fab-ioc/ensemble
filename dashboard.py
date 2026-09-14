@@ -67,6 +67,7 @@ import digest
 import ensemble_tools
 # A documents project's automatic file history (a private git dir per project).
 import history as file_history
+import peer_process
 # A fresh PO session from its written handover when its conversation gets long.
 import rotation
 # Plan-allowance readings (account-wide, per agent kind), refreshed in the
@@ -1904,6 +1905,12 @@ def _history_target(project_id: str) -> tuple[dict | None, str, tuple | None]:
 def _room_project_id(room_id: str, room: dict | None, links: dict | None = None) -> str:
     links = load_session_projects() if links is None else links
     return links.get(room_id) or (room or {}).get("projectId") or ""
+
+
+def _agent_pids() -> set[int]:
+    """The processes of the agents the hub runs (their PTYs): a request whose
+    sender descends from one is an agent's, whatever headers it sends."""
+    return {i["pid"] for i in ptyrun.list_sessions() if i.get("alive") and isinstance(i.get("pid"), int)}
 
 
 def _history_running(project_id: str, active_within: float | None = None) -> list[dict]:
@@ -5751,8 +5758,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _page_refusal(self) -> str:
         """Empty when this request comes from the dashboard page (its key
-        cookie, on a request from its own origin), else why not. For writes a
-        task's agent must never make, such as restoring a file."""
+        cookie, on a request from its own origin, sent by a program that is
+        not an agent), else why not. For writes a task's agent must never make,
+        such as restoring a file. The cookie and the headers alone prove
+        nothing: an agent can fetch the page and replay them, so the process
+        that sent the request is checked too (see peer_process)."""
         if self._bearer_token():
             return "Only the dashboard page can do this, not a task's agent."
         key = self._cookie(self._ui_cookie())
@@ -5760,7 +5770,21 @@ class Handler(BaseHTTPRequestHandler):
             return "Only the dashboard page can do this."
         if not hmac.compare_digest(key, _UI_KEY):
             return "Reload the dashboard page and try again."
+        why = self._agent_peer()
+        if why:
+            return f"Only the dashboard page can do this, and this request did not come from it: {why}."
         return ""
+
+    def _agent_peer(self) -> str:
+        """Why the program that sent this request counts as an agent, or ""."""
+        server = self.server.server_address[:2]
+        conn = getattr(self, "connection", None)
+        if conn is not None:
+            try:
+                server = conn.getsockname()[:2]
+            except OSError:
+                pass
+        return peer_process.from_agent(self.client_address[:2], server, _agent_pids())
 
     def _gate(self) -> bool:
         """Return True if the request may proceed. When an ACCESS_TOKEN is set,
@@ -7212,7 +7236,9 @@ class Handler(BaseHTTPRequestHandler):
         files), a version's content, a diff, and what changed since the last
         snapshot. Read-only, gated like the workspace file APIs."""
         def arg(k: str) -> str:
-            return (q.get(k, [""])[0] or "").strip()
+            v = q.get(k, [""])[0] or ""
+            # A path is taken as written: " notes.txt" is a real file name.
+            return v if k in ("path", "file", "now") else v.strip()
 
         def num(k: str, d: int) -> int:
             return int(arg(k)) if arg(k).isdigit() else d
@@ -7222,7 +7248,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p == "/api/history/log":
             if arg("deleted") == "1":
-                self._send_json(200, {"projectId": proj["id"], "root": home, **file_history.deleted(home)})
+                self._send_json(200, {"projectId": proj["id"], "root": home,
+                                      **file_history.deleted(home, num("limit", file_history.LOG_MAX),
+                                                             num("skip", 0))})
                 return
             path = ""
             if arg("path"):
@@ -7637,7 +7665,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
             res = file_history.restore(home, str(data.get("rev") or ""), str(data.get("path") or ""),
                                        file_history.credit(_history_running, proj["id"], home))
-            self._send_json(200 if res.get("ok") else 400, res)
+            if not res.get("ok"):
+                res["message"] = res.get("error", "")
+            # 500 when the file was written but its snapshot failed: the page
+            # must not say it went well.
+            self._send_json(200 if res.get("ok") else (500 if res.get("written") else 400), res)
             return
         if p == "/api/digest/check":
             # {projectId, force?}: run the progress check now. Without force it

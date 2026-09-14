@@ -300,15 +300,111 @@ class HistoryEndpoints(Hub):
         status, res = self.json_call("POST", "/api/history/restore", body,
                                      {**self.page_headers(), "Origin": "http://127.0.0.1:9999"})
         self.assertEqual(status, 403, "another origin may not")
+        with mock.patch.object(dashboard.Handler, "_agent_peer", lambda h: "it came from an agent's process (42)"):
+            status, res = self.json_call("POST", "/api/history/restore", body, self.page_headers())
+        self.assertEqual((status, res["error"]), (403, "page_only"), "an agent's process may not, cookie or not")
+        self.assertIn("agent's process", res["message"])
         self.assertEqual((self.home / "Leasing" / "offer.md").read_text(encoding="utf-8"), "price 280\n")
-        status, res = self.json_call("POST", "/api/history/restore", body, self.page_headers())
-        self.assertEqual(status, 200, res)
-        self.assertTrue(res["ok"] and res["committed"])
-        self.assertEqual((self.home / "Leasing" / "offer.md").read_text(encoding="utf-8"), "price 300\n")
-        top = history.log(str(self.home))["entries"][0]
-        self.assertTrue(top["subject"].startswith("Restored Leasing/offer.md from"))
-        status, res = self.json_call("POST", "/api/history/restore", {**body, "rev": "HEAD"}, self.page_headers())
-        self.assertEqual(status, 400)
+        with mock.patch.object(dashboard.Handler, "_agent_peer", lambda h: ""):
+            status, res = self.json_call("POST", "/api/history/restore", body, self.page_headers())
+            self.assertEqual(status, 200, res)
+            self.assertTrue(res["ok"] and res["committed"])
+            self.assertEqual((self.home / "Leasing" / "offer.md").read_text(encoding="utf-8"), "price 300\n")
+            top = history.log(str(self.home))["entries"][0]
+            self.assertTrue(top["subject"].startswith("Restored Leasing/offer.md from"))
+            status, res = self.json_call("POST", "/api/history/restore", {**body, "rev": "HEAD"}, self.page_headers())
+            self.assertEqual(status, 400)
+            real = history.snapshot
+
+            def failing(home, who=None, reason="scan", message="", allow_empty=False):
+                if reason == "restore":
+                    return {"ok": False, "committed": False, "rev": "", "files": 0, "skipped": [], "msg": "disk full"}
+                return real(home, who, reason, message, allow_empty)
+            with mock.patch.object(history, "snapshot", failing):
+                status, res = self.json_call("POST", "/api/history/restore", {**body, "rev": self.v2}, self.page_headers())
+            self.assertEqual(status, 500, "written but not recorded is not a success")
+            self.assertTrue(res["written"])
+            self.assertIn("could not record the restore", res["message"])
+
+    def test_paths_are_taken_as_written_and_deleted_files_page(self):
+        (self.home / " leading.txt").write_text("one\n", encoding="utf-8", newline="\n")
+        (self.home / "old1.md").write_text("1\n", encoding="utf-8")
+        (self.home / "old2.md").write_text("2\n", encoding="utf-8")
+        rev = history.snapshot(str(self.home))["rev"]
+        status, body = self.json_call("GET", f"/api/history/file?{self.q(rev=rev, path=' leading.txt')}")
+        self.assertEqual((status, body.get("text")), (200, "one\n"))
+        status, body = self.json_call("GET", f"/api/history/log?{self.q(path=' leading.txt')}")
+        self.assertEqual((status, body["path"]), (200, " leading.txt"))
+        (self.home / "old1.md").unlink()
+        (self.home / "old2.md").unlink()
+        history.snapshot(str(self.home))
+        status, first = self.json_call("GET", f"/api/history/log?{self.q(deleted='1', limit='1')}")
+        self.assertEqual((status, len(first["files"]), first["more"]), (200, 1, True))
+        status, rest = self.json_call("GET", f"/api/history/log?{self.q(deleted='1', limit='1', skip='1')}")
+        self.assertEqual((len(rest["files"]), rest["more"]), (1, False))
+        self.assertEqual({first["files"][0]["path"], rest["files"][0]["path"]}, {"old1.md", "old2.md"})
+
+
+# A task's agent with an ordinary HTTP client: it fetches the page as a browser
+# would, keeps the cookie it is given, and replays it with same-origin headers.
+AGENT_CLIENT = r'''
+import http.client, json, sys
+port, pid, rev = int(sys.argv[1]), sys.argv[2], sys.argv[3]
+c = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+c.request("GET", "/", headers={"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document", "Sec-Fetch-Site": "none",
+                               "Accept": "text/html", "Upgrade-Insecure-Requests": "1"})
+r = c.getresponse()
+r.read()
+cookie = next((v.split(";")[0] for k, v in r.getheaders()
+               if k.lower() == "set-cookie" and v.startswith("ensemble_ui_%d=" % port)), "")
+body = json.dumps({"projectId": pid, "rev": rev, "path": "offer.md"})
+c.request("POST", "/api/history/restore", body=body,
+          headers={"Cookie": cookie, "Origin": "http://127.0.0.1:%d" % port, "Sec-Fetch-Site": "same-origin",
+                   "Sec-Fetch-Mode": "cors", "Content-Type": "application/json"})
+r = c.getresponse()
+print(json.dumps({"cookie": bool(cookie), "status": r.status, "body": json.loads(r.read() or b"{}")}))
+'''
+
+
+@unittest.skipUnless(GIT, "git is not installed")
+class AnAgentCannotPoseAsThePage(Hub):
+    """Over a real socket: the process that sent the request decides, not the
+    headers or the cookie it replays."""
+
+    def test_an_agent_that_fetches_the_page_still_cannot_restore(self):
+        import threading
+        dashboard.set_project_kind(self.pid, "documents")
+        offer = self.home / "offer.md"
+        offer.write_text("price 300\n", encoding="utf-8", newline="\n")
+        v1 = history.snapshot(str(self.home))["rev"]
+        offer.write_text("price 280\n", encoding="utf-8", newline="\n")
+        history.snapshot(str(self.home))
+        quiet = mock.patch.object(dashboard.Handler, "log_message", lambda *a: None)
+        quiet.start()
+        self.addCleanup(quiet.stop)
+        server = dashboard.ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        port = server.server_address[1]
+
+        def attempt(agent_pids):
+            with mock.patch.object(dashboard, "_agent_pids", lambda: set(agent_pids)):
+                r = subprocess.run([sys.executable, "-c", AGENT_CLIENT, str(port), self.pid, v1],
+                                   capture_output=True, text=True, encoding="utf-8", timeout=90)
+            self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+            return json.loads(r.stdout.strip().splitlines()[-1])
+
+        # This test process stands in for the agent's PTY: the client is its child.
+        res = attempt({os.getpid()})
+        self.assertTrue(res["cookie"], "the page's cookie is handed to anyone who asks like a browser")
+        self.assertEqual((res["status"], res["body"].get("error")), (403, "page_only"), res)
+        self.assertIn("agent's process", res["body"]["message"])
+        self.assertEqual(offer.read_text(encoding="utf-8"), "price 280\n")
+        # The same request from a program that is not an agent's (the browser) restores.
+        res = attempt(set())
+        self.assertEqual(res["status"], 200, res)
+        self.assertEqual(offer.read_text(encoding="utf-8"), "price 300\n")
 
 
 # ---- the page ----------------------------------------------------------------
@@ -401,6 +497,8 @@ out.recent = histRecentHtml(st);
 st.view = 'deleted'; out.deleted = histRecentHtml(st);
 out.emptyRecent = histRecentHtml({ recent: [], deleted: [], view: 'recent', err: '' });
 out.top = histTopHtml({ rel: 'Leasing/offer.md', entries: st.recent, sel: 'a1', more: false, err: '' });
+out.topMore = histTopHtml({ rel: 'Leasing/offer.md', entries: st.recent, sel: '', more: true, err: '' });
+out.deletedMore = histRecentHtml({ ...st, view: 'deleted', delMore: true });
 out.text = histTextHtml('one\ntwo\n', 'x.txt');
 out.diff = histDiffHtml('--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n one\n-two\n+TWO\n', 'x.txt');
 console.log(JSON.stringify(out));
@@ -465,6 +563,10 @@ class ThePage(unittest.TestCase):
         self.assertIn("No snapshots yet", o["emptyRecent"])
         self.assertIn('class="wsh-ver on" data-rev="a1"', o["top"])
         self.assertIn("Pick a version", o["top"])
+        self.assertNotIn("wsh-older", o["top"])
+        self.assertIn(">Show older versions<", o["topMore"])
+        self.assertNotIn("dch-older", o["deleted"])
+        self.assertIn(">Show older deleted files<", o["deletedMore"])
         self.assertEqual(o["text"].count('class="dr k-ctx"'), 2)
         self.assertIn('class="drv one"', o["text"])
         self.assertIn("The file now: +1 −1 against this version", o["diff"])
@@ -473,6 +575,7 @@ class ThePage(unittest.TestCase):
     def test_layout_and_safari_rules(self):
         self.assertIn('grid-template-areas: "chrome" "files" "board"', INDEX)
         self.assertIn('<section id="docs-panel" hidden', INDEX)
+        self.assertIn("a.rm-btn { display: inline-flex;", INDEX, "a link button is a box, so its touch height applies")
         self.assertIn("document.body.classList.toggle('docs-split', !!docsPj);", INDEX)
         block = docs_block()
         css = INDEX[INDEX.index("body.docs-split main {"):INDEX.index(".drv.one .dr .dg::before")]

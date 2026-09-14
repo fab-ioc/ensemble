@@ -173,8 +173,8 @@ def ensure(home: str) -> tuple[bool, str]:
 def rel_path(home: str, path: str) -> str:
     """``path`` (relative to ``home`` or absolute inside it) as a clean posix
     path relative to ``home``; "" when it is outside, empty or in ``.history``."""
-    p = (path or "").strip()
-    if not p:
+    p = path or ""
+    if not p.strip():                 # " notes.txt" is a real name: never stripped
         return ""
     if os.path.isabs(p) or re.match(r"^[A-Za-z]:", p):
         try:
@@ -265,9 +265,11 @@ def status(home: str) -> dict:
             "maxFileBytes": MAX_FILE_BYTES}
 
 
-def snapshot(home: str, who=None, reason: str = "scan", message: str = "") -> dict:
+def snapshot(home: str, who=None, reason: str = "scan", message: str = "", allow_empty: bool = False) -> dict:
     """Commit whatever changed since the last snapshot. Cheap when nothing did
-    (one ``git status``). Returns {ok, committed, rev, files, skipped, msg}."""
+    (one ``git status``). ``allow_empty`` commits even then, for an event that
+    must be a snapshot of its own (a restore). Returns {ok, committed, rev,
+    files, skipped, msg}."""
     res = {"ok": False, "committed": False, "rev": "", "files": 0, "skipped": [], "msg": ""}
     with _lock(home):
         try:
@@ -279,7 +281,7 @@ def snapshot(home: str, who=None, reason: str = "scan", message: str = "") -> di
             if st is None:
                 res["msg"] = "git status failed"
                 return res
-            if not st:
+            if not st and not allow_empty:
                 res["ok"] = True
                 return res
             add, drop = [], []
@@ -303,7 +305,7 @@ def snapshot(home: str, who=None, reason: str = "scan", message: str = "") -> di
                 if r.returncode != 0:
                     res["msg"] = "git add failed: " + (r.stderr or "").strip()[:200]
                     return res
-            if _git(home, "diff", "--cached", "--quiet").returncode == 0:
+            if not allow_empty and _git(home, "diff", "--cached", "--quiet").returncode == 0:
                 res["ok"] = True               # only skipped files changed
                 return res
             n = len(add) + len(drop)
@@ -311,7 +313,7 @@ def snapshot(home: str, who=None, reason: str = "scan", message: str = "") -> di
             subject = _clean(message, 200) or f"{n} file{'s' if n != 1 else ''} changed"
             body = "\n".join(lines + [f"Ensemble-Reason: {_clean(reason, 40) or 'scan'}"])
             c = _git(home, "-c", f"user.name={author}", "commit", "-q", "--no-verify",
-                     "-m", subject, "-m", body)
+                     *(["--allow-empty"] if allow_empty else []), "-m", subject, "-m", body)
             if c.returncode != 0:
                 res["msg"] = "commit failed: " + (c.stderr or c.stdout or "").strip()[:200]
                 return res
@@ -376,12 +378,19 @@ def _numstat(rest: str) -> dict:
     return out
 
 
-def _entries(home: str, extra: list[str], path: str = "") -> list[dict]:
+def _head(home: str) -> str:
+    out = (_git(home, "rev-parse", "-q", "--verify", "HEAD^{commit}", read=True).stdout or "").strip()
+    return out if _REV.match(out) else ""
+
+
+def _entries(home: str, head: str, extra: list[str], path: str = "") -> list[dict]:
+    # Both reads start at the same commit: a snapshot landing between them
+    # would otherwise shift the second read's window by one.
     spec = ["--", path] if path else []
-    names = _git(home, "log", f"--format={_FMT}", "-M", "--name-status", "-z", *extra, *spec, read=True)
+    names = _git(home, "log", f"--format={_FMT}", "-M", "--name-status", "-z", *extra, head, *spec, read=True)
     if names.returncode != 0:
         return []
-    nums = _git(home, "log", f"--format={_FMT}", "-M", "--numstat", "-z", *extra, *spec, read=True)
+    nums = _git(home, "log", f"--format={_FMT}", "-M", "--numstat", "-z", *extra, head, *spec, read=True)
     counts = {h: _numstat(rest) for h, *_x, rest in _records(nums.stdout or "")}
     out = []
     for h, at, an, subject, body, rest in _records(names.stdout or ""):
@@ -400,26 +409,29 @@ def log(home: str, path: str = "", limit: int = 50, skip: int = 0) -> dict:
     """The snapshots, newest first: the project's, or one file's (following
     renames). {entries: [{rev, time, subject, who, files: [{path, status,
     from?, added, removed, binary}]}], more}."""
-    if not exists(home):
-        return {"entries": [], "more": False}
-    if not (_git(home, "rev-parse", "--verify", "-q", "HEAD", read=True).stdout or "").strip():
+    head = _head(home) if exists(home) else ""
+    if not head:
         return {"entries": [], "more": False}
     limit = max(1, min(LOG_MAX, int(limit or 50)))
     extra = [f"-n{limit + 1}", f"--skip={max(0, int(skip or 0))}"]
     if path:
         extra.append("--follow")
-    ents = _entries(home, extra, path)
+    ents = _entries(home, head, extra, path)
     return {"entries": ents[:limit], "more": len(ents) > limit}
 
 
-def deleted(home: str, limit: int = LOG_MAX) -> dict:
+def deleted(home: str, limit: int = LOG_MAX, skip: int = 0) -> dict:
     """Files the history holds that are gone from the folder now, newest
-    deletion first: {files: [{path, rev, time, who, from}]}; ``from`` is the
-    snapshot holding its last version."""
-    if not exists(home) or not (_git(home, "rev-parse", "--verify", "-q", "HEAD", read=True).stdout or "").strip():
-        return {"files": []}
-    r = _git(home, "log", f"--format={_FMT}", "-M", "--diff-filter=D", "--name-only", "-z", read=True)
-    out, seen = [], set()
+    deletion first, ``limit`` of them after the first ``skip``: {files:
+    [{path, rev, time, who, from}], more}; ``from`` is the snapshot holding
+    its last version."""
+    head = _head(home) if exists(home) else ""
+    if not head:
+        return {"files": [], "more": False}
+    limit = max(1, min(LOG_MAX, int(limit or LOG_MAX)))
+    skip = max(0, int(skip or 0))
+    r = _git(home, "log", f"--format={_FMT}", "-M", "--diff-filter=D", "--name-only", "-z", head, read=True)
+    out, seen, passed = [], set(), 0
     for h, at, an, _s, body, rest in _records(r.stdout or ""):
         for p in _tokens(rest):
             if p in seen:
@@ -427,11 +439,14 @@ def deleted(home: str, limit: int = LOG_MAX) -> dict:
             seen.add(p)
             if os.path.lexists(os.path.join(home, p)):
                 continue
+            if passed < skip:
+                passed += 1
+                continue
+            if len(out) >= limit:
+                return {"files": out, "more": True}
             out.append({"path": p, "rev": h, "from": h + "^", "time": int(at) if at.strip().isdigit() else 0,
                         "who": _parse_who(body, an)})
-            if len(out) >= limit:
-                return {"files": out}
-    return {"files": out}
+    return {"files": out, "more": False}
 
 
 def _valid_rev(home: str, rev: str) -> str:
@@ -547,9 +562,15 @@ def restore(home: str, rev: str, path: str, who_now=None) -> dict:
             return {"ok": False, "error": f"could not write {rel}: {e}"}
         at = _git(home, "log", "-1", "--format=%at", full, read=True).stdout.strip()
         when = time.strftime("%Y-%m-%d %H:%M", time.localtime(int(at))) if at.isdigit() else full[:8]
-        after = snapshot(home, None, reason="restore", message=f"Restored {rel} from {when}")
+        # Its own snapshot even when the file already held that version, so
+        # every restore shows in the history.
+        after = snapshot(home, None, reason="restore", message=f"Restored {rel} from {when}", allow_empty=True)
+        if not (after.get("ok") and after.get("committed")):
+            return {"ok": False, "written": True, "path": rel, "from": full, "restoredFrom": when,
+                    "error": f"{rel} was put back as it was on {when}, but the history could not record "
+                             f"the restore: {after.get('msg') or 'snapshot failed'}"}
         return {"ok": True, "path": rel, "from": full, "restoredFrom": when,
-                "rev": after.get("rev", ""), "committed": after.get("committed", False)}
+                "rev": after.get("rev", ""), "committed": True}
 
 
 # ---- the scheduler ---------------------------------------------------------------

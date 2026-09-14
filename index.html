@@ -1424,6 +1424,7 @@
   .wsh-ver.on .wsh-what { color: inherit; }
   .wsh-note { flex: none; margin: 0; padding: var(--s-100) var(--s-300); font-size: var(--fs-200); color: var(--fg-muted); }
   .wsh-detail { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .wsh-more { padding: var(--s-100) var(--s-300); }
   .wsh-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-200); padding: var(--s-100) var(--s-300);
     border-bottom: 1px solid var(--border); font-size: var(--fs-200); color: var(--fg-muted); }
   .wsh-box { flex: 1; min-height: 0; overflow: auto; }
@@ -1729,6 +1730,8 @@
   .rm-btn.subtle { height: 24px; padding: 0 var(--s-200); background: transparent; border-color: transparent; color: var(--fg-subtle); font-size: var(--fs-200); }
   .rm-btn.subtle:hover { background: var(--hover); color: var(--fg); }
   .rm-btn:disabled { cursor: progress; }
+  /* A link dressed as a button: its height (and a phone's --touch-min) apply only to a box. */
+  a.rm-btn { display: inline-flex; align-items: center; text-decoration: none; }
   .rm-note { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-200) var(--s-300); padding: var(--s-200) var(--s-300); border-bottom: 1px solid var(--border); background: var(--c-warning-bg); color: var(--c-warning-fg); font-size: var(--fs-300); line-height: var(--lh-300); }
   .rm-note.err { background: var(--c-danger-bg); color: var(--c-danger-fg); }
   .rm-note-txt { flex: 1 1 320px; min-width: 0; }
@@ -8430,7 +8433,7 @@ async function kindChoose(pid) {
 const HIST_FOOT = 'Every version of every file here is kept, with who changed it: a task, or you. Files over 50 MB, and task chats and records, are not kept.';
 const HIST = new Map();   // project id -> the Overview's recent changes
 function histState(pid) {
-  if (!HIST.has(pid)) HIST.set(pid, { recent: null, more: false, deleted: [], err: '', view: 'recent', at: 0, inFlight: false });
+  if (!HIST.has(pid)) HIST.set(pid, { recent: null, more: false, deleted: [], delMore: false, delPaged: false, err: '', view: 'recent', at: 0, inFlight: false });
   return HIST.get(pid);
 }
 const histWho = w => (w && w.kind === 'task' && w.label) ? w.label : 'you';
@@ -8460,7 +8463,8 @@ function histRecentHtml(st) {
     return st.deleted.map(d => `<div class="dch"><div class="dch-top"><span class="dch-who">${esc(wsTabName(d.path))}</span><span class="dch-when" title="${esc(histTime(d.time))}">${agoSpan(d.time)}</span></div>`
       + `<div class="dch-sub">${histFolder(d.path) ? esc(histFolder(d.path)) + ' · ' : ''}deleted by ${esc(histWho(d.who))}</div>`
       + `<div class="dch-acts"><button type="button" class="rm-btn subtle dch-restore" data-path="${esc(d.path)}" data-rev="${esc(d.from)}">Restore</button>`
-      + `<button type="button" class="rm-btn subtle dch-open" data-path="${esc(d.path)}">History</button></div></div>`).join('');
+      + `<button type="button" class="rm-btn subtle dch-open" data-path="${esc(d.path)}">History</button></div></div>`).join('')
+      + (st.delMore ? '<div class="dch-acts"><button type="button" class="rm-btn subtle dch-older">Show older deleted files</button></div>' : '');
   }
   if (!st.recent.length) return '<div class="dcs-empty">No snapshots yet. The first is taken within a few minutes, or now with Snapshot now.</div>';
   return st.recent.map(e => {
@@ -8507,7 +8511,11 @@ async function histRecentLoad(el, pid, force) {
   try {
     const q = encodeURIComponent(pid);
     const [log, del] = await Promise.all([api(`/api/history/log?project=${q}&limit=30`), api(`/api/history/log?project=${q}&deleted=1`)]);
-    st.recent = log.entries || []; st.more = !!log.more; st.deleted = del.files || []; st.err = '';
+    st.recent = log.entries || []; st.more = !!log.more; st.err = '';
+    // The first page of deleted files, keeping older ones already shown.
+    const first = del.files || [], have = new Set(first.map(x => x.path));
+    if (st.delPaged) st.deleted = first.concat(st.deleted.filter(x => !have.has(x.path)));
+    else { st.deleted = first; st.delMore = !!del.more; }
   } catch (e) { st.err = e.message || 'failed'; }
   finally { st.inFlight = false; st.at = Date.now(); }
   histPaintRecent(el, pid);
@@ -8527,13 +8535,30 @@ function wireDocsPanel(el, pid) {
     }
     const rs = e.target.closest('.dch-restore');
     if (rs) {
-      if (await histRestore(pid, rs.dataset.rev, rs.dataset.path, rs) && v) { wsSync(v); histReloadFrame(v, wsfAbs(root, rs.dataset.path)); }
+      if (await histRestore(pid, rs.dataset.rev, rs.dataset.path, rs)) {
+        st.deleted = st.deleted.filter(d => d.path !== rs.dataset.path);
+        if (v) { wsSync(v); histReloadFrame(v, wsfAbs(root, rs.dataset.path)); }
+      }
       histRecentLoad(el, pid, true);
       return;
     }
+    const older = e.target.closest('.dch-older');
+    if (older) { histDeletedMore(el, pid, older); return; }
     const snap = e.target.closest('.dcs-snap');
     if (snap) histSnapshotNow(el, pid, snap);
   };
+}
+async function histDeletedMore(el, pid, btn) {
+  const st = histState(pid);
+  btn.disabled = true;
+  try {
+    const d = await api(`/api/history/log?project=${encodeURIComponent(pid)}&deleted=1&skip=${st.deleted.length}`);
+    const have = new Set(st.deleted.map(x => x.path));
+    st.deleted = st.deleted.concat((d.files || []).filter(x => !have.has(x.path)));
+    st.delMore = !!d.more; st.delPaged = true;
+  } catch (e) { toast('older deleted files could not be read: ' + histErr(e), 5000, 'err'); }
+  finally { btn.disabled = false; }
+  histPaintRecent(el, pid);
 }
 async function histSnapshotNow(el, pid, btn) {
   btn.disabled = true;
@@ -8553,7 +8578,12 @@ async function histRestore(pid, rev, path, btn) {
                                                   body: JSON.stringify({ projectId: pid, rev, path }) });
     toast(`${wsTabName(path)} is back as it was on ${r.restoredFrom}; the version it replaced is kept`, 5000, 'ok');
     return r;
-  } catch (e) { toast('restore failed: ' + histErr(e), 8000, 'err'); return null; }
+  } catch (e) {
+    // Written but not recorded: the hub's sentence says both, and the file
+    // on screen must be read again.
+    if (/"written":\s*true/.test((e && e.message) || '')) { toast(histErr(e), 10000, 'err'); return { written: true }; }
+    toast('restore failed: ' + histErr(e), 8000, 'err'); return null;
+  }
   finally { if (btn) btn.disabled = false; }
 }
 // The viewer does not watch its file: a restored one is read again.
@@ -8574,6 +8604,7 @@ function histTopHtml(h) {
       + `<span class="wsh-when" title="${esc(histTime(e.time))}">${agoSpan(e.time)}</span><span class="wsh-who">${esc(histWho(e.who))}</span>`
       + `<span class="wsh-what">${esc(f ? histWhat(f) : '')}</span></button></li>`;
   }).join('') + '</ul>'
+    + (h.more ? `<div class="wsh-more"><button type="button" class="rm-btn subtle wsh-older"${h.loading ? ' disabled' : ''}>Show older versions</button></div>` : '')
     + `<p class="wsh-note">${h.more ? `The ${h.entries.length} latest versions. ` : ''}Pick a version to compare it with the file now, open it, or restore it; the file it replaces is kept.</p>`;
 }
 // The rows of a diff for reading only: no comments on a file's history.
@@ -8617,16 +8648,26 @@ function histClose(v) {
   const b = v.el && v.el.querySelector('.wsp-hist');
   if (b && !b.hidden) b.focus({ preventScroll: true });
 }
-async function histLoadFile(v) {
+// A file's versions, 100 at a time: older ones are added below on request,
+// so every version can be reached.
+async function histLoadFile(v, older) {
   const h = v.hist;
-  if (!h) return;
+  if (!h || h.loading) return;
+  const have = older ? (h.entries || []) : [];
+  h.loading = true;
+  if (older) histPaint(v);
   try {
-    const d = await api(`/api/history/log?project=${encodeURIComponent(h.pid)}&path=${encodeURIComponent(h.rel)}&limit=100`);
+    const d = await api(`/api/history/log?project=${encodeURIComponent(h.pid)}&path=${encodeURIComponent(h.rel)}&limit=100&skip=${have.length}`);
     if (v.hist !== h) return;
-    h.entries = d.entries || []; h.more = !!d.more; h.err = '';
-  } catch (e) { if (v.hist === h) h.err = e.message || 'failed'; }
+    const revs = new Set(have.map(e => e.rev));
+    h.entries = have.concat((d.entries || []).filter(e => !revs.has(e.rev))); h.more = !!d.more; h.err = '';
+  } catch (e) {
+    if (v.hist !== h) return;
+    if (older) toast('older versions could not be read: ' + histErr(e), 5000, 'err');
+    else h.err = e.message || 'failed';
+  } finally { h.loading = false; }
   histPaint(v);
-  if (h.sel) histShow(v);
+  if (h.sel && !older) histShow(v);
 }
 function histPaint(v) {
   const box = v.el && v.el.querySelector('.wsh');
@@ -8680,6 +8721,7 @@ async function histClick(v, e) {
   const h = v.hist;
   if (!h) return;
   if (e.target.closest('.wsh-close')) { histClose(v); return; }
+  if (e.target.closest('.wsh-older')) { histLoadFile(v, true); return; }
   const ver = e.target.closest('.wsh-ver');
   if (ver) { h.sel = ver.dataset.rev; histPaint(v); histShow(v); return; }
   const m = e.target.closest('.wsh-hm [data-hm]');

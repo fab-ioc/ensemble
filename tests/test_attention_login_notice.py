@@ -3,7 +3,8 @@
 Claude prints "Your login expires in 3 days · run /login to renew" and keeps
 working. Read as "needs you to log in again", it put a task that had just
 reported as blocked, hiding its report (seen with a documents project's first
-real task). A login that has actually expired still blocks.
+real task). A login that has actually expired still blocks, including the
+messages that end with the same "run /login to renew" advice.
 """
 from __future__ import annotations
 
@@ -29,6 +30,20 @@ class LoginNotice(unittest.TestCase):
         self.assertIsNotNone(hit)
         self.assertEqual(hit[1], "auth")
         self.assertIsNotNone(attention.find_block("Not logged in · Please run /login"))
+
+    def test_the_same_advice_after_a_real_failure_still_blocks(self):
+        for tail in ("OAuth token has expired · run /login to renew",
+                     "Not logged in · run /login to renew",
+                     "Authentication failed. Run /login to renew."):
+            hit = attention.find_block(tail)
+            self.assertIsNotNone(hit, tail)
+            self.assertEqual(hit[1], "auth", tail)
+
+    def test_a_real_failure_next_to_the_notice_still_blocks(self):
+        tail = "⚠ Your login expires in 3 days · run /login to renew\nNot logged in · run /login to renew\n"
+        hit = attention.find_block(tail)
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit[1], "auth")
 
 
 if __name__ == "__main__":

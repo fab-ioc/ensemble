@@ -170,6 +170,107 @@ class FileHistory(unittest.TestCase):
         for bad in ("", ".", "..", "../x", "a/../../x", ".history/HEAD", os.path.dirname(h)):
             self.assertEqual(history.rel_path(h, bad), "", bad)
 
+    def test_a_name_starting_with_a_space_is_that_file(self):
+        self.write(" leading.txt", "one\n")
+        v1 = history.snapshot(self.h)["rev"]
+        self.assertEqual(history.rel_path(self.h, " leading.txt"), " leading.txt")
+        self.assertEqual(history.rel_path(self.h, "   "), "")
+        self.assertEqual(history.log(self.h, " leading.txt")["entries"][0]["rev"], v1)
+        self.assertEqual(history.file_at(self.h, v1, " leading.txt"), (200, b"one\n"))
+        self.write(" leading.txt", "two\n")
+        history.snapshot(self.h)
+        res = history.restore(self.h, v1, " leading.txt")
+        self.assertTrue(res["ok"], res)
+        self.assertEqual((self.home / " leading.txt").read_text(encoding="utf-8"), "one\n")
+
+    def test_restoring_the_version_already_there_is_still_a_snapshot(self):
+        self.write("a.md", "same\n")
+        v1 = history.snapshot(self.h)["rev"]
+        res = history.restore(self.h, v1, "a.md")
+        self.assertTrue(res["ok"] and res["committed"] and res["rev"], res)
+        top = history.log(self.h)["entries"][0]
+        self.assertEqual(top["rev"], res["rev"])
+        self.assertTrue(top["subject"].startswith("Restored a.md from "), top["subject"])
+        self.assertEqual((top["who"]["kind"], top["who"]["reason"]), ("you", "restore"))
+
+    def test_a_restore_the_history_cannot_record_is_not_a_success(self):
+        self.write("a.md", "old\n")
+        v1 = history.snapshot(self.h)["rev"]
+        self.write("a.md", "new\n")
+        history.snapshot(self.h)
+        real = history.snapshot
+
+        def failing(home, who=None, reason="scan", message="", allow_empty=False):
+            if reason == "restore":
+                return {"ok": False, "committed": False, "rev": "", "files": 0, "skipped": [], "msg": "disk full"}
+            return real(home, who, reason, message, allow_empty)
+        with mock.patch.object(history, "snapshot", failing):
+            res = history.restore(self.h, v1, "a.md")
+        self.assertFalse(res["ok"])
+        self.assertTrue(res["written"])
+        self.assertIn("could not record the restore: disk full", res["error"])
+        self.assertEqual((self.home / "a.md").read_text(encoding="utf-8"), "old\n")
+
+    @staticmethod
+    def data(text: str) -> str:
+        return f"data {len(text.encode('utf-8'))}\n{text}\n"
+
+    def fast_import(self, changes):
+        """Commits made straight into the history: [(message, [file commands])]."""
+        history.ensure(self.h)
+        out = []
+        for i, (msg, cmds) in enumerate(changes, 1):
+            out.append(f"commit refs/heads/main\nmark :{i}\ncommitter you <{history.EMAIL}> {1790000000 + i} +0000\n"
+                       + self.data(f"{msg}\n\nEnsemble-Who: you"))
+            if i > 1:
+                out.append(f"from :{i - 1}\n")
+            out.extend(cmds)
+        r = subprocess.run(["git", f"--git-dir={self.h}/.history", "fast-import", "--quiet"],
+                           input="".join(out).encode("utf-8"), capture_output=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_every_version_and_every_deleted_file_can_be_reached(self):
+        changes = [(f"v{i}", ["M 100644 inline notes.txt\n" + self.data(f"version {i}")]) for i in range(1, 106)]
+        changes.append(("add", [f"M 100644 inline gone/{n:03d}.txt\n" + self.data(str(n)) for n in range(205)]))
+        changes.append(("delete", [f"D gone/{n:03d}.txt\n" for n in range(205)]))
+        self.fast_import(changes)
+        self.write("notes.txt", "version 105\n")
+        revs, skip = [], 0
+        while True:
+            page = history.log(self.h, "notes.txt", limit=100, skip=skip)
+            revs += [e["rev"] for e in page["entries"]]
+            skip += len(page["entries"])
+            if not page["more"]:
+                break
+        self.assertEqual(len(set(revs)), 105)
+        self.assertEqual(history.file_at(self.h, revs[-1], "notes.txt"), (200, b"version 1"))
+        first = history.deleted(self.h)
+        self.assertEqual((len(first["files"]), first["more"]), (200, True))
+        rest = history.deleted(self.h, skip=200)
+        self.assertEqual((len(rest["files"]), rest["more"]), (5, False))
+        self.assertEqual(len({f["path"] for f in first["files"] + rest["files"]}), 205)
+
+    def test_both_log_reads_see_the_same_commits(self):
+        self.write("a.md", "1\n")
+        history.snapshot(self.h)
+        self.write("a.md", "1\n2\n")
+        history.snapshot(self.h)
+        real, landed = history._git, []
+
+        def git(home, *args, **kw):
+            r = real(home, *args, **kw)
+            if args[:1] == ("log",) and "--name-status" in args and not landed:
+                landed.append(True)
+                for text in ("1\n2\n3\n", "1\n2\n3\n4\n"):   # two snapshots between the reads
+                    self.write("a.md", text)
+                    history.snapshot(self.h)
+            return r
+        with mock.patch.object(history, "_git", git):
+            ents = history.log(self.h, limit=1)["entries"]
+        self.assertTrue(landed)
+        self.assertEqual(len(ents), 1)
+        self.assertEqual((ents[0]["files"][0]["added"], ents[0]["files"][0]["removed"]), (1, 0))
+
     def test_backup_keeps_plain_files_after_history(self):
         self.write("Leasing/offer.md", "one\n")
         history.snapshot(self.h)
