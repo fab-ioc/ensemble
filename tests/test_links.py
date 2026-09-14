@@ -469,6 +469,7 @@ const PROJECTS = {
   pC: { id: 'pC', sessions: [{ roomId: 'room-ccccccc1', isLive: true }] },
 };
 const projectById = id => PROJECTS[id];
+const projectTasks = pj => ((pj && pj.sessions) || []);  // no PO here; test_task_search covers it
 let PROJECT_TAB = 'changes', SB_DEST = '', SELECTED_PROJECT = 'pA';
 // The hub: two repositories in project A's folder; `slow[root]` holds that
 // root's answers back, `hold` holds back a send.
