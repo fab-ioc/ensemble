@@ -28,7 +28,7 @@ HOME = Path.home()
 DASHBOARD_DIR = HOME / ".ensemble"
 _LEGACY_DASHBOARD_DIR = HOME / ".claude" / "dashboard"
 # One-time migration from the old Claude-nested location, so existing rooms,
-# labels, pins, categories and the agent registry carry over on first run.
+# labels and the agent registry carry over on first run.
 if not DASHBOARD_DIR.exists() and _LEGACY_DASHBOARD_DIR.exists():
     try:
         shutil.move(str(_LEGACY_DASHBOARD_DIR), str(DASHBOARD_DIR))
