@@ -277,6 +277,181 @@ class FoldALongConversation(unittest.TestCase):
         self.assertEqual(self.r["shrunk"], {"order": ["a"], "keptA": True})
 
 
+HUB_JS = r"""
+const vm = require('vm');
+const { code } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+class Node {
+  constructor(h) { this._html = h; this.parent = null; }
+  get nextElementSibling() { const k = this.parent.kids; return k[k.indexOf(this) + 1] || null; }
+  remove() { const k = this.parent.kids; k.splice(k.indexOf(this), 1); this.parent = null; }
+}
+class Box {
+  constructor() { this.kids = []; this.created = 0; }
+  get children() { return this.kids.slice(); }
+  get firstElementChild() { return this.kids[0] || null; }
+  insertBefore(n, ref) {
+    if (n.parent) n.remove();
+    n.parent = this;
+    const i = ref ? this.kids.indexOf(ref) : this.kids.length;
+    this.kids.splice(i, 0, n);
+  }
+}
+const box = new Box();
+const ctx = {
+  document: { createElement: () => ({ set innerHTML(h) { box.created++; this.content = { firstElementChild: new Node(h) }; } }) },
+  esc: s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])),
+  identLabel: id => '@' + id,
+};
+vm.createContext(ctx);
+vm.runInContext(code + `
+  globalThis.t = { foldPlan, foldKey, soloItems, patchChildren, quietItem, answerChip, foldUnanswered,
+    foldChips, foldBalloonHtml, isDecision, latestLabel, hubLabel, hubBody, foldUnkeep };`, ctx);
+const T = ctx.t;
+// Turns as /api/session/<sid>?full=1 serves them.
+const rep = { reportKind: 'completed', taskTitle: 'Docs', taskId: 'docs', reporter: 'claude' };
+const turns = [
+  { role: 'user', kind: 'human', text: 'Where does the docs task stand?' },
+  { role: 'assistant', answers: { kind: 'human' }, text: 'In review.' },
+  { role: 'user', kind: 'digest', text: '[digest] Ensemble: 1 task moved' },
+  { role: 'assistant', answers: { kind: 'digest' }, text: 'Noted.' },
+  Object.assign({ role: 'user', kind: 'report', text: "[report] completed from task 'Docs' (docs, claude): merged and tested — read it in full" }, rep),
+  { role: 'assistant', answers: Object.assign({ kind: 'report' }, rep), text: 'Merged and live.' },
+  { role: 'user', kind: 'human', text: 'Should we ship?' },
+  { role: 'user', kind: 'resumed', text: '[resumed] Your task was started again.' },
+  { role: 'assistant', answers: { kind: 'resumed' }, text: 'Where we are.\n\n**Decision needed:** ship now or wait?\n- now\n- wait' },
+  { role: 'user', kind: 'human', text: 'Now.' },
+];
+const items = T.soloItems(turns, 'S', 'po', 120);
+const out = {};
+const fresh = () => ({ base: null, open: new Set() });
+const quiet = justUs => (m, i) => T.quietItem(m, justUs);
+out.plan = T.foldPlan(items, fresh(), true, null, quiet(false));
+out.justUs = T.foldPlan(items, fresh(), true, null, quiet(true));
+out.chips = items.map(m => { const a = m.from === 'user' ? null : T.answerChip(m.answers); return a && a.text; });
+out.unanswered = [...T.foldUnanswered(items)];
+out.lastBusy = T.foldChips(items[9], 'last', false);
+out.lastIdle = T.foldChips(items[9], 'last', true);
+out.pastBusy = T.foldChips(items[6], 'past', false);
+out.decision = [T.isDecision(items[8]), T.foldChips(items[8], undefined, true)];
+out.decisionLines = ['- Decision needed: x', '### Decision needed: x', 'Decision needed: x', 'No Decision needed: here', 'decision needed: x']
+  .map(text => T.isDecision({ from: 'po', text }));
+out.hubRow = T.foldBalloonHtml(items[4], 4, 'row', { md: x => x, open: false });
+out.agentRow = T.foldBalloonHtml(items[5], 5, 'row', { md: x => x, open: false });
+out.labels = [T.latestLabel(3, 1).label, T.latestLabel(3, 2).label, T.latestLabel(3, 0).label, T.latestLabel(0, 0).label];
+out.heldHub = T.foldPlan(items, fresh(), true, (m, i) => i === 2, quiet(false))[2];
+// A commented hub input whose comment goes while the reader is scrolled up
+// stays open; back at the end, or after a Just us click, it folds again.
+const gone = fresh();
+T.foldPlan(items, gone, true, (m, i) => i === 2, quiet(false));
+out.heldGone = [T.foldPlan(items, gone, false, null, quiet(false))[2], T.foldPlan(items, gone, false, null, quiet(false))[2]];
+T.foldUnkeep(gone);
+out.heldGone.push(T.foldPlan(items, gone, false, null, quiet(false))[2]);
+const gone2 = fresh();
+T.foldPlan(items, gone2, true, (m, i) => i === 2, quiet(false));
+out.heldGone.push(T.foldPlan(items, gone2, true, null, quiet(false))[2]);
+// The same for a reply to the hub under Just us.
+const goneUs = fresh();
+T.foldPlan(items, goneUs, true, (m, i) => i === 3, quiet(true));
+out.heldGone.push(T.foldPlan(items, goneUs, false, null, quiet(true))[3]);
+// A report whose task title holds "): ".
+const odd = { reportKind: 'completed', taskTitle: 'Docs (v2): projects', taskId: 'room-1', reporter: 'claude' };
+out.oddBody = T.hubBody(T.soloItems([Object.assign({ role: 'user', kind: 'report',
+  text: "[report] completed from task 'Docs (v2): projects' (room-1, claude): Merged and live." }, odd)], 'O', 'po', 120)[0]);
+const opened = fresh(); opened.open.add(T.foldKey(items[4], 4));
+out.openedHub = T.foldPlan(items, opened, false, null, quiet(false))[4];
+// An older hub without kinds: every turn is the person's, nothing is quiet.
+out.oldHub = T.foldPlan(T.soloItems(turns.map(t => ({ role: t.role, text: t.text })), 'S', 'po', 120), fresh(), true, null, quiet(true));
+// Hub traffic does not use up the latest ten: 30 checks and 30 replies.
+const busy = [];
+for (let i = 0; i < 30; i++) busy.push({ role: 'user', kind: 'digest', text: '[digest] n' + i }, { role: 'assistant', answers: { kind: 'digest' }, text: 'r' + i });
+const bp = T.foldPlan(T.soloItems(busy, 'B', 'po', 120), fresh(), true, null, quiet(false));
+out.busy = [bp.filter(x => x === 'full').length, bp.indexOf('full')];
+
+// Drawing the same items again creates nothing; one new reply creates one.
+const draw = (list, idle) => {
+  const plan = T.foldPlan(list, fresh(), true, null, quiet(false));
+  const un = T.foldUnanswered(list);
+  return list.map((m, i) => T.foldBalloonHtml(m, i, plan[i], { md: x => x, open: false, un: un.get(T.foldKey(m, i)), idle }));
+};
+T.patchChildren(box, draw(items, false));
+box.created = 0;
+T.patchChildren(box, draw(T.soloItems(turns, 'S', 'po', 120), false));
+out.redraw = box.created;
+const more = turns.concat([{ role: 'assistant', answers: { kind: 'human' }, text: 'Shipping.' }]);
+T.patchChildren(box, draw(T.soloItems(more, 'S', 'po', 120), false));
+out.oneMore = box.created;
+console.log(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class HubTrafficAndAnswers(unittest.TestCase):
+    """What the hub typed folds to rows, and every reply says what it answers."""
+
+    @classmethod
+    def setUpClass(cls):
+        code = fold_block(SRC) + js_function(SRC, "soloItems") + js_function(SRC, "patchChildren")
+        out = subprocess.run([NODE, "-e", HUB_JS], input=json.dumps({"code": code}), capture_output=True,
+                             text=True, encoding="utf-8", timeout=60)
+        if out.returncode != 0:
+            raise AssertionError(out.stderr)
+        cls.r = json.loads(out.stdout)
+
+    def test_hub_inputs_are_rows_and_replies_stay(self):
+        self.assertEqual(self.r["plan"], ["full", "full", "row", "full", "row", "full", "full", "row", "full", "full"])
+
+    def test_every_reply_says_what_it_answers(self):
+        self.assertEqual(self.r["chips"], [None, "to you", None, "progress check", None,
+                                           "on a report from task Docs", None, None, "after a resume", None])
+
+    def test_just_us_folds_replies_to_the_hub_but_not_a_decision(self):
+        self.assertEqual(self.r["justUs"], ["full", "full", "row", "row", "row", "row", "full", "row", "full", "full"])
+
+    def test_no_answer_yet(self):
+        self.assertEqual(self.r["unanswered"], [["S:6", "past"], ["S:9", "last"]])
+        self.assertNotIn("no answer yet", self.r["lastBusy"], "marked while the agent is still working")
+        self.assertIn("no answer yet", self.r["lastIdle"])
+        self.assertIn("no answer yet", self.r["pastBusy"], "the hub typed something since: it moved on")
+
+    def test_a_decision_stands_out(self):
+        is_decision, chips = self.r["decision"]
+        self.assertTrue(is_decision)
+        self.assertIn("needs your decision", chips)
+        self.assertIn("after a resume", chips)
+        self.assertEqual(self.r["decisionLines"], [True, True, True, False, False])
+        self.assertEqual(self.r["labels"], ["1 decision waiting · Latest ↓", "2 decisions waiting · Latest ↓",
+                                            "3 new · Latest ↓", "Latest ↓"])
+
+    def test_rows_say_what_they_are(self):
+        row = self.r["hubRow"]
+        self.assertIn('class="msg-fold user hub"', row)
+        self.assertIn("Completed · task Docs", row)
+        self.assertIn('<span class="fl">merged and tested — read it in full</span>', row)
+        self.assertIn('<span class="answers"', self.r["agentRow"])
+        self.assertIn("on a report from task Docs", self.r["agentRow"])
+
+    def test_opened_and_commented_hub_inputs_stay_open(self):
+        self.assertEqual(self.r["heldHub"], "full", "a commented hub input folded")
+        self.assertEqual(self.r["openedHub"], "full", "a hub row the reader opened folded again")
+
+    def test_a_comment_going_while_scrolled_up_folds_no_hub_input(self):
+        # scrolled up twice, after a Just us click, back at the end, a Just us reply scrolled up
+        self.assertEqual(self.r["heldGone"], ["full", "full", "row", "row", "full"])
+
+    def test_a_report_title_may_hold_the_header_end(self):
+        self.assertEqual(self.r["oddBody"], "Merged and live.")
+
+    def test_without_kinds_nothing_changes(self):
+        self.assertEqual(self.r["oldHub"], ["full"] * 10)
+
+    def test_hub_traffic_does_not_use_up_the_latest_ten(self):
+        self.assertEqual(self.r["busy"], [10, 41])
+
+    def test_redrawing_keeps_the_elements(self):
+        self.assertEqual(self.r["redraw"], 0, "an unchanged poll drew balloons again")
+        self.assertEqual(self.r["oneMore"], 1, "a new reply redrew balloons that did not change")
+
+
 class ThePageUsesIt(unittest.TestCase):
     def test_wired_in(self):
         render = js_function(SRC, "renderBubbles")
