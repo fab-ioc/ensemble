@@ -291,7 +291,8 @@ class FilesApi(unittest.TestCase):
         self.assertTrue((self.home / "docs" / "renamed.txt").is_file())
 
     def test_every_accepted_name_is_listed_and_restorable(self):
-        for name in ("notes.tmpl", "a.tmp.txt", "gitignore", ".gitkeep", "tmp/x.md", "~draft.md"):
+        for name in ("notes.tmpl", "a.tmp.txt", "gitignore", ".gitkeep", "tmp/x.md", "~draft.md",
+                     "node_modules.md", "my_node_modules/x.md"):
             status, res = self.upload(name, b"kept\n")
             self.assertEqual(status, 200, (name, res))
             self.assertTrue(res["snapshot"]["committed"], name)
@@ -409,7 +410,9 @@ class FilesApi(unittest.TestCase):
                "con.txt", "a/NUL", "x:stream", "trailing.", "trailing ", "a?.txt", "x" * 1100,
                # names the history never keeps: they could not be put back
                "draft.tmp", "DRAFT.TMP", ".visible.upload.tmp", "folder.tmp/in.txt", ".git/config", "a/.GIT/x",
-               ".DS_Store", "photos/Thumbs.db", "Desktop.ini", "~$offer.docx", ".~lock.offer.odt#"]
+               ".DS_Store", "photos/Thumbs.db", "Desktop.ini", "~$offer.docx", ".~lock.offer.odt#",
+               # folders the Files panel never shows: a file there could not be seen
+               "node_modules/readme.txt", "a/Node_Modules", "NODE_MODULES"]
         for p in bad:
             for status, res in (self.upload(p, b"x"), self.op("mkdir", path=p), self.op("delete", path=p),
                                 self.op("move", **{"from": "ok.txt", "to": p}), self.op("move", **{"from": p, "to": "moved.txt"})):

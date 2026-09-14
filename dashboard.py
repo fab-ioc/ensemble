@@ -2106,7 +2106,12 @@ def _files_off_limits(home: str, parts: list[str], shown: str) -> None:
         raise FileOpRefused(400, "path_not_allowed", f"“{shown}”: {ours}")
     if low[-1] == "task.json":
         raise FileOpRefused(400, "path_not_allowed", f"“{shown}”: a file named task.json would make its folder a task's folder.")
+    hidden = {d.lower() for d in workspace_search.SKIP_DIRS}
     for part in parts:
+        if part.lower() in hidden:
+            raise FileOpRefused(400, "path_not_allowed",
+                                f"“{shown}”: the Files panel never shows a folder named “{part}”, so a file "
+                                "there could not be seen. Rename it and try again.")
         if file_history.not_kept(part):
             raise FileOpRefused(400, "path_not_allowed",
                                 f"“{shown}”: the file history does not keep “{part}” (temporary and system "
