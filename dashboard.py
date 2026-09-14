@@ -2102,13 +2102,14 @@ def files_target(project_id) -> tuple[dict, str]:
 def _files_off_limits(home: str, parts: list[str], shown: str) -> None:
     low = [p.lower() for p in parts]
     ours = "That is where Ensemble keeps its own records, so files cannot be put there, moved or deleted."
-    if low[0] in (file_history.DIR_NAME, "_linked") or (len(low) == 1 and low[0] in ("project.json", "project.json.tmp")):
+    # .history anywhere: the tree hides any folder of that name holding a HEAD.
+    if low[0] == "_linked" or file_history.DIR_NAME in low or (len(low) == 1 and low[0] in ("project.json", "project.json.tmp")):
         raise FileOpRefused(400, "path_not_allowed", f"“{shown}”: {ours}")
     if low[-1] == "task.json":
         raise FileOpRefused(400, "path_not_allowed", f"“{shown}”: a file named task.json would make its folder a task's folder.")
-    hidden = {d.lower() for d in workspace_search.SKIP_DIRS}
     for part in parts:
-        if part.lower() in hidden:
+        # Compared exactly as the tree compares it: "Node_Modules" is listed there, so it stays usable.
+        if part in workspace_search.SKIP_DIRS:
             raise FileOpRefused(400, "path_not_allowed",
                                 f"“{shown}”: the Files panel never shows a folder named “{part}”, so a file "
                                 "there could not be seen. Rename it and try again.")
@@ -2117,8 +2118,14 @@ def _files_off_limits(home: str, parts: list[str], shown: str) -> None:
                                 f"“{shown}”: the file history does not keep “{part}” (temporary and system "
                                 "files), so it could not be put back. Rename it and try again.")
     cur = home
+    isjunction = getattr(os.path, "isjunction", lambda p: False)
     for part in parts:
         cur = os.path.join(cur, part)
+        # The tree never enters a linked folder: a file reached through one could not be seen there.
+        if (os.path.islink(cur) or isjunction(cur)) and os.path.isdir(cur):
+            raise FileOpRefused(400, "path_not_allowed",
+                                f"“{shown}”: “{part}” is a link to another folder, which the Files panel "
+                                "does not show. Use the folder it points to.")
         if os.path.isfile(os.path.join(cur, "task.json")):
             raise FileOpRefused(400, "path_not_allowed",
                                 f"“{shown}” is in a task's folder, which its task looks after. {ours}")
@@ -7572,8 +7579,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     # ---------- A documents project's files: upload, mkdir, move, delete ----------
-    # Writes a task's agent must never make (they are credited to the person),
-    # so only the dashboard page may, like restoring a file.
+    # A plain API, gated like the rest of the hub (the access token off loopback).
 
     def _files_upload(self, u) -> None:
         """POST /api/files/upload?project=&path=[&overwrite=1], the raw file as
@@ -7587,9 +7593,6 @@ class Handler(BaseHTTPRequestHandler):
         ln = int(raw) if raw is not None and str(raw).strip().isdigit() else -1
         unread, tmp = max(ln, 0), ""
         try:
-            why = self._page_refusal()
-            if why:
-                raise FileOpRefused(403, "page_only", why)
             if ln < 0:
                 raise FileOpRefused(411, "length_required", "The upload did not say how large the file is.")
             if ln > file_history.MAX_FILE_BYTES:
@@ -7651,9 +7654,6 @@ class Handler(BaseHTTPRequestHandler):
         """POST /api/files/mkdir {project, path}, /api/files/move {project,
         from, to, overwrite}, /api/files/delete {project, path}."""
         try:
-            why = self._page_refusal()
-            if why:
-                raise FileOpRefused(403, "page_only", why)
             if not isinstance(data, dict):
                 raise FileOpRefused(400, "bad_json", "The request was not understood.")
             op = p[len("/api/files/"):]

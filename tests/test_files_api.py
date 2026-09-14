@@ -300,6 +300,20 @@ class FilesApi(unittest.TestCase):
             self.assertEqual(self.op("delete", path=name)[0], 200)
             self.assertIn(name, [d["path"] for d in history.deleted(self.h)["files"]])
 
+    def test_a_folder_the_tree_shows_stays_usable_whatever_its_case(self):
+        # The tree skips exactly "node_modules"; "Node_Modules" is an ordinary folder it lists.
+        (self.home / "Node_Modules").mkdir()
+        (self.home / "Node_Modules" / "x.md").write_bytes(b"x\n")
+        self.assertIn("Node_Modules/x.md", self.listed())
+        status, res = self.upload("Node_Modules/y.md", b"y\n")
+        self.assertEqual(status, 200, res)
+        self.assertIn("Node_Modules/y.md", self.listed())
+        status, res = self.op("move", **{"from": "Node_Modules/y.md", "to": "Node_Modules/z.md"})
+        self.assertEqual(status, 200, res)
+        status, res = self.op("delete", path="Node_Modules/x.md")
+        self.assertEqual(status, 200, res)
+        self.assertEqual(sorted(self.listed()), ["Node_Modules/z.md", "project.json"])
+
     def test_moving_onto_itself_does_not_credit_pending_work_to_the_person(self):
         self.upload("a.txt", b"a")
         (self.home / "pending.txt").write_bytes(b"a task wrote this\n")
@@ -382,17 +396,42 @@ class FilesApi(unittest.TestCase):
         self.assertFalse((self.home / "b.txt").exists())
         self.assertEqual(self.upload("b.txt", b"b", project="proj-nope")[0], 404)
 
-    def test_only_the_page_may(self):
+    def test_a_plain_request_is_enough(self):
+        # The contract is a plain API: no page cookie, no Origin (like the spec's curl).
         (self.home / "a.txt").write_bytes(b"a")
         status, res = self.upload("b.txt", b"b", page=False)
-        self.assertEqual((status, res["error"]), (403, "page_only"))
-        status, res = self.op("delete", page=False, path="a.txt")
-        self.assertEqual((status, res["error"]), (403, "page_only"))
-        with mock.patch.object(dashboard.Handler, "_agent_peer", lambda h: "it came from an agent's process (42)"):
-            status, res = self.op("delete", path="a.txt")
-        self.assertEqual((status, res["error"]), (403, "page_only"))
-        self.assertTrue((self.home / "a.txt").exists())
-        self.assertFalse((self.home / "b.txt").exists())
+        self.assertEqual(status, 200, res)
+        status, res = self.request("/api/files/delete", json.dumps({"project": self.pid, "path": "a.txt"}).encode(),
+                                   {"Content-Type": "application/json"}, page=False)
+        self.assertEqual(status, 200, res)
+        self.assertFalse((self.home / "a.txt").exists())
+        self.assertEqual((self.home / "b.txt").read_bytes(), b"b")
+
+    def test_a_path_through_a_linked_folder_is_refused(self):
+        target = self.home / "target"
+        target.mkdir()
+        link = self.home / "link"
+        if os.name == "nt":
+            r = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], capture_output=True,
+                               text=True, encoding="utf-8", errors="replace")
+            made = r.returncode == 0
+        else:
+            try:
+                os.symlink(target, link, target_is_directory=True)
+                made = True
+            except OSError:
+                made = False
+        if not made:
+            self.skipTest("cannot make a folder link here")
+        self.addCleanup(lambda: os.path.lexists(link) and (os.rmdir(link) if os.name == "nt" else os.unlink(link)))
+        for status, res in (self.upload("link/new.txt", b"x"), self.op("mkdir", path="link/sub"),
+                            self.op("delete", path="link")):
+            self.assertEqual((status, res["error"]), (400, "path_not_allowed"))
+            self.assertIn("link to another folder", res["message"])
+        self.assertEqual(list(target.iterdir()), [])
+        status, res = self.upload("target/new.txt", b"x")
+        self.assertEqual(status, 200, res)
+        self.assertIn("target/new.txt", self.listed())
 
     def test_paths_outside_or_into_what_the_hub_keeps_are_refused(self):
         task = self.home / "sort-papers"
@@ -412,7 +451,9 @@ class FilesApi(unittest.TestCase):
                "draft.tmp", "DRAFT.TMP", ".visible.upload.tmp", "folder.tmp/in.txt", ".git/config", "a/.GIT/x",
                ".DS_Store", "photos/Thumbs.db", "Desktop.ini", "~$offer.docx", ".~lock.offer.odt#",
                # folders the Files panel never shows: a file there could not be seen
-               "node_modules/readme.txt", "a/Node_Modules", "NODE_MODULES"]
+               "node_modules/readme.txt", "a/node_modules",
+               # a .history folder anywhere: the tree hides one holding a HEAD
+               "docs/.history/HEAD", "a/.History"]
         for p in bad:
             for status, res in (self.upload(p, b"x"), self.op("mkdir", path=p), self.op("delete", path=p),
                                 self.op("move", **{"from": "ok.txt", "to": p}), self.op("move", **{"from": p, "to": "moved.txt"})):
