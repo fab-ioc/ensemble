@@ -187,6 +187,32 @@ class FilesApi(unittest.TestCase):
         self.assertEqual((self.home / "ads" / "photo.jpg").stat().st_size, 3 * MB + 5)
         self.assertEqual(self.leftovers(), [])
 
+    def test_a_task_folder_made_while_the_file_arrives_is_still_refused(self):
+        (self.home / "safe").mkdir()
+
+        def midway(body):
+            (self.home / "safe" / "task.json").write_text("{}", encoding="utf-8")
+        status, res = self.upload("safe/new.txt", Body(1000, b"n", midway))
+        self.assertEqual((status, res["error"]), (400, "path_not_allowed"))
+        self.assertFalse((self.home / "safe" / "new.txt").exists())
+        self.assertEqual(self.leftovers(), [])
+
+    def test_the_path_is_checked_under_the_lock_for_every_change(self):
+        (self.home / "a.txt").write_bytes(b"a")
+        seen = []
+        real = dashboard.files_path
+
+        def spy(home, path):
+            seen.append(history.lock(home)._is_owned())
+            return real(home, path)
+        with mock.patch.object(dashboard, "files_path", spy):
+            self.op("mkdir", path="x")
+            self.op("move", **{"from": "a.txt", "to": "b.txt"})
+            self.op("delete", path="b.txt")
+            self.upload("c.txt", b"c")
+        self.assertEqual(seen, [True, True, True, True, False, True],
+                         "mkdir, move (from and to), delete; an upload before its body and again before its rename")
+
     def test_a_body_that_stops_short_is_not_saved(self):
         class Short(Body):
             def read(self, n=-1):
@@ -263,6 +289,25 @@ class FilesApi(unittest.TestCase):
         status, res = self.op("move", **{"from": "docs/renamed.txt", "to": "docs", "overwrite": True})
         self.assertEqual((status, res["error"]), (409, "exists"), "never the folder it is in")
         self.assertTrue((self.home / "docs" / "renamed.txt").is_file())
+
+    def test_every_accepted_name_is_listed_and_restorable(self):
+        for name in ("notes.tmpl", "a.tmp.txt", "gitignore", ".gitkeep", "tmp/x.md", "~draft.md"):
+            status, res = self.upload(name, b"kept\n")
+            self.assertEqual(status, 200, (name, res))
+            self.assertTrue(res["snapshot"]["committed"], name)
+            self.assertIn(name, self.listed())
+            self.assertEqual(self.op("delete", path=name)[0], 200)
+            self.assertIn(name, [d["path"] for d in history.deleted(self.h)["files"]])
+
+    def test_moving_onto_itself_does_not_credit_pending_work_to_the_person(self):
+        self.upload("a.txt", b"a")
+        (self.home / "pending.txt").write_bytes(b"a task wrote this\n")
+        status, res = self.op("move", **{"from": "a.txt", "to": "a.txt"})
+        self.assertEqual(status, 200, res)
+        self.assertFalse(res["snapshot"]["committed"])
+        top = self.top()
+        self.assertEqual((top["who"]["kind"], top["who"]["reason"], [f["path"] for f in top["files"]]),
+                         ("you", "before move", ["pending.txt"]))
 
     @unittest.skipUnless(os.name == "nt", "a case-insensitive folder")
     def test_a_rename_that_only_changes_case(self):
@@ -361,7 +406,10 @@ class FilesApi(unittest.TestCase):
         bad = ["", " ", "../Other/x.txt", "a/../../x.txt", "/ok2.txt", "a\\b.txt", "C:/x.txt", "a//b.txt", "./a.txt",
                "a/./b.txt", ".history/HEAD", ".HISTORY/x", "_linked/chat.md", "_Linked", "project.json", "Project.JSON",
                "sort-papers", "sort-papers/notes.md", "sort-papers/new/x.md", "SORT-PAPERS/x.md", "docs/task.json",
-               "con.txt", "a/NUL", "x:stream", "trailing.", "trailing ", "a?.txt", "x" * 1100]
+               "con.txt", "a/NUL", "x:stream", "trailing.", "trailing ", "a?.txt", "x" * 1100,
+               # names the history never keeps: they could not be put back
+               "draft.tmp", "DRAFT.TMP", ".visible.upload.tmp", "folder.tmp/in.txt", ".git/config", "a/.GIT/x",
+               ".DS_Store", "photos/Thumbs.db", "Desktop.ini", "~$offer.docx", ".~lock.offer.odt#"]
         for p in bad:
             for status, res in (self.upload(p, b"x"), self.op("mkdir", path=p), self.op("delete", path=p),
                                 self.op("move", **{"from": "ok.txt", "to": p}), self.op("move", **{"from": p, "to": "moved.txt"})):

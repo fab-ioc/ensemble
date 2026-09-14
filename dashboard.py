@@ -2106,6 +2106,11 @@ def _files_off_limits(home: str, parts: list[str], shown: str) -> None:
         raise FileOpRefused(400, "path_not_allowed", f"“{shown}”: {ours}")
     if low[-1] == "task.json":
         raise FileOpRefused(400, "path_not_allowed", f"“{shown}”: a file named task.json would make its folder a task's folder.")
+    for part in parts:
+        if file_history.not_kept(part):
+            raise FileOpRefused(400, "path_not_allowed",
+                                f"“{shown}”: the file history does not keep “{part}” (temporary and system "
+                                "files), so it could not be put back. Rename it and try again.")
     cur = home
     for part in parts:
         cur = os.path.join(cur, part)
@@ -2225,9 +2230,13 @@ def files_upload_temp(home: str, rel: str, full: str) -> str:
 
 
 def files_upload_commit(proj: dict, home: str, rel: str, full: str, tmp: str, overwrite: bool) -> dict:
-    """Put a fully written temp file in place and record it."""
+    """Put a fully written temp file in place and record it. Everything is
+    checked again under the lock: the folder may have changed while the file
+    arrived (a task folder made, a link put in its way)."""
     with file_history.lock(home):
-        files_upload_check(home, rel, full, overwrite)     # again: the folder may have changed meanwhile
+        if files_path(home, rel) != (rel, full):
+            raise FileOpRefused(400, "path_not_allowed", f"“{rel}” is not a path inside the project folder.")
+        files_upload_check(home, rel, full, overwrite)
         _files_snapshot(proj, home, "upload", before=True)
         try:
             size = os.path.getsize(tmp)
@@ -2237,9 +2246,11 @@ def files_upload_commit(proj: dict, home: str, rel: str, full: str, tmp: str, ov
         return {"path": rel, "size": size, "snapshot": _files_snapshot(proj, home, "upload")}
 
 
+# mkdir, move and delete check their paths under the lock, right before the change.
+
 def files_mkdir(proj: dict, home: str, path) -> dict:
-    rel, full = files_path(home, path)
     with file_history.lock(home):
+        rel, full = files_path(home, path)
         _files_parent_dirs(home, rel)
         _files_snapshot(proj, home, "mkdir", before=True)
         if os.path.isdir(full):
@@ -2256,9 +2267,9 @@ def files_mkdir(proj: dict, home: str, path) -> dict:
 
 
 def files_move(proj: dict, home: str, src, dst, overwrite: bool = False) -> dict:
-    frel, ffull = files_path(home, src)
-    trel, tfull = files_path(home, dst)
     with file_history.lock(home):
+        frel, ffull = files_path(home, src)
+        trel, tfull = files_path(home, dst)
         if not os.path.lexists(ffull):
             raise FileOpRefused(404, "not_found", f"“{frel}” is not there any more.")
         is_dir = os.path.isdir(ffull) and not os.path.islink(ffull)
@@ -2275,6 +2286,7 @@ def files_move(proj: dict, home: str, src, dst, overwrite: bool = False) -> dict
         except OSError:
             same = False
         if frel == trel:
+            _files_snapshot(proj, home, "move", before=True)     # nothing moves: pending work stays its own
             return {"from": frel, "to": trel, "snapshot": _files_snapshot(proj, home, "move")}
         replace = os.path.lexists(tfull) and not same
         if replace:
@@ -2294,8 +2306,8 @@ def files_move(proj: dict, home: str, src, dst, overwrite: bool = False) -> dict
 
 
 def files_delete(proj: dict, home: str, path) -> dict:
-    rel, full = files_path(home, path)
     with file_history.lock(home):
+        rel, full = files_path(home, path)
         if not os.path.lexists(full):
             raise FileOpRefused(404, "not_found", f"“{rel}” is not there any more.")
         _files_snapshot(proj, home, "delete", before=True)

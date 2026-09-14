@@ -29,6 +29,7 @@ projects and the running tasks, so this module imports nothing of the hub.
 from __future__ import annotations
 
 import difflib
+import fnmatch
 import os
 import re
 import subprocess
@@ -47,20 +48,23 @@ EMAIL = "history@ensemble.local"
 # Windows: never a console window for the git the hub runs.
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
+# Names never kept wherever they are (a file, or a folder and all it holds).
+NOT_KEPT_NAMES = (".git", ".DS_Store", "Thumbs.db", "desktop.ini", "~$*", ".~lock.*#", "*.tmp")
 BASE_EXCLUDES = [
     "# Managed by Ensemble: what the file history does not keep.",
     "/.history/",
     "/project.json",
     "/project.json.tmp",
     "/_linked/",
-    ".git",
-    ".DS_Store",
-    "Thumbs.db",
-    "desktop.ini",
-    "~$*",
-    ".~lock.*#",
-    "*.tmp",
+    *NOT_KEPT_NAMES,
 ]
+
+
+def not_kept(name: str) -> bool:
+    """Whether a file or folder named ``name`` is one the history never
+    keeps (whatever the case), so a change to it could not be put back."""
+    low = (name or "").lower()
+    return any(fnmatch.fnmatchcase(low, p.lower()) for p in NOT_KEPT_NAMES)
 TASK_EXCLUDES = ("task.json", "chat.json", "*.jsonl", ".claude/", "repo/", ".wt-scheme")
 
 _REV = re.compile(r"^[0-9a-f]{7,40}$")
