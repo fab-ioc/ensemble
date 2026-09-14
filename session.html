@@ -792,7 +792,6 @@
   <button id="resume" hidden title="Relaunch the agent(s) with their conversation">↻ Resume</button>
   <button id="terms" hidden title="Show/hide the raw per-agent terminals">🖥 Terminals</button>
   <button id="pause">Pause</button>
-  <button id="pin" hidden title="Pin this session for quick access">📌 Pin</button>
   <button id="rename" hidden title="Rename this session">✎ Rename</button>
   <button id="autolabel" hidden title="Ask Claude to suggest a label from the conversation">✨ Auto</button>
   <button id="explorer" hidden title="Open the working folder on the host">📂 Files</button>
@@ -1803,13 +1802,11 @@ async function refresh() {
   // Rich actions (header is hidden when embedded, so these show only in the popup;
   // the docked panel provides the same set in its own toolbar).
   const hasCwd = !!actCwd();
-  $('#pin').hidden = false;
   $('#rename').hidden = false;
   $('#autolabel').hidden = notRunning;
   $('#explorer').hidden = !hasCwd;
   $('#ide').hidden = !hasCwd;
   $('#theme').hidden = !hasCwd;
-  if (!_pinInit) { _pinInit = true; refreshPinLabel(); }
   if (agentsBuilt && agentsSig(room) !== AGENTS_SIG) {
     // A review started (a new terminal): drop the mounted ones and rebuild.
     Object.values(terms).forEach(t => { try { t.es.close(); } catch(e) {} });
@@ -2310,24 +2307,10 @@ window.addEventListener('message', (e) => {
 });
 
 // ---- Rich session actions (parity with the dashboard's docked toolbar) -------
-// A solo session keys on its sessionId; a room keys on the room id (label/pin
-// sidecars are keyed that way). cwd comes from the room payload.
+// A solo session keys on its sessionId; a room keys on the room id. The cwd
+// comes from the room payload.
 function actSid() { return SOLO_SID || ROOM; }
 function actCwd() { return (ROOM_OBJ && ROOM_OBJ.cwd) || ''; }
-let PINNED = false, _pinInit = false;
-async function refreshPinLabel() {
-  try {
-    const pins = await fetch('/api/pinned').then(r => r.json());
-    const set = Array.isArray(pins) ? pins : (pins.pinned || Object.keys(pins || {}));
-    PINNED = set.includes(actSid());
-  } catch (e) {}
-  const b = $('#pin'); if (b) b.textContent = PINNED ? '📌 Unpin' : '📌 Pin';
-}
-$('#pin').onclick = async () => {
-  const pinning = !PINNED;
-  try { await jpost('/api/pinned', { sessionId: actSid(), pinned: pinning }); PINNED = pinning; $('#pin').textContent = PINNED ? '📌 Unpin' : '📌 Pin'; }
-  catch (e) { alert('Pin failed'); }
-};
 $('#rename').onclick = async () => {
   const label = prompt('Label for this session (empty to clear):', (ROOM_OBJ && ROOM_OBJ.title) || '');
   if (label === null) return;

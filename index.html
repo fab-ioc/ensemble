@@ -668,9 +668,9 @@
     font-size: var(--fs-200);
     transition: border-color .12s, box-shadow .12s;
   }
-  /* Narrow laptop / side-by-side split. Below the sidebar's drawer breakpoint
-     the switcher is the ONLY way to change project, so it keeps its place and
-     gives up its label instead — the name lives in the tooltip. */
+  /* Narrow laptop / side-by-side split. The switcher is the only way to
+     change project, so it keeps its place and gives up its label instead —
+     the name lives in the tooltip. */
   @media (max-width: 900px) {
     #proj-switch-name { display: none; }
     #plan-usage-slot .usage-chip-label { display: none; }   /* the numbers stay; the word goes */
@@ -708,7 +708,10 @@
   .seg button + button { border-left: 1px solid var(--border); }
   .seg button:hover { background: var(--hover); }
   .seg button.active { background: var(--selected-bg); color: var(--selected-fg); font-weight: 500; }
-  main { padding: 8px 20px 40px; }
+  main {
+    padding: 8px 20px 40px;
+    transition: padding-right .22s cubic-bezier(0.16, 1, 0.3, 1);
+  }
   table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
   thead { position: sticky; top: var(--top-h); background: var(--bg); z-index: 5; }
   th {
@@ -737,8 +740,6 @@
     background: var(--match-bg); color: var(--match-fg);
     padding: 1px 3px; border-radius: var(--r-100); font-weight: 500;
   }
-  tr.row.drop-target td { background: var(--selected-bg); box-shadow: inset 0 2px 0 0 var(--accent); }
-  tr.row.dragging { opacity: 0.4; }
   tr.row { user-select: none; }
   .pid, .sid, .ago { color: var(--fg-subtle); font-size: 12.5px; }
   .sid { font-family: var(--font-mono); font-size: 11.5px; }
@@ -803,10 +804,6 @@
   .badge-live { background: var(--c-success-bg); color: var(--c-success-fg); }
   /* A task created (e.g. by a planning agent) but never launched. */
   .badge-draft { background: var(--c-neutral-bg); color: var(--c-neutral-fg); }
-  .badge-pin {
-    margin-left: 6px; font-size: 11px; vertical-align: middle;
-    filter: saturate(1.4);
-  }
   /* Agent-type badge (claude / codex). Distinguishes what CLI runs the session. */
   .badge-agent {
     margin-left: 8px; padding: 1px 6px; border-radius: 10px;
@@ -842,26 +839,9 @@
   .duo-row .duo-agent { flex: 0 0 130px; }
   .duo-row .duo-role { flex: 0 0 118px; }
   .duo-row .duo-role-custom { flex: 1 1 140px; }
-  .actions .pin-btn.is-pinned {
-    background: color-mix(in srgb, var(--run-working) 16%, transparent);
-    border-color: var(--run-working);
-    color: var(--run-working);
-  }
-  .actions .pin-btn.is-pinned:hover {
-    background: color-mix(in srgb, var(--run-working) 24%, transparent);
-    color: var(--run-working);
-  }
   .label {
     font-weight: 600; color: var(--fg); display: block;
     font-size: 14px; letter-spacing: -0.005em; margin-bottom: 2px;
-  }
-  .row-cat-chip {
-    display: inline-block; margin-left: 8px;
-    background: var(--c-neutral-bg); color: var(--c-neutral-fg);
-    padding: 0 7px; border-radius: var(--r-full);
-    font-size: 10px; font-weight: 600; letter-spacing: 0.02em;
-    vertical-align: middle; line-height: 18px;
-    font-variant-caps: all-small-caps;
   }
   .row-jira-chip {
     display: inline-block; margin-left: 6px;
@@ -919,122 +899,8 @@
     box-shadow: inset -3px 0 0 0 var(--accent);
   }
   /* Panel itself — slides in from the right */
-  main {
-    padding-left: 248px;
-    transition: padding-right .22s cubic-bezier(0.16, 1, 0.3, 1),
-                padding-left  .2s  cubic-bezier(0.16, 1, 0.3, 1);
-  }
-  /* Page header inside the main view — appears when a specific category
-     (or Uncategorized) is selected in the sidebar. */
-  .page-header {
-    display: flex; align-items: baseline; gap: 16px;
-    padding: 14px 4px 14px; margin-bottom: 4px;
-    border-bottom: 1px solid var(--border);
-  }
-  .page-header h2 {
-    font: 600 21px/1.2 var(--font-sans);
-    margin: 0; letter-spacing: -0.025em; color: var(--fg);
-    display: flex; align-items: center; gap: 8px;
-  }
-  .page-header .page-count {
-    color: var(--fg-subtle); font-size: 12px;
-    font-variant-numeric: tabular-nums;
-  }
-  .page-header .page-actions {
-    margin-left: auto; display: flex; gap: 6px;
-  }
-  .page-header .page-actions button {
-    background: transparent; border: 1px solid var(--border);
-    padding: 5px 11px; border-radius: 6px; cursor: pointer;
-    font: inherit; font-size: 12px; color: var(--fg-subtle); font-weight: 500;
-    transition: border-color .08s, color .08s, background .08s;
-  }
-  .page-header .page-actions button:hover { border-color: var(--border-strong); color: var(--fg); background: var(--hover); }
-  .page-header .page-actions #cat-delete-btn:hover { border-color: var(--c-danger-fg); color: var(--c-danger-fg); background: color-mix(in srgb, var(--c-danger-fg) 8%, transparent); }
   body { --detail-w: 380px; }
   body.detail-open main { padding-right: calc(var(--detail-w) + 20px); }
-
-  /* Sidebar toggle button */
-  #sidebar-toggle {
-    background: transparent; border: 1px solid var(--border);
-    padding: 4px 10px; border-radius: 6px; cursor: pointer;
-    color: var(--fg-subtle); font-size: 14px; line-height: 1;
-    flex-shrink: 0;
-    transition: color .1s, border-color .1s, background .1s;
-  }
-  #sidebar-toggle:hover { color: var(--fg); border-color: var(--border-strong); background: var(--hover); }
-  /* Sidebar */
-  #sidebar {
-    transition: transform .2s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-  body.sidebar-collapsed #sidebar {
-    transform: translateX(-100%);
-  }
-  body.sidebar-collapsed main {
-    padding-left: 0;
-  }
-  #sidebar {
-    position: fixed; left: 0; top: var(--top-h); bottom: 0;
-    width: 248px; box-sizing: border-box;
-    border-right: 1px solid var(--border);
-    background: var(--surface);
-    overflow-y: auto;
-    padding: 8px 0 24px;
-    z-index: 5;
-  }
-  .sb-section {
-    font-size: 10px; font-weight: 600;
-    color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.08em;
-    padding: 16px 16px 6px;
-    display: flex; align-items: center; justify-content: space-between;
-  }
-  .sb-section + .sb-section { padding-top: 18px; }
-  .sb-divider {
-    height: 1px; background: var(--border);
-    margin: 10px 12px;
-  }
-  .sb-item {
-    display: flex; align-items: center; gap: 10px;
-    padding: 6px 16px 6px 13px;
-    cursor: pointer; user-select: none;
-    color: var(--fg); font-size: 13px;
-    background: transparent;
-    border: 0; border-left: 3px solid transparent;
-    text-align: left; font: inherit; width: 100%;
-    transition: background .08s, color .08s, border-color .08s;
-    position: relative;
-  }
-  .sb-item:hover { background: var(--hover); }
-  .sb-item.active {
-    background: var(--selected-bg);
-    border-left-color: var(--accent);
-    color: var(--selected-fg);
-    font-weight: 500;
-  }
-  .sb-item .sb-icon {
-    width: 16px; flex-shrink: 0; text-align: center;
-    color: var(--fg-muted); font-size: 12.5px;
-  }
-  .sb-item.active .sb-icon { color: var(--selected-fg); }
-  .sb-item .sb-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .sb-item .sb-count {
-    color: var(--fg-subtle); font-size: 11px; font-variant-numeric: tabular-nums;
-    font-weight: 500; min-width: 22px; text-align: right;
-  }
-  .sb-item.active .sb-count { color: var(--selected-fg); }
-  .sb-item.drop-target {
-    background: var(--selected-bg);
-    border-left-color: var(--accent); color: var(--selected-fg);
-  }
-  /* Footer "+ New category" affordance */
-  .sb-add-cat {
-    margin: 8px 12px 0;
-    background: transparent; color: var(--fg-subtle);
-    border: 1px dashed var(--border); padding: 6px 10px;
-    border-radius: 6px; cursor: pointer; font: inherit; font-size: 12px;
-    width: calc(100% - 24px); text-align: left;
-  }
-  .sb-add-cat:hover { color: var(--fg); border-color: var(--border-strong); border-style: solid; }
   #detail-panel {
     position: fixed; right: 0; top: var(--top-h); bottom: 0;
     width: var(--detail-w);
@@ -1146,8 +1012,6 @@
   .dp-meta .chip.mono { font-family: var(--font-mono); letter-spacing: 0; }
   .dp-meta .chip.live { background: color-mix(in srgb, var(--run-idle) 16%, transparent); color: var(--run-idle); border-color: transparent; }
   .dp-meta .chip.busy { background: color-mix(in srgb, var(--run-working) 20%, transparent); color: var(--run-working); border-color: transparent; }
-  .dp-meta .chip.pinned { background: color-mix(in srgb, var(--run-working) 16%, transparent); color: var(--run-working); border-color: transparent; }
-  .dp-meta .chip.category { background: var(--c-neutral-bg); color: var(--c-neutral-fg); border-color: transparent; }
   .dp-section h3 {
     font-size: 10.5px; font-weight: 600; color: var(--fg-muted);
     text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 6px;
@@ -2079,18 +1943,7 @@
     .board { grid-auto-columns: minmax(248px, 0.9fr); scroll-snap-type: x proximity; }
     .col { scroll-snap-align: start; }
   }
-  /* --- Sidebar destinations ---------------------------------------------- */
-  /* "What needs me" and "what is running now" are two of the four questions
-     this redesign exists to answer, so they are addresses you can point at,
-     not a tray you have to remember to open. */
-  .sb-badge {
-    margin-left: auto; border-radius: var(--r-full); padding: 0 6px;
-    font-size: var(--fs-100); font-weight: 600; font-variant-numeric: tabular-nums;
-    background: var(--c-neutral-bg); color: var(--c-neutral-fg);
-  }
-  .sb-badge.warn { background: var(--c-warning-bg); color: var(--c-warning-fg); }
-  .sb-badge.ok   { background: var(--c-success-bg); color: var(--c-success-fg); }
-  .sb-badge:empty { display: none; }
+  /* --- Needs-you destination --------------------------------------------- */
   .dest { padding: var(--s-200) 0 var(--s-800); }
   .dest-head { display: flex; align-items: center; gap: var(--s-300); margin-bottom: var(--s-400); }
   .dest-head h2 { margin: 0; font-size: var(--fs-500); line-height: var(--lh-500); font-weight: 600; }
@@ -2135,22 +1988,6 @@
   .dest-why {
     grid-column: 2 / -1; grid-row: 2; font-size: var(--fs-200); color: var(--fg-subtle);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  /* Between the drawer breakpoint and full width the sidebar keeps its place
-     as a 56px rail. The labels are what it gives up — the counts are the
-     reason it is there at all, so an address you can only see on a wide
-     screen is not a permanent address. */
-  @media (min-width: 901px) and (max-width: 1279px) {
-    body:not(.sidebar-collapsed) #sidebar { width: 56px; overflow: hidden; }
-    body:not(.sidebar-collapsed) #sidebar .sb-name,
-    body:not(.sidebar-collapsed) #sidebar .sb-section,
-    body:not(.sidebar-collapsed) #sidebar .sb-add-cat { display: none; }
-    body:not(.sidebar-collapsed) #sidebar .sb-item { justify-content: center; padding: 8px 0; position: relative; }
-    body:not(.sidebar-collapsed) #sidebar .sb-badge {
-      position: absolute; top: 2px; right: 6px; margin: 0;
-      padding: 0 4px; font-size: 9px;
-    }
-    body:not(.sidebar-collapsed) main { padding-left: 56px; }
   }
   /* --- Issue view --------------------------------------------------------- */
   /* One row that says what this task IS: where it sits, how urgent, what is
@@ -2670,28 +2507,8 @@
     font-family: -apple-system, sans-serif; letter-spacing: 0.02em;
   }
   /* ================= Phone layout (one screen at a time) =================
-     On narrow screens the three fixed panes (category sidebar, session list,
-     detail) can't coexist. Collapse to: full-width list by default; sidebar as
-     an overlay drawer over a scrim; detail as a full-screen overlay you close
-     to return to the list. Header condenses to a single tidy row. */
-  #scrim { display: none; }
-  /* Below 900 the sidebar is a DRAWER: it floats over the content with a
-     scrim, rather than pushing it aside. These rules used to start at 640,
-     which left 641-900 with a full-width column and no scrim - an open
-     sidebar ate a third of a small laptop window. */
-  @media (max-width: 900px) {
-    #sidebar {
-      width: min(84vw, 320px); z-index: 45;
-      box-shadow: 8px 0 32px rgba(0, 0, 0, .28);
-    }
-    main { padding-left: 0; }
-    #scrim {
-      display: block; position: fixed; inset: var(--top-h) 0 0 0;
-      background: rgba(0, 0, 0, .42); z-index: 40; border: 0;
-      opacity: 0; pointer-events: none; transition: opacity .2s;
-    }
-    body:not(.sidebar-collapsed) #scrim { opacity: 1; pointer-events: auto; }
-  }
+     On narrow screens the list is full-width and the detail becomes a
+     full-screen overlay you close to return to it. */
   /* Mobile = narrow screens OR any touch device up to tablet size (so a large
      phone in landscape, ~950px wide, still gets the one-screen-at-a-time layout
      instead of the cramped desktop slide-over). Keep this selector in sync with
@@ -2716,21 +2533,6 @@
     /* List takes the whole width — no room reserved for side panes */
     main { padding-left: 0 !important; padding-right: 0 !important; }
     main { padding: 8px 12px 40px; }
-
-    /* Sidebar becomes an overlay drawer (starts hidden via .sidebar-collapsed) */
-    #sidebar {
-      width: min(84vw, 320px); z-index: 45;
-      box-shadow: 8px 0 32px rgba(0,0,0,.28);
-    }
-    /* Scrim behind the open drawer */
-    #scrim {
-      display: block; position: fixed; inset: var(--top-h) 0 0 0;
-      background: rgba(0,0,0,.42); z-index: 40; border: 0;
-      opacity: 0; pointer-events: none; transition: opacity .2s;
-    }
-    body:not(.sidebar-collapsed) #scrim { opacity: 1; pointer-events: auto; }
-    /* On phone the scrim only makes sense while the drawer is open; when the
-       sidebar is collapsed (default) it's inert (handled above). */
 
     /* An open task takes the whole width under the bar, with no card chrome.
        The bar stays: it is the way to the PO (its pill opens the PO over the
@@ -2770,8 +2572,6 @@
     .dp-actions button, .dp-actions select { flex: 0 0 auto; }
 
     /* Bigger touch targets */
-    #sidebar-toggle { padding: 6px 12px; font-size: 16px; }
-    .sb-item { padding: 10px 16px; font-size: 14px; }
     .dp-close { font-size: 24px; padding: 6px 10px; }
 
     /* No sideways scroll / accidental zoom on the page itself */
@@ -2785,19 +2585,16 @@
 
     /* The bar: identity goes, search folds into a button that opens over the
        bar, and the plan chip moves into the avatar menu (a warning still
-       reaches the banner above the bar). What is left is six 44px targets
-       and Create: 360px measured the bar at search 0px wide and Create cut
-       off by 19px before this. */
+       reaches the banner above the bar). */
     header { gap: 0; padding: 0 var(--s-100); }
     header h1 { display: none; }
     #plan-usage-slot { display: none; }
     .me-item.me-phone { display: flex; }
-    #sidebar-toggle, #proj-switch, #search-open, #notif-btn, #me-btn {
+    #proj-switch, #search-open, #notif-btn, #me-btn {
       width: var(--touch-min); min-width: var(--touch-min); height: var(--touch-min);
       padding: 0; justify-content: center; border-color: transparent; border-radius: var(--r-200);
     }
     #search-open { display: inline-flex; margin-left: auto; }
-    #sidebar-toggle { font-size: var(--fs-400); }
     #proj-switch { max-width: none; }
     #po-pill { height: var(--touch-min); min-width: var(--touch-min); justify-content: center; }
     #po-pill:not(.none) { padding: 0; border-color: transparent; }
@@ -2841,7 +2638,7 @@
     .colchip { flex: 0 0 auto; }
     .ptabs button, .viewsw button, .fbtn, .fchip, .colchip, .colall, .crumb-back, .crumb-newtask, .proj .newtask,
     .newproj-btn, .rm-btn, .po-btn, .dp-tab, .dp-popout, .dp-actions button,
-    .dp-actions select, .scopebar select, .chp-repo, .sb-add-cat, .srow, .sb-item, .wse, .chf,
+    .dp-actions select, .scopebar select, .chp-repo, .srow, .wse, .chf,
     .dest-row, .dl-cbtns button, #usage-banner-dismiss, #update-banner-dismiss, #update-banner-go,
     .seg button {
       min-height: var(--touch-min);
@@ -2909,7 +2706,7 @@
 
     /* Text below the scale, lifted to --fs-100. */
     .bar-btn .caret, .fbtn .caret, .wf-btn .caret, th, .badge-agent,
-    .badge-headless, .sb-section, .dp-section h3,
+    .badge-headless, .dp-section h3,
     .dp-cost .cost-tokens, .tx-turn .tx-role, .tx-turn .tx-ts, .tx-text .mention,
     .tx-text.md code.ic, .tx-text.md pre.cb[data-lang]::before, .gitmark, .wse.wsroot .wsroot-kind,
     .wse .tw, .wse .sz, .chst, .theme-dd-section, #notif-count, .notif-when,
@@ -2942,7 +2739,6 @@
   </div>
 </div>
 <header>
-  <button id="sidebar-toggle" title="Toggle sidebar" aria-label="Toggle sidebar">☰</button>
   <h1>
     <svg class="logo" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
       <path d="M12 5 L5.5 18 M12 5 L18.5 18 M5.5 18 L18.5 18" fill="none"
@@ -2985,7 +2781,7 @@
     </button>
   </div>
   <!-- Notifications: tasks that need a human. Self-contained under the `notif`
-       name; the sidebar's "Needs you" is the full view of the same data. -->
+       name; project status bars open the full view of the same data. -->
   <button id="notif-btn" class="bar-btn icon" title="Tasks that need you" aria-label="Tasks that need you">
     🔔<span id="notif-count" hidden>0</span>
   </button>
@@ -3129,8 +2925,6 @@
     <p class="cfg-hint">Read-only. Override with <code>ENSEMBLE_*</code> env vars at start time — see the README.</p>
   </div>
 </div>
-<div id="scrim" hidden></div>
-<aside id="sidebar"></aside>
 <main>
   <section id="view"></section>
   <!-- The workspace panel is a sibling of #view, not part of it. Every other
@@ -3567,7 +3361,6 @@ function actionsCell(r, isLive) {
   const deleteBtn = isLive
     ? ''
     : `<button class="delete-btn" data-sid="${sid}" title="Permanently delete this session's transcript and sidecar data (irreversible)">🗑 Delete</button>`;
-  const pinBtn = `<button class="pin-btn ${r.pinned ? 'is-pinned' : ''}" data-sid="${sid}" data-pinned="${r.pinned ? 1 : 0}" title="${r.pinned ? 'Unpin from quick-access' : 'Pin this session for quick access'}">${r.pinned ? '📌 Unpin' : '📌 Pin'}</button>`;
   // Send: inject a prompt into a live session's terminal (the coordination doorbell).
   const sendBtn = (isLive && r.pid && feat('send'))
     ? `<button class="send-btn" data-pid="${r.pid}" data-agent="${esc(r.agent || '')}" title="Type a message into this running session and submit it">✉ Send</button>`
@@ -3582,7 +3375,6 @@ function actionsCell(r, isLive) {
     ? `<button class="terminal-btn" data-sid="${sid}" data-cwd="${esc(r.cwd)}" data-agent="${esc(r.agent || '')}" data-label="${esc(r.label || '')}" title="${esc(terminalTitle)}">🖥 Terminal</button>`
     : '';
   return `<div class="actions">
-    ${pinBtn}
     ${focusBtn}
     ${sendBtn}
     ${terminalBtn}
@@ -3610,16 +3402,16 @@ let SEARCH_QUERY = '';
 // filter you forget you set, and coming back to a list that silently hides
 // rows is worse than coming back to the one you left. Defaults are unchanged,
 // so a first run looks exactly as it did.
-const FILTER_KEYS = ['live', 'pinned', 'history', 'archived'];
+const FILTER_KEYS = ['live', 'history', 'archived'];
 function loadFilters() {
   try {
     const raw = localStorage.getItem('cd-filters');
-    if (!raw) return new Set(['live', 'pinned', 'history']);
+    if (!raw) return new Set(['live', 'history']);
     const arr = JSON.parse(raw).filter(k => FILTER_KEYS.includes(k));
     // An empty set shows nothing at all; treat a stored empty as "unset"
     // rather than handing back a blank screen with no obvious cause.
-    return new Set(arr.length ? arr : ['live', 'pinned', 'history']);
-  } catch (e) { return new Set(['live', 'pinned', 'history']); }
+    return new Set(arr.length ? arr : ['live', 'history']);
+  } catch (e) { return new Set(['live', 'history']); }
 }
 function saveFilters() {
   try { localStorage.setItem('cd-filters', JSON.stringify([...FILTERS])); } catch (e) {}
@@ -3715,10 +3507,6 @@ function frozenWorkflowOf(r, frozen) {
 }
 // When on, hide sessions run outside the dashboard (cwd not under ~/cs).
 let HIDE_EXTERNAL = localStorage.getItem('cd-hide-external') === '1';
-// Category sidebar selection. Sentinel values: '__all__' (everything),
-// '__uncat__' (no category); anything else is the literal category name.
-let SELECTED_CAT = localStorage.getItem('cd-cat') || '__all__';
-
 let SELECTED_SID = null;
 let TRANSCRIPT_SID = null;        // sid whose full transcript is expanded
 let TRANSCRIPT_DATA = null;        // cached transcript turns
@@ -3938,10 +3726,8 @@ function priorityPicker(r, isRoom) {
 }
 
 // One row that answers "what is this task": where it sits, how urgent, what is
-// running, and whether it needs you. The old row was ten chips of mixed kinds
-// — status, pin, category, message count, pid, id — with nothing to say which
-// mattered. Identity details moved to Details, where they are reference rather
-// than headline.
+// running, and whether it needs you. Identity details live in Details, where
+// they are reference rather than headline.
 function detailMeta(r, isLive, isRoom, now) {
   const attn = ATTENTION_BY_ROOM.get(r.roomId) || r.attention || null;
   const tone = (attn && (attn.state === 'agent_gone' || attn.state === 'blocked')) ? 'danger'
@@ -4040,7 +3826,6 @@ function detailOverflow(r, isLive, isRoom) {
                     `<button class="ov-item dp-terms-hide" hidden>Hide terminal</button>`);
     items.push(`<button class="ov-item dp-pause-btn" data-room="${esc(r.roomId)}" data-status="${esc(r.status || '')}">${r.status === 'paused' ? 'Resume' : 'Pause'}</button>`);
   }
-  items.push(`<button class="ov-item pin-btn ${r.pinned ? 'is-pinned' : ''}" data-sid="${esc(r.sessionId)}" data-pinned="${r.pinned ? 1 : 0}">${r.pinned ? 'Unpin' : 'Pin'}</button>`);
   items.push(`<button class="ov-item rename-btn" data-sid="${esc(r.sessionId)}">Rename</button>`);
   items.push(`<button class="ov-item auto-btn" data-sid="${esc(r.sessionId)}">Suggest a name</button>`);
   const agentsWhy = isLive
@@ -4390,22 +4175,8 @@ function specPaneHtml(r) {
   return `<div class="dp-spec">${mdIn(r, spec)}</div>`;
 }
 
-// Single unified layout — list on left, detail panel on right.
+// Single unified layout — list with a detail panel on the right.
 const LAYOUT = 'grid';
-
-let COLLAPSED_CATS = new Set();
-try {
-  const stored = localStorage.getItem('cd-collapsed-cats');
-  if (stored) COLLAPSED_CATS = new Set(JSON.parse(stored));
-} catch {}
-function persistCollapsed() {
-  try { localStorage.setItem('cd-collapsed-cats', JSON.stringify([...COLLAPSED_CATS])); } catch {}
-}
-function toggleCollapsed(cat) {
-  if (COLLAPSED_CATS.has(cat)) COLLAPSED_CATS.delete(cat);
-  else COLLAPSED_CATS.add(cat);
-  persistCollapsed();
-}
 
 // --- shared search-query semantics (matches backend _parse_search_query) ---
 // Rules:
@@ -4502,11 +4273,6 @@ function costChipHtml(r, cls) {
 // ---- Cost chip: end ---------------------------------------------------------
 
 function topicCellHL(r, parsed) {
-  // Only show the category chip in views where category isn't already implied
-  // by the sidebar selection (so "All sessions" view shows it; a specific
-  // category view would just be repeating itself).
-  const showCat = (SELECTED_CAT === '__all__' || SELECTED_CAT === '__uncat__') && r.category;
-  const catChip = showCat ? ` <span class="row-cat-chip">${esc(r.category)}</span>` : '';
   const allJira = r.jira || [];
   const shownJira = allJira.slice(0, 3);
   // Without a Jira base URL a ticket has nowhere to go: say the ticket, don't
@@ -4518,8 +4284,8 @@ function topicCellHL(r, parsed) {
     ? ` <span class="row-jira-chip" style="opacity: .7; cursor: default;" title="${esc(allJira.slice(3).join(', '))}">+${allJira.length - shownJira.length}</span>`
     : '');
   const costChip = costChipHtml(r);
-  const label = r.label ? `<span class="label">${highlight(r.label, parsed)}${catChip}${jiraChips}${costChip}</span>` : '';
-  const first = r.first && !r.label ? `<span class="first">${highlight(r.first, parsed)}${catChip}${jiraChips}${costChip}</span>` : (r.first ? `<span class="first">${highlight(r.first, parsed)}</span>` : '');
+  const label = r.label ? `<span class="label">${highlight(r.label, parsed)}${jiraChips}${costChip}</span>` : '';
+  const first = r.first && !r.label ? `<span class="first">${highlight(r.first, parsed)}${jiraChips}${costChip}</span>` : (r.first ? `<span class="first">${highlight(r.first, parsed)}</span>` : '');
   const last = r.last ? `<span class="last">${highlight(r.last, parsed)}</span>` : '';
   // Show the deep-grep snippet whenever the server returned one. Redundant
   // with a label-visible match sometimes, but "which line matched" is often
@@ -4659,7 +4425,7 @@ function renderRow(r, parsed, now) {
   // In detail mode the actions live in the right-side panel, so we drop
   // the trailing actions cell entirely and let the topic column breathe.
   const actionsTd = DETAIL_MODE ? '' : `<td>${actionsCell(r, r.isLive)}</td>`;
-  return `<tr class="row${selected} ${liveClasses} ${depth ? 'is-fork' : ''}" ${dataAttrs} draggable="true">
+  return `<tr class="row${selected} ${liveClasses} ${depth ? 'is-fork' : ''}" ${dataAttrs}>
     <td>${statusDot}</td>
     ${prioCell(r)}
     <td class="topic" title="${esc(r.cwd)}">${indent}${topicCellHL(r, parsed)}</td>
@@ -4796,8 +4562,7 @@ function boardHtml(rows, now, frozen, hidden) {
 let DONE_SHOW_ALL = false;
 let BOARD_SIG = '';
 
-// A sidebar destination, when one is selected, replaces the task view. '' is
-// "no destination" — the ordinary category/project browsing the app had.
+// A destination selected from a project status bar replaces the task view.
 let SB_DEST = '';
 
 // "What needs me", across every project, in one place. Each entry names the
@@ -4836,31 +4601,6 @@ function needsYouHtml() {
     </section>`;
   }).join('');
   return `<div class="dest-head"><h2>Needs you</h2><span class="dest-count">${items.length}</span></div>${groups}`;
-}
-
-// "What is running now", across every project. The other question the top bar
-// used to answer with a number nobody could click.
-function activeHtml() {
-  const pos = currentPoRooms();
-  const live = ALL_ROWS.filter(r => r.isLive && !isPoRoom(r.roomId, pos));
-  if (!live.length) {
-    return `<div class="dest-head"><h2>Active</h2></div>`
-      + `<div class="dest-empty">No agent is running right now.</div>`;
-  }
-  const busy = live.filter(r => r.status === 'busy');
-  const idle = live.filter(r => r.status !== 'busy');
-  const section = (title, rows) => rows.length ? `<section class="dest-group">
-      <div class="dest-group-head">${esc(title)}<span class="dest-group-n">${rows.length}</span></div>
-      ${rows.map(r => `<button class="dest-row" data-room="${esc(r.roomId || '')}" data-sid="${esc(r.sessionId)}">
-        ${runChip(r)}
-        <span class="dest-title">${esc(r.label || '(session)')}</span>
-        <span class="dest-who">${cardAgents(r)}</span>
-        <span class="dest-when">${agoSpan(r.updatedAt)}</span>
-        <span class="dest-why">${esc(r.projectName || '')}</span>
-      </button>`).join('')}
-    </section>` : '';
-  return `<div class="dest-head"><h2>Active</h2><span class="dest-count">${live.length}</span></div>`
-    + section('Working', busy) + section('Idle', idle);
 }
 
 // Placement is frozen while the mouse is over the board; content is not. This
@@ -5061,7 +4801,6 @@ function offerTransition(rid, col, row) {
 
 
 function renderGroupedRows(rows, parsed, now) {
-  // Sidebar handles category context now — main view is just a flat list.
   return rows.map(r => renderRow(r, parsed, now)).join('');
 }
 
@@ -5093,9 +4832,9 @@ function nestForks(rows) {
   return out;
 }
 
-// WHERE the user is — the project they drilled into and the sidebar category —
-// kept apart from the filter chips, because the view's count needs it on its
-// own: its denominator is "tasks in this scope", not "every task anywhere".
+// The project the user drilled into is kept apart from the filter chips,
+// because the view's count needs it on its own: its denominator is "tasks in
+// this scope", not "every task anywhere".
 // Inside a project, counting all tasks read "12 of 38" and implied filters were
 // hiding 26 tasks that were simply in other projects.
 function inScope(r) {
@@ -5110,9 +4849,6 @@ function inScope(r) {
     const ids = new Set((pj.sessions || []).map(s => s.roomId || s.sessionId));
     if (!ids.has(r.roomId || r.sessionId)) return false;
   }
-  // Sidebar category gate
-  if (SELECTED_CAT === '__uncat__' && r.category) return false;
-  if (SELECTED_CAT !== '__all__' && SELECTED_CAT !== '__uncat__' && r.category !== SELECTED_CAT) return false;
   return true;
 }
 
@@ -5124,7 +4860,6 @@ function passesFilter(r) {
   if (FILTERS.size === 0) return false;
   if (r.archived) return FILTERS.has('archived');
   if (FILTERS.has('live') && r.isLive) return true;
-  if (FILTERS.has('pinned') && r.pinned) return true;
   if (FILTERS.has('history') && !r.isLive) return true;
   return false;
 }
@@ -5378,66 +5113,6 @@ function renderRuntimeConfig() {
   }
 }
 
-let KNOWN_CATS = [];   // union of assignment-categories and explicit list
-
-async function loadKnownCategories() {
-  try { KNOWN_CATS = await api('/api/category-list'); }
-  catch { KNOWN_CATS = []; }
-}
-
-function renderSidebar() {
-  const counts = new Map();
-  let uncatCount = 0;
-  let liveCount = 0;
-  let pinnedCount = 0;
-  let archivedCount = 0;
-  const pos = currentPoRooms();
-  for (const r of ALL_ROWS) {
-    if (r.isLive && !isPoRoom(r.roomId, pos)) liveCount++;
-    if (r.pinned) pinnedCount++;
-    if (r.archived) { archivedCount++; continue; }
-    if (!r.category) uncatCount++;
-    else counts.set(r.category, (counts.get(r.category) || 0) + 1);
-  }
-  const total = ALL_ROWS.filter(r => !r.archived).length;
-  // The sidebar list is the union of (categories actually used) ∪ (known explicit).
-  const catSet = new Set([...counts.keys(), ...KNOWN_CATS]);
-  const cats = [...catSet].sort((a, b) => a.localeCompare(b));
-  const item = (cat, icon, label) => {
-    const active = (!SB_DEST && SELECTED_CAT === cat) ? ' active' : '';
-    return `<button class="sb-item${active}" data-cat="${esc(cat)}">
-      <span class="sb-icon">${icon}</span>
-      <span class="sb-name">${esc(label)}</span>
-    </button>`;
-  };
-  // Two of the four questions this redesign exists to answer — "what needs
-  // me" and "what is running now" — are permanent addresses, not a tray you
-  // have to remember to open. They come first because they are what you open
-  // the dashboard to find out.
-  const needsCount = attentionItems().length;
-  const activeCount = liveCount;
-  const dest = (key, icon, label, count, tone) => {
-    const active = SB_DEST === key ? ' active' : '';
-    const badge = count
-      ? `<span class="sb-badge ${tone}">${count}</span>` : '';
-    return `<button class="sb-item sb-dest${active}" data-dest="${key}">
-      <span class="sb-icon">${icon}</span>
-      <span class="sb-name">${esc(label)}</span>${badge}
-    </button>`;
-  };
-  const out = [];
-  out.push(dest('needsyou', '◉', 'Needs you', needsCount, 'warn'));
-  out.push(dest('active',   '◉', 'Active',    activeCount, 'ok'));
-  out.push(`<div class="sb-divider"></div>`);
-  out.push(`<div class="sb-section">Views</div>`);
-  out.push(item('__all__',   '◉',  'All sessions'));
-  out.push(item('__uncat__', '○',  'Uncategorized'));
-  out.push(`<div class="sb-section">Categories</div>`);
-  for (const c of cats) out.push(item(c, '◆', c));
-  out.push(`<button id="sb-add-cat" class="sb-add-cat">+ New category</button>`);
-  $('#sidebar').innerHTML = out.join('');
-}
-
 // Status strip + group-by control (landing) or breadcrumb (inside a project).
 // SELECTED_PROJECT holds a project ID (from the registry, or '__unassigned__').
 // Membership comes from the server's per-project session list — recorded, not
@@ -5541,14 +5216,14 @@ function wireProjectsChrome() {
     e.stopPropagation(); if (r.dataset.sid) openDetail(r.dataset.sid);
   });
   document.querySelectorAll('.newtask[data-proj]').forEach(b => b.onclick = (e) => {
-    e.stopPropagation(); showNewSessionModal('', b.dataset.proj);
+    e.stopPropagation(); showNewSessionModal(b.dataset.proj);
   });
   const np = document.querySelector('.proj.newproj');
   if (np) np.onclick = () => registerProjectFlow();
   const npb = document.querySelector('.newproj-btn');
   if (npb) npb.onclick = () => registerProjectFlow();
   const ct = document.querySelector('.crumb-newtask');
-  if (ct) ct.onclick = () => showNewSessionModal('', SELECTED_PROJECT);
+  if (ct) ct.onclick = () => showNewSessionModal(SELECTED_PROJECT);
   const back = document.querySelector('.crumb-back');
   if (back) back.onclick = (e) => { e.preventDefault(); SELECTED_PROJECT = null; SB_DEST = ''; renderRows(); };
 }
@@ -8805,7 +8480,6 @@ async function histClick(v, e) {
 // ---- Documents project: end --------------------------------------------------
 
 function renderRows() {
-  renderSidebar();
   syncProjSwitch();
   renderPo();
   paintSearchBadge(null);
@@ -8821,8 +8495,8 @@ function renderRows() {
   // The workspace panel is shown, never rebuilt — every branch below is free to
   // replace #view without touching it.
   const wsp = document.getElementById('ws-panel');
-  // A sidebar destination (Needs you, Active) owns the whole view, so the
-  // project's workspace panel steps aside even if its tab was last open.
+  // Needs you owns the whole view, so the project's stateful panels step
+  // aside even if one of their tabs was last open.
   if (wsp) wsp.hidden = !(SELECTED_PROJECT && PROJECT_TAB === 'workspace') || Boolean(SB_DEST);
   const rmp = document.getElementById('rm-panel');
   if (rmp) rmp.hidden = !(SELECTED_PROJECT && PROJECT_TAB === 'roadmap') || Boolean(SB_DEST);
@@ -8831,7 +8505,7 @@ function renderRows() {
   // entering a project clears it. Its entries are there to be clicked, so they
   // are written only when what they show changes.
   if (SB_DEST) {
-    writeSlot($('#view'), `<div class="dest">${SB_DEST === 'needsyou' ? needsYouHtml() : activeHtml()}</div>`);
+    writeSlot($('#view'), `<div class="dest">${needsYouHtml()}</div>`);
     setViewCount('');
     return;
   }
@@ -8905,11 +8579,10 @@ function renderRows() {
   const active = parsed.groups.length > 0;
   const modeFiltered = ALL_ROWS.filter(passesFilter);
   const filtered = active ? modeFiltered.filter(r => rowMatches(r, parsed)) : modeFiltered;
+  // One number answers the question a filtered list actually raises: am I
+  // looking at everything, or a subset? That is why a task can seem to vanish
+  // when a filter is on.
   paintSearchBadge(filtered.length);
-  // One number, not four. "3 live" duplicated the sidebar's Active count and
-  // "2 pinned" was a filter's own state; both went. What survives answers the
-  // question a filtered list actually raises — am I looking at everything, or
-  // a subset? — which is why a task can seem to vanish when a filter is on.
   // Archived rows are out of the working set unless you ask for them, so they
   // are out of the denominator too. Counting them in produced "38 of 54" with
   // nothing on screen to explain the 16 — which is precisely the false alarm
@@ -8926,21 +8599,7 @@ function renderRows() {
   const colShown = hidden.size ? filtered.filter(r => !hidden.has(frozenWorkflowOf(r, frozen))) : filtered;
   const total = pool.length;
   const shown = colShown.length;
-  const scope = modeFiltered.length;   // still feeds the category page header
   setViewCount(shown === total ? `${total} tasks` : `${shown} of ${total}`);
-  // Page header for category context
-  let pageHeader = '';
-  if (SELECTED_CAT !== '__all__') {
-    const title = SELECTED_CAT === '__uncat__'
-      ? `<h2>Uncategorized <span class="page-count">${scope}</span></h2>`
-      : `<h2>📁 ${esc(SELECTED_CAT)} <span class="page-count">${scope}</span></h2>`;
-    const actions = (SELECTED_CAT === '__uncat__') ? '' :
-      `<div class="page-actions">
-        <button id="cat-rename-btn">✎ Rename</button>
-        <button id="cat-delete-btn">🗑 Delete</button>
-      </div>`;
-    pageHeader = `<div class="page-header">${title}${actions}</div>`;
-  }
   // A project with a PO puts the board beside it (see #po-panel); one without
   // gets today's board under a note saying how to give it one.
   const poSplit = !!poSplitProject();
@@ -8951,7 +8610,7 @@ function renderRows() {
     ? `<div class="board-edge l" hidden><button data-dir="l">‹</button></div><div class="board-edge r" hidden><button data-dir="r">›</button></div>` : '';
   const frame = inner => overviewFrameHtml({ poSplit, docs, chrome: projectsChromeHtml(), poNote, inner, edges });
   if (!filtered.length) {
-    if (writeSlot(view, frame(pageHeader + filterRowHtml(cols)
+    if (writeSlot(view, frame(filterRowHtml(cols)
       + '<p class="empty">' + (active ? 'No matches.' : 'No sessions.') + '</p>'))) wireProjectsChrome();
     setViewCount(total ? `0 of ${total}` : '0 tasks');
     return;
@@ -8962,13 +8621,13 @@ function renderRows() {
     // DOM out from under an in-flight drag. Same problem the Workspace tab
     // hit, same guard: remount only when PLACEMENT changes. Card contents are
     // patched in place below, so dots and lozenges stay live while hovering.
-    const sig = [SELECTED_PROJECT || '', SELECTED_CAT, SEARCH_QUERY, DONE_SHOW_ALL, poSplit, docs, poNote,
+    const sig = [SELECTED_PROJECT || '', SEARCH_QUERY, DONE_SHOW_ALL, poSplit, docs, poNote,
                  BOARD_FIT, isPhone(), [...hidden].join('.'),
                  filtered.map(r => (r.roomId || r.sessionId) + ':' + frozenWorkflowOf(r, frozen)).join(',')].join('|');
     if (sig !== BOARD_SIG || !view.querySelector('.board, .board-none')) {
       BOARD_SIG = sig;
       const fhtml = filterRowHtml(cols);
-      view.innerHTML = frame(pageHeader + fhtml + boardHtml(filtered, now, frozen, hidden));
+      view.innerHTML = frame(fhtml + boardHtml(filtered, now, frozen, hidden));
       view.querySelector('.filterbar')._html = fhtml;
       wireProjectsChrome();
       wireBoard();
@@ -8984,14 +8643,14 @@ function renderRows() {
     return;
   }
   if (!colShown.length) {
-    if (writeSlot(view, frame(pageHeader + filterRowHtml(cols)
+    if (writeSlot(view, frame(filterRowHtml(cols)
       + `<p class="empty">All ${filtered.length} task${filtered.length > 1 ? 's' : ''} here are in hidden columns. <button class="colall">Show all columns</button></p>`))) wireProjectsChrome();
     setViewCount(_viewCount);
     return;
   }
   const ordered = nestForks(colShown);
   const headExtra = DETAIL_MODE ? '' : '<th></th>';
-  const listHtml = frame(pageHeader + filterRowHtml(cols) + `<table>
+  const listHtml = frame(filterRowHtml(cols) + `<table>
     <thead><tr>
       <th></th><th class="prio"></th><th>Task</th><th></th>${headExtra}
     </tr></thead>
@@ -9127,7 +8786,7 @@ async function refresh({ now = false, until = 0 } = {}) {
     // sessions that appeared since are appended. Once the mouse leaves the
     // window the next refresh re-applies the canonical sort.
     // Freeze the rendered order only when the mouse is over the table
-    // itself — not the sidebar/header/detail panel — so the sort isn't
+    // itself — not the header/detail panel — so the sort isn't
     // held stale just because the cursor happens to be on the page.
     const tableEl = $('#view');
     const hovering = tableEl && tableEl.matches(':hover');
@@ -9185,109 +8844,6 @@ function paintSearchBadge(found) {
   const b = searchBadge(SEARCH_QUERY, SEARCH_PHASE, found, SEARCH_HITS);
   setSearchBadge(b.state, b.label);
 }
-async function setCategory(sid, category) {
-  const r = await api('/api/categories/' + sid, {
-    method: 'PUT',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({category}),
-  });
-  const row = ALL_ROWS.find(x => x.sessionId === sid);
-  if (row) row.category = r.category;
-}
-
-let DRAGGED_SID = null;
-
-// Selectors that work across all layouts.
-const DRAG_SRC_SEL = '.row[data-sid]';
-const DRAG_DST_SEL = '.row[data-sid], .sb-item[data-cat]';
-
-document.addEventListener('dragstart', (ev) => {
-  const el = ev.target.closest(DRAG_SRC_SEL);
-  if (!el) return;
-  DRAGGED_SID = el.dataset.sid;
-  ev.dataTransfer.effectAllowed = 'move';
-  ev.dataTransfer.setData('text/plain', DRAGGED_SID);
-  el.classList.add('dragging');
-});
-
-document.addEventListener('dragend', () => {
-  document.querySelectorAll('.dragging').forEach(t => t.classList.remove('dragging'));
-  document.querySelectorAll('.drop-target').forEach(t => t.classList.remove('drop-target'));
-  DRAGGED_SID = null;
-});
-
-document.addEventListener('dragover', (ev) => {
-  if (!DRAGGED_SID) return;
-  const el = ev.target.closest(DRAG_DST_SEL);
-  if (!el) return;
-  if (el.matches(DRAG_SRC_SEL) && el.dataset.sid === DRAGGED_SID) return; // self
-  ev.preventDefault();
-  ev.dataTransfer.dropEffect = 'move';
-  document.querySelectorAll('.drop-target').forEach(t => { if (t !== el) t.classList.remove('drop-target'); });
-  el.classList.add('drop-target');
-});
-
-document.addEventListener('dragleave', (ev) => {
-  const el = ev.target.closest(DRAG_DST_SEL);
-  if (el) el.classList.remove('drop-target');
-});
-
-document.addEventListener('drop', async (ev) => {
-  const el = ev.target.closest(DRAG_DST_SEL);
-  if (!el || !DRAGGED_SID) return;
-  ev.preventDefault();
-  el.classList.remove('drop-target');
-  const srcSid = DRAGGED_SID;
-  DRAGGED_SID = null;
-
-  // Sidebar item drop — translate sentinels back to a real category value.
-  if (el.classList.contains('sb-item')) {
-    let targetCat = el.dataset.cat || '';
-    if (targetCat === '__all__') return; // "All" isn't an assignment
-    if (targetCat === '__uncat__') targetCat = '';
-    try {
-      await setCategory(srcSid, targetCat);
-      toast(targetCat ? `moved to "${targetCat}"` : 'removed from category', 2000, 'ok');
-      renderRows();
-    } catch (e) { toast('error: ' + e.message, 4000, 'err'); }
-    return;
-  }
-
-  if (el.dataset.sid === srcSid) return; // self
-  const targetSid = el.dataset.sid;
-  const targetRow = ALL_ROWS.find(x => x.sessionId === targetSid);
-  const srcRow = ALL_ROWS.find(x => x.sessionId === srcSid);
-  if (!targetRow || !srcRow) return;
-
-  if (targetRow.category) {
-    // Target already in a category — adopt the same category.
-    try {
-      await setCategory(srcSid, targetRow.category);
-      toast(`moved to "${targetRow.category}"`, 2000, 'ok');
-      renderRows();
-    } catch (e) { toast('error: ' + e.message, 4000, 'err'); }
-    return;
-  }
-
-  // Target is uncategorized: prompt for a new category name, apply to both.
-  const r = await showInputModal({
-    title: 'New category',
-    defaults: { title: '', prompt: '' },
-    okLabel: 'Create category',
-    titleHelp: 'name for the new category',
-    promptHelp: '(unused for categories — leave empty)',
-  });
-  if (!r || !r.title) return;
-  try {
-    // Sequential, not Promise.all: the server's load-modify-save is not
-    // atomic, so parallel PUTs would race and one assignment would be lost.
-    await setCategory(srcSid, r.title);
-    await setCategory(targetSid, r.title);
-    toast(`created category "${r.title}"`, 2500, 'ok');
-    renderRows();
-  } catch (e) { toast('error: ' + e.message, 4000, 'err'); }
-});
-
 $('#search').addEventListener('input', (ev) => {
   SEARCH_QUERY = ev.target.value;
   // Drop any deep-search results when the query changes; they'd be stale.
@@ -9343,15 +8899,8 @@ $('#search').addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && document.body.classList.contains('search-open')) { closeSearch(); $('#search-open').focus(); }
 });
 
-// Kept as the single entry point used by "+ New" and the per-category "+ New
-// here" affordances; both now open the unified new-session modal.
-function createSessionInCategory(category) {
-  showNewSessionModal(category);
-}
-
 $('#new-btn').addEventListener('click', () => {
-  const cat = (SELECTED_CAT !== '__all__' && SELECTED_CAT !== '__uncat__') ? SELECTED_CAT : '';
-  createSessionInCategory(cat);
+  showNewSessionModal();
 });
 
 // ---------------------------------------------------------------------------
@@ -9463,7 +9012,7 @@ function updateNsHint(container) {
 // A task (Jira-style): pick the project it belongs to, write the specification,
 // fire agents at it. The task gets its own workspace folder; what goes in it
 // (docs, a cloned repo with commits, anything) is the agents' business.
-function showNewSessionModal(category, projectId) {
+function showNewSessionModal(projectId) {
   const dlg = $('#modal');
   const def = (PREFS && PREFS.defaultModel) || '';
   const curProj = (projectId && projectId !== UNASSIGNED_ID) ? projectId : '';
@@ -9471,7 +9020,7 @@ function showNewSessionModal(category, projectId) {
     + registeredProjects().map(p => `<option value="${esc(p.id)}"${p.id === sel ? ' selected' : ''}>${esc(p.name)}</option>`).join('')
     + '<option value="__new__">+ New project…</option>';
   dlg.innerHTML = `
-    <h3>New task${category ? ` in "${esc(category)}"` : ''}</h3>
+    <h3>New task</h3>
     <div class="im-field">
       <label>Project <small>the board this task belongs to</small></label>
       <select id="ns-proj">${projOpts(curProj)}</select>
@@ -9588,7 +9137,7 @@ function showNewSessionModal(category, projectId) {
           label: rm.title || title, cwd: rm.cwd || '', spec: rm.spec || task, taskDir: rm.taskDir || '',
           isLive: true, status: 'busy', updatedAt: rm.createdAt || Date.now() / 1000,
           startedAt: rm.createdAt || Date.now() / 1000, turns: 0, idleSeconds: 0, pid: null,
-          pinned: false, category: '', archived: false, parent: '', jira: [], cost: 0,
+          archived: false, parent: '', jira: [], cost: 0,
           currentTheme: '', first: '', last: '', transcriptPath: '',
           allocation: rm.allocation || null,
           reviewAllocations: rm.reviewAllocations || [],
@@ -10530,8 +10079,8 @@ document.addEventListener('keydown', (ev) => {
 // in a *global* bar. Same filters, same defaults, same persistence — a
 // different control, in the view that owns them.
 // ---------------------------------------------------------------------------
-const FILTER_LABELS = { live: 'Live', pinned: 'Pinned', history: 'History', archived: 'Archived' };
-const FILTER_DEFAULTS = ['live', 'pinned', 'history'];
+const FILTER_LABELS = { live: 'Live', history: 'History', archived: 'Archived' };
+const FILTER_DEFAULTS = ['live', 'history'];
 
 function filterChips() {
   // What is NARROWING the view — not what is switched on. With the defaults
@@ -10596,7 +10145,7 @@ function filtersMenuHtml() {
   const row = (k, label) =>
     `<label class="fm-item"><input type="checkbox" data-f="${k}"${FILTERS.has(k) ? ' checked' : ''}> ${esc(label)}</label>`;
   return `<div class="fm-group"><div class="fm-head">Which rows</div>
-      ${row('live', 'Live')}${row('pinned', 'Pinned')}${row('history', 'History')}${row('archived', 'Archived')}
+      ${row('live', 'Live')}${row('history', 'History')}${row('archived', 'Archived')}
     </div>
     <div class="fm-group"><div class="fm-head">Where</div>
       <label class="fm-item"><input type="checkbox" data-f="__ext__"${HIDE_EXTERNAL ? ' checked' : ''}> Workspace only</label>
@@ -10747,18 +10296,6 @@ function openFiltersMenu() {
   });
 }
 
-// Sidebar collapse — persisted in localStorage
-if (localStorage.getItem('cd-sidebar') === 'collapsed') {
-  document.body.classList.add('sidebar-collapsed');
-}
-$('#sidebar-toggle').addEventListener('click', () => {
-  const collapsed = document.body.classList.toggle('sidebar-collapsed');
-  localStorage.setItem('cd-sidebar', collapsed ? 'collapsed' : 'open');
-});
-
-// Phone: the sidebar is an overlay drawer, not a pinned column. Start it
-// collapsed regardless of the desktop-persisted state, and close it when the
-// scrim or a category is tapped so you're back to one screen at a time.
 // Keep in sync with the mobile @media query in the stylesheet.
 const MOBILE_MQ = '(max-width: 640px), (max-width: 1024px) and (pointer: coarse)';
 const isPhone = () => window.matchMedia(MOBILE_MQ).matches;
@@ -10769,12 +10306,6 @@ const isPhone = () => window.matchMedia(MOBILE_MQ).matches;
   const redraw = () => { BOARD_SIG = ''; renderRows(); };
   if (mq.addEventListener) mq.addEventListener('change', redraw); else if (mq.addListener) mq.addListener(redraw);
 })();
-// Wherever the sidebar is a drawer it starts closed and closes behind you —
-// a drawer left open is just a column that covers things.
-const DRAWER_MQ = '(max-width: 900px)';
-const isDrawer = () => window.matchMedia(DRAWER_MQ).matches || isPhone();
-if (isDrawer()) document.body.classList.add('sidebar-collapsed');
-
 // The on-screen keyboard. Android (with interactive-widget=resizes-content in
 // the viewport tag) shrinks the page when it opens; iOS instead shrinks only the
 // visual viewport and scrolls it, leaving fixed panels running on behind the
@@ -10810,106 +10341,6 @@ if (window.visualViewport) {
 }
 window.addEventListener('resize', keepComposerInView);
 fitVisualViewport();
-{
-  const scrimEl = document.getElementById('scrim');
-  if (scrimEl) scrimEl.addEventListener('click', () =>
-    document.body.classList.add('sidebar-collapsed'));
-  $('#sidebar').addEventListener('click', (ev) => {
-    if (isDrawer() && ev.target.closest('.sb-item'))
-      document.body.classList.add('sidebar-collapsed');
-  });
-}
-
-// Sidebar: select category, or create one
-$('#sidebar').addEventListener('click', async (ev) => {
-  const addBtn = ev.target.closest('#sb-add-cat');
-  if (addBtn) {
-    ev.stopPropagation();
-    const name = prompt('New category name:');
-    if (!name) return;
-    const trimmed = name.trim();
-    if (!trimmed) return;
-    try {
-      const r = await api('/api/category-list', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({name: trimmed}),
-      });
-      KNOWN_CATS = r.categories;
-      SELECTED_CAT = trimmed;
-      localStorage.setItem('cd-cat', trimmed);
-      renderRows();
-      toast(`created category "${trimmed}"`, 2500, 'ok');
-    } catch (e) { toast('create failed: ' + e.message, 4000, 'err'); }
-    return;
-  }
-  const destBtn = ev.target.closest('.sb-item[data-dest]');
-  if (destBtn) {
-    SB_DEST = SB_DEST === destBtn.dataset.dest ? '' : destBtn.dataset.dest;
-    renderRows();
-    return;
-  }
-  const item = ev.target.closest('.sb-item');
-  if (!item) return;
-  SB_DEST = '';                       // a category is a different question
-  SELECTED_CAT = item.dataset.cat;
-  localStorage.setItem('cd-cat', SELECTED_CAT);
-  renderRows();
-});
-
-// Page-header actions (rename + delete current category)
-document.addEventListener('click', async (ev) => {
-  const renameBtn = ev.target.closest('#cat-rename-btn');
-  if (renameBtn) {
-    ev.stopPropagation();
-    const oldName = SELECTED_CAT;
-    if (oldName === '__all__' || oldName === '__uncat__') return;
-    const newName = prompt(`Rename category "${oldName}" to:`, oldName);
-    if (newName === null) return;
-    const trimmed = newName.trim();
-    if (!trimmed || trimmed === oldName) return;
-    try {
-      const r = await api('/api/categories/rename', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({from: oldName, to: trimmed}),
-      });
-      toast(`renamed ${r.moved} session${r.moved === 1 ? '' : 's'} → "${trimmed}"`, 3000, 'ok');
-      SELECTED_CAT = trimmed;
-      localStorage.setItem('cd-cat', trimmed);
-      await loadKnownCategories();
-      await refresh();
-    } catch (e) { toast('rename failed: ' + e.message, 4000, 'err'); }
-    return;
-  }
-  const deleteBtn = ev.target.closest('#cat-delete-btn');
-  if (deleteBtn) {
-    ev.stopPropagation();
-    const cat = SELECTED_CAT;
-    if (cat === '__all__' || cat === '__uncat__') return;
-    const confirmed = await showConfirmDialog({
-      title: `Delete category "${cat}"?`,
-      message: 'Sessions in this category stay (they become uncategorized). Nothing is deleted from disk.',
-      confirmLabel: '🗑 Delete category',
-      danger: true,
-    });
-    if (!confirmed) return;
-    try {
-      const r = await api('/api/categories/delete', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({category: cat}),
-      });
-      toast(`category removed (${r.removed} session${r.removed === 1 ? '' : 's'} now uncategorized)`, 3500, 'ok');
-      SELECTED_CAT = '__all__';
-      localStorage.setItem('cd-cat', '__all__');
-      await loadKnownCategories();
-      await refresh();
-    } catch (e) { toast('delete failed: ' + e.message, 4000, 'err'); }
-    return;
-  }
-});
-
 async function focusByPid(pid) {
   try {
     const r = await api('/api/focus', {
@@ -11536,7 +10967,7 @@ document.addEventListener('click', async (ev) => {
     const scratch = scratchRootOf(row ? row.cwd : '');
     const confirmed = await showConfirmDialog({
       title: 'Permanently delete this session?',
-      message: 'This removes the transcript JSONL and the dashboard\'s sidecar entries (label, parent, geometry, pin, archive, category).'
+      message: 'This removes the transcript JSONL and the dashboard\'s sidecar entries (label, parent, geometry, archive).'
         + (scratch ? `\n\nIt also deletes the working folder ${tildeify(scratch)} (a ~/cs scratch dir).` : '\n\nYour code in the cwd folder is NOT touched.')
         + '\n\nReal project folders are never deleted. There is no undo.',
       confirmLabel: '🗑 Delete permanently',
@@ -11554,26 +10985,6 @@ document.addEventListener('click', async (ev) => {
       setTimeout(refresh, 600);
     } catch (e) { toast('delete failed: ' + e.message, 5000, 'err'); }
     finally { deleteBtnEl.classList.remove('busy'); }
-    return;
-  }
-  const pinBtnEl = ev.target.closest('.pin-btn');
-  if (pinBtnEl) {
-    ev.stopPropagation();
-    const sid = pinBtnEl.dataset.sid;
-    const pinning = pinBtnEl.dataset.pinned !== '1';
-    try {
-      await api('/api/pinned', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({sessionId: sid, pinned: pinning}),
-      });
-      // Optimistic local update so it's instant.
-      const row = ALL_ROWS.find(x => x.sessionId === sid);
-      if (row) row.pinned = pinning;
-      renderRows();
-      if (SELECTED_SID === sid) renderDetail();
-      toast(pinning ? 'pinned' : 'unpinned', 1800, 'ok');
-    } catch (e) { toast('pin failed: ' + e.message, 4000, 'err'); }
     return;
   }
   const closeBtnEl = ev.target.closest('.close-btn');
@@ -11643,47 +11054,6 @@ document.addEventListener('click', async (ev) => {
   }
   // Click outside menu closes it
   if (!ev.target.closest('.ij-menu')) closeIjMenu();
-
-  // "✎ Rename" pill in a category header → rename the whole category
-  const catRename = ev.target.closest('.cat-rename');
-  if (catRename) {
-    ev.stopPropagation();
-    const oldName = catRename.dataset.cat;
-    const newName = prompt(`Rename category "${oldName}" to:`, oldName);
-    if (newName === null) return;
-    const trimmed = newName.trim();
-    if (!trimmed || trimmed === oldName) return;
-    try {
-      const r = await api('/api/categories/rename', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({from: oldName, to: trimmed}),
-      });
-      toast(`renamed ${r.moved} session${r.moved === 1 ? '' : 's'} → "${trimmed}"`, 3000, 'ok');
-      // Carry collapsed-state across the rename
-      if (COLLAPSED_CATS.has(oldName)) {
-        COLLAPSED_CATS.delete(oldName);
-        COLLAPSED_CATS.add(trimmed);
-        persistCollapsed();
-      }
-      await refresh();
-    } catch (e) { toast('rename failed: ' + e.message, 4000, 'err'); }
-    return;
-  }
-  // "+ New here" button in a category header → open New modal in that category
-  const catAdd = ev.target.closest('.cat-add');
-  if (catAdd) {
-    ev.stopPropagation();
-    await createSessionInCategory(catAdd.dataset.cat);
-    return;
-  }
-  // Category header click → toggle collapse.
-  const catHdr = ev.target.closest('.category-header[data-cat]');
-  if (catHdr) {
-    toggleCollapsed(catHdr.dataset.cat);
-    renderRows();
-    return;
-  }
 
   // Theme dropdown trigger
   const themeTrigger = ev.target.closest('.theme-dd-trigger');
@@ -11815,7 +11185,7 @@ async function loadThemes() {
   // Platform first — everything downstream (feature-gating, terminal names) reads it.
   await loadPlatform();
   applyPlatformChrome();
-  await Promise.all([loadThemes(), loadFavoriteThemes(), loadKnownCategories(), loadJiraConfig(), loadRuntimeConfig(), loadPrefs(), loadAgentOptions()]);
+  await Promise.all([loadThemes(), loadFavoriteThemes(), loadJiraConfig(), loadRuntimeConfig(), loadPrefs(), loadAgentOptions()]);
   // Preferences: segmented control click → save
   document.getElementById('pref-open-mode')?.addEventListener('click', (ev) => {
     const b = ev.target.closest('button[data-val]');
