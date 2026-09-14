@@ -654,7 +654,7 @@ class ThePage(unittest.TestCase):
         self.assertIn("postOk('/api/room/resume', { roomId: ROOM, text, to: to || '', key: key || '' })", SESSION)
         send = SESSION[SESSION.index("$('#send').onclick = async () => {"):]
         send = send[:send.index("\n};\n")]
-        self.assertIn("if (needsResume()) await sendResuming(t, '', key)", send)
+        self.assertIn("if (needsResume(t)) await sendResuming(t, '', key)", send)
         self.assertIn("orResume(e, t, '', key)", send)
         # A team's every send goes through the hub's resume-or-deliver: the
         # hub, not the last poll, knows whether the team is still running.

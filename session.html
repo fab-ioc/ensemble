@@ -602,6 +602,37 @@
   .msg .from .fold-btn { float:right; margin:-2px -4px 0 var(--s-200); padding:0 var(--s-100); background:transparent; border:none;
     color:var(--fg-muted); font-size:var(--fs-100); font-weight:400; text-transform:none; letter-spacing:0; line-height:16px; }
   .msg .from .fold-btn:hover { background:var(--hover); color:var(--fg); }
+  /* Copy link: a link to this balloon, to paste into another chat. It takes its
+     place in the header at rest (nothing moves on hover) and shows on hover or
+     keyboard focus; on a phone it always shows (below). */
+  .msg .from .copy-link { float:right; margin:-2px -4px 0 var(--s-200); padding:0 var(--s-100); background:transparent; border:none;
+    color:var(--fg-muted); font-size:var(--fs-100); font-weight:400; text-transform:none; letter-spacing:0; line-height:16px; }
+  .msg .from .copy-link:hover { background:var(--hover); color:var(--fg); }
+  .msg:not(:hover) .from .copy-link:not(:focus-visible):not(.done) { clip-path:inset(50%); }
+  .copy-link:focus-visible, .ref-chip:focus-visible, .goto-x:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  /* No clipboard here (plain http, or the browser refused): the link, selected, to copy by hand. */
+  .msg .copy-field { display:flex; align-items:center; gap:var(--s-200); margin:var(--s-100) 0; color:var(--fg-muted); font-size:var(--fs-200); line-height:16px; }
+  .msg .copy-field input { flex:1 1 auto; min-width:0; height:24px; padding:0 var(--s-100); background:var(--surface); color:var(--fg);
+    border:1px solid var(--border-strong); border-radius:var(--r-200); font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:var(--fs-200); }
+  /* Landed on from a link: the balloon is the selected one for a moment. */
+  .msg.landed { animation:landed 2.4s ease-out; }
+  @keyframes landed { 0%, 40% { background:var(--selected-bg); } }
+  @media (prefers-reduced-motion: reduce) { .msg.landed { animation:none; background:var(--selected-bg); } }
+  /* A link to another balloon, as a chip naming it: who, where, when, its first words. */
+  .msg .text.md a.ref-chip, a.ref-chip { display:inline-flex; align-items:baseline; gap:var(--s-100); max-width:100%; box-sizing:border-box;
+    vertical-align:baseline; padding:0 var(--s-100); background:var(--surface-sunken); color:var(--fg); border:1px solid var(--border);
+    border-radius:var(--r-100); font-size:var(--fs-200); line-height:16px; text-decoration:none; white-space:nowrap; overflow:hidden; }
+  a.ref-chip:hover { background:var(--hover); }
+  a.ref-chip .ref-arrow { color:var(--link); }
+  a.ref-chip .ref-who { flex:0 0 auto; font-weight:500; }
+  a.ref-chip .ref-prev { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; color:var(--fg-muted); }
+  /* A link to a balloon this conversation does not have. */
+  #goto-note { flex:0 0 auto; display:flex; align-items:center; gap:var(--s-200); padding:var(--s-050) 12px;
+    border-bottom:1px solid var(--border); color:var(--fg-muted); font-size:var(--fs-200); line-height:16px; }
+  #goto-note[hidden] { display:none; }
+  #goto-note > span { flex:1 1 auto; min-width:0; }
+  #goto-note .goto-x { flex:0 0 auto; height:24px; padding:0 var(--s-200); background:transparent; border:none; color:var(--fg-muted); font-size:var(--fs-200); }
+  #goto-note .goto-x:hover { background:var(--hover); color:var(--fg); }
   /* Away from the end of the chat: back to it, with how many arrived since. */
   #to-latest { position:absolute; right:var(--s-400); bottom:var(--s-300); z-index:5; height:24px; padding:0 var(--s-300);
     border-radius:var(--r-full); background:var(--surface); color:var(--fg); border:1px solid var(--border-strong);
@@ -771,6 +802,12 @@
     button { min-width: var(--touch-min); }
     #promptcard .pc-x, #cmt-tray .cmt-item-x, #livetail .lt-more { min-width: var(--touch-min); }
     .msg .pend-state button { min-height: var(--touch-min); }   /* Retry / Discard under a failed message */
+    /* Nothing needs hover: Copy link always shows. A chip keeps its look in the
+       line of text and takes a finger's height with an invisible margin. */
+    .msg:not(:hover) .from .copy-link:not(:focus-visible):not(.done) { clip-path: none; }
+    .msg .text.md a.ref-chip, a.ref-chip { position: relative; overflow: visible; }
+    a.ref-chip::after { content: ''; position: absolute; left: 0; right: 0; top: -14px; bottom: -14px; }
+    a.ref-chip .ref-prev { max-width: 40vw; }
     /* A phone zooms into any field under 16px and stays zoomed. The ids and
        classes are here because those fields' own rules set font: inherit. */
     textarea, select, input, #compose textarea, .cmt-composer textarea { font-size: var(--fs-400); }
@@ -805,6 +842,7 @@
   <div id="chatcol">
     <div id="msgpane">
       <div id="chatbar" hidden><span id="chatbar-note"></span><button type="button" id="just-us" aria-pressed="false" title="Show only your messages and the answers to them in full; everything else folds to one line">Just us</button></div>
+      <div id="goto-note" role="status" hidden><span></span><button type="button" class="goto-x" title="Dismiss this note">Dismiss</button></div>
       <div id="msgs"></div>
       <button type="button" id="to-latest" hidden>Latest ↓</button>
     </div>
@@ -826,7 +864,8 @@
 <div id="tailpop" hidden></div>
 <script>
 const qs = new URLSearchParams(location.search);
-const ROOM = qs.get('id');
+// ?id= from the dashboard; ?room= (with &msg=) from a link to one of its balloons.
+const ROOM = qs.get('id') || qs.get('room');
 let OPERATOR = 'you';   // how the human ("user") is shown — nickname / git name
 fetch('/api/settings').then(r => r.json()).then(s => { OPERATOR = s.operatorName || s.operatorNickname || 'you'; }).catch(() => {});
 // The hub's port, so a link to its loopback address can be made this page's.
@@ -1021,6 +1060,68 @@ function linkify(t, keep) {
 }
 const unlinkify = (t, keep) => t.replace(new RegExp(LINK_A + '(\\d+)' + LINK_Z, 'g'), (m, i) => keep[+i] ?? m);
 // ---- Links in rendered text: end shared block ------------------------------
+// ---- Links to a balloon ----------------------------------------------------
+// Copy link on a balloon makes <this page's origin>/session?room=<room>&msg=<id>.
+// Pasted into any chat, such a link (from any host) shows as a chip naming the
+// message, as the hub resolves it (/api/room/msg). The hub also writes the
+// message out for the agent it is sent to (message_refs.py); a solo transcript
+// records that copy, so its balloon drops it again (stripRefBlocks).
+const REF_URL_RE = /https?:\/\/[^\s<>()\[\]{}"'`*|\\]+/gi;
+const REF_A = String.fromCharCode(0xE004), REF_Z = String.fromCharCode(0xE005);
+const REF_MARK_RE = new RegExp(REF_A + '(\\d+)' + REF_Z, 'g');
+const REF_BLOCKS_RE = /(?:\n\n\[ref https?:\/\/\S+\] [^\n]*(?:\n>[^\n]*)*)+\s*$/i;
+const stripRefBlocks = t => String(t || '').replace(REF_BLOCKS_RE, '');
+function refOfUrl(u) {
+  const url = String(u || '').replace(/[.,;:!?_]+$/, '');
+  let x = null;
+  try { x = new URL(url); } catch (e) { return null; }
+  const room = (x.searchParams.get('room') || '').trim(), msg = (x.searchParams.get('msg') || '').trim();
+  return x.pathname === '/session' && room && msg ? { url, room, msg, tail: u.slice(url.length) } : null;
+}
+// Whether a text holds a link to a balloon (the pattern is REF_URL_RE's).
+function hasMessageRefs(text) {
+  return [...String(text || '').matchAll(/https?:\/\/[^\s<>()\[\]{}"'`*|\\]+/gi)].some(m => refOfUrl(m[0]));
+}
+const refHref = (room, msg) => '/session?room=' + encodeURIComponent(room) + '&msg=' + encodeURIComponent(msg).replace(/%3A/gi, ':');
+const REFS = new Map();   // "room|msg" → { state: 'pending' | 'ok' | 'gone', who, taskTitle, ts, text }
+let REF_GEN = 0, _refRedraw = 0;
+// Balloons draw again once, after the answers that arrived together.
+function refChanged() {
+  clearTimeout(_refRedraw);
+  _refRedraw = setTimeout(() => { REF_GEN++; if (LAST_ITEMS) renderBubbles(LAST_ITEMS); }, 50);
+}
+function refInfo(room, msg) {
+  const k = room + '|' + msg;
+  let r = REFS.get(k);
+  if (r) return r;
+  REFS.set(k, r = { state: 'pending' });
+  fetch('/api/room/msg?room=' + encodeURIComponent(room) + '&msg=' + encodeURIComponent(msg))
+    .then(res => res.status === 404 ? { gone: true } : res.ok ? res.json() : Promise.reject(new Error('error ' + res.status)))
+    .then(d => { REFS.set(k, d && !d.gone && !d.error ? Object.assign({ state: 'ok' }, d) : { state: 'gone' }); refChanged(); })
+    // The hub did not answer: a plain link for now, asked again in a while.
+    .catch(() => setTimeout(() => { REFS.delete(k); refChanged(); }, 15000));
+  return r;
+}
+const refWhen = ts => ts ? new Date(ts * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '';
+const refLabel = r => [r.who, r.taskTitle, refWhen(r.ts)].filter(Boolean).join(' · ');
+function refPreview(r) {
+  const t = stripRefBlocks(r.text).replace(/\s+/g, ' ').trim();
+  return t.length > 60 ? t.slice(0, 59) + '…' : t;
+}
+// The chip for a link the hub has resolved, else null: the text keeps the link.
+function refChipHtml(ref) {
+  const r = refInfo(ref.room, ref.msg);
+  if (r.state !== 'ok') return null;
+  const prev = refPreview(r), label = refLabel(r);
+  return `<a class="ref-chip" href="${esc(refHref(ref.room, ref.msg))}" data-ref-room="${esc(ref.room)}" data-ref-msg="${esc(ref.msg)}"`
+    + ` title="${esc('Open this message: ' + label + (prev ? ' — ' + prev : ''))}"><span class="ref-arrow" aria-hidden="true">↗</span>`
+    + `<span class="ref-who">${esc(label)}</span>${prev ? `<span class="ref-prev">${esc(prev)}</span>` : ''}</a>`;
+}
+// A folded row's line: a resolved link reads as its chip's words.
+const refPlain = t => String(t || '').replace(REF_URL_RE, u => {
+  const ref = refOfUrl(u), r = ref && refInfo(ref.room, ref.msg);
+  return r && r.state === 'ok' ? '↗ ' + refLabel(r) + ref.tail : u;
+});
 const fileBase = () => (ROOM_OBJ && ROOM_OBJ.cwd) || '';
 const fileHref = (p, line) => '/fileview?path=' + encodeURIComponent((p || '').trim()) + (line ? '&line=' + line : '')
   + (ROOM ? '&room=' + encodeURIComponent(ROOM) : '') + (fileBase() ? '&cwd=' + encodeURIComponent(fileBase()) : '');
@@ -1036,6 +1137,14 @@ function mdToHtml(src) {
   s = s.replace(/`([^`\n]+)`/g, (_, body) => {
     const i = codes.push(codeSpanHtml(body)) - 1;
     return ` I${i} `;
+  });
+  // A link to a balloon is its chip, parked like code and put back at the end.
+  // The target of a [text](link) keeps its text.
+  const chips = [];
+  s = s.replace(/[\uE004\uE005]/g, '').replace(REF_URL_RE, (u, off, all) => {
+    if (all.slice(Math.max(0, off - 2), off) === '](') return u;
+    const ref = refOfUrl(u), h = ref && refChipHtml(ref);
+    return h ? REF_A + (chips.push(h) - 1) + REF_Z + ref.tail : u;
   });
   s = esc(s);
   // Inline spans (operate on escaped text; placeholders are safe).
@@ -1083,6 +1192,7 @@ function mdToHtml(src) {
   closeList();
   let html = out.join('\n');
   html = html.replace(/ ([BI])(\d+) /g, (_, __, i) => codes[+i]);
+  if (chips.length) html = html.replace(REF_MARK_RE, (m, i) => chips[+i] ?? m);
   return html;
 }
 const tildeify = p => (p || '').replace(/^[A-Za-z]:\\Users\\[^\\]+/i, '~').replace(/^\/(Users|home)\/[^/]+/, '~');
@@ -1444,10 +1554,13 @@ function foldBalloonHtml(m, i, how, o) {
   const to = m.to && m.to !== 'all' ? ` <span class="to">→ ${identLabel(m.to)}</span>` : '';
   const chips = foldChips(m, o.un, o.idle);
   if (how === 'row') {
-    return `<button type="button" class="msg-fold ${cls}" data-key="${key}" data-mid="${esc(m.id || '')}" aria-expanded="false" title="Open this message"><span class="from">${who}${to}</span>${chips ? `<span class="chips">${chips}</span>` : ''}<span class="fl">${esc(foldLine(hub ? hubBody(m) : m.text))}</span></button>`;
+    // o.plain: the line's words as the reader sees them (a balloon link as its chip's words).
+    const line = hub ? hubBody(m) : m.text;
+    return `<button type="button" class="msg-fold ${cls}" data-key="${key}" data-mid="${esc(m.id || '')}" aria-expanded="false" title="Open this message"><span class="from">${who}${to}</span>${chips ? `<span class="chips">${chips}</span>` : ''}<span class="fl">${esc(foldLine(o.plain ? o.plain(line) : line))}</span></button>`;
   }
   const fb = o.open ? '<button type="button" class="fold-btn" title="Fold this message again" aria-expanded="true">Fold</button>' : '';
-  return `<div class="msg ${cls}" data-mid="${esc(m.id || '')}" data-key="${key}" data-from="${esc(m.from || '')}"><div class="from">${fb}${who}${to}${chips}</div><div class="text md">${o.md(m.text)}</div></div>`;
+  // o.act: the balloon's own action in its header (Copy link).
+  return `<div class="msg ${cls}" data-mid="${esc(m.id || '')}" data-key="${key}" data-from="${esc(m.from || '')}"><div class="from">${fb}${o.act ? o.act(m) : ''}${who}${to}${chips}</div><div class="text md">${o.md(m.text)}</div></div>`;
 }
 // The "Latest ↓" control: a decision waiting beats a count of new balloons.
 function latestLabel(newN, decN) {
@@ -1503,7 +1616,7 @@ function renderBubbles(items, opt = {}) {
   const unanswered = foldUnanswered(items);
   // A balloon's markdown is drawn once and reused while its text, and what its
   // links depend on, stay the same: every poll used to redraw every balloon.
-  const ctx = HUB_PORT + '|' + fileBase() + '|' + ROOM;
+  const ctx = HUB_PORT + '|' + fileBase() + '|' + ROOM + '|' + REF_GEN;
   if (ctx !== MD_CTX) { MD_CACHE = new Map(); MD_CTX = ctx; }
   const used = new Map();
   const md = t => { t = t || ''; let h = MD_CACHE.get(t); if (h == null) h = mdToHtml(t); used.set(t, h); return h; };
@@ -1521,7 +1634,7 @@ function renderBubbles(items, opt = {}) {
       if (quiet(m, i)) quietRows++;
       else if (firstFull < 0 || i < firstFull) folded++;
     }
-    return foldBalloonHtml(m, i, plan[i], { md, open: FOLD.open.has(k), un: unanswered.get(k), idle: SOLO_IDLE });
+    return foldBalloonHtml(m, i, plan[i], { md, open: FOLD.open.has(k), un: unanswered.get(k), idle: SOLO_IDLE, act: copyLinkHtml, plain: refPlain });
   });
   // Never an absence without its reason: the rows say what they are.
   if (folded) rows.unshift(`<div class="fold-note" data-key="fold-note">${folded} earlier message${folded > 1 ? 's' : ''} folded. Click one to read it.</div>`);
@@ -1564,6 +1677,7 @@ function renderBubbles(items, opt = {}) {
   }
   applyComments();
   showLatest();
+  landPending();
 }
 // The bar over a transcript the hub types into: what is folded, and Just us.
 function showChatBar(items, quietRows) {
@@ -1647,7 +1761,113 @@ function foldToggle(el, open) {
     if (f) f.focus({ preventScroll: true });
   }
 }
-function renderMsgs(room) { renderBubbles(room.messages); }
+function renderMsgs(room) { CHAT_DRAWN = true; renderBubbles(room.messages); }
+// ---- Copy link, and landing on a linked balloon ----------------------------
+let CHAT_DRAWN = false;    // the conversation itself has been drawn, not just the page
+let GOTO = (qs.get('msg') || '').trim();   // the balloon to land on once it is drawn
+let SOLO_WANT = null;      // {sid, n}: an older transcript turn than shown, asked for by a link
+let _landing = false;
+function copyLinkHtml(m) {
+  if (!ROOM || !m || !m.id || m.id === 'task') return '';
+  return `<button type="button" class="copy-link" data-mid="${esc(m.id)}" title="Copy a link to this message, to paste into another chat">Copy link</button>`;
+}
+const msgLink = mid => location.origin + refHref(ROOM, mid);
+// The clipboard API needs a secure context, and the hub is plain http on the
+// tailnet: there, a selected field and execCommand, which http still allows.
+async function copyText(s) {
+  try {
+    if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(s);
+      return true;
+    }
+  } catch (e) {}
+  const ta = document.createElement('textarea');
+  ta.value = s; ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;';
+  const had = document.activeElement;
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) {}
+  ta.remove();
+  try { if (had && had.focus) had.focus({ preventScroll: true }); } catch (e) {}
+  return ok;
+}
+async function copyLink(btn) {
+  const url = msgLink(btn.dataset.mid), msg = btn.closest('.msg');
+  if (await copyText(url)) {
+    btn.textContent = 'Copied'; btn.classList.add('done');
+    clearTimeout(btn._done);
+    btn._done = setTimeout(() => { btn.textContent = 'Copy link'; btn.classList.remove('done'); }, 1500);
+    return;
+  }
+  // The browser would not copy at all: the link, selected, to copy by hand.
+  if (!msg) return;
+  let f = msg.querySelector('.copy-field');
+  if (!f) {
+    f = document.createElement('div');
+    f.className = 'copy-field';
+    f.innerHTML = '<span>Copy this link:</span><input type="text" readonly aria-label="Link to this message">';
+    msg.querySelector('.from').after(f);
+    f.querySelector('input').addEventListener('keydown', e => { if (e.key === 'Escape') f.remove(); });
+  }
+  const inp = f.querySelector('input');
+  inp.value = url;
+  inp.focus({ preventScroll: true });
+  inp.select();
+}
+function showGotoNote(text) {
+  const n = $('#goto-note');
+  if (!n) return;
+  setText(n.querySelector('span'), text);
+  n.hidden = !text;
+}
+// Land on a balloon: open it if it is folded, bring it to the middle of the
+// chat and mark it for a moment. It waits until the conversation is drawn and
+// the chat has a height (a hidden frame has none).
+function gotoMsg(mid) {
+  GOTO = String(mid || '').trim();
+  showGotoNote('');
+  landPending();
+}
+function landPending() {
+  const box = $('#msgs');
+  if (!GOTO || !CHAT_DRAWN || _landing || !box || !box.clientHeight || _cmtComposerOpen || _selBtn) return;
+  _landing = true;
+  try {
+    const mid = GOTO;
+    const find = sel => [...box.querySelectorAll(sel)].find(e => e.dataset.mid === mid);
+    let el = find('.msg[data-mid]');
+    const row = !el && find('.msg-fold[data-mid]');
+    if (row) {
+      FOLD.open.add(row.dataset.key);
+      renderBubbles(LAST_ITEMS, { anchor: row });
+      el = find('.msg[data-mid]');
+    }
+    if (!el) {
+      // A turn of a solo transcript older than the chat shows: draw back to it.
+      const t = mid.match(/^(.+):(\d+)$/);
+      if (t && SOLO_SID && !(SOLO_WANT && SOLO_WANT.sid === t[1] && SOLO_WANT.n === +t[2])
+          && (t[1] === SOLO_SID || (SOLO_ROT && t[1] === SOLO_ROT.fromSessionId))) {
+        SOLO_WANT = { sid: t[1], n: +t[2] };
+        renderSolo(SOLO_SID, SOLO_AGENT, true);
+        return;
+      }
+      GOTO = '';
+      showGotoNote('The linked message was not found in this conversation.');
+      return;
+    }
+    GOTO = '';
+    box.scrollTop = Math.max(0, el.offsetTop - Math.max(8, (box.clientHeight - el.offsetHeight) / 2));
+    STICK = nearEnd(box);
+    showLatest();
+    el.classList.remove('landed');
+    void el.offsetWidth;          // start the fade again on a second landing
+    el.classList.add('landed');
+    clearTimeout(el._landed);
+    el._landed = setTimeout(() => el.classList.remove('landed'), 2600);
+  } finally { _landing = false; }
+}
 // The task text is the first message of the conversation. Prepend it as a user
 // bubble unless the history already records it verbatim.
 function withTaskBubble(items, spec, key) {
@@ -1703,16 +1923,20 @@ function soloItems(raw, sid, agentId, keep) {
     : t.answers ? { answers: t.answers } : {}));
 }
 async function prevSessionItems(sid, agentId) {
-  if (SOLO_PREV.sid === sid) return SOLO_PREV.items;
+  // A link to an older turn than those shown draws back to it.
+  const want = SOLO_WANT && SOLO_WANT.sid === sid ? SOLO_WANT.n : -1;
+  if (SOLO_PREV.sid === sid && (want < 0 || SOLO_PREV.from <= want)) return SOLO_PREV.items;
   const d = await fetch('/api/session/' + encodeURIComponent(sid) + '?full=1').then(r => r.json());
-  SOLO_PREV = { sid, items: soloItems(d.turns || [], sid, agentId, PREV_TURNS_SHOWN) };
+  const turns = d.turns || [];
+  const items = soloItems(turns, sid, agentId, Math.max(PREV_TURNS_SHOWN, want < 0 ? 0 : turns.length - want));
+  SOLO_PREV = { sid, items, from: items.length ? +String(items[0].id).split(':').pop() : 0 };
   return SOLO_PREV.items;
 }
 // Poll a cheap size+mtime signal; re-render the transcript only when it actually
 // grows. Reliable (catches every new turn, even while the agent is still working)
 // and light (the full transcript is fetched only on a real change).
 async function checkSolo() {
-  if (!SOLO_SID) { renderBubbles([]); return; }
+  if (!SOLO_SID) { CHAT_DRAWN = true; renderBubbles([]); return; }
   try {
     const s = await fetch('/api/session/' + encodeURIComponent(SOLO_SID) + '?stat=1').then(r => r.json());
     if (s && typeof s.size === 'number') {
@@ -1736,7 +1960,9 @@ async function renderSolo(sid, agentId, force) {
     const raw = d.turns || [];
     if (!force && raw.length === SOLO_TURN_COUNT) return;   // nothing new
     SOLO_TURN_COUNT = raw.length;
-    let items = soloItems(raw, sid, agentId, 120);
+    // A link to an older turn than the last 120 draws back to it.
+    const want = SOLO_WANT && SOLO_WANT.sid === sid ? raw.length - SOLO_WANT.n : 0;
+    let items = soloItems(raw, sid, agentId, Math.max(120, want));
     // A PO rotated into this session: the end of the one before, then the line.
     const rot = SOLO_ROT && SOLO_ROT.toSessionId === sid ? SOLO_ROT : null;
     if (rot && rot.fromSessionId) {
@@ -1744,6 +1970,10 @@ async function renderSolo(sid, agentId, force) {
       try { prev = await prevSessionItems(rot.fromSessionId, agentId); } catch (e) {}
       items = prev.concat([{ id: 'rot' + (rot.n || ''), divider: rot }], items);
     }
+    // What the hub wrote out under a balloon link is the agent's copy: the
+    // balloon shows the words as they were sent, and the link as its chip.
+    items.forEach(m => { if (m.from === 'user' && m.text) m.text = stripRefBlocks(m.text); });
+    CHAT_DRAWN = true;
     renderBubbles(items);
   } catch (e) {} finally { SOLO_FETCHING = false; }
 }
@@ -2195,7 +2425,9 @@ async function sendResuming(text, to, key) {
 // Whether a solo send goes through the hub rather than straight into the
 // terminal (typed there, it is submitted at once; the hub waits for a settled
 // screen, which a resume needs and a running agent does not).
-function needsResume() { return !ROOM_LIVE || ROOM_RESUMING; }
+// A message with links to balloons goes through the hub as well: the hub
+// writes each referenced message out for the agent.
+function needsResume(text) { return !ROOM_LIVE || ROOM_RESUMING || hasMessageRefs(text); }
 // A live send that found the session gone since the last poll (404, 410, not
 // typed) is not lost: it goes the resume way instead. Anything else rethrows.
 async function orResume(e, text, to, key) {
@@ -2256,7 +2488,7 @@ $('#send').onclick = async () => {
   // written a rollout, so early on there is a terminal to type into but no id.
   if (SOLO_MODE) {
     const key = msgKey();
-    try { if (needsResume()) await sendResuming(t, '', key); else await sendSolo(t).catch(e => orResume(e, t, '', key)); }
+    try { if (needsResume(t)) await sendResuming(t, '', key); else await sendSolo(t).catch(e => orResume(e, t, '', key)); }
     catch (e) {
       if (keptByHub(e)) return;
       SEND_ERR = 'Not sent: ' + sendErrorText(e) + '. Your message is still in the box.';
@@ -2307,7 +2539,15 @@ window.addEventListener('message', (e) => {
   // The dashboard opened this chat's panel again: a closed task panel only
   // slides off screen, so its size never says so. Open at the latest message.
   else if (d.ensemble === 'shown' && e.source === window.parent) toLatest();
+  // The dashboard opened this chat for a link to one of its balloons.
+  else if (d.ensemble === 'goto-msg' && e.source === window.parent && e.origin === location.origin) {
+    gotoMsg(d.msg);
+    try { window.parent.postMessage({ type: 'goto-taken', roomId: ROOM }, location.origin); } catch (err) {}
+  }
 });
+// Inside the dashboard, say this chat has started: a balloon link opened while
+// it was still loading is sent to it again.
+try { if (window.parent !== window) window.parent.postMessage({ type: 'chat-ready', roomId: ROOM }, location.origin); } catch (e) {}
 
 // ---- Rich session actions (parity with the dashboard's docked toolbar) -------
 // A solo session keys on its sessionId; a room keys on the room id (label/pin
@@ -2610,7 +2850,7 @@ async function submitComments() {
   let sent = false;
   try {
     if (!SOLO_MODE) await sendResuming(body, to, key);       // the hub decides: running or resumed
-    else if (needsResume()) await sendResuming(body, '', key);
+    else if (needsResume(body)) await sendResuming(body, '', key);
     else await sendSolo(body).catch(e => orResume(e, body, '', key));
     sent = true;
   } catch (e) {
@@ -2642,6 +2882,8 @@ function showTrayItem(cid) {
   setTimeout(() => it.classList.remove('hit'), 1200);
 }
 $('#msgs').addEventListener('click', e => {
+  const cl = e.target.closest && e.target.closest('.copy-link');
+  if (cl) { copyLink(cl); return; }
   const m = e.target.closest && e.target.closest('mark.cmt-hl');
   if (m) showTrayItem(m.dataset.cid);
   const row = e.target.closest && e.target.closest('.msg-fold');
@@ -2687,7 +2929,7 @@ $('#msgs').addEventListener('scroll', msgsScrolled, { passive: true });
 let _msgsH = -1;
 function msgsResized() {
   const box = $('#msgs'), h = box.clientHeight;
-  if (h && _msgsH === 0) toLatest();
+  if (h && _msgsH === 0) { if (GOTO) landPending(); else toLatest(); }
   else if (h && STICK) box.scrollTop = box.scrollHeight;
   _msgsH = h;
   showLatest();
@@ -2706,6 +2948,21 @@ document.addEventListener('click', ev => {
   ev.preventDefault();
   host.postMessage({ type: 'open-task', roomId: a.dataset.task }, location.origin);
 });
+// A balloon link's chip: in this conversation it lands on the balloon; inside
+// the dashboard, the dashboard opens that task or PO at it; on its own, this
+// page goes there. With a modifier key it is a link, opening a new tab.
+document.addEventListener('click', ev => {
+  const a = ev.target.closest && ev.target.closest('a.ref-chip');
+  if (!a || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+  ev.preventDefault();
+  const room = a.dataset.refRoom, msg = a.dataset.refMsg;
+  if (room === ROOM) { gotoMsg(msg); return; }
+  let host = null;
+  try { if (window.parent !== window && window.parent.location.origin === location.origin) host = window.parent; } catch (e) {}
+  if (host) host.postMessage({ type: 'open-msg', roomId: room, msg }, location.origin);
+  else location.href = a.href;
+});
+$('#goto-note .goto-x').addEventListener('click', () => showGotoNote(''));
 $('#msgs').addEventListener('mouseup', _onSelect);
 $('#msgs').addEventListener('touchend', _onSelect);
 $('#msgs').addEventListener('mousedown', () => hideSelBtn());

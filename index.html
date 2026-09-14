@@ -8186,6 +8186,7 @@ setInterval(() => {
 // #view, built once: the session inside is created once per PO and only ever
 // hidden or restyled, so navigating never reconnects it.
 var PO_PEEK = false;
+var PO_PIN = '';   // the project whose PO a balloon link opened, while its drawer is open
 var PO_LAST = (() => { try { return localStorage.getItem('cd-po-last') || ''; } catch (e) { return ''; } })();
 function poRowOf(pj) {
   const rid = pj && pj.poRoomId;
@@ -8207,6 +8208,8 @@ function poSplitProject() {
 function poContext() {
   const split = poSplitProject();
   if (split) return split;
+  const pin = PO_PEEK && PO_PIN ? projectById(PO_PIN) : null;
+  if (pin && poRowOf(pin)) return pin;
   if (SELECTED_SID) {
     const r = ALL_ROWS.find(x => x.sessionId === SELECTED_SID);
     const pj = r && projectOfRoom(r.roomId || r.sessionId);
@@ -8333,7 +8336,7 @@ function poFocusComposer() {
   try { const i = f && f.contentDocument && f.contentDocument.getElementById('input'); if (i) i.focus(); } catch (e) {}
 }
 function poClosePeek() {
-  PO_PEEK = false;
+  PO_PEEK = false; PO_PIN = '';
   renderPo();
   const b = document.getElementById('po-pill');
   if (b && !b.hidden) b.focus();
@@ -8382,7 +8385,7 @@ document.addEventListener('click', async (ev) => {
     }
     // Already leading the page — unless a task covers it, as it does on a phone.
     if (poSplitProject() && !boardWide() && !(SELECTED_SID && isPhone())) { poFocusComposer(); return; }
-    PO_PEEK = !PO_PEEK; renderPo();
+    PO_PEEK = !PO_PEEK; if (!PO_PEEK) PO_PIN = ''; renderPo();
     // Not on a phone: focus raises the keyboard over the conversation you came to read.
     if (PO_PEEK && !isPhone()) poFocusComposer();
     return;
@@ -10476,11 +10479,48 @@ window.addEventListener('message', (ev) => {
   if (d && d.type === 'dock-session' && d.roomId) openDetail(d.roomId);
   // A task link clicked inside a session or file viewer framed in this page.
   if (d && d.type === 'open-task' && d.roomId && ev.origin === location.origin) openTaskLink(d.roomId);
+  // A balloon link clicked in a chat framed here; a chat framed here that has
+  // started, or has landed on the balloon it was sent to.
+  if (d && d.type === 'open-msg' && d.roomId && d.msg && ev.origin === location.origin) openMsgLink(String(d.roomId), String(d.msg));
+  if (d && d.type === 'chat-ready' && d.roomId && ev.origin === location.origin) sendGotoMsg(String(d.roomId));
+  if (d && d.type === 'goto-taken' && d.roomId && ev.origin === location.origin) GOTO_MSG.delete(String(d.roomId));
   // A file viewer in a Workspace tab, saying how the tab was left.
   if (d && (d.type === 'fv-state' || d.type === 'fv-missing' || d.type === 'fv-key') && ev.origin === location.origin) wsFrameMessage(ev.source, d);
 });
 // A task named in text (room-1a2b3c4d) opens here, in the page; with a
 // modifier key it opens in a new tab, which lands on the same task.
+// A link to a balloon (a chip in a chat): the task's panel or the PO's drawer
+// opens as the dashboard opens them, and the chat framed there is told which
+// balloon to land on; a chat still loading is told when it starts
+// (chat-ready). A conversation that is neither here opens in a tab of its own.
+const GOTO_MSG = new Map();   // roomId → message id, until that chat has landed
+function openMsgLink(rid, msg) {
+  const pj = registeredProjects().find(p => p.poRoomId === rid && poRowOf(p));
+  const row = ALL_ROWS.find(r => r.roomId === rid || r.sessionId === rid);
+  if (!pj && !row) {
+    window.open('/session?room=' + encodeURIComponent(rid) + '&msg=' + encodeURIComponent(msg), '_blank', 'noopener');
+    return;
+  }
+  GOTO_MSG.set(rid, msg);
+  if (pj) {
+    const split = poSplitProject();
+    if (split && !boardWide() && !(SELECTED_SID && isPhone())) {
+      // A PO leads the page: this one, or go to the project this one leads.
+      if (split.id !== pj.id) { SELECTED_PROJECT = pj.id; PROJECT_TAB = 'tasks'; WS_SCOPE = ''; SB_DEST = ''; renderRows(); }
+    } else { PO_PIN = pj.id; PO_PEEK = true; renderPo(); }
+  } else {
+    openDetail(row.sessionId);
+  }
+  sendGotoMsg(rid);
+}
+function sendGotoMsg(rid) {
+  const msg = GOTO_MSG.get(rid);
+  if (!msg) return;
+  document.querySelectorAll('iframe.dp-session, iframe.po-session').forEach(f => {
+    if (f.dataset.room !== rid || !f.contentWindow) return;
+    try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg }, location.origin); } catch (e) {}
+  });
+}
 function openTaskLink(rid) {
   if (!ALL_ROWS.some(r => r.sessionId === rid || r.roomId === rid)) {
     toast(`${rid} is not a task on this hub`, 4000, 'err');
