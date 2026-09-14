@@ -549,7 +549,7 @@
   .msg .pend-state { margin-top:var(--s-100); font-size:var(--fs-200); line-height:16px; color:var(--c-danger-fg); display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-200); }
   .msg .pend-state button { min-height:24px; padding:0 var(--s-200); font-size:var(--fs-200); }   /* compact; a finger's size on a phone, below */
   .msg { border:1px solid var(--border); border-radius:var(--r-300); padding:8px 10px; max-width:92%; background:var(--surface); }
-  .msg .from { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; opacity:.85; margin-bottom:3px; }
+  .msg .from { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; margin-bottom:3px; }
   .msg.claude { border-color:color-mix(in srgb, var(--agent-claude-bg) 45%, transparent); } .msg.claude .from { color:var(--agent-claude-bg); }
   .msg.codex { border-color:color-mix(in srgb, var(--agent-codex-bg) 45%, transparent); } .msg.codex .from { color:var(--agent-codex-bg); }
   /* Your messages read left-aligned like everyone else's — right-aligning them
@@ -573,6 +573,29 @@
   .msg-fold .from > .mention { background:transparent; padding:0; color:inherit; text-transform:none; letter-spacing:0; }
   .msg-fold.claude .from { color:var(--agent-claude-bg); } .msg-fold.codex .from { color:var(--agent-codex-bg); }
   .msg-fold .fl { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* What a balloon answers, and hub traffic. The hub's inputs are rows on the
+     sunken ground with no person's edge; the chips are quiet text, and only a
+     decision is a lozenge (amber: it needs the person). */
+  .msg-fold .chips { flex:0 0 auto; max-width:45%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .msg-fold.user.hub { border-left-width:1px; background:var(--surface-sunken); }
+  .msg-fold.user.hub:hover { background:var(--hover); }
+  .msg.user.hub { border-left-width:1px; background:var(--surface-sunken); }
+  .hub-who { color:var(--fg-muted); }
+  .answers, .no-answer, .hub-kind { margin-left:var(--s-200); font-size:var(--fs-100); font-weight:400;
+    text-transform:none; letter-spacing:0; color:var(--fg-muted); }
+  .msg-fold .chips > :first-child { margin-left:0; }
+  .no-answer { font-weight:600; }
+  .lz { display:inline-block; height:16px; line-height:16px; padding:0 6px; margin-left:var(--s-200); border-radius:var(--r-100);
+    font-size:var(--fs-100); font-weight:600; text-transform:uppercase; letter-spacing:.05em; vertical-align:baseline; }
+  .lz-warn { background:var(--c-warning-bg); color:var(--c-warning-fg); }
+  /* Over a transcript the hub types into: what is folded, and Just us. */
+  #chatbar { flex:0 0 auto; display:flex; align-items:center; gap:var(--s-200); padding:var(--s-050) 12px;
+    border-bottom:1px solid var(--border); color:var(--fg-muted); font-size:var(--fs-200); line-height:16px; }
+  #chatbar[hidden] { display:none; }
+  #chatbar-note { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #just-us { flex:0 0 auto; height:24px; padding:0 var(--s-200); font-size:var(--fs-200); line-height:16px; }
+  #just-us[aria-pressed="true"] { background:var(--selected-bg); color:var(--selected-fg); }
+  #just-us:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   /* A balloon opened from its row folds again from its header. */
   .msg .from .fold-btn { float:right; margin:-2px -4px 0 var(--s-200); padding:0 var(--s-100); background:transparent; border:none;
     color:var(--fg-muted); font-size:var(--fs-100); font-weight:400; text-transform:none; letter-spacing:0; line-height:16px; }
@@ -779,6 +802,7 @@
 <main>
   <div id="chatcol">
     <div id="msgpane">
+      <div id="chatbar" hidden><span id="chatbar-note"></span><button type="button" id="just-us" aria-pressed="false" title="Show only your messages and the answers to them in full; everything else folds to one line">Just us</button></div>
       <div id="msgs"></div>
       <button type="button" id="to-latest" hidden>Latest ↓</button>
     </div>
@@ -1250,15 +1274,16 @@ function mountTerm(el, ptyId) {
 // The latest exchange is drawn in full: at least the last FOLD_MIN balloons,
 // and back to the person's own last message when that is within FOLD_MAX.
 // Everything older is one row each (who, first line), opened in place by a
-// click. A rotation line is a landmark and always shows.
+// click. A rotation line is a landmark and always shows. What is quiet (hub
+// traffic, see below) is a row at any age and counts for none of this.
 const FOLD_MIN = 10, FOLD_MAX = 25;
 const isLandmark = m => !!(m.divider || (m.kind === 'notice' && m.rotation));
 const foldKey = (m, i) => m.id || ('#' + i);
-function foldStart(items) {
+function foldStart(items, quiet) {
   let seen = 0, start = items.length, userSeen = false;
   for (let i = items.length - 1; i >= 0; i--) {
     const m = items[i];
-    if (isLandmark(m)) continue;
+    if (isLandmark(m) || (quiet && quiet(m, i))) continue;
     seen++;
     if (seen <= FOLD_MIN) { start = i; userSeen = userSeen || m.from === 'user'; continue; }
     if (userSeen || seen > FOLD_MAX) break;
@@ -1274,22 +1299,31 @@ function foldStart(items) {
 // fold = { base: key → 'full' | 'row' as last drawn, open: keys the reader opened }.
 // A balloon holding a comment's passage (held) is opened, and stays open while
 // the reader is scrolled up even when the comment goes.
-function foldPlan(items, fold, stick, held) {
+// quiet(m, i): a row whatever its age (hub traffic), unless opened or held. A
+// quiet balloon drawn open is 'kept' in base, so it too stays open while the
+// reader is scrolled up; foldUnkeep lets a Just us click fold it again.
+function foldPlan(items, fold, stick, held, quiet) {
   let prev = stick ? null : fold.base, last = -1;
   if (prev) items.forEach((m, i) => { if (prev.has(foldKey(m, i))) last = i; });
   if (last < 0) prev = null;          // nothing drawn before is still here
-  const start = prev ? -1 : foldStart(items);
+  const start = prev ? -1 : foldStart(items, quiet);
   const base = new Map();
   const plan = items.map((m, i) => {
     if (isLandmark(m)) return 'line';
     const k = foldKey(m, i);
+    const h = !!(held && held(m, i));
     let b = prev ? (prev.get(k) || (i > last ? 'full' : 'row')) : (i >= start ? 'full' : 'row');
-    if (b === 'row' && held && held(m, i)) b = 'full';
-    base.set(k, b);
-    return (b === 'full' || fold.open.has(k)) ? 'full' : 'row';
+    if (b === 'row' && h) b = 'full';
+    const q = !!(quiet && quiet(m, i));
+    const shown = b !== 'row' && (h || !q || b === 'kept');
+    base.set(k, shown && q ? 'kept' : b);
+    return (shown || fold.open.has(k)) ? 'full' : 'row';
   });
   fold.base = base;
   return plan;
+}
+function foldUnkeep(fold) {
+  if (fold.base) fold.base.forEach((b, k) => { if (b === 'kept') fold.base.set(k, 'full'); });
 }
 // A folded balloon's first line, as plain text.
 function foldLine(text) {
@@ -1318,11 +1352,119 @@ function foldHeld(items, comments) {
   }
   return keys;
 }
+// What each balloon answers. The hub types progress checks, task reports and
+// handover notes into the agent's terminal, and its transcript records them as
+// the person's turns. The hub tells them apart (kind on a person's turn,
+// answers on the agent's; the page keeps no list of what the hub types): a hub
+// input is a row, every agent balloon says what it answers, and "Just us"
+// folds the replies to the hub too.
+const HUB_KIND_LABEL = { digest: 'Progress check', report: 'Report', relay: 'Team message',
+  resumed: 'Resumed', handover: 'Handover request', rotation: 'New session', helper: 'Restart helper' };
+const isHubInput = m => !!m && m.from === 'user' && !!m.kind && m.kind !== 'human';
+const foldShort = t => { t = String(t || '').trim(); return t.length > 40 ? t.slice(0, 39) + '…' : t; };
+// The chip on an agent's balloon: { text, tip }, or null when it is not known.
+function answerChip(a) {
+  if (!a || !a.kind) return null;
+  const task = a.taskTitle ? `task “${a.taskTitle}”${a.taskId ? ' (' + a.taskId + ')' : ''}` : 'a task';
+  const said = {
+    human: ['to you', 'A reply to your message'],
+    report: [`on a report from ${a.taskTitle ? 'task ' + foldShort(a.taskTitle) : 'a task'}`,
+      `A reply to a report${a.reportKind ? ' (' + a.reportKind + ')' : ''} from ${task}, which the hub typed in`],
+    digest: ['progress check', 'A reply to the hub’s progress check of the project'],
+    relay: ['on a team message', 'A reply to the hub saying a teammate posted in the room'],
+    resumed: ['after a resume', 'The first words after the task was started again'],
+    handover: ['on the handover request', 'A reply to the hub asking for the handover to be written'],
+    rotation: ['after the handover', 'The first words of a fresh session, from the handover'],
+    helper: ['after a restart', 'A reply to the restart helper’s note after the hub restarted'],
+  }[a.kind];
+  return said ? { text: said[0], tip: said[1] } : null;
+}
+// A hub input's row: what it is, and its words without the hub's header.
+function hubLabel(m) {
+  if (m.kind === 'report' && m.taskTitle) {   // "Completed · task Docs", "Review 1 (changes requested) · task Docs"
+    const k = m.reportKind ? m.reportKind[0].toUpperCase() + m.reportKind.slice(1) : 'Report';
+    return `${k} · task ${foldShort(m.taskTitle)}`;
+  }
+  return HUB_KIND_LABEL[m.kind] || 'From the hub';
+}
+// A report's words start after its header, found from the parsed task: a title
+// may itself hold "): ".
+function hubBody(m) {
+  const t = String(m.text || '').replace(/^\s*\[[^\]\n]*\]\s*/, '');
+  if (m.kind !== 'report' || !m.taskId) return t;
+  const head = `from task '${m.taskTitle || ''}' (${m.taskId}, `;
+  const h = t.indexOf(head), at = h >= 0 ? t.indexOf('): ', h + head.length) : -1;
+  return at >= 0 ? t.slice(at + 3) : t;
+}
+// A line of its own asking for the person's decision ("Decision needed: …").
+const DECISION_RE = /^[ \t]*(?:(?:[-*+>]|#{1,6})[ \t]+)*(?:\*\*|__)?Decision needed:/m;
+const isDecision = m => !!m && !m.divider && m.from !== 'user' && DECISION_RE.test(m.text || '');
+// Quiet: a row at any age. A hub input always; in Just us also an agent's
+// reply to one. A decision is the person's whatever it answers, so it stays.
+function quietItem(m, justUs) {
+  if (isHubInput(m)) return true;
+  return !!justUs && !!m && m.from !== 'user' && !!m.answers && m.answers.kind !== 'human' && !isDecision(m);
+}
+// The person's messages that got no agent text before the next input: key →
+// 'past' (the hub typed something since) or 'last' (nothing since, so the agent
+// may still be on it). Messages in a row share the answer after them. Only
+// transcript turns say whose they are; a room's messages are never marked.
+function foldUnanswered(items) {
+  const out = new Map();
+  items.forEach((m, i) => {
+    if (!m || m.from !== 'user' || m.kind !== 'human') return;
+    let j = i + 1;
+    while (j < items.length && (isLandmark(items[j]) || (items[j].from === 'user' && items[j].kind === 'human'))) j++;
+    if (j >= items.length) out.set(foldKey(m, i), 'last');
+    else if (items[j].from === 'user') out.set(foldKey(m, i), 'past');
+  });
+  return out;
+}
+// A balloon's header after who wrote it: what it answers, a decision (the one
+// lozenge), or that a message of the person's has had no answer.
+function foldChips(m, un, idle) {
+  let h = '';
+  if (isHubInput(m)) h += `<span class="hub-kind">${esc(hubLabel(m))}</span>`;
+  const a = m.from !== 'user' ? answerChip(m.answers) : null;
+  if (a) h += `<span class="answers" title="${esc(a.tip)}">${esc(a.text)}</span>`;
+  if (isDecision(m)) h += '<span class="lz lz-warn">needs your decision</span>';
+  if (un === 'past' || (un === 'last' && idle))
+    h += '<span class="no-answer" title="The agent wrote nothing back before its next input">no answer yet</span>';
+  return h;
+}
+// One balloon drawn as a row or in full. o: { md, open, un, idle }. The same
+// item draws the same markup, so a poll keeps its element (patchChildren).
+function foldBalloonHtml(m, i, how, o) {
+  const key = esc(foldKey(m, i));
+  const hub = isHubInput(m);
+  const cls = (m.from === 'user' ? 'user' : esc(m.from)) + (hub ? ' hub' : '');
+  const who = hub ? '<span class="hub-who">Hub</span>' : identLabel(m.from);
+  const to = m.to && m.to !== 'all' ? ` <span class="to">→ ${identLabel(m.to)}</span>` : '';
+  const chips = foldChips(m, o.un, o.idle);
+  if (how === 'row') {
+    return `<button type="button" class="msg-fold ${cls}" data-key="${key}" data-mid="${esc(m.id || '')}" aria-expanded="false" title="Open this message"><span class="from">${who}${to}</span>${chips ? `<span class="chips">${chips}</span>` : ''}<span class="fl">${esc(foldLine(hub ? hubBody(m) : m.text))}</span></button>`;
+  }
+  const fb = o.open ? '<button type="button" class="fold-btn" title="Fold this message again" aria-expanded="true">Fold</button>' : '';
+  return `<div class="msg ${cls}" data-mid="${esc(m.id || '')}" data-key="${key}" data-from="${esc(m.from || '')}"><div class="from">${fb}${who}${to}${chips}</div><div class="text md">${o.md(m.text)}</div></div>`;
+}
+// The "Latest ↓" control: a decision waiting beats a count of new balloons.
+function latestLabel(newN, decN) {
+  const s = n => n > 1 ? 's' : '';
+  if (decN) return { label: `${decN} decision${s(decN)} waiting · Latest ↓`,
+    tip: `Go to the latest message (${decN} asking for your decision since you scrolled up)` };
+  if (newN) return { label: `${newN} new · Latest ↓`, tip: `Go to the latest message (${newN} new since you scrolled up)` };
+  return { label: 'Latest ↓', tip: 'Go to the latest message' };
+}
 // ---- Folding a long conversation: end
 let FOLD = { base: null, open: new Set() };
 let STICK = true;          // at the end of the chat: new messages keep it there
 let LAST_ITEMS = null;     // what was last drawn, to draw it again after a click
 let SEEN = new Set(), NEW_N = 0;   // balloons seen at the end; how many came since
+let DEC_N = 0;             // of those, how many ask for a decision
+let SOLO_IDLE = false;     // the solo agent is not working: its silence is an answer not given
+// Just us: only the person's messages and the answers to them in full. Per browser.
+let JUST_US = false;
+try { JUST_US = localStorage.getItem('cd-chat-just-us') === '1'; } catch (e) {}
 let MD_CACHE = new Map(), MD_CTX = '';
 const nearEnd = box => box.scrollTop + box.clientHeight >= box.scrollHeight - 50;
 // The first child at or below the top of the view, and where it sits in it.
@@ -1354,32 +1496,34 @@ function renderBubbles(items, opt = {}) {
   // A balloon holding a comment's passage stays open, so its highlight shows.
   const heldKeys = foldHeld(items, COMMENTS);
   const held = heldKeys.size ? (m, i) => heldKeys.has(foldKey(m, i)) : null;
-  const plan = foldPlan(items, FOLD, stick, held);
+  const quiet = (m, i) => quietItem(m, JUST_US);
+  const plan = foldPlan(items, FOLD, stick, held, quiet);
+  const unanswered = foldUnanswered(items);
   // A balloon's markdown is drawn once and reused while its text, and what its
   // links depend on, stay the same: every poll used to redraw every balloon.
   const ctx = HUB_PORT + '|' + fileBase() + '|' + ROOM;
   if (ctx !== MD_CTX) { MD_CACHE = new Map(); MD_CTX = ctx; }
   const used = new Map();
   const md = t => { t = t || ''; let h = MD_CACHE.get(t); if (h == null) h = mdToHtml(t); used.set(t, h); return h; };
-  let folded = 0;
-  const keys = [];
+  let folded = 0, quietRows = 0;
+  const firstFull = plan.indexOf('full');
+  const keys = [], decKeys = [];
   const rows = items.map((m, i) => {
-    const key = esc(foldKey(m, i));
+    const k = foldKey(m, i);
     if (plan[i] === 'line') {
-      return `<div class="rot-line" role="separator" data-mid="${esc(m.id || '')}" data-key="${key}"><span>${esc(rotationText(m.rotation || m.divider))}</span></div>`;
+      return `<div class="rot-line" role="separator" data-mid="${esc(m.id || '')}" data-key="${esc(k)}"><span>${esc(rotationText(m.rotation || m.divider))}</span></div>`;
     }
-    keys.push(foldKey(m, i));
-    const cls = m.from === 'user' ? 'user' : esc(m.from);
-    const to = m.to && m.to !== 'all' ? ` <span class="to">→ ${identLabel(m.to)}</span>` : '';
+    keys.push(k);
+    if (isDecision(m)) decKeys.push(k);
     if (plan[i] === 'row') {
-      folded++;
-      return `<button type="button" class="msg-fold ${cls}" data-key="${key}" data-mid="${esc(m.id || '')}" aria-expanded="false" title="Open this message"><span class="from">${identLabel(m.from)}${to}</span><span class="fl">${esc(foldLine(m.text))}</span></button>`;
+      if (quiet(m, i)) quietRows++;
+      else if (firstFull < 0 || i < firstFull) folded++;
     }
-    const fb = FOLD.open.has(foldKey(m, i)) ? '<button type="button" class="fold-btn" title="Fold this message again" aria-expanded="true">Fold</button>' : '';
-    return `<div class="msg ${cls}" data-mid="${esc(m.id || '')}" data-key="${key}" data-from="${esc(m.from || '')}"><div class="from">${fb}${identLabel(m.from)}${to}</div><div class="text md">${md(m.text)}</div></div>`;
+    return foldBalloonHtml(m, i, plan[i], { md, open: FOLD.open.has(k), un: unanswered.get(k), idle: SOLO_IDLE });
   });
   // Never an absence without its reason: the rows say what they are.
   if (folded) rows.unshift(`<div class="fold-note" data-key="fold-note">${folded} earlier message${folded > 1 ? 's' : ''} folded. Click one to read it.</div>`);
+  showChatBar(items, quietRows);
   // Messages you just sent that the transcript hasn't recorded yet (a long
   // agent turn delays the flush): keep showing them until they appear for real.
   // Some never will — a "/command", or a digit answering a prompt — so an echo
@@ -1410,13 +1554,35 @@ function renderBubbles(items, opt = {}) {
   MD_CACHE = used;
   if (stick) {
     box.scrollTop = box.scrollHeight;
-    SEEN = new Set(keys); NEW_N = 0;
+    SEEN = new Set(keys); NEW_N = 0; DEC_N = 0;
   } else {
     keepPlace(box, place);
     NEW_N = keys.filter(k => !SEEN.has(k)).length;
+    DEC_N = decKeys.filter(k => !SEEN.has(k)).length;
   }
   applyComments();
   showLatest();
+}
+// The bar over a transcript the hub types into: what is folded, and Just us.
+function showChatBar(items, quietRows) {
+  const bar = $('#chatbar'), btn = $('#just-us');
+  if (!bar || !btn) return;
+  const any = items.some(m => isHubInput(m) || (m.from !== 'user' && m.answers));
+  bar.hidden = !any;
+  if (!any) return;
+  const pressed = JUST_US ? 'true' : 'false';
+  if (btn.getAttribute('aria-pressed') !== pressed) btn.setAttribute('aria-pressed', pressed);
+  const n = quietRows, s = n === 1 ? '' : 's';
+  setText($('#chatbar-note'), JUST_US
+    ? `Just you and the answers to you · ${n} other message${s} folded`
+    : n ? `${n} message${s} from the hub folded` : 'Nothing from the hub folded');
+}
+function toggleJustUs() {
+  JUST_US = !JUST_US;
+  foldUnkeep(FOLD);
+  try { localStorage.setItem('cd-chat-just-us', JUST_US ? '1' : '0'); } catch (e) {}
+  if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
+  else showChatBar([], 0);
 }
 // Replace only the bubbles that changed. Rewriting every bubble on each 2 s
 // poll replaced every link in the chat under the pointer: a click whose press
@@ -1451,9 +1617,8 @@ function showLatest() {
   if (!box || !btn) return;
   const away = !!box.clientHeight && !STICK;
   btn.hidden = !away;
-  const label = NEW_N ? `${NEW_N} new · Latest ↓` : 'Latest ↓';
+  const { label, tip } = latestLabel(NEW_N, DEC_N);
   setText(btn, label);
-  const tip = NEW_N ? `Go to the latest message (${NEW_N} new since you scrolled up)` : 'Go to the latest message';
   if (btn.title !== tip) btn.title = tip;
 }
 function toLatest() {
@@ -1461,7 +1626,7 @@ function toLatest() {
   STICK = true;
   if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
   box.scrollTop = box.scrollHeight;   // also when a selection held the render
-  SEEN = new Set([...box.children].map(k => k.dataset.key).filter(Boolean)); NEW_N = 0;
+  SEEN = new Set([...box.children].map(k => k.dataset.key).filter(Boolean)); NEW_N = 0; DEC_N = 0;
   showLatest();
 }
 // Open a folded balloon in place, or fold an opened one again. The row stays
@@ -1529,10 +1694,11 @@ function rotationText(r) {
 function soloItems(raw, sid, agentId, keep) {
   const turns = raw.filter((t, i) => i === 0 || t.role !== raw[i - 1].role || t.text !== raw[i - 1].text);
   const off = Math.max(0, turns.length - keep);
-  return turns.slice(off).map((t, i) => ({
+  return turns.slice(off).map((t, i) => Object.assign({
     id: sid + ':' + (off + i),
     from: (t.role === 'user') ? 'user' : agentId, to: '', text: t.text,
-  }));
+  }, t.role === 'user' ? { kind: t.kind || 'human', reportKind: t.reportKind, taskTitle: t.taskTitle, taskId: t.taskId, reporter: t.reporter }
+    : t.answers ? { answers: t.answers } : {}));
 }
 async function prevSessionItems(sid, agentId) {
   if (SOLO_PREV.sid === sid) return SOLO_PREV.items;
@@ -1702,6 +1868,12 @@ async function updateAgentStatus() {
     setText(stat, s.txt);
   });
   renderActivity(map, lmap);
+  // A message of the person's still without an answer says so once the agent
+  // has stopped working (a stopped session is not working either).
+  if (SOLO_SID) {
+    const idle = !SOLO_PTY || !ROOM_LIVE || agentState({ sessionId: SOLO_SID, ptyId: SOLO_PTY }, map, lmap).cls !== 'working';
+    if (idle !== SOLO_IDLE) { SOLO_IDLE = idle; if (LAST_ITEMS) renderBubbles(LAST_ITEMS); }
+  }
   // Solo: when the agent finishes a turn (leaves the working state), pull the new
   // transcript once — avoids constantly re-fetching a large transcript.
   if (SOLO_PTY) {
@@ -2486,6 +2658,7 @@ $('#msgs').addEventListener('click', e => {
   }
 });
 $('#to-latest').addEventListener('click', toLatest);
+$('#just-us').addEventListener('click', toggleJustUs);
 // Where the reader is: at the end the chat follows new messages; scrolled up it
 // stays put and "Latest ↓" offers the way back. A hidden frame scrolls to 0 and
 // says nothing about the reader, so it is not counted.
@@ -2499,7 +2672,7 @@ function msgsScrolled() {
   if (at && !STICK) {
     STICK = true;
     if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
-    SEEN = new Set([...box.children].map(k => k.dataset.key).filter(Boolean)); NEW_N = 0;
+    SEEN = new Set([...box.children].map(k => k.dataset.key).filter(Boolean)); NEW_N = 0; DEC_N = 0;
   }
   STICK = at;
   showLatest();

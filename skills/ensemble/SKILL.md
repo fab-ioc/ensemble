@@ -331,6 +331,22 @@ record in the handover why they are dropped.
 never poll. Keep turns short and the history small: hand large reading to a
 subagent, and don't re-read what you already have.
 
+**Asking the product owner to decide.** Put the whole decision in one reply:
+
+1. a line of its own: `Decision needed: <the question, in one sentence>`;
+2. the options as a short list, each with what it means for them;
+3. your recommendation, and why.
+
+The chat marks that reply "needs your decision" and the "Latest" control counts
+it while it is unread. Never say something needs their decision without the
+question, and never spread one decision across several turns.
+
+**Your replies to the hub are tagged.** The chat folds what the hub typed in
+(`[report]`, `[digest]`, `[handover]`, …) to one line and tags your answer to it,
+e.g. "on a report from task X" or "progress check". When that answer is meant
+for the product owner ("merged and live"), start with the outcome, so it reads
+on its own without the report above it.
+
 ### Bringing a project onto this model
 
 For a project that ran the old way (standing reviewers, reports by chat, no
