@@ -360,9 +360,6 @@ CHAT_SCHEME_FILE = DASHBOARD_DIR / "chat_scheme_override.json"
 JIRA_LINKS_FILE = DASHBOARD_DIR / "jira_links.json"  # {sid: [tickets]} user-added links (override scan)
 JIRA_UNLINKS_FILE = DASHBOARD_DIR / "jira_unlinks.json"  # {sid: [tickets]} user-removed from auto-scan
 PARENTS_FILE = DASHBOARD_DIR / "parents.json"  # child_sid -> parent_sid
-PINNED_FILE = DASHBOARD_DIR / "pinned.json"    # list of pinned session ids
-CATEGORIES_FILE = DASHBOARD_DIR / "categories.json"  # {sid: "category name"}
-KNOWN_CATEGORIES_FILE = DASHBOARD_DIR / "known_categories.json"  # explicit category list
 ARCHIVED_FILE = DASHBOARD_DIR / "archived.json"      # list of archived session ids
 SETTINGS_FILE = DASHBOARD_DIR / "settings.json"      # user preferences (openMode, …)
 PROJECTS_FILE = DASHBOARD_DIR / "projects.json"      # registered projects: [{id,name,path,isGit,createdAt}]
@@ -798,32 +795,6 @@ def save_labels(labels: dict[str, str]) -> None:
     tmp = LABELS_FILE.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(labels, indent=2, sort_keys=True), encoding="utf-8")
     tmp.replace(LABELS_FILE)
-
-
-def load_known_categories() -> list[str]:
-    try:
-        d = json.loads(KNOWN_CATEGORIES_FILE.read_text(encoding="utf-8"))
-        if isinstance(d, list):
-            return [x for x in d if isinstance(x, str) and x]
-    except (FileNotFoundError, json.JSONDecodeError):
-        pass
-    return []
-
-
-def save_known_categories(lst) -> None:
-    DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = KNOWN_CATEGORIES_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(sorted(set(lst)), indent=2), encoding="utf-8")
-    tmp.replace(KNOWN_CATEGORIES_FILE)
-
-
-def all_known_categories() -> list[str]:
-    """Union of explicit category names and any names assigned to sessions."""
-    known = set(load_known_categories())
-    for v in load_categories().values():
-        if v:
-            known.add(v)
-    return sorted(known)
 
 
 def load_archived() -> set[str]:
@@ -3227,40 +3198,6 @@ def ws_search(root: str, q: str, case: bool = False, regex: bool = False, tag: s
     return 200, res
 
 
-def load_categories() -> dict[str, str]:
-    try:
-        d = json.loads(CATEGORIES_FILE.read_text(encoding="utf-8"))
-        if isinstance(d, dict):
-            return {k: v for k, v in d.items() if isinstance(k, str) and isinstance(v, str) and v}
-    except (FileNotFoundError, json.JSONDecodeError):
-        pass
-    return {}
-
-
-def save_categories(c: dict[str, str]) -> None:
-    DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = CATEGORIES_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(c, indent=2, sort_keys=True), encoding="utf-8")
-    tmp.replace(CATEGORIES_FILE)
-
-
-def load_pinned() -> set[str]:
-    try:
-        d = json.loads(PINNED_FILE.read_text(encoding="utf-8"))
-        if isinstance(d, list):
-            return {x for x in d if isinstance(x, str)}
-    except (FileNotFoundError, json.JSONDecodeError):
-        pass
-    return set()
-
-
-def save_pinned(pins: set[str]) -> None:
-    DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = PINNED_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(sorted(pins), indent=2), encoding="utf-8")
-    tmp.replace(PINNED_FILE)
-
-
 def load_parents() -> dict[str, str]:
     try:
         d = json.loads(PARENTS_FILE.read_text(encoding="utf-8"))
@@ -3961,7 +3898,7 @@ def attach_search_rooms(results: list[dict], rooms: list[dict] | None = None) ->
 
 def delete_session(sid: str) -> dict:
     """Remove a session's JSONL transcript and all sidecar entries
-    (labels, parents, geometries, pinned). Does not touch the cwd."""
+    (labels, parents, geometries, archive). Does not touch the cwd."""
     deleted: dict = {"sessionId": sid, "files": []}
     for jsonl in PROJ_DIR.glob(f"*/{sid}.jsonl"):
         try:
@@ -3981,15 +3918,6 @@ def delete_session(sid: str) -> dict:
     if g.pop(sid, None) is not None:
         save_geometries(g)
         deleted["geometry"] = True
-    pins = load_pinned()
-    if sid in pins:
-        pins.discard(sid)
-        save_pinned(pins)
-        deleted["pinned"] = True
-    cats = load_categories()
-    if cats.pop(sid, None) is not None:
-        save_categories(cats)
-        deleted["category"] = True
     arch = load_archived()
     if sid in arch:
         arch.discard(sid)
@@ -4610,8 +4538,6 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
     rows.sort(reverse=True)
     labels = load_labels()
     parents_map = load_parents()
-    pinned_set = load_pinned()
-    categories_map = load_categories()
     archived_set = load_archived()
     jira_links = load_jira_links()
     jira_unlinks = load_jira_unlinks()
@@ -4640,7 +4566,6 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
         # user-set label. These are typically bg-spare daemons, immediately-
         # closed sessions, or other empty-shell files that pollute the list.
         if (live is None and turns == 0 and not labels.get(sid)
-                and sid not in pinned_set and sid not in categories_map
                 and sid not in archived_set):
             continue
         seen.add(sid)
@@ -4661,8 +4586,6 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
             "currentTheme": (live or {}).get("currentTheme", ""),
             "idleSeconds": (live or {}).get("idleSeconds"),
             "parent": parents_map.get(sid, ""),
-            "pinned": sid in pinned_set,
-            "category": categories_map.get(sid, ""),
             "archived": sid in archived_set,
             # Deterministic detection: label + cwd (explicit naming) +
             # Jira URLs pasted by the user (URL paste is intentional — bare
@@ -4702,8 +4625,6 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
             "currentTheme": live.get("currentTheme", ""),
             "idleSeconds": live.get("idleSeconds"),
             "parent": parents_map.get(sid, ""),
-            "pinned": sid in pinned_set,
-            "category": categories_map.get(sid, ""),
             "archived": sid in archived_set,
             "jira": (sorted(
                 (
@@ -4753,9 +4674,8 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
         _rec = codex_live.get(_ck) if _ck not in _claimed_cwds else None
         is_live = _rec is not None
         # Same empty-shell filter Claude uses: drop zero-turn history with no
-        # user-applied label/pin/category/archive — unless it's live.
+        # user-applied label or archive state — unless it's live.
         if (not is_live and cs.turns == 0 and not labels.get(sid)
-                and sid not in pinned_set and sid not in categories_map
                 and sid not in archived_set):
             continue
         seen.add(sid)
@@ -4773,8 +4693,6 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
             "currentTheme": "",
             "idleSeconds": None,
             "parent": parents_map.get(sid, ""),
-            "pinned": sid in pinned_set,
-            "category": categories_map.get(sid, ""),
             "archived": sid in archived_set,
             "jira": (sorted(
                 (set(extract_jira_tickets(row_label, row_cwd)) | set(jira_links.get(sid, [])))
@@ -4834,9 +4752,6 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                         if isec < 2.5:
                             busy = True
             rid = rm["id"]
-            # Rename and pin apply to a room via the same label/pin sidecars a
-            # single-agent session uses (keyed by the room id), so the shared
-            # rename/pin buttons "just work" — read them back here.
             msgs = rm.get("messages", []) or []
             _user_msgs = [m for m in msgs
                           if m.get("from") == "user" and (m.get("text") or "").strip()]
@@ -4877,7 +4792,7 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 "startedAt": rm.get("createdAt", 0),
                 "turns": len(rm.get("messages", [])),
                 "idleSeconds": (idle if live else None),
-                "pid": None, "pinned": rid in pinned_set, "category": "", "archived": False,
+                "pid": None, "archived": False,
                 "parent": "", "jira": [], "cost": room_cost.get("dollars", 0.0),
                 # Tokens across every conversation, Codex's included (which
                 # have no price, so "cost" alone shows nothing for them).
@@ -4940,8 +4855,8 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
             "isLive": False, "status": "idle",
             "updatedAt": max((r.get("updatedAt", 0) for r in rs), default=0),
             "startedAt": 0, "turns": sum(r.get("turns", 0) for r in rs),
-            "idleSeconds": None, "pid": None, "pinned": False, "category": "",
-            "archived": False, "parent": "", "jira": [],
+            "idleSeconds": None, "pid": None, "archived": False,
+            "parent": "", "jira": [],
             "cost": sum(r.get("cost", 0) or 0 for r in rs),
             "currentTheme": "", "first": "", "last": "", "transcriptPath": "",
         })
@@ -5285,11 +5200,11 @@ def normalize_workflow(value) -> str | None:
 
 def workflow_of(record: dict) -> str:
     """The column a task sits in. A task that predates the field — or one
-    created before it was pinned — has no stored value, so we DERIVE one from
+    created before it was recorded — has no stored value, so we DERIVE one from
     its run state rather than migrating anything. Nothing is written until
     someone moves the card, exactly the way priority_of defaults to medium.
 
-    Note the asymmetry that makes this safe: _start_room pins "inprogress" the
+    Note the asymmetry that makes this safe: _start_room stores "inprogress" the
     moment a task launches, so anything that has ever run carries a real
     value. Only never-launched tasks fall through to the derived default, and
     `launched` is itself persisted — so their column is stable across a
@@ -5974,7 +5889,7 @@ def reassign_task(rid: str, agent_list, human: bool = False) -> tuple[bool, dict
     if err:
         return False, None, err
     # normalize_agent_specs validates and drops the identity; recover it from the
-    # caller's own list (same order) so a retained agent can be pinned by name.
+    # caller's own list (same order) so a retained agent can be matched by name.
     idents = [(a.get("identity") or "").strip() if isinstance(a, dict) else ""
               for a in agent_list]
     members = [{"identity": ident, "agent": pref["agent"],
@@ -6667,15 +6582,6 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/favorite-themes":
             self._send_json(200, load_favorite_themes())
             return
-        if p == "/api/pinned":
-            self._send_json(200, sorted(load_pinned()))
-            return
-        if p == "/api/categories":
-            self._send_json(200, load_categories())
-            return
-        if p == "/api/category-list":
-            self._send_json(200, all_known_categories())
-            return
         if p == "/api/archived":
             self._send_json(200, sorted(load_archived()))
             return
@@ -6750,17 +6656,6 @@ class Handler(BaseHTTPRequestHandler):
             save_jira_links(links)
             save_jira_unlinks(unlinks)
             self._send_json(200, {"sessionId": sid, "linked": sorted(link_set), "unlinked": sorted(unlink_set)})
-            return
-        if p.startswith("/api/categories/"):
-            sid = p[len("/api/categories/"):]
-            cat = (data.get("category") or "").strip()[:80]
-            cats = load_categories()
-            if cat:
-                cats[sid] = cat
-            else:
-                cats.pop(sid, None)
-            save_categories(cats)
-            self._send_json(200, {"sessionId": sid, "category": cat})
             return
         if p.startswith("/api/label/"):
             sid = p[len("/api/label/"):]
@@ -8570,8 +8465,8 @@ class Handler(BaseHTTPRequestHandler):
             # --- Codex (or any non-claude agent): launch a fresh CLI in the new
             # folder. We can't pre-allocate its session id (codex mints its own
             # and we discover it from ~/.codex rollout files on the next refresh),
-            # so there's no sid-keyed label/category here — the session surfaces
-            # with its own id shortly after launch.
+            # so there is no sid-keyed label here — the session surfaces with
+            # its own id shortly after launch.
             if agent_key != "claude":
                 ag = agents.get_agent(agent_key)
                 if ag is None:
@@ -8612,11 +8507,6 @@ class Handler(BaseHTTPRequestHandler):
             labels = load_labels()
             labels[new_sid] = desc
             save_labels(labels)
-            category = (data.get("category") or "").strip()[:80]
-            if category:
-                cats = load_categories()
-                cats[new_sid] = category
-                save_categories(cats)
             combined = "\n\n".join(p for p in (desc, user_prompt) if p)
             # `model` from the client picker overrides the persisted default;
             # missing → the persisted default → no --model flag. open_mode
@@ -8672,52 +8562,6 @@ class Handler(BaseHTTPRequestHandler):
             save_favorite_themes(favs)
             self._send_json(200, {"favorites": favs})
             return
-        if p == "/api/categories/delete":
-            cat = (data.get("category") or "").strip()
-            if not cat:
-                self._send_json(400, {"error": "missing_category"})
-                return
-            cats = load_categories()
-            removed = 0
-            for sid in list(cats.keys()):
-                if cats[sid] == cat:
-                    del cats[sid]
-                    removed += 1
-            save_categories(cats)
-            # Also drop from explicit known list.
-            known = [x for x in load_known_categories() if x != cat]
-            save_known_categories(known)
-            self._send_json(200, {"category": cat, "removed": removed})
-            return
-        if p == "/api/categories/rename":
-            src = (data.get("from") or "").strip()
-            dst = (data.get("to") or "").strip()[:80]
-            if not src or not dst:
-                self._send_json(400, {"error": "from_and_to_required"})
-                return
-            cats = load_categories()
-            moved = 0
-            for sid, c in list(cats.items()):
-                if c == src:
-                    cats[sid] = dst
-                    moved += 1
-            save_categories(cats)
-            # Rename in known list too.
-            known = [dst if x == src else x for x in load_known_categories()]
-            save_known_categories(known)
-            self._send_json(200, {"from": src, "to": dst, "moved": moved})
-            return
-        if p == "/api/category-list":
-            name = (data.get("name") or "").strip()[:80]
-            if not name:
-                self._send_json(400, {"error": "missing_name"})
-                return
-            known = load_known_categories()
-            if name not in known:
-                known.append(name)
-                save_known_categories(known)
-            self._send_json(200, {"categories": all_known_categories()})
-            return
         if p == "/api/archived":
             sid = (data.get("sessionId") or "").strip()
             archived = bool(data.get("archived"))
@@ -8731,20 +8575,6 @@ class Handler(BaseHTTPRequestHandler):
                 arch.discard(sid)
             save_archived(arch)
             self._send_json(200, {"archived": sorted(arch)})
-            return
-        if p == "/api/pinned":
-            sid = (data.get("sessionId") or "").strip()
-            pinned = bool(data.get("pinned"))
-            if not sid:
-                self._send_json(400, {"error": "missing_session_id"})
-                return
-            pins = load_pinned()
-            if pinned:
-                pins.add(sid)
-            else:
-                pins.discard(sid)
-            save_pinned(pins)
-            self._send_json(200, {"pinned": sorted(pins)})
             return
         if p == "/api/chat-scheme":
             cwd = (data.get("cwd") or "").strip()

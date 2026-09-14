@@ -157,7 +157,6 @@ class TaskSearchPage(unittest.TestCase):
         self.assertIn("const pool = ALL_ROWS.filter(r => inScope(r)", rows)
         self.assertIn("serverMatchesFrom(r)", INDEX)
         self.assertNotRegex(INDEX, r"SERVER_MATCHES\.(has|get)\(r\.sessionId\)", "deep matches are keyed by task")
-        self.assertIn("isPoRoom(r.roomId, pos)", fn(INDEX, "function activeHtml("))
         self.assertIn("attentionItems()", fn(INDEX, "function needsYouHtml("))
         self.assertIn("attentionItems()", fn(INDEX, "function renderAttention("))
         self.assertIn("!parseSearchQuery(SEARCH_QUERY).groups.length", fn(INDEX, "function boardHtml("),
