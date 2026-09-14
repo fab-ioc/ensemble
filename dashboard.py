@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import getpass
 import hashlib
 import hmac
 import json
@@ -34,6 +35,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -2014,6 +2016,290 @@ def _history_nudge(room_id: str, reason: str) -> None:
 
 def _history_homes() -> dict:
     return {p["id"]: project_home(p, create=False) for p in load_projects() if p.get("kind") == "documents"}
+
+
+# ---- A documents project's files from the page: upload, folders, move, delete ----
+#
+# Every path is relative to the project folder and never reaches the hub's own
+# records there (.history, _linked, project.json, a task's folder). Each change
+# is made under the history's lock between two snapshots: the first keeps what
+# the folder held (so a deleted or replaced file can be put back even if no
+# scan saw it), the second records the change under the person's name.
+
+class FileOpRefused(Exception):
+    """A file operation that did not happen: its status, error code and a
+    plain sentence for the person. ``extra`` joins the reply (a snapshot)."""
+
+    def __init__(self, status: int, code: str, message: str, extra: dict | None = None):
+        super().__init__(message)
+        self.status, self.code, self.message, self.extra = status, code, message, extra or {}
+
+    def payload(self) -> dict:
+        return {"error": self.code, "message": self.message, **self.extra}
+
+
+_FILE_NAME_BAD = re.compile(r'[<>:"|?*\\\x00-\x1f]')
+_FILE_NAME_RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)),
+                       *(f"lpt{i}" for i in range(1, 10))}
+_FILES_PATH_MAX = 1024
+_UPLOAD_CHUNK = 1024 * 1024
+_UPLOAD_DRAIN_MAX = 4 * file_history.MAX_FILE_BYTES   # a refused body past this is not read at all
+
+
+def _files_user() -> dict:
+    """Who a change made from the page is credited to: the person signed in
+    to this computer."""
+    try:
+        name = getpass.getuser()
+    except Exception:
+        name = ""
+    return {"kind": "user", "name": name or "you"}
+
+
+def files_target(project_id) -> tuple[dict, str]:
+    """(project, its folder) for a file operation, else FileOpRefused."""
+    proj = find_project(project_id.strip()) if isinstance(project_id, str) and project_id.strip() else None
+    if proj is None:
+        raise FileOpRefused(404, "no_such_project", "That project is not on the board.")
+    if proj.get("kind") != "documents":
+        raise FileOpRefused(400, "documents_only",
+                            "Files can be added, moved and deleted here only in a documents project.")
+    home = project_home(proj, create=False)
+    if not os.path.isdir(home) or not workspace_access_ok(home):
+        raise FileOpRefused(403, "path_not_allowed", "The project's folder cannot be reached.")
+    return proj, home
+
+
+def _files_off_limits(home: str, parts: list[str], shown: str) -> None:
+    low = [p.lower() for p in parts]
+    ours = "That is where Ensemble keeps its own records, so files cannot be put there, moved or deleted."
+    # .history anywhere: the tree hides any folder of that name holding a HEAD.
+    if low[0] == "_linked" or file_history.DIR_NAME in low or (len(low) == 1 and low[0] in ("project.json", "project.json.tmp")):
+        raise FileOpRefused(400, "path_not_allowed", f"“{shown}”: {ours}")
+    if low[-1] == "task.json":
+        raise FileOpRefused(400, "path_not_allowed", f"“{shown}”: a file named task.json would make its folder a task's folder.")
+    for part in parts:
+        # Compared exactly as the tree compares it: "Node_Modules" is listed there, so it stays usable.
+        if part in workspace_search.SKIP_DIRS:
+            raise FileOpRefused(400, "path_not_allowed",
+                                f"“{shown}”: the Files panel never shows a folder named “{part}”, so a file "
+                                "there could not be seen. Rename it and try again.")
+        if file_history.not_kept(part):
+            raise FileOpRefused(400, "path_not_allowed",
+                                f"“{shown}”: the file history does not keep “{part}” (temporary and system "
+                                "files), so it could not be put back. Rename it and try again.")
+    cur = home
+    isjunction = getattr(os.path, "isjunction", lambda p: False)
+    for part in parts:
+        cur = os.path.join(cur, part)
+        # The tree never enters a linked folder: a file reached through one could not be seen there.
+        if (os.path.islink(cur) or isjunction(cur)) and os.path.isdir(cur):
+            raise FileOpRefused(400, "path_not_allowed",
+                                f"“{shown}”: “{part}” is a link to another folder, which the Files panel "
+                                "does not show. Use the folder it points to.")
+        if os.path.isfile(os.path.join(cur, "task.json")):
+            raise FileOpRefused(400, "path_not_allowed",
+                                f"“{shown}” is in a task's folder, which its task looks after. {ours}")
+
+
+def files_path(home: str, path) -> tuple[str, str]:
+    """(clean relative path, absolute path) for a path the page sent: relative
+    to ``home``, ``/``-separated, a name Windows and macOS both accept, and
+    outside what the hub keeps there. Checked as written and again as it
+    resolves on disk (a short 8.3 name, a link). Else FileOpRefused."""
+    def refuse(msg: str):
+        raise FileOpRefused(400, "path_not_allowed", msg)
+    if not isinstance(path, str) or not path.strip():
+        refuse("No file or folder name was given.")
+    if len(path) > _FILES_PATH_MAX or path.startswith("/") or "\\" in path:
+        refuse(f"“{path[:200]}” is not a path inside the project folder.")
+    parts = path.split("/")
+    for part in parts:
+        if part in ("", ".", ".."):
+            refuse(f"“{path}” is not a path inside the project folder.")
+        if _FILE_NAME_BAD.search(part) or part[-1] in ". " or part.split(".")[0].rstrip().lower() in _FILE_NAME_RESERVED:
+            refuse(f"“{part}” cannot be used as a file or folder name.")
+    _files_off_limits(home, parts, path)
+    full = os.path.join(home, *parts)
+    try:
+        real_home = os.path.realpath(home)
+        rel_real = os.path.relpath(os.path.realpath(full), real_home).replace("\\", "/")
+    except (OSError, ValueError):
+        rel_real = ".."
+    rparts = rel_real.split("/")
+    if rel_real == "." or rparts[0] == "..":
+        refuse(f"“{path}” leads outside the project folder.")
+    _files_off_limits(real_home, rparts, path)
+    return "/".join(parts), full
+
+
+def _files_os_error(e: OSError, rel: str, extra: dict | None = None) -> FileOpRefused:
+    if isinstance(e, PermissionError):
+        return FileOpRefused(409, "in_use", f"“{rel}” is open in another program or cannot be changed. "
+                                            "Close it and try again.", extra)
+    return FileOpRefused(500, "failed", f"“{rel}” could not be changed: {e.strerror or e}.", extra)
+
+
+def _files_parent_dirs(home: str, rel: str) -> None:
+    """Every folder above ``rel`` that is there must be a folder."""
+    cur = home
+    for part in rel.split("/")[:-1]:
+        cur = os.path.join(cur, part)
+        if os.path.lexists(cur) and not os.path.isdir(cur):
+            raise FileOpRefused(409, "not_a_folder", f"“{rel}”: “{part}” is a file, not a folder.")
+
+
+def _files_snapshot(proj: dict, home: str, reason: str, before: bool = False) -> dict:
+    """A snapshot around a change from the page. ``before`` keeps what the
+    folder held, credited like the scan; after, the change is the person's.
+    Never raises: a failure is returned and logged."""
+    try:
+        if before:
+            res = file_history.snapshot(home, file_history.credit(_history_running, proj["id"], home),
+                                        reason=f"before {reason}")
+        else:
+            res = file_history.snapshot(home, _files_user(), reason=reason)
+    except Exception as e:
+        res = {"ok": False, "committed": False, "rev": "", "files": 0, "skipped": [], "msg": f"error: {str(e)[:200]}"}
+    if not res.get("ok"):
+        print(f"[files] {'before ' if before else ''}{reason} in {home}: the history could not record it: "
+              f"{res.get('msg')}", flush=True)
+    return res
+
+
+def _files_remove(full: str) -> None:
+    """Delete a file or a whole folder, read-only files too."""
+    def writable(func, p, _exc):
+        os.chmod(p, os.stat(p).st_mode | 0o200)
+        func(p)
+    if os.path.isdir(full) and not os.path.islink(full):
+        if sys.version_info >= (3, 12):
+            shutil.rmtree(full, onexc=writable)
+        else:
+            shutil.rmtree(full, onerror=writable)
+    else:
+        try:
+            os.remove(full)
+        except PermissionError:
+            os.chmod(full, os.stat(full).st_mode | 0o200)
+            os.remove(full)
+
+
+def _files_exists_refusal(rel: str, full: str) -> FileOpRefused:
+    what = "A folder" if os.path.isdir(full) else "A file"
+    return FileOpRefused(409, "exists", f"{what} named “{rel.rsplit('/', 1)[-1]}” is already there.")
+
+
+def files_upload_check(home: str, rel: str, full: str, overwrite: bool) -> None:
+    """Before the body is read: may a file land at ``rel``?"""
+    _files_parent_dirs(home, rel)
+    if os.path.lexists(full) and (not overwrite or os.path.isdir(full)):
+        raise _files_exists_refusal(rel, full)
+
+
+def files_upload_temp(home: str, rel: str, full: str) -> str:
+    """The temp file an upload is written to: in the file's own folder (made
+    now), hidden, and ending .tmp so neither the tree nor the history takes it."""
+    parent = os.path.dirname(full)
+    try:
+        os.makedirs(parent, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=f".{os.path.basename(full)[:80]}.", suffix=".upload.tmp", dir=parent)
+        os.close(fd)
+        if os.name != "nt":
+            os.chmod(tmp, 0o644)
+    except OSError as e:
+        raise _files_os_error(e, rel)
+    return tmp
+
+
+def files_upload_commit(proj: dict, home: str, rel: str, full: str, tmp: str, overwrite: bool) -> dict:
+    """Put a fully written temp file in place and record it. Everything is
+    checked again under the lock: the folder may have changed while the file
+    arrived (a task folder made, a link put in its way)."""
+    with file_history.lock(home):
+        if files_path(home, rel) != (rel, full):
+            raise FileOpRefused(400, "path_not_allowed", f"“{rel}” is not a path inside the project folder.")
+        files_upload_check(home, rel, full, overwrite)
+        _files_snapshot(proj, home, "upload", before=True)
+        try:
+            size = os.path.getsize(tmp)
+            os.replace(tmp, full)
+        except OSError as e:
+            raise _files_os_error(e, rel)
+        return {"path": rel, "size": size, "snapshot": _files_snapshot(proj, home, "upload")}
+
+
+# mkdir, move and delete check their paths under the lock, right before the change.
+
+def files_mkdir(proj: dict, home: str, path) -> dict:
+    with file_history.lock(home):
+        rel, full = files_path(home, path)
+        _files_parent_dirs(home, rel)
+        _files_snapshot(proj, home, "mkdir", before=True)
+        if os.path.isdir(full):
+            created = False
+        elif os.path.lexists(full):
+            raise _files_exists_refusal(rel, full)
+        else:
+            try:
+                os.makedirs(full)
+            except OSError as e:
+                raise _files_os_error(e, rel)
+            created = True
+        return {"path": rel, "created": created, "snapshot": _files_snapshot(proj, home, "mkdir")}
+
+
+def files_move(proj: dict, home: str, src, dst, overwrite: bool = False) -> dict:
+    with file_history.lock(home):
+        frel, ffull = files_path(home, src)
+        trel, tfull = files_path(home, dst)
+        if not os.path.lexists(ffull):
+            raise FileOpRefused(404, "not_found", f"“{frel}” is not there any more.")
+        is_dir = os.path.isdir(ffull) and not os.path.islink(ffull)
+        fl, tl = frel.lower().split("/"), trel.lower().split("/")
+        try:
+            inside = os.path.normcase(os.path.realpath(tfull)).startswith(os.path.normcase(os.path.realpath(ffull)) + os.sep)
+        except OSError:
+            inside = False
+        if is_dir and (inside or (len(tl) > len(fl) and tl[:len(fl)] == fl)):
+            raise FileOpRefused(400, "into_itself", f"The folder “{frel}” cannot be moved into itself.")
+        _files_parent_dirs(home, trel)
+        try:
+            same = os.path.lexists(tfull) and os.path.samefile(ffull, tfull)    # the same name in another case
+        except OSError:
+            same = False
+        if frel == trel:
+            _files_snapshot(proj, home, "move", before=True)     # nothing moves: pending work stays its own
+            return {"from": frel, "to": trel, "snapshot": _files_snapshot(proj, home, "move")}
+        replace = os.path.lexists(tfull) and not same
+        if replace:
+            if not overwrite:
+                raise _files_exists_refusal(trel, tfull)
+            if fl[:len(tl)] == tl:
+                raise FileOpRefused(409, "exists", f"“{frel}” cannot replace the folder “{trel}” it is in.")
+        _files_snapshot(proj, home, "move", before=True)
+        try:
+            os.makedirs(os.path.dirname(tfull), exist_ok=True)
+            if replace and (is_dir or os.path.isdir(tfull)):
+                _files_remove(tfull)
+            os.replace(ffull, tfull)
+        except OSError as e:
+            raise _files_os_error(e, frel, {"snapshot": _files_snapshot(proj, home, "move")})
+        return {"from": frel, "to": trel, "snapshot": _files_snapshot(proj, home, "move")}
+
+
+def files_delete(proj: dict, home: str, path) -> dict:
+    with file_history.lock(home):
+        rel, full = files_path(home, path)
+        if not os.path.lexists(full):
+            raise FileOpRefused(404, "not_found", f"“{rel}” is not there any more.")
+        _files_snapshot(proj, home, "delete", before=True)
+        try:
+            _files_remove(full)
+        except OSError as e:
+            # Part of a folder may be gone: what is gone is recorded all the same.
+            raise _files_os_error(e, rel, {"snapshot": _files_snapshot(proj, home, "delete")})
+        return {"path": rel, "snapshot": _files_snapshot(proj, home, "delete")}
 
 
 def _set_project_meta(project_id: str, key: str, value) -> tuple[bool, str]:
@@ -7214,6 +7500,99 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    # ---------- A documents project's files: upload, mkdir, move, delete ----------
+    # A plain API, gated like the rest of the hub (the access token off loopback).
+
+    def _files_upload(self, u) -> None:
+        """POST /api/files/upload?project=&path=[&overwrite=1], the raw file as
+        the body. Everything that can refuse it is checked before a byte of
+        the body is read; the body goes to a temp file renamed into place."""
+        q = parse_qs(u.query, keep_blank_values=True)
+
+        def arg(k: str) -> str:
+            return (q.get(k) or [""])[0]
+        raw = self.headers.get("Content-Length")
+        ln = int(raw) if raw is not None and str(raw).strip().isdigit() else -1
+        unread, tmp = max(ln, 0), ""
+        try:
+            if ln < 0:
+                raise FileOpRefused(411, "length_required", "The upload did not say how large the file is.")
+            if ln > file_history.MAX_FILE_BYTES:
+                raise FileOpRefused(413, "too_large",
+                                    f"The file is {ln / 1048576:.1f} MB; a file can be at most "
+                                    f"{file_history.MAX_FILE_BYTES // 1048576} MB.")
+            proj, home = files_target(arg("project"))
+            rel, full = files_path(home, arg("path"))
+            overwrite = arg("overwrite") == "1"
+            files_upload_check(home, rel, full, overwrite)
+            tmp = files_upload_temp(home, rel, full)
+            try:
+                with open(tmp, "wb") as fh:
+                    while unread:
+                        chunk = self.rfile.read(min(unread, _UPLOAD_CHUNK))
+                        if not chunk:
+                            break
+                        fh.write(chunk)
+                        unread -= len(chunk)
+            except OSError as e:
+                if unread and not isinstance(e, (ConnectionError, TimeoutError)):
+                    raise _files_os_error(e, rel)
+            if unread:
+                raise FileOpRefused(400, "incomplete", f"“{rel}” did not arrive in full, so it was not saved. "
+                                                       "Try again.")
+            res = files_upload_commit(proj, home, rel, full, tmp, overwrite)
+            tmp = ""
+            self._send_json(200, res)
+        except FileOpRefused as e:
+            self._send_json(e.status, e.payload())
+            self._files_drain(unread)
+        finally:
+            if tmp:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+
+    def _files_drain(self, n: int) -> None:
+        """Read and drop what is left of a refused upload after the reply is
+        sent, so the browser gets the reply rather than a reset connection.
+        Past a limit, or when it stalls, the connection is simply closed."""
+        self.close_connection = True
+        if n <= 0 or n > _UPLOAD_DRAIN_MAX:
+            return
+        conn = getattr(self, "connection", None)
+        try:
+            if conn is not None:
+                conn.settimeout(15)
+            while n > 0:
+                chunk = self.rfile.read(min(n, _UPLOAD_CHUNK))
+                if not chunk:
+                    break
+                n -= len(chunk)
+        except OSError:
+            pass
+
+    def _files_post(self, p: str, data) -> None:
+        """POST /api/files/mkdir {project, path}, /api/files/move {project,
+        from, to, overwrite}, /api/files/delete {project, path}."""
+        try:
+            if not isinstance(data, dict):
+                raise FileOpRefused(400, "bad_json", "The request was not understood.")
+            op = p[len("/api/files/"):]
+            if op not in ("mkdir", "move", "delete"):
+                raise FileOpRefused(404, "not_found", "There is no such file operation.")
+            proj, home = files_target(data.get("project"))
+            if op == "mkdir":
+                res = files_mkdir(proj, home, data.get("path"))
+            elif op == "move":
+                res = files_move(proj, home, data.get("from"), data.get("to"),
+                                 data.get("overwrite") in (True, 1, "1", "true"))
+            else:
+                res = files_delete(proj, home, data.get("path"))
+            self._send_json(200, res)
+        except FileOpRefused as e:
+            self._send_json(e.status, e.payload())
+
     def _history_get(self, p: str, q: dict) -> None:
         """A documents project's file history: its snapshots (or its deleted
         files), a version's content, a diff, and what changed since the last
@@ -7422,6 +7801,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         u = urlparse(self.path)
         p = u.path
+        if p == "/api/files/upload":
+            # Its body is the file itself: read in pieces, never as JSON.
+            self._files_upload(u)
+            return
         ln = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(ln) if ln else b""
         try:
@@ -7431,6 +7814,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p == "/mcp":
             self._handle_mcp(data)
+            return
+        if p.startswith("/api/files/"):
+            self._files_post(p, data)
             return
         if p == "/api/pty/create":
             # Dev/testing entry point for a headless PTY process. (Real agent
