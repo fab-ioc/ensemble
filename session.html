@@ -1299,7 +1299,9 @@ function foldStart(items, quiet) {
 // fold = { base: key → 'full' | 'row' as last drawn, open: keys the reader opened }.
 // A balloon holding a comment's passage (held) is opened, and stays open while
 // the reader is scrolled up even when the comment goes.
-// quiet(m, i): a row whatever its age (hub traffic), unless opened or held.
+// quiet(m, i): a row whatever its age (hub traffic), unless opened or held. A
+// quiet balloon drawn open is 'kept' in base, so it too stays open while the
+// reader is scrolled up; foldUnkeep lets a Just us click fold it again.
 function foldPlan(items, fold, stick, held, quiet) {
   let prev = stick ? null : fold.base, last = -1;
   if (prev) items.forEach((m, i) => { if (prev.has(foldKey(m, i))) last = i; });
@@ -1312,12 +1314,16 @@ function foldPlan(items, fold, stick, held, quiet) {
     const h = !!(held && held(m, i));
     let b = prev ? (prev.get(k) || (i > last ? 'full' : 'row')) : (i >= start ? 'full' : 'row');
     if (b === 'row' && h) b = 'full';
-    base.set(k, b);
-    const shown = b === 'full' && (h || !quiet || !quiet(m, i));
+    const q = !!(quiet && quiet(m, i));
+    const shown = b !== 'row' && (h || !q || b === 'kept');
+    base.set(k, shown && q ? 'kept' : b);
     return (shown || fold.open.has(k)) ? 'full' : 'row';
   });
   fold.base = base;
   return plan;
+}
+function foldUnkeep(fold) {
+  if (fold.base) fold.base.forEach((b, k) => { if (b === 'kept') fold.base.set(k, 'full'); });
 }
 // A folded balloon's first line, as plain text.
 function foldLine(text) {
@@ -1381,9 +1387,13 @@ function hubLabel(m) {
   }
   return HUB_KIND_LABEL[m.kind] || 'From the hub';
 }
+// A report's words start after its header, found from the parsed task: a title
+// may itself hold "): ".
 function hubBody(m) {
   const t = String(m.text || '').replace(/^\s*\[[^\]\n]*\]\s*/, '');
-  const at = m.kind === 'report' && m.taskId ? t.indexOf('): ') : -1;
+  if (m.kind !== 'report' || !m.taskId) return t;
+  const head = `from task '${m.taskTitle || ''}' (${m.taskId}, `;
+  const h = t.indexOf(head), at = h >= 0 ? t.indexOf('): ', h + head.length) : -1;
   return at >= 0 ? t.slice(at + 3) : t;
 }
 // A line of its own asking for the person's decision ("Decision needed: …").
@@ -1569,6 +1579,7 @@ function showChatBar(items, quietRows) {
 }
 function toggleJustUs() {
   JUST_US = !JUST_US;
+  foldUnkeep(FOLD);
   try { localStorage.setItem('cd-chat-just-us', JUST_US ? '1' : '0'); } catch (e) {}
   if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
   else showChatBar([], 0);
@@ -1686,7 +1697,7 @@ function soloItems(raw, sid, agentId, keep) {
   return turns.slice(off).map((t, i) => Object.assign({
     id: sid + ':' + (off + i),
     from: (t.role === 'user') ? 'user' : agentId, to: '', text: t.text,
-  }, t.role === 'user' ? { kind: t.kind || 'human', reportKind: t.reportKind, taskTitle: t.taskTitle, taskId: t.taskId }
+  }, t.role === 'user' ? { kind: t.kind || 'human', reportKind: t.reportKind, taskTitle: t.taskTitle, taskId: t.taskId, reporter: t.reporter }
     : t.answers ? { answers: t.answers } : {}));
 }
 async function prevSessionItems(sid, agentId) {

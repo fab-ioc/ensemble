@@ -305,7 +305,7 @@ const ctx = {
 vm.createContext(ctx);
 vm.runInContext(code + `
   globalThis.t = { foldPlan, foldKey, soloItems, patchChildren, quietItem, answerChip, foldUnanswered,
-    foldChips, foldBalloonHtml, isDecision, latestLabel, hubLabel, hubBody };`, ctx);
+    foldChips, foldBalloonHtml, isDecision, latestLabel, hubLabel, hubBody, foldUnkeep };`, ctx);
 const T = ctx.t;
 // Turns as /api/session/<sid>?full=1 serves them.
 const rep = { reportKind: 'completed', taskTitle: 'Docs', taskId: 'docs', reporter: 'claude' };
@@ -339,6 +339,24 @@ out.hubRow = T.foldBalloonHtml(items[4], 4, 'row', { md: x => x, open: false });
 out.agentRow = T.foldBalloonHtml(items[5], 5, 'row', { md: x => x, open: false });
 out.labels = [T.latestLabel(3, 1).label, T.latestLabel(3, 2).label, T.latestLabel(3, 0).label, T.latestLabel(0, 0).label];
 out.heldHub = T.foldPlan(items, fresh(), true, (m, i) => i === 2, quiet(false))[2];
+// A commented hub input whose comment goes while the reader is scrolled up
+// stays open; back at the end, or after a Just us click, it folds again.
+const gone = fresh();
+T.foldPlan(items, gone, true, (m, i) => i === 2, quiet(false));
+out.heldGone = [T.foldPlan(items, gone, false, null, quiet(false))[2], T.foldPlan(items, gone, false, null, quiet(false))[2]];
+T.foldUnkeep(gone);
+out.heldGone.push(T.foldPlan(items, gone, false, null, quiet(false))[2]);
+const gone2 = fresh();
+T.foldPlan(items, gone2, true, (m, i) => i === 2, quiet(false));
+out.heldGone.push(T.foldPlan(items, gone2, true, null, quiet(false))[2]);
+// The same for a reply to the hub under Just us.
+const goneUs = fresh();
+T.foldPlan(items, goneUs, true, (m, i) => i === 3, quiet(true));
+out.heldGone.push(T.foldPlan(items, goneUs, false, null, quiet(true))[3]);
+// A report whose task title holds "): ".
+const odd = { reportKind: 'completed', taskTitle: 'Docs (v2): projects', taskId: 'room-1', reporter: 'claude' };
+out.oddBody = T.hubBody(T.soloItems([Object.assign({ role: 'user', kind: 'report',
+  text: "[report] completed from task 'Docs (v2): projects' (room-1, claude): Merged and live." }, odd)], 'O', 'po', 120)[0]);
 const opened = fresh(); opened.open.add(T.foldKey(items[4], 4));
 out.openedHub = T.foldPlan(items, opened, false, null, quiet(false))[4];
 // An older hub without kinds: every turn is the person's, nothing is quiet.
@@ -415,6 +433,13 @@ class HubTrafficAndAnswers(unittest.TestCase):
     def test_opened_and_commented_hub_inputs_stay_open(self):
         self.assertEqual(self.r["heldHub"], "full", "a commented hub input folded")
         self.assertEqual(self.r["openedHub"], "full", "a hub row the reader opened folded again")
+
+    def test_a_comment_going_while_scrolled_up_folds_no_hub_input(self):
+        # scrolled up twice, after a Just us click, back at the end, a Just us reply scrolled up
+        self.assertEqual(self.r["heldGone"], ["full", "full", "row", "row", "full"])
+
+    def test_a_report_title_may_hold_the_header_end(self):
+        self.assertEqual(self.r["oddBody"], "Merged and live.")
 
     def test_without_kinds_nothing_changes(self):
         self.assertEqual(self.r["oldHub"], ["full"] * 10)
