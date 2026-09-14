@@ -268,8 +268,12 @@ class StatuslineWriterTests(unittest.TestCase):
     def payload(self, five=7):
         return {"session_id": "s1", "transcript_path": str(self.transcript),
                 "model": {"id": "claude-opus-5"}, "version": "2.1.270",
-                "rate_limits": {"five_hour": {"used_percentage": five, "resets_at": 1789293000},
-                                "seven_day": {"used_percentage": 35, "resets_at": 1789560000}}}
+                # Reset times ahead of the clock: a window whose reset has passed
+                # reads as rolled over, and the test would fail with the calendar.
+                "rate_limits": {"five_hour": {"used_percentage": five,
+                                              "resets_at": int(time.time()) + 3600},
+                                "seven_day": {"used_percentage": 35,
+                                              "resets_at": int(time.time()) + 3 * 86400}}}
 
     def test_script_writes_the_limits_and_prints_nothing(self):
         out = subprocess.run(
