@@ -67,6 +67,8 @@ import digest
 import ensemble_tools
 # A documents project's automatic file history (a private git dir per project).
 import history as file_history
+# A link to a chat balloon, written out for the agent it is sent to.
+import message_refs
 import peer_process
 # A fresh PO session from its written handover when its conversation gets long.
 import rotation
@@ -1327,6 +1329,114 @@ def _type_input(sess, text: str) -> bool:
     return took is not False and sess.alive()
 
 
+_REF_ROOM_ID = re.compile(r"^room-[\w-]{1,64}$")
+
+
+def _turn_epoch(stamp) -> float:
+    """A transcript turn's ISO timestamp as epoch seconds, 0 when unreadable."""
+    from datetime import datetime
+    if isinstance(stamp, (int, float)):
+        return float(stamp)
+    try:
+        return datetime.fromisoformat(str(stamp).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def resolve_message_ref(room_id: str, msg_id: str) -> dict | None:
+    """The message a balloon link points at: ``{roomId, id, from, who,
+    taskTitle, ts, text, where, isPo}``, or None. A room's message is found by
+    its id; a solo chat's balloon is a transcript turn, ``<sessionId>:<n>``,
+    counted as the chat page counts it (repeats of the turn before dropped)."""
+    room_id, msg_id = (room_id or "").strip(), (msg_id or "").strip()
+    if not _REF_ROOM_ID.match(room_id) or not msg_id or msg_id == "task":
+        return None
+    room = chatroom.get_room(room_id)
+    if room is None:
+        return None
+    is_po = any((p.get("poRoomId") or "") == room_id for p in load_projects())
+    title = "PO" if is_po else (room.get("title") or room_id)
+    out = {"roomId": room_id, "id": msg_id, "taskTitle": title, "isPo": is_po}
+    who = lambda ident: operator_name() if ident == chatroom.HUMAN_IDENTITY else ident
+    for m in room.get("messages") or []:
+        if m.get("id") == msg_id:
+            return {**out, "from": m.get("from", ""), "who": who(m.get("from", "")),
+                    "ts": float(m.get("ts") or 0), "text": m.get("text") or "",
+                    "where": f"~/.ensemble/rooms/{room_id}.json"}
+    sid, sep, n = msg_id.rpartition(":")
+    if not sep or not sid or not n.isdigit() or "/" in sid or "\\" in sid:
+        return None
+    raw = read_session_turns(sid)
+    if not raw:
+        return None
+    turns = [t for i, t in enumerate(raw)
+             if i == 0 or t.get("role") != raw[i - 1].get("role") or t.get("text") != raw[i - 1].get("text")]
+    if int(n) >= len(turns):
+        return None
+    t = turns[int(n)]
+    agents_in = chatroom.agent_participants(room)
+    owner = next((p for p in agents_in if p.get("sessionId") == sid
+                  or any(sid in (r.get("fromSessionId"), r.get("toSessionId")) for r in p.get("rotations") or [])),
+                 agents_in[0] if agents_in else {})
+    frm = chatroom.HUMAN_IDENTITY if t.get("role") == "user" else (owner.get("identity") or "agent")
+    text = t.get("text") or ""
+    if frm == chatroom.HUMAN_IDENTITY:
+        text = message_refs.strip_message_refs(text)
+    return {**out, "from": frm, "who": who(frm), "ts": _turn_epoch(t.get("timestamp")),
+            "text": text, "where": f"the transcript of session {sid}"}
+
+
+def _claude_text_turns(tpath: Path) -> list[dict]:
+    """A Claude transcript's user and assistant text turns, unclassified."""
+    turns = []
+    try:
+        with tpath.open(encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    d = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                t = d.get("type")
+                if t not in ("user", "assistant") or d.get("isMeta"):
+                    continue
+                msg = d.get("message")
+                if not isinstance(msg, dict):
+                    continue
+                text = _extract_text(msg.get("content"))
+                if not text:
+                    continue
+                stripped = text.strip()
+                if not stripped:
+                    continue
+                if t == "user" and (stripped.startswith("<") or stripped.startswith("Caveat:")):
+                    continue
+                turns.append({
+                    "timestamp": d.get("timestamp", ""),
+                    "role": t,
+                    "text": stripped,
+                })
+    except OSError:
+        pass
+    return turns
+
+
+def read_session_turns(sid: str) -> list[dict] | None:
+    """A session's chat turns as /api/session/<sid>?full=1 serves them (Claude
+    or Codex), or None when there is no such session."""
+    tpath = find_transcript(sid)
+    if tpath:
+        return classify_turns(_claude_text_turns(tpath))
+    cx = agents.get_agent("codex")
+    if cx is None or cx.session_stat(sid) is None:
+        return None
+    return classify_turns(cx.read_turns(sid))
+
+
+def with_message_refs(text: str) -> str:
+    """A chat message as the agent receives it: its balloon links written out."""
+    return message_refs.expand_message_refs(text, resolve_message_ref)
+
+
 class _NotTyped(Exception):
     """A message could not be typed into an agent that had looked ready."""
 
@@ -1630,7 +1740,7 @@ Do NOT design or implement — the engineer builds, you review. Check the work a
 ## What you were asked
 From {who}:
 
-{_quote_block(msg.get('text', ''))}
+{_quote_block(with_message_refs(msg.get('text', '')) if sender == chatroom.HUMAN_IDENTITY else msg.get('text', ''))}
 
 Recent conversation before it:
 {context}
@@ -6029,36 +6139,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if full:
                 # User + assistant text turns, with timestamps and roles.
-                turns = []
-                try:
-                    with tpath.open(encoding="utf-8", errors="replace") as f:
-                        for line in f:
-                            try:
-                                d = json.loads(line)
-                            except json.JSONDecodeError:
-                                continue
-                            t = d.get("type")
-                            if t not in ("user", "assistant") or d.get("isMeta"):
-                                continue
-                            msg = d.get("message")
-                            if not isinstance(msg, dict):
-                                continue
-                            text = _extract_text(msg.get("content"))
-                            if not text:
-                                continue
-                            stripped = text.strip()
-                            if not stripped:
-                                continue
-                            if t == "user" and (stripped.startswith("<") or stripped.startswith("Caveat:")):
-                                continue
-                            turns.append({
-                                "timestamp": d.get("timestamp", ""),
-                                "role": t,
-                                "text": stripped,
-                            })
-                except OSError:
-                    pass
-                turns = classify_turns(turns)
+                turns = classify_turns(_claude_text_turns(tpath))
             else:
                 turns = [{"timestamp": ts, "text": t} for ts, t in iter_user_turns(tpath)]
             labels = load_labels()
@@ -6183,6 +6264,18 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(404, {"error": "no_such_room"})
                 return
             self._send_json(200, _annotate_room_liveness(room))
+            return
+        if p == "/api/room/msg":
+            # The message a balloon link points at, for the chip that shows it.
+            q = parse_qs(u.query)
+            ref = resolve_message_ref(q.get("room", [""])[0], q.get("msg", [""])[0])
+            if ref is None:
+                self._send_json(404, {"error": "not_found"})
+                return
+            text = ref["text"]
+            ref = {**ref, "text": text[:message_refs.QUOTE_MAX],
+                   "more": max(0, len(text) - message_refs.QUOTE_MAX)}
+            self._send_json(200, ref)
             return
         if p == "/api/attention":
             # "What needs me, and why" — one item per task. Deliberately cheap
@@ -7032,7 +7125,7 @@ class Handler(BaseHTTPRequestHandler):
             if rotation.room_rotating(rid):
                 raise StartRoomError("handing over to a fresh session, try again shortly")
             sess.last_input = time.time()
-            if not _type_input(sess, "\n\n".join(it["text"] for it in items)):
+            if not _type_input(sess, "\n\n".join(with_message_refs(it["text"]) for it in items)):
                 return items     # it looked alive, but the write found it gone
         return []
 
@@ -7181,7 +7274,7 @@ class Handler(BaseHTTPRequestHandler):
         for ident, sess in ready.items():
             parts = [RESUME_NOTE] if ident in notes else []
             if solo:
-                parts += [it["text"] for it in items]
+                parts += [with_message_refs(it["text"]) for it in items]
             elif ident in wake_for:
                 parts.append(_relay_wake(wake_for.pop(ident)[-1]))
             if not parts:
@@ -7503,7 +7596,15 @@ class Handler(BaseHTTPRequestHandler):
             if not msgs:
                 body = "(no new messages)"
             else:
-                body = "\n".join(f"[from {m['from']}] {m['text']}" for m in msgs)
+                # What the person or the PO sent comes with its balloon links
+                # written out; the room keeps the words as they were sent.
+                room = chatroom.get_room(room_id) or {}
+                po = chatroom.po_identity(room) if any(
+                    chatroom.is_product_owner_part(p) for p in chatroom.agent_participants(room)) else ""
+                body = "\n".join(
+                    f"[from {m['from']}] "
+                    + (with_message_refs(m["text"]) if m["from"] in (chatroom.HUMAN_IDENTITY, po) else m["text"])
+                    for m in msgs)
             return ok({"content": [{"type": "text", "text": body}],
                        "isError": False})
         if name == "chat_whoami":
