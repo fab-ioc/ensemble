@@ -407,6 +407,20 @@ class FilesApi(unittest.TestCase):
         self.assertFalse((self.home / "a.txt").exists())
         self.assertEqual((self.home / "b.txt").read_bytes(), b"b")
 
+    def test_a_request_from_another_site_is_refused(self):
+        # A page on another site, through the person's own browser, sends its
+        # own Origin: refused before anything is read or changed. A program
+        # sends no Origin and passes (the test above).
+        (self.home / "a.txt").write_bytes(b"a")
+        status, res = self.upload("b.txt", b"b", page=False, headers={"Origin": "http://evil.example"})
+        self.assertEqual(status, 403, res)
+        self.assertEqual(res["error"], "cross_origin")
+        self.assertFalse((self.home / "b.txt").exists())
+        status, res = self.request("/api/files/delete", json.dumps({"project": self.pid, "path": "a.txt"}).encode(),
+                                   {"Content-Type": "application/json", "Origin": "http://evil.example"}, page=False)
+        self.assertEqual(status, 403, res)
+        self.assertTrue((self.home / "a.txt").exists())
+
     def test_a_path_through_a_linked_folder_is_refused(self):
         target = self.home / "target"
         target.mkdir()
