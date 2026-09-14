@@ -520,6 +520,36 @@ class Resumes(unittest.TestCase):
         self.assertEqual(self.typed(), {"pty-claude-2": ["is it there?"]})
         self.assertIsNone(dashboard.pending_input(room["id"]))
 
+    # ---- a link to a balloon ----
+    def test_a_balloon_link_is_written_out_in_the_terminal_not_in_the_room(self):
+        other = self.room()
+        url = f"http://hub-host:8765/session?room={other['id']}&msg=m0"
+        block = f"[ref {url}] from ceo in \"t\" at "
+        room = self.room()
+        h = self.handler()
+        with mock.patch.object(dashboard, "operator_name", lambda: "ceo"):
+            # Stopped: typed in after the resume.
+            h._resume_room(room, text=f"read **{url}**")
+            self.join()
+            [first] = self.typed()["pty-claude-1"]
+            self.assertIn(f"read **{url}**\n\n{block}", first)
+            self.assertTrue(first.rstrip("\x1b[201~").endswith("\n> spec"), first)
+            # Running: typed straight in.
+            room = chatroom.get_room(room["id"], public=False)
+            h._resume_room(room, text=f"and {url}")
+            self.assertIn(f"and {url}\n\n{block}", self.ptys["pty-claude-1"].typed[-1])
+            # A team: the room keeps the words, chat_read writes the link out.
+            team = self.room(agents=("claude", "codex"), mode="collab")
+            h._resume_room(team, text=f"- see {url}")
+            self.join()
+            said = [m["text"] for m in chatroom.read_messages(team["id"]) if m.get("from") == "user"]
+            self.assertEqual(said[-1], f"- see {url}")
+            got = h._mcp_tool_call("chat_read", {}, team["id"], "claude",
+                                   lambda r: r, lambda code, msg: {"error": msg})
+            text = got["content"][0]["text"]
+            self.assertIn(f"[from user] - see {url}\n\n{block}", text)
+            self.assertIn("\n> spec", text)
+
     # ---- the payload and the endpoint ----
     def test_the_room_payload_carries_what_is_held(self):
         room = self.room()
