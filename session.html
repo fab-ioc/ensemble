@@ -2030,16 +2030,28 @@ async function orResume(e, text, to, key) {
 }
 // A key for the message in the box, minted once per message: the same one
 // goes with every attempt to send it, and a new one with the next message.
-function sendKey() {
+// (sendKey, above, is the prompt card's keystroke: not this.)
+function msgKey() {
   if (!SEND_KEY) SEND_KEY = 'send:' + Date.now().toString(36) + ':' + Math.random().toString(36).slice(2, 8);
   return SEND_KEY;
+}
+// The hub refused a send but holds the text (shown in the chat as not
+// delivered, with Retry): the box is cleared, the hint says where it is.
+function keptByHub(e) {
+  if (!e || !e.kept) return false;
+  SEND_ERR = 'Not delivered: ' + sendErrorText(e) + '. Your message is kept above: Retry sends it again.';
+  setText($('#hint'), SEND_ERR);
+  SEND_KEY = '';
+  $('#input').value = '';
+  setTimeout(refresh, 400);
+  return true;
 }
 // POST that throws unless the hub accepted it, with the hub's status and reason.
 async function postOk(path, body) {
   const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   let d = null;
   try { d = await r.json(); } catch (e) {}
-  if (!r.ok || !d || d.error) throw Object.assign(new Error((d && d.error) || ('error ' + r.status)), { status: r.status });
+  if (!r.ok || !d || d.error) throw Object.assign(new Error((d && d.error) || ('error ' + r.status)), { status: r.status, kept: !!(d && d.kept) });
   return d;
 }
 // Why a send did not arrive, in words.
@@ -2069,9 +2081,10 @@ $('#send').onclick = async () => {
   // the room's messages. Codex mints its own session id only once it has
   // written a rollout, so early on there is a terminal to type into but no id.
   if (SOLO_MODE) {
-    const key = sendKey();
+    const key = msgKey();
     try { if (needsResume()) await sendResuming(t, '', key); else await sendSolo(t).catch(e => orResume(e, t, '', key)); }
     catch (e) {
+      if (keptByHub(e)) return;
       SEND_ERR = 'Not sent: ' + sendErrorText(e) + '. Your message is still in the box.';
       setText($('#hint'), SEND_ERR);
       return;
@@ -2093,8 +2106,9 @@ $('#send').onclick = async () => {
   // Always through the hub's resume-or-deliver: a team that stopped since the
   // last poll is resumed for the message instead of the message being posted
   // to a room nobody is reading.
-  try { await sendResuming(t, to, sendKey()); }
+  try { await sendResuming(t, to, msgKey()); }
   catch (e) {
+    if (keptByHub(e)) return;
     SEND_ERR = 'Not sent: ' + sendErrorText(e) + '. Your message is still in the box.';
     setText($('#hint'), SEND_ERR);
     return;
@@ -2426,7 +2440,10 @@ async function submitComments() {
     else await sendSolo(body).catch(e => orResume(e, body, '', key));
     sent = true;
   } catch (e) {
-    CMT_ERROR = 'Not sent: ' + sendErrorText(e) + '. Your comments are kept.';
+    // Refused, but the hub holds them: they show in the chat as not
+    // delivered, with Retry, so the tray lets them go like a sent batch.
+    if (e && e.kept) sent = true;
+    else CMT_ERROR = 'Not sent: ' + sendErrorText(e) + '. Your comments are kept.';
   }
   CMT_SENDING = false;
   if (!sent) { renderCmtTray(); return; }

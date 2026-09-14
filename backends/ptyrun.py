@@ -259,14 +259,16 @@ class PtySession:
             self._last_submit = time.time()
         return True
 
-    def send_line(self, text: str) -> None:
+    def send_line(self, text: str) -> bool:
         """Type `text` then submit with Enter. The Enter is a SEPARATE write
         after a short delay — a TUI treats a trailing newline in the same write
         as pasted content (it lands in the input box unsubmitted), but a
-        discrete Enter keystroke submits. This is the chat doorbell."""
-        self.write(text)
+        discrete Enter keystroke submits. This is the chat doorbell. False
+        when either write was refused (see :meth:`write`: on Windows only an
+        ended process says so)."""
+        typed = self.write(text)
         time.sleep(0.25)
-        self.write("\r")
+        return self.write("\r") and typed
 
     def resize(self, rows: int, cols: int) -> None:
         self.rows, self.cols = rows, cols

@@ -4148,9 +4148,13 @@ function renderDetail() {
   const isLive = !!r.isLive;
   const isRoom = !!(r.headless && r.roomId);
   const isOrphan = !!r.orphan;
-  const liveEmbed = isLive && isRoom;   // only a room we own can embed a live view
+  // A room we own embeds its chat, running or not: stopped, the chat shows
+  // the history with its box usable — sending brings the task back and
+  // delivers the message (session.html). Only a session without a room
+  // (legacy, or its record gone) gets the read-only history.
+  const liveEmbed = isRoom && !isOrphan;
   const convReady = (CONV_SID === sid && !!CONV_DATA);
-  // Kick off the history load once per selection (not for the live embed).
+  // Kick off the history load once per selection (not for the embed).
   if (!liveEmbed && !isOrphan && CONV_SID !== sid) loadConversation(r);
   const now = Date.now() / 1000;
 
@@ -7127,14 +7131,16 @@ function drValid(c) {
 function drStale(list) {
   return list.filter(c => c.sent).sort((a, b) => b.sent - a.sent).slice(DR_SENT_KEEP).map(c => c.cid);
 }
-// What Submit can do, and in words why not. A task that is not running is not
-// sent to, as in the chat: its comments stay until it is resumed.
+// What Submit can do, and in words what it will do. A task that is not
+// running is resumed by the hub for the comments, as in the chat: it holds
+// them and types them in once the owner is up.
 function drSubmitState(rv) {
   const t = rv.target ? rv.target(rv) : null;
   const s = rv.sending ? { can: false, label: 'Sending…', note: '' }
     : !t ? { can: false, label: 'Submit', note: 'There is no task chat to send them to. Copy them instead.' }
-    : !t.live ? { can: false, label: 'Submit', note: `${t.name} is not running, so the comments cannot reach its owner. They are kept here: resume the task, then submit them.` }
-    : { can: true, label: 'Submit', note: rv.error, err: !!rv.error };
+    : rv.error ? { can: true, label: 'Submit', note: rv.error, err: true }
+    : !t.live ? { can: true, label: 'Submit', note: `${t.name} is not running: submitting will resume it and deliver them.` }
+    : { can: true, label: 'Submit', note: '' };
   s.roomId = t ? t.roomId : '';
   if (rv.store.unstored.size) s.note = (s.note ? s.note + ' ' : '') + 'This browser would not save some of them, so reloading this page would lose those.';
   return s;
@@ -7442,7 +7448,7 @@ async function drSubmit(rv) {
   if (!rv.store.list.some(c => !c.sent) || !drSubmitState(rv).can) { drPaintTray(rv); return; }
   rv.sending = true; rv.error = '';
   drChanged(rv);
-  let sent = 0;
+  let sent = 0, held = '';
   try {
     await drExclusive(rv, async () => {
       // Picked once no other copy is sending: what one sent meanwhile is not sent again.
@@ -7451,11 +7457,20 @@ async function drSubmit(rv) {
       const s = drSubmitState({ ...rv, sending: false });
       if (!batch.length || !s.can) return;
       const went = new Map(batch.map(c => [c.cid, drRev(c)]));
-      const r = await fetch('/api/room/say', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      // The hub's resume-or-deliver, never /api/room/say: a task that is
+      // not running (or stopped since the row was drawn) is resumed for the
+      // comments and they are typed in once its owner is up; the key makes
+      // the same batch sent again (a lost reply) count once.
+      const r = await fetch('/api/room/resume', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roomId: s.roomId, text: drMessage(batch, rv.what ? rv.what() : ''), to: '', key: drKey(batch) }) });
       let j = null;
       try { j = await r.json(); } catch (e) {}
-      if (!r.ok || !j || j.error) throw Object.assign(new Error((j && j.error) || ('error ' + r.status)), { status: r.status });
+      // Refused but held by the hub (shown in the task's chat as not
+      // delivered, with Retry): the batch went, as far as this tray is concerned.
+      if (!r.ok || !j || j.error) {
+        if (!(j && j.kept)) throw Object.assign(new Error((j && j.error) || ('error ' + r.status)), { status: r.status });
+        held = j.error || 'the task did not start';
+      }
       // What went is marked sent, and only as it went: a comment added or
       // edited meanwhile, here or in another copy, waits for the next Submit.
       const at = Date.now();
@@ -7464,7 +7479,8 @@ async function drSubmit(rv) {
       rv.store.remove(drStale(rv.store.list));
       sent = batch.length;
     });
-    if (sent) toast(`Sent ${sent} comment${sent > 1 ? 's' : ''} to the chat`, 2500, 'ok');
+    if (sent && held) toast(`Not delivered: ${held}. The ${sent > 1 ? 'comments are' : 'comment is'} kept in the task's chat: Retry there.`, 6000, 'warn');
+    else if (sent) toast(`Sent ${sent} comment${sent > 1 ? 's' : ''} to the chat`, 2500, 'ok');
   } catch (e) {
     rv.error = 'Not sent: ' + drSendError(e) + '. Your comments are kept.';
   } finally {

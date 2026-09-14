@@ -24,6 +24,8 @@ from __future__ import annotations
 import io
 import json
 import re
+import shutil
+import subprocess
 import tempfile
 import threading
 import time
@@ -36,16 +38,22 @@ import dashboard
 
 ROOT = Path(__file__).resolve().parent.parent
 SESSION = (ROOT / "session.html").read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
+INDEX = (ROOT / "index.html").read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
+FILEVIEW = (ROOT / "fileview.html").read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
+NODE = shutil.which("node")
 
 
 class FakePty:
-    """A terminal that has drawn its screen and is quiet, unless told otherwise."""
+    """A terminal that has drawn its screen and is quiet, unless told otherwise.
+    ``dies_on_write``: its process ends the moment something is typed into
+    it (it looked ready, but nothing arrived)."""
 
     def __init__(self, pty_id, alive=True, tail="> ", prompt=False):
         self.id = pty_id
         self._alive = alive
         self._tail = tail
         self.prompt = prompt
+        self.dies_on_write = False
         self.last_output = 0.0
         self.last_input = 0.0
         self.typed = []
@@ -57,7 +65,11 @@ class FakePty:
         return self._tail
 
     def send_line(self, text):
+        if self.dies_on_write:
+            self._alive = False
+            return False
         self.typed.append(text)
+        return True
 
 
 class Resumes(unittest.TestCase):
@@ -411,6 +423,87 @@ class Resumes(unittest.TestCase):
         self.assertIn("prompt", held["error"])
         self.assertEqual(self.typed(), {})
 
+    # ---- gone between looking ready and the write ----
+    def test_a_solo_agent_that_dies_as_the_input_is_typed_keeps_the_message(self):
+        room = self.room()
+        self.projects = [{"poRoomId": room["id"]}]
+        h = self.handler()
+
+        orig = dashboard.Handler._type_after_resume
+
+        def dying(self_, rid, ready, notes, items, solo):
+            for s in ready.values():
+                s.dies_on_write = True      # ready a moment ago, gone at the write
+            return orig(self_, rid, ready, notes, items, solo)
+
+        with mock.patch.object(dashboard.Handler, "_type_after_resume", autospec=True, side_effect=dying):
+            h._resume_room(room, text="did this arrive?")
+            self.join()
+        held = dashboard.pending_input(room["id"])
+        self.assertEqual((held["state"], held["error"]),
+                         ("failed", "the agent stopped before the message could be typed"))
+        self.assertEqual([i["text"] for i in held["items"]], ["did this arrive?"])
+        self.assertEqual(self.typed(), {})
+        # Retry brings it back and types the message, once.
+        h._resume_room(chatroom.get_room(room["id"], public=False))
+        self.join()
+        self.assertEqual(self.starts, 2)
+        self.assertEqual(self.ptys["pty-claude-2"].typed, ["did this arrive?"])
+        self.assertIsNone(dashboard.pending_input(room["id"]))
+
+    def test_a_team_recipient_that_dies_as_it_is_woken_keeps_its_message_and_is_posted_once(self):
+        room = self.room(agents=("claude", "codex"), mode="pair")
+        h = self.handler()
+
+        orig = dashboard.Handler._type_after_resume
+
+        def dying(self_, rid, ready, notes, items, solo):
+            if "codex" in ready:
+                ready["codex"].dies_on_write = True
+            return orig(self_, rid, ready, notes, items, solo)
+
+        with mock.patch.object(dashboard.Handler, "_type_after_resume", autospec=True, side_effect=dying):
+            h._resume_room(room, text="codex: a question", to="codex")
+            self.join()
+        held = dashboard.pending_input(room["id"])
+        self.assertEqual((held["state"], held["error"]),
+                         ("failed", "codex stopped before the message could be typed"))
+        texts = [m["text"] for m in chatroom.read_messages(room["id"]) if m.get("from") == chatroom.HUMAN_IDENTITY]
+        self.assertEqual(texts, ["spec", "codex: a question"], "posted once before the wake failed")
+        owner = self.ptys["pty-claude-1"]
+        self.assertEqual(owner.typed, [dashboard.RESUME_NOTE])
+        # Retry: codex comes back alone, is rung once, and the message is not posted again.
+        h._resume_room(chatroom.get_room(room["id"], public=False))
+        self.join()
+        self.assertEqual(self.starts, 3)
+        texts = [m["text"] for m in chatroom.read_messages(room["id"]) if m.get("from") == chatroom.HUMAN_IDENTITY]
+        self.assertEqual(texts, ["spec", "codex: a question"], "posted a second time on retry")
+        partner = self.ptys["pty-codex-3"]
+        self.assertEqual(len(partner.typed), 1)
+        self.assertIn("[relay] New message from 'user'", partner.typed[0])
+        self.assertEqual(owner.typed, [dashboard.RESUME_NOTE], "the owner was woken for codex's message")
+        self.assertIsNone(dashboard.pending_input(room["id"]))
+
+    def test_a_running_owner_that_dies_as_it_is_rung_is_resumed_for_the_message(self):
+        """The live path: the ring's write is what finds the owner gone."""
+        room = self.room(agents=("claude", "codex"), mode="pair")
+        h = self.handler()
+        h._resume_room(room)
+        self.join()
+        room = chatroom.get_room(room["id"], public=False)
+        self.ptys["pty-claude-1"].dies_on_write = True
+        out = h._resume_room(room, text="hey team")
+        self.assertEqual((out["queued"], out["delivered"]), (1, 0))
+        self.join()
+        self.assertEqual(self.starts, 3)
+        texts = [m["text"] for m in chatroom.read_messages(room["id"]) if m.get("from") == chatroom.HUMAN_IDENTITY]
+        self.assertEqual(texts, ["spec", "hey team"])
+        owner = self.ptys["pty-claude-3"]
+        self.assertEqual(len(owner.typed), 1)
+        self.assertIn("[relay] New message from 'user'", owner.typed[0])
+        self.assertEqual(self.ptys["pty-codex-2"].typed, [])
+        self.assertIsNone(dashboard.pending_input(room["id"]))
+
     # ---- the payload and the endpoint ----
     def test_the_room_payload_carries_what_is_held(self):
         room = self.room()
@@ -473,6 +566,32 @@ class Resumes(unittest.TestCase):
         [(pid, lines)] = self.typed().items()
         self.assertEqual(lines, ["## Review comments (1)"])
 
+    def test_the_same_key_after_a_refusal_is_a_retry_not_a_second_message(self):
+        room = self.room()
+        self.projects = [{"poRoomId": room["id"]}]
+        body = {"roomId": room["id"], "text": "once please", "key": "send:k:1"}
+        with mock.patch.object(dashboard.Handler, "_start_or_resume_room",
+                               side_effect=dashboard.StartRoomError("refused")):
+            status, out = self.post("/api/room/resume", body)
+            self.assertEqual((status, out["error"], out["kept"]), (400, "refused", True))
+            status, out = self.post("/api/room/resume", body)        # the page sends it again
+            self.assertEqual((status, out["kept"]), (400, True))
+        self.assertEqual([i["text"] for i in dashboard.pending_input(room["id"])["items"]],
+                         ["once please"], "the same send was queued twice")
+        spawned = self.handler()
+        with mock.patch.object(dashboard.Handler, "_resume_room_agent_pty", spawned._resume_room_agent_pty):
+            status, out = self.post("/api/room/resume", body)        # and again: it starts now
+        self.assertEqual((status, out["queued"]), (200, 1))
+        self.join()
+        [(pid, lines)] = self.typed().items()
+        self.assertEqual(lines, ["once please"])
+        # A plain refusal with nothing held says so: the page keeps the text.
+        with mock.patch.object(dashboard.Handler, "_start_or_resume_room",
+                               side_effect=dashboard.StartRoomError("refused")):
+            self.ptys.clear()
+            status, out = self.post("/api/room/resume", {"roomId": room["id"]})
+        self.assertEqual((status, out["kept"]), (400, False))
+
 
 class ThePage(unittest.TestCase):
     def refresh(self):
@@ -497,22 +616,89 @@ class ThePage(unittest.TestCase):
         self.assertIn("orResume(e, t, '', key)", send)
         # A team's every send goes through the hub's resume-or-deliver: the
         # hub, not the last poll, knows whether the team is still running.
-        self.assertIn("await sendResuming(t, to, sendKey())", send)
+        self.assertIn("await sendResuming(t, to, msgKey())", send)
         self.assertNotIn("/api/room/say", send)
         submit = SESSION[SESSION.index("async function submitComments() {"):]
         submit = submit[:submit.index("\n}\n")]
         self.assertIn("if (!SOLO_MODE) await sendResuming(body, to, key)", submit)
         self.assertNotIn("/api/room/say", submit)
+        # Refused but held by the hub: the box is cleared (the message shows
+        # in the chat as not delivered, with Retry); the tray lets the batch go.
+        self.assertIn("kept: !!(d && d.kept)", SESSION)
+        self.assertEqual(send.count("if (keptByHub(e)) return;"), 2)
+        self.assertIn("if (e && e.kept) sent = true;", submit)
 
     def test_a_send_is_keyed_once_per_message(self):
         # The same key goes with every attempt to send the message in the box
         # (a lost reply, sent again, is taken once), a new one once it is
         # edited or sent.
-        self.assertIn("function sendKey() {", SESSION)
+        self.assertIn("function msgKey() {", SESSION)
         self.assertIn("if (!SEND_KEY) SEND_KEY = 'send:'", SESSION)
         self.assertIn("SEND_KEY = '';             // edited, so it is a new message", SESSION)
         self.assertEqual(SESSION.count("SEND_ERR = ''; SEND_KEY = '';"), 2, "a sent message keeps its key")
         self.assertIn("const key = `cmt:${batch.length}:${batch[0].cid}:${batch[batch.length - 1].cid}`;", SESSION)
+
+    def test_no_function_is_declared_twice(self):
+        # Declarations hoist: a second `function sendKey` silently replaced
+        # the prompt card's keystroke sender, and no prompt could be answered.
+        for i, script in enumerate(re.findall(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", SESSION, re.S)):
+            names = re.findall(r"^(?:async )?function (\w+)\(", script, re.M)
+            dup = sorted({n for n in names if names.count(n) > 1})
+            self.assertEqual(dup, [], f"declared twice in inline script {i}")
+
+    @unittest.skipUnless(NODE, "node is not installed")
+    def test_the_prompt_card_still_sends_keystrokes(self):
+        # Executable: with the message-key helper loaded alongside, the prompt
+        # card's sendKey still posts the keystroke to the terminal.
+        def one_liner(name):
+            m = re.search(rf"^(?:const {name} = |function {name}\().*$", SESSION, re.M)
+            self.assertTrue(m, name)
+            return m.group(0)
+
+        def block(name):
+            m = re.search(rf"^(?:async )?function {name}\(", SESSION, re.M)
+            self.assertTrue(m, name)
+            return SESSION[m.start():SESSION.index("\n}\n", m.start()) + 3]
+
+        code = "\n".join([one_liner("PC_KEYS"), one_liner("sendKey"), block("moveSelection"), block("msgKey")])
+        js = r"""
+const vm = require('vm');
+const code = require('fs').readFileSync(0, 'utf8');
+const posts = [];
+const ctx = { jpost: (u, b) => { posts.push([u, b]); return Promise.resolve({}); }, SOLO_PTY: 'pty-9', PC_SEL: 0, SEND_KEY: '' };
+vm.createContext(ctx);
+vm.runInContext(code + "\nmoveSelection(2); sendKey(PC_KEYS.enter); globalThis.key1 = msgKey(); globalThis.key2 = msgKey();", ctx);
+console.log(JSON.stringify({ posts, same: ctx.key1 === ctx.key2 && !!ctx.key1 }));
+"""
+        out = subprocess.run([NODE, "-e", js], input=code, capture_output=True, text=True,
+                             encoding="utf-8", timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        r = json.loads(out.stdout)
+        self.assertEqual(r["posts"], [["/api/pty/input", {"id": "pty-9", "data": "\x1b[B\x1b[B"}],
+                                      ["/api/pty/input", {"id": "pty-9", "data": "\r"}]])
+        self.assertTrue(r["same"])
+
+    def test_the_task_panel_and_the_comment_trays_reach_a_stopped_task(self):
+        # The task panel embeds a room's chat whether or not it is running (the
+        # chat's box brings it back); the Changes-tab and Workspace comment
+        # trays send through the keyed resume-or-deliver, never /api/room/say.
+        self.assertIn("const liveEmbed = isRoom && !isOrphan;", INDEX)
+        dr = INDEX[INDEX.index("function drSubmitState(rv) {"):]
+        dr = dr[:dr.index("\n}\n")]
+        self.assertIn("is not running: submitting will resume it and deliver them.", dr)
+        self.assertNotIn("can: false, label: 'Submit', note: `${t.name} is not running", dr)
+        submit = INDEX[INDEX.index("async function drSubmit(rv) {"):]
+        submit = submit[:submit.index("\n}\n")]
+        self.assertIn("fetch('/api/room/resume'", submit)
+        self.assertNotIn("fetch('/api/room/say'", submit)
+        self.assertIn("key: drKey(batch)", submit)
+        self.assertIn("if (!(j && j.kept)) throw", submit)
+        fv = FILEVIEW[FILEVIEW.index("async function submitCmts() {"):]
+        fv = fv[:fv.index("\n}\n")]
+        self.assertIn("fetch('/api/room/resume'", fv)
+        self.assertNotIn("fetch('/api/room/say'", fv)
+        self.assertIn("const key = 'fv:' + FV_MARK + ':' + CMTS.map(c => c.cid).join(',');", fv)
+        self.assertIn("showFallback('Couldn’t send to the chat. Copy your comments:', body)", fv)
 
     def test_retry_and_discard_are_a_fingers_size_on_a_phone(self):
         # The compact rule is more specific than the phone's `button` rule, so

@@ -1298,12 +1298,23 @@ def discard_pending(room_id: str) -> bool:
         return True
 
 
-def _type_input(sess, text: str) -> None:
+def _type_input(sess, text: str) -> bool:
     """Type ``text`` into an agent's terminal and submit it as one input. A
     multi-line text goes as a bracketed paste (what the page does), so a TUI
-    does not submit it line by line; Enter is a separate write (send_line)."""
+    does not submit it line by line; Enter is a separate write (send_line).
+    False when the terminal did not take it: a write was refused, or the
+    process was gone right after (on Windows a write to an ended process
+    is the only thing pywinpty reports; it returns 0 for what arrived)."""
     body = "\x1b[200~" + text + "\x1b[201~" if "\n" in text else text
-    sess.send_line(body)
+    try:
+        took = sess.send_line(body)
+    except (OSError, EOFError):
+        return False
+    return took is not False and sess.alive()
+
+
+class _NotTyped(Exception):
+    """A message could not be typed into an agent that had looked ready."""
 
 
 def _relay_wake(sender: str) -> str:
@@ -6254,9 +6265,8 @@ class Handler(BaseHTTPRequestHandler):
                 pty_id = part.get("ptyId")
                 if pty_id:
                     sess = ptyrun.get(pty_id)
-                    if sess and sess.alive():
-                        sess.send_line(wake)   # type + discrete Enter to submit
-                        rung.append(ident)
+                    if sess and sess.alive() and _type_input(sess, wake):
+                        rung.append(ident)     # typed + discrete Enter, and it took
                     continue
             # Legacy visible-terminal session → keystroke injection.
             pid = self._resolve_live_pid(part)
@@ -6610,24 +6620,30 @@ class Handler(BaseHTTPRequestHandler):
     # said while the agents come up is delivered in order with the resume note
     # as ONE input: an agent is woken once, never twice.
 
-    def _resume_room(self, room_full: dict, text: str = "", to: str = "") -> dict:
+    def _resume_room(self, room_full: dict, text: str = "", to: str = "",
+                     key: str = "") -> dict:
         """Resume a room, delivering ``text`` (if any) once it is up — or, when
         it is already running, deliver right away. What a failed resume still
         holds comes along with ANY new attempt (a fresh text, a plain Resume,
-        Retry), in order; only Discard drops it. Returns {resumed, queued,
-        delivered}. Raises StartRoomError when the hub refuses; the message is
-        then kept for a retry."""
+        Retry), in order; only Discard drops it. A text whose ``key`` is
+        already held (the same send again, after a refusal or a lost reply)
+        is not queued twice: the attempt is its retry. Returns {resumed,
+        queued, delivered}. Raises StartRoomError when the hub refuses; the
+        message is then kept for a retry."""
         rid = room_full["id"]
         now = time.time()
-        items = [{"text": text, "to": to, "at": now}] if text else []
+        items = [{"text": text, "to": to, "at": now, "key": key}] if text else []
         start = direct = carried = False
         with _RESUMES_LOCK:
             res = _RESUMES.get(rid)
             if res is not None and res.state == "failed":
                 _RESUMES.pop(rid, None)
-                items = res.queue + items
+                held_keys = {it.get("key") for it in res.queue if it.get("key")}
+                items = res.queue + [it for it in items if it["key"] not in held_keys]
                 carried = bool(res.queue)
                 res = None
+            elif res is not None and key and any(it.get("key") == key for it in res.queue):
+                items = []      # the same send again: already on its way in
             if res is None:
                 # A held message is never typed straight in: it failed on a
                 # prompt, or on an agent that stopped, so it goes the settled
@@ -6812,10 +6828,12 @@ class Handler(BaseHTTPRequestHandler):
                         self._type_after_resume(room_id, ready, notes if first else set(),
                                                 go, solo)
                     except Exception as e:      # noqa: BLE001 — never lose the queue silently
+                        why = str(e) if isinstance(e, _NotTyped) else f"could not deliver: {e}"
                         with _RESUMES_LOCK:
                             res.queue = items + res.queue
-                            res.fail(f"could not deliver: {e}")
-                        print(f"[resume] {room_id}: delivery failed: {e}", flush=True)
+                            res.fail(why)
+                        print(f"[resume] {room_id}: {len(items)} message(s) not delivered — {why}",
+                              flush=True)
                         return
                 if why:
                     held = items[len(go):]
@@ -6836,26 +6854,30 @@ class Handler(BaseHTTPRequestHandler):
         wake_for: dict[str, list[str]] = {}
         if not solo and items:
             for it in items:
-                if it.get("posted"):
-                    # Already in the room; its recipient could not be woken then.
-                    for ident in it.get("wake") or []:
-                        wake_for.setdefault(ident, []).append(chatroom.HUMAN_IDENTITY)
-                    continue
-                result = chatroom.post_message(room_id, chatroom.HUMAN_IDENTITY,
-                                               it["text"], to=it["to"])
-                if result is None:
-                    continue
-                msg = result.get("message") or {}
-                room = chatroom.get_room(room_id) or {}
-                for ident in result.get("recipients") or []:
-                    part = chatroom.participant(room, ident) or {}
-                    if chatroom.is_on_mention(room, part) and not _pty_alive(part.get("ptyId")):
-                        try:        # a reviewer is started fresh with the message
-                            self._start_review(room_id, ident, msg)
-                        except Exception as e:      # noqa: BLE001
-                            print(f"[review] could not start {ident} in {room_id}: {e}", flush=True)
+                if not it.get("posted"):
+                    result = chatroom.post_message(room_id, chatroom.HUMAN_IDENTITY,
+                                                   it["text"], to=it["to"])
+                    if result is None:
                         continue
-                    wake_for.setdefault(ident, []).append(msg.get("from", "user"))
+                    msg = result.get("message") or {}
+                    room = chatroom.get_room(room_id) or {}
+                    owed = []
+                    for ident in result.get("recipients") or []:
+                        part = chatroom.participant(room, ident) or {}
+                        if chatroom.is_on_mention(room, part) and not _pty_alive(part.get("ptyId")):
+                            try:        # a reviewer is started fresh with the message
+                                self._start_review(room_id, ident, msg)
+                            except Exception as e:      # noqa: BLE001
+                                print(f"[review] could not start {ident} in {room_id}: {e}", flush=True)
+                            continue
+                        owed.append(ident)
+                    # In the room now: from here on only its wakes are owed, so
+                    # a retry after a failed wake never posts it a second time.
+                    it["posted"] = True
+                    it["wake"] = owed
+                for ident in it.get("wake") or []:
+                    wake_for.setdefault(ident, []).append(chatroom.HUMAN_IDENTITY)
+        not_typed: list[str] = []
         for ident, sess in ready.items():
             parts = [RESUME_NOTE] if ident in notes else []
             if solo:
@@ -6865,7 +6887,16 @@ class Handler(BaseHTTPRequestHandler):
             if not parts:
                 continue
             sess.last_input = time.time()
-            _type_input(sess, "\n\n".join(parts))
+            if not _type_input(sess, "\n\n".join(parts)):
+                # Gone between looking ready and the write: the messages stay
+                # owed to it (a partner that got its wake is not woken again).
+                print(f"[resume] {room_id}/{ident}: stopped before the input was typed "
+                      f"(pty {sess.id})", flush=True)
+                not_typed.append(ident)
+                continue
+            for it in items:
+                if it.get("posted"):
+                    it["wake"] = [w for w in it["wake"] if w != ident]
             if ident in notes:
                 chatroom.patch_participant(room_id, ident, {"resumedAt": time.time()})
             what = ["the resume note"] if ident in notes else []
@@ -6877,7 +6908,15 @@ class Handler(BaseHTTPRequestHandler):
         # Recipients that were not among the resumed (a live agent of another
         # kind): rung the ordinary way, which skips one that is not running.
         for ident, senders in wake_for.items():
-            self._ring(room_id, [ident], _relay_wake(senders[-1]))
+            if ident in self._ring(room_id, [ident], _relay_wake(senders[-1])):
+                for it in items:
+                    if it.get("posted"):
+                        it["wake"] = [w for w in it["wake"] if w != ident]
+            else:
+                not_typed.append(ident)
+        if not_typed:
+            name = "the agent" if solo else not_typed[0]
+            raise _NotTyped(f"{name} stopped before the message could be typed")
 
     def _brief_agents(self, room_id: str) -> None:
         """Introduce the room to each agent: its identity, partner(s), and the
@@ -7549,12 +7588,18 @@ class Handler(BaseHTTPRequestHandler):
                     if key and _say_key_seen(rid, key):
                         self._send_json(200, {"ok": True, "duplicate": True})
                         return
-                    result = self._resume_room(room_full, text=text, to=to)
+                    result = self._resume_room(room_full, text=text, to=to, key=key)
                     if key:
                         _SAY_KEYS[(rid, key)] = time.time()
             except Exception as exc:    # noqa: BLE001 — refused, in words; the text is kept
                 print(f"[resume] {rid}: refused — {exc!r}", flush=True)
-                self._send_json(400, {"error": str(exc) or exc.__class__.__name__})
+                # ``kept``: the text is held here, shown in the chat as not
+                # delivered with Retry — the page need not keep it too.
+                with _RESUMES_LOCK:
+                    held = _RESUMES.get(rid)
+                    kept = bool(text) and held is not None and any(
+                        (key and it.get("key") == key) or it["text"] == text for it in held.queue)
+                self._send_json(400, {"error": str(exc) or exc.__class__.__name__, "kept": kept})
                 return
             self._send_json(200, {"ok": True, **result,
                                   "room": chatroom.get_room(rid)})
