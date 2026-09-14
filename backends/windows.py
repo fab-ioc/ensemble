@@ -28,6 +28,10 @@ from .base import Backend, DASHBOARD_DIR
 from .shared import AGENT_SESS_DIR, claude_cmd_args
 from . import themes
 
+# A console child of a console-less host would open its own (focus-stealing)
+# console window; this gives it a windowless one instead.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 LAUNCH_DIR = DASHBOARD_DIR / "_launch"
 SCHEME_MARKER = ".wt-scheme"
 
@@ -342,7 +346,7 @@ class WindowsBackend(Backend):
         # Fallback: taskkill (also kills the child tree if claude spawned any).
         try:
             subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
-                           capture_output=True, timeout=5)
+                           capture_output=True, timeout=5, creationflags=_NO_WINDOW)
         except (OSError, subprocess.SubprocessError):
             pass
 
@@ -411,7 +415,7 @@ class WindowsBackend(Backend):
         # exited]" tab, because WT keeps tabs whose process died with non-zero.)
         try:
             subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
-                           capture_output=True, timeout=5)
+                           capture_output=True, timeout=5, creationflags=_NO_WINDOW)
         except (OSError, subprocess.SubprocessError):
             self.terminate(pid)
         try:
@@ -618,7 +622,7 @@ class WindowsBackend(Backend):
             plan_path.write_text(json.dumps(plan), encoding="utf-8")
             out = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
                                  capture_output=True, text=True, encoding="utf-8",
-                                 errors="replace", timeout=60)
+                                 errors="replace", timeout=60, creationflags=_NO_WINDOW)
         except (OSError, subprocess.SubprocessError) as e:
             return {"started": False, "error": f"{e.__class__.__name__}: {e}"}
         parts = (out.stdout or "").split()

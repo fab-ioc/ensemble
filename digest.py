@@ -37,6 +37,10 @@ import threading
 import time
 from pathlib import Path
 
+# Windows: the model call must not open a console window (a console-less host,
+# pythonw.exe, would otherwise give it one and lose the keyboard focus to it).
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 _d = None  # the dashboard module, set by bind()
 
 
@@ -399,7 +403,8 @@ def write_up(facts: str) -> tuple[str, str]:
             [bin_path, "-p", "--model", _model(), "--no-session-persistence",
              "--tools", "", "--strict-mcp-config"],
             input=_PROMPT + facts, cwd=str(workspace), capture_output=True,
-            text=True, encoding="utf-8", errors="replace", timeout=MODEL_TIMEOUT_S)
+            text=True, encoding="utf-8", errors="replace", timeout=MODEL_TIMEOUT_S,
+            creationflags=_NO_WINDOW)
     except (OSError, subprocess.SubprocessError) as e:
         return facts, f"plain facts — the model call failed: {str(e)[:160]}"
     out = (r.stdout or "").strip()

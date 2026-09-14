@@ -75,6 +75,22 @@ import workspace_search
 # Headless PTY runtime — dashboard-owned agent processes streamed to the browser.
 from backends import ptyrun
 
+# Windows: a console program started by a host that has no console of its own
+# (pythonw.exe under the scheduled task) gets a brand-new console window, which
+# flashes up and takes the keyboard focus for the life of the call -- a `git
+# status` per projects poll made the whole desktop flicker. CREATE_NO_WINDOW
+# gives the child a console with no window instead; 0 (no effect) elsewhere.
+# The hub also allocates a hidden console of its own at startup (main), so
+# even a spawn that bypasses _run shares that one. Both are needed: the hidden
+# console covers third-party spawns, the flag covers a hub started without it.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+def _run(argv, **kw):
+    """subprocess.run for a console program the hub only reads: never a window."""
+    kw.setdefault("creationflags", _NO_WINDOW)
+    return subprocess.run(argv, **kw)
+
 BACKEND = get_backend()
 # The tools module calls back into this module's task/launch primitives; the
 # dashboard runs as __main__, so hand it the live module object.
@@ -148,8 +164,8 @@ def _detect_tailscale_ip() -> str | None:
     ]
     for exe in candidates:
         try:
-            out = subprocess.run([exe, "ip", "-4"], capture_output=True,
-                                 text=True, timeout=5)
+            out = _run([exe, "ip", "-4"], capture_output=True,
+                       text=True, timeout=5)
         except (FileNotFoundError, OSError, subprocess.SubprocessError):
             continue
         ip = (out.stdout or "").strip().splitlines()
@@ -1024,8 +1040,8 @@ def operator_name() -> str:
     if not _GIT_NAME_CACHE:
         name = ""
         try:
-            out = subprocess.run(["git", "config", "user.name"],
-                                 capture_output=True, text=True, timeout=3)
+            out = _run(["git", "config", "user.name"],
+                       capture_output=True, text=True, timeout=3)
             name = (out.stdout or "").strip()
         except (FileNotFoundError, OSError, subprocess.SubprocessError):
             name = ""
@@ -1548,8 +1564,8 @@ def git_root(cwd: str) -> str:
         return _GIT_ROOT_CACHE[cwd]
     root = cwd
     try:
-        out = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"],
-                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=4)
+        out = _run(["git", "-C", cwd, "rev-parse", "--show-toplevel"],
+                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=4)
         r = (out.stdout or "").strip()
         if r:
             root = os.path.normpath(r)
@@ -1568,8 +1584,8 @@ def git_changed_count(root: str) -> int:
         return hit[1]
     n = 0
     try:
-        out = subprocess.run(["git", "-C", root, "status", "--porcelain"],
-                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=6)
+        out = _run(["git", "-C", root, "status", "--porcelain"],
+                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=6)
         n = sum(1 for ln in (out.stdout or "").splitlines() if ln.strip())
     except (OSError, subprocess.SubprocessError):
         n = 0
@@ -2146,8 +2162,8 @@ def read_workspace_file(path: str, line: int = 0) -> tuple[int, dict]:
 def _git_out(root: str, *args: str, timeout: int = 8) -> str:
     """stdout of ``git -C root <args>``, stripped; "" when git fails."""
     try:
-        out = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True,
-                             encoding="utf-8", errors="replace", timeout=timeout)
+        out = _run(["git", "-C", root, *args], capture_output=True, text=True,
+                   encoding="utf-8", errors="replace", timeout=timeout)
     except (OSError, subprocess.SubprocessError):
         return ""
     return (out.stdout or "").strip() if out.returncode == 0 else ""
@@ -2183,8 +2199,8 @@ def _git_branch_files(root: str, mb: str) -> list[dict] | None:
     """Files that differ between the merge-base and the working tree, plus
     untracked ones: a branch's whole change, committed and not."""
     try:
-        out = subprocess.run(["git", "-C", root, "diff", "--name-status", "-z", mb],
-                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
+        out = _run(["git", "-C", root, "diff", "--name-status", "-z", mb],
+                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
         if out.returncode != 0:
             return None
         parts = (out.stdout or "").split("\x00")
@@ -2201,8 +2217,8 @@ def _git_branch_files(root: str, mb: str) -> list[dict] | None:
             if i + 1 < len(parts):
                 files.append({"path": parts[i + 1], "status": code[0]})
             i += 2
-        un = subprocess.run(["git", "-C", root, "ls-files", "--others", "--exclude-standard", "-z"],
-                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
+        un = _run(["git", "-C", root, "ls-files", "--others", "--exclude-standard", "-z"],
+                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
         seen = {f["path"] for f in files}
         files += [{"path": p, "status": "?"} for p in (un.stdout or "").split("\x00") if p and p not in seen]
     except (OSError, subprocess.SubprocessError):
@@ -2231,8 +2247,8 @@ def git_status(path: str, branch: bool = False) -> tuple[int, dict]:
         return code, payload
     files = []
     try:
-        out = subprocess.run(["git", "-C", root, "status", "--porcelain=v1", "-z"],
-                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8)
+        out = _run(["git", "-C", root, "status", "--porcelain=v1", "-z"],
+                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8)
         parts = (out.stdout or "").split("\x00")   # NUL-separated records
         i = 0
         while i < len(parts):
@@ -2312,7 +2328,7 @@ def git_diff(path: str, file: str, branch: bool = False) -> tuple[int, dict]:
     if file:
         argv.append(file)
     try:
-        out = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
+        out = _run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
         diff = out.stdout or ""
         # Untracked files don't show in `git diff HEAD`; surface their content as
         # an all-added diff so the reviewer still sees the new file.
@@ -2918,12 +2934,12 @@ def setup_session_workspace(project: dict, mode: str, title: str) -> tuple[bool,
             return False, "", {}, "worktree needs a git project"
         branch = "sess/" + (slug or "session")
         try:
-            out = subprocess.run(
+            out = _run(
                 ["git", "-C", ppath, "worktree", "add", str(dest), "-b", branch],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
             if out.returncode != 0:
                 # Branch may already exist → attach without -b.
-                out2 = subprocess.run(
+                out2 = _run(
                     ["git", "-C", ppath, "worktree", "add", str(dest), branch],
                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
                 if out2.returncode != 0:
@@ -3381,7 +3397,7 @@ def claude_rename(session_id: str, max_turns: int = 12, timeout: int = 60) -> st
         _cleanup_new_jsonls(before)
         return None
     try:
-        r = subprocess.run(
+        r = _run(
             [bin_path, "-p", prompt],
             cwd=str(workspace),
             capture_output=True, text=True, timeout=timeout,
@@ -4240,7 +4256,7 @@ def check_for_update(force: bool = False) -> dict:
         else:
             try:
                 def git(*args) -> str:
-                    return subprocess.run(
+                    return _run(
                         ["git", *args], cwd=str(install_dir),
                         capture_output=True, text=True, timeout=5,
                     ).stdout.strip()
@@ -4249,7 +4265,7 @@ def check_for_update(force: bool = False) -> dict:
                 # tr/main and get stale/inconsistent numbers.
                 upstream_ref = git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
                 remote_name = upstream_ref.split("/", 1)[0] if "/" in upstream_ref else "origin"
-                fetch = subprocess.run(
+                fetch = _run(
                     ["git", "fetch", "--quiet", remote_name],
                     cwd=str(install_dir),
                     capture_output=True, text=True, timeout=15,
@@ -7485,6 +7501,12 @@ def main():
             _LOG_FILE = log_path
         except OSError:
             pass
+    # Windows, under pythonw.exe (the scheduled task): give the hub a hidden
+    # console NOW, before its first git/tailscale call. Every console child then
+    # shares it. Without one, each spawn opened its own console window and took
+    # the keyboard focus for a few ms -- a desktop-wide flicker on every poll,
+    # until the first agent start allocated the console as a side effect.
+    ptyrun.ensure_windows_console()
     # Remote bind, if any. Loopback is always served (agents reach /mcp on
     # 127.0.0.1, and so does the local browser) — a non-loopback bind adds a
     # SECOND, token-gated listener on that interface only (e.g. the tailnet IP),

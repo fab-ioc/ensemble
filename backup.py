@@ -18,6 +18,10 @@ import threading
 import time
 from pathlib import Path
 
+# Windows: never a console window for the git the hub runs (a console-less
+# host, pythonw.exe, would otherwise open one per call and steal the focus).
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 _LOCK = threading.Lock()
 _STATE = {
     "running": False,
@@ -47,7 +51,8 @@ def _git(root: Path, *args: str, timeout: int = 120) -> subprocess.CompletedProc
     # utf-8 + errors=replace: on Windows the default cp1252 decode fails silently
     # inside subprocess's reader thread and yields stdout=None.
     return subprocess.run(["git", "-C", str(root), *args], capture_output=True,
-                          text=True, encoding="utf-8", errors="replace", timeout=timeout)
+                          text=True, encoding="utf-8", errors="replace", timeout=timeout,
+                          creationflags=_NO_WINDOW)
 
 
 def ensure_repo(root: Path, remote: str = "") -> dict:

@@ -53,13 +53,19 @@ _console_ready = False
 _console_lock = threading.Lock()
 
 
-def _ensure_windows_console() -> None:
+def ensure_windows_console() -> None:
     """pywinpty's ConPTY (CreatePseudoConsole) needs the host process to have a
     console. A windowless host — pythonw.exe, or a service/scheduled-task launch
     without an attached console — has none, and the spawn then panics with
     HRESULT 0x800700BB ("The specified system semaphore name was not found").
     Allocate a hidden console once so every headless spawn succeeds regardless of
-    how the server was started. No-op if a console is already attached."""
+    how the server was started. No-op if a console is already attached.
+
+    The hub calls this at startup too, and not only for ConPTY: a console
+    program (git, tailscale, taskkill) started by a host without a console gets
+    a console window of its own, which flashes up and takes the keyboard focus
+    for the life of the call. With a hidden console attached, every child shares
+    it and nothing appears."""
     global _console_ready
     if _console_ready or not IS_WINDOWS:
         return
@@ -196,7 +202,7 @@ class PtySession:
         for k in [k for k in full_env if k.startswith("CLAUDE_CODE_CHILD")]:
             full_env.pop(k, None)
         if IS_WINDOWS:
-            _ensure_windows_console()        # ConPTY needs a console (pythonw has none)
+            ensure_windows_console()        # ConPTY needs a console (pythonw has none)
             try:
                 from winpty import PtyProcess  # lazy: Windows-only dependency
             except ImportError as e:
@@ -401,7 +407,8 @@ class PtySession:
         if pid and IS_WINDOWS:
             try:
                 subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
-                               capture_output=True, timeout=5)
+                               capture_output=True, timeout=5,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             except (OSError, subprocess.SubprocessError):
                 pass
         try:
