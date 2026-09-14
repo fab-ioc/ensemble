@@ -113,6 +113,22 @@ def _phrase(pattern: str) -> re.Pattern:
     return re.compile(pattern.replace(" ", r"\s*"), re.I)
 
 
+# Only the agent's own wall counts. Both CLIs draw a refusal as a status line
+# of their own below the conversation: Claude as a `⎿` line that *starts* with
+# the error ("⎿  API Error: 401 · OAuth token has expired…", "⎿  Credit balance
+# is too low"), after which the turn ends and the session goes idle; codex as a
+# `■` notice. The same words anywhere else are someone quoting them — a review
+# finding read through chat_read (a tool result), a `[digest]` or `[report]`
+# line the hub typed, a numbered finding, a quoted sentence, the agent's own
+# `●` balloon discussing this module — and on 2026-09-14 two healthy rooms
+# were shown as "log in again" for an hour because of exactly that. So a match
+# counts only below the last `●` turn (a background-task notice is not one),
+# only in a block whose first line is the CLI's own error line — never the
+# first `⎿` under a tool call, which is that tool's output, whatever it says —
+# and never while Claude itself says it is busy (see
+# `_own_wall_lines` and `_classify_agent`). Phrases are never exempted for this:
+# "run /login to renew" is a real wall when Claude prints it.
+#
 # "I cannot continue" — capacity and credentials. Each rule is
 # (pattern, plain-language why, machine-readable cause). Kept deliberately
 # specific: a bare "rate limit" is NOT here, because both CLIs retry those
@@ -262,22 +278,162 @@ def _quote_at(text: str, start: int, end: int, limit: int = 260) -> str:
 # message, and the first of them names the actual cause.
 _CLUSTER_SPAN = 400
 
+# Screen structure, read off the first characters of a line (``ptyrun.tail``
+# strips each line, so continuation lines of a wrapped block start bare):
+# a Claude turn or tool call; the frame of a box, which says nothing itself; the
+# CLI's own error line; and everything that marks someone else's words — an
+# agent's balloon or tool output, a prompt, a quote, a hub-typed ``[tag]``, a
+# numbered finding.
+_TURN_LINE = re.compile(r"^[●⏺]")
+_BOX_EDGE = re.compile(r"^[\s│┃║|╭╰╮╯─]+")
+_RESULT_GLYPH = "⎿"
+_OWN_ERROR = re.compile(r"^[■✗✘⚠]")
+_QUOTED_OPENER = re.compile(r"^(?:[●⏺•└├>›❯“\"«]|\[[^\]\n]{1,60}\]|\d+[.)]\s)")
+# A `●` line that calls a tool rather than one Claude wrote. Its first `⎿` is
+# the tool's output, whatever that output says. Only Claude's own tool names
+# count as "● Name(…)" — a sentence can start "● Note(…)" too — plus the shapes
+# live screens show for grouped tool work: "● Running 1 shell command…",
+# "●ReadingNfile…", "● Searching for 2 patterns, reading 1 file", "● Calling
+# ensemble…", and anything marked "(MCP)" or "(ctrl+o to expand)". Spaces may
+# be missing in every one of them.
+_TOOL_NAMES = ("Bash|BashOutput|PowerShell|Read|Write|Edit|MultiEdit|Update|Create|Glob|Grep|LS|"
+               "Task|Agent|Skill|WebFetch|WebSearch|Fetch|TodoWrite|NotebookEdit|NotebookRead|"
+               "KillShell|KillBash|Monitor|ToolSearch|SlashCommand|AskUserQuestion|ExitPlanMode|"
+               "EnterPlanMode|Workflow|SendMessage|ListAgents|Artifact")
+_TOOL_CALL = re.compile(
+    r"^[●⏺]\s*(?:"
+    rf"(?:{_TOOL_NAMES})\s*\("
+    r"|.*\((?:MCP|ctrl\+o\s*to\s*expand)\)"
+    # Only the verbs and objects Claude's grouped-work headers use: "● Adding
+    # 3 tests" is a sentence, and a real error under it must still count.
+    r"|(?:Running|Ran|Reading|Read|Searching|Searched|Listing|Listed|Writing|Wrote|"
+    r"Editing|Edited|Making|Made|Fetching|Fetched)\s*(?:for\s*)?\d+\s*"
+    r"(?:shell\s*commands?|files?|patterns?|director(?:y|ies)|(?:scratchpad\s*)?edits?|"
+    r"urls?|pages?|searche?s?)\b"
+    r"|Call(?:ing|ed)\s*(?:ensemble|claude-in-chrome)\b"
+    r")")
+# A `●` line that only announces something finished in the background. It
+# arrives whether or not the agent can reach the API, so it is no proof the
+# agent got past a wall above it. (Stripping loses spaces: "●Backgroundcommand".)
+_NOTICE_TURN = _phrase(r"^[●⏺] ?background (?:command|task|shell|agent)")
+# A tool's progress frame, which the raw buffer keeps above the final output.
+_PROGRESS_RESULT = _phrase(r"^⎿ ?(?:running|waiting)\b")
+# Claude draws a tool's output and its own API error with the same `⎿`. Its
+# error *starts* with the refusal, give or take a short prefix ("API Error:
+# 401 · ", "Claude "), and it is never the first `⎿` under a tool call.
+_API_ERROR = re.compile(r"^\s*API\s*Error\b", re.I)
+_RESULT_WALL_AT = 30
+
+
+def _result_is_wall(text: str, at: int) -> bool:
+    """Whether the `⎿` block starting at ``at`` begins with a refusal.
+
+    A block that starts with a shell echo ("$ type fixture.txt"), a hub-typed
+    ``[tag]``, a quote or a numbered item is output, never Claude's error —
+    which matters because Claude also heads tool work with a plain sentence
+    ("● Checking where the new test runs execute" over "⎿ $ git …"), so the
+    line above cannot always say it was a tool."""
+    body = text[at:at + 300]
+    lead = body.lstrip()
+    if lead.startswith("$") or _QUOTED_OPENER.match(lead):
+        return False
+    if _API_ERROR.match(body):
+        return True
+    first = min((m.start() for pat, _, _ in _BLOCK_RULES for m in [pat.search(body)] if m),
+                default=None)
+    return first is not None and len(body[:first].strip()) <= _RESULT_WALL_AT
+
+
+def _body(line: str) -> str:
+    return _BOX_EDGE.sub("", line)
+
+
+def _is_tool_output(lines: list[str], j: int) -> bool:
+    """Whether the `⎿` on line ``j`` is the output of a tool call: the nearest
+    structure above it, past bare continuation lines, spinner frames and the
+    tool's own progress frames, is a tool-call line. After another `⎿`, a
+    prompt, a hub-typed line or Claude's own words it is Claude speaking."""
+    for k in range(j - 1, -1, -1):
+        body = _body(lines[k])
+        if body.startswith(_RESULT_GLYPH):
+            if _PROGRESS_RESULT.match(body):
+                continue
+            return False
+        if _TURN_LINE.match(body):
+            return bool(_TOOL_CALL.match(body))
+        if _OWN_ERROR.match(body) or _QUOTED_OPENER.match(body):
+            return False
+    return False
+
+
+def _own_wall_lines(text: str) -> tuple[int, callable]:
+    """Where the agent's own status area begins, and a test for one offset.
+
+    Returns ``(floor, owns)``: a match before ``floor`` sits above the last
+    Claude turn and is history — the agent spoke after it, so it got past it
+    (a background-task notice is not a turn) — and ``owns(offset)`` says
+    whether the block holding that offset is the CLI's own error line rather
+    than quoted text. A block is identified by the nearest line above (or at)
+    the offset that starts with structure; a screen with no structure at all
+    keeps the old behaviour and counts.
+    """
+    lines = text.split("\n")
+    starts, pos = [], 0
+    for ln in lines:
+        starts.append(pos)
+        pos += len(ln) + 1
+    floor = 0
+    for i, ln in enumerate(lines):
+        body = _body(ln)
+        if _TURN_LINE.match(body) and not _NOTICE_TURN.match(body):
+            floor = starts[i]
+    verdicts: dict[int, bool] = {}
+
+    def owns(offset: int) -> bool:
+        i = max(0, text.count("\n", 0, offset))
+        if i in verdicts:
+            return verdicts[i]
+        verdict, j = True, i
+        while j >= 0:
+            edge = _BOX_EDGE.match(lines[j])
+            body = lines[j][edge.end():] if edge else lines[j]
+            if body.startswith(_RESULT_GLYPH):
+                verdict = (not _is_tool_output(lines, j)
+                           and _result_is_wall(text, starts[j] + (edge.end() if edge else 0) + 1))
+                break
+            if _OWN_ERROR.match(body):
+                break
+            if _QUOTED_OPENER.match(body):
+                verdict = False
+                break
+            j -= 1
+        verdicts[i] = verdict
+        return verdict
+
+    return floor, owns
+
 
 def find_block(tail: str) -> tuple[str, str, str] | None:
     """Scan a terminal's screen for "I cannot continue".
 
-    Returns ``(why, cause, quoted_sentence)``, or None. The *latest* message on
-    the screen wins — an old warning can sit above the current one — but within
-    that message the *first* rule to match names the cause, and the quote spans
-    the whole thing, so the product owner reads what the agent actually said.
+    Returns ``(why, cause, quoted_sentence)``, or None. Only the agent's own
+    wall counts — below its last turn, on the CLI's own error line, never text
+    quoted inside a balloon, a tool result or a hub-typed line (see the note
+    above ``_BLOCK_RULES``). The *latest* such message wins — an old warning
+    can sit above the current one — but within that message the *first* rule
+    to match names the cause, and the quote spans the whole thing, so the
+    product owner reads what the agent actually said.
     """
     text = tail or ""
     if not text:
         return None
     hits: list[tuple[int, int, str, str]] = []
     notices = [(n.start(), n.end()) for n in _LOGIN_NOTICE.finditer(text)]
+    floor, owns = _own_wall_lines(text)
     for pat, why, cause in _BLOCK_RULES:
         for m in pat.finditer(text):
+            if m.start() < floor or not owns(m.start()):
+                continue        # history, or someone quoting a wall
             if _BLOCK_EXEMPT.search(text[max(0, m.start() - 60):m.end() + 60]):
                 continue
             if any(s <= m.start() and m.end() <= e for s, e in notices):
@@ -603,6 +759,12 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
     kind = part.get("agent", "") or "agent"
     who = f"{identity} ({kind})" if kind != identity else identity
     block = ev["scan"]["block"]
+    if block and ev["alive"] and ev["claudeStatus"] == "busy":
+        # A Claude session that says it is working has not hit a wall: a real
+        # refusal ends the turn. The screen verdict is kept, so a wall drawn
+        # while the status file is a second behind is reported on the next
+        # poll that reads it idle.
+        block = None
 
     if not ev["alive"]:
         death = ev["death"]

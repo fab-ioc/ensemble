@@ -2604,6 +2604,9 @@ def build_projects() -> dict:
                            "isGit": p.get("isGit", False), "registered": True,
                            "sessions": [], "live": 0, "waiting": 0, "updatedAt": 0}
     UNASSIGNED = "__unassigned__"
+    # A project's PO is not one of its tasks: it stays in `sessions` (the page
+    # finds and chooses the PO there) but counts as no task live or waiting.
+    po_rooms = {p.get("poRoomId") for p in projects_reg if p.get("poRoomId")}
     needs_you = 0
     agents_live = 0
     for s in rows:
@@ -2617,6 +2620,9 @@ def build_projects() -> dict:
                                       "sessions": [], "live": 0, "waiting": 0, "updatedAt": 0}
         g = groups[pid]
         g["sessions"].append(s)
+        g["updatedAt"] = max(g["updatedAt"], s.get("updatedAt") or 0)
+        if s.get("roomId") and s.get("roomId") in po_rooms:
+            continue
         if s.get("isLive"):
             g["live"] += 1
             agents_live += len(s.get("agents") or [1])
@@ -2625,7 +2631,6 @@ def build_projects() -> dict:
         if s.get("attention") or s.get("status") in ("waiting", "waiting_human"):
             g["waiting"] += 1
             needs_you += 1
-        g["updatedAt"] = max(g["updatedAt"], s.get("updatedAt") or 0)
     projects = []
     total_changed = 0
     for gid, g in groups.items():
@@ -3820,6 +3825,28 @@ def search_transcripts(query: str, max_results: int = 100, snippet_pad: int = 60
             })
     results.sort(key=lambda r: -r["hits"])
     return results[:max_results]
+
+
+def attach_search_rooms(results: list[dict], rooms: list[dict] | None = None) -> list[dict]:
+    """Name the task each deep-search hit belongs to. A task row is its room,
+    while the transcripts found are its agents' conversations, so without the
+    room id the page could not show a single task among the matches."""
+    if rooms is None:
+        try:
+            rooms = chatroom.list_rooms()
+        except Exception:
+            rooms = []
+    room_of: dict[str, str] = {}
+    for rm in rooms:
+        for pp in rm.get("participants") or []:
+            if pp.get("kind") == "agent":
+                for sid in participant_session_ids(pp):
+                    room_of.setdefault(sid, rm.get("id") or "")
+    for r in results:
+        rid = room_of.get(r.get("sessionId") or "")
+        if rid:
+            r["roomId"] = rid
+    return results
 
 
 def delete_session(sid: str) -> dict:
@@ -6562,7 +6589,7 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/search":
             q_params = parse_qs(u.query)
             query = (q_params.get("q", [""])[0] or "").strip()
-            self._send_json(200, search_transcripts(query) if query else [])
+            self._send_json(200, attach_search_rooms(search_transcripts(query)) if query else [])
             return
         if p.startswith("/api/repos/"):
             sid = p[len("/api/repos/"):]

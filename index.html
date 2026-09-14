@@ -4525,8 +4525,8 @@ function topicCellHL(r, parsed) {
   // with a label-visible match sometimes, but "which line matched" is often
   // useful even when the label already contains one of the terms.
   let snippetLine = '';
-  if (parsed.terms.length && SERVER_MATCHES.has(r.sessionId)) {
-    const m = SERVER_MATCHES.get(r.sessionId);
+  const m = parsed.terms.length && serverMatchOf(r, SERVER_MATCHES);
+  if (m) {
     const hitsLabel = m.hits > 1 ? ` · ${m.hits} matches` : '';
     snippetLine = `<span class="last">🔎 ${highlight(m.snippet, parsed)}${hitsLabel}</span>`;
   }
@@ -4537,20 +4537,73 @@ function topicCellHL(r, parsed) {
   return `<span class="first" style="color: var(--fg-muted); font-style: italic">${base ? esc(base) : '(no turns yet)'}</span>`;
 }
 
-let SERVER_MATCHES = new Map(); // sid → {hits, snippet}
+// ---- Task search: begin -----------------------------------------------------
+// tests/test_task_search.py runs this block in Node.
+let SERVER_MATCHES = new Map(); // roomId (or a session's id) → {hits, snippet}
 
+// A project's PO is not one of its tasks. It is reached from the pill and the
+// PO pane, so no list, board, search or attention list shows it as a row.
+function poRoomIds(projects) {
+  return new Set((projects || []).filter(p => p.registered).map(p => p.poRoomId).filter(Boolean));
+}
+function isPoRoom(rid, poRooms) { return !!rid && poRooms.has(rid); }
+// A project's tasks: its sessions without its PO. Only the PO picker reads
+// pj.sessions whole, since there the PO is one of the choices.
+function projectTasks(pj) {
+  const pos = poRoomIds(pj ? [pj] : []);
+  return ((pj && pj.sessions) || []).filter(s => !isPoRoom(s.roomId, pos));
+}
+
+// What a quick search reads: what the row shows. A task shows its title; its
+// folder, room id and the start and end of its chat are not on its card or row.
+// Every task in a project shares most of its path, and two letters of that or
+// of a chat ("re", "en") matched nearly every task, so the rows never narrowed.
+// Its conversation is what Enter's deep search is for.
 function rowHaystack(r) {
-  return [r.label, r.first, r.last, r.cwd, r.sessionId, r.pid || '', r.currentTheme || '']
-    .map(s => String(s || '')).join(' ');
+  const own = r.roomId ? [r.label]
+    : [r.label, r.first, r.last, r.cwd, r.sessionId, r.pid || '', r.currentTheme || ''];
+  return own.map(s => String(s || '')).join(' ');
+}
+
+// A deep search finds conversations; the hub names the task each belongs to.
+// A task with several conversations is one match, its hits added up.
+function serverMatchesFrom(hits) {
+  const out = new Map();
+  for (const h of hits || []) {
+    const k = h.roomId || h.sessionId;
+    const m = out.get(k);
+    if (m) m.hits += h.hits || 0;
+    else out.set(k, { hits: h.hits || 0, snippet: h.snippet || '' });
+  }
+  return out;
+}
+function serverMatchOf(r, matches) {
+  return matches.get(r.roomId) || matches.get(r.sessionId) || null;
 }
 
 // Shallow-match a row against the parsed query. If the server already
 // returned this row via deep search, it counts as matched regardless.
-function rowMatches(r, parsed) {
+function rowMatches(r, parsed, matches) {
   if (!parsed.groups.length) return true;
-  if (SERVER_MATCHES.has(r.sessionId)) return true;
+  if (serverMatchOf(r, matches || SERVER_MATCHES)) return true;
   return haystackMatches(rowHaystack(r), parsed);
 }
+
+// What the box says inside it, after the query: how many tasks it finds in the
+// list under it. `found` is null where no task list is showing, and there it
+// says Enter looks deeper, as it always did. The badge has the box's last 92px
+// and the query types up to it, so a count carries no hint or icon: "54 found"
+// fits, "🔎 54 found" covered the end of the query.
+// `phase` is '' while typing, 'searching' or 'deep'.
+function searchBadge(q, phase, found, hits) {
+  q = (q || '').trim();
+  if (!q) return { state: null, label: '' };
+  if (phase === 'searching') return { state: 'deep', label: 'searching…' };
+  if (phase === 'deep') return { state: 'deep', label: `${found == null ? hits : found} found` };
+  if (found != null) return { state: '', label: `${found} found` };
+  return { state: '', label: q.length >= 2 ? '⏎ deep' : '' };
+}
+// ---- Task search: end -------------------------------------------------------
 
 // Task priority — the five Jira levels. The server sends both the number
 // (1 = highest … 5 = lowest, the sort key) and the name; a row from an older
@@ -4721,7 +4774,8 @@ function boardHtml(rows, now, frozen, hidden) {
     let items = byCol.get(c.k) || [];
     const total = items.length;
     let aged = 0;
-    if (c.k === 'done' && !DONE_SHOW_ALL) {
+    // A search shows every match, however old.
+    if (c.k === 'done' && !DONE_SHOW_ALL && !parseSearchQuery(SEARCH_QUERY).groups.length) {
       const fresh = items.filter(r => (r.updatedAt || 0) >= cutoff);
       aged = items.length - fresh.length;
       items = fresh;
@@ -4749,7 +4803,7 @@ let SB_DEST = '';
 // "What needs me", across every project, in one place. Each entry names the
 // project, the task and the agent, and clicking it opens the task in the page.
 function needsYouHtml() {
-  const items = (ATTENTION.items || []);
+  const items = attentionItems();
   if (!items.length) {
     return `<div class="dest-head"><h2>Needs you</h2></div>`
       + `<div class="dest-empty">Nothing is waiting on you, stuck, or dead.</div>`;
@@ -4787,7 +4841,8 @@ function needsYouHtml() {
 // "What is running now", across every project. The other question the top bar
 // used to answer with a number nobody could click.
 function activeHtml() {
-  const live = ALL_ROWS.filter(r => r.isLive);
+  const pos = currentPoRooms();
+  const live = ALL_ROWS.filter(r => r.isLive && !isPoRoom(r.roomId, pos));
   if (!live.length) {
     return `<div class="dest-head"><h2>Active</h2></div>`
       + `<div class="dest-empty">No agent is running right now.</div>`;
@@ -5044,6 +5099,8 @@ function nestForks(rows) {
 // Inside a project, counting all tasks read "12 of 38" and implied filters were
 // hiding 26 tasks that were simply in other projects.
 function inScope(r) {
+  // The PO is reached from its pill and pane, never listed as a task.
+  if (isPoRoom(r.roomId, currentPoRooms())) return false;
   // Drilled into a project: only the sessions the server recorded as members
   // (explicit sidecar link, or path fallback for legacy rows). Never re-derived
   // here from cwd — that mismatch is what produced empty drill-ins before.
@@ -5334,8 +5391,9 @@ function renderSidebar() {
   let liveCount = 0;
   let pinnedCount = 0;
   let archivedCount = 0;
+  const pos = currentPoRooms();
   for (const r of ALL_ROWS) {
-    if (r.isLive) liveCount++;
+    if (r.isLive && !isPoRoom(r.roomId, pos)) liveCount++;
     if (r.pinned) pinnedCount++;
     if (r.archived) { archivedCount++; continue; }
     if (!r.category) uncatCount++;
@@ -5356,7 +5414,7 @@ function renderSidebar() {
   // me" and "what is running now" — are permanent addresses, not a tray you
   // have to remember to open. They come first because they are what you open
   // the dashboard to find out.
-  const needsCount = (ATTENTION.items || []).length;
+  const needsCount = attentionItems().length;
   const activeCount = liveCount;
   const dest = (key, icon, label, count, tone) => {
     const active = SB_DEST === key ? ' active' : '';
@@ -5439,11 +5497,13 @@ function projectSessionState(sn) {
 function projectsLandingHtml() {
   if (!PROJECTS) return '<p class="empty">Loading projects…</p>';
   const cards = PROJECTS.projects.map(p => {
-    const rows = (p.sessions || []).slice(0, 4).map(sn => {
+    const tasks = projectTasks(p);
+    const count = tasks.length;
+    const rows = tasks.slice(0, 4).map(sn => {
       const st = projectSessionState(sn);
       return `<div class="srow" data-sid="${esc(sn.roomId || sn.sessionId || '')}"><span class="sdot ${st}"></span>${sn.roomId ? prioIcon(prioOf(sn)) : ''}<span class="stitle">${esc(sn.label || sn.sessionId || 'session')}</span><span class="stime">${agoSpan(sn.updatedAt)}</span></div>`;
     }).join('');
-    const more = (p.count || 0) > 4 ? `<div class="srow more">… ${p.count - 4} more</div>` : '';
+    const more = count > 4 ? `<div class="srow more">… ${count - 4} more</div>` : '';
     const wait = p.waiting ? `<span class="waitchip">⚠ ${p.waiting} waiting</span>` : '';
     const live = p.live ? `<span class="live"><span class="live-dot"></span>${p.live} live</span>` : `<span class="live off">idle</span>`;
     const changed = p.isGit ? (p.changed ? `<span class="badge changed">◆ ${p.changed} changed</span>` : `<span class="badge clean">clean</span>`) : '';
@@ -5456,7 +5516,7 @@ function projectsLandingHtml() {
     return `<div class="proj ${p.waiting ? 'hot' : ''} ${unassigned ? 'unassigned' : ''}" data-proj="${esc(p.id)}">
       <div class="row1"><h3>${esc(p.name)}</h3>${wait}${live}</div>
       ${sub}
-      <div class="srows">${rows}${more}${(p.count || 0) === 0 ? '<div class="srow none">no tasks yet</div>' : ''}</div>
+      <div class="srows">${rows}${more}${count === 0 ? '<div class="srow none">no tasks yet</div>' : ''}</div>
       <div class="metarow">${changed}<span class="ago">${agoSpan(p.updatedAt)}</span>${newTask}</div>
     </div>`;
   }).join('');
@@ -5572,7 +5632,7 @@ function wsJoin(dir, name) { const sep = dir.includes('\\') ? '\\' : '/'; return
 // write their notes and clone repos.
 function scopeOptions(pj) {
   const opts = [{ path: pj.path, label: 'Project folder' }];
-  (pj.sessions || []).forEach(sn => {
+  projectTasks(pj).forEach(sn => {
     if (sn.cwd && sn.cwd !== pj.path) opts.push({ path: sn.cwd, label: 'Task: ' + (sn.label || sn.sessionId || 'session') });
   });
   return opts;
@@ -7661,9 +7721,9 @@ let CH_LOAD = 0, CH_DIFF = 0;
 const CH_DIFF_EMPTY = '<div class="wsp-empty">Select a changed file to review its diff. Click a line number to comment; submit the comments to a task\'s chat.</div>';
 function chUseContext(pid, root) {
   CH_RV = drReview('project:' + pid + '|' + root, {
-    rooms: () => ((projectById(pid) || {}).sessions || []).filter(s => s.roomId).map(s => ({ id: s.roomId, name: s.label || s.roomId })),
+    rooms: () => projectTasks(projectById(pid)).filter(s => s.roomId).map(s => ({ id: s.roomId, name: s.label || s.roomId })),
     target: rv => {
-      const rooms = ((projectById(pid) || {}).sessions || []).filter(s => s.roomId);
+      const rooms = projectTasks(projectById(pid)).filter(s => s.roomId);
       const s = rooms.find(x => x.roomId === rv.to) || rooms[0];
       return s ? { roomId: s.roomId, live: !!s.isLive, name: s.label || 'That task' } : null;
     },
@@ -8750,6 +8810,7 @@ function renderRows() {
   renderSidebar();
   syncProjSwitch();
   renderPo();
+  paintSearchBadge(null);
   // A documents project's Overview leads with its files (#docs-panel, built
   // once per project and kept); every other view hides it.
   const docsPj = docsOverviewProject();
@@ -8846,6 +8907,7 @@ function renderRows() {
   const active = parsed.groups.length > 0;
   const modeFiltered = ALL_ROWS.filter(passesFilter);
   const filtered = active ? modeFiltered.filter(r => rowMatches(r, parsed)) : modeFiltered;
+  paintSearchBadge(filtered.length);
   // One number, not four. "3 live" duplicated the sidebar's Active count and
   // "2 pinned" was a filter's own state; both went. What survives answers the
   // question a filtered list actually raises — am I looking at everything, or
@@ -9113,11 +9175,17 @@ async function refresh({ now = false, until = 0 } = {}) {
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
 
 let _searchVersion = 0;
+var SEARCH_PHASE = '', SEARCH_HITS = 0;   // '' while typing, 'searching', 'deep'
 function setSearchBadge(state, label) {
   const el = $('#search-state');
-  el.className = 'search-state' + (state ? ' ' + state : '');
-  el.textContent = label || '';
+  const cls = 'search-state' + (state ? ' ' + state : '');
+  if (el.className !== cls) el.className = cls;
+  if (el.textContent !== (label || '')) el.textContent = label || '';
   el.hidden = !label;
+}
+function paintSearchBadge(found) {
+  const b = searchBadge(SEARCH_QUERY, SEARCH_PHASE, found, SEARCH_HITS);
+  setSearchBadge(b.state, b.label);
 }
 async function setCategory(sid, category) {
   const r = await api('/api/categories/' + sid, {
@@ -9226,9 +9294,8 @@ $('#search').addEventListener('input', (ev) => {
   SEARCH_QUERY = ev.target.value;
   // Drop any deep-search results when the query changes; they'd be stale.
   SERVER_MATCHES = new Map();
+  SEARCH_PHASE = '';
   _searchVersion++;
-  const q = SEARCH_QUERY.trim();
-  setSearchBadge(q.length >= 2 ? '' : null, q.length >= 2 ? '⏎ deep' : '');
   renderRows();
 });
 
@@ -9238,15 +9305,19 @@ $('#search').addEventListener('keydown', async (ev) => {
   if (q.length < 2) return;
   ev.preventDefault();
   const v = ++_searchVersion;
-  setSearchBadge('deep', 'searching…');
+  SEARCH_PHASE = 'searching';
+  renderRows();
   try {
     const r = await api('/api/search?q=' + encodeURIComponent(q));
     if (v !== _searchVersion) return; // a newer query has been typed
-    SERVER_MATCHES = new Map(r.map(x => [x.sessionId, x]));
-    setSearchBadge('deep', `🔎 ${r.length} hit${r.length === 1 ? '' : 's'}`);
+    SERVER_MATCHES = serverMatchesFrom(r);
+    SEARCH_HITS = SERVER_MATCHES.size;
+    SEARCH_PHASE = 'deep';
     renderRows();
   } catch (e) {
-    setSearchBadge('', '');
+    if (v !== _searchVersion) return;
+    SEARCH_PHASE = '';
+    renderRows();
     toast('search failed: ' + e.message, 4000, 'err');
   }
 });
@@ -9713,8 +9784,15 @@ async function updateRoomsBadge() {
   }
 }
 
+// The PO is not a task, so it is in no attention list either.
+function currentPoRooms() { return poRoomIds(PROJECTS && PROJECTS.projects); }
+function attentionItems() {
+  const pos = currentPoRooms();
+  return (ATTENTION.items || []).filter(i => !isPoRoom(i.roomId, pos));
+}
+
 function renderAttention() {
-  const items = ATTENTION.items || [];
+  const items = attentionItems();
   const btn = $('#notif-btn'), count = $('#notif-count');
   count.textContent = items.length;
   count.hidden = items.length === 0;
@@ -10135,7 +10213,7 @@ $('#proj-switch').addEventListener('click', (ev) => {
   m.innerHTML = `<button class="pm-item${!SELECTED_PROJECT ? ' on' : ''}" data-proj="">All projects</button>`
     + (list.length ? '<div class="pm-rule"></div>' : '')
     + list.map(pj => {
-        const needs = (pj.sessions || []).filter(x => x.attention).length;
+        const needs = projectTasks(pj).filter(x => x.attention).length;
         return `<button class="pm-item${SELECTED_PROJECT === pj.id ? ' on' : ''}" data-proj="${esc(pj.id)}">`
           + `<span class="pm-name">${esc(pj.name)}</span>`
           + (needs ? `<span class="pm-needs">${needs}</span>` : '') + '</button>';
