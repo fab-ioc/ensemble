@@ -7908,7 +7908,6 @@ function poHeadHtml(pj, row, peek) {
   if (!row.isLive && !row.draft) acts.push(`<button class="po-btn def" data-po="resume" title="Relaunch the PO with its conversation">Resume</button>`);
   acts.push(`<button class="po-btn" data-po="open" title="Open the PO's own task: spec, changes and files">Task</button>`);
   acts.push(`<button class="po-btn" data-po="popout" title="Open the PO in its own window">Pop out</button>`);
-  acts.push(`<button class="po-btn" data-po="change" title="Choose which task is this project's PO">Change</button>`);
   if (peek) acts.push(`<button class="po-btn x" data-po="close" title="Close (Esc)" aria-label="Close the PO">×</button>`);
   return `<span class="av ${cls}">${esc((m.agent || '?')[0])}</span>`
     + `<div class="po-who"><div class="po-name">${esc(pj.name)} · PO</div><div class="po-sub">${sub}</div></div>`
@@ -8073,7 +8072,6 @@ document.addEventListener('click', async (ev) => {
     if (what === 'close') poClosePeek();
     else if (what === 'popout') openSessionWindow(head.dataset.room);
     else if (what === 'open') openDetail(head.dataset.sid);
-    else if (what === 'change') poChoose(head.dataset.proj);
     else if (what === 'resume') {
       act.disabled = true;
       try {
