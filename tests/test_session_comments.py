@@ -238,7 +238,8 @@ class ReviewComments(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         code = (STORE + "\n".join(js_function(SRC, n) for n in (
-            "sendSolo", "sendResuming", "needsResume", "orResume", "postOk", "sendErrorText"))
+            "sendSolo", "sendResuming", "needsResume", "hasMessageRefs", "refOfUrl", "orResume", "postOk",
+            "sendErrorText"))
                 + comments_block(SRC))
         out = subprocess.run([NODE, "-e", JS], input=json.dumps({"code": code, "prefix": PREFIX}), capture_output=True,
                              text=True, encoding="utf-8", timeout=60)
