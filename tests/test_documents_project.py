@@ -340,8 +340,11 @@ class HistoryEndpoints(Hub):
         history.snapshot(str(self.home))
         status, first = self.json_call("GET", f"/api/history/log?{self.q(deleted='1', limit='1')}")
         self.assertEqual((status, len(first["files"]), first["more"]), (200, 1, True))
-        status, rest = self.json_call("GET", f"/api/history/log?{self.q(deleted='1', limit='1', skip='1')}")
+        row = first["files"][0]
+        status, rest = self.json_call("GET", f"/api/history/log?{self.q(deleted='1', limit='1', after=row['rev'] + ':' + row['path'])}")
         self.assertEqual((len(rest["files"]), rest["more"]), (1, False))
+        status, both = self.json_call("GET", f"/api/history/log?{self.q(deleted='1', through=rest['files'][0]['rev'] + ':' + rest['files'][0]['path'])}")
+        self.assertEqual((len(both["files"]), both["more"]), (2, False))
         self.assertEqual({first["files"][0]["path"], rest["files"][0]["path"]}, {"old1.md", "old2.md"})
 
 
@@ -501,7 +504,37 @@ out.topMore = histTopHtml({ rel: 'Leasing/offer.md', entries: st.recent, sel: ''
 out.deletedMore = histRecentHtml({ ...st, view: 'deleted', delMore: true });
 out.text = histTextHtml('one\ntwo\n', 'x.txt');
 out.diff = histDiffHtml('--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n one\n-two\n+TWO\n', 'x.txt');
-console.log(JSON.stringify(out));
+
+// The deleted list against a hub that pages by place (as history.deleted does):
+// 205 deleted files, restored ones between pages.
+const GONE = Array.from({ length: 205 }, (_, n) => ({ rev: 'd1', path: 'gone/' + String(n).padStart(3, '0') + '.txt' }));
+const BACK = new Set();
+function hubDeleted(p) {
+  const at = m => { const i = m.indexOf(':'); return GONE.findIndex(r => r.rev === m.slice(0, i) && r.path === m.slice(i + 1)); };
+  const end = p.get('through') ? at(p.get('through')) : Infinity, cap = p.get('through') ? 1e9 : 200;
+  const files = [];
+  let j = p.get('after') ? at(p.get('after')) + 1 : 0;
+  for (; j < GONE.length && j <= end && files.length < cap; j++) if (!BACK.has(GONE[j].path)) files.push(GONE[j]);
+  return { files, more: GONE.slice(j).some(r => !BACK.has(r.path)) };
+}
+const api = async url => { const u = new URL(url, 'http://hub'); return u.searchParams.get('deleted') === '1' ? hubDeleted(u.searchParams) : { entries: [], more: false }; };
+const toast = () => {};
+const offPage = { isConnected: false, dataset: {} };
+const gone = s => s.deleted.map(d => d.path);
+(async () => {
+  // A restore before older files are shown, then Show older.
+  const a = histState('pa');
+  await histRecentLoad(offPage, 'pa', true);
+  BACK.add('gone/000.txt');
+  await histRecentLoad(offPage, 'pa', true);
+  await histDeletedMore(offPage, 'pa', { disabled: false });
+  out.pagedAfterRestore = [a.deleted.length, a.delMore, new Set(gone(a)).size, gone(a).includes('gone/201.txt'), gone(a).includes('gone/000.txt')];
+  // A restore after older files are shown, then the refresh.
+  BACK.add('gone/150.txt');
+  await histRecentLoad(offPage, 'pa', true);
+  out.refreshAfterPaging = [a.deleted.length, a.delMore, gone(a).includes('gone/150.txt'), gone(a).includes('gone/204.txt')];
+  console.log(JSON.stringify(out));
+})().catch(e => { console.error(e && e.stack || e); process.exit(1); });
 """
 
 DEPS = ["esc", "agoSpan", "wsNorm", "wsSame", "wsJoin", "wsTabName", "wsFmtSize", "projectById", "registeredProjects",
@@ -571,6 +604,11 @@ class ThePage(unittest.TestCase):
         self.assertIn('class="drv one"', o["text"])
         self.assertIn("The file now: +1 −1 against this version", o["diff"])
         self.assertIn('class="dr k-add"', o["diff"])
+
+    def test_deleted_files_page_from_a_place(self):
+        # [shown, more, distinct, the 202nd file is reachable, the restored one is gone]
+        self.assertEqual(self.out["pagedAfterRestore"], [204, False, 204, True, False])
+        self.assertEqual(self.out["refreshAfterPaging"], [203, False, False, True])
 
     def test_layout_and_safari_rules(self):
         self.assertIn('grid-template-areas: "chrome" "files" "board"', INDEX)

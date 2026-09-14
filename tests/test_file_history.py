@@ -246,9 +246,28 @@ class FileHistory(unittest.TestCase):
         self.assertEqual(history.file_at(self.h, revs[-1], "notes.txt"), (200, b"version 1"))
         first = history.deleted(self.h)
         self.assertEqual((len(first["files"]), first["more"]), (200, True))
-        rest = history.deleted(self.h, skip=200)
+        last = first["files"][-1]
+        rest = history.deleted(self.h, after=(last["rev"], last["path"]))
         self.assertEqual((len(rest["files"]), rest["more"]), (5, False))
         self.assertEqual(len({f["path"] for f in first["files"] + rest["files"]}), 205)
+
+    def test_deleted_files_page_from_a_place_so_a_restore_between_pages_skips_nothing(self):
+        self.fast_import([("add", [f"M 100644 inline gone/{n:03d}.txt\n" + self.data(str(n)) for n in range(205)]),
+                          ("delete", [f"D gone/{n:03d}.txt\n" for n in range(205)])])
+        first = history.deleted(self.h)["files"]
+        place = (first[-1]["rev"], first[-1]["path"])
+        self.write(first[0]["path"], "back\n")           # restored between two pages
+        again = history.deleted(self.h, through=place)
+        self.assertEqual((len(again["files"]), again["more"]), (199, True), "the restored file drops out")
+        rest = history.deleted(self.h, after=place)
+        self.assertEqual((len(rest["files"]), rest["more"]), (5, False))
+        paths = [f["path"] for f in again["files"] + rest["files"]]
+        self.assertEqual(len(set(paths)), 204)
+        self.assertNotIn(first[0]["path"], paths)
+        self.assertIn("gone/201.txt", paths)
+        # The page after a place that has itself come back still starts there.
+        self.write(place[1], "back\n")
+        self.assertEqual(len(history.deleted(self.h, after=place)["files"]), 5)
 
     def test_both_log_reads_see_the_same_commits(self):
         self.write("a.md", "1\n")

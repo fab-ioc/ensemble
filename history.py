@@ -420,32 +420,52 @@ def log(home: str, path: str = "", limit: int = 50, skip: int = 0) -> dict:
     return {"entries": ents[:limit], "more": len(ents) > limit}
 
 
-def deleted(home: str, limit: int = LOG_MAX, skip: int = 0) -> dict:
+THROUGH_MAX = 10000
+
+
+def _deletions(home: str, head: str):
+    """Every deletion the history records, newest first, as (rev, path, row):
+    ``row`` is the listing entry when this is the file's latest deletion and
+    the file is still gone, else None. (rev, path) is a place in this order
+    that does not move when files come back or new ones are deleted."""
+    r = _git(home, "log", f"--format={_FMT}", "-M", "--diff-filter=D", "--name-only", "-z", head, read=True)
+    seen = set()
+    for h, at, an, _s, body, rest in _records(r.stdout or ""):
+        for p in _tokens(rest):
+            first = p not in seen
+            seen.add(p)
+            row = None
+            if first and not os.path.lexists(os.path.join(home, p)):
+                row = {"path": p, "rev": h, "from": h + "^", "time": int(at) if at.strip().isdigit() else 0,
+                       "who": _parse_who(body, an)}
+            yield h, p, row
+
+
+def deleted(home: str, limit: int = LOG_MAX, after: tuple | None = None, through: tuple | None = None) -> dict:
     """Files the history holds that are gone from the folder now, newest
-    deletion first, ``limit`` of them after the first ``skip``: {files:
-    [{path, rev, time, who, from}], more}; ``from`` is the snapshot holding
-    its last version."""
+    deletion first: {files: [{path, rev, time, who, from}], more}; ``from``
+    is the snapshot holding its last version. Pages go by place, not by count,
+    so a file restored between two pages shifts nothing: ``after`` (rev, path)
+    of the last row shown gives the next ``limit``; ``through`` gives every
+    row down to that place (a refresh of the pages already shown)."""
     head = _head(home) if exists(home) else ""
     if not head:
         return {"files": [], "more": False}
-    limit = max(1, min(LOG_MAX, int(limit or LOG_MAX)))
-    skip = max(0, int(skip or 0))
-    r = _git(home, "log", f"--format={_FMT}", "-M", "--diff-filter=D", "--name-only", "-z", head, read=True)
-    out, seen, passed = [], set(), 0
-    for h, at, an, _s, body, rest in _records(r.stdout or ""):
-        for p in _tokens(rest):
-            if p in seen:
-                continue
-            seen.add(p)
-            if os.path.lexists(os.path.join(home, p)):
-                continue
-            if passed < skip:
-                passed += 1
-                continue
-            if len(out) >= limit:
+    cap = THROUGH_MAX if through else max(1, min(LOG_MAX, int(limit or LOG_MAX)))
+    after, through = (tuple(after) if after else None), (tuple(through) if through else None)
+    out, started, done = [], after is None, False
+    for h, p, row in _deletions(home, head):
+        if not started:
+            started = (h, p) == after
+            continue
+        if done or len(out) >= cap:
+            if row:
                 return {"files": out, "more": True}
-            out.append({"path": p, "rev": h, "from": h + "^", "time": int(at) if at.strip().isdigit() else 0,
-                        "who": _parse_who(body, an)})
+            continue
+        if row:
+            out.append(row)
+        if through and (h, p) == through:
+            done = True
     return {"files": out, "more": False}
 
 

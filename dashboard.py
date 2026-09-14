@@ -7238,7 +7238,11 @@ class Handler(BaseHTTPRequestHandler):
         def arg(k: str) -> str:
             v = q.get(k, [""])[0] or ""
             # A path is taken as written: " notes.txt" is a real file name.
-            return v if k in ("path", "file", "now") else v.strip()
+            return v if k in ("path", "file", "now", "after", "through") else v.strip()
+
+        def place(k: str):
+            rev, _, path = arg(k).partition(":")      # "<rev>:<path>", a place in the deleted list
+            return (rev, path) if rev and path else None
 
         def num(k: str, d: int) -> int:
             return int(arg(k)) if arg(k).isdigit() else d
@@ -7250,7 +7254,7 @@ class Handler(BaseHTTPRequestHandler):
             if arg("deleted") == "1":
                 self._send_json(200, {"projectId": proj["id"], "root": home,
                                       **file_history.deleted(home, num("limit", file_history.LOG_MAX),
-                                                             num("skip", 0))})
+                                                             place("after"), place("through"))})
                 return
             path = ""
             if arg("path"):

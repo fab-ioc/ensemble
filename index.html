@@ -8433,7 +8433,7 @@ async function kindChoose(pid) {
 const HIST_FOOT = 'Every version of every file here is kept, with who changed it: a task, or you. Files over 50 MB, and task chats and records, are not kept.';
 const HIST = new Map();   // project id -> the Overview's recent changes
 function histState(pid) {
-  if (!HIST.has(pid)) HIST.set(pid, { recent: null, more: false, deleted: [], delMore: false, delPaged: false, err: '', view: 'recent', at: 0, inFlight: false });
+  if (!HIST.has(pid)) HIST.set(pid, { recent: null, more: false, deleted: [], delMore: false, delPaged: false, delCursor: '', err: '', view: 'recent', at: 0, inFlight: false });
   return HIST.get(pid);
 }
 const histWho = w => (w && w.kind === 'task' && w.label) ? w.label : 'you';
@@ -8509,13 +8509,17 @@ async function histRecentLoad(el, pid, force) {
   if (st.inFlight || (!force && st.at && Date.now() - st.at < 15000)) { histPaintRecent(el, pid); return; }
   st.inFlight = true;
   try {
-    const q = encodeURIComponent(pid);
-    const [log, del] = await Promise.all([api(`/api/history/log?project=${q}&limit=30`), api(`/api/history/log?project=${q}&deleted=1`)]);
+    const q = encodeURIComponent(pid), cursor = st.delCursor;
+    // Once older deleted files are shown, every one down to the last shown is
+    // read again: a file restored since drops out, and more goes on from the
+    // same place, never from a count.
+    const through = st.delPaged && cursor ? `&through=${encodeURIComponent(cursor)}` : '';
+    const [log, del] = await Promise.all([api(`/api/history/log?project=${q}&limit=30`), api(`/api/history/log?project=${q}&deleted=1${through}`)]);
     st.recent = log.entries || []; st.more = !!log.more; st.err = '';
-    // The first page of deleted files, keeping older ones already shown.
-    const first = del.files || [], have = new Set(first.map(x => x.path));
-    if (st.delPaged) st.deleted = first.concat(st.deleted.filter(x => !have.has(x.path)));
-    else { st.deleted = first; st.delMore = !!del.more; }
+    if (st.delCursor === cursor) {          // no older page arrived meanwhile
+      st.deleted = del.files || []; st.delMore = !!del.more;
+      if (!through) st.delCursor = histDelPlace(st.deleted);
+    }
   } catch (e) { st.err = e.message || 'failed'; }
   finally { st.inFlight = false; st.at = Date.now(); }
   histPaintRecent(el, pid);
@@ -8548,13 +8552,18 @@ function wireDocsPanel(el, pid) {
     if (snap) histSnapshotNow(el, pid, snap);
   };
 }
+// The place of the last row in the deleted list ("<rev>:<path>"): the next
+// page starts after it.
+const histDelPlace = rows => rows.length ? `${rows[rows.length - 1].rev}:${rows[rows.length - 1].path}` : '';
 async function histDeletedMore(el, pid, btn) {
   const st = histState(pid);
+  if (!st.delCursor) return;
   btn.disabled = true;
   try {
-    const d = await api(`/api/history/log?project=${encodeURIComponent(pid)}&deleted=1&skip=${st.deleted.length}`);
-    const have = new Set(st.deleted.map(x => x.path));
-    st.deleted = st.deleted.concat((d.files || []).filter(x => !have.has(x.path)));
+    const d = await api(`/api/history/log?project=${encodeURIComponent(pid)}&deleted=1&after=${encodeURIComponent(st.delCursor)}`);
+    const rows = d.files || [], have = new Set(st.deleted.map(x => x.path));
+    st.deleted = st.deleted.concat(rows.filter(x => !have.has(x.path)));
+    if (rows.length) st.delCursor = histDelPlace(rows);
     st.delMore = !!d.more; st.delPaged = true;
   } catch (e) { toast('older deleted files could not be read: ' + histErr(e), 5000, 'err'); }
   finally { btn.disabled = false; }

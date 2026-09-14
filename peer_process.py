@@ -8,9 +8,13 @@ of a TCP connection; when that process descends from an agent (a PTY the hub
 runs, or a `claude`/`codex` CLI started anywhere), the request is an agent's.
 
 Used for writes only the person at the dashboard may make, such as restoring an
-old version of a file. It stops an agent's ordinary tools (curl, a script, a
-shell). It does not stop an agent driving the person's own browser, which acts
-with the person's hands, nor one that launches a process outside its own tree.
+old version of a file. It is a guard against an agent calling such a route by
+habit or by mistake (a curl, a script, a shell it runs), not a security
+boundary against an agent set on it. The walk follows live parents only, so an
+agent can cut it: a wrapper that exits leaves an orphan whose parent is gone.
+It can also drive the person's own browser, or start a process outside its
+tree. A lock would buy nothing there anyway: a task in a documents project
+writes those files itself and can read their history's database directly.
 
 Windows reads the TCP table (GetExtendedTcpTable) and Toolhelp32; macOS and
 Linux ask `lsof` and `ps`. Standalone: imports nothing of the hub.
