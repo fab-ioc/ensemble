@@ -79,6 +79,7 @@ class Resumes(unittest.TestCase):
             p.start()
         self.projects = []
         self.starts = 0
+        self.alive: dict[str, bool] = {}
 
     def tearDown(self):
         for p in self.patches:
@@ -103,7 +104,9 @@ class Resumes(unittest.TestCase):
 
     def handler(self, tail="> ", alive=True):
         """A handler whose resume spawns fake terminals: each resumed agent
-        gets a FakePty (settled, unless ``tail`` says a prompt is up)."""
+        gets a FakePty (settled, unless ``tail`` says a prompt is up; dead
+        from the start when ``alive`` is False). ``self.alive[identity]``
+        overrides ``alive`` for one agent, and can change between resumes."""
         test = self
 
         class H(dashboard.Handler):
@@ -113,7 +116,8 @@ class Resumes(unittest.TestCase):
             def _resume_room_agent_pty(self, room_full, part, collab=True, seed="", human=False):
                 test.starts += 1
                 pid = f"pty-{part['identity']}-{test.starts}"
-                test.ptys[pid] = FakePty(pid, alive=alive, tail=tail)
+                up = test.alive.get(part["identity"], alive)
+                test.ptys[pid] = FakePty(pid, alive=up, tail=tail)
                 return {"ptyId": pid, "cwd": "", "sessionId": part.get("sessionId", ""),
                         "prompted": False}
 
@@ -245,18 +249,134 @@ class Resumes(unittest.TestCase):
         self.assertEqual(held["state"], "failed")
         self.assertEqual(held["error"], "codex would not start")
         self.assertEqual([i["text"] for i in held["items"]], ["kept?"])
-        # Text sent afresh does not take the failed one along; Retry does.
+        # Text sent afresh takes the failed one along, in order: only Discard
+        # drops what a failed resume holds.
         with mock.patch.object(dashboard.Handler, "_start_or_resume_room",
                                side_effect=dashboard.StartRoomError("still not")):
             with self.assertRaises(dashboard.StartRoomError):
                 h._resume_room(room, text="another")
-        self.assertEqual([i["text"] for i in dashboard.pending_input(room["id"])["items"]], ["another"])
+        held = dashboard.pending_input(room["id"])
+        self.assertEqual(([i["text"] for i in held["items"]], held["error"]),
+                         (["kept?", "another"], "still not"))
         self.projects = [{"poRoomId": room["id"]}]
-        out = h._resume_room(room, retry=True)
-        self.assertEqual(out["queued"], 1)
+        out = h._resume_room(room)      # a plain Resume (the button, or Retry) sends them
+        self.assertEqual(out["queued"], 2)
         self.join()
         [(pid, lines)] = self.typed().items()
-        self.assertEqual(lines, ["another"])
+        self.assertEqual(lines, ["\x1b[200~kept?\n\nanother\x1b[201~"])
+        self.assertIsNone(dashboard.pending_input(room["id"]))
+
+    def test_a_message_sent_as_the_resume_finishes_is_not_lost(self):
+        """The deliver thread lets go of the lock the moment it has found
+        nothing more to type: a message arriving right then must find no
+        resume to queue onto (it goes straight into the running room), not a
+        queue nobody drains any more."""
+        room = self.room()
+        self.projects = [{"poRoomId": room["id"]}]
+        h = self.handler()
+        real = dashboard._RESUMES_LOCK
+        test = self
+        state = {"sent": False}
+
+        class Lock:
+            def __enter__(self):
+                return real.__enter__()
+
+            def __exit__(self, *a):
+                out = real.__exit__(*a)
+                if (threading.current_thread().name.startswith("resume-deliver-")
+                        and not state["sent"] and test.typed()):
+                    state["sent"] = True        # once: the first release after typing
+                    h._resume_room(chatroom.get_room(room["id"], public=False), text="late")
+                return out
+
+        with mock.patch.object(dashboard, "_RESUMES_LOCK", Lock()):
+            h._resume_room(room, text="first")
+            self.join()
+        self.assertTrue(state["sent"])
+        self.assertEqual(self.starts, 1)
+        [(pid, lines)] = self.typed().items()
+        self.assertEqual(lines, ["first", "late"], "the late message was lost or typed twice")
+        self.assertIsNone(dashboard.pending_input(room["id"]))
+
+    def test_a_retry_on_a_prompt_waits_for_the_screen_to_clear(self):
+        """A message that failed on a prompt is never typed straight into the
+        running agent on Retry: it goes the settled way, and fails again while
+        the prompt is still there."""
+        room = self.room()
+        self.projects = [{"poRoomId": room["id"]}]
+        h = self.handler(tail="PROMPT")
+        h._resume_room(room, text="answer me")
+        self.join(timeout=15)
+        self.assertIn("prompt", dashboard.pending_input(room["id"])["error"])
+        room = chatroom.get_room(room["id"], public=False)
+        out = h._resume_room(room)              # Retry, the prompt still up
+        self.assertEqual((out["queued"], out["delivered"]), (1, 0))
+        self.join(timeout=15)
+        self.assertEqual(self.typed(), {}, "typed on top of the prompt")
+        self.assertIn("prompt", dashboard.pending_input(room["id"])["error"])
+        self.assertEqual(self.starts, 1, "a running agent was launched again")
+        pty = self.ptys[room["participants"][0]["ptyId"]]
+        pty._tail = "> "                        # the prompt is answered
+        h._resume_room(room)
+        self.join(timeout=15)
+        self.assertEqual(pty.typed, ["answer me"])
+        self.assertIsNone(dashboard.pending_input(room["id"]))
+
+    def test_a_named_partner_that_dies_keeps_its_message_and_comes_back_on_retry(self):
+        room = self.room(agents=("claude", "codex"), mode="pair")
+        self.alive["codex"] = False
+        h = self.handler()
+        h._resume_room(room, text="codex: look at this", to="codex")
+        self.join()
+        held = dashboard.pending_input(room["id"])
+        self.assertEqual((held["state"], held["error"]),
+                         ("failed", "codex stopped before the message could be typed"))
+        self.assertEqual([i["text"] for i in held["items"]], ["codex: look at this"])
+        texts = [m["text"] for m in chatroom.read_messages(room["id"]) if m.get("from") == chatroom.HUMAN_IDENTITY]
+        self.assertEqual(texts, ["spec"], "posted to a room its recipient could not read")
+        owner = next(p for pid, p in self.ptys.items() if "claude" in pid)
+        self.assertEqual(owner.typed, [dashboard.RESUME_NOTE], "the owner was told of a message not for it")
+        # Retry: the partner is brought back — alone, the owner is running —
+        # and the message posted and relayed to it, once.
+        self.alive["codex"] = True
+        room = chatroom.get_room(room["id"], public=False)
+        out = h._resume_room(room)
+        self.assertEqual(sorted(r["identity"] for r in out["resumed"]), ["claude", "codex"])
+        self.join()
+        self.assertEqual(self.starts, 3, "the running owner was launched again")
+        texts = [m["text"] for m in chatroom.read_messages(room["id"]) if m.get("from") == chatroom.HUMAN_IDENTITY]
+        self.assertEqual(texts, ["spec", "codex: look at this"])
+        partner = self.ptys[f"pty-codex-{self.starts}"]
+        self.assertEqual(len(partner.typed), 1)
+        self.assertIn("[relay] New message from 'user'", partner.typed[0])
+        self.assertNotIn(dashboard.RESUME_NOTE, partner.typed[0], "a partner is not an owner")
+        self.assertEqual(owner.typed, [dashboard.RESUME_NOTE], "the owner was woken for a message to codex")
+        self.assertIsNone(dashboard.pending_input(room["id"]))
+
+    def test_a_team_that_stopped_since_the_check_is_resumed_and_the_message_posted_once(self):
+        """The room read as running (a partner still is), but its owner had
+        gone by the time the message reached it: the message is in the room
+        once, the owner is brought back and rung for it."""
+        room = self.room(agents=("claude", "codex"), mode="pair")
+        h = self.handler()
+        h._resume_room(room)
+        self.join()
+        room = chatroom.get_room(room["id"], public=False)
+        self.ptys[room["participants"][0]["ptyId"]]._alive = False     # claude died
+        out = h._resume_room(room, text="hey team")
+        self.assertEqual((out["queued"], out["delivered"]), (1, 0))
+        self.join()
+        self.assertEqual(self.starts, 3, "the whole team was launched again")
+        texts = [m["text"] for m in chatroom.read_messages(room["id"]) if m.get("from") == chatroom.HUMAN_IDENTITY]
+        self.assertEqual(texts, ["spec", "hey team"], "posted twice, or not at all")
+        owner = self.ptys[f"pty-claude-{self.starts}"]
+        self.assertEqual(len(owner.typed), 1, "the owner was woken more than once")
+        self.assertTrue(owner.typed[0].startswith("\x1b[200~" + dashboard.RESUME_NOTE + "\n\n"))
+        self.assertIn("[relay] New message from 'user'", owner.typed[0])
+        partner = self.ptys[room["participants"][1]["ptyId"]]
+        self.assertEqual(partner.typed, [], "a message to everyone wakes only the owner")
+        self.assertIsNone(dashboard.pending_input(room["id"]))
 
     def test_a_refused_plain_resume_holds_nothing(self):
         room = self.room()
@@ -369,13 +489,40 @@ class ThePage(unittest.TestCase):
         self.assertIn("$('#resume').hidden = !notRunning || resuming;", body)
 
     def test_send_goes_the_resume_way_when_stopped(self):
-        self.assertIn("async function sendResuming(text, to)", SESSION)
-        self.assertIn("postOk('/api/room/resume', { roomId: ROOM, text, to: to || '' })", SESSION)
+        self.assertIn("async function sendResuming(text, to, key)", SESSION)
+        self.assertIn("postOk('/api/room/resume', { roomId: ROOM, text, to: to || '', key: key || '' })", SESSION)
         send = SESSION[SESSION.index("$('#send').onclick = async () => {"):]
         send = send[:send.index("\n};\n")]
-        self.assertIn("if (needsResume()) await sendResuming(t, '')", send)
-        self.assertIn("if (needsResume()) await sendResuming(t, to)", send)
-        self.assertIn("orResume(e, t, '')", send)
+        self.assertIn("if (needsResume()) await sendResuming(t, '', key)", send)
+        self.assertIn("orResume(e, t, '', key)", send)
+        # A team's every send goes through the hub's resume-or-deliver: the
+        # hub, not the last poll, knows whether the team is still running.
+        self.assertIn("await sendResuming(t, to, sendKey())", send)
+        self.assertNotIn("/api/room/say", send)
+        submit = SESSION[SESSION.index("async function submitComments() {"):]
+        submit = submit[:submit.index("\n}\n")]
+        self.assertIn("if (!SOLO_MODE) await sendResuming(body, to, key)", submit)
+        self.assertNotIn("/api/room/say", submit)
+
+    def test_a_send_is_keyed_once_per_message(self):
+        # The same key goes with every attempt to send the message in the box
+        # (a lost reply, sent again, is taken once), a new one once it is
+        # edited or sent.
+        self.assertIn("function sendKey() {", SESSION)
+        self.assertIn("if (!SEND_KEY) SEND_KEY = 'send:'", SESSION)
+        self.assertIn("SEND_KEY = '';             // edited, so it is a new message", SESSION)
+        self.assertEqual(SESSION.count("SEND_ERR = ''; SEND_KEY = '';"), 2, "a sent message keeps its key")
+        self.assertIn("const key = `cmt:${batch.length}:${batch[0].cid}:${batch[batch.length - 1].cid}`;", SESSION)
+
+    def test_retry_and_discard_are_a_fingers_size_on_a_phone(self):
+        # The compact rule is more specific than the phone's `button` rule, so
+        # the phone block names them itself (SKILL.md §8), on the 4px grid.
+        self.assertIn(".msg .pend-state button { min-height:24px; padding:0 var(--s-200); font-size:var(--fs-200); }", SESSION)
+        coarse = SESSION[SESSION.index("@media (pointer: coarse) {"):]
+        coarse = coarse[:coarse.index("\n  }\n")]
+        self.assertIn(".msg .pend-state button { min-height: var(--touch-min); }", coarse)
+        self.assertIn(".msg .pend-state { margin-top:var(--s-100);", SESSION)
+        self.assertIn("gap:var(--s-200); }", SESSION[SESSION.index(".msg .pend-state {"):][:300])
 
     def test_held_messages_show_as_pending_with_retry_on_failure(self):
         self.assertIn("ROOM_PENDING.state === 'failed'", SESSION)

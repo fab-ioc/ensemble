@@ -168,6 +168,11 @@ const tick = () => new Promise(r => setTimeout(r, 5));
   out.down = await fail(['down']);
   B.set('SOLO_MODE', false);
   out.roomFail = await fail([[500, { error: 'boom' }]]);
+  // The same batch sent again carries the same key: a lost reply cannot
+  // queue it twice on the hub.
+  out.roomFailKeys = [posts[posts.length - 1][1].key];
+  await fail([[500, { error: 'boom' }]]);
+  out.roomFailKeys.push(posts[posts.length - 1][1].key);
   B.set('SOLO_MODE', true);
 
   replies = [[200, { ok: true }], [200, { ok: true }]];
@@ -297,9 +302,14 @@ class ReviewComments(unittest.TestCase):
         self.assertEqual(self.r["otherCopy"], ["three"], "the other copy of the chat kept a sent comment")
 
     def test_a_room_message(self):
+        # Through the hub's resume-or-deliver, never /api/room/say: the hub
+        # decides whether the team is running, not the page's last poll.
         url, body = self.r["roomPost"]
-        self.assertEqual(url, "/api/room/say")
+        self.assertEqual(url, "/api/room/resume")
         self.assertEqual(body["to"], "claude")
+        self.assertTrue(body["key"].startswith("cmt:1:"), body)
+        k1, k2 = self.r["roomFailKeys"]
+        self.assertTrue(k1 and k1 == k2, "the same batch sent again did not carry the same key")
         self.assertEqual(self.r["roomSent"], [])
         self.assertTrue(self.r["storeEmpty"])
         self.assertTrue(self.r["trayGone"])
