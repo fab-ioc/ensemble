@@ -1336,6 +1336,64 @@ def _relay_wake(sender: str) -> str:
             f"input.")
 
 
+# What the hub types into an agent's terminal, told by how it starts. The
+# transcript records it as the user's turn exactly like a line a person typed,
+# so this prefix is the only thing that tells them apart. The chat page reads
+# the kind to fold hub traffic and to say what each reply answers; it keeps no
+# list of its own. A [word] not listed here is a person's (they type brackets).
+HUB_INPUT_KINDS = (
+    ("[digest] ", "digest"),            # digest.py: the PO's progress check
+    ("[report] ", "report"),            # _ring_report: a task's ensemble_report
+    ("[relay] ", "relay"),              # _relay_wake: a team room's doorbell
+    ("[resumed] ", "resumed"),          # RESUME_NOTE
+    ("[handover] ", "handover"),        # rotation.py: write your handover now
+    ("[rotation] ", "rotation"),        # rotation.py: a fresh session's first prompt
+    ("[from the restart helper, not ", "helper"),   # the note after a hub restart
+)
+# The kind is "completed", or a verdict such as "review 1 (changes requested)".
+_REPORT_HEAD = re.compile(r"\[report\] (?P<reportKind>.+?) from task '(?P<taskTitle>.*?)' "
+                          r"\((?P<taskId>[^\s,()]+), (?P<reporter>[^()]*?)\): ")
+
+
+def hub_input_kind(text: str) -> dict:
+    """``{"kind": ...}`` for a user turn: ``human`` or a HUB_INPUT_KINDS kind.
+    A report also carries its ``reportKind``, ``taskTitle``, ``taskId`` and
+    ``reporter`` when its header reads as _ring_report writes it."""
+    s = (text or "").lstrip()
+    for prefix, kind in HUB_INPUT_KINDS:
+        if s.startswith(prefix):
+            info = {"kind": kind}
+            m = _REPORT_HEAD.match(s) if kind == "report" else None
+            if m:
+                info.update(m.groupdict())
+            return info
+    return {"kind": "human"}
+
+
+def classify_turns(turns: list[dict]) -> list[dict]:
+    """The chat's turns with ``kind`` on every user turn and ``answers`` (the
+    kind of the user turn before it, with a report's details) on every
+    assistant turn that follows one. A resume note typed together with the
+    messages held for the resume (one input) is two turns: the note, then
+    what the person sent."""
+    out: list[dict] = []
+    for t in turns:
+        text = t.get("text") or ""
+        if t.get("role") == "user" and text.startswith(RESUME_NOTE) and text[len(RESUME_NOTE):].strip():
+            out.append({**t, "text": RESUME_NOTE})
+            out.append({**t, "text": text[len(RESUME_NOTE):].strip()})
+        else:
+            out.append(dict(t))
+    last = None
+    for t in out:
+        if t.get("role") == "user":
+            t.update(hub_input_kind(t.get("text") or ""))
+            last = {k: v for k, v in t.items() if k not in ("timestamp", "role", "text")}
+        elif last is not None:
+            t["answers"] = dict(last)
+    return out
+
+
 def collab_briefing(ident: str, role: str, teammates: list, task: str,
                     wire_mcp: bool = True) -> str:
     """Assemble a role-aware collaboration briefing. ``teammates`` is the other
@@ -5728,6 +5786,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not full:
                     turns = [{"timestamp": t["timestamp"], "text": t["text"]}
                              for t in turns if t["role"] == "user"]
+                else:
+                    turns = classify_turns(turns)
                 self._send_json(200, {"sessionId": sid,
                                       "cwd": cx.cwd_for_session(sid),
                                       "turns": turns,
@@ -5774,6 +5834,7 @@ class Handler(BaseHTTPRequestHandler):
                             })
                 except OSError:
                     pass
+                turns = classify_turns(turns)
             else:
                 turns = [{"timestamp": ts, "text": t} for ts, t in iter_user_turns(tpath)]
             labels = load_labels()
