@@ -29,6 +29,7 @@ projects and the running tasks, so this module imports nothing of the hub.
 from __future__ import annotations
 
 import difflib
+import fnmatch
 import os
 import re
 import subprocess
@@ -47,20 +48,23 @@ EMAIL = "history@ensemble.local"
 # Windows: never a console window for the git the hub runs.
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
+# Names never kept wherever they are (a file, or a folder and all it holds).
+NOT_KEPT_NAMES = (".git", ".DS_Store", "Thumbs.db", "desktop.ini", "~$*", ".~lock.*#", "*.tmp")
 BASE_EXCLUDES = [
     "# Managed by Ensemble: what the file history does not keep.",
     "/.history/",
     "/project.json",
     "/project.json.tmp",
     "/_linked/",
-    ".git",
-    ".DS_Store",
-    "Thumbs.db",
-    "desktop.ini",
-    "~$*",
-    ".~lock.*#",
-    "*.tmp",
+    *NOT_KEPT_NAMES,
 ]
+
+
+def not_kept(name: str) -> bool:
+    """Whether a file or folder named ``name`` is one the history never
+    keeps (whatever the case), so a change to it could not be put back."""
+    low = (name or "").lower()
+    return any(fnmatch.fnmatchcase(low, p.lower()) for p in NOT_KEPT_NAMES)
 TASK_EXCLUDES = ("task.json", "chat.json", "*.jsonl", ".claude/", "repo/", ".wt-scheme")
 
 _REV = re.compile(r"^[0-9a-f]{7,40}$")
@@ -79,6 +83,12 @@ def _key(home: str) -> str:
 def _lock(home: str) -> threading.RLock:
     with _LOCKS_GUARD:
         return _LOCKS.setdefault(_key(home), threading.RLock())
+
+
+def lock(home: str) -> threading.RLock:
+    """The lock every snapshot of ``home`` takes: a change to the folder made
+    under it lands in one snapshot, never split by the scan."""
+    return _lock(home)
 
 
 def git_dir(home: str) -> str:
@@ -197,8 +207,12 @@ def _clean(s: str, n: int = 120) -> str:
 
 
 def _who_lines(who) -> tuple[str, list[str]]:
-    """(author name, trailer lines) for ``who``: None is you, else a list of
-    {id, title} tasks."""
+    """(author name, trailer lines) for ``who``: None is you, {kind: "user",
+    name} a person by name (a file uploaded, moved or deleted from the page),
+    else a list of {id, title} tasks."""
+    if isinstance(who, dict):
+        name = _clean(str(who.get("name") or ""), 60) if who.get("kind") == "user" else ""
+        return (name, ["Ensemble-Who: user", f"Ensemble-User: {name}"]) if name else ("you", ["Ensemble-Who: you"])
     tasks = [t for t in (who or []) if isinstance(t, dict) and t.get("id")]
     if not tasks:
         return "you", ["Ensemble-Who: you"]
@@ -210,10 +224,12 @@ def _who_lines(who) -> tuple[str, list[str]]:
 
 
 def _parse_who(body: str, author: str) -> dict:
-    tasks, kind, reason = [], "", ""
+    tasks, kind, reason, user = [], "", "", ""
     for ln in (body or "").splitlines():
         if ln.startswith("Ensemble-Who: "):
             kind = ln[14:].strip()
+        elif ln.startswith("Ensemble-User: "):
+            user = ln[15:].strip()
         elif ln.startswith("Ensemble-Task: "):
             rid, _, title = ln[15:].strip().partition(" ")
             tasks.append({"id": rid, "title": title.strip()})
@@ -222,6 +238,8 @@ def _parse_who(body: str, author: str) -> dict:
     if kind == "task" and tasks:
         return {"kind": "task", "tasks": tasks, "label": ", ".join(t["title"] or t["id"] for t in tasks),
                 "reason": reason}
+    if kind == "user" and user:
+        return {"kind": "user", "tasks": [], "name": user, "label": user, "reason": reason}
     return {"kind": "you", "tasks": [], "label": "you" if kind == "you" else (author or "you"), "reason": reason}
 
 

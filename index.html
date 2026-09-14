@@ -8497,7 +8497,7 @@ function histState(pid) {
   if (!HIST.has(pid)) HIST.set(pid, { recent: null, more: false, deleted: [], delMore: false, delPaged: false, delCursor: '', err: '', view: 'recent', at: 0, inFlight: false });
   return HIST.get(pid);
 }
-const histWho = w => (w && w.kind === 'task' && w.label) ? w.label : 'you';
+const histWho = w => (w && (w.kind === 'task' || w.kind === 'user') && w.label) ? w.label : 'you';
 const histFolder = p => { const i = p.lastIndexOf('/'); return i > 0 ? p.slice(0, i) : ''; };
 const histTime = t => { try { return new Date(t * 1000).toLocaleString(); } catch (e) { return ''; } };
 // What a snapshot did to one file, in words: added/removed lines, or added,
