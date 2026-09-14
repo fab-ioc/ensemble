@@ -143,13 +143,29 @@ out.holdRemount = [relC(), hv.hold, relD(), hv.hold];
 const heldL = { dirs: ['Leasing/2026', 'Leasing/2026/Q1', 'Leasing/Empty'], files: ['Leasing/offer.pdf', 'Leasing/2026/march.pdf', 'Leasing/nokept.pdf'], complete: true };
 const delRows = [{ path: 'Leasing/offer.pdf', from: 'r1' }, { path: 'Leasing/2026/march.pdf', from: 'r1' }, { path: 'Leasing2/x.pdf', from: 'r1' }, { path: 'Leasing/offer.pdf', from: 'r0' }];
 const pl = docsRestorePlan(delRows, 'Leasing', heldL);
-out.plan = [pl.rows.map(d => d.path + '@' + d.from), pl.mkdirs, pl.missing];
+out.plan = [pl.rows.map(d => d.path + '@' + d.from), pl.mkdirs, pl.missing, pl.sure];
+// A file deleted from the folder before is not brought back with it.
+const boxRows = [{ path: 'Box/current.txt', rev: 'bbb222' }, { path: 'Box/sub/deep.txt', rev: 'bbb222' }, { path: 'Box/old.txt', rev: 'aaa111' },
+                 { path: 'Box/sub/older.txt', rev: 'aaa111' }];
+const boxHeld = { dirs: ['Box/sub'], files: ['Box/current.txt', 'Box/sub/deep.txt'], unread: [], complete: true };
+const boxPart = { dirs: ['Box/sub'], files: ['Box/current.txt'], unread: ['Box/sub'], complete: false };
+const paths = p => p.rows.map(d => d.path);
+out.planRev = [paths(docsRestorePlan(boxRows, 'Box', boxHeld, 'bbb222')), paths(docsRestorePlan(boxRows, 'Box', boxHeld, 'bbb2')),
+               paths(docsRestorePlan(boxRows, 'Box', boxHeld, '')), paths(docsRestorePlan(boxRows, 'Box', boxPart, 'bbb222')),
+               paths(docsRestorePlan(boxRows, 'Box', boxPart, '')), docsRestorePlan(boxRows, 'Box', boxPart, 'bbb222').sure,
+               docsRestorePlan(boxRows, 'Box', boxHeld, 'bbb222').sure];
+// A row renamed while another name is typed: it and its folder's rows wait.
+const node = ds => { const n = { dataset: ds, cls: [], attrs: {}, inert: false, draggable: true }; n.classList = { add: c => n.cls.push(c) }; n.setAttribute = (k, val) => { n.attrs[k] = val; }; return n; };
+const rowA = node({ path: 'C:\\P\\M\\Leasing' });
+const kA = node({ dir: 'C:\\P\\M\\Leasing' }), kA2 = node({ dir: 'C:\\P\\M\\Leasing\\2026' }), kB = node({ dir: 'C:\\P\\M\\Leasing2' });
+docsSettle({ querySelectorAll: () => [kA, kA2, kB] }, rowA);
+out.settle = [rowA.inert, rowA.draggable, rowA.cls, kA.inert, kA2.inert, kB.inert, rowA.attrs['aria-busy']];
 const pe = docsRestorePlan(delRows, 'Empty', { dirs: [], files: [], complete: true });
 out.planEmpty = [pe.rows.length, pe.mkdirs, pe.missing];
 const pn = docsRestorePlan(delRows, 'Leasing', Object.assign({}, heldL, { complete: false }));
-out.planPartialWalk = pn.missing;
+out.planPartialWalk = [pn.missing, pn.sure];
 const pu = docsRestorePlan(delRows, 'Leasing', null);
-out.planUnknown = [pu.rows.length, pu.mkdirs, pu.missing];
+out.planUnknown = [pu.rows.length, pu.mkdirs, pu.missing, pu.sure];
 out.names = [upKeepName('ads/photo.jpg', 2), upKeepName('README', 2), upKeepName('.env', 3), upKeepName('a/b.tar.gz', 2)];
 out.nameErr = ['', ' ', 'a/b', 'a\\b', '..', 'Leasing 2026.pdf'].map(upNameErr);
 
@@ -209,9 +225,9 @@ out.who = [histWho({ kind: 'user', name: 'ceo', reason: 'upload' }), histDid({ k
   out.walkAll = [w1.dirs, w1.files, w1.complete, reads.includes('sort_papers')];
   out.walkFolders = docsFolders([], w1.dirs, 'README.md', false, new Set());
   const w2 = await docsWalk(rd, '', { max: 2 });
-  out.walkMax = [w2.dirs.length, w2.complete];
+  out.walkMax = [w2.dirs.length, w2.complete, w2.unread];
   const w3 = await docsWalk(r => r === 'Ads' ? Promise.reject(new Error('x')) : rd(r), '');
-  out.walkFail = [w3.complete, w3.dirs.includes('Leasing/2026/Q1')];
+  out.walkFail = [w3.complete, w3.dirs.includes('Leasing/2026/Q1'), w3.unread];
   const w4 = await docsWalk(rd, 'Leasing');
   out.walkFolder = [w4.dirs, w4.files];
 
@@ -316,6 +332,8 @@ class ThePureParts(unittest.TestCase):
     def test_one_name_typed_does_not_free_the_tree_for_another(self):
         self.assertEqual(self.out["hold"], [2, False, 1, False, 1, True, 0])
         self.assertEqual(self.out["holdRemount"], [False, 1, True, 0])
+        self.assertEqual(self.out["settle"], [True, False, ["wse-wait"], True, True, False, "true"],
+                         "the renamed row and its folder's rows wait; a sibling with a longer name does not")
 
     def test_move_to_reads_every_folder_empty_ones_too(self):
         o = self.out
@@ -325,16 +343,24 @@ class ThePureParts(unittest.TestCase):
         self.assertTrue(complete)
         self.assertFalse(read_task, "a task folder is not walked")
         self.assertEqual(o["walkFolders"], ["Ads", "Leasing", "Leasing/2026", "Leasing/2026/Q1"])
-        self.assertEqual(o["walkMax"], [2, False])
-        self.assertEqual(o["walkFail"], [False, True])
+        self.assertEqual(o["walkMax"], [2, False, ["sort_papers", "Leasing/2026"]])
+        self.assertEqual(o["walkFail"], [False, True, ["Ads", "sort_papers/x"]])
         self.assertEqual(o["walkFolder"], [["Leasing/2026", "Leasing/2026/Q1"], ["Leasing/offer.pdf"]])
 
     def test_a_folder_is_restored_whole_or_says_what_is_missing(self):
         o = self.out
-        self.assertEqual(o["plan"], [["Leasing/offer.pdf@r1", "Leasing/2026/march.pdf@r1"], ["Leasing/2026/Q1", "Leasing/Empty"], 1])
+        self.assertEqual(o["plan"], [["Leasing/offer.pdf@r1", "Leasing/2026/march.pdf@r1"], ["Leasing/2026/Q1", "Leasing/Empty"], 1, True])
         self.assertEqual(o["planEmpty"], [0, ["Empty"], 0], "an empty folder is made again")
-        self.assertEqual(o["planPartialWalk"], 0, "no count claimed from a partial reading")
-        self.assertEqual(o["planUnknown"], [2, [], 0])
+        self.assertEqual(o["planPartialWalk"], [0, False], "a partial reading claims no count and is not sure")
+        self.assertEqual(o["planUnknown"], [2, [], 0, False])
+        by_rev, short_rev, no_rev, part_rev, part_no_rev, part_sure, full_sure = o["planRev"]
+        self.assertEqual(by_rev, ["Box/current.txt", "Box/sub/deep.txt"], "only the rows this delete recorded")
+        self.assertEqual(short_rev, by_rev)
+        self.assertEqual(no_rev, by_rev, "without the snapshot, only files the reading saw")
+        self.assertEqual(part_rev, by_rev)
+        self.assertEqual(part_no_rev, ["Box/current.txt", "Box/sub/deep.txt", "Box/sub/older.txt"],
+                         "under a folder not read, nothing tells them apart")
+        self.assertEqual((part_sure, full_sure), (False, True))
         self.assertEqual(o["pages"], [450, 3, 450, 450], "every page of the Deleted list")
         self.assertEqual(o["pagesStop"], [200, 1], "a file stops at the page that has it")
 
