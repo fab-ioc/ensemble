@@ -289,11 +289,24 @@ _BOX_EDGE = re.compile(r"^[\s│┃║|╭╰╮╯─]+")
 _RESULT_GLYPH = "⎿"
 _OWN_ERROR = re.compile(r"^[■✗✘⚠]")
 _QUOTED_OPENER = re.compile(r"^(?:[●⏺•└├>›❯“\"«]|\[[^\]\n]{1,60}\]|\d+[.)]\s)")
-# A `●` line that calls a tool — "● Bash(…)", "●Skill(ensemble)", "● ensemble -
-# chat_read (MCP)" — rather than one Claude wrote. Its first `⎿` is the tool's
-# output, whatever that output says.
-_TOOL_CALL = re.compile(r"^[●⏺]\s*(?:[\w.:-]+(?:\s*-\s*[\w.:-]+)?\s*\(|.*\((?:MCP|ctrl\+o to expand)\))",
-                        re.I)
+# A `●` line that calls a tool rather than one Claude wrote. Its first `⎿` is
+# the tool's output, whatever that output says. Only Claude's own tool names
+# count as "● Name(…)" — a sentence can start "● Note(…)" too — plus the shapes
+# live screens show for grouped tool work: "● Running 1 shell command…",
+# "●ReadingNfile…", "● Searching for 2 patterns, reading 1 file", "● Calling
+# ensemble…", and anything marked "(MCP)" or "(ctrl+o to expand)". Spaces may
+# be missing in every one of them.
+_TOOL_NAMES = ("Bash|BashOutput|PowerShell|Read|Write|Edit|MultiEdit|Update|Create|Glob|Grep|LS|"
+               "Task|Agent|Skill|WebFetch|WebSearch|Fetch|TodoWrite|NotebookEdit|NotebookRead|"
+               "KillShell|KillBash|Monitor|ToolSearch|SlashCommand|AskUserQuestion|ExitPlanMode|"
+               "EnterPlanMode|Workflow|SendMessage|ListAgents|Artifact")
+_TOOL_CALL = re.compile(
+    r"^[●⏺]\s*(?:"
+    rf"(?:{_TOOL_NAMES})\s*\("
+    r"|.*\((?:MCP|ctrl\+o\s*to\s*expand)\)"
+    r"|(?:[A-Z][a-z]+ing|Ran|Read|Wrote|Found|Searched|Listed)\s*(?:for\s*)?\d+\s*[a-z]"
+    r"|Call(?:ing|ed)\s*[\w.-]+\s*(?:[,…·]|\.\.\.|$)"
+    r")")
 # A `●` line that only announces something finished in the background. It
 # arrives whether or not the agent can reach the API, so it is no proof the
 # agent got past a wall above it. (Stripping loses spaces: "●Backgroundcommand".)
@@ -308,8 +321,17 @@ _RESULT_WALL_AT = 30
 
 
 def _result_is_wall(text: str, at: int) -> bool:
-    """Whether the `⎿` block starting at ``at`` begins with a refusal."""
+    """Whether the `⎿` block starting at ``at`` begins with a refusal.
+
+    A block that starts with a shell echo ("$ type fixture.txt"), a hub-typed
+    ``[tag]``, a quote or a numbered item is output, never Claude's error —
+    which matters because Claude also heads tool work with a plain sentence
+    ("● Checking where the new test runs execute" over "⎿ $ git …"), so the
+    line above cannot always say it was a tool."""
     body = text[at:at + 300]
+    lead = body.lstrip()
+    if lead.startswith("$") or _QUOTED_OPENER.match(lead):
+        return False
     if _API_ERROR.match(body):
         return True
     first = min((m.start() for pat, _, _ in _BLOCK_RULES for m in [pat.search(body)] if m),

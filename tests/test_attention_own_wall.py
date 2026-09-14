@@ -144,7 +144,19 @@ class QuotedWallsDoNotBlock(unittest.TestCase):
                      "● Bash(py -m unittest)\n⎿  output: You've hit your usage limit\n>",
                      "●Bash(type fixture.txt)\n⎿  Running…\n⎿  Credit balance is too low\n>",
                      "● ensemble - chat_read (MCP)\n⎿  Invalid API key · Please run /login\n>",
-                     "● Read(notes.md)\n✢Mulling…\n⎿  Not logged in · Please run /login\n>"):
+                     "● Read(notes.md)\n✢Mulling…\n⎿  Not logged in · Please run /login\n>",
+                     # Claude's live shell header, spaced and space-stripped (review 3).
+                     "● Running 1 shell command…\n⎿  $ type fixture.txt\n"
+                     "OAuth token has expired · run /login to renew\n>",
+                     "●Running1shellcommand…\n⎿  $ type fixture.txt\n"
+                     "OAuth token has expired · run /login to renew\n>",
+                     "●RunningNshellcommand · 3s…\n⎿  Credit balance is too low\n>".replace("N", "1"),
+                     "● Calling ensemble…\n⎿  Invalid API key · Please run /login\n>",
+                     "●Searching for 2 patterns, reading 1 file\n⎿  Not logged in · run /login\n>",
+                     # A plain-sentence label over tool work, as live screens show.
+                     "● Checking where the new test runs execute\n⎿  $ type fixture.txt\n"
+                     "You've hit your usage limit\n>",
+                     "● Reading the review\n⎿  [from codex] OAuth token has expired · run /login to renew\n>"):
             self.assertIsNone(attention.find_block(tail), tail)
             self.assertIsNone(_classify(tail, "idle"), tail)
 
@@ -191,8 +203,14 @@ class OwnWallsStillBlock(unittest.TestCase):
         self.assertEqual(attention._classify_agent(room, part, ev, 900, 0.0)[0], "blocked")
 
     def test_after_claudes_own_words_mid_turn(self):
-        tail = "● Checking the review now.\n⎿  API Error: 401 · OAuth token has expired · run /login\n>"
-        self.assertEqual(attention.find_block(tail)[1], "auth")
+        for tail in ("● Checking the review now.\n⎿  API Error: 401 · OAuth token has expired · run /login\n>",
+                     # A sentence shaped like a tool call is still a sentence (review 3).
+                     "● Note(this is Claude prose)\n⎿ API Error: 401 · OAuth token has expired · run /login\n>",
+                     "●Note(thisisClaudeprose)\n⎿ API Error: 401 · OAuth token has expired · run /login\n>"):
+            hit = attention.find_block(tail)
+            self.assertIsNotNone(hit, tail)
+            self.assertEqual(hit[1], "auth", tail)
+            self.assertEqual(_classify(tail, "idle")[0], "blocked", tail)
 
     def test_a_background_notice_after_the_wall_is_not_recovery(self):
         for notice in ("● Background task completed",
