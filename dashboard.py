@@ -7502,11 +7502,23 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---------- A documents project's files: upload, mkdir, move, delete ----------
     # A plain API, gated like the rest of the hub (the access token off loopback).
+    # A browser sends Origin on every POST; a page on another site must not
+    # reach these through the person's own browser. A program (curl, an agent)
+    # sends no Origin and passes.
+
+    def _files_cross_site(self) -> bool:
+        if self.headers.get("Origin") and not self._same_origin_request():
+            self._send_json(403, {"error": "cross_origin",
+                                  "message": "The request came from another site."})
+            return True
+        return False
 
     def _files_upload(self, u) -> None:
         """POST /api/files/upload?project=&path=[&overwrite=1], the raw file as
         the body. Everything that can refuse it is checked before a byte of
         the body is read; the body goes to a temp file renamed into place."""
+        if self._files_cross_site():
+            return
         q = parse_qs(u.query, keep_blank_values=True)
 
         def arg(k: str) -> str:
@@ -7575,6 +7587,8 @@ class Handler(BaseHTTPRequestHandler):
     def _files_post(self, p: str, data) -> None:
         """POST /api/files/mkdir {project, path}, /api/files/move {project,
         from, to, overwrite}, /api/files/delete {project, path}."""
+        if self._files_cross_site():
+            return
         try:
             if not isinstance(data, dict):
                 raise FileOpRefused(400, "bad_json", "The request was not understood.")
