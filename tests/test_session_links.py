@@ -42,7 +42,7 @@ def js_const(name: str) -> str:
 
 HARNESS = r"""
 const out = { fetches: [], notes: [] };
-let GOTO = '', SOLO_WANT = null, LANDED = null, _landing = false, CHAT_DRAWN = false, SOLO_AGAIN = false;
+let GOTO = '', SOLO_WANT = null, LANDED = null, _landing = false, CHAT_DRAWN = false, SOLO_AGAIN = false, SOLO_FIRST_TRIES = 0;
 let SOLO_TURN_COUNT = -1, SOLO_FETCHING = false, SOLO_SID = 's-new', SOLO_AGENT = 'claude', SOLO_ROT = null, SOLO_ROTS = [];
 const SOLO_PREV = new Map();
 const PREV_TURNS_SHOWN = 60;
@@ -70,7 +70,10 @@ function renderBubbles(items) { LAST_ITEMS = items; drawn = items.filter(m => !m
 const turns = n => Array.from({ length: n }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', text: 'turn ' + i }));
 let TURNS = {};
 let FAILS = [];   // {sid, skip, times}: after `skip` good fetches of sid, `times` fail
+let _soloStatKey = '';
 function fetch(url) {
+  // The transcript's size and time never change: a poll never asks for it again.
+  if (url.endsWith('?stat=1')) return Promise.resolve({ json: () => Promise.resolve({ size: 1000, mtime: 1 }) });
   out.fetches.push(url);
   const sid = decodeURIComponent(url.split('/api/session/')[1].split('?')[0]);
   const f = FAILS.find(x => x.sid === sid);
@@ -118,6 +121,18 @@ FAILS = [{ sid: 's-new', skip: 1, times: 99 }];
 GOTO = 's-new:5';
 renderSolo(SOLO_SID, SOLO_AGENT, true);
 """,
+    "first-fails-once": r"""
+TURNS = { 's-new': turns(300) };
+FAILS = [{ sid: 's-new', skip: 0, times: 1 }];
+GOTO = 's-new:5';
+checkSolo().then(() => checkSolo());
+""",
+    "first-fails-always": r"""
+TURNS = { 's-new': turns(300) };
+FAILS = [{ sid: 's-new', skip: 0, times: 99 }];
+GOTO = 's-new:5';
+checkSolo().then(() => checkSolo());
+""",
     "prev-fails": r"""
 TURNS = { 's-new': turns(4), 's-old': turns(200) };
 FAILS = [{ sid: 's-old', skip: 0, times: 99 }];
@@ -148,7 +163,7 @@ TAIL = r"""
 
 def run_scenario(name: str) -> dict:
     code = "\n".join([HARNESS, js_const("REF_BLOCK_RE")] + [js_function(n) for n in (
-        "stripRefBlocks", "soloItems", "prevSessionItems", "soloOwns", "soloWantFailed",
+        "stripRefBlocks", "soloItems", "prevSessionItems", "soloOwns", "soloWantFailed", "checkSolo",
         "renderSolo", "landPending", "markLanded")]
         + [SCENARIOS[name], TAIL])
     res = subprocess.run([NODE, "-"], input=code, capture_output=True, text=True, encoding="utf-8", timeout=30)
@@ -190,6 +205,17 @@ class LandOnALinkedBalloon(unittest.TestCase):
             self.assertEqual(out["goto"], "", name)
             self.assertIsNone(out["landed"], name)
             self.assertLessEqual(len(out["fetches"]), 8, (name, out["fetches"]))
+
+    def test_a_chat_whose_first_load_fails_is_loaded_again_for_its_link(self):
+        # The chat is opened through the stat poll, twice, with an unchanged
+        # transcript: only the page's own retry fetches it again.
+        out = run_scenario("first-fails-once")
+        self.assertEqual(out["notes"], [])
+        self.assertEqual(out["marked"], ["s-new:5"])
+        out = run_scenario("first-fails-always")
+        self.assertEqual(out["notes"], ["The linked message could not be loaded. Reload the page to try again."])
+        self.assertEqual(out["goto"], "")
+        self.assertEqual(len(out["fetches"]), 3, out["fetches"])
 
     def test_a_turn_that_is_not_there_is_not_found_after_widening(self):
         out = run_scenario("missing")

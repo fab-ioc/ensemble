@@ -1996,6 +1996,7 @@ async function checkSolo() {
 }
 let ROOM_OBJ = null;   // last room payload, so we can mount the terminal on demand to read a prompt
 let SOLO_AGAIN = false;   // a forced render was asked for while one was fetching
+let SOLO_FIRST_TRIES = 0; // failed first loads of a chat opened on a link
 async function renderSolo(sid, agentId, force) {
   if (!sid) return;
   if (SOLO_FETCHING) { if (force) SOLO_AGAIN = true; return; }
@@ -2033,7 +2034,15 @@ async function renderSolo(sid, agentId, force) {
     CHAT_DRAWN = true;
     renderBubbles(items);
     if (!wantOk) soloWantFailed(w);
-  } catch (e) { soloWantFailed(SOLO_WANT); } finally {
+  } catch (e) {
+    if (SOLO_WANT) soloWantFailed(SOLO_WANT);
+    else if (GOTO && !CHAT_DRAWN) {
+      // A link opened with the chat, which has never loaded: the stat poll will
+      // not ask again for an unchanged transcript, so try again here, then say so.
+      if (++SOLO_FIRST_TRIES < 3) setTimeout(renderSolo, 2000 * SOLO_FIRST_TRIES, SOLO_SID, SOLO_AGENT, true);
+      else { GOTO = ''; showGotoNote('The linked message could not be loaded. Reload the page to try again.'); }
+    }
+  } finally {
     SOLO_FETCHING = false;
     if (SOLO_AGAIN) { SOLO_AGAIN = false; renderSolo(SOLO_SID, SOLO_AGENT, true); }
   }
