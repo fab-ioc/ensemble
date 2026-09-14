@@ -304,8 +304,13 @@ _TOOL_CALL = re.compile(
     r"^[●⏺]\s*(?:"
     rf"(?:{_TOOL_NAMES})\s*\("
     r"|.*\((?:MCP|ctrl\+o\s*to\s*expand)\)"
-    r"|(?:[A-Z][a-z]+ing|Ran|Read|Wrote|Found|Searched|Listed)\s*(?:for\s*)?\d+\s*[a-z]"
-    r"|Call(?:ing|ed)\s*[\w.-]+\s*(?:[,…·]|\.\.\.|$)"
+    # Only the verbs and objects Claude's grouped-work headers use: "● Adding
+    # 3 tests" is a sentence, and a real error under it must still count.
+    r"|(?:Running|Ran|Reading|Read|Searching|Searched|Listing|Listed|Writing|Wrote|"
+    r"Editing|Edited|Making|Made|Fetching|Fetched)\s*(?:for\s*)?\d+\s*"
+    r"(?:shell\s*commands?|files?|patterns?|director(?:y|ies)|(?:scratchpad\s*)?edits?|"
+    r"urls?|pages?|searche?s?)\b"
+    r"|Call(?:ing|ed)\s*(?:ensemble|claude-in-chrome)\b"
     r")")
 # A `●` line that only announces something finished in the background. It
 # arrives whether or not the agent can reach the API, so it is no proof the

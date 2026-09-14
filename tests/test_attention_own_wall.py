@@ -206,7 +206,11 @@ class OwnWallsStillBlock(unittest.TestCase):
         for tail in ("● Checking the review now.\n⎿  API Error: 401 · OAuth token has expired · run /login\n>",
                      # A sentence shaped like a tool call is still a sentence (review 3).
                      "● Note(this is Claude prose)\n⎿ API Error: 401 · OAuth token has expired · run /login\n>",
-                     "●Note(thisisClaudeprose)\n⎿ API Error: 401 · OAuth token has expired · run /login\n>"):
+                     "●Note(thisisClaudeprose)\n⎿ API Error: 401 · OAuth token has expired · run /login\n>",
+                     # Sentences shaped like grouped-work headers (review 5).
+                     "● Adding 3 tests\n⎿ API Error: 401 · OAuth token has expired · run /login\n>",
+                     "●Adding3tests\n⎿ API Error: 401 · OAuth token has expired · run /login\n>",
+                     "● Calling support…\n⎿ API Error: 401 · OAuth token has expired · run /login\n>"):
             hit = attention.find_block(tail)
             self.assertIsNotNone(hit, tail)
             self.assertEqual(hit[1], "auth", tail)
