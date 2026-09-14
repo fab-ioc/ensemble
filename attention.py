@@ -144,7 +144,11 @@ _BLOCK_RULES: list[tuple[re.Pattern, str, str]] = [
 # limit". Nothing broader belongs here: "your limit will reset at 3pm" is the
 # tail of Claude's *real* limit message, so exempting that phrase would hide the
 # very thing this module exists to show.
-_BLOCK_EXEMPT = _phrase(r"usage limit reset available|/usage to use one")
+#
+# Claude's notice that a login is about to expire ("Your login expires in 3
+# days · run /login to renew") is advice, not a wall: the agent keeps working,
+# and read as "needs you to log in again" it hid a finished task's report.
+_BLOCK_EXEMPT = _phrase(r"usage limit reset available|/usage to use one|login expires in \d+|/login to renew")
 
 # An agent editing THIS file puts the patterns above on its own screen. Only
 # *structural* evidence counts — regex source, a diff line — and only on the

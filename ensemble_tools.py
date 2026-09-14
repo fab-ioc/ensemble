@@ -256,9 +256,10 @@ _ALL_TOOLS = [
                                           "own kind); the hub makes the final choice at first launch."},
                 "workspace": {"type": "string",
                               "enum": ["empty", "inplace", "copy", "worktree"],
-                              "description": "Workspace mode: empty (own task folder, no code — the default), "
-                                             "inplace (work in the project's code folder), copy (a copy of "
-                                             "the code folder), worktree (a git worktree on its own branch)."},
+                              "description": "Workspace mode: empty (own task folder, no code — the default "
+                                             "in a code project), inplace (work in the project's folder — the "
+                                             "default in a documents project), copy (a copy of the code folder), "
+                                             "worktree (a git worktree on its own branch)."},
                 "priority": _priority_spec("Defaults to medium."),
                 "start": {"type": "boolean",
                           "description": "Launch the agents now (default false = leave as a draft)."},
@@ -525,7 +526,7 @@ def _project_view(p: dict | None) -> dict | None:
         return None
     return {"id": p["id"], "name": p.get("name", ""), "path": p.get("path", ""),
             "home": _d.project_home(p, create=False), "isGit": bool(p.get("isGit")),
-            "poRoomId": p.get("poRoomId", "")}
+            "poRoomId": p.get("poRoomId", ""), "kind": p.get("kind") or "code"}
 
 
 def _project_po(project: dict | None) -> dict | None:
@@ -1035,7 +1036,7 @@ def _create_task(ctx, args, handler):
         raise ToolError("agents must be a list")
     if not agent_list:
         agent_list = [{"agent": ctx["part"].get("agent") or "claude"}]
-    workspace = (args.get("workspace") or "empty").strip()
+    workspace = (args.get("workspace") or "").strip()
     priority = _priority(args.get("priority"))
     ok, room_full, err = _d.create_task(title, spec, pid, agent_list, workspace,
                                         priority)

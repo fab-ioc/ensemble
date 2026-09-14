@@ -39,7 +39,7 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse
+from urllib.parse import parse_qs, parse_qsl, quote, urlencode, urlparse
 
 # All OS-specific behavior (terminal control, process introspection, desktop
 # integration) lives behind a platform backend, selected by sys.platform.
@@ -65,6 +65,8 @@ import chatroom
 import digest
 # Task-management MCP tools (ensemble_*) served next to the chat tools.
 import ensemble_tools
+# A documents project's automatic file history (a private git dir per project).
+import history as file_history
 # A fresh PO session from its written handover when its conversation gets long.
 import rotation
 # Plan-allowance readings (account-wide, per agent kind), refreshed in the
@@ -1740,6 +1742,9 @@ def load_projects() -> list[dict]:
                       # The task that is this project's product owner: every
                       # other task reports into it (ensemble_report).
                       "poRoomId": (meta.get("poRoomId") or "").strip(),
+                      # A documents project leads with its files and keeps
+                      # their history; anything else is a code project.
+                      "kind": "documents" if meta.get("kind") == "documents" else "code",
                       # Its own progress-digest interval, when it set one.
                       **({"digestIntervalMin": meta["digestIntervalMin"]}
                          if "digestIntervalMin" in meta else {})})
@@ -1815,7 +1820,14 @@ def set_project_po(project_id: str, room_id: str) -> tuple[bool, str]:
     rid = (room_id or "").strip()
     if rid and chatroom.get_room(rid) is None:
         return False, "no_such_room"
-    return _set_project_meta(project_id, "poRoomId", rid or None)
+    ok, msg = _set_project_meta(project_id, "poRoomId", rid or None)
+    proj = find_project(project_id) if ok and rid else None
+    if proj and proj.get("kind") == "documents":
+        # A PO and a documents project exclude each other: choosing a PO makes
+        # the project a code project again. Its file history is kept.
+        ok, msg = _set_project_meta(project_id, "kind", None)
+        return ok, ("switched_to_code" if ok else msg)
+    return ok, msg
 
 
 def set_project_digest_interval(project_id: str, minutes) -> tuple[bool, str]:
@@ -1827,6 +1839,145 @@ def set_project_digest_interval(project_id: str, minutes) -> tuple[bool, str]:
         if minutes is None:
             return False, "interval_must_be_minutes"
     return _set_project_meta(project_id, "digestIntervalMin", minutes)
+
+
+PROJECT_KINDS = ("code", "documents")
+# What the page says when a kind cannot be chosen, in plain words.
+KIND_REFUSALS = {
+    "project_has_po": "This project has a PO, so it stays a code project. Clear its PO first "
+                      "to make it a documents project.",
+    "files_outside_projects_root": "Only a project whose folder is in the projects folder can be a "
+                                   "documents project; this one's files live elsewhere.",
+    "project_is_a_git_repo": "This project's folder is a git repository, so it stays a code project.",
+    "kind_must_be_code_or_documents": "A project is either a code project or a documents project.",
+}
+SWITCHED_TO_CODE = ("Choosing a PO made this a code project again: its Overview leads with the PO "
+                    "and the board. Its file history is kept.")
+
+
+def set_project_kind(project_id: str, kind: str) -> tuple[bool, str]:
+    """Make a project a documents project (its Overview leads with its files,
+    its tasks work in its folder, the hub keeps every version of its files) or
+    a code project again. Stored as ``kind`` in its project.json; a code
+    project has no key. A project with a PO stays code: the two exclude each
+    other, and choosing a PO switches a documents project back."""
+    k = (kind or "").strip().lower()
+    if k not in PROJECT_KINDS:
+        return False, "kind_must_be_code_or_documents"
+    proj = find_project(project_id)
+    if proj is None:
+        return False, "no_such_project"
+    if k == "code":
+        return _set_project_meta(project_id, "kind", None)
+    rid = (proj.get("poRoomId") or "").strip()
+    if rid and chatroom.get_room(rid) is not None:
+        return False, "project_has_po"
+    if not _in_projects_root(proj.get("path", "")):
+        return False, "files_outside_projects_root"
+    if proj.get("isGit"):
+        return False, "project_is_a_git_repo"
+    if rid:                                 # names a PO task that no longer exists
+        _set_project_meta(project_id, "poRoomId", None)
+    ok, msg = _set_project_meta(project_id, "kind", "documents")
+    if ok:
+        file_history.request(project_home(proj, create=False), None, "history started")
+    return ok, msg
+
+
+# ---- A documents project's file history (history.py) ----------------------
+
+def _history_target(project_id: str) -> tuple[dict | None, str, tuple | None]:
+    """(project, its folder, None), or (None, "", (status, error)) when the
+    project has no file history to read: missing, not a documents project, or
+    a folder the file APIs may not read."""
+    proj = find_project(project_id)
+    if proj is None:
+        return None, "", (404, {"error": "no_such_project"})
+    if proj.get("kind") != "documents":
+        return None, "", (400, {"error": "not_a_documents_project"})
+    home = project_home(proj, create=False)
+    if not os.path.isdir(home) or not workspace_access_ok(home):
+        return None, "", (403, {"error": "path_not_allowed"})
+    return proj, home, None
+
+
+def _room_project_id(room_id: str, room: dict | None, links: dict | None = None) -> str:
+    links = load_session_projects() if links is None else links
+    return links.get(room_id) or (room or {}).get("projectId") or ""
+
+
+def _history_running(project_id: str, active_within: float | None = None) -> list[dict]:
+    """The tasks of a project with an agent running now, which a snapshot
+    of changes nobody announced is credited to. With ``active_within``, only
+    those whose agents printed something within that many seconds: an agent
+    sitting idle since the last snapshot did not make its changes."""
+    idle: dict[str, float] = {}
+    for i in ptyrun.list_sessions():
+        rid = (i.get("meta") or {}).get("room")
+        if rid and i.get("alive"):
+            s = i.get("idleSeconds")
+            idle[rid] = min(idle.get(rid, 1e9), 1e9 if s is None else s)
+    out, links = [], load_session_projects()
+    for rid in sorted(idle):
+        if active_within is not None and idle[rid] > active_within:
+            continue
+        room = chatroom.get_room(rid)
+        if room and _room_project_id(rid, room, links) == project_id:
+            out.append({"id": rid, "title": room.get("title", "")})
+    return out
+
+
+_HISTORY_BUSY: dict[str, bool] = {}     # room id -> seen producing output since its last turn end
+
+
+def _history_turn_ends() -> list[tuple[str, list]]:
+    """[(folder, [task])] for tasks of documents projects whose agents just
+    went quiet after working: the end of a turn. Sampled on the history's
+    tick from the PTYs' idle time; a turn shorter than a tick may be missed,
+    and the scan picks its changes up."""
+    idle: dict[str, float] = {}
+    for info in ptyrun.list_sessions():
+        rid = (info.get("meta") or {}).get("room")
+        if rid and info.get("alive"):
+            s = info.get("idleSeconds")
+            idle[rid] = min(idle.get(rid, 1e9), 1e9 if s is None else s)
+    ended = []
+    for rid, s in idle.items():
+        if s < 3:
+            _HISTORY_BUSY[rid] = True
+        elif s >= 8 and _HISTORY_BUSY.pop(rid, False):
+            ended.append(rid)
+    for rid in [r for r in _HISTORY_BUSY if r not in idle]:
+        if _HISTORY_BUSY.pop(rid):
+            ended.append(rid)
+    if not ended:
+        return []
+    docs = {p["id"]: p for p in load_projects() if p.get("kind") == "documents"}
+    links, out = load_session_projects(), []
+    for rid in ended:
+        room = chatroom.get_room(rid)
+        pid = _room_project_id(rid, room, links)
+        if room and pid in docs:
+            out.append((project_home(docs[pid], create=False), [{"id": rid, "title": room.get("title", "")}]))
+    return out
+
+
+def _history_nudge(room_id: str, reason: str) -> None:
+    """A task said something (a chat message ends its turn, or a report):
+    if it works in a documents project, ask for a snapshot credited to it.
+    Only queues it; the history's thread takes the snapshot."""
+    try:
+        room = chatroom.get_room(room_id)
+        proj = find_project(_room_project_id(room_id, room)) if room else None
+        if proj and proj.get("kind") == "documents":
+            file_history.request(project_home(proj, create=False),
+                                 [{"id": room_id, "title": room.get("title", "")}], reason)
+    except Exception:
+        pass
+
+
+def _history_homes() -> dict:
+    return {p["id"]: project_home(p, create=False) for p in load_projects() if p.get("kind") == "documents"}
 
 
 def _set_project_meta(project_id: str, key: str, value) -> tuple[bool, str]:
@@ -2098,7 +2249,7 @@ def build_projects() -> dict:
     for p in projects_reg:
         groups[p["id"]] = {"id": p["id"], "name": p["name"], "path": p["path"],
                            "home": project_home(p, create=False),
-                           "poRoomId": p.get("poRoomId", ""),
+                           "poRoomId": p.get("poRoomId", ""), "kind": p.get("kind") or "code",
                            "isGit": p.get("isGit", False), "registered": True,
                            "sessions": [], "live": 0, "waiting": 0, "updatedAt": 0}
     UNASSIGNED = "__unassigned__"
@@ -2211,11 +2362,17 @@ def list_dir(path: str) -> tuple[int, dict]:
             try:
                 st = child.stat()
                 is_dir = child.is_dir()
+                # A documents project's file history is a git db too.
+                if is_dir and child.name == file_history.DIR_NAME and (child / "HEAD").is_file():
+                    continue
+                # A task's folder says so, so a documents project's tree can hide
+                # its tasks and still show the project's own folders.
+                task = is_dir and (child / "task.json").is_file()
             except OSError:
                 continue
             entries.append({"name": child.name, "type": "dir" if is_dir else "file",
                             "size": 0 if is_dir else st.st_size,
-                            "mtime": int(st.st_mtime)})
+                            "mtime": int(st.st_mtime), **({"task": True} if task else {})})
     except OSError as e:
         return 500, {"error": f"read_failed: {e}"}
     entries.sort(key=lambda e: (e["type"] != "dir", e["name"].lower()))
@@ -5198,7 +5355,10 @@ def create_task(title: str, spec: str, project_id: str, agent_list,
         project = find_project(project_id)
         if project is None:
             return False, None, "no_such_project"
-    ok, base, ws_meta, msg = setup_session_workspace(project, workspace or "empty", title)
+    # A documents project's tasks work in its folder unless told otherwise.
+    if not workspace:
+        workspace = "inplace" if project and project.get("kind") == "documents" else "empty"
+    ok, base, ws_meta, msg = setup_session_workspace(project, workspace, title)
     if not ok:
         return False, None, msg
     members = [{"identity": pref["agent"], "agent": pref["agent"],
@@ -5589,6 +5749,19 @@ class Handler(BaseHTTPRequestHandler):
             return RESTART_REFUSED
         return ""
 
+    def _page_refusal(self) -> str:
+        """Empty when this request comes from the dashboard page (its key
+        cookie, on a request from its own origin), else why not. For writes a
+        task's agent must never make, such as restoring a file."""
+        if self._bearer_token():
+            return "Only the dashboard page can do this, not a task's agent."
+        key = self._cookie(self._ui_cookie())
+        if not key or not self._same_origin_request():
+            return "Only the dashboard page can do this."
+        if not hmac.compare_digest(key, _UI_KEY):
+            return "Reload the dashboard page and try again."
+        return ""
+
     def _gate(self) -> bool:
         """Return True if the request may proceed. When an ACCESS_TOKEN is set,
         non-loopback requests must present it; a matching ?token= on a GET is
@@ -5883,6 +6056,9 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 depth = 3
             self._send_json(*git_roots(path, depth))
+            return
+        if p.startswith("/api/history/"):
+            self._history_get(p, parse_qs(u.query))
             return
         if p == "/api/rooms":
             rooms = [_annotate_room_liveness(r) for r in chatroom.list_rooms()]
@@ -7031,6 +7207,78 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _history_get(self, p: str, q: dict) -> None:
+        """A documents project's file history: its snapshots (or its deleted
+        files), a version's content, a diff, and what changed since the last
+        snapshot. Read-only, gated like the workspace file APIs."""
+        def arg(k: str) -> str:
+            return (q.get(k, [""])[0] or "").strip()
+
+        def num(k: str, d: int) -> int:
+            return int(arg(k)) if arg(k).isdigit() else d
+        proj, home, bad = _history_target(arg("project"))
+        if bad:
+            self._send_json(*bad)
+            return
+        if p == "/api/history/log":
+            if arg("deleted") == "1":
+                self._send_json(200, {"projectId": proj["id"], "root": home, **file_history.deleted(home)})
+                return
+            path = ""
+            if arg("path"):
+                path = file_history.rel_path(home, arg("path"))
+                if not path:
+                    self._send_json(400, {"error": "bad_path"})
+                    return
+            self._send_json(200, {"projectId": proj["id"], "root": home, "path": path,
+                                  "maxFileBytes": file_history.MAX_FILE_BYTES,
+                                  **file_history.log(home, path, num("limit", 50), num("skip", 0))})
+            return
+        if p == "/api/history/status":
+            self._send_json(200, file_history.status(home))
+            return
+        if p == "/api/history/diff":
+            self._send_json(*file_history.diff(home, arg("rev"), arg("path") or arg("file"),
+                                               "parent" if arg("against") == "parent" else "current",
+                                               arg("now")))
+            return
+        if p == "/api/history/file":
+            code, data = file_history.file_at(home, arg("rev"), arg("path"))
+            if code != 200:
+                self._send_json(code, {"error": data})
+                return
+            if arg("raw") == "1":
+                self._send_history_raw(arg("path"), data)
+                return
+            head = data[:_TEXT_MAX]
+            binary = b"\x00" in head
+            self._send_json(200, {"path": file_history.rel_path(home, arg("path")), "binary": binary,
+                                  "text": "" if binary else head.decode("utf-8", errors="replace"),
+                                  "size": len(data), "truncated": len(data) > _TEXT_MAX})
+            return
+        self._send_json(404, {"error": "not_found"})
+
+    # An old version the browser may show itself; anything else downloads.
+    # Never HTML or SVG: served from the hub, it would run as one of its pages.
+    _HISTORY_INLINE = {".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg",
+                       ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
+                       ".txt": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8",
+                       ".csv": "text/plain; charset=utf-8", ".json": "text/plain; charset=utf-8",
+                       ".log": "text/plain; charset=utf-8"}
+
+    def _send_history_raw(self, path: str, data: bytes) -> None:
+        name = os.path.basename(path.replace("\\", "/")) or "file"
+        ctype = self._HISTORY_INLINE.get(os.path.splitext(name)[1].lower())
+        self.send_response(200)
+        self.send_header("Content-Type", ctype or "application/octet-stream")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Disposition",
+                         f"{'inline' if ctype else 'attachment'}; filename*=UTF-8''{quote(name)}")
+        self.end_headers()
+        self.wfile.write(data)
+
     def _handle_mcp(self, data) -> None:
         """Serve one MCP request (single or JSON-RPC batch) over streamable
         HTTP. Identity comes from the bearer token minted at room creation, so
@@ -7102,6 +7350,8 @@ class Handler(BaseHTTPRequestHandler):
     def _mcp_tool_call(self, name, args, room_id, identity, ok, err):
         if name in ensemble_tools.NAMES:
             text, is_err = ensemble_tools.call(name, args, room_id, identity, self)
+            if name == "ensemble_report" and not is_err:
+                _history_nudge(room_id, "report")
             return ok({"content": [{"type": "text", "text": text}],
                        "isError": is_err})
         if name == "chat_send":
@@ -7113,6 +7363,7 @@ class Handler(BaseHTTPRequestHandler):
             if result is None:
                 return err(-32000, "room no longer exists")
             self._ring_recipients(room_id, result)
+            _history_nudge(room_id, "turn")
             status = result["status"]
             note = "delivered"
             if status == "waiting_human":
@@ -7318,7 +7569,14 @@ class Handler(BaseHTTPRequestHandler):
             if not ok:
                 self._send_json(400, {"error": msg})
                 return
-            self._send_json(200, {"ok": True, "project": proj})
+            payload = {"ok": True, "project": proj}
+            if (data.get("kind") or "").strip().lower() == "documents":
+                kok, kmsg = set_project_kind(proj["id"], "documents")
+                if kok:
+                    proj["kind"] = "documents"
+                else:
+                    payload["kindRefused"] = KIND_REFUSALS.get(kmsg, kmsg)
+            self._send_json(200, payload)
             return
         if p == "/api/projects/assign":
             sid = (data.get("sessionId") or data.get("roomId") or "").strip()
@@ -7334,6 +7592,9 @@ class Handler(BaseHTTPRequestHandler):
             # (roomId "" clears it). Every other task reports into it.
             ok, msg = set_project_po(data.get("projectId", ""), data.get("roomId", ""))
             code = {"no_such_project": 404, "no_such_room": 404}.get(msg, 400)
+            if ok and msg == "switched_to_code":
+                self._send_json(200, {"ok": True, "kind": "code", "message": SWITCHED_TO_CODE})
+                return
             self._send_json(200 if ok else code, {"ok": ok} if ok else {"error": msg})
             return
         if p == "/api/projects/digest":
@@ -7343,6 +7604,40 @@ class Handler(BaseHTTPRequestHandler):
                                                   data.get("intervalMin"))
             self._send_json(200 if ok else (404 if msg == "no_such_project" else 400),
                             {"ok": ok} if ok else {"error": msg})
+            return
+        if p == "/api/projects/kind":
+            # {projectId, kind: "code" | "documents"}.
+            ok, msg = set_project_kind(data.get("projectId", ""), data.get("kind", ""))
+            if ok:
+                self._send_json(200, {"ok": True, "kind": (data.get("kind") or "").strip().lower()})
+            else:
+                self._send_json(404 if msg == "no_such_project" else 400,
+                                {"error": msg, "message": KIND_REFUSALS.get(msg, msg)})
+            return
+        if p == "/api/history/snapshot":
+            # {projectId}: Snapshot now. The history's own thread takes it
+            # within a moment; the page reads the log again after.
+            proj, home, bad = _history_target(data.get("projectId", ""))
+            if bad:
+                self._send_json(*bad)
+                return
+            file_history.request(home, None, "snapshot now")
+            self._send_json(200, {"ok": True, "queued": True})
+            return
+        if p == "/api/history/restore":
+            # {projectId, rev, path}: put an old version back. A write, so only
+            # the dashboard page may, never a task's agent.
+            why = self._page_refusal()
+            if why:
+                self._send_json(403, {"error": "page_only", "message": why})
+                return
+            proj, home, bad = _history_target(data.get("projectId", ""))
+            if bad:
+                self._send_json(*bad)
+                return
+            res = file_history.restore(home, str(data.get("rev") or ""), str(data.get("path") or ""),
+                                       file_history.credit(_history_running, proj["id"], home))
+            self._send_json(200 if res.get("ok") else 400, res)
             return
         if p == "/api/digest/check":
             # {projectId, force?}: run the progress check now. Without force it
@@ -7401,7 +7696,7 @@ class Handler(BaseHTTPRequestHandler):
             # never forces a code checkout (a project or task may have no code).
             ok, room_full, err = create_task(
                 data.get("title"), data.get("task"), data.get("projectId"),
-                data.get("agents") or [], data.get("workspace") or "empty",
+                data.get("agents") or [], data.get("workspace") or "",
                 data.get("priority"), human=True)
             if not ok:
                 self._send_json(400, {"error": err})
@@ -8031,6 +8326,10 @@ def main():
         return (PROJECTS_ROOT, s.get("backupRemote", ""), s.get("backupIntervalMin", 60),
                 bool(s.get("backupEnabled")))
     backup.start_scheduler(_backup_config, _export_task_chats)
+
+    # Documents projects: every version of every file, snapshotted on its own
+    # thread (a task's turn or report, a scan every few minutes, Snapshot now).
+    file_history.start_scheduler(_history_homes, _history_running, _history_turn_ends)
 
     # Plan allowance: refreshed on its own thread so /api/usage is a cache read.
     usage.start_scheduler()

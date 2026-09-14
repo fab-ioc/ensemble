@@ -109,6 +109,19 @@ hand. It moves a card once per merge, and never one that someone moved after
 the merge: if the owner drags a merged card out of Done, it stays where they
 put it.
 
+**A documents project** (`kind: "documents"` in `ensemble_whoami`'s project and
+`ensemble_list_projects`) is a folder of files, not code: ads, contracts,
+letters. It has no PO, so your reports go to the user. Its page leads with its
+files, and its tasks work directly in the project folder (`inplace`, the default
+there): other tasks may be editing the same files at the same time, with no
+locking, so re-read a file before you change it and never rewrite what you did
+not mean to touch. The hub keeps every version of every file in it (a private
+history in `.history`; do not touch that folder, and never `git init` the
+project folder), recording when each file changed and which task changed it, and
+the user can restore any version. So edit in place rather than making `-v2`
+copies, and give files clear names: the history is only as readable as they are.
+A snapshot is taken when you end a turn or report, and every few minutes.
+
 ## Starting a task again
 
 `ensemble_start_task` (or Start on the dashboard) on a task that has run before
