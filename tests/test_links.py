@@ -251,7 +251,6 @@ NATIVE_TAGS = {"a", "label", "summary", "select", "input", "option", "textarea",
 # Containers whose buttons are wired one by one, by their own classes.
 ALLOW = {
     "cmt-composer": "its Cancel/Add buttons are wired by .cmt-cancel and .cmt-add",
-    "page-actions": "its buttons are wired by #cat-rename-btn and #cat-delete-btn",
     "dp-actions": "its buttons carry the action classes wired in the document click handler",
     "actions": "its buttons carry the action classes wired in the document click handler",
     "offer": "its buttons are handled by the offer's own click listener",
