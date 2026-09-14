@@ -138,6 +138,16 @@ class QuotedWallsDoNotBlock(unittest.TestCase):
     def test_codex_quoting_it(self):
         self.assertIsNone(attention.find_block(CODEX_QUOTING))
 
+    def test_a_file_or_test_output_that_starts_with_the_phrase(self):
+        # The tool's output is the phrase itself, and the turn ended on it.
+        for tail in ("● Bash(type fixture.txt)\n⎿  OAuth token has expired · run /login to renew\n>",
+                     "● Bash(py -m unittest)\n⎿  output: You've hit your usage limit\n>",
+                     "●Bash(type fixture.txt)\n⎿  Running…\n⎿  Credit balance is too low\n>",
+                     "● ensemble - chat_read (MCP)\n⎿  Invalid API key · Please run /login\n>",
+                     "● Read(notes.md)\n✢Mulling…\n⎿  Not logged in · Please run /login\n>"):
+            self.assertIsNone(attention.find_block(tail), tail)
+            self.assertIsNone(_classify(tail, "idle"), tail)
+
     def test_a_busy_claude_is_never_blocked_by_its_screen(self):
         # Even a screen that would block when idle.
         self.assertIsNotNone(attention.find_block(CLAUDE_WALL))
@@ -179,6 +189,22 @@ class OwnWallsStillBlock(unittest.TestCase):
         self.assertIsNone(attention._classify_agent(room, part, ev, 900, 0.0))
         ev["claudeStatus"] = "idle"          # the next poll, same cached scan
         self.assertEqual(attention._classify_agent(room, part, ev, 900, 0.0)[0], "blocked")
+
+    def test_after_claudes_own_words_mid_turn(self):
+        tail = "● Checking the review now.\n⎿  API Error: 401 · OAuth token has expired · run /login\n>"
+        self.assertEqual(attention.find_block(tail)[1], "auth")
+
+    def test_a_background_notice_after_the_wall_is_not_recovery(self):
+        for notice in ("● Background task completed",
+                       '●Backgroundcommand"Run the test suites"completed(exitcode0)'):
+            tail = CLAUDE_WALL.rstrip(">").rstrip("\n") + "\n" + notice + "\n>"
+            hit, alone = attention.find_block(tail), attention.find_block(CLAUDE_WALL)
+            self.assertIsNotNone(hit, notice)
+            # The quote itself is out of scope here: `_quote_at` reads on over
+            # a `●` the way it always has.
+            self.assertEqual(hit[:2], alone[:2], notice)
+            self.assertTrue(hit[2].startswith(alone[2]), hit[2])
+            self.assertEqual(_classify(tail, "idle")[0], "blocked")
 
     def test_a_wall_the_agent_got_past_is_history(self):
         tail = CLAUDE_WALL + "\n> /login\n● Logged in again; carrying on with review 2."

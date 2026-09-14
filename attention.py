@@ -122,8 +122,10 @@ def _phrase(pattern: str) -> re.Pattern:
 # line the hub typed, a numbered finding, a quoted sentence, the agent's own
 # `●` balloon discussing this module — and on 2026-09-14 two healthy rooms
 # were shown as "log in again" for an hour because of exactly that. So a match
-# counts only below the last `●` turn, only in a block whose first line is the
-# CLI's own error line, and never while Claude itself says it is busy (see
+# counts only below the last `●` turn (a background-task notice is not one),
+# only in a block whose first line is the CLI's own error line — never the
+# first `⎿` under a tool call, which is that tool's output, whatever it says —
+# and never while Claude itself says it is busy (see
 # `_own_wall_lines` and `_classify_agent`). Phrases are never exempted for this:
 # "run /login to renew" is a real wall when Claude prints it.
 #
@@ -287,15 +289,26 @@ _BOX_EDGE = re.compile(r"^[\s│┃║|╭╰╮╯─]+")
 _RESULT_GLYPH = "⎿"
 _OWN_ERROR = re.compile(r"^[■✗✘⚠]")
 _QUOTED_OPENER = re.compile(r"^(?:[●⏺•└├>›❯“\"«]|\[[^\]\n]{1,60}\]|\d+[.)]\s)")
+# A `●` line that calls a tool — "● Bash(…)", "●Skill(ensemble)", "● ensemble -
+# chat_read (MCP)" — rather than one Claude wrote. Its first `⎿` is the tool's
+# output, whatever that output says.
+_TOOL_CALL = re.compile(r"^[●⏺]\s*(?:[\w.:-]+(?:\s*-\s*[\w.:-]+)?\s*\(|.*\((?:MCP|ctrl\+o to expand)\))",
+                        re.I)
+# A `●` line that only announces something finished in the background. It
+# arrives whether or not the agent can reach the API, so it is no proof the
+# agent got past a wall above it. (Stripping loses spaces: "●Backgroundcommand".)
+_NOTICE_TURN = _phrase(r"^[●⏺] ?background (?:command|task|shell|agent)")
+# A tool's progress frame, which the raw buffer keeps above the final output.
+_PROGRESS_RESULT = _phrase(r"^⎿ ?(?:running|waiting)\b")
 # Claude draws a tool's output and its own API error with the same `⎿`. Its
 # error *starts* with the refusal, give or take a short prefix ("API Error:
-# 401 · ", "Claude "); a tool result that quotes one has it further in.
+# 401 · ", "Claude "), and it is never the first `⎿` under a tool call.
 _API_ERROR = re.compile(r"^\s*API\s*Error\b", re.I)
 _RESULT_WALL_AT = 30
 
 
 def _result_is_wall(text: str, at: int) -> bool:
-    """Whether the `⎿` block starting at ``at`` is Claude's own error line."""
+    """Whether the `⎿` block starting at ``at`` begins with a refusal."""
     body = text[at:at + 300]
     if _API_ERROR.match(body):
         return True
@@ -304,15 +317,38 @@ def _result_is_wall(text: str, at: int) -> bool:
     return first is not None and len(body[:first].strip()) <= _RESULT_WALL_AT
 
 
+def _body(line: str) -> str:
+    return _BOX_EDGE.sub("", line)
+
+
+def _is_tool_output(lines: list[str], j: int) -> bool:
+    """Whether the `⎿` on line ``j`` is the output of a tool call: the nearest
+    structure above it, past bare continuation lines, spinner frames and the
+    tool's own progress frames, is a tool-call line. After another `⎿`, a
+    prompt, a hub-typed line or Claude's own words it is Claude speaking."""
+    for k in range(j - 1, -1, -1):
+        body = _body(lines[k])
+        if body.startswith(_RESULT_GLYPH):
+            if _PROGRESS_RESULT.match(body):
+                continue
+            return False
+        if _TURN_LINE.match(body):
+            return bool(_TOOL_CALL.match(body))
+        if _OWN_ERROR.match(body) or _QUOTED_OPENER.match(body):
+            return False
+    return False
+
+
 def _own_wall_lines(text: str) -> tuple[int, callable]:
     """Where the agent's own status area begins, and a test for one offset.
 
     Returns ``(floor, owns)``: a match before ``floor`` sits above the last
-    Claude turn and is history — the agent spoke after it, so it got past it —
-    and ``owns(offset)`` says whether the block holding that offset is the
-    CLI's own error line rather than quoted text. A block is identified by the
-    nearest line above (or at) the offset that starts with structure; a screen
-    with no structure at all keeps the old behaviour and counts.
+    Claude turn and is history — the agent spoke after it, so it got past it
+    (a background-task notice is not a turn) — and ``owns(offset)`` says
+    whether the block holding that offset is the CLI's own error line rather
+    than quoted text. A block is identified by the nearest line above (or at)
+    the offset that starts with structure; a screen with no structure at all
+    keeps the old behaviour and counts.
     """
     lines = text.split("\n")
     starts, pos = [], 0
@@ -321,7 +357,8 @@ def _own_wall_lines(text: str) -> tuple[int, callable]:
         pos += len(ln) + 1
     floor = 0
     for i, ln in enumerate(lines):
-        if _TURN_LINE.match(_BOX_EDGE.sub("", ln)):
+        body = _body(ln)
+        if _TURN_LINE.match(body) and not _NOTICE_TURN.match(body):
             floor = starts[i]
     verdicts: dict[int, bool] = {}
 
@@ -334,7 +371,8 @@ def _own_wall_lines(text: str) -> tuple[int, callable]:
             edge = _BOX_EDGE.match(lines[j])
             body = lines[j][edge.end():] if edge else lines[j]
             if body.startswith(_RESULT_GLYPH):
-                verdict = _result_is_wall(text, starts[j] + (edge.end() if edge else 0) + 1)
+                verdict = (not _is_tool_output(lines, j)
+                           and _result_is_wall(text, starts[j] + (edge.end() if edge else 0) + 1))
                 break
             if _OWN_ERROR.match(body):
                 break
