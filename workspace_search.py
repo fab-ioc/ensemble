@@ -234,7 +234,9 @@ def list_files(root: str, enclosing_ignores: bool = False, limit: int = FILES_MA
         for e in entries:
             r = rel + e.name
             # A documents project's file history (a bare git db) is not its files.
-            if e.name in SKIP_DIRS or r in ignored or (e.name == ".history" and os.path.isfile(os.path.join(base, e.name, "HEAD"))):
+            # Nor is a file still being uploaded (dashboard.py writes it under this name, then renames).
+            if e.name in SKIP_DIRS or r in ignored or (e.name == ".history" and os.path.isfile(os.path.join(base, e.name, "HEAD"))) \
+                    or (e.name.startswith(".") and e.name.endswith(".upload.tmp")):
                 continue
             path = os.path.join(base, e.name)
             link = _is_link(e)
