@@ -113,6 +113,20 @@ def _phrase(pattern: str) -> re.Pattern:
     return re.compile(pattern.replace(" ", r"\s*"), re.I)
 
 
+# Only the agent's own wall counts. Both CLIs draw a refusal as a status line
+# of their own below the conversation: Claude as a `⎿` line that *starts* with
+# the error ("⎿  API Error: 401 · OAuth token has expired…", "⎿  Credit balance
+# is too low"), after which the turn ends and the session goes idle; codex as a
+# `■` notice. The same words anywhere else are someone quoting them — a review
+# finding read through chat_read (a tool result), a `[digest]` or `[report]`
+# line the hub typed, a numbered finding, a quoted sentence, the agent's own
+# `●` balloon discussing this module — and on 2026-09-14 two healthy rooms
+# were shown as "log in again" for an hour because of exactly that. So a match
+# counts only below the last `●` turn, only in a block whose first line is the
+# CLI's own error line, and never while Claude itself says it is busy (see
+# `_own_wall_lines` and `_classify_agent`). Phrases are never exempted for this:
+# "run /login to renew" is a real wall when Claude prints it.
+#
 # "I cannot continue" — capacity and credentials. Each rule is
 # (pattern, plain-language why, machine-readable cause). Kept deliberately
 # specific: a bare "rate limit" is NOT here, because both CLIs retry those
@@ -262,22 +276,99 @@ def _quote_at(text: str, start: int, end: int, limit: int = 260) -> str:
 # message, and the first of them names the actual cause.
 _CLUSTER_SPAN = 400
 
+# Screen structure, read off the first characters of a line (``ptyrun.tail``
+# strips each line, so continuation lines of a wrapped block start bare):
+# a Claude turn or tool call; the frame of a box, which says nothing itself; the
+# CLI's own error line; and everything that marks someone else's words — an
+# agent's balloon or tool output, a prompt, a quote, a hub-typed ``[tag]``, a
+# numbered finding.
+_TURN_LINE = re.compile(r"^[●⏺]")
+_BOX_EDGE = re.compile(r"^[\s│┃║|╭╰╮╯─]+")
+_RESULT_GLYPH = "⎿"
+_OWN_ERROR = re.compile(r"^[■✗✘⚠]")
+_QUOTED_OPENER = re.compile(r"^(?:[●⏺•└├>›❯“\"«]|\[[^\]\n]{1,60}\]|\d+[.)]\s)")
+# Claude draws a tool's output and its own API error with the same `⎿`. Its
+# error *starts* with the refusal, give or take a short prefix ("API Error:
+# 401 · ", "Claude "); a tool result that quotes one has it further in.
+_API_ERROR = re.compile(r"^\s*API\s*Error\b", re.I)
+_RESULT_WALL_AT = 30
+
+
+def _result_is_wall(text: str, at: int) -> bool:
+    """Whether the `⎿` block starting at ``at`` is Claude's own error line."""
+    body = text[at:at + 300]
+    if _API_ERROR.match(body):
+        return True
+    first = min((m.start() for pat, _, _ in _BLOCK_RULES for m in [pat.search(body)] if m),
+                default=None)
+    return first is not None and len(body[:first].strip()) <= _RESULT_WALL_AT
+
+
+def _own_wall_lines(text: str) -> tuple[int, callable]:
+    """Where the agent's own status area begins, and a test for one offset.
+
+    Returns ``(floor, owns)``: a match before ``floor`` sits above the last
+    Claude turn and is history — the agent spoke after it, so it got past it —
+    and ``owns(offset)`` says whether the block holding that offset is the
+    CLI's own error line rather than quoted text. A block is identified by the
+    nearest line above (or at) the offset that starts with structure; a screen
+    with no structure at all keeps the old behaviour and counts.
+    """
+    lines = text.split("\n")
+    starts, pos = [], 0
+    for ln in lines:
+        starts.append(pos)
+        pos += len(ln) + 1
+    floor = 0
+    for i, ln in enumerate(lines):
+        if _TURN_LINE.match(_BOX_EDGE.sub("", ln)):
+            floor = starts[i]
+    verdicts: dict[int, bool] = {}
+
+    def owns(offset: int) -> bool:
+        i = max(0, text.count("\n", 0, offset))
+        if i in verdicts:
+            return verdicts[i]
+        verdict, j = True, i
+        while j >= 0:
+            edge = _BOX_EDGE.match(lines[j])
+            body = lines[j][edge.end():] if edge else lines[j]
+            if body.startswith(_RESULT_GLYPH):
+                verdict = _result_is_wall(text, starts[j] + (edge.end() if edge else 0) + 1)
+                break
+            if _OWN_ERROR.match(body):
+                break
+            if _QUOTED_OPENER.match(body):
+                verdict = False
+                break
+            j -= 1
+        verdicts[i] = verdict
+        return verdict
+
+    return floor, owns
+
 
 def find_block(tail: str) -> tuple[str, str, str] | None:
     """Scan a terminal's screen for "I cannot continue".
 
-    Returns ``(why, cause, quoted_sentence)``, or None. The *latest* message on
-    the screen wins — an old warning can sit above the current one — but within
-    that message the *first* rule to match names the cause, and the quote spans
-    the whole thing, so the product owner reads what the agent actually said.
+    Returns ``(why, cause, quoted_sentence)``, or None. Only the agent's own
+    wall counts — below its last turn, on the CLI's own error line, never text
+    quoted inside a balloon, a tool result or a hub-typed line (see the note
+    above ``_BLOCK_RULES``). The *latest* such message wins — an old warning
+    can sit above the current one — but within that message the *first* rule
+    to match names the cause, and the quote spans the whole thing, so the
+    product owner reads what the agent actually said.
     """
     text = tail or ""
     if not text:
         return None
     hits: list[tuple[int, int, str, str]] = []
     notices = [(n.start(), n.end()) for n in _LOGIN_NOTICE.finditer(text)]
+    floor, owns = _own_wall_lines(text)
     for pat, why, cause in _BLOCK_RULES:
         for m in pat.finditer(text):
+            if m.start() < floor or not owns(m.start()):
+                continue        # history, or someone quoting a wall
             if _BLOCK_EXEMPT.search(text[max(0, m.start() - 60):m.end() + 60]):
                 continue
             if any(s <= m.start() and m.end() <= e for s, e in notices):
@@ -603,6 +694,12 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
     kind = part.get("agent", "") or "agent"
     who = f"{identity} ({kind})" if kind != identity else identity
     block = ev["scan"]["block"]
+    if block and ev["alive"] and ev["claudeStatus"] == "busy":
+        # A Claude session that says it is working has not hit a wall: a real
+        # refusal ends the turn. The screen verdict is kept, so a wall drawn
+        # while the status file is a second behind is reported on the next
+        # poll that reads it idle.
+        block = None
 
     if not ev["alive"]:
         death = ev["death"]
