@@ -21,6 +21,7 @@ class _FakeAgent:
 class _FakeHandler:
     _start_room = dashboard.Handler._start_room
     _start_or_resume_room = dashboard.Handler._start_or_resume_room
+    _resume_room = dashboard.Handler._resume_room
     _start_review = dashboard.Handler._start_review
 
     def __init__(self):
@@ -42,8 +43,9 @@ class _FakeHandler:
         return {"ptyId": 100 + len(self.resumed), "cwd": room.get("cwd", ""),
                 "sessionId": part.get("sessionId", ""), "prompted": False}
 
-    def _send_resume_note(self, room_id, identity, pty_id):
-        self.resume_notes.append((room_id, identity, pty_id))
+    def _deliver_after_resume(self, room_id, targets, solo):
+        self.resume_notes.extend((room_id, ident, pty) for ident, pty, note in targets if note)
+        dashboard._RESUMES.pop(room_id, None)    # nothing runs to settle here
 
 
 def _window(kind: str, percent, *, trusted=True, rolled_over=False,
