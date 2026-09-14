@@ -430,6 +430,12 @@ class TheMarkup(unittest.TestCase):
         self.assertIn("window.addEventListener('resize', away)", listen)
         self.assertNotIn("addEventListener('resize'", js_function("docsFilesWire"), "not one more listener per mount")
         self.assertNotIn("_asks", block)
+        # A renamed row waiting for the repaint is not opened, menued or dragged.
+        wire = js_function("docsFilesWire")
+        self.assertIn("if (e.target.closest('.wse-wait')) return;", wire)
+        self.assertIn("e.target.closest('.wse-edit, .wse-wait')", wire)
+        self.assertIn(".wse[draggable=\"true\"]:not(.wse-wait)", wire)
+        self.assertIn("e.target.closest('.wse-more, .wse-edit, .wse-wait')", js_function("wsMount"))
         phone = re.search(r"^\s*\.dcm \.ov-item, [^{]*\{ min-height: var\(--touch-min\); \}", INDEX, re.M)
         self.assertIsNotNone(phone)
         self.assertIn(".dcs-all", phone.group(0))

@@ -6874,7 +6874,7 @@ function wsMount(el, ctx) {
   };
   const tree = el.querySelector('.wsp-tree');
   tree.onclick = async (e) => {
-    if (e.target.closest('.wse-more, .wse-edit')) return;   // a row's menu, or a name being typed (the Files panel's)
+    if (e.target.closest('.wse-more, .wse-edit, .wse-wait')) return;   // a row's menu, a name being typed, a renamed row waiting (the Files panel's)
     const d = e.target.closest('.wse.dir');
     if (d) {
       const p = d.dataset.path;
@@ -9269,6 +9269,7 @@ function docsFilesWire(el, pid) {
   // The tree: a click on a folder selects it; ⋯ or a right click opens the
   // row's menu; a row can be dragged onto a folder.
   tree.addEventListener('click', (e) => {
+    if (e.target.closest('.wse-wait')) return;
     const more = e.target.closest('.wse-more');
     if (more) {
       const row = more.closest('.wse');
@@ -9281,12 +9282,12 @@ function docsFilesWire(el, pid) {
   });
   tree.addEventListener('contextmenu', (e) => {
     const row = e.target.closest('.wse[data-path]');
-    if (!row || row.classList.contains('wsroot') || e.target.closest('.wse-edit')) return;
+    if (!row || row.classList.contains('wsroot') || e.target.closest('.wse-edit, .wse-wait')) return;
     e.preventDefault();
     docsMenuOpen(menu, row, { left: e.clientX, right: e.clientX, top: e.clientY, bottom: e.clientY });
   });
   tree.addEventListener('dragstart', (e) => {
-    const row = e.target.closest && e.target.closest('.wse[draggable="true"]');
+    const row = e.target.closest && e.target.closest('.wse[draggable="true"]:not(.wse-wait)');
     const root = wsfRoot(v), rel = row && root ? histRel(root.path, row.dataset.path) : '';
     if (!rel) return;
     DOCS_DRAG = { pid, rel, dir: row.classList.contains('dir'), name: upBase(rel) };
