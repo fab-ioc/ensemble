@@ -233,7 +233,8 @@ def list_files(root: str, enclosing_ignores: bool = False, limit: int = FILES_MA
         dirs = []
         for e in entries:
             r = rel + e.name
-            if e.name in SKIP_DIRS or r in ignored:
+            # A documents project's file history (a bare git db) is not its files.
+            if e.name in SKIP_DIRS or r in ignored or (e.name == ".history" and os.path.isfile(os.path.join(base, e.name, "HEAD"))):
                 continue
             path = os.path.join(base, e.name)
             link = _is_link(e)

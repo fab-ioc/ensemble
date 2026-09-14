@@ -1359,6 +1359,78 @@
     font-size: var(--fs-200); color: var(--fg-subtle);
   }
   .po-note span { flex: 1 1 320px; }
+  /* A documents project's Overview: its files lead, its recent changes sit
+     beside them, and the board follows below. #view becomes display:contents,
+     as for the PO split, so its chrome and board share main's grid with
+     #docs-panel, which lives outside #view because a viewer is state. */
+  body.docs-split main {
+    display: grid; grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "chrome" "files" "board"; row-gap: var(--s-300);
+  }
+  body.docs-split #view { display: contents; }
+  body.docs-split .po-chrome { grid-area: chrome; min-width: 0; }
+  body.docs-split #docs-panel { grid-area: files; min-width: 0; }
+  body.docs-split .po-board { grid-area: board; min-width: 0; }
+  .dcs { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 320px); gap: var(--s-400); }
+  .dcs-files, .dcs-side { min-width: 0; }
+  .dcs-h { margin: 0 0 var(--s-200); font-size: var(--fs-300); font-weight: 600; color: var(--fg); }
+  .dcs .wsp { height: clamp(360px, 62vh, 680px); min-height: 360px; }
+  .dcs-recent { display: flex; flex-direction: column; min-height: 0; height: clamp(360px, 62vh, 680px);
+    border: 1px solid var(--border); border-radius: var(--r-300); background: var(--surface); overflow: hidden; }
+  .dcs-rbar { display: flex; align-items: center; gap: var(--s-200); padding: var(--s-200); border-bottom: 1px solid var(--border); }
+  .dcs-rbar .grow, .wsh-head .grow, .wsh-bar .grow { flex: 1; }
+  .dcs-list { flex: 1; min-height: 0; overflow: auto; }
+  .dch { padding: var(--s-200) var(--s-300); border-bottom: 1px solid var(--border); font-size: var(--fs-200); }
+  .dch:last-child { border-bottom: 0; }
+  .dch-top { display: flex; align-items: baseline; gap: var(--s-200); color: var(--fg-muted); }
+  .dch-who { min-width: 0; color: var(--fg); font-weight: 500; overflow-wrap: anywhere; }
+  .dch-when { margin-left: auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .dch-sub { margin-top: var(--s-050); color: var(--fg-subtle); overflow-wrap: anywhere; }
+  .dch-files { list-style: none; margin: var(--s-100) 0 0; padding: 0; }
+  .dch-files li { display: flex; align-items: center; gap: var(--s-200); min-width: 0; }
+  .dch-file { flex: 0 1 auto; min-width: 0; height: 24px; padding: 0 var(--s-100); border: 0; border-radius: var(--r-100);
+    background: transparent; color: var(--link); font: inherit; font-family: var(--font-mono); text-align: left;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+  .dch-file:hover { background: var(--hover); }
+  .dch-n { flex: none; color: var(--fg-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .dch-acts { display: flex; gap: var(--s-100); margin-top: var(--s-100); }
+  .dch-more, .dcs-empty, .dcs-foot { color: var(--fg-muted); font-size: var(--fs-200); }
+  .dcs-empty { padding: var(--s-300); }
+  .dcs-foot { margin: 0; padding: var(--s-200) var(--s-300); border-top: 1px solid var(--border); }
+  .dch-file:focus-visible, .wsh-ver:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+  @media (max-width: 900px) {
+    .dcs { grid-template-columns: minmax(0, 1fr); gap: var(--s-300); }
+    .dcs .wsp { height: min(75dvh, 640px); }
+    .dcs-recent { height: auto; max-height: 420px; }
+  }
+  /* A file's history, over its viewer: the versions kept, then the one
+     picked, compared with the file now or shown as it was. */
+  .wsh { position: absolute; inset: 0; z-index: 3; display: flex; flex-direction: column; min-height: 0; background: var(--surface); }
+  .wsh[hidden], .wsp-hist[hidden] { display: none; }
+  .wsp-hist[aria-pressed="true"] { background: var(--selected-bg); color: var(--selected-fg); border-color: var(--border-strong); }
+  .wsh-top { flex: 0 1 auto; max-height: 45%; min-height: 0; display: flex; flex-direction: column; border-bottom: 1px solid var(--border); }
+  .wsh-head { flex: none; display: flex; align-items: center; gap: var(--s-200); padding: var(--s-050) var(--s-200) var(--s-050) var(--s-300);
+    border-bottom: 1px solid var(--border); font-size: var(--fs-200); color: var(--fg-muted); }
+  .wsh-head b { color: var(--fg); font-weight: 600; }
+  .wsh-path { min-width: 0; font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wsh-list { flex: 0 1 auto; min-height: 0; overflow: auto; margin: 0; padding: var(--s-050) 0; list-style: none; }
+  .wsh-ver { display: flex; align-items: baseline; gap: var(--s-300); width: 100%; min-height: 28px; padding: var(--s-100) var(--s-300);
+    border: 0; background: transparent; color: var(--fg); font: inherit; font-size: var(--fs-200); text-align: left; cursor: pointer; }
+  .wsh-ver:hover { background: var(--hover); }
+  .wsh-ver.on { background: var(--selected-bg); color: var(--selected-fg); }
+  .wsh-when { flex: none; min-width: 6em; font-variant-numeric: tabular-nums; }
+  .wsh-who { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .wsh-what { flex: none; color: var(--fg-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .wsh-ver.on .wsh-what { color: inherit; }
+  .wsh-note { flex: none; margin: 0; padding: var(--s-100) var(--s-300); font-size: var(--fs-200); color: var(--fg-muted); }
+  .wsh-detail { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .wsh-more { padding: var(--s-100) var(--s-300); }
+  .wsh-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-200); padding: var(--s-100) var(--s-300);
+    border-bottom: 1px solid var(--border); font-size: var(--fs-200); color: var(--fg-muted); }
+  .wsh-box { flex: 1; min-height: 0; overflow: auto; }
+  .wsh-count { padding: var(--s-100) var(--s-300); font-size: var(--fs-200); color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+  .wsh .dr .dg { cursor: default; }
+  .drv.one .dr .dg::before { content: none; display: none; }
   /* The project page: the PO leads, the board sits beside it. #view becomes
      display:contents so its chrome and board can share main's grid with the
      PO panel, which lives outside #view for the same reason the workspace does. */
@@ -1658,6 +1730,8 @@
   .rm-btn.subtle { height: 24px; padding: 0 var(--s-200); background: transparent; border-color: transparent; color: var(--fg-subtle); font-size: var(--fs-200); }
   .rm-btn.subtle:hover { background: var(--hover); color: var(--fg); }
   .rm-btn:disabled { cursor: progress; }
+  /* A link dressed as a button: its height (and a phone's --touch-min) apply only to a box. */
+  a.rm-btn { display: inline-flex; align-items: center; text-decoration: none; }
   .rm-note { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-200) var(--s-300); padding: var(--s-200) var(--s-300); border-bottom: 1px solid var(--border); background: var(--c-warning-bg); color: var(--c-warning-fg); font-size: var(--fs-300); line-height: var(--lh-300); }
   .rm-note.err { background: var(--c-danger-bg); color: var(--c-danger-fg); }
   .rm-note-txt { flex: 1 1 320px; min-width: 0; }
@@ -2814,6 +2888,13 @@
        is cut from the left and swipes sideways within itself. */
     .wsp-bar { padding-block: 0; }
     .wsc-dir, .wsp-btn, .wsp-own { height: var(--touch-min); min-width: var(--touch-min); }
+    /* The project's crumbs wrap rather than cut the kind, New task or the
+       view switch off at the edge of a 360px screen. */
+    .crumbs { flex-wrap: wrap; row-gap: var(--s-100); }
+    /* A documents project's history and recent changes, finger-sized. */
+    .wsh-ver, .dch-file, .kind-btn { min-height: var(--touch-min); }
+    .dch-file { height: auto; }
+    .wsh-top { max-height: 50%; }
     .scopebar { flex-wrap: wrap; }
     .scopebar select, .chp-repo { max-width: 100%; min-width: 0; }
     /* Diffs: a line is a finger-sized target, since a tap on it starts a
@@ -3059,6 +3140,9 @@
   <section id="ws-panel" hidden></section>
   <!-- The roadmap panel, for the same reason: an unsaved draft is state. -->
   <section id="rm-panel" hidden></section>
+  <!-- A documents project's files and recent changes, leading its Overview.
+       A live viewer is state, so this too lives beside #view, never in it. -->
+  <section id="docs-panel" hidden aria-label="The project's files"></section>
   <!-- The PO's conversation, for the same reason again: it is a live session. -->
   <section id="po-panel" hidden aria-label="The project's PO"></section>
 </main>
@@ -5340,7 +5424,7 @@ function projectsChromeHtml() {
       + `<button data-ptab="changes" class="${PROJECT_TAB === 'changes' ? 'on' : ''}" title="Uncommitted changes in the project folder or in a task's workspace: git status, per-file diff, line comments you can send to a task chat">Changes</button>`
       + `<button data-ptab="roadmap" class="${PROJECT_TAB === 'roadmap' ? 'on' : ''}" title="The project's roadmap — ROADMAP.md in its folder. You and the project's PO both edit it">Roadmap</button>`
       + `</div>` : '';
-    return strip + `<div class="crumbs"><a href="#" class="crumb-back">← Projects</a><span class="sep">/</span><b>${esc(nm)}</b>${newTask}`
+    return strip + `<div class="crumbs"><a href="#" class="crumb-back">← Projects</a><span class="sep">/</span><b>${esc(nm)}</b>${kindBtnHtml(pj)}${newTask}`
       + (PROJECT_TAB === 'tasks' ? fitSwitchHtml() + viewSwitchHtml() : '') + `</div>` + tabs;
   }
   return strip + `<div class="listctl"><span>Group by</span>
@@ -5366,7 +5450,8 @@ function projectsLandingHtml() {
     const unassigned = p.id === UNASSIGNED_ID;
     const sub = unassigned
       ? `<div class="ppath">sessions not in a project yet — use “Move to project” to file them</div>`
-      : `<div class="ppath" title="${esc(p.path)}">${esc(tildeify(p.path))}${p.isGit ? ' <span class="gitmark" title="git repository">git</span>' : ''}</div>`;
+      : `<div class="ppath" title="${esc(p.path)}">${esc(tildeify(p.path))}${p.isGit ? ' <span class="gitmark" title="git repository">git</span>' : ''}`
+        + `${isDocsProject(p) ? ' <span class="gitmark" title="A documents project: its files lead its page, and every version of them is kept">documents</span>' : ''}</div>`;
     const newTask = unassigned ? '' : `<button class="newtask" data-proj="${esc(p.id)}" title="Create a task in this project and fire agents at it">+ New task</button>`;
     return `<div class="proj ${p.waiting ? 'hot' : ''} ${unassigned ? 'unassigned' : ''}" data-proj="${esc(p.id)}">
       <div class="row1"><h3>${esc(p.name)}</h3>${wait}${live}</div>
@@ -5415,11 +5500,14 @@ async function registerProjectFlow(prefillPath) {
   const guess = path.trim().split(/[\\/]/).filter(Boolean).pop() || '';
   const name = prompt('Project name:', guess);
   if (name === null) return null;
+  const kind = prompt('Code or documents?\nType “documents” for a folder of files: its page leads with the files, its tasks work in the folder, and every version of every file is kept. Leave “code” otherwise.', 'code');
+  if (kind === null) return null;
   try {
     const r = await api('/api/projects/new', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: path.trim(), name: name.trim() }),
+      body: JSON.stringify({ path: path.trim(), name: name.trim(), kind: /^\s*d/i.test(kind) ? 'documents' : 'code' }),
     });
+    if (r.kindRefused) toast(r.kindRefused, 8000, 'err');
     toast(`project “${r.project.name}” registered`, 2500, 'ok');
     await refreshProjects(); renderRows();
     return r.project;
@@ -5580,12 +5668,19 @@ function wsRoots(ctx) {
 // whose room still exists, and would leak every abandoned folder plus _linked.
 // Files at that level are the project's own and stay.
 function wsHidden(v, dir) {
+  // A documents project's own folders are its documents: at its root only the
+  // real task folders (the hub marks those holding a task.json) and the chat
+  // exports in _linked are left out, at project and at task scope alike.
+  const docs = wsDocsProjectOf(v);
+  if (docs) return wsSame(docs.path, dir) ? { dirs: false, tasks: true, set: new Set() } : null;
   if (v.ctx.kind !== 'task') return null;
   const root = v.roots.find(r => r.kind === 'project');
   if (!root || !wsSame(root.path, dir)) return null;
   return { dirs: !!v.hideAllDirs, set: v.hide || new Set() };
 }
-function wsCtxKey(ctx) { return ctx.kind === 'task' ? 'task:' + ctx.sid : 'project:' + ctx.projectId; }
+// A documents project's Overview mounts its own view of the project, apart
+// from the Workspace tab's, so neither takes the other's element.
+function wsCtxKey(ctx) { return ctx.kind === 'task' ? 'task:' + ctx.sid : (ctx.docs ? 'docs:' : 'project:') + ctx.projectId; }
 
 // ---- Workspace tabs: begin ------------------------------------------------
 // The files open in a Workspace are tabs above the viewer, as in an editor.
@@ -6170,8 +6265,9 @@ function wsPanelHtml() {
       <div class="wsp-bar" hidden><nav class="wsc" aria-label="Where the file is"><ol class="wsc-list"></ol></nav>`
     + `<button type="button" class="wsp-btn wsp-reveal" title="Show in the tree" aria-label="Show in the tree">${WS_ICON_TREE}</button>`
     + `<button type="button" class="wsp-btn wsp-follow" aria-pressed="false" title="Keep the tree on the file showing">Follow</button>`
+    + `<button type="button" class="wsp-btn wsp-hist" aria-pressed="false" title="Every kept version of this file: compare one with the file now, open it or restore it" hidden>History</button>`
     + `<a class="wsp-own" target="_blank" title="Open in its own tab" aria-label="Open in its own tab">⧉</a></div>
-      <div class="wsp-frames" role="tabpanel"><div class="wsp-note"><div class="wsp-empty">${esc(WS_EMPTY)}</div></div></div>
+      <div class="wsp-frames" role="tabpanel"><div class="wsp-note"><div class="wsp-empty">${esc(WS_EMPTY)}</div></div><div class="wsh" role="region" aria-label="File history" hidden></div></div>
     </div>
   </div>`;
 }
@@ -6189,7 +6285,8 @@ function wsRowsHtml(v, dir) {
   if (c.error) return `<div class="wse none">can't read: ${esc(c.error)}</div>`;
   const hide = wsHidden(v, dir);
   const ents = hide
-    ? c.entries.filter(e => !((hide.dirs && e.type === 'dir') || hide.set.has(wsNorm(wsJoin(dir, e.name)))))
+    ? c.entries.filter(e => !((hide.dirs && e.type === 'dir') || (hide.tasks && e.type === 'dir' && (e.task || e.name === '_linked'))
+                              || hide.set.has(wsNorm(wsJoin(dir, e.name)))))
     : c.entries;
   if (!ents.length) return '<div class="wse none">(empty)</div>';
   // mtime rides along in the row so a file rewritten in place — same name, same
@@ -6328,6 +6425,10 @@ function wsPaintView(v) {
       + `<p class="wsp-gone-path">${esc(tildeify(t.path))}</p><button type="button" class="rm-btn wsp-gone-close">Close tab</button></div>`
     : '');
   bar.hidden = !t;
+  const hb = bar.querySelector('.wsp-hist');
+  if (hb) hb.hidden = !(t && wsDocsProjectOf(v));
+  // A file's history belongs to its tab: showing another closes it.
+  if (v.hist && (!t || !wsSame(v.hist.path, t.path))) { v.hist = null; histPaint(v); }
   if (t) {
     const own = bar.querySelector('.wsp-own');
     own.href = wsFileUrl(v, t.path);
@@ -6673,6 +6774,7 @@ function wsMount(el, ctx) {
     const d = e.target.closest('.wsc-dir');
     if (d) { wsReveal(v, d.dataset.path, { dir: true }); return; }
     if (e.target.closest('.wsp-reveal')) { wsReveal(v, v.sel); return; }
+    if (e.target.closest('.wsp-hist')) { if (v.hist) histClose(v); else histOpen(v, v.sel); return; }
     if (e.target.closest('.wsp-follow')) {
       v.follow = !v.follow;
       wsPersist(v);
@@ -6699,6 +6801,13 @@ function wsMount(el, ctx) {
     clearTimeout(scrollTimer);
     scrollTimer = setTimeout(() => wsPersist(v), 400);
   };
+  const hist = el.querySelector('.wsh');
+  if (hist) {
+    hist.onclick = (e) => histClick(v, e);
+    hist.onkeydown = (e) => { if (e.key === 'Escape') { e.preventDefault(); histClose(v); } };
+  }
+  histPaint(v);
+  if (v.hist && v.hist.sel) histShow(v);
   wsfMount(v);
   wsSync(v);
   return v;
@@ -7558,7 +7667,7 @@ function chUseContext(pid, root) {
       const s = rooms.find(x => x.roomId === rv.to) || rooms[0];
       return s ? { roomId: s.roomId, live: !!s.isLive, name: s.label || 'That task' } : null;
     },
-    what: () => 'the uncommitted changes',
+    what: () => ((projectById(pid) || {}).kind === 'documents' ? 'the changes since the last snapshot' : 'the uncommitted changes'),
     open: (r, file, line) => chOpenInWorkspace(pid, r, file, line),
     pick: c => { if (c.root === CH_ROOT) chOpenDiff(c.file, c.cid); },
   });
@@ -7587,6 +7696,11 @@ function chPickRepo(root) {
 async function chLoadStatus() {
   const box = document.getElementById('chp-files'); if (!box) return;
   const gen = ++CH_LOAD, stale = () => gen !== CH_LOAD || !box.isConnected;
+  // A documents project has no repository: in its own folder, its changes
+  // are those since the file history's last snapshot.
+  const dpj = projectById(box.dataset.project);
+  box.dataset.history = '';
+  if (dpj && dpj.kind === 'documents' && wsSame(box.dataset.scope, dpj.path)) return chLoadHistory(box, dpj, stale);
   try {
     // Find the repo(s) in scope first: the folder itself may be a repo, or a
     // task may hold clones a few levels down (e.g. <task>/claude/<name>/).
@@ -7621,6 +7735,25 @@ async function chLoadStatus() {
     const rs = box.querySelector('.chp-repo'); if (rs) rs.onchange = function () { chPickRepo(rs.value); };
   } catch (e) { if (!stale()) box.innerHTML = '<div class="chf none">status unavailable: ' + esc(e.message) + '</div>'; }
 }
+async function chLoadHistory(box, pj, stale) {
+  box.dataset.history = '1';
+  try {
+    const st = await api('/api/history/status?project=' + encodeURIComponent(pj.id));
+    if (stale()) return;
+    CH_ROOT = pj.path; box.dataset.root = CH_ROOT;
+    chUseContext(pj.id, CH_ROOT);
+    const files = st.files || [], big = files.filter(function (f) { return f.tooLarge; }).length;
+    box.innerHTML = '<div class="chp-head"><span class="chp-repo1" title="' + esc(pj.path) + '">Since the last snapshot</span><span class="chp-count">' + files.length + ' changed</span>'
+      + '<button class="chp-refresh" title="Refresh">↻</button></div>'
+      + (files.length ? files.map(function (f) {
+          const code = f.status || '?';
+          return '<div class="chf' + (f.path === CH_FILE ? ' on' : '') + '" data-file="' + esc(f.path) + '">'
+            + '<span class="chst st-' + esc(code[0]) + '">' + esc(code) + '</span><span class="nm">' + esc(f.path) + '</span></div>';
+        }).join('') : '<div class="chf none">Nothing changed since the last snapshot. The file history takes one within a few minutes of a change.</div>')
+      + (big ? '<div class="chf none">' + big + (big > 1 ? ' files are' : ' file is') + ' over 50 MB, so the history does not keep ' + (big > 1 ? 'them' : 'it') + '.</div>' : '');
+    const rb = box.querySelector('.chp-refresh'); if (rb) rb.onclick = chLoadStatus;
+  } catch (e) { if (!stale()) box.innerHTML = '<div class="chf none">changes unavailable: ' + esc(e.message) + '</div>'; }
+}
 async function chOpenDiff(file, cid) {
   const box = document.getElementById('chp-diff'); if (!box) return;
   CH_FILE = file;
@@ -7630,7 +7763,10 @@ async function chOpenDiff(file, cid) {
   document.querySelectorAll('#chp-files .chf').forEach(function (x) { x.classList.toggle('on', x.dataset.file === file); });
   box.innerHTML = '<div class="wsp-empty">loading diff…</div>';
   try {
-    const d = await api('/api/git/diff?path=' + encodeURIComponent(root) + '&file=' + encodeURIComponent(file));
+    const files = document.getElementById('chp-files');
+    const d = files.dataset.history
+      ? await api('/api/history/diff?project=' + encodeURIComponent(files.dataset.project) + '&path=' + encodeURIComponent(file))
+      : await api('/api/git/diff?path=' + encodeURIComponent(root) + '&file=' + encodeURIComponent(file));
     if (seq !== CH_DIFF || !box.isConnected) return;   // another file, repository or project since
     const v = drShow(rv, box, root, file, d.diff || '');
     if (cid) { v.scrollTo = cid; drPaint(v); }
@@ -8003,7 +8139,7 @@ function projectOfRoom(rid) {
 function poSplitProject() {
   if (!SELECTED_PROJECT || PROJECT_TAB !== 'tasks' || SB_DEST) return null;
   const pj = projectById(SELECTED_PROJECT);
-  return pj && poRowOf(pj) ? pj : null;
+  return pj && !isDocsProject(pj) && poRowOf(pj) ? pj : null;
 }
 // "The current project" for the pill: the one whose PO is on screen, else the
 // open task's, else the one you are in, else the last PO you visited, else the
@@ -8046,7 +8182,8 @@ function poHeadHtml(pj, row, peek) {
 function renderPoPill(ctx) {
   const b = document.getElementById('po-pill');
   if (!b) return;
-  if (!ctx) { b.hidden = true; return; }
+  // A documents project has no PO, and no pill saying so.
+  if (!ctx || isDocsProject(ctx)) { b.hidden = true; return; }
   const row = poRowOf(ctx);
   let html;
   if (row) {
@@ -8124,7 +8261,7 @@ function renderPo() {
 function poNoteHtml() {
   if (!SELECTED_PROJECT || SELECTED_PROJECT === UNASSIGNED_ID || PROJECT_TAB !== 'tasks' || SB_DEST) return '';
   const pj = projectById(SELECTED_PROJECT);
-  if (!pj || poRowOf(pj)) return '';
+  if (!pj || isDocsProject(pj) || poRowOf(pj)) return '';
   const hasTasks = (pj.sessions || []).some(s => s.roomId);
   const what = pj.poRoomId ? 'This project’s PO was a task that no longer exists.' : 'This project has no PO.';
   const how = hasTasks ? 'Choose one of its tasks, or create a task for the role first.'
@@ -8168,9 +8305,10 @@ async function poChoose(pid) {
   dlg.close();
   if (roomId === null) return;
   try {
-    await api('/api/projects/po', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ projectId: pid, roomId }) });
-    toast(roomId ? 'PO set' : 'PO cleared', 2000, 'ok');
+    const r = await api('/api/projects/po', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                              body: JSON.stringify({ projectId: pid, roomId }) });
+    // Choosing a PO makes a documents project a code project again; say so.
+    toast(r.message || (roomId ? 'PO set' : 'PO cleared'), r.message ? 8000 : 2000, 'ok');
     await refreshProjects(); renderRows();
   } catch (e) { toast('could not set the PO: ' + e.message, 5000, 'err'); }
 }
@@ -8192,6 +8330,8 @@ document.addEventListener('click', async (ev) => {
   }
   const choose = ev.target.closest('.po-choose');
   if (choose) { poChoose(choose.dataset.proj); return; }
+  const kb = ev.target.closest('.kind-btn');
+  if (kb) { kindChoose(kb.dataset.proj); return; }
   const act = ev.target.closest('#po-panel .po-head [data-po]');
   if (act) {
     const head = act.closest('.po-head'), what = act.dataset.po;
@@ -8214,10 +8354,411 @@ document.addEventListener('click', async (ev) => {
   if (PO_PEEK && !ev.target.closest('#po-panel, #detail-panel, #modal, header, #detail-panel-resize')) poClosePeek();
 });
 
+// ---- Documents project: begin ------------------------------------------------
+// A documents project is a folder of files, not code (car ads, a leasing
+// contract, letters). It has no PO; its Overview leads with its files and its
+// recent changes; its tasks work in its folder; and the hub keeps every version
+// of every file with who changed it (history.py). Plain data and functions down
+// to histPaint, so tests/test_documents_project.py runs them in Node.
+function isDocsProject(pj) { return !!(pj && pj.kind === 'documents'); }
+function docsOverviewProject() {
+  if (!SELECTED_PROJECT || SELECTED_PROJECT === UNASSIGNED_ID || PROJECT_TAB !== 'tasks' || SB_DEST) return null;
+  const pj = projectById(SELECTED_PROJECT);
+  return isDocsProject(pj) ? pj : null;
+}
+// The documents project a Workspace view shows, or null.
+function wsDocsProjectOf(v) {
+  if (!v || !v.ctx) return null;
+  let pj;
+  if (v.ctx.kind === 'task') {
+    const r = ALL_ROWS.find(x => x.sessionId === v.ctx.sid || x.roomId === v.ctx.sid);
+    pj = r ? wsProjectForRow(r) : null;
+  } else pj = projectById(v.ctx.projectId);
+  return isDocsProject(pj) ? pj : null;
+}
+// The Overview's chrome and board, framed for its layout: beside the PO; with
+// a documents project's files between them (#docs-panel takes the middle of
+// main's grid); or plain, under the note saying how to get a PO.
+function overviewFrameHtml(o) {
+  if (o.poSplit) return `<div class="po-chrome">${o.chrome}</div><div class="po-board">${o.inner}</div>${o.edges}`;
+  if (o.docs) return `<div class="po-chrome">${o.chrome}</div><div class="po-board">${o.inner}</div>`;
+  return o.chrome + o.poNote + o.inner;
+}
+function kindBtnHtml(pj) {
+  if (!pj || !pj.registered || !pj.path || pj.id === UNASSIGNED_ID) return '';
+  const docs = isDocsProject(pj);
+  const tip = docs ? 'Its Overview leads with its files, and every version of them is kept. Click to change'
+                   : 'Its Overview leads with the PO and the board. Click to change';
+  return `<button type="button" class="po-btn kind-btn" data-proj="${esc(pj.id)}" title="${tip}">${docs ? 'Documents project' : 'Code project'}</button>`;
+}
+function kindDialogHtml(pj, po) {
+  const docs = isDocsProject(pj);
+  const opt = (k, label, text, off) => `<label class="kind-opt"><input type="radio" name="kind" value="${k}"${(k === 'documents') === docs ? ' checked' : ''}${off ? ' disabled' : ''}> <b>${label}</b><br><span class="cfg-hint">${text}</span></label>`;
+  return `<h3>What kind of project is ${esc(pj.name)}?</h3>`
+    + `<div class="im-field" role="radiogroup" aria-label="Kind of project">`
+    + opt('code', 'Code project', 'Its Overview leads with the PO and the board. Tasks work in their own folders, copies or worktrees.', false)
+    + opt('documents', 'Documents project', 'Its Overview leads with its files. Tasks work directly in the project folder, several at once, and every version of every file is kept with who changed it.', !!po)
+    + `</div>`
+    + (po ? `<p class="cfg-hint">This project has a PO (${esc(po.label || 'its task')}), so it stays a code project. Clear its PO first to make it a documents project.</p>` : '')
+    + (docs ? `<p class="cfg-hint">Choosing a PO for it later makes it a code project again. Its file history is kept either way.</p>` : '')
+    + `<div class="actions"><button id="kind-ok">Save</button><button id="kind-cancel" class="secondary">Cancel</button></div>`;
+}
+// The plain sentence the hub sends with a refusal, out of api()'s error.
+function histErr(e) {
+  const m = /"message":\s*("(?:[^"\\]|\\.)*")/.exec((e && e.message) || '');
+  try { return m ? JSON.parse(m[1]) : ((e && e.message) || 'failed'); } catch (x) { return (e && e.message) || 'failed'; }
+}
+async function kindChoose(pid) {
+  const pj = projectById(pid);
+  if (!pj) return;
+  const dlg = $('#modal');
+  dlg.innerHTML = kindDialogHtml(pj, poRowOf(pj));
+  dlg.showModal();
+  const kind = await new Promise(resolve => {
+    $('#kind-cancel').onclick = () => resolve(null);
+    dlg.addEventListener('cancel', () => resolve(null), { once: true });
+    $('#kind-ok').onclick = () => { const c = dlg.querySelector('input[name="kind"]:checked'); resolve(c ? c.value : null); };
+  });
+  dlg.close();
+  if (kind === null || kind === (isDocsProject(pj) ? 'documents' : 'code')) return;
+  try {
+    await api('/api/projects/kind', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ projectId: pid, kind }) });
+    toast(kind === 'documents' ? `${pj.name} is a documents project: its files lead its page` : `${pj.name} is a code project again`, 4000, 'ok');
+    await refreshProjects(); renderRows();
+  } catch (e) { toast(histErr(e), 8000, 'err'); }
+}
+
+// ---- the file history ----
+const HIST_FOOT = 'Every version of every file here is kept, with who changed it: a task, or you. Files over 50 MB, and task chats and records, are not kept.';
+const HIST = new Map();   // project id -> the Overview's recent changes
+function histState(pid) {
+  if (!HIST.has(pid)) HIST.set(pid, { recent: null, more: false, deleted: [], delMore: false, delPaged: false, delCursor: '', err: '', view: 'recent', at: 0, inFlight: false });
+  return HIST.get(pid);
+}
+const histWho = w => (w && w.kind === 'task' && w.label) ? w.label : 'you';
+const histFolder = p => { const i = p.lastIndexOf('/'); return i > 0 ? p.slice(0, i) : ''; };
+const histTime = t => { try { return new Date(t * 1000).toLocaleString(); } catch (e) { return ''; } };
+// What a snapshot did to one file, in words: added/removed lines, or added,
+// renamed, deleted.
+function histWhat(f) {
+  const lines = (f.added == null && f.removed == null) ? '' : `+${f.added || 0} −${f.removed || 0}`;
+  if (f.status === 'A') return lines && f.added ? `added · ${lines}` : 'added';
+  if (f.status === 'D') return 'deleted';
+  if (f.status === 'R') return `renamed from ${wsTabName(f.from || '')}` + (f.added || f.removed ? ` · ${lines}` : '');
+  return lines || 'changed';
+}
+// A path of the project's (as the hub names it: relative, with /) for one
+// under its folder, or '' for anything outside it.
+function histRel(root, path) {
+  const a = (root || '').replace(/[\\/]+$/, '');
+  if (!a || !path || path.length <= a.length + 1 || !wsSame(path.slice(0, a.length), a) || !/[\\/]/.test(path.charAt(a.length))) return '';
+  return path.slice(a.length + 1).replace(/\\/g, '/');
+}
+function histRecentHtml(st) {
+  if (st.err && !st.recent) return `<div class="dcs-empty">The history could not be read: ${esc(st.err)}</div>`;
+  if (!st.recent) return '<div class="dcs-empty">Loading the history…</div>';
+  if (st.view === 'deleted') {
+    if (!st.deleted.length) return '<div class="dcs-empty">No deleted files. A file removed from the folder shows here, and can be put back.</div>';
+    return st.deleted.map(d => `<div class="dch"><div class="dch-top"><span class="dch-who">${esc(wsTabName(d.path))}</span><span class="dch-when" title="${esc(histTime(d.time))}">${agoSpan(d.time)}</span></div>`
+      + `<div class="dch-sub">${histFolder(d.path) ? esc(histFolder(d.path)) + ' · ' : ''}deleted by ${esc(histWho(d.who))}</div>`
+      + `<div class="dch-acts"><button type="button" class="rm-btn subtle dch-restore" data-path="${esc(d.path)}" data-rev="${esc(d.from)}">Restore</button>`
+      + `<button type="button" class="rm-btn subtle dch-open" data-path="${esc(d.path)}">History</button></div></div>`).join('')
+      + (st.delMore ? '<div class="dch-acts"><button type="button" class="rm-btn subtle dch-older">Show older deleted files</button></div>' : '');
+  }
+  if (!st.recent.length) return '<div class="dcs-empty">No snapshots yet. The first is taken within a few minutes, or now with Snapshot now.</div>';
+  return st.recent.map(e => {
+    const files = e.files.slice(0, 6).map(f => `<li><button type="button" class="dch-file" data-path="${esc(f.path)}" title="${esc(f.path)}">${esc(wsTabName(f.path))}</button><span class="dch-n">${esc(histWhat(f))}</span></li>`).join('');
+    const more = e.files.length > 6 ? `<li class="dch-more">and ${e.files.length - 6} more</li>` : '';
+    const sub = e.who && e.who.reason === 'restore' ? `<div class="dch-sub">${esc(e.subject)}</div>` : '';
+    return `<div class="dch"><div class="dch-top"><span class="dch-who">${esc(histWho(e.who))}</span><span class="dch-when" title="${esc(histTime(e.time))}">${agoSpan(e.time)}</span></div>${sub}<ul class="dch-files">${files}${more}</ul></div>`;
+  }).join('') + (st.more ? `<div class="dcs-empty">The ${st.recent.length} latest snapshots. A file's History lists all of its versions.</div>` : '');
+}
+function docsPanelHtml(pj) {
+  return `<div class="dcs">`
+    + `<section class="dcs-files" aria-label="Files"><h3 class="dcs-h">Files</h3>${wsPanelHtml()}</section>`
+    + `<section class="dcs-side" aria-label="Recent changes"><h3 class="dcs-h">Recent changes</h3><div class="dcs-recent">`
+    + `<div class="dcs-rbar"><div class="seg dcs-hv" role="group" aria-label="Show">`
+    + `<button type="button" data-hv="recent" class="active" aria-pressed="true">Recent</button><button type="button" data-hv="deleted" aria-pressed="false">Deleted</button></div>`
+    + `<span class="grow"></span><button type="button" class="rm-btn subtle dcs-snap" title="Keep a version of every file that changed, now">Snapshot now</button></div>`
+    + `<div class="dcs-list" aria-live="polite"><div class="dcs-empty">Loading the history…</div></div>`
+    + `<p class="dcs-foot">${esc(HIST_FOOT)}</p></div></section></div>`;
+}
+// The Overview's files: mounted once per project, then only kept current.
+function docsPanelRender(el, pj) {
+  if (el.dataset.proj !== pj.id) {
+    el.dataset.proj = pj.id;
+    el.innerHTML = docsPanelHtml(pj);
+    wsMount(el.querySelector('.wsp'), { kind: 'project', projectId: pj.id, docs: true });
+    wireDocsPanel(el, pj.id);
+  }
+  histRecentLoad(el, pj.id, false);
+}
+function histPaintRecent(el, pid) {
+  if (!el.isConnected || el.dataset.proj !== pid) return;
+  const st = histState(pid), list = el.querySelector('.dcs-list');
+  if (list) writeSlot(list, histRecentHtml(st));
+  el.querySelectorAll('.dcs-rbar [data-hv]').forEach(b => {
+    const on = b.dataset.hv === st.view;
+    b.classList.toggle('active', on); b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+}
+// Read on the page's refresh at most every 15 s, one read at a time.
+async function histRecentLoad(el, pid, force) {
+  const st = histState(pid);
+  if (st.inFlight || (!force && st.at && Date.now() - st.at < 15000)) { histPaintRecent(el, pid); return; }
+  st.inFlight = true;
+  try {
+    const q = encodeURIComponent(pid), cursor = st.delCursor;
+    // Once older deleted files are shown, every one down to the last shown is
+    // read again: a file restored since drops out, and more goes on from the
+    // same place, never from a count.
+    const through = st.delPaged && cursor ? `&through=${encodeURIComponent(cursor)}` : '';
+    const [log, del] = await Promise.all([api(`/api/history/log?project=${q}&limit=30`), api(`/api/history/log?project=${q}&deleted=1${through}`)]);
+    st.recent = log.entries || []; st.more = !!log.more; st.err = '';
+    if (st.delCursor === cursor) {          // no older page arrived meanwhile
+      st.deleted = del.files || []; st.delMore = !!del.more;
+      if (!through) st.delCursor = histDelPlace(st.deleted);
+    }
+  } catch (e) { st.err = e.message || 'failed'; }
+  finally { st.inFlight = false; st.at = Date.now(); }
+  histPaintRecent(el, pid);
+}
+function docsView(pid) { return WS_VIEWS.get(wsCtxKey({ kind: 'project', projectId: pid, docs: true })) || null; }
+function wireDocsPanel(el, pid) {
+  el.querySelector('.dcs-side').onclick = async (e) => {
+    const st = histState(pid), v = docsView(pid), root = (projectById(pid) || {}).path || '';
+    const hv = e.target.closest('.dcs-hv [data-hv]');
+    if (hv) { st.view = hv.dataset.hv; histPaintRecent(el, pid); return; }
+    const file = e.target.closest('.dch-file, .dch-open');
+    if (file && v && root) {
+      const abs = wsfAbs(root, file.dataset.path);
+      wsOpenTab(v, abs);
+      if (file.classList.contains('dch-open')) histOpen(v, abs);
+      return;
+    }
+    const rs = e.target.closest('.dch-restore');
+    if (rs) {
+      if (await histRestore(pid, rs.dataset.rev, rs.dataset.path, rs)) {
+        st.deleted = st.deleted.filter(d => d.path !== rs.dataset.path);
+        if (v) { wsSync(v); histReloadFrame(v, wsfAbs(root, rs.dataset.path)); }
+      }
+      histRecentLoad(el, pid, true);
+      return;
+    }
+    const older = e.target.closest('.dch-older');
+    if (older) { histDeletedMore(el, pid, older); return; }
+    const snap = e.target.closest('.dcs-snap');
+    if (snap) histSnapshotNow(el, pid, snap);
+  };
+}
+// The place of the last row in the deleted list ("<rev>:<path>"): the next
+// page starts after it.
+const histDelPlace = rows => rows.length ? `${rows[rows.length - 1].rev}:${rows[rows.length - 1].path}` : '';
+async function histDeletedMore(el, pid, btn) {
+  const st = histState(pid);
+  if (!st.delCursor) return;
+  btn.disabled = true;
+  try {
+    const d = await api(`/api/history/log?project=${encodeURIComponent(pid)}&deleted=1&after=${encodeURIComponent(st.delCursor)}`);
+    const rows = d.files || [], have = new Set(st.deleted.map(x => x.path));
+    st.deleted = st.deleted.concat(rows.filter(x => !have.has(x.path)));
+    if (rows.length) st.delCursor = histDelPlace(rows);
+    st.delMore = !!d.more; st.delPaged = true;
+  } catch (e) { toast('older deleted files could not be read: ' + histErr(e), 5000, 'err'); }
+  finally { btn.disabled = false; }
+  histPaintRecent(el, pid);
+}
+async function histSnapshotNow(el, pid, btn) {
+  btn.disabled = true;
+  try {
+    await api('/api/history/snapshot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: pid }) });
+    // The hub's history thread takes it within a moment.
+    await new Promise(r => setTimeout(r, 1500));
+    await histRecentLoad(el, pid, true);
+    toast('Snapshot taken: every file that changed is kept', 2500, 'ok');
+  } catch (e) { toast('snapshot failed: ' + histErr(e), 5000, 'err'); }
+  finally { btn.disabled = false; }
+}
+async function histRestore(pid, rev, path, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const r = await api('/api/history/restore', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                  body: JSON.stringify({ projectId: pid, rev, path }) });
+    toast(`${wsTabName(path)} is back as it was on ${r.restoredFrom}; the version it replaced is kept`, 5000, 'ok');
+    return r;
+  } catch (e) {
+    // Written but not recorded: the hub's sentence says both, and the file
+    // on screen must be read again.
+    if (/"written":\s*true/.test((e && e.message) || '')) { toast(histErr(e), 10000, 'err'); return { written: true }; }
+    toast('restore failed: ' + histErr(e), 8000, 'err'); return null;
+  }
+  finally { if (btn) btn.disabled = false; }
+}
+// The viewer does not watch its file: a restored one is read again.
+function histReloadFrame(v, path) {
+  const f = v.frames && v.frames.get(wsNorm(path));
+  if (f) f.src = f.src;
+}
+function histFileOf(e, rel) { return (e.files || []).find(f => f.path === rel) || (e.files || [])[0] || null; }
+function histTopHtml(h) {
+  const head = `<div class="wsh-head"><b>History</b><span class="wsh-path" title="${esc(h.rel)}">${esc(h.rel)}</span><span class="grow"></span>`
+    + `<button type="button" class="wsp-btn wsh-close" aria-label="Close the history" title="Close the history (Esc)">×</button></div>`;
+  if (h.err) return head + `<div class="wsp-empty">The history could not be read: ${esc(h.err)}</div>`;
+  if (!h.entries) return head + '<div class="wsp-empty">Loading the versions…</div>';
+  if (!h.entries.length) return head + '<div class="wsp-empty">No version of this file is kept yet. The next snapshot takes one, within a few minutes.</div>';
+  return head + `<ul class="wsh-list" aria-label="Versions">` + h.entries.map(e => {
+    const f = histFileOf(e, h.rel), on = e.rev === h.sel;
+    return `<li><button type="button" class="wsh-ver${on ? ' on' : ''}" data-rev="${esc(e.rev)}" aria-pressed="${on}">`
+      + `<span class="wsh-when" title="${esc(histTime(e.time))}">${agoSpan(e.time)}</span><span class="wsh-who">${esc(histWho(e.who))}</span>`
+      + `<span class="wsh-what">${esc(f ? histWhat(f) : '')}</span></button></li>`;
+  }).join('') + '</ul>'
+    + (h.more ? `<div class="wsh-more"><button type="button" class="rm-btn subtle wsh-older"${h.loading ? ' disabled' : ''}>Show older versions</button></div>` : '')
+    + `<p class="wsh-note">${h.more ? `The ${h.entries.length} latest versions. ` : ''}Pick a version to compare it with the file now, open it, or restore it; the file it replaces is kept.</p>`;
+}
+// The rows of a diff for reading only: no comments on a file's history.
+function histRowsHtml(rows, one) {
+  const parts = [];
+  let top = 0;
+  rows.forEach((r, i) => {
+    top = Math.max(top, r.o || 0, r.n || 0);
+    if (one ? drContent(r) : !(r.k === 'meta' && /^(?:diff --git|index |--- |\+\+\+ )/.test(r.t))) parts.push(drRowHtml(r, i));
+  });
+  let body = '';
+  for (let i = 0; i < parts.length; i += DR_CHUNK) body += '<div class="drv-chunk">' + parts.slice(i, i + DR_CHUNK).join('') + '</div>';
+  return `<div class="drv${one ? ' one' : ''}" style="--gw:${Math.max(3, String(top).length)}ch">${body}</div>`;
+}
+const histLang = file => typeof HL !== 'undefined' ? HL.langOf(wsTabName(file), '') : '';
+function histDiffHtml(text, file) {
+  const rows = drParse(text);
+  drHighlight(rows, histLang(file));
+  let adds = 0, dels = 0;
+  rows.forEach(r => { if (r.k === 'add') adds++; else if (r.k === 'del') dels++; });
+  return `<div class="wsh-count">The file now: +${adds} −${dels} against this version</div>` + histRowsHtml(rows, false);
+}
+function histTextHtml(text, file) {
+  const lines = (text || '').replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n');
+  const rows = drParse(`@@ -1,${lines.length} +1,${lines.length} @@\n` + lines.map(l => ' ' + l).join('\n') + '\n');
+  drHighlight(rows, histLang(file));
+  return histRowsHtml(rows, true);
+}
+function histOpen(v, path) {
+  const pj = wsDocsProjectOf(v), rel = pj ? histRel(pj.path, path) : '';
+  if (!rel) { toast('Only files in the project folder have a history', 3000, 'err'); return; }
+  v.hist = { path, rel, pid: pj.id, entries: null, more: false, err: '', sel: '', mode: 'diff', dseq: 0 };
+  histPaint(v);
+  histLoadFile(v);
+  const c = v.el && v.el.querySelector('.wsh-close');
+  if (c) c.focus({ preventScroll: true });
+}
+function histClose(v) {
+  v.hist = null;
+  histPaint(v);
+  const b = v.el && v.el.querySelector('.wsp-hist');
+  if (b && !b.hidden) b.focus({ preventScroll: true });
+}
+// A file's versions, 100 at a time: older ones are added below on request,
+// so every version can be reached.
+async function histLoadFile(v, older) {
+  const h = v.hist;
+  if (!h || h.loading) return;
+  const have = older ? (h.entries || []) : [];
+  h.loading = true;
+  if (older) histPaint(v);
+  try {
+    const d = await api(`/api/history/log?project=${encodeURIComponent(h.pid)}&path=${encodeURIComponent(h.rel)}&limit=100&skip=${have.length}`);
+    if (v.hist !== h) return;
+    const revs = new Set(have.map(e => e.rev));
+    h.entries = have.concat((d.entries || []).filter(e => !revs.has(e.rev))); h.more = !!d.more; h.err = '';
+  } catch (e) {
+    if (v.hist !== h) return;
+    if (older) toast('older versions could not be read: ' + histErr(e), 5000, 'err');
+    else h.err = e.message || 'failed';
+  } finally { h.loading = false; }
+  histPaint(v);
+  if (h.sel && !older) histShow(v);
+}
+function histPaint(v) {
+  const box = v.el && v.el.querySelector('.wsh');
+  if (!box) return;
+  const h = v.hist || null;
+  box.hidden = !h;
+  const hb = v.el.querySelector('.wsp-hist');
+  if (hb) hb.setAttribute('aria-pressed', h ? 'true' : 'false');
+  if (!h) { box.innerHTML = ''; box._key = null; return; }
+  if (box._key !== h) {
+    box._key = h;
+    box.innerHTML = '<div class="wsh-top"></div><div class="wsh-detail"></div>';
+  }
+  writeSlot(box.querySelector('.wsh-top'), histTopHtml(h));
+  if (!h.sel) writeSlot(box.querySelector('.wsh-detail'), '');
+}
+async function histShow(v) {
+  const h = v.hist, box = v.el && v.el.querySelector('.wsh-detail');
+  const e = h && box && (h.entries || []).find(x => x.rev === h.sel);
+  if (!e) return;
+  const f = histFileOf(e, h.rel) || { path: h.rel, status: 'M' };
+  const gone = f.status === 'D';
+  const rev = gone ? e.rev + '^' : e.rev;   // a deletion's content is the version before it
+  const q = `project=${encodeURIComponent(h.pid)}&rev=${encodeURIComponent(rev)}&path=${encodeURIComponent(f.path)}`;
+  const seq = ++h.dseq;
+  const seg = (m, label) => `<button type="button" data-hm="${m}" class="${h.mode === m ? 'active' : ''}" aria-pressed="${h.mode === m}">${label}</button>`;
+  box.innerHTML = `<div class="wsh-bar"><span>${gone ? 'As it was before it was deleted' : 'Version of ' + esc(histTime(e.time))}</span><span class="grow"></span>`
+    + `<div class="seg wsh-hm" role="group" aria-label="Show">${seg('diff', 'Compare with now')}${seg('content', 'This version')}</div>`
+    + `<a class="rm-btn subtle wsh-raw" href="/api/history/file?${q}&raw=1" target="_blank" rel="noopener">Open</a>`
+    + `<button type="button" class="rm-btn wsh-restore" data-rev="${esc(rev)}" data-path="${esc(f.path)}">Restore this version</button></div>`
+    + `<div class="wsh-box"><div class="wsp-empty">Loading…</div></div>`;
+  const out = box.querySelector('.wsh-box');
+  const note = t => `<div class="wsp-empty">${t}</div>`;
+  try {
+    if (h.mode === 'content') {
+      const d = await api(`/api/history/file?${q}`);
+      if (seq !== h.dseq || v.hist !== h) return;
+      out.innerHTML = d.binary ? note('Not text (a PDF, an image or an office document): Open shows this version in a tab of its own.')
+        : histTextHtml(d.text, f.path) + (d.truncated ? note('The first 512 KB of it. Open shows the whole version.') : '');
+    } else {
+      const d = await api(`/api/history/diff?${q}&against=current&now=${encodeURIComponent(h.rel)}`);
+      if (seq !== h.dseq || v.hist !== h) return;
+      out.innerHTML = d.tooLarge ? note('Too large to compare line by line. Open shows this version.')
+        : d.same ? note('This version is the same as the file now.')
+        : d.binary ? note('Not text, so it cannot be compared line by line. Open shows this version.')
+        : histDiffHtml(d.diff || '', f.path);
+    }
+  } catch (err) { if (seq === h.dseq && v.hist === h) out.innerHTML = note('This version could not be read: ' + esc(err.message)); }
+}
+async function histClick(v, e) {
+  const h = v.hist;
+  if (!h) return;
+  if (e.target.closest('.wsh-close')) { histClose(v); return; }
+  if (e.target.closest('.wsh-older')) { histLoadFile(v, true); return; }
+  const ver = e.target.closest('.wsh-ver');
+  if (ver) { h.sel = ver.dataset.rev; histPaint(v); histShow(v); return; }
+  const m = e.target.closest('.wsh-hm [data-hm]');
+  if (m) { h.mode = m.dataset.hm; histShow(v); return; }
+  const rs = e.target.closest('.wsh-restore');
+  if (rs && await histRestore(h.pid, rs.dataset.rev, rs.dataset.path, rs)) {
+    wsSync(v);
+    histReloadFrame(v, h.path);
+    const dp = document.getElementById('docs-panel');
+    if (dp && dp.dataset.proj === h.pid) histRecentLoad(dp, h.pid, true);
+    if (v.hist === h) { h.sel = ''; h.entries = null; histPaint(v); histLoadFile(v); }
+  }
+}
+// ---- Documents project: end --------------------------------------------------
+
 function renderRows() {
   renderSidebar();
   syncProjSwitch();
   renderPo();
+  // A documents project's Overview leads with its files (#docs-panel, built
+  // once per project and kept); every other view hides it.
+  const docsPj = docsOverviewProject();
+  document.body.classList.toggle('docs-split', !!docsPj);
+  const dcp = document.getElementById('docs-panel');
+  if (dcp) {
+    dcp.hidden = !docsPj;
+    if (docsPj) docsPanelRender(dcp, docsPj);
+  }
   // The workspace panel is shown, never rebuilt — every branch below is free to
   // replace #view without touching it.
   const wsp = document.getElementById('ws-panel');
@@ -8343,13 +8884,12 @@ function renderRows() {
   // A project with a PO puts the board beside it (see #po-panel); one without
   // gets today's board under a note saying how to give it one.
   const poSplit = !!poSplitProject();
-  const poNote = poSplit ? '' : poNoteHtml();
+  const docs = !!docsOverviewProject();
+  const poNote = poSplit || docs ? '' : poNoteHtml();
   // The board's pane gets an edge on each side, shown while columns lie past it.
   const edges = VIEW_MODE === 'board'
     ? `<div class="board-edge l" hidden><button data-dir="l">‹</button></div><div class="board-edge r" hidden><button data-dir="r">›</button></div>` : '';
-  const frame = inner => poSplit
-    ? `<div class="po-chrome">${projectsChromeHtml()}</div><div class="po-board">${inner}</div>${edges}`
-    : projectsChromeHtml() + poNote + inner;
+  const frame = inner => overviewFrameHtml({ poSplit, docs, chrome: projectsChromeHtml(), poNote, inner, edges });
   if (!filtered.length) {
     if (writeSlot(view, frame(pageHeader + filterRowHtml(cols)
       + '<p class="empty">' + (active ? 'No matches.' : 'No sessions.') + '</p>'))) wireProjectsChrome();
@@ -8362,7 +8902,7 @@ function renderRows() {
     // DOM out from under an in-flight drag. Same problem the Workspace tab
     // hit, same guard: remount only when PLACEMENT changes. Card contents are
     // patched in place below, so dots and lozenges stay live while hovering.
-    const sig = [SELECTED_PROJECT || '', SELECTED_CAT, SEARCH_QUERY, DONE_SHOW_ALL, poSplit, poNote,
+    const sig = [SELECTED_PROJECT || '', SELECTED_CAT, SEARCH_QUERY, DONE_SHOW_ALL, poSplit, docs, poNote,
                  BOARD_FIT, isPhone(), [...hidden].join('.'),
                  filtered.map(r => (r.roomId || r.sessionId) + ':' + frozenWorkflowOf(r, frozen)).join(',')].join('|');
     if (sig !== BOARD_SIG || !view.querySelector('.board, .board-none')) {
@@ -8902,16 +9442,25 @@ function showNewSessionModal(category, projectId) {
     copy:     ['Copy of the code', 'A full copy of the project\'s code into this task\'s folder (repo/).'],
     worktree: ['Git worktree on its own branch', 'Checkout of branch sess/<task> in this task\'s folder (repo/) — merge back when done.'],
   };
+  const WS_DOCS = {
+    inplace: ['Work in the project folder (default)', 'Agents work on the project\'s files directly. Several tasks can work on the same files at once; the file history shows who changed what.'],
+    empty:   ['Its own folder in the project', 'The task gets a folder of its own inside the project; the file history keeps what it writes there too.'],
+  };
   const wsSel = $('#ns-ws'), wsHint = $('#ns-ws-hint');
   const fillWs = () => {
     const pj = projectById($('#ns-proj').value);
     // copy/worktree need an external code folder; an in-root project (its home
     // IS its path) is a container of tasks, not code.
     const hasCode = !!(pj && pj.home && pj.path && pj.home !== pj.path);
-    const modes = pj ? ['empty', 'inplace'].concat(hasCode ? ['copy'] : []).concat(hasCode && pj.isGit ? ['worktree'] : []) : ['empty'];
-    wsSel.innerHTML = modes.map(m => `<option value="${m}">${esc(WS[m][0])}</option>`).join('');
+    // A documents project's tasks work in its folder by default, several at
+    // once: no copies, no worktrees, and its history says who changed what.
+    const docs = isDocsProject(pj);
+    const modes = docs ? ['inplace', 'empty']
+      : pj ? ['empty', 'inplace'].concat(hasCode ? ['copy'] : []).concat(hasCode && pj.isGit ? ['worktree'] : []) : ['empty'];
+    const text = m => docs ? (WS_DOCS[m] || WS[m]) : WS[m];
+    wsSel.innerHTML = modes.map(m => `<option value="${m}">${esc(text(m)[0])}</option>`).join('');
     wsSel.disabled = !pj;
-    const upd = () => { wsHint.textContent = WS[wsSel.value][1]; };
+    const upd = () => { wsHint.textContent = text(wsSel.value)[1]; };
     wsSel.onchange = upd; upd();
   };
   fillWs();

@@ -144,7 +144,15 @@ _BLOCK_RULES: list[tuple[re.Pattern, str, str]] = [
 # limit". Nothing broader belongs here: "your limit will reset at 3pm" is the
 # tail of Claude's *real* limit message, so exempting that phrase would hide the
 # very thing this module exists to show.
+#
+# Claude's notice that a login is about to expire ("Your login expires in 3
+# days · run /login to renew") is advice, not a wall: the agent keeps working,
+# and read as "needs you to log in again" it hid a finished task's report.
 _BLOCK_EXEMPT = _phrase(r"usage limit reset available|/usage to use one")
+# Only the words of that notice itself are exempt, never a match next to it:
+# "OAuth token has expired · run /login to renew" ends with the same advice
+# and is a real wall.
+_LOGIN_NOTICE = _phrase(r"your login expires in \d+ \w+(?: [·•|\-] (?:please )?run ?/login to renew)?")
 
 # An agent editing THIS file puts the patterns above on its own screen. Only
 # *structural* evidence counts — regex source, a diff line — and only on the
@@ -267,9 +275,12 @@ def find_block(tail: str) -> tuple[str, str, str] | None:
     if not text:
         return None
     hits: list[tuple[int, int, str, str]] = []
+    notices = [(n.start(), n.end()) for n in _LOGIN_NOTICE.finditer(text)]
     for pat, why, cause in _BLOCK_RULES:
         for m in pat.finditer(text):
             if _BLOCK_EXEMPT.search(text[max(0, m.start() - 60):m.end() + 60]):
+                continue
+            if any(s <= m.start() and m.end() <= e for s, e in notices):
                 continue
             if _CODE_LOOKING.search(_screen_line(text, m.start(), m.end())):
                 continue        # the agent is looking at code, not hitting a wall

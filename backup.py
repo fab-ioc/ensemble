@@ -46,6 +46,11 @@ node_modules/
 
 MIN_INTERVAL_MIN = 5
 
+# Kept out of the backup whatever the .gitignore says (the user may have edited
+# theirs): a documents project's own file history (history.py) is a git
+# database of the same files the backup already carries.
+LOCAL_EXCLUDES = ("**/.history/",)
+
 
 def _git(root: Path, *args: str, timeout: int = 120) -> subprocess.CompletedProcess:
     # utf-8 + errors=replace: on Windows the default cp1252 decode fails silently
@@ -70,6 +75,16 @@ def ensure_repo(root: Path, remote: str = "") -> dict:
         if r.returncode != 0:
             return {"ok": False, "notes": ["git init failed: " + (r.stderr or "").strip()[:200]]}
         notes.append("initialised repo")
+    ex = root / ".git" / "info" / "exclude"
+    try:
+        have = ex.read_text(encoding="utf-8") if ex.is_file() else ""
+        missing = [p for p in LOCAL_EXCLUDES if p not in have.splitlines()]
+        if missing:
+            ex.parent.mkdir(parents=True, exist_ok=True)
+            ex.write_text(have + ("" if not have or have.endswith("\n") else "\n")
+                          + "\n".join(missing) + "\n", encoding="utf-8")
+    except OSError as e:
+        notes.append(f"exclude not written: {e}")
     gi = root / ".gitignore"
     if not gi.exists():
         try:
