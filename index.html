@@ -1237,7 +1237,62 @@
   body.docs-split .po-board { grid-area: board; min-width: 0; }
   .dcs { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 320px); gap: var(--s-400); }
   .dcs-files, .dcs-side { min-width: 0; }
-  .dcs-h { margin: 0 0 var(--s-200); font-size: var(--fs-300); font-weight: 600; color: var(--fg); }
+  .dcs-h { display: flex; align-items: center; min-height: 32px; margin: 0 0 var(--s-200); font-size: var(--fs-300); font-weight: 600; color: var(--fg); }
+  /* The Files panel's own controls (see "Files panel" in the script): Add
+     files is a label over a hidden file input, so a phone offers its photos. */
+  .dcs-files { position: relative; }
+  .dcs-hrow { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-200); margin-bottom: var(--s-200); min-width: 0; }
+  .dcs-hrow .dcs-h { margin: 0; }
+  .dcs-hrow .grow { flex: 1; }
+  label.dcs-add { position: relative; display: inline-flex; align-items: center; }
+  .dcs-add:focus-within { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .dcs-pick { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .dcs-ask { margin-bottom: var(--s-200); border: 0; border-radius: var(--r-300); }
+  .dcs-all { display: inline-flex; align-items: center; gap: var(--s-100); font-size: var(--fs-200); }
+  .dcs-note { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-200); margin-bottom: var(--s-200); padding: var(--s-100) var(--s-300);
+    border: 1px solid var(--border); border-radius: var(--r-300); background: var(--surface); color: var(--fg); font-size: var(--fs-300); }
+  .dcs-ask[hidden], .dcs-note[hidden], .dcs-drop[hidden], .dcu[hidden], .dcm[hidden] { display: none; }
+  .dcs-note-t { min-width: 0; overflow-wrap: anywhere; }
+  /* Dropping: a folder row, or else the panel (files from the computer), is
+     the one drop target, --selected-bg with a 2px accent inset, as on the board. */
+  .dcs-files.over .wsp { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .dcs-files.over .wsp-tree { background: var(--selected-bg); }
+  .wse.over { background: var(--selected-bg); color: var(--selected-fg); box-shadow: inset 0 0 0 2px var(--accent); }
+  .wse.dragging { background: var(--hover); color: var(--fg-muted); }
+  .wse-wait { color: var(--fg-muted); pointer-events: none; }
+  .dcs-files.dragging .wsp-frame { pointer-events: none; }
+  .dcs-drop { position: absolute; left: 50%; bottom: var(--s-400); transform: translateX(-50%); z-index: 5; max-width: calc(100% - var(--s-800));
+    padding: var(--s-200) var(--s-300); border-radius: var(--r-300); background: var(--surface-overlay); color: var(--fg); box-shadow: var(--e-200);
+    font-size: var(--fs-300); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+  /* A row's menu button, always shown: nothing needs hover. */
+  .wse-more { flex: none; margin-left: auto; width: 24px; height: 20px; padding: 0; border: 0; border-radius: var(--r-200);
+    background: transparent; color: var(--fg-subtle); font: inherit; font-size: var(--fs-300); line-height: 1; cursor: pointer; }
+  .wse .sz + .wse-more { margin-left: var(--s-100); }
+  .wse-more:hover { background: var(--hover); color: var(--fg); }
+  .wse-more:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+  .wse.on .wse-more, .wse.over .wse-more { color: inherit; }
+  .wse-edit { flex: 1; min-width: 0; height: 22px; padding: 0 var(--s-100); border: 1px solid var(--focus-ring); border-radius: var(--r-100);
+    background: var(--surface); color: var(--fg); font: inherit; }
+  .wse-edit:focus { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus-ring) 40%, transparent); }
+  .dcm { position: fixed; z-index: 80; min-width: 180px; max-width: min(320px, calc(100vw - var(--s-400))); display: flex; flex-direction: column;
+    background: var(--surface-overlay); border: 1px solid var(--border); border-radius: var(--r-300); box-shadow: var(--e-200); padding: var(--s-100); }
+  .dcm-head { padding: var(--s-100) var(--s-200); font-size: var(--fs-100); font-weight: 600; color: var(--fg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dcm-list { display: flex; flex-direction: column; max-height: min(50vh, 320px); overflow: auto; }
+  .dcm .ov-item { overflow: hidden; text-overflow: ellipsis; }
+  .dcm .ov-item:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+  .dcm-empty { padding: var(--s-200); color: var(--fg-muted); font-size: var(--fs-200); }
+  /* Files being added, over the tree: name, size, a bar; a failed one says why. */
+  .dcu { flex: none; max-height: 40%; overflow: auto; padding: var(--s-100) var(--s-200); border-bottom: 1px solid var(--border); font-size: var(--fs-200); }
+  .dcu-line { padding: var(--s-050) 0; color: var(--fg-muted); }
+  .dcu-row { padding: var(--s-100) 0; }
+  .dcu-top { display: flex; align-items: baseline; gap: var(--s-200); min-width: 0; }
+  .dcu-nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+  .dcu-sz { flex: none; margin-left: auto; color: var(--fg-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .dcu-bar { height: 4px; margin-top: var(--s-100); border-radius: var(--r-full); background: var(--c-neutral-bg); overflow: hidden; }
+  .dcu-bar i { display: block; height: 100%; background: var(--c-progress-bold); }
+  .dcu-err { margin-top: var(--s-050); color: var(--c-danger-fg); overflow-wrap: anywhere; }
+  .dcu-acts { display: flex; gap: var(--s-100); margin-top: var(--s-050); }
+  .dch-did { color: var(--fg-muted); font-weight: 400; }
   .dcs .wsp { height: clamp(360px, 62vh, 680px); min-height: 360px; }
   .dcs-recent { display: flex; flex-direction: column; min-height: 0; height: clamp(360px, 62vh, 680px);
     border: 1px solid var(--border); border-radius: var(--r-300); background: var(--surface); overflow: hidden; }
@@ -2646,7 +2701,8 @@
     .po-btn, .dp-tab { min-width: var(--touch-min); }
     /* Home's "Group by" row: at 360 its last button sat under "+ New project". */
     .listctl { flex-wrap: wrap; row-gap: var(--s-200); }
-    .po-btn.x, .dp-close, .dp-ov-btn, .chp-refresh,
+    .dcm .ov-item, .wse-edit, .dcs-all { min-height: var(--touch-min); }
+    .po-btn.x, .dp-close, .dp-ov-btn, .chp-refresh, .wse-more,
     #usage-banner-dismiss, #update-banner-dismiss {
       min-width: var(--touch-min); min-height: var(--touch-min);
       display: inline-flex; align-items: center; justify-content: center;
@@ -6024,16 +6080,21 @@ function wsRowsHtml(v, dir) {
                               || hide.set.has(wsNorm(wsJoin(dir, e.name)))))
     : c.entries;
   if (!ents.length) return '<div class="wse none">(empty)</div>';
+  // A documents project's Overview (docs) can move a row by dragging it, and
+  // each row has a menu: open, rename, move, history, delete.
+  const docs = !!v.ctx.docs;
+  const more = name => docs ? `<button type="button" class="wse-more" aria-haspopup="menu" aria-expanded="false" aria-label="${esc('Actions for ' + name)}" title="Open, rename, move or delete">⋯</button>` : '';
+  const drag = docs ? ' draggable="true"' : '';
   // mtime rides along in the row so a file rewritten in place — same name, same
   // size — still changes the tree's signature and gets repainted.
   const rows = ents.map(e => {
     const p = wsJoin(dir, e.name);
     if (e.type === 'dir') {
       const open = v.open.has(p);
-      return `<div class="wse dir${v.mark && wsSame(v.mark, p) ? ' on' : ''}" data-path="${esc(p)}" data-mt="${e.mtime || 0}"><span class="tw">${open ? '▾' : '▸'}</span><span class="nm">${esc(e.name)}</span></div>`
+      return `<div class="wse dir${v.mark && wsSame(v.mark, p) ? ' on' : ''}" data-path="${esc(p)}" data-mt="${e.mtime || 0}"${drag}><span class="tw">${open ? '▾' : '▸'}</span><span class="nm">${esc(e.name)}</span>${more(e.name)}</div>`
         + `<div class="wsk" data-dir="${esc(p)}"${open ? '' : ' hidden'}>${open ? wsRowsHtml(v, p) : ''}</div>`;
     }
-    return `<div class="wse file${wsSame(v.mark || v.sel, p) ? ' on' : ''}" data-path="${esc(p)}" data-mt="${e.mtime || 0}"><span class="tw"></span><span class="nm">${esc(e.name)}</span><span class="sz">${wsFmtSize(e.size)}</span></div>`;
+    return `<div class="wse file${wsSame(v.mark || v.sel, p) ? ' on' : ''}" data-path="${esc(p)}" data-mt="${e.mtime || 0}"${drag}><span class="tw"></span><span class="nm">${esc(e.name)}</span><span class="sz">${wsFmtSize(e.size)}</span>${more(e.name)}</div>`;
   }).join('');
   // The server stops at 2000 entries. Say so rather than quietly showing a
   // folder that looks complete and isn't.
@@ -6056,6 +6117,9 @@ function wsTreeHtml(v) {
 function wsPaintTree(v) {
   const tree = v.el && v.el.querySelector('.wsp-tree');
   if (!tree) return;
+  // A name being typed into the tree (rename, new folder) is not wiped by a
+  // refresh; the tree is painted when the typing ends.
+  if (v.hold) return;
   const html = wsTreeHtml(v);
   // The signature hangs off the node rather than the view, so a remount into a
   // fresh element repaints instead of believing it is already up to date. Kept
@@ -6485,6 +6549,7 @@ function wsMount(el, ctx) {
   };
   const tree = el.querySelector('.wsp-tree');
   tree.onclick = async (e) => {
+    if (e.target.closest('.wse-more, .wse-edit, .wse-wait')) return;   // a row's menu, a name being typed, a renamed row waiting (the Files panel's)
     const d = e.target.closest('.wse.dir');
     if (d) {
       const p = d.dataset.path;
@@ -8169,7 +8234,11 @@ function histState(pid) {
   if (!HIST.has(pid)) HIST.set(pid, { recent: null, more: false, deleted: [], delMore: false, delPaged: false, delCursor: '', err: '', view: 'recent', at: 0, inFlight: false });
   return HIST.get(pid);
 }
-const histWho = w => (w && (w.kind === 'task' || w.kind === 'user') && w.label) ? w.label : 'you';
+// Who made a snapshot: a task by its title, a person by name (the hub names
+// the one who uploaded, moved or deleted from the page), else you.
+const histWho = w => (w && w.kind === 'task' && w.label) ? w.label : ((w && (w.name || (w.kind !== 'you' && w.label))) || 'you');
+const HIST_DID = { upload: 'uploaded', mkdir: 'made a folder', move: 'moved', delete: 'deleted' };
+const histDid = w => (w && HIST_DID[w.reason]) || '';
 const histFolder = p => { const i = p.lastIndexOf('/'); return i > 0 ? p.slice(0, i) : ''; };
 const histTime = t => { try { return new Date(t * 1000).toLocaleString(); } catch (e) { return ''; } };
 // What a snapshot did to one file, in words: added/removed lines, or added,
@@ -8204,12 +8273,18 @@ function histRecentHtml(st) {
     const files = e.files.slice(0, 6).map(f => `<li><button type="button" class="dch-file" data-path="${esc(f.path)}" title="${esc(f.path)}">${esc(wsTabName(f.path))}</button><span class="dch-n">${esc(histWhat(f))}</span></li>`).join('');
     const more = e.files.length > 6 ? `<li class="dch-more">and ${e.files.length - 6} more</li>` : '';
     const sub = e.who && e.who.reason === 'restore' ? `<div class="dch-sub">${esc(e.subject)}</div>` : '';
-    return `<div class="dch"><div class="dch-top"><span class="dch-who">${esc(histWho(e.who))}</span><span class="dch-when" title="${esc(histTime(e.time))}">${agoSpan(e.time)}</span></div>${sub}<ul class="dch-files">${files}${more}</ul></div>`;
+    const did = histDid(e.who);
+    return `<div class="dch"><div class="dch-top"><span class="dch-who">${esc(histWho(e.who))}${did ? `<span class="dch-did"> · ${esc(did)}</span>` : ''}</span><span class="dch-when" title="${esc(histTime(e.time))}">${agoSpan(e.time)}</span></div>${sub}<ul class="dch-files">${files}${more}</ul></div>`;
   }).join('') + (st.more ? `<div class="dcs-empty">The ${st.recent.length} latest snapshots. A file's History lists all of its versions.</div>` : '');
 }
 function docsPanelHtml(pj) {
   return `<div class="dcs">`
-    + `<section class="dcs-files" aria-label="Files"><h3 class="dcs-h">Files</h3>${wsPanelHtml()}</section>`
+    + `<section class="dcs-files" aria-label="Files"><div class="dcs-hrow"><h3 class="dcs-h">Files</h3><span class="grow"></span>`
+    + `<label class="rm-btn dcs-add" title="Add files to the folder selected in the tree, or to the project">Add files<input type="file" multiple class="dcs-pick"></label>`
+    + `<button type="button" class="rm-btn dcs-mkdir" title="Make a folder in the one selected in the tree, or in the project">New folder</button></div>`
+    + `<div class="rm-note dcs-ask" role="group" aria-label="A file of that name is already there" hidden></div>`
+    + `<div class="dcs-note" role="status" hidden></div>`
+    + `${wsPanelHtml()}<div class="dcs-drop" aria-hidden="true" hidden></div></section>`
     + `<section class="dcs-side" aria-label="Recent changes"><h3 class="dcs-h">Recent changes</h3><div class="dcs-recent">`
     + `<div class="dcs-rbar"><div class="seg dcs-hv" role="group" aria-label="Show">`
     + `<button type="button" data-hv="recent" class="active" aria-pressed="true">Recent</button><button type="button" data-hv="deleted" aria-pressed="false">Deleted</button></div>`
@@ -8222,6 +8297,8 @@ function docsPanelRender(el, pj) {
   if (el.dataset.proj !== pj.id) {
     el.dataset.proj = pj.id;
     el.innerHTML = docsPanelHtml(pj);
+    const held = docsView(pj.id);
+    if (held) docsHoldReset(held);         // a name being typed went with the old panel
     wsMount(el.querySelector('.wsp'), { kind: 'project', projectId: pj.id, docs: true });
     wireDocsPanel(el, pj.id);
   }
@@ -8239,6 +8316,8 @@ function histPaintRecent(el, pid) {
 // Read on the page's refresh at most every 15 s, one read at a time.
 async function histRecentLoad(el, pid, force) {
   const st = histState(pid);
+  // A change made on the page while a read is out is read again after it.
+  if (st.inFlight && force) st.again = true;
   if (st.inFlight || (!force && st.at && Date.now() - st.at < 15000)) { histPaintRecent(el, pid); return; }
   st.inFlight = true;
   try {
@@ -8256,6 +8335,7 @@ async function histRecentLoad(el, pid, force) {
   } catch (e) { st.err = e.message || 'failed'; }
   finally { st.inFlight = false; st.at = Date.now(); }
   histPaintRecent(el, pid);
+  if (st.again) { st.again = false; await histRecentLoad(el, pid, true); }
 }
 function docsView(pid) { return WS_VIEWS.get(wsCtxKey({ kind: 'project', projectId: pid, docs: true })) || null; }
 function wireDocsPanel(el, pid) {
@@ -8284,6 +8364,7 @@ function wireDocsPanel(el, pid) {
     const snap = e.target.closest('.dcs-snap');
     if (snap) histSnapshotNow(el, pid, snap);
   };
+  docsFilesWire(el, pid);
 }
 // The place of the last row in the deleted list ("<rev>:<path>"): the next
 // page starts after it.
@@ -8478,6 +8559,949 @@ async function histClick(v, e) {
   }
 }
 // ---- Documents project: end --------------------------------------------------
+
+// ---- Files panel: begin ------------------------------------------------------
+// A documents project's Files panel takes files and folders dropped from the
+// computer or picked with Add files, makes folders, and moves, renames and
+// deletes, through the hub's /api/files/*. Every change is snapshotted by the
+// hub, so it shows in Recent changes and a deleted file can be put back.
+// ---- Files panel, pure: begin
+// Plain data and functions, run in Node by tests/test_files_panel.py: the
+// upload queue, the answer to "already there", the walk of a dropped folder.
+const UP_MAX = 50 * 1024 * 1024;   // the hub refuses more (history.MAX_FILE_BYTES)
+const UP_PARALLEL = 3;
+const UP_SKIP = new Set(['.DS_Store', 'Thumbs.db', 'desktop.ini']);   // what Finder and Explorer leave in a folder
+const upJoin = (dir, name) => dir ? dir + '/' + name : name;
+const upBase = rel => (rel || '').slice((rel || '').lastIndexOf('/') + 1);
+const upDir = rel => { const i = (rel || '').lastIndexOf('/'); return i > 0 ? rel.slice(0, i) : ''; };
+const upMB = n => (n / 1048576).toFixed(1).replace(/\.0$/, '') + ' MB';
+// "Keep both": photo.jpg becomes photo-2.jpg, then photo-3.jpg.
+function upKeepName(rel, n) {
+  const base = upBase(rel), dot = base.lastIndexOf('.');
+  const stem = dot > 0 ? base.slice(0, dot) : base, ext = dot > 0 ? base.slice(dot) : '';
+  return upJoin(upDir(rel), `${stem}-${n}${ext}`);
+}
+// Why a typed name cannot be used, or ''.
+function upNameErr(name) {
+  const s = (name || '').trim();
+  if (!s) return 'Type a name.';
+  if (/[\\/]/.test(s)) return 'A name cannot hold / or \\.';
+  if (s === '.' || s === '..') return `“${s}” cannot be a name.`;
+  return '';
+}
+let UP_SEQ = 0;
+// One file to send. state: queued, sending, asking (already there, waiting for
+// an answer), done, skipped, failed. final: retrying would be refused the same.
+function upItem(batch, file, rel) {
+  const it = { id: ++UP_SEQ, batch, file, name: upBase(rel), size: file ? file.size || 0 : 0, want: rel, path: rel,
+               state: 'queued', loaded: 0, err: '', final: false, overwrite: false, keep: 0 };
+  if (!file) { it.state = 'failed'; it.final = true; it.err = `${it.name} could not be read from this computer.`; }
+  else if (it.size > UP_MAX) { it.state = 'failed'; it.final = true; it.err = `${it.name} is ${upMB(it.size)}; files over ${upMB(UP_MAX)} are not added.`; }
+  return it;
+}
+// The queued files to send now, in order, so that at most max are out at once.
+function upToStart(items, max) {
+  let room = max - items.filter(x => x.state === 'sending').length;
+  const out = [];
+  for (const x of items) {
+    if (room <= 0) break;
+    if (x.state === 'queued') { out.push(x); room--; }
+  }
+  return out;
+}
+function upApply(it, choice) {
+  it.err = '';
+  if (choice === 'replace') { it.overwrite = true; it.keep = 0; it.path = it.want; it.state = 'queued'; }
+  else if (choice === 'keep') {
+    it.overwrite = false;
+    it.keep = (it.keep || 1) + 1;
+    if (it.keep > 99) { it.state = 'failed'; it.final = true; it.err = `No free name was found for ${it.name}.`; }
+    else { it.path = upKeepName(it.want, it.keep); it.state = 'queued'; }
+  } else { it.overwrite = false; it.state = 'skipped'; }
+  return it.state;
+}
+// The hub says a file of that name is there: sent to replace it, what is
+// there cannot be replaced (a folder), so that is final; a name picked to
+// keep both is taken too, so the next number; else the batch's answer for
+// all; else ask.
+function upOnExists(it, b) {
+  if (it.overwrite) {
+    it.state = 'failed'; it.final = true;
+    it.err = (b && b.message) || `${it.name} cannot replace what is there.`;
+    return it.state;
+  }
+  if (it.keep) return upApply(it, 'keep');
+  if (it.batch.answer) return upApply(it, it.batch.answer);
+  it.state = 'asking';
+  return it.state;
+}
+// The answer to one question; with "apply to all" it is the batch's answer,
+// for the files waiting now and any found later.
+function upAnswer(items, it, choice, all) {
+  if (all) it.batch.answer = choice;
+  upApply(it, choice);
+  if (all) items.forEach(x => { if (x !== it && x.batch === it.batch && x.state === 'asking') upApply(x, choice); });
+}
+const upAsking = items => items.find(x => x.state === 'asking') || null;
+function upRetry(it) {
+  if (it.state !== 'failed' || it.final) return false;
+  it.state = 'queued'; it.err = ''; it.loaded = 0;
+  return true;
+}
+// What the hub answered moves the file on.
+function upAfter(it, status, body) {
+  const b = body || {};
+  if (status >= 200 && status < 300) { it.state = 'done'; it.loaded = it.size; it.path = b.path || it.path; return it.state; }
+  if (status === 409 && b.error === 'exists') return upOnExists(it, b);
+  it.state = 'failed';
+  it.final = status === 400 || status === 413;
+  it.err = b.message || (status ? `The hub answered ${status}.` : 'The hub could not be reached.');
+  return it.state;
+}
+const upPct = it => it.state === 'done' ? 100 : it.size ? Math.min(100, Math.round(it.loaded / it.size * 100)) : 0;
+// Rows on screen: a file that is done is in the tree now, a skipped one is gone.
+const upShown = items => items.filter(x => x.state !== 'done' && x.state !== 'skipped');
+function upLine(items) {
+  const n = s => items.filter(x => x.state === s).length;
+  const left = n('queued') + n('sending'), asking = n('asking'), failed = n('failed');
+  const parts = [];
+  if (left) parts.push(`Adding ${left} file${left === 1 ? '' : 's'}`);
+  if (asking) parts.push(`${asking} waiting for your answer`);
+  if (failed) parts.push(`${failed} not added`);
+  return parts.join(' · ');
+}
+// A row is rewritten only when this changes; progress patches its bar.
+const upRowSig = x => `${x.state}|${x.path}|${x.err}|${x.final}`;
+function upRowHtml(x) {
+  const failed = x.state === 'failed';
+  const what = { queued: 'waiting', asking: 'already there', failed: 'not added' }[x.state] || '';
+  const pct = upPct(x);
+  return `<div class="dcu-row${failed ? ' failed' : ''}" data-id="${x.id}" title="${esc(x.path)}">`
+    + `<div class="dcu-top"><span class="dcu-nm">${esc(upBase(x.path))}</span><span class="dcu-sz">${esc(wsFmtSize(x.size))}${what ? ' · ' + what : ''}</span></div>`
+    + (failed
+      ? `<div class="dcu-err">${esc(x.err)}</div><div class="dcu-acts">`
+        + (x.final ? '' : `<button type="button" class="rm-btn subtle dcu-retry" data-id="${x.id}">Retry</button>`)
+        + `<button type="button" class="rm-btn subtle dcu-x" data-id="${x.id}">Dismiss</button></div>`
+      : `<div class="dcu-bar" role="progressbar" aria-label="${esc(x.name)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></div>`)
+    + '</div>';
+}
+// What was dropped, as entries, taken during the drop (the list is emptied
+// after it); null where the browser cannot give entries, so the flat file list
+// is used instead.
+function upDropEntries(dt) {
+  const items = dt && dt.items ? Array.from(dt.items).filter(i => i.kind === 'file') : [];
+  const entries = items.map(i => typeof i.webkitGetAsEntry === 'function' ? i.webkitGetAsEntry() : null);
+  return entries.length && entries.every(Boolean) ? entries : null;
+}
+// Every file under the dropped entries, with its path under the drop:
+// [{file, rel}], [{rel, dir: true}] for an empty folder, [{rel, err: true}] for
+// a file that could not be read. A folder's reader gives its entries a batch
+// at a time (Chrome: 100) until it gives none.
+async function upWalk(entries) {
+  const out = [];
+  const read = r => new Promise((res, rej) => r.readEntries(res, rej));
+  async function walk(e, dir) {
+    if (!e || UP_SKIP.has(e.name)) return;
+    const rel = upJoin(dir, e.name);
+    if (e.isFile) {
+      try { out.push({ file: await new Promise((res, rej) => e.file(res, rej)), rel }); }
+      catch (x) { out.push({ rel, err: true }); }
+    } else if (e.isDirectory) {
+      const r = e.createReader(), kids = [];
+      try { for (let b = await read(r); b.length; b = await read(r)) kids.push(...b); }
+      catch (x) { out.push({ rel, err: true }); return; }
+      if (!kids.length) out.push({ rel, dir: true });
+      for (const k of kids) await walk(k, rel);
+    }
+  }
+  for (const e of entries) await walk(e, '');
+  return out;
+}
+// The folders a file or folder can be moved to: every folder of the project
+// ('' is its top), except where it is now, itself and what is inside it, and
+// what the hub keeps apart (the history, chat exports, task folders in hide).
+function docsFolders(files, known, from, isDir, hide) {
+  const set = new Set(['']);
+  const add = d => { while (d && !set.has(d)) { set.add(d); d = upDir(d); } };
+  (files || []).forEach(f => add(upDir(f)));
+  (known || []).forEach(add);
+  const skip = [...(hide || [])].concat(['.history', '_linked']);
+  const here = upDir(from);
+  return [...set].filter(d => d !== here && !(isDir && (d === from || d.startsWith(from + '/')))
+                              && !skip.some(h => d === h || d.startsWith(h + '/')))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+}
+// Whether a dragged row may land in folder rel: not on itself, not where it
+// already is, and a folder not inside itself.
+const docsMoveOk = (drag, rel) => !!drag && drag.rel !== rel && upDir(drag.rel) !== rel
+  && !(drag.dir && rel.startsWith(drag.rel + '/'));
+// Where a path is after from moved to to, or '' when it did not move.
+function docsMoved(p, from, to) {
+  if (wsSame(p, from)) return to;
+  const n = wsNorm(from);
+  return wsNorm(p).startsWith(n + '/') ? to + p.slice(from.replace(/[\\/]+$/, '').length) : '';
+}
+// A name being typed holds the tree still (wsPaintTree skips while v.hold).
+// Each editor lets go of its own hold, once, so one ending never wipes
+// another; the release says whether the tree is free now. A remount starts
+// afresh: a hold whose input went with the old panel lets go of nothing.
+function docsHold(v) {
+  const s = v.holds || (v.holds = new Set()), tok = {};
+  s.add(tok); v.hold = s.size;
+  return () => {
+    if (!s.delete(tok) || s !== v.holds) return false;
+    v.hold = s.size;
+    return !s.size;
+  };
+}
+function docsHoldReset(v) { v.holds = new Set(); v.hold = 0; }
+// A row renamed while another name is still being typed waits for the tree's
+// repaint: it and what is under it hold the old path, so nothing on them acts.
+function docsSettle(tree, row) {
+  const old = row.dataset.path;
+  const kids = [...tree.querySelectorAll('.wsk')].filter(k => docsMoved(k.dataset.dir || '', old, old));
+  [row, ...kids].forEach(n => { n.inert = true; n.classList.add('wse-wait'); n.setAttribute('aria-busy', 'true'); });
+  row.draggable = false;
+}
+// Whether the history keeps a file (history.py's excludes and MAX_FILE_BYTES).
+const docsKept = e => (e.size || 0) <= UP_MAX && !UP_SKIP.has(e.name) && !/^~\$|^\.~lock\..*#$|\.tmp$/i.test(e.name);
+// Every folder under start (a path in the project, '' its top) and every file
+// the history keeps there, read a folder at a time with read(rel) -> entries,
+// six at once, at most max folders. complete is false when a folder could not
+// be read or there were more; unread lists those folders; unkept counts the
+// files too big for the history (not what Finder, Explorer or Office leave).
+async function docsWalk(read, start, o) {
+  const max = (o && o.max) || 400, skip = (o && o.skip) || (() => false);
+  const out = { dirs: [], files: [], unread: [], unkept: 0, complete: true };
+  for (let level = [start]; level.length;) {
+    const next = [];
+    for (let i = 0; i < level.length; i += 6) {
+      const got = await Promise.all(level.slice(i, i + 6).map(rel => Promise.resolve().then(() => read(rel)).then(es => [rel, es], () => [rel, null])));
+      for (const [rel, es] of got) {
+        if (!es) { out.complete = false; out.unread.push(rel); continue; }
+        for (const e of es) {
+          const r = upJoin(rel, e.name);
+          if (e.type !== 'dir') { if (docsKept(e)) out.files.push(r); else if ((e.size || 0) > UP_MAX) out.unkept++; continue; }
+          if (skip(r, e)) continue;
+          if (out.dirs.length >= max) { out.complete = false; out.unread.push(r); continue; }
+          out.dirs.push(r); next.push(r);
+        }
+      }
+    }
+    level = next;
+  }
+  return out;
+}
+const docsSameRev = (a, b) => !!a && !!b && (a.startsWith(b) || b.startsWith(a));
+// Putting a deleted folder rel back: its rows in the Deleted list that went
+// with this delete, the folders no restored file makes again (only the
+// innermost; a folder is made with its parents), how many files it held that
+// have no kept version, and whether that is sure. held is docsWalk's reading
+// of the folder before it was deleted, or null; rev the delete's snapshot, or
+// '' when none was recorded: then nothing tells this delete's rows from an
+// older one's, and the plan puts nothing back (unrecorded).
+function docsRestorePlan(rows, rel, held, rev) {
+  if (!rev) return { rows: [], mkdirs: [], missing: 0, sure: false, unrecorded: true };
+  const under = (p, d) => p === d || p.startsWith(d + '/');
+  const seen = new Set(), mine = [];
+  (rows || []).forEach(d => {
+    if (under(d.path, rel) && !seen.has(d.path)) { seen.add(d.path); if (docsSameRev(d.rev, rev)) mine.push(d); }
+  });
+  const back = new Set(mine.map(d => d.path)), made = new Set();
+  mine.forEach(d => { for (let p = upDir(d.path); p && !made.has(p); p = upDir(p)) made.add(p); });
+  const want = held ? [rel].concat(held.dirs).filter(d => !made.has(d)) : [];
+  const mkdirs = want.filter(d => !want.some(x => x.startsWith(d + '/')));
+  const sure = !!(held && held.complete);
+  const missing = (sure ? held.files.filter(f => !back.has(f)).length : 0) + ((held && held.unkept) || 0);
+  return { rows: mine, mkdirs, missing, sure, unrecorded: false };
+}
+// ---- Files panel, pure: end
+
+const DOCS_FP = new Map();   // project id -> the Files panel's uploads and questions
+function docsFp(pid) {
+  if (!DOCS_FP.has(pid)) DOCS_FP.set(pid, { items: [], asks: [], asking: false, noteTimer: 0, doneDirs: new Set(), doneTimer: 0 });
+  return DOCS_FP.get(pid);
+}
+// #docs-panel is one element that each documents project mounts into in
+// turn: what arrives late for a project paints only while it is that one's.
+const docsMine = (el, pid) => !!el && !!el.isConnected && el.dataset.proj === pid;
+let DOCS_DRAG = null;        // a tree row being dragged: {pid, rel, dir, name}
+let DOCS_ARM_T = 0, DOCS_DOC_WIRED = false;
+const docsDragFiles = ev => !!(ev.dataTransfer && Array.from(ev.dataTransfer.types || []).includes('Files'));
+const docsLiveSection = () => document.querySelector('#docs-panel:not([hidden]) .dcs-files');
+const docsDirLabel = (pid, rel) => rel || (projectById(pid) || {}).name || 'the project';
+const docsRow = (v, abs) => v.el ? [...v.el.querySelectorAll('.wsp-tree .wse[data-path]')].find(r => wsSame(r.dataset.path, abs)) || null : null;
+const docsExists = e => /^409 /.test((e && e.message) || '') && /"error":\s*"exists"/.test(e.message);
+function docsPost(path, body) {
+  return api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+}
+// Where Add files and New folder put things: the folder selected in the tree,
+// else the top of the project.
+function docsTarget(v) {
+  const root = wsfRoot(v);
+  if (!root) return null;
+  const row = v.mark && [...v.el.querySelectorAll('.wsp-tree .wse.dir')].find(r => wsSame(r.dataset.path, v.mark));
+  return row ? { abs: row.dataset.path, rel: histRel(root.path, row.dataset.path) } : { abs: root.path, rel: '' };
+}
+// While something is dragged over the page, the file viewers let it through
+// to the panel: a frame would take the drop and open the file in itself.
+function docsDragArm() {
+  document.querySelectorAll('.dcs-files').forEach(s => s.classList.add('dragging'));
+  clearTimeout(DOCS_ARM_T);
+  DOCS_ARM_T = setTimeout(docsDragDisarm, 600);
+}
+function docsDragDisarm() {
+  clearTimeout(DOCS_ARM_T);
+  document.querySelectorAll('.dcs-files.dragging').forEach(s => s.classList.remove('dragging'));
+}
+function docsFrameDrag(ev) {
+  if (!docsDragFiles(ev) && !DOCS_DRAG) return;
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect = 'none';
+  docsDragArm();
+}
+function docsDocListen() {
+  if (DOCS_DOC_WIRED) return;
+  DOCS_DOC_WIRED = true;
+  // A file dropped beside the panel would make the browser leave the page to
+  // show it: refused while the panel is on screen.
+  const outside = ev => !(ev.target && ev.target.closest && ev.target.closest('.dcs-files'));
+  document.addEventListener('dragover', (ev) => {
+    if (!docsLiveSection() || (!docsDragFiles(ev) && !DOCS_DRAG)) return;
+    docsDragArm();
+    if (docsDragFiles(ev) && outside(ev)) { ev.preventDefault(); ev.dataTransfer.dropEffect = 'none'; }
+  });
+  document.addEventListener('drop', (ev) => {
+    docsDragDisarm();
+    if (docsDragFiles(ev) && docsLiveSection() && outside(ev)) ev.preventDefault();
+  });
+  document.addEventListener('dragend', docsDragDisarm);
+  document.addEventListener('click', (ev) => {
+    document.querySelectorAll('.dcm:not([hidden])').forEach(m => {
+      if (!m.contains(ev.target) && !(ev.target.closest && ev.target.closest('.wse-more'))) docsMenuClose(m, false);
+    });
+  });
+  // The menu stays by its row: any scroll but the menu's own (the tree, the
+  // Overview, the page; scroll does not bubble, so it is caught on the way
+  // down) or a resize closes it.
+  const away = (ev) => {
+    document.querySelectorAll('.dcm:not([hidden])').forEach(m => {
+      if (!(ev && ev.target && ev.target.nodeType === 1 && m.contains(ev.target))) docsMenuClose(m, false);
+    });
+  };
+  document.addEventListener('scroll', away, { capture: true, passive: true });
+  window.addEventListener('resize', away);
+}
+function docsFilesWire(el, pid) {
+  const sec = el.querySelector('.dcs-files'), v = docsView(pid);
+  if (!sec || !v) return;
+  docsDocListen();
+  const side = sec.querySelector('.wsp-side'), tree = sec.querySelector('.wsp-tree');
+  // Files being added sit over the tree, in its column.
+  const up = document.createElement('div');
+  up.className = 'dcu'; up.hidden = true;
+  up.setAttribute('role', 'region'); up.setAttribute('aria-label', 'Files being added');
+  side.insertBefore(up, tree);
+  const menu = document.createElement('div');
+  menu.className = 'dcm'; menu.hidden = true; menu.setAttribute('role', 'menu');
+  menu._el = el; menu._pid = pid;
+  sec.appendChild(menu);
+
+  const pick = sec.querySelector('.dcs-pick');
+  pick.onchange = () => {
+    const files = [...pick.files];
+    pick.value = '';
+    const t = docsTarget(v);
+    if (files.length && t) docsUpload(el, pid, t, files.map(f => ({ file: f, rel: f.name })));
+  };
+  sec.querySelector('.dcs-mkdir').onclick = () => { const t = docsTarget(v); if (t) docsNewFolder(el, pid, t); };
+  up.onclick = (e) => {
+    const b = e.target.closest('.dcu-retry, .dcu-x');
+    const it = b && docsFp(pid).items.find(x => String(x.id) === b.dataset.id);
+    if (!it) return;
+    if (b.classList.contains('dcu-retry')) upRetry(it); else it.state = 'skipped';
+    docsUpPump(el, pid);
+  };
+  const ask = sec.querySelector('.dcs-ask');
+  ask.onclick = (e) => {
+    const b = e.target.closest('.dcs-ans');
+    const q = b && docsFp(pid).asks.shift();
+    if (!q) return;
+    const all = ask.querySelector('.dcs-all-cb');
+    q.resolve({ choice: b.dataset.a, all: !!(all && all.checked) });
+    docsAskShow(el, pid);
+  };
+  const note = sec.querySelector('.dcs-note');
+  note.onclick = async (e) => {
+    const b = e.target.closest('.dcs-undo'), c = docsFp(pid).noteCtx;
+    if (!b || !c) return;
+    b.disabled = true;
+    await docsUndelete(el, pid, c);
+    if (docsFp(pid).noteCtx === c) docsFp(pid).noteCtx = null;
+    note.hidden = true; note.innerHTML = '';
+  };
+
+  // The tree: a click on a folder selects it; ⋯ or a right click opens the
+  // row's menu; a row can be dragged onto a folder.
+  tree.addEventListener('click', (e) => {
+    if (e.target.closest('.wse-wait')) return;
+    const more = e.target.closest('.wse-more');
+    if (more) {
+      const row = more.closest('.wse');
+      if (!menu.hidden && menu._ctx && wsSame(menu._ctx.abs, row.dataset.path)) docsMenuClose(menu, true);
+      else docsMenuOpen(menu, row, more.getBoundingClientRect());
+      return;
+    }
+    const d = e.target.closest('.wse.dir');
+    if (d && !e.target.closest('.wse-edit')) { v.mark = d.dataset.path; wsPaintTree(v); }
+  });
+  tree.addEventListener('contextmenu', (e) => {
+    const row = e.target.closest('.wse[data-path]');
+    if (!row || row.classList.contains('wsroot') || e.target.closest('.wse-edit, .wse-wait')) return;
+    e.preventDefault();
+    docsMenuOpen(menu, row, { left: e.clientX, right: e.clientX, top: e.clientY, bottom: e.clientY });
+  });
+  tree.addEventListener('dragstart', (e) => {
+    const row = e.target.closest && e.target.closest('.wse[draggable="true"]:not(.wse-wait)');
+    const root = wsfRoot(v), rel = row && root ? histRel(root.path, row.dataset.path) : '';
+    if (!rel) return;
+    DOCS_DRAG = { pid, rel, dir: row.classList.contains('dir'), name: upBase(rel) };
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', rel); } catch (x) {}
+    row.classList.add('dragging');
+    docsMenuClose(menu, false);
+  });
+  tree.addEventListener('dragend', () => {
+    DOCS_DRAG = null;
+    tree.querySelectorAll('.wse.dragging').forEach(r => r.classList.remove('dragging'));
+    clearOver();
+  });
+
+  // The whole panel takes a drop: onto a folder row, that folder; anywhere
+  // else, the top of the project. A row being moved lands only on a folder.
+  const hint = sec.querySelector('.dcs-drop');
+  let overT = 0;
+  const clearOver = () => {
+    clearTimeout(overT);
+    sec.classList.remove('over');
+    sec.querySelectorAll('.wse.over').forEach(r => r.classList.remove('over'));
+    hint.hidden = true;
+  };
+  const dropAt = (e) => {
+    const root = wsfRoot(v), row = e.target.closest && e.target.closest('.wsp-tree .wse.dir[data-path]');
+    return root ? { row, abs: row ? row.dataset.path : root.path, rel: row ? histRel(root.path, row.dataset.path) : '' } : null;
+  };
+  sec.addEventListener('dragover', (e) => {
+    const files = docsDragFiles(e), mv = DOCS_DRAG && DOCS_DRAG.pid === pid ? DOCS_DRAG : null;
+    const at = (files || mv) && dropAt(e);
+    if (!at) return;
+    if (mv && (!at.row || !docsMoveOk(mv, at.rel))) { clearOver(); return; }
+    e.preventDefault();
+    e.dataTransfer.dropEffect = mv ? 'move' : 'copy';
+    sec.querySelectorAll('.wse.over').forEach(r => { if (r !== at.row) r.classList.remove('over'); });
+    // One drop target at a time: the folder row, else the panel (files only).
+    if (at.row) at.row.classList.add('over');
+    sec.classList.toggle('over', files && !at.row);
+    hint.textContent = mv ? `Move ${mv.name} to ${docsDirLabel(pid, at.rel)}` : `Drop to add to ${docsDirLabel(pid, at.rel)}`;
+    hint.hidden = false;
+    // Leaving is told by the drag going quiet: Safari gives dragleave no
+    // relatedTarget, so it cannot say where the pointer went.
+    clearTimeout(overT);
+    overT = setTimeout(clearOver, 450);
+  });
+  sec.addEventListener('dragleave', (e) => { if (e.relatedTarget && !sec.contains(e.relatedTarget)) clearOver(); });
+  sec.addEventListener('drop', (e) => {
+    const files = docsDragFiles(e), mv = DOCS_DRAG && DOCS_DRAG.pid === pid ? DOCS_DRAG : null;
+    const at = (files || mv) && dropAt(e);
+    if (!at) return;
+    e.preventDefault();
+    clearOver();
+    docsDragDisarm();
+    if (mv) {
+      DOCS_DRAG = null;
+      if (at.row && docsMoveOk(mv, at.rel)) docsMove(el, pid, mv.rel, upJoin(at.rel, mv.name), mv.dir);
+      return;
+    }
+    const entries = upDropEntries(e.dataTransfer), flat = [...(e.dataTransfer.files || [])];
+    (entries ? upWalk(entries) : Promise.resolve(flat.map(f => ({ file: f, rel: f.name }))))
+      .then(list => docsUpload(el, pid, at, list));
+  });
+  // A file viewer under the pointer passes a drag on to the panel.
+  const frames = sec.querySelector('.wsp-frames');
+  const hook = f => {
+    if (f._dcsHook) return;
+    f._dcsHook = true;
+    f.addEventListener('load', () => {
+      try {
+        const w = f.contentWindow;
+        w.addEventListener('dragenter', docsFrameDrag);
+        w.addEventListener('dragover', docsFrameDrag);
+        w.addEventListener('drop', ev => ev.preventDefault());
+      } catch (x) {}                        // not the hub's page: nothing to hook
+    });
+  };
+  frames.querySelectorAll('iframe').forEach(hook);
+  new MutationObserver(() => frames.querySelectorAll('iframe').forEach(hook)).observe(frames, { childList: true });
+
+  // The row's menu: arrows move, Escape closes and gives focus back to ⋯.
+  menu.addEventListener('keydown', (e) => {
+    const items = [...menu.querySelectorAll('.dcm-item')], i = items.indexOf(document.activeElement);
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); docsMenuClose(menu, true); }
+    else if (e.key === 'Tab') docsMenuClose(menu, false);
+    else if (items.length && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End')) {
+      e.preventDefault();
+      const n = items.length;
+      const to = e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : (i + (e.key === 'ArrowDown' ? 1 : -1) + n) % n;
+      items[to].focus();
+    }
+  });
+  menu.addEventListener('click', (e) => {
+    const b = e.target.closest('.dcm-item'), c = menu._ctx;
+    if (!b || !c) return;
+    const act = b.dataset.act;
+    // The folder list replaces the item clicked: the page's click-outside
+    // check must not see a click from a button no longer in the menu.
+    if (act === 'moveto') { e.stopPropagation(); docsMoveList(menu, c); return; }
+    docsMenuClose(menu, act === 'history' || act === 'open' ? false : act !== 'rename');
+    if (act === 'dest') docsMove(el, pid, c.rel, upJoin(b.dataset.dir, upBase(c.rel)), c.dir);
+    else if (act === 'open') {
+      if (c.dir) { v.open.add(c.abs); v.mark = c.abs; wsPersist(v); wsSync(v); }
+      else wsOpenTab(v, c.abs);
+    } else if (act === 'history') { wsOpenTab(v, c.abs); histOpen(v, c.abs); }
+    else if (act === 'rename') docsRename(el, pid, c);
+    else if (act === 'delete') docsDelete(el, pid, c);
+  });
+  // Back on this project: its files still being added and its open question.
+  docsUpPaint(el, pid);
+  docsAskShow(el, pid);
+}
+
+// ---- the row's menu ----
+function docsMenuOpen(menu, row, rect) {
+  const v = docsView(menu._pid), root = v && wsfRoot(v);
+  const rel = row && root ? histRel(root.path, row.dataset.path) : '';
+  if (!rel) return;
+  docsMenuClose(menu, false);
+  const dir = row.classList.contains('dir');
+  menu._ctx = { abs: row.dataset.path, rel, dir };
+  const item = (act, label, cls) => `<button type="button" role="menuitem" class="ov-item dcm-item${cls ? ' ' + cls : ''}" data-act="${act}">${label}</button>`;
+  menu.innerHTML = `<div class="dcm-head" title="${esc(rel)}">${esc(upBase(rel))}</div>`
+    + item('open', dir ? 'Open folder' : 'Open') + item('rename', 'Rename') + item('moveto', 'Move to…')
+    + (dir ? '' : item('history', 'History')) + '<div class="ov-rule" role="separator"></div>' + item('delete', 'Delete', 'danger');
+  menu.setAttribute('aria-label', `Actions for ${upBase(rel)}`);
+  docsMenuPlace(menu, rect);
+  const btn = row.querySelector('.wse-more');
+  if (btn) btn.setAttribute('aria-expanded', 'true');
+  menu.querySelector('.dcm-item').focus({ preventScroll: true });
+}
+function docsMenuPlace(menu, r) {
+  menu.hidden = false;
+  menu.style.left = '0px'; menu.style.top = '0px';
+  const w = menu.offsetWidth, h = menu.offsetHeight, vw = window.innerWidth, vh = window.innerHeight;
+  let top = r.bottom + 4;
+  if (top + h > vh - 8) top = Math.max(8, r.top - h - 4);
+  menu.style.left = Math.max(8, Math.min(r.right - w, vw - w - 8)) + 'px';
+  menu.style.top = top + 'px';
+}
+function docsMenuClose(menu, focusBack) {
+  if (!menu || menu.hidden) return;
+  const c = menu._ctx, v = docsView(menu._pid);
+  menu.hidden = true; menu.innerHTML = ''; menu._ctx = null;
+  const row = c && v && docsRow(v, c.abs), btn = row && row.querySelector('.wse-more');
+  if (btn) {
+    btn.setAttribute('aria-expanded', 'false');
+    if (focusBack) btn.focus({ preventScroll: true });
+  }
+}
+async function docsMoveList(menu, c) {
+  const v = docsView(menu._pid), root = v && wsfRoot(v), pj = projectById(menu._pid);
+  if (!root) return;
+  const r = menu.getBoundingClientRect();
+  menu.innerHTML = `<div class="dcm-head">Move ${esc(upBase(c.rel))} to</div><div class="dcm-empty">Reading the folders…</div>`;
+  // Every folder of the project, empty ones too, read afresh; not the history,
+  // chat exports or task folders.
+  const walk = await docsWalk(rel => api('/api/dir?path=' + encodeURIComponent(rel ? wsfAbs(root.path, rel) : root.path)).then(d => d.entries || []), '',
+                              { skip: (rel, e) => !upDir(rel) && (e.task || rel === '.history' || rel === '_linked') });
+  if (!walk.complete) await wsfList(v);
+  if (menu._ctx !== c) return;
+  // What the walk could not reach: folders the tree has read, and every
+  // folder holding a file.
+  const known = walk.dirs.slice(), hide = new Set();
+  v.dirs.forEach((d, p) => {
+    const at = wsSame(p, root.path) ? '' : histRel(root.path, p);
+    if (at === '' && !wsSame(p, root.path)) return;
+    (d.entries || []).forEach(e => {
+      if (e.type !== 'dir') return;
+      if (e.task && at === '') hide.add(e.name); else known.push(upJoin(at, e.name));
+    });
+  });
+  const files = (!walk.complete && v.find.list && !v.find.list.error && v.find.list.files) || [];
+  const dirs = docsFolders(files, known, c.rel, c.dir, hide);
+  menu.innerHTML = `<div class="dcm-head">Move ${esc(upBase(c.rel))} to</div><div class="dcm-list">`
+    + dirs.map(d => `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="dest" data-dir="${esc(d)}" title="${esc(d || (pj && pj.name) || '')}">${d ? esc(d) : esc(((pj && pj.name) || 'The project') + ' (top)')}</button>`).join('')
+    + '</div>' + (dirs.length ? '' : '<div class="dcm-empty">No other folder to move it to.</div>');
+  docsMenuPlace(menu, { left: r.right, right: r.right, top: r.top - 4, bottom: r.top - 4 });
+  const first = menu.querySelector('.dcm-item');
+  if (first) first.focus({ preventScroll: true });
+}
+
+// ---- typing a name in the tree ----
+// The input replaces host (a row's name). Enter or leaving the field keeps the
+// name, Escape drops it; the tree is not repainted while it is open.
+function docsEditIn(v, host, o) {
+  const release = docsHold(v);
+  const row = host.closest('.wse'), wasDrag = !!(row && row.draggable);
+  if (row) row.draggable = false;
+  const inp = document.createElement('input');
+  inp.type = 'text'; inp.className = 'wse-edit'; inp.value = o.value;
+  inp.setAttribute('aria-label', o.label);
+  if (o.placeholder) inp.placeholder = o.placeholder;
+  inp.setAttribute('autocapitalize', 'off'); inp.setAttribute('autocomplete', 'off'); inp.setAttribute('enterkeyhint', 'done');
+  inp.spellcheck = false;
+  host.replaceWith(inp);
+  inp.focus({ preventScroll: true });
+  try { inp.setSelectionRange(0, o.selEnd == null ? inp.value.length : o.selEnd); } catch (x) {}
+  let busy = false, over = false, saved = '';
+  const end = () => {
+    if (over) return;
+    over = true;
+    if (o.row) o.row.remove();
+    if (release()) {
+      const tree = v.el && v.el.querySelector('.wsp-tree');
+      if (tree) tree._wsSig = null;
+      wsPaintTree(v);
+    } else if (!o.row && inp.isConnected) {
+      // Another name is being typed: the tree waits for it, this row shows
+      // its new name meanwhile and does nothing until then.
+      const tree = v.el && v.el.querySelector('.wsp-tree');
+      if (saved) host.textContent = saved;
+      inp.replaceWith(host);
+      if (saved && row && tree) docsSettle(tree, row);
+      else if (row) row.draggable = wasDrag;
+    }
+  };
+  const commit = async (fromBlur) => {
+    if (busy || over) return;
+    const name = inp.value.trim();
+    if (!name || name === o.value) { end(); return; }
+    const bad = upNameErr(name);
+    if (bad) {
+      toast(bad, 4000, 'err');
+      if (fromBlur) end(); else inp.focus();
+      return;
+    }
+    busy = true;
+    inp.readOnly = true;
+    try { if (await o.commit(name)) saved = name; } finally { busy = false; end(); }
+  };
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(false); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); end(); }
+  });
+  inp.addEventListener('blur', () => commit(true));
+  return inp;
+}
+function docsRename(el, pid, c) {
+  const v = docsView(pid), row = v && docsRow(v, c.abs), nm = row && row.querySelector('.nm');
+  if (!nm) return;
+  const name = upBase(c.rel), dot = c.dir ? -1 : name.lastIndexOf('.');
+  docsEditIn(v, nm, { value: name, label: `New name for ${name}`, selEnd: dot > 0 ? dot : name.length,
+                      commit: n => docsMove(el, pid, c.rel, upJoin(upDir(c.rel), n), c.dir) });
+}
+async function docsNewFolder(el, pid, t) {
+  const v = docsView(pid), tree = v && v.el && v.el.querySelector('.wsp-tree');
+  if (!tree) return;
+  if (tree.hidden) await wsReveal(v, t.abs, { dir: true });   // the find box makes way for the tree
+  if (!v.open.has(t.abs)) { v.open.add(t.abs); wsPersist(v); await wsSync(v); }
+  const kids = [...tree.querySelectorAll('.wsk')].find(k => wsSame(k.dataset.dir, t.abs));
+  if (!kids) return;
+  const row = document.createElement('div');
+  row.className = 'wse dir wse-new';
+  row.innerHTML = '<span class="tw">▸</span><span class="nm"></span>';
+  kids.hidden = false;
+  kids.prepend(row);
+  kids.querySelectorAll(':scope > .wse.none').forEach(n => { n.hidden = true; });
+  docsEditIn(v, row.querySelector('.nm'), { value: '', row, label: `Name of the new folder in ${docsDirLabel(pid, t.rel)}`, placeholder: 'Folder name',
+                                            commit: n => docsMkdir(el, pid, upJoin(t.rel, n)) });
+  row.scrollIntoView({ block: 'nearest' });
+}
+
+// ---- changes, through the hub ----
+// After a change: the folders it touched are read again now, the rest of the
+// tree on its refresh; Go to file's list and Recent changes are read again.
+async function docsRefresh(el, pid, dirs) {
+  const v = docsView(pid), root = v && wsfRoot(v);
+  if (root) {
+    const want = [...new Set(dirs)].map(d => d ? wsfAbs(root.path, d) : root.path);
+    const read = [...v.dirs.keys()].filter(k => want.some(w => wsSame(k, w)));
+    await Promise.all(read.map(p => wsFetchDir(v, p)));
+    if (v.find.list) v.find.list.at = 0;
+    wsSync(v);
+    wsfList(v);
+  }
+  histRecentLoad(el, pid, true);
+}
+async function docsMkdir(el, pid, rel) {
+  try { await docsPost('/api/files/mkdir', { project: pid, path: rel }); }
+  catch (e) { toast(histErr(e), 8000, 'err'); return false; }
+  const v = docsView(pid), root = v && wsfRoot(v);
+  if (root) v.mark = wsfAbs(root.path, rel);    // the new folder is where the next files go
+  await docsRefresh(el, pid, [upDir(rel)]);
+  return true;
+}
+// Move or rename; a name already there asks Replace, Keep both or Cancel.
+async function docsMove(el, pid, from, want, dir) {
+  if (from === want) return true;
+  let to = want, overwrite = false, n = 0;
+  for (let tries = 0; tries < 100; tries++) {
+    try {
+      await docsPost('/api/files/move', { project: pid, from, to, overwrite });
+      docsRetarget(docsView(pid), from, to);
+      await docsRefresh(el, pid, [upDir(from), upDir(to)]);
+      return true;
+    } catch (e) {
+      if (!docsExists(e) || overwrite) { toast(histErr(e), 8000, 'err'); return false; }
+      if (n) { n++; to = upKeepName(want, n); continue; }
+      const a = await docsAsk(el, pid, { name: upBase(want), folder: docsDirLabel(pid, upDir(want)), keep: upBase(upKeepName(want, 2)), many: false });
+      if (a.choice === 'replace') overwrite = true;
+      else if (a.choice === 'keep') { n = 2; to = upKeepName(want, 2); }
+      else return false;
+    }
+  }
+  return false;
+}
+// What the page holds by path follows a move: open folders, the selection,
+// and open tabs, whose viewers load again at the new path.
+function docsRetarget(v, from, to) {
+  const root = v && wsfRoot(v);
+  if (!root) return;
+  const a = wsfAbs(root.path, from), b = wsfAbs(root.path, to);
+  v.open = new Set([...v.open].map(p => docsMoved(p, a, b) || p));
+  if (v.mark) v.mark = docsMoved(v.mark, a, b) || v.mark;
+  let tabs = false;
+  v.tabs.forEach(t => {
+    const np = docsMoved(t.path, a, b);
+    if (!np) return;
+    const k = wsNorm(t.path), f = v.frames.get(k);
+    if (f) { f.remove(); v.frames.delete(k); const i = v.live.indexOf(k); if (i >= 0) v.live.splice(i, 1); }
+    if (wsSame(v.sel, t.path)) v.sel = np;
+    wsRecentDrop(v.recent, t.path);
+    Object.assign(t, { path: np, missing: false, gone404: false, goneSig: null, retrySig: null, seen: null });
+    tabs = true;
+  });
+  if (v.hist && docsMoved(v.hist.path, a, b)) histClose(v);
+  wsPersist(v);
+  if (tabs) wsPaintView(v);
+}
+async function docsDelete(el, pid, c) {
+  const v = docsView(pid), root = v && wsfRoot(v);
+  // What a folder holds is read first, so Restore can put back its empty
+  // folders too and say when a file had no kept version.
+  let held = null, res;
+  if (c.dir && root) held = await docsWalk(rel => api('/api/dir?path=' + encodeURIComponent(wsfAbs(root.path, rel))).then(d => d.entries || []), c.rel);
+  try { res = await docsPost('/api/files/delete', { project: pid, path: c.rel }); }
+  catch (e) { toast(histErr(e), 8000, 'err'); return; }
+  // The snapshot that recorded this delete: its rows are what Restore puts back.
+  const snap = res && res.snapshot, rev = snap && snap.ok !== false && snap.committed !== false ? snap.rev || '' : '';
+  if (v && v.mark && docsMoved(v.mark, c.abs, c.abs)) v.mark = '';
+  await docsRefresh(el, pid, [upDir(c.rel)]);
+  docsNote(el, pid, { rel: c.rel, dir: c.dir, held, rev });
+}
+// "Deleted <name> · Restore" for 10 s, longer while Restore has focus.
+function docsNote(el, pid, c) {
+  const fp = docsFp(pid);
+  fp.noteCtx = c;
+  if (!docsMine(el, pid)) return;
+  const note = el.querySelector('.dcs-note');
+  if (!note) return;
+  clearTimeout(fp.noteTimer);
+  note.innerHTML = `<span class="dcs-note-t">Deleted <b>${esc(upBase(c.rel))}</b> ·</span>`
+    + `<button type="button" class="rm-btn subtle dcs-undo">Restore</button>`;
+  note.hidden = false;
+  const hide = () => {
+    if (note.contains(document.activeElement)) { fp.noteTimer = setTimeout(hide, 3000); return; }
+    note.hidden = true; note.innerHTML = '';
+  };
+  fp.noteTimer = setTimeout(hide, 10000);
+}
+// The Deleted list, every page of it, or up to the first row found() takes.
+async function docsDeletedRows(pid, found) {
+  const q = encodeURIComponent(pid), rows = [];
+  let after = '';
+  for (let page = 0; page < 500; page++) {
+    const d = await api(`/api/history/log?project=${q}&deleted=1${after ? '&after=' + encodeURIComponent(after) : ''}`);
+    const got = d.files || [];
+    rows.push(...got);
+    if (!d.more || !got.length || (found && got.some(found))) break;
+    after = histDelPlace(got);
+  }
+  return rows;
+}
+// Put back what was deleted, from the history's Deleted list, as its Restore
+// does; a folder with its empty folders, and said so only when it all is.
+async function docsUndelete(el, pid, c) {
+  const rel = c.rel, name = upBase(rel);
+  // Without the delete's snapshot an older deletion of the same path could be
+  // put back in its place, so nothing is.
+  if (!c.rev) { toast(`The history did not record deleting ${name}, so Restore cannot tell it from older versions. The Deleted list under Recent changes shows what can be put back.`, 10000, 'err'); return; }
+  const ours = d => d.path === rel && docsSameRev(d.rev, c.rev);
+  let rows;
+  try { rows = await docsDeletedRows(pid, c.dir ? null : ours); }
+  catch (e) { toast('restore failed: ' + histErr(e), 8000, 'err'); return; }
+  const plan = c.dir ? docsRestorePlan(rows, rel, c.held, c.rev) : { rows: rows.filter(ours).slice(0, 1), mkdirs: [], missing: 0, sure: true };
+  const mine = plan.rows;
+  if (!mine.length && !plan.mkdirs.length) { toast(`No kept version of ${name} was found; the Deleted list under Recent changes shows what can be put back.`, 8000, 'err'); return; }
+  if (!c.dir) await histRestore(pid, mine[0].from, mine[0].path);
+  else {
+    let ok = 0, err = '';
+    for (const d of mine) {
+      try { await docsPost('/api/history/restore', { projectId: pid, rev: d.from, path: d.path }); ok++; }
+      catch (e) { err = histErr(e); }
+    }
+    for (const d of plan.mkdirs) {
+      try { await docsPost('/api/files/mkdir', { project: pid, path: d }); }
+      catch (e) { err = err || histErr(e); }
+    }
+    const files = n => `${n} file${n === 1 ? '' : 's'}`;
+    if (ok < mine.length || err) toast(`${ok} of ${files(mine.length)} of ${name} are back. ${err}`, 8000, 'err');
+    else if (plan.missing) toast(`${name} is back with ${ok} of its ${files(ok + plan.missing)}; ${plan.missing} had no kept version${plan.sure ? '' : ', and not all of it could be read before it was deleted'}.`, 10000, 'err');
+    else if (!plan.sure) toast(`${name}: ${files(ok)} back. Not all of it could be read before it was deleted, so an empty folder or a file with no kept version may be missing.`, 10000, 'err');
+    else toast(ok ? `${name} is back: ${files(ok)}` : `${name} is back, empty as it was`, 6000, 'ok');
+  }
+  const st = histState(pid);
+  st.deleted = st.deleted.filter(d => !mine.some(m => m.path === d.path));
+  await docsRefresh(el, pid, [...new Set(mine.map(d => upDir(d.path)).concat(plan.mkdirs.map(upDir), [upDir(rel)]))]);
+}
+// One question at a time over the tree: a name already there. The questions
+// are the project's, so they wait while another project is on screen.
+function docsAsk(el, pid, o) {
+  return new Promise(resolve => {
+    const fp = docsFp(pid);
+    fp.asks.push({ o, resolve });
+    if (fp.asks.length === 1) docsAskShow(el, pid);
+  });
+}
+function docsAskShow(el, pid) {
+  if (!docsMine(el, pid)) return;
+  const box = el.querySelector('.dcs-ask'), q = docsFp(pid).asks[0];
+  if (!box) return;
+  if (!q) { box.hidden = true; box.innerHTML = ''; return; }
+  const o = q.o;
+  box.innerHTML = `<span class="rm-note-txt"><b>${esc(o.name)}</b> is already in ${esc(o.folder)}.</span><span class="rm-note-acts">`
+    + `<button type="button" class="rm-btn dcs-ans" data-a="replace">Replace</button>`
+    + `<button type="button" class="rm-btn dcs-ans" data-a="keep">Keep both (${esc(o.keep)})</button>`
+    + `<button type="button" class="rm-btn dcs-ans" data-a="skip">${o.many ? 'Skip' : 'Cancel'}</button>`
+    + (o.many ? '<label class="dcs-all"><input type="checkbox" class="dcs-all-cb" checked> Apply to all</label>' : '') + '</span>';
+  box.hidden = false;
+  box.querySelector('.dcs-ans').focus({ preventScroll: true });
+}
+
+// ---- uploads ----
+// Files dropped or picked, into folder t ({abs, rel}): one request each, at
+// most UP_PARALLEL at a time; an empty dropped folder is made as a folder.
+function docsUpload(el, pid, t, list) {
+  const fp = docsFp(pid), v = docsView(pid), batch = { answer: '' };
+  const empty = [];
+  (list || []).forEach(x => {
+    const rel = upJoin(t.rel, x.rel);
+    if (x.dir) empty.push(rel);
+    else fp.items.push(upItem(batch, x.err ? null : x.file, rel));
+  });
+  if (v && !v.open.has(t.abs)) { v.open.add(t.abs); wsPersist(v); }
+  if (empty.length) (async () => {
+    for (const d of empty) {
+      try { await docsPost('/api/files/mkdir', { project: pid, path: d }); } catch (e) { toast(histErr(e), 8000, 'err'); }
+    }
+    docsRefresh(el, pid, empty.map(upDir));
+  })();
+  docsUpPump(el, pid);
+}
+function docsUpSend(pid, it, progress) {
+  return new Promise(resolve => {
+    const x = new XMLHttpRequest();
+    x.open('POST', `/api/files/upload?project=${encodeURIComponent(pid)}&path=${encodeURIComponent(it.path)}${it.overwrite ? '&overwrite=1' : ''}`);
+    if (x.upload) x.upload.onprogress = e => progress(e.loaded);
+    x.onload = () => { let b = null; try { b = JSON.parse(x.responseText); } catch (e) {} resolve({ status: x.status, body: b }); };
+    x.onerror = x.onabort = x.ontimeout = () => resolve({ status: 0, body: null });
+    x.send(it.file);
+  });
+}
+function docsUpPump(el, pid) {
+  const fp = docsFp(pid);
+  upToStart(fp.items, UP_PARALLEL).forEach(it => {
+    it.state = 'sending'; it.loaded = 0;
+    docsUpSend(pid, it, n => { it.loaded = n; docsUpBar(el, pid, it); }).then(r => {
+      upAfter(it, r.status, r.body);
+      if (it.state === 'done') docsUpDone(el, pid, it);
+      else if (it.state === 'asking') docsUpAskLoop(el, pid);
+      docsUpPump(el, pid);
+    });
+  });
+  // Nothing left to send, answer or look at: the list starts afresh.
+  if (!upShown(fp.items).length) fp.items = [];
+  docsUpPaint(el, pid);
+}
+async function docsUpAskLoop(el, pid) {
+  const fp = docsFp(pid);
+  if (fp.asking) return;
+  fp.asking = true;
+  try {
+    for (let it = upAsking(fp.items); it; it = upAsking(fp.items)) {
+      const many = fp.items.some(x => x !== it && x.batch === it.batch && ['queued', 'sending', 'asking'].includes(x.state));
+      const a = await docsAsk(el, pid, { name: it.name, folder: docsDirLabel(pid, upDir(it.want)), keep: upBase(upKeepName(it.want, 2)), many });
+      if (it.state === 'asking') upAnswer(fp.items, it, a.choice, many && a.all);
+      docsUpPump(el, pid);
+    }
+  } finally { fp.asking = false; }
+}
+// A file that is in: its folders are read again together, a moment later.
+function docsUpDone(el, pid, it) {
+  const fp = docsFp(pid);
+  for (let d = upDir(it.path); ; d = upDir(d)) { fp.doneDirs.add(d); if (!d) break; }
+  clearTimeout(fp.doneTimer);
+  fp.doneTimer = setTimeout(() => { const dirs = [...fp.doneDirs]; fp.doneDirs.clear(); docsRefresh(el, pid, dirs); }, 250);
+}
+// The rows are kept by file: one is rewritten only when its state changes,
+// so Retry is never replaced under the pointer by another file's progress.
+function docsUpPaint(el, pid) {
+  if (!docsMine(el, pid)) return;
+  const box = el.querySelector('.dcu');
+  if (!box) return;
+  const items = docsFp(pid).items, shown = upShown(items);
+  box.hidden = !shown.length;
+  let line = box.querySelector('.dcu-line');
+  if (!line) { line = document.createElement('div'); line.className = 'dcu-line'; line.setAttribute('aria-live', 'polite'); box.prepend(line); }
+  const text = upLine(items);
+  if (line.textContent !== text) line.textContent = text;
+  const have = new Map([...box.querySelectorAll('.dcu-row')].map(r => [r.dataset.id, r]));
+  let prev = line;
+  shown.forEach(x => {
+    let r = have.get(String(x.id));
+    have.delete(String(x.id));
+    const sig = upRowSig(x);
+    if (!r || r._sig !== sig) {
+      const t = document.createElement('div');
+      t.innerHTML = upRowHtml(x);
+      const nr = t.firstElementChild;
+      nr._sig = sig;
+      if (r) r.replaceWith(nr);
+      r = nr;
+    }
+    if (prev.nextElementSibling !== r) prev.after(r);
+    prev = r;
+  });
+  have.forEach(r => r.remove());
+  shown.forEach(x => docsUpBar(el, pid, x));
+}
+function docsUpBar(el, pid, it) {
+  if (!docsMine(el, pid)) return;
+  const bar = el.querySelector(`.dcu-row[data-id="${it.id}"] .dcu-bar`);
+  if (!bar) return;
+  const pct = upPct(it);
+  bar.firstElementChild.style.width = pct + '%';
+  bar.setAttribute('aria-valuenow', String(pct));
+}
+// ---- Files panel: end --------------------------------------------------------
 
 function renderRows() {
   syncProjSwitch();
