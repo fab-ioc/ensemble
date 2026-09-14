@@ -543,6 +543,11 @@
   #msgpane { flex:1; min-height:0; position:relative; display:flex; flex-direction:column; }
   #msgs { flex:1; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:10px; position:relative; overflow-anchor:none; }
   .msg.pending { opacity:.72; }   /* sent, not yet in the transcript */
+  /* Held by a resume that failed: fully visible, the reason and the way to
+     send it again under it. --c-danger: it is wrong, the message did not get in. */
+  .msg.pending.failed { opacity:1; border-left-color:var(--c-danger-bold); }
+  .msg .pend-state { margin-top:var(--s-100); font-size:var(--fs-200); line-height:16px; color:var(--c-danger-fg); display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-200); }
+  .msg .pend-state button { min-height:24px; padding:0 var(--s-200); font-size:var(--fs-200); }   /* compact; a finger's size on a phone, below */
   .msg { border:1px solid var(--border); border-radius:var(--r-300); padding:8px 10px; max-width:92%; background:var(--surface); }
   .msg .from { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; opacity:.85; margin-bottom:3px; }
   .msg.claude { border-color:color-mix(in srgb, var(--agent-claude-bg) 45%, transparent); } .msg.claude .from { color:var(--agent-claude-bg); }
@@ -740,6 +745,7 @@
     button, select, .agent .ah { min-height: var(--touch-min); }
     button { min-width: var(--touch-min); }
     #promptcard .pc-x, #cmt-tray .cmt-item-x, #livetail .lt-more { min-width: var(--touch-min); }
+    .msg .pend-state button { min-height: var(--touch-min); }   /* Retry / Discard under a failed message */
     /* A phone zooms into any field under 16px and stays zoomed. The ids and
        classes are here because those fields' own rules set font: inherit. */
     textarea, select, input, #compose textarea, .cmt-composer textarea { font-size: var(--fs-400); }
@@ -1381,9 +1387,21 @@ function renderBubbles(items, opt = {}) {
   // it was sent), or after two minutes, instead of sticking as a phantom
   // "latest message".
   const nowS = Date.now() / 1000;
+  // What the hub holds for a session being resumed (sent while it was
+  // stopped): pending until typed in, or failed with the reason and a way
+  // to send it again. Held by the hub, so it outlives this page and shows
+  // in every copy of the chat; a local echo of the same text is dropped.
+  const hubHeld = ROOM_PENDING && ROOM_PENDING.items ? ROOM_PENDING.items : [];
+  const failed = !!ROOM_PENDING && ROOM_PENDING.state === 'failed';
+  hubHeld.forEach((p, i) => rows.push(
+    `<div class="msg user pending${failed ? ' failed' : ''}" data-from="user" data-key="held-${i}"><div class="from">${identLabel('user')}${p.to ? ' → ' + esc(p.to) : ''}</div><div class="text md">${md(p.text)}</div>`
+    + (failed && i === hubHeld.length - 1
+      ? `<div class="pend-state" role="status">Not delivered: ${esc(ROOM_PENDING.error || 'the session did not come up')}. <button type="button" class="pend-retry">Retry</button><button type="button" class="pend-discard">Discard</button></div>`
+      : '') + '</div>'));
   PENDING_USER.forEach(p => { if (p.n == null) p.n = items.length; });
   PENDING_USER = PENDING_USER.filter(p =>
     !items.some(m => m.from === 'user' && (m.text || '').trim() === p.text)
+    && !hubHeld.some(h => (h.text || '').trim() === p.text)
     && items.length <= p.n
     && (nowS - p.ts) < 120);
   PENDING_USER.forEach(p => rows.push(
@@ -1488,6 +1506,10 @@ function showPendingUser(text) {
 let SOLO_TURN_COUNT = -1, SOLO_FETCHING = false, SOLO_SID = '', SOLO_AGENT = '', SOLO_PTY = '', _prevWorking = {}, _soloStatKey = '';
 let SOLO_MODE = false;   // one agent: what you send is typed into its terminal
 let SEND_ERR = '';       // why the last message did not arrive, shown in the hint
+let SEND_KEY = '';       // the hub's key for the message in the box: sent twice, taken once
+// What the hub holds for this session while it is resumed (room.pending):
+// {state: 'resuming'|'failed', error, items:[{text,to,at}]}, or null.
+let ROOM_PENDING = null, ROOM_RESUMING = false, PENDING_SIG = 'null';
 // A rotated PO: its latest rotation, and the session it was rotated out of
 // (fetched once — a finished transcript never changes).
 let SOLO_ROT = null, SOLO_PREV = { sid: '', items: [] };
@@ -1567,17 +1589,26 @@ async function refresh() {
   setText($('#title'), room.title);
   const st = room.status || '';
   const notRunning = room.live === false;
+  // A resume in flight: the agents are coming up and what was sent meanwhile
+  // is held by the hub until they are. The box stays usable throughout.
+  const pend = room.pending || null;
+  const resuming = !!pend && pend.state !== 'failed';
   const sb = $('#status');
-  if (sb.className !== 'status ' + (notRunning ? '' : st)) sb.className = 'status ' + (notRunning ? '' : st);
-  setText(sb, notRunning ? 'not running' : st.replace('_', ' '));
+  const stCls = notRunning || resuming ? '' : st;
+  if (sb.className !== 'status ' + stCls) sb.className = 'status ' + stCls;
+  setText(sb, resuming ? 'resuming…' : notRunning ? 'not running' : st.replace('_', ' '));
   setText($('#hop'), notRunning ? '' : `hop ${room.hopCount || 0}/${room.maxHops || 0}`);
-  setText($('#hint'), SEND_ERR || (notRunning
-    ? 'Not running — Resume to continue where it left off.'
+  setText($('#hint'), SEND_ERR || (resuming
+    ? 'Resuming: your message goes in once it is up.'
+    : notRunning ? 'Not running: sending will resume it.'
     : (st === 'waiting_human' || st === 'paused')
       ? 'The agents are waiting for you — reply to resume.' : ''));
-  $('#send').disabled = notRunning;
-  $('#input').disabled = notRunning;
-  $('#resume').hidden = !notRunning;
+  $('#send').disabled = false;
+  $('#input').disabled = false;
+  $('#resume').hidden = !notRunning || resuming;
+  const pendSig = JSON.stringify(pend);
+  const pendChanged = pendSig !== PENDING_SIG;
+  PENDING_SIG = pendSig; ROOM_PENDING = pend; ROOM_RESUMING = resuming;
   const pb = $('#pause');
   pb.style.display = notRunning ? 'none' : '';
   setText(pb, st === 'paused' ? 'Resume' : 'Pause');
@@ -1622,7 +1653,9 @@ async function refresh() {
     const a = mem[0] || {};
     SOLO_SID = a.sessionId || ''; SOLO_AGENT = a.identity || 'claude'; SOLO_PTY = a.ptyId || '';
     SOLO_ROT = (a.rotations || []).slice(-1)[0] || null;
-    checkSolo();   // stat-driven: first load + every new turn
+    // What the hub holds for it changed (sent, delivered, failed): draw again.
+    if (pendChanged && SOLO_SID) renderSolo(SOLO_SID, SOLO_AGENT, true);
+    else checkSolo();   // stat-driven: first load + every new turn
   } else {
     SOLO_SID = ''; SOLO_PTY = '';
     renderMsgs(room);
@@ -1974,12 +2007,51 @@ async function sendSolo(text) {
   try { await postOk('/api/pty/input', { id: pty, data: '\r' }); }
   catch (e) { e.typed = true; throw e; }
 }
+// The hub takes the message whatever the session's state, in one request:
+// running, it is typed in (solo) or posted and the team rung; stopped or
+// still coming up, the session is resumed and the text held until the agent
+// is up, then typed in as its first input (with the resume note, as one
+// input). Resolves once the hub holds it — a closed tab or a lost connection
+// from here on drops nothing. ``key`` names this attempt: sent again after a
+// lost reply, the hub takes it once. A team's every send goes this way: the
+// hub, not the last poll, decides whether the team is running.
+async function sendResuming(text, to, key) {
+  return postOk('/api/room/resume', { roomId: ROOM, text, to: to || '', key: key || '' });
+}
+// Whether a solo send goes through the hub rather than straight into the
+// terminal (typed there, it is submitted at once; the hub waits for a settled
+// screen, which a resume needs and a running agent does not).
+function needsResume() { return !ROOM_LIVE || ROOM_RESUMING; }
+// A live send that found the session gone since the last poll (404, 410, not
+// typed) is not lost: it goes the resume way instead. Anything else rethrows.
+async function orResume(e, text, to, key) {
+  if (!e || e.typed || (e.status !== 404 && e.status !== 410)) throw e;
+  return sendResuming(text, to, key);
+}
+// A key for the message in the box, minted once per message: the same one
+// goes with every attempt to send it, and a new one with the next message.
+// (sendKey, above, is the prompt card's keystroke: not this.)
+function msgKey() {
+  if (!SEND_KEY) SEND_KEY = 'send:' + Date.now().toString(36) + ':' + Math.random().toString(36).slice(2, 8);
+  return SEND_KEY;
+}
+// The hub refused a send but holds the text (shown in the chat as not
+// delivered, with Retry): the box is cleared, the hint says where it is.
+function keptByHub(e) {
+  if (!e || !e.kept) return false;
+  SEND_ERR = 'Not delivered: ' + sendErrorText(e) + '. Your message is kept above: Retry sends it again.';
+  setText($('#hint'), SEND_ERR);
+  SEND_KEY = '';
+  $('#input').value = '';
+  setTimeout(refresh, 400);
+  return true;
+}
 // POST that throws unless the hub accepted it, with the hub's status and reason.
 async function postOk(path, body) {
   const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   let d = null;
   try { d = await r.json(); } catch (e) {}
-  if (!r.ok || !d || d.error) throw Object.assign(new Error((d && d.error) || ('error ' + r.status)), { status: r.status });
+  if (!r.ok || !d || d.error) throw Object.assign(new Error((d && d.error) || ('error ' + r.status)), { status: r.status, kept: !!(d && d.kept) });
   return d;
 }
 // Why a send did not arrive, in words.
@@ -1992,6 +2064,7 @@ function sendErrorText(e) {
   return (e.message || ('error ' + s));
 }
 $('#input').addEventListener('input', () => {
+  SEND_KEY = '';             // edited, so it is a new message
   if (SEND_ERR) { SEND_ERR = ''; setText($('#hint'), ''); }
 });
 $('#send').onclick = async () => {
@@ -2008,16 +2081,19 @@ $('#send').onclick = async () => {
   // the room's messages. Codex mints its own session id only once it has
   // written a rollout, so early on there is a terminal to type into but no id.
   if (SOLO_MODE) {
-    try { await sendSolo(t); }
+    const key = msgKey();
+    try { if (needsResume()) await sendResuming(t, '', key); else await sendSolo(t).catch(e => orResume(e, t, '', key)); }
     catch (e) {
+      if (keptByHub(e)) return;
       SEND_ERR = 'Not sent: ' + sendErrorText(e) + '. Your message is still in the box.';
       setText($('#hint'), SEND_ERR);
       return;
     }
-    SEND_ERR = '';
+    SEND_ERR = ''; SEND_KEY = '';
     showPendingUser(t);        // show it now; the transcript catches up later
     $('#input').value = '';
     setTimeout(checkSolo, 1200);
+    setTimeout(refresh, 400);  // the hub's hold on it, and "resuming", show at once
     return;
   }
   let to = $('#to') ? $('#to').value : '';
@@ -2027,13 +2103,17 @@ $('#send').onclick = async () => {
     const idents = $('#to') ? [...$('#to').options].map(o => o.value) : [];
     if (idents.includes(m[1]) || m[1] === 'user') to = m[1];
   }
-  try { await postOk('/api/room/say', { roomId: ROOM, text: t, to }); }
+  // Always through the hub's resume-or-deliver: a team that stopped since the
+  // last poll is resumed for the message instead of the message being posted
+  // to a room nobody is reading.
+  try { await sendResuming(t, to, msgKey()); }
   catch (e) {
+    if (keptByHub(e)) return;
     SEND_ERR = 'Not sent: ' + sendErrorText(e) + '. Your message is still in the box.';
     setText($('#hint'), SEND_ERR);
     return;
   }
-  SEND_ERR = '';
+  SEND_ERR = ''; SEND_KEY = '';
   $('#input').value = ''; if ($('#to')) $('#to').value = ''; refresh();
 };
 $('#input').addEventListener('keydown', e => {
@@ -2280,15 +2360,16 @@ function openComposer(data) {
     if (e.key === 'Escape') { e.preventDefault(); close(); }
   });
 }
-// What Submit can do now, and in words why not when it cannot. A stopped
-// session is not resumed from here: the hub types its own note into a resumed
-// agent once its screen has settled, and comments typed alongside would race
-// it. So Submit waits, the comments stay, and Resume is the session's own.
+// What Submit can do now, and in words what it will do. A stopped session is
+// resumed by the hub, which holds the comments and types them in with its own
+// resume note as one input once the agent's screen has settled: nothing races.
 function cmtSubmitState() {
   const s = CMT_SENDING ? { can: false, label: 'Sending…', note: '' }
     : !ROOM_OBJ ? { can: false, label: 'Submit', note: '' }
-    : !ROOM_LIVE ? { can: false, label: 'Submit', note: 'This session is not running, so comments cannot reach it. They are kept here: resume the session, then submit them.' }
-    : { can: true, label: 'Submit', note: CMT_ERROR, err: !!CMT_ERROR };
+    : CMT_ERROR ? { can: true, label: 'Submit', note: CMT_ERROR, err: true }
+    : ROOM_RESUMING ? { can: true, label: 'Submit', note: 'Resuming: submitted comments go in once it is up.' }
+    : !ROOM_LIVE ? { can: true, label: 'Submit', note: 'This session is not running: submitting will resume it and deliver them.' }
+    : { can: true, label: 'Submit', note: '' };
   if (CMT_UNSTORED.size) s.note = (s.note ? s.note + ' ' : '') + 'This browser would not save some of them, so reloading this page would lose those.';
   return s;
 }
@@ -2348,14 +2429,21 @@ async function submitComments() {
   const to = authors.length === 1 ? authors[0] : '';
   const body = `## Review comments (${batch.length})\n\n` +
     batch.map((c, i) => `**${i + 1}.** > ${c.quote.replace(/\s*\n\s*/g, ' ').trim()}\n\n${c.note}`).join('\n\n');
+  // The batch names its attempt by the comments in it (their ids are stable),
+  // so the same batch sent again after a lost reply is taken once.
+  const key = `cmt:${batch.length}:${batch[0].cid}:${batch[batch.length - 1].cid}`;
   CMT_SENDING = true; CMT_ERROR = ''; renderCmtTray();
   let sent = false;
   try {
-    if (SOLO_MODE) await sendSolo(body);
-    else await postOk('/api/room/say', { roomId: ROOM, text: body, to });
+    if (!SOLO_MODE) await sendResuming(body, to, key);       // the hub decides: running or resumed
+    else if (needsResume()) await sendResuming(body, '', key);
+    else await sendSolo(body).catch(e => orResume(e, body, '', key));
     sent = true;
   } catch (e) {
-    CMT_ERROR = 'Not sent: ' + sendErrorText(e) + '. Your comments are kept.';
+    // Refused, but the hub holds them: they show in the chat as not
+    // delivered, with Retry, so the tray lets them go like a sent batch.
+    if (e && e.kept) sent = true;
+    else CMT_ERROR = 'Not sent: ' + sendErrorText(e) + '. Your comments are kept.';
   }
   CMT_SENDING = false;
   if (!sent) { renderCmtTray(); return; }
@@ -2386,6 +2474,16 @@ $('#msgs').addEventListener('click', e => {
   if (row) { foldToggle(row, true); return; }
   const fb = e.target.closest && e.target.closest('.fold-btn');
   if (fb) foldToggle(fb.closest('.msg'), false);
+  // A message a failed resume could not deliver: send it again (the hub
+  // resumes the session for it once more), or let it go.
+  const pr = e.target.closest && e.target.closest('.pend-retry, .pend-discard');
+  if (pr) {
+    pr.disabled = true;
+    const retry = pr.classList.contains('pend-retry');
+    postOk('/api/room/resume', retry ? { roomId: ROOM, retry: true } : { roomId: ROOM, discard: true })
+      .catch(e => { SEND_ERR = 'Not sent: ' + sendErrorText(e) + '. The message is still shown here.'; setText($('#hint'), SEND_ERR); })
+      .then(() => { pr.disabled = false; refresh(); });
+  }
 });
 $('#to-latest').addEventListener('click', toLatest);
 // Where the reader is: at the end the chat follows new messages; scrolled up it

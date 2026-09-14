@@ -1122,6 +1122,7 @@ function mdToHtml(src) {
 // all to the room the file was opened from (carried in ?room=), or copy them.
 const CMTS = [];               // {cid, start, end, quote, note, view}
 let _cseq = 1, _composerOpen = false, _selBtn = null, _cRoot = null;
+const FV_MARK = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);   // this page's mark on its send keys
 // Which rendering of the file is showing. A passage's offsets count through
 // that rendering's text, so a comment is marked only in the view it was made in:
 // the same offsets in Markdown's source and its preview are different words.
@@ -1239,9 +1240,22 @@ async function submitCmts() {
     catch (e) { showFallback('No task chat to send to. Copy your comments:', body); }
     return;
   }
+  // The hub's resume-or-deliver, never /api/room/say: a task that is not
+  // running is resumed for the comments and they are typed in once its owner
+  // is up. The key names this batch (the ids are this page's, so the page's
+  // own mark goes in front): sent again after a lost reply, it counts once.
+  const key = 'fv:' + FV_MARK + ':' + CMTS.map(c => c.cid).join(',');
   try {
-    const r = await fetch('/api/room/say', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: ROOM, text: body, to: '' }) });
-    if (!r.ok) throw new Error(r.status);
+    const r = await fetch('/api/room/resume', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: ROOM, text: body, to: '', key }) });
+    let j = null;
+    try { j = await r.json(); } catch (e) {}
+    if (!r.ok || !j || j.error) {
+      // Refused but held by the hub: shown in the task's chat as not
+      // delivered, with Retry. Anything else keeps them here.
+      if (!(j && j.kept)) throw new Error((j && j.error) || r.status);
+      CMTS.length = 0; clearHl(); renderTray(); toast('Not delivered: ' + j.error + '. The comments are kept in the task\'s chat: Retry there.');
+      return;
+    }
     CMTS.length = 0; clearHl(); renderTray(); toast('✓ Comments sent to the chat');
   } catch (e) { showFallback('Couldn’t send to the chat. Copy your comments:', body); }
 }

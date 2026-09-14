@@ -8,7 +8,8 @@ and checks that:
 * the tray is drawn once and not again while polls re-render with the same
   comments;
 * unsent comments come back after a reload;
-* a stopped session's Submit is off, says why and sends nothing;
+* a stopped session's Submit stays on, says it will resume the session, and
+  sends the comments the hub's resume-and-deliver way (once; a refusal keeps them);
 * a send the hub refused (a stopped terminal, a handover, no answer, Enter
   not taken) keeps every comment and says so in the tray;
 * a send that went drops exactly what went, and a comment added meanwhile stays;
@@ -90,6 +91,7 @@ function page() {
   vm.runInContext(`
     const ROOM = 'room-test0001';
     let ROOM_OBJ = { id: ROOM }, ROOM_LIVE = true, SOLO_MODE = true, SOLO_PTY = 'pty-1';
+    let ROOM_RESUMING = false, ROOM_PENDING = null;
     const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
     const checkSolo = () => {}, refresh = () => {};
     ${code}
@@ -121,23 +123,56 @@ const tick = () => new Promise(r => setTimeout(r, 5));
   out.reloaded = B.notes();
   out.reloadedItems = (html(B).match(/class="cmt-item"/g) || []).length;
 
+  // Stopped: Submit stays on and says it will resume the session; the
+  // comments go to the hub's resume-and-deliver path, once, and only what the
+  // hub took is dropped.
   B.set('ROOM_LIVE', false); B.renderCmtTray();
   out.stoppedHtml = html(B);
-  let n0 = posts.length; await B.submitComments();
-  out.stoppedPosts = posts.length - n0; out.stoppedKept = B.notes();
+  let n0 = posts.length;
+  replies = [[400, { error: 'codex would not start' }]];
+  await B.submitComments(); replies = [];
+  out.stoppedRefused = { posts: posts.slice(n0), kept: B.notes(), html: html(B) };
+  n0 = posts.length;
+  replies = [[200, { ok: true, queued: 1, resumed: [{ identity: 'claude', ptyId: 'pty-2' }] }]];
+  await B.submitComments(); replies = [];
+  out.stopped = { posts: posts.slice(n0), kept: B.notes(), stored: stored() };
+  B.add('one'); await tick(); B.add('two');
   B.set('ROOM_LIVE', true);
+  // Live, but the terminal went since the last poll: the send goes the resume
+  // way instead of failing, and again only once.
+  n0 = posts.length;
+  replies = [[410, { error: 'the session has stopped' }], [200, { ok: true, queued: 1 }]];
+  await B.submitComments(); replies = [];
+  out.goneMidway = { posts: posts.slice(n0), kept: B.notes() };
+  B.add('one'); await tick(); B.add('two');
+  // Coming up (a resume in flight): the same path, so nothing races the note.
+  B.set('ROOM_RESUMING', true); B.renderCmtTray();
+  out.resumingHtml = html(B);
+  n0 = posts.length;
+  replies = [[200, { ok: true, queued: 1, inFlight: true }]];
+  await B.submitComments(); replies = [];
+  out.resuming = { posts: posts.slice(n0), kept: B.notes() };
+  B.set('ROOM_RESUMING', false);
+  B.add('one'); await tick(); B.add('two');
 
   const fail = async reply => {
     replies = reply; await B.submitComments(); replies = [];
     return { kept: B.notes(), stored: stored(), html: html(B) };
   };
-  out.gone = await fail([[404, { error: 'no_such_pty' }]]);
-  out.dead = await fail([[410, { error: 'the session has stopped' }]]);
+  // A terminal gone since the last poll goes the resume way; when the hub
+  // refuses that too, its reason is what the tray says.
+  out.gone = await fail([[404, { error: 'no_such_pty' }], [400, { error: 'codex would not start' }]]);
+  out.dead = await fail([[410, { error: 'the session has stopped' }], [400, { error: 'codex would not start' }]]);
   out.handover = await fail([[409, { error: 'handing over to a fresh session, try again shortly' }]]);
   out.typedOnly = await fail([[200, { ok: true }], [410, { error: 'the session has stopped' }]]);
   out.down = await fail(['down']);
   B.set('SOLO_MODE', false);
   out.roomFail = await fail([[500, { error: 'boom' }]]);
+  // The same batch sent again carries the same key: a lost reply cannot
+  // queue it twice on the hub.
+  out.roomFailKeys = [posts[posts.length - 1][1].key];
+  await fail([[500, { error: 'boom' }]]);
+  out.roomFailKeys.push(posts[posts.length - 1][1].key);
   B.set('SOLO_MODE', true);
 
   replies = [[200, { ok: true }], [200, { ok: true }]];
@@ -202,7 +237,8 @@ const tick = () => new Promise(r => setTimeout(r, 5));
 class ReviewComments(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        code = (STORE + "\n".join(js_function(SRC, n) for n in ("sendSolo", "postOk", "sendErrorText"))
+        code = (STORE + "\n".join(js_function(SRC, n) for n in (
+            "sendSolo", "sendResuming", "needsResume", "orResume", "postOk", "sendErrorText"))
                 + comments_block(SRC))
         out = subprocess.run([NODE, "-e", JS], input=json.dumps({"code": code, "prefix": PREFIX}), capture_output=True,
                              text=True, encoding="utf-8", timeout=60)
@@ -218,15 +254,37 @@ class ReviewComments(unittest.TestCase):
         self.assertEqual(self.r["reloaded"], ["one", "two"])
         self.assertEqual(self.r["reloadedItems"], 2)
 
-    def test_a_stopped_session_keeps_them_and_says_why(self):
+    def test_a_stopped_session_is_resumed_by_submit(self):
         html = self.r["stoppedHtml"]
-        self.assertRegex(html, r'class="cmt-submit" disabled')
+        self.assertNotRegex(html, r'class="cmt-submit" disabled')
         self.assertIn("not running", html)
-        self.assertEqual(self.r["stoppedPosts"], 0)
-        self.assertEqual(self.r["stoppedKept"], ["one", "two"])
+        self.assertIn("resume", html)
+        # The hub refused the resume: nothing was dropped, the tray says why.
+        r = self.r["stoppedRefused"]
+        self.assertEqual([p[0] for p in r["posts"]], ["/api/room/resume"])
+        self.assertEqual(r["kept"], ["one", "two"])
+        self.assertIn("Not sent", r["html"]); self.assertIn("codex would not start", r["html"])
+        # The hub took them for the resumed session: one request, comments gone.
+        r = self.r["stopped"]
+        self.assertEqual([p[0] for p in r["posts"]], ["/api/room/resume"])
+        self.assertEqual(r["posts"][0][1]["roomId"], "room-test0001")
+        self.assertIn("## Review comments (2)", r["posts"][0][1]["text"])
+        self.assertEqual(r["posts"][0][1]["to"], "")
+        self.assertEqual((r["kept"], r["stored"]), ([], []))
+
+    def test_a_terminal_gone_since_the_last_poll_goes_the_resume_way(self):
+        r = self.r["goneMidway"]
+        self.assertEqual([p[0] for p in r["posts"]], ["/api/pty/input", "/api/room/resume"])
+        self.assertEqual(r["kept"], [])
+
+    def test_a_resume_in_flight_takes_them_too(self):
+        self.assertIn("Resuming", self.r["resumingHtml"])
+        r = self.r["resuming"]
+        self.assertEqual([p[0] for p in r["posts"]], ["/api/room/resume"])
+        self.assertEqual(r["kept"], [])
 
     def test_a_refused_send_keeps_every_comment(self):
-        for case, words in (("gone", "has stopped"), ("dead", "has stopped"), ("handover", "handing over"),
+        for case, words in (("gone", "codex would not start"), ("dead", "codex would not start"), ("handover", "handing over"),
                             ("typedOnly", "not submitted"), ("down", "did not answer"), ("roomFail", "boom")):
             with self.subTest(case):
                 r = self.r[case]
@@ -244,9 +302,14 @@ class ReviewComments(unittest.TestCase):
         self.assertEqual(self.r["otherCopy"], ["three"], "the other copy of the chat kept a sent comment")
 
     def test_a_room_message(self):
+        # Through the hub's resume-or-deliver, never /api/room/say: the hub
+        # decides whether the team is running, not the page's last poll.
         url, body = self.r["roomPost"]
-        self.assertEqual(url, "/api/room/say")
+        self.assertEqual(url, "/api/room/resume")
         self.assertEqual(body["to"], "claude")
+        self.assertTrue(body["key"].startswith("cmt:1:"), body)
+        k1, k2 = self.r["roomFailKeys"]
+        self.assertTrue(k1 and k1 == k2, "the same batch sent again did not carry the same key")
         self.assertEqual(self.r["roomSent"], [])
         self.assertTrue(self.r["storeEmpty"])
         self.assertTrue(self.r["trayGone"])

@@ -155,8 +155,11 @@ const plain = rows => rows.map(r => ({ k: r.k, o: r.o, n: r.n, t: r.t }));
   live = false;
   out.stopped = P2.drSubmitState(rv2);
   let n0 = posts.length;
+  replies = [[400, { error: 'codex would not start' }]];     // the hub could not resume it
   await P2.drSubmit(rv2);
   out.stoppedPosts = posts.length - n0;
+  out.stoppedPost = posts[posts.length - 1];
+  out.stoppedRefused = { notes: notes(rv2), error: rv2.error };
   live = true;
   replies = [[404, { error: 'no_such_room' }]];
   await P2.drSubmit(rv2);
@@ -183,6 +186,14 @@ const plain = rows => rows.map(r => ({ k: r.k, o: r.o, n: r.n, t: r.t }));
   n0 = posts.length;
   await P3.drSubmit(rv3);
   out.nothingLeft = posts.length - n0;
+
+  // Refused, but the hub holds the comments (they show in the task's chat
+  // as not delivered, with Retry): the tray lets them go as sent.
+  const K = page(), rvk = K.drReview('task:kept', opts);
+  mk(rvk, 1, 1, 'held by the hub');
+  replies = [[400, { error: 'codex would not start', kept: true }]];
+  await K.drSubmit(rvk);
+  out.kept = { notes: notes(rvk), error: rvk.error };
 
   // Two copies of the page submit the same comments at the same moment: over
   // plain http both may send, with the same key, so the hub posts once; with
@@ -309,10 +320,21 @@ class DiffReview(unittest.TestCase):
     def test_unsent_comments_survive_a_reload(self):
         self.assertEqual(self.r["reloaded"], [["first", False], ["second", False]])
 
-    def test_a_task_that_is_not_running_is_sent_nothing(self):
-        self.assertFalse(self.r["stopped"]["can"])
-        self.assertIn("not running", self.r["stopped"]["note"])
-        self.assertEqual(self.r["stoppedPosts"], 0)
+    def test_a_task_that_is_not_running_is_resumed_for_the_comments(self):
+        # Submit stays on and says so; the batch goes to the hub's
+        # resume-or-deliver, and a refusal keeps every comment with the reason.
+        self.assertTrue(self.r["stopped"]["can"])
+        self.assertIn("not running: submitting will resume it", self.r["stopped"]["note"])
+        self.assertEqual(self.r["stoppedPosts"], 1)
+        url, body = self.r["stoppedPost"]
+        self.assertEqual(url, "/api/room/resume")
+        self.assertTrue(body["key"])
+        r = self.r["stoppedRefused"]
+        self.assertEqual(r["notes"], [["first", False], ["second", False]])
+        self.assertIn("codex would not start", r["error"])
+
+    def test_comments_the_hub_kept_after_a_refusal_are_let_go(self):
+        self.assertEqual(self.r["kept"], {"notes": [["held by the hub", True]], "error": ""})
 
     def test_a_refused_send_keeps_everything(self):
         for case, words in (("refused", "no longer exists"), ("down", "did not answer")):
@@ -323,7 +345,7 @@ class DiffReview(unittest.TestCase):
 
     def test_one_submit_sends_one_message_and_keeps_them_as_sent(self):
         url, body = self.r["sent"]["post"]
-        self.assertEqual(url, "/api/room/say")
+        self.assertEqual(url, "/api/room/resume")
         self.assertEqual(body["roomId"], "room-1")
         self.assertEqual(body["to"], "")
         text = body["text"]

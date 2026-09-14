@@ -1133,7 +1133,9 @@ def _start_task(ctx, args, handler):
         raise ToolError("that task is already running")
     first_launch = not room.get("launched", True)
     try:
-        handler._start_or_resume_room(room)
+        # Through the hub's resume guard: one resume per task at a time, and
+        # a message the board sent it meanwhile is delivered once it is up.
+        handler._resume_room(room)
     except _d.StartRoomError as exc:
         raise ToolError(str(exc)) from exc
     active = _d.chatroom.get_room(room["id"], public=False) or room
