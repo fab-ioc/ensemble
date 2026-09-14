@@ -504,6 +504,22 @@ class Resumes(unittest.TestCase):
         self.assertEqual(self.ptys["pty-codex-2"].typed, [])
         self.assertIsNone(dashboard.pending_input(room["id"]))
 
+    def test_a_running_solo_agent_that_dies_at_the_write_is_resumed_for_the_message(self):
+        """The live solo path: the direct write is what finds the agent gone."""
+        room = self.room()
+        self.projects = [{"poRoomId": room["id"]}]
+        h = self.handler()
+        h._resume_room(room)
+        self.join()
+        room = chatroom.get_room(room["id"], public=False)
+        self.ptys["pty-claude-1"].dies_on_write = True
+        out = h._resume_room(room, text="is it there?")
+        self.assertEqual((out["queued"], out["delivered"]), (1, 0))
+        self.join()
+        self.assertEqual(self.starts, 2)
+        self.assertEqual(self.typed(), {"pty-claude-2": ["is it there?"]})
+        self.assertIsNone(dashboard.pending_input(room["id"]))
+
     # ---- the payload and the endpoint ----
     def test_the_room_payload_carries_what_is_held(self):
         room = self.room()
@@ -591,6 +607,32 @@ class Resumes(unittest.TestCase):
             self.ptys.clear()
             status, out = self.post("/api/room/resume", {"roomId": room["id"]})
         self.assertEqual((status, out["kept"]), (400, False))
+
+    def test_the_same_key_after_a_resume_that_failed_later_is_a_retry_not_a_duplicate(self):
+        """The request was accepted (its reply lost on the way back) and the
+        resumed agent then died before the message went in: the page's same
+        POST starts it again, once, instead of being waved off as a duplicate."""
+        room = self.room()
+        self.projects = [{"poRoomId": room["id"]}]
+        body = {"roomId": room["id"], "text": "still coming?", "key": "send:k:2"}
+        self.alive["claude"] = False
+        spawned = self.handler()
+        with mock.patch.object(dashboard.Handler, "_resume_room_agent_pty", spawned._resume_room_agent_pty):
+            status, out = self.post("/api/room/resume", body)
+            self.assertEqual((status, out["queued"]), (200, 1))
+            self.join()
+            self.assertEqual(dashboard.pending_input(room["id"])["state"], "failed")
+            self.alive["claude"] = True
+            status, out = self.post("/api/room/resume", body)        # the page sends it again
+            self.assertEqual(status, 200)
+            self.assertFalse(out.get("duplicate"), "the retry was waved off as a duplicate")
+            self.join()
+            self.assertEqual(self.starts, 2)
+            self.assertEqual(self.typed(), {"pty-claude-2": ["still coming?"]})
+            self.assertIsNone(dashboard.pending_input(room["id"]))
+            # Delivered, the same key is a duplicate again: nothing goes in twice.
+            self.assertTrue(self.post("/api/room/resume", body)[1].get("duplicate"))
+        self.assertEqual(self.typed(), {"pty-claude-2": ["still coming?"]})
 
 
 class ThePage(unittest.TestCase):

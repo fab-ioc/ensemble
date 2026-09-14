@@ -1288,6 +1288,17 @@ def pending_input(room_id: str) -> dict | None:
         return res.view() if res else None
 
 
+def key_held(room_id: str, key: str) -> bool:
+    """Whether a send with this key is held by a resume that FAILED after it
+    was accepted. A key seen before is then not a duplicate — the same send
+    again is that message's retry, and it stays one message. (Held by a
+    resume still under way, it is a duplicate: already on its way in.)"""
+    with _RESUMES_LOCK:
+        res = _RESUMES.get(room_id)
+        return (res is not None and res.state == "failed"
+                and any(it.get("key") == key for it in res.queue))
+
+
 def discard_pending(room_id: str) -> bool:
     """Drop what a failed resume was holding for a room."""
     with _RESUMES_LOCK:
@@ -6733,7 +6744,8 @@ class Handler(BaseHTTPRequestHandler):
             if rotation.room_rotating(rid):
                 raise StartRoomError("handing over to a fresh session, try again shortly")
             sess.last_input = time.time()
-            _type_input(sess, "\n\n".join(it["text"] for it in items))
+            if not _type_input(sess, "\n\n".join(it["text"] for it in items)):
+                return items     # it looked alive, but the write found it gone
         return []
 
     def _deliver_after_resume(self, room_id: str, targets: list[tuple], solo: bool) -> None:
@@ -7569,7 +7581,9 @@ class Handler(BaseHTTPRequestHandler):
             # drops it. A room already running is not launched again: text
             # goes straight in, a plain resume is a no-op. ``key`` makes a
             # request safe to send twice (a lost reply): the second is a
-            # duplicate, nothing is queued again.
+            # duplicate, nothing is queued again — unless the hub still holds
+            # that key (the resume it started failed later): then the same
+            # send is its retry.
             rid = (data.get("roomId") or "").strip()
             room_full = chatroom.get_room(rid, public=False)
             if room_full is None:
@@ -7585,7 +7599,7 @@ class Handler(BaseHTTPRequestHandler):
             # starts fresh; anything else resumes its agents' conversations.
             try:
                 with _SAY_KEYS_LOCK if key else contextlib.nullcontext():
-                    if key and _say_key_seen(rid, key):
+                    if key and _say_key_seen(rid, key) and not key_held(rid, key):
                         self._send_json(200, {"ok": True, "duplicate": True})
                         return
                     result = self._resume_room(room_full, text=text, to=to, key=key)
