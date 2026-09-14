@@ -3536,6 +3536,28 @@ def search_transcripts(query: str, max_results: int = 100, snippet_pad: int = 60
     return results[:max_results]
 
 
+def attach_search_rooms(results: list[dict], rooms: list[dict] | None = None) -> list[dict]:
+    """Name the task each deep-search hit belongs to. A task row is its room,
+    while the transcripts found are its agents' conversations, so without the
+    room id the page could not show a single task among the matches."""
+    if rooms is None:
+        try:
+            rooms = chatroom.list_rooms()
+        except Exception:
+            rooms = []
+    room_of: dict[str, str] = {}
+    for rm in rooms:
+        for pp in rm.get("participants") or []:
+            if pp.get("kind") == "agent":
+                for sid in participant_session_ids(pp):
+                    room_of.setdefault(sid, rm.get("id") or "")
+    for r in results:
+        rid = room_of.get(r.get("sessionId") or "")
+        if rid:
+            r["roomId"] = rid
+    return results
+
+
 def delete_session(sid: str) -> dict:
     """Remove a session's JSONL transcript and all sidecar entries
     (labels, parents, geometries, pinned). Does not touch the cwd."""
@@ -6276,7 +6298,7 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/search":
             q_params = parse_qs(u.query)
             query = (q_params.get("q", [""])[0] or "").strip()
-            self._send_json(200, search_transcripts(query) if query else [])
+            self._send_json(200, attach_search_rooms(search_transcripts(query)) if query else [])
             return
         if p.startswith("/api/repos/"):
             sid = p[len("/api/repos/"):]
