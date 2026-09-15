@@ -1984,18 +1984,12 @@ def set_project_po(project_id: str, room_id: str) -> tuple[bool, str]:
 
     Stored as ``poRoomId`` in the project's own ``project.json`` in its home —
     the PO belongs to the project's data, so it travels with a backup or a
-    clone of the projects root. Only that one key is touched."""
+    clone of the projects root. Only that one key is touched: a documents
+    project with a PO stays a documents project."""
     rid = (room_id or "").strip()
     if rid and chatroom.get_room(rid) is None:
         return False, "no_such_room"
-    ok, msg = _set_project_meta(project_id, "poRoomId", rid or None)
-    proj = find_project(project_id) if ok and rid else None
-    if proj and proj.get("kind") == "documents":
-        # A PO and a documents project exclude each other: choosing a PO makes
-        # the project a code project again. Its file history is kept.
-        ok, msg = _set_project_meta(project_id, "kind", None)
-        return ok, ("switched_to_code" if ok else msg)
-    return ok, msg
+    return _set_project_meta(project_id, "poRoomId", rid or None)
 
 
 def set_project_digest_interval(project_id: str, minutes) -> tuple[bool, str]:
@@ -2012,23 +2006,18 @@ def set_project_digest_interval(project_id: str, minutes) -> tuple[bool, str]:
 PROJECT_KINDS = ("code", "documents")
 # What the page says when a kind cannot be chosen, in plain words.
 KIND_REFUSALS = {
-    "project_has_po": "This project has a PO, so it stays a code project. Clear its PO first "
-                      "to make it a documents project.",
     "files_outside_projects_root": "Only a project whose folder is in the projects folder can be a "
                                    "documents project; this one's files live elsewhere.",
     "project_is_a_git_repo": "This project's folder is a git repository, so it stays a code project.",
     "kind_must_be_code_or_documents": "A project is either a code project or a documents project.",
 }
-SWITCHED_TO_CODE = ("Choosing a PO made this a code project again: its Overview leads with the PO "
-                    "and the board. Its file history is kept.")
 
 
 def set_project_kind(project_id: str, kind: str) -> tuple[bool, str]:
     """Make a project a documents project (its Overview leads with its files,
     its tasks work in its folder, the hub keeps every version of its files) or
     a code project again. Stored as ``kind`` in its project.json; a code
-    project has no key. A project with a PO stays code: the two exclude each
-    other, and choosing a PO switches a documents project back."""
+    project has no key. Either kind may have a PO, and switching keeps it."""
     k = (kind or "").strip().lower()
     if k not in PROJECT_KINDS:
         return False, "kind_must_be_code_or_documents"
@@ -2037,14 +2026,12 @@ def set_project_kind(project_id: str, kind: str) -> tuple[bool, str]:
         return False, "no_such_project"
     if k == "code":
         return _set_project_meta(project_id, "kind", None)
-    rid = (proj.get("poRoomId") or "").strip()
-    if rid and chatroom.get_room(rid) is not None:
-        return False, "project_has_po"
     if not _in_projects_root(proj.get("path", "")):
         return False, "files_outside_projects_root"
     if proj.get("isGit"):
         return False, "project_is_a_git_repo"
-    if rid:                                 # names a PO task that no longer exists
+    rid = (proj.get("poRoomId") or "").strip()
+    if rid and chatroom.get_room(rid) is None:  # names a PO task that no longer exists
         _set_project_meta(project_id, "poRoomId", None)
     ok, msg = _set_project_meta(project_id, "kind", "documents")
     if ok:
@@ -8442,9 +8429,6 @@ class Handler(BaseHTTPRequestHandler):
             # (roomId "" clears it). Every other task reports into it.
             ok, msg = set_project_po(data.get("projectId", ""), data.get("roomId", ""))
             code = {"no_such_project": 404, "no_such_room": 404}.get(msg, 400)
-            if ok and msg == "switched_to_code":
-                self._send_json(200, {"ok": True, "kind": "code", "message": SWITCHED_TO_CODE})
-                return
             self._send_json(200 if ok else code, {"ok": ok} if ok else {"error": msg})
             return
         if p == "/api/projects/digest":

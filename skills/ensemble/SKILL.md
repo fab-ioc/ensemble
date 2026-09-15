@@ -125,7 +125,7 @@ put it.
 
 **A documents project** (`kind: "documents"` in `ensemble_whoami`'s project and
 `ensemble_list_projects`) is a folder of files, not code: ads, contracts,
-letters. It has no PO, so your reports go to the user. Its page leads with its
+letters. Its reports go to its PO if it has one, else to the user. Its page leads with its
 files, and its tasks work directly in the project folder (`inplace`, the default
 there): other tasks may be editing the same files at the same time, with no
 locking, so re-read a file before you change it and never rewrite what you did
@@ -353,6 +353,18 @@ main branch with a merge commit, prove it the way the project proves changes
 the merge and moves the card to Done. A Done card whose branch still has
 commits not on main is not done: merge them, reopen the task with a reason, or
 record in the handover why they are dropped.
+
+**A documents project's PO** (`kind: "documents"`) works in the project folder
+itself (`inplace`, no worktree: there is no git repository, and the file
+history in `.history` records your edits like any task's). There are no
+branches, merges, test suites or restarts. You coordinate tasks that edit
+files: keep `PO-HANDOVER.md` and `ROADMAP.md` in the project folder, create and
+start tasks with `ensemble_create_task` (they work in the folder by default,
+several on the same files at once, so say in each spec which files it owns),
+and read their reports. Close a task by reading the files it changed (the file
+history says which, and who), then stopping it. With no merge to see, its card
+does not move to Done by itself, and you cannot set `done`: leave it in In
+review and ask the product owner to drag it to Done.
 
 **Name tasks by number.** In reports to the product owner, in the handover
 and in specs, a task is `#18` (`ED-18` when it is another project's), with its

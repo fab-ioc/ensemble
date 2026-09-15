@@ -1412,6 +1412,25 @@
     .board-edge { align-items: flex-start; }
     .board-edge button { position: sticky; top: 45vh; margin-top: var(--s-600); }
   }
+  /* A documents project with a PO: its files first, then the PO beside the
+     board as above (or the board wide, the PO in the pill's drawer). main
+     grows with the files, so the PO's row takes a screen's height of its own. */
+  body.docs-split.po-split main, body.docs-split.po-wide main { height: auto; row-gap: var(--s-300); }
+  body.docs-split.po-split main {
+    grid-template-rows: auto auto calc(100dvh - var(--top-h) - var(--s-400));
+    grid-template-areas: "chrome chrome" "files files" "po board";
+  }
+  body.docs-split.po-wide main { grid-template-rows: auto auto auto; grid-template-areas: "chrome" "files" "board"; }
+  /* Board wide under the files has no height to fill, so it is stacked at
+     every width: the page scrolls down, the board sideways, and the edges'
+     buttons follow the page as they do below 900px. */
+  body.docs-split.po-wide .po-board { overflow: visible; }
+  body.docs-split.po-wide .po-board .board { overflow-x: auto; }
+  body.docs-split.po-wide .board-edge { align-items: flex-start; }
+  body.docs-split.po-wide .board-edge button { position: sticky; top: 45vh; margin-top: var(--s-600); }
+  @media (max-width: 900px) {
+    body.docs-split.po-split main { grid-template-rows: auto auto auto auto; grid-template-areas: "chrome" "files" "po" "board"; }
+  }
   /* The peek: a drawer under the bar. Beside an open task, not over it. */
   body.po-peek #po-panel {
     position: fixed; top: var(--top-h); bottom: 0; right: 0; z-index: 30;
@@ -5292,7 +5311,7 @@ function projectsChromeHtml() {
       + `<button data-ptab="changes" class="${PROJECT_TAB === 'changes' ? 'on' : ''}" title="Uncommitted changes in the project folder or in a task's workspace: git status, per-file diff, line comments you can send to a task chat">Changes</button>`
       + `<button data-ptab="roadmap" class="${PROJECT_TAB === 'roadmap' ? 'on' : ''}" title="The project's roadmap — ROADMAP.md in its folder. You and the project's PO both edit it">Roadmap</button>`
       + `</div>` : '';
-    return strip + `<div class="crumbs"><a href="#" class="crumb-back">← Projects</a><span class="sep">/</span><b>${esc(nm)}</b>${kindBtnHtml(pj)}${keyBtnHtml(pj)}${newTask}`
+    return strip + `<div class="crumbs"><a href="#" class="crumb-back">← Projects</a><span class="sep">/</span><b>${esc(nm)}</b>${kindBtnHtml(pj)}${keyBtnHtml(pj)}${poChooseBtnHtml(pj)}${newTask}`
       + (PROJECT_TAB === 'tasks' ? fitSwitchHtml() + viewSwitchHtml() : '') + `</div>` + tabs;
   }
   return strip + `<div class="listctl"><span>Group by</span>
@@ -8015,11 +8034,12 @@ function projectOfRoom(rid) {
   if (!rid) return null;
   return registeredProjects().find(p => (p.sessions || []).some(s => (s.roomId || s.sessionId) === rid)) || null;
 }
-// The Overview tab leads with the PO when the project names one that exists.
+// The Overview tab leads with the PO when the project names one that exists
+// (a documents project's files come first, then the PO beside the board).
 function poSplitProject() {
   if (!SELECTED_PROJECT || PROJECT_TAB !== 'tasks' || SB_DEST) return null;
   const pj = projectById(SELECTED_PROJECT);
-  return pj && !isDocsProject(pj) && poRowOf(pj) ? pj : null;
+  return pj && poRowOf(pj) ? pj : null;
 }
 // "The current project" for the pill: the one whose PO is on screen, else the
 // open task's, else the one you are in, else the last PO you visited, else the
@@ -8063,9 +8083,9 @@ function poHeadHtml(pj, row, peek) {
 function renderPoPill(ctx) {
   const b = document.getElementById('po-pill');
   if (!b) return;
-  // A documents project has no PO, and no pill saying so.
-  if (!ctx || isDocsProject(ctx)) { b.hidden = true; return; }
   const row = poRowOf(ctx);
+  // A documents project without a PO needs none, and gets no pill saying so.
+  if (!ctx || (isDocsProject(ctx) && !row)) { b.hidden = true; return; }
   let html;
   if (row) {
     const { m, cls } = poAgent(row);
@@ -8168,7 +8188,7 @@ async function poChoose(pid) {
   const dlg = $('#modal');
   dlg.innerHTML = `
     <h3>Choose ${esc(pj.name)}’s PO</h3>
-    <p class="cfg-hint">The other tasks in this project report to it, and its conversation leads the project page.</p>
+    <p class="cfg-hint">The other tasks in this project report to it, and its conversation leads the project page.${tasks.length ? '' : ' This project has no tasks yet: create a task for the role with + New task, then choose it here.'}</p>
     <div class="im-field">
       <label>Task</label>
       <select id="po-sel">
@@ -8188,8 +8208,7 @@ async function poChoose(pid) {
   try {
     const r = await api('/api/projects/po', { method: 'POST', headers: { 'Content-Type': 'application/json' },
                                               body: JSON.stringify({ projectId: pid, roomId }) });
-    // Choosing a PO makes a documents project a code project again; say so.
-    toast(r.message || (roomId ? 'PO set' : 'PO cleared'), r.message ? 8000 : 2000, 'ok');
+    toast(roomId ? 'PO set' : 'PO cleared', 2000, 'ok');
     await refreshProjects(); renderRows();
   } catch (e) { toast('could not set the PO: ' + e.message, 5000, 'err'); }
 }
@@ -8238,8 +8257,8 @@ document.addEventListener('click', async (ev) => {
 
 // ---- Documents project: begin ------------------------------------------------
 // A documents project is a folder of files, not code (car ads, a leasing
-// contract, letters). It has no PO; its Overview leads with its files and its
-// recent changes; its tasks work in its folder; and the hub keeps every version
+// contract, letters). Its Overview leads with its files and its recent
+// changes, then its PO if it has one; its tasks work in its folder; and the hub keeps every version
 // of every file with who changed it (history.py). Plain data and functions down
 // to histPaint, so tests/test_documents_project.py runs them in Node.
 function isDocsProject(pj) { return !!(pj && pj.kind === 'documents'); }
@@ -8273,16 +8292,20 @@ function kindBtnHtml(pj) {
                    : 'Its Overview leads with the PO and the board. Click to change';
   return `<button type="button" class="po-btn kind-btn" data-proj="${esc(pj.id)}" title="${tip}">${docs ? 'Documents project' : 'Code project'}</button>`;
 }
-function kindDialogHtml(pj, po) {
+// A documents project without a PO shows no note asking for one (it may need
+// none); this button beside its kind is how to give it one.
+function poChooseBtnHtml(pj) {
+  if (!isDocsProject(pj) || !pj.registered || pj.id === UNASSIGNED_ID || poRowOf(pj)) return '';
+  return `<button type="button" class="po-btn po-choose" data-proj="${esc(pj.id)}" title="Choose one of its tasks as its PO: the other tasks report to it, and its conversation joins this page">Choose the PO…</button>`;
+}
+function kindDialogHtml(pj) {
   const docs = isDocsProject(pj);
-  const opt = (k, label, text, off) => `<label class="kind-opt"><input type="radio" name="kind" value="${k}"${(k === 'documents') === docs ? ' checked' : ''}${off ? ' disabled' : ''}> <b>${label}</b><br><span class="cfg-hint">${text}</span></label>`;
+  const opt = (k, label, text) => `<label class="kind-opt"><input type="radio" name="kind" value="${k}"${(k === 'documents') === docs ? ' checked' : ''}> <b>${label}</b><br><span class="cfg-hint">${text}</span></label>`;
   return `<h3>What kind of project is ${esc(pj.name)}?</h3>`
     + `<div class="im-field" role="radiogroup" aria-label="Kind of project">`
-    + opt('code', 'Code project', 'Its Overview leads with the PO and the board. Tasks work in their own folders, copies or worktrees.', false)
-    + opt('documents', 'Documents project', 'Its Overview leads with its files. Tasks work directly in the project folder, several at once, and every version of every file is kept with who changed it.', !!po)
+    + opt('code', 'Code project', 'Its Overview leads with the PO and the board. Tasks work in their own folders, copies or worktrees.')
+    + opt('documents', 'Documents project', 'Its Overview leads with its files. Tasks work directly in the project folder, several at once, and every version of every file is kept with who changed it.')
     + `</div>`
-    + (po ? `<p class="cfg-hint">This project has a PO (${esc(po.label || 'its task')}), so it stays a code project. Clear its PO first to make it a documents project.</p>` : '')
-    + (docs ? `<p class="cfg-hint">Choosing a PO for it later makes it a code project again. Its file history is kept either way.</p>` : '')
     + `<div class="actions"><button id="kind-ok">Save</button><button id="kind-cancel" class="secondary">Cancel</button></div>`;
 }
 // The project's key, next to its kind: its tasks are ED-18 where several
@@ -8330,7 +8353,7 @@ async function kindChoose(pid) {
   const pj = projectById(pid);
   if (!pj) return;
   const dlg = $('#modal');
-  dlg.innerHTML = kindDialogHtml(pj, poRowOf(pj));
+  dlg.innerHTML = kindDialogHtml(pj);
   dlg.showModal();
   const kind = await new Promise(resolve => {
     $('#kind-cancel').onclick = () => resolve(null);
