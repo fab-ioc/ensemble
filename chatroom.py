@@ -259,12 +259,47 @@ def set_agents(room_id: str, members: list[dict],
         return room
 
 
+NUMBER_FIELDS = ("no", "noProjectId", "previousNos")
+
+
 def update_room(room: dict) -> None:
     """Persist a full (non-public) room dict — used by the launcher to record
-    the working dir and each participant's session id/pid after spawning."""
+    the working dir and each participant's session id/pid after spawning.
+
+    A task's number is written only by :func:`set_task_number`, so a copy
+    read before it was given, or before a move renumbered it, never undoes it:
+    once the file has a number, :data:`NUMBER_FIELDS` are the file's."""
     with _LOCK:
+        disk = _read(room.get("id", "")) or {}
+        if disk.get("no"):
+            for k in NUMBER_FIELDS:
+                if k in disk:
+                    room[k] = disk[k]
+                else:
+                    room.pop(k, None)
         room["updatedAt"] = _now()
         _write(room)
+
+
+def set_task_number(room_id: str, project_id: str, no: int) -> dict | None:
+    """Give a task its number in a project — read-modify-write under the room
+    lock, no ``updatedAt`` bump (numbering is not activity). A number it had
+    in another project is kept in ``previousNos`` so an old reference still
+    finds it. Returns the public room, or None when it no longer exists."""
+    with _LOCK:
+        room = _read(room_id)
+        if room is None:
+            return None
+        old, old_pid = room.get("no"), room.get("noProjectId")
+        if old and old_pid and (old_pid, old) != (project_id, no):
+            prev = [p for p in room.get("previousNos") or [] if isinstance(p, dict)]
+            if not any(p.get("projectId") == old_pid and p.get("no") == old for p in prev):
+                prev.append({"projectId": old_pid, "no": old})
+            room["previousNos"] = prev
+        room["no"] = int(no)
+        room["noProjectId"] = project_id
+        _write(room)
+        return _public(room)
 
 
 def record_exit(room_id: str, identity: str, exit_rec: dict) -> bool:

@@ -6,8 +6,13 @@ written out under it, so the agent reads what was pointed at without a tool
 call. The stored chat message keeps the sender's words; only what is typed into
 the agent's terminal (or read through chat_read) carries the expansion.
 
+A task named by its number (``#18``, ``@codex@18``, ``#ED-18``) gets one line
+under the message instead: its title, state, agents, branch and last report.
+
 Pure functions: the hub passes ``lookup(room_id, msg_id)``, which returns
-``{who, taskTitle, ts, text, id, where}`` for a message it knows, else None.
+``{who, taskTitle, taskNo, ts, text, id, where}`` for a message it knows, else
+None, and ``task_lookup(key, no)``, which returns the task a number names (see
+:func:`task_line`), else None.
 """
 from __future__ import annotations
 
@@ -15,7 +20,10 @@ import re
 import time
 from urllib.parse import parse_qs, urlsplit
 
+import task_numbers
+
 QUOTE_MAX = 4000
+REPORT_LINE_MAX = 200
 
 # Any host: a link copied on another computer names the hub by the address it
 # was read at. It stops at whatever Markdown or a sentence puts around it.
@@ -30,6 +38,8 @@ _BLOCK = re.compile(
     r"(?:not found: no message \S+ in \S+ on this hub"
     r"|from [^\n]* in \"[^\n]*\" at (?:\d{4}-\d\d-\d\d \d\d:\d\d|an unknown time):(?:\n>(?: [^\n]*)?)+)"
     r"\s*$")
+# The one line written under a task named by its number, in exactly its shape.
+_TASK_BLOCK = re.compile(r"\n\n\[ref ((?:@[A-Za-z][\w-]*@|#)(?:[A-Za-z][A-Za-z0-9]*-)?\d{1,6})\] task [^\n]*\s*$")
 
 
 def find_message_refs(text: str) -> list[tuple[str, str, str]]:
@@ -59,7 +69,7 @@ def strip_message_refs(text: str) -> str:
     """``text`` without the reference blocks the hub appended to it."""
     text = text or ""
     while True:
-        m = _BLOCK.search(text)
+        m = _TASK_BLOCK.search(text) or _BLOCK.search(text)
         if not m or m.group(1) not in text[:m.start()]:
             return text
         text = text[:m.start()]
@@ -73,19 +83,61 @@ def _when(ts) -> str:
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)) if ts > 0 else "an unknown time"
 
 
-def expand_message_refs(text: str, lookup) -> str:
+def _flat(s) -> str:
+    return " ".join(str(s or "").split())
+
+
+def task_line(token: str, task: dict) -> str:
+    """The line written under a message for a task it names:
+
+        [ref #18] task "<title>" — <status>, <column>; <agent (role)>, …;
+        branch <branch>; last report (<kind>): <its first line>
+
+    ``task`` is ``{label, title, status, workflowName, agents: [{identity,
+    role}], branch, report: {kind, text}}``; what it lacks is left out."""
+    title = _flat(task.get("title")).replace('"', "'")
+    head = f"[ref {token}] task " + (f"{task['label']} " if task.get("label") and task["label"] != token else "") + f"\"{title}\""
+    state = ", ".join(x for x in (_flat(task.get("status")), _flat(task.get("workflowName"))) if x)
+    bits = [state] if state else []
+    agents = ", ".join(_flat(a.get("identity")) + (f" ({_flat(a['role']).split(':')[0].strip()})" if a.get("role") else "")
+                       for a in task.get("agents") or [] if a.get("identity"))
+    if agents:
+        bits.append(agents)
+    if task.get("branch"):
+        bits.append(f"branch {_flat(task['branch'])}")
+    rep = task.get("report") or {}
+    first = next((ln.strip() for ln in str(rep.get("text") or "").splitlines() if ln.strip()), "")
+    if first:
+        first = _flat(first)
+        cut = first[:REPORT_LINE_MAX] + ("…" if len(first) > REPORT_LINE_MAX else "")
+        bits.append(f"last report ({_flat(rep.get('kind')) or 'report'}): {cut}")
+    return head + (" — " + "; ".join(bits) if bits else "")
+
+
+def expand_message_refs(text: str, lookup, task_lookup=None) -> str:
     """``text`` followed by one block per balloon link in it:
 
-        [ref <url>] from <who> in "<task title or PO>" at <YYYY-MM-DD HH:MM>:
+        [ref <url>] from <who> in "<#18 task title, or PO>" at <YYYY-MM-DD HH:MM>:
         > <referenced text, every line quoted>
 
-    A quoted text is cut at QUOTE_MAX characters, with a line saying how much
-    more there is and where. A link the hub cannot resolve gets a one-line
-    block saying so. A text with no links comes back unchanged."""
+    then one line per task it names by number (see :func:`task_line`), when
+    ``task_lookup`` is given. A quoted text is cut at QUOTE_MAX characters,
+    with a line saying how much more there is and where. A link the hub cannot
+    resolve gets a one-line block saying so; a number that names no task gets
+    nothing. A text with no references comes back unchanged."""
     refs = find_message_refs(text)
-    if not refs:
-        return text
+    trefs = task_numbers.find_text_refs(text) if task_lookup else []
     blocks = []
+    for ref in trefs:
+        try:
+            task = task_lookup(ref["key"], ref["no"])
+        except Exception:       # noqa: BLE001 — a bad reference never stops a message
+            task = None
+        if task:
+            blocks.append(task_line(ref["token"], task))
+    if not refs and not blocks:
+        return text
+    tasks, blocks = blocks, []
     for url, room, msg in refs:
         try:
             ref = lookup(room, msg)
@@ -100,7 +152,10 @@ def expand_message_refs(text: str, lookup) -> str:
             where = ref.get("where") or f"~/.ensemble/rooms/{room}.json"
             lines.append(f"> … ({len(body) - QUOTE_MAX} more characters; the full message "
                          f"is in {where}, id {ref.get('id') or msg})")
+        where = ref.get("taskTitle") or room
+        if ref.get("taskNo") and not ref.get("isPo"):
+            where = f"#{ref['taskNo']} {where}"
         head = (f"[ref {url}] from {ref.get('who') or '?'} in "
-                f"\"{ref.get('taskTitle') or room}\" at {_when(ref.get('ts'))}:")
+                f"\"{where}\" at {_when(ref.get('ts'))}:")
         blocks.append(head + "\n" + "\n".join(lines))
-    return text.rstrip() + "\n\n" + "\n\n".join(blocks)
+    return text.rstrip() + "\n\n" + "\n\n".join(blocks + tasks)

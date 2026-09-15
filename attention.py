@@ -586,6 +586,8 @@ def _summarize(room: dict) -> dict:
     return {
         "id": room.get("id", ""),
         "title": room.get("title", ""),
+        "no": room.get("no") or None,
+        "noProjectId": room.get("noProjectId") or "",
         "status": room.get("status", "active"),
         "waitingFor": room.get("waitingFor", ""),
         "hopCount": room.get("hopCount", 0),
@@ -934,6 +936,10 @@ def _items() -> list[dict]:
     projects = {p["id"]: p for p in _d.load_projects()}
     labels = _d.load_labels()
     all_projects = list(projects.values())
+    try:
+        keys = _d.project_keys(all_projects)
+    except Exception:
+        keys = {}
     items: list[dict] = []
     seen_now: set[tuple[str, str]] = set()
 
@@ -963,8 +969,12 @@ def _items() -> list[dict]:
         rid = room["id"]
         pid = links.get(rid) or room.get("projectId") or \
             _d._project_for_cwd(room.get("cwd", ""), all_projects)
+        no = room.get("no")
         item = {
             "roomId": rid,
+            # Its number (#18), and the full form (ED-18) for lists of every project.
+            "no": no,
+            "ref": _d.task_numbers.label(no, keys.get(room.get("noProjectId"), "")) if no else "",
             "projectId": pid or "",
             "project": (projects.get(pid) or {}).get("name", "") if pid else "",
             "title": labels.get(rid) or room.get("title", "") or rid,

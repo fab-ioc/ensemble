@@ -43,6 +43,20 @@ Task statuses: `draft` (created, never launched), `running`, `waiting_user`
 (its agents asked the product owner and are paused), `paused` (turn limit
 reached), `stopped`.
 
+Task numbers: every task of a project has a number the hub gives it when it is
+created, `#18`, never reused or changed (a project's PO is not a task and has
+none). Each project has a short key (`ED` for Ensemble Dashboard), so `ED-18`
+names the task from anywhere. Every tool that takes a `taskId` takes `#18` or
+`18` (read in your own project, or in `projectId` where the tool has one),
+`ED-18` (any project) or the room id (`room-1a2b3c4d`), which keeps working.
+Task rows carry `no` first and keep `id`. A task moved to another project takes
+that project's next number; its old number still finds it. In chat, `#18` and
+`@codex@18` (an identity or a role, then the number) show as a chip naming the
+task, and the person's or PO's message reaches the agent with one line under it
+per task named: `[ref #18] task "title" — state; agents; branch; last report`.
+Naming a task this way does not send it anything: `@codex@18` in one chat does
+not wake task 18's codex.
+
 Task priorities: `highest`, `high`, `medium` (the default), `low`, `lowest` —
 the product owner's ordering. `ensemble_create_task` and `ensemble_update_task`
 take either the name or the number (1 = highest to 5 = lowest); anything else
@@ -340,6 +354,13 @@ the merge and moves the card to Done. A Done card whose branch still has
 commits not on main is not done: merge them, reopen the task with a reason, or
 record in the handover why they are dropped.
 
+**Name tasks by number.** In reports to the product owner, in the handover
+and in specs, a task is `#18` (`ED-18` when it is another project's), with its
+title where it helps: "#18 0DTE management is merged". The product owner reads
+the number on the board; a room id means nothing to them. Reports and the digest
+reach you as `[report] completed from task '…' (#18, codex)`, and
+`ensemble_get_task taskId=#18` reads it.
+
 **Wakes cost your whole conversation.** Reports and the `[digest]` wake you;
 never poll. Keep turns short and the history small: hand large reading to a
 subagent, and don't re-read what you already have.
@@ -476,13 +497,13 @@ Create a draft for an autonomous pair in your own project:
 Amend a draft's spec after review:
 
 ```json
-{"taskId": "room-1a2b3c4d", "spec": "# Goal\n(revised)…"}
+{"taskId": "#18", "spec": "# Goal\n(revised)…"}
 ```
 
 Raise a task's priority (the name or the number — `2` means the same thing):
 
 ```json
-{"taskId": "room-1a2b3c4d", "priority": "high"}
+{"taskId": "ED-18", "priority": "high"}
 ```
 
 List everything running anywhere:

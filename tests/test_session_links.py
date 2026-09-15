@@ -162,7 +162,7 @@ TAIL = r"""
 
 
 def run_scenario(name: str) -> dict:
-    code = "\n".join([HARNESS, js_const("REF_BLOCK_RE")] + [js_function(n) for n in (
+    code = "\n".join([HARNESS, js_const("REF_BLOCK_RE"), js_const("TASK_BLOCK_RE")] + [js_function(n) for n in (
         "stripRefBlocks", "soloItems", "prevSessionItems", "soloOwns", "soloWantFailed", "checkSolo",
         "renderSolo", "landPending", "markLanded")]
         + [SCENARIOS[name], TAIL])
@@ -232,7 +232,7 @@ class LandOnALinkedBalloon(unittest.TestCase):
 @unittest.skipUnless(NODE, "node is not installed")
 class HideTheHubsWriteOut(unittest.TestCase):
     def strip(self, texts):
-        code = "\n".join([js_const("REF_BLOCK_RE"), js_function("stripRefBlocks"),
+        code = "\n".join([js_const("REF_BLOCK_RE"), js_const("TASK_BLOCK_RE"), js_function("stripRefBlocks"),
                           f"console.log(JSON.stringify({json.dumps(texts)}.map(stripRefBlocks)));"])
         res = subprocess.run([NODE, "-"], input=code, capture_output=True, text=True, encoding="utf-8", timeout=30)
         self.assertEqual(res.returncode, 0, res.stderr)

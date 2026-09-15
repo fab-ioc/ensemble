@@ -46,6 +46,10 @@ def bind(dashboard_module) -> None:
 # time crashes the hub on start. The dashboard takes its copy from here.
 WORKFLOW_NAMES = ("backlog", "todo", "inprogress", "inreview", "done")
 
+_TASK_ID_DOC = ("The task: its number (#18 or 18 in your project, ED-18 in any) "
+                "or its id (room-1a2b3c4d).")
+_TASK_ID_SPEC = {"type": "string", "description": _TASK_ID_DOC}
+
 _PRIORITY_DOC = ("Priority: \"highest\", \"high\", \"medium\", \"low\" or \"lowest\" "
                  "(a number 1-5 also works, 1 = highest).")
 
@@ -222,7 +226,9 @@ _ALL_TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "taskId": {"type": "string", "description": "The task (room) id, e.g. room-1a2b3c4d."},
+                "taskId": {"type": "string", "description": _TASK_ID_DOC},
+                "projectId": {"type": "string",
+                              "description": "The project a bare number (#18) is read in (default: yours)."},
                 "messages": {"type": "integer",
                              "description": "How many recent chat messages to include (default 0, max 200)."},
             },
@@ -290,7 +296,7 @@ _ALL_TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "taskId": {"type": "string"},
+                "taskId": _TASK_ID_SPEC,
                 "title": {"type": "string", "description": "New title (omit to keep)."},
                 "spec": {"type": "string", "description": "New full spec (omit to keep). Replaces the old one."},
                 "priority": _priority_spec("Omit to keep the current one."),
@@ -319,7 +325,7 @@ _ALL_TOOLS = [
             "its spec and carry on (the spec itself is not sent again). Fails if the "
             "task is already running."
         ),
-        "inputSchema": {"type": "object", "properties": {"taskId": {"type": "string"}},
+        "inputSchema": {"type": "object", "properties": {"taskId": _TASK_ID_SPEC},
                         "required": ["taskId"]},
     },
     {
@@ -329,7 +335,7 @@ _ALL_TOOLS = [
             "its spec and chat, so it can be started again later. You cannot stop "
             "your own task."
         ),
-        "inputSchema": {"type": "object", "properties": {"taskId": {"type": "string"}},
+        "inputSchema": {"type": "object", "properties": {"taskId": _TASK_ID_SPEC},
                         "required": ["taskId"]},
     },
     {
@@ -341,7 +347,7 @@ _ALL_TOOLS = [
             "it first) and for your own task. Prefer stopping over deleting unless "
             "the product owner asked for deletion."
         ),
-        "inputSchema": {"type": "object", "properties": {"taskId": {"type": "string"}},
+        "inputSchema": {"type": "object", "properties": {"taskId": _TASK_ID_SPEC},
                         "required": ["taskId"]},
     },
     {
@@ -390,11 +396,12 @@ _ALL_TOOLS = [
         "name": "ensemble_move_task",
         "description": (
             "Move a task to another project. The task's folder stays where it was "
-            "created; only the project link changes."
+            "created; only the project link changes. It takes the next number "
+            "there; its old number still finds it."
         ),
         "inputSchema": {
             "type": "object",
-            "properties": {"taskId": {"type": "string"},
+            "properties": {"taskId": _TASK_ID_SPEC,
                            "projectId": {"type": "string", "description": "Destination project id."}},
             "required": ["taskId", "projectId"],
         },
@@ -624,13 +631,26 @@ def _attention_view(item: dict | None) -> dict | None:
     return out
 
 
+def _ref(room: dict, projects: dict) -> str:
+    """ED-18: a task's number with its project's key; "" without a number."""
+    if not room.get("no"):
+        return ""
+    keys = _d.project_keys(list(projects.values()))
+    return _d.task_numbers.label(room["no"], keys.get(room.get("noProjectId") or "", ""))
+
+
 def _row(room: dict, projects: dict, links: dict, labels: dict,
          attn: dict | None = None, detail: bool = False,
          include_project: bool = False) -> dict:
     pid = _project_of_room(room, links)
     spec = room.get("spec", "") or ""
     prio = _d.priority_of(room)
+    no = room.get("no") or None
+    # The number first: it is how a person and a PO name the task.
+    ref = ({"no": no, **({"ref": _ref(room, projects)} if detail or include_project else {})}
+           if no else {})
     compact = {
+        **ref,
         "id": room["id"],
         "title": _title(room, labels),
         "priority": prio,
@@ -645,6 +665,7 @@ def _row(room: dict, projects: dict, links: dict, labels: dict,
     if not detail:
         return compact
     return {
+        **ref,
         "id": room["id"],
         "attention": _attention_view((attn or {}).get(room["id"])),
         "title": _title(room, labels),
@@ -702,10 +723,18 @@ def _caller(room_id: str, identity: str) -> dict:
     return {"room": room, "identity": identity, "part": part, "projectId": pid}
 
 
-def _load_target(task_id: str) -> dict:
-    tid = (task_id or "").strip()
+def _load_target(task_id, ctx: dict | None = None, project_id=None) -> dict:
+    """The task a caller names: its id, or its number (#18 or 18 in
+    ``project_id``, else the caller's project; ED-18 in any)."""
+    tid = str(task_id if task_id is not None and not isinstance(task_id, bool) else "").strip()
     if not tid:
         raise ToolError("taskId is required")
+    if not tid.startswith("room-"):
+        pid = str(project_id or "").strip() or (ctx or {}).get("projectId", "")
+        rid, why = _d.resolve_task_ref(tid, pid)
+        if not rid:
+            raise ToolError(why)
+        tid = rid
     room = _d.chatroom.get_room(tid, public=False)
     if room is None:
         raise ToolError(f"no such task: {tid}")
@@ -764,6 +793,7 @@ def _whoami(ctx, args, handler):
         "agent": part.get("agent", ""),
         "model": part.get("model", ""),
         "role": part.get("role", ""),
+        "taskNo": room.get("no") or None,
         "taskId": room["id"],
         "title": _title(room),
         "mode": room.get("mode", ""),
@@ -805,9 +835,11 @@ def _report(ctx, args, handler):
     if not po:
         return {"ok": True, "kind": kind, "deliveredTo": "user",
                 "note": "recorded on your task; the board shows it to the user"}
-    body = f"**{kind}** — report from task *{title}* (`{room['id']}`, {me}):\n\n{text}"
+    no = _d.task_label(room)
+    body = (f"**{kind}** — report from task {no + ' ' if no else ''}*{title}* "
+            f"(`{room['id']}`, {me}):\n\n{text}")
     res = _d.chatroom.post_report(po["roomId"], f"{me}@{room['id']}", po["identity"], body,
-                                  {"reportKind": kind, "taskId": room["id"],
+                                  {"reportKind": kind, "taskId": room["id"], "taskNo": room.get("no") or None,
                                    "taskTitle": title, "reporter": me})
     rung = handler._ring_report(po["roomId"], res, room["id"], title, me, kind, text) if res else []
     return {"ok": True, "kind": kind,
@@ -872,13 +904,14 @@ def _review_done(ctx, args, handler):
     # To the PO, as a report into its room (it wakes the PO).
     po_woken = False
     if po:
-        body = (f"**review {n} — {label}** of task *{title}* (`{room['id']}`, by {me}"
+        no = _d.task_label(room)
+        body = (f"**review {n} — {label}** of task {no + ' ' if no else ''}*{title}* (`{room['id']}`, by {me}"
                 + (f", asked by {asker}" if asker else "") + f"):\n\n"
                 + (f"{summary}\n\n" if summary else "") + findings)
         pres = _d.chatroom.post_report(po["roomId"], f"{me}@{room['id']}", po["identity"], body,
                                        {"reportKind": "review", "verdict": verdict,
-                                        "taskId": room["id"], "taskTitle": title,
-                                        "reporter": me})
+                                        "taskId": room["id"], "taskNo": room.get("no") or None,
+                                        "taskTitle": title, "reporter": me})
         po_woken = bool(handler._ring_report(po["roomId"], pres, room["id"], title, me,
                                              f"review {n} ({label})",
                                              summary or findings)) if pres else False
@@ -992,7 +1025,7 @@ def _plan_usage(ctx, args, handler):
 
 
 def _get_task(ctx, args, handler):
-    room = _load_target(args.get("taskId"))
+    room = _load_target(args.get("taskId"), ctx, args.get("projectId"))
     projects = _projects()
     links = _d.load_session_projects()
     labels = _d.load_labels()
@@ -1050,7 +1083,7 @@ def _create_task(ctx, args, handler):
             raise ToolError(str(exc)) from exc
         started = True
     allocation = room_full.get("allocation") if started else None
-    return {"ok": True, "taskId": room_full["id"], "title": room_full["title"],
+    return {"ok": True, "no": room_full.get("no") or None, "taskId": room_full["id"], "title": room_full["title"],
             "status": "running" if started else "draft",
             "priority": _d.PRIORITY_NAMES[_d.priority_of(room_full)],
             "projectId": pid, "taskDir": room_full.get("taskDir", ""),
@@ -1063,7 +1096,7 @@ def _create_task(ctx, args, handler):
 
 
 def _update_task(ctx, args, handler):
-    room = _load_target(args.get("taskId"))
+    room = _load_target(args.get("taskId"), ctx)
     _check_write_scope(ctx, _project_of_room(room), "update_task")
     if not is_admin_caller(ctx["room"], ctx["identity"]):
         changes_other_than_workflow = any(args.get(k) is not None
@@ -1127,7 +1160,7 @@ def _reassign_error(err: str) -> str:
 
 
 def _start_task(ctx, args, handler):
-    room = _load_target(args.get("taskId"))
+    room = _load_target(args.get("taskId"), ctx)
     _check_write_scope(ctx, _project_of_room(room), "start_task")
     _not_self(ctx, room, "start")
     if _d._room_is_live(room):
@@ -1150,7 +1183,7 @@ def _start_task(ctx, args, handler):
 
 
 def _stop_task(ctx, args, handler):
-    room = _load_target(args.get("taskId"))
+    room = _load_target(args.get("taskId"), ctx)
     _check_write_scope(ctx, _project_of_room(room), "stop_task")
     _not_self(ctx, room, "stop")
     if not _d._room_is_live(room):
@@ -1161,7 +1194,7 @@ def _stop_task(ctx, args, handler):
 
 
 def _delete_task(ctx, args, handler):
-    room = _load_target(args.get("taskId"))
+    room = _load_target(args.get("taskId"), ctx)
     _check_write_scope(ctx, _project_of_room(room), "delete_task")
     _not_self(ctx, room, "delete")
     if _d._room_is_live(room):
@@ -1175,7 +1208,8 @@ def _delete_task(ctx, args, handler):
 
 
 def _move_task(ctx, args, handler):
-    room = _load_target(args.get("taskId"))
+    # A bare number is read in the caller's project: projectId is where it goes.
+    room = _load_target(args.get("taskId"), ctx)
     src = _project_of_room(room)
     dest = (args.get("projectId") or "").strip()
     if not dest:
@@ -1188,8 +1222,9 @@ def _move_task(ctx, args, handler):
     if src == dest:
         return {"ok": True, "taskId": room["id"], "projectId": dest, "note": "already there"}
     _d.move_task(room["id"], dest)
-    return {"ok": True, "taskId": room["id"], "projectId": dest,
-            "project": projects[dest].get("name", "")}
+    moved = _d.chatroom.get_room(room["id"]) or room
+    return {"ok": True, "no": moved.get("no") or None, "ref": _ref(moved, projects), "taskId": room["id"],
+            "projectId": dest, "project": projects[dest].get("name", "")}
 
 
 def _roadmap_project(ctx, args) -> dict:

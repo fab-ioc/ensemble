@@ -239,6 +239,8 @@ def _task_facts(room: dict, attn: dict, labels: dict, now: float) -> dict:
     g = _git_facts(room)
     return {
         "id": room["id"],
+        # How the digest names it: its number, else its id.
+        "label": _d.task_label(room) or room["id"],
         "title": et._title(room, labels),
         "status": et._status(room),
         "column": _d.workflow_of(room),
@@ -293,8 +295,8 @@ def diff(before: dict, tasks: list[dict]) -> list[dict]:
         now_ids.add(t["id"])
         old = before.get(t["id"])
         if old is None:
-            changes.append({"id": t["id"], "title": t["title"], "what": ["new task"],
-                            "finished": False})
+            changes.append({"id": t["id"], "label": t.get("label") or t["id"], "title": t["title"],
+                            "what": ["new task"], "finished": False})
             continue
         what, finished = [], False
         if old.get("title") != t["title"]:
@@ -316,10 +318,11 @@ def diff(before: dict, tasks: list[dict]) -> list[dict]:
         elif old.get("head") != t["head"] and t["head"] and not t["merged"]:
             what.append("new commits" if old.get("head") else "first commits on its branch")
         if what:
-            changes.append({"id": t["id"], "title": t["title"], "what": what, "finished": finished})
+            changes.append({"id": t["id"], "label": t.get("label") or t["id"], "title": t["title"],
+                            "what": what, "finished": finished})
     for tid, old in before.items():
         if tid not in now_ids:
-            changes.append({"id": tid, "title": old.get("title", tid),
+            changes.append({"id": tid, "label": old.get("label") or tid, "title": old.get("title", tid),
                             "what": ["no longer in this project"], "finished": False})
     return changes
 
@@ -340,10 +343,11 @@ def plain_facts(project: dict, tasks: list[dict], changes: list[dict], since: fl
     when = time.strftime("%H:%M", time.localtime(since)) if since else "the start"
     lines = [f"Project '{project.get('name', project['id'])}' — changes since {when}:"]
     fin = [c for c in changes if c["finished"]]
+    name = lambda x: x.get("label") or x["id"]
     if fin:
-        lines.append("Finished: " + "; ".join(f"{c['title']} ({c['id']})" for c in fin))
+        lines.append("Finished: " + "; ".join(f"{c['title']} ({name(c)})" for c in fin))
     for c in changes:
-        lines.append(f"- {c['title']} ({c['id']}): " + ", ".join(c["what"]))
+        lines.append(f"- {c['title']} ({name(c)}): " + ", ".join(c["what"]))
     changed_ids = {c["id"] for c in changes}
     open_ = [t for t in tasks if t["column"] != "done" or t["id"] in changed_ids]
     if open_:
@@ -367,7 +371,7 @@ def plain_facts(project: dict, tasks: list[dict], changes: list[dict], since: fl
             bits.append(c)
         if t["reportKind"] and t["id"] in changed_ids:
             bits.append(f"report ({t['reportKind']}): {t['reportText']}")
-        lines.append(f"- {t['title']} ({t['id']}): " + "; ".join(bits))
+        lines.append(f"- {t['title']} ({name(t)}): " + "; ".join(bits))
     return "\n".join(lines)
 
 
@@ -383,8 +387,8 @@ _PROMPT = (
     "the facts say its work is merged, and never write that work is awaiting a "
     "merge, a hub restart or a deploy unless the facts say so. Lead with what "
     "finished or changed since the last digest, then call out any task that "
-    "needs attention and why. Name tasks by title with their id in "
-    "parentheses. Plain text, at most 8 short lines, no headings, no greeting, "
+    "needs attention and why. Name tasks by title with their number (#18) "
+    "or id in parentheses, as the facts give it. Plain text, at most 8 short lines, no headings, no greeting, "
     "no closing remarks.\n\nFacts:\n"
 )
 
