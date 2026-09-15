@@ -1421,6 +1421,13 @@
     grid-template-areas: "chrome chrome" "files files" "po board";
   }
   body.docs-split.po-wide main { grid-template-rows: auto auto auto; grid-template-areas: "chrome" "files" "board"; }
+  /* Board wide under the files has no height to fill, so it is stacked at
+     every width: the page scrolls down, the board sideways, and the edges'
+     buttons follow the page as they do below 900px. */
+  body.docs-split.po-wide .po-board { overflow: visible; }
+  body.docs-split.po-wide .po-board .board { overflow-x: auto; }
+  body.docs-split.po-wide .board-edge { align-items: flex-start; }
+  body.docs-split.po-wide .board-edge button { position: sticky; top: 45vh; margin-top: var(--s-600); }
   @media (max-width: 900px) {
     body.docs-split.po-split main { grid-template-rows: auto auto auto auto; grid-template-areas: "chrome" "files" "po" "board"; }
   }
@@ -8296,7 +8303,7 @@ function kindDialogHtml(pj) {
   const opt = (k, label, text) => `<label class="kind-opt"><input type="radio" name="kind" value="${k}"${(k === 'documents') === docs ? ' checked' : ''}> <b>${label}</b><br><span class="cfg-hint">${text}</span></label>`;
   return `<h3>What kind of project is ${esc(pj.name)}?</h3>`
     + `<div class="im-field" role="radiogroup" aria-label="Kind of project">`
-    + opt('code', 'Code project', 'Its Overview leads with the board. Tasks work in their own folders, copies or worktrees.')
+    + opt('code', 'Code project', 'Its Overview leads with the PO and the board. Tasks work in their own folders, copies or worktrees.')
     + opt('documents', 'Documents project', 'Its Overview leads with its files. Tasks work directly in the project folder, several at once, and every version of every file is kept with who changed it.')
     + `</div>`
     + `<div class="actions"><button id="kind-ok">Save</button><button id="kind-cancel" class="secondary">Cancel</button></div>`;

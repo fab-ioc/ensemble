@@ -646,7 +646,8 @@ class ThePage(unittest.TestCase):
         self.assertIn(">Documents project<", o["docsKind"])
         self.assertIn('class="po-btn po-choose" data-proj="p-docs"', o["docsChoose"])
         self.assertIn(">Choose the PO…<", o["docsChoose"])
-        self.assertNotIn("PO", o["docsDialog"], "the Kind dialog no longer mentions the PO")
+        self.assertNotRegex(o["docsDialog"], r"has a PO|Choosing a PO|stays a code project|disabled",
+                            "the Kind dialog no longer mentions the PO exclusion")
         self.assertTrue(0 <= o["panelOrder"][0] < o["panelOrder"][1], "Files come before Recent changes")
         self.assertTrue(o["panelHasTree"])
         self.assertIsNone(o["docsOnWorkspaceTab"])
@@ -661,8 +662,9 @@ class ThePage(unittest.TestCase):
         self.assertEqual(o["codeChoose"], "", "a code project says how to get a PO in its note")
         self.assertEqual(o["poSplit"], "p-po")
         self.assertEqual(o["poChoose"], "")
-        self.assertNotIn("PO", o["poDialog"])
+        self.assertNotRegex(o["poDialog"], r"has a PO|Choosing a PO|stays a code project")
         self.assertNotIn("disabled", o["poDialog"], "a project with a PO may become a documents project")
+        self.assertIn("Its Overview leads with the PO and the board.", o["poDialog"], "the code option reads as before")
 
     def test_a_documents_project_with_a_po_leads_with_files_then_the_po(self):
         o = self.out
@@ -670,11 +672,20 @@ class ThePage(unittest.TestCase):
         self.assertEqual(o["dpoNote"], "")
         self.assertEqual(o["dpoFrame"], '<div class="po-chrome">[chrome]</div><div class="po-board">[board]</div>[edges]')
         self.assertEqual(o["dpoChoose"], "")
-        self.assertNotIn("PO", o["dpoDialog"])
+        self.assertNotRegex(o["dpoDialog"], r"has a PO|Choosing a PO|stays a code project|disabled")
         self.assertFalse(o["dpoPill"][0], "the PO pill shows")
         self.assertIn('<span class="po-pill-t">PO</span><span class="po-pill-p">Cars</span>', o["dpoPill"][1])
         self.assertIn('grid-template-areas: "chrome chrome" "files files" "po board"', INDEX)
         self.assertIn('grid-template-areas: "chrome" "files" "po" "board"', INDEX)
+        # Board wide under the files is stacked at every width: the board, not
+        # an unbounded pane, scrolls sideways, and the edge buttons follow the page.
+        for rule in ("body.docs-split.po-wide .po-board { overflow: visible; }",
+                     "body.docs-split.po-wide .po-board .board { overflow-x: auto; }",
+                     "body.docs-split.po-wide .board-edge { align-items: flex-start; }"):
+            self.assertIn(rule, INDEX)
+        wide = INDEX.index("body.docs-split.po-wide .po-board { overflow: visible; }")
+        self.assertGreater(wide, INDEX.index("body.po-split .po-board, body.po-wide .po-board { grid-area: board;"))
+        self.assertLess(wide, INDEX.index("@media", wide), "outside any media block")
 
     def test_the_tree_hides_only_real_task_folders(self):
         o = self.out
