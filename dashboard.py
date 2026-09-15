@@ -8313,6 +8313,11 @@ class Handler(BaseHTTPRequestHandler):
                 # say so, or the page counts a message as sent that never was.
                 self._send_json(410, {"error": "the session has stopped"})
                 return
+            # Who sent it is looked up outside the gate (a process lookup, up to
+            # seconds on macOS/Linux, must not hold doorbells up). An ask that
+            # lands in between makes this count as a person's, but stamped
+            # before the ask's own submit, which rotation._typed_since ignores.
+            by_person = self._pty_input_by_person(sess)
             # One step with a rotation's mark (rotation.GATE): input to a task
             # being handed over is refused rather than reach the session being
             # ended, and input before it is seen by the rotation's last check.
@@ -8321,7 +8326,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(409, {"error": "handing over to a fresh session, "
                                                    "try again shortly"})
                     return
-                if self._pty_input_by_person(sess):
+                if by_person:
                     sess.last_input = time.time()
                 if not sess.write(data.get("data", "")):
                     # It ended after the check above: the input went nowhere.
