@@ -1,17 +1,19 @@
 """Documents projects: a folder of files instead of code, with its files first.
 
 * the kind: project.json holds it, /api/projects and ensemble_list_projects
-  show it, it switches back and forth, and a PO and a documents project
-  exclude each other (a project with a PO cannot become one; choosing a PO
-  makes one a code project again), each with a plain sentence;
+  show it, it switches back and forth, with or without a PO, and each refusal
+  has a plain sentence;
+* a documents project with a PO: it stays documents, its tasks and PO work in
+  its folder, reports and the digest reach its PO, its files stay open;
 * the hub side of the file history: the tree marks task folders and never
   lists .history, a task's report or chat message asks for a snapshot credited
   to it, a turn's end is seen from the PTYs, the /api/history/* endpoints are
   refused for a code project, and restore is for the dashboard page only;
 * a new task in a documents project works in its folder unless told otherwise;
 * the page (index.html's "Documents project" block and the functions around
-  it, run in Node; skipped without Node): the Overview leads with files and has
-  no PO note or pill, a code project's Overview is unchanged, the tree hides
+  it, run in Node; skipped without Node): the Overview leads with files and,
+  without a PO, has no PO note or pill but a Choose the PO… button; with a PO,
+  the PO and board follow the files; a code project's Overview is unchanged, the tree hides
   only real task folders, and the history's lists read as they should.
 """
 from __future__ import annotations
@@ -136,21 +138,24 @@ class ProjectKind(Hub):
         self.assertEqual((status, body["error"]), (400, "files_outside_projects_root"))
         self.assertIn("projects folder", body["message"])
 
-    def test_a_po_and_a_documents_project_exclude_each_other(self):
+    def test_a_documents_project_can_have_a_po(self):
         rid = self.room("PO")
-        self.assertEqual(self.json_call("POST", "/api/projects/po", {"projectId": self.pid, "roomId": rid})[0], 200)
+        po = lambda chosen: self.json_call("POST", "/api/projects/po", {"projectId": self.pid, "roomId": chosen})
+        self.assertEqual(po(rid), (200, {"ok": True}))
         status, body = self.json_call("POST", "/api/projects/kind", {"projectId": self.pid, "kind": "documents"})
-        self.assertEqual((status, body["error"]), (400, "project_has_po"))
-        self.assertEqual(body["message"], dashboard.KIND_REFUSALS["project_has_po"])
-        self.assertNotIn("kind", self.meta())
-        self.json_call("POST", "/api/projects/po", {"projectId": self.pid, "roomId": ""})
-        self.assertEqual(self.json_call("POST", "/api/projects/kind", {"projectId": self.pid, "kind": "documents"})[0], 200)
-        status, body = self.json_call("POST", "/api/projects/po", {"projectId": self.pid, "roomId": rid})
-        self.assertEqual(status, 200)
-        self.assertEqual(body["kind"], "code")
-        self.assertEqual(body["message"], dashboard.SWITCHED_TO_CODE)
-        self.assertNotIn("kind", self.meta())
-        self.assertEqual(self.meta()["poRoomId"], rid)
+        self.assertEqual((status, body), (200, {"ok": True, "kind": "documents"}), "a project with a PO may become one")
+        self.assertEqual((self.meta()["kind"], self.meta()["poRoomId"]), ("documents", rid))
+        # Clearing and choosing the PO again leaves the kind alone.
+        self.assertEqual(po(""), (200, {"ok": True}))
+        self.assertEqual(self.meta()["kind"], "documents")
+        self.assertEqual(po(rid), (200, {"ok": True}))
+        self.assertEqual((self.meta()["kind"], self.meta()["poRoomId"]), ("documents", rid))
+        self.assertEqual(dashboard.find_project(self.pid)["kind"], "documents")
+        self.assertNotIn("project_has_po", dashboard.KIND_REFUSALS)
+        self.assertFalse(hasattr(dashboard, "SWITCHED_TO_CODE"))
+        # Back to code keeps the PO too.
+        self.assertEqual(self.json_call("POST", "/api/projects/kind", {"projectId": self.pid, "kind": "code"})[0], 200)
+        self.assertEqual((self.meta().get("kind"), self.meta()["poRoomId"]), (None, rid))
 
     def test_a_po_that_no_longer_exists_is_no_po(self):
         dashboard._set_project_meta(self.pid, "poRoomId", "room-gone")
@@ -177,6 +182,68 @@ class ProjectKind(Hub):
             dashboard.set_project_kind(self.pid, "code")
             dashboard.create_task("t", "s", self.pid, [{"agent": "claude"}], "")
         self.assertEqual(seen, ["inplace", "empty", "empty"])
+
+
+class ADocumentsProjectsPO(Hub):
+    """A documents project with a PO keeps its files and routes like a code project."""
+
+    def setUp(self):
+        super().setUp()
+        self.assertEqual(dashboard.set_project_kind(self.pid, "documents"), (True, "ok"))
+        self.po = self.room("Motors PO")
+        self.assertEqual(dashboard.set_project_po(self.pid, self.po), (True, "ok"))
+        self.task = self.room("Sell the X5")
+
+    def test_it_stays_documents_and_its_tasks_and_po_work_in_the_folder(self):
+        proj = dashboard.find_project(self.pid)
+        self.assertEqual((proj["kind"], proj["poRoomId"]), ("documents", self.po))
+        seen = []
+
+        def fake(project, mode, title):
+            seen.append(mode)
+            return False, "", {}, "stop here"
+        with mock.patch.object(dashboard, "setup_session_workspace", fake):
+            dashboard.create_task("t", "s", self.pid, [{"agent": "claude"}], "")
+        self.assertEqual(seen, ["inplace"])
+        # The PO itself: a task in the folder, no worktree (there is no repository).
+        ok, base, meta, _ = dashboard.setup_session_workspace(proj, "inplace", "Motors PO")
+        self.assertTrue(ok)
+        self.assertTrue(os.path.samefile(base, self.home))
+        self.assertEqual(meta["mode"], "inplace")
+        ok, _, _, msg = dashboard.setup_session_workspace(proj, "worktree", "Motors PO 2")
+        self.assertFalse(ok, msg)
+
+    def test_a_task_report_goes_to_its_po_not_the_user(self):
+        rung = []
+        handler = SimpleNamespace(_ring_report=lambda *a: rung.append(a) or ["claude"])
+        ctx = {"room": chatroom.get_room(self.task, public=False), "identity": "claude", "projectId": self.pid}
+        res = ensemble_tools._report(ctx, {"kind": "completed", "text": "The ad is in Selling/ad.md"}, handler)
+        self.assertEqual(res["deliveredTo"], {"roomId": self.po, "identity": "claude", "title": "Motors PO"})
+        self.assertTrue(res["poWoken"])
+        self.assertEqual([a[0] for a in rung], [self.po])
+        self.assertIn("The ad is in Selling/ad.md", rung[0][-1])
+        # The PO's own report still goes to the user.
+        ctx = {"room": chatroom.get_room(self.po, public=False), "identity": "claude", "projectId": self.pid}
+        self.assertEqual(ensemble_tools._report(ctx, {"kind": "update", "text": "x"}, handler)["deliveredTo"], "user")
+        self.assertTrue(ensemble_tools.is_admin_caller(chatroom.get_room(self.po), "claude"))
+        self.assertFalse(ensemble_tools.is_admin_caller(chatroom.get_room(self.task), "claude"))
+
+    def test_the_digest_goes_to_its_po(self):
+        import digest
+        proj = dashboard.find_project(self.pid)
+        with mock.patch.object(dashboard, "_room_is_live", lambda room: True):
+            room, ident, why = digest._po_target(proj)
+        self.assertEqual((room["id"], ident, why), (self.po, "claude", ""))
+        self.assertEqual([t["id"] for t in digest.gather(proj)], [self.task], "the PO is not one of its tasks")
+
+    def test_its_files_and_history_are_still_open(self):
+        proj, home = dashboard.files_target(self.pid)
+        self.assertEqual(proj["id"], self.pid)
+        self.assertTrue(os.path.samefile(home, self.home))
+        proj, home, bad = dashboard._history_target(self.pid)
+        self.assertIsNone(bad)
+        dashboard._history_nudge(self.task, "report")
+        self.assertEqual([r["who"] for r in history._take_requests()][-1:], [[{"id": self.task, "title": "Sell the X5"}]])
 
 
 class TreeAndSnapshots(Hub):
@@ -438,11 +505,13 @@ const out = {};
 let SELECTED_PROJECT = null, PROJECT_TAB = 'tasks', SB_DEST = '', SELECTED_SID = null, PO_LAST = '', PO_PEEK = false;
 const UNASSIGNED_ID = '__unassigned__', DR_CHUNK = 500;
 const docsPath = 'C:\\Users\\f\\EnsembleProjects\\Motors', codePath = 'C:\\Users\\f\\EnsembleProjects\\Opten';
-let ALL_ROWS = [{ roomId: 'room-po', sessionId: 'room-po', label: 'PO task' }, { roomId: 'room-d1', sessionId: 'room-d1', label: 'Sort papers', taskDir: docsPath + '\\sort_papers' }];
+let ALL_ROWS = [{ roomId: 'room-po', sessionId: 'room-po', label: 'PO task' }, { roomId: 'room-d1', sessionId: 'room-d1', label: 'Sort papers', taskDir: docsPath + '\\sort_papers' },
+                { roomId: 'room-dpo', sessionId: 'room-dpo', label: 'Motors PO', agent: 'claude' }];
 const PROJECTS = { projects: [
   { id: 'p-docs', name: 'Motors', kind: 'documents', registered: true, path: docsPath, home: docsPath, poRoomId: '', sessions: [{ roomId: 'room-d1', taskDir: docsPath + '\\sort_papers' }] },
   { id: 'p-code', name: 'Opten', kind: 'code', registered: true, path: codePath, home: codePath, poRoomId: '', sessions: [{ roomId: 'room-c1' }] },
   { id: 'p-po', name: 'Hub', kind: 'code', registered: true, path: 'C:\\x\\Hub', home: 'C:\\x\\Hub', poRoomId: 'room-po', sessions: [{ roomId: 'room-po' }] },
+  { id: 'p-dpo', name: 'Cars', kind: 'documents', registered: true, path: 'C:\\x\\Cars', home: 'C:\\x\\Cars', poRoomId: 'room-dpo', sessions: [{ roomId: 'room-dpo' }] },
 ] };
 const pill = { hidden: true, _html: '', title: '', classList: { toggle() {} }, setAttribute() {}, set innerHTML(v) { this._inner = v; } };
 const document = { getElementById: id => id === 'po-pill' ? pill : null };
@@ -457,6 +526,8 @@ out.docsPoSplit = poSplitProject();
 out.docsNote = poNoteHtml();
 out.docsFrame = overviewFrameHtml({ poSplit: false, docs: true, chrome: '[chrome]', poNote: '', inner: '[board]', edges: '' });
 out.docsKind = kindBtnHtml(projectById('p-docs'));
+out.docsChoose = poChooseBtnHtml(projectById('p-docs'));
+out.docsDialog = kindDialogHtml(projectById('p-docs'));
 renderPoPill(projectById('p-docs')); out.docsPill = pill.hidden;
 const panel = docsPanelHtml(projectById('p-docs'));
 out.panelOrder = [panel.indexOf('>Files<'), panel.indexOf('>Recent changes<')];
@@ -468,10 +539,22 @@ out.codeOverview = docsOverviewProject();
 out.codeNote = poNoteHtml();
 out.codeFrame = overviewFrameHtml({ poSplit: false, docs: false, chrome: '[chrome]', poNote: poNoteHtml(), inner: '[board]', edges: '' });
 out.codeKind = kindBtnHtml(projectById('p-code'));
+out.codeChoose = poChooseBtnHtml(projectById('p-code'));
 pill.hidden = true; renderPoPill(projectById('p-code')); out.codePill = pill.hidden;
 at('p-po');
 out.poSplit = (poSplitProject() || {}).id || null;
-out.poDialog = kindDialogHtml(projectById('p-po'), poRowOf(projectById('p-po')));
+out.poDialog = kindDialogHtml(projectById('p-po'));
+out.poChoose = poChooseBtnHtml(projectById('p-po'));
+
+// A documents project with a PO: files first, then the PO beside the board.
+at('p-dpo');
+out.dpoOverview = (docsOverviewProject() || {}).id || null;
+out.dpoSplit = (poSplitProject() || {}).id || null;
+out.dpoNote = poNoteHtml();
+out.dpoFrame = overviewFrameHtml({ poSplit: true, docs: true, chrome: '[chrome]', poNote: '', inner: '[board]', edges: '[edges]' });
+out.dpoChoose = poChooseBtnHtml(projectById('p-dpo'));
+out.dpoDialog = kindDialogHtml(projectById('p-dpo'));
+pill.hidden = true; pill._inner = ''; renderPoPill(projectById('p-dpo')); out.dpoPill = [pill.hidden, pill._inner || ''];
 
 // The tree: a documents project shows its own folders, hides real task folders.
 const entries = [
@@ -561,6 +644,9 @@ class ThePage(unittest.TestCase):
         self.assertTrue(o["docsPill"], "no PO pill")
         self.assertEqual(o["docsFrame"], '<div class="po-chrome">[chrome]</div><div class="po-board">[board]</div>')
         self.assertIn(">Documents project<", o["docsKind"])
+        self.assertIn('class="po-btn po-choose" data-proj="p-docs"', o["docsChoose"])
+        self.assertIn(">Choose the PO…<", o["docsChoose"])
+        self.assertNotIn("PO", o["docsDialog"], "the Kind dialog no longer mentions the PO")
         self.assertTrue(0 <= o["panelOrder"][0] < o["panelOrder"][1], "Files come before Recent changes")
         self.assertTrue(o["panelHasTree"])
         self.assertIsNone(o["docsOnWorkspaceTab"])
@@ -572,9 +658,23 @@ class ThePage(unittest.TestCase):
         self.assertEqual(o["codeFrame"], "[chrome]" + o["codeNote"] + "[board]")
         self.assertFalse(o["codePill"], "the No PO pill still shows")
         self.assertIn(">Code project<", o["codeKind"])
+        self.assertEqual(o["codeChoose"], "", "a code project says how to get a PO in its note")
         self.assertEqual(o["poSplit"], "p-po")
-        self.assertIn("This project has a PO (PO task), so it stays a code project.", o["poDialog"])
-        self.assertRegex(o["poDialog"], r'value="documents"[^>]* disabled')
+        self.assertEqual(o["poChoose"], "")
+        self.assertNotIn("PO", o["poDialog"])
+        self.assertNotIn("disabled", o["poDialog"], "a project with a PO may become a documents project")
+
+    def test_a_documents_project_with_a_po_leads_with_files_then_the_po(self):
+        o = self.out
+        self.assertEqual((o["dpoOverview"], o["dpoSplit"]), ("p-dpo", "p-dpo"))
+        self.assertEqual(o["dpoNote"], "")
+        self.assertEqual(o["dpoFrame"], '<div class="po-chrome">[chrome]</div><div class="po-board">[board]</div>[edges]')
+        self.assertEqual(o["dpoChoose"], "")
+        self.assertNotIn("PO", o["dpoDialog"])
+        self.assertFalse(o["dpoPill"][0], "the PO pill shows")
+        self.assertIn('<span class="po-pill-t">PO</span><span class="po-pill-p">Cars</span>', o["dpoPill"][1])
+        self.assertIn('grid-template-areas: "chrome chrome" "files files" "po board"', INDEX)
+        self.assertIn('grid-template-areas: "chrome" "files" "po" "board"', INDEX)
 
     def test_the_tree_hides_only_real_task_folders(self):
         o = self.out
