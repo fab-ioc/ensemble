@@ -384,6 +384,18 @@ class Addresses(Hub):
         text, err = ensemble_tools.call(name, args, room or self.po, "claude", handler)
         return (json.loads(text) if not err else text), err
 
+    def test_get_task_keeps_the_real_report_an_update_followed(self):
+        chatroom.record_report(self.b, "codex", "question", "Which motor?")
+        out, _ = self.tool("ensemble_get_task", {"taskId": "#2"})
+        self.assertEqual(out["lastReport"]["kind"], "question")
+        self.assertNotIn("lastRealReport", out)
+        time.sleep(0.002)
+        chatroom.record_report(self.b, "codex", "update", "Working again")
+        out, _ = self.tool("ensemble_get_task", {"taskId": "#2"})
+        self.assertEqual(out["lastReport"]["kind"], "update")
+        self.assertEqual((out["lastRealReport"]["kind"], out["lastRealReport"]["text"]),
+                         ("question", "Which motor?"))
+
     def test_tools_take_a_number(self):
         for ref in ("#2", "2", 2, "ED-2", "ed-2", self.b):
             out, err = self.tool("ensemble_get_task", {"taskId": ref})

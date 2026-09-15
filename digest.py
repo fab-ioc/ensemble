@@ -14,14 +14,41 @@ about the project's tasks and compares them with what the PO was last told:
 
 The facts come from the hub alone: each task's status, board column, attention
 state and reason, how long since it last did something, the commits on its
-branch, and what finished since the last digest. "Changed" is judged on the
-stable ones only — status, column, attention state, reports, the branch head —
-never on idle time, which moves every second.
+branch, and what finished since the last digest.
+
+**What is news**, per task (anything else sends nothing):
+
+* a new task, or one that left the project; a rename;
+* its status or board column changed; new commits on its branch, or its work
+  merged;
+* it became blocked, its agent is gone, or it stalled — unless the last digest
+  sent already said so;
+* such a problem is over (it went from blocked, gone or stalled to fine or to
+  waiting for the CEO);
+* it is waiting for the CEO for the first time since its last report, commit,
+  status or column change.
+
+**Not news**, even though the facts move:
+
+* a task's report on its own. Reports reach the PO directly, at once
+  (``ensemble_report``); a digest only mentions one when it goes out for
+  another reason, and never an ``update`` report (a rotation, a handover);
+* a task that was waiting for the CEO taking a turn and waiting again. The hub
+  typing into it (a doorbell, the rotation ask) makes its attention flap from
+  "waiting for you" to nothing and back; that is not a new question;
+* idle time, which moves every second, and attention reasons, which carry
+  durations.
 
 The baseline (what the PO was last told) is kept in ``DASHBOARD_DIR/digests.json``
 so a hub restart neither re-sends the same news nor forgets news it has not
-delivered. It advances only when a digest is delivered (or there was nothing to
-say): while the PO is not running, changes accumulate into the next digest.
+delivered. It advances only when a digest is delivered: while the PO is not
+running, changes accumulate into the next digest, and a report that was not
+news on its own is still mentioned in it. Per task it also keeps the attention
+state the last sent digest told (``toldAttention``) and what the task looked
+like when it last told "waiting for you" (``toldWaiting``: status, column,
+branch head, last real report), which is how a state already told is not told
+again. A task's report here is always its last real one
+(``chatroom.last_real_report``): an ``update`` never replaces it.
 
 The first check of a project ever records the baseline without sending — the
 PO already knows the state it started from.
@@ -57,9 +84,15 @@ TICK_S = 15                 # how often the scheduler looks at the clock
 SENDER = "ensemble"         # who a digest is from in the PO's room
 _WAKE_MAX = 900             # the doorbell carries the digest on one line
 
-# The fields whose change is news. Idle time and attention *reasons* (which
-# carry durations) are facts, not triggers.
-_WATCHED = ("status", "column", "attention", "report", "head", "title", "merged")
+# The fields whose change is news by itself. Idle time and attention *reasons*
+# (which carry durations) are facts, not triggers.
+_WATCHED = ("status", "column", "head", "title", "merged")
+# Kept in the baseline but news only by the rules in diff(): the attention
+# state, and the task's last report (by its time) and kind.
+_KEPT = ("attention", "report", "reportKind")
+# Attention states that are a problem: news when new, and news when over.
+_PROBLEMS = ("blocked", "agent_gone", "stalled")
+_WAITING = "waiting_for_you"
 
 _LOCK = threading.Lock()    # one check at a time: scheduler vs "check now"
 _STATE: dict[str, dict] = {}   # projectId -> {lastCheck, nextCheck, lastResult, ...}
@@ -235,7 +268,9 @@ def _settle_merges(tasks: list[dict]) -> list[str]:
 def _task_facts(room: dict, attn: dict, labels: dict, now: float) -> dict:
     et = _d.ensemble_tools
     item = attn.get(room["id"]) or {}
-    rep = room.get("lastReport") if isinstance(room.get("lastReport"), dict) else {}
+    # The last real report: an update (a rotation, a handover) is never a fact
+    # here, and never hides the question or completion it followed.
+    rep = _d.chatroom.last_real_report(room)
     g = _git_facts(room)
     return {
         "id": room["id"],
@@ -283,12 +318,61 @@ def gather(project: dict) -> list[dict]:
 
 
 def _stable(t: dict) -> dict:
-    return {k: t.get(k) for k in _WATCHED}
+    return {k: t.get(k) for k in _WATCHED + _KEPT}
+
+
+def _mark(t: dict) -> list:
+    """What the task looks like, for "waiting for you": it is news again only
+    once one of these has changed. ``report`` is its last real report."""
+    return [t.get("status"), t.get("column"), t.get("head"), t.get("report") or 0]
+
+
+def _told(old: dict) -> tuple[str, list | None]:
+    """(toldAttention, toldWaiting) of a baseline entry. An entry from before
+    these were kept counts as having told the attention state it recorded."""
+    ta = old["toldAttention"] if "toldAttention" in old else old.get("attention")
+    if "toldWaiting" in old:
+        tw = old["toldWaiting"]
+    else:
+        tw = _mark(old) if old.get("attention") == _WAITING else None
+    return ta or "", tw
+
+
+def _new_report(old: dict, t: dict) -> bool:
+    """A real report the PO has not seen in a digest yet."""
+    return bool(t.get("report")) and t.get("reportKind") != "update" \
+        and t["report"] != (old.get("report") or 0)
+
+
+def _attention_news(old: dict, t: dict) -> str:
+    """How the task's attention changed, when that is news; "" otherwise."""
+    told, told_waiting = _told(old)
+    now = t.get("attention") or ""
+    if now in _PROBLEMS and now != told:
+        return f"attention {told or 'none'} → {now}"
+    if told in _PROBLEMS and now not in _PROBLEMS:
+        return f"attention {told} → {now or 'none'}"
+    if now == _WAITING and told_waiting != _mark(t):
+        return f"attention {told or 'none'} → {now}"
+    return ""
+
+
+def told_baseline(before: dict, tasks: list[dict]) -> dict:
+    """The per-task baseline once a digest with these facts has gone out."""
+    out = {}
+    for t in tasks:
+        old = before.get(t["id"]) or {}
+        now = t.get("attention") or ""
+        out[t["id"]] = {**_stable(t), "label": t.get("label") or t["id"],
+                        "toldAttention": now,
+                        "toldWaiting": _mark(t) if now == _WAITING else _told(old)[1]}
+    return out
 
 
 def diff(before: dict, tasks: list[dict]) -> list[dict]:
-    """What changed since ``before`` ({taskId: stable facts}), one entry per
-    task: ``{id, title, what: [..], finished: bool}``."""
+    """What is news since ``before`` (the per-task baseline), one entry per
+    task that has some: ``{id, title, what: [..], finished: bool}``. See the
+    module docstring for what is and is not news."""
     changes = []
     now_ids = set()
     for t in tasks:
@@ -307,16 +391,19 @@ def diff(before: dict, tasks: list[dict]) -> list[dict]:
         if old.get("column") != t["column"]:
             what.append(f"moved {old.get('column')} → {t['column']}")
             finished |= t["column"] in ("inreview", "done")
-        if old.get("attention") != t["attention"]:
-            what.append(f"attention {old.get('attention') or 'none'} → {t['attention'] or 'none'}")
-        if (old.get("report") or 0) != t["report"] and t["report"]:
-            what.append(f"reported {t['reportKind']}")
-            finished |= t["reportKind"] == "completed"
+        attention = _attention_news(old, t)
+        if attention:
+            what.append(attention)
         if t["merged"] and not old.get("merged"):
             what.append(f"its work merged into {t['base']}")
             finished = True
         elif old.get("head") != t["head"] and t["head"] and not t["merged"]:
             what.append("new commits" if old.get("head") else "first commits on its branch")
+        # A report reached the PO when it was made: context for other news,
+        # never news on its own.
+        if what and _new_report(old, t):
+            what.append(f"reported {t['reportKind']}")
+            finished |= t["reportKind"] == "completed"
         if what:
             changes.append({"id": t["id"], "label": t.get("label") or t["id"], "title": t["title"],
                             "what": what, "finished": finished})
@@ -338,8 +425,12 @@ def _ago(s: float) -> str:
     return f"{s // 86400} d"
 
 
-def plain_facts(project: dict, tasks: list[dict], changes: list[dict], since: float) -> str:
-    """The facts as text: what the model is given, and what is sent when it fails."""
+def plain_facts(project: dict, tasks: list[dict], changes: list[dict], since: float,
+                reported: set | None = None) -> str:
+    """The facts as text: what the model is given, and what is sent when it
+    fails. ``reported``: ids of tasks whose report is quoted — those with a
+    report not yet in a digest, whether or not they have news of their own
+    (by default, the tasks that changed)."""
     when = time.strftime("%H:%M", time.localtime(since)) if since else "the start"
     lines = [f"Project '{project.get('name', project['id'])}' — changes since {when}:"]
     fin = [c for c in changes if c["finished"]]
@@ -349,7 +440,8 @@ def plain_facts(project: dict, tasks: list[dict], changes: list[dict], since: fl
     for c in changes:
         lines.append(f"- {c['title']} ({name(c)}): " + ", ".join(c["what"]))
     changed_ids = {c["id"] for c in changes}
-    open_ = [t for t in tasks if t["column"] != "done" or t["id"] in changed_ids]
+    quoted = changed_ids if reported is None else reported
+    open_ =[t for t in tasks if t["column"] != "done" or t["id"] in changed_ids]
     if open_:
         lines.append("")
         lines.append("Tasks now:")
@@ -369,7 +461,8 @@ def plain_facts(project: dict, tasks: list[dict], changes: list[dict], since: fl
             if t["lastCommit"]:
                 c += f", last: {t['lastCommit']}"
             bits.append(c)
-        if t["reportKind"] and t["id"] in changed_ids:
+        # An update (a rotation, a handover) is never mentioned.
+        if t["reportKind"] not in ("", "update") and t["id"] in quoted:
             bits.append(f"report ({t['reportKind']}): {t['reportText']}")
         lines.append(f"- {t['title']} ({name(t)}): " + "; ".join(bits))
     return "\n".join(lines)
@@ -482,7 +575,6 @@ def _check(project: dict, force: bool) -> dict:
     # Before anything else, and whether or not a digest goes out: the board
     # follows a merge even while the PO is not running.
     _settle_merges(tasks)
-    stable = {t["id"]: _stable(t) for t in tasks}
 
     def done(result: str, **extra) -> dict:
         st["lastResult"] = result
@@ -491,21 +583,23 @@ def _check(project: dict, force: bool) -> dict:
         return {"projectId": pid, "result": result, **extra}
 
     if base is None:
-        _save_baseline(pid, {"tasks": stable, "lastCheck": now, "lastSent": 0})
+        _save_baseline(pid, {"tasks": told_baseline({}, tasks), "lastCheck": now, "lastSent": 0})
         return done(f"first check — baseline of {len(tasks)} task(s) recorded, nothing sent")
-    changes = diff(base.get("tasks") or {}, tasks)
+    before = base.get("tasks") or {}
+    changes = diff(before, tasks)
     if not changes and not force:
         base["lastCheck"] = now
         _save_baseline(pid, base)
-        return done("nothing changed — skipped, PO not woken")
+        return done("nothing new — skipped, PO not woken")
     room, ident, why = _po_target(project)
     if room is None:
         # Keep the old baseline: these changes go into the next digest.
         return done(f"{len(changes)} change(s), not sent — {why}", pending=len(changes))
-    facts = plain_facts(project, tasks, changes, float(base.get("lastSent") or 0))
+    reported = {t["id"] for t in tasks if _new_report(before.get(t["id"]) or {}, t)}
+    facts = plain_facts(project, tasks, changes, float(base.get("lastSent") or 0), reported)
     text, how = write_up(facts)
     woke = _deliver(project, room, ident, text, how, changes)
-    _save_baseline(pid, {"tasks": stable, "lastCheck": now, "lastSent": now})
+    _save_baseline(pid, {"tasks": told_baseline(before, tasks), "lastCheck": now, "lastSent": now})
     st["lastSent"] = now
     return done(f"{len(changes)} change(s) — digest sent ({how})"
                 + ("" if woke else ", but the PO could not be rung"),

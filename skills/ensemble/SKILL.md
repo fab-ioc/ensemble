@@ -109,10 +109,13 @@ project has no PO, the report goes to the user instead.
   you hand the work back.
 
 **If you are the PO**, the hub also checks your project's tasks on a timer
-(every 5 minutes by default) and wakes you with a `[digest]` only when
-something changed: a task's status, board column or attention state, a new
-report, new commits on its branch, or its work landing on `main`. No digest
-means nothing changed, so you don't need to poll. The digest lists the tasks by
+(every 5 minutes by default) and wakes you with a `[digest]` only for news: a
+task's status or board column changed, new commits on its branch or its work
+landing on `main`, a task newly blocked, stalled or with its agent gone (or
+that problem over), or a task waiting for the product owner for the first time
+since its last report, commit or move. A report alone is not news (it already
+reached you), nor a task that was already waiting taking a turn and waiting
+again, nor a rotation. No digest means nothing new, so you don't need to poll. The digest lists the tasks by
 id; read one in full with `ensemble_get_task`. For each branch it says one of
 three things: the work is merged into `main`, it has commits not yet on
 `main`, or it has no commits yet.
@@ -376,6 +379,15 @@ reach you as `[report] completed from task '…' (#18, codex)`, and
 **Wakes cost your whole conversation.** Reports and the `[digest]` wake you;
 never poll. Keep turns short and the history small: hand large reading to a
 subagent, and don't re-read what you already have.
+
+**Nothing new for the product owner: write nothing.** A progress check, a
+task's report or a rotation note that changes nothing for the product owner
+gets no message to them at all — not "Nothing new", not "Noted", not a
+restatement of what they are already waiting on. End the turn without writing.
+Every reply you write lands in their chat, and the same "nothing new" repeated
+under a decision they have not answered yet is noise. Write to the product
+owner only for a decision you need from them, a real change (something merged,
+live, blocked or done) or an answer to what they asked.
 
 **Asking the product owner to decide.** Put the whole decision in one reply:
 

@@ -675,19 +675,37 @@ def record_report(room_id: str, identity: str, kind: str, text: str,
         room["lastReport"] = {"kind": kind, "text": text[:4000], "ts": now,
                               "identity": identity, "messageId": msg["id"],
                               "to": routed_to or {"identity": HUMAN_IDENTITY}}
+        # An update (a rotation, a handover, "working again") says nothing the
+        # PO must act on: the last completed / question / blocked survives it.
+        if kind != "update":
+            room["lastRealReport"] = room["lastReport"]
         room["updatedAt"] = now
         _write(room)
         return msg
 
 
-def post_report(room_id: str, sender: str, to: str, text: str, meta: dict) -> dict | None:
+def last_real_report(room: dict) -> dict:
+    """The task's last report that is not an ``update``, or {}. A task that
+    reported before ``lastRealReport`` was kept falls back to ``lastReport``
+    when that is not an update."""
+    rep = room.get("lastRealReport")
+    if isinstance(rep, dict):
+        return rep
+    rep = room.get("lastReport")
+    return rep if isinstance(rep, dict) and rep.get("kind") != "update" else {}
+
+
+def post_report(room_id: str, sender: str, to: str, text: str, meta: dict,
+                wake: bool = True) -> dict | None:
     """Deliver a report from another task into this (the PO's) room, addressed
     to ``to``. Returns the same shape as :func:`post_message`.
 
-    Unlike a chat hand-off it always wakes its addressee — being woken by the
-    tasks it runs is the PO's whole job — and it leaves the PO room's status
-    and hop count alone: the report came from outside the room, so it is
-    neither a turn inside it nor a loop the guard could stop."""
+    Unlike a chat hand-off it wakes its addressee — being woken by the tasks it
+    runs is the PO's whole job — and it leaves the PO room's status and hop
+    count alone: the report came from outside the room, so it is neither a turn
+    inside it nor a loop the guard could stop. ``wake=False`` posts a note that
+    asks nothing of the PO (a task owner's rotation): it is shown in the room
+    but rings nobody, so the attention detector never waits for an answer."""
     with _LOCK:
         room = _read(room_id)
         if room is None:
@@ -695,7 +713,7 @@ def post_report(room_id: str, sender: str, to: str, text: str, meta: dict) -> di
         msg = {"id": uuid.uuid4().hex[:12], "from": sender, "to": to, "text": text,
                "ts": _now(), "kind": "report", **meta}
         is_agent = any(p.get("identity") == to for p in agent_participants(room))
-        msg["rang"] = [to] if is_agent else []
+        msg["rang"] = [to] if is_agent and wake else []
         room.setdefault("messages", []).append(msg)
         room["updatedAt"] = _now()
         _write(room)
