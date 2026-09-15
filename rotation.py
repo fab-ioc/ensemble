@@ -85,6 +85,7 @@ ASK_TIMEOUT_S = 20 * 60     # no answer to the ask by then: rotate once idle
 GIVE_UP_S = 60 * 60         # still busy by then: drop the attempt, try later
 COOLDOWN_S = 30 * 60        # a session this young is never rotated, nor re-asked
 SENDER = "ensemble"         # who the notice is from in the room
+ASK_MARK = "[handover]"     # how the ask starts, and how its arrival is told
 _KILL_WAIT_S = 8.0
 _CODEX_SID_WAIT_S = 20.0    # Codex mints its own id: wait this long to learn it
 _TAIL_BYTES = (1 << 20, 8 << 20)
@@ -184,11 +185,11 @@ def read_transcript(path: Path | None, since: int = -1) -> dict:
     * ``tokens`` — the context of the latest main-chain model call, or None;
     * ``turnOver`` — the conversation's last main-chain turn is the model
       ending its turn (not a prompt waiting, not a tool call in flight);
-    * ``promptSince`` — a prompt was written at byte ``since`` or later (the
-      ask has reached the conversation): a user turn that is not only tool
-      results, or a line typed mid-turn, which Claude Code logs as a
-      ``queued_command`` attachment when it reads it (tool results are user
-      entries too, and a busy agent writes them all the time);
+    * ``promptSince`` — the ask was written at byte ``since`` or later: a
+      typed prompt holding ``ASK_MARK``, as a user turn or, typed mid-turn, as
+      the ``queued_command`` attachment Claude Code logs when it reads it.
+      Not any user entry: a busy agent writes tool results as user entries,
+      and background-task notifications as queued commands, all the time;
     * ``size`` — the file's size, the offset a later ``since`` compares to.
     """
     out = {"tokens": None, "turnOver": False, "promptSince": False, "size": 0}
@@ -217,7 +218,9 @@ def read_transcript(path: Path | None, since: int = -1) -> dict:
                 continue
             if typ == "attachment":
                 att = d.get("attachment") if isinstance(d.get("attachment"), dict) else {}
-                if att.get("type") == "queued_command" and since >= 0 and off >= since:
+                if (att.get("type") == "queued_command" and since >= 0 and off >= since
+                        and att.get("commandMode") in (None, "prompt")
+                        and ASK_MARK in str(att.get("prompt") or "")):
                     out["promptSince"] = True
                 continue
             if typ not in ("user", "assistant"):
@@ -226,7 +229,7 @@ def read_transcript(path: Path | None, since: int = -1) -> dict:
             if not last_seen:
                 last_seen = True
                 out["turnOver"] = typ == "assistant" and msg.get("stop_reason") == "end_turn"
-            if typ == "user" and since >= 0 and off >= since and _is_prompt(d, msg):
+            if typ == "user" and since >= 0 and off >= since and _holds_ask(d, msg):
                 out["promptSince"] = True
             if typ == "assistant" and out["tokens"] is None and isinstance(msg.get("usage"), dict):
                 out["tokens"] = _context_of(msg["usage"])
@@ -238,16 +241,17 @@ def read_transcript(path: Path | None, since: int = -1) -> dict:
     return _grew_past(out, since, start)
 
 
-def _is_prompt(d: dict, msg: dict) -> bool:
-    """A user entry that is something typed in, not a tool's result nor
-    Claude Code's own meta note."""
+def _holds_ask(d: dict, msg: dict) -> bool:
+    """A user entry that is the ask typed in: its text (not a tool's result,
+    nor Claude Code's own meta note) holds ASK_MARK. A doorbell typed in the
+    same input as the ask still does."""
     if d.get("isMeta"):
         return False
     content = msg.get("content")
     if isinstance(content, list):
-        return any(not (isinstance(b, dict) and b.get("type") == "tool_result")
-                   for b in content)
-    return True
+        content = " ".join(str(b.get("text") or "") for b in content
+                           if isinstance(b, dict) and b.get("type") == "text")
+    return ASK_MARK in str(content or "")
 
 
 def _grew_past(out: dict, since: int, start: int) -> dict:
@@ -576,7 +580,8 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
     sess.send_line(ask)
     # The ask's own submit: a person typing into the terminal after it means
     # someone is working with the agent, and the rotation waits.
-    st.update(phase="asked", askedAt=now, askSize=tr["size"], askPath=str(tpath),
+    st.update(phase="asked", askRoom=s["room"]["id"], askIdentity=part["identity"],
+              askedAt=now, askSize=tr["size"], askPath=str(tpath),
               handoverAtAsk=_mtime(hp), tokensAtAsk=tr["tokens"],
               askSubmit=float(sess.last_submit() or time.time()))
     note = " (it was busy; it reads the ask at its next pause)" if busy else ""
@@ -1019,8 +1024,10 @@ def _rotate(s: dict, tr: dict, done, answered: bool, asked: bool = True) -> dict
         since = float(st.get("askSubmit") or 0) if asked else time.time() - IDLE_S
         person = sess is None or _typed_since(sess, since)
         busy = not person and (not _idle(part, reader(tpath)) or _submitted_lately(sess))
-        if busy and asked:
-            return done(f"{s['who']} started working again — rotating once it is idle")
+        waited = time.time() - float(st.get("askedAt") or 0)
+        if busy and asked and waited <= GIVE_UP_S:
+            return done(f"{s['who']} started working again — rotating once it is idle",
+                        quiet=s["kind"] == "owner")
         if person or busy:
             st.update(phase="watching", lastAttempt=time.time())
             return done(f"{s['who']} was typed to or started working again — this "
@@ -1044,9 +1051,10 @@ def _release(key: tuple) -> None:
 
 def _typed_since(sess, since: float) -> bool:
     """A person typed into its terminal after ``since``: ``last_input``, which
-    the dashboard sets for ``/api/pty/input`` and for a person's message typed
-    into a solo agent — never for the hub's own lines (doorbells, reports,
-    digests, the resume note, this ask) nor the PO's ``[from the PO]``."""
+    the dashboard sets for ``/api/pty/input`` (unless, while the handover is
+    awaited, an agent's process sent it: the PO's ``tell.py``) and for a
+    person's message typed into a solo agent — never for the hub's own lines
+    (doorbells, reports, digests, the resume note, this ask)."""
     try:
         return float(getattr(sess, "last_input", 0) or 0) > since
     except Exception:
@@ -1084,6 +1092,16 @@ def await_rotation(room_id: str, timeout: float = 60.0) -> bool:
 def is_rotating(room_id: str, identity: str) -> bool:
     with GATE:
         return (room_id, identity) in _ROTATING
+
+
+def awaiting_handover(room_id: str, identity: str) -> bool:
+    """This agent (a PO or a task owner) has been asked for its handover and
+    not yet rotated: what it is typed meanwhile decides whether the rotation
+    waits. A read of the states without _LOCK, which a check holds for as
+    long as a rotation takes."""
+    return any(st.get("phase") == "asked" and st.get("askRoom") == room_id
+               and st.get("askIdentity") == identity
+               for st in [*list(_STATE.values()), *list(_TASK_STATE.values())])
 
 
 def hold_wake(room_id: str, identity: str, wake: str) -> bool:

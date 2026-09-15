@@ -216,6 +216,14 @@ class AskedTests(_Base):
         self.assertIn("attempt is dropped", out["result"])
         self.assertIn("lastAttempt", s["state"])
 
+    def test_a_gate_that_keeps_finding_a_submit_gives_up_past_give_up(self):
+        s = self.asked(ago=rotation.GIVE_UP_S + 10)
+        self.idle, self.tr["promptSince"] = True, True
+        self.sess._last_submit = time.time()
+        out = self.check(s)
+        self.assertEqual((self.rotated, out["phase"]), ([], "watching"))
+        self.assertIn("lastAttempt", s["state"])
+
     def test_a_person_typing_before_the_ask_does_not_count(self):
         s = self.asked()
         self.sess.last_input = time.time() - 120     # before the ask
@@ -267,6 +275,7 @@ class TranscriptPromptTests(unittest.TestCase):
         self.add(self.tool_result(),
                  {"type": "queue-operation"},
                  {"type": "attachment", "attachment": {"type": "queued_command",
+                                                       "commandMode": "prompt",
                                                        "prompt": "[handover] Your conversation"}},
                  self.assistant("end_turn"), {"type": "last-prompt"})
         out = self.read()
@@ -279,12 +288,113 @@ class TranscriptPromptTests(unittest.TestCase):
                  self.assistant("end_turn"))
         self.assertTrue(self.read()["promptSince"])
 
+    def test_a_background_task_notification_is_not_the_ask(self):
+        self.add({"type": "attachment", "attachment": {
+            "type": "queued_command", "commandMode": "task-notification",
+            "prompt": "<task-notification>tests done: grep found [handover] 3 times"}},
+            self.assistant("end_turn"))
+        self.assertFalse(self.read()["promptSince"])
+
+    def test_another_line_read_after_the_ask_is_not_the_ask(self):
+        # The ask's Enter did not submit, say: a doorbell read later is not it.
+        self.add({"type": "attachment", "attachment": {
+            "type": "queued_command", "commandMode": "prompt", "prompt": "[relay] New message"}},
+            {"type": "user", "message": {"role": "user", "content": "[report] completed"}},
+            self.assistant("end_turn"))
+        self.assertFalse(self.read()["promptSince"])
+
+    def test_a_tool_result_quoting_the_ask_is_not_the_ask(self):
+        self.add({"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "[handover] Your conversation"}]}})
+        self.assertFalse(self.read()["promptSince"])
+
+    def test_the_ask_typed_with_a_doorbell_in_one_input_is_the_ask(self):
+        self.add({"type": "user", "message": {"role": "user", "content": [
+            {"type": "text", "text": "[relay] New message\n[handover] Your conversation"}]}})
+        self.assertTrue(self.read()["promptSince"])
+
     def test_a_line_read_before_the_ask_does_not_count(self):
         self.since = 0
         self.add({"type": "attachment", "attachment": {"type": "queued_command", "prompt": "x"}})
         self.since = self.path.stat().st_size
         self.add(self.tool_result())
         self.assertFalse(self.read()["promptSince"])
+
+
+class PtyInputTests(_Base):
+    """/api/pty/input's stamp, the way the PO's po-tools/tell.py sends a note:
+    the text, then a lone Enter, from a process under the PO's agent."""
+
+    def handler(self, agent_pid):
+        test = self
+
+        class H(dashboard.Handler):
+            def __init__(self):
+                pass
+
+            def _agent_sender(self):
+                test.lookups += 1
+                return agent_pid
+
+        return H()
+
+    def setUp(self):
+        super().setUp()
+        self.lookups = 0
+        self.sess.meta = {"room": "room-1", "identity": "claude"}
+        self.states = mock.patch.dict(rotation._TASK_STATE, {})
+        self.states.start()
+
+    def tearDown(self):
+        self.states.stop()
+        super().tearDown()
+
+    def type_like_tell(self, h):
+        for data in ("[from the PO] Review 2: fix the finding", "\r"):
+            if h._pty_input_by_person(self.sess):
+                self.sess.last_input = time.time()
+
+    def test_a_po_note_does_not_drop_an_asked_rotation(self):
+        s = self.asked()
+        rotation._TASK_STATE["room-1/claude"] = s["state"]
+        s["state"].update(askRoom="room-1", askIdentity="claude")
+        self.assertTrue(rotation.awaiting_handover("room-1", "claude"))
+        self.type_like_tell(self.handler(agent_pid=4242))
+        self.assertEqual(self.sess.last_input, 0.0)
+        self.idle, self.tr["promptSince"] = True, True
+        self.sess._last_submit = time.time() - 30
+        self.check(s)
+        self.assertEqual(len(self.rotated), 1)
+
+    def test_the_page_typing_drops_it(self):
+        s = self.asked()
+        rotation._TASK_STATE["room-1/claude"] = s["state"]
+        s["state"].update(askRoom="room-1", askIdentity="claude")
+        self.type_like_tell(self.handler(agent_pid=None))
+        self.assertGreater(self.sess.last_input, 0.0)
+        self.idle, self.tr["promptSince"] = True, True
+        self.check(s)
+        self.assertEqual((self.rotated, s["state"]["phase"]), ([], "watching"))
+
+    def test_the_sender_is_looked_up_only_while_a_handover_is_awaited(self):
+        self.type_like_tell(self.handler(agent_pid=4242))
+        self.assertEqual(self.lookups, 0)
+        self.assertGreater(self.sess.last_input, 0.0)
+
+    def test_the_ask_records_whom_it_awaits(self):
+        s = self.subject()
+        rotation._TASK_STATE["room-1/claude"] = s["state"]
+        self.assertFalse(rotation.awaiting_handover("room-1", "claude"))
+        self.check(s)
+        self.assertTrue(rotation.awaiting_handover("room-1", "claude"))
+        self.assertFalse(rotation.awaiting_handover("room-1", "codex"))
+
+    def test_an_unknown_sender_is_not_an_agent(self):
+        import peer_process
+        with mock.patch.object(peer_process, "owner", side_effect=peer_process.Unknown("no table")):
+            self.assertIsNone(peer_process.agent_sender(("127.0.0.1", 1), ("127.0.0.1", 2), {1}))
+        with mock.patch.object(peer_process, "owner", return_value=None):
+            self.assertIsNone(peer_process.agent_sender(("127.0.0.1", 1), ("127.0.0.1", 2), {1}))
 
 
 class WhatCountsAsAPersonTests(unittest.TestCase):

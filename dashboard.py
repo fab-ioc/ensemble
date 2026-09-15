@@ -6456,8 +6456,7 @@ class Handler(BaseHTTPRequestHandler):
             return f"Only the dashboard page can do this, and this request did not come from it: {why}."
         return ""
 
-    def _agent_peer(self) -> str:
-        """Why the program that sent this request counts as an agent, or ""."""
+    def _server_end(self) -> tuple:
         server = self.server.server_address[:2]
         conn = getattr(self, "connection", None)
         if conn is not None:
@@ -6465,7 +6464,28 @@ class Handler(BaseHTTPRequestHandler):
                 server = conn.getsockname()[:2]
             except OSError:
                 pass
-        return peer_process.from_agent(self.client_address[:2], server, _agent_pids())
+        return server
+
+    def _agent_peer(self) -> str:
+        """Why the program that sent this request counts as an agent, or ""."""
+        return peer_process.from_agent(self.client_address[:2], self._server_end(), _agent_pids())
+
+    def _agent_sender(self) -> int | None:
+        """The agent process that sent this request, None when none did or
+        it cannot tell."""
+        return peer_process.agent_sender(self.client_address[:2], self._server_end(), _agent_pids())
+
+    def _pty_input_by_person(self, sess) -> bool:
+        """Whether a write to /api/pty/input is a person's, which holds a
+        rotation waiting for the agent's handover (rotation._typed_since). It
+        is, unless an agent's process sent it: the PO's tell.py types
+        "[from the PO] …" this way, the text and its Enter as two writes. The
+        sender is looked up only while a handover is awaited — the page types
+        keystroke by keystroke."""
+        meta = sess.meta or {}
+        if not rotation.awaiting_handover(meta.get("room", ""), meta.get("identity", "")):
+            return True
+        return self._agent_sender() is None
 
     def _gate(self) -> bool:
         """Return True if the request may proceed. When an ACCESS_TOKEN is set,
@@ -8301,7 +8321,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(409, {"error": "handing over to a fresh session, "
                                                    "try again shortly"})
                     return
-                sess.last_input = time.time()
+                if self._pty_input_by_person(sess):
+                    sess.last_input = time.time()
                 if not sess.write(data.get("data", "")):
                     # It ended after the check above: the input went nowhere.
                     self._send_json(410, {"error": "the session has stopped"})
