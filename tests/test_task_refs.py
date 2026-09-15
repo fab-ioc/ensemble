@@ -87,7 +87,7 @@ const lines = %s;
   await settle();
   const second = mdToHtml(text);
   const again = mdToHtml('#18 once more');
-  const notTasks = mdToHtml('PR #18 fixes #18, finding #18');
+  const notTasks = mdToHtml('PR #18, issue #18, finding #18');
   const asked = fetches.length;
   // A minute on, the task has ended: the chip asks again and redraws once.
   const realNow = Date.now, redrawsBefore = redraws;
@@ -154,7 +154,7 @@ class SessionChips(unittest.TestCase):
             self.assertIn(text, html)
         self.assertEqual(len(self.r["fetches"]), 3, "a number already asked about is not asked again")
         self.assertIn('class="task-chip"', self.r["again"])
-        self.assertNotIn("task-chip", self.r["notTasks"], "PR #18, fixes #18, finding #18 are not tasks")
+        self.assertNotIn("task-chip", self.r["notTasks"], "PR #18, issue #18, finding #18 are not tasks")
 
     def test_a_chip_asks_again_after_a_minute(self):
         ttl = self.r["ttl"]

@@ -138,10 +138,10 @@ class Refs(unittest.TestCase):
         self.assertEqual(tn.find_text_refs("#18a #18-19 x#18 @claude@ no refs"), [])
 
     def test_someone_elses_numbers_are_not_tasks(self):
-        text = ("PR #12, fixes #13, Closes #14, finding #2, Review #3, issues #4, step\n#5, "
-                "the task #18, prefix#6; but PR ED-7 and @codex@8 are.")
+        text = ("PR #12, Issues #4, finding #2, step #5, commit #6, prefix#7; "
+                "but please review #13, fix #14, close #15, a line ending in step\n#16, the task #18 and @codex@8 are.")
         got = [r["token"] for r in tn.find_text_refs(text)]
-        self.assertEqual(got, ["#18", "@codex@8"])
+        self.assertEqual(got, ["#13", "#14", "#15", "#16", "#18", "@codex@8"])
         self.assertEqual([r["token"] for r in tn.find_text_refs("PR #ED-7")], ["#ED-7"], "a key makes it a task")
         self.assertEqual([r["token"] for r in tn.find_text_refs("Mapper #9 and suffix #10")], ["#9", "#10"],
                          "a word only ending in one of them does not count")

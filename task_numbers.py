@@ -34,9 +34,9 @@ TEXT_REF = re.compile(r"(?<![\w&/#@.\\-])(?:@([A-Za-z][\w-]*)@|#)"
 # request, an issue, a review finding), not a task: "PR #12", "fixes #34".
 # ED-12 and @codex@12 are always tasks.
 NOT_TASK_BEFORE = re.compile(
-    r"(?:^|[^\w])(?:pr|mr|pull request|issue|bug|ticket|fix|fixe|fixed|close|closed|resolve|resolved"
-    r"|finding|step|item|point|round|review|option|question|comment|commit|line|page|number|no|part"
-    r"|phase|rule|test|case)s?\.?\s*$", re.I)
+    r"(?:^|[^\w])(?:pr|mr|pull request|issue|bug|ticket|resolve|resolved"
+    r"|finding|step|item|point|round|option|question|comment|commit|line|page|part"
+    r"|phase|rule|case)s?\.?[ \t]*\Z", re.I)   # \Z: Python's $ also matches before a final newline
 _FENCE = re.compile(r"```[\s\S]*?(?:```|$)")
 _CODE = re.compile(r"`[^`\n]*`")
 
