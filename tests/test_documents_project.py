@@ -1,4 +1,4 @@
-"""Documents projects: a folder of files instead of code, with its files first.
+"""Documents projects: a folder of files instead of code, its files in its Workspace tab.
 
 * the kind: project.json holds it, /api/projects and ensemble_list_projects
   show it, it switches back and forth, with or without a PO, and each refusal
@@ -11,10 +11,12 @@
   refused for a code project, and restore is for the dashboard page only;
 * a new task in a documents project works in its folder unless told otherwise;
 * the page (index.html's "Documents project" block and the functions around
-  it, run in Node; skipped without Node): the Overview leads with files and,
-  without a PO, has no PO note or pill but a Choose the PO… button; with a PO,
-  the PO and board follow the files; a code project's Overview is unchanged, the tree hides
-  only real task folders, and the history's lists read as they should.
+  it, run in Node; skipped without Node): the Overview shows no files; without
+  a PO it is the board with no PO note or pill but a Choose the PO… button;
+  with a PO, the PO beside the board as in a code project; the Workspace tab
+  mounts the Files panel; a code project's Overview is unchanged, the tree
+  hides only real task folders unless "Task folders" is checked (never in a
+  task's Workspace), and the history's lists read as they should.
 """
 from __future__ import annotations
 
@@ -516,15 +518,15 @@ const PROJECTS = { projects: [
 const pill = { hidden: true, _html: '', title: '', classList: { toggle() {} }, setAttribute() {}, set innerHTML(v) { this._inner = v; } };
 const document = { getElementById: id => id === 'po-pill' ? pill : null };
 const HL = undefined;
+let DOCS_TASKS = false;
 %(deps)s
 %(block)s
 const at = (id, tab) => { SELECTED_PROJECT = id; PROJECT_TAB = tab || 'tasks'; };
 
 at('p-docs');
-out.docsOverview = (docsOverviewProject() || {}).id || null;
 out.docsPoSplit = poSplitProject();
 out.docsNote = poNoteHtml();
-out.docsFrame = overviewFrameHtml({ poSplit: false, docs: true, chrome: '[chrome]', poNote: '', inner: '[board]', edges: '' });
+out.docsFrame = overviewFrameHtml({ poSplit: false, chrome: '[chrome]', poNote: poNoteHtml(), inner: '[board]', edges: '' });
 out.docsKind = kindBtnHtml(projectById('p-docs'));
 out.docsChoose = poChooseBtnHtml(projectById('p-docs'));
 out.docsDialog = kindDialogHtml(projectById('p-docs'));
@@ -532,12 +534,11 @@ renderPoPill(projectById('p-docs')); out.docsPill = pill.hidden;
 const panel = docsPanelHtml(projectById('p-docs'));
 out.panelOrder = [panel.indexOf('>Files<'), panel.indexOf('>Recent changes<')];
 out.panelHasTree = panel.includes('class="wsp-tree"') && panel.includes('wsp-hist"');
-at('p-docs', 'workspace'); out.docsOnWorkspaceTab = docsOverviewProject();
+out.panelBox = [panel.indexOf('> Task folders</label>'), panel.indexOf('class="wsp-tree"'), panel.includes('dcs-tasks-cb" checked')];
 
 at('p-code');
-out.codeOverview = docsOverviewProject();
 out.codeNote = poNoteHtml();
-out.codeFrame = overviewFrameHtml({ poSplit: false, docs: false, chrome: '[chrome]', poNote: poNoteHtml(), inner: '[board]', edges: '' });
+out.codeFrame = overviewFrameHtml({ poSplit: false, chrome: '[chrome]', poNote: poNoteHtml(), inner: '[board]', edges: '' });
 out.codeKind = kindBtnHtml(projectById('p-code'));
 out.codeChoose = poChooseBtnHtml(projectById('p-code'));
 pill.hidden = true; renderPoPill(projectById('p-code')); out.codePill = pill.hidden;
@@ -546,12 +547,12 @@ out.poSplit = (poSplitProject() || {}).id || null;
 out.poDialog = kindDialogHtml(projectById('p-po'));
 out.poChoose = poChooseBtnHtml(projectById('p-po'));
 
-// A documents project with a PO: files first, then the PO beside the board.
+// A documents project with a PO: the PO beside the board, as in a code project.
 at('p-dpo');
-out.dpoOverview = (docsOverviewProject() || {}).id || null;
 out.dpoSplit = (poSplitProject() || {}).id || null;
 out.dpoNote = poNoteHtml();
-out.dpoFrame = overviewFrameHtml({ poSplit: true, docs: true, chrome: '[chrome]', poNote: '', inner: '[board]', edges: '[edges]' });
+out.dpoFrame = overviewFrameHtml({ poSplit: true, chrome: '[chrome]', poNote: '', inner: '[board]', edges: '[edges]' });
+at('p-dpo', 'workspace'); out.dpoSplitOnWorkspace = poSplitProject();
 out.dpoChoose = poChooseBtnHtml(projectById('p-dpo'));
 out.dpoDialog = kindDialogHtml(projectById('p-dpo'));
 pill.hidden = true; pill._inner = ''; renderPoPill(projectById('p-dpo')); out.dpoPill = [pill.hidden, pill._inner || ''];
@@ -569,6 +570,12 @@ out.codeTree = names(wsRowsHtml(view({ kind: 'project', projectId: 'p-code' }, c
 const tv = view({ kind: 'task', sid: 'room-d1' }, docsPath);
 out.docsTaskTree = names(wsRowsHtml(tv, docsPath));
 out.keys = [wsCtxKey({ kind: 'project', projectId: 'p-docs', docs: true }), wsCtxKey({ kind: 'project', projectId: 'p-docs' })];
+// "Task folders" checked: the Workspace tab shows them; a task's Workspace does not.
+docsTasksSet(true);
+out.docsTreeShown = names(wsRowsHtml(view({ kind: 'project', projectId: 'p-docs', docs: true }, docsPath), docsPath));
+out.docsTaskTreeShown = names(wsRowsHtml(view({ kind: 'task', sid: 'room-d1' }, docsPath), docsPath));
+out.codeTreeShown = names(wsRowsHtml(view({ kind: 'project', projectId: 'p-code' }, codePath), codePath));
+docsTasksSet(false);
 
 // The history's words.
 out.what = [histWhat({ status: 'M', added: 3, removed: 1 }), histWhat({ status: 'A', added: 12, removed: 0 }), histWhat({ status: 'D', added: 0, removed: 4 }),
@@ -623,7 +630,8 @@ const gone = s => s.deleted.map(d => d.path);
 DEPS = ["esc", "agoSpan", "wsNorm", "wsSame", "wsJoin", "wsTabName", "wsFmtSize", "projectById", "registeredProjects",
         "poRowOf", "poSplitProject", "poNoteHtml", "renderPoPill", "poAgent", "wsProjectForRow", "wsTaskFolder",
         "wsHidden", "wsRowsHtml", "wsCtxKey", "drParse", "drContent", "drHighlight", "drRowHtml",
-        "WS_EMPTY", "WS_MAC", "WS_RECENT_KEY", "WS_ICON_TREE", "wsPanelHtml"]
+        "WS_EMPTY", "WS_MAC", "WS_RECENT_KEY", "WS_ICON_TREE", "wsPanelHtml",
+        "DOCS_TASKS_KEY", "docsTasksShown", "docsTasksSet", "docsApart", "docsInTask"]
 
 
 @unittest.skipUnless(NODE, "node is not installed")
@@ -636,13 +644,12 @@ class ThePage(unittest.TestCase):
             raise AssertionError(r.stderr[-3000:])
         cls.out = json.loads(r.stdout.strip().splitlines()[-1])
 
-    def test_documents_overview_leads_with_files_and_has_no_po(self):
+    def test_documents_overview_is_the_board_and_has_no_po(self):
         o = self.out
-        self.assertEqual(o["docsOverview"], "p-docs")
         self.assertIsNone(o["docsPoSplit"])
         self.assertEqual(o["docsNote"], "")
         self.assertTrue(o["docsPill"], "no PO pill")
-        self.assertEqual(o["docsFrame"], '<div class="po-chrome">[chrome]</div><div class="po-board">[board]</div>')
+        self.assertEqual(o["docsFrame"], "[chrome][board]", "no files above the board, no note asking for a PO")
         self.assertIn(">Documents project<", o["docsKind"])
         self.assertIn('class="po-btn po-choose" data-proj="p-docs"', o["docsChoose"])
         self.assertIn(">Choose the PO…<", o["docsChoose"])
@@ -650,11 +657,26 @@ class ThePage(unittest.TestCase):
                             "the Kind dialog no longer mentions the PO exclusion")
         self.assertTrue(0 <= o["panelOrder"][0] < o["panelOrder"][1], "Files come before Recent changes")
         self.assertTrue(o["panelHasTree"])
-        self.assertIsNone(o["docsOnWorkspaceTab"])
+        box, tree, checked = o["panelBox"]
+        self.assertTrue(0 <= box < tree, "the Task folders box is above the tree")
+        self.assertFalse(checked, "unchecked by default")
+
+    def test_the_workspace_tab_of_a_documents_project_is_its_files_panel(self):
+        i = INDEX.index("if (SELECTED_PROJECT && PROJECT_TAB === 'workspace') {")
+        branch = INDEX[i:INDEX.index("\n    return;\n  }", i)]
+        self.assertIn("const docs = !!(pj && pj.path && isDocsProject(pj));", branch)
+        self.assertIn("wsCtxKey({ kind: 'project', projectId: SELECTED_PROJECT, docs })", branch)
+        self.assertIn("delete panel.dataset.proj;", branch, "a code project's Workspace is never taken for the Files panel")
+        self.assertIn("if (docs) docsPanelRender(panel, pj);", branch)
+        self.assertIn("wsMount(panel.querySelector('.wsp'), { kind: 'project', projectId: SELECTED_PROJECT });", branch,
+                      "a code project's Workspace mounts as before")
+        self.assertIn("document.querySelector('#ws-panel:not([hidden]) .dcs-files')", INDEX)
+        self.assertIn("const dp = document.getElementById('ws-panel');", js_function("histClick"))
+        self.assertIn("docs: isDocsProject(projectById(pid))", js_function("chOpenInWorkspace"),
+                      "the Changes tab's Open file lands in the Files panel's viewer")
 
     def test_a_code_project_is_unchanged(self):
         o = self.out
-        self.assertIsNone(o["codeOverview"])
         self.assertIn("This project has no PO.", o["codeNote"])
         self.assertEqual(o["codeFrame"], "[chrome]" + o["codeNote"] + "[board]")
         self.assertFalse(o["codePill"], "the No PO pill still shows")
@@ -666,26 +688,19 @@ class ThePage(unittest.TestCase):
         self.assertNotIn("disabled", o["poDialog"], "a project with a PO may become a documents project")
         self.assertIn("Its Overview leads with the PO and the board.", o["poDialog"], "the code option reads as before")
 
-    def test_a_documents_project_with_a_po_leads_with_files_then_the_po(self):
+    def test_a_documents_project_with_a_po_shows_the_po_beside_the_board(self):
         o = self.out
-        self.assertEqual((o["dpoOverview"], o["dpoSplit"]), ("p-dpo", "p-dpo"))
+        self.assertEqual(o["dpoSplit"], "p-dpo")
+        self.assertIsNone(o["dpoSplitOnWorkspace"])
         self.assertEqual(o["dpoNote"], "")
         self.assertEqual(o["dpoFrame"], '<div class="po-chrome">[chrome]</div><div class="po-board">[board]</div>[edges]')
         self.assertEqual(o["dpoChoose"], "")
         self.assertNotRegex(o["dpoDialog"], r"has a PO|Choosing a PO|stays a code project|disabled")
         self.assertFalse(o["dpoPill"][0], "the PO pill shows")
         self.assertIn('<span class="po-pill-t">PO</span><span class="po-pill-p">Cars</span>', o["dpoPill"][1])
-        self.assertIn('grid-template-areas: "chrome chrome" "files files" "po board"', INDEX)
-        self.assertIn('grid-template-areas: "chrome" "files" "po" "board"', INDEX)
-        # Board wide under the files is stacked at every width: the board, not
-        # an unbounded pane, scrolls sideways, and the edge buttons follow the page.
-        for rule in ("body.docs-split.po-wide .po-board { overflow: visible; }",
-                     "body.docs-split.po-wide .po-board .board { overflow-x: auto; }",
-                     "body.docs-split.po-wide .board-edge { align-items: flex-start; }"):
-            self.assertIn(rule, INDEX)
-        wide = INDEX.index("body.docs-split.po-wide .po-board { overflow: visible; }")
-        self.assertGreater(wide, INDEX.index("body.po-split .po-board, body.po-wide .po-board { grid-area: board;"))
-        self.assertLess(wide, INDEX.index("@media", wide), "outside any media block")
+        # The code project's layout, nothing of its own: no files row in main's grid.
+        self.assertNotIn("docs-split", INDEX)
+        self.assertNotRegex(INDEX, r"grid-template-areas:[^;]*\bfiles\b")
 
     def test_the_tree_hides_only_real_task_folders(self):
         o = self.out
@@ -693,6 +708,9 @@ class ThePage(unittest.TestCase):
         self.assertEqual(o["docsTaskTree"], ["Leasing", "old-task-no-json", "README.md"])
         self.assertEqual(o["codeTree"], ["Leasing", "sort_papers", "_linked", "old-task-no-json", "README.md"])
         self.assertEqual(o["keys"], ["docs:p-docs", "project:p-docs"])
+        self.assertEqual(o["docsTreeShown"], ["Leasing", "sort_papers", "old-task-no-json", "README.md"], "_linked still hidden")
+        self.assertEqual(o["docsTaskTreeShown"], o["docsTaskTree"], "a task's Workspace keeps its own rules")
+        self.assertEqual(o["codeTreeShown"], o["codeTree"])
 
     def test_the_history_reads_plainly(self):
         o = self.out
@@ -722,12 +740,14 @@ class ThePage(unittest.TestCase):
         self.assertEqual(self.out["refreshAfterPaging"], [203, False, False, True])
 
     def test_layout_and_safari_rules(self):
-        self.assertIn('grid-template-areas: "chrome" "files" "board"', INDEX)
-        self.assertIn('<section id="docs-panel" hidden', INDEX)
+        self.assertNotIn('id="docs-panel"', INDEX)
+        self.assertNotIn("docsOverviewProject", INDEX)
         self.assertIn("a.rm-btn { display: inline-flex;", INDEX, "a link button is a box, so its touch height applies")
-        self.assertIn("document.body.classList.toggle('docs-split', !!docsPj);", INDEX)
+        # The panel fills the Workspace tab as a Workspace does, and stacks on a narrow screen.
+        self.assertIn("height: calc(100vh - var(--chrome-h)); min-height: 420px; }", INDEX[INDEX.index("  .dcs {"):])
+        self.assertIn(".dcs { grid-template-columns: minmax(0, 1fr); gap: var(--s-300); height: auto; min-height: 0; }", INDEX)
         block = docs_block()
-        css = INDEX[INDEX.index("body.docs-split main {"):INDEX.index(".drv.one .dr .dg::before")]
+        css = INDEX[INDEX.index("  .dcs {"):INDEX.index(".drv.one .dr .dg::before")]
         for text in (block, css):
             self.assertNotIn(":has(", text)
         self.assertNotRegex(block, r"^await ", "no top-level await")
