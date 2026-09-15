@@ -103,11 +103,20 @@ class Titles(unittest.TestCase):
         tasks = [{"id": "a", "title": "Old", "createdAt": 1, "no": 1},
                  {"id": "b", "title": "2. Once deleted", "createdAt": 2},
                  {"id": "c", "title": "9. Ahead", "createdAt": 3}]
-        # #2 was given before (the counter passed it), so the title cannot have it.
-        self.assertEqual(tn.plan_numbers(tasks, 5), ({"c": 9, "b": 10}, 11))
+        # Once a project has a counter, titles are not read: #2 may have been given before.
+        self.assertEqual(tn.plan_numbers(tasks, 5), ({"b": 5, "c": 6}, 7))
         self.assertEqual(tn.plan_numbers([{"id": "x", "title": "1. taken", "createdAt": 1},
                                           {"id": "y", "title": "Other", "createdAt": 0, "no": 1}], 0),
                          ({"x": 2}, 3), "a title's number another task has is not taken")
+
+    def test_a_year_in_a_title_is_not_its_number(self):
+        tasks = [{"id": "a", "title": "Plain", "createdAt": 1},
+                 {"id": "y", "title": "2026 roadmap", "createdAt": 2},
+                 {"id": "b", "title": "53. Just within reach", "createdAt": 3},
+                 {"id": "c", "title": "Later", "createdAt": 4}]
+        self.assertEqual(tn.plan_numbers(tasks, 0), ({"b": 53, "a": 54, "y": 55, "c": 56}, 57))
+        tasks[2]["title"] = "55. Too far"
+        self.assertEqual(tn.plan_numbers(tasks, 0)[0], {"a": 1, "y": 2, "b": 3, "c": 4})
 
 
 class Refs(unittest.TestCase):
@@ -127,6 +136,15 @@ class Refs(unittest.TestCase):
         got = [(r["token"], r["who"], r["key"], r["no"]) for r in tn.find_text_refs(text)]
         self.assertEqual(got, [("#18", "", "", 18), ("@reviewer@ED-7", "reviewer", "ED", 7), ("#23", "", "", 23)])
         self.assertEqual(tn.find_text_refs("#18a #18-19 x#18 @claude@ no refs"), [])
+
+    def test_someone_elses_numbers_are_not_tasks(self):
+        text = ("PR #12, fixes #13, Closes #14, finding #2, Review #3, issues #4, step\n#5, "
+                "the task #18, prefix#6; but PR ED-7 and @codex@8 are.")
+        got = [r["token"] for r in tn.find_text_refs(text)]
+        self.assertEqual(got, ["#18", "@codex@8"])
+        self.assertEqual([r["token"] for r in tn.find_text_refs("PR #ED-7")], ["#ED-7"], "a key makes it a task")
+        self.assertEqual([r["token"] for r in tn.find_text_refs("Mapper #9 and suffix #10")], ["#9", "#10"],
+                         "a word only ending in one of them does not count")
 
     def test_finding_a_task(self):
         rooms = [{"id": "room-a", "no": 18, "noProjectId": "p1"},
@@ -252,6 +270,27 @@ class Numbering(Hub):
         chatroom.update_room(stale)
         room = chatroom.get_room(rid)
         self.assertEqual((room["no"], room["noProjectId"], room["status"]), (1, self.ed, "paused"))
+
+    def test_a_copy_read_before_a_move_never_undoes_it(self):
+        rid = self.room("Resuming", self.ed, numbered=True)
+        stale = chatroom.get_room(rid, public=False)       # a resume read it, then started the terminals
+        self.assertTrue(dashboard.move_task(rid, self.ot))
+        stale["status"] = "active"
+        chatroom.update_room(stale)
+        room = chatroom.get_room(rid)
+        self.assertEqual((room["no"], room["noProjectId"], room["previousNos"], room["status"]),
+                         (1, self.ot, [{"projectId": self.ed, "no": 1}], "active"))
+        self.assertEqual(dashboard.resolve_task_ref("O-1"), (rid, ""))
+
+    def test_an_adopted_session_takes_the_next_number(self):
+        self.room("Already", self.ed, numbered=True)
+        home = Path(dashboard.find_project(self.ed)["path"])
+        with mock.patch.object(dashboard.Handler, "_resume_room_agent_pty", lambda *a, **k: {"ptyId": 7}, create=True):
+            status, _, body = self.call("POST", "/api/session/adopt", {
+                "label": "Old work", "members": [{"agent": "claude", "sessionId": "s1", "cwd": str(home / "old" / "claude")},
+                                                 {"agent": "codex", "sessionId": "s2", "cwd": str(home / "old" / "codex")}]})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(self.no(json.loads(body)["room"]["id"]), 2)
 
     def test_the_po_gets_no_number(self):
         po = self.room("The PO", self.ed)
@@ -451,6 +490,9 @@ class WhatTheHubWrites(Addresses):
         self.assertEqual(mr.strip_message_refs(out), text)
         self.assertEqual(dashboard.with_message_refs("#1 here", self.x).split("\n\n")[1][:30], '[ref #1] task "Trading one" — ')
         self.assertEqual(dashboard.with_message_refs("no refs #9", self.a), "no refs #9")
+        with mock.patch.object(dashboard, "_task_index", side_effect=AssertionError("read")):
+            self.assertEqual(dashboard.with_message_refs("names no task", self.a), "names no task",
+                             "a message naming no task reads nothing")
 
     def test_task_lines_come_after_balloon_blocks_and_strip_together(self):
         url = f"http://127.0.0.1:8765/session?room={self.a}&msg=aaaaaaaaaaaa"

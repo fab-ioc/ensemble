@@ -3262,7 +3262,10 @@ function mdToHtml(src) {
     ph(`<pre class="cb"${lang ? ` data-lang="${esc(lang)}"` : ''}><code>${esc(body.replace(/\n$/, ''))}</code></pre>`));
   s = s.replace(/`([^`\n]+)`/g, (_, body) => ph(codeSpanHtml(body)));
   // A task named by its number is a link to it (outside code, parked like code).
-  s = s.replace(TASK_REF_RE, (m, who, key, no) => { const h = taskRefLinkHtml(who || '', key || '', +no, FILE_LINK_ROOM); return h ? ph(h) : m; });
+  s = s.replace(TASK_REF_RE, (m, who, key, no, at, str) => {
+    const h = !notTaskRef(who, key, str, at) && taskRefLinkHtml(who || '', key || '', +no, FILE_LINK_ROOM);
+    return h ? ph(h) : m;
+  });
   s = esc(s);
   const inline = t => {
     const keep = [];
@@ -4392,8 +4395,8 @@ function projectTasks(pj) {
 // of a chat ("re", "en") matched nearly every task, so the rows never narrowed.
 // Its conversation is what Enter's deep search is for.
 function rowHaystack(r) {
-  // A task's number is on its card too: "#18" or "18" finds it.
-  const own = r.roomId ? [r.label, r.no ? '#' + r.no : '']
+  // A task's number is on its card too: "#18", "18" or "ED-18" finds it.
+  const own = r.roomId ? [r.label, r.no ? '#' + r.no : '', taskNoText(r, true)]
     : [r.label, r.first, r.last, r.cwd, r.sessionId, r.pid || '', r.currentTheme || ''];
   return own.map(s => String(s || '')).join(' ');
 }
@@ -4584,12 +4587,20 @@ function taskRowId(ref, projectId) {
   const projects = (PROJECTS && PROJECTS.projects) || [];
   const key = (m[1] || '').toUpperCase(), no = +m[2];
   const pid = projectId || SELECTED_PROJECT;
+  if (!key && !pid) {
+    // Every project showing: a number only one project has names its task.
+    const hits = projects.flatMap(p => (p.sessions || []).filter(x => x.roomId && x.no === no));
+    return hits.length === 1 ? hits[0].roomId : '';
+  }
   const pj = key ? projects.find(p => p.key === key) : projects.find(p => p.id === pid);
   const s = pj && (pj.sessions || []).find(x => x.roomId && x.no === no);
   return s ? s.roomId : '';
 }
 // Chat text's task references (#18, #ED-18, @codex@18), as session.html reads them.
 const TASK_REF_RE = /(?<![\w&\/#@.\\-])(?:@([A-Za-z][\w-]*)@|#)(?:([A-Za-z][A-Za-z0-9]{0,5})-)?(\d{1,6})(?![\w-])/g;
+// A bare #12 after one of these words is someone else's number ("PR #12").
+const NOT_TASK_BEFORE_RE = /(?:^|[^\w])(?:pr|mr|pull request|issue|bug|ticket|fix|fixe|fixed|close|closed|resolve|resolved|finding|step|item|point|round|review|option|question|comment|commit|line|page|number|no|part|phase|rule|test|case)s?\.?\s*$/i;
+const notTaskRef = (who, key, s, at) => !who && !key && NOT_TASK_BEFORE_RE.test(s.slice(Math.max(0, at - 40), at));
 // A task named by its number in a spec or a summary: a link to it, read in the
 // project of the task the text belongs to. A number that names no task stays text.
 function taskRefLinkHtml(who, key, no, inRoom) {

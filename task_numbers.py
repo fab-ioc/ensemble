@@ -19,6 +19,9 @@ KEY_MAX = 6
 _KEY = re.compile(r"^[A-Z][A-Z0-9]{0,%d}$" % (KEY_MAX - 1))
 _WORD = re.compile(r"[A-Za-z0-9]+")
 TITLE_NO_MAX = 9999
+# How far above a project's task count a title's number may be and still be
+# the task's number.
+TITLE_NO_SLACK = 50
 # A title a person numbered by hand: "18. 0DTE management", "18 Fixes", "#18 …".
 _TITLE_NO = re.compile(r"^\s*(?:#(\d{1,4})(?!\w)|(\d{1,4})(?:\.|\s))")
 # What names a task: its id, or its number with or without the project's key.
@@ -27,6 +30,13 @@ _REF = re.compile(r"^#?(?:([A-Za-z][A-Za-z0-9]{0,%d})-)?(\d{1,6})$" % (KEY_MAX -
 # word, a path or a URL fragment (page#18), and not an HTML entity (&#18;).
 TEXT_REF = re.compile(r"(?<![\w&/#@.\\-])(?:@([A-Za-z][\w-]*)@|#)"
                       r"(?:([A-Za-z][A-Za-z0-9]{0,%d})-)?(\d{1,6})(?![\w-])" % (KEY_MAX - 1))
+# A bare #12 right after one of these words is someone else's number (a pull
+# request, an issue, a review finding), not a task: "PR #12", "fixes #34".
+# ED-12 and @codex@12 are always tasks.
+NOT_TASK_BEFORE = re.compile(
+    r"(?:^|[^\w])(?:pr|mr|pull request|issue|bug|ticket|fix|fixe|fixed|close|closed|resolve|resolved"
+    r"|finding|step|item|point|round|review|option|question|comment|commit|line|page|number|no|part"
+    r"|phase|rule|test|case)s?\.?\s*$", re.I)
 _FENCE = re.compile(r"```[\s\S]*?(?:```|$)")
 _CODE = re.compile(r"`[^`\n]*`")
 
@@ -86,21 +96,23 @@ def plan_numbers(tasks: list[dict], next_no: int = 0) -> tuple[dict[str, int], i
 
     ``tasks`` is every task of the project: ``{id, title, createdAt, no}``, with
     ``no`` None for a task without a number here. ``next_no`` is the project's
-    counter (0 when it has none yet). A task whose title starts with a number
-    (``18.``, ``18 ``, ``#18``) gets it when no other task of the project has
-    that number in its title or as its number, and the counter has not passed
-    it (a number is never reused); the rest take the numbers after the highest
-    one, oldest first. Returns ``({id: no}, next counter)``: with nothing to
-    number, nothing changes."""
+    counter (0 when it has none yet). On a project's first numbering (no
+    counter), a task whose title starts with a number (``18.``, ``18 ``,
+    ``#18``) gets it when no other task of the project has that number in its
+    title or as its number, and it is not far above the project's task count
+    (``2026 roadmap`` is a year, not #2026); the rest take the numbers after
+    the highest one, oldest first. Once a project has a counter, titles are
+    not read. Returns ``({id: no}, next counter)``: with nothing to number,
+    nothing changes."""
     used = {int(t["no"]) for t in tasks if t.get("no")}
     todo = sorted((t for t in tasks if not t.get("no")),
                   key=lambda t: (t.get("createdAt") or 0, t.get("id") or ""))
     in_titles = Counter(n for n in (title_no(t.get("title") or "") for t in tasks) if n)
     counter = int(next_no or 0)
     out: dict[str, int] = {}
-    for t in todo:
+    for t in todo if counter <= 0 else ():
         n = title_no(t.get("title") or "")
-        if n and in_titles[n] == 1 and n not in used and (counter <= 0 or n >= counter):
+        if n and in_titles[n] == 1 and n not in used and n <= len(tasks) + TITLE_NO_SLACK:
             out[t["id"]] = n
             used.add(n)
     after = max([counter - 1, 0, *used])
@@ -187,11 +199,15 @@ def _without_code(text: str) -> str:
 def find_text_refs(text: str) -> list[dict]:
     """The tasks named in chat text, in order and each task once:
     ``[{token, who, key, no}]`` — ``who`` is the identity or role before the
-    number (``@codex@18``), else "". Code is not read."""
+    number (``@codex@18``), else "". Code is not read, nor a bare number
+    after a word that says it is not a task (:data:`NOT_TASK_BEFORE`)."""
     out: list[dict] = []
     seen: set[tuple[str, int]] = set()
-    for m in TEXT_REF.finditer(_without_code(text)):
+    plain = _without_code(text)
+    for m in TEXT_REF.finditer(plain):
         key, no = (m.group(2) or "").upper(), int(m.group(3))
+        if not m.group(1) and not key and NOT_TASK_BEFORE.search(plain[max(0, m.start() - 40):m.start()]):
+            continue
         if (key, no) in seen:
             continue
         seen.add((key, no))

@@ -87,7 +87,20 @@ const lines = %s;
   await settle();
   const second = mdToHtml(text);
   const again = mdToHtml('#18 once more');
-  console.log(JSON.stringify({ first, second, again, fetches, redraws,
+  const notTasks = mdToHtml('PR #18 fixes #18, finding #18');
+  const asked = fetches.length;
+  // A minute on, the task has ended: the chip asks again and redraws once.
+  const realNow = Date.now, redrawsBefore = redraws;
+  TASKS['#18'] = Object.assign({}, TASKS['#18'], { status: 'not running', workflowName: 'Done' });
+  Date.now = () => realNow() + 61000;
+  mdToHtml('#18 later');
+  await settle();
+  const later = mdToHtml('#18 later');
+  mdToHtml('#18 later');
+  await settle();
+  const ttl = { asked: fetches.length - asked, redraws: redraws - redrawsBefore, later };
+  Date.now = realNow;
+  console.log(JSON.stringify({ first, second, again, notTasks, ttl, fetches: fetches.slice(0, asked), redraws,
     stripped: lines.map(stripRefBlocks),
     report: hubLabel({ kind: 'report', taskTitle: 'Docs', taskId: '#18', reportKind: 'completed' }),
     oldReport: hubLabel({ kind: 'report', taskTitle: 'Docs', taskId: 'room-1a2b3c4d', reportKind: 'completed' }) }));
@@ -141,6 +154,12 @@ class SessionChips(unittest.TestCase):
             self.assertIn(text, html)
         self.assertEqual(len(self.r["fetches"]), 3, "a number already asked about is not asked again")
         self.assertIn('class="task-chip"', self.r["again"])
+        self.assertNotIn("task-chip", self.r["notTasks"], "PR #18, fixes #18, finding #18 are not tasks")
+
+    def test_a_chip_asks_again_after_a_minute(self):
+        ttl = self.r["ttl"]
+        self.assertEqual((ttl["asked"], ttl["redraws"]), (1, 1), "once, and a redraw only because it changed")
+        self.assertIn('<span class="ref-state">Done</span>', ttl["later"])
 
     def test_the_hubs_line_is_dropped_from_the_balloon(self):
         self.assertEqual(self.r["stripped"], ["Look at @codex@18", "see #18 and @codex@18", self.lines[2]])
@@ -187,6 +206,8 @@ const out = {
 };
 SELECTED_PROJECT = '';
 out.all = taskRowId('#18');
+out.allUnique = taskRowId('3');
+out.skip = [notTaskRef('', '', 'see PR #4', 7), notTaskRef('', '', 'see #4', 4), notTaskRef('codex', '', 'PR @codex@4', 3)];
 console.log(JSON.stringify(out));
 """
 
@@ -205,7 +226,9 @@ class IndexNumbers(unittest.TestCase):
     def test_a_link_finds_its_task_on_the_board(self):
         self.assertEqual(self.r["rows"], ["room-a", "room-a", "room-b", "room-y", "room-y", "", "", "", ""])
         self.assertEqual(self.r["elsewhere"], "room-x")
-        self.assertEqual(self.r["all"], "", "no project showing: a bare number names nothing")
+        self.assertEqual(self.r["all"], "", "every project showing: a number two projects have names nothing")
+        self.assertEqual(self.r["allUnique"], "room-y", "and a number only one has names its task")
+        self.assertEqual(self.r["skip"], [True, False, False])
 
     def test_a_spec_names_a_task(self):
         self.assertEqual(self.r["link"], '<a href="/?task=room-a" data-task="room-a" data-agent="codex" class="task-link"'
@@ -217,6 +240,7 @@ class IndexNumbers(unittest.TestCase):
 
     def test_search_finds_a_task_by_its_number(self):
         self.assertIn("#18", self.r["hay"])
+        self.assertIn("ED-18", self.r["hay"])
 
     def test_the_page_shows_them(self):
         self.assertIn("taskNoHtml(r, !SELECTED_PROJECT)", fn(INDEX, "cardHtml"))

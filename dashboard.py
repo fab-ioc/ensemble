@@ -2546,6 +2546,14 @@ def assign_task_number(rid: str, project_id: str, room_full: dict | None = None)
         return n
 
 
+def number_adopted_room(room_full: dict) -> int | None:
+    """A past session brought in as a task (/api/session/adopt) gets the next
+    number of the project its folder is in, like any new task."""
+    projects = load_projects()
+    return assign_task_number(room_full.get("id", ""),
+                              _task_project(room_full, load_session_projects(), projects), room_full)
+
+
 def backfill_task_numbers() -> dict:
     """Numbers for the tasks that have none, and a key for every project —
     run when the hub starts. Per project, oldest task first; a title a person
@@ -2694,13 +2702,18 @@ def http_task_id(value, project_id: str = "") -> tuple[str, dict | None]:
 
 def task_lookup_for(room_id: str = "", project_id: str = ""):
     """``lookup(key, no)`` for message_refs: the task a number in a message
-    names, read in the project of the room it was sent in."""
-    if room_id and not project_id:
-        room = next((e for e in _task_index() if e["id"] == room_id), None)
-        project_id = _task_project(room, load_session_projects(), load_projects()) if room else ""
+    names, read in the project of the room it was sent in. Nothing is read
+    until a message names a task."""
+    project: list[str] = []
 
     def lookup(key: str, no: int) -> dict | None:
-        rid, _why = resolve_task_ref(f"{key}-{no}" if key else f"#{no}", project_id)
+        if not project:
+            pid = project_id
+            if room_id and not pid:
+                room = next((e for e in _task_index() if e["id"] == room_id), None)
+                pid = _task_project(room, load_session_projects(), load_projects()) if room else ""
+            project.append(pid)
+        rid, _why = resolve_task_ref(f"{key}-{no}" if key else f"#{no}", project[0])
         return task_ref_info(rid) if rid else None
     return lookup
 
@@ -8687,6 +8700,7 @@ class Handler(BaseHTTPRequestHandler):
                                                        collab=not solo)
                     part["ptyId"] = info["ptyId"]
                 chatroom.update_room(room_full)
+                number_adopted_room(room_full)
                 self._send_json(200, {"ok": True,
                                       "room": chatroom.get_room(room["id"])})
                 return
@@ -8716,6 +8730,7 @@ class Handler(BaseHTTPRequestHandler):
             info = self._resume_room_agent_pty(room_full, part, collab=False, human=True)
             part["ptyId"] = info["ptyId"]
             chatroom.update_room(room_full)
+            number_adopted_room(room_full)
             self._send_json(200, {"ok": True,
                                   "room": chatroom.get_room(room["id"])})
             return

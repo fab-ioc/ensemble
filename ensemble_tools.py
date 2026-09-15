@@ -50,7 +50,7 @@ _TASK_ID_DOC = ("The task: its number (#18 or 18 in your project, ED-18 in any) 
                 "or its id (room-1a2b3c4d).")
 _TASK_ID_SPEC = {"type": "string", "description": _TASK_ID_DOC}
 
-_PRIORITY_DOC = ("Priority:\"highest\", \"high\", \"medium\", \"low\" or \"lowest\" "
+_PRIORITY_DOC = ("Priority: \"highest\", \"high\", \"medium\", \"low\" or \"lowest\" "
                  "(a number 1-5 also works, 1 = highest).")
 
 

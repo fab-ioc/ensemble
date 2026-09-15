@@ -266,14 +266,17 @@ def update_room(room: dict) -> None:
     """Persist a full (non-public) room dict — used by the launcher to record
     the working dir and each participant's session id/pid after spawning.
 
-    A task's number is never lost to a copy read before it was given: fields
-    of :data:`NUMBER_FIELDS` the dict lacks are kept from the file."""
+    A task's number is written only by :func:`set_task_number`, so a copy
+    read before it was given, or before a move renumbered it, never undoes it:
+    once the file has a number, :data:`NUMBER_FIELDS` are the file's."""
     with _LOCK:
-        if not all(k in room for k in NUMBER_FIELDS):
-            disk = _read(room.get("id", "")) or {}
+        disk = _read(room.get("id", "")) or {}
+        if disk.get("no"):
             for k in NUMBER_FIELDS:
-                if k not in room and k in disk:
+                if k in disk:
                     room[k] = disk[k]
+                else:
+                    room.pop(k, None)
         room["updatedAt"] = _now()
         _write(room)
 

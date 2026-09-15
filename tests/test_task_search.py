@@ -32,6 +32,7 @@ def fn(src: str, head: str) -> str:
 JS = r"""
 %s
 const log = {};
+const taskNoText = r => (r && r.no ? '#' + r.no : '');   // tests/test_task_refs.py covers the real one
 const PROJECTS = { projects: [
   { id: 'p1', registered: true, poRoomId: 'room-po', sessions: [{ roomId: 'room-po' }, { roomId: 'room-a' }, { roomId: 'room-b' }, { roomId: 'room-c' }] },
   { id: 'p2', registered: true, poRoomId: 'room-gone', sessions: [{ roomId: 'room-x' }] },
