@@ -1476,6 +1476,20 @@ def hub_input_kind(text: str) -> dict:
     return {"kind": "human"}
 
 
+# The PO's message to a one-agent task (sent through /api/room/resume) starts
+# like this. Not hub traffic for the chat page, but not a person at the
+# terminal either.
+PO_MESSAGE_PREFIX = "[from the PO]"
+
+
+def typed_by_person(text: str) -> bool:
+    """Whether a line typed into an agent is a person's — what holds a
+    rotation that is waiting for the agent's handover (rotation._typed_since
+    reads ``last_input``). The hub's own lines and the PO's are not."""
+    s = (text or "").lstrip()
+    return hub_input_kind(s)["kind"] == "human" and not s.startswith(PO_MESSAGE_PREFIX)
+
+
 def classify_turns(turns: list[dict]) -> list[dict]:
     """The chat's turns with ``kind`` on every user turn and ``answers`` (the
     kind of the user turn before it, with a report's details) on every
@@ -7625,7 +7639,8 @@ class Handler(BaseHTTPRequestHandler):
         with rotation.GATE:
             if rotation.room_rotating(rid):
                 raise StartRoomError("handing over to a fresh session, try again shortly")
-            sess.last_input = time.time()
+            if any(typed_by_person(it["text"]) for it in items):
+                sess.last_input = time.time()
             if not _type_input(sess, "\n\n".join(with_message_refs(it["text"], rid) for it in items)):
                 return items     # it looked alive, but the write found it gone
         return []
@@ -7780,7 +7795,10 @@ class Handler(BaseHTTPRequestHandler):
                 parts.append(_relay_wake(wake_for.pop(ident)[-1]))
             if not parts:
                 continue
-            sess.last_input = time.time()
+            # The note and a team's relay are the hub's; a solo agent's
+            # messages are a person's unless they say otherwise.
+            if solo and any(typed_by_person(it["text"]) for it in items):
+                sess.last_input = time.time()
             if not _type_input(sess, "\n\n".join(parts)):
                 # Gone between looking ready and the write: the messages stay
                 # owed to it (a partner that got its wake is not woken again).
