@@ -1049,6 +1049,10 @@ def _get_task(ctx, args, handler):
         "isYou": room["id"] == ctx["room"]["id"],
     })
     row["lastReport"] = _report_view(room, full=True)
+    real = _d.chatroom.last_real_report(room)
+    if real and real.get("ts") != (row["lastReport"] or {}).get("ts"):
+        # An update came after it: the question or completion still stands.
+        row["lastRealReport"] = _report_view({"lastReport": real}, full=True)
     return row
 
 

@@ -675,9 +675,24 @@ def record_report(room_id: str, identity: str, kind: str, text: str,
         room["lastReport"] = {"kind": kind, "text": text[:4000], "ts": now,
                               "identity": identity, "messageId": msg["id"],
                               "to": routed_to or {"identity": HUMAN_IDENTITY}}
+        # An update (a rotation, a handover, "working again") says nothing the
+        # PO must act on: the last completed / question / blocked survives it.
+        if kind != "update":
+            room["lastRealReport"] = room["lastReport"]
         room["updatedAt"] = now
         _write(room)
         return msg
+
+
+def last_real_report(room: dict) -> dict:
+    """The task's last report that is not an ``update``, or {}. A task that
+    reported before ``lastRealReport`` was kept falls back to ``lastReport``
+    when that is not an update."""
+    rep = room.get("lastRealReport")
+    if isinstance(rep, dict):
+        return rep
+    rep = room.get("lastReport")
+    return rep if isinstance(rep, dict) and rep.get("kind") != "update" else {}
 
 
 def post_report(room_id: str, sender: str, to: str, text: str, meta: dict,

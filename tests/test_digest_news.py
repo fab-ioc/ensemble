@@ -2,9 +2,13 @@
 a report alone, or "waiting for you" flapping, sends nothing."""
 from __future__ import annotations
 
+import tempfile
+import time
 import unittest
+from pathlib import Path
 from unittest import mock
 
+import chatroom
 import dashboard  # noqa: F401  (binds digest to the dashboard module)
 import digest
 
@@ -29,14 +33,23 @@ class _Checks(unittest.TestCase):
         self.store: dict = {}
         self.sent: list = []
         self.task = _task()
+        self.po_running = True
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        old_rooms = chatroom.ROOMS_DIR
+        chatroom.ROOMS_DIR = Path(self.temp.name) / "rooms"
+        self.addCleanup(setattr, chatroom, "ROOMS_DIR", old_rooms)
+        self.room = chatroom.create_room(
+            "Motor spec", [{"identity": "claude", "agent": "claude", "role": "engineer"}])["id"]
         patches = [
             mock.patch.object(digest, "_load_baselines", side_effect=lambda: self.store),
             mock.patch.object(digest, "_save_baseline",
                               side_effect=lambda pid, e: self.store.__setitem__(pid, e)),
             mock.patch.object(digest, "gather", side_effect=lambda p: [dict(self.task)]),
             mock.patch.object(digest, "_settle_merges", return_value=[]),
-            mock.patch.object(digest, "_po_target",
-                              return_value=({"id": "room-po"}, "claude", "")),
+            mock.patch.object(digest, "_po_target", side_effect=lambda p: (
+                ({"id": "room-po"}, "claude", "") if self.po_running
+                else (None, "claude", "the PO is not running"))),
             mock.patch.object(digest, "write_up", side_effect=lambda facts: (facts, "plain")),
             mock.patch.object(digest, "_deliver", side_effect=self.deliver),
             mock.patch.object(digest, "_log"),
@@ -57,6 +70,15 @@ class _Checks(unittest.TestCase):
         n = len(self.sent)
         digest.check(PROJECT)
         return len(self.sent) > n
+
+    def report(self, kind: str, text: str) -> None:
+        """The task reports, as ensemble_report records it; the facts take its
+        report the way digest._task_facts reads it."""
+        time.sleep(0.002)                   # reports are told apart by their time
+        chatroom.record_report(self.room, "claude", kind, text)
+        rep = chatroom.last_real_report(chatroom.get_room(self.room, public=False))
+        self.task.update(report=float(rep.get("ts") or 0), reportKind=rep.get("kind", ""),
+                         reportText=rep.get("text", ""))
 
     def last_what(self) -> list:
         return self.sent[-1]["changes"][0]["what"]
@@ -81,10 +103,24 @@ class ReportsAreNotTriggers(_Checks):
         self.assertNotIn("report (completed)", self.sent[-1]["text"])
 
     def test_an_update_report_is_never_mentioned(self):
-        self.check(report=100.0, reportKind="update", reportText="Handed to a fresh session")
+        self.report("update", "Handed to a fresh session")
+        self.assertFalse(self.check())
         self.assertTrue(self.check(head="def5678"))
         self.assertEqual(self.last_what(), ["new commits"])
         self.assertNotIn("Handed to a fresh session", self.sent[-1]["text"])
+
+    def test_an_update_does_not_replace_the_last_real_report(self):
+        self.report("question", "Which motor?")
+        self.report("update", "Working again")
+        room = chatroom.get_room(self.room, public=False)
+        self.assertEqual(room["lastReport"]["kind"], "update")
+        self.assertEqual(chatroom.last_real_report(room)["text"], "Which motor?")
+        # A task that reported before lastRealReport was kept: its last report
+        # counts unless it is an update.
+        del room["lastRealReport"]
+        self.assertEqual(chatroom.last_real_report(room), {})
+        self.assertEqual(chatroom.last_real_report({"lastReport": {"kind": "question"}}),
+                         {"kind": "question"})
 
 
 class WaitingForYou(_Checks):
@@ -109,17 +145,41 @@ class WaitingForYou(_Checks):
         self.assertEqual(len(self.sent), 2)
 
     def test_an_update_report_does_not_make_waiting_news_again(self):
-        self.check(report=100.0, reportKind="question", reportText="Which motor?",
-                   attention="waiting_for_you")
-        self.assertEqual(len(self.sent), 1)
-        self.assertFalse(self.check(attention=""))
-        self.assertFalse(self.check(report=200.0, reportKind="update", reportText="Rotated"))
-        self.assertFalse(self.check(attention="waiting_for_you"))
-
-    def test_the_real_report_is_remembered_across_checks_before_an_update(self):
-        self.assertFalse(self.check(report=100.0, reportKind="question"))
-        self.assertFalse(self.check(report=200.0, reportKind="update"))
+        self.report("question", "Which motor?")
         self.assertTrue(self.check(attention="waiting_for_you"))
+        self.assertFalse(self.check(attention=""))
+        self.report("update", "Rotated")
+        self.assertFalse(self.check())
+        self.assertFalse(self.check(attention="waiting_for_you"))
+        self.assertEqual(len(self.sent), 1)
+
+    def test_a_question_survives_an_update_while_the_po_is_down(self):
+        # Already told as waiting; a new question is pending while the PO is
+        # not running; the agent then reports an update. The question is still
+        # delivered, with its text, once the PO is back.
+        self.assertTrue(self.check(attention="waiting_for_you"))
+        self.po_running = False
+        self.report("question", "Which motor?")
+        self.assertFalse(self.check())
+        self.report("update", "Working on the other part meanwhile")
+        self.assertFalse(self.check(attention=""))
+        self.po_running = True
+        self.assertTrue(self.check(attention="waiting_for_you"))
+        self.assertIn("reported question", self.last_what())
+        self.assertIn("report (question): Which motor?", self.sent[-1]["text"])
+        self.assertNotIn("Working on the other part", self.sent[-1]["text"])
+
+    def test_a_completion_survives_an_update_as_context(self):
+        self.po_running = False
+        self.report("completed", "Spec written.")
+        self.report("update", "Tidying up")
+        self.assertFalse(self.check(column="inreview"))
+        self.po_running = True
+        self.assertTrue(self.check())
+        change = self.sent[-1]["changes"][0]
+        self.assertIn("reported completed", change["what"])
+        self.assertTrue(change["finished"])
+        self.assertIn("report (completed): Spec written.", self.sent[-1]["text"])
 
     def test_waiting_is_news_again_after_a_commit_or_a_move(self):
         self.check(attention="waiting_for_you")

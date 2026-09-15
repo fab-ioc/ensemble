@@ -47,7 +47,8 @@ news on its own is still mentioned in it. Per task it also keeps the attention
 state the last sent digest told (``toldAttention``) and what the task looked
 like when it last told "waiting for you" (``toldWaiting``: status, column,
 branch head, last real report), which is how a state already told is not told
-again.
+again. A task's report here is always its last real one
+(``chatroom.last_real_report``): an ``update`` never replaces it.
 
 The first check of a project ever records the baseline without sending — the
 PO already knows the state it started from.
@@ -267,7 +268,9 @@ def _settle_merges(tasks: list[dict]) -> list[str]:
 def _task_facts(room: dict, attn: dict, labels: dict, now: float) -> dict:
     et = _d.ensemble_tools
     item = attn.get(room["id"]) or {}
-    rep = room.get("lastReport") if isinstance(room.get("lastReport"), dict) else {}
+    # The last real report: an update (a rotation, a handover) is never a fact
+    # here, and never hides the question or completion it followed.
+    rep = _d.chatroom.last_real_report(room)
     g = _git_facts(room)
     return {
         "id": room["id"],
@@ -318,20 +321,10 @@ def _stable(t: dict) -> dict:
     return {k: t.get(k) for k in _WATCHED + _KEPT}
 
 
-def _real_report(old: dict, t: dict) -> float:
-    """When the task last made a real report (not an ``update``): its current
-    one, or the one remembered from before an update replaced it."""
-    if t.get("report") and t.get("reportKind") != "update":
-        return t["report"]
-    if "realReport" in old:
-        return old["realReport"] or 0
-    return 0 if old.get("reportKind") == "update" else (old.get("report") or 0)
-
-
-def _mark(t: dict, real: float) -> list:
+def _mark(t: dict) -> list:
     """What the task looks like, for "waiting for you": it is news again only
-    once one of these has changed."""
-    return [t.get("status"), t.get("column"), t.get("head"), real]
+    once one of these has changed. ``report`` is its last real report."""
+    return [t.get("status"), t.get("column"), t.get("head"), t.get("report") or 0]
 
 
 def _told(old: dict) -> tuple[str, list | None]:
@@ -341,7 +334,7 @@ def _told(old: dict) -> tuple[str, list | None]:
     if "toldWaiting" in old:
         tw = old["toldWaiting"]
     else:
-        tw = _mark(old, _real_report({}, old)) if old.get("attention") == _WAITING else None
+        tw = _mark(old) if old.get("attention") == _WAITING else None
     return ta or "", tw
 
 
@@ -359,7 +352,7 @@ def _attention_news(old: dict, t: dict) -> str:
         return f"attention {told or 'none'} → {now}"
     if told in _PROBLEMS and now not in _PROBLEMS:
         return f"attention {told} → {now or 'none'}"
-    if now == _WAITING and told_waiting != _mark(t, _real_report(old, t)):
+    if now == _WAITING and told_waiting != _mark(t):
         return f"attention {told or 'none'} → {now}"
     return ""
 
@@ -369,22 +362,10 @@ def told_baseline(before: dict, tasks: list[dict]) -> dict:
     out = {}
     for t in tasks:
         old = before.get(t["id"]) or {}
-        real = _real_report(old, t)
         now = t.get("attention") or ""
         out[t["id"]] = {**_stable(t), "label": t.get("label") or t["id"],
-                        "realReport": real, "toldAttention": now,
-                        "toldWaiting": _mark(t, real) if now == _WAITING else _told(old)[1]}
-    return out
-
-
-def seen_baseline(before: dict, tasks: list[dict]) -> dict:
-    """The per-task baseline after a check with no news: unchanged, except that
-    each task's last real report is remembered, in case an ``update`` report
-    replaces it on the task before the next check."""
-    out = dict(before)
-    for t in tasks:
-        if t["id"] in out:
-            out[t["id"]] = {**out[t["id"]], "realReport": _real_report(out[t["id"]], t)}
+                        "toldAttention": now,
+                        "toldWaiting": _mark(t) if now == _WAITING else _told(old)[1]}
     return out
 
 
@@ -607,7 +588,6 @@ def _check(project: dict, force: bool) -> dict:
     before = base.get("tasks") or {}
     changes = diff(before, tasks)
     if not changes and not force:
-        base["tasks"] = seen_baseline(before, tasks)
         base["lastCheck"] = now
         _save_baseline(pid, base)
         return done("nothing new — skipped, PO not woken")
