@@ -243,6 +243,12 @@ docsTasksSet(false);
 out.stored = [store[DOCS_TASKS_KEY], docsTasksShown()];
 store[DOCS_TASKS_KEY] = '1'; DOCS_TASKS = false;          // a reload: nothing in memory, the box was left checked
 out.remembered = docsTasksShown();
+// A find filtered for the other setting (checked in another project, or in
+// another copy of the page) is read again; a busy one and a code project's not.
+const sv = tview();
+out.findStale = [docsFindStale(sv, { tasks: true }), docsFindStale(sv, { tasks: false }), docsFindStale(sv, { busy: true }),
+                 docsFindStale(sv, null), docsFindStale(sv, { error: 'x' }),
+                 docsFindStale(Object.assign(tview(), { ctx: { kind: 'project', projectId: 'p-code' } }), {})];
 // Go to file and a text search leave out what the tree leaves out.
 const hiddenNames = docsApartNames(topEntries, false), shownNames = docsApartNames(topEntries, true);
 out.apartNames = [[...hiddenNames].sort(), [...shownNames].sort()];
@@ -486,6 +492,20 @@ class ThePureParts(unittest.TestCase):
         self.assertEqual(o["stored"], ["0", False])
         self.assertTrue(o["remembered"], "a reload finds the box as it was left")
 
+    def test_a_find_left_from_the_other_setting_is_read_again(self):
+        self.assertEqual(self.out["findStale"], [False, True, False, False, True, False])
+        self.assertIn("if (docsFindStale(v, f.list) || docsFindStale(v, f.res)) docsFindReset(f);", js_function("wsfEnsure"))
+        lst = js_function("wsfList")
+        self.assertIn("&& !docsFindStale(v, f.list))) return;", lst)
+        self.assertEqual(lst.count("tasks: v.ctx.docs ? docsTasksShown() : undefined"), 2, "an error is kept for its setting too")
+        self.assertIn("old.tasks = list.tasks;", lst)
+        self.assertIn("if (v.ctx.docs) res.tasks = docsTasksShown();", js_function("wsfSearch"))
+        # Another copy of the page: the Workspace on screen follows at once.
+        i = INDEX.index("window.addEventListener('storage', e => {\n  if (e.key !== DOCS_TASKS_KEY) return;")
+        listener = INDEX[i:INDEX.index("\n});", i)]
+        self.assertIn("cb.checked = docsTasksShown();", listener)
+        self.assertIn("docsTasksFollow(v);", listener)
+
     def test_a_tasks_folder_opens_but_is_its_tasks(self):
         held, draggable, menus, nested, tip = self.out["tasksHeld"]
         self.assertEqual(held, 4, "the task's folder and everything shown in it")
@@ -521,8 +541,17 @@ class TheMarkup(unittest.TestCase):
         self.assertIn('class="dcs-all dcs-tasks"', panel, "the box looks like the panel's other checkbox")
         wire = js_function("docsFilesWire")
         self.assertIn("tasks.onchange = () => docsTasksToggle(v, tasks.checked);", wire)
-        self.assertIn(".wse.dir[data-path]:not([data-task])", wire, "a task's folder is no drop target")
+        # A drop over a task's folder is refused with a reason, never sent to the project's top.
+        self.assertIn("if (t && t.closest('.wsp-tree .wse[data-task]')) return { held: true };", wire)
+        self.assertIn("if (at.held) return;", wire)
+        self.assertIn("nothing is added or moved here", wire)
+        held = wire[wire.index("if (at.held) {"):wire.index("if (mv && (!at.row")]
+        self.assertIn("e.dataTransfer.dropEffect = 'none';", held)
+        self.assertNotIn("classList.add('over')", held)
         self.assertIn(".wse.dir:not([data-task])", js_function("docsTarget"), "nor where Add files and New folder put things")
+        self.assertIn("v.mark = d.dataset.task ? '' : d.dataset.path;", wire, "selecting a task's folder selects no folder")
+        self.assertIn("v.mark = docsInTask(v, c.abs) ? '' : c.abs;", wire)
+        self.assertNotIn("leading its Overview", INDEX)
         menu = js_function("docsMenuOpen")
         self.assertIn("held ? '' : item('rename', 'Rename') + item('moveto', 'Move to…')", menu)
         self.assertIn("which its task looks after", menu)

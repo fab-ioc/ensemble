@@ -2986,8 +2986,6 @@
   <section id="ws-panel" hidden></section>
   <!-- The roadmap panel, for the same reason: an unsaved draft is state. -->
   <section id="rm-panel" hidden></section>
-  <!-- A documents project's files and recent changes, leading its Overview.
-       A live viewer is state, so this too lives beside #view, never in it. -->
   <!-- The PO's conversation, for the same reason again: it is a live session. -->
   <section id="po-panel" hidden aria-label="The project's PO"></section>
 </main>
@@ -6705,7 +6703,8 @@ async function wsfList(v) {
   const f = v.find, root = wsfRoot(v);
   if (!root) return;
   const key = wsNorm(root.path);
-  if (f.listing === key || (f.list && f.list.key === key && !f.list.error && Date.now() - f.list.at < WSF_LIST_TTL)) return;
+  if (f.listing === key || (f.list && f.list.key === key && !f.list.error && Date.now() - f.list.at < WSF_LIST_TTL
+                            && !docsFindStale(v, f.list))) return;
   f.listing = key;
   let list;
   try {
@@ -6714,15 +6713,17 @@ async function wsfList(v) {
     // are when the list arrives ("Task folders" may have changed meanwhile).
     const apart = v.ctx.docs ? await docsApartOf(v) : null;
     const files = apart ? (d.files || []).filter(p => !docsApartPath(p, apart)) : d.files || [];
-    list = { key, root: d.root || root.path, files, truncated: !!d.truncated, max: d.max || 0, at: Date.now(), error: '' };
+    list = { key, root: d.root || root.path, files, truncated: !!d.truncated, max: d.max || 0, at: Date.now(), error: '',
+             tasks: v.ctx.docs ? docsTasksShown() : undefined };
   } catch (e) {
-    list = { key, root: root.path, files: null, truncated: false, max: 0, at: Date.now(), error: e.message || 'failed' };
+    list = { key, root: root.path, files: null, truncated: false, max: 0, at: Date.now(), error: e.message || 'failed',
+             tasks: v.ctx.docs ? docsTasksShown() : undefined };
   } finally {
     if (f.listing === key) f.listing = '';
   }
   const old = f.list;
   if (old && old.key === key && old.files && list.files && old.files.length === list.files.length
-      && old.files.join('\n') === list.files.join('\n')) { old.at = list.at; return; }
+      && old.files.join('\n') === list.files.join('\n')) { old.at = list.at; old.tasks = list.tasks; return; }
   f.list = list;
   f.pool = null;
   if (f.mode === 'files' && wsfRoot(v) && wsNorm(wsfRoot(v).path) === key) { wsfRank(v); wsfPaint(v); }
@@ -6785,6 +6786,7 @@ async function wsfSearch(v) {
   const apart = res.files && v.ctx.docs ? await docsApartOf(v) : null;
   if (apart) res = docsFindApart(res, apart);
   if (gen !== f.gen) return;
+  if (v.ctx.docs) res.tasks = docsTasksShown();
   f.ctl = null;
   res.root = res.root || root.path;
   res.ms = Math.round(performance.now() - t0);
@@ -6796,6 +6798,7 @@ async function wsfSearch(v) {
 // the box was put on screen, gets its results.
 function wsfEnsure(v) {
   const f = v.find, root = wsfRoot(v);
+  if (docsFindStale(v, f.list) || docsFindStale(v, f.res)) docsFindReset(f);
   if (!root || !wsfOn(f)) return;
   if (f.mode === 'files') {
     if (!f.list || f.list.key !== wsNorm(root.path)) wsfList(v);
@@ -8894,6 +8897,10 @@ function docsInTask(v, abs) {
   }
   return false;
 }
+// Whether a documents Workspace's Go to file list or text result was left out
+// by the other setting of "Task folders" (checked in another project, or
+// another copy of the page): then it is read again.
+const docsFindStale = (v, x) => !!(v.ctx && v.ctx.docs) && !!x && !x.busy && x.tasks !== docsTasksShown();
 // Whether a dragged row may land in folder rel: not on itself, not where it
 // already is, and a folder not inside itself.
 const docsMoveOk = (drag, rel) => !!drag && drag.rel !== rel && upDir(drag.rel) !== rel
@@ -8998,17 +9005,33 @@ async function docsApartOf(v) {
   const c = v.dirs.get(root.path);
   return docsApartNames(c && c.entries, docsTasksShown());
 }
+// A find's list and result, dropped to be read again.
+function docsFindReset(f) {
+  f.list = null; f.pool = null; f.ranked = null;
+  if (f.res && !f.res.busy) f.res = null;
+}
 // "Task folders" checked or not: the tree, Go to file and a text search follow.
 function docsTasksToggle(v, on) {
   docsTasksSet(on);
-  const f = v.find;
-  f.list = null; f.pool = null; f.ranked = null;
-  if (f.res && !f.res.busy) f.res = null;
+  docsTasksFollow(v);
+}
+function docsTasksFollow(v) {
+  docsFindReset(v.find);
   wsPaintTree(v);
   wsfEnsure(v);
   wsfPaint(v);
   wsSync(v);
 }
+// The box checked or unchecked in another copy of the page: the Workspace on
+// screen here follows (another project's finds catch up by docsFindStale).
+window.addEventListener('storage', e => {
+  if (e.key !== DOCS_TASKS_KEY) return;
+  const el = document.getElementById('ws-panel'), pid = el && el.dataset.proj, v = pid && docsMine(el, pid) && docsView(pid);
+  const cb = v && el.querySelector('.dcs-tasks-cb');
+  if (!cb) return;
+  cb.checked = docsTasksShown();
+  docsTasksFollow(v);
+});
 let DOCS_DRAG = null;        // a tree row being dragged: {pid, rel, dir, name}
 let DOCS_ARM_T = 0, DOCS_DOC_WIRED = false;
 const docsDragFiles = ev => !!(ev.dataTransfer && Array.from(ev.dataTransfer.types || []).includes('Files'));
@@ -9139,7 +9162,9 @@ function docsFilesWire(el, pid) {
       return;
     }
     const d = e.target.closest('.wse.dir');
-    if (d && !e.target.closest('.wse-edit')) { v.mark = d.dataset.path; wsPaintTree(v); }
+    // A task's folder takes nothing: selecting it selects no folder, so Add
+    // files and New folder plainly go to the project.
+    if (d && !e.target.closest('.wse-edit')) { v.mark = d.dataset.task ? '' : d.dataset.path; wsPaintTree(v); }
   });
   tree.addEventListener('contextmenu', (e) => {
     const row = e.target.closest('.wse[data-path]');
@@ -9174,14 +9199,27 @@ function docsFilesWire(el, pid) {
     sec.querySelectorAll('.wse.over').forEach(r => r.classList.remove('over'));
     hint.hidden = true;
   };
+  // Over a row in a task's folder the drop is refused, and the hint says why.
   const dropAt = (e) => {
-    const root = wsfRoot(v), row = e.target.closest && e.target.closest('.wsp-tree .wse.dir[data-path]:not([data-task])');
-    return root ? { row, abs: row ? row.dataset.path : root.path, rel: row ? histRel(root.path, row.dataset.path) : '' } : null;
+    const root = wsfRoot(v), t = e.target.closest ? e.target : null;
+    if (!root) return null;
+    if (t && t.closest('.wsp-tree .wse[data-task]')) return { held: true };
+    const row = t && t.closest('.wsp-tree .wse.dir[data-path]');
+    return { row, abs: row ? row.dataset.path : root.path, rel: row ? histRel(root.path, row.dataset.path) : '' };
   };
   sec.addEventListener('dragover', (e) => {
     const files = docsDragFiles(e), mv = DOCS_DRAG && DOCS_DRAG.pid === pid ? DOCS_DRAG : null;
     const at = (files || mv) && dropAt(e);
     if (!at) return;
+    if (at.held) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'none';
+      clearOver();
+      hint.textContent = "A task's folder, which its task looks after: nothing is added or moved here";
+      hint.hidden = false;
+      overT = setTimeout(clearOver, 450);
+      return;
+    }
     if (mv && (!at.row || !docsMoveOk(mv, at.rel))) { clearOver(); return; }
     e.preventDefault();
     e.dataTransfer.dropEffect = mv ? 'move' : 'copy';
@@ -9204,6 +9242,7 @@ function docsFilesWire(el, pid) {
     e.preventDefault();
     clearOver();
     docsDragDisarm();
+    if (at.held) return;
     if (mv) {
       DOCS_DRAG = null;
       if (at.row && docsMoveOk(mv, at.rel)) docsMove(el, pid, mv.rel, upJoin(at.rel, mv.name), mv.dir);
@@ -9252,7 +9291,7 @@ function docsFilesWire(el, pid) {
     docsMenuClose(menu, act === 'history' || act === 'open' ? false : act !== 'rename');
     if (act === 'dest') docsMove(el, pid, c.rel, upJoin(b.dataset.dir, upBase(c.rel)), c.dir);
     else if (act === 'open') {
-      if (c.dir) { v.open.add(c.abs); v.mark = c.abs; wsPersist(v); wsSync(v); }
+      if (c.dir) { v.open.add(c.abs); v.mark = docsInTask(v, c.abs) ? '' : c.abs; wsPersist(v); wsSync(v); }
       else wsOpenTab(v, c.abs);
     } else if (act === 'history') { wsOpenTab(v, c.abs); histOpen(v, c.abs); }
     else if (act === 'rename') docsRename(el, pid, c);
