@@ -1223,20 +1223,11 @@
     font-size: var(--fs-200); color: var(--fg-subtle);
   }
   .po-note span { flex: 1 1 320px; }
-  /* A documents project's Overview: its files lead, its recent changes sit
-     beside them, and the board follows below. #view becomes display:contents,
-     as for the PO split, so its chrome and board share main's grid with
-     #docs-panel, which lives outside #view because a viewer is state. */
-  body.docs-split main {
-    display: grid; grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "chrome" "files" "board"; row-gap: var(--s-300);
-  }
-  body.docs-split #view { display: contents; }
-  body.docs-split .po-chrome { grid-area: chrome; min-width: 0; }
-  body.docs-split #docs-panel { grid-area: files; min-width: 0; }
-  body.docs-split .po-board { grid-area: board; min-width: 0; }
-  .dcs { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 320px); gap: var(--s-400); }
-  .dcs-files, .dcs-side { min-width: 0; }
+  /* A documents project's Workspace tab is its Files panel: the files, with
+     their recent changes beside them, filling the tab as a Workspace does. */
+  .dcs { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 320px); gap: var(--s-400);
+    height: calc(100vh - var(--chrome-h)); min-height: 420px; }
+  .dcs-files, .dcs-side { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
   .dcs-h { display: flex; align-items: center; min-height: 32px; margin: 0 0 var(--s-200); font-size: var(--fs-300); font-weight: 600; color: var(--fg); }
   /* The Files panel's own controls (see "Files panel" in the script): Add
      files is a label over a hidden file input, so a phone offers its photos. */
@@ -1293,8 +1284,8 @@
   .dcu-err { margin-top: var(--s-050); color: var(--c-danger-fg); overflow-wrap: anywhere; }
   .dcu-acts { display: flex; gap: var(--s-100); margin-top: var(--s-050); }
   .dch-did { color: var(--fg-muted); font-weight: 400; }
-  .dcs .wsp { height: clamp(360px, 62vh, 680px); min-height: 360px; }
-  .dcs-recent { display: flex; flex-direction: column; min-height: 0; height: clamp(360px, 62vh, 680px);
+  .dcs .wsp { flex: 1 1 auto; height: auto; min-height: 0; }
+  .dcs-recent { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0;
     border: 1px solid var(--border); border-radius: var(--r-300); background: var(--surface); overflow: hidden; }
   .dcs-rbar { display: flex; align-items: center; gap: var(--s-200); padding: var(--s-200); border-bottom: 1px solid var(--border); }
   .dcs-rbar .grow, .wsh-head .grow, .wsh-bar .grow { flex: 1; }
@@ -1318,9 +1309,9 @@
   .dcs-foot { margin: 0; padding: var(--s-200) var(--s-300); border-top: 1px solid var(--border); }
   .dch-file:focus-visible, .wsh-ver:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
   @media (max-width: 900px) {
-    .dcs { grid-template-columns: minmax(0, 1fr); gap: var(--s-300); }
-    .dcs .wsp { height: min(75dvh, 640px); }
-    .dcs-recent { height: auto; max-height: 420px; }
+    .dcs { grid-template-columns: minmax(0, 1fr); gap: var(--s-300); height: auto; min-height: 0; }
+    .dcs .wsp { flex: none; height: min(75dvh, 640px); }
+    .dcs-recent { flex: none; height: auto; max-height: 420px; }
   }
   /* A file's history, over its viewer: the versions kept, then the one
      picked, compared with the file now or shown as it was. */
@@ -1411,25 +1402,6 @@
        the page down instead of sitting halfway down a long column. */
     .board-edge { align-items: flex-start; }
     .board-edge button { position: sticky; top: 45vh; margin-top: var(--s-600); }
-  }
-  /* A documents project with a PO: its files first, then the PO beside the
-     board as above (or the board wide, the PO in the pill's drawer). main
-     grows with the files, so the PO's row takes a screen's height of its own. */
-  body.docs-split.po-split main, body.docs-split.po-wide main { height: auto; row-gap: var(--s-300); }
-  body.docs-split.po-split main {
-    grid-template-rows: auto auto calc(100dvh - var(--top-h) - var(--s-400));
-    grid-template-areas: "chrome chrome" "files files" "po board";
-  }
-  body.docs-split.po-wide main { grid-template-rows: auto auto auto; grid-template-areas: "chrome" "files" "board"; }
-  /* Board wide under the files has no height to fill, so it is stacked at
-     every width: the page scrolls down, the board sideways, and the edges'
-     buttons follow the page as they do below 900px. */
-  body.docs-split.po-wide .po-board { overflow: visible; }
-  body.docs-split.po-wide .po-board .board { overflow-x: auto; }
-  body.docs-split.po-wide .board-edge { align-items: flex-start; }
-  body.docs-split.po-wide .board-edge button { position: sticky; top: 45vh; margin-top: var(--s-600); }
-  @media (max-width: 900px) {
-    body.docs-split.po-split main { grid-template-rows: auto auto auto auto; grid-template-areas: "chrome" "files" "po" "board"; }
   }
   /* The peek: a drawer under the bar. Beside an open task, not over it. */
   body.po-peek #po-panel {
@@ -3014,9 +2986,6 @@
   <section id="ws-panel" hidden></section>
   <!-- The roadmap panel, for the same reason: an unsaved draft is state. -->
   <section id="rm-panel" hidden></section>
-  <!-- A documents project's files and recent changes, leading its Overview.
-       A live viewer is state, so this too lives beside #view, never in it. -->
-  <section id="docs-panel" hidden aria-label="The project's files"></section>
   <!-- The PO's conversation, for the same reason again: it is a live session. -->
   <section id="po-panel" hidden aria-label="The project's PO"></section>
 </main>
@@ -5340,7 +5309,7 @@ function projectsLandingHtml() {
     const sub = unassigned
       ? `<div class="ppath">sessions not in a project yet — use “Move to project” to file them</div>`
       : `<div class="ppath" title="${esc(p.path)}">${esc(tildeify(p.path))}${p.isGit ? ' <span class="gitmark" title="git repository">git</span>' : ''}`
-        + `${isDocsProject(p) ? ' <span class="gitmark" title="A documents project: its files lead its page, and every version of them is kept">documents</span>' : ''}</div>`;
+        + `${isDocsProject(p) ? ' <span class="gitmark" title="A documents project: its files are in its Workspace tab, and every version of them is kept">documents</span>' : ''}</div>`;
     const newTask = unassigned ? '' : `<button class="newtask" data-proj="${esc(p.id)}" title="Create a task in this project and fire agents at it">+ New task</button>`;
     return `<div class="proj ${p.waiting ? 'hot' : ''} ${unassigned ? 'unassigned' : ''}" data-proj="${esc(p.id)}">
       <div class="row1"><h3>${esc(p.name)}</h3>${wait}${live}</div>
@@ -5557,18 +5526,19 @@ function wsRoots(ctx) {
 // whose room still exists, and would leak every abandoned folder plus _linked.
 // Files at that level are the project's own and stay.
 function wsHidden(v, dir) {
-  // A documents project's own folders are its documents: at its root only the
-  // real task folders (the hub marks those holding a task.json) and the chat
-  // exports in _linked are left out, at project and at task scope alike.
+  // A documents project's own folders are its documents: at its root the chat
+  // exports in _linked are left out, and so are the real task folders (the hub
+  // marks those holding a task.json) unless its Workspace's "Task folders" box
+  // shows them. A task's Workspace always leaves them out.
   const docs = wsDocsProjectOf(v);
-  if (docs) return wsSame(docs.path, dir) ? { dirs: false, tasks: true, set: new Set() } : null;
+  if (docs) return wsSame(docs.path, dir) ? { dirs: false, docs: true, tasks: !!v.ctx.docs && docsTasksShown(), set: new Set() } : null;
   if (v.ctx.kind !== 'task') return null;
   const root = v.roots.find(r => r.kind === 'project');
   if (!root || !wsSame(root.path, dir)) return null;
   return { dirs: !!v.hideAllDirs, set: v.hide || new Set() };
 }
-// A documents project's Overview mounts its own view of the project, apart
-// from the Workspace tab's, so neither takes the other's element.
+// A documents project's Workspace tab is its Files panel, a view of its own
+// (docs:), so a project that changes kind never inherits the other's state.
 function wsCtxKey(ctx) { return ctx.kind === 'task' ? 'task:' + ctx.sid : (ctx.docs ? 'docs:' : 'project:') + ctx.projectId; }
 
 // ---- Workspace tabs: begin ------------------------------------------------
@@ -6174,25 +6144,26 @@ function wsRowsHtml(v, dir) {
   if (c.error) return `<div class="wse none">can't read: ${esc(c.error)}</div>`;
   const hide = wsHidden(v, dir);
   const ents = hide
-    ? c.entries.filter(e => !((hide.dirs && e.type === 'dir') || (hide.tasks && e.type === 'dir' && (e.task || e.name === '_linked'))
+    ? c.entries.filter(e => !((hide.dirs && e.type === 'dir') || (hide.docs && docsApart(e, hide.tasks))
                               || hide.set.has(wsNorm(wsJoin(dir, e.name)))))
     : c.entries;
   if (!ents.length) return '<div class="wse none">(empty)</div>';
-  // A documents project's Overview (docs) can move a row by dragging it, and
-  // each row has a menu: open, rename, move, history, delete.
-  const docs = !!v.ctx.docs;
-  const more = name => docs ? `<button type="button" class="wse-more" aria-haspopup="menu" aria-expanded="false" aria-label="${esc('Actions for ' + name)}" title="Open, rename, move or delete">⋯</button>` : '';
-  const drag = docs ? ' draggable="true"' : '';
+  // A documents project's Workspace (docs) can move a row by dragging it, and
+  // each row has a menu: open, rename, move, history, delete. A task's folder,
+  // shown by "Task folders", is its task's: its rows open and show a history.
+  const docs = !!v.ctx.docs, held = docs && docsInTask(v, dir);
+  const more = (name, t) => docs ? `<button type="button" class="wse-more" aria-haspopup="menu" aria-expanded="false" aria-label="${esc('Actions for ' + name)}" title="${t ? 'Open or see its history' : 'Open, rename, move or delete'}">⋯</button>` : '';
+  const attrs = t => !docs ? '' : t ? ' data-task="1"' : ' draggable="true"';
   // mtime rides along in the row so a file rewritten in place — same name, same
   // size — still changes the tree's signature and gets repainted.
   const rows = ents.map(e => {
-    const p = wsJoin(dir, e.name);
+    const p = wsJoin(dir, e.name), t = held || (docs && e.type === 'dir' && !!e.task);
     if (e.type === 'dir') {
       const open = v.open.has(p);
-      return `<div class="wse dir${v.mark && wsSame(v.mark, p) ? ' on' : ''}" data-path="${esc(p)}" data-mt="${e.mtime || 0}"${drag}><span class="tw">${open ? '▾' : '▸'}</span><span class="nm">${esc(e.name)}</span>${more(e.name)}</div>`
+      return `<div class="wse dir${v.mark && wsSame(v.mark, p) ? ' on' : ''}" data-path="${esc(p)}" data-mt="${e.mtime || 0}"${attrs(t)}><span class="tw">${open ? '▾' : '▸'}</span><span class="nm">${esc(e.name)}</span>${more(e.name, t)}</div>`
         + `<div class="wsk" data-dir="${esc(p)}"${open ? '' : ' hidden'}>${open ? wsRowsHtml(v, p) : ''}</div>`;
     }
-    return `<div class="wse file${wsSame(v.mark || v.sel, p) ? ' on' : ''}" data-path="${esc(p)}" data-mt="${e.mtime || 0}"${drag}><span class="tw"></span><span class="nm">${esc(e.name)}</span><span class="sz">${wsFmtSize(e.size)}</span>${more(e.name)}</div>`;
+    return `<div class="wse file${wsSame(v.mark || v.sel, p) ? ' on' : ''}" data-path="${esc(p)}" data-mt="${e.mtime || 0}"${attrs(t)}><span class="tw"></span><span class="nm">${esc(e.name)}</span><span class="sz">${wsFmtSize(e.size)}</span>${more(e.name, t)}</div>`;
   }).join('');
   // The server stops at 2000 entries. Say so rather than quietly showing a
   // folder that looks complete and isn't.
@@ -6732,20 +6703,27 @@ async function wsfList(v) {
   const f = v.find, root = wsfRoot(v);
   if (!root) return;
   const key = wsNorm(root.path);
-  if (f.listing === key || (f.list && f.list.key === key && !f.list.error && Date.now() - f.list.at < WSF_LIST_TTL)) return;
+  if (f.listing === key || (f.list && f.list.key === key && !f.list.error && Date.now() - f.list.at < WSF_LIST_TTL
+                            && !docsFindStale(v, f.list))) return;
   f.listing = key;
   let list;
   try {
     const d = await api('/api/ws/files?root=' + encodeURIComponent(root.path));
-    list = { key, root: d.root || root.path, files: d.files || [], truncated: !!d.truncated, max: d.max || 0, at: Date.now(), error: '' };
+    // A documents project finds only in the folders its tree shows, as they
+    // are when the list arrives ("Task folders" may have changed meanwhile).
+    const apart = v.ctx.docs ? await docsApartOf(v) : null;
+    const files = apart ? (d.files || []).filter(p => !docsApartPath(p, apart)) : d.files || [];
+    list = { key, root: d.root || root.path, files, truncated: !!d.truncated, max: d.max || 0, at: Date.now(), error: '',
+             tasks: v.ctx.docs ? docsTasksShown() : undefined };
   } catch (e) {
-    list = { key, root: root.path, files: null, truncated: false, max: 0, at: Date.now(), error: e.message || 'failed' };
+    list = { key, root: root.path, files: null, truncated: false, max: 0, at: Date.now(), error: e.message || 'failed',
+             tasks: v.ctx.docs ? docsTasksShown() : undefined };
   } finally {
     if (f.listing === key) f.listing = '';
   }
   const old = f.list;
   if (old && old.key === key && old.files && list.files && old.files.length === list.files.length
-      && old.files.join('\n') === list.files.join('\n')) { old.at = list.at; return; }
+      && old.files.join('\n') === list.files.join('\n')) { old.at = list.at; old.tasks = list.tasks; return; }
   f.list = list;
   f.pool = null;
   if (f.mode === 'files' && wsfRoot(v) && wsNorm(wsfRoot(v).path) === key) { wsfRank(v); wsfPaint(v); }
@@ -6805,6 +6783,10 @@ async function wsfSearch(v) {
     res = { error: e.message || 'failed' };
   }
   if (gen !== f.gen) return;
+  const apart = res.files && v.ctx.docs ? await docsApartOf(v) : null;
+  if (apart) res = docsFindApart(res, apart);
+  if (gen !== f.gen) return;
+  if (v.ctx.docs) res.tasks = docsTasksShown();
   f.ctl = null;
   res.root = res.root || root.path;
   res.ms = Math.round(performance.now() - t0);
@@ -6816,6 +6798,7 @@ async function wsfSearch(v) {
 // the box was put on screen, gets its results.
 function wsfEnsure(v) {
   const f = v.find, root = wsfRoot(v);
+  if (docsFindStale(v, f.list) || docsFindStale(v, f.res)) docsFindReset(f);
   if (!root || !wsfOn(f)) return;
   if (f.mode === 'files') {
     if (!f.list || f.list.key !== wsNorm(root.path)) wsfList(v);
@@ -7675,7 +7658,7 @@ function chOpenInWorkspace(pid, root, file, line) {
   if (SELECTED_PROJECT !== pid) return;
   PROJECT_TAB = 'workspace';
   renderRows();
-  const v = WS_VIEWS.get(wsCtxKey({ kind: 'project', projectId: pid }));
+  const v = WS_VIEWS.get(wsCtxKey({ kind: 'project', projectId: pid, docs: isDocsProject(projectById(pid)) }));
   if (v && v.el && v.el.isConnected) wsOpenTabAt(v, drPath(root, file), line);
 }
 function wireChangesPanel(pj) {
@@ -8257,16 +8240,12 @@ document.addEventListener('click', async (ev) => {
 
 // ---- Documents project: begin ------------------------------------------------
 // A documents project is a folder of files, not code (car ads, a leasing
-// contract, letters). Its Overview leads with its files and its recent
-// changes, then its PO if it has one; its tasks work in its folder; and the hub keeps every version
+// contract, letters). Its Workspace tab is its files and their recent changes
+// (the Files panel); its Overview is the board, beside its PO if it has one;
+// its tasks work in its folder; and the hub keeps every version
 // of every file with who changed it (history.py). Plain data and functions down
 // to histPaint, so tests/test_documents_project.py runs them in Node.
 function isDocsProject(pj) { return !!(pj && pj.kind === 'documents'); }
-function docsOverviewProject() {
-  if (!SELECTED_PROJECT || SELECTED_PROJECT === UNASSIGNED_ID || PROJECT_TAB !== 'tasks' || SB_DEST) return null;
-  const pj = projectById(SELECTED_PROJECT);
-  return isDocsProject(pj) ? pj : null;
-}
 // The documents project a Workspace view shows, or null.
 function wsDocsProjectOf(v) {
   if (!v || !v.ctx) return null;
@@ -8277,18 +8256,16 @@ function wsDocsProjectOf(v) {
   } else pj = projectById(v.ctx.projectId);
   return isDocsProject(pj) ? pj : null;
 }
-// The Overview's chrome and board, framed for its layout: beside the PO; with
-// a documents project's files between them (#docs-panel takes the middle of
-// main's grid); or plain, under the note saying how to get a PO.
+// The Overview's chrome and board, framed for its layout: beside the PO; or
+// plain, under the note saying how to get a PO (a documents project has none).
 function overviewFrameHtml(o) {
   if (o.poSplit) return `<div class="po-chrome">${o.chrome}</div><div class="po-board">${o.inner}</div>${o.edges}`;
-  if (o.docs) return `<div class="po-chrome">${o.chrome}</div><div class="po-board">${o.inner}</div>`;
   return o.chrome + o.poNote + o.inner;
 }
 function kindBtnHtml(pj) {
   if (!pj || !pj.registered || !pj.path || pj.id === UNASSIGNED_ID) return '';
   const docs = isDocsProject(pj);
-  const tip = docs ? 'Its Overview leads with its files, and every version of them is kept. Click to change'
+  const tip = docs ? 'Its Workspace tab holds its files, and every version of them is kept. Click to change'
                    : 'Its Overview leads with the PO and the board. Click to change';
   return `<button type="button" class="po-btn kind-btn" data-proj="${esc(pj.id)}" title="${tip}">${docs ? 'Documents project' : 'Code project'}</button>`;
 }
@@ -8304,7 +8281,7 @@ function kindDialogHtml(pj) {
   return `<h3>What kind of project is ${esc(pj.name)}?</h3>`
     + `<div class="im-field" role="radiogroup" aria-label="Kind of project">`
     + opt('code', 'Code project', 'Its Overview leads with the PO and the board. Tasks work in their own folders, copies or worktrees.')
-    + opt('documents', 'Documents project', 'Its Overview leads with its files. Tasks work directly in the project folder, several at once, and every version of every file is kept with who changed it.')
+    + opt('documents', 'Documents project', 'Its Workspace tab holds its files, to add, move and restore them. Tasks work directly in the project folder, several at once, and every version of every file is kept with who changed it.')
     + `</div>`
     + `<div class="actions"><button id="kind-ok">Save</button><button id="kind-cancel" class="secondary">Cancel</button></div>`;
 }
@@ -8365,14 +8342,14 @@ async function kindChoose(pid) {
   try {
     await api('/api/projects/kind', { method: 'POST', headers: { 'Content-Type': 'application/json' },
                                       body: JSON.stringify({ projectId: pid, kind }) });
-    toast(kind === 'documents' ? `${pj.name} is a documents project: its files lead its page` : `${pj.name} is a code project again`, 4000, 'ok');
+    toast(kind === 'documents' ? `${pj.name} is a documents project: its files are in its Workspace tab` : `${pj.name} is a code project again`, 4000, 'ok');
     await refreshProjects(); renderRows();
   } catch (e) { toast(histErr(e), 8000, 'err'); }
 }
 
 // ---- the file history ----
 const HIST_FOOT = 'Every version of every file here is kept, with who changed it: a task, or you. Files over 50 MB, and task chats and records, are not kept.';
-const HIST = new Map();   // project id -> the Overview's recent changes
+const HIST = new Map();   // project id -> the Files panel's recent changes
 function histState(pid) {
   if (!HIST.has(pid)) HIST.set(pid, { recent: null, more: false, deleted: [], delMore: false, delPaged: false, delCursor: '', err: '', view: 'recent', at: 0, inFlight: false });
   return HIST.get(pid);
@@ -8422,7 +8399,9 @@ function histRecentHtml(st) {
 }
 function docsPanelHtml(pj) {
   return `<div class="dcs">`
-    + `<section class="dcs-files" aria-label="Files"><div class="dcs-hrow"><h3 class="dcs-h">Files</h3><span class="grow"></span>`
+    + `<section class="dcs-files" aria-label="Files"><div class="dcs-hrow"><h3 class="dcs-h">Files</h3>`
+    + `<label class="dcs-all dcs-tasks" title="Show the folders of the project's tasks, with the files they made there, in the tree, Go to file and Text search">`
+    + `<input type="checkbox" class="dcs-tasks-cb"${docsTasksShown() ? ' checked' : ''}> Task folders</label><span class="grow"></span>`
     + `<label class="rm-btn dcs-add" title="Add files to the folder selected in the tree, or to the project">Add files<input type="file" multiple class="dcs-pick"></label>`
     + `<button type="button" class="rm-btn dcs-mkdir" title="Make a folder in the one selected in the tree, or in the project">New folder</button></div>`
     + `<div class="rm-note dcs-ask" role="group" aria-label="A file of that name is already there" hidden></div>`
@@ -8435,7 +8414,7 @@ function docsPanelHtml(pj) {
     + `<div class="dcs-list" aria-live="polite"><div class="dcs-empty">Loading the history…</div></div>`
     + `<p class="dcs-foot">${esc(HIST_FOOT)}</p></div></section></div>`;
 }
-// The Overview's files: mounted once per project, then only kept current.
+// The Files panel, in the Workspace tab: mounted once per project, then only kept current.
 function docsPanelRender(el, pj) {
   if (el.dataset.proj !== pj.id) {
     el.dataset.proj = pj.id;
@@ -8696,7 +8675,7 @@ async function histClick(v, e) {
   if (rs && await histRestore(h.pid, rs.dataset.rev, rs.dataset.path, rs)) {
     wsSync(v);
     histReloadFrame(v, h.path);
-    const dp = document.getElementById('docs-panel');
+    const dp = document.getElementById('ws-panel');
     if (dp && dp.dataset.proj === h.pid) histRecentLoad(dp, h.pid, true);
     if (v.hist === h) { h.sel = ''; h.entries = null; histPaint(v); histLoadFile(v); }
   }
@@ -8704,7 +8683,7 @@ async function histClick(v, e) {
 // ---- Documents project: end --------------------------------------------------
 
 // ---- Files panel: begin ------------------------------------------------------
-// A documents project's Files panel takes files and folders dropped from the
+// A documents project's Files panel (its Workspace tab) takes files and folders dropped from the
 // computer or picked with Add files, makes folders, and moves, renames and
 // deletes, through the hub's /api/files/*. Every change is snapshotted by the
 // hub, so it shows in Recent changes and a deleted file can be put back.
@@ -8874,6 +8853,54 @@ function docsFolders(files, known, from, isDir, hide) {
                               && !skip.some(h => d === h || d.startsWith(h + '/')))
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
 }
+// "Task folders": whether a documents project's Workspace shows its tasks'
+// folders. One choice for this browser, kept in its storage, or for as long as
+// the page is open where storage is refused.
+const DOCS_TASKS_KEY = 'cd-docs-task-folders';
+let DOCS_TASKS = false;
+function docsTasksShown() {
+  try { const s = localStorage.getItem(DOCS_TASKS_KEY); if (s !== null) return s === '1'; } catch (x) {}
+  return DOCS_TASKS;
+}
+function docsTasksSet(on) {
+  DOCS_TASKS = !!on;
+  try { localStorage.setItem(DOCS_TASKS_KEY, on ? '1' : '0'); } catch (x) {}
+}
+// What a documents project's Workspace leaves out of its root: the file
+// history and the chat exports in _linked always, a task's folder (the hub
+// marks those holding a task.json) unless tasks ("Task folders" checked).
+const docsApart = (e, tasks) => !!e && e.type === 'dir' && (e.name === '.history' || e.name === '_linked' || (!tasks && !!e.task));
+// Their names, from the root's listing.
+function docsApartNames(entries, tasks) {
+  return new Set(['.history', '_linked'].concat((entries || []).filter(e => docsApart(e, tasks)).map(e => e.name)));
+}
+// Whether a file (a /-separated path under the root) lies in one of them.
+const docsApartPath = (rel, names) => { const i = (rel || '').indexOf('/'); return i > 0 && names.has(rel.slice(0, i)); };
+// A text search's results without those files, its count recounted.
+function docsFindApart(res, names) {
+  const files = (res.files || []).filter(f => !docsApartPath(f.path, names));
+  if (files.length === (res.files || []).length) return res;
+  const matches = files.reduce((a, f) => a + f.matches.reduce((b, m) => b + (m.n || m.ranges.length), 0), 0);
+  return Object.assign({}, res, { files, matches });
+}
+// Whether folder abs of a documents Workspace is a task's folder or inside
+// one, by the listings the tree has read: the hub leaves those to their task,
+// so nothing there is renamed, moved, deleted, dropped on or added to.
+function docsInTask(v, abs) {
+  const root = v.roots && v.roots[0], rel = root ? histRel(root.path, abs) : '';
+  if (!rel) return false;
+  let dir = root.path;
+  for (const name of rel.split('/')) {
+    const c = v.dirs.get(dir);
+    if (c && (c.entries || []).some(e => e.task && e.name === name)) return true;
+    dir = wsJoin(dir, name);
+  }
+  return false;
+}
+// Whether a documents Workspace's Go to file list or text result was left out
+// by the other setting of "Task folders" (checked in another project, or
+// another copy of the page): then it is read again.
+const docsFindStale = (v, x) => !!(v.ctx && v.ctx.docs) && !!x && !x.busy && x.tasks !== docsTasksShown();
 // Whether a dragged row may land in folder rel: not on itself, not where it
 // already is, and a folder not inside itself.
 const docsMoveOk = (drag, rel) => !!drag && drag.rel !== rel && upDir(drag.rel) !== rel
@@ -8965,13 +8992,50 @@ function docsFp(pid) {
   if (!DOCS_FP.has(pid)) DOCS_FP.set(pid, { items: [], asks: [], asking: false, noteTimer: 0, doneDirs: new Set(), doneTimer: 0 });
   return DOCS_FP.get(pid);
 }
-// #docs-panel is one element that each documents project mounts into in
-// turn: what arrives late for a project paints only while it is that one's.
+// #ws-panel is one element that each project's Workspace mounts into in turn:
+// what arrives late for a project paints only while it is that one's.
 const docsMine = (el, pid) => !!el && !!el.isConnected && el.dataset.proj === pid;
+// The folders a documents Workspace's find leaves out, or null for any other
+// Workspace. The root's listing names the tasks' folders; read it if the tree
+// has not.
+async function docsApartOf(v) {
+  const root = v.ctx.docs && wsfRoot(v);
+  if (!root) return null;
+  if (!v.dirs.has(root.path)) await wsFetchDir(v, root.path);
+  const c = v.dirs.get(root.path);
+  return docsApartNames(c && c.entries, docsTasksShown());
+}
+// A find's list and result, dropped to be read again.
+function docsFindReset(f) {
+  f.list = null; f.pool = null; f.ranked = null;
+  if (f.res && !f.res.busy) f.res = null;
+}
+// "Task folders" checked or not: the tree, Go to file and a text search follow.
+function docsTasksToggle(v, on) {
+  docsTasksSet(on);
+  docsTasksFollow(v);
+}
+function docsTasksFollow(v) {
+  docsFindReset(v.find);
+  wsPaintTree(v);
+  wsfEnsure(v);
+  wsfPaint(v);
+  wsSync(v);
+}
+// The box checked or unchecked in another copy of the page: the Workspace on
+// screen here follows (another project's finds catch up by docsFindStale).
+window.addEventListener('storage', e => {
+  if (e.key !== DOCS_TASKS_KEY) return;
+  const el = document.getElementById('ws-panel'), pid = el && el.dataset.proj, v = pid && docsMine(el, pid) && docsView(pid);
+  const cb = v && el.querySelector('.dcs-tasks-cb');
+  if (!cb) return;
+  cb.checked = docsTasksShown();
+  docsTasksFollow(v);
+});
 let DOCS_DRAG = null;        // a tree row being dragged: {pid, rel, dir, name}
 let DOCS_ARM_T = 0, DOCS_DOC_WIRED = false;
 const docsDragFiles = ev => !!(ev.dataTransfer && Array.from(ev.dataTransfer.types || []).includes('Files'));
-const docsLiveSection = () => document.querySelector('#docs-panel:not([hidden]) .dcs-files');
+const docsLiveSection = () => document.querySelector('#ws-panel:not([hidden]) .dcs-files');
 const docsDirLabel = (pid, rel) => rel || (projectById(pid) || {}).name || 'the project';
 const docsRow = (v, abs) => v.el ? [...v.el.querySelectorAll('.wsp-tree .wse[data-path]')].find(r => wsSame(r.dataset.path, abs)) || null : null;
 const docsExists = e => /^409 /.test((e && e.message) || '') && /"error":\s*"exists"/.test(e.message);
@@ -8983,7 +9047,7 @@ function docsPost(path, body) {
 function docsTarget(v) {
   const root = wsfRoot(v);
   if (!root) return null;
-  const row = v.mark && [...v.el.querySelectorAll('.wsp-tree .wse.dir')].find(r => wsSame(r.dataset.path, v.mark));
+  const row = v.mark && [...v.el.querySelectorAll('.wsp-tree .wse.dir:not([data-task])')].find(r => wsSame(r.dataset.path, v.mark));
   return row ? { abs: row.dataset.path, rel: histRel(root.path, row.dataset.path) } : { abs: root.path, rel: '' };
 }
 // While something is dragged over the page, the file viewers let it through
@@ -9058,6 +9122,8 @@ function docsFilesWire(el, pid) {
     if (files.length && t) docsUpload(el, pid, t, files.map(f => ({ file: f, rel: f.name })));
   };
   sec.querySelector('.dcs-mkdir').onclick = () => { const t = docsTarget(v); if (t) docsNewFolder(el, pid, t); };
+  const tasks = sec.querySelector('.dcs-tasks-cb');
+  tasks.onchange = () => docsTasksToggle(v, tasks.checked);
   up.onclick = (e) => {
     const b = e.target.closest('.dcu-retry, .dcu-x');
     const it = b && docsFp(pid).items.find(x => String(x.id) === b.dataset.id);
@@ -9096,7 +9162,9 @@ function docsFilesWire(el, pid) {
       return;
     }
     const d = e.target.closest('.wse.dir');
-    if (d && !e.target.closest('.wse-edit')) { v.mark = d.dataset.path; wsPaintTree(v); }
+    // A task's folder takes nothing: selecting it selects no folder, so Add
+    // files and New folder plainly go to the project.
+    if (d && !e.target.closest('.wse-edit')) { v.mark = d.dataset.task ? '' : d.dataset.path; wsPaintTree(v); }
   });
   tree.addEventListener('contextmenu', (e) => {
     const row = e.target.closest('.wse[data-path]');
@@ -9122,6 +9190,7 @@ function docsFilesWire(el, pid) {
 
   // The whole panel takes a drop: onto a folder row, that folder; anywhere
   // else, the top of the project. A row being moved lands only on a folder.
+  // A task's folder is no drop target: its task looks after it.
   const hint = sec.querySelector('.dcs-drop');
   let overT = 0;
   const clearOver = () => {
@@ -9130,14 +9199,27 @@ function docsFilesWire(el, pid) {
     sec.querySelectorAll('.wse.over').forEach(r => r.classList.remove('over'));
     hint.hidden = true;
   };
+  // Over a row in a task's folder the drop is refused, and the hint says why.
   const dropAt = (e) => {
-    const root = wsfRoot(v), row = e.target.closest && e.target.closest('.wsp-tree .wse.dir[data-path]');
-    return root ? { row, abs: row ? row.dataset.path : root.path, rel: row ? histRel(root.path, row.dataset.path) : '' } : null;
+    const root = wsfRoot(v), t = e.target.closest ? e.target : null;
+    if (!root) return null;
+    if (t && t.closest('.wsp-tree .wse[data-task]')) return { held: true };
+    const row = t && t.closest('.wsp-tree .wse.dir[data-path]');
+    return { row, abs: row ? row.dataset.path : root.path, rel: row ? histRel(root.path, row.dataset.path) : '' };
   };
   sec.addEventListener('dragover', (e) => {
     const files = docsDragFiles(e), mv = DOCS_DRAG && DOCS_DRAG.pid === pid ? DOCS_DRAG : null;
     const at = (files || mv) && dropAt(e);
     if (!at) return;
+    if (at.held) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'none';
+      clearOver();
+      hint.textContent = "A task's folder, which its task looks after: nothing is added or moved here";
+      hint.hidden = false;
+      overT = setTimeout(clearOver, 450);
+      return;
+    }
     if (mv && (!at.row || !docsMoveOk(mv, at.rel))) { clearOver(); return; }
     e.preventDefault();
     e.dataTransfer.dropEffect = mv ? 'move' : 'copy';
@@ -9160,6 +9242,7 @@ function docsFilesWire(el, pid) {
     e.preventDefault();
     clearOver();
     docsDragDisarm();
+    if (at.held) return;
     if (mv) {
       DOCS_DRAG = null;
       if (at.row && docsMoveOk(mv, at.rel)) docsMove(el, pid, mv.rel, upJoin(at.rel, mv.name), mv.dir);
@@ -9208,7 +9291,7 @@ function docsFilesWire(el, pid) {
     docsMenuClose(menu, act === 'history' || act === 'open' ? false : act !== 'rename');
     if (act === 'dest') docsMove(el, pid, c.rel, upJoin(b.dataset.dir, upBase(c.rel)), c.dir);
     else if (act === 'open') {
-      if (c.dir) { v.open.add(c.abs); v.mark = c.abs; wsPersist(v); wsSync(v); }
+      if (c.dir) { v.open.add(c.abs); v.mark = docsInTask(v, c.abs) ? '' : c.abs; wsPersist(v); wsSync(v); }
       else wsOpenTab(v, c.abs);
     } else if (act === 'history') { wsOpenTab(v, c.abs); histOpen(v, c.abs); }
     else if (act === 'rename') docsRename(el, pid, c);
@@ -9225,12 +9308,14 @@ function docsMenuOpen(menu, row, rect) {
   const rel = row && root ? histRel(root.path, row.dataset.path) : '';
   if (!rel) return;
   docsMenuClose(menu, false);
-  const dir = row.classList.contains('dir');
+  const dir = row.classList.contains('dir'), held = row.hasAttribute('data-task');
   menu._ctx = { abs: row.dataset.path, rel, dir };
   const item = (act, label, cls) => `<button type="button" role="menuitem" class="ov-item dcm-item${cls ? ' ' + cls : ''}" data-act="${act}">${label}</button>`;
   menu.innerHTML = `<div class="dcm-head" title="${esc(rel)}">${esc(upBase(rel))}</div>`
-    + item('open', dir ? 'Open folder' : 'Open') + item('rename', 'Rename') + item('moveto', 'Move to…')
-    + (dir ? '' : item('history', 'History')) + '<div class="ov-rule" role="separator"></div>' + item('delete', 'Delete', 'danger');
+    + item('open', dir ? 'Open folder' : 'Open') + (held ? '' : item('rename', 'Rename') + item('moveto', 'Move to…'))
+    + (dir ? '' : item('history', 'History'))
+    + (held ? `<div class="dcm-empty">In a task's folder, which its task looks after: it is not renamed, moved or deleted here.</div>`
+            : '<div class="ov-rule" role="separator"></div>' + item('delete', 'Delete', 'danger'));
   menu.setAttribute('aria-label', `Actions for ${upBase(rel)}`);
   docsMenuPlace(menu, rect);
   const btn = row.querySelector('.wse-more');
@@ -9650,15 +9735,6 @@ function renderRows() {
   syncProjSwitch();
   renderPo();
   paintSearchBadge(null);
-  // A documents project's Overview leads with its files (#docs-panel, built
-  // once per project and kept); every other view hides it.
-  const docsPj = docsOverviewProject();
-  document.body.classList.toggle('docs-split', !!docsPj);
-  const dcp = document.getElementById('docs-panel');
-  if (dcp) {
-    dcp.hidden = !docsPj;
-    if (docsPj) docsPanelRender(dcp, docsPj);
-  }
   // The workspace panel is shown, never rebuilt — every branch below is free to
   // replace #view without touching it.
   const wsp = document.getElementById('ws-panel');
@@ -9731,15 +9807,21 @@ function renderRows() {
     // here can destroy it.
     if (writeSlot($('#view'), projectsChromeHtml())) wireProjectsChrome();
     const panel = document.getElementById('ws-panel');
-    const key = pj && pj.path ? wsCtxKey({ kind: 'project', projectId: SELECTED_PROJECT }) : 'none';
+    // A documents project's Workspace is its Files panel: the same tree and
+    // viewer, with row menus, uploads and recent changes (docsPanelRender
+    // builds it into the panel, keyed by data-proj).
+    const docs = !!(pj && pj.path && isDocsProject(pj));
+    const key = pj && pj.path ? wsCtxKey({ kind: 'project', projectId: SELECTED_PROJECT, docs }) : 'none';
     if (panel.dataset.wskey !== key) {
       panel.dataset.wskey = key;
+      delete panel.dataset.proj;
       if (!pj || !pj.path) panel.innerHTML = '<p class="empty">This project has no folder.</p>';
-      else {
+      else if (!docs) {
         panel.innerHTML = wsPanelHtml();
         wsMount(panel.querySelector('.wsp'), { kind: 'project', projectId: SELECTED_PROJECT });
       }
     }
+    if (docs) docsPanelRender(panel, pj);
     return;
   }
   const parsed = parseSearchQuery(SEARCH_QUERY);
@@ -9770,12 +9852,11 @@ function renderRows() {
   // A project with a PO puts the board beside it (see #po-panel); one without
   // gets today's board under a note saying how to give it one.
   const poSplit = !!poSplitProject();
-  const docs = !!docsOverviewProject();
-  const poNote = poSplit || docs ? '' : poNoteHtml();
+  const poNote = poSplit ? '' : poNoteHtml();
   // The board's pane gets an edge on each side, shown while columns lie past it.
   const edges = VIEW_MODE === 'board'
     ? `<div class="board-edge l" hidden><button data-dir="l">‹</button></div><div class="board-edge r" hidden><button data-dir="r">›</button></div>` : '';
-  const frame = inner => overviewFrameHtml({ poSplit, docs, chrome: projectsChromeHtml(), poNote, inner, edges });
+  const frame = inner => overviewFrameHtml({ poSplit, chrome: projectsChromeHtml(), poNote, inner, edges });
   if (!filtered.length) {
     if (writeSlot(view, frame(filterRowHtml(cols)
       + '<p class="empty">' + (active ? 'No matches.' : 'No sessions.') + '</p>'))) wireProjectsChrome();
@@ -9788,7 +9869,7 @@ function renderRows() {
     // DOM out from under an in-flight drag. Same problem the Workspace tab
     // hit, same guard: remount only when PLACEMENT changes. Card contents are
     // patched in place below, so dots and lozenges stay live while hovering.
-    const sig = [SELECTED_PROJECT || '', SEARCH_QUERY, DONE_SHOW_ALL, poSplit, docs, poNote,
+    const sig = [SELECTED_PROJECT || '', SEARCH_QUERY, DONE_SHOW_ALL, poSplit, poNote,
                  BOARD_FIT, isPhone(), [...hidden].join('.'),
                  filtered.map(r => (r.roomId || r.sessionId) + ':' + frozenWorkflowOf(r, frozen)).join(',')].join('|');
     if (sig !== BOARD_SIG || !view.querySelector('.board, .board-none')) {

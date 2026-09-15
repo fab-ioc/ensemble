@@ -1,5 +1,5 @@
-"""The Files panel of a documents project's Overview: drop, Add files, folders,
-move, rename and delete (index.html's "Files panel" block).
+"""The Files panel of a documents project's Workspace tab: drop, Add files,
+folders, move, rename and delete (index.html's "Files panel" block).
 
 * the pure parts, run in Node (skipped without Node): the upload queue (at
   most three out, a file over 50 MB refused before it is sent, what each hub
@@ -7,8 +7,12 @@ move, rename and delete (index.html's "Files panel" block).
   (asked once, "apply to all", Keep both counting on), the walk of a dropped
   folder (paths, batches of entries, empty folders, unreadable files, what
   Finder leaves behind), the folders offered by Move to, and paths after a move;
-* the tree rows get a menu and dragging only on the documents Overview, not
-  in a code project or a task's Workspace;
+* the tree rows get a menu and dragging only in a documents project's
+  Workspace, not in a code project or a task's Workspace;
+* "Task folders": hidden by default, shown with their files when checked (in
+  the tree, Go to file and a text search), remembered by the browser; .history
+  and _linked never show; a task's folder opens but is not renamed, moved,
+  deleted or dropped on;
 * Recent changes says who and what: "ceo · uploaded".
 """
 from __future__ import annotations
@@ -44,15 +48,17 @@ def pure_block() -> str:
 
 
 DEPS = ["esc", "wsNorm", "wsSame", "wsJoin", "wsFmtSize", "wsRowsHtml", "wsCtxKey", "isDocsProject", "wsDocsProjectOf",
-        "projectById", "registeredProjects", "wsHidden", "wsProjectForRow", "wsTaskFolder", "histWho", "HIST_DID", "histDid"]
+        "projectById", "registeredProjects", "wsHidden", "wsProjectForRow", "wsTaskFolder", "histWho", "HIST_DID", "histDid",
+        "histRel", "wsfRoot", "wsFetchDir"]
 # The Files panel's own wiring that runs without a page.
-WIRING = ["histDelPlace", "DOCS_FP", "docsFp", "docsMine", "docsDeletedRows", "docsAsk", "docsAskShow", "docsUpPaint", "docsUpBar"]
+WIRING = ["histDelPlace", "DOCS_FP", "docsFp", "docsMine", "docsDeletedRows", "docsAsk", "docsAskShow", "docsUpPaint", "docsUpBar",
+          "docsApartOf"]
 
 PAGE = r"""
 const out = {};
 let api = async () => { throw new Error('no hub'); };
 const UNASSIGNED_ID = '__unassigned__';
-let ALL_ROWS = [];
+let ALL_ROWS = [], WS_DIR_GEN = 0;
 const PROJECTS = { projects: [
   { id: 'p-docs', name: 'Motors', kind: 'documents', registered: true, path: 'C:\\P\\Motors', home: 'C:\\P\\Motors', sessions: [] },
   { id: 'p-code', name: 'Opten', kind: 'code', registered: true, path: 'C:\\P\\Opten', home: 'C:\\P\\Opten', sessions: [] },
@@ -211,11 +217,68 @@ out.docsRows = wsRowsHtml(view({ kind: 'project', projectId: 'p-docs', docs: tru
 out.docsWsTab = wsRowsHtml(view({ kind: 'project', projectId: 'p-docs' }, 'C:\\P\\Motors'), 'C:\\P\\Motors');
 out.codeRows = wsRowsHtml(view({ kind: 'project', projectId: 'p-code' }, 'C:\\P\\Opten'), 'C:\\P\\Opten');
 
+// ---- "Task folders"
+const nm = html => [...html.matchAll(/class="nm">([^<]*)</g)].map(m => m[1]);
+const mo = 'C:\\P\\Motors', x5 = mo + '\\selling_x5';
+const topEntries = [{ name: 'Leasing', type: 'dir' }, { name: 'selling_x5', type: 'dir', task: true }, { name: '_linked', type: 'dir' },
+                    { name: '.history', type: 'dir' }, { name: 'README.md', type: 'file', size: 3 }];
+const tview = () => ({ ctx: { kind: 'project', projectId: 'p-docs', docs: true }, roots: [{ path: mo, kind: 'project', label: 'Motors' }],
+  dirs: new Map([[mo, { entries: topEntries }], [x5, { entries: [{ name: 'ad.md', type: 'file', size: 4 }, { name: 'photos', type: 'dir' }] }],
+                 [x5 + '\\photos', { entries: [{ name: 'front.jpg', type: 'file', size: 9 }] }]]),
+  open: new Set([x5, x5 + '\\photos']), mark: '', sel: '', hide: new Set(), hideAllDirs: false, hideReady: true });
+// No storage at all (a blocked one throws): unchecked, then kept for the page.
+out.tasksDefault = [docsTasksShown(), nm(wsRowsHtml(tview(), mo))];
+docsTasksSet(true);
+const shownRows = wsRowsHtml(tview(), mo);
+out.tasksShown = [docsTasksShown(), nm(shownRows)];
+out.tasksHeld = [(shownRows.match(/data-task="1"/g) || []).length, (shownRows.match(/draggable="true"/g) || []).length,
+                 (shownRows.match(/class="wse-more"/g) || []).length, /data-path="[^"]*photos" data-mt="0" data-task="1"/.test(shownRows),
+                 /title="Open or see its history"/.test(shownRows)];
+out.inTask = [docsInTask(tview(), x5), docsInTask(tview(), x5 + '\\photos\\deep'), docsInTask(tview(), mo + '\\Leasing'),
+              docsInTask(tview(), mo), docsInTask(tview(), 'C:\\P\\Motors2\\selling_x5')];
+// The browser's storage remembers it, across a reload of the page.
+const store = {};
+globalThis.localStorage = { getItem: k => (k in store ? store[k] : null), setItem: (k, val) => { store[k] = String(val); } };
+docsTasksSet(false);
+out.stored = [store[DOCS_TASKS_KEY], docsTasksShown()];
+store[DOCS_TASKS_KEY] = '1'; DOCS_TASKS = false;          // a reload: nothing in memory, the box was left checked
+out.remembered = docsTasksShown();
+// A find filtered for the other setting (checked in another project, or in
+// another copy of the page) is read again; a busy one and a code project's not.
+const sv = tview();
+out.findStale = [docsFindStale(sv, { tasks: true }), docsFindStale(sv, { tasks: false }), docsFindStale(sv, { busy: true }),
+                 docsFindStale(sv, null), docsFindStale(sv, { error: 'x' }),
+                 docsFindStale(Object.assign(tview(), { ctx: { kind: 'project', projectId: 'p-code' } }), {})];
+// Go to file and a text search leave out what the tree leaves out.
+const hiddenNames = docsApartNames(topEntries, false), shownNames = docsApartNames(topEntries, true);
+out.apartNames = [[...hiddenNames].sort(), [...shownNames].sort()];
+const listed = ['README.md', 'Leasing/offer.pdf', 'selling_x5/ad.md', 'selling_x5/photos/front.jpg', '_linked/room-1/chat.md', '.history/HEAD', 'selling_x5.md'];
+out.gotoHidden = listed.filter(p => !docsApartPath(p, hiddenNames));
+out.gotoShown = listed.filter(p => !docsApartPath(p, shownNames));
+const found = { files: [{ path: 'Leasing/offer.pdf', matches: [{ line: 1, ranges: [[0, 3]], n: 2 }] },
+                        { path: 'selling_x5/ad.md', matches: [{ line: 2, ranges: [[0, 3]], n: 1 }, { line: 9, ranges: [[1, 3]] }] }],
+                matches: 4, truncated: false, filesSearched: 12 };
+const fh = docsFindApart(found, hiddenNames);
+out.searchHidden = [fh.files.map(f => f.path), fh.matches, fh.filesSearched, found.files.length];
+out.searchShown = docsFindApart(found, shownNames) === found;
+
 out.who = [histWho({ kind: 'user', name: 'ceo', reason: 'upload' }), histDid({ kind: 'user', name: 'ceo', reason: 'upload' }),
            histWho({ kind: 'you', label: 'you', reason: 'scan' }), histDid({ kind: 'you', reason: 'scan' }),
            histWho({ kind: 'task', label: 'Sort papers' }), histWho(null), histDid({ reason: 'delete' }), histDid({ reason: 'move' })];
 
 (async () => {
+  // The find's folders: from the tree's listing, or read when the tree has none;
+  // none for a code project's Workspace.
+  const reads0 = [];
+  api = async url => { reads0.push(url); return { entries: topEntries }; };
+  const av = tview();
+  store[DOCS_TASKS_KEY] = '0';
+  out.apartOf = [[...(await docsApartOf(av))].sort(), reads0.length];
+  av.dirs.delete(mo); store[DOCS_TASKS_KEY] = '1';
+  out.apartOfRead = [[...(await docsApartOf(av))].sort(), reads0.length, av.dirs.has(mo)];
+  out.apartOfCode = await docsApartOf(Object.assign(tview(), { ctx: { kind: 'project', projectId: 'p-code' } }));
+  api = async () => { throw new Error('no hub'); };
+
   const walked = await upWalk(dropped);
   out.walk = walked.map(x => x.dir ? x.rel + '/' : x.err ? '!' + x.rel : x.rel);
   out.walkFile = walked[0].file.name;
@@ -408,7 +471,7 @@ class ThePureParts(unittest.TestCase):
         self.assertEqual(o["moveOk"], [False, False, False, True, True, False])
         self.assertEqual(o["moved"], ["C:\\P\\M\\Old\\Leasing\\a.pdf", "C:\\P\\M\\Lease", ""])
 
-    def test_rows_have_a_menu_and_drag_only_on_the_documents_overview(self):
+    def test_rows_have_a_menu_and_drag_only_in_a_documents_workspace(self):
         o = self.out
         self.assertEqual(o["docsRows"].count('class="wse-more"'), 2)
         self.assertEqual(o["docsRows"].count('draggable="true"'), 2)
@@ -416,6 +479,51 @@ class ThePureParts(unittest.TestCase):
         for html in (o["docsWsTab"], o["codeRows"]):
             self.assertNotIn("wse-more", html)
             self.assertNotIn("draggable", html)
+
+    def test_task_folders_are_hidden_until_checked_and_history_and_linked_never_show(self):
+        o = self.out
+        self.assertEqual(o["tasksDefault"], [False, ["Leasing", "README.md"]])
+        self.assertEqual(o["tasksShown"], [True, ["Leasing", "selling_x5", "ad.md", "photos", "front.jpg", "README.md"]],
+                         "the task's folder with the files it made there; _linked and .history still hidden")
+        self.assertEqual(o["apartNames"], [[".history", "_linked", "selling_x5"], [".history", "_linked"]])
+
+    def test_the_choice_is_remembered_by_the_browser(self):
+        o = self.out
+        self.assertEqual(o["stored"], ["0", False])
+        self.assertTrue(o["remembered"], "a reload finds the box as it was left")
+
+    def test_a_find_left_from_the_other_setting_is_read_again(self):
+        self.assertEqual(self.out["findStale"], [False, True, False, False, True, False])
+        self.assertIn("if (docsFindStale(v, f.list) || docsFindStale(v, f.res)) docsFindReset(f);", js_function("wsfEnsure"))
+        lst = js_function("wsfList")
+        self.assertIn("&& !docsFindStale(v, f.list))) return;", lst)
+        self.assertEqual(lst.count("tasks: v.ctx.docs ? docsTasksShown() : undefined"), 2, "an error is kept for its setting too")
+        self.assertIn("old.tasks = list.tasks;", lst)
+        self.assertIn("if (v.ctx.docs) res.tasks = docsTasksShown();", js_function("wsfSearch"))
+        # Another copy of the page: the Workspace on screen follows at once.
+        i = INDEX.index("window.addEventListener('storage', e => {\n  if (e.key !== DOCS_TASKS_KEY) return;")
+        listener = INDEX[i:INDEX.index("\n});", i)]
+        self.assertIn("cb.checked = docsTasksShown();", listener)
+        self.assertIn("docsTasksFollow(v);", listener)
+
+    def test_a_tasks_folder_opens_but_is_its_tasks(self):
+        held, draggable, menus, nested, tip = self.out["tasksHeld"]
+        self.assertEqual(held, 4, "the task's folder and everything shown in it")
+        self.assertEqual(draggable, 2, "only the project's own rows are dragged")
+        self.assertEqual(menus, 6, "every row still opens, and a file shows its history")
+        self.assertTrue(nested)
+        self.assertTrue(tip)
+        self.assertEqual(self.out["inTask"], [True, True, False, False, False])
+
+    def test_go_to_file_and_text_search_leave_out_what_the_tree_does(self):
+        o = self.out
+        self.assertEqual(o["gotoHidden"], ["README.md", "Leasing/offer.pdf", "selling_x5.md"])
+        self.assertEqual(o["gotoShown"], ["README.md", "Leasing/offer.pdf", "selling_x5/ad.md", "selling_x5/photos/front.jpg", "selling_x5.md"])
+        self.assertEqual(o["searchHidden"], [["Leasing/offer.pdf"], 2, 12, 2], "the count is recounted, the hub's result untouched")
+        self.assertTrue(o["searchShown"])
+        self.assertEqual(o["apartOf"], [[".history", "_linked", "selling_x5"], 0])
+        self.assertEqual(o["apartOfRead"], [[".history", "_linked"], 1, True], "the root is read when the tree has not")
+        self.assertIsNone(o["apartOfCode"])
 
     def test_recent_changes_names_who_and_what(self):
         self.assertEqual(self.out["who"], ["ceo", "uploaded", "you", "", "Sort papers", "you", "deleted", "moved"])
@@ -428,6 +536,28 @@ class TheMarkup(unittest.TestCase):
         self.assertIn('<input type="file" multiple class="dcs-pick">', panel)
         self.assertNotIn("accept=", panel, "a phone offers Photos and Files only without a filter")
         self.assertIn(">New folder<", panel)
+        self.assertIn('<input type="checkbox" class="dcs-tasks-cb"', panel)
+        self.assertIn("> Task folders</label>", panel)
+        self.assertIn('class="dcs-all dcs-tasks"', panel, "the box looks like the panel's other checkbox")
+        wire = js_function("docsFilesWire")
+        self.assertIn("tasks.onchange = () => docsTasksToggle(v, tasks.checked);", wire)
+        # A drop over a task's folder is refused with a reason, never sent to the project's top.
+        self.assertIn("if (t && t.closest('.wsp-tree .wse[data-task]')) return { held: true };", wire)
+        self.assertIn("if (at.held) return;", wire)
+        self.assertIn("nothing is added or moved here", wire)
+        held = wire[wire.index("if (at.held) {"):wire.index("if (mv && (!at.row")]
+        self.assertIn("e.dataTransfer.dropEffect = 'none';", held)
+        self.assertNotIn("classList.add('over')", held)
+        self.assertIn(".wse.dir:not([data-task])", js_function("docsTarget"), "nor where Add files and New folder put things")
+        self.assertIn("v.mark = d.dataset.task ? '' : d.dataset.path;", wire, "selecting a task's folder selects no folder")
+        self.assertIn("v.mark = docsInTask(v, c.abs) ? '' : c.abs;", wire)
+        self.assertNotIn("leading its Overview", INDEX)
+        menu = js_function("docsMenuOpen")
+        self.assertIn("held ? '' : item('rename', 'Rename') + item('moveto', 'Move to…')", menu)
+        self.assertIn("which its task looks after", menu)
+        self.assertIn("const apart = v.ctx.docs ? await docsApartOf(v) : null;", js_function("wsfList"))
+        self.assertIn("const apart = res.files && v.ctx.docs ? await docsApartOf(v) : null;", js_function("wsfSearch"))
+        self.assertIn("if (apart) res = docsFindApart(res, apart);", js_function("wsfSearch"))
         block = INDEX[INDEX.index("// ---- Files panel: begin"):INDEX.index("// ---- Files panel: end")]
         self.assertNotRegex(block, r"\bprompt\(|\bconfirm\(|\balert\(")
         self.assertIn("webkitGetAsEntry", block)
