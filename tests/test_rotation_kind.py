@@ -373,9 +373,12 @@ class RotateOwnerTests(_Base):
         with mock.patch.object(dashboard, "find_project",
                                return_value={"id": "p1", "poRoomId": po_created["id"]}):
             self.rotate(self.saved(room), _snap(86, 20))
-        self.assertEqual(len(self.launcher.rings), 1)
-        line = self.launcher.rings[0][1]
-        self.assertTrue(line.startswith(
+        self.assertEqual(self.launcher.rings, [], "a rotation does not wake the PO")
+        line = chatroom.get_room(po_created["id"], public=False)["messages"][-1]["text"]
+        self.assertIn(
+            "claude was handed to a fresh Claude session (switching to Codex failed: "
+            "its terminal ended as it started)", line)
+        self.assertTrue(line.split("\n\n", 1)[1].startswith(
             "claude was handed to a fresh Claude session (switching to Codex failed: "
             "its terminal ended as it started)"), line)
 
@@ -423,7 +426,9 @@ class RotateOwnerTests(_Base):
         with mock.patch.object(dashboard, "find_project",
                                return_value={"id": "p1", "poRoomId": po_created["id"]}):
             self.rotate(self.saved(room), _snap(86, 20))
-        line = self.launcher.rings[-1][1]
+        self.assertEqual(self.launcher.rings, [], "a rotation does not wake the PO")
+        line = chatroom.get_room(po_created["id"], public=False)["messages"][-1]["text"]
+        line = line.split("\n\n", 1)[1]
         self.assertTrue(line.startswith(
             "claude was handed to a fresh Codex session (Claude 5-hour window at 86%) "
             "at 212k tokens"), line)

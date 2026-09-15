@@ -37,8 +37,9 @@ settings; 0 turns them off):
    reports reach the new session unchanged; the old session id is kept in
    ``participant.rotations`` (its transcript stays on disk, and still counts in
    the task's cost).
-4. **Say so.** A notice lands in the room; a task owner's rotation is also
-   reported to the project's PO in one line.
+4. **Say so.** A notice lands in the room; a task owner's rotation also puts
+   one line in the project's PO room. Neither wakes anyone: a rotation asks
+   nothing of the PO or the CEO.
 
 Only Claude POs are rotated: a PO is started from a prompt that holds its
 spec, which a Codex command line has no room for. Owners of both kinds are.
@@ -741,7 +742,7 @@ def _watch_switch(key: tuple, flags: dict, w: dict) -> None:
     if _d.chatroom.get_room(rid) is None:
         return
     try:
-        rec["poWoken"] = _report_to_po(w["room"], ident, rec, w["how"])
+        rec["poTold"] = _report_to_po(w["room"], ident, rec, w["how"])
     except Exception as e:
         _log(f"{rid}/{ident}: could not report the rotation to the PO: {str(e)[:200]}")
 
@@ -978,8 +979,12 @@ def _await_codex_session(cwd: str, since: float, taken: set) -> str:
 
 
 def _report_to_po(room: dict, ident: str, rec: dict, how: str) -> bool:
-    """Tell the project's PO in one line, the way ensemble_report reaches it.
-    True when the PO was woken."""
+    """Put one line about the rotation in the project's PO room, shaped like
+    an ``update`` report so the chat folds it to a hub row. It does not wake
+    the PO: a rotation asks nothing of it, and each wake re-sends the PO's
+    whole conversation (and its answer lands in the CEO's chat). The task's
+    ``lastReport`` is not touched, so its last real report survives. True when
+    the line was posted."""
     proj = _d.find_project(room.get("projectId") or "")
     po_rid = ((proj or {}).get("poRoomId") or "").strip()
     if not po_rid or po_rid == room["id"]:
@@ -997,11 +1002,8 @@ def _report_to_po(room: dict, ident: str, rec: dict, how: str) -> bool:
     res = _d.chatroom.post_report(po_rid, f"{ident}@{room['id']}", po_ident, body,
                                   {"reportKind": "update", "taskId": room["id"],
                                    "taskTitle": title, "reporter": ident,
-                                   "noticeKind": "rotation"})
-    if not res:
-        return False
-    return bool(_d.hub_launcher()._ring_report(po_rid, res, room["id"], title, ident,
-                                               "update", line))
+                                   "noticeKind": "rotation"}, wake=False)
+    return bool(res)
 
 
 def _rotate(s: dict, tr: dict, done, answered: bool, asked: bool = True) -> dict:
@@ -1284,7 +1286,7 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
                 "room": room_full, "how": how})
         else:
             try:
-                rec["poWoken"] = _report_to_po(room_full, ident, rec, how)
+                rec["poTold"] = _report_to_po(room_full, ident, rec, how)
             except Exception as e:      # the rotation itself has happened
                 _log(f"{s['name']}: could not report the rotation to the PO: "
                      f"{str(e)[:200]}")
