@@ -626,6 +626,16 @@
   a.ref-chip .ref-arrow { color:var(--link); }
   a.ref-chip .ref-who { flex:0 0 auto; font-weight:500; }
   a.ref-chip .ref-prev { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; color:var(--fg-muted); }
+  /* A task named by its number, as a chip: #18, its title, its column. */
+  .msg .text.md a.task-chip, a.task-chip { display:inline-flex; align-items:baseline; gap:var(--s-100); max-width:100%; box-sizing:border-box;
+    vertical-align:baseline; padding:0 var(--s-100); background:var(--surface-sunken); color:var(--fg); border:1px solid var(--border);
+    border-radius:var(--r-100); font-size:var(--fs-200); line-height:16px; text-decoration:none; white-space:nowrap; overflow:hidden; }
+  a.task-chip:hover { background:var(--hover); }
+  a.task-chip:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  a.task-chip .ref-who { flex:0 0 auto; font-weight:500; font-variant-numeric:tabular-nums; }
+  a.task-chip .ref-prev { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+  a.task-chip .ref-state, .tno { flex:0 0 auto; color:var(--fg-muted); }
+  .tno { margin-right:var(--s-100); font-weight:400; font-variant-numeric:tabular-nums; }
   /* A link to a balloon this conversation does not have. */
   #goto-note { flex:0 0 auto; display:flex; align-items:center; gap:var(--s-200); padding:var(--s-050) 12px;
     border-bottom:1px solid var(--border); color:var(--fg-muted); font-size:var(--fs-200); line-height:16px; }
@@ -805,9 +815,9 @@
     /* Nothing needs hover: Copy link always shows. A chip keeps its look in the
        line of text and takes a finger's height with an invisible margin. */
     .msg:not(:hover) .from .copy-link:not(:focus-visible):not(.done) { clip-path: none; }
-    .msg .text.md a.ref-chip, a.ref-chip { position: relative; overflow: visible; }
-    a.ref-chip::after { content: ''; position: absolute; left: 0; right: 0; top: -14px; bottom: -14px; }
-    a.ref-chip .ref-prev { max-width: 40vw; }
+    .msg .text.md a.ref-chip, a.ref-chip, .msg .text.md a.task-chip, a.task-chip { position: relative; overflow: visible; }
+    a.ref-chip::after, a.task-chip::after { content: ''; position: absolute; left: 0; right: 0; top: -14px; bottom: -14px; }
+    a.ref-chip .ref-prev, a.task-chip .ref-prev { max-width: 40vw; }
     /* A phone zooms into any field under 16px and stays zoomed. The ids and
        classes are here because those fields' own rules set font: inherit. */
     textarea, select, input, #compose textarea, .cmt-composer textarea { font-size: var(--fs-400); }
@@ -821,7 +831,7 @@
 </head>
 <body>
 <header>
-  <h1 id="title">session</h1>
+  <h1><span id="tno" class="tno" hidden></span><span id="title">session</span></h1>
   <span id="status" class="status"></span>
   <span id="hop" class="dim"></span>
   <span class="grow"></span>
@@ -1074,7 +1084,7 @@ const REF_MARK_RE = new RegExp(REF_A + '(\\d+)' + REF_Z, 'g');
 const REF_BLOCK_RE = /\n\n\[ref (https?:\/\/[^\s\]]+)\] (?:not found: no message \S+ in \S+ on this hub|from [^\n]* in "[^\n]*" at (?:\d{4}-\d\d-\d\d \d\d:\d\d|an unknown time):(?:\n>(?: [^\n]*)?)+)\s*$/;
 function stripRefBlocks(t) {
   t = String(t || '');
-  for (let m; (m = REF_BLOCK_RE.exec(t)) && t.slice(0, m.index).includes(m[1]);) t = t.slice(0, m.index);
+  for (let m; (m = TASK_BLOCK_RE.exec(t) || REF_BLOCK_RE.exec(t)) && t.slice(0, m.index).includes(m[1]);) t = t.slice(0, m.index);
   return t;
 }
 function refOfUrl(u) {
@@ -1084,6 +1094,55 @@ function refOfUrl(u) {
   const room = (x.searchParams.get('room') || '').trim(), msg = (x.searchParams.get('msg') || '').trim();
   return x.pathname === '/session' && room && msg ? { url, room, msg, tail: u.slice(url.length) } : null;
 }
+// ---- Task references: begin ------------------------------------------------
+// A task named by its number in chat text (#18, #ED-18, @codex@18,
+// @reviewer@ED-18) is a chip naming it, as the hub reads the number in this
+// chat's project (/api/task/ref): "#18 · title · state". A number that names no
+// task stays text. The hub writes one line under the message for the agent
+// (message_refs.py), which the balloon drops (stripRefBlocks).
+// tests/test_task_refs.py runs this block in Node.
+const TASK_REF_RE = /(?<![\w&\/#@.\\-])(?:@([A-Za-z][\w-]*)@|#)(?:([A-Za-z][A-Za-z0-9]{0,5})-)?(\d{1,6})(?![\w-])/g;
+const TASK_BLOCK_RE = /\n\n\[ref ((?:@[A-Za-z][\w-]*@|#)(?:[A-Za-z][A-Za-z0-9]*-)?\d{1,6})\] task [^\n]*\s*$/;
+const TASK_REFS = new Map();   // "#18" or "ED-18" → { state: 'pending' | 'ok' | 'gone', ...the task }
+function taskRefInfo(key, no) {
+  const k = key ? key.toUpperCase() + '-' + no : '#' + no;
+  let r = TASK_REFS.get(k);
+  if (r) return r;
+  TASK_REFS.set(k, r = { state: 'pending' });
+  fetch('/api/task/ref?ref=' + encodeURIComponent(k) + (ROOM ? '&room=' + encodeURIComponent(ROOM) : ''))
+    .then(res => res.status === 404 ? { gone: true } : res.ok ? res.json() : Promise.reject(new Error('error ' + res.status)))
+    .then(d => { TASK_REFS.set(k, d && !d.gone && d.roomId ? Object.assign({ state: 'ok' }, d) : { state: 'gone' }); refChanged(); })
+    // The hub did not answer: text for now, asked again in a while.
+    .catch(() => setTimeout(() => { TASK_REFS.delete(k); refChanged(); }, 15000));
+  return r;
+}
+// Its column, and what it is doing when that is not the calm default.
+const taskRefState = t => [t.workflowName, t.status && t.status !== 'not running' ? t.status : ''].filter(Boolean).join(' · ');
+// The chip for a number the hub has resolved, else null. @codex@18 opens the
+// task at that agent (a role, @reviewer@18, is the agent holding it).
+function taskChipHtml(who, key, no) {
+  const t = taskRefInfo(key, no);
+  if (t.state !== 'ok') return null;
+  const w = String(who || '').toLowerCase();
+  const agent = w ? (t.agents || []).find(a => (a.identity || '').toLowerCase() === w
+    || String(a.role || '').split(':')[0].trim().toLowerCase() === w) : null;
+  const id = agent ? agent.identity : '';
+  const href = '/session?id=' + encodeURIComponent(t.roomId) + (id ? '&agent=' + encodeURIComponent(id) : '');
+  const name = key ? (t.ref || t.label) : (t.label || t.ref);
+  const state = taskRefState(t);
+  const tip = `Open task ${t.ref || t.label}: ${t.title}` + (id ? ` at ${id}` : '') + (t.project ? ` (${t.project})` : '');
+  return `<a class="task-chip" href="${esc(href)}" data-task="${esc(t.roomId)}"${id ? ` data-agent="${esc(id)}"` : ''} title="${esc(tip)}">`
+    + `<span class="ref-who">${esc((id ? '@' + id + ' ' : '') + name)}</span><span class="ref-prev">${esc(t.title)}</span>`
+    + (state ? `<span class="ref-state">${esc(state)}</span>` : '') + `</a>`;
+}
+// Every resolved task number in a text, parked as a chip (REF_A i REF_Z).
+function parkTaskRefs(s, chips) {
+  return String(s).replace(TASK_REF_RE, (m, who, key, no) => {
+    const h = taskChipHtml(who || '', key || '', +no);
+    return h ? REF_A + (chips.push(h) - 1) + REF_Z : m;
+  });
+}
+// ---- Task references: end --------------------------------------------------
 // Whether a text holds a link to a balloon (the pattern is REF_URL_RE's).
 function hasMessageRefs(text) {
   return [...String(text || '').matchAll(/https?:\/\/[^\s<>()\[\]{}"'`*|\\]+/gi)].some(m => refOfUrl(m[0]));
@@ -1109,7 +1168,7 @@ function refInfo(room, msg) {
   return r;
 }
 const refWhen = ts => ts ? new Date(ts * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '';
-const refLabel = r => [r.who, r.taskTitle, refWhen(r.ts)].filter(Boolean).join(' · ');
+const refLabel = r => [r.who, (r.taskNo ? '#' + r.taskNo + ' ' : '') + (r.taskTitle || ''), refWhen(r.ts)].filter(Boolean).join(' · ');
 function refPreview(r) {
   const t = stripRefBlocks(r.text).replace(/\s+/g, ' ').trim();
   return t.length > 60 ? t.slice(0, 59) + '…' : t;
@@ -1152,6 +1211,7 @@ function mdToHtml(src) {
     const ref = refOfUrl(u), h = ref && refChipHtml(ref);
     return h ? REF_A + (chips.push(h) - 1) + REF_Z + ref.tail : u;
   });
+  s = parkTaskRefs(s, chips);
   s = esc(s);
   // Inline spans (operate on escaped text; placeholders are safe).
   const inline = t => {
@@ -1501,7 +1561,8 @@ function answerChip(a) {
 function hubLabel(m) {
   if (m.kind === 'report' && m.taskTitle) {   // "Completed · task Docs", "Review 1 (changes requested) · task Docs"
     const k = m.reportKind ? m.reportKind[0].toUpperCase() + m.reportKind.slice(1) : 'Report';
-    return `${k} · task ${foldShort(m.taskTitle)}`;
+    const no = /^#\d+$/.test(m.taskId || '') ? m.taskId + ' ' : '';   // the hub names a task by its number
+    return `${k} · task ${no}${foldShort(m.taskTitle)}`;
   }
   return HUB_KIND_LABEL[m.kind] || 'From the hub';
 }
@@ -2053,7 +2114,12 @@ async function refresh() {
   try { room = await fetch('/api/room?id=' + encodeURIComponent(ROOM)).then(r => r.json()); }
   catch(e) { return; }
   if (!room || room.error) { setText($('#title'), '(session not found)'); return; }
-  if (document.title !== room.title + ' — session') document.title = room.title + ' — session';
+  // A task is named by its number: "#18 · title" in the tab, #18 before the title.
+  const tno = room.no ? '#' + room.no : '';
+  const tabTitle = tno ? `${tno} · ${room.title}` : room.title + ' — session';
+  if (document.title !== tabTitle) document.title = tabTitle;
+  setText($('#tno'), tno);
+  $('#tno').hidden = !tno;
   setText($('#title'), room.title);
   const st = room.status || '';
   const notRunning = room.live === false;
@@ -3001,7 +3067,7 @@ document.addEventListener('click', ev => {
   try { if (window.parent !== window && window.parent.location.origin === location.origin) host = window.parent; } catch (e) {}
   if (!host) return;
   ev.preventDefault();
-  host.postMessage({ type: 'open-task', roomId: a.dataset.task }, location.origin);
+  host.postMessage({ type: 'open-task', roomId: a.dataset.task, agent: a.dataset.agent || '' }, location.origin);
 });
 // A balloon link's chip: in this conversation it lands on the balloon; inside
 // the dashboard, the dashboard opens that task or PO at it; on its own, this

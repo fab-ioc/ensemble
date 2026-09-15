@@ -35,7 +35,7 @@ log.chips = [
 // A board card, the rest of it stubbed.
 const ATTENTION_BY_ROOM = new Map(), ATTN_LABEL = {}, SELECTED_PROJECT = '';
 const prioIcon = () => '<i class="prio-ico"></i>', prioOf = () => 3, runChip = () => '<span class="run">Idle</span>';
-const cardAgents = () => '', fmtAgo = () => '1m';
+const cardAgents = () => '', fmtAgo = () => '1m', taskNoHtml = () => '';
 log.card = cardHtml({ roomId: 'room-1', sessionId: 's1', label: 'Codex task', projectName: 'P', updatedAt: 0,
                       cost: 0, costTokens: T({ input: 120000, output: 30000, cacheRead: 1200000 }) }, 60);
 log.cardPriced = cardHtml({ roomId: 'room-2', sessionId: 's2', label: 'Claude task', updatedAt: 0, cost: 2.5, costTokens: T({ input: 9 }) }, 60);

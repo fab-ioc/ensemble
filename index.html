@@ -1922,6 +1922,11 @@
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
     overflow: hidden;
   }
+  /* A task's number before its title: #18 in its project, ED-18 where tasks of
+     several projects are listed. Secondary text, never a colour of its own. */
+  .tno { margin-right: var(--s-100); font-size: var(--fs-200); font-weight: 400; color: var(--fg-muted);
+    font-variant-numeric: tabular-nums; white-space: nowrap; letter-spacing: 0; }
+  .dp-head h2 .tno { font-size: var(--fs-400); }
   .crow1, .crow2 { display: flex; align-items: center; gap: var(--s-200); min-width: 0; }
   .crow1 .prio-ico { display: inline-block; margin: 0; flex: 0 0 auto; }
   .run { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-200); color: var(--fg-subtle); }
@@ -2745,7 +2750,7 @@
        view switch off at the edge of a 360px screen. */
     .crumbs { flex-wrap: wrap; row-gap: var(--s-100); }
     /* A documents project's history and recent changes, finger-sized. */
-    .wsh-ver, .dch-file, .kind-btn { min-height: var(--touch-min); }
+    .wsh-ver, .dch-file, .kind-btn, .key-btn { min-height: var(--touch-min); }
     .dch-file { height: auto; }
     .wsh-top { max-height: 50%; }
     .scopebar { flex-wrap: wrap; }
@@ -3256,6 +3261,8 @@ function mdToHtml(src) {
   s = s.replace(/```([\w+-]*)\n?([\s\S]*?)```/g, (_, lang, body) =>
     ph(`<pre class="cb"${lang ? ` data-lang="${esc(lang)}"` : ''}><code>${esc(body.replace(/\n$/, ''))}</code></pre>`));
   s = s.replace(/`([^`\n]+)`/g, (_, body) => ph(codeSpanHtml(body)));
+  // A task named by its number is a link to it (outside code, parked like code).
+  s = s.replace(TASK_REF_RE, (m, who, key, no) => { const h = taskRefLinkHtml(who || '', key || '', +no, FILE_LINK_ROOM); return h ? ph(h) : m; });
   s = esc(s);
   const inline = t => {
     const keep = [];
@@ -3744,7 +3751,7 @@ function agentBadges(r) {
 let detailHeadOverflow = '';
 function detailHead(r, isRoom) {
   return `<div class="dp-head">
-      <h2>${esc(detailTitle(r))}</h2>
+      <h2>${taskNoHtml(r, false)}${esc(detailTitle(r))}</h2>
       ${detailHeadOverflow || ''}
       ${isRoom && r.roomId ? `<button class="dp-popout" data-room="${esc(r.roomId)}" title="Pop out to a floating window">⧉ Pop out</button>` : ''}
       <button class="dp-close" title="Close (Esc)">×</button>
@@ -4125,7 +4132,10 @@ function renderDetail() {
     if (act.dataset.room !== r.roomId) {
       act.dataset.room = r.roomId;
       act._sig = '';
-      act.innerHTML = `<iframe class="dp-session" data-room="${esc(r.roomId)}" src="/session?id=${encodeURIComponent(r.roomId)}&embed=1" title="session" allow="clipboard-read; clipboard-write"></iframe>`;
+      // Opened from @codex@18: at that agent.
+      const ag = DETAIL_AGENT && DETAIL_AGENT.room === r.roomId ? '&agent=' + encodeURIComponent(DETAIL_AGENT.agent) : '';
+      DETAIL_AGENT = null;
+      act.innerHTML = `<iframe class="dp-session" data-room="${esc(r.roomId)}" src="/session?id=${encodeURIComponent(r.roomId)}&embed=1${ag}" title="session" allow="clipboard-read; clipboard-write"></iframe>`;
     }
   } else {
     const themeTok = (CHAT_THEME && CHAT_THEME.background) || '-';
@@ -4382,7 +4392,8 @@ function projectTasks(pj) {
 // of a chat ("re", "en") matched nearly every task, so the rows never narrowed.
 // Its conversation is what Enter's deep search is for.
 function rowHaystack(r) {
-  const own = r.roomId ? [r.label]
+  // A task's number is on its card too: "#18" or "18" finds it.
+  const own = r.roomId ? [r.label, r.no ? '#' + r.no : '']
     : [r.label, r.first, r.last, r.cwd, r.sessionId, r.pid || '', r.currentTheme || ''];
   return own.map(s => String(s || '')).join(' ');
 }
@@ -4519,7 +4530,7 @@ function renderHeadlessRow(r, parsed, now) {
   return `<tr class="row headless${attnCls} ${liveClasses}" data-room="${esc(r.roomId || '')}" data-orphan="${r.orphan ? '1' : ''}" data-sid="${esc(r.sessionId)}" draggable="false">
     <td>${statusDot}</td>
     ${prioCell(r)}
-    <td class="topic" title="${esc(attn ? attn.reason : r.cwd)}">${esc(r.label || '(session)')}${agentBadges(r)}</td>
+    <td class="topic" title="${esc(attn ? attn.reason : r.cwd)}">${taskNoHtml(r, !SELECTED_PROJECT)}${esc(r.label || '(session)')}${agentBadges(r)}</td>
     <td class="tag">${attnBadge}${liveBadge}</td>
     ${actionsTd}
   </tr>`;
@@ -4539,6 +4550,63 @@ function runChip(r) {
   // restart. No red, no border, no icon — if it reads as an error, it is wrong.
   return `<span class="run off"><span class="dot off"></span>not running</span>`;
 }
+
+// ---- Task numbers: begin ----------------------------------------------------
+// A task is #18 in its project; where tasks of several projects are listed
+// (every project's list and board, the bell, Needs you) it is ED-18, with its
+// project's key. tests/test_task_refs.py runs this block in Node.
+let _ROOM_KEYS = { src: null, map: new Map() };
+function roomProjectKey(rid) {
+  const src = (typeof PROJECTS !== 'undefined' && PROJECTS && PROJECTS.projects) || null;
+  if (_ROOM_KEYS.src !== src) {
+    const map = new Map();
+    for (const p of src || []) for (const s of p.sessions || []) if (s.roomId && p.key) map.set(s.roomId, p.key);
+    _ROOM_KEYS = { src, map };
+  }
+  return _ROOM_KEYS.map.get(rid) || '';
+}
+function taskNoText(r, full) {
+  if (!r || !r.no) return '';
+  const key = full ? roomProjectKey(r.roomId) : '';
+  return key ? `${key}-${r.no}` : `#${r.no}`;
+}
+function taskNoHtml(r, full) {
+  const t = taskNoText(r, full);
+  return t ? `<span class="tno">${esc(t)}</span>` : '';
+}
+// The task a link names: its id, or its number (#18, 18 in `projectId`, else the
+// project showing; ED-18 in any). "" when the board has no such task.
+function taskRowId(ref, projectId) {
+  ref = String(ref || '').trim();
+  if (ALL_ROWS.some(r => r.sessionId === ref || r.roomId === ref)) return ref;
+  const m = /^#?(?:([A-Za-z][A-Za-z0-9]{0,5})-)?(\d{1,6})$/.exec(ref);
+  if (!m) return '';
+  const projects = (PROJECTS && PROJECTS.projects) || [];
+  const key = (m[1] || '').toUpperCase(), no = +m[2];
+  const pid = projectId || SELECTED_PROJECT;
+  const pj = key ? projects.find(p => p.key === key) : projects.find(p => p.id === pid);
+  const s = pj && (pj.sessions || []).find(x => x.roomId && x.no === no);
+  return s ? s.roomId : '';
+}
+// Chat text's task references (#18, #ED-18, @codex@18), as session.html reads them.
+const TASK_REF_RE = /(?<![\w&\/#@.\\-])(?:@([A-Za-z][\w-]*)@|#)(?:([A-Za-z][A-Za-z0-9]{0,5})-)?(\d{1,6})(?![\w-])/g;
+// A task named by its number in a spec or a summary: a link to it, read in the
+// project of the task the text belongs to. A number that names no task stays text.
+function taskRefLinkHtml(who, key, no, inRoom) {
+  const projects = (PROJECTS && PROJECTS.projects) || [];
+  const home = inRoom ? projects.find(p => (p.sessions || []).some(s => s.roomId === inRoom))
+    : projects.find(p => p.id === SELECTED_PROJECT);
+  const pj = key ? projects.find(p => p.key === key.toUpperCase()) : home;
+  const s = pj && (pj.sessions || []).find(x => x.roomId && x.no === no);
+  if (!s) return null;
+  const r = ALL_ROWS.find(x => x.roomId === s.roomId) || s;
+  const name = key ? `${pj.key}-${no}` : `#${no}`;
+  const col = (WORKFLOW_COLS.find(c => c.k === workflowOf(r)) || {}).name || '';
+  const label = [(who ? '@' + who + ' ' : '') + name, r.label || '', col].filter(Boolean).join(' · ');
+  return `<a href="/?task=${esc(s.roomId)}" data-task="${esc(s.roomId)}"${who ? ` data-agent="${esc(who)}"` : ''}`
+    + ` class="task-link" title="${esc('Open task ' + name + (r.label ? ': ' + r.label : ''))}">${esc(label)}</a>`;
+}
+// ---- Task numbers: end ------------------------------------------------------
 
 function shortModel(m) {
   // A card has room for the distinguishing part, not the vendor's full string.
@@ -4577,7 +4645,7 @@ function cardHtml(r, now) {
   const working = r.isLive && r.status === 'busy' ? ' working' : '';
   return `<article class="card${working}" draggable="true" data-room="${esc(r.roomId || '')}" data-sid="${esc(r.sessionId)}">
     ${loz}
-    <div class="ctitle">${esc(r.label || '(session)')}</div>
+    <div class="ctitle">${taskNoHtml(r, !SELECTED_PROJECT)}${esc(r.label || '(session)')}</div>
     <div class="crow1">${r.roomId ? prioIcon(prioOf(r)) : ''}${runChip(r)}${costChipHtml(r, 'ccost')}${proj}</div>
     <div class="crow2">${cardAgents(r)}<span class="cwhen">${esc(fmtAgo(now - r.updatedAt))}</span></div>
   </article>`;
@@ -4645,7 +4713,7 @@ function needsYouHtml() {
       const who = [it.agentIdentity, it.agentModel].filter(Boolean).join(' ');
       return `<button class="dest-row" data-room="${esc(it.roomId)}">
         <span class="dest-cell"><span class="loz ${tone}">${esc(ATTN_LABEL[it.state] || it.state)}</span></span>
-        <span class="dest-title">${esc(it.title)}</span>
+        <span class="dest-title">${it.ref ? `<span class="tno">${esc(it.ref)}</span>` : ''}${esc(it.title)}</span>
         <span class="dest-who">${esc(who)}</span>
         <span class="dest-when">${when}</span>
         <span class="dest-why">${esc(it.reason)}</span>
@@ -5213,7 +5281,7 @@ function projectsChromeHtml() {
       + `<button data-ptab="changes" class="${PROJECT_TAB === 'changes' ? 'on' : ''}" title="Uncommitted changes in the project folder or in a task's workspace: git status, per-file diff, line comments you can send to a task chat">Changes</button>`
       + `<button data-ptab="roadmap" class="${PROJECT_TAB === 'roadmap' ? 'on' : ''}" title="The project's roadmap — ROADMAP.md in its folder. You and the project's PO both edit it">Roadmap</button>`
       + `</div>` : '';
-    return strip + `<div class="crumbs"><a href="#" class="crumb-back">← Projects</a><span class="sep">/</span><b>${esc(nm)}</b>${kindBtnHtml(pj)}${newTask}`
+    return strip + `<div class="crumbs"><a href="#" class="crumb-back">← Projects</a><span class="sep">/</span><b>${esc(nm)}</b>${kindBtnHtml(pj)}${keyBtnHtml(pj)}${newTask}`
       + (PROJECT_TAB === 'tasks' ? fitSwitchHtml() + viewSwitchHtml() : '') + `</div>` + tabs;
   }
   return strip + `<div class="listctl"><span>Group by</span>
@@ -8134,6 +8202,8 @@ document.addEventListener('click', async (ev) => {
   if (choose) { poChoose(choose.dataset.proj); return; }
   const kb = ev.target.closest('.kind-btn');
   if (kb) { kindChoose(kb.dataset.proj); return; }
+  const kyb = ev.target.closest('.key-btn');
+  if (kyb) { keyChoose(kyb.dataset.proj); return; }
   const act = ev.target.closest('#po-panel .po-head [data-po]');
   if (act) {
     const head = act.closest('.po-head'), what = act.dataset.po;
@@ -8203,6 +8273,42 @@ function kindDialogHtml(pj, po) {
     + (po ? `<p class="cfg-hint">This project has a PO (${esc(po.label || 'its task')}), so it stays a code project. Clear its PO first to make it a documents project.</p>` : '')
     + (docs ? `<p class="cfg-hint">Choosing a PO for it later makes it a code project again. Its file history is kept either way.</p>` : '')
     + `<div class="actions"><button id="kind-ok">Save</button><button id="kind-cancel" class="secondary">Cancel</button></div>`;
+}
+// The project's key, next to its kind: its tasks are ED-18 where several
+// projects' tasks are listed.
+function keyBtnHtml(pj) {
+  if (!pj || !pj.registered || !pj.key || pj.id === UNASSIGNED_ID) return '';
+  return `<button type="button" class="po-btn key-btn" data-proj="${esc(pj.id)}" title="${esc(`Its tasks are ${pj.key}-18 where tasks of several projects are listed. Click to change`)}">Key ${esc(pj.key)}</button>`;
+}
+function keyDialogHtml(pj, err) {
+  return `<h3>The key of ${esc(pj.name)}</h3>`
+    + `<div class="im-field"><label for="key-in">Key <small>a letter, then up to five letters or digits</small></label>`
+    + `<input type="text" id="key-in" value="${esc(pj.key || '')}" maxlength="6" autocomplete="off" spellcheck="false"></div>`
+    + `<p class="cfg-hint">Its tasks are #18 on its own pages, and ${esc(pj.key || 'ED')}-18 where tasks of several projects are listed and in other projects' chats. Links made with the old key stop working.</p>`
+    + (err ? `<p class="cfg-hint" role="alert">${esc(err)}</p>` : '')
+    + `<div class="actions"><button id="key-ok">Save</button><button id="key-cancel" class="secondary">Cancel</button></div>`;
+}
+async function keyChoose(pid, err) {
+  const pj = projectById(pid);
+  if (!pj) return;
+  const dlg = $('#modal');
+  dlg.innerHTML = keyDialogHtml(pj, err);
+  dlg.showModal();
+  $('#key-in').focus(); $('#key-in').select();
+  const key = await new Promise(resolve => {
+    $('#key-cancel').onclick = () => resolve(null);
+    dlg.addEventListener('cancel', () => resolve(null), { once: true });
+    $('#key-ok').onclick = () => resolve($('#key-in').value.trim().toUpperCase());
+    $('#key-in').onkeydown = ev => { if (ev.key === 'Enter') { ev.preventDefault(); resolve($('#key-in').value.trim().toUpperCase()); } };
+  });
+  dlg.close();
+  if (key === null || key === pj.key) return;
+  try {
+    await api('/api/projects/key', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                     body: JSON.stringify({ projectId: pid, key }) });
+    toast(`${pj.name}'s tasks are ${key}-1, ${key}-2… where projects mix`, 4000, 'ok');
+    await refreshProjects(); renderRows();
+  } catch (e) { keyChoose(pid, histErr(e)); }
 }
 // The plain sentence the hub sends with a refusal, out of api()'s error.
 function histErr(e) {
@@ -10396,7 +10502,7 @@ function notifItemHtml(it) {
   return `<button class="notif-item" data-room="${esc(it.roomId)}">
     <div class="notif-row1">
       <span class="notif-chip ${esc(it.state)}">${esc(ATTN_LABEL[it.state] || it.state)}</span>
-      <span class="notif-title">${esc(it.title)}</span>
+      <span class="notif-title">${it.ref ? `<span class="tno">${esc(it.ref)}</span>` : ''}${esc(it.title)}</span>
       <span class="notif-when">${when}</span>
     </div>
     <div class="notif-why">${esc(it.reason)}</div>
@@ -11051,7 +11157,7 @@ window.addEventListener('message', (ev) => {
   const d = ev.data;
   if (d && d.type === 'dock-session' && d.roomId) openDetail(d.roomId);
   // A task link clicked inside a session or file viewer framed in this page.
-  if (d && d.type === 'open-task' && d.roomId && ev.origin === location.origin) openTaskLink(d.roomId);
+  if (d && d.type === 'open-task' && d.roomId && ev.origin === location.origin) openTaskLink(String(d.roomId), String(d.agent || ''));
   // A balloon link clicked in a chat framed here; a chat framed here that has
   // started, or has landed on the balloon it was sent to.
   if (d && d.type === 'open-msg' && d.roomId && d.msg && ev.origin === location.origin) openMsgLink(String(d.roomId), String(d.msg));
@@ -11094,10 +11200,24 @@ function sendGotoMsg(rid) {
     try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg }, location.origin); } catch (e) {}
   });
 }
-function openTaskLink(rid) {
-  if (!ALL_ROWS.some(r => r.sessionId === rid || r.roomId === rid)) {
-    toast(`${rid} is not a task on this hub`, 4000, 'err');
+// A task link names it by id or number (#18, ED-18); with an agent (@codex@18,
+// or its role, @reviewer@18) the task opens at that agent's terminal.
+let DETAIL_AGENT = null;   // { room, agent }: the next chat drawn for that task opens at the agent
+function openTaskLink(ref, agent, projectId) {
+  const rid = taskRowId(ref, projectId);
+  if (!rid) {
+    toast(`${ref} is not a task on this hub`, 4000, 'err');
     return;
+  }
+  const row = ALL_ROWS.find(r => r.sessionId === rid || r.roomId === rid);
+  const w = String(agent || '').toLowerCase();
+  const m = w && row ? (row.members || []).find(x => (x.identity || '').toLowerCase() === w
+    || String(x.role || '').split(':')[0].trim().toLowerCase() === w) : null;
+  if (m) {
+    DETAIL_AGENT = { room: row.roomId, agent: m.identity };
+    // Already showing that task: its chat is drawn again, at the agent.
+    const f = SELECTED_SID === rid && document.querySelector(`iframe.dp-session[data-room="${CSS.escape(row.roomId)}"]`);
+    if (f) { f.src = '/session?id=' + encodeURIComponent(row.roomId) + '&embed=1&agent=' + encodeURIComponent(m.identity); DETAIL_AGENT = null; }
   }
   openDetail(rid);
 }
@@ -11106,7 +11226,7 @@ document.addEventListener('click', (ev) => {
   if (!a || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;
   ev.preventDefault();
   ev.stopPropagation();
-  openTaskLink(a.dataset.task);
+  openTaskLink(a.dataset.task, a.dataset.agent);
 }, true);
 document.addEventListener('keydown', (ev) => {
   // Arrows move through the priority levels while its menu has focus.
@@ -12362,11 +12482,14 @@ async function loadThemes() {
   setInterval(checkForUpdate, UPDATE_CHECK_INTERVAL_MS);
   await refresh();
   updateRoomsBadge();     // paint the needs-you badge on the first screen
-  // /?task=room-... — a task link opened in a tab of its own.
-  const deepTask = new URLSearchParams(location.search).get('task');
+  // /?task=room-... — a task link opened in a tab of its own; also ?task=ED-18,
+  // or ?task=18&project=proj-…, and &agent= to open it at an agent.
+  const deepQs = new URLSearchParams(location.search);
+  const deepTask = deepQs.get('task');
   if (deepTask) {
     history.replaceState(null, '', location.pathname);
-    openTaskLink(deepTask);
+    if (!PROJECTS) await refreshProjects();
+    openTaskLink(deepTask, deepQs.get('agent') || '', deepQs.get('project') || '');
   }
 })();
 setInterval(refresh, 2500);

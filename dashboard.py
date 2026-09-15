@@ -72,6 +72,8 @@ import history as file_history
 # A link to a chat balloon, written out for the agent it is sent to.
 import message_refs
 import peer_process
+# Task numbers (#18, ED-18) and project keys.
+import task_numbers
 # A fresh PO session from its written handover when its conversation gets long.
 import rotation
 # Plan-allowance readings (account-wide, per agent kind), refreshed in the
@@ -1329,7 +1331,8 @@ def resolve_message_ref(room_id: str, msg_id: str) -> dict | None:
         return None
     is_po = any((p.get("poRoomId") or "") == room_id for p in load_projects())
     title = "PO" if is_po else (room.get("title") or room_id)
-    out = {"roomId": room_id, "id": msg_id, "taskTitle": title, "isPo": is_po}
+    out = {"roomId": room_id, "id": msg_id, "taskTitle": title, "isPo": is_po,
+           **({"taskNo": room["no"]} if room.get("no") and not is_po else {})}
     who = lambda ident: operator_name() if ident == chatroom.HUMAN_IDENTITY else ident
     for m in room.get("messages") or []:
         if m.get("id") == msg_id:
@@ -1412,9 +1415,11 @@ def read_session_turns(sid: str) -> list[dict] | None:
     return classify_turns(cx.read_turns(sid))
 
 
-def with_message_refs(text: str) -> str:
-    """A chat message as the agent receives it: its balloon links written out."""
-    return message_refs.expand_message_refs(text, resolve_message_ref)
+def with_message_refs(text: str, room_id: str = "") -> str:
+    """A chat message as the agent receives it: its balloon links written out,
+    and a line for each task it names by number (#18 in the project of the
+    room it was sent in, ED-18 in any)."""
+    return message_refs.expand_message_refs(text, resolve_message_ref, task_lookup_for(room_id))
 
 
 def refs_expanded_for(room: dict, sender: str) -> bool:
@@ -1719,7 +1724,8 @@ def review_brief(room: dict, part: dict, msg: dict, n: int, git: dict,
         work = ("No git checkout was found for this task. Review what the request "
                 f"points at; the task's folder is `{room.get('taskDir') or room.get('cwd', '')}`.")
     verdicts = " | ".join(REVIEW_VERDICTS)
-    brief = f"""You are '{ident}', the reviewer on the task "{room.get('title', '')}" ({room.get('id', '')}). This is review {n} of this task.
+    no = task_label(room)
+    brief = f"""You are '{ident}', the reviewer on the task {no + ' ' if no else ''}"{room.get('title', '')}" ({room.get('id', '')}). This is review {n} of this task.
 
 You are a fresh session started for this ONE review. You remember nothing of earlier reviews: the review log below is what they found. When you have given your verdict with review_done, this session ends.
 
@@ -1728,7 +1734,7 @@ Do NOT design or implement — the engineer builds, you review. Check the work a
 ## What you were asked
 From {who}:
 
-{_quote_block(with_message_refs(msg.get('text', '')) if refs_expanded_for(room, sender) else msg.get('text', ''))}
+{_quote_block(with_message_refs(msg.get('text', ''), room.get('id', '')) if refs_expanded_for(room, sender) else msg.get('text', ''))}
 
 Recent conversation before it:
 {context}
@@ -1902,6 +1908,9 @@ def load_projects() -> list[dict]:
                       # A documents project leads with its files and keeps
                       # their history; anything else is a code project.
                       "kind": "documents" if meta.get("kind") == "documents" else "code",
+                      # Its short key (ED) and the number its next task gets.
+                      "key": str(meta.get("key") or "").strip(),
+                      "nextTaskNo": meta.get("nextTaskNo") if isinstance(meta.get("nextTaskNo"), int) else 0,
                       # Its own progress-digest interval, when it set one.
                       **({"digestIntervalMin": meta["digestIntervalMin"]}
                          if "digestIntervalMin" in meta else {})})
@@ -1955,13 +1964,15 @@ def register_project(path: str, name: str = "") -> tuple[bool, dict, str]:
         "createdAt": int(time.time()),
     }
     projects.append(proj)
+    # Its key now, so a project added later never changes this one's.
+    proj["key"] = task_numbers.project_keys(projects)[proj["id"]]
     save_projects(projects)
     if _in_projects_root(norm):
         # Layout v2: the project's identity lives WITH its data, so a clone of
         # the projects root on a new machine is self-describing.
         try:
             (Path(norm) / "project.json").write_text(
-                json.dumps({k: proj[k] for k in ("id", "name", "createdAt")}, indent=2),
+                json.dumps({k: proj[k] for k in ("id", "name", "createdAt", "key")}, indent=2),
                 encoding="utf-8")
         except OSError:
             pass
@@ -2427,6 +2438,9 @@ def files_delete(proj: dict, home: str, path) -> dict:
         return {"path": rel, "snapshot": _files_snapshot(proj, home, "delete")}
 
 
+_PROJECT_META_LOCK = threading.RLock()
+
+
 def _set_project_meta(project_id: str, key: str, value) -> tuple[bool, str]:
     """Set (or, with None, remove) one key of a project's own ``project.json``
     in its home. Only that one key is touched."""
@@ -2435,25 +2449,260 @@ def _set_project_meta(project_id: str, key: str, value) -> tuple[bool, str]:
         return False, "no_such_project"
     home = project_home(proj, create=True)
     pj = Path(home) / "project.json"
-    try:
-        meta = json.loads(pj.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        meta = None
-    if not isinstance(meta, dict):
-        meta = {k: proj.get(k) for k in ("id", "name", "createdAt")}
-    if meta.get("id") != proj["id"]:
-        return False, "project_json_belongs_to_another_project"
-    if value is None:
-        meta.pop(key, None)
-    else:
-        meta[key] = value
-    try:
-        tmp = pj.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(meta, indent=2), encoding="utf-8")
-        tmp.replace(pj)
-    except OSError as e:
-        return False, f"cannot write {pj}: {e}"
+    with _PROJECT_META_LOCK:
+        try:
+            meta = json.loads(pj.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            meta = None
+        if not isinstance(meta, dict):
+            meta = {k: proj.get(k) for k in ("id", "name", "createdAt")}
+        if meta.get("id") != proj["id"]:
+            return False, "project_json_belongs_to_another_project"
+        if value is None:
+            meta.pop(key, None)
+        else:
+            meta[key] = value
+        try:
+            tmp = pj.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+            tmp.replace(pj)
+        except OSError as e:
+            return False, f"cannot write {pj}: {e}"
     return True, "ok"
+
+
+# ---- Task numbers (#18) and project keys (ED) --------------------------------
+# A task gets the next number of its project when it is created or moved in
+# (assign_task_number); tasks from before numbers existed get theirs when the
+# hub starts (backfill_task_numbers). The counter is ``nextTaskNo`` in the
+# project's project.json; the task's number is ``no`` in its room (and its
+# task.json), with ``noProjectId`` saying which project it counts in.
+
+_NUMBERS_LOCK = threading.RLock()
+KEY_REFUSALS = {
+    "bad_key": "A key is a letter followed by up to five letters or digits, such as ED or OT2.",
+    "key_taken": "Another project already has that key.",
+}
+
+
+def project_keys(projects: list[dict] | None = None) -> dict[str, str]:
+    """{project id: key}: the stored key, else one derived from the name."""
+    return task_numbers.project_keys(load_projects() if projects is None else projects)
+
+
+def set_project_key(project_id: str, key: str) -> tuple[bool, str]:
+    """A project's key, as the person typed it on the project's settings."""
+    k = task_numbers.normalize_key(key)
+    if not k:
+        return False, "bad_key"
+    projects = load_projects()
+    if not any(p["id"] == project_id for p in projects):
+        return False, "no_such_project"
+    if any(pid != project_id and v == k for pid, v in project_keys(projects).items()):
+        return False, "key_taken"
+    return _set_project_meta(project_id, "key", k)
+
+
+def _task_project(room: dict, links: dict, projects: list[dict]) -> str:
+    """The project a task belongs to: its recorded link, else its own record,
+    else the project whose folder holds it."""
+    return (links.get(room.get("id", "")) or room.get("projectId")
+            or _project_for_cwd(room.get("cwd", ""), projects) or "")
+
+
+def _po_room_ids(projects: list[dict]) -> set[str]:
+    return {(p.get("poRoomId") or "").strip() for p in projects if (p.get("poRoomId") or "").strip()}
+
+
+def assign_task_number(rid: str, project_id: str, room_full: dict | None = None) -> int | None:
+    """Give a task the next number of ``project_id`` (a new task, or one moved
+    in), unless it has one there already or is a project's PO. ``room_full``,
+    a copy of the room the caller will write back, gets the number too.
+    Returns the number, or None."""
+    pid = (project_id or "").strip()
+    if not rid or not pid:
+        return None
+    with _NUMBERS_LOCK:
+        projects = load_projects()
+        proj = next((p for p in projects if p["id"] == pid), None)
+        room = chatroom.get_room(rid)
+        if proj is None or room is None or rid in _po_room_ids(projects):
+            return None
+        if room.get("no") and room.get("noProjectId") == pid:
+            n = room["no"]
+        else:
+            # The counter, and never a number a task of the project has.
+            n = max(proj.get("nextTaskNo") or 0,
+                    1 + max((r.get("no") or 0 for r in _task_index() if r.get("noProjectId") == pid), default=0))
+            ok, _msg = _set_project_meta(pid, "nextTaskNo", n + 1)
+            if not ok:
+                return None
+            room = chatroom.set_task_number(rid, pid, n) or room
+            _patch_task_json(room.get("taskDir", ""), no=n, previousNos=room.get("previousNos") or [])
+        if room_full is not None:
+            for k in chatroom.NUMBER_FIELDS:
+                if k in room:
+                    room_full[k] = room[k]
+        return n
+
+
+def backfill_task_numbers() -> dict:
+    """Numbers for the tasks that have none, and a key for every project —
+    run when the hub starts. Per project, oldest task first; a title a person
+    numbered by hand keeps its number when no other task has it (see
+    task_numbers.plan_numbers). A second run changes nothing. Returns
+    ``{numbered, keys}``."""
+    numbered, keyed = 0, 0
+    with _NUMBERS_LOCK:
+        projects = load_projects()
+        keys = project_keys(projects)
+        for p in projects:
+            if (p.get("key") or "") != keys[p["id"]] and _set_project_meta(p["id"], "key", keys[p["id"]])[0]:
+                keyed += 1
+        links, labels = load_session_projects(), load_labels()
+        po_rooms = _po_room_ids(projects)
+        ids = {p["id"] for p in projects}
+        by_project: dict[str, list[dict]] = {}
+        for room in chatroom.list_rooms():
+            pid = _task_project(room, links, projects)
+            if pid in ids and room["id"] not in po_rooms:
+                by_project.setdefault(pid, []).append(room)
+        for p in projects:
+            rooms = by_project.get(p["id"], [])
+            tasks = [{"id": r["id"], "title": labels.get(r["id"]) or r.get("title", ""),
+                      "createdAt": r.get("createdAt") or 0,
+                      "no": r.get("no") if r.get("no") and r.get("noProjectId", p["id"]) == p["id"] else None}
+                     for r in rooms]
+            plan, nxt = task_numbers.plan_numbers(tasks, p.get("nextTaskNo") or 0)
+            for r in rooms:
+                n = plan.get(r["id"])
+                if n is None and r.get("noProjectId"):
+                    continue
+                if n is None:                    # numbered here, but never said where
+                    n = r["no"]
+                done = chatroom.set_task_number(r["id"], p["id"], n)
+                if done and r["id"] in plan:
+                    numbered += 1
+                    _patch_task_json(done.get("taskDir", ""), no=n, previousNos=done.get("previousNos") or [])
+            if nxt != (p.get("nextTaskNo") or 0):
+                _set_project_meta(p["id"], "nextTaskNo", nxt)
+    return {"numbered": numbered, "keys": keyed}
+
+
+_TASK_INDEX: dict[str, tuple[tuple, dict]] = {}
+_TASK_INDEX_LOCK = threading.Lock()
+
+
+def _task_index() -> list[dict]:
+    """Every room's numbering and the little a reference shows of it, reading
+    again only the room files that changed since the last call."""
+    out: list[dict] = []
+    try:
+        paths = list(chatroom.ROOMS_DIR.glob("room-*.json"))
+    except OSError:
+        return out
+    seen = set()
+    for p in paths:
+        rid = p.stem
+        seen.add(rid)
+        try:
+            st = p.stat()
+            mtime = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            continue
+        with _TASK_INDEX_LOCK:
+            hit = _TASK_INDEX.get(rid)
+        if hit and hit[0] == mtime:
+            out.append(hit[1])
+            continue
+        room = chatroom.get_room(rid)
+        if room is None:
+            continue
+        rep = room.get("lastReport") if isinstance(room.get("lastReport"), dict) else {}
+        entry = {"id": rid, "no": room.get("no"), "noProjectId": room.get("noProjectId") or "",
+                 "previousNos": room.get("previousNos") or [], "title": room.get("title", ""),
+                 "projectId": room.get("projectId") or "", "cwd": room.get("cwd") or "",
+                 "launched": room.get("launched", True), "status": room.get("status", ""),
+                 "workflow": room.get("workflow"), "createdAt": room.get("createdAt"),
+                 "branch": ((room.get("workspace") or {}).get("branch") or ""),
+                 "participants": [{k: pp.get(k) for k in ("identity", "kind", "agent", "role", "ptyId", "pid")}
+                                  for pp in room.get("participants") or []],
+                 "report": {"kind": rep.get("kind", ""), "text": (rep.get("text") or "")[:1000]} if rep else None}
+        with _TASK_INDEX_LOCK:
+            _TASK_INDEX[rid] = (mtime, entry)
+        out.append(entry)
+    with _TASK_INDEX_LOCK:
+        for rid in [r for r in _TASK_INDEX if r not in seen]:
+            _TASK_INDEX.pop(rid, None)
+    return out
+
+
+def task_label(room: dict | None) -> str:
+    """#18 for a numbered task, else ""."""
+    return task_numbers.label((room or {}).get("no"))
+
+
+def resolve_task_ref(ref, project_id: str = "", any_project: bool = False) -> tuple[str, str]:
+    """(room id, "") for a task address — room-…, #18 or 18 in ``project_id``,
+    ED-18 anywhere — else ("", a sentence saying why)."""
+    projects = load_projects()
+    return task_numbers.find_task(_task_index(), ref, (project_id or "").strip(), project_keys(projects),
+                                  {p["id"]: p.get("name", "") for p in projects}, any_project=any_project)
+
+
+def task_ref_info(rid: str, projects: list[dict] | None = None) -> dict | None:
+    """What a reference to a task shows: ``{roomId, no, label, ref, key,
+    projectId, project, title, status, workflow, workflowName, live, agents,
+    branch, report}`` (``ref`` is the full form, ED-18)."""
+    entry = next((e for e in _task_index() if e["id"] == rid), None)
+    if entry is None:
+        return None
+    projects = load_projects() if projects is None else projects
+    keys = project_keys(projects)
+    pid = entry.get("noProjectId") or ""
+    live = _room_is_live(entry)
+    if not entry.get("launched", True):
+        status = "draft"
+    elif live:
+        status = {"waiting_human": "waiting for you", "paused": "paused"}.get(entry.get("status"), "running")
+    else:
+        status = "not running"
+    wf = workflow_of(entry)
+    labels = load_labels()
+    return {"roomId": rid, "no": entry.get("no"), "label": task_label(entry),
+            "ref": task_numbers.label(entry.get("no"), keys.get(pid, "")) if pid else task_label(entry),
+            "key": keys.get(pid, ""), "projectId": pid,
+            "project": next((p.get("name", "") for p in projects if p["id"] == pid), ""),
+            "title": labels.get(rid) or entry.get("title", ""), "status": status, "live": live,
+            "workflow": wf, "workflowName": WORKFLOW_LABELS.get(wf, wf),
+            "agents": [{"identity": pp.get("identity", ""), "agent": pp.get("agent", ""), "role": pp.get("role", "")}
+                       for pp in entry["participants"] if pp.get("kind") == "agent"],
+            "branch": entry.get("branch", ""), "report": entry.get("report")}
+
+
+def http_task_id(value, project_id: str = "") -> tuple[str, dict | None]:
+    """A task named in a request: a room id as it is, or a number (#18 or 18
+    in ``project_id``, ED-18 anywhere, or a number only one project has)
+    resolved to its room id. Returns (id, None), or ("", the 404 body).
+    Anything that is not a number is returned as it is, as before numbers."""
+    v = str(value if value is not None else "").strip()
+    if "no" not in (task_numbers.parse_ref(v) or {}):
+        return v, None
+    rid, why = resolve_task_ref(v, project_id, any_project=not (project_id or "").strip())
+    return (rid, None) if rid else ("", {"error": "no_such_task", "message": why})
+
+
+def task_lookup_for(room_id: str = "", project_id: str = ""):
+    """``lookup(key, no)`` for message_refs: the task a number in a message
+    names, read in the project of the room it was sent in."""
+    if room_id and not project_id:
+        room = next((e for e in _task_index() if e["id"] == room_id), None)
+        project_id = _task_project(room, load_session_projects(), load_projects()) if room else ""
+
+    def lookup(key: str, no: int) -> dict | None:
+        rid, _why = resolve_task_ref(f"{key}-{no}" if key else f"#{no}", project_id)
+        return task_ref_info(rid) if rid else None
+    return lookup
 
 
 def unregister_project(project_id: str) -> bool:
@@ -2690,11 +2939,12 @@ def build_projects() -> dict:
     keep = ("sessionId", "roomId", "label", "status", "isLive", "idleSeconds",
             "updatedAt", "agents", "members", "mode", "headless", "cwd",
             "taskDir", "priority", "priorityName", "workflow", "workflowName",
-            "lastAgent", "attention", "allocation", "reviewAllocations")
+            "lastAgent", "attention", "allocation", "reviewAllocations", "no")
     # One group per registered project, plus a synthetic unassigned bucket.
     groups: dict = {}
+    keys = project_keys(projects_reg)
     for p in projects_reg:
-        groups[p["id"]] = {"id": p["id"], "name": p["name"], "path": p["path"],
+        groups[p["id"]] = {"id": p["id"], "name": p["name"], "path": p["path"], "key": keys.get(p["id"], ""),
                            "home": project_home(p, create=False),
                            "poRoomId": p.get("poRoomId", ""), "kind": p.get("kind") or "code",
                            "isGit": p.get("isGit", False), "registered": True,
@@ -4782,6 +5032,8 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
             room_cost = compute_room_cost(rm)
             room_rows.append({
                 "sessionId": rid, "roomId": rid, "headless": True,
+                # Its number in its project (#18), when it has one.
+                "no": rm.get("no") or None,
                 "mode": rm.get("mode", ""),
                 "agent": (agents_in[0]["agent"] if len(agents_in) == 1 else "duo"),
                 "agents": [p.get("identity", "") for p in agents_in],
@@ -5821,6 +6073,8 @@ def create_task(title: str, spec: str, project_id: str, agent_list,
     # Persist BEFORE any launch so an interrupted spawn leaves a resumable
     # draft, not a corrupt room with no cwd.
     chatroom.update_room(room_full)
+    if project_id:
+        assign_task_number(room["id"], project_id, room_full)
     return True, room_full, ""
 
 
@@ -6024,6 +6278,8 @@ def move_task(rid: str, project_id: str) -> bool:
     room["projectId"] = project_id
     chatroom.update_room(room)
     _patch_task_json(room.get("taskDir", ""), projectId=project_id)
+    # The next number there; the old one stays in previousNos.
+    assign_task_number(rid, project_id)
     return True
 
 
@@ -6276,6 +6532,29 @@ class Handler(BaseHTTPRequestHandler):
                             "text/html; charset=utf-8")
             return
         if p == "/session":
+            # /session?room=#18 (&project=…), ?room=ED-18 or ?task=18: the page
+            # itself only knows room ids, so the number goes to the address.
+            pairs = parse_qsl(u.query, keep_blank_values=True)
+            q = dict(pairs)
+            name = next((k for k in ("id", "room", "task")
+                         if "no" in (task_numbers.parse_ref(q.get(k, "")) or {})), "")
+            if name and not any(q.get(k, "").strip().startswith("room-") for k in ("id", "room")):
+                rid, bad = http_task_id(q[name], q.get("project", ""))
+                if bad:
+                    body = f"{bad['message']}\n".encode("utf-8")
+                    self.send_response(404)
+                    self.send_header("Content-Type", "text/plain; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                keep = [(k, v) for k, v in pairs if k not in ("id", "room", "task", "project")]
+                where = "id" if name == "id" else "room"
+                self.send_response(302)
+                self.send_header("Location", "/session?" + urlencode([(where, rid)] + keep))
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             self._send_file(STATIC_DIR / "session.html",
                             "text/html; charset=utf-8")
             return
@@ -6474,12 +6753,36 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, rooms)
             return
         if p == "/api/room":
-            rid = (parse_qs(u.query).get("id", [""])[0]).strip()
+            q = parse_qs(u.query)
+            # ?id=room-… or a number: ?id=#18 / ?task=18 (&project=…), ?id=ED-18.
+            rid, bad = http_task_id((q.get("id", [""])[0] or q.get("task", [""])[0]).strip(),
+                                    q.get("project", [""])[0])
+            if bad:
+                self._send_json(404, bad)
+                return
             room = chatroom.get_room(rid) if rid else None
             if room is None:
                 self._send_json(404, {"error": "no_such_room"})
                 return
             self._send_json(200, _annotate_room_liveness(room))
+            return
+        if p == "/api/task/ref":
+            # The task a number in a chat names, for the chip that shows it:
+            # ?ref=#18 read in the project of ?room= (or ?project=), ?ref=ED-18
+            # in any. 404 with a sentence when it names none.
+            q = parse_qs(u.query)
+            ctx_room = (q.get("room", [""])[0] or "").strip()
+            pid = (q.get("project", [""])[0] or "").strip()
+            if ctx_room and not pid:
+                rm = chatroom.get_room(ctx_room)
+                pid = _task_project(rm, load_session_projects(), load_projects()) if rm else ""
+            rid, why = resolve_task_ref(q.get("ref", [""])[0], pid)
+            info = task_ref_info(rid) if rid else None
+            if info is None:
+                self._send_json(404, {"error": "no_such_task", "message": why or "no such task"})
+                return
+            info.pop("report", None)
+            self._send_json(200, info)
             return
         if p == "/api/room/msg":
             # The message a balloon link points at, for the chip that shows it.
@@ -6877,8 +7180,10 @@ class Handler(BaseHTTPRequestHandler):
         flat = " ".join((text or "").split())
         if len(flat) > 700:
             flat = flat[:700] + "…"
-        wake = (f"[report] {kind} from task '{task_title}' ({task_id}, {reporter}): "
-                f"{flat} — read it in full with ensemble_get_task taskId={task_id} messages=0.")
+        # The task by its number, which the PO resolves in its own project.
+        name = task_label(chatroom.get_room(task_id)) or task_id
+        wake = (f"[report] {kind} from task '{task_title}' ({name}, {reporter}): "
+                f"{flat} — read it in full with ensemble_get_task taskId={name} messages=0.")
         return self._ring(po_room_id, recipients, wake)
 
     def _mcp_url(self) -> str:
@@ -7321,7 +7626,7 @@ class Handler(BaseHTTPRequestHandler):
             if rotation.room_rotating(rid):
                 raise StartRoomError("handing over to a fresh session, try again shortly")
             sess.last_input = time.time()
-            if not _type_input(sess, "\n\n".join(with_message_refs(it["text"]) for it in items)):
+            if not _type_input(sess, "\n\n".join(with_message_refs(it["text"], rid) for it in items)):
                 return items     # it looked alive, but the write found it gone
         return []
 
@@ -7470,7 +7775,7 @@ class Handler(BaseHTTPRequestHandler):
         for ident, sess in ready.items():
             parts = [RESUME_NOTE] if ident in notes else []
             if solo:
-                parts += [with_message_refs(it["text"]) for it in items]
+                parts += [with_message_refs(it["text"], room_id) for it in items]
             elif ident in wake_for:
                 parts.append(_relay_wake(wake_for.pop(ident)[-1]))
             if not parts:
@@ -7904,7 +8209,7 @@ class Handler(BaseHTTPRequestHandler):
                 room = chatroom.get_room(room_id) or {}
                 body = "\n".join(
                     f"[from {m['from']}] "
-                    + (with_message_refs(m["text"]) if refs_expanded_for(room, m["from"]) else m["text"])
+                    + (with_message_refs(m["text"], room_id) if refs_expanded_for(room, m["from"]) else m["text"])
                     for m in msgs)
             return ok({"content": [{"type": "text", "text": body}],
                        "isError": False})
@@ -8114,6 +8419,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "missing_session"})
                 return
             assign_session_project(sid, pid)
+            if pid and sid.startswith("room-"):
+                # A task moved in takes the project's next number.
+                assign_task_number(sid, pid)
             self._send_json(200, {"ok": True})
             return
         if p == "/api/projects/po":
@@ -8133,6 +8441,15 @@ class Handler(BaseHTTPRequestHandler):
                                                   data.get("intervalMin"))
             self._send_json(200 if ok else (404 if msg == "no_such_project" else 400),
                             {"ok": ok} if ok else {"error": msg})
+            return
+        if p == "/api/projects/key":
+            # {projectId, key}: the project's short key (ED), for ED-18.
+            ok, msg = set_project_key(data.get("projectId", ""), data.get("key", ""))
+            if ok:
+                self._send_json(200, {"ok": True, "key": task_numbers.normalize_key(data.get("key"))})
+            else:
+                self._send_json(404 if msg == "no_such_project" else 400,
+                                {"error": msg, "message": KEY_REFUSALS.get(msg, msg)})
             return
         if p == "/api/projects/kind":
             # {projectId, kind: "code" | "documents"}.
@@ -8316,7 +8633,10 @@ class Handler(BaseHTTPRequestHandler):
             # The owner moving a card. This endpoint is the UI's, and the UI is
             # the human — agents come in through /mcp, where the ProductOwner
             # check applies. So every column is available here, including Done.
-            rid = (data.get("roomId") or "").strip()
+            rid, bad = http_task_id(data.get("roomId") or data.get("task") or "", data.get("projectId") or "")
+            if bad:
+                self._send_json(404, bad)
+                return
             w = normalize_workflow(data.get("workflow"))
             if w is None:
                 self._send_json(400, {"error": "bad_workflow",
@@ -8411,8 +8731,12 @@ class Handler(BaseHTTPRequestHandler):
             # request safe to send twice (a lost reply): the second is a
             # duplicate, nothing is queued again — unless the hub still holds
             # that key (the resume it started failed later): then the same
-            # send is its retry.
-            rid = (data.get("roomId") or "").strip()
+            # send is its retry. ``roomId`` may be a number (#18 with
+            # ``projectId``, ED-18), or ``task`` may give it.
+            rid, bad = http_task_id(data.get("roomId") or data.get("task") or "", data.get("projectId") or "")
+            if bad:
+                self._send_json(404, bad)
+                return
             room_full = chatroom.get_room(rid, public=False)
             if room_full is None:
                 self._send_json(404, {"error": "no_such_room"})
@@ -8729,6 +9053,13 @@ def main():
             print(f"installed agent skill: {pth}", flush=True)
     except Exception as e:
         print(f"agent skill install skipped: {e}", flush=True)
+    # Tasks from before numbers existed get theirs, and every project a key.
+    try:
+        done = backfill_task_numbers()
+        if done["numbered"] or done["keys"]:
+            print(f"task numbers: {done['numbered']} task(s) numbered, {done['keys']} project key(s) set", flush=True)
+    except Exception as e:
+        print(f"task numbers backfill skipped: {e}", flush=True)
 
     def _announce_remote(ip: str) -> None:
         print(f"ensemble [{BACKEND.os_name}]: http://{ip}:{port} (remote)", flush=True)
