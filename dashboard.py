@@ -1476,6 +1476,20 @@ def hub_input_kind(text: str) -> dict:
     return {"kind": "human"}
 
 
+# The PO's message to a one-agent task (sent through /api/room/resume) starts
+# like this. Not hub traffic for the chat page, but not a person at the
+# terminal either.
+PO_MESSAGE_PREFIX = "[from the PO]"
+
+
+def typed_by_person(text: str) -> bool:
+    """Whether a line typed into an agent is a person's — what holds a
+    rotation that is waiting for the agent's handover (rotation._typed_since
+    reads ``last_input``). The hub's own lines and the PO's are not."""
+    s = (text or "").lstrip()
+    return hub_input_kind(s)["kind"] == "human" and not s.startswith(PO_MESSAGE_PREFIX)
+
+
 def classify_turns(turns: list[dict]) -> list[dict]:
     """The chat's turns with ``kind`` on every user turn and ``answers`` (the
     kind of the user turn before it, with a report's details) on every
@@ -6442,8 +6456,7 @@ class Handler(BaseHTTPRequestHandler):
             return f"Only the dashboard page can do this, and this request did not come from it: {why}."
         return ""
 
-    def _agent_peer(self) -> str:
-        """Why the program that sent this request counts as an agent, or ""."""
+    def _server_end(self) -> tuple:
         server = self.server.server_address[:2]
         conn = getattr(self, "connection", None)
         if conn is not None:
@@ -6451,7 +6464,28 @@ class Handler(BaseHTTPRequestHandler):
                 server = conn.getsockname()[:2]
             except OSError:
                 pass
-        return peer_process.from_agent(self.client_address[:2], server, _agent_pids())
+        return server
+
+    def _agent_peer(self) -> str:
+        """Why the program that sent this request counts as an agent, or ""."""
+        return peer_process.from_agent(self.client_address[:2], self._server_end(), _agent_pids())
+
+    def _agent_sender(self) -> int | None:
+        """The agent process that sent this request, None when none did or
+        it cannot tell."""
+        return peer_process.agent_sender(self.client_address[:2], self._server_end(), _agent_pids())
+
+    def _pty_input_by_person(self, sess) -> bool:
+        """Whether a write to /api/pty/input is a person's, which holds a
+        rotation waiting for the agent's handover (rotation._typed_since). It
+        is, unless an agent's process sent it: the PO's tell.py types
+        "[from the PO] …" this way, the text and its Enter as two writes. The
+        sender is looked up only while a handover is awaited — the page types
+        keystroke by keystroke."""
+        meta = sess.meta or {}
+        if not rotation.awaiting_handover(meta.get("room", ""), meta.get("identity", "")):
+            return True
+        return self._agent_sender() is None
 
     def _gate(self) -> bool:
         """Return True if the request may proceed. When an ACCESS_TOKEN is set,
@@ -7625,7 +7659,8 @@ class Handler(BaseHTTPRequestHandler):
         with rotation.GATE:
             if rotation.room_rotating(rid):
                 raise StartRoomError("handing over to a fresh session, try again shortly")
-            sess.last_input = time.time()
+            if any(typed_by_person(it["text"]) for it in items):
+                sess.last_input = time.time()
             if not _type_input(sess, "\n\n".join(with_message_refs(it["text"], rid) for it in items)):
                 return items     # it looked alive, but the write found it gone
         return []
@@ -7780,7 +7815,10 @@ class Handler(BaseHTTPRequestHandler):
                 parts.append(_relay_wake(wake_for.pop(ident)[-1]))
             if not parts:
                 continue
-            sess.last_input = time.time()
+            # The note and a team's relay are the hub's; a solo agent's
+            # messages are a person's unless they say otherwise.
+            if solo and any(typed_by_person(it["text"]) for it in items):
+                sess.last_input = time.time()
             if not _type_input(sess, "\n\n".join(parts)):
                 # Gone between looking ready and the write: the messages stay
                 # owed to it (a partner that got its wake is not woken again).
@@ -8275,6 +8313,11 @@ class Handler(BaseHTTPRequestHandler):
                 # say so, or the page counts a message as sent that never was.
                 self._send_json(410, {"error": "the session has stopped"})
                 return
+            # Who sent it is looked up outside the gate (a process lookup, up to
+            # seconds on macOS/Linux, must not hold doorbells up). An ask that
+            # lands in between makes this count as a person's, but stamped
+            # before the ask's own submit, which rotation._typed_since ignores.
+            by_person = self._pty_input_by_person(sess)
             # One step with a rotation's mark (rotation.GATE): input to a task
             # being handed over is refused rather than reach the session being
             # ended, and input before it is seen by the rotation's last check.
@@ -8283,7 +8326,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(409, {"error": "handing over to a fresh session, "
                                                    "try again shortly"})
                     return
-                sess.last_input = time.time()
+                if by_person:
+                    sess.last_input = time.time()
                 if not sess.write(data.get("data", "")):
                     # It ended after the check above: the input went nowhere.
                     self._send_json(410, {"error": "the session has stopped"})

@@ -181,6 +181,21 @@ def agent_ancestor(pid: int, procs: dict[int, tuple[int, str]], agent_pids: set[
     return None
 
 
+def agent_sender(client: tuple[str, int], server: tuple[str, int],
+                 agent_pids: set[int]) -> int | None:
+    """The agent process that sent this request; None when none did, and when
+    it cannot tell — for a caller that must never take a person for an agent
+    (from_agent is the opposite: it refuses what it cannot tell)."""
+    try:
+        pid = owner(client, server)
+        if pid is None:
+            return None
+        procs = _win_processes() if sys.platform == "win32" else _posix_processes()
+    except Exception:                            # noqa: BLE001 - unknown is not an agent here
+        return None
+    return agent_ancestor(pid, procs, set(agent_pids), os.getpid())
+
+
 def from_agent(client: tuple[str, int], server: tuple[str, int], agent_pids: set[int]) -> str:
     """Why this request must be treated as an agent's, or "" when it is not.
     A connection from this machine whose owner cannot be found is refused."""
