@@ -6,6 +6,7 @@
 <title>Ensemble — session</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
 <script src="/static/comments.js"></script>
+<script src="/static/attach.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
 <script>
@@ -641,6 +642,25 @@
   a.task-chip .ref-prev { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; }
   a.task-chip .ref-state, .tno { flex:0 0 auto; color:var(--fg-muted); }
   .tno { margin-right:var(--s-100); font-weight:400; font-variant-numeric:tabular-nums; }
+  /* Images a message carries: thumbnails that open full size (static/attach.js). */
+  .att-thumbs { display:flex; flex-wrap:wrap; gap:var(--s-200); margin-top:var(--s-200); }
+  .att-thumb { display:block; max-width:100%; border:1px solid var(--border); border-radius:var(--r-200); overflow:hidden; background:var(--surface-sunken); line-height:0; }
+  .att-thumb img { display:block; max-height:160px; max-width:100%; }
+  .att-thumb:hover { border-color:var(--border-strong); }
+  .att-thumb:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  /* The images in a box being written: a chip each, with its remove ×. */
+  .att-chips { display:flex; flex-wrap:wrap; gap:var(--s-100); }
+  .att-chips[hidden] { display:none; }
+  .att-chip { display:inline-flex; align-items:center; gap:var(--s-100); max-width:100%; box-sizing:border-box; height:32px; padding:0 0 0 var(--s-050);
+    background:var(--surface-sunken); color:var(--fg); border:1px solid var(--border); border-radius:var(--r-100); font-size:var(--fs-200); line-height:16px; }
+  .att-chip img { height:24px; width:auto; max-width:48px; object-fit:cover; border-radius:var(--r-100); }
+  .att-chip .att-name { min-width:0; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding-left:var(--s-050); }
+  .att-chip.err .att-name { color:var(--c-danger-fg); }
+  .att-chip .att-x { flex:0 0 auto; height:24px; padding:0 var(--s-200); background:transparent; border:none; color:var(--fg-muted); font-size:var(--fs-300); line-height:16px; }
+  .att-chip .att-x:hover { background:var(--hover); color:var(--fg); }
+  .att-chip .att-x:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .cmt-composer .att-chips { margin-top:var(--s-200); }
+  #cmt-tray .cmt-item-img { font-size:var(--fs-100); line-height:16px; color:var(--fg-muted); }
   /* A link to a balloon this conversation does not have. */
   #goto-note { flex:0 0 auto; display:flex; align-items:center; gap:var(--s-200); padding:var(--s-050) 12px;
     border-bottom:1px solid var(--border); color:var(--fg-muted); font-size:var(--fs-200); line-height:16px; }
@@ -828,6 +848,8 @@
     button, select, .agent .ah { min-height: var(--touch-min); }
     button { min-width: var(--touch-min); }
     #promptcard .pc-x, #cmt-tray .cmt-item-x, #livetail .lt-more { min-width: var(--touch-min); }
+    .att-chip { height: var(--touch-min); }
+    .att-chip .att-x { height: var(--touch-min); }
     .msg .pend-state button { min-height: var(--touch-min); }   /* Retry / Discard under a failed message */
     /* Nothing needs hover: Copy link always shows. A chip keeps its look in the
        line of text and takes a finger's height with an invisible margin. */
@@ -880,7 +902,8 @@
     <div id="activity" hidden></div>
     <div id="compose">
       <div class="dim" id="hint"></div>
-      <textarea id="input" placeholder="Message the agents — Ctrl+Enter to send. Start with @codex or @claude to direct it to one."></textarea>
+      <div id="att-chips" class="att-chips" hidden></div>
+      <textarea id="input" placeholder="Message the agents — Ctrl+Enter to send. Start with @codex or @claude to direct it to one. Paste or drop a screenshot to attach it."></textarea>
       <div style="display:flex; gap:8px; align-items:center">
         <span class="dim">To</span>
         <select id="to"><option value="">Everyone</option></select>
@@ -1105,6 +1128,8 @@ const REF_MARK_RE = new RegExp(REF_A + '(\\d+)' + REF_Z, 'g');
 // it, so a person's own "[ref …]" lines stay.
 const REF_BLOCK_RE = /\n\n\[ref (https?:\/\/[^\s\]]+)\] (?:not found: no message \S+ in \S+ on this hub|from [^\n]* in "[^\n]*" at (?:\d{4}-\d\d-\d\d \d\d:\d\d|an unknown time):(?:\n>(?: [^\n]*)?)+)\s*$/;
 function stripRefBlocks(t) {
+  const att = attSplit(t);
+  if (att.paths.length) return (stripRefBlocks(att.words) + '\n\n' + att.paths.map(x => ATT_PREFIX + x).join('\n')).replace(/^\n+/, '');
   t = String(t || '');
   for (let m; (m = TASK_BLOCK_RE.exec(t) || REF_BLOCK_RE.exec(t)) && t.slice(0, m.index).includes(m[1]);) t = t.slice(0, m.index);
   return t;
@@ -1216,7 +1241,7 @@ function refWho(r) {
 }
 const refLabel = r => [refWho(r), (r.taskNo ? '#' + r.taskNo + ' ' : '') + (r.taskTitle || ''), refWhen(r.ts)].filter(Boolean).join(' · ');
 function refPreview(r) {
-  const t = stripRefBlocks(r.text).replace(/\s+/g, ' ').trim();
+  const t = attSplit(stripRefBlocks(r.text)).words.replace(/\s+/g, ' ').trim();
   return t.length > 60 ? t.slice(0, 59) + '…' : t;
 }
 // The chip for a link the hub has resolved, else null: the text keeps the link.
@@ -1237,6 +1262,9 @@ const fileBase = () => (ROOM_OBJ && ROOM_OBJ.cwd) || '';
 const fileHref = (p, line) => '/fileview?path=' + encodeURIComponent((p || '').trim()) + (line ? '&line=' + line : '')
   + (ROOM ? '&room=' + encodeURIComponent(ROOM) : '') + (fileBase() ? '&cwd=' + encodeURIComponent(fileBase()) : '');
 function mdToHtml(src) {
+  // The images a message ends with ("[image] <path>" lines) as thumbnails.
+  const att = attSplit(src);
+  if (att.paths.length) return (att.words ? mdToHtml(att.words) : '') + attThumbsHtml(ROOM, att.paths, esc);
   const codes = [];
   let s = (src ?? '').replace(/\r\n/g, '\n');
   // Fenced code blocks ```lang\n...\n```
@@ -1551,7 +1579,8 @@ function foldUnkeep(fold) {
 }
 // A folded balloon's first line, as plain text.
 function foldLine(text) {
-  const raw = String(text || '').replace(/\r/g, '');
+  const att = attSplit(text);
+  const raw = String(att.paths.length && !att.words ? (att.paths.length > 1 ? att.paths.length + ' images' : 'Image') : att.words).replace(/\r/g, '');
   const line = raw.replace(/```[\s\S]*?(?:```|$)/g, '\n').split('\n')
     .map(l => l.replace(/^\s*(?:#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+)/, '')
       .replace(/\[([^\]\n]*)\]\([^)\n]*\)/g, '$1').replace(/\*\*|__|`/g, '').trim())
@@ -3069,8 +3098,10 @@ async function sendSolo(text) {
 // from here on drops nothing. ``key`` names this attempt: sent again after a
 // lost reply, the hub takes it once. A team's every send goes this way: the
 // hub, not the last poll, decides whether the team is running.
-async function sendResuming(text, to, key) {
-  return postOk('/api/room/resume', { roomId: ROOM, text, to: to || '', key: key || '' });
+async function sendResuming(text, to, key, attachments) {
+  const body = { roomId: ROOM, text, to: to || '', key: key || '' };
+  if (attachments && attachments.length) body.attachments = attachments;
+  return postOk('/api/room/resume', body);
 }
 // Whether a solo send goes through the hub rather than straight into the
 // terminal (typed there, it is submitted at once; the hub waits for a settled
@@ -3098,7 +3129,7 @@ function keptByHub(e) {
   SEND_ERR = 'Not delivered: ' + sendErrorText(e) + '. Your message is kept above: Retry sends it again.';
   setText($('#hint'), SEND_ERR);
   SEND_KEY = '';
-  $('#input').value = '';
+  $('#input').value = ''; ATT.clear();
   setTimeout(refresh, 400);
   return true;
 }
@@ -3123,8 +3154,34 @@ $('#input').addEventListener('input', () => {
   SEND_KEY = '';             // edited, so it is a new message
   if (SEND_ERR) { SEND_ERR = ''; setText($('#hint'), ''); }
 });
+// Images pasted or dropped into the box: uploaded at once, sent with the message.
+const ATT_WAIT = 'Wait for the images to finish uploading, then send.';
+const ATT = attBox(() => ROOM, box => {
+  SEND_KEY = '';             // a different set of images, so a new message
+  const el = $('#att-chips'), html = box.html(esc);
+  if (el._html !== html) { el._html = html; el.innerHTML = html; }
+  el.hidden = !box.list.length;
+  const bad = box.failed();
+  if (bad.length) { SEND_ERR = 'Not uploaded: ' + bad[bad.length - 1].err + '. Remove it to send the rest.'; setText($('#hint'), SEND_ERR); }
+  else if (SEND_ERR.startsWith('Not uploaded') || (SEND_ERR === ATT_WAIT && !box.busy())) { SEND_ERR = ''; setText($('#hint'), ''); }
+});
+attWire($('#input'), $('#compose'), ATT);
+$('#att-chips').addEventListener('click', e => {
+  const x = e.target.closest && e.target.closest('[data-att-x]');
+  if (x) { ATT.remove(x.dataset.attX); $('#input').focus(); }
+});
+// What Send does with the images: null when it must wait (uploading, or one
+// failed), else what the message carries (maybe none).
+function sendAttachments() {
+  if (ATT.busy()) { SEND_ERR = ATT_WAIT; setText($('#hint'), SEND_ERR); return null; }
+  const bad = ATT.failed();
+  if (bad.length) { SEND_ERR = 'Not uploaded: ' + bad[bad.length - 1].err + '. Remove it to send the rest.'; setText($('#hint'), SEND_ERR); return null; }
+  return ATT.stored();
+}
 $('#send').onclick = async () => {
-  const t = $('#input').value.trim(); if (!t) return;
+  const t = $('#input').value.trim();
+  const atts = sendAttachments();
+  if (!atts || (!t && !atts.length)) return;
   // Until the session has loaded, whether this is typed into a terminal or
   // said in the room is not known (Send starts off, and turns on in refresh).
   if (!ROOM_OBJ) {
@@ -3138,7 +3195,8 @@ $('#send').onclick = async () => {
   // written a rollout, so early on there is a terminal to type into but no id.
   if (SOLO_MODE) {
     const key = msgKey();
-    try { if (needsResume(t)) await sendResuming(t, '', key); else await sendSolo(t).catch(e => orResume(e, t, '', key)); }
+    // With images it goes through the hub, which adds their lines.
+    try { if (atts.length || needsResume(t)) await sendResuming(t, '', key, atts); else await sendSolo(t).catch(e => orResume(e, t, '', key)); }
     catch (e) {
       if (keptByHub(e)) return;
       SEND_ERR = 'Not sent: ' + sendErrorText(e) + '. Your message is still in the box.';
@@ -3146,8 +3204,8 @@ $('#send').onclick = async () => {
       return;
     }
     SEND_ERR = ''; SEND_KEY = '';
-    showPendingUser(t);        // show it now; the transcript catches up later
-    $('#input').value = '';
+    showPendingUser(t + (atts.length ? '\n\n' + atts.map(a => ATT_PREFIX + a.name).join('\n') : ''));   // show it now; the transcript catches up later
+    $('#input').value = ''; ATT.clear();
     setTimeout(checkSolo, 1200);
     setTimeout(refresh, 400);  // the hub's hold on it, and "resuming", show at once
     return;
@@ -3162,7 +3220,7 @@ $('#send').onclick = async () => {
   // Always through the hub's resume-or-deliver: a team that stopped since the
   // last poll is resumed for the message instead of the message being posted
   // to a room nobody is reading.
-  try { await sendResuming(t, to, msgKey()); }
+  try { await sendResuming(t, to, msgKey(), atts); }
   catch (e) {
     if (keptByHub(e)) return;
     SEND_ERR = 'Not sent: ' + sendErrorText(e) + '. Your message is still in the box.';
@@ -3170,7 +3228,7 @@ $('#send').onclick = async () => {
     return;
   }
   SEND_ERR = ''; SEND_KEY = '';
-  $('#input').value = ''; if ($('#to')) $('#to').value = ''; refresh();
+  $('#input').value = ''; ATT.clear(); if ($('#to')) $('#to').value = ''; refresh();
 };
 $('#input').addEventListener('keydown', e => {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $('#send').click(); }
@@ -3393,17 +3451,23 @@ function openComposer(data) {
   const pop = document.createElement('div');
   pop.className = 'cmt-composer';
   pop.innerHTML = `<div class="cmt-quote"></div>
-    <textarea class="cmt-note" rows="3" placeholder="Your comment on this passage…"></textarea>
+    <textarea class="cmt-note" rows="3" placeholder="Your comment on this passage… Paste or drop a screenshot to attach it."></textarea>
+    <div class="att-chips" hidden></div>
     <div class="cmt-actions"><button class="cmt-cancel">Cancel</button><button class="cmt-add">Add comment</button></div>`;
   pop.querySelector('.cmt-quote').textContent = '“' + q + '”';
   document.body.appendChild(pop);
   const ta = pop.querySelector('.cmt-note'); ta.focus();
+  const chips = pop.querySelector('.att-chips');
+  const att = attBox(() => ROOM, box => { chips.innerHTML = box.html(esc); chips.hidden = !box.list.length; });
+  attWire(ta, pop, att);
+  chips.addEventListener('click', e => { const x = e.target.closest && e.target.closest('[data-att-x]'); if (x) att.remove(x.dataset.attX); });
   const close = () => { pop.remove(); _cmtComposerOpen = false; };
   pop.querySelector('.cmt-cancel').onclick = close;
   pop.querySelector('.cmt-add').onclick = () => {
-    const note = ta.value.trim(); if (!note) { ta.focus(); return; }
+    const note = ta.value.trim(), images = att.stored();
+    if (att.busy() || att.failed().length || (!note && !images.length)) { ta.focus(); return; }
     close();
-    cmtAdd({ cid: cmtId(), at: cmtNow(), mid: data.mid, from: data.from, start: data.start, end: data.end, quote: data.quote, note });
+    cmtAdd({ cid: cmtId(), at: cmtNow(), mid: data.mid, from: data.from, start: data.start, end: data.end, quote: data.quote, note, ...(images.length ? { images } : {}) });
     const s = window.getSelection(); if (s) s.removeAllRanges();
   };
   ta.addEventListener('keydown', e => {
@@ -3432,6 +3496,11 @@ function cmtSupHtml(c) {
   if (!later || !later.id) return '';
   return `<div class="cmt-item-sup"><a class="sup-link" href="${esc(refHref(ROOM, later.id))}" data-ref-room="${esc(ROOM)}" data-ref-msg="${esc(later.id)}">${esc(supersededText(later))}</a></div>`;
 }
+// Under a comment with images: how many, by name.
+function cmtImagesHtml(c) {
+  const imgs = Array.isArray(c.images) ? c.images : [];
+  return imgs.length ? `<div class="cmt-item-img">${esc((imgs.length > 1 ? imgs.length + ' images: ' : 'Image: ') + imgs.map(i => i.name).join(', '))}</div>` : '';
+}
 function renderCmtTray() {
   let tray = document.getElementById('cmt-tray');
   if (!COMMENTS.length) { CMT_ERROR = ''; if (tray) tray.remove(); return; }
@@ -3441,7 +3510,7 @@ function renderCmtTray() {
     + (s.note ? `<div class="cmt-state${s.err ? ' err' : ''}" role="status">${esc(s.note)}</div>` : '')
     + '<div class="cmt-list">' + COMMENTS.map(c => `<div class="cmt-item" data-cid="${esc(c.cid)}">`
       + `<div class="cmt-item-q">${esc('“' + (c.quote.length > 60 ? c.quote.slice(0, 60) + '…' : c.quote) + '”')}</div>`
-      + `<div class="cmt-item-n">${esc(c.note)}</div>${cmtSupHtml(c)}<button class="cmt-item-x" title="Remove">✕</button></div>`).join('')
+      + `<div class="cmt-item-n">${esc(c.note)}</div>${cmtImagesHtml(c)}${cmtSupHtml(c)}<button class="cmt-item-x" title="Remove">✕</button></div>`).join('')
     + '</div>';
   if (!tray) {
     tray = document.createElement('div'); tray.id = 'cmt-tray';
@@ -3492,16 +3561,18 @@ async function submitComments() {
   const batch = COMMENTS.slice();
   const authors = [...new Set(batch.map(c => c.from))];
   const to = authors.length === 1 ? authors[0] : '';
+  const images = batch.flatMap(c => Array.isArray(c.images) ? c.images : []);
   const body = `## Review comments (${batch.length})\n\n` +
-    batch.map((c, i) => `**${i + 1}.** > ${c.quote.replace(/\s*\n\s*/g, ' ').trim()}\n\n${c.note}`).join('\n\n');
+    batch.map((c, i) => `**${i + 1}.** > ${c.quote.replace(/\s*\n\s*/g, ' ').trim()}\n\n${c.note}`
+      + (Array.isArray(c.images) && c.images.length ? `\n\n(attached: ${c.images.map(x => x.name).join(', ')})` : '')).join('\n\n');
   // The batch names its attempt by the comments in it (their ids are stable),
   // so the same batch sent again after a lost reply is taken once.
   const key = `cmt:${batch.length}:${batch[0].cid}:${batch[batch.length - 1].cid}`;
   CMT_SENDING = true; CMT_ERROR = ''; renderCmtTray();
   let sent = false;
   try {
-    if (!SOLO_MODE) await sendResuming(body, to, key);       // the hub decides: running or resumed
-    else if (needsResume(body)) await sendResuming(body, '', key);
+    if (!SOLO_MODE) await sendResuming(body, to, key, images);       // the hub decides: running or resumed
+    else if (images.length || needsResume(body)) await sendResuming(body, '', key, images);
     else await sendSolo(body).catch(e => orResume(e, body, '', key));
     sent = true;
   } catch (e) {

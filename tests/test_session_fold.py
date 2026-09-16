@@ -29,6 +29,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = (ROOT / "session.html").read_text(encoding="utf-8").replace("\r\n", "\n")
+ATTACH = (ROOT / "static" / "attach.js").read_text(encoding="utf-8").replace("\r\n", "\n")
 NODE = shutil.which("node")
 
 
@@ -191,7 +192,7 @@ console.log(JSON.stringify(out));
 class FoldALongConversation(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        code = fold_block(SRC) + js_function(SRC, "soloItems") + js_function(SRC, "patchChildren")
+        code = ATTACH + fold_block(SRC) + js_function(SRC, "soloItems") + js_function(SRC, "patchChildren")
         payload = {"code": code, "showPending": js_function(SRC, "showPendingUser"),
                    "scrolled": js_function(SRC, "msgsScrolled")}
         out = subprocess.run([NODE, "-e", JS], input=json.dumps(payload), capture_output=True,
@@ -389,7 +390,7 @@ class HubTrafficAndAnswers(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        code = fold_block(SRC) + js_function(SRC, "soloItems") + js_function(SRC, "patchChildren")
+        code = ATTACH + fold_block(SRC) + js_function(SRC, "soloItems") + js_function(SRC, "patchChildren")
         out = subprocess.run([NODE, "-e", HUB_JS], input=json.dumps({"code": code}), capture_output=True,
                              text=True, encoding="utf-8", timeout=60)
         if out.returncode != 0:

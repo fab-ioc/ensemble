@@ -25,6 +25,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = (ROOT / "session.html").read_text(encoding="utf-8").replace("\r\n", "\n")
+ATTACH = (ROOT / "static" / "attach.js").read_text(encoding="utf-8").replace("\r\n", "\n")
 NODE = shutil.which("node")
 
 
@@ -163,7 +164,7 @@ TAIL = r"""
 
 
 def run_scenario(name: str) -> dict:
-    code = "\n".join([HARNESS, js_const("REF_BLOCK_RE"), js_const("TASK_BLOCK_RE")] + [js_function(n) for n in (
+    code = "\n".join([HARNESS, ATTACH, js_const("REF_BLOCK_RE"), js_const("TASK_BLOCK_RE")] + [js_function(n) for n in (
         "stripRefBlocks", "soloItems", "prevSessionItems", "soloOwns", "soloWantFailed", "checkSolo",
         "renderSolo", "openGroupOf", "landPending", "markLanded")]
         + [SCENARIOS[name], TAIL])
@@ -233,7 +234,7 @@ class LandOnALinkedBalloon(unittest.TestCase):
 @unittest.skipUnless(NODE, "node is not installed")
 class HideTheHubsWriteOut(unittest.TestCase):
     def strip(self, texts):
-        code = "\n".join([js_const("REF_BLOCK_RE"), js_const("TASK_BLOCK_RE"), js_function("stripRefBlocks"),
+        code = "\n".join([ATTACH, js_const("REF_BLOCK_RE"), js_const("TASK_BLOCK_RE"), js_function("stripRefBlocks"),
                           f"console.log(JSON.stringify({json.dumps(texts)}.map(stripRefBlocks)));"])
         res = subprocess.run([NODE, "-"], input=code, capture_output=True, text=True, encoding="utf-8", timeout=30)
         self.assertEqual(res.returncode, 0, res.stderr)
