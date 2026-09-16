@@ -41,7 +41,7 @@ const PROJECTS = { projects: [
 const currentPoRooms = () => poRoomIds(PROJECTS.projects);
 const projectById = id => PROJECTS.projects.find(p => p.id === id) || null;
 let SELECTED_PROJECT = 'p1', SELECTED_CAT = '__all__';
-const path = n => 'C:\\Users\\ceo\\EnsembleProjects\\Ensemble Dashboard\\' + n + '\\repo';
+const path = n => 'C:\\Users\\me\\EnsembleProjects\\Ensemble Dashboard\\' + n + '\\repo';
 const ALL = [
   { roomId: 'room-po', sessionId: 'room-po', label: 'Ensemble', cwd: path('po') },
   { roomId: 'room-a', sessionId: 'room-a', label: 'Hub: upload files', cwd: path('hub_upload') },

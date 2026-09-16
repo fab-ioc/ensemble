@@ -4,7 +4,7 @@ messages fold under its latest (session.html).
 The page's own functions run in Node and these check that:
 
 * a header names the task, the PO and the person: "#26 claude → PO",
-  "ceo → PO", "PO → #26 claude", "Hub → PO", with no "@";
+  "sam → PO", "PO → #26 claude", "Hub → PO", with no "@";
 * a review report says its round, and the row chip its verdict;
 * between two of the person's messages a task's messages are one row, a
   task's latest completed report stays in view below it, progress checks are
@@ -47,7 +47,7 @@ vm.runInContext(code + `
     chatGroups, supersededMap, supersededText, soloItems, titleNo, taskName, groupRowHtml, answerChip };`, ctx);
 const T = ctx.t;
 const out = {};
-Object.assign(T.CHAT_NAMES, { operator: 'ceo', po: 'claude', taskNo: id => ({ 'room-0804cfef': 26 })[id] || null });
+Object.assign(T.CHAT_NAMES, { operator: 'sam', po: 'claude', taskNo: id => ({ 'room-0804cfef': 26 })[id] || null });
 
 // A PO's room, as the hub keeps it.
 const R = 'claude@room-0804cfef', S = 'claude@room-11112222';
@@ -126,8 +126,8 @@ class WhoWritesToWhom(unittest.TestCase):
         cls.r = run()
 
     def test_headers_name_the_task_the_po_and_the_person(self):
-        self.assertEqual(self.r["senders"], ["ceo", "#26 claude", "#26 claude · review 1", "PO", "11112222 claude",
-                                             "Hub", "#26 claude · review 2", "Hub", "#26 claude", "ceo", "#26 claude"])
+        self.assertEqual(self.r["senders"], ["sam", "#26 claude", "#26 claude · review 1", "PO", "11112222 claude",
+                                             "Hub", "#26 claude · review 2", "Hub", "#26 claude", "sam", "#26 claude"])
         self.assertEqual(self.r["recipients"], ["PO", "PO", "PO", "#26 claude", "PO", "PO", "PO", "PO", "PO", "PO", "PO"])
         self.assertEqual(self.r["head"][0], '<span class="who">#26 claude</span> <span class="to">→ PO</span>')
         self.assertEqual(self.r["head"][1], '<span class="who hub-who">Hub</span> <span class="to">→ PO</span>')
@@ -135,13 +135,13 @@ class WhoWritesToWhom(unittest.TestCase):
 
     def test_names(self):
         self.assertEqual(self.r["names"], [26, 7, None, "#26", "9abcdef0", "#60", "ED-18",
-                                           "ceo", "Hub", "PO", "codex", "#26 codex-2"])
+                                           "sam", "Hub", "PO", "codex", "#26 codex-2"])
         self.assertEqual(self.r["task"], ["claude", "", "claude"])
 
     def test_what_each_message_is(self):
-        self.assertEqual(self.r["kinds"], ["ceo", "update", "review 1 changes requested", "PO ruling", "update",
+        self.assertEqual(self.r["kinds"], ["sam", "update", "review 1 changes requested", "PO ruling", "update",
                                            "progress check", "review 2 approved", "progress check", "completed",
-                                           "ceo", "update"])
+                                           "sam", "update"])
         self.assertIn('>Changes requested</span>', self.r["reviewChip"])
 
     def test_a_solo_transcript(self):
@@ -337,13 +337,13 @@ vm.runInContext(code + `
   const ROOM = 'room-here';
   globalThis.t = { CHAT_NAMES, refWho };`, ctx);
 const T = ctx.t;
-Object.assign(T.CHAT_NAMES, { operator: 'ceo', po: '', taskNo: id => ({ 'room-0804cfef': 26 })[id] || null });
+Object.assign(T.CHAT_NAMES, { operator: 'sam', po: '', taskNo: id => ({ 'room-0804cfef': 26 })[id] || null });
 const other = { roomId: 'room-other-po', isPo: true };
 console.log(JSON.stringify([
   T.refWho(Object.assign({ from: 'claude@room-0804cfef', who: 'claude@room-0804cfef' }, other)),
   T.refWho(Object.assign({ from: 'claude', who: 'claude' }, other)),
   T.refWho(Object.assign({ from: 'ensemble', who: 'ensemble' }, other)),
-  T.refWho(Object.assign({ from: 'user', who: 'ceo' }, other)),
+  T.refWho(Object.assign({ from: 'user', who: 'sam' }, other)),
   T.refWho({ roomId: 'room-task', isPo: false, from: 'claude', who: 'claude' }),
 ]));
 """
@@ -357,7 +357,7 @@ class LinkChipsNameTheWriter(unittest.TestCase):
                              text=True, encoding="utf-8", timeout=60)
         self.assertEqual(out.returncode, 0, out.stderr)
         # a task's report there, the PO's own message, the hub, the person, a task room's agent
-        self.assertEqual(json.loads(out.stdout), ["#26 claude", "PO", "Hub", "ceo", "claude"])
+        self.assertEqual(json.loads(out.stdout), ["#26 claude", "PO", "Hub", "sam", "claude"])
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 """A documents project's files from the page: upload, mkdir, move, delete.
 
 * each endpoint's happy path, and each change is a snapshot credited to the
-  person by name ("ceo"), with the reason, that Recent changes shows;
+  person by name ("sam"), with the reason, that Recent changes shows;
 * every refusal: a code project, a path outside the folder or into what the
   hub keeps there (.history, _linked, project.json, a task's folder), a name
   already taken, a folder into itself, a file over 50 MB, not the page;
@@ -76,7 +76,7 @@ class FilesApi(unittest.TestCase):
             mock.patch.object(dashboard, "SESSION_PROJECTS_FILE", state / "session_projects.json"),
             mock.patch.object(chatroom, "ROOMS_DIR", base / "rooms"),
             mock.patch.object(dashboard, "load_sessions", lambda *a, **k: []),
-            mock.patch.object(dashboard.getpass, "getuser", lambda: "ceo"),
+            mock.patch.object(dashboard.getpass, "getuser", lambda: "sam"),
             mock.patch.object(dashboard.Handler, "_agent_peer", lambda h: ""),
         ]
         for p in patches:
@@ -146,7 +146,7 @@ class FilesApi(unittest.TestCase):
         self.assertIn("ads/2026/photo.jpg", self.listed())
         top = self.top()
         self.assertEqual(top["rev"], res["snapshot"]["rev"])
-        self.assertEqual(top["who"], {"kind": "user", "tasks": [], "name": "ceo", "label": "ceo", "reason": "upload"})
+        self.assertEqual(top["who"], {"kind": "user", "tasks": [], "name": "sam", "label": "sam", "reason": "upload"})
         self.assertEqual([f["path"] for f in top["files"]], ["ads/2026/photo.jpg"])
         status, _ = dashboard.ws_files(self.h)
         self.assertEqual(status, 200)
@@ -271,7 +271,7 @@ class FilesApi(unittest.TestCase):
         self.assertFalse((self.home / "a.txt").exists())
         self.assertEqual((self.home / "docs" / "renamed.txt").read_bytes(), b"one\ntwo\n")
         top = self.top()
-        self.assertEqual((top["who"]["label"], top["who"]["reason"]), ("ceo", "move"))
+        self.assertEqual((top["who"]["label"], top["who"]["reason"]), ("sam", "move"))
         self.assertEqual(top["files"], [{"path": "docs/renamed.txt", "status": "R", "from": "a.txt",
                                          "added": 0, "removed": 0, "binary": False}])
         status, res = self.op("move", **{"from": "b.txt", "to": "docs/renamed.txt"})
@@ -342,7 +342,7 @@ class FilesApi(unittest.TestCase):
         self.assertFalse((self.home / "ads").exists())
         self.assertEqual((self.home / "archive" / "ads-2026" / "sub" / "two.md").read_bytes(), b"two\n")
         top = self.top()
-        self.assertEqual(top["who"]["label"], "ceo")
+        self.assertEqual(top["who"]["label"], "sam")
         self.assertEqual(sorted((f["from"], f["path"]) for f in top["files"]),
                          [("ads/one.md", "archive/ads-2026/one.md"), ("ads/sub/two.md", "archive/ads-2026/sub/two.md"),
                           ("ads/sub/unseen.md", "archive/ads-2026/sub/unseen.md")])
@@ -359,9 +359,9 @@ class FilesApi(unittest.TestCase):
         self.assertEqual(status, 200, res)
         self.assertEqual(res["path"], "ads/photo.jpg")
         self.assertFalse((self.home / "ads" / "photo.jpg").exists())
-        self.assertEqual((self.top()["who"]["label"], self.top()["who"]["reason"]), ("ceo", "delete"))
+        self.assertEqual((self.top()["who"]["label"], self.top()["who"]["reason"]), ("sam", "delete"))
         gone = history.deleted(self.h)["files"]
-        self.assertEqual([(d["path"], d["who"]["label"]) for d in gone], [("ads/photo.jpg", "ceo")])
+        self.assertEqual([(d["path"], d["who"]["label"]) for d in gone], [("ads/photo.jpg", "sam")])
         back = history.restore(self.h, gone[0]["from"], "ads/photo.jpg")
         self.assertTrue(back["ok"], back)
         self.assertEqual((self.home / "ads" / "photo.jpg").read_bytes(), b"\xff\xd8photo")
@@ -535,9 +535,9 @@ class FilesApi(unittest.TestCase):
     def test_recent_changes_name_the_person(self):
         index = (ROOT / "index.html").read_text(encoding="utf-8")
         line = re.search(r"^const histWho = .*;$", index, re.M).group(0)
-        js = line + "\nconsole.log(JSON.stringify([histWho({kind:'user',label:'ceo'}), histWho({kind:'task',label:'Sort'}), histWho({kind:'you',label:'x'}), histWho(null)]));"
+        js = line + "\nconsole.log(JSON.stringify([histWho({kind:'user',label:'sam'}), histWho({kind:'task',label:'Sort'}), histWho({kind:'you',label:'x'}), histWho(null)]));"
         r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, encoding="utf-8", timeout=60)
-        self.assertEqual(json.loads(r.stdout), ["ceo", "Sort", "you", "you"], r.stderr)
+        self.assertEqual(json.loads(r.stdout), ["sam", "Sort", "you", "you"], r.stderr)
 
 
 if __name__ == "__main__":

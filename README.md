@@ -1,250 +1,235 @@
 # Ensemble
 
-A local, multi-agent collaboration & coordination dashboard for coding agents — [Claude Code](https://claude.com/claude-code) and Codex today, any agent tomorrow (each is a pluggable adapter). One browser tab that surfaces every live and historical session across agents, runs them headless, lets multiple agents collaborate in a shared room, and gives one-click controls to open, resume, theme, label, categorise, pin, archive, search, track cost, and (optionally) link Jira tickets — backed by the data each agent already writes to disk. The server binds to `127.0.0.1` only; no network exposure.
+## What Ensemble is
 
-Cross-platform: **macOS** (iTerm2) and **Windows** (Windows Terminal) are supported today; Linux terminal control is stubbed and coming. Everything except the terminal-driving bits (session list, history, transcripts, labels, categories, pins, archive, search, cost, Jira, repo/editor opening, folder opening) works everywhere. All OS-specific behavior lives behind a platform backend in `backends/`, selected by `sys.platform`.
+Ensemble is a Jira-like board where the people doing the work are coding agents.
+Today those agents are [Claude Code](https://docs.claude.com/en/docs/claude-code) and
+[Codex](https://github.com/openai/codex). Each one plugs in through an adapter in `agents/`.
 
-![dashboard screenshot](docs/screenshot.png)
+- You organise work as **projects**, and each project has **tasks**.
+- Each project has a **PO**, a long-running agent session you mainly talk to. It writes task specs, starts tasks, reads their reports, merges finished work and asks you for decisions.
+- A task has one owner that does the work. It can also have a reviewer, which runs only when someone asks for a review.
+- When a task is done or blocked, it reports to its PO.
+- When an owner's conversation grows past a token limit, the owner writes a handover and a fresh session carries on from it.
+- A project can also be a **documents project**, a folder of files (letters, ads, contracts) instead of code.
 
-## What it does
+What Ensemble is not:
 
-**Browsing**
+- It has no cloud service and no accounts. It is one Python process, the **hub**, on one machine, serving a web page.
+- It runs the `claude` and `codex` programs you already have installed and logged in, under your own plan.
 
-- **Live + history** in one searchable table. Live sessions stay pinned at the top; history sorts by recency. Busy sessions get an orange blinker.
-- **Search** — instant filter as you type; press Enter to grep across all transcripts.
-- **Filter chips** — Live · 📌 Pinned · History · 🗄 Archived (multi-select).
-- **Sidebar** — Views (All / Uncategorized) and your own **Categories** (drag-drop sessions in).
-- **Detail panel** — click a row for cwd, first/last turn, full-conversation toggle, cost, and action buttons.
+## What it looks like
 
-**Session actions**
+![A project's Overview: the PO's chat beside the task board](docs/board.png)
 
-- **Click a live row** → focuses the matching terminal tab (macOS/iTerm only; elsewhere opens the transcript).
-- **▶ Open** a historical session → new terminal window with `claude --resume <sid>`, restoring the saved theme (and, on macOS, the window position).
-- **⛔ Close** a live session → macOS saves window geometry then kills claude; Windows kills the process.
-- **+ New** → creates `~/cs/NN_<slug>/`, opens a new terminal window, runs `claude "<your prompt>"` (optional `--model` picker).
-- **✎ Rename / ✨ Auto** → label manually or have Claude propose a name from the conversation (also becomes the terminal tab title on macOS).
-- **🎨 Theme** → macOS: any `~/.claude/iterm-presets/*.itermcolors`, applied live. Windows: any Windows Terminal color scheme, applied at the next Open.
-- **📂 Finder / Explorer** → opens the session's actual cwd (resolved via `lsof` on macOS if the recorded path is stale).
-- **🧠 IDE** → opens the session's git repo (or `.idea` project) in its preferred editor, auto-detected by language.
-- **📌 Pin / 🗄 Archive** → keep important sessions on top, hide finished ones.
-- **💲 Cost** → per-session token cost, estimated from a built-in Anthropic pricing table.
+A project's Overview. The PO's conversation is on the left and the task board is on the right, with columns Backlog, To do, In progress, In review and Done.
 
-**Jira (opt-in)** — auto-detects tickets from labels, cwd names, pasted `…atlassian.net/browse/PTECH-X` URLs, and tickets created via the Atlassian MCP tool; manual link/unlink in the detail panel. Off unless configured (see Configuration).
+![A PO chat with a task's report, a progress check and the PO asking for a decision](docs/po-chat.png)
 
-**Self-update** — when the install dir is a git checkout, a banner offers *Update now* (git fetch/reset + restart). Hidden for zip installs.
+A PO's chat. It shows your messages, a task's report (`#1 claude → PO Completed …`), the hub's progress check (`Hub → PO Progress check …`) and the PO's answers, including one that needs your decision.
+
+(The project and tasks in both pictures are made up.)
+
+## How work flows
+
+1. **You tell the PO what you want**, in its chat.
+2. **The PO plans.** It creates tasks as **drafts** (Backlog), each with a written spec, a priority and a preferred line-up: which agent kind owns the task, which one reviews it, and which models they use. When a task starts, the hub may swap Claude and Codex between the two seats if one plan allowance is nearly used up.
+3. **The PO starts a task** (In progress). The hub launches the task's agents without a visible terminal, gives them the spec as their first prompt, and connects them to the hub's `ensemble` MCP server. In a code project, a task normally works in its own git worktree on a branch `sess/<task-slug>`.
+4. **Review.** The owner asks the reviewer by @mentioning it. The hub starts a fresh reviewer session for that one review. Its verdict goes to the owner and the PO, and is added to `REVIEW-LOG.md` in the task folder.
+5. **Report.** The owner reports `completed`, `blocked` or `question`. The report lands in the PO's chat and wakes the PO, and the owner moves its card to In review.
+6. **Merge and Done.** The PO reviews the diff, merges the branch into the project's main branch and runs the project's tests. The hub sees the merge and moves the card to Done by itself. A documents project has no merges, so you drag its cards to Done yourself.
+
+Four things keep this running without you watching:
+
+- **The progress check.** Every 5 minutes by default, the hub looks at each project's tasks. It wakes the PO only when there is news: a column changed, new commits, work merged, a task blocked, stalled or dead.
+- **The handover.** A long conversation costs more with every turn. Past 200k tokens by default, the hub asks the task owner to write `TASK-HANDOVER.md` (or the PO to update `PO-HANDOVER.md`). It then starts a fresh session that reads the handover and carries on.
+- **Needs you.** The bell in the top bar lists every task waiting on a person, blocked, stalled, or whose agent died, across all projects.
+- **Plan allowance.** The header shows how much of your Claude and Codex plans is used.
+
+What the tabs show:
+
+| Tab | Shows |
+|---|---|
+| **Overview** (project) | The PO's chat and the board (or a list). Each card opens the task. |
+| **Workspace** | The project's or the task's folder, browsable like an editor. Files render (Markdown, code, images), and you can comment on lines and send the comments to a task's chat. In a documents project this tab is **Files**: upload, move, delete, **Recent changes** (who changed what), and every earlier version of every file, which you can restore. |
+| **Changes** | Uncommitted changes (git status and a per-file diff) in the project folder or a task's worktree, with line comments you can send to the task. |
+| **Roadmap** (project) | `ROADMAP.md` in the project folder. You and the PO both edit it. |
+| **Activity, Spec, Details** (task) | The task's chat, its spec, and its agents, branch, workspace and latest report. |
+
+Claude Code and Codex sessions you started yourself, outside Ensemble, are listed under **Unassigned** on the Projects page. You can move one into a project.
 
 ## Requirements
 
-Common:
-- Python 3.10+
-- [Claude Code](https://docs.claude.com/en/docs/claude-code) — `claude` must be on PATH
+- **Python 3.** Developed and tested with 3.13. There is no `match` statement or other 3.10+ syntax, but older versions are untested.
+- **Claude Code** (`claude`), **Codex** (`codex`), or both, on `PATH` and logged in. Ensemble starts them; it does not install them or log them in.
+- **git** on `PATH`, for worktrees, the Changes tab, the backup and a documents project's file history.
+- **Windows 10 or 11, or macOS.** The Linux backend is a stub: the pages load, but launching agents on Linux is not wired up.
+- **`requirements.txt`**: `pywinpty` on Windows, `ptyprocess` on macOS. These run the agents headless. The start scripts install them if they are missing.
 
-macOS:
-- [iTerm2](https://iterm2.com/) (terminal control is AppleScript-driven)
+Optional:
 
-Windows:
-- [Windows Terminal](https://aka.ms/terminal) (`wt.exe` on PATH)
-- The `py` launcher (ships with python.org installers) — the Microsoft Store
-  Python alias is detected and skipped
+- **Windows Terminal** (Windows) or **iTerm2** (macOS). They are only needed to open a session in a real terminal window. Agents never need them.
+- **Node.js**. It is only used by the tests that exercise the pages' JavaScript; those tests are skipped without it.
 
-Optional everywhere: an IDE for the 🧠 IDE button (auto-detected per language).
+## Install and run
 
-### Platform support
+The hub serves `http://127.0.0.1:8765`. It keeps its own state in `~/.ensemble` (settings, the project list, task records, logs) and creates projects under `~/EnsembleProjects`.
 
-| Feature | macOS | Windows |
-|---|---|---|
-| Session list / history / transcripts / labels | ✅ | ✅ |
-| Search, categories, pin, archive, cost, detail panel | ✅ | ✅ |
-| Jira integration (opt-in) | ✅ | ✅ |
-| Self-update banner (git checkouts only) | ✅ launchd | ✅ Task Scheduler |
-| Open (new window, `claude --resume`) | ✅ | ✅ |
-| Close (kill session) | ✅ saves window position | ✅ kills process |
-| New session (`~/cs/NN_<slug>`) | ✅ | ✅ |
-| Open folder | ✅ Finder | ✅ Explorer |
-| Open in editor | ✅ | ✅ |
-| Focus the live terminal tab | ✅ | ❌ (no tty→tab mapping) |
-| Per-session terminal theme | ✅ live | ⏳ applied at next Open (`--colorScheme`) |
-| Consolidate / split terminal windows | ✅ iTerm | ❌ (no WT equivalent) |
-
-Windows themes come from your Windows Terminal color schemes (read from its
-`settings.json`); Windows Terminal can't re-theme a running tab, so a chosen
-scheme is saved and applied the next time you Open the session.
-
-## Install (macOS)
-
-Four steps. The whole thing takes about 30 seconds.
-
-### 1. Clone the repo into `~/.ensemble`
-
-```sh
-git clone https://github.com/fab-ioc/agent-ensemble.git ~/.ensemble
-```
-
-### 2. Put the CLI on your PATH
-
-```sh
-mkdir -p ~/.local/bin
-ln -s ~/.ensemble/ensemble ~/.local/bin/ensemble
-```
-
-Make sure `~/.local/bin` is on your `PATH` (most shells already have it; otherwise add `export PATH="$HOME/.local/bin:$PATH"` to your `~/.zshrc` or `~/.bashrc`). Verify:
-
-```sh
-which ensemble       # should print the symlink path
-```
-
-### 3. Start the server
-
-Manual (foreground or one-shot):
-
-```sh
-ensemble start       # starts detached on port 8765
-ensemble status      # verify it's running
-ensemble open        # opens http://127.0.0.1:8765 in your default browser
-```
-
-### 4. (Optional) Autostart at login
-
-Recommended — survives reboots, restarts on crash, no need to ever `start` it again:
-
-```sh
-~/.ensemble/install-launchd.sh
-```
-
-That installs a LaunchAgent at `~/Library/LaunchAgents/com.ensemble.dashboard.plist` and starts it immediately. To check / uninstall later:
-
-```sh
-~/.ensemble/install-launchd.sh status
-~/.ensemble/install-launchd.sh uninstall
-```
-
-### First-time iTerm permission prompt
-
-The first time the dashboard tries to control iTerm (focus a tab, apply a theme, open a session), macOS will prompt:
-
-> "Python wants access to control 'iTerm'."
-
-Click **Allow**. You can review/change this later in **System Settings → Privacy & Security → Automation**. Without this permission, the AppleScript-based features (focus, themes, open/close) won't work — but the dashboard view itself will still display all sessions correctly.
-
-### Updating
-
-```sh
-cd ~/.ensemble && git pull
-~/.ensemble/install-launchd.sh   # re-runs to pick up plist changes; safe to repeat
-```
-
-## Install (Windows)
-
-### 1. Clone the repo
+### Windows
 
 ```powershell
-git clone https://github.com/fab-ioc/agent-ensemble.git "$env:USERPROFILE\.ensemble"
-cd "$env:USERPROFILE\.ensemble"
+git clone https://github.com/fab-ioc/ensemble.git
+cd ensemble
+.\ensemble.ps1 start      # installs pywinpty if needed, starts the hub without a console window
+.\ensemble.ps1 open       # opens http://127.0.0.1:8765
+.\ensemble.ps1 doctor     # checks Python, pywinpty, claude/codex, git, the hub
 ```
 
-### 2. Start the server
+Other commands are `stop`, `restart`, `status` and `logs`, and `-Port N` picks another port. The log is `%USERPROFILE%\.ensemble\logs\ensemble.log`. If PowerShell refuses to run the script, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.
+
+To start the hub at logon and restart it if it crashes:
 
 ```powershell
-.\ensemble.ps1 start     # starts detached on port 8765
-.\ensemble.ps1 status    # verify it's running
-.\ensemble.ps1 open      # opens http://127.0.0.1:8765 in your browser
+.\install-task.ps1            # registers and starts a scheduled task named "Ensemble"
+.\install-task.ps1 status
+.\install-task.ps1 uninstall
 ```
 
-If PowerShell blocks the script, allow local scripts for your user once:
-`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+The task runs as the current user. Keep the name `Ensemble`: the hub's restart helper (`restart-hub.ps1`) looks for a scheduled task by that name and restarts the hub through it.
 
-The server runs windowless via `pythonw.exe` (no console pops up), logging to
-`%USERPROFILE%\.ensemble\logs\ensemble.log`.
+### macOS
 
-### 3. (Optional) Autostart at logon
+```sh
+git clone https://github.com/fab-ioc/ensemble.git ~/ensemble
+cd ~/ensemble
+./ensemble start          # installs ptyprocess if needed, starts the hub in the background
+./ensemble open
+```
+
+Other commands are `stop`, `restart`, `status` and `logs`. The log is `~/Library/Logs/ensemble.log`. To start the hub at login, run `./install-launchd.sh`, which installs the LaunchAgent `com.ensemble.dashboard`. It also takes `status` and `uninstall`. The LaunchAgent keeps the `PATH` of the shell you run it from, so the hub finds `claude`, `codex`, `git` and `node` wherever they are installed.
+
+The macOS scripts were read and adjusted but not run for this README; only the Windows steps were tried.
+
+### First project, PO and task
+
+1. **Create a project.** On the Projects page, click **+ New project**. For the folder, give a plain name (for example `Recipe Box`, created under `~/EnsembleProjects`) or the full path of an existing repository. Then give the project a name, and answer `code` or `documents`.
+2. **Create the PO.** Open the project and click **+ New task**. Call the task something like "PO", give it one agent (Claude or Codex) and a short spec ("You are this project's PO"), then **Start** it. Back on the Overview, click **Choose the PO…** and pick that task. The `ensemble` skill tells the agent how to run a project as its PO.
+3. **Create a task.** Either ask the PO in its chat ("plan the search feature and start it"), or click **+ New task** (or **Create** in the top bar). Fill in the task, its spec, the agents and their roles (engineer, reviewer) and the workspace (`worktree` for code on its own branch, `inplace` for the project folder, `empty` for a fresh folder), then **Start**.
+
+## Remote use and security
+
+By default the hub listens on loopback only. To reach it from another device, for example over [Tailscale](https://tailscale.com):
 
 ```powershell
-.\install-task.ps1               # registers a Scheduled Task and starts it
-.\install-task.ps1 status        # show task state + recent log
-.\install-task.ps1 uninstall     # remove it
-
-# Optionally enable Jira integration at install time:
-.\install-task.ps1 -JiraBase "https://your-org.atlassian.net/browse/" -JiraPrefixes "PTECH,PLAT"
+py dashboard.py --bind tailscale        # or --bind <an IP of this machine>; ENSEMBLE_BIND works too
 ```
 
-The task runs in your interactive session (so it can open Windows Terminal) and
-restarts on crash. State and logs live under `%USERPROFILE%\.ensemble\`.
+- With a non-loopback bind, the hub keeps serving `127.0.0.1` and adds a second listener that needs a **token**.
+- The token comes from `ENSEMBLE_TOKEN`, or is created once and kept in `~/.ensemble/access-token.txt`.
+- At startup the hub logs the address to open, `http://<ip>:8765/?token=…`. The first visit sets a cookie; after that the plain address works.
+- A client can also send the token as an `X-Ensemble-Token` header or `Authorization: Bearer`.
+- For the scheduled task or LaunchAgent, set `ENSEMBLE_BIND` as a user environment variable (Windows) or add it to the plist's `EnvironmentVariables` (macOS), then restart the hub.
 
-### Health check
+State stays in `~/.ensemble` on the hub's machine. Every device sees the same projects, chats and settings.
 
-```powershell
-.\ensemble.ps1 doctor    # green/red check of python, claude, wt.exe, server, task
-```
+**Backup.** In Settings, set **Backup of your projects**. The hub keeps `~/EnsembleProjects` as a git repository: it exports each task's chat to `chat.json`, commits on a schedule (hourly by default), and pushes to the remote you give. Only the remote URL is stored. Authentication is the machine's own git credential manager or SSH key. Task worktrees (`repo/`) and file history (`.history/`) are not included.
 
-## CLI
+**Security. Read this before you run it.**
 
-macOS / Linux:
+- **Agents run without permission prompts.** The hub launches Claude Code with `--permission-mode bypassPermissions` (change this with `ENSEMBLE_PERMISSION_MODE`) and Codex with `--dangerously-bypass-approvals-and-sandbox`. Nobody watches a task's terminal, so a prompt would only stall it. Every agent can read, write and run anything your user account can, on the machine the hub runs on.
+- **Anyone who can reach the hub's port with the token can do the same**, by starting a task with any spec.
+- **Every program on the machine can call every hub endpoint.** Loopback needs no token, and that includes the agents. The limits on what an agent may do through the MCP tools (its own project, never its own task) are enforced. Refusing to restart the hub for anyone but one PO stops accidents, not a determined agent.
+- **Run it only on a machine and a network you trust. Never bind it to a public interface.** A tailnet or a LAN you control is the intended use.
+- Today any agent can stop the hub, and every other agent with it. The recommendation is to **run the hub elevated** (as administrator) so an agent cannot stop it. This is not built yet: the install scripts do not set it up, and it has not been tested.
 
-```
-ensemble {start|stop|restart|status|logs|open|doctor}
-```
+## The agents' side
 
-Windows (PowerShell):
+The hub is also an MCP server (`POST /mcp`). Every agent it launches is connected to it as the server `ensemble`, with its own token that says which task and project it belongs to. Nothing is added to your global Claude or Codex configuration.
 
-```
-.\ensemble.ps1 {start|stop|restart|status|logs|open|doctor} [-Port N]
-```
+| Who | Tools |
+|---|---|
+| Every agent | `ensemble_whoami`, `ensemble_report`, `ensemble_list_tasks`, `ensemble_get_task`, `ensemble_list_attention`, `ensemble_plan_usage`, `ensemble_get_roadmap`, `ensemble_update_task` (owners and reviewers: only to move their own task to In review) |
+| Tasks with more than one agent | `chat_send`, `chat_read`, `chat_whoami` |
+| A project's PO, and agents with the `planner` role | also `ensemble_list_projects`, `ensemble_create_task`, `ensemble_start_task`, `ensemble_stop_task`, `ensemble_move_task`, `ensemble_delete_task`, `ensemble_update_roadmap`, and full `ensemble_update_task` |
+| A reviewer started for one review | `review_done` |
+| The PO of a room named in `ENSEMBLE_RESTART_ROOMS` | `ensemble_restart_hub` |
 
-State lives in `~/.ensemble/`:
-- `labels.json` · `categories.json` · `pinned.json` · `archived.json` · `parents.json` — your session metadata
-- `settings.json` — preferences (open mode, default model, Jira config)
-- `geometries.json` — saved iTerm window bounds per session (macOS)
-- `favorite_themes.json` — starred themes
-- `jira_links.json` / `jira_unlinks.json` — manual Jira link overrides
-- `server.pid` — when running manually (not under launchd/Task Scheduler)
+Two skills teach the agents the board. At every start the hub copies both into `~/.claude/skills/`, and into `~/.codex/skills/` when `codex` is on `PATH`. The copies overwrite any skill folder of the same name.
 
-Logs: `~/Library/Logs/ensemble.log` (macOS) · `~/.ensemble/logs/ensemble.log` (Windows).
+- `skills/ensemble/SKILL.md`: the operating model. It covers reporting, reviews on mention, handovers, the PO's job, documents projects, and writing specs.
+- `skills/ensemble-design/SKILL.md`: the dashboard's visual rules, for agents that change Ensemble's own pages.
 
 ## Configuration
 
-- `ENSEMBLE_PORT` — port to bind (default `8765`)
-- `ENSEMBLE_PERMISSION_MODE` — permission mode for launched sessions (default `bypassPermissions`; set to `acceptEdits`, or empty to omit the flag)
-- `ENSEMBLE_IJ_APP` — macOS only; application name for IntelliJ (default `IntelliJ IDEA`)
+**Settings** is in the menu at the top right. It covers:
 
-**Jira integration is opt-in** and off unless configured. Precedence: `~/.ensemble/settings.json` then environment. In `settings.json`:
+- Theme (Light, Dark, Dim, Paper, High contrast, Fjord, Match system) and accent colour.
+- The default Claude model for new sessions, and what the agents call you (your git `user.name` by default).
+- When an agent counts as stalled (seconds).
+- The PO and task-owner handover limits (tokens; 0 = never).
+- RTK for task agents (compresses command output).
+- The backup remote, interval and on/off.
 
-```json
-{ "jiraEnabled": true, "jiraBase": "https://your-org.atlassian.net/browse/", "jiraPrefixes": ["PTECH", "PLAT"] }
+Settings are saved in `~/.ensemble/settings.json` and shared by every browser that opens the hub. Two settings are not in the page:
+
+- `digestIntervalMin`, the progress check interval (default 5; 0 = off).
+- `digestModel`, the model that writes the check up (default `haiku`).
+
+Set them in `settings.json`. A project can override the interval with `digestIntervalMin` in its `project.json`.
+
+Environment variables, read at start:
+
+| Variable | Meaning |
+|---|---|
+| `ENSEMBLE_PORT` | Port (default `8765`; `--port` wins) |
+| `ENSEMBLE_BIND` | Extra listener: `tailscale`, an IP, or `0.0.0.0` (`--bind` wins) |
+| `ENSEMBLE_TOKEN` | The remote access token |
+| `ENSEMBLE_PERMISSION_MODE` | Claude's `--permission-mode` (default `bypassPermissions`; empty omits the flag) |
+| `ENSEMBLE_RESTART_ROOMS` | Rooms whose PO may restart the hub |
+
+Each project keeps its own files in its folder: `project.json`, `ROADMAP.md`, `PO-HANDOVER.md`, and one folder per task with `task.json`, `REVIEW-LOG.md`, `TASK-HANDOVER.md` and, for a worktree task, `repo/`.
+
+## Layout of the repository
+
+| Path | What it is |
+|---|---|
+| `dashboard.py` | The hub: HTTP server, API, MCP endpoint, task launching, settings |
+| `index.html` | The main page: projects, board, task panel, settings |
+| `session.html` | A task's or PO's chat page |
+| `fileview.html` | The file viewer that links open in |
+| `static/` | Scripts the pages share (syntax highlighting, comments) |
+| `chatroom.py` | Task rooms: participants, messages, who a message wakes |
+| `ensemble_tools.py` | The `ensemble_*` MCP tools and their role checks |
+| `digest.py` | The PO's progress check |
+| `rotation.py` | Handovers and fresh sessions past the token limit |
+| `attention.py` | Needs you: blocked, stalled, dead or waiting tasks |
+| `usage.py`, `usage_statusline.py` | Plan allowance readings for Claude and Codex |
+| `backup.py` | Backup of `~/EnsembleProjects` to a git remote |
+| `history.py` | A documents project's file history |
+| `task_numbers.py`, `message_refs.py`, `workspace_search.py`, `peer_process.py` | Task numbers (`#18`, `ED-18`), links to messages, Workspace search, caller detection |
+| `agents/` | Adapters for Claude Code and Codex |
+| `backends/` | Per-OS code (Windows, macOS, Linux stub) and the headless terminal runner |
+| `skills/` | The two agent skills |
+| `tests/` | The test suite |
+| `tools/` | A measuring script for agents' tool output |
+| `docs/` | The screenshots in this README |
+| `ensemble.ps1`, `install-task.ps1`, `restart-hub.ps1` | Windows: start and stop, autostart task, restart helper |
+| `ensemble`, `install-launchd.sh`, `com.ensemble.dashboard.plist.template` | macOS: start and stop, LaunchAgent |
+| `requirements.txt` | `pywinpty` / `ptyprocess` |
+| `LICENSE` | MIT |
+
+## Tests
+
+```powershell
+py -m unittest discover -s tests       # macOS: python3 -m unittest discover -s tests
 ```
 
-or via env: `ENSEMBLE_JIRA_BASE` and `ENSEMBLE_JIRA_PREFIXES` (comma-separated). On Windows, `install-task.ps1 -JiraBase … -JiraPrefixes …` writes these for you. When no base is set, the whole Jira UI is hidden.
+The suite uses only the standard library. Tests of the pages' JavaScript need `node` on `PATH` (no npm packages) and are skipped without it. Some tests need `git`.
 
-Editor choice per language is configurable for any platform via `~/.ensemble/editors.json` (e.g. `{"python": "code", "rust": "code"}`). On macOS the values are app names; on Windows/Linux they are launcher commands resolved on PATH.
+## Status
 
-## How it works
-
-- Reads live session state from `~/.claude/sessions/<pid>.json` (Claude Code's own per-process metadata).
-- Reads transcripts from `~/.claude/projects/<slug>/<session-id>.jsonl`.
-- All OS-specific behavior lives behind a platform backend in `backends/` (selected by `sys.platform`):
-  - **macOS** (`backends/macos.py`) — controls iTerm via `osascript` (AppleScript): finds sessions by tty, sets colors, focuses windows, opens/closes windows, reads/writes bounds.
-  - **Windows** (`backends/windows.py`) — opens Windows Terminal (`wt.exe`) running `claude` via a one-shot PowerShell launcher; process checks/termination use the Win32 API; folders open in Explorer.
-  - **Linux** (`backends/linux.py`) — process + desktop (`xdg-open`) work; terminal control is not wired up yet.
-- Stores its own state (labels, geometries, favorites) in `~/.ensemble/`.
-
-The server binds to `127.0.0.1` only — no network exposure. On macOS, the OS will prompt for Automation permission the first time the python process tries to send Apple Events to iTerm; approve it.
-
-## Agents managing tasks (the Ensemble MCP server)
-
-Ensemble is itself an MCP server (`POST /mcp`, streamable HTTP). Every headless agent it launches — solo or collaboration, Claude or Codex — is wired to it as the server named `ensemble`, with a per-agent bearer token that tells the server who is calling and which task/project it belongs to. Two tool families are served:
-
-- **Chat tools** (`chat_send`, `chat_read`, `chat_whoami`) — the collaboration protocol; only offered in multi-agent tasks.
-- **Task tools** (`ensemble_*`) — the board itself: `ensemble_whoami`, `ensemble_list_projects`, `ensemble_list_tasks`, `ensemble_get_task`, `ensemble_create_task`, `ensemble_update_task`, `ensemble_start_task`, `ensemble_stop_task`, `ensemble_move_task`, `ensemble_delete_task`. Schemas and dispatch live in `ensemble_tools.py`; the REST endpoints the UI calls share the same implementation.
-
-This is what lets you give an agent a task like *"plan the work for this project"*: it reads the existing tasks, creates new ones as **drafts** (complete specs, suggested agents/roles, workspace mode), and you review and start them from the dashboard (drafts show a `draft` badge and a **▶ Start** button). A `planner` role is available in the new-task dialog with a charter that says exactly that.
-
-Scope rules are enforced server-side: read anywhere; write only inside the caller's own project (a task with no project may write anywhere); a task can never stop, start, move or delete itself; a running task cannot be deleted. Deleting removes the task record, chat and agent transcripts — task folders under the projects root and real code folders are never removed.
-
-Agents are taught the tools by the **`ensemble` skill** (`skills/ensemble/SKILL.md`), which the server installs/refreshes at startup into `~/.claude/skills/ensemble/` and, if the Codex CLI is present, `~/.codex/skills/ensemble/`.
-
-## Acknowledgements
-
-Inspired by the `claude-sessions` (`cs`) CLI script that ships with my personal Claude Code setup — same data sources, web frontend.
+Ensemble is early. It is shared so a few people can try it, and it is not a finished product. Expect rough edges: wording that assumes you know the model, Windows getting more use than macOS, and behaviour that changes between commits. If something breaks or confuses you, open a GitHub issue with what you did, what you expected, and the end of the hub log.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

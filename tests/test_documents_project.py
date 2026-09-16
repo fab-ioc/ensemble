@@ -506,7 +506,7 @@ PAGE = r"""
 const out = {};
 let SELECTED_PROJECT = null, PROJECT_TAB = 'tasks', SB_DEST = '', SELECTED_SID = null, PO_LAST = '', PO_PEEK = false;
 const UNASSIGNED_ID = '__unassigned__', DR_CHUNK = 500;
-const docsPath = 'C:\\Users\\f\\EnsembleProjects\\Motors', codePath = 'C:\\Users\\f\\EnsembleProjects\\Opten';
+const docsPath = 'C:\\Users\\me\\EnsembleProjects\\Motors', codePath = 'C:\\Users\\me\\EnsembleProjects\\Opten';
 let ALL_ROWS = [{ roomId: 'room-po', sessionId: 'room-po', label: 'PO task' }, { roomId: 'room-d1', sessionId: 'room-d1', label: 'Sort papers', taskDir: docsPath + '\\sort_papers' },
                 { roomId: 'room-dpo', sessionId: 'room-dpo', label: 'Motors PO', agent: 'claude' }];
 const PROJECTS = { projects: [
@@ -580,7 +580,7 @@ docsTasksSet(false);
 // The history's words.
 out.what = [histWhat({ status: 'M', added: 3, removed: 1 }), histWhat({ status: 'A', added: 12, removed: 0 }), histWhat({ status: 'D', added: 0, removed: 4 }),
             histWhat({ status: 'R', from: 'a/old.md', added: 0, removed: 0 }), histWhat({ status: 'M', added: null, removed: null, binary: true })];
-out.rel = [histRel(docsPath, docsPath + '\\Leasing\\offer.md'), histRel(docsPath, 'C:\\Users\\f\\EnsembleProjects\\Motors2\\x.md'), histRel(docsPath, docsPath)];
+out.rel = [histRel(docsPath, docsPath + '\\Leasing\\offer.md'), histRel(docsPath, 'C:\\Users\\me\\EnsembleProjects\\Motors2\\x.md'), histRel(docsPath, docsPath)];
 const st = { recent: [{ rev: 'a1', time: 1790000000, subject: '1 file changed', who: { kind: 'task', label: 'Sort papers', tasks: [{ id: 'room-d1' }] },
                         files: [{ path: 'Leasing/offer.md', status: 'M', added: 2, removed: 1 }] },
                       { rev: 'a0', time: 1789990000, subject: 'Restored Leasing/offer.md from 2026-09-14 10:00', who: { kind: 'you', reason: 'restore' },

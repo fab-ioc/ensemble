@@ -44,13 +44,18 @@ case "$action" in
 
     mkdir -p "$(dirname "$PLIST")" "$(dirname "$LOG")"
 
+    # launchd starts the hub with a bare PATH, and the hub must find `claude`,
+    # `codex`, `git` and `node` wherever this Mac has them (npm global, nvm,
+    # Homebrew...): keep the PATH of the shell running the install.
+    AGENT_PATH="$HOME/.local/bin:$PATH:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
     sed \
       -e "s|__PYTHON__|$PYTHON|g" \
       -e "s|__SCRIPT__|$SCRIPT|g" \
       -e "s|__DIR__|$DIR|g" \
       -e "s|__PORT__|$PORT|g" \
       -e "s|__LOG__|$LOG|g" \
-      -e "s|__HOME__|$HOME|g" \
+      -e "s|__PATH__|$AGENT_PATH|g" \
       "$TEMPLATE" > "$PLIST"
 
     # Unload first if already loaded (safe to ignore failures)

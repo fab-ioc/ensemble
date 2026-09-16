@@ -46,7 +46,7 @@ class _Base(unittest.TestCase):
                 Path(self.temp.name) / "t.jsonl", self.reader)),
             mock.patch.object(rotation, "_rotate_marked", side_effect=self.rotate_marked),
             mock.patch.object(rotation, "_log"),
-            mock.patch.object(dashboard, "operator_name", return_value="ceo"),
+            mock.patch.object(dashboard, "operator_name", return_value="sam"),
         ]
         for p in self.patches:
             p.start()
@@ -137,7 +137,7 @@ class AskTests(_Base):
         self.assertEqual(out["phase"], "asked")
         self.assertEqual(len(self.sess.typed), 1)
         self.assertIn("start a fresh PO session", self.sess.typed[0])
-        self.assertIn("what you have promised ceo", self.sess.typed[0])
+        self.assertIn("what you have promised sam", self.sess.typed[0])
         self.assertIn("(it was busy;", out["result"])
 
     def test_a_young_session_is_not_asked(self):

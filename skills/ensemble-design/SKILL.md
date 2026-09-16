@@ -549,7 +549,7 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
    except in *Board beside the PO* below; horizontal scroll is the escape valve. Page gutter 24px,
    16px below 900px.
 
-   A project's Overview offers two board layouts, both kept (ceo's choice, 2026-09-11).
+   A project's Overview offers two board layouts, both kept (the CEO's choice, 2026-09-11).
    **Board wide** (the default) gives the board the whole Overview in Board view and keeps 248px
    columns; the PO becomes the pill's drawer, restyled and never moved. **Board beside the PO**
    keeps the split and narrows the columns to 208px, and a card wraps its rows rather than dropping
