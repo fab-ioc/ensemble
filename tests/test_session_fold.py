@@ -153,7 +153,7 @@ const sent = {};
 for (const stick of [false, true]) {
   const pbox = { html: '', scrollTop: 400, scrollHeight: 5000, insertAdjacentHTML(w, h) { this.html += h; this.scrollHeight += 100; } };
   let shown = 0;
-  const sctx = { $: () => pbox, identLabel: x => x, mdToHtml: x => x, showLatest: () => { shown++; }, Date };
+  const sctx = { $: () => pbox, whoHtml: m => m.from, mdToHtml: x => x, showLatest: () => { shown++; }, Date };
   vm.createContext(sctx);
   vm.runInContext(`var PENDING_USER = [], STICK = ${stick};\n` + showPending + `\nshowPendingUser('hello');`, sctx);
   sent[stick ? 'atEnd' : 'up'] = { top: pbox.scrollTop, echoed: pbox.html.includes('hello'), latest: shown };
@@ -300,7 +300,6 @@ const box = new Box();
 const ctx = {
   document: { createElement: () => ({ set innerHTML(h) { box.created++; this.content = { firstElementChild: new Node(h) }; } }) },
   esc: s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])),
-  identLabel: id => '@' + id,
 };
 vm.createContext(ctx);
 vm.runInContext(code + `
@@ -402,7 +401,7 @@ class HubTrafficAndAnswers(unittest.TestCase):
 
     def test_every_reply_says_what_it_answers(self):
         self.assertEqual(self.r["chips"], [None, "to you", None, "progress check", None,
-                                           "on a report from task Docs", None, None, "after a resume", None])
+                                           "on a report from docs claude", None, None, "after a resume", None])
 
     def test_just_us_folds_replies_to_the_hub_but_not_a_decision(self):
         self.assertEqual(self.r["justUs"], ["full", "full", "row", "row", "row", "row", "full", "row", "full", "full"])
@@ -425,10 +424,11 @@ class HubTrafficAndAnswers(unittest.TestCase):
     def test_rows_say_what_they_are(self):
         row = self.r["hubRow"]
         self.assertIn('class="msg-fold user hub"', row)
-        self.assertIn("Completed · task Docs", row)
+        self.assertIn('<span class="who">docs claude</span>', row)
+        self.assertIn('<span class="hub-kind" title="Docs">Completed</span>', row)
         self.assertIn('<span class="fl">merged and tested — read it in full</span>', row)
         self.assertIn('<span class="answers"', self.r["agentRow"])
-        self.assertIn("on a report from task Docs", self.r["agentRow"])
+        self.assertIn("on a report from docs claude", self.r["agentRow"])
 
     def test_opened_and_commented_hub_inputs_stay_open(self):
         self.assertEqual(self.r["heldHub"], "full", "a commented hub input folded")
