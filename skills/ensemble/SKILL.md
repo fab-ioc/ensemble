@@ -90,6 +90,14 @@ final reply reaches only whoever happens to open it. Report through the tool:
 | You need a decision before you continue | `question` |
 | A milestone worth knowing, while you keep working | `update` |
 
+An `update` is for a milestone the PO would act on or the CEO would want to
+hear: the first working version is on the branch, a review round is done, a
+plan changed. **Not** for "still working", "starting review", a restatement
+of a review verdict the PO already got, or an acknowledgement of a PO note:
+end the turn without reporting. One task sending six updates in forty minutes
+made its PO's chat unreadable (2026-09-16). At most one `update` between two
+real events, and none within an hour of the last unless something changed.
+
 The report is posted in the PO's room and **wakes the PO**. It is also recorded
 on your task, so after `completed`, `question` or `blocked` the board shows your
 task as waiting on a human, with your report quoted, not as stalled. If the
