@@ -282,6 +282,41 @@ class Attachments(unittest.TestCase):
             "[Image #3] a picture of my own",
         ])
 
+    def test_a_po_chat_without_a_task_folder_gets_its_image_lines_back(self):
+        # A PO room has no task folder: its images live in <state>/attachments/<room id>/.
+        po = self.room("PO")
+        _s, a = self.upload(PNG, room=po)
+        lines = [
+            {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "[Image #1]look\n[image]"}]}},
+            {"type": "user", "isMeta": True, "message": {"role": "user", "content": [{"type": "text", "text": f"[Image: source: {a['path']}]"}]}},
+        ]
+        t = Path(self.tmp.name) / "po.jsonl"
+        t.write_text("\n".join(json.dumps(x) for x in lines), encoding="utf-8")
+        self.assertEqual([x["text"] for x in dashboard._claude_text_turns(t)], [f"look\n\n[image] {a['path']}"])
+        self.assertFalse(attachments.is_attachment_path(self.state / "other" / "room-1" / "x.png", self.state))
+
+    def test_a_retry_while_the_key_is_held_reuses_a_numbered_copy(self):
+        other = self.room("PO")
+        _s, a = self.upload(PNG, room=other, name="shot.png")
+        self.folder().mkdir(parents=True, exist_ok=True)
+        (self.folder() / "shot.png").write_bytes(JPG)        # a different image of that name is already here
+        room = chatroom.get_room(self.rid, public=False)
+        first = dashboard.attachment_paths(room, [{"room": other, "name": a["name"]}])
+        again = dashboard.attachment_paths(room, [{"room": other, "name": a["name"]}])
+        self.assertEqual(first, again)
+        self.assertEqual(Path(first[0]).name, "shot-2.png")
+        self.assertEqual(sorted(os.listdir(self.folder())), ["shot-2.png", "shot.png"])
+
+    def test_a_duplicate_send_is_answered_before_its_images_are_looked_for(self):
+        other = self.room("PO")
+        _s, a = self.upload(PNG, room=other)
+        body = {"roomId": self.rid, "text": "see", "key": "k1", "attachments": [{"room": other, "name": a["name"]}]}
+        status, r = self.json_post("/api/room/say", body)
+        self.assertEqual(status, 200, r)
+        os.remove(a["path"])                                   # gone before the lost reply is retried
+        status, r = self.json_post("/api/room/say", body)
+        self.assertEqual((status, r.get("duplicate")), (200, True), r)
+
     # ---- the text ----
 
     def test_with_images_and_split_images(self):

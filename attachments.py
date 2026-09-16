@@ -15,6 +15,7 @@ per image (message_refs.with_images), which is how the agent finds them.
 from __future__ import annotations
 
 import filecmp
+import glob
 import os
 import re
 import shutil
@@ -162,6 +163,19 @@ def find(room: dict, state_dir, name) -> Path:
     return Path(real)
 
 
+def is_attachment_path(path, state_dir) -> bool:
+    """Whether ``path`` is where some chat keeps an attachment: directly in a
+    task folder's ``attachments/``, or in ``<state dir>/attachments/<room id>/``
+    (a chat with no task folder, such as a project's PO)."""
+    p = Path(str(path))
+    if p.parent.name == DIR_NAME:
+        return True
+    try:
+        return os.path.normcase(os.path.abspath(p.parent.parent)) == os.path.normcase(os.path.abspath(Path(state_dir) / DIR_NAME))
+    except (OSError, ValueError):
+        return False
+
+
 def content_type(path) -> str:
     ext = os.path.splitext(str(path))[1].lower()
     return TYPES[_EXT_ALIASES.get(ext, ext)]
@@ -173,10 +187,12 @@ def bring(room: dict, state_dir, src: Path) -> Path:
     dest = folder(room, state_dir)
     if os.path.normcase(os.path.realpath(src.parent)) == os.path.normcase(os.path.realpath(dest)):
         return src
-    same = dest / src.name        # brought before (a retried send): that copy
+    # Brought before (a retried send), under its name or a numbered one: that copy.
+    stem, ext = os.path.splitext(src.name)
     try:
-        if same.is_file() and filecmp.cmp(src, same, shallow=False):
-            return same
+        for same in [dest / src.name, *sorted(dest.glob(f"{glob.escape(stem)}-*{glob.escape(ext)}"))]:
+            if same.is_file() and filecmp.cmp(src, same, shallow=False):
+                return same
     except OSError:
         pass
     try:

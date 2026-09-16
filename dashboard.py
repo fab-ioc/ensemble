@@ -1386,7 +1386,7 @@ def _claude_image_source(turn: dict, meta: dict) -> None:
     if not m:
         return
     path = m.group(1).strip()
-    if Path(path).parent.name != attachments.DIR_NAME or not _CLAUDE_IMAGE_TOKEN.search(turn["text"]):
+    if not attachments.is_attachment_path(path, DASHBOARD_DIR) or not _CLAUDE_IMAGE_TOKEN.search(turn["text"]):
         return
     words, paths = message_refs.split_images(turn["text"])
     words = _CLAUDE_IMAGE_TOKEN.sub("", words, count=1)
@@ -8734,17 +8734,17 @@ class Handler(BaseHTTPRequestHandler):
             if room_full is None:
                 self._send_json(404, {"error": "no_such_room"})
                 return
-            try:
-                text = message_refs.with_images(text, attachment_paths(room_full, data.get("attachments")))
-            except attachments.Refused as e:
-                self._send_json(e.status, e.payload())
-                return
             # Posts to the room as it is, running or not (a stopped room's
             # agents read it once resumed). To have a stopped room resumed
             # and woken for a message, say it through /api/room/resume.
             with _SAY_KEYS_LOCK if key else contextlib.nullcontext():
                 if key and _say_key_seen(rid, key):
                     self._send_json(200, {"ok": True, "duplicate": True})
+                    return
+                try:
+                    text = message_refs.with_images(text, attachment_paths(room_full, data.get("attachments")))
+                except attachments.Refused as e:
+                    self._send_json(e.status, e.payload())
                     return
                 result = chatroom.post_message(rid, chatroom.HUMAN_IDENTITY, text, to=to)
                 if result is not None and key:
@@ -8920,17 +8920,19 @@ class Handler(BaseHTTPRequestHandler):
             text = (data.get("text") or "").strip()
             to = (data.get("to") or "").strip()
             key = str(data.get("key") or "").strip()[:200]
-            try:
-                text = message_refs.with_images(text, attachment_paths(room_full, data.get("attachments")))
-            except attachments.Refused as e:
-                self._send_json(e.status, e.payload())
-                return
             # A draft (created but never launched, e.g. by a planning agent)
             # starts fresh; anything else resumes its agents' conversations.
             try:
                 with _SAY_KEYS_LOCK if key else contextlib.nullcontext():
                     if key and _say_key_seen(rid, key) and not key_held(rid, key):
                         self._send_json(200, {"ok": True, "duplicate": True})
+                        return
+                    # The images only once the send is known not to be a
+                    # duplicate: a retried lost reply copies nothing again.
+                    try:
+                        text = message_refs.with_images(text, attachment_paths(room_full, data.get("attachments")))
+                    except attachments.Refused as e:
+                        self._send_json(e.status, e.payload())
                         return
                     result = self._resume_room(room_full, text=text, to=to, key=key)
                     if key:

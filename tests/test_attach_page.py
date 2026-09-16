@@ -118,6 +118,8 @@ const run = src => vm.runInContext(src, ctx);
 
   // ---- a message's image lines
   out.split = run(`[attSplit('hi\\n\\n[image] C:\\\\a b\\\\x.png\\n[image] /t/y.png\\n'), attSplit('[image] x.png\\nwords'), attSplit('plain'), attSplit('[image] only.png')]`);
+  out.own = run(`[attOwn('room-1', 'C:\\\\P\\\\t\\\\attachments\\\\a.png'), attOwn('room-1', '/s/attachments/room-1/a.png'),
+                  attOwn('room-1', '/s/attachments/room-2/a.png'), attOwn('room-1', '/home/me/pics/a.png'), attOwn('', '/t/attachments/a.png')]`);
   out.thumbs = run(`attThumbsHtml('room-1', ['C:\\\\t\\\\attachments\\\\a "b".png'], esc)`);
 
   // ---- diff comments
@@ -202,6 +204,7 @@ class AttachPage(unittest.TestCase):
         self.assertEqual(middle["paths"], [])
         self.assertEqual(plain, {"words": "plain", "paths": []})
         self.assertEqual(only, {"words": "", "paths": ["only.png"]})
+        self.assertEqual(self.r["own"], [True, True, False, False, False])
         self.assertIn('href="/api/room/attachment?room=room-1&amp;name=a%20%22b%22.png"', self.r["thumbs"])
         self.assertNotIn('"b".png"', self.r["thumbs"])
 

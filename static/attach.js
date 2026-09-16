@@ -43,7 +43,7 @@ const attUrl = (room, name) => '/api/room/attachment?room=' + encodeURIComponent
 // Upload one image for a room: resolves {name, path, url, room}, rejects with
 // the hub's words.
 async function attUpload(room, file, name) {
-  if (!room) throw new Error('this chat has not loaded yet');
+  if (!room) throw new Error('there is no chat to attach it to yet');
   if (file.size > ATT_MAX) throw new Error(`the image is ${(file.size / 1048576).toFixed(1)} MB; an image can be at most 20 MB`);
   const r = await fetch('/api/room/attachment?room=' + encodeURIComponent(room) + (name ? '&name=' + encodeURIComponent(name) : ''),
     { method: 'POST', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file });
@@ -62,6 +62,13 @@ function attSplit(text) {
   return { words: lines.slice(0, n).join('\n').replace(/\s+$/, ''), paths: lines.slice(n).map(l => l.slice(ATT_PREFIX.length).trim()) };
 }
 const attBase = p => String(p || '').split(/[\\/]/).pop();
+// A path where this chat keeps its images (a task folder's attachments, or
+// <state>/attachments/<room id>): only those can be shown from the hub.
+function attOwn(room, p) {
+  const parts = String(p || '').split(/[\\/]/);
+  const dir = parts[parts.length - 2] || '', up = parts[parts.length - 3] || '';
+  return !!room && (dir === 'attachments' || (dir === room && up === 'attachments'));
+}
 
 // Thumbnails for a balloon's images: each opens full size in a new tab.
 function attThumbsHtml(room, paths, esc) {
