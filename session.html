@@ -1887,7 +1887,7 @@ function forPerson(m, N = CHAT_NAMES) {
 const CU_WORD = { completed: 'done', blocked: 'blocked', question: 'asks' };
 // A progress check's plain facts name a new or stopped task by its number or id:
 // "- Title (#63): new task", "- Title (#26): status running → stopped". [[label, word]].
-const CU_DIGEST_RE = /\(((?:#|[A-Za-z][A-Za-z0-9]{0,5}-)\d{1,6}|room-[0-9a-f]+)\): (?:(new task)|(?:renamed from '[^']*', )?status \S+ → (stopped))/g;
+const CU_DIGEST_RE = /\(((?:#|[A-Za-z][A-Za-z0-9]{0,5}-)\d{1,6}|room-[0-9a-f]+)\): (?:(new task)|(?:renamed from '.*?', )?status \S+ → (stopped))/g;
 function digestWords(m) {
   if (!isDigest(m)) return [];
   return [...String(m.text || '').matchAll(CU_DIGEST_RE)].map(x => [x[1], x[2] ? 'new' : 'stopped']);

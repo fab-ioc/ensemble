@@ -114,7 +114,7 @@ out.room = strip(T.catchUp(room, T.readPoint(room, null), false));
 const digestRoom = room.concat([
   { id: 'r4', from: 'ensemble', to: 'claude', kind: 'report', reportKind: 'digest', ts: 5,
     text: "**Progress digest** — plain facts\n\nProject 'X' — changes since 10:00:\n- Grid (#27): new task\n"
-      + "- Layout (room-0804cfef): renamed from 'Old', status running → stopped\n\nTasks now:\n- Grid (#27): running; todo" },
+      + "- Layout (room-0804cfef): renamed from 'CEO's old', status running → stopped\n\nTasks now:\n- Grid (#27): running; todo" },
   { id: 'r5', from: 'user', to: '', kind: 'digest', reportKind: 'digest', ts: 6,
     text: "[digest] X: Project 'X' — changes since 10:05: - Plot (room-3333aaaa): status running → stopped — details with ensemble_list_tasks." },
 ]);
