@@ -140,7 +140,7 @@ out.heldNone = [...foldHeld(common, [{ mid: 'm1', from: 'claude', quote: 'absent
 {
   const sbox = { clientHeight: 500, scrollTop: 0, scrollHeight: 5000, children: [] };
   let renders = 0;
-  const sctx = { $: () => sbox, renderBubbles: () => { renders++; }, showLatest: () => {} };
+  const sctx = { $: () => sbox, renderBubbles: () => { renders++; }, showLatest: () => {}, readTick: () => {} };
   vm.createContext(sctx);
   vm.runInContext(`var STICK = false, LAST_ITEMS = [1], SEEN = null, NEW_N = 3;
     const nearEnd = box => box.scrollTop + box.clientHeight >= box.scrollHeight - 50;\n` + scrolled, sctx);

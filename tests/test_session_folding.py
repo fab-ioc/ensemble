@@ -239,6 +239,8 @@ vm.runInContext(code + `
   const $ = () => box, fileBase = () => '', mdToHtml = t => t, copyLinkHtml = () => '', refPlain = t => t;
   const withTaskBubble = items => items, rotationText = () => '', readingPlace = () => null, keepPlace = () => {};
   const showChatBar = () => {}, applyComments = () => {}, showLatest = () => {}, markLanded = () => {}, landPending = () => {};
+  let CU_POINT = null, CU_SHOWN = false, CU_OPENED = true;
+  const readTick = () => {}, catchUpOpen = () => {}, refHref = (room, mid) => '?msg=' + mid;
   globalThis.t = {
     CHAT_NAMES, render: items => renderBubbles(items), fold: () => FOLD,
     set: (k, v) => eval(k + ' = v'), get: k => eval(k),
@@ -293,6 +295,20 @@ out.closedBack = groupRows().length;
 T.set('FOLD', { base: null, open: new Set(), groups: new Set(), hid: null });
 T.render(base.concat([{ id: 'p1', from: 'claude', to: R, text: 'Use the safe path.' }]));
 out.ruling = box.kids.map(k => k.dataset.group ? 'row' : k.dataset.key);
+
+// The catch-up line goes above what is drawn first after the read point, a
+// group's row when the first is folded in it; none once the point is the end.
+T.set('FOLD', { base: null, open: new Set(), groups: new Set(), hid: null });
+const back = base.concat([{ id: 'p2', from: 'claude', to: '', text: 'Answer.' }, rep('r4', 'completed', 'done')]);
+T.set('CU_POINT', { id: 'u0', ts: 0 });
+T.render(back);
+out.catchup = [box.kids.map(k => k.dataset.group ? 'row' : k.dataset.key), T.get('CU_SHOWN')];
+T.set('CU_POINT', { id: 'r2', ts: 0 });
+T.render(back.slice(0, 3).concat([rep('r4', 'completed', 'done'), { id: 'p2', from: 'claude', to: '', text: 'Answer.' }]));
+out.catchup.push(box.kids.map(k => k.dataset.group ? 'row' : k.dataset.key));
+T.set('CU_POINT', { id: 'r4', ts: 0 });
+T.render(back);
+out.catchup.push(box.kids.map(k => k.dataset.group ? 'row' : k.dataset.key), T.get('CU_SHOWN'));
 console.log(JSON.stringify(out));
 """
 
@@ -326,6 +342,14 @@ class WhileThePageRedraws(unittest.TestCase):
 
     def test_the_pos_ruling_stays_in_view(self):
         self.assertEqual(self.r["ruling"], ["u0", "row", "p1"])
+
+    def test_the_catch_up_line_sits_above_the_first_unread(self):
+        first, shown, folded, none, gone = self.r["catchup"]
+        self.assertEqual(first, ["u0", "catchup", "p2", "row", "r4"])
+        self.assertTrue(shown)
+        self.assertEqual(folded, ["u0", "catchup", "row", "r4", "p2"])
+        self.assertEqual(none, ["u0", "p2", "row", "r4"])
+        self.assertFalse(gone)
 
 
 REF_JS = r"""
