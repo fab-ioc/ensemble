@@ -6,6 +6,11 @@ written out under it, so the agent reads what was pointed at without a tool
 call. The stored chat message keeps the sender's words; only what is typed into
 the agent's terminal (or read through chat_read) carries the expansion.
 
+An image pasted into the chat box travels as one line per image at the very
+end of the message, ``[image] <absolute path on the hub>`` (:func:`image_line`),
+so Claude (Read) or Codex (view_image) can open it; the hub adds the lines, the
+room and the transcript keep them, and the balloon shows them as thumbnails.
+
 A task named by its number (``#18``, ``@codex@18``, ``#ED-18``) gets one line
 under the message instead: its title, state, agents, branch and last report.
 
@@ -42,6 +47,35 @@ _BLOCK = re.compile(
 _TASK_BLOCK = re.compile(r"\n\n\[ref ((?:@[A-Za-z][\w-]*@|#)(?:[A-Za-z][A-Za-z0-9]*-)?\d{1,6})\] task [^\n]*\s*$")
 
 
+IMAGE_PREFIX = "[image] "
+
+
+def image_line(path: str) -> str:
+    """The line an attached image adds under a message: ``[image] <path>``."""
+    return IMAGE_PREFIX + str(path)
+
+
+def with_images(text: str, paths) -> str:
+    """``text`` ending with one ``[image]`` line per path (none: unchanged)."""
+    lines = [image_line(p) for p in paths or [] if str(p or "").strip()]
+    if not lines:
+        return text or ""
+    body = (text or "").rstrip()
+    return (body + "\n\n" if body else "") + "\n".join(lines)
+
+
+def split_images(text: str) -> tuple[str, list[str]]:
+    """``(words, paths)``: a text without the ``[image]`` lines it ends with,
+    and their paths in order."""
+    lines = (text or "").replace("\r\n", "\n").rstrip().split("\n")
+    n = len(lines)
+    while n and lines[n - 1].startswith(IMAGE_PREFIX) and lines[n - 1][len(IMAGE_PREFIX):].strip():
+        n -= 1
+    if n == len(lines):
+        return text or "", []
+    return "\n".join(lines[:n]).rstrip(), [ln[len(IMAGE_PREFIX):].strip() for ln in lines[n:]]
+
+
 def find_message_refs(text: str) -> list[tuple[str, str, str]]:
     """The balloon links in ``text``, in order and each once:
     ``[(url, room_id, msg_id)]``."""
@@ -66,7 +100,12 @@ def find_message_refs(text: str) -> list[tuple[str, str, str]]:
 
 
 def strip_message_refs(text: str) -> str:
-    """``text`` without the reference blocks the hub appended to it."""
+    """``text`` without the reference blocks the hub appended to it (its
+    ``[image]`` lines kept)."""
+    words, images = split_images(text)
+    if images:
+        out = strip_message_refs(words)
+        return text if out == words else with_images(out, images)
     text = text or ""
     while True:
         m = _TASK_BLOCK.search(text) or _BLOCK.search(text)
@@ -124,7 +163,12 @@ def expand_message_refs(text: str, lookup, task_lookup=None) -> str:
     ``task_lookup`` is given. A quoted text is cut at QUOTE_MAX characters,
     with a line saying how much more there is and where. A link the hub cannot
     resolve gets a one-line block saying so; a number that names no task gets
-    nothing. A text with no references comes back unchanged."""
+    nothing. A text with no references comes back unchanged. ``[image]``
+    lines stay last, under the blocks."""
+    words, images = split_images(text)
+    if images:
+        out = expand_message_refs(words, lookup, task_lookup)
+        return text if out == words else with_images(out, images)
     refs = find_message_refs(text)
     trefs = task_numbers.find_text_refs(text) if task_lookup else []
     blocks = []

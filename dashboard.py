@@ -55,6 +55,8 @@ from backends.shared import (
     claude_cmd, claude_cmd_args, load_geometries, save_geometries, save_geometry,
     is_workspace_cwd, read_session_files, read_agent_session_files,
 )
+# Images pasted into a chat box, kept for the agent.
+import attachments
 # Agent-type abstraction (WHAT runs in a session), orthogonal to the OS backend
 # (WHERE it runs). Codex discovery + the claude/codex registry live here.
 import agents
@@ -1369,6 +1371,31 @@ def resolve_message_ref(room_id: str, msg_id: str) -> dict | None:
             "text": text, "where": f"the transcript of session {sid}"}
 
 
+_CLAUDE_IMAGE_SOURCE = re.compile(r"^\[Image: source: (.+)\]$")
+_CLAUDE_IMAGE_TOKEN = re.compile(r"\[Image #\d+\]")
+
+
+def _claude_image_source(turn: dict, meta: dict) -> None:
+    """Claude Code reads an ``[image] <path>`` line typed into it as the image
+    itself: the message keeps ``[Image #1]`` and a bare ``[image]``, and the
+    path follows in a meta entry ``[Image: source: <path>]``. For an image of a
+    chat's attachments folder, the turn gets its ``[image] <path>`` line back,
+    so its balloon shows the thumbnail as for any other agent."""
+    msg = meta.get("message")
+    m = _CLAUDE_IMAGE_SOURCE.match((_extract_text(msg.get("content")) if isinstance(msg, dict) else "").strip())
+    if not m:
+        return
+    path = m.group(1).strip()
+    if not attachments.is_attachment_path(path, DASHBOARD_DIR) or not _CLAUDE_IMAGE_TOKEN.search(turn["text"]):
+        return
+    words, paths = message_refs.split_images(turn["text"])
+    words = _CLAUDE_IMAGE_TOKEN.sub("", words, count=1)
+    lines = words.split("\n")
+    while lines and lines[-1].strip() in ("", message_refs.IMAGE_PREFIX.strip()):
+        lines.pop()
+    turn["text"] = message_refs.with_images("\n".join(lines).strip(), [*paths, path])
+
+
 def _claude_text_turns(tpath: Path) -> list[dict]:
     """A Claude transcript's user and assistant text turns, unclassified."""
     turns = []
@@ -1380,6 +1407,8 @@ def _claude_text_turns(tpath: Path) -> list[dict]:
                 except json.JSONDecodeError:
                     continue
                 t = d.get("type")
+                if t == "user" and d.get("isMeta") and turns and turns[-1]["role"] == "user":
+                    _claude_image_source(turns[-1], d)
                 if t not in ("user", "assistant") or d.get("isMeta"):
                     continue
                 msg = d.get("message")
@@ -1415,11 +1444,44 @@ def read_session_turns(sid: str) -> list[dict] | None:
     return classify_turns(cx.read_turns(sid))
 
 
+def attachment_url(room_id: str, name: str) -> str:
+    """Where the page shows a stored attachment from."""
+    return "/api/room/attachment?" + urlencode({"room": room_id, "name": name})
+
+
 def with_message_refs(text: str, room_id: str = "") -> str:
     """A chat message as the agent receives it: its balloon links written out,
     and a line for each task it names by number (#18 in the project of the
     room it was sent in, ED-18 in any)."""
     return message_refs.expand_message_refs(text, resolve_message_ref, task_lookup_for(room_id))
+
+
+def attachment_paths(room: dict, given) -> list[str]:
+    """The absolute paths of the images a message from the page carries:
+    ``given`` is a list of stored names of this room's attachments, or of
+    ``{room, name}`` for another room's (copied into this room's folder, so
+    the chat that shows the message can show them). attachments.Refused when
+    one is not there."""
+    if given in (None, ""):
+        return []
+    if not isinstance(given, list) or len(given) > 20:
+        raise attachments.Refused(400, "bad_attachments", "The attachments were not understood.")
+    out = []
+    for it in given:
+        if isinstance(it, dict):
+            src_id, name = str(it.get("room") or room.get("id") or ""), it.get("name")
+        else:
+            src_id, name = room.get("id") or "", it
+        src_room = room if src_id == room.get("id") else chatroom.get_room(src_id, public=False)
+        if src_room is None:
+            raise attachments.Refused(404, "no_such_attachment", "An attached image is not on this hub any more.")
+        try:
+            path = attachments.find(src_room, DASHBOARD_DIR, name)
+        except attachments.Refused as e:
+            raise attachments.Refused(e.status, "no_such_attachment",
+                                      f"An attached image is not on this hub any more: {e.message}")
+        out.append(str(attachments.bring(room, DASHBOARD_DIR, path)))
+    return out
 
 
 def refs_expanded_for(room: dict, sender: str) -> bool:
@@ -6818,6 +6880,9 @@ class Handler(BaseHTTPRequestHandler):
             info.pop("report", None)
             self._send_json(200, info)
             return
+        if p == "/api/room/attachment":
+            self._attachment_get(u)
+            return
         if p == "/api/room/msg":
             # The message a balloon link points at, for the chip that shows it.
             q = parse_qs(u.query)
@@ -8016,6 +8081,59 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError:
                     pass
 
+    def _attachment_upload(self, u) -> None:
+        """POST /api/room/attachment?room=<id>[&name=<dropped file's name>], the
+        image as the body: stored in the room's attachments folder,
+        ``{ok, room, name, path, url, size, type}``."""
+        if self._files_cross_site():
+            return
+        q = parse_qs(u.query, keep_blank_values=True)
+        raw = self.headers.get("Content-Length")
+        ln = int(raw) if raw is not None and str(raw).strip().isdigit() else -1
+        got = [0]
+
+        def read(n: int) -> bytes:
+            chunk = self.rfile.read(n)
+            got[0] += len(chunk)
+            return chunk
+        try:
+            rid = (q.get("room") or [""])[0].strip()
+            room = chatroom.get_room(rid, public=False) if rid else None
+            if room is None:
+                raise attachments.Refused(404, "no_such_room", "That chat is not on this hub.")
+            res = attachments.store(room, DASHBOARD_DIR, read, ln, (q.get("name") or [""])[0])
+        except attachments.Refused as e:
+            self._send_json(e.status, e.payload())
+            self._files_drain(max(ln, 0) - got[0])
+            return
+        self._send_json(200, {"ok": True, "room": rid, **res, "url": attachment_url(rid, res["name"])})
+
+    def _attachment_get(self, u) -> None:
+        """GET /api/room/attachment?room=<id>&name=<name>: one stored image,
+        from that room's attachments folder only."""
+        q = parse_qs(u.query, keep_blank_values=True)
+        try:
+            rid = (q.get("room") or [""])[0].strip()
+            room = chatroom.get_room(rid, public=False) if rid else None
+            if room is None:
+                raise attachments.Refused(404, "no_such_room", "That chat is not on this hub.")
+            path = attachments.find(room, DASHBOARD_DIR, (q.get("name") or [""])[0])
+            data = path.read_bytes()
+        except attachments.Refused as e:
+            self._send_json(e.status, e.payload())
+            return
+        except OSError:
+            self._send_json(404, {"error": "not_found", "message": "There is no such attachment."})
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", attachments.content_type(path))
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "private, max-age=86400")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Disposition", "inline; filename*=UTF-8''" + quote(path.name))
+        self.end_headers()
+        self.wfile.write(data)
+
     def _files_drain(self, n: int) -> None:
         """Read and drop what is left of a refused upload after the reply is
         sent, so the browser gets the reply rather than a reset connection.
@@ -8275,6 +8393,9 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/files/upload":
             # Its body is the file itself: read in pieces, never as JSON.
             self._files_upload(u)
+            return
+        if p == "/api/room/attachment":
+            self._attachment_upload(u)
             return
         ln = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(ln) if ln else b""
@@ -8606,8 +8727,12 @@ class Handler(BaseHTTPRequestHandler):
             text = (data.get("text") or "").strip()
             to = (data.get("to") or "").strip()
             key = str(data.get("key") or "").strip()[:200]
-            if not rid or not text:
+            if not rid or not (text or data.get("attachments")):
                 self._send_json(400, {"error": "missing_fields"})
+                return
+            room_full = chatroom.get_room(rid, public=False)
+            if room_full is None:
+                self._send_json(404, {"error": "no_such_room"})
                 return
             # Posts to the room as it is, running or not (a stopped room's
             # agents read it once resumed). To have a stopped room resumed
@@ -8615,6 +8740,11 @@ class Handler(BaseHTTPRequestHandler):
             with _SAY_KEYS_LOCK if key else contextlib.nullcontext():
                 if key and _say_key_seen(rid, key):
                     self._send_json(200, {"ok": True, "duplicate": True})
+                    return
+                try:
+                    text = message_refs.with_images(text, attachment_paths(room_full, data.get("attachments")))
+                except attachments.Refused as e:
+                    self._send_json(e.status, e.payload())
                     return
                 result = chatroom.post_message(rid, chatroom.HUMAN_IDENTITY, text, to=to)
                 if result is not None and key:
@@ -8796,6 +8926,13 @@ class Handler(BaseHTTPRequestHandler):
                 with _SAY_KEYS_LOCK if key else contextlib.nullcontext():
                     if key and _say_key_seen(rid, key) and not key_held(rid, key):
                         self._send_json(200, {"ok": True, "duplicate": True})
+                        return
+                    # The images only once the send is known not to be a
+                    # duplicate: a retried lost reply copies nothing again.
+                    try:
+                        text = message_refs.with_images(text, attachment_paths(room_full, data.get("attachments")))
+                    except attachments.Refused as e:
+                        self._send_json(e.status, e.payload())
                         return
                     result = self._resume_room(room_full, text=text, to=to, key=key)
                     if key:

@@ -32,6 +32,7 @@ import message_refs as mr
 ROOT = Path(__file__).resolve().parent.parent
 SESSION = (ROOT / "session.html").read_text(encoding="utf-8").replace("\r\n", "\n")
 INDEX = (ROOT / "index.html").read_text(encoding="utf-8").replace("\r\n", "\n")
+ATTACH = (ROOT / "static" / "attach.js").read_text(encoding="utf-8").replace("\r\n", "\n")
 NODE = shutil.which("node")
 
 
@@ -113,6 +114,7 @@ class SessionChips(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         src = "\n".join([
+            ATTACH,
             block(SESSION, "// ---- Links in rendered text: begin shared block", "// ---- Links in rendered text: end shared block"),
             const(SESSION, "REF_URL_RE"), const(SESSION, "REF_A"), const(SESSION, "REF_MARK_RE"),
             const(SESSION, "REF_BLOCK_RE"), fn(SESSION, "stripRefBlocks"), fn(SESSION, "refOfUrl"),

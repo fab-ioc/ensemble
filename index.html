@@ -1586,6 +1586,24 @@
   .dcx-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-200); }
   .dcx-foot .grow { flex: 1; }
   .dcx-hint { font-size: var(--fs-200); color: var(--fg-muted); }
+  .dcx-hint.err { color: var(--c-danger-fg); }
+  /* Images a comment carries (static/attach.js): chips while it is written, thumbnails once added. */
+  .att-thumbs { display: flex; flex-wrap: wrap; gap: var(--s-200); margin-top: var(--s-200); }
+  .att-thumb { display: block; max-width: 100%; border: 1px solid var(--border); border-radius: var(--r-200); overflow: hidden; background: var(--surface-sunken); line-height: 0; }
+  .att-thumb img { display: block; max-height: 120px; max-width: 100%; }
+  .att-thumb:hover { border-color: var(--border-strong); }
+  .att-thumb:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .att-chips { display: flex; flex-wrap: wrap; gap: var(--s-100); margin-bottom: var(--s-200); }
+  .att-chips[hidden] { display: none; }
+  .att-chip { display: inline-flex; align-items: center; gap: var(--s-100); max-width: 100%; box-sizing: border-box; height: 32px; padding: 0 0 0 var(--s-050);
+    background: var(--surface-sunken); color: var(--fg); border: 1px solid var(--border); border-radius: var(--r-100); font-size: var(--fs-200); line-height: 16px; }
+  .att-chip img { height: 24px; width: auto; max-width: 48px; object-fit: cover; border-radius: var(--r-100); }
+  .att-chip .att-name { min-width: 0; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-left: var(--s-050); }
+  .att-chip.err .att-name { color: var(--c-danger-fg); }
+  .att-chip .att-x { flex: 0 0 auto; height: 24px; padding: 0 var(--s-200); background: transparent; border: none; color: var(--fg-muted); font-size: var(--fs-300); line-height: 16px; cursor: pointer; }
+  .att-chip .att-x:hover { background: var(--hover); color: var(--fg); }
+  .att-chip .att-x:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .cmt-item-img { font-size: var(--fs-100); line-height: 16px; color: var(--fg-muted); overflow-wrap: anywhere; }
   .drv-away { padding: var(--s-200) 0; border-bottom: 1px solid var(--border); }
   .drv-away-h { padding: 0 var(--s-300); font-size: var(--fs-200); color: var(--fg-muted); }
   .drv-away .dc, .drv-away .dcx { margin-left: var(--s-300); }
@@ -2752,6 +2770,7 @@
     .dr { min-height: var(--touch-min); align-items: center; }
     .dc, .dcx, .drv-away .dc, .drv-away .dcx { margin-left: var(--s-200); margin-right: var(--s-200); }
     .dcx textarea { font-size: var(--fs-400); }
+    .att-chip, .att-chip .att-x { height: var(--touch-min); }
     .dc .rm-btn, .dcx .rm-btn, .drv-head .rm-btn, .cmt-tray .rm-btn, .cmt-selbtn, .cmt-to { height: auto; min-height: var(--touch-min); }
     .cmt-item { padding-right: calc(var(--touch-min) + var(--s-100)); }
     .cmt-item-x { top: 0; right: 0; width: var(--touch-min); height: var(--touch-min); }
@@ -2771,6 +2790,7 @@
      store that keeps review comments until they are delivered. -->
 <script src="/static/hl.js"></script>
 <script src="/static/comments.js"></script>
+<script src="/static/attach.js"></script>
 </head>
 <body>
 <div id="update-banner" hidden>
@@ -7086,12 +7106,18 @@ function drMessage(list, what) {
     let run = 2;
     code.forEach(l => (l.match(/`+/g) || []).forEach(m => { run = Math.max(run, m.length); }));
     const fence = '`'.repeat(run + 1);
-    return `**${i + 1}.** \`${where}\` ${drLoc(c.rows)}\n\n${fence}diff\n${code.join('\n')}\n${fence}\n\n${c.note}`;
+    const imgs = drImages(c);
+    return `**${i + 1}.** \`${where}\` ${drLoc(c.rows)}\n\n${fence}diff\n${code.join('\n')}\n${fence}\n\n${c.note}`
+      + (imgs.length ? `${c.note ? '\n\n' : ''}(attached: ${imgs.map(x => x.name).join(', ')})` : '');
   });
   return `## Review comments (${list.length})\n\n` + (what ? `On ${what}.\n\n` : '') + items.join('\n\n');
 }
+// The images pasted or dropped into a comment: {room, name} each, stored by the
+// hub in that room's attachments folder (static/attach.js).
+const drImages = c => (Array.isArray(c.images) ? c.images : []);
 function drValid(c) {
   return typeof c.root === 'string' && typeof c.file === 'string' && typeof c.note === 'string'
+    && (c.images == null || (Array.isArray(c.images) && c.images.every(x => x && typeof x.room === 'string' && typeof x.name === 'string')))
     && Array.isArray(c.rows) && c.rows.length > 0
     && c.rows.every(r => r && typeof r.t === 'string' && (r.k === 'add' || r.k === 'del' || r.k === 'ctx'));
 }
@@ -7198,6 +7224,22 @@ function drShow(rv, box, root, file, text) {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); drSave(v); }
     else if (e.key === 'Escape') { e.preventDefault(); v.draft = null; drPaint(v); }
   };
+  // An image pasted into the comment box, or dropped on it, goes with the comment.
+  box.onpaste = e => {
+    if (!v.draft || !e.target.matches('.dcx textarea')) return;
+    const files = attImages(e.clipboardData);
+    if (!files.length) return;
+    e.preventDefault();
+    drAtt(v, v.draft).add(files, true);
+  };
+  const onDcx = e => !!(v.draft && e.target.closest && e.target.closest('.dcx') && e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files'));
+  box.ondragover = e => { if (onDcx(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } };
+  box.ondrop = e => {
+    if (!onDcx(e)) return;
+    e.preventDefault();
+    const files = attImages(e.dataTransfer);
+    if (files.length) drAtt(v, v.draft).add(files, false);
+  };
   drPaint(v);
   window.__drRenderMs = Math.round(performance.now() - t0);
   return v;
@@ -7212,6 +7254,7 @@ function drClick(v, e) {
     if (t.closest('.dc-edit')) {
       const i = drAnchor(v.rows, c);
       v.draft = { cid: c.cid, a: i < 0 ? -1 : Math.max(0, i - (c.span || c.rows.length) + 1), b: i, note: c.note, focus: true };
+      if (drImages(c).length) drAtt(v, v.draft).keep(drImages(c));
       drPaint(v);
     } else if (t.closest('.dc-del')) {
       rv.store.remove([c.cid]);
@@ -7220,7 +7263,9 @@ function drClick(v, e) {
     return;
   }
   if (t.closest('.dcx')) {
-    if (t.closest('.dcx-cancel')) { v.draft = null; drPaint(v); }
+    const x = t.closest('[data-att-x]');
+    if (x && v.draft && v.draft.att) { v.draft.att.remove(x.dataset.attX); v.draft.focus = true; drPaint(v); }
+    else if (t.closest('.dcx-cancel')) { v.draft = null; drPaint(v); }
     else if (t.closest('.dcx-add')) drSave(v);
     else if (t.closest('.dcx-open') && v.draft) rv.open(v.root, v.file, drLineOf(v.rows, v.draft.a, v.draft.b));
     return;
@@ -7237,22 +7282,48 @@ function drClick(v, e) {
   // A second line while a new comment is open covers the range between them;
   // otherwise the comment moves to the line clicked and keeps what was typed.
   if (d && !d.cid && (e.shiftKey || coarse)) { d.b = i; d.focus = true; }
-  else v.draft = { a: i, b: i, note: d && !d.cid ? d.note : '', focus: true };
+  else v.draft = { a: i, b: i, note: d && !d.cid ? d.note : '', att: d && !d.cid ? d.att : null, focus: true };
   drPaint(v);
 }
+// The draft's images, made on the first one. They are uploaded to the chat
+// that Submit sends to; the hub copies them over if another is picked later.
+function drAtt(v, d) {
+  if (!d.att) d.att = attBox(() => drSubmitState(v.rv).roomId, box => drAttPaint(v, box));
+  return d.att;
+}
+function drAttPaint(v, box) {
+  const d = v.draft, el = d && d.att === box ? v.box.querySelector('.dcx') : null;
+  if (!el) return;
+  const chips = el.querySelector('.att-chips'), html = box.html(esc);
+  if (chips._html !== html) { chips._html = html; chips.innerHTML = html; }
+  chips.hidden = !box.list.length;
+  const bad = box.failed(), hint = el.querySelector('.dcx-hint');
+  if (!hint) return;
+  hint.textContent = bad.length ? `Not uploaded: ${bad[bad.length - 1].err}. Remove it to add the comment.` : drHint(d);
+  hint.classList.toggle('err', !!bad.length);
+}
+const drHint = d => d.cid ? '' : (drCoarse() ? 'Tap another line to cover a range.' : 'Shift-click another line number to cover a range.') + ' Paste or drop an image to attach it.';
 function drSave(v) {
   const { rv } = v, d = v.draft;
   if (!d) return;
   const note = (d.note || '').trim();
   const ta = v.box.querySelector('.dcx textarea');
-  if (!note) { if (ta) ta.focus(); return; }
+  const att = d.att, images = att ? att.stored() : [];
+  if (att && (att.busy() || att.failed().length)) {
+    const hint = v.box.querySelector('.dcx-hint');
+    if (hint && att.busy()) { hint.textContent = 'Wait for the images to finish uploading.'; hint.classList.remove('err'); }
+    if (ta) ta.focus();
+    return;
+  }
+  if (!note && !images.length) { if (ta) ta.focus(); return; }
+  const withImages = c => { const o = { ...c, note }; if (images.length) o.images = images; else delete o.images; return o; };
   if (d.cid) {
     const c = rv.store.list.find(z => z.cid === d.cid);
-    if (c && !c.sent) rv.store.put({ ...c, note });
+    if (c && !c.sent) rv.store.put(withImages(c));
   } else {
     const q = drRange(v.rows, d.a, d.b);
     if (!q.rows.length) return;
-    rv.store.put({ cid: rv.store.id(), at: rv.store.now(), root: v.root, file: v.file, rows: q.rows, span: q.span, note, sent: 0 });
+    rv.store.put(withImages({ cid: rv.store.id(), at: rv.store.now(), root: v.root, file: v.file, rows: q.rows, span: q.span, sent: 0 }));
   }
   v.draft = null;
   drChanged(rv);
@@ -7267,7 +7338,15 @@ function drCardHtml(rv, c) {
     + '<span class="grow"></span>'
     + (sent ? '' : `<button type="button" class="rm-btn subtle dc-edit"${rv.sending ? ' disabled' : ''}>Edit</button>`
       + `<button type="button" class="rm-btn subtle danger dc-del"${rv.sending ? ' disabled' : ''}>Remove</button>`)
-    + `</div><div class="dc-note">${esc(c.note)}</div></div>`;
+    + `</div>${c.note ? `<div class="dc-note">${esc(c.note)}</div>` : ''}`
+    + (drImages(c).length ? drThumbsHtml(drImages(c)) : '') + '</div>';
+}
+// A comment's images as thumbnails; each opens full size.
+function drThumbsHtml(imgs) {
+  return '<div class="att-thumbs">' + imgs.map(x => {
+    const u = attUrl(x.room, x.name);
+    return `<a class="att-thumb" href="${esc(u)}" target="_blank" rel="noopener" title="${esc(x.name)}"><img src="${esc(u)}" alt="${esc(x.name)}" loading="lazy"></a>`;
+  }).join('') + '</div>';
 }
 function drComposer(v, d) {
   const q = d.cid ? (v.rv.store.list.find(z => z.cid === d.cid) || { rows: [] }) : drRange(v.rows, d.a, d.b);
@@ -7277,8 +7356,8 @@ function drComposer(v, d) {
   el.innerHTML = `<div class="dc-head"><span class="dc-loc">${esc((d.cid ? 'Edit the comment on ' : 'Comment on ') + loc)}</span><span class="grow"></span>`
     + (v.rv.open && line ? `<button type="button" class="rm-btn subtle dcx-open">Open at line ${line}</button>` : '') + '</div>'
     + `<textarea rows="3" aria-label="Your comment on ${esc(loc)}" placeholder="Your comment on ${esc(loc)}…"></textarea>`
-    + '<div class="dcx-foot"><span class="dcx-hint">'
-    + (d.cid ? '' : drCoarse() ? 'Tap another line to cover a range.' : 'Shift-click another line number to cover a range.')
+    + '<div class="att-chips" hidden></div>'
+    + `<div class="dcx-foot"><span class="dcx-hint">${esc(drHint(d))}`
     + '</span><span class="grow"></span><button type="button" class="rm-btn dcx-cancel">Cancel</button>'
     + `<button type="button" class="rm-btn primary dcx-add">${d.cid ? 'Save' : 'Add comment'}</button></div>`;
   el.querySelector('textarea').value = d.note || '';
@@ -7316,6 +7395,7 @@ function drPaint(v) {
       while (ref && ref.nextElementSibling && ref.nextElementSibling.classList.contains('dc')) ref = ref.nextElementSibling;
       if (ref) ref.insertAdjacentElement('afterend', el); else v.draft = null;
     }
+    if (v.draft && v.draft.att && el.isConnected) drAttPaint(v, v.draft.att);
     const ta = v.draft && el.isConnected ? el.querySelector('textarea') : null;
     if (ta && (d.focus || hadFocus)) {
       d.focus = false;
@@ -7352,6 +7432,7 @@ function drPaintTray(rv) {
     + (s.note ? `<div class="cmt-state${s.err ? ' err' : ''}" role="status">${esc(s.note)}</div>` : '')
     + '<div class="cmt-list">' + list.map(c => `<div class="cmt-item" data-cid="${esc(c.cid)}">`
       + `<div class="cmt-item-q">${esc(c.file + ' · ' + drLoc(c.rows))}</div><div class="cmt-item-n">${esc(c.note)}</div>`
+      + (drImages(c).length ? `<div class="cmt-item-img">${esc((drImages(c).length > 1 ? drImages(c).length + ' images: ' : 'Image: ') + drImages(c).map(x => x.name).join(', '))}</div>` : '')
       + `<button type="button" class="cmt-item-x" title="Remove" aria-label="Remove"${rv.sending ? ' disabled' : ''}>✕</button></div>`).join('')
     + '</div>';
   tray.hidden = false;
@@ -7396,7 +7477,7 @@ function drExclusive(rv, fn) {
   return fn();
 }
 // What a comment says, to tell whether the copy that went is the one stored.
-const drRev = c => JSON.stringify([c.root, c.file, c.rows, c.span || 0, c.note]);
+const drRev = c => JSON.stringify(drImages(c).length ? [c.root, c.file, c.rows, c.span || 0, c.note, drImages(c)] : [c.root, c.file, c.rows, c.span || 0, c.note]);
 // The key a send carries: the same comments, as they read, make the same key,
 // so the hub posts them once however many tabs or retries send them.
 function drKey(batch) {
@@ -7429,8 +7510,11 @@ async function drSubmit(rv) {
       // not running (or stopped since the row was drawn) is resumed for the
       // comments and they are typed in once its owner is up; the key makes
       // the same batch sent again (a lost reply) count once.
+      // Their images: the hub ends the message with one "[image] <path>" line
+      // each, copying any stored for another chat into this one's folder.
+      const images = batch.flatMap(drImages);
       const r = await fetch('/api/room/resume', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roomId: s.roomId, text: drMessage(batch, rv.what ? rv.what() : ''), to: '', key: drKey(batch) }) });
+        body: JSON.stringify({ roomId: s.roomId, text: drMessage(batch, rv.what ? rv.what() : ''), to: '', key: drKey(batch), ...(images.length ? { attachments: images } : {}) }) });
       let j = null;
       try { j = await r.json(); } catch (e) {}
       // Refused but held by the hub (shown in the task's chat as not
@@ -9061,6 +9145,23 @@ function docsDocListen() {
     if (docsDragFiles(ev) && docsLiveSection() && outside(ev)) ev.preventDefault();
   });
   document.addEventListener('dragend', docsDragDisarm);
+  // An image pasted while the Files panel has the focus or the pointer is
+  // added to the folder selected in it, named for the moment it was pasted.
+  document.addEventListener('paste', (ev) => {
+    const sec = docsLiveSection(), ctx = sec && sec._docs;
+    if (!ctx || ev.defaultPrevented) return;
+    const a = document.activeElement, inSec = !!(a && sec.contains(a));
+    if (!inSec && !sec.matches(':hover')) return;
+    if (a && (a.isContentEditable || /^(INPUT|TEXTAREA)$/.test(a.tagName) && a.type !== 'checkbox' && a.type !== 'file')) return;   // typing somewhere: its own paste
+    const files = attImages(ev.clipboardData), t = files.length && docsTarget(ctx.v);
+    if (!t) return;
+    ev.preventDefault();
+    const now = new Date();
+    docsUpload(ctx.el, ctx.pid, t, files.map(f => {
+      const name = attStampName(now, f.type);
+      return { file: new File([f], name, { type: f.type }), rel: name, keepBoth: true };
+    }));
+  });
   document.addEventListener('click', (ev) => {
     document.querySelectorAll('.dcm:not([hidden])').forEach(m => {
       if (!m.contains(ev.target) && !(ev.target.closest && ev.target.closest('.wse-more'))) docsMenuClose(m, false);
@@ -9080,6 +9181,7 @@ function docsDocListen() {
 function docsFilesWire(el, pid) {
   const sec = el.querySelector('.dcs-files'), v = docsView(pid);
   if (!sec || !v) return;
+  sec._docs = { el, pid, v };
   docsDocListen();
   const side = sec.querySelector('.wsp-side'), tree = sec.querySelector('.wsp-tree');
   // Files being added sit over the tree, in its column.
@@ -9610,8 +9712,10 @@ function docsUpload(el, pid, t, list) {
   const empty = [];
   (list || []).forEach(x => {
     const rel = upJoin(t.rel, x.rel);
-    if (x.dir) empty.push(rel);
-    else fp.items.push(upItem(batch, x.err ? null : x.file, rel));
+    if (x.dir) { empty.push(rel); return; }
+    const it = upItem(batch, x.err ? null : x.file, rel);
+    if (x.keepBoth && it.state === 'queued') it.keep = 1;      // a name taken: the next number, never a question
+    fp.items.push(it);
   });
   if (v && !v.open.has(t.abs)) { v.open.add(t.abs); wsPersist(v); }
   if (empty.length) (async () => {
