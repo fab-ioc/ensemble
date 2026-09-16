@@ -648,6 +648,16 @@
   #goto-note > span { flex:1 1 auto; min-width:0; }
   #goto-note .goto-x { flex:0 0 auto; height:24px; padding:0 var(--s-200); background:transparent; border:none; color:var(--fg-muted); font-size:var(--fs-200); }
   #goto-note .goto-x:hover { background:var(--hover); color:var(--fg); }
+  /* Coming back to a chat: what changed since the reader last read, above the
+     first balloon after that, held at the top while reading down. */
+  #msgs > .catchup { position:sticky; top:0; z-index:4; flex:0 0 auto; display:flex; align-items:center; gap:var(--s-200);
+    padding:var(--s-100) var(--s-100) var(--s-100) var(--s-300); background:var(--surface); border:1px solid var(--border);
+    border-radius:var(--r-200); color:var(--fg-muted); font-size:var(--fs-200); line-height:16px; }
+  #msgs > .catchup .cu-text { flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
+  #msgs > .catchup .cu-link { color:var(--link); white-space:nowrap; }
+  #msgs > .catchup .cu-read { flex:0 0 auto; height:24px; padding:0 var(--s-200); background:transparent; border:none; color:var(--fg-muted); font-size:var(--fs-200); }
+  #msgs > .catchup .cu-read:hover { background:var(--hover); color:var(--fg); }
+  #msgs > .catchup .cu-read:focus-visible, #msgs > .catchup .cu-link:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   /* Away from the end of the chat: back to it, with how many arrived since. */
   #to-latest { position:absolute; right:var(--s-400); bottom:var(--s-300); z-index:5; height:24px; padding:0 var(--s-300);
     border-radius:var(--r-full); background:var(--surface); color:var(--fg); border:1px solid var(--border-strong);
@@ -831,6 +841,9 @@
     .status, .msg .from, #livetail .lt-head, #livetail .lt-more,
     .msg .text.md pre.cb[data-lang]::before, .adot { font-size: var(--fs-100); }
     #to-latest { height: auto; padding: 0 var(--s-400); }
+    #msgs > .catchup .cu-read { height: auto; }
+    #msgs > .catchup .cu-link { position: relative; }
+    #msgs > .catchup .cu-link::after { content: ''; position: absolute; left: 0; right: 0; top: -14px; bottom: -14px; }
     /* Centred, the comment box sat under the keyboard it opens. */
     .cmt-composer { top: var(--s-300, 12px); transform: translateX(-50%); }
   }
@@ -1847,6 +1860,94 @@ function latestLabel(newN, decN) {
   if (newN) return { label: `${newN} new · Latest ↓`, tip: `Go to the latest message (${newN} new since you scrolled up)` };
   return { label: 'Latest ↓', tip: 'Go to the latest message' };
 }
+// ---- Catch-up: what changed since the reader last read ---------------------
+// The read point is { id, ts, mine }: the last message the reader had on screen
+// at the end of the chat (kept per room and per browser), or with none kept the
+// person's own last message (mine). Where it is in items: { i, ts, mine }, i -1
+// when everything shown came after it; null when there is no point at all.
+function readPoint(items, stored) {
+  if (!stored) {
+    for (let i = items.length - 1; i >= 0; i--)
+      if (isPersons(items[i]) && items[i].id !== 'task') return { i, ts: items[i].ts || 0, mine: true };
+    return null;
+  }
+  let i = stored.id ? items.findIndex(m => m && m.id === stored.id) : -1;
+  if (i < 0 && stored.ts) items.forEach((m, j) => { if (m && m.ts && m.ts <= stored.ts) i = j; });
+  return { i, ts: stored.ts || 0, mine: !!stored.mine };
+}
+// For the person: 'decision' (asked of them), 'answer' (an agent's reply to
+// them), or ''. A task's report, the hub and the person's own are not.
+function forPerson(m, N = CHAT_NAMES) {
+  if (!m || m.from === 'user' || m.from === 'ensemble' || taskReport(m)) return '';
+  if (isDecision(m)) return 'decision';
+  if (m.answers) return m.answers.kind === 'human' ? 'answer' : '';
+  if (m.to === 'user') return 'answer';
+  return N.po && m.from === N.po && (!m.to || m.to === 'all') ? 'answer' : '';
+}
+const CU_WORD = { completed: 'done', blocked: 'blocked', question: 'asks' };
+// A progress check's plain facts name a new or stopped task by its number or id:
+// "- Title (#63): new task", "- Title (#26): status running → stopped". [[label, word]].
+const CU_DIGEST_RE = /\(((?:#|[A-Za-z][A-Za-z0-9]{0,5}-)\d{1,6}|room-[0-9a-f]+)\): (?:(new task)|(?:renamed from '.*?', )?status \S+ → (stopped))/g;
+function digestWords(m) {
+  if (!isDigest(m)) return [];
+  return [...String(m.text || '').matchAll(CU_DIGEST_RE)].map(x => [x[1], x[2] ? 'new' : 'stopped']);
+}
+// What changed after the point: null when nothing did, or when fewer than three
+// balloons came and all are for the person (they are in view). Else
+// { ts, mine, first: index of the first, parts: [{ text, mid }], rest, justUs }:
+// decisions waiting, each task whose last word is done, blocked or a question,
+// the answers to the person, and how many others. In Just us the tasks' words
+// count with the others, as hidden.
+function catchUp(items, point, justUs, N = CHAT_NAMES) {
+  if (!point) return null;
+  const after = [];
+  let lastPersons = -1;
+  items.forEach((m, i) => {
+    if (isPersons(m) && m.id !== 'task') lastPersons = i;
+    if (i > point.i && m && !isLandmark(m) && !isPersons(m)) after.push(i);
+  });
+  if (!after.length) return null;
+  // A task's last word, by the name the reader knows it by: { i, word }.
+  const decisions = [], answers = [], words = new Map();
+  const say = (name, i, word) => { words.delete(name); words.set(name, { i, word }); };
+  for (const i of after) {
+    const m = items[i], t = taskReport(m), f = forPerson(m, N);
+    if (t && reportBase(m) !== 'update') say(taskName(t, N), i, CU_WORD[reportBase(m)] || '');
+    digestWords(m).forEach(([t, word]) => say(taskName(t, N), i, word));
+    if (f === 'decision' && i > lastPersons) decisions.push(i);
+    else if (f) answers.push(i);
+  }
+  if (after.length < 3 && decisions.length + answers.length === after.length) return null;
+  const named = [...words].filter(([, w]) => w.word).sort((a, b) => a[1].i - b[1].i);
+  const s = n => n === 1 ? '' : 's';
+  const parts = [];
+  if (decisions.length) parts.push({ text: `${decisions.length} decision${s(decisions.length)} waiting`, mid: items[decisions[0]].id || '' });
+  if (!justUs) named.forEach(([name, w]) => parts.push({ text: name + ' ' + w.word, mid: items[w.i].id || '' }));
+  if (answers.length) parts.push({ text: `${answers.length} answer${s(answers.length)} to you`, mid: items[answers[0]].id || '' });
+  // One progress check can name several tasks: count each balloon once.
+  const rest = after.length - decisions.length - answers.length - (justUs ? 0 : new Set(named.map(([, w]) => w.i)).size);
+  return { ts: point.ts, mine: point.mine, first: after[0], parts, rest, justUs: !!justUs };
+}
+// "10:05" today, "Sep 14, 10:05" before.
+function chatWhen(ts) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  return d.toDateString() === new Date().toDateString() ? chatTime(ts)
+    : d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+// The line: "Since you last read (10:05): 1 decision waiting · #26 done · …",
+// each named part a link to its balloon (href(mid)), and Mark read.
+function catchUpHtml(cu, href) {
+  const when = chatWhen(cu.ts);
+  const head = (cu.mine ? 'Since your last message' : 'Since you last read') + (when ? ` (${when})` : '') + ': ';
+  const bits = cu.parts.map(p => p.mid
+    ? `<a class="cu-link" href="${esc(href(p.mid))}" data-ref-msg="${esc(p.mid)}">${esc(p.text)}</a>` : esc(p.text));
+  const n = cu.rest;
+  if (n) bits.push(esc(cu.justUs ? `+ ${n} task message${n === 1 ? '' : 's'} hidden`
+    : n === 1 ? '1 check or report folded' : `${n} checks and reports folded`));
+  return `<div class="catchup" role="status" data-key="catchup"><span class="cu-text">${esc(head)}${bits.join(' · ')}.</span>`
+    + '<button type="button" class="cu-read" title="Mark everything up to the latest message as read">Mark read</button></div>';
+}
 // ---- Folding a long conversation: end
 let FOLD = { base: null, open: new Set(), groups: new Set(), hid: null };
 let GROUP_OF_MID = new Map();   // a folded message's id → its group's key, to land on it
@@ -1861,12 +1962,17 @@ let SOLO_IDLE = false;     // the solo agent is not working: its silence is an a
 let JUST_US = false;
 try { JUST_US = localStorage.getItem('cd-chat-just-us') === '1'; } catch (e) {}
 let MD_CACHE = new Map(), MD_CTX = '';
+// The catch-up line: the read point it counts from while it shows (null: no
+// line), whether it is drawn, and whether the chat has been opened on it yet.
+// CU_SNAP: the line as drawn at opening, { sig, html }: a poll does not replace it
+// (nothing clickable is replaced on a timer); Just us or a name resolving does.
+let CU_POINT = null, CU_SHOWN = false, CU_OPENED = false, CU_SNAP = null, READ_MEM = null, READ_TIMER = 0;
 const nearEnd = box => box.scrollTop + box.clientHeight >= box.scrollHeight - 50;
 // The first child at or below the top of the view, and where it sits in it.
 function readingPlace(box, el) {
   if (!el) {
     const top = box.scrollTop;
-    for (const k of box.children) if (k.offsetTop + k.offsetHeight > top) { el = k; break; }
+    for (const k of box.children) if (!k.classList.contains('catchup') && k.offsetTop + k.offsetHeight > top) { el = k; break; }
   }
   return el ? { el, key: el.dataset.key || '', off: el.offsetTop - box.scrollTop } : null;
 }
@@ -1936,9 +2042,16 @@ function renderBubbles(items, opt = {}) {
       act: copyLinkHtml, plain: refPlain, superseded: sup.has(i) });
   };
   const rows = [];
+  // The catch-up line goes above what is drawn first for the first message after the read point.
+  const cu = CU_POINT ? catchUp(items, readPoint(items, CU_POINT), JUST_US) : null;
+  const cuSig = JUST_US + '|' + CHAT_NAMES.po + '|' + REF_GEN;
+  if (cu && (!CU_SNAP || CU_SNAP.sig !== cuSig)) CU_SNAP = { sig: cuSig, html: catchUpHtml(cu, mid => refHref(ROOM, mid)) };
+  let cuHtml = cu ? CU_SNAP.html : '';
+  CU_SHOWN = !!cu;
   items.forEach((m, i) => {
     const k = foldKey(m, i);
     const g = groupAt.get(i);
+    if (cuHtml && i >= cu.first && (g || !hiddenIn.has(i))) { rows.push(cuHtml); cuHtml = ''; }
     if (g) {
       // Its row, and when opened the group in order under it: "Latest ↓" counts
       // the row, not what is folded in it.
@@ -2001,7 +2114,92 @@ function renderBubbles(items, opt = {}) {
   showLatest();
   markLanded();
   landPending();
+  if (!CU_OPENED && box.clientHeight && items.length) catchUpOpen();
+  readTick(false);
 }
+// ---- The catch-up line: when it shows, and what advances the read point ----
+const READ_KEY = () => 'cd-chat-read:' + (ROOM || location.pathname + location.search);
+function loadRead() {
+  try {
+    const v = JSON.parse(localStorage.getItem(READ_KEY()) || 'null');
+    if (v && typeof v === 'object' && (v.id || v.ts)) return { id: String(v.id || ''), ts: +v.ts || 0 };
+  } catch (e) {}
+  return READ_MEM;
+}
+// Opening the chat (a load, or its frame shown again): count from the read
+// point, and when a line shows, open on it instead of at the end.
+function catchUpOpen() {
+  const box = $('#msgs');
+  CU_OPENED = true;
+  if (!LAST_ITEMS || !box || !box.clientHeight) return;
+  const items = withTaskBubble(LAST_ITEMS, ROOM_OBJ && ROOM_OBJ.spec, 'from');
+  const stored = loadRead(), p = stored ? null : readPoint(items, null);
+  CU_POINT = stored || (p ? { id: items[p.i].id || '', ts: p.ts, mine: true } : null);
+  CU_SNAP = null;
+  // Opened on a link to a balloon: the landing wins, landed already or not.
+  const onLink = !!GOTO || GOTO_OPEN;
+  GOTO_OPEN = false;
+  if (!CU_POINT) return;
+  renderBubbles(LAST_ITEMS);
+  const line = box.querySelector(':scope > .catchup');
+  // Nothing to catch up on: what arrives while the chat is open is not a catch-up.
+  if (!line) { CU_POINT = null; return; }
+  if (onLink) return;
+  box.scrollTop = 0;   // a sticky line measures its own place only while not held at the top
+  box.scrollTop = Math.max(0, line.offsetTop - 12);
+  STICK = nearEnd(box);
+  showLatest();
+}
+// Everything up to the latest message is read: kept for this room, and the line
+// goes. The point only moves forward: a tab left behind (another tab read further)
+// keeps the later point, found in this tab's messages or else by its time.
+function markRead() {
+  clearTimeout(READ_TIMER); READ_TIMER = 0;
+  const items = LAST_ITEMS || [];
+  for (let i = items.length - 1; i >= 0; i--) {
+    const m = items[i];
+    if (!m || !m.id || m.id === 'task' || isLandmark(m)) continue;
+    const cur = loadRead(), ts = m.ts || Date.now() / 1000;
+    const at = cur && cur.id ? items.findIndex(x => x && x.id === cur.id) : -1;
+    if (!cur || (at >= 0 ? at < i : (cur.ts || 0) < ts)) {
+      READ_MEM = { id: m.id, ts };
+      try { localStorage.setItem(READ_KEY(), JSON.stringify(READ_MEM)); } catch (e) {}
+    }
+    break;
+  }
+  if (CU_POINT) { CU_POINT = null; CU_SNAP = null; if (LAST_ITEMS) renderBubbles(LAST_ITEMS); }
+}
+// Another tab read further: the line here counts from that point, or goes when
+// nothing is left after it. A point behind this one changes nothing.
+function readElsewhere(e) {
+  if (e.key !== READ_KEY() || !CU_POINT || !LAST_ITEMS) return;
+  const stored = loadRead();
+  if (!stored) return;
+  const items = withTaskBubble(LAST_ITEMS, ROOM_OBJ && ROOM_OBJ.spec, 'from');
+  const now = readPoint(items, CU_POINT), then = readPoint(items, stored);
+  if (then.i < now.i || (then.i === now.i && then.ts <= now.ts)) return;
+  CU_POINT = catchUp(items, then, JUST_US) ? stored : null;
+  CU_SNAP = null;
+  renderBubbles(LAST_ITEMS);
+}
+window.addEventListener('storage', readElsewhere);
+const readerAtEnd = box => !!box && !!box.clientHeight && nearEnd(box) && document.visibilityState !== 'hidden';
+// At the end for 3 s, the read point follows. While the line shows, only a
+// scroll to the end starts the wait: a chat short enough to open at its end
+// keeps the line until Mark read.
+function readTick(scrolled) {
+  const box = $('#msgs');
+  if (!readerAtEnd(box)) { clearTimeout(READ_TIMER); READ_TIMER = 0; return; }
+  if (READ_TIMER || (CU_SHOWN && !scrolled)) return;
+  READ_TIMER = setTimeout(() => { READ_TIMER = 0; if (readerAtEnd($('#msgs'))) markRead(); }, 3000);
+}
+// Leaving the page at the end counts as having read it; scrolled up it does not.
+function readerLeaves() {
+  const box = $('#msgs');
+  if (CHAT_DRAWN && box && box.clientHeight && nearEnd(box)) markRead();
+}
+window.addEventListener('pagehide', readerLeaves);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') readerLeaves(); else readTick(false); });
 // The bar over a transcript the hub types into: what is folded, and Just us.
 function showChatBar(items, quietRows) {
   const bar = $('#chatbar'), btn = $('#just-us');
@@ -2122,6 +2320,7 @@ function renderMsgs(room) { CHAT_DRAWN = true; renderBubbles(room.messages); }
 // ---- Copy link, and landing on a linked balloon ----------------------------
 let CHAT_DRAWN = false;    // the conversation itself has been drawn, not just the page
 let GOTO = (qs.get('msg') || '').trim();   // the balloon to land on once it is drawn
+let GOTO_OPEN = !!GOTO;    // the chat was opened for that link: no catch-up jump over it
 let SOLO_WANT = null;      // {sid, n, loaded}: an older transcript turn than shown, asked for by a link
 let LANDED = null;         // {mid, at}: the balloon just landed on, marked again if a redraw replaces it
 let _landing = false;
@@ -2989,9 +3188,10 @@ window.addEventListener('message', (e) => {
   else if (d.ensemble === 'pause') { const pb = $('#pause'); if (pb && pb.onclick) pb.onclick(); }
   // The dashboard opened this chat's panel again: a closed task panel only
   // slides off screen, so its size never says so. Open at the latest message.
-  else if (d.ensemble === 'shown' && e.source === window.parent) toLatest();
+  else if (d.ensemble === 'shown' && e.source === window.parent) { toLatest(); if (CHAT_DRAWN && !GOTO) catchUpOpen(); }
   // The dashboard opened this chat for a link to one of its balloons.
   else if (d.ensemble === 'goto-msg' && e.source === window.parent && e.origin === location.origin) {
+    GOTO_OPEN = true;
     gotoMsg(d.msg);
     try { window.parent.postMessage({ type: 'goto-taken', roomId: ROOM }, location.origin); } catch (err) {}
   }
@@ -3335,6 +3535,7 @@ function showTrayItem(cid) {
 $('#msgs').addEventListener('click', e => {
   const cl = e.target.closest && e.target.closest('.copy-link');
   if (cl) { copyLink(cl); return; }
+  if (e.target.closest && e.target.closest('.cu-read')) { markRead(); return; }
   const m = e.target.closest && e.target.closest('mark.cmt-hl');
   if (m) showTrayItem(m.dataset.cid);
   const grp = e.target.closest && e.target.closest('.msg-fold[data-group]');
@@ -3373,6 +3574,7 @@ function msgsScrolled() {
   }
   STICK = at;
   showLatest();
+  readTick(true);
 }
 $('#msgs').addEventListener('scroll', msgsScrolled, { passive: true });
 // A conversation opens at its end, also when its frame is shown again (the
@@ -3382,7 +3584,12 @@ $('#msgs').addEventListener('scroll', msgsScrolled, { passive: true });
 let _msgsH = -1;
 function msgsResized() {
   const box = $('#msgs'), h = box.clientHeight;
-  if (h && _msgsH === 0) { if (GOTO) landPending(); else toLatest(); }
+  // Hidden while at the end (the drawer closed): read, as leaving the page.
+  if (!h && _msgsH > 0 && STICK && CHAT_DRAWN) markRead();
+  if (h && _msgsH === 0) {
+    if (GOTO) { GOTO_OPEN = true; landPending(); if (CHAT_DRAWN) catchUpOpen(); }
+    else { toLatest(); if (CHAT_DRAWN) catchUpOpen(); }
+  }
   else if (h && STICK) box.scrollTop = box.scrollHeight;
   _msgsH = h;
   showLatest();
@@ -3405,10 +3612,10 @@ document.addEventListener('click', ev => {
 // the dashboard, the dashboard opens that task or PO at it; on its own, this
 // page goes there. With a modifier key it is a link, opening a new tab.
 document.addEventListener('click', ev => {
-  const a = ev.target.closest && ev.target.closest('a.ref-chip, a.sup-link');
+  const a = ev.target.closest && ev.target.closest('a.ref-chip, a.sup-link, a.cu-link');
   if (!a || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
   ev.preventDefault();
-  const room = a.dataset.refRoom, msg = a.dataset.refMsg;
+  const room = a.dataset.refRoom || ROOM, msg = a.dataset.refMsg;
   if (room === ROOM) { gotoMsg(msg); return; }
   let host = null;
   try { if (window.parent !== window && window.parent.location.origin === location.origin) host = window.parent; } catch (e) {}
