@@ -78,30 +78,30 @@ CASES = [
     "`http://127.0.0.1:8765/session?id=room-35d21def`",
     "dev server http://127.0.0.1:8797/ is up",
     "`http://127.0.0.1:8797/`",
-    "see [plan](file:///C:/Users/me/plan.md)",
-    "see file:///C:/Users/me/plan.md",
+    "see [plan](file:///D:/work/plan.md)",
+    "see file:///D:/work/plan.md",
     "Docs at https://example.com/a/b.",
     "(see https://example.com/x)",
-    "Wrote C:\\Users\\me\\Ensemble Dashboard\\task\\LINKS-REVIEW.md for you",
+    "Wrote D:\\work\\Ensemble Dashboard\\task\\LINKS-REVIEW.md for you",
     "`dashboard.py:4620`",
     "and index.html:88 too",
     "Task room-35d21def is done",
     "open [the viewer](/fileview?path=C%3A%5Cx.md)",
     "see [below](#setup)",
-    "`C:\\Users\\me\\Ensemble Dashboard\\task\\`",
+    "`D:\\work\\Ensemble Dashboard\\task\\`",
     "[the preview](http://127.0.0.1:8797/)",
     # 17-: the review's adversarial cases
-    "Wrote C:\\Users\\me\\Ensemble Dashboard\\My File.md today",
+    "Wrote D:\\work\\Ensemble Dashboard\\My File.md today",
     "C:\\foo is copied to docs\\readme.md",
-    "see C:\\Users\\me\\a&b\\x.md",
+    "see D:\\work\\a&b\\x.md",
     "[paren](https://en.wikipedia.org/wiki/Foo_(bar))",
     "x \ue0020\ue003 y",
     "see https://a.example/ then \ue0020\ue003",
-    "C:\\Users\\me\\New folder\\notes.md is there",
+    "D:\\work\\New folder\\notes.md is there",
     "Saved to C:\\temp\\a.md and C:\\temp\\b.md",
-    "[doc](C:\\Users\\me\\Ensemble Dashboard\\a (1).md)",
+    "[doc](D:\\work\\Ensemble Dashboard\\a (1).md)",
     # 26-: review 2 — names with little words in them, and prose after a drive
-    "C:\\Users\\me\\Terms and Conditions.md",
+    "D:\\work\\Terms and Conditions.md",
     "C:\\Books\\War of the Worlds.md is here",
     "Meme: C:\\x\\This is Fine.md",
     "C:\\foo please check docs\\readme.md",
@@ -132,11 +132,11 @@ class GeneratedLinks(unittest.TestCase):
             self.assertEqual(hrefs(r[c]), [], c)
             self.assertIn("only on the hub machine", r[c])
         for c in (CASES[5], CASES[6]):
-            self.assertEqual(viewer_path(hrefs(r[c])[0])[0], "C:/Users/me/plan.md", c)
+            self.assertEqual(viewer_path(hrefs(r[c])[0])[0], "D:/work/plan.md", c)
         self.assertEqual(hrefs(r[CASES[7]]), ["https://example.com/a/b"])
         self.assertEqual(hrefs(r[CASES[8]]), ["https://example.com/x"])
         self.assertEqual(viewer_path(hrefs(r[CASES[9]])[0])[0],
-                         "C:\\Users\\me\\Ensemble Dashboard\\task\\LINKS-REVIEW.md")
+                         "D:\\work\\Ensemble Dashboard\\task\\LINKS-REVIEW.md")
         self.assertEqual(viewer_path(hrefs(r[CASES[10]])[0]), ("dashboard.py", "4620"))
         self.assertEqual(viewer_path(hrefs(r[CASES[11]])[0]), ("index.html", "88"))
         self.assertEqual(hrefs(r[CASES[12]]), ["/?task=room-35d21def"])
@@ -144,17 +144,17 @@ class GeneratedLinks(unittest.TestCase):
         self.assertEqual(hrefs(r[CASES[13]]), ["/fileview?path=C%3A%5Cx.md"])
         self.assertEqual(hrefs(r[CASES[14]]), ["#setup"])
         self.assertNotIn("_blank", r[CASES[14]], "an in-page anchor must not open a new tab")
-        self.assertEqual(viewer_path(hrefs(r[CASES[15]])[0])[0], "C:\\Users\\me\\Ensemble Dashboard\\task\\")
+        self.assertEqual(viewer_path(hrefs(r[CASES[15]])[0])[0], "D:\\work\\Ensemble Dashboard\\task\\")
 
     def test_paths_and_markers_in_running_text(self):
         r = self.render("http://hub-host:8765/")
         paths = lambda c: [viewer_path(h)[0] for h in hrefs(r[c])]
         # Spaces in the file name as well as the folders.
-        self.assertEqual(paths(CASES[17]), ["C:\\Users\\me\\Ensemble Dashboard\\My File.md"])
-        self.assertEqual(paths(CASES[23]), ["C:\\Users\\me\\New folder\\notes.md"])
+        self.assertEqual(paths(CASES[17]), ["D:\\work\\Ensemble Dashboard\\My File.md"])
+        self.assertEqual(paths(CASES[23]), ["D:\\work\\New folder\\notes.md"])
         self.assertEqual(paths(CASES[24]), ["C:\\temp\\a.md", "C:\\temp\\b.md"])
         # Names with little words in them, linked whole.
-        self.assertEqual(paths(CASES[26]), ["C:\\Users\\me\\Terms and Conditions.md"])
+        self.assertEqual(paths(CASES[26]), ["D:\\work\\Terms and Conditions.md"])
         self.assertEqual(paths(CASES[27]), ["C:\\Books\\War of the Worlds.md"])
         self.assertEqual(paths(CASES[28]), ["C:\\x\\This is Fine.md"])
         # A sentence after a drive is not a path, and no piece of it is linked
@@ -164,11 +164,11 @@ class GeneratedLinks(unittest.TestCase):
             self.assertEqual(hrefs(r[c]), [], c)
             self.assertEqual(r[c], c.replace("&", "&amp;"), c)
         # An & in a path, which arrives escaped.
-        self.assertEqual(paths(CASES[19]), ["C:\\Users\\me\\a&b\\x.md"])
+        self.assertEqual(paths(CASES[19]), ["D:\\work\\a&b\\x.md"])
         # Brackets in a markdown target, a URL's and a path's.
         self.assertEqual(hrefs(r[CASES[20]]), ["https://en.wikipedia.org/wiki/Foo_(bar)"])
         self.assertTrue(r[CASES[20]].endswith(">paren</a>"), r[CASES[20]])
-        self.assertEqual(paths(CASES[25]), ["C:\\Users\\me\\Ensemble Dashboard\\a (1).md"])
+        self.assertEqual(paths(CASES[25]), ["D:\\work\\Ensemble Dashboard\\a (1).md"])
         # The text's own marker characters come back as they were, and never
         # stand in for a link.
         self.assertEqual(r[CASES[21]], CASES[21])
@@ -405,7 +405,7 @@ class TokenRedirect(unittest.TestCase):
             def end_headers(self):
                 pass
 
-        path = "C:\\Users\\me\\Ensemble Projects\\a&b #1+2.md"
+        path = "D:\\work\\Ensemble Projects\\a&b #1+2.md"
         from urllib.parse import quote
         h = H("/fileview?path=" + quote(path, safe="") + "&room=room-35d21def&token=T")
         with mock.patch.object(dashboard, "ACCESS_TOKEN", "T"):

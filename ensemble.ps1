@@ -170,7 +170,7 @@ function Invoke-Doctor {
   }
 
   $task = Get-ScheduledTask -TaskName 'Ensemble' -ErrorAction SilentlyContinue
-  Check "autostart task" ($null -ne $task) ($(if ($task) { "Ensemble ($($task.State))" } else { "not installed (optional: install-task.ps1)" }))
+  Write-Host ("  [info] autostart task (optional)  {0}" -f $(if ($task) { "Ensemble ($($task.State))" } else { "not installed - install-task.ps1 starts the hub at logon" }))
 
   Write-Host ""
   if ($script:fail -eq 0) { Write-Host "All checks passed." }

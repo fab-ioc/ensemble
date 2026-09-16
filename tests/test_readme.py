@@ -27,8 +27,9 @@ PERSONAL = re.compile("|".join([
     "tail" + "4f8740",
     r"\.ts" + r"\.net",
     "Idea" + "Projects",
-    # A Windows or macOS home folder, except the placeholders `me` and `<name>`.
-    r"(?:[A-Za-z]:(?:\\\\|\\|/)+|(?<![\w.~])/)Users(?:\\\\|\\|/)+(?!me\b|<|\$|%)[A-Za-z]",
+    # Any Windows home folder; a macOS one unless it is a placeholder (`<name>`, `$USER`).
+    r"[A-Za-z]:(?:\\\\|\\|/)+Users\b",
+    r"(?<![\w.~])/Users(?:\\\\|\\|/)+(?!<|\$|%)[A-Za-z]",
 ]), re.I)
 
 
@@ -78,9 +79,11 @@ class Readme(unittest.TestCase):
         self.assertEqual(hits, [])
 
     def test_the_pattern_catches_what_it_is_for(self):
-        for bad in ("C:\\Users\\" + "alex\\x", "/Users/" + "alex/x", "C:\\\\Users\\\\" + "alex", "host.tailnet" + ".ts" + ".net"):
+        drive = "C" + ":"
+        for bad in (drive + "\\Users\\alex\\x", drive + "\\Users\\me", drive + "/Users/" + "me", drive + "\\\\Users\\\\alex",
+                    "/Users/" + "alex/x", "host.tailnet" + ".ts" + ".net"):
             self.assertTrue(PERSONAL.search(bad), bad)
-        for ok in ("C:\\Users\\me\\.ensemble", "/Users/<name>/x", "~/EnsembleProjects", "a /api/users/1"):
+        for ok in ("D:\\work\\.ensemble", "<drive>:\\Users\\<u>", "/Users/<name>/x", "~/EnsembleProjects", "a /api/users/1"):
             self.assertFalse(PERSONAL.search(ok), ok)
 
 

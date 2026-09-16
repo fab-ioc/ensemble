@@ -60,7 +60,7 @@ Claude Code and Codex sessions you started yourself, outside Ensemble, are liste
 
 ## Requirements
 
-- **Python 3.** Developed and tested with 3.13. There is no `match` statement or other 3.10+ syntax, but older versions are untested.
+- **Python 3.10 or newer.** The code uses `X | None` type unions, which older versions cannot parse. Developed and tested with 3.13.
 - **Claude Code** (`claude`), **Codex** (`codex`), or both, on `PATH` and logged in. Ensemble starts them; it does not install them or log them in.
 - **git** on `PATH`, for worktrees, the Changes tab, the backup and a documents project's file history.
 - **Windows 10 or 11, or macOS.** The Linux backend is a stub: the pages load, but launching agents on Linux is not wired up.
@@ -140,7 +140,7 @@ State stays in `~/.ensemble` on the hub's machine. Every device sees the same pr
 - **Anyone who can reach the hub's port with the token can do the same**, by starting a task with any spec.
 - **Every program on the machine can call every hub endpoint.** Loopback needs no token, and that includes the agents. The limits on what an agent may do through the MCP tools (its own project, never its own task) are enforced. Refusing to restart the hub for anyone but one PO stops accidents, not a determined agent.
 - **Run it only on a machine and a network you trust. Never bind it to a public interface.** A tailnet or a LAN you control is the intended use.
-- Today any agent can stop the hub, and every other agent with it. The recommendation is to **run the hub elevated** (as administrator) so an agent cannot stop it. This is not built yet: the install scripts do not set it up, and it has not been tested.
+- **Any agent can stop the hub**, and every other agent with it. Agents are ordinary child processes of the hub and run as the same user, so nothing keeps one from ending it. Do not run the hub as administrator to prevent this: its agents would then run as administrator too. Keeping agents away from the hub would need them to run as a separate, less privileged account, and that is not built.
 
 ## The agents' side
 
@@ -148,7 +148,7 @@ The hub is also an MCP server (`POST /mcp`). Every agent it launches is connecte
 
 | Who | Tools |
 |---|---|
-| Every agent | `ensemble_whoami`, `ensemble_report`, `ensemble_list_tasks`, `ensemble_get_task`, `ensemble_list_attention`, `ensemble_plan_usage`, `ensemble_get_roadmap`, `ensemble_update_task` (owners and reviewers: only to move their own task to In review) |
+| Every agent | `ensemble_whoami`, `ensemble_report`, `ensemble_list_tasks`, `ensemble_get_task`, `ensemble_list_attention`, `ensemble_plan_usage`, `ensemble_get_roadmap`, `ensemble_update_task` (for any agent that is not a PO or planner: only to move its own task to In review) |
 | Tasks with more than one agent | `chat_send`, `chat_read`, `chat_whoami` |
 | A project's PO, and agents with the `planner` role | also `ensemble_list_projects`, `ensemble_create_task`, `ensemble_start_task`, `ensemble_stop_task`, `ensemble_move_task`, `ensemble_delete_task`, `ensemble_update_roadmap`, and full `ensemble_update_task` |
 | A reviewer started for one review | `review_done` |
