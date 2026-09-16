@@ -140,7 +140,7 @@ out.heldNone = [...foldHeld(common, [{ mid: 'm1', from: 'claude', quote: 'absent
 {
   const sbox = { clientHeight: 500, scrollTop: 0, scrollHeight: 5000, children: [] };
   let renders = 0;
-  const sctx = { $: () => sbox, renderBubbles: () => { renders++; }, showLatest: () => {} };
+  const sctx = { $: () => sbox, renderBubbles: () => { renders++; }, showLatest: () => {}, readTick: () => {} };
   vm.createContext(sctx);
   vm.runInContext(`var STICK = false, LAST_ITEMS = [1], SEEN = null, NEW_N = 3;
     const nearEnd = box => box.scrollTop + box.clientHeight >= box.scrollHeight - 50;\n` + scrolled, sctx);
@@ -464,7 +464,7 @@ class ThePageUsesIt(unittest.TestCase):
     def test_reopening_a_task_panel_goes_to_the_latest(self):
         index = (ROOT / "index.html").read_text(encoding="utf-8").replace("\r\n", "\n")
         self.assertIn("ensemble: 'shown'", js_function(index, "openDetail"))
-        self.assertRegex(SRC, r"d\.ensemble === 'shown' && e\.source === window\.parent\) toLatest\(\)")
+        self.assertRegex(SRC, r"d\.ensemble === 'shown' && e\.source === window\.parent\) \{ toLatest\(\); if \(CHAT_DRAWN && !GOTO\) catchUpOpen\(\); \}")
 
 
 if __name__ == "__main__":
