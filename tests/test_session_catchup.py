@@ -10,6 +10,8 @@ The page's own functions run in Node and these check that:
 * there is no line when nothing came after the point, or when fewer than
   three came and all are for the person;
 * Mark read keeps the latest message as the point, and the line goes;
+* a progress check's plain facts name a new or a stopped task;
+* another tab that read further moves this tab's line forward, never back;
 * in Just us only decisions and answers are named, the rest counted as hidden.
 
 Skipped without Node.
@@ -108,6 +110,15 @@ const room = [
   { id: 'r3', from: 'claude', to: 'claude@room-0804cfef', text: 'Thanks.', ts: 4 },
 ];
 out.room = strip(T.catchUp(room, T.readPoint(room, null), false));
+// A progress check's plain facts: a new task and a stopped one are named, linked to the check.
+const digestRoom = room.concat([
+  { id: 'r4', from: 'ensemble', to: 'claude', kind: 'report', reportKind: 'digest', ts: 5,
+    text: "**Progress digest** — plain facts\n\nProject 'X' — changes since 10:00:\n- Grid (#27): new task\n"
+      + "- Layout (room-0804cfef): renamed from 'Old', status running → stopped\n\nTasks now:\n- Grid (#27): running; todo" },
+  { id: 'r5', from: 'user', to: '', kind: 'digest', reportKind: 'digest', ts: 6,
+    text: "[digest] X: Project 'X' — changes since 10:05: - Plot (room-3333aaaa): status running → stopped — details with ensemble_list_tasks." },
+]);
+out.digest = strip(T.catchUp(digestRoom, T.readPoint(digestRoom, null), false));
 
 // Mark read: the latest message is the point, kept for the room, and the line goes.
 T.set(items, { id: 's:3', ts: 121 });
@@ -138,7 +149,7 @@ out.sameTimeFound = T.loadRead();
 const box = { clientHeight: 500, scrollTop: 900, scrollHeight: 5000, line: { offsetTop: 300 },
   querySelector: () => box.line };
 Object.assign(ctx, { $: () => box, nearEnd: () => false, showLatest: () => {}, withTaskBubble: x => x, ROOM_OBJ: null });
-vm.runInContext(`var GOTO = '', GOTO_OPEN = false, STICK = true, CU_OPENED = false, CU_SNAP = null;
+vm.runInContext(`var JUST_US = false, GOTO = '', GOTO_OPEN = false, STICK = true, CU_OPENED = false, CU_SNAP = null;
   globalThis.t.open = (items, link) => { LAST_ITEMS = items; GOTO_OPEN = link; store.clear(); READ_MEM = null; catchUpOpen(); return GOTO_OPEN; };`, Object.assign(ctx, { store }));
 T.open(items, false);
 out.openJump = box.scrollTop;
@@ -148,6 +159,13 @@ out.openLink = box.scrollTop;
 box.line = null; box.scrollTop = 900;
 T.open(items, false);
 out.openNoLine = [box.scrollTop, T.state().point];
+// Another tab read further: the line counts from there, goes at the end, and a point behind changes nothing.
+vm.runInContext(`globalThis.t.elsewhere = (items, point, stored) => { LAST_ITEMS = items; CU_POINT = point; CU_SNAP = { html: 'old' };
+  store.set(READ_KEY(), JSON.stringify(stored)); const d = DRAWS; readElsewhere({ key: READ_KEY() });
+  return { point: CU_POINT, snap: CU_SNAP, drew: DRAWS - d }; };`, ctx);
+out.elsewherePartial = T.elsewhere(items, { id: 's:3', ts: 121 }, { id: 's:7', ts: 141 });
+out.elsewhereEnd = T.elsewhere(items, { id: 's:3', ts: 121 }, { id: 's:14', ts: 171 });
+out.elsewhereBehind = T.elsewhere(items, { id: 's:7', ts: 141 }, { id: 's:3', ts: 121 });
 console.log(JSON.stringify(out));
 """
 
@@ -157,7 +175,7 @@ class CatchUpLine(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         code = (fold_block(SRC) + js_line(SRC, "const READ_KEY = ") + js_function(SRC, "loadRead")
-                + js_function(SRC, "markRead") + js_function(SRC, "catchUpOpen"))
+                + js_function(SRC, "markRead") + js_function(SRC, "catchUpOpen") + js_function(SRC, "readElsewhere"))
         run = subprocess.run([NODE, "-e", JS], input=json.dumps({"code": code}), capture_output=True,
                              text=True, encoding="utf-8", timeout=60)
         assert run.returncode == 0, run.stderr
@@ -205,6 +223,23 @@ class CatchUpLine(unittest.TestCase):
         room = self.out["room"]
         self.assertEqual([p["text"] for p in room["parts"]], ["#26 done", "1 answer to you"])
         self.assertEqual(room["rest"], 1)
+
+    def test_a_progress_check_names_new_and_stopped_tasks(self):
+        d = self.out["digest"]
+        self.assertEqual(d["parts"], [
+            {"text": "#27 new", "mid": "r4"},
+            {"text": "#26 stopped", "mid": "r4"},
+            {"text": "#24 stopped", "mid": "r5"},
+            {"text": "1 answer to you", "mid": "r2"},
+        ])
+        # r1 (#26 done, then stopped) and r3 are counted; r4 and r5 once each as named.
+        self.assertEqual(d["rest"], 2)
+
+    def test_another_tab_read_further(self):
+        o = self.out
+        self.assertEqual(o["elsewherePartial"], {"point": {"id": "s:7", "ts": 141}, "snap": None, "drew": 1})
+        self.assertEqual(o["elsewhereEnd"], {"point": None, "snap": None, "drew": 1})
+        self.assertEqual(o["elsewhereBehind"], {"point": {"id": "s:7", "ts": 141}, "snap": {"html": "old"}, "drew": 0})
 
     def test_just_us(self):
         ju = self.out["justUs"]

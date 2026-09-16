@@ -1885,6 +1885,13 @@ function forPerson(m, N = CHAT_NAMES) {
   return N.po && m.from === N.po && (!m.to || m.to === 'all') ? 'answer' : '';
 }
 const CU_WORD = { completed: 'done', blocked: 'blocked', question: 'asks' };
+// A progress check's plain facts name a new or stopped task by its number or id:
+// "- Title (#63): new task", "- Title (#26): status running → stopped". [[label, word]].
+const CU_DIGEST_RE = /\(((?:#|[A-Za-z][A-Za-z0-9]{0,5}-)\d{1,6}|room-[0-9a-f]+)\): (?:(new task)|(?:renamed from '[^']*', )?status \S+ → (stopped))/g;
+function digestWords(m) {
+  if (!isDigest(m)) return [];
+  return [...String(m.text || '').matchAll(CU_DIGEST_RE)].map(x => [x[1], x[2] ? 'new' : 'stopped']);
+}
 // What changed after the point: null when nothing did, or when fewer than three
 // balloons came and all are for the person (they are in view). Else
 // { ts, mine, first: index of the first, parts: [{ text, mid }], rest, justUs }:
@@ -1900,21 +1907,25 @@ function catchUp(items, point, justUs, N = CHAT_NAMES) {
     if (i > point.i && m && !isLandmark(m) && !isPersons(m)) after.push(i);
   });
   if (!after.length) return null;
+  // A task's last word, by the name the reader knows it by: { i, word }.
   const decisions = [], answers = [], words = new Map();
+  const say = (name, i, word) => { words.delete(name); words.set(name, { i, word }); };
   for (const i of after) {
     const m = items[i], t = taskReport(m), f = forPerson(m, N);
-    if (t && reportBase(m) !== 'update') { words.delete(t); words.set(t, i); }
+    if (t && reportBase(m) !== 'update') say(taskName(t, N), i, CU_WORD[reportBase(m)] || '');
+    digestWords(m).forEach(([t, word]) => say(taskName(t, N), i, word));
     if (f === 'decision' && i > lastPersons) decisions.push(i);
     else if (f) answers.push(i);
   }
   if (after.length < 3 && decisions.length + answers.length === after.length) return null;
-  const named = [...words].filter(([, i]) => CU_WORD[reportBase(items[i])]).sort((a, b) => a[1] - b[1]);
+  const named = [...words].filter(([, w]) => w.word).sort((a, b) => a[1].i - b[1].i);
   const s = n => n === 1 ? '' : 's';
   const parts = [];
   if (decisions.length) parts.push({ text: `${decisions.length} decision${s(decisions.length)} waiting`, mid: items[decisions[0]].id || '' });
-  if (!justUs) named.forEach(([t, i]) => parts.push({ text: taskName(t, N) + ' ' + CU_WORD[reportBase(items[i])], mid: items[i].id || '' }));
+  if (!justUs) named.forEach(([name, w]) => parts.push({ text: name + ' ' + w.word, mid: items[w.i].id || '' }));
   if (answers.length) parts.push({ text: `${answers.length} answer${s(answers.length)} to you`, mid: items[answers[0]].id || '' });
-  const rest = after.length - decisions.length - answers.length - (justUs ? 0 : named.length);
+  // One progress check can name several tasks: count each balloon once.
+  const rest = after.length - decisions.length - answers.length - (justUs ? 0 : new Set(named.map(([, w]) => w.i)).size);
   return { ts: point.ts, mine: point.mine, first: after[0], parts, rest, justUs: !!justUs };
 }
 // "10:05" today, "Sep 14, 10:05" before.
@@ -2158,14 +2169,17 @@ function markRead() {
   }
   if (CU_POINT) { CU_POINT = null; CU_SNAP = null; if (LAST_ITEMS) renderBubbles(LAST_ITEMS); }
 }
-// Another tab read further: a line here with nothing left after that point goes.
+// Another tab read further: the line here counts from that point, or goes when
+// nothing is left after it. A point behind this one changes nothing.
 function readElsewhere(e) {
   if (e.key !== READ_KEY() || !CU_POINT || !LAST_ITEMS) return;
   const stored = loadRead();
   if (!stored) return;
   const items = withTaskBubble(LAST_ITEMS, ROOM_OBJ && ROOM_OBJ.spec, 'from');
-  if (catchUp(items, readPoint(items, stored), JUST_US)) return;
-  CU_POINT = null; CU_SNAP = null;
+  const now = readPoint(items, CU_POINT), then = readPoint(items, stored);
+  if (then.i < now.i || (then.i === now.i && then.ts <= now.ts)) return;
+  CU_POINT = catchUp(items, then, JUST_US) ? stored : null;
+  CU_SNAP = null;
   renderBubbles(LAST_ITEMS);
 }
 window.addEventListener('storage', readElsewhere);
