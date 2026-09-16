@@ -572,7 +572,11 @@
   .msg-fold:focus-visible, .fold-btn:focus-visible, #to-latest:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   .msg-fold.user { border-left:3px solid var(--border-strong); }
   .msg-fold .from { flex:0 0 auto; font-size:var(--fs-100); font-weight:600; text-transform:uppercase; letter-spacing:.04em; color:var(--fg-muted); }
-  .msg-fold .from > .mention { background:transparent; padding:0; color:inherit; text-transform:none; letter-spacing:0; }
+  /* Who writes to whom reads as names ("#26 claude → PO"), not as a shouted label. */
+  .msg .from .who, .msg .from .to, .msg-fold .from .who, .msg-fold .from .to { text-transform:none; letter-spacing:0; }
+  /* A task's folded messages: one row, its summary and the kinds in order. */
+  .msg-fold.grp .gsum { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--fg-subtle); }
+  .msg-fold.grp[aria-expanded="true"] { background:var(--surface-sunken); }
   .msg-fold.claude .from { color:var(--agent-claude-bg); } .msg-fold.codex .from { color:var(--agent-codex-bg); }
   .msg-fold .fl { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   /* What a balloon answers, and hub traffic. The hub's inputs are rows on the
@@ -590,6 +594,7 @@
   .lz { display:inline-block; height:16px; line-height:16px; padding:0 6px; margin-left:var(--s-200); border-radius:var(--r-100);
     font-size:var(--fs-100); font-weight:600; text-transform:uppercase; letter-spacing:.05em; vertical-align:baseline; }
   .lz-warn { background:var(--c-warning-bg); color:var(--c-warning-fg); }
+  .lz-neutral { background:var(--c-neutral-bg); color:var(--c-neutral-fg); }
   /* Over a transcript the hub types into: what is folded, and Just us. */
   #chatbar { flex:0 0 auto; display:flex; align-items:center; gap:var(--s-200); padding:var(--s-050) 12px;
     border-bottom:1px solid var(--border); color:var(--fg-muted); font-size:var(--fs-200); line-height:16px; }
@@ -688,6 +693,8 @@
   #cmt-tray .cmt-item { position:relative; padding:8px 26px 8px 11px; border-bottom:1px solid var(--border); cursor:pointer; }
   #cmt-tray .cmt-item:hover, #cmt-tray .cmt-item.hit { background:var(--hover); }
   #cmt-tray .cmt-item-q { font-size:11px; color:var(--fg-muted); margin-bottom:2px; word-break:break-word; }
+  #cmt-tray .cmt-item-sup { font-size:var(--fs-200); line-height:16px; margin-top:var(--s-050); color:var(--fg-muted); word-break:break-word; }
+  #cmt-tray a.sup-link { color:var(--link); }
   #cmt-tray .cmt-item-n { font-size:12px; color:var(--fg); word-break:break-word; }
   #cmt-tray .cmt-item-x { position:absolute; top:6px; right:6px; background:none; border:none; color:var(--dim); cursor:pointer; font-size:12px; padding:2px 5px; }
   #cmt-tray .cmt-item-x:hover { color:var(--c-danger-fg); }
@@ -695,7 +702,7 @@
   /* Why Submit is off, or why the last send did not arrive. */
   #cmt-tray .cmt-state { padding:8px 12px; border-bottom:1px solid var(--border); font-size:var(--fs-200); line-height:16px; color:var(--fg-muted); }
   #cmt-tray .cmt-state.err { color:var(--c-danger-fg); }
-  .to { font-weight:400; opacity:.6; text-transform:none; }
+  .to { font-weight:400; color:var(--fg-muted); text-transform:none; }
   .mention { color:var(--c-discovery-fg); font-weight:600; background:var(--c-discovery-bg); border-radius:var(--r-100); padding:0 3px; }
   .msg .from .mention { text-transform:none; letter-spacing:0; }
   /* Sender (direct child) keeps its agent colour, no pill; recipient gets the pill. */
@@ -876,10 +883,12 @@ const qs = new URLSearchParams(location.search);
 // ?id= from the dashboard; ?room= (with &msg=) from a link to one of its balloons.
 const ROOM = qs.get('id') || qs.get('room');
 let OPERATOR = 'you';   // how the human ("user") is shown — nickname / git name
-fetch('/api/settings').then(r => r.json()).then(s => { OPERATOR = s.operatorName || s.operatorNickname || 'you'; }).catch(() => {});
+fetch('/api/settings').then(r => r.json()).then(s => {
+  OPERATOR = s.operatorName || s.operatorNickname || 'you';
+  if (CHAT_NAMES.operator !== OPERATOR) { CHAT_NAMES.operator = OPERATOR; refChanged(); }
+}).catch(() => {});
 // The hub's port, so a link to its loopback address can be made this page's.
 fetch('/api/config').then(r => r.json()).then(c => { if (c && c.port) HUB_PORT = String(c.port); }).catch(() => {});
-const identLabel = id => `<span class="mention">@${esc(id === 'user' ? OPERATOR : id)}</span>`;
 if (qs.get('embed')) document.body.classList.add('embed');
 // ?agent=<identity> — arrived from a notification about that specific agent, so
 // land on its terminal rather than on a page with the terminals switched off.
@@ -1183,7 +1192,10 @@ function refInfo(room, msg) {
   return r;
 }
 const refWhen = ts => ts ? new Date(ts * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '';
-const refLabel = r => [r.who, (r.taskNo ? '#' + r.taskNo + ' ' : '') + (r.taskTitle || ''), refWhen(r.ts)].filter(Boolean).join(' · ');
+// Who wrote a linked message, as a balloon header names them ("#26 claude", "PO").
+const refWho = r => !r.from || r.from === 'user' ? r.who
+  : whoName(r.from, r.roomId === ROOM ? CHAT_NAMES : Object.assign({}, CHAT_NAMES, { po: r.isPo ? r.from : '' }));
+const refLabel = r => [refWho(r), (r.taskNo ? '#' + r.taskNo + ' ' : '') + (r.taskTitle || ''), refWhen(r.ts)].filter(Boolean).join(' · ');
 function refPreview(r) {
   const t = stripRefBlocks(r.text).replace(/\s+/g, ' ').trim();
   return t.length > 60 ? t.slice(0, 59) + '…' : t;
@@ -1555,13 +1567,94 @@ const HUB_KIND_LABEL = { digest: 'Progress check', report: 'Report', relay: 'Tea
   resumed: 'Resumed', handover: 'Handover request', rotation: 'New session', helper: 'Restart helper' };
 const isHubInput = m => !!m && m.from === 'user' && !!m.kind && m.kind !== 'human';
 const foldShort = t => { t = String(t || '').trim(); return t.length > 40 ? t.slice(0, 39) + '…' : t; };
+// ---- Who writes to whom ----------------------------------------------------
+// A header names the task, the PO and the person as the reader knows them:
+// "#26 claude → PO", "ceo → PO", "PO → #26 claude", "Hub → PO". No "@": that
+// is an address, for the message box. The page fills CHAT_NAMES: the person's
+// name, the PO's own agent when this is a PO's room, and a task's number from
+// its room id.
+const CHAT_NAMES = { operator: 'you', po: '', taskNo: () => null };
+const TASK_ADDR_RE = /^([^@\s]+)@(room-[\w-]+)$/;
+// A task's number from its title as a report gives it: "26. The screen…" or "#26 …".
+function titleNo(title) {
+  const m = String(title || '').match(/^\s*(?:#(\d{1,6})\b|(\d{1,6})\.\s)/);
+  return m ? +(m[1] || m[2]) : null;
+}
+// A task as a header names it: "#26" (a hub label already is one), else its short id.
+function taskName(id, N = CHAT_NAMES) {
+  id = String(id || '');
+  if (/^(?:#|[A-Za-z][A-Za-z0-9]{0,5}-)\d{1,6}$/.test(id)) return id;
+  const no = /^room-/.test(id) ? N.taskNo(id) : null;
+  return no ? '#' + no : id.replace(/^room-/, '');
+}
+function whoName(id, N = CHAT_NAMES) {
+  id = String(id || '');
+  if (id === 'user') return N.operator;
+  if (id === 'ensemble') return 'Hub';
+  if (N.po && id === N.po) return 'PO';
+  const a = id.match(TASK_ADDR_RE);
+  return a ? taskName(a[2], N) + ' ' + a[1] : id;
+}
+// "completed", "review" (a verdict is in reviewVerdict), "digest", or ''.
+const reportBase = m => String((m && m.reportKind) || '').trim().split(/[\s(]/)[0].toLowerCase();
+// The task a report came from (a room's report, or one the hub typed into a
+// transcript), else ''.
+function taskReport(m) {
+  if (!m || m.kind !== 'report' || !m.taskId || reportBase(m) === 'digest') return '';
+  return m.from !== 'user' || isHubInput(m) ? String(m.taskId) : '';
+}
+// A review's round: in a transcript's kind ("review 2 (approved)"), else the
+// report's first line ("**review 2 — approved** of task …").
+function reviewRound(m) {
+  const k = String(m.reportKind || '');
+  const r = k.match(/^review (\d+)/i) || (reportBase(m) === 'review' ? String(m.text || '').match(/^\W*review (\d+)/i) : null);
+  return r ? +r[1] : 0;
+}
+function reviewVerdict(m) {
+  const v = m.verdict ? String(m.verdict) : (String(m.reportKind || '').match(/\(([^)]*)\)/) || [])[1] || '';
+  return { approve: 'approved', changes_requested: 'changes requested' }[v] || v.replace(/_/g, ' ');
+}
+const isPersons = m => !!m && m.from === 'user' && !isHubInput(m);
+const isDigest = m => !!m && (isHubInput(m) ? m.kind === 'digest' : m.from === 'ensemble' && reportBase(m) === 'digest');
+function senderName(m, N = CHAT_NAMES) {
+  const t = taskReport(m);
+  const s = t && m.from === 'user' ? taskName(t, N) + (m.reporter ? ' ' + m.reporter : '')
+    : isHubInput(m) ? 'Hub' : whoName(m.from, N);
+  const r = t && reportBase(m) === 'review' ? reviewRound(m) : 0;
+  return r ? s + ' · review ' + r : s;
+}
+// Unaddressed, from the person or the hub in a PO's room: the PO reads it.
+function recipientName(m, N = CHAT_NAMES) {
+  if (m.to && m.to !== 'all') return whoName(m.to, N);
+  return N.po && (m.from === 'user' || m.from === 'ensemble') ? 'PO' : '';
+}
+function whoHtml(m, N = CHAT_NAMES) {
+  const hub = m.from === 'ensemble' || (isHubInput(m) && !taskReport(m));
+  const to = recipientName(m, N);
+  return `<span class="who${hub ? ' hub-who' : ''}">${esc(senderName(m, N))}</span>`
+    + (to ? ` <span class="to">→ ${esc(to)}</span>` : '');
+}
+// The agent kind a balloon is coloured by: codex-2@room-… is a codex.
+const agentClass = id => String(id || '').split('@')[0].replace(/-\d+$/, '');
+// What a message of a task is, in a few words: "update", "review 2 changes
+// requested", "completed", "PO ruling", "progress check".
+function kindName(m, N = CHAT_NAMES) {
+  if (isDigest(m)) return 'progress check';
+  if (taskReport(m)) {
+    const b = reportBase(m);
+    return b === 'review' ? ['review', reviewRound(m) || '', reviewVerdict(m)].filter(Boolean).join(' ') : b || 'report';
+  }
+  const who = whoName(m.from, N);
+  if (who === 'PO') return m.to ? 'PO ruling' : 'PO reply';
+  return who;
+}
 // The chip on an agent's balloon: { text, tip }, or null when it is not known.
-function answerChip(a) {
+function answerChip(a, N = CHAT_NAMES) {
   if (!a || !a.kind) return null;
   const task = a.taskTitle ? `task “${a.taskTitle}”${a.taskId ? ' (' + a.taskId + ')' : ''}` : 'a task';
   const said = {
     human: ['to you', 'A reply to your message'],
-    report: [`on a report from ${a.taskTitle ? 'task ' + foldShort(a.taskTitle) : 'a task'}`,
+    report: [`on a report from ${a.taskId ? taskName(a.taskId, N) + (a.reporter ? ' ' + a.reporter : '') : a.taskTitle ? 'task ' + foldShort(a.taskTitle) : 'a task'}`,
       `A reply to a report${a.reportKind ? ' (' + a.reportKind + ')' : ''} from ${task}, which the hub typed in`],
     digest: ['progress check', 'A reply to the hub’s progress check of the project'],
     relay: ['on a team message', 'A reply to the hub saying a teammate posted in the room'],
@@ -1572,13 +1665,14 @@ function answerChip(a) {
   }[a.kind];
   return said ? { text: said[0], tip: said[1] } : null;
 }
-// A hub input's row: what it is, and its words without the hub's header.
+// What a hub input or a task's report is: "Completed", "Changes requested",
+// "Progress check". The sender names the task; its title is the tooltip.
 function hubLabel(m) {
-  if (m.kind === 'report' && m.taskTitle) {   // "Completed · task Docs", "Review 1 (changes requested) · task Docs"
-    const k = m.reportKind ? m.reportKind[0].toUpperCase() + m.reportKind.slice(1) : 'Report';
-    const no = /^#\d+$/.test(m.taskId || '') ? m.taskId + ' ' : '';   // the hub names a task by its number
-    return `${k} · task ${no}${foldShort(m.taskTitle)}`;
+  if (taskReport(m)) {
+    const k = reportBase(m) === 'review' ? reviewVerdict(m) || 'review' : reportBase(m) || 'report';
+    return k[0].toUpperCase() + k.slice(1);
   }
+  if (isDigest(m)) return 'Progress check';
   return HUB_KIND_LABEL[m.kind] || 'From the hub';
 }
 // A report's words start after its header, found from the parsed task: a title
@@ -1616,33 +1710,114 @@ function foldUnanswered(items) {
 }
 // A balloon's header after who wrote it: what it answers, a decision (the one
 // lozenge), or that a message of the person's has had no answer.
-function foldChips(m, un, idle) {
+function foldChips(m, un, idle, superseded) {
   let h = '';
-  if (isHubInput(m)) h += `<span class="hub-kind">${esc(hubLabel(m))}</span>`;
+  if (isHubInput(m) || taskReport(m) || isDigest(m))
+    h += `<span class="hub-kind"${m.taskTitle ? ` title="${esc(m.taskTitle)}"` : ''}>${esc(hubLabel(m))}</span>`;
   const a = m.from !== 'user' ? answerChip(m.answers) : null;
   if (a) h += `<span class="answers" title="${esc(a.tip)}">${esc(a.text)}</span>`;
   if (isDecision(m)) h += '<span class="lz lz-warn">needs your decision</span>';
+  if (superseded) h += '<span class="lz lz-neutral" title="A later message from the same task stands in its place">superseded</span>';
   if (un === 'past' || (un === 'last' && idle))
     h += '<span class="no-answer" title="The agent wrote nothing back before its next input">no answer yet</span>';
   return h;
 }
-// One balloon drawn as a row or in full. o: { md, open, un, idle }. The same
-// item draws the same markup, so a poll keeps its element (patchChildren).
+// One balloon drawn as a row or in full. o: { md, open, un, idle, superseded }.
+// The same item draws the same markup, so a poll keeps its element (patchChildren).
 function foldBalloonHtml(m, i, how, o) {
   const key = esc(foldKey(m, i));
   const hub = isHubInput(m);
-  const cls = (m.from === 'user' ? 'user' : esc(m.from)) + (hub ? ' hub' : '');
-  const who = hub ? '<span class="hub-who">Hub</span>' : identLabel(m.from);
-  const to = m.to && m.to !== 'all' ? ` <span class="to">→ ${identLabel(m.to)}</span>` : '';
-  const chips = foldChips(m, o.un, o.idle);
+  const cls = (m.from === 'user' ? 'user' : esc(agentClass(m.from))) + (hub ? ' hub' : '');
+  const who = whoHtml(m);
   if (how === 'row') {
+    const chips = foldChips(m, o.un, o.idle, o.superseded);
     // o.plain: the line's words as the reader sees them (a balloon link as its chip's words).
     const line = hub ? hubBody(m) : m.text;
-    return `<button type="button" class="msg-fold ${cls}" data-key="${key}" data-mid="${esc(m.id || '')}" aria-expanded="false" title="Open this message"><span class="from">${who}${to}</span>${chips ? `<span class="chips">${chips}</span>` : ''}<span class="fl">${esc(foldLine(o.plain ? o.plain(line) : line))}</span></button>`;
+    return `<button type="button" class="msg-fold ${cls}" data-key="${key}" data-mid="${esc(m.id || '')}" aria-expanded="false" title="Open this message"><span class="from">${who}</span>${chips ? `<span class="chips">${chips}</span>` : ''}<span class="fl">${esc(foldLine(o.plain ? o.plain(line) : line))}</span></button>`;
   }
+  const chips = foldChips(m, o.un, o.idle);
   const fb = o.open ? '<button type="button" class="fold-btn" title="Fold this message again" aria-expanded="true">Fold</button>' : '';
   // o.act: the balloon's own action in its header (Copy link).
-  return `<div class="msg ${cls}" data-mid="${esc(m.id || '')}" data-key="${key}" data-from="${esc(m.from || '')}"><div class="from">${fb}${o.act ? o.act(m) : ''}${who}${to}${chips}</div><div class="text md">${o.md(m.text)}</div></div>`;
+  return `<div class="msg ${cls}" data-mid="${esc(m.id || '')}" data-key="${key}" data-from="${esc(m.from || '')}"><div class="from">${fb}${o.act ? o.act(m) : ''}${who}${chips}</div><div class="text md">${o.md(m.text)}</div></div>`;
+}
+// ---- A task's older messages fold under its latest -------------------------
+// Between two of the person's own messages, what belongs to one task (its
+// reports, the reviews of it, what the PO wrote to it) is one row, and the
+// progress checks are one row. The latest word of a task that needs reading
+// (completed, a question, blocked, a decision) stays in view below its row.
+const DIGESTS = '~digests';
+// The task a message belongs to ('' for none); a transcript's reply to a
+// report belongs to the report's task.
+function taskOfMsg(m) {
+  if (!m || isLandmark(m) || isPersons(m)) return '';
+  const t = taskReport(m);
+  if (t) return t;
+  const to = String(m.to || '').match(TASK_ADDR_RE);
+  if (to) return to[2];
+  const a = m.from !== 'user' && m.answers;
+  return a && a.kind === 'report' && a.taskId ? String(a.taskId) : '';
+}
+const STANDS = ['completed', 'question', 'blocked'];
+const standsAlone = m => (!!taskReport(m) && STANDS.includes(reportBase(m))) || isDecision(m);
+// [{ key, task, hidden: [i…], stand: i or -1, at: where its row goes }], only
+// where two messages or more would fold. kept(m, i): never folded (drawn in
+// view while the reader is scrolled up, or holding a comment).
+function chatGroups(items, kept) {
+  const out = [];
+  let open = new Map();
+  const flush = () => {
+    open.forEach((members, task) => {
+      const last = members[members.length - 1];
+      const stand = task !== DIGESTS && standsAlone(items[last]) ? last : -1;
+      const hidden = members.filter(i => i !== stand && !(kept && kept(items[i], i)));
+      if (hidden.length < 2) return;
+      out.push({ key: 'g:' + task + ':' + foldKey(items[members[0]], members[0]), task, hidden, stand,
+                 at: stand >= 0 ? stand : hidden[hidden.length - 1] });
+    });
+    open = new Map();
+  };
+  items.forEach((m, i) => {
+    if (isPersons(m)) { flush(); return; }
+    const task = isDigest(m) ? DIGESTS : taskOfMsg(m);
+    if (!task) return;
+    const list = open.get(task);
+    if (list) list.push(i); else open.set(task, [i]);
+  });
+  flush();
+  return out.sort((a, b) => a.at - b.at);
+}
+const chatTime = ts => ts ? new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+// A group's row: "#26 · 9 messages · latest: completed 10:05", then the kinds in
+// order; "Hub · 5 progress checks · latest 10:10".
+function groupRowHtml(g, items, open, N = CHAT_NAMES) {
+  const all = g.hidden.concat(g.stand >= 0 ? [g.stand] : []);
+  const last = items[all[all.length - 1]], when = chatTime(last.ts);
+  const digests = g.task === DIGESTS;
+  const who = digests ? 'Hub' : taskName(g.task, N);
+  const sum = digests ? `${all.length} progress checks${when ? ' · latest ' + when : ''}`
+    : `${all.length} messages · latest: ${kindName(last, N)}${when ? ' ' + when : ''}`;
+  const kinds = digests ? '' : all.map(i => kindName(items[i], N)).join(' · ');
+  const title = (open ? 'Fold these messages again' : `Show these ${all.length} messages`)
+    + (!digests && last.taskTitle ? ` (${last.taskTitle})` : '');
+  return `<button type="button" class="msg-fold grp${digests ? ' user hub' : ''}" data-key="${esc(g.key)}" data-group="${esc(g.key)}" aria-expanded="${open}" title="${esc(title)}">`
+    + `<span class="from"><span class="who${digests ? ' hub-who' : ''}">${esc(who)}</span></span><span class="gsum">${esc(sum)}</span>${kinds ? `<span class="fl gkinds">${esc(kinds)}</span>` : ''}</button>`;
+}
+// A message a later one stands in place of: the task's latest report after a
+// report, the latest progress check after a check. index → that later index.
+function supersededMap(items) {
+  const last = new Map(), out = new Map();
+  for (let i = items.length - 1; i >= 0; i--) {
+    const k = isDigest(items[i]) ? DIGESTS : taskReport(items[i]);
+    if (!k) continue;
+    if (last.has(k)) out.set(i, last.get(k)); else last.set(k, i);
+  }
+  return out;
+}
+// "Superseded: #26 reported completed at 10:05".
+function supersededText(m, N = CHAT_NAMES) {
+  const when = chatTime(m.ts), at = when ? ' at ' + when : '';
+  return isDigest(m) ? `Superseded: a later progress check${at}`
+    : `Superseded: ${taskName(taskReport(m), N)} reported ${kindName(m, N)}${at}`;
 }
 // The "Latest ↓" control: a decision waiting beats a count of new balloons.
 function latestLabel(newN, decN) {
@@ -1653,7 +1828,10 @@ function latestLabel(newN, decN) {
   return { label: 'Latest ↓', tip: 'Go to the latest message' };
 }
 // ---- Folding a long conversation: end
-let FOLD = { base: null, open: new Set() };
+let FOLD = { base: null, open: new Set(), groups: new Set(), hid: null };
+let GROUP_OF_MID = new Map();   // a folded message's id → its group's key, to land on it
+let CHAT_VIEW = null;           // { items, sup }: what was drawn, for the comment tray
+const ROOM_NOS = new Map();     // a task's room id → { no }: its number, once known
 let STICK = true;          // at the end of the chat: new messages keep it there
 let LAST_ITEMS = null;     // what was last drawn, to draw it again after a click
 let SEEN = new Set(), NEW_N = 0;   // balloons seen at the end; how many came since
@@ -1694,8 +1872,30 @@ function renderBubbles(items, opt = {}) {
   const heldKeys = foldHeld(items, COMMENTS);
   const held = heldKeys.size ? (m, i) => heldKeys.has(foldKey(m, i)) : null;
   const quiet = (m, i) => quietItem(m, JUST_US);
+  const prevBase = stick ? null : FOLD.base, prevHid = FOLD.hid || new Set();
   const plan = foldPlan(items, FOLD, stick, held, quiet);
   const unanswered = foldUnanswered(items);
+  // A task's messages fold under one row. Scrolled up, nothing drawn in view
+  // folds into a group: only what was in one stays, and what arrives joins.
+  const drawnBefore = !!prevBase && items.some((m, i) => prevBase.has(foldKey(m, i)));
+  const groups = chatGroups(items, (m, i) => {
+    const k = foldKey(m, i);
+    return (held && held(m, i)) || (drawnBefore && prevBase.has(k) && !prevHid.has(k));
+  });
+  const groupAt = new Map(), hiddenIn = new Map();
+  GROUP_OF_MID = new Map();
+  for (const g of groups) {
+    groupAt.set(g.at, g);
+    g.hidden.forEach(i => { hiddenIn.set(i, g); if (items[i].id) GROUP_OF_MID.set(items[i].id, g.key); });
+  }
+  FOLD.hid = new Set([...hiddenIn.keys()].map(i => foldKey(items[i], i)));
+  FOLD.groups.forEach(k => { if (!groups.some(g => g.key === k)) FOLD.groups.delete(k); });
+  const sup = supersededMap(items);
+  CHAT_VIEW = { items, sup };
+  items.forEach((m, i) => {
+    const no = m.taskNo || titleNo(m.taskTitle);
+    if (no && /^room-/.test(m.taskId || '')) ROOM_NOS.set(m.taskId, { no });
+  });
   // A balloon's markdown is drawn once and reused while its text, and what its
   // links depend on, stay the same: every poll used to redraw every balloon.
   const ctx = HUB_PORT + '|' + fileBase() + '|' + ROOM + '|' + REF_GEN;
@@ -1705,18 +1905,35 @@ function renderBubbles(items, opt = {}) {
   let folded = 0, quietRows = 0;
   const firstFull = plan.indexOf('full');
   const keys = [], decKeys = [];
-  const rows = items.map((m, i) => {
+  const balloon = (m, i) => {
     const k = foldKey(m, i);
-    if (plan[i] === 'line') {
-      return `<div class="rot-line" role="separator" data-mid="${esc(m.id || '')}" data-key="${esc(k)}"><span>${esc(rotationText(m.rotation || m.divider))}</span></div>`;
-    }
     keys.push(k);
     if (isDecision(m)) decKeys.push(k);
+    return foldBalloonHtml(m, i, plan[i], { md, open: FOLD.open.has(k), un: unanswered.get(k), idle: SOLO_IDLE,
+      act: copyLinkHtml, plain: refPlain, superseded: sup.has(i) });
+  };
+  const rows = [];
+  items.forEach((m, i) => {
+    const k = foldKey(m, i);
+    const g = groupAt.get(i);
+    if (g) {
+      // Its row, and when opened the group in order under it: "Latest ↓" counts
+      // the row, not what is folded in it.
+      const open = FOLD.groups.has(g.key);
+      keys.push(g.key);
+      rows.push(groupRowHtml(g, items, open));
+      if (open) g.hidden.forEach(j => rows.push(balloon(items[j], j)));
+    }
+    if (hiddenIn.has(i)) { if (quiet(m, i)) quietRows++; return; }
+    if (plan[i] === 'line') {
+      rows.push(`<div class="rot-line" role="separator" data-mid="${esc(m.id || '')}" data-key="${esc(k)}"><span>${esc(rotationText(m.rotation || m.divider))}</span></div>`);
+      return;
+    }
     if (plan[i] === 'row') {
       if (quiet(m, i)) quietRows++;
       else if (firstFull < 0 || i < firstFull) folded++;
     }
-    return foldBalloonHtml(m, i, plan[i], { md, open: FOLD.open.has(k), un: unanswered.get(k), idle: SOLO_IDLE, act: copyLinkHtml, plain: refPlain });
+    rows.push(balloon(m, i));
   });
   // Never an absence without its reason: the rows say what they are.
   if (folded) rows.unshift(`<div class="fold-note" data-key="fold-note">${folded} earlier message${folded > 1 ? 's' : ''} folded. Click one to read it.</div>`);
@@ -1735,7 +1952,7 @@ function renderBubbles(items, opt = {}) {
   const hubHeld = ROOM_PENDING && ROOM_PENDING.items ? ROOM_PENDING.items : [];
   const failed = !!ROOM_PENDING && ROOM_PENDING.state === 'failed';
   hubHeld.forEach((p, i) => rows.push(
-    `<div class="msg user pending${failed ? ' failed' : ''}" data-from="user" data-key="held-${i}"><div class="from">${identLabel('user')}${p.to ? ' → ' + esc(p.to) : ''}</div><div class="text md">${md(p.text)}</div>`
+    `<div class="msg user pending${failed ? ' failed' : ''}" data-from="user" data-key="held-${i}"><div class="from">${whoHtml({ from: 'user', to: p.to || '' })}</div><div class="text md">${md(p.text)}</div>`
     + (failed && i === hubHeld.length - 1
       ? `<div class="pend-state" role="status">Not delivered: ${esc(ROOM_PENDING.error || 'the session did not come up')}. <button type="button" class="pend-retry">Retry</button><button type="button" class="pend-discard">Discard</button></div>`
       : '') + '</div>'));
@@ -1746,7 +1963,7 @@ function renderBubbles(items, opt = {}) {
     && items.length <= p.n
     && (nowS - p.ts) < 120);
   PENDING_USER.forEach(p => rows.push(
-    `<div class="msg user pending" data-from="user"><div class="from">${identLabel('user')}</div><div class="text md">${md(p.text)}</div></div>`));
+    `<div class="msg user pending" data-from="user"><div class="from">${whoHtml({ from: 'user', to: '' })}</div><div class="text md">${md(p.text)}</div></div>`));
   patchChildren(box, rows);
   MD_CACHE = used;
   if (stick) {
@@ -1844,6 +2061,28 @@ function foldToggle(el, open) {
     if (f) f.focus({ preventScroll: true });
   }
 }
+// Open a task's folded group in place, or fold it again.
+function groupToggle(el) {
+  const key = el.dataset.group; if (!key) return;
+  const focused = el.contains(document.activeElement);
+  if (FOLD.groups.has(key)) FOLD.groups.delete(key); else FOLD.groups.add(key);
+  const box = $('#msgs');
+  if (LAST_ITEMS) renderBubbles(LAST_ITEMS, { anchor: el });
+  STICK = nearEnd(box);
+  showLatest();
+  if (focused) {
+    const now = [...box.children].find(k => k.dataset.key === key);
+    if (now) now.focus({ preventScroll: true });
+  }
+}
+// A message folded in a group: its group opens, drawn around the group's row.
+function openGroupOf(box, mid) {
+  const key = GROUP_OF_MID.get(mid);
+  if (!key || FOLD.groups.has(key) || !LAST_ITEMS) return;
+  FOLD.groups.add(key);
+  const row = [...box.children].find(k => k.dataset.group === key);
+  renderBubbles(LAST_ITEMS, row ? { anchor: row } : {});
+}
 function renderMsgs(room) { CHAT_DRAWN = true; renderBubbles(room.messages); }
 // ---- Copy link, and landing on a linked balloon ----------------------------
 let CHAT_DRAWN = false;    // the conversation itself has been drawn, not just the page
@@ -1922,6 +2161,7 @@ function landPending() {
   try {
     const mid = GOTO;
     const find = sel => [...box.querySelectorAll(sel)].find(e => e.dataset.mid === mid);
+    if (!find('.msg[data-mid], .msg-fold[data-mid]')) openGroupOf(box, mid);
     let el = find('.msg[data-mid]');
     const row = !el && find('.msg-fold[data-mid]');
     if (row) {
@@ -1986,7 +2226,7 @@ function showPendingUser(text) {
   PENDING_USER.push({ text: t, ts: Date.now() / 1000 });
   const box = $('#msgs'); if (!box) return;
   box.insertAdjacentHTML('beforeend',
-    `<div class="msg user pending" data-from="user"><div class="from">${identLabel('user')}</div><div class="text md">${mdToHtml(t)}</div></div>`);
+    `<div class="msg user pending" data-from="user"><div class="from">${whoHtml({ from: 'user', to: '' })}</div><div class="text md">${mdToHtml(t)}</div></div>`);
   // At the end the chat follows what you sent. Scrolled up, your place stays:
   // the echo is added below it, and "Latest ↓" is the way down.
   if (STICK) box.scrollTop = box.scrollHeight;
@@ -2018,13 +2258,38 @@ function rotationText(r) {
 // and its place in it: it stays the same when the turn moves above a rotation
 // line, and no other session's turn ever has it, so a fold, an opened balloon
 // or a comment never lands on another session's text.
+// A task's number from its room id, asked of the hub once: headers say "#26".
+CHAT_NAMES.taskNo = rid => {
+  const r = ROOM_NOS.get(rid);
+  if (r) return r.no;
+  ROOM_NOS.set(rid, { no: null });
+  fetch('/api/task/ref?ref=' + encodeURIComponent(rid)).then(res => res.ok ? res.json() : null)
+    .then(d => { if (d && d.no) { ROOM_NOS.set(rid, { no: d.no }); refChanged(); } }).catch(() => {});
+  return null;
+};
+// Whether this chat is a project's PO, and which of its agents is the PO: in a
+// solo chat its agent; in a room the one tasks report to, else its first agent.
+let PO_ROOMS = null;
+fetch('/api/projects').then(r => r.json()).then(d => {
+  PO_ROOMS = new Set(((d && d.projects) || []).map(p => p.poRoomId).filter(Boolean));
+  if (ROOM_OBJ) chatNamesFor(ROOM_OBJ, SOLO_MODE);
+}).catch(() => {});
+function chatNamesFor(room, solo) {
+  let po = '';
+  if (PO_ROOMS && PO_ROOMS.has(ROOM)) {
+    const agents = (room.participants || []).filter(p => p.kind === 'agent');
+    const rep = solo ? null : (room.messages || []).slice().reverse().find(m => m.kind === 'report' && m.to && m.to !== 'user' && m.to !== 'all');
+    po = solo ? ((agents[0] && agents[0].identity) || 'claude') : rep ? rep.to : (agents[0] && agents[0].identity) || '';
+  }
+  if (po !== CHAT_NAMES.po) { CHAT_NAMES.po = po; refChanged(); }
+}
 function soloItems(raw, sid, agentId, keep) {
   const turns = raw.filter((t, i) => i === 0 || t.role !== raw[i - 1].role || t.text !== raw[i - 1].text);
   const off = Math.max(0, turns.length - keep);
   return turns.slice(off).map((t, i) => Object.assign({
     id: sid + ':' + (off + i),
     from: (t.role === 'user') ? 'user' : agentId, to: '', text: t.text,
-  }, t.role === 'user' ? { kind: t.kind || 'human', reportKind: t.reportKind, taskTitle: t.taskTitle, taskId: t.taskId, reporter: t.reporter }
+  }, t.timestamp ? { ts: Date.parse(t.timestamp) / 1000 } : {}, t.role === 'user' ? { kind: t.kind || 'human', reportKind: t.reportKind, taskTitle: t.taskTitle, taskId: t.taskId, reporter: t.reporter }
     : t.answers ? { answers: t.answers } : {}));
 }
 async function prevSessionItems(sid, agentId) {
@@ -2172,6 +2437,7 @@ async function refresh() {
   ROOM_LIVE = !notRunning;
   ROOM_OBJ = room;
   SOLO_MODE = soloMode;
+  chatNamesFor(room, soloMode);
   const cwd = room.cwd || '';
   ensureTheme(cwd);
   setHtml($('#info'),
@@ -2923,6 +3189,14 @@ function cmtSubmitState() {
   if (CMT_UNSTORED.size) s.note = (s.note ? s.note + ' ' : '') + 'This browser would not save some of them, so reloading this page would lose those.';
   return s;
 }
+// Under a comment on a message a later one stands in place of: that later one, as a link.
+function cmtSupHtml(c) {
+  if (!CHAT_VIEW || !ROOM) return '';
+  const i = CHAT_VIEW.items.findIndex(m => m.id === c.mid);
+  const j = i < 0 ? undefined : CHAT_VIEW.sup.get(i), later = j === undefined ? null : CHAT_VIEW.items[j];
+  if (!later || !later.id) return '';
+  return `<div class="cmt-item-sup"><a class="sup-link" href="${esc(refHref(ROOM, later.id))}" data-ref-room="${esc(ROOM)}" data-ref-msg="${esc(later.id)}">${esc(supersededText(later))}</a></div>`;
+}
 function renderCmtTray() {
   let tray = document.getElementById('cmt-tray');
   if (!COMMENTS.length) { CMT_ERROR = ''; if (tray) tray.remove(); return; }
@@ -2932,7 +3206,7 @@ function renderCmtTray() {
     + (s.note ? `<div class="cmt-state${s.err ? ' err' : ''}" role="status">${esc(s.note)}</div>` : '')
     + '<div class="cmt-list">' + COMMENTS.map(c => `<div class="cmt-item" data-cid="${esc(c.cid)}">`
       + `<div class="cmt-item-q">${esc('“' + (c.quote.length > 60 ? c.quote.slice(0, 60) + '…' : c.quote) + '”')}</div>`
-      + `<div class="cmt-item-n">${esc(c.note)}</div><button class="cmt-item-x" title="Remove">✕</button></div>`).join('')
+      + `<div class="cmt-item-n">${esc(c.note)}</div>${cmtSupHtml(c)}<button class="cmt-item-x" title="Remove">✕</button></div>`).join('')
     + '</div>';
   if (!tray) {
     tray = document.createElement('div'); tray.id = 'cmt-tray';
@@ -2950,6 +3224,7 @@ function renderCmtTray() {
 }
 function cmtTrayClick(e) {
   const t = e.target;
+  if (t.closest('a')) return;   // a superseded line's link lands on the later message
   if (t.closest('.cmt-submit')) { submitComments(); return; }
   if (t.closest('.cmt-clear')) { cmtRemove(COMMENTS.map(c => c.cid)); return; }
   const item = t.closest('.cmt-item');
@@ -2960,6 +3235,7 @@ function cmtTrayClick(e) {
   // Its passage is in a folded balloon the quote could not be matched to: open
   // the balloon it was made on.
   const c = !mk && COMMENTS.find(x => x.cid === cid);
+  if (c) openGroupOf(document.getElementById('msgs'), c.mid);
   const row = c && [...document.querySelectorAll('#msgs .msg-fold')].find(r => r.dataset.mid === c.mid);
   if (row) {
     const key = row.dataset.key;
@@ -3022,6 +3298,8 @@ $('#msgs').addEventListener('click', e => {
   if (cl) { copyLink(cl); return; }
   const m = e.target.closest && e.target.closest('mark.cmt-hl');
   if (m) showTrayItem(m.dataset.cid);
+  const grp = e.target.closest && e.target.closest('.msg-fold[data-group]');
+  if (grp) { groupToggle(grp); return; }
   const row = e.target.closest && e.target.closest('.msg-fold');
   if (row) { foldToggle(row, true); return; }
   const fb = e.target.closest && e.target.closest('.fold-btn');
@@ -3088,7 +3366,7 @@ document.addEventListener('click', ev => {
 // the dashboard, the dashboard opens that task or PO at it; on its own, this
 // page goes there. With a modifier key it is a link, opening a new tab.
 document.addEventListener('click', ev => {
-  const a = ev.target.closest && ev.target.closest('a.ref-chip');
+  const a = ev.target.closest && ev.target.closest('a.ref-chip, a.sup-link');
   if (!a || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
   ev.preventDefault();
   const room = a.dataset.refRoom, msg = a.dataset.refMsg;

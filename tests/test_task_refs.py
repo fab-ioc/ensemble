@@ -102,8 +102,8 @@ const lines = %s;
   Date.now = realNow;
   console.log(JSON.stringify({ first, second, again, notTasks, ttl, fetches: fetches.slice(0, asked), redraws,
     stripped: lines.map(stripRefBlocks),
-    report: hubLabel({ kind: 'report', taskTitle: 'Docs', taskId: '#18', reportKind: 'completed' }),
-    oldReport: hubLabel({ kind: 'report', taskTitle: 'Docs', taskId: 'room-1a2b3c4d', reportKind: 'completed' }) }));
+    report: [hubLabel, senderName].map(f => f({ from: 'user', kind: 'report', taskTitle: 'Docs', taskId: '#18', reporter: 'claude', reportKind: 'completed' })),
+    oldReport: [hubLabel, senderName].map(f => f({ from: 'user', kind: 'report', taskTitle: 'Docs', taskId: 'room-1a2b3c4d', reporter: 'claude', reportKind: 'completed' })) }));
 })();
 """
 
@@ -117,8 +117,9 @@ class SessionChips(unittest.TestCase):
             const(SESSION, "REF_URL_RE"), const(SESSION, "REF_A"), const(SESSION, "REF_MARK_RE"),
             const(SESSION, "REF_BLOCK_RE"), fn(SESSION, "stripRefBlocks"), fn(SESSION, "refOfUrl"),
             block(SESSION, "// ---- Task references: begin", "// ---- Task references: end"),
-            fn(SESSION, "mdToHtml"), const(SESSION, "foldShort"),
+            fn(SESSION, "mdToHtml"),
             SESSION[SESSION.index("const HUB_KIND_LABEL"):SESSION.index("};\n", SESSION.index("const HUB_KIND_LABEL")) + 3],
+            SESSION[SESSION.index("const isHubInput"):SESSION.index("// The chip on an agent's balloon")],
             fn(SESSION, "hubLabel")])
         task = {"label": "#18", "title": 'Beta "quoted"', "status": "running", "workflowName": "In progress",
                 "agents": [{"identity": "claude", "role": "engineer"}], "branch": "sess/b",
@@ -165,8 +166,9 @@ class SessionChips(unittest.TestCase):
         self.assertEqual(self.r["stripped"], ["Look at @codex@18", "see #18 and @codex@18", self.lines[2]])
 
     def test_a_report_row_names_its_task_by_number(self):
-        self.assertEqual(self.r["report"], "Completed · task #18 Docs")
-        self.assertEqual(self.r["oldReport"], "Completed · task Docs")
+        self.assertEqual(self.r["report"], ["Completed", "#18 claude"])
+        # A room id the page has no number for yet: its short id.
+        self.assertEqual(self.r["oldReport"], ["Completed", "1a2b3c4d claude"])
 
     def test_the_page_uses_them(self):
         self.assertIn("s = parkTaskRefs(s, chips);", fn(SESSION, "mdToHtml"))

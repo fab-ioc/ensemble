@@ -48,6 +48,7 @@ const SOLO_PREV = new Map();
 const PREV_TURNS_SHOWN = 60;
 let _cmtComposerOpen = false, _selBtn = null, STICK = false, LAST_ITEMS = [];
 const FOLD = { open: new Set() };
+let GROUP_OF_MID = new Map();
 // A retry of the transcript runs at once; the landed mark's fade never ends.
 const setTimeout = (f, ms, ...a) => { if (f === renderSolo) setImmediate(() => f(...a)); return 0; };
 const clearTimeout = () => {};
@@ -164,7 +165,7 @@ TAIL = r"""
 def run_scenario(name: str) -> dict:
     code = "\n".join([HARNESS, js_const("REF_BLOCK_RE"), js_const("TASK_BLOCK_RE")] + [js_function(n) for n in (
         "stripRefBlocks", "soloItems", "prevSessionItems", "soloOwns", "soloWantFailed", "checkSolo",
-        "renderSolo", "landPending", "markLanded")]
+        "renderSolo", "openGroupOf", "landPending", "markLanded")]
         + [SCENARIOS[name], TAIL])
     res = subprocess.run([NODE, "-"], input=code, capture_output=True, text=True, encoding="utf-8", timeout=30)
     assert res.returncode == 0, res.stderr

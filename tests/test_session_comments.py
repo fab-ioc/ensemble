@@ -237,7 +237,7 @@ const tick = () => new Promise(r => setTimeout(r, 5));
 class ReviewComments(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        code = (STORE + "\n".join(js_function(SRC, n) for n in (
+        code = ("let CHAT_VIEW = null;\n" + STORE + "\n".join(js_function(SRC, n) for n in (
             "sendSolo", "sendResuming", "needsResume", "hasMessageRefs", "refOfUrl", "orResume", "postOk",
             "sendErrorText"))
                 + comments_block(SRC))
