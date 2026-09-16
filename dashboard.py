@@ -1382,7 +1382,7 @@ def _claude_image_source(turn: dict, meta: dict) -> None:
     chat's attachments folder, the turn gets its ``[image] <path>`` line back,
     so its balloon shows the thumbnail as for any other agent."""
     msg = meta.get("message")
-    m = _CLAUDE_IMAGE_SOURCE.match((_extract_text(msg.get("content")) if isinstance(msg, dict) else "").strip())
+    m = _CLAUDE_IMAGE_SOURCE.match(((_extract_text(msg.get("content")) if isinstance(msg, dict) else "") or "").strip())
     if not m:
         return
     path = m.group(1).strip()
