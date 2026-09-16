@@ -13,6 +13,7 @@ this module has no import-time dependency on the server.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import threading
 import time
@@ -49,7 +50,73 @@ MIN_INTERVAL_MIN = 5
 # Kept out of the backup whatever the .gitignore says (the user may have edited
 # theirs): a documents project's own file history (history.py) is a git
 # database of the same files the backup already carries.
-LOCAL_EXCLUDES = ("**/.history/",)
+# Agent and hub state that a throwaway test hub leaves inside a task folder
+# (a scratch home with .claude/, AppData/) is not project content either, and
+# its paths run past Windows' 260 characters.
+LOCAL_EXCLUDES = ("**/.history/", "**/.claude/", "**/.codex/", "**/.ensemble/", "**/AppData/",
+                  "**/.local/")
+# Folders never walked when looking for nested repositories (excluded, ignored
+# or huge by design).
+_NO_WALK = {".git", ".history", ".claude", ".codex", ".ensemble", "AppData", ".local", "repo",
+            "node_modules", "__pycache__", ".venv"}
+# A file above this is not a document: a build, a binary, a market-data
+# capture. GitHub refuses files over 100 MB and warns from 50.
+MAX_FILE_MB = 20
+
+
+def _exclude_pattern(rel: str) -> str:
+    """One anchored .git/info/exclude line for a path relative to the root."""
+    out = "".join("\\" + ch if ch in "\\[]*?#!" else ch for ch in rel)
+    return "/" + out
+
+
+def scan(root: Path, max_depth: int = 8, max_file_mb: int | None = None) -> tuple[list[str], list[str]]:
+    """Walk ``root`` and return ``(nested, oversize)``: git repositories below
+    it (a folder with its own .git) and files above ``max_file_mb``, both as
+    slash-separated paths relative to root. ``git add -A`` fails on a repo that
+    has no commit yet and records a useless pointer for one that has, so the
+    backup keeps them out; a task's code lives in its own remote anyway."""
+    nested: list[str] = []
+    oversize: list[str] = []
+    root_s = str(root)
+    cap = (MAX_FILE_MB if max_file_mb is None else max_file_mb) * 1024 * 1024
+    for cur, dirs, files in os.walk(root_s):
+        rel = os.path.relpath(cur, root_s)
+        depth = 0 if rel == "." else rel.count(os.sep) + 1
+        if depth and (".git" in dirs or ".git" in files):
+            nested.append(rel.replace(os.sep, "/"))
+            dirs[:] = []
+            continue
+        if depth >= max_depth:
+            dirs[:] = []
+            continue
+        dirs[:] = [d for d in dirs if d not in _NO_WALK]
+        for f in files:
+            try:
+                if os.path.getsize(os.path.join(cur, f)) > cap:
+                    oversize.append((f if rel == "." else rel.replace(os.sep, "/") + "/" + f))
+            except OSError:
+                pass
+    return nested, oversize
+
+
+def nested_repos(root: Path, max_depth: int = 8) -> list[str]:
+    return scan(root, max_depth)[0]
+
+
+def _add_excludes(root: Path, lines: list[str]) -> str | None:
+    """Append the lines missing from .git/info/exclude; the error text if any."""
+    ex = root / ".git" / "info" / "exclude"
+    try:
+        have = ex.read_text(encoding="utf-8") if ex.is_file() else ""
+        missing = [p for p in lines if p not in have.splitlines()]
+        if missing:
+            ex.parent.mkdir(parents=True, exist_ok=True)
+            ex.write_text(have + ("" if not have or have.endswith("\n") else "\n")
+                          + "\n".join(missing) + "\n", encoding="utf-8")
+    except OSError as e:
+        return f"exclude not written: {e}"
+    return None
 
 
 def _git(root: Path, *args: str, timeout: int = 120) -> subprocess.CompletedProcess:
@@ -75,16 +142,13 @@ def ensure_repo(root: Path, remote: str = "") -> dict:
         if r.returncode != 0:
             return {"ok": False, "notes": ["git init failed: " + (r.stderr or "").strip()[:200]]}
         notes.append("initialised repo")
-    ex = root / ".git" / "info" / "exclude"
-    try:
-        have = ex.read_text(encoding="utf-8") if ex.is_file() else ""
-        missing = [p for p in LOCAL_EXCLUDES if p not in have.splitlines()]
-        if missing:
-            ex.parent.mkdir(parents=True, exist_ok=True)
-            ex.write_text(have + ("" if not have or have.endswith("\n") else "\n")
-                          + "\n".join(missing) + "\n", encoding="utf-8")
-    except OSError as e:
-        notes.append(f"exclude not written: {e}")
+    err = _add_excludes(root, list(LOCAL_EXCLUDES))
+    if err:
+        notes.append(err)
+    if os.name == "nt":
+        # A task folder's name plus a file deep inside it passes 260 characters;
+        # without this git add stops at "Filename too long".
+        _git(root, "config", "core.longpaths", "true")
     gi = root / ".gitignore"
     if not gi.exists():
         try:
@@ -113,7 +177,8 @@ def run_backup(root: Path, remote: str = "", export_hook=None) -> dict:
                 "pushed": False, "exported": 0}
     _STATE["running"] = True
     _STATE["lastRun"] = time.time()
-    result = {"ok": False, "msg": "", "committed": False, "pushed": False, "exported": 0}
+    result = {"ok": False, "msg": "", "committed": False, "pushed": False, "exported": 0,
+              "skipped": 0}
     try:
         er = ensure_repo(root, remote)
         if not er["ok"]:
@@ -124,6 +189,13 @@ def run_backup(root: Path, remote: str = "", export_hook=None) -> dict:
                 result["exported"] = int(export_hook() or 0)
             except Exception as e:                    # the hook must never sink the backup
                 result["msg"] = f"chat export error: {str(e)[:120]}; "
+        nested, oversize = scan(root)
+        if nested or oversize:
+            err = _add_excludes(root, [_exclude_pattern(n) + "/" for n in nested]
+                                + [_exclude_pattern(f) for f in oversize])
+            if err:
+                result["msg"] += err + "; "
+        result["skipped"] = len(nested) + len(oversize)
         add = _git(root, "add", "-A")
         if add.returncode != 0:
             result["msg"] += "git add failed: " + (add.stderr or "").strip()[:200]
@@ -139,7 +211,7 @@ def run_backup(root: Path, remote: str = "", export_hook=None) -> dict:
             result["committed"] = True
         remote = (remote or "").strip()
         if remote:
-            p = _git(root, "push", "-u", "origin", "HEAD", timeout=300)
+            p = _git(root, "push", "-u", "origin", "HEAD", timeout=1800)
             if p.returncode != 0:
                 result["msg"] += "push failed: " + (p.stderr or "").strip()[:300]
                 return result
@@ -147,7 +219,9 @@ def run_backup(root: Path, remote: str = "", export_hook=None) -> dict:
         result["ok"] = True
         result["msg"] += ("committed" if result["committed"] else "nothing new") \
             + ("; pushed" if result["pushed"] else ("; no remote configured" if not remote else "")) \
-            + f"; {result['exported']} chat(s) exported"
+            + f"; {result['exported']} chat(s) exported" \
+            + (f"; {result['skipped']} nested repo(s) or file(s) over {MAX_FILE_MB} MB left out"
+               if result.get("skipped") else "")
         return result
     except (OSError, subprocess.SubprocessError) as e:
         result["msg"] += f"error: {str(e)[:200]}"
