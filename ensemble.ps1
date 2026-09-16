@@ -1,7 +1,7 @@
-<#
+﻿<#
 .SYNOPSIS
-  ensemble: start/stop/restart/status/logs/open the Claude session
-  dashboard on Windows (PowerShell counterpart of the macOS/Linux `ensemble`
+  ensemble: start/stop/restart/status/logs/open/doctor the Ensemble hub on
+  Windows (PowerShell counterpart of the macOS/Linux `ensemble`
   bash script).
 
 .USAGE
@@ -89,11 +89,19 @@ function Start-Dashboard {
   if (-not (Test-Path $Server)) { Write-Error "$Server not found"; exit 1 }
   $python = Resolve-PythonW
   if (-not $python) { Write-Error 'No real Python found (need python.org install / py launcher).'; exit 1 }
+  # The headless agents need pywinpty (requirements.txt); install it for this
+  # Python on a machine that does not have it yet, as the macOS script does.
+  $py = Resolve-Python
+  & $py -c 'import winpty' 2>$null
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host 'Installing dependencies (pywinpty)...'
+    & $py -m pip install --user -r (Join-Path $ScriptDir 'requirements.txt')
+  }
 
   # pythonw.exe = no console window. The server writes its own log via --log
   # (pythonw has no stdio to redirect).
   $proc = Start-Process -FilePath $python `
-    -ArgumentList @($Server, '--port', $Port, '--log', $Log) `
+    -ArgumentList @("`"$Server`"", '--port', $Port, '--log', "`"$Log`"") `
     -WorkingDirectory $ScriptDir -WindowStyle Hidden -PassThru
   $proc.Id | Out-File -Encoding ascii $PidFile
   Start-Sleep -Milliseconds 500
@@ -117,7 +125,7 @@ function Stop-Dashboard {
 
 function Invoke-Doctor {
   # Green/red health check of every prerequisite. Exits non-zero if any fail.
-  $fail = 0
+  $script:fail = 0
   function Check($label, $ok, $detail) {
     if ($ok) { Write-Host ("  [OK]   {0}  {1}" -f $label, $detail) }
     else     { Write-Host ("  [FAIL] {0}  {1}" -f $label, $detail); $script:fail++ }
@@ -132,11 +140,20 @@ function Invoke-Doctor {
   $isWindowless = $pyw -and ($pyw -like '*pythonw.exe')
   Check "pythonw (windowless)" $isWindowless ($(if ($pyw) { $pyw } else { "not found" }))
 
+  $hasPty = $false
+  if ($py) { & $py -c 'import winpty' 2>$null; $hasPty = ($LASTEXITCODE -eq 0) }
+  Check "pywinpty" $hasPty ($(if ($hasPty) { "installed" } else { "missing - py -m pip install -r requirements.txt" }))
+
+  # Claude Code and Codex are each optional; the hub needs at least one.
   $claude = Get-Command claude -ErrorAction SilentlyContinue
-  Check "claude CLI" ($null -ne $claude) ($(if ($claude) { $claude.Source } else { "not on PATH" }))
+  $codex = Get-Command codex -ErrorAction SilentlyContinue
+  Check "claude or codex CLI" (($null -ne $claude) -or ($null -ne $codex)) ("claude: $(if ($claude) { $claude.Source } else { 'not on PATH' }); codex: $(if ($codex) { $codex.Source } else { 'not on PATH' })")
+
+  $git = Get-Command git -ErrorAction SilentlyContinue
+  Check "git" ($null -ne $git) ($(if ($git) { $git.Source } else { "not on PATH" }))
 
   $wt = Get-Command wt -ErrorAction SilentlyContinue
-  Check "Windows Terminal (wt.exe)" ($null -ne $wt) ($(if ($wt) { $wt.Source } else { "not found - Open/New/Fork won't work" }))
+  Write-Host ("  [info] Windows Terminal (optional)  {0}" -f $(if ($wt) { $wt.Source } else { "not found - only needed to open a past session in a terminal window" }))
 
   Check "dashboard.py" (Test-Path $Server) $Server
 
@@ -153,11 +170,11 @@ function Invoke-Doctor {
   }
 
   $task = Get-ScheduledTask -TaskName 'Ensemble' -ErrorAction SilentlyContinue
-  Check "autostart task" ($null -ne $task) ($(if ($task) { "Ensemble ($($task.State))" } else { "not installed (optional: install-task.ps1)" }))
+  Write-Host ("  [info] autostart task (optional)  {0}" -f $(if ($task) { "Ensemble ($($task.State))" } else { "not installed - install-task.ps1 starts the hub at logon" }))
 
   Write-Host ""
-  if ($fail -eq 0) { Write-Host "All checks passed." }
-  else { Write-Host "$fail check(s) failed."; exit 1 }
+  if ($script:fail -eq 0) { Write-Host "All checks passed." }
+  else { Write-Host "$script:fail check(s) failed."; exit 1 }
 }
 
 switch ($Action) {

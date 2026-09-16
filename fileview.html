@@ -1545,7 +1545,7 @@ function wireFrameLinks(ifr) {
 
   const res = await loadText(path, src);
   if (!res.ok) {
-    // A folder with a dot in its name ("C:\Users\me\.ensemble") looked like a file.
+    // A folder with a dot in its name ("<home>\.ensemble") looked like a file.
     if (res.status === 404 && absPath && (await showDir(path, main)) === true) return;
     // Say which of the two it is, rather than making the reader guess.
     if (res.status === 404) notFound();

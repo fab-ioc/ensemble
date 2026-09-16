@@ -455,7 +455,7 @@ hub first starts that code on a spare port and gives up if it does not serve;
 about 45 seconds later it stops and starts, resumes the PO and types it a note.
 Every other room stops with the hub: the PO resumes those. Progress is in
 `~/.ensemble/logs/restart.log`. The Update now button (pull the pushed code,
-then restart) stays ceo's.
+then restart) stays with the product owner.
 
 ## Planning work for a project
 

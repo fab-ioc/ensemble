@@ -3047,7 +3047,7 @@ function restoreFocus(root, key) {
   if (el) el.focus({ preventScroll: true });
 }
 // Collapse the home dir to ~ across platforms: /Users/<u> (macOS),
-// /home/<u> (Linux), C:\Users\<u> (Windows).
+// /home/<u> (Linux), <drive>:\Users\<u> (Windows).
 const tildeify = p => (p || '')
   .replace(/^\/Users\/[^/]+/, '~')
   .replace(/^\/home\/[^/]+/, '~')

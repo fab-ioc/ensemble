@@ -524,10 +524,10 @@ class Resumes(unittest.TestCase):
     def test_a_balloon_link_is_written_out_in_the_terminal_not_in_the_room(self):
         other = self.room()
         url = f"http://hub-host:8765/session?room={other['id']}&msg=m0"
-        block = f"[ref {url}] from ceo in \"t\" at "
+        block = f"[ref {url}] from sam in \"t\" at "
         room = self.room()
         h = self.handler()
-        with mock.patch.object(dashboard, "operator_name", lambda: "ceo"):
+        with mock.patch.object(dashboard, "operator_name", lambda: "sam"):
             # Stopped: typed in after the resume.
             h._resume_room(room, text=f"read **{url}**")
             self.join()

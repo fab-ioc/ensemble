@@ -13,7 +13,7 @@ folders, move, rename and delete (index.html's "Files panel" block).
   the tree, Go to file and a text search), remembered by the browser; .history
   and _linked never show; a task's folder opens but is not renamed, moved,
   deleted or dropped on;
-* Recent changes says who and what: "ceo · uploaded".
+* Recent changes says who and what: "sam · uploaded".
 """
 from __future__ import annotations
 
@@ -262,7 +262,7 @@ const fh = docsFindApart(found, hiddenNames);
 out.searchHidden = [fh.files.map(f => f.path), fh.matches, fh.filesSearched, found.files.length];
 out.searchShown = docsFindApart(found, shownNames) === found;
 
-out.who = [histWho({ kind: 'user', name: 'ceo', reason: 'upload' }), histDid({ kind: 'user', name: 'ceo', reason: 'upload' }),
+out.who = [histWho({ kind: 'user', name: 'sam', reason: 'upload' }), histDid({ kind: 'user', name: 'sam', reason: 'upload' }),
            histWho({ kind: 'you', label: 'you', reason: 'scan' }), histDid({ kind: 'you', reason: 'scan' }),
            histWho({ kind: 'task', label: 'Sort papers' }), histWho(null), histDid({ reason: 'delete' }), histDid({ reason: 'move' })];
 
@@ -526,7 +526,7 @@ class ThePureParts(unittest.TestCase):
         self.assertIsNone(o["apartOfCode"])
 
     def test_recent_changes_names_who_and_what(self):
-        self.assertEqual(self.out["who"], ["ceo", "uploaded", "you", "", "Sort papers", "you", "deleted", "moved"])
+        self.assertEqual(self.out["who"], ["sam", "uploaded", "you", "", "Sort papers", "you", "deleted", "moved"])
 
 
 class TheMarkup(unittest.TestCase):

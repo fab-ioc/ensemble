@@ -24,7 +24,7 @@ URL2 = "http://127.0.0.1:8765/session?room=room-cafe0001&msg=abcdefabcdef"
 MSGS = {
     ("room-1a2b3c4d", "0123456789ab"): {"who": "claude", "taskTitle": "Docs", "ts": TS,
                                         "text": "Merged.\nTests pass.", "id": "0123456789ab"},
-    ("room-cafe0001", "abcdefabcdef"): {"who": "ceo", "taskTitle": "PO", "ts": TS,
+    ("room-cafe0001", "abcdefabcdef"): {"who": "sam", "taskTitle": "PO", "ts": TS,
                                         "text": "Ship it", "id": "abcdefabcdef"},
 }
 
@@ -49,7 +49,7 @@ class ExpandTest(unittest.TestCase):
         out = mr.expand_message_refs(f"{URL2} and {URL}, again {URL}.", lookup)
         blocks = out.split("\n\n")[1:]
         self.assertEqual(len(blocks), 2)
-        self.assertTrue(blocks[0].startswith(f"[ref {URL2}] from ceo in \"PO\" at {WHEN}:\n> Ship it"))
+        self.assertTrue(blocks[0].startswith(f"[ref {URL2}] from sam in \"PO\" at {WHEN}:\n> Ship it"))
         self.assertTrue(blocks[1].startswith(f"[ref {URL}] from claude in \"Docs\""))
 
     def test_unknown_room_and_unknown_id(self):
@@ -84,7 +84,7 @@ class ExpandTest(unittest.TestCase):
         self.assertEqual(mr.find_message_refs(f"see **{URL}**.")[0][0], URL)
 
     def test_a_different_host_and_an_encoded_id(self):
-        url = "https://my-mac.tailnet.ts.net/session?msg=sess-1%3A12&room=room-1a2b3c4d"
+        url = "https://my-mac.tailnet.example/session?msg=sess-1%3A12&room=room-1a2b3c4d"
         seen = []
         mr.expand_message_refs(url, lambda r, m: seen.append((r, m)))
         self.assertEqual(seen, [("room-1a2b3c4d", "sess-1:12")])
@@ -109,7 +109,7 @@ class ResolveTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         for p in (mock.patch.object(chatroom, "ROOMS_DIR", Path(self.tmp.name)),
-                  mock.patch.object(dashboard, "operator_name", lambda: "ceo"),
+                  mock.patch.object(dashboard, "operator_name", lambda: "sam"),
                   mock.patch.object(dashboard, "load_projects", lambda: [{"poRoomId": "room-00000002"}])):
             p.start()
             self.addCleanup(p.stop)
@@ -127,7 +127,7 @@ class ResolveTest(unittest.TestCase):
     def test_a_room_message(self):
         r = dashboard.resolve_message_ref("room-00000001", "aaaaaaaaaaaa")
         self.assertEqual((r["who"], r["from"], r["taskTitle"], r["ts"], r["text"], r["isPo"]),
-                         ("ceo", "user", "Docs (v2)", TS, "hello", False))
+                         ("sam", "user", "Docs (v2)", TS, "hello", False))
         self.assertEqual(r["where"], "~/.ensemble/rooms/room-00000001.json")
         self.assertEqual(dashboard.resolve_message_ref("room-00000001", "bbbbbbbbbbbb")["who"], "claude")
 
@@ -148,7 +148,7 @@ class ResolveTest(unittest.TestCase):
             self.assertEqual((r["who"], r["taskTitle"], r["text"], r["isPo"]), ("codex", "PO", "on it", True))
             self.assertAlmostEqual(r["ts"], datetime(2026, 9, 14, 10, 0, 5, tzinfo=timezone.utc).timestamp())
             self.assertEqual(dashboard.resolve_message_ref("room-00000002", "s-old:2")["text"], f"see {URL}")
-            self.assertEqual(dashboard.resolve_message_ref("room-00000002", "s-old:0")["who"], "ceo")
+            self.assertEqual(dashboard.resolve_message_ref("room-00000002", "s-old:0")["who"], "sam")
             self.assertIsNone(dashboard.resolve_message_ref("room-00000002", "s-old:3"))
             self.assertIsNone(dashboard.resolve_message_ref("room-00000002", "s-gone:0"))
             self.assertEqual(dashboard.resolve_message_ref("room-00000002", "s-new:1")["text"], "on it")

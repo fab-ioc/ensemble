@@ -39,7 +39,7 @@ TURNS = [
     ("assistant", "Handover written."),
     ("user", "[rotation] You are the product owner (PO) of the project 'Ensemble', taking over …"),
     ("assistant", "Where things stand: …"),
-    ("user", "[from the restart helper, not ceo] The hub restarted on the code already on disk …"),
+    ("user", "[from the restart helper, not sam] The hub restarted on the code already on disk …"),
     ("user", "[relay] New message from 'codex' in your shared room. Use the chat_read tool …"),
     ("user", "[note to self] check the backup"),
     ("assistant", "Backup checked."),

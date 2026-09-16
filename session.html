@@ -1588,7 +1588,7 @@ const isHubInput = m => !!m && m.from === 'user' && !!m.kind && m.kind !== 'huma
 const foldShort = t => { t = String(t || '').trim(); return t.length > 40 ? t.slice(0, 39) + '…' : t; };
 // ---- Who writes to whom ----------------------------------------------------
 // A header names the task, the PO and the person as the reader knows them:
-// "#26 claude → PO", "ceo → PO", "PO → #26 claude", "Hub → PO". No "@": that
+// "#26 claude → PO", "<person> → PO", "PO → #26 claude", "Hub → PO". No "@": that
 // is an address, for the message box. The page fills CHAT_NAMES: the person's
 // name, the PO's own agent when this is a PO's room, and a task's number from
 // its room id.

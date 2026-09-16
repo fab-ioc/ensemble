@@ -32,3 +32,6 @@ __pycache__/
 .DS_Store
 .vscode/
 .idea/
+
+# RTK command history written into the working folder
+rtk/
