@@ -62,7 +62,7 @@ vm.runInContext(code + `
     set: (items, point) => { LAST_ITEMS = items; CU_POINT = point; },
     state: () => ({ point: CU_POINT, draws: DRAWS }) };`, ctx);
 const T = ctx.t;
-Object.assign(T.CHAT_NAMES, { operator: 'ceo', po: 'claude', taskNo: id => ({ 'room-0804cfef': 26, 'room-11112222': 25, 'room-3333aaaa': 24 })[id] || null });
+Object.assign(T.CHAT_NAMES, { operator: 'sam', po: 'claude', taskNo: id => ({ 'room-0804cfef': 26, 'room-11112222': 25, 'room-3333aaaa': 24 })[id] || null });
 const out = {};
 
 // A PO's transcript as the hub types it: the person's turns, hub inputs and the PO's replies.
