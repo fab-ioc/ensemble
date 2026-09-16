@@ -328,5 +328,37 @@ class WhileThePageRedraws(unittest.TestCase):
         self.assertEqual(self.r["ruling"], ["u0", "row", "p1"])
 
 
+REF_JS = r"""
+const vm = require('vm');
+const { code } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+const ctx = { esc: s => String(s) };
+vm.createContext(ctx);
+vm.runInContext(code + `
+  const ROOM = 'room-here';
+  globalThis.t = { CHAT_NAMES, refWho };`, ctx);
+const T = ctx.t;
+Object.assign(T.CHAT_NAMES, { operator: 'ceo', po: '', taskNo: id => ({ 'room-0804cfef': 26 })[id] || null });
+const other = { roomId: 'room-other-po', isPo: true };
+console.log(JSON.stringify([
+  T.refWho(Object.assign({ from: 'claude@room-0804cfef', who: 'claude@room-0804cfef' }, other)),
+  T.refWho(Object.assign({ from: 'claude', who: 'claude' }, other)),
+  T.refWho(Object.assign({ from: 'ensemble', who: 'ensemble' }, other)),
+  T.refWho(Object.assign({ from: 'user', who: 'ceo' }, other)),
+  T.refWho({ roomId: 'room-task', isPo: false, from: 'claude', who: 'claude' }),
+]));
+"""
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class LinkChipsNameTheWriter(unittest.TestCase):
+    def test_a_link_into_another_pos_room(self):
+        code = fold_block(SRC) + js_function(SRC, "refWho")
+        out = subprocess.run([NODE, "-e", REF_JS], input=json.dumps({"code": code}), capture_output=True,
+                             text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        # a task's report there, the PO's own message, the hub, the person, a task room's agent
+        self.assertEqual(json.loads(out.stdout), ["#26 claude", "PO", "Hub", "ceo", "claude"])
+
+
 if __name__ == "__main__":
     unittest.main()

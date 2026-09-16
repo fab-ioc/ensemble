@@ -1193,8 +1193,14 @@ function refInfo(room, msg) {
 }
 const refWhen = ts => ts ? new Date(ts * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '';
 // Who wrote a linked message, as a balloon header names them ("#26 claude", "PO").
-const refWho = r => !r.from || r.from === 'user' ? r.who
-  : whoName(r.from, r.roomId === ROOM ? CHAT_NAMES : Object.assign({}, CHAT_NAMES, { po: r.isPo ? r.from : '' }));
+// In another PO's room (isPo: the room is a PO's) its agents are the PO; a
+// task's agent writing there is still "#26 claude".
+function refWho(r) {
+  if (!r.from || r.from === 'user') return r.who;
+  if (r.roomId === ROOM) return whoName(r.from);
+  const po = r.isPo && r.from !== 'ensemble' && !TASK_ADDR_RE.test(r.from) ? r.from : '';
+  return whoName(r.from, Object.assign({}, CHAT_NAMES, { po }));
+}
 const refLabel = r => [refWho(r), (r.taskNo ? '#' + r.taskNo + ' ' : '') + (r.taskTitle || ''), refWhen(r.ts)].filter(Boolean).join(' · ');
 function refPreview(r) {
   const t = stripRefBlocks(r.text).replace(/\s+/g, ' ').trim();
