@@ -27,9 +27,10 @@ PERSONAL = re.compile("|".join([
     "tail" + "4f8740",
     r"\.ts" + r"\.net",
     "Idea" + "Projects",
-    # Any Windows home folder; a macOS one unless it is a placeholder (`<name>`, `$USER`).
+    # Any Windows home folder; one without a drive, or a macOS one, unless it is a
+    # placeholder (`<name>`, `$USER`).
     r"[A-Za-z]:(?:\\\\|\\|/)+Users\b",
-    r"(?<![\w.~])/Users(?:\\\\|\\|/)+(?!<|\$|%)[A-Za-z]",
+    r"(?<![\w.~])(?:\\\\|\\|/)Users(?:\\\\|\\|/)+(?!<|\$|%)[A-Za-z]",
 ]), re.I)
 
 
@@ -79,9 +80,11 @@ class Readme(unittest.TestCase):
         self.assertEqual(hits, [])
 
     def test_the_pattern_catches_what_it_is_for(self):
-        drive = "C" + ":"
-        for bad in (drive + "\\Users\\alex\\x", drive + "\\Users\\me", drive + "/Users/" + "me", drive + "\\\\Users\\\\alex",
-                    "/Users/" + "alex/x", "host.tailnet" + ".ts" + ".net"):
+        u = "Us" + "ers"          # pieces, so this test's own source is not a hit
+        bs = "\\"
+        for bad in ("C:" + bs + u + bs + "alex" + bs + "x", "C:" + bs + u + bs + "me", "C:/" + u + "/me",
+                    "C:" + bs * 2 + u + bs * 2 + "alex", "/" + u + "/alex/x", bs + u + bs + "alex" + bs + "x",
+                    bs * 2 + u + bs * 2 + "alex", "x = '" + bs * 2 + u + bs * 2 + "alex'", "host.tailnet" + ".ts" + ".net"):
             self.assertTrue(PERSONAL.search(bad), bad)
         for ok in ("D:\\work\\.ensemble", "<drive>:\\Users\\<u>", "/Users/<name>/x", "~/EnsembleProjects", "a /api/users/1"):
             self.assertFalse(PERSONAL.search(ok), ok)
