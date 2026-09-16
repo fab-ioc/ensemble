@@ -239,7 +239,7 @@ vm.runInContext(code + `
   const $ = () => box, fileBase = () => '', mdToHtml = t => t, copyLinkHtml = () => '', refPlain = t => t;
   const withTaskBubble = items => items, rotationText = () => '', readingPlace = () => null, keepPlace = () => {};
   const showChatBar = () => {}, applyComments = () => {}, showLatest = () => {}, markLanded = () => {}, landPending = () => {};
-  let CU_POINT = null, CU_SHOWN = false, CU_OPENED = true;
+  let CU_POINT = null, CU_SHOWN = false, CU_OPENED = true, CU_SNAP = null;
   const readTick = () => {}, catchUpOpen = () => {}, refHref = (room, mid) => '?msg=' + mid;
   globalThis.t = {
     CHAT_NAMES, render: items => renderBubbles(items), fold: () => FOLD,
@@ -303,6 +303,12 @@ const back = base.concat([{ id: 'p2', from: 'claude', to: '', text: 'Answer.' },
 T.set('CU_POINT', { id: 'u0', ts: 0 });
 T.render(back);
 out.catchup = [box.kids.map(k => k.dataset.group ? 'row' : k.dataset.key), T.get('CU_SHOWN')];
+// A poll with a new message keeps the drawn line: the same element, the same words.
+const lineNode = () => box.kids.find(k => k.dataset.key === 'catchup');
+const was = lineNode(), wasHtml = was.innerHTML;
+T.render(back.concat([{ id: 'p3', from: 'claude', to: '', text: 'More.' }]));
+out.catchupKept = [lineNode() === was, lineNode().innerHTML === wasHtml];
+T.set('CU_SNAP', null);
 T.set('CU_POINT', { id: 'r2', ts: 0 });
 T.render(back.slice(0, 3).concat([rep('r4', 'completed', 'done'), { id: 'p2', from: 'claude', to: '', text: 'Answer.' }]));
 out.catchup.push(box.kids.map(k => k.dataset.group ? 'row' : k.dataset.key));
@@ -350,6 +356,9 @@ class WhileThePageRedraws(unittest.TestCase):
         self.assertEqual(folded, ["u0", "catchup", "row", "r4", "p2"])
         self.assertEqual(none, ["u0", "p2", "row", "r4"])
         self.assertFalse(gone)
+
+    def test_a_poll_keeps_the_catch_up_line(self):
+        self.assertEqual(self.r["catchupKept"], [True, True])
 
 
 REF_JS = r"""

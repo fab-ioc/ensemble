@@ -118,6 +118,36 @@ T.set(items.concat([{ id: 'rot1', divider: {} }]), null);
 T.markRead();
 out.markedSkipsLandmark = T.loadRead();
 out.store = [...store.keys()];
+// Two tabs: one left behind never moves the point back; with the kept point
+// not among its messages it goes by time, and at the same time by order.
+store.set('cd-chat-read:room-po', JSON.stringify({ id: 's:14', ts: 171 }));
+T.set(items.slice(0, 10), null);
+T.markRead();
+out.stale = T.loadRead();
+const same = items.slice(0, 13).concat([Object.assign({}, items[13], { ts: 160 })]);
+store.set('cd-chat-read:room-po', JSON.stringify({ id: 's:12', ts: 160 }));
+T.set(same, null);
+T.markRead();
+out.sameTimeLater = T.loadRead();
+store.set('cd-chat-read:room-po', JSON.stringify({ id: 's:14', ts: 171 }));
+T.set(items.slice(0, 13).concat([Object.assign({}, items[13], { ts: 171 }), items[14]]), null);
+T.markRead();
+out.sameTimeFound = T.loadRead();
+
+// Opening: on a line the chat scrolls to it; opened on a link, the landing stays.
+const box = { clientHeight: 500, scrollTop: 900, scrollHeight: 5000, line: { offsetTop: 300 },
+  querySelector: () => box.line };
+Object.assign(ctx, { $: () => box, nearEnd: () => false, showLatest: () => {}, withTaskBubble: x => x, ROOM_OBJ: null });
+vm.runInContext(`var GOTO = '', GOTO_OPEN = false, STICK = true, CU_OPENED = false, CU_SNAP = null;
+  globalThis.t.open = (items, link) => { LAST_ITEMS = items; GOTO_OPEN = link; store.clear(); READ_MEM = null; catchUpOpen(); return GOTO_OPEN; };`, Object.assign(ctx, { store }));
+T.open(items, false);
+out.openJump = box.scrollTop;
+box.scrollTop = 900;
+out.openLinkConsumed = T.open(items, true);
+out.openLink = box.scrollTop;
+box.line = null; box.scrollTop = 900;
+T.open(items, false);
+out.openNoLine = [box.scrollTop, T.state().point];
 console.log(JSON.stringify(out));
 """
 
@@ -126,7 +156,8 @@ console.log(JSON.stringify(out));
 class CatchUpLine(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        code = fold_block(SRC) + js_line(SRC, "const READ_KEY = ") + js_function(SRC, "loadRead") + js_function(SRC, "markRead")
+        code = (fold_block(SRC) + js_line(SRC, "const READ_KEY = ") + js_function(SRC, "loadRead")
+                + js_function(SRC, "markRead") + js_function(SRC, "catchUpOpen"))
         run = subprocess.run([NODE, "-e", JS], input=json.dumps({"code": code}), capture_output=True,
                              text=True, encoding="utf-8", timeout=60)
         assert run.returncode == 0, run.stderr
@@ -189,6 +220,19 @@ class CatchUpLine(unittest.TestCase):
         self.assertEqual(o["markedState"]["draws"], 1)
         self.assertEqual(o["markedSkipsLandmark"], {"id": "s:14", "ts": 171})
         self.assertEqual(o["store"], ["cd-chat-read:room-po"])
+
+    def test_the_point_never_moves_back(self):
+        o = self.out
+        self.assertEqual(o["stale"], {"id": "s:14", "ts": 171})
+        self.assertEqual(o["sameTimeLater"], {"id": "s:13", "ts": 160})
+        self.assertEqual(o["sameTimeFound"], {"id": "s:14", "ts": 171})
+
+    def test_opening_on_the_line_unless_on_a_link(self):
+        o = self.out
+        self.assertEqual(o["openJump"], 288)
+        self.assertFalse(o["openLinkConsumed"])
+        self.assertEqual(o["openLink"], 900)
+        self.assertEqual(o["openNoLine"], [900, None])
 
 
 if __name__ == "__main__":
