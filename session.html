@@ -1758,10 +1758,12 @@ function taskOfMsg(m) {
   return a && a.kind === 'report' && a.taskId ? String(a.taskId) : '';
 }
 const STANDS = ['completed', 'question', 'blocked'];
-const standsAlone = m => (!!taskReport(m) && STANDS.includes(reportBase(m))) || isDecision(m);
+// The PO's own word to a task (a ruling, or its reply to the task's report) stands too.
+const standsAlone = (m, N = CHAT_NAMES) => (!!taskReport(m) && STANDS.includes(reportBase(m))) || isDecision(m)
+  || (!!N.po && m.from === N.po && !taskReport(m));
 // [{ key, task, hidden: [i…], stand: i or -1, at: where its row goes }], only
 // where two messages or more would fold. kept(m, i): never folded (drawn in
-// view while the reader is scrolled up, or holding a comment).
+// view while the reader is scrolled up, or holding a comment), see groupKept.
 function chatGroups(items, kept) {
   const out = [];
   let open = new Map();
@@ -1769,10 +1771,11 @@ function chatGroups(items, kept) {
     open.forEach((members, task) => {
       const last = members[members.length - 1];
       const stand = task !== DIGESTS && standsAlone(items[last]) ? last : -1;
-      const hidden = members.filter(i => i !== stand && !(kept && kept(items[i], i)));
+      const hidden = members.filter(i => i !== stand);
       if (hidden.length < 2) return;
       out.push({ key: 'g:' + task + ':' + foldKey(items[members[0]], members[0]), task, hidden, stand,
-                 at: stand >= 0 ? stand : hidden[hidden.length - 1] });
+                 at: stand >= 0 ? stand : hidden[hidden.length - 1],
+                 seen: foldKey(items[last], last) });
     });
     open = new Map();
   };
@@ -1784,8 +1787,19 @@ function chatGroups(items, kept) {
     if (list) list.push(i); else open.set(task, [i]);
   });
   flush();
-  return out.sort((a, b) => a.at - b.at);
+  const groups = kept ? out.map(g => groupKept(g, kept)).filter(Boolean) : out;
+  return groups.sort((a, b) => a.at - b.at);
 }
+// A closed group less what must not fold, or null when fewer than two are left.
+// Its key stays: a group only kept apart for a while is the same group.
+function groupKept(g, kept) {
+  const hidden = g.hidden.filter(i => !kept(i));
+  if (hidden.length < 2) return null;
+  return Object.assign({}, g, { hidden, at: g.stand >= 0 ? g.stand : hidden[hidden.length - 1] });
+}
+// What "N new" counts a group by: its key and its latest message, so a group a
+// new message joined counts once more.
+const groupSeen = g => g.key + '|' + g.seen;
 const chatTime = ts => ts ? new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
 // A group's row: "#26 · 9 messages · latest: completed 10:05", then the kinds in
 // order; "Hub · 5 progress checks · latest 10:10".
@@ -1799,7 +1813,7 @@ function groupRowHtml(g, items, open, N = CHAT_NAMES) {
   const kinds = digests ? '' : all.map(i => kindName(items[i], N)).join(' · ');
   const title = (open ? 'Fold these messages again' : `Show these ${all.length} messages`)
     + (!digests && last.taskTitle ? ` (${last.taskTitle})` : '');
-  return `<button type="button" class="msg-fold grp${digests ? ' user hub' : ''}" data-key="${esc(g.key)}" data-group="${esc(g.key)}" aria-expanded="${open}" title="${esc(title)}">`
+  return `<button type="button" class="msg-fold grp${digests ? ' user hub' : ''}" data-key="${esc(g.key)}" data-group="${esc(g.key)}" data-seen="${esc(groupSeen(g))}" aria-expanded="${open}" title="${esc(title)}">`
     + `<span class="from"><span class="who${digests ? ' hub-who' : ''}">${esc(who)}</span></span><span class="gsum">${esc(sum)}</span>${kinds ? `<span class="fl gkinds">${esc(kinds)}</span>` : ''}</button>`;
 }
 // A message a later one stands in place of: the task's latest report after a
@@ -1878,10 +1892,14 @@ function renderBubbles(items, opt = {}) {
   // A task's messages fold under one row. Scrolled up, nothing drawn in view
   // folds into a group: only what was in one stays, and what arrives joins.
   const drawnBefore = !!prevBase && items.some((m, i) => prevBase.has(foldKey(m, i)));
-  const groups = chatGroups(items, (m, i) => {
-    const k = foldKey(m, i);
+  const kept = i => {
+    const m = items[i], k = foldKey(m, i);
     return (held && held(m, i)) || (drawnBefore && prevBase.has(k) && !prevHid.has(k));
-  });
+  };
+  // An opened group stays open while some of it is kept apart for a while.
+  const every = chatGroups(items);
+  FOLD.groups.forEach(k => { if (!every.some(g => g.key === k)) FOLD.groups.delete(k); });
+  const groups = every.map(g => FOLD.groups.has(g.key) ? g : groupKept(g, kept)).filter(Boolean);
   const groupAt = new Map(), hiddenIn = new Map();
   GROUP_OF_MID = new Map();
   for (const g of groups) {
@@ -1889,7 +1907,6 @@ function renderBubbles(items, opt = {}) {
     g.hidden.forEach(i => { hiddenIn.set(i, g); if (items[i].id) GROUP_OF_MID.set(items[i].id, g.key); });
   }
   FOLD.hid = new Set([...hiddenIn.keys()].map(i => foldKey(items[i], i)));
-  FOLD.groups.forEach(k => { if (!groups.some(g => g.key === k)) FOLD.groups.delete(k); });
   const sup = supersededMap(items);
   CHAT_VIEW = { items, sup };
   items.forEach((m, i) => {
@@ -1920,7 +1937,7 @@ function renderBubbles(items, opt = {}) {
       // Its row, and when opened the group in order under it: "Latest ↓" counts
       // the row, not what is folded in it.
       const open = FOLD.groups.has(g.key);
-      keys.push(g.key);
+      keys.push(groupSeen(g));
       rows.push(groupRowHtml(g, items, open));
       if (open) g.hidden.forEach(j => rows.push(balloon(items[j], j)));
     }
@@ -2007,11 +2024,13 @@ function toggleJustUs() {
 // (one folded above it, or the window of a long transcript slid) is moved, not
 // drawn again.
 function patchChildren(box, rows) {
-  const pool = new Map();
+  const pool = new Map(), groups = new Map();
   for (const k of box.children) {
     const same = pool.get(k._h);
     if (same) same.push(k); else pool.set(k._h, [k]);
+    if (k.dataset && k.dataset.group) groups.set(k.dataset.group, k);
   }
+  const used = new Set();
   let at = box.firstElementChild;
   for (const h of rows) {
     const same = pool.get(h);
@@ -2020,8 +2039,18 @@ function patchChildren(box, rows) {
       const t = document.createElement('template');
       t.innerHTML = h;
       n = t.content.firstElementChild;
+      // A group's row a new message changed stays the same button, under a
+      // click or keyboard focus: only its words and attributes change.
+      const old = n.dataset && n.dataset.group && groups.get(n.dataset.group);
+      if (old && !used.has(old) && old.tagName === n.tagName) {
+        [...old.attributes].forEach(a => { if (!n.hasAttribute(a.name)) old.removeAttribute(a.name); });
+        [...n.attributes].forEach(a => { if (old.getAttribute(a.name) !== a.value) old.setAttribute(a.name, a.value); });
+        old.innerHTML = n.innerHTML;
+        n = old;
+      }
       n._h = h;
     }
+    used.add(n);
     if (n === at) at = at.nextElementSibling;
     else box.insertBefore(n, at);
   }
@@ -2042,7 +2071,7 @@ function toLatest() {
   STICK = true;
   if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
   box.scrollTop = box.scrollHeight;   // also when a selection held the render
-  SEEN = new Set([...box.children].map(k => k.dataset.key).filter(Boolean)); NEW_N = 0; DEC_N = 0;
+  SEEN = new Set([...box.children].map(k => k.dataset.seen || k.dataset.key).filter(Boolean)); NEW_N = 0; DEC_N = 0;
   showLatest();
 }
 // Open a folded balloon in place, or fold an opened one again. The row stays
@@ -3235,8 +3264,12 @@ function cmtTrayClick(e) {
   // Its passage is in a folded balloon the quote could not be matched to: open
   // the balloon it was made on.
   const c = !mk && COMMENTS.find(x => x.cid === cid);
-  if (c) openGroupOf(document.getElementById('msgs'), c.mid);
-  const row = c && [...document.querySelectorAll('#msgs .msg-fold')].find(r => r.dataset.mid === c.mid);
+  if (c && GROUP_OF_MID.has(c.mid)) {
+    openGroupOf(document.getElementById('msgs'), c.mid);
+    mk = document.querySelector(`#msgs mark.cmt-hl[data-cid="${cid}"]`)
+      || [...document.querySelectorAll('#msgs .msg')].find(b => b.dataset.mid === c.mid);
+  }
+  const row = c && !mk && [...document.querySelectorAll('#msgs .msg-fold')].find(r => r.dataset.mid === c.mid);
   if (row) {
     const key = row.dataset.key;
     foldToggle(row, true);
@@ -3330,7 +3363,7 @@ function msgsScrolled() {
   if (at && !STICK) {
     STICK = true;
     if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
-    SEEN = new Set([...box.children].map(k => k.dataset.key).filter(Boolean)); NEW_N = 0; DEC_N = 0;
+    SEEN = new Set([...box.children].map(k => k.dataset.seen || k.dataset.key).filter(Boolean)); NEW_N = 0; DEC_N = 0;
   }
   STICK = at;
   showLatest();
