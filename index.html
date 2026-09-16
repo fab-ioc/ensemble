@@ -2894,14 +2894,6 @@
   <div class="settings-section" id="settings-prefs">
     <h4>Preferences</h4>
     <div class="pref-row">
-      <span class="pref-label">Open new sessions in</span>
-      <div class="seg pref-seg" id="pref-open-mode">
-        <button type="button" data-val="window">New window</button>
-        <button type="button" data-val="tab">Tab in current window</button>
-      </div>
-    </div>
-    <p class="cfg-hint" id="pref-open-mode-hint"></p>
-    <div class="pref-row" style="margin-top: 14px;">
       <span class="pref-label">Default model for new sessions</span>
       <input type="text" id="pref-default-model" list="model-presets"
              placeholder="claude default (leave empty)"
@@ -5015,18 +5007,6 @@ async function loadPrefs() {
 }
 function renderPrefs() {
   if (!PREFS) return;
-  const seg = document.getElementById('pref-open-mode');
-  if (seg) {
-    seg.querySelectorAll('button').forEach(b => {
-      b.classList.toggle('active', b.dataset.val === PREFS.openMode);
-    });
-  }
-  const hint = document.getElementById('pref-open-mode-hint');
-  if (hint) {
-    hint.textContent = PREFS.openMode === 'tab'
-      ? `New sessions open as a tab in the frontmost ${T()} window. Saved window geometry is not restored in tab mode.`
-      : `New sessions open in a new ${T()} window${feat('geometry') ? ' at their saved geometry (if any)' : ''}.`;
-  }
   const modelInput = document.getElementById('pref-default-model');
   if (modelInput && document.activeElement !== modelInput) {
     modelInput.value = PREFS.defaultModel || '';
@@ -5203,14 +5183,12 @@ async function triggerUpdate() {
 function renderRuntimeConfig() {
   if (!RUNTIME_CFG) return;
   const c = RUNTIME_CFG;
-  // Order chosen so the most variable bits (instance, port, sources) lead.
+  // Only what a person can act on: where the hub listens, where its state and
+  // log are, which process it is. A named instance shows only when there is one.
   const rows = [
-    ['instance', c.instance, '(default)'],
+    ...(c.instance ? [['instance', c.instance]] : []),
     ['port', c.port != null ? String(c.port) : ''],
     ['state dir', tildeify(c.stateDir)],
-    ['sessions', tildeify(c.sessionsDir)],
-    ['projects', tildeify(c.projectsDir)],
-    ['cs root', tildeify(c.csRoot)],
     ['log', tildeify(c.logFile)],
     ['pid', c.pid != null ? String(c.pid) : ''],
   ];
@@ -12486,10 +12464,6 @@ async function loadThemes() {
   applyPlatformChrome();
   await Promise.all([loadThemes(), loadFavoriteThemes(), loadJiraConfig(), loadRuntimeConfig(), loadPrefs(), loadAgentOptions()]);
   // Preferences: segmented control click → save
-  document.getElementById('pref-open-mode')?.addEventListener('click', (ev) => {
-    const b = ev.target.closest('button[data-val]');
-    if (b) setPref('openMode', b.dataset.val);
-  });
   document.getElementById('pref-rtk-tasks')?.addEventListener('click', (ev) => {
     const b = ev.target.closest('button[data-val]');
     if (b) setPref('rtkForTasks', b.dataset.val === 'on');
