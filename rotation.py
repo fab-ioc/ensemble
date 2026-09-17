@@ -60,6 +60,7 @@ import time.
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -431,10 +432,22 @@ def _session_started(part: dict) -> float:
     """When the agent's current session began, if a rotation started it."""
     rots = part.get("rotations") or []
     last = rots[-1] if rots and isinstance(rots[-1], dict) else {}
+    # A past session made a PO (``madePoAt``) counts as started then: it is
+    # writing its first handover, and is not asked to make way meanwhile.
+    made_po = float(part.get("madePoAt") or 0)
     if last.get("toSessionId") == part.get("sessionId"):
-        return float(last.get("at") or 0)
+        return max(float(last.get("at") or 0), made_po)
     # A Codex session's id is learnt after its launch.
-    return float(part.get("rotatedAt") or 0)
+    return max(float(part.get("rotatedAt") or 0), made_po)
+
+
+def handover_written(hp: Path | None) -> bool:
+    """The handover exists and says something: a fresh session started from a
+    missing or empty one would know nothing."""
+    try:
+        return bool(hp) and bool(Path(hp).read_text(encoding="utf-8", errors="replace").strip())
+    except OSError:
+        return False
 
 
 def _k(n) -> str:
@@ -524,9 +537,29 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
     tr = reader(tpath, since)
     st["tokens"] = tr["tokens"]
 
+    # A PO is never replaced by a fresh session that would know nothing: with
+    # no written handover (a past session made a PO has none until it writes
+    # one) it is asked for it, and asked again, but not rotated.
+    unwritten = s["kind"] == "po" and not handover_written(s["handover"])
+
+    def not_without_handover() -> dict:
+        st.update(phase="watching", lastAttempt=now)
+        if st.get("noHandoverNoticed") != sid:
+            st["noHandoverNoticed"] = sid
+            _d.chatroom.post_notice(
+                room["id"], SENDER,
+                f"**The PO was not replaced by a fresh session** — its conversation is over "
+                f"the limit, but `{HANDOVER_NAME}` is missing or empty, and a fresh session "
+                f"would start knowing nothing. The hub asks the PO for it again later; it "
+                f"rotates once the file is written.", {"noticeKind": "rotation"})
+        return done(f"{who} has no written handover ({s['handover']} is missing or empty) — "
+                    f"not rotated; it is asked again later")
+
     if st["phase"] == "asked":
         waited = now - float(st.get("askedAt") or now)
         idle = _idle(part, tr)
+        if unwritten and idle and (tr["promptSince"] or waited > ASK_TIMEOUT_S):
+            return not_without_handover()
         if idle and tr["promptSince"]:
             return _rotate(s, tr, done, answered=True)
         if idle and waited > ASK_TIMEOUT_S:
@@ -550,6 +583,8 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
                     f"or attempt was {int(young // 60)} min ago", quiet=routine)
     busy = not _idle(part, tr)
     if immediate:
+        if unwritten:
+            return not_without_handover()
         # No ask, so nothing to read at a pause: the rotation itself needs idle.
         if busy:
             return done(f"{_k(tr['tokens'])} tokens, over the limit — waiting for {who} "
@@ -559,8 +594,11 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
     if s["kind"] == "po":
         ask = (f"[handover] Your conversation has reached {_k(tr['tokens'])} tokens "
                f"(the limit is {_k(limit)}), so the hub will start a fresh PO session that "
-               f"picks up from your written handover instead of this history. Bring {hp} "
-               f"up to date now: priorities, decisions and why, what is in flight, what you "
+               f"picks up from your written handover instead of this history. "
+               + (f"{hp} does not exist yet, or is empty, and you are not rotated without it. "
+                  f"Write it now: what the project is, " if unwritten else
+                  f"Bring {hp} up to date now: ")
+               + f"priorities, decisions and why, what is in flight, what you "
                f"have promised {_d.operator_name()}. Anything that is not in that file or in "
                f"ROADMAP.md will be forgotten. When it is current, end your turn; the hub "
                f"rotates you as soon as you are idle.")
@@ -1176,6 +1214,14 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
     solo = room_full.get("mode") == "solo" or len(agents_in) < 2
     launcher = _d.hub_launcher()
     cwd = fpart.get("cwd") or None
+    # A past session made a PO was resumed where it had been started; its
+    # fresh session starts where a PO works (``nextCwd``: the code folder, or
+    # a documents project's folder).
+    moved = (fpart.get("nextCwd") or "") if not owner else ""
+    if moved and os.path.isdir(moved):
+        cwd = moved
+    else:
+        moved = ""
     started = time.time()
     used, old_kind = fpart, fpart.get("agent", "")
     if not owner:
@@ -1206,7 +1252,9 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
            "handoverUpdated": updated, "asked": asked, "answered": answered}
     fields = {"sessionId": info["sessionId"], "ptyId": info["ptyId"],
               "cwd": info["cwd"], "pid": None}
-    drop = ("lastExit", "fresh")
+    drop = ("lastExit", "fresh", "nextCwd")
+    if moved:
+        _d.chatroom.patch_room(rid, cwd=moved)
     if owner:
         rec.update(agent=used.get("agent", ""), model=used.get("model", ""),
                    fromAgent=old_kind, fromModel=fpart.get("model", ""),

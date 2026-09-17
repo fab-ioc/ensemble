@@ -1516,6 +1516,7 @@ HUB_INPUT_KINDS = (
     ("[resumed] ", "resumed"),          # RESUME_NOTE
     ("[handover] ", "handover"),        # rotation.py: write your handover now
     ("[rotation] ", "rotation"),        # rotation.py: a fresh session's first prompt
+    ("[product owner] ", "madepo"),     # made_po_first_input: a session made a project's PO
     ("[from the restart helper, not ", "helper"),   # the note after a hub restart
 )
 # The kind is "completed", or a verdict such as "review 1 (changes requested)".
@@ -2066,6 +2067,151 @@ def set_project_po(project_id: str, room_id: str) -> tuple[bool, str]:
     if rid and chatroom.get_room(rid) is None:
         return False, "no_such_room"
     return _set_project_meta(project_id, "poRoomId", rid or None)
+
+
+# ---- A past session made a project's PO (/api/projects/po-from-session) ----
+# A conversation started in a terminal, outside the hub, that already holds a
+# project's context becomes that project's PO in one request: the project (new,
+# or an existing one without a PO), the session adopted as its room, the PO set,
+# and one first input typed by the hub that says so and asks for the handover.
+
+MADE_PO_PREFIX = "[product owner] "
+
+
+class MakePoError(Exception):
+    """Why a session cannot be made a project's PO, in plain words."""
+
+    def __init__(self, message: str, status: int = 400):
+        super().__init__(message)
+        self.status = status
+
+
+def project_po_room(project: dict) -> dict | None:
+    """The project's PO task, or None when it has none (or names one that no
+    longer exists)."""
+    rid = (project.get("poRoomId") or "").strip()
+    return chatroom.get_room(rid) if rid else None
+
+
+def po_work_folder(project: dict) -> str:
+    """Where a project's PO works: a documents project's PO in the project
+    folder, a code project's PO in the code folder."""
+    if project.get("kind") == "documents":
+        return project_home(project, create=False)
+    return project.get("path") or project_home(project, create=False)
+
+
+def made_po_charter(project: dict) -> str:
+    """The PO room's spec: who it is, kept as background for every fresh
+    session a rotation starts. No one-off step belongs here (a fresh session
+    is given it again)."""
+    docs = project.get("kind") == "documents"
+    name = project.get("name") or project["id"]
+    home = project_home(project, create=False)
+    return (
+        f"You are the product owner (PO) of the project '{name}' in Ensemble, "
+        f"{'a documents project (files, no code)' if docs else 'a code project'}. "
+        f"{operator_name()}, the CEO, talks mainly to you; the project's tasks report to you; "
+        f"you report to him. The `ensemble` skill (section \"Running a project as its PO\""
+        f"{', including the paragraph on a documents project’s PO' if docs else ''}) is your "
+        f"operating model: you create and start tasks with the ensemble_* tools, read their "
+        f"reports, and keep `PO-HANDOVER.md` and `ROADMAP.md` in {home} current."
+        + ("" if docs else f" The project's code is in {project.get('path', '')}."))
+
+
+def made_po_first_input(project: dict) -> str:
+    """What the hub types into a session it has just made a PO. One line, as
+    every hub input: it starts with MADE_PO_PREFIX, which is how the chat
+    tells it from the person's words (HUB_INPUT_KINDS)."""
+    docs = project.get("kind") == "documents"
+    name = project.get("name") or project["id"]
+    hp, rp = rotation.handover_path(project), roadmap_path(project)
+    return (
+        f"{MADE_PO_PREFIX}You are now the product owner (PO) of the project '{name}' in "
+        f"Ensemble ({'a documents project' if docs else 'a code project'}); "
+        f"{operator_name()} made you its PO from the dashboard because this conversation "
+        f"already holds the project's context. From now on the project's tasks report to you "
+        f"and you have the ensemble_* tools of a PO. "
+        f"1) Read the `ensemble` skill, section \"Running a project as its PO\""
+        f"{' and its paragraph on a documents project’s PO' if docs else ''}. "
+        f"2) From what you already know, write {hp} (your handover: what the project is, "
+        f"priorities, decisions and why, what is in flight, what you have promised) and {rp} "
+        f"(the roadmap). Write the handover first: this conversation is long, and the hub will "
+        f"later start a fresh PO session that knows only those two files. "
+        f"3) Then tell {operator_name()} in a few lines what you understood the project to be "
+        f"and what you would start first, and wait for his answer before starting any task.")
+
+
+def _session_room(sid: str) -> dict | None:
+    """The hub's task that already holds this conversation, if any."""
+    for room in chatroom.list_rooms():
+        for part in room.get("participants") or []:
+            if part.get("kind") == "agent" and (part.get("sessionId") or "") == sid:
+                return room
+    return None
+
+
+def _same_folder(a: str, b: str) -> bool:
+    return os.path.normcase(os.path.normpath(a or ".")) == os.path.normcase(os.path.normpath(b or "."))
+
+
+def _new_po_project(name: str, kind: str, path: str) -> tuple[dict, callable]:
+    """Create the project a session becomes the PO of, by the New project
+    path (register_project, set_project_kind). Returns (project, undo)."""
+    name = (name or "").strip()
+    kind = (kind or "code").strip().lower()
+    if not name:
+        raise MakePoError("Give the project a name.")
+    if kind not in PROJECT_KINDS:
+        raise MakePoError(KIND_REFUSALS["kind_must_be_code_or_documents"])
+    if kind == "documents":
+        # Its files live in the projects folder, under its name.
+        raw = name
+        if _UNSAFE_DIR_CHARS.search(name) or name in (".", ".."):
+            raise MakePoError("A documents project's name is also its folder's name: "
+                              "use letters, digits, spaces, - and _ only.")
+    else:
+        raw = (path or "").strip()
+        if not raw:
+            raise MakePoError("Give the code folder.")
+        if not Path(os.path.expanduser(raw)).is_absolute():
+            raise MakePoError("Give the code folder as a full path, such as "
+                              + (r"C:\work\my-project." if os.name == "nt" else "/home/me/my-project."))
+    target = Path(os.path.expanduser(raw))
+    if not target.is_absolute():
+        target = PROJECTS_ROOT / raw
+    existed = target.exists()
+    if existed and not target.is_dir():
+        raise MakePoError(f"{target} is a file, not a folder.")
+    before = {p["id"] for p in load_projects()}
+    ok, proj, msg = register_project(raw, name)
+    if not ok:
+        raise MakePoError(f"The project could not be created: {msg}.")
+    if proj["id"] in before:
+        raise MakePoError(f"The folder {proj['path']} is already the project “{proj.get('name', '')}”. "
+                          f"Open that project and choose its PO there.", 409)
+    home_before = project_home(proj, create=False)
+    home_existed = os.path.isdir(home_before)
+
+    def undo() -> None:
+        unregister_project(proj["id"])
+        for folder, was_there in ((proj["path"], existed), (home_before, home_existed)):
+            try:
+                pj = Path(folder) / "project.json"
+                if pj.is_file() and json.loads(pj.read_text(encoding="utf-8")).get("id") == proj["id"]:
+                    pj.unlink()
+            except (OSError, json.JSONDecodeError):
+                pass
+            if not was_there:
+                # Made by this request moments ago: nothing of anyone's is in it.
+                shutil.rmtree(folder, ignore_errors=True)
+
+    if kind == "documents":
+        kok, kmsg = set_project_kind(proj["id"], "documents")
+        if not kok:
+            undo()
+            raise MakePoError(KIND_REFUSALS.get(kmsg, kmsg))
+    return find_project(proj["id"]) or proj, undo
 
 
 def set_project_digest_interval(project_id: str, minutes) -> tuple[bool, str]:
@@ -8042,6 +8188,138 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    # ---------- A past session made a project's PO ----------
+
+    def _make_po_from_session(self, data: dict) -> dict:
+        """POST /api/projects/po-from-session. The session: ``{sessionId, cwd,
+        agent, label}`` (one the hub lists but does not own; adopted as
+        /api/session/adopt does, its conversation resumed) or ``{roomId}`` (a
+        one-agent task in no project). The project: ``{projectId}`` (it has no
+        PO) or ``{name, kind, path}`` (made as New project makes it). Returns
+        {project, room}. Raises MakePoError in plain words; whatever it had
+        made by then is taken back."""
+        rid = (data.get("roomId") or "").strip()
+        sid = (data.get("sessionId") or "").strip()
+        cwd = (data.get("cwd") or "").strip()
+        label = (data.get("label") or "").strip()
+        if rid:
+            room_full = chatroom.get_room(rid, public=False)
+            if room_full is None:
+                raise MakePoError("That task no longer exists.", 404)
+            agents_in = chatroom.agent_participants(room_full)
+            if len(agents_in) != 1:
+                raise MakePoError("Only a task with one agent can be made a PO.")
+            if any((p.get("poRoomId") or "") == rid for p in load_projects()):
+                raise MakePoError("That task is already a project's PO.", 409)
+            if not room_full.get("launched", True) or not (agents_in[0].get("sessionId") or "").strip():
+                raise MakePoError("That task has no conversation yet: a PO made this way "
+                                  "brings its conversation with it.")
+            agent_key = agents_in[0].get("agent", "")
+        else:
+            if not sid or not cwd:
+                raise MakePoError("The session and its folder are needed.")
+            agent_key = (data.get("agent") or "claude").strip().lower()
+            ag = agents.get_agent(agent_key)
+            if ag is None or not ag.installed():
+                raise MakePoError(f"“{agent_key}” is not installed on this machine.")
+            if not os.path.isdir(cwd):
+                raise MakePoError(f"The session's folder {cwd} no longer exists, and a "
+                                  f"conversation can only be continued in the folder it was started in.")
+            held = _session_room(sid)
+            if held is not None:
+                raise MakePoError(f"That conversation is already the task “{held.get('title', held['id'])}”. "
+                                  f"Make that task the PO instead.", 409)
+        if agent_key not in ("claude", "codex"):
+            raise MakePoError("Only a Claude or a Codex session can be made a PO.")
+
+        undo_project = None
+        pid = (data.get("projectId") or "").strip()
+        if pid:
+            project = find_project(pid)
+            if project is None:
+                raise MakePoError("That project no longer exists.", 404)
+            if project_po_room(project) is not None:
+                raise MakePoError(f"“{project.get('name', pid)}” already has a PO.", 409)
+        else:
+            source_cwd = cwd if not rid else (agents_in[0].get("cwd") or room_full.get("cwd") or "")
+            project, undo_project = _new_po_project(
+                data.get("name") or label, data.get("kind") or "code",
+                data.get("path") or source_cwd)
+            pid = project["id"]
+
+        made_room = False
+        before = {}
+        try:
+            if not rid:
+                title = (label or project.get("name") or f"{agent_key} {sid[:8]}")[:120]
+                room = chatroom.create_room(title, [{"identity": agent_key, "agent": agent_key}])
+                rid, made_room = room["id"], True
+                room_full = chatroom.get_room(rid, public=False)
+                room_full["cwd"] = cwd
+                room_full["mode"] = "solo"
+                room_full["adopted"] = True
+                part = chatroom.agent_participants(room_full)[0]
+                part["sessionId"] = sid
+                part["cwd"] = cwd          # resumed in place: where the conversation was started
+            else:
+                part = agents_in[0]
+                before = {"room": {k: room_full.get(k) for k in ("projectId", "spec", "sharedCwd", "workspace")},
+                          "part": {k: part.get(k) for k in ("madePoAt", "nextCwd")},
+                          "link": load_session_projects().get(rid, "")}
+            room_full["projectId"] = pid
+            room_full["sharedCwd"] = True
+            room_full["spec"] = made_po_charter(project)
+            if project.get("kind") == "documents":
+                room_full["workspace"] = {"mode": "inplace"}
+            # The PO's cool-down counts from here (rotation._session_started):
+            # it writes its handover before the hub asks it to make way.
+            part["madePoAt"] = time.time()
+            # A conversation continues only where it was started; the fresh
+            # session of its first rotation starts where a PO works.
+            work = po_work_folder(project)
+            part.pop("nextCwd", None)
+            if work and os.path.isdir(work) and not _same_folder(work, part.get("cwd") or room_full.get("cwd", "")):
+                part["nextCwd"] = os.path.normpath(work)
+            chatroom.update_room(room_full)
+            assign_session_project(rid, pid)
+            # Numbered like any adopted task, then the PO (a PO takes no new number).
+            assign_task_number(rid, pid, room_full)
+            ok, msg = set_project_po(pid, rid)
+            if not ok:
+                raise MakePoError(f"The PO could not be recorded on the project: {msg}.")
+            try:
+                # Resumed (or, if it runs, left running) and told, as one hub input.
+                self._resume_room(chatroom.get_room(rid, public=False) or room_full,
+                                  text=made_po_first_input(project), key=f"made-po:{pid}:{rid}")
+            except Exception as exc:    # noqa: BLE001 — a refusal or a failed spawn alike
+                raise MakePoError(f"The session could not be started: {str(exc) or exc.__class__.__name__}.") from exc
+        except Exception:
+            with _RESUMES_LOCK:
+                _RESUMES.pop(rid, None)
+            if find_project(pid) is not None and (find_project(pid).get("poRoomId") or "") == rid:
+                set_project_po(pid, "")
+            if made_room:
+                try:
+                    stop_task(rid)
+                except Exception:       # noqa: BLE001 — nothing was started
+                    pass
+                assign_session_project(rid, "")
+                chatroom.delete_room(rid)
+            elif before:
+                assign_session_project(rid, before["link"])
+                back = chatroom.get_room(rid, public=False)
+                if back is not None:
+                    for k, v in before["room"].items():
+                        back.pop(k, None) if v is None else back.__setitem__(k, v)
+                    bpart = chatroom.agent_participants(back)[0]
+                    for k, v in before["part"].items():
+                        bpart.pop(k, None) if v is None else bpart.__setitem__(k, v)
+                    chatroom.update_room(back)
+            if undo_project:
+                undo_project()
+            raise
+        return {"project": find_project(pid) or project, "room": chatroom.get_room(rid)}
+
     # ---------- A documents project's files: upload, mkdir, move, delete ----------
     # A plain API, gated like the rest of the hub (the access token off loopback).
     # A browser sends Origin on every POST; a page on another site must not
@@ -8621,6 +8899,19 @@ class Handler(BaseHTTPRequestHandler):
             ok, msg = set_project_po(data.get("projectId", ""), data.get("roomId", ""))
             code = {"no_such_project": 404, "no_such_room": 404}.get(msg, 400)
             self._send_json(200 if ok else code, {"ok": ok} if ok else {"error": msg})
+            return
+        if p == "/api/projects/po-from-session":
+            # A past session (or a one-agent task in no project) becomes the
+            # PO of a new project, or of one that has none: one request, all
+            # or nothing (see _make_po_from_session).
+            if self._files_cross_site():
+                return
+            try:
+                made = self._make_po_from_session(data)
+            except MakePoError as exc:
+                self._send_json(exc.status, {"error": "cannot_make_po", "message": str(exc)})
+                return
+            self._send_json(200, {"ok": True, **made})
             return
         if p == "/api/projects/digest":
             # {projectId, intervalMin}: the project's own progress-digest
