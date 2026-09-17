@@ -1253,8 +1253,6 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
     fields = {"sessionId": info["sessionId"], "ptyId": info["ptyId"],
               "cwd": info["cwd"], "pid": None}
     drop = ("lastExit", "fresh", "nextCwd")
-    if moved:
-        _d.chatroom.patch_room(rid, cwd=moved)
     if owner:
         rec.update(agent=used.get("agent", ""), model=used.get("model", ""),
                    fromAgent=old_kind, fromModel=fpart.get("model", ""),
@@ -1275,6 +1273,9 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
     with GATE:
         patched = _d.chatroom.patch_participant(rid, ident, fields,
                                                 append={"rotations": rec}, drop=drop)
+    if patched is not None and moved:
+        # Only once the participant has its fresh session: the room follows it.
+        _d.chatroom.patch_room(rid, cwd=moved)
     if patched is None:
         _discard_fresh(info, used.get("agent", ""), started, agents_in)
         st["phase"] = "watching"

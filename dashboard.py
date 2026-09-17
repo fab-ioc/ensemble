@@ -2076,6 +2076,10 @@ def set_project_po(project_id: str, room_id: str) -> tuple[bool, str]:
 # and one first input typed by the hub that says so and asks for the handover.
 
 MADE_PO_PREFIX = "[product owner] "
+# One such request at a time: what it checks (the session is nobody's task, the
+# project has no PO, the folder is no project) holds until it has finished or
+# taken everything back. Two tabs, or a program, cannot fork a conversation.
+_MAKE_PO_LOCK = threading.Lock()
 
 
 class MakePoError(Exception):
@@ -2184,6 +2188,13 @@ def _new_po_project(name: str, kind: str, path: str) -> tuple[dict, callable]:
     if existed and not target.is_dir():
         raise MakePoError(f"{target} is a file, not a folder.")
     before = {p["id"] for p in load_projects()}
+    # A project.json that was in the folder (a project of another hub, or
+    # something unreadable) is put back as it was if this is undone.
+    kept_json = None
+    try:
+        kept_json = (target / "project.json").read_bytes()
+    except OSError:
+        pass
     ok, proj, msg = register_project(raw, name)
     if not ok:
         raise MakePoError(f"The project could not be created: {msg}.")
@@ -2199,7 +2210,10 @@ def _new_po_project(name: str, kind: str, path: str) -> tuple[dict, callable]:
             try:
                 pj = Path(folder) / "project.json"
                 if pj.is_file() and json.loads(pj.read_text(encoding="utf-8")).get("id") == proj["id"]:
-                    pj.unlink()
+                    if was_there and kept_json is not None and _same_folder(folder, str(target)):
+                        pj.write_bytes(kept_json)
+                    else:
+                        pj.unlink()
             except (OSError, json.JSONDecodeError):
                 pass
             if not was_there:
@@ -8197,7 +8211,11 @@ class Handler(BaseHTTPRequestHandler):
         one-agent task in no project). The project: ``{projectId}`` (it has no
         PO) or ``{name, kind, path}`` (made as New project makes it). Returns
         {project, room}. Raises MakePoError in plain words; whatever it had
-        made by then is taken back."""
+        made by then is taken back. One at a time (_MAKE_PO_LOCK)."""
+        with _MAKE_PO_LOCK:
+            return self._make_po_locked(data)
+
+    def _make_po_locked(self, data: dict) -> dict:
         rid = (data.get("roomId") or "").strip()
         sid = (data.get("sessionId") or "").strip()
         cwd = (data.get("cwd") or "").strip()
@@ -8215,6 +8233,12 @@ class Handler(BaseHTTPRequestHandler):
                 raise MakePoError("That task has no conversation yet: a PO made this way "
                                   "brings its conversation with it.")
             agent_key = agents_in[0].get("agent", "")
+            # A task of a project stays that project's: only one in no project
+            # (or already in the project it becomes the PO of) is taken.
+            member = find_project(_task_project(room_full, load_session_projects(), load_projects()))
+            if member is not None and member["id"] != (data.get("projectId") or "").strip():
+                raise MakePoError(f"That task belongs to the project “{member.get('name', member['id'])}”. "
+                                  f"Move it out of the project first.", 409)
         else:
             if not sid or not cwd:
                 raise MakePoError("The session and its folder are needed.")
@@ -8282,8 +8306,7 @@ class Handler(BaseHTTPRequestHandler):
                 part["nextCwd"] = os.path.normpath(work)
             chatroom.update_room(room_full)
             assign_session_project(rid, pid)
-            # Numbered like any adopted task, then the PO (a PO takes no new number).
-            assign_task_number(rid, pid, room_full)
+            # No task number: a project's PO is not one of its tasks.
             ok, msg = set_project_po(pid, rid)
             if not ok:
                 raise MakePoError(f"The PO could not be recorded on the project: {msg}.")
@@ -8896,7 +8919,10 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/projects/po":
             # {projectId, roomId}: name the task that is the project's PO
             # (roomId "" clears it). Every other task reports into it.
-            ok, msg = set_project_po(data.get("projectId", ""), data.get("roomId", ""))
+            # Not while a session is being made a project's PO: that request
+            # has checked the project has none.
+            with _MAKE_PO_LOCK:
+                ok, msg = set_project_po(data.get("projectId", ""), data.get("roomId", ""))
             code = {"no_such_project": 404, "no_such_room": 404}.get(msg, 400)
             self._send_json(200 if ok else code, {"ok": ok} if ok else {"error": msg})
             return

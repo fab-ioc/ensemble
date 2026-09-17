@@ -3,9 +3,11 @@
 * the hub (POST /api/projects/po-from-session): a session the hub lists but
   does not own becomes the PO of a new code or documents project, or of an
   existing project that has none, in one request: the project, the adopted
-  room (numbered as an adopted task), the PO, and the first input held for the
-  resume; a one-agent task in no project can take the same way; what is
-  refused, and that a refusal or a failed start leaves nothing behind;
+  room (no task number: a PO is not a task), the PO, and the first input held
+  for the resume; a one-agent task in no project can take the same way, a
+  project's task cannot; what is refused, and that a refusal or a failed start
+  leaves nothing behind, a project.json that was in the folder included; two
+  requests at once for one session, or one project, make one PO;
 * what the hub types: one line that the chat reads as the hub's (``madepo``),
   not the person's;
 * rotation: a PO with no written handover is asked for it and never replaced
@@ -23,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -83,10 +86,13 @@ class Hub(unittest.TestCase):
         self.work.mkdir(parents=True)
 
     def call(self, body, origin=""):
+        return self.call_url(URL, body, origin)
+
+    def call_url(self, url, body, origin=""):
         raw = json.dumps(body).encode()
         h = dashboard.Handler.__new__(dashboard.Handler)
-        h.path, h.command, h.request_version = URL, "POST", "HTTP/1.1"
-        h.requestline = f"POST {URL} HTTP/1.1"
+        h.path, h.command, h.request_version = url, "POST", "HTTP/1.1"
+        h.requestline = f"POST {url} HTTP/1.1"
         h.headers = {"Content-Length": str(len(raw)), "Content-Type": "application/json", "Host": f"127.0.0.1:{PORT}"}
         if origin:
             h.headers["Origin"] = origin
@@ -127,7 +133,8 @@ class NewProject(Hub):
                          "continued in the folder it was started in")
         self.assertEqual(part["nextCwd"], os.path.normpath(str(code)), "its first fresh session works in the code")
         self.assertAlmostEqual(part["madePoAt"], time.time(), delta=30)
-        self.assertEqual(room["no"], 1, "numbered as an adopted task")
+        self.assertIsNone(room.get("no"), "a PO is not one of the project's tasks")
+        self.assertFalse(dashboard.find_project(proj["id"]).get("nextTaskNo"))
         self.assertEqual(dashboard.load_session_projects()[rid], proj["id"])
         self.assertIn("product owner (PO) of the project 'Engine'", room["spec"])
         self.assertNotIn("PO-HANDOVER.md first", room["spec"], "the charter holds no one-off step")
@@ -222,6 +229,48 @@ class NewProject(Hub):
         self.assertEqual([p.name for p in kept.iterdir()], ["will.txt"])
 
 
+    def test_a_project_json_that_was_in_the_folder_is_put_back(self):
+        self.start_error = RuntimeError("no terminal")
+        # A readable one makes the folder a project already (the root is scanned): refused, untouched.
+        # An unreadable one is overwritten by the new project, and put back when that is undone.
+        for name, was, status, projects in (
+                ("Old hub", b'{"id": "proj-elsewhere", "name": "Old hub", "poRoomId": "room-x"}', 409, 1),
+                ("Broken", b"{not json", 400, 1)):
+            folder = self.root / name
+            folder.mkdir()
+            (folder / "project.json").write_bytes(was)
+            got, out = self.call({**self.session(), "name": name, "kind": "documents"})
+            self.assertEqual(got, status, out)
+            self.assertEqual((folder / "project.json").read_bytes(), was, name)
+            self.nothing_left(projects=projects)
+
+    def test_two_requests_at_once_for_one_session_make_one_po(self):
+        gate, results = threading.Event(), []
+        real = dashboard.Handler._start_or_resume_room
+
+        def slow(handler, room_full):
+            gate.wait(5)
+            return real(handler, room_full)
+
+        def ask(name):
+            results.append(self.call({**self.session(), "name": name, "kind": "code",
+                                      "path": str(self.base / "code" / name)}))
+
+        with mock.patch.object(dashboard.Handler, "_start_or_resume_room", slow):
+            threads = [threading.Thread(target=ask, args=(n,)) for n in ("One", "Two")]
+            for t in threads:
+                t.start()
+            time.sleep(0.3)             # the second is asked while the first is starting the session
+            gate.set()
+            for t in threads:
+                t.join(20)
+        self.assertEqual(sorted(s for s, _ in results), [200, 409], results)
+        self.assertEqual((len(self.rooms()), len(dashboard.load_projects()), len(self.started)), (1, 1, 1))
+        loser = next(o for s, o in results if s == 409)
+        self.assertIn("already the task", loser["message"])
+        self.assertEqual(len(list((self.base / "code").iterdir())), 1, "the refused request's folder is not left")
+
+
 class ExistingProject(Hub):
     def setUp(self):
         super().setUp()
@@ -237,7 +286,8 @@ class ExistingProject(Hub):
         rid = out["room"]["id"]
         self.assertEqual((out["project"]["id"], out["project"]["poRoomId"]), (self.pid, rid))
         self.assertEqual(len(dashboard.load_projects()), 1, "no project is made")
-        self.assertEqual(chatroom.get_room(rid)["no"], 2, "the project's next number")
+        self.assertIsNone(chatroom.get_room(rid).get("no"))
+        self.assertEqual(dashboard.find_project(self.pid)["nextTaskNo"], 2, "the project's counter is left alone")
 
     def test_a_project_with_a_po_is_refused(self):
         po = chatroom.create_room("The PO", [{"identity": "claude", "agent": "claude"}])["id"]
@@ -249,6 +299,44 @@ class ExistingProject(Hub):
         self.assertEqual([r["id"] for r in self.rooms()], [po])
         self.assertEqual(dashboard.find_project(self.pid)["poRoomId"], po)
         self.assertEqual(self.started, [])
+
+    def test_two_sessions_at_once_for_one_project_make_one_po(self):
+        gate, results = threading.Event(), []
+        real = dashboard.Handler._start_or_resume_room
+
+        def slow(handler, room_full):
+            gate.wait(5)
+            return real(handler, room_full)
+
+        def ask(sid):
+            results.append(self.call({**self.session(sessionId=sid), "projectId": self.pid}))
+
+        with mock.patch.object(dashboard.Handler, "_start_or_resume_room", slow):
+            threads = [threading.Thread(target=ask, args=(s,)) for s in ("sid-a", "sid-b")]
+            for t in threads:
+                t.start()
+            time.sleep(0.3)             # the second is asked while the first is starting the session
+            gate.set()
+            for t in threads:
+                t.join(20)
+        self.assertEqual(sorted(s for s, _ in results), [200, 409], results)
+        winner = next(o for s, o in results if s == 200)
+        self.assertEqual([r["id"] for r in self.rooms()], [winner["room"]["id"]], "the refused session is nobody's task")
+        self.assertEqual(dashboard.find_project(self.pid)["poRoomId"], winner["room"]["id"])
+
+    def test_choosing_a_po_waits_for_a_session_being_made_one(self):
+        self.assertTrue(dashboard._MAKE_PO_LOCK.acquire(timeout=1))
+        try:
+            done = []
+            h = threading.Thread(target=lambda: done.append(
+                self.call_url("/api/projects/po", {"projectId": self.pid, "roomId": ""})))
+            h.start()
+            h.join(0.5)
+            self.assertEqual(done, [], "held while the other request runs")
+        finally:
+            dashboard._MAKE_PO_LOCK.release()
+        h.join(10)
+        self.assertEqual(done[0][0], 200)
 
     def test_a_po_that_no_longer_exists_does_not_count(self):
         po = chatroom.create_room("The PO", [{"identity": "claude", "agent": "claude"}])["id"]
@@ -303,6 +391,48 @@ class ATask(Hub):
         self.assertNotIn("nextCwd", part)
         self.assertEqual((dashboard.load_projects(), dashboard.load_session_projects()), ([], {}))
         self.assertFalse((self.base / "code").exists())
+
+    def test_a_projects_task_is_not_taken_from_it(self):
+        ok, proj, _ = dashboard.register_project("Motors")
+        ok, other, _ = dashboard.register_project("Boats")
+        linked, recorded, inside = self.task(sid="s-1"), self.task(sid="s-2"), self.task(sid="s-3")
+        dashboard.assign_session_project(linked, proj["id"])
+        dashboard.assign_task_number(linked, proj["id"])
+        full = chatroom.get_room(recorded, public=False)
+        full["projectId"] = proj["id"]
+        chatroom.update_room(full)
+        full = chatroom.get_room(inside, public=False)
+        full["cwd"] = str(Path(proj["path"]) / "sub")            # its folder is in the project's
+        chatroom.update_room(full)
+        for rid in (linked, recorded, inside):
+            for target in ({"name": "New", "kind": "code", "path": str(self.base / "new")}, {"projectId": other["id"]}):
+                status, out = self.call({"roomId": rid, **target})
+                self.assertEqual(status, 409, (rid, target, out))
+                self.assertIn("belongs to the project “Motors”", out["message"])
+        self.assertEqual(len(dashboard.load_projects()), 2)
+        self.assertFalse((self.base / "new").exists())
+        self.assertEqual((dashboard.load_session_projects(), chatroom.get_room(linked)["no"]), ({linked: proj["id"]}, 1))
+        self.assertEqual(self.started, [])
+        # Its own project's PO it may become, keeping its number there.
+        status, out = self.call({"roomId": linked, "projectId": proj["id"]})
+        self.assertEqual(status, 200, out)
+        self.assertEqual((out["project"]["poRoomId"], chatroom.get_room(linked)["no"]), (linked, 1))
+
+    def test_a_failed_start_in_its_own_project_changes_nothing(self):
+        ok, proj, _ = dashboard.register_project("Motors")
+        rid = self.task()
+        dashboard.assign_session_project(rid, proj["id"])
+        dashboard.assign_task_number(rid, proj["id"])
+        meta = Path(proj["path"]) / "project.json"
+        was_meta, was_room = meta.read_bytes(), chatroom.get_room(rid, public=False)
+        self.start_error = RuntimeError("no terminal")
+        status, out = self.call({"roomId": rid, "projectId": proj["id"]})
+        self.assertEqual(status, 400, out)
+        now = chatroom.get_room(rid, public=False)
+        for k in ("no", "noProjectId", "previousNos", "projectId", "spec", "sharedCwd", "workspace", "cwd"):
+            self.assertEqual(now.get(k), was_room.get(k), k)
+        self.assertEqual(json.loads(meta.read_bytes()), json.loads(was_meta), "the counter and the PO as they were")
+        self.assertEqual(dashboard.load_session_projects(), {rid: proj["id"]})
 
     def test_which_tasks_are_refused(self):
         team = self.task(agents=("claude", "codex"))
@@ -516,6 +646,29 @@ class TheFirstFreshSession(unittest.TestCase):
         self.assertEqual(self.launches[0]["cwd"], str(self.code))
         self.assertEqual((room["cwd"], part["cwd"], part["sessionId"]), (str(self.code), str(self.code), "sid-new"))
         self.assertNotIn("nextCwd", part, "once")
+
+    def test_a_task_that_went_away_meanwhile_is_not_moved(self):
+        rid = chatroom.create_room("Engine notes", [{"identity": "claude", "agent": "claude"}])["id"]
+        full = chatroom.get_room(rid, public=False)
+        full["cwd"], full["mode"] = str(self.was), "solo"
+        part = chatroom.agent_participants(full)[0]
+        part.update(sessionId="sid-old", cwd=str(self.was), ptyId="pty-old", nextCwd=str(self.code))
+        chatroom.update_room(full)
+        s = {"kind": "po", "name": "Engine", "project": {"id": "p1", "name": "Engine", "path": str(self.code)},
+             "room": full, "part": part, "why": "", "state": {"phase": "asked"}, "limit": 150_000,
+             "setting": "poRotateTokens", "who": "the PO", "whose": "the PO's",
+             "handoverName": rotation.HANDOVER_NAME, "handover": self.code / rotation.HANDOVER_NAME,
+             "ids": {"projectId": "p1"}}
+        patches = []
+        with mock.patch.object(chatroom, "patch_participant", return_value=None), \
+                mock.patch.object(chatroom, "patch_room", side_effect=lambda *a, **k: patches.append(k)), \
+                mock.patch.object(rotation, "_discard_fresh") as discard:
+            out = rotation._rotate_marked(s, {"tokens": 250_000}, lambda r, quiet=False, **x: {"result": r, **x},
+                                          True, True, (rid, "claude"), {"stopped": False})
+        self.assertIn("went away while rotating", out["result"])
+        self.assertEqual(patches, [], "the room's folder is left as it was")
+        self.assertTrue(discard.called)
+        self.assertEqual(chatroom.get_room(rid, public=False)["cwd"], str(self.was))
 
     def test_a_folder_that_is_gone_is_not_moved_to(self):
         room, part = self.rotate(str(self.code / "gone"))
