@@ -31,14 +31,26 @@ Two sources, deliberately not symmetrical:
       good reading with that reading's age instead of going "unavailable".
 
 ``read_codex()``
-    No network, no credentials: the newest ``token_count`` event in the Codex
-    rollout JSONLs. **A last-write snapshot, not a feed** — the rollout is
-    appended only when that agent takes a turn, so a reading's age is unbounded
-    and it freezes exactly when an agent stops, which is the condition we most
-    want to notice. Two guards, both mandatory, both below: carry the age and
-    stop trusting a reading once it has gone old *relative to that window's own
-    length*, and treat a window whose ``resets_at`` has passed as rolled over
-    rather than reporting its dead value.
+    A Codex plan has several **pools**, each an allowance of its own: the main
+    one (``limit_id`` "codex"), a reserve that only the model ``gpt-reserve``
+    draws on, and a model's own (Spark's). They are read and shown apart, and
+    the pool Codex agents run on (:func:`codex_pool_for_model`) is the one
+    that alarms and the one allocation judges. Two readings, the newer wins
+    per pool:
+
+    * **Preferred** — :func:`read_codex_app_server`: ``codex app-server``
+      answers ``account/rateLimits/read`` with every pool, used or not. One
+      short-lived child process per reading, killed after a hard timeout.
+    * **Fallback** — the newest ``token_count`` event of each pool in the
+      Codex rollout JSONLs, when ``codex`` is missing, not logged in, too old
+      to know the method, or slow. **A last-write snapshot, not a feed** — the
+      rollout is appended only when that agent takes a turn, so a reading's
+      age is unbounded and it freezes exactly when an agent stops, which is
+      the condition we most want to notice. Two guards, both mandatory, both
+      below: carry the age and stop trusting a reading once it has gone old
+      *relative to that window's own length*, and treat a window whose
+      ``resets_at`` has passed as rolled over rather than reporting its dead
+      value.
 
 Both normalise to one window vocabulary (``five_hour`` / ``seven_day`` /
 ``seven_day_model``) so the chip, the endpoint and the MCP tool share one render
@@ -63,6 +75,11 @@ import copy
 import json
 import math
 import os
+import queue
+import re
+import shutil
+import signal
+import subprocess
 import threading
 import time
 import urllib.error
@@ -124,6 +141,40 @@ RESET_SLACK_S = 86400
 # being reported — a model no longer in use, a plan that has changed — and its
 # windows are no longer a statement about now.
 BUCKET_TOGETHER_S = 300
+
+# Codex's pools. The main one is the account's weekly (and, on some plans,
+# five-hour) allowance; every model draws on it except the ones below.
+CODEX_MAIN_POOL = "codex"
+# The reserve: a weekly allowance of its own that only the model slug
+# `gpt-reserve` draws on. The app server names it (`limitName` "gpt-reserve");
+# a session record does not — a turn on `gpt-reserve` writes `limit_id`
+# "codex" like any other, with the reserve's numbers — so the session reader
+# tells the two apart by the session's model.
+CODEX_RESERVE_POOL = "base_model_inference"
+CODEX_RESERVE_MODEL = "gpt-reserve"
+# Spark: a model with a five-hour and a weekly allowance of its own.
+CODEX_SPARK_POOL = "codex_bengalfox"
+CODEX_SPARK_MODEL = "gpt-5.3-codex-spark"
+# The only models known to draw on a pool of their own. A pool Codex adds
+# later is read and shown under its name, but no model is *judged* by it until
+# it is listed here: a slug that merely looks like a pool's name stays on the
+# main pool.
+_CODEX_MODEL_POOLS = {CODEX_RESERVE_MODEL: CODEX_RESERVE_POOL,
+                      CODEX_SPARK_MODEL: CODEX_SPARK_POOL}
+
+# `codex app-server` answered in about a second when measured (2026-09-17).
+# The whole reading, its kill included, stays under 15 s: this long to answer,
+# then CODEX_APP_KILL_S, counted from the same start, to be gone.
+CODEX_APP_TIMEOUT_S = 12
+CODEX_APP_KILL_S = 3
+# After a reading that failed — no `codex`, not logged in, an older Codex
+# without the method, a timeout — the session records serve, and the app
+# server is not started again for this long.
+CODEX_APP_RETRY_S = 600
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+_codex_app_retry_at = 0.0
+_codex_app_last_good: dict | None = None   # {at, pools} of its last good answer
+_codex_app_why = ""                        # why it last failed, in the user's terms
 
 WARN_PERCENT = 80          # banner
 ALARM_PERCENT = 95         # banner, louder
@@ -253,7 +304,8 @@ def _stale_after(window_minutes) -> float:
 def _window(kind: str, label: str, *, percent=None, stale_percent=None,
             rolled_over: bool = False, reset_unknown: bool = False,
             window_minutes=None, resets_at=None,
-            model: str | None = None, age_seconds=None) -> dict:
+            model: str | None = None, age_seconds=None,
+            pool: str | None = None) -> dict:
     # Trust is per window, not per source: the same reading can be current for
     # the weekly window and out of date for the five-hour one.
     stale_after = _stale_after(window_minutes)
@@ -266,6 +318,12 @@ def _window(kind: str, label: str, *, percent=None, stale_percent=None,
         "kind": kind,
         "label": label,
         "model": model,
+        # Codex only: the pool this window belongs to (its limit id), and
+        # whether Codex agents currently run on that pool (read_codex sets it).
+        # `model` stays None for the main pool, so a page that reads the
+        # `model: null` windows as the account's keeps working.
+        "pool": pool,
+        "inUse": None,
         "windowMinutes": window_minutes,
         # `percent` is the number that may be shown as current. When a window
         # has rolled over it is None and the dead value is preserved separately,
@@ -660,13 +718,34 @@ def _newest_rate_limits(files) -> dict[str, tuple[dict, float]]:
     Records are ordered by *parsed* timestamp, not by string: Codex writes
     fractional seconds today, but ``...:40Z`` sorts above ``...:40.401Z``
     lexicographically, so a format change would silently pick the older record.
+
+    One bucket is not named by its record. A turn on the model ``gpt-reserve``
+    draws on the reserve pool, yet writes ``limit_id`` "codex" like any other,
+    with the reserve's numbers (0% and its own reset time on 2026-09-17, beside
+    the main pool's 97%). Read as written, the main figure flipped between the
+    two with whichever session wrote last. So an account record belongs to the
+    reserve when the turn it follows ran on that model — the ``turn_context``
+    record before it names the model — and is returned under
+    :data:`CODEX_RESERVE_POOL`, named as the app server names it. Not told
+    apart by reset time: the main pool's own wobbles by a second from record
+    to record.
     """
     best: dict[str, tuple[dict, float]] = {}
     extra = 0
     for path in files:
         try:
             with open(path, encoding="utf-8", errors="replace") as fh:
+                model = ""
                 for line in fh:
+                    if '"turn_context"' in line:
+                        try:
+                            rec = json.loads(line)
+                        except ValueError:
+                            continue
+                        if rec.get("type") == "turn_context":
+                            named = (rec.get("payload") or {}).get("model")
+                            model = named.strip().lower() if isinstance(named, str) else ""
+                        continue
                     if '"token_count"' not in line:
                         continue
                     try:
@@ -682,7 +761,11 @@ def _newest_rate_limits(files) -> dict[str, tuple[dict, float]]:
                     at = _iso_to_epoch(rec.get("timestamp"))
                     if at is None:
                         continue
-                    bucket = limits.get("limit_id") or "codex"
+                    bucket = limits.get("limit_id") or CODEX_MAIN_POOL
+                    if bucket == CODEX_MAIN_POOL and model == CODEX_RESERVE_MODEL:
+                        bucket = CODEX_RESERVE_POOL
+                        limits = dict(limits, limit_id=CODEX_RESERVE_POOL,
+                                      limit_name=CODEX_RESERVE_MODEL)
                     if bucket not in best or at > best[bucket][1]:
                         best[bucket] = (limits, at)
         except OSError:
@@ -791,51 +874,450 @@ def _reset_plausible(resets: float, written_at: float, window_minutes) -> bool:
     return written_at - RESET_SLACK_S <= resets <= written_at + reach + RESET_SLACK_S
 
 
-def read_codex(now: float | None = None, files=None) -> dict:
-    """Newest Codex rate-limit reading, with both staleness guards.
-
-    ``now`` and ``files`` are injectable so the guards can be tested against a
-    fixed clock and a synthetic record. Never raises.
-    """
-    now = time.time() if now is None else now
-    try:
-        buckets = _newest_rate_limits(
-            _rollout_files(CODEX_MAX_FILES) if files is None else files)
-    except Exception as e:                                   # noqa: BLE001
-        return _unavailable("codex", _scrub(f"cannot read Codex rollouts ({type(e).__name__})"))
+def _session_pools(files) -> list[dict]:
+    """The pools the session records still report, as pool records
+    ``{id, limitName, limits, at, plan, live}`` (``limits`` in the records'
+    own snake_case shape)."""
+    buckets = _newest_rate_limits(files)
     if not buckets:
-        return _unavailable(
-            "codex", "no Codex session has reported its limits recently")
-
+        return []
     newest_at = max(at for _, at in buckets.values())
     # Only buckets still being reported: co-reported ones are a millisecond
     # apart, and one that trails by more than BUCKET_TOGETHER_S has stopped.
-    # Never the account-wide bucket, though. A model's bucket can write on its
+    # Never the account's two pools, though. A model's bucket can write on its
     # own — on this machine Spark ran up to 43 s ahead of the account's — and a
-    # longer run must not drop the one number the chip exists for. Nothing is
-    # lost by exempting it: across a plan change it stays "codex", so the
-    # change is handled by taking its whole record, and its own staleness and
-    # rollover guards still apply. Account-wide first, so its windows lead.
-    current = sorted(
-        ((bucket, limits, at) for bucket, (limits, at) in buckets.items()
-         if bucket == "codex" or newest_at - at <= BUCKET_TOGETHER_S),
-        key=lambda t: (t[0] != "codex", t[0]))
-    # The plan is the account's. Model buckets carry a null plan_type, so
-    # taking it from whichever bucket wrote last would make the label flicker.
-    plan = (buckets.get("codex")
-            or max(buckets.values(), key=lambda v: v[1]))[0].get("plan_type")
+    # longer run must not drop the one number the chip exists for; and the main
+    # pool and the reserve are never written together at all, since a turn
+    # draws on one or the other. Nothing is lost by exempting them: across a
+    # plan change the bucket stays "codex", so the change is handled by taking
+    # its whole record, and each pool's own staleness and rollover guards
+    # still apply.
+    return [{"id": bucket, "limitName": limits.get("limit_name"), "limits": limits,
+             "at": at, "plan": limits.get("plan_type"), "live": False}
+            for bucket, (limits, at) in buckets.items()
+            if bucket in (CODEX_MAIN_POOL, CODEX_RESERVE_POOL)
+            or newest_at - at <= BUCKET_TOGETHER_S]
 
-    entries = []
-    for bucket, limits, at in current:
-        # A model's own limit is labelled with the model's name — the same
-        # path Claude's per-model weekly cap takes through the tray and banner.
-        model = None if bucket == "codex" else (limits.get("limit_name") or bucket)
-        for win, kind, label in _listed_windows(limits):
-            entries.append((win, kind, label, model, at))
 
+# --- Preferred: Codex's app server ------------------------------------------
+
+def _codex_app_argv() -> list[str] | None:
+    """How to start Codex's app server, or None when ``codex`` is not installed."""
+    exe = shutil.which("codex")
+    return [exe, "app-server"] if exe else None
+
+
+_SUSPENDED = 0x4 if os.name == "nt" else 0                   # CREATE_SUSPENDED
+
+
+def _win_job_api():
+    import ctypes
+    from ctypes import wintypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateJobObjectW.restype = wintypes.HANDLE
+    k32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+    k32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int,
+                                            wintypes.LPVOID, wintypes.DWORD]
+    k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    k32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    return k32
+
+
+def _job_open():
+    """Windows: a job that ends everything in it when it is ended — or when
+    its one handle, held here, closes, so also when the hub dies mid-reading.
+    None where there is no such thing or it cannot be had; the kill then goes
+    by ``taskkill``."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        k32 = _win_job_api()
+        job = k32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        # JOBOBJECT_EXTENDED_LIMIT_INFORMATION, of which only LimitFlags (a
+        # DWORD after two 64-bit time limits) is set: KILL_ON_JOB_CLOSE.
+        info = (ctypes.c_byte * (144 if ctypes.sizeof(ctypes.c_void_p) == 8 else 112))()
+        ctypes.c_uint32.from_buffer(info, 16).value = 0x2000
+        kept = False
+        try:
+            kept = bool(k32.SetInformationJobObject(job, 9, ctypes.byref(info),
+                                                    ctypes.sizeof(info)))
+        finally:
+            if not kept:
+                k32.CloseHandle(job)
+        return job if kept else None
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def _job_start(job, proc) -> bool:
+    """Put the child, started suspended, in the job and let it run: it has
+    started nothing yet, so nothing of its tree is ever outside the job. False
+    when the job did not take it (it still runs; ``taskkill`` ends it then).
+    Raises when it could not be let run at all."""
+    import ctypes
+    from ctypes import wintypes
+    handle = int(proc._handle)                               # noqa: SLF001
+    held = bool(_win_job_api().AssignProcessToJobObject(job, handle))
+    ntdll = ctypes.WinDLL("ntdll")
+    ntdll.NtResumeProcess.argtypes = [wintypes.HANDLE]
+    ntdll.NtResumeProcess.restype = ctypes.c_long
+    if ntdll.NtResumeProcess(handle) != 0:
+        raise OSError("the child could not be resumed")
+    return held
+
+
+def _job_end(job) -> bool:
+    """End everything in the job and let the job go. True when it was ended."""
+    ended = False
+    try:
+        k32 = _win_job_api()
+        try:
+            ended = bool(k32.TerminateJobObject(job, 1))
+        finally:
+            k32.CloseHandle(job)                             # kills too, by its limit
+    except Exception:                                        # noqa: BLE001
+        pass
+    return ended
+
+
+def _kill_tree(proc, job=None, deadline: float | None = None) -> None:
+    """End the child and everything it started, by ``deadline`` (monotonic).
+    ``codex`` on Windows is an npm shim — cmd.exe, then node, then the real
+    program — and killing only the first leaves the other two running and
+    holding the pipes open. On Windows the tree is in ``job`` and ends with
+    it, at once and without another process; ``taskkill`` only when there is
+    no job, and only for the time that is left."""
+    if deadline is None:
+        deadline = time.monotonic() + CODEX_APP_KILL_S
+    ended = _job_end(job) if job is not None else False
+    if not ended:
+        try:
+            if os.name == "nt":
+                # No pipes: a taskkill killed at its timeout is not waited on
+                # for output.
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, creationflags=_NO_WINDOW,
+                               timeout=max(1.0, deadline - time.monotonic() - 0.2))
+            else:
+                os.killpg(proc.pid, signal.SIGKILL)
+        except Exception:                                    # noqa: BLE001
+            pass
+    try:
+        proc.kill()
+    except Exception:                                        # noqa: BLE001
+        pass
+    try:
+        proc.wait(timeout=max(0.2, deadline - time.monotonic()))
+    except Exception:                                        # noqa: BLE001
+        pass
+    # stdout is left to the reader thread, which closes it at end of file:
+    # closing it here could wait on a read that a surviving grandchild holds.
+    try:
+        if proc.stdin is not None:
+            proc.stdin.close()
+    except Exception:                                        # noqa: BLE001
+        pass
+
+
+def read_codex_app_server(timeout: float | None = None) -> tuple[dict | None, str]:
+    """One ``account/rateLimits/read`` from ``codex app-server``: ``(result,
+    "")`` or ``(None, reason)``. Never raises.
+
+    JSON-RPC over stdio, one object per line: ``initialize``, ``initialized``,
+    then the one read. A child process per reading, never kept: it is started
+    without a console window (a console-less hub's spawns took the desktop's
+    focus before), given ``timeout`` seconds to answer, and killed with its
+    whole tree whether it answered or not — within ``CODEX_APP_KILL_S`` more,
+    so the call never outlasts the two together. Only ever that one read-only method — the
+    same server also *consumes* rate-limit reset credits.
+    """
+    timeout = CODEX_APP_TIMEOUT_S if timeout is None else timeout
+    argv = _codex_app_argv()
+    if not argv:
+        return None, "Codex is not installed on this machine"
+    deadline = time.monotonic() + timeout
+    proc = None
+    pumping = False
+    job = _job_open()
+    try:
+        proc = subprocess.Popen(
+            argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
+            errors="replace",
+            creationflags=_NO_WINDOW | (_SUSPENDED if job is not None else 0),
+            # Its own process group where there is one, so the kill takes
+            # everything it started with it.
+            start_new_session=os.name != "nt")
+        if job is not None and not _job_start(job, proc):
+            _job_end(job)
+            job = None
+        lines: queue.Queue = queue.Queue()
+
+        def pump(stream=proc.stdout):
+            try:
+                with stream:
+                    for line in stream:
+                        lines.put(line)
+            except Exception:                                # noqa: BLE001
+                pass
+            lines.put(None)
+
+        threading.Thread(target=pump, daemon=True, name="codex-app-server").start()
+        pumping = True
+
+        def send(message: dict) -> None:
+            proc.stdin.write(json.dumps(message) + "\n")
+            proc.stdin.flush()
+
+        send({"id": 1, "method": "initialize", "params": {"clientInfo": {
+            "name": "ensemble", "title": "ensemble", "version": "0"}}})
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise queue.Empty
+            line = lines.get(timeout=left)
+            if line is None:
+                return None, "Codex's app server ended without answering"
+            try:
+                message = json.loads(line)
+            except ValueError:
+                continue
+            # Notifications (no id) and anything else it volunteers are skipped.
+            if not isinstance(message, dict) or message.get("id") not in (1, 2):
+                continue
+            if "result" not in message:
+                # Not logged in, or an older Codex that does not know the method.
+                error = message.get("error")
+                detail = error.get("message") if isinstance(error, dict) else ""
+                return None, _scrub(f"Codex's app server refused the reading"
+                                    f"{': ' + str(detail)[:120] if detail else ''}")
+            if message["id"] == 1:
+                send({"method": "initialized"})
+                send({"id": 2, "method": "account/rateLimits/read"})
+                continue
+            result = message["result"]
+            if not isinstance(result, dict):
+                return None, "Codex's app server gave an unfamiliar answer"
+            return result, ""
+    except queue.Empty:
+        return None, f"Codex's app server did not answer within {int(timeout)} s"
+    except Exception as e:                                   # noqa: BLE001
+        return None, _scrub(f"could not ask Codex's app server ({type(e).__name__})")
+    finally:
+        if proc is not None:
+            _kill_tree(proc, job, deadline + CODEX_APP_KILL_S)
+            if not pumping and proc.stdout is not None:
+                # It never ran, so nothing holds the pipe and nobody reads it.
+                try:
+                    proc.stdout.close()
+                except Exception:                            # noqa: BLE001
+                    pass
+        elif job is not None:
+            _job_end(job)
+
+
+def _app_server_pools(result: dict, now: float) -> list[dict]:
+    """The app server's answer as pool records. Raises ValueError for an answer
+    whose shape cannot be trusted — the caller then falls back to the session
+    records rather than show it.
+
+    ``rateLimitsByLimitId`` holds every pool, ``rateLimits`` the account's own
+    (kept for an answer that has only that). The windows are camelCase here
+    and snake_case in the session records; they leave in the records' shape so
+    one path turns either into windows. Everything else in the answer — the
+    reset credits, the account id, the upsell — is ignored.
+    """
+    by_id = result.get("rateLimitsByLimitId")
+    entries = dict(by_id) if isinstance(by_id, dict) else {}
+    account = result.get("rateLimits")
+    if isinstance(account, dict):
+        entries.setdefault(account.get("limitId") or CODEX_MAIN_POOL, account)
+    pools = []
+    for key, entry in entries.items():
+        if not isinstance(entry, dict):
+            continue
+        limits = {}
+        for slot in ("primary", "secondary"):
+            win = entry.get(slot)
+            if not isinstance(win, dict):
+                continue
+            resets = win.get("resetsAt")
+            if resets is not None and (
+                    isinstance(resets, bool) or not isinstance(resets, (int, float))
+                    or not _reset_plausible(float(resets), now, win.get("windowDurationMins"))):
+                raise ValueError("reset time")
+            limits[slot] = {"used_percent": win.get("usedPercent"),
+                            "window_minutes": win.get("windowDurationMins"),
+                            "resets_at": resets}
+        if not limits:
+            continue
+        name = entry.get("limitName")
+        pools.append({"id": str(entry.get("limitId") or key),
+                      "limitName": name if isinstance(name, str) and name else None,
+                      "limits": limits, "at": now, "plan": entry.get("planType"),
+                      "live": True})
+    if not pools:
+        raise ValueError("no windows")
+    return pools
+
+
+def _codex_app_pools(now: float, fetch=None) -> tuple[list[dict], str]:
+    """Pools from the app server: this poll's, or the last good answer's (aged)
+    while it fails. ``(pools, why it is not this poll's or "")``."""
+    global _codex_app_retry_at, _codex_app_last_good, _codex_app_why
+    if now >= _codex_app_retry_at:
+        result, why = (fetch or read_codex_app_server)()
+        pools = None
+        if result is not None:
+            try:
+                pools = _app_server_pools(result, now)
+            except Exception:                                # noqa: BLE001
+                why = ("Codex's app server gave an answer in an unfamiliar "
+                       "format — it has probably changed")
+        if pools is not None:
+            _codex_app_last_good = {"at": now, "pools": pools}
+            _codex_app_why = ""
+            return copy.deepcopy(pools), ""
+        _codex_app_why = why
+        _codex_app_retry_at = now + CODEX_APP_RETRY_S
+    good = _codex_app_last_good
+    if good and now - good["at"] <= CACHED_MAX_AGE_S:
+        return [dict(p, live=False) for p in copy.deepcopy(good["pools"])], _codex_app_why
+    return [], _codex_app_why
+
+
+def _reset_codex_state() -> None:
+    """Forget the app server's retry time and last good answer (tests)."""
+    global _codex_app_retry_at, _codex_app_last_good, _codex_app_why
+    _codex_app_retry_at = 0.0
+    _codex_app_last_good = None
+    _codex_app_why = ""
+
+
+# --- Pools -------------------------------------------------------------------
+
+def _pool_label(pool_id: str, limit_name) -> str | None:
+    """A pool's name on the board: None for the main pool (unlabelled, as it
+    always was), "reserve" for ``gpt-reserve``, and otherwise the name Codex
+    gives it ("GPT-5.3-Codex-Spark") — or its id, for a pool with no name. An
+    unknown pool is kept and named, never dropped."""
+    if pool_id == CODEX_MAIN_POOL:
+        return None
+    name = (limit_name or pool_id or "").strip()
+    plain = re.fullmatch(r"gpt-([a-z][a-z -]*)", name, re.IGNORECASE)
+    return plain.group(1).lower() if plain else name
+
+
+def codex_config_model(path=None) -> str:
+    """The model Codex runs on when a launch names none: ``model`` in
+    ``config.toml`` (the active ``profile``'s, when one is set). "" when
+    there is no such file or line."""
+    if path is None:
+        home = os.environ.get("CODEX_HOME")
+        path = (Path(home) if home else Path.home() / ".codex") / "config.toml"
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    except OSError:
+        return ""
+    try:
+        import tomllib
+        config = tomllib.loads(text)
+        profile = (config.get("profiles") or {}).get(config.get("profile")) or {}
+        model = profile.get("model") or config.get("model")
+        return model.strip() if isinstance(model, str) else ""
+    except Exception:                                        # noqa: BLE001
+        pass
+    # No tomllib (Python < 3.11), or a file it will not take: the top-level
+    # `model = "..."` line, which sits above the first table.
+    for line in text.splitlines():
+        if line.lstrip().startswith("["):
+            break
+        found = re.match(r"""\s*model\s*=\s*(["'])(.*?)\1""", line)
+        if found:
+            return found.group(2).strip()
+    return ""
+
+
+def codex_pool_for_model(source: dict | None, model: str = "") -> dict:
+    """The pool a Codex agent runs on: ``{id, label, model}``.
+
+    ``model`` is the seat's named model; without one it is the config's
+    (``source["configModel"]``). ``gpt-reserve`` draws on the reserve, Spark's
+    slug on Spark's pool, anything else — no model at all, and a slug that
+    matches some pool not known here, included — on the main pool.
+    """
+    source = source or {}
+    slug = (model or source.get("configModel") or "").strip()
+    low = slug.lower()
+    main = {"id": CODEX_MAIN_POOL, "label": None, "model": slug}
+    pool_id = _CODEX_MODEL_POOLS.get(low)
+    if pool_id is None:
+        return main
+    for pool in source.get("pools") or []:
+        if pool.get("id") == pool_id:
+            return {"id": pool_id, "label": pool.get("label"), "model": slug}
+    # The pool has not been read (session records only, and no turn on it
+    # yet). Still that pool: unknown, never the main pool's number.
+    return {"id": pool_id, "label": _pool_label(pool_id, slug), "model": slug}
+
+
+def _mark_pool_in_use(source: dict, config_model: str) -> dict:
+    """Say on the source, its pools and its windows which pool Codex sessions
+    currently run on — the config's model, since the hub names a model only
+    when a task's line-up does."""
+    source["configModel"] = config_model
+    source.setdefault("pools", [])
+    used = codex_pool_for_model(source, "")
+    source["poolInUse"] = used
+    for pool in source["pools"]:
+        pool["inUse"] = pool["id"] == used["id"]
+    for win in source.get("windows") or []:
+        win["inUse"] = win.get("pool") == used["id"]
+    return source
+
+
+def read_codex(now: float | None = None, files=None, app_server=None) -> dict:
+    """Codex's pools, each with both staleness guards.
+
+    The app server's reading first, the session records for whatever it did
+    not give: per pool the newer record wins, so this poll's app-server answer
+    always does, and while the app server fails a pool keeps the newer of its
+    last good answer and the session records.
+
+    ``now``, ``files`` and ``app_server`` are injectable so the guards can be
+    tested against a fixed clock and synthetic readings. ``app_server`` is a
+    callable returning ``(result, why)`` like :func:`read_codex_app_server`,
+    or False for the session records alone — which is also what injected
+    ``files`` without it mean, so a test never starts a real Codex. Never
+    raises.
+    """
+    now = time.time() if now is None else now
+    try:
+        config_model = codex_config_model()
+    except Exception:                                        # noqa: BLE001
+        config_model = ""
+    if app_server is None and files is not None:
+        app_server = False
+    try:
+        source = _read_codex_pools(now, files, app_server)
+    except Exception as e:                                   # noqa: BLE001
+        source = _unavailable("codex", _scrub(f"cannot read Codex's limits ({type(e).__name__})"))
+    return _mark_pool_in_use(source, config_model)
+
+
+def _pool_windows(pool: dict, now: float) -> list[dict] | str:
+    """One pool's windows, each with both staleness guards — or, as a string,
+    why the pool's reset times cannot be believed."""
     windows = []
-    for win, kind, label, model, at in entries:
-        age = int(now - at)
+    at, limits = pool["at"], pool["limits"]
+    for win, kind, label in _listed_windows(limits):
+        age = max(0, int(now - at))
         # Guard 2 rests entirely on the reset time, so the shape of that field
         # decides everything. The invariant: **a window whose reset time we
         # cannot verify is never reported as current.** Without that, an
@@ -845,35 +1327,33 @@ def read_codex(now: float | None = None, files=None) -> dict:
         resets_dt = None
         reset_unknown = False
         if resets is None:
-            # Nothing to check against. The value may be current or may be a
-            # dead number from a window that reset an hour ago; we cannot tell,
-            # so we do not claim.
-            reset_unknown = True
+            # Nothing to check against. From a record, the value may be
+            # current or may be a dead number from a window that reset an
+            # hour ago; we cannot tell, so we do not claim. This poll's
+            # app-server answer is Codex's statement about now, and stands.
+            reset_unknown = not pool["live"]
         elif isinstance(resets, (int, float)) and not isinstance(resets, bool):
             # Sanity-check before believing it. If this field ever changes
             # meaning — a duration instead of an epoch, say — the parse yields
             # 1970, every window reads "rolled over", and the chip goes
             # confidently and permanently blank. Fail the source instead.
             if not _reset_plausible(float(resets), at, win.get("window_minutes")):
-                return _unavailable(
-                    "codex", "Codex reported a reset time that is not a plausible "
-                             "date — the rollout format has probably changed")
+                return ("Codex reported a reset time that is not a plausible "
+                        "date — the rollout format has probably changed")
             try:
                 resets_dt = datetime.fromtimestamp(resets, timezone.utc)
             except (OverflowError, OSError, ValueError):
-                return _unavailable(
-                    "codex", "Codex reported a reset time that could not be read "
-                             "as a date — the rollout format has probably changed")
+                return ("Codex reported a reset time that could not be read "
+                        "as a date — the rollout format has probably changed")
         else:
             # Present but not a number — an ISO string is the likeliest way this
             # field ever mutates. Fail the source loudly rather than let the
             # value fall through the guard unchecked.
-            return _unavailable(
-                "codex", "Codex reported a reset time in an unfamiliar format — "
-                         "the rollout format has probably changed")
+            return ("Codex reported a reset time in an unfamiliar format — "
+                    "the rollout format has probably changed")
         # A window whose reset has passed has already rolled to 0. Its last value
         # is dead — preserve it separately, never report it as now.
-        rolled = bool(resets_dt and resets_dt.timestamp() < now)
+        rolled = bool(not pool["live"] and resets_dt and resets_dt.timestamp() < now)
         value = _as_percent(win.get("used_percent"))
         # Withheld in both unverifiable cases: rolled over, or no reset to check.
         withheld = rolled or reset_unknown
@@ -883,7 +1363,8 @@ def read_codex(now: float | None = None, files=None) -> dict:
             stale_percent=value if withheld else None,
             rolled_over=rolled,
             reset_unknown=reset_unknown,
-            model=model,
+            model=pool["label"],
+            pool=pool["id"],
             window_minutes=win.get("window_minutes"),
             resets_at=resets_dt.isoformat() if resets_dt else None,
             # Guard 1: each window carries the reading's age and decides for
@@ -891,6 +1372,56 @@ def read_codex(now: float | None = None, files=None) -> dict:
             # five-hour window and is nothing to the weekly one.
             age_seconds=age,
         ))
+    return windows
+
+
+def _read_codex_pools(now: float, files, app_server) -> dict:
+    app_pools, app_why = ([], "") if app_server is False else _codex_app_pools(
+        now, None if app_server in (None, True) else app_server)
+    via = "app-server" if any(p["live"] for p in app_pools) else "sessions"
+    # The session records are read beside even a good answer: one that leaves
+    # a pool out (an answer with the account's pool alone is a known shape)
+    # must not take the reserve's or Spark's still-valid record off the board.
+    # A pool the answer does give is this poll's, so it wins below.
+    session_pools, session_why = [], ""
+    try:
+        session_pools = _session_pools(
+            _rollout_files(CODEX_MAX_FILES) if files is None else files)
+    except Exception as e:                                   # noqa: BLE001
+        session_why = _scrub(f"cannot read Codex rollouts ({type(e).__name__})")
+    by_id: dict[str, dict] = {}
+    for pool in [*app_pools, *session_pools]:
+        held = by_id.get(pool["id"])
+        # This poll's answer stands whatever a record's clock says; otherwise
+        # the newer of the two.
+        if held is None or (not held["live"] and pool["at"] > held["at"]):
+            by_id[pool["id"]] = pool
+    if not by_id:
+        reason = session_why or "no Codex session has reported its limits recently"
+        return _unavailable("codex", f"{app_why}; {reason}" if app_why else reason)
+
+    # The main pool first, so its windows lead.
+    pools = sorted(by_id.values(), key=lambda p: (p["id"] != CODEX_MAIN_POOL, p["id"]))
+    newest_at = max(p["at"] for p in pools)
+    # The plan is the account's. Model buckets in the session records carry a
+    # null plan_type, so taking it from whichever wrote last would make the
+    # label flicker.
+    plan = (by_id.get(CODEX_MAIN_POOL) or max(pools, key=lambda p: p["at"]))["plan"]
+
+    windows = []
+    for pool in list(pools):
+        # A pool's own limit is labelled with its name — the same path Claude's
+        # per-model weekly cap takes through the tray and banner.
+        pool["label"] = _pool_label(pool["id"], pool["limitName"])
+        listed = _pool_windows(pool, now)
+        if isinstance(listed, str):
+            if via == "app-server" and not pool["live"]:
+                # A record that cannot be read beside a good answer costs its
+                # own pool, not the answer.
+                pools.remove(pool)
+                continue
+            return _unavailable("codex", listed)
+        windows.extend(listed)
     if not windows:
         return _unavailable("codex", "the newest Codex reading carries no windows")
 
@@ -898,12 +1429,20 @@ def read_codex(now: float | None = None, files=None) -> dict:
         "source": "codex",
         "state": "ok",
         "error": None,
+        # Where the numbers came from: "app-server" (asked this poll) or
+        # "sessions" (the session records, with whatever the app server last
+        # said about a pool they do not cover). `note` says why not the former.
+        "via": via,
+        "note": (app_why or None) if via != "app-server" else None,
         "planType": plan,
         "asOf": newest_at,
-        "ageSeconds": int(now - newest_at),
+        "ageSeconds": max(0, int(now - newest_at)),
         # Source-level summary only: true when *every* window is still current.
         # The render path uses each window's own `trusted`.
         "trusted": all(w["trusted"] for w in windows),
+        "pools": [{"id": p["id"], "label": p["label"], "limitName": p["limitName"],
+                   "ageSeconds": max(0, int(now - p["at"])), "inUse": False}
+                  for p in pools],
         "windows": windows,
     }
 
@@ -953,6 +1492,7 @@ def _snapshot_locked() -> dict:
                     if k in sources],
     }
     snap["alerts"] = alerts(snap["sources"])
+    snap["notices"] = notices(snap["sources"])
     return snap
 
 
@@ -974,17 +1514,35 @@ def alerts(sources) -> list[dict]:
       would be the one failure mode we cannot afford. It is qualified with its
       age, never presented as a fresh measurement.
     * **Fresh and high → yes, plainly.**
+    * **A Codex pool that Codex agents are not running on → never.** A spent
+      main pool while Codex runs on the reserve stops nothing, so it is
+      information (:func:`notices`), not an alarm that Codex is unusable.
 
     Thresholds come off ``percent`` only, never the payload's ``severity``: the
     investigation never observed a non-normal value, so branching on the
     escalated strings would be guessing.
     """
+    return _hot_windows(sources, in_use=True)
+
+
+def notices(sources) -> list[dict]:
+    """High windows of a Codex pool that is not the one in use: the same
+    entries as :func:`alerts` with ``level`` "info". Kept out of ``alerts`` so
+    that neither the banner nor a page written before pools can take one for
+    an alarm."""
+    return _hot_windows(sources, in_use=False)
+
+
+def _hot_windows(sources, *, in_use: bool) -> list[dict]:
     out = []
     for src in sources:
         if src.get("state") != "ok":
             continue
         for win in src.get("windows") or []:
             if win.get("rolledOver"):
+                continue
+            # Only a Codex window says False; every other window counts as in use.
+            if (win.get("inUse") is not False) != in_use:
                 continue
             pct = win.get("percent")
             if pct is None or pct < WARN_PERCENT:
@@ -994,9 +1552,11 @@ def alerts(sources) -> list[dict]:
                 "kind": win["kind"],
                 "label": win["label"],
                 "model": win.get("model"),
+                "pool": win.get("pool"),
                 "percent": pct,
                 "resetsAt": win.get("resetsAt"),
-                "level": "alarm" if pct >= ALARM_PERCENT else "warn",
+                "level": ("info" if not in_use
+                          else "alarm" if pct >= ALARM_PERCENT else "warn"),
                 # True when the reading is old: the value is a floor, not a
                 # measurement, and the surface must say so.
                 "atLeast": not win.get("trusted"),

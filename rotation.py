@@ -643,7 +643,10 @@ def choose_owner_kind(room: dict, part: dict, snapshot: dict | None = None,
         installed = installed or _installed
         warn = float(snap.get("warnPercent", _d.usage.WARN_PERCENT))
         alarm = float(snap.get("alarmPercent", _d.usage.ALARM_PERCENT))
-        figures = {k: _d._kind_usage(snap, k) for k in ("claude", "codex")}
+        # The owner as Codex: the model it has now, or the one its seat names.
+        codex_model = cur_model if cur == "codex" else _model_for(
+            _preferred_seats(room)[0], "codex")
+        figures = {k: _d._kind_usage(snap, k, codex_model) for k in ("claude", "codex")}
         out["usage"] = {"checkedAt": snap.get("checkedAt"), "warnPercent": warn,
                         "alarmPercent": alarm, "kinds": figures}
         other = _OTHER_KIND.get(cur, "")

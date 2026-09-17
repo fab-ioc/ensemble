@@ -2318,6 +2318,14 @@
     font-size: var(--fs-100); color: var(--fg-subtle); margin-top: 5px; line-height: 1.45;
   }
   .usage-why.bad { color: var(--c-danger-fg); }
+  /* A Codex pool's heading in the tray: its name, and whether Codex sessions
+     run on it. Words, not colour: being in use is not a status. */
+  .usage-pool {
+    display: flex; align-items: baseline; gap: 6px; margin-top: 10px;
+    font-size: var(--fs-100); font-weight: 600; color: var(--fg-subtle);
+  }
+  .usage-pool-use, .usage-pool .usage-src-age { font-weight: 400; }
+  .usage-pool-use { color: var(--fg-muted); }
   .usage-foot {
     font-size: var(--fs-100); color: var(--fg-muted); padding: 8px 6px 2px;
     border-top: 1px solid var(--border); line-height: 1.5;
@@ -10757,6 +10765,11 @@ document.addEventListener('visibilitychange', () => {
 //   * window.resetUnknown       → the reading carried no reset time, so there
 //     is no telling whether it has rolled. Shown as "?"; the last value is
 //     withheld rather than passed off as current.
+//   * source.pools / poolInUse, window.pool / inUse → Codex has several pools
+//     (main, reserve, a model's own), each an allowance of its own. The chip
+//     face carries only the pool Codex sessions run on; the tray lists each
+//     under its name. A full pool that is not in use is `notices`, never
+//     `alerts`: it stops nothing, so it takes no colour and no banner.
 // Self-contained, like the notifications block above it: all the markup, CSS
 // and JS live under the `usage` name so the Jira-style board can lift it whole.
 const USAGE_POLL_MS = 30000;         // the server refreshes on its own timer
@@ -10835,10 +10848,23 @@ function usageChipPart(src) {
   // Account-wide windows before per-model ones (Claude's Fable cap, a Codex
   // model's own limit), and the five-hour window first within each, so "a/b"
   // reads the same way for both agent kinds.
-  const rank = w => (w.model ? 2 : 0) + (w.kind === 'five_hour' ? 0 : 1);
-  const wins = (src.windows || [])
+  // A Codex pool's windows stay together, in the order the pools are listed.
+  const poolAt = w => Math.max(0, (src.pools || []).findIndex(p => p.id === w.pool));
+  const rank = w => poolAt(w) * 4 + (w.model ? 2 : 0) + (w.kind === 'five_hour' ? 0 : 1);
+  const all =(src.windows || [])
     .filter(w => w.percent != null || w.rolledOver || w.resetUnknown)
     .sort((a, b) => rank(a) - rank(b));
+  // Codex has several pools. The face carries only the one its sessions run
+  // on — an untouched reserve or a spent pool nobody is using is detail, and
+  // the tooltip and the tray have every pool.
+  const used = src.poolInUse || null;
+  const wins = used ? all.filter(w => w.inUse !== false) : all;
+  const usedName = used && used.label ? used.label : '';
+  if (used && !wins.length && all.length) {
+    return `<span class="usage-chip-kind gone"
+      title="${esc(name)} — no reading yet for the ${esc(usageCodexPoolName(used))}, which ${esc(name)} sessions use"
+      >${esc(short)} ${usedName ? `<i class="usage-chip-wname">${esc(usedName)}</i>` : ''}n/a</span>`;
+  }
   // A source that reported ok but gave nothing renderable still has to account
   // for itself — vanishing silently from the chip is the one thing it must not
   // do, since that is indistinguishable from an agent kind not being installed.
@@ -10856,14 +10882,21 @@ function usageChipPart(src) {
     (named ? `<i class="usage-chip-wname">${esc(w.label)}</i>` : '')
     + `<span class="${w.trusted && !w.rolledOver ? '' : 'untrusted'}">${usageChipValue(w)}</span>`
   ).join('<i class="usage-chip-sep">/</i>');
-  const tip = name + ' — ' + wins.map(w => usageChipTip(w, name)).join(' · ');
+  const tip = name + (used ? ` (sessions use the ${usageCodexPoolName(used)})` : '')
+    + ' — ' + all.map(w => usageChipTip(w, name)).join(' · ');
   return `<span class="usage-chip-kind" title="${esc(tip)}"
-    >${esc(short)} <b>${body}</b></span>`;
+    >${esc(short)} ${usedName ? `<i class="usage-chip-wname">${esc(usedName)}</i>` : ''}<b>${body}</b></span>`;
+}
+
+// A Codex pool in words: "main pool", "reserve pool", "GPT-5.3-Codex-Spark pool".
+function usageCodexPoolName(pool) {
+  return ((pool && pool.label) || 'main') + ' pool';
 }
 
 function usageWindowRow(win, srcName) {
   const name = USAGE_WIN_NAME[win.kind] || (win.label + ' window');
-  const label = win.model ? `${name} · ${win.model}` : name;
+  // A Codex pool's windows sit under the pool's own heading, which names it.
+  const label = win.model && !win.pool ? `${name} · ${win.model}` : name;
   let pct = '—', barPct = 0, barCls = 'untrusted', pctCls = 'unknown', why = '';
   if (win.rolledOver) {
     // The last value is dead and the current one is genuinely unknown.
@@ -10875,8 +10908,11 @@ function usageWindowRow(win, srcName) {
   } else if (win.percent != null) {
     pct = (win.trusted ? '' : '≥') + Math.round(win.percent) + '%';
     barPct = Math.max(0, Math.min(100, win.percent));
-    if (win.percent >= (USAGE.alarmPercent ?? 95)) barCls = 'alarm';
-    else if (win.percent >= (USAGE.warnPercent ?? 80)) barCls = 'warn';
+    // A pool Codex is not running on stops nothing however full it is, and a
+    // state that needs nobody carries no colour.
+    const idle = win.inUse === false;
+    if (!idle && win.percent >= (USAGE.alarmPercent ?? 95)) barCls = 'alarm';
+    else if (!idle && win.percent >= (USAGE.warnPercent ?? 80)) barCls = 'warn';
     else barCls = win.trusted ? '' : 'untrusted';
     pctCls = win.trusted ? '' : 'unknown';
   }
@@ -10916,14 +10952,19 @@ function usageSourceHtml(src) {
   // Age matters only for Codex, whose file freezes when its agents stop; the
   // Claude reading is a live HTTPS call, so it is always "just now".
   const wins = src.windows || [];
-  const showAge = src.ageSeconds != null && src.ageSeconds > 60;
-  const age = showAge
-    ? `<span class="usage-src-age${src.trusted ? '' : ' untrusted'}"
-        >as of ${esc(fmtAgo(src.ageSeconds))} ago</span>` : '';
-  const frozen = wins.some(w => !w.trusted && !w.rolledOver)
+  const ageHtml = (seconds, trusted) => seconds != null && seconds > 60
+    ? `<span class="usage-src-age${trusted ? '' : ' untrusted'}"
+        >as of ${esc(fmtAgo(seconds))} ago</span>` : '';
+  let age = ageHtml(src.ageSeconds, src.trusted);
+  // Each pool is written on its own, so the age told is the frozen windows'
+  // own (the oldest of them), never the source's, which is its newest pool's.
+  const stuck = wins.filter(w => !w.trusted && !w.rolledOver);
+  const stuckFor = Math.max(...stuck.map(w => w.ageSeconds || 0));
+  const frozen = stuck.length
     ? `<div class="usage-why">A “≥” number is frozen: ${esc(name)} only writes
-        its usage when one of its agents takes a turn, and none has for
-        ${esc(fmtAgo(src.ageSeconds))}. Because a window only ever fills up
+        ${(src.pools || []).length > 1 ? 'a pool’s' : 'its'} usage when one of its
+        agents takes a turn${(src.pools || []).length > 1 ? ' on it' : ''}, and none has for
+        ${esc(fmtAgo(stuckFor))}. Because a window only ever fills up
         until it resets, that number is a floor — the real one is at least
         that high.</div>` : '';
   const rolled = wins.some(w => w.rolledOver)
@@ -10934,14 +10975,52 @@ function usageSourceHtml(src) {
     ? `<div class="usage-why">A window shown as “?” came without a reset time,
         so there is no way to tell whether it has already rolled over. Its last
         value is withheld rather than shown as if it were current.</div>` : '';
+  // Codex: each pool apart under its own heading, and which one its sessions
+  // run on. A source without pools (Claude) lists its windows as before.
+  const pools = src.pools || [];
+  const used = src.poolInUse || null;
+  let rows = wins.map(w => usageWindowRow(w, name)).join('');
+  let inUse = '', spent = '', via = '';
+  if (pools.length > 1 || (used && !pools.some(p => p.inUse))) {
+    // ... and each pool says how old its own reading is. A lone pool in use
+    // gets no heading: the source's age above is that pool's own.
+    age = '';
+    rows = pools.map(p => {
+      const mine = wins.filter(w => w.pool === p.id);
+      return `<div class="usage-pool"><span>${esc(usageCodexPoolName(p))}</span>
+        ${p.inUse ? '<span class="usage-pool-use">in use</span>' : ''}
+        ${ageHtml(p.ageSeconds, mine.every(w => w.trusted))}</div>`
+        + mine.map(w => usageWindowRow(w, name)).join('');
+    }).join('');
+  }
+  if (used) {
+    const how = used.model ? ` (model ${used.model})` : '';
+    const unread = pools.some(p => p.inUse) ? ''
+      : ' There is no reading for that pool yet.';
+    inUse = `<div class="usage-why">${esc(name)} sessions currently use the
+      ${esc(usageCodexPoolName(used))}${esc(how)}.${unread}</div>`;
+    const idleHot = (USAGE.notices || []).filter(n => n.source === src.source);
+    if (idleHot.length) {
+      const n = idleHot[0];
+      const which = usageCodexPoolName(pools.find(p => p.id === n.pool) || {});
+      spent = `<div class="usage-why">The ${esc(which)} is ${n.atLeast ? 'at least ' : ''}${
+        Math.round(n.percent)}% used. ${esc(name)} sessions do not run on it, so it
+        stops nothing.</div>`;
+    }
+  }
+  if (src.via === 'sessions' && src.note) {
+    via = `<div class="usage-why">Read from what ${esc(name)} sessions last wrote:
+      ${esc(src.note)}.</div>`;
+  }
   return `<div class="usage-src">
     <div class="usage-src-head">
       <span class="usage-src-name">${esc(name)}</span>
       ${src.planType ? `<span class="usage-src-plan">${esc(src.planType)}</span>` : ''}
       ${age}
     </div>
-    ${wins.map(w => usageWindowRow(w, name)).join('')}
-    ${frozen}${rolled}${unverifiable}
+    ${inUse}
+    ${rows}
+    ${spent}${frozen}${rolled}${unverifiable}${via}
   </div>`;
 }
 
