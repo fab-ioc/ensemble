@@ -64,6 +64,8 @@ import agents
 import attention
 # Multi-agent chat rooms (pairing live sessions into a collaborating "duo").
 import backup
+# A session's files copied into the documents project it becomes the PO of.
+import bringfiles
 import chatroom
 # The PO's timed progress digest (only when something changed).
 import digest
@@ -2137,19 +2139,27 @@ def made_po_charter(project: dict) -> str:
         + ("" if docs else f" The project's code is in {project.get('path', '')}."))
 
 
-def made_po_first_input(project: dict) -> str:
+def made_po_first_input(project: dict, brought: dict | None = None) -> str:
     """What the hub types into a session it has just made a PO. One line, as
     every hub input: it starts with MADE_PO_PREFIX, which is how the chat
-    tells it from the person's words (HUB_INPUT_KINDS)."""
+    tells it from the person's words (HUB_INPUT_KINDS). ``brought`` is the
+    copy of its files into the project's folder, when one was made."""
     docs = project.get("kind") == "documents"
     name = project.get("name") or project["id"]
     hp, rp = rotation.handover_path(project), roadmap_path(project)
+    files = ""
+    if brought and brought.get("copied"):
+        n = brought["copied"]
+        files = (f"The file{'s' if n != 1 else ''} in {brought.get('from', '')}, the folder this conversation "
+                 f"works in, {'were' if n != 1 else 'was'} copied to the project's folder "
+                 f"{project_home(project, create=False)} ({n} file{'s' if n != 1 else ''}): that copy is the "
+                 f"one to work on from now on, and the original folder is left as it was. ")
     return (
         f"{MADE_PO_PREFIX}You are now the product owner (PO) of the project '{name}' in "
         f"Ensemble ({'a documents project' if docs else 'a code project'}); "
         f"{operator_name()} made you its PO from the dashboard because this conversation "
         f"already holds the project's context. From now on the project's tasks report to you "
-        f"and you have the ensemble_* tools of a PO. "
+        f"and you have the ensemble_* tools of a PO. {files}"
         f"1) Read the `ensemble` skill, section \"Running a project as its PO\""
         f"{' and its paragraph on a documents project’s PO' if docs else ''}. "
         f"2) From what you already know, write {hp} (your handover: what the project is, "
@@ -2242,7 +2252,10 @@ def _new_po_project(name: str, kind: str, path: str) -> tuple[dict, callable]:
             except OSError:
                 empty = False
             if ours or empty:
-                shutil.rmtree(folder, ignore_errors=True)
+                try:
+                    _files_remove(folder)       # a file history's objects are read-only
+                except OSError:
+                    shutil.rmtree(folder, ignore_errors=True)
 
     if kind == "documents":
         kok, kmsg = set_project_kind(proj["id"], "documents")
@@ -2250,6 +2263,109 @@ def _new_po_project(name: str, kind: str, path: str) -> tuple[dict, callable]:
             undo()
             raise MakePoError(KIND_REFUSALS.get(kmsg, kmsg))
     return find_project(proj["id"]) or proj, undo
+
+
+# ---- The session's files brought into the project (bringfiles.py) ----
+# A conversation made the PO of a documents project has its documents in the
+# folder it was started in, and continues there; the project's folder would
+# start empty. Asked to (``bringFiles``), the hub copies them, once, as one
+# snapshot of the file history under the person's name. Never for a code
+# project: its code folder already is where the files are.
+
+def make_po_source(data: dict) -> str:
+    """The folder a Make PO request's conversation works in: the task's
+    agent's, or the session's."""
+    rid = (data.get("roomId") or "").strip()
+    if not rid:
+        return (data.get("cwd") or "").strip()
+    room = chatroom.get_room(rid, public=False)
+    if room is None:
+        return ""
+    agents_in = chatroom.agent_participants(room)
+    return ((agents_in[0].get("cwd") if len(agents_in) == 1 else "") or room.get("cwd") or "").strip()
+
+
+def _make_po_documents(data: dict) -> tuple[bool, str]:
+    """(the request's project is a documents project, its folder if it exists
+    already)."""
+    pid = (data.get("projectId") or "").strip()
+    if not pid:
+        return (data.get("kind") or "").strip().lower() == "documents", ""
+    proj = find_project(pid)
+    if proj is None or proj.get("kind") != "documents":
+        return False, ""
+    return True, project_home(proj, create=False)
+
+
+def make_po_files_preview(data: dict) -> dict:
+    """POST /api/projects/po-from-session/files, the request Make PO would be
+    sent: what ``bringFiles`` would bring, for the dialog to say before the
+    person confirms. Reads only, and answers within bringfiles.PREVIEW_S."""
+    docs, home = _make_po_documents(data)
+    src = make_po_source(data)
+    limits = {"maxFiles": bringfiles.MAX_FILES, "maxBytes": bringfiles.MAX_BYTES,
+              "backupCapBytes": bringfiles.BACKUP_CAP}
+    if not docs:
+        return {"documents": False, "offer": False, "reason": "", "folder": src, "files": 0, "bytes": 0,
+                "notInBackup": 0, **limits}
+    return {"documents": True, **bringfiles.preview(src, home, str(PROJECTS_ROOT)), **limits}
+
+
+def make_po_files_plan(data: dict) -> dict | None:
+    """What a request that asks for the files would copy, counted before
+    _MAKE_PO_LOCK is taken: reading a large folder holds nobody up."""
+    if data.get("bringFiles") is not True or not _make_po_documents(data)[0]:
+        return None
+    src = make_po_source(data)
+    if not src or bringfiles.refusal(src, "", str(PROJECTS_ROOT)):
+        return None
+    return {"src": src, **bringfiles.scan(src)}
+
+
+def bring_session_files(project: dict, src: str, plan: dict | None) -> dict:
+    """Copy the session's files into the project's folder. Returns what the
+    reply says under ``files``: ``{ok: True, from, copied, bytes, alreadyThere,
+    tooLong, unreadable, leftOut, notInBackup, ...}`` with ``undo`` for the
+    caller, or ``{ok: False, message}`` when they are not brought and the
+    project is made all the same (not a documents project, a home folder, the
+    bound). A copy that fails half way is taken back and raises MakePoError."""
+    if project.get("kind") != "documents":
+        return {"ok": False, "message": "Files are brought only into a documents project: a code project's "
+                                        "code folder is where its files already are."}
+    home = project_home(project, create=False)
+    if not os.path.isdir(home):
+        return {"ok": False, "message": "The project's folder cannot be reached, so no files were brought."}
+    why = bringfiles.refusal(src, home, str(PROJECTS_ROOT))
+    if why:
+        return {"ok": False, "message": why}
+    if plan is None or not _same_folder(plan.get("src", ""), src):
+        plan = {"src": src, **bringfiles.scan(src)}
+    if plan["why"]:
+        return {"ok": False, "message": bringfiles.bound_words(src, plan["why"], bringfiles.SCAN_S)}
+    with file_history.lock(home):
+        _files_snapshot(project, home, "bring files", before=True)
+        try:
+            res = bringfiles.bring(src, home, plan["files"])
+        except bringfiles.BringFailed as exc:
+            raise MakePoError(f"{exc} No PO was made.") from exc
+        except OSError as exc:
+            raise MakePoError(f"The files could not be copied from {src} ({exc.strerror or exc}), so the "
+                              f"copy was taken back. No PO was made.") from exc
+        n = res["copied"]
+        snap = _files_snapshot(project, home, "bring files",
+                               message=f"{n} file{'s' if n != 1 else ''} brought from {src}") if n else {}
+    written = {"written": res.pop("written"), "madeDirs": res.pop("madeDirs")}
+
+    def undo() -> None:
+        with file_history.lock(home):
+            bringfiles.undo(written)
+            if n and os.path.isdir(home):
+                _files_snapshot(project, home, "bring files undone", message="the files brought were taken back")
+
+    return {"ok": True, "from": src, **res, "leftOut": plan["leftOut"],
+            "tooLong": res["tooLong"] + plan["tooLong"], "unreadable": res["unreadable"] + plan["unreadable"],
+            "notInHistory": len(snap.get("skipped") or []), "historyFailed": bool(n) and not snap.get("ok"),
+            "undo": undo}
 
 
 def set_project_digest_interval(project_id: str, minutes) -> tuple[bool, str]:
@@ -2532,16 +2648,17 @@ def _files_parent_dirs(home: str, rel: str) -> None:
             raise FileOpRefused(409, "not_a_folder", f"“{rel}”: “{part}” is a file, not a folder.")
 
 
-def _files_snapshot(proj: dict, home: str, reason: str, before: bool = False) -> dict:
+def _files_snapshot(proj: dict, home: str, reason: str, before: bool = False, message: str = "") -> dict:
     """A snapshot around a change from the page. ``before`` keeps what the
-    folder held, credited like the scan; after, the change is the person's.
+    folder held, credited like the scan; after, the change is the person's
+    (``message`` names it in the history, else "N files changed").
     Never raises: a failure is returned and logged."""
     try:
         if before:
             res = file_history.snapshot(home, file_history.credit(_history_running, proj["id"], home),
                                         reason=f"before {reason}")
         else:
-            res = file_history.snapshot(home, _files_user(), reason=reason)
+            res = file_history.snapshot(home, _files_user(), reason=reason, message=message)
     except Exception as e:
         res = {"ok": False, "committed": False, "rev": "", "files": 0, "skipped": [], "msg": f"error: {str(e)[:200]}"}
     if not res.get("ok"):
@@ -8273,11 +8390,22 @@ class Handler(BaseHTTPRequestHandler):
         one-agent task in no project). The project: ``{projectId}`` (it has no
         PO) or ``{name, kind, path}`` (made as New project makes it). Returns
         {project, room}. Raises MakePoError in plain words; whatever it had
-        made by then is taken back. One at a time (_MAKE_PO_LOCK)."""
-        with _MAKE_PO_LOCK:
-            return self._make_po_locked(data)
+        made by then is taken back. One at a time (_MAKE_PO_LOCK).
 
-    def _make_po_locked(self, data: dict) -> dict:
+        With ``bringFiles`` true and a documents project, the files of the
+        session's folder are copied into the project's (bring_session_files)
+        and the reply says what happened under ``files``. The folder is
+        counted before the lock is taken. The copy itself runs under it: it
+        writes into the folder this request has just made a project's (or
+        found without a PO), and must be done before the session is told its
+        files were copied, which is the request's last step; it is bounded
+        (bringfiles.MAX_FILES, MAX_BYTES, COPY_S), and the lock holds up only
+        another Make PO or Choose the PO, never the rest of the hub."""
+        plan = make_po_files_plan(data)
+        with _MAKE_PO_LOCK:
+            return self._make_po_locked(data, plan)
+
+    def _make_po_locked(self, data: dict, plan: dict | None = None) -> dict:
         rid = (data.get("roomId") or "").strip()
         sid = (data.get("sessionId") or "").strip()
         cwd = (data.get("cwd") or "").strip()
@@ -8319,6 +8447,7 @@ class Handler(BaseHTTPRequestHandler):
             raise MakePoError("Only a Claude or a Codex session can be made a PO.")
 
         undo_project = None
+        source_cwd = cwd if not rid else (agents_in[0].get("cwd") or room_full.get("cwd") or "")
         pid = (data.get("projectId") or "").strip()
         if pid:
             project = find_project(pid)
@@ -8327,7 +8456,6 @@ class Handler(BaseHTTPRequestHandler):
             if project_po_room(project) is not None:
                 raise MakePoError(f"“{project.get('name', pid)}” already has a PO.", 409)
         else:
-            source_cwd = cwd if not rid else (agents_in[0].get("cwd") or room_full.get("cwd") or "")
             project, undo_project = _new_po_project(
                 data.get("name") or label, data.get("kind") or "code",
                 data.get("path") or source_cwd)
@@ -8335,7 +8463,10 @@ class Handler(BaseHTTPRequestHandler):
 
         made_room = False
         before = {}
+        brought = None
         try:
+            if data.get("bringFiles") is True:
+                brought = bring_session_files(project, source_cwd.strip(), plan)
             if not rid:
                 title = (label or project.get("name") or f"{agent_key} {sid[:8]}")[:120]
                 room = chatroom.create_room(title, [{"identity": agent_key, "agent": agent_key}])
@@ -8375,7 +8506,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 # Resumed (or, if it runs, left running) and told, as one hub input.
                 self._resume_room(chatroom.get_room(rid, public=False) or room_full,
-                                  text=made_po_first_input(project), key=f"made-po:{pid}:{rid}")
+                                  text=made_po_first_input(project, brought), key=f"made-po:{pid}:{rid}")
             except Exception as exc:    # noqa: BLE001 — a refusal or a failed spawn alike
                 raise MakePoError(f"The session could not be started: {str(exc) or exc.__class__.__name__}.") from exc
         except Exception:
@@ -8399,10 +8530,15 @@ class Handler(BaseHTTPRequestHandler):
                     for k, v in before["part"].items():
                         bpart.pop(k, None) if v is None else bpart.__setitem__(k, v)
                     chatroom.update_room(back)
+            if brought and brought.get("undo"):
+                brought["undo"]()       # only what this request copied, before the folder itself
             if undo_project:
                 undo_project()
             raise
-        return {"project": find_project(pid) or project, "room": chatroom.get_room(rid)}
+        made = {"project": find_project(pid) or project, "room": chatroom.get_room(rid)}
+        if brought is not None:
+            made["files"] = {k: v for k, v in brought.items() if k != "undo"}
+        return made
 
     # ---------- A documents project's files: upload, mkdir, move, delete ----------
     # A plain API, gated like the rest of the hub (the access token off loopback).
@@ -8986,6 +9122,13 @@ class Handler(BaseHTTPRequestHandler):
                 ok, msg = set_project_po(data.get("projectId", ""), data.get("roomId", ""))
             code = {"no_such_project": 404, "no_such_room": 404}.get(msg, 400)
             self._send_json(200 if ok else code, {"ok": ok} if ok else {"error": msg})
+            return
+        if p == "/api/projects/po-from-session/files":
+            # The same body as the request below: what bringFiles would bring
+            # (count, size, or why not), for the dialog. Reads only.
+            if self._files_cross_site():
+                return
+            self._send_json(200, make_po_files_preview(data))
             return
         if p == "/api/projects/po-from-session":
             # A past session (or a one-agent task in no project) becomes the

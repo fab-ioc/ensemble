@@ -481,6 +481,274 @@ class ATask(Hub):
         self.assertEqual(status, 409, out)
 
 
+class TheSessionsFiles(Hub):
+    """``bringFiles``: the session's files copied into the documents project
+    it becomes the PO of (bringfiles.py has its own tests for the walk)."""
+
+    FILES_URL = URL + "/files"
+
+    def setUp(self):
+        super().setUp()
+        for rel, text in (("strategy.md", "# Strategy"), ("notes/2026/track record.csv", "a,b\n1,2\n"),
+                          ("notes/ideas.txt", "ideas"), (".git/config", "[core]"), (".claude/settings.json", "{}"),
+                          ("node_modules/x/index.js", "x"), ("__pycache__/a.pyc", "x"), ("lib/cache.pyc", "x"),
+                          ("vendor/tool/.git/HEAD", "ref"), ("vendor/tool/main.py", "print()"),
+                          ("Thumbs.db", "x"), ("project.json", '{"id": "proj-other"}')):
+            f = self.work / rel
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(text, encoding="utf-8")
+        self.kept = ["notes/2026/track record.csv", "notes/ideas.txt", "strategy.md"]
+
+    def tree(self, folder):
+        skip = (".history", "project.json")
+        return sorted(p.relative_to(folder).as_posix() for p in Path(folder).rglob("*")
+                      if p.is_file() and p.relative_to(folder).parts[0] not in skip)
+
+    def source_as_it_was(self):
+        self.assertEqual(len([p for p in self.work.rglob("*") if p.is_file()]), 12, "copied, never moved")
+        self.assertEqual((self.work / "strategy.md").read_text(encoding="utf-8"), "# Strategy")
+
+    def test_a_new_documents_project_gets_the_files(self):
+        status, seen = self.call_url(self.FILES_URL, {**self.session(), "kind": "documents"})
+        self.assertEqual(status, 200, seen)
+        self.assertEqual((seen["offer"], seen["files"], seen["folder"], seen["documents"]),
+                         (True, 3, str(self.work), True))
+        self.assertEqual(seen["bytes"], sum((self.work / k).stat().st_size for k in self.kept))
+        self.assertFalse((self.root / "Strats").exists(), "the count makes nothing")
+        status, out = self.call({**self.session(), "name": "Strats", "kind": "documents", "bringFiles": True})
+        self.assertEqual(status, 200, out)
+        home = self.root / "Strats"
+        self.assertEqual(self.tree(home), self.kept, "what a project never keeps is left out")
+        self.assertEqual((home / "notes/2026/track record.csv").read_text(encoding="utf-8"), "a,b\n1,2\n")
+        files = out["files"]
+        self.assertEqual((files["ok"], files["copied"], files["alreadyThere"], files["from"]),
+                         (True, 3, 0, str(self.work)))
+        self.assertGreaterEqual(files["leftOut"], 7)
+        self.assertNotIn("undo", files)
+        self.assertNotIn("written", files)
+        self.source_as_it_was()
+        # One snapshot, credited to the person.
+        log = dashboard.file_history.log(str(home))["entries"]
+        self.assertEqual(len(log), 1, log)
+        self.assertEqual(log[0]["who"]["kind"], "user")
+        self.assertEqual(sorted(f["path"] for f in log[0]["files"]), self.kept)
+        self.assertIn("3 files brought from", log[0]["subject"])
+        # The PO is told, in its one first input.
+        text = dashboard._RESUMES[out["room"]["id"]].queue[0]["text"]
+        self.assertNotIn("\n", text)
+        self.assertIn(f"copied to the project's folder {home} (3 files)", text)
+        self.assertIn("that copy is the one to work on", text)
+        self.assertIn(str(self.work), text)
+
+    def test_not_asked_nothing_is_brought(self):
+        status, out = self.call({**self.session(), "name": "Strats", "kind": "documents"})
+        self.assertEqual(status, 200, out)
+        self.assertNotIn("files", out)
+        self.assertEqual(self.tree(self.root / "Strats"), [])
+        self.assertNotIn("copied to", dashboard._RESUMES[out["room"]["id"]].queue[0]["text"])
+
+    def test_a_code_project_is_untouched(self):
+        status, seen = self.call_url(self.FILES_URL, {**self.session(), "kind": "code"})
+        self.assertEqual((status, seen["offer"], seen["documents"], seen["reason"]), (200, False, False, ""))
+        code = self.base / "code" / "engine"
+        status, out = self.call({**self.session(), "name": "Engine", "kind": "code", "path": str(code),
+                                 "bringFiles": True})
+        self.assertEqual(status, 200, out)
+        self.assertFalse(out["files"]["ok"])
+        self.assertIn("only into a documents project", out["files"]["message"])
+        self.assertEqual(self.tree(code), [])
+        self.assertEqual(self.tree(dashboard.project_home(out["project"], create=False)), [])
+        self.assertNotIn("copied to", dashboard._RESUMES[out["room"]["id"]].queue[0]["text"])
+
+    def existing(self, kind="documents"):
+        ok, proj, _ = dashboard.register_project("Papers")
+        if kind == "documents":
+            self.assertEqual(dashboard.set_project_kind(proj["id"], "documents"), (True, "ok"))
+        home = Path(dashboard.project_home(proj, create=False))
+        (home / "strategy.md").write_text("the project's own", encoding="utf-8")
+        (home / "will.txt").write_text("mine", encoding="utf-8")
+        return proj["id"], home
+
+    def test_an_existing_documents_project_keeps_what_it_has(self):
+        pid, home = self.existing()
+        status, seen = self.call_url(self.FILES_URL, {**self.session(), "projectId": pid})
+        self.assertEqual((status, seen["offer"], seen["files"]), (200, True, 3))
+        status, out = self.call({**self.session(), "projectId": pid, "bringFiles": True})
+        self.assertEqual(status, 200, out)
+        self.assertEqual((out["files"]["copied"], out["files"]["alreadyThere"]), (2, 1))
+        self.assertFalse(out["files"]["historyFailed"])
+        self.assertEqual((home / "strategy.md").read_text(encoding="utf-8"), "the project's own", "never overwritten")
+        self.assertEqual(self.tree(home), sorted(self.kept + ["will.txt"]))
+        self.assertIn("(2 files)", dashboard._RESUMES[out["room"]["id"]].queue[0]["text"])
+
+    def test_a_history_that_could_not_record_them_is_said(self):
+        real = dashboard.file_history.snapshot
+
+        def fails(home, who, reason="", message=""):
+            if reason == "bring files":
+                raise OSError("disk full")
+            return real(home, who, reason=reason, message=message)
+
+        pid, home = self.existing()
+        with mock.patch.object(dashboard.file_history, "snapshot", fails):
+            status, out = self.call({**self.session(), "projectId": pid, "bringFiles": True})
+        self.assertEqual(status, 200, out)
+        self.assertEqual((out["files"]["copied"], out["files"]["historyFailed"]), (2, True))
+
+    def test_an_existing_code_project_is_not_offered_them(self):
+        pid, home = self.existing(kind="code")
+        status, seen = self.call_url(self.FILES_URL, {**self.session(), "projectId": pid})
+        self.assertEqual((status, seen["offer"], seen["documents"]), (200, False, False))
+        status, out = self.call({**self.session(), "projectId": pid, "bringFiles": True})
+        self.assertEqual((status, out["files"]["ok"]), (200, False), out)
+        self.assertEqual(self.tree(home), ["strategy.md", "will.txt"])
+
+    def test_a_failed_start_takes_the_copy_back_with_the_new_project(self):
+        self.start_error = RuntimeError("no terminal")
+        status, out = self.call({**self.session(), "name": "Strats", "kind": "documents", "bringFiles": True})
+        self.assertEqual(status, 400, out)
+        self.nothing_left()
+        self.assertEqual(list(self.root.iterdir()), [], "the home, its files and its history are gone")
+        self.source_as_it_was()
+
+    def test_a_failed_start_takes_back_only_what_it_copied_into_an_existing_project(self):
+        pid, home = self.existing()
+        (home / "notes").mkdir()
+        (home / "notes" / "mine.txt").write_text("mine", encoding="utf-8")
+        self.start_error = RuntimeError("no terminal")
+        status, out = self.call({**self.session(), "projectId": pid, "bringFiles": True})
+        self.assertEqual(status, 400, out)
+        self.assertEqual(self.tree(home), ["notes/mine.txt", "strategy.md", "will.txt"])
+        self.assertFalse((home / "notes" / "2026").exists(), "a folder it made goes; one that was there stays")
+        self.assertEqual((home / "strategy.md").read_text(encoding="utf-8"), "the project's own")
+        self.assertFalse(dashboard.find_project(pid).get("poRoomId"))
+        self.nothing_left(projects=1)
+        self.source_as_it_was()
+
+    def failing_write(self, after):
+        """open() as bringfiles sees it: the disk is full from the file after ``after``."""
+        made = []
+
+        def fake(path, mode="r", *a, **k):
+            if "x" in mode:
+                made.append(path)
+                if len(made) > after:
+                    raise OSError(28, "No space left on device")
+            return open(path, mode, *a, **k)
+        return mock.patch.object(dashboard.bringfiles, "open", fake, create=True)
+
+    def test_a_copy_that_fails_half_way_leaves_nothing(self):
+        with self.failing_write(after=1):
+            status, out = self.call({**self.session(), "name": "Strats", "kind": "documents", "bringFiles": True})
+        self.assertEqual((status, out.get("error")), (400, "cannot_make_po"), out)
+        self.assertIn("No space left", out["message"])
+        self.assertIn("No PO was made", out["message"])
+        self.nothing_left()
+        self.assertEqual(list(self.root.iterdir()), [])
+        self.assertEqual(self.started, [])
+        # Into an existing project: only what this request wrote goes.
+        pid, home = self.existing()
+        with self.failing_write(after=1):
+            status, out = self.call({**self.session(), "projectId": pid, "bringFiles": True})
+        self.assertEqual(status, 400, out)
+        self.assertEqual(self.tree(home), ["strategy.md", "will.txt"])
+        self.assertFalse((home / "notes").exists())
+        self.nothing_left(projects=1)
+        self.source_as_it_was()
+
+    def test_a_home_folder_or_a_drive_is_not_offered(self):
+        with mock.patch.object(dashboard.bringfiles, "user_home", lambda: str(self.work)):
+            status, seen = self.call_url(self.FILES_URL, {**self.session(), "kind": "documents"})
+            self.assertEqual((status, seen["offer"], seen["files"]), (200, False, 0))
+            self.assertIn("your home folder", seen["reason"])
+            self.assertNotIn("\n", seen["reason"])
+            # Asked all the same: the project is made, without the files, and the reply says why.
+            status, out = self.call({**self.session(), "name": "Strats", "kind": "documents", "bringFiles": True})
+        self.assertEqual(status, 200, out)
+        self.assertEqual(out["files"]["ok"], False)
+        self.assertIn("your home folder", out["files"]["message"])
+        self.assertEqual(self.tree(self.root / "Strats"), [])
+        self.assertNotIn("copied to", dashboard._RESUMES[out["room"]["id"]].queue[0]["text"])
+        with mock.patch.object(dashboard.bringfiles, "user_home", lambda: str(self.work / "deeper" / "me")):
+            self.assertIn("home folder", dashboard.bringfiles.refusal(str(self.work)), "a folder above it too")
+        drive = os.path.abspath(os.sep)
+        self.assertIn("a whole drive", dashboard.bringfiles.refusal(drive))
+        # The projects folder itself, and a folder already in the project's.
+        self.assertIn("projects folder", dashboard.bringfiles.refusal(str(self.base), "", str(self.root)))
+        home = self.root / "Strats"
+        (home / "sub").mkdir()
+        self.assertIn("already in the project's folder", dashboard.bringfiles.refusal(str(home / "sub"), str(home)))
+
+    def test_past_the_bound_the_project_is_made_without_them(self):
+        for patch, words in ((mock.patch.object(dashboard.bringfiles, "MAX_FILES", 2), "more than 2 files"),
+                             (mock.patch.object(dashboard.bringfiles, "MAX_BYTES", 12), "more than 0.0 MB")):
+            with patch:
+                status, seen = self.call_url(self.FILES_URL, {**self.session(), "kind": "documents"})
+                self.assertEqual((status, seen["offer"]), (200, False))
+                self.assertIn(words, seen["reason"])
+                name = f"Strats {len(dashboard.load_projects())}"
+                status, out = self.call({**self.session(sessionId=name), "name": name, "kind": "documents",
+                                         "bringFiles": True})
+            self.assertEqual(status, 200, out)
+            self.assertEqual(out["files"]["ok"], False)
+            self.assertIn(words, out["files"]["message"])
+            self.assertIn("by hand", out["files"]["message"])
+            self.assertEqual(self.tree(self.root / name), [])
+            self.assertEqual(out["project"]["poRoomId"], out["room"]["id"], "the project is still made")
+
+    def test_a_folder_that_cannot_be_counted_in_time(self):
+        def slow(src, out, stop):
+            while not stop():
+                time.sleep(0.02)
+            out["why"] = "time"
+
+        with mock.patch.object(dashboard.bringfiles, "_walk", slow), \
+                mock.patch.object(dashboard.bringfiles, "PREVIEW_S", 0.3):
+            began = time.monotonic()
+            seen = dashboard.bringfiles.preview(str(self.work), seconds=0.3)
+            self.assertLess(time.monotonic() - began, 2.0)
+        self.assertEqual(seen["offer"], False)
+        self.assertIn("could not be counted in 0.3 seconds", seen["reason"])
+
+        def stuck(src, out, stop):          # one directory read that never comes back
+            time.sleep(3)
+
+        with mock.patch.object(dashboard.bringfiles, "_walk", stuck):
+            began = time.monotonic()
+            found = dashboard.bringfiles.scan(str(self.work), 0.2)
+            self.assertLess(time.monotonic() - began, 1.5)
+        self.assertEqual((found["why"], found["files"]), ("time", []))
+
+    def test_a_path_too_long_is_skipped_and_counted(self):
+        long_name = "a file with a rather long name " * 3 + ".txt"
+        (self.work / "notes" / long_name).write_text("x", encoding="utf-8")
+        home = self.root / "Strats"
+        room_for = len(os.path.abspath(home / "notes" / "2026" / "track record.csv"))    # the longest that fits
+        with mock.patch.object(dashboard.bringfiles, "PATH_MAX", room_for):
+            status, out = self.call({**self.session(), "name": "Strats", "kind": "documents", "bringFiles": True})
+        self.assertEqual(status, 200, out)
+        self.assertEqual((out["files"]["copied"], out["files"]["tooLong"]), (3, 1))
+        self.assertEqual(self.tree(home), self.kept)
+
+    def test_a_task_brings_the_folder_its_agent_works_in(self):
+        rid = chatroom.create_room("Research", [{"identity": "claude", "agent": "claude"}])["id"]
+        full = chatroom.get_room(rid, public=False)
+        full["cwd"], full["mode"] = str(self.work), "solo"
+        part = chatroom.agent_participants(full)[0]
+        part["sessionId"], part["cwd"] = "sid-task-9", str(self.work)
+        chatroom.update_room(full)
+        status, seen = self.call_url(self.FILES_URL, {"roomId": rid, "kind": "documents"})
+        self.assertEqual((status, seen["offer"], seen["files"], seen["folder"]), (200, True, 3, str(self.work)))
+        status, out = self.call({"roomId": rid, "name": "Strats", "kind": "documents", "bringFiles": True})
+        self.assertEqual(status, 200, out)
+        self.assertEqual(self.tree(self.root / "Strats"), self.kept)
+
+    def test_a_page_on_another_site_is_refused_the_count_too(self):
+        status, out = self.call_url(self.FILES_URL, {**self.session(), "kind": "documents"},
+                                    origin="https://elsewhere.example")
+        self.assertEqual((status, out["error"]), (403, "cross_origin"))
+
+
 class WhatTheHubTypes(unittest.TestCase):
     PROJECT = {"id": "p1", "name": "Engine", "kind": "code", "path": "/code/engine"}
 
@@ -734,7 +1002,34 @@ const out = {
   titles: [makePoTitle(rows[0]), makePoTitle({ sessionId: 'abc', first: ' ' + 'We plan a boat trip. '.repeat(5) }), makePoTitle({ sessionId: 'abc' })],
   again: makePoDialogHtml(rows[0], now, 'The folder <x> is already a project.', { name: 'My "papers"', kind: 'documents', path: 'D:\\else' }),
   bodies: [makePoBody(rows[0], { name: 'Engine', kind: 'code', path: 'C:\\code' }), makePoBody(rows[5], { projectId: 'p1' }),
-           makePoBody({ sessionId: 's', cwd: 'c' }, { projectId: 'p1' })],
+           makePoBody({ sessionId: 's', cwd: 'c' }, { projectId: 'p1' }),
+           makePoBody(rows[0], { name: 'Strats', kind: 'documents', path: '', bringFiles: true })],
+};
+const info = { documents: true, offer: true, reason: '', folder: 'C:\\cs\\01 <opts>', files: 56, bytes: 38 * 1048576,
+               notInBackup: 0, backupCapBytes: 20 * 1048576 };
+const docs = { name: 'Strats', kind: 'documents', path: '' };
+out.files = {
+  sizes: [makePoSize(0), makePoSize(2048), makePoSize(1.26 * 1048576), makePoSize(38.4 * 1048576)],
+  box: makePoBringHtml(info),
+  off: makePoBringHtml(info, false),
+  big: makePoBringHtml({ ...info, files: 1, notInBackup: 1 }),
+  refused: makePoBringHtml({ ...info, offer: false, reason: 'The session was started in D:\\me, which is your home folder <x>.' }),
+  code: makePoBringHtml({ ...info, documents: false, offer: false }),
+  unknown: makePoBringHtml(null),
+  dialogDocs: makePoDialogHtml(rows[0], now, '', docs, info),
+  dialogCode: makePoDialogHtml(rows[0], now, '', { ...docs, kind: 'code' }, info),
+  dialogOff: makePoDialogHtml(rows[0], now, 'refused', { ...docs, bringFiles: false }, info),
+  dialogNoCount: makePoDialogHtml(rows[0], now, '', docs),
+  notes: [makePoBroughtNote(undefined),
+          makePoBroughtNote({ ok: true, copied: 56, bytes: 38 * 1048576, alreadyThere: 0, tooLong: 0, unreadable: 0, leftOut: 0, notInBackup: [] }),
+          makePoBroughtNote({ ok: true, copied: 1, bytes: 2048, alreadyThere: 2, tooLong: 1, unreadable: 1, leftOut: 4, notInHistory: 1,
+                              notInBackup: [{ path: 'data/ticks.bin', size: 60 * 1048576, inHistory: false }], notInBackupCount: 3 }),
+          makePoBroughtNote({ ok: false, message: 'The files in C:\\x are not brought: it holds more than 2,000 files.' }),
+          makePoBroughtNote({ ok: true, copied: 0, bytes: 0, alreadyThere: 3 }),
+          makePoBroughtNote({ ok: true, copied: 2, bytes: 10, historyFailed: true })],
+  moreUnrecorded: makePoBroughtMore({ ok: true, copied: 2, historyFailed: true }),
+  more: [makePoBroughtMore(undefined), makePoBroughtMore({ ok: true, copied: 5, leftOut: 2 }), makePoBroughtMore({ ok: true, copied: 5, alreadyThere: 1 }),
+         makePoBroughtMore({ ok: false, message: 'x' }), makePoBroughtMore({ ok: true, copied: 1, notInBackup: [{ path: 'a', size: 1 }] })],
 };
 console.log(JSON.stringify(out));
 """
@@ -790,11 +1085,62 @@ console.log(JSON.stringify(out));
         self.assertIn('value="D:\\else"', d)
 
     def test_what_the_hub_is_asked(self):
-        new, task, bare = self.out["bodies"]
+        new, task, bare, bringing = self.out["bodies"]
+        self.assertEqual((bringing["kind"], bringing["bringFiles"], bringing["cwd"]), ("documents", True, "C:\\work\\engine"))
         self.assertEqual(new, {"sessionId": "old", "cwd": "C:\\work\\engine", "agent": "claude", "label": "Engine notes",
                                "name": "Engine", "kind": "code", "path": "C:\\code"})
         self.assertEqual(task, {"roomId": "room-1", "projectId": "p1"})
         self.assertEqual(bare, {"sessionId": "s", "cwd": "c", "agent": "claude", "label": "", "projectId": "p1"})
+
+    def test_the_box_that_brings_the_sessions_files(self):
+        f = self.out["files"]
+        self.assertEqual(f["sizes"], ["1 KB", "2 KB", "1.3 MB", "38 MB"])
+        self.assertIn('<input type="checkbox" id="mp-bring" checked> Bring the files from C:\\cs\\01 &lt;opts&gt; '
+                      'into the project (56 files, 38 MB)', f["box"])
+        self.assertIn("left as it is", f["box"])
+        self.assertNotIn("backup", f["box"])
+        self.assertIn('id="mp-bring">', f["off"], "switched off, it re-opens off")
+        self.assertIn("(1 file, 38 MB)", f["big"])
+        self.assertIn("1 file over 20 MB is copied too, but will not be in the backup.", f["big"])
+        # Not offered: one line saying why, and no box; nothing at all for a code project or before the count.
+        self.assertNotIn("mp-bring", f["refused"])
+        self.assertIn("your home folder &lt;x&gt;.", f["refused"])
+        self.assertEqual((f["code"], f["unknown"]), ("", ""))
+
+    def test_the_box_shows_for_a_documents_project_only(self):
+        f = self.out["files"]
+        self.assertIn('id="mp-bring-field"><label class="kind-opt"><input type="checkbox" id="mp-bring" checked>', f["dialogDocs"])
+        self.assertIn('id="mp-bring-field" hidden><label', f["dialogCode"], "there, and hidden until the kind changes")
+        self.assertIn('id="mp-bring">', f["dialogOff"])
+        self.assertIn('id="mp-bring-field" hidden></div>', f["dialogNoCount"])
+        self.assertIn('id="mp-bring-field" hidden></div>', self.out["dialog"])
+        # The page: the field follows the kind, the count is asked once, and Make PO waits for it.
+        self.assertIn("$('#mp-bring-field').hidden = !docs || !$('#mp-bring-field').firstChild;", INDEX)
+        self.assertIn("if (kind === 'documents') { $('#mp-ok').disabled = true; await counted; }", INDEX)
+        self.assertIn("...(bring ? { bringFiles: kind === 'documents' && bring.checked } : {})", INDEX)
+        self.assertIn("makePoFlow(r, histErr(e), target, info);", INDEX, "a refusal re-opens it without counting again")
+        self.assertIn("if (!chosen || !isDocsProject(pj)) { counted = Promise.resolve(); return; }", INDEX,
+                      "Choose the PO offers it to a documents project only")
+        self.assertIn("'/api/projects/po-from-session/files'", INDEX)
+
+    def test_the_notice_says_what_became_of_the_files(self):
+        none, plain, mixed, refused, nothing, unrecorded = self.out["files"]["notes"]
+        self.assertIn("The file history could not record them", unrecorded)
+        self.assertNotIn("could not record", mixed)
+        self.assertTrue(self.out["files"]["moreUnrecorded"])
+        self.assertEqual(none, "")
+        self.assertEqual(plain, "56 files (38 MB) were copied into the project’s folder.")
+        for words in ("1 file (2 KB) was copied", "2 files already there were left as they are and not copied.",
+                      "1 with a path too long to open was skipped.", "1 that could not be read was skipped.",
+                      "4 left out: what a project never keeps",
+                      "Too large for the backup, so only in the project’s folder: data/ticks.bin (60 MB) and 2 more.",
+                      "1 file too large for the file history as well."):
+            self.assertIn(words, mixed)
+        self.assertIn("more than 2,000 files", refused)
+        self.assertTrue(nothing.startswith("No files were copied"))
+        self.assertEqual(self.out["files"]["more"], [False, False, True, True, True],
+                         "it stays until dismissed only when it says more than copied")
+        self.assertIn("makePoBroughtMore(resp.files) ? 0 : (note ? 8000 : 3000)", INDEX)
 
     def test_where_the_page_offers_it(self):
         self.assertRegex(INDEX, r'\(!isLive && r\.cwd && !r\.roomId && !r\.orphan\)\s*\? `<button class="makepo-btn" data-sid=')

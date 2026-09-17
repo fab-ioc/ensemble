@@ -2557,6 +2557,8 @@
   /* A choice (.kind-opt) keeps its radio beside its words, not as a text box above them. */
   dialog .im-field .kind-opt input { width: auto; padding: 0; margin: 0 4px 0 0; vertical-align: -1px; }
   dialog .im-field .kind-opt { font-size: 13px; color: var(--fg); font-weight: 400; margin-bottom: 6px; cursor: pointer; }
+  /* A folder's path has no spaces to break at: it wraps, the dialog never scrolls sideways. */
+  dialog .cfg-hint, dialog .im-field .kind-opt { overflow-wrap: anywhere; }
   dialog .im-field input:focus,
   dialog .im-field textarea:focus {
     border-color: var(--focus-ring);
@@ -8281,12 +8283,57 @@ function makePoLiveNote(r, nowS) {
   const min = Math.max(1, Math.round((nowS - r.updatedAt) / 60));
   return `This conversation was written to ${min} minute${min === 1 ? '' : 's'} ago. If it is still open in a terminal, close it there first: continued in two places, it splits in two.`;
 }
+// The session's files, brought into a documents project. `info` is the hub's
+// count of its folder (/api/projects/po-from-session/files), null until it
+// answers: a box, on unless it was switched off, or the one line saying why
+// the files are not offered (a home folder, a drive, too many).
+function makePoSize(bytes) {
+  const mb = (bytes || 0) / 1048576;
+  if (mb >= 10) return Math.round(mb) + ' MB';
+  if (mb >= 0.1) return mb.toFixed(1) + ' MB';
+  return Math.max(1, Math.round((bytes || 0) / 1024)) + ' KB';
+}
+function makePoCount(n, one) {
+  return `${Number(n || 0).toLocaleString('en-US')} ${n === 1 ? one : one + 's'}`;
+}
+function makePoBringHtml(info, on) {
+  if (!info || !info.documents) return '';
+  if (!info.offer) return info.reason ? `<p class="cfg-hint" role="note">${esc(info.reason)}</p>` : '';
+  const cap = Math.round((info.backupCapBytes || 0) / 1048576);
+  const big = info.notInBackup ? ` ${makePoCount(info.notInBackup, 'file')} over ${cap} MB ${info.notInBackup === 1 ? 'is' : 'are'} copied too, but will not be in the backup.` : '';
+  return `<label class="kind-opt"><input type="checkbox" id="mp-bring"${on === false ? '' : ' checked'}> Bring the files from ${esc(info.folder)} into the project (${makePoCount(info.files, 'file')}, ${makePoSize(info.bytes)})<br>`
+    + `<span class="cfg-hint">They are copied: the folder they are in now is left as it is.${big}</span></label>`;
+}
+// What the hub did with them (the reply's `files`), for the notice; '' when it was not asked.
+function makePoBroughtNote(files) {
+  if (!files) return '';
+  if (!files.ok) return files.message || 'The files were not brought.';
+  const out = [files.copied ? `${makePoCount(files.copied, 'file')} (${makePoSize(files.bytes)}) ${files.copied === 1 ? 'was' : 'were'} copied into the project’s folder.`
+                            : 'No files were copied into the project’s folder.'];
+  if (files.alreadyThere) out.push(`${makePoCount(files.alreadyThere, 'file')} already there ${files.alreadyThere === 1 ? 'was' : 'were'} left as ${files.alreadyThere === 1 ? 'it is' : 'they are'} and not copied.`);
+  if (files.tooLong) out.push(`${files.tooLong} with a path too long to open ${files.tooLong === 1 ? 'was' : 'were'} skipped.`);
+  if (files.unreadable) out.push(`${files.unreadable} that could not be read ${files.unreadable === 1 ? 'was' : 'were'} skipped.`);
+  if (files.leftOut) out.push(`${files.leftOut} left out: what a project never keeps (such as .git, node_modules, links, temporary files).`);
+  const big = files.notInBackup || [];
+  if (big.length) {
+    const more = (files.notInBackupCount || big.length) - big.length;
+    out.push(`Too large for the backup, so only in the project’s folder: ${big.map(f => `${f.path} (${makePoSize(f.size)})`).join(', ')}${more > 0 ? ` and ${more} more` : ''}.`);
+  }
+  if (files.notInHistory) out.push(`${makePoCount(files.notInHistory, 'file')} too large for the file history as well.`);
+  if (files.historyFailed) out.push('The file history could not record them, so they will show there as found by its next scan.');
+  return out.join(' ');
+}
+// Whether the notice says more than "copied": it then stays until dismissed.
+function makePoBroughtMore(files) {
+  return !!files && (!files.ok || !!(files.alreadyThere || files.tooLong || files.unreadable || files.historyFailed || (files.notInBackup || []).length));
+}
 // `typed` is what the dialog held when the hub refused: it re-opens as it was left.
-function makePoDialogHtml(r, nowS, err, typed) {
+function makePoDialogHtml(r, nowS, err, typed, info) {
   const t = typed || {};
   const name = t.name != null ? t.name : ((r.label || '').trim() || String(r.cwd || '').split(/[\\/]/).filter(Boolean).pop() || '');
   const docs = t.kind === 'documents';
   const live = makePoLiveNote(r, nowS);
+  const bring = makePoBringHtml(info, t.bringFiles);
   const kind = (k, label, text, on) => `<label class="kind-opt"><input type="radio" name="mp-kind" value="${k}"${on ? ' checked' : ''}> <b>${label}</b><br><span class="cfg-hint">${text}</span></label>`;
   return `<h3>Make PO of a new project</h3>`
     + `<p class="cfg-hint">“${esc(makePoTitle(r))}” becomes the PO of a new project: the task you talk to about it, which the project's other tasks report to. Its conversation continues, and the hub tells it what a PO does and asks it to write the project's handover and roadmap.</p>`
@@ -8297,6 +8344,7 @@ function makePoDialogHtml(r, nowS, err, typed) {
     + kind('documents', 'Documents project', 'A folder of files in the projects folder, named after the project. Its tasks work directly in it, and every version of every file is kept.', docs)
     + `</div>`
     + `<div class="im-field" id="mp-path-field"${docs ? ' hidden' : ''}><label for="mp-path">Code folder <small>created if missing</small></label><input type="text" id="mp-path" value="${esc(t.path != null ? t.path : (r.cwd || ''))}" autocomplete="off" spellcheck="false"></div>`
+    + `<div class="im-field" id="mp-bring-field"${docs && bring ? '' : ' hidden'}>${bring}</div>`
     + `<p class="cfg-hint">The conversation continues in the folder it was started in (${esc(r.cwd || '')}). After its first handover the PO works in the project's own folder.</p>`
     + (err ? `<p class="cfg-hint" role="alert">${esc(err)}</p>` : '')
     + `<div class="actions"><button id="mp-ok">Make PO</button><button id="mp-cancel" class="secondary">Cancel</button></div>`;
@@ -8314,7 +8362,7 @@ async function makePoSend(r, target) {
   const key = r.roomId || r.sessionId;
   if (MAKING_PO.has(key)) { toast('already making this one a PO…', 2000); return null; }
   MAKING_PO.add(key);
-  toast('making it the PO…', 0, 'busy');
+  toast(target && target.bringFiles ? 'copying its files and making it the PO…' : 'making it the PO…', 0, 'busy');
   try {
     const resp = await api('/api/projects/po-from-session', { method: 'POST', headers: { 'Content-Type': 'application/json' },
                                                              body: JSON.stringify(makePoBody(r, target)) });
@@ -8337,28 +8385,59 @@ async function makePoOpen(resp) {
   SELECTED_PROJECT = pid; PROJECT_TAB = 'tasks'; WS_SCOPE = ''; SB_DEST = '';
   PO_PIN = pid; PO_PEEK = true;       // renderPo drops the peek where the PO leads the page
   renderRows();
-  toast(`${(resp.project && resp.project.name) || 'The project'} has its PO`, 3000, 'ok');
+  // What became of its files stays until dismissed when some were skipped or are not backed up.
+  const note = makePoBroughtNote(resp.files);
+  toast(`${(resp.project && resp.project.name) || 'The project'} has its PO.${note ? ' ' + note : ''}`,
+        makePoBroughtMore(resp.files) ? 0 : (note ? 8000 : 3000), 'ok');
 }
-async function makePoFlow(r, err, typed) {
+// The hub's count of the session's folder, asked once per dialog (it reads the
+// folder for at most two seconds) and kept while a refusal re-opens it.
+let MAKEPO_FLOW = 0;
+function makePoFiles(r, target) {
+  return api('/api/projects/po-from-session/files', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                     body: JSON.stringify(makePoBody(r, target)) });
+}
+async function makePoFlow(r, err, typed, info) {
   if (!r) return;
   const dlg = $('#modal');
-  dlg.innerHTML = makePoDialogHtml(r, Date.now() / 1000, err, typed);
+  const flow = ++MAKEPO_FLOW;
+  dlg.innerHTML = makePoDialogHtml(r, Date.now() / 1000, err, typed, info);
   dlg.showModal();
   const sync = () => {
     const docs = (dlg.querySelector('input[name="mp-kind"]:checked') || {}).value === 'documents';
     $('#mp-path-field').hidden = docs;
+    // The files are brought into a documents project only: a code project's folder is where they are.
+    $('#mp-bring-field').hidden = !docs || !$('#mp-bring-field').firstChild;
   };
   dlg.querySelectorAll('input[name="mp-kind"]').forEach(i => i.onchange = sync);
   $('#mp-name').focus(); $('#mp-name').select();
+  let counted = Promise.resolve();
+  if (!info) {
+    $('#mp-bring-field').innerHTML = `<p class="cfg-hint" role="status">Counting the files in ${esc(r.cwd || 'its folder')}…</p>`;
+    counted = makePoFiles(r, { kind: 'documents' }).then(got => { info = got; }).catch(() => {}).then(() => {
+      const field = $('#mp-bring-field');
+      if (flow !== MAKEPO_FLOW || !dlg.open || !field) return;
+      // Without a count the files are simply not offered.
+      field.innerHTML = makePoBringHtml(info, (typed || {}).bringFiles);
+      sync();
+    });
+    sync();
+  }
   const target = await new Promise(resolve => {
     $('#mp-cancel').onclick = () => resolve(null);
     dlg.addEventListener('cancel', () => resolve(null), { once: true });
-    $('#mp-ok').onclick = () => resolve({
-      name: $('#mp-name').value.trim(),
-      kind: (dlg.querySelector('input[name="mp-kind"]:checked') || {}).value || 'code',
-      path: $('#mp-path').value.trim(),
-    });
+    $('#mp-ok').onclick = async () => {
+      const kind = (dlg.querySelector('input[name="mp-kind"]:checked') || {}).value || 'code';
+      // Confirmed before the count came back: the box would have been on.
+      if (kind === 'documents') { $('#mp-ok').disabled = true; await counted; }
+      const bring = $('#mp-bring');
+      resolve({
+        name: $('#mp-name').value.trim(), kind, path: $('#mp-path').value.trim(),
+        ...(bring ? { bringFiles: kind === 'documents' && bring.checked } : {}),
+      });
+    };
   });
+  MAKEPO_FLOW++;
   dlg.close();
   if (target === null) return;
   try {
@@ -8366,7 +8445,7 @@ async function makePoFlow(r, err, typed) {
     if (resp) await makePoOpen(resp);
   } catch (e) {
     _toastEl().hidden = true;          // the dialog says why, beside what to change
-    makePoFlow(r, histErr(e), target);
+    makePoFlow(r, histErr(e), target, info);
   }
 }
 // Choose (or clear) a project's PO: one of its own tasks, or a past session.
@@ -8395,30 +8474,51 @@ async function poChoose(pid, err) {
         ${past.map(s => `<option value="${esc(s.sessionId)}">${esc(makePoTitle(s) + ' · ' + (s.agent || 'claude') + ' · ' + fmtAgo(now - (s.updatedAt || now)) + ' ago')}</option>`).join('')}
       </select>
     </div>
-    <p class="cfg-hint" id="po-past-note" role="note">Its conversation continues as this project's PO: the hub tells it what a PO does and asks it to write the project's handover and roadmap.</p>` : ''}
+    <p class="cfg-hint" id="po-past-note" role="note">Its conversation continues as this project's PO: the hub tells it what a PO does and asks it to write the project's handover and roadmap.</p>
+    <div class="im-field" id="mp-bring-field" hidden></div>` : ''}
     ${err ? `<p class="cfg-hint" role="alert">${esc(err)}</p>` : ''}
     <div class="actions"><button id="po-ok">Save</button><button id="po-cancel" class="secondary">Cancel</button></div>`;
   dlg.showModal();
   const pastSel = $('#po-past');
+  const flow = ++MAKEPO_FLOW;
+  let counted = Promise.resolve();
   if (pastSel) {
     const base = $('#po-past-note').textContent;
     pastSel.onchange = () => {
       if (pastSel.value) $('#po-sel').value = '';
-      const live = makePoLiveNote(past.find(s => s.sessionId === pastSel.value), Date.now() / 1000);
+      const chosen = past.find(s => s.sessionId === pastSel.value);
+      const live = makePoLiveNote(chosen, Date.now() / 1000);
       $('#po-past-note').textContent = live ? base + ' ' + live : base;
+      // A documents project is offered the session's files, as a new one is.
+      const field = $('#mp-bring-field');
+      field.innerHTML = ''; field.hidden = true;
+      if (!chosen || !isDocsProject(pj)) { counted = Promise.resolve(); return; }
+      field.innerHTML = `<p class="cfg-hint" role="status">Counting the files in ${esc(chosen.cwd || 'its folder')}…</p>`;
+      field.hidden = false;
+      counted = makePoFiles(chosen, { projectId: pid }).catch(() => null).then(got => {
+        if (flow !== MAKEPO_FLOW || !dlg.open || pastSel.value !== chosen.sessionId) return;
+        field.innerHTML = makePoBringHtml(got);
+        field.hidden = !field.firstChild;
+      });
     };
     $('#po-sel').onchange = () => { if ($('#po-sel').value) { pastSel.value = ''; pastSel.onchange(); } };
   }
   const choice = await new Promise(resolve => {
     $('#po-cancel').onclick = () => resolve(null);
     dlg.addEventListener('cancel', () => resolve(null), { once: true });
-    $('#po-ok').onclick = () => resolve({ roomId: $('#po-sel').value, past: pastSel ? pastSel.value : '' });
+    $('#po-ok').onclick = async () => {
+      if (pastSel && pastSel.value) { $('#po-ok').disabled = true; await counted; }
+      const bring = $('#mp-bring');
+      resolve({ roomId: $('#po-sel').value, past: pastSel ? pastSel.value : '', ...(bring ? { bringFiles: bring.checked } : {}) });
+    };
   });
+  MAKEPO_FLOW++;
   dlg.close();
   if (choice === null) return;
   if (choice.past) {
     try {
-      const resp = await makePoSend(past.find(s => s.sessionId === choice.past), { projectId: pid });
+      const resp = await makePoSend(past.find(s => s.sessionId === choice.past),
+                                    { projectId: pid, ...('bringFiles' in choice ? { bringFiles: choice.bringFiles } : {}) });
       if (resp) await makePoOpen(resp);
     } catch (e) { _toastEl().hidden = true; poChoose(pid, histErr(e)); }
     return;
