@@ -596,6 +596,9 @@ class ConfigModel(unittest.TestCase):
         with mock.patch.dict(os.environ, {"CODEX_HOME": str(folder)}):
             return usage.codex_config_model()
 
+    def test_a_byte_order_mark_does_not_hide_the_model(self):
+        self.assertEqual(self.read('﻿model = "gpt-reserve"\n'), "gpt-reserve")
+
     def test_the_top_level_model(self):
         self.assertEqual(self.read('model = "gpt-reserve"\n\n[projects.\'d:\\work\\x\']\n'
                                    'trust_level = "trusted"\n'), "gpt-reserve")
