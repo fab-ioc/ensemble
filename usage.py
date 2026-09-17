@@ -152,6 +152,15 @@ CODEX_MAIN_POOL = "codex"
 # tells the two apart by the session's model.
 CODEX_RESERVE_POOL = "base_model_inference"
 CODEX_RESERVE_MODEL = "gpt-reserve"
+# Spark: a model with a five-hour and a weekly allowance of its own.
+CODEX_SPARK_POOL = "codex_bengalfox"
+CODEX_SPARK_MODEL = "gpt-5.3-codex-spark"
+# The only models known to draw on a pool of their own. A pool Codex adds
+# later is read and shown under its name, but no model is *judged* by it until
+# it is listed here: a slug that merely looks like a pool's name stays on the
+# main pool.
+_CODEX_MODEL_POOLS = {CODEX_RESERVE_MODEL: CODEX_RESERVE_POOL,
+                      CODEX_SPARK_MODEL: CODEX_SPARK_POOL}
 
 # `codex app-server` answered in about a second when measured (2026-09-17).
 # The whole reading, its kill included, stays under 15 s: this long to answer,
@@ -932,10 +941,14 @@ def _job_open():
         # DWORD after two 64-bit time limits) is set: KILL_ON_JOB_CLOSE.
         info = (ctypes.c_byte * (144 if ctypes.sizeof(ctypes.c_void_p) == 8 else 112))()
         ctypes.c_uint32.from_buffer(info, 16).value = 0x2000
-        if not k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):
-            k32.CloseHandle(job)
-            return None
-        return job
+        kept = False
+        try:
+            kept = bool(k32.SetInformationJobObject(job, 9, ctypes.byref(info),
+                                                    ctypes.sizeof(info)))
+        finally:
+            if not kept:
+                k32.CloseHandle(job)
+        return job if kept else None
     except Exception:                                        # noqa: BLE001
         return None
 
@@ -959,13 +972,16 @@ def _job_start(job, proc) -> bool:
 
 def _job_end(job) -> bool:
     """End everything in the job and let the job go. True when it was ended."""
+    ended = False
     try:
         k32 = _win_job_api()
-        ended = bool(k32.TerminateJobObject(job, 1))
-        k32.CloseHandle(job)                                 # kills too, by its limit
-        return ended
+        try:
+            ended = bool(k32.TerminateJobObject(job, 1))
+        finally:
+            k32.CloseHandle(job)                             # kills too, by its limit
     except Exception:                                        # noqa: BLE001
-        return False
+        pass
+    return ended
 
 
 def _kill_tree(proc, job=None, deadline: float | None = None) -> None:
@@ -1026,6 +1042,7 @@ def read_codex_app_server(timeout: float | None = None) -> tuple[dict | None, st
         return None, "Codex is not installed on this machine"
     deadline = time.monotonic() + timeout
     proc = None
+    pumping = False
     job = _job_open()
     try:
         proc = subprocess.Popen(
@@ -1051,6 +1068,7 @@ def read_codex_app_server(timeout: float | None = None) -> tuple[dict | None, st
             lines.put(None)
 
         threading.Thread(target=pump, daemon=True, name="codex-app-server").start()
+        pumping = True
 
         def send(message: dict) -> None:
             proc.stdin.write(json.dumps(message) + "\n")
@@ -1093,6 +1111,12 @@ def read_codex_app_server(timeout: float | None = None) -> tuple[dict | None, st
     finally:
         if proc is not None:
             _kill_tree(proc, job, deadline + CODEX_APP_KILL_S)
+            if not pumping and proc.stdout is not None:
+                # It never ran, so nothing holds the pipe and nobody reads it.
+                try:
+                    proc.stdout.close()
+                except Exception:                            # noqa: BLE001
+                    pass
         elif job is not None:
             _job_end(job)
 
@@ -1224,27 +1248,23 @@ def codex_pool_for_model(source: dict | None, model: str = "") -> dict:
     """The pool a Codex agent runs on: ``{id, label, model}``.
 
     ``model`` is the seat's named model; without one it is the config's
-    (``source["configModel"]``). ``gpt-reserve`` draws on the reserve, a slug
-    that is a pool's own name (Spark's) on that pool, anything else — no model
-    at all included — on the main pool.
+    (``source["configModel"]``). ``gpt-reserve`` draws on the reserve, Spark's
+    slug on Spark's pool, anything else — no model at all, and a slug that
+    matches some pool not known here, included — on the main pool.
     """
     source = source or {}
     slug = (model or source.get("configModel") or "").strip()
     low = slug.lower()
     main = {"id": CODEX_MAIN_POOL, "label": None, "model": slug}
-    if not low:
+    pool_id = _CODEX_MODEL_POOLS.get(low)
+    if pool_id is None:
         return main
     for pool in source.get("pools") or []:
-        if pool.get("id") == CODEX_MAIN_POOL:
-            continue
-        if low in ((pool.get("limitName") or "").lower(), (pool.get("id") or "").lower()):
-            return {"id": pool["id"], "label": pool.get("label"), "model": slug}
-    if low == CODEX_RESERVE_MODEL:
-        # The reserve has not been read (session records only, and no turn on
-        # it yet). Still the reserve: unknown, never the main pool's number.
-        return {"id": CODEX_RESERVE_POOL,
-                "label": _pool_label(CODEX_RESERVE_POOL, CODEX_RESERVE_MODEL), "model": slug}
-    return main
+        if pool.get("id") == pool_id:
+            return {"id": pool_id, "label": pool.get("label"), "model": slug}
+    # The pool has not been read (session records only, and no turn on it
+    # yet). Still that pool: unknown, never the main pool's number.
+    return {"id": pool_id, "label": _pool_label(pool_id, slug), "model": slug}
 
 
 def _mark_pool_in_use(source: dict, config_model: str) -> dict:

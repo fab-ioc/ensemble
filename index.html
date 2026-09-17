@@ -10982,7 +10982,8 @@ function usageSourceHtml(src) {
   let rows = wins.map(w => usageWindowRow(w, name)).join('');
   let inUse = '', spent = '', via = '';
   if (pools.length > 1 || (used && !pools.some(p => p.inUse))) {
-    // ... and each pool says how old its own reading is.
+    // ... and each pool says how old its own reading is. A lone pool in use
+    // gets no heading: the source's age above is that pool's own.
     age = '';
     rows = pools.map(p => {
       const mine = wins.filter(w => w.pool === p.id);

@@ -328,6 +328,38 @@ class AppServerProcess(_Case):
         self.assertLess(took, 2 + usage.CODEX_APP_KILL_S + 0.5)
         self.assertTrue(self.gone())                         # proc.kill() still had its turn
 
+    def test_a_job_that_cannot_be_ended_or_set_up_is_still_closed(self):
+        k32 = mock.Mock()
+        k32.TerminateJobObject.side_effect = OSError("no")
+        with mock.patch.object(usage, "_win_job_api", return_value=k32):
+            self.assertFalse(usage._job_end(1234))
+        k32.CloseHandle.assert_called_once_with(1234)
+        if os.name != "nt":
+            return
+        k32 = mock.Mock()
+        k32.CreateJobObjectW.return_value = 1234
+        k32.SetInformationJobObject.side_effect = OSError("no")
+        with mock.patch.object(usage, "_win_job_api", return_value=k32):
+            self.assertIsNone(usage._job_open())
+        k32.CloseHandle.assert_called_once_with(1234)
+
+    @unittest.skipUnless(os.name == "nt", "the job and taskkill are Windows'")
+    def test_a_child_that_cannot_be_put_in_its_job_or_resumed_is_not_left_suspended(self):
+        self.serve("hang", "--shim")
+        started, popen = [], subprocess.Popen
+
+        def spy(*a, **kw):
+            started.append(popen(*a, **kw))
+            return started[-1]
+        with mock.patch.object(usage, "_job_start", side_effect=OSError("no")), \
+                mock.patch.object(usage.subprocess, "Popen", side_effect=spy):
+            result, why = usage.read_codex_app_server(timeout=2)
+        self.assertIsNone(result)
+        self.assertIn("could not ask", why)
+        # It never ran (no pid written), and it is dead, not waiting suspended.
+        self.assertFalse(self.pid_file.exists())
+        self.assertIsNotNone(started[0].poll())
+
     def test_the_production_budget_is_fifteen_seconds(self):
         self.assertLessEqual(usage.CODEX_APP_TIMEOUT_S + usage.CODEX_APP_KILL_S, 15)
 
@@ -431,6 +463,31 @@ class PoolInUse(_Case):
                 self.assertEqual({w["pool"] for w in src["windows"] if w["inUse"]}, {pool})
                 self.assertEqual([p["id"] for p in src["pools"] if p["inUse"]], [pool])
 
+    def test_a_model_named_like_an_unknown_pool_is_judged_by_the_main_pool(self):
+        answer = copy.deepcopy(ANSWER)
+        answer["rateLimitsByLimitId"]["codex_newthing"] = {
+            "limitId": "codex_newthing", "limitName": "GPT-7-Nova", "planType": "prolite",
+            "primary": {"usedPercent": 12, "windowDurationMins": 10080, "resetsAt": NOW + 3600}}
+        for model in ("gpt-7-nova", "codex_newthing"):
+            with self.subTest(model=model):
+                usage._reset_codex_state()
+                self.config_model = model
+                src = usage.read_codex(NOW, app_server=self.answered(answer))
+                # Read and shown under its name, but nobody is judged by it.
+                self.assertIn(("codex_newthing", "seven_day"), self.by_pool(src))
+                self.assertEqual(src["poolInUse"]["id"], "codex")
+                self.assertEqual([p["id"] for p in src["pools"] if p["inUse"]], ["codex"])
+                snap = {"state": "ready", "sources": [src]}
+                judged = dashboard._kind_usage(snap, "codex", model)
+                self.assertEqual((judged["pool"], judged["percent"]), ("codex", 97.0))
+
+    def test_spark_not_yet_read_is_still_spark_never_the_main_figure(self):
+        self.config_model = "gpt-5.3-codex-spark"
+        src = usage.read_codex(NOW, files=[self.rollout(
+            _turn("gpt-5.6-sol"), _count(NOW - 60, 97, MAIN_RESET))])
+        self.assertEqual(src["poolInUse"]["id"], "codex_bengalfox")
+        self.assertEqual([w for w in src["windows"] if w["inUse"]], [])
+
     def test_a_spent_pool_that_is_not_in_use_is_a_notice_not_an_alert(self):
         src = usage.read_codex(NOW, app_server=self.answered())
         self.assertEqual(usage.alerts([src]), [])
@@ -479,7 +536,12 @@ const pools = { source: 'codex', state: 'ok', ageSeconds: 30, trusted: false, vi
             win('codex_bengalfox', 'seven_day', 3600, true)] };
 const one = { source: 'claude', state: 'ok', ageSeconds: 900, trusted: false,
   windows: [{ kind: 'five_hour', ageSeconds: 900, trusted: false, rolledOver: false }] };
-console.log(JSON.stringify({ pools: usageSourceHtml(pools), one: usageSourceHtml(one) }));
+const lone = { source: 'codex', state: 'ok', ageSeconds: 900, trusted: false, via: 'sessions',
+  poolInUse: { id: 'codex', label: null, model: '' },
+  pools: [{ id: 'codex', label: null, ageSeconds: 900, inUse: true }],
+  windows: [win('codex', 'five_hour', 900, false)] };
+console.log(JSON.stringify({ pools: usageSourceHtml(pools), one: usageSourceHtml(one),
+                             lone: usageSourceHtml(lone) }));
 """
 
 
@@ -517,6 +579,13 @@ class Tray(unittest.TestCase):
                       "and none has for 900s.", html)
         self.assertEqual(html.count("as of 900s ago"), 1)
         self.assertNotIn("usage-pool", html)
+
+
+    def test_a_lone_pool_in_use_keeps_the_source_s_age_which_is_its_own(self):
+        html = self.html["lone"]
+        self.assertNotIn('class="usage-pool"', html)
+        self.assertEqual(html.count("as of 900s ago"), 1)
+        self.assertIn("none has for 900s.", html)
 
 
 class ConfigModel(unittest.TestCase):
