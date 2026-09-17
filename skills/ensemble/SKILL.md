@@ -317,6 +317,17 @@ to bring it up to date, then starts a fresh PO whose first prompt is to read it
 and `ROADMAP.md`. Anything in neither file is lost. Never hand a task's spec to
 a fresh session as an instruction: it redoes the work.
 
+**Made a PO from a past session.** The product owner can make a conversation
+that already knows a project its PO, from the dashboard. The hub then types one
+line starting `[product owner]` into it. If that is you: read this section,
+write `PO-HANDOVER.md` first and then `ROADMAP.md` in the project home from what
+you already know, tell the product owner in a few lines what you understood the
+project to be and what you would start first, and wait for the answer before
+starting any task. While `PO-HANDOVER.md` is missing or empty the hub asks for
+it but never replaces you with a fresh session, which would know nothing. You
+keep working in the folder your conversation was started in; your first fresh
+session starts in the project's own folder.
+
 **The line-up of a task.** One owner does the work end to end, in its own
 `worktree`. A reviewer is optional and runs only on mention (see *The reviewer
 runs on mention*): add one where a second opinion is worth a review's cost

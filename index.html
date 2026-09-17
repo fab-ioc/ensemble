@@ -2542,6 +2542,7 @@
     font-family: var(--font-mono);
   }
   dialog .im-field { margin: 14px 0; display: flex; flex-direction: column; gap: 4px; }
+  dialog .im-field[hidden] { display: none; }
   dialog .im-field label {
     font-size: 12px; color: var(--fg-subtle); font-weight: 500;
   }
@@ -2553,6 +2554,9 @@
     background: var(--bg); color: var(--fg); font: inherit;
     outline: none; box-sizing: border-box;
   }
+  /* A choice (.kind-opt) keeps its radio beside its words, not as a text box above them. */
+  dialog .im-field .kind-opt input { width: auto; padding: 0; margin: 0 4px 0 0; vertical-align: -1px; }
+  dialog .im-field .kind-opt { font-size: 13px; color: var(--fg); font-weight: 400; margin-bottom: 6px; cursor: pointer; }
   dialog .im-field input:focus,
   dialog .im-field textarea:focus {
     border-color: var(--focus-ring);
@@ -3448,11 +3452,17 @@ function actionsCell(r, isLive) {
   const terminalBtn = (!isLive && r.cwd)
     ? `<button class="terminal-btn" data-sid="${sid}" data-cwd="${esc(r.cwd)}" data-agent="${esc(r.agent || '')}" data-label="${esc(r.label || '')}" title="${esc(terminalTitle)}">🖥 Terminal</button>`
     : '';
+  // A past session that already knows a project becomes that project's PO.
+  // Offered where ▶ Open is: continuing a live session here too would split it.
+  const makePoBtn = (!isLive && r.cwd && !r.roomId && !r.orphan)
+    ? `<button class="makepo-btn" data-sid="${sid}" title="Start a new project with this conversation as its PO: the task you talk to about the project, which its other tasks report to">Make PO of a new project…</button>`
+    : '';
   return `<div class="actions">
     ${focusBtn}
     ${sendBtn}
     ${terminalBtn}
     ${openCloseBtn}
+    ${makePoBtn}
     ${archiveBtn}
     ${deleteBtn}
     <button class="rename-btn" data-sid="${sid}" title="Edit the label manually (also updates the iTerm tab name when live)">✎ Rename</button>
@@ -3907,6 +3917,8 @@ function detailOverflow(r, isLive, isRoom) {
     : 'Change who is assigned to this task and which model each one runs';
   items.push(`<span title="${esc(agentsWhy)}"><button class="ov-item agents-btn" data-room="${esc(r.roomId)}"${isLive ? ' disabled' : ''}>Agents and models</button></span>`);
   items.push(`<button class="ov-item moveproj-btn" data-sid="${esc(r.sessionId)}">Move to project</button>`);
+  if (makePoTaskOk(r, !!projectOfRoom(r.roomId), isPoRoom(r.roomId, currentPoRooms())))
+    items.push(`<button class="ov-item makepo-btn" data-room="${esc(r.roomId)}" title="Start a new project with this task as its PO: the task you talk to about the project, which its other tasks report to">Make PO of a new project…</button>`);
   if (cwd) {
     items.push(`<button class="ov-item finder-btn" data-path="${esc(cwd)}">${esc(finderLabel())}</button>`);
     items.push(`<button class="ov-item ij-btn" data-sid="${esc(r.sessionId)}">${onHubMachine() ? 'Open in editor' : 'Show in Workspace'}</button>`);
@@ -8218,10 +8230,13 @@ function poNoteHtml() {
   if (!pj || isDocsProject(pj) || poRowOf(pj)) return '';
   const hasTasks = (pj.sessions || []).some(s => s.roomId);
   const what = pj.poRoomId ? 'This project’s PO was a task that no longer exists.' : 'This project has no PO.';
-  const how = hasTasks ? 'Choose one of its tasks, or create a task for the role first.'
-                       : 'Create a task for the role with + New task, then choose it here.';
+  // A past session that already knows the project can take the role too.
+  const hasPast = makePoSessions(ALL_ROWS).length > 0;
+  const how = hasTasks ? `Choose one of its tasks${hasPast ? ' or a past session' : ''}, or create a task for the role first.`
+            : hasPast ? 'Choose a past session that already knows the project, or create a task for the role with + New task and choose it here.'
+                      : 'Create a task for the role with + New task, then choose it here.';
   return `<div class="po-note"><span>${what} The PO is the task you talk to about the project: the other tasks report to it, and its conversation leads this page. ${how}</span>`
-    + `<button class="po-btn def po-choose" data-proj="${esc(pj.id)}"${hasTasks ? '' : ' disabled'}>Choose the PO…</button></div>`;
+    + `<button class="po-btn def po-choose" data-proj="${esc(pj.id)}"${hasTasks || hasPast ? '' : ' disabled'}>Choose the PO…</button></div>`;
 }
 function poFocusComposer() {
   const f = document.querySelector('#po-panel iframe.po-session:not([hidden])');
@@ -8233,31 +8248,182 @@ function poClosePeek() {
   const b = document.getElementById('po-pill');
   if (b && !b.hidden) b.focus();
 }
-// Choose (or clear) a project's PO from its own tasks.
-async function poChoose(pid) {
+// ---- A past session made a PO: begin ----------------------------------------
+// A conversation started in a terminal, outside Ensemble, that already holds a
+// project's context becomes that project's PO: of a new project ("Make PO of a
+// new project…" on the session, or on a one-agent task in no project), or of a
+// project that has none (in "Choose the PO…"). One request does it all
+// (/api/projects/po-from-session). Plain data and functions down to
+// makePoBody, so tests/test_make_po.py runs them in Node.
+const MAKEPO_LIVE_S = 15 * 60;
+// The sessions the hub lists but does not own, newest first. One running in a
+// terminal is left out, as it has no ▶ Open: continuing it here too would split it.
+function makePoSessions(rows) {
+  return (rows || []).filter(r => r && !r.roomId && !r.orphan && !r.isLive && r.sessionId && r.cwd)
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+}
+// A one-agent task in no project that is nobody's PO may become one.
+function makePoTaskOk(r, inProject, isPo) {
+  return !!(r && r.roomId && !r.draft && !inProject && !isPo && (r.members || []).length === 1
+    && ['claude', 'codex'].includes(String(r.members[0].agent || '').toLowerCase()));
+}
+// Written to a moment ago: it may still be open in a terminal the hub cannot see.
+function makePoLooksLive(r, nowS) {
+  return !!(r && !r.roomId && r.updatedAt && nowS - r.updatedAt < MAKEPO_LIVE_S);
+}
+// What the person knows a session by: its label, else its first words, else its id.
+function makePoTitle(r) {
+  const first = String((r && r.first) || '').trim();
+  return ((r && r.label) || '').trim() || (first.length > 60 ? first.slice(0, 59) + '…' : first) || String((r && (r.sessionId || r.roomId)) || '');
+}
+function makePoLiveNote(r, nowS) {
+  if (!makePoLooksLive(r, nowS)) return '';
+  const min = Math.max(1, Math.round((nowS - r.updatedAt) / 60));
+  return `This conversation was written to ${min} minute${min === 1 ? '' : 's'} ago. If it is still open in a terminal, close it there first: continued in two places, it splits in two.`;
+}
+// `typed` is what the dialog held when the hub refused: it re-opens as it was left.
+function makePoDialogHtml(r, nowS, err, typed) {
+  const t = typed || {};
+  const name = t.name != null ? t.name : ((r.label || '').trim() || String(r.cwd || '').split(/[\\/]/).filter(Boolean).pop() || '');
+  const docs = t.kind === 'documents';
+  const live = makePoLiveNote(r, nowS);
+  const kind = (k, label, text, on) => `<label class="kind-opt"><input type="radio" name="mp-kind" value="${k}"${on ? ' checked' : ''}> <b>${label}</b><br><span class="cfg-hint">${text}</span></label>`;
+  return `<h3>Make PO of a new project</h3>`
+    + `<p class="cfg-hint">“${esc(makePoTitle(r))}” becomes the PO of a new project: the task you talk to about it, which the project's other tasks report to. Its conversation continues, and the hub tells it what a PO does and asks it to write the project's handover and roadmap.</p>`
+    + (live ? `<p class="cfg-hint" role="note">${esc(live)}</p>` : '')
+    + `<div class="im-field"><label for="mp-name">Project name</label><input type="text" id="mp-name" value="${esc(name)}" autocomplete="off"></div>`
+    + `<div class="im-field" role="radiogroup" aria-label="Kind of project">`
+    + kind('code', 'Code project', 'Its tasks work in copies or worktrees of the code folder.', !docs)
+    + kind('documents', 'Documents project', 'A folder of files in the projects folder, named after the project. Its tasks work directly in it, and every version of every file is kept.', docs)
+    + `</div>`
+    + `<div class="im-field" id="mp-path-field"${docs ? ' hidden' : ''}><label for="mp-path">Code folder <small>created if missing</small></label><input type="text" id="mp-path" value="${esc(t.path != null ? t.path : (r.cwd || ''))}" autocomplete="off" spellcheck="false"></div>`
+    + `<p class="cfg-hint">The conversation continues in the folder it was started in (${esc(r.cwd || '')}). After its first handover the PO works in the project's own folder.</p>`
+    + (err ? `<p class="cfg-hint" role="alert">${esc(err)}</p>` : '')
+    + `<div class="actions"><button id="mp-ok">Make PO</button><button id="mp-cancel" class="secondary">Cancel</button></div>`;
+}
+// What the hub is asked: the session (or the task), and the project to make
+// (or, with projectId, the one that has no PO).
+function makePoBody(r, target) {
+  const src = r.roomId ? { roomId: r.roomId }
+    : { sessionId: r.sessionId, cwd: r.cwd, agent: r.agent || 'claude', label: r.label || '' };
+  return { ...src, ...target };
+}
+// ---- A past session made a PO: end ------------------------------------------
+const MAKING_PO = new Set();
+async function makePoSend(r, target) {
+  const key = r.roomId || r.sessionId;
+  if (MAKING_PO.has(key)) { toast('already making this one a PO…', 2000); return null; }
+  MAKING_PO.add(key);
+  toast('making it the PO…', 0, 'busy');
+  try {
+    const resp = await api('/api/projects/po-from-session', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                             body: JSON.stringify(makePoBody(r, target)) });
+    return resp;
+  } finally { MAKING_PO.delete(key); }
+}
+// The new PO's project, with its conversation: leading the Overview, or as the
+// pill's drawer where the board has the page.
+async function makePoOpen(resp) {
+  const pid = resp.project && resp.project.id;
+  const end = Date.now() + ADOPT_WAIT_MS;
+  const shown = () => { const pj = projectById(pid); return !!(pj && poRowOf(pj)); };
+  do {
+    await refreshProjects();
+    await refresh({ now: true, until: end });
+    if (!shown()) await new Promise(res => setTimeout(res, 250));
+  } while (!shown() && Date.now() < end);
+  updateRoomsBadge();
+  if (SELECTED_SID) closeDetail();
+  SELECTED_PROJECT = pid; PROJECT_TAB = 'tasks'; WS_SCOPE = ''; SB_DEST = '';
+  PO_PIN = pid; PO_PEEK = true;       // renderPo drops the peek where the PO leads the page
+  renderRows();
+  toast(`${(resp.project && resp.project.name) || 'The project'} has its PO`, 3000, 'ok');
+}
+async function makePoFlow(r, err, typed) {
+  if (!r) return;
+  const dlg = $('#modal');
+  dlg.innerHTML = makePoDialogHtml(r, Date.now() / 1000, err, typed);
+  dlg.showModal();
+  const sync = () => {
+    const docs = (dlg.querySelector('input[name="mp-kind"]:checked') || {}).value === 'documents';
+    $('#mp-path-field').hidden = docs;
+  };
+  dlg.querySelectorAll('input[name="mp-kind"]').forEach(i => i.onchange = sync);
+  $('#mp-name').focus(); $('#mp-name').select();
+  const target = await new Promise(resolve => {
+    $('#mp-cancel').onclick = () => resolve(null);
+    dlg.addEventListener('cancel', () => resolve(null), { once: true });
+    $('#mp-ok').onclick = () => resolve({
+      name: $('#mp-name').value.trim(),
+      kind: (dlg.querySelector('input[name="mp-kind"]:checked') || {}).value || 'code',
+      path: $('#mp-path').value.trim(),
+    });
+  });
+  dlg.close();
+  if (target === null) return;
+  try {
+    const resp = await makePoSend(r, target);
+    if (resp) await makePoOpen(resp);
+  } catch (e) {
+    _toastEl().hidden = true;          // the dialog says why, beside what to change
+    makePoFlow(r, histErr(e), target);
+  }
+}
+// Choose (or clear) a project's PO: one of its own tasks, or a past session.
+async function poChoose(pid, err) {
   const pj = projectById(pid);
   if (!pj) return;
   const tasks = (pj.sessions || []).filter(s => s.roomId);
+  // A past session is offered only to a project that has no PO.
+  const past = poRowOf(pj) ? [] : makePoSessions(ALL_ROWS);
+  const now = Date.now() / 1000;
   const dlg = $('#modal');
   dlg.innerHTML = `
     <h3>Choose ${esc(pj.name)}’s PO</h3>
-    <p class="cfg-hint">The other tasks in this project report to it, and its conversation leads the project page.${tasks.length ? '' : ' This project has no tasks yet: create a task for the role with + New task, then choose it here.'}</p>
+    <p class="cfg-hint">The other tasks in this project report to it, and its conversation leads the project page.${tasks.length || past.length ? '' : ' This project has no tasks yet: create a task for the role with + New task, then choose it here.'}</p>
     <div class="im-field">
-      <label>Task</label>
+      <label for="po-sel">Task</label>
       <select id="po-sel">
         <option value="">(no PO)</option>
         ${tasks.map(s => `<option value="${esc(s.roomId)}"${s.roomId === pj.poRoomId ? ' selected' : ''}>${esc(s.label || s.roomId)}</option>`).join('')}
       </select>
     </div>
+    ${past.length ? `<div class="im-field">
+      <label for="po-past">Or a past session <small>a conversation started outside Ensemble that already knows the project</small></label>
+      <select id="po-past">
+        <option value="">(none)</option>
+        ${past.map(s => `<option value="${esc(s.sessionId)}">${esc(makePoTitle(s) + ' · ' + (s.agent || 'claude') + ' · ' + fmtAgo(now - (s.updatedAt || now)) + ' ago')}</option>`).join('')}
+      </select>
+    </div>
+    <p class="cfg-hint" id="po-past-note" role="note">Its conversation continues as this project's PO: the hub tells it what a PO does and asks it to write the project's handover and roadmap.</p>` : ''}
+    ${err ? `<p class="cfg-hint" role="alert">${esc(err)}</p>` : ''}
     <div class="actions"><button id="po-ok">Save</button><button id="po-cancel" class="secondary">Cancel</button></div>`;
   dlg.showModal();
-  const roomId = await new Promise(resolve => {
+  const pastSel = $('#po-past');
+  if (pastSel) {
+    const base = $('#po-past-note').textContent;
+    pastSel.onchange = () => {
+      if (pastSel.value) $('#po-sel').value = '';
+      const live = makePoLiveNote(past.find(s => s.sessionId === pastSel.value), Date.now() / 1000);
+      $('#po-past-note').textContent = live ? base + ' ' + live : base;
+    };
+    $('#po-sel').onchange = () => { if ($('#po-sel').value) { pastSel.value = ''; pastSel.onchange(); } };
+  }
+  const choice = await new Promise(resolve => {
     $('#po-cancel').onclick = () => resolve(null);
     dlg.addEventListener('cancel', () => resolve(null), { once: true });
-    $('#po-ok').onclick = () => resolve($('#po-sel').value);
+    $('#po-ok').onclick = () => resolve({ roomId: $('#po-sel').value, past: pastSel ? pastSel.value : '' });
   });
   dlg.close();
-  if (roomId === null) return;
+  if (choice === null) return;
+  if (choice.past) {
+    try {
+      const resp = await makePoSend(past.find(s => s.sessionId === choice.past), { projectId: pid });
+      if (resp) await makePoOpen(resp);
+    } catch (e) { _toastEl().hidden = true; poChoose(pid, histErr(e)); }
+    return;
+  }
+  const roomId = choice.roomId;
   try {
     const r = await api('/api/projects/po', { method: 'POST', headers: { 'Content-Type': 'application/json' },
                                               body: JSON.stringify({ projectId: pid, roomId }) });
@@ -8343,7 +8509,7 @@ function kindBtnHtml(pj) {
 // none); this button beside its kind is how to give it one.
 function poChooseBtnHtml(pj) {
   if (!isDocsProject(pj) || !pj.registered || pj.id === UNASSIGNED_ID || poRowOf(pj)) return '';
-  return `<button type="button" class="po-btn po-choose" data-proj="${esc(pj.id)}" title="Choose one of its tasks as its PO: the other tasks report to it, and its conversation joins this page">Choose the PO…</button>`;
+  return `<button type="button" class="po-btn po-choose" data-proj="${esc(pj.id)}" title="Choose one of its tasks, or a past session, as its PO: the other tasks report to it, and its conversation joins this page">Choose the PO…</button>`;
 }
 function kindDialogHtml(pj) {
   const docs = isDocsProject(pj);
@@ -12340,6 +12506,13 @@ document.addEventListener('click', async (ev) => {
   if (moveProjBtn) {
     ev.stopPropagation();
     await moveSessionToProject(moveProjBtn.dataset.sid);
+    return;
+  }
+  const makePoBtn = ev.target.closest('.makepo-btn');
+  if (makePoBtn) {
+    ev.stopPropagation();
+    const { sid, room } = makePoBtn.dataset;
+    await makePoFlow(ALL_ROWS.find(x => room ? x.roomId === room : (!x.roomId && x.sessionId === sid)));
     return;
   }
   const renameBtn = ev.target.closest('.rename-btn');

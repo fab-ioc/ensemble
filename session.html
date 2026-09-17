@@ -1618,7 +1618,7 @@ function foldHeld(items, comments) {
 // input is a row, every agent balloon says what it answers, and "Just us"
 // folds the replies to the hub too.
 const HUB_KIND_LABEL = { digest: 'Progress check', report: 'Report', relay: 'Team message',
-  resumed: 'Resumed', handover: 'Handover request', rotation: 'New session', helper: 'Restart helper' };
+  resumed: 'Resumed', handover: 'Handover request', rotation: 'New session', madepo: 'Made PO', helper: 'Restart helper' };
 const isHubInput = m => !!m && m.from === 'user' && !!m.kind && m.kind !== 'human';
 const foldShort = t => { t = String(t || '').trim(); return t.length > 40 ? t.slice(0, 39) + '…' : t; };
 // ---- Who writes to whom ----------------------------------------------------
@@ -1715,6 +1715,7 @@ function answerChip(a, N = CHAT_NAMES) {
     resumed: ['after a resume', 'The first words after the task was started again'],
     handover: ['on the handover request', 'A reply to the hub asking for the handover to be written'],
     rotation: ['after the handover', 'The first words of a fresh session, from the handover'],
+    madepo: ['on becoming PO', 'The first words after the hub made this conversation a project’s PO'],
     helper: ['after a restart', 'A reply to the restart helper’s note after the hub restarted'],
   }[a.kind];
   return said ? { text: said[0], tip: said[1] } : null;
@@ -1740,12 +1741,15 @@ function hubBody(m) {
 }
 // A line of its own asking for the person's decision ("Decision needed: …").
 const DECISION_RE = /^[ \t]*(?:(?:[-*+>]|#{1,6})[ \t]+)*(?:\*\*|__)?Decision needed:/m;
+// The reply to these is the person's to read: their own words, and the hub's
+// note that made this conversation a PO (it ends by telling them what it understood).
+const forPersonKind = k => k === 'human' || k === 'madepo';
 const isDecision = m => !!m && !m.divider && m.from !== 'user' && DECISION_RE.test(m.text || '');
 // Quiet: a row at any age. A hub input always; in Just us also an agent's
 // reply to one. A decision is the person's whatever it answers, so it stays.
 function quietItem(m, justUs) {
   if (isHubInput(m)) return true;
-  return !!justUs && !!m && m.from !== 'user' && !!m.answers && m.answers.kind !== 'human' && !isDecision(m);
+  return !!justUs && !!m && m.from !== 'user' && !!m.answers && !forPersonKind(m.answers.kind) && !isDecision(m);
 }
 // The person's messages that got no agent text before the next input: key →
 // 'past' (the hub typed something since) or 'last' (nothing since, so the agent
@@ -1923,7 +1927,7 @@ function readPoint(items, stored) {
 function forPerson(m, N = CHAT_NAMES) {
   if (!m || m.from === 'user' || m.from === 'ensemble' || taskReport(m)) return '';
   if (isDecision(m)) return 'decision';
-  if (m.answers) return m.answers.kind === 'human' ? 'answer' : '';
+  if (m.answers) return forPersonKind(m.answers.kind) ? 'answer' : '';
   if (m.to === 'user') return 'answer';
   return N.po && m.from === N.po && (!m.to || m.to === 'all') ? 'answer' : '';
 }

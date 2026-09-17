@@ -615,7 +615,7 @@ def top_level_function(src: str, name: str) -> str:
 
 HUB_ACTION_FUNCTIONS = ("actionsCell", "detailOverflow", "ideAction", "openWorkspaceTab", "terminalAction",
                         "openHeadless", "termsAction", "toggleCapturedTerms", "capturedTermsShown", "waitFor",
-                        "showCapturedTerminal")
+                        "showCapturedTerminal", "makePoTaskOk", "isPoRoom", "poRoomIds", "currentPoRooms")
 
 HUB_ACTIONS_JS = r"""
 globalThis.location = new URL(process.argv[1]);
@@ -626,6 +626,7 @@ const PLATFORM = { terminalName: 'Windows Terminal', fileManagerName: 'Explorer'
 const feat = k => !!PLATFORM.features[k];
 const T = () => PLATFORM.terminalName, FM = () => PLATFORM.fileManagerName;
 const CHAT_SCHEME_ON = {};
+const PROJECTS = { projects: [] }, projectOfRoom = () => null;
 const CSS = { escape: s => s };
 const toast = (msg) => log.push('toast:' + msg);
 const ADOPT_WAIT_MS = 1500;

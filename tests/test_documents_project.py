@@ -628,7 +628,7 @@ const gone = s => s.deleted.map(d => d.path);
 """
 
 DEPS = ["esc", "agoSpan", "wsNorm", "wsSame", "wsJoin", "wsTabName", "wsFmtSize", "projectById", "registeredProjects",
-        "poRowOf", "poSplitProject", "poNoteHtml", "renderPoPill", "poAgent", "wsProjectForRow", "wsTaskFolder",
+        "poRowOf", "poSplitProject", "poNoteHtml", "makePoSessions", "renderPoPill", "poAgent", "wsProjectForRow", "wsTaskFolder",
         "wsHidden", "wsRowsHtml", "wsCtxKey", "drParse", "drContent", "drHighlight", "drRowHtml",
         "WS_EMPTY", "WS_MAC", "WS_RECENT_KEY", "WS_ICON_TREE", "wsPanelHtml",
         "DOCS_TASKS_KEY", "docsTasksShown", "docsTasksSet", "docsApart", "docsInTask"]
