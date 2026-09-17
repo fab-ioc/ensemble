@@ -1221,7 +1221,8 @@ def codex_config_model(path=None) -> str:
         home = os.environ.get("CODEX_HOME")
         path = (Path(home) if home else Path.home() / ".codex") / "config.toml"
     try:
-        with open(path, encoding="utf-8", errors="replace") as fh:
+        # utf-8-sig: an editor's byte-order mark would hide the first line.
+        with open(path, encoding="utf-8-sig", errors="replace") as fh:
             text = fh.read()
     except OSError:
         return ""
