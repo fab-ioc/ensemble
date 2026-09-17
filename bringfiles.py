@@ -309,12 +309,14 @@ def bring(src: str, home: str, files: list, seconds: float = COPY_S) -> dict:
     def taken(parts: list) -> bool:
         """Something of the project's stands where this file would go: a
         task's folder of the same name, or a link that leads out of the
-        project's folder. Asked once per folder."""
+        project's folder, however far above the folder still to be made
+        (realpath follows the part of the path that exists). Asked once per
+        folder."""
         parent = os.path.join(home, *parts[:-1])
         if parent not in in_the_way:
             in_the_way[parent] = bool(
                 (len(parts) > 1 and os.path.isfile(os.path.join(home, parts[0], "task.json")))
-                or (os.path.isdir(parent) and not _within(_norm(parent), real_home)))
+                or not _within(_norm(parent), real_home))
         return in_the_way[parent]
 
     try:

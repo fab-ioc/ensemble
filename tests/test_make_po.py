@@ -576,9 +576,24 @@ class TheSessionsFiles(Hub):
         status, out = self.call({**self.session(), "projectId": pid, "bringFiles": True})
         self.assertEqual(status, 200, out)
         self.assertEqual((out["files"]["copied"], out["files"]["alreadyThere"]), (2, 1))
+        self.assertFalse(out["files"]["historyFailed"])
         self.assertEqual((home / "strategy.md").read_text(encoding="utf-8"), "the project's own", "never overwritten")
         self.assertEqual(self.tree(home), sorted(self.kept + ["will.txt"]))
         self.assertIn("(2 files)", dashboard._RESUMES[out["room"]["id"]].queue[0]["text"])
+
+    def test_a_history_that_could_not_record_them_is_said(self):
+        real = dashboard.file_history.snapshot
+
+        def fails(home, who, reason="", message=""):
+            if reason == "bring files":
+                raise OSError("disk full")
+            return real(home, who, reason=reason, message=message)
+
+        pid, home = self.existing()
+        with mock.patch.object(dashboard.file_history, "snapshot", fails):
+            status, out = self.call({**self.session(), "projectId": pid, "bringFiles": True})
+        self.assertEqual(status, 200, out)
+        self.assertEqual((out["files"]["copied"], out["files"]["historyFailed"]), (2, True))
 
     def test_an_existing_code_project_is_not_offered_them(self):
         pid, home = self.existing(kind="code")
@@ -1010,7 +1025,9 @@ out.files = {
           makePoBroughtNote({ ok: true, copied: 1, bytes: 2048, alreadyThere: 2, tooLong: 1, unreadable: 1, leftOut: 4, notInHistory: 1,
                               notInBackup: [{ path: 'data/ticks.bin', size: 60 * 1048576, inHistory: false }], notInBackupCount: 3 }),
           makePoBroughtNote({ ok: false, message: 'The files in C:\\x are not brought: it holds more than 2,000 files.' }),
-          makePoBroughtNote({ ok: true, copied: 0, bytes: 0, alreadyThere: 3 })],
+          makePoBroughtNote({ ok: true, copied: 0, bytes: 0, alreadyThere: 3 }),
+          makePoBroughtNote({ ok: true, copied: 2, bytes: 10, historyFailed: true })],
+  moreUnrecorded: makePoBroughtMore({ ok: true, copied: 2, historyFailed: true }),
   more: [makePoBroughtMore(undefined), makePoBroughtMore({ ok: true, copied: 5, leftOut: 2 }), makePoBroughtMore({ ok: true, copied: 5, alreadyThere: 1 }),
          makePoBroughtMore({ ok: false, message: 'x' }), makePoBroughtMore({ ok: true, copied: 1, notInBackup: [{ path: 'a', size: 1 }] })],
 };
@@ -1107,7 +1124,10 @@ console.log(JSON.stringify(out));
         self.assertIn("'/api/projects/po-from-session/files'", INDEX)
 
     def test_the_notice_says_what_became_of_the_files(self):
-        none, plain, mixed, refused, nothing = self.out["files"]["notes"]
+        none, plain, mixed, refused, nothing, unrecorded = self.out["files"]["notes"]
+        self.assertIn("The file history could not record them", unrecorded)
+        self.assertNotIn("could not record", mixed)
+        self.assertTrue(self.out["files"]["moreUnrecorded"])
         self.assertEqual(none, "")
         self.assertEqual(plain, "56 files (38 MB) were copied into the project’s folder.")
         for words in ("1 file (2 KB) was copied", "2 files already there were left as they are and not copied.",

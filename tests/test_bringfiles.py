@@ -167,6 +167,8 @@ class TheCopy(Case):
 
     def test_a_link_in_the_project_is_not_written_through(self):
         self.put(self.src, "out/notes.md")
+        self.put(self.src, "out/deep/er/notes.md")   # its folders do not exist behind the link yet
+        self.put(self.src, "kept/notes.md")
         try:
             os.symlink(self.away, self.home / "out", target_is_directory=True)
         except OSError:
@@ -174,8 +176,9 @@ class TheCopy(Case):
                                                  capture_output=True).returncode != 0:
                 self.skipTest("no link could be made here")
         res = self.bring()
-        self.assertEqual((res["copied"], res["alreadyThere"]), (0, 1))
-        self.assertEqual(self.tree(self.away), [])
+        self.assertEqual((res["copied"], res["alreadyThere"]), (1, 2))
+        self.assertEqual(os.listdir(self.away), [])
+        self.assertEqual([os.path.relpath(p, self.home) for p in res["written"]], [os.path.join("kept", "notes.md")])
 
     def test_a_file_that_cannot_be_read_is_skipped(self):
         self.put(self.src, "a.md")

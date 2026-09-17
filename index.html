@@ -8320,11 +8320,12 @@ function makePoBroughtNote(files) {
     out.push(`Too large for the backup, so only in the project’s folder: ${big.map(f => `${f.path} (${makePoSize(f.size)})`).join(', ')}${more > 0 ? ` and ${more} more` : ''}.`);
   }
   if (files.notInHistory) out.push(`${makePoCount(files.notInHistory, 'file')} too large for the file history as well.`);
+  if (files.historyFailed) out.push('The file history could not record them, so they will show there as found by its next scan.');
   return out.join(' ');
 }
 // Whether the notice says more than "copied": it then stays until dismissed.
 function makePoBroughtMore(files) {
-  return !!files && (!files.ok || !!(files.alreadyThere || files.tooLong || files.unreadable || (files.notInBackup || []).length));
+  return !!files && (!files.ok || !!(files.alreadyThere || files.tooLong || files.unreadable || files.historyFailed || (files.notInBackup || []).length));
 }
 // `typed` is what the dialog held when the hub refused: it re-opens as it was left.
 function makePoDialogHtml(r, nowS, err, typed, info) {

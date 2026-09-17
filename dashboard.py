@@ -2364,7 +2364,8 @@ def bring_session_files(project: dict, src: str, plan: dict | None) -> dict:
 
     return {"ok": True, "from": src, **res, "leftOut": plan["leftOut"],
             "tooLong": res["tooLong"] + plan["tooLong"], "unreadable": res["unreadable"] + plan["unreadable"],
-            "notInHistory": len(snap.get("skipped") or []), "undo": undo}
+            "notInHistory": len(snap.get("skipped") or []), "historyFailed": bool(n) and not snap.get("ok"),
+            "undo": undo}
 
 
 def set_project_digest_interval(project_id: str, minutes) -> tuple[bool, str]:
