@@ -5026,6 +5026,9 @@ def load_recent(n: int = 100) -> list[dict]:
 # a couple of seconds, and dropped as soon as any write request completes, so an
 # action is never followed by a stale list.
 _SESS_TTL = 2.0
+# How far back the list looks for a session no task holds, once it is past the
+# newest n transcripts.
+SESSION_LIST_MAX_AGE = 365 * 86400
 _SESS_GEN = 0
 _SESS_CACHE: dict[int, tuple[float, int, list]] = {}
 _SESS_LOCKS: dict[int, threading.Lock] = {}
@@ -5066,9 +5069,53 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
     archived_set = load_archived()
     jira_links = load_jira_links()
     jira_unlinks = load_jira_unlinks()
+    # What the hub's tasks hold: each agent's conversation and folder. Those
+    # never make a row of their own (the task is the row), and owners, reviewers
+    # and PO rotations write many transcripts a day, so they must not use up the
+    # window either: `n` counts the rows kept, not the files looked at. Read
+    # once per load, for the task rows below too.
+    def _norm_cwd(p: str) -> str:
+        return os.path.normcase(os.path.normpath(p)) if p else ""
+    try:
+        rooms = chatroom.list_rooms()
+    except Exception:
+        rooms = []
+    collab_sids: set[str] = set()
+    collab_cwds: set[str] = set()
+    for rm in rooms:
+        for pp in rm.get("participants") or []:
+            if not isinstance(pp, dict) or pp.get("kind") != "agent":
+                continue
+            if pp.get("sessionId"):
+                collab_sids.add(pp["sessionId"])
+            if pp.get("cwd"):
+                collab_cwds.add(_norm_cwd(pp["cwd"]))
+
+    def _held(sid: str, cwd: str) -> bool:
+        return sid in collab_sids or _norm_cwd(cwd or ".") in collab_cwds
+    oldest = time.time() - SESSION_LIST_MAX_AGE
     out: list[dict] = []
     seen: set[str] = set()
-    for mtime, jsonl in rows[:n]:
+    for i, (mtime, jsonl) in enumerate(rows):
+        if len(out) >= n:
+            break
+        # Past the newest n files only what no task holds is looked for, and
+        # not further back than a year.
+        if i >= n and mtime < oldest:
+            break
+        sid = jsonl.stem
+        # Dedupe by session id — the same transcript may appear in multiple
+        # project dirs (e.g. when an isolated fork seeded its workspace with
+        # a copy of the parent's transcript). `rows` is mtime-desc so the
+        # first one we see is the most-recently-active copy.
+        if sid in seen:
+            continue
+        live = live_by_sid.get(sid)
+        # A task's own transcript: nothing below is asked of it (its folder is
+        # remembered per file, so this reads nothing).
+        if _held(sid, (live and live.get("cwd")) or cwd_of(jsonl)):
+            seen.add(sid)
+            continue
         # Parent-dir name will contain "rename-workspace" once claude-code
         # slugifies the workspace path — catches the case where the JSONL
         # exists but doesn't have a `cwd` field yet.
@@ -5078,15 +5125,7 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
             continue
         if _is_workspace_cwd(cwd_of(jsonl)):
             continue
-        sid = jsonl.stem
-        # Dedupe by session id — the same transcript may appear in multiple
-        # project dirs (e.g. when an isolated fork seeded its workspace with
-        # a copy of the parent's transcript). `rows` is mtime-desc so the
-        # first one we see is the most-recently-active copy.
-        if sid in seen:
-            continue
         first, last, turns = first_last_user(jsonl)
-        live = live_by_sid.get(sid)
         # Skip historical artifacts: transcripts with zero user turns and no
         # user-set label. These are typically bg-spare daemons, immediately-
         # closed sessions, or other empty-shell files that pollute the list.
@@ -5167,14 +5206,8 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
     # own, so un-launched (externally started) codex sessions still surface as
     # history. Wrapped defensively: a Codex parse hiccup must never break the
     # (Claude-critical) sessions list. ----
-    try:
-        codex_sessions = agents.get_agent("codex").list_sessions(limit=n)
-    except Exception:
-        codex_sessions = []
     # Live launch records keyed by normalized cwd (newest wins). Each fresh codex
     # session gets its own ~/cs folder, so cwd is a unique key back to its pid.
-    def _norm_cwd(p: str) -> str:
-        return os.path.normcase(os.path.normpath(p)) if p else ""
     codex_live: dict[str, dict] = {}
     try:
         for _r in _read_agent_session_files():
@@ -5188,10 +5221,22 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 codex_live[_k] = _r
     except Exception:
         codex_live = {}
+
+    # The same window as above: a task's rollouts and empty shells do not count.
+    def _codex_dropped(cs) -> bool:
+        return (_held(cs.session_id, cs.cwd)
+                or (cs.turns == 0 and not labels.get(cs.session_id)
+                    and cs.session_id not in archived_set
+                    and _norm_cwd(cs.cwd) not in codex_live))
+    try:
+        codex_sessions = agents.get_agent("codex").list_sessions(
+            limit=n, dropped=_codex_dropped, max_age=SESSION_LIST_MAX_AGE)
+    except Exception:
+        codex_sessions = []
     _claimed_cwds: set[str] = set()
     for cs in codex_sessions:
         sid = cs.session_id
-        if sid in seen:
+        if sid in seen or _held(sid, cs.cwd):
             continue
         # A live launch record for this cwd (not yet claimed by a newer session
         # in the newest-first list) makes this the live session for that folder.
@@ -5245,8 +5290,6 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
     # its window; its per-agent sub-sessions are hidden (they'd otherwise scatter
     # as a live claude row + a codex history row). Matched by agent session id
     # and per-agent subfolder cwd.
-    collab_sids: set[str] = set()
-    collab_cwds: set[str] = set()
     room_rows: list[dict] = []
     # Attention states for the same rooms, so a row can be marked without a
     # second lookup. Cached and independent of everything above — this adds no
@@ -5256,14 +5299,9 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
     except Exception:
         att_by_room = {}
     try:
-        for rm in chatroom.list_rooms():
+        for rm in rooms:
             agents_in = [p for p in rm.get("participants", [])
                          if p.get("kind") == "agent"]
-            for pp in agents_in:
-                if pp.get("sessionId"):
-                    collab_sids.add(pp["sessionId"])
-                if pp.get("cwd"):
-                    collab_cwds.add(os.path.normcase(os.path.normpath(pp["cwd"])))
             live = _room_is_live(rm)
             idle = None
             busy = False

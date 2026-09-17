@@ -18,6 +18,7 @@ import copy
 import json
 import os
 import shutil
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -206,28 +207,47 @@ class CodexAgent(AgentType):
     def sessions_dir(self) -> Path:
         return _codex_home() / "sessions"
 
-    def list_sessions(self, limit: int = 200) -> list[AgentSession]:
+    def list_sessions(self, limit: int = 200, dropped=None,
+                      max_age: float = 0.0) -> list[AgentSession]:
+        """The newest `limit` sessions. With `dropped` (session -> bool: the
+        caller will not show this one), `limit` counts the sessions it keeps,
+        not the files looked at: a session outside every task stays listed
+        however many rollouts the hub's own tasks wrote after it. The dropped
+        ones are still returned, for the caller to drop as it always has. Past
+        the newest `limit` files, a rollout older than `max_age` seconds ends
+        the walk."""
         root = self.sessions_dir()
         if not root.exists():
             return []
         files = list(root.glob("*/*/*/rollout-*.jsonl"))
-        # Newest first by mtime; only parse up to `limit` to bound cost.
+        # Newest first by mtime. A parsed rollout is remembered per file, so
+        # walking past `limit` files costs a stat each, not a read.
         try:
             files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         except OSError:
             files.sort(key=lambda p: p.name, reverse=True)
+        if dropped is None:
+            files = files[:limit]
+        oldest = (time.time() - max_age) if max_age else 0.0
         out: list[AgentSession] = []
         seen: set[str] = set()
-        for f in files[:limit]:
+        kept = 0
+        for i, f in enumerate(files):
+            if kept >= limit:
+                break
             s = _parse_rollout(f)
             if s is None:
                 continue
+            if i >= limit and s.updated_at < oldest:
+                break
             # A resumed session writes a fresh rollout file under the same id.
             # Files are mtime-desc, so the first one we see is the most recent.
             if s.session_id in seen:
                 continue
             seen.add(s.session_id)
             out.append(s)
+            if dropped is None or not dropped(s):
+                kept += 1
         return out
 
     def launch_argv(self, cwd: str, prompt: str = "",
