@@ -154,8 +154,10 @@ CODEX_RESERVE_POOL = "base_model_inference"
 CODEX_RESERVE_MODEL = "gpt-reserve"
 
 # `codex app-server` answered in about a second when measured (2026-09-17).
-# The whole reading, its kill included, stays under 15 s.
+# The whole reading, its kill included, stays under 15 s: this long to answer,
+# then CODEX_APP_KILL_S, counted from the same start, to be gone.
 CODEX_APP_TIMEOUT_S = 12
+CODEX_APP_KILL_S = 3
 # After a reading that failed — no `codex`, not logged in, an older Codex
 # without the method, a timeout — the session records serve, and the app
 # server is not started again for this long.
@@ -896,25 +898,105 @@ def _codex_app_argv() -> list[str] | None:
     return [exe, "app-server"] if exe else None
 
 
-def _kill_tree(proc) -> None:
-    """End the child and everything it started. ``codex`` on Windows is an npm
-    shim — cmd.exe, then node, then the real program — and killing only the
-    first leaves the other two running and holding the pipes open."""
+_SUSPENDED = 0x4 if os.name == "nt" else 0                   # CREATE_SUSPENDED
+
+
+def _win_job_api():
+    import ctypes
+    from ctypes import wintypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateJobObjectW.restype = wintypes.HANDLE
+    k32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+    k32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int,
+                                            wintypes.LPVOID, wintypes.DWORD]
+    k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    k32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    return k32
+
+
+def _job_open():
+    """Windows: a job that ends everything in it when it is ended — or when
+    its one handle, held here, closes, so also when the hub dies mid-reading.
+    None where there is no such thing or it cannot be had; the kill then goes
+    by ``taskkill``."""
+    if os.name != "nt":
+        return None
     try:
-        if os.name == "nt":
-            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                           capture_output=True, timeout=10, encoding="utf-8",
-                           errors="replace", creationflags=_NO_WINDOW)
-        else:
-            os.killpg(proc.pid, signal.SIGKILL)
+        import ctypes
+        k32 = _win_job_api()
+        job = k32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        # JOBOBJECT_EXTENDED_LIMIT_INFORMATION, of which only LimitFlags (a
+        # DWORD after two 64-bit time limits) is set: KILL_ON_JOB_CLOSE.
+        info = (ctypes.c_byte * (144 if ctypes.sizeof(ctypes.c_void_p) == 8 else 112))()
+        ctypes.c_uint32.from_buffer(info, 16).value = 0x2000
+        if not k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):
+            k32.CloseHandle(job)
+            return None
+        return job
     except Exception:                                        # noqa: BLE001
-        pass
+        return None
+
+
+def _job_start(job, proc) -> bool:
+    """Put the child, started suspended, in the job and let it run: it has
+    started nothing yet, so nothing of its tree is ever outside the job. False
+    when the job did not take it (it still runs; ``taskkill`` ends it then).
+    Raises when it could not be let run at all."""
+    import ctypes
+    from ctypes import wintypes
+    handle = int(proc._handle)                               # noqa: SLF001
+    held = bool(_win_job_api().AssignProcessToJobObject(job, handle))
+    ntdll = ctypes.WinDLL("ntdll")
+    ntdll.NtResumeProcess.argtypes = [wintypes.HANDLE]
+    ntdll.NtResumeProcess.restype = ctypes.c_long
+    if ntdll.NtResumeProcess(handle) != 0:
+        raise OSError("the child could not be resumed")
+    return held
+
+
+def _job_end(job) -> bool:
+    """End everything in the job and let the job go. True when it was ended."""
+    try:
+        k32 = _win_job_api()
+        ended = bool(k32.TerminateJobObject(job, 1))
+        k32.CloseHandle(job)                                 # kills too, by its limit
+        return ended
+    except Exception:                                        # noqa: BLE001
+        return False
+
+
+def _kill_tree(proc, job=None, deadline: float | None = None) -> None:
+    """End the child and everything it started, by ``deadline`` (monotonic).
+    ``codex`` on Windows is an npm shim — cmd.exe, then node, then the real
+    program — and killing only the first leaves the other two running and
+    holding the pipes open. On Windows the tree is in ``job`` and ends with
+    it, at once and without another process; ``taskkill`` only when there is
+    no job, and only for the time that is left."""
+    if deadline is None:
+        deadline = time.monotonic() + CODEX_APP_KILL_S
+    ended = _job_end(job) if job is not None else False
+    if not ended:
+        try:
+            if os.name == "nt":
+                # No pipes: a taskkill killed at its timeout is not waited on
+                # for output.
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, creationflags=_NO_WINDOW,
+                               timeout=max(1.0, deadline - time.monotonic() - 0.2))
+            else:
+                os.killpg(proc.pid, signal.SIGKILL)
+        except Exception:                                    # noqa: BLE001
+            pass
     try:
         proc.kill()
     except Exception:                                        # noqa: BLE001
         pass
     try:
-        proc.wait(timeout=3)
+        proc.wait(timeout=max(0.2, deadline - time.monotonic()))
     except Exception:                                        # noqa: BLE001
         pass
     # stdout is left to the reader thread, which closes it at end of file:
@@ -933,8 +1015,9 @@ def read_codex_app_server(timeout: float | None = None) -> tuple[dict | None, st
     JSON-RPC over stdio, one object per line: ``initialize``, ``initialized``,
     then the one read. A child process per reading, never kept: it is started
     without a console window (a console-less hub's spawns took the desktop's
-    focus before), given ``timeout`` seconds in all, and killed with its whole
-    tree whether it answered or not. Only ever that one read-only method — the
+    focus before), given ``timeout`` seconds to answer, and killed with its
+    whole tree whether it answered or not — within ``CODEX_APP_KILL_S`` more,
+    so the call never outlasts the two together. Only ever that one read-only method — the
     same server also *consumes* rate-limit reset credits.
     """
     timeout = CODEX_APP_TIMEOUT_S if timeout is None else timeout
@@ -943,14 +1026,19 @@ def read_codex_app_server(timeout: float | None = None) -> tuple[dict | None, st
         return None, "Codex is not installed on this machine"
     deadline = time.monotonic() + timeout
     proc = None
+    job = _job_open()
     try:
         proc = subprocess.Popen(
             argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
-            errors="replace", creationflags=_NO_WINDOW,
+            errors="replace",
+            creationflags=_NO_WINDOW | (_SUSPENDED if job is not None else 0),
             # Its own process group where there is one, so the kill takes
             # everything it started with it.
             start_new_session=os.name != "nt")
+        if job is not None and not _job_start(job, proc):
+            _job_end(job)
+            job = None
         lines: queue.Queue = queue.Queue()
 
         def pump(stream=proc.stdout):
@@ -1004,7 +1092,9 @@ def read_codex_app_server(timeout: float | None = None) -> tuple[dict | None, st
         return None, _scrub(f"could not ask Codex's app server ({type(e).__name__})")
     finally:
         if proc is not None:
-            _kill_tree(proc)
+            _kill_tree(proc, job, deadline + CODEX_APP_KILL_S)
+        elif job is not None:
+            _job_end(job)
 
 
 def _app_server_pools(result: dict, now: float) -> list[dict]:
@@ -1201,21 +1291,90 @@ def read_codex(now: float | None = None, files=None, app_server=None) -> dict:
     return _mark_pool_in_use(source, config_model)
 
 
+def _pool_windows(pool: dict, now: float) -> list[dict] | str:
+    """One pool's windows, each with both staleness guards — or, as a string,
+    why the pool's reset times cannot be believed."""
+    windows = []
+    at, limits = pool["at"], pool["limits"]
+    for win, kind, label in _listed_windows(limits):
+        age = max(0, int(now - at))
+        # Guard 2 rests entirely on the reset time, so the shape of that field
+        # decides everything. The invariant: **a window whose reset time we
+        # cannot verify is never reported as current.** Without that, an
+        # unparseable reset silently switches the guard off and a dead agent's
+        # 100% is served as live — the precise bug this reader exists to avoid.
+        resets = win.get("resets_at")
+        resets_dt = None
+        reset_unknown = False
+        if resets is None:
+            # Nothing to check against. From a record, the value may be
+            # current or may be a dead number from a window that reset an
+            # hour ago; we cannot tell, so we do not claim. This poll's
+            # app-server answer is Codex's statement about now, and stands.
+            reset_unknown = not pool["live"]
+        elif isinstance(resets, (int, float)) and not isinstance(resets, bool):
+            # Sanity-check before believing it. If this field ever changes
+            # meaning — a duration instead of an epoch, say — the parse yields
+            # 1970, every window reads "rolled over", and the chip goes
+            # confidently and permanently blank. Fail the source instead.
+            if not _reset_plausible(float(resets), at, win.get("window_minutes")):
+                return ("Codex reported a reset time that is not a plausible "
+                        "date — the rollout format has probably changed")
+            try:
+                resets_dt = datetime.fromtimestamp(resets, timezone.utc)
+            except (OverflowError, OSError, ValueError):
+                return ("Codex reported a reset time that could not be read "
+                        "as a date — the rollout format has probably changed")
+        else:
+            # Present but not a number — an ISO string is the likeliest way this
+            # field ever mutates. Fail the source loudly rather than let the
+            # value fall through the guard unchecked.
+            return ("Codex reported a reset time in an unfamiliar format — "
+                    "the rollout format has probably changed")
+        # A window whose reset has passed has already rolled to 0. Its last value
+        # is dead — preserve it separately, never report it as now.
+        rolled = bool(not pool["live"] and resets_dt and resets_dt.timestamp() < now)
+        value = _as_percent(win.get("used_percent"))
+        # Withheld in both unverifiable cases: rolled over, or no reset to check.
+        withheld = rolled or reset_unknown
+        windows.append(_window(
+            kind, label,
+            percent=None if withheld else value,
+            stale_percent=value if withheld else None,
+            rolled_over=rolled,
+            reset_unknown=reset_unknown,
+            model=pool["label"],
+            pool=pool["id"],
+            window_minutes=win.get("window_minutes"),
+            resets_at=resets_dt.isoformat() if resets_dt else None,
+            # Guard 1: each window carries the reading's age and decides for
+            # itself whether that is still current — 30 minutes matters to the
+            # five-hour window and is nothing to the weekly one.
+            age_seconds=age,
+        ))
+    return windows
+
+
 def _read_codex_pools(now: float, files, app_server) -> dict:
     app_pools, app_why = ([], "") if app_server is False else _codex_app_pools(
         now, None if app_server in (None, True) else app_server)
     via = "app-server" if any(p["live"] for p in app_pools) else "sessions"
+    # The session records are read beside even a good answer: one that leaves
+    # a pool out (an answer with the account's pool alone is a known shape)
+    # must not take the reserve's or Spark's still-valid record off the board.
+    # A pool the answer does give is this poll's, so it wins below.
     session_pools, session_why = [], ""
-    if via != "app-server":
-        try:
-            session_pools = _session_pools(
-                _rollout_files(CODEX_MAX_FILES) if files is None else files)
-        except Exception as e:                               # noqa: BLE001
-            session_why = _scrub(f"cannot read Codex rollouts ({type(e).__name__})")
+    try:
+        session_pools = _session_pools(
+            _rollout_files(CODEX_MAX_FILES) if files is None else files)
+    except Exception as e:                                   # noqa: BLE001
+        session_why = _scrub(f"cannot read Codex rollouts ({type(e).__name__})")
     by_id: dict[str, dict] = {}
     for pool in [*app_pools, *session_pools]:
         held = by_id.get(pool["id"])
-        if held is None or pool["at"] > held["at"]:
+        # This poll's answer stands whatever a record's clock says; otherwise
+        # the newer of the two.
+        if held is None or (not held["live"] and pool["at"] > held["at"]):
             by_id[pool["id"]] = pool
     if not by_id:
         reason = session_why or "no Codex session has reported its limits recently"
@@ -1230,71 +1389,19 @@ def _read_codex_pools(now: float, files, app_server) -> dict:
     plan = (by_id.get(CODEX_MAIN_POOL) or max(pools, key=lambda p: p["at"]))["plan"]
 
     windows = []
-    for pool in pools:
-        at, limits = pool["at"], pool["limits"]
+    for pool in list(pools):
         # A pool's own limit is labelled with its name — the same path Claude's
         # per-model weekly cap takes through the tray and banner.
-        label_of_pool = _pool_label(pool["id"], pool["limitName"])
-        pool["label"] = label_of_pool
-        for win, kind, label in _listed_windows(limits):
-            age = max(0, int(now - at))
-            # Guard 2 rests entirely on the reset time, so the shape of that field
-            # decides everything. The invariant: **a window whose reset time we
-            # cannot verify is never reported as current.** Without that, an
-            # unparseable reset silently switches the guard off and a dead agent's
-            # 100% is served as live — the precise bug this reader exists to avoid.
-            resets = win.get("resets_at")
-            resets_dt = None
-            reset_unknown = False
-            if resets is None:
-                # Nothing to check against. From a record, the value may be
-                # current or may be a dead number from a window that reset an
-                # hour ago; we cannot tell, so we do not claim. This poll's
-                # app-server answer is Codex's statement about now, and stands.
-                reset_unknown = not pool["live"]
-            elif isinstance(resets, (int, float)) and not isinstance(resets, bool):
-                # Sanity-check before believing it. If this field ever changes
-                # meaning — a duration instead of an epoch, say — the parse yields
-                # 1970, every window reads "rolled over", and the chip goes
-                # confidently and permanently blank. Fail the source instead.
-                if not _reset_plausible(float(resets), at, win.get("window_minutes")):
-                    return _unavailable(
-                        "codex", "Codex reported a reset time that is not a plausible "
-                                 "date — the rollout format has probably changed")
-                try:
-                    resets_dt = datetime.fromtimestamp(resets, timezone.utc)
-                except (OverflowError, OSError, ValueError):
-                    return _unavailable(
-                        "codex", "Codex reported a reset time that could not be read "
-                                 "as a date — the rollout format has probably changed")
-            else:
-                # Present but not a number — an ISO string is the likeliest way this
-                # field ever mutates. Fail the source loudly rather than let the
-                # value fall through the guard unchecked.
-                return _unavailable(
-                    "codex", "Codex reported a reset time in an unfamiliar format — "
-                             "the rollout format has probably changed")
-            # A window whose reset has passed has already rolled to 0. Its last value
-            # is dead — preserve it separately, never report it as now.
-            rolled = bool(not pool["live"] and resets_dt and resets_dt.timestamp() < now)
-            value = _as_percent(win.get("used_percent"))
-            # Withheld in both unverifiable cases: rolled over, or no reset to check.
-            withheld = rolled or reset_unknown
-            windows.append(_window(
-                kind, label,
-                percent=None if withheld else value,
-                stale_percent=value if withheld else None,
-                rolled_over=rolled,
-                reset_unknown=reset_unknown,
-                model=label_of_pool,
-                pool=pool["id"],
-                window_minutes=win.get("window_minutes"),
-                resets_at=resets_dt.isoformat() if resets_dt else None,
-                # Guard 1: each window carries the reading's age and decides for
-                # itself whether that is still current — 30 minutes matters to the
-                # five-hour window and is nothing to the weekly one.
-                age_seconds=age,
-            ))
+        pool["label"] = _pool_label(pool["id"], pool["limitName"])
+        listed = _pool_windows(pool, now)
+        if isinstance(listed, str):
+            if via == "app-server" and not pool["live"]:
+                # A record that cannot be read beside a good answer costs its
+                # own pool, not the answer.
+                pools.remove(pool)
+                continue
+            return _unavailable("codex", listed)
+        windows.extend(listed)
     if not windows:
         return _unavailable("codex", "the newest Codex reading carries no windows")
 

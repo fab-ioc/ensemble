@@ -2324,7 +2324,8 @@
     display: flex; align-items: baseline; gap: 6px; margin-top: 10px;
     font-size: var(--fs-100); font-weight: 600; color: var(--fg-subtle);
   }
-  .usage-pool-use { font-weight: 400; color: var(--fg-muted); }
+  .usage-pool-use, .usage-pool .usage-src-age { font-weight: 400; }
+  .usage-pool-use { color: var(--fg-muted); }
   .usage-foot {
     font-size: var(--fs-100); color: var(--fg-muted); padding: 8px 6px 2px;
     border-top: 1px solid var(--border); line-height: 1.5;
@@ -10951,14 +10952,19 @@ function usageSourceHtml(src) {
   // Age matters only for Codex, whose file freezes when its agents stop; the
   // Claude reading is a live HTTPS call, so it is always "just now".
   const wins = src.windows || [];
-  const showAge = src.ageSeconds != null && src.ageSeconds > 60;
-  const age = showAge
-    ? `<span class="usage-src-age${src.trusted ? '' : ' untrusted'}"
-        >as of ${esc(fmtAgo(src.ageSeconds))} ago</span>` : '';
-  const frozen = wins.some(w => !w.trusted && !w.rolledOver)
+  const ageHtml = (seconds, trusted) => seconds != null && seconds > 60
+    ? `<span class="usage-src-age${trusted ? '' : ' untrusted'}"
+        >as of ${esc(fmtAgo(seconds))} ago</span>` : '';
+  let age = ageHtml(src.ageSeconds, src.trusted);
+  // Each pool is written on its own, so the age told is the frozen windows'
+  // own (the oldest of them), never the source's, which is its newest pool's.
+  const stuck = wins.filter(w => !w.trusted && !w.rolledOver);
+  const stuckFor = Math.max(...stuck.map(w => w.ageSeconds || 0));
+  const frozen = stuck.length
     ? `<div class="usage-why">A “≥” number is frozen: ${esc(name)} only writes
-        its usage when one of its agents takes a turn, and none has for
-        ${esc(fmtAgo(src.ageSeconds))}. Because a window only ever fills up
+        ${(src.pools || []).length > 1 ? 'a pool’s' : 'its'} usage when one of its
+        agents takes a turn${(src.pools || []).length > 1 ? ' on it' : ''}, and none has for
+        ${esc(fmtAgo(stuckFor))}. Because a window only ever fills up
         until it resets, that number is a floor — the real one is at least
         that high.</div>` : '';
   const rolled = wins.some(w => w.rolledOver)
@@ -10976,9 +10982,15 @@ function usageSourceHtml(src) {
   let rows = wins.map(w => usageWindowRow(w, name)).join('');
   let inUse = '', spent = '', via = '';
   if (pools.length > 1 || (used && !pools.some(p => p.inUse))) {
-    rows = pools.map(p => `<div class="usage-pool"><span>${esc(usageCodexPoolName(p))}</span>
-        ${p.inUse ? '<span class="usage-pool-use">in use</span>' : ''}</div>`
-      + wins.filter(w => w.pool === p.id).map(w => usageWindowRow(w, name)).join('')).join('');
+    // ... and each pool says how old its own reading is.
+    age = '';
+    rows = pools.map(p => {
+      const mine = wins.filter(w => w.pool === p.id);
+      return `<div class="usage-pool"><span>${esc(usageCodexPoolName(p))}</span>
+        ${p.inUse ? '<span class="usage-pool-use">in use</span>' : ''}
+        ${ageHtml(p.ageSeconds, mine.every(w => w.trusted))}</div>`
+        + mine.map(w => usageWindowRow(w, name)).join('');
+    }).join('');
   }
   if (used) {
     const how = used.model ? ` (model ${used.model})` : '';

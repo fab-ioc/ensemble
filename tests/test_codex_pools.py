@@ -8,6 +8,8 @@ from __future__ import annotations
 import copy
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -60,6 +62,11 @@ class _Case(unittest.TestCase):
                                    side_effect=lambda *a: self.config_model)
         config.start()
         self.addCleanup(config.stop)
+        # Never this machine's own session records: a test that gives no files
+        # reads none.
+        rollouts = mock.patch.object(usage, "_rollout_files", return_value=[])
+        rollouts.start()
+        self.addCleanup(rollouts.stop)
 
     def rollout(self, *records) -> Path:
         self._n += 1
@@ -112,6 +119,51 @@ class AppServerAnswer(_Case):
     def test_an_answer_with_only_the_account_pool_still_reads(self):
         src = usage.read_codex(NOW, app_server=self.answered({"rateLimits": ANSWER["rateLimits"]}))
         self.assertEqual([(w["pool"], w["percent"]) for w in src["windows"]], [("codex", 97.0)])
+
+    def test_a_pool_the_answer_leaves_out_keeps_its_session_record(self):
+        spark = {"used_percent": 4, "window_minutes": 10080, "resets_at": RESERVE_RESET}
+        files = [
+            self.rollout(_turn("gpt-reserve"), _count(NOW - 120, 20, RESERVE_RESET)),
+            self.rollout(_turn("gpt-5.3-codex-spark"), _count(
+                NOW - 60, 31, NOW + 9000, limit_id="codex_bengalfox",
+                limit_name="GPT-5.3-Codex-Spark", minutes=300, plan=None, secondary=spark)),
+            # ... and a record of the main pool whose clock runs ahead of ours:
+            # this poll's answer stands all the same.
+            self.rollout(_turn("gpt-5.6-sol"), _count(NOW + 5, 90, MAIN_RESET)),
+        ]
+        src = usage.read_codex(NOW, files=files,
+                               app_server=self.answered({"rateLimits": ANSWER["rateLimits"]}))
+        self.assertEqual((src["via"], src["note"], src["planType"]), ("app-server", None, "prolite"))
+        self.assertEqual(
+            [(w["pool"], w["model"], w["kind"], w["percent"], w["ageSeconds"]) for w in src["windows"]], [
+                ("codex", None, "seven_day", 97.0, 0),
+                ("base_model_inference", "reserve", "seven_day", 20.0, 120),
+                ("codex_bengalfox", "GPT-5.3-Codex-Spark", "five_hour", 31.0, 60),
+                ("codex_bengalfox", "GPT-5.3-Codex-Spark", "seven_day", 4.0, 60),
+            ])
+        self.assertEqual([(p["id"], p["ageSeconds"]) for p in src["pools"]],
+                         [("codex", 0), ("base_model_inference", 120), ("codex_bengalfox", 60)])
+        # The records keep their guards beside the answer: past its reset the
+        # reserve's record is withheld, the answer's main pool is not.
+        src = usage.read_codex(RESERVE_RESET + 10, files=files, app_server=self.answered(
+            {"rateLimits": dict(ANSWER["rateLimits"], primary=dict(
+                ANSWER["rateLimits"]["primary"], resetsAt=RESERVE_RESET + 86400))}))
+        wins = self.by_pool(src)
+        self.assertEqual(wins[("codex", "seven_day")]["percent"], 97.0)
+        self.assertTrue(wins[("base_model_inference", "seven_day")]["rolledOver"])
+        self.assertIsNone(wins[("base_model_inference", "seven_day")]["percent"])
+
+    def test_a_record_that_cannot_be_read_costs_its_pool_not_the_answer(self):
+        files = [self.rollout(_turn("gpt-reserve"), _count(NOW - 120, 20, "2026-09-24"))]
+        src = usage.read_codex(NOW, files=files,
+                               app_server=self.answered({"rateLimits": ANSWER["rateLimits"]}))
+        self.assertEqual((src["state"], src["via"]), ("ok", "app-server"))
+        self.assertEqual([w["pool"] for w in src["windows"]], ["codex"])
+        self.assertEqual([p["id"] for p in src["pools"]], ["codex"])
+        # Without an answer the same record fails the source, as before.
+        src = usage.read_codex(NOW, files=files)
+        self.assertEqual(src["state"], "unavailable")
+        self.assertIn("unfamiliar format", src["error"])
 
     def test_a_reset_time_that_is_not_a_date_falls_back_to_the_session_records(self):
         for bad in (18000, "2026-09-20T05:16:31Z", True):
@@ -238,6 +290,46 @@ class AppServerProcess(_Case):
             _turn("gpt-5.6-sol"), _count(NOW - 60, 97, MAIN_RESET))],
             app_server=lambda: (result, why))
         self.assertEqual((src["state"], src["via"]), ("ok", "sessions"))
+
+    @unittest.skipUnless(os.name == "nt", "the job and taskkill are Windows'")
+    def test_the_tree_ends_with_its_job_and_no_taskkill_is_started(self):
+        self.serve("hang", "--shim")
+        with mock.patch.object(usage.subprocess, "run") as run:
+            result, _ = usage.read_codex_app_server(timeout=2)
+        self.assertIsNone(result)
+        run.assert_not_called()
+        self.assertTrue(self.gone())
+
+    @unittest.skipUnless(os.name == "nt", "the job and taskkill are Windows'")
+    def test_without_a_job_taskkill_ends_the_tree(self):
+        self.serve("hang", "--shim")
+        with mock.patch.object(usage, "_job_open", return_value=None):
+            result, _ = usage.read_codex_app_server(timeout=2)
+        self.assertIsNone(result)
+        self.assertTrue(self.gone())
+
+    @unittest.skipUnless(os.name == "nt", "the job and taskkill are Windows'")
+    def test_the_kill_gets_only_the_time_that_is_left(self):
+        self.serve("hang")
+        seen = {}
+
+        def slow_taskkill(argv, **kw):
+            seen.update(kw, argv=argv)
+            time.sleep(kw["timeout"])                        # a taskkill that hangs
+            raise usage.subprocess.TimeoutExpired(argv, kw["timeout"])
+        started = time.monotonic()
+        with mock.patch.object(usage, "_job_open", return_value=None),                 mock.patch.object(usage.subprocess, "run", side_effect=slow_taskkill):
+            result, _ = usage.read_codex_app_server(timeout=2)
+        took = time.monotonic() - started
+        self.assertIsNone(result)
+        self.assertEqual(seen["argv"][:3], ["taskkill", "/F", "/T"])
+        self.assertLessEqual(seen["timeout"], usage.CODEX_APP_KILL_S)
+        self.assertEqual(seen["creationflags"], usage._NO_WINDOW)
+        self.assertLess(took, 2 + usage.CODEX_APP_KILL_S + 0.5)
+        self.assertTrue(self.gone())                         # proc.kill() still had its turn
+
+    def test_the_production_budget_is_fifteen_seconds(self):
+        self.assertLessEqual(usage.CODEX_APP_TIMEOUT_S + usage.CODEX_APP_KILL_S, 15)
 
     def test_an_older_codex_without_the_method_is_a_refusal(self):
         self.serve("old")
@@ -368,6 +460,63 @@ class PoolInUse(_Case):
         # A page that reads `model: null` windows as the main pool still can.
         main = [w for w in snap["sources"][0]["windows"] if w["model"] is None]
         self.assertEqual([w["percent"] for w in main], [97.0])
+
+
+TRAY_JS = r"""
+const esc = (s) => String(s);
+const fmtAgo = (s) => s + 's';
+const usageWindowRow = (w) => `<row ${w.pool} ${w.kind}>`;
+const usageCodexPoolName = (p) => p.label ? p.label + ' pool' : 'main pool';
+const USAGE_SRC_NAME = { codex: 'Codex', claude: 'Claude' };
+const USAGE = { notices: [] };
+%s
+const win = (pool, kind, age, trusted) => ({ pool, kind, ageSeconds: age, trusted, rolledOver: false });
+const pools = { source: 'codex', state: 'ok', ageSeconds: 30, trusted: false, via: 'app-server',
+  poolInUse: { id: 'codex', label: null, model: '' },
+  pools: [{ id: 'codex', label: null, ageSeconds: 30, inUse: true },
+          { id: 'codex_bengalfox', label: 'Spark', ageSeconds: 3600, inUse: false }],
+  windows: [win('codex', 'seven_day', 30, true), win('codex_bengalfox', 'five_hour', 3600, false),
+            win('codex_bengalfox', 'seven_day', 3600, true)] };
+const one = { source: 'claude', state: 'ok', ageSeconds: 900, trusted: false,
+  windows: [{ kind: 'five_hour', ageSeconds: 900, trusted: false, rolledOver: false }] };
+console.log(JSON.stringify({ pools: usageSourceHtml(pools), one: usageSourceHtml(one) }));
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class Tray(unittest.TestCase):
+    """index.html's usageSourceHtml, run in Node."""
+
+    @classmethod
+    def setUpClass(cls):
+        index = (Path(usage.__file__).parent / "index.html").read_text(
+            encoding="utf-8").replace("\r\n", "\n")
+        i = index.index("function usageSourceHtml(")
+        script = Path(tempfile.mkdtemp()) / "tray.cjs"
+        script.write_text(TRAY_JS % index[i:index.index("\n}\n", i) + 3], encoding="utf-8")
+        proc = subprocess.run([shutil.which("node"), str(script)], capture_output=True,
+                              text=True, encoding="utf-8", timeout=60)
+        if proc.returncode:
+            raise AssertionError(proc.stderr)
+        cls.html = {k: " ".join(v.split()) for k, v in json.loads(proc.stdout).items()}
+
+    def test_a_frozen_pool_tells_its_own_age_not_the_newest_pool_s(self):
+        html = self.html["pools"]
+        self.assertIn("a pool’s usage when one of its agents takes a turn on it, "
+                      "and none has for 3600s.", html)
+        self.assertNotIn("none has for 30s", html)
+        # The age sits on the pool it belongs to; the fresh pool and the source
+        # head carry none.
+        self.assertEqual(html.count("as of "), 1)
+        self.assertRegex(html, r'Spark pool</span>\s*<span class="usage-src-age untrusted" '
+                               r'>as of 3600s ago</span>')
+
+    def test_a_source_without_pools_reads_as_before(self):
+        html = self.html["one"]
+        self.assertIn("only writes its usage when one of its agents takes a turn, "
+                      "and none has for 900s.", html)
+        self.assertEqual(html.count("as of 900s ago"), 1)
+        self.assertNotIn("usage-pool", html)
 
 
 class ConfigModel(unittest.TestCase):
