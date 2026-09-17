@@ -575,6 +575,9 @@
   .msg-fold .from { flex:0 0 auto; font-size:var(--fs-100); font-weight:600; text-transform:uppercase; letter-spacing:.04em; color:var(--fg-muted); }
   /* Who writes to whom reads as names ("#26 claude → PO"), not as a shouted label. */
   .msg .from .who, .msg .from .to, .msg-fold .from .who, .msg-fold .from .to { text-transform:none; letter-spacing:0; }
+  /* When it was written: quiet, after the names, digits of equal width. */
+  .msg .from .at, .msg-fold .from .at { margin-left:var(--s-200); font-weight:400; text-transform:none; letter-spacing:0;
+    color:var(--fg-muted); font-variant-numeric:tabular-nums; }
   /* A task's folded messages: one row, its summary and the kinds in order. */
   .msg-fold.grp .gsum { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--fg-subtle); }
   .msg-fold.grp[aria-expanded="true"] { background:var(--surface-sunken); }
@@ -1773,13 +1776,21 @@ function foldChips(m, un, idle, superseded) {
     h += '<span class="no-answer" title="The agent wrote nothing back before its next input">no answer yet</span>';
   return h;
 }
+// When a balloon was written, after who wrote it: "09/17 14:05", the reader's
+// own clock. Nothing for a message without a time.
+function chatStamp(ts) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000), p = n => String(n).padStart(2, '0');
+  return isNaN(d) ? '' : `${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+const stampHtml = ts => { const s = chatStamp(ts); return s ? `<span class="at">${s}</span>` : ''; };
 // One balloon drawn as a row or in full. o: { md, open, un, idle, superseded }.
 // The same item draws the same markup, so a poll keeps its element (patchChildren).
 function foldBalloonHtml(m, i, how, o) {
   const key = esc(foldKey(m, i));
   const hub = isHubInput(m);
   const cls = (m.from === 'user' ? 'user' : esc(agentClass(m.from))) + (hub ? ' hub' : '');
-  const who = whoHtml(m);
+  const who = whoHtml(m) + stampHtml(m.ts);
   if (how === 'row') {
     const chips = foldChips(m, o.un, o.idle, o.superseded);
     // o.plain: the line's words as the reader sees them (a balloon link as its chip's words).
