@@ -25,7 +25,7 @@ from backends import ptyrun  # noqa: E402
 
 # Every module the hub runs console programs from. backends/macos.py and
 # linux.py never run under a console-less Windows host.
-FILES = ["dashboard.py", "backup.py", "digest.py", "workspace_search.py",
+FILES = ["dashboard.py", "backup.py", "digest.py", "workspace_search.py", "usage.py",
          "backends/windows.py", "backends/ptyrun.py"]
 
 

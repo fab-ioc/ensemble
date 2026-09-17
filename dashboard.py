@@ -5649,30 +5649,45 @@ def _allocation_reviewer_index(lineup: list[dict], owner_index: int) -> int | No
     return None
 
 
-def _kind_usage(snapshot: dict, kind: str) -> dict:
+def _kind_usage(snapshot: dict, kind: str, codex_model: str = "") -> dict:
     """Worst usable account window for ``kind`` from the cached snapshot.
 
     Unknown values are skipped, while an untrusted value remains usable as a
     floor. Model-specific limits are not an agent-kind allowance and therefore
     do not participate in this decision.
+
+    Codex has several pools, and is judged by the one the agent would run on:
+    ``codex_model`` (the seat's named model) if any, else the model in Codex's
+    config — ``gpt-reserve`` draws on the reserve, a pool's own model on that
+    pool, anything else on the main pool. A spent main pool does not make
+    Codex unavailable while it runs on an untouched reserve.
     """
     source = next((s for s in snapshot.get("sources", [])
                    if s.get("source") == kind), None)
+    pool = usage.codex_pool_for_model(source, codex_model) if kind == "codex" else None
+    named = ({"pool": pool["id"], "poolLabel": pool["label"] or "", "model": pool["model"]}
+             if pool else {})
     if not source or source.get("state") != "ok":
-        return {"state": "unknown", "error": (source or {}).get("error", "source unavailable")}
+        return {"state": "unknown", **named,
+                "error": (source or {}).get("error", "source unavailable")}
     windows = []
     for window in source.get("windows") or []:
         if window.get("kind") not in ("five_hour", "seven_day"):
+            continue
+        # A window from before pools were read apart names none: the main pool.
+        if pool and (window.get("pool") or usage.CODEX_MAIN_POOL) != pool["id"]:
             continue
         if (window.get("percent") is None or window.get("rolledOver")
                 or window.get("resetUnknown")):
             continue
         windows.append(window)
     if not windows:
-        return {"state": "unknown", "error": "no current 5-hour or 7-day reading"}
+        return {"state": "unknown", **named,
+                "error": "no current 5-hour or 7-day reading"}
     worst = max(windows, key=lambda w: float(w.get("percent") or 0))
     return {
         "state": "known",
+        **named,
         "percent": worst.get("percent"),
         "window": worst.get("kind"),
         "label": "5-hour" if worst.get("kind") == "five_hour" else "7-day",
@@ -5690,7 +5705,8 @@ def _usage_reason_phrase(kind: str, reading: dict) -> str:
     percent = reading.get("percent")
     value = f"{float(percent):g}" if percent is not None else "?"
     floor = "at least " if reading.get("atLeast") else ""
-    return (f"{_agent_kind_name(kind)} {reading.get('label', 'usage')} window "
+    pool = f"{reading['poolLabel']} pool " if reading.get("poolLabel") else ""
+    return (f"{_agent_kind_name(kind)} {pool}{reading.get('label', 'usage')} window "
             f"at {floor}{value}%")
 
 
@@ -5707,7 +5723,8 @@ def _seat_for_kind(preference: dict, kind: str) -> dict:
 
 
 def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
-                               installed=None, current_kind: str = "") -> dict:
+                               installed=None, current_kind: str = "",
+                               codex_model: str = "") -> dict:
     """Choose one seat's kind using the allowance rules shared by task launch
     and reviews.
 
@@ -5715,11 +5732,13 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
     keeps what is already assigned.  A first launch omits it, making the
     preferred kind the current kind too.  The returned decision is deliberately
     model-free; callers apply the seat preference with :func:`_seat_for_kind`.
+    ``codex_model`` is the model the seat would run on as Codex ("" for the
+    config's): it picks the Codex pool that is judged (see :func:`_kind_usage`).
     """
     other_kind = {"claude": "codex", "codex": "claude"}.get(preferred_kind, "")
     warn = snapshot.get("warnPercent", usage.WARN_PERCENT)
     alarm = snapshot.get("alarmPercent", usage.ALARM_PERCENT)
-    figures = {kind: _kind_usage(snapshot, kind) for kind in ("claude", "codex")}
+    figures = {kind: _kind_usage(snapshot, kind, codex_model) for kind in ("claude", "codex")}
     preferred_usage = figures.get(preferred_kind, {"state": "unknown"})
     other_usage = figures.get(other_kind, {"state": "unknown"})
     installed = installed or (lambda kind: bool(
@@ -5780,7 +5799,9 @@ def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
         agents.get_agent(kind) and agents.get_agent(kind).installed()))
     warn = snapshot.get("warnPercent", usage.WARN_PERCENT)
     alarm = snapshot.get("alarmPercent", usage.ALARM_PERCENT)
-    figures = {kind: _kind_usage(snapshot, kind) for kind in ("claude", "codex")}
+    # The owner's seat as Codex: its own model, or the one it names for Codex.
+    codex_model = _seat_for_kind(preferred[owner_i], "codex")["model"]
+    figures = {kind: _kind_usage(snapshot, kind, codex_model) for kind in ("claude", "codex")}
     owner_usage = figures.get(owner_kind, {"state": "unknown"})
 
     def result(reason: str, changed: bool) -> tuple[list[dict], dict]:
@@ -5810,7 +5831,8 @@ def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
                   f"preferred kind is not installed on this machine.")
         return result(reason, True)
 
-    decision = choose_agent_kind_for_seat(owner_kind, snapshot, installed=installed)
+    decision = choose_agent_kind_for_seat(owner_kind, snapshot, installed=installed,
+                                          codex_model=codex_model)
     if decision["decision"] == "both_alarm":
         reason = (f"Preferred line-up kept although Claude and Codex are both at or above "
                   f"the {float(alarm):g}% alarm.")
@@ -6004,8 +6026,12 @@ def apply_review_allocation(room_full: dict, identity: str) -> tuple[dict, dict,
     installed = lambda kind: bool(agents.get_agent(kind) and agents.get_agent(kind).installed())
     try:
         snapshot = usage.snapshot()
+        # The reviewer as Codex: the model it has now, or the one its seat names.
+        codex_model = (part.get("model", "") if current_kind == "codex"
+                       else _seat_for_kind(seat_preference, "codex")["model"])
         decision = choose_agent_kind_for_seat(
-            preferred_kind, snapshot, installed=installed, current_kind=current_kind)
+            preferred_kind, snapshot, installed=installed, current_kind=current_kind,
+            codex_model=codex_model)
     except StartRoomError:
         raise
     except Exception as exc:                              # noqa: BLE001

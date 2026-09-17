@@ -201,7 +201,12 @@ _ALL_TOOLS = [
             "are **account-wide**: every task on this machine shares them, so they "
             "say nothing about what one task cost (that is the per-task cost "
             "chip). Claude and Codex have separate allowances — read them "
-            "separately and never add them up. **Judge each window on its own "
+            "separately and never add them up. Codex itself has several pools "
+            "(main, reserve, a model's own), each window naming its `pool`: judge "
+            "Codex by the pool its agents run on (`sources[].poolInUse`, "
+            "`windows[].inUse`; `kinds.codex` is that pool's figure) — a spent "
+            "pool that is not in use is listed under `notices`, not `alerts`. "
+            "**Judge each window on its own "
             "`windows[].trusted`**, not on the source-level flag, which is only "
             "the conjunction: Codex writes its usage to a file only when one of "
             "its agents takes a turn, so the same reading can be out of date for "
@@ -1011,7 +1016,18 @@ def _plan_usage(ctx, args, handler):
     snap = _d.usage.snapshot()
     return {
         **snap,
-        "note": ("Account-wide, not per-task: every task on this machine shares "
+        # What the hub itself goes by when it picks a kind for a seat that
+        # names no model: each kind's worst current window, Codex's taken from
+        # the pool its agents run on.
+        "kinds": {kind: _d._kind_usage(snap, kind) for kind in ("claude", "codex")},
+        "note": ("Codex has several pools, each its own allowance: the main one "
+                 "(windows with model=null), the reserve (only the model "
+                 "gpt-reserve draws on it) and a model's own. Judge Codex by the "
+                 "pool its agents run on — sources[].poolInUse, windows[].inUse, "
+                 "and `kinds.codex` is that pool's figure. A spent pool that is "
+                 "not in use stops nothing: it is listed under `notices`, never "
+                 "`alerts`. "
+                 "Account-wide, not per-task: every task on this machine shares "
                  "these windows. Claude and Codex allowances are separate — never "
                  "sum them. Judge freshness per window (windows[].trusted), not "
                  "per source: the source flag is only the conjunction, and one "
