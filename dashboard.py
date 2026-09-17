@@ -1262,6 +1262,20 @@ _RESUMES: dict[str, _Resume] = {}      # room id -> the resume in flight (or fai
 _RESUMES_LOCK = threading.Lock()
 
 
+def _drop_made_po_input(room_id: str, key: str, made_room: bool) -> None:
+    """Take back the first input of a Make PO that failed. A room made for it
+    held nothing else; a task that was there keeps what a person's earlier
+    send left held for Retry."""
+    with _RESUMES_LOCK:
+        res = _RESUMES.get(room_id)
+        if res is None:
+            return
+        if not made_room:
+            res.queue[:] = [it for it in res.queue if it.get("key") != key]
+        if made_room or not res.queue:
+            _RESUMES.pop(room_id, None)
+
+
 def pending_input(room_id: str) -> dict | None:
     """What a room's page shows as sent but not yet in: the messages a resume
     is holding (or could not deliver), or None."""
@@ -2198,7 +2212,7 @@ def _new_po_project(name: str, kind: str, path: str) -> tuple[dict, callable]:
     ok, proj, msg = register_project(raw, name)
     if not ok:
         raise MakePoError(f"The project could not be created: {msg}.")
-    if proj["id"] in before:
+    if proj["id"] in before or msg == "already registered":
         raise MakePoError(f"The folder {proj['path']} is already the project “{proj.get('name', '')}”. "
                           f"Open that project and choose its PO there.", 409)
     home_before = project_home(proj, create=False)
@@ -2207,17 +2221,27 @@ def _new_po_project(name: str, kind: str, path: str) -> tuple[dict, callable]:
     def undo() -> None:
         unregister_project(proj["id"])
         for folder, was_there in ((proj["path"], existed), (home_before, home_existed)):
+            ours = False
             try:
                 pj = Path(folder) / "project.json"
                 if pj.is_file() and json.loads(pj.read_text(encoding="utf-8")).get("id") == proj["id"]:
+                    ours = True
                     if was_there and kept_json is not None and _same_folder(folder, str(target)):
                         pj.write_bytes(kept_json)
                     else:
                         pj.unlink()
             except (OSError, json.JSONDecodeError):
                 pass
-            if not was_there:
-                # Made by this request moments ago: nothing of anyone's is in it.
+            if was_there:
+                continue
+            # Made by this request moments ago. A folder that carries another
+            # project's id by now (New project took the same name meanwhile)
+            # is that project's: only ours, or an empty one, goes.
+            try:
+                empty = not os.listdir(folder)
+            except OSError:
+                empty = False
+            if ours or empty:
                 shutil.rmtree(folder, ignore_errors=True)
 
     if kind == "documents":
@@ -8317,8 +8341,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:    # noqa: BLE001 — a refusal or a failed spawn alike
                 raise MakePoError(f"The session could not be started: {str(exc) or exc.__class__.__name__}.") from exc
         except Exception:
-            with _RESUMES_LOCK:
-                _RESUMES.pop(rid, None)
+            _drop_made_po_input(rid, f"made-po:{pid}:{rid}", made_room)
             if find_project(pid) is not None and (find_project(pid).get("poRoomId") or "") == rid:
                 set_project_po(pid, "")
             if made_room:

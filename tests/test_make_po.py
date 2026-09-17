@@ -392,6 +392,34 @@ class ATask(Hub):
         self.assertEqual((dashboard.load_projects(), dashboard.load_session_projects()), ([], {}))
         self.assertFalse((self.base / "code").exists())
 
+    def test_a_failed_start_keeps_what_the_task_held_for_retry(self):
+        rid = self.task()
+        held = dashboard._Resume()
+        held.queue.append({"text": "carry on with the pistons", "to": "", "at": 1.0, "key": "k-1"})
+        held.fail("no terminal")
+        dashboard._RESUMES[rid] = held
+        self.start_error = RuntimeError("no terminal")
+        status, out = self.call({"roomId": rid, "name": "Engine", "kind": "code", "path": str(self.base / "code")})
+        self.assertEqual(status, 400, out)
+        pending = dashboard.pending_input(rid)
+        self.assertEqual([it["text"] for it in pending["items"]], ["carry on with the pistons"])
+        self.assertEqual(pending["state"], "failed")
+
+    def test_a_folder_that_became_another_projects_is_not_deleted(self):
+        folder = self.root / "Engine"
+
+        def start(handler, room_full):
+            # New project took the same name while the session was starting.
+            (folder / "project.json").write_text(json.dumps({"id": "proj-theirs"}), encoding="utf-8")
+            (folder / "notes.md").write_text("theirs", encoding="utf-8")
+            raise RuntimeError("no terminal")
+
+        with mock.patch.object(dashboard.Handler, "_start_or_resume_room", start):
+            status, out = self.call({**self.session(), "name": "Engine", "kind": "documents"})
+        self.assertEqual(status, 400, out)
+        self.assertEqual((folder / "notes.md").read_text(encoding="utf-8"), "theirs")
+        self.assertEqual(json.loads((folder / "project.json").read_text(encoding="utf-8"))["id"], "proj-theirs")
+
     def test_a_projects_task_is_not_taken_from_it(self):
         ok, proj, _ = dashboard.register_project("Motors")
         ok, other, _ = dashboard.register_project("Boats")
