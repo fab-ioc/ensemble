@@ -4046,10 +4046,12 @@ function convBody(r, sid) {
 async function loadConversation(r) {
   const sid = r.sessionId;
   try {
-    let items;
+    let items, specText = typeof r.spec === 'string' ? r.spec : '';
     if (r.headless && r.roomId) {
       const room = await api('/api/room?id=' + encodeURIComponent(r.roomId));
       items = (room.messages || []).map(m => ({ who: m.from, to: m.to, text: m.text, ts: m.ts }));
+      // The polled row carries only specRev; the room read here has the text.
+      if (typeof room.spec === 'string') specText = room.spec;
     } else {
       const d = await api('/api/session/' + encodeURIComponent(sid) + '?full=1');
       items = (d.turns || []).map(t => ({ who: t.role || 'user', text: t.text, ts: t.timestamp }));
@@ -4057,9 +4059,9 @@ async function loadConversation(r) {
     if (SELECTED_SID !== sid) return;   // selection moved on while loading
     // The task text is the first message of the chat: show it as the first
     // user bubble unless the history already records it verbatim.
-    const spec = (r.spec || '').trim();
+    const spec = specText.trim();
     if (spec && !items.some(m => m.who === 'user' && (m.text || '').trim() === spec))
-      items.unshift({ who: 'user', to: '', text: r.spec, ts: r.startedAt || null });
+      items.unshift({ who: 'user', to: '', text: specText, ts: r.startedAt || null });
     CONV_SID = sid; CONV_DATA = { items };
     const panel = $('#detail-panel'); if (panel) panel.dataset.sig = '';
     renderDetail();
