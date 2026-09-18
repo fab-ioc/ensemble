@@ -391,6 +391,28 @@ class AnsweredInTheTerminal(_Bell):
         self.assertEqual(chatroom.get_room(self.rid, public=False)["status"], "paused")
         self.assertIn("paused at their limit", self.item()["reason"])
 
+    def test_a_message_closed_by_a_completed_leaves_the_bell_once_the_task_works_again(self):
+        for mode in ("solo", "collab"):
+            full = chatroom.get_room(self.rid, public=False)
+            full["mode"] = mode
+            chatroom.update_room(full)
+            chatroom.post_message(self.rid, "claude", "Which price?", to="user")
+            self.assertEqual(chatroom.get_room(self.rid, public=False)["status"], "waiting_human")
+            self.report("completed", "Sold.")
+            it = self.item()                # the finished work is what the bell holds now
+            self.assertEqual((it["state"], it["quote"]), ("waiting_for_you", "Sold."))
+            self.report("update", "Archived the listing.")
+            self.assertEqual(chatroom.get_room(self.rid, public=False)["status"], "active")
+            self.assertIsNone(self.item(), mode)
+            self.assertNotIn("openAsk", dashboard._annotate_room_liveness(chatroom.get_room(self.rid)))
+            self.assertEqual(self.facts()["ask"], "")
+        # A pause at the hop limit is not a completed report's to lift either.
+        full = chatroom.get_room(self.rid, public=False)
+        full.update(status="paused", hopCount=5, maxHops=5)
+        chatroom.update_room(full)
+        self.report("completed", "Sold again.")
+        self.assertEqual(chatroom.get_room(self.rid, public=False)["status"], "paused")
+
     def test_in_a_team_room_the_terminal_answers_nothing(self):
         full = chatroom.get_room(self.rid, public=False)
         full["mode"] = "collab"

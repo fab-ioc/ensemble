@@ -664,8 +664,10 @@ def record_report(room_id: str, identity: str, kind: str, text: str,
     None when it went to the user. ``clears``: this report says the task's open
     ask to the person (a blocked, a question) is over, although nobody answered
     it in chat; without it an ``update`` leaves the ask open (attention.py).
-    It is the one report that touches the status: a room that was waiting on
-    the person's reply to a message stops waiting."""
+    It and a ``completed`` are the reports that touch the status: either closes
+    what the task had asked, so a room that was waiting on the person's reply
+    to a message stops waiting (the completed report is then what the bell
+    holds, by attention's own rule)."""
     with _LOCK:
         room = _read(room_id)
         if room is None:
@@ -678,7 +680,8 @@ def record_report(room_id: str, identity: str, kind: str, text: str,
             msg["reportTo"] = routed_to
         if clears:
             msg["clears"] = True
-            _wait_for_human_over(room)
+        if clears or kind == "completed":
+            _wait_for_human_over(room)      # either closes what it had asked
         room.setdefault("messages", []).append(msg)
         room["lastReport"] = {"kind": kind, "text": text[:4000], "ts": now,
                               "identity": identity, "messageId": msg["id"],
