@@ -572,24 +572,18 @@ def _open_to_human(room: dict, msgs: list) -> dict | None:
     That is kept on the participant (``answeredAt``, see
     ``dashboard.note_answer``), not on the terminal, so the ask stays closed
     across a hub restart and a rotation — and the bell, the chat's line and
-    the progress check all read this one rule."""
-    put = _put_to_human(room, msgs)
-    if put and room.get("mode") == "solo":
-        part = next((p for p in room.get("participants", [])
-                     if p.get("identity") == put["from"]), {})
-        try:
-            answered = float(part.get("answeredAt") or 0)
-        except (TypeError, ValueError):
-            answered = 0.0
-        if answered > float(put.get("ts") or 0):
-            return None
-    return put
-
-
-def _put_to_human(room: dict, msgs: list) -> dict | None:
-    """``_open_to_human`` by the chat alone."""
+    the progress check all read this one rule. Such an answer ends the scan
+    where the person speaking in chat would: what the agent put to them after
+    it is as open as ever, whatever it had asked before."""
     agents = {p.get("identity") for p in room.get("participants", [])
               if p.get("kind") == "agent"}
+    answered: dict[str, float] = {}
+    if room.get("mode") == "solo":
+        for p in room.get("participants", []):
+            try:
+                answered[p.get("identity")] = float(p.get("answeredAt") or 0)
+            except (TypeError, ValueError):
+                pass
     reports = [r for r in (room.get("lastReport"), room.get("lastRealReport")) if isinstance(r, dict)]
     updated = False         # a later update: the agent is working again
     message = None          # the newest plain message to the person
@@ -599,6 +593,8 @@ def _put_to_human(room: dict, msgs: list) -> dict | None:
             break
         if frm not in agents:
             continue
+        if answered.get(frm, 0) > float(m.get("ts") or 0):
+            break               # answered in its terminal after this
         if m.get("kind") == "report":
             kind = m.get("reportKind", "")
             if kind == "update":

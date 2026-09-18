@@ -1700,7 +1700,7 @@ def note_answer(room_id: str, identity: str) -> bool:
         ask = attention.open_ask(room)
         if not ask or ask.get("from") != identity:
             return False
-        return chatroom.patch_participant(room_id, identity, {"answeredAt": time.time()}) is not None
+        return chatroom.record_answer(room_id, identity, time.time()) is not None
     except Exception as exc:    # noqa: BLE001 — the input itself went in
         print(f"[attention] {room_id}/{identity}: the answer was not recorded: {exc!r}", flush=True)
         return False

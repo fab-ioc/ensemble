@@ -345,6 +345,52 @@ class AnsweredInTheTerminal(_Bell):
             self.assertEqual((self.item()["state"], self.item()["askedAt"]), ("blocked", again["ts"]))
             self.assertEqual(self.facts()["ask"], "blocked")
 
+    def test_an_answered_block_never_hides_what_it_asks_the_person_next(self):
+        self.report("blocked", BLOCKED)
+        self.type("Logged in, go on.\r")
+        self.assertIsNone(self.item())
+        self.report("update", "Renewed the listing.")
+        asked = chatroom.post_message(self.rid, "claude", "Which price should I use?", to="user")["message"]
+        self.report("update", "Photos uploaded meanwhile.")
+        it = self.item()
+        self.assertEqual((it["state"], it["quote"], it["askedAt"]),
+                         ("waiting_for_you", "Which price should I use?", asked["ts"]))
+        room = dashboard._annotate_room_liveness(chatroom.get_room(self.rid))
+        self.assertEqual((room["openAsk"]["kind"], room["openAsk"]["id"]), ("message", asked["id"]))
+        self.assertEqual(self.facts()["ask"], "message")
+        # And it is answered the way the block was.
+        self.type("9,500\r")
+        self.assertIsNone(self.item())
+        self.assertNotIn("openAsk", dashboard._annotate_room_liveness(chatroom.get_room(self.rid)))
+        self.assertEqual(self.facts()["ask"], "")
+
+    def test_a_message_answered_in_the_terminal_leaves_the_bell(self):
+        chatroom.post_message(self.rid, "claude", "Ready to merge?", to="user")
+        self.assertEqual(chatroom.get_room(self.rid, public=False)["status"], "waiting_human")
+        self.assertEqual(self.item()["state"], "waiting_for_you")
+        self.type("Yes, merge it.\r")
+        self.assertIsNone(self.item())
+        self.assertEqual(chatroom.get_room(self.rid, public=False)["status"], "active")
+
+    def test_a_message_cleared_by_a_report_leaves_the_bell_in_a_team_room_too(self):
+        full = chatroom.get_room(self.rid, public=False)
+        full["mode"] = "collab"
+        chatroom.update_room(full)
+        chatroom.post_message(self.rid, "claude", "Ready to merge?", to="user")
+        self.report("update", "Something else.")
+        self.assertEqual(self.item()["state"], "waiting_for_you")
+        self.report("update", "Resolved without help.", clears=True)
+        self.assertIsNone(self.ask())
+        self.assertIsNone(self.item())
+        self.assertEqual(chatroom.get_room(self.rid, public=False)["status"], "active")
+        # A pause at the hop limit is the person's to lift, whatever a report says.
+        full = chatroom.get_room(self.rid, public=False)
+        full.update(status="paused", hopCount=5, maxHops=5)
+        chatroom.update_room(full)
+        self.report("update", "Still fine.", clears=True)
+        self.assertEqual(chatroom.get_room(self.rid, public=False)["status"], "paused")
+        self.assertIn("paused at their limit", self.item()["reason"])
+
     def test_in_a_team_room_the_terminal_answers_nothing(self):
         full = chatroom.get_room(self.rid, public=False)
         full["mode"] = "collab"

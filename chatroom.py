@@ -663,7 +663,9 @@ def record_report(room_id: str, identity: str, kind: str, text: str,
     ``routed_to`` is ``{roomId, identity, project}`` of the PO it went to, or
     None when it went to the user. ``clears``: this report says the task's open
     ask to the person (a blocked, a question) is over, although nobody answered
-    it in chat; without it an ``update`` leaves the ask open (attention.py)."""
+    it in chat; without it an ``update`` leaves the ask open (attention.py).
+    It is the one report that touches the status: a room that was waiting on
+    the person's reply to a message stops waiting."""
     with _LOCK:
         room = _read(room_id)
         if room is None:
@@ -676,6 +678,7 @@ def record_report(room_id: str, identity: str, kind: str, text: str,
             msg["reportTo"] = routed_to
         if clears:
             msg["clears"] = True
+            _wait_for_human_over(room)
         room.setdefault("messages", []).append(msg)
         room["lastReport"] = {"kind": kind, "text": text[:4000], "ts": now,
                               "identity": identity, "messageId": msg["id"],
@@ -687,6 +690,34 @@ def record_report(room_id: str, identity: str, kind: str, text: str,
         room["updatedAt"] = now
         _write(room)
         return msg
+
+
+def _wait_for_human_over(room: dict) -> None:
+    """The room was waiting on the person's reply to an agent's message
+    (``waiting_human``, see :func:`post_message`) and that ask has closed
+    without them speaking in the chat: the room is not waiting any more, so
+    the bell and the lists agree with the ask's own line. A pause at the hop
+    limit is another matter and stays."""
+    if room.get("status") == "waiting_human":
+        room["status"] = "active"
+        room["waitingFor"] = ""
+
+
+def record_answer(room_id: str, identity: str, at: float) -> dict | None:
+    """A person answered a one-agent task's open ask in its terminal, at
+    ``at``: kept on the participant (``answeredAt``, read by
+    attention._open_to_human), and the room stops waiting on them. Returns the
+    participant, or None when the room or the participant is gone."""
+    with _LOCK:
+        room = _read(room_id)
+        part = participant(room, identity) if room is not None else None
+        if part is None:
+            return None
+        part["answeredAt"] = at
+        _wait_for_human_over(room)
+        room["updatedAt"] = _now()
+        _write(room)
+        return dict(part)
 
 
 def last_real_report(room: dict) -> dict:
