@@ -56,6 +56,8 @@ const clearTimeout = () => {};
 function showGotoNote(t) { if (t) out.notes.push(t); }
 function nearEnd() { return false; }
 function showLatest() {}
+function withHubRows(items) { return items; }
+const ROOM_OBJ = null;
 let nodes = new Map(), drawn = [];
 function node(id) {
   if (!nodes.has(id)) {

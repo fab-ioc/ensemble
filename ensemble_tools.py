@@ -116,7 +116,11 @@ _ALL_TOOLS = [
             "text as a self-contained Markdown summary — what was done or what is "
             "needed, where (branch, commit, paths), how you verified it — because "
             "the PO does not see your conversation. One report per event; do not "
-            "repeat it to be sure it arrived."
+            "repeat it to be sure it arrived. A blocked or question report stays "
+            "on the user's Needs you list until the user answers in your chat or "
+            "you report completed; an update about something else leaves it "
+            "there. When what you asked for was resolved without an answer in "
+            "chat, say so: an update with clears: true."
         ),
         "inputSchema": {
             "type": "object",
@@ -124,6 +128,10 @@ _ALL_TOOLS = [
                 "kind": {"type": "string", "enum": list(REPORT_KINDS),
                          "description": "completed | blocked | question | update."},
                 "text": {"type": "string", "description": "The report, Markdown."},
+                "clears": {"type": "boolean",
+                           "description": "With kind update: your open blocked / question "
+                                          "is over (resolved without an answer in chat). "
+                                          "Default false: the ask stays open."},
             },
             "required": ["kind", "text"],
         },
@@ -850,12 +858,16 @@ def _report(ctx, args, handler):
               if po else None)
     heading = (f"**Report — {kind}**, sent to the PO (*{po['title']}*)" if po
                else f"**Report — {kind}**")
-    _d.chatroom.record_report(room["id"], me, kind, text, routed, heading=heading)
+    # Only an update can say an earlier ask is over: a completed ends it by
+    # itself, a new blocked or question takes its place.
+    clears = kind == "update" and args.get("clears") is True
+    _d.chatroom.record_report(room["id"], me, kind, text, routed, heading=heading, clears=clears)
     if not po:
         return {"ok": True, "kind": kind, "deliveredTo": "user",
                 "note": "recorded on your task; the board shows it to the user"}
     no = _d.task_label(room)
-    body = (f"**{kind}** — report from task {no + ' ' if no else ''}*{title}* "
+    body = (f"**{kind}**{f' (its open ask to {_d.operator_name()} is over)' if clears else ''} — "
+            f"report from task {no + ' ' if no else ''}*{title}* "
             f"(`{room['id']}`, {me}):\n\n{text}")
     res = _d.chatroom.post_report(po["roomId"], f"{me}@{room['id']}", po["identity"], body,
                                   {"reportKind": kind, "taskId": room["id"], "taskNo": room.get("no") or None,
@@ -1078,6 +1090,15 @@ def _get_task(ctx, args, handler):
         "recentMessages": tail,
         "isYou": room["id"] == ctx["room"]["id"],
     })
+    if row["isYou"]:
+        # This session has now read its spec as it stands: the next resume
+        # note need not send it to read it again (dashboard.resume_note_for).
+        try:
+            seen = _d.spec_seen(ctx["part"], room.get("spec", "") or "")
+            if ctx["part"].get("specSeen") != seen["specSeen"]:
+                _d.chatroom.patch_participant(room["id"], ctx["identity"], seen)
+        except Exception:
+            pass
     row["lastReport"] = _report_view(room, full=True)
     real = _d.chatroom.last_real_report(room)
     if real and real.get("ts") != (row["lastReport"] or {}).get("ts"):

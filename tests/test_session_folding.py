@@ -239,6 +239,7 @@ vm.runInContext(code + `
   const $ = () => box, fileBase = () => '', mdToHtml = t => t, copyLinkHtml = () => '', refPlain = t => t;
   const withTaskBubble = items => items, rotationText = () => '', readingPlace = () => null, keepPlace = () => {};
   const showChatBar = () => {}, applyComments = () => {}, showLatest = () => {}, markLanded = () => {}, landPending = () => {};
+  const showAskLine = () => {};
   let CU_POINT = null, CU_SHOWN = false, CU_OPENED = true, CU_SNAP = null;
   const readTick = () => {}, catchUpOpen = () => {}, refHref = (room, mid) => '?msg=' + mid;
   globalThis.t = {

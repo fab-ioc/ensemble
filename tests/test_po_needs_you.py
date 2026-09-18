@@ -146,7 +146,8 @@ class PoNeedsYouPage(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         i = INDEX.index("// ---- Task search: begin")
-        heads = ("function attentionItems(", "function notifItemHtml(", "function needsYouHtml(",
+        heads = ("function sinceClock(", "function attnWhen(",
+                 "function attentionItems(", "function notifItemHtml(", "function needsYouHtml(",
                  "function openAttentionItem(", "function openPoOf(", "function poRowOf(",
                  "function projectOfRoom(", "function poSplitProject(", "function poContext(", "function renderPo(", "function poPillClick(")
         src = "\n".join([INDEX[i:INDEX.index("// ---- Task search: end", i)]] + [fn(INDEX, h) for h in heads])

@@ -651,7 +651,8 @@ def post_message(room_id: str, sender: str, text: str, to: str = "") -> dict | N
 
 
 def record_report(room_id: str, identity: str, kind: str, text: str,
-                  routed_to: dict | None = None, heading: str = "") -> dict | None:
+                  routed_to: dict | None = None, heading: str = "",
+                  clears: bool = False) -> dict | None:
     """Put a task agent's report on its own task: a chat message to the human
     (so the task's chat shows it) and ``lastReport`` (so the attention detector
     and the task tools can read it without walking the log).
@@ -660,7 +661,9 @@ def record_report(room_id: str, identity: str, kind: str, text: str,
     hand-off inside the team, and whether it leaves the task waiting on a human
     is the attention detector's call, which it makes from ``lastReport``.
     ``routed_to`` is ``{roomId, identity, project}`` of the PO it went to, or
-    None when it went to the user."""
+    None when it went to the user. ``clears``: this report says the task's open
+    ask to the person (a blocked, a question) is over, although nobody answered
+    it in chat; without it an ``update`` leaves the ask open (attention.py)."""
     with _LOCK:
         room = _read(room_id)
         if room is None:
@@ -671,6 +674,8 @@ def record_report(room_id: str, identity: str, kind: str, text: str,
                "kind": "report", "reportKind": kind, "rang": []}
         if routed_to:
             msg["reportTo"] = routed_to
+        if clears:
+            msg["clears"] = True
         room.setdefault("messages", []).append(msg)
         room["lastReport"] = {"kind": kind, "text": text[:4000], "ts": now,
                               "identity": identity, "messageId": msg["id"],

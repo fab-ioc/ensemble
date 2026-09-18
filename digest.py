@@ -24,7 +24,10 @@ branch, and what finished since the last digest.
 * it became blocked, its agent is gone, or it stalled — unless the last digest
   sent already said so;
 * such a problem is over (it went from blocked, gone or stalled to fine or to
-  waiting for the CEO);
+  waiting for the CEO) — but a task that reported ``blocked`` is never "over"
+  while that ask is open (``attention.open_ask``: until the CEO answers in its
+  chat, it reports completed, or a report of its clears the ask), whatever its
+  agent is doing: busy re-checking, or stopped by a hub restart;
 * it is waiting for the CEO for the first time since its last report, commit,
   status or column change.
 
@@ -277,6 +280,10 @@ def _task_facts(room: dict, attn: dict, labels: dict, now: float) -> dict:
     # here, and never hides the question or completion it followed.
     rep = _d.chatroom.last_real_report(room)
     g = _git_facts(room)
+    try:
+        ask = _d.attention.open_ask(room) or {}
+    except Exception:
+        ask = {}
     return {
         "id": room["id"],
         # How the digest names it: its number, else its id.
@@ -298,6 +305,12 @@ def _task_facts(room: dict, attn: dict, labels: dict, now: float) -> dict:
         "report": float(rep.get("ts") or 0),
         "reportKind": rep.get("kind", ""),
         "reportText": " ".join((rep.get("text") or "").split())[:300],
+        # What it put to the CEO that is still open ("" when nothing is): a
+        # blocked or a question stays open until answered, not until the agent
+        # goes busy.
+        "ask": ask.get("kind", ""),
+        "askAt": float(ask.get("ts") or 0),
+        "askText": ask.get("text", "")[:300],
     }
 
 
@@ -356,6 +369,10 @@ def _attention_news(old: dict, t: dict) -> str:
     if now in _PROBLEMS and now != told:
         return f"attention {told or 'none'} → {now}"
     if told in _PROBLEMS and now not in _PROBLEMS:
+        if told == "blocked" and t.get("ask") == "blocked":
+            # Its block is still open to the CEO: the agent going busy, or
+            # stopping, unblocked nothing. Told as over once the ask closes.
+            return ""
         return f"attention {told} → {now or 'none'}"
     if now == _WAITING and told_waiting != _mark(t):
         return f"attention {told or 'none'} → {now}"
@@ -368,6 +385,8 @@ def told_baseline(before: dict, tasks: list[dict]) -> dict:
     for t in tasks:
         old = before.get(t["id"]) or {}
         now = t.get("attention") or ""
+        if _told(old)[0] == "blocked" and now not in _PROBLEMS and t.get("ask") == "blocked":
+            now = "blocked"         # still told as blocked: its end is news later
         out[t["id"]] = {**_stable(t), "label": t.get("label") or t["id"],
                         "toldAttention": now,
                         "toldWaiting": _mark(t) if now == _WAITING else _told(old)[1]}
@@ -454,6 +473,10 @@ def plain_facts(project: dict, tasks: list[dict], changes: list[dict], since: fl
         bits = [t["status"], t["column"], f"last active {_ago(t['idleSeconds'])} ago"]
         if t["attention"]:
             bits.append(f"needs attention — {t['attention']}: {t['attentionReason'][:200]}")
+        elif t.get("ask") in ("blocked", "question"):
+            since = time.strftime("%H:%M", time.localtime(t.get("askAt") or 0))
+            bits.append(f"its {t['ask']} report is still open to {_d.operator_name()} "
+                        f"since {since}: {t.get('askText', '')[:200]}")
         if t["branch"]:
             # Three different facts, never one number: zero commits ahead is
             # both "merged" and "not started", and must not be left to guess.

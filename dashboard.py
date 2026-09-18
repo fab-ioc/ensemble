@@ -343,6 +343,14 @@ def _annotate_room_liveness(room: dict) -> dict:
         {**p, "onMention": True} if chatroom.is_on_mention(room, p) else p
         for p in room.get("participants", [])]
     _backfill_codex_session_ids(room)
+    # What the task asked of the person that is still open (attention's rules):
+    # the chat holds it in a line above the conversation until it closes.
+    try:
+        ask = attention.open_ask_now(room)
+    except Exception:
+        ask = None
+    if ask:
+        room["openAsk"] = ask
     return room
 
 
@@ -1304,7 +1312,39 @@ RESUME_NOTE = (
     "were stopped: read it again with ensemble_get_task, then carry on from where "
     f"you were; do not start over. {OWNER_OUTPUT_NOTE} Report with ensemble_report when you finish or "
     "are blocked.")
+# The same, for an owner whose session has read the spec as it is now (at its
+# launch, or with ensemble_get_task since): nothing to read again.
+RESUME_NOTE_SAME_SPEC = (
+    "[resumed] Your task was started again. Your spec has not changed since you "
+    "last read it. Carry on from where "
+    f"you were; do not start over. {OWNER_OUTPUT_NOTE} Report with ensemble_report when you finish or "
+    "are blocked.")
+RESUME_NOTES = (RESUME_NOTE, RESUME_NOTE_SAME_SPEC)
+# After a planned hub restart, only to an agent that was in the middle of a
+# turn when the hub stopped (restore_after_restart). One that was idle is typed
+# nothing: a line reads as an order, and an idle task told to "carry on" redid
+# its whole check pass at every restart (measured: 0.8 to 3.4M tokens a time).
+RESTART_NOTE = (
+    "[hub restarted] The hub restarted while you were in the middle of a turn, and "
+    "your session was brought back. Carry on from where you were: do not start over, "
+    "do not read your spec again, and do not report the restart.")
 RESUME_NOTE_WAIT_S = 180    # a terminal that never settles gets the line anyway
+
+
+def spec_seen(part: dict, spec: str) -> dict:
+    """What goes on a participant when its session has just been given the
+    spec: the revision, tied to the session that read it (a fresh or rotated
+    session has read nothing)."""
+    return {"specSeen": {"rev": _spec_rev(spec), "sessionId": part.get("sessionId") or ""}}
+
+
+def resume_note_for(room: dict, part: dict) -> str:
+    """The resume note for an owner: without "read your spec again" when this
+    very session has read the spec as it stands."""
+    seen = part.get("specSeen")
+    if isinstance(seen, dict) and seen.get("sessionId") and             seen.get("sessionId") == (part.get("sessionId") or "") and             seen.get("rev") == _spec_rev(room.get("spec", "") or ""):
+        return RESUME_NOTE_SAME_SPEC
+    return RESUME_NOTE
 
 
 class _Resume:
@@ -1603,6 +1643,7 @@ HUB_INPUT_KINDS = (
     ("[report] ", "report"),            # _ring_report: a task's ensemble_report
     ("[relay] ", "relay"),              # _relay_wake: a team room's doorbell
     ("[resumed] ", "resumed"),          # RESUME_NOTE
+    ("[hub restarted] ", "restart"),    # RESTART_NOTE: it was mid-turn at a hub restart
     ("[handover] ", "handover"),        # rotation.py: write your handover now
     ("[rotation] ", "rotation"),        # rotation.py: a fresh session's first prompt
     ("[product owner] ", "madepo"),     # made_po_first_input: a session made a project's PO
@@ -1651,9 +1692,10 @@ def classify_turns(turns: list[dict]) -> list[dict]:
     out: list[dict] = []
     for t in turns:
         text = t.get("text") or ""
-        if t.get("role") == "user" and text.startswith(RESUME_NOTE) and text[len(RESUME_NOTE):].strip():
-            out.append({**t, "text": RESUME_NOTE})
-            out.append({**t, "text": text[len(RESUME_NOTE):].strip()})
+        note = next((n for n in (*RESUME_NOTES, RESTART_NOTE) if text.startswith(n)), "")
+        if t.get("role") == "user" and note and text[len(note):].strip():
+            out.append({**t, "text": note})
+            out.append({**t, "text": text[len(note):].strip()})
         else:
             out.append(dict(t))
     last = None
@@ -5842,6 +5884,111 @@ def _spare_port() -> int:
         return s.getsockname()[1]
 
 
+# --- What was running, for the hub that comes back ---------------------------
+# A planned restart brings back every room that had a live terminal, by itself
+# (the PO used to resume them by hand), and quietly: an agent that was idle is
+# typed nothing, one that was in the middle of a turn gets RESTART_NOTE. The
+# hub that is about to stop writes who was doing what to a file in the state
+# dir — when the restart is asked for, and again when the helper is about to
+# stop it (POST /api/restart/snapshot) — and the hub that comes back reads it
+# when the helper says so (POST /api/restart/restore). Both calls carry the
+# restart's lease id. A snapshot of another restart is ignored; one older than
+# RESTART_SNAPSHOT_MAX_AGE_S still says which rooms to bring back, but not who
+# was mid-turn: unknown is idle, since a person or the PO can always type.
+RESTART_SNAPSHOT_MAX_AGE_S = 300
+RESTART_NOTICE_KIND = "restart"
+MID_TURN_STATES = ("working", "waiting")    # a prompt up is a turn not over
+
+
+def _restart_snapshot_path() -> Path:
+    return DASHBOARD_DIR / "restart-snapshot.json"
+
+
+def _restart_log(msg: str) -> None:
+    """A line in logs/restart.log, in the helper's format. The helper appends
+    to the same file, so a write that finds it busy is tried again."""
+    path = DASHBOARD_DIR / "logs" / "restart.log"
+    line = f"{time.strftime('%Y-%m-%dT%H:%M:%S')} [restart] {msg}\n"
+    print(f"[restart] {msg}", flush=True)
+    for _ in range(5):
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(line)
+            return
+        except OSError:
+            time.sleep(0.2)
+
+
+def _read_restart_snapshot() -> dict | None:
+    try:
+        snap = json.loads(_restart_snapshot_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return snap if isinstance(snap, dict) and isinstance(snap.get("rooms"), list) else None
+
+
+def _current_restart_lease() -> str:
+    try:
+        return str(json.loads(_restart_lease_path().read_text(encoding="utf-8")).get("id") or "")
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
+def take_restart_snapshot(lease: str, wake_room: str | None = None) -> dict:
+    """Write down every room with a live terminal and what each of its agents
+    is doing right now (attention.turn_state: its hooks, Claude's status file,
+    then the screen). ``wake_room`` is the restarting PO's room, which the
+    helper tells itself; None keeps the one an earlier snapshot of this
+    restart recorded."""
+    if wake_room is None:
+        prior = _read_restart_snapshot() or {}
+        wake_room = prior.get("wakeRoom", "") if prior.get("leaseId") == lease else ""
+    live = {(i.get("meta") or {}).get("room") for i in ptyrun.list_sessions() if i.get("alive")}
+    statuses = attention._claude_status_by_session()
+    rooms = []
+    for rid in sorted(r for r in live if r):
+        room = chatroom.get_room(rid, public=False)
+        if room is None:
+            continue
+        agents_out = []
+        for part in room.get("participants", []):
+            if part.get("kind") != "agent":
+                continue
+            try:
+                state, source = attention.turn_state(part, statuses)
+            except Exception:       # noqa: BLE001 — a snapshot never stops a restart
+                state, source = ("unknown" if _pty_alive(part.get("ptyId")) else "stopped"), ""
+            entry = {"identity": part.get("identity", ""), "agent": part.get("agent", ""),
+                     "ptyId": part.get("ptyId") or "", "state": state, "source": source}
+            if chatroom.is_on_mention(room, part):
+                entry["onMention"] = True
+                if state != "stopped":
+                    entry["reviewMessageId"] = (part.get("review") or {}).get("messageId", "")
+            agents_out.append(entry)
+        if any(a["state"] != "stopped" for a in agents_out):
+            rooms.append({"roomId": rid, "title": room.get("title", ""), "agents": agents_out})
+    snap = {"leaseId": lease, "at": time.time(), "hubPid": os.getpid(),
+            "wakeRoom": wake_room or "", "rooms": rooms}
+    path = _restart_snapshot_path()
+    DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(snap, indent=1), encoding="utf-8")
+    os.replace(tmp, path)
+    return snap
+
+
+def _snapshot_summary(snap: dict) -> str:
+    rooms = snap.get("rooms") or []
+    if not rooms:
+        return "no room had a live terminal"
+    return "; ".join(
+        r["roomId"] + " (" + ", ".join(
+            f"{a['identity']} {a['state']}" + (f"/{a['source']}" if a.get("source") else "")
+            for a in r["agents"]) + ")"
+        for r in rooms)
+
+
 def restart_plan(room_id: str = "") -> dict:
     """What the helper needs: how this hub was started (to start it again the
     same way), where to preflight, whom to resume and what to tell them.
@@ -5864,8 +6011,10 @@ def restart_plan(room_id: str = "") -> dict:
                 "already on disk (a plain restart: nothing was fetched, reset or pulled) "
                 "after a passing preflight, and you, the PO, were resumed. First verify "
                 "that /, /session, /fileview, /api/usage and /api/settings answer. Then "
-                f"start what {handover} lists to start now, resume any other room that was "
-                f"running, and tell {who} what is running. Do not restart the hub again.")
+                f"start what {handover} lists to start now, and tell {who} what is running. "
+                "Every room that was running was brought back by the restart itself "
+                "(restart.log lists them): do not resume or wake them. Do not restart the "
+                "hub again.")
     try:
         grace = max(0, min(300, int(os.environ.get("ENSEMBLE_RESTART_GRACE", RESTART_GRACE_S))))
     except ValueError:
@@ -5910,6 +6059,12 @@ def trigger_restart(room_id: str = "") -> dict:
             _drop_restart_lease(lease)
             view = {k: v for k, v in plan.items() if k != "env"}
             return {"started": True, "status": 202, "dryRun": True, "plan": view}
+        # Who is running, now: what the hub that comes back restores from if
+        # the helper's own snapshot, taken just before the stop, never lands.
+        try:
+            take_restart_snapshot(lease, wake_room=room_id if plan["wakeRoom"] else "")
+        except Exception as e:      # noqa: BLE001 — the restart goes ahead without it
+            print(f"[restart] no snapshot at the request: {e!r}", flush=True)
         result = BACKEND.self_restart(plan)
     except BaseException:
         _drop_restart_lease(lease)
@@ -5922,7 +6077,10 @@ def trigger_restart(room_id: str = "") -> dict:
             "log": plan["log"],
             "message": (f"Restart started. In about {plan['graceSeconds']}s, once the code "
                         f"on disk has served on port {plan['preflightPort']}, the hub stops "
-                        "and starts again; every agent on it stops with it. "
+                        "and starts again; every agent on it stops with it, and every "
+                        "room that was running is brought back by the restart itself "
+                        "(an idle agent is typed nothing, one in the middle of a turn "
+                        "one line): do not resume rooms by hand. "
                         + ("You will be resumed and told when it is back. "
                            if plan["wakeRoom"] else "")
                         + f"Progress: {plan['log']}")}
@@ -8020,6 +8178,7 @@ class Handler(BaseHTTPRequestHandler):
                 continue                # started per request (_start_review)
             info = self._launch_room_agent_pty(room_full, part, task, collab=collab)
             part["sessionId"] = info["sessionId"]
+            part.update(spec_seen(part, task))      # its first prompt was the spec
             part["cwd"] = info["cwd"]
             part["ptyId"] = info["ptyId"]
             part.pop("lastExit", None)   # a fresh agent isn't the dead one
@@ -8036,10 +8195,16 @@ class Handler(BaseHTTPRequestHandler):
         chatroom.update_room(room_full)
         return launched
 
-    def _start_or_resume_room(self, room_full: dict) -> list[dict]:
+    def _start_or_resume_room(self, room_full: dict, restart: dict | None = None) -> list[dict]:
         """Bring a not-running task up: a draft (never launched) starts fresh,
         anything else relaunches its agents resuming their prior conversations.
-        Returns [{identity, ptyId}]."""
+        Returns [{identity, ptyId}].
+
+        ``restart``: the room is coming back only because the hub restarted
+        (``_restore_after_restart``), or quietly on request. It maps each agent
+        to what it was doing when the hub stopped; one that was mid-turn is
+        typed RESTART_NOTE, everyone else — idle, unknown, not listed — is
+        typed nothing at all, the PO and the owner alike. ``{}`` is "nobody"."""
         agents_in = [pp for pp in room_full.get("participants", [])
                      if pp.get("kind") == "agent"]
         solo = room_full.get("mode") == "solo" or len(agents_in) < 2
@@ -8059,7 +8224,7 @@ class Handler(BaseHTTPRequestHandler):
         # reviewer, not an agent given a first prompt just now.
         is_po = any((p.get("poRoomId") or "") == room_full["id"] for p in load_projects())
         own = set(chatroom.owners(room_full))
-        notify = []
+        notify: dict[str, str] = {}     # identity -> the line it is typed once up
         resumed = []
         # An agent still running (a partner died, a retry after a failed
         # delivery) is never launched a second time: it stays as it is, and
@@ -8082,10 +8247,16 @@ class Handler(BaseHTTPRequestHandler):
                 info = self._launch_room_agent_pty(
                     room_full, part, room_full.get("spec", "") or "", collab=not solo)
                 part["sessionId"] = info["sessionId"]
+                part.update(spec_seen(part, room_full.get("spec", "") or ""))
             else:
                 info = self._resume_room_agent_pty(room_full, part, collab=not solo, seed=seed)
-                if part["identity"] in own and not is_po and not info.get("prompted"):
-                    notify.append((part["identity"], info["ptyId"]))
+                if info.get("prompted"):
+                    pass                # its first prompt is its wake
+                elif restart is not None:
+                    if restart.get(part["identity"]) in MID_TURN_STATES:
+                        notify[part["identity"]] = RESTART_NOTE
+                elif part["identity"] in own and not is_po:
+                    notify[part["identity"]] = resume_note_for(room_full, part)
             part["ptyId"] = info["ptyId"]
             part["cwd"] = info["cwd"]
             # Drop any recorded death: this agent is running again, and an
@@ -8102,7 +8273,7 @@ class Handler(BaseHTTPRequestHandler):
             for part in agents_in:
                 if part["identity"] in running:
                     continue
-                keep = {k: part[k] for k in ("ptyId", "cwd", "sessionId") if k in part}
+                keep = {k: part[k] for k in ("ptyId", "cwd", "sessionId", "specSeen") if k in part}
                 gone = tuple(k for k in ("lastExit", "fresh", "resumedAt") if k not in part)
                 chatroom.patch_participant(rid, part["identity"], keep, drop=gone)
             chatroom.patch_room(rid, status="active", hopCount=0, waitingFor="")
@@ -8110,7 +8281,7 @@ class Handler(BaseHTTPRequestHandler):
             chatroom.update_room(room_full)
         self._deliver_after_resume(
             room_full["id"],
-            [(r["identity"], r["ptyId"], (r["identity"], r["ptyId"]) in notify) for r in resumed],
+            [(r["identity"], r["ptyId"], notify.get(r["identity"], "")) for r in resumed],
             solo)
         return resumed
 
@@ -8122,7 +8293,7 @@ class Handler(BaseHTTPRequestHandler):
     # as ONE input: an agent is woken once, never twice.
 
     def _resume_room(self, room_full: dict, text: str = "", to: str = "",
-                     key: str = "") -> dict:
+                     key: str = "", quiet: bool = False) -> dict:
         """Resume a room, delivering ``text`` (if any) once it is up — or, when
         it is already running, deliver right away. What a failed resume still
         holds comes along with ANY new attempt (a fresh text, a plain Resume,
@@ -8130,7 +8301,9 @@ class Handler(BaseHTTPRequestHandler):
         already held (the same send again, after a refusal or a lost reply)
         is not queued twice: the attempt is its retry. Returns {resumed,
         queued, delivered}. Raises StartRoomError when the hub refuses; the
-        message is then kept for a retry."""
+        message is then kept for a retry. ``quiet``: bring the agents back
+        without the resume note (a room that was only stopped by a hub crash
+        or restart); a text still goes in."""
         rid = room_full["id"]
         now = time.time()
         items = [{"text": text, "to": to, "at": now, "key": key}] if text else []
@@ -8165,7 +8338,8 @@ class Handler(BaseHTTPRequestHandler):
         if start:
             try:
                 room_full = chatroom.get_room(rid, public=False) or room_full
-                resumed = self._start_or_resume_room(room_full)
+                resumed = (self._start_or_resume_room(room_full, restart={}) if quiet
+                           else self._start_or_resume_room(room_full))
             except Exception as exc:    # noqa: BLE001 — a refusal or a failed spawn alike
                 with _RESUMES_LOCK:
                     if _RESUMES.get(rid) is res:
@@ -8179,6 +8353,97 @@ class Handler(BaseHTTPRequestHandler):
             return {"resumed": resumed, "queued": len(items), "delivered": 0}
         return {"resumed": list(res.resumed), "queued": len(items), "delivered": 0,
                 "inFlight": True}
+
+    def _restore_after_restart(self, lease: str) -> dict:
+        """Bring back every room the snapshot of this restart lists, each under
+        the rule of ``_start_or_resume_room(restart=…)``: nothing typed into an
+        agent that was idle, RESTART_NOTE into one that was mid-turn. Once per
+        snapshot. The restarting PO's room comes back quiet (the helper types
+        its note); another project's PO that was idle gets one hub row in its
+        chat; a review that was running is started again with its request (a
+        reviewer has no conversation to resume). Every room is logged to
+        restart.log. Returns {ok, rooms: [{roomId, outcome}], note}."""
+        snap = _read_restart_snapshot()
+        if snap is None or snap.get("leaseId") != lease:
+            note = ("no snapshot of the rooms that were running" if snap is None
+                    else "the snapshot on disk is of another restart: ignored")
+            _restart_log(f"restore: {note}; nothing brought back")
+            return {"ok": True, "rooms": [], "note": note}
+        if snap.get("hubPid") == os.getpid():
+            note = "this hub process took the snapshot: it did not restart"
+            _restart_log(f"restore: {note}; nothing done")
+            return {"ok": True, "rooms": [], "note": note}
+        path = _restart_snapshot_path()
+        with contextlib.suppress(OSError):
+            os.replace(path, path.with_name("restart-snapshot.last.json"))
+        age = time.time() - float(snap.get("at") or 0)
+        fresh = 0 <= age <= RESTART_SNAPSHOT_MAX_AGE_S
+        wake_room = snap.get("wakeRoom") or ""
+        po_rooms = {(pr.get("poRoomId") or "") for pr in load_projects()}
+        _restart_log(f"restore: snapshot {int(age)}s old"
+                     + ("" if fresh else f" (over {RESTART_SNAPSHOT_MAX_AGE_S}s: who was mid-turn "
+                                         f"is unknown, everyone comes back quiet)")
+                     + f", {len(snap['rooms'])} room(s)")
+        out = []
+        for entry in snap["rooms"]:
+            rid = entry.get("roomId") or ""
+            agents_was = [a for a in entry.get("agents") or [] if isinstance(a, dict)]
+            was = ", ".join(f"{a.get('identity')} {a.get('state')}"
+                            + (f"/{a.get('source')}" if a.get("source") else "") for a in agents_was)
+            room_full = chatroom.get_room(rid, public=False)
+            if room_full is None:
+                outcome = "no such room any more"
+            elif _room_is_live(room_full):
+                outcome = "already running: left alone"
+            else:
+                states = ({} if rid == wake_room or not fresh else
+                          {a.get("identity"): a.get("state") for a in agents_was
+                           if not a.get("onMention")})
+                lined = sorted(i for i, st in states.items() if st in MID_TURN_STATES)
+                with _RESUMES_LOCK:
+                    busy = _RESUMES.get(rid) is not None
+                    res = None if busy else _RESUMES.setdefault(rid, _Resume())
+                if busy:
+                    outcome = "a resume is already under way: left to it"
+                else:
+                    try:
+                        resumed = self._start_or_resume_room(room_full, restart=states)
+                        with _RESUMES_LOCK:
+                            res.resumed = resumed
+                        outcome = ("brought back; " + (
+                            "the helper tells it" if rid == wake_room else
+                            f"one line to {', '.join(lined)}, nothing typed into the rest" if lined
+                            else "nothing typed"))
+                    except Exception as exc:    # noqa: BLE001 — one room never stops the rest
+                        with _RESUMES_LOCK:
+                            if _RESUMES.get(rid) is res and not res.queue:
+                                _RESUMES.pop(rid, None)
+                        outcome = f"NOT brought back: {exc!r}"
+                    else:
+                        if rid in po_rooms and rid != wake_room and not lined:
+                            chatroom.post_notice(
+                                rid, digest.SENDER,
+                                f"The hub was restarted at {time.strftime('%H:%M')}.",
+                                {"noticeKind": RESTART_NOTICE_KIND})
+                        for a in agents_was:
+                            if not (a.get("onMention") and a.get("state") != "stopped"):
+                                continue
+                            msg = next((m for m in room_full.get("messages") or []
+                                        if m.get("id") == a.get("reviewMessageId")), None)
+                            try:
+                                started = msg and self._start_review(rid, a.get("identity"), msg)
+                            except Exception as exc:    # noqa: BLE001
+                                started = None
+                                outcome += f"; the review by {a.get('identity')} NOT started again: {exc!r}"
+                            if started:
+                                outcome += (f"; the review by {a.get('identity')} that was running "
+                                            f"was started again (review {started.get('n')})")
+                            elif msg is None:
+                                outcome += (f"; the review by {a.get('identity')} that was running "
+                                            f"is lost (its request was not found)")
+            _restart_log(f"restore {rid} '{(entry.get('title') or '')[:40]}' (was: {was}): {outcome}")
+            out.append({"roomId": rid, "outcome": outcome})
+        return {"ok": True, "rooms": out, "note": ""}
 
     def _resume_after_all(self, room_full: dict, items: list[dict]) -> dict:
         """The room read as live but an agent was gone by the time the message
@@ -8237,6 +8502,8 @@ class Handler(BaseHTTPRequestHandler):
                 sess.last_input = time.time()
             if not _type_input(sess, "\n\n".join(with_message_refs(it["text"], rid) for it in items)):
                 return items     # it looked alive, but the write found it gone
+            if any(hub_input_kind(it["text"])["kind"] == "human" for it in items):
+                sess.last_answer = time.time()      # a person's or the PO's: see attention
         return []
 
     def _deliver_after_resume(self, room_id: str, targets: list[tuple], solo: bool) -> None:
@@ -8250,7 +8517,8 @@ class Handler(BaseHTTPRequestHandler):
         quiet also means not working). Not on top of a prompt. In the
         background, so the start returns at once; the time a note was typed
         goes on the participant, which is how attention knows the agent was
-        asked to carry on. ``targets`` is [(identity, ptyId, note)]."""
+        asked to carry on. ``targets`` is [(identity, ptyId, note)]: the
+        note is the line itself ("" for none; True is the resume note)."""
         with _RESUMES_LOCK:
             res = _RESUMES.get(room_id)
             if res is None:
@@ -8305,7 +8573,8 @@ class Handler(BaseHTTPRequestHandler):
                     if settled or late:
                         waiting.pop(ident)
                         ready[ident] = sess
-            notes = {ident for ident, _pty, note in targets if note}
+            notes = {ident: (RESUME_NOTE if note is True else note)
+                     for ident, _pty, note in targets if note}
             first = True
             while True:
                 with _RESUMES_LOCK:
@@ -8328,7 +8597,7 @@ class Handler(BaseHTTPRequestHandler):
                     go.append(it)
                 if go or (first and notes and ready):
                     try:
-                        self._type_after_resume(room_id, ready, notes if first else set(),
+                        self._type_after_resume(room_id, ready, notes if first else {},
                                                 go, solo)
                     except Exception as e:      # noqa: BLE001 — never lose the queue silently
                         why = str(e) if isinstance(e, _NotTyped) else f"could not deliver: {e}"
@@ -8349,9 +8618,10 @@ class Handler(BaseHTTPRequestHandler):
                 first = False
         threading.Thread(target=run, daemon=True, name=f"resume-deliver-{room_id}").start()
 
-    def _type_after_resume(self, room_id: str, ready: dict, notes: set,
+    def _type_after_resume(self, room_id: str, ready: dict, notes: dict,
                            items: list[dict], solo: bool) -> None:
-        """One input per settled agent: its resume note (if it gets one) and
+        """One input per settled agent: its note (``notes``: identity -> the
+        line, for one that gets one: the resume note, or the restart line) and
         the messages — the texts themselves for a solo agent, the relay for a
         team, whose messages are posted to the room first, in order."""
         wake_for: dict[str, list[str]] = {}
@@ -8382,7 +8652,7 @@ class Handler(BaseHTTPRequestHandler):
                     wake_for.setdefault(ident, []).append(chatroom.HUMAN_IDENTITY)
         not_typed: list[str] = []
         for ident, sess in ready.items():
-            parts = [RESUME_NOTE] if ident in notes else []
+            parts = [notes[ident]] if ident in notes else []
             if solo:
                 parts += [with_message_refs(it["text"], room_id) for it in items]
             elif ident in wake_for:
@@ -8403,9 +8673,15 @@ class Handler(BaseHTTPRequestHandler):
             for it in items:
                 if it.get("posted"):
                     it["wake"] = [w for w in it["wake"] if w != ident]
+            if solo and any(hub_input_kind(it["text"])["kind"] == "human" for it in items):
+                sess.last_answer = time.time()
             if ident in notes:
                 chatroom.patch_participant(room_id, ident, {"resumedAt": time.time()})
-            what = ["the resume note"] if ident in notes else []
+            after_restart = notes.get(ident) == RESTART_NOTE
+            if after_restart:
+                _restart_log(f"restore {room_id}/{ident}: typed the one restart line (pty {sess.id})")
+            what = [] if ident not in notes else ["the restart line" if after_restart
+                                                  else "the resume note"]
             if len(parts) > len(what):
                 what.append(f"{len(items)} message(s)" if solo
                             else f"the relay for {len(items)} message(s)")
@@ -9165,10 +9441,16 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 if by_person:
                     sess.last_input = time.time()
-                if not sess.write(data.get("data", "")):
+                typed = data.get("data", "")
+                if not sess.write(typed):
                     # It ended after the check above: the input went nowhere.
                     self._send_json(410, {"error": "the session has stopped"})
                     return
+                if isinstance(typed, str) and ("\r" in typed or "\n" in typed):
+                    # Submitted from outside the hub (the page's terminal, the
+                    # PO's tell): what answers a one-agent task's open ask. The
+                    # hub's own lines never come this way.
+                    sess.last_answer = time.time()
             self._send_json(200, {"ok": True})
             return
         if p == "/api/pty/resize":
@@ -9204,6 +9486,22 @@ class Handler(BaseHTTPRequestHandler):
             resolved = chatroom.resolve_token(self._bearer_token()) if self._bearer_token() else None
             result = trigger_restart(resolved[0] if resolved else "")
             self._send_json(result.pop("status"), result)
+            return
+        if p in ("/api/restart/snapshot", "/api/restart/restore"):
+            # The restart helper's two calls, proved by the lease id of the
+            # restart under way (a file in the state dir, like a room token).
+            lease = str(data.get("lease") or "")
+            held = _current_restart_lease()
+            if not lease or not held or not hmac.compare_digest(lease, held):
+                self._send_json(403, {"error": "not_allowed",
+                                      "message": "only the helper of the restart under way"})
+                return
+            if p == "/api/restart/snapshot":
+                snap = take_restart_snapshot(lease)
+                _restart_log(f"snapshot before the stop: {_snapshot_summary(snap)}")
+                self._send_json(200, {"ok": True, "rooms": [r["roomId"] for r in snap["rooms"]]})
+                return
+            self._send_json(200, self._restore_after_restart(lease))
             return
         if p == "/api/iterm/consolidate":
             ok, msg = BACKEND.consolidate_windows()
@@ -9659,6 +9957,10 @@ class Handler(BaseHTTPRequestHandler):
             text = (data.get("text") or "").strip()
             to = (data.get("to") or "").strip()
             key = str(data.get("key") or "").strip()[:200]
+            # ``quiet``: no resume note — for a room that a hub crash stopped,
+            # whose agent has nothing new to do (the planned restart brings
+            # rooms back this way by itself).
+            quiet = data.get("quiet") is True
             # A draft (created but never launched, e.g. by a planning agent)
             # starts fresh; anything else resumes its agents' conversations.
             try:
@@ -9673,7 +9975,8 @@ class Handler(BaseHTTPRequestHandler):
                     except attachments.Refused as e:
                         self._send_json(e.status, e.payload())
                         return
-                    result = self._resume_room(room_full, text=text, to=to, key=key)
+                    result = (self._resume_room(room_full, text=text, to=to, key=key, quiet=True)
+                              if quiet else self._resume_room(room_full, text=text, to=to, key=key))
                     if key:
                         _SAY_KEYS[(rid, key)] = time.time()
             except Exception as exc:    # noqa: BLE001 — refused, in words; the text is kept
