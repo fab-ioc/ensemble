@@ -286,7 +286,7 @@ class WindowsBackend(unittest.TestCase):
         i = text.index("function RenewLease {")
         func = text[i:text.index("\n}\n", i) + 3]
         # Every wait up to the hub being back renews it: no plain sleeps left there.
-        main = text[text.index("# --- 1. Preflight"):text.index("# --- 4. Resume")]
+        main = text[text.index("# --- 1. Preflight"):text.index("# --- 4. Bring the rooms back")]
         self.assertNotIn("Start-Sleep -Seconds 2;", main)
         self.assertIn("Nap 2; $pfUp", main)
         self.assertIn("if ($up) { RenewLease }", main)

@@ -3036,6 +3036,17 @@ const fmtAgo = secs => {
 // signature, and are patched in place, the way the board's .cwhen always was.
 const agoSpan = ts => `<span data-ago="${ts == null ? '' : Number(ts)}">`
   + `${esc(fmtAgo(ts == null ? null : Date.now() / 1000 - ts))}</span>`;
+// An ask the agent reported is dated by its report, as a time of day: "since
+// 15:55" ("since Sep 17, 15:55" before today). It does not tick.
+function sinceClock(ts) {
+  const d = new Date(ts * 1000);
+  const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return 'since ' + (d.toDateString() === new Date().toDateString() ? t
+    : d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ', ' + t);
+}
+function attnWhen(it) {
+  return it.askedAt ? esc(sinceClock(it.askedAt)) : it.since ? agoSpan(it.since) + ' ago' : '';
+}
 const withoutAgo = html => html.replace(/(<span data-ago="[^"]*">)[^<]*/g, '$1');
 function tickAgo(root) {
   const now = Date.now() / 1000;
@@ -4803,7 +4814,7 @@ function needsYouHtml() {
   }
   const groups = [...byProj.entries()].map(([proj, list]) => {
     const rows = list.map(it => {
-      const when = it.since ? agoSpan(it.since) + ' ago' : '';
+      const when = attnWhen(it);
       const tone = (it.state === 'agent_gone' || it.state === 'blocked') ? 'danger'
                  : (it.state === 'stalled') ? 'neutral' : 'warning';
       const who = [it.agentIdentity, it.agentModel].filter(Boolean).join(' ');
@@ -11047,7 +11058,7 @@ function renderAttention() {
 }
 
 function notifItemHtml(it) {
-  const when = it.since ? agoSpan(it.since) + ' ago' : '';
+  const when = attnWhen(it);
   // agent_gone has no terminal left to open, so the last screen comes along.
   const screen = it.lastLines
     ? `<div class="notif-screen">${esc(it.lastLines)}</div>` : '';

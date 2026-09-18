@@ -9,9 +9,13 @@
 #   1. Preflight: the code on disk must start and serve on a spare port, or
 #      the running hub is not touched.
 #   2. Wait out the grace period, so the caller's reply reaches the user.
-#   3. Stop the hub (through its scheduled task when that is how it runs) and
-#      start it again the same way; wait until it answers.
-#   4. Resume the rooms in the plan and type the PO what to do next.
+#   3. Have the hub write down who is running and who is in the middle of a
+#      turn (POST /api/restart/snapshot), stop it (through its scheduled task
+#      when that is how it runs) and start it again the same way; wait until
+#      it answers.
+#   4. Have the new hub bring back every room that was running (POST
+#      /api/restart/restore: an idle agent is typed nothing, one that was in
+#      the middle of a turn one line) and type the PO what to do next.
 # Keep this file ASCII: Windows PowerShell 5.1 reads a script without a BOM in
 # the ANSI code page.
 param([Parameter(Mandatory = $true)][string]$Plan)
@@ -103,6 +107,13 @@ RenewLease
 while ($left -gt 0) { $s = [int][math]::Min(10, [math]::Ceiling($left)); Nap $s; $left -= $s }
 
 # --- 3. Stop the hub and start it again the way it was started. ---
+# First the hub's last word on who is running and who is mid-turn. A hub from
+# before this existed answers 404: the rooms of the plan are then resumed the
+# old way in step 4.
+try {
+  $r = Post '/api/restart/snapshot' @{ lease = [string]$cfg.leaseId }
+  L "snapshot before the stop: HTTP $($r.StatusCode) $($r.Content)"
+} catch { L "no snapshot before the stop ($_): the one taken at the request, if any, is used" }
 $useTask = $false
 if (-not $cfg.noTask) {
   $task = Get-ScheduledTask -TaskName $cfg.taskName -ErrorAction SilentlyContinue
@@ -150,10 +161,20 @@ if (-not $up) {
   exit 1
 }
 
-# --- 4. Resume the rooms and tell the PO what to do next. ---
+# --- 4. Bring the rooms back and tell the PO what to do next. ---
 Start-Sleep -Seconds 4
+# The hub does it from the snapshot and logs each room here itself. What it did
+# not bring back of the plan's own rooms (no snapshot: the hub that stopped was
+# older than this) is resumed the old way.
+$back = @()
+try {
+  $r = Post '/api/restart/restore' @{ lease = [string]$cfg.leaseId }
+  $res = $r.Content | ConvertFrom-Json
+  $back = @($res.rooms | Where-Object { $_.outcome -like 'brought back*' -or $_.outcome -like 'already running*' } | ForEach-Object { $_.roomId })
+  L "restore: HTTP $($r.StatusCode), $(@($res.rooms).Count) room(s) in the snapshot, $($back.Count) running again. $($res.note)"
+} catch { L "restore failed: $_" }
 foreach ($room in @($cfg.resumeRooms)) {
-  if (-not $room) { continue }
+  if (-not $room -or ($back -contains $room)) { continue }
   try { $r = Post '/api/room/resume' @{ roomId = $room }; L "resume ${room}: HTTP $($r.StatusCode)" } catch { L "resume $room failed: $_" }
 }
 if ($cfg.wakeRoom) {
@@ -169,9 +190,11 @@ if ($cfg.wakeRoom) {
   if ($pty) {
     Start-Sleep -Seconds 15
     try {
-      Post '/api/pty/input' @{ id = $pty; data = [string]$cfg.wakeText } | Out-Null
+      # hub: this line and its Enter are the restart's, not a person's answer
+      # to anything the PO asked.
+      Post '/api/pty/input' @{ id = $pty; data = [string]$cfg.wakeText; hub = $true } | Out-Null
       Start-Sleep -Milliseconds 500
-      Post '/api/pty/input' @{ id = $pty; data = "`r" } | Out-Null
+      Post '/api/pty/input' @{ id = $pty; data = "`r"; hub = $true } | Out-Null
       L "woke the PO"
     } catch { L "wake failed: $_" }
   }

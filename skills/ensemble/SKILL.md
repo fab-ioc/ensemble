@@ -103,6 +103,13 @@ on your task, so after `completed`, `question` or `blocked` the board shows your
 task as waiting on a human, with your report quoted, not as stalled. If the
 project has no PO, the report goes to the user instead.
 
+A `blocked` or `question` stays on the product owner's Needs you list, and as a
+line above your chat, until they answer in your chat or you report `completed`;
+an `update` about something else leaves it there, and so does going back to
+work. When what you were blocked on is resolved without an answer in chat (the
+login came back, the PO told you), say so with an `update` that carries
+`clears: true`.
+
 - **Report once per event.** Every wake costs the PO its whole conversation
   again. Never send a second report just to be sure the first one arrived.
 - **Make it self-contained.** The PO does not see your conversation. Say what
@@ -161,9 +168,28 @@ line into the task's owner:
 
 The spec itself is never sent again: a session told its spec again redoes the
 work. So when you change a stopped task's spec, the change reaches its owner
-through that line. A reviewer on mention is not resumed, an agent added since
-the last run starts fresh with its brief, and a project's PO does not get the
-line (the rotation and the restart helper brief it).
+through that line. When the spec has not changed since this session last read
+it (at its launch, or with `ensemble_get_task` on its own task), the line says
+so instead of sending it to read the spec again. A reviewer on mention is not
+resumed, an agent added since the last run starts fresh with its brief, and a
+project's PO does not get the line (the rotation and the restart helper brief
+it).
+
+**A hub restart is not a start.** A planned restart (`ensemble_restart_hub`,
+the dashboard's button) brings every room that was running back by itself; the
+PO resumes nothing by hand. An agent that was idle when the hub stopped is
+typed nothing: it is back at an empty prompt with its conversation, as it was.
+One that was in the middle of a turn gets one line:
+
+> [hub restarted] The hub restarted while you were in the middle of a turn, and
+> your session was brought back. Carry on from where you were: do not start
+> over, do not read your spec again, and do not report the restart.
+
+If you get it, do exactly that. A review that was running is started again with
+its request. `~/.ensemble/logs/restart.log` says what happened to each room.
+After a crash (no planned restart) nothing comes back by itself: resume a room
+that has nothing new to do with `POST /api/room/resume` and `"quiet": true`,
+which types no line.
 
 ## Long tasks: the handover
 

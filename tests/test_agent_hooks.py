@@ -640,10 +640,20 @@ class AttentionPrefersTheHook(unittest.TestCase):
     def test_finished_with_a_question_in_its_last_words_is_not_a_prompt(self):
         self.assertIsNone(_classify(_ev(ASKING_TEXT, _hook("idle"))))
 
-    def test_a_working_agent_is_not_blocked_by_its_earlier_report(self):
+    def test_a_working_agent_does_not_hide_the_block_it_reported(self):
+        # Busy is no wall (below), but what the agent itself asked stays open
+        # until it is answered: an agent re-checking after a doorbell or a
+        # restart has not been given its key.
         room = {"openToHuman": {"from": "claude", "kind": "blocked", "text": "need a key", "ts": 5.0}}
         self.assertEqual(_classify(_ev("● ok\n❯ \n"), room=room)[0], "blocked")
-        self.assertIsNone(_classify(_ev("● ok\n❯ \n", _hook("working")), room=room))
+        hit = _classify(_ev("● ok\n❯ \n", _hook("working")), room=room)
+        self.assertEqual((hit[0], hit[2]["since"]), ("blocked", 5.0))
+        self.assertEqual(_classify(_ev(WORKING, status="busy"), room=room)[0], "blocked")
+        # A one-agent task is answered in its terminal by a person's line, which
+        # the room keeps (test_open_ask): what the hub typed and submitted is none.
+        solo = {**room, "mode": "solo"}
+        self.assertEqual(_classify({**_ev("● ok\n❯ \n", _hook("working")), "lastSubmit": 9.0},
+                                   room=solo)[0], "blocked")
 
     def test_walls_stay_with_the_screen(self):
         self.assertEqual(_classify(_ev(WALL, _hook("idle")))[0], "blocked")
@@ -848,8 +858,9 @@ class Fallback(unittest.TestCase):
 
 
 class DigestReadsTheSameResult(unittest.TestCase):
-    """The digest's "attention" fact is attention's item for the room, so a
-    working task that once reported itself blocked is not called blocked."""
+    """The digest's "attention" fact is attention's item for the room: a task
+    that reported itself blocked stays blocked while its agent works, until
+    the ask closes."""
 
     def setUp(self):
         agent_hooks.reset()
@@ -888,10 +899,14 @@ class DigestReadsTheSameResult(unittest.TestCase):
         with mock.patch.object(digest, "_git_facts", return_value={}):
             return digest._task_facts(room, attention.by_room(max_age=-1), {}, time.time())["attention"]
 
-    def test_blocked_until_it_says_it_is_working_again(self):
+    def test_blocked_until_the_ask_closes_not_until_it_works_again(self):
         self.assertEqual(self.attention_fact(), "blocked")
         agent_hooks.record({"room": self.rid, "identity": "claude", "ptyId": "pty-1",
                             "event": _event("UserPromptSubmit")}, lambda pid: (self.rid, "claude"))
+        self.assertEqual(self.attention_fact(), "blocked")
+        chatroom.record_report(self.rid, "claude", "update", "Something else moved")
+        self.assertEqual(self.attention_fact(), "blocked")
+        chatroom.record_report(self.rid, "claude", "update", "The key arrived by mail", clears=True)
         self.assertEqual(self.attention_fact(), "")
         agent_hooks.record({"room": self.rid, "identity": "claude", "ptyId": "pty-1",
                             "event": _event("PermissionRequest", tool_name="Bash")},

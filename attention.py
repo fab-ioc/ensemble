@@ -546,36 +546,99 @@ _SUMMARY_CACHE: dict[str, tuple[float, dict]] = {}
 _CACHE_LOCK = threading.Lock()
 
 
-def _open_to_human(room: dict, msgs: list) -> dict | None:
-    """The newest thing an agent put to the human that no human has answered
-    in chat: a report of completed / question / blocked, or a message sent
-    to "user". None once the human has spoken since, or once the agent's own
-    later report says it is merely giving an update (it is working again).
+_REPORT_HEADING = re.compile(r"\A\*\*Report — [^\n]*\n\n")
 
-    Teammate chatter after it does not answer it — the redesign pair sent
+
+def _open_to_human(room: dict, msgs: list) -> dict | None:
+    """What an agent put to the human that is still open: a report of
+    completed / question / blocked, or a message sent to "user" —
+    ``{from, ts, kind, text, id}``, or None.
+
+    An ask (``blocked``, ``question``, a message to the person) stays open
+    until the person speaks in the chat, the agent reports ``completed``, or a
+    later report of the agent's says the ask is over (``clears``, see
+    ``ensemble_report``). An ``update`` about something else does not close
+    it: a task blocked on a login reported that a group had approved its post,
+    and the block left the bell although nobody had logged in. A ``completed``
+    is not an ask: a later ``update`` (it is working again) still ends it.
+
+    The newest ``blocked`` / ``question`` wins over a plain message sent after
+    it. Teammate chatter does not answer anything — the redesign pair sent
     "ready to merge" to the user, then a thank-you to the designer, and the
-    merge was still waiting on a human."""
+    merge was still waiting on a human.
+
+    A one-agent task is answered in its terminal as often as in chat: what a
+    person (or the PO, for them) submitted to it after the ask closes it too.
+    That is kept on the participant (``answeredAt``, see
+    ``dashboard.note_answer``), not on the terminal, so the ask stays closed
+    across a hub restart and a rotation — and the bell, the chat's line and
+    the progress check all read this one rule. Such an answer ends the scan
+    where the person speaking in chat would: what the agent put to them after
+    it is as open as ever, whatever it had asked before."""
     agents = {p.get("identity") for p in room.get("participants", [])
               if p.get("kind") == "agent"}
-    rep = room.get("lastReport") or {}
+    answered: dict[str, float] = {}
+    if room.get("mode") == "solo":
+        for p in room.get("participants", []):
+            try:
+                answered[p.get("identity")] = float(p.get("answeredAt") or 0)
+            except (TypeError, ValueError):
+                pass
+    reports = [r for r in (room.get("lastReport"), room.get("lastRealReport")) if isinstance(r, dict)]
+    updated = False         # a later update: the agent is working again
+    message = None          # the newest plain message to the person
     for m in reversed(msgs):
         frm = m.get("from", "")
         if frm == "user":
-            return None
+            break
         if frm not in agents:
             continue
+        if answered.get(frm, 0) > float(m.get("ts") or 0):
+            break               # answered in its terminal after this
         if m.get("kind") == "report":
             kind = m.get("reportKind", "")
             if kind == "update":
-                return None
-            text = rep.get("text", "") if rep.get("messageId") == m.get("id") else m.get("text", "")
-        elif (m.get("to") or "") == "user":
-            kind, text = "message", m.get("text", "")
-        else:
-            continue
-        return {"from": frm, "ts": m.get("ts", 0), "kind": kind,
-                "text": " ".join((text or "").split())[:400]}
-    return None
+                if m.get("clears"):
+                    break
+                updated = True
+                continue
+            if kind == "completed" and (updated or message):
+                break
+            text = next((r.get("text", "") for r in reports if r.get("messageId") == m.get("id")),
+                        None)
+            if text is None:
+                text = _REPORT_HEADING.sub("", m.get("text", "") or "")
+            return {"from": frm, "ts": m.get("ts", 0), "kind": kind, "id": m.get("id", ""),
+                    "text": " ".join((text or "").split())[:400], "line": _first_line(text)}
+        if (m.get("to") or "") == "user" and message is None:
+            message = {"from": frm, "ts": m.get("ts", 0), "kind": "message", "id": m.get("id", ""),
+                       "text": " ".join((m.get("text") or "").split())[:400],
+                       "line": _first_line(m.get("text"))}
+    return message
+
+
+def _first_line(text) -> str:
+    """The first line of an ask that says something, without Markdown marks."""
+    for ln in (text or "").splitlines():
+        ln = " ".join(re.sub(r"^[#>\-*\s]+|[*`]+", "", ln).split())
+        if ln:
+            return ln[:200]
+    return ""
+
+
+def open_ask(room: dict) -> dict | None:
+    """The room's open ask to the person (see ``_open_to_human``), from a room
+    that carries its messages."""
+    return _open_to_human(room, room.get("messages") or [])
+
+
+def open_ask_now(room: dict) -> dict | None:
+    """The ask the task's chat holds above the conversation: a ``blocked``, a
+    ``question`` or a message to the person that is still open, by the rules
+    the bell uses — so a one-agent task answered in its terminal has none. A
+    ``completed`` is not an ask."""
+    ask = open_ask(room)
+    return ask if ask and ask["kind"] != "completed" else None
 
 
 def _summarize(room: dict) -> dict:
@@ -612,7 +675,7 @@ def _summarize(room: dict) -> dict:
         "participants": [
             {k: p.get(k) for k in ("identity", "kind", "agent", "role",
                                    "ptyId", "sessionId", "lastExit", "resumedAt",
-                                   "rotatedAt")}
+                                   "rotatedAt", "answeredAt")}
             for p in room.get("participants", [])
         ],
         "lastMessage": {"from": last.get("from", ""), "to": last.get("to", ""),
@@ -807,6 +870,34 @@ def _hook_status(ev: dict) -> str:
     return status
 
 
+def turn_state(part: dict, statuses: dict | None = None) -> tuple[str, str]:
+    """Whether an agent is in the middle of a turn right now, for the snapshot a
+    planned restart takes just before the hub stops: ``(state, source)`` with
+    state ``working`` | ``waiting`` (a prompt is up: its turn is not over) |
+    ``idle`` | ``stopped`` (no live terminal), and source ``hook`` | ``status``
+    | ``screen`` — what said so, in the order ``_classify_agent`` believes
+    them: the agent's hooks, Claude's status file, then the screen (all codex
+    and a hook-less agent have)."""
+    ev = _evidence(part, _claude_status_by_session() if statuses is None else statuses)
+    if not ev["alive"]:
+        return "stopped", ""
+    hooked = _hook_status(ev)
+    said, source = (hooked, "hook") if hooked else (ev["claudeStatus"], "status")
+    if said in ("busy", "shell"):
+        return "working", source
+    if said == "waiting":
+        return "waiting", source
+    scan, idle = ev["scan"], ev["idleSeconds"]
+    if said == "idle":
+        # Its hooks report every prompt; the status file does not (a question).
+        return ("waiting", "screen") if scan["prompt"] and source != "hook" else ("idle", source)
+    if scan["prompt"]:
+        return "waiting", "screen"
+    if scan["busy"] and (idle is None or idle < _MIN_QUIET):
+        return "working", "screen"
+    return "idle", "screen"
+
+
 def _owed_since(room: dict, identity: str) -> tuple[float, str]:
     """When this agent was last asked for something it hasn't delivered.
 
@@ -847,6 +938,10 @@ def _owed_since(room: dict, identity: str) -> tuple[float, str]:
     if identity not in (last.get("rang") or []):
         return 0.0, ""             # it was never woken, so nothing was asked of it
     return float(last.get("ts") or 0), "message"
+
+
+_ASK_NAMES = {"blocked": "its blocked report", "question": "its question",
+              "message": "its message to you"}
 
 
 def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
@@ -892,13 +987,27 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
             return ("agent_gone", f"{who} died — it {why}: “{line}” ({exit_txt})", extra)
         return ("agent_gone", f"{who} died on its own ({exit_txt})", extra)
 
+    # What it put to a human that nobody has answered (``_open_to_human``). An
+    # ask keeps its text and its time on the item whatever else the terminal
+    # shows: a prompt or a wall on the screen is one more thing to see to, and
+    # neither answers it. (A ``completed`` is not an ask: a prompt after it is
+    # simply the newer thing.)
+    put = room.get("openToHuman")
+    put = put if put and put.get("from") == identity else None
+    q = (put or {}).get("text", "")
+    asked = {"quote": q, "since": float(put.get("ts") or 0), "askId": put.get("id", "")} if put else {}
+    still, still_extra = "", {}
+    if put and put["kind"] != "completed":
+        still = f"; {_ASK_NAMES.get(put['kind'], 'its message to you')} is still open: “{q}”"
+        still_extra = {**asked, **({"cause": "reported"} if put["kind"] == "blocked" else {})}
+
     if block:
         why, cause, line = block
-        return ("blocked", f"{who} {why}: “{line}”",
-                {"quote": line, "cause": cause})
+        return ("blocked", f"{who} {why}: “{line}”{still}",
+                {"quote": line, **still_extra, "cause": cause})
 
     if status == "waiting":
-        return ("waiting_for_you", f"{who} is waiting on your answer to a prompt", {})
+        return ("waiting_for_you", f"{who} is waiting on your answer to a prompt{still}", still_extra)
     if status != "busy" and ev["scan"]["prompt"] and hooked != "idle":
         # The screen is the fallback, and it is needed for two different
         # reasons: codex publishes no status at all, and Claude's status file
@@ -909,33 +1018,31 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
         # has no prompt up — its hooks report every one, the question too — so
         # there the words of a prompt are the end of its own last message
         # ("Would you like to…?").
-        return ("waiting_for_you", f"{who} has a prompt on screen waiting for you", {})
+        return ("waiting_for_you", f"{who} has a prompt on screen waiting for you{still}", still_extra)
 
     # A working indicator on a screen that has been still for a while is a
     # leftover: both CLIs repaint theirs every second while a turn runs, and
     # codex's in-place redraws leave its start-up "esc to interrupt" in the
     # stripped text of a session idle at its prompt.
+    # It put something to a human — a report, a question, "ready to merge" —
+    # and nobody has answered. That is the human's move, never a stall, and it
+    # stays up whatever the terminal is doing: an agent that went back to
+    # checking on its own (a doorbell, a progress check, a restart) has not
+    # been answered, and "a busy Claude is never blocked" above is about walls
+    # read off the screen, not about what the agent itself reported.
+    if put:
+        if put["kind"] == "blocked":
+            return ("blocked", f"{who} reported it is blocked and needs help: “{q}”",
+                    {**asked, "cause": "reported"})
+        if put["kind"] == "completed":
+            return ("waiting_for_you", f"{who} reported the work is finished: “{q}”", asked)
+        if put["kind"] == "question":
+            return ("waiting_for_you", f"{who} asked: “{q}”", asked)
+        return ("waiting_for_you", f"{who} is waiting on your reply: “{q}”", asked)
+
     idle = ev["idleSeconds"]
     if status == "busy" or (ev["scan"]["busy"] and (idle is None or idle < _MIN_QUIET)):
         return None                # thinking is not a problem, however long
-
-    # It put something to a human — a report, a question, "ready to merge" —
-    # and nobody has answered. That is the human's move, never a stall. A
-    # one-agent task is answered in its terminal as often as in chat, so for
-    # one anything submitted to it since counts as the answer.
-    put = room.get("openToHuman")
-    if put and put.get("from") == identity and not (
-            room.get("mode") == "solo" and ev.get("lastSubmit", 0) > float(put.get("ts") or 0)):
-        q = put.get("text", "")
-        if put["kind"] == "blocked":
-            return ("blocked", f"{who} reported it is blocked and needs help: “{q}”",
-                    {"quote": q, "cause": "reported"})
-        if put["kind"] == "completed":
-            return ("waiting_for_you", f"{who} reported the work is finished: “{q}”",
-                    {"quote": q})
-        if put["kind"] == "question":
-            return ("waiting_for_you", f"{who} asked: “{q}”", {"quote": q})
-        return ("waiting_for_you", f"{who} is waiting on your reply: “{q}”", {"quote": q})
 
     if room.get("status") != "active":
         return None                # the room is waiting on the human, not on it
@@ -1100,11 +1207,14 @@ def _items() -> list[dict]:
             # when we first saw the state, which is what "blocked · 4 min ago"
             # has to mean. Room `updatedAt` would be the last chat message, and
             # would read as 4 minutes for an agent blocked for an hour.
-            "since": float(extra.get("endedAt") or _first_seen(rid, state, now)),
+            # An ask the agent reported dates from the report.
+            "since": float(extra.get("endedAt") or extra.get("since") or _first_seen(rid, state, now)),
             "otherStates": sorted({f[0] for f in found[1:]}),
         }
         seen_now.add((rid, state))
-        for k in ("quote", "cause", "exitCode", "lastLines", "waitedSeconds"):
+        if extra.get("since"):
+            item["askedAt"] = float(extra["since"])     # the pages say "since 15:55"
+        for k in ("quote", "cause", "exitCode", "lastLines", "waitedSeconds", "askId"):
             if k in extra and extra[k] not in (None, ""):
                 item[k] = extra[k]
         items.append(item)
