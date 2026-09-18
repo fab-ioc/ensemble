@@ -2868,7 +2868,7 @@
   </div>
   <!-- Notifications: tasks that need a human. Self-contained under the `notif`
        name; project status bars open the full view of the same data. -->
-  <button id="notif-btn" class="bar-btn icon" title="Tasks that need you" aria-label="Tasks that need you">
+  <button id="notif-btn" class="bar-btn icon" title="What needs you" aria-label="What needs you">
     🔔<span id="notif-count" hidden>0</span>
   </button>
   <button id="me-btn" class="bar-btn avatar-btn" title="You — settings and preferences"
@@ -4399,16 +4399,41 @@ function topicCellHL(r, parsed) {
 let SERVER_MATCHES = new Map(); // roomId (or a session's id) → {hits, snippet}
 
 // A project's PO is not one of its tasks. It is reached from the pill and the
-// PO pane, so no list, board, search or attention list shows it as a row.
+// PO pane, so no list, board or search shows it as a row.
 function poRoomIds(projects) {
   return new Set((projects || []).filter(p => p.registered).map(p => p.poRoomId).filter(Boolean));
 }
 function isPoRoom(rid, poRooms) { return !!rid && poRooms.has(rid); }
-// A project's tasks: its sessions without its PO. Only the PO picker reads
-// pj.sessions whole, since there the PO is one of the choices.
+// A project's tasks: its sessions without its PO, or another project's PO whose
+// room is kept here. Only the PO picker reads pj.sessions whole, since there
+// the PO is one of the choices.
 function projectTasks(pj) {
-  const pos = poRoomIds(pj ? [pj] : []);
+  const pos = new Set([...currentPoRooms(), ...poRoomIds(pj ? [pj] : [])]);
   return ((pj && pj.sessions) || []).filter(s => !isPoRoom(s.roomId, pos));
+}
+// The one place a PO shows: the bell and Needs you, when it cannot go on. It is
+// blocked, has a prompt or a question waiting for you, or died. Idle or stalled
+// it never shows: a PO sits at its prompt most of the day. build_projects
+// (dashboard.py) counts by the same three states.
+const PO_NEEDS_STATES = ['blocked', 'waiting_for_you', 'agent_gone'];
+function poNeedsYou(attn) { return !!attn && PO_NEEDS_STATES.includes(attn.state); }
+// The attention items to show. A PO's item is named as the PO, under the
+// project it leads, with no task number; isPo sends its click to the PO.
+function attentionShown(items, projects) {
+  const out = [];
+  for (const it of items || []) {
+    const pj = (projects || []).find(p => p.registered && p.poRoomId && p.poRoomId === it.roomId);
+    if (!pj) out.push(it);
+    else if (poNeedsYou(it)) out.push({ ...it, isPo: true, title: 'PO', ref: '', projectId: pj.id, project: pj.name });
+  }
+  return out;
+}
+// A project's needs-you count: its tasks', and its PO when the bell lists it.
+// The PO belongs to the project that names it, whichever project keeps its room.
+function projectNeeds(pj, projects) {
+  const rid = pj && pj.registered && pj.poRoomId;
+  const po = rid && (projects || [pj]).flatMap(p => p.sessions || []).find(s => s.roomId === rid);
+  return projectTasks(pj).filter(x => x.attention).length + (po && poNeedsYou(po.attention) ? 1 : 0);
 }
 
 // What a quick search reads: what the row shows. A task shows its title; its
@@ -8113,9 +8138,13 @@ function poSplitProject() {
 // first project that has one. Null only when no project anywhere has a PO.
 function poContext() {
   const split = poSplitProject();
-  if (split) return split;
+  // A drawer opened for one project's PO shows that one, also over another
+  // project's Overview where the drawer is how a PO opens: Board wide, or a
+  // phone's open task.
   const pin = PO_PEEK && PO_PIN ? projectById(PO_PIN) : null;
-  if (pin && poRowOf(pin)) return pin;
+  const drawer = !split || boardWide() || !!(SELECTED_SID && isPhone());
+  if (drawer && pin && poRowOf(pin)) return pin;
+  if (split) return split;
   if (SELECTED_SID) {
     const r = ALL_ROWS.find(x => x.sessionId === SELECTED_SID);
     const pj = r && projectOfRoom(r.roomId || r.sessionId);
@@ -8185,6 +8214,9 @@ function renderPo() {
   // where the PO already leads the page. On a phone an open task keeps the bar,
   // so the pill opens the PO over the task and its × returns to it.
   if (split || !(ctx && poRowOf(ctx))) PO_PEEK = false;
+  // A pin lasts as long as its drawer: one that ended on its own (a PO came to
+  // lead the page) must not choose the PO the next time the pill opens it.
+  if (!PO_PEEK) PO_PIN = '';
   const pj = split || (PO_PEEK ? ctx : null);
   document.body.classList.toggle('po-split', !!split);
   document.body.classList.toggle('po-wide', wide);
@@ -8240,6 +8272,17 @@ function poNoteHtml() {
   return `<div class="po-note"><span>${what} The PO is the task you talk to about the project: the other tasks report to it, and its conversation leads this page. ${how}</span>`
     + `<button class="po-btn def po-choose" data-proj="${esc(pj.id)}"${hasTasks || hasPast ? '' : ' disabled'}>Choose the PO…</button></div>`;
 }
+// A project's PO, opened from somewhere else on the page (a balloon link, a
+// Needs you item): the drawer over the page you are on, or its own pane where a
+// PO leads the page. Before its row has loaded, the project it leads.
+function openPoOf(pj) {
+  if (!pj) return;
+  const split = poSplitProject();
+  if (!poRowOf(pj) || (split && !boardWide() && !(SELECTED_SID && isPhone()))) {
+    // A PO leads the page: this one, or go to the project this one leads.
+    if (!split || split.id !== pj.id) { SELECTED_PROJECT = pj.id; PROJECT_TAB = 'tasks'; WS_SCOPE = ''; SB_DEST = ''; renderRows(); }
+  } else { PO_PIN = pj.id; PO_PEEK = true; renderPo(); }
+}
 function poFocusComposer() {
   const f = document.querySelector('#po-panel iframe.po-session:not([hidden])');
   try { const i = f && f.contentDocument && f.contentDocument.getElementById('input'); if (i) i.focus(); } catch (e) {}
@@ -8249,6 +8292,20 @@ function poClosePeek() {
   renderPo();
   const b = document.getElementById('po-pill');
   if (b && !b.hidden) b.focus();
+}
+// The pill opens the PO it names, and closes the drawer it opened.
+function poPillClick() {
+  const ctx = poContext();
+  if (!ctx) return;
+  if (!poRowOf(ctx)) {           // no PO: go where the page says how to choose one
+    SELECTED_PROJECT = ctx.id; PROJECT_TAB = 'tasks'; WS_SCOPE = ''; SB_DEST = '';
+    renderRows(); return;
+  }
+  // Already leading the page — unless a task covers it, as it does on a phone.
+  if (poSplitProject() && !boardWide() && !(SELECTED_SID && isPhone())) { poFocusComposer(); return; }
+  PO_PEEK = !PO_PEEK; PO_PIN = ''; renderPo();
+  // Not on a phone: focus raises the keyboard over the conversation you came to read.
+  if (PO_PEEK && !isPhone()) poFocusComposer();
 }
 // ---- A past session made a PO: begin ----------------------------------------
 // A conversation started in a terminal, outside Ensemble, that already holds a
@@ -8533,20 +8590,7 @@ async function poChoose(pid, err) {
 }
 document.addEventListener('click', async (ev) => {
   const pill = ev.target.closest('#po-pill');
-  if (pill) {
-    const ctx = poContext();
-    if (!ctx) return;
-    if (!poRowOf(ctx)) {           // no PO: go where the page says how to choose one
-      SELECTED_PROJECT = ctx.id; PROJECT_TAB = 'tasks'; WS_SCOPE = ''; SB_DEST = '';
-      renderRows(); return;
-    }
-    // Already leading the page — unless a task covers it, as it does on a phone.
-    if (poSplitProject() && !boardWide() && !(SELECTED_SID && isPhone())) { poFocusComposer(); return; }
-    PO_PEEK = !PO_PEEK; if (!PO_PEEK) PO_PIN = ''; renderPo();
-    // Not on a phone: focus raises the keyboard over the conversation you came to read.
-    if (PO_PEEK && !isPhone()) poFocusComposer();
-    return;
-  }
+  if (pill) { poPillClick(); return; }
   const choose = ev.target.closest('.po-choose');
   if (choose) { poChoose(choose.dataset.proj); return; }
   const kb = ev.target.closest('.kind-btn');
@@ -8571,7 +8615,7 @@ document.addEventListener('click', async (ev) => {
   }
   // A peek closes when you click beside it — but not in the task it sits
   // beside, the bar, or a dialog it opened.
-  if (PO_PEEK && !ev.target.closest('#po-panel, #detail-panel, #modal, header, #detail-panel-resize')) poClosePeek();
+  if (PO_PEEK && !ev.target.closest('#po-panel, #detail-panel, #modal, header, #notif-tray, #detail-panel-resize')) poClosePeek();
 });
 
 // ---- Documents project: begin ------------------------------------------------
@@ -10413,7 +10457,8 @@ async function refresh({ now = false, until = 0 } = {}) {
     if (!_projInFlight && Date.now() - _projTs > 5000) {   // projects grouping refreshes on a slower cadence (git status is heavy)
       _projTs = Date.now();
       _projInFlight = true;
-      api('/api/projects').then(p => { PROJECTS = p; _projFailed = false; if (!SELECTED_PROJECT && PROJ_GROUPBY === 'project') renderRows(); })
+      // Which attention item is a PO's is known only once the projects are.
+      api('/api/projects').then(p => { PROJECTS = p; _projFailed = false; renderAttention(); if (!SELECTED_PROJECT && PROJ_GROUPBY === 'project') renderRows(); })
         .catch(() => { _projFailed = true; if (PROJ_GROUPBY === 'project') renderRows(); })   // older server without /api/projects → fall back to the flat list
         .finally(() => { _projInFlight = false; });
     }
@@ -10935,11 +10980,10 @@ async function updateRoomsBadge() {
   }
 }
 
-// The PO is not a task, so it is in no attention list either.
 function currentPoRooms() { return poRoomIds(PROJECTS && PROJECTS.projects); }
+// What the bell and Needs you list: attentionShown decides which PO items pass.
 function attentionItems() {
-  const pos = currentPoRooms();
-  return (ATTENTION.items || []).filter(i => !isPoRoom(i.roomId, pos));
+  return attentionShown(ATTENTION.items, PROJECTS && PROJECTS.projects);
 }
 
 function renderAttention() {
@@ -10949,13 +10993,13 @@ function renderAttention() {
   count.hidden = items.length === 0;
   btn.classList.toggle('has-items', items.length > 0);
   btn.title = items.length
-    ? `${items.length} task${items.length === 1 ? '' : 's'} need${items.length === 1 ? 's' : ''} you`
+    ? `${items.length} need${items.length === 1 ? 's' : ''} you`
     : 'Nothing needs you';
   $('#notif-sub').textContent = items.length ? '' : '— all clear';
   const list = $('#notif-list');
   const listed = writeSlot(list, items.length
     ? items.map(notifItemHtml).join('')
-    : '<div class="notif-empty">No task is waiting on you, stuck, or dead.</div>');
+    : '<div class="notif-empty">Nothing is waiting on you, stuck, or dead.</div>');
   if (listed) list.querySelectorAll('.notif-item').forEach(el => {
     el.onclick = () => openAttentionItem(el.dataset.room);
   });
@@ -10982,11 +11026,13 @@ function notifItemHtml(it) {
   </button>`;
 }
 
-// Straight to the task, and to the agent when the item names one.
+// Straight to the task, and to the agent when the item names one. A PO's item
+// opens the PO's conversation: a PO has no task panel to land on.
 function openAttentionItem(roomId) {
-  const it = ATTENTION_BY_ROOM.get(roomId);
+  const it = attentionItems().find(i => i.roomId === roomId);
   if (!it) return;
   $('#notif-tray').hidden = true;
+  if (it.isPo) { openPoOf(projectById(it.projectId)); return; }
   if (it.projectId && projectById(it.projectId)) {
     SELECTED_PROJECT = it.projectId; PROJECT_TAB = 'tasks';
   }
@@ -11435,7 +11481,7 @@ $('#proj-switch').addEventListener('click', (ev) => {
   m.innerHTML = `<button class="pm-item${!SELECTED_PROJECT ? ' on' : ''}" data-proj="">All projects</button>`
     + (list.length ? '<div class="pm-rule"></div>' : '')
     + list.map(pj => {
-        const needs = projectTasks(pj).filter(x => x.attention).length;
+        const needs = projectNeeds(pj, list);
         return `<button class="pm-item${SELECTED_PROJECT === pj.id ? ' on' : ''}" data-proj="${esc(pj.id)}">`
           + `<span class="pm-name">${esc(pj.name)}</span>`
           + (needs ? `<span class="pm-needs">${needs}</span>` : '') + '</button>';
@@ -11724,11 +11770,7 @@ function openMsgLink(rid, msg) {
   }
   GOTO_MSG.set(rid, msg);
   if (pj) {
-    const split = poSplitProject();
-    if (split && !boardWide() && !(SELECTED_SID && isPhone())) {
-      // A PO leads the page: this one, or go to the project this one leads.
-      if (split.id !== pj.id) { SELECTED_PROJECT = pj.id; PROJECT_TAB = 'tasks'; WS_SCOPE = ''; SB_DEST = ''; renderRows(); }
-    } else { PO_PIN = pj.id; PO_PEEK = true; renderPo(); }
+    openPoOf(pj);
   } else {
     openDetail(row.sessionId);
   }

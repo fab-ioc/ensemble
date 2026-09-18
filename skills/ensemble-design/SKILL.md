@@ -567,7 +567,9 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
 ### Attention vs. columns — a boundary that will decay if you let it
 
 `Needs you` means **something is stuck or waiting on a reply right now** — it clears itself when the
-condition ends. It is not a to-do list.
+condition ends. It is not a to-do list. A project's PO is no task, and appears there (named `PO`,
+opening its conversation) only when it is `blocked`, `waiting_for_you` or `agent_gone`, never idle
+or `stalled`.
 
 *In review* is a **column**, not an attention state: it is queued work for the owner, which is what a
 column is for. Do not feed columns into the notification count, or the count stops meaning "unblock
