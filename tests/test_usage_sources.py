@@ -358,12 +358,14 @@ class LaunchSettingsTests(unittest.TestCase):
         self.assertIn("usage_statusline.py", settings["statusLine"]["command"])
         self.assertTrue(brief)
 
-    def test_other_claude_launches_get_the_status_line_only(self):
+    def test_other_claude_launches_get_the_status_line_and_no_rtk(self):
         with mock.patch.object(dashboard, "_rtk_task_room", return_value=False):
             args, env, brief = dashboard._rtk_task_wiring({"id": "room-x"}, "claude")
             codex_args, _, _ = dashboard._rtk_task_wiring({"id": "room-x"}, "codex")
         settings = self.settings_of(args)
-        self.assertEqual(set(settings), {"statusLine"})
+        # The attention hooks (tests/test_agent_hooks.py) and the status line.
+        self.assertEqual(set(settings), {"hooks", "statusLine"})
+        self.assertNotIn("hook claude", json.dumps(settings["hooks"]))
         self.assertIn(usage.CLAUDE_STATUSLINE_FILE.as_posix(), settings["statusLine"]["command"])
         self.assertEqual((env, brief, codex_args), ({}, "", []))
 

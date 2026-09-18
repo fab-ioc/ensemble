@@ -26,13 +26,23 @@ answers *can it continue on its own?*; the reason answers *why not?*:
     team at launch — isn't working, and never answered anyone. A one-agent
     task idle at its prompt has only finished its turn, and is not stalled.
 
+What an agent says, before what its screen looks like
+------------------------------------------------------
+A hub-launched Claude agent tells the hub, through its hooks, the moment it
+takes a prompt, stops to ask, finishes its turn or ends (``agent_hooks.py``).
+A Claude session also publishes its own status (``busy`` / ``idle`` /
+``shell`` / ``waiting``) in ``~/.claude/sessions/<pid>.json``; ``waiting``
+means exactly "blocked on a permission or plan prompt". Both are the agent's
+own word, and the newer of the two is what it is doing — unless the screen has
+clearly moved on since (``_hook_status`` has the rules). The screen is the
+fallback: codex publishes nothing, so for codex the terminal *is* the evidence
+and every rule here works on the screen text alone; a Claude agent started
+before the hooks existed, or since a hub restart, has said nothing yet. And the
+walls a hook never sees — a usage limit, an expired login, the CLI's own error
+line — are always read off the screen.
+
 Reading a terminal
 ------------------
-A Claude session publishes its own status (``busy`` / ``idle`` / ``shell`` /
-``waiting``) in ``~/.claude/sessions/<pid>.json``; ``waiting`` means exactly
-"blocked on a permission or plan prompt". Codex publishes nothing, so for codex
-the terminal *is* the evidence and every rule here works on the screen text
-alone.
 
 Two things make that screen hostile to naive matching, both observed on live
 agents rather than imagined:
@@ -652,30 +662,43 @@ def _room_summaries() -> list[dict]:
 # Per-agent evidence
 # ---------------------------------------------------------------------------
 
-def _claude_status_by_session() -> dict[str, str]:
-    """{sessionId: status} for every live Claude session. The status is Claude's
-    own, and ``waiting`` means it is blocked on a permission or plan prompt."""
-    out: dict[str, str] = {}
+def _claude_status_by_session() -> dict[str, tuple[str, float]]:
+    """{sessionId: (status, since)} for every live Claude session. The status
+    is Claude's own, and ``waiting`` means it is blocked on a permission or plan
+    prompt; ``since`` is when it last changed (0 when the file does not say)."""
+    out: dict[str, tuple[str, float]] = {}
     try:
         for d in _d._read_session_files():
             sid = d.get("sessionId", "")
             if sid:
-                out[sid] = d.get("status", "") or ""
+                try:
+                    since = float(d.get("statusUpdatedAt") or 0) / 1000.0
+                except (TypeError, ValueError):
+                    since = 0.0
+                out[sid] = (d.get("status", "") or "", since)
     except Exception:
         pass
     return out
 
 
-def _evidence(part: dict, statuses: dict[str, str]) -> dict:
+def _evidence(part: dict, statuses: dict[str, tuple[str, float]]) -> dict:
     """Everything known about one agent right now: its terminal (alive or dead),
     what that terminal says, and what Claude says about itself."""
     ptyrun = _d.ptyrun
     pty_id = (part.get("ptyId") or "").strip()
     sess = ptyrun.get(pty_id) if pty_id else None
     alive = bool(sess and sess.alive())
-    tail, idle, death, submitted = "", None, None, 0.0
+    tail, idle, death, submitted, printed, hook = "", None, None, 0.0, 0.0, None
     if alive:
         tail, scan = _analyse_live(sess)
+        try:
+            printed = float(sess.last_output or 0)
+        except (TypeError, ValueError):
+            printed = 0.0
+        if (part.get("agent") or "") != "codex":
+            # Held per terminal: what an earlier run of this agent said is
+            # not about this one.
+            hook = _d.agent_hooks.state_for(pty_id)
         try:
             idle = sess.info().get("idleSeconds")
         except Exception:
@@ -699,11 +722,73 @@ def _evidence(part: dict, statuses: dict[str, str]) -> dict:
         if death:
             tail = death.get("tail", "") or ""
             scan = analyse(tail)
+    # The session the hub launched, else the one the agent's hooks name: a
+    # /clear or a resume can continue under a new id.
+    said = (statuses.get((part.get("sessionId") or "").strip())
+            or statuses.get((hook or {}).get("sessionId") or "") or ("", 0.0))
+    if isinstance(said, str):
+        said = (said, 0.0)
     return {
         "ptyId": pty_id, "alive": alive, "tail": tail, "idleSeconds": idle,
         "lastSubmit": submitted, "death": death, "scan": scan or {"block": None, "busy": False, "prompt": False},
-        "claudeStatus": statuses.get((part.get("sessionId") or "").strip(), ""),
+        "claudeStatus": said[0], "claudeStatusAt": said[1],
+        "hook": hook, "lastOutput": printed,
     }
+
+
+# How long after a hook the terminal must still be printing, with a working
+# indicator and no prompt on it, for the screen to count as having moved on.
+_HOOK_MOVED_ON = 5.0
+_HOOK_STATUS = {"working": "busy", "waiting": "waiting", "idle": "idle"}
+
+
+def _hook_status(ev: dict) -> str:
+    """What the agent's last hook says it is doing, in the status file's words
+    (``busy`` / ``waiting`` / ``idle``) — or "" when there is none or it can no
+    longer be believed, and the status file and the screen decide as before.
+
+    A hook is the agent's own word at one moment; what makes it wrong is only
+    ever a later moment nobody reported (a hook lost while the hub was slow,
+    a turn interrupted with Esc, which fires none). So it is dropped when
+    something newer contradicts it, never because of its age — an agent that
+    finished yesterday is still finished:
+
+    * **Another terminal's.** Held per terminal, so a relaunch starts clean.
+    * **The session ended.** Nothing to say about a live terminal: the screen.
+    * **The status file changed later, to something else.** It is Claude's
+      own word too, and the newer one. Approving a permission prompt flips it
+      to ``busy`` at once, where the tool's hook comes only when the tool is
+      done; an interrupted turn flips it to ``idle``; and a prompt typed while
+      a turn runs fires its hook then, not when its own turn starts — so that
+      turn begins, moments after the ``Stop`` before it, with the file alone
+      saying ``busy`` (measured: 40 ms apart, which is why there is no grace
+      period here). A later change that says the same leaves the hook in
+      charge: it knows more (see the prompt fallback in ``_classify_agent``).
+    * **"Working", on a terminal silent for ``_MIN_QUIET``.** A running turn
+      repaints its indicator every second. Silence means the turn ended with
+      no hook — or sits on a prompt whose hook was lost, which the screen
+      then shows.
+    * **"Waiting" or "idle", but the terminal has printed for more than
+      ``_HOOK_MOVED_ON`` seconds since, still is, and shows a working
+      indicator and no prompt.** It went back to work and the hook saying so
+      was lost.
+    """
+    hook = ev.get("hook") or {}
+    status = _HOOK_STATUS.get(hook.get("state") or "", "")
+    if not status:
+        return ""
+    at = float(hook.get("at") or 0)
+    if ev.get("claudeStatus") not in ("", status) and float(ev.get("claudeStatusAt") or 0) > at:
+        return ""
+    idle = ev.get("idleSeconds")
+    quiet = idle is not None and idle >= _MIN_QUIET
+    if status == "busy":
+        return "" if quiet else status
+    scan = ev.get("scan") or {}
+    if (scan.get("busy") and not scan.get("prompt") and not quiet
+            and float(ev.get("lastOutput") or 0) > at + _HOOK_MOVED_ON):
+        return ""
+    return status
 
 
 def _owed_since(room: dict, identity: str) -> tuple[float, str]:
@@ -761,7 +846,11 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
     kind = part.get("agent", "") or "agent"
     who = f"{identity} ({kind})" if kind != identity else identity
     block = ev["scan"]["block"]
-    if block and ev["alive"] and ev["claudeStatus"] == "busy":
+    # What Claude itself says it is doing: its last hook while that can be
+    # believed, else its status file. Codex says nothing, by either route.
+    hooked = _hook_status(ev) if ev["alive"] else ""
+    status = hooked or ev["claudeStatus"]
+    if block and ev["alive"] and status == "busy":
         # A Claude session that says it is working has not hit a wall: a real
         # refusal ends the turn. The screen verdict is kept, so a wall drawn
         # while the status file is a second behind is reported on the next
@@ -792,16 +881,18 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
         return ("blocked", f"{who} {why}: “{line}”",
                 {"quote": line, "cause": cause})
 
-    status = ev["claudeStatus"]
     if status == "waiting":
         return ("waiting_for_you", f"{who} is waiting on your answer to a prompt", {})
-    if status != "busy" and ev["scan"]["prompt"]:
+    if status != "busy" and ev["scan"]["prompt"] and hooked != "idle":
         # The screen is the fallback, and it is needed for two different
-        # reasons: codex publishes no status at all, and Claude does not flip
-        # to "waiting" for every prompt (an AskUserQuestion doesn't — see the
-        # same fallback in session.html's `looksLikePrompt`). A working
-        # indicator already rules the screen out, so this can't catch a
-        # thinking agent.
+        # reasons: codex publishes no status at all, and Claude's status file
+        # does not flip to "waiting" for every prompt (an AskUserQuestion
+        # doesn't — see the same fallback in session.html's `looksLikePrompt`).
+        # A working indicator already rules the screen out, so this can't
+        # catch a thinking agent. An agent whose hook says it finished its turn
+        # has no prompt up — its hooks report every one, the question too — so
+        # there the words of a prompt are the end of its own last message
+        # ("Would you like to…?").
         return ("waiting_for_you", f"{who} has a prompt on screen waiting for you", {})
 
     # A working indicator on a screen that has been still for a while is a
