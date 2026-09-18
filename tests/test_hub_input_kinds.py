@@ -138,7 +138,7 @@ class ClassifiedTurns(unittest.TestCase):
     def test_every_prefix_the_hub_types_is_listed(self):
         # The lines as the hub writes them start with a listed prefix.
         root = Path(dashboard.__file__).resolve().parent
-        sources = "".join((root / f).read_text(encoding="utf-8") for f in ("dashboard.py", "digest.py", "rotation.py"))
+        sources = "".join((root / f).read_text(encoding="utf-8") for f in ("dashboard.py", "digest.py", "due.py", "rotation.py"))
         for prefix, _ in dashboard.HUB_INPUT_KINDS:
             self.assertIn('"' + prefix, sources, f"nothing types {prefix!r} any more")
         self.assertTrue(dashboard.RESUME_NOTE.startswith("[resumed] "))

@@ -1617,7 +1617,7 @@ function foldHeld(items, comments) {
 // answers on the agent's; the page keeps no list of what the hub types): a hub
 // input is a row, every agent balloon says what it answers, and "Just us"
 // folds the replies to the hub too.
-const HUB_KIND_LABEL = { digest: 'Progress check', report: 'Report', relay: 'Team message',
+const HUB_KIND_LABEL = { digest: 'Progress check', due: 'Due now', report: 'Report', relay: 'Team message',
   resumed: 'Resumed', handover: 'Handover request', rotation: 'New session', madepo: 'Made PO', helper: 'Restart helper' };
 const isHubInput = m => !!m && m.from === 'user' && !!m.kind && m.kind !== 'human';
 const foldShort = t => { t = String(t || '').trim(); return t.length > 40 ? t.slice(0, 39) + '…' : t; };
@@ -1711,6 +1711,7 @@ function answerChip(a, N = CHAT_NAMES) {
     report: [`on a report from ${a.taskId ? taskName(a.taskId, N) + (a.reporter ? ' ' + a.reporter : '') : a.taskTitle ? 'task ' + foldShort(a.taskTitle) : 'a task'}`,
       `A reply to a report${a.reportKind ? ' (' + a.reportKind + ')' : ''} from ${task}, which the hub typed in`],
     digest: ['progress check', 'A reply to the hub’s progress check of the project'],
+    due: ['on a due item', 'A reply to the hub saying that something in the handover is due now'],
     relay: ['on a team message', 'A reply to the hub saying a teammate posted in the room'],
     resumed: ['after a resume', 'The first words after the task was started again'],
     handover: ['on the handover request', 'A reply to the hub asking for the handover to be written'],

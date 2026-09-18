@@ -41,6 +41,13 @@ settings; 0 turns them off):
    one line in the project's PO room. Neither wakes anyone: a rotation asks
    nothing of the PO or the CEO.
 
+A fresh session **carries on**: its first prompt has it summarise and, in the
+same turn, continue what the handover lists as in flight, due or promised; it
+waits only for a decision that is the CEO's. (Told to "summarise and wait", a
+fresh PO left a promised test undone for four hours, 2026-09-18.) The ask has
+the old session list what is due at a time under ``## Due``, which ``due.py``
+types into the idle session when the time comes.
+
 Only Claude POs are rotated: a PO is started from a prompt that holds its
 spec, which a Codex command line has no room for. Owners of both kinds are.
 
@@ -139,6 +146,18 @@ def handover_path(project: dict) -> Path:
 def task_handover_path(room: dict, part: dict) -> Path:
     base = room.get("taskDir") or part.get("cwd") or room.get("cwd") or ""
     return Path(base) / TASK_HANDOVER_NAME
+
+
+DUE_HEADING = "## Due"
+
+
+def due_rule(promised_to: str = "") -> str:
+    """What a handover ask says about the Due section (read by ``due.py``)."""
+    first = f", promises to {promised_to} first" if promised_to else ""
+    return (f"Give it a '{DUE_HEADING}' section: one line for each thing due at a time, as "
+            f"'- HH:MM — what' (24 h, this machine's local time; '- MM-DD HH:MM — what' "
+            f"when it is not today){first}; drop a line once it is done. When a line's "
+            f"time comes and the session is idle, the hub types it in as a [due] line, once.")
 
 
 def _mtime(p: Path) -> float:
@@ -599,7 +618,8 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
                   f"Write it now: what the project is, " if unwritten else
                   f"Bring {hp} up to date now: ")
                + f"priorities, decisions and why, what is in flight, what you "
-               f"have promised {_d.operator_name()}. Anything that is not in that file or in "
+               f"have promised {_d.operator_name()}. {due_rule(_d.operator_name())} "
+               f"Anything that is not in that file or in "
                f"ROADMAP.md will be forgotten. When it is current, end your turn; the hub "
                f"rotates you as soon as you are idle.")
     else:
@@ -609,7 +629,8 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
                f"Write {hp} now (replace it if it exists), holding: the current goal and "
                f"how far you got; decisions and why; branch and commits; changed files; "
                f"tests run and their results; open review findings; blockers; and the "
-               f"exact next action. Anything that is not in that file, the repo or the "
+               f"exact next action. {due_rule()} "
+               f"Anything that is not in that file, the repo or the "
                f"task's spec will be forgotten. When it is written, end your turn without "
                f"messaging anyone; the hub rotates you as soon as you are idle.")
     sess = _pty(part)
@@ -947,8 +968,17 @@ def first_prompt(project: dict, room: dict, old_sid: str, tokens) -> str:
         _d.OWNER_OUTPUT_NOTE,
         f"Now, before anything else, read {hp} (your handover) and {rp} (the roadmap). "
         f"They are everything you know about this project: priorities, decisions and "
-        f"why, what is in flight, what has been promised to {_d.operator_name()}. "
-        f"Then reply with a short summary of where things stand, and wait.",
+        f"why, what is in flight, what has been promised to {_d.operator_name()}, and "
+        f"under '{DUE_HEADING}' what is due at a time.",
+        # The summary is not the end of the turn: a fresh PO that summarised and
+        # waited left a promised test undone for four hours (2026-09-18).
+        f"Then reply with a short summary of where things stand, and in the same "
+        f"message say what you are carrying on with ('Carrying on with: …'): whatever "
+        f"the handover lists as in flight, due or promised is yours now, so continue "
+        f"it at once, promises to {_d.operator_name()} first, without being asked again. "
+        f"Wait only where the handover says the decision is {_d.operator_name()}'s, and "
+        f"say which decision that is. A '{DUE_HEADING}' item whose time is still to come "
+        f"is typed to you by the hub as a [due] line when it comes, if you are idle then.",
     ]
     return "\n\n".join(parts)
 
@@ -986,7 +1016,11 @@ def task_first_prompt(room: dict, old_sid: str, tokens, hp: Path, solo: bool,
     ]
     if not solo:
         parts.append("Then read any messages that arrived meanwhile with chat_read.")
-    parts.append(f"Then carry on with the next action. When this conversation grows "
+    parts.append(f"Then carry on with the next action and with whatever else the handover "
+                 f"lists as in flight, due or promised: do not stop after a summary, and "
+                 f"stop only for a decision that is not yours to make. What it lists under "
+                 f"'{DUE_HEADING}' for a time still to come, the hub types to you as a [due] "
+                 f"line when it comes, if you are idle then. When this conversation grows "
                  f"long again the hub will ask you to rewrite {TASK_HANDOVER_NAME}.")
     return "\n\n".join(parts)
 

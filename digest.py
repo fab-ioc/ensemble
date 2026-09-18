@@ -53,6 +53,9 @@ again. A task's report here is always its last real one
 The first check of a project ever records the baseline without sending — the
 PO already knows the state it started from.
 
+A digest never wakes a PO at a time: what its handover says is due at a time
+is ``due.py``, which rides this scheduler's loop.
+
 Bound to the dashboard module like ``attention``: nothing here reads ``_d`` at
 import time.
 """
@@ -63,6 +66,8 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+
+import due
 
 # Windows: the model call must not open a console window (a console-less host,
 # pythonw.exe, would otherwise give it one and lose the keyboard focus to it).
@@ -662,6 +667,13 @@ def start_scheduler() -> None:
                 _tick()
             except Exception as e:          # keep the loop alive
                 _log(f"scheduler error: {str(e)[:200]}")
+            # What a handover says is due at a time (due.py) rides this loop,
+            # once a minute whatever a project's interval: a digest that is
+            # off, or has nothing new, must not keep a promise from its PO.
+            try:
+                due.maybe_tick()
+            except Exception as e:
+                _log(f"due check error: {str(e)[:200]}")
             time.sleep(TICK_S)
 
     threading.Thread(target=loop, daemon=True, name="po-digest").start()
