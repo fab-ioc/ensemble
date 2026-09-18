@@ -770,7 +770,12 @@ def _newest_rate_limits(files) -> dict[str, tuple[dict, float]]:
                         best[bucket] = (limits, at)
         except OSError:
             continue
-        if best:
+        if CODEX_MAIN_POOL in best:
+            # Counted from the main pool's first record, not from any bucket's:
+            # with the newest sessions all on the reserve the count ran out
+            # before a main record was reached, and the main pool left the
+            # board. The caller's file budget still bounds the walk.
+            #
             # Files are ordered by mtime, but the records we want are ordered
             # by their own timestamps, and the two can disagree: a rollout
             # touched a minute ago may hold nothing newer than an hour-old

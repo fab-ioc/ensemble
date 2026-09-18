@@ -400,6 +400,14 @@ class SessionRecords(_Case):
         self.assertEqual(wins[("codex", "seven_day")]["percent"], 98.0)
         self.assertEqual(wins[("base_model_inference", "seven_day")]["percent"], 0.0)
 
+    def test_the_main_pool_is_found_behind_a_run_of_reserve_sessions(self):
+        files = [self.rollout(_turn("gpt-reserve"), _count(NOW - 60 * n, 10 + n, RESERVE_RESET))
+                 for n in range(1, 6)]
+        files.append(self.rollout(_turn("gpt-6-astra"), _count(NOW - 900, 37, MAIN_RESET)))
+        wins = self.by_pool(usage.read_codex(NOW, files=files))
+        self.assertEqual(wins[("codex", "seven_day")]["percent"], 37.0)
+        self.assertEqual(wins[("base_model_inference", "seven_day")]["percent"], 11.0)
+
     def test_a_session_that_changes_model_is_read_turn_by_turn(self):
         one = self.rollout(_turn("gpt-reserve"), _count(NOW - 300, 3, RESERVE_RESET),
                            _turn("gpt-6-astra"), _count(NOW - 200, 40, MAIN_RESET),
