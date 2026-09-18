@@ -119,7 +119,7 @@ class TaskSearchPage(unittest.TestCase):
             self.assertIn("projectTasks(", body, head)
             self.assertNotIn(".sessions", body, head + " lists the PO as a task")
         switch = INDEX[INDEX.index("$('#proj-switch').addEventListener('click'"):]
-        self.assertIn("projectNeeds(pj)", switch[:switch.index("\n});\n")], "the project menu's needs count")
+        self.assertIn("projectNeeds(pj, list)", switch[:switch.index("\n});\n")], "the project menu's needs count")
         self.assertIn("projectTasks(pj).filter(x => x.attention)", fn(INDEX, "function projectNeeds("))
         self.assertIn("(pj.sessions || []).filter(s => s.roomId)", fn(INDEX, "async function poChoose("),
                       "the PO picker still offers the PO")

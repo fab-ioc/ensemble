@@ -3340,7 +3340,8 @@ def build_projects() -> dict:
     # A project's PO is not one of its tasks: it stays in `sessions` (the page
     # finds and chooses the PO there) and is never a task live. It needs you
     # only when it cannot go on (PO_NEEDS_STATES), as in the bell.
-    po_rooms = {p.get("poRoomId") for p in projects_reg if p.get("poRoomId")}
+    # It counts for the project that names it, whichever project keeps its room.
+    po_rooms = {p["poRoomId"]: p["id"] for p in projects_reg if p.get("poRoomId")}
     needs_you = 0
     agents_live = 0
     for s in rows:
@@ -3357,7 +3358,7 @@ def build_projects() -> dict:
         g["updatedAt"] = max(g["updatedAt"], s.get("updatedAt") or 0)
         if s.get("roomId") and s.get("roomId") in po_rooms:
             if (s.get("attention") or {}).get("state") in PO_NEEDS_STATES:
-                g["waiting"] += 1
+                groups[po_rooms[s["roomId"]]]["waiting"] += 1
                 needs_you += 1
             continue
         if s.get("isLive"):

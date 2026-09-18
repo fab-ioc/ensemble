@@ -4404,10 +4404,11 @@ function poRoomIds(projects) {
   return new Set((projects || []).filter(p => p.registered).map(p => p.poRoomId).filter(Boolean));
 }
 function isPoRoom(rid, poRooms) { return !!rid && poRooms.has(rid); }
-// A project's tasks: its sessions without its PO. Only the PO picker reads
-// pj.sessions whole, since there the PO is one of the choices.
+// A project's tasks: its sessions without its PO, or another project's PO whose
+// room is kept here. Only the PO picker reads pj.sessions whole, since there
+// the PO is one of the choices.
 function projectTasks(pj) {
-  const pos = poRoomIds(pj ? [pj] : []);
+  const pos = new Set([...currentPoRooms(), ...poRoomIds(pj ? [pj] : [])]);
   return ((pj && pj.sessions) || []).filter(s => !isPoRoom(s.roomId, pos));
 }
 // The one place a PO shows: the bell and Needs you, when it cannot go on. It is
@@ -4428,8 +4429,10 @@ function attentionShown(items, projects) {
   return out;
 }
 // A project's needs-you count: its tasks', and its PO when the bell lists it.
-function projectNeeds(pj) {
-  const po = pj && pj.registered && pj.poRoomId && (pj.sessions || []).find(s => s.roomId === pj.poRoomId);
+// The PO belongs to the project that names it, whichever project keeps its room.
+function projectNeeds(pj, projects) {
+  const rid = pj && pj.registered && pj.poRoomId;
+  const po = rid && (projects || [pj]).flatMap(p => p.sessions || []).find(s => s.roomId === rid);
   return projectTasks(pj).filter(x => x.attention).length + (po && poNeedsYou(po.attention) ? 1 : 0);
 }
 
@@ -8135,9 +8138,13 @@ function poSplitProject() {
 // first project that has one. Null only when no project anywhere has a PO.
 function poContext() {
   const split = poSplitProject();
-  if (split) return split;
+  // A drawer opened for one project's PO shows that one, also over another
+  // project's Overview where the drawer is how a PO opens: Board wide, or a
+  // phone's open task.
   const pin = PO_PEEK && PO_PIN ? projectById(PO_PIN) : null;
-  if (pin && poRowOf(pin)) return pin;
+  const drawer = !split || boardWide() || !!(SELECTED_SID && isPhone());
+  if (drawer && pin && poRowOf(pin)) return pin;
+  if (split) return split;
   if (SELECTED_SID) {
     const r = ALL_ROWS.find(x => x.sessionId === SELECTED_SID);
     const pj = r && projectOfRoom(r.roomId || r.sessionId);
@@ -11470,7 +11477,7 @@ $('#proj-switch').addEventListener('click', (ev) => {
   m.innerHTML = `<button class="pm-item${!SELECTED_PROJECT ? ' on' : ''}" data-proj="">All projects</button>`
     + (list.length ? '<div class="pm-rule"></div>' : '')
     + list.map(pj => {
-        const needs = projectNeeds(pj);
+        const needs = projectNeeds(pj, list);
         return `<button class="pm-item${SELECTED_PROJECT === pj.id ? ' on' : ''}" data-proj="${esc(pj.id)}">`
           + `<span class="pm-name">${esc(pj.name)}</span>`
           + (needs ? `<span class="pm-needs">${needs}</span>` : '') + '</button>';

@@ -56,6 +56,8 @@ const ATTENTION = { items: [
   item('po-unreg', 'blocked', { title: 'Not a PO here' }),
 ] };
 const projectById = id => PROJECTS.projects.find(p => p.id === id) || null;
+let CURRENT = PROJECTS.projects;
+const currentPoRooms = () => poRoomIds(CURRENT);
 const before = JSON.stringify(ATTENTION.items);
 const shown = attentionItems();
 log.untouched = JSON.stringify(ATTENTION.items) === before;
@@ -63,33 +65,63 @@ log.shown = shown.map(i => i.roomId);
 log.pos = shown.filter(i => i.isPo).map(i => [i.roomId, i.title, i.ref, i.projectId, i.project]);
 log.task = shown.find(i => i.roomId === 'room-a');
 log.noProjects = attentionShown(ATTENTION.items, null).length;
-log.needs = PROJECTS.projects.map(projectNeeds);
+log.needs = PROJECTS.projects.map(p => projectNeeds(p, PROJECTS.projects));
+// A PO whose room is kept in another project: A's blocked PO and C's stalled PO sit in B's sessions.
+const LINK = [
+  { id: 'a', name: 'A', registered: true, poRoomId: 'po-a', sessions: [{ roomId: 'a-task', attention: null }] },
+  { id: 'b', name: 'B', registered: true, poRoomId: 'po-b', sessions: [{ roomId: 'po-b', attention: null },
+    { roomId: 'po-a', attention: { state: 'blocked' } }, { roomId: 'po-c', attention: { state: 'stalled' } }] },
+  { id: 'c', name: 'C', registered: true, poRoomId: 'po-c', sessions: [] },
+];
+CURRENT = LINK;
+log.linkNeeds = LINK.map(p => projectNeeds(p, LINK));
+log.linkTasks = LINK.map(p => projectTasks(p).map(s => s.roomId));
+log.linkShown = attentionShown([item('po-a', 'blocked', { projectId: 'b', project: 'B' }),
+                                item('po-c', 'stalled', { projectId: 'b', project: 'B' })], LINK).map(i => [i.roomId, i.projectId, i.project]);
+CURRENT = PROJECTS.projects;
 log.bellPo = notifItemHtml(shown[0]);
 log.bellTask = notifItemHtml(log.task);
 log.page = needsYouHtml();
 
-// Opening: what the page would do, written down instead of done.
-let PO_PEEK = false, PO_PIN = '', SELECTED_PROJECT = '', PROJECT_TAB = 'changes', WS_SCOPE = 'x', SB_DEST = 'needsyou', SELECTED_SID = '';
-let SPLIT = null, WIDE = false, PHONE = false, ROWS = true, calls = [];
-const poSplitProject = () => SPLIT;
-const boardWide = () => WIDE;
+// Opening: the page's own poContext, poSplitProject, poRowOf and renderPo run
+// over a stand-in for #po-panel, so what is read is the conversation shown.
+let PO_PEEK = false, PO_PIN = '', PO_LAST = '', SELECTED_PROJECT = '', PROJECT_TAB = 'changes', WS_SCOPE = 'x', SB_DEST = 'needsyou', SELECTED_SID = '';
+let WIDE = false, PHONE = false, calls = [], ALL_ROWS = [];
+const UNASSIGNED_ID = '__unassigned__', VIEW_MODE = 'board';
+const ROWS = PROJECTS.projects.flatMap(p => p.sessions.map(s => ({ roomId: s.roomId, sessionId: s.roomId })));
+const registeredProjects = () => PROJECTS.projects.filter(p => p.registered);
+const boardWide = () => WIDE && !PHONE;
 const isPhone = () => PHONE;
-const poRowOf = pj => (ROWS && pj && pj.poRoomId ? { roomId: pj.poRoomId } : null);
-const renderPo = () => calls.push('renderPo');
-const renderRows = () => calls.push('renderRows');
+const el = () => ({ hidden: false, dataset: {}, kids: [], className: '',
+  querySelectorAll() { return this.kids; }, appendChild(k) { this.kids.push(k); }, remove() {} });
+let head, frames, panel;
+const document = { getElementById: id => (id === 'po-panel' ? panel : null), createElement: el,
+  body: { classList: { on: new Set(), toggle(c, v) { v ? this.on.add(c) : this.on.delete(c); } } } };
+const renderPoPill = () => {}, focusKeyIn = () => null, restoreFocus = () => {};
+const poHeadHtml = (pj, row) => pj.id + ':' + row.roomId;
+const renderRows = () => { calls.push('renderRows'); renderPo(); };
 const openDetail = id => calls.push('openDetail:' + id);
 const open = (rid, setup) => {
   PO_PEEK = false; PO_PIN = ''; SELECTED_PROJECT = ''; PROJECT_TAB = 'changes'; SB_DEST = 'needsyou'; SELECTED_SID = '';
-  SPLIT = null; WIDE = false; PHONE = false; ROWS = true; calls = []; tray.hidden = false;
-  if (setup) setup();
+  WIDE = false; PHONE = false; ALL_ROWS = ROWS; calls = []; tray.hidden = false;
+  head = el(); frames = el(); document.body.classList.on.clear();
+  panel = { hidden: true, built: false, set innerHTML(v) { this.built = true; },
+            querySelector(sel) { return !this.built ? null : sel === '.po-frames' ? frames : head; } };
+  if (setup) { setup(); renderPo(); }
   openAttentionItem(rid);
-  return { calls, peek: PO_PEEK, pin: PO_PIN, project: SELECTED_PROJECT, tab: PROJECT_TAB, dest: SB_DEST, tray: tray.hidden };
+  const lit = frames.kids.filter(f => !f.hidden).map(f => f.dataset.room);
+  return { calls, peek: PO_PEEK, pin: PO_PIN, project: SELECTED_PROJECT, tab: PROJECT_TAB, dest: SB_DEST, tray: tray.hidden,
+           drawer: document.body.classList.on.has('po-peek'), leads: document.body.classList.on.has('po-split'),
+           room: panel.hidden ? '' : head.dataset.room, lit };
 };
+const overview = id => () => { SELECTED_PROJECT = id; PROJECT_TAB = 'tasks'; SB_DEST = ''; };
 log.openPo = open('po-blocked');
-log.openPoLeading = open('po-blocked', () => { SPLIT = projectById('p1'); SELECTED_PROJECT = 'p1'; PROJECT_TAB = 'tasks'; SB_DEST = ''; });
-log.openPoOtherLeading = open('po-gone', () => { SPLIT = projectById('p1'); SELECTED_PROJECT = 'p1'; PROJECT_TAB = 'tasks'; SB_DEST = ''; });
-log.openPoWide = open('po-waiting', () => { SPLIT = projectById('p2'); WIDE = true; });
-log.openPoNoRow = open('po-blocked', () => { ROWS = false; });
+log.openPoLeading = open('po-blocked', overview('p1'));
+log.openPoOtherLeading = open('po-gone', overview('p1'));
+log.openPoWide = open('po-waiting', () => { overview('p2')(); WIDE = true; });
+log.openPoOtherWide = open('po-gone', () => { overview('p1')(); WIDE = true; });
+log.openPoOtherPhoneTask = open('po-gone', () => { overview('p1')(); PHONE = true; SELECTED_SID = 'room-a'; });
+log.openPoNoRow = open('po-blocked', () => { ALL_ROWS = []; });
 log.openTask = open('room-a');
 log.openHidden = open('po-stalled');
 console.log(JSON.stringify(log));
@@ -102,7 +134,8 @@ class PoNeedsYouPage(unittest.TestCase):
     def setUpClass(cls):
         i = INDEX.index("// ---- Task search: begin")
         heads = ("function attentionItems(", "function notifItemHtml(", "function needsYouHtml(",
-                 "function openAttentionItem(", "function openPoOf(")
+                 "function openAttentionItem(", "function openPoOf(", "function poRowOf(",
+                 "function projectOfRoom(", "function poSplitProject(", "function poContext(", "function renderPo(")
         src = "\n".join([INDEX[i:INDEX.index("// ---- Task search: end", i)]] + [fn(INDEX, h) for h in heads])
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "po_needs_you.cjs"
@@ -146,24 +179,34 @@ class PoNeedsYouPage(unittest.TestCase):
 
     def test_the_click_opens_the_po_not_the_task_panel(self):
         o = self.r["openPo"]
-        self.assertEqual((o["calls"], o["peek"], o["pin"]), (["renderPo"], True, "p1"),
+        self.assertEqual((o["drawer"], o["room"], o["lit"], o["pin"]), (True, "po-blocked", ["po-blocked"], "p1"),
                          "the drawer over the page you are on")
         self.assertEqual((o["dest"], o["tray"]), ("needsyou", True), "Needs you stays under it; the tray closes")
         lead = self.r["openPoLeading"]
-        self.assertEqual((lead["calls"], lead["peek"]), ([], False), "already leading the Overview")
-        other = self.r["openPoOtherLeading"]
-        self.assertEqual((other["calls"], other["project"], other["tab"], other["peek"]),
-                         (["renderRows"], "p3", "tasks", False), "another project's PO: its Overview")
+        self.assertEqual((lead["calls"], lead["drawer"], lead["leads"], lead["room"]), ([], False, True, "po-blocked"),
+                         "already leading the Overview")
         wide = self.r["openPoWide"]
-        self.assertEqual((wide["calls"], wide["peek"], wide["pin"]), (["renderPo"], True, "p2"),
+        self.assertEqual((wide["drawer"], wide["room"], wide["lit"]), (True, "po-waiting", ["po-waiting"]),
                          "Board wide: the PO is the drawer")
-        for k in ("openPo", "openPoLeading", "openPoOtherLeading", "openPoWide", "openPoNoRow"):
-            self.assertFalse([c for c in self.r[k]["calls"] if c.startswith("openDetail")], k)
+        for k, o in self.r.items():
+            if k.startswith("openPo"):
+                self.assertFalse([c for c in o["calls"] if c.startswith("openDetail")], k)
+
+    def test_another_projects_po_is_the_one_that_opens(self):
+        other = self.r["openPoOtherLeading"]
+        self.assertEqual((other["project"], other["tab"], other["leads"], other["drawer"], other["room"], other["lit"]),
+                         ("p3", "tasks", True, False, "po-gone", ["po-gone"]), "a PO leads the page: go to the one asked for")
+        wide = self.r["openPoOtherWide"]
+        self.assertEqual((wide["project"], wide["drawer"], wide["room"], wide["lit"]),
+                         ("p1", True, "po-gone", ["po-gone"]), "Board wide on One's Overview: Three's PO in the drawer")
+        phone = self.r["openPoOtherPhoneTask"]
+        self.assertEqual((phone["project"], phone["drawer"], phone["room"], phone["lit"]),
+                         ("p1", True, "po-gone", ["po-gone"]), "a phone's open task on One's Overview: the same")
 
     def test_a_po_whose_row_has_not_loaded_opens_its_project(self):
         o = self.r["openPoNoRow"]
-        self.assertEqual((o["calls"], o["project"], o["tab"], o["dest"], o["peek"]),
-                         (["renderRows"], "p1", "tasks", "", False))
+        self.assertEqual((o["calls"], o["project"], o["tab"], o["dest"], o["peek"], o["room"]),
+                         (["renderRows"], "p1", "tasks", "", False, ""))
 
     def test_a_task_still_opens_its_panel(self):
         o = self.r["openTask"]
@@ -176,12 +219,17 @@ class PoNeedsYouPage(unittest.TestCase):
     def test_a_projects_count_agrees_with_the_bell(self):
         self.assertEqual(self.r["needs"], [2, 1, 1, 0, 0, 0], "p1: its blocked PO and its stalled task")
 
+    def test_a_po_belongs_to_the_project_that_names_it(self):
+        self.assertEqual(self.r["linkShown"], [["po-a", "a", "A"]], "the bell lists it under A")
+        self.assertEqual(self.r["linkNeeds"], [1, 0, 0], "A's menu counts it; B's counts neither PO kept there")
+        self.assertEqual(self.r["linkTasks"], [["a-task"], [], []], "another project's PO is no task of B's")
+
     def test_the_page_uses_it(self):
         self.assertIn("attentionShown(ATTENTION.items", fn(INDEX, "function attentionItems("))
         self.assertEqual(INDEX.count("PO_NEEDS_STATES"), 2, "one place decides which PO items pass")
         self.assertIn("openPoOf(pj);", fn(INDEX, "function openMsgLink("), "one way to open a project's PO")
         self.assertNotIn("PO_PEEK = true", fn(INDEX, "function openMsgLink("))
-        self.assertIn("projectNeeds(pj)", INDEX[INDEX.index("$('#proj-switch').addEventListener('click'"):])
+        self.assertIn("projectNeeds(pj, list)", INDEX[INDEX.index("$('#proj-switch').addEventListener('click'"):])
         self.assertIn("if (rid && ATTENTION_BY_ROOM.has(rid)) { openAttentionItem(rid); return; }", INDEX,
                       "a Needs you row opens through the same function as the bell's")
         self.assertRegex(INDEX, r"PO_PEEK && !ev\.target\.closest\('[^']*#notif-tray[^']*'\)\) poClosePeek\(\)",
@@ -221,6 +269,25 @@ class ProjectCountsThePoThatCannotGoOn(unittest.TestCase):
                  {"roomId": "room-b", "sessionId": "room-b", "attention": {"state": "stalled"}}]
         self.assertEqual(self.build({"isLive": True, "attention": {"state": "blocked"}}, tasks), (1, 3, 3, 1))
         self.assertEqual(self.build({"isLive": True, "status": "waiting"}, tasks), (1, 2, 2, 1))
+
+    def test_a_po_kept_in_another_project_counts_for_the_one_that_names_it(self):
+        reg = [{"id": "a", "name": "A", "path": "", "poRoomId": "po-a"},
+               {"id": "b", "name": "B", "path": "", "poRoomId": "po-b"},
+               {"id": "c", "name": "C", "path": "", "poRoomId": "po-c"}]
+        rows = [{"roomId": "po-a", "sessionId": "po-a", "isLive": True, "attention": {"state": "blocked"}},
+                {"roomId": "po-c", "sessionId": "po-c", "isLive": True, "status": "waiting", "attention": {"state": "stalled"}},
+                {"roomId": "po-b", "sessionId": "po-b", "isLive": True, "status": "waiting"}]
+        links = {r["roomId"]: "b" for r in rows}
+        with mock.patch.object(dashboard, "load_projects", return_value=reg), \
+                mock.patch.object(dashboard, "load_session_projects", return_value=links), \
+                mock.patch.object(dashboard, "load_sessions", return_value=rows), \
+                mock.patch.object(dashboard, "project_home", return_value=""):
+            out = dashboard.build_projects()
+        by = {p["id"]: p for p in out["projects"]}
+        self.assertEqual([(by[k]["waiting"], by[k]["live"]) for k in "abc"], [(1, 0), (0, 0), (0, 0)])
+        self.assertEqual(out["summary"]["needsYou"], 1)
+        self.assertEqual(sorted(s["roomId"] for s in by["b"]["sessions"]), ["po-a", "po-b", "po-c"],
+                         "the rooms stay where they are kept")
 
     def test_the_page_and_the_hub_name_the_same_states(self):
         i = INDEX.index("const PO_NEEDS_STATES = [")
