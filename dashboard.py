@@ -5227,8 +5227,11 @@ def load_recent(n: int = 100) -> list[dict]:
 # a couple of seconds, and dropped as soon as any write request completes, so an
 # action is never followed by a stale list.
 _SESS_TTL = 2.0
-# How far back the list looks for a session no task holds, once it is past the
-# newest n transcripts.
+# Sessions no task holds have a window of their own, so no number of tasks
+# pushes one out: the newest SESSION_LIST_OWN_CAP of each kind (Claude, Codex),
+# and past that many transcripts none older than SESSION_LIST_MAX_AGE. The
+# caller's `n` bounds the task rows alone (_cut_task_rows).
+SESSION_LIST_OWN_CAP = 500
 SESSION_LIST_MAX_AGE = 365 * 86400
 _SESS_GEN = 0
 _SESS_CACHE: dict[int, tuple[float, int, list]] = {}
@@ -5253,9 +5256,39 @@ def load_sessions(n: int = 200) -> list[dict]:
     return [dict(r) for r in rows]      # callers may annotate rows; never the cached ones
 
 
+def _spec_rev(spec) -> str:
+    """A few characters that change when the spec does; "" for no spec."""
+    spec = spec if isinstance(spec, str) else ""
+    if not spec.strip():
+        return ""
+    return hashlib.sha1(spec.encode("utf-8", "replace")).hexdigest()[:10]
+
+
+def _cut_task_rows(room_rows: list[dict], n: int) -> list[dict]:
+    """At most `n` task rows, and only a finished task is ever left out: one
+    that runs, needs someone, is a project's PO or sits in any column before
+    Done stays whatever `n` is (the board, the task panel and the PO pill all
+    find their task in this list). The finished ones fill what is left of `n`,
+    the most recently active first."""
+    try:
+        po_rooms = {p.get("poRoomId") for p in load_projects() if p.get("poRoomId")}
+    except Exception:
+        po_rooms = set()
+
+    def _needed(r: dict) -> bool:
+        return bool(r.get("isLive") or r.get("attention") or r.get("draft")
+                    or r.get("workflow") != "done" or r.get("roomId") in po_rooms)
+    needed = [r for r in room_rows if _needed(r)]
+    rest = sorted((r for r in room_rows if not _needed(r)),
+                  key=lambda r: -(r.get("updatedAt") or 0))
+    return needed + rest[:max(0, n - len(needed))]
+
+
 def _load_sessions_uncached(n: int = 200) -> list[dict]:
     """Unified view: recent transcripts with live-state overlaid where applicable.
-    Sorted by updatedAt desc, so active live sessions naturally float to the top."""
+    Sorted by updatedAt desc, so active live sessions naturally float to the top.
+    `n` bounds the task rows (_cut_task_rows); the sessions no task holds have
+    their own window (SESSION_LIST_OWN_CAP), so tasks never push one out."""
     live_by_sid = {s["sessionId"]: s for s in load_live()}
     rows = []
     for jsonl in PROJ_DIR.glob("*/*.jsonl"):
@@ -5273,8 +5306,9 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
     # What the hub's tasks hold: each agent's conversation and folder. Those
     # never make a row of their own (the task is the row), and owners, reviewers
     # and PO rotations write many transcripts a day, so they must not use up the
-    # window either: `n` counts the rows kept, not the files looked at. Read
+    # window either: it counts the rows kept, not the files looked at. Read
     # once per load, for the task rows below too.
+    own_cap = SESSION_LIST_OWN_CAP
     def _norm_cwd(p: str) -> str:
         return os.path.normcase(os.path.normpath(p)) if p else ""
     try:
@@ -5298,11 +5332,11 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
     out: list[dict] = []
     seen: set[str] = set()
     for i, (mtime, jsonl) in enumerate(rows):
-        if len(out) >= n:
+        if len(out) >= own_cap:
             break
-        # Past the newest n files only what no task holds is looked for, and
-        # not further back than a year.
-        if i >= n and mtime < oldest:
+        # Past the newest own_cap files only what no task holds is looked for,
+        # and not further back than a year.
+        if i >= own_cap and mtime < oldest:
             break
         sid = jsonl.stem
         # Dedupe by session id — the same transcript may appear in multiple
@@ -5431,7 +5465,7 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                     and _norm_cwd(cs.cwd) not in codex_live))
     try:
         codex_sessions = agents.get_agent("codex").list_sessions(
-            limit=n, dropped=_codex_dropped, max_age=SESSION_LIST_MAX_AGE)
+            limit=own_cap, dropped=_codex_dropped, max_age=SESSION_LIST_MAX_AGE)
     except Exception:
         codex_sessions = []
     _claimed_cwds: set[str] = set()
@@ -5545,7 +5579,11 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                                 if chatroom.is_on_mention(rm, p) else {})}
                             for p in agents_in],
                 "label": labels.get(rid) or rm.get("title", ""), "cwd": rm.get("cwd", ""),
-                "spec": rm.get("spec", ""), "taskDir": rm.get("taskDir", ""),
+                # The spec is two thirds of this answer's bytes and is read in
+                # one pane of one open task, so every poll carries only what
+                # tells the page a spec changed; the text is /api/room?part=spec.
+                "specRev": _spec_rev(rm.get("spec", "")),
+                "taskDir": rm.get("taskDir", ""),
                 "priority": priority_of(rm),
                 "priorityName": PRIORITY_NAMES[priority_of(rm)],
                 "workflow": workflow_of(rm),
@@ -5626,7 +5664,7 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
             "cost": sum(r.get("cost", 0) or 0 for r in rs),
             "currentTheme": "", "first": "", "last": "", "transcriptPath": "",
         })
-    out.extend(room_rows)
+    out.extend(_cut_task_rows(room_rows, n))
     # Flag sessions run OUTSIDE the dashboard (cwd not under ~/cs) so the UI can
     # optionally hide them. Headless rooms/orphans are always dashboard-managed.
     cs_root_n2 = os.path.normcase(os.path.normpath(str(CS_ROOT)))
@@ -5641,7 +5679,7 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
         r.setdefault("workflow", "backlog")
         r.setdefault("workflowName", WORKFLOW_LABELS[r["workflow"]])
     out.sort(key=_key)
-    return out[:n]
+    return out
 
 
 # ---------- self-update ----------
@@ -7311,6 +7349,13 @@ class Handler(BaseHTTPRequestHandler):
             room = chatroom.get_room(rid) if rid else None
             if room is None:
                 self._send_json(404, {"error": "no_such_room"})
+                return
+            # &part=spec: the spec alone, for the task panel's Spec pane (the
+            # polled list carries only specRev). A PO's room is megabytes.
+            if q.get("part", [""])[0] == "spec":
+                spec = room.get("spec", "")
+                self._send_json(200, {"id": room.get("id", rid), "spec": spec,
+                                      "specRev": _spec_rev(spec)})
                 return
             self._send_json(200, _annotate_room_liveness(room))
             return

@@ -4259,12 +4259,48 @@ function watchLiveChatFit(panel) {
     .forEach(el => { if (el) DP_FIT_RO.observe(el); });
 }
 
+// ---- A task's spec, on request: begin ----------------------------------------
+// Plain data and functions down to specPaneHtml, so tests/test_session_window.py
+// runs them in Node.
+// A task's spec. The polled list carries only specRev (a spec is kilobytes and
+// this pane alone reads it): the text is asked for once per task, and again
+// when specRev changes; the text already shown stays up meanwhile. A row that
+// carries `spec` itself (a hub not restarted yet, or the row made from
+// /api/room/new's answer) is read as it is. null while the first answer is awaited.
+const SPEC_TEXT = new Map();    // roomId -> { rev, text }
+const SPEC_ASKED = new Map();   // roomId -> { rev, busy, at }: one request at a time, a failed one again after 5 s
+function specOf(r) {
+  if (typeof r.spec === 'string') return r.spec;
+  if (!r.specRev || !r.roomId) return '';
+  const hit = SPEC_TEXT.get(r.roomId);
+  if (!hit || hit.rev !== r.specRev) loadSpec(r.roomId, r.specRev);
+  return hit ? hit.text : null;
+}
+async function loadSpec(rid, rev) {
+  const a = SPEC_ASKED.get(rid);
+  if (a && (a.busy || (a.rev === rev && Date.now() - a.at < 5000))) return;
+  SPEC_ASKED.set(rid, { rev, busy: true, at: Date.now() });
+  try {
+    const d = await api('/api/room?id=' + encodeURIComponent(rid) + '&part=spec');
+    // Kept under the revision the answer names, not the one the list had when
+    // it was asked: the spec may have been amended in between (and back).
+    SPEC_TEXT.set(rid, { rev: (d && d.specRev) || rev, text: String((d && d.spec) || '') });
+  } catch (e) { /* asked again below */ }
+  // An answer the list does not agree with yet is not asked for again at once:
+  // the next poll usually brings the list up to it; if not, again after 5 s.
+  SPEC_ASKED.set(rid, { rev, busy: false, at: Date.now() });
+  if (SELECTED_SID === rid) renderDetail();
+}
+
 // The Spec pane: for a draft this IS the content, the agents' first prompt.
 function specPaneHtml(r) {
-  const spec = (r.spec || '').trim();
+  const text = specOf(r);
+  if (text == null) return issueEmpty('Loading\u2026');
+  const spec = text.trim();
   if (!spec) return issueEmpty('No spec \u2014 this task was not created from one.');
   return `<div class="dp-spec">${mdIn(r, spec)}</div>`;
 }
+// ---- A task's spec, on request: end ------------------------------------------
 
 // Single unified layout — list with a detail panel on the right.
 const LAYOUT = 'grid';
