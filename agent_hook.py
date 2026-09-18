@@ -45,8 +45,8 @@ TOTAL_TIMEOUT = 1.0
 # What the hub reads. A hook's stdin can be megabytes (a Write's whole file, a
 # tool's whole output); none of that is the hub's business.
 _FIELDS = ("hook_event_name", "session_id", "notification_type", "tool_name",
-           "source", "reason", "error", "error_type", "permission_mode",
-           "agent_id", "agent_type")
+           "tool_use_id", "source", "reason", "error", "error_type",
+           "permission_mode", "agent_id", "agent_type")
 _TEXT_LIMIT = 300
 
 

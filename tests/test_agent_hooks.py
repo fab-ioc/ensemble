@@ -284,7 +284,7 @@ def _event(name: str, **fields) -> dict:
 
 
 class EventStates(unittest.TestCase):
-    def test_what_each_moment_means(self):
+    def test_what_each_moment_speaks_of(self):
         for event, state in (
                 (_event("UserPromptSubmit"), "working"),
                 (_event("PostToolUse", tool_name="Bash"), "working"),
@@ -308,68 +308,158 @@ class EventStates(unittest.TestCase):
                 (_event("SomethingNew"), "")):
             self.assertEqual(agent_hooks.state_of(event)[0], state, event)
 
-    def test_still_at_the_prompt_does_not_end_a_question(self):
-        idle = _event("Notification", notification_type="idle_prompt")
-        self.assertEqual(agent_hooks.state_of(idle, "waiting"), ("", ""))
-        self.assertEqual(agent_hooks.state_of(idle, "working")[0], "idle")
-
-    def test_a_subagents_tool_call_only_ends_a_wait(self):
-        tool = _event("PostToolUse", tool_name="Read", agent_id="sub-1")
-        self.assertEqual(agent_hooks.state_of(tool, "idle"), ("", ""))
-        self.assertEqual(agent_hooks.state_of(tool, "waiting")[0], "working")
-        ask = _event("PermissionRequest", tool_name="Write", agent_id="sub-1")
-        self.assertEqual(agent_hooks.state_of(ask, "idle")[0], "waiting")
-
 
 class HeldState(unittest.TestCase):
     def setUp(self):
         agent_hooks.reset()
         self.addCleanup(agent_hooks.reset)
+        self.clock = 1000.0
 
     def owner(self, pty_id):
         return {"pty-1": ("room-1", "eng")}.get(pty_id)
 
-    def post(self, event, at=None, now=1000.0, **over):
+    def post(self, name, at=None, **fields):
+        """One hook, a second after the last unless ``at`` says when."""
+        over = {k: fields.pop(k) for k in ("room", "identity", "ptyId") if k in fields}
+        self.clock += 1
         payload = {"room": "room-1", "identity": "eng", "ptyId": "pty-1",
-                   "at": now if at is None else at, "event": event, **over}
-        return agent_hooks.record(payload, self.owner, now=now)
+                   "at": self.clock if at is None else at, "event": _event(name, **fields), **over}
+        return agent_hooks.record(payload, self.owner, now=self.clock)
 
-    def test_the_last_state_is_kept_per_terminal_with_its_time(self):
-        self.assertEqual(self.post(_event("UserPromptSubmit"), at=999.5),
+    def state(self) -> str:
+        return (agent_hooks.state_for("pty-1") or {}).get("state", "")
+
+    def test_the_state_is_kept_per_terminal_with_its_time(self):
+        self.assertEqual(self.post("UserPromptSubmit", at=1000.5),
                          {"ok": True, "state": "working", "changed": True})
         held = agent_hooks.state_for("pty-1")
         self.assertEqual((held["state"], held["at"], held["room"], held["identity"], held["sessionId"]),
-                         ("working", 999.5, "room-1", "eng", "s1"))
+                         ("working", 1000.5, "room-1", "eng", "s1"))
         self.assertIsNone(agent_hooks.state_for("pty-2"))      # a relaunch starts clean
         self.assertIsNone(agent_hooks.state_for(""))
 
+    def test_a_turn_from_prompt_to_permission_to_the_end(self):
+        seen = []
+        for name, fields in (("SessionStart", {"source": "startup"}), ("UserPromptSubmit", {}),
+                             ("PermissionRequest", {"tool_name": "Write"}),
+                             ("Notification", {"notification_type": "permission_prompt"}),
+                             ("PostToolUse", {"tool_name": "Write", "tool_use_id": "toolu_1"}),
+                             ("Stop", {}), ("Notification", {"notification_type": "idle_prompt"})):
+            self.post(name, **fields)
+            seen.append(self.state())
+        self.assertEqual(seen, ["idle", "working", "waiting", "waiting", "working", "idle", "idle"])
+
     def test_an_event_from_before_the_one_held_changes_nothing(self):
-        self.post(_event("Stop"), at=999.0)
-        res = self.post(_event("PostToolUse", tool_name="Bash"), at=998.0)     # a background hook, late
-        self.assertEqual((res["changed"], agent_hooks.state_for("pty-1")["state"]), (False, "idle"))
-        self.assertTrue(agent_hooks.snapshot()["recent"][-1]["late"])
+        self.post("Stop", at=999.0)
+        res = self.post("PostToolUse", at=998.0, tool_name="Bash")      # a background hook, late
+        self.assertEqual((res["changed"], self.state()), (False, "idle"))
 
     def test_news_and_unknown_events_change_nothing(self):
-        self.post(_event("PermissionRequest", tool_name="Write"))
-        for event in (_event("Notification", notification_type="auth_success"), _event("Brand New")):
-            self.assertEqual(self.post(event), {"ok": True, "state": "waiting", "changed": False})
+        self.post("PermissionRequest", tool_name="Write")
+        for name, fields in (("Notification", {"notification_type": "auth_success"}), ("Brand New", {})):
+            self.assertEqual(self.post(name, **fields), {"ok": True, "state": "waiting", "changed": False})
+
+    # --- an ask is over when ITS answer comes, not when anything happens ---
+
+    def test_a_subagents_tool_call_does_not_answer_the_agents_question(self):
+        self.post("UserPromptSubmit")
+        self.post("PreToolUse", tool_name="AskUserQuestion", tool_use_id="toolu_q")
+        self.post("PostToolUse", tool_name="Read", tool_use_id="toolu_r", agent_id="sub-1")
+        self.post("PostToolUse", tool_name="AskUserQuestion", tool_use_id="toolu_other", agent_id="sub-1")
+        self.assertEqual(self.state(), "waiting")
+        self.post("PostToolUse", tool_name="AskUserQuestion", tool_use_id="toolu_q")
+        self.assertEqual(self.state(), "working")
+
+    def test_a_call_made_side_by_side_does_not_answer_a_permission_prompt(self):
+        self.post("UserPromptSubmit")
+        self.post("PermissionRequest", tool_name="Write")                 # names no call id
+        self.post("PostToolUse", tool_name="Read", tool_use_id="toolu_r")
+        self.assertEqual(self.state(), "waiting")
+        self.post("PostToolUse", tool_name="Write", tool_use_id="toolu_w")
+        self.assertEqual(self.state(), "working")
+
+    def test_the_question_and_its_permission_request_are_one_ask(self):
+        self.post("PreToolUse", tool_name="AskUserQuestion", tool_use_id="toolu_q")
+        self.post("PermissionRequest", tool_name="AskUserQuestion")
+        self.assertEqual(agent_hooks.state_for("pty-1")["waits"], 2)
+        self.post("PostToolUse", tool_name="AskUserQuestion", tool_use_id="toolu_q")
+        self.assertEqual(self.state(), "working")
+
+    def test_a_subagents_ask_outlives_the_agents_own_tool_calls_and_turn(self):
+        self.post("UserPromptSubmit")
+        self.post("PermissionRequest", tool_name="Bash", agent_id="sub-1")
+        self.post("PostToolUse", tool_name="Bash", tool_use_id="toolu_b")      # the agent's own Bash
+        self.assertEqual(self.state(), "waiting")
+        self.post("Stop")
+        self.post("Notification", notification_type="idle_prompt")
+        self.assertEqual(self.state(), "waiting")
+        self.post("PostToolUse", tool_name="Bash", tool_use_id="toolu_s", agent_id="sub-1")
+        self.assertEqual(self.state(), "idle")           # and its tool calls are not the agent's word
+
+    def test_the_end_of_its_turn_or_a_new_prompt_ends_the_agents_own_ask(self):
+        for ender in ("Stop", "UserPromptSubmit", "SessionEnd"):
+            agent_hooks.reset()
+            self.post("PermissionRequest", tool_name="Write")
+            self.post(ender)
+            self.assertNotEqual(self.state(), "waiting", ender)
+
+    def test_still_at_the_prompt_does_not_end_a_question(self):
+        self.post("PreToolUse", tool_name="AskUserQuestion", tool_use_id="toolu_q")
+        self.post("Notification", notification_type="idle_prompt")
+        self.assertEqual(self.state(), "waiting")
+
+    def test_a_notification_alone_is_an_ask_any_returning_call_ends(self):
+        self.post("UserPromptSubmit")
+        self.post("Notification", message="Claude needs your permission to use Bash")
+        self.assertEqual(self.state(), "waiting")
+        self.post("PostToolUse", tool_name="Bash", tool_use_id="toolu_b")
+        self.assertEqual(self.state(), "working")
+
+    # --- what attention saw contradicted stays dropped ---
+
+    def test_a_contradicted_state_stays_dropped_until_the_next_hook(self):
+        self.post("UserPromptSubmit")
+        self.post("PermissionRequest", tool_name="Write")
+        at = agent_hooks.state_for("pty-1")["at"]
+        agent_hooks.invalidate("pty-1", at)
+        self.assertIsNone(agent_hooks.state_for("pty-1"))      # not the older "working" either
+        self.assertNotIn("pty-1", agent_hooks.snapshot()["states"])
+        self.post("Stop")
+        self.assertEqual(self.state(), "idle")
+        agent_hooks.invalidate("pty-9", at)                     # unknown: nothing to do
 
     def test_only_a_terminal_the_hub_owns_as_that_agent(self):
         for over in ({"ptyId": "pty-9"}, {"room": "room-2"}, {"identity": "other"}):
-            self.assertEqual(self.post(_event("Stop"), **over), {"ok": False, "error": "unknown_agent"})
+            self.assertEqual(self.post("Stop", **over), {"ok": False, "error": "unknown_agent"})
         self.assertEqual(agent_hooks.snapshot()["states"], {})
 
     def test_malformed_posts_are_refused_not_raised(self):
         for payload in (None, [], "x", {}, {"event": "Stop"}, {"event": {}},
                         {"room": "room-1", "identity": "eng", "ptyId": "pty-1", "event": {"hook_event_name": 7}},
+                        {"room": ["room-1"], "identity": "eng", "ptyId": "pty-1", "event": _event("Stop")},
                         {"room": "room-1", "identity": "eng", "event": _event("Stop")}):
             self.assertEqual(agent_hooks.record(payload, self.owner), {"ok": False, "error": "bad_payload"})
 
+    def test_fields_of_the_wrong_type_are_not_there(self):
+        wrong = {"hook_event_name": "Notification", "message": ["wrong type"], "notification_type": 7,
+                 "tool_name": {"a": 1}, "agent_id": 3, "session_id": None, 5: "x"}
+        res = agent_hooks.record({"room": "room-1", "identity": "eng", "ptyId": "pty-1",
+                                  "at": [1], "event": wrong}, self.owner)
+        self.assertEqual(res, {"ok": True, "state": "", "changed": False})
+        for name in ("StopFailure", "PreToolUse", "PermissionRequest", "SessionStart", "SessionEnd"):
+            event = {"hook_event_name": name, "error_type": 5, "error": [], "tool_name": 9,
+                     "tool_use_id": {}, "source": 1, "reason": 2}
+            self.assertTrue(agent_hooks.record({"room": "room-1", "identity": "eng", "ptyId": "pty-1",
+                                                "event": event}, self.owner)["ok"], name)
+
     def test_a_clock_that_cannot_be_the_hooks_is_replaced(self):
-        for at in (5000.0, 10.0, "soon", None):
+        for at in (5000.0, 10.0, "soon", None, True):
             agent_hooks.reset()
-            self.post(_event("Stop"), now=1000.0, **{"at": at})
-            self.assertEqual(agent_hooks.state_for("pty-1")["at"], 1000.0, at)
+            self.clock = 1000.0
+            self.post("Stop", at=at) if at is not None else agent_hooks.record(
+                {"room": "room-1", "identity": "eng", "ptyId": "pty-1", "event": _event("Stop")},
+                self.owner, now=1001.0)
+            self.assertEqual(agent_hooks.state_for("pty-1")["at"], 1001.0, at)
 
 
 # ---------------------------------------------------------------------------
@@ -411,7 +501,7 @@ class Endpoint(unittest.TestCase):
 
     def payload(self, event="Stop", **over):
         return {"room": "room-1", "identity": "eng", "ptyId": "pty-1", "at": time.time(),
-                "event": _event(event), **over}
+                "event": _event(event) if isinstance(event, str) else event, **over}
 
     def test_an_agents_hook_is_kept(self):
         gen = dashboard._SESS_GEN
@@ -441,6 +531,14 @@ class Endpoint(unittest.TestCase):
             status, res = self.send(body)
             self.assertEqual(status, 400, body)
         self.assertEqual(self.send(b"x" * 20000)[0], 413)
+        # Well-formed JSON whose event fields are not text: answered, not a
+        # dropped connection and a traceback.
+        for event in ({"hook_event_name": "Notification", "message": ["wrong type"]},
+                      {"hook_event_name": "StopFailure", "error_type": {"a": 1}},
+                      {"hook_event_name": "PermissionRequest", "tool_name": 7, "agent_id": []}):
+            self.assertEqual(self.send(self.payload(event=event))[0], 200, event)
+        with mock.patch.object(agent_hooks, "record", side_effect=RuntimeError("boom")):
+            self.assertEqual(self.send(self.payload()), (400, {"ok": False, "error": "bad_payload"}))
         self.assertEqual(self.send(self.payload())[0], 200)       # and the hub is still fine
 
     def test_a_page_on_another_site_is_refused(self):
@@ -476,7 +574,7 @@ HOOK_AT = 1000.0
 
 
 def _hook(state: str, at: float = HOOK_AT) -> dict:
-    return {"state": state, "at": at, "event": "x", "detail": "", "sessionId": "s1"}
+    return {"state": state, "at": at, "event": "x", "detail": "", "sessionId": "s1", "waits": 0}
 
 
 def _ev(tail: str, hook: dict | None = None, status: str = "", status_at: float = 0.0,
@@ -559,6 +657,40 @@ class Staleness(unittest.TestCase):
                              attention._HOOK_STATUS[state])
             self.assertTrue(attention._hook_status(_ev(PERMISSION, _hook(state), printed=HOOK_AT + 60)))
             self.assertTrue(attention._hook_status(_ev(WORKING, _hook(state), printed=HOOK_AT + 6, idle=70)))
+
+    def test_what_the_screen_contradicted_does_not_come_back_when_it_goes_quiet(self):
+        # A question's hook, then the hooks of its answer and of the turn's end
+        # are lost and there is no status file: the screen shows later work,
+        # then silence. The old question must not return.
+        agent_hooks.reset()
+        self.addCleanup(agent_hooks.reset)
+        agent_hooks.record({"room": "room-1", "identity": "claude", "ptyId": "p1", "at": HOOK_AT,
+                            "event": _event("PreToolUse", tool_name="AskUserQuestion")},
+                           lambda pid: ("room-1", "claude"), now=HOOK_AT)
+
+        def poll(tail, idle, printed):
+            return _classify(_ev(tail, agent_hooks.state_for("p1"), idle=idle, printed=printed))
+        self.assertEqual(poll(PERMISSION, 2, HOOK_AT)[0], "waiting_for_you")
+        self.assertIsNone(poll(WORKING, 2, HOOK_AT + 10))
+        self.assertIsNone(agent_hooks.state_for("p1"))
+        self.assertIsNone(poll(WORKING, 70, HOOK_AT + 10))           # later: silence
+        # The next hook is believed again.
+        agent_hooks.record({"room": "room-1", "identity": "claude", "ptyId": "p1", "at": HOOK_AT + 100,
+                            "event": _event("PermissionRequest", tool_name="Write")},
+                           lambda pid: ("room-1", "claude"), now=HOOK_AT + 100)
+        self.assertEqual(poll(WORKING, 70, HOOK_AT + 10)[0], "waiting_for_you")
+
+    def test_working_left_behind_stays_dropped_when_the_terminal_prints_again(self):
+        agent_hooks.reset()
+        self.addCleanup(agent_hooks.reset)
+        agent_hooks.record({"room": "room-1", "identity": "claude", "ptyId": "p1", "at": HOOK_AT,
+                            "event": _event("UserPromptSubmit")},
+                           lambda pid: ("room-1", "claude"), now=HOOK_AT)
+        quiet = _ev(PERMISSION, agent_hooks.state_for("p1"), idle=61)
+        self.assertEqual(_classify(quiet)[0], "waiting_for_you")
+        repainted = _ev(PERMISSION, agent_hooks.state_for("p1"), idle=1)     # a resize redraws it
+        self.assertIsNone(repainted["hook"])
+        self.assertEqual(_classify(repainted)[0], "waiting_for_you")
 
     def test_an_old_state_is_still_true(self):
         ev = _ev(ASKING_TEXT, _hook("idle", at=HOOK_AT - 3 * 86400), idle=3 * 86400)

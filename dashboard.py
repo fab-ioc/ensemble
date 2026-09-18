@@ -9033,7 +9033,10 @@ class Handler(BaseHTTPRequestHandler):
             sess = ptyrun.get(pty_id)
             meta = (sess.meta or {}) if sess is not None else {}
             return (meta.get("room", ""), meta.get("identity", "")) if meta.get("room") else None
-        res = agent_hooks.record(payload, owner)
+        try:
+            res = agent_hooks.record(payload, owner)
+        except Exception:                   # whatever it was, it is not the agent's problem
+            res = {"ok": False, "error": "bad_payload"}
         self._send_json(200 if res.get("ok") else (400 if res.get("error") == "bad_payload" else 404), res)
 
     def _do_POST(self):

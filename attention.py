@@ -751,7 +751,8 @@ def _hook_status(ev: dict) -> str:
     ever a later moment nobody reported (a hook lost while the hub was slow,
     a turn interrupted with Esc, which fires none). So it is dropped when
     something newer contradicts it, never because of its age — an agent that
-    finished yesterday is still finished:
+    finished yesterday is still finished — and what was contradicted once
+    stays dropped until the next hook (``agent_hooks.invalidate``):
 
     * **Another terminal's.** Held per terminal, so a relaunch starts clean.
     * **The session ended.** Nothing to say about a live terminal: the screen.
@@ -778,15 +779,22 @@ def _hook_status(ev: dict) -> str:
     if not status:
         return ""
     at = float(hook.get("at") or 0)
-    if ev.get("claudeStatus") not in ("", status) and float(ev.get("claudeStatusAt") or 0) > at:
-        return ""
     idle = ev.get("idleSeconds")
     quiet = idle is not None and idle >= _MIN_QUIET
-    if status == "busy":
-        return "" if quiet else status
     scan = ev.get("scan") or {}
-    if (scan.get("busy") and not scan.get("prompt") and not quiet
-            and float(ev.get("lastOutput") or 0) > at + _HOOK_MOVED_ON):
+    if ev.get("claudeStatus") not in ("", status) and float(ev.get("claudeStatusAt") or 0) > at:
+        outdated = True
+    elif status == "busy":
+        outdated = quiet
+    else:
+        outdated = bool(scan.get("busy") and not scan.get("prompt") and not quiet
+                        and float(ev.get("lastOutput") or 0) > at + _HOOK_MOVED_ON)
+    if outdated:
+        # For good, not for this poll: the evidence against it passes (the
+        # terminal goes quiet, or prints again), what it disproved does not
+        # come back. The next hook starts afresh.
+        if _d is not None:
+            _d.agent_hooks.invalidate(ev.get("ptyId") or "", at)
         return ""
     return status
 
