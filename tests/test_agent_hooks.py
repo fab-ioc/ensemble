@@ -72,7 +72,7 @@ class LaunchSettings(unittest.TestCase):
             settings = self.settings(rtk)
             for event in ("SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest",
                           "Notification", "PostToolUse", "PostToolUseFailure", "Stop",
-                          "StopFailure", "SessionEnd"):
+                          "StopFailure", "SubagentStop", "SessionEnd"):
                 self.assertEqual(len(self.handlers(settings, event)), 1, (rtk, event))
             self.assertLessEqual(set(settings["hooks"]), KNOWN_EVENTS)
             self.assertIn("usage_statusline.py", settings["statusLine"]["command"])
@@ -304,7 +304,7 @@ class EventStates(unittest.TestCase):
                 (_event("SessionStart", source="startup"), "idle"),
                 (_event("SessionStart", source="compact"), ""),
                 (_event("SessionEnd", reason="other"), "ended"),
-                (_event("SubagentStop"), ""),
+                (_event("SubagentStop", agent_id="sub-1"), "idle"),      # that subagent's turn, see HeldState
                 (_event("SomethingNew"), "")):
             self.assertEqual(agent_hooks.state_of(event)[0], state, event)
 
@@ -414,6 +414,32 @@ class HeldState(unittest.TestCase):
         self.assertEqual(self.state(), "waiting")
         self.post("PostToolUse", tool_name="Bash", tool_use_id="toolu_b")
         self.assertEqual(self.state(), "working")
+
+    def test_another_kind_of_notice_is_an_ask_of_its_own(self):
+        self.post("UserPromptSubmit")
+        self.post("PermissionRequest", tool_name="Write")
+        self.post("Notification", notification_type="permission_prompt")          # the echo
+        self.assertEqual(agent_hooks.state_for("pty-1")["waits"], 1)
+        self.post("Notification", notification_type="elicitation_dialog", agent_id="sub-1")
+        self.post("PostToolUse", tool_name="Write", tool_use_id="toolu_w")        # the first is answered
+        self.assertEqual(self.state(), "waiting")
+        self.post("PostToolUse", tool_name="mcp__x__y", tool_use_id="toolu_m", agent_id="sub-1")
+        self.assertEqual(self.state(), "working")
+
+    def test_a_subagents_end_ends_what_it_asked_and_nothing_else(self):
+        self.post("UserPromptSubmit")
+        self.post("PreToolUse", tool_name="AskUserQuestion", tool_use_id="toolu_q")
+        self.post("PermissionRequest", tool_name="Bash", agent_id="sub-1")
+        self.post("PermissionRequest", tool_name="Bash", agent_id="sub-2")
+        self.post("SubagentStop", agent_id="sub-1")             # denied: its Bash never came back
+        self.post("SubagentStop")                               # which one? says nothing
+        self.assertEqual(agent_hooks.state_for("pty-1")["waits"], 2)
+        self.post("PostToolUse", tool_name="AskUserQuestion", tool_use_id="toolu_q")
+        self.post("Stop")
+        self.assertEqual(self.state(), "waiting")               # sub-2 still asks
+        self.post("SubagentStop", agent_id="sub-2")
+        held = agent_hooks.state_for("pty-1")
+        self.assertEqual((held["state"], held["event"]), ("idle", "Stop"))     # not the subagent's word
 
     # --- what attention saw contradicted stays dropped ---
 
@@ -679,6 +705,49 @@ class Staleness(unittest.TestCase):
                             "event": _event("PermissionRequest", tool_name="Write")},
                            lambda pid: ("room-1", "claude"), now=HOOK_AT + 100)
         self.assertEqual(poll(WORKING, 70, HOOK_AT + 10)[0], "waiting_for_you")
+
+    def _hooks(self, *events):
+        agent_hooks.reset()
+        self.addCleanup(agent_hooks.reset)
+        for at, name, fields in events:
+            agent_hooks.record({"room": "room-1", "identity": "claude", "ptyId": "p1", "at": at,
+                                "event": _event(name, **fields)},
+                               lambda pid: ("room-1", "claude"), now=at)
+
+    def test_the_agents_turn_ending_does_not_answer_its_subagents_question(self):
+        self._hooks((HOOK_AT, "UserPromptSubmit", {}),
+                    (HOOK_AT + 1, "PermissionRequest", {"tool_name": "Bash", "agent_id": "sub-1"}),
+                    (HOOK_AT + 2, "Stop", {}))
+        for _ in range(2):          # the file says idle since the Stop; poll after poll
+            ev = _ev(PERMISSION, agent_hooks.state_for("p1"), status="idle", status_at=HOOK_AT + 2.1, idle=70)
+            self.assertEqual(attention._hook_status(ev), "waiting")
+            self.assertEqual(_classify(ev)[0], "waiting_for_you")
+        # The agent's own ask does end with its turn, the subagent's beside it stays.
+        self._hooks((HOOK_AT, "PermissionRequest", {"tool_name": "Bash", "agent_id": "sub-1"}),
+                    (HOOK_AT + 1, "PermissionRequest", {"tool_name": "Write"}))
+        ev = _ev(PERMISSION, agent_hooks.state_for("p1"), status="idle", status_at=HOOK_AT + 3)
+        self.assertEqual(attention._hook_status(ev), "waiting")
+        self.assertEqual(agent_hooks.state_for("p1")["waits"], 1)
+        # Approved: the file says busy, and that is about the prompt on screen, whoever asked.
+        ev = _ev(WORKING, agent_hooks.state_for("p1"), status="busy", status_at=HOOK_AT + 4)
+        self.assertEqual(attention._hook_status(ev), "")
+        self.assertIsNone(agent_hooks.state_for("p1"))
+
+    def test_a_finished_subagent_leaves_no_question_behind_on_a_quiet_terminal(self):
+        # The agent stopped, its subagent asked, was refused and finished: no
+        # tool call came back, the file says idle since before, nothing prints.
+        self._hooks((HOOK_AT, "Stop", {}),
+                    (HOOK_AT + 1, "PermissionRequest", {"tool_name": "Bash", "agent_id": "sub-1"}))
+        asked = _ev(PERMISSION, agent_hooks.state_for("p1"), status="idle", status_at=HOOK_AT + 0.1)
+        self.assertEqual(_classify(asked)[0], "waiting_for_you")
+        self._hooks((HOOK_AT, "Stop", {}),
+                    (HOOK_AT + 1, "PermissionRequest", {"tool_name": "Bash", "agent_id": "sub-1"}),
+                    (HOOK_AT + 2, "SubagentStop", {"agent_id": "sub-1"}),
+                    (HOOK_AT + 60, "Notification", {"notification_type": "idle_prompt"}))
+        quiet = _ev(ASKING_TEXT, agent_hooks.state_for("p1"), status="idle", status_at=HOOK_AT + 0.1,
+                    idle=3600)
+        self.assertEqual(attention._hook_status(quiet), "idle")
+        self.assertIsNone(_classify(quiet))
 
     def test_working_left_behind_stays_dropped_when_the_terminal_prints_again(self):
         agent_hooks.reset()

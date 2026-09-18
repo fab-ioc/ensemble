@@ -1211,6 +1211,9 @@ _AGENT_HOOK_EVENTS: tuple[tuple[str, str | None, bool], ...] = (
     ("PostToolUseFailure", None, True),
     ("Stop", None, False),
     ("StopFailure", None, False),
+    # Ends what that subagent asked: a question dismissed or a permission
+    # denied has no hook of its own.
+    ("SubagentStop", None, False),
     ("SessionEnd", None, False),
 )
 # Claude Code's own limit on the hook, in seconds; the script ends itself

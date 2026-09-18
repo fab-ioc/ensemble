@@ -765,6 +765,8 @@ def _hook_status(ev: dict) -> str:
       saying ``busy`` (measured: 40 ms apart, which is why there is no grace
       period here). A later change that says the same leaves the hook in
       charge: it knows more (see the prompt fallback in ``_classify_agent``).
+      The file is the agent's own: ``idle`` ends what the agent asked, not
+      what a subagent still running asked.
     * **"Working", on a terminal silent for ``_MIN_QUIET``.** A running turn
       repaints its indicator every second. Silence means the turn ended with
       no hook — or sits on a prompt whose hook was lost, which the screen
@@ -782,8 +784,10 @@ def _hook_status(ev: dict) -> str:
     idle = ev.get("idleSeconds")
     quiet = idle is not None and idle >= _MIN_QUIET
     scan = ev.get("scan") or {}
+    turn_over = False
     if ev.get("claudeStatus") not in ("", status) and float(ev.get("claudeStatusAt") or 0) > at:
         outdated = True
+        turn_over = ev.get("claudeStatus") == "idle"
     elif status == "busy":
         outdated = quiet
     else:
@@ -793,9 +797,11 @@ def _hook_status(ev: dict) -> str:
         # For good, not for this poll: the evidence against it passes (the
         # terminal goes quiet, or prints again), what it disproved does not
         # come back. The next hook starts afresh.
+        left = None
         if _d is not None:
-            _d.agent_hooks.invalidate(ev.get("ptyId") or "", at)
-        return ""
+            left = _d.agent_hooks.invalidate(ev.get("ptyId") or "", at, own_only=turn_over)
+        # The agent's own turn ending answers nothing a subagent asked.
+        return "waiting" if turn_over and (left or {}).get("state") == "waiting" else ""
     return status
 
 

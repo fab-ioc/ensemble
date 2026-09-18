@@ -21,8 +21,9 @@ A wait is not just the last event. Several things run in one session — the
 agent, its subagents, tool calls made side by side — and one of them finishing
 says nothing about a question another one asked. So each ask is kept until
 *its own* answer arrives: the same tool call coming back, or the asker's turn
-ending. While any ask is open the agent is ``waiting``; otherwise it is what
-the agent itself (not a subagent) last said.
+ending (``Stop``, a subagent's ``SubagentStop``). While any ask is open the
+agent is ``waiting``; otherwise it is what the agent itself (not a subagent)
+last said.
 
 ``attention.py`` reads this in preference to the agent's screen, and tells this
 module when the screen or Claude's status file has since shown otherwise
@@ -89,7 +90,7 @@ def state_of(event: dict) -> tuple[str, str]:
         if kind in _NOTIFY_IDLE or (not kind and _MSG_IDLE.search(msg)):
             return "idle", kind or "notification"
         return "", ""
-    if name == "Stop":
+    if name in ("Stop", "SubagentStop"):
         return "idle", ""
     if name == "StopFailure":
         return "idle", (event.get("error_type") or event.get("error") or "api_error")[:80]
@@ -119,13 +120,18 @@ def _apply(held: dict, event: dict, state: str, detail: str, at: float) -> None:
     tool_use_id, tool = event.get("tool_use_id") or "", event.get("tool_name") or ""
     waits, base = held["waits"], held["base"]
     own_word = not agent and at >= (base or {}).get("at", 0)
+    if name == "SubagentStop" and not agent:
+        return                                   # which subagent? It says nothing.
     if state == "waiting":
         if name == "Notification":
-            # The late echo of an ask already open (measured: about 6 s after
-            # its PermissionRequest) adds nothing; alone, it is the ask.
-            if waits:
+            # The permission notice is the late echo (measured: about 6 s) of
+            # a PermissionRequest, which is a hook of its own: while any ask
+            # is open it adds nothing, whoever it is about. Alone (an older
+            # CLI), or of any other kind (an MCP server's dialog), it is an
+            # ask of its own.
+            if waits and detail in ("permission_prompt", "notification"):
                 return
-            tool_use_id = tool = ""
+            tool_use_id, tool = "", ""
         waits[:] = [w for w in waits if not (w["agent"] == agent and w["toolUseId"] == tool_use_id
                                              and w["tool"] == tool)]
         waits.append({"agent": agent, "toolUseId": tool_use_id, "tool": tool, "detail": detail,
@@ -149,7 +155,10 @@ def _apply(held: dict, event: dict, state: str, detail: str, at: float) -> None:
             if waits or not own_word:
                 return
         else:
-            waits[:] = [w for w in waits if w["agent"] or w["at"] > at]     # its turn is over
+            # The asker's turn is over, and with it whatever it asked (a
+            # question dismissed or a permission denied has no hook of its
+            # own). A subagent's end is not the agent's word, nor the reverse.
+            waits[:] = [w for w in waits if w["agent"] != agent or w["at"] > at]
         if own_word:
             held["base"] = {"state": state, "detail": detail, "event": name, "at": at, "stale": False}
         return
@@ -230,18 +239,21 @@ def state_for(pty_id: str) -> dict | None:
         return _effective(_STATES.get(pty_id))
 
 
-def invalidate(pty_id: str, at: float) -> None:
+def invalidate(pty_id: str, at: float, own_only: bool = False) -> dict | None:
     """The state of time ``at`` was seen to be out of date (``attention`` says
     how): it, and every ask open since before it, stays dropped until a new
     hook says something. Without this a contradicted state would be believed
-    again as soon as the evidence against it stopped being visible."""
+    again as soon as the evidence against it stopped being visible.
+    ``own_only`` when the evidence is about the agent itself (its turn ended):
+    that says nothing about what a subagent asked. Returns what still stands."""
     with _LOCK:
         held = _STATES.get(pty_id)
         if not held:
-            return
-        held["waits"][:] = [w for w in held["waits"] if w["at"] > at]
+            return None
+        held["waits"][:] = [w for w in held["waits"] if w["at"] > at or (own_only and w["agent"])]
         if held["base"] and held["base"]["at"] <= at:
             held["base"]["stale"] = True
+        return _effective(held)
 
 
 def forget(pty_id: str) -> None:
