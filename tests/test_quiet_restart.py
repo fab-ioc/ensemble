@@ -500,7 +500,7 @@ class TheHelper(unittest.TestCase):
         i = HELPER.index("Post '/api/restart/snapshot'")
         self.assertIn("} catch {", HELPER[i:i + 400])
         self.assertIn("if (-not $room -or ($back -contains $room)) { continue }", HELPER)
-        self.assertIn("Post '/api/room/resume' @{ roomId = $room }", HELPER)
+        self.assertIn("Post '/api/room/resume' @{ roomId = $room; quiet = $true }", HELPER)
 
 
 class TheEndpoints(unittest.TestCase):
@@ -508,7 +508,7 @@ class TheEndpoints(unittest.TestCase):
         src = (ROOT / "dashboard.py").read_text(encoding="utf-8")
         i = src.index('if p in ("/api/restart/snapshot", "/api/restart/restore"):')
         block = src[i:src.index('if p == "/api/iterm/consolidate":', i)]
-        self.assertIn("hmac.compare_digest(lease, held)", block)
+        self.assertIn("hmac.compare_digest(", block)
         self.assertLess(block.index("compare_digest"), block.index("take_restart_snapshot"))
         self.assertLess(block.index("compare_digest"), block.index("_restore_after_restart"))
 

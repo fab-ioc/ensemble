@@ -8218,7 +8218,8 @@ class Handler(BaseHTTPRequestHandler):
         chatroom.update_room(room_full)
         return launched
 
-    def _start_or_resume_room(self, room_full: dict, restart: dict | None = None) -> list[dict]:
+    def _start_or_resume_room(self, room_full: dict, restart: dict | None = None,
+                              keep_state: bool = False) -> list[dict]:
         """Bring a not-running task up: a draft (never launched) starts fresh,
         anything else relaunches its agents resuming their prior conversations.
         Returns [{identity, ptyId}].
@@ -8257,6 +8258,8 @@ class Handler(BaseHTTPRequestHandler):
             if part["identity"] in running:
                 resumed.append({"identity": part["identity"], "ptyId": part["ptyId"]})
                 continue
+            if restart is not None and restart.get(part["identity"]) == "stopped":
+                continue                    # was not running when the hub stopped
             part.pop("resumedAt", None)     # set again once the note is typed
             if chatroom.is_on_mention(room_full, part):
                 # Never resumed: a reviewer is started fresh for each request,
@@ -8286,9 +8289,12 @@ class Handler(BaseHTTPRequestHandler):
             # alert about the previous run is one nobody could ever dismiss.
             part.pop("lastExit", None)
             resumed.append({"identity": part["identity"], "ptyId": info["ptyId"]})
-        room_full["status"] = "active"
-        room_full["hopCount"] = 0
-        room_full["waitingFor"] = ""
+        # A room back only because the hub restarted is where it was: one
+        # waiting for the person, or paused at its hop limit, stays so.
+        if not keep_state:
+            room_full["status"] = "active"
+            room_full["hopCount"] = 0
+            room_full["waitingFor"] = ""
         if running:
             # A running agent may post meanwhile: write only what changed,
             # under the room lock, so a message of its is never overwritten.
@@ -8299,7 +8305,8 @@ class Handler(BaseHTTPRequestHandler):
                 keep = {k: part[k] for k in ("ptyId", "cwd", "sessionId", "specSeen") if k in part}
                 gone = tuple(k for k in ("lastExit", "fresh", "resumedAt") if k not in part)
                 chatroom.patch_participant(rid, part["identity"], keep, drop=gone)
-            chatroom.patch_room(rid, status="active", hopCount=0, waitingFor="")
+            if not keep_state:
+                chatroom.patch_room(rid, status="active", hopCount=0, waitingFor="")
         else:
             chatroom.update_room(room_full)
         self._deliver_after_resume(
@@ -8419,9 +8426,13 @@ class Handler(BaseHTTPRequestHandler):
             elif _room_is_live(room_full):
                 outcome = "already running: left alone"
             else:
-                states = ({} if rid == wake_room or not fresh else
-                          {a.get("identity"): a.get("state") for a in agents_was
-                           if not a.get("onMention")})
+                # An agent that was already stopped when the hub went down
+                # stays stopped whatever the snapshot's age: the restart
+                # brings back what ran, it starts nothing.
+                states = {a.get("identity"): a.get("state") for a in agents_was
+                          if not a.get("onMention")
+                          and (a.get("state") == "stopped"
+                               or (fresh and rid != wake_room))}
                 lined = sorted(i for i, st in states.items() if st in MID_TURN_STATES)
                 with _RESUMES_LOCK:
                     busy = _RESUMES.get(rid) is not None
@@ -8430,7 +8441,8 @@ class Handler(BaseHTTPRequestHandler):
                     outcome = "a resume is already under way: left to it"
                 else:
                     try:
-                        resumed = self._start_or_resume_room(room_full, restart=states)
+                        resumed = self._start_or_resume_room(room_full, restart=states,
+                                                             keep_state=True)
                         with _RESUMES_LOCK:
                             res.resumed = resumed
                         outcome = ("brought back; " + (
@@ -9535,7 +9547,8 @@ class Handler(BaseHTTPRequestHandler):
             # restart under way (a file in the state dir, like a room token).
             lease = str(data.get("lease") or "")
             held = _current_restart_lease()
-            if not lease or not held or not hmac.compare_digest(lease, held):
+            if not lease or not held or not hmac.compare_digest(
+                    lease.encode("utf-8"), str(held).encode("utf-8")):
                 self._send_json(403, {"error": "not_allowed",
                                       "message": "only the helper of the restart under way"})
                 return

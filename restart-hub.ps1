@@ -175,7 +175,7 @@ try {
 } catch { L "restore failed: $_" }
 foreach ($room in @($cfg.resumeRooms)) {
   if (-not $room -or ($back -contains $room)) { continue }
-  try { $r = Post '/api/room/resume' @{ roomId = $room }; L "resume ${room}: HTTP $($r.StatusCode)" } catch { L "resume $room failed: $_" }
+  try { $r = Post '/api/room/resume' @{ roomId = $room; quiet = $true }; L "resume ${room}: HTTP $($r.StatusCode)" } catch { L "resume $room failed: $_" }
 }
 if ($cfg.wakeRoom) {
   $pty = $null
