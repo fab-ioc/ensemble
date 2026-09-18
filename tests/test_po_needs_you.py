@@ -101,6 +101,10 @@ const renderPoPill = () => {}, focusKeyIn = () => null, restoreFocus = () => {};
 const poHeadHtml = (pj, row) => pj.id + ':' + row.roomId;
 const renderRows = () => { calls.push('renderRows'); renderPo(); };
 const openDetail = id => calls.push('openDetail:' + id);
+const poFocusComposer = () => calls.push('focus');
+const seen = () => ({ peek: PO_PEEK, pin: PO_PIN, drawer: document.body.classList.on.has('po-peek'),
+  leads: document.body.classList.on.has('po-split'), room: panel.hidden ? '' : head.dataset.room,
+  lit: panel.hidden ? [] : frames.kids.filter(f => !f.hidden).map(f => f.dataset.room) });
 const open = (rid, setup) => {
   PO_PEEK = false; PO_PIN = ''; SELECTED_PROJECT = ''; PROJECT_TAB = 'changes'; SB_DEST = 'needsyou'; SELECTED_SID = '';
   WIDE = false; PHONE = false; ALL_ROWS = ROWS; calls = []; tray.hidden = false;
@@ -121,6 +125,15 @@ log.openPoOtherLeading = open('po-gone', overview('p1'));
 log.openPoWide = open('po-waiting', () => { overview('p2')(); WIDE = true; });
 log.openPoOtherWide = open('po-gone', () => { overview('p1')(); WIDE = true; });
 log.openPoOtherPhoneTask = open('po-gone', () => { overview('p1')(); PHONE = true; SELECTED_SID = 'room-a'; });
+// Three's PO opened over One's Overview (Board wide); then Beside, Board wide again, and One's pill.
+open('po-gone', () => { overview('p1')(); WIDE = true; });
+log.pillSteps = [seen()];
+WIDE = false; renderRows(); log.pillSteps.push(seen());
+WIDE = true; renderRows(); log.pillSteps.push(seen());
+poPillClick(); log.pillSteps.push(seen());
+poPillClick(); log.pillSteps.push(seen());
+// A drawer the phone layout closes leaves no pin either.
+open('po-gone'); PO_PEEK = false; renderPo(); log.pinAfterClose = PO_PIN;
 log.openPoNoRow = open('po-blocked', () => { ALL_ROWS = []; });
 log.openTask = open('room-a');
 log.openHidden = open('po-stalled');
@@ -135,7 +148,7 @@ class PoNeedsYouPage(unittest.TestCase):
         i = INDEX.index("// ---- Task search: begin")
         heads = ("function attentionItems(", "function notifItemHtml(", "function needsYouHtml(",
                  "function openAttentionItem(", "function openPoOf(", "function poRowOf(",
-                 "function projectOfRoom(", "function poSplitProject(", "function poContext(", "function renderPo(")
+                 "function projectOfRoom(", "function poSplitProject(", "function poContext(", "function renderPo(", "function poPillClick(")
         src = "\n".join([INDEX[i:INDEX.index("// ---- Task search: end", i)]] + [fn(INDEX, h) for h in heads])
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "po_needs_you.cjs"
@@ -202,6 +215,18 @@ class PoNeedsYouPage(unittest.TestCase):
         phone = self.r["openPoOtherPhoneTask"]
         self.assertEqual((phone["project"], phone["drawer"], phone["room"], phone["lit"]),
                          ("p1", True, "po-gone", ["po-gone"]), "a phone's open task on One's Overview: the same")
+
+    def test_the_pill_opens_the_po_it_names_after_a_pinned_drawer_ended(self):
+        opened, beside, wide, pill, again = self.r["pillSteps"]
+        self.assertEqual((opened["drawer"], opened["room"], opened["pin"]), (True, "po-gone", "p3"))
+        self.assertEqual((beside["leads"], beside["drawer"], beside["room"], beside["pin"]),
+                         (True, False, "po-blocked", ""), "One's PO leads the page: the drawer and its pin end")
+        self.assertEqual((wide["drawer"], wide["room"]), (False, ""), "Board wide again: nothing open")
+        self.assertEqual((pill["drawer"], pill["room"], pill["lit"], pill["pin"]),
+                         (True, "po-blocked", ["po-blocked"], ""), "One's pill opens One's PO, not the one pinned before")
+        self.assertEqual((again["drawer"], again["peek"]), (False, False), "and closes it")
+        self.assertEqual(self.r["pinAfterClose"], "", "however a drawer ends, its pin goes with it")
+        self.assertIn("if (pill) { poPillClick(); return; }", INDEX)
 
     def test_a_po_whose_row_has_not_loaded_opens_its_project(self):
         o = self.r["openPoNoRow"]

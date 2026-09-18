@@ -8214,6 +8214,9 @@ function renderPo() {
   // where the PO already leads the page. On a phone an open task keeps the bar,
   // so the pill opens the PO over the task and its × returns to it.
   if (split || !(ctx && poRowOf(ctx))) PO_PEEK = false;
+  // A pin lasts as long as its drawer: one that ended on its own (a PO came to
+  // lead the page) must not choose the PO the next time the pill opens it.
+  if (!PO_PEEK) PO_PIN = '';
   const pj = split || (PO_PEEK ? ctx : null);
   document.body.classList.toggle('po-split', !!split);
   document.body.classList.toggle('po-wide', wide);
@@ -8289,6 +8292,20 @@ function poClosePeek() {
   renderPo();
   const b = document.getElementById('po-pill');
   if (b && !b.hidden) b.focus();
+}
+// The pill opens the PO it names, and closes the drawer it opened.
+function poPillClick() {
+  const ctx = poContext();
+  if (!ctx) return;
+  if (!poRowOf(ctx)) {           // no PO: go where the page says how to choose one
+    SELECTED_PROJECT = ctx.id; PROJECT_TAB = 'tasks'; WS_SCOPE = ''; SB_DEST = '';
+    renderRows(); return;
+  }
+  // Already leading the page — unless a task covers it, as it does on a phone.
+  if (poSplitProject() && !boardWide() && !(SELECTED_SID && isPhone())) { poFocusComposer(); return; }
+  PO_PEEK = !PO_PEEK; PO_PIN = ''; renderPo();
+  // Not on a phone: focus raises the keyboard over the conversation you came to read.
+  if (PO_PEEK && !isPhone()) poFocusComposer();
 }
 // ---- A past session made a PO: begin ----------------------------------------
 // A conversation started in a terminal, outside Ensemble, that already holds a
@@ -8573,20 +8590,7 @@ async function poChoose(pid, err) {
 }
 document.addEventListener('click', async (ev) => {
   const pill = ev.target.closest('#po-pill');
-  if (pill) {
-    const ctx = poContext();
-    if (!ctx) return;
-    if (!poRowOf(ctx)) {           // no PO: go where the page says how to choose one
-      SELECTED_PROJECT = ctx.id; PROJECT_TAB = 'tasks'; WS_SCOPE = ''; SB_DEST = '';
-      renderRows(); return;
-    }
-    // Already leading the page — unless a task covers it, as it does on a phone.
-    if (poSplitProject() && !boardWide() && !(SELECTED_SID && isPhone())) { poFocusComposer(); return; }
-    PO_PEEK = !PO_PEEK; if (!PO_PEEK) PO_PIN = ''; renderPo();
-    // Not on a phone: focus raises the keyboard over the conversation you came to read.
-    if (PO_PEEK && !isPhone()) poFocusComposer();
-    return;
-  }
+  if (pill) { poPillClick(); return; }
   const choose = ev.target.closest('.po-choose');
   if (choose) { poChoose(choose.dataset.proj); return; }
   const kb = ev.target.closest('.kind-btn');
