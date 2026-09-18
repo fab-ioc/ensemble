@@ -119,8 +119,8 @@ class TaskSearchPage(unittest.TestCase):
             self.assertIn("projectTasks(", body, head)
             self.assertNotIn(".sessions", body, head + " lists the PO as a task")
         switch = INDEX[INDEX.index("$('#proj-switch').addEventListener('click'"):]
-        self.assertIn("projectTasks(pj).filter(x => x.attention)", switch[:switch.index("\n});\n")],
-                      "the project menu's needs count")
+        self.assertIn("projectNeeds(pj)", switch[:switch.index("\n});\n")], "the project menu's needs count")
+        self.assertIn("projectTasks(pj).filter(x => x.attention)", fn(INDEX, "function projectNeeds("))
         self.assertIn("(pj.sessions || []).filter(s => s.roomId)", fn(INDEX, "async function poChoose("),
                       "the PO picker still offers the PO")
 
@@ -178,9 +178,10 @@ class ProjectCountsLeaveOutThePo(unittest.TestCase):
                 mock.patch.object(dashboard, "project_home", return_value=""):
             return dashboard.build_projects()
 
+    # tests/test_po_needs_you.py covers the PO that cannot go on, which does count as waiting.
     def test_a_po_alone_is_nothing_live_or_waiting(self):
         out = self.build([{"roomId": "room-po", "sessionId": "room-po", "isLive": True,
-                           "status": "waiting", "attention": {"state": "waiting_for_you"}, "updatedAt": 5}])
+                           "status": "waiting", "attention": {"state": "stalled"}, "updatedAt": 5}])
         p = out["projects"][0]
         self.assertEqual((p["live"], p["waiting"], out["summary"]["needsYou"]), (0, 0, 0))
         self.assertEqual([s["roomId"] for s in p["sessions"]], ["room-po"], "the page still finds the PO")
@@ -188,7 +189,7 @@ class ProjectCountsLeaveOutThePo(unittest.TestCase):
 
     def test_its_tasks_still_count(self):
         out = self.build([
-            {"roomId": "room-po", "sessionId": "room-po", "isLive": True, "attention": {"state": "blocked"}},
+            {"roomId": "room-po", "sessionId": "room-po", "isLive": True, "status": "waiting_human"},
             {"roomId": "room-a", "sessionId": "room-a", "isLive": True, "status": "waiting_human"},
             {"roomId": "room-b", "sessionId": "room-b", "attention": {"state": "agent_gone"}},
         ])
