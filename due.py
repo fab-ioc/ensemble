@@ -78,7 +78,10 @@ _LAST = 0.0                 # when tick last ran (maybe_tick)
 
 
 def _log(msg: str) -> None:
-    print(f"[{time.strftime('%H:%M:%S')}] due: {msg}", flush=True)
+    try:
+        print(f"[{time.strftime('%H:%M:%S')}] due: {msg}", flush=True)
+    except (OSError, ValueError):       # a console that cannot show the line
+        pass                            # must not cost a delivery its record
 
 
 # ---------------------------------------------------------------------------
@@ -212,12 +215,13 @@ def _state_file() -> Path:
 def _load() -> dict:
     try:
         d = json.loads(_state_file().read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):       # unreadable, not JSON, or not UTF-8
         d = {}
     d = d if isinstance(d, dict) else {}
     # seen: path -> line -> {anchor, due}; fired: key -> {path, line, due, at, how}
-    return {"seen": d["seen"] if isinstance(d.get("seen"), dict) else {},
-            "fired": d["fired"] if isinstance(d.get("fired"), dict) else {}}
+    # A damaged entry is dropped, not raised on at every look.
+    return {k: {a: b for a, b in d[k].items() if isinstance(b, dict)}
+            if isinstance(d.get(k), dict) else {} for k in ("seen", "fired")}
 
 
 def _save(state: dict) -> None:
@@ -407,6 +411,12 @@ def _tick(now: float) -> list[dict]:
             fired[it["key"]] = {"path": path, "line": it["line"], "due": it["due"],
                                 "at": now, "how": how}
             out.append({**fired[it["key"]]})
+        if told:
+            # Written down at once: whatever fails later in this look, a line
+            # that was typed is not typed again.
+            _save(state)
+            before = json.dumps(state, sort_keys=True)
+        for it in told:
             _log(f"{path}: “{it['line']}” — "
                  + ("typed into the idle agent" if how == "typed" else "the PO is not running: "
                     "written to its chat"))

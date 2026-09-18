@@ -367,6 +367,43 @@ class PersistenceTests(_World):
         self.assertEqual(len(due.tick(at(15, 42))), 1)
         self.assertEqual(due.tick(at(15, 43)), [])
 
+    def test_a_damaged_state_file_does_not_stop_the_look(self):
+        self.write("- 15:40 — the test\n")
+        f = self.dir / "state" / "due.json"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_bytes(b'{"seen": "\xff\xfe"}')                  # not UTF-8
+        self.assertEqual(due.tick(at(15, 39)), [])
+        f.write_text(json.dumps({"seen": {str(self.hp): "text", "x": 3}, "fired": {"k": None}}),
+                     encoding="utf-8")
+        self.assertEqual(len(due.tick(at(15, 41))), 1)
+        self.assertEqual(due.tick(at(15, 42)), [])
+        self.assertEqual(len(self.sess.typed), 1)
+
+    def test_a_typed_item_is_recorded_before_anything_later_can_fail(self):
+        # Two handovers due in one look; the second one's delivery blows up in a
+        # place nothing catches. The first was typed: it is on disk already.
+        self.write("- 15:40 — the test\n")
+        other = self.dir / "task" / "TASK-HANDOVER.md"
+        self.write("- 15:40 — the owner's item\n", path=other)
+        self.owners = [("room-t", "claude")]
+        p = mock.patch.object(rotation, "task_handover_path", return_value=other)
+        p.start()
+        self.addCleanup(p.stop)
+        real = due._deliver
+        calls = []
+
+        def deliver(subj, ready, now):
+            calls.append(subj)
+            if len(calls) > 1:
+                raise KeyboardInterrupt()
+            return real(subj, ready, now)
+
+        with mock.patch.object(due, "_deliver", side_effect=deliver):
+            with self.assertRaises(KeyboardInterrupt):
+                due.tick(at(15, 41))
+        self.assertEqual(len(self.sess.typed), 1)
+        self.assertEqual([r["how"] for r in self.saved()["fired"].values()], ["typed"])
+
 
 class AgeTests(_World):
     def test_an_item_first_seen_more_than_a_day_late_is_never_delivered(self):
