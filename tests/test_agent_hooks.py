@@ -733,6 +733,22 @@ class Staleness(unittest.TestCase):
         self.assertEqual(attention._hook_status(ev), "")
         self.assertIsNone(agent_hooks.state_for("p1"))
 
+    def test_the_screen_still_ends_a_subagents_question_after_the_agents_turn(self):
+        # The subagent's answer and its end were lost; the agent's file says
+        # idle since its Stop. The screen going back to work ends the ask, for good.
+        self._hooks((HOOK_AT, "UserPromptSubmit", {}),
+                    (HOOK_AT + 1, "PermissionRequest", {"tool_name": "Bash", "agent_id": "sub-1"}),
+                    (HOOK_AT + 2, "Stop", {}))
+
+        def poll(tail, idle, printed):
+            return _classify(_ev(tail, agent_hooks.state_for("p1"), status="idle",
+                                 status_at=HOOK_AT + 2.1, idle=idle, printed=printed))
+        self.assertEqual(poll(PERMISSION, 2, HOOK_AT + 1)[0], "waiting_for_you")
+        self.assertEqual(poll(PERMISSION, 2, HOOK_AT + 10)[0], "waiting_for_you")    # prompt still up
+        self.assertIsNone(poll(WORKING, 2, HOOK_AT + 10))
+        self.assertEqual(agent_hooks.state_for("p1")["state"], "idle")               # the agent's Stop stands
+        self.assertIsNone(poll(WORKING, 3600, HOOK_AT + 10))                         # an hour of silence
+
     def test_a_finished_subagent_leaves_no_question_behind_on_a_quiet_terminal(self):
         # The agent stopped, its subagent asked, was refused and finished: no
         # tool call came back, the file says idle since before, nothing prints.

@@ -785,14 +785,16 @@ def _hook_status(ev: dict) -> str:
     quiet = idle is not None and idle >= _MIN_QUIET
     scan = ev.get("scan") or {}
     turn_over = False
-    if ev.get("claudeStatus") not in ("", status) and float(ev.get("claudeStatusAt") or 0) > at:
+    if status != "busy" and scan.get("busy") and not scan.get("prompt") and not quiet \
+            and float(ev.get("lastOutput") or 0) > at + _HOOK_MOVED_ON:
+        # Before the status file: the screen is about every ask, the file's
+        # ``idle`` only about the agent's own.
+        outdated = True
+    elif ev.get("claudeStatus") not in ("", status) and float(ev.get("claudeStatusAt") or 0) > at:
         outdated = True
         turn_over = ev.get("claudeStatus") == "idle"
-    elif status == "busy":
-        outdated = quiet
     else:
-        outdated = bool(scan.get("busy") and not scan.get("prompt") and not quiet
-                        and float(ev.get("lastOutput") or 0) > at + _HOOK_MOVED_ON)
+        outdated = status == "busy" and quiet
     if outdated:
         # For good, not for this poll: the evidence against it passes (the
         # terminal goes quiet, or prints again), what it disproved does not
