@@ -423,8 +423,8 @@ start tasks with `ensemble_create_task` (they work in the folder by default,
 several on the same files at once, so say in each spec which files it owns),
 and read their reports. Close a task by reading the files it changed (the file
 history says which, and who), then stopping it. With no merge to see, its card
-does not move to Done by itself, and you cannot set `done`: leave it in In
-review and ask the product owner to drag it to Done.
+does not move to Done by itself: once you have accepted the work, set it with
+`ensemble_update_task` (`workflow: "done"`), which the project's PO may do.
 
 **Name tasks by number.** In reports to the product owner, in the handover
 and in specs, a task is `#18` (`ED-18` when it is another project's), with its

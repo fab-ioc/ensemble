@@ -414,6 +414,20 @@ class Addresses(Hub):
         out, err = self.tool("ensemble_stop_task", {"taskId": "ED-2"})
         self.assertEqual((err, out["taskId"]), (False, self.b))
 
+    def test_the_projects_po_sets_done_whatever_its_seat_is_called(self):
+        # The PO here holds an "engineer" seat, as a documents project's PO or a
+        # past session made PO does: the project naming its room is what counts.
+        out, err = self.tool("ensemble_update_task", {"taskId": "#1", "workflow": "done"})
+        self.assertFalse(err, out)
+        self.assertEqual(chatroom.get_room(self.a).get("workflow"), "done")     # stored, not derived
+        # Not the task's own owner, not the PO room's reviewer seat.
+        out, err = self.tool("ensemble_update_task", {"taskId": "#2", "workflow": "done"}, room=self.b)
+        self.assertTrue(err)
+        text, err = ensemble_tools.call("ensemble_update_task", {"taskId": "#2", "workflow": "done"},
+                                        self.po, "codex", SimpleNamespace())
+        self.assertTrue(err, text)
+        self.assertNotEqual(chatroom.get_room(self.b).get("workflow"), "done")
+
     def test_rows_carry_the_number_first(self):
         out, _ = self.tool("ensemble_list_tasks", {})
         rows = {r["id"]: r for r in out["tasks"]}

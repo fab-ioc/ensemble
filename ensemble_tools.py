@@ -495,6 +495,19 @@ def is_admin_caller(room: dict, identity: str) -> bool:
     return bool(project and (project.get("poRoomId") or "").strip() == room.get("id"))
 
 
+def _is_project_po(room: dict, identity: str) -> bool:
+    """Whether the caller is its project's PO: the agent that reports are
+    addressed to in the room the project names as ``poRoomId``. A project's PO
+    is chosen by the person on the page, whatever role its seat carries (a
+    documents project's PO, a past session made PO), and it accepts the work
+    of its project's tasks: nothing merges there to move a card by itself."""
+    if not (room or {}).get("id"):
+        return False
+    project = _projects().get(_project_of_room(room)) or {}
+    return ((project.get("poRoomId") or "").strip() == room["id"]
+            and _d.chatroom.po_identity(room) == identity)
+
+
 def tool_schemas(room: dict, identity: str) -> list[dict]:
     """Task schemas offered to this authenticated participant."""
     tools = list(COMMON_TOOLS)
@@ -711,7 +724,8 @@ def _workflow(value, ctx):
     w = _d.normalize_workflow(value)
     if w is None:
         raise ToolError(f"workflow must be one of: {_d.WORKFLOW_CHOICES}")
-    if w in _d.OWNER_ONLY_WORKFLOW and not _d.is_product_owner(ctx["room"], ctx["identity"]):
+    if (w in _d.OWNER_ONLY_WORKFLOW and not _d.is_product_owner(ctx["room"], ctx["identity"])
+            and not _is_project_po(ctx["room"], ctx["identity"])):
         raise ToolError(
             f"only a ProductOwner moves a task to {_d.WORKFLOW_LABELS[w]} — it is "
             "accepted after testing, not when the work is handed over. Move it to "
