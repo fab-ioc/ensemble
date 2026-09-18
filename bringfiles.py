@@ -67,8 +67,10 @@ _BACKUP_DIRS, _BACKUP_FILES = _backup_names()
 LEFT_OUT_DIRS = ({".git", ".idea", ".claude", ".codex", ".ensemble", history.DIR_NAME, "node_modules",
                   "__pycache__", "appdata"} | {d.lower() for d in backup._NO_WALK} | _BACKUP_DIRS)
 LEFT_OUT_FILES = tuple(dict.fromkeys([*_BACKUP_FILES, *(p.lower() for p in history.NOT_KEPT_NAMES)]))
-# The hub's own records in a project's folder, and a task's in its own.
-_ROOT_ONLY = {"project.json", "project.json.tmp", "_linked"}
+# The hub's own records in a project's folder, and a task's in its own. Another
+# project's handover or roadmap at the top would pass for this project's own: a
+# rotation would start a fresh PO from it.
+_ROOT_ONLY = {"project.json", "project.json.tmp", "_linked", "po-handover.md", "roadmap.md"}
 _TASK_FILES = tuple(p.lower() for p in history.TASK_EXCLUDES if not p.endswith("/"))
 
 

@@ -87,6 +87,11 @@ class WhatIsLeftOut(Case):
         self.put(self.src, "doc.md")
         self.assertEqual(self.found()[0], ["doc.md"])
 
+    def test_another_projects_handover_and_roadmap_stay_behind(self):
+        for rel in ("PO-HANDOVER.md", "ROADMAP.md", "notes.md", "plans/ROADMAP.md", "plans/po-handover.md"):
+            self.put(self.src, rel)
+        self.assertEqual(self.found()[0], ["notes.md", "plans/ROADMAP.md", "plans/po-handover.md"])
+
     def test_a_tasks_own_folder_leaves_its_records(self):
         for rel in ("task.json", "chat.json", "claude.jsonl", ".wt-scheme", "project.json", "_linked/x.txt",
                     "notes.md", "data/rows.jsonl", "data/project.json"):
