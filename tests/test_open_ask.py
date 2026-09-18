@@ -16,10 +16,13 @@ check told the PO it was "unblocked".
 """
 from __future__ import annotations
 
+import json
 import tempfile
+import threading
 import time
 import types
 import unittest
+import urllib.request
 from pathlib import Path
 from unittest import mock
 
@@ -32,7 +35,7 @@ import ensemble_tools
 from test_digest_news import _Checks
 
 ROOT = Path(__file__).resolve().parent.parent
-BLOCKED = "AutoScout24 is logged out.\n\nfabio must log in before I can renew the listing."
+BLOCKED = "AutoScout24 is logged out.\n\nthe operator must log in before I can renew the listing."
 IDLE_SCREEN = "● ok\n❯ \n"
 BUSY_SCREEN = "● Checking the listings\n\n✻ Working… (12s · esc to interrupt)\n"
 
@@ -61,7 +64,7 @@ class WhatClosesAnAsk(_Room):
         self.report("update", "A Facebook group approved the post.")
         ask = self.ask()
         self.assertEqual((ask["kind"], ask["id"], ask["ts"]), ("blocked", first["id"], first["ts"]))
-        self.assertTrue(ask["text"].startswith("AutoScout24 is logged out. fabio must log in"))
+        self.assertTrue(ask["text"].startswith("AutoScout24 is logged out. the operator must log in"))
         self.assertEqual(ask["line"], "AutoScout24 is logged out.")      # never the hub's heading
 
     def test_the_person_speaking_in_the_chat_closes_it(self):
@@ -111,7 +114,7 @@ class WhatClosesAnAsk(_Room):
         self.assertEqual(self.ask()["kind"], "blocked")
 
 
-class TheBellKeepsIt(_Room):
+class _Bell(_Room):
     """attention.snapshot, which /api/attention serves, over a live terminal."""
 
     def setUp(self):
@@ -126,8 +129,10 @@ class TheBellKeepsIt(_Room):
         self.sess = types.SimpleNamespace(
             id="pty-1", alive=lambda: True, tail=lambda: self.screen, last_output=time.time(),
             info=lambda: {"idleSeconds": 2}, last_submit=lambda: self.submitted, death=lambda: None,
-            last_answer=0.0, meta={"room": self.rid, "identity": "claude"})
+            write=lambda data: self.written.append(data) or True,
+            meta={"room": self.rid, "identity": "claude"})
         self.submitted = 0.0
+        self.written: list[str] = []
         for patch in (
                 mock.patch.object(dashboard.ptyrun, "get",
                                   side_effect=lambda pid: self.sess if pid == "pty-1" else None),
@@ -153,6 +158,8 @@ class TheBellKeepsIt(_Room):
                             "event": {"hook_event_name": "UserPromptSubmit", "session_id": "s1"}},
                            lambda pid: (self.rid, "claude"))
 
+
+class TheBellKeepsIt(_Bell):
     def test_blocked_then_an_unrelated_update_is_still_waiting_for_the_person(self):
         asked = self.report("blocked", BLOCKED)
         self.report("update", "A Facebook group approved the post.")
@@ -196,19 +203,155 @@ class TheBellKeepsIt(_Room):
         self.assertEqual(self.item()["state"], "waiting_for_you")
         room = dashboard._annotate_room_liveness(chatroom.get_room(self.rid))
         self.assertEqual((room["openAsk"]["line"], room["openAsk"]["ts"]), ("Which price?", asked["ts"]))
-        self.sess.last_answer = time.time() + 5
+        self.assertTrue(dashboard.note_answer(self.rid, "claude"))
         self.assertIsNone(self.item())
         self.assertNotIn("openAsk", dashboard._annotate_room_liveness(chatroom.get_room(self.rid)))
+        # With nothing open there is nothing to answer: a person types many lines.
+        self.assertFalse(dashboard.note_answer(self.rid, "claude"))
 
-    def test_the_page_and_the_po_answer_it_the_hubs_own_lines_do_not(self):
-        src = (ROOT / "dashboard.py").read_text(encoding="utf-8")
-        i = src.index('if p == "/api/pty/input":')
-        self.assertIn("sess.last_answer = time.time()", src[i:src.index('if p == "/api/pty/resize":', i)])
-        # Nothing the hub types by itself goes through there, or marks an answer.
-        ring = src[src.index("    def _ring(self, room_id"):src.index("    def _ring_report(")]
-        self.assertNotIn("last_answer", ring)
-        self.assertEqual(dashboard.hub_input_kind(dashboard.PO_MESSAGE_PREFIX + " he logged in")["kind"], "human")
-        self.assertNotEqual(dashboard.hub_input_kind(dashboard.RESTART_NOTE)["kind"], "human")
+    def test_a_prompt_on_its_terminal_does_not_hide_the_asks_text_and_time(self):
+        asked = self.report("blocked", BLOCKED)
+        self.report("update", "Something else.")
+        agent_hooks.record({"room": self.rid, "identity": "claude", "ptyId": "pty-1",
+                            "event": {"hook_event_name": "PermissionRequest", "session_id": "s1"}},
+                           lambda pid: (self.rid, "claude"))
+        it = self.item()
+        self.assertEqual((it["state"], it["cause"]), ("waiting_for_you", "reported"))
+        self.assertEqual((it["askedAt"], it["askId"]), (asked["ts"], asked["id"]))
+        self.assertIn("AutoScout24 is logged out", it["quote"])
+        self.assertIn("waiting on your answer to a prompt", it["reason"])
+        self.assertIn("its blocked report is still open: “AutoScout24 is logged out", it["reason"])
+
+    def test_a_prompt_read_off_the_screen_does_not_hide_it_either(self):
+        asked = self.report("question", "Which price?")
+        self.screen = "● Edit file?\n❯ 1. Yes\n  2. No\n\nDo you want to proceed?\n"
+        self.assertTrue(attention.analyse(self.screen)["prompt"])
+        it = self.item()
+        self.assertEqual((it["state"], it["askedAt"], it["quote"]),
+                         ("waiting_for_you", asked["ts"], "Which price?"))
+        self.assertIn("its question is still open", it["reason"])
+
+    def test_a_wall_on_its_screen_does_not_replace_the_report(self):
+        asked = self.report("blocked", BLOCKED)
+        wall = ("hit its usage limit", "usage_limit", "You've hit your limit")
+        with mock.patch.object(attention, "_analyse_live",
+                               return_value=("", {"block": wall, "busy": False, "prompt": False})):
+            it = self.item()
+        self.assertEqual((it["state"], it["cause"]), ("blocked", "usage_limit"))      # the wall is said
+        self.assertIn("hit its usage limit: “You've hit your limit”", it["reason"])
+        self.assertIn("its blocked report is still open: “AutoScout24", it["reason"])  # and so is the ask
+        self.assertEqual((it["askedAt"], it["askId"]), (asked["ts"], asked["id"]))
+        self.assertIn("AutoScout24 is logged out", it["quote"])
+        # Without an ask the wall is what it was.
+        chatroom.post_message(self.rid, "user", "Logged in.")
+        with mock.patch.object(attention, "_analyse_live",
+                               return_value=("", {"block": wall, "busy": False, "prompt": False})):
+            it = self.item()
+        self.assertEqual((it["quote"], it["reason"].count("still open")), ("You've hit your limit", 0))
+        self.assertNotIn("askedAt", it)
+
+    def test_a_prompt_after_a_completed_is_just_the_prompt(self):
+        self.report("completed", "Sold.")
+        agent_hooks.record({"room": self.rid, "identity": "claude", "ptyId": "pty-1",
+                            "event": {"hook_event_name": "PermissionRequest", "session_id": "s1"}},
+                           lambda pid: (self.rid, "claude"))
+        it = self.item()
+        self.assertEqual(it["state"], "waiting_for_you")
+        self.assertNotIn("quote", it)
+
+
+class AnsweredInTheTerminal(_Bell):
+    """POST /api/pty/input on a real handler: the page's terminal and the PO's
+    tell answer a one-agent task's ask; the restart helper's note does not;
+    and the answer outlives the terminal."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.quiet = mock.patch.object(dashboard.Handler, "log_message", lambda *a: None)
+        cls.quiet.start()
+        cls.server = dashboard.ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.quiet.stop()
+
+    def type(self, data, **more):
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.server.server_address[1]}/api/pty/input",
+            data=json.dumps({"id": "pty-1", "data": data, **more}).encode("utf-8"),
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            self.assertEqual(r.status, 200)
+
+    def facts(self):
+        with mock.patch.object(digest, "_git_facts", return_value={}):
+            return digest._task_facts(chatroom.get_room(self.rid, public=False), {}, {}, time.time())
+
+    def test_the_restart_helpers_note_and_its_enter_answer_nothing(self):
+        helper = (ROOT / "restart-hub.ps1").read_text(encoding="utf-8")
+        sends = [ln for ln in helper.splitlines() if "Post '/api/pty/input'" in ln]
+        self.assertEqual(len(sends), 2)
+        self.assertTrue(all("hub = $true" in ln for ln in sends), sends)
+        self.report("blocked", BLOCKED)
+        note = "[from the restart helper, not a person] The hub was restarted at 16:51."
+        self.assertEqual(dashboard.hub_input_kind(note)["kind"], "helper")
+        # As the helper sends it, and as one from before `hub` would: the note, then the Enter.
+        for flag in ({"hub": True}, {}):
+            self.type(note, **flag)
+            self.type("\r", **flag)
+            self.assertEqual(self.item()["state"], "blocked")
+            self.assertIn("openAsk", dashboard._annotate_room_liveness(chatroom.get_room(self.rid)))
+        self.assertEqual(self.written, [note, "\r"] * 2)
+        self.assertNotIn("answeredAt", chatroom.participant(chatroom.get_room(self.rid, public=False), "claude"))
+
+    def test_a_person_or_the_po_typing_into_it_answers_it_for_the_bell_the_chat_and_the_digest(self):
+        for body in ("Logged in, go on.", dashboard.PO_MESSAGE_PREFIX + " he logged in, carry on"):
+            self.report("blocked", BLOCKED)
+            self.assertEqual(self.facts()["ask"], "blocked")
+            self.type(body)                 # the text, then its Enter, as the page and tell.py send them
+            self.assertEqual(self.item()["state"], "blocked")
+            self.type("\r")
+            self.assertIsNone(self.item())
+            self.assertNotIn("openAsk", dashboard._annotate_room_liveness(chatroom.get_room(self.rid)))
+            self.assertEqual(self.facts()["ask"], "")
+
+    def test_the_progress_check_tells_the_end_of_a_block_answered_in_the_terminal(self):
+        self.report("blocked", BLOCKED)
+        told = {"toldAttention": "blocked"}
+        self.assertEqual(digest._attention_news(told, {**self.facts(), "attention": ""}), "")
+        self.type("Logged in, go on.\r")
+        self.assertEqual(digest._attention_news(told, {**self.facts(), "attention": ""}),
+                         "attention blocked → none")
+
+    def test_an_answered_ask_stays_answered_across_a_restart_and_a_rotation(self):
+        self.report("question", "Which price?")
+        self.type("9,500\r")
+        self.assertIsNone(self.item())
+        # The hub restarts, or the task is handed to a fresh session: another
+        # terminal, another session id, nothing of the old one in memory.
+        chatroom.patch_participant(self.rid, "claude", {"ptyId": "pty-2", "sessionId": "fresh",
+                                                        "rotatedAt": 0})
+        fresh = types.SimpleNamespace(**{**vars(self.sess), "id": "pty-2"})
+        with mock.patch.object(dashboard.ptyrun, "get",
+                               side_effect=lambda pid: fresh if pid == "pty-2" else None):
+            self.assertIsNone(self.item())
+            self.assertNotIn("openAsk", dashboard._annotate_room_liveness(chatroom.get_room(self.rid)))
+            self.assertEqual(self.facts()["ask"], "")
+            # What it asks next is as visible as ever.
+            again = self.report("blocked", BLOCKED)
+            self.assertEqual((self.item()["state"], self.item()["askedAt"]), ("blocked", again["ts"]))
+            self.assertEqual(self.facts()["ask"], "blocked")
+
+    def test_in_a_team_room_the_terminal_answers_nothing(self):
+        full = chatroom.get_room(self.rid, public=False)
+        full["mode"] = "collab"
+        chatroom.update_room(full)
+        self.report("question", "Which price?")
+        self.type("9,500\r")
+        self.assertEqual(self.item()["state"], "waiting_for_you")
 
 
 class TheProgressCheck(_Checks):

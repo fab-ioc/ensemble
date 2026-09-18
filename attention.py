@@ -565,7 +565,29 @@ def _open_to_human(room: dict, msgs: list) -> dict | None:
     The newest ``blocked`` / ``question`` wins over a plain message sent after
     it. Teammate chatter does not answer anything — the redesign pair sent
     "ready to merge" to the user, then a thank-you to the designer, and the
-    merge was still waiting on a human."""
+    merge was still waiting on a human.
+
+    A one-agent task is answered in its terminal as often as in chat: what a
+    person (or the PO, for them) submitted to it after the ask closes it too.
+    That is kept on the participant (``answeredAt``, see
+    ``dashboard.note_answer``), not on the terminal, so the ask stays closed
+    across a hub restart and a rotation — and the bell, the chat's line and
+    the progress check all read this one rule."""
+    put = _put_to_human(room, msgs)
+    if put and room.get("mode") == "solo":
+        part = next((p for p in room.get("participants", [])
+                     if p.get("identity") == put["from"]), {})
+        try:
+            answered = float(part.get("answeredAt") or 0)
+        except (TypeError, ValueError):
+            answered = 0.0
+        if answered > float(put.get("ts") or 0):
+            return None
+    return put
+
+
+def _put_to_human(room: dict, msgs: list) -> dict | None:
+    """``_open_to_human`` by the chat alone."""
     agents = {p.get("identity") for p in room.get("participants", [])
               if p.get("kind") == "agent"}
     reports = [r for r in (room.get("lastReport"), room.get("lastRealReport")) if isinstance(r, dict)]
@@ -620,19 +642,7 @@ def open_ask_now(room: dict) -> dict | None:
     the bell uses — so a one-agent task answered in its terminal has none. A
     ``completed`` is not an ask."""
     ask = open_ask(room)
-    if not ask or ask["kind"] == "completed":
-        return None
-    if room.get("mode") == "solo":
-        part = next((p for p in room.get("participants") or []
-                     if p.get("identity") == ask["from"]), {})
-        sess = _d.ptyrun.get(part.get("ptyId") or "") if part.get("ptyId") else None
-        try:
-            answered = float(getattr(sess, "last_answer", 0) or 0) if sess is not None else 0.0
-        except (TypeError, ValueError):
-            answered = 0.0
-        if answered > float(ask.get("ts") or 0):
-            return None
-    return ask
+    return ask if ask and ask["kind"] != "completed" else None
 
 
 def _summarize(room: dict) -> dict:
@@ -669,7 +679,7 @@ def _summarize(room: dict) -> dict:
         "participants": [
             {k: p.get(k) for k in ("identity", "kind", "agent", "role",
                                    "ptyId", "sessionId", "lastExit", "resumedAt",
-                                   "rotatedAt")}
+                                   "rotatedAt", "answeredAt")}
             for p in room.get("participants", [])
         ],
         "lastMessage": {"from": last.get("from", ""), "to": last.get("to", ""),
@@ -745,7 +755,7 @@ def _evidence(part: dict, statuses: dict[str, tuple[str, float]]) -> dict:
     pty_id = (part.get("ptyId") or "").strip()
     sess = ptyrun.get(pty_id) if pty_id else None
     alive = bool(sess and sess.alive())
-    tail, idle, death, submitted, printed, hook, answered = "", None, None, 0.0, 0.0, None, 0.0
+    tail, idle, death, submitted, printed, hook = "", None, None, 0.0, 0.0, None
     if alive:
         tail, scan = _analyse_live(sess)
         try:
@@ -764,13 +774,6 @@ def _evidence(part: dict, statuses: dict[str, tuple[str, float]]) -> dict:
             submitted = float(sess.last_submit() or 0)
         except Exception:
             submitted = 0.0
-        # When a person (or the PO, for them) last submitted something to it:
-        # the page's terminal and the chat box, never a line the hub types by
-        # itself (a doorbell, a progress check, the note after a restart).
-        try:
-            answered = float(getattr(sess, "last_answer", 0) or 0)
-        except (TypeError, ValueError):
-            answered = 0.0
     else:
         scan = None
     if not alive and pty_id:
@@ -794,7 +797,7 @@ def _evidence(part: dict, statuses: dict[str, tuple[str, float]]) -> dict:
         said = (said, 0.0)
     return {
         "ptyId": pty_id, "alive": alive, "tail": tail, "idleSeconds": idle,
-        "lastSubmit": submitted, "lastAnswer": answered, "death": death, "scan": scan or {"block": None, "busy": False, "prompt": False},
+        "lastSubmit": submitted, "death": death, "scan": scan or {"block": None, "busy": False, "prompt": False},
         "claudeStatus": said[0], "claudeStatusAt": said[1],
         "hook": hook, "lastOutput": printed,
     }
@@ -941,6 +944,10 @@ def _owed_since(room: dict, identity: str) -> tuple[float, str]:
     return float(last.get("ts") or 0), "message"
 
 
+_ASK_NAMES = {"blocked": "its blocked report", "question": "its question",
+              "message": "its message to you"}
+
+
 def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
                     now: float) -> tuple[str, str, dict] | None:
     """One agent's attention state, or None if it needs nothing.
@@ -984,13 +991,27 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
             return ("agent_gone", f"{who} died — it {why}: “{line}” ({exit_txt})", extra)
         return ("agent_gone", f"{who} died on its own ({exit_txt})", extra)
 
+    # What it put to a human that nobody has answered (``_open_to_human``). An
+    # ask keeps its text and its time on the item whatever else the terminal
+    # shows: a prompt or a wall on the screen is one more thing to see to, and
+    # neither answers it. (A ``completed`` is not an ask: a prompt after it is
+    # simply the newer thing.)
+    put = room.get("openToHuman")
+    put = put if put and put.get("from") == identity else None
+    q = (put or {}).get("text", "")
+    asked = {"quote": q, "since": float(put.get("ts") or 0), "askId": put.get("id", "")} if put else {}
+    still, still_extra = "", {}
+    if put and put["kind"] != "completed":
+        still = f"; {_ASK_NAMES.get(put['kind'], 'its message to you')} is still open: “{q}”"
+        still_extra = {**asked, **({"cause": "reported"} if put["kind"] == "blocked" else {})}
+
     if block:
         why, cause, line = block
-        return ("blocked", f"{who} {why}: “{line}”",
-                {"quote": line, "cause": cause})
+        return ("blocked", f"{who} {why}: “{line}”{still}",
+                {"quote": line, **still_extra, "cause": cause})
 
     if status == "waiting":
-        return ("waiting_for_you", f"{who} is waiting on your answer to a prompt", {})
+        return ("waiting_for_you", f"{who} is waiting on your answer to a prompt{still}", still_extra)
     if status != "busy" and ev["scan"]["prompt"] and hooked != "idle":
         # The screen is the fallback, and it is needed for two different
         # reasons: codex publishes no status at all, and Claude's status file
@@ -1001,7 +1022,7 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
         # has no prompt up — its hooks report every one, the question too — so
         # there the words of a prompt are the end of its own last message
         # ("Would you like to…?").
-        return ("waiting_for_you", f"{who} has a prompt on screen waiting for you", {})
+        return ("waiting_for_you", f"{who} has a prompt on screen waiting for you{still}", still_extra)
 
     # A working indicator on a screen that has been still for a while is a
     # leftover: both CLIs repaint theirs every second while a turn runs, and
@@ -1012,15 +1033,8 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
     # stays up whatever the terminal is doing: an agent that went back to
     # checking on its own (a doorbell, a progress check, a restart) has not
     # been answered, and "a busy Claude is never blocked" above is about walls
-    # read off the screen, not about what the agent itself reported. A
-    # one-agent task is answered in its terminal as often as in chat, so for
-    # one anything a person submitted to it since counts as the answer — not
-    # what the hub typed.
-    put = room.get("openToHuman")
-    if put and put.get("from") == identity and not (
-            room.get("mode") == "solo" and ev.get("lastAnswer", 0) > float(put.get("ts") or 0)):
-        q = put.get("text", "")
-        asked = {"quote": q, "since": float(put.get("ts") or 0), "askId": put.get("id", "")}
+    # read off the screen, not about what the agent itself reported.
+    if put:
         if put["kind"] == "blocked":
             return ("blocked", f"{who} reported it is blocked and needs help: “{q}”",
                     {**asked, "cause": "reported"})

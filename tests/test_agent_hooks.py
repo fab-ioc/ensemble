@@ -649,12 +649,11 @@ class AttentionPrefersTheHook(unittest.TestCase):
         hit = _classify(_ev("● ok\n❯ \n", _hook("working")), room=room)
         self.assertEqual((hit[0], hit[2]["since"]), ("blocked", 5.0))
         self.assertEqual(_classify(_ev(WORKING, status="busy"), room=room)[0], "blocked")
-        # A one-agent task is answered in its terminal: a person's line, not the hub's.
+        # A one-agent task is answered in its terminal by a person's line, which
+        # the room keeps (test_open_ask): what the hub typed and submitted is none.
         solo = {**room, "mode": "solo"}
         self.assertEqual(_classify({**_ev("● ok\n❯ \n", _hook("working")), "lastSubmit": 9.0},
                                    room=solo)[0], "blocked")
-        self.assertIsNone(_classify({**_ev("● ok\n❯ \n", _hook("working")), "lastAnswer": 9.0},
-                                    room=solo))
 
     def test_walls_stay_with_the_screen(self):
         self.assertEqual(_classify(_ev(WALL, _hook("idle")))[0], "blocked")

@@ -392,6 +392,43 @@ class Restore(_Hub):
         self.assertEqual(self.typed(good), {"claude": [dashboard.RESTART_NOTE]})
         self.assertNotIn(bad, dashboard._RESUMES)
 
+    def test_a_message_that_arrived_while_a_failed_restore_was_starting_is_not_stranded(self):
+        rid = self.room()
+        self.running(rid, "claude", "idle")
+        h = self.handler()
+        real = h._resume_room_agent_pty
+        said = []
+
+        def fails_with_a_message_on_its_way(room_full, part, **kw):
+            # Someone writes to the task while its terminal is being started…
+            said.append(h._resume_room(chatroom.get_room(rid, public=False),
+                                       text="Logged in, go on.", key="k1"))
+            raise RuntimeError("no such session")       # …and the start fails.
+        h._resume_room_agent_pty = fails_with_a_message_on_its_way
+        dashboard.take_restart_snapshot(self.lease(), wake_room="")
+        path = self.dir / "restart-snapshot.json"
+        snap = json.loads(path.read_text(encoding="utf-8"))
+        snap["hubPid"] = os.getpid() + 1
+        path.write_text(json.dumps(snap), encoding="utf-8")
+        self.hub_stops()
+        out = h._restore_after_restart("lease-1")["rooms"]
+        self.assertIn("NOT brought back", out[0]["outcome"])
+        self.assertTrue(said[0]["inFlight"])
+        # Kept as a failed resume, the way /api/room/resume keeps it: not "resuming" for ever.
+        held = dashboard._RESUMES[rid]
+        self.assertEqual((held.state, [it["text"] for it in held.queue]),
+                         ("failed", ["Logged in, go on."]))
+        # The same send again starts the task and delivers it, once.
+        h._resume_room_agent_pty = real
+        again = h._resume_room(chatroom.get_room(rid, public=False), text="Logged in, go on.", key="k1")
+        self.join()
+        self.assertNotIn("inFlight", again)
+        self.assertEqual([r["identity"] for r in again["resumed"]], ["claude"])
+        typed = self.typed(rid)["claude"]
+        self.assertEqual(len(typed), 1)
+        self.assertEqual(typed[0].count("Logged in, go on."), 1)
+        self.assertNotIn(rid, dashboard._RESUMES)
+
 
 class StartingAStoppedTaskIsUnchanged(_Hub):
     def test_a_person_or_a_po_starting_it_still_types_the_resume_note(self):

@@ -61,7 +61,7 @@ vm.runInContext(code + `
 const T = ctx.t, out = {};
 const now = Date.now() / 1000;
 const ask = { from: 'claude', ts: now - 60, kind: 'blocked', id: 'm-blocked',
-  line: 'AutoScout24 is logged out <b>', text: 'AutoScout24 is logged out <b> fabio must log in' };
+  line: 'AutoScout24 is logged out <b>', text: 'AutoScout24 is logged out <b> the operator must log in' };
 
 // A room: the message itself.
 const roomItems = [{ id: 'm1', from: 'user', ts: now - 90 }, { id: 'm-blocked', from: 'claude', ts: now - 60 },

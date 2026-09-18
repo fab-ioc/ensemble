@@ -1683,6 +1683,29 @@ def typed_by_person(text: str) -> bool:
     return hub_input_kind(s)["kind"] == "human" and not s.startswith(PO_MESSAGE_PREFIX)
 
 
+def note_answer(room_id: str, identity: str) -> bool:
+    """A person (or the PO, for them) submitted a line to a one-agent task's
+    terminal: that answers the ask the task has open (attention._open_to_human
+    reads ``answeredAt``). Kept on the participant, so it outlives the terminal
+    — a hub restart or a rotation never brings an answered ask back — and
+    written only when there is an ask to answer: a person types many lines.
+    Never a line the hub types by itself (a doorbell, a progress check, the
+    note after a restart, the restart helper's)."""
+    if not room_id or not identity:
+        return False
+    try:
+        room = chatroom.get_room(room_id, public=False)
+        if not room or room.get("mode") != "solo":
+            return False
+        ask = attention.open_ask(room)
+        if not ask or ask.get("from") != identity:
+            return False
+        return chatroom.patch_participant(room_id, identity, {"answeredAt": time.time()}) is not None
+    except Exception as exc:    # noqa: BLE001 — the input itself went in
+        print(f"[attention] {room_id}/{identity}: the answer was not recorded: {exc!r}", flush=True)
+        return False
+
+
 def classify_turns(turns: list[dict]) -> list[dict]:
     """The chat's turns with ``kind`` on every user turn and ``answers`` (the
     kind of the user turn before it, with a report's details) on every
@@ -8415,9 +8438,16 @@ class Handler(BaseHTTPRequestHandler):
                             f"one line to {', '.join(lined)}, nothing typed into the rest" if lined
                             else "nothing typed"))
                     except Exception as exc:    # noqa: BLE001 — one room never stops the rest
+                        # As in _resume_room: what was sent to the room while
+                        # it was coming up is kept as failed, so the next
+                        # attempt (the same send again, Resume, Retry) starts
+                        # the room and delivers it.
                         with _RESUMES_LOCK:
-                            if _RESUMES.get(rid) is res and not res.queue:
-                                _RESUMES.pop(rid, None)
+                            if _RESUMES.get(rid) is res:
+                                if res.queue:
+                                    res.fail(str(exc) or exc.__class__.__name__)
+                                else:
+                                    _RESUMES.pop(rid, None)
                         outcome = f"NOT brought back: {exc!r}"
                     else:
                         if rid in po_rooms and rid != wake_room and not lined:
@@ -8502,8 +8532,8 @@ class Handler(BaseHTTPRequestHandler):
                 sess.last_input = time.time()
             if not _type_input(sess, "\n\n".join(with_message_refs(it["text"], rid) for it in items)):
                 return items     # it looked alive, but the write found it gone
-            if any(hub_input_kind(it["text"])["kind"] == "human" for it in items):
-                sess.last_answer = time.time()      # a person's or the PO's: see attention
+        if any(hub_input_kind(it["text"])["kind"] == "human" for it in items):
+            note_answer(rid, agents_in[0].get("identity", ""))     # a person's or the PO's
         return []
 
     def _deliver_after_resume(self, room_id: str, targets: list[tuple], solo: bool) -> None:
@@ -8674,7 +8704,7 @@ class Handler(BaseHTTPRequestHandler):
                 if it.get("posted"):
                     it["wake"] = [w for w in it["wake"] if w != ident]
             if solo and any(hub_input_kind(it["text"])["kind"] == "human" for it in items):
-                sess.last_answer = time.time()
+                note_answer(room_id, ident)
             if ident in notes:
                 chatroom.patch_participant(room_id, ident, {"resumedAt": time.time()})
             after_restart = notes.get(ident) == RESTART_NOTE
@@ -9431,6 +9461,14 @@ class Handler(BaseHTTPRequestHandler):
             # lands in between makes this count as a person's, but stamped
             # before the ask's own submit, which rotation._typed_since ignores.
             by_person = self._pty_input_by_person(sess)
+            typed = data.get("data", "")
+            # The restart helper comes this way too, with its note and then the
+            # Enter as two writes: it says so (``hub``), and its note is known
+            # by its first words. Neither write is anyone's answer.
+            hub_line = bool(data.get("hub")) or (
+                isinstance(typed, str) and hub_input_kind(typed)["kind"] != "human")
+            submits = isinstance(typed, str) and ("\r" in typed or "\n" in typed)
+            answers = False
             # One step with a rotation's mark (rotation.GATE): input to a task
             # being handed over is refused rather than reach the session being
             # ended, and input before it is seen by the rotation's last check.
@@ -9441,16 +9479,21 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 if by_person:
                     sess.last_input = time.time()
-                typed = data.get("data", "")
                 if not sess.write(typed):
                     # It ended after the check above: the input went nowhere.
                     self._send_json(410, {"error": "the session has stopped"})
                     return
-                if isinstance(typed, str) and ("\r" in typed or "\n" in typed):
+                if submits:
                     # Submitted from outside the hub (the page's terminal, the
-                    # PO's tell): what answers a one-agent task's open ask. The
-                    # hub's own lines never come this way.
-                    sess.last_answer = time.time()
+                    # PO's tell): what answers a one-agent task's open ask —
+                    # unless the line it submits is the hub's.
+                    answers = not hub_line and not getattr(sess, "hub_line_typed", False)
+                    sess.hub_line_typed = False
+                elif hub_line:
+                    sess.hub_line_typed = True      # its Enter follows by itself
+            if answers:
+                meta = sess.meta or {}
+                note_answer(meta.get("room", ""), meta.get("identity", ""))
             self._send_json(200, {"ok": True})
             return
         if p == "/api/pty/resize":

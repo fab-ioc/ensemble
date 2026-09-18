@@ -190,9 +190,11 @@ if ($cfg.wakeRoom) {
   if ($pty) {
     Start-Sleep -Seconds 15
     try {
-      Post '/api/pty/input' @{ id = $pty; data = [string]$cfg.wakeText } | Out-Null
+      # hub: this line and its Enter are the restart's, not a person's answer
+      # to anything the PO asked.
+      Post '/api/pty/input' @{ id = $pty; data = [string]$cfg.wakeText; hub = $true } | Out-Null
       Start-Sleep -Milliseconds 500
-      Post '/api/pty/input' @{ id = $pty; data = "`r" } | Out-Null
+      Post '/api/pty/input' @{ id = $pty; data = "`r"; hub = $true } | Out-Null
       L "woke the PO"
     } catch { L "wake failed: $_" }
   }
