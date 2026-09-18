@@ -59,6 +59,7 @@ _MSG_WAITING = re.compile(r"needs your (?:permission|approval|attention)|permiss
 _MSG_IDLE = re.compile(r"waiting for your input", re.I)
 
 _MAX_AGENTS = 500
+_MAX_WAITS = 50
 _LOCK = threading.Lock()
 # ptyId -> {room, identity, sessionId, base, waits}. ``base`` is what the agent
 # itself last said, {state, detail, event, at, stale}; ``waits`` the open asks,
@@ -136,6 +137,7 @@ def _apply(held: dict, event: dict, state: str, detail: str, at: float) -> None:
                                              and w["tool"] == tool)]
         waits.append({"agent": agent, "toolUseId": tool_use_id, "tool": tool, "detail": detail,
                       "event": name, "at": at})
+        del waits[:-_MAX_WAITS]             # asks nobody ever answers must not pile up
         return
     if state == "working":
         if name == "UserPromptSubmit":

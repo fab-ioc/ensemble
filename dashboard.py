@@ -6862,6 +6862,9 @@ class Handler(BaseHTTPRequestHandler):
         # windowless) there is no console stream, and writes would raise.
         if not sys.stderr:
             return
+        # Every tool call of every Claude agent posts a hook: not worth a line each.
+        if str(getattr(self, "path", "")).split("?", 1)[0] == "/api/agent/hook":
+            return
         try:
             sys.stderr.write(f"[{time.strftime('%H:%M:%S')}] {fmt % args}\n")
         except (OSError, ValueError):
@@ -9014,6 +9017,14 @@ class Handler(BaseHTTPRequestHandler):
         what it is doing: ``{room, identity, ptyId, at, event}``. This machine
         only, and never from a page on another site. Anything it cannot use is
         answered and dropped: the sender neither reads the answer nor retries."""
+        try:
+            self._agent_hook_answer()
+        except OSError:
+            # The sender hangs up without reading the answer; what it said is
+            # already kept, and a traceback per hook would only fill the log.
+            self.close_connection = True
+
+    def _agent_hook_answer(self) -> None:
         if not _addr_is_loopback(self._client_ip()):
             self._send_json(403, {"error": "loopback_only"})
             return
@@ -9021,14 +9032,17 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(403, {"error": "cross_origin"})
             return
         raw = self.headers.get("Content-Length")
-        ln = int(raw) if raw is not None and str(raw).strip().isdigit() else 0
+        try:                                # isdigit() also passes "²", int() does not
+            ln = int(raw) if raw is not None and str(raw).strip().isdigit() else 0
+        except ValueError:
+            ln = 0
         if ln > _AGENT_HOOK_MAX_BODY:
             self.close_connection = True        # unread, so not reusable
             self._send_json(413, {"error": "too_large"})
             return
         try:
             payload = json.loads(self.rfile.read(ln).decode("utf-8")) if ln else None
-        except (ValueError, OSError):
+        except (ValueError, OSError, RecursionError):       # deep nesting is bad JSON too
             self._send_json(400, {"error": "bad_json"})
             return
 

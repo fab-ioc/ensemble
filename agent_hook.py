@@ -121,7 +121,7 @@ def main() -> int:
             "event": trimmed(data),
         }).encode("utf-8")
         post(url, body, deadline)
-    except Exception:                                        # noqa: BLE001
+    except BaseException:                                    # noqa: BLE001 — an interrupt too: exit 0, silent
         pass
     return 0
 

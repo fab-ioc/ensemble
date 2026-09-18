@@ -338,6 +338,13 @@ class HeldState(unittest.TestCase):
         self.assertIsNone(agent_hooks.state_for("pty-2"))      # a relaunch starts clean
         self.assertIsNone(agent_hooks.state_for(""))
 
+    def test_asks_nobody_answers_do_not_pile_up(self):
+        self.post("UserPromptSubmit")
+        for i in range(agent_hooks._MAX_WAITS + 20):
+            self.post("PermissionRequest", tool_name="Write", tool_use_id=f"toolu_{i}")
+        held = agent_hooks.state_for("pty-1")
+        self.assertEqual((held["state"], held["waits"]), ("waiting", agent_hooks._MAX_WAITS))
+
     def test_a_turn_from_prompt_to_permission_to_the_end(self):
         seen = []
         for name, fields in (("SessionStart", {"source": "startup"}), ("UserPromptSubmit", {}),
@@ -546,6 +553,11 @@ class Endpoint(unittest.TestCase):
         self.assertEqual((out.returncode, out.stdout, out.stderr), (0, "", ""))
         held = agent_hooks.state_for("pty-1")
         self.assertEqual((held["state"], held["detail"]), ("waiting", "Write"))
+
+    def test_a_body_nested_too_deep_is_bad_json(self):
+        deep = b"[" * 8000 + b"]" * 8000
+        self.assertEqual(self.send(deep), (400, {"error": "bad_json"}))
+        self.assertEqual(self.send(self.payload("Stop"))[0], 200)      # and the hub still answers
 
     def test_unknown_events_and_agents_are_tolerated(self):
         self.assertEqual(self.send(self.payload("NeverHeardOfIt"))[0], 200)
