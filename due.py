@@ -10,7 +10,7 @@ at a time, one line per item::
     - 15:40 — the paper-1 hand test
     - 09-19 08:30 — read the overnight report
 
-and once a minute the hub reads that section of every project's
+and about once a minute the hub reads that section of every project's
 ``PO-HANDOVER.md`` and of every running task owner's ``TASK-HANDOVER.md``:
 
 * **An item whose time has come, its agent running and idle** (its turn over,
@@ -18,6 +18,10 @@ and once a minute the hub reads that section of every project's
   into it as one ``[due] …`` line, a hub input like a digest. Items of one
   handover that are due together go in one line.
 * **Busy** → nothing is typed; it is tried again each minute until it is idle.
+  The look rides the progress check's loop, after its tick: while a digest is
+  being written up (up to 90 s a project) it is that much later. Best effort.
+* **More due at once than one line holds** (``_WAKE_MAX``): the line names as
+  many as fit, in order; the others stay due and go in the next line.
 * **A PO that is not running** is not resumed (resumes are the CEO's or the
   PO's): the item is written to its room's chat as a line from the hub, once.
   If the PO runs again while the item is less than ``MAX_AGE_S`` old and still
@@ -175,13 +179,14 @@ def resolve(item: dict, anchor: float) -> float | None:
 
 
 def _read_items(path: Path, now: float) -> tuple[float, list[dict]] | None:
-    """(mtime, items) of a handover; (0, []) when there is none; None when it
-    was written a moment ago and may be half-written (looked at next time)."""
+    """(mtime, items) of a handover; None when there is none (an owner that
+    replaces its handover may delete it first), or it was written a moment ago
+    and may be half-written: looked at next time."""
     try:
         st = path.stat()
     except OSError:
         _PARSED.pop(str(path), None)
-        return 0.0, []
+        return None
     if 0 <= now - st.st_mtime < SETTLE_S:
         return None
     key = (st.st_mtime, st.st_size)
@@ -284,50 +289,60 @@ def _listed(items: list[dict], now: float) -> str:
     return "; ".join(bits)
 
 
-def wake_line(subj: dict, items: list[dict], now: float) -> str:
-    one = len(items) == 1
+def wake_line(subj: dict, items: list[dict], now: float) -> tuple[str, list[dict]]:
+    """(the typed line, the items it names). As many items, in order, as fit in
+    ``_WAKE_MAX``; the first always does (``_WHAT_MAX``). The rest are not
+    delivered by this line: they stay due, and go in the next one."""
     tell = (f"tell {_d.operator_name()} why not" if subj["kind"] == "po"
             else "report why not")
-    tail = (f" (from {subj['file']}). {'This is' if one else 'These are'} due and you are "
-            f"idle: do {'it' if one else 'them'} now, or {tell}.")
-    listed = _listed(items, now)
-    room_for = _WAKE_MAX - len(PREFIX) - len(tail)
-    if len(listed) > room_for:
-        listed = listed[:room_for] + "…"
-    return PREFIX + listed + tail
+
+    def line(told: list[dict]) -> str:
+        one = len(told) == 1
+        return (f"{PREFIX}{_listed(told, now)} (from {subj['file']}). "
+                f"{'This is' if one else 'These are'} due and you are idle: do "
+                f"{'it' if one else 'them'} now, or {tell}.")
+
+    told = items[:1]
+    for it in items[1:]:
+        if len(line(told + [it])) > _WAKE_MAX:
+            break
+        told.append(it)
+    return line(told)[:_WAKE_MAX], told
 
 
-def _deliver(subj: dict, items: list[dict], now: float) -> str:
-    """``typed`` (into the idle agent), ``chat`` (a PO that is not running: a
-    line in its room) or "" (busy, being rotated, or not reachable: later).
-    One step under the rotation's gate, like a doorbell: the terminal is read
+def _deliver(subj: dict, items: list[dict], now: float) -> tuple[str, list[dict]]:
+    """(how, the items it delivered): ``typed`` (into the idle agent), ``chat``
+    (a PO that is not running: a line in its room) or "" (busy, being rotated,
+    or not reachable: later). One step under the rotation's gate, like a doorbell: the terminal is read
     afresh, and never one a rotation is replacing."""
     rot, cr = _d.rotation, _d.chatroom
     rid = subj["roomId"]
     with rot.GATE:
         room = cr.get_room(rid)
         if room is None:
-            return ""
+            return "", []
         ident = subj["identity"] or cr.po_identity(room)
         part = cr.participant(room, ident) if ident else None
         if not part or rot.is_rotating(rid, ident):
-            return ""
+            return "", []
         sess = rot._pty(part)
         if sess is None:
-            if subj["kind"] != "po" or all(it.get("how") == "chat" for it in items):
-                return ""
             new = [it for it in items if it.get("how") != "chat"]
+            if subj["kind"] != "po" or not new:
+                return "", []
             text = (f"**Due: {_listed(new, now)}** (from `{subj['file']}`). The PO is not "
                     f"running, so the hub did not wake it. It is told when it next runs, "
                     f"if that is within a day.")
-            return "chat" if cr.post_notice(rid, SENDER, text, {"noticeKind": "due"}) else ""
+            posted = cr.post_notice(rid, SENDER, text, {"noticeKind": "due"})
+            return ("chat", new) if posted else ("", [])
         # About to be replaced by a fresh session: that one is told instead.
         if rot.awaiting_handover(rid, ident):
-            return ""
+            return "", []
         tpath, reader = rot._transcript_of(part)
         if not rot._idle(part, reader(tpath)) or rot._submitted_lately(sess):
-            return ""
-        return "typed" if _d._type_input(sess, wake_line(subj, items, now)) else ""
+            return "", []
+        wake, told = wake_line(subj, items, now)
+        return ("typed", told) if _d._type_input(sess, wake) else ("", [])
 
 
 # ---------------------------------------------------------------------------
@@ -345,13 +360,13 @@ def _tick(now: float) -> list[dict]:
     state = _load()
     before = json.dumps(state, sort_keys=True)
     seen_all, fired = state["seen"], state["fired"]
-    visited, out = set(), []
+    read, out = set(), []
     for subj in _subjects():
         path = str(subj["path"])
-        visited.add(path)
         got = _read_items(subj["path"], now)
         if got is None:
             continue
+        read.add(path)
         mtime, items = got
         old, seen = seen_all.get(path) or {}, {}
         ready = []
@@ -384,21 +399,30 @@ def _tick(now: float) -> list[dict]:
         if not ready:
             continue
         try:
-            how = _deliver(subj, ready, now)
+            how, told = _deliver(subj, ready, now)
         except Exception as e:              # one handover must not stop the others
             _log(f"{path}: not delivered: {str(e)[:200]}")
-            how = ""
-        for it in ready if how else []:
-            if how == "chat" and it["how"] == "chat":
-                continue
+            how, told = "", []
+        for it in told:
             fired[it["key"]] = {"path": path, "line": it["line"], "due": it["due"],
                                 "at": now, "how": how}
             out.append({**fired[it["key"]]})
             _log(f"{path}: “{it['line']}” — "
                  + ("typed into the idle agent" if how == "typed" else "the PO is not running: "
                     "written to its chat"))
-    for path in [p for p in seen_all if p not in visited]:
-        seen_all.pop(path, None)            # a stopped task, a project that is gone
+    # A handover not read this time — its owner's terminal is away (a rotation
+    # between its two sessions, a stopped task), or the file is being written —
+    # keeps what is known of its lines: forgotten, an unchanged line would be
+    # resolved again from a newer write, a bare time move to tomorrow, and a
+    # delivered one be delivered again. Once the file itself is gone, a line
+    # is forgotten when it could no longer be delivered.
+    for path in [p for p in seen_all if p not in read and not Path(p).exists()]:
+        kept = {ln: r for ln, r in seen_all[path].items()
+                if isinstance(r, dict) and now - float(r.get("due") or 0) <= MAX_AGE_S}
+        if kept:
+            seen_all[path] = kept
+        else:
+            seen_all.pop(path, None)
     # A record outlives its line only while the same line, written again, could
     # still be delivered: past MAX_AGE_S it would be dropped anyway.
     for key in [k for k, r in fired.items()

@@ -231,6 +231,24 @@ class WakeTests(_World):
         due.tick(at(8, 31, day=19))
         self.assertTrue(self.sess.typed[1].startswith("[due] 08:30 — tomorrow's (from"))
 
+    def test_more_than_one_line_holds_the_rest_stay_due(self):
+        # Review 1: six long items came to 901 characters with the last two cut
+        # off, and all six were marked delivered.
+        self.write("".join(f"- 15:4{i} — item {i} " + "x" * 225 + "\n" for i in range(6)))
+        out = due.tick(at(15, 50))
+        first = self.sess.typed[0]
+        self.assertLessEqual(len(first), due._WAKE_MAX)
+        self.assertTrue(0 < len(out) < 6)
+        self.assertEqual([i for i in range(6) if f"item {i} " in first], list(range(len(out))))
+        self.assertTrue(first.endswith("do them now, or tell sam why not."))
+        self.assertNotIn("…", first)                        # no item cut short
+        # The others are still due: the next idle looks deliver them, each once.
+        rest = due.tick(at(15, 51)) + due.tick(at(15, 52))
+        self.assertEqual(len(out) + len(rest), 6)
+        self.assertEqual(sorted(i for t in self.sess.typed for i in range(6) if f"item {i} " in t),
+                         list(range(6)))
+        self.assertEqual(due.tick(at(15, 53)), [])
+
     def test_a_long_item_stays_one_short_line(self):
         self.write("- 15:40 — " + "word " * 400 + "\n")
         due.tick(at(15, 41))
@@ -264,6 +282,15 @@ class WakeTests(_World):
         self.sess = live
         self.assertEqual(due.tick(at(15, 45, day=19)), [])
         self.assertEqual(live.typed, [])
+
+    def test_a_stopped_po_is_told_in_chat_only_of_what_is_new(self):
+        self.write("- 15:40 — the test\n- 15:50 — chase\n")
+        self.sess = None
+        due.tick(at(15, 41))
+        out = due.tick(at(15, 51))
+        self.assertEqual([o["line"] for o in out], ["- 15:50 — chase"])
+        self.assertEqual(len(self.notices), 2)
+        self.assertNotIn("the test", self.notices[1][2])
 
     def test_a_project_without_a_po_room_or_a_handover_is_skipped(self):
         self.assertEqual(due.tick(at(15, 41)), [])          # no handover file
@@ -366,33 +393,77 @@ class AgeTests(_World):
 
 
 class OwnerTests(_World):
-    def test_a_running_owners_task_handover_is_read_too(self):
+    LINE = "- 15:40 — rerun the soak test"
+
+    def owner_task(self, written=None) -> Path:
         task = self.dir / "task"
         self.room = {"id": "room-t", "taskDir": str(task), "participants": [
             {"identity": "claude", "kind": "agent", "agent": "claude", "role": "engineer",
              "ptyId": "pty-2", "sessionId": "sid-2"}]}
         self.owners = [("room-t", "claude")]
-        self.write("- 15:40 — rerun the soak test\n", path=task / "TASK-HANDOVER.md")
+        self.write(self.LINE + "\n", written=written, path=task / "TASK-HANDOVER.md")
+        return task / "TASK-HANDOVER.md"
+
+    def test_a_pending_time_survives_a_rewrite_and_a_gap_without_the_owner(self):
+        # Review 1: written at 11:20 for 15:40, the owner busy; asked for its
+        # handover it rewrites the file at 15:41, and between its two sessions
+        # a look finds no live owner. The line is still today's 15:40.
+        hp = self.owner_task()
+        due.tick(at(11, 25))
+        self.idle = False
+        due.tick(at(15, 40) + 30)
+        self.write(self.LINE + "\n", written=at(15, 41), path=hp)
+        self.owners = []
+        self.assertEqual(due.tick(at(15, 42)), [])
+        self.assertEqual(self.saved()["seen"][str(hp)][self.LINE]["due"], at(15, 40))
+        self.owners, self.idle = [("room-t", "claude")], True
+        self.assertEqual([o["how"] for o in due.tick(at(15, 44))], ["typed"])
+        self.assertEqual(len(self.sess.typed), 1)
+
+    def test_a_delivered_line_is_not_delivered_again_after_a_rewrite_and_a_gap(self):
+        hp = self.owner_task()
+        self.assertEqual(len(due.tick(at(15, 41))), 1)
+        self.write(self.LINE + "\n", written=at(16, 0), path=hp)
+        self.owners = []                                    # stopped, or between two sessions
+        due.tick(at(16, 1))
+        self.owners = [("room-t", "claude")]
+        for when in (at(16, 5), at(15, 41, day=19), at(15, 41, day=20)):
+            self.assertEqual(due.tick(when), [])
+        self.assertEqual(len(self.sess.typed), 1)
+
+    def test_a_handover_deleted_for_a_moment_keeps_its_times(self):
+        hp = self.owner_task()
+        due.tick(at(11, 25))
+        hp.unlink()                                         # "replace it if it exists"
+        self.assertEqual(due.tick(at(15, 41)), [])
+        self.write(self.LINE + "\n", written=at(15, 41), path=hp)
+        self.assertEqual(len(due.tick(at(15, 42))), 1)
+
+    def test_a_deleted_handovers_lines_are_forgotten_a_day_after_their_time(self):
+        hp = self.owner_task()
+        due.tick(at(11, 25))
+        hp.unlink()
+        due.tick(at(15, 0, day=19))
+        self.assertIn(str(hp), self.saved()["seen"])
+        due.tick(at(15, 41, day=19))
+        self.assertEqual(self.saved()["seen"], {})
+
+    def test_a_running_owners_task_handover_is_read_too(self):
+        self.owner_task()
         out = due.tick(at(15, 41))
         self.assertEqual([o["how"] for o in out], ["typed"])
         self.assertEqual(self.sess.typed, [
             "[due] 15:40 — rerun the soak test (from TASK-HANDOVER.md). This is due and you are "
             "idle: do it now, or report why not."])
 
-    def test_a_stopped_task_gets_nothing_and_its_record_goes(self):
-        task = self.dir / "task"
-        self.room = {"id": "room-t", "taskDir": str(task), "participants": [
-            {"identity": "claude", "kind": "agent", "agent": "claude", "role": "engineer",
-             "ptyId": "pty-2", "sessionId": "sid-2"}]}
-        self.owners = [("room-t", "claude")]
-        self.write("- 15:40 — rerun the soak test\n", path=task / "TASK-HANDOVER.md")
+    def test_a_stopped_task_gets_nothing_and_keeps_its_times(self):
+        hp = self.owner_task()
         due.tick(at(11, 25))
-        self.assertIn(str(task / "TASK-HANDOVER.md"), self.saved()["seen"])
         self.owners = []
         self.assertEqual(due.tick(at(15, 41)), [])
         self.assertEqual((self.sess.typed, self.notices), ([], []))
-        self.assertEqual(self.saved()["seen"], {})
-        # Started again: the same line resolves to the same time, and is due.
+        self.assertIn(str(hp), self.saved()["seen"])
+        # Started again: the line is still the same 15:40, and is due.
         self.owners = [("room-t", "claude")]
         self.assertEqual(len(due.tick(at(15, 45))), 1)
 
