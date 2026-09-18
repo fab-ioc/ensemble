@@ -69,6 +69,8 @@ import bringfiles
 import chatroom
 # The PO's timed progress digest (only when something changed).
 import digest
+# What a handover says is due at a time: the idle PO is typed it then.
+import due
 # Task-management MCP tools (ensemble_*) served next to the chat tools.
 import ensemble_tools
 # A documents project's automatic file history (a private git dir per project).
@@ -110,6 +112,7 @@ BACKEND = get_backend()
 ensemble_tools.bind(sys.modules[__name__])
 attention.bind(sys.modules[__name__])
 digest.bind(sys.modules[__name__])
+due.bind(sys.modules[__name__])
 rotation.bind(sys.modules[__name__])
 # Capture each agent terminal's dying screen onto its task, before the reaper
 # drops the buffer — that evidence is why a death is visible at all.
@@ -1527,6 +1530,7 @@ def _relay_wake(sender: str) -> str:
 # list of its own. A [word] not listed here is a person's (they type brackets).
 HUB_INPUT_KINDS = (
     ("[digest] ", "digest"),            # digest.py: the PO's progress check
+    ("[due] ", "due"),                  # due.py: what its handover says is due now
     ("[report] ", "report"),            # _ring_report: a task's ensemble_report
     ("[relay] ", "relay"),              # _relay_wake: a team room's doorbell
     ("[resumed] ", "resumed"),          # RESUME_NOTE

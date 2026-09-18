@@ -317,6 +317,36 @@ to bring it up to date, then starts a fresh PO whose first prompt is to read it
 and `ROADMAP.md`. Anything in neither file is lost. Never hand a task's spec to
 a fresh session as an instruction: it redoes the work.
 
+**What you inherit is yours to continue.** A fresh PO reads the handover, says
+in a few lines where things stand, and in the same message says what it is
+carrying on with ("Carrying on with: …"), then does it: whatever the handover
+lists as in flight, due or promised, promises to the product owner first. It
+does not summarise and wait. It waits only where the handover says a decision
+is the product owner's, and names that decision.
+
+**Write what is due at a time under `## Due`.** One line per item, promises to
+the product owner first:
+
+```
+## Due
+- 15:40 — the paper-1 hand test
+- 09-19 08:30 — read the overnight report
+```
+
+`HH:MM` is 24 h in the hub machine's local time and means the first such time
+after you wrote the line; write `MM-DD HH:MM` when it is not today. Convert
+other zones yourself: a line marked `NY`, `ET` or `UTC` is ignored (`host` or
+`local` is fine), as is any line not shaped `- time — what`. Remove a line once
+it is done, and write a new line for a new promise; a line is delivered once,
+so the same line left in place is not a daily reminder. When a line's time
+comes and you are idle, the hub types it into you once as
+`[due] 15:40 — the paper-1 hand test (from PO-HANDOVER.md)`: do it then, or
+tell the product owner why not. Busy, you get it when you are next idle. If you
+are not running, the hub does not start you; it writes the item to your chat,
+and types it to you if you run again within a day. An item first seen more than
+a day after its time is dropped. A task owner's `TASK-HANDOVER.md` works the
+same way.
+
 **Made a PO from a past session.** The product owner can make a conversation
 that already knows a project its PO, from the dashboard. The hub then types one
 line starting `[product owner]` into it. If that is you: read this section,

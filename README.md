@@ -203,6 +203,7 @@ Each project keeps its own files in its folder: `project.json`, `ROADMAP.md`, `P
 | `ensemble_tools.py` | The `ensemble_*` MCP tools and their role checks |
 | `digest.py` | The PO's progress check |
 | `rotation.py` | Handovers and fresh sessions past the token limit |
+| `due.py` | What a handover's `## Due` section names for a time, typed into its idle agent then |
 | `attention.py` | Needs you: blocked, stalled, dead or waiting tasks |
 | `usage.py`, `usage_statusline.py` | Plan allowance readings for Claude and Codex |
 | `backup.py` | Backup of `~/EnsembleProjects` to a git remote |
