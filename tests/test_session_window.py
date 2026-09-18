@@ -360,9 +360,11 @@ const issueEmpty = m => 'EMPTY:' + m, mdIn = (r, t) => 'MD:' + t;
 function renderDetail() { renders++; }
 function api(url) {
   asked.push(url);
-  return new Promise((ok, no) => waiting.push(() => fail ? no(new Error('down')) : ok({ spec: 'text of ' + asked.length })));
+  const n = asked.length;         // an answer without specRev: a hub that does not send one
+  return new Promise((ok, no) => waiting.push(reply => fail ? no(new Error('down')) : ok(reply || { spec: 'text of ' + n })));
 }
-const answer = async () => { waiting.shift()(); await new Promise(r => setTimeout(r, 0)); };
+const answer = async reply => { waiting.shift()(reply); await new Promise(r => setTimeout(r, 0)); };
+const many = (row, times) => { let last; for (let i = 0; i < times; i++) last = specPaneHtml(row); return last; };
 %s
 (async () => {
   const out = {};
@@ -395,6 +397,32 @@ const answer = async () => { waiting.shift()(); await new Promise(r => setTimeou
   out.plain = specPaneHtml({ sessionId: 'sid' });
   out.carried = specPaneHtml({ roomId: 'room-d', spec: 'as sent' });      // a hub not restarted yet
   out.askedForThose = asked.length - before;
+  // The spec is amended while its text is on its way: the answer is kept under
+  // the revision it names, whichever that is.
+  let at = asked.length;
+  const e = { roomId: 'room-e', specRev: 'A' };
+  specPaneHtml(e); e.specRev = 'B'; many(e, 3);
+  out.pendingAsks = asked.length - at;
+  await answer({ spec: 'B text', specRev: 'B' });
+  out.pendingNewer = many(e, 5); out.pendingNewerAsks = asked.length - at;
+  at = asked.length;
+  const g = { roomId: 'room-g', specRev: 'A' };
+  specPaneHtml(g); g.specRev = 'B';
+  await answer({ spec: 'A text', specRev: 'A' });        // read before the amendment
+  specPaneHtml(g); out.pendingOlderAsks = asked.length - at;
+  await answer({ spec: 'B text', specRev: 'B' });
+  out.pendingOlder = many(g, 5); out.pendingOlderAsksAfter = asked.length - at;
+  // A -> B -> A: the list saw A, the text read was B's, and the spec is A again
+  // before the list is read again.
+  at = asked.length;
+  const f = { roomId: 'room-f', specRev: 'A' };
+  specPaneHtml(f);
+  await answer({ spec: 'B text', specRev: 'B' });
+  out.abaMeanwhile = many(f, 10); out.abaNoLoop = asked.length - at;
+  now += 6000;
+  specPaneHtml(f); out.abaAskedAgain = asked.length - at;
+  await answer({ spec: 'A text', specRev: 'A' });
+  out.abaSettled = many(f, 10); out.abaAsksInAll = asked.length - at;
   console.log(JSON.stringify(out));
 })();
 """
@@ -429,6 +457,23 @@ class SpecPane(unittest.TestCase):
         self.assertEqual(o["noRetryYet"], 3)
         self.assertEqual(o["afterRetry"], '<div class="dp-spec">MD:text of 4</div>')
         self.assertEqual(o["rendersForOther"], 2, "only room-a's two answers drew the panel")
+
+    def test_the_spec_amended_while_its_text_is_on_its_way(self):
+        o = self.out
+        self.assertEqual(o["pendingAsks"], 1, "one request at a time for a task")
+        self.assertEqual(o["pendingNewer"], '<div class="dp-spec">MD:B text</div>')
+        self.assertEqual(o["pendingNewerAsks"], 1, "the answer was already the amended spec")
+        self.assertEqual(o["pendingOlderAsks"], 2, "an answer older than the list is followed by a request at once")
+        self.assertEqual(o["pendingOlder"], '<div class="dp-spec">MD:B text</div>')
+        self.assertEqual(o["pendingOlderAsksAfter"], 2)
+
+    def test_amended_and_put_back_never_leaves_the_wrong_text(self):
+        o = self.out
+        self.assertEqual(o["abaMeanwhile"], '<div class="dp-spec">MD:B text</div>')
+        self.assertEqual(o["abaNoLoop"], 1, "an answer the list does not agree with is not asked for again at once")
+        self.assertEqual(o["abaAskedAgain"], 2)
+        self.assertEqual(o["abaSettled"], '<div class="dp-spec">MD:A text</div>')
+        self.assertEqual(o["abaAsksInAll"], 2)
 
     def test_rows_that_need_no_request(self):
         o = self.out

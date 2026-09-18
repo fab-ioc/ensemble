@@ -4282,12 +4282,14 @@ async function loadSpec(rid, rev) {
   SPEC_ASKED.set(rid, { rev, busy: true, at: Date.now() });
   try {
     const d = await api('/api/room?id=' + encodeURIComponent(rid) + '&part=spec');
-    SPEC_TEXT.set(rid, { rev, text: String((d && d.spec) || '') });
-    SPEC_ASKED.delete(rid);
-    if (SELECTED_SID === rid) renderDetail();
-  } catch (e) {
-    SPEC_ASKED.set(rid, { rev, busy: false, at: Date.now() });
-  }
+    // Kept under the revision the answer names, not the one the list had when
+    // it was asked: the spec may have been amended in between (and back).
+    SPEC_TEXT.set(rid, { rev: (d && d.specRev) || rev, text: String((d && d.spec) || '') });
+  } catch (e) { /* asked again below */ }
+  // An answer the list does not agree with yet is not asked for again at once:
+  // the next poll usually brings the list up to it; if not, again after 5 s.
+  SPEC_ASKED.set(rid, { rev, busy: false, at: Date.now() });
+  if (SELECTED_SID === rid) renderDetail();
 }
 
 // The Spec pane: for a draft this IS the content, the agents' first prompt.
