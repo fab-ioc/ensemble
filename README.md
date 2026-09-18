@@ -205,6 +205,7 @@ Each project keeps its own files in its folder: `project.json`, `ROADMAP.md`, `P
 | `rotation.py` | Handovers and fresh sessions past the token limit |
 | `due.py` | What a handover's `## Due` section names for a time, typed into its idle agent then |
 | `attention.py` | Needs you: blocked, stalled, dead or waiting tasks |
+| `agent_hooks.py`, `agent_hook.py` | What each Claude agent says it is doing, through its Claude Code hooks; `attention.py` reads it before the agent's screen |
 | `usage.py`, `usage_statusline.py` | Plan allowance readings for Claude and Codex |
 | `backup.py` | Backup of `~/EnsembleProjects` to a git remote |
 | `history.py` | A documents project's file history |

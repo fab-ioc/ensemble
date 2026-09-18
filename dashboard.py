@@ -60,6 +60,8 @@ import attachments
 # Agent-type abstraction (WHAT runs in a session), orthogonal to the OS backend
 # (WHERE it runs). Codex discovery + the claude/codex registry live here.
 import agents
+# What each Claude agent last said about itself through its hooks.
+import agent_hooks
 # Which tasks need a human, and why (the /api/attention join).
 import attention
 # Multi-agent chat rooms (pairing live sessions into a collaborating "duo").
@@ -1125,6 +1127,7 @@ RTK_DIR = DASHBOARD_DIR / "rtk"
 RTK_CLAUDE_SETTINGS = RTK_DIR / "claude-task-settings.json"
 USAGE_CLAUDE_SETTINGS = DASHBOARD_DIR / "usage" / "claude-agent-settings.json"
 USAGE_STATUSLINE_SCRIPT = Path(__file__).resolve().parent / "usage_statusline.py"
+AGENT_HOOK_SCRIPT = Path(__file__).resolve().parent / "agent_hook.py"
 RTK_TELEMETRY_ENV = "RTK_TELEMETRY_DISABLED"
 RTK_RECALL_DB = RTK_DIR / "recall.db"
 _RTK_SETTINGS_LOCK = threading.Lock()
@@ -1189,24 +1192,90 @@ def _write_settings_file(path: Path, settings: dict) -> Path:
     return path
 
 
+# The moments a hub-launched Claude agent reports to the hub (agent_hooks.py):
+# it took a prompt, it stopped to ask, a tool came back, its turn ended, its
+# session started or ended. Names and payloads checked against the Claude Code
+# hooks reference and the installed CLI (2.1.276). ``None`` is "every time";
+# a string is the event's matcher.
+_AGENT_HOOK_EVENTS: tuple[tuple[str, str | None, bool], ...] = (
+    # (event, matcher, in the background)
+    ("SessionStart", None, False),
+    ("UserPromptSubmit", None, False),
+    ("PreToolUse", "|".join(agent_hooks.ASKING_TOOLS), False),
+    ("PermissionRequest", None, False),
+    ("Notification", None, False),
+    # After every tool call, so never in the agent's way: Claude Code starts a
+    # background hook and carries on. The script stamps its own start time,
+    # which is what orders it at the hub.
+    ("PostToolUse", None, True),
+    ("PostToolUseFailure", None, True),
+    ("Stop", None, False),
+    ("StopFailure", None, False),
+    # Ends what that subagent asked: a question dismissed or a permission
+    # denied has no hook of its own.
+    ("SubagentStop", None, False),
+    ("SessionEnd", None, False),
+)
+# Claude Code's own limit on the hook, in seconds; the script ends itself
+# sooner (agent_hook.TOTAL_TIMEOUT).
+_AGENT_HOOK_TIMEOUT = 5
+# agent_hook.py sends a few short fields; anything larger is not from it.
+_AGENT_HOOK_MAX_BODY = 16384
+
+
+def _agent_hooks() -> dict:
+    """The ``hooks`` every hub-launched Claude agent gets: ``agent_hook.py`` at
+    the moments above. Who is speaking travels in the agent's environment
+    (``_agent_hook_env``), so this is the same for every agent and fits the
+    one settings file they share. It is an *additional* settings source:
+    Claude Code merges hooks across sources, so the user's own
+    ``~/.claude/settings.json`` hooks keep running."""
+    command = f'"{Path(sys.executable).as_posix()}" "{AGENT_HOOK_SCRIPT.as_posix()}"'
+    hooks: dict[str, list] = {}
+    for event, matcher, background in _AGENT_HOOK_EVENTS:
+        handler = {"type": "command", "command": command, "timeout": _AGENT_HOOK_TIMEOUT}
+        if background:
+            handler["async"] = True
+        entry = {"hooks": [handler]}
+        if matcher is not None:
+            entry["matcher"] = matcher
+        hooks.setdefault(event, []).append(entry)
+    return hooks
+
+
+def _agent_hook_env(port: int, room_id: str, identity: str) -> dict:
+    """What ``agent_hook.py`` needs to say who it is, for a Claude agent's
+    environment. Its terminal's id is added by the terminal itself
+    (``ENSEMBLE_PTY_ID``, backends/ptyrun.py)."""
+    return {"ENSEMBLE_HOOK_URL": f"http://127.0.0.1:{port}/api/agent/hook",
+            "ENSEMBLE_HOOK_ROOM": room_id, "ENSEMBLE_HOOK_IDENTITY": identity}
+
+
 def _rtk_claude_settings() -> Path:
     """Write the hub-owned, launch-only Claude settings file for RTK tasks: the
-    RTK hook, plus the usage status line every hub-launched Claude gets.
-    Claude takes one ``--settings`` source, so both live in this one file."""
+    RTK hook, plus the usage status line and the attention hooks every
+    hub-launched Claude gets. Claude takes one ``--settings`` source, so all
+    three live in this one file."""
     command = f'"{RTK_BIN.as_posix()}" hook claude'
+    hooks = _agent_hooks()
+    hooks.setdefault("PreToolUse", []).insert(0, {
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": command}],
+    })
     return _write_settings_file(RTK_CLAUDE_SETTINGS, {
-        "hooks": {"PreToolUse": [{
-            "matcher": "Bash",
-            "hooks": [{"type": "command", "command": command}],
-        }]},
+        "hooks": hooks,
         "statusLine": _claude_status_line(),
     })
 
 
 def _usage_claude_settings() -> Path:
     """The launch-only Claude settings file for agents outside the RTK pilot
-    (POs, adopted sessions, tasks with RTK off): the usage status line only."""
-    return _write_settings_file(USAGE_CLAUDE_SETTINGS, {"statusLine": _claude_status_line()})
+    (POs, adopted sessions, tasks with RTK off): the usage status line and the
+    attention hooks."""
+    return _write_settings_file(USAGE_CLAUDE_SETTINGS, {
+        "hooks": _agent_hooks(),
+        "statusLine": _claude_status_line(),
+    })
 
 
 def _rtk_task_wiring(room: dict, agent_key: str) -> tuple[list[str], dict, str]:
@@ -7282,6 +7351,14 @@ class Handler(BaseHTTPRequestHandler):
             # nothing with /api/sessions or /api/projects, which are slow.
             self._send_json(200, attention.snapshot())
             return
+        if p == "/api/agent/hooks":
+            # What the Claude agents' hooks last said, and the newest events:
+            # for checking the hooks arrive (no page reads this).
+            if not _addr_is_loopback(self._client_ip()):
+                self._send_json(403, {"error": "loopback_only"})
+                return
+            self._send_json(200, agent_hooks.snapshot())
+            return
         if p == "/api/ptys":
             ptyrun.reap()
             self._send_json(200, ptyrun.list_sessions())
@@ -7815,6 +7892,8 @@ class Handler(BaseHTTPRequestHandler):
         meta = {"room": room_full["id"], "identity": ident, "agent": agent_key}
         codex_mcp, claude_mcp, env = self._mcp_wiring(token, collab)
         env.update(rtk_env)
+        if agent_key != "codex":
+            env.update(_agent_hook_env(self.server.server_address[1], room_full["id"], ident))
         if agent_key == "codex":
             argv = ["codex", "-c", "check_for_update_on_startup=false"] + codex_mcp
             if model:
@@ -7854,6 +7933,8 @@ class Handler(BaseHTTPRequestHandler):
         codex_mcp, claude_mcp, env = self._mcp_wiring(token, collab, human=human)
         rtk_args, rtk_env, _ = _rtk_task_wiring(room_full, agent_key)
         env.update(rtk_env)
+        if agent_key != "codex":
+            env.update(_agent_hook_env(self.server.server_address[1], room_full["id"], ident))
         if agent_key == "codex":
             argv = ["codex", "-c", "check_for_update_on_startup=false"] + codex_mcp
             if model:
@@ -8919,10 +9000,47 @@ class Handler(BaseHTTPRequestHandler):
     # a new task, a chat message — so the cached listing is dropped the
     # moment the write finishes.
     def do_POST(self):
+        if urlparse(self.path).path == "/api/agent/hook":
+            # Several per tool call, and none changes a session listing.
+            self._agent_hook()
+            return
         try:
             self._do_POST()
         finally:
             invalidate_session_listing()
+
+    def _agent_hook(self) -> None:
+        """POST /api/agent/hook — a Claude agent's hook (agent_hook.py) saying
+        what it is doing: ``{room, identity, ptyId, at, event}``. This machine
+        only, and never from a page on another site. Anything it cannot use is
+        answered and dropped: the sender neither reads the answer nor retries."""
+        if not _addr_is_loopback(self._client_ip()):
+            self._send_json(403, {"error": "loopback_only"})
+            return
+        if self.headers.get("Origin") and not self._same_origin_request():
+            self._send_json(403, {"error": "cross_origin"})
+            return
+        raw = self.headers.get("Content-Length")
+        ln = int(raw) if raw is not None and str(raw).strip().isdigit() else 0
+        if ln > _AGENT_HOOK_MAX_BODY:
+            self.close_connection = True        # unread, so not reusable
+            self._send_json(413, {"error": "too_large"})
+            return
+        try:
+            payload = json.loads(self.rfile.read(ln).decode("utf-8")) if ln else None
+        except (ValueError, OSError):
+            self._send_json(400, {"error": "bad_json"})
+            return
+
+        def owner(pty_id: str):
+            sess = ptyrun.get(pty_id)
+            meta = (sess.meta or {}) if sess is not None else {}
+            return (meta.get("room", ""), meta.get("identity", "")) if meta.get("room") else None
+        try:
+            res = agent_hooks.record(payload, owner)
+        except Exception:                   # whatever it was, it is not the agent's problem
+            res = {"ok": False, "error": "bad_payload"}
+        self._send_json(200 if res.get("ok") else (400 if res.get("error") == "bad_payload" else 404), res)
 
     def _do_POST(self):
         if not self._gate():

@@ -201,6 +201,9 @@ class PtySession:
         # for non-Claude agents, which ignore these vars.)
         for k in [k for k in full_env if k.startswith("CLAUDE_CODE_CHILD")]:
             full_env.pop(k, None)
+        # Which terminal this is, for a process inside that reports to the hub
+        # (agent_hook.py): what it says then belongs to this run of the agent.
+        full_env["ENSEMBLE_PTY_ID"] = self.id
         if IS_WINDOWS:
             ensure_windows_console()        # ConPTY needs a console (pythonw has none)
             try:
