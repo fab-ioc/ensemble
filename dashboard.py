@@ -1441,13 +1441,21 @@ def discard_pending(room_id: str) -> bool:
         if res is None or res.state != "failed":
             return False
         _RESUMES.pop(room_id, None)
-        held = [i for it in res.queue for i in points.point_ids(it.get("text") or "")]
-    # What those sends did to the person's points goes with them: they
-    # were never delivered.
-    try:
-        points.discard(room_id, held)
-    except Exception as e:      # noqa: BLE001 — the discard itself stands
-        print(f"[points] {room_id}: held points not taken back: {e!r}", flush=True)
+        held = list(res.queue)
+    # What those sends did to the person's points goes with them, newest
+    # first: they were never delivered. One already in a team's chat (only
+    # its wake was owed) was, and keeps its points.
+    for it in reversed(held):
+        if it.get("posted"):
+            continue
+        key = it.get("key") or ""
+        try:
+            if key.startswith("approve:"):
+                points.unapprove(room_id, key[len("approve:"):])
+            else:
+                points.discard(room_id, points.point_ids(it.get("text") or ""), key)
+        except Exception as e:      # noqa: BLE001 — the discard itself stands
+            print(f"[points] {room_id}: held points not taken back: {e!r}", flush=True)
     return True
 
 
@@ -9991,7 +9999,7 @@ class Handler(BaseHTTPRequestHandler):
                 if result is not None and key:
                     _SAY_KEYS[(rid, key)] = time.time()
             if result is None:
-                points.discard(rid, pids)
+                points.discard(rid, pids, key)
                 self._send_json(404, {"error": "no_such_room"})
                 return
             self._ring_recipients(rid, result)
@@ -10255,7 +10263,7 @@ class Handler(BaseHTTPRequestHandler):
                     kept = bool(text) and held is not None and any(
                         (key and it.get("key") == key) or it["text"] == text for it in held.queue)
                 if not kept:
-                    points.discard(rid, pids)
+                    points.discard(rid, pids, key)
                 self._send_json(400, {"error": str(exc) or exc.__class__.__name__, "kept": kept})
                 return
             self._send_json(200, {"ok": True, **result,

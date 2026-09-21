@@ -95,6 +95,7 @@ _ID_IN = re.compile(POINT_ID, re.I)
 _COMMENTS_HEAD = re.compile(r"^## Review comments \(\d+\)")
 _COMMENT_ITEM = re.compile(r"^\*\*\d+\.\*\*")
 _FENCE = re.compile(r"^\s*(```|~~~)")
+_FENCE_ANY = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 # A bare acknowledgement: every word is one of these, and there are few.
 _ACK_WORDS = frozenset("""
 ok okay k kk thanks thank you thx ty cheers great perfect got it noted nice cool
@@ -138,9 +139,10 @@ def _prose(text: str) -> str:
     as an example, or quoted from someone else, answers nothing."""
     out, fence = [], ""
     for ln in (text or "").split("\n"):
-        m = _FENCE.match(ln)
+        m = _FENCE_ANY.match(ln)
         if fence:
-            if m and m.group(1) == fence:
+            # Closed by a bare run of its own character, at least as long.
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) and not m.group(2).strip():
                 fence = ""
             out.append("")
             continue
@@ -462,14 +464,16 @@ def take(room: dict, text: str, to: str = "", key: str = "", now: float | None =
             words = strip_point_lines(body)[:TEXT_MAX]
             for i in follow:
                 p = pts[i]
-                # What this send changed, for discard() when it is refused.
-                p["undo"] = {"at": now, **{k: p.get(k) for k in _UNDO_FIELDS}}
+                # What this send changed, for discard() when it is refused
+                # or dropped: one entry per send, newest last.
+                u = {"key": key, "at": now, **{k: p.get(k) for k in _UNDO_FIELDS}}
                 if p["state"] in ("answered", "acked", "dropped"):
                     _set_state(p, "open", now)
                     p["reopenedAt"] = now
                 p["followKey"] = key or p.get("followKey", "")
                 p.setdefault("follows", []).append({"text": words, "at": now, "key": key})
-                p["undo"]["stateAt2"] = p.get("stateAt")
+                u["stateAt2"] = p.get("stateAt")
+                p["undo"] = (p.get("undo") if isinstance(p.get("undo"), list) else [])[-(_UNDO_KEEP - 1):] + [u]
             led["lastPersonAt"] = now
             _save(rid, led)
             return _deliverable(text, follow), follow
@@ -497,12 +501,16 @@ def take(room: dict, text: str, to: str = "", key: str = "", now: float | None =
 _UNDO_FIELDS = ("state", "stateAt", "openedAt", "reopenedAt", "reminded", "followKey")
 
 
-def discard(room_id: str, ids: list[str]) -> None:
-    """Take back what a send did to the ledger when the hub refused it (and
+_UNDO_KEEP = 10                 # sends a point remembers how to take back
+
+
+def discard(room_id: str, ids: list[str], key: str = "") -> None:
+    """Take back what ONE send did to the ledger when the hub refused it (and
     does not hold it) or the person discarded it: a point it made goes (the
     text is still in the person's box, its next attempt makes it again;
     numbers are not reused); a point it followed up is as it was before,
-    unless it moved since. Nothing else is touched."""
+    unless it moved since. ``key`` names the send (without one, the last
+    send to each point). Several sends are taken back newest first."""
     if not ids:
         return
     with _LOCK:
@@ -513,12 +521,17 @@ def discard(room_id: str, ids: list[str]) -> None:
             if p["id"] not in ids:
                 keep.append(p)
                 continue
-            u = p.pop("undo", None)
-            if isinstance(u, dict):
+            stack = p.get("undo") if isinstance(p.get("undo"), list) else []
+            u = next((x for x in reversed(stack) if x.get("key") == key), None) if key \
+                else (stack[-1] if stack else None)
+            if u is not None:
                 changed = True
+                stack.remove(u)
+                if not stack:
+                    p.pop("undo", None)
                 fl = p.get("follows") or []
-                if fl and fl[-1].get("at") == u.get("at"):
-                    fl.pop()
+                for f in [f for f in fl if f.get("at") == u.get("at")]:
+                    fl.remove(f)
                 if p.get("stateAt") == u.get("stateAt2"):
                     for k in _UNDO_FIELDS:
                         if u.get(k) is None:
@@ -526,7 +539,8 @@ def discard(room_id: str, ids: list[str]) -> None:
                         else:
                             p[k] = u[k]
                 keep.append(p)
-            elif p["state"] == "open" and not p["answers"] and not p.get("follows"):
+            elif ((not key or p.get("key") == key) and p["state"] == "open"
+                  and not p["answers"] and not p.get("follows")):
                 changed = True
             else:
                 keep.append(p)
@@ -588,6 +602,8 @@ def _scan_turns(led: dict, sid: str, turns: list[dict]) -> bool:
                 continue
             found = [i for i in point_ids(text)
                      if i in pts and (not ts or ts >= pts[i]["createdAt"] - SLACK_S)]
+            # A point taken in from before the ledger has no line: its balloon.
+            found += [i for i, p in pts.items() if p.get("adopted") and p.get("mid") == mid and i not in found]
             for i in found:
                 changed |= _see_balloon(pts[i], mid, sid)
             # A line read while the agent was busy is not followed by its
@@ -641,6 +657,7 @@ def _scan_messages(led: dict, room: dict) -> bool:
         if frm == human:
             implicit = None
             found = [i for i in point_ids(text) if i in pts and ts >= pts[i]["createdAt"] - SLACK_S]
+            found += [i for i, p in pts.items() if p.get("adopted") and p.get("mid") == mid and i not in found]
             for i in found:
                 changed |= _see_balloon(pts[i], mid)
             if team and len(found) == 1:
@@ -683,6 +700,10 @@ def _adopt(led: dict, room: dict) -> bool:
                      if not (t.get("role") == "user" and (t.get("kind") or "human") != "human")), None)
         if not last or last[1].get("role") != "user":
             return False
+        # The session's first input is what launched it (the task, or the
+        # hub's first prompt), not something the person raised.
+        if last[0] == next((m for m, x in ids if x.get("role") == "user"), None):
+            return False
         mid, t = last
         text = strip_point_lines(_d.message_refs.strip_message_refs(t.get("text") or ""))
         if not text or text.startswith("/") or is_bare_ack(text) or text.startswith(_d.PO_MESSAGE_PREFIX):
@@ -690,8 +711,8 @@ def _adopt(led: dict, room: dict) -> bool:
         p = _new_point(led, text, owner, _d._turn_epoch(t.get("timestamp")) or time.time(), "", sid, mid=mid)
     else:
         msgs = [m for m in room.get("messages") or [] if m.get("kind") not in ("notice",)]
-        if not msgs or msgs[-1].get("from") != human:
-            return False
+        if not msgs or msgs[-1].get("from") != human or len(msgs) == 1:
+            return False        # the room's first message is its task
         m = msgs[-1]
         text = (m.get("text") or "").strip()
         if not text or is_bare_ack(text):
@@ -920,16 +941,17 @@ def open_points(room_id: str, identity: str = "", skip=()) -> list[dict]:
                   key=lambda p: p["createdAt"])
 
 
+def follow_ups(p: dict) -> list[str]:
+    """The person's follow-ups of a point that no answer came after: what is
+    still to be answered, oldest first."""
+    last = max([a.get("at") or 0 for a in p.get("answers") or []] + [0])
+    return [" ".join(strip_point_lines(f.get("text") or "").split())
+            for f in p.get("follows") or [] if (f.get("at") or 0) > last]
+
+
 def follow_up(p: dict) -> str:
-    """The person's last follow-up of a point, while it is what is still to
-    be answered (no answer came after it)."""
-    fl = p.get("follows") or []
-    if not fl:
-        return ""
-    at = fl[-1].get("at") or 0
-    if any((a.get("at") or 0) > at for a in p.get("answers") or []):
-        return ""
-    return " ".join(strip_point_lines(fl[-1].get("text") or "").split())
+    """The follow-ups still to be answered, on one line."""
+    return " / ".join(follow_ups(p))
 
 
 def asked(p: dict) -> str:
@@ -985,9 +1007,9 @@ def prompt_block(room_id: str, identity: str = "", now: float | None = None) -> 
         words = " ".join(strip_point_lines(p["text"]).split())
         if len(words) > 400:
             words = words[:399] + "…"
-        f = follow_up(p)
-        if f:
-            words += " | follow-up: " + (f[:399] + "…" if len(f) > 400 else f)
+        fs = [f[:299] + "…" if len(f) > 300 else f for f in follow_ups(p)]
+        if fs:
+            words += " | follow-up: " + " / ".join(fs)
         ln = f"- {p['id']} (since {_when(p.get('openedAt') or p['createdAt'], now)}): {words}"
         if used + len(ln) > _PROMPT_MAX and i:
             lines.append(f"- … and {len(pts) - i} more: ensemble_points lists them all.")

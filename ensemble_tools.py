@@ -1388,7 +1388,8 @@ def _points(ctx, args, handler):
                      "acknowledge. Answer an open one with 'Re Pn:' in your reply."),
             "points": [{"id": p["id"], "state": p["state"], "owner": p.get("owner", ""),
                         "since": time.strftime("%m-%d %H:%M", time.localtime(p.get("openedAt") or p["createdAt"])),
-                        "text": pts.asked(p)[:1000]}
+                        "text": pts.strip_point_lines(p["text"])[:1000],
+                        **({"followUps": [f[:1000] for f in pts.follow_ups(p)]} if pts.follow_ups(p) else {})}
                        for p in sorted(show, key=lambda p: p["createdAt"])]}
 
 
