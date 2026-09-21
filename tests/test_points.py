@@ -66,6 +66,7 @@ class _World(unittest.TestCase):
         base = Path(self.temp.name)
         self.turns: dict[str, list] = {}
         self.gen = 0
+        self.mtime = time.time() + 86400    # a transcript written after every point
         self.pty = _Pty()
         patches = [
             mock.patch.object(chatroom, "ROOMS_DIR", base / "rooms"),
@@ -74,7 +75,7 @@ class _World(unittest.TestCase):
             mock.patch.object(dashboard, "read_session_turns",
                               side_effect=lambda sid: dashboard.classify_turns(self.turns.get(sid, []))),
             mock.patch.object(points, "_session_stat",
-                              side_effect=lambda sid: [len(self.turns.get(sid, [])), self.gen]
+                              side_effect=lambda sid: [len(self.turns.get(sid, [])), self.mtime + self.gen]
                               if sid in self.turns else None),
             mock.patch.object(points, "_log"),
         ]
@@ -85,6 +86,8 @@ class _World(unittest.TestCase):
         points._SYNCED.clear()
         points._SCANNED.clear()
         points._ADOPT_SEEN.clear()
+        points._TOLD.clear()
+        points._GONE.clear()
         self.t0 = time.time() - 3600
 
     def solo_room(self, sid="sid-1"):
@@ -316,6 +319,89 @@ class Ledger(_World):
         self.assertEqual(points.sync(team, force=True)["points"], [])
 
 
+class POCheck(_World):
+    """The PO's merge check: reading, links and writes that must hold up."""
+
+    def test_a_file_that_cannot_be_read_now_is_not_damage(self):
+        rid = self.solo_room()
+        self.send(rid, "one")
+        points._CACHE.clear()
+        real = Path.read_text
+
+        def read(path, *a, **k):
+            if path.name.endswith(".json") and path.parent.name == "points":
+                raise PermissionError("locked")
+            return real(path, *a, **k)
+        with mock.patch.object(Path, "read_text", autospec=True, side_effect=read):
+            with self.assertRaises(OSError):
+                points.load(rid)
+        self.assertEqual([f.name for f in points._dir().iterdir() if "damaged" in f.name], [])
+        self.assertEqual(self.send(rid, "two")[1], ["P2"], "numbering goes on")
+
+    def test_transcripts_are_read_without_the_lock_and_old_ones_not_at_all(self):
+        rid = self.solo_room()
+        held, read = [], []
+
+        def turns(sid):
+            held.append(points._LOCK._is_owned())
+            read.append(sid)
+            return dashboard.classify_turns(self.turns.get(sid, []))
+        out, _ = self.send(rid, "Q?", at=self.t0)
+        self.add("sid-1", turn("user", out, self.t0 + 1), turn("assistant", "A.", self.t0 + 2))
+        with mock.patch.object(dashboard, "read_session_turns", side_effect=turns):
+            self.assertEqual(self.state(rid), {"P1": "answered"})
+            self.assertEqual(held, [False])
+            # A session last written before the oldest waiting point is not read.
+            room = chatroom.get_room(rid, public=False)
+            room["participants"][0]["rotations"] = [{"fromSessionId": "sid-old", "toSessionId": "sid-1"}]
+            chatroom.update_room(room)
+            with mock.patch.object(points, "_session_stat",
+                                   side_effect=lambda sid: [1, self.t0 - 9000] if sid == "sid-old" else None):
+                read.clear()
+                points.sync(rid, force=True)
+            self.assertEqual(read, [])
+
+    def test_an_empty_read_keeps_the_links(self):
+        rid = self.solo_room()
+        out, _ = self.send(rid, "Q?", at=self.t0)
+        self.add("sid-1", turn("user", out, self.t0 + 1), turn("assistant", "A.", self.t0 + 2))
+        self.assertEqual(self.state(rid), {"P1": "answered"})
+        self.gen += 1
+        with mock.patch.object(dashboard, "read_session_turns", return_value=[]):
+            points.sync(rid, force=True)
+        self.assertEqual([a["mid"] for a in self.point(rid, "P1")["answers"]], ["sid-1:1"])
+
+    def test_a_team_reply_after_hub_input_answers_only_with_re(self):
+        rid = self.team_room()
+        out, _ = self.send(rid, "Is it merged?", at=time.time() - 5)
+        chatroom.post_message(rid, chatroom.HUMAN_IDENTITY, out)
+        time.sleep(0.01)
+        chatroom.patch_participant(rid, "claude", {"resumedAt": time.time()})
+        time.sleep(0.01)
+        chatroom.post_message(rid, "claude", "Resumed, carrying on.", to="user")
+        self.assertEqual(self.state(rid), {"P1": "open"})
+        chatroom.post_message(rid, "claude", "Re P1: yes, merged.", to="user")
+        self.assertEqual(self.state(rid), {"P1": "answered"})
+
+    def test_a_lone_surrogate_is_saved_and_no_temp_file_stays(self):
+        rid = self.solo_room()
+        self.assertEqual(self.send(rid, "odd \ud800 text")[1], ["P1"])
+        points._CACHE.clear()
+        self.assertIn("\ud800", points.load(rid)["points"][0]["text"])
+        self.assertEqual([f.name for f in points._dir().iterdir() if f.name.endswith(".tmp")], [])
+
+    def test_a_bad_room_id_names_no_file(self):
+        with self.assertRaises(ValueError):
+            points.load("../rooms/x")
+        self.assertFalse(points.exists("..\\x"))
+
+    def test_an_interruption_is_not_taken_in(self):
+        rid = self.solo_room()
+        self.add("sid-1", turn("user", "launch", self.t0), turn("assistant", "ok", self.t0 + 1),
+                 turn("user", "[Request interrupted by user]", self.t0 + 2))
+        self.assertEqual(points.sync(rid, force=True)["points"], [])
+
+
 class Storage(_World):
     def test_it_survives_a_reload_of_the_module(self):
         rid = self.solo_room()
@@ -502,6 +588,47 @@ class Reminder(_World):
         points.act(rid, "P1", "drop")
         points.act(rid, "P1", "reopen", now=now + 100 * 60)
         self.assertEqual(points.tick(now + 121 * 60), ["P1"])
+
+    def test_a_paused_room_is_not_typed_into(self):
+        rid = self.solo_room()
+        self.send(rid, "Is the backup running?", at=time.time() - 30 * 60)
+        room = chatroom.get_room(rid, public=False)
+        room["status"] = "paused"
+        chatroom.update_room(room)
+        self.assertEqual(points.tick(), [])
+        self.assertEqual(self.pty.typed, [])
+
+    def test_typed_once_even_when_it_cannot_be_recorded(self):
+        rid = self.solo_room()
+        self.send(rid, "Is the backup running?", at=time.time() - 30 * 60)
+        with mock.patch.object(points, "_save", side_effect=OSError("locked")):
+            self.assertEqual(points.tick(), ["P1"])
+            self.assertEqual(points.tick(), [])
+        self.assertEqual(len(self.pty.typed), 1)
+
+    def test_one_rooms_failure_does_not_end_the_tick(self):
+        bad = self.solo_room("sid-bad")
+        good = self.solo_room()
+        self.send(bad, "x", at=time.time() - 30 * 60)
+        self.send(good, "y", at=time.time() - 30 * 60)
+        real = points.load
+
+        def load(r):
+            if r == bad:
+                raise OSError("no")
+            return real(r)
+        with mock.patch.object(points, "load", side_effect=load):
+            self.assertEqual(points.tick(), ["P1"])
+
+    def test_a_deleted_rooms_ledger_is_not_read_again(self):
+        rid = self.solo_room()
+        self.send(rid, "x", at=time.time() - 30 * 60)
+        with mock.patch.object(chatroom, "get_room", return_value=None), \
+                mock.patch.object(points, "load", wraps=points.load) as load:
+            self.assertEqual(points.tick(), [])
+            self.assertEqual(points.tick(), [])
+        load.assert_not_called()
+        self.assertIn(rid, points._GONE)
 
     def test_off_when_the_setting_is_zero(self):
         rid = self.solo_room()
@@ -732,6 +859,15 @@ class Endpoints(_World):
             self.assertEqual(http("/api/room/approve", {"roomId": rid, "mid": "sid-1:1"})[0], 400)
         self.assertEqual(self.state(rid), {"P1": "answered"})
         self.assertNotIn("ackedBy", self.point(rid, "P1"))
+
+    def test_a_ledger_that_cannot_be_written_is_answered_500(self):
+        rid = self.solo_room()
+        self.send(rid, "Q?")
+        with mock.patch.object(points, "_save", side_effect=OSError("locked")):
+            status, r = http("/api/room/points", {"roomId": rid, "id": "P1", "action": "drop"})
+            self.assertEqual((status, r["error"]), (500, "not_saved"))
+            status, r = http("/api/room/approve", {"roomId": rid, "mid": "sid-1:9"})
+            self.assertEqual((status, r["error"]), (500, "not_saved"))
 
     def test_the_room_poll_carries_the_points(self):
         rid = self.solo_room()

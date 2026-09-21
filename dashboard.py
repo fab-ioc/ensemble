@@ -5438,6 +5438,24 @@ def _points_counts(rid: str) -> dict | None:
         return None
 
 
+def _points_view(rid: str) -> dict | None:
+    """The room's points for a reply; None when the ledger cannot be read
+    (the page keeps what it has until its next poll)."""
+    try:
+        return points.view(rid)
+    except Exception as e:  # noqa: BLE001
+        print(f"[points] {rid}: not listed: {e!r}", flush=True)
+        return None
+
+
+def _points_discard(rid: str, ids: list, key: str) -> None:
+    """Take a refused send's points back; the refusal is answered either way."""
+    try:
+        points.discard(rid, ids, key)
+    except Exception as e:  # noqa: BLE001
+        print(f"[points] {rid}: not taken back: {e!r}", flush=True)
+
+
 def load_sessions(n: int = 200) -> list[dict]:
     lock = _SESS_LOCKS.setdefault(n, threading.Lock())
     with lock:
@@ -5749,7 +5767,7 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
             _user_msgs = [m for m in msgs
                           if m.get("from") == "user" and (m.get("text") or "").strip()]
             first_txt = ((_user_msgs[0] if _user_msgs else (msgs[0] if msgs else {})).get("text") or "")[:200]
-            last_txt = ((msgs[-1] if msgs else {}).get("text") or "")[:200]
+            last_txt = points.strip_point_lines((msgs[-1] if msgs else {}).get("text") or "")[:200]
             # The issue view's summary answers "what did this task do", so it
             # needs the last thing an AGENT said. `last` is the last message
             # from anyone, which would happily caption your own question as
@@ -9999,7 +10017,7 @@ class Handler(BaseHTTPRequestHandler):
                 if result is not None and key:
                     _SAY_KEYS[(rid, key)] = time.time()
             if result is None:
-                points.discard(rid, pids, key)
+                _points_discard(rid, pids, key)
                 self._send_json(404, {"error": "no_such_room"})
                 return
             self._ring_recipients(rid, result)
@@ -10019,13 +10037,18 @@ class Handler(BaseHTTPRequestHandler):
             if action not in points.ACTIONS:
                 self._send_json(400, {"error": "bad_action", "expected": list(points.ACTIONS)})
                 return
-            pt = points.act(rid, str(data.get("id") or ""), action)
+            try:
+                pt = points.act(rid, str(data.get("id") or ""), action)
+            except Exception as e:  # noqa: BLE001 — said, not a dropped connection
+                print(f"[points] {rid}: {action} not saved: {e!r}", flush=True)
+                self._send_json(500, {"error": "not_saved", "message": "The hub could not save that. Try again."})
+                return
             if pt is None:
                 self._send_json(409, {"error": "not_applicable",
                                       "message": "That point is not there, or is already so."})
                 return
             self._send_json(200, {"ok": True, "point": {"id": pt["id"], "state": pt["state"]},
-                                  "points": points.view(rid)})
+                                  "points": _points_view(rid)})
             return
         if p == "/api/room/approve":
             # A thumbs up on a balloon asking for a decision: "yes, go with
@@ -10048,7 +10071,13 @@ class Handler(BaseHTTPRequestHandler):
             if to and not chatroom.participant(room_full, to):
                 to = ""
             question = " ".join(str(data.get("question") or "").split())[:200]
-            if not points.approve(rid, mid):
+            try:
+                fresh = points.approve(rid, mid)
+            except Exception as e:  # noqa: BLE001
+                print(f"[points] {rid}: approval not saved: {e!r}", flush=True)
+                self._send_json(500, {"error": "not_saved", "message": "The hub could not save that. Try again."})
+                return
+            if not fresh:
                 self._send_json(200, {"ok": True, "duplicate": True})
                 return
             line = ("Approved: go with your recommendation"
@@ -10056,10 +10085,13 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 result = self._resume_room(room_full, text=line, to=to, key="approve:" + mid)
             except Exception as exc:    # noqa: BLE001 — refused: it may be given again
-                points.unapprove(rid, mid)
+                try:
+                    points.unapprove(rid, mid)
+                except Exception as e:  # noqa: BLE001
+                    print(f"[points] {rid}: approval not taken back: {e!r}", flush=True)
                 self._send_json(400, {"error": str(exc) or exc.__class__.__name__})
                 return
-            self._send_json(200, {"ok": True, **result, "points": points.view(rid)})
+            self._send_json(200, {"ok": True, **result, "points": _points_view(rid)})
             return
         if p == "/api/room/roles":
             # Assign/clear team roles on an existing room's agents:
@@ -10263,7 +10295,7 @@ class Handler(BaseHTTPRequestHandler):
                     kept = bool(text) and held is not None and any(
                         (key and it.get("key") == key) or it["text"] == text for it in held.queue)
                 if not kept:
-                    points.discard(rid, pids, key)
+                    _points_discard(rid, pids, key)
                 self._send_json(400, {"error": str(exc) or exc.__class__.__name__, "kept": kept})
                 return
             self._send_json(200, {"ok": True, **result,

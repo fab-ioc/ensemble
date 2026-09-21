@@ -82,6 +82,8 @@ _SYNCED: dict[str, float] = {}  # room id -> when its answers were last looked f
 _ADOPT_SEEN: set[str] = set()   # rooms whose last unanswered message was looked at
 _SCANNED: dict[tuple, object] = {}  # (room, session or "~room") -> what it was when read
 _LAST_TICK = 0.0
+_TOLD: set[tuple] = set()       # (room, point, when it opened) a reminder was typed for
+_GONE: set[str] = set()         # rooms deleted while their ledger stays
 
 POINT_ID = r"P\d{1,5}[a-z]?"
 _POINT_LINE = re.compile(rf"^\[point ({POINT_ID})\][ \t]*$", re.M)
@@ -222,7 +224,12 @@ def _dir() -> Path:
     return Path(_d.chatroom.ROOMS_DIR).parent / "points"
 
 
+_ROOM_ID = re.compile(r"room-[0-9a-f]+")
+
+
 def _path(room_id: str) -> Path:
+    if not _ROOM_ID.fullmatch(room_id or ""):
+        raise ValueError(f"not a room id: {room_id!r}")
     return _dir() / f"{room_id}.json"
 
 
@@ -264,9 +271,16 @@ def _clean(led: dict, room_id: str) -> dict:
 
 
 def _read_file(p: Path):
+    """The file's ledger; None when it is missing or damaged (not JSON, not a
+    ledger). A file that cannot be read just now (locked, no access) raises:
+    it is not damage, and nothing is replaced for it."""
     try:
-        d = json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        raw = p.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    try:
+        d = json.loads(raw)
+    except ValueError:
         return None
     return d if _valid(d) else None
 
@@ -310,20 +324,28 @@ def _save(room_id: str, led: dict) -> None:
     p = _path(room_id)
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_name(f"{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
-    tmp.write_text(json.dumps(led, indent=1, ensure_ascii=False), encoding="utf-8")
-    for attempt in range(5):
+    # ASCII: a lone surrogate from a request body cannot fail the write.
+    body = json.dumps(led, indent=1, ensure_ascii=True)
+    try:
+        tmp.write_text(body, encoding="utf-8")
+        for attempt in range(5):
+            try:
+                if p.exists():
+                    try:
+                        os.replace(p, p.with_suffix(".json.prev"))
+                    except OSError:
+                        pass
+                os.replace(tmp, p)
+                break
+            except OSError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
+    finally:
         try:
-            if p.exists():
-                try:
-                    os.replace(p, p.with_suffix(".json.prev"))
-                except OSError:
-                    pass
-            os.replace(tmp, p)
-            break
+            tmp.unlink()
         except OSError:
-            if attempt == 4:
-                raise
-            time.sleep(0.05 * (attempt + 1))
+            pass
     try:
         _CACHE[room_id] = (p.stat().st_mtime_ns, json.loads(json.dumps(led)))
     except OSError:
@@ -335,6 +357,8 @@ def _save(room_id: str, led: dict) -> None:
 
 
 def exists(room_id: str) -> bool:
+    if not _ROOM_ID.fullmatch(room_id or ""):
+        return False
     return _path(room_id).exists() or _path(room_id).with_suffix(".json.prev").exists()
 
 
@@ -622,7 +646,9 @@ def _scan_turns(led: dict, sid: str, turns: list[dict]) -> bool:
             implicit = None
     # The whole session was read: an answer linked in it before that it does
     # not hold now (its turns were counted otherwise then) goes. The state
-    # stays what it became.
+    # stays what it became. A read that found nothing unlinks nothing.
+    if not turns:
+        return changed
     head = sid + ":"
     for p in pts.values():
         keep = [a for a in p["answers"]
@@ -644,8 +670,14 @@ def _scan_messages(led: dict, room: dict) -> bool:
     agents = {p.get("identity", "") for p in _agents(room)}
     team = not _solo(room)
     changed = False
-    implicit, ukey = None, ""
+    implicit, ukey, uts = None, "", 0.0
     human = _d.chatroom.HUMAN_IDENTITY
+    # When the hub typed into each agent's terminal (a resume or restart
+    # note, a handover, a reminder): not in the room's messages.
+    typed: dict[str, list] = {}
+    for part in _agents(room):
+        ts_ = [part.get("resumedAt")] + [r.get("at") for r in part.get("rotations") or [] if isinstance(r, dict)]
+        typed[part.get("identity", "")] = [float(t) for t in ts_ if isinstance(t, (int, float))]
     for m in room.get("messages") or []:
         try:
             ts = float(m.get("ts") or 0)
@@ -661,7 +693,7 @@ def _scan_messages(led: dict, room: dict) -> bool:
             for i in found:
                 changed |= _see_balloon(pts[i], mid)
             if team and len(found) == 1:
-                implicit, ukey = found[0], mid
+                implicit, ukey, uts = found[0], mid, ts
             continue
         if frm not in agents:
             implicit = None             # the hub, another task's report: not a reply
@@ -678,13 +710,17 @@ def _scan_messages(led: dict, room: dict) -> bool:
             implicit = None
             continue
         to = (m.get("to") or "").strip().lower()
+        hub = typed.get(frm, []) + [float(pts[implicit].get("reminded") or 0)]
+        if any(uts < t <= ts for t in hub):
+            implicit = None             # it may answer what the hub typed: only Re Pn:
+            continue
         if frm == pts[implicit].get("owner") and to in ("user", "", "all", "everyone", "*"):
             changed |= _answer(pts[implicit], "after:" + ukey, mid, ts, "implicit")
             implicit = None
     return changed
 
 
-def _adopt(led: dict, room: dict) -> bool:
+def _adopt(led: dict, room: dict, pre: list | None = None) -> bool:
     """A room seen for the first time: the person's last message, if nothing
     answered it, is taken in as an open point. Nothing older is."""
     human = _d.chatroom.HUMAN_IDENTITY
@@ -694,7 +730,7 @@ def _adopt(led: dict, room: dict) -> bool:
     owner = _owner_for(room, "")
     if _solo(room):
         sid = (agents[0].get("sessionId") or "").strip()
-        turns = _d.read_session_turns(sid) if sid else None
+        turns = pre if pre is not None else (_d.read_session_turns(sid) if sid else None)
         ids = _d.page_turn_ids(sid, turns or [])
         last = next(((mid, t) for mid, t in reversed(ids)
                      if not (t.get("role") == "user" and (t.get("kind") or "human") != "human")), None)
@@ -706,7 +742,8 @@ def _adopt(led: dict, room: dict) -> bool:
             return False
         mid, t = last
         text = strip_point_lines(_d.message_refs.strip_message_refs(t.get("text") or ""))
-        if not text or text.startswith("/") or is_bare_ack(text) or text.startswith(_d.PO_MESSAGE_PREFIX):
+        if not text or text.startswith(("/", "[Request interrupted")) or is_bare_ack(text) \
+                or text.startswith(_d.PO_MESSAGE_PREFIX):
             return False
         p = _new_point(led, text, owner, _d._turn_epoch(t.get("timestamp")) or time.time(), "", sid, mid=mid)
     else:
@@ -734,6 +771,30 @@ def sync(room_id: str, force: bool = False, room: dict | None = None) -> dict:
         room = _d.chatroom.get_room(room_id)
     if room is None:
         return load(room_id)
+    # The transcripts are read first, without the lock: a long one takes a
+    # while, and every poll and send waits on the lock. Only a session that
+    # changed since it was last read, and after the oldest point still
+    # waiting on someone, is read. What was read is remembered here, not on
+    # disk: after a restart it is read once more, and linking again changes
+    # nothing.
+    led = load(room_id)
+    adopt = not led["points"] and not exists(room_id) and room_id not in _ADOPT_SEEN
+    reads: dict[str, tuple] = {}
+    pre = None
+    if _solo(room):
+        live = [p["createdAt"] for p in led["points"] if p["state"] in ("open", "answered")]
+        floor = (min(live) - SLACK_S) if live else None
+        for sid in _session_ids(room, led):
+            st = _session_stat(sid)
+            if st is None or _SCANNED.get((room_id, sid)) == st:
+                continue
+            if floor is None or st[1] < floor:
+                _SCANNED[(room_id, sid)] = st   # nothing it holds can answer a point still waiting
+                continue
+            reads[sid] = (st, _d.read_session_turns(sid) or [])
+        if adopt:
+            sid = (next(iter(_agents(room)), {}).get("sessionId") or "").strip()
+            pre = _d.read_session_turns(sid) if sid else None
     with _LOCK:
         led = load(room_id)
         changed = False
@@ -742,20 +803,14 @@ def sync(room_id: str, force: bool = False, room: dict | None = None) -> dict:
                 return led
             _ADOPT_SEEN.add(room_id)
             try:
-                changed = _adopt(led, room)
+                changed = _adopt(led, room, pre)
             except Exception as e:
                 _log(f"{room_id}: the last message was not read: {e!r}")
             if not changed:
                 return led
-        # What was read is remembered here, not on disk: after a restart
-        # everything is read once more, and linking again changes nothing.
-        if _solo(room):
-            for sid in _session_ids(room, led):
-                st = _session_stat(sid)
-                if st is None or _SCANNED.get((room_id, sid)) == st:
-                    continue
-                turns = _d.read_session_turns(sid) or []
-                changed |= _scan_turns(led, sid, turns)
+        for sid, (st, turns) in reads.items():
+            changed |= _scan_turns(led, sid, turns)
+            if turns:                   # an empty read is read again next time
                 _SCANNED[(room_id, sid)] = st
         msgs = room.get("messages") or []
         mark = (len(msgs), msgs[-1].get("id", "") if msgs else "", len(led["points"]))
@@ -1052,7 +1107,9 @@ def _deliver(room_id: str, owner: str, items: list[dict], now: float) -> list[di
     rot, cr = _d.rotation, _d.chatroom
     with rot.GATE:
         room = cr.get_room(room_id)
-        part = cr.participant(room, owner) if room and owner else None
+        if not room or room.get("status") == "paused":
+            return []                   # paused: nothing is typed into it
+        part = cr.participant(room, owner) if owner else None
         if not part or rot.is_rotating(room_id, owner) or rot.awaiting_handover(room_id, owner):
             return []
         sess = rot._pty(part)
@@ -1079,28 +1136,52 @@ def tick(now: float | None = None) -> list[str]:
         return []
     for f in files:
         rid = f.stem
-        led = load(rid)
-        if not any(p["state"] == "open" for p in led["points"]):
+        if rid in _GONE:
             continue
         try:
-            led = sync(rid, force=True)
+            out += _tick_room(rid, now, after)
+        except Exception as e:      # noqa: BLE001 — the other rooms still get theirs
+            _log(f"{rid}: reminder check failed: {e!r}")
+    return out
+
+
+def _told(rid: str, p: dict) -> tuple:
+    return (rid, p["id"], float(p.get("openedAt") or p["createdAt"]))
+
+
+def _tick_room(rid: str, now: float, after: float) -> list[str]:
+    if _d.chatroom.get_room(rid) is None:
+        _GONE.add(rid)                  # a deleted room: its ledger is not read again
+        return []
+    led = load(rid)
+    if not any(p["state"] == "open" for p in led["points"]):
+        return []
+    try:
+        led = sync(rid, force=True)
+    except Exception as e:
+        _log(f"{rid}: answers not read: {e!r}")
+    owed: dict[str, list] = {}
+    for p in sorted(led["points"], key=lambda p: p["createdAt"]):
+        if p["state"] == "open" and not p.get("reminded") and _told(rid, p) not in _TOLD \
+                and now - float(p.get("openedAt") or p["createdAt"]) >= after:
+            owed.setdefault(p.get("owner") or "", []).append(p)
+    out = []
+    for owner, items in owed.items():
+        if not owner:
+            continue
+        try:
+            told = _deliver(rid, owner, items, now)
         except Exception as e:
-            _log(f"{rid}: answers not read: {e!r}")
-        owed: dict[str, list] = {}
-        for p in sorted(led["points"], key=lambda p: p["createdAt"]):
-            if p["state"] == "open" and not p.get("reminded") \
-                    and now - float(p.get("openedAt") or p["createdAt"]) >= after:
-                owed.setdefault(p.get("owner") or "", []).append(p)
-        for owner, items in owed.items():
-            if not owner:
-                continue
-            try:
-                told = _deliver(rid, owner, items, now)
-            except Exception as e:
-                _log(f"{rid}/{owner}: reminder not typed: {e!r}")
-                told = []
-            if not told:
-                continue
+            _log(f"{rid}/{owner}: reminder not typed: {e!r}")
+            told = []
+        if not told:
+            continue
+        # Typed: never again for that opening, even if the ledger cannot be
+        # written now (each line costs the agent a whole-history wake).
+        _TOLD.update(_told(rid, p) for p in told)
+        out += [p["id"] for p in told]
+        _log(f"{rid}/{owner}: reminded of {', '.join(p['id'] for p in told)}")
+        try:
             with _LOCK:
                 cur = load(rid)
                 ids = {p["id"] for p in told}
@@ -1108,8 +1189,8 @@ def tick(now: float | None = None) -> list[str]:
                     if p["id"] in ids:
                         p["reminded"] = now
                 _save(rid, cur)
-            out += [p["id"] for p in told]
-            _log(f"{rid}/{owner}: reminded of {', '.join(p['id'] for p in told)}")
+        except Exception as e:
+            _log(f"{rid}: reminder not recorded: {e!r}")
     return out
 
 
