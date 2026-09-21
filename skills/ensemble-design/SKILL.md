@@ -482,7 +482,9 @@ bell's count.**
   each point and where it stands ("P12 · waiting for an answer", "P12 · answered ↓" linked to the
   answer, "acknowledged", "dropped") with Drop or Reopen; on the agent's, "answers P12 ↑" linked to
   the person's balloon and 👍 Ack while it is not acknowledged. The one word that draws the eye is
-  "answered", in `--fg` at weight 600: it waits for the person.
+  "answered", in `--fg` at weight 600: it waits for the person. On the person's balloon (`--hover`)
+  the bar's words are `--fg-subtle` and its links `--fg` underlined: `--fg-muted` and `--link` there
+  fall under 4.5:1 in Light.
 - **Controls are Subtle buttons** (transparent, `--fg-subtle`, 24px, `--hover`, the focus ring),
   every one with its words in `aria-label`: an Ack types nothing into the agent, and says so in its
   tooltip. **👍 Go with it** sits only on a balloon that asks for a decision (or a task's own

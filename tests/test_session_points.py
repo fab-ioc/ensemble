@@ -290,5 +290,11 @@ class PollAndLinks(unittest.TestCase):
         self.assertEqual(r["notes"], [], "never 'not found' before the transcript is drawn")
 
 
+class Contrast(unittest.TestCase):
+    def test_the_bar_on_the_persons_balloon_is_not_muted(self):
+        # --fg-muted on --hover measured 4.25:1 in Light at 12px.
+        self.assertIn(".msg.user .pt-bar, .msg.user .pt-chip:not(.answered) { color:var(--fg-subtle); }", SRC)
+
+
 if __name__ == "__main__":
     unittest.main()

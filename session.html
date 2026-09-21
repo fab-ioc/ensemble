@@ -728,6 +728,9 @@
   /* --link on the person's balloon (--hover) measured 4.35:1 in Light: there
      the link is --fg, underlined, its arrow saying where it goes. */
   .msg.user .pt-bar a.pt-link { color:var(--fg); text-decoration:underline; }
+  /* --fg-muted there measured 4.25:1 in Light (12px): the bar's words on the
+     person's balloon are --fg-subtle. */
+  .msg.user .pt-bar, .msg.user .pt-chip:not(.answered) { color:var(--fg-subtle); }
   /* Away from the end of the chat: back to it, with how many arrived since. */
   #to-latest { position:absolute; right:var(--s-400); bottom:var(--s-300); z-index:5; height:24px; padding:0 var(--s-300);
     border-radius:var(--r-full); background:var(--surface); color:var(--fg); border:1px solid var(--border-strong);
