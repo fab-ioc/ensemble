@@ -88,7 +88,7 @@ _POINT_LINE = re.compile(rf"^\[point ({POINT_ID})\][ \t]*$", re.M)
 _POINT_LINE_STRIP = re.compile(rf"\n*^\[point {POINT_ID}\][ \t]*$", re.M)
 # "Re P12:", "**Re P12, P14:**", "- Re P3 and P4:" at the start of a line.
 _RE_HEAD = re.compile(
-    rf"^[ \t]*(?:[-*+>][ \t]+)*(?:\*\*|__)?[ \t]*re[ \t]+"
+    rf"^[ \t]*(?:[-*+][ \t]+)*(?:\*\*|__)?[ \t]*re[ \t]+"
     rf"({POINT_ID}(?:[ \t]*(?:,|&|/|and)[ \t]*{POINT_ID})*)[ \t]*(?:\*\*|__)?[ \t]*:",
     re.M | re.I)
 _ID_IN = re.compile(POINT_ID, re.I)
@@ -133,10 +133,29 @@ def strip_point_lines(text: str) -> str:
     return _POINT_LINE_STRIP.sub("", text or "").strip()
 
 
+def _prose(text: str) -> str:
+    """The reply without its code fences and quoted lines: a ``Re Pn:`` shown
+    as an example, or quoted from someone else, answers nothing."""
+    out, fence = [], ""
+    for ln in (text or "").split("\n"):
+        m = _FENCE.match(ln)
+        if fence:
+            if m and m.group(1) == fence:
+                fence = ""
+            out.append("")
+            continue
+        if m:
+            fence = m.group(1)
+            out.append("")
+            continue
+        out.append("" if re.match(r"^[ \t]*>", ln) else ln)
+    return "\n".join(out)
+
+
 def re_ids(text: str) -> list[str]:
     """The points a reply answers by ``Re Pn:`` at the start of a paragraph."""
     out = []
-    for m in _RE_HEAD.finditer(text or ""):
+    for m in _RE_HEAD.finditer(_prose(text)):
         for i in _ID_IN.findall(m.group(1)):
             i = _norm_id(i)
             if i not in out:
@@ -440,12 +459,17 @@ def take(room: dict, text: str, to: str = "", key: str = "", now: float | None =
             sid = part.get("sessionId", "") or ""
         follow = [i for i in re_ids(body) if i in pts]
         if follow:
+            words = strip_point_lines(body)[:TEXT_MAX]
             for i in follow:
                 p = pts[i]
+                # What this send changed, for discard() when it is refused.
+                p["undo"] = {"at": now, **{k: p.get(k) for k in _UNDO_FIELDS}}
                 if p["state"] in ("answered", "acked", "dropped"):
                     _set_state(p, "open", now)
                     p["reopenedAt"] = now
                 p["followKey"] = key or p.get("followKey", "")
+                p.setdefault("follows", []).append({"text": words, "at": now, "key": key})
+                p["undo"]["stateAt2"] = p.get("stateAt")
             led["lastPersonAt"] = now
             _save(rid, led)
             return _deliverable(text, follow), follow
@@ -470,18 +494,44 @@ def take(room: dict, text: str, to: str = "", key: str = "", now: float | None =
         return _deliverable(text, ids), ids
 
 
+_UNDO_FIELDS = ("state", "stateAt", "openedAt", "reopenedAt", "reminded", "followKey")
+
+
 def discard(room_id: str, ids: list[str]) -> None:
-    """Take back the points of a send the hub refused and does not hold: the
-    text is still in the person's box, and its next attempt makes them again.
-    Numbers are not reused."""
+    """Take back what a send did to the ledger when the hub refused it (and
+    does not hold it) or the person discarded it: a point it made goes (the
+    text is still in the person's box, its next attempt makes it again;
+    numbers are not reused); a point it followed up is as it was before,
+    unless it moved since. Nothing else is touched."""
     if not ids:
         return
     with _LOCK:
         led = load(room_id)
-        before = len(led["points"])
-        led["points"] = [p for p in led["points"]
-                         if not (p["id"] in ids and p["state"] == "open" and not p["answers"])]
-        if len(led["points"]) != before:
+        changed = False
+        keep = []
+        for p in led["points"]:
+            if p["id"] not in ids:
+                keep.append(p)
+                continue
+            u = p.pop("undo", None)
+            if isinstance(u, dict):
+                changed = True
+                fl = p.get("follows") or []
+                if fl and fl[-1].get("at") == u.get("at"):
+                    fl.pop()
+                if p.get("stateAt") == u.get("stateAt2"):
+                    for k in _UNDO_FIELDS:
+                        if u.get(k) is None:
+                            p.pop(k, None)
+                        else:
+                            p[k] = u[k]
+                keep.append(p)
+            elif p["state"] == "open" and not p["answers"] and not p.get("follows"):
+                changed = True
+            else:
+                keep.append(p)
+        if changed:
+            led["points"] = keep
             _save(room_id, led)
 
 
@@ -744,17 +794,34 @@ def approve(room_id: str, mid: str, now: float | None = None) -> bool:
         led["approvals"][mid] = now
         for p in led["points"]:
             if p["state"] in ("open", "answered") and any(a.get("mid") == mid for a in p["answers"]):
+                u = {"mid": mid, "state": p["state"], "stateAt": p.get("stateAt"),
+                     "ackedBy": p.get("ackedBy")}
                 _set_state(p, "acked", now)
                 p["ackedBy"] = "approval"
+                p["unapprove"] = {**u, "stateAt2": p["stateAt"]}
         _save(room_id, led)
         return True
 
 
 def unapprove(room_id: str, mid: str) -> None:
-    """The approval could not be delivered: it may be given again."""
+    """The approval could not be delivered: it may be given again, and the
+    points it acknowledged are as they were (unless they moved since)."""
     with _LOCK:
         led = load(room_id)
-        if led["approvals"].pop(mid, None) is not None:
+        changed = led["approvals"].pop(mid, None) is not None
+        for p in led["points"]:
+            u = p.get("unapprove")
+            if not isinstance(u, dict) or u.get("mid") != mid:
+                continue
+            p.pop("unapprove")
+            changed = True
+            if p["state"] == "acked" and p.get("stateAt") == u.get("stateAt2"):
+                p["state"], p["stateAt"] = u["state"], u.get("stateAt") or p["stateAt"]
+                if u.get("ackedBy"):
+                    p["ackedBy"] = u["ackedBy"]
+                else:
+                    p.pop("ackedBy", None)
+        if changed:
             _save(room_id, led)
 
 
@@ -818,6 +885,8 @@ def _item(p: dict) -> dict:
     out = {k: p.get(k) for k in ("id", "state", "owner", "createdAt", "stateAt", "mid", "followUps",
                                  "parent", "comment") if p.get(k) not in (None, "", [])}
     out["text"] = strip_point_lines(p.get("text") or "")[:400]
+    if p.get("follows"):
+        out["follows"] = [{"text": (f.get("text") or "")[:400], "at": f.get("at")} for f in p["follows"]]
     out["answers"] = [{k: a[k] for k in ("mid", "at", "how", "summary") if a.get(k)} for a in p["answers"]]
     return out
 
@@ -830,7 +899,13 @@ def view(room_id: str, room: dict | None = None) -> dict:
     except Exception as e:
         _log(f"{room_id}: answers not read: {e!r}")
         led = load(room_id)
-    pts = sorted(led["points"], key=lambda p: (p["createdAt"], p["id"]), reverse=True)[:VIEW_MAX]
+    order = lambda p: (p["createdAt"], p["id"])     # noqa: E731
+    pts = sorted(led["points"], key=order, reverse=True)
+    # Every point still waiting on someone, however old; of the closed ones
+    # the newest, up to the cap.
+    live = [p for p in pts if p["state"] in ("open", "answered")]
+    shut = [p for p in pts if p["state"] not in ("open", "answered")][:max(0, VIEW_MAX - len(live))]
+    pts = sorted(live + shut, key=order, reverse=True)
     return {"items": [_item(p) for p in pts], **_counts(led),
             "approvals": sorted(led.get("approvals") or {})}
 
@@ -843,6 +918,25 @@ def open_points(room_id: str, identity: str = "", skip=()) -> list[dict]:
     return sorted((p for p in led["points"] if p["state"] == "open" and p["id"] not in skip
                    and (not identity or p.get("owner") in ("", identity))),
                   key=lambda p: p["createdAt"])
+
+
+def follow_up(p: dict) -> str:
+    """The person's last follow-up of a point, while it is what is still to
+    be answered (no answer came after it)."""
+    fl = p.get("follows") or []
+    if not fl:
+        return ""
+    at = fl[-1].get("at") or 0
+    if any((a.get("at") or 0) > at for a in p.get("answers") or []):
+        return ""
+    return " ".join(strip_point_lines(fl[-1].get("text") or "").split())
+
+
+def asked(p: dict) -> str:
+    """What a point asks, on one line: its words, and its open follow-up."""
+    words = " ".join(strip_point_lines(p.get("text") or "").split())
+    f = follow_up(p)
+    return f"{words} | follow-up: {f}" if f else words
 
 
 def _when(ts: float, now: float) -> str:
@@ -862,7 +956,10 @@ def note_line(room_id: str, identity: str = "", now: float | None = None, skip=(
             f"\"Re Pn:\" at the start of a paragraph, or say why not. ")
     bits, used = [], len(head)
     for i, p in enumerate(pts):
-        b = f"{p['id']} \"{_first_words(p['text'])}\" (since {_when(p.get('openedAt') or p['createdAt'], now)})"
+        f = follow_up(p)
+        b = (f"{p['id']} \"{_first_words(p['text'])}\""
+             + (f" follow-up \"{_first_words(f)}\"" if f else "")
+             + f" (since {_when(p.get('openedAt') or p['createdAt'], now)})")
         if used + len(b) + 2 > _WAKE_MAX - 60 and bits:
             bits.append(f"and {len(pts) - i} more (ensemble_points lists them)")
             break
@@ -888,6 +985,9 @@ def prompt_block(room_id: str, identity: str = "", now: float | None = None) -> 
         words = " ".join(strip_point_lines(p["text"]).split())
         if len(words) > 400:
             words = words[:399] + "…"
+        f = follow_up(p)
+        if f:
+            words += " | follow-up: " + (f[:399] + "…" if len(f) > 400 else f)
         ln = f"- {p['id']} (since {_when(p.get('openedAt') or p['createdAt'], now)}): {words}"
         if used + len(ln) > _PROMPT_MAX and i:
             lines.append(f"- … and {len(pts) - i} more: ensemble_points lists them all.")
@@ -912,7 +1012,7 @@ def remind_after_s() -> float:
 def reminder_line(items: list[dict], now: float) -> tuple[str, list[dict]]:
     """(the typed line, the points it names): as many as fit, oldest first."""
     def line(told):
-        bits = "; ".join(f"{p['id']} \"{_first_words(p['text'], 48)}\" "
+        bits = "; ".join(f"{p['id']} \"{_first_words(follow_up(p) or p['text'], 48)}\" "
                          f"(since {_when(p.get('openedAt') or p['createdAt'], now)})" for p in told)
         return (f"{PREFIX}still open: {bits}. Answer each with \"Re Pn:\" at the start of a "
                 f"paragraph, or say why not.")

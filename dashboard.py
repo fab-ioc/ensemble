@@ -1441,7 +1441,14 @@ def discard_pending(room_id: str) -> bool:
         if res is None or res.state != "failed":
             return False
         _RESUMES.pop(room_id, None)
-        return True
+        held = [i for it in res.queue for i in points.point_ids(it.get("text") or "")]
+    # What those sends did to the person's points goes with them: they
+    # were never delivered.
+    try:
+        points.discard(room_id, held)
+    except Exception as e:      # noqa: BLE001 — the discard itself stands
+        print(f"[points] {room_id}: held points not taken back: {e!r}", flush=True)
+    return True
 
 
 def _type_input(sess, text: str) -> bool:

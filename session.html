@@ -2218,7 +2218,7 @@ async function pointAct(id, act, post) {
   PT_BUSY.add(k);
   try {
     const r = await post('/api/room/points', { roomId: ROOM, id, action: act });
-    if (r && r.points) pointsChanged(r.points);
+    if (r && r.points) pointsChanged(r.points, ptTicket());
     return r;
   } catch (e) { pointsNote('Not done: ' + ((e && e.message) || 'the hub did not answer') + '.'); return null; }
   finally { PT_BUSY.delete(k); }
@@ -2230,7 +2230,7 @@ async function approveDecision(m, post) {
   try {
     const r = await post('/api/room/approve', { roomId: ROOM, mid: m.id, to: SOLO_MODE ? '' : m.from, question: decisionQuestion(m) });
     POINTS.approvals.add(m.id);
-    if (r && r.points) pointsChanged(r.points);
+    if (r && r.points) pointsChanged(r.points, ptTicket());
     return r;
   } catch (e) { pointsNote('Not sent: ' + ((e && e.message) || 'the hub did not answer') + '. Try again.'); return null; }
   finally { PT_BUSY.delete(k); }
@@ -2427,9 +2427,15 @@ function showAskLine(items) {
   el.hidden = !ask;
   el.innerHTML = ask ? askLineHtml(ask, mid, m => refHref(ROOM, m)) : '';
 }
+// Which answer about the points is newest: a room poll takes its ticket when
+// it asks, a click's answer when it arrives, and an answer older than the one
+// drawn (a slow poll that asked before an Ack was taken) is not drawn.
+let PT_GEN = 0, PT_DRAWN = 0;
+function ptTicket() { return ++PT_GEN; }
 // The points the room's poll (or an ack) brought: drawn again only when they
 // changed, so nothing clickable is replaced on a timer.
-function pointsChanged(pv) {
+function pointsChanged(pv, ticket) {
+  if (ticket) { if (ticket < PT_DRAWN) return; PT_DRAWN = ticket; }
   const sig = JSON.stringify(pv || null);
   if (sig === POINTS_SIG) { pointsAges(); return; }
   POINTS_SIG = sig;
@@ -2748,11 +2754,13 @@ function landPending() {
     }
     if (!el) {
       // A turn of a solo transcript older than the chat shows: draw back to it.
-      const t = mid.match(/^(.+):(\d+)$/);
+      // A line read while the agent was busy (":q<n>") has no place in the
+      // numbering: the whole transcript is drawn for it.
+      const t = mid.match(/^(.+):(q?)(\d+)$/);
       let failed = false;
       if (t && SOLO_SID && soloOwns(t[1])) {
-        if (!(SOLO_WANT && SOLO_WANT.sid === t[1] && SOLO_WANT.n === +t[2])) {
-          SOLO_WANT = { sid: t[1], n: +t[2] };
+        if (!(SOLO_WANT && SOLO_WANT.mid === mid)) {
+          SOLO_WANT = { sid: t[1], n: t[2] ? 0 : +t[3], mid };
           renderSolo(SOLO_SID, SOLO_AGENT, true);
           return;
         }
@@ -2926,6 +2934,8 @@ function soloWantFailed(w) {
 // and light (the full transcript is fetched only on a real change).
 async function checkSolo() {
   if (!SOLO_SID) { CHAT_DRAWN = true; renderBubbles([]); return; }
+  if (checkSolo.busy) return;   // one stat request at a time
+  checkSolo.busy = true;
   try {
     const s = await fetch('/api/session/' + encodeURIComponent(SOLO_SID) + '?stat=1').then(r => r.json());
     if (s && typeof s.size === 'number') {
@@ -2939,6 +2949,7 @@ async function checkSolo() {
       renderSolo(SOLO_SID, SOLO_AGENT, false);
     }
   } catch (e) {}
+  finally { checkSolo.busy = false; }
 }
 let ROOM_OBJ = null;   // last room payload, so we can mount the terminal on demand to read a prompt
 let SOLO_AGAIN = false;   // a forced render was asked for while one was fetching
@@ -2996,8 +3007,21 @@ async function renderSolo(sid, agentId, force) {
   }
 }
 
+// The room poll: one request at a time. A refresh asked for while one is
+// under way (after a click) runs once it is done, not beside it.
+let REFRESH_BUSY = false, REFRESH_AGAIN = false;
 async function refresh() {
+  if (REFRESH_BUSY) { REFRESH_AGAIN = true; return; }
+  REFRESH_BUSY = true;
+  try { await refreshRoom(); }
+  finally {
+    REFRESH_BUSY = false;
+    if (REFRESH_AGAIN) { REFRESH_AGAIN = false; refresh(); }
+  }
+}
+async function refreshRoom() {
   let room;
+  const ticket = ptTicket();
   try { room = await fetch('/api/room?id=' + encodeURIComponent(ROOM)).then(r => r.json()); }
   catch(e) { return; }
   if (!room || room.error) { setText($('#title'), '(session not found)'); return; }
@@ -3045,7 +3069,7 @@ async function refresh() {
   ROOM_OBJ = room;
   SOLO_MODE = soloMode;
   showAskLine(null);
-  pointsChanged(room.points || null);
+  pointsChanged(room.points || null, ticket);
   chatNamesFor(room, soloMode);
   const cwd = room.cwd || '';
   ensureTheme(cwd);

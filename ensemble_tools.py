@@ -1388,7 +1388,7 @@ def _points(ctx, args, handler):
                      "acknowledge. Answer an open one with 'Re Pn:' in your reply."),
             "points": [{"id": p["id"], "state": p["state"], "owner": p.get("owner", ""),
                         "since": time.strftime("%m-%d %H:%M", time.localtime(p.get("openedAt") or p["createdAt"])),
-                        "text": pts.strip_point_lines(p["text"])[:1000]}
+                        "text": pts.asked(p)[:1000]}
                        for p in sorted(show, key=lambda p: p["createdAt"])]}
 
 

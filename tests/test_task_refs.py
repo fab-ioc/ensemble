@@ -175,7 +175,7 @@ class SessionChips(unittest.TestCase):
     def test_the_page_uses_them(self):
         self.assertIn("s = parkTaskRefs(s, chips);", fn(SESSION, "mdToHtml"))
         self.assertIn("agent: a.dataset.agent", SESSION)
-        refresh = fn(SESSION, "refresh")
+        refresh = fn(SESSION, "refreshRoom")
         self.assertIn("`${tno} · ${room.title}`", refresh, "the tab title")
         self.assertIn("setText($('#tno'), tno);", refresh, "the header")
 

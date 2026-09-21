@@ -194,5 +194,101 @@ class Points(unittest.TestCase):
         self.assertEqual(acks, [["/api/room/points", {"roomId": "room-po", "id": "P2", "action": "ack"}]])
 
 
+def fn_src(name: str, prefix: str = "function ") -> str:
+    import re
+    m = re.search(rf"^(?:async )?{prefix}{name}\(", SRC, re.M)
+    return SRC[m.start():SRC.index("\n}\n", m.start()) + 3]
+
+
+POLL_JS = r"""
+const vm = require('vm');
+const { code } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+const out = { inFlight: 0, most: 0, rooms: 0, drawn: [], wants: [], notes: [] };
+const ctx = { out, POINTS_SIG: '', LAST_ITEMS: null, pointMaps: v => v, showPointsLine: () => {},
+  pointsAges: () => {}, renderBubbles: () => {}, POINTS: null, resolves: [] };
+vm.createContext(ctx);
+vm.runInContext(code + `
+  // The room request, held open until the test lets it answer.
+  async function refreshRoom() {
+    out.rooms++; out.inFlight++; out.most = Math.max(out.most, out.inFlight);
+    const ticket = ptTicket();
+    const pv = await new Promise(r => resolves.push(r));
+    out.inFlight--;
+    pointsChanged(pv, ticket);
+  }
+  globalThis.T = { refresh, ptTicket, pointsChanged, drawn: () => POINTS };`, ctx);
+(async () => {
+  const T = ctx.T;
+  const tick = () => new Promise(r => setImmediate(r));
+  T.refresh(); T.refresh(); T.refresh();           // the timer fires while the first is out
+  await tick();
+  out.afterThree = [out.rooms, out.inFlight];
+  // An Ack answers while that poll is still out: its newer state is drawn...
+  T.pointsChanged({ v: 'acked' }, T.ptTicket());
+  // ...and the slow poll, which asked before, does not draw over it.
+  ctx.resolves.shift()({ v: 'stale' });
+  await tick(); await tick();
+  out.afterSlow = T.drawn();
+  out.rooms2 = out.rooms;                          // the asked-again refresh ran once
+  ctx.resolves.shift()({ v: 'fresh' });
+  await tick(); await tick();
+  out.afterFresh = T.drawn();
+  process.stdout.write(JSON.stringify(out));
+})();
+"""
+
+
+LAND_JS = r"""
+const vm = require('vm');
+const { code } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+const out = { renders: 0, notes: [] };
+const box = { clientHeight: 400, querySelectorAll: () => [] };
+const ctx = { out, $: () => box, CHAT_DRAWN: true, _landing: false, _cmtComposerOpen: false, _selBtn: null,
+  GOTO: '', SOLO_WANT: null, SOLO_SID: 'now', SOLO_AGENT: 'claude', openGroupOf: () => {},
+  soloOwns: sid => sid === 'now' || sid === 'old', renderSolo: () => { out.renders++; },
+  showGotoNote: t => { if (t) out.notes.push(t); } };
+vm.createContext(ctx);
+vm.runInContext(code + `
+  GOTO = 'old:q0'; landPending();
+  out.want = SOLO_WANT;
+  landPending();                                   // not loaded yet: waits, asks nothing new
+  out.renders2 = out.renders;
+  GOTO = 'old:7'; landPending();
+  out.want2 = SOLO_WANT;`, ctx);
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE, "needs Node")
+class PollAndLinks(unittest.TestCase):
+    """The room poll is one request at a time and an older answer never draws
+    over a newer one; a link to a line read while the agent was busy loads
+    the transcript it is in."""
+
+    def node(self, js, code):
+        r = subprocess.run([NODE, "-e", js], input=json.dumps({"code": code}), capture_output=True,
+                           text=True, encoding="utf-8", timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)
+
+    def test_the_room_poll_is_one_at_a_time_and_a_slow_answer_draws_nothing(self):
+        code = ("let POINTS_OPEN = false;\n" + SRC[SRC.index("let PT_GEN = 0"):SRC.index("function ptTicket")]
+                + fn_src("ptTicket") + fn_src("pointsChanged")
+                + SRC[SRC.index("let REFRESH_BUSY"):SRC.index("async function refreshRoom")])
+        r = self.node(POLL_JS, code)
+        self.assertEqual(r["afterThree"], [1, 1], "three timer ticks, one request")
+        self.assertEqual(r["most"], 1)
+        self.assertEqual(r["afterSlow"], {"v": "acked"})
+        self.assertEqual(r["rooms2"], 2, "the refresh asked for meanwhile runs once, after")
+        self.assertEqual(r["afterFresh"], {"v": "fresh"})
+
+    def test_a_link_to_a_queued_line_loads_its_whole_transcript(self):
+        r = self.node(LAND_JS, fn_src("landPending"))
+        self.assertEqual(r["want"], {"sid": "old", "n": 0, "mid": "old:q0"})
+        self.assertEqual((r["renders"], r["renders2"]), (2, 1), "loaded once per link")
+        self.assertEqual(r["want2"], {"sid": "old", "n": 7, "mid": "old:7"})
+        self.assertEqual(r["notes"], [], "never 'not found' before the transcript is drawn")
+
+
 if __name__ == "__main__":
     unittest.main()
