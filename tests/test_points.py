@@ -471,6 +471,33 @@ class Turns(unittest.TestCase):
         self.assertEqual([i for i, _ in dashboard.page_turn_ids("s", turns)], ["s:0", "s:1", "s:q0", "s:2"])
 
 
+class PageIds(unittest.TestCase):
+    """The chat page and the hub name a one-agent chat's balloons alike: a
+    point finds its balloon by the id the page draws it with."""
+
+    def test_soloitems_and_page_turn_ids_agree(self):
+        import re
+        import shutil
+        import subprocess
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("needs Node")
+        src = (Path(__file__).resolve().parent.parent / "session.html").read_text(encoding="utf-8").replace("\r\n", "\n")
+        m = re.search(r"^function soloItems\(", src, re.M)
+        fn = src[m.start():src.index("\n}\n", m.start()) + 3]
+        raw = [{"role": "user", "text": "a"}, {"role": "user", "text": "a"}, {"role": "assistant", "text": "b"},
+               {"role": "user", "text": "q1", "queued": True}, {"role": "assistant", "text": "b"},
+               {"role": "assistant", "text": "c"}, {"role": "user", "text": "q2", "queued": True},
+               {"role": "user", "text": "d"}]
+        js = fn + "\nconst raw = " + json.dumps(raw) + ";\nconsole.log(JSON.stringify([soloItems(raw, 's', 'claude', 99).map(m => m.id), soloItems(raw, 's', 'claude', 2).map(m => m.id)]));"
+        out = subprocess.run([node, "-e", js], capture_output=True, text=True, encoding="utf-8", timeout=30)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        full, last2 = json.loads(out.stdout)
+        self.assertEqual(full, [i for i, _ in dashboard.page_turn_ids("s", raw)])
+        self.assertEqual(full, ["s:0", "s:1", "s:q0", "s:2", "s:q1", "s:3"])
+        self.assertEqual(last2, ["s:2", "s:q1", "s:3"])
+
+
 def http(path, body, origin=None):
     raw = json.dumps(body).encode()
     h = dashboard.Handler.__new__(dashboard.Handler)

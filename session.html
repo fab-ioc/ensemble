@@ -2875,11 +2875,23 @@ function withHubRows(items, room) {
   }
   return out;
 }
+// A line the agent read while busy (queued) is its own turn, "<sid>:q<n>",
+// counted apart, so the other turns keep the ids they had before those were
+// shown; the hub counts the same way (page_turn_ids), which is how a point
+// finds its balloon.
 function soloItems(raw, sid, agentId, keep) {
-  const turns = raw.filter((t, i) => i === 0 || t.role !== raw[i - 1].role || t.text !== raw[i - 1].text);
-  const off = Math.max(0, turns.length - keep);
-  return turns.slice(off).map((t, i) => Object.assign({
-    id: sid + ':' + (off + i),
+  const all = [];
+  let prev = null, n = 0, q = 0;
+  for (const t of raw) {
+    if (t.queued) { all.push({ t, id: sid + ':q' + (q++), n: -1 }); continue; }
+    const same = !!prev && t.role === prev.role && t.text === prev.text;
+    prev = t;
+    if (!same) all.push({ t, id: sid + ':' + n, n: n++ });
+  }
+  const off = Math.max(0, n - keep);
+  const start = off ? all.findIndex(x => x.n === off) : 0;
+  return all.slice(start).map(({ t, id }) => Object.assign({
+    id,
     from: (t.role === 'user') ? 'user' : agentId, to: '', text: t.text,
   }, t.timestamp ? { ts: Date.parse(t.timestamp) / 1000 } : {}, t.role === 'user' ? { kind: t.kind || 'human', reportKind: t.reportKind, taskTitle: t.taskTitle, taskId: t.taskId, reporter: t.reporter }
     : t.answers ? { answers: t.answers } : {}));
@@ -2892,7 +2904,8 @@ async function prevSessionItems(sid, agentId) {
   const d = await fetch('/api/session/' + encodeURIComponent(sid) + '?full=1').then(r => r.json());
   const turns = d.turns || [];
   const items = soloItems(turns, sid, agentId, Math.max(PREV_TURNS_SHOWN, want < 0 ? 0 : turns.length - want));
-  SOLO_PREV.set(sid, { items, from: items.length ? +String(items[0].id).split(':').pop() : 0 });
+  const first = items.find(m => /:\d+$/.test(String(m.id)));   // a queued line's id is ":q<n>"
+  SOLO_PREV.set(sid, { items, from: first ? +String(first.id).split(':').pop() : 0 });
   return items;
 }
 // The sessions of this chat a link may point into: the current one and every
