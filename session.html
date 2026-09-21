@@ -694,6 +694,43 @@
   #ask-line .ask-text { flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
   #ask-line .ask-link { color:var(--link); }
   #ask-line .ask-link:focus-visible { outline:none; border-radius:var(--r-100); box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  /* The person's points (points.py): the ask line's look, and the words say
+     it. Information, not an alarm: no colour of its own; an answer waiting
+     for the person's acknowledgement is the one word in --fg, weight 600. */
+  #points-line { flex:0 0 auto; margin:var(--s-200) var(--s-300) 0; background:var(--surface); border:1px solid var(--border);
+    border-radius:var(--r-200); color:var(--fg-muted); font-size:var(--fs-200); line-height:16px; }
+  #points-line[hidden] { display:none; }
+  #points-line .pt-sum { display:flex; align-items:center; gap:var(--s-200); width:100%; min-height:24px; padding:var(--s-100) var(--s-300);
+    background:transparent; border:none; border-radius:var(--r-200); color:var(--fg-muted); font:inherit; text-align:left; cursor:pointer; }
+  #points-line .pt-sum:hover { background:var(--hover); }
+  #points-line .pt-caret { flex:0 0 auto; width:12px; }
+  #points-line .pt-sum-t { flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
+  #points-list { list-style:none; margin:0; padding:0 var(--s-300); max-height:40vh; overflow-y:auto; border-top:1px solid var(--border); }
+  #points-list[hidden] { display:none; }
+  .pt-row { display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-100) var(--s-200); padding:var(--s-100) 0; border-bottom:1px solid var(--border); }
+  .pt-row:last-child { border-bottom:none; }
+  .pt-id { flex:0 0 auto; font-family:var(--font-mono); font-size:var(--fs-200); color:var(--fg); font-variant-numeric:tabular-nums; }
+  .pt-words { flex:1 1 160px; min-width:0; color:var(--fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .pt-age, .pt-state { flex:0 0 auto; color:var(--fg-muted); font-variant-numeric:tabular-nums; }
+  .pt-state.answered, .pt-chip.answered { color:var(--fg); font-weight:600; }
+  .pt-said { flex:1 1 100%; min-width:0; color:var(--fg-muted); overflow-wrap:anywhere; }
+  a.pt-link { color:var(--link); white-space:nowrap; }
+  .pt-btn { flex:0 0 auto; height:24px; padding:0 var(--s-200); background:transparent; border:none; border-radius:var(--r-200);
+    color:var(--fg-subtle); font-size:var(--fs-200); line-height:16px; cursor:pointer; }
+  .pt-btn:hover { background:var(--hover); color:var(--fg); }
+  .pt-btn:disabled { color:var(--fg-disabled); cursor:default; }
+  .pt-btn:focus-visible, a.pt-link:focus-visible, #points-line .pt-sum:focus-visible { outline:none; border-radius:var(--r-100);
+    box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  /* Under a balloon: the points it holds or answers, and their one click. */
+  .msg .pt-bar { display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-100) var(--s-200); margin-top:var(--s-200);
+    padding-top:var(--s-100); border-top:1px solid var(--border); color:var(--fg-muted); font-size:var(--fs-200); line-height:16px; }
+  .pt-chip { color:var(--fg-muted); font-variant-numeric:tabular-nums; }
+  /* --link on the person's balloon (--hover) measured 4.35:1 in Light: there
+     the link is --fg, underlined, its arrow saying where it goes. */
+  .msg.user .pt-bar a.pt-link { color:var(--fg); text-decoration:underline; }
+  /* --fg-muted there measured 4.25:1 in Light (12px): the bar's words on the
+     person's balloon are --fg-subtle. */
+  .msg.user .pt-bar, .msg.user .pt-chip:not(.answered) { color:var(--fg-subtle); }
   /* Away from the end of the chat: back to it, with how many arrived since. */
   #to-latest { position:absolute; right:var(--s-400); bottom:var(--s-300); z-index:5; height:24px; padding:0 var(--s-300);
     border-radius:var(--r-full); background:var(--surface); color:var(--fg); border:1px solid var(--border-strong);
@@ -885,6 +922,9 @@
     #ask-line { min-height: var(--touch-min, 44px); }
     #ask-line .ask-link { position: relative; }
     #ask-line .ask-link::after { content: ''; position: absolute; left: 0; right: 0; top: -14px; bottom: -14px; }
+    #points-line .pt-sum, .pt-btn { min-height: var(--touch-min, 44px); }
+    a.pt-link { position: relative; }
+    a.pt-link::after { content: ''; position: absolute; left: 0; right: 0; top: -14px; bottom: -14px; }
     /* Centred, the comment box sat under the keyboard it opens. */
     .cmt-composer { top: var(--s-300, 12px); transform: translateX(-50%); }
   }
@@ -914,6 +954,7 @@
       <div id="chatbar" hidden><span id="chatbar-note"></span><button type="button" id="just-us" aria-pressed="false" title="Show only your messages and the answers to them in full; everything else folds to one line">Just us</button></div>
       <div id="goto-note" role="status" hidden><span></span><button type="button" class="goto-x" title="Dismiss this note">Dismiss</button></div>
       <div id="ask-line" role="status" hidden></div>
+      <div id="points-line" hidden></div>
       <div id="msgs"></div>
       <button type="button" id="to-latest" hidden>Latest ↓</button>
     </div>
@@ -1635,7 +1676,8 @@ function foldHeld(items, comments) {
 // input is a row, every agent balloon says what it answers, and "Just us"
 // folds the replies to the hub too.
 const HUB_KIND_LABEL = { digest: 'Progress check', due: 'Due now', report: 'Report', relay: 'Team message',
-  resumed: 'Resumed', restart: 'Hub restarted', handover: 'Handover request', rotation: 'New session', madepo: 'Made PO', helper: 'Restart helper' };
+  resumed: 'Resumed', restart: 'Hub restarted', handover: 'Handover request', rotation: 'New session', madepo: 'Made PO', helper: 'Restart helper',
+  points: 'Your open points' };
 const isHubInput = m => !!m && m.from === 'user' && !!m.kind && m.kind !== 'human';
 const foldShort = t => { t = String(t || '').trim(); return t.length > 40 ? t.slice(0, 39) + '…' : t; };
 // ---- Who writes to whom ----------------------------------------------------
@@ -1736,6 +1778,7 @@ function answerChip(a, N = CHAT_NAMES) {
     rotation: ['after the handover', 'The first words of a fresh session, from the handover'],
     madepo: ['on becoming PO', 'The first words after the hub made this conversation a project’s PO'],
     helper: ['after a restart', 'A reply to the restart helper’s note after the hub restarted'],
+    points: ['on your open points', 'A reply to the hub naming your points that are still open'],
   }[a.kind];
   return said ? { text: said[0], tip: said[1] } : null;
 }
@@ -1823,7 +1866,8 @@ function foldBalloonHtml(m, i, how, o) {
   const chips = foldChips(m, o.un, o.idle);
   const fb = o.open ? '<button type="button" class="fold-btn" title="Fold this message again" aria-expanded="true">Fold</button>' : '';
   // o.act: the balloon's own action in its header (Copy link).
-  return `<div class="msg ${cls}" data-mid="${esc(m.id || '')}" data-key="${key}" data-from="${esc(m.from || '')}"><div class="from">${fb}${o.act ? o.act(m) : ''}${who}${chips}</div><div class="text md">${o.md(m.text)}</div></div>`;
+  // o.pts: the bar of the person's points it holds or answers (pointBarHtml).
+  return `<div class="msg ${cls}" data-mid="${esc(m.id || '')}" data-key="${key}" data-from="${esc(m.from || '')}"><div class="from">${fb}${o.act ? o.act(m) : ''}${who}${chips}</div><div class="text md">${o.md(m.text)}</div>${o.pts ? o.pts(m) : ''}</div>`;
 }
 // ---- A task's older messages fold under its latest -------------------------
 // Between two of the person's own messages, what belongs to one task (its
@@ -1964,7 +2008,9 @@ function digestWords(m) {
 // decisions waiting, each task whose last word is done, blocked or a question,
 // the answers to the person, and how many others. In Just us the tasks' words
 // count with the others, as hidden.
-function catchUp(items, point, justUs, N = CHAT_NAMES) {
+// unacked: the balloons answering the person's points that they have not
+// acknowledged (pointMaps). They come first, and are counted once.
+function catchUp(items, point, justUs, N = CHAT_NAMES, unacked = null) {
   if (!point) return null;
   const after = [];
   let lastPersons = -1;
@@ -1974,24 +2020,26 @@ function catchUp(items, point, justUs, N = CHAT_NAMES) {
   });
   if (!after.length) return null;
   // A task's last word, by the name the reader knows it by: { i, word }.
-  const decisions = [], answers = [], words = new Map();
+  const acks = [], decisions = [], answers = [], words = new Map();
   const say = (name, i, word) => { words.delete(name); words.set(name, { i, word }); };
   for (const i of after) {
     const m = items[i], t = taskReport(m), f = forPerson(m, N);
     if (t && reportBase(m) !== 'update') say(taskName(t, N), i, CU_WORD[reportBase(m)] || '');
     digestWords(m).forEach(([t, word]) => say(taskName(t, N), i, word));
-    if (f === 'decision' && i > lastPersons) decisions.push(i);
+    if (unacked && m.id && unacked.has(m.id)) acks.push(i);
+    else if (f === 'decision' && i > lastPersons) decisions.push(i);
     else if (f) answers.push(i);
   }
-  if (after.length < 3 && decisions.length + answers.length === after.length) return null;
-  const named = [...words].filter(([, w]) => w.word).sort((a, b) => a[1].i - b[1].i);
+  if (after.length < 3 && acks.length + decisions.length + answers.length === after.length) return null;
+  const named = [...words].filter(([, w]) => w.word && !acks.includes(w.i)).sort((a, b) => a[1].i - b[1].i);
   const s = n => n === 1 ? '' : 's';
   const parts = [];
+  if (acks.length) parts.push({ text: `${acks.length} answer${s(acks.length)} to your points to acknowledge`, mid: items[acks[0]].id || '' });
   if (decisions.length) parts.push({ text: `${decisions.length} decision${s(decisions.length)} waiting`, mid: items[decisions[0]].id || '' });
   if (!justUs) named.forEach(([name, w]) => parts.push({ text: name + ' ' + w.word, mid: items[w.i].id || '' }));
   if (answers.length) parts.push({ text: `${answers.length} answer${s(answers.length)} to you`, mid: items[answers[0]].id || '' });
   // One progress check can name several tasks: count each balloon once.
-  const rest = after.length - decisions.length - answers.length - (justUs ? 0 : new Set(named.map(([, w]) => w.i)).size);
+  const rest = after.length - acks.length - decisions.length - answers.length - (justUs ? 0 : new Set(named.map(([, w]) => w.i)).size);
   return { ts: point.ts, mine: point.mine, first: after[0], parts, rest, justUs: !!justUs };
 }
 // "10:05" today, "Sep 14, 10:05" before.
@@ -2039,8 +2087,163 @@ function askLineHtml(ask, mid, href) {
   return `<span class="ask-text">Waiting for you${when ? ' since ' + esc(when) : ''}: ${said}</span>`;
 }
 // ---- The open ask: end
+// ---- The person's points: begin --------------------------------------------
+// Every message the person sends an agent is a point the hub keeps (P12) until
+// they acknowledge its answer (points.py). The room's poll carries them
+// (room.points: { items, open, answered, approvals }); the page only draws
+// them: a line above the chat with a list, and a bar under each balloon a
+// point lives in or is answered by. The hub types "[point P12]" under the
+// person's words for the agent; the balloon shows the words as sent.
+const POINT_LINE_RE = /\n*^\[point P\d{1,5}[a-z]?\][ \t]*$/gm;
+const hasPointLines = t => /^\[point P\d{1,5}[a-z]?\][ \t]*$/m.test(String(t || ''));
+const stripPointLines = t => hasPointLines(t) ? String(t).replace(POINT_LINE_RE, '').trim() : String(t || '');
+const PT_WORD = { open: 'waiting for an answer', answered: 'answered', acked: 'acknowledged', dropped: 'dropped', split: 'split into parts' };
+// The answer a link goes to: the latest one with a balloon, else the latest.
+function lastAnswer(p) {
+  const a = (p && p.answers) || [];
+  for (let i = a.length - 1; i >= 0; i--) if (a[i].mid) return a[i];
+  return a.length ? a[a.length - 1] : null;
+}
+// The points by where they live: byMid (the person's balloon, and each
+// follow-up), byAnswer (a balloon that answers them), keep (balloons that never
+// fold: an open point's, an unacknowledged answer), unacked (those answers).
+function pointMaps(pv) {
+  const P = { items: (pv && pv.items) || [], byMid: new Map(), byAnswer: new Map(), keep: new Set(),
+    unacked: new Set(), approvals: new Set((pv && pv.approvals) || []), open: (pv && pv.open) || 0, answered: (pv && pv.answered) || 0 };
+  const add = (map, k, p) => { if (!k) return; const l = map.get(k); if (!l) map.set(k, [p]); else if (!l.includes(p)) l.push(p); };
+  for (const p of P.items) {
+    const own = [p.mid, ...(p.followUps || [])].filter(Boolean);
+    own.forEach(k => add(P.byMid, k, p));
+    (p.answers || []).forEach(a => add(P.byAnswer, a.mid, p));
+    if (p.state === 'open') own.forEach(k => P.keep.add(k));
+    if (p.state === 'answered') { const a = lastAnswer(p); if (a && a.mid) { P.keep.add(a.mid); P.unacked.add(a.mid); } }
+  }
+  return P;
+}
+// What never folds: the balloons holding a comment's passage (their keys) and
+// those the points keep (their ids). null when there are none.
+function heldBy(keys, keep) {
+  return keys.size || keep.size ? (m, i) => keys.has(foldKey(m, i)) || (!!m.id && keep.has(m.id)) : null;
+}
+// "2m", "3h", "4d": how long a point has waited, from the reader's clock.
+function ptAge(ts, now) {
+  const s = Math.max(0, (now || Date.now() / 1000) - (ts || 0));
+  if (s < 90) return 'now';
+  if (s < 3600) return Math.round(s / 60) + 'm';
+  if (s < 48 * 3600) return Math.round(s / 3600) + 'h';
+  return Math.round(s / 86400) + 'd';
+}
+// "Your points: 2 waiting for an answer · 3 answered, not yet acknowledged".
+function pointsSummary(P) {
+  const bits = [];
+  if (P.open) bits.push(`${P.open} waiting for an answer`);
+  if (P.answered) bits.push(`${P.answered} answered, not yet acknowledged`);
+  return bits.length ? 'Your points: ' + bits.join(' · ') : '';
+}
+const ptWords = (t, n = 80) => { t = foldLine(stripPointLines(String(t || '').replace(/^\*\*\d+\.\*\*\s*/, ''))); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
+const ptLink = (mid, text, href, tip) => mid
+  ? `<a class="pt-link" href="${esc(href(mid))}" data-ref-msg="${esc(mid)}"${tip ? ` title="${esc(tip)}"` : ''}>${esc(text)}</a>` : '';
+const ptBtn = (id, act, text, label) =>
+  `<button type="button" class="pt-btn" data-pt="${esc(id)}" data-pt-act="${act}" aria-label="${esc(label)}" title="${esc(label)}">${text}</button>`;
+const ackBtn = id => ptBtn(id, 'ack', '👍 Ack', `Acknowledge the answer to ${id}: nothing is sent to the agent`);
+// The compact list under the line: what waits for an answer, then what was
+// answered, oldest first; both ends linked, and the one click that closes it.
+function pointsListHtml(P, href, now) {
+  const rows = P.items.filter(p => p.state === 'open' || p.state === 'answered')
+    .sort((a, b) => (a.state === b.state ? 0 : a.state === 'answered' ? -1 : 1) || (a.createdAt || 0) - (b.createdAt || 0));
+  return rows.map(p => {
+    const a = p.state === 'answered' ? lastAnswer(p) : null;
+    const said = a && !a.mid && a.summary ? `<span class="pt-said">${esc(a.summary)}</span>` : '';
+    return `<li class="pt-row" data-pt="${esc(p.id)}"><span class="pt-id">${esc(p.id)}</span>`
+      + `<span class="pt-words" title="${esc(stripPointLines(p.text))}">${esc(ptWords(p.text))}</span>`
+      + `<span class="pt-age" data-at="${esc(String(p.createdAt || 0))}">${esc(ptAge(p.createdAt, now))}</span>`
+      + `<span class="pt-state ${esc(p.state)}">${esc(PT_WORD[p.state] || p.state)}</span>${said}`
+      + ptLink(p.mid, 'your message ↑', href, 'Go to your message')
+      + (a ? ptLink(a.mid, 'answer ↓', href, 'Go to the answer') : '')
+      + (p.state === 'answered' ? ackBtn(p.id) : ptBtn(p.id, 'drop', 'Drop', `Drop ${p.id}: you no longer need an answer`))
+      + '</li>';
+  }).join('');
+}
+function pointsLineHtml(P, open, href, now) {
+  const sum = pointsSummary(P);
+  if (!sum) return '';
+  return `<button type="button" class="pt-sum" aria-expanded="${open}" aria-controls="points-list" title="${open ? 'Hide the list' : 'Show each point, with its message and its answer'}">`
+    + `<span class="pt-caret" aria-hidden="true">${open ? '▾' : '▸'}</span><span class="pt-sum-t">${esc(sum)}</span></button>`
+    + `<ul id="points-list"${open ? '' : ' hidden'}>${open ? pointsListHtml(P, href, now) : ''}</ul>`;
+}
+// A balloon asking for the person's decision, or a task's own question, with a
+// recommendation in it: a thumbs up there means "yes, go with it".
+const RECOMMEND_RE = /\brecommend(?:ation|ed|s|ing)?\b/i;
+function canApprove(m) {
+  if (!m || m.from === 'user' || !m.id || isHubInput(m)) return false;
+  const q = m.kind === 'report' && !taskReport(m) && String(m.reportKind || '').toLowerCase() === 'question';
+  return (isDecision(m) || q) && RECOMMEND_RE.test(m.text || '');
+}
+function decisionQuestion(m) {
+  const t = String((m && m.text) || '');
+  const d = t.match(/Decision needed:\s*(.+)/);
+  return foldLine(d ? d[1] : t).replace(/\*\*|__/g, '').trim().slice(0, 200);
+}
+// The bar under a balloon: on the person's own, each point it holds and where
+// it stands; on an agent's, the points it answers, the thumbs up that
+// acknowledges them, and on a decision the thumbs up that approves it.
+function pointBarHtml(m, P, href) {
+  if (!m || !m.id || !P) return '';
+  const bits = [];
+  for (const p of P.byMid.get(m.id) || []) {
+    const a = lastAnswer(p);
+    if (p.state === 'answered') bits.push(`<span class="pt-chip answered">${a && a.mid ? ptLink(a.mid, p.id + ' · answered ↓', href, 'Go to the answer') : esc(p.id + ' · answered')}</span>`);
+    else bits.push(`<span class="pt-chip ${esc(p.state)}">${esc(p.id + ' · ' + (PT_WORD[p.state] || p.state))}</span>`);
+    if (p.state === 'open') bits.push(ptBtn(p.id, 'drop', 'Drop', `Drop ${p.id}: you no longer need an answer`));
+    if (p.state === 'acked' || p.state === 'dropped') bits.push(ptBtn(p.id, 'reopen', 'Reopen', `Reopen ${p.id}: it waits for an answer again`));
+  }
+  for (const p of P.byAnswer.get(m.id) || []) {
+    bits.push(`<span class="pt-chip">${p.mid && p.mid !== m.id ? ptLink(p.mid, 'answers ' + p.id + ' ↑', href, 'Go to your message') : esc('answers ' + p.id)}</span>`);
+    const a = lastAnswer(p);
+    if (p.state === 'answered' && a && a.mid === m.id) bits.push(ackBtn(p.id));
+    else if (p.state === 'acked') bits.push(`<span class="pt-chip">acknowledged</span>`);
+  }
+  if (canApprove(m)) {
+    bits.push(P.approvals.has(m.id) ? '<span class="pt-chip">approved</span>'
+      : `<button type="button" class="pt-btn pt-approve" data-mid="${esc(m.id)}" title="Yes, go with your recommendation: typed to the agent once" aria-label="Approve: go with the recommendation">👍 Go with it</button>`);
+  }
+  return bits.length ? `<div class="pt-bar">${bits.join('')}</div>` : '';
+}
+// The points as the room's poll last gave them.
+let POINTS = pointMaps(null);
+// What a click does. A key per point and action is in flight at most once;
+// an approval is sent at most once per balloon, from this page, and the hub
+// takes it once from any device. Both answer with the room's points.
+const PT_BUSY = new Set();
+async function pointAct(id, act, post) {
+  const k = act + ':' + id;
+  if (PT_BUSY.has(k)) return null;
+  PT_BUSY.add(k);
+  try {
+    const r = await post('/api/room/points', { roomId: ROOM, id, action: act });
+    if (r && r.points) pointsChanged(r.points, ptTicket());
+    return r;
+  } catch (e) { pointsNote('Not done: ' + ((e && e.message) || 'the hub did not answer') + '.'); return null; }
+  finally { PT_BUSY.delete(k); }
+}
+async function approveDecision(m, post) {
+  const k = 'approve:' + (m && m.id);
+  if (!canApprove(m) || PT_BUSY.has(k) || POINTS.approvals.has(m.id)) return null;
+  PT_BUSY.add(k);
+  try {
+    const r = await post('/api/room/approve', { roomId: ROOM, mid: m.id, to: SOLO_MODE ? '' : m.from, question: decisionQuestion(m) });
+    POINTS.approvals.add(m.id);
+    if (r && r.points) pointsChanged(r.points, ptTicket());
+    return r;
+  } catch (e) { pointsNote('Not sent: ' + ((e && e.message) || 'the hub did not answer') + '. Try again.'); return null; }
+  finally { PT_BUSY.delete(k); }
+}
+// ---- The person's points: end
 // ---- Folding a long conversation: end
 let FOLD = { base: null, open: new Set(), groups: new Set(), hid: null };
+// The person's points as the room's poll last gave them (pointMaps), and
+// whether the list under their line is open (per page, not remembered).
+let POINTS_SIG = '', POINTS_OPEN = false, POINTS_LINE_SIG = '';
 let GROUP_OF_MID = new Map();   // a folded message's id → its group's key, to land on it
 let CHAT_VIEW = null;           // { items, sup }: what was drawn, for the comment tray
 const ROOM_NOS = new Map();     // a task's room id → { no }: its number, once known
@@ -2085,9 +2288,13 @@ function renderBubbles(items, opt = {}) {
   const stick = STICK && !opt.anchor;
   const place = stick ? null : readingPlace(box, opt.anchor);
   items = withTaskBubble(items, ROOM_OBJ && ROOM_OBJ.spec, 'from');
-  // A balloon holding a comment's passage stays open, so its highlight shows.
+  // The person's words as sent: the hub's "[point P12]" lines are the agent's.
+  items = items.map(m => m && m.from === 'user' && hasPointLines(m.text) ? Object.assign({}, m, { text: stripPointLines(m.text) }) : m);
+  // A balloon holding a comment's passage stays open, so its highlight shows;
+  // so does one holding an open point, or an answer not yet acknowledged,
+  // whatever would fold it (its age, its task, Just us).
   const heldKeys = foldHeld(items, COMMENTS);
-  const held = heldKeys.size ? (m, i) => heldKeys.has(foldKey(m, i)) : null;
+  const held = heldBy(heldKeys, POINTS.keep);
   const quiet = (m, i) => quietItem(m, JUST_US);
   const prevBase = stick ? null : FOLD.base, prevHid = FOLD.hid || new Set();
   const plan = foldPlan(items, FOLD, stick, held, quiet);
@@ -2130,12 +2337,13 @@ function renderBubbles(items, opt = {}) {
     keys.push(k);
     if (isDecision(m)) decKeys.push(k);
     return foldBalloonHtml(m, i, plan[i], { md, open: FOLD.open.has(k), un: unanswered.get(k), idle: SOLO_IDLE,
-      act: copyLinkHtml, plain: refPlain, superseded: sup.has(i) });
+      act: copyLinkHtml, plain: refPlain, superseded: sup.has(i), pts: ptBar });
   };
+  const ptBar = m => pointBarHtml(m, POINTS, mid => refHref(ROOM, mid));
   const rows = [];
   // The catch-up line goes above what is drawn first for the first message after the read point.
-  const cu = CU_POINT ? catchUp(items, readPoint(items, CU_POINT), JUST_US) : null;
-  const cuSig = JUST_US + '|' + CHAT_NAMES.po + '|' + REF_GEN;
+  const cu = CU_POINT ? catchUp(items, readPoint(items, CU_POINT), JUST_US, CHAT_NAMES, POINTS.unacked) : null;
+  const cuSig = JUST_US + '|' + CHAT_NAMES.po + '|' + REF_GEN + '|' + [...POINTS.unacked].join(',');
   if (cu && (!CU_SNAP || CU_SNAP.sig !== cuSig)) CU_SNAP = { sig: cuSig, html: catchUpHtml(cu, mid => refHref(ROOM, mid)) };
   let cuHtml = cu ? CU_SNAP.html : '';
   CU_SHOWN = !!cu;
@@ -2179,14 +2387,14 @@ function renderBubbles(items, opt = {}) {
   const hubHeld = ROOM_PENDING && ROOM_PENDING.items ? ROOM_PENDING.items : [];
   const failed = !!ROOM_PENDING && ROOM_PENDING.state === 'failed';
   hubHeld.forEach((p, i) => rows.push(
-    `<div class="msg user pending${failed ? ' failed' : ''}" data-from="user" data-key="held-${i}"><div class="from">${whoHtml({ from: 'user', to: p.to || '' })}</div><div class="text md">${md(p.text)}</div>`
+    `<div class="msg user pending${failed ? ' failed' : ''}" data-from="user" data-key="held-${i}"><div class="from">${whoHtml({ from: 'user', to: p.to || '' })}</div><div class="text md">${md(stripPointLines(p.text))}</div>`
     + (failed && i === hubHeld.length - 1
       ? `<div class="pend-state" role="status">Not delivered: ${esc(ROOM_PENDING.error || 'the session did not come up')}. <button type="button" class="pend-retry">Retry</button><button type="button" class="pend-discard">Discard</button></div>`
       : '') + '</div>'));
   PENDING_USER.forEach(p => { if (p.n == null) p.n = items.length; });
   PENDING_USER = PENDING_USER.filter(p =>
     !items.some(m => m.from === 'user' && (m.text || '').trim() === p.text)
-    && !hubHeld.some(h => (h.text || '').trim() === p.text)
+    && !hubHeld.some(h => stripPointLines(h.text || '').trim() === p.text)
     && items.length <= p.n
     && (nowS - p.ts) < 120);
   PENDING_USER.forEach(p => rows.push(
@@ -2222,6 +2430,45 @@ function showAskLine(items) {
   el.hidden = !ask;
   el.innerHTML = ask ? askLineHtml(ask, mid, m => refHref(ROOM, m)) : '';
 }
+// Which answer about the points is newest: a room poll takes its ticket when
+// it asks, a click's answer when it arrives, and an answer older than the one
+// drawn (a slow poll that asked before an Ack was taken) is not drawn.
+let PT_GEN = 0, PT_DRAWN = 0;
+function ptTicket() { return ++PT_GEN; }
+// The points the room's poll (or an ack) brought: drawn again only when they
+// changed, so nothing clickable is replaced on a timer.
+function pointsChanged(pv, ticket) {
+  if (ticket) { if (ticket < PT_DRAWN) return; PT_DRAWN = ticket; }
+  const sig = JSON.stringify(pv || null);
+  if (sig === POINTS_SIG) { pointsAges(); return; }
+  POINTS_SIG = sig;
+  POINTS = pointMaps(pv);
+  showPointsLine();
+  if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
+}
+function showPointsLine() {
+  const el = $('#points-line');
+  if (!el) return;
+  const html = pointsLineHtml(POINTS, POINTS_OPEN, mid => refHref(ROOM, mid));
+  // The ages tick in place (pointsAges): they are not what makes a new line.
+  const sig = html.replace(/(<span class="pt-age"[^>]*>)[^<]*/g, '$1');
+  if (sig === POINTS_LINE_SIG) { pointsAges(); return; }
+  POINTS_LINE_SIG = sig;
+  const hadFocus = el.contains(document.activeElement) ? document.activeElement : null;
+  const focusKey = hadFocus ? (hadFocus.classList.contains('pt-sum') ? '.pt-sum' : hadFocus.dataset.ptAct ? `[data-pt="${hadFocus.dataset.pt}"][data-pt-act="${hadFocus.dataset.ptAct}"]` : '') : '';
+  el.hidden = !html;
+  el.innerHTML = html;
+  if (focusKey) { const f = el.querySelector(focusKey) || el.querySelector('.pt-sum'); if (f) f.focus(); }
+}
+function pointsAges() {
+  const now = Date.now() / 1000;
+  document.querySelectorAll('#points-line .pt-age[data-at]').forEach(s => {
+    const p = POINTS.items.find(x => x.id === s.closest('.pt-row').dataset.pt);
+    const t = ptAge(p ? p.createdAt : +s.dataset.at, now);
+    if (s.textContent !== t) s.textContent = t;
+  });
+}
+function pointsNote(text) { setText($('#hint'), text); }
 // ---- The catch-up line: when it shows, and what advances the read point ----
 const READ_KEY = () => 'cd-chat-read:' + (ROOM || location.pathname + location.search);
 function loadRead() {
@@ -2510,11 +2757,13 @@ function landPending() {
     }
     if (!el) {
       // A turn of a solo transcript older than the chat shows: draw back to it.
-      const t = mid.match(/^(.+):(\d+)$/);
+      // A line read while the agent was busy (":q<n>") has no place in the
+      // numbering: the whole transcript is drawn for it.
+      const t = mid.match(/^(.+):(q?)(\d+)$/);
       let failed = false;
       if (t && SOLO_SID && soloOwns(t[1])) {
-        if (!(SOLO_WANT && SOLO_WANT.sid === t[1] && SOLO_WANT.n === +t[2])) {
-          SOLO_WANT = { sid: t[1], n: +t[2] };
+        if (!(SOLO_WANT && SOLO_WANT.mid === mid)) {
+          SOLO_WANT = { sid: t[1], n: t[2] ? 0 : +t[3], mid };
           renderSolo(SOLO_SID, SOLO_AGENT, true);
           return;
         }
@@ -2637,11 +2886,23 @@ function withHubRows(items, room) {
   }
   return out;
 }
+// A line the agent read while busy (queued) is its own turn, "<sid>:q<n>",
+// counted apart, so the other turns keep the ids they had before those were
+// shown; the hub counts the same way (page_turn_ids), which is how a point
+// finds its balloon.
 function soloItems(raw, sid, agentId, keep) {
-  const turns = raw.filter((t, i) => i === 0 || t.role !== raw[i - 1].role || t.text !== raw[i - 1].text);
-  const off = Math.max(0, turns.length - keep);
-  return turns.slice(off).map((t, i) => Object.assign({
-    id: sid + ':' + (off + i),
+  const all = [];
+  let prev = null, n = 0, q = 0;
+  for (const t of raw) {
+    if (t.queued) { all.push({ t, id: sid + ':q' + (q++), n: -1 }); continue; }
+    const same = !!prev && t.role === prev.role && t.text === prev.text;
+    prev = t;
+    if (!same) all.push({ t, id: sid + ':' + n, n: n++ });
+  }
+  const off = Math.max(0, n - keep);
+  const start = off ? all.findIndex(x => x.n === off) : 0;
+  return all.slice(start).map(({ t, id }) => Object.assign({
+    id,
     from: (t.role === 'user') ? 'user' : agentId, to: '', text: t.text,
   }, t.timestamp ? { ts: Date.parse(t.timestamp) / 1000 } : {}, t.role === 'user' ? { kind: t.kind || 'human', reportKind: t.reportKind, taskTitle: t.taskTitle, taskId: t.taskId, reporter: t.reporter }
     : t.answers ? { answers: t.answers } : {}));
@@ -2654,7 +2915,8 @@ async function prevSessionItems(sid, agentId) {
   const d = await fetch('/api/session/' + encodeURIComponent(sid) + '?full=1').then(r => r.json());
   const turns = d.turns || [];
   const items = soloItems(turns, sid, agentId, Math.max(PREV_TURNS_SHOWN, want < 0 ? 0 : turns.length - want));
-  SOLO_PREV.set(sid, { items, from: items.length ? +String(items[0].id).split(':').pop() : 0 });
+  const first = items.find(m => /:\d+$/.test(String(m.id)));   // a queued line's id is ":q<n>"
+  SOLO_PREV.set(sid, { items, from: first ? +String(first.id).split(':').pop() : 0 });
   return items;
 }
 // The sessions of this chat a link may point into: the current one and every
@@ -2675,6 +2937,8 @@ function soloWantFailed(w) {
 // and light (the full transcript is fetched only on a real change).
 async function checkSolo() {
   if (!SOLO_SID) { CHAT_DRAWN = true; renderBubbles([]); return; }
+  if (checkSolo.busy) return;   // one stat request at a time
+  checkSolo.busy = true;
   try {
     const s = await fetch('/api/session/' + encodeURIComponent(SOLO_SID) + '?stat=1').then(r => r.json());
     if (s && typeof s.size === 'number') {
@@ -2688,6 +2952,7 @@ async function checkSolo() {
       renderSolo(SOLO_SID, SOLO_AGENT, false);
     }
   } catch (e) {}
+  finally { checkSolo.busy = false; }
 }
 let ROOM_OBJ = null;   // last room payload, so we can mount the terminal on demand to read a prompt
 let SOLO_AGAIN = false;   // a forced render was asked for while one was fetching
@@ -2745,8 +3010,21 @@ async function renderSolo(sid, agentId, force) {
   }
 }
 
+// The room poll: one request at a time. A refresh asked for while one is
+// under way (after a click) runs once it is done, not beside it.
+let REFRESH_BUSY = false, REFRESH_AGAIN = false;
 async function refresh() {
+  if (REFRESH_BUSY) { REFRESH_AGAIN = true; return; }
+  REFRESH_BUSY = true;
+  try { await refreshRoom(); }
+  finally {
+    REFRESH_BUSY = false;
+    if (REFRESH_AGAIN) { REFRESH_AGAIN = false; refresh(); }
+  }
+}
+async function refreshRoom() {
   let room;
+  const ticket = ptTicket();
   try { room = await fetch('/api/room?id=' + encodeURIComponent(ROOM)).then(r => r.json()); }
   catch(e) { return; }
   if (!room || room.error) { setText($('#title'), '(session not found)'); return; }
@@ -2794,6 +3072,7 @@ async function refresh() {
   ROOM_OBJ = room;
   SOLO_MODE = soloMode;
   showAskLine(null);
+  pointsChanged(room.points || null, ticket);
   chatNamesFor(room, soloMode);
   const cwd = room.cwd || '';
   ensureTheme(cwd);
@@ -3176,18 +3455,6 @@ function hidePromptCard() {
 // line-by-line; the trailing CR submits.
 // Resolves only when the agent's terminal took the text: a stopped terminal
 // (404, 410) or a task mid-handover (409) throws, and nothing may count as sent.
-async function sendSolo(text) {
-  // A TUI treats a trailing CR in the SAME write as pasted content (it lands in
-  // the input unsubmitted). Type the text, then send Enter as a SEPARATE write —
-  // the same two-step the server-side doorbell (send_line) uses.
-  const pty = SOLO_PTY;
-  if (!pty) throw Object.assign(new Error('no terminal'), { status: 404 });
-  const body = text.includes('\n') ? '\x1b[200~' + text + '\x1b[201~' : text;
-  await postOk('/api/pty/input', { id: pty, data: body });
-  await new Promise(r => setTimeout(r, 300));
-  try { await postOk('/api/pty/input', { id: pty, data: '\r' }); }
-  catch (e) { e.typed = true; throw e; }
-}
 // The hub takes the message whatever the session's state, in one request:
 // running, it is typed in (solo) or posted and the team rung; stopped or
 // still coming up, the session is resumed and the text held until the agent
@@ -3200,18 +3467,6 @@ async function sendResuming(text, to, key, attachments) {
   const body = { roomId: ROOM, text, to: to || '', key: key || '' };
   if (attachments && attachments.length) body.attachments = attachments;
   return postOk('/api/room/resume', body);
-}
-// Whether a solo send goes through the hub rather than straight into the
-// terminal (typed there, it is submitted at once; the hub waits for a settled
-// screen, which a resume needs and a running agent does not).
-// A message with links to balloons goes through the hub as well: the hub
-// writes each referenced message out for the agent.
-function needsResume(text) { return !ROOM_LIVE || ROOM_RESUMING || hasMessageRefs(text); }
-// A live send that found the session gone since the last poll (404, 410, not
-// typed) is not lost: it goes the resume way instead. Anything else rethrows.
-async function orResume(e, text, to, key) {
-  if (!e || e.typed || (e.status !== 404 && e.status !== 410)) throw e;
-  return sendResuming(text, to, key);
 }
 // A key for the message in the box, minted once per message: the same one
 // goes with every attempt to send it, and a new one with the next message.
@@ -3293,8 +3548,9 @@ $('#send').onclick = async () => {
   // written a rollout, so early on there is a terminal to type into but no id.
   if (SOLO_MODE) {
     const key = msgKey();
-    // With images it goes through the hub, which adds their lines.
-    try { if (atts.length || needsResume(t)) await sendResuming(t, '', key, atts); else await sendSolo(t).catch(e => orResume(e, t, '', key)); }
+    // Through the hub, running or not: it keeps the person's points and adds
+    // their lines (and the images'), and types it in (or resumes the session).
+    try { await sendResuming(t, '', key, atts); }
     catch (e) {
       if (keptByHub(e)) return;
       SEND_ERR = 'Not sent: ' + sendErrorText(e) + '. Your message is still in the box.';
@@ -3678,9 +3934,8 @@ async function submitComments() {
   CMT_SENDING = true; CMT_ERROR = ''; renderCmtTray();
   let sent = false;
   try {
-    if (!SOLO_MODE) await sendResuming(body, to, key, images);       // the hub decides: running or resumed
-    else if (images.length || needsResume(body)) await sendResuming(body, '', key, images);
-    else await sendSolo(body).catch(e => orResume(e, body, '', key));
+    // The hub decides: running or resumed; each comment becomes a point.
+    await sendResuming(body, SOLO_MODE ? '' : to, key, images);
     sent = true;
   } catch (e) {
     // Refused, but the hub holds them: they show in the chat as not
@@ -3710,7 +3965,26 @@ function showTrayItem(cid) {
   it.classList.add('hit');
   setTimeout(() => it.classList.remove('hit'), 1200);
 }
+// The person's points: a thumbs up, Drop or Reopen types nothing into the
+// agent; a thumbs up on a decision is the one that does, once.
+function pointClick(e) {
+  const b = e.target.closest && e.target.closest('.pt-btn');
+  if (!b || b.disabled) return false;
+  if (b.classList.contains('pt-approve')) {
+    const m = (LAST_ITEMS || []).find(x => x && x.id === b.dataset.mid);
+    if (m) { b.disabled = true; approveDecision(m, postOk).then(() => { b.disabled = false; }); }
+    return true;
+  }
+  b.disabled = true;
+  pointAct(b.dataset.pt, b.dataset.ptAct, postOk).then(() => { if (b.isConnected) b.disabled = false; });
+  return true;
+}
+$('#points-line').addEventListener('click', e => {
+  if (pointClick(e)) return;
+  if (e.target.closest && e.target.closest('.pt-sum')) { POINTS_OPEN = !POINTS_OPEN; showPointsLine(); }
+});
 $('#msgs').addEventListener('click', e => {
+  if (pointClick(e)) return;
   const cl = e.target.closest && e.target.closest('.copy-link');
   if (cl) { copyLink(cl); return; }
   if (e.target.closest && e.target.closest('.cu-read')) { markRead(); return; }
@@ -3790,7 +4064,7 @@ document.addEventListener('click', ev => {
 // the dashboard, the dashboard opens that task or PO at it; on its own, this
 // page goes there. With a modifier key it is a link, opening a new tab.
 document.addEventListener('click', ev => {
-  const a = ev.target.closest && ev.target.closest('a.ref-chip, a.sup-link, a.cu-link, a.ask-link');
+  const a = ev.target.closest && ev.target.closest('a.ref-chip, a.sup-link, a.cu-link, a.ask-link, a.pt-link');
   if (!a || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
   ev.preventDefault();
   const room = a.dataset.refRoom || ROOM, msg = a.dataset.refMsg;

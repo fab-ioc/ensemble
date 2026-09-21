@@ -328,6 +328,34 @@ project's **Roadmap** tab; the project's PO keeps it current through the tools.
 - Only your own project's roadmap can be written; any project's can be read.
   Mention files by path (`docs/plan.md`) and they open in the file view.
 
+## Points from the product owner
+
+Every message the product owner sends you through a chat is a **point** the hub
+keeps until they have acknowledged its answer. It reaches you with a line under
+it, `[point P12]` (a review-comments message has one under each comment: each
+comment is its own point). The hub, not your conversation, holds the list, so a
+rotation, a restart or a flood of reports never loses one.
+
+- **Answer each with `Re P12:`** at the start of a paragraph of your reply. One
+  reply may answer several (`Re P12:` … `Re P13:` …, or `Re P12, P13:`). The
+  first reply to a message holding a single point answers it by itself; after
+  anything the hub typed in between (a `[report]`, a `[digest]`, a `[due]`, a
+  note), or for a message read while you were busy, only `Re Pn:` does.
+- **An answer given by doing** gets `ensemble_points` with `action: "answer"`
+  and a one-line summary ("started as #75"). `ensemble_points` lists the open
+  points; a PO may `split` a message that holds several into `P12a`, `P12b`.
+- **Never leave a point open silently.** Declined or deferred, say so the same
+  way: `Re P12: not now, because …`.
+- A point still open while you are idle gets you one `[points] still open: …`
+  line, once. A fresh session's first prompt and the note after a restart list
+  the open points verbatim: answer them. Keep them in your handover too, but the
+  hub's list is the source of truth.
+
+The product owner acknowledges an answer with a thumbs up that reaches nobody:
+you are not woken for it. A thumbs up on a reply that asks for their decision
+and gives your recommendation reaches you as one line, `Approved: go with your
+recommendation on "…".`: go ahead with it.
+
 ## Running a project as its PO
 
 The PO is one long-lived session per project (`poRoomId` in the project's

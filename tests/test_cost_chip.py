@@ -40,6 +40,9 @@ log.card = cardHtml({ roomId: 'room-1', sessionId: 's1', label: 'Codex task', pr
                       cost: 0, costTokens: T({ input: 120000, output: 30000, cacheRead: 1200000 }) }, 60);
 log.cardPriced = cardHtml({ roomId: 'room-2', sessionId: 's2', label: 'Claude task', updatedAt: 0, cost: 2.5, costTokens: T({ input: 9 }) }, 60);
 log.cardNone = cardHtml({ roomId: 'room-3', sessionId: 's3', label: 'Fresh', updatedAt: 0, cost: 0, costTokens: null }, 60);
+log.cardPts = cardHtml({ roomId: 'room-4', sessionId: 's4', label: 'Asked', updatedAt: 0, cost: 0, costTokens: null,
+                         points: { open: 1, answered: 2 } }, 60);
+log.pts = [pointsCountText({ open: 0, answered: 0 }), pointsCountText(null), pointsCountText({ open: 3, answered: 0 })];
 console.log(JSON.stringify(log));
 """
 
@@ -89,9 +92,16 @@ class CostChip(unittest.TestCase):
         self.assertIn(">$2.50</span>", row1(self.r["cardPriced"]))
         self.assertNotIn("ccost", self.r["cardNone"], "nothing used, nothing shown")
 
+    def test_the_persons_points_are_quiet_words_on_the_card(self):
+        self.assertIn('<span class="cpts" title="Your points: 2 answered, not yet acknowledged · 1 waiting for an answer. '
+                      'Open the chat to see them.">2 to acknowledge · 1 open</span>', self.r["cardPts"])
+        self.assertNotIn("cpts", self.r["cardNone"])
+        self.assertEqual(self.r["pts"], ["", "", "3 open"])
+        self.assertIn(".cpts { font-size: var(--fs-100); color: var(--fg-muted);", INDEX)
+
     def test_the_row_and_the_card_use_it(self):
         self.assertIn("const costChip = costChipHtml(r);", INDEX)
-        self.assertIn("${runChip(r)}${costChipHtml(r, 'ccost')}${proj}", fn(INDEX, "function cardHtml("))
+        self.assertIn("${runChip(r)}${costChipHtml(r, 'ccost')}${pointsCountHtml(r.points, 'cpts')}${proj}", fn(INDEX, "function cardHtml("))
         self.assertIn(".ccost { font-size: var(--fs-100); color: var(--fg-muted);", INDEX, "plain muted text, not a pill")
 
 

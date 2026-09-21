@@ -232,7 +232,8 @@ class Attachments(unittest.TestCase):
         status, r = self.json_post("/api/room/say", {"roomId": self.rid, "text": "look at these", "attachments": [a["name"], {"room": self.rid, "name": b["name"]}]})
         self.assertEqual(status, 200, r)
         text = chatroom.get_room(self.rid, public=False)["messages"][-1]["text"]
-        self.assertEqual(text, f"look at these\n\n[image] {a['path']}\n[image] {b['path']}")
+        # The person's words are a point (points.py): its line comes before the images.
+        self.assertEqual(text, f"look at these\n\n[point P1]\n\n[image] {a['path']}\n[image] {b['path']}")
 
     def test_say_takes_images_without_words_and_refuses_one_not_there(self):
         _s, a = self.upload(PNG)
@@ -256,7 +257,7 @@ class Attachments(unittest.TestCase):
                 status, r = self.json_post("/api/room/resume", {"roomId": self.rid, "text": "see", "attachments": [{"room": other, "name": a["name"]}]})
                 self.assertEqual(status, 200, r)
         copy = self.folder() / a["name"]
-        self.assertEqual(got[0], f"see\n\n[image] {copy}")
+        self.assertEqual(got[0], f"see\n\n[point P1]\n\n[image] {copy}")
         self.assertEqual(copy.read_bytes(), PNG)
         self.assertEqual(os.listdir(self.folder()), [a["name"]], "a retried send copied the image again")
 

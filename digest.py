@@ -71,6 +71,7 @@ import time
 from pathlib import Path
 
 import due
+import points
 
 # Windows: the model call must not open a console window (a console-less host,
 # pythonw.exe, would otherwise give it one and lose the keyboard focus to it).
@@ -697,6 +698,11 @@ def start_scheduler() -> None:
                 due.maybe_tick()
             except Exception as e:
                 _log(f"due check error: {str(e)[:200]}")
+            # The person's points still open: one reminder each (points.py).
+            try:
+                points.maybe_tick()
+            except Exception as e:
+                _log(f"points check error: {str(e)[:200]}")
             time.sleep(TICK_S)
 
     threading.Thread(target=loop, daemon=True, name="po-digest").start()

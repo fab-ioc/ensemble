@@ -230,6 +230,34 @@ _ALL_TOOLS = [
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
+        "name": "ensemble_points",
+        "description": (
+            "The product owner's points in your room: every message they send "
+            "you is a point (P12) the hub keeps until they acknowledge its "
+            "answer, and it reaches you with a `[point P12]` line under it. "
+            "Answer a point by starting a paragraph of your reply with "
+            "`Re P12:` (one reply may answer several); the first reply to a "
+            "message holding a single point answers it by itself. action "
+            "\"list\" (default): the open points and the answered ones not yet "
+            "acknowledged. action \"answer\": a point answered by doing rather "
+            "than by saying (\"started as #75\"), with a one-line summary. "
+            "action \"split\": a message that holds several points becomes "
+            "P12a, P12b … (parts: one text each)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["list", "answer", "split"],
+                           "description": "list | answer | split (default list)."},
+                "point": {"type": "string", "description": "The point, e.g. P12 (answer, split)."},
+                "summary": {"type": "string",
+                            "description": "With answer: one line, what was done (\"started as #75\")."},
+                "parts": {"type": "array", "items": {"type": "string"},
+                          "description": "With split: the points the message holds, one text each."},
+            },
+        },
+    },
+    {
         "name": "ensemble_get_task",
         "description": (
             "Read one task in full: title, complete spec, priority, project, "
@@ -427,7 +455,7 @@ _ALL_TOOLS = [
 COMMON_TOOL_NAMES = frozenset({
     "ensemble_whoami", "ensemble_report", "ensemble_list_tasks",
     "ensemble_list_attention", "ensemble_plan_usage", "ensemble_get_task",
-    "ensemble_update_task", "ensemble_get_roadmap",
+    "ensemble_update_task", "ensemble_get_roadmap", "ensemble_points",
 })
 ADMIN_TOOL_NAMES = frozenset(t["name"] for t in _ALL_TOOLS) - COMMON_TOOL_NAMES
 COMMON_TOOLS = [t for t in _ALL_TOOLS if t["name"] in COMMON_TOOL_NAMES]
@@ -1333,6 +1361,38 @@ def _update_roadmap(ctx, args, handler):
                              "mtime": cur["mtime"], "text": cur["text"]}}))
 
 
+def _points(ctx, args, handler):
+    pts = _d.points
+    rid = ctx["room"]["id"]
+    action = (args.get("action") or "list").strip().lower()
+    pid = (args.get("point") or "").strip()
+    if action == "answer":
+        summary = " ".join(str(args.get("summary") or "").split())
+        if not pid or not summary:
+            raise ToolError("answer needs point (e.g. P12) and a one-line summary")
+        p = pts.answer_by_tool(rid, pid, summary[:300], ctx["identity"])
+        if p is None:
+            raise ToolError(f"no point {pid} in your room")
+        return {"ok": True, "point": p["id"], "state": p["state"]}
+    if action == "split":
+        kids = pts.split(rid, pid, args.get("parts") or [])
+        if kids is None:
+            raise ToolError("split needs an open point that was not split before (e.g. P12) "
+                            "and two to 26 parts")
+        return {"ok": True, "point": pid, "parts": [{"id": k["id"], "text": k["text"]} for k in kids]}
+    if action != "list":
+        raise ToolError("action is list, answer or split")
+    led = pts.sync(rid, force=True)
+    show = [p for p in led["points"] if p["state"] in ("open", "answered")]
+    return {"note": ("open: no answer yet; answered: waiting for the product owner to "
+                     "acknowledge. Answer an open one with 'Re Pn:' in your reply."),
+            "points": [{"id": p["id"], "state": p["state"], "owner": p.get("owner", ""),
+                        "since": time.strftime("%m-%d %H:%M", time.localtime(p.get("openedAt") or p["createdAt"])),
+                        "text": pts.strip_point_lines(p["text"])[:1000],
+                        **({"followUps": [f[:1000] for f in pts.follow_ups(p)]} if pts.follow_ups(p) else {})}
+                       for p in sorted(show, key=lambda p: p["createdAt"])]}
+
+
 def _restart_hub(ctx, args, handler):
     res = _d.trigger_restart(ctx["room"]["id"])
     res.pop("status", None)
@@ -1359,6 +1419,7 @@ _IMPL = {
     "ensemble_update_roadmap": _update_roadmap,
     "review_done": _review_done,
     "ensemble_restart_hub": _restart_hub,
+    "ensemble_points": _points,
 }
 
 NAMES = frozenset(_IMPL)

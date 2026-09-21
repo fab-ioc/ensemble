@@ -435,11 +435,12 @@ class TheHubPostsAKeyOnce(unittest.TestCase):
         status, again = self.say(body)
         self.assertEqual(status, b"200")
         self.assertTrue(again.get("duplicate"))
-        self.assertEqual(self.texts(), ["## Review comments (1)"])
+        self.assertEqual(self.texts(), ["## Review comments (1)\n\n[point P1]"])
         self.say({**body, "key": "review:other:1", "text": "## Review comments (2)"})
         self.say({"roomId": self.rid, "text": "plain", "to": ""})
         self.say({"roomId": self.rid, "text": "plain", "to": ""})
-        self.assertEqual(self.texts(), ["## Review comments (1)", "## Review comments (2)", "plain", "plain"])
+        self.assertEqual(self.texts(), ["## Review comments (1)\n\n[point P1]", "## Review comments (2)\n\n[point P2]",
+                                        "plain\n\n[point P3]", "plain\n\n[point P4]"])
 
 
 class SharedScriptsAreWired(unittest.TestCase):
