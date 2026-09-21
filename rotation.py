@@ -618,7 +618,9 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
                   f"Write it now: what the project is, " if unwritten else
                   f"Bring {hp} up to date now: ")
                + f"priorities, decisions and why, what is in flight, what you "
-               f"have promised {_d.operator_name()}. {due_rule(_d.operator_name())} "
+               f"have promised {_d.operator_name()}, and {_d.operator_name()}'s points still "
+               f"open (ensemble_points lists them; the hub keeps them too). "
+               f"{due_rule(_d.operator_name())} "
                f"Anything that is not in that file or in "
                f"ROADMAP.md will be forgotten. When it is current, end your turn; the hub "
                f"rotates you as soon as you are idle.")
@@ -628,7 +630,8 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
                f"that continues this task from a written handover instead of this history. "
                f"Write {hp} now (replace it if it exists), holding: the current goal and "
                f"how far you got; decisions and why; branch and commits; changed files; "
-               f"tests run and their results; open review findings; blockers; and the "
+               f"tests run and their results; open review findings; blockers; the "
+               f"product owner's points still open (ensemble_points); and the "
                f"exact next action. {due_rule()} "
                f"Anything that is not in that file, the repo or the "
                f"task's spec will be forgotten. When it is written, end your turn without "
@@ -980,7 +983,20 @@ def first_prompt(project: dict, room: dict, old_sid: str, tokens) -> str:
         f"say which decision that is. A '{DUE_HEADING}' item whose time is still to come "
         f"is typed to you by the hub as a [due] line when it comes, if you are idle then.",
     ]
+    pts = _open_points(room)
+    if pts:
+        parts.append(pts)
     return "\n\n".join(parts)
+
+
+def _open_points(room: dict) -> str:
+    """The person's points still open in this room, verbatim (points.py): the
+    hub keeps them, so a fresh session never loses one its handover missed."""
+    try:
+        return _d.points.prompt_block(room.get("id", ""))
+    except Exception as e:      # the prompt goes without them
+        _log(f"{room.get('id')}: open points not listed: {str(e)[:200]}")
+        return ""
 
 
 def task_first_prompt(room: dict, old_sid: str, tokens, hp: Path, solo: bool,
@@ -1022,6 +1038,9 @@ def task_first_prompt(room: dict, old_sid: str, tokens, hp: Path, solo: bool,
                  f"'{DUE_HEADING}' for a time still to come, the hub types to you as a [due] "
                  f"line when it comes, if you are idle then. When this conversation grows "
                  f"long again the hub will ask you to rewrite {TASK_HANDOVER_NAME}.")
+    pts = _open_points(room)
+    if pts:
+        parts.append(pts)
     return "\n\n".join(parts)
 
 

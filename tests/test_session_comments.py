@@ -138,10 +138,10 @@ const tick = () => new Promise(r => setTimeout(r, 5));
   out.stopped = { posts: posts.slice(n0), kept: B.notes(), stored: stored() };
   B.add('one'); await tick(); B.add('two');
   B.set('ROOM_LIVE', true);
-  // Live, but the terminal went since the last poll: the send goes the resume
-  // way instead of failing, and again only once.
+  // Live: through the hub as well (it keeps each comment as a point, and
+  // resumes the session itself if it went since the last poll), once.
   n0 = posts.length;
-  replies = [[410, { error: 'the session has stopped' }], [200, { ok: true, queued: 1 }]];
+  replies = [[200, { ok: true, delivered: 1 }]];
   await B.submitComments(); replies = [];
   out.goneMidway = { posts: posts.slice(n0), kept: B.notes() };
   B.add('one'); await tick(); B.add('two');
@@ -159,12 +159,10 @@ const tick = () => new Promise(r => setTimeout(r, 5));
     replies = reply; await B.submitComments(); replies = [];
     return { kept: B.notes(), stored: stored(), html: html(B) };
   };
-  // A terminal gone since the last poll goes the resume way; when the hub
-  // refuses that too, its reason is what the tray says.
-  out.gone = await fail([[404, { error: 'no_such_pty' }], [400, { error: 'codex would not start' }]]);
-  out.dead = await fail([[410, { error: 'the session has stopped' }], [400, { error: 'codex would not start' }]]);
+  // The hub refuses: its reason is what the tray says.
+  out.gone = await fail([[404, { error: 'no_such_room' }]]);
+  out.dead = await fail([[400, { error: 'codex would not start' }]]);
   out.handover = await fail([[409, { error: 'handing over to a fresh session, try again shortly' }]]);
-  out.typedOnly = await fail([[200, { ok: true }], [410, { error: 'the session has stopped' }]]);
   out.down = await fail(['down']);
   B.set('SOLO_MODE', false);
   out.roomFail = await fail([[500, { error: 'boom' }]]);
@@ -181,7 +179,7 @@ const tick = () => new Promise(r => setTimeout(r, 5));
   B.add('three');                                      // added while it goes
   await sending;
   out.afterSend = B.notes(); out.storedAfterSend = stored();
-  out.sentTyped = posts.slice(n0).map(p => p[1].data);
+  out.sentTyped = posts.slice(n0).map(p => p[1].text);
   out.errorCleared = !/Not sent/.test(html(B));
 
   A.storage.forEach(f => f({ key: prefix + 'x' }));   // the other copy hears of it
@@ -238,7 +236,7 @@ class ReviewComments(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         code = ("let CHAT_VIEW = null;\n" + STORE + "\n".join(js_function(SRC, n) for n in (
-            "sendSolo", "sendResuming", "needsResume", "hasMessageRefs", "refOfUrl", "orResume", "postOk",
+            "sendResuming", "hasMessageRefs", "refOfUrl", "postOk",
             "sendErrorText"))
                 + comments_block(SRC))
         out = subprocess.run([NODE, "-e", JS], input=json.dumps({"code": code, "prefix": PREFIX}), capture_output=True,
@@ -273,9 +271,9 @@ class ReviewComments(unittest.TestCase):
         self.assertEqual(r["posts"][0][1]["to"], "")
         self.assertEqual((r["kept"], r["stored"]), ([], []))
 
-    def test_a_terminal_gone_since_the_last_poll_goes_the_resume_way(self):
+    def test_a_live_chats_comments_go_through_the_hub(self):
         r = self.r["goneMidway"]
-        self.assertEqual([p[0] for p in r["posts"]], ["/api/pty/input", "/api/room/resume"])
+        self.assertEqual([p[0] for p in r["posts"]], ["/api/room/resume"])
         self.assertEqual(r["kept"], [])
 
     def test_a_resume_in_flight_takes_them_too(self):
@@ -285,8 +283,8 @@ class ReviewComments(unittest.TestCase):
         self.assertEqual(r["kept"], [])
 
     def test_a_refused_send_keeps_every_comment(self):
-        for case, words in (("gone", "codex would not start"), ("dead", "codex would not start"), ("handover", "handing over"),
-                            ("typedOnly", "not submitted"), ("down", "did not answer"), ("roomFail", "boom")):
+        for case, words in (("gone", "the session has stopped"), ("dead", "codex would not start"), ("handover", "handing over"),
+                            ("down", "did not answer"), ("roomFail", "boom")):
             with self.subTest(case):
                 r = self.r[case]
                 self.assertEqual(r["kept"], ["one", "two"], "comments dropped after a failed send")
@@ -298,7 +296,7 @@ class ReviewComments(unittest.TestCase):
         self.assertEqual(self.r["afterSend"], ["three"])
         self.assertEqual(self.r["storedAfterSend"], ["three"])
         self.assertIn("## Review comments (2)", self.r["sentTyped"][0])
-        self.assertEqual(self.r["sentTyped"][1], "\r")
+        self.assertEqual(len(self.r["sentTyped"]), 1, "one request: the hub types it in")
         self.assertTrue(self.r["errorCleared"])
         self.assertEqual(self.r["otherCopy"], ["three"], "the other copy of the chat kept a sent comment")
 

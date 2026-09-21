@@ -588,7 +588,7 @@ class Resumes(unittest.TestCase):
         self.assertEqual(out["queued"], 1)
         self.join()
         [(pid, lines)] = self.typed().items()
-        self.assertEqual(lines, ["hi there"])
+        self.assertEqual(lines, ["\x1b[200~hi there\n\n[point P1]\x1b[201~"])
         with mock.patch.object(dashboard.Handler, "_start_or_resume_room",
                                side_effect=dashboard.StartRoomError("codex would not start")):
             self.ptys.clear()
@@ -610,7 +610,7 @@ class Resumes(unittest.TestCase):
             self.assertTrue(self.post("/api/room/resume", body)[1].get("duplicate"))
         self.join()
         [(pid, lines)] = self.typed().items()
-        self.assertEqual(lines, ["## Review comments (1)"])
+        self.assertEqual(lines, ["\x1b[200~## Review comments (1)\n\n[point P1]\x1b[201~"])
 
     def test_the_same_key_after_a_refusal_is_a_retry_not_a_second_message(self):
         room = self.room()
@@ -623,14 +623,14 @@ class Resumes(unittest.TestCase):
             status, out = self.post("/api/room/resume", body)        # the page sends it again
             self.assertEqual((status, out["kept"]), (400, True))
         self.assertEqual([i["text"] for i in dashboard.pending_input(room["id"])["items"]],
-                         ["once please"], "the same send was queued twice")
+                         ["once please\n\n[point P1]"], "the same send was queued twice")
         spawned = self.handler()
         with mock.patch.object(dashboard.Handler, "_resume_room_agent_pty", spawned._resume_room_agent_pty):
             status, out = self.post("/api/room/resume", body)        # and again: it starts now
         self.assertEqual((status, out["queued"]), (200, 1))
         self.join()
         [(pid, lines)] = self.typed().items()
-        self.assertEqual(lines, ["once please"])
+        self.assertEqual(lines, ["\x1b[200~once please\n\n[point P1]\x1b[201~"])
         # A plain refusal with nothing held says so: the page keeps the text.
         with mock.patch.object(dashboard.Handler, "_start_or_resume_room",
                                side_effect=dashboard.StartRoomError("refused")):
@@ -658,11 +658,11 @@ class Resumes(unittest.TestCase):
             self.assertFalse(out.get("duplicate"), "the retry was waved off as a duplicate")
             self.join()
             self.assertEqual(self.starts, 2)
-            self.assertEqual(self.typed(), {"pty-claude-2": ["still coming?"]})
+            self.assertEqual(self.typed(), {"pty-claude-2": ["\x1b[200~still coming?\n\n[point P1]\x1b[201~"]})
             self.assertIsNone(dashboard.pending_input(room["id"]))
             # Delivered, the same key is a duplicate again: nothing goes in twice.
             self.assertTrue(self.post("/api/room/resume", body)[1].get("duplicate"))
-        self.assertEqual(self.typed(), {"pty-claude-2": ["still coming?"]})
+        self.assertEqual(self.typed(), {"pty-claude-2": ["\x1b[200~still coming?\n\n[point P1]\x1b[201~"]})
 
 
 class ThePage(unittest.TestCase):
@@ -685,15 +685,17 @@ class ThePage(unittest.TestCase):
         self.assertIn("return postOk('/api/room/resume', body);", SESSION)
         send = SESSION[SESSION.index("$('#send').onclick = async () => {"):]
         send = send[:send.index("\n};\n")]
-        self.assertIn("if (atts.length || needsResume(t)) await sendResuming(t, '', key, atts)", send)
-        self.assertIn("orResume(e, t, '', key)", send)
+        # A one-agent chat's too: the hub keeps the person's points (points.py)
+        # and types it in, or resumes the session for it.
+        self.assertIn("try { await sendResuming(t, '', key, atts); }", send)
+        self.assertNotIn("/api/pty/input", send)
         # A team's every send goes through the hub's resume-or-deliver: the
         # hub, not the last poll, knows whether the team is still running.
         self.assertIn("await sendResuming(t, to, msgKey(), atts)", send)
         self.assertNotIn("/api/room/say", send)
         submit = SESSION[SESSION.index("async function submitComments() {"):]
         submit = submit[:submit.index("\n}\n")]
-        self.assertIn("if (!SOLO_MODE) await sendResuming(body, to, key, images)", submit)
+        self.assertIn("await sendResuming(body, SOLO_MODE ? '' : to, key, images);", submit)
         self.assertNotIn("/api/room/say", submit)
         # Refused but held by the hub: the box is cleared (the message shows
         # in the chat as not delivered, with Retry); the tray lets the batch go.

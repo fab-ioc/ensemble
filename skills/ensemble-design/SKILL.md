@@ -462,6 +462,40 @@ them), the same tray, the same `## Review comments (N)` message.
   wraps is taller anyway); comment cards span the width, every control is `--touch-min`, the comment
   field is `--fs-400`.
 
+### Points
+
+Every message the person sends an agent is a point (`P12`) the hub keeps until they acknowledge its
+answer (`points.py`). The chat shows it; `session.html`'s `pointBarHtml` and `pointsLineHtml` are
+the reference. It is information for the person, not an alarm: **no colour of its own, never the
+bell's count.**
+
+- **The line** (`#points-line`) sits under the ask line, in its look (`--surface`, `--border`,
+  `--r-200`, `--fs-200`, `--fg-muted`): "Your points: 2 waiting for an answer · 3 answered, not yet
+  acknowledged". Hidden when both are 0. It is a disclosure button (`aria-expanded`, a `▸`/`▾`
+  glyph) that opens a compact list under it, at most 40% of the height, scrolling within itself.
+- **A list row:** the id in `--font-mono`, its first words (`--fg`, one line, cut with `…`, the
+  whole text its tooltip), its age ("12m", patched in place, never a redraw), its state in words,
+  "your message ↑" and "answer ↓" as links (`--link`), and its one click: **👍 Ack** for an answer,
+  **Drop** for one still waiting. Answers to acknowledge first, then the waiting ones, oldest first.
+  An answer given by doing shows its summary under the row.
+- **The bar under a balloon** (`.pt-bar`, a hairline `--border` above it): on the person's balloon
+  each point and where it stands ("P12 · waiting for an answer", "P12 · answered ↓" linked to the
+  answer, "acknowledged", "dropped") with Drop or Reopen; on the agent's, "answers P12 ↑" linked to
+  the person's balloon and 👍 Ack while it is not acknowledged. The one word that draws the eye is
+  "answered", in `--fg` at weight 600: it waits for the person.
+- **Controls are Subtle buttons** (transparent, `--fg-subtle`, 24px, `--hover`, the focus ring),
+  every one with its words in `aria-label`: an Ack types nothing into the agent, and says so in its
+  tooltip. **👍 Go with it** sits only on a balloon that asks for a decision (or a task's own
+  question) *and* holds a recommendation; it is the one control that types, once, and becomes
+  "approved".
+- **Never folded:** a balloon holding an open point or an unacknowledged answer is drawn in full
+  whatever would fold it (age, its task's row, Just us), and the catch-up line names "N answers to
+  your points to acknowledge" first.
+- **Outside the chat:** the task card (`.cpts`, beside the cost) and the PO's header and pill say
+  "2 to acknowledge · 1 open" in `--fg-muted` words, the tooltip in full. No lozenge: a card keeps
+  its two.
+- **Phone:** the summary, every control and every link are `--touch-min`.
+
 ### Run chip
 
 `● working` · `● idle` · `not started` · `not running`.
@@ -485,8 +519,10 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
    **The PO pill is identity, not view state.** It names who you talk to about the current project,
    the way the avatar names you: it reads the same on every page, and nothing about the view below
    (filters, tab, board or list) changes it. It opens the PO's conversation as a drawer over the page
-   you are on, so reading a task never costs you the PO. It shows no count or status: anything that
-   needs you already reaches the bell. On the project's Overview tab, where the PO already leads the
+   you are on, so reading a task never costs you the PO. It shows no status: anything that
+   needs you already reaches the bell. The one number it carries is the person's own points with
+   the PO (see *Points* in §4), as quiet `--fg-muted` words after the name ("2 to acknowledge · 1
+   open"), never a badge, and gone with the name when the bar runs short. On the project's Overview tab, where the PO already leads the
    page, the pill focuses its composer instead of opening a second copy. (In the *Board wide*
    layout of rule 8, the PO does not lead the Overview's Board view, so there the pill opens the
    drawer.)

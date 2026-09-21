@@ -80,6 +80,8 @@ import history as file_history
 # A link to a chat balloon, written out for the agent it is sent to.
 import message_refs
 import peer_process
+# The person's points: every point they raise is kept until they acknowledge its answer.
+import points
 # Task numbers (#18, ED-18) and project keys.
 import task_numbers
 # A fresh PO session from its written handover when its conversation gets long.
@@ -116,6 +118,7 @@ attention.bind(sys.modules[__name__])
 digest.bind(sys.modules[__name__])
 due.bind(sys.modules[__name__])
 rotation.bind(sys.modules[__name__])
+points.bind(sys.modules[__name__])
 # Capture each agent terminal's dying screen onto its task, before the reaper
 # drops the buffer — that evidence is why a death is visible at all.
 attention.install()
@@ -329,7 +332,7 @@ def _pty_alive(pty_id) -> bool:
     return bool(sess and sess.alive())
 
 
-def _annotate_room_liveness(room: dict) -> dict:
+def _annotate_room_liveness(room: dict, with_points: bool = False) -> dict:
     """Add a `live` flag: True if any agent PTY is running. Not live simply means
     the session isn't running — there's no separate 'ended' state. A reviewer
     that is started per request is flagged `onMention`."""
@@ -351,6 +354,12 @@ def _annotate_room_liveness(room: dict) -> dict:
         ask = None
     if ask:
         room["openAsk"] = ask
+    # The person's points (points.py), on the poll the chat already makes.
+    if with_points:
+        try:
+            room["points"] = points.view(room.get("id", ""), room=room)
+        except Exception as e:      # noqa: BLE001 — the chat still shows
+            print(f"[points] {room.get('id')}: not listed: {e!r}", flush=True)
     return room
 
 
@@ -860,6 +869,9 @@ _SETTINGS_DEFAULTS = {
     # The same for a running task's owner (its engineer, or its only agent),
     # from TASK-HANDOVER.md in the task folder. 0 = off.
     "taskRotateTokens": rotation.DEFAULT_TOKENS,
+    # A point of the person's still open this many minutes while its agent is
+    # idle and running: the hub types it one [points] line (points.py). 0 = off.
+    "pointsRemindMin": points.DEFAULT_REMIND_MIN,
     # Compress noisy command output for hub-launched task owners/reviewers.
     # PO rooms, adopted sessions and ordinary user terminals are never wired.
     "rtkForTasks": True,
@@ -1002,6 +1014,12 @@ def _save_settings_locked(settings: dict) -> dict:
             v = rotation.clamp_tokens(v)
             if v is None:
                 continue
+        if k == "pointsRemindMin":
+            try:
+                v = int(v)
+            except (TypeError, ValueError):
+                continue
+            v = 0 if v <= 0 else max(5, min(1440, v))
         if k in ("backupEnabled", "rtkForTasks"):
             v = bool(v)
         if k == "accent":
@@ -1121,10 +1139,17 @@ OWNER_OUTPUT_NOTE = (
     "No progress narration; tool calls need no preamble. Reports: outcome, evidence "
     "and tests, files or commit, blocker or next decision. Do not repeat the spec.")
 
+# The person's messages are points the hub keeps (points.py): how to answer one.
+POINTS_NOTE = (
+    "A message from the product owner reaches you with a [point Pn] line under it (one "
+    "per comment): answer each point by starting a paragraph of your reply with \"Re Pn:\" "
+    "(one reply may answer several), or say why not the same way; ensemble_points lists "
+    "the open ones.")
+
 SOLO_REPORT_NOTE = (
     f"\n\n---\n{OWNER_OUTPUT_NOTE} When you finish this task, or get blocked and need help, report it "
     "with the ensemble_report tool (kind completed | blocked | question) — it "
-    "reaches the project's PO, who otherwise cannot see your reply.")
+    f"reaches the project's PO, who otherwise cannot see your reply. {POINTS_NOTE}")
 
 # RTK is deliberately launch-scoped.  Never run ``rtk init -g`` here: that
 # edits user-level Claude/Codex files and would also affect PO rooms and the
@@ -1467,10 +1492,12 @@ def resolve_message_ref(room_id: str, msg_id: str) -> dict | None:
     for m in room.get("messages") or []:
         if m.get("id") == msg_id:
             return {**out, "from": m.get("from", ""), "who": who(m.get("from", "")),
-                    "ts": float(m.get("ts") or 0), "text": m.get("text") or "",
+                    "ts": float(m.get("ts") or 0),
+                    "text": (points.strip_point_lines(m.get("text") or "")
+                             if m.get("from") == chatroom.HUMAN_IDENTITY else m.get("text") or ""),
                     "where": f"~/.ensemble/rooms/{room_id}.json"}
     sid, sep, n = msg_id.rpartition(":")
-    if not sep or not sid or not n.isdigit() or "/" in sid or "\\" in sid:
+    if not sep or not sid or not (n.isdigit() or (n[:1] == "q" and n[1:].isdigit()))             or "/" in sid or "\\" in sid:
         return None
     # Only a solo chat shows transcript turns, and only its own agent's sessions
     # (the current one or one it was rotated from) are this room's: a link
@@ -1486,15 +1513,13 @@ def resolve_message_ref(room_id: str, msg_id: str) -> dict | None:
     raw = read_session_turns(sid)
     if not raw:
         return None
-    turns = [t for i, t in enumerate(raw)
-             if i == 0 or t.get("role") != raw[i - 1].get("role") or t.get("text") != raw[i - 1].get("text")]
-    if int(n) >= len(turns):
+    t = dict(page_turn_ids(sid, raw)).get(msg_id)
+    if t is None:
         return None
-    t = turns[int(n)]
     frm = chatroom.HUMAN_IDENTITY if t.get("role") == "user" else (owner.get("identity") or "agent")
     text = t.get("text") or ""
     if frm == chatroom.HUMAN_IDENTITY:
-        text = message_refs.strip_message_refs(text)
+        text = points.strip_point_lines(message_refs.strip_message_refs(text))
     return {**out, "from": frm, "who": who(frm), "ts": _turn_epoch(t.get("timestamp")),
             "text": text, "where": f"the transcript of session {sid}"}
 
@@ -1535,6 +1560,18 @@ def _claude_text_turns(tpath: Path) -> list[dict]:
                 except json.JSONDecodeError:
                     continue
                 t = d.get("type")
+                if t == "attachment" and not d.get("isSidechain"):
+                    # A line typed while the agent was busy is logged only as
+                    # the queued command it read at its next pause: without
+                    # this, a message sent to a working agent never showed.
+                    att = d.get("attachment") if isinstance(d.get("attachment"), dict) else {}
+                    prompt = att.get("prompt")
+                    if (att.get("type") == "queued_command" and isinstance(prompt, str)
+                            and att.get("commandMode") in (None, "prompt")
+                            and prompt.strip() and not prompt.strip().startswith("<")):
+                        turns.append({"timestamp": att.get("timestamp") or d.get("timestamp", ""),
+                                      "role": "user", "text": prompt.strip(), "queued": True})
+                    continue
                 if t == "user" and d.get("isMeta") and turns and turns[-1]["role"] == "user":
                     _claude_image_source(turns[-1], d)
                 if t not in ("user", "assistant") or d.get("isMeta"):
@@ -1560,16 +1597,64 @@ def _claude_text_turns(tpath: Path) -> list[dict]:
     return turns
 
 
+# A long PO's transcript runs to tens of megabytes, and both the chat page and
+# the points ledger read it whenever it grows: one read per change serves both.
+_TURNS_CACHE: dict = {}         # path -> ((size, mtime_ns), turns)
+_TURNS_CACHE_LOCK = threading.Lock()
+_TURNS_CACHE_MAX = 6
+
+
+def claude_turns_classified(tpath: Path) -> list[dict]:
+    """classify_turns(_claude_text_turns(tpath)), kept while the file is unchanged."""
+    try:
+        st = tpath.stat()
+        sig = (st.st_size, st.st_mtime_ns)
+    except OSError:
+        return classify_turns(_claude_text_turns(tpath))
+    key = str(tpath)
+    with _TURNS_CACHE_LOCK:
+        hit = _TURNS_CACHE.get(key)
+        if hit and hit[0] == sig:
+            return copy.deepcopy(hit[1])
+    turns = classify_turns(_claude_text_turns(tpath))
+    with _TURNS_CACHE_LOCK:
+        _TURNS_CACHE.pop(key, None)
+        _TURNS_CACHE[key] = (sig, copy.deepcopy(turns))
+        while len(_TURNS_CACHE) > _TURNS_CACHE_MAX:
+            _TURNS_CACHE.pop(next(iter(_TURNS_CACHE)))
+    return turns
+
+
 def read_session_turns(sid: str) -> list[dict] | None:
     """A session's chat turns as /api/session/<sid>?full=1 serves them (Claude
     or Codex), or None when there is no such session."""
     tpath = find_transcript(sid)
     if tpath:
-        return classify_turns(_claude_text_turns(tpath))
+        return claude_turns_classified(tpath)
     cx = agents.get_agent("codex")
     if cx is None or cx.session_stat(sid) is None:
         return None
     return classify_turns(cx.read_turns(sid))
+
+
+def page_turn_ids(sid: str, raw: list[dict]) -> list[tuple[str, dict]]:
+    """Each turn of a one-agent chat with the id its balloon has on the chat
+    page (soloItems in session.html): ``<sid>:<n>`` counting the turns with
+    repeats of the turn before dropped; a line the agent read while busy (a
+    queued command) is ``<sid>:q<n>``, counted apart, so the ids of the
+    others are what they were before those were shown."""
+    out, prev, n, q = [], None, 0, 0
+    for t in raw or []:
+        if t.get("queued"):
+            out.append((f"{sid}:q{q}", t))
+            q += 1
+            continue
+        same = prev is not None and t.get("role") == prev.get("role") and t.get("text") == prev.get("text")
+        prev = t
+        if not same:
+            out.append((f"{sid}:{n}", t))
+            n += 1
+    return out
 
 
 def attachment_url(room_id: str, name: str) -> str:
@@ -1648,6 +1733,7 @@ HUB_INPUT_KINDS = (
     ("[rotation] ", "rotation"),        # rotation.py: a fresh session's first prompt
     ("[product owner] ", "madepo"),     # made_po_first_input: a session made a project's PO
     ("[from the restart helper, not ", "helper"),   # the note after a hub restart
+    ("[points] ", "points"),            # points.py: the person's points still open
 )
 # The kind is "completed", or a verdict such as "review 1 (changes requested)".
 _REPORT_HEAD = re.compile(r"\[report\] (?P<reportKind>.+?) from task '(?P<taskTitle>.*?)' "
@@ -1718,7 +1804,15 @@ def classify_turns(turns: list[dict]) -> list[dict]:
         note = next((n for n in (*RESUME_NOTES, RESTART_NOTE) if text.startswith(n)), "")
         if t.get("role") == "user" and note and text[len(note):].strip():
             out.append({**t, "text": note})
-            out.append({**t, "text": text[len(note):].strip()})
+            rest = text[len(note):].strip()
+            # The person's open points follow the note on one line of their
+            # own (points.note_line): the hub's too, before what they sent.
+            if rest.startswith(points.PREFIX):
+                line, _, rest = rest.partition("\n\n")
+                out.append({**t, "text": line.strip()})
+                rest = rest.strip()
+            if rest:
+                out.append({**t, "text": rest})
         else:
             out.append(dict(t))
     last = None
@@ -1779,7 +1873,7 @@ def collab_briefing(ident: str, role: str, teammates: list, task: str,
         parts.append(f"Start by acknowledging your role in one line, then wait for "
                      f"{eng}'s first deliverable — do not begin working the task yourself.")
     else:
-        parts.append(OWNER_OUTPUT_NOTE)
+        parts.append(OWNER_OUTPUT_NOTE + " " + POINTS_NOTE)
         non_reviewers = [t for t in teammates
                          if chatroom._role_head(t.get("role", "")) != chatroom.REVIEWER_ROLE]
         if non_reviewers:
@@ -5308,6 +5402,13 @@ def invalidate_session_listing() -> None:
     _SESS_GEN += 1
 
 
+def _points_counts(rid: str) -> dict | None:
+    try:
+        return points.counts(rid)
+    except Exception:       # noqa: BLE001 — a card without the count
+        return None
+
+
 def load_sessions(n: int = 200) -> list[dict]:
     lock = _SESS_LOCKS.setdefault(n, threading.Lock())
     with lock:
@@ -5678,6 +5779,8 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 "attention": ({k: v for k, v in att_by_room[rid].items()
                                if k in ("state", "reason", "agentIdentity", "since")}
                               if rid in att_by_room else None),
+                # {open, answered}: the person's points waiting, or None.
+                "points": _points_counts(rid),
             })
     except Exception:
         pass
@@ -7401,7 +7504,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if full:
                 # User + assistant text turns, with timestamps and roles.
-                turns = classify_turns(_claude_text_turns(tpath))
+                turns = claude_turns_classified(tpath)
             else:
                 turns = [{"timestamp": ts, "text": t} for ts, t in iter_user_turns(tpath)]
             labels = load_labels()
@@ -7538,7 +7641,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(200, {"id": room.get("id", rid), "spec": spec,
                                       "specRev": _spec_rev(spec)})
                 return
-            self._send_json(200, _annotate_room_liveness(room))
+            self._send_json(200, _annotate_room_liveness(room, with_points=True))
             return
         if p == "/api/task/ref":
             # The task a number in a chat names, for the chip that shows it:
@@ -7853,6 +7956,15 @@ class Handler(BaseHTTPRequestHandler):
                     os.path.normcase(os.path.normpath(r.get("cwd", ""))) == nk):
                 return r.get("pid")
         return None
+
+    def _take_points(self, room_full: dict, text: str, to: str, key: str) -> tuple[str, list]:
+        """The person's message as its agent gets it, with its points
+        (points.take); as it was when the ledger cannot be written."""
+        try:
+            return points.take(room_full, text, to, key)
+        except Exception as e:      # noqa: BLE001 — the message goes anyway
+            print(f"[points] {room_full.get('id')}: not recorded: {e!r}", flush=True)
+            return text, []
 
     def _ring_recipients(self, room_id: str, result: dict) -> list[str]:
         """Ring each agent recipient's terminal (the keystroke doorbell) so it
@@ -8695,6 +8807,18 @@ class Handler(BaseHTTPRequestHandler):
         not_typed: list[str] = []
         for ident, sess in ready.items():
             parts = [notes[ident]] if ident in notes else []
+            if ident in notes:
+                # A note that brings the agent back names the person's points
+                # still open, on a line of its own; those in the messages it
+                # is given now are in them already.
+                with_msgs = {i for it in items for i in points.point_ids(it.get("text") or "")}
+                try:
+                    line = points.note_line(room_id, ident, skip=with_msgs)
+                except Exception as e:      # noqa: BLE001 — the note goes in anyway
+                    print(f"[points] {room_id}/{ident}: open points not listed: {e!r}", flush=True)
+                    line = ""
+                if line:
+                    parts.append(line)
             if solo:
                 parts += [with_message_refs(it["text"], room_id) for it in items]
             elif ident in wake_for:
@@ -9830,23 +9954,83 @@ class Handler(BaseHTTPRequestHandler):
             # Posts to the room as it is, running or not (a stopped room's
             # agents read it once resumed). To have a stopped room resumed
             # and woken for a message, say it through /api/room/resume.
+            pids: list = []
             with _SAY_KEYS_LOCK if key else contextlib.nullcontext():
                 if key and _say_key_seen(rid, key):
                     self._send_json(200, {"ok": True, "duplicate": True})
                     return
                 try:
-                    text = message_refs.with_images(text, attachment_paths(room_full, data.get("attachments")))
+                    paths = attachment_paths(room_full, data.get("attachments"))
                 except attachments.Refused as e:
                     self._send_json(e.status, e.payload())
                     return
+                text, pids = self._take_points(room_full, text, to, key)
+                text = message_refs.with_images(text, paths)
                 result = chatroom.post_message(rid, chatroom.HUMAN_IDENTITY, text, to=to)
                 if result is not None and key:
                     _SAY_KEYS[(rid, key)] = time.time()
             if result is None:
+                points.discard(rid, pids)
                 self._send_json(404, {"error": "no_such_room"})
                 return
             self._ring_recipients(rid, result)
             self._send_json(200, {"ok": True, "result": result})
+            return
+        if p == "/api/room/points":
+            # The person acknowledges, drops or reopens one of their points:
+            # {roomId, id, action: ack | drop | reopen}. Types nothing into
+            # any agent and wakes nobody.
+            if self._files_cross_site():
+                return
+            rid = (data.get("roomId") or "").strip()
+            if chatroom.get_room(rid) is None:
+                self._send_json(404, {"error": "no_such_room"})
+                return
+            action = (data.get("action") or "").strip()
+            if action not in points.ACTIONS:
+                self._send_json(400, {"error": "bad_action", "expected": list(points.ACTIONS)})
+                return
+            pt = points.act(rid, str(data.get("id") or ""), action)
+            if pt is None:
+                self._send_json(409, {"error": "not_applicable",
+                                      "message": "That point is not there, or is already so."})
+                return
+            self._send_json(200, {"ok": True, "point": {"id": pt["id"], "state": pt["state"]},
+                                  "points": points.view(rid)})
+            return
+        if p == "/api/room/approve":
+            # A thumbs up on a balloon asking for a decision: "yes, go with
+            # your recommendation", typed to its agent once (the normal send,
+            # which also resumes a stopped task and answers its open ask):
+            # {roomId, mid, to?, question?}. The same balloon again is a
+            # duplicate, from any device.
+            if self._files_cross_site():
+                return
+            rid = (data.get("roomId") or "").strip()
+            mid = str(data.get("mid") or "").strip()[:200]
+            room_full = chatroom.get_room(rid, public=False) if rid else None
+            if room_full is None:
+                self._send_json(404, {"error": "no_such_room"})
+                return
+            if not mid:
+                self._send_json(400, {"error": "missing_fields"})
+                return
+            to = (data.get("to") or "").strip()
+            if to and not chatroom.participant(room_full, to):
+                to = ""
+            question = " ".join(str(data.get("question") or "").split())[:200]
+            if not points.approve(rid, mid):
+                self._send_json(200, {"ok": True, "duplicate": True})
+                return
+            line = ("Approved: go with your recommendation"
+                    + (f" on “{question}”" if question else "") + ".")
+            try:
+                result = self._resume_room(room_full, text=line, to=to, key="approve:" + mid)
+            except Exception as exc:    # noqa: BLE001 — refused: it may be given again
+                points.unapprove(rid, mid)
+                self._send_json(400, {"error": str(exc) or exc.__class__.__name__})
+                return
+            self._send_json(200, {"ok": True, **result, "points": points.view(rid)})
             return
         if p == "/api/room/roles":
             # Assign/clear team roles on an existing room's agents:
@@ -10017,6 +10201,7 @@ class Handler(BaseHTTPRequestHandler):
             # whose agent has nothing new to do (the planned restart brings
             # rooms back this way by itself).
             quiet = data.get("quiet") is True
+            pids: list = []
             # A draft (created but never launched, e.g. by a planning agent)
             # starts fresh; anything else resumes its agents' conversations.
             try:
@@ -10027,10 +10212,15 @@ class Handler(BaseHTTPRequestHandler):
                     # The images only once the send is known not to be a
                     # duplicate: a retried lost reply copies nothing again.
                     try:
-                        text = message_refs.with_images(text, attachment_paths(room_full, data.get("attachments")))
+                        paths = attachment_paths(room_full, data.get("attachments"))
                     except attachments.Refused as e:
                         self._send_json(e.status, e.payload())
                         return
+                    # The person's words become points, each with its line
+                    # for the agent; a retry of a held send keeps its own.
+                    if text and not (key and key_held(rid, key)):
+                        text, pids = self._take_points(room_full, text, to, key)
+                    text = message_refs.with_images(text, paths)
                     result = (self._resume_room(room_full, text=text, to=to, key=key, quiet=True)
                               if quiet else self._resume_room(room_full, text=text, to=to, key=key))
                     if key:
@@ -10043,6 +10233,8 @@ class Handler(BaseHTTPRequestHandler):
                     held = _RESUMES.get(rid)
                     kept = bool(text) and held is not None and any(
                         (key and it.get("key") == key) or it["text"] == text for it in held.queue)
+                if not kept:
+                    points.discard(rid, pids)
                 self._send_json(400, {"error": str(exc) or exc.__class__.__name__, "kept": kept})
                 return
             self._send_json(200, {"ok": True, **result,

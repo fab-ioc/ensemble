@@ -1180,7 +1180,12 @@
   /* The name goes first when the bar runs short (it is in the tooltip and the
      accessible name), then the word, from where the project switcher also
      gives up its label: the PO's avatar alone still says who. */
-  @media (max-width: 1100px) { #po-pill .po-pill-p { display: none; } }
+  /* The person's points with the PO (points.py): quiet words, not a badge and
+     not the bell's count. They go with the name when the bar runs short; the
+     PO's header and the chat's own line still say it. */
+  #po-pill .po-pill-n { color: var(--fg-muted); font-weight: 400; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  #po-pill[aria-expanded="true"] .po-pill-n { color: inherit; }
+  @media (max-width: 1100px) { #po-pill .po-pill-p, #po-pill .po-pill-n { display: none; } }
   @media (max-width: 900px), (max-width: 1024px) and (pointer: coarse) {
     .bar-gap { min-width: var(--s-100); }   /* 641px overflowed by 5px with the pill */
     #po-pill:not(.none) { padding: 0 var(--s-100); }
@@ -1954,6 +1959,8 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%;
   }
   .ccost { font-size: var(--fs-100); color: var(--fg-muted); white-space: nowrap; font-variant-numeric: tabular-nums; cursor: default; }
+  /* The person's points in the task: plain words like the cost, never a lozenge. */
+  .cpts { font-size: var(--fs-100); color: var(--fg-muted); white-space: nowrap; font-variant-numeric: tabular-nums; cursor: default; }
   .cagent { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
   /* An avatar is a SOLID fill with light text; a lozenge is a pale wash with
      dark text. That difference is what stops the two reading as each other
@@ -4410,6 +4417,26 @@ function costChipHtml(r, cls) {
   const c = costChip(r);
   return c ? ` <span class="${cls || 'row-cost-chip'}" title="${c.title}">${c.text}</span>` : '';
 }
+// The person's points in a task's or a PO's chat (points.py; the row's
+// points: {open, answered}), as quiet words: "2 to acknowledge · 1 open". It
+// is information for them, like the cost: never a lozenge, never the bell.
+function pointsCountText(p) {
+  if (!p) return '';
+  const bits = [];
+  if (p.answered) bits.push(`${p.answered} to acknowledge`);
+  if (p.open) bits.push(`${p.open} open`);
+  return bits.join(' · ');
+}
+function pointsCountTip(p) {
+  const bits = [];
+  if (p && p.answered) bits.push(`${p.answered} answered, not yet acknowledged`);
+  if (p && p.open) bits.push(`${p.open} waiting for an answer`);
+  return bits.length ? 'Your points: ' + bits.join(' · ') + '. Open the chat to see them.' : '';
+}
+function pointsCountHtml(p, cls) {
+  const t = pointsCountText(p);
+  return t ? `<span class="${cls}" title="${esc(pointsCountTip(p))}">${esc(t)}</span>` : '';
+}
 // ---- Cost chip: end ---------------------------------------------------------
 
 function topicCellHL(r, parsed) {
@@ -4753,7 +4780,7 @@ function cardHtml(r, now) {
   return `<article class="card${working}" draggable="true" data-room="${esc(r.roomId || '')}" data-sid="${esc(r.sessionId)}">
     ${loz}
     <div class="ctitle">${taskNoHtml(r, !SELECTED_PROJECT)}${esc(r.label || '(session)')}</div>
-    <div class="crow1">${r.roomId ? prioIcon(prioOf(r)) : ''}${runChip(r)}${costChipHtml(r, 'ccost')}${proj}</div>
+    <div class="crow1">${r.roomId ? prioIcon(prioOf(r)) : ''}${runChip(r)}${costChipHtml(r, 'ccost')}${pointsCountHtml(r.points, 'cpts')}${proj}</div>
     <div class="crow2">${cardAgents(r)}<span class="cwhen">${esc(fmtAgo(now - r.updatedAt))}</span></div>
   </article>`;
 }
@@ -8215,7 +8242,9 @@ function poAgent(row) {
 function poHeadHtml(pj, row, peek) {
   const { m, cls } = poAgent(row);
   const model = shortModel(m.model);
-  const sub = [m.agent || '', model, row.label || ''].filter(Boolean).map(esc).join(' · ');
+  const pts = pointsCountText(row.points);
+  const sub = [m.agent || '', model, row.label || ''].filter(Boolean).map(esc).join(' · ')
+    + (pts ? ` · <span class="po-pts" title="${esc(pointsCountTip(row.points))}">${esc('your points: ' + pts)}</span>` : '');
   const acts = [];
   if (!row.isLive && !row.draft) acts.push(`<button class="po-btn def" data-po="resume" title="Relaunch the PO with its conversation">Resume</button>`);
   acts.push(`<button class="po-btn" data-po="open" title="Open the PO's own task: spec, changes and files">Task</button>`);
@@ -8234,8 +8263,11 @@ function renderPoPill(ctx) {
   let html;
   if (row) {
     const { m, cls } = poAgent(row);
-    html = `<span class="av ${cls}">${esc((m.agent || '?')[0])}</span><span class="po-pill-t">PO</span><span class="po-pill-p">${esc(ctx.name)}</span>`;
-    b.title = `${ctx.name}'s PO — ${row.label || 'its task'}. Opens the conversation over this page`;
+    const pts = pointsCountText(row.points);
+    html = `<span class="av ${cls}">${esc((m.agent || '?')[0])}</span><span class="po-pill-t">PO</span><span class="po-pill-p">${esc(ctx.name)}</span>`
+      + (pts ? `<span class="po-pill-n">${esc(pts)}</span>` : '');
+    b.title = `${ctx.name}'s PO — ${row.label || 'its task'}. Opens the conversation over this page`
+      + (pts ? `. ${pointsCountTip(row.points)}` : '');
     b.setAttribute('aria-label', `${ctx.name} PO`);
   } else {
     html = `<span>No PO</span><span class="po-pill-p">${esc(ctx.name)}</span>`;
