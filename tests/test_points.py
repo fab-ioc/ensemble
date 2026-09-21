@@ -211,6 +211,21 @@ class Ledger(_World):
         self.assertEqual(self.state(rid)["P3"], "answered")
         self.assertEqual(len(self.point(rid, "P3")["answers"]), 2)
 
+    def test_a_session_read_again_keeps_only_the_answers_it_holds(self):
+        rid = self.solo_room()
+        out, _ = self.send(rid, "Why red?", at=self.t0)
+        self.add("sid-1", turn("user", out, self.t0 + 1), turn("assistant", "Re P1: flaky.", self.t0 + 2))
+        self.assertEqual(self.state(rid), {"P1": "answered"})
+        # An answer linked under a turn count the session no longer has (a hub
+        # that counted its turns otherwise) goes when the session is read again.
+        led = points.load(rid)
+        led["points"][0]["answers"].append({"key": "sid-1:7", "mid": "sid-1:7", "at": self.t0 + 3, "how": "re"})
+        points._save(rid, led)
+        points._SCANNED.clear()
+        points.sync(rid, force=True)
+        p = self.point(rid, "P1")
+        self.assertEqual(([a["mid"] for a in p["answers"]], p["state"]), (["sid-1:1"], "answered"))
+
     def test_a_follow_up_reopens_with_the_same_id_and_the_thread_keeps_both(self):
         rid = self.solo_room()
         out, _ = self.send(rid, "Why red?", at=self.t0)
@@ -418,6 +433,18 @@ class Reminder(_World):
 
 
 class Turns(unittest.TestCase):
+    def test_a_pasted_message_is_the_persons_turn(self):
+        # Claude Code 2.1.278 logs a bracketed paste (every multi-line message the
+        # hub types) wrapped; it used to start with "<" and never showed.
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "t.jsonl"
+            body = '\n\n<pasted_content id="40eb">\nPoint A: what is 2 + 2?\n\n[point P2]\n</pasted_content id="40eb">\n'
+            p.write_text(json.dumps({"type": "user", "message": {"role": "user", "content": body},
+                                     "timestamp": "2026-09-21T10:00:00Z"}), encoding="utf-8")
+            self.assertEqual([t["text"] for t in dashboard._claude_text_turns(p)],
+                             ["Point A: what is 2 + 2?\n\n[point P2]"])
+
+
     def test_a_queued_command_is_a_turn_with_its_own_id(self):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "t.jsonl"

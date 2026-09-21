@@ -728,7 +728,7 @@ def _user_turn(line: str):
     msg = d.get("message")
     if not isinstance(msg, dict):
         return None
-    text = _extract_text(msg.get("content"))
+    text = _unwrap_pasted(_extract_text(msg.get("content")) or "")
     if not text:
         return None
     text = text.strip()
@@ -1549,6 +1549,18 @@ def _claude_image_source(turn: dict, meta: dict) -> None:
     turn["text"] = message_refs.with_images("\n".join(lines).strip(), [*paths, path])
 
 
+# Claude Code (2.1.278, seen 2026-09-21) logs text pasted into it (what the hub
+# types as a bracketed paste: every message of more than one line) wrapped as
+# <pasted_content id="…">…</pasted_content id="…">, so the turn began with "<"
+# and was dropped as Claude Code's own: the person's multi-line messages never
+# showed in the chat.
+_PASTED = re.compile(r'<pasted_content id="([^"]*)">\n?(.*?)\n?</pasted_content id="\1">', re.S)
+
+
+def _unwrap_pasted(text: str) -> str:
+    return _PASTED.sub(lambda m: m.group(2), text) if "<pasted_content" in text else text
+
+
 def _claude_text_turns(tpath: Path) -> list[dict]:
     """A Claude transcript's user and assistant text turns, unclassified."""
     turns = []
@@ -1565,7 +1577,7 @@ def _claude_text_turns(tpath: Path) -> list[dict]:
                     # the queued command it read at its next pause: without
                     # this, a message sent to a working agent never showed.
                     att = d.get("attachment") if isinstance(d.get("attachment"), dict) else {}
-                    prompt = att.get("prompt")
+                    prompt = _unwrap_pasted(att["prompt"]) if isinstance(att.get("prompt"), str) else None
                     if (att.get("type") == "queued_command" and isinstance(prompt, str)
                             and att.get("commandMode") in (None, "prompt")
                             and prompt.strip() and not prompt.strip().startswith("<")):
@@ -1582,6 +1594,8 @@ def _claude_text_turns(tpath: Path) -> list[dict]:
                 text = _extract_text(msg.get("content"))
                 if not text:
                     continue
+                if t == "user":
+                    text = _unwrap_pasted(text)
                 stripped = text.strip()
                 if not stripped:
                     continue
@@ -4875,7 +4889,7 @@ def _iter_text_for_rename(path: Path):
                 msg = d.get("message")
                 if not isinstance(msg, dict):
                     continue
-                text = _extract_text(msg.get("content"))
+                text = _unwrap_pasted(_extract_text(msg.get("content")) or "") if t == "user" else _extract_text(msg.get("content"))
                 if not text:
                     continue
                 stripped = text.strip()

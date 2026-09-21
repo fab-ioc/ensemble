@@ -36,8 +36,7 @@ JS = r"""
 const vm = require('vm');
 const { code } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const posts = [];
-const ctx = { esc: s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])),
-  attSplit: t => ({ words: String(t || ''), paths: [] }),
+const ctx = { attSplit: t => ({ words: String(t || ''), paths: [] }),
   ROOM: 'room-po', SOLO_MODE: true, pointsChanged: () => {}, pointsNote: () => {} };
 vm.createContext(ctx);
 vm.runInContext(code + `
@@ -121,7 +120,9 @@ out.cuPlain = T.catchUp(cuItems, { i: 0, ts: 1, mine: true }, false).parts.map(p
 class Points(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        run = subprocess.run([NODE, "-e", JS], input=json.dumps({"code": fold_block(SRC)}),
+        # The page's own esc, which takes strings only: a number in the markup throws.
+        esc = next(ln for ln in SRC.split("\n") if ln.startswith("const esc = "))
+        run = subprocess.run([NODE, "-e", JS], input=json.dumps({"code": esc + "\n" + fold_block(SRC)}),
                              capture_output=True, text=True, encoding="utf-8", timeout=60)
         if run.returncode:
             raise AssertionError(run.stderr)

@@ -528,6 +528,7 @@ def _scan_turns(led: dict, sid: str, turns: list[dict]) -> bool:
         return False
     changed = False
     implicit, run = None, ""
+    seen: set[tuple] = set()        # (point, answer key) found in this reading
     for mid, t in _d.page_turn_ids(sid, turns):
         ts = _d._turn_epoch(t.get("timestamp"))
         text = t.get("text") or ""
@@ -547,10 +548,23 @@ def _scan_turns(led: dict, sid: str, turns: list[dict]) -> bool:
         said = [i for i in re_ids(text) if i in pts and (not ts or ts >= pts[i]["createdAt"] - SLACK_S)]
         for i in said:
             changed |= _answer(pts[i], mid, mid, ts, "re")
+            seen.add((i, mid))
         if implicit and implicit not in said:
             changed |= _answer(pts[implicit], "after:" + run, mid, ts, "implicit")
+            seen.add((implicit, "after:" + run))
         elif implicit in said:
             implicit = None
+    # The whole session was read: an answer linked in it before that it does
+    # not hold now (its turns were counted otherwise then) goes. The state
+    # stays what it became.
+    head = sid + ":"
+    for p in pts.values():
+        keep = [a for a in p["answers"]
+                if not (str(a.get("key", "")).startswith((head, "after:" + head)))
+                or (p["id"], a.get("key")) in seen]
+        if len(keep) != len(p["answers"]):
+            p["answers"] = keep
+            changed = True
     return changed
 
 

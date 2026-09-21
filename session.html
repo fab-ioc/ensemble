@@ -725,6 +725,9 @@
   .msg .pt-bar { display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-100) var(--s-200); margin-top:var(--s-200);
     padding-top:var(--s-100); border-top:1px solid var(--border); color:var(--fg-muted); font-size:var(--fs-200); line-height:16px; }
   .pt-chip { color:var(--fg-muted); font-variant-numeric:tabular-nums; }
+  /* --link on the person's balloon (--hover) measured 4.35:1 in Light: there
+     the link is --fg, underlined, its arrow saying where it goes. */
+  .msg.user .pt-bar a.pt-link { color:var(--fg); text-decoration:underline; }
   /* Away from the end of the chat: back to it, with how many arrived since. */
   #to-latest { position:absolute; right:var(--s-400); bottom:var(--s-300); z-index:5; height:24px; padding:0 var(--s-300);
     border-radius:var(--r-full); background:var(--surface); color:var(--fg); border:1px solid var(--border-strong);
@@ -2150,7 +2153,7 @@ function pointsListHtml(P, href, now) {
     const said = a && !a.mid && a.summary ? `<span class="pt-said">${esc(a.summary)}</span>` : '';
     return `<li class="pt-row" data-pt="${esc(p.id)}"><span class="pt-id">${esc(p.id)}</span>`
       + `<span class="pt-words" title="${esc(stripPointLines(p.text))}">${esc(ptWords(p.text))}</span>`
-      + `<span class="pt-age" data-at="${esc(p.createdAt || 0)}">${esc(ptAge(p.createdAt, now))}</span>`
+      + `<span class="pt-age" data-at="${esc(String(p.createdAt || 0))}">${esc(ptAge(p.createdAt, now))}</span>`
       + `<span class="pt-state ${esc(p.state)}">${esc(PT_WORD[p.state] || p.state)}</span>${said}`
       + ptLink(p.mid, 'your message ↑', href, 'Go to your message')
       + (a ? ptLink(a.mid, 'answer ↓', href, 'Go to the answer') : '')
