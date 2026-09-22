@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="ensemble-pages" content="">
 <title>file</title>
 <!-- Syntax highlighting is this page's own (HL, below), coloured by the
      --code-* tokens of each theme. Nothing is fetched from a CDN: the hub is
@@ -593,6 +594,22 @@
     /* Centred, the comment box sat under the keyboard it opens. */
     .cmt-composer { top: var(--s-300); transform: translateX(-50%); }
   }
+  /* The line that says the page on disk is newer (see "Page update" in the
+     script): one quiet strip over the top of the page, --surface on a border,
+     the action a link. The same rule in index.html, session.html and fileview.html. */
+  #ens-upd {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
+    display: flex; justify-content: center; align-items: center; gap: var(--s-100);
+    min-height: 28px; padding: var(--s-100) var(--s-300);
+    background: var(--surface); color: var(--fg); border-bottom: 1px solid var(--border); box-shadow: var(--e-200);
+    font-size: var(--fs-200); line-height: var(--lh-200); font-weight: 500;
+  }
+  #ens-upd button {
+    position: relative; background: none; border: 0; padding: 0; margin: 0; font: inherit;
+    color: var(--link); text-decoration: underline; cursor: pointer; border-radius: var(--r-100);
+  }
+  #ens-upd button::after { content: ''; position: absolute; left: -8px; right: -8px; top: -14px; bottom: -14px; }
+  #ens-upd button:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
 </style>
 </head>
 <body>
@@ -1653,6 +1670,12 @@ function wireFrameLinks(ifr) {
   // rendered page has loaded, the place to go back to is still the one given.
   let pendingTop = START.top, reporting = false, stateOf = () => ({});
   const scrolledTop = () => { const s = fvScrollOwner(main); return pendingTop || (s ? Math.round(s.scrollTop) : 0); };
+  // An update reload comes back to this file at this line and scroll place.
+  window.ensUpdPlace = () => {
+    const u = new URL(location.href);
+    u.searchParams.set('st', JSON.stringify({ ...stateOf(), top: scrolledTop() }));
+    return { url: u.pathname + u.search + u.hash };
+  };
   function report() {
     const host = reporting && hostPage();
     if (host) host.postMessage({ type: 'fv-state', st: { ...stateOf(), top: scrolledTop() } }, location.origin);
@@ -1877,6 +1900,139 @@ function wireFrameLinks(ifr) {
   reporting = true;
   report();
 })();
+// ---- Page update: begin shared block ----------------------------------------
+// The hub serves the pages from disk, so a merge is live on the next load; this
+// keeps a tab that stays open on the current page. At load the page knows the
+// stamps it was served with (<meta name="ensemble-pages">, written by the hub
+// as it serves the page); /api/config says what is on disk now. The page's own
+// poll asks every 30 s, and when this page's file or a hub script it loads has
+// changed, the page reloads where it was — unless the person is in the middle
+// of something: text they typed that is still there, a comment composer, a
+// selection, an open dialog, a drag or a held pointer, or any input in the last
+// few seconds. Then one line at the top says "Ensemble was updated · Reload",
+// and the page reloads on a click, by itself once idle (nothing in hand and no
+// input for 60 s), or when the tab is hidden and holds no text. A page framed
+// in another (the chat in the task panel) leaves the reload to its host when
+// the host is about to reload too, and a host reloads only when its frames are
+// idle as well. A hub restart from the Update button holds this off (hold) so
+// the two never reload twice. Each page adds what only it knows: ensUpdBusy()
+// (what counts as in hand there), ensUpdPlace() (what to put back, or a url to
+// come back to) and a call to ensUpd.restore() when it is ready to put it back.
+// index.html, session.html and fileview.html carry the same block;
+// tests/test_page_update.py runs it in Node.
+const ensUpd = window.ensUpd = (() => {   // a window property too: a host page reads its frames', a frame its host's
+  const PAGE = { '/': 'index.html', '/index.html': 'index.html', '/session': 'session.html', '/fileview': 'fileview.html' }[location.pathname] || '';
+  const KEY = 'cd-upd-place:' + location.pathname + location.search;
+  const CHECK_MS = 30000, QUIET_MS = 5000, IDLE_MS = 60000, RECHECK_MS = 5000;
+  const loaded = {};   // the stamps this page was served with
+  try {
+    const meta = document.querySelector('meta[name="ensemble-pages"]');
+    for (const kv of ((meta && meta.getAttribute('content')) || '').split(' ')) {
+      const i = kv.indexOf('='); if (i > 0) loaded[kv.slice(0, i)] = kv.slice(i + 1);
+    }
+  } catch (e) {}
+  // This page and the hub scripts it loads.
+  const deps = () => [PAGE].concat([...document.querySelectorAll('script[src^="/static/"]')].map(s => s.getAttribute('src').slice(1))).filter(Boolean);
+  const S = { page: PAGE, loaded, pages: null, pending: false, hold: false, reloading: false, lastInput: Date.now(), checkedAt: Date.now(), checking: false, line: null, timer: 0 };
+  const typed = new Set();      // the fields typed in since the page loaded
+  let held = false;             // a pointer held down or a drag under way
+  const isField = el => !!el && ((el.matches && el.matches('input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]):not([type=file]), textarea')) || el.isContentEditable === true);
+  const fieldText = el => el.isContentEditable === true ? (el.textContent || '') : (el.value || '');
+  const input = () => { S.lastInput = Date.now(); };
+  const on = (t, f, o) => document.addEventListener(t, f, o);
+  on('keydown', input, true);
+  on('pointerdown', () => { input(); held = true; }, true);
+  on('pointermove', input, true);
+  on('wheel', input, { capture: true, passive: true });
+  on('touchstart', input, { capture: true, passive: true });
+  on('pointerup', () => { held = false; }, true);
+  on('pointercancel', () => { held = false; }, true);
+  on('dragstart', () => { held = true; }, true);
+  on('dragend', () => { held = false; }, true);
+  on('drop', () => { held = false; }, true);
+  on('input', e => { if (isField(e.target)) typed.add(e.target); }, true);
+  // The same-origin pages framed in this one (the chat in the task panel).
+  const frames = () => [...document.querySelectorAll('iframe')].map(f => { try { return f.contentWindow && f.contentWindow.ensUpd; } catch (e) { return null; } }).filter(Boolean);
+  // Text in hand: typed here and still there, or what the page names (a
+  // composer, the message box), here or in a frame.
+  const holdingText = () => {
+    for (const el of typed) { if (!el.isConnected) typed.delete(el); else if (fieldText(el).trim()) return true; }
+    try { if (window.ensUpdBusy && window.ensUpdBusy()) return true; } catch (e) {}
+    return frames().some(u => u.holdingText());
+  };
+  const busy = () => {
+    if (holdingText() || held) return true;
+    if (document.querySelector('dialog[open]')) return true;
+    try { const sel = getSelection(); if (sel && !sel.isCollapsed && sel.toString().trim()) return true; } catch (e) {}
+    return frames().some(u => u.busy());
+  };
+  const idleFor = () => Math.min(Date.now() - S.lastInput, ...frames().map(u => u.idleFor()));
+  // Whether what is on disk differs from what this page runs.
+  const changed = pages => !!pages && deps().some(f => loaded[f] && pages[f] && pages[f] !== loaded[f]);
+  // Where the page was, kept for the page that loads next (or a url to come back to).
+  function reload() {
+    if (S.reloading) return;
+    S.reloading = true;
+    clearInterval(S.timer); S.timer = 0;
+    let place = null;
+    try { place = window.ensUpdPlace ? window.ensUpdPlace() : null; } catch (e) {}
+    try { if (place) sessionStorage.setItem(KEY, JSON.stringify(place)); } catch (e) {}
+    if (place && place.url) location.replace(place.url); else location.reload();
+  }
+  function restore() {
+    let place = null;
+    try { place = JSON.parse(sessionStorage.getItem(KEY) || 'null'); sessionStorage.removeItem(KEY); } catch (e) {}
+    return place;
+  }
+  function showLine() {
+    if (S.line || !document.body) return;
+    const n = document.createElement('div');
+    n.id = 'ens-upd';
+    n.setAttribute('role', 'status');
+    n.innerHTML = 'Ensemble was updated · <button type="button">Reload</button>';
+    n.querySelector('button').addEventListener('click', reload);
+    document.body.appendChild(n);
+    S.line = n;
+  }
+  // A host page about to reload takes its frames with it: this one waits for it.
+  const hostPending = () => {
+    try {
+      const h = window.parent !== window && window.parent.ensUpd;
+      return !!h && (h.pending || h.changed(S.pages));
+    } catch (e) { return false; }
+  };
+  function maybe() {
+    if (!S.pending || S.reloading || S.hold || hostPending()) return;
+    if (document.hidden) { if (!holdingText()) reload(); return; }
+    if (busy()) { showLine(); return; }
+    if (idleFor() >= (S.line ? IDLE_MS : QUIET_MS)) reload();
+  }
+  async function poll() {
+    if (S.reloading || !PAGE) return;
+    if (S.pending) { maybe(); return; }
+    if (S.checking || Date.now() - S.checkedAt < CHECK_MS) return;
+    S.checking = true; S.checkedAt = Date.now();
+    try {
+      const r = await fetch('/api/config', { cache: 'no-store' });
+      const c = r.ok ? await r.json() : null;
+      S.pages = (c && c.pages) || null;
+      if (changed(S.pages)) {
+        S.pending = true;
+        if (!S.timer) S.timer = setInterval(maybe, RECHECK_MS);
+        maybe();
+      }
+    } catch (e) {}
+    finally { S.checking = false; }
+  }
+  document.addEventListener('visibilitychange', () => { if (document.hidden) maybe(); });
+  return Object.assign(S, { deps, changed, holdingText, busy, idleFor, reload, restore, poll, maybe, showLine });
+})();
+// ---- Page update: end shared block ------------------------------------------
+// What this page holds, for the update block above: a comment being written
+// or a passage picked. Where it is goes into the address it comes back to:
+// the same st= a Workspace tab reopens it with (see ensUpdPlace in the reader).
+window.ensUpdBusy = () => _composerOpen || !!_selBtn;
+setInterval(ensUpd.poll, 15000);   // asks every 30 s; a tick that lands a hair early is not skipped
 </script>
 </body>
 </html>
