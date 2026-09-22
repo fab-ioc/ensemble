@@ -60,6 +60,28 @@ class ExpandTest(unittest.TestCase):
         self.assertIn(f"[ref {bad_id}] not found: no message ffffffffffff in room-1a2b3c4d on this hub", out)
         self.assertTrue(out.startswith(f"{bad_room}\n{bad_id}\n\n"))
 
+    def test_a_points_message_keeps_each_items_blocks_inside_it(self):
+        # The chat editor's numbered points: an item's link is written out in
+        # that item, above its images and its [point] line; the head's under
+        # the head. Review comments have the same shape.
+        text = (f"## Points (2)\n\nIntro {URL2}\n\n**1.** first {URL}\n[image] C:\\t\\attachments\\a.png\n\n[point P1]\n\n"
+                f"**2.** second, plain\n\n[point P2]")
+        out = mr.expand_message_refs(text, lookup)
+        self.assertEqual(out, (
+            f"## Points (2)\n\nIntro {URL2}\n\n[ref {URL2}] from sam in \"PO\" at {WHEN}:\n> Ship it\n\n"
+            f"**1.** first {URL}\n\n[ref {URL}] from claude in \"Docs\" at {WHEN}:\n> Merged.\n> Tests pass.\n\n"
+            f"[image] C:\\t\\attachments\\a.png\n\n[point P1]\n\n"
+            f"**2.** second, plain\n\n[point P2]"))
+        # Stripped again: the same message, an item's tail set off by a blank line.
+        self.assertEqual(mr.strip_message_refs(out), text.replace("9ab\n[image]", "9ab\n\n[image]"))
+        self.assertEqual(mr.split_items(out)[1][1], "**2.** second, plain\n\n[point P2]")
+        review = f"## Review comments (1)\n\n**1.** > quoted\n\nsee {URL}"
+        self.assertTrue(mr.expand_message_refs(review, lookup).endswith(f"see {URL}\n\n[ref {URL}] from claude in \"Docs\" at {WHEN}:\n> Merged.\n> Tests pass."))
+        plain = "## Points (1)\n\n**1.** nothing to expand\n\n[point P1]"
+        self.assertIs(mr.expand_message_refs(plain, lookup), plain)
+        self.assertIsNone(mr.split_items("## Points (1)\n\nno item line"))
+        self.assertIsNone(mr.split_items("**1.** no head"))
+
     def test_a_lookup_that_raises_is_not_found(self):
         def boom(room, msg):
             raise OSError("disk")

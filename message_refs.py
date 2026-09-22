@@ -10,6 +10,12 @@ An image pasted into the chat box travels as one line per image at the very
 end of the message, ``[image] <absolute path on the hub>`` (:func:`image_line`),
 so Claude (Read) or Codex (view_image) can open it; the hub adds the lines, the
 room and the transcript keep them, and the balloon shows them as thumbnails.
+A message written as numbered points (``## Points (N)``, one ``**N.**`` item
+each, as the chat's editor writes it; ``## Review comments (N)`` is the same
+shape) keeps each image with its point: the page writes ``[image] <name>``
+inside the item, and :func:`with_images` puts the stored path there. The
+``[ref …]`` blocks of such a message go inside the item whose link they
+expand, above that item's images and its ``[point Pn]`` line.
 
 A task named by its number (``#18``, ``@codex@18``, ``#ED-18``) gets one line
 under the message instead: its title, state, agents, branch and last report.
@@ -48,6 +54,75 @@ _TASK_BLOCK = re.compile(r"\n\n\[ref ((?:@[A-Za-z][\w-]*@|#)(?:[A-Za-z][A-Za-z0-
 
 
 IMAGE_PREFIX = "[image] "
+# A message of numbered items (points.py reads the same head): its head line,
+# and where each item starts, outside code fences.
+ITEMS_HEAD = re.compile(r"^## (?:Review comments|Points) \(\d+\)")
+_ITEM_START = re.compile(r"^\*\*\d+\.\*\*")
+_FENCE = re.compile(r"^\s*(```|~~~)")
+# What ends an item and stays at its end: its images and its point line.
+_TAIL_LINE = re.compile(r"^(?:\[image\] \S.*|\[point P\d{1,5}[a-z]?\][ \t]*)$")
+
+
+def split_items(text: str) -> tuple[str, list[str]] | None:
+    """A numbered-items message as ``(its head, each item)``, or None when it
+    is not one. Items start at ``**N.**`` lines outside code fences; the head
+    is everything above the first."""
+    if not ITEMS_HEAD.match(text or ""):
+        return None
+    lines = text.split("\n")
+    starts, fence = [], None
+    for i, ln in enumerate(lines):
+        f = _FENCE.match(ln)
+        if f:
+            fence = None if fence == f.group(1) else (fence or f.group(1))
+            continue
+        if fence is None and _ITEM_START.match(ln):
+            starts.append(i)
+    if not starts:
+        return None
+    head = "\n".join(lines[:starts[0]]).rstrip()
+    items = ["\n".join(lines[a:b]).strip() for a, b in zip(starts, starts[1:] + [len(lines)])]
+    return head, items
+
+
+def _join_items(head: str, items) -> str:
+    return "\n\n".join(x for x in [head, *items] if x)
+
+
+def _split_tail(item: str) -> tuple[str, str]:
+    """An item as ``(its body, its tail)``: the tail is the run of ``[image]``
+    and ``[point Pn]`` lines (and blank lines) it ends with."""
+    lines = item.rstrip().split("\n")
+    n = len(lines)
+    while n and (not lines[n - 1].strip() or _TAIL_LINE.match(lines[n - 1])):
+        n -= 1
+    if n == len(lines):
+        return item.rstrip(), ""
+    return "\n".join(lines[:n]).rstrip(), "\n".join(lines[n:]).strip()
+
+
+def _with_tail(body: str, tail: str) -> str:
+    return body.rstrip() + ("\n\n" + tail if tail else "")
+
+
+def _per_item(text: str, fn) -> str:
+    """``fn`` applied to the head and to each item's body of a numbered-items
+    message, its tails kept where they are; the text itself when it is not
+    one or nothing changed."""
+    split = split_items(text)
+    if not split:
+        return text
+    head, items = split
+    changed = False
+    out = []
+    for it in items:
+        body, tail = _split_tail(it)
+        done = fn(body)
+        changed = changed or done != body
+        out.append(_with_tail(done, tail))
+    new_head = fn(head) if head else head
+    changed = changed or new_head != head
+    return _join_items(new_head, out) if changed else text
 
 
 def image_line(path: str) -> str:
@@ -55,13 +130,40 @@ def image_line(path: str) -> str:
     return IMAGE_PREFIX + str(path)
 
 
-def with_images(text: str, paths) -> str:
-    """``text`` ending with one ``[image]`` line per path (none: unchanged)."""
-    lines = [image_line(p) for p in paths or [] if str(p or "").strip()]
-    if not lines:
-        return text or ""
-    body = (text or "").rstrip()
-    return (body + "\n\n" if body else "") + "\n".join(lines)
+def with_images(text: str, paths, names=None) -> str:
+    """``text`` with one ``[image]`` line per path (none: unchanged). A path
+    whose image the text already names on a ``[image] <name>`` line of its
+    own (``names[i]``, else the file's name: how a point's images are written
+    inside it) takes that line's place; the rest end the text."""
+    names = list(names or [])
+    lines = (text or "").replace("\r\n", "\n").split("\n")
+    rest, placed = [], False
+    for i, p in enumerate(paths or []):
+        p = str(p or "").strip()
+        if not p:
+            continue
+        want = {IMAGE_PREFIX + n for n in (names[i] if i < len(names) else "", _basename(p)) if n}
+        at = next((k for k, ln in enumerate(lines) if ln.rstrip() in want), None)
+        if at is None:
+            rest.append(image_line(p))
+        else:
+            lines[at] = image_line(p)
+            placed = True
+    body = ("\n".join(lines) if placed else (text or "")).rstrip()
+    if not rest:
+        return body if placed else (text or "")
+    return (body + "\n\n" if body else "") + "\n".join(rest)
+
+
+def _basename(path: str) -> str:
+    return re.split(r"[\\/]", path)[-1]
+
+
+def all_images(text: str) -> list[str]:
+    """Every ``[image] <path>`` line's path, wherever it is in the text (a
+    point's images sit inside their point), in order."""
+    return [ln[len(IMAGE_PREFIX):].strip() for ln in (text or "").replace("\r\n", "\n").split("\n")
+            if ln.startswith(IMAGE_PREFIX) and ln[len(IMAGE_PREFIX):].strip()]
 
 
 def split_images(text: str) -> tuple[str, list[str]]:
@@ -101,7 +203,9 @@ def find_message_refs(text: str) -> list[tuple[str, str, str]]:
 
 def strip_message_refs(text: str) -> str:
     """``text`` without the reference blocks the hub appended to it (its
-    ``[image]`` lines kept)."""
+    ``[image]`` lines kept; a numbered-items message loses each item's)."""
+    if split_items(text or ""):
+        return _per_item(text, strip_message_refs)
     words, images = split_images(text)
     if images:
         out = strip_message_refs(words)
@@ -164,7 +268,11 @@ def expand_message_refs(text: str, lookup, task_lookup=None) -> str:
     with a line saying how much more there is and where. A link the hub cannot
     resolve gets a one-line block saying so; a number that names no task gets
     nothing. A text with no references comes back unchanged. ``[image]``
-    lines stay last, under the blocks."""
+    lines stay last, under the blocks. In a numbered-items message each
+    item's links are written out inside that item, above its images and its
+    ``[point Pn]`` line."""
+    if split_items(text or ""):
+        return _per_item(text, lambda t: expand_message_refs(t, lookup, task_lookup))
     words, images = split_images(text)
     if images:
         out = expand_message_refs(words, lookup, task_lookup)

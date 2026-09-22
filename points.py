@@ -94,7 +94,11 @@ _RE_HEAD = re.compile(
     rf"({POINT_ID}(?:[ \t]*(?:,|&|/|and)[ \t]*{POINT_ID})*)[ \t]*(?:\*\*|__)?[ \t]*:",
     re.M | re.I)
 _ID_IN = re.compile(POINT_ID, re.I)
-_COMMENTS_HEAD = re.compile(r"^## Review comments \(\d+\)")
+# A message of numbered items, one point each: the chat's review comments
+# ("## Review comments (N)") and the editor's points ("## Points (N)").
+# message_refs.split_items reads the same shape for the [ref] blocks.
+_COMMENTS_HEAD = re.compile(r"^## (?:Review comments|Points) \(\d+\)")
+_REVIEW_HEAD = re.compile(r"^## Review comments \(\d+\)")
 _COMMENT_ITEM = re.compile(r"^\*\*\d+\.\*\*")
 _FENCE = re.compile(r"^\s*(```|~~~)")
 _FENCE_ANY = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
@@ -177,8 +181,9 @@ def is_bare_ack(text: str) -> bool:
 
 
 def _comment_items(text: str) -> tuple[str, list[str]] | None:
-    """A "## Review comments (N)" message as (its head, each comment), or None
-    when it is not one. Split at ``**N.**`` lines outside code fences."""
+    """A "## Review comments (N)" or "## Points (N)" message as (its head,
+    each item), or None when it is not one. Split at ``**N.**`` lines outside
+    code fences."""
     if not _COMMENTS_HEAD.match(text or ""):
         return None
     lines = text.split("\n")
@@ -205,7 +210,8 @@ def _first_words(text: str, n: int = _WORDS) -> str:
 
 def _deliverable(text: str, ids: list[str]) -> str:
     """The message as typed to the agent: a ``[point Pn]`` line under it, or
-    under each comment of a review-comments message."""
+    under each item of a review-comments or points message (under the item's
+    own ``[image]`` lines, so each image stays with its point)."""
     if not ids:
         return text
     split = _comment_items(text)
@@ -513,7 +519,7 @@ def take(room: dict, text: str, to: str = "", key: str = "", now: float | None =
         split = _comment_items(body)
         texts = split[1] if split else [body]
         made = [_new_point(led, t, owner, now, key, sid) for t in texts]
-        if split:
+        if split and _REVIEW_HEAD.match(body):
             for p in made:
                 p["comment"] = True
         led["lastPersonAt"] = now

@@ -320,6 +320,45 @@ class Attachments(unittest.TestCase):
 
     # ---- the text ----
 
+    def test_an_image_named_inside_a_point_takes_its_place(self):
+        # The chat editor writes "[image] <name>" inside the point an image
+        # was pasted into; the hub puts the stored path there. Images the
+        # text does not name end it, as ever; split_images sees only those.
+        text = "## Points (2)\n\n**1.** a\n[image] a.png\n\n[point P1]\n\n**2.** b\n\n[point P2]"
+        out = message_refs.with_images(text, ["C:\\t\\attachments\\a.png", "/t/attachments/b.png"], ["a.png", "b.png"])
+        self.assertEqual(out, "## Points (2)\n\n**1.** a\n[image] C:\\t\\attachments\\a.png\n\n[point P1]\n\n**2.** b\n\n[point P2]\n\n[image] /t/attachments/b.png")
+        self.assertEqual(message_refs.split_images(out)[1], ["/t/attachments/b.png"])
+        self.assertEqual(message_refs.all_images(out), ["C:\\t\\attachments\\a.png", "/t/attachments/b.png"])
+        # Without the given names the file's own name places it; a name used
+        # twice takes the first line; an unrelated text is unchanged.
+        self.assertEqual(message_refs.with_images("x\n[image] a.png\n[image] a.png", ["/t/a.png"]), "x\n[image] /t/a.png\n[image] a.png")
+        self.assertEqual(message_refs.with_images("x\n[image] other.png", ["/t/a.png"]), "x\n[image] other.png\n\n[image] /t/a.png")
+        self.assertEqual(message_refs.with_images("plain", ["/t/a.png"], ["a.png"]), "plain\n\n[image] /t/a.png")
+
+    def test_say_places_an_image_inside_its_point(self):
+        _s, a = self.upload(PNG)
+        _s, b = self.upload(JPG, name="b.jpg")
+        body = f"## Points (2)\n\n**1.** first\n[image] {a['name']}\n\n**2.** second\n[image] {b['name']}"
+        status, r = self.json_post("/api/room/say", {"roomId": self.rid, "text": body,
+                                                     "attachments": [{"room": self.rid, "name": a["name"]}, b["name"]]})
+        self.assertEqual(status, 200, r)
+        text = chatroom.get_room(self.rid, public=False)["messages"][-1]["text"]
+        self.assertEqual(text, f"## Points (2)\n\n**1.** first\n[image] {a['path']}\n\n[point P1]\n\n"
+                               f"**2.** second\n[image] {b['path']}\n\n[point P2]")
+
+    def test_a_claude_transcript_gets_a_points_image_back_in_its_point(self):
+        att = self.folder()
+        typed = f"## Points (2)\n\n**1.** first\n[image]\n\n[point P1]\n\n**2.** second\n\n[point P2]\n\n[image]"
+        lines = [
+            {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "[Image #1][Image #2]" + typed}]}},
+            {"type": "user", "isMeta": True, "message": {"role": "user", "content": [{"type": "text", "text": f"[Image: source: {att / 'a.png'}]"}]}},
+            {"type": "user", "isMeta": True, "message": {"role": "user", "content": [{"type": "text", "text": f"[Image: source: {att / 'b.png'}]"}]}},
+        ]
+        t = Path(self.tmp.name) / "p.jsonl"
+        t.write_text("\n".join(json.dumps(x) for x in lines), encoding="utf-8")
+        self.assertEqual([x["text"] for x in dashboard._claude_text_turns(t)], [
+            f"## Points (2)\n\n**1.** first\n[image] {att / 'a.png'}\n\n[point P1]\n\n**2.** second\n\n[point P2]\n\n[image] {att / 'b.png'}"])
+
     def test_with_images_and_split_images(self):
         paths = [r"C:\t\attachments\a.png", "/t/attachments/b c.png"]
         text = message_refs.with_images("hello", paths)

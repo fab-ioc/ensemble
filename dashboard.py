@@ -1558,6 +1558,18 @@ def _claude_image_source(turn: dict, meta: dict) -> None:
         return
     words, paths = message_refs.split_images(turn["text"])
     words = _CLAUDE_IMAGE_TOKEN.sub("", words, count=1)
+    # An image inside a point left a bare "[image]" line in the middle of
+    # the text: the path goes back there, in order. The bare lines at the
+    # end are the message's own trailing images, put back below.
+    lines = words.split("\n")
+    end = len(lines)
+    while end and lines[end - 1].strip() in ("", message_refs.IMAGE_PREFIX.strip()):
+        end -= 1
+    inline = next((i for i in range(end) if lines[i].strip() == message_refs.IMAGE_PREFIX.strip()), None)
+    if inline is not None:
+        lines[inline] = message_refs.image_line(path)
+        turn["text"] = message_refs.with_images("\n".join(lines).rstrip(), paths)
+        return
     lines = words.split("\n")
     while lines and lines[-1].strip() in ("", message_refs.IMAGE_PREFIX.strip()):
         lines.pop()
@@ -1724,6 +1736,14 @@ def attachment_paths(room: dict, given) -> list[str]:
                                       f"An attached image is not on this hub any more: {e.message}")
         out.append(str(attachments.bring(room, DASHBOARD_DIR, path)))
     return out
+
+
+def attachment_names(given) -> list[str]:
+    """The names the page gave its images, in the order of attachment_paths:
+    what a ``[image] <name>`` line written inside a point names."""
+    if not isinstance(given, list):
+        return []
+    return [str((it.get("name") if isinstance(it, dict) else it) or "") for it in given]
 
 
 def refs_expanded_for(room: dict, sender: str) -> bool:
@@ -10012,7 +10032,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(e.status, e.payload())
                     return
                 text, pids = self._take_points(room_full, text, to, key)
-                text = message_refs.with_images(text, paths)
+                text = message_refs.with_images(text, paths, attachment_names(data.get("attachments")))
                 result = chatroom.post_message(rid, chatroom.HUMAN_IDENTITY, text, to=to)
                 if result is not None and key:
                     _SAY_KEYS[(rid, key)] = time.time()
@@ -10281,7 +10301,7 @@ class Handler(BaseHTTPRequestHandler):
                     # for the agent; a retry of a held send keeps its own.
                     if text and not (key and key_held(rid, key)):
                         text, pids = self._take_points(room_full, text, to, key)
-                    text = message_refs.with_images(text, paths)
+                    text = message_refs.with_images(text, paths, attachment_names(data.get("attachments")))
                     result = (self._resume_room(room_full, text=text, to=to, key=key, quiet=True)
                               if quiet else self._resume_room(room_full, text=text, to=to, key=key))
                     if key:

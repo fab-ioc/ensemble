@@ -498,6 +498,36 @@ bell's count.**
   its two.
 - **Phone:** the summary, every control and every link are `--touch-min`.
 
+### Message editor
+
+The chat's box (`#compose` in `session.html`; `edSerialize` and `pointItems` are the reference) is a
+small editor: the words at the top are the message, as ever, and under them **numbered points**, each
+a block with its own text, its own images and its own balloon links. It replaced the `To` drop-down:
+a message is directed with its `@codex` / `@claude` prefix, which the placeholder names.
+
+- **A point is a block:** its number (`--fg-muted`, `--fs-200`, 600) beside a box that grows with its
+  words, its image chips (`.att-chips`, as the head's) and its balloon links as `ref-chip`s under the
+  box, and Move up · Move down · Remove as Subtle buttons (24px, `--fg-subtle`, words in `aria-label`).
+  The block is `--surface` with a `--border` that turns `--border-strong` while a box in it has focus.
+  Nothing in the editor is a colour of its own.
+- **Keys:** Ctrl/⌘+Enter sends; Ctrl/⌘+Shift+Enter adds a point; Enter in a point is a new line in
+  it; Tab in the last point adds one once it has words (otherwise Tab moves focus, as a keyboard user
+  expects); Backspace in an empty point removes it; `1. ` or `- ` typed at the very start of the head
+  turns its words into the first point. The placeholders say so: they are the only hint, so they are
+  `--fg-muted`, never the browser's default grey.
+- **Sent as one message the hub reads:** `## Points (N)`, the head, then one `**N.**` item per point
+  with its `[image] <name>` lines inside it (an empty point is dropped; no point at all sends the
+  words alone). The hub gives each item its own `P` number, chip and reminder (`points.py`), puts each
+  image's stored path in its item (`message_refs.with_images`) and writes an item's `[ref …]` blocks
+  inside that item. The person's balloon shows it as a numbered list, each item with its thumbnails,
+  its link chips and its own point chip and control (`pointItemsHtml`); a folded row says "3 points ·
+  its first words".
+- **The draft** (words, points, images) is kept per room in `sessionStorage` and comes back after a
+  reload; Send clears it. The editor never grows past half of the visible height (`--vv-h` on a
+  phone): it scrolls within itself.
+- **Phone:** every control and chip is `--touch-min`, every box `--fs-400`; the header and info bar
+  step aside while any box in the editor has focus, as they did for the one box.
+
 ### Run chip
 
 `● working` · `● idle` · `not started` · `not running`.
