@@ -1993,7 +1993,7 @@ const ensUpd = window.ensUpd = (() => {   // a window property too: a host page 
     n.id = 'ens-upd';
     n.setAttribute('role', 'status');
     n.innerHTML = 'Ensemble was updated · <button type="button">Reload</button>';
-    n.querySelector('button').addEventListener('click', reload);
+    n.addEventListener('click', reload);   // the whole line; the button is where the keyboard lands
     document.body.appendChild(n);
     S.line = n;
   }
