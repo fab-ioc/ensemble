@@ -715,6 +715,30 @@ async function main() {
       out.frameAfter = await p.evalIn(framePlace);
       out.frameKept = await p.evalIn('!!sessionStorage.getItem(' + frameKey + ')');
       await p.evalIn('document.querySelector("#cdp-frame").remove(); 0');
+      // The PO drawer open over the page, its conversation scrolled up: after
+      // the reload it is open again on the same conversation at the same place.
+      const poFrame = 'document.querySelector("#po-panel iframe.po-session:not([hidden])")';
+      const poDrawn = '(() => { const f = ' + poFrame + '; const w = f && f.contentWindow; return !!(w && w.document.querySelectorAll("#msgs > [data-key]").length >= 20 && w.eval("typeof CHAT_DRAWN !== typeof void 0 && CHAT_DRAWN && UPD_PLACE === null")); })()';
+      const poPlace = '(() => { const f = ' + poFrame + '; const w = f.contentWindow; const b = w.document.querySelector("#msgs"); const k = w.readingPlace(b); return { peek: PO_PEEK, pin: PO_PIN, shown: !document.querySelector("#po-panel").hidden && document.body.classList.contains("po-peek"), room: f.dataset.room, proj: SELECTED_PROJECT, tab: PROJECT_TAB, key: k.key, off: k.off, top: b.scrollTop, stick: w.eval("STICK") }; })()';
+      await p.evalIn('window.__mark = 7; PO_PIN = SELECTED_PROJECT; PO_PEEK = true; renderPo(); 0');
+      await p.until(poDrawn, 15000);
+      await p.evalIn('(() => { const b = ' + poFrame + '.contentWindow.document.querySelector("#msgs"); b.scrollTop = Math.max(0, b.scrollHeight / 2); })(); 0');
+      await sleep(300);
+      out.poBefore = await p.evalIn(poPlace);
+      poke('index.html');
+      await p.evalIn('ensUpd.checkedAt = 0; ensUpd.lastInput = Date.now() - 100000; ' + poFrame + '.contentWindow.ensUpd.lastInput = Date.now() - 100000; ensUpd.poll(); 0');
+      await p.until('window.__mark === undefined && !!window.ensUpd && Object.keys(ensUpd.loaded).length > 0', 15000);
+      await p.until(poDrawn, 15000);
+      await sleep(400);
+      out.poAfter = await p.evalIn(poPlace);
+      // Closed before the reload: closed after it.
+      await p.evalIn('window.__mark = 8; poClosePeek(); 0');
+      poke('index.html');
+      await p.evalIn('ensUpd.checkedAt = 0; ensUpd.lastInput = Date.now() - 100000; ensUpd.poll(); 0');
+      await p.until('window.__mark === undefined && !!window.ensUpd && Object.keys(ensUpd.loaded).length > 0', 15000);
+      await p.until('typeof SELECTED_PROJECT !== "undefined" && !!SELECTED_PROJECT', 15000);
+      await sleep(600);
+      out.poClosed = await p.evalIn('({ peek: PO_PEEK, hidden: document.querySelector("#po-panel").hidden, proj: SELECTED_PROJECT, tab: PROJECT_TAB })');
       // A file index.html does not load (session.html) changes: nothing.
       await p.evalIn('window.__mark = 4; 0');
       poke('session.html');
@@ -813,6 +837,18 @@ class InChrome(unittest.TestCase):
             dashboard.assign_session_project(cls.room, proj["id"])
         except Exception:
             pass
+        # The project's PO: another room of many messages, for the drawer.
+        po = chatroom.create_room("PO talk", [{"identity": "claude", "agent": "claude", "cwd": str(cls.root / "Motors")},
+                                              {"identity": "codex", "agent": "codex", "cwd": str(cls.root / "Motors")}])
+        cls.po_room = po["id"]
+        for i in range(40):
+            chatroom.post_message(cls.po_room, "user" if i % 2 else "claude", f"po message {i}" + chr(10) * 2 + "words " * 40)
+        try:
+            dashboard.assign_session_project(cls.po_room, proj["id"])
+        except Exception:
+            pass
+        ok, why = dashboard.set_project_po(proj["id"], cls.po_room)
+        assert ok, why
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
         cls.server.daemon_threads = True
         cls.port = cls.server.server_address[1]
@@ -910,6 +946,19 @@ class InChrome(unittest.TestCase):
         self.assertLessEqual(abs(g["frameAfter"]["off"] - g["frameBefore2"]["off"]), 2)
         self.assertFalse(g["frameAfter"]["stick"])
         self.assertFalse(g["frameKept"], "put back once")
+
+    def test_the_po_drawer_is_open_again_on_the_same_conversation_after_the_reload(self):
+        g = self.got
+        before, after = dict(g["poBefore"]), dict(g["poAfter"])
+        self.assertEqual(before["room"], self.po_room)
+        self.assertTrue(before["peek"] and before["shown"] and not before["stick"] and before["key"])
+        self.assertEqual(after["room"], before["room"], "the same PO conversation")
+        self.assertEqual((after["peek"], after["shown"], after["pin"]), (True, True, before["pin"]))
+        self.assertEqual((after["proj"], after["tab"]), (before["proj"], before["tab"]))
+        self.assertEqual(after["key"], before["key"], "the same balloon at the top of the drawer's chat")
+        self.assertLessEqual(abs(after["off"] - before["off"]), 2)
+        self.assertFalse(after["stick"])
+        self.assertEqual(g["poClosed"], {"peek": False, "hidden": True, "proj": before["proj"], "tab": before["tab"]}, "closed before: closed after")
 
     def test_the_line_fits_the_top_at_1400_900_500_light_and_dark(self):
         s = self.got["lineSizes"]

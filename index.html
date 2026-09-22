@@ -13351,6 +13351,7 @@ window.ensUpdPlace = () => ({
   proj: SELECTED_PROJECT || '', tab: PROJECT_TAB, sb: SB_DEST,
   sid: document.body.classList.contains('detail-open') && SELECTED_SID ? SELECTED_SID : '',
   top: Math.round((document.scrollingElement || document.documentElement).scrollTop || 0),
+  po: PO_PEEK ? 1 : 0, pin: PO_PEEK ? PO_PIN : '',   // the PO drawer open over the page, and whose PO it shows
 });
 (async () => {
   // Platform first — everything downstream (feature-gating, terminal names) reads it.
@@ -13483,6 +13484,9 @@ window.ensUpdPlace = () => ({
       if (projectById(back.proj)) { SELECTED_PROJECT = back.proj; PROJECT_TAB = back.tab || 'tasks'; }
     }
     SB_DEST = back.sb || '';
+    // The PO drawer open again on the same conversation (its frame's place is
+    // kept under the frame's url); renderPo drops it where it has no PO to show.
+    if (back.po) { PO_PEEK = true; PO_PIN = back.pin || ''; }
     renderRows();
     if (back.sid && ALL_ROWS.some(r => r.sessionId === back.sid)) openDetail(back.sid);
     if (back.top) (document.scrollingElement || document.documentElement).scrollTop = back.top;
