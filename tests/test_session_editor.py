@@ -64,6 +64,8 @@ const ctx = { ROOM: 'room-aaaa0001', console, URL,
   PT_WORD: { open: 'waiting for an answer', answered: 'answered', acked: 'acknowledged', dropped: 'dropped' },
   ptBtn: (id, act, label) => `<button data-pt="${id}" data-pt-act="${act}">${label}</button>`, ackBtn: id => `<button data-pt="${id}" data-pt-act="ack">👍 Ack</button>`,
   ptLink: (mid, text) => `<a class="pt-link" data-mid="${mid}">${text}</a>`, canApprove: () => false,
+  // The shared link block is not loaded: no "..." path resolves here.
+  PATH_ABBR: null, withPathAbbrevs: (t, fn) => { ctx.PATH_ABBR = new Map(); try { return fn(); } finally { ctx.PATH_ABBR = null; } },
 };
 vm.createContext(ctx);
 vm.runInContext(code + `

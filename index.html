@@ -1598,6 +1598,8 @@
   .att-thumb img { display: block; max-height: 120px; max-width: 100%; }
   .att-thumb:hover { border-color: var(--border-strong); }
   .att-thumb:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  /* A picture an agent named by its path: its thumbnail, the path's link under it (the shared link block). */
+  .path-img > .att-thumb { width: fit-content; margin: var(--s-100) 0; }
   .att-chips { display: flex; flex-wrap: wrap; gap: var(--s-100); margin-bottom: var(--s-200); }
   .att-chips[hidden] { display: none; }
   .att-chip { display: inline-flex; align-items: center; gap: var(--s-100); max-width: 100%; box-sizing: border-box; height: 32px; padding: 0 0 0 var(--s-050);
@@ -3140,7 +3142,7 @@ function splitLine(s) {
 const looksFilePath = s => {
   const t = splitLine((s || '').trim()).path;
   if (ABS_PATH_RE.test(t)) return /\S+\.\w{1,8}$/.test(t);
-  return /^(?:\.\.?[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}$/.test(t)
+  return /^(?:\.\.?[\\\/]|…[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}$/.test(t)
       || /^[\w-]+\.(?:md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|png|jpg|jpeg|gif|svg|sh|ps1|sql|xml|log|ini|cfg)$/.test(t);
 };
 // A folder: a Windows, UNC or home path with no extension, or a macOS/Linux
@@ -3194,10 +3196,51 @@ function trimUrlTail(u) {
 }
 const A_NEW = ' target="_blank" rel="noopener"';
 const taskLinkHtml = (id, text) => `<a href="/?task=${id}" data-task="${id}"${A_NEW} class="task-link">${text}</a>`;
-const fileLinkHtml = (p, text, line) => `<a href="${fileHref(p, line)}"${A_NEW} class="file-link">${text}</a>`;
+const fileLinkHtml = (p, text, line, title) => `<a href="${fileHref(p, line)}"${A_NEW} class="file-link"${title ? ` title="${esc(title)}"` : ''}>${text}</a>`;
+// ---- Pictures named by their path, and paths abbreviated with "..." --------
+// A picture an agent names by its path (png, jpg, jpeg, gif, webp, svg, bmp:
+// what /api/file serves as one) shows as a thumbnail wherever the path stands
+// (plain text, a code span, a link target, a list item, words after it), the
+// path's link under it, as the "[image]" thumbnails of static/attach.js. The
+// picture comes straight from /api/file; when the hub has none there (404,
+// or the file is gone) the thumbnail gives way to the link alone, titled so.
+// An agent shortens a path it has already written in full ("...\evidence\
+// task-59\2.png" after "C:\Trading\...\evidence\task-59\1.png"): such an
+// abbreviation ("...\", ".../" or "…/") opens the nearest full path before it
+// in the same message whose folders hold its first folder; with none, it
+// stays text. pathAbbrevs reads the whole message once; mdToHtml sets
+// PATH_ABBR for the render (withPathAbbrevs). tests/test_path_images.py.
+const IMAGE_PATH_RE = /\.(?:png|jpe?g|gif|webp|svg|bmp)$/i;
+const ABBREV_RE = /^(?:\.\.\.|\u2026)[\\\/]/;
+let PATH_ABBR = null;          // during a render: an abbreviation as written -> its full path
+const THUMB_GONE = new Set();  // the paths the hub had no picture for
+const fileSrc = p => fileHref(p, 0).replace(/^\/fileview\?/, '/api/file?');
+const fileName = p => (p || '').split(/[\\\/]/).pop();
+// A path an agent wrote, as the person sees it: an abbreviation resolved
+// (null when it cannot be, so the caller leaves the text alone), a picture
+// as its thumbnail with the link under it, any other file as its link.
+function fileRefHtml(p, text, line) {
+  let full = p;
+  if (ABBREV_RE.test(p)) { full = PATH_ABBR && PATH_ABBR.get(p); if (!full) return null; }
+  if (line || !IMAGE_PATH_RE.test(full)) return fileLinkHtml(full, text, line);
+  if (THUMB_GONE.has(full)) return fileLinkHtml(full, text, 0, 'not found on the hub');
+  const u = fileSrc(full), name = fileName(full);
+  return `<span class="path-img" data-path="${esc(full)}"><a class="att-thumb" href="${u}"${A_NEW} title="${esc(name)}">`
+    + `<img src="${u}" alt="${esc(name)}" loading="lazy" onerror="pathThumbGone(this)"></a>${fileLinkHtml(full, text, 0)}</span>`;
+}
+// The hub had no picture at that path: the link stays, titled so, and the
+// next render of that path draws the link alone.
+function pathThumbGone(img) {
+  const wrap = img && img.closest && img.closest('.path-img');
+  if (!wrap) return;
+  THUMB_GONE.add(wrap.dataset.path || '');
+  const a = wrap.querySelector('a.file-link'), thumb = wrap.querySelector('a.att-thumb');
+  if (a) a.title = 'not found on the hub';
+  if (thumb) thumb.remove();
+}
 function urlLinkHtml(raw, text) {
   const t = urlTarget(raw);
-  if (t.file != null) return fileLinkHtml(t.file, text, t.line);
+  if (t.file != null) return fileRefHtml(t.file, text, t.line);
   if (t.dead) return `<span class="dead-link" title="${esc(t.dead)} is an address on the hub machine itself">${text} (only on the hub machine)</span>`;
   return `<a href="${esc(t.href)}"${A_NEW}>${text}</a>`;
 }
@@ -3210,7 +3253,7 @@ function mdLinkHtml(m, txt, target) {
   const task = t.match(/^(?:\/?\?task=)?(room-[0-9a-f]{8})$/);
   if (task) return taskLinkHtml(task[1], txt);
   if (/^\/(?:fileview|session)?(?:\?|$)/.test(t)) return `<a href="${esc(t)}"${A_NEW}>${txt}</a>`;
-  if (looksFilePath(t) || looksDirPath(t)) { const s = splitLine(t); return fileLinkHtml(s.path, txt, s.line); }
+  if (looksFilePath(t) || looksDirPath(t)) { const s = splitLine(t); return fileRefHtml(s.path, txt, s.line) ?? m; }
   return m;
 }
 // A `code span` that names a place is a link too, and still reads as code.
@@ -3219,7 +3262,7 @@ function codeSpanHtml(body) {
   const t = body.trim();
   if (/^room-[0-9a-f]{8}$/.test(t)) return taskLinkHtml(t, code);
   if (/^(?:https?|file):\/\/\S+$/i.test(t)) return urlLinkHtml(t, code);
-  if (looksFilePath(t) || looksDirPath(t)) { const s = splitLine(t); return fileLinkHtml(s.path, code, s.line); }
+  if (looksFilePath(t) || looksDirPath(t)) { const s = splitLine(t); return fileRefHtml(s.path, code, s.line) ?? code; }
   return code;
 }
 // Running text, already escaped, in one pass so nothing is linked twice. The
@@ -3249,7 +3292,7 @@ const LINK_RE = (() => {
     pre + String.raw`((?:https?|file):\/\/[^\s<*]+)`,
     pre + String.raw`((?:[A-Za-z]:[\\\/]|\\\\)(?:` + dir + String.raw`[\\\/])*` + file + line + String.raw`)(?![\w\\\/-])`,
     String.raw`(^|[\s*]|(?<!` + nixCh + String.raw`)[(_])((?:~\/|\/)` + nixCh + String.raw`*\.\w{1,8}` + line + String.raw`)(?![\w\\\/-])`,
-    String.raw`(^|[\s(*]|(?<![\w.\\\/-])_)((?:\.\.?[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}` + line
+    String.raw`(^|[\s(*]|(?<![\w.\\\/-])_)((?:\.\.?[\\\/]|…[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}` + line
       + String.raw`|[\w-]+\.(?:md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|png|jpg|jpeg|gif|svg|sh|ps1|sql|xml|log|ini|cfg)` + line + String.raw`)(?=[\s.,;:)\]]|$)`,
     String.raw`\b(room-[0-9a-f]{8})\b`,
   ].join('|'), 'g');
@@ -3266,11 +3309,56 @@ function linkify(t, keep) {
     if (url != null) { const [u, tail] = trimUrlTail(url); return p1 + put(urlLinkHtml(u, u)) + tail; }
     if (room != null) return put(taskLinkHtml(room, room));
     if (win != null && !winPathSure(win)) return m;
-    const pth = win ?? nix ?? rel, s = splitLine(unescPath(pth));
-    return (p2 ?? p3 ?? p4) + put(fileLinkHtml(s.path, pth, s.line));
+    const pth = win ?? nix ?? rel, s = splitLine(unescPath(pth)), h = fileRefHtml(s.path, pth, s.line);
+    return h ? (p2 ?? p3 ?? p4) + put(h) : m;
   });
 }
 const unlinkify = (t, keep) => t.replace(new RegExp(LINK_A + '(\\d+)' + LINK_Z, 'g'), (m, i) => keep[+i] ?? m);
+// The full path an abbreviation stands for, from the full paths before it
+// (nearest last): the one whose folders hold the abbreviation's first folder,
+// at the deepest place where the most of its folders follow in order.
+function abbrevFull(abbr, bases) {
+  const parts = abbr.replace(ABBREV_RE, '').split(/[\\\/]/).filter(Boolean), dirs = parts.slice(0, -1);
+  if (!dirs.length) return '';
+  const same = (a, b) => a.toLowerCase() === b.toLowerCase();
+  for (let i = bases.length - 1; i >= 0; i--) {
+    const b = bases[i], sep = b.includes('\\') ? '\\' : '/', bp = b.split(/[\\\/]/);
+    const bdirs = /[\\\/]$/.test(b) || looksDirPath(b) ? bp.filter((x, k) => x || k < 2) : bp.slice(0, -1);
+    let best = -1, bestLen = 0;
+    for (let j = 0; j < bdirs.length; j++) {
+      if (!same(bdirs[j], dirs[0])) continue;
+      let k = 1;
+      while (k < dirs.length && j + k < bdirs.length && same(bdirs[j + k], dirs[k])) k++;
+      if (k >= bestLen) { best = j; bestLen = k; }
+    }
+    if (best >= 0) return bdirs.slice(0, best).concat(parts).join(sep);
+  }
+  return '';
+}
+// Every abbreviation in a text, as written, with the full path it stands for:
+// the message read once, in order, its code spans, link targets, file URLs
+// and paths in running text taken as this block takes them.
+function pathAbbrevs(text) {
+  const bases = [], out = new Map();
+  const s = esc(String(text ?? '').replace(/\r\n/g, '\n'));
+  const re = new RegExp('`([^`\\n]+)`|' + LINK_RE.source, 'g');
+  for (const m of s.matchAll(re)) {
+    const [, code, mdTxt, mdUrl, , url, , win, , nix, , rel] = m;
+    let p = code != null ? code : mdTxt != null ? mdUrl.trim().replace(/^&lt;([\s\S]*)&gt;$/, '$1') : win != null ? (winPathSure(win) ? win : '') : (nix ?? rel ?? '');
+    if (url != null) { const t = urlTarget(trimUrlTail(url)[0]); p = t.file || ''; }
+    p = splitLine(unescPath(p).trim()).path;
+    if (!p) continue;
+    if (ABBREV_RE.test(p)) { const full = abbrevFull(p, bases); if (full) out.set(p, full); }
+    else if (ABS_PATH_RE.test(p) && (looksFilePath(p) || looksDirPath(p))) bases.push(p);
+  }
+  return out;
+}
+// One render of a whole message: its abbreviations resolve while fn runs.
+function withPathAbbrevs(text, fn) {
+  const was = PATH_ABBR;
+  PATH_ABBR = pathAbbrevs(text);
+  try { return fn(); } finally { PATH_ABBR = was; }
+}
 // ---- Links in rendered text: end shared block ------------------------------
 let FILE_LINK_ROOM = '';   // room id woven into file links so /fileview can send comments back
 let FILE_LINK_BASE = '';   // the task folder relative paths resolve against
@@ -3287,6 +3375,8 @@ function mdIn(r, text) {
 const operatorLabel = () => (typeof PREFS !== 'undefined' && PREFS && (PREFS.operatorName || PREFS.operatorNickname)) || 'you';
 const identLabel = id => `<span class="mention">@${esc(id === 'user' ? operatorLabel() : id)}</span>`;
 function mdToHtml(src) {
+  // The whole message read once for the paths its "..." abbreviations stand for.
+  if (!PATH_ABBR) return withPathAbbrevs(src, () => mdToHtml(src));
   const codes = [];
   const ph = h => _MDA + (codes.push(h) - 1) + _MDZ;
   let s = (src ?? '').replace(/\r\n/g, '\n');

@@ -256,8 +256,10 @@ class FileViewRendering(unittest.TestCase):
         # One backslash: the opener is a character.
         self.assertTrue(p[0].startswith("<p>[safe]("), p[0])
         self.assertNotIn(">safe</a>", p[0], "an escaped [ starts no link")
-        self.assertTrue(p[1].startswith('<p>!<a href="/fileview?path=C%3A%5Cp%5Cdocs%5Cimg.png"'), "what is left is a link, as on GitHub")
-        self.assertNotIn("<img", p[1], "an escaped ! starts no image")
+        # What is left is a link, as on GitHub; a picture's path is its thumbnail with the link under it.
+        self.assertTrue(p[1].startswith('<p>!<span class="path-img" data-path="img.png"><a class="att-thumb" href="/api/file?path=C%3A%5Cp%5Cdocs%5Cimg.png"'), p[1])
+        self.assertIn('<a href="/fileview?path=C%3A%5Cp%5Cdocs%5Cimg.png"', p[1])
+        self.assertNotIn('<img class="md-img"', p[1], "an escaped ! starts no image")
         self.assertEqual(p[2], "<p>`code`</p>")
         self.assertIn(r'<code class="ic">C:\dir\</code>', p[3], "a code span keeps its backslashes")
         self.assertTrue(p[3].endswith(" and *not em*</p>"), p[3])
