@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import unittest
 from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlparse
 
 ROOT = Path(__file__).resolve().parent.parent
 PAGES = {n: (ROOT / n).read_text(encoding="utf-8").replace("\r\n", "\n") for n in ("session.html", "index.html", "fileview.html")}
@@ -87,6 +88,21 @@ CASES = {
     "quote": "`C:\\x\\ev\\a.png`\n\n> `...\\ev\\b.png`",
     "image": "words\n[image] C:\\t\\attachments\\room-aaaa0001\\shot.png",
     "gone": "`C:\\x\\ev\\gone.png`",
+    # Review 1: each occurrence stands for what was written before it, not the last answer.
+    "twice": "`C:\\one\\shots\\a.png` then `...\\shots\\x.png` then `C:\\two\\shots\\a.png` then `...\\shots\\x.png`",
+    "firstbare": "`...\\shots\\x.png` then `C:\\one\\shots\\a.png` then `...\\shots\\x.png`",
+    "kinds": "`C:\\one\\s\\a.png` ...\\s\\x.png `C:\\two\\s\\a.png` `...\\s\\x.png`",
+    "pointstwice": "## Points (3)\n\n**1.** `...\\ev\\b.png`\n\n**2.** `C:\\x\\ev\\a.png`\n\n**3.** `...\\ev\\b.png`",
+    "fenced": "`C:\\one\\shots\\a.png`\n\n```\n...\\shots\\f.png\nC:\\two\\shots\\g.png\n```\n\n`...\\shots\\x.png`",
+    # Review 1: a full path, then an abbreviation, on one line of running text.
+    "sameline": "C:\\one\\shots\\a.png then ...\\shots\\x.png",
+    "spaces": "D:\\work\\Ensemble Dashboard\\shots\\a.png then ...\\shots\\x.png",
+    # Review 1: a file URL in a code span or a link target is a full path too.
+    "fileurlcode": "`file:///C:/one/shots/a.png` then `.../shots/x.png`",
+    "fileurllink": "[a](file:///C:/one/shots/a.png) then `.../shots/x.png`",
+    # Review 1: every picture kind by its bare name, as written or as a camera writes it.
+    "barecode": "`shot.webp` and `shot.bmp` and `shot.PNG` and `shot.JPG` and `shot.svg`",
+    "baretext": "shot.webp and shot.bmp and shot.PNG and shot.gif and shot.jpeg",
 }
 
 JS = r"""
@@ -101,23 +117,36 @@ vm.runInContext(code + `
 const out = {};
 for (const [k, t] of Object.entries(cases)) out[k] = mdToHtml(t);
 // The hub had no picture at gone.png: the thumbnail gives way to the link.
-const link = { title: '' }, thumb = { removed: false, remove() { this.removed = true; } };
-const wrap = { dataset: { path: 'C:\\\\x\\\\ev\\\\gone.png' }, querySelector: sel => sel === 'a.file-link' ? link : sel === 'a.att-thumb' ? thumb : null };
-pathThumbGone({ closest: sel => sel === '.path-img' ? wrap : null });
-out.goneDom = { title: link.title, removed: thumb.removed };
+const srcOf = h => (h.match(/<img src="([^"]*)"/) || [])[1] || '';
+const gone = src => {
+  const link = { title: '' }, thumb = { removed: false, remove() { this.removed = true; } };
+  const wrap = { querySelector: sel => sel === 'a.file-link' ? link : sel === 'a.att-thumb' ? thumb : null };
+  pathThumbGone({ closest: sel => sel === '.path-img' ? wrap : null, getAttribute: a => a === 'src' ? src : null });
+  return { title: link.title, removed: thumb.removed };
+};
+out.goneDom = gone(srcOf(out.gone));
 out.goneAfter = mdToHtml(cases.gone);
 out.goneOther = mdToHtml('\`C:\\\\x\\\\ev\\\\a.png\`');
+// A relative path the hub had nothing for in one task is still a picture in another.
+out.relA = mdToHtml('\`shots/a.png\`');
+out.relADom = gone(srcOf(out.relA));
+out.relAAfter = mdToHtml('\`shots/a.png\`');
+ROOM = 'room-bbbb0002'; ROOM_OBJ = { cwd: 'C:\\\\u' };
+out.relB = mdToHtml('\`shots/a.png\`');
+ROOM = 'room-aaaa0001'; ROOM_OBJ = { cwd: 'C:\\\\t' };
 globalThis.cases = cases; globalThis.out = out;
 `, ctx);
 console.log(JSON.stringify(ctx.out));
 """
 
-THUMB = re.compile(r'<span class="path-img" data-path="([^"]*)"><a class="att-thumb" href="([^"]*)" target="_blank" rel="noopener" title="([^"]*)">'
+THUMB = re.compile(r'<span class="path-img"><a class="att-thumb" href="([^"]*)" target="_blank" rel="noopener" title="([^"]*)">'
                    r'<img src="([^"]*)" alt="([^"]*)" loading="lazy" onerror="pathThumbGone\(this\)"></a><a href="([^"]*)" target="_blank" rel="noopener" class="file-link"[^>]*>')
 
 
 def thumbs(html: str) -> list[dict]:
-    return [{"path": m[0], "src": m[3], "alt": m[4], "href": m[5], "title": m[2]} for m in THUMB.findall(html)]
+    """Each thumbnail's request, link and name; path is what the request asks the hub for."""
+    return [{"path": unquote(parse_qs(urlparse(m[2]).query).get("path", [""])[0]), "src": m[2], "alt": m[3], "href": m[4], "title": m[1]}
+            for m in THUMB.findall(html)]
 
 
 @unittest.skipUnless(NODE, "node is not installed")
@@ -210,7 +239,7 @@ class PathImages(unittest.TestCase):
         self.assertIn('<ol class="pt-items">', self.out["points"])
         self.assertIn("</span> please</div></li>", self.out["points"])
         self.assertEqual([x["path"] for x in thumbs(self.out["quote"])], ["C:\\x\\ev\\a.png", "C:\\x\\ev\\b.png"])
-        self.assertIn('&gt; <span class="path-img" data-path="C:\\x\\ev\\b.png">', self.out["quote"], "in a quoted block too")
+        self.assertIn('&gt; <span class="path-img"><a class="att-thumb" href="/api/file?path=C%3A%5Cx%5Cev%5Cb.png', self.out["quote"], "in a quoted block too")
 
     def test_a_picture_the_hub_has_not_got_is_its_link_titled_so(self):
         self.assertEqual(len(thumbs(self.out["gone"])), 1, "drawn as a thumbnail first")
@@ -218,6 +247,43 @@ class PathImages(unittest.TestCase):
         self.assertNotIn("<img", self.out["goneAfter"])
         self.assertIn('class="file-link" title="not found on the hub"><code class="ic">C:\\x\\ev\\gone.png</code></a>', self.out["goneAfter"])
         self.assertEqual(len(thumbs(self.out["goneOther"])), 1, "only that path")
+
+    def test_each_occurrence_stands_for_what_was_written_before_it(self):
+        self.assertEqual([x["path"] for x in thumbs(self.out["twice"])],
+                         ["C:\\one\\shots\\a.png", "C:\\one\\shots\\x.png", "C:\\two\\shots\\a.png", "C:\\two\\shots\\x.png"])
+        h = self.out["firstbare"]
+        self.assertEqual([x["path"] for x in thumbs(h)], ["C:\\one\\shots\\a.png", "C:\\one\\shots\\x.png"])
+        self.assertTrue(h.startswith('<div class="ln"><code class="ic">...\\shots\\x.png</code> then'), "the first occurrence stays text")
+        self.assertEqual([x["path"] for x in thumbs(self.out["kinds"])], ["C:\\one\\s\\a.png", "C:\\one\\s\\x.png", "C:\\two\\s\\a.png", "C:\\two\\s\\x.png"],
+                         "in running text and in code, each in its own order")
+        h = self.out["pointstwice"]
+        self.assertEqual([x["path"] for x in thumbs(h)], ["C:\\x\\ev\\a.png", "C:\\x\\ev\\b.png"])
+        self.assertIn('<li class="pt-item"><div class="ln"><code class="ic">...\\ev\\b.png</code></div></li>', h, "the first item stays text")
+        self.assertEqual([x["path"] for x in thumbs(self.out["fenced"])], ["C:\\one\\shots\\a.png", "C:\\one\\shots\\x.png"],
+                         "a fenced block neither gives nor takes a path")
+
+    def test_a_full_path_then_an_abbreviation_on_one_line_of_running_text(self):
+        self.assertEqual([x["path"] for x in thumbs(self.out["sameline"])], ["C:\\one\\shots\\a.png", "C:\\one\\shots\\x.png"])
+        self.assertRegex(self.out["sameline"], r'a\.png</a></span> then <span class="path-img"')
+        self.assertEqual([x["path"] for x in thumbs(self.out["spaces"])], ["D:\\work\\Ensemble Dashboard\\shots\\a.png", "D:\\work\\Ensemble Dashboard\\shots\\x.png"],
+                         "a name with spaces is still one name")
+
+    def test_a_file_url_written_in_full_counts(self):
+        for key in ("fileurlcode", "fileurllink"):
+            self.assertEqual([x["path"] for x in thumbs(self.out[key])], ["C:/one/shots/a.png", "C:/one/shots/x.png"], key)
+
+    def test_every_picture_kind_by_its_bare_name(self):
+        self.assertEqual([x["alt"] for x in thumbs(self.out["barecode"])], ["shot.webp", "shot.bmp", "shot.PNG", "shot.JPG", "shot.svg"])
+        self.assertEqual([x["alt"] for x in thumbs(self.out["baretext"])], ["shot.webp", "shot.bmp", "shot.PNG", "shot.gif", "shot.jpeg"])
+
+    def test_a_picture_the_hub_has_not_got_is_gone_for_that_task_only(self):
+        self.assertEqual(len(thumbs(self.out["relA"])), 1)
+        self.assertEqual(self.out["relADom"], {"title": "not found on the hub", "removed": True})
+        self.assertNotIn("<img", self.out["relAAfter"])
+        self.assertIn('title="not found on the hub"', self.out["relAAfter"])
+        t = thumbs(self.out["relB"])
+        self.assertEqual(len(t), 1, "the same name in another task is asked for again")
+        self.assertIn("room=room-bbbb0002&cwd=C%3A%5Cu", t[0]["src"])
 
     def test_a_pasted_screenshot_is_as_it_was(self):
         h = self.out["image"]
@@ -238,8 +304,8 @@ class ThreePages(unittest.TestCase):
 
     def test_the_points_of_a_balloon_are_drawn_in_its_context(self):
         self.assertIn("withPathAbbrevs(m.text, () => itemsHtml(it, bars, md))", js_function("pointItemsHtml"))
-        self.assertIn("const mdKey = t => PATH_ABBR && PATH_ABBR.size ? t + '\\u0000' + [...PATH_ABBR].join('\\u0000') : t;", SRC,
-                      "an item with a resolved path is kept with its paths, not by its words alone")
+        self.assertIn("let h = inCtx() ? null : MD_CACHE.get(t); if (h == null) h = mdToHtml(t); if (!inCtx()) used.set(t, h);", SRC,
+                      "an item of a message with abbreviations is drawn in its context, never from or into the cache")
         self.assertIn("+ '|' + THUMB_GONE.size;", SRC, "a picture gone from the hub redraws as its link")
 
 

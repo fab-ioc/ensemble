@@ -257,7 +257,7 @@ class FileViewRendering(unittest.TestCase):
         self.assertTrue(p[0].startswith("<p>[safe]("), p[0])
         self.assertNotIn(">safe</a>", p[0], "an escaped [ starts no link")
         # What is left is a link, as on GitHub; a picture's path is its thumbnail with the link under it.
-        self.assertTrue(p[1].startswith('<p>!<span class="path-img" data-path="img.png"><a class="att-thumb" href="/api/file?path=C%3A%5Cp%5Cdocs%5Cimg.png"'), p[1])
+        self.assertTrue(p[1].startswith('<p>!<span class="path-img"><a class="att-thumb" href="/api/file?path=C%3A%5Cp%5Cdocs%5Cimg.png"'), p[1])
         self.assertIn('<a href="/fileview?path=C%3A%5Cp%5Cdocs%5Cimg.png"', p[1])
         self.assertNotIn('<img class="md-img"', p[1], "an escaped ! starts no image")
         self.assertEqual(p[2], "<p>`code`</p>")

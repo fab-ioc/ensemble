@@ -3139,11 +3139,15 @@ function splitLine(s) {
   return m && /\.\w{1,8}$/.test(s.slice(0, m.index))
     ? { path: s.slice(0, m.index), line: +m[1] } : { path: s || '', line: 0 };
 }
+// A bare name is a file by its extension: the kinds agents write about, and
+// every picture /api/file serves (as a camera or Windows writes it too).
+const BARE_EXT = 'md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|sh|ps1|sql|xml|log|ini|cfg'
+  + '|png|jpg|jpeg|gif|webp|svg|bmp|PNG|JPG|JPEG|GIF|WEBP|SVG|BMP';
+const BARE_RE = new RegExp('^[\\w-]+\\.(?:' + BARE_EXT + ')$');
 const looksFilePath = s => {
   const t = splitLine((s || '').trim()).path;
   if (ABS_PATH_RE.test(t)) return /\S+\.\w{1,8}$/.test(t);
-  return /^(?:\.\.?[\\\/]|…[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}$/.test(t)
-      || /^[\w-]+\.(?:md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|png|jpg|jpeg|gif|svg|sh|ps1|sql|xml|log|ini|cfg)$/.test(t);
+  return /^(?:\.\.?[\\\/]|…[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}$/.test(t) || BARE_RE.test(t);
 };
 // A folder: a Windows, UNC or home path with no extension, or a macOS/Linux
 // home path ending in a separator. Only where it stands alone (a code span, a
@@ -3207,40 +3211,46 @@ const fileLinkHtml = (p, text, line, title) => `<a href="${fileHref(p, line)}"${
 // An agent shortens a path it has already written in full ("...\evidence\
 // task-59\2.png" after "C:\Trading\...\evidence\task-59\1.png"): such an
 // abbreviation ("...\", ".../" or "…/") opens the nearest full path before it
-// in the same message whose folders hold its first folder; with none, it
-// stays text. pathAbbrevs reads the whole message once; mdToHtml sets
-// PATH_ABBR for the render (withPathAbbrevs). tests/test_path_images.py.
+// in the same message whose folders hold its first folder; with none, that
+// occurrence stays text. pathAbbrevs reads the whole message once; mdToHtml
+// sets PATH_ABBR for the render (withPathAbbrevs). tests/test_path_images.py.
 const IMAGE_PATH_RE = /\.(?:png|jpe?g|gif|webp|svg|bmp)$/i;
 const ABBREV_RE = /^(?:\.\.\.|\u2026)[\\\/]/;
-let PATH_ABBR = null;          // during a render: an abbreviation as written -> its full path
-const THUMB_GONE = new Set();  // the paths the hub had no picture for
+let PATH_ABBR = null;          // during a render: what each abbreviation stands for, occurrence by occurrence
+const THUMB_GONE = new Set();  // the picture requests (a path in a task) the hub had nothing for
 const fileSrc = p => fileHref(p, 0).replace(/^\/fileview\?/, '/api/file?');
 const fileName = p => (p || '').split(/[\\\/]/).pop();
-// A path an agent wrote, as the person sees it: an abbreviation resolved
-// (null when it cannot be, so the caller leaves the text alone), a picture
-// as its thumbnail with the link under it, any other file as its link.
-function fileRefHtml(p, text, line) {
+// A path an agent wrote, as the person sees it: an abbreviation resolved to
+// what this occurrence of it stands for (null when nothing, so the caller
+// leaves the text alone), a picture as its thumbnail with the link under it,
+// any other file as its link. `kind` is 'code' for a code span, else 'text':
+// the render meets each kind in the order pathAbbrevs read it.
+function fileRefHtml(p, text, line, kind) {
   let full = p;
-  if (ABBREV_RE.test(p)) { full = PATH_ABBR && PATH_ABBR.get(p); if (!full) return null; }
+  if (ABBREV_RE.test(p)) {
+    const q = PATH_ABBR && PATH_ABBR[kind === 'code' ? 'code' : 'text'].get(p);
+    full = q && q.length ? q.shift() : '';
+    if (!full) return null;
+  }
   if (line || !IMAGE_PATH_RE.test(full)) return fileLinkHtml(full, text, line);
-  if (THUMB_GONE.has(full)) return fileLinkHtml(full, text, 0, 'not found on the hub');
   const u = fileSrc(full), name = fileName(full);
-  return `<span class="path-img" data-path="${esc(full)}"><a class="att-thumb" href="${u}"${A_NEW} title="${esc(name)}">`
+  if (THUMB_GONE.has(u)) return fileLinkHtml(full, text, 0, 'not found on the hub');
+  return `<span class="path-img"><a class="att-thumb" href="${u}"${A_NEW} title="${esc(name)}">`
     + `<img src="${u}" alt="${esc(name)}" loading="lazy" onerror="pathThumbGone(this)"></a>${fileLinkHtml(full, text, 0)}</span>`;
 }
-// The hub had no picture at that path: the link stays, titled so, and the
-// next render of that path draws the link alone.
+// The hub had no picture for that request (the path, in that task): the
+// link stays, titled so, and the next render of it draws the link alone.
 function pathThumbGone(img) {
   const wrap = img && img.closest && img.closest('.path-img');
   if (!wrap) return;
-  THUMB_GONE.add(wrap.dataset.path || '');
+  THUMB_GONE.add(img.getAttribute('src') || '');
   const a = wrap.querySelector('a.file-link'), thumb = wrap.querySelector('a.att-thumb');
   if (a) a.title = 'not found on the hub';
   if (thumb) thumb.remove();
 }
-function urlLinkHtml(raw, text) {
+function urlLinkHtml(raw, text, kind) {
   const t = urlTarget(raw);
-  if (t.file != null) return fileRefHtml(t.file, text, t.line);
+  if (t.file != null) return fileRefHtml(t.file, text, t.line, kind);
   if (t.dead) return `<span class="dead-link" title="${esc(t.dead)} is an address on the hub machine itself">${text} (only on the hub machine)</span>`;
   return `<a href="${esc(t.href)}"${A_NEW}>${text}</a>`;
 }
@@ -3249,11 +3259,11 @@ function urlLinkHtml(raw, text) {
 function mdLinkHtml(m, txt, target) {
   const t = unescPath(target.trim().replace(/^&lt;([\s\S]*)&gt;$/, '$1'));
   if (/^#/.test(t) || /^mailto:/i.test(t)) return `<a href="${esc(t)}">${txt}</a>`;
-  if (/^(?:https?|file):/i.test(t)) return urlLinkHtml(t, txt);
+  if (/^(?:https?|file):/i.test(t)) return urlLinkHtml(t, txt, 'text');
   const task = t.match(/^(?:\/?\?task=)?(room-[0-9a-f]{8})$/);
   if (task) return taskLinkHtml(task[1], txt);
   if (/^\/(?:fileview|session)?(?:\?|$)/.test(t)) return `<a href="${esc(t)}"${A_NEW}>${txt}</a>`;
-  if (looksFilePath(t) || looksDirPath(t)) { const s = splitLine(t); return fileRefHtml(s.path, txt, s.line) ?? m; }
+  if (looksFilePath(t) || looksDirPath(t)) { const s = splitLine(t); return fileRefHtml(s.path, txt, s.line, 'text') ?? m; }
   return m;
 }
 // A `code span` that names a place is a link too, and still reads as code.
@@ -3261,8 +3271,8 @@ function codeSpanHtml(body) {
   const code = `<code class="ic">${esc(body)}</code>`;
   const t = body.trim();
   if (/^room-[0-9a-f]{8}$/.test(t)) return taskLinkHtml(t, code);
-  if (/^(?:https?|file):\/\/\S+$/i.test(t)) return urlLinkHtml(t, code);
-  if (looksFilePath(t) || looksDirPath(t)) { const s = splitLine(t); return fileRefHtml(s.path, code, s.line) ?? code; }
+  if (/^(?:https?|file):\/\/\S+$/i.test(t)) return urlLinkHtml(t, code, 'code');
+  if (looksFilePath(t) || looksDirPath(t)) { const s = splitLine(t); return fileRefHtml(s.path, code, s.line, 'code') ?? code; }
   return code;
 }
 // Running text, already escaped, in one pass so nothing is linked twice. The
@@ -3275,6 +3285,8 @@ function codeSpanHtml(body) {
 // with spaces reads as a name when it starts with a capital or a digit and
 // has at most four words ("New folder", "War of the Worlds.md"). A code span
 // or [text](target) takes any path as written. A path's & arrives as &amp;.
+// A word of a name never begins an abbreviation ("...\" or "…/"): "C:\one\a.png
+// then ...\x.png" is a path, then an abbreviation, not one name with spaces.
 // A markdown target may hold one level of brackets: [x](https://w/Foo_(bar)).
 // Linear on any line: the expression is tried from every character, so no
 // part of it may scan past the place where the next try would start. A link's
@@ -3284,7 +3296,7 @@ function codeSpanHtml(body) {
 const winPathSure = p => p.split(/[\\\/]/).every(s => !s.includes(' ') || (/^[A-Z0-9]/.test(s) && s.split(' ').length <= 4));
 const LINK_RE = (() => {
   const c = String.raw`(?:[^\s"'<>|?*,;:)\]\\\/&]|&amp;)`, f = String.raw`(?:[^\s"'<>|?*,;:)\]\\\/&.]|&amp;)`;
-  const dir = `${c}+(?: ${c}+)*`, file = `(?:${f}+ )*${c}*\\.\\w{1,8}`;
+  const dir = `${c}+(?: (?!(?:\\.\\.\\.|\\u2026)[\\\\\\/])${c}+)*`, file = `(?:${f}+ )*${c}*\\.\\w{1,8}`;
   const line = String.raw`(?::\d+(?::\d+)?)?`, pre = String.raw`(^|[\s(*_])`;
   const nixCh = String.raw`(?:[^\s"'<>|?*,;)\]&]|&amp;)`;
   return new RegExp([
@@ -3293,7 +3305,7 @@ const LINK_RE = (() => {
     pre + String.raw`((?:[A-Za-z]:[\\\/]|\\\\)(?:` + dir + String.raw`[\\\/])*` + file + line + String.raw`)(?![\w\\\/-])`,
     String.raw`(^|[\s*]|(?<!` + nixCh + String.raw`)[(_])((?:~\/|\/)` + nixCh + String.raw`*\.\w{1,8}` + line + String.raw`)(?![\w\\\/-])`,
     String.raw`(^|[\s(*]|(?<![\w.\\\/-])_)((?:\.\.?[\\\/]|…[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}` + line
-      + String.raw`|[\w-]+\.(?:md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|png|jpg|jpeg|gif|svg|sh|ps1|sql|xml|log|ini|cfg)` + line + String.raw`)(?=[\s.,;:)\]]|$)`,
+      + String.raw`|[\w-]+\.(?:` + BARE_EXT + String.raw`)` + line + String.raw`)(?=[\s.,;:)\]]|$)`,
     String.raw`\b(room-[0-9a-f]{8})\b`,
   ].join('|'), 'g');
 })();
@@ -3306,50 +3318,66 @@ function linkify(t, keep) {
   t = t.replace(LINK_MARK_RE, put);
   return t.replace(LINK_RE, (m, mdTxt, mdUrl, p1, url, p2, win, p3, nix, p4, rel, room) => {
     if (mdTxt != null) { const h = mdLinkHtml(m, mdTxt, mdUrl); return h === m ? m : put(h); }
-    if (url != null) { const [u, tail] = trimUrlTail(url); return p1 + put(urlLinkHtml(u, u)) + tail; }
+    if (url != null) { const [u, tail] = trimUrlTail(url); return p1 + put(urlLinkHtml(u, u, 'text')) + tail; }
     if (room != null) return put(taskLinkHtml(room, room));
     if (win != null && !winPathSure(win)) return m;
-    const pth = win ?? nix ?? rel, s = splitLine(unescPath(pth)), h = fileRefHtml(s.path, pth, s.line);
+    const pth = win ?? nix ?? rel, s = splitLine(unescPath(pth)), h = fileRefHtml(s.path, pth, s.line, 'text');
     return h ? (p2 ?? p3 ?? p4) + put(h) : m;
   });
 }
 const unlinkify = (t, keep) => t.replace(new RegExp(LINK_A + '(\\d+)' + LINK_Z, 'g'), (m, i) => keep[+i] ?? m);
-// The full path an abbreviation stands for, from the full paths before it
-// (nearest last): the one whose folders hold the abbreviation's first folder,
-// at the deepest place where the most of its folders follow in order.
-function abbrevFull(abbr, bases) {
-  const parts = abbr.replace(ABBREV_RE, '').split(/[\\\/]/).filter(Boolean), dirs = parts.slice(0, -1);
-  if (!dirs.length) return '';
-  const same = (a, b) => a.toLowerCase() === b.toLowerCase();
-  for (let i = bases.length - 1; i >= 0; i--) {
-    const b = bases[i], sep = b.includes('\\') ? '\\' : '/', bp = b.split(/[\\\/]/);
-    const bdirs = /[\\\/]$/.test(b) || looksDirPath(b) ? bp.filter((x, k) => x || k < 2) : bp.slice(0, -1);
-    let best = -1, bestLen = 0;
-    for (let j = 0; j < bdirs.length; j++) {
-      if (!same(bdirs[j], dirs[0])) continue;
-      let k = 1;
-      while (k < dirs.length && j + k < bdirs.length && same(bdirs[j + k], dirs[k])) k++;
-      if (k >= bestLen) { best = j; bestLen = k; }
-    }
-    if (best >= 0) return bdirs.slice(0, best).concat(parts).join(sep);
-  }
-  return '';
+// A full path's folders, lowercased for the index: a file's folders, or all
+// of a folder's own.
+function pathDirs(p) {
+  const bp = p.split(/[\\\/]/);
+  return /[\\\/]$/.test(p) || looksDirPath(p) ? bp.filter((x, k) => x || k < 2) : bp.slice(0, -1);
 }
-// Every abbreviation in a text, as written, with the full path it stands for:
-// the message read once, in order, its code spans, link targets, file URLs
-// and paths in running text taken as this block takes them.
+// The full path an abbreviation stands for, from the full paths before it
+// (nearest last; byDir lists them by each folder they hold): the one whose
+// folders hold the abbreviation's first folder, at the deepest place where
+// the most of its folders follow in order. '' when none does.
+function abbrevFull(abbr, bases, byDir) {
+  const parts = abbr.replace(ABBREV_RE, '').split(/[\\\/]/).filter(Boolean), dirs = parts.slice(0, -1);
+  const at = dirs.length ? byDir.get(dirs[0].toLowerCase()) : null;
+  if (!at) return '';
+  const same = (a, b) => a.toLowerCase() === b.toLowerCase();
+  const b = bases[at[at.length - 1]];
+  let best = -1, bestLen = 0;
+  for (let j = 0; j < b.dirs.length; j++) {
+    if (!same(b.dirs[j], dirs[0])) continue;
+    let k = 1;
+    while (k < dirs.length && j + k < b.dirs.length && same(b.dirs[j + k], dirs[k])) k++;
+    if (k >= bestLen) { best = j; bestLen = k; }
+  }
+  return b.dirs.slice(0, best).concat(parts).join(b.sep);
+}
+// What each abbreviation in a text stands for, occurrence by occurrence: the
+// message read once, in order, its code spans, link targets, file URLs and
+// paths in running text taken as this block takes them (a fenced block draws
+// no links, so it is passed over). { code, text, n }: for code spans and for
+// everything else, a Map from the abbreviation as written to its occurrences'
+// full paths ('' for one that stands for none), in the order the render
+// meets them; n counts the occurrences.
 function pathAbbrevs(text) {
-  const bases = [], out = new Map();
-  const s = esc(String(text ?? '').replace(/\r\n/g, '\n'));
+  const bases = [], byDir = new Map(), out = { code: new Map(), text: new Map(), n: 0 };
+  const s = esc(String(text ?? '').replace(/\r\n/g, '\n')).replace(/```[\s\S]*?```/g, ' ');
   const re = new RegExp('`([^`\\n]+)`|' + LINK_RE.source, 'g');
   for (const m of s.matchAll(re)) {
     const [, code, mdTxt, mdUrl, , url, , win, , nix, , rel] = m;
-    let p = code != null ? code : mdTxt != null ? mdUrl.trim().replace(/^&lt;([\s\S]*)&gt;$/, '$1') : win != null ? (winPathSure(win) ? win : '') : (nix ?? rel ?? '');
-    if (url != null) { const t = urlTarget(trimUrlTail(url)[0]); p = t.file || ''; }
+    let p = code != null ? code.trim() : mdTxt != null ? mdUrl.trim().replace(/^&lt;([\s\S]*)&gt;$/, '$1')
+      : url != null ? trimUrlTail(url)[0] : win != null ? (winPathSure(win) ? win : '') : (nix ?? rel ?? '');
+    if (/^(?:https?|file):/i.test(p)) p = /^file:/i.test(p) ? (urlTarget(p).file || '') : '';
     p = splitLine(unescPath(p).trim()).path;
     if (!p) continue;
-    if (ABBREV_RE.test(p)) { const full = abbrevFull(p, bases); if (full) out.set(p, full); }
-    else if (ABS_PATH_RE.test(p) && (looksFilePath(p) || looksDirPath(p))) bases.push(p);
+    if (ABBREV_RE.test(p)) {
+      const q = out[code != null ? 'code' : 'text'];
+      if (!q.has(p)) q.set(p, []);
+      q.get(p).push(abbrevFull(p, bases, byDir));
+      out.n++;
+    } else if (ABS_PATH_RE.test(p) && (looksFilePath(p) || looksDirPath(p))) {
+      const dirs = pathDirs(p), i = bases.push({ dirs, sep: p.includes('\\') ? '\\' : '/' }) - 1;
+      for (const d of new Set(dirs.map(x => x.toLowerCase()))) { if (!byDir.has(d)) byDir.set(d, []); byDir.get(d).push(i); }
+    }
   }
   return out;
 }
