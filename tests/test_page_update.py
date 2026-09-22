@@ -547,11 +547,11 @@ async function main() {
   const c = new Cdp(ws); await c.open();
   const out = {};
   try {
-    const page = async (url) => {
+    const page = async (url, width) => {
       const { targetId } = await c.send('Target.createTarget', { url: 'about:blank' });
       const { sessionId } = await c.send('Target.attachToTarget', { targetId, flatten: true });
       await c.send('Page.enable', {}, sessionId);
-      await c.send('Emulation.setDeviceMetricsOverride', { width: A.width || 1400, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
+      await c.send('Emulation.setDeviceMetricsOverride', { width: width || A.width || 1400, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
       const evalIn = async (expr) => { const r = await c.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }, sessionId); if (r.exceptionDetails) throw new Error(JSON.stringify(r.exceptionDetails).slice(0, 500)); return r.result.value; };
       const until = async (expr, ms = 15000) => { const t = Date.now(); while (Date.now() - t < ms) { let v = null; try { v = await evalIn(expr); } catch (e) {} if (v) return v; await sleep(150); } throw new Error('timeout: ' + expr); };
       await c.send('Page.navigate', { url }, sessionId);
@@ -635,6 +635,10 @@ async function main() {
       out.fileHeld = await p.evalIn('window.__mark');
       await p.close();
     }
+    // The PO drawer's visible frame, its chat drawn and put back, and where it is.
+    const poFrame = 'document.querySelector("#po-panel iframe.po-session:not([hidden])")';
+    const poDrawn = '(() => { const f = ' + poFrame + '; const w = f && f.contentWindow; return !!(w && w.document.querySelectorAll("#msgs > [data-key]").length >= 20 && w.eval("typeof CHAT_DRAWN !== typeof void 0 && CHAT_DRAWN && UPD_PLACE === null")); })()';
+    const poPlace = '(() => { const f = ' + poFrame + '; const w = f.contentWindow; const b = w.document.querySelector("#msgs"); const k = w.readingPlace(b); return { peek: PO_PEEK, pin: PO_PIN, shown: !document.querySelector("#po-panel").hidden && document.body.classList.contains("po-peek"), room: f.dataset.room, proj: SELECTED_PROJECT, tab: PROJECT_TAB, key: k.key, off: k.off, top: b.scrollTop, stick: w.eval("STICK") }; })()';
     // ---- index.html: a project drilled into, on its Workspace tab, with a task open.
     {
       const p = await page(A.base + '/');
@@ -717,9 +721,6 @@ async function main() {
       await p.evalIn('document.querySelector("#cdp-frame").remove(); 0');
       // The PO drawer open over the page, its conversation scrolled up: after
       // the reload it is open again on the same conversation at the same place.
-      const poFrame = 'document.querySelector("#po-panel iframe.po-session:not([hidden])")';
-      const poDrawn = '(() => { const f = ' + poFrame + '; const w = f && f.contentWindow; return !!(w && w.document.querySelectorAll("#msgs > [data-key]").length >= 20 && w.eval("typeof CHAT_DRAWN !== typeof void 0 && CHAT_DRAWN && UPD_PLACE === null")); })()';
-      const poPlace = '(() => { const f = ' + poFrame + '; const w = f.contentWindow; const b = w.document.querySelector("#msgs"); const k = w.readingPlace(b); return { peek: PO_PEEK, pin: PO_PIN, shown: !document.querySelector("#po-panel").hidden && document.body.classList.contains("po-peek"), room: f.dataset.room, proj: SELECTED_PROJECT, tab: PROJECT_TAB, key: k.key, off: k.off, top: b.scrollTop, stick: w.eval("STICK") }; })()';
       await p.evalIn('window.__mark = 7; PO_PIN = SELECTED_PROJECT; PO_PEEK = true; renderPo(); 0');
       await p.until(poDrawn, 15000);
       await p.evalIn('(() => { const b = ' + poFrame + '.contentWindow.document.querySelector("#msgs"); b.scrollTop = Math.max(0, b.scrollHeight / 2); })(); 0');
@@ -755,6 +756,28 @@ async function main() {
           out.lineSizes[w + '/' + theme] = await p.evalIn('(() => { const n = document.querySelector("#ens-upd"); const r = n.getBoundingClientRect(); const cs = getComputedStyle(n); const b = n.querySelector("button").getBoundingClientRect(); return { top: r.top, left: r.left, width: r.width, height: r.height, bg: cs.backgroundColor, color: cs.color, fontSize: cs.fontSize, lineHeight: cs.lineHeight, btnIn: b.left >= r.left && b.right <= r.right && b.top >= r.top && b.bottom <= r.bottom, scrollW: document.documentElement.scrollWidth, innerW: innerWidth }; })()');
         }
       }
+      await p.close();
+    }
+    // ---- index.html on a phone (500 px): the PO drawer opened by the pill over
+    // an open task, on Overview and on Workspace, is over the task again after
+    // the reload (opening a task by hand closes the drawer there; a put-back is
+    // not that).
+    out.phone = {};
+    for (const tab of ['tasks', 'workspace']) {
+      const p = await page(A.base + '/', 500);
+      await p.until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 0 && typeof ALL_ROWS !== "undefined" && ALL_ROWS.length > 0');
+      await p.evalIn('window.__mark = 9; SELECTED_PROJECT = PROJECTS.projects[0].id; PROJECT_TAB = ' + JSON.stringify(tab) + '; renderRows(); openDetail(ALL_ROWS.find(r => r.roomId === ' + JSON.stringify(A.room) + ').sessionId); poPillClick(); 0');
+      await p.until(poDrawn, 15000);
+      await p.evalIn('(() => { const b = ' + poFrame + '.contentWindow.document.querySelector("#msgs"); b.scrollTop = Math.max(0, b.scrollHeight / 2); })(); 0');
+      await sleep(300);
+      const state = '(() => { const s = ' + poPlace + '; s.phone = isPhone(); s.detail = document.body.classList.contains("detail-open"); s.sid = SELECTED_SID; return s; })()';
+      const before = await p.evalIn(state);
+      poke('index.html');
+      await p.evalIn('ensUpd.checkedAt = 0; ensUpd.lastInput = Date.now() - 100000; document.querySelectorAll("iframe").forEach(f => { try { f.contentWindow.ensUpd.lastInput = Date.now() - 100000; } catch (e) {} }); ensUpd.poll(); 0');
+      await p.until('window.__mark === undefined && !!window.ensUpd && Object.keys(ensUpd.loaded).length > 0', 15000);
+      await p.until(poDrawn, 15000);
+      await sleep(400);
+      out.phone[tab] = { before, after: await p.evalIn(state) };
       await p.close();
     }
   } finally {
@@ -959,6 +982,16 @@ class InChrome(unittest.TestCase):
         self.assertLessEqual(abs(after["off"] - before["off"]), 2)
         self.assertFalse(after["stick"])
         self.assertEqual(g["poClosed"], {"peek": False, "hidden": True, "proj": before["proj"], "tab": before["tab"]}, "closed before: closed after")
+
+    def test_on_a_phone_the_po_drawer_is_over_the_restored_task_again(self):
+        for tab in ("tasks", "workspace"):
+            b, a = self.got["phone"][tab]["before"], self.got["phone"][tab]["after"]
+            self.assertTrue(b["phone"] and b["peek"] and b["shown"] and b["detail"] and b["sid"] and b["key"] and not b["stick"], (tab, b))
+            self.assertEqual((b["room"], b["tab"]), (self.po_room, tab))
+            for k in ("phone", "peek", "shown", "detail", "sid", "room", "proj", "tab", "pin", "key"):
+                self.assertEqual(a[k], b[k], (tab, k))
+            self.assertLessEqual(abs(a["off"] - b["off"]), 2, tab)
+            self.assertFalse(a["stick"], tab)
 
     def test_the_line_fits_the_top_at_1400_900_500_light_and_dark(self):
         s = self.got["lineSizes"]

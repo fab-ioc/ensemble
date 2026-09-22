@@ -13484,11 +13484,13 @@ window.ensUpdPlace = () => ({
       if (projectById(back.proj)) { SELECTED_PROJECT = back.proj; PROJECT_TAB = back.tab || 'tasks'; }
     }
     SB_DEST = back.sb || '';
-    // The PO drawer open again on the same conversation (its frame's place is
-    // kept under the frame's url); renderPo drops it where it has no PO to show.
-    if (back.po) { PO_PEEK = true; PO_PIN = back.pin || ''; }
     renderRows();
     if (back.sid && ALL_ROWS.some(r => r.sessionId === back.sid)) openDetail(back.sid);
+    // The PO drawer open again on the same conversation (its frame's place is
+    // kept under the frame's url), after the task it was over: opening a task
+    // by hand closes the drawer on a phone, and this is not that. renderPo
+    // drops it where it has no PO to show.
+    if (back.po) { PO_PEEK = true; PO_PIN = back.pin || ''; renderPo(); }
     if (back.top) (document.scrollingElement || document.documentElement).scrollTop = back.top;
   }
 })();
