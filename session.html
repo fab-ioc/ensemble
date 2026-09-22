@@ -2706,7 +2706,8 @@ function renderBubbles(items, opt = {}) {
   markLanded();
   landPending();
   if (!CU_OPENED && box.clientHeight && items.length) catchUpOpen();
-  if (UPD_PLACE && box.clientHeight && items.length) updPutBack(box);
+  // (typeof: tests run this function in Node without the update block below)
+  if (typeof UPD_PLACE !== 'undefined' && UPD_PLACE && box.clientHeight && items.length) updPutBack(box);
   readTick(false);
 }
 // The line above the conversation. Nothing clickable is replaced on a timer:
