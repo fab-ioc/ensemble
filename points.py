@@ -33,7 +33,9 @@ one-agent chat, the room's messages of a team):
 * the first reply after a message holding a single point, with no hub input
   in between, answers it (the run of replies up to the next input is one
   answer, linked to its last balloon) — not after a message the agent read
-  while busy, which is followed by more of the work it was doing;
+  while busy, which is followed by more of the work it was doing, and not a
+  line written between two tool calls ("Reading the log...", ``interim`` on
+  the turn): the reply that ends the agent's turn answers;
 * a paragraph starting ``Re P12:`` answers P12 (several per reply);
 * ``ensemble_points`` answers one by doing ("P12: started as #75").
 
@@ -646,6 +648,8 @@ def _scan_turns(led: dict, sid: str, turns: list[dict]) -> bool:
             changed |= _answer(pts[i], mid, mid, ts, "re")
             seen.add((i, mid))
         if implicit and implicit not in said:
+            if t.get("interim"):
+                continue        # written between two tool calls: still working
             changed |= _answer(pts[implicit], "after:" + run, mid, ts, "implicit")
             seen.add((implicit, "after:" + run))
         elif implicit in said:
