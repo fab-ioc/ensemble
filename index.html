@@ -3354,30 +3354,48 @@ function abbrevFull(abbr, bases, byDir) {
 // What each abbreviation in a text stands for, occurrence by occurrence: the
 // message read once, in order, its code spans, link targets, file URLs and
 // paths in running text taken as this block takes them (a fenced block draws
-// no links, so it is passed over). { code, text, n }: for code spans and for
-// everything else, a Map from the abbreviation as written to its occurrences'
-// full paths ('' for one that stands for none), in the order the render
-// meets them; n counts the occurrences.
+// no links, so it is passed over). The message is read in the render's units:
+// code spans parked first, then line by line, a table row cell by trimmed
+// cell (a compact row, "|...\x.png|first|", has its path against the bars).
+// { code, text, n }: for code spans and for everything else, a Map from the
+// abbreviation as written to its occurrences' full paths ('' for one that
+// stands for none), in the order the render meets them; n counts the
+// occurrences.
 function pathAbbrevs(text) {
   const bases = [], byDir = new Map(), out = { code: new Map(), text: new Map(), n: 0 };
-  const s = esc(String(text ?? '').replace(/\r\n/g, '\n')).replace(/```[\s\S]*?```/g, ' ');
-  const re = new RegExp('`([^`\\n]+)`|' + LINK_RE.source, 'g');
-  for (const m of s.matchAll(re)) {
-    const [, code, mdTxt, mdUrl, , url, , win, , nix, , rel] = m;
-    let p = code != null ? code.trim() : mdTxt != null ? mdUrl.trim().replace(/^&lt;([\s\S]*)&gt;$/, '$1')
-      : url != null ? trimUrlTail(url)[0] : win != null ? (winPathSure(win) ? win : '') : (nix ?? rel ?? '');
-    if (/^(?:https?|file):/i.test(p)) p = /^file:/i.test(p) ? (urlTarget(p).file || '') : '';
-    p = splitLine(unescPath(p).trim()).path;
-    if (!p) continue;
-    if (ABBREV_RE.test(p)) {
-      const q = out[code != null ? 'code' : 'text'];
-      if (!q.has(p)) q.set(p, []);
-      q.get(p).push(abbrevFull(p, bases, byDir));
-      out.n++;
-    } else if (ABS_PATH_RE.test(p) && (looksFilePath(p) || looksDirPath(p))) {
-      const dirs = pathDirs(p), i = bases.push({ dirs, sep: p.includes('\\') ? '\\' : '/' }) - 1;
-      for (const d of new Set(dirs.map(x => x.toLowerCase()))) { if (!byDir.has(d)) byDir.set(d, []); byDir.get(d).push(i); }
+  const codes = [];
+  const s = esc(String(text ?? '').replace(/\r\n/g, '\n')).replace(/```[\s\S]*?```/g, ' ').replace(LINK_MARK_RE, '')
+    .replace(/`([^`\n]+)`/g, (_, body) => ` ${LINK_A}${codes.push(body) - 1}${LINK_Z} `);
+  const re = new RegExp(LINK_A + '(\\d+)' + LINK_Z + '|' + LINK_RE.source, 'g');
+  const scan = unit => {
+    for (const m of unit.matchAll(re)) {
+      const [, span, mdTxt, mdUrl, , url, , win, , nix, , rel] = m, code = span != null ? codes[+span] : null;
+      let p = code != null ? code.trim() : mdTxt != null ? mdUrl.trim().replace(/^&lt;([\s\S]*)&gt;$/, '$1')
+        : url != null ? trimUrlTail(url)[0] : win != null ? (winPathSure(win) ? win : '') : (nix ?? rel ?? '');
+      if (/^(?:https?|file):/i.test(p)) p = /^file:/i.test(p) ? (urlTarget(p).file || '') : '';
+      p = splitLine(unescPath(p).trim()).path;
+      if (!p) continue;
+      if (ABBREV_RE.test(p)) {
+        const q = out[code != null ? 'code' : 'text'];
+        if (!q.has(p)) q.set(p, []);
+        q.get(p).push(abbrevFull(p, bases, byDir));
+        out.n++;
+      } else if (ABS_PATH_RE.test(p) && (looksFilePath(p) || looksDirPath(p))) {
+        const dirs = pathDirs(p), i = bases.push({ dirs, sep: p.includes('\\') ? '\\' : '/' }) - 1;
+        for (const d of new Set(dirs.map(x => x.toLowerCase()))) { if (!byDir.has(d)) byDir.set(d, []); byDir.get(d).push(i); }
+      }
     }
+  };
+  const tableSep = l => /^[\s|:-]+$/.test(l.trim()) && l.includes('|') && l.includes('-');
+  const rowCells = l => { let r = l.trim(); if (r.startsWith('|')) r = r.slice(1); if (r.endsWith('|')) r = r.slice(0, -1); return r.split('|').map(c => c.trim()); };
+  const lines = s.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    if (!(lines[i].includes('|') && i + 1 < lines.length && tableSep(lines[i + 1]))) { scan(lines[i]); continue; }
+    const heads = rowCells(lines[i]);
+    heads.forEach(scan);
+    let j = i + 2;
+    while (j < lines.length && lines[j].includes('|') && lines[j].trim() !== '') { rowCells(lines[j]).slice(0, heads.length).forEach(scan); j++; }
+    i = j - 1;
   }
   return out;
 }

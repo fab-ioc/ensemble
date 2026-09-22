@@ -12,6 +12,7 @@ index.html and fileview.html, tests/test_links.py) run in Node and check:
   before, the text stays as it was written;
 * the balloon of the trading PO the CEO pointed at renders its five paths;
 * an item of numbered points and a quoted block see the whole message's paths;
+* a compact table row ("|...\\x.png|first|") is read cell by cell, as it is drawn;
 * a thumbnail the hub had no picture for gives way to the link, titled so,
   and the path is drawn as the link alone from then on;
 * the "[image]" thumbnails of a pasted screenshot are as they were;
@@ -103,6 +104,9 @@ CASES = {
     # Review 1: every picture kind by its bare name, as written or as a camera writes it.
     "barecode": "`shot.webp` and `shot.bmp` and `shot.PNG` and `shot.JPG` and `shot.svg`",
     "baretext": "shot.webp and shot.bmp and shot.PNG and shot.gif and shot.jpeg",
+    # Review 2: a compact table row has its path against the bars; the scanner reads the cells the render draws.
+    "cells": "`C:\\one\\shots\\a.png`\n\n|...\\shots\\x.png|first|\n|---|---|\n|...\\shots\\x.png|second|\n\n`C:\\two\\shots\\a.png` then ...\\shots\\x.png",
+    "cellbase": "|C:\\one\\shots\\a.png|first|\n|---|---|\n|`...\\shots\\x.png`|second|third ...\\shots\\y.png|\n\n...\\shots\\z.png",
 }
 
 JS = r"""
@@ -267,6 +271,17 @@ class PathImages(unittest.TestCase):
         self.assertRegex(self.out["sameline"], r'a\.png</a></span> then <span class="path-img"')
         self.assertEqual([x["path"] for x in thumbs(self.out["spaces"])], ["D:\\work\\Ensemble Dashboard\\shots\\a.png", "D:\\work\\Ensemble Dashboard\\shots\\x.png"],
                          "a name with spaces is still one name")
+
+    def test_a_compact_table_row_is_read_cell_by_cell(self):
+        h = self.out["cells"]
+        self.assertEqual([x["path"] for x in thumbs(h)],
+                         ["C:\\one\\shots\\a.png", "C:\\one\\shots\\x.png", "C:\\one\\shots\\x.png", "C:\\two\\shots\\a.png", "C:\\two\\shots\\x.png"])
+        self.assertEqual((h.count("<th>"), h.count("<td>")), (2, 2), h)
+        h = self.out["cellbase"]
+        self.assertEqual([x["path"] for x in thumbs(h)], ["C:\\one\\shots\\a.png", "C:\\one\\shots\\x.png", "C:\\one\\shots\\z.png"],
+                         "a full path in a cell is a base; a cell beyond the head row is not drawn, so it neither gives nor takes")
+        self.assertIn("<td>second</td>", h)
+        self.assertNotIn("third", h)
 
     def test_a_file_url_written_in_full_counts(self):
         for key in ("fileurlcode", "fileurllink"):
