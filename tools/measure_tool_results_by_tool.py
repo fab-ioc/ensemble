@@ -16,6 +16,10 @@ is dropped.  It ignores prompt caching (cached input is cheaper but still
 sent) and any tool-result clearing the CLIs do on their own, so it is an
 upper bound on the input the result generated, not a bill.
 
+Bytes are payload bytes; "approx tokens" is ceil(bytes / 4), a text
+convention that does not describe images (the model prices those by
+resolution), so image/PDF results are listed apart.
+
 Read-only: transcripts are opened for reading only.
 """
 
@@ -42,15 +46,29 @@ BANDS: tuple[tuple[str, int], ...] = (
 )
 BAND_NAMES = tuple(name for name, _ in BANDS)
 SHELL_TOOLS = {"bash", "powershell"}
-CODEX_SHELL = {"exec_command", "shell", "exec", "container.exec", "write_stdin"}
+CODEX_SHELL = {"exec_command", "shell", "container.exec", "write_stdin"}
+CODEX_MIXED = "exec (mixed)"
+CODEX_JS = "exec (js)"
+# Items of a Codex rollout that the model produced (one run of them = one
+# model call) and the items that end such a run.
+CODEX_MODEL_ITEMS = {"reasoning", "function_call", "custom_tool_call",
+                     "local_shell_call", "web_search_call"}
+CODEX_INPUT_ITEMS = {"function_call_output", "custom_tool_call_output"}
 IMAGE_SUFFIX = " [image/pdf]"
 RTK_BRIEF_MARK = ("RTK is enabled for this task", "RTK is available for this task")
-RTK_RESULT_MARK = "[rtk]"
-RTK_RECALL_MARK = "rtk recall"
+# What rtk itself leaves in a result: its warning line at the start of a line
+# (this installation has no global hook, so rtk prints it on every run) and
+# the recovery hint with a real hash.  Guidance text that merely mentions
+# ``rtk recall <hash>`` matches neither.
 RTK_WARNING = "[rtk] /!\\ No hook installed"
+_RTK_LINE_RE = re.compile(r"(?m)^\[rtk\] ")
+_RTK_RECALL_RE = re.compile(r"rtk recall [0-9a-f]{6,}")
 # The warning line as it lands in a result: the marker, the advice and a newline.
 RTK_WARNING_BYTES = len(RTK_WARNING) + 54
-RTK_KINDS = ("rtk", "no-rtk", "pre-rtk", "unwired")
+# rtk: evidence that rtk ran; no-rtk: none, in a session that had the brief;
+# unwired: none, no brief; partial: a Codex batch of several commands where
+# only some were prefixed.
+RTK_KINDS = ("rtk", "no-rtk", "unwired", "partial")
 # The note a cap would leave in place of the cut bytes, in the what-if table.
 CAP_NOTE_BYTES = 120
 DEFAULT_CAPS: tuple[tuple[str, str, int], ...] = (
@@ -58,8 +76,6 @@ DEFAULT_CAPS: tuple[tuple[str, str, int], ...] = (
     ("claude", "Bash", 8), ("claude", "Bash", 16),
     ("claude", "Grep", 8), ("claude", "Grep", 16),
     ("claude", "Agent", 8),
-    ("claude", "mcp__claude-in-chrome__browser_batch", 16),
-    ("claude", "mcp__claude-in-chrome__browser_batch", 32),
     ("claude", "mcp__ensemble__chat_read", 8),
     ("claude", "mcp__ensemble__ensemble_get_task", 8),
     ("codex", "exec_command", 8), ("codex", "exec_command", 16), ("codex", "exec_command", 32),
@@ -72,6 +88,7 @@ _JS_STR = r'(?:"((?:[^"\\]|\\.)*)"|\'((?:[^\'\\]|\\.)*)\'|`((?:[^`\\]|\\.)*)`)'
 _CMD_RE = re.compile(r'["\']?(?:cmd|command)["\']?\s*:\s*' + _JS_STR)
 _PATH_RE = re.compile(r'["\']?(?:path|file_path|url|pattern|query)["\']?\s*:\s*' + _JS_STR)
 _TOOLS_RE = re.compile(r"\btools\.([A-Za-z0-9_]+)\s*\(")
+_QUOTED_RE = re.compile(r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'')
 _PREFIX_RE = re.compile(
     r"^\s*(?:"
     r"cd\s+(?:\"[^\"]*\"|'[^']*'|\S+)\s*(?:&&|;)\s*"      # cd x && / cd x;
@@ -148,9 +165,16 @@ def first_word(command: str) -> str:
     return word.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] or "(empty)"
 
 
-def _rtk_prefixed(command: str) -> bool:
-    return first_word(command) == "rtk" or bool(
-        re.search(r"(?:&&|\|\||[;|\n])\s*rtk\s", command or ""))
+def rtk_prefixed(command: str) -> bool:
+    """Whether a segment of the command runs ``rtk`` (quoted text ignored)."""
+    bare = _QUOTED_RE.sub('""', command or "")
+    return first_word(bare) == "rtk" or bool(
+        re.search(r"(?:&&|\|\||[;|\n])\s*rtk\s", bare))
+
+
+def rtk_ran(result_text: str) -> bool:
+    """Whether the result carries what rtk itself prints."""
+    return bool(_RTK_LINE_RE.search(result_text) or _RTK_RECALL_RE.search(result_text))
 
 
 # --- rooms -----------------------------------------------------------------
@@ -237,17 +261,6 @@ def _rtk_kind(hit: bool, wired: bool) -> str:
     return "rtk" if hit else ("no-rtk" if wired else "unwired")
 
 
-def _mark_pre_rtk(records: list[dict]) -> None:
-    """Shell results before a session's first rtk result were made before the
-    hook reached it (a session launched before the pilot, resumed after)."""
-    first = min((r["when"] for r in records if r["rtk"] == "rtk"), default=None)
-    if first is None:
-        return
-    for rec in records:
-        if rec["rtk"] == "no-rtk" and rec["when"] < first:
-            rec["rtk"] = "pre-rtk"
-
-
 def scan_claude(path: Path, start: datetime, end: datetime,
                 room: dict | None) -> list[dict]:
     """Tool results of one Claude transcript (main line and in-file sidechains)."""
@@ -295,9 +308,8 @@ def scan_claude(path: Path, start: datetime, end: datetime,
                     text = _text(payload)
                     command = str(inp.get("command") or "")
                     warnings = text.count(RTK_WARNING)
-                    recall = RTK_RECALL_MARK in text
-                    hit = RTK_RESULT_MARK in text or recall or _rtk_prefixed(command)
-                    rtk = _rtk_kind(hit, wired)
+                    recall = bool(_RTK_RECALL_RE.search(text))
+                    rtk = _rtk_kind(rtk_ran(text) or rtk_prefixed(command), wired)
                     first = first_word(command)
                 rec = _record("claude", tool, size, when, end, path.stem, room,
                               _preview(tool, inp), rtk, recall, warnings, first)
@@ -305,29 +317,41 @@ def scan_claude(path: Path, start: datetime, end: datetime,
                 records.append(rec)
     for conv in conversations.values():
         conv.resolve()
-    _mark_pre_rtk(records)
     return records
 
 
-def codex_tool(call: dict) -> tuple[str, str]:
-    """(tool name, command-or-input preview) of a Codex call.
+def codex_tool(call: dict) -> tuple[str, str, list[str]]:
+    """(tool name, preview, shell commands) of a Codex call.
 
-    Codex's ``exec`` custom tool runs JavaScript that calls ``tools.X(...)``;
-    the first such call names the real tool (``exec_command``,
-    ``apply_patch``, an MCP tool).  Plain scripts count as ``exec (js)``.
+    Codex's ``exec`` custom tool runs JavaScript that calls ``tools.X(...)``.
+    A script that calls one tool (once or several times) is that tool; a
+    script that calls different tools is ``exec (mixed)`` and its bytes are
+    not attributed to any of them; a script without tool calls is
+    ``exec (js)``.  The shell commands are every ``cmd`` of a shell call.
     """
     name = str(call.get("name") or "(unknown)")
     args = call.get("arguments")
     inp = call.get("input")
     if name == "exec" and isinstance(inp, str):
-        match = _TOOLS_RE.search(inp)
-        if match:
-            name = match.group(1)
-            rest = inp[match.end():]
-            if name in CODEX_SHELL:
-                return name, _js_string(_CMD_RE.search(rest)) or _one_line(rest)
-            return name, _js_string(_PATH_RE.search(rest)) or _one_line(rest)
-        return "exec (js)", _one_line(inp)
+        matches = list(_TOOLS_RE.finditer(inp))
+        if not matches:
+            return CODEX_JS, _one_line(inp), []
+        names = []
+        for match in matches:
+            if match.group(1) not in names:
+                names.append(match.group(1))
+        commands: list[str] = []
+        for i, match in enumerate(matches):
+            if match.group(1) in CODEX_SHELL:
+                stop = matches[i + 1].start() if i + 1 < len(matches) else len(inp)
+                commands.append(_js_string(_CMD_RE.search(inp, match.end(), stop)))
+        if len(names) > 1:
+            return CODEX_MIXED, _one_line("+".join(names) + ": " + (commands[0] if commands else inp)), commands
+        name = names[0]
+        rest = inp[matches[0].end():]
+        if name in CODEX_SHELL:
+            return name, _one_line(commands[0] if commands and commands[0] else rest), commands
+        return name, _js_string(_PATH_RE.search(rest)) or _one_line(rest), []
     if isinstance(args, str):
         try:
             parsed = json.loads(args)
@@ -338,52 +362,74 @@ def codex_tool(call: dict) -> tuple[str, str]:
             if isinstance(cmd, list):
                 cmd = " ".join(str(c) for c in cmd)
             if cmd:
-                return name, str(cmd)
-        return name, _preview(name, parsed)
-    return name, _preview(name, inp if inp is not None else args)
+                return name, _one_line(cmd), [str(cmd)] if name in CODEX_SHELL else []
+        return name, _preview(name, parsed), []
+    return name, _preview(name, inp if inp is not None else args), []
 
 
 def scan_codex(path: Path, start: datetime, end: datetime,
                room: dict | None) -> list[dict]:
+    """Tool results of one Codex rollout.
+
+    A model call is a run of consecutive model-produced items (reasoning,
+    message, tool call); an output or a user message ends the run.  The
+    run that produced a call sits before that call's output, so only the
+    runs after the output count as re-reads.
+    """
     calls: dict[str, dict] = {}
     conv = _Conversation()
     records: list[dict] = []
     wired = False
+    in_run = False
+    turns = 0
     for row in base._json_lines(path):
         kind = row.get("type")
         payload = row.get("payload") or {}
         if kind == "compacted":
             conv.events.append(("compact",))
-        elif kind == "event_msg" and payload.get("type") == "token_count":
-            conv.events.append(("turn", str(row.get("timestamp") or len(conv.events))))
+            in_run = False
+            continue
         if kind != "response_item":
             continue
         item = payload.get("type")
+        model_item = item in CODEX_MODEL_ITEMS or (
+            item == "message" and payload.get("role") == "assistant")
+        if model_item:
+            if not in_run:
+                turns += 1
+                conv.events.append(("turn", str(turns)))
+                in_run = True
+        elif item in CODEX_INPUT_ITEMS or item == "message":
+            in_run = False
         if item == "message" and not wired:
             wired = any(mark in base._codex_user_text(payload) for mark in RTK_BRIEF_MARK)
         elif item in {"function_call", "custom_tool_call"}:
             calls[str(payload.get("call_id") or "")] = payload
-        elif item in {"function_call_output", "custom_tool_call_output"}:
+        elif item in CODEX_INPUT_ITEMS:
             when = base._timestamp(row.get("timestamp"))
             if not _in_window(when, start, end):
                 continue
             call = calls.get(str(payload.get("call_id") or ""), {})
-            tool, command = codex_tool(call)
+            tool, preview, commands = codex_tool(call)
             size = base._payload_bytes(payload.get("output"))
             rtk, recall, warnings, first = "n/a", False, 0, ""
             if tool in CODEX_SHELL:
                 text = _text(payload.get("output"))
                 warnings = text.count(RTK_WARNING)
-                recall = RTK_RECALL_MARK in text
-                hit = _rtk_prefixed(command) or RTK_RESULT_MARK in text or recall
-                rtk = _rtk_kind(hit, wired)
-                first = first_word(command)
+                recall = bool(_RTK_RECALL_RE.search(text))
+                prefixed = [rtk_prefixed(c) for c in commands]
+                if all(prefixed) and (prefixed or rtk_ran(text)):
+                    rtk = "rtk"
+                elif any(prefixed):
+                    rtk = "partial"
+                else:
+                    rtk = _rtk_kind(rtk_ran(text), wired)
+                first = first_word(commands[0] if commands else "")
             rec = _record("codex", tool, size, when, end, path.stem, room,
-                          _one_line(command), rtk, recall, warnings, first)
+                          preview, rtk, recall, warnings, first)
             conv.events.append(("result", rec))
             records.append(rec)
     conv.resolve()
-    _mark_pre_rtk(records)
     return records
 
 
@@ -438,8 +484,11 @@ def aggregate(records: list[dict], top: int = 20) -> dict:
 
 def _rtk_summary(rows: list[dict]) -> dict:
     shell = [r for r in rows if r["rtk"] != "n/a"]
+    mixed = [r for r in rows if r["tool"] == CODEX_MIXED]
     summary: dict[str, Any] = {"shellResults": len(shell),
-                               "shellBytes": sum(r["bytes"] for r in shell)}
+                               "shellBytes": sum(r["bytes"] for r in shell),
+                               "mixedResults": len(mixed),
+                               "mixedBytes": sum(r["bytes"] for r in mixed)}
 
     def counter() -> dict:
         row = {kind: 0 for kind in RTK_KINDS}
@@ -472,10 +521,11 @@ def _rtk_summary(rows: list[dict]) -> dict:
     for r in shell:
         sessions[r["session"]][r["rtk"]] += 1
     summary["sessions"] = {
-        "withRtk": sum(1 for s in sessions.values() if s["rtk"]),
-        "wiredWithoutRtk": sum(1 for s in sessions.values() if not s["rtk"] and s["no-rtk"]),
+        "withRtk": sum(1 for s in sessions.values() if s["rtk"] or s["partial"]),
+        "briefedWithoutRtk": sum(1 for s in sessions.values()
+                                 if not s["rtk"] and not s["partial"] and s["no-rtk"]),
         "unwired": sum(1 for s in sessions.values()
-                       if not s["rtk"] and not s["no-rtk"] and s["unwired"]),
+                       if not s["rtk"] and not s["partial"] and not s["no-rtk"] and s["unwired"]),
     }
     return summary
 
@@ -575,7 +625,8 @@ def _markdown(report: dict) -> str:
         "",
         "Re-read bytes = bytes x model calls that followed in the same conversation "
         "(stops at a compaction; ignores prompt caching and the CLIs' own result "
-        "clearing, so it is an upper bound). Approx tokens = ceil(bytes / 4).",
+        "clearing, so it is an upper bound). Approx tokens = ceil(bytes / 4), a text "
+        "convention; image/PDF results (listed apart) are priced by resolution, not bytes.",
     ]
     for agent, data in report["agents"].items():
         out += ["", f"## {agent.capitalize()}: {data['results']:,} results, {_mb(data['bytes'])} MB "
@@ -605,25 +656,28 @@ def _markdown(report: dict) -> str:
                        f"{row['remainingTurns']} | {row['rereadBytes']:,} | `{preview}` |")
         rtk = data["rtk"]
         out += ["", f"rtk ({agent}): {rtk['shellResults']:,} shell results, {rtk['shellBytes']:,} bytes; "
-                    f"sessions with an rtk result {rtk['sessions']['withRtk']}, wired but never rtk "
-                    f"{rtk['sessions']['wiredWithoutRtk']}, not wired {rtk['sessions']['unwired']}; "
+                    f"sessions with an rtk result {rtk['sessions']['withRtk']}, briefed but never rtk "
+                    f"{rtk['sessions']['briefedWithoutRtk']}, no brief {rtk['sessions']['unwired']}; "
                     f"rtk's 'No hook installed' line printed {rtk['warnings']:,} times "
-                    f"(~{rtk['warningBytes']:,} bytes, re-read ~{rtk['warningRereadBytes']:,})", "",
-                "| Shell tool | Through rtk | Bytes | Hook active, not rewritten | Bytes | "
-                "Before the hook | Bytes | Session not wired | Bytes | Recall hints |",
+                    f"(~{rtk['warningBytes']:,} bytes, re-read ~{rtk['warningRereadBytes']:,})"
+                    + (f"; {rtk['mixedResults']:,} mixed batches ({rtk['mixedBytes']:,} bytes) "
+                       "combine shell and other tools and are not classified"
+                       if rtk["mixedResults"] else ""), "",
+                "| Shell tool | rtk ran | Bytes | Briefed, no rtk evidence | Bytes | "
+                "No brief in session | Bytes | Some commands prefixed | Bytes | Recall hints |",
                 "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
         for tool, row in sorted(rtk["byTool"].items(),
                                 key=lambda kv: -sum(kv[1][k] for k in RTK_KINDS)):
             cells = " | ".join(f"{row[k]:,} | {row[k + 'Bytes']:,}" for k in RTK_KINDS)
             out.append(f"| {tool} | {cells} | {row['recall']:,} |")
-        out += ["", f"Shell results by day ({agent}): through rtk / hook active but not rewritten / "
-                    "before the hook / not wired", "",
-                "| Day | rtk | not rewritten | before hook | not wired |",
+        out += ["", f"Shell results by day ({agent}): rtk ran / briefed, no evidence / "
+                    "no brief / some prefixed", "",
+                "| Day | rtk | no evidence | no brief | some prefixed |",
                 "|---|---:|---:|---:|---:|"]
         for day, row in rtk["byDay"].items():
             out.append(f"| {day} | " + " | ".join(f"{row[k]:,}" for k in RTK_KINDS) + " |")
         if rtk["noRtkFirstWords"]:
-            out += ["", f"Commands rtk left alone while the hook was active ({agent}), by program:", "",
+            out += ["", f"Briefed commands with no rtk evidence ({agent}), by program:", "",
                     "| Program | Results | Bytes |", "|---|---:|---:|"]
             for row in rtk["noRtkFirstWords"]:
                 word = row["word"].replace("|", "\\|").replace("`", "'")
@@ -637,7 +691,8 @@ def _markdown(report: dict) -> str:
         for row in sub["tools"]:
             out.append(f"| {row['tool']} | {row['results']:,} | {row['bytes']:,} | {row['rereadBytes']:,} |")
     out += ["", "## What a cap would have cut", "",
-            f"A result over the cap keeps the first cap KB plus a {CAP_NOTE_BYTES}-byte note.", "",
+            f"A result over the cap keeps the first cap KB plus a {CAP_NOTE_BYTES}-byte note. "
+            "Text results only: a byte cap says nothing about an image's token cost.", "",
             "| Agent | Tool | Cap KB | Results | Over cap | Bytes saved | % of tool | Re-read bytes saved | % of tool re-read |",
             "|---|---|---:|---:|---:|---:|---:|---:|---:|"]
     for row in report["caps"]:
