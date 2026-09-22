@@ -1687,11 +1687,17 @@ def _claude_text_turns(tpath: Path) -> list[dict]:
                     continue
                 if t == "user" and (stripped.startswith("<") or stripped.startswith("Caveat:")):
                     continue
-                turns.append({
+                turn = {
                     "timestamp": d.get("timestamp", ""),
                     "role": t,
                     "text": stripped,
-                })
+                }
+                # A line the agent writes between two tool calls ("Reading the
+                # log...") is recorded with the stop reason of the tool call
+                # that follows it; only the reply that ends its turn answers.
+                if t == "assistant" and msg.get("stop_reason") == "tool_use":
+                    turn["interim"] = True
+                turns.append(turn)
     except OSError:
         pass
     return turns

@@ -51,11 +51,13 @@ class _Pty:
         return 0.0
 
 
-def turn(role, text, ts, kind=None, queued=False):
+def turn(role, text, ts, kind=None, queued=False, interim=False):
     t = {"role": role, "text": text,
          "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(ts)) + ".000Z"}
     if queued:
         t["queued"] = True
+    if interim:
+        t["interim"] = True
     return t
 
 
@@ -220,6 +222,30 @@ class Ledger(_World):
         for kind in ("[digest] a", "[due] 15:40 — b", "[handover] c", dashboard.RESTART_NOTE):
             self.add("sid-1", turn("user", kind, self.t0 + 6), turn("assistant", "noted", self.t0 + 7))
         self.assertEqual(self.state(rid), {"P1": "open"})
+
+    def test_a_line_written_between_tool_calls_is_not_an_answer(self):
+        # 09-22: "Reproducing the balloon the CEO pointed at..." written while the
+        # PO was still working marked P4 answered; the handover cut in before
+        # its real reply, and only the fresh session's Re P4: answered it.
+        rid = self.solo_room()
+        a, _ = self.send(rid, "I still cannot open those images", at=self.t0)
+        self.add("sid-1", turn("user", a, self.t0 + 1),
+                 turn("assistant", "Reproducing the balloon through the page's own code.", self.t0 + 2, interim=True),
+                 turn("assistant", "Rendering the live balloon in headless Chrome.", self.t0 + 3, interim=True))
+        self.assertEqual(self.state(rid), {"P1": "open"})
+        self.add("sid-1", turn("user", "[handover] write it now", self.t0 + 4, queued=True),
+                 turn("assistant", "The handover is current.", self.t0 + 5))
+        self.assertEqual(self.state(rid), {"P1": "open"}, "the reply to the handover answers nothing")
+        # An interim line that says Re Pn: is deliberate; the reply that ends
+        # the turn answers by itself.
+        b, _ = self.send(rid, "And the links?", at=self.t0 + 6)
+        self.add("sid-1", turn("user", b, self.t0 + 7),
+                 turn("assistant", "Checking the page.", self.t0 + 8, interim=True),
+                 turn("assistant", "Re P1: your tab ran the old page; reload once.", self.t0 + 9, interim=True),
+                 turn("assistant", "The links open on the live page.", self.t0 + 10))
+        self.assertEqual(self.state(rid), {"P1": "answered", "P2": "answered"})
+        self.assertEqual(self.point(rid, "P1")["answers"][0]["how"], "re")
+        self.assertEqual(self.point(rid, "P2")["answers"][0]["mid"], "sid-1:7")
 
     def test_re_answers_several_late_after_hub_traffic_and_other_points(self):
         rid = self.solo_room()
@@ -673,6 +699,29 @@ class Turns(unittest.TestCase):
             self.assertEqual([t["text"] for t in dashboard._claude_text_turns(p)],
                              ["Point A: what is 2 + 2?\n\n[point P2]"])
 
+
+    def test_a_text_before_a_tool_call_is_interim_the_reply_that_ends_the_turn_is_not(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "t.jsonl"
+            lines = [
+                {"type": "user", "message": {"role": "user", "content": "hello"}, "timestamp": "2026-09-21T10:00:00Z"},
+                {"type": "assistant", "message": {"role": "assistant", "stop_reason": "tool_use",
+                                                  "content": [{"type": "text", "text": "Reading the log."}]},
+                 "timestamp": "2026-09-21T10:00:01Z"},
+                {"type": "assistant", "message": {"role": "assistant", "stop_reason": "tool_use",
+                                                  "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}]},
+                 "timestamp": "2026-09-21T10:00:02Z"},
+                {"type": "assistant", "message": {"role": "assistant", "stop_reason": "end_turn",
+                                                  "content": [{"type": "text", "text": "Nothing in it."}]},
+                 "timestamp": "2026-09-21T10:00:03Z"},
+                {"type": "assistant", "message": {"role": "assistant",
+                                                  "content": [{"type": "text", "text": "no stop reason"}]},
+                 "timestamp": "2026-09-21T10:00:04Z"},
+            ]
+            p.write_text("\n".join(json.dumps(x) for x in lines), encoding="utf-8")
+            turns = dashboard._claude_text_turns(p)
+        self.assertEqual([(t["text"], t.get("interim")) for t in turns],
+                         [("hello", None), ("Reading the log.", True), ("Nothing in it.", None), ("no stop reason", None)])
 
     def test_a_queued_command_is_a_turn_with_its_own_id(self):
         with tempfile.TemporaryDirectory() as d:
