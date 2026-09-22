@@ -13245,6 +13245,9 @@ const ensUpd = window.ensUpd = (() => {   // a window property too: a host page 
   on('dragend', () => { held = false; }, true);
   on('drop', () => { held = false; }, true);
   on('input', e => { if (isField(e.target)) typed.add(e.target); }, true);
+  // A one-line field left with its words in it (a search box, a setting saved
+  // on blur) is done with, not in hand; a textarea keeps holding until empty.
+  on('change', e => { if (e.target && e.target.matches && e.target.matches('input')) typed.delete(e.target); }, true);
   // The same-origin pages framed in this one (the chat in the task panel).
   const frames = () => [...document.querySelectorAll('iframe')].map(f => { try { return f.contentWindow && f.contentWindow.ensUpd; } catch (e) { return null; } }).filter(Boolean);
   // Text in hand: typed here and still there, or what the page names (a

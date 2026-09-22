@@ -306,6 +306,15 @@ const changed = { ...same, 'session.html': 'aab' };
   now += 10_000; p.ensUpd.maybe(); out.typedClearedSoon = p.location.reloads;
   now += 50_000; p.ensUpd.maybe(); out.typedClearedIdle = p.location.reloads;
 
+  // A one-line field typed in and left (blur fires change): done with, not in hand;
+  // a textarea holds until it is empty.
+  p = fakePage(); p.onDisk = changed;
+  const one = p.el('input'); one.value = 'opus'; p.document.fire('input', { target: one }); p.document.fire('change', { target: one });
+  now += 30_000; p.ensUpd.lastInput = now - 100_000; await tick(p); out.oneLineLeft = p.location.reloads;
+  p = fakePage(); p.onDisk = changed;
+  const ta = p.el('textarea'); ta.value = 'a longer thought'; p.document.fire('input', { target: ta }); p.document.fire('change', { target: ta });
+  now += 30_000; p.ensUpd.lastInput = now - 100_000; await tick(p); out.textareaLeft = { reloads: p.location.reloads, line: !!p.ensUpd.line };
+
   // What the page names as in hand (the message box, a composer).
   p = fakePage(); p.onDisk = changed; p.ensUpdBusy = () => true; now += 30_000; p.ensUpd.lastInput = now - 100_000; await tick(p);
   out.pageBusy = { reloads: p.location.reloads, line: !!p.ensUpd.line };
@@ -412,6 +421,10 @@ class Rules(unittest.TestCase):
         self.assertEqual(self.got["typed"], {"reloads": 0, "line": "Ensemble was updated · <button type=\"button\">Reload</button>", "busy": True})
         self.assertEqual(self.got["typedClearedSoon"], 0, "10 s of quiet is not idle once the line shows")
         self.assertEqual(self.got["typedClearedIdle"], 1)
+
+    def test_a_one_line_field_left_with_words_is_done_with_a_textarea_is_not(self):
+        self.assertEqual(self.got["oneLineLeft"], 1)
+        self.assertEqual(self.got["textareaLeft"], {"reloads": 0, "line": True})
 
     def test_what_the_page_names_as_in_hand_holds_the_reload(self):
         self.assertEqual(self.got["pageBusy"], {"reloads": 0, "line": True})
