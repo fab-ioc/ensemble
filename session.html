@@ -845,6 +845,46 @@
   #promptcard .pc-hint { font-size:11px; color:var(--dim); margin-top:7px; }
   #compose { border-top:1px solid var(--border); padding:10px; display:flex; flex-direction:column; gap:6px; flex:0 0 auto; }
   #compose textarea { width:100%; min-height:48px; resize:vertical; background:var(--surface); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:6px; font:inherit; }
+  /* The box is a small editor: the words, then numbered points, each a block
+     with its own text, images (chips) and balloon links (chips). It never
+     grows past half the view: it scrolls within itself. */
+  #editor { display:flex; flex-direction:column; gap:var(--s-200); max-height:calc(var(--vv-h, 100vh) * .5); overflow-y:auto; }
+  #editor .ed-head { display:flex; flex-direction:column; gap:var(--s-100); }
+  #ed-points { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:var(--s-200); }
+  #ed-points:empty { display:none; }
+  .ed-pt { display:grid; grid-template-columns:auto minmax(0, 1fr) auto; grid-template-areas:"n text ctl" "n more ctl"; column-gap:var(--s-200); row-gap:var(--s-100);
+    align-items:start; padding:var(--s-100); border:1px solid var(--border); border-radius:var(--r-200); background:var(--surface); }
+  .ed-pt:focus-within { border-color:var(--border-strong); }
+  .ed-pt .ed-n { grid-area:n; min-width:20px; padding-top:6px; color:var(--fg-muted); font-size:var(--fs-200); font-weight:600; line-height:20px; font-variant-numeric:tabular-nums; text-align:right; }
+  .ed-pt textarea.ed-text { grid-area:text; min-height:32px; resize:none; overflow:hidden; }
+  .ed-pt .ed-more { grid-area:more; display:flex; flex-direction:column; gap:var(--s-100); }
+  .ed-pt .ed-more:empty { display:none; }
+  .ed-pt .ed-ctl { grid-area:ctl; display:flex; flex-direction:column; gap:var(--s-050); }
+  .ed-btn { height:24px; min-width:24px; padding:0 var(--s-100); background:transparent; border:none; border-radius:var(--r-200);
+    color:var(--fg-subtle); font-size:var(--fs-200); line-height:16px; cursor:pointer; }
+  .ed-btn:hover { background:var(--hover); color:var(--fg); }
+  .ed-btn:disabled { color:var(--fg-disabled); cursor:default; background:transparent; }
+  .ed-btn:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  /* The balloon links a box holds, as the chips the sent balloon will show. */
+  .ed-refs { display:flex; flex-wrap:wrap; gap:var(--s-100); }
+  .ed-refs[hidden] { display:none; }
+  #compose .ed-row { display:flex; align-items:center; gap:var(--s-200); }
+  #compose .ed-row .grow { flex:1 1 auto; }
+  #add-point { height:32px; padding:0 var(--s-200); background:transparent; border:1px solid transparent; color:var(--fg-subtle); font-size:var(--fs-200); }
+  #add-point:hover { background:var(--hover); color:var(--fg); }
+  #add-point:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  /* A sent message of numbered points: each point its own list item with its
+     text, thumbnails, link chips and its point chip (pointBarHtml). */
+  .msg .text.md ol.pt-items { margin:var(--s-100) 0 0; padding-left:0; list-style:none; counter-reset:pt; }
+  .msg .text.md ol.pt-items > li.pt-item { position:relative; margin:0 0 var(--s-200); padding-left:28px; }
+  .msg .text.md ol.pt-items > li.pt-item::before { counter-increment:pt; content:counter(pt) "."; position:absolute; left:0; top:0; width:22px;
+    color:var(--fg-muted); font-size:var(--fs-200); font-weight:600; line-height:20px; text-align:right; font-variant-numeric:tabular-nums; }
+  .msg .text.md ol.pt-items > li.pt-item:last-child { margin-bottom:0; }
+  /* On the person's balloon (--hover) the number reads as the bar's words do: --fg-subtle. */
+  .msg.user .text.md ol.pt-items > li.pt-item::before { color:var(--fg-subtle); }
+  /* The editor's hints live in its placeholders: --fg-muted, the floor for what a person reads. */
+  #compose textarea::placeholder { color:var(--fg-muted); opacity:1; }
+  .msg .text.md ol.pt-items .pt-bar { margin-top:var(--s-100); }
   #agentcol { flex:0 0 46%; display:flex; flex-direction:column; min-width:0; overflow-y:auto; }
   .agent { border-bottom:1px solid var(--border); }
   .agent .ah { display:flex; align-items:center; gap:8px; padding:8px 10px; cursor:pointer; user-select:none; }
@@ -896,8 +936,16 @@
     /* While you type, the header and info bar step aside: a landscape phone
        with its keyboard up leaves about 200px, and Send ended 1px under the
        keyboard at 300px with them showing. */
-    body:has(#input:focus) > header, body:has(#input:focus) > #info { display: none; }
+    body:has(#compose textarea:focus) > header, body:has(#compose textarea:focus) > #info { display: none; }
     #compose { padding: 8px; gap: 4px; }
+    /* The editor's controls are a finger's size, and the box itself takes at
+       most half of what the keyboard leaves. */
+    .ed-btn, #add-point { min-height: var(--touch-min); min-width: var(--touch-min); }
+    .ed-pt .ed-n { padding-top: 12px; }
+    .ed-pt textarea.ed-text { min-height: var(--touch-min); }
+    .ed-refs a.ref-chip { min-height: var(--touch-min); align-items: center; }
+    .ed-refs a.ref-chip::after { content: none; }
+    .ed-refs a.ref-chip { overflow: hidden; }   /* its label is cut, never past the edge */
     button, select, .agent .ah { min-height: var(--touch-min); }
     button { min-width: var(--touch-min); }
     #promptcard .pc-x, #cmt-tray .cmt-item-x, #livetail .lt-more { min-width: var(--touch-min); }
@@ -963,11 +1011,17 @@
     <div id="activity" hidden></div>
     <div id="compose">
       <div class="dim" id="hint"></div>
-      <div id="att-chips" class="att-chips" hidden></div>
-      <textarea id="input" placeholder="Message the agents — Ctrl+Enter to send. Start with @codex or @claude to direct it to one. Paste or drop a screenshot to attach it."></textarea>
-      <div style="display:flex; gap:8px; align-items:center">
-        <span class="dim">To</span>
-        <select id="to"><option value="">Everyone</option></select>
+      <div id="editor">
+        <div class="ed-head">
+          <div id="att-chips" class="att-chips" hidden></div>
+          <textarea id="input" placeholder="Message the agents — Ctrl+Enter to send. Start with @codex or @claude to direct it to one. Paste or drop a screenshot to attach it. Start with 1. (or press Ctrl+Shift+Enter) for numbered points, each with its own screenshots and links."></textarea>
+          <div class="ed-refs" id="ed-head-refs" hidden></div>
+        </div>
+        <ol id="ed-points"></ol>
+      </div>
+      <div class="ed-row">
+        <button type="button" id="add-point" title="Add a numbered point (Ctrl+Shift+Enter)">+ Add a point</button>
+        <span class="grow"></span>
         <button id="send" disabled>Send</button>
       </div>
     </div>
@@ -1189,6 +1243,14 @@ const REF_MARK_RE = new RegExp(REF_A + '(\\d+)' + REF_Z, 'g');
 // it, so a person's own "[ref …]" lines stay.
 const REF_BLOCK_RE = /\n\n\[ref (https?:\/\/[^\s\]]+)\] (?:not found: no message \S+ in \S+ on this hub|from [^\n]* in "[^\n]*" at (?:\d{4}-\d\d-\d\d \d\d:\d\d|an unknown time):(?:\n>(?: [^\n]*)?)+)\s*$/;
 function stripRefBlocks(t) {
+  const it = pointItems(t);
+  if (it) {
+    // A message of numbered points carries each item's blocks inside it,
+    // above the item's images and point line (message_refs.py).
+    const items = it.items.map(x => { const [body, tail] = itemTail(x); const out = stripRefBlocks(body); return out === body ? x : out + (tail ? '\n\n' + tail : ''); });
+    const head = it.head ? stripRefBlocks(it.head) : it.head;   // the head's, above its images
+    return head === it.head && items.every((x, i) => x === it.items[i]) ? t : joinItems(it.title, head, items);
+  }
   const att = attSplit(t);
   if (att.paths.length) return (stripRefBlocks(att.words) + '\n\n' + att.paths.map(x => ATT_PREFIX + x).join('\n')).replace(/^\n+/, '');
   t = String(t || '');
@@ -1276,7 +1338,7 @@ let REF_GEN = 0, _refRedraw = 0;
 // Balloons draw again once, after the answers that arrived together.
 function refChanged() {
   clearTimeout(_refRedraw);
-  _refRedraw = setTimeout(() => { REF_GEN++; if (LAST_ITEMS) renderBubbles(LAST_ITEMS); }, 50);
+  _refRedraw = setTimeout(() => { REF_GEN++; if (LAST_ITEMS) renderBubbles(LAST_ITEMS); if (typeof edRefsDraw === 'function') edRefsDraw(); }, 50);
 }
 function refInfo(room, msg) {
   const k = room + '|' + msg;
@@ -1323,6 +1385,9 @@ const fileBase = () => (ROOM_OBJ && ROOM_OBJ.cwd) || '';
 const fileHref = (p, line) => '/fileview?path=' + encodeURIComponent((p || '').trim()) + (line ? '&line=' + line : '')
   + (ROOM ? '&room=' + encodeURIComponent(ROOM) : '') + (fileBase() ? '&cwd=' + encodeURIComponent(fileBase()) : '');
 function mdToHtml(src) {
+  // A message of numbered points: its head, then one list item per point.
+  const it = pointItems(src);
+  if (it) return itemsHtml(it, null, mdToHtml);
   // The images a message ends with ("[image] <path>" lines) as thumbnails.
   const att = attSplit(src);
   if (att.paths.length && att.paths.every(p => attOwn(ROOM, p))) return (att.words ? mdToHtml(att.words) : '') + attThumbsHtml(ROOM, att.paths, esc);
@@ -1364,10 +1429,21 @@ function mdToHtml(src) {
   const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
   const tableSep = l => /^[\s|:-]+$/.test(l.trim()) && l.includes('|') && l.includes('-');
   const rowCells = l => { let r = l.trim(); if (r.startsWith('|')) r = r.slice(1); if (r.endsWith('|')) r = r.slice(0, -1); return r.split('|').map(c => c.trim()); };
+  const unesc = t => t.replace(/&quot;/g, '"').replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&');
+  const imgLine = l => { const m = l.match(/^\[image\] (\S.*)$/); const p = m && unesc(m[1].trim()); return p && attOwn(ROOM, p) ? p : ''; };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (/^ B\d+ $/.test(line.trim())) { closeList(); out.push(line.trim()); continue; }
     let m;
+    // An image inside a point ("[image] <path>", this chat's): a thumbnail where it is.
+    if (imgLine(line)) {
+      closeList();
+      const paths = [];
+      while (i < lines.length && imgLine(lines[i])) paths.push(imgLine(lines[i++]));
+      i--;
+      out.push(attThumbsHtml(ROOM, paths, esc));
+      continue;
+    }
     if (line.includes('|') && i + 1 < lines.length && tableSep(lines[i + 1])) {
       closeList();
       const heads = rowCells(line);
@@ -1395,6 +1471,12 @@ function mdToHtml(src) {
   html = html.replace(/ ([BI])(\d+) /g, (_, __, i) => codes[+i]);
   if (chips.length) html = html.replace(REF_MARK_RE, (m, i) => chips[+i] ?? m);
   return html;
+}
+// A message of numbered points as a list: the head's markdown, then each
+// item's, with its bar of point chips (bars[i], from pointBarHtml) when given.
+function itemsHtml(it, bars, md) {
+  return (it.head ? md(it.head) : '') + '<ol class="pt-items">'
+    + it.items.map((x, i) => `<li class="pt-item">${md(itemBody(x))}${bars && bars[i] ? bars[i] : ''}</li>`).join('') + '</ol>';
 }
 const tildeify = p => (p || '').replace(/^[A-Za-z]:\\Users\\[^\\]+/i, '~').replace(/^\/(Users|home)\/[^/]+/, '~');
 const jpost = (path, body) => fetch(path, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) }).then(r=>r.json());
@@ -1496,13 +1578,6 @@ function buildAgents(room) {
     div.querySelector('.ah').onclick = () => toggleTerm(div, p.ptyId);
     col.appendChild(div);
   });
-  // Populate the "To" picker: Everyone + each agent (directed message).
-  const sel = $('#to');
-  const keep = sel.value;
-  sel.innerHTML = '<option value="">Everyone</option>' +
-    room.participants.filter(p => p.kind === 'agent')
-      .map(p => `<option value="${esc(p.identity)}">${esc(p.identity)}</option>`).join('');
-  sel.value = keep;
   // Solo session: auto-open the single agent's terminal (it's the main view).
   const agentDivs = col.querySelectorAll('.agent');
   if (agentDivs.length === 1) {
@@ -1584,6 +1659,42 @@ function mountTerm(el, ptyId) {
 }
 
 // ---- Folding a long conversation -----------------------------------------
+// ---- Numbered points: begin ------------------------------------------------
+// A message of numbered items, one point each (points.py, message_refs.py):
+// "## Points (N)" from the editor below, "## Review comments (N)" from the
+// comment tray; one "**N.**" item each, outside code fences. Read as
+// { title, head, items } (the head without its title line), or null.
+// tests/test_session_editor.py runs this block in Node.
+const ITEMS_HEAD_RE = /^## (?:Review comments|Points) \(\d+\)/;
+const ITEM_START_RE = /^\*\*\d+\.\*\*/;
+const ITEM_TAIL_RE = /^(?:\[image\] \S.*|\[point P\d{1,5}[a-z]?\][ \t]*)$/;
+function pointItems(text) {
+  const t = String(text || '').replace(/\r\n/g, '\n');
+  if (!ITEMS_HEAD_RE.test(t)) return null;
+  const lines = t.split('\n'), starts = [];
+  let fence = null;
+  for (let i = 0; i < lines.length; i++) {
+    const f = lines[i].match(/^\s*(```|~~~)/);
+    if (f) { fence = fence === f[1] ? null : (fence || f[1]); continue; }
+    if (fence === null && ITEM_START_RE.test(lines[i])) starts.push(i);
+  }
+  if (!starts.length) return null;
+  return { title: lines[0].trim(), head: lines.slice(1, starts[0]).join('\n').trim(),
+    items: starts.map((a, k) => lines.slice(a, k + 1 < starts.length ? starts[k + 1] : lines.length).join('\n').trim()) };
+}
+const joinItems = (title, head, items) => [title, head, ...items].filter(Boolean).join('\n\n');
+// An item as [its body, its tail]: the tail is the run of "[image]" and
+// "[point Pn]" lines it ends with.
+function itemTail(item) {
+  const lines = String(item || '').replace(/\s+$/, '').split('\n');
+  let n = lines.length;
+  while (n && (!lines[n - 1].trim() || ITEM_TAIL_RE.test(lines[n - 1]))) n--;
+  if (n === lines.length) return [lines.join('\n'), ''];
+  return [lines.slice(0, n).join('\n').replace(/\s+$/, ''), lines.slice(n).join('\n').trim()];
+}
+// An item's words without its "**N.**" number.
+const itemBody = item => String(item || '').replace(/^\*\*\d+\.\*\*[ \t]*/, '').trim();
+// ---- Numbered points: end --------------------------------------------------
 // The latest exchange is drawn in full: at least the last FOLD_MIN balloons,
 // and back to the person's own last message when that is within FOLD_MAX.
 // Everything older is one row each (who, first line), opened in place by a
@@ -1643,6 +1754,9 @@ function foldUnkeep(fold) {
 }
 // A folded balloon's first line, as plain text.
 function foldLine(text) {
+  // A message of numbered points: how many, then its first words.
+  const it = pointItems(text);
+  if (it) { const first = foldLine(it.head || itemBody(it.items[0])); return `${it.items.length} point${it.items.length > 1 ? 's' : ''}` + (first ? ' · ' + first : ''); }
   const att = attSplit(text);
   const raw = String(att.paths.length && !att.words ? (att.paths.length > 1 ? att.paths.length + ' images' : 'Image') : att.words).replace(/\r/g, '');
   const line = raw.replace(/```[\s\S]*?(?:```|$)/g, '\n').split('\n')
@@ -1867,7 +1981,9 @@ function foldBalloonHtml(m, i, how, o) {
   const fb = o.open ? '<button type="button" class="fold-btn" title="Fold this message again" aria-expanded="true">Fold</button>' : '';
   // o.act: the balloon's own action in its header (Copy link).
   // o.pts: the bar of the person's points it holds or answers (pointBarHtml).
-  return `<div class="msg ${cls}" data-mid="${esc(m.id || '')}" data-key="${key}" data-from="${esc(m.from || '')}"><div class="from">${fb}${o.act ? o.act(m) : ''}${who}${chips}</div><div class="text md">${o.md(m.text)}</div>${o.pts ? o.pts(m) : ''}</div>`;
+  // o.body: the text and its bars drawn otherwise (a message of numbered points).
+  const body = (o.body && o.body(m)) || `<div class="text md">${o.md(m.text)}</div>${o.pts ? o.pts(m) : ''}`;
+  return `<div class="msg ${cls}" data-mid="${esc(m.id || '')}" data-key="${key}" data-from="${esc(m.from || '')}"><div class="from">${fb}${o.act ? o.act(m) : ''}${who}${chips}</div>${body}</div>`;
 }
 // ---- A task's older messages fold under its latest -------------------------
 // Between two of the person's own messages, what belongs to one task (its
@@ -2187,10 +2303,10 @@ function decisionQuestion(m) {
 // The bar under a balloon: on the person's own, each point it holds and where
 // it stands; on an agent's, the points it answers, the thumbs up that
 // acknowledges them, and on a decision the thumbs up that approves it.
-function pointBarHtml(m, P, href) {
+function pointBarHtml(m, P, href, pick) {
   if (!m || !m.id || !P) return '';
   const bits = [];
-  for (const p of P.byMid.get(m.id) || []) {
+  for (const p of (P.byMid.get(m.id) || []).filter(p => !pick || pick(p))) {
     const a = lastAnswer(p);
     if (p.state === 'answered') bits.push(`<span class="pt-chip answered">${a && a.mid ? ptLink(a.mid, p.id + ' · answered ↓', href, 'Go to the answer') : esc(p.id + ' · answered')}</span>`);
     else bits.push(`<span class="pt-chip ${esc(p.state)}">${esc(p.id + ' · ' + (PT_WORD[p.state] || p.state))}</span>`);
@@ -2208,6 +2324,22 @@ function pointBarHtml(m, P, href) {
       : `<button type="button" class="pt-btn pt-approve" data-mid="${esc(m.id)}" title="Yes, go with your recommendation: typed to the agent once" aria-label="Approve: go with the recommendation">👍 Go with it</button>`);
   }
   return bits.length ? `<div class="pt-bar">${bits.join('')}</div>` : '';
+}
+// The points a message of numbered points made, in its items' order (one
+// per item when the hub read it as one); a follow-up in it is not among them.
+function ptOwn(m, P) {
+  const no = p => { const x = String(p.id || '').match(/^P(\d+)([a-z]?)$/); return x ? [+x[1], x[2]] : [0, '']; };
+  return (P.byMid.get((m && m.id) || '') || []).filter(p => p.mid === m.id)
+    .sort((a, b) => ((a.createdAt || 0) - (b.createdAt || 0)) || (no(a)[0] - no(b)[0]) || no(a)[1].localeCompare(no(b)[1]));
+}
+// A person's balloon of numbered points: each item with its own point's chip
+// under it, else (the hub read it differently) the one bar under the text.
+function pointItemsHtml(m, it, P, href, md) {
+  const own = ptOwn(m, P);
+  if (own.length !== it.items.length) return null;
+  const bars = own.map(p => pointBarHtml(m, P, href, x => x === p));
+  const rest = pointBarHtml(m, P, href, x => !own.includes(x));
+  return `<div class="text md">${itemsHtml(it, bars, md)}</div>${rest}`;
 }
 // The points as the room's poll last gave them.
 let POINTS = pointMaps(null);
@@ -2337,9 +2469,12 @@ function renderBubbles(items, opt = {}) {
     keys.push(k);
     if (isDecision(m)) decKeys.push(k);
     return foldBalloonHtml(m, i, plan[i], { md, open: FOLD.open.has(k), un: unanswered.get(k), idle: SOLO_IDLE,
-      act: copyLinkHtml, plain: refPlain, superseded: sup.has(i), pts: ptBar });
+      act: copyLinkHtml, plain: refPlain, superseded: sup.has(i), pts: ptBar, body });
   };
-  const ptBar = m => pointBarHtml(m, POINTS, mid => refHref(ROOM, mid));
+  const href = mid => refHref(ROOM, mid);
+  const ptBar = m => pointBarHtml(m, POINTS, href);
+  // The person's numbered points: a chip per item (pointItemsHtml).
+  const body = m => { const it = m.from === 'user' && m.id ? pointItems(m.text) : null; return it ? pointItemsHtml(m, it, POINTS, href, md) : null; };
   const rows = [];
   // The catch-up line goes above what is drawn first for the first message after the read point.
   const cu = CU_POINT ? catchUp(items, readPoint(items, CU_POINT), JUST_US, CHAT_NAMES, POINTS.unacked) : null;
@@ -3071,6 +3206,9 @@ async function refreshRoom() {
   ROOM_LIVE = !notRunning;
   ROOM_OBJ = room;
   SOLO_MODE = soloMode;
+  // The agents a message can be directed to with its @<identity> prefix:
+  // from every poll, so a stopped room with its terminals hidden knows them too.
+  ROOM_IDENTS = mem.map(m => m.identity);
   showAskLine(null);
   pointsChanged(room.points || null, ticket);
   chatNamesFor(room, soloMode);
@@ -3482,7 +3620,7 @@ function keptByHub(e) {
   SEND_ERR = 'Not delivered: ' + sendErrorText(e) + '. Your message is kept above: Retry sends it again.';
   setText($('#hint'), SEND_ERR);
   SEND_KEY = '';
-  $('#input').value = ''; ATT.clear();
+  edClear();
   setTimeout(refresh, 400);
   return true;
 }
@@ -3506,6 +3644,7 @@ function sendErrorText(e) {
 $('#input').addEventListener('input', () => {
   SEND_KEY = '';             // edited, so it is a new message
   if (SEND_ERR) { SEND_ERR = ''; setText($('#hint'), ''); }
+  edHeadInput();
 });
 // Images pasted or dropped into the box: uploaded at once, sent with the message.
 const ATT_WAIT = 'Wait for the images to finish uploading, then send.';
@@ -3517,22 +3656,26 @@ const ATT = attBox(() => ROOM, box => {
   const bad = box.failed();
   if (bad.length) { SEND_ERR = 'Not uploaded: ' + bad[bad.length - 1].err + '. Remove it to send the rest.'; setText($('#hint'), SEND_ERR); }
   else if (SEND_ERR.startsWith('Not uploaded') || (SEND_ERR === ATT_WAIT && !box.busy())) { SEND_ERR = ''; setText($('#hint'), ''); }
+  edSave();                  // the head's images are part of the draft
 });
 attWire($('#input'), $('#compose'), ATT);
 $('#att-chips').addEventListener('click', e => {
   const x = e.target.closest && e.target.closest('[data-att-x]');
   if (x) { ATT.remove(x.dataset.attX); $('#input').focus(); }
 });
-// What Send does with the images: null when it must wait (uploading, or one
-// failed), else what the message carries (maybe none).
+// What Send does with the images (the head's and each point's): null when it
+// must wait (uploading, or one failed), else what the message carries (maybe
+// none). A point's images are named inside its text; the hub places them.
 function sendAttachments() {
-  if (ATT.busy()) { SEND_ERR = ATT_WAIT; setText($('#hint'), SEND_ERR); return null; }
-  const bad = ATT.failed();
+  const boxes = [ATT, ...edBoxes()];
+  if (boxes.some(b => b.busy())) { SEND_ERR = ATT_WAIT; setText($('#hint'), SEND_ERR); return null; }
+  const bad = boxes.flatMap(b => b.failed());
   if (bad.length) { SEND_ERR = 'Not uploaded: ' + bad[bad.length - 1].err + '. Remove it to send the rest.'; setText($('#hint'), SEND_ERR); return null; }
-  return ATT.stored();
+  return boxes.flatMap(b => b.stored());
 }
+let ROOM_IDENTS = [];   // the room's agents, for the @<identity> prefix
 $('#send').onclick = async () => {
-  const t = $('#input').value.trim();
+  const t = edText();
   const atts = sendAttachments();
   if (!atts || (!t && !atts.length)) return;
   // Until the session has loaded, whether this is typed into a terminal or
@@ -3558,19 +3701,18 @@ $('#send').onclick = async () => {
       return;
     }
     SEND_ERR = ''; SEND_KEY = '';
-    showPendingUser(t + (atts.length ? '\n\n' + atts.map(a => ATT_PREFIX + a.name).join('\n') : ''));   // show it now; the transcript catches up later
-    $('#input').value = ''; ATT.clear();
+    // Shown now; the transcript catches up later. A message of points names
+    // the head's images itself; a plain one gets them under it as the hub does.
+    showPendingUser(t + (ATT.stored().length && !pointItems(t) ? '\n\n' + ATT.stored().map(a => ATT_PREFIX + a.name).join('\n') : ''));
+    edClear();
     setTimeout(checkSolo, 1200);
     setTimeout(refresh, 400);  // the hub's hold on it, and "resuming", show at once
     return;
   }
-  let to = $('#to') ? $('#to').value : '';
-  // A leading @<identity> overrides the To picker: "@codex do X" → codex only.
-  const m = t.match(/^@([\w-]+)\b/);
-  if (m) {
-    const idents = $('#to') ? [...$('#to').options].map(o => o.value) : [];
-    if (idents.includes(m[1]) || m[1] === 'user') to = m[1];
-  }
+  // A leading @<identity> directs the message: "@codex do X" → codex only.
+  let to = '';
+  const m = $('#input').value.trim().match(/^@([\w-]+)\b/);
+  if (m && (ROOM_IDENTS.includes(m[1]) || m[1] === 'user')) to = m[1];
   // Always through the hub's resume-or-deliver: a team that stopped since the
   // last poll is resumed for the message instead of the message being posted
   // to a room nobody is reading.
@@ -3582,11 +3724,268 @@ $('#send').onclick = async () => {
     return;
   }
   SEND_ERR = ''; SEND_KEY = '';
-  $('#input').value = ''; ATT.clear(); if ($('#to')) $('#to').value = ''; refresh();
+  edClear(); refresh();
 };
 $('#input').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $('#send').click(); }
+  const act = edKeyAction(e, { part: 'head', empty: !$('#input').value.trim(), last: !ED.points.length });
+  if (act === 'send') { e.preventDefault(); $('#send').click(); }
+  else if (act === 'add') { e.preventDefault(); edAddAt(ED.points.length); }
 });
+// ---- The message editor: begin ---------------------------------------------
+// The box is a small editor. The words at the top (the head) are the message,
+// as ever; under them, numbered points, each a block with its own text, its
+// own images (pasted or dropped while the caret is in it) and its own balloon
+// links. The message goes as one "## Points (N)" text (edSerialize), one
+// "**N.**" item per point with its "[image] <name>" lines inside it: the hub
+// takes each item as a point of its own (points.py) and puts each image's
+// stored path in its item (message_refs.with_images). With no point it is
+// plain text, exactly as before. The model (ED) is the source of truth; the
+// draft is kept per room in sessionStorage across a reload.
+// tests/test_session_editor.py runs the model in Node.
+let ED_SEQ = 0;
+const edNew = () => ({ head: '', images: [], points: [] });   // images: the head's, stored ({room, name})
+// Whether a draft holds anything worth keeping.
+const edHas = d => !!(d && (d.head || (d.points && d.points.length) || (d.images && d.images.length)));
+const edUsed = p => !!(p && (String(p.text || '').trim() || (p.images && p.images.length)));
+function edAddPoint(m, at, text) {
+  const p = { id: 'pt' + (++ED_SEQ), text: String(text || ''), images: [] };
+  const i = at == null || at < 0 || at > m.points.length ? m.points.length : at;
+  m.points.splice(i, 0, p);
+  return i;
+}
+function edRemovePoint(m, i) { return i >= 0 && i < m.points.length ? m.points.splice(i, 1)[0] : null; }
+function edMovePoint(m, i, d) {
+  const j = i + d;
+  if (i < 0 || i >= m.points.length || j < 0 || j >= m.points.length) return i;
+  const [p] = m.points.splice(i, 1);
+  m.points.splice(j, 0, p);
+  return j;
+}
+// What a key does in the head or in a point: 'send' (Ctrl/⌘+Enter), 'add' a
+// point (Ctrl/⌘+Shift+Enter anywhere; Tab in the last point once it has
+// words), 'remove' (Backspace in an empty point), else nothing: the key types
+// (Enter in a point is a new line in it).
+function edKeyAction(e, at) {
+  const mod = e.ctrlKey || e.metaKey;
+  if (e.key === 'Enter' && mod) return e.shiftKey ? 'add' : 'send';
+  if (at.part !== 'point') return null;
+  if (e.key === 'Tab' && !e.shiftKey && !mod && !e.altKey && at.last && !at.empty) return 'add';
+  if (e.key === 'Backspace' && !mod && at.empty) return 'remove';
+  return null;
+}
+// "1. words" or "- words" typed at the very start of the head: its words
+// become the first point.
+function edHeadTrigger(value) {
+  const m = String(value || '').match(/^(?:1\.|-)[ \t]([\s\S]*)$/);
+  return m ? m[1] : null;
+}
+// The message as sent: the head's words alone when no point has anything;
+// else the "## Points (N)" form the hub reads (points._comment_items), an
+// empty point dropped. A point's first line follows its number, unless it is
+// a fence, heading, quote, list or table line, which needs a line of its own;
+// its images end it, named, for the hub to place. The head's images are
+// named under the head the same way, so they stay above the first point (a
+// message with no point leaves them to the hub, which ends it with them).
+function edSerialize(m) {
+  const head = String(m.head || '').replace(/\r\n/g, '\n').trim();
+  const pts = m.points.filter(edUsed);
+  if (!pts.length) return head;
+  const named = imgs => (imgs || []).map(x => ATT_PREFIX + x.name);
+  const items = pts.map((p, i) => {
+    const t = String(p.text || '').replace(/\r\n/g, '\n').trim();
+    const own = /^(?:```|~~~|#{1,6}[ \t]|>|[-*+][ \t]|\d+[.)][ \t]|\|)/.test(t.split('\n')[0]) ? '\n\n' : ' ';
+    const imgs = named(p.images);
+    return `**${i + 1}.**` + (t ? own + t : '') + (imgs.length ? '\n' + imgs.join('\n') : '');
+  });
+  const himgs = named(m.images);
+  const top = head + (himgs.length ? (head ? '\n' : '') + himgs.join('\n') : '');
+  return `## Points (${pts.length})\n\n` + (top ? top + '\n\n' : '') + items.join('\n\n');
+}
+// The draft as kept: {head, images: [{room, name}], points: [{text, images: [{room, name}]}]}.
+const edStored = imgs => (imgs || []).filter(x => x && x.room && x.name).map(x => ({ room: String(x.room), name: String(x.name) }));
+const edDraft = m => ({ head: m.head, images: edStored(m.images), points: m.points.map(p => ({ text: p.text, images: edStored(p.images) })) });
+function edFromDraft(d) {
+  const m = edNew();
+  if (!d || typeof d !== 'object') return m;
+  m.head = typeof d.head === 'string' ? d.head : '';
+  m.images = edStored(Array.isArray(d.images) ? d.images : []);
+  for (const p of Array.isArray(d.points) ? d.points : []) {
+    if (!p || typeof p !== 'object') continue;
+    const i = edAddPoint(m, null, typeof p.text === 'string' ? p.text : '');
+    m.points[i].images = edStored(Array.isArray(p.images) ? p.images : []);
+  }
+  return m;
+}
+// ---- The editor on the page ----
+let ED = edNew();
+const ED_BOX = new Map();      // a point's id → its images (attBox)
+const ED_KEY = () => 'cd-draft:' + (ROOM || location.pathname + location.search);
+let _edSave = 0;
+function edSave() {
+  clearTimeout(_edSave);
+  _edSave = setTimeout(() => {
+    ED.head = $('#input').value;
+    ED.images = ATT.stored();
+    try {
+      const d = edDraft(ED);
+      if (edHas(d)) sessionStorage.setItem(ED_KEY(), JSON.stringify(d));
+      else sessionStorage.removeItem(ED_KEY());
+    } catch (e) {}
+  }, 200);
+}
+function edLoad() {
+  try { return edFromDraft(JSON.parse(sessionStorage.getItem(ED_KEY()) || 'null')); } catch (e) { return edNew(); }
+}
+const edLi = id => document.querySelector(`#ed-points > li[data-pt="${id}"]`);
+const edTextOf = id => { const li = edLi(id); return li ? li.querySelector('textarea.ed-text') : null; };
+function edBoxes() { return ED.points.map(p => ED_BOX.get(p.id)).filter(Boolean); }
+// A point's images: uploaded at once, shown as chips in the point, named in
+// its text when sent.
+function edBox(p) {
+  let box = ED_BOX.get(p.id);
+  if (box) return box;
+  box = attBox(() => ROOM, b => {
+    SEND_KEY = '';             // a different set of images, so a new message
+    p.images = b.stored();
+    const li = edLi(p.id);
+    if (li) { const el = li.querySelector('.att-chips'); setHtml(el, b.html(esc)); el.hidden = !b.list.length; }
+    const bad = b.failed();
+    if (bad.length) { SEND_ERR = 'Not uploaded: ' + bad[bad.length - 1].err + '. Remove it to send the rest.'; setText($('#hint'), SEND_ERR); }
+    else if (SEND_ERR.startsWith('Not uploaded') || (SEND_ERR === ATT_WAIT && !b.busy())) { SEND_ERR = ''; setText($('#hint'), ''); }
+    edSave();
+  });
+  ED_BOX.set(p.id, box);
+  return box;
+}
+// The message in the box, as it will be sent.
+function edText() { ED.head = $('#input').value; ED.images = ATT.stored(); return edSerialize(ED); }
+// Typing in the head: "1. " or "- " at its start turns its words into the
+// first point (while there is none).
+function edHeadInput() {
+  const ta = $('#input');
+  const rest = ED.points.length ? null : edHeadTrigger(ta.value);
+  if (rest != null) { ta.value = ''; edAddAt(0, rest); return; }
+  edRefsDraw(); edSave();
+}
+const edGrow = ta => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+// One list item per point: its number, its box, its chips and links, its
+// controls. Drawn again whenever a point is added, removed or moved (the
+// words live in the model, so nothing typed is lost); the caret goes where
+// asked ({id} a point, {head} the head; end: at its end).
+function edRender(focus) {
+  const ol = $('#ed-points');
+  const n = ED.points.length;
+  ol.innerHTML = ED.points.map((p, i) => `<li class="ed-pt" data-pt="${esc(p.id)}"><span class="ed-n" aria-hidden="true">${i + 1}.</span>`
+    + `<textarea class="ed-text" rows="1" aria-label="Point ${i + 1}" placeholder="Point ${i + 1} — Enter for a new line, Tab for the next point, Backspace on an empty point removes it. Paste or drop a screenshot, or a link, to attach it to this point."></textarea>`
+    + `<div class="ed-more"><div class="att-chips" hidden></div><div class="ed-refs" hidden></div></div>`
+    + `<div class="ed-ctl"><button type="button" class="ed-btn" data-ed="up" title="Move this point up" aria-label="Move point ${i + 1} up"${i ? '' : ' disabled'}>▲</button>`
+    + `<button type="button" class="ed-btn" data-ed="down" title="Move this point down" aria-label="Move point ${i + 1} down"${i < n - 1 ? '' : ' disabled'}>▼</button>`
+    + `<button type="button" class="ed-btn" data-ed="x" title="Remove this point" aria-label="Remove point ${i + 1}">×</button></div></li>`).join('');
+  ED.points.forEach((p, i) => {
+    const li = ol.children[i], ta = li.querySelector('textarea.ed-text');
+    ta.value = p.text;
+    edGrow(ta);
+    const box = edBox(p);
+    if (p.images.length && !box.list.length) box.keep(p.images);   // a draft's images, already stored
+    const chips = li.querySelector('.att-chips');
+    setHtml(chips, box.html(esc)); chips.hidden = !box.list.length;
+    attWire(ta, li, box);
+    ta.addEventListener('input', () => { p.text = ta.value; SEND_KEY = ''; if (SEND_ERR) { SEND_ERR = ''; setText($('#hint'), ''); } edGrow(ta); edRefsDraw(); edSave(); });
+    ta.addEventListener('keydown', e => edPointKey(e, p));
+  });
+  edRefsDraw();
+  if (focus) {
+    const ta = focus.head ? $('#input') : edTextOf(focus.id);
+    if (ta) { ta.focus(); const k = focus.end ? ta.value.length : 0; try { ta.setSelectionRange(k, k); } catch (e) {} }
+  }
+  edSave();
+}
+function edPointKey(e, p) {
+  const i = ED.points.indexOf(p);
+  const act = edKeyAction(e, { part: 'point', empty: !edUsed(p), last: i === ED.points.length - 1 });
+  if (act === 'send') { e.preventDefault(); $('#send').click(); }
+  else if (act === 'add') { e.preventDefault(); edAddAt(i + 1); }
+  else if (act === 'remove') { e.preventDefault(); edRemoveAt(i); }
+}
+function edAddAt(i, text) {
+  const at = edAddPoint(ED, i, text);
+  SEND_KEY = '';
+  edRender({ id: ED.points[at].id, end: true });
+}
+function edRemoveAt(i) {
+  const p = edRemovePoint(ED, i);
+  if (!p) return;
+  const box = ED_BOX.get(p.id);
+  ED_BOX.delete(p.id);
+  if (box) box.clear();
+  SEND_KEY = '';
+  const prev = ED.points[i - 1] || ED.points[i];
+  edRender(prev ? { id: prev.id, end: true } : { head: true, end: true });
+}
+function edMoveAt(i, d) {
+  const j = edMovePoint(ED, i, d);
+  if (j === i) return;
+  SEND_KEY = '';
+  edRender({ id: ED.points[j].id, end: true });
+}
+$('#ed-points').addEventListener('click', e => {
+  const li = e.target.closest && e.target.closest('li.ed-pt');
+  const p = li && ED.points.find(q => q.id === li.dataset.pt);
+  if (!p) return;
+  const i = ED.points.indexOf(p);
+  const x = e.target.closest('[data-att-x]');
+  if (x) { edBox(p).remove(x.dataset.attX); const ta = edTextOf(p.id); if (ta) ta.focus(); return; }
+  const b = e.target.closest('button[data-ed]');
+  if (!b) return;
+  if (b.dataset.ed === 'up') edMoveAt(i, -1);
+  else if (b.dataset.ed === 'down') edMoveAt(i, 1);
+  else if (b.dataset.ed === 'x') edRemoveAt(i);
+});
+$('#add-point').onclick = () => edAddAt(ED.points.length);
+// The balloon links in a box, as the chips the sent balloon will show (the
+// hub resolves them; a link it has not answered for yet stays plain text).
+function edRefsHtml(text) {
+  const out = [], seen = new Set();
+  for (const m of String(text || '').matchAll(REF_URL_RE)) {
+    const ref = refOfUrl(m[0]);
+    if (!ref || seen.has(ref.url)) continue;
+    seen.add(ref.url);
+    const h = refChipHtml(ref);
+    if (h) out.push(h);
+  }
+  return out.join('');
+}
+let _edRefs = 0;
+function edRefsDraw() {
+  clearTimeout(_edRefs);
+  _edRefs = setTimeout(() => {
+    const draw = (el, text) => { if (!el) return; const h = edRefsHtml(text); setHtml(el, h); el.hidden = !h; };
+    draw($('#ed-head-refs'), $('#input').value);
+    ED.points.forEach(p => { const li = edLi(p.id); draw(li && li.querySelector('.ed-refs'), p.text); });
+  }, 150);
+}
+// Sent, or kept by the hub: the box is empty again.
+function edClear() {
+  $('#input').value = '';
+  ATT.clear();
+  edBoxes().forEach(b => b.clear());
+  ED_BOX.clear();
+  ED = edNew();
+  edRender(null);
+  try { sessionStorage.removeItem(ED_KEY()); } catch (e) {}
+}
+function edStart() {
+  ED = edLoad();
+  $('#input').value = ED.head;
+  // The head's images, already stored: their chips back.
+  if (ED.images.length && !ATT.list.length) {
+    ATT.keep(ED.images);
+    const el = $('#att-chips'); el._html = ATT.html(esc); el.innerHTML = el._html; el.hidden = false;
+  }
+  edRender(null);
+}
+edStart();
+// ---- The message editor: end -----------------------------------------------
 $('#terms').onclick = () => {
   const hidden = document.body.classList.toggle('term-hidden');
   $('#terms').classList.toggle('on', !hidden);

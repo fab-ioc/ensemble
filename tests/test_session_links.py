@@ -35,6 +35,11 @@ def js_function(name: str) -> str:
     return SRC[m.start():SRC.index("\n}\n", m.start()) + 3]
 
 
+# The reader of a message of numbered points (stripRefBlocks strips each item's blocks).
+def items_block() -> str:
+    return SRC[SRC.index("// ---- Numbered points: begin"):SRC.index("// ---- Numbered points: end")]
+
+
 def js_const(name: str) -> str:
     m = re.search(rf"^const {name} = .*$", SRC, re.M)
     assert m, f"{name} not found in session.html"
@@ -166,7 +171,7 @@ TAIL = r"""
 
 
 def run_scenario(name: str) -> dict:
-    code = "\n".join([HARNESS, ATTACH, js_const("REF_BLOCK_RE"), js_const("TASK_BLOCK_RE")] + [js_function(n) for n in (
+    code = "\n".join([HARNESS, ATTACH, items_block(), js_const("REF_BLOCK_RE"), js_const("TASK_BLOCK_RE")] + [js_function(n) for n in (
         "stripRefBlocks", "soloItems", "prevSessionItems", "soloOwns", "soloWantFailed", "checkSolo",
         "renderSolo", "openGroupOf", "landPending", "markLanded")]
         + [SCENARIOS[name], TAIL])
@@ -236,7 +241,7 @@ class LandOnALinkedBalloon(unittest.TestCase):
 @unittest.skipUnless(NODE, "node is not installed")
 class HideTheHubsWriteOut(unittest.TestCase):
     def strip(self, texts):
-        code = "\n".join([ATTACH, js_const("REF_BLOCK_RE"), js_const("TASK_BLOCK_RE"), js_function("stripRefBlocks"),
+        code = "\n".join([ATTACH, items_block(), js_const("REF_BLOCK_RE"), js_const("TASK_BLOCK_RE"), js_function("stripRefBlocks"),
                           f"console.log(JSON.stringify({json.dumps(texts)}.map(stripRefBlocks)));"])
         res = subprocess.run([NODE, "-"], input=code, capture_output=True, text=True, encoding="utf-8", timeout=30)
         self.assertEqual(res.returncode, 0, res.stderr)

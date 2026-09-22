@@ -170,6 +170,30 @@ class Ledger(_World):
         self.assertIn("the first passage", self.point(rid, "P1")["text"])
         self.assertTrue(self.point(rid, "P2")["comment"])
 
+    def test_each_item_of_a_points_message_is_its_own_point(self):
+        # The chat editor's numbered points: "## Points (N)", one **N.** item
+        # each, a point's images and links written inside it.
+        rid = self.solo_room()
+        body = ("## Points (3)\n\nAfter today's tests.\n\n"
+                "**1.** The board is slow\n[image] 2026-09-22 10.00.00 screenshot.png\n\n"
+                "**2.** See http://h/session?room=room-1a2b3c4d&msg=0123456789ab\n\n"
+                "```\n**9.** not an item\n```\n\n"
+                "**3.**\n\n- a list\n- inside the point")
+        out, ids = self.send(rid, body, key="k-pts")
+        self.assertEqual(ids, ["P1", "P2", "P3"])
+        self.assertTrue(out.startswith("## Points (3)\n\nAfter today's tests.\n\n**1.** The board is slow\n"
+                                       "[image] 2026-09-22 10.00.00 screenshot.png\n\n[point P1]\n\n**2.** "), out)
+        self.assertIn("**9.** not an item\n```\n\n[point P2]\n\n**3.**", out)
+        self.assertTrue(out.endswith("- inside the point\n\n[point P3]"), out)
+        self.assertEqual(points.point_ids(out), ["P1", "P2", "P3"])
+        self.assertEqual(self.point(rid, "P1")["text"], "**1.** The board is slow\n[image] 2026-09-22 10.00.00 screenshot.png")
+        self.assertIn("a list", self.point(rid, "P3")["text"])
+        self.assertNotIn("comment", self.point(rid, "P1"), "a point is not a review comment")
+        self.assertEqual(self.send(rid, body, key="k-pts"), (out, ids), "a retried send is the same points")
+        # The same head with no item is one point, as any message.
+        _, ids = self.send(rid, "## Points (0)\n\njust words")
+        self.assertEqual(ids, ["P4"])
+
     def test_not_points(self):
         rid = self.solo_room()
         for t in ("/compact", "[digest] x", "[from the PO] do it", "ok thanks"):
