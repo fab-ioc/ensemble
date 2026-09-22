@@ -613,7 +613,8 @@ def measure(home: Path, start: datetime, end: datetime, top: int = 20,
 
 
 def _mb(value: int) -> str:
-    return f"{value / (1024 * 1024):,.1f}"
+    """Decimal megabytes (1,000,000 bytes), the unit the report's tables use."""
+    return f"{value / 1_000_000:,.1f}"
 
 
 def _markdown(report: dict) -> str:
