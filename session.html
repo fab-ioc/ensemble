@@ -1248,7 +1248,8 @@ function stripRefBlocks(t) {
     // A message of numbered points carries each item's blocks inside it,
     // above the item's images and point line (message_refs.py).
     const items = it.items.map(x => { const [body, tail] = itemTail(x); const out = stripRefBlocks(body); return out === body ? x : out + (tail ? '\n\n' + tail : ''); });
-    return items.every((x, i) => x === it.items[i]) ? t : joinItems(it.title, it.head, items);
+    const head = it.head ? stripRefBlocks(it.head) : it.head;   // the head's, above its images
+    return head === it.head && items.every((x, i) => x === it.items[i]) ? t : joinItems(it.title, head, items);
   }
   const att = attSplit(t);
   if (att.paths.length) return (stripRefBlocks(att.words) + '\n\n' + att.paths.map(x => ATT_PREFIX + x).join('\n')).replace(/^\n+/, '');
@@ -1577,8 +1578,6 @@ function buildAgents(room) {
     div.querySelector('.ah').onclick = () => toggleTerm(div, p.ptyId);
     col.appendChild(div);
   });
-  // The agents a message can be directed to with its @<identity> prefix.
-  ROOM_IDENTS = room.participants.filter(p => p.kind === 'agent').map(p => p.identity);
   // Solo session: auto-open the single agent's terminal (it's the main view).
   const agentDivs = col.querySelectorAll('.agent');
   if (agentDivs.length === 1) {
@@ -3207,6 +3206,9 @@ async function refreshRoom() {
   ROOM_LIVE = !notRunning;
   ROOM_OBJ = room;
   SOLO_MODE = soloMode;
+  // The agents a message can be directed to with its @<identity> prefix:
+  // from every poll, so a stopped room with its terminals hidden knows them too.
+  ROOM_IDENTS = mem.map(m => m.identity);
   showAskLine(null);
   pointsChanged(room.points || null, ticket);
   chatNamesFor(room, soloMode);
@@ -3654,6 +3656,7 @@ const ATT = attBox(() => ROOM, box => {
   const bad = box.failed();
   if (bad.length) { SEND_ERR = 'Not uploaded: ' + bad[bad.length - 1].err + '. Remove it to send the rest.'; setText($('#hint'), SEND_ERR); }
   else if (SEND_ERR.startsWith('Not uploaded') || (SEND_ERR === ATT_WAIT && !box.busy())) { SEND_ERR = ''; setText($('#hint'), ''); }
+  edSave();                  // the head's images are part of the draft
 });
 attWire($('#input'), $('#compose'), ATT);
 $('#att-chips').addEventListener('click', e => {
@@ -3698,7 +3701,9 @@ $('#send').onclick = async () => {
       return;
     }
     SEND_ERR = ''; SEND_KEY = '';
-    showPendingUser(t + (ATT.stored().length ? '\n\n' + ATT.stored().map(a => ATT_PREFIX + a.name).join('\n') : ''));   // show it now; the transcript catches up later
+    // Shown now; the transcript catches up later. A message of points names
+    // the head's images itself; a plain one gets them under it as the hub does.
+    showPendingUser(t + (ATT.stored().length && !pointItems(t) ? '\n\n' + ATT.stored().map(a => ATT_PREFIX + a.name).join('\n') : ''));
     edClear();
     setTimeout(checkSolo, 1200);
     setTimeout(refresh, 400);  // the hub's hold on it, and "resuming", show at once
@@ -3738,7 +3743,9 @@ $('#input').addEventListener('keydown', e => {
 // draft is kept per room in sessionStorage across a reload.
 // tests/test_session_editor.py runs the model in Node.
 let ED_SEQ = 0;
-const edNew = () => ({ head: '', points: [] });
+const edNew = () => ({ head: '', images: [], points: [] });   // images: the head's, stored ({room, name})
+// Whether a draft holds anything worth keeping.
+const edHas = d => !!(d && (d.head || (d.points && d.points.length) || (d.images && d.images.length)));
 const edUsed = p => !!(p && (String(p.text || '').trim() || (p.images && p.images.length)));
 function edAddPoint(m, at, text) {
   const p = { id: 'pt' + (++ED_SEQ), text: String(text || ''), images: [] };
@@ -3776,29 +3783,36 @@ function edHeadTrigger(value) {
 // else the "## Points (N)" form the hub reads (points._comment_items), an
 // empty point dropped. A point's first line follows its number, unless it is
 // a fence, heading, quote, list or table line, which needs a line of its own;
-// its images end it, named, for the hub to place.
+// its images end it, named, for the hub to place. The head's images are
+// named under the head the same way, so they stay above the first point (a
+// message with no point leaves them to the hub, which ends it with them).
 function edSerialize(m) {
   const head = String(m.head || '').replace(/\r\n/g, '\n').trim();
   const pts = m.points.filter(edUsed);
   if (!pts.length) return head;
+  const named = imgs => (imgs || []).map(x => ATT_PREFIX + x.name);
   const items = pts.map((p, i) => {
     const t = String(p.text || '').replace(/\r\n/g, '\n').trim();
     const own = /^(?:```|~~~|#{1,6}[ \t]|>|[-*+][ \t]|\d+[.)][ \t]|\|)/.test(t.split('\n')[0]) ? '\n\n' : ' ';
-    const imgs = (p.images || []).map(x => ATT_PREFIX + x.name);
+    const imgs = named(p.images);
     return `**${i + 1}.**` + (t ? own + t : '') + (imgs.length ? '\n' + imgs.join('\n') : '');
   });
-  return `## Points (${pts.length})\n\n` + (head ? head + '\n\n' : '') + items.join('\n\n');
+  const himgs = named(m.images);
+  const top = head + (himgs.length ? (head ? '\n' : '') + himgs.join('\n') : '');
+  return `## Points (${pts.length})\n\n` + (top ? top + '\n\n' : '') + items.join('\n\n');
 }
-// The draft as kept: {head, points: [{text, images: [{room, name}]}]}.
-const edDraft = m => ({ head: m.head, points: m.points.map(p => ({ text: p.text, images: (p.images || []).map(x => ({ room: x.room, name: x.name })) })) });
+// The draft as kept: {head, images: [{room, name}], points: [{text, images: [{room, name}]}]}.
+const edStored = imgs => (imgs || []).filter(x => x && x.room && x.name).map(x => ({ room: String(x.room), name: String(x.name) }));
+const edDraft = m => ({ head: m.head, images: edStored(m.images), points: m.points.map(p => ({ text: p.text, images: edStored(p.images) })) });
 function edFromDraft(d) {
   const m = edNew();
   if (!d || typeof d !== 'object') return m;
   m.head = typeof d.head === 'string' ? d.head : '';
+  m.images = edStored(Array.isArray(d.images) ? d.images : []);
   for (const p of Array.isArray(d.points) ? d.points : []) {
     if (!p || typeof p !== 'object') continue;
     const i = edAddPoint(m, null, typeof p.text === 'string' ? p.text : '');
-    m.points[i].images = (Array.isArray(p.images) ? p.images : []).filter(x => x && x.room && x.name).map(x => ({ room: String(x.room), name: String(x.name) }));
+    m.points[i].images = edStored(Array.isArray(p.images) ? p.images : []);
   }
   return m;
 }
@@ -3811,9 +3825,10 @@ function edSave() {
   clearTimeout(_edSave);
   _edSave = setTimeout(() => {
     ED.head = $('#input').value;
+    ED.images = ATT.stored();
     try {
       const d = edDraft(ED);
-      if (d.head || d.points.length) sessionStorage.setItem(ED_KEY(), JSON.stringify(d));
+      if (edHas(d)) sessionStorage.setItem(ED_KEY(), JSON.stringify(d));
       else sessionStorage.removeItem(ED_KEY());
     } catch (e) {}
   }, 200);
@@ -3843,7 +3858,7 @@ function edBox(p) {
   return box;
 }
 // The message in the box, as it will be sent.
-function edText() { ED.head = $('#input').value; return edSerialize(ED); }
+function edText() { ED.head = $('#input').value; ED.images = ATT.stored(); return edSerialize(ED); }
 // Typing in the head: "1. " or "- " at its start turns its words into the
 // first point (while there is none).
 function edHeadInput() {
@@ -3962,6 +3977,11 @@ function edClear() {
 function edStart() {
   ED = edLoad();
   $('#input').value = ED.head;
+  // The head's images, already stored: their chips back.
+  if (ED.images.length && !ATT.list.length) {
+    ATT.keep(ED.images);
+    const el = $('#att-chips'); el._html = ATT.html(esc); el.innerHTML = el._html; el.hidden = false;
+  }
   edRender(null);
 }
 edStart();

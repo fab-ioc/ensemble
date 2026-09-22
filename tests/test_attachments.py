@@ -335,6 +335,24 @@ class Attachments(unittest.TestCase):
         self.assertEqual(message_refs.with_images("x\n[image] other.png", ["/t/a.png"]), "x\n[image] other.png\n\n[image] /t/a.png")
         self.assertEqual(message_refs.with_images("plain", ["/t/a.png"], ["a.png"]), "plain\n\n[image] /t/a.png")
 
+    def test_a_head_image_stays_above_the_first_point(self):
+        # The editor names the head's images under the head: the hub's path
+        # goes there, not to the end of the message (which is the last point).
+        import points
+        text = "## Points (2)\n\nIntro\n[image] h.png\n\n**1.** a\n[image] a.png\n\n**2.** b"
+        typed = points._deliverable(text, ["P1", "P2"])
+        out = message_refs.with_images(typed, ["/t/attachments/h.png", "/t/attachments/a.png"], ["h.png", "a.png"])
+        self.assertEqual(out, ("## Points (2)\n\nIntro\n[image] /t/attachments/h.png\n\n"
+                               "**1.** a\n[image] /t/attachments/a.png\n\n[point P1]\n\n**2.** b\n\n[point P2]"))
+        head, items = message_refs.split_items(out)
+        self.assertEqual(head, "## Points (2)\n\nIntro\n[image] /t/attachments/h.png")
+        self.assertNotIn("[image]", items[1], "the last point has no image of its own")
+        self.assertEqual(message_refs.split_images(out)[1], [], "none ends the message")
+        self.assertEqual(message_refs.all_images(out), ["/t/attachments/h.png", "/t/attachments/a.png"])
+        # Only the head has one: the same.
+        alone = message_refs.with_images("## Points (1)\n\n[image] h.png\n\n**1.** a\n\n[point P1]", ["/t/attachments/h.png"], ["h.png"])
+        self.assertEqual(alone, "## Points (1)\n\n[image] /t/attachments/h.png\n\n**1.** a\n\n[point P1]")
+
     def test_say_places_an_image_inside_its_point(self):
         _s, a = self.upload(PNG)
         _s, b = self.upload(JPG, name="b.jpg")

@@ -67,7 +67,7 @@ const ctx = { ROOM: 'room-aaaa0001', console, URL,
 };
 vm.createContext(ctx);
 vm.runInContext(code + `
-  globalThis.t = { edNew, edAddPoint, edRemovePoint, edMovePoint, edKeyAction, edHeadTrigger, edSerialize, edDraft, edFromDraft, edUsed,
+  globalThis.t = { edNew, edAddPoint, edRemovePoint, edMovePoint, edKeyAction, edHeadTrigger, edSerialize, edDraft, edFromDraft, edUsed, edHas,
     pointItems, itemTail, itemBody, joinItems, stripRefBlocks, mdToHtml, itemsHtml, foldLine, pointBarHtml, ptOwn, pointItemsHtml, pointMaps };`, ctx);
 const T = ctx.t;
 const out = {};
@@ -86,6 +86,13 @@ m.points[i5].images = [{ room: 'room-aaaa0001', name: 'only.png' }];
 out.points = T.edSerialize(m);
 m.head = '';
 out.noHead = T.edSerialize(m).split('\n').slice(0, 3);
+// The head's images: named under the head, above the first point; alone
+// when the head has no words; left to the hub when there is no point.
+m.images = [{ room: 'room-aaaa0001', name: 'h.png' }];
+out.headImgOnly = T.edSerialize(m).split('\n').slice(0, 4);
+m.head = 'words';
+out.headImg = T.edSerialize(m).split('\n').slice(0, 5);
+out.headImgPlain = T.edSerialize(Object.assign(T.edNew(), { head: 'just words', images: m.images }));
 // --- the keys ---
 const k = (key, o = {}) => Object.assign({ key, ctrlKey: false, metaKey: false, shiftKey: false, altKey: false }, o);
 const head = { part: 'head', empty: false, last: true }, pt = { part: 'point', empty: false, last: true };
@@ -112,12 +119,16 @@ out.removed = [T.edRemovePoint(m, 1).text, m.points.map(p => p.text).join(''), T
 out.ids = new Set(m.points.map(p => p.id)).size === m.points.length;
 // --- a draft ---
 m = T.edNew(); m.head = 'h';
+m.images = [{ room: 'r', name: 'top.png', url: 'y', state: 'ok' }, { room: '', name: 'lost.png' }];
 T.edAddPoint(m, null, 'p1'); m.points[0].images = [{ room: 'r', name: 'n.png', url: 'x', state: 'ok' }];
 const d = T.edDraft(m);
 out.draft = d;
 out.back = T.edSerialize(T.edFromDraft(JSON.parse(JSON.stringify(d))));
+out.backImages = T.edFromDraft(JSON.parse(JSON.stringify(d))).images;
 out.badDraft = [T.edSerialize(T.edFromDraft(null)), T.edSerialize(T.edFromDraft({ head: 3, points: [null, { text: 5, images: [{ room: 'r' }] }] })),
-  T.edFromDraft({ points: 'x' }).points.length];
+  T.edFromDraft({ points: 'x' }).points.length, T.edFromDraft({ images: 'x' }).images.length];
+out.has = [T.edHas(T.edDraft(T.edNew())), T.edHas({ head: 'w', points: [], images: [] }), T.edHas({ head: '', points: [], images: [{ room: 'r', name: 'a.png' }] }),
+  T.edHas({ head: '', points: [{ text: '', images: [] }], images: [] }), T.edHas(null)];
 // --- reading it back ---
 const sent = '## Points (2)\n\nAfter tests.\n\n**1.** The board is slow, see http://h/session?room=room-1&msg=m1\n\n[ref http://h/session?room=room-1&msg=m1] from claude in "Docs" at 2026-09-22 10:00:\n> Merged.\n\n[image] C:\\t\\attachments\\a.png\n\n**2.**\n\n```\n**3.** not an item\n```\n\nsee http://h/session?room=room-1&msg=m1';
 const it = T.pointItems(sent);
@@ -127,7 +138,10 @@ out.body = T.itemBody(it.items[1]).split('\n')[0];
 out.notItems = [T.pointItems('## Points (1)\n\nno item'), T.pointItems('**1.** no head'), T.pointItems('plain')];
 out.stripped = T.stripRefBlocks(sent);
 out.strippedSame = T.stripRefBlocks('## Points (1)\n\n**1.** x') === '## Points (1)\n\n**1.** x';
+// The head's block goes too, its image kept under the head.
+out.strippedHead = T.stripRefBlocks('## Points (1)\n\nIntro http://h/session?room=room-1&msg=m1\n\n[ref http://h/session?room=room-1&msg=m1] from claude in "Docs" at 2026-09-22 10:00:\n> Merged.\n\n[image] C:\\t\\attachments\\h.png\n\n**1.** x');
 out.html = T.mdToHtml('## Points (2)\n\nHead words\n\n**1.** first\n[image] C:\\t\\attachments\\a.png\n\n**2.** second\n\nmore');
+out.htmlHeadImg = T.mdToHtml('## Points (2)\n\nHead words\n[image] C:\\t\\attachments\\h.png\n\n**1.** first\n\n**2.** second');
 out.htmlInline = T.mdToHtml('words\n[image] C:\\t\\attachments\\a.png\nthen more');
 out.htmlNotOwn = T.mdToHtml('[image] C:\\elsewhere\\a.png\nwords');
 out.fold = [T.foldLine('## Points (2)\n\nAfter tests.\n\n**1.** a\n\n**2.** b'), T.foldLine('## Points (1)\n\n**1.** the first point\n[image] C:\\t\\attachments\\a.png'),
@@ -172,6 +186,11 @@ class Editor(unittest.TestCase):
             "**4.**\n[image] only.png"))
         self.assertEqual(self.r["noHead"], ["## Points (4)", "", "**1.** The board is slow"])
 
+    def test_the_heads_images_stay_above_the_first_point(self):
+        self.assertEqual(self.r["headImgOnly"], ["## Points (4)", "", "[image] h.png", ""])
+        self.assertEqual(self.r["headImg"], ["## Points (4)", "", "words", "[image] h.png", ""])
+        self.assertEqual(self.r["headImgPlain"], "just words", "no point: the hub ends the message with them, as ever")
+
     def test_the_keys(self):
         k = self.r["keys"]
         self.assertEqual(k["send"], ["send", "send"])
@@ -190,9 +209,13 @@ class Editor(unittest.TestCase):
         self.assertTrue(self.r["ids"])
 
     def test_a_draft_round_trips(self):
-        self.assertEqual(self.r["draft"], {"head": "h", "points": [{"text": "p1", "images": [{"room": "r", "name": "n.png"}]}]})
-        self.assertEqual(self.r["back"], "## Points (1)\n\nh\n\n**1.** p1\n[image] n.png")
-        self.assertEqual(self.r["badDraft"], ["", "", 0])
+        self.assertEqual(self.r["draft"], {"head": "h", "images": [{"room": "r", "name": "top.png"}],
+                                           "points": [{"text": "p1", "images": [{"room": "r", "name": "n.png"}]}]},
+                         "the head's stored images are kept too; one not stored is not")
+        self.assertEqual(self.r["back"], "## Points (1)\n\nh\n[image] top.png\n\n**1.** p1\n[image] n.png")
+        self.assertEqual(self.r["backImages"], [{"room": "r", "name": "top.png"}])
+        self.assertEqual(self.r["badDraft"], ["", "", 0, 0])
+        self.assertEqual(self.r["has"], [False, True, True, True, False], "a draft of only a head image is worth keeping")
 
     def test_a_sent_message_is_read_back_as_its_items(self):
         it = self.r["items"]
@@ -210,6 +233,8 @@ class Editor(unittest.TestCase):
             "## Points (2)\n\nAfter tests.\n\n**1.** The board is slow, see http://h/session?room=room-1&msg=m1\n\n[image] C:\\t\\attachments\\a.png\n\n"
             "**2.**\n\n```\n**3.** not an item\n```\n\nsee http://h/session?room=room-1&msg=m1"))
         self.assertTrue(self.r["strippedSame"])
+        self.assertEqual(self.r["strippedHead"], "## Points (1)\n\nIntro http://h/session?room=room-1&msg=m1\n\n[image] C:\\t\\attachments\\h.png\n\n**1.** x",
+                         "the head's block goes too, its image kept")
 
     def test_the_balloon_is_a_numbered_list_with_images_in_place(self):
         h = self.r["html"]
@@ -217,6 +242,10 @@ class Editor(unittest.TestCase):
         self.assertIn('<li class="pt-item"><div class="ln">first</div><div class="att-thumbs"><a class="att-thumb" href="/api/room/attachment?room=room-aaaa0001&amp;name=a.png"', h)
         self.assertIn('<li class="pt-item"><div class="ln">second</div>', h)
         self.assertEqual(h.count("<li"), 2)
+        hh = self.r["htmlHeadImg"]
+        self.assertTrue(hh.startswith('<div class="ln">Head words</div><div class="att-thumbs"><a class="att-thumb" href="/api/room/attachment?room=room-aaaa0001&amp;name=h.png"'), hh)
+        self.assertEqual(hh.count("att-thumbs"), 1, "the head's image is above the list, in no item")
+        self.assertIn('<ol class="pt-items"><li class="pt-item"><div class="ln">first</div></li>', hh)
         inline = self.r["htmlInline"]
         self.assertTrue(inline.startswith('<div class="ln">words</div>\n<div class="att-thumbs">'), inline)
         self.assertTrue(inline.endswith('</div>\n<div class="ln">then more</div>'), inline)

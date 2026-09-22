@@ -75,6 +75,13 @@ class ExpandTest(unittest.TestCase):
         # Stripped again: the same message, an item's tail set off by a blank line.
         self.assertEqual(mr.strip_message_refs(out), text.replace("9ab\n[image]", "9ab\n\n[image]"))
         self.assertEqual(mr.split_items(out)[1][1], "**2.** second, plain\n\n[point P2]")
+        # The head's own image (named under it by the editor) stays under
+        # the head's block, above the first item.
+        with_img = f"## Points (1)\n\nIntro {URL2}\n[image] C:\\t\\attachments\\h.png\n\n**1.** first\n\n[point P1]"
+        out = mr.expand_message_refs(with_img, lookup)
+        self.assertEqual(out, (f"## Points (1)\n\nIntro {URL2}\n\n[ref {URL2}] from sam in \"PO\" at {WHEN}:\n> Ship it\n\n"
+                               f"[image] C:\\t\\attachments\\h.png\n\n**1.** first\n\n[point P1]"))
+        self.assertEqual(mr.strip_message_refs(out), with_img.replace("\n[image]", "\n\n[image]"))
         review = f"## Review comments (1)\n\n**1.** > quoted\n\nsee {URL}"
         self.assertTrue(mr.expand_message_refs(review, lookup).endswith(f"see {URL}\n\n[ref {URL}] from claude in \"Docs\" at {WHEN}:\n> Merged.\n> Tests pass."))
         plain = "## Points (1)\n\n**1.** nothing to expand\n\n[point P1]"
