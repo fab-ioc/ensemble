@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="ensemble-pages" content="">
 <title>Ensemble</title>
 <script>
 // Appearance, resolved before first paint so the page never flashes the wrong
@@ -2808,6 +2809,22 @@
       font-size: var(--fs-100);
     }
   }
+  /* The line that says the page on disk is newer (see "Page update" in the
+     script): one quiet strip over the top of the page, --surface on a border,
+     the action a link. The same rule in index.html, session.html and fileview.html. */
+  #ens-upd {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
+    display: flex; justify-content: center; align-items: center; gap: var(--s-100);
+    min-height: 28px; padding: var(--s-100) var(--s-300);
+    background: var(--surface); color: var(--fg); border-bottom: 1px solid var(--border); box-shadow: var(--e-200);
+    font-size: var(--fs-200); line-height: var(--lh-200); font-weight: 500;
+  }
+  #ens-upd button {
+    position: relative; background: none; border: 0; padding: 0; margin: 0; font: inherit;
+    color: var(--link); text-decoration: underline; cursor: pointer; border-radius: var(--r-100);
+  }
+  #ens-upd button::after { content: ''; position: absolute; left: -8px; right: -8px; top: -14px; bottom: -14px; }
+  #ens-upd button:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
 </style>
 <!-- Shared with fileview.html and session.html: the code highlighter, and the
      store that keeps review comments until they are delivered. -->
@@ -5398,8 +5415,9 @@ function setUpdateStage(text) {
   if (el) el.textContent = text;
 }
 async function triggerUpdate() {
-  if (UPDATE_IN_PROGRESS) return;
+  if (UPDATE_IN_PROGRESS || ensUpd.reloading) return;
   UPDATE_IN_PROGRESS = true;
+  ensUpd.hold = true;   // the page reloads on the new pid below, not for a changed stamp too
   const banner = document.getElementById('update-banner');
   const overlay = document.getElementById('update-overlay');
   if (banner) banner.hidden = true;
@@ -5426,6 +5444,7 @@ async function triggerUpdate() {
   }
   if (refused) {
     UPDATE_IN_PROGRESS = false;
+    ensUpd.hold = false;
     if (overlay) overlay.hidden = true;
     if (banner) banner.hidden = false;
     toast(refused, 8000, 'err');
@@ -5447,7 +5466,8 @@ async function triggerUpdate() {
         setUpdateStage('Reloading…');
         // Small pause so the user sees the final stage flash, then reload.
         await new Promise(r => setTimeout(r, 300));
-        location.reload();
+        ensUpd.hold = false;
+        ensUpd.reload();   // where it was, like an update reload
         return;
       }
     } catch { /* still restarting */ }
@@ -5455,6 +5475,7 @@ async function triggerUpdate() {
 
   // Timed out — let the user retry.
   UPDATE_IN_PROGRESS = false;
+  ensUpd.hold = false;
   if (overlay) overlay.hidden = true;
   if (banner) banner.hidden = false;
   toast('update timed out — check `ensemble logs`', 6000, 'err');
@@ -13173,6 +13194,165 @@ async function loadThemes() {
   catch (e) { THEMES = []; }
 }
 
+// ---- Page update: begin shared block ----------------------------------------
+// The hub serves the pages from disk, so a merge is live on the next load; this
+// keeps a tab that stays open on the current page. At load the page knows the
+// stamps it was served with (<meta name="ensemble-pages">, written by the hub
+// as it serves the page); /api/config says what is on disk now. The page's own
+// poll asks every 30 s, and when this page's file or a hub script it loads has
+// changed, the page reloads where it was — unless the person is in the middle
+// of something: text they typed that is still there, a comment composer, a
+// selection, an open dialog, a drag or a held pointer, or any input in the last
+// few seconds. Then one line at the top says "Ensemble was updated · Reload",
+// and the page reloads on a click, by itself once idle (nothing in hand and no
+// input for 60 s), or when the tab is hidden and holds no text. A page framed
+// in another (the chat in the task panel) leaves the reload to its host when
+// the host is about to reload too, and a host reloads only when its frames are
+// idle as well, saving their places with its own. A hub restart from the Update button holds this off (hold) so
+// the two never reload twice. Each page adds what only it knows: ensUpdBusy()
+// (what counts as in hand there), ensUpdPlace() (what to put back, or a url to
+// come back to) and a call to ensUpd.restore() when it is ready to put it back.
+// index.html, session.html and fileview.html carry the same block;
+// tests/test_page_update.py runs it in Node.
+const ensUpd = window.ensUpd = (() => {   // a window property too: a host page reads its frames', a frame its host's
+  const PAGE = { '/': 'index.html', '/index.html': 'index.html', '/session': 'session.html', '/fileview': 'fileview.html' }[location.pathname] || '';
+  const KEY = 'cd-upd-place:' + location.pathname + location.search;
+  const CHECK_MS = 30000, QUIET_MS = 5000, IDLE_MS = 60000, RECHECK_MS = 5000, PLACE_MS = 30 * 60000;
+  const loaded = {};   // the stamps this page was served with
+  try {
+    const meta = document.querySelector('meta[name="ensemble-pages"]');
+    for (const kv of ((meta && meta.getAttribute('content')) || '').split(' ')) {
+      const i = kv.indexOf('='); if (i > 0) loaded[kv.slice(0, i)] = kv.slice(i + 1);
+    }
+  } catch (e) {}
+  // This page and the hub scripts it loads.
+  const deps = () => [PAGE].concat([...document.querySelectorAll('script[src^="/static/"]')].map(s => s.getAttribute('src').slice(1))).filter(Boolean);
+  const S = { page: PAGE, loaded, pages: null, pending: false, hold: false, reloading: false, lastInput: Date.now(), checkedAt: Date.now(), checking: false, line: null, timer: 0 };
+  const typed = new Set();      // the fields typed in since the page loaded
+  let held = false;             // a pointer held down or a drag under way
+  const isField = el => !!el && ((el.matches && el.matches('input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]):not([type=file]), textarea')) || el.isContentEditable === true);
+  const fieldText = el => el.isContentEditable === true ? (el.textContent || '') : (el.value || '');
+  const input = () => { S.lastInput = Date.now(); };
+  const on = (t, f, o) => document.addEventListener(t, f, o);
+  on('keydown', input, true);
+  on('pointerdown', () => { input(); held = true; }, true);
+  on('pointermove', input, true);
+  on('wheel', input, { capture: true, passive: true });
+  on('touchstart', input, { capture: true, passive: true });
+  on('pointerup', () => { held = false; }, true);
+  on('pointercancel', () => { held = false; }, true);
+  on('dragstart', () => { held = true; }, true);
+  on('dragend', () => { held = false; }, true);
+  on('drop', () => { held = false; }, true);
+  on('input', e => { if (isField(e.target)) typed.add(e.target); }, true);
+  // A one-line field left with its words in it (a search box, a setting saved
+  // on blur) is done with, not in hand; a textarea keeps holding until empty,
+  // and so does a field in a dialog (a task's title is taken by Start, not by
+  // leaving the field) for as long as the dialog is open.
+  const inDialog = el => (el.closest && el.closest('dialog')) || null;
+  on('change', e => { const t = e.target; if (t && t.matches && t.matches('input') && !inDialog(t)) typed.delete(t); }, true);
+  // The same-origin pages framed in this one (the chat in the task panel).
+  const frames = () => [...document.querySelectorAll('iframe')].map(f => { try { return f.contentWindow && f.contentWindow.ensUpd; } catch (e) { return null; } }).filter(Boolean);
+  // Text in hand: typed here and still there, or what the page names (a
+  // composer, the message box), here or in a frame.
+  const holdingText = () => {
+    for (const el of typed) {
+      const dlg = el.isConnected ? inDialog(el) : null;
+      if (!el.isConnected || (dlg && !dlg.open)) typed.delete(el);   // gone, or its dialog closed: not in hand
+      else if (fieldText(el).trim()) return true;
+    }
+    try { if (window.ensUpdBusy && window.ensUpdBusy()) return true; } catch (e) {}
+    return frames().some(u => u.holdingText());
+  };
+  const busy = () => {
+    if (holdingText() || held) return true;
+    if (document.querySelector('dialog[open]')) return true;
+    try { const sel = getSelection(); if (sel && !sel.isCollapsed && sel.toString().trim()) return true; } catch (e) {}
+    return frames().some(u => u.busy());
+  };
+  const idleFor = () => Math.min(Date.now() - S.lastInput, ...frames().map(u => u.idleFor()));
+  // Whether what is on disk differs from what this page runs.
+  const changed = pages => !!pages && deps().some(f => loaded[f] && pages[f] && pages[f] !== loaded[f]);
+  // Where the page is, kept for the page that loads next under this url (or a
+  // url to come back to). A host going away saves its frames' places too: the
+  // chat in the task panel comes back where it was when the panel opens again.
+  function savePlace() {
+    let place = null;
+    try { place = window.ensUpdPlace ? window.ensUpdPlace() : null; } catch (e) {}
+    if (place) { place.at = Date.now(); try { sessionStorage.setItem(KEY, JSON.stringify(place)); } catch (e) {} }
+    return place;
+  }
+  function reload() {
+    if (S.reloading) return;
+    S.reloading = true;
+    clearInterval(S.timer); S.timer = 0;
+    for (const u of frames()) { try { u.savePlace(); } catch (e) {} }
+    const place = savePlace();
+    if (place && place.url) location.replace(place.url); else location.reload();
+  }
+  function restore() {
+    let place = null;
+    try { place = JSON.parse(sessionStorage.getItem(KEY) || 'null'); sessionStorage.removeItem(KEY); } catch (e) {}
+    // A frame's place is for the chat opened again soon, not one opened hours on.
+    return place && (!place.at || Date.now() - place.at < PLACE_MS) ? place : null;
+  }
+  function showLine() {
+    if (S.line || !document.body) return;
+    const n = document.createElement('div');
+    n.id = 'ens-upd';
+    n.setAttribute('role', 'status');
+    n.innerHTML = 'Ensemble was updated · <button type="button">Reload</button>';
+    n.addEventListener('click', reload);   // the whole line; the button is where the keyboard lands
+    document.body.appendChild(n);
+    S.line = n;
+  }
+  // A host page about to reload takes its frames with it: this one waits for it.
+  const hostPending = () => {
+    try {
+      const h = window.parent !== window && window.parent.ensUpd;
+      return !!h && (h.pending || h.changed(S.pages));
+    } catch (e) { return false; }
+  };
+  function maybe() {
+    if (!S.pending || S.reloading || S.hold || hostPending()) return;
+    if (document.hidden) { if (!holdingText()) reload(); return; }
+    if (busy()) { showLine(); return; }
+    if (idleFor() >= (S.line ? IDLE_MS : QUIET_MS)) reload();
+  }
+  async function poll() {
+    if (S.reloading || !PAGE) return;
+    if (S.pending) { maybe(); return; }
+    if (S.checking || Date.now() - S.checkedAt < CHECK_MS) return;
+    S.checking = true; S.checkedAt = Date.now();
+    try {
+      const r = await fetch('/api/config', { cache: 'no-store' });
+      const c = r.ok ? await r.json() : null;
+      S.pages = (c && c.pages) || null;
+      if (changed(S.pages)) {
+        S.pending = true;
+        if (!S.timer) S.timer = setInterval(maybe, RECHECK_MS);
+        maybe();
+      }
+    } catch (e) {}
+    finally { S.checking = false; }
+  }
+  document.addEventListener('visibilitychange', () => { if (document.hidden) maybe(); });
+  return Object.assign(S, { deps, changed, holdingText, busy, idleFor, savePlace, reload, restore, poll, maybe, showLine });
+})();
+// ---- Page update: end shared block ------------------------------------------
+// What this page holds and where it is, for the update block above: a roadmap
+// with unsaved edits (its own beforeunload guard would turn a reload into a
+// prompt), a diff comment being written (its box open, empty or not: drPaint
+// rewrites the textarea on every change, so the draft is the truth, not the
+// field), or an Update under way; the project, tab, panel and scroll to put back.
+const drInHand = () => [...DR_REVIEWS.values()].some(rv => rv.view && rv.view.draft && rv.view.box.isConnected && rv.view.head && rv.view.head.isConnected);
+window.ensUpdBusy = () => UPDATE_IN_PROGRESS || [...RM.values()].some(rmDirty) || drInHand();
+window.ensUpdPlace = () => ({
+  proj: SELECTED_PROJECT || '', tab: PROJECT_TAB, sb: SB_DEST,
+  sid: document.body.classList.contains('detail-open') && SELECTED_SID ? SELECTED_SID : '',
+  top: Math.round((document.scrollingElement || document.documentElement).scrollTop || 0),
+  po: PO_PEEK ? 1 : 0, pin: PO_PEEK ? PO_PIN : '',   // the PO drawer open over the page, and whose PO it shows
+});
 (async () => {
   // Platform first — everything downstream (feature-gating, terminal names) reads it.
   await loadPlatform();
@@ -13295,8 +13475,27 @@ async function loadThemes() {
     if (!PROJECTS) await refreshProjects();
     openTaskLink(deepTask, deepQs.get('agent') || '', deepQs.get('project') || '');
   }
+  // Back where it was after the page reloaded itself for an update: the same
+  // project and tab, the same open task, the same scroll place.
+  const back = deepTask ? null : ensUpd.restore();
+  if (back && typeof back === 'object') {
+    if (back.proj) {
+      if (!PROJECTS) await refreshProjects();
+      if (projectById(back.proj)) { SELECTED_PROJECT = back.proj; PROJECT_TAB = back.tab || 'tasks'; }
+    }
+    SB_DEST = back.sb || '';
+    renderRows();
+    if (back.sid && ALL_ROWS.some(r => r.sessionId === back.sid)) openDetail(back.sid);
+    // The PO drawer open again on the same conversation (its frame's place is
+    // kept under the frame's url), after the task it was over: opening a task
+    // by hand closes the drawer on a phone, and this is not that. renderPo
+    // drops it where it has no PO to show.
+    if (back.po) { PO_PEEK = true; PO_PIN = back.pin || ''; renderPo(); }
+    if (back.top) (document.scrollingElement || document.documentElement).scrollTop = back.top;
+  }
 })();
-setInterval(refresh, 2500);
+// The poll also asks, every 30 s, whether the page on disk is still this one.
+setInterval(() => { refresh(); ensUpd.poll(); }, 2500);
 
 </script>
 </body>

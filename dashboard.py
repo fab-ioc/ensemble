@@ -393,6 +393,65 @@ SETTINGS_FILE = DASHBOARD_DIR / "settings.json"      # user preferences (openMod
 PROJECTS_FILE = DASHBOARD_DIR / "projects.json"      # registered projects: [{id,name,path,isGit,createdAt}]
 SESSION_PROJECTS_FILE = DASHBOARD_DIR / "session_projects.json"  # {sessionId|roomId: projectId}
 STATIC_DIR = Path(__file__).parent
+# The pages and the scripts they share are served from disk, so a merge is live
+# on the next load; a tab that stays open keeps running what it loaded. Each of
+# these files has a stamp (a hash of its bytes) that /api/config lists, that
+# every page and script response carries in X-Ensemble-Stamp, and that a served
+# page gets written into its <meta name="ensemble-pages"> at serve time, so an
+# open tab can tell when the page it runs is no longer the one on disk.
+PAGE_FILES = ("index.html", "session.html", "fileview.html",
+              "static/hl.js", "static/comments.js", "static/attach.js")
+PAGE_META = b'<meta name="ensemble-pages" content="">'
+_STAMP_CACHE: dict[str, tuple[tuple[int, int], str]] = {}
+
+
+def _stamp_of(data: bytes) -> str:
+    return hashlib.sha1(data).hexdigest()[:12]
+
+
+def page_stamp(rel: str, data: bytes | None = None) -> str:
+    """The stamp of one served file: hashed once per (mtime, size), so a poll
+    costs a stat. "" when the file is missing."""
+    path = STATIC_DIR / rel
+    try:
+        st = path.stat()
+    except OSError:
+        _STAMP_CACHE.pop(rel, None)
+        return ""
+    key = (st.st_mtime_ns, st.st_size)
+    hit = _STAMP_CACHE.get(rel)
+    if hit and hit[0] == key:
+        return hit[1]
+    try:
+        stamp = _stamp_of(path.read_bytes() if data is None else data)
+    except OSError:
+        return ""
+    _STAMP_CACHE[rel] = (key, stamp)
+    return stamp
+
+
+def page_stamps() -> dict[str, str]:
+    return {rel: page_stamp(rel) for rel in PAGE_FILES}
+
+
+def page_file_rel(path: Path) -> str:
+    """The PAGE_FILES name of a served path, or "" for any other file."""
+    try:
+        rel = path.resolve().relative_to(STATIC_DIR.resolve()).as_posix()
+    except (OSError, ValueError):
+        return ""
+    return rel if rel in PAGE_FILES else ""
+
+
+def stamp_page(data: bytes) -> bytes:
+    """A served page with the stamps of every page file written into its
+    <meta name="ensemble-pages">, space-separated "name=stamp" pairs."""
+    if PAGE_META not in data:
+        return data
+    pairs = " ".join(f"{k}={v}" for k, v in page_stamps().items() if v)
+    return data.replace(PAGE_META, PAGE_META[:-2] + pairs.encode("ascii") + b'">', 1)
+
+
 # Default log location per platform (macOS keeps the historical ~/Library/Logs
 # path; Windows/Linux log under the dashboard state dir, matching the CLIs).
 if sys.platform == "darwin":
@@ -7442,10 +7501,18 @@ class Handler(BaseHTTPRequestHandler):
         except FileNotFoundError:
             self.send_error(404)
             return
+        # A page or a shared script says which version it is, and a page is
+        # told every page file's stamp (see PAGE_FILES).
+        page = page_file_rel(path)
+        stamp = page_stamp(page, data) if page else ""
+        if page and page.endswith(".html"):
+            data = stamp_page(data)
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        if stamp:
+            self.send_header("X-Ensemble-Stamp", stamp)
         for name, value in extra_headers:
             self.send_header(name, value)
         self.end_headers()
@@ -7843,6 +7910,8 @@ class Handler(BaseHTTPRequestHandler):
                 "logFile": str(_LOG_FILE if _LOG_FILE else DEFAULT_LOG_FILE),
                 "pid": os.getpid(),
                 "python": sys.executable,
+                # What is on disk now; an open tab compares it with what it loaded.
+                "pages": page_stamps(),
             })
             return
         if p.startswith("/api/jira-links/"):
