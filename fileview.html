@@ -1914,7 +1914,7 @@ function wireFrameLinks(ifr) {
 // input for 60 s), or when the tab is hidden and holds no text. A page framed
 // in another (the chat in the task panel) leaves the reload to its host when
 // the host is about to reload too, and a host reloads only when its frames are
-// idle as well. A hub restart from the Update button holds this off (hold) so
+// idle as well, saving their places with its own. A hub restart from the Update button holds this off (hold) so
 // the two never reload twice. Each page adds what only it knows: ensUpdBusy()
 // (what counts as in hand there), ensUpdPlace() (what to put back, or a url to
 // come back to) and a call to ensUpd.restore() when it is ready to put it back.
@@ -1923,7 +1923,7 @@ function wireFrameLinks(ifr) {
 const ensUpd = window.ensUpd = (() => {   // a window property too: a host page reads its frames', a frame its host's
   const PAGE = { '/': 'index.html', '/index.html': 'index.html', '/session': 'session.html', '/fileview': 'fileview.html' }[location.pathname] || '';
   const KEY = 'cd-upd-place:' + location.pathname + location.search;
-  const CHECK_MS = 30000, QUIET_MS = 5000, IDLE_MS = 60000, RECHECK_MS = 5000;
+  const CHECK_MS = 30000, QUIET_MS = 5000, IDLE_MS = 60000, RECHECK_MS = 5000, PLACE_MS = 30 * 60000;
   const loaded = {};   // the stamps this page was served with
   try {
     const meta = document.querySelector('meta[name="ensemble-pages"]');
@@ -1952,14 +1952,21 @@ const ensUpd = window.ensUpd = (() => {   // a window property too: a host page 
   on('drop', () => { held = false; }, true);
   on('input', e => { if (isField(e.target)) typed.add(e.target); }, true);
   // A one-line field left with its words in it (a search box, a setting saved
-  // on blur) is done with, not in hand; a textarea keeps holding until empty.
-  on('change', e => { if (e.target && e.target.matches && e.target.matches('input')) typed.delete(e.target); }, true);
+  // on blur) is done with, not in hand; a textarea keeps holding until empty,
+  // and so does a field in a dialog (a task's title is taken by Start, not by
+  // leaving the field) for as long as the dialog is open.
+  const inDialog = el => (el.closest && el.closest('dialog')) || null;
+  on('change', e => { const t = e.target; if (t && t.matches && t.matches('input') && !inDialog(t)) typed.delete(t); }, true);
   // The same-origin pages framed in this one (the chat in the task panel).
   const frames = () => [...document.querySelectorAll('iframe')].map(f => { try { return f.contentWindow && f.contentWindow.ensUpd; } catch (e) { return null; } }).filter(Boolean);
   // Text in hand: typed here and still there, or what the page names (a
   // composer, the message box), here or in a frame.
   const holdingText = () => {
-    for (const el of typed) { if (!el.isConnected) typed.delete(el); else if (fieldText(el).trim()) return true; }
+    for (const el of typed) {
+      const dlg = el.isConnected ? inDialog(el) : null;
+      if (!el.isConnected || (dlg && !dlg.open)) typed.delete(el);   // gone, or its dialog closed: not in hand
+      else if (fieldText(el).trim()) return true;
+    }
     try { if (window.ensUpdBusy && window.ensUpdBusy()) return true; } catch (e) {}
     return frames().some(u => u.holdingText());
   };
@@ -1972,20 +1979,28 @@ const ensUpd = window.ensUpd = (() => {   // a window property too: a host page 
   const idleFor = () => Math.min(Date.now() - S.lastInput, ...frames().map(u => u.idleFor()));
   // Whether what is on disk differs from what this page runs.
   const changed = pages => !!pages && deps().some(f => loaded[f] && pages[f] && pages[f] !== loaded[f]);
-  // Where the page was, kept for the page that loads next (or a url to come back to).
+  // Where the page is, kept for the page that loads next under this url (or a
+  // url to come back to). A host going away saves its frames' places too: the
+  // chat in the task panel comes back where it was when the panel opens again.
+  function savePlace() {
+    let place = null;
+    try { place = window.ensUpdPlace ? window.ensUpdPlace() : null; } catch (e) {}
+    if (place) { place.at = Date.now(); try { sessionStorage.setItem(KEY, JSON.stringify(place)); } catch (e) {} }
+    return place;
+  }
   function reload() {
     if (S.reloading) return;
     S.reloading = true;
     clearInterval(S.timer); S.timer = 0;
-    let place = null;
-    try { place = window.ensUpdPlace ? window.ensUpdPlace() : null; } catch (e) {}
-    try { if (place) sessionStorage.setItem(KEY, JSON.stringify(place)); } catch (e) {}
+    for (const u of frames()) { try { u.savePlace(); } catch (e) {} }
+    const place = savePlace();
     if (place && place.url) location.replace(place.url); else location.reload();
   }
   function restore() {
     let place = null;
     try { place = JSON.parse(sessionStorage.getItem(KEY) || 'null'); sessionStorage.removeItem(KEY); } catch (e) {}
-    return place;
+    // A frame's place is for the chat opened again soon, not one opened hours on.
+    return place && (!place.at || Date.now() - place.at < PLACE_MS) ? place : null;
   }
   function showLine() {
     if (S.line || !document.body) return;
@@ -2028,7 +2043,7 @@ const ensUpd = window.ensUpd = (() => {   // a window property too: a host page 
     finally { S.checking = false; }
   }
   document.addEventListener('visibilitychange', () => { if (document.hidden) maybe(); });
-  return Object.assign(S, { deps, changed, holdingText, busy, idleFor, reload, restore, poll, maybe, showLine });
+  return Object.assign(S, { deps, changed, holdingText, busy, idleFor, savePlace, reload, restore, poll, maybe, showLine });
 })();
 // ---- Page update: end shared block ------------------------------------------
 // What this page holds, for the update block above: a comment being written

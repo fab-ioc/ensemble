@@ -233,11 +233,12 @@ let now = 1_000_000;
 function fakePage({ path = '/session', search = '?room=room-1', meta = 'session.html=aaa static/comments.js=bbb static/attach.js=ccc', scripts = ['/static/comments.js', '/static/attach.js'], frames = [], parent = null } = {}) {
   const listeners = {};
   const body = { children: [], appendChild(n) { this.children.push(n); n.isConnected = true; } };
-  const el = (tag) => ({ tag, isConnected: true, value: '', attrs: {}, matches(sel) { return sel.split(',').some(s => s.trim().startsWith(tag)); },
+  const el = (tag) => ({ tag, isConnected: true, value: '', attrs: {}, inDialog: false, matches(sel) { return sel.split(',').some(s => s.trim().startsWith(tag)); },
+    closest(sel) { return sel === 'dialog' && this.inDialog ? doc.dialog : null; },
     setAttribute(k, v) { this.attrs[k] = v; }, getAttribute(k) { return this.attrs[k]; }, addEventListener(t, f) { this.on = this.on || {}; this.on[t] = f; },
     querySelector() { return this; }, set innerHTML(v) { this.html = v; }, get innerHTML() { return this.html; } });
   const doc = {
-    hidden: false, body, dialogOpen: false,
+    hidden: false, body, dialogOpen: false, dialog: { get open() { return doc.dialogOpen; } },
     addEventListener(t, f) { (listeners[t] = listeners[t] || []).push(f); },
     fire(t, e) { (listeners[t] || []).forEach(f => f(e || {})); },
     querySelector(sel) {
@@ -389,6 +390,34 @@ const changed = { ...same, 'session.html': 'aab' };
   p = fakePage(); p.onDisk = same; p.fetches = 0; const f1 = p.fetch; p.fetch = async () => { p.fetches++; return f1(); };
   now += 30_000; await Promise.all([p.ensUpd.poll(), p.ensUpd.poll()]); out.singleFlight = p.fetches;
   now += 29_000; await tick(p); now += 1_000; await tick(p); out.cadence = p.fetches;
+
+  // A one-line field in a dialog (a task's title) left for another field (blur
+  // fires change) is still in hand: the line, no reload, hidden or not; the
+  // dialog closed, the words are let go and the hidden tab reloads.
+  p = fakePage(); p.onDisk = changed;
+  const title = p.el('input'); title.inDialog = true; title.value = 'a task title';
+  p.document.fire('input', { target: title }); p.document.fire('change', { target: title });
+  p.document.dialogOpen = true; now += 30_000; p.ensUpd.lastInput = now - 100_000; await tick(p);
+  out.dialogField = { holding: p.ensUpd.holdingText(), line: !!p.ensUpd.line, reloads: p.location.reloads };
+  p.document.hidden = true; p.document.fire('visibilitychange'); out.dialogFieldHidden = p.location.reloads;
+  p.document.dialogOpen = false; p.ensUpd.maybe(); out.dialogClosed = { holding: p.ensUpd.holdingText(), reloads: p.location.reloads };
+  // The same field outside a dialog: done with on change (the earlier case), even hidden.
+  p = fakePage(); p.onDisk = changed; p.document.hidden = true;
+  const one2 = p.el('input'); one2.value = 'opus'; p.document.fire('input', { target: one2 }); p.document.fire('change', { target: one2 });
+  now += 30_000; await tick(p); out.oneLineHidden = p.location.reloads;
+
+  // A host reloading saves its frames' places with its own (each under its own
+  // url); a place kept longer than 30 min is not put back.
+  const host5 = fakePage({ path: '/', search: '', meta: 'index.html=iii static/hl.js=hhh static/comments.js=bbb static/attach.js=ccc', scripts: ['/static/hl.js', '/static/comments.js', '/static/attach.js'] });
+  const frame5 = fakePage({ parent: host5 });
+  host5.document.querySelectorAll = (sel) => sel === 'iframe' ? [{ contentWindow: frame5 }] : sel.startsWith('script') ? ['/static/hl.js', '/static/comments.js', '/static/attach.js'].map(s => ({ getAttribute: () => s })) : [];
+  host5.ensUpdPlace = () => ({ proj: 'p1', tab: 'tasks' }); frame5.ensUpdPlace = () => ({ key: 'm12', off: 3, stick: false });
+  host5.onDisk = { ...same, 'index.html': 'iij' }; frame5.onDisk = host5.onDisk;
+  now += 30_000; host5.ensUpd.lastInput = now - 100_000; frame5.ensUpd.lastInput = now - 100_000; await tick(host5);
+  out.hostSaves = { host: JSON.parse(host5.store['cd-upd-place:/']), frame: JSON.parse(frame5.store['cd-upd-place:/session?room=room-1']), reloads: [host5.location.reloads, frame5.location.reloads] };
+  out.frameRestored = frame5.ensUpd.restore();
+  frame5.store['cd-upd-place:/session?room=room-1'] = JSON.stringify({ key: 'm12', off: 3, stick: false, at: now - 31 * 60_000 });
+  out.staleRestore = [frame5.ensUpd.restore(), 'cd-upd-place:/session?room=room-1' in frame5.store];
   console.log(JSON.stringify(out));
 })().catch(e => { console.error(e); process.exit(1); });
 """
@@ -410,8 +439,28 @@ class Rules(unittest.TestCase):
         self.assertEqual(self.got["deps"], ["session.html", "static/comments.js", "static/attach.js"])
 
     def test_a_change_while_idle_reloads_with_the_place_kept(self):
-        self.assertEqual(self.got["idleReload"], {"reloads": 1, "line": False, "saved": {"key": "m7", "off": 12, "stick": False}})
-        self.assertEqual(self.got["restored"], [{"key": "m7", "off": 12, "stick": False}, None])
+        got = self.got["idleReload"]
+        self.assertIsInstance(got["saved"].pop("at"), int, "when it was kept")
+        self.assertEqual(got, {"reloads": 1, "line": False, "saved": {"key": "m7", "off": 12, "stick": False}})
+        first, second = self.got["restored"]
+        self.assertIsInstance(first.pop("at"), int)
+        self.assertEqual((first, second), ({"key": "m7", "off": 12, "stick": False}, None))
+
+    def test_a_dialogs_field_holds_while_the_dialog_is_open_blurred_or_hidden(self):
+        self.assertEqual(self.got["dialogField"], {"holding": True, "line": True, "reloads": 0})
+        self.assertEqual(self.got["dialogFieldHidden"], 0, "hidden with a title typed: no reload")
+        self.assertEqual(self.got["dialogClosed"], {"holding": False, "reloads": 1})
+        self.assertEqual(self.got["oneLineHidden"], 1, "a search box left with words, outside a dialog, is done with")
+
+    def test_a_host_saves_its_frames_places_and_a_stale_place_is_dropped(self):
+        got = self.got["hostSaves"]
+        self.assertEqual(got["reloads"], [1, 0])
+        self.assertIsInstance(got["host"].pop("at"), int)
+        self.assertIsInstance(got["frame"].pop("at"), int)
+        self.assertEqual(got["host"], {"proj": "p1", "tab": "tasks"})
+        self.assertEqual(got["frame"], {"key": "m12", "off": 3, "stick": False})
+        self.assertEqual(self.got["frameRestored"]["key"], "m12")
+        self.assertEqual(self.got["staleRestore"], [None, False], "dropped, and gone from the store")
 
     def test_input_in_the_last_five_seconds_waits_without_a_line(self):
         self.assertEqual(self.got["recentInput"], {"reloads": 0, "line": False, "pending": True})
@@ -549,6 +598,21 @@ async function main() {
       out.sessionClick = { box: await p.evalIn('document.querySelector("#input").value'), stamp: await p.evalIn('ensUpd.loaded["static/comments.js"]'), disk: await stampOf(p, 'static/comments.js') };
       await p.close();
     }
+    // ---- session.html with a read marker up the chat: the catch-up line draws, and the place is put back over it.
+    {
+      const p = await page(A.base + '/session?room=' + A.room);
+      await p.until('document.querySelectorAll("#msgs > [data-key]").length >= 20');
+      await p.evalIn('window.__mark = 6; (() => { const b = document.querySelector("#msgs"); b.scrollTop = Math.max(0, b.scrollHeight * 0.6); const m = LAST_ITEMS.filter(x => x && x.id && x.id !== "task")[4]; localStorage.setItem(READ_KEY(), JSON.stringify({ id: m.id, ts: m.ts })); })(); 0');
+      await sleep(300);
+      out.cuBefore = await p.evalIn('(() => { const b = document.querySelector("#msgs"); const k = readingPlace(b); return { key: k.key, off: k.off, top: b.scrollTop, stick: STICK }; })()');
+      poke('session.html');
+      await p.evalIn('ensUpd.checkedAt = 0; ensUpd.lastInput = Date.now() - 100000; ensUpd.poll(); 0');
+      await p.until('window.__mark === undefined && !!window.ensUpd && Object.keys(ensUpd.loaded).length > 0', 15000);
+      await p.until('typeof CHAT_DRAWN !== "undefined" && CHAT_DRAWN && document.querySelectorAll("#msgs > [data-key]").length >= 20 && UPD_PLACE === null', 15000);
+      await sleep(400);
+      out.cuAfter = await p.evalIn('(() => { const b = document.querySelector("#msgs"); const k = readingPlace(b); return { key: k.key, off: k.off, top: b.scrollTop, stick: STICK, line: !!b.querySelector(":scope > .catchup"), point: !!CU_POINT }; })()');
+      await p.close();
+    }
     // ---- fileview.html: the same file, line and scroll after the reload.
     {
       const p = await page(A.base + '/fileview?path=' + encodeURIComponent(A.file) + '&line=120');
@@ -578,18 +642,79 @@ async function main() {
       await p.evalIn('window.__mark = 1; SELECTED_PROJECT = PROJECTS.projects[0].id; PROJECT_TAB = "workspace"; renderRows(); 0');
       await sleep(300);
       out.indexBefore = await p.evalIn('({ proj: SELECTED_PROJECT, tab: PROJECT_TAB, stamp: ensUpd.loaded["index.html"] })');
-      // A dialog open holds it.
-      await p.evalIn('document.querySelector("#modal").setAttribute("open", ""); 0');
+      // A diff comment being written is in hand: its box open and empty, typed
+      // in, and after a Shift-click extends the range (drPaint rewrites the
+      // textarea then: the words move over without an input event).
+      out.indexDiff = await p.evalIn(`(() => {
+        const box = document.createElement('div'); document.body.appendChild(box);
+        const rv = drReview('cdp-test', { open: null, target: () => null });
+        drShow(rv, box, 'root', 'a.py', ${JSON.stringify(A.diff)});
+        const rows = [...box.querySelectorAll('.drv .dr')].filter(r => r.querySelector('.dg[data-o]'));
+        const gutter = (i, shift) => rows[i].querySelector('.dg').dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: !!shift }));
+        const r = { rows: rows.length, free: ensUpd.busy() };
+        gutter(1);
+        r.emptyOpen = { busy: ensUpd.busy(), open: !!box.querySelector('.dcx textarea') };
+        const ta = box.querySelector('.dcx textarea'); ta.value = 'unsent diff comment'; ta.dispatchEvent(new Event('input', { bubbles: true }));
+        r.typed = ensUpd.busy();
+        gutter(3, true);
+        const ta2 = box.querySelector('.dcx textarea');
+        r.ranged = { busy: ensUpd.busy(), sameField: ta2 === ta, note: ta2 ? ta2.value : null, draft: rv.view.draft ? rv.view.draft.note : null, span: rv.view.draft ? [rv.view.draft.a, rv.view.draft.b] : null };
+        box.querySelector('.dcx-cancel').click();
+        r.cancelled = { busy: ensUpd.busy(), open: !!box.querySelector('.dcx') };
+        gutter(2); ta.value = 'kept'; box.querySelector('.dcx textarea').value = 'words'; box.querySelector('.dcx textarea').dispatchEvent(new Event('input', { bubbles: true }));
+        r.typedAgain = ensUpd.busy();
+        box.remove(); rv.view = null;
+        r.gone = ensUpd.busy();
+        return r;
+      })()`);
+      // A task's title typed in the New task dialog and left for the
+      // specification (blur fires change): the line, no reload, hidden or not.
+      await p.evalIn('window.__changed = 0; document.addEventListener("change", () => { window.__changed++; }, true); showNewSessionModal(""); document.querySelector("#ns-title").focus(); 0');
+      await c.send('Input.insertText', { text: 'a task title' }, p.sessionId);
+      await p.evalIn('document.querySelector("#ns-task").focus(); 0');
+      await sleep(200);
       poke('index.html');
       await p.evalIn('ensUpd.checkedAt = 0; ensUpd.lastInput = Date.now() - 100000; ensUpd.poll(); 0');
       await p.until('!!document.querySelector("#ens-upd")', 10000);
       await sleep(1500);
-      out.indexHeld = await p.evalIn('({ mark: window.__mark, busy: ensUpd.busy() })');
-      await p.evalIn('document.querySelector("#modal").removeAttribute("open"); ensUpd.lastInput = Date.now() - 61000; 0');
+      out.indexHeld = await p.evalIn('({ mark: window.__mark, busy: ensUpd.busy(), holding: ensUpd.holdingText(), changed: window.__changed, title: document.querySelector("#ns-title").value, open: document.querySelector("#modal").open, focused: document.activeElement && document.activeElement.id })');
+      await p.evalIn('Object.defineProperty(document, "hidden", { get: () => true, configurable: true }); document.dispatchEvent(new Event("visibilitychange")); ensUpd.maybe(); 0');
+      await sleep(1000);
+      out.indexHiddenTitle = await p.evalIn('({ mark: window.__mark, title: document.querySelector("#ns-title").value, open: document.querySelector("#modal").open })');
+      // Cancel closes the dialog: nothing in hand, and the hidden tab reloads at once.
+      await p.evalIn('document.querySelector("#ns-cancel").click(); ensUpd.maybe(); 0');
       await p.until('window.__mark === undefined && !!window.ensUpd && Object.keys(ensUpd.loaded).length > 0', 15000);
       await p.until('typeof SELECTED_PROJECT !== "undefined" && !!SELECTED_PROJECT', 15000);
       out.indexAfter = await p.evalIn('({ proj: SELECTED_PROJECT, tab: PROJECT_TAB, stamp: ensUpd.loaded["index.html"], line: !!document.querySelector("#ens-upd") })');
       out.indexDisk = await stampOf(p, 'index.html');
+      // The chat framed in the page (the task panel's) comes back where it was
+      // when the page reloads for itself: the host saves the frame's place, and
+      // the chat loaded again under the same url puts it back.
+      const frameJs = 'const f = document.createElement("iframe"); f.id = "cdp-frame"; f.className = "dp-session"; f.style.cssText = "width:600px;height:400px;display:block"; f.src = "/session?id=" + encodeURIComponent(' + JSON.stringify(A.room) + ') + "&embed=1"; document.body.appendChild(f);';
+      const frameKey = '"cd-upd-place:/session?id=" + encodeURIComponent(' + JSON.stringify(A.room) + ') + "&embed=1"';
+      const frameDrawn = '(() => { const f = document.querySelector("#cdp-frame"); const w = f && f.contentWindow; return !!(w && w.document.querySelectorAll("#msgs > [data-key]").length >= 20 && w.eval("typeof CHAT_DRAWN !== typeof void 0 && CHAT_DRAWN && UPD_PLACE === null")); })()';
+      const framePlace = '(() => { const w = document.querySelector("#cdp-frame").contentWindow; const b = w.document.querySelector("#msgs"); const k = w.readingPlace(b); return { key: k.key, off: k.off, top: b.scrollTop, stick: w.eval("STICK") }; })()';
+      await p.evalIn('window.__mark = 5; ' + frameJs + ' 0');
+      await p.until(frameDrawn, 15000);
+      await p.evalIn('(() => { const w = document.querySelector("#cdp-frame").contentWindow; const b = w.document.querySelector("#msgs"); b.scrollTop = Math.max(0, b.scrollHeight / 2); })(); 0');
+      await sleep(300);
+      out.frameBefore = await p.evalIn(framePlace);
+      // Hidden (display:none), a frame has no place to keep; shown again it is scrolled back for the reload.
+      out.frameHiddenPlace = await p.evalIn('(() => { const f = document.querySelector("#cdp-frame"); f.style.display = "none"; const k = f.contentWindow.ensUpdPlace(); f.style.display = "block"; return { key: k.key, stick: k.stick }; })()');
+      await p.evalIn('(() => { const w = document.querySelector("#cdp-frame").contentWindow; w.document.querySelector("#msgs").scrollTop = ' + out.frameBefore.top + '; })(); 0');
+      await sleep(300);
+      out.frameBefore2 = await p.evalIn(framePlace);
+      poke('index.html');
+      await p.evalIn('ensUpd.checkedAt = 0; ensUpd.lastInput = Date.now() - 100000; document.querySelector("#cdp-frame").contentWindow.ensUpd.lastInput = Date.now() - 100000; ensUpd.poll(); 0');
+      await p.until('window.__mark === undefined && !!window.ensUpd && Object.keys(ensUpd.loaded).length > 0', 15000);
+      await p.until('typeof SELECTED_PROJECT !== "undefined" && !!SELECTED_PROJECT', 15000);
+      out.frameSaved = await p.evalIn('!!sessionStorage.getItem(' + frameKey + ')');
+      await p.evalIn(frameJs + ' 0');
+      await p.until(frameDrawn, 15000);
+      await sleep(400);
+      out.frameAfter = await p.evalIn(framePlace);
+      out.frameKept = await p.evalIn('!!sessionStorage.getItem(' + frameKey + ')');
+      await p.evalIn('document.querySelector("#cdp-frame").remove(); 0');
       // A file index.html does not load (session.html) changes: nothing.
       await p.evalIn('window.__mark = 4; 0');
       poke('session.html');
@@ -617,6 +742,20 @@ async function main() {
   console.log(JSON.stringify(out));
 }
 main().catch(e => { console.error(e && e.stack || e); process.exit(1); });
+"""
+
+
+DIFF = """diff --git a/a.py b/a.py
+--- a/a.py
++++ b/a.py
+@@ -1,5 +1,6 @@
+ line1 = 1
+-old = 2
++new = 2
++new2 = 22
+ line3 = 3
+ line4 = 4
+ line5 = 5
 """
 
 
@@ -680,7 +819,7 @@ class InChrome(unittest.TestCase):
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
         args = {"chrome": CHROME, "tmp": cls.tmp.name, "static": str(cls.static), "base": f"http://127.0.0.1:{cls.port}",
-                "room": cls.room, "file": str(cls.file)}
+                "room": cls.room, "file": str(cls.file), "diff": DIFF}
         out = subprocess.run([NODE, "-e", CDP_JS, json.dumps(args)], capture_output=True, encoding="utf-8", timeout=300)
         cls.err = out.stderr
         assert out.returncode == 0, out.stderr[-4000:]
@@ -724,13 +863,53 @@ class InChrome(unittest.TestCase):
         self.assertIn("st=", g["fileAfter"]["url"])
         self.assertEqual(g["fileHeld"], 3, "a comment being written holds the reload")
 
-    def test_index_holds_on_a_dialog_then_comes_back_to_the_same_project_and_tab(self):
+    def test_a_read_marker_up_the_chat_draws_the_line_and_the_place_is_still_put_back(self):
         g = self.got
-        self.assertEqual(g["indexHeld"], {"mark": 1, "busy": True})
+        self.assertFalse(g["cuBefore"]["stick"])
+        self.assertEqual(g["cuAfter"]["key"], g["cuBefore"]["key"], "the same balloon at the top, not the catch-up line")
+        self.assertLessEqual(abs(g["cuAfter"]["off"] - g["cuBefore"]["off"]), 2)
+        self.assertTrue(g["cuAfter"]["line"], "the catch-up line is drawn, up the chat")
+        self.assertTrue(g["cuAfter"]["point"])
+        self.assertFalse(g["cuAfter"]["stick"])
+
+    def test_a_diff_comment_being_written_is_in_hand_through_a_repaint(self):
+        d = self.got["indexDiff"]
+        self.assertGreaterEqual(d["rows"], 6)
+        self.assertFalse(d["free"])
+        self.assertEqual(d["emptyOpen"], {"busy": True, "open": True}, "an open composer, empty, holds")
+        self.assertTrue(d["typed"])
+        ranged = dict(d["ranged"])
+        a, b = ranged.pop("span")
+        self.assertEqual(b - a, 2, "the range covers the three rows between the two clicks")
+        self.assertEqual(ranged, {"busy": True, "sameField": False, "note": "unsent diff comment", "draft": "unsent diff comment"},
+                         "the range extended: a new textarea with the words, still in hand")
+        self.assertEqual(d["cancelled"], {"busy": False, "open": False})
+        self.assertTrue(d["typedAgain"])
+        self.assertFalse(d["gone"], "the diff box gone from the page: nothing in hand")
+
+    def test_index_holds_on_a_dialogs_typed_title_then_comes_back_to_the_same_project_and_tab(self):
+        g = self.got
+        held = dict(g["indexHeld"])
+        self.assertEqual(held.pop("focused"), "ns-task", "the title was left for the specification")
+        self.assertGreaterEqual(held.pop("changed"), 1, "leaving the title fired change")
+        self.assertEqual(held, {"mark": 1, "busy": True, "holding": True, "title": "a task title", "open": True})
+        self.assertEqual(g["indexHiddenTitle"], {"mark": 1, "title": "a task title", "open": True}, "hidden with a title typed: no reload")
         self.assertEqual((g["indexAfter"]["proj"], g["indexAfter"]["tab"]), (g["indexBefore"]["proj"], "workspace"))
         self.assertEqual(g["indexAfter"]["stamp"], g["indexDisk"])
         self.assertFalse(g["indexAfter"]["line"])
         self.assertEqual(g["indexOther"], {"mark": 4, "pending": False}, "session.html is not index.html's")
+
+    def test_the_framed_chat_comes_back_where_it_was_after_its_host_reloads(self):
+        g = self.got
+        self.assertFalse(g["frameBefore"]["stick"])
+        self.assertTrue(g["frameBefore"]["key"])
+        self.assertEqual(g["frameHiddenPlace"], {"key": "", "stick": False}, "a hidden frame has no place to keep")
+        self.assertEqual(g["frameBefore2"]["key"], g["frameBefore"]["key"])
+        self.assertTrue(g["frameSaved"], "the host saved the frame's place under the frame's url")
+        self.assertEqual(g["frameAfter"]["key"], g["frameBefore2"]["key"], "the same balloon at the top of the framed chat")
+        self.assertLessEqual(abs(g["frameAfter"]["off"] - g["frameBefore2"]["off"]), 2)
+        self.assertFalse(g["frameAfter"]["stick"])
+        self.assertFalse(g["frameKept"], "put back once")
 
     def test_the_line_fits_the_top_at_1400_900_500_light_and_dark(self):
         s = self.got["lineSizes"]
