@@ -46,7 +46,9 @@ compaction; a ceiling, not a bill.  Approx tokens = ceil(bytes / 4).
 
 Read-only: transcripts, rooms and project files are opened for reading only.
 ``--dump DIR`` writes the largest internal texts to DIR (outside the hub's
-data) so they can be rewritten by hand.
+data) so they can be rewritten by hand; ``--per-kind N`` adds the N largest
+texts of every kind (a report line, a digest, a spec, a review verdict ...),
+which the overall top list, made of handovers and task listings, leaves out.
 """
 
 from __future__ import annotations
@@ -763,18 +765,26 @@ def top_internal(records: list[dict], n: int) -> list[dict]:
     return sorted(pool, key=lambda r: (-r["rereadBytes"], -r["bytes"]))[:n]
 
 
+def top_per_kind(records: list[dict], n: int) -> list[dict]:
+    """The n largest internal texts of every category/kind, by re-read bytes."""
+    by_kind: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for r in top_internal(records, len(records)):
+        by_kind[(r["cat"], r["kind"])].append(r)
+    return [r for key in sorted(by_kind) for r in by_kind[key][:n]]
+
+
 def _top_row(rec: dict) -> dict:
     return {k: rec.get(k) for k in ("agent", "role", "cat", "kind", "tool", "bytes", "remainingTurns",
                                     "rereadBytes", "task", "room", "title", "preview", "when", "reportKind")}
 
 
-def dump_texts(rows: list[dict], folder: Path) -> list[str]:
+def dump_texts(rows: list[dict], folder: Path, prefix: str = "") -> list[str]:
     folder.mkdir(parents=True, exist_ok=True)
     names = []
     for i, rec in enumerate(rows, 1):
         task = f"t{rec['task']}" if rec.get("task") is not None else (rec.get("room") or "room")
         kind = re.sub(r"[^\w.-]+", "_", f"{rec['cat']}-{rec['kind']}")[:40]
-        name = f"{i:02d}-{rec['agent']}-{rec['role']}-{kind}-{task}.md"
+        name = f"{prefix}{i:02d}-{rec['agent']}-{rec['role']}-{kind}-{task}.md"
         head = (f"<!-- {rec['cat']}/{rec['kind']} {rec['agent']} {rec['role']} task {rec.get('task')} "
                 f"room {rec.get('room')} bytes {rec['bytes']} turns-after {rec['remainingTurns']} "
                 f"re-read {rec['rereadBytes']} at {rec['when']} -->\n")
@@ -784,7 +794,7 @@ def dump_texts(rows: list[dict], folder: Path) -> list[str]:
 
 
 def measure(home: Path, start: datetime, end: datetime, top: int = 30,
-            progress=None, repo: Path | None = None) -> dict:
+            progress=None, repo: Path | None = None, per_kind: int = 0) -> dict:
     began = time.monotonic()
     scope = conversation_scope(home)
     records: list[dict] = []
@@ -846,6 +856,7 @@ def measure(home: Path, start: datetime, end: datetime, top: int = 30,
         "agents": agents,
         "top": [_top_row(r) for r in largest],
         "topRecords": largest,
+        "perKindRecords": top_per_kind(records, per_kind) if per_kind else [],
         "filesOnDisk": _files_on_disk(home, repo or HERE.parent),
     }
 
@@ -943,6 +954,8 @@ def main() -> int:
     parser.add_argument("--end", help="ISO-8601 window end (default: now, local time)")
     parser.add_argument("--top", type=int, default=30, help="Largest internal texts to list")
     parser.add_argument("--dump", type=Path, help="Write the largest internal texts to this folder")
+    parser.add_argument("--per-kind", type=int, default=0,
+                        help="With --dump: also write the N largest texts of every kind (files kind-NN-...)")
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     args = parser.parse_args()
     if args.days <= 0:
@@ -954,11 +967,12 @@ def main() -> int:
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
-    report = measure(args.home.expanduser(), start, end, args.top,
+    report = measure(args.home.expanduser(), start, end, args.top, per_kind=args.per_kind,
                      progress=lambda msg: print(msg, file=sys.stderr, flush=True))
     largest = report.pop("topRecords")
+    per_kind = report.pop("perKindRecords")
     if args.dump:
-        names = dump_texts(largest, args.dump)
+        names = dump_texts(largest, args.dump) + dump_texts(per_kind, args.dump, prefix="kind-")
         print(f"wrote {len(names)} texts to {args.dump}", file=sys.stderr, flush=True)
     if args.json:
         json.dump(report, sys.stdout, indent=2)

@@ -278,8 +278,9 @@ class FixtureTests(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.home = Path(cls.tmp.name)
         cls.task_dir = build_home(cls.home)
-        cls.report = m.measure(cls.home, START, END, top=5)
+        cls.report = m.measure(cls.home, START, END, top=5, per_kind=2)
         cls.records = cls.report.pop("topRecords")
+        cls.per_kind = cls.report.pop("perKindRecords")
 
     @classmethod
     def tearDownClass(cls):
@@ -411,6 +412,25 @@ class FixtureTests(unittest.TestCase):
             first = (Path(out) / names[0]).read_text(encoding="utf-8")
             self.assertTrue(first.startswith("<!-- "))
             self.assertIn(self.records[0]["text"][:40], first)
+
+    def test_top_per_kind(self):
+        two = self.per_kind                                             # measure(per_kind=2)
+        keys = [(r["cat"], r["kind"]) for r in two]
+        self.assertEqual(keys, sorted(keys))                            # grouped by kind, kinds sorted
+        self.assertLessEqual(max(keys.count(k) for k in keys), 2)
+        self.assertIn(("hub", "report"), keys)
+        self.assertIn(("hub", "digest"), keys)
+        self.assertIn(("first", "spec"), keys)
+        self.assertIn(("ownreply", "ownreply"), keys)
+        self.assertNotIn("ownnarr", [c for c, _ in keys])
+        for key in set(keys):
+            same = [r["rereadBytes"] for r in two if (r["cat"], r["kind"]) == key]
+            self.assertEqual(same, sorted(same, reverse=True))
+        one = m.top_per_kind(two, 1)
+        self.assertEqual(len(one), len(set(keys)))
+        with tempfile.TemporaryDirectory() as out:
+            names = m.dump_texts(one, Path(out), prefix="kind-")
+            self.assertTrue(all(n.startswith("kind-") for n in names))
 
     def test_markdown_and_files(self):
         text = m._markdown(self.report)
