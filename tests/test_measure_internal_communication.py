@@ -321,9 +321,9 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(g["categories"]["ownreply"]["count"], 2)
         self.assertEqual({k: v["count"] for k, v in kinds["owninternal"].items()},
                          {"chat_send": 1, "ensemble_report": 1})
-        # Inputs: Read x2, Bash x3, get_task, Edit; results: git status, edited, sent, reported, git log.
+        # Inputs: Read x2, Bash x3, get_task, Edit; results: git status, edited, git log.
         self.assertEqual(g["categories"]["owninput"]["count"], 7)
-        self.assertEqual(g["categories"]["otherresult"]["count"], 5)
+        self.assertEqual(g["categories"]["otherresult"]["count"], 3)
         self.assertEqual({k: v["count"] for k, v in kinds["harness"].items()},
                          {"system-reminder": 1, "compact summary": 1})
         self.assertEqual(g["thinking"]["count"], 1)
