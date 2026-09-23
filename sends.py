@@ -264,27 +264,61 @@ def evidence(send_text: str) -> tuple[str, object]:
     return ("images", tuple(paths)) if paths else ("", None)
 
 
-def times_in(ev: tuple[str, object], turn_text: str) -> int:
-    """How many sends with this evidence a turn can confirm: one resume
-    input carries several sends, and the same words sent twice need two
-    turns (or one that holds them twice)."""
+def _size(ev: tuple[str, object]) -> int:
     kind, val = ev
-    if kind == "points":
-        have = set(_POINT_LINE.findall(turn_text or ""))
-        return 1 if all(i in have for i in val) else 0
-    if kind == "words":
-        return _norm(turn_text).count(val)
-    if kind == "images":
-        have = _image_paths(turn_text)
-        return min(have.count(p) for p in val)
-    return 0
+    return len(val) if kind in ("words", "images", "points") else 0
+
+
+class _Turn:
+    """What of one user turn is still unclaimed. One turn may confirm several
+    sends (a resume types them in as one input), each by a part of it no
+    other send has: words at their own place, as whole words, each image
+    path and point once."""
+
+    def __init__(self, text: str):
+        self.words = _norm(text)
+        self.spans: list[tuple[int, int]] = []
+        self.images = _image_paths(text)
+        self.points = set(_POINT_LINE.findall(text or ""))
+
+    def take(self, ev: tuple[str, object]) -> bool:
+        kind, val = ev
+        if kind == "points":
+            if not all(i in self.points for i in val):
+                return False
+            self.points.difference_update(val)
+            return True
+        if kind == "images":
+            left = list(self.images)
+            for p in val:
+                if p not in left:
+                    return False
+                left.remove(p)
+            self.images = left
+            return True
+        if kind == "words":
+            w, i = self.words, self.words.find(val)
+            while i >= 0:
+                j = i + len(val)
+                if ((i == 0 or w[i - 1] == " ") and (j == len(w) or w[j] == " " or len(val) >= _NEEDLE)
+                        and not any(i < b and a < j for a, b in self.spans)):
+                    self.spans.append((i, j))
+                    return True
+                i = w.find(val, i + 1)
+        return False
+
+
+def by_size(sends_: list[dict]) -> list[dict]:
+    """The order sends claim turns in: the fullest evidence first (so "go"
+    cannot take the words of "go now" from it), then oldest first."""
+    return sorted(sends_, key=lambda s: (-_size(evidence(s["text"])), s["at"]))
 
 
 def matches(send_text: str, turn_text: str) -> bool:
     """Whether a user turn holds this send: its point lines, when it has any
     (unique in a room), else its first words, as the agent was given them,
     else (images alone) the images' paths."""
-    return times_in(evidence(send_text), turn_text) > 0
+    return _Turn(turn_text).take(evidence(send_text))
 
 
 def _session_ids(room: dict) -> list[str]:
@@ -340,24 +374,22 @@ def sync(room_id: str, room: dict | None = None, force: bool = False,
     live = _d._room_is_live(room)
     with _LOCK:
         items = _load(room_id)
-        # What each turn has confirmed already: one turn may confirm several
-        # sends (a resume types them in as one input), but the same words
-        # only as often as it holds them.
-        taken: dict[str, list] = {}
-        for s in items:
-            if s.get("mid"):
-                taken.setdefault(s["mid"], []).append(evidence(s["text"]))
+        # What of each turn the sends it confirmed already have not claimed:
+        # one turn may confirm several sends (a resume types them in as one
+        # input), each by its own part of it.
+        left = {mid: _Turn(t.get("text") or "") for mid, t in turns}
+        for s in by_size([s for s in items if s.get("mid") in left]):
+            left[s["mid"]].take(evidence(s["text"]))
         changed = False
-        for s in sorted((s for s in items if s["state"] == "delivered"), key=lambda s: s["at"]):
+        for s in by_size([s for s in items if s["state"] == "delivered"]):
             floor = float(s["at"]) - SLACK_S
             ev = evidence(s["text"])
             hit = next((mid for mid, t in turns
                         if (_d._turn_epoch(t.get("timestamp")) or now) >= floor
-                        and times_in(ev, t.get("text") or "") > taken.get(mid, []).count(ev)), None)
+                        and left[mid].take(ev)), None)
             if hit:
                 _set(s, "confirmed", now)
                 s["mid"], s["confirmedAt"] = hit, now
-                taken.setdefault(hit, []).append(ev)
                 changed = True
             elif not live and now - float(s.get("deliveredAt") or s["stateAt"]) > STOPPED_AFTER_S:
                 _set(s, "failed", now, "the session stopped before it read this")

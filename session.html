@@ -3167,52 +3167,73 @@ function sendNorm(t) {
 }
 const SEND_IMG = /^\s*\[image\][ \t]+(\S[^\n]*?)\s*$/gim;
 function sendImages(t) { return [...String(t || '').matchAll(SEND_IMG)].map(m => m[1].replace(/\\/g, '/').toLowerCase()); }
-// What of a send its turn must hold, as one string (sends.evidence): its
-// point lines, else its first words, else (images alone) their paths.
+// What of a send its turn must hold (sends.evidence): its point lines, else
+// its first words, else (images alone) their paths; null for nothing.
 function sendEvidence(sent) {
   const ids = [...String(sent || '').matchAll(SEND_PT)].map(m => m[1]);
-  if (ids.length) return 'p\n' + ids.join('\n');
+  if (ids.length) return { kind: 'p', val: ids };
   const needle = sendNorm(sent).slice(0, 400);
-  if (needle) return 'w\n' + needle;
+  if (needle) return { kind: 'w', val: needle };
   const paths = sendImages(sent);
-  return paths.length ? 'i\n' + paths.join('\n') : '';
+  return paths.length ? { kind: 'i', val: paths } : null;
 }
-// How many sends with that evidence a turn can confirm (sends.times_in): one
-// resume input carries several sends; the same words twice need them twice.
-// A turn's ref blocks are stripped as it is read (renderSolo).
-function sendTimesIn(ev, turn) {
-  const kind = ev.slice(0, 1), val = ev.slice(2).split('\n');
-  if (kind === 'p') {
-    const have = new Set([...String(turn || '').matchAll(SEND_PT)].map(m => m[1]));
-    return val.every(i => have.has(i)) ? 1 : 0;
-  }
-  if (kind === 'w') return sendNorm(turn).split(val[0]).length - 1;
-  if (kind === 'i') { const have = sendImages(turn); return Math.min(...val.map(p => have.filter(h => h === p).length)); }
-  return 0;
+// What of a user turn is still unclaimed (sends._Turn): one turn confirms
+// several sends (a resume types them in as one input), each by a part no
+// other send has: words at their own place, as whole words, each image path
+// and point once. A turn's ref blocks are stripped as it is read (renderSolo).
+function sendTurn(text) {
+  const words = sendNorm(text), spans = [];
+  let images = sendImages(text);
+  const points = new Set([...String(text || '').matchAll(SEND_PT)].map(m => m[1]));
+  return { take(ev) {
+    if (!ev) return false;
+    if (ev.kind === 'p') {
+      if (!ev.val.every(i => points.has(i))) return false;
+      ev.val.forEach(i => points.delete(i));
+      return true;
+    }
+    if (ev.kind === 'i') {
+      const left = images.slice();
+      for (const p of ev.val) { const k = left.indexOf(p); if (k < 0) return false; left.splice(k, 1); }
+      images = left;
+      return true;
+    }
+    for (let i = words.indexOf(ev.val); i >= 0; i = words.indexOf(ev.val, i + 1)) {
+      const j = i + ev.val.length;
+      if ((i === 0 || words[i - 1] === ' ') && (j === words.length || words[j] === ' ' || ev.val.length >= 400)
+          && !spans.some(([a, b]) => i < b && a < j)) { spans.push([i, j]); return true; }
+    }
+    return false;
+  } };
 }
-function sendMatches(sent, turn) { const ev = sendEvidence(sent); return !!ev && sendTimesIn(ev, turn) > 0; }
+function sendMatches(sent, turn) { return sendTurn(turn).take(sendEvidence(sent)); }
+// The order sends claim turns in (sends.by_size): the fullest evidence first,
+// so "go" cannot take the words of "go now" from it; then oldest first.
+function sendsBySize(list) {
+  return list.map(s => ({ s, ev: sendEvidence(s.text) }))
+    .sort((a, b) => ((b.ev ? b.ev.val.length : 0) - (a.ev ? a.ev.val.length : 0)) || ((a.s.at || 0) - (b.s.at || 0)));
+}
 // The sends to draw under the conversation: the hub's and any just sent,
 // less those the conversation drawn now already shows (by the hub's
-// confirmation, or a turn that holds it: a turn confirms several sends, but
-// the same words only as often as it holds them). One the hub confirmed stays
-// until this page's copy of the conversation has its turn, so it is replaced,
-// never gone and back.
+// confirmation, or a turn that holds it, each send by its own part of the
+// turn). One the hub confirmed stays until this page's copy of the
+// conversation has its turn, so it is replaced, never gone and back.
 function sendsToShow(items) {
   const all = ROOM_SENDS.slice();
   for (const [k, v] of SENT_LOCAL) if (!all.some(x => x.key === k)) all.push(v.s);
   all.sort((a, b) => (a.at || 0) - (b.at || 0));
-  const taken = new Map();   // turn id -> the evidence it has confirmed
-  const claim = (id, ev) => { if (!taken.has(id)) taken.set(id, []); taken.get(id).push(ev); };
-  const used = (id, ev) => (taken.get(id) || []).filter(e => e === ev).length;
-  return all.filter(s => {
-    const ev = sendEvidence(s.text);
-    if (s.mid && items.some(m => m.id === s.mid)) { claim(s.mid, ev); return false; }
-    if (s.state === 'confirmed' && !s.mid) return false;
-    const m = ev && items.find(m => m.from === 'user' && m.id
-      && (!m.ts || m.ts >= (s.at || 0) - 120) && sendTimesIn(ev, m.text) > used(m.id, ev));
-    if (m) { claim(m.id, ev); return false; }
-    return true;
-  });
+  const turns = new Map(), gone = new Set();
+  const turn = m => { if (!turns.has(m.id)) turns.set(m.id, sendTurn(m.text)); return turns.get(m.id); };
+  const open = [];
+  for (const { s, ev } of sendsBySize(all)) {
+    const own = s.mid && items.find(m => m.id === s.mid);
+    if (own) { turn(own).take(ev); gone.add(s); } else if (s.state === 'confirmed' && !s.mid) gone.add(s); else open.push({ s, ev });
+  }
+  for (const { s, ev } of open) {
+    if (ev && items.some(m => m.from === 'user' && m.id
+      && (!m.ts || m.ts >= (s.at || 0) - 120) && turn(m).take(ev))) gone.add(s);
+  }
+  return all.filter(s => !gone.has(s));
 }
 // A send as a balloon: the words as sent, and under them where it is, in words.
 function sendHtml(s, md) {

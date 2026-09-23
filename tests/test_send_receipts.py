@@ -403,7 +403,7 @@ class Receipts(unittest.TestCase):
         # No words and no point: its image's path is what to look for, in
         # Claude's turn too (review 1, finding 3).
         self.assertTrue(sends.matches("[image] C:/a.png", "[Image #1]\n[image] C:/a.png"))
-        self.assertTrue(sends.matches("[image] C:\\x\\A.png","[image] c:/x/a.png"))
+        self.assertTrue(sends.matches("[image] C:\\x\\A.png", "[image] c:/x/a.png"))
         self.assertFalse(sends.matches("[image] C:/a.png", "[Image #1]\n[image] C:/b.png"))
         self.assertFalse(sends.matches("[image] C:/a.png", "[Image #1]"))
         rid = self.room(agents=("claude",))
@@ -414,6 +414,32 @@ class Receipts(unittest.TestCase):
                                 "timestamp": iso(now + 1)})
         [s] = self.payload(rid)["sends"]
         self.assertEqual(s["state"], "confirmed")
+
+    def overlapping(self, texts, turn):
+        """The states of delivered sends ``texts`` after one turn ``turn``."""
+        rid = self.room()
+        now = time.time()
+        for i, t in enumerate(texts):
+            sends.accept(rid, f"send:{i}", t, now=now + i * 0.01)
+            sends.mark(rid, [f"send:{i}"], "delivered", now=now)
+        self.turns[SID].append({"role": "user", "text": turn, "timestamp": iso(now + 1)})
+        return [s["state"] for s in sorted(self.payload(rid)["sends"], key=lambda s: s["key"])]
+
+    def test_one_part_of_a_turn_confirms_one_send(self):
+        # Review 2: a shorter send, or a subset of images, cannot ride on the
+        # part of the turn a longer one is confirmed by.
+        self.assertEqual(self.overlapping(["go", "go now"], "go now"), ["delivered", "confirmed"])
+        self.assertEqual(self.overlapping(["go now", "go"], "go now"), ["confirmed", "delivered"])
+        self.assertEqual(self.overlapping(["go", "go now"], "go\n\ngo now"), ["confirmed", "confirmed"])
+        self.assertEqual(self.overlapping(["[image] a.png", "[image] a.png\n[image] b.png"],
+                                          "[image] a.png\n[image] b.png"), ["delivered", "confirmed"])
+        self.assertEqual(self.overlapping(["[image] a.png\n[image] a.png"], "[image] a.png"), ["delivered"])
+        self.assertEqual(self.overlapping(["[image] a.png\n[image] b.png"] * 2,
+                                          "[image] a.png\n[image] b.png"), ["confirmed", "delivered"])
+        # Words inside the resume note's prose, or inside other words, are not the send.
+        note = dashboard.RESUME_NOTE + "\n\nin"
+        self.assertEqual(self.overlapping(["in", "in", "in"], note), ["confirmed", "delivered", "delivered"])
+        self.assertEqual(self.overlapping(["ok"], "book it"), ["delivered"])
 
 
 @unittest.skipUnless(NODE, "node is not installed")
@@ -467,6 +493,14 @@ out.coalesced = ctx.sendsToShow(busy.concat([{ id: 's:5', from: 'user', ts: 1003
 run('ROOM_SENDS = ' + JSON.stringify([{ key: 'img', text: '[image] C:\\att\\shot.png', at: 1000, state: 'delivered' }]));
 out.imageOther = ctx.sendsToShow(busy.concat([{ id: 's:6', from: 'user', text: '[Image #1]\n[image] C:/att/other.png', ts: 1001 }])).map(s => s.key);
 out.imageTurn = ctx.sendsToShow(busy.concat([{ id: 's:6', from: 'user', text: '[Image #1]\n[image] C:/att/shot.png', ts: 1001 }])).map(s => s.key);
+// Review 2: one part of a turn confirms one send, the fullest first.
+const over = (texts, turn) => {
+  run('ROOM_SENDS = ' + JSON.stringify(texts.map((text, i) => ({ key: 'o' + i, text, at: 1000 + i, state: 'delivered' }))));
+  return ctx.sendsToShow([{ id: 's:9', from: 'user', text: turn, ts: 1010 }]).map(s => s.key);
+};
+out.overlap = [over(['go', 'go now'], 'go now'), over(['go', 'go now'], 'go\n\ngo now'),
+  over(['[image] a.png', '[image] a.png\n[image] b.png'], '[image] a.png\n[image] b.png'),
+  over(['[image] a.png\n[image] a.png'], '[image] a.png'), over(['ok'], 'book it')];
 // The reply shows it at once; a poll that asked before keeps it, one after decides.
 run('ROOM_SENDS = []; SENDS_GEN = 5;');
 ctx.noteSent(sent);
@@ -500,6 +534,9 @@ console.log(JSON.stringify(out));
 
     def test_one_turn_for_several_sends(self):
         self.assertEqual(self.r["coalesced"], [])
+
+    def test_one_part_of_a_turn_replaces_one_send(self):
+        self.assertEqual(self.r["overlap"], [["o0"], [], ["o0"], ["o0"], ["o0"]])
 
     def test_an_image_alone_is_replaced_by_its_turn(self):
         self.assertEqual(self.r["imageOther"], ["img"])
