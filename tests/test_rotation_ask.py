@@ -330,6 +330,28 @@ class HandoverWrittenTests(_Base):
         self.assertEqual(self.sess.typed, [])
 
 
+    def test_a_file_written_while_the_ask_is_typed_is_not_fresh(self):
+        s = self.subject()
+        hp = s["handover"]
+        typed = self.sess.send_line
+
+        def send_line(text):
+            # The owner saves its handover as the ask goes in: not an answer.
+            hp.write_text("# Handover\n", encoding="utf-8")
+            at = time.time()
+            os.utime(hp, (at, at))
+            return typed(text)
+
+        self.sess.send_line = send_line
+        self.assertEqual(self.check(s)["phase"], "asked")
+        self.idle = self.hook_idle = True
+        out = self.check(s)
+        self.assertEqual((out["phase"], self.rotated), ("asked", []))
+        self.write(s, +30)                          # rewritten after the ask
+        self.sess._last_submit -= 30                # the ask's own submit is long past
+        self.check(s)
+        self.assertEqual(self.rotated, [{"answered": True, "asked": True}])
+
     def test_the_timeout_and_immediate_paths_ignore_the_hook(self):
         s = self.asked(ago=rotation.ASK_TIMEOUT_S + 10)
         self.write(s, -30)                          # not refreshed

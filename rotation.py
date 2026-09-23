@@ -494,9 +494,12 @@ def _hook_idle(part: dict, since: float) -> bool:
 
 
 def _handover_refreshed(st: dict, hp: Path | None) -> bool:
-    """The handover was written after the ask, and says something."""
+    """The handover was written after the ask was typed (newer than the ask's
+    time and than the file just before it), and says something."""
     asked_at = float(st.get("askedAt") or 0)
-    return bool(hp) and asked_at > 0 and _mtime(Path(hp)) > asked_at and handover_written(hp)
+    m = _mtime(Path(hp)) if hp else 0.0
+    return (asked_at > 0 and m > asked_at and m > float(st.get("handoverAtAsk") or 0)
+            and handover_written(hp))
 
 
 def _session_started(part: dict) -> float:
@@ -701,12 +704,15 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
     # Typed now even mid-turn: the agent queues it and reads it at its next
     # pause. The transcript's size is read before the ask, so the ask lands
     # at or after askSize.
+    # The handover as it was just before the ask, and the ask's time just
+    # after it: a file written before or while it was typed is never fresh.
+    before = _mtime(hp)
     sess.send_line(ask)
     # The ask's own submit: a person typing into the terminal after it means
     # someone is working with the agent, and the rotation waits.
     st.update(phase="asked", askRoom=s["room"]["id"], askIdentity=part["identity"],
-              askedAt=now, askSize=tr["size"], askPath=str(tpath),
-              handoverAtAsk=_mtime(hp), tokensAtAsk=tr["tokens"],
+              askedAt=time.time(), askSize=tr["size"], askPath=str(tpath),
+              handoverAtAsk=before, tokensAtAsk=tr["tokens"],
               askSubmit=float(sess.last_submit() or time.time()))
     note = " (it was busy; it reads the ask at its next pause)" if busy else ""
     return done(f"{_k(tr['tokens'])} tokens, over the {_k(limit)} limit — "
