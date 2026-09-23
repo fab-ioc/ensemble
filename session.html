@@ -1641,6 +1641,14 @@ function cleanSeq(s) {
     .replace(/\x1b?\]1[01];rgb:[0-9a-f\/]+(?:\x1b\\|\x07|\\)/gi, '')
     .replace(/\x1b?\[\?[0-9;]+c/g, '');
 }
+// xterm's query replies are emitted as complete onData events. Filter those
+// frames before posting input; leave incomplete ESC prefixes alone so a real
+// Escape key is never delayed or swallowed.
+function stripTerminalReplies(s, userKey = false, userPaste = false) {
+  if (userPaste) return s;
+  return s.replace(/\x1b\[200~[\s\S]*?\x1b\[201~|\x1b\[\?[0-9;]+c|\x1b\[(?:>[0-9;]*c|0n|[0-9]+;[0-9]+R|\?[0-9]+;[0-9]+R|\??[0-9]+;[0-4]\$y|(?:4|6|8);[0-9]+;[0-9]+t)|\x1b\](?:4;[0-9]{1,3};|(?:10|11|12);)rgb:[0-9a-f]{1,4}\/[0-9a-f]{1,4}\/[0-9a-f]{1,4}(?:\x1b\\|\x07)|\x1bP(?:0\$r|1\$r(?:[0-9;]+m|[0-9;]+r|[0-9 ]+q|[01]\"q|61;1\"p))\x1b\\/gi,
+    frame => frame.startsWith('\x1b[200~') || (userKey && /^\x1b\[1;[2-8]R$/.test(frame)) ? frame : '');
+}
 
 const terms = {};          // ptyId -> {term, es}
 let agentsBuilt = false;
@@ -1792,19 +1800,44 @@ function mountTerm(el, ptyId) {
       // preventDefault stops the browser's OWN paste action — without it the
       // clipboard lands twice (once here, once via xterm's native paste event).
       e.preventDefault();
-      navigator.clipboard.readText().then(t => term.paste(t)).catch(() => {});
+      navigator.clipboard.readText().then(t => pasteUserText(t)).catch(() => {});
       return false;
     }
     return true;
   });
   el.addEventListener('contextmenu', (e) => {
     e.preventDefault();
-    navigator.clipboard.readText().then(t => term.paste(t)).catch(() => {});
+    navigator.clipboard.readText().then(t => pasteUserText(t)).catch(() => {});
   });
+  let terminalPaste = false;
+  const pasteUserText = value => {
+    terminalPaste = true;
+    try { term.paste(value); } finally { terminalPaste = false; }
+  };
+  // Native paste events bubble through xterm's own paste handler. Mark the
+  // synchronous onData event as user text, even when bracketed-paste mode is
+  // off and xterm sends clipboard bytes without wrappers.
+  el.addEventListener('paste', () => {
+    terminalPaste = true;
+    setTimeout(() => { terminalPaste = false; }, 0);
+  }, true);
   const td = new TextDecoder();
   const es = new EventSource('/api/pty/stream?id=' + encodeURIComponent(ptyId));
   es.onmessage = ev => term.write(cleanSeq(td.decode(b64bytes(ev.data), { stream: true })));
-  term.onData(d => jpost('/api/pty/input', { id: ptyId, data: d }));
+  const pendingKeys = new Set();
+  term.onKey(({ key }) => {
+    pendingKeys.add(key);
+    setTimeout(() => pendingKeys.delete(key), 0);
+  });
+  term.onData(d => {
+    // xterm 5.3.0 fires onKey immediately before the corresponding onData.
+    // Keep modified F3 sequences distinct from cursor-position reports.
+    const terminalKey = pendingKeys.delete(d);
+    const input = stripTerminalReplies(d, terminalKey, terminalPaste);
+    if (input) jpost('/api/pty/input', {
+      id: ptyId, data: input, terminalKey, terminalPaste,
+    });
+  });
   terms[ptyId] = { term, es, fit };
   // Size the PTY to the terminal once it has laid out; focus it for typing.
   setTimeout(() => { syncSize(ptyId); if (!quiet) term.focus(); }, 60);
