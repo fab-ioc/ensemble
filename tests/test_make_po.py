@@ -174,7 +174,7 @@ class NewProject(Hub):
                 ({**self.session(), "name": "E", "kind": "spreadsheet", "path": str(self.work)}, 400, ""),
                 ({**self.session(), "name": "a/b", "kind": "documents"}, 400, "folder's name"),
                 ({**self.session(cwd=str(self.base / "gone")), "name": "E", "kind": "code", "path": str(self.work)}, 400, "no longer exists"),
-                ({**self.session(agent="cursor"), "name": "E", "kind": "code", "path": str(self.work)}, 400, "not installed"),
+                ({**self.session(agent="cursor"), "name": "E", "kind": "code", "path": str(self.work)}, 400, "a Claude or a Codex"),
                 ({"sessionId": "", "cwd": "", "name": "E"}, 400, "session and its folder"),
         ):
             got, out = self.call(body)
