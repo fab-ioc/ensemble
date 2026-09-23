@@ -687,7 +687,7 @@ class ThePage(unittest.TestCase):
         send = send[:send.index("\n};\n")]
         # A one-agent chat's too: the hub keeps the person's points (points.py)
         # and types it in, or resumes the session for it.
-        self.assertIn("try { await sendResuming(t, '', key, atts); }", send)
+        self.assertIn("try { d = await sendResuming(t, '', key, atts); }", send)
         self.assertNotIn("/api/pty/input", send)
         # A team's every send goes through the hub's resume-or-deliver: the
         # hub, not the last poll, knows whether the team is still running.

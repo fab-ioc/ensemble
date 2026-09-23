@@ -544,11 +544,14 @@
      browser's own scroll anchoring is off rather than adjusting twice. */
   #msgpane { flex:1; min-height:0; position:relative; display:flex; flex-direction:column; }
   #msgs { flex:1; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:10px; position:relative; overflow-anchor:none; }
-  .msg.pending { opacity:.72; }   /* sent, not yet in the transcript */
+  /* Sent, not yet in the conversation (sends.py): a dashed edge and a line
+     saying where it is, in words. No opacity: its text keeps its contrast. */
+  .msg.pending { border-style:dashed; }
   /* Held by a resume that failed: fully visible, the reason and the way to
      send it again under it. --c-danger: it is wrong, the message did not get in. */
   .msg.pending.failed { opacity:1; border-left-color:var(--c-danger-bold); }
   .msg .pend-state { margin-top:var(--s-100); font-size:var(--fs-200); line-height:16px; color:var(--c-danger-fg); display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-200); }
+  .msg .pend-state.ok { color:var(--fg-muted); }   /* queued or delivered: fine, no colour */
   .msg .pend-state button { min-height:24px; padding:0 var(--s-200); font-size:var(--fs-200); }   /* compact; a finger's size on a phone, below */
   /* #msgs's own 12px padding is the column's margin; a balloon fills the rest
      of the width at every window size instead of stopping at a fraction of it. */
@@ -2610,6 +2613,7 @@ function renderBubbles(items, opt = {}) {
       box.contains(_liveSel.getRangeAt(0).commonAncestorContainer)) return;
   const stick = STICK && !opt.anchor;
   const place = stick ? null : readingPlace(box, opt.anchor);
+  const given = items;       // as the conversation has them, point lines and all (sendsToShow)
   items = withTaskBubble(items, ROOM_OBJ && ROOM_OBJ.spec, 'from');
   // The person's words as sent: the hub's "[point P12]" lines are the agent's.
   items = items.map(m => m && m.from === 'user' && hasPointLines(m.text) ? Object.assign({}, m, { text: stripPointLines(m.text) }) : m);
@@ -2701,32 +2705,22 @@ function renderBubbles(items, opt = {}) {
   // Never an absence without its reason: the rows say what they are.
   if (folded) rows.unshift(`<div class="fold-note" data-key="fold-note">${folded} earlier message${folded > 1 ? 's' : ''} folded. Click one to read it.</div>`);
   showChatBar(items, quietRows);
-  // Messages you just sent that the transcript hasn't recorded yet (a long
-  // agent turn delays the flush): keep showing them until they appear for real.
-  // Some never will — a "/command", or a digit answering a prompt — so an echo
-  // also goes once the conversation has moved on (anything new arrived after
-  // it was sent), or after two minutes, instead of sticking as a phantom
-  // "latest message".
-  const nowS = Date.now() / 1000;
-  // What the hub holds for a session being resumed (sent while it was
-  // stopped): pending until typed in, or failed with the reason and a way
-  // to send it again. Held by the hub, so it outlives this page and shows
-  // in every copy of the chat; a local echo of the same text is dropped.
-  const hubHeld = ROOM_PENDING && ROOM_PENDING.items ? ROOM_PENDING.items : [];
+  // What you sent that the conversation does not show yet, as the hub keeps
+  // it (sends.py): queued, typed in and waiting for the agent to take it, or
+  // not delivered with the reason, Retry and Discard. Held by the hub, so it
+  // outlives this page and shows in every copy of the chat. Nothing but the
+  // conversation showing it (or Discard) takes it away: no clock, no count.
+  const shown = sendsToShow(given);
+  shown.forEach(x => rows.push(sendHtml(x, md)));
+  // Held by a resume with no receipt of its own (a hub line): as it is held.
+  const known = new Set(shown.map(x => x.key).concat(ROOM_SENDS.map(x => x.key)));
+  const hubHeld = (ROOM_PENDING && ROOM_PENDING.items ? ROOM_PENDING.items : []).filter(p => !p.key || !known.has(p.key));
   const failed = !!ROOM_PENDING && ROOM_PENDING.state === 'failed';
   hubHeld.forEach((p, i) => rows.push(
     `<div class="msg user pending${failed ? ' failed' : ''}" data-from="user" data-key="held-${i}"><div class="from">${whoHtml({ from: 'user', to: p.to || '' })}</div><div class="text md">${md(stripPointLines(p.text))}</div>`
     + (failed && i === hubHeld.length - 1
       ? `<div class="pend-state" role="status">Not delivered: ${esc(ROOM_PENDING.error || 'the session did not come up')}. <button type="button" class="pend-retry">Retry</button><button type="button" class="pend-discard">Discard</button></div>`
       : '') + '</div>'));
-  PENDING_USER.forEach(p => { if (p.n == null) p.n = items.length; });
-  PENDING_USER = PENDING_USER.filter(p =>
-    !items.some(m => m.from === 'user' && (m.text || '').trim() === p.text)
-    && !hubHeld.some(h => stripPointLines(h.text || '').trim() === p.text)
-    && items.length <= p.n
-    && (nowS - p.ts) < 120);
-  PENDING_USER.forEach(p => rows.push(
-    `<div class="msg user pending" data-from="user"><div class="from">${whoHtml({ from: 'user', to: '' })}</div><div class="text md">${md(p.text)}</div></div>`));
   patchChildren(box, rows);
   showAskLine(items);
   MD_CACHE = used;
@@ -3141,18 +3135,92 @@ function withTaskBubble(items, spec, key) {
   if (items.some(m => m[key] === 'user' && (m.text || '').trim() === t)) return items;
   return [{ id: 'task', from: 'user', who: 'user', to: '', text: spec }].concat(items);
 }
-let PENDING_USER = [];   // optimistic echo of what you sent (solo sessions)
-function showPendingUser(text) {
-  const t = (text || '').trim(); if (!t) return;
-  PENDING_USER.push({ text: t, ts: Date.now() / 1000 });
-  const box = $('#msgs'); if (!box) return;
-  box.insertAdjacentHTML('beforeend',
-    `<div class="msg user pending" data-from="user"><div class="from">${whoHtml({ from: 'user', to: '' })}</div><div class="text md">${mdToHtml(t)}</div></div>`);
-  // At the end the chat follows what you sent. Scrolled up, your place stays:
-  // the echo is added below it, and "Latest ↓" is the way down.
-  if (STICK) box.scrollTop = box.scrollHeight;
-  showLatest();
+// ---- What you sent, until the conversation shows it: begin -----------------
+// The hub keeps every send by its key (sends.py) and each poll brings them
+// (room.sends): {key, text, to, at, state, error, mid}. A send's own reply
+// shows it at once, before the next poll (SENT_LOCAL); from the first poll
+// that asked after that reply, the hub's list alone says what there is.
+let ROOM_SENDS = [];
+const SENT_LOCAL = new Map();   // key -> {s, gen}
+let SENDS_GEN = 0, SENDS_SIG = '[]';
+function noteSent(s) {
+  if (!s || !s.key) return;
+  SENT_LOCAL.set(s.key, { s, gen: SENDS_GEN });
+  if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
 }
+// A poll's list (``gen``: the ticket it took when it asked). Returns whether
+// what shows changed.
+function sendsFromPoll(list, gen) {
+  ROOM_SENDS = Array.isArray(list) ? list : [];
+  for (const [k, v] of SENT_LOCAL) if (gen > v.gen) SENT_LOCAL.delete(k);
+  const sig = JSON.stringify([ROOM_SENDS, [...SENT_LOCAL.keys()]]);
+  if (sig === SENDS_SIG) return false;
+  SENDS_SIG = sig;
+  return true;
+}
+// Whether a turn of the conversation holds a send: its point lines when it
+// has any (unique in a room), else its first words (sends.matches).
+const SEND_PT = /\[point (P\d{1,5}[a-z]?)\]/g;
+function sendNorm(t) {
+  return String(t || '').replace(/^\s*\[image\][^\n]*$/gim, ' ').replace(/\[Image(?: #\d+|: source: [^\]]*)\]/g, ' ')
+    .split(/\s+/).filter(Boolean).join(' ');
+}
+function sendMatches(sent, turn) {
+  const ids = [...String(sent || '').matchAll(SEND_PT)].map(m => m[1]);
+  if (ids.length) {
+    const have = new Set([...String(turn || '').matchAll(SEND_PT)].map(m => m[1]));
+    return ids.every(i => have.has(i));
+  }
+  const needle = sendNorm(sent).slice(0, 400);
+  return !!needle && sendNorm(turn).includes(needle);   // a turn's ref blocks are stripped as it is read (renderSolo)
+}
+// The sends to draw under the conversation: the hub's and any just sent,
+// less those the conversation drawn now already shows (by the hub's
+// confirmation, or a turn that holds it: one turn per send). One the hub
+// confirmed stays until this page's copy of the conversation has its turn,
+// so it is replaced, never gone and back.
+function sendsToShow(items) {
+  const all = ROOM_SENDS.slice();
+  for (const [k, v] of SENT_LOCAL) if (!all.some(x => x.key === k)) all.push(v.s);
+  all.sort((a, b) => (a.at || 0) - (b.at || 0));
+  const taken = new Set();
+  return all.filter(s => {
+    if (s.mid && items.some(m => m.id === s.mid)) { taken.add(s.mid); return false; }
+    if (s.state === 'confirmed' && !s.mid) return false;
+    const m = items.find(m => m.from === 'user' && m.id && !taken.has(m.id)
+      && (!m.ts || m.ts >= (s.at || 0) - 120) && sendMatches(s.text, m.text));
+    if (m) { taken.add(m.id); return false; }
+    return true;
+  });
+}
+// A send as a balloon: the words as sent, and under them where it is, in words.
+function sendHtml(s, md) {
+  const st = s.state === 'failed'
+    ? `<div class="pend-state" role="status">Not delivered: ${esc(s.error || 'it did not go in')}. `
+      + `<button type="button" class="send-retry" data-send="${esc(s.key)}">Retry</button>`
+      + `<button type="button" class="send-discard" data-send="${esc(s.key)}">Discard</button></div>`
+    : s.state === 'queued'
+      ? '<div class="pend-state ok" role="status">Queued: it goes in once the session is up.</div>'
+      : `<div class="pend-state ok" role="status">Delivered, not yet read by the agent.`
+        + (s.state === 'delivered' ? ` <button type="button" class="send-hide" data-send="${esc(s.key)}" title="Stop showing it here (it was typed in)">Hide</button>` : '') + '</div>';
+  return `<div class="msg user pending${s.state === 'failed' ? ' failed' : ''}" data-from="user" data-key="send-${esc(s.key)}">`
+    + `<div class="from">${whoHtml({ from: 'user', to: s.to || '' })}</div><div class="text md">${md(stripPointLines(s.text))}</div>${st}</div>`;
+}
+// Retry, Discard or Hide on a send the hub keeps.
+function sendAction(bt) {
+  const key = bt.dataset.send;
+  const act = bt.classList.contains('send-retry') ? 'retry' : bt.classList.contains('send-discard') ? 'discard' : 'dismiss';
+  bt.disabled = true;
+  postOk('/api/room/resume', { roomId: ROOM, key, [act]: true })
+    .then(d => { SEND_ERR = ''; setText($('#hint'), ''); if (act === 'retry' && d && d.send) noteSent(d.send); else SENT_LOCAL.delete(key); })
+    .catch(e => {
+      if (e && e.send) noteSent(e.send);
+      SEND_ERR = 'Not sent: ' + sendErrorText(e) + '. The message is still shown here.';
+      setText($('#hint'), SEND_ERR);
+    })
+    .then(() => { bt.disabled = false; refresh(); });
+}
+// ---- What you sent, until the conversation shows it: end -------------------
 // Solo session: render its live transcript (user + assistant turns) as bubbles,
 // fetched once per completed turn (see the activity-driven trigger in refresh).
 let SOLO_TURN_COUNT = -1, SOLO_FETCHING = false, SOLO_SID = '', SOLO_AGENT = '', SOLO_PTY = '', _prevWorking = {}, _soloStatKey = '';
@@ -3358,6 +3426,7 @@ async function refresh() {
 async function refreshRoom() {
   let room;
   const ticket = ptTicket();
+  const sendsGen = ++SENDS_GEN;
   try { room = await fetch('/api/room?id=' + encodeURIComponent(ROOM)).then(r => r.json()); }
   catch(e) { return; }
   if (!room || room.error) { setText($('#title'), '(session not found)'); return; }
@@ -3390,6 +3459,7 @@ async function refreshRoom() {
   const pendSig = JSON.stringify(pend);
   const pendChanged = pendSig !== PENDING_SIG;
   PENDING_SIG = pendSig; ROOM_PENDING = pend; ROOM_RESUMING = resuming;
+  const sendsChanged = sendsFromPoll(room.sends, sendsGen);
   const pb = $('#pause');
   pb.style.display = notRunning ? 'none' : '';
   setText(pb, st === 'paused' ? 'Resume' : 'Pause');
@@ -3445,7 +3515,10 @@ async function refreshRoom() {
     const rowsChanged = hubRows !== HUB_ROWS_N;
     HUB_ROWS_N = hubRows;
     if ((pendChanged || rowsChanged) && SOLO_SID) renderSolo(SOLO_SID, SOLO_AGENT, true);
-    else checkSolo();   // stat-driven: first load + every new turn
+    else {
+      if (sendsChanged && LAST_ITEMS) renderBubbles(LAST_ITEMS);   // a send moved on
+      checkSolo();   // stat-driven: first load + every new turn
+    }
   } else {
     SOLO_SID = ''; SOLO_PTY = '';
     renderMsgs(room);
@@ -3815,6 +3888,7 @@ function msgKey() {
 // delivered, with Retry): the box is cleared, the hint says where it is.
 function keptByHub(e) {
   if (!e || !e.kept) return false;
+  noteSent(e.send);
   SEND_ERR = 'Not delivered: ' + sendErrorText(e) + '. Your message is kept above: Retry sends it again.';
   setText($('#hint'), SEND_ERR);
   SEND_KEY = '';
@@ -3827,7 +3901,7 @@ async function postOk(path, body) {
   const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   let d = null;
   try { d = await r.json(); } catch (e) {}
-  if (!r.ok || !d || d.error) throw Object.assign(new Error((d && d.error) || ('error ' + r.status)), { status: r.status, kept: !!(d && d.kept) });
+  if (!r.ok || !d || d.error) throw Object.assign(new Error((d && d.error) || ('error ' + r.status)), { status: r.status, kept: !!(d && d.kept), send: d && d.send });
   return d;
 }
 // Why a send did not arrive, in words.
@@ -3891,7 +3965,8 @@ $('#send').onclick = async () => {
     const key = msgKey();
     // Through the hub, running or not: it keeps the person's points and adds
     // their lines (and the images'), and types it in (or resumes the session).
-    try { await sendResuming(t, '', key, atts); }
+    let d;
+    try { d = await sendResuming(t, '', key, atts); }
     catch (e) {
       if (keptByHub(e)) return;
       SEND_ERR = 'Not sent: ' + sendErrorText(e) + '. Your message is still in the box.';
@@ -3899,10 +3974,10 @@ $('#send').onclick = async () => {
       return;
     }
     SEND_ERR = ''; SEND_KEY = '';
-    // Shown now; the transcript catches up later. A message of points names
-    // the head's images itself; a plain one gets them under it as the hub does.
-    showPendingUser(t + (ATT.stored().length && !pointItems(t) ? '\n\n' + ATT.stored().map(a => ATT_PREFIX + a.name).join('\n') : ''));
+    // Shown now as the hub keeps it (its words, points and images as they
+    // go in), until the transcript has it.
     edClear();
+    noteSent(d && d.send);
     setTimeout(checkSolo, 1200);
     setTimeout(refresh, 400);  // the hub's hold on it, and "resuming", show at once
     return;
@@ -3914,7 +3989,8 @@ $('#send').onclick = async () => {
   // Always through the hub's resume-or-deliver: a team that stopped since the
   // last poll is resumed for the message instead of the message being posted
   // to a room nobody is reading.
-  try { await sendResuming(t, to, msgKey(), atts); }
+  let d;
+  try { d = await sendResuming(t, to, msgKey(), atts); }
   catch (e) {
     if (keptByHub(e)) return;
     SEND_ERR = 'Not sent: ' + sendErrorText(e) + '. Your message is still in the box.';
@@ -3922,7 +3998,7 @@ $('#send').onclick = async () => {
     return;
   }
   SEND_ERR = ''; SEND_KEY = '';
-  edClear(); refresh();
+  edClear(); noteSent(d && d.send); refresh();
 };
 $('#input').addEventListener('keydown', e => {
   const act = edKeyAction(e, { part: 'head', empty: !$('#input').value.trim(), last: !ED.points.length });
@@ -4611,6 +4687,8 @@ $('#msgs').addEventListener('click', e => {
   if (row) { foldToggle(row, true); return; }
   const fb = e.target.closest && e.target.closest('.fold-btn');
   if (fb) foldToggle(fb.closest('.msg'), false);
+  const sb = e.target.closest && e.target.closest('.send-retry, .send-discard, .send-hide');
+  if (sb) { sendAction(sb); return; }
   // A message a failed resume could not deliver: send it again (the hub
   // resumes the session for it once more), or let it go.
   const pr = e.target.closest && e.target.closest('.pend-retry, .pend-discard');

@@ -292,7 +292,12 @@ def sync(room_id: str, room: dict | None = None, force: bool = False,
     if room is None or not _solo(room):
         return
     turns: list[tuple[str, dict]] = []
-    for sid in _session_ids(room):
+    # Read again only when a transcript changed since a read that found
+    # nothing new: a PO's is megabytes, and the page polls every two seconds.
+    sids = _session_ids(room)
+    stats = tuple((sid, _d.points._session_stat(sid)) for sid in sids)
+    fresh = _SCANNED.get((room_id, "stats")) != (stats, tuple(s["key"] for s in waiting))
+    for sid in sids if fresh else []:
         try:
             raw = _d.read_session_turns(sid) or []
         except Exception as e:     # noqa: BLE001 — looked at again next time
@@ -319,6 +324,8 @@ def sync(room_id: str, room: dict | None = None, force: bool = False,
                 changed = True
         if changed:
             _save(room_id, items)
+        if fresh and all(st is not None for _sid, st in stats):
+            _SCANNED[(room_id, "stats")] = (stats, tuple(s["key"] for s in items if s["state"] == "delivered"))
 
 
 def view(room_id: str, now: float | None = None) -> list[dict]:
@@ -343,8 +350,9 @@ def view(room_id: str, now: float | None = None) -> list[dict]:
                 _log(f"{room_id}: {e!r}")
     out = []
     for s in sorted(items, key=lambda s: s["at"]):
-        if s["state"] == "confirmed" and now - float(s.get("confirmedAt") or s["stateAt"]) > SHOW_CONFIRMED_S:
-            continue
+        if s["state"] == "confirmed" and (not s.get("mid") or now - float(
+                s.get("confirmedAt") or s["stateAt"]) > SHOW_CONFIRMED_S):
+            continue        # in the conversation (or never to be: a /command)
         out.append({k: s.get(k) for k in ("key", "text", "to", "at", "state", "stateAt", "error", "mid")
                     if s.get(k) not in (None, "")})
     return out

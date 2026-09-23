@@ -8893,6 +8893,12 @@ class Handler(BaseHTTPRequestHandler):
                 raise
             with _RESUMES_LOCK:
                 res.resumed = resumed
+                # No agent came up or is running: nothing will ever take
+                # what is held. Said now, kept for Retry (#82: an ok that
+                # did nothing).
+                if not resumed and res.queue and _RESUMES.get(rid) is res:
+                    res.fail("no agent of this task could be started")
+                    raise StartRoomError("no agent of this task could be started")
             return {"resumed": resumed, "queued": len(items), "delivered": 0}
         return {"resumed": list(res.resumed), "queued": len(items), "delivered": 0,
                 "inFlight": True}
