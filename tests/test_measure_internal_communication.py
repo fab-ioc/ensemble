@@ -75,6 +75,7 @@ FROM_PO = "[from the PO] Please also add a test for the empty case. " + "p" * 10
 CEO = "Alex here: why did you choose that? " + "c" * 100
 REMINDER = "<system-reminder>\nThe memory index says ...\n</system-reminder>"
 HANDOVER_TEXT = "# Task handover\n\nState: half done. " + "h" * 2000
+HANDOVER_EDIT = "State: done, review pending. " + "e" * 300
 REVIEW_LOG_TEXT = "## Review 1 (changes requested)\n\n" + "l" * 1000
 GET_TASK = json.dumps({"taskNo": 7, "spec": SPEC, "messages": []})
 CHAT_MSG = "## Commit `abc` ready for review\n\n@codex please review. " + "m" * 500
@@ -140,8 +141,13 @@ def build_home(root: Path) -> Path:
         _claude("user", [_result("t4", "On branch sess/x\nnothing to commit")], IN.format(8)),
         _assistant([_use("t5", "Read", {"file_path": notes})], IN.format(9), "r5", usage=usage),
         _claude("user", [_result("t5", "some notes")], IN.format(10)),
-        _assistant([_use("t6", "Edit", {"file_path": str(task_dir / "repo" / "a.py"), "old_string": "a", "new_string": "b"})], IN.format(11), "r6", usage=usage),
-        _claude("user", [_result("t6", "edited")], IN.format(12)),
+        _assistant([_use("t6", "Edit", {"file_path": str(task_dir / "repo" / "a.py"), "old_string": "a", "new_string": "b"}),
+                    _use("t10", "Edit", {"file_path": handover, "old_string": "half done", "new_string": HANDOVER_EDIT}),
+                    _use("t11", "Bash", {"command": "Set-Content -Path ../notes.txt -Value 'n'"}),
+                    _use("t12", "Bash", {"command": f"cat \"{handover}\" && sed -n 1,20p src/a.py"})],
+                   IN.format(11), "r6", usage=usage),
+        _claude("user", [_result("t6", "edited"), _result("t10", "edited"), _result("t11", ""),
+                         _result("t12", HANDOVER_TEXT + "\nimport os\n")], IN.format(12)),
         _assistant([_use("t7", "mcp__ensemble__chat_send", {"to": "codex", "message": CHAT_MSG})], IN.format(13), "r7", usage=usage),
         _claude("user", [_result("t7", "sent")], IN.format(14)),
         _claude("user", "[relay] New message from 'codex' in your shared room.", IN.format(15)),
@@ -247,6 +253,23 @@ class ClassifierTests(unittest.TestCase):
         self.assertEqual(m.doc_kind("D:/home/x/EnsembleProjects/Proj/do_the_thing/repo/a.py", dirs), "")
         self.assertEqual(m.doc_kind("cat src/report.md"), "")
         self.assertEqual(m.doc_kind(""), "")
+        # A named document inside the task folder is that document, once.
+        self.assertEqual(m.doc_kinds("D:/home/x/EnsembleProjects/Proj/do_the_thing/REVIEW-LOG.md", dirs), ["REVIEW-LOG"])
+        self.assertEqual(m.doc_kinds("Get-Content SKILL.md; Get-Content TASK-HANDOVER.md"), ["SKILL", "TASK-HANDOVER"])
+        # Relative to the call's working directory: the repo checkout or the task folder.
+        repo = "D:/home/x/EnsembleProjects/Proj/do_the_thing/repo"
+        self.assertEqual(m.doc_kind("../notes.txt", dirs, cwd=repo), "task folder")
+        self.assertEqual(m.doc_kind("Get-Content ../notes.txt", dirs, cwd=repo), "task folder")
+        self.assertEqual(m.doc_kind("cat ../repo/a.py", dirs, cwd=repo), "")
+        self.assertEqual(m.doc_kind("cat docs/a.md", dirs, cwd=repo), "")
+        self.assertEqual(m.doc_kind("type notes.txt", dirs, cwd=dirs[0]), "task folder")
+        self.assertEqual(m.doc_kind("cat ../notes.txt", dirs, cwd="D:/elsewhere/repo"), "")
+        self.assertEqual(m.doc_kind("cat ../notes.txt", dirs), "")
+        # Reading segments of shell commands: one per &&, ||, ; or line; a write is not a read.
+        self.assertEqual(m.read_kinds(["cat TASK-HANDOVER.md && sed -n 1,50p src/a.py"], dirs), ["TASK-HANDOVER", "other"])
+        self.assertEqual(m.read_kinds(["git log -3 | head -5; cat ROADMAP.md"], dirs), ["other", "ROADMAP"])
+        self.assertEqual(m.read_kinds(["cat SKILL.md\ncat > x.md <<EOF\nq\nEOF"], dirs), ["SKILL"])
+        self.assertEqual(m.read_kinds(["cat a.py | head", "cat b.py"], dirs), ["other"])
 
     def test_results_and_inputs(self):
         dirs = ["d:/home/x/ensembleprojects/proj/do_the_thing"]
@@ -260,6 +283,29 @@ class ClassifierTests(unittest.TestCase):
         self.assertEqual(m.classify_result("Bash", {"command": "cat > REVIEW-LOG.md <<EOF\nx\nEOF"}, "x", dirs), ("otherresult", "text"))
         self.assertEqual(m.classify_result("Read", {"file_path": "C:/x/a.png"},
                                            [{"type": "image", "source": {}}], dirs), ("otherresult", "image"))
+        # One output holding a document and something else is mixed: no single kind owns its bytes.
+        self.assertEqual(m.classify_result("Bash", {"command": "cat TASK-HANDOVER.md && sed -n 1,50p src/a.py"}, "x", dirs),
+                         ("docread", "mixed: TASK-HANDOVER+other"))
+        self.assertEqual(m.classify_result("exec_command", None, "x", dirs,
+                                           commands=["Get-Content SKILL.md", "Get-Content TASK-HANDOVER.md"]),
+                         ("docread", "mixed: SKILL+TASK-HANDOVER"))
+        self.assertEqual(m.classify_result("exec_command", None, "x", dirs,
+                                           commands=["Get-Content SKILL.md", "Get-Content src/a.py"]),
+                         ("docread", "mixed: SKILL+other"))
+        self.assertEqual(m.classify_result("Bash", {"command": "cat TASK-HANDOVER.md && git status"}, "x", dirs),
+                         ("docread", "TASK-HANDOVER"))            # git status reads no file
+        self.assertEqual(m.classify_result("Bash", {"command": "cat a.py && cat b.py"}, "x", dirs), ("otherresult", "text"))
+        # Relative paths resolve against the call's working directory.
+        repo = "D:/home/x/EnsembleProjects/Proj/do_the_thing/repo"
+        self.assertEqual(m.classify_result("Read", {"file_path": "../notes.txt"}, "x", dirs, cwd=repo), ("docread", "task folder"))
+        self.assertEqual(m.classify_result("Bash", {"command": "cat ../notes.txt"}, "x", dirs, cwd=repo), ("docread", "task folder"))
+        self.assertEqual(m.classify_result("Bash", {"command": "cat ../notes.txt"}, "x", dirs), ("otherresult", "text"))
+        self.assertEqual(m.classify_input("Edit", {"file_path": "../notes.txt", "new_string": "n"}, dirs, cwd=repo),
+                         ("owninternal", "write task folder"))
+        self.assertEqual(m.classify_input("Bash", {"command": "Set-Content -Path ../notes.txt -Value n"}, dirs, cwd=repo),
+                         ("owninternal", "write task folder"))
+        self.assertEqual(m.classify_input("Edit", {"file_path": "../repo/a.py", "new_string": "n"}, dirs, cwd=repo),
+                         ("owninput", "edit"))
         self.assertEqual(m.classify_result("exec_command", None, "x", dirs, ["cat SKILL.md"]), ("docread", "SKILL"))
         self.assertEqual(m.classify_input("mcp__ensemble__chat_send", {"message": "m"}, dirs), ("owninternal", "chat_send"))
         self.assertEqual(m.classify_input("mcp__ensemble__ensemble_whoami", {}, dirs), ("owninput", "other"))
@@ -317,14 +363,16 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(kinds["ensemble"]["ensemble_get_task"]["bytes"],
                          base._payload_bytes([{"type": "text", "text": GET_TASK}]))
         self.assertEqual({k: v["count"] for k, v in kinds["docread"].items()},
-                         {"TASK-HANDOVER": 1, "REVIEW-LOG": 1, "task folder": 1})
+                         {"TASK-HANDOVER": 1, "REVIEW-LOG": 1, "task folder": 1,
+                          "mixed: TASK-HANDOVER+other": 1})      # a handover and source in one output
         self.assertEqual(g["categories"]["ownnarr"]["count"], 1)
         self.assertEqual(g["categories"]["ownreply"]["count"], 2)
         self.assertEqual({k: v["count"] for k, v in kinds["owninternal"].items()},
-                         {"chat_send": 1, "ensemble_report": 1})
-        # Inputs: Read x2, Bash x3, get_task, Edit; results: git status, edited, git log.
-        self.assertEqual(g["categories"]["owninput"]["count"], 7)
-        self.assertEqual(g["categories"]["otherresult"]["count"], 3)
+                         {"chat_send": 1, "ensemble_report": 1, "write TASK-HANDOVER": 1,
+                          "write task folder": 1})                  # Set-Content ../notes.txt from repo/
+        # Inputs: Read x2, Bash x4, get_task, Edit a.py; results: git status, 3 edits/writes, git log.
+        self.assertEqual(g["categories"]["owninput"]["count"], 8)
+        self.assertEqual(g["categories"]["otherresult"]["count"], 5)
         self.assertEqual({k: v["count"] for k, v in kinds["harness"].items()},
                          {"system-reminder": 1, "compact summary": 1})
         self.assertEqual(g["thinking"]["count"], 1)
@@ -412,6 +460,38 @@ class FixtureTests(unittest.TestCase):
             first = (Path(out) / names[0]).read_text(encoding="utf-8")
             self.assertTrue(first.startswith("<!-- "))
             self.assertIn(self.records[0]["text"][:40], first)
+
+    def test_written_text_is_kept_and_dumped(self):
+        session = m.scan_claude(self.home / ".claude" / "projects" / "C--proj" / "claude-1.jsonl", START, END, "owner",
+                                {"room": "room-aaaa", "task": 7, "cwd": str(self.task_dir / "repo")},
+                                [m._norm_dir(str(self.task_dir))])
+        edit = _find(session.records, kind="write TASK-HANDOVER")[0]
+        self.assertEqual(edit["text"], HANDOVER_EDIT)                # the new text, not the message field
+        self.assertEqual(edit["textBytes"], len(HANDOVER_EDIT.encode()))
+        self.assertLess(edit["textBytes"], edit["bytes"])            # bytes = the whole input
+        shell = _find(session.records, kind="write task folder")[0]
+        self.assertEqual(shell["text"], "Set-Content -Path ../notes.txt -Value 'n'")
+        report = _find(session.records, kind="ensemble_report", cat="owninternal")[0]
+        self.assertEqual(report["text"], REPORT_TEXT)
+        with tempfile.TemporaryDirectory() as out:
+            names = m.dump_texts([edit, shell], Path(out))
+            first = (Path(out) / names[0]).read_text(encoding="utf-8")
+            self.assertIn(f"bytes {edit['bytes']} text-bytes {edit['textBytes']}", first)
+            self.assertTrue(first.endswith(HANDOVER_EDIT))
+            self.assertTrue((Path(out) / names[1]).read_text(encoding="utf-8").endswith("-Value 'n'"))
+
+    def test_signals_count_tasks_per_project(self):
+        def report(project, task):
+            return {"cat": "hub", "kind": "report", "reportKind": "completed", "taskId": task,
+                    "project": project, "room": "room-" + project, "text": ""}
+        two_projects = m._signals([report("p1", "#7"), report("p2", "#7")])
+        self.assertEqual(two_projects["tasksReportingCompleted"], 2)
+        self.assertEqual(two_projects["tasksReportingCompletedMoreThanOnce"], 0)
+        twice = m._signals([report("p1", "#7"), report("p1", "#7")])
+        self.assertEqual(twice["tasksReportingCompleted"], 1)
+        self.assertEqual(twice["extraCompletedReports"], 1)
+        po = _find(self.per_kind, cat="hub", kind="report")
+        self.assertTrue(po and all(r["project"] == "proj-1" for r in po))   # the PO room's project from project.json
 
     def test_top_per_kind(self):
         two = self.per_kind                                             # measure(per_kind=2)

@@ -45,7 +45,9 @@ bytes x model calls that followed in the same conversation, stopping at a
 compaction; a ceiling, not a bill.  Approx tokens = ceil(bytes / 4).
 
 Read-only: transcripts, rooms and project files are opened for reading only.
-``--dump DIR`` writes the largest internal texts to DIR (outside the hub's
+A shell output that read an internal document together with something else
+(a source file, another document) is ``mixed: A+B``: its bytes stay under
+document reads but no single kind owns them.  ``--dump DIR`` writes the largest internal texts to DIR (outside the hub's
 data) so they can be rewritten by hand; ``--per-kind N`` adds the N largest
 texts of every kind (a report line, a digest, a spec, a review verdict ...),
 which the overall top list, made of handovers and task listings, leaves out.
@@ -56,6 +58,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import posixpath
 import re
 import sys
 import time
@@ -133,23 +136,84 @@ def _norm_dir(value: Any) -> str:
     return base._normal_path(value).replace("\\", "/").rstrip("/") if value else ""
 
 
-def doc_kind(text: str, task_dirs: Iterable[str] = ()) -> str:
-    """Which internal document ``text`` (a path or a command) names, or ''."""
-    if not text:
-        return ""
-    for name, rx in _DOC_KINDS:
-        if rx.search(text):
-            return name
-    # A command inside Codex's JavaScript carries doubled backslashes.
-    low = re.sub(r"/+", "/", text.replace("\\", "/")).lower()
+_SEGMENT = re.compile(r"\s*(?:&&|\|\||;|\r?\n)\s*")
+# A relative file name in a command or a path field: not absolute, not a URL,
+# not an option; resolved against the call's working directory.
+_RELATIVE = re.compile(r"(?<![\w/\\:.~-])((?:\.\.?[/\\])+[\w./\\-]+|[\w-][\w.-]*(?:[/\\][\w.-]+)*\.\w{1,5})(?![\w/\\-])")
+_ABSOLUTE = re.compile(r"^(?:[A-Za-z]:|[/\\~])")
+
+
+def _in_task_folder(low: str, task_dirs: Iterable[str]) -> bool:
+    """``low`` (lower case, forward slashes) holds a file under a task folder
+    that is not under its ``repo/``."""
     for folder in task_dirs:
         i = low.find(folder + "/")
         while i >= 0:
             rest = low[i + len(folder) + 1:]
             if rest and not rest.startswith("repo/") and not rest.startswith("repo\""):
-                return "task folder"
+                return True
             i = low.find(folder + "/", i + 1)
-    return ""
+    return False
+
+
+def doc_kinds(text: str, task_dirs: Iterable[str] = (), cwd: str = "") -> list[str]:
+    """Every internal document ``text`` (a path or a command) names, in order
+    of first mention, without repeats; ``[]`` when it names none.  A relative
+    file name is resolved against ``cwd`` (a task folder or its ``repo``)."""
+    if not text:
+        return []
+    found: list[tuple[int, str]] = []
+    for name, rx in _DOC_KINDS:
+        hit = rx.search(text)
+        if hit:
+            found.append((hit.start(), name))
+    # A command inside Codex's JavaScript carries doubled backslashes.
+    low = re.sub(r"/+", "/", text.replace("\\", "/")).lower()
+    if found:
+        pass                    # a named document inside the task folder is that document
+    elif _in_task_folder(low, task_dirs):
+        found.append((len(text), "task folder"))
+    elif cwd:
+        base_dir = _norm_dir(cwd)
+        for hit in _RELATIVE.finditer(text):
+            token = hit.group(1)
+            if _ABSOLUTE.match(token) or "://" in token:
+                continue
+            resolved = posixpath.normpath(base_dir + "/" + token.replace("\\", "/").lower())
+            if _in_task_folder(resolved, task_dirs):
+                found.append((hit.start(), "task folder"))
+                break
+    return list(dict.fromkeys(name for _, name in sorted(found)))
+
+
+def doc_kind(text: str, task_dirs: Iterable[str] = (), cwd: str = "") -> str:
+    """The first internal document ``text`` names, or ''."""
+    kinds = doc_kinds(text, task_dirs, cwd)
+    return kinds[0] if kinds else ""
+
+
+def read_kinds(commands: Iterable[str], task_dirs: Iterable[str], cwd: str = "") -> list[str]:
+    """What the reading segments of shell commands name: internal document
+    kinds, and ``other`` for a read of anything else.  One segment per
+    ``&&``, ``||``, ``;`` or line; a segment that writes is not a read."""
+    kinds: list[str] = []
+    for command in commands:
+        for segment in _SEGMENT.split(command or ""):
+            if not segment or not _READ_VERB.search(segment) or _WRITE_VERB.search(segment):
+                continue
+            kinds.extend(doc_kinds(segment, task_dirs, cwd) or ["other"])
+    return list(dict.fromkeys(kinds))
+
+
+def _doc_result(kinds: list[str]) -> tuple[str, str] | None:
+    """(category, kind) of a result that read ``kinds``: one document, or a
+    mixed output that no single kind's rewrite ratio applies to."""
+    docs = [k for k in kinds if k != "other"]
+    if not docs:
+        return None
+    if len(kinds) == 1:
+        return "docread", kinds[0]
+    return "docread", "mixed: " + "+".join(sorted(kinds, key=lambda k: (k == "other", k)))
 
 
 def short_tool(name: str) -> str:
@@ -187,40 +251,40 @@ def classify_user_text(text: str, first_done: bool, meta: bool = False) -> tuple
 
 
 def classify_result(tool: str, inp: Any, payload: Any, task_dirs: Iterable[str],
-                    commands: Iterable[str] = ()) -> tuple[str, str]:
-    """(category, kind) of a tool result."""
+                    commands: Iterable[str] = (), cwd: str = "") -> tuple[str, str]:
+    """(category, kind) of a tool result.  A shell output that read several
+    things at once is ``mixed: A+B`` (``other`` = not an internal document):
+    its bytes cannot be split between them."""
     if is_ensemble(tool):
         return "ensemble", short_tool(tool)
     if bytool._has_image(payload):
         return "otherresult", "image"
     inp = inp if isinstance(inp, dict) else {}
     if tool == "Read":
-        doc = doc_kind(str(inp.get("file_path") or ""), task_dirs)
+        doc = doc_kind(str(inp.get("file_path") or ""), task_dirs, cwd)
         if doc:
             return "docread", doc
     elif tool.lower() in bytool.SHELL_TOOLS or tool in bytool.CODEX_SHELL:
-        command = str(inp.get("command") or "") if inp else " ".join(commands)
-        if _READ_VERB.search(command) and not _WRITE_VERB.search(command):
-            doc = doc_kind(command, task_dirs)
-            if doc:
-                return "docread", doc
+        found = _doc_result(read_kinds([str(inp.get("command") or "")] if inp else commands, task_dirs, cwd))
+        if found:
+            return found
     return "otherresult", "text"
 
 
 def classify_input(tool: str, inp: Any, task_dirs: Iterable[str],
-                   commands: Iterable[str] = ()) -> tuple[str, str]:
+                   commands: Iterable[str] = (), cwd: str = "") -> tuple[str, str]:
     """(category, kind) of a tool call's input."""
     if is_ensemble(tool):
         name = short_tool(tool)
         return ("owninternal", name) if name in WRITING_TOOLS else ("owninput", "other")
     inp = inp if isinstance(inp, dict) else {}
     if tool in EDIT_TOOLS:
-        doc = doc_kind(str(inp.get("file_path") or inp.get("notebook_path") or ""), task_dirs)
+        doc = doc_kind(str(inp.get("file_path") or inp.get("notebook_path") or ""), task_dirs, cwd)
         return ("owninternal", "write " + doc) if doc else ("owninput", "edit")
     if tool.lower() in bytool.SHELL_TOOLS or tool in bytool.CODEX_SHELL:
         command = str(inp.get("command") or "") if inp else " ".join(commands)
         if _WRITE_VERB.search(command):
-            doc = doc_kind(command, task_dirs)
+            doc = doc_kind(command, task_dirs, cwd)
             if doc:
                 return "owninternal", "write " + doc
         return "owninput", "shell"
@@ -237,6 +301,22 @@ def _role_head(part: dict) -> str:
     return ((part or {}).get("role") or "").split(":", 1)[0].strip().lower()
 
 
+def _po_room_projects(home: Path) -> dict[str, str]:
+    """PO room id -> project id, from the project files base._project_po_rooms reads."""
+    result: dict[str, str] = {}
+    project_files = list(base._glob(home / "EnsembleProjects", "*/project.json"))
+    project_files.append(home / ".ensemble" / "projects.json")
+    for path in project_files:
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for project in value if isinstance(value, list) else [value]:
+            if isinstance(project, dict) and project.get("poRoomId"):
+                result.setdefault(str(project["poRoomId"]), str(project.get("id") or ""))
+    return result
+
+
 def conversation_scope(home: Path) -> dict:
     """Which conversations count, and as what.
 
@@ -248,7 +328,7 @@ def conversation_scope(home: Path) -> dict:
     normalised for doc_kind.  ``excluded``: sessions of rooms out of scope
     (adopted, ad-hoc), so a cwd match never admits them.
     """
-    po_rooms = base._project_po_rooms(home)
+    po_rooms = _po_room_projects(home)
     sessions: dict[str, dict] = {}
     kinds: dict[str, str] = {}
     cwds: dict[str, dict] = {}
@@ -273,7 +353,8 @@ def conversation_scope(home: Path) -> dict:
         counts["po" if is_po else "task"] += 1
         info = {"room": str(room.get("id") or ""), "task": room.get("no"),
                 "title": bytool._one_line(room.get("title"), 60),
-                "project": str(room.get("projectId") or ""), "po": is_po}
+                "project": str(room.get("projectId") or po_rooms.get(str(room.get("id") or "")) or ""),
+                "po": is_po, "cwd": base._normal_path(room.get("cwd"))}
         if room.get("taskDir"):
             task_dirs.add(_norm_dir(room.get("taskDir")))
         room_cwds = {base._normal_path(room.get(k)) for k in ("cwd", "taskDir")}
@@ -304,6 +385,7 @@ def _record(agent: str, role: str, room: dict, cat: str, kind: str, size: int,
             text: str | None = None, **extra) -> dict:
     rec = {
         "agent": agent, "role": role, "room": room.get("room", ""),
+        "project": room.get("project", ""),
         "task": room.get("task"), "title": room.get("title", ""),
         "cat": cat, "kind": kind, "bytes": size,
         "when": when.astimezone(timezone.utc).isoformat(),
@@ -315,6 +397,24 @@ def _record(agent: str, role: str, room: dict, cat: str, kind: str, size: int,
     if text is not None and cat in INTERNAL:
         rec["text"] = text
     return rec
+
+
+def written_text(tool: str, inp: dict) -> str:
+    """The text a tool call wrote for someone else: a message, a report, a
+    verdict, a spec; an Edit's new text; a Write's content; a shell write's
+    whole command."""
+    if tool in EDIT_TOOLS:
+        edits = inp.get("edits") if isinstance(inp.get("edits"), list) else []
+        parts = [str(inp.get("new_string") or ""), str(inp.get("content") or ""), str(inp.get("new_source") or "")]
+        parts += [str(e.get("new_string") or "") for e in edits if isinstance(e, dict)]
+        return "\n".join(s for s in parts if s)
+    if tool.lower() in bytool.SHELL_TOOLS:
+        return str(inp.get("command") or "")
+    text = str(inp.get("message") or inp.get("text") or inp.get("findings")
+               or inp.get("content") or inp.get("spec") or "")
+    if inp.get("summary") and inp.get("findings"):
+        text = f"{inp['summary']}\n\n{text}"
+    return text
 
 
 def _usage_total(usage: dict) -> int:
@@ -357,10 +457,13 @@ def scan_claude(path: Path, start: datetime, end: datetime, role: str, room: dic
     first_done = False
     sid = path.stem
     add = out.add
+    cwd = _norm_dir(room.get("cwd"))
 
     for row in base._json_lines(path):
         rtype = row.get("type")
         when = base._timestamp(row.get("timestamp"))
+        if row.get("cwd"):
+            cwd = _norm_dir(row.get("cwd"))
         if rtype == "attachment" and not row.get("isSidechain"):
             att = row.get("attachment") if isinstance(row.get("attachment"), dict) else {}
             prompt = att.get("prompt")
@@ -432,16 +535,15 @@ def scan_claude(path: Path, start: datetime, end: datetime, role: str, room: dic
                     calls[str(block.get("id") or "")] = block
                     name = str(block.get("name") or "(unknown)")
                     inp = block.get("input")
-                    cat, kind = classify_input(name, inp, task_dirs)
+                    cat, kind = classify_input(name, inp, task_dirs, cwd=cwd)
                     if in_window:
                         text = None
+                        extra = {}
                         if cat == "owninternal" and isinstance(inp, dict):
-                            text = str(inp.get("message") or inp.get("text") or inp.get("findings")
-                                       or inp.get("content") or inp.get("spec") or "")
-                            if inp.get("summary") and inp.get("findings"):
-                                text = f"{inp['summary']}\n\n{text}"
+                            text = written_text(name, inp)
+                            extra = {"textBytes": base._payload_bytes(text)}
                         add(conv, _record("claude", role, room, cat, kind, base._payload_bytes(inp),
-                                          when, end, sid, bytool._preview(name, inp), text, tool=name))
+                                          when, end, sid, bytool._preview(name, inp), text, tool=name, **extra))
             continue
         meta = bool(row.get("isMeta"))
         for block in content:
@@ -453,7 +555,7 @@ def scan_claude(path: Path, start: datetime, end: datetime, role: str, room: dic
                 name = str(call.get("name") or "(unknown)")
                 inp = call.get("input")
                 payload = block.get("content")
-                cat, kind = classify_result(name, inp, payload, task_dirs)
+                cat, kind = classify_result(name, inp, payload, task_dirs, cwd=cwd)
                 if in_window:
                     text = bytool._text(payload) if cat in INTERNAL else None
                     add(conv, _record("claude", role, room, cat, kind, base._payload_bytes(payload),
@@ -493,6 +595,7 @@ def scan_codex(path: Path, start: datetime, end: datetime, role: str, room: dict
     turns = 0
     sid = path.stem
     first_usage_seen = False
+    cwd = _norm_dir(room.get("cwd"))
 
     def add(rec: dict) -> None:
         out.add(conv, rec)
@@ -504,6 +607,8 @@ def scan_codex(path: Path, start: datetime, end: datetime, role: str, room: dict
         in_window = bytool._in_window(when, start, end)
         if rtype == "session_meta":
             sid = str(payload.get("id") or sid)
+            if payload.get("cwd"):
+                cwd = _norm_dir(payload.get("cwd"))
             text = str((payload.get("base_instructions") or {}).get("text") or "")
             if in_window and text:
                 add(_record("codex", role, room, "fixed", "base instructions",
@@ -569,10 +674,12 @@ def scan_codex(path: Path, start: datetime, end: datetime, role: str, room: dict
                 writing = [short_tool(n) for n in names if short_tool(n) in WRITING_TOOLS]
                 cat, kind = ("owninternal", "batch: " + "+".join(writing)) if writing else ("owninput", "other")
             else:
-                cat, kind = classify_input(tool, None, task_dirs, commands)
+                cat, kind = classify_input(tool, None, task_dirs, commands, cwd)
             if in_window:
+                text = str(raw) if cat == "owninternal" else None
+                extra = {"textBytes": base._payload_bytes(text)} if text is not None else {}
                 add(_record("codex", role, room, cat, kind, base._payload_bytes(raw), when, end, sid,
-                            preview, str(raw) if cat == "owninternal" else None, tool=tool))
+                            preview, text, tool=tool, **extra))
         elif item in bytool.CODEX_INPUT_ITEMS:
             call = calls.get(str(payload.get("call_id") or ""), {})
             tool, preview, commands = bytool.codex_tool(call)
@@ -581,7 +688,7 @@ def scan_codex(path: Path, start: datetime, end: datetime, role: str, room: dict
             if names and all(is_ensemble(n) for n in names):
                 cat, kind = "ensemble", "batch: " + "+".join(short_tool(n) for n in names)
             else:
-                cat, kind = classify_result(tool, None, output, task_dirs, commands)
+                cat, kind = classify_result(tool, None, output, task_dirs, commands, cwd)
                 if cat == "otherresult" and tool == bytool.CODEX_MIXED:
                     kind = "mixed batch"
             if in_window:
@@ -675,13 +782,14 @@ def _signals(records: list[dict]) -> dict:
     points.  It counts events; whether a follow-up was a misread or a
     legitimate next step is not in the transcript."""
     reports: dict[str, int] = defaultdict(int)
-    completed_by_task: dict[str, int] = defaultdict(int)
+    completed_by_task: dict[tuple[str, str], int] = defaultdict(int)
     for rec in records:
         if rec["cat"] == "hub" and rec["kind"] == "report":
             rk = rec.get("reportKind") or "(unparsed)"
             reports[rk] += 1
             if rk == "completed" and rec.get("taskId"):
-                completed_by_task[rec["taskId"]] += 1
+                # Task numbers are per project: #7 in two projects is two tasks.
+                completed_by_task[(rec.get("project") or rec["room"], str(rec["taskId"]))] += 1
     from_po = [r for r in records if r["cat"] == "hub" and r["kind"] == FROM_PO_KIND]
     re_points = sum(1 for r in records if r["cat"] in {"ownreply", "owninternal"}
                     and _RE_POINT.search(r.get("text") or ""))
@@ -774,8 +882,8 @@ def top_per_kind(records: list[dict], n: int) -> list[dict]:
 
 
 def _top_row(rec: dict) -> dict:
-    return {k: rec.get(k) for k in ("agent", "role", "cat", "kind", "tool", "bytes", "remainingTurns",
-                                    "rereadBytes", "task", "room", "title", "preview", "when", "reportKind")}
+    return {k: rec.get(k) for k in ("agent", "role", "cat", "kind", "tool", "bytes", "textBytes", "remainingTurns",
+                                    "rereadBytes", "task", "room", "project", "title", "preview", "when", "reportKind")}
 
 
 def dump_texts(rows: list[dict], folder: Path, prefix: str = "") -> list[str]:
@@ -785,8 +893,10 @@ def dump_texts(rows: list[dict], folder: Path, prefix: str = "") -> list[str]:
         task = f"t{rec['task']}" if rec.get("task") is not None else (rec.get("room") or "room")
         kind = re.sub(r"[^\w.-]+", "_", f"{rec['cat']}-{rec['kind']}")[:40]
         name = f"{prefix}{i:02d}-{rec['agent']}-{rec['role']}-{kind}-{task}.md"
+        text_note = (f" text-bytes {rec['textBytes']}" if rec.get("textBytes") is not None
+                     and rec["textBytes"] != rec["bytes"] else "")
         head = (f"<!-- {rec['cat']}/{rec['kind']} {rec['agent']} {rec['role']} task {rec.get('task')} "
-                f"room {rec.get('room')} bytes {rec['bytes']} turns-after {rec['remainingTurns']} "
+                f"room {rec.get('room')} bytes {rec['bytes']}{text_note} turns-after {rec['remainingTurns']} "
                 f"re-read {rec['rereadBytes']} at {rec['when']} -->\n")
         (folder / name).write_text(head + (rec.get("text") or ""), encoding="utf-8")
         names.append(name)
