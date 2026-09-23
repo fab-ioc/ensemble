@@ -36,10 +36,14 @@ class TerminalReplyFilter(unittest.TestCase):
             "\x1b[0n\x1b[24;80R\x1b[?24;80R" # status / cursor reports
             "\x1b[?1;1$y\x1b[4;2$y"          # private and ANSI mode reports
             "\x1b[8;24;80t"                  # character dimensions
-            "\x1b]Licon\x1b\\\x1b]lwindow\x1b\\"
             "\x1bP1$r0m\x1b\\"               # status-string report
         )
         self.assertEqual(dashboard._strip_pty_terminal_replies(replies), "")
+
+    def test_xterm_530_title_query_reply_shapes_are_not_emitted_by_page(self):
+        # xterm 5.3.0's windowOptions handler has no CSI 20/21 response cases.
+        title_reports = "\x1b]Licon\x1b\\\x1b]lwindow\x1b\\"
+        self.assertEqual(dashboard._strip_pty_terminal_replies(title_reports), title_reports)
 
     def test_non_response_input_and_incomplete_escape_are_immediate(self):
         paste = "\x1b[200~literal " + DA + FG + " text\x1b[201~"
@@ -74,7 +78,8 @@ class TerminalReplyFilter(unittest.TestCase):
             [DA + FG + BG + "question", "question"],
             ["\x1b[>0;276;0c\x1b]12;rgb:aaaa/bbbb/cccc\x07after", "after"],
             ["\x1b[0n\x1b[24;80R\x1b[?24;80R\x1b[?1;1$y\x1b[4;2$y\x1b[8;24;80t", ""],
-            ["\x1b]Licon\x1b\\\x1b]lwindow\x1b\\\x1bP1$r0m\x1b\\", ""],
+            ["\x1b]Licon\x1b\\\x1b]lwindow\x1b\\", "\x1b]Licon\x1b\\\x1b]lwindow\x1b\\"],
+            ["\x1bP1$r0m\x1b\\", ""],
             ["\x1b[A\x1b[200~" + DA + FG + "\x1b[201~", "\x1b[A\x1b[200~" + DA + FG + "\x1b[201~"],
             ["\x1b[I\x1b[O\x1bOP", "\x1b[I\x1b[O\x1bOP"],
             ["\x1b[1;5R", ""],

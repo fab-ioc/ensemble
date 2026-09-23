@@ -1661,12 +1661,16 @@ def _type_input(sess, text: str) -> bool:
 # keystrokes. The page posts each complete onData event as one request; xterm
 # emits a parser reply as one event. Keep this guard at the browser-input
 # endpoint so stale pages and other clients cannot pass a reply through.
+# Pixel/character window-size reply shapes remain guarded for configurations
+# that enable them; session.html does not set xterm's windowOptions (disabled
+# by default). xterm 5.3.0 documents title-query replies but its windowOptions
+# handler has no CSI 20/21 response cases, so those OSC L/l strings are not
+# emitted by this page and are intentionally not filtered.
 _PTY_DA_REPLY = re.compile(r"\x1b\[\?[0-9;]+c")
 _PTY_TERMINAL_REPLY = re.compile(
     r"\x1b\[(?:>[0-9;]*c|0n|[0-9]+;[0-9]+R|\?[0-9]+;[0-9]+R|"
     r"\??[0-9]+;[0-4]\$y|(?:4|6|8);[0-9]+;[0-9]+t)"
     r"|\x1b\](?:4;[0-9]{1,3};|(?:10|11|12);)rgb:[0-9a-f]{1,4}/[0-9a-f]{1,4}/[0-9a-f]{1,4}(?:\x1b\\|\x07)"
-    r"|\x1b\](?:L|l)[^\x07\x1b]*(?:\x1b\\|\x07)"
     r"|\x1bP(?:0\$r|1\$r(?:[0-9;]+m|[0-9;]+r|[0-9 ]+q|[01]\"q|61;1\"p))\x1b\\",
     re.IGNORECASE,
 )
