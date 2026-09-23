@@ -613,7 +613,7 @@ def top_level_function(src: str, name: str) -> str:
     return src[m.start():src.index("\n}\n", m.start()) + 3]
 
 
-HUB_ACTION_FUNCTIONS = ("actionsCell", "detailOverflow", "ideAction", "openWorkspaceTab", "terminalAction",
+HUB_ACTION_FUNCTIONS = ("actionState", "actionEnv", "actionsCell", "ideAction", "openWorkspaceTab", "terminalAction",
                         "openHeadless", "termsAction", "toggleCapturedTerms", "capturedTermsShown", "waitFor",
                         "showCapturedTerminal", "makePoTaskOk", "isPoRoom", "poRoomIds", "currentPoRooms")
 
@@ -706,8 +706,8 @@ const take = () => log.splice(0);
   ALL_ROWS = [liveLegacy, history, liveRoom, endedRoom];
   out.live = actionsCell(liveLegacy, true);
   out.history = actionsCell(history, false);
-  out.menu = detailOverflow(liveRoom, true, true);
-  out.endedMenu = detailOverflow(endedRoom, false, true);
+  out.menu = actionsCell(liveRoom, true);
+  out.endedMenu = actionsCell(endedRoom, false);
   out.forkAnywhere = /fork/i.test(out.live + out.history + out.menu);
 
   // IDE
@@ -790,11 +790,16 @@ class HubMachineActions(unittest.TestCase):
                 re.search(r"^const finderLabel = .*$", src, re.M).group(0),
                 re.search(r"^const ADOPTING = .*$", src, re.M).group(0),
                 re.search(r"^const ADOPTED = .*$", src, re.M).group(0)]
-        prog = HUB_ACTIONS_JS % "\n".join(defs + [top_level_function(src, n) for n in HUB_ACTION_FUNCTIONS])
+        shared = (ROOT / "static" / "actions.js").read_text(encoding="utf-8")
+        prog = HUB_ACTIONS_JS % "\n".join([shared] + defs + [top_level_function(src, n) for n in HUB_ACTION_FUNCTIONS])
 
         def run(location):
-            out = subprocess.run([NODE, "-e", prog, location], capture_output=True, text=True,
-                                 encoding="utf-8", timeout=60)
+            # From a file: with the shared script the program is past a command line's length.
+            with tempfile.TemporaryDirectory() as tmp:
+                script = Path(tmp) / "actions.cjs"
+                script.write_text(prog.replace("new URL(process.argv[1])", "new URL(process.argv[2])", 1), encoding="utf-8")
+                out = subprocess.run([NODE, str(script), location], capture_output=True, text=True,
+                                     encoding="utf-8", timeout=60)
             self.assertEqual(out.returncode, 0, out.stderr)
             return json.loads(out.stdout)
 
@@ -804,12 +809,12 @@ class HubMachineActions(unittest.TestCase):
             self.assertNotIn("dp-terms", r["endedMenu"], "a task that is not running has no terminal")
 
         # On the hub machine nothing changes.
-        self.assertIn('class="focus-btn"', hub["live"])
+        self.assertIn(' focus-btn" data-act="focus"', hub["live"])
         self.assertIn("preferred editor", hub["live"])
         self.assertIn("Open in a real Windows Terminal terminal window", hub["history"])
-        self.assertIn('dp-terms-btn">Show terminals<', hub["menu"])
+        self.assertRegex(hub["menu"], r'dp-terms-btn" data-act="terminals"[^>]*><span class="am-lbl">Show terminals<')
         self.assertNotIn("dp-terms-hide", hub["menu"])
-        self.assertIn(">Open in editor<", hub["menu"])
+        self.assertIn('am-lbl">Open in editor<', hub["menu"])
         self.assertEqual(hub["ideRoom"][0], ["api:/api/repos/room-0000aaa1", "editor:/code/x"])
         self.assertIn("api:/api/open", hub["terminalHistory"])
         self.assertNotIn("api:/api/session/adopt", hub["terminalHistory"])
@@ -817,13 +822,12 @@ class HubMachineActions(unittest.TestCase):
 
         # From another computer.
         self.assertNotIn("focus-btn", mac["live"])
-        self.assertIn('class="ij-btn"', mac["live"])
+        self.assertIn(' ij-btn" data-act="ide"', mac["live"])
         self.assertIn("Workspace tab", mac["live"])
         self.assertIn("headless, and show its terminal", mac["history"])
-        self.assertIn('dp-terms-btn" title=', mac["menu"])
-        self.assertIn(">Terminal<", mac["menu"])
-        self.assertIn('dp-terms-hide" hidden>Hide terminal<', mac["menu"])
-        self.assertIn(">Show in Workspace<", mac["menu"])
+        self.assertRegex(mac["menu"], r'dp-terms-btn" data-act="terminals" title="[^"]+"><span class="am-lbl">Terminal<')
+        self.assertRegex(mac["menu"], r'dp-terms-hide" data-act="terms-hide" title="[^"]+" hidden><span class="am-lbl">Hide terminal<')
+        self.assertIn('am-lbl">Show in Workspace<', mac["menu"])
         # IDE: the Workspace tab, no editor; a session with no Workspace folder
         # browses its own folder instead.
         log, tab, tab_sid = mac["ideRoom"]

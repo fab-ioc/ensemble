@@ -1143,8 +1143,11 @@ console.log(JSON.stringify(out));
         self.assertIn("makePoBroughtMore(resp.files) ? 0 : (note ? 8000 : 3000)", INDEX)
 
     def test_where_the_page_offers_it(self):
-        self.assertRegex(INDEX, r'\(!isLive && r\.cwd && !r\.roomId && !r\.orphan\)\s*\? `<button class="makepo-btn" data-sid=')
-        self.assertIn('class="ov-item makepo-btn" data-room=', INDEX)
+        # Offered in the shared action menu (static/actions.js): a task by its room, a session by its id.
+        actions = (ROOT / "static" / "actions.js").read_text(encoding="utf-8")
+        self.assertIn("id: 'makepo', label: 'Make PO of a new project…', cls: 'makepo-btn',", actions)
+        self.assertIn("data: s.kind === 'room' ? { room: s.roomId } : { sid: s.sessionId },", actions)
+        self.assertIn("SessionActions.actionBarHtml(SessionActions.sessionActions(actionState(r, isLive), actionEnv()))", INDEX)
         self.assertIn("ev.target.closest('.makepo-btn')", INDEX)
         self.assertIn("dialog .im-field[hidden] { display: none; }", INDEX, "display:flex would defeat hidden")
 

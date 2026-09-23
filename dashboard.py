@@ -401,7 +401,7 @@ STATIC_DIR = Path(__file__).parent
 # page gets written into its <meta name="ensemble-pages"> at serve time, so an
 # open tab can tell when the page it runs is no longer the one on disk.
 PAGE_FILES = ("index.html", "session.html", "fileview.html",
-              "static/hl.js", "static/comments.js", "static/attach.js")
+              "static/hl.js", "static/comments.js", "static/attach.js", "static/actions.js")
 PAGE_META = b'<meta name="ensemble-pages" content="">'
 _STAMP_CACHE: dict[str, tuple[tuple[int, int], str]] = {}
 
@@ -6047,6 +6047,7 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                            if m.get("from") != "user" and (m.get("text") or "").strip()]
             last_agent_txt = ((_agent_msgs[-1] if _agent_msgs else {}).get("text") or "")[:400]
             room_cost = compute_room_cost(rm)
+            pend = pending_input(rid)
             room_rows.append({
                 "sessionId": rid, "roomId": rid, "headless": True,
                 # Its number in its project (#18), when it has one.
@@ -6076,6 +6077,11 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 # launched; Open/Start launches it fresh with its spec.
                 "draft": not rm.get("launched", True),
                 "isLive": live, "status": "busy" if (live and busy) else "idle",
+                # `status` above is the activity dot; the action bar needs the
+                # room's own lifecycle (active / paused / waiting_human) and
+                # whether a resume is under way, as the pop-out reads them.
+                "roomStatus": rm.get("status", ""),
+                "resuming": bool(pend) and pend.get("state") != "failed",
                 "updatedAt": rm.get("updatedAt", rm.get("createdAt", 0)),
                 "startedAt": rm.get("createdAt", 0),
                 "turns": len(rm.get("messages", [])),
