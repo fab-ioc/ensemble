@@ -472,6 +472,10 @@ class ThePhoneRules(unittest.TestCase):
             self.assertIn(":not([hidden])", sel)
 
 
+def _in(path, folder):
+    return path == folder or path.startswith(folder.rstrip(os.sep) + os.sep)
+
+
 class ACodeFolderInTheProjectsFolder(TheHub):
     """A code folder that is in the projects root with files in it is used in
     place: nothing is written into it, the project's own files go beside it."""
@@ -525,6 +529,44 @@ class ACodeFolderInTheProjectsFolder(TheHub):
         self.assertEqual(status, 400, out)
         self.assertEqual(self.listing(), self.before)
         self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["engine"], "the home it would have had is gone")
+
+    def failing(self, what):
+        """Path.mkdir / Path.write_text failing for the home beside the code folder only."""
+        real = getattr(Path, what)
+        code = os.path.normcase(str(self.code))
+
+        def fake(path, *a, **k):
+            target = path if what == "mkdir" else path.parent
+            t = os.path.normcase(str(target))
+            if _in(t, os.path.normcase(str(self.root))) and t != code and not _in(t, code):
+                raise OSError("disk full")
+            return real(path, *a, **k)
+        return mock.patch.object(Path, what, fake)
+
+    def test_a_home_that_cannot_be_made_is_no_registration(self):
+        for what in ("mkdir", "write_text"):
+            with self.subTest(what=what):
+                with self.failing(what):
+                    status, out = self.call_url("/api/projects/new",
+                                                {"path": str(self.code), "name": "Engine", "kind": "code"})
+                self.assertEqual(status, 400, out)
+                self.assertIn("cannot create the project's folder", out["error"])
+                self.assertIn("disk full", out["error"])
+                self.assertEqual(dashboard.load_projects(), [])
+                self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["engine"], "no half-made home")
+                self.assertEqual(self.listing(), self.before)
+
+    def test_a_home_that_cannot_be_made_is_no_po(self):
+        for what in ("mkdir", "write_text"):
+            with self.subTest(what=what):
+                with self.failing(what):
+                    status, out = self.call({**self.session(), "name": "Engine", "kind": "code",
+                                             "path": str(self.code)})
+                self.assertEqual(status, 400, out)
+                self.assertIn("could not be created", out["message"])
+                self.nothing_left()
+                self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["engine"], "no half-made home")
+                self.assertEqual(self.listing(), self.before)
 
     def test_an_empty_code_folder_is_kept_apart_too(self):
         for p in sorted(self.code.rglob("*"), reverse=True):

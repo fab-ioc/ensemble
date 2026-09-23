@@ -2605,7 +2605,15 @@ def register_project(path: str, name: str = "", kind: str = "code",
         proj["home"] = _free_home(proj)
     save_projects(projects)
     if kept_apart and make_home:
-        project_home(proj)                  # the home, with its project.json
+        home_existed = os.path.isdir(proj["home"])
+        try:
+            _make_home(proj)                # the home, with its project.json
+        except OSError as e:
+            # Registered without a home, it could not be found again from
+            # the projects root: registered not at all.
+            unregister_project(proj["id"])
+            _drop_home(proj, home_existed)
+            return False, {}, f"cannot create the project's folder {proj['home']}: {e}"
     if _in_projects_root(norm) and not kept_apart:
         # Layout v2: the project's identity lives WITH its data, so a clone of
         # the projects root on a new machine is self-describing.
@@ -3155,7 +3163,6 @@ def _new_po_project(name: str, kind: str, path: str) -> tuple[dict, callable]:
                           f"Open that project and choose its PO there.", 409)
     home_before = project_home(proj, create=False)
     home_existed = os.path.isdir(home_before)
-    project_home(proj)      # a home kept apart is made now, and undone below
 
     def undo() -> None:
         unregister_project(proj["id"])
@@ -3186,6 +3193,12 @@ def _new_po_project(name: str, kind: str, path: str) -> tuple[dict, callable]:
                 except OSError:
                     shutil.rmtree(folder, ignore_errors=True)
 
+    if _home_apart(proj):
+        try:
+            _make_home(proj)    # a home kept apart is made now, and undone with the rest
+        except OSError as e:
+            undo()
+            raise MakePoError(f"The project's folder {home_before} could not be created: {e}.")
     if kind == "documents":
         kok, kmsg = set_project_kind(proj["id"], "documents")
         if not kok:
@@ -5011,17 +5024,38 @@ def project_home(project: dict, create: bool = True) -> str:
     if not home:
         home = _free_home(project)
     if create:
-        try:
-            Path(home).mkdir(parents=True, exist_ok=True)
-            pj = Path(home) / "project.json"
-            if not pj.exists():
-                pj.write_text(json.dumps({"id": project.get("id", ""), "name": project.get("name", ""),
-                                          "code": os.path.normpath(ppath) if ppath else "",
-                                          "createdAt": project.get("createdAt") or int(time.time())},
-                                         indent=2), encoding="utf-8")
-        except OSError:
-            pass
+        with contextlib.suppress(OSError):
+            _make_home(project, home)
     return os.path.normpath(home)
+
+
+def _make_home(project: dict, home: str = "") -> None:
+    """Make a project's home apart from its code, with its project.json (the
+    code path in it, so a scan of the projects root finds it). Raises OSError."""
+    home = home or project.get("home") or _free_home(project)
+    ppath = project.get("path", "")
+    Path(home).mkdir(parents=True, exist_ok=True)
+    pj = Path(home) / "project.json"
+    if not pj.exists():
+        pj.write_text(json.dumps({"id": project.get("id", ""), "name": project.get("name", ""),
+                                  "code": os.path.normpath(ppath) if ppath else "",
+                                  "createdAt": project.get("createdAt") or int(time.time())},
+                                 indent=2), encoding="utf-8")
+
+
+def _drop_home(project: dict, existed: bool) -> None:
+    """Undo _make_home: its project.json if it is this project's, and the
+    folder if this made it and nothing else is in it."""
+    home = Path(project.get("home") or "")
+    if not project.get("home"):
+        return
+    with contextlib.suppress(OSError, json.JSONDecodeError):
+        pj = home / "project.json"
+        if pj.is_file() and json.loads(pj.read_text(encoding="utf-8")).get("id") == project.get("id"):
+            pj.unlink()
+    if not existed:
+        with contextlib.suppress(OSError):
+            home.rmdir()
 
 
 # ---- Roadmap: ROADMAP.md in the project's home ------------------------------
