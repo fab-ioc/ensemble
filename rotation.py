@@ -1404,12 +1404,31 @@ def _fall_back(key: tuple, flags: dict, w: dict) -> dict | None:
     _log(f"{rid}/{ident}: its {new_kind} terminal ended as it started — starting it "
          f"as {old_kind}")
     _discard_fresh(w["info"], new_kind, w["started"], w["agentsIn"])
+    with launch_lock(rid):
+        return _fall_back_locked(key, flags, w, rec, old, old_kind, new_kind, failed)
+
+
+def _fall_back_locked(key, flags, w, rec, old, old_kind, new_kind, failed):
+    """``_fall_back`` under the room's launch lock: refused when a live
+    terminal of the seat is recorded nowhere, and a fresh terminal that is
+    never recorded is ended."""
+    rid, ident = key
     room = _d.chatroom.get_room(rid, public=False)
     if room is None:
         return None
+    stray = _d.seat_ptys(rid, ident)
+    if stray:
+        _log(f"{rid}/{ident}: not started as {old_kind}: a running terminal that its "
+             f"record does not name ({', '.join(stray)})")
+        return None
     started = time.time()
-    info = _d.hub_launcher()._launch_room_agent_pty(
-        room, old, w["text_for"](old_kind), collab=not w["solo"], cwd=w["cwd"])
+    try:
+        info = _d.hub_launcher()._launch_room_agent_pty(
+            room, old, w["text_for"](old_kind), collab=not w["solo"], cwd=w["cwd"])
+    except BaseException:
+        for pid in _d.seat_ptys(rid, ident):
+            _d.ptyrun.kill(pid)
+        raise
     rec = {**rec, "toSessionId": info["sessionId"], "agent": old_kind,
            "model": old.get("model", ""),
            "allocation": _allocation_rec(w["choice"], failed)}
@@ -1427,7 +1446,10 @@ def _fall_back(key: tuple, flags: dict, w: dict) -> dict | None:
         if rots and isinstance(rots[-1], dict) and rots[-1].get("n") == rec["n"]:
             rots[-1] = rec
         fields["rotations"] = rots
-        patched = _d.chatroom.patch_participant(rid, ident, fields, drop=drop)
+        try:
+            patched = _d.chatroom.patch_participant(rid, ident, fields, drop=drop)
+        except Exception:
+            patched = None
     if patched is None:
         _discard_fresh(info, old_kind, started, w["agentsIn"])
         return None
@@ -1833,78 +1855,106 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
     updated = _mtime(hp) > float(st.get("handoverAtAsk") or 0) if asked else False
     owner = s["kind"] == "owner"
 
-    if old_pty:
-        _d.ptyrun.kill(old_pty)
-        _await_death(old_pty)
-    room_full = _d.chatroom.get_room(rid, public=False)
-    fpart = _d.chatroom.participant(room_full or {}, ident)
-    if fpart is None or flags["stopped"]:
-        st["phase"] = "watching"
-        return done(f"{s['whose']} task changed or was stopped while rotating — "
-                    f"nothing started")
-    agents_in = _d.chatroom.agent_participants(room_full)
-    solo = room_full.get("mode") == "solo" or len(agents_in) < 2
-    launcher = _d.hub_launcher()
-    cwd = fpart.get("cwd") or None
-    # A past session made a PO was resumed where it had been started; its
-    # fresh session starts where a PO works (``nextCwd``: the code folder, or
-    # a documents project's folder).
-    moved = (fpart.get("nextCwd") or "") if not owner else ""
-    if moved and os.path.isdir(moved):
-        cwd = moved
-    else:
-        moved = ""
-    started = time.time()
-    used, old_kind = fpart, fpart.get("agent", "")
-    if not owner:
-        prompt = first_prompt(s["project"], room_full, old_sid, tokens)
-        if solo:
-            info = launcher._launch_room_agent_pty(room_full, fpart, "", collab=False,
-                                                   prompt=prompt, cwd=cwd)
+    # Under the room's launch lock from the last look at the seat to the
+    # write, as every start: a live terminal of this seat that no one records
+    # stops the rotation (it would be left beside the fresh one), and a fresh
+    # terminal that is never recorded is ended.
+    lock = launch_lock(rid)
+    lock.acquire()
+    info = patched = None
+    used, started, agents_in = part, time.time(), []
+    before = set(_d.seat_ptys(rid, ident))
+    try:
+        stray = sorted(before - {old_pty})
+        if stray:
+            st.update(phase="watching", lastAttempt=time.time())
+            return done(f"{s['who']} has a running terminal that its record does not "
+                        f"name ({', '.join(stray)}) — not rotated; stop the task to end it")
+        if old_pty:
+            _d.ptyrun.kill(old_pty)
+            _await_death(old_pty)
+        room_full = _d.chatroom.get_room(rid, public=False)
+        fpart = _d.chatroom.participant(room_full or {}, ident)
+        if fpart is None or flags["stopped"]:
+            st["phase"] = "watching"
+            return done(f"{s['whose']} task changed or was stopped while rotating — "
+                        f"nothing started")
+        agents_in = _d.chatroom.agent_participants(room_full)
+        solo = room_full.get("mode") == "solo" or len(agents_in) < 2
+        launcher = _d.hub_launcher()
+        cwd = fpart.get("cwd") or None
+        # A past session made a PO was resumed where it had been started; its
+        # fresh session starts where a PO works (``nextCwd``: the code folder, or
+        # a documents project's folder).
+        moved = (fpart.get("nextCwd") or "") if not owner else ""
+        if moved and os.path.isdir(moved):
+            cwd = moved
         else:
-            info = launcher._launch_room_agent_pty(room_full, fpart, prompt, collab=True,
-                                                   cwd=cwd)
-    else:
-        # The rotation text goes where the spec would: a team owner gets its
-        # collaboration briefing around it, a solo one how to report. Its kind
-        # is chosen from the allowance; a kind that fails to start falls back.
-        choice = choose_owner_kind(room_full, fpart)
+            moved = ""
+        started = time.time()
+        used, old_kind = fpart, fpart.get("agent", "")
+        if not owner:
+            prompt = first_prompt(s["project"], room_full, old_sid, tokens)
+            if solo:
+                info = launcher._launch_room_agent_pty(room_full, fpart, "", collab=False,
+                                                       prompt=prompt, cwd=cwd)
+            else:
+                info = launcher._launch_room_agent_pty(room_full, fpart, prompt, collab=True,
+                                                       cwd=cwd)
+        else:
+            # The rotation text goes where the spec would: a team owner gets its
+            # collaboration briefing around it, a solo one how to report. Its kind
+            # is chosen from the allowance; a kind that fails to start falls back.
+            choice = choose_owner_kind(room_full, fpart)
 
-        def text_for(kind: str) -> str:
-            return task_first_prompt(room_full, old_sid, tokens, hp, solo,
-                                     kinds=(old_kind, kind) if kind != old_kind else None)
+            def text_for(kind: str) -> str:
+                return task_first_prompt(room_full, old_sid, tokens, hp, solo,
+                                         kinds=(old_kind, kind) if kind != old_kind else None)
 
-        info, used, failed = _launch_owner(launcher, room_full, fpart, text_for, solo,
-                                           cwd, choice)
-        allocation = _allocation_rec(choice, failed)
-    now = time.time()
-    n = len(fpart.get("rotations") or []) + 1
-    rec = {"n": n, "at": now, "fromSessionId": old_sid, "toSessionId": info["sessionId"],
-           "tokens": tokens, "threshold": limit, "handover": str(hp),
-           "handoverUpdated": updated, "asked": asked, "answered": answered}
-    fields = {"sessionId": info["sessionId"], "ptyId": info["ptyId"],
-              "cwd": info["cwd"], "pid": None}
-    drop = ("lastExit", "fresh", "nextCwd")
-    if owner:
-        rec.update(agent=used.get("agent", ""), model=used.get("model", ""),
-                   fromAgent=old_kind, fromModel=fpart.get("model", ""),
-                   allocation=allocation, startedAt=started)
-        # The fresh session's ask dates from its launch: anything it says
-        # after that is an answer to it.
-        fields["rotatedAt"] = started
-        drop += ("resumedAt",)
-        if used.get("agent") != old_kind:
-            # Same identity and token (messages and reports still reach it);
-            # the new kind and model, and the kind of each earlier session.
-            fields.update(agent=used["agent"], model=used.get("model", ""),
-                          sessionKinds=session_kinds(fpart))
-    # On the room at once, so a doorbell is held for the fresh terminal and a
-    # Stop ends it. The mark is cleared only once the stopped or clean-up path
-    # and a Codex session's id are settled: a Delete waiting on it then sees
-    # the fresh session and deletes it too.
-    with GATE:
-        patched = _d.chatroom.patch_participant(rid, ident, fields,
-                                                append={"rotations": rec}, drop=drop)
+            info, used, failed = _launch_owner(launcher, room_full, fpart, text_for, solo,
+                                               cwd, choice)
+            allocation = _allocation_rec(choice, failed)
+        now = time.time()
+        n = len(fpart.get("rotations") or []) + 1
+        rec = {"n": n, "at": now, "fromSessionId": old_sid, "toSessionId": info["sessionId"],
+               "tokens": tokens, "threshold": limit, "handover": str(hp),
+               "handoverUpdated": updated, "asked": asked, "answered": answered}
+        fields = {"sessionId": info["sessionId"], "ptyId": info["ptyId"],
+                  "cwd": info["cwd"], "pid": None}
+        drop = ("lastExit", "fresh", "nextCwd")
+        if owner:
+            rec.update(agent=used.get("agent", ""), model=used.get("model", ""),
+                       fromAgent=old_kind, fromModel=fpart.get("model", ""),
+                       allocation=allocation, startedAt=started)
+            # The fresh session's ask dates from its launch: anything it says
+            # after that is an answer to it.
+            fields["rotatedAt"] = started
+            drop += ("resumedAt",)
+            if used.get("agent") != old_kind:
+                # Same identity and token (messages and reports still reach it);
+                # the new kind and model, and the kind of each earlier session.
+                fields.update(agent=used["agent"], model=used.get("model", ""),
+                              sessionKinds=session_kinds(fpart))
+        # On the room at once, so a doorbell is held for the fresh terminal and a
+        # Stop ends it. The mark is cleared only once the stopped or clean-up path
+        # and a Codex session's id are settled: a Delete waiting on it then sees
+        # the fresh session and deletes it too.
+        with GATE:
+            patched = _d.chatroom.patch_participant(rid, ident, fields,
+                                                    append={"rotations": rec}, drop=drop)
+    except BaseException:
+        if patched is None:
+            for pid in _d.seat_ptys(rid, ident):
+                if pid not in before:
+                    try:
+                        _d.ptyrun.kill(pid)
+                    except Exception:
+                        pass
+            if info is not None:
+                _discard_fresh(info, used.get("agent", ""), started, agents_in)
+        raise
+    finally:
+        lock.release()
     if patched is not None and moved:
         # Only once the participant has its fresh session: the room follows it.
         _d.chatroom.patch_room(rid, cwd=moved)

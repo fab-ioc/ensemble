@@ -422,6 +422,84 @@ class LaunchGuardTests(_Switch):
         self.assertEqual(hit[2]["ptyIds"], ["stray"])
 
 
+class TokenRotationGuardTests(unittest.TestCase):
+    """rotation._rotate_marked (a PO's or owner's token rotation) under the
+    same one-terminal discipline as a start."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name)
+        self.ptys, self.killed, self.launches = [], [], []
+
+        def launch(room, part, task, collab=True, prompt=None, cwd=None):
+            pid = f"pty-new{len(self.launches) + 1}"
+            self.launches.append(pid)
+            self.ptys.append({"id": pid, "alive": True,
+                              "meta": {"room": room["id"], "identity": "claude"}})
+            return {"ptyId": pid, "cwd": cwd or str(base), "sessionId": "sid-new"}
+
+        def kill(pid):
+            self.killed.append(pid)
+            self.ptys = [x for x in self.ptys if x["id"] != pid]
+
+        for p in (mock.patch.object(chatroom, "ROOMS_DIR", base / "rooms"),
+                  mock.patch.object(dashboard, "PROJECTS_ROOT", base / "EnsembleProjects"),
+                  mock.patch.object(dashboard, "hub_launcher",
+                                    lambda: SimpleNamespace(_launch_room_agent_pty=launch)),
+                  mock.patch.object(dashboard.ptyrun, "list_sessions",
+                                    side_effect=lambda: [dict(x) for x in self.ptys]),
+                  mock.patch.object(dashboard.ptyrun, "kill", side_effect=kill),
+                  mock.patch.object(rotation, "_await_death"),
+                  mock.patch.object(rotation, "_discard_fresh",
+                                    side_effect=lambda info, *a: kill(info["ptyId"])),
+                  mock.patch.object(rotation, "_log")):
+            p.start()
+            self.addCleanup(p.stop)
+        self.base = base
+
+    def rotate(self, orphan=False):
+        rid = chatroom.create_room("PO", [{"identity": "claude", "agent": "claude"}])["id"]
+        full = chatroom.get_room(rid, public=False)
+        full["cwd"], full["mode"] = str(self.base), "solo"
+        part = chatroom.agent_participants(full)[0]
+        part.update(sessionId="sid-old", cwd=str(self.base), ptyId="pty-old")
+        chatroom.update_room(full)
+        for pid in ["pty-old"] + (["orphan"] if orphan else []):
+            self.ptys.append({"id": pid, "alive": True,
+                              "meta": {"room": rid, "identity": "claude"}})
+        project = {"id": "p1", "name": "Engine", "path": str(self.base)}
+        s = {"kind": "po", "name": "Engine", "project": project, "room": full, "part": part,
+             "why": "", "state": {"phase": "asked", "tokensAtAsk": 250_000, "handoverAtAsk": 0},
+             "limit": 150_000, "setting": "poRotateTokens", "who": "the PO",
+             "whose": "the PO's", "handoverName": rotation.HANDOVER_NAME,
+             "handover": self.base / rotation.HANDOVER_NAME, "ids": {"projectId": "p1"}}
+        out = rotation._rotate_marked(s, {"tokens": 250_000},
+                                      lambda r, quiet=False, **x: {"result": r, **x},
+                                      True, True, (rid, "claude"), {"stopped": False})
+        return rid, out
+
+    def test_an_orphan_of_the_seat_stops_the_rotation(self):
+        rid, out = self.rotate(orphan=True)
+        self.assertIn("orphan", out["result"])
+        self.assertEqual((self.killed, self.launches), ([], []))
+        part = chatroom.agent_participants(chatroom.get_room(rid, public=False))[0]
+        self.assertEqual(part["ptyId"], "pty-old")
+
+    def test_a_failed_write_ends_the_fresh_terminal(self):
+        with mock.patch.object(chatroom, "patch_participant",
+                               side_effect=PermissionError(13, "Access is denied")), \
+                self.assertRaises(PermissionError):
+            self.rotate()
+        self.assertEqual(sorted(set(self.killed)), ["pty-new1", "pty-old"])
+        self.assertEqual(self.ptys, [])
+
+    def test_a_clean_rotation_leaves_one_terminal(self):
+        rid, out = self.rotate()
+        self.assertIn("rotated at 250k", out["result"])
+        self.assertEqual([x["id"] for x in self.ptys], ["pty-new1"])
+
+
 class RoomWriteTests(unittest.TestCase):
     def test_a_briefly_locked_room_file_is_retried(self):
         with tempfile.TemporaryDirectory() as d, \
