@@ -339,6 +339,12 @@ def room_ptys(room_id: str) -> list[dict]:
             if x.get("alive") and (x.get("meta") or {}).get("room") == room_id]
 
 
+def seat_ptys(room_id: str, ident: str) -> list[str]:
+    """The live terminals the hub started for one agent of the room."""
+    return [x["id"] for x in room_ptys(room_id)
+            if (x.get("meta") or {}).get("identity") == ident]
+
+
 def unrecorded_room_ptys(room: dict) -> list[str]:
     """Live terminals of the room that no participant records: an agent the
     hub no longer tracks (it would never be stopped, and a start would add a
@@ -8374,31 +8380,54 @@ class Handler(BaseHTTPRequestHandler):
         the review brief (the question, the branch and its diff, the spec and
         REVIEW-LOG.md), it runs in the checkout under review, and it ends when
         it calls review_done. Returns the review record, or None when it was
-        already running (the caller then rings it like anyone else)."""
-        with _REVIEW_LAUNCH_LOCK:
+        already running (the caller then rings it like anyone else).
+
+        Like ``_launch_guarded``, but for the reviewer's seat alone (a PO
+        switch in the same room may be starting its replacement): under the
+        room's launch lock, refused while a live terminal of this seat is
+        recorded nowhere, and ending the terminal it started when recording it
+        fails."""
+        with rotation.launch_lock(room_id), _REVIEW_LAUNCH_LOCK:
             room_full = chatroom.get_room(room_id, public=False)
             part = chatroom.participant(room_full or {}, ident)
             if part is None or _pty_alive(part.get("ptyId")):
                 return None
+            stray = seat_ptys(room_id, ident)
+            if stray:
+                raise StartRoomError(
+                    f"{ident} already has a running terminal that its record does not name "
+                    f"({', '.join(stray)}); stop the task to end it.")
             room_full, part, review_allocation = apply_review_allocation(room_full, ident)
             log_text = read_review_log(room_full)
             n = review_count(log_text) + 1
             root = review_repo(room_full)
             git = review_git_context(root)
             brief = review_brief(room_full, part, msg, n, git, log_text)
-            info = self._launch_room_agent_pty(room_full, part, "", collab=True,
-                                               prompt=brief, cwd=root or None)
-            review = {"n": n, "askedBy": msg.get("from", ""), "messageId": msg.get("id", ""),
-                      "question": (msg.get("text") or "")[:1000], "startedAt": time.time(),
-                      "ptyId": info["ptyId"], "sessionId": info["sessionId"],
-                      "repo": root, "branch": git.get("branch", ""),
-                      "head": git.get("head", ""), "base": git.get("base", ""),
-                      "allocation": review_allocation}
-            chatroom.patch_participant(
-                room_id, ident,
-                {"ptyId": info["ptyId"], "sessionId": info["sessionId"],
-                 "cwd": info["cwd"], "pid": None, "review": review},
-                drop=("lastExit", "fresh"))
+            try:
+                info = self._launch_room_agent_pty(room_full, part, "", collab=True,
+                                                   prompt=brief, cwd=root or None)
+                review = {"n": n, "askedBy": msg.get("from", ""),
+                          "messageId": msg.get("id", ""),
+                          "question": (msg.get("text") or "")[:1000], "startedAt": time.time(),
+                          "ptyId": info["ptyId"], "sessionId": info["sessionId"],
+                          "repo": root, "branch": git.get("branch", ""),
+                          "head": git.get("head", ""), "base": git.get("base", ""),
+                          "allocation": review_allocation}
+                if chatroom.patch_participant(
+                        room_id, ident,
+                        {"ptyId": info["ptyId"], "sessionId": info["sessionId"],
+                         "cwd": info["cwd"], "pid": None, "review": review},
+                        drop=("lastExit", "fresh")) is None:
+                    raise StartRoomError("the task went away before its reviewer was recorded")
+            except BaseException:
+                for pid in seat_ptys(room_id, ident):
+                    try:
+                        ptyrun.kill(pid)
+                        print(f"[review] {room_id}: ended {pid}, started by a review launch "
+                              f"that failed", flush=True)
+                    except Exception:
+                        pass
+                raise
             print(f"[review] started review {n} by {ident} in {room_id} "
                   f"(pty {info['ptyId']}, asked by {review['askedBy']})", flush=True)
             return review

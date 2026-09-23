@@ -930,6 +930,11 @@ def switching(room_id: str) -> bool:
         return room_id in _SWITCHING
 
 
+def _stray_reason(stray: list) -> str:
+    return (f"The PO room has a running terminal that its record does not name "
+            f"({', '.join(stray)}); stop the PO to end it, then switch again.")
+
+
 def _switch_po(project: dict, room: dict, part: dict, other: str, model: str,
                cause: str, extra: dict | None = None) -> dict:
     """Hand the PO's seat to a fresh ``other`` session in the same room: the
@@ -949,8 +954,12 @@ def _switch_po(project: dict, room: dict, part: dict, other: str, model: str,
     sid, old_pty = part.get("sessionId") or "", part.get("ptyId") or ""
     key = (rid, ident)
     flags = {"stopped": False}
-    with GATE:
-        current = _d.chatroom.participant(_d.chatroom.get_room(rid, public=False) or {}, ident)
+    with launch_lock(rid), GATE:
+        current_room = _d.chatroom.get_room(rid, public=False) or {}
+        stray = _d.unrecorded_room_ptys(current_room)
+        if stray:
+            return {"result": "failed", "reason": _stray_reason(stray)}
+        current = _d.chatroom.participant(current_room, ident)
         if (key in _ROTATING or current is None or current.get("sessionId") != part.get("sessionId")
                 or current.get("ptyId") != part.get("ptyId")):
             return {"result": "cancelled", "reason": "the PO changed before the switch"}
@@ -984,19 +993,34 @@ def _switch_po(project: dict, room: dict, part: dict, other: str, model: str,
             if sess is None or not sess.alive():
                 raise RuntimeError("replacement terminal ended during startup")
             time.sleep(0.25)
-        sess = _d.ptyrun.get(info["ptyId"])
-        if sess is None or not sess.alive():
+        def fresh_alive() -> bool:
+            s = _d.ptyrun.get(info["ptyId"])
+            return s is not None and s.alive()
+
+        if not fresh_alive():
             raise RuntimeError("replacement terminal ended during startup")
         if other == "codex" and not info["sessionId"]:
-            info["sessionId"] = _await_codex_session(info["cwd"], started, _taken(agents_in))
+            info["sessionId"] = _await_codex_session(info["cwd"], started, _taken(agents_in),
+                                                     alive=fresh_alive)
+            if not fresh_alive():
+                raise RuntimeError("replacement terminal ended during startup")
             if not info["sessionId"]:
                 raise RuntimeError("replacement Codex session id was not found")
         with launch_lock(rid), GATE:
-            latest = _d.chatroom.participant(_d.chatroom.get_room(rid, public=False) or {}, ident)
+            latest_room = _d.chatroom.get_room(rid, public=False) or {}
+            latest = _d.chatroom.participant(latest_room, ident)
             if (flags["stopped"] or latest is None or latest.get("ptyId") != part.get("ptyId")
                     or latest.get("sessionId") != part.get("sessionId")):
                 raise _FailoverCancelled("the PO changed or was stopped while its "
                                          "replacement started")
+            # The last look before the seat changes hands: a replacement that
+            # died is never recorded, and no other terminal of the room may
+            # be left running that no one records.
+            if not fresh_alive():
+                raise RuntimeError("replacement terminal ended during startup")
+            stray = [p for p in _d.unrecorded_room_ptys(latest_room) if p != info["ptyId"]]
+            if stray:
+                raise RuntimeError(_stray_reason(stray))
             rec = {"n": len(latest.get("rotations") or []) + 1,
                    "at": time.time(), "cause": cause,
                    "fromAgent": part["agent"], "fromModel": part.get("model", ""),
@@ -1131,6 +1155,9 @@ def _refusal(project: dict, room, part, why: str, kind: str) -> str:
             return "The PO is being handed to a fresh session; try again in a minute."
     if _d.pending_input(rid):
         return "The PO is being started or resumed; try again in a minute."
+    stray = _d.unrecorded_room_ptys(room)
+    if stray:
+        return _stray_reason(stray)
     if not handover_written(handover_path(project)) and _pty(part) is None:
         return (f"`{HANDOVER_NAME}` is missing or empty, and the PO is not running to write "
                 f"it. Start the PO and ask it to write its handover first.")
@@ -1601,13 +1628,16 @@ def _await_death(pty_id: str) -> None:
         time.sleep(0.2)
 
 
-def _await_codex_session(cwd: str, since: float, taken: set) -> str:
+def _await_codex_session(cwd: str, since: float, taken: set, alive=None) -> str:
     """The id of the Codex session just started in ``cwd`` (Codex takes no
     caller-supplied id), or "" if its rollout has not appeared in time — the
-    dashboard's backfill then finds it later."""
+    dashboard's backfill then finds it later — or, given ``alive``, as soon as
+    that says the session's terminal has ended."""
     cx = _d.agents.get_agent("codex")
     end = time.time() + _CODEX_SID_WAIT_S
     while cx is not None and time.time() < end:
+        if alive is not None and not alive():
+            return ""
         try:
             sid = cx.latest_session_id_for_cwd(cwd, since=since)
         except Exception:

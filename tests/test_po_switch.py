@@ -319,6 +319,100 @@ class LaunchGuardTests(_Switch):
             rotation._release((rid, "po"))
         self.assertEqual(sorted(self.killed), [], "the detector never ends a terminal")
 
+    def test_an_orphan_refuses_a_manual_switch(self):
+        project, _ = self.po()
+        rid = project["poRoomId"]
+        self.pty(rid, "old-pty")
+        self.pty(rid, "orphan")
+        self.assertIn("orphan", rotation.switch_info(project)["targets"]["codex"]["why"])
+        with self.assertRaises(rotation.SwitchRefused) as cm:
+            rotation.request_switch(project, "codex")
+        self.assertEqual(cm.exception.code, "busy")
+        self.assertEqual((self.launcher.launched, self.killed), ([], []))
+
+    def test_an_orphan_refuses_a_failover(self):
+        project, item = self.po()
+        rid = project["poRoomId"]
+        self.pty(rid, "old-pty")
+        self.pty(rid, "orphan")
+        out = rotation.failover_po(project, item)
+        self.assertNotEqual(out["result"], "switched")
+        self.assertEqual((self.launcher.launched, self.killed), ([], []))
+        self.assertEqual(chatroom.participant(self.saved(project), "po")["ptyId"], "old-pty")
+
+    def test_an_orphan_that_appears_while_the_replacement_starts_cancels(self):
+        project, _ = self.po()
+        rid = project["poRoomId"]
+        self.pty(rid, "old-pty")
+        with mock.patch.object(rotation, "_await_codex_session",
+                               side_effect=lambda *a, **k: self.pty(rid, "orphan") or "codex-new"):
+            rotation.request_switch(project, "codex")
+        part = chatroom.participant(self.saved(project), "po")
+        self.assertEqual((part["agent"], part["ptyId"]), ("claude", "old-pty"))
+        self.assertIn("pty-1", self.killed)
+        self.assertNotIn("old-pty", self.killed)
+        self.assertEqual(rotation._LAST_SWITCH[rid]["result"], "failed")
+
+    def test_a_codex_replacement_that_dies_while_its_id_is_found_is_not_recorded(self):
+        for trigger in ("manual", "usage_limit"):
+            with self.subTest(trigger=trigger):
+                self.killed.clear()
+                self.dead.discard("pty-1")
+                project, item = self.po()
+                self.launcher.launched.clear()
+                def dies(*a, **k):
+                    self.dead.add("pty-1")
+                    return "codex-new"
+                with mock.patch.object(rotation, "_await_codex_session", side_effect=dies):
+                    if trigger == "manual":
+                        rotation.request_switch(project, "codex")
+                    else:
+                        self.assertNotEqual(rotation.failover_po(project, item)["result"],
+                                            "switched")
+                part = chatroom.participant(self.saved(project), "po")
+                self.assertEqual((part["agent"], part["ptyId"], part["sessionId"]),
+                                 ("claude", "old-pty", "old-sid"))
+                self.assertNotIn("old-pty", self.killed)
+
+    def test_the_0923_failed_write_on_a_review_launch_ends_its_terminal(self):
+        made = chatroom.create_room("T", [
+            {"identity": "claude", "agent": "claude", "role": "Engineer"},
+            {"identity": "codex", "agent": "codex", "role": "Reviewer"}])
+        rid = made["id"]
+        n = {"calls": 0}
+        def launch(room_full, part, *a, **k):
+            n["calls"] += 1
+            pid = f"pty-v{n['calls']}"
+            self.pty(rid, pid, ident="codex")
+            return {"ptyId": pid, "sessionId": "", "cwd": self.temp.name}
+        real_patch = chatroom.patch_participant
+        def patch(room_id, ident, fields, **kw):
+            if "review" in fields and n["calls"] == 1:
+                raise PermissionError(13, "Access is denied")
+            return real_patch(room_id, ident, fields, **kw)
+        self.handler._launch_room_agent_pty = launch
+        msg = {"from": "claude", "id": "m1", "text": "@codex review"}
+        with mock.patch.object(dashboard, "apply_review_allocation",
+                               side_effect=lambda r, i: (r, chatroom.participant(r, i), None)), \
+                mock.patch.object(dashboard, "read_review_log", return_value=""), \
+                mock.patch.object(dashboard, "review_repo", return_value=""), \
+                mock.patch.object(dashboard, "review_git_context", return_value={}), \
+                mock.patch.object(dashboard, "review_brief", return_value="brief"), \
+                mock.patch.object(dashboard.chatroom, "patch_participant", side_effect=patch):
+            with self.assertRaises(PermissionError):
+                self.handler._start_review(rid, "codex", msg)
+            self.assertEqual(self.killed, ["pty-v1"])
+            self.handler._start_review(rid, "codex", msg)
+            self.assertEqual([x["id"] for x in self.ptys], ["pty-v2"])
+            self.assertEqual(chatroom.participant(chatroom.get_room(rid, public=False),
+                                                  "codex")["ptyId"], "pty-v2")
+            # A live terminal of the seat that no one records refuses a launch.
+            self.dead.add("gone")
+            chatroom.patch_participant(rid, "codex", {"ptyId": "gone"})
+            with self.assertRaises(dashboard.StartRoomError):
+                self.handler._start_review(rid, "codex", msg)
+            self.assertEqual(n["calls"], 2)
+
     def test_detector_flags_an_unrecorded_terminal(self):
         project, _ = self.po()
         rid = project["poRoomId"]
