@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 import chatroom
+import attention
 import dashboard
 import rotation
 
@@ -571,6 +572,10 @@ class PoUsageFailoverTests(_Base):
         self.assertEqual(part["rotations"][-1]["fromSessionId"], "old-sid")
         self.assertEqual(saved["poFailover"]["cause"], "usage_limit")
         self.assertEqual(self.killed, ["old-pty"])
+        attention.on_pty_death({"meta": {"room": project["poRoomId"], "identity": "po"},
+                                "ptyId": "old-pty", "exitCode": 0, "killed": True,
+                                "endedAt": time.time(), "tail": ""})
+        self.assertNotIn("lastExit", chatroom.participant(self.saved(project), "po"))
         self.assertIn("Open point P1", self.launcher.launched[0]["text"])
         self.assertIn("PO-HANDOVER.md", self.launcher.launched[0]["text"])
         self.assertIn("ROADMAP.md", self.launcher.launched[0]["text"])
@@ -652,16 +657,61 @@ class PoUsageFailoverTests(_Base):
     def test_failed_start_keeps_old_po_and_alerts_once(self):
         project, item = self.po()
         self.dead.add("pty-1")
-        for _ in range(2):
-            rotation.failover_po(project, item)
+        def candidate_dies(pid):
+            if pid == "pty-1":
+                attention.on_pty_death({"meta": {"room": project["poRoomId"],
+                                                  "identity": "po"},
+                                        "ptyId": pid, "exitCode": 1, "killed": False,
+                                        "endedAt": time.time(), "tail": "usage failed"})
+            return _FakePty(pid not in self.dead) if pid else None
+        with mock.patch.object(dashboard.ptyrun, "get", side_effect=candidate_dies):
+            for _ in range(2):
+                rotation.failover_po(project, item)
         saved = self.saved(project)
         part = chatroom.participant(saved, "po")
         self.assertEqual((part["agent"], part["sessionId"], part["ptyId"]),
                          ("claude", "old-sid", "old-pty"))
         self.assertNotIn("poFailover", saved)
+        self.assertNotIn("lastExit", part, "candidate death must not mark retained PO dead")
         self.assertEqual(len(self.launcher.launched), 1)
         self.assertEqual(self.killed, ["pty-1"])
         self.assertEqual(len(saved["messages"]), 1)
+
+    def test_stop_during_startup_cancels_without_poisoning_retry(self):
+        project, item = self.po()
+        launch = self.launcher._launch_room_agent_pty
+        def stop_after_candidate(*args, **kwargs):
+            info = launch(*args, **kwargs)
+            dashboard.stop_task(project["poRoomId"])
+            return info
+        with mock.patch.object(self.launcher, "_launch_room_agent_pty",
+                               side_effect=stop_after_candidate):
+            first = rotation.failover_po(project, item)
+        self.assertEqual(first["result"], "cancelled")
+        self.assertNotIn("poFailoverAlert", self.saved(project))
+        self.assertEqual(self.killed, ["old-pty", "pty-1"])
+        # A Start resumes the same old conversation in a new terminal.
+        chatroom.patch_participant(project["poRoomId"], "po", {"ptyId": "resumed-old-pty"})
+        second = rotation.failover_po(project, item)
+        self.assertEqual(second["result"], "switched")
+        saved = self.saved(project)
+        self.assertEqual(len(chatroom.participant(saved, "po")["rotations"]), 1)
+        self.assertEqual(len(self.launcher.launched), 2)
+        self.assertIn("resumed-old-pty", self.killed)
+
+    def test_wake_during_startup_is_replayed_to_new_po(self):
+        project, item = self.po()
+        launch = self.launcher._launch_room_agent_pty
+        held = []
+        def launch_and_wake(*args, **kwargs):
+            info = launch(*args, **kwargs)
+            self.assertTrue(rotation.hold_wake(project["poRoomId"], "po", "[relay] hello"))
+            return info
+        with mock.patch.object(self.launcher, "_launch_room_agent_pty",
+                               side_effect=launch_and_wake), \
+                mock.patch.object(rotation, "_replay", side_effect=lambda *args: held.append(args)):
+            self.assertEqual(rotation.failover_po(project, item)["result"], "switched")
+        self.assertEqual(held, [(project["poRoomId"], "po", ["[relay] hello"])])
 
     def test_ordinary_block_and_waiting_do_not_trigger(self):
         project, item = self.po()

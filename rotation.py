@@ -103,6 +103,10 @@ _LAUNCH_SETTLE_S = 3.0      # a switched-to kind whose terminal ends by then fai
 _OTHER_KIND = {"claude": "codex", "codex": "claude"}
 DEFAULT_PO_FALLBACK_MODELS = {"codex": "gpt-5.6-sol", "claude": ""}
 
+
+class _FailoverCancelled(Exception):
+    """Stop or reassignment changed the PO while its replacement was starting."""
+
 _LOCK = threading.Lock()    # one check at a time: scheduler vs "check now"
 _STATE: dict[str, dict] = {}  # projectId -> {phase, askedAt, ..., lastResult}
 _TASK_STATE: dict[str, dict] = {}  # "roomId/identity" -> the same, for owners
@@ -864,6 +868,9 @@ def _failover_po(project: dict, item: dict) -> dict:
                     room, fresh, prompt, collab=True, cwd=cwd)
             settle_started = time.time()
             while time.time() < settle_started + _LAUNCH_SETTLE_S:
+                with GATE:
+                    if flags["stopped"]:
+                        raise _FailoverCancelled("PO was stopped during startup")
                 sess = _d.ptyrun.get(info["ptyId"])
                 if sess is None or not sess.alive():
                     raise RuntimeError("replacement terminal ended during startup")
@@ -881,7 +888,7 @@ def _failover_po(project: dict, item: dict) -> dict:
                     _d.chatroom.get_room(rid, public=False) or {}, ident)
                 if (flags["stopped"] or latest is None or latest.get("ptyId") != part.get("ptyId")
                         or latest.get("sessionId") != sid):
-                    raise RuntimeError("PO changed or stopped during startup")
+                    raise _FailoverCancelled("PO changed or stopped during startup")
                 # The old session remains in rotations/sessionKinds for audit.
                 # Its death hook must write to the old participant, before the
                 # atomic participant and room metadata update below.
@@ -918,6 +925,10 @@ def _failover_po(project: dict, item: dict) -> dict:
             except Exception as e:
                 _log(f"{rid}: failover succeeded but notice failed: {str(e)[:200]}")
             return {"result": "switched", "rotation": rec}
+        except _FailoverCancelled as e:
+            if info is not None:
+                _discard_fresh(info, other, started, agents_in)
+            return {"result": "cancelled", "reason": str(e)}
         except Exception as e:
             if info is not None:
                 _discard_fresh(info, other, started, agents_in)
