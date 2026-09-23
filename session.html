@@ -6,6 +6,7 @@
 <meta name="ensemble-pages" content="">
 <title>Ensemble — session</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+<script src="/static/actions.js"></script>
 <script src="/static/comments.js"></script>
 <script src="/static/attach.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
@@ -991,6 +992,92 @@
     /* Centred, the comment box sat under the keyboard it opens. */
     .cmt-composer { top: var(--s-300, 12px); transform: translateX(-50%); }
   }
+  /* ---- Session actions: begin shared block ---------------------------------
+     The action bar (static/actions.js): one primary action and a More menu,
+     the same in the dashboard's task panel, its list rows and the popped-out
+     session window. index.html and session.html carry this block word for
+     word (tests/test_session_actions.py compares them). */
+  .am-bar { display: inline-flex; align-items: center; gap: var(--s-200); flex-wrap: nowrap; }
+  .am-wrap { display: inline-flex; }
+  .am-btn {
+    display: inline-flex; align-items: center; gap: var(--s-100);
+    height: 32px; padding: 0 var(--s-300); border-radius: var(--r-200);
+    background: var(--surface); color: var(--fg); border: 1px solid var(--border-strong);
+    font: inherit; font-size: var(--fs-300); font-weight: 500; line-height: var(--lh-300);
+    cursor: pointer; white-space: nowrap;
+  }
+  .am-btn:hover { background: var(--hover); }
+  .am-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .am-btn.is-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+  .am-btn.is-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .am-btn[aria-disabled="true"] { color: var(--fg-disabled); background: var(--surface); border-color: var(--border); cursor: not-allowed; }
+  .am-more[aria-expanded="true"] { background: var(--pressed); }
+  .am-dots { font-size: var(--fs-400); line-height: 1; }
+  .am-menu {
+    position: fixed; z-index: 210; min-width: 220px; max-width: 320px;
+    display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain;
+    background: var(--surface-overlay); border: 1px solid var(--border);
+    border-radius: var(--r-300); box-shadow: var(--e-200); padding: var(--s-100);
+  }
+  .am-menu[hidden] { display: none; }
+  .am-item {
+    display: flex; flex-direction: column; align-items: stretch; flex: 0 0 auto;
+    width: 100%; min-height: 32px; padding: var(--s-100) var(--s-200);
+    background: transparent; border: 0; border-radius: var(--r-200); text-align: left;
+    font: inherit; font-size: var(--fs-200); line-height: var(--lh-200); color: var(--fg); cursor: pointer;
+  }
+  .am-item[hidden] { display: none; }
+  .am-item:hover { background: var(--hover); }
+  .am-item:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+  .am-item.danger { color: var(--c-danger-fg); }
+  .am-item.danger:hover { background: var(--c-danger-bg); }
+  .am-item[aria-disabled="true"] { color: var(--fg-disabled); cursor: not-allowed; }
+  .am-item[aria-disabled="true"]:hover { background: transparent; }
+  .am-lbl { display: flex; align-items: center; gap: var(--s-100); }
+  .am-check { display: inline-block; width: 12px; }
+  .am-why { color: var(--fg-muted); font-size: var(--fs-100); line-height: var(--lh-100); white-space: normal; }
+  .am-sep { flex: 0 0 auto; height: 1px; background: var(--border); margin: var(--s-100) 0; }
+  /* The terminal colour picker, opened from its item in the menu. */
+  .theme-dd-menu {
+    position: fixed; z-index: 220; width: 280px; max-height: 420px;
+    display: flex; flex-direction: column; overflow: hidden;
+    background: var(--surface-overlay); border: 1px solid var(--border);
+    border-radius: var(--r-300); box-shadow: var(--e-200);
+  }
+  .theme-dd-search {
+    flex: 0 0 auto; border: 0; border-bottom: 1px solid var(--border);
+    padding: var(--s-200) var(--s-300); font: inherit; font-size: var(--fs-300);
+    background: transparent; color: var(--fg); outline: none;
+  }
+  .theme-dd-search:focus-visible { box-shadow: inset 0 0 0 2px var(--focus-ring); }
+  .theme-dd-list { overflow-y: auto; padding: var(--s-100); }
+  .theme-dd-section {
+    padding: var(--s-200) var(--s-200) var(--s-100); font-size: var(--fs-100);
+    color: var(--fg-muted); text-transform: uppercase; font-weight: 600; letter-spacing: .05em;
+  }
+  .theme-dd-empty { padding: var(--s-200) var(--s-300); font-size: var(--fs-200); color: var(--fg-muted); }
+  .theme-dd-item { display: flex; align-items: center; gap: var(--s-100); border-radius: var(--r-200); }
+  .theme-dd-item:hover { background: var(--hover); }
+  .theme-dd-item .star, .theme-dd-item .name {
+    background: transparent; border: 0; font: inherit; cursor: pointer; color: var(--fg);
+    border-radius: var(--r-200); min-height: 28px;
+  }
+  .theme-dd-item .star { flex: 0 0 auto; color: var(--fg-muted); padding: 0 var(--s-200); }
+  .theme-dd-item .star:hover { background: var(--selected-bg); color: var(--selected-fg); }
+  .theme-dd-item .star.is-fav { color: var(--selected-fg); }
+  .theme-dd-item .name {
+    flex: 1; min-width: 0; text-align: left; padding: 0 var(--s-100); font-size: var(--fs-200);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .theme-dd-item.current .name { color: var(--selected-fg); font-weight: 600; }
+  .theme-dd-item .star:focus-visible, .theme-dd-item .name:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+  @media (pointer: coarse) {
+    .am-btn, .am-item, .theme-dd-item .star, .theme-dd-item .name { min-height: var(--touch-min); }
+    .am-btn { height: auto; min-width: var(--touch-min); }
+    .theme-dd-item .star { min-width: var(--touch-min); }
+    .theme-dd-search { font-size: var(--fs-400); min-height: var(--touch-min); }
+  }
+  /* ---- Session actions: end shared block */
   /* The line that says the page on disk is newer (see "Page update" in the
      script): one quiet strip over the top of the page, --surface on a border,
      the action a link. The same rule in index.html, session.html and fileview.html. */
@@ -1015,16 +1102,10 @@
   <span id="status" class="status"></span>
   <span id="hop" class="dim"></span>
   <span class="grow"></span>
+  <span id="actions"></span>
   <button id="dock" hidden title="Dock this session back into the dashboard panel">⧉ Dock</button>
-  <button id="resume" hidden title="Relaunch the agent(s) with their conversation">↻ Resume</button>
-  <button id="terms" hidden title="Show/hide the raw per-agent terminals">🖥 Terminals</button>
-  <button id="pause">Pause</button>
-  <button id="rename" hidden title="Rename this session">✎ Rename</button>
-  <button id="autolabel" hidden title="Ask Claude to suggest a label from the conversation">✨ Auto</button>
-  <button id="explorer" hidden title="Open the working folder on the host">📂 Files</button>
-  <button id="ide" hidden title="Open the project in its editor (on the host)">🧠 IDE</button>
-  <button id="theme" hidden title="The chat follows the dashboard theme; switch this task's chat to its folder's terminal colours instead">🎨 Chat colours</button>
-  <button id="end" title="Stop the agent(s) and end this session">End</button>
+  <!-- Not shown: the dashboard's Terminal clicks it, and "Show terminals" in the menu too. -->
+  <button id="terms" hidden tabindex="-1" title="Show/hide the raw per-agent terminals">🖥 Terminals</button>
 </header>
 <div id="info"></div>
 <main>
@@ -3515,15 +3596,10 @@ async function refreshRoom() {
       ? 'The agents are waiting for you — reply to resume.' : ''));
   $('#send').disabled = false;
   $('#input').disabled = false;
-  $('#resume').hidden = !notRunning || resuming;
   const pendSig = JSON.stringify(pend);
   const pendChanged = pendSig !== PENDING_SIG;
   PENDING_SIG = pendSig; ROOM_PENDING = pend; ROOM_RESUMING = resuming;
   const sendsChanged = sendsFromPoll(room.sends, sendsGen);
-  const pb = $('#pause');
-  pb.style.display = notRunning ? 'none' : '';
-  setText(pb, st === 'paused' ? 'Resume' : 'Pause');
-  pb.onclick = () => jpost('/api/room/status', { roomId: ROOM, status: st === 'paused' ? 'active' : 'paused' }).then(refresh);
   const soloMode = room.mode === 'solo' ||
     room.participants.filter(p => p.kind === 'agent').length === 1;
   document.body.classList.toggle('solo', soloMode);
@@ -3547,16 +3623,10 @@ async function refreshRoom() {
     + mem.map(m => `<span class="ib-agent ${esc(m.agent)}" title="${esc(m.identity)}${m.onMention ? ' — started fresh for each review request' : ''}">${esc(m.agent)}${m.model ? ' · ' + esc(m.model) : ''}${m.onMention ? ' · on mention' : ''}</span>`).join('')
     + (soloMode ? '' : `<span>${room.messages.length} messages · hop ${room.hopCount || 0}/${room.maxHops || 0}</span>`));
   const showTerms = !document.body.classList.contains('term-hidden');
-  $('#terms').hidden = notRunning;
   $('#terms').classList.toggle('on', showTerms);
-  // Rich actions (header is hidden when embedded, so these show only in the popup;
-  // the docked panel provides the same set in its own toolbar).
-  const hasCwd = !!actCwd();
-  $('#rename').hidden = false;
-  $('#autolabel').hidden = notRunning;
-  $('#explorer').hidden = !hasCwd;
-  $('#ide').hidden = !hasCwd;
-  $('#theme').hidden = !hasCwd;
+  // The header's actions: the dashboard's model (static/actions.js), so the
+  // pop-out and the docked panel offer the same, in the same order.
+  renderActions();
   if (agentsBuilt && agentsSig(room) !== AGENTS_SIG) {
     // A review started (a new terminal): drop the mounted ones and rebuild.
     Object.values(terms).forEach(t => { try { t.es.close(); } catch(e) {} });
@@ -4348,7 +4418,7 @@ $('#terms').onclick = () => {
 window.addEventListener('message', (e) => {
   const d = e.data || {};
   if (d.ensemble === 'toggleTerms') $('#terms').click();
-  else if (d.ensemble === 'pause') { const pb = $('#pause'); if (pb && pb.onclick) pb.onclick(); }
+  else if (d.ensemble === 'pause') pauseToggle();
   // The dashboard opened this chat's panel again: a closed task panel only
   // slides off screen, so its size never says so. Open at the latest message.
   else if (d.ensemble === 'shown' && e.source === window.parent) { toLatest(); if (CHAT_DRAWN && !GOTO) catchUpOpen(); }
@@ -4363,75 +4433,200 @@ window.addEventListener('message', (e) => {
 // it was still loading is sent to it again.
 try { if (window.parent !== window) window.parent.postMessage({ type: 'chat-ready', roomId: ROOM }, location.origin); } catch (e) {}
 
-// ---- Rich session actions (parity with the dashboard's docked toolbar) -------
-// A solo session keys on its sessionId; a room keys on the room id. The cwd
-// comes from the room payload.
-function actSid() { return SOLO_SID || ROOM; }
+// ---- Session actions ---------------------------------------------------------
+// The header shows the dashboard's action bar (static/actions.js, the matrix in
+// docs/session-actions.md): the same primary action and More menu as the task
+// panel, from the same model. What needs the dashboard's dialogs (Agents and
+// models, Move to project, Make PO, Delete, Show in Workspace) is done there.
+let PLATFORM = null;
+fetch('/api/platform').then(r => r.json()).then(p => { PLATFORM = p || {}; renderActions(); }).catch(() => { PLATFORM = {}; renderActions(); });
 function actCwd() { return (ROOM_OBJ && ROOM_OBJ.cwd) || ''; }
-$('#rename').onclick = async () => {
-  const label = prompt('Label for this session (empty to clear):', (ROOM_OBJ && ROOM_OBJ.title) || '');
-  if (label === null) return;
-  try { await fetch('/api/label/' + encodeURIComponent(actSid()), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: label.trim() }) }); refresh(); }
-  catch (e) { alert('Rename failed'); }
+function actionState() {
+  const room = ROOM_OBJ || {};
+  return {
+    kind: 'room', sessionId: ROOM, roomId: ROOM, cwd: room.cwd || '',
+    live: room.live !== false, draft: room.launched === false, status: room.status || '',
+    members: (room.participants || []).filter(p => p.kind === 'agent').map(p => ({ agent: p.agent })),
+    makePo: room.makePo, currentTheme: '', chatSchemeOn: SCHEME_ON, resuming: ROOM_RESUMING,
+  };
+}
+function actionEnv() {
+  const p = PLATFORM || {};
+  return { hub: onHubMachine(), features: p.features || {},
+           terminalName: p.terminalName || 'terminal', fileManagerName: p.fileManagerName || 'file manager' };
+}
+let ACTIONS_HTML = '';
+function renderActions() {
+  const box = $('#actions');
+  if (!box || !ROOM_OBJ || !PLATFORM) return;
+  // Never rewritten while its menu or the colour picker is open: nothing
+  // moves under the pointer, and focus stays where it is.
+  if (SessionActions.isOpen() || document.getElementById('theme-menu-s')) return;
+  const html = SessionActions.actionBarHtml(SessionActions.sessionActions(actionState(), actionEnv()));
+  if (html === ACTIONS_HTML) return;
+  const a = document.activeElement, had = box.contains(a) ? (a.dataset.act || (a.classList.contains('am-more') ? 'more' : '')) : null;
+  ACTIONS_HTML = html;
+  box.innerHTML = html;
+  if (had !== null) {
+    const back = had === 'more' ? box.querySelector('.am-more') : box.querySelector(`[data-act="${CSS.escape(had)}"]`);
+    (back || box.querySelector('button'))?.focus({ preventScroll: true });
+  }
+}
+SessionActions.onOpen = (menu) => {
+  const hide = menu.querySelector('.dp-terms-hide');
+  if (hide) hide.hidden = document.body.classList.contains('term-hidden');
 };
-$('#autolabel').onclick = async () => {
-  $('#autolabel').disabled = true;
-  try { await fetch('/api/label/' + encodeURIComponent(actSid()) + '/auto', { method: 'POST' }); setTimeout(refresh, 800); }
-  catch (e) { alert('Auto-label failed'); }
-  finally { $('#autolabel').disabled = false; }
-};
-$('#explorer').onclick = () => {
-  const cwd = actCwd(); if (!cwd) return;
-  // From another computer a file manager would open on the hub's own screen,
-  // where nobody sees it: browse the folder in the file viewer instead.
-  if (!onHubMachine()) {
-    window.open('/fileview?path=' + encodeURIComponent(cwd) + (ROOM ? '&room=' + encodeURIComponent(ROOM) : ''), '_blank', 'noopener');
+SessionActions.onClose = () => setTimeout(renderActions, 0);
+function pauseToggle() {
+  const st = (ROOM_OBJ && ROOM_OBJ.status) || '';
+  return jpost('/api/room/status', { roomId: ROOM, status: st === 'paused' ? 'active' : 'paused' }).then(refresh);
+}
+// What the dashboard does with its own dialogs: in the window that opened this
+// one when it is still there, else in a new dashboard tab (?task=&act=).
+function toDashboard(act) {
+  let host = null;
+  try { if (window.opener && !window.opener.closed && window.opener.location.origin === location.origin) host = window.opener; } catch (e) {}
+  if (host) {
+    host.postMessage({ type: 'session-action', roomId: ROOM, act }, location.origin);
+    try { host.focus(); } catch (e) {}
     return;
   }
-  jpost('/api/open-path', { path: cwd, app: 'finder' });
-};
-if (!onHubMachine()) {
-  $('#explorer').title = 'Browse the working folder in the file viewer';
-  $('#ide').title = 'Open the project in its editor — on the hub machine, not this one';
+  window.open('/?task=' + encodeURIComponent(ROOM) + '&act=' + encodeURIComponent(act), '_blank');
 }
-$('#ide').onclick = async () => {
+async function startOrResume(btn) {
+  btn.setAttribute('aria-disabled', 'true');
   try {
-    const repos = await fetch('/api/repos/' + encodeURIComponent(actSid())).then(r => r.json());
-    if (repos && repos.length) jpost('/api/open-path', { path: repos[0].path, app: repos[0].editor || 'default' });
-    else { const cwd = actCwd(); if (cwd) jpost('/api/open-path', { path: cwd, app: 'default' }); }
-  } catch (e) { alert('IDE open failed'); }
-};
-function closeThemeMenuS() { const m = document.getElementById('theme-menu-s'); if (m) m.remove(); document.removeEventListener('mousedown', _themeMenuOutS); }
-function _themeMenuOutS(e) { if (!e.target.closest('#theme-menu-s') && e.target.id !== 'theme') closeThemeMenuS(); }
-$('#theme').onclick = async () => {
-  const cwd = actCwd(); if (!cwd) return;
-  if (document.getElementById('theme-menu-s')) { closeThemeMenuS(); return; }
-  let themes = [];
-  try { themes = await fetch('/api/themes').then(r => r.json()); } catch (e) {}
-  const names = (themes || []).map(t => typeof t === 'string' ? t : (t.name || t.id)).filter(Boolean);
-  if (!names.length) return;
-  const menu = document.createElement('div'); menu.id = 'theme-menu-s';
-  // First the switch, then the schemes. Picking a scheme here switches it on:
-  // this menu's only job is the chat's colours.
-  menu.innerHTML = `<div class="tm-item tm-follow${SCHEME_ON ? '' : ' on'}" role="menuitemradio" aria-checked="${!SCHEME_ON}">${SCHEME_ON ? '' : '✓ '}Follow the dashboard theme</div><div class="tm-rule"></div>`
-    + names.map(n => `<div class="tm-item tm-scheme${SCHEME_ON && n === THEME_NAME ? ' on' : ''}">${SCHEME_ON && n === THEME_NAME ? '✓ ' : ''}${esc(n)}</div>`).join('');
-  document.body.appendChild(menu);
-  const rect = $('#theme').getBoundingClientRect();
-  menu.style.top = (rect.bottom + 4) + 'px'; menu.style.right = Math.max(6, window.innerWidth - rect.right) + 'px';
-  menu.querySelector('.tm-follow').onclick = async () => {
-    closeThemeMenuS();
-    try { await jpost('/api/chat-scheme', { cwd, on: false }); ensureTheme(cwd); } catch (e) {}
-  };
-  menu.querySelectorAll('.tm-scheme').forEach((it, i) => it.onclick = async () => {
-    const theme = names[i]; closeThemeMenuS();
+    await jpost('/api/room/resume', { roomId: ROOM });
+    // ptyIds changed → tear down the dead terminals and rebuild.
+    Object.values(terms).forEach(t => { try { t.es.close(); } catch(e) {} });
+    for (const k in terms) delete terms[k];
+    agentsBuilt = false;
+  } catch (e) { /* stay ended */ }
+  ACTIONS_HTML = '';
+  await refresh();
+}
+const ACTS = {
+  start: startOrResume,
+  resume: startOrResume,
+  async end() {
+    if (!confirm('End this session and stop the agent(s)?')) return;
+    try { await jpost('/api/room/close', { roomId: ROOM }); } catch(e) {}
+    window.close();
+  },
+  terminals() { $('#terms').click(); },
+  'terms-hide'() { if (!document.body.classList.contains('term-hidden')) $('#terms').click(); },
+  pause: pauseToggle,
+  async rename() {
+    const label = prompt('Label for this session (empty to clear):', (ROOM_OBJ && ROOM_OBJ.title) || '');
+    if (label === null) return;
+    try { await fetch('/api/label/' + encodeURIComponent(ROOM), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: label.trim() }) }); refresh(); }
+    catch (e) { alert('Rename failed'); }
+  },
+  async auto() {
+    try { await fetch('/api/label/' + encodeURIComponent(ROOM) + '/auto', { method: 'POST' }); setTimeout(refresh, 800); }
+    catch (e) { alert('Auto-label failed'); }
+  },
+  finder() {
+    const cwd = actCwd(); if (!cwd) return;
+    // From another computer a file manager would open on the hub's own screen,
+    // where nobody sees it: browse the folder in the file viewer instead.
+    if (!onHubMachine()) {
+      window.open('/fileview?path=' + encodeURIComponent(cwd) + (ROOM ? '&room=' + encodeURIComponent(ROOM) : ''), '_blank', 'noopener');
+      return;
+    }
+    jpost('/api/open-path', { path: cwd, app: 'finder' });
+  },
+  async ide() {
+    // From another computer: the task's Workspace tab, in the dashboard.
+    if (!onHubMachine()) { toDashboard('workspace'); return; }
     try {
-      await jpost('/api/theme', { cwd, theme });
-      await jpost('/api/chat-scheme', { cwd, on: true });
-      ensureTheme(cwd);
-    } catch (e) {}
+      const repos = await fetch('/api/repos/' + encodeURIComponent(ROOM)).then(r => r.json());
+      if (repos && repos.length) jpost('/api/open-path', { path: repos[0].path, app: repos[0].editor || 'default' });
+      else { const cwd = actCwd(); if (cwd) jpost('/api/open-path', { path: cwd, app: 'default' }); }
+    } catch (e) { alert('IDE open failed'); }
+  },
+  colours(btn) {
+    if (document.getElementById('theme-menu-s')) closeThemeMenuS(true);
+    else openThemeMenuS(btn);
+  },
+  async 'chat-colours'() {
+    const cwd = actCwd(); if (!cwd) return;
+    try { await jpost('/api/chat-scheme', { cwd, on: !SCHEME_ON }); await ensureTheme(cwd); } catch (e) {}
+    ACTIONS_HTML = ''; renderActions();
+  },
+  agents() { toDashboard('agents'); },
+  moveproj() { toDashboard('moveproj'); },
+  makepo() { toDashboard('makepo'); },
+  delete() { toDashboard('delete'); },
+};
+document.addEventListener('click', ev => {
+  const b = ev.target.closest && ev.target.closest('.am-item[data-act], .am-primary[data-act]');
+  if (!b || b.getAttribute('aria-disabled') === 'true') return;
+  const f = ACTS[b.dataset.act];
+  if (f) f(b);
+});
+// The colour picker: the dashboard's, beside the item that opened it.
+let THEME_NAMES = null, THEME_FAVS = [], THEME_FILTER = '';
+function renderThemeMenuS(menu) {
+  menu.querySelector('.theme-dd-list').innerHTML = SessionActions.themeListHtml(THEME_NAMES || [], THEME_FAVS, THEME_CUR, THEME_FILTER);
+}
+let THEME_CUR = '';
+async function openThemeMenuS(trigger) {
+  const cwd = actCwd(); if (!cwd) return;
+  if (!THEME_NAMES) {
+    try {
+      const [themes, favs] = await Promise.all([fetch('/api/themes').then(r => r.json()), fetch('/api/favorite-themes').then(r => r.json()).catch(() => [])]);
+      THEME_NAMES = (themes || []).map(t => typeof t === 'string' ? t : (t.name || t.id)).filter(Boolean);
+      THEME_FAVS = Array.isArray(favs) ? favs : [];
+    } catch (e) { THEME_NAMES = null; return; }
+  }
+  try { const t = await fetch('/api/theme-colors?cwd=' + encodeURIComponent(cwd)).then(r => r.json()); THEME_CUR = (t && t.theme) || ''; } catch (e) {}
+  if (!trigger.isConnected) return;
+  const menu = document.createElement('div');
+  menu.id = 'theme-menu-s'; menu.className = 'theme-dd-menu';
+  menu.setAttribute('role', 'dialog'); menu.setAttribute('aria-label', 'Terminal colours');
+  menu.innerHTML = '<input type="text" class="theme-dd-search" placeholder="Search schemes…" aria-label="Search colour schemes"><div class="theme-dd-list"></div>';
+  THEME_FILTER = '';
+  document.body.appendChild(menu);
+  renderThemeMenuS(menu);
+  menu._am = SessionActions.child(menu, trigger);
+  menu._amFrom = trigger;
+  trigger.setAttribute('aria-expanded', 'true');
+  const search = menu.querySelector('.theme-dd-search');
+  search.focus({ preventScroll: true });
+  search.addEventListener('input', () => { THEME_FILTER = search.value; renderThemeMenuS(menu); });
+  menu.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeThemeMenuS(true); return; }
+    SessionActions.arrowKeys(e, [search, ...menu.querySelectorAll('.theme-dd-item .name')]);
+  });
+  menu.addEventListener('click', async e => {
+    const item = e.target.closest('.theme-dd-item'); if (!item) return;
+    const theme = item.dataset.theme;
+    if (e.target.closest('.star')) {
+      try { const r = await jpost('/api/favorite-themes', { theme, favorite: !THEME_FAVS.includes(theme) }); THEME_FAVS = r.favorites || THEME_FAVS; } catch (err) {}
+      renderThemeMenuS(menu);
+      return;
+    }
+    if (!e.target.closest('.name')) return;
+    closeThemeMenuS(true);
+    SessionActions.closeMenu({ focus: true });
+    try { await jpost('/api/theme', { cwd, theme }); ensureTheme(cwd); } catch (err) {}
   });
   setTimeout(() => document.addEventListener('mousedown', _themeMenuOutS), 0);
-};
+}
+function closeThemeMenuS(back) {
+  const m = document.getElementById('theme-menu-s');
+  document.removeEventListener('mousedown', _themeMenuOutS);
+  if (!m) return;
+  if (m._amFrom) m._amFrom.setAttribute('aria-expanded', 'false');
+  if (m._am) { if (back) m._am.returnFocus(); m._am.stop(); }
+  m.remove();
+  setTimeout(renderActions, 0);
+}
+function _themeMenuOutS(e) {
+  if (e.target.closest('#theme-menu-s') || e.target.closest('.am-item[data-act="colours"]')) return;
+  closeThemeMenuS();
+}
 
 // ---- In-place review comments -------------------------------------------
 // Select text inside an agent bubble → attach a comment; collect several across
@@ -4841,23 +5036,6 @@ if (TOUCH) {
   document.addEventListener('selectionchange', () => { clearTimeout(selTimer); selTimer = setTimeout(_onSelect, 300); });
 }
 document.addEventListener('mousedown', e => { if (_selBtn && e.target !== _selBtn) hideSelBtn(); });
-$('#end').onclick = async () => {
-  if (!confirm('End this session and stop the agent(s)?')) return;
-  try { await jpost('/api/room/close', { roomId: ROOM }); } catch(e) {}
-  window.close();
-};
-$('#resume').onclick = async () => {
-  $('#resume').disabled = true;
-  try {
-    await jpost('/api/room/resume', { roomId: ROOM });
-    // ptyIds changed → tear down the dead terminals and rebuild.
-    Object.values(terms).forEach(t => { try { t.es.close(); } catch(e) {} });
-    for (const k in terms) delete terms[k];
-    agentsBuilt = false;
-    await refresh();
-  } catch (e) { /* stay ended */ }
-  $('#resume').disabled = false;
-};
 // In a solo session the terminal is the main surface — refocus it when the
 // window regains focus so you can just start typing.
 window.addEventListener('focus', () => {

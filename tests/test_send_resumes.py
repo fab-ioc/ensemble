@@ -677,7 +677,10 @@ class ThePage(unittest.TestCase):
         self.assertNotIn("$('#input').disabled = notRunning", body)
         self.assertIn("'Not running: sending will resume it.'", body)
         self.assertIn("'Resuming: your message goes in once it is up.'", body)
-        self.assertIn("$('#resume').hidden = !notRunning || resuming;", body)
+        # Resume is the header's primary action (static/actions.js), off while resuming.
+        self.assertIn("ROOM_RESUMING = resuming;", body)
+        self.assertIn("renderActions();", body)
+        self.assertIn("resuming: ROOM_RESUMING", SESSION)
 
     def test_send_goes_the_resume_way_when_stopped(self):
         self.assertIn("async function sendResuming(text, to, key, attachments)", SESSION)

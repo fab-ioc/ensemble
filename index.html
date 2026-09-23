@@ -1729,32 +1729,8 @@
   .dp-live { display: flex; flex-direction: column; gap: 10px; padding: 16px 18px 12px; border-bottom: 1px solid var(--border); }
   #detail-panel:has(iframe.dp-session) { gap: 0; }
   #detail-panel:has(iframe.dp-session) .dp-live .dp-head { padding: 0; }
-  .dp-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-  .dp-actions button, .dp-actions select {
-    background: var(--bg); border: 1px solid var(--border);
-    padding: 5px 11px; border-radius: 6px; cursor: pointer;
-    font: inherit; font-size: 12px; color: var(--fg); font-weight: 500;
-    transition: border-color .08s, background .08s, color .08s, transform .06s;
-  }
-  .dp-actions button:hover, .dp-actions select:hover {
-    border-color: var(--border-strong); color: var(--fg); background: var(--hover);
-  }
-  .dp-actions button:active { transform: translateY(1px); }
-  /* PRIMARY actions (Focus on live, Open on historical) — filled terracotta */
-  .dp-actions .focus-btn, .dp-actions .open-btn {
-    background: var(--accent); color: var(--accent-fg); border-color: var(--accent);
-  }
-  .dp-actions .focus-btn:hover, .dp-actions .open-btn:hover {
-    background: var(--accent-hover); color: var(--accent-fg);
-  }
-  /* DESTRUCTIVE actions — red by default, not just on hover */
-  .dp-actions .close-btn, .dp-actions .delete-btn {
-    color: var(--c-danger-fg); border-color: color-mix(in srgb, var(--c-danger-fg) 30%, var(--border));
-  }
-  .dp-actions .close-btn:hover, .dp-actions .delete-btn:hover {
-    background: color-mix(in srgb, var(--c-danger-fg) 10%, transparent);
-    border-color: var(--c-danger-fg); color: var(--c-danger-fg);
-  }
+  /* The task panel's action bar (the shared .am-* block below). */
+  .dp-actions { display: flex; align-items: center; }
   .actions button, .actions select {
     background: var(--surface); border: 1px solid var(--border); padding: 3px 9px;
     font: inherit; font-size: 11.5px; cursor: pointer; border-radius: 5px;
@@ -1769,52 +1745,92 @@
   .actions .open-btn:hover  { border-color: var(--run-idle); color: var(--run-idle); background: color-mix(in srgb, var(--run-idle) 8%, transparent); }
   .actions select { max-width: 130px; }
   .actions button.busy { opacity: .5; cursor: progress; }
-  .theme-dd-trigger {
-    background: var(--surface); border: 1px solid var(--border);
-    padding: 3px 9px; font: inherit; font-size: 11.5px; cursor: pointer;
-    border-radius: 5px; color: var(--fg); font-weight: 500;
-    max-width: 160px; overflow: hidden; text-overflow: ellipsis;
-    white-space: nowrap; transition: border-color .08s, background .08s, color .08s;
+  /* ---- Session actions: begin shared block ---------------------------------
+     The action bar (static/actions.js): one primary action and a More menu,
+     the same in the dashboard's task panel, its list rows and the popped-out
+     session window. index.html and session.html carry this block word for
+     word (tests/test_session_actions.py compares them). */
+  .am-bar { display: inline-flex; align-items: center; gap: var(--s-200); flex-wrap: nowrap; }
+  .am-wrap { display: inline-flex; }
+  .am-btn {
+    display: inline-flex; align-items: center; gap: var(--s-100);
+    height: 32px; padding: 0 var(--s-300); border-radius: var(--r-200);
+    background: var(--surface); color: var(--fg); border: 1px solid var(--border-strong);
+    font: inherit; font-size: var(--fs-300); font-weight: 500; line-height: var(--lh-300);
+    cursor: pointer; white-space: nowrap;
   }
-  .theme-dd-trigger:hover { background: var(--hover); border-color: var(--border-strong); color: var(--fg); }
+  .am-btn:hover { background: var(--hover); }
+  .am-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .am-btn.is-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+  .am-btn.is-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .am-btn[aria-disabled="true"] { color: var(--fg-disabled); background: var(--surface); border-color: var(--border); cursor: not-allowed; }
+  .am-more[aria-expanded="true"] { background: var(--pressed); }
+  .am-dots { font-size: var(--fs-400); line-height: 1; }
+  .am-menu {
+    position: fixed; z-index: 210; min-width: 220px; max-width: 320px;
+    display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain;
+    background: var(--surface-overlay); border: 1px solid var(--border);
+    border-radius: var(--r-300); box-shadow: var(--e-200); padding: var(--s-100);
+  }
+  .am-menu[hidden] { display: none; }
+  .am-item {
+    display: flex; flex-direction: column; align-items: stretch; flex: 0 0 auto;
+    width: 100%; min-height: 32px; padding: var(--s-100) var(--s-200);
+    background: transparent; border: 0; border-radius: var(--r-200); text-align: left;
+    font: inherit; font-size: var(--fs-200); line-height: var(--lh-200); color: var(--fg); cursor: pointer;
+  }
+  .am-item[hidden] { display: none; }
+  .am-item:hover { background: var(--hover); }
+  .am-item:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+  .am-item.danger { color: var(--c-danger-fg); }
+  .am-item.danger:hover { background: var(--c-danger-bg); }
+  .am-item[aria-disabled="true"] { color: var(--fg-disabled); cursor: not-allowed; }
+  .am-item[aria-disabled="true"]:hover { background: transparent; }
+  .am-lbl { display: flex; align-items: center; gap: var(--s-100); }
+  .am-check { display: inline-block; width: 12px; }
+  .am-why { color: var(--fg-muted); font-size: var(--fs-100); line-height: var(--lh-100); white-space: normal; }
+  .am-sep { flex: 0 0 auto; height: 1px; background: var(--border); margin: var(--s-100) 0; }
+  /* The terminal colour picker, opened from its item in the menu. */
   .theme-dd-menu {
-    position: fixed; z-index: 200;
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 10px; box-shadow: 0 12px 36px rgba(0,0,0,.22);
-    width: 280px; max-height: 420px;
+    position: fixed; z-index: 220; width: 280px; max-height: 420px;
     display: flex; flex-direction: column; overflow: hidden;
+    background: var(--surface-overlay); border: 1px solid var(--border);
+    border-radius: var(--r-300); box-shadow: var(--e-200);
   }
   .theme-dd-search {
-    border: 0; border-bottom: 1px solid var(--border);
-    padding: 9px 12px; font: inherit; font-size: 13px;
+    flex: 0 0 auto; border: 0; border-bottom: 1px solid var(--border);
+    padding: var(--s-200) var(--s-300); font: inherit; font-size: var(--fs-300);
     background: transparent; color: var(--fg); outline: none;
   }
-  .theme-dd-list { overflow-y: auto; padding: 6px; }
+  .theme-dd-search:focus-visible { box-shadow: inset 0 0 0 2px var(--focus-ring); }
+  .theme-dd-list { overflow-y: auto; padding: var(--s-100); }
   .theme-dd-section {
-    padding: 8px 8px 4px; font-size: 10px;
-    color: var(--fg-muted); text-transform: uppercase;
-    font-weight: 600; letter-spacing: 0.06em;
+    padding: var(--s-200) var(--s-200) var(--s-100); font-size: var(--fs-100);
+    color: var(--fg-muted); text-transform: uppercase; font-weight: 600; letter-spacing: .05em;
   }
-  .theme-dd-empty { padding: 8px 12px; font-size: 12px; color: var(--fg-subtle); }
-  .theme-dd-item {
-    display: flex; align-items: center; gap: 6px;
-    padding: 5px 6px 5px 4px; border-radius: 5px;
-    font-size: 12.5px; line-height: 1.4;
-  }
+  .theme-dd-empty { padding: var(--s-200) var(--s-300); font-size: var(--fs-200); color: var(--fg-muted); }
+  .theme-dd-item { display: flex; align-items: center; gap: var(--s-100); border-radius: var(--r-200); }
   .theme-dd-item:hover { background: var(--hover); }
-  .theme-dd-item.current .name { color: var(--selected-fg); font-weight: 600; }
-  .theme-dd-item .star {
-    background: transparent; border: 0; cursor: pointer;
-    color: var(--fg-muted); font-size: 14px; line-height: 1;
-    padding: 2px 6px; border-radius: 4px; flex-shrink: 0;
+  .theme-dd-item .star, .theme-dd-item .name {
+    background: transparent; border: 0; font: inherit; cursor: pointer; color: var(--fg);
+    border-radius: var(--r-200); min-height: 28px;
   }
+  .theme-dd-item .star { flex: 0 0 auto; color: var(--fg-muted); padding: 0 var(--s-200); }
   .theme-dd-item .star:hover { background: var(--selected-bg); color: var(--selected-fg); }
   .theme-dd-item .star.is-fav { color: var(--selected-fg); }
   .theme-dd-item .name {
-    flex: 1; cursor: pointer; overflow: hidden;
-    text-overflow: ellipsis; white-space: nowrap;
-    padding: 1px 0;
+    flex: 1; min-width: 0; text-align: left; padding: 0 var(--s-100); font-size: var(--fs-200);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+  .theme-dd-item.current .name { color: var(--selected-fg); font-weight: 600; }
+  .theme-dd-item .star:focus-visible, .theme-dd-item .name:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+  @media (pointer: coarse) {
+    .am-btn, .am-item, .theme-dd-item .star, .theme-dd-item .name { min-height: var(--touch-min); }
+    .am-btn { height: auto; min-width: var(--touch-min); }
+    .theme-dd-item .star { min-width: var(--touch-min); }
+    .theme-dd-search { font-size: var(--fs-400); min-height: var(--touch-min); }
+  }
+  /* ---- Session actions: end shared block */
   .ij-menu {
     position: fixed; z-index: 100; background: var(--surface);
     border: 1px solid var(--border); border-radius: 8px;
@@ -2657,12 +2673,6 @@
     /* A sideways-scrolling row clips what hangs below it, so while its status
        or priority menu is open the row wraps instead of scrolling. */
     .dp-meta:has(.wf-menu:not([hidden]), .pr-menu:not([hidden])) { overflow: visible; flex-wrap: wrap; }
-    .dp-actions, .dp-actions .actions {
-      flex-wrap: nowrap; overflow-x: auto;
-      -webkit-overflow-scrolling: touch; scrollbar-width: none;
-    }
-    .dp-actions::-webkit-scrollbar, .dp-actions .actions::-webkit-scrollbar { display: none; }
-    .dp-actions button, .dp-actions select { flex: 0 0 auto; }
 
     /* Bigger touch targets */
     .dp-close { font-size: 24px; padding: 6px 10px; }
@@ -2721,6 +2731,11 @@
     /* Trays and menus fit the screen, and their rows are finger-sized. */
     #notif-tray, #usage-tray, #settings-panel { left: var(--s-200); right: var(--s-200); width: auto; }
     .me-item, .pm-item, .fm-item, .notif-item, .wf-item, .pr-item, .ov-menu button { min-height: var(--touch-min); }
+    /* The action bar and its menu, as the shared block's (pointer: coarse) rule. */
+    .am-btn, .am-item, .theme-dd-item .star, .theme-dd-item .name { min-height: var(--touch-min); }
+    .am-btn { height: auto; min-width: var(--touch-min); }
+    .theme-dd-item .star { min-width: var(--touch-min); }
+    .theme-dd-search { min-height: var(--touch-min); }
 
     /* Touch targets in the page, the task panel and the PO's drawer. */
     /* A phone swipes its board a column at a time (scroll-snap); the edge
@@ -2828,6 +2843,7 @@
 </style>
 <!-- Shared with fileview.html and session.html: the code highlighter, and the
      store that keeps review comments until they are delivered. -->
+<script src="/static/actions.js"></script>
 <script src="/static/hl.js"></script>
 <script src="/static/comments.js"></script>
 <script src="/static/attach.js"></script>
@@ -3097,7 +3113,8 @@ function writeSlot(el, html) {
 // <body>. Note which control had focus and give it to its equivalent in the
 // new markup: the same control if it survived, else the one in its place.
 const FOCUSABLE = 'button:not([disabled]), a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
-const controlId = el => [el.tagName, el.classList[0] || '', el.dataset.wf || '', el.dataset.itab || ''].join('|');
+const controlId = el => [el.tagName, el.classList[0] || '', el.dataset.wf || '', el.dataset.itab || '',
+                         el.dataset.act || '', el.classList.contains('am-more') ? 'more' : ''].join('|');
 function focusKeyIn(root) {
   const a = document.activeElement;
   if (!a || a === root || !root.contains(a)) return null;
@@ -3568,83 +3585,27 @@ function applyPlatformChrome() {
   if (nb) nb.title = `Start a new claude session in a new ${T()} window`;
 }
 
+// The state the shared action model (static/actions.js) reads, from a row of
+// the task list. The pop-out builds the same from its room (session.html).
+function actionState(r, isLive) {
+  const isRoom = !!(r.headless && r.roomId);
+  return {
+    kind: r.orphan ? 'orphan' : isRoom ? 'room' : 'raw',
+    sessionId: r.sessionId, roomId: r.roomId || '', cwd: r.cwd || '', pid: r.pid || '',
+    agent: r.agent || '', label: r.label || '', live: !!isLive, draft: !!r.draft,
+    status: isRoom ? (r.roomStatus || '') : (r.status || ''), resuming: !!r.resuming,
+    archived: !!r.archived, members: r.members || [],
+    makePo: r.makePo, currentTheme: r.currentTheme || '',
+    chatSchemeOn: !!(r.cwd && CHAT_SCHEME_ON[r.cwd]),
+  };
+}
+function actionEnv() {
+  return { hub: onHubMachine(), features: PLATFORM.features || {},
+           terminalName: T(), fileManagerName: FM() };
+}
+// One primary action and the More menu: in a list row, and in the task panel.
 function actionsCell(r, isLive) {
-  const sid = r.sessionId;
-  const current = r.currentTheme || '';
-  const placeholder = current ? `Terminal colours: ${current}` : 'Terminal colours…';
-  const themeTitle = current ? `Active ${T()} theme: ${current}` : `Pick a ${T()} color theme for this session`;
-  // Show the theme picker on any theming platform for any session with a pid
-  // or cwd. A live session (pid) themes the running tab on macOS / queues on
-  // Windows; a historical session (cwd only) sets the theme for its next Open.
-  const themeSelect = (feat('themes') && (r.pid || r.cwd)) ? `
-    <button type="button" class="theme-dd-trigger" data-pid="${r.pid || ''}" data-cwd="${esc(r.cwd || '')}" data-current="${esc(current)}" title="${esc(themeTitle)}">${esc(placeholder)}</button>` : '';
-  const finderBtn = r.cwd
-    ? (onHubMachine()
-        ? `<button class="finder-btn" data-path="${esc(r.cwd)}" title="Open cwd in ${esc(FM())}">📂 ${esc(FM())}</button>`
-        : `<button class="finder-btn" data-path="${esc(r.cwd)}" title="Browse this folder in the file viewer">📂 Browse</button>`)
-    : '';
-  // IDE opens an editor on the hub's own screen. From any other computer it
-  // shows the session's files in the Workspace tab instead.
-  const hub = onHubMachine();
-  const ijBtn = hub
-    ? `<button class="ij-btn" data-sid="${sid}" title="Open the project in its preferred editor (auto-detected by language)">🧠 IDE</button>`
-    : `<button class="ij-btn" data-sid="${sid}" title="Show this session's files in the Workspace tab">🧠 IDE</button>`;
-  // Focus raises this session's terminal window on the hub's screen, where the
-  // platform maps a tty to its tab. From another computer there is no window to
-  // raise, and the hub does not capture a terminal it did not start: no button.
-  const focusBtn = (hub && isLive && feat('focus'))
-    ? `<button class="focus-btn" data-pid="${r.pid}" title="Bring this session's ${esc(T())} window to the front">🪟 Focus</button>`
-    : '';
-  const closeTitle = feat('geometry')
-    ? `Close this ${T()} session (saves window position, kills claude)`
-    : `Close this ${T()} session (kills claude)`;
-  const openTitle = feat('geometry')
-    ? `Open in new ${T()} window — restores saved theme and position`
-    : `Open in new ${T()} window`;
-  const openCloseBtn = isLive
-    ? `<button class="close-btn" data-pid="${r.pid}" title="${esc(closeTitle)}">⛔ Close</button>`
-    : `<button class="open-btn" data-sid="${sid}" data-cwd="${esc(r.cwd)}" data-agent="${esc(r.agent || '')}" data-label="${esc(r.label || '')}" title="Open in the dashboard, headless — no terminal window">▶ Open</button>`;
-  const archiveBtn = isLive
-    ? ''
-    : (r.archived
-        ? `<button class="archive-btn" data-sid="${sid}" data-archived="1" title="Restore this session to the main list">📦 Unarchive</button>`
-        : `<button class="archive-btn" data-sid="${sid}" data-archived="0" title="Hide this session from the main list (reversible)">🗄 Archive</button>`);
-  const deleteBtn = isLive
-    ? ''
-    : `<button class="delete-btn" data-sid="${sid}" title="Permanently delete this session's transcript and sidecar data (irreversible)">🗑 Delete</button>`;
-  // Send: inject a prompt into a live session's terminal (the coordination doorbell).
-  const sendBtn = (isLive && r.pid && feat('send'))
-    ? `<button class="send-btn" data-pid="${r.pid}" data-agent="${esc(r.agent || '')}" title="Type a message into this running session and submit it">✉ Send</button>`
-    : '';
-  // History sessions open HEADLESS by default (▶ Open). A real terminal is the
-  // opt-in escape hatch. (Only history — resuming a live session would double
-  // it.) A window on the hub's screen is nothing another computer sees, so
-  // there Terminal resumes the session headless and shows the terminal the hub
-  // captures.
-  const terminalTitle = hub ? `Open in a real ${T()} terminal window` : 'Resume it here, headless, and show its terminal';
-  const terminalBtn = (!isLive && r.cwd)
-    ? `<button class="terminal-btn" data-sid="${sid}" data-cwd="${esc(r.cwd)}" data-agent="${esc(r.agent || '')}" data-label="${esc(r.label || '')}" title="${esc(terminalTitle)}">🖥 Terminal</button>`
-    : '';
-  // A past session that already knows a project becomes that project's PO.
-  // Offered where ▶ Open is: continuing a live session here too would split it.
-  const makePoBtn = (!isLive && r.cwd && !r.roomId && !r.orphan)
-    ? `<button class="makepo-btn" data-sid="${sid}" title="Start a new project with this conversation as its PO: the task you talk to about the project, which its other tasks report to">Make PO of a new project…</button>`
-    : '';
-  return `<div class="actions">
-    ${focusBtn}
-    ${sendBtn}
-    ${terminalBtn}
-    ${openCloseBtn}
-    ${makePoBtn}
-    ${archiveBtn}
-    ${deleteBtn}
-    <button class="rename-btn" data-sid="${sid}" title="Edit the label manually (also updates the iTerm tab name when live)">✎ Rename</button>
-    <button class="moveproj-btn" data-sid="${sid}" title="File this session under a project (or remove it from one)">📁 Move to project</button>
-    <button class="auto-btn" data-sid="${sid}" title="Ask Claude to suggest a label based on the conversation">✨ Auto</button>
-    ${finderBtn}
-    ${ijBtn}
-    ${themeSelect}
-  </div>`;
+  return SessionActions.actionBarHtml(SessionActions.sessionActions(actionState(r, isLive), actionEnv()));
 }
 
 let ALL_ROWS = [];
@@ -3942,11 +3903,9 @@ function agentBadges(r) {
   }).join('');
 }
 
-let detailHeadOverflow = '';
 function detailHead(r, isRoom) {
   return `<div class="dp-head">
       <h2>${taskNoHtml(r, false)}${esc(detailTitle(r))}</h2>
-      ${detailHeadOverflow || ''}
       ${isRoom && r.roomId ? `<button class="dp-popout" data-room="${esc(r.roomId)}" title="Pop out to a floating window">⧉ Pop out</button>` : ''}
       <button class="dp-close" title="Close (Esc)">×</button>
     </div>`;
@@ -4001,8 +3960,7 @@ function detailMeta(r, isLive, isRoom, now) {
 function detailSummary(r, isRoom) {
   if (r.draft) {
     return `<div class="dp-summary draft">
-      <div class="dp-summary-t">Not started. The spec below is what the agents will be given.</div>
-      ${isRoom && r.roomId ? `<button class="open-btn room-resume-inline" data-room="${esc(r.roomId)}">▶ Start</button>` : ''}
+      <div class="dp-summary-t">Not started. The spec below is what the agents will be given; Start launches them.</div>
     </div>`;
   }
   const last = (r.lastAgent || '').trim();
@@ -4044,74 +4002,10 @@ function issueEmpty(msg) {
   return `<div class="dp-empty">${esc(msg)}</div>`;
 }
 
-function detailActions(r, isLive, isRoom, isOrphan) {
-  if (isOrphan) {
-    return `<div class="dp-actions">
-      <button class="open-btn orphan-open" data-grp="${esc(r.sessionId)}" title="Resume this collaboration headless">▶ Open</button>
-      <button class="delete-btn orphan-delete" data-grp="${esc(r.sessionId)}" title="Delete — every agent transcript and the ~/cs scratch folder">🗑 Delete</button>
-    </div>`;
-  }
-  if (isRoom) {
-    // Everything else a task can do lives in the ⋯ menu (detailOverflow).
-    const lifecycle = isLive
-      ? `<button class="room-end delete-btn" data-room="${esc(r.roomId)}" title="Stop the agent(s), keep the session">✕ End</button>`
-      : `<button class="open-btn room-resume-inline" data-room="${esc(r.roomId)}" title="${r.draft ? 'Start — launch the agent(s) with the task spec' : 'Relaunch the agent(s) with their conversation'}">${r.draft ? '▶ Start' : '▶ Open'}</button>
-         <button class="delete-btn room-delete" data-room="${esc(r.roomId)}" title="Delete — transcripts, room record, and the ~/cs scratch folder">🗑 Delete</button>`;
-    // A draft's Start lives in the summary, where it reads as the next step
-    // rather than as one of ten equal options. Repeating it here is the
-    // two-primaries bug.
-    const contextual = r.draft ? '' : lifecycle;
-    return contextual ? `<div class="dp-actions"><div class="actions">${contextual}</div></div>` : '';
-  }
+// The task panel's actions: the same bar as the pop-out's header, from the
+// same model (docs/session-actions.md).
+function detailActions(r, isLive) {
   return `<div class="dp-actions">${actionsCell(r, isLive)}</div>`;
-}
-
-// Everything that is not the next action. Words, not emoji: the labels were
-// already there, the pictures were decoration.
-function detailOverflow(r, isLive, isRoom) {
-  if (!isRoom || !r.roomId) return '';
-  const cwd = r.cwd || '';
-  const current = r.currentTheme || '';
-  const items = [];
-  if (isLive) {
-    // On the hub this shows or hides the agents' terminals. From another
-    // computer it is Terminal: it shows the terminal the hub captures, and
-    // pressed again brings it to the front, so hiding it is an item of its own
-    // (shown while the terminal is, set when the menu opens).
-    if (onHubMachine()) items.push(`<button class="ov-item dp-terms-btn">Show terminals</button>`);
-    else items.push(`<button class="ov-item dp-terms-btn" title="The agent's terminal, as the hub captures it. Pressed again, it comes to the front.">Terminal</button>`,
-                    `<button class="ov-item dp-terms-hide" hidden>Hide terminal</button>`);
-    items.push(`<button class="ov-item dp-pause-btn" data-room="${esc(r.roomId)}" data-status="${esc(r.status || '')}">${r.status === 'paused' ? 'Resume' : 'Pause'}</button>`);
-  }
-  items.push(`<button class="ov-item rename-btn" data-sid="${esc(r.sessionId)}">Rename</button>`);
-  items.push(`<button class="ov-item auto-btn" data-sid="${esc(r.sessionId)}">Suggest a name</button>`);
-  const agentsWhy = isLive
-    ? 'This task is running — agents cannot be reassigned under a live task. End it first, then reassign.'
-    : 'Change who is assigned to this task and which model each one runs';
-  items.push(`<span title="${esc(agentsWhy)}"><button class="ov-item agents-btn" data-room="${esc(r.roomId)}"${isLive ? ' disabled' : ''}>Agents and models</button></span>`);
-  items.push(`<button class="ov-item moveproj-btn" data-sid="${esc(r.sessionId)}">Move to project</button>`);
-  if (makePoTaskOk(r, !!projectOfRoom(r.roomId), isPoRoom(r.roomId, currentPoRooms())))
-    items.push(`<button class="ov-item makepo-btn" data-room="${esc(r.roomId)}" title="Start a new project with this task as its PO: the task you talk to about the project, which its other tasks report to">Make PO of a new project…</button>`);
-  if (cwd) {
-    items.push(`<button class="ov-item finder-btn" data-path="${esc(cwd)}">${esc(finderLabel())}</button>`);
-    items.push(`<button class="ov-item ij-btn" data-sid="${esc(r.sessionId)}">${onHubMachine() ? 'Open in editor' : 'Show in Workspace'}</button>`);
-  }
-  if (feat('themes') && cwd) {
-    items.push(`<button type="button" class="ov-item theme-dd-trigger" data-pid="" data-cwd="${esc(cwd)}" data-current="${esc(current)}" title="Pick the terminal colour scheme for this task's folder">${current ? 'Terminal colours: ' + esc(current) : 'Terminal colours…'}</button>`);
-    // Off by default: the chat follows the dashboard theme. On, it takes the
-    // folder's scheme instead, as it always did before global themes.
-    const on = !!CHAT_SCHEME_ON[cwd];
-    items.push(`<button type="button" class="ov-item chat-scheme-btn" role="menuitemcheckbox" aria-checked="${on}" data-cwd="${esc(cwd)}" data-on="${on ? 1 : 0}" title="${on ? 'The chat uses this folder’s terminal colours. Click to follow the dashboard theme.' : 'The chat follows the dashboard theme. Click to use this folder’s terminal colours instead.'}">${on ? '✓ ' : ''}Chat in terminal colours</button>`);
-  }
-  // Destructive last and set apart, never adjacent to the primary action.
-  if (!isLive) {
-    items.push(`<div class="ov-rule"></div>`);
-    items.push(`<button class="ov-item danger room-delete" data-room="${esc(r.roomId)}">Delete task</button>`);
-  }
-  return `<span class="ov-wrap">
-    <button class="dp-ov-btn" title="More actions" aria-haspopup="true">⋯</button>
-    <span class="ov-menu" hidden>${items.join('')}</span>
-  </span>`;
 }
 
 function jiraSection(r) {
@@ -4300,12 +4194,11 @@ function renderDetail() {
 
   // Top slot.
   const top = panel.querySelector('.dp-top');
-  detailHeadOverflow = detailOverflow(r, isLive, isRoom);
   const topHtml = detailHead(r, isRoom) + detailMeta(r, isLive, isRoom, now)
-    + detailActions(r, isLive, isRoom, isOrphan) + detailSummary(r, isRoom);
+    + detailActions(r, isLive) + detailSummary(r, isRoom);
   const topSig = withoutAgo(topHtml);
   if (top._html !== topSig) {
-    if (top.querySelector(DP_MENU_OPEN)) {
+    if (top.querySelector(DP_MENU_OPEN) || SessionActions.openIn(top) || (THEME_MENU && top.contains(THEME_MENU._amFrom))) {
       panel.dataset.topPending = '1';     // apply once the menu closes
     } else {
       const focus = focusKeyIn(top);
@@ -10573,69 +10466,86 @@ async function toggleFavoriteTheme(theme) {
 }
 
 function renderThemeMenu(menu, current) {
-  const q = THEME_MENU_FILTER.toLowerCase().trim();
-  const all = THEMES.map(t => t.name);
-  const matches = q ? all.filter(n => n.toLowerCase().includes(q)) : all;
-  const favs = matches.filter(n => FAVORITE_THEMES.has(n)).sort((a,b) => a.localeCompare(b));
-  const rest = matches.filter(n => !FAVORITE_THEMES.has(n));
-  const itemHtml = (name) => {
-    const fav = FAVORITE_THEMES.has(name);
-    const cur = name === current;
-    return `<div class="theme-dd-item ${cur ? 'current' : ''}" data-theme="${esc(name)}">
-      <button type="button" class="star ${fav ? 'is-fav' : ''}" title="${fav ? 'Remove from favorites' : 'Add to favorites'}">${fav ? '★' : '☆'}</button>
-      <span class="name" title="${esc(name)}">${esc(name)}</span>
-    </div>`;
-  };
-  let body = '';
-  if (favs.length) {
-    body += `<div class="theme-dd-section">Favorites</div>`;
-    body += favs.map(itemHtml).join('');
-  }
-  if (rest.length) {
-    body += `<div class="theme-dd-section">${favs.length ? 'All themes' : 'Themes'}</div>`;
-    body += rest.map(itemHtml).join('');
-  }
-  if (!favs.length && !rest.length) {
-    body = `<div class="theme-dd-empty">No matches.</div>`;
-  }
-  menu.querySelector('.theme-dd-list').innerHTML = body;
+  menu.querySelector('.theme-dd-list').innerHTML =
+    SessionActions.themeListHtml(THEMES.map(t => t.name), [...FAVORITE_THEMES], current, THEME_MENU_FILTER);
 }
 
+// The colour picker opens beside the item that opened it, flipped and kept
+// inside the window, and follows it on scroll and resize (static/actions.js).
+// If the More menu closes first, it stays, against the More button.
 function openThemeMenu(trigger) {
   closeThemeMenu();
   const current = trigger.dataset.current || '';
   THEME_MENU_FILTER = '';
   const menu = document.createElement('div');
   menu.className = 'theme-dd-menu';
+  menu.setAttribute('role', 'dialog');
+  menu.setAttribute('aria-label', 'Terminal colours');
   menu.dataset.pid = trigger.dataset.pid || '';
   menu.dataset.cwd = trigger.dataset.cwd || '';
   menu.dataset.key = trigger.dataset.pid || trigger.dataset.cwd || '';
   menu.dataset.current = current;
   menu.innerHTML = `
-    <input type="text" class="theme-dd-search" placeholder="Search themes…">
+    <input type="text" class="theme-dd-search" placeholder="Search schemes…" aria-label="Search colour schemes">
     <div class="theme-dd-list"></div>
   `;
   document.body.appendChild(menu);
   renderThemeMenu(menu, current);
-  const rect = trigger.getBoundingClientRect();
-  const top = rect.bottom + 4;
-  const left = Math.min(rect.left, window.innerWidth - menu.offsetWidth - 8);
-  menu.style.top = top + 'px';
-  menu.style.left = Math.max(8, left) + 'px';
-  menu.querySelector('.theme-dd-search').focus();
+  menu._amFrom = trigger;
+  menu._am = SessionActions.child(menu, trigger);
+  trigger.setAttribute('aria-expanded', 'true');
+  menu.querySelector('.theme-dd-search').focus({ preventScroll: true });
   THEME_MENU = menu;
 }
 
-function closeThemeMenu() {
+// back: put focus back on what opened it (Escape, a choice made).
+function closeThemeMenu(back) {
   if (THEME_MENU) {
-    THEME_MENU.remove();
+    const m = THEME_MENU;
     THEME_MENU = null;
     THEME_MENU_FILTER = '';
+    if (m._amFrom) m._amFrom.setAttribute('aria-expanded', 'false');
+    if (m._am) { if (back) m._am.returnFocus(); m._am.stop(); }
+    m.remove();
   }
 }
 
 function selectInteracting() {
-  return THEME_MENU !== null;
+  return THEME_MENU !== null || SessionActions.isOpen();
+}
+// "Hide terminal" shows only while the captured terminal is up; the task
+// panel's header waited for the menu to close before it was rewritten.
+SessionActions.onOpen = (menu) => {
+  const hide = menu.querySelector('.dp-terms-hide');
+  if (hide) hide.hidden = !capturedTermsShown();
+};
+SessionActions.onClose = () => {
+  const dpp = document.getElementById('detail-panel');
+  if (dpp && dpp.dataset.topPending) setTimeout(renderDetail, 0);
+};
+
+// A popped-out session window asks the dashboard for what needs its dialogs
+// (static/actions.js): Agents and models, Move to project, Make PO, Delete
+// and Show in Workspace. Each opens the task here and asks before it acts.
+const TASK_ACTS = ['agents', 'moveproj', 'makepo', 'delete', 'workspace'];
+async function runTaskAction(rid, act) {
+  if (!TASK_ACTS.includes(act)) return;
+  let row = ALL_ROWS.find(x => x.roomId === rid);
+  if (!row) { await refresh({ now: true }); row = ALL_ROWS.find(x => x.roomId === rid); }
+  if (!row) { toast('That task is not in the list', 4000, 'err'); return; }
+  if (SELECTED_SID !== row.sessionId) openDetail(row.sessionId);
+  if (act === 'agents') {
+    if (row.isLive) toast('Running: end it first, then reassign.', 4000);
+    else showAgentsModal(rid);
+  } else if (act === 'moveproj') await moveSessionToProject(row.sessionId);
+  else if (act === 'makepo') {
+    const item = SessionActions.makePoItem(actionState(row, row.isLive));
+    if (item.disabled) toast(item.reason, 5000);
+    else await makePoFlow(row);
+  } else if (act === 'delete') {
+    if (row.isLive) toast('Running: end it first.', 4000);
+    else await deleteRoom(row);
+  } else if (act === 'workspace') openWorkspaceTab(row.sessionId);
 }
 
 let DISPLAYED_ORDER = []; // session IDs in their last-rendered order
@@ -11982,6 +11892,10 @@ document.addEventListener('click', (ev) => {
 window.addEventListener('message', (ev) => {
   const d = ev.data;
   if (d && d.type === 'dock-session' && d.roomId) openDetail(d.roomId);
+  if (d && d.type === 'session-action' && d.roomId && ev.origin === location.origin) {
+    try { window.focus(); } catch (e) {}
+    runTaskAction(String(d.roomId), String(d.act || ''));
+  }
   // A task link clicked inside a session or file viewer framed in this page.
   if (d && d.type === 'open-task' && d.roomId && ev.origin === location.origin) openTaskLink(String(d.roomId), String(d.agent || ''));
   // A balloon link clicked in a chat framed here; a chat framed here that has
@@ -13099,7 +13013,8 @@ document.addEventListener('click', async (ev) => {
     const pidRaw = THEME_MENU.dataset.pid;
     const cwd = THEME_MENU.dataset.cwd || '';
     const previous = THEME_MENU.dataset.current || '';
-    closeThemeMenu();
+    closeThemeMenu(true);
+    SessionActions.closeMenu({ focus: true });
     if (theme === previous) return;
     // Live session → apply by pid; historical → set by cwd for next Open.
     const payload = pidRaw ? {pid: +pidRaw, theme} : {cwd, theme};
@@ -13143,7 +13058,7 @@ document.addEventListener('click', async (ev) => {
 
   // Row/card click → open the right-side detail panel (in detail mode) or
   // fall back to the legacy behavior (focus iTerm / open transcript modal).
-  if (ev.target.closest('.actions')) return;
+  if (ev.target.closest('.actions, .am-bar')) return;
   if (ev.target.closest('#detail-panel')) return;
   const sel = ev.target.closest('.row[data-sid]');
   if (!sel) return;
@@ -13179,7 +13094,11 @@ document.addEventListener('input', (ev) => {
 // keyboard: / focuses search, r refreshes, Esc closes theme menu
 document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && THEME_MENU) {
-    closeThemeMenu();
+    closeThemeMenu(true);
+    return;
+  }
+  if (THEME_MENU && THEME_MENU.contains(ev.target)) {
+    SessionActions.arrowKeys(ev, [THEME_MENU.querySelector('.theme-dd-search'), ...THEME_MENU.querySelectorAll('.theme-dd-item .name')]);
     return;
   }
   if (ev.target.tagName === 'INPUT' || ev.target.tagName === 'TEXTAREA') return;
@@ -13474,6 +13393,9 @@ window.ensUpdPlace = () => ({
     history.replaceState(null, '', location.pathname);
     if (!PROJECTS) await refreshProjects();
     openTaskLink(deepTask, deepQs.get('agent') || '', deepQs.get('project') || '');
+    // &act=: an action a popped-out session window sent here (runTaskAction).
+    const deepAct = deepQs.get('act');
+    if (deepAct && /^room-[\w-]+$/.test(deepTask)) runTaskAction(deepTask, deepAct);
   }
   // Back where it was after the page reloaded itself for an update: the same
   // project and tab, the same open task, the same scroll place.
