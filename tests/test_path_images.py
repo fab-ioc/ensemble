@@ -318,7 +318,7 @@ class ThreePages(unittest.TestCase):
             self.assertNotIn("#", re.search(r"\.path-img > \.att-thumb \{[^}]*\}", src).group(0), name)
 
     def test_the_points_of_a_balloon_are_drawn_in_its_context(self):
-        self.assertIn("withPathAbbrevs(m.text, () => itemsHtml(it, bars, md))", js_function("pointItemsHtml"))
+        self.assertIn("withPathAbbrevs(m.text, () => itemsHtml(it, bars, md, headBar))", js_function("pointItemsHtml"))
         self.assertIn("let h = inCtx() ? null : MD_CACHE.get(t); if (h == null) h = mdToHtml(t); if (!inCtx()) used.set(t, h);", SRC,
                       "an item of a message with abbreviations is drawn in its context, never from or into the cache")
         self.assertIn("+ '|' + THUMB_GONE.size;", SRC, "a picture gone from the hub redraws as its link")

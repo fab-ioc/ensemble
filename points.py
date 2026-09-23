@@ -59,6 +59,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import message_refs
+
 _d = None  # the dashboard module, set by bind()
 
 
@@ -204,6 +206,24 @@ def _comment_items(text: str) -> tuple[str, list[str]] | None:
     return head, items
 
 
+def _head_words(head: str) -> str:
+    """The words a points message carries above its first item: its head
+    without the ``## Points (N)`` title line and its ``[image]`` lines. They
+    are a point of their own (the person typed them as the message and then
+    added points under them; the editor now makes them point 1 itself, this
+    keeps an older page's send whole)."""
+    lines = (head or "").split("\n")[1:]
+    return "\n".join(ln for ln in lines if not ln.startswith(message_refs.IMAGE_PREFIX)).strip()
+
+
+def _point_texts(split: tuple[str, list[str]]) -> list[str]:
+    """One text per point of a split message: the head's words first when it
+    has any, then each item."""
+    head, items = split
+    words = _head_words(head)
+    return ([words] if words else []) + list(items)
+
+
 def _first_words(text: str, n: int = _WORDS) -> str:
     t = " ".join(strip_point_lines(text).split())
     t = re.sub(r"^\*\*\d+\.\*\*\s*", "", t)
@@ -220,6 +240,11 @@ def _deliverable(text: str, ids: list[str]) -> str:
     if split and len(split[1]) == len(ids):
         head, items = split
         return head + "\n\n" + "\n\n".join(f"{it}\n\n[point {i}]" for it, i in zip(items, ids))
+    if split and len(split[1]) + 1 == len(ids) and _head_words(split[0]):
+        # The head's words are the first point: their line under the head
+        # (under its images, so they stay with it).
+        head, items = split
+        return head + f"\n\n[point {ids[0]}]\n\n" + "\n\n".join(f"{it}\n\n[point {i}]" for it, i in zip(items, ids[1:]))
     return text.rstrip() + "\n\n" + "\n".join(f"[point {i}]" for i in ids)
 
 
@@ -519,7 +544,7 @@ def take(room: dict, text: str, to: str = "", key: str = "", now: float | None =
             _save(rid, led)
             return text, []
         split = _comment_items(body)
-        texts = split[1] if split else [body]
+        texts = _point_texts(split) if split else [body]
         made = [_new_point(led, t, owner, now, key, sid) for t in texts]
         if split and _REVIEW_HEAD.match(body):
             for p in made:

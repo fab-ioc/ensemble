@@ -82,6 +82,16 @@ class ExpandTest(unittest.TestCase):
         self.assertEqual(out, (f"## Points (1)\n\nIntro {URL2}\n\n[ref {URL2}] from sam in \"PO\" at {WHEN}:\n> Ship it\n\n"
                                f"[image] C:\\t\\attachments\\h.png\n\n**1.** first\n\n[point P1]"))
         self.assertEqual(mr.strip_message_refs(out), with_img.replace("\n[image]", "\n\n[image]"))
+        # Head words that are a point of their own: their [point] line stays
+        # at the head's end, under the ref block and the head's image.
+        head_pt = f"## Points (1)\n\nIntro {URL2}\n[image] C:\\t\\attachments\\h.png\n\n[point P1]\n\n**1.** first\n\n[point P2]"
+        out = mr.expand_message_refs(head_pt, lookup)
+        self.assertEqual(out, (f"## Points (1)\n\nIntro {URL2}\n\n[ref {URL2}] from sam in \"PO\" at {WHEN}:\n> Ship it\n\n"
+                               f"[image] C:\\t\\attachments\\h.png\n\n[point P1]\n\n**1.** first\n\n[point P2]"))
+        self.assertEqual(mr.strip_message_refs(out), head_pt.replace("\n[image]", "\n\n[image]"))
+        self.assertEqual(mr.with_images(f"## Points (1)\n\nIntro\n[image] h.png\n\n[point P1]\n\n**1.** first\n\n[point P2]",
+                                        ["C:\\t\\attachments\\h.png"], ["h.png"]),
+                         "## Points (1)\n\nIntro\n[image] C:\\t\\attachments\\h.png\n\n[point P1]\n\n**1.** first\n\n[point P2]")
         review = f"## Review comments (1)\n\n**1.** > quoted\n\nsee {URL}"
         self.assertTrue(mr.expand_message_refs(review, lookup).endswith(f"see {URL}\n\n[ref {URL}] from claude in \"Docs\" at {WHEN}:\n> Merged.\n> Tests pass."))
         plain = "## Points (1)\n\n**1.** nothing to expand\n\n[point P1]"
