@@ -624,10 +624,19 @@
   .msg .copy-field { display:flex; align-items:center; gap:var(--s-200); margin:var(--s-100) 0; color:var(--fg-muted); font-size:var(--fs-200); line-height:16px; }
   .msg .copy-field input { flex:1 1 auto; min-width:0; height:24px; padding:0 var(--s-100); background:var(--surface); color:var(--fg);
     border:1px solid var(--border-strong); border-radius:var(--r-200); font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:var(--fs-200); }
-  /* Landed on from a link: the balloon is the selected one for a moment. */
+  /* Landed on from a link: the balloon takes the drop-target treatment (design
+     system §1) for a moment — a 2px accent ring over a wash fill, both painted
+     as box-shadow (ring layer first, so it sits on top of the fill) so the
+     real background never changes and the fade at the end reveals it cleanly
+     instead of cutting to it. */
   .msg.landed { animation:landed 2.4s ease-out; }
-  @keyframes landed { 0%, 40% { background:var(--selected-bg); } }
-  @media (prefers-reduced-motion: reduce) { .msg.landed { animation:none; background:var(--selected-bg); } }
+  @keyframes landed {
+    0%, 40% { box-shadow:inset 0 0 0 2px var(--accent), inset 0 0 0 999px var(--selected-bg); }
+    100% { box-shadow:inset 0 0 0 2px transparent, inset 0 0 0 999px transparent; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .msg.landed { animation:none; box-shadow:inset 0 0 0 2px var(--accent), inset 0 0 0 999px var(--selected-bg); }
+  }
   /* A link to another balloon, as a chip naming it: who, where, when, its first words. */
   .msg .text.md a.ref-chip, a.ref-chip { display:inline-flex; align-items:baseline; gap:var(--s-100); max-width:100%; box-sizing:border-box;
     vertical-align:baseline; padding:0 var(--s-100); background:var(--surface-sunken); color:var(--fg); border:1px solid var(--border);
@@ -4675,10 +4684,12 @@ document.addEventListener('click', ev => {
   ev.preventDefault();
   host.postMessage({ type: 'open-task', roomId: a.dataset.task, agent: a.dataset.agent || '' }, location.origin);
 });
-// A balloon link's chip: in this conversation it lands on the balloon; inside
-// the dashboard, the dashboard opens that task or PO at it; on its own, this
-// page goes there. With a modifier key it is a link, opening a new tab.
-document.addEventListener('click', ev => {
+// A balloon link's chip — a point's "your message ↑" / "answer ↓" (pt-link)
+// as much as a ref-chip, sup-link or ask-link: in this conversation it lands
+// on the balloon; inside the dashboard, the dashboard opens that task or PO
+// at it; on its own, this page goes there. With a modifier key it is a link,
+// opening a new tab.
+function refClickHandler(ev) {
   const a = ev.target.closest && ev.target.closest('a.ref-chip, a.sup-link, a.cu-link, a.ask-link, a.pt-link');
   if (!a || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
   ev.preventDefault();
@@ -4688,7 +4699,8 @@ document.addEventListener('click', ev => {
   try { if (window.parent !== window && window.parent.location.origin === location.origin) host = window.parent; } catch (e) {}
   if (host) host.postMessage({ type: 'open-msg', roomId: room, msg }, location.origin);
   else location.href = a.href;
-});
+}
+document.addEventListener('click', refClickHandler);
 $('#goto-note .goto-x').addEventListener('click', () => showGotoNote(''));
 $('#msgs').addEventListener('mouseup', _onSelect);
 $('#msgs').addEventListener('touchend', _onSelect);
