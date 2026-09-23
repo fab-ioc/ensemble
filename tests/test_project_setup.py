@@ -20,6 +20,7 @@ import io
 import json
 import os
 import subprocess
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -36,7 +37,7 @@ NOW = 1_000_000.0
 
 def session_facts(**over):
     return {"kind": "session", "agents": ["claude"], "installed": ("claude", "codex"), "cwd": "C:\\w",
-            "cwdOk": True, "isLive": False, "updatedAt": NOW - 7200, **over}
+            "cwdOk": True, "isLive": False, "seen": True, "updatedAt": NOW - 7200, **over}
 
 
 def task_facts(**over):
@@ -83,6 +84,26 @@ class TheVerdict(unittest.TestCase):
         self.assertEqual(self.code(task_facts(project=own), {"id": "p2", "name": "Cars", "po": ""}), "other_project")
         self.assertEqual(self.code(task_facts(isLive=True)), "", "a task the hub runs is not split by a terminal")
 
+    def test_a_machine_with_neither_agent(self):
+        self.assertEqual(self.code(session_facts(installed=())), "not_installed")
+        self.assertEqual(self.code(session_facts(agents=["codex"], installed=())), "not_installed")
+        self.assertEqual(self.code(task_facts(installed=())), "not_installed")
+        self.assertEqual(self.code(session_facts(installed=None)), "", "not said: taken as both there")
+
+    def test_a_session_the_hub_cannot_see_needs_the_persons_word(self):
+        for f in (session_facts(seen=False), {k: v for k, v in session_facts().items() if k != "seen"},
+                  session_facts(agents=["codex"], seen=False, updatedAt=NOW - 86400)):
+            v = V(f, None, NOW)
+            self.assertEqual((v["ok"], v["code"], v.get("confirm")), (True, "unseen", "closed"), f)
+        self.assertEqual(self.code(session_facts(seen=False, isLive=True)), "live")
+        self.assertEqual(self.code(task_facts(seen=False)), "", "a task runs in the hub, which sees it")
+        # The listing: nothing shows whether a Codex started in a terminal is open.
+        facts = dashboard._PoFacts.__new__(dashboard._PoFacts)
+        facts.installed, facts._dirs = ("claude", "codex"), {}
+        codex = facts.of_row({"sessionId": "s", "agent": "codex", "cwd": "C:\\w", "updatedAt": NOW - 86400})
+        claude = facts.of_row({"sessionId": "s", "agent": "claude", "cwd": "C:\\w", "updatedAt": NOW - 86400})
+        self.assertEqual((codex["seen"], claude["seen"]), (False, True))
+
     def test_every_refusal_says_why_and_what_to_do(self):
         for v in VERDICTS:
             with self.subTest(code=v["code"]):
@@ -99,7 +120,7 @@ VERDICTS = [
     {"ok": False, "code": "not_installed", "agent": "codex"}, {"ok": False, "code": "other_project", "project": "Cars"},
     {"ok": False, "code": "no_conversation"}, {"ok": False, "code": "no_cwd", "cwd": "D:\\gone"},
     {"ok": False, "code": "no_cwd", "cwd": ""}, {"ok": False, "code": "has_po", "project": "Motors", "po": "Motors PO"},
-    {"ok": False, "code": "live"}, {"ok": True, "code": "recent", "confirm": "closed", "min": 1},
+    {"ok": False, "code": "live"}, {"ok": True, "code": "unseen", "confirm": "closed"}, {"ok": True, "code": "recent", "confirm": "closed", "min": 1},
     {"ok": True, "code": "recent", "confirm": "closed", "min": 12}, {"ok": False, "code": "what"},
 ]
 
@@ -107,9 +128,10 @@ VERDICTS = [
 class TheHub(Hub):
     def setUp(self):
         super().setUp()
-        self.live = {}                  # sid -> (open in a terminal, last written)
+        self.live = {}                  # sid -> what the hub reads of it now
         p = mock.patch.object(dashboard, "_session_live_now",
-                              lambda sid, agent, cwd: self.live.get(sid, (False, time.time() - 7200)))
+                              lambda sid, agent: {"live": False, "seen": True, "written": time.time() - 7200,
+                                                  "cwd": "", **self.live.get(sid, {})})
         p.start()
         self.addCleanup(p.stop)
         self.rows = []
@@ -153,6 +175,55 @@ class TheHub(Hub):
     def task_row(self, rid, cwd, **over):
         return {"sessionId": rid, "roomId": rid, "cwd": str(cwd), "label": "task", "updatedAt": time.time() - 60,
                 "members": [{"agent": "claude"}], "hasConversation": True, **over}
+
+
+class WhatTheHubReadsNow(unittest.TestCase):
+    """_session_live_now: by the session's id, never by the folder a request names."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+
+    def rollout(self, cwd):
+        f = self.dir / "rollout-x-sid-c.jsonl"
+        f.write_text(json.dumps({"type": "session_meta", "payload": {"id": "sid-c", "cwd": cwd}}) + "\n", encoding="utf-8")
+        return f
+
+    def codex(self, files, records=()):
+        ag = SimpleNamespace(rollouts_for_session=lambda sid: files)
+        with mock.patch.object(dashboard.agents, "get_agent", lambda k: ag if k == "codex" else None), \
+                mock.patch.object(dashboard, "_read_agent_session_files", lambda: list(records)):
+            return dashboard._session_live_now("sid-c", "codex")
+
+    def test_a_codex_session_is_never_seen_closed(self):
+        now = self.codex([self.rollout("C:\\work\\engine")])
+        self.assertEqual((now["live"], now["seen"], now["cwd"]), (False, False, "C:\\work\\engine"))
+        self.assertGreater(now["written"], 0)
+
+    def test_a_codex_launched_by_the_hub_in_its_folder_is_live(self):
+        now = self.codex([self.rollout("C:\\work\\engine")], [{"agent": "codex", "cwd": "c:\\work\\engine\\"}])
+        self.assertTrue(now["live"])
+
+    def test_a_failed_read_is_unseen(self):
+        def boom(k):
+            raise RuntimeError("no codex")
+        with mock.patch.object(dashboard.agents, "get_agent", boom):
+            self.assertEqual(dashboard._session_live_now("sid-c", "codex")["seen"], False)
+        with mock.patch.object(dashboard, "_read_session_files", side_effect=OSError("denied")):
+            self.assertEqual(dashboard._session_live_now("sid-a", "claude")["seen"], False)
+
+    def test_a_claude_session_by_its_pid_file_and_transcript(self):
+        t = self.dir / "sid-a.jsonl"
+        t.write_text(json.dumps({"type": "user", "cwd": "C:\\work\\engine"}) + "\n", encoding="utf-8")
+        with mock.patch.object(dashboard, "_read_session_files", lambda: [{"sessionId": "sid-a"}]), \
+                mock.patch.object(dashboard, "find_transcript", lambda sid: t if sid == "sid-a" else None):
+            now = dashboard._session_live_now("sid-a", "claude")
+        dashboard._CWD_CACHE.pop(str(t), None)
+        self.assertEqual((now["live"], now["seen"], now["cwd"]), (True, True, "C:\\work\\engine"))
+        with mock.patch.object(dashboard, "_read_session_files", lambda: []), \
+                mock.patch.object(dashboard, "find_transcript", lambda sid: None):
+            self.assertEqual(dashboard._session_live_now("sid-a", "claude")["live"], False)
 
 
 class Candidates(TheHub):
@@ -226,19 +297,42 @@ class Candidates(TheHub):
 
 class Requests(TheHub):
     def test_open_in_a_terminal_is_refused(self):
-        self.live["sid-past-1"] = (True, time.time())
+        self.live["sid-past-1"] = {"live": True, "written": time.time()}
         status, out = self.call({**self.session(), "name": "Engine", "kind": "code", "path": str(self.work)})
         self.assertEqual(status, 409, out)
         self.assertIn("open in a terminal right now", out["message"])
         self.nothing_left()
 
     def test_written_to_recently_it_waits_for_the_person(self):
-        self.live["sid-past-1"] = (False, time.time() - 180)
+        self.live["sid-past-1"] = {"written": time.time() - 180}
         body = {**self.session(), "name": "Engine", "kind": "code", "path": str(self.work)}
         status, out = self.call(body)
         self.assertEqual(status, 409, out)
         self.assertIn("written to 3 minutes ago", out["message"])
         self.assertIn("confirm it is closed", out["message"])
+        self.nothing_left()
+        status, out = self.call({**body, "confirmClosed": True})
+        self.assertEqual(status, 200, out)
+
+    def test_a_folder_the_transcript_does_not_name_is_refused(self):
+        other = self.base / "other"
+        other.mkdir()
+        self.live["sid-past-1"] = {"cwd": str(other)}
+        status, out = self.call({**self.session(), "name": "Engine", "kind": "code", "path": str(self.work),
+                                 "confirmClosed": True})
+        self.assertEqual(status, 409, out)
+        self.assertIn(f"was started in {other}", out["message"])
+        self.nothing_left()
+        self.live["sid-past-1"] = {"cwd": str(self.work)}
+        status, out = self.call({**self.session(), "name": "Engine", "kind": "code", "path": str(self.work)})
+        self.assertEqual(status, 200, out)
+
+    def test_a_codex_the_hub_cannot_see_waits_for_the_person(self):
+        self.live["sid-past-1"] = {"seen": False, "written": time.time() - 86400}
+        body = {**self.session(agent="codex"), "name": "Engine", "kind": "code", "path": str(self.work)}
+        status, out = self.call(body)
+        self.assertEqual(status, 409, out)
+        self.assertIn("cannot see whether it is still open", out["message"])
         self.nothing_left()
         status, out = self.call({**body, "confirmClosed": True})
         self.assertEqual(status, 200, out)
@@ -311,6 +405,73 @@ class Requests(TheHub):
 
     def test_the_sessions_list_carries_the_verdict(self):
         self.assertIn('r["makePo"] = v', Path(dashboard.__file__).read_text(encoding="utf-8"))
+
+
+class ACodeFolderInTheProjectsFolder(TheHub):
+    """A code folder that is in the projects root with files in it is used in
+    place: nothing is written into it, the project's own files go beside it."""
+
+    def setUp(self):
+        super().setUp()
+        self.code = self.root / "engine"
+        (self.code / "src").mkdir(parents=True)
+        (self.code / "src" / "main.py").write_text("print(1)\n")
+        (self.code / "project.json").write_text('{"name": "the code folder\'s own"}')
+        self.before = self.listing()
+
+    def listing(self):
+        return sorted((str(p.relative_to(self.code)), p.read_bytes() if p.is_file() else b"")
+                      for p in self.code.rglob("*"))
+
+    def kept_apart(self, pid):
+        proj = dashboard.find_project(pid)
+        home = dashboard.project_home(proj)
+        self.assertEqual(os.path.normcase(proj["path"]), os.path.normcase(str(self.code)))
+        self.assertNotEqual(os.path.normcase(home), os.path.normcase(str(self.code)))
+        self.assertEqual(json.loads((Path(home) / "project.json").read_text(encoding="utf-8"))["id"], pid)
+        self.assertEqual(Path(dashboard._task_dir_for(proj, "A task")).parent, Path(home), "tasks go in its home")
+        self.assertEqual(dashboard.set_project_kind(pid, "documents"), (False, "code_kept_apart"))
+        # Found again from the projects root alone, as on a restored machine.
+        with mock.patch.object(dashboard, "PROJECTS_FILE", self.base / "nothing.json"):
+            again = [p for p in dashboard.load_projects() if p["id"] == pid]
+        self.assertEqual(os.path.normcase(again[0]["path"]), os.path.normcase(str(self.code)))
+        self.assertEqual(self.listing(), self.before, "the code folder is as it was")
+        return proj
+
+    def test_made_the_po_of_a_new_project(self):
+        status, out = self.call({**self.session(), "name": "Engine", "kind": "code", "path": str(self.code)})
+        self.assertEqual(status, 200, out)
+        self.kept_apart(out["project"]["id"])
+
+    def test_a_fresh_po(self):
+        status, out = self.call({"fresh": "claude", "name": "Engine", "kind": "code", "path": str(self.code)})
+        self.assertEqual(status, 200, out)
+        self.kept_apart(out["project"]["id"])
+
+    def test_registered_with_no_po(self):
+        status, out = self.call_url("/api/projects/new", {"path": str(self.code), "name": "Engine", "kind": "code"})
+        self.assertEqual(status, 200, out)
+        self.kept_apart(out["project"]["id"])
+
+    def test_a_failed_start_leaves_the_folder_and_no_home(self):
+        self.start_error = dashboard.StartRoomError("claude could not be started")
+        status, out = self.call({"fresh": "claude", "name": "Engine", "kind": "code", "path": str(self.code)})
+        self.assertEqual(status, 400, out)
+        self.assertEqual(self.listing(), self.before)
+        self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["engine"], "the home it would have had is gone")
+
+    def test_a_new_or_empty_folder_is_its_own_home_as_before(self):
+        ok, proj, _ = dashboard.register_project("Motors")
+        self.assertTrue((self.root / "Motors" / "project.json").is_file())
+        self.assertFalse(dashboard._home_apart(dashboard.find_project(proj["id"])))
+
+    def test_a_documents_folder_with_files_is_its_own_home(self):
+        docs = self.root / "Letters"
+        docs.mkdir()
+        (docs / "a.txt").write_text("x")
+        ok, proj, _ = dashboard.register_project(str(docs), "Letters", "documents")
+        self.assertTrue((docs / "project.json").is_file())
+        self.assertEqual(dashboard.set_project_kind(proj["id"], "documents"), (True, "ok"))
 
 
 @unittest.skipUnless(NODE, "node is not installed")

@@ -2571,19 +2571,18 @@
   dialog .cfg-hint, dialog .im-field .kind-opt { overflow-wrap: anywhere; }
   dialog .im-field select { padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; }
   /* The setup dialog (projectSetupFlow): its PO's choices, each opening what it needs below it. */
-  dialog .su-legend { font-size: 12px; color: var(--fg-subtle); font-weight: 500; margin-bottom: 2px; }
-  dialog .su-legend small { color: var(--fg-muted); font-weight: 400; margin-left: 6px; }
-  dialog .im-field.su-sub { margin: 0 0 10px 22px; }
-  dialog .su-list { max-height: 36vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px 8px; }
-  dialog .su-group { font-size: 12px; color: var(--fg-subtle); font-weight: 600; margin: 8px 0 4px; }
-  dialog .im-field .su-cand { display: block; padding: 4px 0; margin: 0; }
+  dialog .su-legend { font-size: var(--fs-200); color: var(--fg-subtle); font-weight: 500; margin-bottom: var(--s-050); }
+  dialog .su-legend small { color: var(--fg-muted); font-weight: 400; margin-left: var(--s-200); }
+  dialog .im-field.su-sub { margin: 0 0 var(--s-300) var(--s-600); }
+  dialog .su-list { max-height: 36vh; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--r-200); padding: var(--s-100) var(--s-300) var(--s-200); }
+  dialog .su-group { font-size: var(--fs-200); color: var(--fg-subtle); font-weight: 600; margin: var(--s-200) 0 var(--s-100); }
+  dialog .im-field .su-cand { display: block; padding: var(--s-100) 0; margin: 0; }
   dialog .im-field .su-cand.off { cursor: default; }
   dialog .im-field .su-cand.off b { color: var(--fg-muted); }
-  dialog .su-list .su-more { margin-top: 6px; }
+  dialog .su-list .su-more { margin-top: var(--s-200); }
   dialog #su-folder-note[data-alert], dialog #su-err { color: var(--c-danger-fg); }
   dialog #su-err:empty, dialog .kind-opt[hidden] { display: none; }
-  dialog #su-closed-field:not([hidden]) { display: block; margin: 8px 0 0; }
-  @media (max-width: 480px) { dialog#setup-modal { width: calc(100vw - 32px); max-width: none; padding: 16px; } }
+  dialog #su-closed-field:not([hidden]) { display: block; margin: var(--s-200) 0 0; }
   dialog .im-field input:focus,
   dialog .im-field textarea:focus {
     border-color: var(--focus-ring);
@@ -2799,6 +2798,15 @@
     .crumbs { flex-wrap: wrap; row-gap: var(--s-100); }
     /* A documents project's history and recent changes, finger-sized. */
     .wsh-ver, .dch-file, .kind-btn, .key-btn { min-height: var(--touch-min); }
+    /* The project setup dialog: a choice is its whole row, and every row,
+       field and button is finger-sized. */
+    dialog#setup-modal { width: calc(100vw - 2 * var(--s-400)); max-width: none; padding: var(--s-400); }
+    dialog#setup-modal .kind-opt { display: flex; flex-wrap: wrap; align-items: center; min-height: var(--touch-min); margin: 0; padding: var(--s-100) 0; box-sizing: border-box; }
+    dialog#setup-modal .kind-opt > .cfg-hint { flex-basis: 100%; }
+    dialog#setup-modal .kind-opt > br { display: none; }
+    dialog#setup-modal .kind-opt input { width: var(--s-400); height: var(--s-400); margin-right: var(--s-200); }
+    dialog#setup-modal input[type=text], dialog#setup-modal input[type=search], dialog#setup-modal select,
+    dialog#setup-modal button { min-height: var(--touch-min); font-size: var(--fs-400); }
     .dch-file { height: auto; }
     .wsh-top { max-height: 50%; }
     .scopebar { flex-wrap: wrap; }
@@ -5650,29 +5658,41 @@ function wireProjectsChrome() {
 function registerProjectFlow(prefillPath) {
   return projectSetupFlow({ path: prefillPath || '', inline: true });
 }
+function pickProjectOptions(allowNone, chosen) {
+  return (allowNone ? '<option value="">(no project — Unassigned)</option>' : '')
+    + registeredProjects().map(p => `<option value="${esc(p.id)}"${p.id === chosen ? ' selected' : ''}>${esc(p.name)}</option>`).join('')
+    + '<option value="__new__">+ New project…</option>';
+}
 // Modal project picker → resolves to a project id ('' = none) or null if cancelled.
 function pickProject(title, allowNone) {
   return new Promise(resolve => {
     const dlg = $('#modal');
-    const projs = registeredProjects();
     dlg.innerHTML = `
       <h3>${esc(title)}</h3>
       <div class="im-field">
         <label>Project</label>
-        <select id="pp-sel">
-          ${allowNone ? '<option value="">(no project — Unassigned)</option>' : ''}
-          ${projs.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}
-          <option value="__new__">+ New project…</option>
-        </select>
+        <select id="pp-sel">${pickProjectOptions(allowNone, '')}</select>
       </div>
       <div class="actions"><button id="pp-ok">OK</button><button id="pp-cancel" class="secondary">Cancel</button></div>`;
     dlg.showModal();
     const done = v => { dlg.close(); resolve(v); };
     $('#pp-cancel').onclick = () => done(null);
     dlg.addEventListener('cancel', () => done(null), { once: true });
+    // A new project is set up over the picker, which stays as it was: with
+    // the new project chosen, or as before when that is cancelled.
+    let was = $('#pp-sel').value;
+    const newProject = async () => {
+      const p = await registerProjectFlow();
+      const sel = $('#pp-sel');
+      if (!sel) return;
+      if (p) sel.innerHTML = pickProjectOptions(allowNone, p.id);
+      sel.value = p ? p.id : was;
+      was = sel.value;
+    };
+    $('#pp-sel').onchange = () => { if ($('#pp-sel').value === '__new__') newProject(); else was = $('#pp-sel').value; };
     $('#pp-ok').onclick = async () => {
       const v = $('#pp-sel').value;
-      if (v === '__new__') { dlg.close(); const p = await registerProjectFlow(); resolve(p ? p.id : null); return; }
+      if (v === '__new__') { newProject(); return; }
       done(v);
     };
   });
@@ -8679,6 +8699,8 @@ function makePoWords(v) {
     has_po: [`${q('project')} already has a PO: ${q('po')}.`, 'Open the project to talk to its PO.'],
     live: ['It is open in a terminal right now. Continued here as well, it would split in two.',
            'Close it in that terminal first (quit the agent), then choose it again.'],
+    unseen: ['Ensemble cannot see whether it is still open in a terminal. Continued in two places, it would split in two.',
+             'If it is open, close it there first, then confirm it is closed.'],
     recent: [`It was written to ${mins} minute${mins !== 1 ? 's' : ''} ago, so it may still be open in a terminal Ensemble cannot see. Continued in two places, it would split in two.`,
              'If it is open, close it there first, then confirm it is closed.'],
   };
@@ -8940,7 +8962,7 @@ async function projectSetupFlow(opts) {
       paintPo();
     }
   };
-  const reload = () => { clearTimeout(timer); timer = setTimeout(load, 300); };
+  const reload = () => { asked++; clearTimeout(timer); timer = setTimeout(load, 300); };
   let finish;
   const done = new Promise(res => { finish = res; });
   function wire() {
