@@ -446,7 +446,19 @@ class Requests(TheHub):
         self.nothing_left()
 
     def test_the_sessions_list_carries_the_verdict(self):
-        self.assertIn('r["makePo"] = v', Path(dashboard.__file__).read_text(encoding="utf-8"))
+        # On every row, with its words: the action menu takes a row without it as not known.
+        self.assertIn('r["makePo"] = make_po_answer(make_po_verdict(po_facts.of_row(r), None, now))',
+                      Path(dashboard.__file__).read_text(encoding="utf-8"))
+
+    def test_the_room_carries_it_for_the_pop_out(self):
+        rid = self.task()
+        status, out = self.get(f"/api/room?id={rid}")
+        self.assertEqual(status, 200, out)
+        self.assertEqual(out["makePo"], {"ok": True, "code": "", "reason": "", "fix": ""})
+        dashboard.assign_session_project(rid, dashboard.register_project("Motors")[1]["id"])
+        status, out = self.get(f"/api/room?id={rid}")
+        self.assertEqual((out["makePo"]["ok"], out["makePo"]["code"]), (False, "other_project"))
+        self.assertIn("Move it out of that project first", out["makePo"]["fix"])
 
 
 class ThePhoneRules(unittest.TestCase):
@@ -611,8 +623,6 @@ out.submit.conv.cand = out.submit.conv.cand && out.submit.conv.cand.sessionId;
 out.submit.existing.cand = out.submit.existing.cand && out.submit.existing.cand.sessionId;
 if (out.submit.recentClosed.cand) out.submit.recentClosed.cand = out.submit.recentClosed.cand.sessionId;
 if (out.submit.docsConv.cand) out.submit.docsConv.cand = out.submit.docsConv.cand.sessionId;
-out.offer = [makePoOffer({ sessionId: 's' }), makePoOffer({ makePo: { ok: false, code: 'live' } }),
-             makePoOffer({ makePo: { ok: true, code: 'recent', confirm: 'closed', min: 2 } })];
 console.log(JSON.stringify(out));
 """
 
@@ -633,12 +643,21 @@ console.log(JSON.stringify(out));
                 self.assertEqual(words, dashboard.make_po_words(v))
 
     def test_the_menu_item_says_why_it_is_off(self):
-        plain, live, recent = self.out["offer"]
-        self.assertEqual(plain, {"ok": True, "why": ""})
-        self.assertFalse(live["ok"])
-        self.assertIn("open in a terminal right now", live["why"])
-        self.assertIn("Close it in that terminal first", live["why"])
-        self.assertEqual(recent, {"ok": True, "why": ""}, "offered: the dialog asks about the terminal")
+        # The shared action menu (static/actions.js) on what the hub puts on a
+        # row: every row carries its answer, with its words.
+        answers = [dashboard.make_po_answer(v) for v in (
+            {"ok": True, "code": ""}, {"ok": False, "code": "live"},
+            {"ok": True, "code": "recent", "confirm": "closed", "min": 2})]
+        js = (f"const A = require({json.dumps(str(Path(dashboard.__file__).parent / 'static' / 'actions.js'))});"
+              f"console.log(JSON.stringify({json.dumps(answers)}.map(m => A.makePoItem({{kind: 'raw', sessionId: 's', makePo: m}}))))")
+        r = subprocess.run([NODE, "-e", js], capture_output=True, text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        plain, live, recent = json.loads(r.stdout)
+        self.assertFalse(plain.get("disabled"))
+        self.assertTrue(live["disabled"])
+        self.assertIn("open in a terminal right now", live["reason"])
+        self.assertIn("Close it in that terminal first", live["reason"])
+        self.assertFalse(recent.get("disabled"), "offered: the dialog asks about the terminal")
 
     def test_the_groups(self):
         o = self.out

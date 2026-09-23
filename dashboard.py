@@ -401,7 +401,7 @@ STATIC_DIR = Path(__file__).parent
 # page gets written into its <meta name="ensemble-pages"> at serve time, so an
 # open tab can tell when the page it runs is no longer the one on disk.
 PAGE_FILES = ("index.html", "session.html", "fileview.html",
-              "static/hl.js", "static/comments.js", "static/attach.js")
+              "static/hl.js", "static/comments.js", "static/attach.js", "static/actions.js")
 PAGE_META = b'<meta name="ensemble-pages" content="">'
 _STAMP_CACHE: dict[str, tuple[tuple[int, int], str]] = {}
 
@@ -2757,8 +2757,9 @@ def _same_folder(a: str, b: str) -> bool:
 # A conversation becomes a project's PO only when the hub can continue it
 # without splitting it and without taking it from a task or a project. The
 # answer is a verdict, {ok, code, ...what the words name}: /api/sessions rows
-# carry it (``makePo``, left out when plainly ok) for "Make PO of a new
-# project…", /api/projects/po-candidates for the chooser, and
+# and /api/room carry it with its words (``makePo``, make_po_answer) for "Make
+# PO of a new project…" (static/actions.js), /api/projects/po-candidates for
+# the chooser, and
 # /api/projects/po-from-session checks it again under _MAKE_PO_LOCK. The page
 # words a verdict with makePoWords (index.html), the hub with make_po_words;
 # tests/test_project_setup.py holds the two to the same text.
@@ -2864,6 +2865,13 @@ def make_po_words(v: dict) -> dict:
     }
     reason, fix = words.get(c, ("It cannot be made a PO.", ""))
     return {"reason": reason, "fix": fix}
+
+
+def make_po_answer(v: dict) -> dict:
+    """A verdict with its words, as a row's ``makePo``: the action menu
+    (static/actions.js makePoItem) shows reason and fix, and takes a row
+    without one as not known."""
+    return {**v, **make_po_words(v)}
 
 
 def make_po_refusal(v: dict) -> str:
@@ -6458,6 +6466,7 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                            if m.get("from") != "user" and (m.get("text") or "").strip()]
             last_agent_txt = ((_agent_msgs[-1] if _agent_msgs else {}).get("text") or "")[:400]
             room_cost = compute_room_cost(rm)
+            pend = pending_input(rid)
             room_rows.append({
                 "sessionId": rid, "roomId": rid, "headless": True,
                 # Its number in its project (#18), when it has one.
@@ -6488,6 +6497,11 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 "draft": not rm.get("launched", True),
                 "hasConversation": len(agents_in) == 1 and bool((agents_in[0].get("sessionId") or "").strip()),
                 "isLive": live, "status": "busy" if (live and busy) else "idle",
+                # `status` above is the activity dot; the action bar needs the
+                # room's own lifecycle (active / paused / waiting_human) and
+                # whether a resume is under way, as the pop-out reads them.
+                "roomStatus": rm.get("status", ""),
+                "resuming": bool(pend) and pend.get("state") != "failed",
                 "updatedAt": rm.get("updatedAt", rm.get("createdAt", 0)),
                 "startedAt": rm.get("createdAt", 0),
                 "turns": len(rm.get("messages", [])),
@@ -6577,14 +6591,12 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
         r.setdefault("workflow", "backlog")
         r.setdefault("workflowName", WORKFLOW_LABELS[r["workflow"]])
     # Whether "Make PO of a new project…" may take it, and if not why
-    # (make_po_verdict): left out where it plainly may.
+    # (make_po_verdict), on every row: one without it reads as not known.
     try:
         po_facts = _PoFacts()
         now = time.time()
         for r in out:
-            v = make_po_verdict(po_facts.of_row(r), None, now)
-            if not v["ok"] or v["code"]:
-                r["makePo"] = v
+            r["makePo"] = make_po_answer(make_po_verdict(po_facts.of_row(r), None, now))
     except Exception as e:      # noqa: BLE001 — the list without it; the request checks again
         print(f"[make-po] verdicts not listed: {e!r}", flush=True)
     out.sort(key=_key)
@@ -8401,7 +8413,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(200, {"id": room.get("id", rid), "spec": spec,
                                       "specRev": _spec_rev(spec)})
                 return
-            self._send_json(200, _annotate_room_liveness(room, with_points=True))
+            out = _annotate_room_liveness(room, with_points=True)
+            try:
+                # The pop-out's "Make PO of a new project…", as the list row has it.
+                out["makePo"] = make_po_answer(make_po_verdict(make_po_facts({"roomId": rid})))
+            except Exception as e:      # noqa: BLE001 — shown as not known; the request checks again
+                print(f"[make-po] no verdict for {rid}: {e!r}", flush=True)
+            self._send_json(200, out)
             return
         if p == "/api/task/ref":
             # The task a number in a chat names, for the chip that shows it:
