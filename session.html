@@ -1627,8 +1627,8 @@ function mdToHtml(src) {
 }
 // A message of numbered points as a list: the head's markdown, then each
 // item's, with its bar of point chips (bars[i], from pointBarHtml) when given.
-function itemsHtml(it, bars, md) {
-  return (it.head ? md(it.head) : '') + '<ol class="pt-items">'
+function itemsHtml(it, bars, md, headBar) {
+  return (it.head ? md(it.head) : '') + (headBar || '') + '<ol class="pt-items">'
     + it.items.map((x, i) => `<li class="pt-item">${md(itemBody(x))}${bars && bars[i] ? bars[i] : ''}</li>`).join('') + '</ol>';
 }
 const tildeify = p => (p || '').replace(/^[A-Za-z]:\\Users\\[^\\]+/i, '~').replace(/^\/(Users|home)\/[^/]+/, '~');
@@ -2486,14 +2486,18 @@ function ptOwn(m, P) {
     .sort((a, b) => ((a.createdAt || 0) - (b.createdAt || 0)) || (no(a)[0] - no(b)[0]) || no(a)[1].localeCompare(no(b)[1]));
 }
 // A person's balloon of numbered points: each item with its own point's chip
-// under it, else (the hub read it differently) the one bar under the text.
+// under it (words above the list are a point too, the first, with their chip
+// under them), else (the hub read it differently) the one bar under the text.
+const headWords = head => String(head || '').split('\n').filter(l => !l.startsWith(ATT_PREFIX)).join('\n').trim();
 function pointItemsHtml(m, it, P, href, md) {
   const own = ptOwn(m, P);
-  if (own.length !== it.items.length) return null;
+  const withHead = own.length === it.items.length + 1 && !!headWords(it.head);
+  if (!withHead && own.length !== it.items.length) return null;
   const bars = own.map(p => pointBarHtml(m, P, href, x => x === p));
+  const headBar = withHead ? bars.shift() : '';
   const rest = pointBarHtml(m, P, href, x => !own.includes(x));
   // Each item drawn on its own, so the whole message's paths are read first.
-  return `<div class="text md">${withPathAbbrevs(m.text, () => itemsHtml(it, bars, md))}</div>${rest}`;
+  return `<div class="text md">${withPathAbbrevs(m.text, () => itemsHtml(it, bars, md, headBar))}</div>${rest}`;
 }
 // The points as the room's poll last gave them.
 let POINTS = pointMaps(null);
@@ -3890,7 +3894,7 @@ $('#send').onclick = async () => {
 $('#input').addEventListener('keydown', e => {
   const act = edKeyAction(e, { part: 'head', empty: !$('#input').value.trim(), last: !ED.points.length });
   if (act === 'send') { e.preventDefault(); $('#send').click(); }
-  else if (act === 'add') { e.preventDefault(); edAddAt(ED.points.length); }
+  else if (act === 'add') { e.preventDefault(); edAddLast(); }
 });
 // ---- The message editor: begin ---------------------------------------------
 // The box is a small editor. The words at the top (the head) are the message,
@@ -3939,6 +3943,17 @@ function edKeyAction(e, at) {
 function edHeadTrigger(value) {
   const m = String(value || '').match(/^(?:1\.|-)[ \t]([\s\S]*)$/);
   return m ? m[1] : null;
+}
+// The first point added under a head that has words: the head's words are
+// point 1 (as the trigger makes them), so the point added next is point 2
+// and nothing typed is left as the message above the list. The head's own
+// images stay in the head. false when there is nothing to move: a head
+// without words, or points already there.
+function edHeadToPoint(m, head) {
+  const t = String(head || '').replace(/\r\n/g, '\n').trim();
+  if (m.points.length || !t) return false;
+  edAddPoint(m, 0, t);
+  return true;
 }
 // The message as sent: the head's words alone when no point has anything;
 // else the "## Points (N)" form the hub reads (points._comment_items), an
@@ -4102,7 +4117,14 @@ $('#ed-points').addEventListener('click', e => {
   else if (b.dataset.ed === 'down') edMoveAt(i, 1);
   else if (b.dataset.ed === 'x') edRemoveAt(i);
 });
-$('#add-point').onclick = () => edAddAt(ED.points.length);
+// "+ Add a point" and Ctrl+Shift+Enter in the head: a new last point; the
+// first one under a head with words makes those words point 1 first.
+function edAddLast() {
+  const ta = $('#input');
+  if (edHeadToPoint(ED, ta.value)) { ta.value = ''; edGrow(ta); SEND_KEY = ''; }
+  edAddAt(ED.points.length);
+}
+$('#add-point').onclick = () => edAddLast();
 // The balloon links in a box, as the chips the sent balloon will show (the
 // hub resolves them; a link it has not answered for yet stays plain text).
 function edRefsHtml(text) {

@@ -69,7 +69,7 @@ const ctx = { ROOM: 'room-aaaa0001', console, URL,
 };
 vm.createContext(ctx);
 vm.runInContext(code + `
-  globalThis.t = { edNew, edAddPoint, edRemovePoint, edMovePoint, edKeyAction, edHeadTrigger, edSerialize, edDraft, edFromDraft, edUsed, edHas,
+  globalThis.t = { edNew, edAddPoint, edRemovePoint, edMovePoint, edKeyAction, edHeadTrigger, edHeadToPoint, edSerialize, edDraft, edFromDraft, edUsed, edHas,
     pointItems, itemTail, itemBody, joinItems, stripRefBlocks, mdToHtml, itemsHtml, foldLine, pointBarHtml, ptOwn, pointItemsHtml, pointMaps };`, ctx);
 const T = ctx.t;
 const out = {};
@@ -119,6 +119,10 @@ out.order1 = m.points.map(p => p.text);
 out.moved = [T.edMovePoint(m, 0, 1), m.points.map(p => p.text).join(''), T.edMovePoint(m, 0, -1), T.edMovePoint(m, 2, 1), m.points.map(p => p.text).join('')];
 out.removed = [T.edRemovePoint(m, 1).text, m.points.map(p => p.text).join(''), T.edRemovePoint(m, 7)];
 out.ids = new Set(m.points.map(p => p.id)).size === m.points.length;
+// --- the first point under a head with words: the words are point 1 ---
+m = T.edNew();
+out.headToPoint = [T.edHeadToPoint(m, ' first question \r\nmore '), m.points.map(p => p.text), T.edHeadToPoint(m, 'again'), m.points.length,
+  T.edHeadToPoint(T.edNew(), '  \n '), T.edHeadToPoint(T.edNew(), '')];
 // --- a draft ---
 m = T.edNew(); m.head = 'h';
 m.images = [{ room: 'r', name: 'top.png', url: 'y', state: 'ok' }, { room: '', name: 'lost.png' }];
@@ -158,6 +162,17 @@ const msg = { id: 'm1', from: 'user', text: '## Points (2)\n\n**1.** a\n\n**2.**
 out.own = T.ptOwn(msg, P).map(p => p.id);
 out.perItem = T.pointItemsHtml(msg, T.pointItems(msg.text), P, mid => '#' + mid, T.mdToHtml);
 out.mismatch = T.pointItemsHtml({ id: 'm1', from: 'user', text: '## Points (3)\n\n**1.** a\n\n**2.** b\n\n**3.** c' }, T.pointItems('## Points (3)\n\n**1.** a\n\n**2.** b\n\n**3.** c'), P, mid => '#' + mid, T.mdToHtml);
+// Words above the list are the first point: their chip under them, above the list.
+const P3 = T.pointMaps({ open: 3, answered: 0, approvals: [], items: [
+  { id: 'P1', state: 'open', text: 'Head q', createdAt: 1000, mid: 'm3', answers: [] },
+  { id: 'P2', state: 'open', text: 'a', createdAt: 1000, mid: 'm3', answers: [] },
+  { id: 'P3', state: 'open', text: 'b', createdAt: 1000, mid: 'm3', answers: [] },
+] });
+const withHead = '## Points (2)\n\nHead q\n[image] C:\\t\\attachments\\h.png\n\n**1.** a\n\n**2.** b';
+out.headChip = T.pointItemsHtml({ id: 'm3', from: 'user', text: withHead }, T.pointItems(withHead), P3, mid => '#' + mid, T.mdToHtml);
+// Only images above the list: three points do not fit two items, the one bar.
+const imgHead = '## Points (2)\n\n[image] C:\\t\\attachments\\h.png\n\n**1.** a\n\n**2.** b';
+out.headImgNoChip = T.pointItemsHtml({ id: 'm3', from: 'user', text: imgHead }, T.pointItems(imgHead), P3, mid => '#' + mid, T.mdToHtml);
 console.log(JSON.stringify(out));
 """
 
@@ -168,7 +183,7 @@ class Editor(unittest.TestCase):
     def setUpClass(cls):
         code = "\n".join([ATTACH, MODEL, ITEMS, js_const("REF_BLOCK_RE"), js_function("stripRefBlocks"), js_function("mdToHtml"),
                           js_function("itemsHtml"), js_function("foldLine"), js_function("pointBarHtml"), js_function("ptOwn"),
-                          js_function("pointItemsHtml"), js_function("pointMaps")])
+                          js_function("pointItemsHtml"), js_function("pointMaps"), js_const("headWords")])
         run = subprocess.run([NODE, "-e", JS], input=json.dumps({"code": code}), capture_output=True, text=True,
                              encoding="utf-8", timeout=60)
         if run.returncode != 0:
@@ -209,6 +224,13 @@ class Editor(unittest.TestCase):
         self.assertEqual(self.r["moved"], [1, "cab", 0, 2, "cab"])
         self.assertEqual(self.r["removed"], ["a", "cb", None])
         self.assertTrue(self.r["ids"])
+
+    def test_the_first_point_under_a_head_with_words_makes_them_point_1(self):
+        # "+ Add a point" (or Ctrl+Shift+Enter) with words in the head and no
+        # point yet: the words become point 1, so the new point is point 2
+        # and nothing stays above the list; once there are points, or with
+        # no words, nothing moves.
+        self.assertEqual(self.r["headToPoint"], [True, ["first question \nmore"], False, 1, False, False])
 
     def test_a_draft_round_trips(self):
         self.assertEqual(self.r["draft"], {"head": "h", "images": [{"room": "r", "name": "top.png"}],
@@ -266,6 +288,17 @@ class Editor(unittest.TestCase):
         self.assertIn('data-pt="P2" data-pt-act="drop"', h)
         self.assertTrue(h.endswith('<div class="pt-bar"><span class="pt-chip open">P3 · waiting for an answer</span><button data-pt="P3" data-pt-act="drop">Drop</button></div>'), h)
         self.assertIsNone(self.r["mismatch"], "the hub read it as fewer points: the one bar under the text")
+
+    def test_words_above_the_list_get_the_first_chip(self):
+        h = self.r["headChip"]
+        self.assertIsNotNone(h)
+        self.assertEqual(h.count('<div class="pt-bar">'), 3, "one bar for the head, one per item")
+        head_end = h.index('<ol class="pt-items">')
+        self.assertIn("P1 · waiting for an answer", h[:head_end], "the head's chip stands above the list")
+        self.assertNotIn("P2", h[:head_end])
+        first = h[h.index('<li class="pt-item">'):]
+        self.assertIn("P2 · waiting", first[:first.index("</li>")])
+        self.assertIsNone(self.r["headImgNoChip"], "an image alone above the list is no point: the counts do not fit")
 
 
 if __name__ == "__main__":
