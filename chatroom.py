@@ -71,7 +71,17 @@ def _write(room: dict) -> None:
     p = _room_path(room["id"])
     tmp = p.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(room, indent=2), encoding="utf-8")
-    tmp.replace(p)
+    # Windows refuses the replace while another process (a virus scanner, a
+    # backup, the indexer) has the file open for a moment: WinError 5 on
+    # 2026-09-23 failed a PO resume after its terminal had started.
+    for attempt in range(8):
+        try:
+            tmp.replace(p)
+            return
+        except PermissionError:
+            if attempt == 7:
+                raise
+            time.sleep(0.05 * (attempt + 1))
 
 
 # ---------------------------------------------------------------------------

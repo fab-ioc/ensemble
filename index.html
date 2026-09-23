@@ -8317,6 +8317,7 @@ function poHeadHtml(pj, row, peek) {
     + (pts ? ` · <span class="po-pts" title="${esc(pointsCountTip(row.points))}">${esc('your points: ' + pts)}</span>` : '');
   const acts = [];
   if (!row.isLive && !row.draft) acts.push(`<button class="po-btn def" data-po="resume" title="Relaunch the PO with its conversation">Resume</button>`);
+  if (!row.draft) acts.push(`<button class="po-btn" data-po="switch" title="Hand the PO to the other agent (Claude or Codex) in the same room, from its written handover">Switch…</button>`);
   acts.push(`<button class="po-btn" data-po="open" title="Open the PO's own task: spec, changes and files">Task</button>`);
   acts.push(`<button class="po-btn" data-po="popout" title="Open the PO in its own window">Pop out</button>`);
   if (peek) acts.push(`<button class="po-btn x" data-po="close" title="Close (Esc)" aria-label="Close the PO">×</button>`);
@@ -8598,6 +8599,66 @@ function makePoWords(v) {
   };
   const [reason, fix] = words[c] || ['It cannot be made a PO.', ''];
   return { reason, fix };
+}
+// Switch a project's PO to the other agent kind (rotation.request_switch):
+// the same room, chat and points, a fresh session from PO-HANDOVER.md. The
+// dialog says why a kind cannot be chosen, and asks again past the warning.
+function poSwitchDialogHtml(pj, info, err, confirmMsg, typed) {
+  const name = k => k === 'codex' ? 'Codex' : 'Claude';
+  const cur = info.agent || '';
+  const other = cur === 'claude' ? 'codex' : 'claude';
+  const t = (info.targets || {})[other] || {};
+  const running = info.running ? `A switch to ${name(info.running.agent)} is under way (${esc(info.running.phase || 'starting')}); the PO room says when it ends.` : '';
+  const last = info.last && info.last.result !== 'switched'
+    ? `The last switch did not happen: ${info.last.reason || info.last.result}.` : '';
+  const why = t.why || running;
+  const model = typed && typeof typed.model === 'string' ? typed.model : (t.model || '');
+  return `
+    <h3>Switch ${esc(pj.name)}’s PO</h3>
+    <p class="cfg-hint">Now ${esc(name(cur))}${info.model ? ' · <code>' + esc(info.model) + '</code>' : ''}${info.live ? '' : ' (not running)'}. A fresh ${esc(name(other))} session takes over in the same room, with the same chat and points, from the PO’s written handover. A running PO is asked to bring its handover up to date first; that can take a few minutes.</p>
+    <div class="im-field">
+      <label for="ps-model">${esc(name(other))} model <small>empty for its default</small></label>
+      <input id="ps-model" type="text" value="${esc(model)}" spellcheck="false" autocomplete="off"${why ? ' disabled' : ''}>
+    </div>
+    ${why ? `<p class="cfg-hint" role="status">${esc(why)}</p>` : ''}
+    ${!why && t.warning && !confirmMsg ? `<p class="cfg-hint" role="note">${esc(t.warning)} You will be asked to confirm.</p>` : ''}
+    ${!why && t.allowance ? `<p class="cfg-hint" role="note">${esc(t.allowance)}</p>` : ''}
+    ${last ? `<p class="cfg-hint" role="note">${esc(last)}</p>` : ''}
+    ${confirmMsg ? `<p class="cfg-hint" role="alert">${esc(confirmMsg)}</p>` : ''}
+    ${err ? `<p class="cfg-hint" role="alert">${esc(err)}</p>` : ''}
+    <div class="actions"><button id="ps-ok"${why ? ' disabled' : ''} data-agent="${other}">${confirmMsg ? 'Switch anyway' : 'Switch to ' + esc(name(other))}</button><button id="ps-cancel" class="secondary">Cancel</button></div>`;
+}
+async function poSwitchFlow(pid, err, confirmMsg, typed) {
+  const pj = projectById(pid);
+  if (!pj) return;
+  const dlg = $('#modal');
+  let info;
+  try { info = await api('/api/po/switch?projectId=' + encodeURIComponent(pid)); }
+  catch (e) { toast('could not read the PO: ' + e.message, 4000, 'err'); return; }
+  dlg.innerHTML = poSwitchDialogHtml(pj, info, err, confirmMsg, typed);
+  if (!dlg.open) dlg.showModal();
+  const ok = $('#ps-ok');
+  const go = await new Promise(resolve => {
+    $('#ps-cancel').onclick = () => resolve(null);
+    dlg.addEventListener('cancel', () => resolve(null), { once: true });
+    ok.onclick = () => resolve({ agent: ok.dataset.agent, model: $('#ps-model').value.trim() });
+  });
+  if (go === null) { dlg.close(); return; }
+  ok.disabled = true;
+  const r = await fetch('/api/po/switch', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectId: pid, agent: go.agent, model: go.model, confirm: !!confirmMsg }),
+  });
+  let out = {};
+  try { out = await r.json(); } catch (e) {}
+  if (r.ok) {
+    dlg.close();
+    toast(`Switching the PO to ${go.agent === 'codex' ? 'Codex' : 'Claude'}: the PO room says when it is done`, 4000, 'ok');
+    refresh();
+    return;
+  }
+  if (out.needsConfirm) return poSwitchFlow(pid, '', out.message, go);
+  return poSwitchFlow(pid, out.message || `${r.status} ${out.error || r.statusText}`, '', go);
 }
 // A conversation offered in the dialog, by the key the list selects it by.
 function setupKey(c) { return (c && (c.roomId || c.sessionId)) || ''; }
@@ -8943,6 +9004,7 @@ document.addEventListener('click', async (ev) => {
     if (what === 'close') poClosePeek();
     else if (what === 'popout') openSessionWindow(head.dataset.room);
     else if (what === 'open') openDetail(head.dataset.sid);
+    else if (what === 'switch') poSwitchFlow(head.dataset.proj);
     else if (what === 'resume') {
       act.disabled = true;
       try {

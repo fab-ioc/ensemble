@@ -1141,6 +1141,43 @@ def _stall_seconds() -> int:
     return max(60, min(24 * 3600, v))
 
 
+# A terminal this young may be a start still recording itself on the room.
+_DUP_GRACE_S = 30.0
+
+
+def _duplicate_ptys(room: dict, now: float) -> tuple | None:
+    """A task with more live terminals than seats: two for one agent, or one
+    its record names for nobody (a launch that failed before writing it, as
+    on 2026-09-23). Both hear the same wakes and act twice. Reported, never
+    ended here: which one is the real agent is a person's call (Stop ends
+    them all). None while an agent of the room is handed to a fresh session,
+    which runs two for a moment by design."""
+    rid = room.get("id", "")
+    try:
+        if _d.rotation.room_rotating(rid) or _d.rotation.switching(rid):
+            return None
+        ptys = [x for x in _d.room_ptys(rid) if now - float(x.get("created") or now) >= _DUP_GRACE_S]
+    except Exception:
+        return None
+    if not ptys:
+        return None
+    known = {p.get("ptyId"): p for p in room.get("participants", []) if p.get("ptyId")}
+    by_ident: dict[str, list[str]] = {}
+    for x in ptys:
+        by_ident.setdefault((x.get("meta") or {}).get("identity", ""), []).append(x["id"])
+    stray = [x["id"] for x in ptys if x["id"] not in known]
+    doubled = {i: ids for i, ids in by_ident.items() if len(ids) > 1}
+    if not stray and not doubled:
+        return None
+    ids = sorted({*stray, *(i for ids in doubled.values() for i in ids)})
+    who = ", ".join(sorted(i or "an agent" for i in doubled)) or         ", ".join(sorted({(next((x for x in ptys if x["id"] == i), {}).get("meta") or {})
+                          .get("identity") or "an agent" for i in stray}))
+    reason = (f"has {len(ids)} running terminals for {who} ({', '.join(ids)}); "
+              f"Stop the task to end them all, then start it again")
+    part = next((known[i] for i in ids if i in known), {})
+    return ("blocked", reason, {"cause": "duplicate_pty", "ptyIds": ids}, part)
+
+
 def _items() -> list[dict]:
     now = time.time()
     rooms = _room_summaries()
@@ -1172,6 +1209,11 @@ def _items() -> list[dict]:
             hit = _classify_agent(room, part, ev, stall, now)
             if hit:
                 found.append((*hit, part))
+        dup = _duplicate_ptys(room, now)
+        if dup:
+            # Worse than anything an agent says: the room's record and its
+            # terminals disagree. First, so it wins a tie with another block.
+            found.insert(0, dup)
         room_hit = _room_level(room, live_agents)
         if room_hit and not any(f[0] == "waiting_for_you" for f in found):
             found.append((*room_hit, {}))
@@ -1214,7 +1256,8 @@ def _items() -> list[dict]:
         seen_now.add((rid, state))
         if extra.get("since"):
             item["askedAt"] = float(extra["since"])     # the pages say "since 15:55"
-        for k in ("quote", "cause", "exitCode", "lastLines", "waitedSeconds", "askId"):
+        for k in ("quote", "cause", "exitCode", "lastLines", "waitedSeconds", "askId",
+                  "ptyIds"):
             if k in extra and extra[k] not in (None, ""):
                 item[k] = extra[k]
         items.append(item)

@@ -371,6 +371,18 @@ to bring it up to date, then starts a fresh PO whose first prompt is to read it
 and `ROADMAP.md`. Anything in neither file is lost. Never hand a task's spec to
 a fresh session as an instruction: it redoes the work.
 
+**The PO can change agent (Claude <-> Codex) in the same room.** Two ways: the
+hub fails a usage-limited PO over to the other kind by itself, and the person
+can switch it by hand ("Switch..." in the PO's header, or `POST /api/po/switch`
+`{projectId, agent, model?, confirm?}`). Either way a fresh session of the other
+kind starts from `PO-HANDOVER.md` and `ROADMAP.md`, with the same room, chat,
+points and token, so reports still reach it. On a switch by hand, a running PO
+is first asked for its handover (a `[handover]` line naming the switch): bring
+the file up to date and end your turn. A failover asks nothing (the blocked PO
+cannot answer): it starts from the handover as it is, so keep it current. The old terminal ends only once the new one has started;
+if the new one fails, nothing changes and the room says why. The hub never
+switches back by itself. A PO cannot switch its own seat.
+
 **What you inherit is yours to continue.** A fresh PO reads the handover, says
 in a few lines where things stand, and in the same message says what it is
 carrying on with ("Carrying on with: …"), then does it: whatever the handover
