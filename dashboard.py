@@ -2559,12 +2559,14 @@ def save_projects(projects: list[dict]) -> None:
     tmp.replace(PROJECTS_FILE)
 
 
-def register_project(path: str, name: str = "", kind: str = "code") -> tuple[bool, dict, str]:
+def register_project(path: str, name: str = "", kind: str = "code",
+                     make_home: bool = True) -> tuple[bool, dict, str]:
     """Register a folder as a project (idempotent by normalized path). The folder
-    is created if missing. A code folder found in the projects root with files
-    in it is used in place and never written to: the project's own files (its
-    project.json, tasks, notes) go in a home beside it. Returns (ok, project,
-    message)."""
+    is created if missing. A code folder that was already in the projects root
+    (empty or not) is used in place and never written to: the project's own
+    files (its project.json, tasks, notes) go in a home beside it, made now
+    (``make_home``, so a scan of the projects root finds it) or by the caller.
+    Returns (ok, project, message)."""
     raw = (path or "").strip()
     if not raw:
         return False, {}, "empty path"
@@ -2577,9 +2579,9 @@ def register_project(path: str, name: str = "", kind: str = "code") -> tuple[boo
         p = PROJECTS_ROOT / raw
     norm = os.path.normpath(str(p))
     try:
-        had_files = p.is_dir() and any(p.iterdir())
+        existed = p.is_dir()
     except OSError:
-        had_files = False
+        existed = False
     try:
         p.mkdir(parents=True, exist_ok=True)
     except OSError as e:
@@ -2598,10 +2600,12 @@ def register_project(path: str, name: str = "", kind: str = "code") -> tuple[boo
     projects.append(proj)
     # Its key now, so a project added later never changes this one's.
     proj["key"] = task_numbers.project_keys(projects)[proj["id"]]
-    kept_apart = _in_projects_root(norm) and had_files and (kind or "code") != "documents"
+    kept_apart = _in_projects_root(norm) and existed and (kind or "code") != "documents"
     if kept_apart:
-        proj["home"] = _free_home(proj)     # made, with its project.json, on first use
+        proj["home"] = _free_home(proj)
     save_projects(projects)
+    if kept_apart and make_home:
+        project_home(proj)                  # the home, with its project.json
     if _in_projects_root(norm) and not kept_apart:
         # Layout v2: the project's identity lives WITH its data, so a clone of
         # the projects root on a new machine is self-describing.
@@ -2930,38 +2934,43 @@ def _agent_installed(key: str) -> bool:
         return False
 
 
-def _session_live_now(sid: str, agent: str) -> dict:
+def _session_live_now(sid: str) -> dict:
     """What the hub can read now of a session no task holds, by its id alone
-    (never by what a request says of it): {live (open in a terminal), seen
-    (whether the hub can tell: a Claude session has a pid file while it runs,
-    a Codex one started in a terminal has nothing), written (last written),
-    cwd (the folder its transcript says it was started in, "" if not found)}.
-    Any failure leaves it unseen, so the person is asked."""
-    out = {"live": False, "seen": False, "written": 0.0, "cwd": ""}
+    (never by what a request says of it): {agent (whose transcript it is:
+    claude | codex, "" when none or both are found), live (open in a
+    terminal), seen (whether the hub can tell: a Claude session has a pid
+    file while it runs, a Codex one started in a terminal has nothing),
+    written (last written), cwd (the folder its transcript says it was started
+    in, "" if not found)}. Any failure leaves it unseen, so the person is
+    asked; a transcript it cannot read is no session at all."""
+    out = {"agent": "", "live": False, "seen": False, "written": 0.0, "cwd": ""}
+    found = {}
     try:
-        if agent == "codex":
-            ag = agents.get_agent("codex")
-            files = ag.rollouts_for_session(sid) if ag is not None and hasattr(ag, "rollouts_for_session") else []
-            for f in files:
-                with contextlib.suppress(OSError):
-                    out["written"] = max(out["written"], f.stat().st_mtime)
-            if files:
-                with contextlib.suppress(OSError, ValueError):
-                    with files[0].open(encoding="utf-8", errors="replace") as fh:
-                        meta = json.loads(fh.readline() or "{}")
-                    out["cwd"] = str(((meta.get("payload") or {}) if meta.get("type") == "session_meta" else {})
-                                     .get("cwd") or "")
-            k = os.path.normcase(os.path.normpath(out["cwd"])) if out["cwd"] else ""
-            out["live"] = bool(k) and any(r.get("agent") == "codex" and os.path.normcase(os.path.normpath(r.get("cwd") or "."))
-                                          == k for r in _read_agent_session_files())
+        claude_live = any((d.get("sessionId") or "") == sid for d in _read_session_files())
+        t = find_transcript(sid) if re.fullmatch(r"[\w-]+", sid) else None
+        if t is not None:
+            found["claude"] = (cwd_of(t), t.stat().st_mtime)
+        ag = agents.get_agent("codex")
+        files = ag.rollouts_for_session(sid) if ag is not None and hasattr(ag, "rollouts_for_session") else []
+        if files:
+            with files[0].open(encoding="utf-8", errors="replace") as fh:
+                meta = json.loads(fh.readline() or "{}")
+            cwd = str(((meta.get("payload") or {}) if meta.get("type") == "session_meta" else {}).get("cwd") or "")
+            found["codex"] = (cwd, max(f.stat().st_mtime for f in files))
+        if len(found) != 1:
+            # None, or one id in both agents' transcripts: which one it is,
+            # and so whether it is open, cannot be told.
+            out["live"] = claude_live
+            return out
+        (agent, (cwd, written)), = found.items()
+        out.update(agent=agent, cwd=cwd or "", written=written)
+        if agent == "claude":
+            out["live"], out["seen"] = claude_live, True
         else:
-            out["live"] = any((d.get("sessionId") or "") == sid for d in _read_session_files())
-            t = find_transcript(sid) if re.fullmatch(r"[\w-]+", sid) else None
-            if t is not None:
-                out["cwd"] = cwd_of(t)
-                with contextlib.suppress(OSError):
-                    out["written"] = t.stat().st_mtime
-            out["seen"] = True
+            k = os.path.normcase(os.path.normpath(cwd)) if cwd else ""
+            out["live"] = claude_live or (bool(k) and any(
+                r.get("agent") == "codex" and os.path.normcase(os.path.normpath(r.get("cwd") or ".")) == k
+                for r in _read_agent_session_files()))
     except Exception:       # noqa: BLE001 — unknown is unseen: the person is asked
         out["seen"] = False
     return out
@@ -2989,12 +2998,21 @@ def make_po_facts(data: dict) -> dict:
                 "project": {"id": p["id"], "name": p.get("name") or p["id"]} if p else None}
     sid = (data.get("sessionId") or "").strip()
     cwd = (data.get("cwd") or "").strip()
-    agent = (data.get("agent") or "claude").strip().lower()
+    said = (data.get("agent") or "").strip().lower()
     held = _session_room(sid)
-    now = _session_live_now(sid, agent)
-    if now["cwd"] and not _same_folder(now["cwd"], cwd):
-        # The page names a folder its transcript does not: act on neither.
-        return {"kind": "moved", "cwd": now["cwd"]}
+    now = _session_live_now(sid)
+    agent = now["agent"]
+    if now["live"]:
+        # Open in a terminal, whatever else is or is not known of it.
+        return {"kind": "session", "agents": [agent or said or "claude"], "installed": installed, "cwd": cwd,
+                "cwdOk": True, "isLive": True, "seen": True, "updatedAt": now["written"],
+                "heldBy": (held.get("title") or held["id"]) if held else ""}
+    if not agent or not now["cwd"]:
+        # No transcript names it (or two do, or none says where it began).
+        return {"kind": "unknown"}
+    if (said and said != agent) or not _same_folder(now["cwd"], cwd):
+        # The page names an agent or a folder its transcript does not: act on neither.
+        return {"kind": "moved", "cwd": now["cwd"], "agent": agent}
     return {"kind": "session", "agents": [agent], "installed": installed, "cwd": cwd,
             "cwdOk": bool(cwd) and os.path.isdir(cwd), "isLive": now["live"], "seen": now["seen"],
             "updatedAt": now["written"], "heldBy": (held.get("title") or held["id"]) if held else ""}
@@ -3121,7 +3139,7 @@ def _new_po_project(name: str, kind: str, path: str) -> tuple[dict, callable]:
         kept_json = (target / "project.json").read_bytes()
     except OSError:
         pass
-    ok, proj, msg = register_project(raw, name, kind)
+    ok, proj, msg = register_project(raw, name, kind, make_home=False)
     if not ok:
         raise MakePoError(f"The project could not be created: {msg}.")
     if proj["id"] in before or msg == "already registered":
@@ -3129,6 +3147,7 @@ def _new_po_project(name: str, kind: str, path: str) -> tuple[dict, callable]:
                           f"Open that project and choose its PO there.", 409)
     home_before = project_home(proj, create=False)
     home_existed = os.path.isdir(home_before)
+    project_home(proj)      # a home kept apart is made now, and undone below
 
     def undo() -> None:
         unregister_project(proj["id"])
@@ -9768,9 +9787,13 @@ class Handler(BaseHTTPRequestHandler):
             facts = make_po_facts(data)
             if facts.get("kind") == "gone":
                 raise MakePoError("That task no longer exists.", 404)
+            if facts.get("kind") == "unknown":
+                raise MakePoError("Ensemble cannot find that conversation's transcript, so it cannot tell which "
+                                  "agent it is, where it was started or whether it is still open: "
+                                  "reload the page and choose it again.", 409)
             if facts.get("kind") == "moved":
-                raise MakePoError(f"That conversation was started in {facts['cwd']}, not in the folder given: "
-                                  f"reload the page and choose it again.", 409)
+                raise MakePoError(f"That is a {facts['agent'].capitalize()} conversation started in {facts['cwd']}, "
+                                  f"not the one described: reload the page and choose it again.", 409)
             v = make_po_verdict(facts, _make_po_target(project))
             if not v["ok"]:
                 raise MakePoError(make_po_refusal(v), _MAKE_PO_STATUS.get(v["code"], 400))

@@ -84,6 +84,15 @@ class Hub(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.work = base / "work" / "engine"            # where the past session was started
         self.work.mkdir(parents=True)
+        # What the hub reads of a past session by its id: a Claude transcript
+        # started in self.work, closed two hours ago, unless a test says more.
+        self.live = {}
+        p = mock.patch.object(dashboard, "_session_live_now",
+                              lambda sid: {"agent": "claude", "live": False, "seen": True,
+                                           "written": time.time() - 7200, "cwd": str(self.work),
+                                           **self.live.get(sid, {})})
+        p.start()
+        self.addCleanup(p.stop)
 
     def call(self, body, origin=""):
         return self.call_url(URL, body, origin)
@@ -174,9 +183,10 @@ class NewProject(Hub):
                 ({**self.session(), "name": "E", "kind": "spreadsheet", "path": str(self.work)}, 400, ""),
                 ({**self.session(), "name": "a/b", "kind": "documents"}, 400, "folder's name"),
                 ({**self.session(cwd=str(self.base / "gone")), "name": "E", "kind": "code", "path": str(self.work)}, 400, "no longer exists"),
-                ({**self.session(agent="cursor"), "name": "E", "kind": "code", "path": str(self.work)}, 400, "a Claude or a Codex"),
+                ({**self.session(agent="cursor"), "name": "E", "kind": "code", "path": str(self.work)}, 409, "That is a Claude"),
                 ({"sessionId": "", "cwd": "", "name": "E"}, 400, "session and its folder"),
         ):
+            self.live["sid-past-1"] = {"cwd": body.get("cwd") or str(self.work)}
             got, out = self.call(body)
             self.assertEqual((got, out.get("error")), (status, "cannot_make_po"), (body, out))
             self.assertIn(words, out["message"])

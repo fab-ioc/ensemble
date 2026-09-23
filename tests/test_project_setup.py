@@ -128,12 +128,6 @@ VERDICTS = [
 class TheHub(Hub):
     def setUp(self):
         super().setUp()
-        self.live = {}                  # sid -> what the hub reads of it now
-        p = mock.patch.object(dashboard, "_session_live_now",
-                              lambda sid, agent: {"live": False, "seen": True, "written": time.time() - 7200,
-                                                  "cwd": "", **self.live.get(sid, {})})
-        p.start()
-        self.addCleanup(p.stop)
         self.rows = []
         p = mock.patch.object(dashboard, "load_sessions", lambda *a, **k: self.rows)
         p.start()
@@ -190,15 +184,29 @@ class WhatTheHubReadsNow(unittest.TestCase):
         f.write_text(json.dumps({"type": "session_meta", "payload": {"id": "sid-c", "cwd": cwd}}) + "\n", encoding="utf-8")
         return f
 
-    def codex(self, files, records=()):
-        ag = SimpleNamespace(rollouts_for_session=lambda sid: files)
+    def read(self, sid, files=(), records=(), transcript=None, pids=()):
+        ag = SimpleNamespace(rollouts_for_session=lambda s: list(files) if s == sid else [])
         with mock.patch.object(dashboard.agents, "get_agent", lambda k: ag if k == "codex" else None), \
-                mock.patch.object(dashboard, "_read_agent_session_files", lambda: list(records)):
-            return dashboard._session_live_now("sid-c", "codex")
+                mock.patch.object(dashboard, "_read_agent_session_files", lambda: list(records)), \
+                mock.patch.object(dashboard, "_read_session_files", lambda: [{"sessionId": s} for s in pids]), \
+                mock.patch.object(dashboard, "find_transcript", lambda s: transcript if s == sid else None):
+            now = dashboard._session_live_now(sid)
+        if transcript is not None:
+            dashboard._CWD_CACHE.pop(str(transcript), None)
+        return now
+
+    def codex(self, files, records=()):
+        return self.read("sid-c", files, records)
+
+    def transcript(self, cwd):
+        t = self.dir / "sid-a.jsonl"
+        t.write_text(json.dumps({"type": "user", "cwd": cwd}) + "\n", encoding="utf-8")
+        return t
 
     def test_a_codex_session_is_never_seen_closed(self):
         now = self.codex([self.rollout("C:\\work\\engine")])
-        self.assertEqual((now["live"], now["seen"], now["cwd"]), (False, False, "C:\\work\\engine"))
+        self.assertEqual((now["agent"], now["live"], now["seen"], now["cwd"]),
+                         ("codex", False, False, "C:\\work\\engine"))
         self.assertGreater(now["written"], 0)
 
     def test_a_codex_launched_by_the_hub_in_its_folder_is_live(self):
@@ -208,22 +216,30 @@ class WhatTheHubReadsNow(unittest.TestCase):
     def test_a_failed_read_is_unseen(self):
         def boom(k):
             raise RuntimeError("no codex")
-        with mock.patch.object(dashboard.agents, "get_agent", boom):
-            self.assertEqual(dashboard._session_live_now("sid-c", "codex")["seen"], False)
+        t = self.transcript("C:\\work\\engine")
+        with mock.patch.object(dashboard.agents, "get_agent", boom), \
+                mock.patch.object(dashboard, "_read_session_files", lambda: []), \
+                mock.patch.object(dashboard, "find_transcript", lambda s: t):
+            self.assertEqual(dashboard._session_live_now("sid-a")["seen"], False)
+        dashboard._CWD_CACHE.pop(str(t), None)
         with mock.patch.object(dashboard, "_read_session_files", side_effect=OSError("denied")):
-            self.assertEqual(dashboard._session_live_now("sid-a", "claude")["seen"], False)
+            self.assertEqual(dashboard._session_live_now("sid-a")["seen"], False)
 
     def test_a_claude_session_by_its_pid_file_and_transcript(self):
-        t = self.dir / "sid-a.jsonl"
-        t.write_text(json.dumps({"type": "user", "cwd": "C:\\work\\engine"}) + "\n", encoding="utf-8")
-        with mock.patch.object(dashboard, "_read_session_files", lambda: [{"sessionId": "sid-a"}]), \
-                mock.patch.object(dashboard, "find_transcript", lambda sid: t if sid == "sid-a" else None):
-            now = dashboard._session_live_now("sid-a", "claude")
-        dashboard._CWD_CACHE.pop(str(t), None)
-        self.assertEqual((now["live"], now["seen"], now["cwd"]), (True, True, "C:\\work\\engine"))
-        with mock.patch.object(dashboard, "_read_session_files", lambda: []), \
-                mock.patch.object(dashboard, "find_transcript", lambda sid: None):
-            self.assertEqual(dashboard._session_live_now("sid-a", "claude")["live"], False)
+        now = self.read("sid-a", transcript=self.transcript("C:\\work\\engine"), pids=["sid-a"])
+        self.assertEqual((now["agent"], now["live"], now["seen"], now["cwd"]), ("claude", True, True, "C:\\work\\engine"))
+        now = self.read("sid-a", transcript=self.transcript("C:\\work\\engine"))
+        self.assertEqual((now["agent"], now["live"], now["seen"]), ("claude", False, True))
+
+    def test_no_transcript_or_two_is_no_agent(self):
+        now = self.read("sid-a")
+        self.assertEqual((now["agent"], now["seen"], now["cwd"]), ("", False, ""))
+        now = self.read("sid-a", pids=["sid-a"])
+        self.assertEqual((now["agent"], now["live"]), ("", True), "open, even with no transcript yet")
+        f = self.dir / "rollout-x-sid-a.jsonl"
+        f.write_text(json.dumps({"type": "session_meta", "payload": {"cwd": "C:\\w"}}) + "\n", encoding="utf-8")
+        now = self.read("sid-a", files=[f], transcript=self.transcript("C:\\w"))
+        self.assertEqual((now["agent"], now["seen"]), ("", False), "an id in both agents' transcripts")
 
 
 class Candidates(TheHub):
@@ -321,14 +337,40 @@ class Requests(TheHub):
         status, out = self.call({**self.session(), "name": "Engine", "kind": "code", "path": str(self.work),
                                  "confirmClosed": True})
         self.assertEqual(status, 409, out)
-        self.assertIn(f"was started in {other}", out["message"])
+        self.assertIn(f"started in {other}", out["message"])
         self.nothing_left()
         self.live["sid-past-1"] = {"cwd": str(self.work)}
         status, out = self.call({**self.session(), "name": "Engine", "kind": "code", "path": str(self.work)})
         self.assertEqual(status, 200, out)
 
+    def test_the_agent_the_page_names_must_be_the_transcripts(self):
+        # A live Codex posted as Claude, and a live Claude posted as Codex.
+        for real, said in (("codex", "claude"), ("claude", "codex")):
+            with self.subTest(real=real):
+                self.live["sid-past-1"] = {"agent": real, "live": True, "seen": real == "claude"}
+                status, out = self.call({**self.session(agent=said), "name": "Engine", "kind": "code",
+                                         "path": str(self.work), "confirmClosed": True})
+                self.assertEqual(status, 409, out)
+                self.assertIn("open in a terminal right now", out["message"])
+                self.live["sid-past-1"] = {"agent": real, "seen": real == "claude"}
+                status, out = self.call({**self.session(agent=said), "name": "Engine", "kind": "code",
+                                         "path": str(self.work), "confirmClosed": True})
+                self.assertEqual(status, 409, out)
+                self.assertIn(f"That is a {real.capitalize()} conversation", out["message"])
+                self.nothing_left()
+
+    def test_a_session_with_no_transcript_is_refused(self):
+        for gone in ({"agent": ""}, {"cwd": ""}, {"agent": "", "seen": False}):
+            with self.subTest(gone=gone):
+                self.live["sid-past-1"] = gone
+                status, out = self.call({**self.session(), "name": "Engine", "kind": "code", "path": str(self.work),
+                                         "confirmClosed": True})
+                self.assertEqual(status, 409, out)
+                self.assertIn("cannot find that conversation's transcript", out["message"])
+                self.nothing_left()
+
     def test_a_codex_the_hub_cannot_see_waits_for_the_person(self):
-        self.live["sid-past-1"] = {"seen": False, "written": time.time() - 86400}
+        self.live["sid-past-1"] = {"agent": "codex", "seen": False, "written": time.time() - 86400}
         body = {**self.session(agent="codex"), "name": "Engine", "kind": "code", "path": str(self.work)}
         status, out = self.call(body)
         self.assertEqual(status, 409, out)
@@ -407,6 +449,17 @@ class Requests(TheHub):
         self.assertIn('r["makePo"] = v', Path(dashboard.__file__).read_text(encoding="utf-8"))
 
 
+class ThePhoneRules(unittest.TestCase):
+    def test_a_hidden_choice_stays_hidden_on_a_phone(self):
+        # "It is closed in its terminal" is hidden unless the verdict asks for
+        # it: a phone rule that shows every choice must not show that one.
+        import re
+        rules = re.findall(r"^\s*(dialog#setup-modal \.kind-opt[^{,]*)\{[^}]*display:\s*flex", INDEX, re.M)
+        self.assertTrue(rules)
+        for sel in rules:
+            self.assertIn(":not([hidden])", sel)
+
+
 class ACodeFolderInTheProjectsFolder(TheHub):
     """A code folder that is in the projects root with files in it is used in
     place: nothing is written into it, the project's own files go beside it."""
@@ -424,6 +477,11 @@ class ACodeFolderInTheProjectsFolder(TheHub):
                       for p in self.code.rglob("*"))
 
     def kept_apart(self, pid):
+        # Found again from the projects root alone, as on a restored machine,
+        # straight after it was registered: its home is made then, not later.
+        with mock.patch.object(dashboard, "PROJECTS_FILE", self.base / "nothing.json"):
+            again = [p for p in dashboard.load_projects() if p["id"] == pid]
+        self.assertEqual(os.path.normcase(again[0]["path"]), os.path.normcase(str(self.code)))
         proj = dashboard.find_project(pid)
         home = dashboard.project_home(proj)
         self.assertEqual(os.path.normcase(proj["path"]), os.path.normcase(str(self.code)))
@@ -431,10 +489,6 @@ class ACodeFolderInTheProjectsFolder(TheHub):
         self.assertEqual(json.loads((Path(home) / "project.json").read_text(encoding="utf-8"))["id"], pid)
         self.assertEqual(Path(dashboard._task_dir_for(proj, "A task")).parent, Path(home), "tasks go in its home")
         self.assertEqual(dashboard.set_project_kind(pid, "documents"), (False, "code_kept_apart"))
-        # Found again from the projects root alone, as on a restored machine.
-        with mock.patch.object(dashboard, "PROJECTS_FILE", self.base / "nothing.json"):
-            again = [p for p in dashboard.load_projects() if p["id"] == pid]
-        self.assertEqual(os.path.normcase(again[0]["path"]), os.path.normcase(str(self.code)))
         self.assertEqual(self.listing(), self.before, "the code folder is as it was")
         return proj
 
@@ -460,7 +514,17 @@ class ACodeFolderInTheProjectsFolder(TheHub):
         self.assertEqual(self.listing(), self.before)
         self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["engine"], "the home it would have had is gone")
 
-    def test_a_new_or_empty_folder_is_its_own_home_as_before(self):
+    def test_an_empty_code_folder_is_kept_apart_too(self):
+        for p in sorted(self.code.rglob("*"), reverse=True):
+            p.rmdir() if p.is_dir() else p.unlink()
+        self.before = self.listing()
+        self.assertEqual(self.before, [])
+        status, out = self.call_url("/api/projects/new", {"path": str(self.code), "name": "Engine", "kind": "code"})
+        self.assertEqual(status, 200, out)
+        self.kept_apart(out["project"]["id"])
+        self.assertEqual(os.listdir(self.code), [])
+
+    def test_a_new_folder_is_its_own_home_as_before(self):
         ok, proj, _ = dashboard.register_project("Motors")
         self.assertTrue((self.root / "Motors" / "project.json").is_file())
         self.assertFalse(dashboard._home_apart(dashboard.find_project(proj["id"])))

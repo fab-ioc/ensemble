@@ -2801,7 +2801,7 @@
     /* The project setup dialog: a choice is its whole row, and every row,
        field and button is finger-sized. */
     dialog#setup-modal { width: calc(100vw - 2 * var(--s-400)); max-width: none; padding: var(--s-400); }
-    dialog#setup-modal .kind-opt { display: flex; flex-wrap: wrap; align-items: center; min-height: var(--touch-min); margin: 0; padding: var(--s-100) 0; box-sizing: border-box; }
+    dialog#setup-modal .kind-opt:not([hidden]) { display: flex; flex-wrap: wrap; align-items: center; min-height: var(--touch-min); margin: 0; padding: var(--s-100) 0; box-sizing: border-box; }
     dialog#setup-modal .kind-opt > .cfg-hint { flex-basis: 100%; }
     dialog#setup-modal .kind-opt > br { display: none; }
     dialog#setup-modal .kind-opt input { width: var(--s-400); height: var(--s-400); margin-right: var(--s-200); }
