@@ -1729,32 +1729,8 @@
   .dp-live { display: flex; flex-direction: column; gap: 10px; padding: 16px 18px 12px; border-bottom: 1px solid var(--border); }
   #detail-panel:has(iframe.dp-session) { gap: 0; }
   #detail-panel:has(iframe.dp-session) .dp-live .dp-head { padding: 0; }
-  .dp-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-  .dp-actions button, .dp-actions select {
-    background: var(--bg); border: 1px solid var(--border);
-    padding: 5px 11px; border-radius: 6px; cursor: pointer;
-    font: inherit; font-size: 12px; color: var(--fg); font-weight: 500;
-    transition: border-color .08s, background .08s, color .08s, transform .06s;
-  }
-  .dp-actions button:hover, .dp-actions select:hover {
-    border-color: var(--border-strong); color: var(--fg); background: var(--hover);
-  }
-  .dp-actions button:active { transform: translateY(1px); }
-  /* PRIMARY actions (Focus on live, Open on historical) — filled terracotta */
-  .dp-actions .focus-btn, .dp-actions .open-btn {
-    background: var(--accent); color: var(--accent-fg); border-color: var(--accent);
-  }
-  .dp-actions .focus-btn:hover, .dp-actions .open-btn:hover {
-    background: var(--accent-hover); color: var(--accent-fg);
-  }
-  /* DESTRUCTIVE actions — red by default, not just on hover */
-  .dp-actions .close-btn, .dp-actions .delete-btn {
-    color: var(--c-danger-fg); border-color: color-mix(in srgb, var(--c-danger-fg) 30%, var(--border));
-  }
-  .dp-actions .close-btn:hover, .dp-actions .delete-btn:hover {
-    background: color-mix(in srgb, var(--c-danger-fg) 10%, transparent);
-    border-color: var(--c-danger-fg); color: var(--c-danger-fg);
-  }
+  /* The task panel's action bar (the shared .am-* block below). */
+  .dp-actions { display: flex; align-items: center; }
   .actions button, .actions select {
     background: var(--surface); border: 1px solid var(--border); padding: 3px 9px;
     font: inherit; font-size: 11.5px; cursor: pointer; border-radius: 5px;
@@ -1769,52 +1745,92 @@
   .actions .open-btn:hover  { border-color: var(--run-idle); color: var(--run-idle); background: color-mix(in srgb, var(--run-idle) 8%, transparent); }
   .actions select { max-width: 130px; }
   .actions button.busy { opacity: .5; cursor: progress; }
-  .theme-dd-trigger {
-    background: var(--surface); border: 1px solid var(--border);
-    padding: 3px 9px; font: inherit; font-size: 11.5px; cursor: pointer;
-    border-radius: 5px; color: var(--fg); font-weight: 500;
-    max-width: 160px; overflow: hidden; text-overflow: ellipsis;
-    white-space: nowrap; transition: border-color .08s, background .08s, color .08s;
+  /* ---- Session actions: begin shared block ---------------------------------
+     The action bar (static/actions.js): one primary action and a More menu,
+     the same in the dashboard's task panel, its list rows and the popped-out
+     session window. index.html and session.html carry this block word for
+     word (tests/test_session_actions.py compares them). */
+  .am-bar { display: inline-flex; align-items: center; gap: var(--s-200); flex-wrap: nowrap; }
+  .am-wrap { display: inline-flex; }
+  .am-btn {
+    display: inline-flex; align-items: center; gap: var(--s-100);
+    height: 32px; padding: 0 var(--s-300); border-radius: var(--r-200);
+    background: var(--surface); color: var(--fg); border: 1px solid var(--border-strong);
+    font: inherit; font-size: var(--fs-300); font-weight: 500; line-height: var(--lh-300);
+    cursor: pointer; white-space: nowrap;
   }
-  .theme-dd-trigger:hover { background: var(--hover); border-color: var(--border-strong); color: var(--fg); }
+  .am-btn:hover { background: var(--hover); }
+  .am-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .am-btn.is-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+  .am-btn.is-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .am-btn[aria-disabled="true"] { color: var(--fg-disabled); background: var(--surface); border-color: var(--border); cursor: not-allowed; }
+  .am-more[aria-expanded="true"] { background: var(--pressed); }
+  .am-dots { font-size: var(--fs-400); line-height: 1; }
+  .am-menu {
+    position: fixed; z-index: 210; min-width: 220px; max-width: 320px;
+    display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain;
+    background: var(--surface-overlay); border: 1px solid var(--border);
+    border-radius: var(--r-300); box-shadow: var(--e-200); padding: var(--s-100);
+  }
+  .am-menu[hidden] { display: none; }
+  .am-item {
+    display: flex; flex-direction: column; align-items: stretch; flex: 0 0 auto;
+    width: 100%; min-height: 32px; padding: var(--s-100) var(--s-200);
+    background: transparent; border: 0; border-radius: var(--r-200); text-align: left;
+    font: inherit; font-size: var(--fs-200); line-height: var(--lh-200); color: var(--fg); cursor: pointer;
+  }
+  .am-item[hidden] { display: none; }
+  .am-item:hover { background: var(--hover); }
+  .am-item:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+  .am-item.danger { color: var(--c-danger-fg); }
+  .am-item.danger:hover { background: var(--c-danger-bg); }
+  .am-item[aria-disabled="true"] { color: var(--fg-disabled); cursor: not-allowed; }
+  .am-item[aria-disabled="true"]:hover { background: transparent; }
+  .am-lbl { display: flex; align-items: center; gap: var(--s-100); }
+  .am-check { display: inline-block; width: 12px; }
+  .am-why { color: var(--fg-muted); font-size: var(--fs-100); line-height: var(--lh-100); white-space: normal; }
+  .am-sep { flex: 0 0 auto; height: 1px; background: var(--border); margin: var(--s-100) 0; }
+  /* The terminal colour picker, opened from its item in the menu. */
   .theme-dd-menu {
-    position: fixed; z-index: 200;
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 10px; box-shadow: 0 12px 36px rgba(0,0,0,.22);
-    width: 280px; max-height: 420px;
+    position: fixed; z-index: 220; width: 280px; max-height: 420px;
     display: flex; flex-direction: column; overflow: hidden;
+    background: var(--surface-overlay); border: 1px solid var(--border);
+    border-radius: var(--r-300); box-shadow: var(--e-200);
   }
   .theme-dd-search {
-    border: 0; border-bottom: 1px solid var(--border);
-    padding: 9px 12px; font: inherit; font-size: 13px;
+    flex: 0 0 auto; border: 0; border-bottom: 1px solid var(--border);
+    padding: var(--s-200) var(--s-300); font: inherit; font-size: var(--fs-300);
     background: transparent; color: var(--fg); outline: none;
   }
-  .theme-dd-list { overflow-y: auto; padding: 6px; }
+  .theme-dd-search:focus-visible { box-shadow: inset 0 0 0 2px var(--focus-ring); }
+  .theme-dd-list { overflow-y: auto; padding: var(--s-100); }
   .theme-dd-section {
-    padding: 8px 8px 4px; font-size: 10px;
-    color: var(--fg-muted); text-transform: uppercase;
-    font-weight: 600; letter-spacing: 0.06em;
+    padding: var(--s-200) var(--s-200) var(--s-100); font-size: var(--fs-100);
+    color: var(--fg-muted); text-transform: uppercase; font-weight: 600; letter-spacing: .05em;
   }
-  .theme-dd-empty { padding: 8px 12px; font-size: 12px; color: var(--fg-subtle); }
-  .theme-dd-item {
-    display: flex; align-items: center; gap: 6px;
-    padding: 5px 6px 5px 4px; border-radius: 5px;
-    font-size: 12.5px; line-height: 1.4;
-  }
+  .theme-dd-empty { padding: var(--s-200) var(--s-300); font-size: var(--fs-200); color: var(--fg-muted); }
+  .theme-dd-item { display: flex; align-items: center; gap: var(--s-100); border-radius: var(--r-200); }
   .theme-dd-item:hover { background: var(--hover); }
-  .theme-dd-item.current .name { color: var(--selected-fg); font-weight: 600; }
-  .theme-dd-item .star {
-    background: transparent; border: 0; cursor: pointer;
-    color: var(--fg-muted); font-size: 14px; line-height: 1;
-    padding: 2px 6px; border-radius: 4px; flex-shrink: 0;
+  .theme-dd-item .star, .theme-dd-item .name {
+    background: transparent; border: 0; font: inherit; cursor: pointer; color: var(--fg);
+    border-radius: var(--r-200); min-height: 28px;
   }
+  .theme-dd-item .star { flex: 0 0 auto; color: var(--fg-muted); padding: 0 var(--s-200); }
   .theme-dd-item .star:hover { background: var(--selected-bg); color: var(--selected-fg); }
   .theme-dd-item .star.is-fav { color: var(--selected-fg); }
   .theme-dd-item .name {
-    flex: 1; cursor: pointer; overflow: hidden;
-    text-overflow: ellipsis; white-space: nowrap;
-    padding: 1px 0;
+    flex: 1; min-width: 0; text-align: left; padding: 0 var(--s-100); font-size: var(--fs-200);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+  .theme-dd-item.current .name { color: var(--selected-fg); font-weight: 600; }
+  .theme-dd-item .star:focus-visible, .theme-dd-item .name:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+  @media (pointer: coarse) {
+    .am-btn, .am-item, .theme-dd-item .star, .theme-dd-item .name { min-height: var(--touch-min); }
+    .am-btn { height: auto; min-width: var(--touch-min); }
+    .theme-dd-item .star { min-width: var(--touch-min); }
+    .theme-dd-search { font-size: var(--fs-400); min-height: var(--touch-min); }
+  }
+  /* ---- Session actions: end shared block */
   .ij-menu {
     position: fixed; z-index: 100; background: var(--surface);
     border: 1px solid var(--border); border-radius: 8px;
@@ -2569,6 +2585,20 @@
   dialog .im-field .kind-opt { font-size: 13px; color: var(--fg); font-weight: 400; margin-bottom: 6px; cursor: pointer; }
   /* A folder's path has no spaces to break at: it wraps, the dialog never scrolls sideways. */
   dialog .cfg-hint, dialog .im-field .kind-opt { overflow-wrap: anywhere; }
+  dialog .im-field select { padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; }
+  /* The setup dialog (projectSetupFlow): its PO's choices, each opening what it needs below it. */
+  dialog .su-legend { font-size: var(--fs-200); color: var(--fg-subtle); font-weight: 500; margin-bottom: var(--s-050); }
+  dialog .su-legend small { color: var(--fg-muted); font-weight: 400; margin-left: var(--s-200); }
+  dialog .im-field.su-sub { margin: 0 0 var(--s-300) var(--s-600); }
+  dialog .su-list { max-height: 36vh; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--r-200); padding: var(--s-100) var(--s-300) var(--s-200); }
+  dialog .su-group { font-size: var(--fs-200); color: var(--fg-subtle); font-weight: 600; margin: var(--s-200) 0 var(--s-100); }
+  dialog .im-field .su-cand { display: block; padding: var(--s-100) 0; margin: 0; }
+  dialog .im-field .su-cand.off { cursor: default; }
+  dialog .im-field .su-cand.off b { color: var(--fg-muted); }
+  dialog .su-list .su-more { margin-top: var(--s-200); }
+  dialog #su-folder-note[data-alert], dialog #su-err { color: var(--c-danger-fg); }
+  dialog #su-err:empty, dialog .kind-opt[hidden] { display: none; }
+  dialog #su-closed-field:not([hidden]) { display: block; margin: var(--s-200) 0 0; }
   dialog .im-field input:focus,
   dialog .im-field textarea:focus {
     border-color: var(--focus-ring);
@@ -2657,12 +2687,6 @@
     /* A sideways-scrolling row clips what hangs below it, so while its status
        or priority menu is open the row wraps instead of scrolling. */
     .dp-meta:has(.wf-menu:not([hidden]), .pr-menu:not([hidden])) { overflow: visible; flex-wrap: wrap; }
-    .dp-actions, .dp-actions .actions {
-      flex-wrap: nowrap; overflow-x: auto;
-      -webkit-overflow-scrolling: touch; scrollbar-width: none;
-    }
-    .dp-actions::-webkit-scrollbar, .dp-actions .actions::-webkit-scrollbar { display: none; }
-    .dp-actions button, .dp-actions select { flex: 0 0 auto; }
 
     /* Bigger touch targets */
     .dp-close { font-size: 24px; padding: 6px 10px; }
@@ -2721,6 +2745,11 @@
     /* Trays and menus fit the screen, and their rows are finger-sized. */
     #notif-tray, #usage-tray, #settings-panel { left: var(--s-200); right: var(--s-200); width: auto; }
     .me-item, .pm-item, .fm-item, .notif-item, .wf-item, .pr-item, .ov-menu button { min-height: var(--touch-min); }
+    /* The action bar and its menu, as the shared block's (pointer: coarse) rule. */
+    .am-btn, .am-item, .theme-dd-item .star, .theme-dd-item .name { min-height: var(--touch-min); }
+    .am-btn { height: auto; min-width: var(--touch-min); }
+    .theme-dd-item .star { min-width: var(--touch-min); }
+    .theme-dd-search { min-height: var(--touch-min); }
 
     /* Touch targets in the page, the task panel and the PO's drawer. */
     /* A phone swipes its board a column at a time (scroll-snap); the edge
@@ -2784,6 +2813,15 @@
     .crumbs { flex-wrap: wrap; row-gap: var(--s-100); }
     /* A documents project's history and recent changes, finger-sized. */
     .wsh-ver, .dch-file, .kind-btn, .key-btn { min-height: var(--touch-min); }
+    /* The project setup dialog: a choice is its whole row, and every row,
+       field and button is finger-sized. */
+    dialog#setup-modal { width: calc(100vw - 2 * var(--s-400)); max-width: none; padding: var(--s-400); }
+    dialog#setup-modal .kind-opt:not([hidden]) { display: flex; flex-wrap: wrap; align-items: center; min-height: var(--touch-min); margin: 0; padding: var(--s-100) 0; box-sizing: border-box; }
+    dialog#setup-modal .kind-opt > .cfg-hint { flex-basis: 100%; }
+    dialog#setup-modal .kind-opt > br { display: none; }
+    dialog#setup-modal .kind-opt input { width: var(--s-400); height: var(--s-400); margin-right: var(--s-200); }
+    dialog#setup-modal input[type=text], dialog#setup-modal input[type=search], dialog#setup-modal select,
+    dialog#setup-modal button { min-height: var(--touch-min); font-size: var(--fs-400); }
     .dch-file { height: auto; }
     .wsh-top { max-height: 50%; }
     .scopebar { flex-wrap: wrap; }
@@ -2828,6 +2866,7 @@
 </style>
 <!-- Shared with fileview.html and session.html: the code highlighter, and the
      store that keeps review comments until they are delivered. -->
+<script src="/static/actions.js"></script>
 <script src="/static/hl.js"></script>
 <script src="/static/comments.js"></script>
 <script src="/static/attach.js"></script>
@@ -3097,7 +3136,8 @@ function writeSlot(el, html) {
 // <body>. Note which control had focus and give it to its equivalent in the
 // new markup: the same control if it survived, else the one in its place.
 const FOCUSABLE = 'button:not([disabled]), a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
-const controlId = el => [el.tagName, el.classList[0] || '', el.dataset.wf || '', el.dataset.itab || ''].join('|');
+const controlId = el => [el.tagName, el.classList[0] || '', el.dataset.wf || '', el.dataset.itab || '',
+                         el.dataset.act || '', el.classList.contains('am-more') ? 'more' : ''].join('|');
 function focusKeyIn(root) {
   const a = document.activeElement;
   if (!a || a === root || !root.contains(a)) return null;
@@ -3568,83 +3608,27 @@ function applyPlatformChrome() {
   if (nb) nb.title = `Start a new claude session in a new ${T()} window`;
 }
 
+// The state the shared action model (static/actions.js) reads, from a row of
+// the task list. The pop-out builds the same from its room (session.html).
+function actionState(r, isLive) {
+  const isRoom = !!(r.headless && r.roomId);
+  return {
+    kind: r.orphan ? 'orphan' : isRoom ? 'room' : 'raw',
+    sessionId: r.sessionId, roomId: r.roomId || '', cwd: r.cwd || '', pid: r.pid || '',
+    agent: r.agent || '', label: r.label || '', live: !!isLive, draft: !!r.draft,
+    status: isRoom ? (r.roomStatus || '') : (r.status || ''), resuming: !!r.resuming,
+    archived: !!r.archived, members: r.members || [],
+    makePo: r.makePo, currentTheme: r.currentTheme || '',
+    chatSchemeOn: !!(r.cwd && CHAT_SCHEME_ON[r.cwd]),
+  };
+}
+function actionEnv() {
+  return { hub: onHubMachine(), features: PLATFORM.features || {},
+           terminalName: T(), fileManagerName: FM() };
+}
+// One primary action and the More menu: in a list row, and in the task panel.
 function actionsCell(r, isLive) {
-  const sid = r.sessionId;
-  const current = r.currentTheme || '';
-  const placeholder = current ? `Terminal colours: ${current}` : 'Terminal colours…';
-  const themeTitle = current ? `Active ${T()} theme: ${current}` : `Pick a ${T()} color theme for this session`;
-  // Show the theme picker on any theming platform for any session with a pid
-  // or cwd. A live session (pid) themes the running tab on macOS / queues on
-  // Windows; a historical session (cwd only) sets the theme for its next Open.
-  const themeSelect = (feat('themes') && (r.pid || r.cwd)) ? `
-    <button type="button" class="theme-dd-trigger" data-pid="${r.pid || ''}" data-cwd="${esc(r.cwd || '')}" data-current="${esc(current)}" title="${esc(themeTitle)}">${esc(placeholder)}</button>` : '';
-  const finderBtn = r.cwd
-    ? (onHubMachine()
-        ? `<button class="finder-btn" data-path="${esc(r.cwd)}" title="Open cwd in ${esc(FM())}">📂 ${esc(FM())}</button>`
-        : `<button class="finder-btn" data-path="${esc(r.cwd)}" title="Browse this folder in the file viewer">📂 Browse</button>`)
-    : '';
-  // IDE opens an editor on the hub's own screen. From any other computer it
-  // shows the session's files in the Workspace tab instead.
-  const hub = onHubMachine();
-  const ijBtn = hub
-    ? `<button class="ij-btn" data-sid="${sid}" title="Open the project in its preferred editor (auto-detected by language)">🧠 IDE</button>`
-    : `<button class="ij-btn" data-sid="${sid}" title="Show this session's files in the Workspace tab">🧠 IDE</button>`;
-  // Focus raises this session's terminal window on the hub's screen, where the
-  // platform maps a tty to its tab. From another computer there is no window to
-  // raise, and the hub does not capture a terminal it did not start: no button.
-  const focusBtn = (hub && isLive && feat('focus'))
-    ? `<button class="focus-btn" data-pid="${r.pid}" title="Bring this session's ${esc(T())} window to the front">🪟 Focus</button>`
-    : '';
-  const closeTitle = feat('geometry')
-    ? `Close this ${T()} session (saves window position, kills claude)`
-    : `Close this ${T()} session (kills claude)`;
-  const openTitle = feat('geometry')
-    ? `Open in new ${T()} window — restores saved theme and position`
-    : `Open in new ${T()} window`;
-  const openCloseBtn = isLive
-    ? `<button class="close-btn" data-pid="${r.pid}" title="${esc(closeTitle)}">⛔ Close</button>`
-    : `<button class="open-btn" data-sid="${sid}" data-cwd="${esc(r.cwd)}" data-agent="${esc(r.agent || '')}" data-label="${esc(r.label || '')}" title="Open in the dashboard, headless — no terminal window">▶ Open</button>`;
-  const archiveBtn = isLive
-    ? ''
-    : (r.archived
-        ? `<button class="archive-btn" data-sid="${sid}" data-archived="1" title="Restore this session to the main list">📦 Unarchive</button>`
-        : `<button class="archive-btn" data-sid="${sid}" data-archived="0" title="Hide this session from the main list (reversible)">🗄 Archive</button>`);
-  const deleteBtn = isLive
-    ? ''
-    : `<button class="delete-btn" data-sid="${sid}" title="Permanently delete this session's transcript and sidecar data (irreversible)">🗑 Delete</button>`;
-  // Send: inject a prompt into a live session's terminal (the coordination doorbell).
-  const sendBtn = (isLive && r.pid && feat('send'))
-    ? `<button class="send-btn" data-pid="${r.pid}" data-agent="${esc(r.agent || '')}" title="Type a message into this running session and submit it">✉ Send</button>`
-    : '';
-  // History sessions open HEADLESS by default (▶ Open). A real terminal is the
-  // opt-in escape hatch. (Only history — resuming a live session would double
-  // it.) A window on the hub's screen is nothing another computer sees, so
-  // there Terminal resumes the session headless and shows the terminal the hub
-  // captures.
-  const terminalTitle = hub ? `Open in a real ${T()} terminal window` : 'Resume it here, headless, and show its terminal';
-  const terminalBtn = (!isLive && r.cwd)
-    ? `<button class="terminal-btn" data-sid="${sid}" data-cwd="${esc(r.cwd)}" data-agent="${esc(r.agent || '')}" data-label="${esc(r.label || '')}" title="${esc(terminalTitle)}">🖥 Terminal</button>`
-    : '';
-  // A past session that already knows a project becomes that project's PO.
-  // Offered where ▶ Open is: continuing a live session here too would split it.
-  const makePoBtn = (!isLive && r.cwd && !r.roomId && !r.orphan)
-    ? `<button class="makepo-btn" data-sid="${sid}" title="Start a new project with this conversation as its PO: the task you talk to about the project, which its other tasks report to">Make PO of a new project…</button>`
-    : '';
-  return `<div class="actions">
-    ${focusBtn}
-    ${sendBtn}
-    ${terminalBtn}
-    ${openCloseBtn}
-    ${makePoBtn}
-    ${archiveBtn}
-    ${deleteBtn}
-    <button class="rename-btn" data-sid="${sid}" title="Edit the label manually (also updates the iTerm tab name when live)">✎ Rename</button>
-    <button class="moveproj-btn" data-sid="${sid}" title="File this session under a project (or remove it from one)">📁 Move to project</button>
-    <button class="auto-btn" data-sid="${sid}" title="Ask Claude to suggest a label based on the conversation">✨ Auto</button>
-    ${finderBtn}
-    ${ijBtn}
-    ${themeSelect}
-  </div>`;
+  return SessionActions.actionBarHtml(SessionActions.sessionActions(actionState(r, isLive), actionEnv()));
 }
 
 let ALL_ROWS = [];
@@ -3942,11 +3926,9 @@ function agentBadges(r) {
   }).join('');
 }
 
-let detailHeadOverflow = '';
 function detailHead(r, isRoom) {
   return `<div class="dp-head">
       <h2>${taskNoHtml(r, false)}${esc(detailTitle(r))}</h2>
-      ${detailHeadOverflow || ''}
       ${isRoom && r.roomId ? `<button class="dp-popout" data-room="${esc(r.roomId)}" title="Pop out to a floating window">⧉ Pop out</button>` : ''}
       <button class="dp-close" title="Close (Esc)">×</button>
     </div>`;
@@ -4001,8 +3983,7 @@ function detailMeta(r, isLive, isRoom, now) {
 function detailSummary(r, isRoom) {
   if (r.draft) {
     return `<div class="dp-summary draft">
-      <div class="dp-summary-t">Not started. The spec below is what the agents will be given.</div>
-      ${isRoom && r.roomId ? `<button class="open-btn room-resume-inline" data-room="${esc(r.roomId)}">▶ Start</button>` : ''}
+      <div class="dp-summary-t">Not started. The spec below is what the agents will be given; Start launches them.</div>
     </div>`;
   }
   const last = (r.lastAgent || '').trim();
@@ -4044,74 +4025,10 @@ function issueEmpty(msg) {
   return `<div class="dp-empty">${esc(msg)}</div>`;
 }
 
-function detailActions(r, isLive, isRoom, isOrphan) {
-  if (isOrphan) {
-    return `<div class="dp-actions">
-      <button class="open-btn orphan-open" data-grp="${esc(r.sessionId)}" title="Resume this collaboration headless">▶ Open</button>
-      <button class="delete-btn orphan-delete" data-grp="${esc(r.sessionId)}" title="Delete — every agent transcript and the ~/cs scratch folder">🗑 Delete</button>
-    </div>`;
-  }
-  if (isRoom) {
-    // Everything else a task can do lives in the ⋯ menu (detailOverflow).
-    const lifecycle = isLive
-      ? `<button class="room-end delete-btn" data-room="${esc(r.roomId)}" title="Stop the agent(s), keep the session">✕ End</button>`
-      : `<button class="open-btn room-resume-inline" data-room="${esc(r.roomId)}" title="${r.draft ? 'Start — launch the agent(s) with the task spec' : 'Relaunch the agent(s) with their conversation'}">${r.draft ? '▶ Start' : '▶ Open'}</button>
-         <button class="delete-btn room-delete" data-room="${esc(r.roomId)}" title="Delete — transcripts, room record, and the ~/cs scratch folder">🗑 Delete</button>`;
-    // A draft's Start lives in the summary, where it reads as the next step
-    // rather than as one of ten equal options. Repeating it here is the
-    // two-primaries bug.
-    const contextual = r.draft ? '' : lifecycle;
-    return contextual ? `<div class="dp-actions"><div class="actions">${contextual}</div></div>` : '';
-  }
+// The task panel's actions: the same bar as the pop-out's header, from the
+// same model (docs/session-actions.md).
+function detailActions(r, isLive) {
   return `<div class="dp-actions">${actionsCell(r, isLive)}</div>`;
-}
-
-// Everything that is not the next action. Words, not emoji: the labels were
-// already there, the pictures were decoration.
-function detailOverflow(r, isLive, isRoom) {
-  if (!isRoom || !r.roomId) return '';
-  const cwd = r.cwd || '';
-  const current = r.currentTheme || '';
-  const items = [];
-  if (isLive) {
-    // On the hub this shows or hides the agents' terminals. From another
-    // computer it is Terminal: it shows the terminal the hub captures, and
-    // pressed again brings it to the front, so hiding it is an item of its own
-    // (shown while the terminal is, set when the menu opens).
-    if (onHubMachine()) items.push(`<button class="ov-item dp-terms-btn">Show terminals</button>`);
-    else items.push(`<button class="ov-item dp-terms-btn" title="The agent's terminal, as the hub captures it. Pressed again, it comes to the front.">Terminal</button>`,
-                    `<button class="ov-item dp-terms-hide" hidden>Hide terminal</button>`);
-    items.push(`<button class="ov-item dp-pause-btn" data-room="${esc(r.roomId)}" data-status="${esc(r.status || '')}">${r.status === 'paused' ? 'Resume' : 'Pause'}</button>`);
-  }
-  items.push(`<button class="ov-item rename-btn" data-sid="${esc(r.sessionId)}">Rename</button>`);
-  items.push(`<button class="ov-item auto-btn" data-sid="${esc(r.sessionId)}">Suggest a name</button>`);
-  const agentsWhy = isLive
-    ? 'This task is running — agents cannot be reassigned under a live task. End it first, then reassign.'
-    : 'Change who is assigned to this task and which model each one runs';
-  items.push(`<span title="${esc(agentsWhy)}"><button class="ov-item agents-btn" data-room="${esc(r.roomId)}"${isLive ? ' disabled' : ''}>Agents and models</button></span>`);
-  items.push(`<button class="ov-item moveproj-btn" data-sid="${esc(r.sessionId)}">Move to project</button>`);
-  if (makePoTaskOk(r, !!projectOfRoom(r.roomId), isPoRoom(r.roomId, currentPoRooms())))
-    items.push(`<button class="ov-item makepo-btn" data-room="${esc(r.roomId)}" title="Start a new project with this task as its PO: the task you talk to about the project, which its other tasks report to">Make PO of a new project…</button>`);
-  if (cwd) {
-    items.push(`<button class="ov-item finder-btn" data-path="${esc(cwd)}">${esc(finderLabel())}</button>`);
-    items.push(`<button class="ov-item ij-btn" data-sid="${esc(r.sessionId)}">${onHubMachine() ? 'Open in editor' : 'Show in Workspace'}</button>`);
-  }
-  if (feat('themes') && cwd) {
-    items.push(`<button type="button" class="ov-item theme-dd-trigger" data-pid="" data-cwd="${esc(cwd)}" data-current="${esc(current)}" title="Pick the terminal colour scheme for this task's folder">${current ? 'Terminal colours: ' + esc(current) : 'Terminal colours…'}</button>`);
-    // Off by default: the chat follows the dashboard theme. On, it takes the
-    // folder's scheme instead, as it always did before global themes.
-    const on = !!CHAT_SCHEME_ON[cwd];
-    items.push(`<button type="button" class="ov-item chat-scheme-btn" role="menuitemcheckbox" aria-checked="${on}" data-cwd="${esc(cwd)}" data-on="${on ? 1 : 0}" title="${on ? 'The chat uses this folder’s terminal colours. Click to follow the dashboard theme.' : 'The chat follows the dashboard theme. Click to use this folder’s terminal colours instead.'}">${on ? '✓ ' : ''}Chat in terminal colours</button>`);
-  }
-  // Destructive last and set apart, never adjacent to the primary action.
-  if (!isLive) {
-    items.push(`<div class="ov-rule"></div>`);
-    items.push(`<button class="ov-item danger room-delete" data-room="${esc(r.roomId)}">Delete task</button>`);
-  }
-  return `<span class="ov-wrap">
-    <button class="dp-ov-btn" title="More actions" aria-haspopup="true">⋯</button>
-    <span class="ov-menu" hidden>${items.join('')}</span>
-  </span>`;
 }
 
 function jiraSection(r) {
@@ -4300,12 +4217,11 @@ function renderDetail() {
 
   // Top slot.
   const top = panel.querySelector('.dp-top');
-  detailHeadOverflow = detailOverflow(r, isLive, isRoom);
   const topHtml = detailHead(r, isRoom) + detailMeta(r, isLive, isRoom, now)
-    + detailActions(r, isLive, isRoom, isOrphan) + detailSummary(r, isRoom);
+    + detailActions(r, isLive) + detailSummary(r, isRoom);
   const topSig = withoutAgo(topHtml);
   if (top._html !== topSig) {
-    if (top.querySelector(DP_MENU_OPEN)) {
+    if (top.querySelector(DP_MENU_OPEN) || SessionActions.openIn(top) || (THEME_MENU && top.contains(THEME_MENU._amFrom))) {
       panel.dataset.topPending = '1';     // apply once the menu closes
     } else {
       const focus = focusKeyIn(top);
@@ -5620,58 +5536,55 @@ function wireProjectsChrome() {
     e.stopPropagation(); showNewSessionModal(b.dataset.proj);
   });
   const np = document.querySelector('.proj.newproj');
-  if (np) np.onclick = () => registerProjectFlow();
+  if (np) np.onclick = () => projectSetupFlow();
   const npb = document.querySelector('.newproj-btn');
-  if (npb) npb.onclick = () => registerProjectFlow();
+  if (npb) npb.onclick = () => projectSetupFlow();
   const ct = document.querySelector('.crumb-newtask');
   if (ct) ct.onclick = () => showNewSessionModal(SELECTED_PROJECT);
   const back = document.querySelector('.crumb-back');
   if (back) back.onclick = (e) => { e.preventDefault(); SELECTED_PROJECT = null; SB_DEST = ''; renderRows(); };
 }
-// Register a folder as a project. Any folder works (created if missing) — a
-// git repo, or just a place for specs/notes. Returns the project or null.
-async function registerProjectFlow(prefillPath) {
-  const path = prompt('Project folder (created if missing).\nAny folder — a repo, or just notes/specs:', prefillPath || '');
-  if (path === null || !path.trim()) return null;
-  const guess = path.trim().split(/[\\/]/).filter(Boolean).pop() || '';
-  const name = prompt('Project name:', guess);
-  if (name === null) return null;
-  const kind = prompt('Code or documents?\nType “documents” for a folder of files: its page leads with the files, its tasks work in the folder, and every version of every file is kept. Leave “code” otherwise.', 'code');
-  if (kind === null) return null;
-  try {
-    const r = await api('/api/projects/new', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: path.trim(), name: name.trim(), kind: /^\s*d/i.test(kind) ? 'documents' : 'code' }),
-    });
-    if (r.kindRefused) toast(r.kindRefused, 8000, 'err');
-    toast(`project “${r.project.name}” registered`, 2500, 'ok');
-    await refreshProjects(); renderRows();
-    return r.project;
-  } catch (e) { toast('register failed: ' + e.message, 5000, 'err'); return null; }
+// New project, asked for from another dialog (a new task's project, Move to
+// project): the setup dialog, registering only and staying there. Returns the
+// project or null.
+function registerProjectFlow(prefillPath) {
+  return projectSetupFlow({ path: prefillPath || '', inline: true });
+}
+function pickProjectOptions(allowNone, chosen) {
+  return (allowNone ? '<option value="">(no project — Unassigned)</option>' : '')
+    + registeredProjects().map(p => `<option value="${esc(p.id)}"${p.id === chosen ? ' selected' : ''}>${esc(p.name)}</option>`).join('')
+    + '<option value="__new__">+ New project…</option>';
 }
 // Modal project picker → resolves to a project id ('' = none) or null if cancelled.
 function pickProject(title, allowNone) {
   return new Promise(resolve => {
     const dlg = $('#modal');
-    const projs = registeredProjects();
     dlg.innerHTML = `
       <h3>${esc(title)}</h3>
       <div class="im-field">
         <label>Project</label>
-        <select id="pp-sel">
-          ${allowNone ? '<option value="">(no project — Unassigned)</option>' : ''}
-          ${projs.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}
-          <option value="__new__">+ New project…</option>
-        </select>
+        <select id="pp-sel">${pickProjectOptions(allowNone, '')}</select>
       </div>
       <div class="actions"><button id="pp-ok">OK</button><button id="pp-cancel" class="secondary">Cancel</button></div>`;
     dlg.showModal();
     const done = v => { dlg.close(); resolve(v); };
     $('#pp-cancel').onclick = () => done(null);
     dlg.addEventListener('cancel', () => done(null), { once: true });
+    // A new project is set up over the picker, which stays as it was: with
+    // the new project chosen, or as before when that is cancelled.
+    let was = $('#pp-sel').value;
+    const newProject = async () => {
+      const p = await registerProjectFlow();
+      const sel = $('#pp-sel');
+      if (!sel) return;
+      if (p) sel.innerHTML = pickProjectOptions(allowNone, p.id);
+      sel.value = p ? p.id : was;
+      was = sel.value;
+    };
+    $('#pp-sel').onchange = () => { if ($('#pp-sel').value === '__new__') newProject(); else was = $('#pp-sel').value; };
     $('#pp-ok').onclick = async () => {
       const v = $('#pp-sel').value;
-      if (v === '__new__') { dlg.close(); const p = await registerProjectFlow(); resolve(p ? p.id : null); return; }
+      if (v === '__new__') { newProject(); return; }
       done(v);
     };
   });
@@ -8501,15 +8414,9 @@ function poNoteHtml() {
   if (!SELECTED_PROJECT || SELECTED_PROJECT === UNASSIGNED_ID || PROJECT_TAB !== 'tasks' || SB_DEST) return '';
   const pj = projectById(SELECTED_PROJECT);
   if (!pj || isDocsProject(pj) || poRowOf(pj)) return '';
-  const hasTasks = (pj.sessions || []).some(s => s.roomId);
   const what = pj.poRoomId ? 'This project’s PO was a task that no longer exists.' : 'This project has no PO.';
-  // A past session that already knows the project can take the role too.
-  const hasPast = makePoSessions(ALL_ROWS).length > 0;
-  const how = hasTasks ? `Choose one of its tasks${hasPast ? ' or a past session' : ''}, or create a task for the role first.`
-            : hasPast ? 'Choose a past session that already knows the project, or create a task for the role with + New task and choose it here.'
-                      : 'Create a task for the role with + New task, then choose it here.';
-  return `<div class="po-note"><span>${what} The PO is the task you talk to about the project: the other tasks report to it, and its conversation leads this page. ${how}</span>`
-    + `<button class="po-btn def po-choose" data-proj="${esc(pj.id)}"${hasTasks || hasPast ? '' : ' disabled'}>Choose the PO…</button></div>`;
+  return `<div class="po-note"><span>${what} The PO is the task you talk to about the project: the other tasks report to it, and its conversation leads this page. Make it a conversation you already had about the project, or start a fresh one.</span>`
+    + `<button class="po-btn def po-choose" data-proj="${esc(pj.id)}">Set up the PO…</button></div>`;
 }
 // A project's PO, opened from somewhere else on the page (a balloon link, a
 // Needs you item): the drawer over the page you are on, or its own pane where a
@@ -8547,37 +8454,15 @@ function poPillClick() {
   if (PO_PEEK && !isPhone()) poFocusComposer();
 }
 // ---- A past session made a PO: begin ----------------------------------------
-// A conversation started in a terminal, outside Ensemble, that already holds a
-// project's context becomes that project's PO: of a new project ("Make PO of a
-// new project…" on the session, or on a one-agent task in no project), or of a
-// project that has none (in "Choose the PO…"). One request does it all
-// (/api/projects/po-from-session). Plain data and functions down to
-// makePoBody, so tests/test_make_po.py runs them in Node.
-const MAKEPO_LIVE_S = 15 * 60;
-// The sessions the hub lists but does not own, newest first. One running in a
-// terminal is left out, as it has no ▶ Open: continuing it here too would split it.
-function makePoSessions(rows) {
-  return (rows || []).filter(r => r && !r.roomId && !r.orphan && !r.isLive && r.sessionId && r.cwd)
-    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-}
-// A one-agent task in no project that is nobody's PO may become one.
-function makePoTaskOk(r, inProject, isPo) {
-  return !!(r && r.roomId && !r.draft && !inProject && !isPo && (r.members || []).length === 1
-    && ['claude', 'codex'].includes(String(r.members[0].agent || '').toLowerCase()));
-}
-// Written to a moment ago: it may still be open in a terminal the hub cannot see.
-function makePoLooksLive(r, nowS) {
-  return !!(r && !r.roomId && r.updatedAt && nowS - r.updatedAt < MAKEPO_LIVE_S);
-}
+// A conversation that already holds a project's context (started in a
+// terminal, outside Ensemble, or a one-agent task) becomes that project's PO:
+// of a new project, or of a project that has none, chosen in the setup dialog
+// below. One request does it all (/api/projects/po-from-session). Plain data
+// and functions down to makePoBody, so tests/test_make_po.py runs them in Node.
 // What the person knows a session by: its label, else its first words, else its id.
 function makePoTitle(r) {
   const first = String((r && r.first) || '').trim();
   return ((r && r.label) || '').trim() || (first.length > 60 ? first.slice(0, 59) + '…' : first) || String((r && (r.sessionId || r.roomId)) || '');
-}
-function makePoLiveNote(r, nowS) {
-  if (!makePoLooksLive(r, nowS)) return '';
-  const min = Math.max(1, Math.round((nowS - r.updatedAt) / 60));
-  return `This conversation was written to ${min} minute${min === 1 ? '' : 's'} ago. If it is still open in a terminal, close it there first: continued in two places, it splits in two.`;
 }
 // The session's files, brought into a documents project. `info` is the hub's
 // count of its folder (/api/projects/po-from-session/files), null until it
@@ -8623,28 +8508,6 @@ function makePoBroughtNote(files) {
 function makePoBroughtMore(files) {
   return !!files && (!files.ok || !!(files.alreadyThere || files.tooLong || files.unreadable || files.historyFailed || (files.notInBackup || []).length));
 }
-// `typed` is what the dialog held when the hub refused: it re-opens as it was left.
-function makePoDialogHtml(r, nowS, err, typed, info) {
-  const t = typed || {};
-  const name = t.name != null ? t.name : ((r.label || '').trim() || String(r.cwd || '').split(/[\\/]/).filter(Boolean).pop() || '');
-  const docs = t.kind === 'documents';
-  const live = makePoLiveNote(r, nowS);
-  const bring = makePoBringHtml(info, t.bringFiles);
-  const kind = (k, label, text, on) => `<label class="kind-opt"><input type="radio" name="mp-kind" value="${k}"${on ? ' checked' : ''}> <b>${label}</b><br><span class="cfg-hint">${text}</span></label>`;
-  return `<h3>Make PO of a new project</h3>`
-    + `<p class="cfg-hint">“${esc(makePoTitle(r))}” becomes the PO of a new project: the task you talk to about it, which the project's other tasks report to. Its conversation continues, and the hub tells it what a PO does and asks it to write the project's handover and roadmap.</p>`
-    + (live ? `<p class="cfg-hint" role="note">${esc(live)}</p>` : '')
-    + `<div class="im-field"><label for="mp-name">Project name</label><input type="text" id="mp-name" value="${esc(name)}" autocomplete="off"></div>`
-    + `<div class="im-field" role="radiogroup" aria-label="Kind of project">`
-    + kind('code', 'Code project', 'Its tasks work in copies or worktrees of the code folder.', !docs)
-    + kind('documents', 'Documents project', 'A folder of files in the projects folder, named after the project. Its tasks work directly in it, and every version of every file is kept.', docs)
-    + `</div>`
-    + `<div class="im-field" id="mp-path-field"${docs ? ' hidden' : ''}><label for="mp-path">Code folder <small>created if missing</small></label><input type="text" id="mp-path" value="${esc(t.path != null ? t.path : (r.cwd || ''))}" autocomplete="off" spellcheck="false"></div>`
-    + `<div class="im-field" id="mp-bring-field"${docs && bring ? '' : ' hidden'}>${bring}</div>`
-    + `<p class="cfg-hint">The conversation continues in the folder it was started in (${esc(r.cwd || '')}). After its first handover the PO works in the project's own folder.</p>`
-    + (err ? `<p class="cfg-hint" role="alert">${esc(err)}</p>` : '')
-    + `<div class="actions"><button id="mp-ok">Make PO</button><button id="mp-cancel" class="secondary">Cancel</button></div>`;
-}
 // What the hub is asked: the session (or the task), and the project to make
 // (or, with projectId, the one that has no PO).
 function makePoBody(r, target) {
@@ -8686,63 +8549,56 @@ async function makePoOpen(resp) {
   toast(`${(resp.project && resp.project.name) || 'The project'} has its PO.${note ? ' ' + note : ''}`,
         makePoBroughtMore(resp.files) ? 0 : (note ? 8000 : 3000), 'ok');
 }
-// The hub's count of the session's folder, asked once per dialog (it reads the
-// folder for at most two seconds) and kept while a refusal re-opens it.
-let MAKEPO_FLOW = 0;
+// The hub's count of the session's folder, asked once per conversation chosen
+// (it reads the folder for at most two seconds).
 function makePoFiles(r, target) {
   return api('/api/projects/po-from-session/files', { method: 'POST', headers: { 'Content-Type': 'application/json' },
                                                      body: JSON.stringify(makePoBody(r, target)) });
 }
-async function makePoFlow(r, err, typed, info) {
-  if (!r) return;
-  const dlg = $('#modal');
-  const flow = ++MAKEPO_FLOW;
-  dlg.innerHTML = makePoDialogHtml(r, Date.now() / 1000, err, typed, info);
-  dlg.showModal();
-  const sync = () => {
-    const docs = (dlg.querySelector('input[name="mp-kind"]:checked') || {}).value === 'documents';
-    $('#mp-path-field').hidden = docs;
-    // The files are brought into a documents project only: a code project's folder is where they are.
-    $('#mp-bring-field').hidden = !docs || !$('#mp-bring-field').firstChild;
+// ---- Set up a project: begin ------------------------------------------------
+// One dialog registers a folder as a project and gives it its PO: a
+// conversation already had (in a terminal, or a task), a fresh one, or none
+// for now. "Set up the PO…" opens the same dialog for a project that has
+// none. The hub says which conversation may become a PO and why not
+// (make_po_verdict, carried as a row's `makePo` and by
+// /api/projects/po-candidates); makePoWords words it exactly as the hub's
+// make_po_words does (tests/test_project_setup.py). Plain data and functions
+// down to setupSubmit, so the tests run them in Node.
+function makePoWords(v) {
+  const c = (v && v.code) || '';
+  const q = k => `“${(v && v[k]) || ''}”`;
+  const mins = parseInt((v && v.min) || 1, 10);
+  const agent = String((v && v.agent) || '');
+  const words = {
+    '': ['', ''],
+    orphan: ['It is what is left of a collaboration whose task was deleted: several conversations, none of them on its own.',
+             'Choose a conversation that is on its own, or start a fresh PO.'],
+    held: [`It is already the task ${q('task')}.`, 'Choose that task instead.'],
+    is_po: [`It is already the PO of ${q('project')}.`, 'A PO leads one project: choose another conversation.'],
+    draft: ['It is a draft: it has not started, so it has no conversation yet.', 'Start it first, or start a fresh PO.'],
+    agents: [`It has ${(v && v.n) || 0} agents: only a task with one agent can be made a PO.`,
+             'Choose a conversation with one agent, or start a fresh PO.'],
+    unsupported: [`It is a ${agent} conversation: only a Claude or a Codex conversation can be made a PO.`,
+                  'Choose a Claude or a Codex conversation.'],
+    not_installed: [`${agent.charAt(0).toUpperCase() + agent.slice(1).toLowerCase()} is not installed on this machine.`,
+                    `Install ${agent}, or choose another conversation.`],
+    other_project: [`It belongs to the project ${q('project')}.`,
+                    'Move it out of that project first (Move to project… in its menu), then choose it.'],
+    no_conversation: ['It has no conversation yet: a PO made this way brings its conversation with it.',
+                      'Start it first, or start a fresh PO.'],
+    no_cwd: [v && v.cwd ? `Its folder ${v.cwd} no longer exists, and a conversation can only be continued in the folder it was started in.`
+                        : 'The folder it was started in is not known.',
+             'Restore that folder, or choose another conversation.'],
+    has_po: [`${q('project')} already has a PO: ${q('po')}.`, 'Open the project to talk to its PO.'],
+    live: ['It is open in a terminal right now. Continued here as well, it would split in two.',
+           'Close it in that terminal first (quit the agent), then choose it again.'],
+    unseen: ['Ensemble cannot see whether it is still open in a terminal. Continued in two places, it would split in two.',
+             'If it is open, close it there first, then confirm it is closed.'],
+    recent: [`It was written to ${mins} minute${mins !== 1 ? 's' : ''} ago, so it may still be open in a terminal Ensemble cannot see. Continued in two places, it would split in two.`,
+             'If it is open, close it there first, then confirm it is closed.'],
   };
-  dlg.querySelectorAll('input[name="mp-kind"]').forEach(i => i.onchange = sync);
-  $('#mp-name').focus(); $('#mp-name').select();
-  let counted = Promise.resolve();
-  if (!info) {
-    $('#mp-bring-field').innerHTML = `<p class="cfg-hint" role="status">Counting the files in ${esc(r.cwd || 'its folder')}…</p>`;
-    counted = makePoFiles(r, { kind: 'documents' }).then(got => { info = got; }).catch(() => {}).then(() => {
-      const field = $('#mp-bring-field');
-      if (flow !== MAKEPO_FLOW || !dlg.open || !field) return;
-      // Without a count the files are simply not offered.
-      field.innerHTML = makePoBringHtml(info, (typed || {}).bringFiles);
-      sync();
-    });
-    sync();
-  }
-  const target = await new Promise(resolve => {
-    $('#mp-cancel').onclick = () => resolve(null);
-    dlg.addEventListener('cancel', () => resolve(null), { once: true });
-    $('#mp-ok').onclick = async () => {
-      const kind = (dlg.querySelector('input[name="mp-kind"]:checked') || {}).value || 'code';
-      // Confirmed before the count came back: the box would have been on.
-      if (kind === 'documents') { $('#mp-ok').disabled = true; await counted; }
-      const bring = $('#mp-bring');
-      resolve({
-        name: $('#mp-name').value.trim(), kind, path: $('#mp-path').value.trim(),
-        ...(bring ? { bringFiles: kind === 'documents' && bring.checked } : {}),
-      });
-    };
-  });
-  MAKEPO_FLOW++;
-  dlg.close();
-  if (target === null) return;
-  try {
-    const resp = await makePoSend(r, target);
-    if (resp) await makePoOpen(resp);
-  } catch (e) {
-    _toastEl().hidden = true;          // the dialog says why, beside what to change
-    makePoFlow(r, histErr(e), target, info);
-  }
+  const [reason, fix] = words[c] || ['It cannot be made a PO.', ''];
+  return { reason, fix };
 }
 // Switch a project's PO to the other agent kind (rotation.request_switch):
 // the same room, chat and points, a fresh session from PO-HANDOVER.md. The
@@ -8804,94 +8660,340 @@ async function poSwitchFlow(pid, err, confirmMsg, typed) {
   if (out.needsConfirm) return poSwitchFlow(pid, '', out.message, go);
   return poSwitchFlow(pid, out.message || `${r.status} ${out.error || r.statusText}`, '', go);
 }
-// Choose (or clear) a project's PO: one of its own tasks, or a past session.
-async function poChoose(pid, err) {
-  const pj = projectById(pid);
-  if (!pj) return;
-  const tasks = (pj.sessions || []).filter(s => s.roomId);
-  // A past session is offered only to a project that has no PO.
-  const past = poRowOf(pj) ? [] : makePoSessions(ALL_ROWS);
-  const now = Date.now() / 1000;
-  const dlg = $('#modal');
-  dlg.innerHTML = `
-    <h3>Choose ${esc(pj.name)}’s PO</h3>
-    <p class="cfg-hint">The other tasks in this project report to it, and its conversation leads the project page.${tasks.length || past.length ? '' : ' This project has no tasks yet: create a task for the role with + New task, then choose it here.'}</p>
-    <div class="im-field">
-      <label for="po-sel">Task</label>
-      <select id="po-sel">
-        <option value="">(no PO)</option>
-        ${tasks.map(s => `<option value="${esc(s.roomId)}"${s.roomId === pj.poRoomId ? ' selected' : ''}>${esc(s.label || s.roomId)}</option>`).join('')}
-      </select>
-    </div>
-    ${past.length ? `<div class="im-field">
-      <label for="po-past">Or a past session <small>a conversation started outside Ensemble that already knows the project</small></label>
-      <select id="po-past">
-        <option value="">(none)</option>
-        ${past.map(s => `<option value="${esc(s.sessionId)}">${esc(makePoTitle(s) + ' · ' + (s.agent || 'claude') + ' · ' + fmtAgo(now - (s.updatedAt || now)) + ' ago')}</option>`).join('')}
-      </select>
-    </div>
-    <p class="cfg-hint" id="po-past-note" role="note">Its conversation continues as this project's PO: the hub tells it what a PO does and asks it to write the project's handover and roadmap.</p>
-    <div class="im-field" id="mp-bring-field" hidden></div>` : ''}
-    ${err ? `<p class="cfg-hint" role="alert">${esc(err)}</p>` : ''}
-    <div class="actions"><button id="po-ok">Save</button><button id="po-cancel" class="secondary">Cancel</button></div>`;
+// A conversation offered in the dialog, by the key the list selects it by.
+function setupKey(c) { return (c && (c.roomId || c.sessionId)) || ''; }
+// The line under the folder: what registering it would find (the hub's
+// po_setup_folder, `st.folder`). {text, alert, project}.
+function setupFolderNote(st) {
+  const f = st.folder;
+  if (st.mode !== 'new' || !f) return { text: '' };
+  if (st.kind === 'documents') {
+    if (!f.folder) return st.name.trim()
+      ? { text: 'A documents project’s name is also its folder’s name: use letters, digits, spaces, - and _ only.', alert: true }
+      : { text: '' };
+    if (f.project) return { text: `The folder ${f.folder} is already the project “${f.project.name}”.`, alert: true, project: f.project };
+    return { text: f.exists ? `Its files are kept in ${f.folder}, which is there already: the files in it become the project’s.`
+                            : `Its files are kept in ${f.folder}, made when you confirm. Every version of every file is kept.` };
+  }
+  if (f.relative) return { text: 'Give the folder’s full path, such as C:\\work\\my-project or /home/me/my-project.', alert: true };
+  if (!f.folder) return { text: '' };
+  if (f.project) return { text: `This folder is already the project “${f.project.name}”.`, alert: true, project: f.project };
+  if (f.isFile) return { text: `${f.folder} is a file, not a folder.`, alert: true };
+  const same = ' Registering it changes nothing in it. Conversations already started in it show under the project, because they work there.';
+  if (f.exists) return { text: (f.isGit ? 'A git repository.' : 'A folder that is there already.') + same };
+  return { text: 'This folder is not there yet: it is made when you confirm.' };
+}
+// The conversations the list shows, in its groups: those started in the
+// project's folder, inside it, then elsewhere (five, until "Show more" or a
+// filter). {groups: [{title, items}], hidden}.
+const SETUP_ELSEWHERE_SHOWN = 5;
+function setupGroups(st) {
+  const words = (st.filter || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const hay = c => [c.label, c.first, c.cwd, c.agent, c.no != null ? '#' + c.no : ''].join(' ').toLowerCase();
+  const shown = (st.cands || []).filter(c => words.every(w => hay(c).includes(w)));
+  const folder = st.mode === 'existing' ? !!(st.project && st.project.path) : !!(st.folder && st.folder.folder);
+  const titles = { same: 'Started in this folder', inside: 'Started in a folder inside it',
+                   elsewhere: folder ? 'Started elsewhere' : 'Your conversations' };
+  const groups = [];
+  let hidden = 0;
+  for (const rel of ['same', 'inside', 'elsewhere']) {
+    let items = shown.filter(c => c.relation === rel);
+    if (rel === 'elsewhere' && !words.length && !st.more) {
+      // The chosen one stays in view.
+      const cut = items.slice(0, SETUP_ELSEWHERE_SHOWN);
+      const sel = items.find(c => setupKey(c) === st.sel);
+      if (sel && !cut.includes(sel)) cut.push(sel);
+      hidden = items.length - cut.length;
+      items = cut;
+    }
+    if (items.length) groups.push({ title: titles[rel], items });
+  }
+  return { groups, hidden };
+}
+function setupCandHtml(c, st) {
+  const v = c.verdict || { ok: true, code: '' };
+  const key = setupKey(c);
+  const w = makePoWords(v);
+  const what = c.roomId ? `task${c.no != null ? ' #' + c.no : ''}` : 'terminal';
+  const ago = c.updatedAt && st.now ? ` · ${fmtAgo(st.now - c.updatedAt)} ago` : '';
+  const why = v.ok ? (v.code ? w.reason : '') : `${w.reason} ${w.fix}`.trim();
+  return `<label class="kind-opt su-cand${v.ok ? '' : ' off'}"><input type="radio" name="su-cand" value="${esc(key)}"`
+    + `${v.ok ? '' : ' disabled'}${st.sel === key && v.ok ? ' checked' : ''}> <b>${esc(makePoTitle(c))}</b><br>`
+    + `<span class="cfg-hint">${esc(String(c.agent || 'claude').replace(/,/g, ', '))} · ${what}${ago} · ${esc(c.cwd || 'no folder')}</span>`
+    + (why ? `<br><span class="cfg-hint su-why">${esc(why)}</span>` : '') + `</label>`;
+}
+function setupListHtml(st) {
+  if (st.cands === null) return `<p class="cfg-hint" role="status">Looking for your conversations…</p>`;
+  if (st.candsErr) return `<p class="cfg-hint" role="alert">${esc(st.candsErr)}</p>`;
+  const { groups, hidden } = setupGroups(st);
+  if (!groups.length) return `<p class="cfg-hint">${st.filter && st.filter.trim() ? `None matches “${esc(st.filter.trim())}”.` : 'There are no conversations yet: start a fresh PO.'}</p>`;
+  return groups.map(g => `<div class="su-group">${esc(g.title)}</div>` + g.items.map(c => setupCandHtml(c, st)).join('')).join('')
+    + (hidden ? `<button type="button" class="secondary su-more">Show ${hidden} more</button>` : '');
+}
+// The one chosen, when the list holds it.
+function setupChosen(st) {
+  return st.choice === 'conv' ? (st.cands || []).find(c => setupKey(c) === st.sel) || null : null;
+}
+function setupNeedsClosed(st) {
+  const c = setupChosen(st);
+  return !!(c && c.verdict && c.verdict.confirm === 'closed');
+}
+function setupIsDocs(st) {
+  return st.mode === 'existing' ? !!(st.project && st.project.kind === 'documents') : st.kind === 'documents';
+}
+// The agents a fresh PO may run: the ones this machine has, once the hub has said.
+function setupAgentsHtml(st) {
+  const agents = (st.installed || []).filter(a => a === 'claude' || a === 'codex');
+  if (!agents.length) return `<option value="">${st.cands === null ? 'Looking…' : 'Neither Claude nor Codex is installed'}</option>`;
+  return agents.map(a => `<option value="${a}"${a === st.fresh ? ' selected' : ''}>${a === 'codex' ? 'Codex' : 'Claude'}</option>`).join('');
+}
+function setupDialogHtml(st) {
+  const isNew = st.mode === 'new';
+  const opt = (name, k, label, text, on, extra) => `<label class="kind-opt"><input type="radio" name="${name}" value="${k}"${on ? ' checked' : ''}> <b>${label}</b>${text ? `<br><span class="cfg-hint">${text}</span>` : ''}</label>${extra || ''}`;
+  const fresh = `<div class="im-field su-sub" id="su-fresh-field"${st.choice === 'fresh' ? '' : ' hidden'}><label for="su-agent">Agent</label>`
+    + `<select id="su-agent">${setupAgentsHtml(st)}</select></div>`;
+  const note = setupFolderNote(st);
+  const po = st.inline ? `<p class="cfg-hint">Set up its PO later with Set up the PO… on the project’s page.</p>`
+    : `<div class="im-field" role="radiogroup" aria-labelledby="su-po-label"><span class="su-legend" id="su-po-label">Its PO <small>the task you talk to about the project: its other tasks report to it</small></span>`
+      + opt('su-po', 'conv', 'A conversation you already had', 'It continues as the PO, in the folder it was started in, and the hub tells it what a PO does.', st.choice === 'conv',
+            `<div class="im-field su-sub" id="su-conv-field"${st.choice === 'conv' ? '' : ' hidden'}>`
+            + `<input type="search" id="su-filter" placeholder="Filter by name, words or folder" value="${esc(st.filter || '')}" autocomplete="off" spellcheck="false" aria-label="Filter the conversations">`
+            + `<div id="su-list" class="su-list" role="radiogroup" aria-label="Conversations">${setupListHtml(st)}</div>`
+            + `<label class="kind-opt" id="su-closed-field"${setupNeedsClosed(st) ? '' : ' hidden'}><input type="checkbox" id="su-closed"${st.closed ? ' checked' : ''}> It is closed in its terminal</label></div>`)
+      + opt('su-po', 'fresh', 'Start a fresh PO', 'A new conversation, started for the role in the project’s folder.', st.choice === 'fresh', fresh)
+      + (isNew ? opt('su-po', 'none', 'No PO for now', 'Set it up later with Set up the PO… on the project’s page.', st.choice === 'none') : '')
+      + `</div>`
+      + `<div class="im-field" id="mp-bring-field" hidden></div>`;
+  return (isNew ? `<h3>New project</h3>` : `<h3>Set up the PO of “${esc(st.project.name)}”</h3>`)
+    + (isNew ? `<p class="cfg-hint">A project is a folder and the tasks that work on it. Nothing is registered until you confirm.</p>`
+      + `<div class="im-field" role="radiogroup" aria-label="Kind of project">`
+      + opt('su-kind', 'code', 'Code project', 'Its tasks work in the code folder, or in copies or worktrees of it.', st.kind !== 'documents')
+      + opt('su-kind', 'documents', 'Documents project', 'A folder of files in the projects folder, named after the project. Its tasks work directly in it, and every version of every file is kept.', st.kind === 'documents')
+      + `</div>`
+      + `<div class="im-field" id="su-path-field"${st.kind === 'documents' ? ' hidden' : ''}><label for="su-path">Code folder <small>made if it is not there</small></label>`
+      + `<input type="text" id="su-path" value="${esc(st.path || '')}" autocomplete="off" spellcheck="false"></div>`
+      + `<div class="im-field"><label for="su-name">Project name</label><input type="text" id="su-name" value="${esc(st.name || '')}" autocomplete="off"></div>`
+      + `<p class="cfg-hint" id="su-folder-note" role="status"${note.alert ? ' data-alert="1"' : ''}>${esc(note.text)}${note.project ? ` <button type="button" class="secondary su-open-proj" data-proj="${esc(note.project.id)}">Open it</button>` : ''}</p>`
+      : `<p class="cfg-hint">The other tasks of ${esc(st.project.name)} report to its PO, and its conversation leads the project’s page.</p>`)
+    + po
+    + `<p class="cfg-hint" id="su-err" role="alert">${esc(st.err || '')}</p>`
+    + `<div class="actions"><button id="su-ok">${isNew ? 'Create project' : 'Set up the PO'}</button><button id="su-cancel" class="secondary">Cancel</button></div>`;
+}
+// What confirming asks of the hub, or the sentence saying what is missing.
+// {error} | {how: 'conv', cand, target} | {how: 'fresh', body} | {how: 'none', body}.
+function setupSubmit(st) {
+  const isNew = st.mode === 'new';
+  const docs = setupIsDocs(st);
+  let target;
+  if (isNew) {
+    const name = (st.name || '').trim(), path = (st.path || '').trim();
+    if (!name) return { error: 'Give the project a name.' };
+    if (!docs && !path) return { error: 'Give the code folder.' };
+    const note = setupFolderNote(st);
+    if (note.alert) return { error: note.text };
+    target = { name, kind: docs ? 'documents' : 'code', path: docs ? '' : path };
+  } else target = { projectId: st.project.id };
+  if (st.inline || st.choice === 'none') {
+    if (!isNew) return { error: 'Choose how the project gets its PO.' };
+    return { how: 'none', body: { name: target.name, kind: target.kind, path: docs ? ((st.folder && st.folder.folder) || target.name) : target.path } };
+  }
+  if (!st.choice) return { error: 'Choose how the project gets its PO.' };
+  if (st.choice === 'fresh') {
+    if (!st.fresh) return { error: 'Choose the agent of the fresh PO.' };
+    return { how: 'fresh', body: { fresh: st.fresh, ...target } };
+  }
+  const c = setupChosen(st);
+  if (!c) return { error: 'Choose a conversation.' };
+  const v = c.verdict || { ok: true };
+  if (!v.ok) { const w = makePoWords(v); return { error: `${w.reason} ${w.fix}`.trim() }; }
+  if (v.confirm === 'closed') {
+    if (!st.closed) return { error: 'Close it in its terminal first, then tick “It is closed in its terminal”.' };
+    target.confirmClosed = true;
+  }
+  if (docs && st.bring && st.bring.documents && st.bring.offer) target.bringFiles = st.bringOn !== false;
+  return { how: 'conv', cand: c, target };
+}
+// ---- Set up a project: end --------------------------------------------------
+// The dialog: its own <dialog>, so it can open over the new-task dialog that
+// asks for a new project (inline: register only, and stay there). Resolves
+// to the project it registered, or null.
+let SETUP_FLOW = 0;
+function setupDialogEl() {
+  let dlg = document.getElementById('setup-modal');
+  if (!dlg) { dlg = document.createElement('dialog'); dlg.id = 'setup-modal'; document.body.appendChild(dlg); }
+  return dlg;
+}
+async function projectSetupFlow(opts) {
+  const o = opts || {};
+  const pj = o.projectId ? projectById(o.projectId) : null;
+  if (o.projectId && !pj) return null;
+  const pre = o.preselect || null;
+  const guess = p => String(p || '').split(/[\\/]/).filter(Boolean).pop() || '';
+  const st = {
+    mode: pj ? 'existing' : 'new', inline: !!o.inline, now: Date.now() / 1000,
+    project: pj ? { id: pj.id, name: pj.name, kind: pj.kind || 'code', path: pj.path || '' } : null,
+    kind: 'code', path: o.path || (pre && pre.cwd) || '', name: pre ? ((pre.label || '').trim() || guess(pre.cwd)) : guess(o.path),
+    folder: null, cands: null, candsErr: '', installed: [], choice: pre ? 'conv' : '', sel: pre ? setupKey(pre) : '',
+    fresh: '', filter: '', more: false, closed: false, bring: null, bringOn: true, err: '',
+  };
+  let nameTouched = !!pre;
+  const flow = ++SETUP_FLOW;
+  const dlg = setupDialogEl();
+  const $d = s => dlg.querySelector(s);
+  const alive = () => flow === SETUP_FLOW && dlg.open;
+  dlg.innerHTML = setupDialogHtml(st);
   dlg.showModal();
-  const pastSel = $('#po-past');
-  const flow = ++MAKEPO_FLOW;
+  const paintNote = () => {
+    const el = $d('#su-folder-note');
+    if (!el) return;
+    const n = setupFolderNote(st);
+    el.innerHTML = esc(n.text) + (n.project ? ` <button type="button" class="secondary su-open-proj" data-proj="${esc(n.project.id)}">Open it</button>` : '');
+    if (n.alert) el.dataset.alert = '1'; else delete el.dataset.alert;
+  };
+  const paintBring = () => {
+    const field = $d('#mp-bring-field');
+    if (!field) return;
+    const c = setupChosen(st);
+    if (!c || !setupIsDocs(st) || !st.bring) { field.innerHTML = ''; field.hidden = true; return; }
+    field.innerHTML = st.bring === 'counting' ? `<p class="cfg-hint" role="status">Counting the files in ${esc(c.cwd || 'its folder')}…</p>`
+                                              : makePoBringHtml(st.bring, st.bringOn);
+    field.hidden = !field.firstChild;
+  };
   let counted = Promise.resolve();
-  if (pastSel) {
-    const base = $('#po-past-note').textContent;
-    pastSel.onchange = () => {
-      if (pastSel.value) $('#po-sel').value = '';
-      const chosen = past.find(s => s.sessionId === pastSel.value);
-      const live = makePoLiveNote(chosen, Date.now() / 1000);
-      $('#po-past-note').textContent = live ? base + ' ' + live : base;
-      // A documents project is offered the session's files, as a new one is.
-      const field = $('#mp-bring-field');
-      field.innerHTML = ''; field.hidden = true;
-      if (!chosen || !isDocsProject(pj)) { counted = Promise.resolve(); return; }
-      field.innerHTML = `<p class="cfg-hint" role="status">Counting the files in ${esc(chosen.cwd || 'its folder')}…</p>`;
-      field.hidden = false;
-      counted = makePoFiles(chosen, { projectId: pid }).catch(() => null).then(got => {
-        if (flow !== MAKEPO_FLOW || !dlg.open || pastSel.value !== chosen.sessionId) return;
-        field.innerHTML = makePoBringHtml(got);
-        field.hidden = !field.firstChild;
+  const count = () => {
+    const c = setupChosen(st);
+    st.bring = null;
+    if (!c || !setupIsDocs(st)) { counted = Promise.resolve(); paintBring(); return; }
+    st.bring = 'counting'; paintBring();
+    const key = setupKey(c);
+    counted = makePoFiles(c, st.mode === 'existing' ? { projectId: st.project.id } : { kind: 'documents' })
+      .catch(() => null).then(got => {
+        if (!alive() || setupKey(setupChosen(st)) !== key) return;
+        st.bring = got; paintBring();   // without a count the files are simply not offered
       });
-    };
-    $('#po-sel').onchange = () => { if ($('#po-sel').value) { pastSel.value = ''; pastSel.onchange(); } };
-  }
-  const choice = await new Promise(resolve => {
-    $('#po-cancel').onclick = () => resolve(null);
-    dlg.addEventListener('cancel', () => resolve(null), { once: true });
-    $('#po-ok').onclick = async () => {
-      if (pastSel && pastSel.value) { $('#po-ok').disabled = true; await counted; }
-      const bring = $('#mp-bring');
-      resolve({ roomId: $('#po-sel').value, past: pastSel ? pastSel.value : '', ...(bring ? { bringFiles: bring.checked } : {}) });
-    };
-  });
-  MAKEPO_FLOW++;
-  dlg.close();
-  if (choice === null) return;
-  if (choice.past) {
+  };
+  const paintPo = () => {
+    const conv = $d('#su-conv-field'), fr = $d('#su-fresh-field'), cl = $d('#su-closed-field');
+    if (conv) conv.hidden = st.choice !== 'conv';
+    if (fr) fr.hidden = st.choice !== 'fresh';
+    if (cl) cl.hidden = !setupNeedsClosed(st);
+    const list = $d('#su-list');
+    if (list) list.innerHTML = setupListHtml(st);
+  };
+  // The folder's state and its conversations, asked again as the folder or
+  // the name changes; only the newest answer is painted.
+  let asked = 0, timer = 0;
+  const load = async () => {
+    const n = ++asked;
+    const q = st.mode === 'existing' ? 'project=' + encodeURIComponent(st.project.id)
+      : `path=${encodeURIComponent(st.kind === 'documents' ? '' : st.path)}&kind=${st.kind}&name=${encodeURIComponent(st.name)}`;
     try {
-      const resp = await makePoSend(past.find(s => s.sessionId === choice.past),
-                                    { projectId: pid, ...('bringFiles' in choice ? { bringFiles: choice.bringFiles } : {}) });
-      if (resp) await makePoOpen(resp);
-    } catch (e) { _toastEl().hidden = true; poChoose(pid, histErr(e)); }
-    return;
+      const got = await api('/api/projects/po-candidates?' + q);
+      if (n !== asked || !alive()) return;
+      st.folder = got.folder; st.installed = got.installed || []; st.candsErr = '';
+      st.now = Date.now() / 1000;
+      const before = setupKey(setupChosen(st));
+      st.cands = got.candidates || [];
+      // The row this dialog was opened from stays offered, as the hub sees it now or as the list had it.
+      if (pre && !st.cands.some(c => setupKey(c) === setupKey(pre)))
+        st.cands.push({ ...pre, relation: 'elsewhere', verdict: pre.makePo || { ok: true, code: '' },
+                        agent: pre.roomId ? (pre.members || []).map(m => m.agent).join(',') : (pre.agent || 'claude') });
+      if (!st.fresh) st.fresh = ['claude', 'codex'].find(a => st.installed.includes(a)) || '';
+      const ag = $d('#su-agent');
+      if (ag) ag.innerHTML = setupAgentsHtml(st);
+      paintNote(); paintPo();
+      if (setupKey(setupChosen(st)) !== before || (setupChosen(st) && !st.bring)) count();
+    } catch (e) {
+      if (n !== asked || !alive()) return;
+      st.cands = st.cands || []; st.candsErr = 'The conversations could not be listed: ' + histErr(e);
+      paintPo();
+    }
+  };
+  const reload = () => { asked++; clearTimeout(timer); timer = setTimeout(load, 300); };
+  let finish;
+  const done = new Promise(res => { finish = res; });
+  function wire() {
+    dlg.querySelectorAll('input[name="su-kind"]').forEach(i => i.onchange = () => {
+      st.kind = i.value;
+      $d('#su-path-field').hidden = st.kind === 'documents';
+      count(); reload();
+    });
+    const path = $d('#su-path'), name = $d('#su-name');
+    if (path) path.oninput = () => {
+      st.path = path.value;
+      if (!nameTouched) { st.name = guess(st.path); name.value = st.name; }
+      reload();
+    };
+    if (name) name.oninput = () => { st.name = name.value; nameTouched = true; if (st.kind === 'documents') reload(); };
+    dlg.querySelectorAll('input[name="su-po"]').forEach(i => i.onchange = () => { st.choice = i.value; paintPo(); count(); });
+    const agent = $d('#su-agent');
+    if (agent) agent.onchange = () => { st.fresh = agent.value; };
+    const filter = $d('#su-filter');
+    if (filter) filter.oninput = () => { st.filter = filter.value; paintPo(); };
+    const closed = $d('#su-closed');
+    if (closed) closed.onchange = () => { st.closed = closed.checked; };
+    $d('#su-cancel').onclick = () => finish(null);
+    $d('#su-ok').onclick = submit;
   }
-  const roomId = choice.roomId;
-  try {
-    const r = await api('/api/projects/po', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                              body: JSON.stringify({ projectId: pid, roomId }) });
-    toast(roomId ? 'PO set' : 'PO cleared', 2000, 'ok');
-    await refreshProjects(); renderRows();
-  } catch (e) { toast('could not set the PO: ' + e.message, 5000, 'err'); }
+  dlg.onchange = ev => {
+    if (ev.target.name === 'su-cand') { st.sel = ev.target.value; st.closed = false; const cb = $d('#su-closed'); if (cb) cb.checked = false; paintPo(); count(); }
+    if (ev.target.id === 'mp-bring') st.bringOn = ev.target.checked;
+  };
+  dlg.onclick = ev => {
+    if (ev.target.closest('.su-more')) { st.more = true; paintPo(); return; }
+    const open = ev.target.closest('.su-open-proj');
+    if (open) { finish(null); openProjectPage(open.dataset.proj); }
+  };
+  dlg.addEventListener('cancel', () => finish(null), { once: true });
+  const fail = msg => { st.err = msg; const e = $d('#su-err'); if (e) { e.textContent = msg; if (msg) e.scrollIntoView({ block: 'nearest' }); } const b = $d('#su-ok'); if (b) { b.disabled = false; b.classList.remove('busy'); } };
+  async function submit() {
+    const btn = $d('#su-ok');
+    btn.disabled = true;
+    if (setupIsDocs(st) && st.choice === 'conv') await counted;    // the box would have been on
+    const s = setupSubmit(st);
+    if (s.error) { fail(s.error); return; }
+    btn.classList.add('busy');
+    try {
+      if (s.how === 'none') {
+        const r = await api('/api/projects/new', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s.body) });
+        if (r.kindRefused) toast(r.kindRefused, 8000, 'err');
+        await refreshProjects();
+        finish(r.project);
+        toast(`project “${r.project.name}” registered`, 2500, 'ok');
+        if (!st.inline) openProjectPage(r.project.id); else renderRows();
+        return;
+      }
+      const resp = s.how === 'fresh'
+        ? await api('/api/projects/po-from-session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s.body) })
+        : await makePoSend(s.cand, s.target);
+      if (!resp) { fail(''); return; }
+      finish(resp.project || null);
+      await makePoOpen(resp);
+    } catch (e) {
+      _toastEl().hidden = true;        // the dialog says why, beside what to change
+      fail(histErr(e));
+    }
+  }
+  wire();
+  const first = $d('#su-name') || $d('input[name="su-po"]');
+  if (first) { first.focus(); if (first.select) first.select(); }
+  load();
+  const got = await done;
+  SETUP_FLOW++;
+  clearTimeout(timer);
+  dlg.close();
+  return got;
+}
+function openProjectPage(pid) {
+  if (SELECTED_SID) closeDetail();
+  SELECTED_PROJECT = pid; PROJECT_TAB = 'tasks'; WS_SCOPE = ''; SB_DEST = '';
+  renderRows();
 }
 document.addEventListener('click', async (ev) => {
   const pill = ev.target.closest('#po-pill');
   if (pill) { poPillClick(); return; }
   const choose = ev.target.closest('.po-choose');
-  if (choose) { poChoose(choose.dataset.proj); return; }
+  if (choose) { projectSetupFlow({ projectId: choose.dataset.proj }); return; }
   const kb = ev.target.closest('.kind-btn');
   if (kb) { kindChoose(kb.dataset.proj); return; }
   const kyb = ev.target.closest('.key-btn');
@@ -8953,7 +9055,7 @@ function kindBtnHtml(pj) {
 // none); this button beside its kind is how to give it one.
 function poChooseBtnHtml(pj) {
   if (!isDocsProject(pj) || !pj.registered || pj.id === UNASSIGNED_ID || poRowOf(pj)) return '';
-  return `<button type="button" class="po-btn po-choose" data-proj="${esc(pj.id)}" title="Choose one of its tasks, or a past session, as its PO: the other tasks report to it, and its conversation joins this page">Choose the PO…</button>`;
+  return `<button type="button" class="po-btn po-choose" data-proj="${esc(pj.id)}" title="Make a conversation you already had, or a fresh one, its PO: the other tasks report to it, and its conversation joins this page">Set up the PO…</button>`;
 }
 function kindDialogHtml(pj) {
   const docs = isDocsProject(pj);
@@ -10635,69 +10737,86 @@ async function toggleFavoriteTheme(theme) {
 }
 
 function renderThemeMenu(menu, current) {
-  const q = THEME_MENU_FILTER.toLowerCase().trim();
-  const all = THEMES.map(t => t.name);
-  const matches = q ? all.filter(n => n.toLowerCase().includes(q)) : all;
-  const favs = matches.filter(n => FAVORITE_THEMES.has(n)).sort((a,b) => a.localeCompare(b));
-  const rest = matches.filter(n => !FAVORITE_THEMES.has(n));
-  const itemHtml = (name) => {
-    const fav = FAVORITE_THEMES.has(name);
-    const cur = name === current;
-    return `<div class="theme-dd-item ${cur ? 'current' : ''}" data-theme="${esc(name)}">
-      <button type="button" class="star ${fav ? 'is-fav' : ''}" title="${fav ? 'Remove from favorites' : 'Add to favorites'}">${fav ? '★' : '☆'}</button>
-      <span class="name" title="${esc(name)}">${esc(name)}</span>
-    </div>`;
-  };
-  let body = '';
-  if (favs.length) {
-    body += `<div class="theme-dd-section">Favorites</div>`;
-    body += favs.map(itemHtml).join('');
-  }
-  if (rest.length) {
-    body += `<div class="theme-dd-section">${favs.length ? 'All themes' : 'Themes'}</div>`;
-    body += rest.map(itemHtml).join('');
-  }
-  if (!favs.length && !rest.length) {
-    body = `<div class="theme-dd-empty">No matches.</div>`;
-  }
-  menu.querySelector('.theme-dd-list').innerHTML = body;
+  menu.querySelector('.theme-dd-list').innerHTML =
+    SessionActions.themeListHtml(THEMES.map(t => t.name), [...FAVORITE_THEMES], current, THEME_MENU_FILTER);
 }
 
+// The colour picker opens beside the item that opened it, flipped and kept
+// inside the window, and follows it on scroll and resize (static/actions.js).
+// If the More menu closes first, it stays, against the More button.
 function openThemeMenu(trigger) {
   closeThemeMenu();
   const current = trigger.dataset.current || '';
   THEME_MENU_FILTER = '';
   const menu = document.createElement('div');
   menu.className = 'theme-dd-menu';
+  menu.setAttribute('role', 'dialog');
+  menu.setAttribute('aria-label', 'Terminal colours');
   menu.dataset.pid = trigger.dataset.pid || '';
   menu.dataset.cwd = trigger.dataset.cwd || '';
   menu.dataset.key = trigger.dataset.pid || trigger.dataset.cwd || '';
   menu.dataset.current = current;
   menu.innerHTML = `
-    <input type="text" class="theme-dd-search" placeholder="Search themes…">
+    <input type="text" class="theme-dd-search" placeholder="Search schemes…" aria-label="Search colour schemes">
     <div class="theme-dd-list"></div>
   `;
   document.body.appendChild(menu);
   renderThemeMenu(menu, current);
-  const rect = trigger.getBoundingClientRect();
-  const top = rect.bottom + 4;
-  const left = Math.min(rect.left, window.innerWidth - menu.offsetWidth - 8);
-  menu.style.top = top + 'px';
-  menu.style.left = Math.max(8, left) + 'px';
-  menu.querySelector('.theme-dd-search').focus();
+  menu._amFrom = trigger;
+  menu._am = SessionActions.child(menu, trigger);
+  trigger.setAttribute('aria-expanded', 'true');
+  menu.querySelector('.theme-dd-search').focus({ preventScroll: true });
   THEME_MENU = menu;
 }
 
-function closeThemeMenu() {
+// back: put focus back on what opened it (Escape, a choice made).
+function closeThemeMenu(back) {
   if (THEME_MENU) {
-    THEME_MENU.remove();
+    const m = THEME_MENU;
     THEME_MENU = null;
     THEME_MENU_FILTER = '';
+    if (m._amFrom) m._amFrom.setAttribute('aria-expanded', 'false');
+    if (m._am) { if (back) m._am.returnFocus(); m._am.stop(); }
+    m.remove();
   }
 }
 
 function selectInteracting() {
-  return THEME_MENU !== null;
+  return THEME_MENU !== null || SessionActions.isOpen();
+}
+// "Hide terminal" shows only while the captured terminal is up; the task
+// panel's header waited for the menu to close before it was rewritten.
+SessionActions.onOpen = (menu) => {
+  const hide = menu.querySelector('.dp-terms-hide');
+  if (hide) hide.hidden = !capturedTermsShown();
+};
+SessionActions.onClose = () => {
+  const dpp = document.getElementById('detail-panel');
+  if (dpp && dpp.dataset.topPending) setTimeout(renderDetail, 0);
+};
+
+// A popped-out session window asks the dashboard for what needs its dialogs
+// (static/actions.js): Agents and models, Move to project, Make PO, Delete
+// and Show in Workspace. Each opens the task here and asks before it acts.
+const TASK_ACTS = ['agents', 'moveproj', 'makepo', 'delete', 'workspace'];
+async function runTaskAction(rid, act) {
+  if (!TASK_ACTS.includes(act)) return;
+  let row = ALL_ROWS.find(x => x.roomId === rid);
+  if (!row) { await refresh({ now: true }); row = ALL_ROWS.find(x => x.roomId === rid); }
+  if (!row) { toast('That task is not in the list', 4000, 'err'); return; }
+  if (SELECTED_SID !== row.sessionId) openDetail(row.sessionId);
+  if (act === 'agents') {
+    if (row.isLive) toast('Running: end it first, then reassign.', 4000);
+    else showAgentsModal(rid);
+  } else if (act === 'moveproj') await moveSessionToProject(row.sessionId);
+  else if (act === 'makepo') {
+    const item = SessionActions.makePoItem(actionState(row, row.isLive));
+    if (item.disabled) toast(item.reason, 5000);
+    else await projectSetupFlow({ preselect: row });
+  } else if (act === 'delete') {
+    if (row.isLive) toast('Running: end it first.', 4000);
+    else await deleteRoom(row);
+  } else if (act === 'workspace') openWorkspaceTab(row.sessionId);
 }
 
 let DISPLAYED_ORDER = []; // session IDs in their last-rendered order
@@ -12044,6 +12163,10 @@ document.addEventListener('click', (ev) => {
 window.addEventListener('message', (ev) => {
   const d = ev.data;
   if (d && d.type === 'dock-session' && d.roomId) openDetail(d.roomId);
+  if (d && d.type === 'session-action' && d.roomId && ev.origin === location.origin) {
+    try { window.focus(); } catch (e) {}
+    runTaskAction(String(d.roomId), String(d.act || ''));
+  }
   // A task link clicked inside a session or file viewer framed in this page.
   if (d && d.type === 'open-task' && d.roomId && ev.origin === location.origin) openTaskLink(String(d.roomId), String(d.agent || ''));
   // A balloon link clicked in a chat framed here; a chat framed here that has
@@ -12954,7 +13077,8 @@ document.addEventListener('click', async (ev) => {
   if (makePoBtn) {
     ev.stopPropagation();
     const { sid, room } = makePoBtn.dataset;
-    await makePoFlow(ALL_ROWS.find(x => room ? x.roomId === room : (!x.roomId && x.sessionId === sid)));
+    const row = ALL_ROWS.find(x => room ? x.roomId === room : (!x.roomId && x.sessionId === sid));
+    if (row) await projectSetupFlow({ preselect: row });
     return;
   }
   const renameBtn = ev.target.closest('.rename-btn');
@@ -13161,7 +13285,8 @@ document.addEventListener('click', async (ev) => {
     const pidRaw = THEME_MENU.dataset.pid;
     const cwd = THEME_MENU.dataset.cwd || '';
     const previous = THEME_MENU.dataset.current || '';
-    closeThemeMenu();
+    closeThemeMenu(true);
+    SessionActions.closeMenu({ focus: true });
     if (theme === previous) return;
     // Live session → apply by pid; historical → set by cwd for next Open.
     const payload = pidRaw ? {pid: +pidRaw, theme} : {cwd, theme};
@@ -13205,7 +13330,7 @@ document.addEventListener('click', async (ev) => {
 
   // Row/card click → open the right-side detail panel (in detail mode) or
   // fall back to the legacy behavior (focus iTerm / open transcript modal).
-  if (ev.target.closest('.actions')) return;
+  if (ev.target.closest('.actions, .am-bar')) return;
   if (ev.target.closest('#detail-panel')) return;
   const sel = ev.target.closest('.row[data-sid]');
   if (!sel) return;
@@ -13241,7 +13366,11 @@ document.addEventListener('input', (ev) => {
 // keyboard: / focuses search, r refreshes, Esc closes theme menu
 document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && THEME_MENU) {
-    closeThemeMenu();
+    closeThemeMenu(true);
+    return;
+  }
+  if (THEME_MENU && THEME_MENU.contains(ev.target)) {
+    SessionActions.arrowKeys(ev, [THEME_MENU.querySelector('.theme-dd-search'), ...THEME_MENU.querySelectorAll('.theme-dd-item .name')]);
     return;
   }
   if (ev.target.tagName === 'INPUT' || ev.target.tagName === 'TEXTAREA') return;
@@ -13536,6 +13665,9 @@ window.ensUpdPlace = () => ({
     history.replaceState(null, '', location.pathname);
     if (!PROJECTS) await refreshProjects();
     openTaskLink(deepTask, deepQs.get('agent') || '', deepQs.get('project') || '');
+    // &act=: an action a popped-out session window sent here (runTaskAction).
+    const deepAct = deepQs.get('act');
+    if (deepAct && /^room-[\w-]+$/.test(deepTask)) runTaskAction(deepTask, deepAct);
   }
   // Back where it was after the page reloaded itself for an update: the same
   // project and tab, the same open task, the same scroll place.

@@ -134,7 +134,9 @@ class Points(unittest.TestCase):
         self.assertIn('data-pt="P3" data-pt-act="drop"', r["his"])
         self.assertIn('class="pt-link" href="/session?room=room-po&amp;msg=s:2" data-ref-msg="s:2"', r["hisAnswered"])
         self.assertIn("P2 · answered ↓", r["hisAnswered"])
-        self.assertIn("P1 · acknowledged", r["hisAcked"])
+        self.assertIn("P1 · acknowledged ↓", r["hisAcked"])
+        # Read again after the thumbs up, the question still leads to its answer.
+        self.assertIn('data-ref-msg="s:10"', r["hisAcked"])
         self.assertIn('data-pt-act="reopen"', r["hisAcked"])
         self.assertNotIn("drop", r["hisAcked"])
 

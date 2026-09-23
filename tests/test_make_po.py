@@ -84,6 +84,15 @@ class Hub(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.work = base / "work" / "engine"            # where the past session was started
         self.work.mkdir(parents=True)
+        # What the hub reads of a past session by its id: a Claude transcript
+        # started in self.work, closed two hours ago, unless a test says more.
+        self.live = {}
+        p = mock.patch.object(dashboard, "_session_live_now",
+                              lambda sid: {"agent": "claude", "live": False, "seen": True,
+                                           "written": time.time() - 7200, "cwd": str(self.work),
+                                           **self.live.get(sid, {})})
+        p.start()
+        self.addCleanup(p.stop)
 
     def call(self, body, origin=""):
         return self.call_url(URL, body, origin)
@@ -174,9 +183,10 @@ class NewProject(Hub):
                 ({**self.session(), "name": "E", "kind": "spreadsheet", "path": str(self.work)}, 400, ""),
                 ({**self.session(), "name": "a/b", "kind": "documents"}, 400, "folder's name"),
                 ({**self.session(cwd=str(self.base / "gone")), "name": "E", "kind": "code", "path": str(self.work)}, 400, "no longer exists"),
-                ({**self.session(agent="cursor"), "name": "E", "kind": "code", "path": str(self.work)}, 400, "not installed"),
+                ({**self.session(agent="cursor"), "name": "E", "kind": "code", "path": str(self.work)}, 409, "That is a Claude"),
                 ({"sessionId": "", "cwd": "", "name": "E"}, 400, "session and its folder"),
         ):
+            self.live["sid-past-1"] = {"cwd": body.get("cwd") or str(self.work)}
             got, out = self.call(body)
             self.assertEqual((got, out.get("error")), (status, "cannot_make_po"), (body, out))
             self.assertIn(words, out["message"])
@@ -987,27 +997,14 @@ const rows = [
   { sessionId: 'lost', cwd: 'C:\\work\\y', orphan: true, updatedAt: now },
   { sessionId: 'room-1', roomId: 'room-1', cwd: 'C:\\work\\z', updatedAt: now },
 ];
-const solo = { roomId: 'room-1', members: [{ agent: 'Claude' }] };
 const out = {
-  offered: makePoSessions(rows).map(r => r.sessionId),
-  none: makePoSessions(null),
-  task: [makePoTaskOk(solo, false, false), makePoTaskOk(solo, true, false), makePoTaskOk(solo, false, true),
-         makePoTaskOk({ ...solo, draft: true }, false, false),
-         makePoTaskOk({ roomId: 'r', members: [{ agent: 'claude' }, { agent: 'codex' }] }, false, false),
-         makePoTaskOk({ roomId: 'r', members: [{ agent: 'gemini' }] }, false, false), makePoTaskOk(rows[0], false, false)],
-  live: [makePoLiveNote(rows[0], now), makePoLiveNote(rows[1], now), makePoLiveNote({ ...rows[1], updatedAt: now - 20 }, now),
-         makePoLiveNote({ roomId: 'room-1', updatedAt: now }, now)],
-  dialog: makePoDialogHtml(rows[0], now, ''),
-  named: makePoDialogHtml(rows[1], now, ''),
   titles: [makePoTitle(rows[0]), makePoTitle({ sessionId: 'abc', first: ' ' + 'We plan a boat trip. '.repeat(5) }), makePoTitle({ sessionId: 'abc' })],
-  again: makePoDialogHtml(rows[0], now, 'The folder <x> is already a project.', { name: 'My "papers"', kind: 'documents', path: 'D:\\else' }),
   bodies: [makePoBody(rows[0], { name: 'Engine', kind: 'code', path: 'C:\\code' }), makePoBody(rows[5], { projectId: 'p1' }),
            makePoBody({ sessionId: 's', cwd: 'c' }, { projectId: 'p1' }),
            makePoBody(rows[0], { name: 'Strats', kind: 'documents', path: '', bringFiles: true })],
 };
 const info = { documents: true, offer: true, reason: '', folder: 'C:\\cs\\01 <opts>', files: 56, bytes: 38 * 1048576,
                notInBackup: 0, backupCapBytes: 20 * 1048576 };
-const docs = { name: 'Strats', kind: 'documents', path: '' };
 out.files = {
   sizes: [makePoSize(0), makePoSize(2048), makePoSize(1.26 * 1048576), makePoSize(38.4 * 1048576)],
   box: makePoBringHtml(info),
@@ -1016,10 +1013,6 @@ out.files = {
   refused: makePoBringHtml({ ...info, offer: false, reason: 'The session was started in D:\\me, which is your home folder <x>.' }),
   code: makePoBringHtml({ ...info, documents: false, offer: false }),
   unknown: makePoBringHtml(null),
-  dialogDocs: makePoDialogHtml(rows[0], now, '', docs, info),
-  dialogCode: makePoDialogHtml(rows[0], now, '', { ...docs, kind: 'code' }, info),
-  dialogOff: makePoDialogHtml(rows[0], now, 'refused', { ...docs, bringFiles: false }, info),
-  dialogNoCount: makePoDialogHtml(rows[0], now, '', docs),
   notes: [makePoBroughtNote(undefined),
           makePoBroughtNote({ ok: true, copied: 56, bytes: 38 * 1048576, alreadyThere: 0, tooLong: 0, unreadable: 0, leftOut: 0, notInBackup: [] }),
           makePoBroughtNote({ ok: true, copied: 1, bytes: 2048, alreadyThere: 2, tooLong: 1, unreadable: 1, leftOut: 4, notInHistory: 1,
@@ -1043,46 +1036,11 @@ console.log(JSON.stringify(out));
             raise AssertionError(r.stderr[-3000:])
         cls.out = json.loads(r.stdout.strip().splitlines()[-1])
 
-    def test_which_sessions_are_offered(self):
-        self.assertEqual(self.out["offered"], ["new", "old"], "the hub's own, a live one, a lost one and one "
-                                                              "without a folder are not; newest first")
-        self.assertEqual(self.out["none"], [])
-
-    def test_which_tasks_are_offered(self):
-        self.assertEqual(self.out["task"], [True, False, False, False, False, False, False])
-
-    def test_a_session_that_may_still_be_open_in_a_terminal(self):
-        old, recent, moment, task = self.out["live"]
-        self.assertEqual((old, task), ("", ""))
-        self.assertIn("written to 2 minutes ago", recent)
-        self.assertIn("close it there first", recent)
-        self.assertIn("1 minute ago", moment)
-
-    def test_the_dialog(self):
-        d = self.out["dialog"]
-        self.assertIn('id="mp-name" value="Engine notes"', d)
-        self.assertIn('id="mp-path" value="C:\\work\\engine"', d)
-        self.assertIn('value="code" checked', d)
-        self.assertNotIn('role="note"', d, "an old session carries no warning")
-        self.assertNotIn('role="alert"', d)
-        self.assertIn('id="mp-name" value="papers"', self.out["named"], "an unnamed session takes its folder's name")
-        self.assertIn('role="note"', self.out["named"])
-
     def test_a_session_is_named_as_the_person_knows_it(self):
         label, first, bare = self.out["titles"]
         self.assertEqual((label, bare), ("Engine notes", "abc"))
         self.assertTrue(first.startswith("We plan a boat trip.") and first.endswith("…") and len(first) == 60, first)
-        self.assertIn("“Engine notes” becomes the PO", self.out["dialog"])
         self.assertIn("dialog .im-field .kind-opt input { width: auto;", INDEX, "a radio is not a full-width text box")
-
-    def test_a_refusal_reopens_the_dialog_as_it_was_left(self):
-        d = self.out["again"]
-        self.assertIn('role="alert">The folder &lt;x&gt; is already a project.', d)
-        self.assertIn('value="My &quot;papers&quot;"', d)
-        self.assertIn('value="documents" checked', d)
-        self.assertNotIn('value="code" checked', d)
-        self.assertIn('id="mp-path-field" hidden', d)
-        self.assertIn('value="D:\\else"', d)
 
     def test_what_the_hub_is_asked(self):
         new, task, bare, bringing = self.out["bodies"]
@@ -1108,19 +1066,10 @@ console.log(JSON.stringify(out));
         self.assertEqual((f["code"], f["unknown"]), ("", ""))
 
     def test_the_box_shows_for_a_documents_project_only(self):
-        f = self.out["files"]
-        self.assertIn('id="mp-bring-field"><label class="kind-opt"><input type="checkbox" id="mp-bring" checked>', f["dialogDocs"])
-        self.assertIn('id="mp-bring-field" hidden><label', f["dialogCode"], "there, and hidden until the kind changes")
-        self.assertIn('id="mp-bring">', f["dialogOff"])
-        self.assertIn('id="mp-bring-field" hidden></div>', f["dialogNoCount"])
-        self.assertIn('id="mp-bring-field" hidden></div>', self.out["dialog"])
-        # The page: the field follows the kind, the count is asked once, and Make PO waits for it.
-        self.assertIn("$('#mp-bring-field').hidden = !docs || !$('#mp-bring-field').firstChild;", INDEX)
-        self.assertIn("if (kind === 'documents') { $('#mp-ok').disabled = true; await counted; }", INDEX)
-        self.assertIn("...(bring ? { bringFiles: kind === 'documents' && bring.checked } : {})", INDEX)
-        self.assertIn("makePoFlow(r, histErr(e), target, info);", INDEX, "a refusal re-opens it without counting again")
-        self.assertIn("if (!chosen || !isDocsProject(pj)) { counted = Promise.resolve(); return; }", INDEX,
-                      "Choose the PO offers it to a documents project only")
+        # The setup dialog: counted when a conversation is chosen for a
+        # documents project, and confirming waits for the count.
+        self.assertIn("if (!c || !setupIsDocs(st)) { counted = Promise.resolve(); paintBring(); return; }", INDEX)
+        self.assertIn("if (setupIsDocs(st) && st.choice === 'conv') await counted;", INDEX)
         self.assertIn("'/api/projects/po-from-session/files'", INDEX)
 
     def test_the_notice_says_what_became_of_the_files(self):
@@ -1143,8 +1092,12 @@ console.log(JSON.stringify(out));
         self.assertIn("makePoBroughtMore(resp.files) ? 0 : (note ? 8000 : 3000)", INDEX)
 
     def test_where_the_page_offers_it(self):
-        self.assertRegex(INDEX, r'\(!isLive && r\.cwd && !r\.roomId && !r\.orphan\)\s*\? `<button class="makepo-btn" data-sid=')
-        self.assertIn('class="ov-item makepo-btn" data-room=', INDEX)
+        # Offered in the shared action menu (static/actions.js): a task by its room, a session by its id.
+        actions = (ROOT / "static" / "actions.js").read_text(encoding="utf-8")
+        self.assertIn("id: 'makepo', label: 'Make PO of a new project…', cls: 'makepo-btn',", actions)
+        self.assertIn("data: s.kind === 'room' ? { room: s.roomId } : { sid: s.sessionId },", actions)
+        self.assertIn("SessionActions.actionBarHtml(SessionActions.sessionActions(actionState(r, isLive), actionEnv()))", INDEX)
+        self.assertIn("if (row) await projectSetupFlow({ preselect: row });", INDEX)
         self.assertIn("ev.target.closest('.makepo-btn')", INDEX)
         self.assertIn("dialog .im-field[hidden] { display: none; }", INDEX, "display:flex would defeat hidden")
 

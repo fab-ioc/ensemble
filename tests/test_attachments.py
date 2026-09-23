@@ -252,7 +252,9 @@ class Attachments(unittest.TestCase):
         _s, a = self.upload(PNG, room=other)
         got = []
         with mock.patch.object(dashboard.Handler, "_resume_room",
-                               lambda h, room, text="", to="", key="": got.append(text) or {"ok": True, "queued": 1}):
+                               # Delivered, as the real one would: an ok that did nothing is refused (sends.py).
+                               lambda h, room, text="", to="", key="": got.append(text)
+                               or dashboard.sends.mark(room["id"], [key], "delivered") or {"ok": True, "queued": 1}):
             for _ in range(2):          # a lost reply, sent again
                 status, r = self.json_post("/api/room/resume", {"roomId": self.rid, "text": "see", "attachments": [{"room": other, "name": a["name"]}]})
                 self.assertEqual(status, 200, r)

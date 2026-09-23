@@ -39,6 +39,11 @@ def js_function(src: str, name: str) -> str:
     return src[m.start():src.index("\n}\n", m.start()) + 3]
 
 
+def js_line(src: str, start: str) -> str:
+    at = src.index(start)
+    return src[at:src.index("\n", at) + 1]
+
+
 def fold_block(src: str) -> str:
     return src[src.index("// ---- Folding a long conversation -"):src.index("// ---- Folding a long conversation: end")]
 
@@ -149,15 +154,19 @@ out.heldNone = [...foldHeld(common, [{ mid: 'm1', from: 'claude', quote: 'absent
   out.scrolled = [step(1000), step(4500), step(4500), step(1000), step(4490)];
 }
 
-// Sending while scrolled up adds the echo below and leaves the view where it is.
+// Sending draws the hub's receipt through the one redraw, which keeps the
+// reader's place scrolled up and follows the end at the end (renderBubbles);
+// before the chat has drawn at all, nothing (the next poll shows it).
 const sent = {};
-for (const stick of [false, true]) {
-  const pbox = { html: '', scrollTop: 400, scrollHeight: 5000, insertAdjacentHTML(w, h) { this.html += h; this.scrollHeight += 100; } };
-  let shown = 0;
-  const sctx = { $: () => pbox, whoHtml: m => m.from, mdToHtml: x => x, showLatest: () => { shown++; }, Date };
+for (const drawn of [true, false]) {
+  let renders = 0;
+  const sctx = { renderBubbles: () => { renders++; } };
   vm.createContext(sctx);
-  vm.runInContext(`var PENDING_USER = [], STICK = ${stick};\n` + showPending + `\nshowPendingUser('hello');`, sctx);
-  sent[stick ? 'atEnd' : 'up'] = { top: pbox.scrollTop, echoed: pbox.html.includes('hello'), latest: shown };
+  vm.runInContext(`var LAST_ITEMS = ${drawn ? '[]' : 'null'}; var SENDS_GEN = 4;
+` + showPending
+    + `
+noteSent({ key: 'send:a', text: 'hello', state: 'delivered', at: 1 }); noteSent(null);`, sctx);
+  sent[drawn ? 'drawn' : 'notYet'] = { renders, kept: vm.runInContext("JSON.stringify([...SENT_LOCAL])", sctx) };
 }
 out.sent = sent;
 
@@ -193,7 +202,7 @@ class FoldALongConversation(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         code = ATTACH + fold_block(SRC) + js_function(SRC, "soloItems") + js_function(SRC, "patchChildren")
-        payload = {"code": code, "showPending": js_function(SRC, "showPendingUser"),
+        payload = {"code": code, "showPending": js_line(SRC, "const SENT_LOCAL = new Map();") + js_function(SRC, "noteSent"),
                    "scrolled": js_function(SRC, "msgsScrolled")}
         out = subprocess.run([NODE, "-e", JS], input=json.dumps(payload), capture_output=True,
                              text=True, encoding="utf-8", timeout=60)
@@ -253,10 +262,10 @@ class FoldALongConversation(unittest.TestCase):
         # up, to the end (draws), still at the end, up, back to the end (draws)
         self.assertEqual(self.r["scrolled"], [[0, False], [1, True], [1, True], [1, False], [2, True]])
 
-    def test_sending_while_scrolled_up_keeps_the_place(self):
-        up, end = self.r["sent"]["up"], self.r["sent"]["atEnd"]
-        self.assertEqual(up, {"top": 400, "echoed": True, "latest": 1})
-        self.assertEqual(end, {"top": 5100, "echoed": True, "latest": 1})
+    def test_a_send_shows_through_the_one_redraw(self):
+        kept = '[["send:a",{"s":{"key":"send:a","text":"hello","state":"delivered","at":1},"gen":4}]]'
+        self.assertEqual(self.r["sent"]["drawn"], {"renders": 1, "kept": kept})
+        self.assertEqual(self.r["sent"]["notYet"], {"renders": 0, "kept": kept})
 
     def test_first_line_is_plain_text(self):
         lines = self.r["lines"]
