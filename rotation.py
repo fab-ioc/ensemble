@@ -27,8 +27,9 @@ settings; 0 turns them off):
 2. **Wait** for it to finish the turn in which it read the ask (its transcript
    holds the ask after the offset it was typed at, the turn is over, and its
    terminal has gone quiet) — or, whatever the transcript shows, for its
-   handover file to be newer than the ask and it idle (by the transcript or
-   as the attention view decides it). If it never answers — the line did not submit,
+   handover file to be newer than the ask and it idle (by the transcript, or
+   by an idle hook since the ask that nothing on its screen contradicts). If
+   it never answers — the line did not submit,
    say — it is rotated anyway once idle past ``ASK_TIMEOUT_S``; if it stays
    busy past ``GIVE_UP_S`` the attempt is dropped and made again later. Only a
    person typing at its terminal since the ask drops the attempt; the hub's
@@ -467,23 +468,29 @@ def _idle(part: dict, tr: dict) -> bool:
         return False
 
 
-def _attention_idle(part: dict) -> bool:
-    """Idle as the attention view decides it (the agent's hooks, Claude's
-    status file, then the screen) and its terminal quiet for IDLE_S — for when
-    the transcript's last entry does not show the turn's end."""
+def _hook_idle(part: dict, since: float) -> bool:
+    """Its turn is over by the agent's own hook, for when the transcript's
+    last entry does not show it: an ``idle`` hook fired after ``since`` (the
+    ask), that attention still believes (``_hook_status``: nothing newer
+    contradicts it), with no working indicator or prompt on the screen and the
+    terminal quiet for IDLE_S. The screen alone is not enough — attention
+    reads a busy screen quiet for a minute as idle, and a long silent tool
+    call looks just like that — nor is an idle hook from before the ask."""
     sess = _pty(part)
     if sess is None:
         return False
+    att = _d.attention
     try:
-        state, _ = _d.attention.turn_state(part)
-        return state == "idle" and float(sess.info().get("idleSeconds") or 0) >= IDLE_S
+        ev = att._evidence(part, att._claude_status_by_session())
+        hook = ev.get("hook") or {}
+        if hook.get("state") != "idle" or float(hook.get("at") or 0) <= since:
+            return False
+        scan = ev.get("scan") or {}
+        if scan.get("busy") or scan.get("prompt") or att._hook_status(ev) != "idle":
+            return False
+        return float(ev.get("idleSeconds") or 0) >= IDLE_S
     except Exception:
         return False
-
-
-def _settled(part: dict, tr: dict) -> bool:
-    """Its turn is over by the transcript or by the attention view."""
-    return _idle(part, tr) or _attention_idle(part)
 
 
 def _handover_refreshed(st: dict, hp: Path | None) -> bool:
@@ -624,14 +631,17 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
 
     if st["phase"] == "asked":
         waited = now - float(st.get("askedAt") or now)
-        idle = _settled(part, tr)
+        idle = _idle(part, tr)
         if unwritten and idle and (tr["promptSince"] or waited > ASK_TIMEOUT_S):
             return not_without_handover()
+        if idle and tr["promptSince"]:
+            return _rotate(s, tr, done, answered=True)
         # A handover written since the ask answers it, even when the ask never
         # shows in the transcript (measured 2026-09-23: written at 15:14,
         # rotated on the timeout at 15:34).
-        if idle and (tr["promptSince"] or _handover_refreshed(st, s["handover"])):
-            return _rotate(s, tr, done, answered=True)
+        if _handover_refreshed(st, s["handover"]) and (
+                idle or _hook_idle(part, float(st.get("askedAt") or 0))):
+            return _rotate(s, tr, done, answered=True, by_file=True)
         if idle and waited > ASK_TIMEOUT_S:
             return _rotate(s, tr, done, answered=False)
         if waited > GIVE_UP_S:
@@ -651,7 +661,7 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
     if young < COOLDOWN_S and not force:
         return done(f"{_k(tr['tokens'])} tokens, over the limit, but the last rotation "
                     f"or attempt was {int(young // 60)} min ago", quiet=routine)
-    busy = not _settled(part, tr)
+    busy = not _idle(part, tr)
     if immediate:
         if unwritten:
             return not_without_handover()
@@ -1728,7 +1738,8 @@ def _report_to_po(room: dict, ident: str, rec: dict, how: str) -> bool:
     return bool(res)
 
 
-def _rotate(s: dict, tr: dict, done, answered: bool, asked: bool = True) -> dict:
+def _rotate(s: dict, tr: dict, done, answered: bool, asked: bool = True,
+            by_file: bool = False) -> dict:
     """End the old session and start the fresh one. From the last idle check
     until the fresh terminal is on the room, the agent is marked as rotating
     under GATE: a doorbell for it is held and typed into the fresh session
@@ -1747,7 +1758,11 @@ def _rotate(s: dict, tr: dict, done, answered: bool, asked: bool = True) -> dict
         tpath, reader = _transcript_of(part)
         since = float(st.get("askSubmit") or 0) if asked else time.time() - IDLE_S
         person = sess is None or _typed_since(sess, since)
-        busy = not person and (not _settled(part, reader(tpath)) or _submitted_lately(sess))
+        # Answered by the handover file alone, an idle hook since the ask is
+        # enough for the transcript's turn end (see _hook_idle).
+        settled = _idle(part, reader(tpath)) or (
+            by_file and _hook_idle(part, float(st.get("askedAt") or 0)))
+        busy = not person and (not settled or _submitted_lately(sess))
         waited = time.time() - float(st.get("askedAt") or 0)
         if busy and asked and waited <= GIVE_UP_S:
             return done(f"{s['who']} started working again — rotating once it is idle",

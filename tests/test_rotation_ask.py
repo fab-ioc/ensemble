@@ -38,14 +38,14 @@ class _Base(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.sess = _FakePty()
         self.idle = False
-        self.attn_idle = False
+        self.hook_idle = False
         self.tr = {"tokens": 250_000, "turnOver": False, "promptSince": False, "size": 1000}
         self.sinces = []
         self.rotated = []
         self.patches = [
             mock.patch.object(rotation, "_pty", side_effect=lambda part: self.sess),
             mock.patch.object(rotation, "_idle", side_effect=lambda part, tr: self.idle),
-            mock.patch.object(rotation, "_attention_idle", side_effect=lambda part: self.attn_idle),
+            mock.patch.object(rotation, "_hook_idle", side_effect=lambda part, since: self.hook_idle),
             mock.patch.object(rotation, "_transcript_of", side_effect=lambda part: (
                 Path(self.temp.name) / "t.jsonl", self.reader)),
             mock.patch.object(rotation, "_rotate_marked", side_effect=self.rotate_marked),
@@ -249,7 +249,7 @@ class HandoverWrittenTests(_Base):
     def test_fresh_file_and_idle_rotates(self):
         s = self.asked()
         self.write(s, +30)
-        self.attn_idle = True               # hooks say idle; transcript shows no ask
+        self.hook_idle = True               # hooks say idle; transcript shows no ask
         out = self.check(s)
         self.assertEqual(out["result"], "rotated")
         self.assertEqual(self.rotated, [{"answered": True, "asked": True}])
@@ -271,7 +271,7 @@ class HandoverWrittenTests(_Base):
     def test_stale_file_and_idle_waits_for_the_timeout(self):
         s = self.asked()
         self.write(s, -30)
-        self.attn_idle = True
+        self.idle = self.hook_idle = True
         out = self.check(s)
         self.assertEqual((out["phase"], self.rotated), ("asked", []))
         s["state"]["askedAt"] -= rotation.ASK_TIMEOUT_S
@@ -282,21 +282,21 @@ class HandoverWrittenTests(_Base):
     def test_an_emptied_file_does_not_count(self):
         s = self.asked()
         self.write(s, +30, text="  \n")
-        self.attn_idle = True
+        self.hook_idle = True
         out = self.check(s)
         self.assertEqual((out["phase"], self.rotated), ("asked", []))
 
     def test_the_po_rotates_on_its_fresh_file_too(self):
         s = self.asked("po")
         self.write(s, +30)
-        self.attn_idle = True
+        self.hook_idle = True
         self.check(s)
         self.assertEqual(self.rotated, [{"answered": True, "asked": True}])
 
     def test_busy_again_at_the_gate_puts_it_off(self):
         s = self.asked()
         self.write(s, +30)
-        self.attn_idle = True
+        self.hook_idle = True
         self.sess._last_submit = time.time()        # a doorbell this very moment
         out = self.check(s)
         self.assertEqual((out["phase"], self.rotated), ("asked", []))
@@ -304,7 +304,7 @@ class HandoverWrittenTests(_Base):
     def test_no_double_launch(self):
         s = self.asked()
         self.write(s, +30)
-        self.attn_idle = True
+        self.hook_idle = True
         entered = threading.Event()
 
         def slow_rotate(s_, tr, done, answered, asked, key, flags):
@@ -316,7 +316,8 @@ class HandoverWrittenTests(_Base):
             return self.rotate_marked(s_, tr, done, answered, asked, key, flags)
 
         results = []
-        with mock.patch.object(rotation, "_rotate_marked", side_effect=slow_rotate),                 mock.patch.object(rotation, "_owner_subject", return_value=s):
+        with mock.patch.object(rotation, "_rotate_marked", side_effect=slow_rotate), \
+                mock.patch.object(rotation, "_owner_subject", return_value=s):
             threads = [threading.Thread(target=lambda: results.append(
                 rotation.check_task("room-1", "claude"))) for _ in range(2)]
             threads[0].start()
@@ -329,21 +330,104 @@ class HandoverWrittenTests(_Base):
         self.assertEqual(self.sess.typed, [])
 
 
-class AttentionIdleTests(unittest.TestCase):
-    """Idle as the attention view says, and quiet for IDLE_S."""
+    def test_the_timeout_and_immediate_paths_ignore_the_hook(self):
+        s = self.asked(ago=rotation.ASK_TIMEOUT_S + 10)
+        self.write(s, -30)                          # not refreshed
+        self.hook_idle = True
+        out = self.check(s)
+        self.assertEqual((out["phase"], self.rotated), ("asked", []))
+        out = rotation._check(self.subject(), True, True)
+        self.assertEqual(self.rotated, [])
+        self.assertIn("waiting for the owner (claude) to be idle", out["result"])
 
-    def run_with(self, state, quiet):
-        sess = mock.Mock(**{"alive.return_value": True,
-                            "info.return_value": {"idleSeconds": quiet}})
-        with mock.patch.object(rotation, "_pty", return_value=sess), \
-                mock.patch.object(dashboard.attention, "turn_state", return_value=(state, "hook")):
-            return rotation._attention_idle({"ptyId": "pty-1"})
 
-    def test_states(self):
-        self.assertTrue(self.run_with("idle", rotation.IDLE_S + 1))
-        self.assertFalse(self.run_with("idle", 1.0))            # just finished printing
-        self.assertFalse(self.run_with("working", 60.0))
-        self.assertFalse(self.run_with("waiting", 60.0))        # a prompt is up
+_REAL_HOOK_IDLE = rotation._hook_idle
+DONE = "● Wrote TASK-HANDOVER.md\n"
+WORKING = "● Running the suite\n\n✻ Pondering… (212s · esc to interrupt)\n"
+
+
+class HookIdleTests(_Base):
+    """What _hook_idle believes, through attention's real reading of the hook
+    and the screen; a fresh handover must wait unless it says idle, at the
+    first check and at the gate."""
+
+    def setUp(self):
+        super().setUp()
+        self.evs = []
+        self.invalidated = []
+        for p in (
+            mock.patch.object(rotation, "_hook_idle", side_effect=_REAL_HOOK_IDLE),
+            mock.patch.object(dashboard.attention, "_evidence", side_effect=self.evidence),
+            mock.patch.object(dashboard.attention, "_claude_status_by_session", return_value={}),
+            mock.patch.object(dashboard.agent_hooks, "invalidate",
+                              side_effect=lambda *a, **k: self.invalidated.append(a)),
+        ):
+            p.start()
+            self.patches.append(p)
+
+    def evidence(self, part, statuses):
+        return self.evs.pop(0) if len(self.evs) > 1 else self.evs[0]
+
+    def ev(self, tail, hook_state=None, hook_at=0.0, quiet=120.0):
+        now = time.time()
+        hook = ({"state": hook_state, "at": hook_at, "event": "Stop", "detail": "",
+                 "sessionId": "sid-1", "waits": 0} if hook_state else None)
+        return {"ptyId": "pty-1", "alive": True, "tail": tail, "idleSeconds": quiet,
+                "lastSubmit": 0.0, "death": None, "scan": dashboard.attention.analyse(tail),
+                "claudeStatus": "", "claudeStatusAt": 0.0, "hook": hook,
+                "lastOutput": now - quiet}
+
+    def fresh(self):
+        s = self.asked()
+        hp = s["handover"]
+        hp.write_text("# Handover\n", encoding="utf-8")
+        at = s["state"]["askedAt"] + 30
+        os.utime(hp, (at, at))
+        return s
+
+    def test_an_idle_hook_after_the_ask_rotates(self):
+        s = self.fresh()
+        self.evs = [self.ev(DONE, "idle", s["state"]["askedAt"] + 40)]
+        self.check(s)
+        self.assertEqual(self.rotated, [{"answered": True, "asked": True}])
+
+    def test_a_busy_screen_quiet_past_a_minute_is_not_idle(self):
+        # A long silent tool call: attention's turn_state calls it idle.
+        s = self.fresh()
+        self.evs = [self.ev(WORKING, quiet=120.0)]
+        self.assertEqual(dashboard.attention.turn_state({"ptyId": "pty-1", "agent": "codex"})[0],
+                         "idle")
+        out = self.check(s)
+        self.assertEqual((out["phase"], self.rotated), ("asked", []))
+
+    def test_a_stale_idle_hook_is_not_idle(self):
+        s = self.fresh()
+        for tail in (DONE, WORKING):
+            self.evs = [self.ev(tail, "idle", s["state"]["askedAt"] - 5)]
+            out = self.check(s)
+            self.assertEqual((out["phase"], self.rotated), ("asked", []))
+
+    def test_an_idle_hook_under_a_busy_screen_is_not_idle(self):
+        # The working hook after it was lost; the screen shows the turn.
+        s = self.fresh()
+        self.evs = [self.ev(WORKING, "idle", s["state"]["askedAt"] + 40)]
+        out = self.check(s)
+        self.assertEqual((out["phase"], self.rotated), ("asked", []))
+
+    def test_just_printed_is_not_idle(self):
+        s = self.fresh()
+        self.evs = [self.ev(DONE, "idle", s["state"]["askedAt"] + 40, quiet=1.0)]
+        out = self.check(s)
+        self.assertEqual((out["phase"], self.rotated), ("asked", []))
+
+    def test_busy_again_at_the_gate_waits(self):
+        s = self.fresh()
+        at = s["state"]["askedAt"] + 40
+        self.evs = [self.ev(DONE, "idle", at), self.ev(WORKING, "idle", at, quiet=2.0)]
+        out = self.check(s)
+        self.assertEqual(self.rotated, [])
+        self.assertEqual(out["phase"], "asked")
+        self.assertIn("rotating once it is idle", out["result"])
 
 
 class TranscriptPromptTests(unittest.TestCase):
