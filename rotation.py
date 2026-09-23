@@ -26,7 +26,10 @@ settings; 0 turns them off):
    that let conversations run past 500k (measured 2026-09-15).
 2. **Wait** for it to finish the turn in which it read the ask (its transcript
    holds the ask after the offset it was typed at, the turn is over, and its
-   terminal has gone quiet). If it never answers — the line did not submit,
+   terminal has gone quiet) — or, whatever the transcript shows, for its
+   handover file to be newer than the ask and it idle (by the transcript, or
+   by an idle hook since the ask that nothing on its screen contradicts). If
+   it never answers — the line did not submit,
    say — it is rotated anyway once idle past ``ASK_TIMEOUT_S``; if it stays
    busy past ``GIVE_UP_S`` the attempt is dropped and made again later. Only a
    person typing at its terminal since the ask drops the attempt; the hub's
@@ -465,6 +468,40 @@ def _idle(part: dict, tr: dict) -> bool:
         return False
 
 
+def _hook_idle(part: dict, since: float) -> bool:
+    """Its turn is over by the agent's own hook, for when the transcript's
+    last entry does not show it: an ``idle`` hook fired after ``since`` (the
+    ask), that attention still believes (``_hook_status``: nothing newer
+    contradicts it), with no working indicator or prompt on the screen and the
+    terminal quiet for IDLE_S. The screen alone is not enough — attention
+    reads a busy screen quiet for a minute as idle, and a long silent tool
+    call looks just like that — nor is an idle hook from before the ask."""
+    sess = _pty(part)
+    if sess is None:
+        return False
+    att = _d.attention
+    try:
+        ev = att._evidence(part, att._claude_status_by_session())
+        hook = ev.get("hook") or {}
+        if hook.get("state") != "idle" or float(hook.get("at") or 0) <= since:
+            return False
+        scan = ev.get("scan") or {}
+        if scan.get("busy") or scan.get("prompt") or att._hook_status(ev) != "idle":
+            return False
+        return float(ev.get("idleSeconds") or 0) >= IDLE_S
+    except Exception:
+        return False
+
+
+def _handover_refreshed(st: dict, hp: Path | None) -> bool:
+    """The handover was written after the ask was typed (newer than the ask's
+    time and than the file just before it), and says something."""
+    asked_at = float(st.get("askedAt") or 0)
+    m = _mtime(Path(hp)) if hp else 0.0
+    return (asked_at > 0 and m > asked_at and m > float(st.get("handoverAtAsk") or 0)
+            and handover_written(hp))
+
+
 def _session_started(part: dict) -> float:
     """When the agent's current session began, if a rotation started it."""
     rots = part.get("rotations") or []
@@ -602,6 +639,12 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
             return not_without_handover()
         if idle and tr["promptSince"]:
             return _rotate(s, tr, done, answered=True)
+        # A handover written since the ask answers it, even when the ask never
+        # shows in the transcript (measured 2026-09-23: written at 15:14,
+        # rotated on the timeout at 15:34).
+        if _handover_refreshed(st, s["handover"]) and (
+                idle or _hook_idle(part, float(st.get("askedAt") or 0))):
+            return _rotate(s, tr, done, answered=True, by_file=True)
         if idle and waited > ASK_TIMEOUT_S:
             return _rotate(s, tr, done, answered=False)
         if waited > GIVE_UP_S:
@@ -661,12 +704,15 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
     # Typed now even mid-turn: the agent queues it and reads it at its next
     # pause. The transcript's size is read before the ask, so the ask lands
     # at or after askSize.
+    # The handover as it was just before the ask, and the ask's time just
+    # after it: a file written before or while it was typed is never fresh.
+    before = _mtime(hp)
     sess.send_line(ask)
     # The ask's own submit: a person typing into the terminal after it means
     # someone is working with the agent, and the rotation waits.
     st.update(phase="asked", askRoom=s["room"]["id"], askIdentity=part["identity"],
-              askedAt=now, askSize=tr["size"], askPath=str(tpath),
-              handoverAtAsk=_mtime(hp), tokensAtAsk=tr["tokens"],
+              askedAt=time.time(), askSize=tr["size"], askPath=str(tpath),
+              handoverAtAsk=before, tokensAtAsk=tr["tokens"],
               askSubmit=float(sess.last_submit() or time.time()))
     note = " (it was busy; it reads the ask at its next pause)" if busy else ""
     return done(f"{_k(tr['tokens'])} tokens, over the {_k(limit)} limit — "
@@ -1698,7 +1744,8 @@ def _report_to_po(room: dict, ident: str, rec: dict, how: str) -> bool:
     return bool(res)
 
 
-def _rotate(s: dict, tr: dict, done, answered: bool, asked: bool = True) -> dict:
+def _rotate(s: dict, tr: dict, done, answered: bool, asked: bool = True,
+            by_file: bool = False) -> dict:
     """End the old session and start the fresh one. From the last idle check
     until the fresh terminal is on the room, the agent is marked as rotating
     under GATE: a doorbell for it is held and typed into the fresh session
@@ -1717,7 +1764,11 @@ def _rotate(s: dict, tr: dict, done, answered: bool, asked: bool = True) -> dict
         tpath, reader = _transcript_of(part)
         since = float(st.get("askSubmit") or 0) if asked else time.time() - IDLE_S
         person = sess is None or _typed_since(sess, since)
-        busy = not person and (not _idle(part, reader(tpath)) or _submitted_lately(sess))
+        # Answered by the handover file alone, an idle hook since the ask is
+        # enough for the transcript's turn end (see _hook_idle).
+        settled = _idle(part, reader(tpath)) or (
+            by_file and _hook_idle(part, float(st.get("askedAt") or 0)))
+        busy = not person and (not settled or _submitted_lately(sess))
         waited = time.time() - float(st.get("askedAt") or 0)
         if busy and asked and waited <= GIVE_UP_S:
             return done(f"{s['who']} started working again — rotating once it is idle",
