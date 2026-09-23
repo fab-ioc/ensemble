@@ -367,6 +367,54 @@ class Receipts(unittest.TestCase):
         states = {s["key"]: s["state"] for s in self.payload(rid)["sends"]}
         self.assertEqual(sorted(states.values()), ["confirmed", "delivered"])
 
+    def test_one_resume_input_confirms_every_send_it_carries(self):
+        # A resume types its note and every send it held as one input: one
+        # transcript turn then holds them all (review 1, finding 1).
+        rid = self.room()
+        now = time.time()
+        held = {"send:p1": "first\n\n[point P1]", "send:p2": "second\n\n[point P2]",
+                "send:w": "and a plain line"}
+        for k, t in held.items():
+            sends.accept(rid, k, t, now=now)
+            sends.mark(rid, [k], "delivered", now=now)
+        turn = "[resumed] carry on\n\n" + "\n\n".join(held.values())
+        self.turns[SID].append({"role": "user", "text": turn, "timestamp": iso(now + 1)})
+        pub = self.payload(rid)["sends"]
+        self.assertEqual({s["key"]: s["state"] for s in pub}, dict.fromkeys(held, "confirmed"))
+        self.assertEqual(len({s["mid"] for s in pub}), 1)
+
+    def test_a_retry_straight_after_a_restart_delivers_it(self):
+        # Queued by a hub that has since restarted, and sent again before any
+        # poll of the room: a retry, not a duplicate that says "queued"
+        # (review 1, finding 2).
+        rid = self.room()
+        with mock.patch.object(sends, "BOOT", "the-hub-before"):
+            sends.accept(rid, "send:early", "sent before the restart")
+        status, out = self.post({"roomId": rid, "text": "sent before the restart", "key": "send:early"})
+        self.assertEqual(status, 200)
+        self.assertFalse(out.get("duplicate"))
+        self.join()
+        self.assertEqual(out["send"]["state"], "delivered")
+        [(pid, lines)] = self.typed().items()
+        self.assertEqual(len(lines), 1)
+        self.assertIn("sent before the restart", lines[0])
+
+    def test_an_image_alone_is_confirmed_by_its_turn(self):
+        # No words and no point: its image's path is what to look for, in
+        # Claude's turn too (review 1, finding 3).
+        self.assertTrue(sends.matches("[image] C:/a.png", "[Image #1]\n[image] C:/a.png"))
+        self.assertTrue(sends.matches("[image] C:\\x\\A.png","[image] c:/x/a.png"))
+        self.assertFalse(sends.matches("[image] C:/a.png", "[Image #1]\n[image] C:/b.png"))
+        self.assertFalse(sends.matches("[image] C:/a.png", "[Image #1]"))
+        rid = self.room(agents=("claude",))
+        now = time.time()
+        sends.accept(rid, "send:img", "[image] C:\\att\\shot.png", now=now)
+        sends.mark(rid, ["send:img"], "delivered", now=now)
+        self.turns[SID].append({"role": "user", "text": "[Image #1]\n[image] C:\\att\\shot.png",
+                                "timestamp": iso(now + 1)})
+        [s] = self.payload(rid)["sends"]
+        self.assertEqual(s["state"], "confirmed")
+
 
 @unittest.skipUnless(NODE, "node is not installed")
 class ThePage(unittest.TestCase):
@@ -410,6 +458,15 @@ run('ROOM_SENDS = ' + JSON.stringify([{ key: 'a', text: 'ok go', at: 1000, state
 out.twice = ctx.sendsToShow(busy.concat([{ id: 's:4', from: 'user', text: 'ok go', ts: 1002 }])).map(s => s.key);
 // An older turn with the same words does not count.
 out.older = ctx.sendsToShow([{ id: 's:0', from: 'user', text: 'ok go', ts: 10 }]).map(s => s.key);
+// One resume input carries several sends: each is replaced by it.
+run('ROOM_SENDS = ' + JSON.stringify([{ key: 'p1', text: 'one\n\n[point P1]', at: 1000, state: 'delivered' },
+  { key: 'p2', text: 'two\n\n[point P2]', at: 1001, state: 'delivered' }, { key: 'w', text: 'plain words', at: 1002, state: 'delivered' }]));
+out.coalesced = ctx.sendsToShow(busy.concat([{ id: 's:5', from: 'user', ts: 1003,
+  text: '[resumed] carry on\n\none\n\n[point P1]\n\ntwo\n\n[point P2]\n\nplain words' }])).map(s => s.key);
+// An image alone: its path, as Claude's turn gives it back.
+run('ROOM_SENDS = ' + JSON.stringify([{ key: 'img', text: '[image] C:\\att\\shot.png', at: 1000, state: 'delivered' }]));
+out.imageOther = ctx.sendsToShow(busy.concat([{ id: 's:6', from: 'user', text: '[Image #1]\n[image] C:/att/other.png', ts: 1001 }])).map(s => s.key);
+out.imageTurn = ctx.sendsToShow(busy.concat([{ id: 's:6', from: 'user', text: '[Image #1]\n[image] C:/att/shot.png', ts: 1001 }])).map(s => s.key);
 // The reply shows it at once; a poll that asked before keeps it, one after decides.
 run('ROOM_SENDS = []; SENDS_GEN = 5;');
 ctx.noteSent(sent);
@@ -440,6 +497,13 @@ console.log(JSON.stringify(out));
     def test_one_turn_per_send(self):
         self.assertEqual(self.r["twice"], ["b"])
         self.assertEqual(self.r["older"], ["a", "b"])
+
+    def test_one_turn_for_several_sends(self):
+        self.assertEqual(self.r["coalesced"], [])
+
+    def test_an_image_alone_is_replaced_by_its_turn(self):
+        self.assertEqual(self.r["imageOther"], ["img"])
+        self.assertEqual(self.r["imageTurn"], [])
 
     def test_the_reply_and_the_polls(self):
         self.assertEqual(self.r["local"], ["send:p11"])

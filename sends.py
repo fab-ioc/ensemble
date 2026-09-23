@@ -243,15 +243,48 @@ def _norm(text: str) -> str:
     return " ".join(text.split())
 
 
-def matches(send_text: str, turn_text: str) -> bool:
-    """Whether a user turn holds this send: its point lines, when it has any
-    (unique in a room), else its first words, as the agent was given them."""
+_IMAGE_PATH = re.compile(r"^\s*\[image\][ \t]+(\S[^\n]*?)\s*$", re.M | re.I)
+
+
+def _image_paths(text: str) -> list[str]:
+    return [p.replace("\\", "/").lower() for p in _IMAGE_PATH.findall(text or "")]
+
+
+def evidence(send_text: str) -> tuple[str, object]:
+    """What of a send its turn must hold: ``("points", ids)`` (unique in a
+    room), else ``("words", its first words)``, else, for images alone,
+    ``("images", their paths)``; ``("", None)`` for nothing to go by."""
     ids = _POINT_LINE.findall(send_text or "")
     if ids:
-        have = set(_POINT_LINE.findall(turn_text or ""))
-        return all(i in have for i in ids)
+        return "points", tuple(ids)
     needle = _norm(send_text)[:_NEEDLE]
-    return bool(needle) and needle in _norm(turn_text)
+    if needle:
+        return "words", needle
+    paths = _image_paths(send_text)
+    return ("images", tuple(paths)) if paths else ("", None)
+
+
+def times_in(ev: tuple[str, object], turn_text: str) -> int:
+    """How many sends with this evidence a turn can confirm: one resume
+    input carries several sends, and the same words sent twice need two
+    turns (or one that holds them twice)."""
+    kind, val = ev
+    if kind == "points":
+        have = set(_POINT_LINE.findall(turn_text or ""))
+        return 1 if all(i in have for i in val) else 0
+    if kind == "words":
+        return _norm(turn_text).count(val)
+    if kind == "images":
+        have = _image_paths(turn_text)
+        return min(have.count(p) for p in val)
+    return 0
+
+
+def matches(send_text: str, turn_text: str) -> bool:
+    """Whether a user turn holds this send: its point lines, when it has any
+    (unique in a room), else its first words, as the agent was given them,
+    else (images alone) the images' paths."""
+    return times_in(evidence(send_text), turn_text) > 0
 
 
 def _session_ids(room: dict) -> list[str]:
@@ -307,17 +340,24 @@ def sync(room_id: str, room: dict | None = None, force: bool = False,
     live = _d._room_is_live(room)
     with _LOCK:
         items = _load(room_id)
-        taken = {s.get("mid") for s in items if s.get("mid")}
+        # What each turn has confirmed already: one turn may confirm several
+        # sends (a resume types them in as one input), but the same words
+        # only as often as it holds them.
+        taken: dict[str, list] = {}
+        for s in items:
+            if s.get("mid"):
+                taken.setdefault(s["mid"], []).append(evidence(s["text"]))
         changed = False
         for s in sorted((s for s in items if s["state"] == "delivered"), key=lambda s: s["at"]):
             floor = float(s["at"]) - SLACK_S
-            hit = next((mid for mid, t in turns if mid not in taken
-                        and (_d._turn_epoch(t.get("timestamp")) or now) >= floor
-                        and matches(s["text"], t.get("text") or "")), None)
+            ev = evidence(s["text"])
+            hit = next((mid for mid, t in turns
+                        if (_d._turn_epoch(t.get("timestamp")) or now) >= floor
+                        and times_in(ev, t.get("text") or "") > taken.get(mid, []).count(ev)), None)
             if hit:
                 _set(s, "confirmed", now)
                 s["mid"], s["confirmedAt"] = hit, now
-                taken.add(hit)
+                taken.setdefault(hit, []).append(ev)
                 changed = True
             elif not live and now - float(s.get("deliveredAt") or s["stateAt"]) > STOPPED_AFTER_S:
                 _set(s, "failed", now, "the session stopped before it read this")
@@ -328,11 +368,10 @@ def sync(room_id: str, room: dict | None = None, force: bool = False,
             _SCANNED[(room_id, "stats")] = (stats, tuple(s["key"] for s in items if s["state"] == "delivered"))
 
 
-def view(room_id: str, now: float | None = None) -> list[dict]:
-    """What a room's page shows: every send not yet confirmed, oldest first,
-    and one confirmed a moment ago (until the page's own copy of the
-    conversation has it). A send queued by a hub that has since stopped is
-    failed here: its queue went with that hub."""
+def reconcile(room_id: str, now: float | None = None) -> list[dict]:
+    """A room's sends, with those queued by a hub that has since stopped
+    failed: their queue went with that hub. Before anything reads a send's
+    state to act on it (the page's poll, a send of the same key again)."""
     now = time.time() if now is None else now
     if not _ROOM_ID.fullmatch(room_id or ""):
         return []
@@ -348,6 +387,18 @@ def view(room_id: str, now: float | None = None) -> list[dict]:
                 _save(room_id, items)
             except OSError as e:
                 _log(f"{room_id}: {e!r}")
+    return items
+
+
+def view(room_id: str, now: float | None = None) -> list[dict]:
+    """What a room's page shows: every send not yet confirmed, oldest first,
+    and one confirmed a moment ago (until the page's own copy of the
+    conversation has it). A send queued by a hub that has since stopped is
+    failed here: its queue went with that hub."""
+    now = time.time() if now is None else now
+    if not _ROOM_ID.fullmatch(room_id or ""):
+        return []
+    items = reconcile(room_id, now)
     out = []
     for s in sorted(items, key=lambda s: s["at"]):
         if s["state"] == "confirmed" and (not s.get("mid") or now - float(

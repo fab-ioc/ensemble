@@ -10629,6 +10629,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(404, {"error": "no_such_room"})
                 return
             key = str(data.get("key") or "").strip()[:200]
+            # A send queued by a hub since restarted failed: the same key
+            # again is its retry (not a duplicate), and Discard can drop it.
+            sends.reconcile(rid)
             if data.get("discard"):
                 self._send_json(200, {"ok": True, "discarded": discard_pending(rid, key)})
                 return
