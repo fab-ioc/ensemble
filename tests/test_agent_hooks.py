@@ -81,7 +81,8 @@ class LaunchSettings(unittest.TestCase):
         pre = self.settings(True)["hooks"]["PreToolUse"]
         self.assertEqual(pre[0]["matcher"], "Bash")
         self.assertIn("hook claude", pre[0]["hooks"][0]["command"])
-        self.assertEqual(pre[1]["matcher"], "AskUserQuestion|ExitPlanMode")
+        self.assertEqual(pre[1]["matcher"], "Read")            # the task tool hook (read cap)
+        self.assertEqual(pre[2]["matcher"], "AskUserQuestion|ExitPlanMode")
         self.assertNotIn("hook claude", json.dumps(self.settings(False)))
 
     def test_only_the_per_tool_hooks_run_in_the_background(self):

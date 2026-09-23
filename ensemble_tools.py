@@ -24,12 +24,26 @@ primitives live in ``dashboard.py``, which registers itself via :func:`bind`
 """
 from __future__ import annotations
 
+import collections
 import json
+import threading
 import time
 
 from chatroom import REPORT_KINDS   # a plain module, safe to import here
 
 _d = None  # the dashboard module, set by bind()
+
+# Who has been given which task's spec in full by ensemble_get_task, and at
+# which revision: (caller's room, identity, terminal, task) -> spec revision.
+# A session's first call gets the whole spec, later ones a preview unless the
+# spec changed or they ask (``spec: true``): a result is read again on every
+# later model call, and the spec is the biggest thing in it. In memory only:
+# after a hub restart every session is given it once more, which is fine.
+_SPEC_GIVEN: "collections.OrderedDict[tuple, str]" = collections.OrderedDict()
+_SPEC_GIVEN_MAX = 5000
+_SPEC_GIVEN_LOCK = threading.Lock()
+SPEC_PREVIEW_CHARS = 300
+SPEC_NOTE = "full spec: pass spec=true"
 
 
 def bind(dashboard_module) -> None:
@@ -260,9 +274,14 @@ _ALL_TOOLS = [
     {
         "name": "ensemble_get_task",
         "description": (
-            "Read one task in full: title, complete spec, priority, project, "
-            "status, agents and roles, workspace mode, working directory, task "
-            "folder, and its latest report in full. Chat messages are opt-in."
+            "Read one task: title, spec, priority, project, status, agents and "
+            "roles, workspace mode, working directory, task folder, and its "
+            "latest report in full. The complete spec comes with your session's "
+            "first read of a task and whenever the spec has changed since; later "
+            "reads carry a 300-character `specPreview` instead (every result is "
+            "re-read on each of your later calls, and the spec is the biggest "
+            "part) — pass `spec: true` when you need the whole spec again. Chat "
+            "messages are opt-in."
         ),
         "inputSchema": {
             "type": "object",
@@ -272,6 +291,8 @@ _ALL_TOOLS = [
                               "description": "The project a bare number (#18) is read in (default: yours)."},
                 "messages": {"type": "integer",
                              "description": "How many recent chat messages to include (default 0, max 200)."},
+                "spec": {"type": "boolean",
+                         "description": "true: the complete spec, even when this session has read it before (default false)."},
             },
             "required": ["taskId"],
         },
@@ -693,6 +714,15 @@ def _ref(room: dict, projects: dict) -> str:
     return _d.task_numbers.label(room["no"], keys.get(room.get("noProjectId") or "", ""))
 
 
+def _allocation_view(allocation) -> dict | None:
+    """A task's launch allocation without its ``usage`` snapshot: what was
+    decided and why is for an agent, the plan figures behind it are not
+    (ensemble_plan_usage has the current ones)."""
+    if not isinstance(allocation, dict):
+        return allocation
+    return {k: v for k, v in allocation.items() if k != "usage"}
+
+
 def _row(room: dict, projects: dict, links: dict, labels: dict,
          attn: dict | None = None, detail: bool = False,
          include_project: bool = False) -> dict:
@@ -731,7 +761,7 @@ def _row(room: dict, projects: dict, links: dict, labels: dict,
         "projectId": pid,
         "project": (projects.get(pid) or {}).get("name", "") if pid else "",
         "agents": _agents_view(room),
-        "allocation": room.get("allocation"),
+        "allocation": _allocation_view(room.get("allocation")),
         "specPreview": (spec[:160] + "…") if len(spec) > 160 else spec,
         "messages": len(room.get("messages", []) or []),
         "lastReport": _report_view(room),
@@ -1094,6 +1124,35 @@ def _plan_usage(ctx, args, handler):
     }
 
 
+def _spec_fields(ctx, task_id: str, spec: str, want_full) -> dict:
+    """``spec`` in full for this session's first read of the task, after a
+    change of the spec, or on request; otherwise a preview and how to get
+    it. Remembers the revision handed out (see ``_SPEC_GIVEN``)."""
+    part = ctx.get("part") or {}
+    key = ((ctx.get("room") or {}).get("id", ""), ctx.get("identity", ""),
+           part.get("ptyId") or part.get("sessionId") or "", task_id)
+    rev = _d._spec_rev(spec)
+    full = want_full is True or (isinstance(want_full, str) and want_full.lower() == "true")
+    with _SPEC_GIVEN_LOCK:
+        if _SPEC_GIVEN.get(key) != rev:
+            full = True
+            _SPEC_GIVEN[key] = rev
+            _SPEC_GIVEN.move_to_end(key)
+            while len(_SPEC_GIVEN) > _SPEC_GIVEN_MAX:
+                _SPEC_GIVEN.popitem(last=False)
+    if full:
+        return {"spec": spec}
+    preview = spec[:SPEC_PREVIEW_CHARS] + ("…" if len(spec) > SPEC_PREVIEW_CHARS else "")
+    return {"specPreview": preview, "specNote": SPEC_NOTE}
+
+
+def forget_specs_given() -> None:
+    """Every session's next read of a task carries the full spec (tests, and
+    what a hub restart does by itself)."""
+    with _SPEC_GIVEN_LOCK:
+        _SPEC_GIVEN.clear()
+
+
 def _get_task(ctx, args, handler):
     room = _load_target(args.get("taskId"), ctx, args.get("projectId"))
     projects = _projects()
@@ -1109,8 +1168,9 @@ def _get_task(ctx, args, handler):
              "text": (m.get("text") or "")[:2000]} for m in msgs[-n:]] if n else []
     row = _row(room, projects, links, labels, detail=True)
     row.pop("specPreview", None)
+    spec = room.get("spec", "") or ""
     row.update({
-        "spec": room.get("spec", "") or "",
+        **_spec_fields(ctx, room["id"], spec, args.get("spec")),
         "workspace": room.get("workspace", {}),
         "cwd": room.get("cwd", ""),
         "taskDir": room.get("taskDir", ""),

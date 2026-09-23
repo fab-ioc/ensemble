@@ -84,6 +84,7 @@ import peer_process
 import points
 # Task numbers (#18, ED-18) and project keys.
 import task_numbers
+import task_tool_hook
 # A fresh PO session from its written handover when its conversation gets long.
 import rotation
 # Plan-allowance readings (account-wide, per agent kind), refreshed in the
@@ -903,6 +904,12 @@ def save_archived(arch: set[str]) -> None:
 
 # User-facing preferences. Persisted to settings.json; the whitelist of keys
 # below is what the /api/settings PUT endpoint accepts.
+# Codex's own budget for one tool output in its history is about 10,000
+# tokens (measured on 0.154.0: a 60 KB `cat` came back as 40 KB); a task
+# agent gets about 16 KB (report #78, cap 1). Applied when the prompt is
+# built, so every later turn of the conversation re-reads the smaller one.
+CODEX_TOOL_OUTPUT_TOKENS_DEFAULT = 4000
+
 _SETTINGS_DEFAULTS = {
     "openMode": "window",   # "window" (new iTerm window) | "tab" (new tab in front window)
     "defaultModel": "",     # e.g. "opus" | "sonnet" | "haiku" | "fable" | full ID; empty = claude default
@@ -934,6 +941,17 @@ _SETTINGS_DEFAULTS = {
     # Compress noisy command output for hub-launched task owners/reviewers.
     # PO rooms, adopted sessions and ordinary user terminals are never wired.
     "rtkForTasks": True,
+    # What hub-launched task agents (owners and reviewers, never a PO or an
+    # adopted session) are allowed to keep of one tool result, since every
+    # result is read again on every later call of the same conversation.
+    # Codex: the token budget of one shell/tool output in its history
+    # (``-c tool_output_token_limit``); 0 = Codex's own default (~10,000).
+    "codexToolOutputTokens": CODEX_TOOL_OUTPUT_TOKENS_DEFAULT,
+    # Claude: a text file the agent Reads whole, over this many bytes, comes
+    # back as its first ``readCapLines`` lines and a note (task_tool_hook.py).
+    # 0 bytes = off.
+    "readCapBytes": task_tool_hook.CAP_BYTES_DEFAULT,
+    "readCapLines": task_tool_hook.CAP_LINES_DEFAULT,
     # The dashboard theme, shared by every device on this hub. Empty = never
     # chosen here; the pages then hand up whatever their browser had.
     "theme": "",
@@ -1081,6 +1099,14 @@ def _save_settings_locked(settings: dict) -> dict:
             v = 0 if v <= 0 else max(5, min(1440, v))
         if k in ("backupEnabled", "rtkForTasks"):
             v = bool(v)
+        if k in ("codexToolOutputTokens", "readCapBytes", "readCapLines"):
+            try:
+                v = int(v)
+            except (TypeError, ValueError):
+                continue
+            v = max(0, min(10_000_000, v))
+            if k == "readCapLines":
+                v = max(1, min(100_000, v))
         if k == "accent":
             # Never back to "": that reads as never chosen, and the next page
             # would hand up its own browser's colour over the choice.
@@ -1220,6 +1246,7 @@ RTK_CLAUDE_SETTINGS = RTK_DIR / "claude-task-settings.json"
 USAGE_CLAUDE_SETTINGS = DASHBOARD_DIR / "usage" / "claude-agent-settings.json"
 USAGE_STATUSLINE_SCRIPT = Path(__file__).resolve().parent / "usage_statusline.py"
 AGENT_HOOK_SCRIPT = Path(__file__).resolve().parent / "agent_hook.py"
+TASK_TOOL_HOOK_SCRIPT = Path(__file__).resolve().parent / "task_tool_hook.py"
 RTK_TELEMETRY_ENV = "RTK_TELEMETRY_DISABLED"
 RTK_RECALL_DB = RTK_DIR / "recall.db"
 _RTK_SETTINGS_LOCK = threading.Lock()
@@ -1239,18 +1266,37 @@ RTK_BRIEF = {
 }
 
 
-def _rtk_task_room(room: dict) -> bool:
-    """Whether ``room`` is a hub-created task covered by the RTK pilot."""
-    if not load_settings().get("rtkForTasks", True) or room.get("adopted"):
+def _hub_task_room(room: dict) -> bool:
+    """Whether ``room`` is a hub-created task (its owner and its reviewers):
+    not a session adopted from history, not a project's PO room."""
+    if room.get("adopted"):
         return False
     # create_task writes ``launched`` before the first launch.  Older tasks have
     # a task folder; ad-hoc/PO rooms and sessions adopted from history do not.
     if "launched" not in room and not room.get("taskDir"):
         return False
     rid = room.get("id", "")
-    if any((p.get("poRoomId") or "") == rid for p in load_projects()):
+    return not any((p.get("poRoomId") or "") == rid for p in load_projects())
+
+
+def _rtk_task_room(room: dict) -> bool:
+    """Whether ``room`` is a hub-created task covered by the RTK pilot."""
+    if not load_settings().get("rtkForTasks", True):
         return False
-    return RTK_BIN.is_file()
+    return _hub_task_room(room) and RTK_BIN.is_file()
+
+
+def _codex_task_args(room: dict) -> list[str]:
+    """Codex's launch-only cap on one tool output in its history, for a task
+    agent (owner or reviewer) of ``room``: nothing for a PO room, an adopted
+    session or a cap of 0. Never written to ``~/.codex/config.toml``."""
+    if not _hub_task_room(room):
+        return []
+    try:
+        tokens = int(load_settings().get("codexToolOutputTokens") or 0)
+    except (TypeError, ValueError):
+        tokens = 0
+    return ["-c", f"tool_output_token_limit={tokens}"] if tokens > 0 else []
 
 
 def _claude_status_line() -> dict:
@@ -1343,16 +1389,38 @@ def _agent_hook_env(port: int, room_id: str, identity: str) -> dict:
             "ENSEMBLE_HOOK_ROOM": room_id, "ENSEMBLE_HOOK_IDENTITY": identity}
 
 
+def _task_tool_hook_command() -> str:
+    """``task_tool_hook.py`` with the caps from the settings: a big text file
+    Read whole comes back as its first lines and a note, rtk's warning line
+    stays out of Bash results."""
+    settings = load_settings()
+    cap_bytes = settings.get("readCapBytes", task_tool_hook.CAP_BYTES_DEFAULT)
+    cap_lines = settings.get("readCapLines", task_tool_hook.CAP_LINES_DEFAULT)
+    return (f'"{Path(sys.executable).as_posix()}" "{TASK_TOOL_HOOK_SCRIPT.as_posix()}" '
+            f'--bytes {int(cap_bytes)} --lines {int(cap_lines)}')
+
+
 def _rtk_claude_settings() -> Path:
     """Write the hub-owned, launch-only Claude settings file for RTK tasks: the
-    RTK hook, plus the usage status line and the attention hooks every
-    hub-launched Claude gets. Claude takes one ``--settings`` source, so all
-    three live in this one file."""
+    RTK hook and the task tool hook (task_tool_hook.py), plus the usage status
+    line and the attention hooks every hub-launched Claude gets. Claude takes
+    one ``--settings`` source, so all of them live in this one file."""
     command = f'"{RTK_BIN.as_posix()}" hook claude'
     hooks = _agent_hooks()
+    tool_hook = _task_tool_hook_command()
     hooks.setdefault("PreToolUse", []).insert(0, {
         "matcher": "Bash",
         "hooks": [{"type": "command", "command": command}],
+    })
+    hooks["PreToolUse"].insert(1, {
+        "matcher": "Read",
+        "hooks": [{"type": "command", "command": tool_hook, "timeout": _AGENT_HOOK_TIMEOUT}],
+    })
+    # In the agent's way on purpose (not ``async``): its note and its cleaned
+    # result must be there when the model reads the result.
+    hooks.setdefault("PostToolUse", []).insert(0, {
+        "matcher": "Read|Bash",
+        "hooks": [{"type": "command", "command": tool_hook, "timeout": _AGENT_HOOK_TIMEOUT}],
     })
     return _write_settings_file(RTK_CLAUDE_SETTINGS, {
         "hooks": hooks,
@@ -8266,7 +8334,8 @@ class Handler(BaseHTTPRequestHandler):
                        # autonomous collaboration; the workspace is a scratch dir.
                        "-c", 'approval_policy="never"',
                        "-c", f'mcp_servers.ensemble.url="{url}"',
-                       "-c", 'mcp_servers.ensemble.bearer_token_env_var="CHAT_TOKEN"']
+                       "-c", 'mcp_servers.ensemble.bearer_token_env_var="CHAT_TOKEN"',
+                       *_codex_task_args(room_full)]
             if model:
                 command += ["-c", f'model="{model}"']
             res = BACKEND.open_new(cwd, briefing, label=label, command=command,
@@ -8378,7 +8447,8 @@ class Handler(BaseHTTPRequestHandler):
         if agent_key != "codex":
             env.update(_agent_hook_env(self.server.server_address[1], room_full["id"], ident))
         if agent_key == "codex":
-            argv = ["codex", "-c", "check_for_update_on_startup=false"] + codex_mcp
+            argv = (["codex", "-c", "check_for_update_on_startup=false"] + codex_mcp
+                    + _codex_task_args(room_full))
             if model:
                 argv += ["-c", f'model="{model}"']
             cmd = BACKEND.headless_launch(cwd, argv, briefing)
@@ -8419,7 +8489,8 @@ class Handler(BaseHTTPRequestHandler):
         if agent_key != "codex":
             env.update(_agent_hook_env(self.server.server_address[1], room_full["id"], ident))
         if agent_key == "codex":
-            argv = ["codex", "-c", "check_for_update_on_startup=false"] + codex_mcp
+            argv = (["codex", "-c", "check_for_update_on_startup=false"] + codex_mcp
+                    + _codex_task_args(room_full))
             if model:
                 argv += ["-c", f'model="{model}"']
             codex_sid = part.get("sessionId") or (
