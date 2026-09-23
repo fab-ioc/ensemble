@@ -1662,24 +1662,35 @@ def _type_input(sess, text: str) -> bool:
 # emits a parser reply as one event. Keep this guard at the browser-input
 # endpoint so stale pages and other clients cannot pass a reply through.
 _PTY_DA_REPLY = re.compile(r"\x1b\[\?[0-9;]+c")
-_PTY_COLOR_REPLY = re.compile(
-    r"\x1b\](?:10|11);rgb:[0-9a-f]{1,4}/[0-9a-f]{1,4}/[0-9a-f]{1,4}(?:\x1b\\|\x07)",
+_PTY_TERMINAL_REPLY = re.compile(
+    r"\x1b\[(?:>[0-9;]*c|0n|[0-9]+;[0-9]+R|\?[0-9]+;[0-9]+R|"
+    r"\??[0-9]+;[0-4]\$y|(?:4|6|8);[0-9]+;[0-9]+t)"
+    r"|\x1b\](?:4;[0-9]{1,3};|(?:10|11|12);)rgb:[0-9a-f]{1,4}/[0-9a-f]{1,4}/[0-9a-f]{1,4}(?:\x1b\\|\x07)"
+    r"|\x1b\](?:L|l)[^\x07\x1b]*(?:\x1b\\|\x07)"
+    r"|\x1bP(?:0\$r|1\$r(?:[0-9;]+m|[0-9;]+r|[0-9 ]+q|[01]\"q|61;1\"p))\x1b\\",
     re.IGNORECASE,
 )
 _PTY_BRACKETED_PASTE = re.compile(r"\x1b\[200~.*?\x1b\[201~", re.DOTALL)
+_PTY_MODIFIED_F3 = re.compile(r"\x1b\[1;[2-8]R")
 
 
-def _strip_pty_terminal_replies(text: str) -> str:
-    """Remove complete xterm device/color query replies from browser input.
+def _strip_pty_terminal_replies(text: str, *, user_paste: bool = False,
+                                user_key: bool = False) -> str:
+    """Remove complete xterm query replies from browser terminal input.
 
     Incomplete sequences pass through immediately. xterm emits each response
     in one onData event, so they cannot be split between page requests; this
     zero-delay fallback also ensures an Escape key is never held waiting for a
     possible continuation. Hub-authored writes do not use this function.
     """
+    # xterm's modified F3 keys use CSI 1;2R through 1;8R, which overlaps the
+    # shape of a cursor-position report. The page marks the matching onKey
+    # event; allow only that exact key shape through this exception.
+    if user_paste or (user_key and _PTY_MODIFIED_F3.fullmatch(text)):
+        return text
+
     def strip_outside_paste(value: str) -> str:
-        value = _PTY_DA_REPLY.sub("", value)
-        return _PTY_COLOR_REPLY.sub("", value)
+        return _PTY_DA_REPLY.sub("", _PTY_TERMINAL_REPLY.sub("", value))
 
     # A real paste is user-authored text, even when it happens to contain a
     # byte-for-byte copy of a terminal response. Keep bracketed paste blocks
@@ -9913,7 +9924,10 @@ class Handler(BaseHTTPRequestHandler):
             # carry hub=True (and the hub's other PTY writes use _type_input),
             # so their bytes remain exactly as authored.
             if isinstance(typed, str) and not hub_line:
-                typed = _strip_pty_terminal_replies(typed)
+                typed = _strip_pty_terminal_replies(
+                    typed, user_paste=data.get("terminalPaste") is True,
+                    user_key=data.get("terminalKey") is True,
+                )
             submits = isinstance(typed, str) and ("\r" in typed or "\n" in typed)
             answers = False
             # One step with a rotation's mark (rotation.GATE): input to a task
