@@ -495,7 +495,8 @@ def is_on_mention(room: dict, part: dict) -> bool:
 
 
 def patch_participant(room_id: str, identity: str, fields: dict,
-                      append: dict | None = None, drop: tuple = ()) -> dict | None:
+                      append: dict | None = None, drop: tuple = (),
+                      room_fields: dict | None = None) -> dict | None:
     """Update one participant's record — read-modify-write under the room lock,
     so a chat message posted meanwhile is never lost (see :func:`record_exit`).
     ``append`` adds items to list fields; ``drop`` removes keys. Returns the
@@ -512,6 +513,8 @@ def patch_participant(room_id: str, identity: str, fields: dict,
             part.setdefault(k, []).append(v)
         for k in drop:
             part.pop(k, None)
+        if room_fields:
+            room.update(room_fields)
         room["updatedAt"] = _now()
         _write(room)
         return dict(part)
