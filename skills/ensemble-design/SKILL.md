@@ -528,6 +528,20 @@ a message is directed with its `@codex` / `@claude` prefix, which the placeholde
 - **Phone:** every control and chip is `--touch-min`, every box `--fs-400`; the header and info bar
   step aside while any box in the editor has focus, as they did for the one box.
 
+### A send on its way
+
+What the person sent that the conversation does not show yet (`sendHtml` in `session.html`; the
+hub's `sends.py` keeps it). It is their balloon with a **dashed** edge and one line under it saying
+where it is, in words: "Queued: it goes in once the session is up.", "Delivered, not yet read by the
+agent." (with **Hide**), or "Not delivered: *reason*." with **Retry** and **Discard**.
+
+- **Never on a timer or a row count.** It goes only when the turn that holds it is drawn (it is then
+  replaced by that balloon in the same draw, never gone and back), or on Discard or Hide. Every copy
+  of the chat and a reload show it, because the hub holds it.
+- Queued and delivered are fine, so their line is `--fg-muted`; not delivered is wrong, so its line
+  is `--c-danger-fg` with the danger edge. **No opacity:** a faded balloon took its text below 4.5:1.
+- Retry · Discard · Hide are the compact buttons of `.pend-state`, `--touch-min` on a phone.
+
 ### Run chip
 
 `● working` · `● idle` · `not started` · `not running`.

@@ -33,6 +33,11 @@ def js_function(src: str, name: str) -> str:
     return src[m.start():src.index("\n}\n", m.start()) + 3]
 
 
+def sends_block(src: str) -> str:
+    return src[src.index("// ---- What you sent, until the conversation shows it: begin"):
+               src.index("// ---- What you sent, until the conversation shows it: end")]
+
+
 def fold_block(src: str) -> str:
     return src[src.index("// ---- Folding a long conversation -"):src.index("// ---- Folding a long conversation: end")]
 
@@ -233,7 +238,7 @@ vm.createContext(ctx);
 vm.runInContext(code + `
   let FOLD = { base: null, open: new Set(), groups: new Set(), hid: null };
   let GROUP_OF_MID = new Map(), CHAT_VIEW = null, LAST_ITEMS = null, STICK = true, SEEN = new Set(), NEW_N = 0, DEC_N = 0;
-  let COMMENTS = [], JUST_US = false, SOLO_IDLE = false, ROOM_OBJ = null, ROOM_PENDING = null, PENDING_USER = [];
+  let COMMENTS = [], JUST_US = false, SOLO_IDLE = false, ROOM_OBJ = null, ROOM_PENDING = null;
   let MD_CACHE = new Map(), MD_CTX = '', _cmtComposerOpen = false, _selBtn = null, PATH_ABBR = null;
   const THUMB_GONE = new Set();
   const ROOM_NOS = new Map(), HUB_PORT = '', ROOM = 'room-po', REF_GEN = 0;
@@ -327,7 +332,7 @@ class WhileThePageRedraws(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        code = fold_block(SRC) + js_function(SRC, "renderBubbles") + js_function(SRC, "patchChildren")
+        code = fold_block(SRC) + sends_block(SRC) + js_function(SRC, "renderBubbles") + js_function(SRC, "patchChildren")
         out = subprocess.run([NODE, "-e", RENDER_JS], input=json.dumps({"code": code}), capture_output=True,
                              text=True, encoding="utf-8", timeout=60)
         if out.returncode != 0:
