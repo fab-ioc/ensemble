@@ -265,11 +265,33 @@ class ClassifierTests(unittest.TestCase):
         self.assertEqual(m.doc_kind("type notes.txt", dirs, cwd=dirs[0]), "task folder")
         self.assertEqual(m.doc_kind("cat ../notes.txt", dirs, cwd="D:/elsewhere/repo"), "")
         self.assertEqual(m.doc_kind("cat ../notes.txt", dirs), "")
-        # Reading segments of shell commands: one per &&, ||, ; or line; a write is not a read.
+        # Option-like and URL tokens are not relative file names.
+        self.assertEqual(m.doc_kind("--notes.txt", dirs, cwd=dirs[0]), "")
+        self.assertEqual(m.doc_kind("curl https://example.org/notes.txt", dirs, cwd=dirs[0]), "")
+        # A nested agent checkout (<task>/<agent>/repo) is a checkout, not the task folder.
+        nested = "D:/home/x/EnsembleProjects/Proj/do_the_thing/claude/repo"
+        self.assertEqual(m.doc_kind(nested + "/static/app/js/add-tranche.js", dirs), "")
+        self.assertEqual(m.doc_kind("D:/home/x/EnsembleProjects/Proj/do_the_thing/claude/FINDINGS.md", dirs), "task folder")
+        self.assertEqual(m.doc_kind("sed -n '540,800p' static/app/js/add-tranche.js", dirs, cwd=nested), "")
+        self.assertEqual(m.doc_kind("cat ../notes.md", dirs, cwd=nested), "task folder")
+        # What a shell output holds: one kind per document read (per file operand, first stage of a
+        # pipeline), ``other`` for any other command that prints; a write or a cd adds nothing.
         self.assertEqual(m.read_kinds(["cat TASK-HANDOVER.md && sed -n 1,50p src/a.py"], dirs), ["TASK-HANDOVER", "other"])
         self.assertEqual(m.read_kinds(["git log -3 | head -5; cat ROADMAP.md"], dirs), ["other", "ROADMAP"])
         self.assertEqual(m.read_kinds(["cat SKILL.md\ncat > x.md <<EOF\nq\nEOF"], dirs), ["SKILL"])
         self.assertEqual(m.read_kinds(["cat a.py | head", "cat b.py"], dirs), ["other"])
+        self.assertEqual(m.read_kinds(["Get-Content PO-HANDOVER.md; git show HEAD"], dirs), ["PO-HANDOVER", "other"])
+        self.assertEqual(m.read_kinds(["cat TASK-HANDOVER.md src/a.py"], dirs), ["TASK-HANDOVER", "other"])
+        self.assertEqual(m.read_kinds(["cat TASK-HANDOVER.md ../notes.txt"], dirs, cwd=repo), ["TASK-HANDOVER", "task folder"])
+        self.assertEqual(m.read_kinds(["cat TASK-HANDOVER.md | head -20"], dirs), ["TASK-HANDOVER"])
+        self.assertEqual(m.read_kinds(["cd repo && cat ../REVIEW-LOG.md 2>/dev/null; echo ----"], dirs), ["REVIEW-LOG"])
+        self.assertEqual(m.read_kinds(["ls " + dirs[0] + "/; cat a.py"], dirs, cwd=repo), ["other"])
+        self.assertEqual(m.read_kinds(["cat TASK-HANDOVER.md && git status"], dirs), ["TASK-HANDOVER", "other"])
+        self.assertEqual(m.read_kinds(['sed -n "1,40p" "D:/home/x/a dir/REVIEW-LOG.md"'], dirs), ["REVIEW-LOG"])
+        # A Codex call's own workdir wins over the session cwd, per command.
+        self.assertEqual(m.read_kinds(["Get-Content notes.txt"], dirs, cwd=repo, workdirs=[dirs[0]]), ["task folder"])
+        self.assertEqual(m.read_kinds(["Get-Content notes.txt"], dirs, cwd=dirs[0], workdirs=["D:/unrelated"]), ["other"])
+        self.assertEqual(m.read_kinds(["cat notes.txt", "cat SKILL.md"], dirs, cwd=repo, workdirs=["", ""]), ["other", "SKILL"])
 
     def test_results_and_inputs(self):
         dirs = ["d:/home/x/ensembleprojects/proj/do_the_thing"]
@@ -293,7 +315,11 @@ class ClassifierTests(unittest.TestCase):
                                            commands=["Get-Content SKILL.md", "Get-Content src/a.py"]),
                          ("docread", "mixed: SKILL+other"))
         self.assertEqual(m.classify_result("Bash", {"command": "cat TASK-HANDOVER.md && git status"}, "x", dirs),
-                         ("docread", "TASK-HANDOVER"))            # git status reads no file
+                         ("docread", "mixed: TASK-HANDOVER+other"))   # git status prints too
+        self.assertEqual(m.classify_result("PowerShell", {"command": "Get-Content PO-HANDOVER.md; git show HEAD"}, "x", dirs),
+                         ("docread", "mixed: PO-HANDOVER+other"))
+        self.assertEqual(m.classify_result("Bash", {"command": "cat TASK-HANDOVER.md | head -20"}, "x", dirs),
+                         ("docread", "TASK-HANDOVER"))
         self.assertEqual(m.classify_result("Bash", {"command": "cat a.py && cat b.py"}, "x", dirs), ("otherresult", "text"))
         # Relative paths resolve against the call's working directory.
         repo = "D:/home/x/EnsembleProjects/Proj/do_the_thing/repo"
@@ -307,6 +333,14 @@ class ClassifierTests(unittest.TestCase):
         self.assertEqual(m.classify_input("Edit", {"file_path": "../repo/a.py", "new_string": "n"}, dirs, cwd=repo),
                          ("owninput", "edit"))
         self.assertEqual(m.classify_result("exec_command", None, "x", dirs, ["cat SKILL.md"]), ("docread", "SKILL"))
+        self.assertEqual(m.classify_result("exec_command", None, "x", dirs, ["Get-Content notes.txt"], cwd=repo,
+                                           workdirs=[dirs[0]]), ("docread", "task folder"))
+        self.assertEqual(m.classify_result("exec_command", None, "x", dirs, ["Get-Content notes.txt"], cwd=dirs[0],
+                                           workdirs=["D:/unrelated"]), ("otherresult", "text"))
+        self.assertEqual(m.classify_input("exec_command", None, dirs, ["Set-Content notes.txt -Value n"], cwd=repo,
+                                          workdirs=[dirs[0]]), ("owninternal", "write task folder"))
+        self.assertEqual(m.classify_input("exec_command", None, dirs, ["Set-Content notes.txt -Value n"], cwd=dirs[0],
+                                          workdirs=["D:/unrelated"]), ("owninput", "shell"))
         self.assertEqual(m.classify_input("mcp__ensemble__chat_send", {"message": "m"}, dirs), ("owninternal", "chat_send"))
         self.assertEqual(m.classify_input("mcp__ensemble__ensemble_whoami", {}, dirs), ("owninput", "other"))
         self.assertEqual(m.classify_input("Write", {"file_path": "C:/x/TASK-HANDOVER.md", "content": "c"}, dirs),
@@ -479,6 +513,43 @@ class FixtureTests(unittest.TestCase):
             self.assertIn(f"bytes {edit['bytes']} text-bytes {edit['textBytes']}", first)
             self.assertTrue(first.endswith(HANDOVER_EDIT))
             self.assertTrue((Path(out) / names[1]).read_text(encoding="utf-8").endswith("-Value 'n'"))
+
+    def test_codex_workdir_per_call(self):
+        """A Codex shell call reads relative to its own workdir, not the session's cwd."""
+        task = m._norm_dir(str(self.task_dir))
+        js = ("const a = await tools.exec_command({cmd:'Get-Content notes.txt', workdir:" + json.dumps(str(self.task_dir)) + "});\n"
+              "const b = await tools.exec_command({cmd:'Get-Content notes.txt', workdir:'D:\\\\unrelated'});\n"
+              "const c = await tools.exec_command({cmd:'Get-Content notes.txt', workdir: wd});\n")
+        self.assertEqual(m._codex_workdirs({"name": "exec", "input": js}), [task, "d:/unrelated", ""])
+        self.assertEqual(m._codex_workdirs({"name": "exec_command", "arguments": json.dumps(
+            {"cmd": "cat x", "workdir": str(self.task_dir)})}), [task])
+        self.assertEqual(m._codex_workdirs({"name": "exec_command", "arguments": json.dumps({"cmd": "cat x"})}), [])
+
+        def scan(session_cwd: Path):
+            with tempfile.TemporaryDirectory() as tmp:
+                rollout = Path(tmp) / "rollout-2026-09-20T11-00-00-codex-2.jsonl"
+                rows = [_item("session_meta", {"id": "codex-2", "cwd": str(session_cwd)}, IN.format(0)),
+                        _msg("user", SPEC, IN.format(0))]
+                for i, (workdir, name) in enumerate([(str(self.task_dir), "in"), ("D:\\unrelated", "out")]):
+                    js = "const r = await tools.exec_command({cmd:'Get-Content notes.txt', workdir:" + json.dumps(workdir) + "});\n"
+                    rows.append(_item("response_item", {"type": "custom_tool_call", "name": "exec", "call_id": name,
+                                                        "input": js}, IN.format(i + 1)))
+                    rows.append(_item("response_item", {"type": "custom_tool_call_output", "call_id": name,
+                                                        "output": [{"type": "input_text", "text": "note " + name}]},
+                                      IN.format(i + 2)))
+                _lines(rollout, rows)
+                return m.scan_codex(rollout, START, END, "owner", {"room": "room-aaaa", "task": 7,
+                                                                    "cwd": str(session_cwd)}, [task]).records
+        # Session cwd in the checkout: the call whose workdir is the task folder still reads an internal note.
+        records = scan(self.task_dir / "repo")
+        by_text = {r["text"]: (r["cat"], r["kind"]) for r in records if r.get("text", "").startswith("note")}
+        self.assertEqual(by_text, {"note in": ("docread", "task folder")})      # "note out" keeps no text: not internal
+        other = [r for r in records if r["cat"] == "otherresult"]
+        self.assertEqual([(r["kind"], r["preview"]) for r in other], [("text", "Get-Content notes.txt")])
+        # Session cwd in the task folder: the call whose workdir is elsewhere is not internal.
+        records = scan(self.task_dir)
+        self.assertEqual([r["kind"] for r in records if r["cat"] == "docread"], ["task folder"])
+        self.assertEqual(len([r for r in records if r["cat"] == "otherresult"]), 1)
 
     def test_signals_count_tasks_per_project(self):
         def report(project, task):

@@ -65,7 +65,7 @@ import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Sequence
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -117,8 +117,10 @@ _DOC_KINDS: tuple[tuple[str, re.Pattern], ...] = (
     ("REPORT", re.compile(r"[\w-]*REPORT[\w-]*\.md")),
     ("room json", re.compile(r"room-[0-9a-f]{6,}\.json")),
 )
-_READ_VERB = re.compile(r"(?<![\w-])(?:cat|sed|head|tail|less|more|type|gc|Get-Content)(?![\w-])")
-_WRITE_VERB = re.compile(r"(?<![\w-])(?:Set-Content|Out-File|Add-Content|tee)(?![\w-])|>>?\s*\S")
+_READ_VERB = re.compile(r"(?<![\w-])(?:cat|sed|head|tail|less|more|type|gc|Get-Content)(?![\w-])", re.I)
+# A redirection of stdout to a file; ``2>``, ``2>&1`` and ``>&1`` redirect
+# nothing the model would read.
+_WRITE_VERB = re.compile(r"(?<![\w-])(?:Set-Content|Out-File|Add-Content|tee)(?![\w-])|(?<!\d)>>?\s*(?!&)\S", re.I)
 _RE_POINT = re.compile(r"\bRe P\d+[a-z]?\s*:")
 _REVIEW_KIND = re.compile(r"^review \d+\s*(\(.*\))?$")
 _PASTED = re.compile(r'<pasted_content id="([^"]*)">\n?(.*?)\n?</pasted_content id="\1">', re.S)
@@ -136,21 +138,32 @@ def _norm_dir(value: Any) -> str:
     return base._normal_path(value).replace("\\", "/").rstrip("/") if value else ""
 
 
-_SEGMENT = re.compile(r"\s*(?:&&|\|\||;|\r?\n)\s*")
+_SEPARATOR = re.compile(r"&&|\|\||;|\r?\n")
+# A command line as tokens: quoted strings whole, separators, pipes, words.
+_TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|\'[^\']*\'|&&|\|\||;|\r?\n|\||[^\s;|&"\']+|&')
+_HEREDOC = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?[^\n]*\n.*?\n\1(?=\s|$)", re.S)
+# Commands whose output is nothing, or only what the agent itself typed.
+_SILENT = frozenset({"cd", "pushd", "popd", "set-location", "sl", "export", "set", "true", "exit",
+                     "echo", "printf", "write-host", "write-output", "rem", "#"})
 # A relative file name in a command or a path field: not absolute, not a URL,
 # not an option; resolved against the call's working directory.
-_RELATIVE = re.compile(r"(?<![\w/\\:.~-])((?:\.\.?[/\\])+[\w./\\-]+|[\w-][\w.-]*(?:[/\\][\w.-]+)*\.\w{1,5})(?![\w/\\-])")
+_RELATIVE = re.compile(r"(?<![\w/\\:.~-])((?:\.\.?[/\\])+[\w./\\-]+|\w[\w.-]*(?:[/\\][\w.-]+)*\.\w{1,5})(?![\w/\\-])")
 _ABSOLUTE = re.compile(r"^(?:[A-Za-z]:|[/\\~])")
+# A checkout under a task folder: ``<task>/repo`` or ``<task>/<agent>/repo``.
+_CHECKOUT = re.compile(r"^(?:[^/\"]+/)?repo(?:/|\"|$)")
+# Codex's shell calls carry their working directory next to the command.
+_WORKDIR_RE = re.compile(r'["\']?(?:workdir|cwd)["\']?\s*:\s*' + bytool._JS_STR)
 
 
 def _in_task_folder(low: str, task_dirs: Iterable[str]) -> bool:
     """``low`` (lower case, forward slashes) holds a file under a task folder
-    that is not under its ``repo/``."""
+    that is not inside a checkout (``repo/`` at the folder's root or one
+    level down, the hub's layouts)."""
     for folder in task_dirs:
         i = low.find(folder + "/")
         while i >= 0:
             rest = low[i + len(folder) + 1:]
-            if rest and not rest.startswith("repo/") and not rest.startswith("repo\""):
+            if rest and not _CHECKOUT.match(rest):
                 return True
             i = low.find(folder + "/", i + 1)
     return False
@@ -192,16 +205,59 @@ def doc_kind(text: str, task_dirs: Iterable[str] = (), cwd: str = "") -> str:
     return kinds[0] if kinds else ""
 
 
-def read_kinds(commands: Iterable[str], task_dirs: Iterable[str], cwd: str = "") -> list[str]:
-    """What the reading segments of shell commands name: internal document
-    kinds, and ``other`` for a read of anything else.  One segment per
-    ``&&``, ``||``, ``;`` or line; a segment that writes is not a read."""
+def _unquote(token: str) -> str:
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in "\"'":
+        return token[1:-1]
+    return token
+
+
+def _segments(command: str) -> list[list[str]]:
+    """The tokens of each segment of a command line (one per ``&&``, ``||``,
+    ``;`` or line; heredoc bodies dropped; quotes kept whole)."""
+    result: list[list[str]] = [[]]
+    for token in _TOKEN.findall(_HEREDOC.sub("", command or "")):
+        if _SEPARATOR.fullmatch(token):
+            result.append([])
+        else:
+            result[-1].append(token)
+    return [seg for seg in result if seg]
+
+
+def _operand_kinds(stage: list[str], task_dirs: Iterable[str], cwd: str) -> list[str]:
+    """What the file operands of a reading command name: an internal document
+    kind per operand, or ``other``; the segment as a whole when it has no
+    file operand (a sed script alone, a read of stdin)."""
     kinds: list[str] = []
-    for command in commands:
-        for segment in _SEGMENT.split(command or ""):
-            if not segment or not _READ_VERB.search(segment) or _WRITE_VERB.search(segment):
+    for token in stage[1:]:
+        bare = _unquote(token)
+        if bare.startswith("-") or not (_ABSOLUTE.match(bare) or _RELATIVE.fullmatch(bare)):
+            continue
+        kinds.extend(doc_kinds(bare, task_dirs, cwd) or ["other"])
+    return kinds or doc_kinds(" ".join(stage), task_dirs, cwd) or ["other"]
+
+
+def read_kinds(commands: Iterable[str], task_dirs: Iterable[str], cwd: str = "",
+               workdirs: Sequence[str] = ()) -> list[str]:
+    """What the output of shell commands holds: an internal document kind
+    per document read (``cat``, ``sed``, ``Get-Content``... per file operand;
+    the first stage of a pipeline), ``other`` for a read of anything else
+    and for any other command that prints (``git show``, ``ls``, a test
+    run).  A segment that writes, or a silent one (``cd``, ``echo``), adds
+    nothing.  ``workdirs[i]`` is the working directory of ``commands[i]``
+    when the call names one, else ``cwd``."""
+    kinds: list[str] = []
+    for i, command in enumerate(commands):
+        here = workdirs[i] if i < len(workdirs) and workdirs[i] else cwd
+        for segment in _segments(command):
+            stage = segment[: segment.index("|")] if "|" in segment else segment
+            text = " ".join(segment)
+            verb = _unquote(stage[0]) if stage else ""
+            if verb.lower() in _SILENT or _WRITE_VERB.search(text):
                 continue
-            kinds.extend(doc_kinds(segment, task_dirs, cwd) or ["other"])
+            if _READ_VERB.fullmatch(verb):
+                kinds.extend(_operand_kinds(stage, task_dirs, here))
+            else:
+                kinds.append("other")
     return list(dict.fromkeys(kinds))
 
 
@@ -251,7 +307,7 @@ def classify_user_text(text: str, first_done: bool, meta: bool = False) -> tuple
 
 
 def classify_result(tool: str, inp: Any, payload: Any, task_dirs: Iterable[str],
-                    commands: Iterable[str] = (), cwd: str = "") -> tuple[str, str]:
+                    commands: Sequence[str] = (), cwd: str = "", workdirs: Sequence[str] = ()) -> tuple[str, str]:
     """(category, kind) of a tool result.  A shell output that read several
     things at once is ``mixed: A+B`` (``other`` = not an internal document):
     its bytes cannot be split between them."""
@@ -265,14 +321,14 @@ def classify_result(tool: str, inp: Any, payload: Any, task_dirs: Iterable[str],
         if doc:
             return "docread", doc
     elif tool.lower() in bytool.SHELL_TOOLS or tool in bytool.CODEX_SHELL:
-        found = _doc_result(read_kinds([str(inp.get("command") or "")] if inp else commands, task_dirs, cwd))
+        found = _doc_result(read_kinds([str(inp.get("command") or "")] if inp else commands, task_dirs, cwd, workdirs))
         if found:
             return found
     return "otherresult", "text"
 
 
 def classify_input(tool: str, inp: Any, task_dirs: Iterable[str],
-                   commands: Iterable[str] = (), cwd: str = "") -> tuple[str, str]:
+                   commands: Sequence[str] = (), cwd: str = "", workdirs: Sequence[str] = ()) -> tuple[str, str]:
     """(category, kind) of a tool call's input."""
     if is_ensemble(tool):
         name = short_tool(tool)
@@ -282,11 +338,13 @@ def classify_input(tool: str, inp: Any, task_dirs: Iterable[str],
         doc = doc_kind(str(inp.get("file_path") or inp.get("notebook_path") or ""), task_dirs, cwd)
         return ("owninternal", "write " + doc) if doc else ("owninput", "edit")
     if tool.lower() in bytool.SHELL_TOOLS or tool in bytool.CODEX_SHELL:
-        command = str(inp.get("command") or "") if inp else " ".join(commands)
-        if _WRITE_VERB.search(command):
-            doc = doc_kind(command, task_dirs, cwd)
-            if doc:
-                return "owninternal", "write " + doc
+        pairs = [(str(inp.get("command") or ""), cwd)] if inp else \
+            [(c, workdirs[i] if i < len(workdirs) and workdirs[i] else cwd) for i, c in enumerate(commands)]
+        for command, here in pairs:
+            if _WRITE_VERB.search(command):
+                doc = doc_kind(command, task_dirs, here)
+                if doc:
+                    return "owninternal", "write " + doc
         return "owninput", "shell"
     if tool in READ_TOOLS:
         return "owninput", "read/search"
@@ -583,6 +641,30 @@ def _codex_names(call: dict) -> list[str]:
     return list(dict.fromkeys(bytool._TOOLS_RE.findall(inp))) if isinstance(inp, str) else []
 
 
+def _codex_workdirs(call: dict) -> list[str]:
+    """The working directory of each shell command bytool.codex_tool returns
+    for ``call`` ('' when the call names none, or names a variable): one per
+    shell call of an ``exec`` script, or the ``workdir`` of a direct call."""
+    inp = call.get("input")
+    if str(call.get("name") or "") == "exec" and isinstance(inp, str):
+        matches = list(bytool._TOOLS_RE.finditer(inp))
+        result = []
+        for i, match in enumerate(matches):
+            if match.group(1) in bytool.CODEX_SHELL:
+                stop = matches[i + 1].start() if i + 1 < len(matches) else len(inp)
+                result.append(_norm_dir(bytool._js_string(_WORKDIR_RE.search(inp, match.end(), stop))))
+        return result
+    args = call.get("arguments")
+    if isinstance(args, str):
+        try:
+            parsed = json.loads(args)
+        except ValueError:
+            return []
+        if isinstance(parsed, dict) and parsed.get("workdir"):
+            return [_norm_dir(parsed.get("workdir"))]
+    return []
+
+
 def scan_codex(path: Path, start: datetime, end: datetime, role: str, room: dict,
                task_dirs: list[str]) -> _Session:
     """One Codex rollout.  Model calls are counted as in
@@ -674,7 +756,7 @@ def scan_codex(path: Path, start: datetime, end: datetime, role: str, room: dict
                 writing = [short_tool(n) for n in names if short_tool(n) in WRITING_TOOLS]
                 cat, kind = ("owninternal", "batch: " + "+".join(writing)) if writing else ("owninput", "other")
             else:
-                cat, kind = classify_input(tool, None, task_dirs, commands, cwd)
+                cat, kind = classify_input(tool, None, task_dirs, commands, cwd, _codex_workdirs(payload))
             if in_window:
                 text = str(raw) if cat == "owninternal" else None
                 extra = {"textBytes": base._payload_bytes(text)} if text is not None else {}
@@ -688,7 +770,7 @@ def scan_codex(path: Path, start: datetime, end: datetime, role: str, room: dict
             if names and all(is_ensemble(n) for n in names):
                 cat, kind = "ensemble", "batch: " + "+".join(short_tool(n) for n in names)
             else:
-                cat, kind = classify_result(tool, None, output, task_dirs, commands, cwd)
+                cat, kind = classify_result(tool, None, output, task_dirs, commands, cwd, _codex_workdirs(call))
                 if cat == "otherresult" and tool == bytool.CODEX_MIXED:
                     kind = "mixed batch"
             if in_window:
