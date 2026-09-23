@@ -2503,8 +2503,10 @@ function pointBarHtml(m, P, href, pick) {
   const bits = [];
   for (const p of (P.byMid.get(m.id) || []).filter(p => !pick || pick(p))) {
     const a = lastAnswer(p);
-    if (p.state === 'answered') bits.push(`<span class="pt-chip answered">${a && a.mid ? ptLink(a.mid, p.id + ' · answered ↓', href, 'Go to the answer') : esc(p.id + ' · answered')}</span>`);
-    else bits.push(`<span class="pt-chip ${esc(p.state)}">${esc(p.id + ' · ' + (PT_WORD[p.state] || p.state))}</span>`);
+    // Linked down to its answer whatever the state, so an acknowledged
+    // question read again still leads to what answered it.
+    const word = p.id + ' · ' + (PT_WORD[p.state] || p.state);
+    bits.push(`<span class="pt-chip ${esc(p.state)}">${a && a.mid ? ptLink(a.mid, word + ' ↓', href, 'Go to the answer') : esc(word)}</span>`);
     if (p.state === 'open') bits.push(ptBtn(p.id, 'drop', 'Drop', `Drop ${p.id}: you no longer need an answer`));
     if (p.state === 'acked' || p.state === 'dropped') bits.push(ptBtn(p.id, 'reopen', 'Reopen', `Reopen ${p.id}: it waits for an answer again`));
   }
