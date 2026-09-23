@@ -441,6 +441,30 @@ class Receipts(unittest.TestCase):
         self.assertEqual(self.overlapping(["in", "in", "in"], note), ["confirmed", "delivered", "delivered"])
         self.assertEqual(self.overlapping(["ok"], "book it"), ["delivered"])
 
+    def test_one_send_claims_its_points_words_and_images_together(self):
+        # Review 3: an image sent alone cannot ride on the image of a send
+        # confirmed by its point.
+        captioned = "caption\n\n[point P2]\n\n[image] C:/a.png"
+        self.assertEqual(self.overlapping([captioned, "[image] C:/a.png"], captioned), ["confirmed", "delivered"])
+        self.assertEqual(self.overlapping(["[image] C:/a.png", captioned], captioned), ["delivered", "confirmed"])
+        self.assertEqual(self.overlapping(["[image] C:/a.png", captioned], captioned + "\n\n[image] C:/a.png"),
+                         ["confirmed", "confirmed"])
+
+    def test_two_follow_ups_to_one_point_in_one_input(self):
+        # Review 3: follow-ups to P1 each carry [point P1]; a resume types
+        # them in as one input.
+        a, b = "more on it\n\n[point P1]", "and this\n\n[point P1]"
+        self.assertEqual(self.overlapping([a, b], "[resumed] carry on\n\n" + a + "\n\n" + b), ["confirmed", "confirmed"])
+        self.assertEqual(self.overlapping([a, b], a), ["confirmed", "delivered"])
+
+    def test_the_first_400_characters_in_code_points(self):
+        # Review 3: an astral character at the cut, and a send of exactly 400
+        # characters, which is not cut short.
+        self.assertFalse(sends.matches("a" * 399 + "\U0001F600", "a" * 399 + "\U0001F601"))
+        self.assertFalse(sends.matches("a" * 400, "a" * 400 + "x"))
+        self.assertTrue(sends.matches("a" * 400, "a" * 400))
+        self.assertTrue(sends.matches("a" * 401, "a" * 400 + "a and more"))
+
 
 @unittest.skipUnless(NODE, "node is not installed")
 class ThePage(unittest.TestCase):
@@ -501,6 +525,14 @@ const over = (texts, turn) => {
 out.overlap = [over(['go', 'go now'], 'go now'), over(['go', 'go now'], 'go\n\ngo now'),
   over(['[image] a.png', '[image] a.png\n[image] b.png'], '[image] a.png\n[image] b.png'),
   over(['[image] a.png\n[image] a.png'], '[image] a.png'), over(['ok'], 'book it')];
+// Review 3: one send claims its point, words and image together; a point
+// repeated by two follow-ups counts twice; 400 characters in code points.
+const cap = 'caption\n\n[point P2]\n\n[image] C:/a.png', f1 = 'more on it\n\n[point P1]', f2 = 'and this\n\n[point P1]';
+out.review3 = [over([cap, '[image] C:/a.png'], cap), over(['[image] C:/a.png', cap], cap),
+  over([f1, f2], '[resumed] carry on\n\n' + f1 + '\n\n' + f2), over([f1, f2], f1)];
+out.cut = [ctx.sendMatches('a'.repeat(399) + '\u{1F600}', 'a'.repeat(399) + '\u{1F601}'),
+  ctx.sendMatches('a'.repeat(400), 'a'.repeat(400) + 'x'), ctx.sendMatches('a'.repeat(400), 'a'.repeat(400)),
+  ctx.sendMatches('a'.repeat(401), 'a'.repeat(400) + 'a and more')];
 // The reply shows it at once; a poll that asked before keeps it, one after decides.
 run('ROOM_SENDS = []; SENDS_GEN = 5;');
 ctx.noteSent(sent);
@@ -537,6 +569,12 @@ console.log(JSON.stringify(out));
 
     def test_one_part_of_a_turn_replaces_one_send(self):
         self.assertEqual(self.r["overlap"], [["o0"], [], ["o0"], ["o0"], ["o0"]])
+
+    def test_one_send_claims_its_points_words_and_images_together(self):
+        self.assertEqual(self.r["review3"], [["o1"], ["o0"], [], ["o1"]])
+
+    def test_the_first_400_characters_as_the_hub_counts_them(self):
+        self.assertEqual(self.r["cut"], [False, False, True, True])
 
     def test_an_image_alone_is_replaced_by_its_turn(self):
         self.assertEqual(self.r["imageOther"], ["img"])

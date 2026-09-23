@@ -250,68 +250,84 @@ def _image_paths(text: str) -> list[str]:
     return [p.replace("\\", "/").lower() for p in _IMAGE_PATH.findall(text or "")]
 
 
-def evidence(send_text: str) -> tuple[str, object]:
-    """What of a send its turn must hold: ``("points", ids)`` (unique in a
-    room), else ``("words", its first words)``, else, for images alone,
-    ``("images", their paths)``; ``("", None)`` for nothing to go by."""
-    ids = _POINT_LINE.findall(send_text or "")
-    if ids:
-        return "points", tuple(ids)
-    needle = _norm(send_text)[:_NEEDLE]
-    if needle:
-        return "words", needle
-    paths = _image_paths(send_text)
-    return ("images", tuple(paths)) if paths else ("", None)
+class Evidence:
+    """What of a send its turn holds: its point ids, its first words (``cut``:
+    the send has more) and its images' paths. A turn must have the first of
+    them it has at all (points: unique to a send, else words, else images);
+    the rest are claimed with it where the turn has them, so no other send
+    confirms itself by this one's image or words."""
+
+    def __init__(self, send_text: str):
+        self.points = _POINT_LINE.findall(send_text or "")
+        words = _norm(send_text)
+        self.words, self.cut = words[:_NEEDLE], len(words) > _NEEDLE
+        self.images = _image_paths(send_text)
+        self.kind = "points" if self.points else "words" if self.words else "images" if self.images else ""
+
+    def order(self) -> tuple[int, int]:
+        """Points first (they can only be this send's), then the fullest."""
+        rank = ("points", "words", "images", "").index(self.kind)
+        size = {"points": len(self.points), "words": len(self.words), "images": len(self.images)}.get(self.kind, 0)
+        return rank, -size
 
 
-def _size(ev: tuple[str, object]) -> int:
-    kind, val = ev
-    return len(val) if kind in ("words", "images", "points") else 0
+def evidence(send_text: str) -> Evidence:
+    return Evidence(send_text)
 
 
 class _Turn:
     """What of one user turn is still unclaimed. One turn may confirm several
     sends (a resume types them in as one input), each by a part of it no
     other send has: words at their own place, as whole words, each image
-    path and point once."""
+    path and point occurrence once."""
 
     def __init__(self, text: str):
         self.words = _norm(text)
         self.spans: list[tuple[int, int]] = []
         self.images = _image_paths(text)
-        self.points = set(_POINT_LINE.findall(text or ""))
+        self.points = _POINT_LINE.findall(text or "")
 
-    def take(self, ev: tuple[str, object]) -> bool:
-        kind, val = ev
-        if kind == "points":
-            if not all(i in self.points for i in val):
-                return False
-            self.points.difference_update(val)
-            return True
-        if kind == "images":
-            left = list(self.images)
-            for p in val:
-                if p not in left:
-                    return False
-                left.remove(p)
-            self.images = left
-            return True
-        if kind == "words":
-            w, i = self.words, self.words.find(val)
-            while i >= 0:
-                j = i + len(val)
-                if ((i == 0 or w[i - 1] == " ") and (j == len(w) or w[j] == " " or len(val) >= _NEEDLE)
-                        and not any(i < b and a < j for a, b in self.spans)):
-                    self.spans.append((i, j))
-                    return True
-                i = w.find(val, i + 1)
-        return False
+    @staticmethod
+    def _less(pool: list, want: list, partial: bool = False) -> list | None:
+        """``pool`` less ``want`` (each occurrence once); None when it lacks
+        one, unless ``partial``: then less those it has."""
+        left = list(pool)
+        for x in want:
+            if x in left:
+                left.remove(x)
+            elif not partial:
+                return None
+        return left
+
+    def _span(self, ev: Evidence) -> tuple[int, int] | None:
+        w, val = self.words, ev.words
+        i = w.find(val) if val else -1
+        while i >= 0:
+            j = i + len(val)
+            if ((i == 0 or w[i - 1] == " ") and (j == len(w) or w[j] == " " or ev.cut)
+                    and not any(i < b and a < j for a, b in self.spans)):
+                return i, j
+            i = w.find(val, i + 1)
+        return None
+
+    def take(self, ev: Evidence) -> bool:
+        points = self._less(self.points, ev.points)
+        span = self._span(ev)
+        images = self._less(self.images, ev.images, partial=ev.kind != "images")
+        if {"points": points, "words": span, "images": images}.get(ev.kind) is None:
+            return False
+        self.points = points
+        if span is not None:
+            self.spans.append(span)
+        self.images = images
+        return True
 
 
 def by_size(sends_: list[dict]) -> list[dict]:
-    """The order sends claim turns in: the fullest evidence first (so "go"
-    cannot take the words of "go now" from it), then oldest first."""
-    return sorted(sends_, key=lambda s: (-_size(evidence(s["text"])), s["at"]))
+    """The order sends claim turns in: point sends first, then the fullest
+    evidence (so "go" cannot take the words of "go now" from it), then the
+    oldest."""
+    return sorted(sends_, key=lambda s: (*evidence(s["text"]).order(), s["at"]))
 
 
 def matches(send_text: str, turn_text: str) -> bool:

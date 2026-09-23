@@ -3178,51 +3178,58 @@ function sendNorm(t) {
 }
 const SEND_IMG = /^\s*\[image\][ \t]+(\S[^\n]*?)\s*$/gim;
 function sendImages(t) { return [...String(t || '').matchAll(SEND_IMG)].map(m => m[1].replace(/\\/g, '/').toLowerCase()); }
-// What of a send its turn must hold (sends.evidence): its point lines, else
-// its first words, else (images alone) their paths; null for nothing.
+// What of a send its turn holds (sends.Evidence): its point ids, its first
+// 400 characters of words (``cut``: it has more; counted in code points, as
+// the hub does) and its images' paths. A turn must have the first of them it
+// has at all (points, else words, else images); the rest are claimed with it
+// where the turn has them, so no other send rides on this one's image or words.
 function sendEvidence(sent) {
-  const ids = [...String(sent || '').matchAll(SEND_PT)].map(m => m[1]);
-  if (ids.length) return { kind: 'p', val: ids };
-  const needle = sendNorm(sent).slice(0, 400);
-  if (needle) return { kind: 'w', val: needle };
-  const paths = sendImages(sent);
-  return paths.length ? { kind: 'i', val: paths } : null;
+  const points = [...String(sent || '').matchAll(SEND_PT)].map(m => m[1]);
+  const all = Array.from(sendNorm(sent)), words = all.slice(0, 400).join('');
+  const images = sendImages(sent);
+  const kind = points.length ? 'p' : words ? 'w' : images.length ? 'i' : '';
+  const size = kind === 'p' ? points.length : kind === 'w' ? Math.min(all.length, 400) : images.length;
+  return { kind, points, words, cut: all.length > 400, images, rank: 'pwi-'.indexOf(kind || '-'), size };
+}
+// ``pool`` less ``want``, each occurrence once; null when it lacks one,
+// unless ``partial``: then less those it has.
+function sendLess(pool, want, partial) {
+  const left = pool.slice();
+  for (const x of want) { const k = left.indexOf(x); if (k >= 0) left.splice(k, 1); else if (!partial) return null; }
+  return left;
 }
 // What of a user turn is still unclaimed (sends._Turn): one turn confirms
 // several sends (a resume types them in as one input), each by a part no
 // other send has: words at their own place, as whole words, each image path
-// and point once. A turn's ref blocks are stripped as it is read (renderSolo).
+// and point occurrence once. A turn's ref blocks are stripped as it is read
+// (renderSolo).
 function sendTurn(text) {
   const words = sendNorm(text), spans = [];
-  let images = sendImages(text);
-  const points = new Set([...String(text || '').matchAll(SEND_PT)].map(m => m[1]));
+  let images = sendImages(text), points = [...String(text || '').matchAll(SEND_PT)].map(m => m[1]);
+  const span = ev => {
+    for (let i = ev.words ? words.indexOf(ev.words) : -1; i >= 0; i = words.indexOf(ev.words, i + 1)) {
+      const j = i + ev.words.length;
+      if ((i === 0 || words[i - 1] === ' ') && (j === words.length || words[j] === ' ' || ev.cut)
+          && !spans.some(([a, b]) => i < b && a < j)) return [i, j];
+    }
+    return null;
+  };
   return { take(ev) {
-    if (!ev) return false;
-    if (ev.kind === 'p') {
-      if (!ev.val.every(i => points.has(i))) return false;
-      ev.val.forEach(i => points.delete(i));
-      return true;
-    }
-    if (ev.kind === 'i') {
-      const left = images.slice();
-      for (const p of ev.val) { const k = left.indexOf(p); if (k < 0) return false; left.splice(k, 1); }
-      images = left;
-      return true;
-    }
-    for (let i = words.indexOf(ev.val); i >= 0; i = words.indexOf(ev.val, i + 1)) {
-      const j = i + ev.val.length;
-      if ((i === 0 || words[i - 1] === ' ') && (j === words.length || words[j] === ' ' || ev.val.length >= 400)
-          && !spans.some(([a, b]) => i < b && a < j)) { spans.push([i, j]); return true; }
-    }
-    return false;
+    const p = sendLess(points, ev.points), w = span(ev), im = sendLess(images, ev.images, ev.kind !== 'i');
+    if (({ p, w, i: im })[ev.kind] == null) return false;
+    points = p;
+    if (w) spans.push(w);
+    images = im;
+    return true;
   } };
 }
 function sendMatches(sent, turn) { return sendTurn(turn).take(sendEvidence(sent)); }
-// The order sends claim turns in (sends.by_size): the fullest evidence first,
-// so "go" cannot take the words of "go now" from it; then oldest first.
+// The order sends claim turns in (sends.by_size): point sends first, then the
+// fullest evidence, so "go" cannot take the words of "go now" from it; then
+// the oldest.
 function sendsBySize(list) {
   return list.map(s => ({ s, ev: sendEvidence(s.text) }))
-    .sort((a, b) => ((b.ev ? b.ev.val.length : 0) - (a.ev ? a.ev.val.length : 0)) || ((a.s.at || 0) - (b.s.at || 0)));
+    .sort((a, b) => (a.ev.rank - b.ev.rank) || (b.ev.size - a.ev.size) || ((a.s.at || 0) - (b.s.at || 0)));
 }
 // The sends to draw under the conversation: the hub's and any just sent,
 // less those the conversation drawn now already shows (by the hub's
@@ -3241,7 +3248,7 @@ function sendsToShow(items) {
     if (own) { turn(own).take(ev); gone.add(s); } else if (s.state === 'confirmed' && !s.mid) gone.add(s); else open.push({ s, ev });
   }
   for (const { s, ev } of open) {
-    if (ev && items.some(m => m.from === 'user' && m.id
+    if (ev.kind && items.some(m => m.from === 'user' && m.id
       && (!m.ts || m.ts >= (s.at || 0) - 120) && turn(m).take(ev))) gone.add(s);
   }
   return all.filter(s => !gone.has(s));
