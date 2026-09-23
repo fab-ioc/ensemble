@@ -223,16 +223,37 @@ def _segments(command: str) -> list[list[str]]:
     return [seg for seg in result if seg]
 
 
+_NUMBER = re.compile(r"[+-]?\d+[a-zA-Z]?")
+
+
 def _operand_kinds(stage: list[str], task_dirs: Iterable[str], cwd: str) -> list[str]:
     """What the file operands of a reading command name: an internal document
-    kind per operand, or ``other``; the segment as a whole when it has no
-    file operand (a sed script alone, a read of stdin)."""
+    kind per operand, or ``other``.  An operand the classifier cannot
+    resolve (no extension, a variable, a glob) is ``other`` too: the output
+    may hold anything, so the read is mixed rather than one document.
+    Skipped: options, numbers, a value after an option (``-TotalCount 40``,
+    ``-Encoding utf8``), ``sed``'s script.  With no operand at all (a read
+    of stdin) the segment as a whole is looked at."""
     kinds: list[str] = []
+    verb = _unquote(stage[0]).lower()
+    script_seen = verb != "sed"
+    after_option = after_redirect = False
     for token in stage[1:]:
         bare = _unquote(token)
-        if bare.startswith("-") or not (_ABSOLUTE.match(bare) or _RELATIVE.fullmatch(bare)):
+        if bare.startswith("-") or ">" in bare or "<" in bare or after_redirect:
+            after_option = bare.startswith("-")
+            after_redirect = bare.endswith((">", "<"))   # ``2> /dev/null``: the target follows
             continue
-        kinds.extend(doc_kinds(bare, task_dirs, cwd) or ["other"])
+        if _NUMBER.fullmatch(bare) or (after_option and not (_ABSOLUTE.match(bare) or _RELATIVE.fullmatch(bare))):
+            after_option = False
+            continue
+        after_option = False
+        if not script_seen:
+            script_seen = True          # sed's first operand is its script
+            continue
+        for part in bare.split(","):    # PowerShell takes a path array
+            if part:
+                kinds.extend(doc_kinds(part, task_dirs, cwd) or ["other"])
     return kinds or doc_kinds(" ".join(stage), task_dirs, cwd) or ["other"]
 
 

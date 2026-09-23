@@ -288,6 +288,15 @@ class ClassifierTests(unittest.TestCase):
         self.assertEqual(m.read_kinds(["ls " + dirs[0] + "/; cat a.py"], dirs, cwd=repo), ["other"])
         self.assertEqual(m.read_kinds(["cat TASK-HANDOVER.md && git status"], dirs), ["TASK-HANDOVER", "other"])
         self.assertEqual(m.read_kinds(['sed -n "1,40p" "D:/home/x/a dir/REVIEW-LOG.md"'], dirs), ["REVIEW-LOG"])
+        self.assertEqual(m.read_kinds(["sed '1,40p' REVIEW-LOG.md; sed -n 5p TASK-HANDOVER.md"], dirs), ["REVIEW-LOG", "TASK-HANDOVER"])
+        self.assertEqual(m.read_kinds(["Get-Content -Path TASK-HANDOVER.md -Raw -Encoding utf8 -TotalCount 40"], dirs), ["TASK-HANDOVER"])
+        self.assertEqual(m.read_kinds(["head -c 4000 TASK-HANDOVER.md", "tail -n +5 ROADMAP.md"], dirs), ["TASK-HANDOVER", "ROADMAP"])
+        # An operand the classifier cannot resolve (no extension, a variable, a path array) makes the read mixed.
+        self.assertEqual(m.read_kinds(["cat TASK-HANDOVER.md Makefile"], dirs), ["TASK-HANDOVER", "other"])
+        self.assertEqual(m.read_kinds(["Get-Content TASK-HANDOVER.md,src/a.py"], dirs), ["TASK-HANDOVER", "other"])
+        self.assertEqual(m.read_kinds(['cat "$f" TASK-HANDOVER.md'], dirs), ["other", "TASK-HANDOVER"])
+        self.assertEqual(m.read_kinds(["cat REVIEW-LOG.md,TASK-HANDOVER.md"], dirs), ["REVIEW-LOG", "TASK-HANDOVER"])
+        self.assertEqual(m.read_kinds(["cat TASK-HANDOVER.md 2> /dev/null", "cat ROADMAP.md 2>&1 < x"], dirs), ["TASK-HANDOVER", "ROADMAP"])
         # A Codex call's own workdir wins over the session cwd, per command.
         self.assertEqual(m.read_kinds(["Get-Content notes.txt"], dirs, cwd=repo, workdirs=[dirs[0]]), ["task folder"])
         self.assertEqual(m.read_kinds(["Get-Content notes.txt"], dirs, cwd=dirs[0], workdirs=["D:/unrelated"]), ["other"])
