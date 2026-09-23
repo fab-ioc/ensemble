@@ -26,7 +26,9 @@ settings; 0 turns them off):
    that let conversations run past 500k (measured 2026-09-15).
 2. **Wait** for it to finish the turn in which it read the ask (its transcript
    holds the ask after the offset it was typed at, the turn is over, and its
-   terminal has gone quiet). If it never answers — the line did not submit,
+   terminal has gone quiet) — or, whatever the transcript shows, for its
+   handover file to be newer than the ask and it idle (by the transcript or
+   as the attention view decides it). If it never answers — the line did not submit,
    say — it is rotated anyway once idle past ``ASK_TIMEOUT_S``; if it stays
    busy past ``GIVE_UP_S`` the attempt is dropped and made again later. Only a
    person typing at its terminal since the ask drops the attempt; the hub's
@@ -465,6 +467,31 @@ def _idle(part: dict, tr: dict) -> bool:
         return False
 
 
+def _attention_idle(part: dict) -> bool:
+    """Idle as the attention view decides it (the agent's hooks, Claude's
+    status file, then the screen) and its terminal quiet for IDLE_S — for when
+    the transcript's last entry does not show the turn's end."""
+    sess = _pty(part)
+    if sess is None:
+        return False
+    try:
+        state, _ = _d.attention.turn_state(part)
+        return state == "idle" and float(sess.info().get("idleSeconds") or 0) >= IDLE_S
+    except Exception:
+        return False
+
+
+def _settled(part: dict, tr: dict) -> bool:
+    """Its turn is over by the transcript or by the attention view."""
+    return _idle(part, tr) or _attention_idle(part)
+
+
+def _handover_refreshed(st: dict, hp: Path | None) -> bool:
+    """The handover was written after the ask, and says something."""
+    asked_at = float(st.get("askedAt") or 0)
+    return bool(hp) and asked_at > 0 and _mtime(Path(hp)) > asked_at and handover_written(hp)
+
+
 def _session_started(part: dict) -> float:
     """When the agent's current session began, if a rotation started it."""
     rots = part.get("rotations") or []
@@ -597,10 +624,13 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
 
     if st["phase"] == "asked":
         waited = now - float(st.get("askedAt") or now)
-        idle = _idle(part, tr)
+        idle = _settled(part, tr)
         if unwritten and idle and (tr["promptSince"] or waited > ASK_TIMEOUT_S):
             return not_without_handover()
-        if idle and tr["promptSince"]:
+        # A handover written since the ask answers it, even when the ask never
+        # shows in the transcript (measured 2026-09-23: written at 15:14,
+        # rotated on the timeout at 15:34).
+        if idle and (tr["promptSince"] or _handover_refreshed(st, s["handover"])):
             return _rotate(s, tr, done, answered=True)
         if idle and waited > ASK_TIMEOUT_S:
             return _rotate(s, tr, done, answered=False)
@@ -621,7 +651,7 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
     if young < COOLDOWN_S and not force:
         return done(f"{_k(tr['tokens'])} tokens, over the limit, but the last rotation "
                     f"or attempt was {int(young // 60)} min ago", quiet=routine)
-    busy = not _idle(part, tr)
+    busy = not _settled(part, tr)
     if immediate:
         if unwritten:
             return not_without_handover()
@@ -1717,7 +1747,7 @@ def _rotate(s: dict, tr: dict, done, answered: bool, asked: bool = True) -> dict
         tpath, reader = _transcript_of(part)
         since = float(st.get("askSubmit") or 0) if asked else time.time() - IDLE_S
         person = sess is None or _typed_since(sess, since)
-        busy = not person and (not _idle(part, reader(tpath)) or _submitted_lately(sess))
+        busy = not person and (not _settled(part, reader(tpath)) or _submitted_lately(sess))
         waited = time.time() - float(st.get("askedAt") or 0)
         if busy and asked and waited <= GIVE_UP_S:
             return done(f"{s['who']} started working again — rotating once it is idle",

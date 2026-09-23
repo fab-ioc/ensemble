@@ -3,7 +3,9 @@ only a person at its terminal holds the rotation that follows."""
 from __future__ import annotations
 
 import json
+import os
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -36,12 +38,14 @@ class _Base(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.sess = _FakePty()
         self.idle = False
+        self.attn_idle = False
         self.tr = {"tokens": 250_000, "turnOver": False, "promptSince": False, "size": 1000}
         self.sinces = []
         self.rotated = []
         self.patches = [
             mock.patch.object(rotation, "_pty", side_effect=lambda part: self.sess),
             mock.patch.object(rotation, "_idle", side_effect=lambda part, tr: self.idle),
+            mock.patch.object(rotation, "_attention_idle", side_effect=lambda part: self.attn_idle),
             mock.patch.object(rotation, "_transcript_of", side_effect=lambda part: (
                 Path(self.temp.name) / "t.jsonl", self.reader)),
             mock.patch.object(rotation, "_rotate_marked", side_effect=self.rotate_marked),
@@ -230,6 +234,116 @@ class AskedTests(_Base):
         self.idle, self.tr["promptSince"] = True, True
         self.check(s)
         self.assertEqual(len(self.rotated), 1)
+
+
+class HandoverWrittenTests(_Base):
+    """A handover file written after the ask answers it once the agent is idle,
+    whether or not the ask shows in its transcript."""
+
+    def write(self, s, offset, text="# Handover\nnext: run the tests\n"):
+        hp = s["handover"]
+        hp.write_text(text, encoding="utf-8")
+        at = float(s["state"]["askedAt"]) + offset
+        os.utime(hp, (at, at))
+
+    def test_fresh_file_and_idle_rotates(self):
+        s = self.asked()
+        self.write(s, +30)
+        self.attn_idle = True               # hooks say idle; transcript shows no ask
+        out = self.check(s)
+        self.assertEqual(out["result"], "rotated")
+        self.assertEqual(self.rotated, [{"answered": True, "asked": True}])
+
+    def test_fresh_file_and_idle_by_the_transcript_rotates(self):
+        s = self.asked()
+        self.write(s, +30)
+        self.idle = True
+        self.check(s)
+        self.assertEqual(self.rotated, [{"answered": True, "asked": True}])
+
+    def test_fresh_file_but_working_waits(self):
+        s = self.asked()
+        self.write(s, +30)
+        out = self.check(s)
+        self.assertEqual((out["phase"], self.rotated), ("asked", []))
+        self.assertIn("waiting for the owner (claude)", out["result"])
+
+    def test_stale_file_and_idle_waits_for_the_timeout(self):
+        s = self.asked()
+        self.write(s, -30)
+        self.attn_idle = True
+        out = self.check(s)
+        self.assertEqual((out["phase"], self.rotated), ("asked", []))
+        s["state"]["askedAt"] -= rotation.ASK_TIMEOUT_S
+        self.write(s, -30)                          # still older than the ask
+        self.check(s)
+        self.assertEqual(self.rotated, [{"answered": False, "asked": True}])
+
+    def test_an_emptied_file_does_not_count(self):
+        s = self.asked()
+        self.write(s, +30, text="  \n")
+        self.attn_idle = True
+        out = self.check(s)
+        self.assertEqual((out["phase"], self.rotated), ("asked", []))
+
+    def test_the_po_rotates_on_its_fresh_file_too(self):
+        s = self.asked("po")
+        self.write(s, +30)
+        self.attn_idle = True
+        self.check(s)
+        self.assertEqual(self.rotated, [{"answered": True, "asked": True}])
+
+    def test_busy_again_at_the_gate_puts_it_off(self):
+        s = self.asked()
+        self.write(s, +30)
+        self.attn_idle = True
+        self.sess._last_submit = time.time()        # a doorbell this very moment
+        out = self.check(s)
+        self.assertEqual((out["phase"], self.rotated), ("asked", []))
+
+    def test_no_double_launch(self):
+        s = self.asked()
+        self.write(s, +30)
+        self.attn_idle = True
+        entered = threading.Event()
+
+        def slow_rotate(s_, tr, done, answered, asked, key, flags):
+            entered.set()
+            time.sleep(0.3)
+            # What the real one leaves: the seat on the fresh session.
+            s_["part"]["sessionId"] = "sid-2"
+            self.tr["tokens"] = 60_000
+            return self.rotate_marked(s_, tr, done, answered, asked, key, flags)
+
+        results = []
+        with mock.patch.object(rotation, "_rotate_marked", side_effect=slow_rotate),                 mock.patch.object(rotation, "_owner_subject", return_value=s):
+            threads = [threading.Thread(target=lambda: results.append(
+                rotation.check_task("room-1", "claude"))) for _ in range(2)]
+            threads[0].start()
+            entered.wait(2)
+            threads[1].start()
+            for t in threads:
+                t.join(5)
+        self.assertEqual(self.rotated, [{"answered": True, "asked": True}])
+        self.assertEqual(len(results), 2)
+        self.assertEqual(self.sess.typed, [])
+
+
+class AttentionIdleTests(unittest.TestCase):
+    """Idle as the attention view says, and quiet for IDLE_S."""
+
+    def run_with(self, state, quiet):
+        sess = mock.Mock(**{"alive.return_value": True,
+                            "info.return_value": {"idleSeconds": quiet}})
+        with mock.patch.object(rotation, "_pty", return_value=sess), \
+                mock.patch.object(dashboard.attention, "turn_state", return_value=(state, "hook")):
+            return rotation._attention_idle({"ptyId": "pty-1"})
+
+    def test_states(self):
+        self.assertTrue(self.run_with("idle", rotation.IDLE_S + 1))
+        self.assertFalse(self.run_with("idle", 1.0))            # just finished printing
+        self.assertFalse(self.run_with("working", 60.0))
+        self.assertFalse(self.run_with("waiting", 60.0))        # a prompt is up
 
 
 class TranscriptPromptTests(unittest.TestCase):
