@@ -72,7 +72,7 @@ SPEC = "You are 'claude', the engineer on a small software team.\n\nTASK:\n# Do 
 REPORT_LINE = ("[report] completed from task 'Do the thing' (#7, claude): all done, see commit abc " + "r" * 300)
 DIGEST_LINE = "[digest] Proj: #7 (Do the thing) has new commits. " + "d" * 200
 FROM_PO = "[from the PO] Please also add a test for the empty case. " + "p" * 100
-CEO = "Fabio here: why did you choose that? " + "c" * 100
+CEO = "Alex here: why did you choose that? " + "c" * 100
 REMINDER = "<system-reminder>\nThe memory index says ...\n</system-reminder>"
 HANDOVER_TEXT = "# Task handover\n\nState: half done. " + "h" * 2000
 REVIEW_LOG_TEXT = "## Review 1 (changes requested)\n\n" + "l" * 1000
@@ -176,7 +176,7 @@ def build_home(root: Path) -> Path:
     ])
 
     rollout = root / ".codex" / "sessions" / "2026" / "09" / "20" / "rollout-2026-09-20T10-00-00-codex-1.jsonl"
-    skill = "C:\\\\Users\\\\x\\\\.codex\\\\skills\\\\ensemble\\\\SKILL.md"
+    skill = "D:\\\\home\\\\x\\\\.codex\\\\skills\\\\ensemble\\\\SKILL.md"
     _lines(rollout, [
         _item("session_meta", {"id": "codex-1", "cwd": str(task_dir / "repo"),
                                "base_instructions": {"text": BASE_INSTRUCTIONS}}, IN.format(0)),
@@ -224,7 +224,7 @@ class ClassifierTests(unittest.TestCase):
         _, _, extra = m.classify_user_text("[report] review 3 (changes requested) from task 'T' (#9, codex): x", True)
         self.assertEqual(extra["reportKind"], "review (changes requested)")
         self.assertEqual(m.classify_user_text(DIGEST_LINE, True)[:2], ("hub", "digest"))
-        self.assertEqual(m.classify_user_text("[from the restart helper, not fabio] back", True)[:2], ("hub", "helper"))
+        self.assertEqual(m.classify_user_text("[from the restart helper, not the CEO] back", True)[:2], ("hub", "helper"))
         self.assertEqual(m.classify_user_text(FROM_PO, True)[:2], ("hub", m.FROM_PO_KIND))
         self.assertEqual(m.classify_user_text('<pasted_content id="1">\n' + FROM_PO + '\n</pasted_content id="1">', True)[:2],
                          ("hub", m.FROM_PO_KIND))
@@ -236,20 +236,20 @@ class ClassifierTests(unittest.TestCase):
         self.assertEqual(m.classify_user_text("anything", True, meta=True)[:2], ("harness", "meta"))
 
     def test_doc_kind(self):
-        dirs = ["c:/users/x/ensembleprojects/proj/do_the_thing"]
-        self.assertEqual(m.doc_kind("C:\\Users\\x\\EnsembleProjects\\Proj\\PO-HANDOVER.md"), "PO-HANDOVER")
+        dirs = ["d:/home/x/ensembleprojects/proj/do_the_thing"]
+        self.assertEqual(m.doc_kind("D:\\home\\x\\EnsembleProjects\\Proj\\PO-HANDOVER.md"), "PO-HANDOVER")
         self.assertEqual(m.doc_kind("PO-HANDOVER-2026-09-10.md"), "PO-HANDOVER")
         self.assertEqual(m.doc_kind("sed -n 1,40p REVIEW-LOG.md"), "REVIEW-LOG")
         self.assertEqual(m.doc_kind("TOKEN-REPORT.md"), "REPORT")
         self.assertEqual(m.doc_kind("~/.ensemble/rooms/room-8d56cd21.json"), "room json")
-        self.assertEqual(m.doc_kind("C:/Users/x/EnsembleProjects/Proj/do_the_thing/notes.txt", dirs), "task folder")
-        self.assertEqual(m.doc_kind("C:\\\\Users\\\\x\\\\EnsembleProjects\\\\Proj\\\\do_the_thing\\\\notes.txt", dirs), "task folder")
-        self.assertEqual(m.doc_kind("C:/Users/x/EnsembleProjects/Proj/do_the_thing/repo/a.py", dirs), "")
+        self.assertEqual(m.doc_kind("D:/home/x/EnsembleProjects/Proj/do_the_thing/notes.txt", dirs), "task folder")
+        self.assertEqual(m.doc_kind("D:\\\\home\\\\x\\\\EnsembleProjects\\\\Proj\\\\do_the_thing\\\\notes.txt", dirs), "task folder")
+        self.assertEqual(m.doc_kind("D:/home/x/EnsembleProjects/Proj/do_the_thing/repo/a.py", dirs), "")
         self.assertEqual(m.doc_kind("cat src/report.md"), "")
         self.assertEqual(m.doc_kind(""), "")
 
     def test_results_and_inputs(self):
-        dirs = ["c:/users/x/ensembleprojects/proj/do_the_thing"]
+        dirs = ["d:/home/x/ensembleprojects/proj/do_the_thing"]
         self.assertEqual(m.classify_result("mcp__ensemble__chat_read", {}, "x", dirs), ("ensemble", "chat_read"))
         self.assertEqual(m.classify_result("Read", {"file_path": "C:/x/TASK-HANDOVER.md"}, "x", dirs), ("docread", "TASK-HANDOVER"))
         self.assertEqual(m.classify_result("Read", {"file_path": "C:/x/repo/a.py"}, "x", dirs), ("otherresult", "text"))
