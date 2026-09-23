@@ -1641,6 +1641,13 @@ function cleanSeq(s) {
     .replace(/\x1b?\]1[01];rgb:[0-9a-f\/]+(?:\x1b\\|\x07|\\)/gi, '')
     .replace(/\x1b?\[\?[0-9;]+c/g, '');
 }
+// A parser reply is emitted by xterm as one complete onData event. Filter
+// those replies before they can be posted as terminal input; leave incomplete
+// ESC prefixes alone so a real Escape key is never delayed or swallowed.
+function stripTerminalReplies(s) {
+  return s.replace(/\x1b\[200~[\s\S]*?\x1b\[201~|\x1b\[\?[0-9;]+c|\x1b\](?:10|11);rgb:[0-9a-f]{1,4}\/[0-9a-f]{1,4}\/[0-9a-f]{1,4}(?:\x1b\\|\x07)/gi,
+    frame => frame.startsWith('\x1b[200~') ? frame : '');
+}
 
 const terms = {};          // ptyId -> {term, es}
 let agentsBuilt = false;
@@ -1804,7 +1811,10 @@ function mountTerm(el, ptyId) {
   const td = new TextDecoder();
   const es = new EventSource('/api/pty/stream?id=' + encodeURIComponent(ptyId));
   es.onmessage = ev => term.write(cleanSeq(td.decode(b64bytes(ev.data), { stream: true })));
-  term.onData(d => jpost('/api/pty/input', { id: ptyId, data: d }));
+  term.onData(d => {
+    const input = stripTerminalReplies(d);
+    if (input) jpost('/api/pty/input', { id: ptyId, data: input });
+  });
   terms[ptyId] = { term, es, fit };
   // Size the PTY to the terminal once it has laid out; focus it for typing.
   setTimeout(() => { syncSize(ptyId); if (!quiet) term.focus(); }, 60);
