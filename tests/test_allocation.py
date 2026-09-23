@@ -21,6 +21,9 @@ class _FakeAgent:
 class _FakeHandler:
     _start_room = dashboard.Handler._start_room
     _start_or_resume_room = dashboard.Handler._start_or_resume_room
+    _launch_guarded = dashboard.Handler._launch_guarded
+    _start_room_now = dashboard.Handler._start_room_now
+    _start_or_resume_room_now = dashboard.Handler._start_or_resume_room_now
     _resume_room = dashboard.Handler._resume_room
     _start_review = dashboard.Handler._start_review
 

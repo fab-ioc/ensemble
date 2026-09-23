@@ -58,8 +58,17 @@ seat's identity and token, takes the other kind's model from the task's
 preferred line-up (``alt``) or its default, and falls back to the old kind if
 the new one does not start. A one-agent task a human picked keeps its kind. A
 reviewer on mention needs nothing here: each review start picks the kind other
-than the owner's current one (the dashboard's ``apply_review_allocation``). The
-PO always stays as it is.
+than the owner's current one (the dashboard's ``apply_review_allocation``).
+
+A PO changes kind only through :func:`_switch_po`: on a reliable usage-limit
+block (:func:`failover_po`) or when a person asks (:func:`request_switch`, the
+dashboard's "Switch PO"). Both start the other kind while the old terminal
+still runs, and only once it has survived its startup rewrite the participant
+and end the old terminal, under :func:`launch_lock` — so a room never has two
+live PO terminals, and a failed start leaves the old PO as it was. The hub
+does not switch back on its own: a fresh session costs a full start, the
+allowance readings it would go by are often stale, and two kinds near their
+limits would swap back and forth.
 
 Bound to the dashboard module like ``digest``: nothing here reads ``_d`` at
 import time.
@@ -547,6 +556,9 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
     if room is None:
         st["phase"] = "watching"
         return done(f"nothing to watch — {s['why']}", quiet=routine)
+    if switching(room["id"]):
+        # A PO switch owns the seat until it ends; its own ask stands in.
+        return done(f"{who} is being switched to the other agent — not checked", quiet=True)
     sid = part["sessionId"]
     if st.get("sessionId") != sid:
         # A new session (a rotation, a reassignment): any pending ask was for
@@ -768,13 +780,36 @@ def _po_fallback_model(room: dict, kind: str) -> str:
     return DEFAULT_PO_FALLBACK_MODELS[kind]
 
 
+def _allowance_of(kind: str, model: str) -> tuple[dict, float, str]:
+    """(reading, warn percent, why it cannot be trusted or "") of ``kind``'s
+    plan allowance, as the failover reads it: every current window of its
+    pool must be trusted and known."""
+    snap = _d.usage.snapshot()
+    reading = _d._kind_usage(snap, kind, model if kind == "codex" else "")
+    warn = float(snap.get("warnPercent", _d.usage.WARN_PERCENT))
+    name = _d._agent_kind_name(kind)
+    if reading.get("state") != "known":
+        return reading, warn, f"{name} has no current allowance reading."
+    source = next((s for s in snap.get("sources", []) if s.get("source") == kind), {})
+    windows = [w for w in source.get("windows") or []
+               if w.get("kind") in ("five_hour", "seven_day")
+               and (kind != "codex" or
+                    (w.get("pool") or _d.usage.CODEX_MAIN_POOL) == reading.get("pool"))]
+    if not reading.get("trusted") or any(
+            not w.get("trusted") or w.get("percent") is None
+            or w.get("rolledOver") or w.get("resetUnknown") for w in windows):
+        return reading, warn, f"{name} allowance is stale; its current level is unknown."
+    return reading, warn, ""
+
+
 def failover_po(project: dict, attention_item: dict | None) -> dict:
     """Replace a usage-limited PO in its existing room, once per incident.
 
     Only the attention detector's live ``blocked/usage_limit`` verdict is a
     trigger. A durable room record suppresses repeated polls and restarts.
-    The other PTY must survive its startup window before the old one is ended
-    or the room's participant is changed.
+    The switch itself is :func:`_switch_po`, the one a person's manual switch
+    uses too: the other PTY must survive its startup window before the old
+    one is ended or the room's participant is changed.
     """
     with _LOCK:
         return _failover_po(project, attention_item or {})
@@ -796,6 +831,8 @@ def _failover_po(project: dict, item: dict) -> dict:
     if prior.get("at") or (alert.get("sessionId") == sid and alert.get("permanent")):
         return {"result": "already handled"}
     key = (rid, ident)
+    if rid in _SWITCHING:
+        return {"result": "a PO switch is already running"}
     if key in _ROTATING or key in _WATCHING or _pty(part) is None:
         return {"result": "PO is rotating or no longer live"}
 
@@ -820,122 +857,423 @@ def _failover_po(project: dict, item: dict) -> dict:
         return cannot(f"{_d._agent_kind_name(other)} is not installed.")
     try:
         model = _po_fallback_model(room, other)
-        snap = _d.usage.snapshot()
-        reading = _d._kind_usage(snap, other, model if other == "codex" else "")
-        warn = float(snap.get("warnPercent", _d.usage.WARN_PERCENT))
-        if reading.get("state") != "known":
-            return cannot(f"{_d._agent_kind_name(other)} has no current allowance reading.")
-        source = next((s for s in snap.get("sources", [])
-                       if s.get("source") == other), {})
-        windows = [w for w in source.get("windows") or []
-                   if w.get("kind") in ("five_hour", "seven_day")
-                   and (other != "codex" or
-                        (w.get("pool") or _d.usage.CODEX_MAIN_POOL) == reading.get("pool"))]
-        if not reading.get("trusted") or any(
-                not w.get("trusted") or w.get("percent") is None
-                or w.get("rolledOver") or w.get("resetUnknown") for w in windows):
-            return cannot(f"{_d._agent_kind_name(other)} allowance is stale; its "
-                          f"current level is unknown.")
+        reading, warn, untrusted = _allowance_of(other, model)
+        if untrusted:
+            return cannot(untrusted)
         if float(reading["percent"]) >= warn:
             return cannot(f"{_d._agent_kind_name(other)} is at or above the "
                           f"{warn:g}% warning threshold.")
     except Exception as e:
         return cannot(f"The fallback allowance check failed ({type(e).__name__}).")
 
+    if not _reserve(rid, {"trigger": "usage_limit", "agent": other, "model": model,
+                          "fromAgent": part["agent"], "phase": "starting"}):
+        return {"result": "a PO switch is already running"}
+    try:
+        out = _switch_po(project, room, part, other, model, cause="usage_limit",
+                         extra={"allowance": reading})
+    finally:
+        _unreserve(rid, None)
+    if out["result"] == "failed":
+        return cannot(out["reason"], permanent=True)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# The one PO switch: the usage-limit failover and a person's manual switch
+# ---------------------------------------------------------------------------
+
+SWITCH_ASK_TIMEOUT_S = 10 * 60  # a PO asked for its handover gets this long, then it goes on
+SWITCH_POLL_S = 2.0
+_SWITCHING: dict[str, dict] = {}   # PO roomId -> the switch under way (under GATE)
+_LAST_SWITCH: dict[str, dict] = {}  # PO roomId -> how the last manual switch ended
+_LAUNCH_LOCKS: dict[str, threading.RLock] = {}
+_LAUNCH_LOCKS_GUARD = threading.Lock()
+
+
+class SwitchRefused(Exception):
+    """A manual switch that is not started: ``code`` for the caller, the
+    message for the person, ``extra`` for the page (a warning to confirm)."""
+
+    def __init__(self, code: str, message: str, status: int = 409, **extra):
+        super().__init__(message)
+        self.code, self.status, self.extra = code, status, extra
+
+
+def launch_lock(room_id: str) -> threading.RLock:
+    """The lock every path that starts a room's agents and records their
+    terminals holds from its last look at the room to its write: a start or
+    resume (the dashboard's ``_start_or_resume_room``) and a PO switch's
+    commit. Taken before GATE, never while holding it."""
+    with _LAUNCH_LOCKS_GUARD:
+        return _LAUNCH_LOCKS.setdefault(room_id, threading.RLock())
+
+
+def _reserve(rid: str, info: dict) -> bool:
+    with GATE:
+        if rid in _SWITCHING or any(r == rid for r, _ in [*_ROTATING, *_WATCHING]):
+            return False
+        _SWITCHING[rid] = {**info, "flags": {"stopped": False}, "startedAt": time.time()}
+        return True
+
+
+def _unreserve(rid: str, outcome: dict | None) -> None:
+    with GATE:
+        st = _SWITCHING.pop(rid, None)
+    if outcome is not None and st is not None:
+        _LAST_SWITCH[rid] = {**{k: v for k, v in st.items() if k != "flags"},
+                             **outcome, "endedAt": time.time()}
+
+
+def switching(room_id: str) -> bool:
+    with GATE:
+        return room_id in _SWITCHING
+
+
+def _switch_po(project: dict, room: dict, part: dict, other: str, model: str,
+               cause: str, extra: dict | None = None) -> dict:
+    """Hand the PO's seat to a fresh ``other`` session in the same room: the
+    same identity, token, chat and points, so reports reach it unchanged.
+
+    The replacement starts while the old terminal still runs, from the
+    handover's first prompt; it must still be running ``_LAUNCH_SETTLE_S``
+    later. Only then, under the launch lock and GATE, the participant is
+    checked unchanged and rewritten (agent, model, sessionId, ptyId) and the
+    old terminal ended — one step, so the room never records two and a
+    resume never starts a third. Wakes meanwhile are held for the new
+    session. Any failure ends the replacement (a Codex rollout is deleted)
+    and leaves the old PO exactly as it was.
+
+    Returns {result: switched, rotation} | {result: cancelled | failed, reason}."""
+    rid, ident = room["id"], part["identity"]
+    sid, old_pty = part.get("sessionId") or "", part.get("ptyId") or ""
+    key = (rid, ident)
     flags = {"stopped": False}
     with GATE:
         current = _d.chatroom.participant(_d.chatroom.get_room(rid, public=False) or {}, ident)
-        if (key in _ROTATING or current is None or current.get("sessionId") != sid
+        if (key in _ROTATING or current is None or current.get("sessionId") != part.get("sessionId")
                 or current.get("ptyId") != part.get("ptyId")):
-            return {"result": "PO changed before failover"}
+            return {"result": "cancelled", "reason": "the PO changed before the switch"}
+        if (_SWITCHING.get(rid) or {}).get("flags", {}).get("stopped"):
+            return {"result": "cancelled", "reason": "the PO was stopped"}
         _ROTATING[key] = flags
+    name = _d._agent_kind_name
+    hp = handover_path(project)
+    info, started, committed = None, time.time(), None
+    agents_in = _d.chatroom.agent_participants(room)
     try:
         fresh = {**part, "agent": other, "model": model, "sessionId": ""}
-        agents_in = _d.chatroom.agent_participants(room)
         solo = room.get("mode") == "solo" or len(agents_in) < 2
         cwd = part.get("nextCwd") or part.get("cwd") or None
         if cwd and not os.path.isdir(cwd):
             cwd = part.get("cwd") or None
-        prompt = first_prompt(project, room, sid, 0, cause="usage_limit")
-        started = time.time()
-        info = None
-        try:
-            if solo:
-                info = _d.hub_launcher()._launch_room_agent_pty(
-                    room, fresh, "", collab=False, prompt=prompt, cwd=cwd)
-            else:
-                info = _d.hub_launcher()._launch_room_agent_pty(
-                    room, fresh, prompt, collab=True, cwd=cwd)
-            settle_started = time.time()
-            while time.time() < settle_started + _LAUNCH_SETTLE_S:
-                with GATE:
-                    if flags["stopped"]:
-                        raise _FailoverCancelled("PO was stopped during startup")
-                sess = _d.ptyrun.get(info["ptyId"])
-                if sess is None or not sess.alive():
-                    raise RuntimeError("replacement terminal ended during startup")
-                time.sleep(0.25)
+        prompt = first_prompt(project, room, sid, 0, cause=cause,
+                              kinds=(part.get("agent", ""), other))
+        launcher = _d.hub_launcher()
+        if solo:
+            info = launcher._launch_room_agent_pty(room, fresh, "", collab=False,
+                                                   prompt=prompt, cwd=cwd)
+        else:
+            info = launcher._launch_room_agent_pty(room, fresh, prompt, collab=True, cwd=cwd)
+        settle_started = time.time()
+        while time.time() < settle_started + _LAUNCH_SETTLE_S:
+            with GATE:
+                if flags["stopped"]:
+                    raise _FailoverCancelled("the PO was stopped while its replacement started")
             sess = _d.ptyrun.get(info["ptyId"])
             if sess is None or not sess.alive():
                 raise RuntimeError("replacement terminal ended during startup")
-            if other == "codex" and not info["sessionId"]:
-                info["sessionId"] = _await_codex_session(
-                    info["cwd"], started, _taken(agents_in))
-                if not info["sessionId"]:
-                    raise RuntimeError("replacement Codex session id was not found")
-            with GATE:
-                latest = _d.chatroom.participant(
-                    _d.chatroom.get_room(rid, public=False) or {}, ident)
-                if (flags["stopped"] or latest is None or latest.get("ptyId") != part.get("ptyId")
-                        or latest.get("sessionId") != sid):
-                    raise _FailoverCancelled("PO changed or stopped during startup")
-                # The old session remains in rotations/sessionKinds for audit.
-                # Its death hook must write to the old participant, before the
-                # atomic participant and room metadata update below.
-                old_pty = part.get("ptyId") or ""
-                if old_pty:
-                    _d.ptyrun.kill(old_pty)
-                    _await_death(old_pty)
-                rec = {"n": len(latest.get("rotations") or []) + 1,
-                       "at": time.time(), "cause": "usage_limit",
-                       "fromAgent": part["agent"], "fromModel": part.get("model", ""),
-                       "agent": other, "model": model, "fromSessionId": sid,
-                       "toSessionId": info["sessionId"], "handover": str(hp),
-                       "roadmap": str(_d.roadmap_path(project)),
-                       "allowance": reading}
-                fields = {"agent": other, "model": model, "sessionId": info["sessionId"],
-                          "ptyId": info["ptyId"], "cwd": info["cwd"], "pid": None,
-                          "rotatedAt": started, "sessionKinds": session_kinds(latest)}
-                patched = _d.chatroom.patch_participant(
-                    rid, ident, fields, append={"rotations": rec},
-                    drop=("lastExit", "fresh", "nextCwd", "resumedAt"),
-                    room_fields={"poFailover": rec, "poFailoverAlert": None})
-                if patched is None:
-                    raise RuntimeError("PO room disappeared before replacement was recorded")
-            try:
-                _d.chatroom.post_notice(
-                    rid, SENDER,
-                    f"**PO provider failover** — {_d._agent_kind_name(part['agent'])} "
-                    f"`{part.get('model') or 'default'}` → {_d._agent_kind_name(other)} "
-                    f"`{model or 'default'}` at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(rec['at']))} "
+            time.sleep(0.25)
+        sess = _d.ptyrun.get(info["ptyId"])
+        if sess is None or not sess.alive():
+            raise RuntimeError("replacement terminal ended during startup")
+        if other == "codex" and not info["sessionId"]:
+            info["sessionId"] = _await_codex_session(info["cwd"], started, _taken(agents_in))
+            if not info["sessionId"]:
+                raise RuntimeError("replacement Codex session id was not found")
+        with launch_lock(rid), GATE:
+            latest = _d.chatroom.participant(_d.chatroom.get_room(rid, public=False) or {}, ident)
+            if (flags["stopped"] or latest is None or latest.get("ptyId") != part.get("ptyId")
+                    or latest.get("sessionId") != part.get("sessionId")):
+                raise _FailoverCancelled("the PO changed or was stopped while its "
+                                         "replacement started")
+            rec = {"n": len(latest.get("rotations") or []) + 1,
+                   "at": time.time(), "cause": cause,
+                   "fromAgent": part["agent"], "fromModel": part.get("model", ""),
+                   "agent": other, "model": model, "fromSessionId": sid,
+                   "toSessionId": info["sessionId"], "handover": str(hp),
+                   "roadmap": str(_d.roadmap_path(project)), **(extra or {})}
+            fields = {"agent": other, "model": model, "sessionId": info["sessionId"],
+                      "ptyId": info["ptyId"], "cwd": info["cwd"], "pid": None,
+                      "rotatedAt": started, "sessionKinds": session_kinds(latest)}
+            # A manual switch settles the incident a failover was for: the
+            # next usage-limit block may fail over again.
+            room_fields = ({"poFailover": rec, "poFailoverAlert": None}
+                           if cause == "usage_limit" else
+                           {"poSwitch": rec, "poFailover": None, "poFailoverAlert": None})
+            # The participant first, then the old terminal: its death then
+            # belongs to no one (chatroom.record_exit), and a failed write
+            # leaves the old PO running as it was.
+            patched = _d.chatroom.patch_participant(
+                rid, ident, fields, append={"rotations": rec},
+                drop=("lastExit", "fresh", "nextCwd", "resumedAt"),
+                room_fields=room_fields)
+            if patched is None:
+                raise RuntimeError("PO room disappeared before replacement was recorded")
+            committed = rec
+            if old_pty:
+                _d.ptyrun.kill(old_pty)
+        if old_pty:
+            _await_death(old_pty)
+        if cause == "usage_limit":
+            text = (f"**PO provider failover** — {name(part['agent'])} "
+                    f"`{part.get('model') or 'default'}` → {name(other)} "
+                    f"`{model or 'default'}` at "
+                    f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(rec['at']))} "
                     f"because the previous provider hit its usage limit. The same PO room "
                     f"continues from `{HANDOVER_NAME}` and `ROADMAP.md`; the previous "
-                    f"session `{sid}` is kept.",
-                    {"noticeKind": "poFailover", "poFailover": rec})
-            except Exception as e:
-                _log(f"{rid}: failover succeeded but notice failed: {str(e)[:200]}")
-            return {"result": "switched", "rotation": rec}
-        except _FailoverCancelled as e:
-            if info is not None:
-                _discard_fresh(info, other, started, agents_in)
-            return {"result": "cancelled", "reason": str(e)}
+                    f"session `{sid}` is kept.")
+        else:
+            if rec.get("handoverUpdated"):
+                how = "after the PO brought its handover up to date"
+            elif rec.get("asked"):
+                how = "after the PO was asked for its handover (the file did not change)"
+            elif not rec.get("wasLive"):
+                how = "from the handover as it was (the PO was not running)"
+            else:
+                how = "from the handover as it was"
+            text = (f"**PO switched** — {name(part['agent'])} `{part.get('model') or 'default'}` "
+                    f"→ {name(other)} `{model or 'default'}` at "
+                    f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(rec['at']))}, as "
+                    f"{_d.operator_name()} asked, {how}. The same PO room continues from "
+                    f"`{HANDOVER_NAME}` and `ROADMAP.md`; the previous session "
+                    f"`{sid or '(none)'}` is kept.")
+        try:
+            _d.chatroom.post_notice(rid, SENDER, text,
+                                    {"noticeKind": "poFailover" if cause == "usage_limit"
+                                     else "poSwitch", "poFailover" if cause == "usage_limit"
+                                     else "poSwitch": rec})
         except Exception as e:
-            if info is not None:
-                _discard_fresh(info, other, started, agents_in)
-            return cannot(f"The {_d._agent_kind_name(other)} replacement failed to start "
-                          f"({str(e)[:160] or type(e).__name__}).", permanent=True)
+            _log(f"{rid}: switch succeeded but notice failed: {str(e)[:200]}")
+        _log(f"{project['id']}: PO switched {part['agent']} -> {other} ({cause}), "
+             f"pty {info['ptyId']}")
+        return {"result": "switched", "rotation": rec}
+    except _FailoverCancelled as e:
+        if info is not None:
+            _discard_fresh(info, other, started, agents_in)
+        return {"result": "cancelled", "reason": str(e)}
+    except Exception as e:
+        if committed is not None:
+            # The room already records the replacement: it is the PO now.
+            _log(f"{rid}: PO switched, but finishing up failed: {type(e).__name__}")
+            return {"result": "switched", "rotation": committed}
+        if info is not None:
+            _discard_fresh(info, other, started, agents_in)
+        return {"result": "failed",
+                "reason": f"The {name(other)} replacement failed to start "
+                          f"({str(e)[:160] or type(e).__name__})."}
     finally:
         _release(key)
+
+
+def switch_info(project: dict) -> dict:
+    """What the dashboard shows beside "Switch PO": the PO's kind and model,
+    and for each kind whether a switch to it can start now, and if not why
+    (a warning is not a refusal: the person confirms it)."""
+    room, part, why = _po(project)
+    rid = (project.get("poRoomId") or "").strip()
+    out = {"projectId": project["id"], "roomId": rid, "why": why,
+           "agent": (part or {}).get("agent", ""), "model": (part or {}).get("model", ""),
+           "live": bool(part) and _pty(part) is not None,
+           "running": None, "last": _LAST_SWITCH.get(rid), "targets": {}}
+    with GATE:
+        st = _SWITCHING.get(rid)
+        if st is not None:
+            out["running"] = {k: v for k, v in st.items() if k != "flags"}
+    for kind in _OTHER_KIND:
+        t = {"available": False, "why": "", "model": "", "warning": "", "installed": _installed(kind)}
+        try:
+            t["why"] = _refusal(project, room, part, why, kind)
+        except Exception as e:
+            t["why"] = f"The check failed ({type(e).__name__})."
+        if room is not None:
+            t["model"] = _po_fallback_model(room, kind)
+            try:
+                reading, warn, untrusted = _allowance_of(kind, t["model"])
+                if untrusted:
+                    t["allowance"] = untrusted
+                elif float(reading["percent"]) >= warn:
+                    t["warning"] = (f"{_d._agent_kind_name(kind)} is at "
+                                    f"{float(reading['percent']):g}%, at or above the "
+                                    f"{warn:g}% warning.")
+            except Exception as e:
+                t["allowance"] = f"The allowance check failed ({type(e).__name__})."
+        t["available"] = not t["why"]
+        out["targets"][kind] = t
+    return out
+
+
+def _refusal(project: dict, room, part, why: str, kind: str) -> str:
+    """Why a manual switch of this PO to ``kind`` cannot start, or ""."""
+    name = _d._agent_kind_name
+    if room is None:
+        return why[:1].upper() + why[1:] + "."
+    rid = room["id"]
+    if part.get("agent") == kind:
+        return f"The PO is already {name(kind)}."
+    if not _installed(kind):
+        return f"{name(kind)} is not installed on this machine."
+    key = (rid, part["identity"])
+    with GATE:
+        if rid in _SWITCHING:
+            return "A switch of this PO is already running."
+        if key in _ROTATING or key in _WATCHING:
+            return "The PO is being handed to a fresh session; try again in a minute."
+    if _d.pending_input(rid):
+        return "The PO is being started or resumed; try again in a minute."
+    if not handover_written(handover_path(project)) and _pty(part) is None:
+        return (f"`{HANDOVER_NAME}` is missing or empty, and the PO is not running to write "
+                f"it. Start the PO and ask it to write its handover first.")
+    return ""
+
+
+def request_switch(project: dict, agent: str, model: str | None = None,
+                   confirm: bool = False) -> dict:
+    """A person's switch of a project's PO to ``agent`` (the dashboard's
+    "Switch PO"). Checked here, then run in the background (asking the PO for
+    its handover may take minutes); the room's notice says how it ended.
+    Raises :class:`SwitchRefused`."""
+    agent = (agent or "").strip().lower()
+    if agent not in _OTHER_KIND:
+        raise SwitchRefused("bad_agent", "The PO can be switched to Claude or Codex.", 400)
+    room, part, why = _po(project)
+    reason = _refusal(project, room, part, why, agent)
+    if reason:
+        code = ("no_po" if room is None else "same_kind" if part.get("agent") == agent
+                else "not_installed" if not _installed(agent) else "busy")
+        raise SwitchRefused(code, reason)
+    model = (model if isinstance(model, str) else "").strip() or _po_fallback_model(room, agent)
+    if not confirm:
+        try:
+            reading, warn, untrusted = _allowance_of(agent, model)
+        except Exception:
+            reading, warn, untrusted = {}, 0.0, "unknown"
+        if not untrusted and float(reading.get("percent") or 0) >= warn:
+            raise SwitchRefused(
+                "needs_confirm",
+                f"{_d._agent_kind_name(agent)} is at {float(reading['percent']):g}% of its "
+                f"allowance, at or above the {warn:g}% warning. Switch anyway?",
+                needsConfirm=True)
+    rid = room["id"]
+    if not _reserve(rid, {"trigger": "manual", "agent": agent, "model": model,
+                          "fromAgent": part.get("agent", ""), "phase": "asking"}):
+        raise SwitchRefused("busy", "A switch of this PO is already running.")
+    threading.Thread(target=_run_manual, args=(project, rid, agent, model), daemon=True,
+                     name=f"po-switch-{rid}").start()
+    return {"ok": True, "started": True, "roomId": rid, "agent": agent, "model": model}
+
+
+def _run_manual(project: dict, rid: str, agent: str, model: str) -> None:
+    outcome: dict = {"result": "failed", "reason": "the switch stopped unexpectedly"}
+    try:
+        outcome = _manual_switch(project, rid, agent, model)
+    except Exception as e:
+        outcome = {"result": "failed", "reason": f"{type(e).__name__}: {str(e)[:200]}"}
+    finally:
+        _unreserve(rid, outcome)
+    if outcome.get("result") != "switched":
+        _log(f"{project['id']}: PO switch to {agent} ended: {outcome}")
+        try:
+            _d.chatroom.post_notice(
+                rid, SENDER, f"**PO switch to {_d._agent_kind_name(agent)} did not happen** — "
+                             f"{outcome.get('reason') or outcome.get('result')} The PO is "
+                             f"unchanged.",
+                {"noticeKind": "poSwitchFailed", "poSwitch": outcome})
+        except Exception as e:
+            _log(f"{rid}: could not post the switch outcome: {str(e)[:200]}")
+
+
+def _manual_switch(project: dict, rid: str, agent: str, model: str) -> dict:
+    with GATE:
+        flags = _SWITCHING[rid]["flags"]
+    room, part, why = _po(project)
+    if room is None or room["id"] != rid:
+        return {"result": "cancelled", "reason": why or "the project has another PO now"}
+    sid, pty = part.get("sessionId"), part.get("ptyId")
+    was_live = _pty(part) is not None
+    asked = {"asked": False, "answered": False, "handoverUpdated": False}
+    if was_live:
+        asked = _ask_before_switch(project, room, part, agent, flags)
+        with GATE:
+            if flags["stopped"]:
+                return {"result": "cancelled", "reason": "the PO was stopped"}
+        room, part, why = _po(project)
+        if (room is None or room["id"] != rid or part.get("sessionId") != sid
+                or part.get("ptyId") != pty):
+            return {"result": "cancelled",
+                    "reason": "the PO changed (a rotation, a stop or a reassignment) while "
+                              "it was asked for its handover"}
+    if not handover_written(handover_path(project)):
+        return {"result": "failed", "reason": f"`{HANDOVER_NAME}` is missing or empty; a "
+                                              f"fresh PO would start knowing nothing."}
+    with GATE:
+        _SWITCHING[rid]["phase"] = "starting"
+    return _switch_po(project, room, part, agent, model, cause="manual",
+                      extra={**asked, "wasLive": was_live})
+
+
+def _ask_before_switch(project: dict, room: dict, part: dict, agent: str, flags: dict) -> dict:
+    """Ask a running PO to bring its handover up to date before the switch,
+    and wait for it: first for it to be idle (a PO mid-turn is not typed
+    at), then for the turn in which it read the ask to end. Past
+    SWITCH_ASK_TIMEOUT_S the switch goes on with the file as it is."""
+    end = time.time() + SWITCH_ASK_TIMEOUT_S
+    hp = handover_path(project)
+    out = {"asked": False, "answered": False, "handoverUpdated": False}
+    tpath, reader = _transcript_of(part)
+    while True:
+        with GATE:
+            if flags["stopped"]:
+                return out
+        if _pty(part) is None:
+            return out
+        tr = reader(tpath)
+        if _idle(part, tr):
+            break
+        if time.time() >= end:
+            _log(f"{room['id']}: the PO stayed busy; switching with the handover as it is")
+            return out
+        time.sleep(SWITCH_POLL_S)
+    before, size = _mtime(hp), tr["size"]
+    name = _d._agent_kind_name
+    op = _d.operator_name()
+    ask = (f"[handover] {op} is switching this PO from {name(part.get('agent', ''))} to "
+           f"{name(agent)}: a fresh {name(agent)} session takes over in this room from your "
+           f"written handover, not from this conversation. Bring {hp} up to date now: "
+           f"priorities, decisions and why, what is in flight, what you have promised {op}, "
+           f"and {op}'s points still open (ensemble_points lists them; the hub keeps them "
+           f"too). {due_rule(op)} Anything that is not in that file or in ROADMAP.md will be "
+           f"forgotten. Start nothing new; when the file is current, end your turn and the "
+           f"hub switches you.")
+    sess = _pty(part)
+    if sess is None:
+        return out
+    sess.send_line(ask)
+    out["asked"] = True
+    while time.time() < end:
+        time.sleep(SWITCH_POLL_S)
+        with GATE:
+            if flags["stopped"]:
+                break
+        if _pty(part) is None:
+            break
+        now_path, reader = _transcript_of(part)
+        tr = reader(now_path, size if str(now_path) == str(tpath) else 0)
+        if tr["promptSince"] and _idle(part, tr):
+            out["answered"] = True
+            break
+    out["handoverUpdated"] = _mtime(hp) > before
+    return out
 
 
 def session_kinds(part: dict) -> dict:
@@ -1136,11 +1474,18 @@ def _record_allocation(rid: str, ident: str, rec: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def first_prompt(project: dict, room: dict, old_sid: str, tokens,
-                 cause: str = "") -> str:
+                 cause: str = "", kinds: tuple[str, str] = ("", "")) -> str:
     name = project.get("name", project["id"])
     hp = handover_path(project)
     rp = _d.roadmap_path(project)
-    if cause == "usage_limit":
+    if cause == "manual":
+        old, new = (_d._agent_kind_name(k) if k else "another agent" for k in kinds)
+        opening = (f"[rotation] You are the product owner (PO) of the project '{name}', "
+                   f"taking over in the same room from the previous PO session ({old}) "
+                   f"because {_d.operator_name()} switched this PO to {new}. Continue the "
+                   f"existing work; do not restart it. The previous conversation is kept on "
+                   f"disk (session {old_sid or 'none'}); do not load it.")
+    elif cause == "usage_limit":
         opening = (f"[rotation] You are the product owner (PO) of the project '{name}', "
                    f"taking over in the same room because the previous provider hit its "
                    f"usage limit. Continue the existing work; do not restart it. The "
@@ -1418,6 +1763,9 @@ def note_stopped(room_id: str) -> None:
         for (rid, _), flags in [*_ROTATING.items(), *_WATCHING.items()]:
             if rid == room_id:
                 flags["stopped"] = True
+        st = _SWITCHING.get(room_id)
+        if st is not None:
+            st["flags"]["stopped"] = True
 
 
 def _replay(rid: str, ident: str, wakes: list) -> None:

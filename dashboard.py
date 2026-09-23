@@ -333,6 +333,21 @@ def _pty_alive(pty_id) -> bool:
     return bool(sess and sess.alive())
 
 
+def room_ptys(room_id: str) -> list[dict]:
+    """The live terminals the hub started for this room's agents."""
+    return [x for x in ptyrun.list_sessions()
+            if x.get("alive") and (x.get("meta") or {}).get("room") == room_id]
+
+
+def unrecorded_room_ptys(room: dict) -> list[str]:
+    """Live terminals of the room that no participant records: an agent the
+    hub no longer tracks (it would never be stopped, and a start would add a
+    second). A PO switch's replacement before its commit is one too — callers
+    skip a room that ``rotation.room_rotating``."""
+    known = {p.get("ptyId") for p in room.get("participants", []) if p.get("ptyId")}
+    return [x["id"] for x in room_ptys(room.get("id", "")) if x["id"] not in known]
+
+
 def _annotate_room_liveness(room: dict, with_points: bool = False) -> dict:
     """Add a `live` flag: True if any agent PTY is running. Not live simply means
     the session isn't running — there's no separate 'ended' state. A reviewer
@@ -7365,14 +7380,16 @@ def stop_task(rid: str) -> bool:
         room = chatroom.get_room(rid, public=False)
         if not room:
             return False
-        for part in room.get("participants", []):
-            pid = part.get("ptyId")
-            if pid:
-                try:
-                    ptyrun.kill(pid)
-                except Exception:
-                    pass
-                ptyrun.forget_death(pid)
+        pids = [part.get("ptyId") for part in room.get("participants", []) if part.get("ptyId")]
+        # And any terminal of the room its record does not name (a launch that
+        # failed before writing it): Stop leaves nothing of the task running.
+        pids += [x["id"] for x in room_ptys(rid) if x["id"] not in pids]
+        for pid in pids:
+            try:
+                ptyrun.kill(pid)
+            except Exception:
+                pass
+            ptyrun.forget_death(pid)
     # Cleared through the room lock, and only after the kills: writing the room
     # we read before a slow kill loop would drop a chat message posted during it.
     chatroom.clear_exits(rid)
@@ -7589,6 +7606,27 @@ class Handler(BaseHTTPRequestHandler):
             return RESTART_REFUSED + " Reload the dashboard page and try again."
         if not self._same_origin_request():
             return RESTART_REFUSED
+        return ""
+
+    def _po_switch_refusal(self, data: dict) -> str:
+        """Empty when this request may switch a PO's agent kind: the dashboard
+        page, or a PO that may restart the hub switching another project's PO
+        (never its own seat: the session asking would be the one ended)."""
+        origin = self.headers.get("Origin")
+        if origin is not None and not self._same_origin_request():
+            return "Only the dashboard page or a PO can switch a PO."
+        token = self._bearer_token()
+        if not token:
+            return self._page_refusal()
+        resolved = chatroom.resolve_token(token)
+        if not resolved or not may_restart_hub(*resolved):
+            return "Only the dashboard page or a PO can switch a PO."
+        target = (data.get("roomId") or "").strip()
+        proj = find_project((data.get("projectId") or "").strip())
+        if proj is not None:
+            target = (proj.get("poRoomId") or "").strip()
+        if target == resolved[0]:
+            return "A PO cannot switch its own seat; ask the person to switch it."
         return ""
 
     def _page_refusal(self) -> str:
@@ -8061,6 +8099,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p == "/api/rotation/status":
             self._send_json(200, rotation.status())
+            return
+        if p == "/api/po/switch":
+            # What "Switch PO" shows: the PO's kind and model, and per kind
+            # whether a switch can start now, why not, or what to confirm.
+            proj = find_project((parse_qs(u.query).get("projectId", [""])[0]).strip())
+            if proj is None:
+                self._send_json(404, {"error": "no_such_project"})
+                return
+            self._send_json(200, rotation.switch_info(proj))
             return
         if p == "/api/digest/status":
             self._send_json(200, digest.status())
@@ -8631,6 +8678,51 @@ class Handler(BaseHTTPRequestHandler):
         return {"ptyId": sess.id, "cwd": cwd, "sessionId": sid, "prompted": False}
 
     def _start_room(self, room_full: dict) -> list[dict]:
+        """``_start_room_now`` under the room's launch lock (see
+        ``_start_or_resume_room``)."""
+        return self._launch_guarded(room_full, self._start_room_now, room_full)
+
+    def _launch_guarded(self, room_full: dict, fn, *args, **kw) -> list[dict]:
+        """Run a start or resume of a room's agents so that the room never has
+        two live terminals for one seat: under ``rotation.launch_lock`` (a PO
+        switch commits under it too), refused while an agent of the room is
+        being handed to a fresh session, refused while a live terminal of the
+        room is recorded on no participant, working from the seats as they are on
+        disk now, and ending every terminal it started when it fails before
+        recording them (2026-09-23: a resume started a PO, failed to write the
+        room, and its retry started a second one)."""
+        rid = room_full["id"]
+        with rotation.launch_lock(rid):
+            if rotation.room_rotating(rid):
+                raise StartRoomError("An agent of this task is being handed to a fresh "
+                                     "session; try again in a minute.")
+            # The seats as they are now: a PO switch may have rewritten one
+            # since the caller read the room. The rest of the caller's copy
+            # stands (it may hold what it has yet to write).
+            fresh = chatroom.get_room(rid, public=False)
+            if fresh is not None and fresh is not room_full:
+                room_full["participants"] = fresh.get("participants", [])
+            stray = unrecorded_room_ptys(room_full)
+            if stray:
+                raise StartRoomError(
+                    f"This task already has a running terminal that its record does not "
+                    f"name ({', '.join(stray)}); stop the task to end it, then start it "
+                    f"again.")
+            before = {x["id"] for x in room_ptys(rid)}
+            try:
+                return fn(*args, **kw)
+            except BaseException:
+                for x in room_ptys(rid):
+                    if x["id"] not in before:
+                        try:
+                            ptyrun.kill(x["id"])
+                            print(f"[launch] {rid}: ended {x['id']}, started by a launch "
+                                  f"that failed", flush=True)
+                        except Exception:
+                            pass
+                raise
+
+    def _start_room_now(self, room_full: dict) -> list[dict]:
         """First launch of a task's agents (a fresh conversation seeded with the
         spec / collaboration briefing). Marks the room launched. Returns
         [{identity, ptyId}]."""
@@ -8663,6 +8755,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def _start_or_resume_room(self, room_full: dict, restart: dict | None = None,
                               keep_state: bool = False) -> list[dict]:
+        """``_start_or_resume_room_now`` under the room's launch lock, from the
+        room's seats as they are on disk (``_launch_guarded``)."""
+        return self._launch_guarded(room_full, self._start_or_resume_room_now, room_full,
+                                    restart=restart, keep_state=keep_state)
+
+    def _start_or_resume_room_now(self, room_full: dict, restart: dict | None = None,
+                                  keep_state: bool = False) -> list[dict]:
         """Bring a not-running task up: a draft (never launched) starts fresh,
         anything else relaunches its agents resuming their prior conversations.
         Returns [{identity, ptyId}].
@@ -8676,7 +8775,7 @@ class Handler(BaseHTTPRequestHandler):
                      if pp.get("kind") == "agent"]
         solo = room_full.get("mode") == "solo" or len(agents_in) < 2
         if not room_full.get("launched", True):
-            launched = self._start_room(room_full)
+            launched = self._start_room_now(room_full)
             # A first launch gets its spec as its first prompt; anything said
             # to it meanwhile is typed once its screen has settled.
             self._deliver_after_resume(
@@ -10218,6 +10317,28 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(404, {"error": "no_such_project"})
                 return
             self._send_json(200, digest.check(proj, force=bool(data.get("force"))))
+            return
+        if p == "/api/po/switch":
+            # {projectId | roomId, agent, model?, confirm?}: switch the
+            # project's PO to the other agent kind in its room (rotation.py).
+            refusal = self._po_switch_refusal(data)
+            if refusal:
+                self._send_json(403, {"error": "not_allowed", "message": refusal})
+                return
+            proj = find_project((data.get("projectId") or "").strip())
+            rid = (data.get("roomId") or "").strip()
+            if proj is None and rid:
+                proj = next((x for x in load_projects() if (x.get("poRoomId") or "") == rid), None)
+            if proj is None:
+                self._send_json(404, {"error": "no_such_project"})
+                return
+            try:
+                out = rotation.request_switch(proj, str(data.get("agent") or ""),
+                                              data.get("model"), bool(data.get("confirm")))
+            except rotation.SwitchRefused as e:
+                self._send_json(e.status, {"error": e.code, "message": str(e), **e.extra})
+                return
+            self._send_json(202, out)
             return
         if p == "/api/rotation/check":
             # {projectId, force?, immediate?}: check the PO's size now. force

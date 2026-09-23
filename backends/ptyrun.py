@@ -270,7 +270,10 @@ class PtySession:
         when either write was refused (see :meth:`write`: on Windows only an
         ended process says so)."""
         typed = self.write(text)
-        time.sleep(0.25)
+        # A long text is still being taken in when a quick Enter arrives: Codex
+        # 0.156 left a 780-character line in its input box unsubmitted after
+        # 0.25 s, and submitted it after 1.5 s (measured 2026-09-23).
+        time.sleep(0.25 if len(text) <= 200 else min(2.0, 0.25 + len(text) / 600))
         return self.write("\r") and typed
 
     def resize(self, rows: int, cols: int) -> None:
