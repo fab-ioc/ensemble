@@ -720,7 +720,12 @@ def _allocation_view(allocation) -> dict | None:
     (ensemble_plan_usage has the current ones)."""
     if not isinstance(allocation, dict):
         return allocation
-    return {k: v for k, v in allocation.items() if k != "usage"}
+    out = {k: v for k, v in allocation.items() if k != "usage"}
+    # A rotated task carries a second snapshot under its handover record
+    # (rotation._record_allocation); the decision and its reason stay.
+    if isinstance(out.get("handover"), dict):
+        out["handover"] = {k: v for k, v in out["handover"].items() if k != "usage"}
+    return out
 
 
 def _row(room: dict, projects: dict, links: dict, labels: dict,
@@ -1129,8 +1134,10 @@ def _spec_fields(ctx, task_id: str, spec: str, want_full) -> dict:
     change of the spec, or on request; otherwise a preview and how to get
     it. Remembers the revision handed out (see ``_SPEC_GIVEN``)."""
     part = ctx.get("part") or {}
+    # A conversation is a terminal AND a session: a fresh conversation in the
+    # same terminal (a rotation, a restart in place) is a first reader again.
     key = ((ctx.get("room") or {}).get("id", ""), ctx.get("identity", ""),
-           part.get("ptyId") or part.get("sessionId") or "", task_id)
+           part.get("ptyId") or "", part.get("sessionId") or "", task_id)
     rev = _d._spec_rev(spec)
     full = want_full is True or (isinstance(want_full, str) and want_full.lower() == "true")
     with _SPEC_GIVEN_LOCK:
