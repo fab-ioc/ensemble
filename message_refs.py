@@ -120,7 +120,9 @@ def _per_item(text: str, fn) -> str:
         done = fn(body)
         changed = changed or done != body
         out.append(_with_tail(done, tail))
-    new_head = fn(head) if head else head
+    # The head has a tail too when its words are a point of their own.
+    hb, ht = _split_tail(head) if head else ("", "")
+    new_head = _with_tail(fn(hb), ht) if hb else head
     changed = changed or new_head != head
     return _join_items(new_head, out) if changed else text
 
