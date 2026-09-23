@@ -2699,7 +2699,7 @@ def made_po_first_input(project: dict, brought: dict | None = None) -> str:
         f"(the roadmap). Write the handover first: this conversation is long, and the hub will "
         f"later start a fresh PO session that knows only those two files. "
         f"3) Then tell {operator_name()} in a few lines what you understood the project to be "
-        f"and what you would start first, and wait for his answer before starting any task.")
+        f"and what you would start first, and wait for the answer before starting any task.")
 
 
 def made_po_fresh_input(project: dict) -> str:
