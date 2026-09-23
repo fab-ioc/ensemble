@@ -64,7 +64,7 @@ defers the top-slot rewrite while a menu is open.
    checked) through the same handlers; each one confirms in a dialog.
 5. **Hub**: nothing new here. The pop-out reads `makePo` from its `/api/room`
    payload when the hub puts it there, and otherwise shows "not known"
-   (#87 adds it to `/api/sessions` rows; `/api/room` should carry the same).
+   (#87: `/api/sessions` rows and `/api/room` both carry it, with its words, on every row).
 6. **Tests**: new `tests/test_session_actions.py` (Node): the matrix below,
    docked/pop-out parity (the same state gives the same model, and both pages
    render with `actionBarHtml`), Make PO shown from `row.makePo` (on, off

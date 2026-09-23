@@ -615,7 +615,7 @@ def top_level_function(src: str, name: str) -> str:
 
 HUB_ACTION_FUNCTIONS = ("actionState", "actionEnv", "actionsCell", "ideAction", "openWorkspaceTab", "terminalAction",
                         "openHeadless", "termsAction", "toggleCapturedTerms", "capturedTermsShown", "waitFor",
-                        "showCapturedTerminal", "makePoTaskOk", "isPoRoom", "poRoomIds", "currentPoRooms")
+                        "showCapturedTerminal", "makePoWords", "isPoRoom", "poRoomIds", "currentPoRooms")
 
 HUB_ACTIONS_JS = r"""
 globalThis.location = new URL(process.argv[1]);

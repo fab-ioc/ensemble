@@ -2652,9 +2652,14 @@ def save_projects(projects: list[dict]) -> None:
     tmp.replace(PROJECTS_FILE)
 
 
-def register_project(path: str, name: str = "") -> tuple[bool, dict, str]:
+def register_project(path: str, name: str = "", kind: str = "code",
+                     make_home: bool = True) -> tuple[bool, dict, str]:
     """Register a folder as a project (idempotent by normalized path). The folder
-    is created if missing. Returns (ok, project, message)."""
+    is created if missing. A code folder that was already in the projects root
+    (empty or not) is used in place and never written to: the project's own
+    files (its project.json, tasks, notes) go in a home beside it, made now
+    (``make_home``, so a scan of the projects root finds it) or by the caller.
+    Returns (ok, project, message)."""
     raw = (path or "").strip()
     if not raw:
         return False, {}, "empty path"
@@ -2666,6 +2671,10 @@ def register_project(path: str, name: str = "") -> tuple[bool, dict, str]:
             return False, {}, "use a plain project name, or an absolute path"
         p = PROJECTS_ROOT / raw
     norm = os.path.normpath(str(p))
+    try:
+        existed = p.is_dir()
+    except OSError:
+        existed = False
     try:
         p.mkdir(parents=True, exist_ok=True)
     except OSError as e:
@@ -2684,8 +2693,21 @@ def register_project(path: str, name: str = "") -> tuple[bool, dict, str]:
     projects.append(proj)
     # Its key now, so a project added later never changes this one's.
     proj["key"] = task_numbers.project_keys(projects)[proj["id"]]
+    kept_apart = _in_projects_root(norm) and existed and (kind or "code") != "documents"
+    if kept_apart:
+        proj["home"] = _free_home(proj)
     save_projects(projects)
-    if _in_projects_root(norm):
+    if kept_apart and make_home:
+        home_existed = os.path.isdir(proj["home"])
+        try:
+            _make_home(proj)                # the home, with its project.json
+        except OSError as e:
+            # Registered without a home, it could not be found again from
+            # the projects root: registered not at all.
+            unregister_project(proj["id"])
+            _drop_home(proj, home_existed)
+            return False, {}, f"cannot create the project's folder {proj['home']}: {e}"
+    if _in_projects_root(norm) and not kept_apart:
         # Layout v2: the project's identity lives WITH its data, so a clone of
         # the projects root on a new machine is self-describing.
         try:
@@ -2792,7 +2814,31 @@ def made_po_first_input(project: dict, brought: dict | None = None) -> str:
         f"(the roadmap). Write the handover first: this conversation is long, and the hub will "
         f"later start a fresh PO session that knows only those two files. "
         f"3) Then tell {operator_name()} in a few lines what you understood the project to be "
-        f"and what you would start first, and wait for his answer before starting any task.")
+        f"and what you would start first, and wait for the answer before starting any task.")
+
+
+def made_po_fresh_input(project: dict) -> str:
+    """What the hub types into a PO started fresh for a project (Set up the
+    project → Start a fresh PO): as made_po_first_input, for a conversation
+    that knows nothing yet and learns the project from its folder."""
+    docs = project.get("kind") == "documents"
+    name = project.get("name") or project["id"]
+    hp, rp = rotation.handover_path(project), roadmap_path(project)
+    where = project_home(project, create=False) if docs else project.get("path", "")
+    return (
+        f"{MADE_PO_PREFIX}You are the new product owner (PO) of the project '{name}' in Ensemble "
+        f"({'a documents project' if docs else 'a code project'}), started fresh by {operator_name()} "
+        f"from the dashboard: this conversation has no history yet. From now on the project's tasks "
+        f"report to you and you have the ensemble_* tools of a PO. "
+        f"1) Read the `ensemble` skill, section \"Running a project as its PO\""
+        f"{' and its paragraph on a documents project’s PO' if docs else ''}. "
+        f"2) Learn the project from its folder {where}: read what is there (a README, notes, "
+        f"{'the documents' if docs else 'the code and its history'}) without changing anything. "
+        f"3) Write {hp} (your handover: what the project is, what you found, open questions) and {rp} "
+        f"(the roadmap as far as you can tell). "
+        f"4) Then tell {operator_name()} in a few lines what you understood the project to be, what you "
+        f"need to know from them, and what you would start first, and wait for the answer before "
+        f"starting any task.")
 
 
 def _session_room(sid: str) -> dict | None:
@@ -2806,6 +2852,364 @@ def _session_room(sid: str) -> dict | None:
 
 def _same_folder(a: str, b: str) -> bool:
     return os.path.normcase(os.path.normpath(a or ".")) == os.path.normcase(os.path.normpath(b or "."))
+
+
+# ---- Who may become a PO: one answer for the menu, the chooser and the request ----
+# A conversation becomes a project's PO only when the hub can continue it
+# without splitting it and without taking it from a task or a project. The
+# answer is a verdict, {ok, code, ...what the words name}: /api/sessions rows
+# and /api/room carry it with its words (``makePo``, make_po_answer) for "Make
+# PO of a new project…" (static/actions.js), /api/projects/po-candidates for
+# the chooser, and
+# /api/projects/po-from-session checks it again under _MAKE_PO_LOCK. The page
+# words a verdict with makePoWords (index.html), the hub with make_po_words;
+# tests/test_project_setup.py holds the two to the same text.
+
+# Written to this recently, a conversation may still be open in a terminal the
+# hub cannot see (Codex writes no pid file): it is taken only once the person
+# says it is closed.
+MAKE_PO_RECENT_S = 15 * 60
+MAKE_PO_AGENTS = ("claude", "codex")
+
+
+def make_po_verdict(f: dict, target: dict | None = None, now: float | None = None) -> dict:
+    """``f``, what is known of the conversation: ``kind`` (session | task |
+    orphan), ``agents`` (the agent kinds it runs), ``installed`` (those this
+    machine has), ``cwd``, ``cwdOk`` (the folder exists), ``isLive`` (open in
+    a terminal), ``seen`` (the hub can tell whether it is open: without it,
+    only the person can say it is closed), ``updatedAt``, ``draft``, ``conversation`` (a task's agent has
+    one), ``heldBy`` (the task that holds a session), ``poOf`` (the project it
+    is the PO of), ``project`` (the project a task belongs to). ``target``:
+    None for a new project, or the project ``{id, name, po}`` (``po``: its PO's
+    title, when it has one). The first reason that applies is the one given:
+    the one the person can act on first."""
+    now = time.time() if now is None else now
+    agents_in = [a for a in (f.get("agents") or []) if a]
+    kind = f.get("kind") or "session"
+    if kind == "orphan":
+        return {"ok": False, "code": "orphan"}
+    if f.get("heldBy"):
+        return {"ok": False, "code": "held", "task": f["heldBy"]}
+    if f.get("poOf"):
+        return {"ok": False, "code": "is_po", "project": f["poOf"]}
+    if kind == "task":
+        if f.get("draft"):
+            return {"ok": False, "code": "draft"}
+        if len(agents_in) != 1:
+            return {"ok": False, "code": "agents", "n": len(agents_in)}
+    agent = (agents_in[0] if agents_in else "claude").lower()
+    if agent not in MAKE_PO_AGENTS:
+        return {"ok": False, "code": "unsupported", "agent": agent}
+    installed = f.get("installed")
+    if agent not in (MAKE_PO_AGENTS if installed is None else installed):
+        return {"ok": False, "code": "not_installed", "agent": agent}
+    proj = f.get("project") or None
+    if kind == "task" and proj and proj.get("id") != (target or {}).get("id"):
+        return {"ok": False, "code": "other_project", "project": proj.get("name") or proj.get("id")}
+    if kind == "task" and not f.get("conversation"):
+        return {"ok": False, "code": "no_conversation"}
+    if kind == "session" and (not f.get("cwd") or not f.get("cwdOk")):
+        return {"ok": False, "code": "no_cwd", "cwd": f.get("cwd") or ""}
+    if target and target.get("po"):
+        return {"ok": False, "code": "has_po", "project": target.get("name") or target.get("id"),
+                "po": target["po"]}
+    if kind == "session" and f.get("isLive"):
+        return {"ok": False, "code": "live"}
+    if kind == "session" and f.get("seen") is not True:
+        # Nothing tells the hub whether it is open (a Codex started in a
+        # terminal leaves no trace, or the lookup failed): only the person knows.
+        return {"ok": True, "code": "unseen", "confirm": "closed"}
+    age = now - float(f.get("updatedAt") or 0)
+    if kind == "session" and f.get("updatedAt") and 0 <= age < MAKE_PO_RECENT_S:
+        return {"ok": True, "code": "recent", "confirm": "closed", "min": max(1, round(age / 60))}
+    return {"ok": True, "code": ""}
+
+
+def make_po_words(v: dict) -> dict:
+    """{reason, fix} for a verdict, in the person's words: the same text as
+    makePoWords in index.html (tests/test_project_setup.py)."""
+    c = v.get("code") or ""
+    q = lambda k: f"“{v.get(k) or ''}”"      # noqa: E731
+    mins = int(v.get("min") or 1)
+    words = {
+        "": ("", ""),
+        "orphan": ("It is what is left of a collaboration whose task was deleted: several conversations, "
+                   "none of them on its own.",
+                   "Choose a conversation that is on its own, or start a fresh PO."),
+        "held": (f"It is already the task {q('task')}.", "Choose that task instead."),
+        "is_po": (f"It is already the PO of {q('project')}.", "A PO leads one project: choose another conversation."),
+        "draft": ("It is a draft: it has not started, so it has no conversation yet.",
+                  "Start it first, or start a fresh PO."),
+        "agents": (f"It has {v.get('n', 0)} agents: only a task with one agent can be made a PO.",
+                   "Choose a conversation with one agent, or start a fresh PO."),
+        "unsupported": (f"It is a {v.get('agent', '')} conversation: only a Claude or a Codex conversation "
+                        f"can be made a PO.", "Choose a Claude or a Codex conversation."),
+        "not_installed": (f"{v.get('agent', '').capitalize()} is not installed on this machine.",
+                          f"Install {v.get('agent', '')}, or choose another conversation."),
+        "other_project": (f"It belongs to the project {q('project')}.",
+                          "Move it out of that project first (Move to project… in its menu), then choose it."),
+        "no_conversation": ("It has no conversation yet: a PO made this way brings its conversation with it.",
+                            "Start it first, or start a fresh PO."),
+        "no_cwd": ((f"Its folder {v.get('cwd')} no longer exists, and a conversation can only be continued "
+                    f"in the folder it was started in.") if v.get("cwd") else "The folder it was started in is not known.",
+                   "Restore that folder, or choose another conversation."),
+        "has_po": (f"{q('project')} already has a PO: {q('po')}.",
+                   "Open the project to talk to its PO."),
+        "live": ("It is open in a terminal right now. Continued here as well, it would split in two.",
+                 "Close it in that terminal first (quit the agent), then choose it again."),
+        "unseen": ("Ensemble cannot see whether it is still open in a terminal. Continued in two places, "
+                   "it would split in two.",
+                   "If it is open, close it there first, then confirm it is closed."),
+        "recent": (f"It was written to {mins} minute{'s' if mins != 1 else ''} ago, so it may still be open "
+                   f"in a terminal Ensemble cannot see. Continued in two places, it would split in two.",
+                   "If it is open, close it there first, then confirm it is closed."),
+    }
+    reason, fix = words.get(c, ("It cannot be made a PO.", ""))
+    return {"reason": reason, "fix": fix}
+
+
+def make_po_answer(v: dict) -> dict:
+    """A verdict with its words, as a row's ``makePo``: the action menu
+    (static/actions.js makePoItem) shows reason and fix, and takes a row
+    without one as not known."""
+    return {**v, **make_po_words(v)}
+
+
+def make_po_refusal(v: dict) -> str:
+    w = make_po_words(v)
+    return f"{w['reason']} {w['fix']}".strip()
+
+
+# The HTTP status a refused verdict answers with: a conflict with what the hub
+# holds (a task, a project, a terminal), else a request that cannot be met.
+_MAKE_PO_STATUS = {"held": 409, "is_po": 409, "other_project": 409, "has_po": 409, "live": 409, "recent": 409,
+                   "unseen": 409, "moved": 409}
+
+
+def _make_po_target(project: dict | None) -> dict | None:
+    if project is None:
+        return None
+    po = project_po_room(project)
+    return {"id": project["id"], "name": project.get("name") or project["id"],
+            "po": (po.get("title") or po["id"]) if po else ""}
+
+
+class _PoFacts:
+    """What the hub knows about every conversation, read once for a listing."""
+
+    def __init__(self):
+        self.projects = load_projects()
+        self.by_id = {p["id"]: p for p in self.projects}
+        self.links = load_session_projects()
+        self.po_of = {(p.get("poRoomId") or "").strip(): p for p in self.projects if (p.get("poRoomId") or "").strip()}
+        self.installed = tuple(a for a in MAKE_PO_AGENTS if _agent_installed(a))
+        self._dirs: dict[str, bool] = {}
+
+    def is_dir(self, cwd: str) -> bool:
+        """Many sessions share a folder: each is looked at once per listing."""
+        if cwd not in self._dirs:
+            self._dirs[cwd] = bool(cwd) and os.path.isdir(cwd)
+        return self._dirs[cwd]
+
+    def project_of_task(self, rid: str, room_project: str, cwd: str) -> dict | None:
+        pid = self.links.get(rid) or room_project or _project_for_cwd(cwd, self.projects)
+        p = self.by_id.get(pid)
+        return {"id": p["id"], "name": p.get("name") or p["id"]} if p else None
+
+    def of_row(self, r: dict) -> dict:
+        """The facts of an /api/sessions row (a session, a task, an orphan group)."""
+        if r.get("orphan"):
+            return {"kind": "orphan"}
+        rid = r.get("roomId") or ""
+        if rid:
+            po = self.po_of.get(rid)
+            return {"kind": "task", "agents": [m.get("agent", "") for m in (r.get("members") or [])],
+                    "installed": self.installed, "draft": bool(r.get("draft")),
+                    "conversation": bool(r.get("hasConversation", not r.get("draft"))),
+                    "poOf": (po.get("name") or po["id"]) if po else "",
+                    "project": self.project_of_task(rid, r.get("projectId") or "", r.get("cwd") or "")}
+        cwd = r.get("cwd") or ""
+        agent = (r.get("agent") or "claude").lower()
+        return {"kind": "session", "agents": [agent], "installed": self.installed,
+                "cwd": cwd, "cwdOk": self.is_dir(cwd), "seen": agent == "claude",
+                "isLive": bool(r.get("isLive")), "updatedAt": r.get("updatedAt") or 0}
+
+
+def _agent_installed(key: str) -> bool:
+    try:
+        ag = agents.get_agent(key)
+        return bool(ag is not None and ag.installed())
+    except Exception:       # noqa: BLE001 — not installed, as far as a PO goes
+        return False
+
+
+def _session_live_now(sid: str) -> dict:
+    """What the hub can read now of a session no task holds, by its id alone
+    (never by what a request says of it): {agent (whose transcript it is:
+    claude | codex, "" when none or both are found), live (open in a
+    terminal), seen (whether the hub can tell: a Claude session has a pid
+    file while it runs, a Codex one started in a terminal has nothing),
+    written (last written), cwd (the folder its transcript says it was started
+    in, "" if not found)}. Any failure leaves it unseen, so the person is
+    asked; a transcript it cannot read is no session at all."""
+    out = {"agent": "", "live": False, "seen": False, "written": 0.0, "cwd": ""}
+    found = {}
+    try:
+        claude_live = any((d.get("sessionId") or "") == sid for d in _read_session_files())
+        t = find_transcript(sid) if re.fullmatch(r"[\w-]+", sid) else None
+        if t is not None:
+            found["claude"] = (cwd_of(t), t.stat().st_mtime)
+        ag = agents.get_agent("codex")
+        files = ag.rollouts_for_session(sid) if ag is not None and hasattr(ag, "rollouts_for_session") else []
+        if files:
+            with files[0].open(encoding="utf-8", errors="replace") as fh:
+                meta = json.loads(fh.readline() or "{}")
+            cwd = str(((meta.get("payload") or {}) if meta.get("type") == "session_meta" else {}).get("cwd") or "")
+            found["codex"] = (cwd, max(f.stat().st_mtime for f in files))
+        if len(found) != 1:
+            # None, or one id in both agents' transcripts: which one it is,
+            # and so whether it is open, cannot be told.
+            out["live"] = claude_live
+            return out
+        (agent, (cwd, written)), = found.items()
+        out.update(agent=agent, cwd=cwd or "", written=written)
+        if agent == "claude":
+            out["live"], out["seen"] = claude_live, True
+        else:
+            k = os.path.normcase(os.path.normpath(cwd)) if cwd else ""
+            out["live"] = claude_live or (bool(k) and any(
+                r.get("agent") == "codex" and os.path.normcase(os.path.normpath(r.get("cwd") or ".")) == k
+                for r in _read_agent_session_files()))
+    except Exception:       # noqa: BLE001 — unknown is unseen: the person is asked
+        out["seen"] = False
+    return out
+
+
+def make_po_facts(data: dict) -> dict:
+    """The facts of the conversation a po-from-session request names, read
+    from the hub now (a task's room, a session's terminal and transcript)."""
+    installed = tuple(a for a in MAKE_PO_AGENTS if _agent_installed(a))
+    rid = (data.get("roomId") or "").strip()
+    projects = load_projects()
+    po_of = {(p.get("poRoomId") or "").strip(): p for p in projects if (p.get("poRoomId") or "").strip()}
+    if rid:
+        room = chatroom.get_room(rid, public=False)
+        if room is None:
+            return {"kind": "gone"}
+        agents_in = chatroom.agent_participants(room)
+        pid = _task_project(room, load_session_projects(), projects)
+        p = next((x for x in projects if x["id"] == pid), None)
+        po = po_of.get(rid)
+        return {"kind": "task", "agents": [a.get("agent", "") for a in agents_in], "installed": installed,
+                "draft": not room.get("launched", True),
+                "conversation": len(agents_in) == 1 and bool((agents_in[0].get("sessionId") or "").strip()),
+                "poOf": (po.get("name") or po["id"]) if po else "",
+                "project": {"id": p["id"], "name": p.get("name") or p["id"]} if p else None}
+    sid = (data.get("sessionId") or "").strip()
+    cwd = (data.get("cwd") or "").strip()
+    said = (data.get("agent") or "").strip().lower()
+    held = _session_room(sid)
+    now = _session_live_now(sid)
+    agent = now["agent"]
+    if now["live"]:
+        # Open in a terminal, whatever else is or is not known of it.
+        return {"kind": "session", "agents": [agent or said or "claude"], "installed": installed, "cwd": cwd,
+                "cwdOk": True, "isLive": True, "seen": True, "updatedAt": now["written"],
+                "heldBy": (held.get("title") or held["id"]) if held else ""}
+    if not agent or not now["cwd"]:
+        # No transcript names it (or two do, or none says where it began).
+        return {"kind": "unknown"}
+    if (said and said != agent) or not _same_folder(now["cwd"], cwd):
+        # The page names an agent or a folder its transcript does not: act on neither.
+        return {"kind": "moved", "cwd": now["cwd"], "agent": agent}
+    return {"kind": "session", "agents": [agent], "installed": installed, "cwd": cwd,
+            "cwdOk": bool(cwd) and os.path.isdir(cwd), "isLive": now["live"], "seen": now["seen"],
+            "updatedAt": now["written"], "heldBy": (held.get("title") or held["id"]) if held else ""}
+
+
+def _folder_relation(cwd: str, folder: str) -> str:
+    """How a conversation's folder stands to the project's: same | inside | elsewhere."""
+    if not cwd or not folder:
+        return "elsewhere"
+    c, f = os.path.normcase(os.path.normpath(cwd)), os.path.normcase(os.path.normpath(folder))
+    if c == f:
+        return "same"
+    return "inside" if c.startswith(f.rstrip(os.sep) + os.sep) else "elsewhere"
+
+
+def po_setup_folder(path: str, kind: str, name: str = "") -> dict:
+    """What registering ``path`` (a code project) or ``name`` (a documents
+    project, a folder in the projects folder) would find, for the setup
+    dialog: {folder, exists, isFile, isGit, project (the one it already is),
+    relative (not a full path)}. Reads only."""
+    kind = "documents" if (kind or "").strip().lower() == "documents" else "code"
+    if kind == "documents":
+        raw = (name or "").strip()
+        folder = str(PROJECTS_ROOT / raw) if raw and not _UNSAFE_DIR_CHARS.search(raw) and raw not in (".", "..") else ""
+    else:
+        raw = (path or "").strip()
+        p = Path(os.path.expanduser(raw)) if raw else None
+        folder = os.path.normpath(str(p)) if p is not None and p.is_absolute() else ""
+    out = {"kind": kind, "folder": folder, "exists": False, "isFile": False, "isGit": False,
+           "project": None, "relative": bool(raw) and not folder and kind == "code"}
+    if not folder:
+        return out
+    out["exists"] = os.path.isdir(folder)
+    out["isFile"] = os.path.exists(folder) and not out["exists"]
+    out["isGit"] = out["exists"] and path_is_git(folder)
+    for p in load_projects():
+        if _same_folder(p["path"], folder):
+            out["project"] = {"id": p["id"], "name": p.get("name") or p["id"]}
+    return out
+
+
+def po_candidates(project_id: str = "", path: str = "", kind: str = "code", name: str = "",
+                  rows: list[dict] | None = None) -> dict:
+    """GET /api/projects/po-candidates: the conversations a project (an
+    existing one, ``project_id``, or the one New project would register) may
+    take as its PO, each with its verdict, how its folder stands to the
+    project's, and when it was last written. Nothing is left out for being
+    unfit: an unfit one says why and what to do. Sessions in the project's
+    folder come first, then the newest; none is chosen for the person."""
+    facts = _PoFacts()
+    project = facts.by_id.get(project_id) if project_id else None
+    if project_id and project is None:
+        return {"error": "no_such_project"}
+    target = _make_po_target(project)
+    folder_info = None
+    if project is not None:
+        folder = project.get("path") or ""
+    else:
+        folder_info = po_setup_folder(path, kind, name)
+        folder = folder_info["folder"]
+    rows = load_sessions(500) if rows is None else rows
+    now = time.time()
+    out = []
+    for r in rows:
+        if r.get("archived") and not r.get("roomId"):
+            continue
+        f = facts.of_row(r)
+        rid = r.get("roomId") or ""
+        # A task of another project is shown only when it works in this
+        # project's folder: the rest are simply other projects' tasks.
+        rel = _folder_relation(r.get("cwd") or "", folder)
+        proj = f.get("project")
+        if rid and proj and (not project or proj["id"] != project["id"]) and rel == "elsewhere":
+            continue
+        v = make_po_verdict(f, target, now)
+        out.append({"sessionId": r.get("sessionId") or "", "roomId": rid, "orphan": bool(r.get("orphan")),
+                    "label": r.get("label") or "", "first": (r.get("first") or "")[:120],
+                    "agent": (r.get("agent") or "claude") if not rid else
+                             ",".join(m.get("agent", "") for m in (r.get("members") or [])),
+                    "cwd": r.get("cwd") or "", "relation": rel, "isLive": bool(r.get("isLive")),
+                    "updatedAt": r.get("updatedAt") or 0, "no": r.get("no"),
+                    "inProject": bool(rid and proj and project and proj["id"] == project["id"]),
+                    "verdict": v})
+    rank = {"same": 0, "inside": 1, "elsewhere": 2}
+    out.sort(key=lambda c: (rank[c["relation"]], -(c["updatedAt"] or 0)))
+    return {"project": ({"id": project["id"], "name": project.get("name"), "kind": project.get("kind") or "code",
+                         "path": folder, "po": target["po"]} if project else None),
+            "folder": folder_info, "installed": list(facts.installed), "candidates": out}
 
 
 def _new_po_project(name: str, kind: str, path: str) -> tuple[dict, callable]:
@@ -2844,7 +3248,7 @@ def _new_po_project(name: str, kind: str, path: str) -> tuple[dict, callable]:
         kept_json = (target / "project.json").read_bytes()
     except OSError:
         pass
-    ok, proj, msg = register_project(raw, name)
+    ok, proj, msg = register_project(raw, name, kind, make_home=False)
     if not ok:
         raise MakePoError(f"The project could not be created: {msg}.")
     if proj["id"] in before or msg == "already registered":
@@ -2882,6 +3286,12 @@ def _new_po_project(name: str, kind: str, path: str) -> tuple[dict, callable]:
                 except OSError:
                     shutil.rmtree(folder, ignore_errors=True)
 
+    if _home_apart(proj):
+        try:
+            _make_home(proj)    # a home kept apart is made now, and undone with the rest
+        except OSError as e:
+            undo()
+            raise MakePoError(f"The project's folder {home_before} could not be created: {e}.")
     if kind == "documents":
         kok, kmsg = set_project_kind(proj["id"], "documents")
         if not kok:
@@ -3010,6 +3420,8 @@ KIND_REFUSALS = {
     "files_outside_projects_root": "Only a project whose folder is in the projects folder can be a "
                                    "documents project; this one's files live elsewhere.",
     "project_is_a_git_repo": "This project's folder is a git repository, so it stays a code project.",
+    "code_kept_apart": "This project's folder is used in place, with the project's own files kept beside it, "
+                       "so it stays a code project.",
     "kind_must_be_code_or_documents": "A project is either a code project or a documents project.",
 }
 
@@ -3029,6 +3441,8 @@ def set_project_kind(project_id: str, kind: str) -> tuple[bool, str]:
         return _set_project_meta(project_id, "kind", None)
     if not _in_projects_root(proj.get("path", "")):
         return False, "files_outside_projects_root"
+    if _home_apart(proj):
+        return False, "code_kept_apart"
     if proj.get("isGit"):
         return False, "project_is_a_git_repo"
     rid = (proj.get("poRoomId") or "").strip()
@@ -4659,43 +5073,82 @@ def _safe_dir_name(name: str) -> str:
     return s[:80] or "project"
 
 
+def _free_home(project: dict) -> str:
+    """A home for a project whose code is kept apart: <root>/<name>, or -2, -3…
+    when that is another project's, the code folder itself, or a folder with
+    files in it that is no project's."""
+    ppath = project.get("path", "")
+    base = PROJECTS_ROOT / _safe_dir_name(project.get("name") or os.path.basename(ppath))
+    home, n = str(base), 2
+    while True:
+        pj = Path(home) / "project.json"
+        if not _same_folder(home, ppath):
+            try:
+                if not pj.exists():
+                    if not os.path.isdir(home) or not os.listdir(home):
+                        break
+                elif json.loads(pj.read_text(encoding="utf-8")).get("id") == project.get("id"):
+                    break
+            except (OSError, json.JSONDecodeError):
+                pass
+        home = f"{base}-{n}"
+        n += 1
+    return home
+
+
+def _home_apart(project: dict) -> bool:
+    """The project's code folder is not its home (an external code folder, or
+    one in the root that is used in place)."""
+    return not _same_folder(project_home(project, create=False), project.get("path", ""))
+
+
 def project_home(project: dict, create: bool = True) -> str:
     """The project's folder under PROJECTS_ROOT: where its tasks, notes and
     chat exports live — what the backup carries. A project registered from an
     external code folder (``path`` outside the root) gets a home created on
     demand; its project.json records the code path so a restored root is still
-    self-describing. In-root projects are their own home."""
+    self-describing. In-root projects are their own home, except a code folder
+    that was in the root with files in it when it was registered: it is used in
+    place and never written to, and the project gets a home beside it."""
     ppath = project.get("path", "")
-    if _in_projects_root(ppath):
-        return os.path.normpath(ppath)
     home = project.get("home") or ""
+    if _in_projects_root(ppath) and (not home or _same_folder(home, ppath)):
+        return os.path.normpath(ppath)
     if not home:
-        base = PROJECTS_ROOT / _safe_dir_name(project.get("name") or os.path.basename(ppath))
-        home = str(base)
-        n = 2
-        while True:                          # same name, different project → -2, -3…
-            pj = Path(home) / "project.json"
-            if not pj.exists():
-                break
-            try:
-                if json.loads(pj.read_text(encoding="utf-8")).get("id") == project.get("id"):
-                    break
-            except (OSError, json.JSONDecodeError):
-                pass
-            home = f"{base}-{n}"
-            n += 1
+        home = _free_home(project)
     if create:
-        try:
-            Path(home).mkdir(parents=True, exist_ok=True)
-            pj = Path(home) / "project.json"
-            if not pj.exists():
-                pj.write_text(json.dumps({"id": project.get("id", ""), "name": project.get("name", ""),
-                                          "code": os.path.normpath(ppath) if ppath else "",
-                                          "createdAt": project.get("createdAt") or int(time.time())},
-                                         indent=2), encoding="utf-8")
-        except OSError:
-            pass
+        with contextlib.suppress(OSError):
+            _make_home(project, home)
     return os.path.normpath(home)
+
+
+def _make_home(project: dict, home: str = "") -> None:
+    """Make a project's home apart from its code, with its project.json (the
+    code path in it, so a scan of the projects root finds it). Raises OSError."""
+    home = home or project.get("home") or _free_home(project)
+    ppath = project.get("path", "")
+    Path(home).mkdir(parents=True, exist_ok=True)
+    pj = Path(home) / "project.json"
+    if not pj.exists():
+        pj.write_text(json.dumps({"id": project.get("id", ""), "name": project.get("name", ""),
+                                  "code": os.path.normpath(ppath) if ppath else "",
+                                  "createdAt": project.get("createdAt") or int(time.time())},
+                                 indent=2), encoding="utf-8")
+
+
+def _drop_home(project: dict, existed: bool) -> None:
+    """Undo _make_home: its project.json if it is this project's, and the
+    folder if this made it and nothing else is in it."""
+    home = Path(project.get("home") or "")
+    if not project.get("home"):
+        return
+    with contextlib.suppress(OSError, json.JSONDecodeError):
+        pj = home / "project.json"
+        if pj.is_file() and json.loads(pj.read_text(encoding="utf-8")).get("id") == project.get("id"):
+            pj.unlink()
+    if not existed:
+        with contextlib.suppress(OSError):
+            home.rmdir()
 
 
 # ---- Roadmap: ROADMAP.md in the project's home ------------------------------
@@ -4828,7 +5281,7 @@ def setup_session_workspace(project: dict, mode: str, title: str) -> tuple[bool,
     ppath = project.get("path", "")
     if not ppath or not os.path.isdir(ppath):
         return False, "", {}, "project folder missing"
-    in_root = _in_projects_root(ppath)
+    in_root = _in_projects_root(ppath) and not _home_apart(project)
     # Every task gets its own folder under the project's home in the projects
     # root (task.json, notes, chat export) — so the backup carries every task.
     task_dir = _task_dir_for(project, title)
@@ -6169,6 +6622,7 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 # A draft is a task created (e.g. by a planning agent) but never
                 # launched; Open/Start launches it fresh with its spec.
                 "draft": not rm.get("launched", True),
+                "hasConversation": len(agents_in) == 1 and bool((agents_in[0].get("sessionId") or "").strip()),
                 "isLive": live, "status": "busy" if (live and busy) else "idle",
                 # `status` above is the activity dot; the action bar needs the
                 # room's own lifecycle (active / paused / waiting_human) and
@@ -6263,6 +6717,15 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
         r.setdefault("priorityName", PRIORITY_NAMES[r["priority"]])
         r.setdefault("workflow", "backlog")
         r.setdefault("workflowName", WORKFLOW_LABELS[r["workflow"]])
+    # Whether "Make PO of a new project…" may take it, and if not why
+    # (make_po_verdict), on every row: one without it reads as not known.
+    try:
+        po_facts = _PoFacts()
+        now = time.time()
+        for r in out:
+            r["makePo"] = make_po_answer(make_po_verdict(po_facts.of_row(r), None, now))
+    except Exception as e:      # noqa: BLE001 — the list without it; the request checks again
+        print(f"[make-po] verdicts not listed: {e!r}", flush=True)
     out.sort(key=_key)
     return out
 
@@ -7982,6 +8445,17 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/projects":
             self._send_json(200, build_projects())
             return
+        if p == "/api/projects/po-candidates":
+            # ?project=<id>, or ?path=&kind=&name= for the project New project
+            # would register: the conversations that may be its PO, with why
+            # not for those that may not (po_candidates). Reads only.
+            if self._files_cross_site():
+                return
+            q = parse_qs(u.query)
+            arg = lambda k: (q.get(k) or [""])[0].strip()      # noqa: E731
+            got = po_candidates(arg("project"), arg("path"), arg("kind") or "code", arg("name"))
+            self._send_json(404 if got.get("error") else 200, got)
+            return
         if p == "/api/roadmap":
             pid = (parse_qs(u.query).get("project", [""])[0]).strip()
             proj = next((x for x in load_projects() if x["id"] == pid), None)
@@ -8066,7 +8540,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(200, {"id": room.get("id", rid), "spec": spec,
                                       "specRev": _spec_rev(spec)})
                 return
-            self._send_json(200, _annotate_room_liveness(room, with_points=True))
+            out = _annotate_room_liveness(room, with_points=True)
+            try:
+                # The pop-out's "Make PO of a new project…", as the list row has it.
+                out["makePo"] = make_po_answer(make_po_verdict(make_po_facts({"roomId": rid})))
+            except Exception as e:      # noqa: BLE001 — shown as not known; the request checks again
+                print(f"[make-po] no verdict for {rid}: {e!r}", flush=True)
+            self._send_json(200, out)
             return
         if p == "/api/task/ref":
             # The task a number in a chat names, for the chip that shows it:
@@ -9438,52 +9918,53 @@ class Handler(BaseHTTPRequestHandler):
         sid = (data.get("sessionId") or "").strip()
         cwd = (data.get("cwd") or "").strip()
         label = (data.get("label") or "").strip()
-        if rid:
-            room_full = chatroom.get_room(rid, public=False)
-            if room_full is None:
-                raise MakePoError("That task no longer exists.", 404)
-            agents_in = chatroom.agent_participants(room_full)
-            if len(agents_in) != 1:
-                raise MakePoError("Only a task with one agent can be made a PO.")
-            if any((p.get("poRoomId") or "") == rid for p in load_projects()):
-                raise MakePoError("That task is already a project's PO.", 409)
-            if not room_full.get("launched", True) or not (agents_in[0].get("sessionId") or "").strip():
-                raise MakePoError("That task has no conversation yet: a PO made this way "
-                                  "brings its conversation with it.")
-            agent_key = agents_in[0].get("agent", "")
-            # A task of a project stays that project's: only one in no project
-            # (or already in the project it becomes the PO of) is taken.
-            member = find_project(_task_project(room_full, load_session_projects(), load_projects()))
-            if member is not None and member["id"] != (data.get("projectId") or "").strip():
-                raise MakePoError(f"That task belongs to the project “{member.get('name', member['id'])}”. "
-                                  f"Move it out of the project first.", 409)
-        else:
-            if not sid or not cwd:
-                raise MakePoError("The session and its folder are needed.")
-            agent_key = (data.get("agent") or "claude").strip().lower()
-            ag = agents.get_agent(agent_key)
-            if ag is None or not ag.installed():
-                raise MakePoError(f"“{agent_key}” is not installed on this machine.")
-            if not os.path.isdir(cwd):
-                raise MakePoError(f"The session's folder {cwd} no longer exists, and a "
-                                  f"conversation can only be continued in the folder it was started in.")
-            held = _session_room(sid)
-            if held is not None:
-                raise MakePoError(f"That conversation is already the task “{held.get('title', held['id'])}”. "
-                                  f"Make that task the PO instead.", 409)
-        if agent_key not in ("claude", "codex"):
-            raise MakePoError("Only a Claude or a Codex session can be made a PO.")
-
-        undo_project = None
-        source_cwd = cwd if not rid else (agents_in[0].get("cwd") or room_full.get("cwd") or "")
+        fresh = (data.get("fresh") or "").strip().lower() if isinstance(data.get("fresh"), str) else ""
         pid = (data.get("projectId") or "").strip()
+        project = None
         if pid:
             project = find_project(pid)
             if project is None:
                 raise MakePoError("That project no longer exists.", 404)
-            if project_po_room(project) is not None:
-                raise MakePoError(f"“{project.get('name', pid)}” already has a PO.", 409)
+        # Which conversation, and whether it may: the verdict the page showed
+        # (make_po_verdict), taken again from what the hub holds now.
+        if fresh:
+            # A new conversation, started for the role: nothing to split or take.
+            if fresh not in MAKE_PO_AGENTS:
+                raise MakePoError(make_po_refusal({"code": "unsupported", "agent": fresh}))
+            if not _agent_installed(fresh):
+                raise MakePoError(make_po_refusal({"code": "not_installed", "agent": fresh}))
+            target = _make_po_target(project)
+            if target and target["po"]:
+                raise MakePoError(make_po_refusal({"code": "has_po", "project": target["name"], "po": target["po"]}), 409)
+            agent_key, agents_in, room_full = fresh, [], None
+            rid = sid = cwd = ""
         else:
+            if not rid and (not sid or not cwd):
+                raise MakePoError("The session and its folder are needed.")
+            facts = make_po_facts(data)
+            if facts.get("kind") == "gone":
+                raise MakePoError("That task no longer exists.", 404)
+            if facts.get("kind") == "unknown":
+                raise MakePoError("Ensemble cannot find that conversation's transcript, so it cannot tell which "
+                                  "agent it is, where it was started or whether it is still open: "
+                                  "reload the page and choose it again.", 409)
+            if facts.get("kind") == "moved":
+                raise MakePoError(f"That is a {facts['agent'].capitalize()} conversation started in {facts['cwd']}, "
+                                  f"not the one described: reload the page and choose it again.", 409)
+            v = make_po_verdict(facts, _make_po_target(project))
+            if not v["ok"]:
+                raise MakePoError(make_po_refusal(v), _MAKE_PO_STATUS.get(v["code"], 400))
+            if v.get("confirm") == "closed" and data.get("confirmClosed") is not True:
+                # Only the person knows it is closed: the page asks, once.
+                raise MakePoError(make_po_refusal(v), 409)
+            agent_key = facts["agents"][0].lower()
+            if rid:
+                room_full = chatroom.get_room(rid, public=False)
+                agents_in = chatroom.agent_participants(room_full)
+
+        undo_project = None
+        source_cwd = cwd if not rid else (agents_in[0].get("cwd") or room_full.get("cwd") or "")
+        if project is None:
             project, undo_project = _new_po_project(
                 data.get("name") or label, data.get("kind") or "code",
                 data.get("path") or source_cwd)
@@ -9493,9 +9974,22 @@ class Handler(BaseHTTPRequestHandler):
         before = {}
         brought = None
         try:
-            if data.get("bringFiles") is True:
+            if data.get("bringFiles") is True and not fresh:
                 brought = bring_session_files(project, source_cwd.strip(), plan)
-            if not rid:
+            if fresh:
+                # Started, not resumed: a first launch whose first prompt is
+                # the charter, where a PO works; the first input follows it.
+                work = po_work_folder(project)
+                room = chatroom.create_room(f"{project.get('name') or pid} PO"[:120],
+                                            [{"identity": agent_key, "agent": agent_key}])
+                rid, made_room = room["id"], True
+                room_full = chatroom.get_room(rid, public=False)
+                room_full["cwd"] = work
+                room_full["mode"] = "solo"
+                room_full["launched"] = False
+                part = chatroom.agent_participants(room_full)[0]
+                part["cwd"] = work
+            elif not rid:
                 title = (label or project.get("name") or f"{agent_key} {sid[:8]}")[:120]
                 room = chatroom.create_room(title, [{"identity": agent_key, "agent": agent_key}])
                 rid, made_room = room["id"], True
@@ -9534,7 +10028,8 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 # Resumed (or, if it runs, left running) and told, as one hub input.
                 self._resume_room(chatroom.get_room(rid, public=False) or room_full,
-                                  text=made_po_first_input(project, brought), key=f"made-po:{pid}:{rid}")
+                                  text=(made_po_fresh_input(project) if fresh else made_po_first_input(project, brought)),
+                                  key=f"made-po:{pid}:{rid}")
             except Exception as exc:    # noqa: BLE001 — a refusal or a failed spawn alike
                 raise MakePoError(f"The session could not be started: {str(exc) or exc.__class__.__name__}.") from exc
         except Exception:
@@ -10211,7 +10706,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"ok": True, "room": chatroom.get_room(room["id"])})
             return
         if p == "/api/projects/new":
-            ok, proj, msg = register_project(data.get("path", ""), data.get("name", ""))
+            ok, proj, msg = register_project(data.get("path", ""), data.get("name", ""),
+                                             "documents" if (data.get("kind") or "").strip().lower() == "documents" else "code")
             if not ok:
                 self._send_json(400, {"error": msg})
                 return

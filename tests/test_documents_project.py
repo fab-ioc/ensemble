@@ -628,7 +628,7 @@ const gone = s => s.deleted.map(d => d.path);
 """
 
 DEPS = ["esc", "agoSpan", "wsNorm", "wsSame", "wsJoin", "wsTabName", "wsFmtSize", "projectById", "registeredProjects",
-        "poRowOf", "poSplitProject", "poNoteHtml", "makePoSessions", "renderPoPill", "poAgent", "wsProjectForRow", "wsTaskFolder",
+        "poRowOf", "poSplitProject", "poNoteHtml", "renderPoPill", "poAgent", "wsProjectForRow", "wsTaskFolder",
         "wsHidden", "wsRowsHtml", "wsCtxKey", "drParse", "drContent", "drHighlight", "drRowHtml",
         "WS_EMPTY", "WS_MAC", "WS_RECENT_KEY", "WS_ICON_TREE", "wsPanelHtml",
         "DOCS_TASKS_KEY", "docsTasksShown", "docsTasksSet", "docsApart", "docsInTask",
@@ -653,7 +653,7 @@ class ThePage(unittest.TestCase):
         self.assertEqual(o["docsFrame"], "[chrome][board]", "no files above the board, no note asking for a PO")
         self.assertIn(">Documents project<", o["docsKind"])
         self.assertIn('class="po-btn po-choose" data-proj="p-docs"', o["docsChoose"])
-        self.assertIn(">Choose the PO…<", o["docsChoose"])
+        self.assertIn(">Set up the PO…<", o["docsChoose"])
         self.assertNotRegex(o["docsDialog"], r"has a PO|Choosing a PO|stays a code project|disabled",
                             "the Kind dialog no longer mentions the PO exclusion")
         self.assertTrue(0 <= o["panelOrder"][0] < o["panelOrder"][1], "Files come before Recent changes")
