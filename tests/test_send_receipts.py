@@ -95,6 +95,8 @@ class Receipts(unittest.TestCase):
             mock.patch.object(dashboard, "RESUME_NOTE_WAIT_S", 2),
             mock.patch.object(dashboard, "read_session_turns", lambda sid: self.turns.get(sid)),
             mock.patch.object(dashboard, "find_transcript", lambda sid: None),
+            # A transcript's size and time, as its file would give them.
+            mock.patch.object(points, "_session_stat", lambda sid: self.stat(sid)),
             mock.patch.object(dashboard.Handler, "_resume_room_agent_pty",
                               lambda h, room_full, part, **k: test.spawn(part)),
         ]
@@ -115,6 +117,12 @@ class Receipts(unittest.TestCase):
         pid = f"pty-{part['identity']}-{self.starts}"
         self.ptys[pid] = FakePty(pid, alive=self.come_up)
         return {"ptyId": pid, "cwd": "", "sessionId": part.get("sessionId", ""), "prompted": False}
+
+    def stat(self, sid):
+        turns = self.turns.get(sid)
+        if not turns:
+            return None
+        return [len(turns), max(dashboard._turn_epoch(t.get("timestamp")) or 0 for t in turns)]
 
     def join(self, timeout=8):
         for t in threading.enumerate():
@@ -464,6 +472,86 @@ class Receipts(unittest.TestCase):
         self.assertFalse(sends.matches("a" * 400, "a" * 400 + "x"))
         self.assertTrue(sends.matches("a" * 400, "a" * 400))
         self.assertTrue(sends.matches("a" * 401, "a" * 400 + "a and more"))
+
+    # ---- the PO's code check ----
+    def test_a_transcript_is_read_again_only_when_it_changed(self):
+        rid = self.room()
+        now = time.time()
+        sends.accept(rid, "send:r", "read me once", now=now)
+        sends.mark(rid, ["send:r"], "delivered", now=now)
+        reads, stat = [], {"st": [10, now]}
+        room = chatroom.get_room(rid)
+        with mock.patch.object(dashboard, "read_session_turns",
+                               lambda sid: reads.append(sid) or self.turns.get(sid)), \
+                mock.patch.object(points, "_session_stat", lambda sid: stat["st"]):
+            for _ in range(3):
+                sends.sync(rid, room=room, force=True)
+            self.assertEqual(len(reads), 1, "read again with nothing changed")
+            stat["st"] = [20, now + 1]
+            sends.sync(rid, room=room, force=True)
+            self.assertEqual(len(reads), 2)
+            # Not written since the send (less the clock slack): not read at all.
+            stat["st"] = [20, now - sends.SLACK_S - 60]
+            sends._SCANNED.clear()
+            sends.sync(rid, room=room, force=True)
+            self.assertEqual(len(reads), 2)
+            # A stat that cannot be had: read, then not again for a while.
+            stat["st"] = None
+            sends.sync(rid, room=room, force=True, now=now + 5)
+            sends.sync(rid, room=room, force=True, now=now + 7)
+            self.assertEqual(len(reads), 3)
+            sends.sync(rid, room=room, force=True, now=now + 5 + sends.RESCAN_UNKNOWN_S + 1)
+            self.assertEqual(len(reads), 4)
+
+    def test_a_send_its_transcript_never_shows_is_not_failed_for_retry(self):
+        # Its turn is skipped by the reader ("<", "Caveat:"): the agent read
+        # it, so Retry would type it in twice.
+        rid = self.room()
+        status, out = self.post({"roomId": rid, "text": "<b>bold</b> please", "key": "send:lt"})
+        self.assertEqual(out["send"]["state"], "delivered")
+        self.ptys["pty-live-0"]._alive = False
+        [s] = self.payload(rid, now=out["send"]["at"] + sends.STOPPED_AFTER_S + 5)["sends"]
+        self.assertEqual(s["state"], "delivered")
+
+    def test_a_send_the_team_chat_did_not_take_fails_with_retry(self):
+        rid = self.room(agents=("claude", "codex"), mode="collab")
+        with mock.patch.object(dashboard.chatroom, "post_message", lambda *a, **k: None):
+            status, out = self.post({"roomId": rid, "text": "hey team", "key": "send:none"})
+        self.assertEqual(status, 400)
+        self.assertTrue(out["kept"])
+        self.assertEqual(out["send"]["state"], "failed")
+        [s] = self.payload(rid)["sends"]
+        self.assertEqual((s["state"], s["error"]), ("failed", "the chat did not take it"))
+
+    def test_a_send_nothing_will_deliver_fails_without_a_restart(self):
+        rid = self.room(running=False)
+        now = time.time()
+        sends.accept(rid, "send:lost", "left queued", now=now)
+        self.assertEqual(self.payload(rid)["sends"][0]["state"], "queued")
+        with mock.patch.object(sends.time, "time", lambda: now + dashboard.ORPHAN_AFTER_S + 1):
+            [s] = self.payload(rid)["sends"]
+        self.assertEqual(s["state"], "failed")
+        # One a resume under way holds is left alone.
+        sends.accept(rid, "send:held", "held", now=now)
+        dashboard._RESUMES[rid] = dashboard._Resume(rid)
+        with mock.patch.object(sends.time, "time", lambda: now + dashboard.ORPHAN_AFTER_S + 1):
+            states = {s["key"]: s["state"] for s in self.payload(rid)["sends"]}
+        self.assertEqual(states["send:held"], "queued")
+        dashboard._RESUMES.clear()
+
+    def test_a_receipt_that_cannot_be_written_does_not_stop_the_send(self):
+        rid = self.room()
+        with mock.patch.object(sends, "_save", mock.Mock(side_effect=OSError("disk full"))):
+            status, out = self.post({"roomId": rid, "text": "go anyway", "key": "send:disk"})
+        self.assertEqual(status, 200)
+        [(pid, lines)] = self.typed().items()
+        self.assertIn("go anyway", lines[0])
+
+    def test_the_whole_text_is_kept_for_retry(self):
+        rid = self.room()
+        long = "x" * 30000
+        sends.accept(rid, "send:long", long)
+        self.assertEqual(sends.get(rid, "send:long")["text"], long)
 
 
 @unittest.skipUnless(NODE, "node is not installed")

@@ -60,12 +60,11 @@ SHOW_CONFIRMED_S = 120          # and shown this long, until the page's own copy
 STOPPED_AFTER_S = 30            # delivered, the agent gone this long after: not read
 SLACK_S = 120                   # a transcript's clock and the hub's may differ this much
 SYNC_EVERY_S = 2.0              # a room's conversation is looked at at most this often
-TEXT_MAX = 20000
 _NEEDLE = 400                   # the first words of a send that must be in its turn
 
 _LOCK = threading.RLock()
 _SYNCED: dict[str, float] = {}
-_SCANNED: dict[tuple, object] = {}  # (room, session) -> its stat when last read with nothing new
+_SCANNED: dict[tuple, tuple] = {}   # (room, session) -> (its stat, since, its user turns, when read)
 
 
 def _log(msg: str) -> None:
@@ -164,14 +163,18 @@ def accept(room_id: str, key: str, text: str, to: str = "", now: float | None = 
         items = _prune(_load(room_id), now)
         s = _find(items, key)
         if s is None:
-            s = {"key": key, "text": (text or "")[:TEXT_MAX], "to": to or "", "at": now,
+            # The whole text: Retry sends it again as it is.
+            s = {"key": key, "text": text or "", "to": to or "", "at": now,
                  "state": "queued", "stateAt": now, "error": "", "boot": BOOT}
             items.append(s)
         elif s["state"] == "failed":
             _set(s, "queued", now)
         else:
             return dict(s)
-        _save(room_id, items)
+        try:
+            _save(room_id, items)
+        except OSError as e:    # the send itself goes ahead; only its receipt is missing
+            _log(f"{room_id}: send {key} not recorded: {e!r}")
         return dict(s)
 
 
@@ -217,6 +220,17 @@ def drop(room_id: str, keys) -> list[dict]:
         if gone:
             _save(room_id, [s for s in items if s["key"] not in keys])
         return gone
+
+
+def orphans(room_id: str, after_s: float, now: float | None = None) -> list[str]:
+    """The keys of sends queued by this hub more than ``after_s`` ago: the
+    caller knows whether anything is still on its way to deliver them."""
+    now = time.time() if now is None else now
+    if not _ROOM_ID.fullmatch(room_id or ""):
+        return []
+    with _LOCK:
+        return [s["key"] for s in _load(room_id) if s["state"] == "queued" and s.get("boot") == BOOT
+                and now - float(s.get("stateAt") or s["at"]) > after_s]
 
 
 def typed_confirms(text: str) -> bool:
@@ -355,18 +369,55 @@ def _solo(room: dict) -> bool:
     return room.get("mode") == "solo" or len(agents) < 2
 
 
+def unseen(text: str) -> bool:
+    """A send its transcript never shows as a turn of its own: the reader
+    skips a user turn that starts with "<" or "Caveat:" (Claude Code's own
+    lines). It stays delivered (Dismiss hides it), never failed: Retry would
+    type in again what the agent read."""
+    t = (text or "").lstrip()
+    return t.startswith("<") or t.startswith("Caveat:")
+
+
+RESCAN_UNKNOWN_S = 30           # a transcript whose size and time cannot be read: read again this often
+
+
+def _user_turns(room_id: str, sid: str, since: float, now: float) -> list[tuple[str, dict]]:
+    """A session's user turns from ``since`` on, read again only when its
+    transcript changed (a PO's is megabytes, and the page polls every two
+    seconds); one whose stat cannot be had, every RESCAN_UNKNOWN_S. A session
+    not written since ``since`` holds none."""
+    st = _d.points._session_stat(sid)
+    if st is not None and float(st[1]) < since:
+        return []
+    seen = _SCANNED.get((room_id, sid))
+    if seen is not None and seen[1] <= since and (
+            seen[0] == st if st is not None else seen[0] is None and now - seen[3] < RESCAN_UNKNOWN_S):
+        return seen[2]
+    try:
+        raw = _d.read_session_turns(sid) or []
+    except Exception as e:     # noqa: BLE001 — looked at again next time
+        _log(f"{room_id}: transcript {sid} not read: {e!r}")
+        return []
+    turns = [(mid, t) for mid, t in _d.page_turn_ids(sid, raw)
+             if t.get("role") == "user" and (_d._turn_epoch(t.get("timestamp")) or now) >= since]
+    _SCANNED[(room_id, sid)] = (st, since, turns, now)
+    return turns
+
+
 def sync(room_id: str, room: dict | None = None, force: bool = False,
          now: float | None = None) -> None:
     """Look for the delivered sends of a one-agent chat in its transcript:
     each is confirmed by the first user turn after it was taken that holds
-    it, one turn per send. One still not there once its agent has stopped
-    for a while failed: it was never read."""
+    it, by a part of it no other send has. One still not there once its
+    agent has stopped for a while failed: it was never read. Matched on a
+    copy, outside the lock; what it finds is applied under it to the sends
+    still delivered."""
     now = time.time() if now is None else now
     if not force and now - _SYNCED.get(room_id, 0) < SYNC_EVERY_S:
         return
     _SYNCED[room_id] = now
     with _LOCK:
-        items = _load(room_id)
+        items = [dict(s) for s in _load(room_id)]
     waiting = [s for s in items if s["state"] == "delivered"]
     if not waiting:
         return
@@ -374,46 +425,47 @@ def sync(room_id: str, room: dict | None = None, force: bool = False,
         room = _d.chatroom.get_room(room_id)
     if room is None or not _solo(room):
         return
+    since = min(float(s["at"]) for s in waiting) - SLACK_S
     turns: list[tuple[str, dict]] = []
-    # Read again only when a transcript changed since a read that found
-    # nothing new: a PO's is megabytes, and the page polls every two seconds.
-    sids = _session_ids(room)
-    stats = tuple((sid, _d.points._session_stat(sid)) for sid in sids)
-    fresh = _SCANNED.get((room_id, "stats")) != (stats, tuple(s["key"] for s in waiting))
-    for sid in sids if fresh else []:
-        try:
-            raw = _d.read_session_turns(sid) or []
-        except Exception as e:     # noqa: BLE001 — looked at again next time
-            _log(f"{room_id}: transcript {sid} not read: {e!r}")
-            continue
-        turns += [(mid, t) for mid, t in _d.page_turn_ids(sid, raw) if t.get("role") == "user"]
+    for sid in _session_ids(room):
+        turns += _user_turns(room_id, sid, since, now)
     live = _d._room_is_live(room)
+    # What of each turn the sends it confirmed already have not claimed:
+    # one turn may confirm several sends (a resume types them in as one
+    # input), each by its own part of it.
+    left = {mid: _Turn(t.get("text") or "") for mid, t in turns}
+    for s in by_size([s for s in items if s.get("mid") in left]):
+        left[s["mid"]].take(evidence(s["text"]))
+    hits: dict[str, str] = {}
+    gone: set[str] = set()
+    for s in by_size(waiting):
+        floor = float(s["at"]) - SLACK_S
+        ev = evidence(s["text"])
+        hit = next((mid for mid, t in turns
+                    if (_d._turn_epoch(t.get("timestamp")) or now) >= floor
+                    and left[mid].take(ev)), None)
+        if hit:
+            hits[s["key"]] = hit
+        elif (not live and not unseen(s["text"])
+              and now - float(s.get("deliveredAt") or s["stateAt"]) > STOPPED_AFTER_S):
+            gone.add(s["key"])
+    if not hits and not gone:
+        return
     with _LOCK:
         items = _load(room_id)
-        # What of each turn the sends it confirmed already have not claimed:
-        # one turn may confirm several sends (a resume types them in as one
-        # input), each by its own part of it.
-        left = {mid: _Turn(t.get("text") or "") for mid, t in turns}
-        for s in by_size([s for s in items if s.get("mid") in left]):
-            left[s["mid"]].take(evidence(s["text"]))
         changed = False
-        for s in by_size([s for s in items if s["state"] == "delivered"]):
-            floor = float(s["at"]) - SLACK_S
-            ev = evidence(s["text"])
-            hit = next((mid for mid, t in turns
-                        if (_d._turn_epoch(t.get("timestamp")) or now) >= floor
-                        and left[mid].take(ev)), None)
-            if hit:
+        for s in items:
+            if s["state"] != "delivered":
+                continue
+            if s["key"] in hits:
                 _set(s, "confirmed", now)
-                s["mid"], s["confirmedAt"] = hit, now
+                s["mid"], s["confirmedAt"] = hits[s["key"]], now
                 changed = True
-            elif not live and now - float(s.get("deliveredAt") or s["stateAt"]) > STOPPED_AFTER_S:
+            elif s["key"] in gone:
                 _set(s, "failed", now, "the session stopped before it read this")
                 changed = True
         if changed:
             _save(room_id, items)
-        if fresh and all(st is not None for _sid, st in stats):
-            _SCANNED[(room_id, "stats")] = (stats, tuple(s["key"] for s in items if s["state"] == "delivered"))
 
 
 def reconcile(room_id: str, now: float | None = None) -> list[dict]:
