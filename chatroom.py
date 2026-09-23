@@ -306,6 +306,10 @@ def record_exit(room_id: str, identity: str, exit_rec: dict) -> bool:
     """Stamp one agent's last exit onto the room — read-modify-write under the
     room lock.
 
+    Only the participant's current PTY may write its death. A replacement can
+    run briefly under the same room and identity before it is committed; its
+    death must not overwrite the retained session's exit metadata.
+
     Deliberately narrow. The caller is a dying PTY's reader thread, and a
     ``get_room`` → mutate → :func:`update_room` from there would race
     :func:`post_message`: both rewrite the whole file, so a chat message posted
@@ -318,7 +322,8 @@ def record_exit(room_id: str, identity: str, exit_rec: dict) -> bool:
             return False
         hit = False
         for p in room.get("participants", []):
-            if p.get("identity") == identity:
+            if (p.get("identity") == identity and exit_rec.get("ptyId")
+                    and (not p.get("ptyId") or p.get("ptyId") == exit_rec["ptyId"])):
                 p["lastExit"] = exit_rec
                 hit = True
         if not hit:
@@ -495,7 +500,8 @@ def is_on_mention(room: dict, part: dict) -> bool:
 
 
 def patch_participant(room_id: str, identity: str, fields: dict,
-                      append: dict | None = None, drop: tuple = ()) -> dict | None:
+                      append: dict | None = None, drop: tuple = (),
+                      room_fields: dict | None = None) -> dict | None:
     """Update one participant's record — read-modify-write under the room lock,
     so a chat message posted meanwhile is never lost (see :func:`record_exit`).
     ``append`` adds items to list fields; ``drop`` removes keys. Returns the
@@ -512,6 +518,8 @@ def patch_participant(room_id: str, identity: str, fields: dict,
             part.setdefault(k, []).append(v)
         for k in drop:
             part.pop(k, None)
+        if room_fields:
+            room.update(room_fields)
         room["updatedAt"] = _now()
         _write(room)
         return dict(part)

@@ -932,6 +932,9 @@ _SETTINGS_DEFAULTS = {
     # model call, the PO writes its handover and a fresh session takes over
     # from it. 0 = off.
     "poRotateTokens": rotation.DEFAULT_TOKENS,
+    # Model for an emergency PO switch when its seat has no alternative model.
+    # The PO's agentPreference.alt takes precedence when it is present.
+    "poFallbackModels": dict(rotation.DEFAULT_PO_FALLBACK_MODELS),
     # The same for a running task's owner (its engineer, or its only agent),
     # from TASK-HANDOVER.md in the task folder. 0 = off.
     "taskRotateTokens": rotation.DEFAULT_TOKENS,
@@ -1059,6 +1062,13 @@ def _save_settings_locked(settings: dict) -> dict:
             if not isinstance(v, str) or len(v) > 80:
                 continue
             v = v.strip()
+        if k == "poFallbackModels":
+            if not isinstance(v, dict) or any(
+                    kind not in ("claude", "codex") or not isinstance(model, str)
+                    or len(model) > 80 for kind, model in v.items()):
+                continue
+            v = {**current["poFallbackModels"],
+                 **{kind: model.strip() for kind, model in v.items()}}
         if k == "operatorNickname":
             if not isinstance(v, str) or len(v) > 60:
                 continue

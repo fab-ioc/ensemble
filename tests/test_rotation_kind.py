@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 import chatroom
+import attention
 import dashboard
 import rotation
 
@@ -467,6 +468,258 @@ class PoRotationUnchangedTests(_Base):
         self.assertEqual([l["agent"] for l in launcher.launched], ["claude"])
         self.assertNotIn("allocation", out["rotation"])
         self.assertNotIn("fromAgent", out["rotation"])
+
+    def test_codex_po_rotates_from_handover_in_same_room(self):
+        launcher = _FakeLauncher()
+        created = chatroom.create_room(
+            "PO", [{"identity": "po", "agent": "codex", "model": "gpt-5.6-sol",
+                    "role": "ProductOwner"}])
+        room = chatroom.get_room(created["id"], public=False)
+        room.update(mode="solo", launched=True, spec="Be the PO.", cwd=self.temp.name)
+        room["participants"][0].update(sessionId="old-sid", ptyId="old-pty")
+        chatroom.update_room(room)
+        project = {"id": "p1", "name": "P", "poRoomId": room["id"]}
+        self.assertEqual(rotation._po(project)[1]["agent"], "codex")
+        s = {"kind": "po", "name": "P", "project": project, "room": room,
+             "part": chatroom.participant(room, "po"), "why": "",
+             "state": {"phase": "asked", "tokensAtAsk": 300_000, "handoverAtAsk": 0},
+             "limit": 200_000, "setting": "poRotateTokens", "who": "the PO",
+             "whose": "the PO's", "handoverName": rotation.HANDOVER_NAME,
+             "handover": Path(self.temp.name) / rotation.HANDOVER_NAME,
+             "ids": {"projectId": "p1"}}
+        with mock.patch.object(dashboard, "hub_launcher", return_value=launcher), \
+                mock.patch.object(dashboard.ptyrun, "kill"), \
+                mock.patch.object(rotation, "_await_death"), \
+                mock.patch.object(rotation, "_await_codex_session", return_value="codex-new"), \
+                mock.patch.object(dashboard, "roadmap_path",
+                                  return_value=Path(self.temp.name) / "ROADMAP.md"):
+            rotation._rotate_marked(
+                s, {"tokens": 300_000}, lambda r, quiet=False, **x: {"result": r, **x},
+                True, True, (room["id"], "po"), {"stopped": False})
+        saved = chatroom.get_room(room["id"], public=False)
+        part = chatroom.participant(saved, "po")
+        self.assertEqual((part["agent"], part["model"], part["sessionId"]),
+                         ("codex", "gpt-5.6-sol", "codex-new"))
+        self.assertEqual(part["rotations"][-1]["toSessionId"], "codex-new")
+        self.assertEqual(chatroom.po_identity(saved), "po")
+
+
+class PoUsageFailoverTests(_Base):
+    def setUp(self):
+        super().setUp()
+        self.launcher = _FakeLauncher()
+        self.dead = set()
+        self.killed = []
+        self.snap = _snap(100, 20)
+        for p in [
+            mock.patch.object(dashboard, "hub_launcher", return_value=self.launcher),
+            mock.patch.object(dashboard, "project_home", return_value=self.temp.name),
+            mock.patch.object(dashboard, "roadmap_path",
+                              return_value=Path(self.temp.name) / "ROADMAP.md"),
+            mock.patch.object(dashboard.ptyrun, "get", side_effect=lambda pid: _FakePty(
+                pid not in self.dead) if pid else None),
+            mock.patch.object(dashboard.ptyrun, "kill", side_effect=self.killed.append),
+            mock.patch.object(rotation, "_await_death"),
+            mock.patch.object(rotation, "_await_codex_session", return_value="codex-new"),
+            mock.patch.object(rotation, "_LAUNCH_SETTLE_S", 0),
+            mock.patch.object(dashboard.usage, "snapshot", side_effect=lambda: self.snap),
+        ]:
+            p.start()
+            self.patches.append(p)
+        rotation._STATE.clear()
+
+    def po(self, kind="claude", model="opus", handover=True, preference=None):
+        made = chatroom.create_room("PO", [{"identity": "po", "agent": kind,
+                                            "model": model, "role": "ProductOwner"}])
+        room = chatroom.get_room(made["id"], public=False)
+        room.update(mode="solo", launched=True, status="active", projectId="p1",
+                    spec="Start this project from scratch.", cwd=self.temp.name)
+        if preference:
+            room["agentPreference"] = preference
+        room["participants"][0].update(sessionId="old-sid", ptyId="old-pty",
+                                        cwd=self.temp.name)
+        chatroom.update_room(room)
+        if handover:
+            (Path(self.temp.name) / "PO-HANDOVER.md").write_text("Carry on #1.", encoding="utf-8")
+        (Path(self.temp.name) / "ROADMAP.md").write_text("Next milestone.", encoding="utf-8")
+        project = {"id": "p1", "name": "Project", "poRoomId": made["id"]}
+        item = {"roomId": made["id"], "state": "blocked", "cause": "usage_limit",
+                "agentIdentity": "po", "sessionId": "old-sid"}
+        return project, item
+
+    def saved(self, project):
+        return chatroom.get_room(project["poRoomId"], public=False)
+
+    def test_claude_failover_preserves_room_chat_token_points_and_routing(self):
+        project, item = self.po(preference=[{"agent": "claude", "model": "opus",
+                                             "role": "ProductOwner",
+                                             "alt": {"agent": "codex", "model": "gpt-custom"}}])
+        original = self.saved(project)
+        chatroom.post_notice(project["poRoomId"], "human", "Existing chat", {})
+        with mock.patch.object(dashboard.points, "prompt_block", return_value="Open point P1"):
+            result = rotation.failover_po(project, item)
+        saved = self.saved(project)
+        part = chatroom.participant(saved, "po")
+        self.assertEqual(result["result"], "switched")
+        self.assertEqual((part["agent"], part["model"], part["sessionId"]),
+                         ("codex", "gpt-custom", "codex-new"))
+        self.assertEqual((saved["id"], saved["projectId"], saved["tokens"]),
+                         (original["id"], "p1", original["tokens"]))
+        self.assertEqual(project["poRoomId"], saved["id"])
+        self.assertEqual(chatroom.po_identity(saved), "po")
+        self.assertTrue(any(m["text"] == "Existing chat" for m in saved["messages"]))
+        self.assertEqual(part["sessionKinds"], {"old-sid": "claude"})
+        self.assertEqual(part["rotations"][-1]["fromSessionId"], "old-sid")
+        self.assertEqual(saved["poFailover"]["cause"], "usage_limit")
+        self.assertEqual(self.killed, ["old-pty"])
+        attention.on_pty_death({"meta": {"room": project["poRoomId"], "identity": "po"},
+                                "ptyId": "old-pty", "exitCode": 0, "killed": True,
+                                "endedAt": time.time(), "tail": ""})
+        self.assertNotIn("lastExit", chatroom.participant(self.saved(project), "po"))
+        self.assertIn("Open point P1", self.launcher.launched[0]["text"])
+        self.assertIn("PO-HANDOVER.md", self.launcher.launched[0]["text"])
+        self.assertIn("ROADMAP.md", self.launcher.launched[0]["text"])
+        self.assertIn("do not restart", self.launcher.launched[0]["text"])
+        self.assertIn("gpt-custom", saved["messages"][-1]["text"])
+
+    def test_codex_to_claude_uses_preference_and_never_switches_back(self):
+        self.snap = _snap(15, 100)
+        project, item = self.po("codex", "gpt-5.6-sol", preference=[
+            {"agent": "codex", "model": "gpt-5.6-sol", "role": "ProductOwner",
+             "alt": {"agent": "claude", "model": "sonnet"}}])
+        self.assertEqual(rotation.failover_po(project, item)["result"], "switched")
+        part = chatroom.participant(self.saved(project), "po")
+        self.assertEqual((part["agent"], part["model"]), ("claude", "sonnet"))
+        self.assertEqual(part["sessionKinds"], {"old-sid": "codex"})
+        again = {**item, "sessionId": part["sessionId"]}
+        self.snap = _snap(100, 15)
+        self.assertEqual(rotation.failover_po(project, again)["result"], "already handled")
+        self.assertEqual(len(self.launcher.launched), 1)
+
+    def test_default_codex_fallback_model(self):
+        project, item = self.po()
+        rotation.failover_po(project, item)
+        self.assertEqual(self.launcher.launched[0]["model"], "gpt-5.6-sol")
+
+    def test_configured_fallback_model(self):
+        project, item = self.po()
+        with mock.patch.object(dashboard, "load_settings", return_value={
+                "poFallbackModels": {"codex": "gpt-custom", "claude": "sonnet"}}):
+            rotation.failover_po(project, item)
+        self.assertEqual(self.launcher.launched[0]["model"], "gpt-custom")
+
+    def test_over_warning_and_unknown_allowance_alert_once(self):
+        stale = _snap(100, 10)
+        stale["sources"][1]["windows"][0]["trusted"] = False
+        mixed = _snap(100, 20)
+        mixed["sources"][1]["windows"].append(_window("seven_day", 10, trusted=False))
+        for snap in (_snap(100, 80), _snap(100, 10, codex_state="error"), stale, mixed):
+            with self.subTest(snap=snap):
+                self.snap = snap
+                project, item = self.po()
+                for _ in range(2):
+                    rotation.failover_po(project, item)
+                saved = self.saved(project)
+                self.assertEqual(len([m for m in saved["messages"]
+                                      if m.get("noticeKind") == "poFailoverAlert"]), 1)
+                self.assertEqual(chatroom.participant(saved, "po")["agent"], "claude")
+                self.assertEqual(self.launcher.launched, [])
+
+    def test_missing_handover_blocks_then_existing_handover_allows_switch(self):
+        project, item = self.po(handover=False)
+        for _ in range(2):
+            rotation.failover_po(project, item)
+        self.assertEqual(len(self.saved(project)["messages"]), 1)
+        (Path(self.temp.name) / "PO-HANDOVER.md").write_text("Existing state", encoding="utf-8")
+        self.assertEqual(rotation.failover_po(project, item)["result"], "switched")
+
+    def test_repeated_polls_and_restart_do_not_repeat_switch(self):
+        project, item = self.po()
+        with mock.patch.object(dashboard, "load_projects", return_value=[project]), \
+                mock.patch.object(dashboard.attention, "snapshot", return_value={"items": [item]}), \
+                mock.patch.object(rotation, "threshold", return_value=0), \
+                mock.patch.object(rotation, "task_threshold", return_value=0):
+            rotation._tick()
+            rotation._STATE.clear()  # a hub restart loses this memory
+            rotation._tick()
+        self.assertEqual(len(self.launcher.launched), 1)
+        self.assertEqual(len(chatroom.participant(self.saved(project), "po")["rotations"]), 1)
+
+    def test_attention_failure_does_not_stop_task_owner_checks(self):
+        with mock.patch.object(dashboard, "load_projects", return_value=[]), \
+                mock.patch.object(dashboard.attention, "snapshot", side_effect=OSError("cache")), \
+                mock.patch.object(rotation, "task_threshold", return_value=200_000), \
+                mock.patch.object(rotation, "running_owners", return_value=[("room-t", "eng")]), \
+                mock.patch.object(rotation, "check_task") as check_task:
+            rotation._tick()
+        check_task.assert_called_once_with("room-t", "eng")
+
+    def test_failed_start_keeps_old_po_and_alerts_once(self):
+        project, item = self.po()
+        self.dead.add("pty-1")
+        def candidate_dies(pid):
+            if pid == "pty-1":
+                attention.on_pty_death({"meta": {"room": project["poRoomId"],
+                                                  "identity": "po"},
+                                        "ptyId": pid, "exitCode": 1, "killed": False,
+                                        "endedAt": time.time(), "tail": "usage failed"})
+            return _FakePty(pid not in self.dead) if pid else None
+        with mock.patch.object(dashboard.ptyrun, "get", side_effect=candidate_dies):
+            for _ in range(2):
+                rotation.failover_po(project, item)
+        saved = self.saved(project)
+        part = chatroom.participant(saved, "po")
+        self.assertEqual((part["agent"], part["sessionId"], part["ptyId"]),
+                         ("claude", "old-sid", "old-pty"))
+        self.assertNotIn("poFailover", saved)
+        self.assertNotIn("lastExit", part, "candidate death must not mark retained PO dead")
+        self.assertEqual(len(self.launcher.launched), 1)
+        self.assertEqual(self.killed, ["pty-1"])
+        self.assertEqual(len(saved["messages"]), 1)
+
+    def test_stop_during_startup_cancels_without_poisoning_retry(self):
+        project, item = self.po()
+        launch = self.launcher._launch_room_agent_pty
+        def stop_after_candidate(*args, **kwargs):
+            info = launch(*args, **kwargs)
+            dashboard.stop_task(project["poRoomId"])
+            return info
+        with mock.patch.object(self.launcher, "_launch_room_agent_pty",
+                               side_effect=stop_after_candidate):
+            first = rotation.failover_po(project, item)
+        self.assertEqual(first["result"], "cancelled")
+        self.assertNotIn("poFailoverAlert", self.saved(project))
+        self.assertEqual(self.killed, ["old-pty", "pty-1"])
+        # A Start resumes the same old conversation in a new terminal.
+        chatroom.patch_participant(project["poRoomId"], "po", {"ptyId": "resumed-old-pty"})
+        second = rotation.failover_po(project, item)
+        self.assertEqual(second["result"], "switched")
+        saved = self.saved(project)
+        self.assertEqual(len(chatroom.participant(saved, "po")["rotations"]), 1)
+        self.assertEqual(len(self.launcher.launched), 2)
+        self.assertIn("resumed-old-pty", self.killed)
+
+    def test_wake_during_startup_is_replayed_to_new_po(self):
+        project, item = self.po()
+        launch = self.launcher._launch_room_agent_pty
+        held = []
+        def launch_and_wake(*args, **kwargs):
+            info = launch(*args, **kwargs)
+            self.assertTrue(rotation.hold_wake(project["poRoomId"], "po", "[relay] hello"))
+            return info
+        with mock.patch.object(self.launcher, "_launch_room_agent_pty",
+                               side_effect=launch_and_wake), \
+                mock.patch.object(rotation, "_replay", side_effect=lambda *args: held.append(args)):
+            self.assertEqual(rotation.failover_po(project, item)["result"], "switched")
+        self.assertEqual(held, [(project["poRoomId"], "po", ["[relay] hello"])])
+
+    def test_ordinary_block_and_waiting_do_not_trigger(self):
+        project, item = self.po()
+        self.assertEqual(rotation.failover_po(project, {**item, "cause": "login"})["result"],
+                         "no reliable usage-limit block")
+        self.assertEqual(rotation.failover_po(project, {**item, "state": "waiting_for_you"})["result"],
+                         "no reliable usage-limit block")
+        self.assertEqual(self.launcher.launched, [])
 
 
 class SessionAgentTests(unittest.TestCase):
