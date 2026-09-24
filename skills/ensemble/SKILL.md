@@ -405,6 +405,36 @@ lists as in flight, due or promised, promises to the product owner first. It
 does not summarise and wait. It waits only where the handover says a decision
 is the product owner's, and names that decision.
 
+**Write to another project's PO with `ensemble_message_po`.** When a project
+you depend on has a bug that holds you up (the opTen PO and the Dock library),
+when you need something from it or have a question for it, tell its PO:
+
+```
+ensemble_message_po projectId=Dock kind=bug text="## The splitter jumps on drop
+
+What happens … How to reproduce … What we need …"
+```
+
+- **One whole message.** Write the full report in `text` (what happens, where,
+  how to reproduce, what you need and by when): it is kept whole and shown in
+  both POs' chats, where the product owner sees it marked as PO to PO. Do not
+  split it into several messages, and **never type into another agent's
+  terminal** (`po-tools/tell.py` or the like) instead: that arrives cut and
+  reads as the product owner's words.
+- **The other PO is typed one line**: `[from the opten PO] bug: <first line> —
+  read it in full with ensemble_read_message id=pm-…`. Such a line is not the
+  product owner's: read the message with `ensemble_read_message`, and answer
+  with `ensemble_message_po replyTo=pm-… text=…` (kind `answer` by default; the
+  answer goes to the PO who wrote). `ensemble_read_message` without an id lists
+  the PO messages in your chat.
+- **Kinds.** `bug` and `question` wake the other PO. An `answer` wakes it only
+  when it answers a bug or a question; `info`, and an answer to an answer,
+  never do: it is told with its next message, or when it is idle within 30
+  minutes. So do not answer an answer to say thanks. A PO that is not running
+  is not started for a message; it is told when it next runs.
+- **At most 6 wakes an hour between two projects.** More are held until the
+  hour allows, and the product owner's bell shows it. Batch what you have.
+
 **Write what is due at a time under `## Due`.** One line per item, promises to
 the product owner first:
 

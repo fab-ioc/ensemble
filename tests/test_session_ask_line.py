@@ -109,7 +109,7 @@ class TheAskLine(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         code = "\n".join([
-            js_line(SRC, "const isHubRow ="), js_line(SRC, "const isLandmark ="),
+            js_line(SRC, "const isHubRow ="), js_line(SRC, "const isPoMsg ="), js_line(SRC, "const isLandmark ="),
             js_function(SRC, "chatWhen"),
             SRC[SRC.index("// ---- The open ask: what the task put"):SRC.index("// ---- The open ask: end")],
             js_line(SRC, "let ASK_SIG ="), js_function(SRC, "showAskLine"), js_function(SRC, "withHubRows"),

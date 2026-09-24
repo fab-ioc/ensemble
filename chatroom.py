@@ -778,6 +778,25 @@ def post_report(room_id: str, sender: str, to: str, text: str, meta: dict,
                 "status": room.get("status", "active"), "hopCount": room.get("hopCount", 0)}
 
 
+def post_po_message(room_id: str, sender: str, to: str, text: str, meta: dict) -> dict | None:
+    """A message between two projects' POs (``po_messages``), as one of the
+    two rooms keeps it: ``meta`` carries its id (the same in both rooms), its
+    projects and its direction. Rings nobody — the hub types the target PO a
+    line of its own — and leaves status and the hop count alone, like a
+    report. Returns the message, or None if there is no room."""
+    with _LOCK:
+        room = _read(room_id)
+        if room is None:
+            return None
+        msg = {"from": sender, "to": to, "text": text, "ts": _now(), "rang": [],
+               **meta, "kind": "pomsg"}
+        msg.setdefault("id", uuid.uuid4().hex[:12])
+        room.setdefault("messages", []).append(msg)
+        room["updatedAt"] = _now()
+        _write(room)
+        return msg
+
+
 def post_notice(room_id: str, sender: str, text: str, meta: dict) -> dict | None:
     """A line from the hub itself into a room, for the human — e.g. that the
     room's PO was rotated to a fresh session. Wakes nobody and leaves status

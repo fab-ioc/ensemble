@@ -72,6 +72,7 @@ from pathlib import Path
 
 import due
 import points
+import po_messages
 
 # Windows: the model call must not open a console window (a console-less host,
 # pythonw.exe, would otherwise give it one and lose the keyboard focus to it).
@@ -698,6 +699,11 @@ def start_scheduler() -> None:
                 due.maybe_tick()
             except Exception as e:
                 _log(f"due check error: {str(e)[:200]}")
+            # Messages between POs waiting for their PO to be idle (po_messages.py).
+            try:
+                po_messages.maybe_tick()
+            except Exception as e:
+                _log(f"PO messages check error: {str(e)[:200]}")
             # The person's points still open: one reminder each (points.py).
             try:
                 points.maybe_tick()
