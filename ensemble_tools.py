@@ -416,8 +416,8 @@ _ALL_TOOLS = [
         "name": "ensemble_get_roadmap",
         "description": (
             "Read a project's roadmap — ROADMAP.md in the project's home folder, "
-            "the same text the product owner sees and edits on the project's "
-            "Roadmap tab. Defaults to your own project. Returns the Markdown "
+            "the same text the product owner sees and edits first in the project's "
+            "Workspace Documents list. Defaults to your own project. Returns the Markdown "
             "text, the file path, whether it exists yet, and its `version`: pass "
             "that version to ensemble_update_roadmap so a newer edit is never "
             "overwritten."

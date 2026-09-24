@@ -324,8 +324,9 @@ being asked.
 ## The project roadmap
 
 Each project has one roadmap: `ROADMAP.md`, plain Markdown, in the project's
-home folder (`project.home`). The product owner reads and edits it on the
-project's **Roadmap** tab; the project's PO keeps it current through the tools.
+home folder (`project.home`). The product owner reads and edits it first in
+the project's Workspace Documents list; the project's PO keeps it current
+through the tools.
 
 - **If you are the project's PO, you own the roadmap**, alongside the
   project's documentation. When a task lands, a plan changes, or the product
