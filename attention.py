@@ -1193,6 +1193,10 @@ def _items() -> list[dict]:
         keys = {}
     items: list[dict] = []
     seen_now: set[tuple[str, str]] = set()
+    try:
+        held_po = _d.po_messages.held_by_room()
+    except Exception:
+        held_po = {}
 
     for room in rooms:
         if not room.get("launched", True):
@@ -1217,6 +1221,12 @@ def _items() -> list[dict]:
         room_hit = _room_level(room, live_agents)
         if room_hit and not any(f[0] == "waiting_for_you" for f in found):
             found.append((*room_hit, {}))
+        held = held_po.get(room["id"])
+        if held and not any(f[0] == "waiting_for_you" for f in found):
+            # Another PO's messages the hourly limit holds back (po_messages):
+            # the CEO sees two POs are talking more than they should.
+            found.append(("waiting_for_you", held["reason"],
+                          {"since": held["since"], "heldPoMessages": held["count"]}, {}))
         if not found:
             continue
         # One item per task: the worst thing wrong with it.
@@ -1257,7 +1267,7 @@ def _items() -> list[dict]:
         if extra.get("since"):
             item["askedAt"] = float(extra["since"])     # the pages say "since 15:55"
         for k in ("quote", "cause", "exitCode", "lastLines", "waitedSeconds", "askId",
-                  "ptyIds"):
+                  "ptyIds", "heldPoMessages"):
             if k in extra and extra[k] not in (None, ""):
                 item[k] = extra[k]
         items.append(item)

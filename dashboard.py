@@ -73,6 +73,8 @@ import chatroom
 import digest
 # What a handover says is due at a time: the idle PO is typed it then.
 import due
+# Messages between two projects' POs (ensemble_message_po).
+import po_messages
 # Task-management MCP tools (ensemble_*) served next to the chat tools.
 import ensemble_tools
 # A documents project's automatic file history (a private git dir per project).
@@ -122,6 +124,7 @@ ensemble_tools.bind(sys.modules[__name__])
 attention.bind(sys.modules[__name__])
 digest.bind(sys.modules[__name__])
 due.bind(sys.modules[__name__])
+po_messages.bind(sys.modules[__name__])
 rotation.bind(sys.modules[__name__])
 points.bind(sys.modules[__name__])
 sends.bind(sys.modules[__name__])
@@ -2164,6 +2167,9 @@ HUB_INPUT_KINDS = (
     ("[points] ", "points"),            # points.py: the person's points still open
 )
 # The kind is "completed", or a verdict such as "review 1 (changes requested)".
+# A message from another project's PO (po_messages.wake_line): the project's
+# name varies, so it is matched here rather than listed above.
+_PO_MESSAGE_HEAD = re.compile(r"\[from the (?P<fromProject>.+?) PO\] (?P<poKind>bug|question|answer|info): ")
 _REPORT_HEAD = re.compile(r"\[report\] (?P<reportKind>.+?) from task '(?P<taskTitle>.*?)' "
                           r"\((?P<taskId>[^\s,()]+), (?P<reporter>[^()]*?)\): ")
 
@@ -2180,6 +2186,9 @@ def hub_input_kind(text: str) -> dict:
             if m:
                 info.update(m.groupdict())
             return info
+    m = _PO_MESSAGE_HEAD.match(s)
+    if m:
+        return {"kind": "pomsg", **m.groupdict()}
     return {"kind": "human"}
 
 

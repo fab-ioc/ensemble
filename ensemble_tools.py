@@ -515,6 +515,60 @@ REVIEW_TOOLS = [
 ]
 REVIEW_TOOL_NAMES = frozenset(t["name"] for t in REVIEW_TOOLS)
 
+# Offered only to a project's PO (_is_project_po): writing to another
+# project's PO, and reading what POs wrote (po_messages.py). Kept literal.
+PO_MESSAGE_KINDS = ("bug", "question", "answer", "info")
+PO_MESSAGE_TOOLS = [
+    {
+        "name": "ensemble_message_po",
+        "description": (
+            "Write to the PO of another project: a bug in a project yours depends "
+            "on, a request or question to it, or your answer to a PO who wrote to "
+            "you. The whole text is kept and shown in both POs' chats, where the "
+            "CEO sees it; the other PO is typed one line naming it and reads the "
+            "rest with ensemble_read_message. Write the whole report in one "
+            "message (what happens, where, how to reproduce, what you need), "
+            "never several, and never type into another agent's terminal "
+            "instead. A bug or question wakes that PO; an answer wakes it only "
+            "when it answers a bug or question; info never does (it is told with "
+            "its next message, or within 30 minutes when idle). A PO that is not "
+            "running is told when it next runs. At most 6 wakes per hour between "
+            "two projects: more are held, and the CEO sees that."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "projectId": {"type": "string",
+                              "description": "The project whose PO you write to: its id or "
+                                             "name. Leave it out with replyTo."},
+                "text": {"type": "string", "description": "The whole message, Markdown."},
+                "kind": {"type": "string", "enum": list(PO_MESSAGE_KINDS),
+                         "description": "bug | question | answer | info. Default: question, "
+                                        "or answer with replyTo."},
+                "replyTo": {"type": "string",
+                            "description": "The id (pm-…) of the PO message you answer: the "
+                                           "reply goes to the PO it is between you and."},
+            },
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "ensemble_read_message",
+        "description": (
+            "Read a message between POs in full: one another project's PO sent "
+            "you (the hub typed you a line naming its id) or one you sent. "
+            "Without an id, list the PO messages in your chat, newest first."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "The message id (pm-…)."},
+            },
+        },
+    },
+]
+PO_MESSAGE_TOOL_NAMES = frozenset(t["name"] for t in PO_MESSAGE_TOOLS)
+
 # Offered only to the agent that may restart the hub (dashboard.may_restart_hub:
 # the PO of a room in HUB_RESTART_ROOMS, the Ensemble Dashboard PO by default).
 RESTART_TOOLS = [
@@ -575,6 +629,8 @@ def tool_schemas(room: dict, identity: str) -> list[dict]:
         tools += list(REVIEW_TOOLS)
     if _d.may_restart_hub((room or {}).get("id", ""), identity):
         tools += list(RESTART_TOOLS)
+    if _is_project_po(room or {}, identity):
+        tools += list(PO_MESSAGE_TOOLS)
     return tools
 
 
@@ -1462,6 +1518,37 @@ def _points(ctx, args, handler):
                        for p in sorted(show, key=lambda p: p["createdAt"])]}
 
 
+def _message_po(ctx, args, handler):
+    try:
+        return _d.po_messages.send(ctx["room"], ctx["identity"], ctx["projectId"],
+                                   args.get("projectId") or "", args.get("text") or "",
+                                   kind=args.get("kind") or "", reply_to=args.get("replyTo") or "")
+    except _d.po_messages.Refused as e:
+        raise ToolError(str(e)) from None
+
+
+def _read_message(ctx, args, handler):
+    pm = _d.po_messages
+    room = ctx["room"]
+    mid = str(args.get("id") or "").strip()
+    if not mid:
+        msgs = pm.messages_in(room)[::-1][:30]
+        return {"messages": [pm.view(m, full=False) for m in msgs],
+                "note": "read one in full with ensemble_read_message id=…" if msgs
+                        else "no PO messages in your chat yet"}
+    m = pm.find(room, mid)
+    if m is None:
+        raise ToolError(f"no PO message {mid} in your chat")
+    out = pm.view(m)
+    replies = [r["id"] for r in pm.messages_in(room) if r.get("replyTo") == mid]
+    if replies:
+        out["replies"] = replies
+    out["howToAnswer"] = (f"ensemble_message_po replyTo={mid} text=… (kind answer by default)"
+                          if m.get("direction") == "received" else
+                          f"a follow-up: ensemble_message_po replyTo={mid} kind=… text=…")
+    return out
+
+
 def _restart_hub(ctx, args, handler):
     res = _d.trigger_restart(ctx["room"]["id"])
     res.pop("status", None)
@@ -1489,6 +1576,8 @@ _IMPL = {
     "review_done": _review_done,
     "ensemble_restart_hub": _restart_hub,
     "ensemble_points": _points,
+    "ensemble_message_po": _message_po,
+    "ensemble_read_message": _read_message,
 }
 
 NAMES = frozenset(_IMPL)
@@ -1510,6 +1599,10 @@ def call(name: str, args: dict, room_id: str, identity: str, handler) -> tuple[s
                     f"{name} is available only to a reviewer during an active review")
             if name in RESTART_TOOL_NAMES:
                 raise ToolError(_d.RESTART_REFUSED)
+            if name in PO_MESSAGE_TOOL_NAMES:
+                raise ToolError(
+                    f"{name} is only for a project's PO: a task reports to its own PO "
+                    "with ensemble_report, and that PO writes to other projects' POs")
             raise ToolError(
                 f"{name} is not available to role '{role}': board administration "
                 "tools are reserved for a project's PO room or an agent whose "

@@ -2070,8 +2070,11 @@ function foldHeld(items, comments) {
 // folds the replies to the hub too.
 const HUB_KIND_LABEL = { digest: 'Progress check', due: 'Due now', report: 'Report', relay: 'Team message',
   resumed: 'Resumed', restart: 'Hub restarted', handover: 'Handover request', rotation: 'New session', madepo: 'Made PO', helper: 'Restart helper',
-  points: 'Your open points' };
+  points: 'Your open points', pomsg: 'From another PO' };
 const isHubInput = m => !!m && m.from === 'user' && !!m.kind && m.kind !== 'human';
+// A message between two projects' POs (po_messages.py), kept in both POs'
+// rooms: a balloon of its own, never folded as hub traffic.
+const isPoMsg = m => !!m && m.kind === 'pomsg';
 const foldShort = t => { t = String(t || '').trim(); return t.length > 40 ? t.slice(0, 39) + '…' : t; };
 // ---- Who writes to whom ----------------------------------------------------
 // A header names the task, the PO and the person as the reader knows them:
@@ -2122,7 +2125,10 @@ function reviewVerdict(m) {
 }
 const isPersons = m => !!m && m.from === 'user' && !isHubInput(m);
 const isDigest = m => !!m && (isHubInput(m) ? m.kind === 'digest' : m.from === 'ensemble' && reportBase(m) === 'digest');
+// "opten PO", "Dock PO": a message between POs names both by their projects.
+const poSide = name => (name || 'Another project') + ' PO';
 function senderName(m, N = CHAT_NAMES) {
+  if (isPoMsg(m)) return poSide(m.fromProjectName);
   const t = taskReport(m);
   const s = t && m.from === 'user' ? taskName(t, N) + (m.reporter ? ' ' + m.reporter : '')
     : isHubInput(m) ? 'Hub' : whoName(m.from, N);
@@ -2131,6 +2137,7 @@ function senderName(m, N = CHAT_NAMES) {
 }
 // Unaddressed, from the person or the hub in a PO's room: the PO reads it.
 function recipientName(m, N = CHAT_NAMES) {
+  if (isPoMsg(m)) return poSide(m.toProjectName);
   if (m.to && m.to !== 'all') return whoName(m.to, N);
   return N.po && (m.from === 'user' || m.from === 'ensemble') ? 'PO' : '';
 }
@@ -2145,6 +2152,7 @@ const agentClass = id => String(id || '').split('@')[0].replace(/-\d+$/, '');
 // What a message of a task is, in a few words: "update", "review 2 changes
 // requested", "completed", "PO ruling", "progress check".
 function kindName(m, N = CHAT_NAMES) {
+  if (isPoMsg(m)) return 'PO message';
   if (isDigest(m)) return 'progress check';
   if (taskReport(m)) {
     const b = reportBase(m);
@@ -2172,6 +2180,7 @@ function answerChip(a, N = CHAT_NAMES) {
     madepo: ['on becoming PO', 'The first words after the hub made this conversation a project’s PO'],
     helper: ['after a restart', 'A reply to the restart helper’s note after the hub restarted'],
     points: ['on your open points', 'A reply to the hub naming your points that are still open'],
+    pomsg: ['on a PO message', 'A reply to the hub saying another project’s PO wrote a message'],
   }[a.kind];
   return said ? { text: said[0], tip: said[1] } : null;
 }
@@ -2225,6 +2234,8 @@ function foldUnanswered(items) {
 // lozenge), or that a message of the person's has had no answer.
 function foldChips(m, un, idle, superseded) {
   let h = '';
+  if (isPoMsg(m))
+    h += `<span class="hub-kind" title="A message between two projects’ POs: not a task’s report, and not yours to answer">PO to PO${m.poKind ? ' · ' + esc(m.poKind) : ''}</span>`;
   if (isHubInput(m) || taskReport(m) || isDigest(m))
     h += `<span class="hub-kind"${m.taskTitle ? ` title="${esc(m.taskTitle)}"` : ''}>${esc(hubLabel(m))}</span>`;
   const a = m.from !== 'user' ? answerChip(m.answers) : null;
@@ -2273,7 +2284,7 @@ const DIGESTS = '~digests';
 // The task a message belongs to ('' for none); a transcript's reply to a
 // report belongs to the report's task.
 function taskOfMsg(m) {
-  if (!m || isLandmark(m) || isPersons(m)) return '';
+  if (!m || isLandmark(m) || isPersons(m) || isPoMsg(m)) return '';
   const t = taskReport(m);
   if (t) return t;
   const to = String(m.to || '').match(TASK_ADDR_RE);
@@ -3435,7 +3446,7 @@ function chatNamesFor(room, solo) {
 // A one-agent chat is its transcript; the hub's rows live in the room. Each
 // goes in by its time, among the turns shown (never above the first of them).
 function withHubRows(items, room) {
-  const rows = ((room && room.messages) || []).filter(isHubRow);
+  const rows = ((room && room.messages) || []).filter(m => isHubRow(m) || isPoMsg(m));
   if (!rows.length || !items.length) return items;
   const out = items.slice();
   for (const r of rows) {
@@ -3660,7 +3671,7 @@ async function refreshRoom() {
     SOLO_ROT = SOLO_ROTS.slice(-1)[0] || null;
     // What the hub holds for it changed (sent, delivered, failed): draw again.
     // …or the hub put a row of its own in the room (it was restarted).
-    const hubRows = (room.messages || []).filter(isHubRow).length;
+    const hubRows = (room.messages || []).filter(m => isHubRow(m) || isPoMsg(m)).length;
     const rowsChanged = hubRows !== HUB_ROWS_N;
     HUB_ROWS_N = hubRows;
     if ((pendChanged || rowsChanged) && SOLO_SID) renderSolo(SOLO_SID, SOLO_AGENT, true);
