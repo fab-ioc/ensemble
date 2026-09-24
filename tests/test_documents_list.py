@@ -233,7 +233,7 @@ class TheWiring(unittest.TestCase):
         self.assertNotIn("wst-x", docs_tab, "the Documents tab has no ×")
         self.assertIn("strip.hidden = !docs && !v.tabs.length;", tabs)
         self.assertIn("if (!path) return;", js_function("wsCloseTab"), "Delete or a middle click leave it")
-        self.assertIn("wsDocsHtml(v.docsList)", js_function("wsPaintView"))
+        self.assertIn("wsDocsHtml(v.docsList, wsDocsRm(v))", js_function("wsPaintView"))
         self.assertIn("if (wsDocsShowing(v)) wsDocsLoad(v, false);", js_function("wsSync"))
 
     def test_the_switch_sits_above_a_code_projects_tree(self):

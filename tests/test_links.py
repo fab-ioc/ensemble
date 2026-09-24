@@ -462,6 +462,8 @@ globalThis.localStorage = { get length() { return mem.size; }, key: i => [...mem
   getItem: k => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: k => mem.delete(k) };
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const toast = () => {}, wireScopeBar = () => {}, writeSlot = () => {}, wsJoin = (a, b) => a + '/' + b;
+// The page's own lookup reaches popped-out panels too; here there is one document.
+const pdById = id => document.getElementById(id);
 const PROJECTS = {
   pA: { id: 'pA', sessions: [{ roomId: 'room-aaaaaaa1', isLive: true }, { roomId: 'room-aaaaaaa2', isLive: true }] },
   pB: { id: 'pB', sessions: [{ roomId: 'room-bbbbbbb1', isLive: true }] },

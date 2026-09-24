@@ -86,12 +86,14 @@ log.page = needsYouHtml();
 // Opening: the page's own poContext, poSplitProject, poRowOf and renderPo run
 // over a stand-in for #po-panel, so what is read is the conversation shown.
 let PO_PEEK = false, PO_PIN = '', PO_LAST = '', SELECTED_PROJECT = '', PROJECT_TAB = 'changes', WS_SCOPE = 'x', SB_DEST = 'needsyou', SELECTED_SID = '';
-let WIDE = false, PHONE = false, calls = [], ALL_ROWS = [];
+let PHONE = false, calls = [], ALL_ROWS = [];
 const UNASSIGNED_ID = '__unassigned__', VIEW_MODE = 'board';
 const ROWS = PROJECTS.projects.flatMap(p => p.sessions.map(s => ({ roomId: s.roomId, sessionId: s.roomId })));
 const registeredProjects = () => PROJECTS.projects.filter(p => p.registered);
-const boardWide = () => WIDE && !PHONE;
 const isPhone = () => PHONE;
+// The PO screen's panels, loaded: a project with a PO is a Dock with the PO chat among them.
+var PD = { failed: '', lib: {} };
+const pdReveal = id => calls.push('reveal:' + id), pdPointsFrame = () => {}, pdPaintPoints = () => {}, pdSchedule = () => {};
 const el = () => ({ hidden: false, dataset: {}, kids: [], className: '',
   querySelectorAll() { return this.kids; }, appendChild(k) { this.kids.push(k); }, remove() {} });
 let head, frames, panel;
@@ -103,34 +105,33 @@ const renderRows = () => { calls.push('renderRows'); renderPo(); };
 const openDetail = id => calls.push('openDetail:' + id);
 const poFocusComposer = () => calls.push('focus');
 const seen = () => ({ peek: PO_PEEK, pin: PO_PIN, drawer: document.body.classList.on.has('po-peek'),
-  leads: document.body.classList.on.has('po-split'), room: panel.hidden ? '' : head.dataset.room,
+  leads: document.body.classList.on.has('po-dock'), calls: calls.slice(), room: panel.hidden ? '' : head.dataset.room,
   lit: panel.hidden ? [] : frames.kids.filter(f => !f.hidden).map(f => f.dataset.room) });
 const open = (rid, setup) => {
   PO_PEEK = false; PO_PIN = ''; SELECTED_PROJECT = ''; PROJECT_TAB = 'changes'; SB_DEST = 'needsyou'; SELECTED_SID = '';
-  WIDE = false; PHONE = false; ALL_ROWS = ROWS; calls = []; tray.hidden = false;
+  PHONE = false; ALL_ROWS = ROWS; calls = []; tray.hidden = false;
   head = el(); frames = el(); document.body.classList.on.clear();
   panel = { hidden: true, built: false, set innerHTML(v) { this.built = true; },
+            hasAttribute() { return false; }, removeAttribute() {}, classList: { remove() {} },
             querySelector(sel) { return !this.built ? null : sel === '.po-frames' ? frames : head; } };
   if (setup) { setup(); renderPo(); }
   openAttentionItem(rid);
   const lit = frames.kids.filter(f => !f.hidden).map(f => f.dataset.room);
   return { calls, peek: PO_PEEK, pin: PO_PIN, project: SELECTED_PROJECT, tab: PROJECT_TAB, dest: SB_DEST, tray: tray.hidden,
-           drawer: document.body.classList.on.has('po-peek'), leads: document.body.classList.on.has('po-split'),
+           drawer: document.body.classList.on.has('po-peek'), leads: document.body.classList.on.has('po-dock'),
            room: panel.hidden ? '' : head.dataset.room, lit };
 };
 const overview = id => () => { SELECTED_PROJECT = id; PROJECT_TAB = 'tasks'; SB_DEST = ''; };
 log.openPo = open('po-blocked');
 log.openPoLeading = open('po-blocked', overview('p1'));
 log.openPoOtherLeading = open('po-gone', overview('p1'));
-log.openPoWide = open('po-waiting', () => { overview('p2')(); WIDE = true; });
-log.openPoOtherWide = open('po-gone', () => { overview('p1')(); WIDE = true; });
 log.openPoOtherPhoneTask = open('po-gone', () => { overview('p1')(); PHONE = true; SELECTED_SID = 'room-a'; });
-// Three's PO opened over One's Overview (Board wide); then Beside, Board wide again, and One's pill.
-open('po-gone', () => { overview('p1')(); WIDE = true; });
+// Three's PO opened over Needs you; then One's PO screen; its pill there; the pill elsewhere, twice.
+open('po-gone');
 log.pillSteps = [seen()];
-WIDE = false; renderRows(); log.pillSteps.push(seen());
-WIDE = true; renderRows(); log.pillSteps.push(seen());
-poPillClick(); log.pillSteps.push(seen());
+overview('p1')(); calls = []; renderRows(); log.pillSteps.push(seen());
+calls = []; poPillClick(); log.pillSteps.push(seen());
+SELECTED_PROJECT = ''; SB_DEST = 'needsyou'; renderRows(); calls = []; poPillClick(); log.pillSteps.push(seen());
 poPillClick(); log.pillSteps.push(seen());
 // A drawer the phone layout closes leaves no pin either.
 open('po-gone'); PO_PEEK = false; renderPo(); log.pinAfterClose = PO_PIN;
@@ -149,7 +150,7 @@ class PoNeedsYouPage(unittest.TestCase):
         heads = ("function sinceClock(", "function attnWhen(",
                  "function attentionItems(", "function notifItemHtml(", "function needsYouHtml(",
                  "function openAttentionItem(", "function openPoOf(", "function poRowOf(",
-                 "function projectOfRoom(", "function poSplitProject(", "function poContext(", "function renderPo(", "function poPillClick(")
+                 "function projectOfRoom(", "function poDockProject(", "function poSplitProject(", "function poContext(", "function renderPo(", "function poPillClick(")
         src = "\n".join([INDEX[i:INDEX.index("// ---- Task search: end", i)]] + [fn(INDEX, h) for h in heads])
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "po_needs_you.cjs"
@@ -197,11 +198,8 @@ class PoNeedsYouPage(unittest.TestCase):
                          "the drawer over the page you are on")
         self.assertEqual((o["dest"], o["tray"]), ("needsyou", True), "Needs you stays under it; the tray closes")
         lead = self.r["openPoLeading"]
-        self.assertEqual((lead["calls"], lead["drawer"], lead["leads"], lead["room"]), ([], False, True, "po-blocked"),
-                         "already leading the Overview")
-        wide = self.r["openPoWide"]
-        self.assertEqual((wide["drawer"], wide["room"], wide["lit"]), (True, "po-waiting", ["po-waiting"]),
-                         "Board wide: the PO is the drawer")
+        self.assertEqual((lead["calls"], lead["drawer"], lead["leads"], lead["room"]), (["reveal:po-chat"], False, True, "po-blocked"),
+                         "already leading its PO screen: the PO chat panel comes on screen")
         for k, o in self.r.items():
             if k.startswith("openPo"):
                 self.assertFalse([c for c in o["calls"] if c.startswith("openDetail")], k)
@@ -210,19 +208,17 @@ class PoNeedsYouPage(unittest.TestCase):
         other = self.r["openPoOtherLeading"]
         self.assertEqual((other["project"], other["tab"], other["leads"], other["drawer"], other["room"], other["lit"]),
                          ("p3", "tasks", True, False, "po-gone", ["po-gone"]), "a PO leads the page: go to the one asked for")
-        wide = self.r["openPoOtherWide"]
-        self.assertEqual((wide["project"], wide["drawer"], wide["room"], wide["lit"]),
-                         ("p1", True, "po-gone", ["po-gone"]), "Board wide on One's Overview: Three's PO in the drawer")
         phone = self.r["openPoOtherPhoneTask"]
         self.assertEqual((phone["project"], phone["drawer"], phone["room"], phone["lit"]),
                          ("p1", True, "po-gone", ["po-gone"]), "a phone's open task on One's Overview: the same")
 
     def test_the_pill_opens_the_po_it_names_after_a_pinned_drawer_ended(self):
-        opened, beside, wide, pill, again = self.r["pillSteps"]
+        opened, screen, there, pill, again = self.r["pillSteps"]
         self.assertEqual((opened["drawer"], opened["room"], opened["pin"]), (True, "po-gone", "p3"))
-        self.assertEqual((beside["leads"], beside["drawer"], beside["room"], beside["pin"]),
-                         (True, False, "po-blocked", ""), "One's PO leads the page: the drawer and its pin end")
-        self.assertEqual((wide["drawer"], wide["room"]), (False, ""), "Board wide again: nothing open")
+        self.assertEqual((screen["leads"], screen["drawer"], screen["room"], screen["pin"]),
+                         (True, False, "po-blocked", ""), "One's PO screen: its PO leads, the drawer and its pin end")
+        self.assertEqual((there["calls"], there["drawer"], there["leads"]), (["reveal:po-chat", "focus"], False, True),
+                         "the pill on the PO screen brings the PO chat panel forward and its box takes the keys")
         self.assertEqual((pill["drawer"], pill["room"], pill["lit"], pill["pin"]),
                          (True, "po-blocked", ["po-blocked"], ""), "One's pill opens One's PO, not the one pinned before")
         self.assertEqual((again["drawer"], again["peek"]), (False, False), "and closes it")
@@ -232,7 +228,7 @@ class PoNeedsYouPage(unittest.TestCase):
     def test_a_po_whose_row_has_not_loaded_opens_its_project(self):
         o = self.r["openPoNoRow"]
         self.assertEqual((o["calls"], o["project"], o["tab"], o["dest"], o["peek"], o["room"]),
-                         (["renderRows"], "p1", "tasks", "", False, ""))
+                         (["renderRows", "reveal:po-chat"], "p1", "tasks", "", False, ""))
 
     def test_a_task_still_opens_its_panel(self):
         o = self.r["openTask"]
