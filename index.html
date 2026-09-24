@@ -9001,12 +9001,22 @@ function pdLoad() {
       // A panel's own window gets the page's document-wide listeners: a task
       // link clicked there opens the task (in this window), typing there
       // counts as input for Page update.
+      // The frames in it (a file viewer, the PO chat) talk to their parent
+      // window, which is that one: what they say is passed on to this page.
       lib.onEveryWindow(w => {
         if (w === window) return null;
         const d = w.document, skip = new Set(['visibilitychange', 'selectionchange']);
         const ls = window.DOC_LISTENERS.filter(([t]) => !skip.has(t));
         for (const [t, fn, o] of ls) d.addEventListener(t, fn, o);
-        return () => { for (const [t, fn, o] of ls) { try { d.removeEventListener(t, fn, o); } catch (e) {} } };
+        const relay = e => {
+          if (e.origin !== location.origin) return;
+          try { window.dispatchEvent(new MessageEvent('message', { data: e.data, origin: e.origin, source: e.source })); } catch (err) {}
+        };
+        w.addEventListener('message', relay);
+        return () => {
+          for (const [t, fn, o] of ls) { try { d.removeEventListener(t, fn, o); } catch (e) {} }
+          try { w.removeEventListener('message', relay); } catch (e) {}
+        };
       });
     })
     .catch(e => { PD.failed = (e && e.message) || 'failed'; console.warn('[po-dock] the panels could not load:', PD.failed); })

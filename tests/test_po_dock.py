@@ -303,7 +303,11 @@ async function main() {
       await new Promise(r => setTimeout(r, 200));
       d.querySelector('.viewsw button[data-view="list"]').click(); await new Promise(r => setTimeout(r, 200));
       const list = d.querySelectorAll('tr.row').length; d.querySelector('.viewsw button[data-view="board"]').click(); await new Promise(r => setTimeout(r, 200));
-      return { live, followed, back: d.documentElement.dataset.theme === theme, list, title: d.title, styled: getComputedStyle(d.querySelector('.card')).borderRadius };
+      // A frame in the window talks to its parent, the window: the page hears it.
+      let heard = null; const hear = e => { if (e.data && e.data.type === 'dock-relay-check') heard = e.source === w; };
+      window.addEventListener('message', hear); new w.Function("postMessage({ type: 'dock-relay-check' }, location.origin)")();
+      await new Promise(r => setTimeout(r, 200)); window.removeEventListener('message', hear);
+      return { live, followed, back: d.documentElement.dataset.theme === theme, list, title: d.title, styled: getComputedStyle(d.querySelector('.card')).borderRadius, heard };
     })()`);
     await p.evalIn('PD.dock.popWindow("board").close(); 0');
     await p.until('!PD.dock.isOut("board") && PD.els.board.ownerDocument === document', 10000);
@@ -486,6 +490,7 @@ class InChrome(unittest.TestCase):
         self.assertGreater(b["list"], 0, "a click there switches the view")
         self.assertEqual(b["title"], "Board · Motors")
         self.assertNotEqual(b["styled"], "0px", "the page's styles came along")
+        self.assertTrue(b["heard"], "a message to the window reaches the page, with its source")
         self.assertTrue(self.got["boardBack"]["inDock"] and self.got["boardBack"]["cards"] > 0)
 
     def test_a_popped_out_po_chat_takes_typing_and_comes_back(self):
