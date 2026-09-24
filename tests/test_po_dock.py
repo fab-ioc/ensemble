@@ -507,6 +507,17 @@ async function main() {
       tabs: [...document.querySelectorAll('#po-dock .dk-tab')].map(t => t.dataset.dkTab), front: PD_IDS.filter(id => PD.dock.frontOf(id) === id),
       ctl: [...document.querySelectorAll('#po-dock [data-dk-act]')].filter(x => x.offsetWidth).length, strip: document.querySelectorAll('.dk-strip-btn').length,
       chatIn: PO_PANEL.parentNode === PD.els['po-chat'], kept: !!pdChatFrame().contentWindow.__kept, scrollX: document.documentElement.scrollWidth - innerWidth })`);
+    // Points in front, then a task over the PO screen and the pill's drawer over the task:
+    // the Points panel is covered, so the chat shows its own points line again.
+    await p.evalIn('pdReveal("points"); 0'); await sleep(300);
+    out.peekBefore = await p.evalIn('pdPointsOnScreen()');
+    await p.evalIn(`(() => { openDetail(${JSON.stringify(A.task)}); PO_PEEK = true; renderPo(); return 0; })()`);
+    await p.until('document.body.classList.contains("po-peek") && PO_PANEL.parentNode === PD_HOST', 10000); await sleep(400);
+    out.peek = await p.evalIn(`(() => { const f = pdChatFrame(); return { onScreen: pdPointsOnScreen(), elsewhere: f.hasAttribute('data-points-elsewhere'),
+      line: !f.contentDocument.getElementById('points-line').hidden, drawer: !PO_PANEL.hidden && !PO_PANEL.classList.contains('pd-off') }; })()`);
+    await p.evalIn('PO_PEEK = false; closeDetail(); pdReveal("po-chat"); 0');
+    await p.until('!document.body.classList.contains("po-peek") && PO_PANEL.parentNode === PD.els["po-chat"]', 10000); await sleep(300);
+    out.peekAfter = await p.evalIn('pdPointsFrame(), pdChatFrame().hasAttribute("data-points-elsewhere")');
     await c.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, p.sessionId);
     await p.until('!PD.dock.narrow()', 10000); await sleep(400);
     out.toWide = await p.evalIn(`({ same: window.__dock === PD.dock, asWas: (() => { const L = PD.dock.layout(); return JSON.stringify([L.root, L.auto.map(a => [a.id, a.edge]), L.floats, L.hidden]); })() === window.__wide,
@@ -719,6 +730,13 @@ class InChrome(unittest.TestCase):
         w = self.got["toWide"]
         self.assertTrue(w["same"] and w["chatIn"] and w["kept"])
         self.assertTrue(w["asWas"], "the wide layout as it was")
+
+    def test_the_phone_drawer_over_a_task_brings_the_chats_points_line_back(self):
+        self.assertTrue(self.got["peekBefore"], "Points in front on the phone")
+        k = self.got["peek"]
+        self.assertTrue(k["drawer"], "the drawer is open over the task")
+        self.assertFalse(k["onScreen"] or k["elsewhere"], "the Points panel is covered")
+        self.assertTrue(k["line"], "the chat shows its own points line")
 
     def test_a_points_arrow_scrolls_the_chat_to_its_balloon_and_marks_it(self):
         a = self.got["arrow"]

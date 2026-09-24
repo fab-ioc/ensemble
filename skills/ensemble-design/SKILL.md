@@ -676,10 +676,11 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
    panel forward and focuses its composer instead of opening a second copy. (A phone's open task
    covers the PO screen, so there the pill opens the drawer over the task.)
 
-   **A live session is built once and never re-parented.** The PO's conversation is one iframe in
-   `#po-panel`, which never moves. On the PO screen it lies over the PO chat panel's place; everywhere
-   else it is a fixed drawer; only its classes and its measured box change between the two. Moving
-   an iframe in the DOM reloads it, so navigating must restyle it, never move it.
+   **A live session is built once and never reloaded by navigation.** The PO's conversation is one
+   iframe in `#po-panel`. On the PO screen it sits inside the PO chat panel; everywhere else it is a
+   fixed drawer. It moves between the two only through `pdPlaceChat`/`pdMove`, which use
+   `moveBefore` so the iframe keeps its page (a plain `appendChild` would reload it; browsers
+   without `moveBefore` do reload it then). Never rebuild it, and never move it any other way.
 2. **The board groups; it never sorts.** Priority first, then most recently updated, in *both* views.
    The hover-freeze works by being the **only** place ordering happens — any second sort defeats it and
    cards move under the cursor. Two tasks must never swap places because someone flipped the view

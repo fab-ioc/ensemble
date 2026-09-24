@@ -1163,10 +1163,10 @@
   .ptabs button:hover { color: var(--fg); }
   .ptabs button.on { color: var(--fg); border-bottom-color: var(--accent); }
   /* ---- The PO ------------------------------------------------------------
-     One element, #po-panel, in two places: a grid cell beside the board on a
-     project's Overview tab, and a drawer the bar's pill opens anywhere else.
-     Only its classes change between the two. Moving an iframe in the DOM
-     reloads it, so the live session inside is never moved, only restyled. */
+     One element, #po-panel, in two places: inside the PO chat panel on a
+     project's PO screen, and a drawer the bar's pill opens anywhere else.
+     pdPlaceChat moves it between the two with moveBefore, so the live session
+     inside keeps its page (browsers without moveBefore reload it then). */
   #po-pill {
     height: 28px; padding: 0 var(--s-300) 0 var(--s-100); gap: var(--s-200);
     border-color: var(--border-strong); border-radius: var(--r-full);
@@ -8778,7 +8778,7 @@ function renderPo() {
   let split = poSplitProject();
   const dock = !!split;
   // On a phone an open task covers the page the PO leads, so there the pill
-  // peeks at the PO over the task; the same panel, restyled, never moved.
+  // peeks at the PO over the task: the chat goes home to the drawer.
   if (split && PO_PEEK && SELECTED_SID && isPhone()) split = null;
   const ctx = poContext();
   // A peek has nothing to show once its project has no PO, and none is needed
@@ -9214,6 +9214,8 @@ function pdPopChat(out) {
 function pdPointsOnScreen() {
   if (!PD.dock || !document.body.classList.contains('po-dock')) return false;
   if (PD.dock.popWindow('points') && PD.els.points.ownerDocument !== document) return true;
+  // A phone's open task covers the PO screen, and the drawer peeks over it.
+  if (document.body.classList.contains('po-peek')) return false;
   const el = PD.els.points;
   if (el.ownerDocument !== document || !el.isConnected || el.closest('.dk-parking') || el.classList.contains('dk-off')) return false;
   const fly = el.closest('.dk-flyout');
@@ -11493,8 +11495,9 @@ function wsRenderInto(panel, pj) {
   if (docs) docsPanelRender(panel, pj);
 }
 // #ws-panel sits in the Workspace panel of a PO screen, else beside #view.
-// It moves only when the page changes between the two (its file viewers load
-// again then), never on a refresh.
+// It moves only when the page changes between the two, never on a refresh,
+// and with moveBefore, so its file viewers keep their pages (browsers without
+// moveBefore reload them then).
 function wsPlace(docked) {
   const wsp = pdById('ws-panel');
   if (!wsp) return null;
