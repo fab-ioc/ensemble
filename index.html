@@ -8682,10 +8682,11 @@ setInterval(() => {
 // ---- The PO -----------------------------------------------------------------
 // A project's PO is one of its tasks (poRoomId in project.json) whose agent
 // runs the project for the owner: every other task reports to it. Its
-// conversation leads the project's Overview tab, beside the board, and the pill
-// in the bar peeks at it from any other page. Both are #po-panel, a sibling of
-// #view, built once: the session inside is created once per PO and only ever
-// hidden or restyled, so navigating never reconnects it.
+// conversation leads the project's Overview tab, the PO screen (a dock of
+// panels), and the pill in the bar peeks at it from any other page. Both are
+// #po-panel, built once: pdPlaceChat moves it between the PO chat panel and
+// the drawer with moveBefore, so the session inside is created once per PO and
+// navigating never reconnects it (browsers without moveBefore reload it).
 var PO_PEEK = false;
 var PO_PIN = '';   // the project whose PO a balloon link opened, while its drawer is open
 var PO_LAST = (() => { try { return localStorage.getItem('cd-po-last') || ''; } catch (e) { return ''; } })();
@@ -9938,7 +9939,7 @@ document.addEventListener('click', async (ev) => {
 // ---- Documents project: begin ------------------------------------------------
 // A documents project is a folder of files, not code (car ads, a leasing
 // contract, letters). Its Workspace tab is its files and their recent changes
-// (the Files panel); its Overview is the board, beside its PO if it has one;
+// (the Files panel); its Overview is the board, or the PO screen if it has a PO;
 // its tasks work in its folder; and the hub keeps every version
 // of every file with who changed it (history.py). Plain data and functions down
 // to histPaint, so tests/test_documents_project.py runs them in Node.
@@ -9965,7 +9966,7 @@ function kindBtnHtml(pj) {
   if (!pj || !pj.registered || !pj.path || pj.id === UNASSIGNED_ID) return '';
   const docs = isDocsProject(pj);
   const tip = docs ? 'Its Workspace tab holds its files, and every version of them is kept. Click to change'
-                   : 'Its Overview leads with the PO and the board. Click to change';
+                   : 'Its Overview is the PO screen: the PO chat, its points and the board as panels. Click to change';
   return `<button type="button" class="po-btn kind-btn" data-proj="${esc(pj.id)}" title="${tip}">${docs ? 'Documents project' : 'Code project'}</button>`;
 }
 // A documents project without a PO shows no note asking for one (it may need
@@ -9979,7 +9980,7 @@ function kindDialogHtml(pj) {
   const opt = (k, label, text) => `<label class="kind-opt"><input type="radio" name="kind" value="${k}"${(k === 'documents') === docs ? ' checked' : ''}> <b>${label}</b><br><span class="cfg-hint">${text}</span></label>`;
   return `<h3>What kind of project is ${esc(pj.name)}?</h3>`
     + `<div class="im-field" role="radiogroup" aria-label="Kind of project">`
-    + opt('code', 'Code project', 'Its Overview leads with the PO and the board. Tasks work in their own folders, copies or worktrees.')
+    + opt('code', 'Code project', 'Its Overview is the PO screen: the PO chat, its points and the board as panels. Tasks work in their own folders, copies or worktrees.')
     + opt('documents', 'Documents project', 'Its Workspace tab holds its files, to add, move and restore them. Tasks work directly in the project folder, several at once, and every version of every file is kept with who changed it.')
     + `</div>`
     + `<div class="actions"><button id="kind-ok">Save</button><button id="kind-cancel" class="secondary">Cancel</button></div>`;
