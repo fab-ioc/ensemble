@@ -496,12 +496,22 @@ export function activate(layout, id) {
 
 // ---------- a stored layout ----------
 
+// A stored `home`, made safe. It keeps the fields it has and adds none, so a layout that comes through here again (a
+// reload, or narrow and back) comes out the same: an `index` it lacks stays absent (the panel goes after its peers).
 function normHome(h) {
   if (!h || typeof h !== 'object') return null;
-  const out = { peers: Array.isArray(h.peers) ? h.peers.filter((p) => typeof p === 'string') : [], index: finite(h.index) ? h.index : 0,
-    near: typeof h.near === 'string' ? h.near : null, side: EDGES.includes(h.side) ? h.side : null };
+  const out = {};
+  if ('peers' in h) out.peers = Array.isArray(h.peers) ? h.peers.filter((p) => typeof p === 'string') : [];
+  if (finite(h.index)) out.index = h.index;
+  if ('near' in h) out.near = typeof h.near === 'string' ? h.near : null;
+  if ('side' in h) out.side = EDGES.includes(h.side) ? h.side : null;
   if (finite(h.size) && h.size > 0) out.size = h.size;
   if (Array.isArray(h.nearAll)) { const all = h.nearAll.filter((p) => typeof p === 'string'); if (all.length) out.nearAll = all; }
+  return out;
+}
+// `out` with `from`'s home made safe, when `from` has one (null included); with none when it has none.
+function withHome(out, from) {
+  if ('home' in from) out.home = normHome(from.home);
   return out;
 }
 
@@ -542,16 +552,16 @@ export function normalizeLayout(raw, opts = {}) {
     const s = f && normStack(f.stack);
     if (!s) continue;
     delete s.size;
-    layout.floats.push({ stack: s, x: finite(f.x) ? f.x : 80, y: finite(f.y) ? f.y : 60, w: finite(f.w) && f.w > 0 ? f.w : 480,
-      h: finite(f.h) && f.h > 0 ? f.h : 360, home: normHome(f.home) });
+    layout.floats.push(withHome({ stack: s, x: finite(f.x) ? f.x : 80, y: finite(f.y) ? f.y : 60, w: finite(f.w) && f.w > 0 ? f.w : 480,
+      h: finite(f.h) && f.h > 0 ? f.h : 360 }, f));
   }
   for (const a of Array.isArray(raw.auto) ? raw.auto : []) {
     if (!a || !take(a.id)) continue;
-    layout.auto.push({ id: a.id, edge: EDGES.includes(a.edge) ? a.edge : 'right', size: finite(a.size) && a.size > 0 ? a.size : unpin, home: normHome(a.home) });
+    layout.auto.push(withHome({ id: a.id, edge: EDGES.includes(a.edge) ? a.edge : 'right', size: finite(a.size) && a.size > 0 ? a.size : unpin }, a));
   }
   const normWas = (w) => {
     const was = w && typeof w === 'object' ? w : {};
-    const keep = { kind: ['dock', 'float', 'auto'].includes(was.kind) ? was.kind : 'dock', home: normHome(was.home) };
+    const keep = withHome({ kind: ['dock', 'float', 'auto'].includes(was.kind) ? was.kind : 'dock' }, was);
     if (keep.kind === 'float' && was.float && ['x', 'y', 'w', 'h'].every((k) => finite(was.float[k]))) keep.float = { ...was.float };
     else if (keep.kind === 'float') keep.kind = 'dock';
     if (keep.kind === 'float' && Array.isArray(was.peers)) {
@@ -563,7 +573,7 @@ export function normalizeLayout(raw, opts = {}) {
   };
   for (const h of Array.isArray(raw.hidden) ? raw.hidden : []) {
     if (!h || !take(h.id)) continue;
-    layout.hidden.push({ id: h.id, was: normWas(h.was) });
+    layout.hidden.push(h.was === undefined ? { id: h.id } : { id: h.id, was: normWas(h.was) });
   }
   // The panels in windows of their own, with where those windows were. One stored with `was` has no place in the
   // layout; one stored before (no `was`) still has its place there, and leaves it below.

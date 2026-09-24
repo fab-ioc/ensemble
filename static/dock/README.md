@@ -134,6 +134,7 @@ text), and `src/host.js` for apps whose panels open dialogs (below).
 | `can` | none | `(id, action) => boolean`, action `move float unpin pop max min hide`: `false` takes that control, menu item (the Panels menu's too, for `hide`) and gesture away from a person (the app's own calls still work) |
 | `popUrl`, `popName`, `popTitle` | `'popout.html'`, `'dock-panel-'`, `(p) => p.title` | the pop-out window's page, window name prefix, and title |
 | `popHtml` | none | `true`: open the pop-out page (`POP_HTML`) from a `blob:` URL of its text instead of loading `popUrl`; or the text of a page of the app's own (it needs an element with id `dk-pop-root`; its scripts run as any page's) |
+| `popBase` | `document.baseURI` | with `popHtml`: the base URL of the pop-out page's relative URLs, put in it as `<base href>` (the page's own HTML `<base href>`, if it has one, is kept instead); the page is read with the browser's `DOMParser` and written back from it, so a comment before `<html>` is dropped; `false`: no `<base>`, the page as given, its base its `blob:` URL |
 | `copyStyles` | `true` | copy the page's `<link rel=stylesheet>` and `<style>` into a pop-out window |
 | `themeAttrs`, `themeEvent` | `data-theme data-scheme class style`, `'dock-theme'` | what of `<html>` a pop-out window copies, and the event that says the theme changed (a MutationObserver also watches) |
 | `help` | none | `{ icon(key, panel) → html, mount(doc) → { destroy } \| fn, selector }`; `createHelp()` makes one |
@@ -193,7 +194,11 @@ person can do, not the app's own calls.
   role of its own.
 - **F6** and **Shift+F6**, with focus anywhere in the dock, go to the next or previous stack's front tab: the docked
   stacks in order, then the floating windows, then a slid-out panel (only the maximised one while a stack is maximised).
-  Outside the dock F6 stays the browser's.
+  Outside the dock F6 stays the browser's. With focus inside an iframe in a panel (a text box in it, say) F6 works the
+  same, if the iframe is **same-origin**: the dock puts its key listener on each same-origin iframe's document in the
+  dock, again each time the iframe loads a page, and on iframes the app adds later; `destroy()` takes them off. A
+  **cross-origin** iframe's document cannot be reached, so the dock skips it, silently, and F6 inside it stays the
+  browser's (as do iframes nested inside a panel's iframe, and a panel's in its own window).
 - **Escape** restores a maximised stack and slides a slid-out panel back in; arrow keys on a focused splitter move it.
 
 Every focus the dock gives is `{ preventScroll: true }`, and `.dock` and its boxes are `overflow: clip`, not `hidden`, so
@@ -305,9 +310,14 @@ data and listeners stay where they were, so it keeps updating. What the host app
    window at its `blob:` URL, which is on the app's origin; `popHtml: '<!doctype html>…'` does the same with an app's
    own page. Nothing is fetched from the server, so a server that cannot serve `popout.html` does not matter. The
    browser loads it as a page: its doctype holds (standards mode), and its scripts run as any page's (inline, modules,
-   `src`, `DOMContentLoaded`). Its base is the `blob:` URL, so a relative `src` or `href` in an app's own page
-   finds nothing: make them absolute. A reload of the window acts as with `popout.html`: the panel comes back to the
-   main window. The dock keeps one URL and revokes it in `destroy()`. (Not measured: whether an installed app opens a
+   `src`, `DOMContentLoaded`). Its relative URLs (links, images, iframes, scripts) resolve against the main page, as
+   in `popout.html` beside it: the dock puts `<base href>` of the main page's `document.baseURI` first in its head
+   (`popBase` sets another base, or `false` none, which leaves the `blob:` URL as the base, against which a relative URL
+   finds nothing). An app's own page with a `<base href>` of its own keeps that one. The dock reads the page as the
+   browser does (its `DOMParser`), so a `<base>` in a comment, a `<template>` or an svg does not count, and writes it
+   back with its doctype (same mode); what lies outside `<html>`, such as a comment before it, is not kept. A reload of the window acts as with `popout.html`: the panel comes back to the
+   main window. The dock keeps one URL (one for each base, if the page's base changes with `history.pushState`) and
+   revokes them in `destroy()`. (Not measured: whether an installed app opens a
    `blob:` URL as an app window; see the next section for `popUrl`.)
 2. **A click to open it.** Browsers open windows only from a user gesture, so `popOut(id)` must run from a click. If the
    browser blocks it, the dock says so and the panel stays.
@@ -386,8 +396,9 @@ The browser tests prove, on the demo page, that a popped-out panel leaves no pla
 room, keeps receiving live updates, takes typing, clicks and its dialog, has the current theme and follows every set
 picked in the theme picker, comes back to its stack when its window closes (three ways) or from the Panels menu, and
 survives a reload of the main window (reopen, or bring it back, from the notice); all of it again with `popHtml`, where
-`popout.html` is never requested. `needs.js` proves that the demo's iframe does not reload when splitters are dragged,
+`popout.html` is never requested, a relative URL in the window resolves against the main page, `popBase: false` leaves
+the `blob:` URL as its base, and a page's own `<base>` is kept while one in a comment, svg or `<template>` is not. `needs.js` proves that the demo's iframe does not reload when splitters are dragged,
 tabs switched, or other panels floated, unpinned, slid out or popped out, with and without `moveBefore`, and keeps its
 page with it when its own panel moves; that a strip slide-out scrolls nothing (with `overflow: clip`, and with `hidden`
-put back); the roving tabs, their roles and F6; narrow mode (no controls, no drag, no double-click maximise, its own
+put back); the roving tabs, their roles and F6 (from inside an iframe panel too, after it reloads, and from one added later); narrow mode (no controls, no drag, no double-click maximise, its own
 layout, a phone-sized window); and that `dock-popin` and `onPopIn` come while the panel is still in its window.

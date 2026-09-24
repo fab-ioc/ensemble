@@ -110,6 +110,32 @@ function arrange(parent, kids) {
   }
 }
 
+/**
+ * A page's text with `<base href="base">` first in its head, so its relative URLs resolve against `base`, as the
+ * browser's own parser reads the page (`Parser`: a DOMParser). A page with a `<base href>` of its own that works (an
+ * HTML one, in the document: not in a <template>, svg or math) is returned as it is, and so is any page where there is
+ * no DOMParser (Node). The page is written back from its parsed document with its own doctype, so it keeps its mode;
+ * what lies outside <html> (a comment before it) is not kept.
+ */
+export function withBase(html, base, Parser = globalThis.DOMParser) {
+  if (typeof Parser !== 'function') return html;
+  let d;
+  try { d = new Parser().parseFromString(html, 'text/html'); } catch { return html; }
+  if (!d || !d.head || !d.documentElement) return html;
+  if ([...d.querySelectorAll('base[href]')].some((b) => b.namespaceURI === 'http://www.w3.org/1999/xhtml')) return html;
+  const tag = d.createElement('base');
+  tag.setAttribute('href', base);
+  d.head.insertBefore(tag, d.head.firstChild);
+  return doctypeOf(d.doctype) + d.documentElement.outerHTML;
+}
+// A doctype as markup: `<!DOCTYPE html>`, with its public and system ids if it has them (they decide the mode).
+function doctypeOf(t) {
+  if (!t) return '';
+  const q = (s) => `"${String(s).replace(/"/g, '')}"`;
+  const ids = t.publicId ? ` PUBLIC ${q(t.publicId)}${t.systemId ? ' ' + q(t.systemId) : ''}` : t.systemId ? ` SYSTEM ${q(t.systemId)}` : '';
+  return `<!DOCTYPE ${t.name || 'html'}${ids}>`;
+}
+
 function defaultStorage() {
   try { return typeof localStorage !== 'undefined' ? localStorage : null; } catch { return null; }
 }
@@ -148,6 +174,7 @@ export function panelsFrom(container) {
  *   storage, storageKey, migrate             where the layout is kept (any { getItem, setItem, removeItem })
  *   defaultLayout, minSize, edgeOf, fill, defaultSize, sizes    the layout's defaults (layout.js makeConfig)
  *   popUrl, popName, popTitle, copyStyles, openWindow           pop-out windows
+ *   popHtml, popBase                        a pop-out page without a served file, and the base of its relative URLs
  *   themeAttrs, themeEvent                  what of the main page's <html> a pop-out window copies, and when
  *   help: { icon(key, panel), mount(doc), selector }            a panel's help control, and its popovers in a window
  *   modalSelector, badgeClass, text, onReset, win
@@ -162,7 +189,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   copyStyles = true, themeAttrs = THEME_ATTRS, themeEvent = THEME_EVENT, help = {}, modalSelector = '[role="dialog"], .dk-help-pop',
   badgeClass = 'dk-badge', text = {}, onReset = null, migrate = null,
   defaultLayout, minSize, edgeOf, fill, defaultSize, sizes,
-  narrow = false, narrowLayout, narrowKey, can = null, popHtml = null,
+  narrow = false, narrowLayout, narrowKey, can = null, popHtml = null, popBase,
   openWindow = (url, name, features) => (win && typeof win.open === 'function' ? win.open(url, name, features) : null) }) {
   const doc = root.ownerDocument;
   const T = { ...TEXT, ...text };
@@ -819,15 +846,26 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
 
   // The pop-out page without a served file (popHtml): the page's text as a Blob, opened by its blob: URL. That URL has
   // this page's origin, and the window loads it as it would popout.html: a standards-mode document whose scripts run as
-  // the browser runs any page's. One URL for the dock's life; destroy() lets it go (so does this page unloading).
-  let popBlobUrl = null;
+  // the browser runs any page's. Its own base would be the blob: URL, against which a relative URL finds nothing, so the
+  // page gets a <base href> of this page's base (popBase), unless it has a <base> of its own. One URL for each base
+  // (a page's base changes only with history.pushState and no <base>); destroy() lets them go (so does this page unloading).
+  const popBlobUrls = new Map(); // the page's text -> its blob: URL
   const urlEnv = () => {
     const view = doc.defaultView;
     return view && view.URL && typeof view.URL.createObjectURL === 'function' ? view : globalThis;
   };
+  function popPageText() {
+    const base = popBase === false ? null : typeof popBase === 'string' ? popBase : doc.baseURI;
+    const view = doc.defaultView;
+    return base ? withBase(popPage, base, view && view.DOMParser) : popPage;
+  }
   function popPageUrl() {
-    if (!popBlobUrl) { const env = urlEnv(); popBlobUrl = env.URL.createObjectURL(new env.Blob([popPage], { type: 'text/html;charset=utf-8' })); }
-    return popBlobUrl;
+    const text = popPageText();
+    if (!popBlobUrls.has(text)) {
+      const env = urlEnv();
+      popBlobUrls.set(text, env.URL.createObjectURL(new env.Blob([text], { type: 'text/html;charset=utf-8' })));
+    }
+    return popBlobUrls.get(text);
   }
 
   function popOut(id) {
@@ -1204,7 +1242,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       for (const fn of undo.splice(0)) { try { fn(); } catch { /* ignore */ } }
       closeMenu(false);
       root.textContent = '';
-      if (popBlobUrl) { try { urlEnv().URL.revokeObjectURL(popBlobUrl); } catch { /* ignore */ } popBlobUrl = null; }
+      for (const u of popBlobUrls.values()) { try { urlEnv().URL.revokeObjectURL(u); } catch { /* ignore */ } }
+      popBlobUrls.clear();
     },
   };
 
@@ -1574,11 +1613,55 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     showTab(tab);
     return true;
   }
-  on(doc, 'keydown', (e) => {
+  function onF6(e) {
     if (e.key !== 'F6' || e.altKey || e.ctrlKey || e.metaKey || e.defaultPrevented) return;
     if (!root.contains(doc.activeElement)) return; // outside the dock F6 is the browser's
     if (cycleStacks(e.shiftKey)) e.preventDefault();
-  });
+  }
+  on(doc, 'keydown', onF6);
+  // With focus in an iframe in a panel, the keys go to the iframe's document, not this one (whose focus is then the
+  // iframe). So each same-origin iframe in the dock gets the same listener, again each time it loads a page, and
+  // iframes put in later get it too. A cross-origin one cannot be reached: F6 there stays the browser's. Not the
+  // iframes inside those, nor those of a panel in its own window.
+  const frames = new Map(); // iframe -> [the document its listener is on, the listener]
+  const watched = new WeakSet(); // iframes with a load listener
+  function unhookFrame(f) {
+    const had = frames.get(f);
+    if (!had) return;
+    frames.delete(f);
+    try { had[0].removeEventListener('keydown', had[1]); } catch { /* gone */ }
+  }
+  function hookFrame(f) {
+    if (destroyed) return;
+    let d = null;
+    try { d = f.contentDocument; } catch { d = null; } // null when cross-origin
+    const had = frames.get(f);
+    if (had && had[0] === d) return;
+    unhookFrame(f);
+    if (!d) return;
+    const fn = (e) => { if (root.contains(f)) onF6(e); };
+    d.addEventListener('keydown', fn);
+    frames.set(f, [d, fn]);
+  }
+  function watchFrames(under) {
+    if (under.nodeType !== 1) return;
+    const list = under.tagName === 'IFRAME' ? [under] : [...under.querySelectorAll('iframe')];
+    for (const f of list) {
+      if (!watched.has(f)) { watched.add(f); on(f, 'load', () => hookFrame(f)); }
+      hookFrame(f);
+    }
+  }
+  watchFrames(root);
+  const FMO = doc.defaultView && doc.defaultView.MutationObserver;
+  if (FMO) {
+    const fmo = new FMO((recs) => {
+      for (const r of recs) for (const n of r.addedNodes) watchFrames(n);
+      for (const f of [...frames.keys()]) if (!f.isConnected) unhookFrame(f); // removed, not moved: let it go
+    });
+    fmo.observe(root, { childList: true, subtree: true });
+    undo.push(() => fmo.disconnect());
+  }
+  undo.push(() => { for (const f of [...frames.keys()]) unhookFrame(f); });
   on(root, 'keydown', (e) => {
     const tab = e.target.closest && e.target.closest('[data-dk-tab]');
     if (tab && !e.altKey && !e.ctrlKey && !e.metaKey && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) {

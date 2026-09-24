@@ -20,7 +20,8 @@ pages, with one project whose PO room holds points:
 * layout changes (another panel floated and back, a stack maximised, the
   Workspace and the PO chat themselves floated and back, Reset layout) keep
   the PO chat's page and an open Workspace file's page (no reload);
-* F6 and Shift+F6 go between the stacks, the arrow keys along a stack's tabs;
+* F6 and Shift+F6 go between the stacks, also from inside the PO chat's
+  composer (a frame), the arrow keys along a stack's tabs;
 * a Points arrow scrolls the PO chat to that balloon and marks it;
 * the roadmap opens from the Workspace's Documents list, in its own view;
 * Reset layout brings the default back after a panel was hidden;
@@ -28,9 +29,11 @@ pages, with one project whose PO room holds points:
 * a panel popped out into its own window (the Board, the PO chat) keeps its
   live updates, takes clicks and typing, follows the theme, and comes back
   when its window closes; the window's own chat is gone before the panel is
-  back, and the chat here was never reloaded;
+  back, and the chat here was never reloaded; the window's base is this
+  page's (the library's <base href>), so a relative link or frame there is
+  this hub's;
 * a resize to a phone's width turns the same dock narrow (one column of
-  tabs), and back to the wide layout as it was;
+  tabs), and back to the wide layout as it was, the saved layout unchanged;
 * at 1400x900, 1800x1000 and a 390 px phone, in Light, Dark and High
   contrast: nothing wider than the screen, and the phone is one column of tabs.
 
@@ -198,15 +201,15 @@ class ThePanels(unittest.TestCase):
         self.assertNotIn("dock/css/theme.css", INDEX, "the --dk-* tokens read Ensemble's own")
         self.assertNotIn("static/dock/src/popout.html", INDEX, "the pop-out page is the library's popHtml")
         self.assertNotIn("static/dock/src/popout.html", dashboard.PAGE_FILES)
-        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.3\.2 [0-9a-f]{40}")
+        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.3\.3 [0-9a-f]{40}")
 
     def test_the_library_does_what_the_workarounds_did(self):
-        # Dock v0.3.2 has each of Ensemble's needs (the Dock project's ENSEMBLE-NEEDS.md); the page uses them.
+        # Dock v0.3.3 has each of Ensemble's needs (the Dock project's ENSEMBLE-NEEDS.md); the page uses them.
         dock = INDEX[INDEX.index("// ---- The PO screen as panels: begin"):INDEX.index("// ---- The PO screen as panels: end")]
-        for gone in ("pdSyncChat", "pdSchedule", "pdOpenWindow", "document.write", "phoneOnly", "unscroll", "PD.phone",
+        for gone in ("<base href", "POP_HTML", "pdSyncChat", "pdSchedule", "pdOpenWindow", "document.write", "phoneOnly", "unscroll", "PD.phone",
                      "pd-phone", "popout.html", "ResizeObserver"):
             self.assertNotIn(gone, dock, gone)
-        for used in ("popHtml: L.POP_HTML.replace('<head>', `<head><base href=", "narrow: isPhone()", "narrowKey: PD_KEYS.phone", "PD.dock.setNarrow(isPhone())",
+        for used in ("popHtml: true,", "narrow: isPhone()", "narrowKey: PD_KEYS.phone", "PD.dock.setNarrow(isPhone())",
                      "PD.dock.onPopIn(", "parent.moveBefore(el"):
             self.assertIn(used, dock, used)
         css = INDEX[INDEX.index("/* ---- The PO screen as panels"):INDEX.index("</style>", INDEX.index("/* ---- The PO screen as panels"))]
@@ -225,7 +228,7 @@ class ThePanels(unittest.TestCase):
 CDP_JS = r"""
 const { spawn } = require('child_process');
 const fs = require('fs'), path = require('path');
-const A = JSON.parse(process.argv[1]);
+const A = JSON.parse(process.argv[2]);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function launch() {
   const udd = fs.mkdtempSync(path.join(A.tmp, 'chrome-'));
@@ -348,6 +351,12 @@ async function main() {
       const r = {};
       document.querySelector('.dk-tab[data-dk-tab="po-chat"]').focus();
       key('F6'); r.f6 = at(); key('F6', true); r.back = at();
+      // From the chat's composer, inside its frame: the frame's own key event reaches the dock.
+      const inp = pdChatFrame().contentDocument.getElementById('input'), fw = pdChatFrame().contentWindow;
+      inp.focus();
+      inp.dispatchEvent(new fw.KeyboardEvent('keydown', { key: 'F6', bubbles: true, cancelable: true })); r.frameF6 = at();
+      inp.focus();
+      inp.dispatchEvent(new fw.KeyboardEvent('keydown', { key: 'F6', shiftKey: true, bubbles: true, cancelable: true })); r.frameBack = at();
       const stackOf = id => { let s = null; (function walk(n) { if (!n || s) return; if (n.t === 'stack') { if (n.panels.includes(id)) s = n; } else n.kids.forEach(walk); })(PD.dock.layout().root); return s; };
       PD.dock.moveTo('board', { kind: 'stack', stack: stackOf('points') }, 'center'); PD.dock.activate('points'); await sleep(300);
       document.querySelector('.dk-tab[data-dk-tab="points"]').focus();
@@ -494,13 +503,17 @@ async function main() {
       const v = [...WS_VIEWS.values()].find(x => x.el && PD.els.workspace.contains(x.el));
       const tab = v && v.tabs.find(x => x.path.endsWith('ROADMAP.md'));
       r.tabHeard = !!tab && tab.st.view === 'source' && tab.st.wrap === true;
+      // The window's base is this page's (the library's <base href>, once): a relative link there is this hub's.
+      const a = d.createElement('a'); a.href = 'fileview?x=1';
+      r.base = { n: d.querySelectorAll('base').length, first: d.head.firstElementChild.tagName, uri: d.baseURI === document.baseURI,
+        link: a.href === new URL('fileview?x=1', document.baseURI).href };
       return r;
     })()`);
     await p.evalIn('PD.dock.popWindow("workspace").close(); 0');
     await p.until('!PD.dock.isOut("workspace") && PD.els.workspace.ownerDocument === document', 10000);
 
     // A phone's width: the same dock turns narrow, and wide again as it was.
-    await p.evalIn('window.__dock = PD.dock; window.__wide = (() => { const L = PD.dock.layout(); return JSON.stringify([L.root, L.auto.map(a => [a.id, a.edge]), L.floats, L.hidden]); })(); pdChatFrame().contentWindow.__kept = 1; 0');
+    await p.evalIn('window.__saved = localStorage.getItem("cd-po-dock"); window.__dock = PD.dock; window.__wide = (() => { const L = PD.dock.layout(); return JSON.stringify([L.root, L.auto.map(a => [a.id, a.edge]), L.floats, L.hidden]); })(); pdChatFrame().contentWindow.__kept = 1; 0');
     await c.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }, p.sessionId);
     await p.until('PD.dock.narrow()', 10000); await sleep(400);
     out.toPhone = await p.evalIn(`({ same: window.__dock === PD.dock, narrow: PD_ROOT.classList.contains('dk-narrow'),
@@ -521,7 +534,9 @@ async function main() {
     await c.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, p.sessionId);
     await p.until('!PD.dock.narrow()', 10000); await sleep(400);
     out.toWide = await p.evalIn(`({ same: window.__dock === PD.dock, asWas: (() => { const L = PD.dock.layout(); return JSON.stringify([L.root, L.auto.map(a => [a.id, a.edge]), L.floats, L.hidden]); })() === window.__wide,
-      chatIn: PO_PANEL.parentNode === PD.els['po-chat'], kept: !!pdChatFrame().contentWindow.__kept })`);
+      chatIn: PO_PANEL.parentNode === PD.els['po-chat'], kept: !!pdChatFrame().contentWindow.__kept,
+      saved: !!window.__saved && localStorage.getItem('cd-po-dock') === window.__saved,
+      homes: JSON.parse(localStorage.getItem('cd-po-dock') || '{}') })`);
 
     // A documents project's Files panel in its own window: a row's menu closes on a click
     // elsewhere, a scroll and a resize of that window.
@@ -681,7 +696,10 @@ class InChrome(unittest.TestCase):
             Path(shots).mkdir(parents=True, exist_ok=True)
         args = {"chrome": CHROME, "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{cls.port}", "proj": cls.proj,
                 "po": cls.po, "task": cls.task, "notes": cls.notes, "shots": shots}
-        out = subprocess.run([NODE, "-e", CDP_JS, json.dumps(args)], capture_output=True, encoding="utf-8", timeout=400)
+        # From a file: the script is longer than a Windows command line may be (32767 characters).
+        script = base / "po_dock_cdp.js"
+        script.write_text(CDP_JS, encoding="utf-8")
+        out = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding="utf-8", timeout=400)
         assert out.returncode == 0, out.stderr[-4000:]
         cls.got = json.loads(out.stdout.strip().splitlines()[-1])
 
@@ -720,6 +738,11 @@ class InChrome(unittest.TestCase):
         self.assertEqual((k["right"], k["front"]), ("board", "board"), "Right: the next tab, brought to the front")
         self.assertEqual(k["roving"], ["po-chat", "board"], "one tab of each docked stack in the Tab order")
 
+    def test_f6_works_from_inside_the_chat_composer(self):
+        k = self.got["keys"]
+        self.assertEqual(k["frameF6"], "points", "F6 in the composer's frame: the next stack")
+        self.assertEqual(k["frameBack"], "points", "Shift+F6 there: the other stack (two in all)")
+
     def test_a_phone_width_turns_the_same_dock_narrow_and_back(self):
         n = self.got["toPhone"]
         self.assertTrue(n["same"] and n["narrow"], "setNarrow, not a second dock")
@@ -730,6 +753,7 @@ class InChrome(unittest.TestCase):
         w = self.got["toWide"]
         self.assertTrue(w["same"] and w["chatIn"] and w["kept"])
         self.assertTrue(w["asWas"], "the wide layout as it was")
+        self.assertTrue(w["saved"], "the saved layout is byte for byte what it was: no home gained index/near/side")
 
     def test_the_phone_drawer_over_a_task_brings_the_chats_points_line_back(self):
         self.assertTrue(self.got["peekBefore"], "Points in front on the phone")
@@ -805,8 +829,12 @@ class InChrome(unittest.TestCase):
         self.assertEqual(self.got["popFiles"], {"opened": True, "click": True, "scroll": True, "resize": True, "inWindow": True})
 
     def test_a_popped_out_workspace_works_in_its_own_window(self):
-        self.assertEqual(self.got["popWs"], {"roadmapInWindow": True, "viewerInWindow": True, "viewerLoaded": True, "tabHeard": True},
+        ws = dict(self.got["popWs"])
+        base = ws.pop("base")
+        self.assertEqual(ws, {"roadmapInWindow": True, "viewerInWindow": True, "viewerLoaded": True, "tabHeard": True},
                          "a relative frame address in the window is this page's (its base), not the blob: URL's")
+        self.assertEqual(base, {"n": 1, "first": "BASE", "uri": True, "link": True},
+                         "one <base href>, the library's, first in the head: a relative link there is this hub's")
 
     def test_no_size_or_theme_overflows(self):
         s = self.got["sizes"]
