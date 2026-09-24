@@ -198,7 +198,8 @@ const drRange = () => ({ rows: [1] });
 let painted = null;
 const drPaint = v => { painted = v; };
 let btn = null;
-const document = { createElement: () => (btn = { style: {}, addEventListener() {}, remove() {} }), body: { appendChild() {} } };
+const document = { createElement: () => (btn = { style: {}, addEventListener() {}, remove() {} }), body: { appendChild() {} },
+  getSelection: () => window.getSelection(), get defaultView() { return window; } };   // the selection is its document's
 const window = { innerHeight: 800, innerWidth: 1200,
   getSelection: () => ({ isCollapsed: false, rangeCount: 1, removeAllRanges() {},
     getRangeAt: () => ({ startContainer: viewA2.els[0], endContainer: viewA2.els[2], endOffset: 1, getBoundingClientRect: () => ({ bottom: 10, left: 10 }) }) }) };

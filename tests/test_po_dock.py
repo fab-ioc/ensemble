@@ -329,6 +329,92 @@ async function main() {
     await p.until('!PD.dock.isOut("po-chat") && PD.els["po-chat"].ownerDocument === document', 10000);
     await sleep(400);
     out.chatBack = await p.evalIn(`(() => { ${rect} return { own: !!PD.els['po-chat'].querySelector('iframe'), shown: !PO_PANEL.classList.contains('pd-off'), same: JSON.stringify(R(PO_PANEL)) === JSON.stringify(R(PD.els['po-chat'])) }; })()`);
+
+    // Points in the layout but not on screen: the chat keeps its own points line.
+    out.pointsSeen = await p.evalIn(`(async () => {
+      const line = () => pdChatFrame().contentDocument.getElementById('points-line').hidden;
+      const w = () => new Promise(r => setTimeout(r, 400));
+      const stackOf = id => { let s = null; (function walk(n) { if (!n || s) return; if (n.t === 'stack') { if (n.panels.includes(id)) s = n; } else n.kids.forEach(walk); })(PD.dock.layout().root); return s; };
+      const r = {};
+      PD.dock.reset(); await w(); r.side = line();
+      PD.dock.moveTo('points', { kind: 'stack', stack: stackOf('po-chat') }, 'center'); PD.dock.activate('po-chat'); await w(); r.behindTab = line();
+      PD.dock.activate('points'); await w(); r.inFront = line();
+      PD.dock.reset(); await w(); PD.dock.unpin('points'); await w(); r.slidIn = line();
+      PD.dock.openFly('points'); await w(); r.slidOut = line();
+      PD.dock.closeFly(); PD.dock.reset(); await w(); r.back = line();
+      return r;
+    })()`);
+
+    // Changes in its own window: a diff, a selection across its lines, a dialog and a toast there.
+    await p.evalIn('PD.dock.pin("changes"); 0'); await sleep(300);
+    await p.until('!!PD.els.changes.querySelector(".chf[data-file]")', 20000);
+    await p.click('PD.els.changes.closest(".dk-stack").querySelector("[data-dk-act=pop]")');
+    await p.until('!!PD.dock.popWindow("changes") && PD.els.changes.ownerDocument !== document', 15000);
+    out.popChanges = await p.evalIn(`(async () => {
+      const sleep = ms => new Promise(r => setTimeout(r, ms));
+      const w = PD.dock.popWindow('changes'), d = w.document, r = {};
+      PD.els.changes.querySelector('.chf[data-file]').click();
+      for (let i = 0; i < 60 && !PD.els.changes.querySelector('.drv .dr .dg[data-n]'); i++) await sleep(100);
+      const rows = [...PD.els.changes.querySelectorAll('.drv .dr')].filter(x => x.querySelector('.dg[data-n]'));
+      r.rows = rows.length;
+      d.getSelection().setBaseAndExtent(rows[0].querySelector('.dt'), 0, rows[2].querySelector('.dt'), 0);
+      await sleep(500);
+      const btn = d.querySelector('.cmt-selbtn');
+      r.selInWindow = !!btn; r.selInMain = !!document.querySelector('.cmt-selbtn');
+      if (btn) { btn.click(); await sleep(300); }
+      const ta = PD.els.changes.querySelector('.dcx textarea');
+      r.commentBox = !!ta && ta.ownerDocument === d;
+      const cancel = PD.els.changes.querySelector('.dcx-cancel'); if (cancel) cancel.click();
+      const press = doc => { const v = doc.defaultView; doc.body.dispatchEvent(new v.PointerEvent('pointerdown', { bubbles: true })); doc.body.dispatchEvent(new v.PointerEvent('pointerup', { bubbles: true })); };
+      press(d);
+      const ask = showConfirmDialog({ title: 'Check', message: 'Asked where you are working' });
+      await sleep(150);
+      r.dialogInWindow = MODAL_EL.ownerDocument === d && MODAL_EL.open && !!d.activeElement && d.activeElement.id === 'cf-cancel';
+      d.getElementById('cf-cancel').click();
+      r.answer = await ask;
+      toast('shown where you are working');
+      r.toastInWindow = !!d.getElementById('status') && !d.getElementById('status').hidden;
+      press(document);
+      const ask2 = showConfirmDialog({ title: 'Check', message: 'Back in the main window' });
+      await sleep(150);
+      r.dialogInMain = MODAL_EL.ownerDocument === document && MODAL_EL.open;
+      document.getElementById('cf-cancel').click(); await ask2;
+      return r;
+    })()`);
+    await p.evalIn('PD.dock.popWindow("changes").close(); 0');
+    await p.until('!PD.dock.isOut("changes") && PD.els.changes.ownerDocument === document', 10000);
+
+    // The Workspace in its own window: the roadmap opens there, a file's viewer reports to its tab.
+    await p.evalIn('PD.dock.pin("workspace"); 0'); await sleep(300);
+    await p.until('!!PD.els.workspace.querySelector(".wsp-tree .wse[data-path]")', 20000);
+    await p.click('PD.els.workspace.closest(".dk-stack").querySelector("[data-dk-act=pop]")');
+    await p.until('!!PD.dock.popWindow("workspace") && PD.els.workspace.ownerDocument !== document', 15000);
+    out.popWs = await p.evalIn(`(async () => {
+      const sleep = ms => new Promise(r => setTimeout(r, ms));
+      const w = PD.dock.popWindow('workspace'), d = w.document, r = {};
+      PD.els.workspace.querySelector('.wsd-open[data-roadmap]').click();
+      for (let i = 0; i < 50 && !/Motors roadmap/.test((d.getElementById('rm-panel') || {}).innerText || ''); i++) await sleep(100);
+      const rm = d.getElementById('rm-panel');
+      r.roadmapInWindow = !!rm && !rm.hidden && rm.ownerDocument === d;
+      PD.els.workspace.querySelector('.wsd-back').click();
+      const file = [...PD.els.workspace.querySelectorAll('.wsp-tree .wse[data-path]')].find(x => x.dataset.path.endsWith('ROADMAP.md'));
+      file.click();
+      let f = null;
+      for (let i = 0; i < 80; i++) {
+        f = PD.els.workspace.querySelector('iframe.wsp-frame');
+        try { if (f && f.contentDocument && f.contentDocument.readyState === 'complete' && f.contentWindow.location.pathname === '/fileview') break; } catch (e) {}
+        await sleep(100);
+      }
+      r.viewerInWindow = !!f && f.ownerDocument === d;
+      new f.contentWindow.Function("parent.postMessage({ type: 'fv-state', st: { view: 'source', wrap: true, marks: {} } }, location.origin)")();
+      await sleep(300);
+      const v = [...WS_VIEWS.values()].find(x => x.el && PD.els.workspace.contains(x.el));
+      const tab = v && v.tabs.find(x => x.path.endsWith('ROADMAP.md'));
+      r.tabHeard = !!tab && tab.st.view === 'source' && tab.st.wrap === true;
+      return r;
+    })()`);
+    await p.evalIn('PD.dock.popWindow("workspace").close(); 0');
+    await p.until('!PD.dock.isOut("workspace") && PD.els.workspace.ownerDocument === document', 10000);
     await p.close();
 
     // ---- Sizes and themes: nothing wider than the screen
@@ -404,6 +490,18 @@ class InChrome(unittest.TestCase):
         cls.proj = proj["id"]
         home = Path(proj.get("home") or proj["path"])
         (home / "ROADMAP.md").write_text("# Motors roadmap\n\nFirst the panels.\n", encoding="utf-8")
+        # A repository with an uncommitted change, for the Changes panel's diff.
+        code = Path(proj["path"])
+
+        def git(*a):
+            subprocess.run(["git", "-C", str(code), *a], capture_output=True, check=True, encoding="utf-8")
+        git("init", "-q")
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "t")
+        (code / "motor.py").write_text("".join(f"speed_{i} = {i}\n" for i in range(12)), encoding="utf-8")
+        git("add", "motor.py")
+        git("commit", "-q", "-m", "motors")
+        (code / "motor.py").write_text("".join(f"speed_{i} = {i * 2}\n" for i in range(12)), encoding="utf-8")
         members = lambda: [{"identity": "claude", "agent": "claude", "cwd": str(home)},
                            {"identity": "codex", "agent": "codex", "cwd": str(home)}]
         task = chatroom.create_room("Wider board", members())
@@ -501,6 +599,24 @@ class InChrome(unittest.TestCase):
         self.assertTrue(c["landed"], "an arrow goes to the chat in the window")
         self.assertEqual(c["size"], [True, True])
         self.assertEqual(self.got["chatBack"], {"own": False, "shown": True, "same": True})
+
+    def test_the_chats_points_line_follows_whether_points_is_on_screen(self):
+        self.assertEqual(self.got["pointsSeen"], {"side": True, "behindTab": False, "inFront": True, "slidIn": False,
+                                                 "slidOut": True, "back": True},
+                         "hidden only while the Points panel is on screen")
+
+    def test_a_popped_out_changes_panel_works_in_its_own_window(self):
+        c = self.got["popChanges"]
+        self.assertGreaterEqual(c["rows"], 3)
+        self.assertEqual((c["selInWindow"], c["selInMain"]), (True, False), "a selection there offers its Comment there")
+        self.assertTrue(c["commentBox"])
+        self.assertTrue(c["dialogInWindow"], "a question asked while working there opens there, Cancel focused")
+        self.assertIs(c["answer"], False)
+        self.assertTrue(c["toastInWindow"])
+        self.assertTrue(c["dialogInMain"], "back in the main window, it opens here again")
+
+    def test_a_popped_out_workspace_works_in_its_own_window(self):
+        self.assertEqual(self.got["popWs"], {"roadmapInWindow": True, "viewerInWindow": True, "tabHeard": True})
 
     def test_no_size_or_theme_overflows(self):
         s = self.got["sizes"]

@@ -3065,12 +3065,17 @@
 <script>
 // The page's document-wide listeners, kept so a panel popped out into a window
 // of its own gets them too (see "PO screen as panels"): a click on a task link
-// in a popped-out board opens the task as it does here.
+// in a popped-out board opens the task as it does here. The Dock library's
+// own are not the page's (DOC_LISTENERS_PAUSED while it sets itself up): it
+// listens in each window itself.
 window.DOC_LISTENERS = [];
+window.DOC_LISTENERS_PAUSED = false;
 (function () {
   var add = document.addEventListener;
   document.addEventListener = function (type, fn, o) {
+    if (window.DOC_LISTENERS_PAUSED) return add.call(document, type, fn, o);
     window.DOC_LISTENERS.push([type, fn, o]);
+    if (window.pdDocListenerAdded) window.pdDocListenerAdded(type, fn, o);
     return add.call(document, type, fn, o);
   };
 })();
@@ -3304,7 +3309,12 @@ window.DOC_LISTENERS = [];
 <aside id="detail-panel"></aside>
 <div id="detail-panel-resize" title="Drag to resize" aria-label="Resize detail panel"></div>
 <script>
-const $ = sel => document.querySelector(sel);
+// An element by selector: in this page, else in a popped-out panel's window
+// (a dialog or menu opened there; see "The PO screen as panels").
+const $ = sel => document.querySelector(sel) || pdHostQuery(sel);
+// The one dialog most of the page's questions are asked in, kept by
+// reference: it moves to the window the person is using (pdModal).
+const MODAL_EL = document.getElementById('modal');
 const fmtAgo = secs => {
   if (secs == null) return '-';
   if (secs < 0) secs = 0;
@@ -3760,15 +3770,15 @@ function mdToHtml(src) {
 // #status used to be a span wedged into the top bar. A transient message is
 // not chrome, so it is a toast now — created on demand, floating clear of the
 // layout. Same call signature, so every existing toast() caller is unchanged.
+let _TOAST = null;
 function _toastEl() {
-  let s = document.getElementById('status');
-  if (!s) {
-    s = document.createElement('div');
-    s.id = 'status';
-    s.hidden = true;
-    document.body.appendChild(s);
+  if (!_TOAST) {
+    _TOAST = document.createElement('div');
+    _TOAST.id = 'status';
+    _TOAST.hidden = true;
   }
-  return s;
+  // In the window the person is using: a popped-out panel's, or this page.
+  return pdHostHere(_TOAST);
 }
 const toast = (msg, ms=2500, kind='') => {
   const s = _toastEl();
@@ -5769,7 +5779,7 @@ function pickProjectOptions(allowNone, chosen) {
 // Modal project picker → resolves to a project id ('' = none) or null if cancelled.
 function pickProject(title, allowNone) {
   return new Promise(resolve => {
-    const dlg = $('#modal');
+    const dlg = pdModal();
     dlg.innerHTML = `
       <h3>${esc(title)}</h3>
       <div class="im-field">
@@ -6671,7 +6681,7 @@ function wsPaintTabs(v) {
   }).join('');
   strip.hidden = !docs && !v.tabs.length;
   if (strip._sig === html) return;
-  const f = document.activeElement;
+  const f = strip.ownerDocument.activeElement;
   const focused = f && strip.contains(f) ? (f.dataset.path || '') : null;
   strip._sig = html;
   strip.innerHTML = html;
@@ -7502,7 +7512,7 @@ function wsfMount(v) {
     b.onclick = () => { f[b.dataset.opt] = !f[b.dataset.opt]; changed(); if (fine()) input.focus({ preventScroll: true }); };
   });
   // With a mouse, a click on a result leaves the typing where it was.
-  res.onmousedown = (e) => { if (fine() && document.activeElement === input && e.target.closest('.wsr')) e.preventDefault(); };
+  res.onmousedown = (e) => { if (fine() && input.ownerDocument.activeElement === input && e.target.closest('.wsr')) e.preventDefault(); };
   res.onclick = (e) => { const r = e.target.closest('.wsr'); if (r) wsfOpen(v, +r.dataset.i); };
   res._sig = null;
   wsfEnsure(v);
@@ -7824,7 +7834,7 @@ function drClick(v, e) {
   const onGutter = !!t.closest('.dg'), coarse = drCoarse();
   if (!onGutter) {
     if (!coarse) return;
-    const s = window.getSelection();
+    const s = t.ownerDocument.getSelection();
     if (s && !s.isCollapsed) return;
   }
   const i = +row.dataset.i, d = v.draft;
@@ -7918,7 +7928,7 @@ function drPaint(v) {
   const { rv, box, rows } = v;
   if (!box.isConnected || rv.view !== v || !v.head || !v.head.isConnected) return;
   const typing = box.querySelector('.dcx textarea');
-  const hadFocus = typing && document.activeElement === typing;
+  const hadFocus = typing && typing.ownerDocument.activeElement === typing;
   box.querySelectorAll('.drv .dc, .drv .dcx').forEach(n => n.remove());
   box.querySelectorAll('.dr.sel').forEach(n => n.classList.remove('sel'));
   const d = v.draft, at = new Map(), away = [];
@@ -7986,7 +7996,8 @@ function drPaintTray(rv) {
     + '</div>';
   tray.hidden = false;
   // A menu that is open is left alone until it closes.
-  if (tray._html === html || (document.activeElement && document.activeElement.matches('.cmt-to') && tray.contains(document.activeElement))) return;
+  const act = tray.ownerDocument.activeElement;
+  if (tray._html === html || (act && act.matches('.cmt-to') && tray.contains(act))) return;
   const l = tray.querySelector('.cmt-list'), top = l ? l.scrollTop : 0;
   tray._html = html;
   tray.innerHTML = html;
@@ -8094,9 +8105,15 @@ async function drSubmit(rv) {
 // which move after the finger lifts, count.
 let DR_SELBTN = null, DR_SEL_T = 0;
 function drHideSel() { if (DR_SELBTN) { DR_SELBTN.remove(); DR_SELBTN = null; } }
-document.addEventListener('selectionchange', () => { clearTimeout(DR_SEL_T); DR_SEL_T = setTimeout(drOnSelect, 150); });
-function drOnSelect() {
-  const s = window.getSelection();
+// The selection is the one of the document it changed in: a popped-out Changes
+// panel's window has its own (the event is passed on to this listener there).
+document.addEventListener('selectionchange', e => {
+  const doc = e && e.target && e.target.nodeType === 9 ? e.target : document;
+  clearTimeout(DR_SEL_T); DR_SEL_T = setTimeout(() => drOnSelect(doc), 150);
+});
+function drOnSelect(doc) {
+  doc = doc || document;
+  const s = doc.getSelection();
   if (!s || s.isCollapsed || !s.rangeCount) { drHideSel(); return; }
   const rg = s.getRangeAt(0);
   const rowOf = n => { const el = n && (n.nodeType === 1 ? n : n.parentElement); return el ? el.closest('.drv .dr') : null; };
@@ -8110,17 +8127,18 @@ function drOnSelect() {
   let b = +rb.dataset.i;
   if (b > a && rg.endOffset === 0) b--;            // a selection that ends where the next line starts
   if (!drRange(v.rows, a, b).rows.length) { drHideSel(); return; }
+  if (DR_SELBTN && DR_SELBTN.ownerDocument !== doc) drHideSel();
   if (!DR_SELBTN) {
-    DR_SELBTN = document.createElement('button');
+    DR_SELBTN = doc.createElement('button');
     DR_SELBTN.type = 'button';
     DR_SELBTN.className = 'cmt-selbtn';
     DR_SELBTN.textContent = '💬 Comment';
     DR_SELBTN.addEventListener('mousedown', e => e.preventDefault());   // keep the selection
-    document.body.appendChild(DR_SELBTN);
+    doc.body.appendChild(DR_SELBTN);
   }
-  const rect = rg.getBoundingClientRect();
-  DR_SELBTN.style.top = Math.min(window.innerHeight - 52, Math.max(8, rect.bottom + 8)) + 'px';
-  DR_SELBTN.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - 150)) + 'px';
+  const rect = rg.getBoundingClientRect(), win = doc.defaultView || window;
+  DR_SELBTN.style.top = Math.min(win.innerHeight - 52, Math.max(8, rect.bottom + 8)) + 'px';
+  DR_SELBTN.style.left = Math.max(8, Math.min(rect.left, win.innerWidth - 150)) + 'px';
   DR_SELBTN.onclick = () => {
     drHideSel();
     s.removeAllRanges();
@@ -8626,7 +8644,7 @@ async function tchRead(v) {
     tchEmpty(v, '');
     // A menu that is open is left alone until it closes, like the header's.
     const head = v.el.querySelector('.tch-head');
-    if (document.activeElement !== head.querySelector('.chp-repo')) tchWrite(head, tchHeadHtml(v));
+    if (head.ownerDocument.activeElement !== head.querySelector('.chp-repo')) tchWrite(head, tchHeadHtml(v));
     tchPaintList(v);
   } catch (e) {
     tchEmpty(v, '');
@@ -8972,6 +8990,36 @@ function pdById(id) {
   const el = document.getElementById(id);
   return el || !PD || !PD.lib ? el : PD.lib.byId(id);
 }
+// ---- A popped-out panel's window as a host: what opens over the page (a
+// dialog, a menu, a toast, a selection's Comment button) opens in the window
+// the person is using, and code finds it there (the library's hostDoc).
+function pdHostDoc() {
+  try { return PD && PD.lib ? PD.lib.hostDoc() : document; } catch (e) { return document; }
+}
+function pdHostDocs() {
+  try { return PD && PD.lib ? PD.lib.hostDocs() : [document]; } catch (e) { return [document]; }
+}
+// An element by selector in a popped-out window (after this page: see $).
+function pdHostQuery(sel) {
+  if (typeof PD === 'undefined' || !PD || !PD.lib) return null;
+  for (const d of pdHostDocs()) {
+    if (d === document) continue;
+    const el = d.querySelector(sel);
+    if (el) return el;
+  }
+  return null;
+}
+function pdQueryAll(sel) { return pdHostDocs().flatMap(d => [...d.querySelectorAll(sel)]); }
+// An element that opens over the page goes to the window the person is using.
+function pdHostHere(el) {
+  const d = pdHostDoc();
+  if (el.ownerDocument !== d || !el.isConnected) d.body.appendChild(el);
+  return el;
+}
+// The page's dialog, in that window; one already open stays where it is.
+function pdModal() {
+  return MODAL_EL.open && MODAL_EL.isConnected ? MODAL_EL : pdHostHere(MODAL_EL);
+}
 // Where the board is drawn: its panel on a PO screen, else the view.
 function boardHost() {
   return PD && PD.lib && poDockProject() ? PD.els.board : document.getElementById('view');
@@ -8989,7 +9037,9 @@ function poDockProject() {
 function pdLoad() {
   if (PD.loading) return PD.loading;
   const text = u => fetch(u, { credentials: 'same-origin' }).then(r => { if (!r.ok) throw new Error(u + ': ' + r.status); return r.text(); });
-  PD.loading = Promise.all([import('/static/dock/src/index.js'), text('/static/dock/css/dock.css'), text('/static/dock/src/popout.html')])
+  window.DOC_LISTENERS_PAUSED = true;   // the library's module code listens on its own account
+  const lib = import('/static/dock/src/index.js').finally(() => { window.DOC_LISTENERS_PAUSED = false; });
+  PD.loading = Promise.all([lib, text('/static/dock/css/dock.css'), text('/static/dock/src/popout.html')])
     .then(([lib, css, pop]) => {
       const s = document.createElement('style');
       s.id = 'dock-css';
@@ -9005,15 +9055,17 @@ function pdLoad() {
       // window, which is that one: what they say is passed on to this page.
       lib.onEveryWindow(w => {
         if (w === window) return null;
-        const d = w.document, skip = new Set(['visibilitychange', 'selectionchange']);
+        const d = w.document, skip = new Set(['visibilitychange']);
         const ls = window.DOC_LISTENERS.filter(([t]) => !skip.has(t));
         for (const [t, fn, o] of ls) d.addEventListener(t, fn, o);
+        PD_POP_DOCS.set(d, ls);
         const relay = e => {
           if (e.origin !== location.origin) return;
           try { window.dispatchEvent(new MessageEvent('message', { data: e.data, origin: e.origin, source: e.source })); } catch (err) {}
         };
         w.addEventListener('message', relay);
         return () => {
+          PD_POP_DOCS.delete(d);
           for (const [t, fn, o] of ls) { try { d.removeEventListener(t, fn, o); } catch (e) {} }
           try { w.removeEventListener('message', relay); } catch (e) {}
         };
@@ -9023,6 +9075,13 @@ function pdLoad() {
     .then(() => renderRows());
   return PD.loading;
 }
+// The pop-out windows' documents and the listeners given them; one the page
+// adds later (a panel wiring itself on first use) reaches them as well.
+const PD_POP_DOCS = new Map();
+window.pdDocListenerAdded = (type, fn, o) => {
+  if (type === 'visibilitychange') return;
+  PD_POP_DOCS.forEach((ls, d) => { try { d.addEventListener(type, fn, o); ls.push([type, fn, o]); } catch (e) {} });
+};
 // A panel's own window: the pop-out page written into a blank window of this
 // origin (the hub serves no .html from /static before a restart).
 function pdOpenWindow(url, name, features) {
@@ -9040,7 +9099,8 @@ function pdEnsure() {
   const L = PD.lib;
   PD.phone = phone;
   document.body.classList.toggle('pd-phone', phone);
-  PD.dock = L.createDock({
+  window.DOC_LISTENERS_PAUSED = true;   // the dock's own listeners are not the page's
+  try { PD.dock = L.createDock({
     root: PD_ROOT,
     panels: PD_IDS.map(id => ({ id, title: PD_TITLES[id], el: PD.els[id] })),
     storageKey: phone ? PD_KEYS.phone : PD_KEYS.desk,
@@ -9054,7 +9114,7 @@ function pdEnsure() {
     themeEvent: 'cd-theme',
     modalSelector: '[role="dialog"], dialog, .dk-help-pop, .dcm',
     text: { empty: 'Every panel is on a strip at an edge or hidden: the Panels menu above shows them.' },
-  });
+  }); } finally { window.DOC_LISTENERS_PAUSED = false; }
   PD.dock.onChange(() => { pdPointsFrame(); pdSyncChat(); pdSchedule(200); });
   PD.dock.onShown(id => pdShown(id));
   pdSchedule(0);
@@ -9100,6 +9160,7 @@ function pdSchedule(ms) {
 // minimised, another panel maximised, slid in, or popped out.
 function pdSyncChat() {
   if (!document.body.classList.contains('po-dock') || !PD.dock || PO_PANEL.hidden) return;
+  pdPointsFrame();   // what is on screen changed: the chat's points line follows
   const ph = PD.els['po-chat'];
   if (PO_PEEK) { PO_PANEL.removeAttribute('style'); PO_PANEL.classList.remove('pd-off'); return; }
   const out = ph.ownerDocument !== document;
@@ -9177,10 +9238,26 @@ function pdPopChat(out) {
 // ---- Points
 // The chat tells the page every change to the points (session.html
 // pointsTell); the panel lists them and its arrows go to the balloons.
+// Whether the Points panel is on screen now: in its own window, or here in
+// front of its stack, not minimised, not under another maximised panel, and
+// slid out if it sits on a strip. In the layout but behind another tab or
+// slid in is not on screen: the chat then shows its own points line.
+function pdPointsOnScreen() {
+  if (!PD.dock || !document.body.classList.contains('po-dock')) return false;
+  if (PD.dock.popWindow('points') && PD.els.points.ownerDocument !== document) return true;
+  const el = PD.els.points;
+  if (el.ownerDocument !== document || !el.isConnected || el.closest('.dk-parking') || el.classList.contains('dk-off')) return false;
+  const fly = el.closest('.dk-flyout');
+  if (fly && !fly.classList.contains('open')) return false;
+  const stack = el.closest('.dk-stack');
+  if (stack && stack.classList.contains('dk-min')) return false;
+  if (PD_ROOT.classList.contains('dk-has-max') && !(stack && stack.classList.contains('dk-max')) && !el.closest('.dk-float.dk-max')) return false;
+  return true;
+}
 function pdPointsFrame() {
   const f = pdChatFrame();
   if (!f) return;
-  const want = !!(PD.dock && document.body.classList.contains('po-dock') && PD.dock.isVisible('points'));
+  const want = pdPointsOnScreen();
   const frames = [f, PD.els['po-chat'].querySelector('iframe.po-session')].filter(Boolean);
   for (const x of frames) {
     if (x.hasAttribute('data-points-elsewhere') === want) continue;
@@ -9498,7 +9575,7 @@ function poSwitchDialogHtml(pj, info, err, confirmMsg, typed) {
 async function poSwitchFlow(pid, err, confirmMsg, typed) {
   const pj = projectById(pid);
   if (!pj) return;
-  const dlg = $('#modal');
+  const dlg = pdModal();
   let info;
   try { info = await api('/api/po/switch?projectId=' + encodeURIComponent(pid)); }
   catch (e) { toast('could not read the PO: ' + e.message, 4000, 'err'); return; }
@@ -9953,7 +10030,7 @@ function keyDialogHtml(pj, err) {
 async function keyChoose(pid, err) {
   const pj = projectById(pid);
   if (!pj) return;
-  const dlg = $('#modal');
+  const dlg = pdModal();
   dlg.innerHTML = keyDialogHtml(pj, err);
   dlg.showModal();
   $('#key-in').focus(); $('#key-in').select();
@@ -9980,7 +10057,7 @@ function histErr(e) {
 async function kindChoose(pid) {
   const pj = projectById(pid);
   if (!pj) return;
-  const dlg = $('#modal');
+  const dlg = pdModal();
   dlg.innerHTML = kindDialogHtml(pj);
   dlg.showModal();
   const kind = await new Promise(resolve => {
@@ -10692,7 +10769,7 @@ window.addEventListener('storage', e => {
 let DOCS_DRAG = null;        // a tree row being dragged: {pid, rel, dir, name}
 let DOCS_ARM_T = 0, DOCS_DOC_WIRED = false;
 const docsDragFiles = ev => !!(ev.dataTransfer && Array.from(ev.dataTransfer.types || []).includes('Files'));
-const docsLiveSection = () => document.querySelector('#ws-panel:not([hidden]) .dcs-files');
+const docsLiveSection = () => { const w = pdById('ws-panel'); return w && !w.hidden ? w.querySelector('.dcs-files') : null; };
 const docsDirLabel = (pid, rel) => rel || (projectById(pid) || {}).name || 'the project';
 const docsRow = (v, abs) => v.el ? [...v.el.querySelectorAll('.wsp-tree .wse[data-path]')].find(r => wsSame(r.dataset.path, abs)) || null : null;
 const docsExists = e => /^409 /.test((e && e.message) || '') && /"error":\s*"exists"/.test(e.message);
@@ -10710,13 +10787,13 @@ function docsTarget(v) {
 // While something is dragged over the page, the file viewers let it through
 // to the panel: a frame would take the drop and open the file in itself.
 function docsDragArm() {
-  document.querySelectorAll('.dcs-files').forEach(s => s.classList.add('dragging'));
+  pdQueryAll('.dcs-files').forEach(s => s.classList.add('dragging'));
   clearTimeout(DOCS_ARM_T);
   DOCS_ARM_T = setTimeout(docsDragDisarm, 600);
 }
 function docsDragDisarm() {
   clearTimeout(DOCS_ARM_T);
-  document.querySelectorAll('.dcs-files.dragging').forEach(s => s.classList.remove('dragging'));
+  pdQueryAll('.dcs-files.dragging').forEach(s => s.classList.remove('dragging'));
 }
 function docsFrameDrag(ev) {
   if (!docsDragFiles(ev) && !DOCS_DRAG) return;
@@ -10745,7 +10822,7 @@ function docsDocListen() {
   document.addEventListener('paste', (ev) => {
     const sec = docsLiveSection(), ctx = sec && sec._docs;
     if (!ctx || ev.defaultPrevented) return;
-    const a = document.activeElement, inSec = !!(a && sec.contains(a));
+    const a = sec.ownerDocument.activeElement, inSec = !!(a && sec.contains(a));
     if (!inSec && !sec.matches(':hover')) return;
     if (a && (a.isContentEditable || /^(INPUT|TEXTAREA)$/.test(a.tagName) && a.type !== 'checkbox' && a.type !== 'file')) return;   // typing somewhere: its own paste
     const files = attImages(ev.clipboardData), t = files.length && docsTarget(ctx.v);
@@ -10946,7 +11023,7 @@ function docsFilesWire(el, pid) {
 
   // The row's menu: arrows move, Escape closes and gives focus back to ⋯.
   menu.addEventListener('keydown', (e) => {
-    const items = [...menu.querySelectorAll('.dcm-item')], i = items.indexOf(document.activeElement);
+    const items = [...menu.querySelectorAll('.dcm-item')], i = items.indexOf(menu.ownerDocument.activeElement);
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); docsMenuClose(menu, true); }
     else if (e.key === 'Tab') docsMenuClose(menu, false);
     else if (items.length && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End')) {
@@ -11000,7 +11077,8 @@ function docsMenuOpen(menu, row, rect) {
 function docsMenuPlace(menu, r) {
   menu.hidden = false;
   menu.style.left = '0px'; menu.style.top = '0px';
-  const w = menu.offsetWidth, h = menu.offsetHeight, vw = window.innerWidth, vh = window.innerHeight;
+  const win = menu.ownerDocument.defaultView || window;   // its panel's window, popped out or not
+  const w = menu.offsetWidth, h = menu.offsetHeight, vw = win.innerWidth, vh = win.innerHeight;
   let top = r.bottom + 4;
   if (top + h > vh - 8) top = Math.max(8, r.top - h - 4);
   menu.style.left = Math.max(8, Math.min(r.right - w, vw - w - 8)) + 'px';
@@ -12001,7 +12079,7 @@ function updateNsHint(container) {
 // fire agents at it. The task gets its own workspace folder; what goes in it
 // (docs, a cloned repo with commits, anything) is the agents' business.
 function showNewSessionModal(projectId) {
-  const dlg = $('#modal');
+  const dlg = pdModal();
   const def = (PREFS && PREFS.defaultModel) || '';
   const curProj = (projectId && projectId !== UNASSIGNED_ID) ? projectId : '';
   const projOpts = (sel) => '<option value="">(no project — Unassigned)</option>'
@@ -12151,7 +12229,7 @@ function showAgentsModal(roomId) {
     toast('this task is running — end it first, then reassign its agents', 5000, 'err');
     return;
   }
-  const dlg = $('#modal');
+  const dlg = pdModal();
   dlg.innerHTML = `
     <h3>Agents on "${esc(detailTitle(row))}"</h3>
     <div class="im-field">
@@ -13167,7 +13245,7 @@ document.addEventListener('keydown', (ev) => {
     return;
   }
   if (ev.key !== 'Escape') return;
-  if (THEME_MENU || $('#modal').open) return;
+  if (THEME_MENU || MODAL_EL.open) return;
   // A menu in the task panel's header closes before the panel does, and hands
   // focus back to the control that opened it.
   const menu = document.querySelector('#detail-panel .dp-top :is(.wf-menu, .ov-menu, .pr-menu):not([hidden])');
@@ -13277,9 +13355,9 @@ function toggleFilter(key) {
 }
 
 function closeFiltersMenu() {
-  const m = document.getElementById('filters-menu');
+  const m = pdById('filters-menu');
   if (m) m.remove();
-  const b = document.getElementById('filters-btn');
+  const b = pdById('filters-btn');
   if (b) b.setAttribute('aria-expanded', 'false');
 }
 
@@ -13383,24 +13461,25 @@ document.addEventListener('click', (ev) => {
   const fb = ev.target.closest('#filters-btn');
   if (fb) {
     ev.stopPropagation();
-    if (document.getElementById('filters-menu')) closeFiltersMenu(); else openFiltersMenu();
+    if (pdById('filters-menu')) closeFiltersMenu(); else openFiltersMenu();
     return;
   }
-  const menu = document.getElementById('filters-menu');
+  const menu = pdById('filters-menu');
   if (menu && !ev.target.closest('#filters-menu')) closeFiltersMenu();
 });
 
 function openFiltersMenu() {
   closeFiltersMenu();
-  const btn = document.getElementById('filters-btn');
+  const btn = pdById('filters-btn');
   if (!btn) return;
-  const m = document.createElement('div');
+  // Under its button, in the window the button is in (a popped-out Board's too).
+  const m = btn.ownerDocument.createElement('div');
   m.id = 'filters-menu';
   m.innerHTML = filtersMenuHtml();
-  document.body.appendChild(m);
+  btn.ownerDocument.body.appendChild(m);
   const r = btn.getBoundingClientRect();
   m.style.top = (r.bottom + 6) + 'px';
-  m.style.left = Math.min(r.left, window.innerWidth - m.offsetWidth - 12) + 'px';
+  m.style.left = Math.min(r.left, btn.ownerDocument.defaultView.innerWidth - m.offsetWidth - 12) + 'px';
   btn.setAttribute('aria-expanded', 'true');
   m.querySelectorAll('input[data-f]').forEach(cb => {
     cb.addEventListener('change', () => toggleFilter(cb.dataset.f));
@@ -13678,7 +13757,7 @@ async function showCapturedTerminal(rid) {
 async function showTranscript(sid) {
   try {
     const data = await api('/api/session/' + sid);
-    const dlg = $('#modal');
+    const dlg = pdModal();
     dlg.innerHTML = `
       <h3>${esc(sid.slice(0,8))} <span style="color:var(--fg-subtle); font-weight:400; font-size:12px">· ${data.turns.length} turns</span></h3>
       <div class="cwd-line">${esc(tildeify(data.cwd))}</div>
@@ -13719,7 +13798,7 @@ async function renameSession(sid, label) {
 // Confirmation modal: returns true on confirm, false on cancel/dismiss.
 function showConfirmDialog({title, message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger = false}) {
   return new Promise(resolve => {
-    const dlg = $('#modal');
+    const dlg = pdModal();
     dlg.innerHTML = `
       <h3>${esc(title)}</h3>
       <p style="color: var(--fg-subtle); margin: 6px 0 18px; font-size: 13px; line-height: 1.55; white-space: pre-wrap;">${esc(message)}</p>
@@ -13741,7 +13820,7 @@ function showConfirmDialog({title, message, confirmLabel = 'Confirm', cancelLabe
 // Two-field modal: returns {title, prompt} on submit, null on cancel.
 function showInputModal({title, defaults = {}, okLabel = 'OK', titleHelp, promptHelp, agentPicker = false}) {
   return new Promise((resolve) => {
-    const dlg = $('#modal');
+    const dlg = pdModal();
     const defaultModel = (PREFS && PREFS.defaultModel) || '';
     const agentField = agentPicker ? `
       <div class="im-field">
@@ -14295,7 +14374,7 @@ document.addEventListener('keydown', (ev) => {
     return;
   }
   if (ev.target.tagName === 'INPUT' || ev.target.tagName === 'TEXTAREA') return;
-  if ($('#modal').open) return;
+  if (MODAL_EL.open) return;
   if (ev.key === '/') { ev.preventDefault(); $('#search').focus(); }
   else if (ev.key === 'r') refresh();
 });
@@ -14459,7 +14538,7 @@ const ensUpd = window.ensUpd = (() => {   // a window property too: a host page 
 // rewrites the textarea on every change, so the draft is the truth, not the
 // field), or an Update under way; the project, tab, panel and scroll to put back.
 const drInHand = () => [...DR_REVIEWS.values()].some(rv => rv.view && rv.view.draft && rv.view.box.isConnected && rv.view.head && rv.view.head.isConnected);
-window.ensUpdBusy = () => UPDATE_IN_PROGRESS || [...RM.values()].some(rmDirty) || drInHand();
+window.ensUpdBusy = () => UPDATE_IN_PROGRESS || MODAL_EL.open || [...RM.values()].some(rmDirty) || drInHand();
 window.ensUpdPlace = () => ({
   proj: SELECTED_PROJECT || '', tab: PROJECT_TAB, sb: SB_DEST,
   sid: document.body.classList.contains('detail-open') && SELECTED_SID ? SELECTED_SID : '',

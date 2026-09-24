@@ -575,9 +575,14 @@ library is never edited in this repository: a need goes to the Dock project's `E
   tabs. A tab asked for from elsewhere (a diff's Open file, an old "workspace" tab) brings its panel
   forward instead.
 - **Panel code never looks its elements up by id in the main document** (`PD.els`, or `pdById`,
-  which is the library's `byId`): a popped-out panel's elements are in its window's document. A
-  popped-out window gets the page's stylesheets, its theme attributes and its document-wide
-  listeners (`DOC_LISTENERS`), so a click there works as here. Dialogs still open in the main window.
+  which is the library's `byId`), and asks an element for its own document and window
+  (`el.ownerDocument`: focus, a selection, a menu's room): a popped-out panel's elements are in its
+  window's document. A popped-out window gets the page's stylesheets, its theme attributes, its
+  document-wide listeners (`DOC_LISTENERS`, the library's own left out) and its frames' messages,
+  so a click, a key or a selection there works as here. **What opens over the page opens where the
+  person is working** (`pdHostDoc`, the library's `hostDoc`): the page's dialog (`pdModal()`, never
+  `$('#modal')` to open one), a toast, a menu under its button, a selection's Comment button; `$`
+  finds an element in a popped-out window when this page has none.
 - **The PO chat** is an exception to "the panel holds its content": its iframe stays in `#po-panel`
   (rule 1) and lies over the panel's place (`pdSyncChat`: measured on every layout change, resize,
   splitter drag and slide), at the panel's level (over its own floating window or strip, under any

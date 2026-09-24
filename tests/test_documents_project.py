@@ -675,7 +675,7 @@ class ThePage(unittest.TestCase):
         self.assertIn("if (docs) docsPanelRender(panel, pj);", branch)
         self.assertIn("wsMount(panel.querySelector('.wsp'), { kind: 'project', projectId: pj.id });", branch,
                       "a code project's Workspace mounts as before")
-        self.assertIn("document.querySelector('#ws-panel:not([hidden]) .dcs-files')", INDEX)
+        self.assertIn("const docsLiveSection = () => { const w = pdById('ws-panel'); return w && !w.hidden ? w.querySelector('.dcs-files') : null; };", INDEX)
         self.assertIn("const dp = pdById('ws-panel');", js_function("histClick"))
         self.assertIn("docs: isDocsProject(projectById(pid))", js_function("chOpenInWorkspace"),
                       "the Changes tab's Open file lands in the Files panel's viewer")
