@@ -233,6 +233,32 @@ class TheMigration(Tmp):
         self.assertEqual(target.read_text(encoding="utf-8"), "someone else's")
         self.assertNotIn(str(target), [i["dst"] for i in done])
 
+    def test_a_copy_whose_times_fail_is_removed_and_a_second_run_finishes_it(self):
+        plan = project_docs.plan_migration(str(self.home), str(self.docs))
+        with mock.patch.object(project_docs.shutil, "copystat", side_effect=OSError("no times")):
+            with self.assertRaises(OSError):
+                project_docs.apply_migration(plan)
+        first = Path(plan["copy"][0]["dst"])
+        self.assertFalse(first.exists(), "no copy is left without its times")
+        again = project_docs.plan_migration(str(self.home), str(self.docs))
+        self.assertIn(str(first), [i["dst"] for i in again["copy"]])
+        project_docs.apply_migration(again)
+        src = Path(plan["copy"][0]["src"])
+        self.assertEqual(int(first.stat().st_mtime), int(src.stat().st_mtime))
+
+    def test_picture_paths_the_viewer_renders_are_followed(self):
+        t = self.home / "fix-it"
+        write(t / "gallery" / "LOOK.md", "![a](shots/foo_(1).png) ![b](<shots/b.png> 'B') "
+                                         "![c](shots/c.png \"C\")")
+        for n in ("foo_(1).png", "b.png", "c.png"):
+            write(t / "gallery" / "shots" / n, "png")
+        write(t / "gallery" / "shots" / "not-linked.png", "png")
+        plan = project_docs.plan_migration(str(self.home), str(self.docs))
+        got = {Path(i["dst"]).name for i in plan["copy"] if "gallery" in i["dst"]}
+        self.assertEqual(got, {"LOOK.md", "foo_(1).png", "b.png", "c.png", "not-linked.png"})
+        linked = {p.name for p in project_docs._linked_media(t / "gallery" / "LOOK.md", t)}
+        self.assertEqual(linked, {"foo_(1).png", "b.png", "c.png"})
+
     def test_the_tool_is_a_dry_run_unless_told(self):
         write(self.home / "project.json", json.dumps({"id": "p-x", "name": "X"}))
         tool = str(ROOT / "tools" / "migrate_reports.py")

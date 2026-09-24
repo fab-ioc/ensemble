@@ -302,7 +302,9 @@ def plan_migration(home: str, docs_dir: str) -> dict:
 
 # What makes a task subfolder a report's, and what is copied from it.
 DOC_EXT = {".md", ".markdown", ".html", ".htm", ".pdf", ".docx"}
-_LINK_RE = re.compile(r"""\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)|\bsrc\s*=\s*["']([^"']+)["']""", re.I)
+# The image destinations the Markdown viewer (fileview.html) renders: one
+# level of parentheses inside the path, an optional "title" or 'title'.
+_LINK_RE = re.compile(r"""\]\(\s*<?([^()\s<>]+(?:\([^()\s]*\)[^()\s<>]*)*)>?(?:\s+(?:"[^"\n]*"|'[^'\n]*'))?\s*\)|\bsrc\s*=\s*["']([^"']+)["']""", re.I)
 
 
 def _files_under(d: Path) -> list[Path]:
@@ -372,12 +374,14 @@ def apply_migration(plan: dict) -> list[dict]:
         try:
             with out, open(item["src"], "rb") as src:
                 shutil.copyfileobj(src, out)
+            # Inside the try: a copy left without its times would read as
+            # "same" next time and never get them.
+            shutil.copystat(item["src"], dp)
         except OSError:
             try:
                 dp.unlink()      # our own half-written file, never someone else's
             except OSError:
                 pass
             raise
-        shutil.copystat(item["src"], dp)
         done.append(item)
     return done
