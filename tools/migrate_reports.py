@@ -2,11 +2,12 @@
 
 Once per project, when it moves to the Documents folder: each numbered task
 folder's top-level Markdown (TASK-HANDOVER.md, REVIEW-LOG.md and PO-*.md stay:
-they are working notes) and its report subfolders (screenshots, evidence;
-never a checkout, an agent's clone, a git repository or a browser profile) are
-COPIED to ``<Documents>/#<no> <title>/``, with their times. Nothing is moved,
-removed or overwritten, so it can be run again: a file already there is left
-as it is.
+they are working notes), its report subfolders (a folder holding a document:
+its documents and their pictures, not samples or data; never a folder of
+screenshots alone, a checkout, an agent's clone, a git repository or a browser
+profile) and the pictures a copied document links to are COPIED to
+``<Documents>/#<no> <title>/``, with their times. Nothing is moved, removed or
+overwritten, so it can be run again: a file already there is left as it is.
 
     py tools/migrate_reports.py "Ensemble Dashboard"            # what it would copy
     py tools/migrate_reports.py "Ensemble Dashboard" --apply    # copy
@@ -108,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     if why:
         print("Not copied: " + "; ".join(f"{n} {w}" for w, n in why.most_common()))
     for s in plan["skipped"]:
-        if s["why"] in ("a browser profile", "over 50 MB", "a git repository"):
+        if s["why"] in ("a browser profile", "over 50 MB", "a git repository") or s["why"].startswith("no document"):
             print(f"  {rel(s['path'])}: {s['why']}")
     if not a.apply:
         print("\nDry run: nothing was written. Add --apply to copy.")

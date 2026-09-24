@@ -4728,8 +4728,13 @@ def git_roots(path: str, depth: int = 3) -> tuple[int, dict]:
 
 
 _SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
-_TASK_NO_RE = re.compile(r"(?:^Merge #|\(#|\s#)(\d+)\b")
-_MERGE_BRANCH_RE = re.compile(r"^Merge (?:remote-tracking )?branch '([^']+)'")
+# A task's number in a commit on the main line: "Merge #NN: ..." (how tasks
+# land here), "#NN: ..." or "... (#NN)". Nothing else: "Merge pull request
+# #999 from ..." names a pull request, not a task.
+_TASK_NO_RE = re.compile(r"^(?:Merge )?#(\d+)\b|\(#(\d+)\)\s*$")
+# The branch a merge commit merges: git's own subjects, and a pull request's
+# ("from <owner>/<branch>").
+_MERGE_BRANCH_RE = re.compile(r"^Merge (?:remote-tracking )?branch '([^']+)'|^Merge pull request #\d+ from (\S+)")
 GIT_LOG_MAX = 100
 GIT_LOG_FILES_MAX = 300
 
@@ -4767,13 +4772,21 @@ def commit_task_no(subject: str, idx: dict) -> int | None:
     """The task a commit on the main line is: ``Merge #NN:`` or ``(#NN)`` in
     its message, else the task whose branch it merges, else the task whose
     title it is (a squash merge)."""
-    m = _TASK_NO_RE.search(subject or "")
+    subject = (subject or "").strip()
+    m = _MERGE_BRANCH_RE.match(subject)
     if m:
-        return int(m.group(1))
-    m = _MERGE_BRANCH_RE.match(subject or "")
-    if m and m.group(1) in idx.get("branch", {}):
-        return idx["branch"][m.group(1)]
-    return idx.get("title", {}).get((subject or "").strip().lower())
+        # "origin/sess/x" or a pull request's "owner/sess/x": the task's
+        # branch is the whole name or what follows its first part.
+        br, branches = m.group(1) or m.group(2), idx.get("branch", {})
+        for cand in (br, br.split("/", 1)[1] if "/" in br else ""):
+            if cand and cand in branches:
+                return branches[cand]
+        if m.group(2):
+            return None          # a pull request's number is not a task's
+    m = _TASK_NO_RE.search(subject)
+    if m:
+        return int(m.group(1) or m.group(2))
+    return idx.get("title", {}).get(subject.lower())
 
 
 def git_log(path: str, n: int = 30, project_id: str = "") -> tuple[int, dict]:

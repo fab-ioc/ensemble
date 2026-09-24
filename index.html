@@ -6727,7 +6727,7 @@ function wsCloseTab(v, path) {
 // its tasks put in its Documents folder, and for a code project the Markdown
 // under its checkout's docs/ folder, newest first (/api/projects/documents).
 // The list is the fixed first tab, showing whenever no file tab is. Pure down
-// to wsDocsHtml, so tests/test_workspace_docs.py runs it in Node.
+// to wsDocsHtml, so tests/test_documents_list.py runs it in Node.
 const WS_DOCS_TTL = 15000;         // the list is read again at most this often
 const wsDocsCtx = v => !!(v && v.ctx && v.ctx.kind === 'project');
 // Whether the Documents list is what shows: no file tab is.
@@ -7886,7 +7886,9 @@ function drOnSelect() {
   const rowOf = n => { const el = n && (n.nodeType === 1 ? n : n.parentElement); return el ? el.closest('.drv .dr') : null; };
   const ra = rowOf(rg.startContainer), rb = rowOf(rg.endContainer);
   let v = null;
-  if (ra && rb) DR_REVIEWS.forEach(rv => { if (rv.view && rv.view.box.contains(ra) && rv.view.box.contains(rb)) v = rv.view; });
+  // The view whose own rows these are: several reviews (a commit's and the
+  // uncommitted one) share a box, and only the one that drew it owns its rows.
+  if (ra && rb) DR_REVIEWS.forEach(rv => { const w = rv.view; if (w && w.els[+ra.dataset.i] === ra && w.els[+rb.dataset.i] === rb) v = w; });
   if (!v) { drHideSel(); return; }
   const a = +ra.dataset.i;
   let b = +rb.dataset.i;
@@ -7941,7 +7943,7 @@ const CH_FILES_SHOWN = 8;             // a commit's files listed before "+N more
 // ---- Changes, landed on main: begin ------------------------------------------
 // What landed on the project's main line, newest first (/api/git/log): each
 // commit (a merge counts as one) with its task, subject, time and files. Pure,
-// so tests/test_workspace_docs.py runs it in Node.
+// so tests/test_documents_list.py runs it in Node.
 // A merge's "Merge #90: " goes: the task's chip says it.
 const chSubject = s => String(s || '').replace(/^Merge #\d+:\s*/, '') || String(s || '');
 function chFileHtml(f, sha, on) {

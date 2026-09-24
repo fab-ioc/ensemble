@@ -152,12 +152,17 @@ class TheMigration(Tmp):
         super().setUp()
         h = self.home = self.tmp / "home"
         t = task(h, "fix-it", 7, "Fix it: now")
-        write(t / "REPORT.md", "report", mtime=1_500)
+        write(t / "REPORT.md", "report ![shot](shots/linked.png) ![web](https://x/y.png)", mtime=1_500)
         write(t / "TASK-HANDOVER.md")
         write(t / "REVIEW-LOG.md")
         write(t / "PO-notes.md")
         write(t / "mockup.html")
         write(t / "shots" / "a.png", "png", mtime=1_600)
+        write(t / "shots" / "linked.png", "png")
+        write(t / "samples" / "fixture.py")
+        write(t / "evidence" / "notes.md", "notes ![p](pic.png)")
+        write(t / "evidence" / "pic.png", "png")
+        write(t / "evidence" / "data.json", "{}")
         write(t / "repo" / "README.md")
         write(t / "claude" / "x.md")
         write(t / "clone" / ".git" / "HEAD")
@@ -172,7 +177,9 @@ class TheMigration(Tmp):
         plan = project_docs.plan_migration(str(self.home), str(self.docs))
         dest = self.docs / "#7 Fix it now"
         self.assertEqual(sorted(i["dst"] for i in plan["copy"]),
-                         sorted([str(dest / "REPORT.md"), str(dest / "shots" / "a.png")]))
+                         sorted([str(dest / "REPORT.md"), str(dest / "shots" / "linked.png"),
+                                 str(dest / "evidence" / "notes.md"), str(dest / "evidence" / "pic.png")]),
+                         "a report folder's documents and pictures, and a picture a report links to")
         why = {Path(s["path"]).name: s["why"] for s in plan["skipped"]}
         for name in ("TASK-HANDOVER.md", "REVIEW-LOG.md", "PO-notes.md"):
             self.assertIn("working notes", why[name])
@@ -181,18 +188,20 @@ class TheMigration(Tmp):
         self.assertEqual(why["clone"], "a git repository")
         self.assertEqual(why["chrome-profile"], "a browser profile")
         self.assertEqual(why["inner"], "a task's folder")
+        for name in ("shots", "samples"):
+            self.assertEqual(why[name], "no document in it (screenshots, samples, data)", name)
         self.assertFalse(self.docs.exists(), "a plan writes nothing")
 
     def test_copies_keep_times_move_nothing_and_run_again_copies_nothing(self):
         plan = project_docs.plan_migration(str(self.home), str(self.docs))
         done = project_docs.apply_migration(plan)
-        self.assertEqual(len(done), 2)
+        self.assertEqual(len(done), 4)
         rep = self.docs / "#7 Fix it now" / "REPORT.md"
-        self.assertEqual(rep.read_text(encoding="utf-8"), "report")
+        self.assertTrue(rep.read_text(encoding="utf-8").startswith("report "))
         self.assertEqual(int(rep.stat().st_mtime), 1_500)
         self.assertTrue((self.home / "fix-it" / "REPORT.md").is_file(), "copied, not moved")
         again = project_docs.plan_migration(str(self.home), str(self.docs))
-        self.assertEqual((len(again["copy"]), len(again["same"])), (0, 2))
+        self.assertEqual((len(again["copy"]), len(again["same"])), (0, 4))
         self.assertEqual(project_docs.apply_migration(again), [])
 
     def test_a_file_there_with_other_content_is_left_alone(self):
@@ -201,6 +210,28 @@ class TheMigration(Tmp):
         self.assertEqual([Path(i["dst"]).name for i in plan["differs"]], ["REPORT.md"])
         project_docs.apply_migration(plan)
         self.assertEqual((self.docs / "#7 Fix it now" / "REPORT.md").read_text(encoding="utf-8"), "mine, edited")
+
+    def test_same_size_and_time_but_other_bytes_differs(self):
+        src = self.home / "fix-it" / "REPORT.md"
+        st = src.stat()
+        dst = write(self.docs / "#7 Fix it now" / "REPORT.md", "x" * st.st_size, mtime=int(st.st_mtime))
+        plan = project_docs.plan_migration(str(self.home), str(self.docs))
+        self.assertIn(str(dst), [i["dst"] for i in plan["differs"]])
+        self.assertNotIn(str(dst), [i["dst"] for i in plan["same"]])
+
+    def test_a_file_that_appears_just_before_the_copy_is_not_overwritten(self):
+        plan = project_docs.plan_migration(str(self.home), str(self.docs))
+        target = Path(next(i["dst"] for i in plan["copy"] if i["dst"].endswith("REPORT.md")))
+        real_mkdir = Path.mkdir
+
+        def racing_mkdir(self_, *a, **k):
+            real_mkdir(self_, *a, **k)
+            if self_ == target.parent and not target.exists():
+                target.write_text("someone else's", encoding="utf-8")
+        with mock.patch.object(Path, "mkdir", racing_mkdir):
+            done = project_docs.apply_migration(plan)
+        self.assertEqual(target.read_text(encoding="utf-8"), "someone else's")
+        self.assertNotIn(str(target), [i["dst"] for i in done])
 
     def test_the_tool_is_a_dry_run_unless_told(self):
         write(self.home / "project.json", json.dumps({"id": "p-x", "name": "X"}))
@@ -227,6 +258,17 @@ class TheTaskOfACommit(unittest.TestCase):
         self.assertEqual(n("Merge branch 'sess/fix'", self.IDX), 12)
         self.assertEqual(n("Make it faster", self.IDX), 30)
         self.assertIsNone(n("Tidy up", self.IDX))
+
+    def test_edge_cases(self):
+        n = dashboard.commit_task_no
+        self.assertEqual(n("#91: the Documents list", self.IDX), 91)
+        self.assertEqual(n("Merge remote-tracking branch 'origin/sess/fix'", self.IDX), 12)
+        self.assertEqual(n("Merge pull request #999 from org/sess/fix", self.IDX), 12,
+                         "a pull request's number is not the task's; its branch is")
+        self.assertIsNone(n("Merge pull request #999 from org/other", self.IDX))
+        self.assertIsNone(n("Bump the version to 2 #3", self.IDX), "a stray #N is not a task")
+        self.assertIsNone(n("Fix (#41) in the middle", self.IDX))
+        self.assertIsNone(n("", self.IDX))
 
 
 @unittest.skipUnless(GIT, "git is not installed")

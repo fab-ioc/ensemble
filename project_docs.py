@@ -18,6 +18,7 @@ import os
 import re
 import shutil
 from pathlib import Path
+from urllib.parse import unquote
 
 DEFAULT_NAME = "Documents"
 # For a documents project the folder is the CEO's own: a name already there is
@@ -222,11 +223,12 @@ def task_folders(home: str) -> list[dict]:
 def plan_migration(home: str, docs_dir: str) -> dict:
     """What a migration would copy: for each numbered task folder, its
     top-level Markdown (TASK-HANDOVER.md, REVIEW-LOG.md and PO-*.md stay: they
-    are working notes) and its report subfolders, into
-    ``<Documents>/#<no> <title>/``. Nothing is written.
+    are working notes), its report subfolders (those holding a document:
+    their documents and pictures only) and the pictures a copied document
+    links to, into ``<Documents>/#<no> <title>/``. Nothing is written.
 
     {copy: [{src, dst, task, size, mtime}], same: [...], differs: [...],
-    skipped: [{path, why}]}: ``same`` is already there (same size and time),
+    skipped: [{path, why}]}: ``same`` is already there (the same bytes),
     ``differs`` is there with other content and is left alone."""
     plan = {"copy": [], "same": [], "differs": [], "skipped": []}
     docs = Path(docs_dir)
@@ -259,13 +261,26 @@ def plan_migration(home: str, docs_dir: str) -> dict:
                     if why not in ("hidden", "empty"):
                         plan["skipped"].append({"path": str(c), "why": why})
                     continue
-                for root, dirs, fs in os.walk(c):
-                    dirs[:] = sorted(d for d in dirs if not d.startswith("."))
-                    for f in sorted(fs):
-                        if f.startswith("."):
-                            continue
-                        sp = Path(root) / f
+                # A report's folder holds a document; from it go its documents
+                # and their pictures, not the samples, fixtures or data beside
+                # them. A folder of screenshots alone is evidence, not a report.
+                found = [p for p in _files_under(c) if p.suffix.lower() in DOC_EXT]
+                if not found:
+                    plan["skipped"].append({"path": str(c), "why": "no document in it (screenshots, samples, data)"})
+                    continue
+                for sp in _files_under(c):
+                    if sp.suffix.lower() in DOC_EXT or sp.suffix.lower() in MEDIA_EXT:
                         files.append((sp, dest_dir / sp.relative_to(src_dir)))
+        # A picture a copied document links to goes with it, wherever it is
+        # in the task folder.
+        have = {os.path.normcase(str(sp)) for sp, _ in files}
+        for sp, _ in list(files):
+            if sp.suffix.lower() not in (".md", ".markdown"):
+                continue
+            for pic in _linked_media(sp, src_dir):
+                if os.path.normcase(str(pic)) not in have:
+                    have.add(os.path.normcase(str(pic)))
+                    files.append((pic, dest_dir / pic.relative_to(src_dir)))
         for sp, dp in files:
             try:
                 st = sp.stat()
@@ -278,23 +293,91 @@ def plan_migration(home: str, docs_dir: str) -> dict:
                 dst = None
             if dst is None:
                 plan["copy"].append(item)
-            elif dst.st_size == st.st_size and int(dst.st_mtime) == int(st.st_mtime):
+            elif dst.st_size == st.st_size and _same_bytes(sp, dp):
                 plan["same"].append(item)
             else:
                 plan["differs"].append(item)
     return plan
 
 
+# What makes a task subfolder a report's, and what is copied from it.
+DOC_EXT = {".md", ".markdown", ".html", ".htm", ".pdf", ".docx"}
+_LINK_RE = re.compile(r"""\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)|\bsrc\s*=\s*["']([^"']+)["']""", re.I)
+
+
+def _files_under(d: Path) -> list[Path]:
+    out = []
+    for root, dirs, fs in os.walk(d):
+        dirs[:] = sorted(x for x in dirs if not x.startswith("."))
+        out.extend(Path(root) / f for f in sorted(fs) if not f.startswith("."))
+    return out
+
+
+def _linked_media(md: Path, task_dir: Path) -> list[Path]:
+    """The pictures a Markdown file links to by a relative path inside its
+    task folder."""
+    try:
+        text = md.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    out = []
+    base = os.path.normcase(os.path.realpath(task_dir))
+    for m in _LINK_RE.finditer(text):
+        ref = (m.group(1) or m.group(2) or "").split("#", 1)[0].split("?", 1)[0]
+        if not ref or re.match(r"^[a-z][a-z0-9+.-]*:", ref, re.I) or ref.startswith(("/", "\\")):
+            continue
+
+        p = (md.parent / unquote(ref))
+        if p.suffix.lower() not in MEDIA_EXT:
+            continue
+        real = os.path.normcase(os.path.realpath(p))
+        if not real.startswith(base + os.sep):
+            continue
+        try:
+            if p.is_file():
+                out.append(Path(os.path.realpath(p)))
+        except OSError:
+            continue
+    return out
+
+
+def _same_bytes(a: Path, b: Path) -> bool:
+    """Whether two files hold the same bytes: a copy made earlier, not
+    someone's own file of that name and size."""
+    try:
+        with open(a, "rb") as fa, open(b, "rb") as fb:
+            while True:
+                x, y = fa.read(1 << 16), fb.read(1 << 16)
+                if x != y:
+                    return False
+                if not x:
+                    return True
+    except OSError:
+        return False
+
+
 def apply_migration(plan: dict) -> list[dict]:
     """Copy what ``plan`` says to copy, keeping each file's times. Never
-    overwrites and never removes: a file that appeared at the destination
-    since the plan was made is left alone. Returns what was copied."""
+    overwrites and never removes: the destination is created exclusively, so
+    a file that appeared there since the plan was made (even a moment before
+    the copy) is left alone. Returns what was copied."""
     done = []
     for item in plan["copy"]:
         dp = Path(item["dst"])
-        if dp.exists():
-            continue
         dp.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(item["src"], dp)
+        try:
+            out = open(dp, "xb")
+        except FileExistsError:
+            continue
+        try:
+            with out, open(item["src"], "rb") as src:
+                shutil.copyfileobj(src, out)
+        except OSError:
+            try:
+                dp.unlink()      # our own half-written file, never someone else's
+            except OSError:
+                pass
+            raise
+        shutil.copystat(item["src"], dp)
         done.append(item)
     return done

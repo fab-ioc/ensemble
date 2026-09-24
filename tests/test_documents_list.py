@@ -185,6 +185,43 @@ class ThePureParts(unittest.TestCase):
         self.assertEqual(self.o["subject"], ["hand over", "Merge branch x", "Merge #5:"])
 
 
+SELECT_JS = r"""
+// One box, three reviews: commit A's diff, then B's, then A's again. The rows on
+// screen are A's second drawing; B's view still holds the same box.
+const row = i => { const el = { nodeType: 1, dataset: { i: String(i) } }; el.closest = () => el; return el; };
+const box = { contains: () => true };
+const draw = () => [row(0), row(1), row(2)];
+const viewA1 = { box, els: draw(), rows: [] }, viewB = { box, els: draw(), rows: [] }, viewA2 = { box, els: draw(), rows: [] };
+const DR_REVIEWS = new Map([['A', { view: viewA2 }], ['B', { view: viewB }]]);
+viewA1.rv = null;
+const drRange = () => ({ rows: [1] });
+let painted = null;
+const drPaint = v => { painted = v; };
+let btn = null;
+const document = { createElement: () => (btn = { style: {}, addEventListener() {}, remove() {} }), body: { appendChild() {} } };
+const window = { innerHeight: 800, innerWidth: 1200,
+  getSelection: () => ({ isCollapsed: false, rangeCount: 1, removeAllRanges() {},
+    getRangeAt: () => ({ startContainer: viewA2.els[0], endContainer: viewA2.els[2], endOffset: 1, getBoundingClientRect: () => ({ bottom: 10, left: 10 }) }) }) };
+let DR_SELBTN = null;
+%(fns)s
+drOnSelect();
+btn.onclick();
+console.log(JSON.stringify({ paintedA2: painted === viewA2, draft: viewA2.draft ? [viewA2.draft.a, viewA2.draft.b] : null, bTouched: !!viewB.draft }));
+"""
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class TheSelection(unittest.TestCase):
+    def test_a_selection_comments_on_the_diff_on_screen_after_a_to_b_to_a(self):
+        fns = js_function("drHideSel") + "\n" + js_function("drOnSelect")
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "s.js"
+            p.write_text(SELECT_JS % {"fns": fns}, encoding="utf-8")
+            proc = subprocess.run([NODE, str(p)], capture_output=True, text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(json.loads(proc.stdout), {"paintedA2": True, "draft": [0, 2], "bTouched": False})
+
+
 class TheWiring(unittest.TestCase):
     def test_a_project_workspace_opens_on_documents_the_fixed_first_tab(self):
         mount = js_function("wsMount")
