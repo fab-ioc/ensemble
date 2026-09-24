@@ -69,7 +69,7 @@ class _World(unittest.TestCase):
             mock.patch.object(dashboard, "load_projects", side_effect=lambda: [dict(p) for p in self.projects]),
             mock.patch.object(dashboard, "load_session_projects", return_value={}),
             mock.patch.object(dashboard, "load_labels", return_value={}),
-            mock.patch.object(dashboard, "operator_name", return_value="fabio"),
+            mock.patch.object(dashboard, "operator_name", return_value="sam"),
             mock.patch.object(dashboard, "may_restart_hub", return_value=False),
             mock.patch.object(rotation, "_pty", side_effect=lambda part: self.ptys.get(part.get("ptyId") or "")),
             mock.patch.object(rotation, "_transcript_of", return_value=(None, lambda p: {"turnOver": True})),

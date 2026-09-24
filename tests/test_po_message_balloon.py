@@ -38,7 +38,7 @@ vm.runInContext(code + `
   globalThis.t = { CHAT_NAMES, whoHtml, senderName, recipientName, kindName, foldChips, foldBalloonHtml,
     quietItem, taskOfMsg, chatGroups, withHubRows, soloItems, isHubInput, hubLabel, answerChip };`, ctx);
 const T = ctx.t;
-Object.assign(T.CHAT_NAMES, { operator: 'fabio', po: 'claude', taskNo: () => null });
+Object.assign(T.CHAT_NAMES, { operator: 'sam', po: 'claude', taskNo: () => null });
 const out = {};
 const pm = (id, direction, ts, extra) => Object.assign({ id, kind: 'pomsg', direction, ts, rang: [],
   from: direction === 'received' ? 'claude@room-0pten000' : 'claude',
