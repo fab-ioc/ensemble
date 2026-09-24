@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -360,28 +361,30 @@ def _same_bytes(a: Path, b: Path) -> bool:
 
 def apply_migration(plan: dict) -> list[dict]:
     """Copy what ``plan`` says to copy, keeping each file's times. Never
-    overwrites and never removes: the destination is created exclusively, so
-    a file that appeared there since the plan was made (even a moment before
-    the copy) is left alone. Returns what was copied."""
+    overwrites and never removes: each file is written, times and all, under
+    a hidden name of this run's own and only then linked in under its real
+    name, which fails if a file appeared there since the plan was made (even
+    a moment before). A failed copy removes only that hidden file, never
+    whatever is at the real name. Returns what was copied."""
     done = []
     for item in plan["copy"]:
         dp = Path(item["dst"])
         dp.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            out = open(dp, "xb")
-        except FileExistsError:
+        if dp.exists():
             continue
+        fd, tmp = tempfile.mkstemp(prefix=".~migrate-", dir=dp.parent)
         try:
-            with out, open(item["src"], "rb") as src:
+            with os.fdopen(fd, "wb") as out, open(item["src"], "rb") as src:
                 shutil.copyfileobj(src, out)
-            # Inside the try: a copy left without its times would read as
-            # "same" next time and never get them.
-            shutil.copystat(item["src"], dp)
-        except OSError:
+            shutil.copystat(item["src"], tmp)
             try:
-                dp.unlink()      # our own half-written file, never someone else's
+                os.link(tmp, dp)     # exclusive: never replaces a file
+            except FileExistsError:
+                continue
+        finally:
+            try:
+                os.unlink(tmp)
             except OSError:
                 pass
-            raise
         done.append(item)
     return done

@@ -246,6 +246,36 @@ class TheMigration(Tmp):
         src = Path(plan["copy"][0]["src"])
         self.assertEqual(int(first.stat().st_mtime), int(src.stat().st_mtime))
 
+    def test_a_failed_copy_never_removes_a_file_someone_else_put_there(self):
+        plan = project_docs.plan_migration(str(self.home), str(self.docs))
+        target = Path(plan["copy"][0]["dst"])
+
+        def theirs_then_fail(src, dst, *a, **k):
+            target.write_text("someone else's", encoding="utf-8")
+            raise OSError("no times")
+        with mock.patch.object(project_docs.shutil, "copystat", side_effect=theirs_then_fail):
+            with self.assertRaises(OSError):
+                project_docs.apply_migration(plan)
+        self.assertEqual(target.read_text(encoding="utf-8"), "someone else's")
+        self.assertEqual([p.name for p in target.parent.iterdir()], [target.name], "no hidden copy left")
+
+    def test_a_file_that_appears_while_copying_is_kept_and_nothing_is_left_behind(self):
+        plan = project_docs.plan_migration(str(self.home), str(self.docs))
+        target = Path(plan["copy"][0]["dst"])
+        real = shutil.copystat
+
+        def theirs_meanwhile(src, dst, *a, **k):
+            if not target.exists():
+                target.write_text("someone else's", encoding="utf-8")
+            return real(src, dst, *a, **k)
+        with mock.patch.object(project_docs.shutil, "copystat", side_effect=theirs_meanwhile):
+            done = project_docs.apply_migration(plan)
+        self.assertEqual(target.read_text(encoding="utf-8"), "someone else's")
+        self.assertNotIn(str(target), [i["dst"] for i in done])
+        self.assertEqual(len(done), len(plan["copy"]) - 1)
+        leftovers = [p for p in self.docs.rglob(".~migrate-*")]
+        self.assertEqual(leftovers, [])
+
     def test_picture_paths_the_viewer_renders_are_followed(self):
         t = self.home / "fix-it"
         write(t / "gallery" / "LOOK.md", "![a](shots/foo_(1).png) ![b](<shots/b.png> 'B') "
