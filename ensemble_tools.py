@@ -608,7 +608,9 @@ def _project_view(p: dict | None) -> dict | None:
         return None
     return {"id": p["id"], "name": p.get("name", ""), "path": p.get("path", ""),
             "home": _d.project_home(p, create=False), "isGit": bool(p.get("isGit")),
-            "poRoomId": p.get("poRoomId", ""), "kind": p.get("kind") or "code"}
+            "poRoomId": p.get("poRoomId", ""), "kind": p.get("kind") or "code",
+            # Where the project's tasks put reports and design notes.
+            "documentsDir": _d.project_documents_dir(p)}
 
 
 def _project_po(project: dict | None) -> dict | None:

@@ -534,7 +534,7 @@ renderPoPill(projectById('p-docs')); out.docsPill = pill.hidden;
 const panel = docsPanelHtml(projectById('p-docs'));
 out.panelOrder = [panel.indexOf('>Files<'), panel.indexOf('>Recent changes<')];
 out.panelHasTree = panel.includes('class="wsp-tree"') && panel.includes('wsp-hist"');
-out.panelBox = [panel.indexOf('> Task folders</label>'), panel.indexOf('class="wsp-tree"'), panel.includes('dcs-tasks-cb" checked')];
+out.panelBox = [panel.indexOf('> Show task folders</label>'), panel.indexOf('class="wsp-tree"'), panel.includes('dcs-tasks-cb" checked')];
 
 at('p-code');
 out.codeNote = poNoteHtml();
@@ -707,11 +707,12 @@ class ThePage(unittest.TestCase):
         o = self.out
         self.assertEqual(o["docsTree"], ["Leasing", "old-task-no-json", "README.md"])
         self.assertEqual(o["docsTaskTree"], ["Leasing", "old-task-no-json", "README.md"])
-        self.assertEqual(o["codeTree"], ["Leasing", "sort_papers", "_linked", "old-task-no-json", "README.md"])
+        # A code project's home hides its tasks' folders too, behind the same switch (#91).
+        self.assertEqual(o["codeTree"], ["Leasing", "_linked", "old-task-no-json", "README.md"])
         self.assertEqual(o["keys"], ["docs:p-docs", "project:p-docs"])
         self.assertEqual(o["docsTreeShown"], ["Leasing", "sort_papers", "old-task-no-json", "README.md"], "_linked still hidden")
         self.assertEqual(o["docsTaskTreeShown"], o["docsTaskTree"], "a task's Workspace keeps its own rules")
-        self.assertEqual(o["codeTreeShown"], o["codeTree"])
+        self.assertEqual(o["codeTreeShown"], ["Leasing", "sort_papers", "_linked", "old-task-no-json", "README.md"])
 
     def test_the_history_reads_plainly(self):
         o = self.out

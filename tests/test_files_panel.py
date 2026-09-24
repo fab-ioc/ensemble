@@ -537,7 +537,7 @@ class TheMarkup(unittest.TestCase):
         self.assertNotIn("accept=", panel, "a phone offers Photos and Files only without a filter")
         self.assertIn(">New folder<", panel)
         self.assertIn('<input type="checkbox" class="dcs-tasks-cb"', panel)
-        self.assertIn("> Task folders</label>", panel)
+        self.assertIn("> Show task folders</label>", panel)
         self.assertIn('class="dcs-all dcs-tasks"', panel, "the box looks like the panel's other checkbox")
         wire = js_function("docsFilesWire")
         self.assertIn("tasks.onchange = () => docsTasksToggle(v, tasks.checked);", wire)
