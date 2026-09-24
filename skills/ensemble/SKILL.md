@@ -123,6 +123,20 @@ login came back, the PO told you), say so with an `update` that carries
 - Use `ensemble_update_task` to move your own task to `inreview` as well when
   you hand the work back.
 
+### Where reports and design notes go: the project's Documents folder
+
+What a task produces for others to read (a deliverable report, a survey, a
+measurement, a design decision and its why) is the project's knowledge, not
+the task's. It goes in the project's **Documents folder**, whose path the hub
+gives you as `project.documentsDir` in `ensemble_get_task` (never guess it; a
+documents project's may not be called `Documents`). Name it by your task's
+number: `#<no> <short title>.md`, e.g. `#26 Where our tokens go.md`, or a
+folder `#<no> <title>/` when there are several files or images. The project's
+Workspace opens on this folder, newest first, so the product owner finds it
+there. Link it in your `ensemble_report` text. Working notes stay in your task
+folder: `TASK-HANDOVER.md`, `REVIEW-LOG.md`, scratch files, evidence nobody
+will read again.
+
 **If you are the PO**, the hub also checks your project's tasks on a timer
 (every 5 minutes by default) and wakes you with a `[digest]` only for news: a
 task's status or board column changed, new commits on its branch or its work
@@ -491,6 +505,16 @@ and read their reports. Close a task by reading the files it changed (the file
 history says which, and who), then stopping it. With no merge to see, its card
 does not move to Done by itself: once you have accepted the work, set it with
 `ensemble_update_task` (`workflow: "done"`), which the project's PO may do.
+
+**Your documents go where the tasks' do.** A document you write for the
+product owner (an analysis, a proposal, a decision record) goes in the
+project's Documents folder (`project.documentsDir` from `ensemble_get_task` or
+`ensemble_whoami`'s project), as `PO <short title>.md`, or `#<no> …` when it
+belongs to a task; `PO-HANDOVER.md` and `ROADMAP.md` stay where they are. Say
+in each spec that the task's report goes there (the launch prompt tells the
+owner too). A project that kept its reports in task folders is brought over
+once with `py tools/migrate_reports.py "<project>"` (a dry run; `--apply`
+copies, never moves).
 
 **Name tasks by number.** In reports to the product owner, in the handover
 and in specs, a task is `#18` (`ED-18` when it is another project's), with its

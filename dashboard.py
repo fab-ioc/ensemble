@@ -84,6 +84,8 @@ import peer_process
 import points
 # The person's sends: each kept by its key until the agent's conversation shows it.
 import sends
+# A project's Documents folder: its tasks' reports, newest first.
+import project_docs
 # Task numbers (#18, ED-18) and project keys.
 import task_numbers
 import task_tool_hook
@@ -1274,10 +1276,17 @@ POINTS_NOTE = (
     "(one reply may answer several), or say why not the same way; ensemble_points lists "
     "the open ones.")
 
+# Where a task's knowledge goes (project_docs): the project's Documents folder.
+DOCUMENTS_NOTE = (
+    "Your deliverable reports and design-decision notes go in the project's Documents folder "
+    "(`project.documentsDir` in ensemble_get_task) as `#<task no> <short title>.md`, or a folder "
+    "`#<task no> <title>/` for several files; link them in ensemble_report. TASK-HANDOVER.md and "
+    "other working notes stay in your task folder.")
+
 SOLO_REPORT_NOTE = (
     f"\n\n---\n{OWNER_OUTPUT_NOTE} When you finish this task, or get blocked and need help, report it "
     "with the ensemble_report tool (kind completed | blocked | question) — it "
-    f"reaches the project's PO, who otherwise cannot see your reply. {POINTS_NOTE}")
+    f"reaches the project's PO, who otherwise cannot see your reply. {POINTS_NOTE} {DOCUMENTS_NOTE}")
 
 # RTK is deliberately launch-scoped.  Never run ``rtk init -g`` here: that
 # edits user-level Claude/Codex files and would also affect PO rooms and the
@@ -2287,7 +2296,7 @@ def collab_briefing(ident: str, role: str, teammates: list, task: str,
         parts.append(f"Start by acknowledging your role in one line, then wait for "
                      f"{eng}'s first deliverable — do not begin working the task yourself.")
     else:
-        parts.append(OWNER_OUTPUT_NOTE + " " + POINTS_NOTE)
+        parts.append(OWNER_OUTPUT_NOTE + " " + POINTS_NOTE + " " + DOCUMENTS_NOTE)
         non_reviewers = [t for t in teammates
                          if chatroom._role_head(t.get("role", "")) != chatroom.REVIEWER_ROLE]
         if non_reviewers:
@@ -2650,6 +2659,10 @@ def load_projects() -> list[dict]:
                       # Its short key (ED) and the number its next task gets.
                       "key": str(meta.get("key") or "").strip(),
                       "nextTaskNo": meta.get("nextTaskNo") if isinstance(meta.get("nextTaskNo"), int) else 0,
+                      # The name of its Documents folder, once chosen
+                      # (project_documents_dir).
+                      **({"documentsDir": meta["documentsDir"]}
+                         if project_docs.valid_name(meta.get("documentsDir") or "") else {}),
                       # Its own progress-digest interval, when it set one.
                       **({"digestIntervalMin": meta["digestIntervalMin"]}
                          if "digestIntervalMin" in meta else {})})
@@ -4389,6 +4402,8 @@ def build_projects() -> dict:
     for p in projects_reg:
         groups[p["id"]] = {"id": p["id"], "name": p["name"], "path": p["path"], "key": keys.get(p["id"], ""),
                            "home": project_home(p, create=False),
+                           # Where its tasks put reports and design notes.
+                           "documentsDir": project_documents_dir(p),
                            "poRoomId": p.get("poRoomId", ""), "kind": p.get("kind") or "code",
                            "isGit": p.get("isGit", False), "registered": True,
                            "sessions": [], "live": 0, "waiting": 0, "updatedAt": 0}
@@ -4712,12 +4727,117 @@ def git_roots(path: str, depth: int = 3) -> tuple[int, dict]:
     return 200, {"roots": found}
 
 
-def git_diff(path: str, file: str, branch: bool = False) -> tuple[int, dict]:
+_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
+_TASK_NO_RE = re.compile(r"(?:^Merge #|\(#|\s#)(\d+)\b")
+_MERGE_BRANCH_RE = re.compile(r"^Merge (?:remote-tracking )?branch '([^']+)'")
+GIT_LOG_MAX = 100
+GIT_LOG_FILES_MAX = 300
+
+
+def _main_line(root: str) -> str:
+    """The branch work lands on: main, master or the remote's default, else HEAD."""
+    remote_head = _git_out(root, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+    for cand in ("main", "master", remote_head):
+        if cand and _git_out(root, "rev-parse", "--verify", "--quiet", cand + "^{commit}"):
+            return cand
+    return "HEAD"
+
+
+def _project_task_index(project_id: str) -> dict:
+    """What names a task of a project in a commit: its branch and its title,
+    each to its number."""
+    idx = {"branch": {}, "title": {}}
+    if not project_id:
+        return idx
+    links = load_session_projects()
+    for room in chatroom.list_rooms():
+        no = room.get("no")
+        if not isinstance(no, int) or _room_project_id(room["id"], room, links) != project_id:
+            continue
+        br = ((room.get("workspace") or {}).get("branch") or "").strip()
+        if br:
+            idx["branch"][br] = no
+        t = (room.get("title") or "").strip().lower()
+        if t:
+            idx["title"].setdefault(t, no)
+    return idx
+
+
+def commit_task_no(subject: str, idx: dict) -> int | None:
+    """The task a commit on the main line is: ``Merge #NN:`` or ``(#NN)`` in
+    its message, else the task whose branch it merges, else the task whose
+    title it is (a squash merge)."""
+    m = _TASK_NO_RE.search(subject or "")
+    if m:
+        return int(m.group(1))
+    m = _MERGE_BRANCH_RE.match(subject or "")
+    if m and m.group(1) in idx.get("branch", {}):
+        return idx["branch"][m.group(1)]
+    return idx.get("title", {}).get((subject or "").strip().lower())
+
+
+def git_log(path: str, n: int = 30, project_id: str = "") -> tuple[int, dict]:
+    """What landed on the main line recently, newest first: each commit of its
+    first-parent history (a merge counts as one) with its task number, time,
+    author and files, as the project's Changes tab lists them."""
+    if not path or not workspace_access_ok(path):
+        return 403, {"error": "path_not_allowed"}
+    root = git_root(path)
+    if not root or not path_is_git(root):
+        return 200, {"root": root, "isGit": False, "commits": []}
+    n = max(1, min(GIT_LOG_MAX, n))
+    ref = _main_line(root)
+    try:
+        out = _run(["git", "-c", "core.quotepath=false", "-C", root, "log", ref, "--first-parent",
+                    "-n", str(n), "--diff-merges=first-parent", "--name-status", "--no-renames",
+                    "--format=%x1e%H%x1f%ct%x1f%an%x1f%s"],
+                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
+    except (OSError, subprocess.SubprocessError) as e:
+        return 500, {"error": f"git_log_failed: {e}"}
+    if out.returncode != 0:
+        return 200, {"root": root, "isGit": True, "ref": ref, "commits": []}
+    idx = _project_task_index(project_id)
+    commits = []
+    for rec in (out.stdout or "").split("\x1e"):
+        if not rec.strip():
+            continue
+        head, _, body = rec.partition("\n")
+        parts = head.split("\x1f")
+        if len(parts) < 4 or not _SHA_RE.match(parts[0]):
+            continue
+        files = []
+        for line in body.splitlines():
+            code, _, name = line.partition("\t")
+            if code and name:
+                files.append({"path": name, "status": code[0]})
+        commits.append({"sha": parts[0], "time": int(parts[1]) if parts[1].isdigit() else 0,
+                        "author": parts[2], "subject": parts[3],
+                        "no": commit_task_no(parts[3], idx),
+                        "files": files[:GIT_LOG_FILES_MAX],
+                        "more": max(0, len(files) - GIT_LOG_FILES_MAX)})
+    return 200, {"root": root, "isGit": True, "ref": ref, "commits": commits}
+
+
+def git_diff(path: str, file: str, branch: bool = False, commit: str = "") -> tuple[int, dict]:
     if not path or not workspace_access_ok(path):
         return 403, {"error": "path_not_allowed"}
     root = git_root(path)
     if not root or not path_is_git(root):
         return 200, {"root": root, "isGit": False, "diff": ""}
+    if commit:
+        # One commit's change, a merge against the line it landed on.
+        if not _SHA_RE.match(commit):
+            return 400, {"error": "bad_commit"}
+        argv = ["git", "-C", root, "show", "--diff-merges=first-parent", "--format=", "--no-color", commit, "--"]
+        if file:
+            argv.append(file)
+        try:
+            out = _run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
+        except (OSError, subprocess.SubprocessError) as e:
+            return 500, {"error": f"git_diff_failed: {e}"}
+        if out.returncode != 0:
+            return 404, {"error": "no_such_commit"}
+        return 200, {"root": root, "isGit": True, "file": file, "commit": commit, "diff": out.stdout or ""}
     # A branch diff runs from where the branch left the main line to the
     # working tree, so it carries the commits and the uncommitted edits alike.
     against = (git_branch_base(root)["mergeBase"] if branch else "") or "HEAD"
@@ -5241,14 +5361,45 @@ def write_roadmap(project: dict, text: str, base_version: str) -> tuple[bool, di
                       **_roadmap_state(fp)}
 
 
+def project_documents_dir(project: dict, persist: bool = True) -> str:
+    """Where a project's tasks put their reports and design notes: its
+    Documents folder in its home (project_docs). The name is chosen the first
+    time and kept in project.json, so it never moves, and a documents
+    project's own folder of that name is never taken over. The folder itself
+    is made by whoever first writes there."""
+    home = project_home(project, create=False)
+    name = project.get("documentsDir") or ""
+    if not project_docs.valid_name(name):
+        name = project_docs.choose_name(home, project.get("kind") == "documents")
+        if persist and project.get("id") and os.path.isdir(home):
+            ok, _ = _set_project_meta(project["id"], "documentsDir", name)
+            if ok:
+                project["documentsDir"] = name
+    return os.path.join(home, name)
+
+
+def project_documents(project: dict) -> dict:
+    """GET /api/projects/documents: the project's documents, newest first —
+    its Documents folder and, for a code project, the Markdown under the main
+    checkout's docs/ folder."""
+    code_docs = ""
+    if project.get("kind") != "documents" and project.get("path"):
+        code_docs = os.path.join(project["path"], "docs")
+    out = project_docs.list_documents(project_documents_dir(project), code_docs)
+    key = project_keys(load_projects()).get(project.get("id", ""), "") or project.get("key", "")
+    return {"projectId": project.get("id", ""), "key": key, **out}
+
+
 def _task_dir_for(project: dict, title: str) -> Path:
     """A new task's folder: <project home>/<slug>[-N]. Plain names, no NN_
-    prefix — the project folder is the namespace."""
+    prefix — the project folder is the namespace. Never the project's
+    Documents folder, even before it exists."""
     slug = sanitize_slug(title) or "task"
     base = Path(project_home(project))
+    reserved = os.path.basename(project_documents_dir(project)).lower()
     dest = base / slug
     n = 2
-    while dest.exists():
+    while dest.exists() or dest.name.lower() == reserved:
         dest = base / f"{slug}-{n}"
         n += 1
     return dest
@@ -8489,6 +8640,15 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/projects":
             self._send_json(200, build_projects())
             return
+        if p == "/api/projects/documents":
+            # ?project=<id>: its Documents folder and docs/ in its code,
+            # newest first (the Workspace opens on it).
+            proj = find_project((parse_qs(u.query).get("project", [""])[0]).strip())
+            if proj is None:
+                self._send_json(404, {"error": "no_such_project"})
+                return
+            self._send_json(200, project_documents(proj))
+            return
         if p == "/api/projects/po-candidates":
             # ?project=<id>, or ?path=&kind=&name= for the project New project
             # would register: the conversations that may be its PO, with why
@@ -8547,7 +8707,16 @@ class Handler(BaseHTTPRequestHandler):
             q = parse_qs(u.query)
             path = (q.get("path", [""])[0] or "").strip()
             fpath = (q.get("file", [""])[0] or "").strip()
-            self._send_json(*git_diff(path, fpath, q.get("branch", [""])[0] == "1"))
+            self._send_json(*git_diff(path, fpath, q.get("branch", [""])[0] == "1",
+                                      (q.get("commit", [""])[0] or "").strip()))
+            return
+        if p == "/api/git/log":
+            # ?path=<repo>[&project=<id>][&n=30]: what landed on its main line.
+            q = parse_qs(u.query)
+            n = q.get("n", ["30"])[0]
+            self._send_json(*git_log((q.get("path", [""])[0] or "").strip(),
+                                     int(n) if n.isdigit() else 30,
+                                     (q.get("project", [""])[0] or "").strip()))
             return
         if p == "/api/git/roots":
             q = parse_qs(u.query)
