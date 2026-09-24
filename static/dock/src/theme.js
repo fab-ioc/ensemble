@@ -1,5 +1,5 @@
 // The theme: which colour set is on. The tokens live in css/theme.css as custom properties on :root, light by default
-// and dark under :root[data-theme="dark"]. An app switches by setting data-theme (and data-scheme, light or dark, for
+// and every other set under :root[data-theme="<name>"] (THEME_LIST names them). An app switches by setting data-theme (and data-scheme, light or dark, for
 // anything that only cares which kind it is) on <html>, which applyTheme() does and announces with a `dock-theme` event
 // on the window. A dock copies those attributes into its pop-out windows and keeps them in step.
 //
@@ -7,7 +7,26 @@
 //   const theme = createTheme();          // remembers the choice in localStorage['dock.theme']; 'system' follows the OS
 //   theme.set('dark'); theme.toggle(); theme.onChange(({ pref, theme }) => …);
 
-export const THEMES = { light: 'light', dark: 'dark' }; // name -> scheme
+/**
+ * Every colour set in css/theme.css, in a menu's order, as { name, label, scheme, origin }: name is the data-theme
+ * value, label what a menu calls it, scheme 'light' or 'dark', and origin its group: 'base', the library's own;
+ * 'ensemble', Ensemble's; 'extra', more.
+ * README "Theme" says where each comes from.
+ */
+export const THEME_LIST = Object.freeze([
+  ['light', 'Light', 'light', 'base'], ['dark', 'Dark', 'dark', 'base'], ['dim', 'Dim', 'dark', 'base'],
+  ['paper', 'Paper', 'light', 'base'], ['contrast', 'High contrast', 'light', 'base'], ['fjord', 'Fjord', 'dark', 'base'],
+  ['tws', 'TWS', 'dark', 'base'],
+  ['ensemble-light', 'Light', 'light', 'ensemble'], ['ensemble-dark', 'Dark', 'dark', 'ensemble'],
+  ['ensemble-dim', 'Dim', 'dark', 'ensemble'], ['ensemble-paper', 'Paper', 'light', 'ensemble'],
+  ['ensemble-contrast', 'High contrast', 'light', 'ensemble'], ['ensemble-fjord', 'Fjord', 'dark', 'ensemble'],
+  ['solar-light', 'Solar light', 'light', 'extra'], ['solar-dark', 'Solar dark', 'dark', 'extra'],
+  ['sepia', 'Sepia', 'light', 'extra'], ['rose', 'Rose', 'light', 'extra'], ['dusk', 'Dusk', 'dark', 'extra'],
+  ['forest', 'Forest', 'dark', 'extra'], ['contrast-dark', 'High contrast dark', 'dark', 'extra'],
+].map(([name, label, scheme, origin]) => Object.freeze({ name, label, scheme, origin })));
+
+/** name -> scheme ('light' | 'dark') for every set in THEME_LIST: createTheme's default `themes`. */
+export const THEMES = Object.freeze(Object.fromEntries(THEME_LIST.map((t) => [t.name, t.scheme])));
 export const THEME_KEY = 'dock.theme';
 export const THEME_EVENT = 'dock-theme';
 

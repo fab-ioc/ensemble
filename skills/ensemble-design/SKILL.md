@@ -559,8 +559,10 @@ library is never edited in this repository: a need goes to the Dock project's `E
 - **Tokens:** the library's `--dk-*` tokens read Ensemble's own (`--dk-bg` `--bg`, `--dk-bg2`
   `--surface-sunken`, `--dk-bg3` `--surface`, `--dk-line` `--border`, `--dk-accent` `--accent`,
   `--dk-focus` `--focus-ring`, …) in `:root`, so every theme and the person's accent apply without a
-  theme block; its `css/theme.css` is not loaded. Its stylesheet is loaded first and Ensemble's rules
-  after it put its chrome on Ensemble's scale.
+  theme block; its `css/theme.css` is not loaded. Its size tokens put its chrome's type and shapes on
+  Ensemble's scale (`--dk-font-chrome`, `--dk-fs-tab`, `--dk-tab-case`, `--dk-badge-*`, `--dk-radius`,
+  `--dk-float-shadow`, …); its stylesheet is loaded first and Ensemble's rules after it do the rest
+  (button sizes, hover and selected grounds, the focus ring).
 - **Chrome:** a title bar is 32px on `--surface-sunken` with a `--border` under it. A tab is
   `--fs-200` at 600 in `--fg-subtle`, sentence case; the one in front is `--fg` on `--surface` with
   the `--accent` underline (§1's selected tab). The bar's controls (move or hide, minimise, maximise,
@@ -583,16 +585,21 @@ library is never edited in this repository: a need goes to the Dock project's `E
   person is working** (`pdHostDoc`, the library's `hostDoc`): the page's dialog (`pdModal()`, never
   `$('#modal')` to open one), a toast, a menu under its button, a selection's Comment button; `$`
   finds an element in a popped-out window when this page has none.
-- **The PO chat** is an exception to "the panel holds its content": its iframe stays in `#po-panel`
-  (rule 1) and lies over the panel's place (`pdSyncChat`: measured on every layout change, resize,
-  splitter drag and slide), at the panel's level (over its own floating window or strip, under any
-  other). It is hidden with `visibility`, never `display`, while its place is off screen. Popped
-  out, the panel's window holds a chat of its own; the one here stays loaded and hidden.
+- **The PO chat** is in its panel: `#po-panel` moves into the PO chat panel on a PO screen and back
+  home (the drawer) anywhere else (`pdPlaceChat`, with `moveBefore`, so its iframe keeps its page;
+  the library moves panels the same way, so a layout change reloads no chat and no open file).
+  While the panel is hidden or popped out it waits at home, hidden with `visibility`, never
+  `display`. Popped out, the panel's window holds a chat of its own (removed in `onPopIn`, before the
+  panel comes back); the one here stays loaded.
 - **The roadmap** is a document: the first row of the Workspace's Documents list ("Roadmap,
   ROADMAP.md · always first", with when it was saved), opening in its own view and editor over the
   list with **← Documents**. There is no Roadmap tab.
-- **Phone:** the tabs are `--touch-min` and scroll sideways within the title bar; the dock fills the
-  height under the chrome (`--vv-h`).
+- **Phone:** the same dock, narrow (the library's `narrow`, switched by `setNarrow` on resize; its
+  layout kept apart, under `cd-po-dock-phone`): one column of tabs, no control that moves a panel.
+  The title bar is `--touch-min` tall and its tabs scroll sideways; the dock fills the height under
+  the chrome (`--vv-h`).
+- **Keys** (the library's): F6 / Shift+F6 go between the stacks, the arrow keys along a stack's tabs;
+  Tab reaches a stack's front tab only.
 
 ### Message editor
 
@@ -669,10 +676,11 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
    panel forward and focuses its composer instead of opening a second copy. (A phone's open task
    covers the PO screen, so there the pill opens the drawer over the task.)
 
-   **A live session is built once and never re-parented.** The PO's conversation is one iframe in
-   `#po-panel`, which never moves. On the PO screen it lies over the PO chat panel's place; everywhere
-   else it is a fixed drawer; only its classes and its measured box change between the two. Moving
-   an iframe in the DOM reloads it, so navigating must restyle it, never move it.
+   **A live session is built once and never reloaded by navigation.** The PO's conversation is one
+   iframe in `#po-panel`. On the PO screen it sits inside the PO chat panel; everywhere else it is a
+   fixed drawer. It moves between the two only through `pdPlaceChat`/`pdMove`, which use
+   `moveBefore` so the iframe keeps its page (a plain `appendChild` would reload it; browsers
+   without `moveBefore` do reload it then). Never rebuild it, and never move it any other way.
 2. **The board groups; it never sorts.** Priority first, then most recently updated, in *both* views.
    The hover-freeze works by being the **only** place ordering happens — any second sort defeats it and
    cards move under the cursor. Two tasks must never swap places because someone flipped the view

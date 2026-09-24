@@ -1,12 +1,15 @@
 // The layout model: plain JSON, so it is stored as it is. No DOM here; dock.js draws it.
 //
-//   { v, root, floats: [{ stack, x, y, w, h, home }], auto: [{ id, edge, size, home }], hidden: [{ id, was }], out: { id: geo } }
+//   { v, root, floats: [{ stack, x, y, w, h, home }], auto: [{ id, edge, size, home }], hidden: [{ id, was }],
+//     out: { id: { x, y, w, h, was } } }
 //
 // A node is a stack { t: 'stack', panels: [id], active: id, min?, size? } or a split { t: 'split', dir: 'row'|'col',
 // kids: [node], size? }. `size` is a node's px along its parent split; one child of each split (the one holding the
 // `fill` panel, else the largest) takes what is left. `home` is where a panel was docked: the panels it shared a stack
 // with, or the panel beside it and on which side, so it goes back there. `out` names the panels popped out into a
-// browser window of their own, with that window's screen position and size ({ x, y, w, h }).
+// browser window of their own, with that window's screen position and size ({ x, y, w, h }). A panel that is out has
+// no place in the layout (its tab goes, or its whole stack, and the neighbours take the room); `was` says where it
+// was, as a hidden panel's does, and it goes back there.
 //
 // Everything that depends on the app (its panels, their minimum sizes, their default edges and layout) comes from a
 // config made by makeConfig(); every function that needs it takes it as `opts.cfg` (or `cfg`).
@@ -123,7 +126,7 @@ export function findStack(node, s, chain = []) {
   return null;
 }
 
-/** Where a panel is: { kind: 'dock' | 'float' | 'auto' | 'hidden', ... }; null when the layout does not hold it. */
+/** Where a panel is: { kind: 'dock' | 'float' | 'auto' | 'hidden' | 'out', ... }; null when the layout does not hold it. */
 export function whereIs(layout, id) {
   const at = locate(layout.root, id);
   if (at) return { kind: 'dock', stack: at.stack, chain: at.chain };
@@ -132,6 +135,7 @@ export function whereIs(layout, id) {
   if (a) return { kind: 'auto', entry: a };
   const h = layout.hidden.find((x) => x.id === id);
   if (h) return { kind: 'hidden', entry: h };
+  if (layout.out && Object.prototype.hasOwnProperty.call(layout.out, id)) return { kind: 'out', entry: layout.out[id] };
   return null;
 }
 
@@ -143,7 +147,8 @@ export function isShownIn(layout, id) {
   return w.kind === 'auto';
 }
 
-/** Where a docked panel would go back to: the panels of its stack, else the panel beside it and on which side. */
+/** Where a docked panel would go back to: the panels of its stack, else the panel (or panels) beside it and on which
+ * side. */
 export function homeOf(layout, id) {
   const at = locate(layout.root, id);
   if (!at) return null;
@@ -156,6 +161,7 @@ export function homeOf(layout, id) {
     const near = panelsUnder(sp.kids[j]);
     if (!near.length) continue;
     home.near = near[0];
+    if (near.length > 1) home.nearAll = near; // the neighbour was a split: go back beside all of it, not into it
     home.side = sp.dir === 'row' ? (i > j ? 'right' : 'left') : (i > j ? 'bottom' : 'top');
     break;
   }
@@ -192,7 +198,7 @@ export function tidy(node) {
   return node;
 }
 
-/** Takes a panel out of wherever it is. Returns what it was: { kind, home?, float?, entry? }, or null. */
+/** Takes a panel out of wherever it is. Returns what it was: { kind, home?, float?, entry?, was? }, or null. */
 export function detach(layout, id) {
   const w = whereIs(layout, id);
   if (!w) return null;
@@ -212,14 +218,68 @@ export function detach(layout, id) {
     if (s.active === id) s.active = s.panels[Math.max(0, at - 1)];
     if (!s.panels.length) layout.floats.splice(layout.floats.indexOf(w.float), 1);
     const { x, y, w: fw, h } = w.float;
-    return { kind: 'float', home: w.float.home || null, float: { x, y, w: fw, h } };
+    const was = { kind: 'float', home: w.float.home || null, float: { x, y, w: fw, h } };
+    if (s.panels.length) { was.peers = s.panels.slice(); was.index = at; } // back into this floating stack while it lasts
+    return was;
   }
   if (w.kind === 'auto') {
     layout.auto.splice(layout.auto.indexOf(w.entry), 1);
     return { kind: 'auto', home: w.entry.home || null, entry: { edge: w.entry.edge, size: w.entry.size } };
   }
+  if (w.kind === 'out') {
+    delete layout.out[id];
+    const was = w.entry.was || { kind: 'dock', home: null };
+    return { kind: 'out', home: was.home || null, was };
+  }
   layout.hidden.splice(layout.hidden.indexOf(w.entry), 1);
   return { kind: 'hidden', was: w.entry.was || null };
+}
+
+// What a panel taken from its place (detach's answer) needs to go back there: { kind: 'dock' | 'float' | 'auto', home,
+// float?, edge?, size? }. A panel that was out or hidden keeps what it had.
+function wasOf(was) {
+  if (was.kind === 'out' || was.kind === 'hidden') return was.was ? { ...was.was } : { kind: 'dock', home: null };
+  const keep = { kind: was.kind, home: was.home || null };
+  if (was.float) keep.float = was.float;
+  if (was.peers) { keep.peers = was.peers.slice(); keep.index = was.index; }
+  if (was.entry) { keep.edge = was.entry.edge; keep.size = was.entry.size; }
+  return keep;
+}
+
+// Puts panel `id` into stack `s` where it was among `peers` (the stack's other panels then; it stood before
+// peers[index]): after the nearest of the panels before it that is still there, else before the nearest after it.
+function insertAmong(s, id, peers, index) {
+  const at = finite(index) ? Math.max(0, Math.min(peers.length, index)) : peers.length;
+  let i = -1;
+  for (let k = at - 1; k >= 0 && i < 0; k--) { const j = s.panels.indexOf(peers[k]); if (j >= 0) i = j + 1; }
+  for (let k = at; k < peers.length && i < 0; k++) { const j = s.panels.indexOf(peers[k]); if (j >= 0) i = j; }
+  s.panels.splice(i < 0 ? s.panels.length : i, 0, id);
+  s.active = id;
+}
+
+// The floating stack a panel that was in one goes back to: the one holding most of its peers, and of those the one
+// still at its rectangle, or null.
+function peerFloatOf(layout, was) {
+  const peers = was.peers || [];
+  let best = null, most = 0;
+  for (const f of layout.floats) {
+    const n = f.stack.panels.filter((p) => peers.includes(p)).length;
+    if (!n) continue;
+    const there = was.float && ['x', 'y', 'w', 'h'].every((k) => f[k] === was.float[k]);
+    if (n > most || (n === most && there)) { best = f; most = n; }
+  }
+  return best;
+}
+
+// Puts a panel back as `was` says: docked, floating or unpinned.
+function restore(layout, id, was, opts) {
+  const peerFloat = was.kind === 'float' ? peerFloatOf(layout, was) : null;
+  if (peerFloat) insertAmong(peerFloat.stack, id, was.peers, was.index);
+  else if (was.kind === 'float' && was.float) layout.floats.push({ stack: stackNode([id]), ...was.float, home: was.home || null });
+  else if (was.kind === 'auto') {
+    const unpin = cfgOf(opts).sizes.unpinSize;
+    layout.auto.push({ id, edge: EDGES.includes(was.edge) ? was.edge : 'right', size: finite(was.size) ? was.size : unpin, home: was.home || null });
+  } else placeDocked(layout, id, was.home, opts);
 }
 
 /** Docks panel `id` beside the stack found at `at`, on `side`. `dims(node)` measures a node ({ w, h }) when it can. */
@@ -263,19 +323,34 @@ export function dockAtEdge(layout, id, side, size, extent, cfg = makeConfig()) {
   return node;
 }
 
-// Back where `home` says: into the stack of any panel it shared one with, else beside the panel it was next to.
+// The smallest node holding every panel of `ids` still in the tree, as { stack: node, chain } (the node may be a split).
+function enclosing(root, ids) {
+  const here = ids.filter((p) => contains(root, p));
+  if (!here.length) return null;
+  let node = root;
+  const chain = [];
+  for (;;) {
+    if (node.t !== 'split') break;
+    const i = node.kids.findIndex((k) => here.every((p) => contains(k, p)));
+    if (i < 0) break;
+    chain.push({ split: node, i });
+    node = node.kids[i];
+  }
+  return { stack: node, chain };
+}
+
+// Back where `home` says: into the stack holding most of the panels it shared one with, else beside the panel it was next to.
 function placeAtHome(layout, id, home, dims) {
   if (!home) return false;
+  let best = null, most = 0;
   for (const p of home.peers || []) {
     const at = locate(layout.root, p);
-    if (!at) continue;
-    const i = Math.max(0, Math.min(at.stack.panels.length, finite(home.index) ? home.index : at.stack.panels.length));
-    at.stack.panels.splice(i, 0, id);
-    at.stack.active = id;
-    return true;
+    const n = at ? at.stack.panels.filter((q) => home.peers.includes(q)).length : 0;
+    if (n > most) { best = at; most = n; }
   }
+  if (best) { insertAmong(best.stack, id, home.peers, home.index); return true; }
   if (home.near && EDGES.includes(home.side)) {
-    const at = locate(layout.root, home.near);
+    const at = home.nearAll ? enclosing(layout.root, home.nearAll) : locate(layout.root, home.near);
     if (at) { dockBeside(layout, at, id, home.side, home.size, dims); return true; }
   }
   return false;
@@ -362,27 +437,53 @@ export function pinPanel(layout, id, opts = {}) {
   return true;
 }
 
-/** Hides a panel; `showPanel` puts it back as it was (docked, floating or unpinned). */
+/** Hides a panel; `showPanel` puts it back as it was (docked, floating or unpinned). One that was out comes back where
+ * it was before it went out. */
 export function hidePanel(layout, id) {
   const w = whereIs(layout, id);
   if (!w || w.kind === 'hidden') return false;
-  const was = detach(layout, id);
-  const keep = { kind: was.kind, home: was.home || null };
-  if (was.float) keep.float = was.float;
-  if (was.entry) { keep.edge = was.entry.edge; keep.size = was.entry.size; }
-  layout.hidden.push({ id, was: keep });
+  layout.hidden.push({ id, was: wasOf(detach(layout, id)) });
   return true;
 }
 
 export function showPanel(layout, id, opts = {}) {
   const w = whereIs(layout, id);
   if (!w || w.kind !== 'hidden') return false;
-  const unpin = cfgOf(opts).sizes.unpinSize;
-  const was = detach(layout, id).was || { kind: 'dock' };
-  if (was.kind === 'float' && was.float) layout.floats.push({ stack: stackNode([id]), ...was.float, home: was.home || null });
-  else if (was.kind === 'auto') layout.auto.push({ id, edge: EDGES.includes(was.edge) ? was.edge : 'right', size: finite(was.size) ? was.size : unpin, home: was.home || null });
-  else placeDocked(layout, id, was.home, opts);
+  restore(layout, id, detach(layout, id).was || { kind: 'dock' }, opts);
   return true;
+}
+
+/**
+ * Pops a panel out into a window of its own: it leaves the layout (its tab, if it shared a stack; else its stack, and the
+ * neighbours take the room), and `out` remembers where it was and `geo` ({ x, y, w, h }), where its window is. A
+ * hidden panel is shown first. Returns the entry, or null.
+ */
+export function popOutPanel(layout, id, geo = {}, opts = {}) {
+  const w = whereIs(layout, id);
+  if (!w) return null;
+  if (w.kind === 'out') { Object.assign(w.entry, pickGeo(geo)); return w.entry; }
+  if (w.kind === 'hidden') showPanel(layout, id, opts);
+  const entry = { ...pickGeo(geo), was: wasOf(detach(layout, id)) };
+  if (!layout.out) layout.out = {};
+  layout.out[id] = entry;
+  return entry;
+}
+
+/**
+ * Back from its own window, where it was: the same stack, the same side of the same neighbour, its float or its strip.
+ * If that is gone, where the default layout has it, else on its default edge.
+ */
+export function popInPanel(layout, id, opts = {}) {
+  const w = whereIs(layout, id);
+  if (!w || w.kind !== 'out') return false;
+  restore(layout, id, detach(layout, id).was, opts);
+  return true;
+}
+
+function pickGeo(g) {
+  const out = {};
+  for (const k of ['x', 'y', 'w', 'h']) if (g && finite(g[k])) out[k] = Math.round(g[k]);
+  return out;
 }
 
 export function activate(layout, id) {
@@ -400,6 +501,7 @@ function normHome(h) {
   const out = { peers: Array.isArray(h.peers) ? h.peers.filter((p) => typeof p === 'string') : [], index: finite(h.index) ? h.index : 0,
     near: typeof h.near === 'string' ? h.near : null, side: EDGES.includes(h.side) ? h.side : null };
   if (finite(h.size) && h.size > 0) out.size = h.size;
+  if (Array.isArray(h.nearAll)) { const all = h.nearAll.filter((p) => typeof p === 'string'); if (all.length) out.nearAll = all; }
   return out;
 }
 
@@ -447,14 +549,30 @@ export function normalizeLayout(raw, opts = {}) {
     if (!a || !take(a.id)) continue;
     layout.auto.push({ id: a.id, edge: EDGES.includes(a.edge) ? a.edge : 'right', size: finite(a.size) && a.size > 0 ? a.size : unpin, home: normHome(a.home) });
   }
-  for (const h of Array.isArray(raw.hidden) ? raw.hidden : []) {
-    if (!h || !take(h.id)) continue;
-    const was = h.was && typeof h.was === 'object' ? h.was : {};
+  const normWas = (w) => {
+    const was = w && typeof w === 'object' ? w : {};
     const keep = { kind: ['dock', 'float', 'auto'].includes(was.kind) ? was.kind : 'dock', home: normHome(was.home) };
     if (keep.kind === 'float' && was.float && ['x', 'y', 'w', 'h'].every((k) => finite(was.float[k]))) keep.float = { ...was.float };
     else if (keep.kind === 'float') keep.kind = 'dock';
+    if (keep.kind === 'float' && Array.isArray(was.peers)) {
+      const peers = was.peers.filter((p) => typeof p === 'string');
+      if (peers.length) { keep.peers = peers; keep.index = finite(was.index) ? was.index : peers.length; }
+    }
     if (keep.kind === 'auto') { keep.edge = EDGES.includes(was.edge) ? was.edge : 'right'; keep.size = finite(was.size) ? was.size : unpin; }
-    layout.hidden.push({ id: h.id, was: keep });
+    return keep;
+  };
+  for (const h of Array.isArray(raw.hidden) ? raw.hidden : []) {
+    if (!h || !take(h.id)) continue;
+    layout.hidden.push({ id: h.id, was: normWas(h.was) });
+  }
+  // The panels in windows of their own, with where those windows were. One stored with `was` has no place in the
+  // layout; one stored before (no `was`) still has its place there, and leaves it below.
+  const out = raw.out && typeof raw.out === 'object' && !Array.isArray(raw.out) ? raw.out : {};
+  const older = [];
+  for (const id of Object.keys(out)) {
+    const g = out[id] && typeof out[id] === 'object' ? out[id] : {};
+    if (g.was && typeof g.was === 'object') { if (take(id)) layout.out[id] = { ...pickGeo(g), was: normWas(g.was) }; }
+    else if (known.has(id)) older.push([id, g]);
   }
   // One that names none of today's panels says nothing about them: the default, not each panel placed one by one.
   if (!seen.size) return fallback();
@@ -462,14 +580,10 @@ export function normalizeLayout(raw, opts = {}) {
   for (const id of ids) if (!seen.has(id)) placeDocked(layout, id, null, opts);
   const visible = ids.filter((id) => { const w = whereIs(layout, id); return w && w.kind !== 'hidden'; });
   if (!visible.length) return fallback();
-  // The panels that were in windows of their own, with where those windows were. A hidden one is not out.
-  const out = raw.out && typeof raw.out === 'object' && !Array.isArray(raw.out) ? raw.out : {};
-  for (const id of Object.keys(out)) {
-    if (!known.has(id) || !visible.includes(id)) continue;
-    const g = out[id] && typeof out[id] === 'object' ? out[id] : {};
-    const keep = {};
-    for (const k of ['x', 'y', 'w', 'h']) if (finite(g[k])) keep[k] = Math.round(g[k]);
-    layout.out[id] = keep;
+  // A panel a layout stored before was out and still in its place (a hidden one is not out): it leaves its place now.
+  for (const [id, g] of older) {
+    const w = whereIs(layout, id);
+    if (w && w.kind !== 'hidden' && w.kind !== 'out') popOutPanel(layout, id, g, opts);
   }
   return layout;
 }

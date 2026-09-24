@@ -13,7 +13,7 @@
 * the page (index.html's "Documents project" block and the functions around
   it, run in Node; skipped without Node): the Overview shows no files; without
   a PO it is the board with no PO note or pill but a Choose the PO… button;
-  with a PO, the PO beside the board as in a code project; the Workspace tab
+  with a PO, the PO screen as in a code project; the Workspace tab
   mounts the Files panel; a code project's Overview is unchanged, the tree
   hides only real task folders unless "Task folders" is checked (never in a
   task's Workspace), and the history's lists read as they should.
@@ -691,9 +691,9 @@ class ThePage(unittest.TestCase):
         self.assertEqual(o["poChoose"], "")
         self.assertNotRegex(o["poDialog"], r"has a PO|Choosing a PO|stays a code project")
         self.assertNotIn("disabled", o["poDialog"], "a project with a PO may become a documents project")
-        self.assertIn("Its Overview leads with the PO and the board.", o["poDialog"], "the code option reads as before")
+        self.assertIn("Its Overview is the PO screen: the PO chat, its points and the board as panels.", o["poDialog"], "the code option describes the PO screen")
 
-    def test_a_documents_project_with_a_po_shows_the_po_beside_the_board(self):
+    def test_a_documents_project_with_a_po_shows_the_po_screen(self):
         o = self.out
         self.assertEqual(o["dpoSplit"], "p-dpo")
         self.assertEqual((o["dpoSplitOnWorkspace"] or {}).get("id"), "p-dpo", "its Workspace is a panel of the PO screen")

@@ -1163,10 +1163,10 @@
   .ptabs button:hover { color: var(--fg); }
   .ptabs button.on { color: var(--fg); border-bottom-color: var(--accent); }
   /* ---- The PO ------------------------------------------------------------
-     One element, #po-panel, in two places: a grid cell beside the board on a
-     project's Overview tab, and a drawer the bar's pill opens anywhere else.
-     Only its classes change between the two. Moving an iframe in the DOM
-     reloads it, so the live session inside is never moved, only restyled. */
+     One element, #po-panel, in two places: inside the PO chat panel on a
+     project's PO screen, and a drawer the bar's pill opens anywhere else.
+     pdPlaceChat moves it between the two with moveBefore, so the live session
+     inside keeps its page (browsers without moveBefore reload it then). */
   #po-pill {
     height: 28px; padding: 0 var(--s-300) 0 var(--s-100); gap: var(--s-200);
     border-color: var(--border-strong); border-radius: var(--r-full);
@@ -2905,6 +2905,13 @@
     --dk-warn: var(--c-warning-bold); --dk-warn-bg: var(--c-warning-bg);
     --dk-shadow: transparent; --dk-scrim: var(--pressed);
     --dk-font: var(--font-sans); --dk-font-mono: var(--font-sans);
+    /* The chrome's type and shapes (the library's size tokens): tabs in
+       sentence case on the type scale, a count as quiet words. */
+    --dk-font-chrome: var(--font-sans); --dk-fs-tab: var(--fs-200);
+    --dk-tab-case: none; --dk-tab-tracking: 0; --dk-tab-weight: 600;
+    --dk-badge-border: 0; --dk-badge-fg: var(--fg-muted); --dk-badge-fs: var(--fs-100); --dk-badge-pad: 0;
+    --dk-fs-small: var(--fs-100); --dk-fs-menu: var(--fs-300); --dk-fs-note: var(--fs-300);
+    --dk-radius: var(--r-300); --dk-float-shadow: var(--e-200);
   }
   #po-dock-host { display: contents; }
   #po-dock[hidden], #po-dock-panels[hidden] { display: none; }
@@ -2914,17 +2921,14 @@
   }
   body.po-dock #view { flex: 0 0 auto; }
   body.po-dock #view .crumbs { margin-bottom: var(--s-300); }
-  /* The dock fills what the chrome leaves. It is the stacking context its
-     floating panels and the PO's conversation share (see #po-panel below),
-     under the task panel and the bar. */
+  /* The dock fills what the chrome leaves, under the task panel and the bar.
+     The host clips to its rounded border. */
   body.po-dock #po-dock-host {
     display: block; position: relative; isolation: isolate; z-index: 0;
     flex: 1 1 auto; min-height: 0;
     border: 1px solid var(--border); border-radius: var(--r-300); overflow: clip;
   }
-  /* clip, not hidden: focus scrolls a hidden box, and the library focuses a
-     panel sliding out from its strip while it is still off to the side. */
-  body.po-dock #po-dock { position: absolute; inset: 0; z-index: auto; overflow: clip; background: var(--bg); }
+  body.po-dock #po-dock { position: absolute; inset: 0; background: var(--bg); }
   .dk-bar { background: var(--bg); }
   .dk-row > .dk-bar { border-left-color: var(--border); }
   .dk-col > .dk-bar { border-top-color: var(--border); }
@@ -2933,14 +2937,12 @@
   .dk-head { background: var(--surface-sunken); border-bottom-color: var(--border); }
   .dk-tab-wrap { border-right-color: var(--border); padding-right: var(--s-100); }
   .dk-tab-wrap.on { background: var(--surface); }
-  .dk-tab {
-    padding: 0 var(--s-200) 0 var(--s-300); font-family: var(--font-sans); font-size: var(--fs-200);
-    font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--fg-subtle);
-  }
+  .dk-tab { padding: 0 var(--s-200) 0 var(--s-300); color: var(--fg-subtle); }
   .dk-tab:hover { color: var(--fg); }
   .dk-tab.on { color: var(--fg); border-bottom-color: var(--accent); }
-  /* A tab's count (the Points panel's) is quiet words, never a badge. */
-  .dk-badge { margin-left: var(--s-100); padding: 0; border: 0; color: var(--fg-muted); font-size: var(--fs-100); font-weight: 400; }
+  /* A tab's count (the Points panel's) is quiet words, never a badge (the
+     --dk-badge-* tokens above). */
+  .dk-badge { margin-left: var(--s-100); }
   .dk-ctl { gap: var(--s-050); padding: 0 var(--s-100); }
   .dk-btn { width: 24px; height: 24px; border: 0; border-radius: var(--r-200); color: var(--fg-subtle); }
   .dk-btn:hover, .dk-btn:focus-visible { background: var(--hover); color: var(--fg); border: 0; }
@@ -2948,34 +2950,30 @@
   .dk-strip { gap: var(--s-100); padding: var(--s-100); background: var(--surface-sunken); }
   .dk-strip-left { border-right-color: var(--border); } .dk-strip-right { border-left-color: var(--border); }
   .dk-strip-top { border-bottom-color: var(--border); } .dk-strip-bottom { border-top-color: var(--border); }
-  .dk-strip-btn {
-    border: 1px solid var(--border); border-radius: var(--r-200); background: var(--surface); color: var(--fg-subtle);
-    font-family: var(--font-sans); font-size: var(--fs-200); font-weight: 500; letter-spacing: 0; text-transform: none;
-  }
+  .dk-strip-btn { border: 1px solid var(--border); border-radius: var(--r-200); background: var(--surface); color: var(--fg-subtle); font-weight: 500; }
   .dk-strip-btn:hover { background: var(--hover); border-color: var(--border-strong); color: var(--fg); }
   .dk-strip-btn.on { background: var(--selected-bg); border-color: var(--border-strong); color: var(--selected-fg); }
   .dk-strip-left .dk-strip-btn, .dk-strip-right .dk-strip-btn { padding: var(--s-300) 0; }
-  .dk-float, .dk-flyout { border-color: var(--border); border-radius: var(--r-300); box-shadow: var(--e-200); overflow: hidden; }
+  .dk-float, .dk-flyout { border-color: var(--border); }
   .dk-stack.dk-max { box-shadow: 0 0 0 1px var(--border); }
   .dk-menu {
     min-width: 200px; padding: var(--s-100); background: var(--surface-overlay); color: var(--fg);
-    border-color: var(--border); border-radius: var(--r-300); box-shadow: var(--e-200);
-    font-family: var(--font-sans); font-size: var(--fs-300);
+    border-color: var(--border); box-shadow: var(--e-200);
   }
   .dk-menu button { min-height: 32px; padding: var(--s-100) var(--s-200); border-radius: var(--r-200); color: var(--fg); }
   .dk-menu button:hover { background: var(--hover); }
   .dk-menu button.on { background: transparent; font-weight: 500; }
   .dk-menu button[disabled] { color: var(--fg-disabled); }
   .dk-menu-sep { background: var(--border); }
-  .dk-empty, .dk-popped { color: var(--fg-muted); font-size: var(--fs-300); }
-  .dk-popped { background: var(--surface); }
+  .dk-empty { color: var(--fg-muted); }
   .dk-textbtn, .dk-pop-back {
     height: 32px; padding: 0 var(--s-300); border: 1px solid var(--border-strong); border-radius: var(--r-200);
     background: var(--surface); color: var(--fg); font-family: var(--font-sans); font-size: var(--fs-300); font-weight: 500;
   }
   .dk-pop-back { height: 24px; font-size: var(--fs-200); }
   .dk-textbtn:hover, .dk-pop-back:hover, .dk-pop-back:focus-visible { background: var(--hover); border-color: var(--border-strong); color: var(--fg); }
-  .dk-note { border-color: var(--c-warning-bold); border-radius: var(--r-300); background: var(--surface-overlay); box-shadow: var(--e-200); font-size: var(--fs-300); }
+  .dk-note { border-color: var(--c-warning-bold); background: var(--surface-overlay); box-shadow: var(--e-200); }
+  .dk-outnote { background: var(--surface-overlay); box-shadow: var(--e-200); }
   body.dk-popwin { background: var(--surface); color: var(--fg); font-family: var(--font-sans); font-size: var(--fs-300); }
   /* The panels: each fills its place and scrolls within itself. */
   .dk-panel { background: var(--surface); }
@@ -2988,15 +2986,12 @@
   .pd-changes { display: flex; flex-direction: column; padding: var(--s-200) var(--s-300); }
   .pd-changes > .ch-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
   .pd-changes .chp { flex: 1 1 auto; height: auto; min-height: 0; }
-  /* The PO's conversation lives in #po-panel, which is never moved (moving
-     an iframe reloads it). On a Dock it lies over the PO chat panel's place,
-     measured from it: under a floating panel, over its own, hidden while its
-     place is not on screen. */
-  body.po-dock #po-panel {
-    position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 10;
-    border: 0; border-radius: 0;
-  }
-  body.po-dock #po-panel.pd-off { visibility: hidden; }
+  /* The PO's conversation (#po-panel) is in the PO chat panel, filling it.
+     While that panel is hidden or in its own window it waits at home in the
+     host, out of sight (never display:none, which tells the chat it has no
+     height). */
+  .pd-chat > #po-panel { position: absolute; inset: 0; border: 0; border-radius: 0; }
+  body.po-dock #po-panel.pd-off { position: absolute; inset: 0; visibility: hidden; border: 0; }
   /* Points: the person's points with the PO, as a list of their own. */
   .pdp { display: flex; flex-direction: column; gap: var(--s-200); }
   .pdp-sum { margin: 0; color: var(--fg-subtle); font-size: var(--fs-200); line-height: var(--lh-200); }
@@ -3023,12 +3018,9 @@
   /* The dock's own controls sit at the end of the Overview's crumbs row: the
      Panels menu (show or hide each panel, Reset layout). */
   .pd-ctl { display: inline-flex; align-items: center; gap: var(--s-100); margin-left: auto; }
-  /* A phone: one column, the panels as tabs. Nothing floats, unpins or pops
-     out there, and a tab is not dragged: the title bar only picks a panel. */
-  body.pd-phone .dk-ctl, body.pd-phone .dk-strip { display: none; }
-  body.pd-phone .dk-head { cursor: default; overflow-x: auto; scrollbar-width: none; }
-  body.pd-phone .dk-tabs { overflow: visible; }
-  body.pd-phone .dk-tab { min-height: var(--touch-min); }
+  /* A phone: one column, the panels as tabs (the library's narrow mode, which
+     draws no control that moves a panel). Tabs a finger can hit. */
+  .dock.dk-narrow .dk-head { flex-basis: var(--touch-min); height: var(--touch-min); }
   @media (max-width: 640px), (max-width: 1024px) and (pointer: coarse) {
     body.po-dock main { height: calc(var(--vv-h, 100dvh) - var(--top-h)); padding-bottom: 0; }
     body.po-dock #po-dock-host { border-radius: 0; border-left: 0; border-right: 0; border-bottom: 0; }
@@ -3060,8 +3052,10 @@
 <link rel="modulepreload" href="/static/dock/src/panels-menu.js">
 <link rel="modulepreload" href="/static/dock/src/help.js">
 <link rel="modulepreload" href="/static/dock/src/theme.js">
+<link rel="modulepreload" href="/static/dock/src/theme-picker.js">
+<link rel="modulepreload" href="/static/dock/src/install.js">
+<link rel="modulepreload" href="/static/dock/src/popout-page.js">
 <link rel="preload" as="fetch" crossorigin="anonymous" href="/static/dock/css/dock.css">
-<link rel="preload" as="fetch" crossorigin="anonymous" href="/static/dock/src/popout.html">
 <script>
 // The page's document-wide listeners, kept so a panel popped out into a window
 // of its own gets them too (see "PO screen as panels"): a click on a task link
@@ -3301,7 +3295,7 @@ window.DOC_LISTENERS_PAUSED = false;
       <div data-panel="changes" data-title="Changes" class="pd-changes"></div>
     </div>
     <!-- The PO's conversation, for the same reason again: it is a live session.
-         On a Dock it lies over the PO chat panel's place (pdSyncChat). -->
+         On a Dock it is in the PO chat panel (pdPlaceChat). -->
     <section id="po-panel" hidden aria-label="The project's PO"></section>
   </div>
 </main>
@@ -8688,10 +8682,11 @@ setInterval(() => {
 // ---- The PO -----------------------------------------------------------------
 // A project's PO is one of its tasks (poRoomId in project.json) whose agent
 // runs the project for the owner: every other task reports to it. Its
-// conversation leads the project's Overview tab, beside the board, and the pill
-// in the bar peeks at it from any other page. Both are #po-panel, a sibling of
-// #view, built once: the session inside is created once per PO and only ever
-// hidden or restyled, so navigating never reconnects it.
+// conversation leads the project's Overview tab, the PO screen (a dock of
+// panels), and the pill in the bar peeks at it from any other page. Both are
+// #po-panel, built once: pdPlaceChat moves it between the PO chat panel and
+// the drawer with moveBefore, so the session inside is created once per PO and
+// navigating never reconnects it (browsers without moveBefore reload it).
 var PO_PEEK = false;
 var PO_PIN = '';   // the project whose PO a balloon link opened, while its drawer is open
 var PO_LAST = (() => { try { return localStorage.getItem('cd-po-last') || ''; } catch (e) { return ''; } })();
@@ -8784,7 +8779,7 @@ function renderPo() {
   let split = poSplitProject();
   const dock = !!split;
   // On a phone an open task covers the page the PO leads, so there the pill
-  // peeks at the PO over the task; the same panel, restyled, never moved.
+  // peeks at the PO over the task: the chat goes home to the drawer.
   if (split && PO_PEEK && SELECTED_SID && isPhone()) split = null;
   const ctx = poContext();
   // A peek has nothing to show once its project has no PO, and none is needed
@@ -8796,11 +8791,11 @@ function renderPo() {
   if (!PO_PEEK) PO_PIN = '';
   const pj = split || (PO_PEEK ? ctx : null);
   document.body.classList.toggle('po-dock', dock && !!PD.lib);
-  // Off a PO screen the panel is the drawer again: nothing of its place there.
-  if (!(dock && PD.lib)) { if (panel.hasAttribute('style')) panel.removeAttribute('style'); panel.classList.remove('pd-off'); }
   document.body.classList.toggle('po-peek', !split && !!pj);
   renderPoPill(ctx);
-  // While the panels load there is nowhere yet for the PO to lie over.
+  // Where it is: in the PO chat panel, or at home as the drawer.
+  if (PD.lib) pdPlaceChat();
+  // While the panels load there is no panel yet for the PO to be in.
   if (!pj || (split && !PD.lib)) { panel.hidden = true; return; }
   if (pj.id !== PO_LAST) { PO_LAST = pj.id; try { localStorage.setItem('cd-po-last', pj.id); } catch (e) {} }
   const row = poRowOf(pj);
@@ -8838,7 +8833,6 @@ function renderPo() {
     if (PD.chatKey !== row.roomId) { PD.chatKey = row.roomId; PD.ptSig = ''; }
     pdPointsFrame();
     pdPaintPoints();
-    pdSchedule(0);
   }
 }
 // A project without a PO keeps its board and says how to get one.
@@ -8896,15 +8890,16 @@ function poPillClick() {
 //
 // The panels' elements are taken once (PD.els) and never looked up by id: the
 // library moves them between its frames and into a popped-out window's
-// document. The PO's conversation is the exception: an iframe reloads when it
-// is moved, so it stays in #po-panel, which lies over the PO chat panel's
-// place (pdSyncChat); popped out, the panel's window gets a chat of its own.
+// document, each only when its place really changed, and with moveBefore
+// where the browser has it, so the iframes in them keep their pages. The PO's
+// conversation (#po-panel) is in the PO chat panel (pdPlaceChat); popped out,
+// the panel's window gets a chat of its own.
 // Pure down to pdPointsHtml, so tests/test_po_dock.py runs them in Node.
 const PD_IDS = ['po-chat', 'points', 'board', 'workspace', 'changes'];
 const PD_TITLES = { 'po-chat': 'PO chat', points: 'Points', board: 'Board', workspace: 'Workspace', changes: 'Changes' };
 const PD_MIN = { 'po-chat': { w: 360, h: 200 }, points: { w: 260, h: 120 }, board: { w: 320, h: 160 },
                  workspace: { w: 480, h: 200 }, changes: { w: 420, h: 200 } };
-const PD_KEYS = { desk: 'cd-po-dock', phone: 'cd-po-dock-phone' };
+const PD_KEYS = { desk: 'cd-po-dock', phone: 'cd-po-dock-phone' };   // phone: the narrow dock's
 // From this width the Board is on screen too: the chat's lines stop getting
 // longer at about 700px, so a wider screen's width goes to the board.
 const PD_WIDE = 1800;
@@ -8979,8 +8974,8 @@ function pdPointsHtml(told, now) {
 }
 
 // (A var, not a const: pdById is called from code that may run before this line.)
-var PD = { lib: null, loading: null, failed: '', dock: null, phone: null, els: {}, popHtml: '',
-           pid: '', told: null, ptSig: '', chatKey: '', chKey: '', until: 0, raf: 0 };
+var PD = { lib: null, loading: null, failed: '', dock: null, els: {},
+           pid: '', told: null, ptSig: '', chatKey: '', chKey: '', raf: 0 };
 document.querySelectorAll('#po-dock-panels > [data-panel]').forEach(el => { PD.els[el.dataset.panel] = el; });
 const PD_ROOT = document.getElementById('po-dock');
 const PD_HOST = document.getElementById('po-dock-host');
@@ -9033,21 +9028,21 @@ function poDockProject() {
   const pj = projectById(SELECTED_PROJECT);
   return pj && poRowOf(pj) ? pj : null;
 }
-// The library, its stylesheet (read as text: a hub not restarted since serves
-// .css as a download) and its pop-out page, once.
+// The library and its stylesheet (read as text: a hub not restarted since
+// serves .css as a download), once. Its pop-out page needs nothing served
+// (popHtml).
 function pdLoad() {
   if (PD.loading) return PD.loading;
   const text = u => fetch(u, { credentials: 'same-origin' }).then(r => { if (!r.ok) throw new Error(u + ': ' + r.status); return r.text(); });
   window.DOC_LISTENERS_PAUSED = true;   // the library's module code listens on its own account
   const lib = import('/static/dock/src/index.js').finally(() => { window.DOC_LISTENERS_PAUSED = false; });
-  PD.loading = Promise.all([lib, text('/static/dock/css/dock.css'), text('/static/dock/src/popout.html')])
-    .then(([lib, css, pop]) => {
+  PD.loading = Promise.all([lib, text('/static/dock/css/dock.css')])
+    .then(([lib, css]) => {
       const s = document.createElement('style');
       s.id = 'dock-css';
       s.textContent = css;
       // Before the page's own styles, which override it.
       document.head.insertBefore(s, document.head.querySelector('style'));
-      PD.popHtml = pop;
       PD.lib = lib;
       // A panel's own window gets the page's document-wide listeners: a task
       // link clicked there opens the task (in this window), typing there
@@ -9095,49 +9090,45 @@ function pdOnResize(fn) {
   window.addEventListener('resize', fn);
   PD_POP_WINS.forEach((rs, w) => { try { w.addEventListener('resize', fn); rs.push(fn); } catch (e) {} });
 }
-// A panel's own window: the pop-out page written into a blank window of this
-// origin (the hub serves no .html from /static before a restart).
-function pdOpenWindow(url, name, features) {
-  const w = window.open('', name, features);
-  if (!w) return null;
-  try { w.document.open(); w.document.write(PD.popHtml); w.document.close(); } catch (e) { try { w.close(); } catch (e2) {} return null; }
-  return w;
-}
-// The dock, made once per kind of screen: a phone gets its own layout (one
-// column of tabs), kept apart from the desktop's.
+// The dock, made once. A phone's is narrow (one column of tabs, nothing that
+// moves a panel), with a layout of its own; a resize across that line
+// switches it (the listener after pdPopChat).
 function pdEnsure() {
-  const phone = isPhone();
-  if (PD.dock && PD.phone === phone) return PD.dock;
-  if (PD.dock) { PD.dock.destroy(); PD.dock = null; }
+  if (PD.dock) return PD.dock;
   const L = PD.lib;
-  PD.phone = phone;
-  document.body.classList.toggle('pd-phone', phone);
   window.DOC_LISTENERS_PAUSED = true;   // the dock's own listeners are not the page's
   try { PD.dock = L.createDock({
     root: PD_ROOT,
     panels: PD_IDS.map(id => ({ id, title: PD_TITLES[id], el: PD.els[id] })),
-    storageKey: phone ? PD_KEYS.phone : PD_KEYS.desk,
-    defaultLayout: ctx => pdDefaultLayout(L, { ...ctx, phone }),
+    storageKey: PD_KEYS.desk,
+    defaultLayout: ctx => pdDefaultLayout(L, ctx),
+    narrow: isPhone(),
+    narrowKey: PD_KEYS.phone,
+    narrowLayout: ctx => pdDefaultLayout(L, { ...ctx, phone: true }),
     fill: 'po-chat',
     minSize: PD_MIN,
     sizes: { head: 32, strip: 28, unpinSize: 720 },
     popName: 'ensemble-panel-',
     popTitle: p => `${p.title} · ${(projectById(PD.pid) || {}).name || 'Ensemble'}`,
-    openWindow: pdOpenWindow,
+    // The library's page from a blob: URL, with this page's base: a panel's
+    // relative addresses (a file viewer's frame, a task link) are this page's.
+    popHtml: L.POP_HTML.replace('<head>', `<head><base href="${esc(document.baseURI)}">`),
     themeEvent: 'cd-theme',
     modalSelector: '[role="dialog"], dialog, .dk-help-pop, .dcm',
     text: { empty: 'Every panel is on a strip at an edge or hidden: the Panels menu above shows them.' },
   }); } finally { window.DOC_LISTENERS_PAUSED = false; }
-  PD.dock.onChange(() => { pdPointsFrame(); pdSyncChat(); pdSchedule(200); });
+  PD.dock.onChange(() => pdPlaceChat());
   PD.dock.onShown(id => pdShown(id));
-  pdSchedule(0);
+  // Before the chat panel comes back from its window: the window's own chat goes.
+  PD.dock.onPopIn(id => { if (id === 'po-chat') pdPopChat(false); });
+  pdPlaceChat();
   return PD.dock;
 }
 // A panel came on screen: what it shows is drawn now, not at the next refresh.
 function pdShown(id) {
   if (id === 'board' || id === 'workspace' || id === 'changes') renderRows();
   if (id === 'points') pdPaintPoints(true);
-  pdSchedule(200);
+  pdPlaceChat();
 }
 // Brings a panel on screen: shown if hidden, in front of its stack, slid out
 // if it is on a strip, its window raised if it is in one.
@@ -9145,71 +9136,45 @@ function pdReveal(id) {
   if (PD.dock) PD.dock.reveal(id);
 }
 
-// ---- The PO chat over its panel's place
+// ---- The PO chat in its panel
 function pdChatFrame() {
   return PO_PANEL.querySelector('iframe.po-session:not([hidden])');
 }
 // The chat the person sees: the one in the panel's own window while it is
-// popped out, else the one over its place.
+// popped out, else the one in #po-panel.
 function pdVisibleChat() {
   const ph = PD.els['po-chat'];
-  if (ph.ownerDocument !== document) return ph.querySelector('iframe.po-session') || null;
+  if (ph.ownerDocument !== document) return ph.querySelector('iframe.pd-own') || null;
   return pdChatFrame();
 }
-function pdSchedule(ms) {
-  PD.until = Math.max(PD.until, performance.now() + (ms || 0));
-  if (PD.raf) return;
-  const step = () => {
-    PD.raf = 0;
-    pdSyncChat();
-    if (performance.now() < PD.until) PD.raf = requestAnimationFrame(step);
-  };
-  PD.raf = requestAnimationFrame(step);
-}
-// #po-panel lies exactly over the PO chat panel's place, at its stacking
-// level: over its own floating window or slid-out strip, under any other
-// floating panel. It is hidden (never display:none, which would tell the chat
-// it has no height) while its place is off screen: another tab in front,
-// minimised, another panel maximised, slid in, or popped out.
-function pdSyncChat() {
-  if (!document.body.classList.contains('po-dock') || !PD.dock || PO_PANEL.hidden) return;
-  pdPointsFrame();   // what is on screen changed: the chat's points line follows
-  const ph = PD.els['po-chat'];
-  if (PO_PEEK) { PO_PANEL.removeAttribute('style'); PO_PANEL.classList.remove('pd-off'); return; }
-  const out = ph.ownerDocument !== document;
-  pdPopChat(out);
-  let show = !out && ph.isConnected && !ph.closest('.dk-parking') && !ph.classList.contains('dk-off');
-  const stack = show ? ph.closest('.dk-stack') : null;
-  const fly = show ? ph.closest('.dk-flyout') : null;
-  const float = show ? ph.closest('.dk-float') : null;
-  if (fly && !fly.classList.contains('open')) show = false;
-  if (stack && stack.classList.contains('dk-min')) show = false;
-  const maxed = show && PD_ROOT.classList.contains('dk-has-max');
-  if (maxed && !(stack && stack.classList.contains('dk-max')) && !(float && float.classList.contains('dk-max'))) show = false;
-  let r = null;
-  if (show) {
-    const pr = ph.getBoundingClientRect(), hr = PD_HOST.getBoundingClientRect();
-    r = { left: Math.round(pr.left - hr.left - PD_HOST.clientLeft), top: Math.round(pr.top - hr.top - PD_HOST.clientTop),
-          width: Math.round(pr.width), height: Math.round(pr.height) };
-    if (r.width < 2 || r.height < 2) show = false;
+// An element moved within this page, keeping its iframes' pages where the
+// browser can (moveBefore, Chrome and Edge 133+).
+function pdMove(parent, el, before) {
+  if (typeof parent.moveBefore === 'function' && el.isConnected && parent.isConnected && el.ownerDocument === parent.ownerDocument) {
+    try { parent.moveBefore(el, before || null); return; } catch (e) {}
   }
-  PO_PANEL.classList.toggle('pd-off', !show);
-  if (!show) return;
-  const z = maxed ? 40 : fly ? 30 : float ? (parseInt(float.style.zIndex, 10) || 20) : 10;
-  const st = PO_PANEL.style;
-  const px = n => n + 'px';
-  if (st.left !== px(r.left)) st.left = px(r.left);
-  if (st.top !== px(r.top)) st.top = px(r.top);
-  if (st.width !== px(r.width)) st.width = px(r.width);
-  if (st.height !== px(r.height)) st.height = px(r.height);
-  if (st.zIndex !== String(z)) st.zIndex = String(z);
+  parent.insertBefore(el, before || null);
+}
+// #po-panel is in the PO chat panel while that panel is on this page's dock.
+// Anywhere else it is at home in the host: the drawer the pill opens (on
+// another page, or over a phone's open task), or out of sight (pd-off) while
+// the panel is hidden or in its own window. It moves only when that changes.
+function pdPlaceChat() {
+  const ph = PD.els['po-chat'];
+  const dock = document.body.classList.contains('po-dock') && !!PD.dock;
+  const inPanel = dock && !PO_PEEK && ph.ownerDocument === document && ph.isConnected && !ph.closest('.dk-parking');
+  const home = inPanel ? ph : PD_HOST;
+  if (PO_PANEL.parentNode !== home) pdMove(home, PO_PANEL);
+  PO_PANEL.classList.toggle('pd-off', dock && !PO_PEEK && !inPanel);
+  if (PD.dock) pdPopChat(ph.ownerDocument !== document);
+  pdPointsFrame();   // what is on screen changed: the chat's points line follows
 }
 // Popped out, the panel's window gets a chat of its own (the same page as the
-// chat here, which stays loaded and hidden); back in, it goes.
+// chat here, which stays loaded, out of sight); before it comes back, it goes.
 function pdPopChat(out) {
   const ph = PD.els['po-chat'];
   const main = pdChatFrame();
-  let own = ph.querySelector('iframe.po-session');
+  let own = ph.querySelector('iframe.pd-own');
   if (!out) { if (own) own.remove(); return; }
   if (!main) return;
   if (own && own.dataset.room === main.dataset.room) return;
@@ -9225,27 +9190,19 @@ function pdPopChat(out) {
   ph.appendChild(own);
 }
 (() => {
-  if (window.ResizeObserver) {
-    const ro = new ResizeObserver(() => pdSchedule(0));
-    ro.observe(PD_HOST); ro.observe(PD.els['po-chat']);
-  }
-  // A floating window dragged, a splitter moved, a strip slid out: all are
-  // style and class changes inside the dock.
-  new MutationObserver(() => pdSchedule(220)).observe(PD_ROOT, { subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'class'] });
-  // A resize can also make the screen a phone's, or no longer one: the phone
-  // has its own layout.
-  window.addEventListener('resize', () => { pdSchedule(0); if (PD.dock && PD.phone !== isPhone()) renderRows(); });
-  // The library focuses a panel sliding out from its strip while it is still
-  // off to the side, which scrolled the whole dock sideways: both boxes clip
-  // (overflow: clip, which focus cannot scroll), and should one scroll anyway
-  // it goes back. Nothing here is meant to scroll (the Dock project's
-  // ENSEMBLE-NEEDS.md).
-  const unscroll = el => el.addEventListener('scroll', () => { if (el.scrollLeft || el.scrollTop) { el.scrollLeft = 0; el.scrollTop = 0; } });
-  unscroll(PD_ROOT); unscroll(PD_HOST);
-  // On a phone the title bar only picks a tab: nothing is dragged or maximised.
-  const phoneOnly = e => { if (PD.phone && e.target.closest && e.target.closest('.dk-head')) e.stopPropagation(); };
-  PD_HOST.addEventListener('pointerdown', phoneOnly, true);
-  PD_HOST.addEventListener('dblclick', phoneOnly, true);
+  // Whether Points is on screen also changes without a layout change (a strip
+  // panel slid out or back): those are class and style changes in the dock.
+  new MutationObserver(() => {
+    if (PD.raf) return;
+    PD.raf = requestAnimationFrame(() => { PD.raf = 0; pdPointsFrame(); });
+  }).observe(PD_ROOT, { subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'class'] });
+  // A resize can also make the screen a phone's, or no longer one: the dock
+  // turns narrow or wide, each with its own layout.
+  window.addEventListener('resize', () => {
+    if (!PD.dock || PD.dock.narrow() === isPhone()) return;
+    PD.dock.setNarrow(isPhone());
+    renderRows();
+  });
 })();
 
 // ---- Points
@@ -9258,6 +9215,8 @@ function pdPopChat(out) {
 function pdPointsOnScreen() {
   if (!PD.dock || !document.body.classList.contains('po-dock')) return false;
   if (PD.dock.popWindow('points') && PD.els.points.ownerDocument !== document) return true;
+  // A phone's open task covers the PO screen, and the drawer peeks over it.
+  if (document.body.classList.contains('po-peek')) return false;
   const el = PD.els.points;
   if (el.ownerDocument !== document || !el.isConnected || el.closest('.dk-parking') || el.classList.contains('dk-off')) return false;
   const fly = el.closest('.dk-flyout');
@@ -9271,7 +9230,7 @@ function pdPointsFrame() {
   const f = pdChatFrame();
   if (!f) return;
   const want = pdPointsOnScreen();
-  const frames = [f, PD.els['po-chat'].querySelector('iframe.po-session')].filter(Boolean);
+  const frames = [f, PD.els['po-chat'].querySelector('iframe.pd-own')].filter(Boolean);
   for (const x of frames) {
     if (x.hasAttribute('data-points-elsewhere') === want) continue;
     x.toggleAttribute('data-points-elsewhere', want);
@@ -9980,7 +9939,7 @@ document.addEventListener('click', async (ev) => {
 // ---- Documents project: begin ------------------------------------------------
 // A documents project is a folder of files, not code (car ads, a leasing
 // contract, letters). Its Workspace tab is its files and their recent changes
-// (the Files panel); its Overview is the board, beside its PO if it has one;
+// (the Files panel); its Overview is the board, or the PO screen if it has a PO;
 // its tasks work in its folder; and the hub keeps every version
 // of every file with who changed it (history.py). Plain data and functions down
 // to histPaint, so tests/test_documents_project.py runs them in Node.
@@ -10007,7 +9966,7 @@ function kindBtnHtml(pj) {
   if (!pj || !pj.registered || !pj.path || pj.id === UNASSIGNED_ID) return '';
   const docs = isDocsProject(pj);
   const tip = docs ? 'Its Workspace tab holds its files, and every version of them is kept. Click to change'
-                   : 'Its Overview leads with the PO and the board. Click to change';
+                   : 'Its Overview is the PO screen: the PO chat, its points and the board as panels. Click to change';
   return `<button type="button" class="po-btn kind-btn" data-proj="${esc(pj.id)}" title="${tip}">${docs ? 'Documents project' : 'Code project'}</button>`;
 }
 // A documents project without a PO shows no note asking for one (it may need
@@ -10021,7 +9980,7 @@ function kindDialogHtml(pj) {
   const opt = (k, label, text) => `<label class="kind-opt"><input type="radio" name="kind" value="${k}"${(k === 'documents') === docs ? ' checked' : ''}> <b>${label}</b><br><span class="cfg-hint">${text}</span></label>`;
   return `<h3>What kind of project is ${esc(pj.name)}?</h3>`
     + `<div class="im-field" role="radiogroup" aria-label="Kind of project">`
-    + opt('code', 'Code project', 'Its Overview leads with the PO and the board. Tasks work in their own folders, copies or worktrees.')
+    + opt('code', 'Code project', 'Its Overview is the PO screen: the PO chat, its points and the board as panels. Tasks work in their own folders, copies or worktrees.')
     + opt('documents', 'Documents project', 'Its Workspace tab holds its files, to add, move and restore them. Tasks work directly in the project folder, several at once, and every version of every file is kept with who changed it.')
     + `</div>`
     + `<div class="actions"><button id="kind-ok">Save</button><button id="kind-cancel" class="secondary">Cancel</button></div>`;
@@ -11537,15 +11496,17 @@ function wsRenderInto(panel, pj) {
   if (docs) docsPanelRender(panel, pj);
 }
 // #ws-panel sits in the Workspace panel of a PO screen, else beside #view.
-// It moves only when the page changes between the two (its file viewers load
-// again then), never on a refresh.
+// It moves only when the page changes between the two, never on a refresh,
+// and with moveBefore, so its file viewers keep their pages (browsers without
+// moveBefore reload them then).
 function wsPlace(docked) {
   const wsp = pdById('ws-panel');
   if (!wsp) return null;
   const home = docked ? PD.els.workspace : document.querySelector('main');
   if (wsp.parentElement !== home) {
     // (Before the dock's host, which never moves: #rm-panel may be inside it.)
-    if (docked) home.appendChild(wsp); else home.insertBefore(wsp, PD_HOST);
+    // Moved as the dock moves panels: its open files keep their pages.
+    pdMove(home, wsp, docked ? null : PD_HOST);
   }
   return wsp;
 }
