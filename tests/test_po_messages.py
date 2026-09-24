@@ -288,6 +288,25 @@ class LoopGuard(_World):
         self.assertIn("held", it["reason"])
         self.assertEqual([i for i in items if i["roomId"] == self.opten], [])
 
+    def test_held_messages_show_on_a_po_already_waiting_for_you(self):
+        import attention
+        for i in range(po_messages.WAKES_PER_HOUR + 1):
+            self.ok(self.opten, "ensemble_message_po", projectId="Dock", kind="bug", text=f"bug {i}")
+        asked = ("waiting_for_you", "asked: which release?", {"since": T0})
+        with mock.patch.object(attention, "_classify_agent", return_value=None), \
+                mock.patch.object(attention, "_duplicate_ptys", return_value=None), \
+                mock.patch.object(attention, "_room_level",
+                                  side_effect=lambda room, live: asked if room["id"] == self.dock else None), \
+                mock.patch.object(attention, "_claude_status_by_session", return_value={}), \
+                mock.patch.object(attention, "_evidence", return_value={"alive": True}), \
+                mock.patch.object(dashboard, "project_keys", return_value={}):
+            items = attention._items()
+        [it] = [i for i in items if i["roomId"] == self.dock]
+        self.assertEqual(it["state"], "waiting_for_you")
+        self.assertEqual(it["heldPoMessages"], 1)
+        self.assertIn("which release?", it["reason"])
+        self.assertIn("held", it["reason"])
+
 
 class StoppedPo(_World):
     def test_not_started_told_when_it_runs_and_is_idle(self):
@@ -306,6 +325,43 @@ class StoppedPo(_World):
         self.idle["pty-dock"] = True
         self.assertEqual(po_messages.tick(), [self.dock])
         self.assertEqual(len(self.typed("pty-dock")), 1)
+        self.assertEqual(po_messages.tick(), [])
+        self.assertEqual(len(self.typed("pty-dock")), 1)
+
+    def test_a_queue_that_cannot_be_saved_promises_nothing(self):
+        self.ptys.pop("pty-dock")
+        with mock.patch.object(po_messages, "_save", return_value=False):
+            res = self.ok(self.opten, "ensemble_message_po", projectId="Dock", kind="bug", text="Crash.")
+        self.assertFalse(res["delivered"])
+        self.assertFalse(res["queued"])
+        self.assertIn("NOT told", res["note"])
+        self.assertEqual(len(self.pomsgs(self.dock)), 1)   # in its chat all the same
+        self.assertEqual(self.queue(), [])
+
+    def test_not_typed_when_the_mark_cannot_be_saved(self):
+        self.ptys.pop("pty-dock")
+        self.ok(self.opten, "ensemble_message_po", projectId="Dock", kind="bug", text="Crash.")
+        self.ptys["pty-dock"] = _FakePty()
+        with mock.patch.object(po_messages, "_save", return_value=False):
+            self.assertEqual(po_messages.tick(), [])
+        self.assertEqual(self.typed("pty-dock"), [])
+        self.assertEqual(po_messages.tick(), [self.dock])  # the disk works again: told
+        self.assertEqual(len(self.typed("pty-dock")), 1)
+
+    def test_a_failed_save_after_typing_never_types_it_twice(self):
+        self.ptys.pop("pty-dock")
+        self.ok(self.opten, "ensemble_message_po", projectId="Dock", kind="bug", text="Crash.")
+        self.ptys["pty-dock"] = _FakePty()
+        real = po_messages._save
+        calls = []
+
+        def second_fails(state):
+            calls.append(1)
+            return real(state) if len(calls) == 1 else False
+        with mock.patch.object(po_messages, "_save", side_effect=second_fails):
+            self.assertEqual(po_messages.tick(), [self.dock])
+        self.assertEqual(len(self.typed("pty-dock")), 1)
+        self.assertEqual(self.queue(), [])                 # the mark reads as told
         self.assertEqual(po_messages.tick(), [])
         self.assertEqual(len(self.typed("pty-dock")), 1)
 

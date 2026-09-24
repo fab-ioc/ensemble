@@ -1270,6 +1270,11 @@ def _items() -> list[dict]:
                   "ptyIds", "heldPoMessages"):
             if k in extra and extra[k] not in (None, ""):
                 item[k] = extra[k]
+        if held and "heldPoMessages" not in item:
+            # Worse or other news won the item: the held messages still show
+            # on it, so the CEO sees two POs are being held back as well.
+            item["heldPoMessages"] = held["count"]
+            item["reason"] = f"{reason} · {held['reason']}" if reason else held["reason"]
         items.append(item)
     # Forget states that have cleared, so the same trouble returning later
     # reads as new rather than inheriting an old start time.

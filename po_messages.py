@@ -104,20 +104,30 @@ def _load() -> dict:
         d = {}
     d = d if isinstance(d, dict) else {}
     pending = [p for p in d.get("pending") or [] if isinstance(p, dict) and p.get("id")]
+    # Marked before its line was typed and never cleared: typed (or the hub
+    # died typing it). At most once — the whole text is in the chat anyway.
+    typing = [p["id"] for p in pending if p.get("typing")]
+    if typing:
+        _log(f"{', '.join(typing)}: marked as being typed — taken as told, not typed again")
+        pending = [p for p in pending if not p.get("typing")]
     wakes = {k: [float(t) for t in v if isinstance(t, (int, float))]
              for k, v in (d.get("wakes") or {}).items() if isinstance(v, list)}
     return {"pending": pending, "wakes": wakes}
 
 
-def _save(state: dict) -> None:
+def _save(state: dict) -> bool:
+    """Write the queue. False when it could not be written: the file is the
+    queue, so callers must not act as if the change were kept."""
     f = _state_file()
     try:
         f.parent.mkdir(parents=True, exist_ok=True)
         tmp = f.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
         tmp.replace(f)
+        return True
     except OSError as e:
         _log(f"cannot save the queue: {e}")
+        return False
 
 
 def pair_key(a: str, b: str) -> str:
@@ -263,15 +273,22 @@ def send(room: dict, identity: str, project_id: str, target_ref: str, text: str,
     with _LOCK:
         state = _load()
         state["pending"].append(item)
-        _save(state)
-        how = _deliver(state, to_room["id"], now, require_idle=False) if wakes else ""
+        queued = _save(state)
+        how = _deliver(state, to_room["id"], now, require_idle=False) if wakes and queued else ""
     told = how == "typed"
     held = False
+    who = f"the {_name(target)} PO"
+    if not queued:
+        _log(f"{mid} {kind} {_name(me)} → {_name(target)}: in both chats, not queued")
+        return {"ok": True, "id": mid, "kind": kind, "to": f"{_name(target)} PO",
+                "toProjectId": target["id"], "delivered": False, "held": False, "queued": False,
+                "note": (f"in {who}'s chat, but the hub could not save its list of messages to "
+                         f"tell, so {who} is NOT told of it: send it again later, or tell "
+                         f"{_d.operator_name()}")}
     if not told:
         with _LOCK:
             st = _load()
             held = any(p["id"] == mid and p.get("heldSince") for p in st["pending"])
-    who = f"the {_name(target)} PO"
     if told:
         note = f"delivered: {who} was typed a line and reads the whole text with ensemble_read_message"
     elif held:
@@ -365,14 +382,26 @@ def _deliver(state: dict, room_id: str, now: float, require_idle: bool) -> str:
                 # What wakes first, then what waited longest.
                 order = sorted(free, key=lambda p: (p not in due, p["at"]))
                 wake, told = wake_line(order)
+                ids = {p["id"] for p in told}
+                # Marked on disk before typing, so a failed save afterwards
+                # can never type the same line twice (_load drops the mark).
+                for p in told:
+                    p["typing"] = now
+                if not _save(state):
+                    for p in told:
+                        p.pop("typing", None)
+                    _log(f"not typed to the PO of {room_id}: the queue could not be saved")
+                    return ""
+                changed = True
                 if _d._type_input(sess, wake):
                     how = "typed"
-                    ids = {p["id"] for p in told}
                     state["pending"] = [p for p in state["pending"] if p["id"] not in ids]
                     for k in {pair_key(p["fromProjectId"], p["toProjectId"]) for p in told}:
                         state["wakes"][k] = _recent(state, k, now) + [now]
-                    changed = True
                     _log(f"typed to the PO of {room_id}: {', '.join(sorted(ids))}")
+                else:
+                    for p in told:
+                        p.pop("typing", None)
     if changed:
         _save(state)
     return how
