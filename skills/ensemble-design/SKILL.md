@@ -336,6 +336,35 @@ apply to them. Their rules instead:
   its label, and a plain note with **Close tab** where the file was. Not red: nothing is broken.
 - The row scrolls sideways within itself, never the page; on a phone each tab and its `×` are
   `--touch-min`.
+- **A project's Workspace has one fixed tab first: Documents** (see *Documents list*). It has no
+  `×`, Delete and a middle click leave it, and it shows whenever no file tab does: the Workspace
+  opens on it, and closing the last file comes back to it. A task's Workspace has no such tab.
+
+### Documents list
+
+What a project's Workspace opens on: the reports and design notes its tasks put in its Documents
+folder, and a code project's Markdown under `docs/` in its checkout (`wsDocsHtml` in `index.html`
+is the reference). It is the project's knowledge, so it comes before the tree's task folders.
+
+- **Newest first**, by the file's time, in the order the hub sends. A heading "Documents", the count
+  ("12 documents, newest first") and a line saying where they live, in `--fg-muted`.
+- **A row:** the title (the file's name without `#12 ` and `.md`) with its folder under it in
+  `--fg-muted`, as one Subtle button that opens the file in a tab; then the task's number as a
+  `.tno` link to the task (`#12`), or a neutral lozenge "in the code"; the date (the full time is
+  its tooltip; no ticking text); the size. One lozenge at most.
+- **Empty says what would fill it** (§5.5): where tasks put documents and how they are named. A
+  capped list says the rest are in the tree. Loading and unreadable are plain `--fg-muted` lines.
+- Read at most every 15 s while it shows, one read at a time; rewritten only when it changes.
+- **"Show task folders"** (one switch, remembered in the browser, shared with a documents project's
+  Files panel): off, the tree leaves the tasks' folders out of the project's home. Go to file and
+  Text search still look everywhere.
+- **Phone:** the title takes the row, its task, date and size go under it; the title and the
+  task link are `--touch-min`.
+
+The project **Changes** tab uses the same idea for code: uncommitted files on top only when there
+are any, then **Landed on main**, a commit at a time (a merge counts as one), newest first: the
+task's `.tno` link, the subject without `Merge #NN: `, when, then its files as the Changes rows
+(the first 8, then "+N more"). A file opens that commit's diff, with line comments of its own.
 
 ### Find in a Workspace
 

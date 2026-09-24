@@ -1497,6 +1497,32 @@
   .wsp-gone p { margin: 0 0 var(--s-200); }
   .wsp-gone-path { font-family: var(--font-mono); font-size: var(--fs-200); color: var(--fg-muted); overflow-wrap: anywhere; }
   .wsp-empty { color: var(--fg-subtle); padding: 24px; font-size: 13px; }
+  /* "Show task folders" above a code project's tree. */
+  .wsp-tasks { flex: none; padding: var(--s-100) var(--s-300); border-bottom: 1px solid var(--border); color: var(--fg-subtle); }
+  /* The Documents list: a project's Workspace opens on it, its fixed first
+     tab (see the design skill's "Documents list"). */
+  .wst-tab.wst-docs { padding-right: var(--s-300); font-weight: 600; }
+  .wsd { position: absolute; inset: 0; overflow: auto; padding: var(--s-400) var(--s-600); }
+  .wsd-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--s-100) var(--s-300); }
+  .wsd-h { margin: 0; font-size: var(--fs-500); font-weight: 600; color: var(--fg); }
+  .wsd-n, .wsd-where, .wsd-note { color: var(--fg-muted); font-size: var(--fs-200); }
+  .wsd-where { margin: var(--s-100) 0 var(--s-300); overflow-wrap: anywhere; }
+  .wsd-note { margin: var(--s-300) 0 0; max-width: 72ch; overflow-wrap: anywhere; }
+  .wsd code { font-family: var(--font-mono); }
+  .wsd-list { list-style: none; margin: 0; padding: 0; }
+  .wsd-row { display: flex; align-items: center; gap: var(--s-300); padding: var(--s-050) 0; border-top: 1px solid var(--border); }
+  .wsd-open { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: var(--s-100) var(--s-200);
+    border: 0; border-radius: var(--r-200); background: transparent; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+  .wsd-open:hover { background: var(--hover); }
+  .wsd-open:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+  .wsd-t { max-width: 100%; font-size: var(--fs-300); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wsd-f { max-width: 100%; color: var(--fg-muted); font-size: var(--fs-200); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wsd-meta { flex: none; display: flex; align-items: center; gap: var(--s-300); color: var(--fg-muted); font-size: var(--fs-200); }
+  .wsd-when, .wsd-sz { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .wsd-sz { min-width: 6ch; text-align: right; }
+  a.tno.wsd-no { margin: 0; text-decoration: none; }
+  a.tno.wsd-no:hover { color: var(--link); text-decoration: underline; }
+  a.tno.wsd-no:focus-visible { outline: none; border-radius: var(--r-100); box-shadow: 0 0 0 2px var(--focus-ring); }
   /* Where am I: the file showing as a path of crumbs (see the design skill's
      "Breadcrumb"). A path too long for the bar keeps its end in view and
      scrolls sideways within itself; a fade says the start is cut. */
@@ -1532,6 +1558,22 @@
   .chf.none { color: var(--fg-muted); cursor: default; }
   .chf.none:hover { background: transparent; }
   .chf .nm { overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+  /* The project's Changes: uncommitted files on top when there are any, then
+     what landed on the main line, a commit at a time. */
+  .chp-sec { display: flex; align-items: baseline; gap: var(--s-200); margin: var(--s-300) 0 var(--s-100); padding: 0 6px;
+    color: var(--fg-subtle); font-size: var(--fs-100); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+  .chp-sec .chp-count { text-transform: none; letter-spacing: 0; font-size: var(--fs-200); color: var(--fg-muted); }
+  .chc { padding: var(--s-100) 0; border-top: 1px solid var(--border); }
+  .chc-head { display: flex; align-items: baseline; gap: var(--s-100); min-width: 0; padding: var(--s-050) 6px; }
+  .chc-head .tno { margin: 0; text-decoration: none; }
+  .chc-head a.tno:hover { color: var(--link); text-decoration: underline; }
+  .chc-subj { flex: 1; min-width: 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+    overflow-wrap: anywhere; color: var(--fg); font-weight: 500; }
+  .chc-when { flex: none; color: var(--fg-muted); font-size: var(--fs-200); white-space: nowrap; }
+  .chc .chf { padding-left: var(--s-300); }
+  .chc-more { margin: 0 0 0 var(--s-300); padding: 2px 6px; border: 0; border-radius: var(--r-200); background: transparent; color: var(--link); font: inherit; font-size: var(--fs-200); cursor: pointer; }
+  .chc-more:hover { background: var(--hover); }
+  .chc-more:focus-visible, .chc-head a.tno:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
   .chst { flex: 0 0 auto; min-width: 20px; text-align: center; font-size: 10.5px; font-weight: 700; border-radius: 4px; padding: 1px 3px; color: var(--fg-subtle); border: 1px solid var(--border); }
   .chst.st-M { color: var(--c-warning-fg); } .chst.st-A, .chst.st-\? { color: var(--c-success-fg); } .chst.st-D { color: var(--c-danger-fg); } .chst.st-R { color: var(--c-progress-fg); }
   .chp-diff { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
@@ -2804,6 +2846,15 @@
     .wst { scrollbar-width: none; }
     .wst-tab { height: auto; min-height: var(--touch-min); padding-right: 0; }
     .wst-x { width: var(--touch-min); height: var(--touch-min); }
+    .wst-tab.wst-docs { padding-right: var(--s-300); }
+    .chc-more, .chc-head a.tno { display: inline-flex; align-items: center; min-height: var(--touch-min); min-width: var(--touch-min); }
+    /* The Documents list: a row's title takes the width; its task, date and
+       size go under it; the title and the task are finger-sized. */
+    .wsd { padding: var(--s-300); }
+    .wsd-row { flex-wrap: wrap; row-gap: 0; }
+    .wsd-open { flex-basis: 100%; min-height: var(--touch-min); justify-content: center; }
+    .wsd-meta { padding-left: var(--s-200); }
+    .wsd-no { display: inline-flex; align-items: center; min-height: var(--touch-min); min-width: var(--touch-min); }
     /* The path above the file: every crumb and button finger-sized; the path
        is cut from the left and swipes sideways within itself. */
     .wsp-bar { padding-block: 0; }
@@ -5471,7 +5522,7 @@ function projectsChromeHtml() {
     const tabs = hasFolder ? `<div class="ptabs">`
       + `<button data-ptab="tasks" class="${PROJECT_TAB === 'tasks' ? 'on' : ''}" title="The project's PO and its tasks">Overview</button>`
       + `<button data-ptab="workspace" class="${PROJECT_TAB === 'workspace' ? 'on' : ''}" title="Browse this project's folder like an IDE — files render, and you can comment in place">Workspace</button>`
-      + `<button data-ptab="changes" class="${PROJECT_TAB === 'changes' ? 'on' : ''}" title="Uncommitted changes in the project folder or in a task's workspace: git status, per-file diff, line comments you can send to a task chat">Changes</button>`
+      + `<button data-ptab="changes" class="${PROJECT_TAB === 'changes' ? 'on' : ''}" title="What landed on the main line, newest first, with each task and its files, and any uncommitted changes on top: per-file diff, line comments you can send to a task chat">Changes</button>`
       + `<button data-ptab="roadmap" class="${PROJECT_TAB === 'roadmap' ? 'on' : ''}" title="The project's roadmap — ROADMAP.md in its folder. You and the project's PO both edit it">Roadmap</button>`
       + `</div>` : '';
     return strip + `<div class="crumbs"><a href="#" class="crumb-back">← Projects</a><span class="sep">/</span><b>${esc(nm)}</b>${kindBtnHtml(pj)}${keyBtnHtml(pj)}${poChooseBtnHtml(pj)}${newTask}`
@@ -5723,6 +5774,12 @@ function wsHidden(v, dir) {
   // shows them. A task's Workspace always leaves them out.
   const docs = wsDocsProjectOf(v);
   if (docs) return wsSame(docs.path, dir) ? { dirs: false, docs: true, tasks: !!v.ctx.docs && docsTasksShown(), set: new Set() } : null;
+  // A code project's tasks' folders sit in its home, behind the same "Show
+  // task folders" switch: its Workspace leads with its documents.
+  if (v.ctx.kind === 'project') {
+    const pj = projectById(v.ctx.projectId);
+    return pj && pj.home && wsSame(pj.home, dir) && !docsTasksShown() ? { dirs: false, noTasks: true, set: new Set() } : null;
+  }
   if (v.ctx.kind !== 'task') return null;
   const root = v.roots.find(r => r.kind === 'project');
   if (!root || !wsSame(root.path, dir)) return null;
@@ -6289,7 +6346,11 @@ const WS_EMPTY = 'Open a file from the tree. Each file opens in a tab of its own
 const WS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
 const WS_RECENT_KEY = WS_MAC ? '⌥R' : 'Alt+R';
 const WS_ICON_TREE = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="5"/><circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/><path d="M8 1v2.5M8 12.5V15M1 8h2.5M12.5 8H15"/></svg>';
-function wsPanelHtml() {
+function wsPanelHtml(o) {
+  // A code project's Workspace has the "Show task folders" switch above its
+  // tree (a documents project's is in its Files panel's header).
+  const tasks = o && o.tasks ? `<label class="dcs-all wsp-tasks" title="Show the folders of the project's tasks in the tree">`
+    + `<input type="checkbox" class="wsp-tasks-cb"${docsTasksShown() ? ' checked' : ''}> Show task folders</label>` : '';
   // tabindex -1: a click anywhere in the pane gives it focus, so the Recent
   // shortcut, which acts only inside the pane, works after clicking the tree.
   return `<div class="wsp" tabindex="-1">
@@ -6307,7 +6368,7 @@ function wsPanelHtml() {
         <input class="wsf-q" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-label="Go to file or search in files" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go">
         <div class="wsf-state" aria-live="polite" hidden></div>
       </div>
-      <div class="wsp-tree"></div>
+      ${tasks}<div class="wsp-tree"></div>
       <div class="wsf-res" role="listbox" aria-label="Results" hidden></div>
     </div>
     <div class="wsp-view">
@@ -6336,9 +6397,11 @@ function wsRowsHtml(v, dir) {
   const hide = wsHidden(v, dir);
   const ents = hide
     ? c.entries.filter(e => !((hide.dirs && e.type === 'dir') || (hide.docs && docsApart(e, hide.tasks))
+                              || (hide.noTasks && e.type === 'dir' && !!e.task)
                               || hide.set.has(wsNorm(wsJoin(dir, e.name)))))
     : c.entries;
-  if (!ents.length) return '<div class="wse none">(empty)</div>';
+  if (!ents.length) return hide && hide.noTasks && c.entries.length
+    ? '<div class="wse none">Only task folders here: “Show task folders” shows them.</div>' : '<div class="wse none">(empty)</div>';
   // A documents project's Workspace (docs) can move a row by dragging it, and
   // each row has a menu: open, rename, move, history, delete. A task's folder,
   // shown by "Task folders", is its task's: its rows open and show a history.
@@ -6435,13 +6498,18 @@ const wsTabEl = (strip, path) => [...strip.querySelectorAll('.wst-tab')].find(e 
 function wsPaintTabs(v) {
   const strip = v.el && v.el.querySelector('.wst');
   if (!strip) return;
-  const html = v.tabs.map((t, i) => {
+  // A project's Workspace has its Documents list as a fixed first tab: no ×,
+  // never closed, showing whenever no file tab is.
+  const docs = wsDocsCtx(v), docsOn = docs && wsDocsShowing(v);
+  const html = (docs ? `<div class="wst-tab wst-docs${docsOn ? ' on' : ''}" role="tab" id="${v.uid}-docs" aria-selected="${docsOn}" tabindex="${docsOn ? 0 : -1}"`
+      + ` data-path="" title="The project's documents, newest first"><span class="wst-nm">Documents</span></div>` : '')
+    + v.tabs.map((t, i) => {
     const on = wsSame(t.path, v.sel), name = wsTabName(t.path);
     return `<div class="wst-tab${on ? ' on' : ''}${t.missing ? ' gone' : ''}" role="tab" id="${v.uid}-${i}" aria-selected="${on}" tabindex="${on ? 0 : -1}"`
       + ` data-path="${esc(t.path)}" title="${esc(tildeify(t.path) + (t.missing ? ' (no longer exists)' : ''))}" aria-label="${esc(name + (t.missing ? ', no longer exists' : ''))}">`
       + `<span class="wst-nm">${esc(name)}</span><span class="wst-x" aria-hidden="true" title="Close">×</span></div>`;
   }).join('');
-  strip.hidden = !v.tabs.length;
+  strip.hidden = !docs && !v.tabs.length;
   if (strip._sig === html) return;
   const f = document.activeElement;
   const focused = f && strip.contains(f) ? (f.dataset.path || '') : null;
@@ -6479,7 +6547,7 @@ function wsPaintView(v) {
       const i = v.live.indexOf(k); if (i >= 0) v.live.splice(i, 1);
     }
   });
-  writeSlot(stage.querySelector('.wsp-note'), !t ? `<div class="wsp-empty">${esc(WS_EMPTY)}</div>`
+  writeSlot(stage.querySelector('.wsp-note'), !t ? (wsDocsCtx(v) ? wsDocsHtml(v.docsList) : `<div class="wsp-empty">${esc(WS_EMPTY)}</div>`)
     : t.missing ? `<div class="wsp-empty wsp-gone"><p><b>${esc(wsTabName(t.path))}</b> no longer exists on the hub. It was moved, renamed or deleted since the tab was opened.</p>`
       + `<p class="wsp-gone-path">${esc(tildeify(t.path))}</p><button type="button" class="rm-btn wsp-gone-close">Close tab</button></div>`
     : '');
@@ -6494,7 +6562,7 @@ function wsPaintView(v) {
     own.hidden = t.missing;
   }
   wsPaintCrumbs(v);
-  const tabEl = t && v.el.querySelector('.wst') && wsTabEl(v.el.querySelector('.wst'), t.path);
+  const tabEl = (t || wsDocsCtx(v)) && v.el.querySelector('.wst') && wsTabEl(v.el.querySelector('.wst'), t ? t.path : '');
   if (tabEl) stage.setAttribute('aria-labelledby', tabEl.id); else stage.removeAttribute('aria-labelledby');
   if (key && !v.frames.has(key)) {
     const f = document.createElement('iframe');
@@ -6623,6 +6691,7 @@ function wsShowTab(v, path) {
   const t = v.tabs.find(x => wsSame(x.path, path));
   if (t) wsRecentTouch(v.recent, t.path, t.st);
   wsPersist(v); wsPaintTree(v); wsPaintView(v);
+  if (!t && wsDocsCtx(v)) wsDocsLoad(v, false);
   const strip = v.el && v.el.querySelector('.wst');
   wsRevealTab(strip, strip && wsTabEl(strip, path));
   if (t && v.follow) wsReveal(v, t.path, { clear: false });
@@ -6649,9 +6718,73 @@ function wsOpenTabAt(v, path, line, hit) {
   wsShowTab(v, t.path);
 }
 function wsCloseTab(v, path) {
+  if (!path) return;                 // the Documents tab stays
   wsTabClose(v, path);
   wsShowTab(v, v.sel);
 }
+// ---- Workspace Documents: begin -------------------------------------------
+// A project's Workspace opens on its documents: the reports and design notes
+// its tasks put in its Documents folder, and for a code project the Markdown
+// under its checkout's docs/ folder, newest first (/api/projects/documents).
+// The list is the fixed first tab, showing whenever no file tab is. Pure down
+// to wsDocsHtml, so tests/test_workspace_docs.py runs it in Node.
+const WS_DOCS_TTL = 15000;         // the list is read again at most this often
+const wsDocsCtx = v => !!(v && v.ctx && v.ctx.kind === 'project');
+// Whether the Documents list is what shows: no file tab is.
+const wsDocsShowing = v => wsDocsCtx(v) && !v.tabs.some(x => wsSame(x.path, v.sel));
+function wsDocsDate(t) {
+  try { return new Date(t * 1000).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }); } catch (e) { return ''; }
+}
+function wsDocsWhen(t) {
+  try { return new Date(t * 1000).toLocaleString(); } catch (e) { return ''; }
+}
+// One document: its title (and where it is under its folder), the task that
+// wrote it or "in the code", its date and size. The title opens it in a tab.
+function wsDocsRowHtml(it, key) {
+  const folder = histFolder(it.rel || '');
+  const chip = it.inCode ? '<span class="loz neutral">in the code</span>'
+    : it.no ? `<a class="tno wsd-no" href="#" data-task="${esc((key ? key + '-' : '#') + it.no)}" title="${esc(`Open task #${it.no}`)}">#${it.no}</a>` : '';
+  return `<li class="wsd-row"><button type="button" class="wsd-open" data-path="${esc(it.path)}" title="${esc(tildeify(it.path))}">`
+    + `<span class="wsd-t">${esc(it.title || wsTabName(it.path))}</span>`
+    + (folder ? `<span class="wsd-f">${esc(folder)}</span>` : '') + `</button>`
+    + `<span class="wsd-meta">${chip}<span class="wsd-when" title="${esc(wsDocsWhen(it.mtime))}">${esc(wsDocsDate(it.mtime))}</span>`
+    + `<span class="wsd-sz">${wsFmtSize(it.size)}</span></span></li>`;
+}
+// The list, or what stands in for it: loading, unreadable, or empty with what
+// would fill it.
+function wsDocsHtml(st) {
+  const s = st || {};
+  const head = n => `<div class="wsd-head"><h3 class="wsd-h">Documents</h3>${n}</div>`;
+  if (!s.data) {
+    return `<div class="wsd">${head('')}<p class="wsd-note">${s.err ? 'The documents could not be read: ' + esc(s.err) : 'Loading the documents…'}</p></div>`;
+  }
+  const d = s.data, items = d.items || [];
+  const dir = d.dir ? `<code>${esc(tildeify(d.dir))}</code>` : 'the project’s Documents folder';
+  const where = d.codeDocs ? `In ${dir}, and in the code’s <code>docs</code> folder.` : `In ${dir}.`;
+  if (!items.length) {
+    return `<div class="wsd">${head('')}<p class="wsd-note">No documents yet. Tasks put their reports and design notes in ${dir}, `
+      + `named after the task (“#12 Title.md”); they show here, newest first. The task folders are in the tree.</p></div>`;
+  }
+  const n = `<span class="wsd-n">${items.length.toLocaleString('en-US')}${d.truncated ? '+' : ''} ${items.length === 1 ? 'document' : 'documents'}, newest first</span>`;
+  return `<div class="wsd">${head(n)}<p class="wsd-where">${where}</p>`
+    + `<ul class="wsd-list">${items.map(it => wsDocsRowHtml(it, d.key || '')).join('')}</ul>`
+    + (d.truncated ? `<p class="wsd-note">The ${items.length.toLocaleString('en-US')} newest only; the rest are in the tree.</p>` : '')
+    + `</div>`;
+}
+// Read the list, one read at a time, at most every WS_DOCS_TTL unless forced.
+async function wsDocsLoad(v, force) {
+  if (!wsDocsCtx(v)) return;
+  const st = v.docsList || (v.docsList = { data: null, err: '', at: 0, inFlight: false });
+  if (st.inFlight || (!force && st.at && Date.now() - st.at < WS_DOCS_TTL)) return;
+  st.inFlight = true;
+  try {
+    st.data = await api('/api/projects/documents?project=' + encodeURIComponent(v.ctx.projectId));
+    st.err = '';
+  } catch (e) { st.err = (e && e.message) || 'failed'; }
+  finally { st.inFlight = false; st.at = Date.now(); }
+  wsPaintView(v);
+}
+// ---- Workspace Documents: end ---------------------------------------------
 // Every directory currently on screen: a root that is open, and every open
 // directory whose ancestors are open too. Folders opened inside a collapsed
 // parent stay remembered but aren't polled.
@@ -6741,6 +6874,7 @@ async function wsSync(v) {
     wsPaintTree(v);
     if (wsTabsCheck(v, v.dirs)) wsPaintView(v);
     else wsPaintCrumbs(v);   // the roots may have arrived since the path was drawn
+    if (wsDocsShowing(v)) wsDocsLoad(v, false);
     wsfEnsure(v);
     wsfPaint(v);
   } finally { v.busy = false; }
@@ -6753,6 +6887,8 @@ function wsMount(el, ctx) {
   // The viewers of an earlier mount went with its element; this one loads its
   // tabs' viewers afresh, each where it was left.
   v.frames = new Map(); v.live = [];
+  // A project's Workspace opens on its Documents list; its file tabs wait.
+  if (wsDocsCtx(v)) v.sel = '';
   wsRecompute(v);
   if (!v.open.size && v.roots.length) v.open.add(v.roots[0].path);   // first visit: open where you are
   wsTabsCheck(v, v.dirs);
@@ -6800,6 +6936,8 @@ function wsMount(el, ctx) {
   // The button goes with the note, so focus moves to the tab now showing, or
   // to the pane when no tab is left, rather than dropping to the page.
   el.querySelector('.wsp-frames').onclick = (e) => {
+    const doc = e.target.closest('.wsd-open');
+    if (doc) { wsOpenTab(v, doc.dataset.path); return; }
     if (!e.target.closest('.wsp-gone-close')) return;
     wsRecentDrop(v.recent, v.sel);   // a file that is gone is not offered again
     wsCloseTab(v, v.sel);
@@ -6807,6 +6945,8 @@ function wsMount(el, ctx) {
     if (on) on.focus({ preventScroll: true });
     else { pane.tabIndex = -1; pane.focus({ preventScroll: true }); }
   };
+  const tasksCb = el.querySelector('.wsp-tasks-cb');
+  if (tasksCb) tasksCb.onchange = () => { docsTasksSet(tasksCb.checked); wsPaintTree(v); wsSync(v); };
   const tree = el.querySelector('.wsp-tree');
   tree.onclick = async (e) => {
     if (e.target.closest('.wse-more, .wse-edit, .wse-wait')) return;   // a row's menu, a name being typed, a renamed row waiting (the Files panel's)
@@ -7782,7 +7922,7 @@ function drPath(root, file) {
 }
 // ---- Diff review: end ---------------------------------------------------------
 
-// ---- Changes tab: uncommitted changes of a git project — status, per-file
+// ---- Changes tab: what landed on main and the uncommitted changes of a git project, per-file
 // unified diff, and line comments sent to a task's chat. ---------------------
 let CH_FILE = '';
 let CH_ROOT = '';                     // the repository currently shown (found within the scope)
@@ -7795,17 +7935,58 @@ let CH_RV = null;
 // repository picked twice, or a file and then another, can answer in any order.
 let CH_LOAD = 0, CH_DIFF = 0;
 const CH_DIFF_EMPTY = '<div class="wsp-empty">Select a changed file to review its diff. Click a line number to comment; submit the comments to a task\'s chat.</div>';
-function chUseContext(pid, root) {
-  CH_RV = drReview('project:' + pid + '|' + root, {
+let CH_SHA = '';                      // the commit whose file is shown, or '' for an uncommitted one
+const CH_OPEN = new Set();            // commits whose every file is listed
+const CH_FILES_SHOWN = 8;             // a commit's files listed before "+N more"
+// ---- Changes, landed on main: begin ------------------------------------------
+// What landed on the project's main line, newest first (/api/git/log): each
+// commit (a merge counts as one) with its task, subject, time and files. Pure,
+// so tests/test_workspace_docs.py runs it in Node.
+// A merge's "Merge #90: " goes: the task's chip says it.
+const chSubject = s => String(s || '').replace(/^Merge #\d+:\s*/, '') || String(s || '');
+function chFileHtml(f, sha, on) {
+  const code = (f.status || '?').replace(/\s/g, '') || '?';
+  return '<div class="chf' + (on ? ' on' : '') + '" data-file="' + esc(f.path) + '"' + (sha ? ' data-commit="' + esc(sha) + '"' : '') + '>'
+    + '<span class="chst st-' + esc(code[0]) + '">' + esc(code) + '</span><span class="nm" title="' + esc(f.path) + '">' + esc(f.path) + '</span></div>';
+}
+// log: the hub's answer; key: the project's key, for the task links; open: the
+// commits listed in full; cur: {file, sha}, the file shown.
+function chLogHtml(log, key, open, cur) {
+  const commits = (log && log.commits) || [];
+  const ref = (log && log.ref && log.ref !== 'HEAD') ? log.ref : 'the main line';
+  const head = '<h4 class="chp-sec">Landed on ' + esc(ref) + '</h4>';
+  if (!commits.length) return head + '<div class="chf none">Nothing has landed yet. Each merge of a task shows here, newest first, with its files.</div>';
+  return head + commits.map(function (c) {
+    const files = c.files || [], all = open && open.has(c.sha);
+    const shown = all ? files : files.slice(0, CH_FILES_SHOWN);
+    const rest = files.length - shown.length;
+    const chip = c.no ? '<a class="tno" href="#" data-task="' + esc((key ? key + '-' : '#') + c.no) + '" title="Open task #' + c.no + '">#' + c.no + '</a>' : '';
+    let when = '';
+    try { when = new Date(c.time * 1000).toLocaleString(); } catch (e) {}
+    return '<div class="chc" data-sha="' + esc(c.sha) + '"><div class="chc-head">' + chip
+      + '<span class="chc-subj" title="' + esc(c.subject + ' · ' + c.sha.slice(0, 10) + ' · ' + (c.author || '')) + '">' + esc(chSubject(c.subject)) + '</span>'
+      + '<span class="chc-when" title="' + esc(when) + '">' + agoSpan(c.time) + '</span></div>'
+      + shown.map(function (f) { return chFileHtml(f, c.sha, !!cur && cur.sha === c.sha && cur.file === f.path); }).join('')
+      + (rest > 0 ? '<button type="button" class="chc-more" data-sha="' + esc(c.sha) + '">+' + rest + ' more</button>' : '')
+      + (c.more && (all || rest <= 0) ? '<div class="chf none">and ' + c.more + ' more files not listed</div>' : '')
+      + (!files.length ? '<div class="chf none">no files changed</div>' : '')
+      + '</div>';
+  }).join('');
+}
+// ---- Changes, landed on main: end --------------------------------------------
+function chUseContext(pid, root, sha) {
+  // A commit's diff has a review of its own, so a comment on it never mixes
+  // with the uncommitted changes' comments.
+  CH_RV = drReview('project:' + pid + '|' + root + (sha ? '@' + sha : ''), {
     rooms: () => projectTasks(projectById(pid)).filter(s => s.roomId).map(s => ({ id: s.roomId, name: s.label || s.roomId })),
     target: rv => {
       const rooms = projectTasks(projectById(pid)).filter(s => s.roomId);
       const s = rooms.find(x => x.roomId === rv.to) || rooms[0];
       return s ? { roomId: s.roomId, live: !!s.isLive, name: s.label || 'That task' } : null;
     },
-    what: () => ((projectById(pid) || {}).kind === 'documents' ? 'the changes since the last snapshot' : 'the uncommitted changes'),
+    what: () => (sha ? 'commit ' + sha.slice(0, 10) : (projectById(pid) || {}).kind === 'documents' ? 'the changes since the last snapshot' : 'the uncommitted changes'),
     open: (r, file, line) => chOpenInWorkspace(pid, r, file, line),
-    pick: c => { if (c.root === CH_ROOT) chOpenDiff(c.file, c.cid); },
+    pick: c => { if (c.root === CH_ROOT) chOpenDiff(c.file, c.cid, sha || ''); },
   });
   drSetTray(CH_RV, document.getElementById('chp-tray'));
 }
@@ -7822,7 +8003,7 @@ function changesPanelHtml(pj) {
 function chPickRepo(root) {
   const box = document.getElementById('chp-files'), diff = document.getElementById('chp-diff');
   if (!box) return;
-  CH_ROOT = root; CH_FILE = ''; CH_DIFF++;
+  CH_ROOT = root; CH_FILE = ''; CH_SHA = ''; CH_DIFF++;
   box.dataset.root = root;
   box.innerHTML = '<div class="chf none">loading…</div>';
   if (diff) diff.innerHTML = CH_DIFF_EMPTY;
@@ -7844,29 +8025,35 @@ async function chLoadStatus() {
     const roots = rr.roots || [];
     if (stale()) return;                // a newer load, or another project or scope, took the panel
     if (!roots.length) {
-      CH_ROOT = ''; box.dataset.root = '';
+      CH_ROOT = ''; CH_SHA = ''; box.dataset.root = '';
       chUseContext(box.dataset.project, '');
       box.innerHTML = '<div class="chf none">No git repository here yet. When an agent clones one into this folder, its changes show up here.</div>';
       return;
     }
-    if (!CH_ROOT || !roots.some(function (r) { return r.path === CH_ROOT; })) CH_ROOT = roots[0].path;
+    if (!CH_ROOT || !roots.some(function (r) { return r.path === CH_ROOT; })) { CH_ROOT = roots[0].path; CH_SHA = ''; }
     box.dataset.root = CH_ROOT;
-    chUseContext(box.dataset.project, CH_ROOT);
+    // The diff showing keeps its review: a commit's, or the uncommitted one.
+    chUseContext(box.dataset.project, CH_ROOT, CH_SHA);
     const repoSel = roots.length > 1
       ? '<select class="chp-repo" title="Which repository">' + roots.map(function (r) {
           return '<option value="' + esc(r.path) + '"' + (r.path === CH_ROOT ? ' selected' : '') + '>' + esc(r.name) + '</option>';
         }).join('') + '</select>'
       : '<span class="chp-repo1" title="' + esc(CH_ROOT) + '">' + esc(roots[0].name) + '</span>';
-    const st = await api('/api/git/status?path=' + encodeURIComponent(CH_ROOT));
+    // The uncommitted changes, and what landed on the main line: read together.
+    const pid = box.dataset.project;
+    const [st, log] = await Promise.all([
+      api('/api/git/status?path=' + encodeURIComponent(CH_ROOT)),
+      api('/api/git/log?path=' + encodeURIComponent(CH_ROOT) + '&project=' + encodeURIComponent(pid) + '&n=30').catch(function (e) { return { error: e.message, commits: [] }; }),
+    ]);
     if (stale()) return;
     const files = st.files || [];
-    box.innerHTML = '<div class="chp-head">' + repoSel + '<span class="chp-count">' + files.length + ' changed</span>'
-      + '<button class="chp-refresh" title="Refresh">↻</button></div>'
-      + (files.length ? files.map(function (f) {
-          const code = (f.status || '?').replace(/\s/g, '') || '?';
-          return '<div class="chf' + (f.path === CH_FILE ? ' on' : '') + '" data-file="' + esc(f.path) + '">'
-            + '<span class="chst st-' + esc(code[0]) + '">' + esc(code) + '</span><span class="nm">' + esc(f.path) + '</span></div>';
-        }).join('') : '<div class="chf none">working tree clean</div>');
+    const cur = { file: CH_FILE, sha: CH_SHA };
+    // Uncommitted changes on top, only when there are any.
+    const unc = files.length ? '<h4 class="chp-sec">Uncommitted <span class="chp-count">' + files.length + ' changed</span></h4>'
+      + files.map(function (f) { return chFileHtml(f, '', !CH_SHA && f.path === CH_FILE); }).join('') : '';
+    box.innerHTML = '<div class="chp-head">' + repoSel + '<button class="chp-refresh" title="Refresh">↻</button></div>'
+      + unc + (log.error ? '<div class="chf none">what landed is unavailable: ' + esc(log.error) + '</div>'
+                         : chLogHtml(log, (projectById(pid) || {}).key || '', CH_OPEN, cur));
     const rb = box.querySelector('.chp-refresh'); if (rb) rb.onclick = chLoadStatus;
     const rs = box.querySelector('.chp-repo'); if (rs) rs.onchange = function () { chPickRepo(rs.value); };
   } catch (e) { if (!stale()) box.innerHTML = '<div class="chf none">status unavailable: ' + esc(e.message) + '</div>'; }
@@ -7876,7 +8063,7 @@ async function chLoadHistory(box, pj, stale) {
   try {
     const st = await api('/api/history/status?project=' + encodeURIComponent(pj.id));
     if (stale()) return;
-    CH_ROOT = pj.path; box.dataset.root = CH_ROOT;
+    CH_ROOT = pj.path; CH_SHA = ''; box.dataset.root = CH_ROOT;
     chUseContext(pj.id, CH_ROOT);
     const files = st.files || [], big = files.filter(function (f) { return f.tooLarge; }).length;
     box.innerHTML = '<div class="chp-head"><span class="chp-repo1" title="' + esc(pj.path) + '">Since the last snapshot</span><span class="chp-count">' + files.length + ' changed</span>'
@@ -7890,19 +8077,22 @@ async function chLoadHistory(box, pj, stale) {
     const rb = box.querySelector('.chp-refresh'); if (rb) rb.onclick = chLoadStatus;
   } catch (e) { if (!stale()) box.innerHTML = '<div class="chf none">changes unavailable: ' + esc(e.message) + '</div>'; }
 }
-async function chOpenDiff(file, cid) {
+async function chOpenDiff(file, cid, sha) {
   const box = document.getElementById('chp-diff'); if (!box) return;
+  const files = document.getElementById('chp-files');
+  sha = files.dataset.history ? '' : (sha || '');
+  // A file of another commit (or of none) takes that one's review.
+  if (sha !== CH_SHA) { CH_SHA = sha; chUseContext(files.dataset.project, files.dataset.root, sha); }
   CH_FILE = file;
   // The diff belongs to this repository's review: a comment on it lands there,
   // whatever is on screen by the time it is added.
-  const seq = ++CH_DIFF, root = document.getElementById('chp-files').dataset.root, rv = CH_RV;
-  document.querySelectorAll('#chp-files .chf').forEach(function (x) { x.classList.toggle('on', x.dataset.file === file); });
+  const seq = ++CH_DIFF, root = files.dataset.root, rv = CH_RV;
+  document.querySelectorAll('#chp-files .chf').forEach(function (x) { x.classList.toggle('on', x.dataset.file === file && (x.dataset.commit || '') === sha); });
   box.innerHTML = '<div class="wsp-empty">loading diff…</div>';
   try {
-    const files = document.getElementById('chp-files');
     const d = files.dataset.history
       ? await api('/api/history/diff?project=' + encodeURIComponent(files.dataset.project) + '&path=' + encodeURIComponent(file))
-      : await api('/api/git/diff?path=' + encodeURIComponent(root) + '&file=' + encodeURIComponent(file));
+      : await api('/api/git/diff?path=' + encodeURIComponent(root) + '&file=' + encodeURIComponent(file) + (sha ? '&commit=' + encodeURIComponent(sha) : ''));
     if (seq !== CH_DIFF || !box.isConnected) return;   // another file, repository or project since
     const v = drShow(rv, box, root, file, d.diff || '');
     if (cid) { v.scrollTo = cid; drPaint(v); }
@@ -7921,11 +8111,13 @@ function wireChangesPanel(pj) {
   // No repository yet, so nothing to comment on until the status names one.
   chUseContext((pj && pj.id) || '', '');
   const files = document.getElementById('chp-files'); if (!files) return;
-  CH_FILE = '';
+  CH_FILE = ''; CH_SHA = '';
   chLoadStatus();
   files.onclick = function (e) {
+    const more = e.target.closest('.chc-more');
+    if (more) { CH_OPEN.add(more.dataset.sha); chLoadStatus(); return; }
     const f = e.target.closest('.chf'); if (!f || !f.dataset.file) return;
-    chOpenDiff(f.dataset.file);
+    chOpenDiff(f.dataset.file, '', f.dataset.commit || '');
   };
 }
 
@@ -9183,7 +9375,7 @@ function docsPanelHtml(pj) {
   return `<div class="dcs">`
     + `<section class="dcs-files" aria-label="Files"><div class="dcs-hrow"><h3 class="dcs-h">Files</h3>`
     + `<label class="dcs-all dcs-tasks" title="Show the folders of the project's tasks, with the files they made there, in the tree, Go to file and Text search">`
-    + `<input type="checkbox" class="dcs-tasks-cb"${docsTasksShown() ? ' checked' : ''}> Task folders</label><span class="grow"></span>`
+    + `<input type="checkbox" class="dcs-tasks-cb"${docsTasksShown() ? ' checked' : ''}> Show task folders</label><span class="grow"></span>`
     + `<label class="rm-btn dcs-add" title="Add files to the folder selected in the tree, or to the project">Add files<input type="file" multiple class="dcs-pick"></label>`
     + `<button type="button" class="rm-btn dcs-mkdir" title="Make a folder in the one selected in the tree, or in the project">New folder</button></div>`
     + `<div class="rm-note dcs-ask" role="group" aria-label="A file of that name is already there" hidden></div>`
@@ -9809,6 +10001,12 @@ function docsTasksFollow(v) {
 window.addEventListener('storage', e => {
   if (e.key !== DOCS_TASKS_KEY) return;
   const el = document.getElementById('ws-panel'), pid = el && el.dataset.proj, v = pid && docsMine(el, pid) && docsView(pid);
+  // A code project's Workspace: its switch and tree follow.
+  const ccb = el && el.querySelector('.wsp-tasks-cb');
+  if (ccb) {
+    ccb.checked = docsTasksShown();
+    WS_VIEWS.forEach(w => { if (w.el && el.contains(w.el)) { wsPaintTree(w); wsSync(w); } });
+  }
   const cb = v && el.querySelector('.dcs-tasks-cb');
   if (!cb) return;
   cb.checked = docsTasksShown();
@@ -10619,7 +10817,7 @@ function renderRows() {
       delete panel.dataset.proj;
       if (!pj || !pj.path) panel.innerHTML = '<p class="empty">This project has no folder.</p>';
       else if (!docs) {
-        panel.innerHTML = wsPanelHtml();
+        panel.innerHTML = wsPanelHtml({ tasks: true });
         wsMount(panel.querySelector('.wsp'), { kind: 'project', projectId: SELECTED_PROJECT });
       }
     }
