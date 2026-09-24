@@ -1,8 +1,27 @@
-/* Dock theme: the colour tokens, light and dark, and the fonts. Every rule in dock.css uses these tokens only; an app's
-   own styles can use them too, so its screens and its panels look like one family.
+/* Dock theme: the colour tokens, one complete set per theme, and the fonts. Every rule in dock.css uses these tokens
+   only; an app's own styles can use them too, so its screens and its panels look like one family.
 
-   Switching: set data-theme="light" | "dark" on <html> (theme.js applyTheme/createTheme do, and also set
-   data-scheme). With no data-theme the OS preference picks. A dock copies these attributes into its pop-out windows.
+   Switching: set data-theme="<name>" on <html> (theme.js applyTheme/createTheme do, and also set data-scheme, light or
+   dark). With no data-theme the OS preference picks light or dark. A dock copies these attributes into its pop-out
+   windows. Each set also applies to any element with data-dk-theme="<name>", so a theme picker can show a true preview
+   of a set inside a page that has another one on.
+
+   The sets (theme.js THEME_LIST names them, with their scheme and origin):
+     light, dark, dim, paper, contrast, fjord, tws     the library's own set; README "Theme" says where they come from
+     ensemble-light, -dark, -dim, -paper, -contrast, -fjord
+                                                       Ensemble's six (claude-dashboard-main index.html). They share
+                                                       names with the base sets but differ in shade, so they carry a
+                                                       prefix.
+                                                       Ensemble's tokens map as: --surface-overlay -> --dk-bg (menus,
+                                                       fields), --surface-sunken -> --dk-bg2 (chrome), --surface ->
+                                                       --dk-bg3 (panel ground), --border -> --dk-line, --fg / -subtle /
+                                                       -muted -> --dk-fg / fg2 / fg3, the -fg of success / danger /
+                                                       warning -> ok / danger / warn, --selected-bg (worked out) -> sel-bg
+     solar-light, solar-dark, sepia, rose, dusk, forest, contrast-dark
+                                                       new here: Solarized-like light and dark (the text and accents
+                                                       deepened to pass), a warm sepia, a rose-tinted light (Rosé Pine
+                                                       Dawn-like), a violet dusk (Dracula-like), a green forest dark, and
+                                                       a high-contrast dark (7:1)
 
    Overriding: redefine any token after this file, for every theme or for one:
      :root { --dk-accent: #7a3cff; }
@@ -10,7 +29,7 @@
    An app with more themes adds its own :root[data-theme="..."] block, setting every token below.
 
    Meanings (a theme changes a colour's shade, never its meaning):
-     --dk-bg / --dk-bg2 / --dk-bg3   page ground / chrome (title bars, strips, splitters) / panel ground
+     --dk-bg / --dk-bg2 / --dk-bg3   menus and fields / chrome (title bars, strips, splitters) / panel ground
      --dk-line                       borders and dividers        --dk-hover     a hovered row or menu item
      --dk-fg / --dk-fg2 / --dk-fg3   text: main / secondary / quiet
      --dk-accent                     the active tab, a drop preview, a primary action
@@ -18,8 +37,10 @@
      --dk-sel-bg                     a selected item's ground    --dk-focus     the keyboard focus ring
      --dk-shadow / --dk-scrim        floating things' shadow / behind a modal
      --dk-font / --dk-font-mono      text / title bars, tabs, menus
-   Every text token clears 4.5:1 on every ground token in both sets. */
-:root {
+   Every text token (fg, fg2, fg3, accent, ok, danger, warn) clears 4.5:1 on bg, bg2 and bg3 in every set (7:1 in the
+   high-contrast ones), and warn on warn-bg; the new sets also on hover and sel-bg. The carried sets keep their apps'
+   colours, a few of which are slightly under 4.5:1 on hover or sel-bg. test/theme-sets.test.js measures it. */
+:root, [data-dk-theme="light"] {
   color-scheme: light;
   --dk-bg: #FFFFFF; --dk-bg2: #EBEDF0; --dk-bg3: #F7F8F9;
   --dk-line: #D0D4DB; --dk-hover: #E4E7EB;
@@ -30,7 +51,7 @@
   --dk-font: "IBM Plex Sans", system-ui, sans-serif;
   --dk-font-mono: "JetBrains Mono", Consolas, monospace;
 }
-:root[data-theme="dark"] {
+:root[data-theme="dark"], [data-dk-theme="dark"] {
   color-scheme: dark;
   --dk-bg: #1D2125; --dk-bg2: #2C333A; --dk-bg3: #22272B;
   --dk-line: #38414A; --dk-hover: #38414A;
@@ -49,4 +70,187 @@
     --dk-sel-bg: #1C2B41; --dk-focus: #579DFF;
     --dk-shadow: rgba(3, 4, 4, .5); --dk-scrim: rgba(3, 4, 4, .6);
   }
+}
+
+/* ---- the rest of the base set ---- */
+
+/* Dim: a softer dark for long evenings. Warm grey ground, no pure white. */
+:root[data-theme="dim"], [data-dk-theme="dim"] {
+  color-scheme: dark;
+  --dk-bg: #242320; --dk-bg2: #33322E; --dk-bg3: #2B2A27;
+  --dk-line: #3D3B37; --dk-hover: #3D3B37;
+  --dk-fg: #D2CCC1; --dk-fg2: #B4AEA3; --dk-fg3: #A8A297;
+  --dk-accent: #9DC0EC; --dk-ok: #98D8B6; --dk-danger: #F3AAA2; --dk-warn: #E6C878; --dk-warn-bg: #3A3018;
+  --dk-sel-bg: #2E3440; --dk-focus: #9CC0F0;
+  --dk-shadow: rgba(0, 0, 0, .45); --dk-scrim: rgba(0, 0, 0, .55);
+}
+/* Paper: a warmer light. Cream ground, ink-brown text. */
+:root[data-theme="paper"], [data-dk-theme="paper"] {
+  color-scheme: light;
+  --dk-bg: #FFFDF8; --dk-bg2: #EFEADF; --dk-bg3: #F6F3EC;
+  --dk-line: #DDD5C6; --dk-hover: #E8E2D5;
+  --dk-fg: #2B2620; --dk-fg2: #534B41; --dk-fg3: #62594E;
+  --dk-accent: #1D4F9E; --dk-ok: #1E6443; --dk-danger: #A02C21; --dk-warn: #6B4F00; --dk-warn-bg: #FAEDC6;
+  --dk-sel-bg: #E6ECF5; --dk-focus: #2677F0;
+  --dk-shadow: rgba(60, 40, 10, .22); --dk-scrim: rgba(60, 40, 10, .4);
+}
+/* High contrast: black on white, every text pair 7:1 or better. */
+:root[data-theme="contrast"], [data-dk-theme="contrast"] {
+  color-scheme: light;
+  --dk-bg: #FFFFFF; --dk-bg2: #EDEDED; --dk-bg3: #FFFFFF;
+  --dk-line: #767676; --dk-hover: #E3E3E3;
+  --dk-fg: #000000; --dk-fg2: #1C1C1C; --dk-fg3: #383838;
+  --dk-accent: #002C85; --dk-ok: #073F26; --dk-danger: #700F08; --dk-warn: #3F2D00; --dk-warn-bg: #FFEAA8;
+  --dk-sel-bg: #DCE7FF; --dk-focus: #000000;
+  --dk-shadow: rgba(0, 0, 0, .35); --dk-scrim: rgba(0, 0, 0, .55);
+}
+/* Fjord: a cool polar night with frost blues and aurora hues. */
+:root[data-theme="fjord"], [data-dk-theme="fjord"] {
+  color-scheme: dark;
+  --dk-bg: #2E3440; --dk-bg2: #3B4252; --dk-bg3: #333A47;
+  --dk-line: #4C566A; --dk-hover: #434C5E;
+  --dk-fg: #ECEFF4; --dk-fg2: #D8DEE9; --dk-fg3: #BCC4D0;
+  --dk-accent: #A9C7EC; --dk-ok: #BFD9A8; --dk-danger: #F2AEB4; --dk-warn: #EBCB8B; --dk-warn-bg: #4D4531;
+  --dk-sel-bg: #3D4A5E; --dk-focus: #A8D8E6;
+  --dk-shadow: rgba(15, 18, 24, .5); --dk-scrim: rgba(15, 18, 24, .6);
+}
+/* TWS: black ground as in the TWS option chain, blue strikes, red losses, green gains. */
+:root[data-theme="tws"], [data-dk-theme="tws"] {
+  color-scheme: dark;
+  --dk-bg: #000000; --dk-bg2: #16181E; --dk-bg3: #0A0B0E;
+  --dk-line: #33363F; --dk-hover: #262A33;
+  --dk-fg: #F0F0F0; --dk-fg2: #C8CCD4; --dk-fg3: #A2A8B3;
+  --dk-accent: #6EA8FF; --dk-ok: #3DDC84; --dk-danger: #FF6B6B; --dk-warn: #FFC940; --dk-warn-bg: #3A2E00;
+  --dk-sel-bg: #1B2A48; --dk-focus: #4C9AFF;
+  --dk-shadow: rgba(0, 0, 0, .6); --dk-scrim: rgba(0, 0, 0, .65);
+}
+
+/* ---- Ensemble's (claude-dashboard-main index.html), mapped as the header says ---- */
+
+:root[data-theme="ensemble-light"], [data-dk-theme="ensemble-light"] {
+  color-scheme: light;
+  --dk-bg: #FFFFFF; --dk-bg2: #F1F2F4; --dk-bg3: #FFFFFF;
+  --dk-line: #DCDFE4; --dk-hover: rgba(9, 30, 66, .06);
+  --dk-fg: #172B4D; --dk-fg2: #44546F; --dk-fg3: #626F86;
+  --dk-accent: #0C66E4; --dk-ok: #216E4E; --dk-danger: #AE2E24; --dk-warn: #7F5F01; --dk-warn-bg: #FFF7D6;
+  --dk-sel-bg: #E7F0FC; --dk-focus: #2684FF;
+  --dk-shadow: rgba(9, 30, 66, .25); --dk-scrim: rgba(9, 30, 66, .45);
+}
+:root[data-theme="ensemble-dark"], [data-dk-theme="ensemble-dark"] {
+  color-scheme: dark;
+  --dk-bg: #282E33; --dk-bg2: #1D2125; --dk-bg3: #22272B;
+  --dk-line: #38414A; --dk-hover: rgba(166, 197, 226, .10);
+  --dk-fg: #C7D1DB; --dk-fg2: #9FADBC; --dk-fg3: #94A2B2;
+  --dk-accent: #579DFF; --dk-ok: #7EE2B8; --dk-danger: #FD9891; --dk-warn: #F5CD47; --dk-warn-bg: #533F04;
+  --dk-sel-bg: #273340; --dk-focus: #579DFF;
+  --dk-shadow: rgba(3, 4, 4, .5); --dk-scrim: rgba(3, 4, 4, .6);
+}
+:root[data-theme="ensemble-dim"], [data-dk-theme="ensemble-dim"] {
+  color-scheme: dark;
+  --dk-bg: #33322E; --dk-bg2: #201F1D; --dk-bg3: #2B2A27;
+  --dk-line: #3D3B37; --dk-hover: rgba(236, 226, 206, .07);
+  --dk-fg: #D2CCC1; --dk-fg2: #B4AEA3; --dk-fg3: #A8A297;
+  --dk-accent: #8DB0DC; --dk-ok: #98D8B6; --dk-danger: #F3AAA2; --dk-warn: #E6C878; --dk-warn-bg: #41351A;
+  --dk-sel-bg: #353739; --dk-focus: #9CC0F0;
+  --dk-shadow: rgba(0, 0, 0, .45); --dk-scrim: rgba(0, 0, 0, .55);
+}
+:root[data-theme="ensemble-paper"], [data-dk-theme="ensemble-paper"] {
+  color-scheme: light;
+  --dk-bg: #FFFDF8; --dk-bg2: #EFEADF; --dk-bg3: #FFFDF8;
+  --dk-line: #E3DCCF; --dk-hover: rgba(70, 50, 20, .06);
+  --dk-fg: #2B2620; --dk-fg2: #534B41; --dk-fg3: #696055;
+  --dk-accent: #2A5DA8; --dk-ok: #1E6443; --dk-danger: #A02C21; --dk-warn: #6B4F00; --dk-warn-bg: #FAEDC6;
+  --dk-sel-bg: #EAEDF0; --dk-focus: #2677F0;
+  --dk-shadow: rgba(60, 40, 10, .22); --dk-scrim: rgba(60, 40, 10, .4);
+}
+:root[data-theme="ensemble-contrast"], [data-dk-theme="ensemble-contrast"] {
+  color-scheme: light;
+  --dk-bg: #FFFFFF; --dk-bg2: #EDEDED; --dk-bg3: #FFFFFF;
+  --dk-line: #767676; --dk-hover: rgba(0, 0, 0, .08);
+  --dk-fg: #000000; --dk-fg2: #1C1C1C; --dk-fg3: #383838;
+  --dk-accent: #003DA8; --dk-ok: #073F26; --dk-danger: #700F08; --dk-warn: #3F2D00; --dk-warn-bg: #FFEAA8;
+  --dk-sel-bg: #E6ECF6; --dk-focus: #000000;
+  --dk-shadow: rgba(0, 0, 0, .35); --dk-scrim: rgba(0, 0, 0, .55);
+}
+:root[data-theme="ensemble-fjord"], [data-dk-theme="ensemble-fjord"] {
+  color-scheme: dark;
+  --dk-bg: #434C5E; --dk-bg2: #2A2F3A; --dk-bg3: #3B4252;
+  --dk-line: #4C566A; --dk-hover: rgba(216, 222, 233, .08);
+  --dk-fg: #ECEFF4; --dk-fg2: #D8DEE9; --dk-fg3: #BCC4D0;
+  --dk-accent: #93CBDB; --dk-ok: #BFD9A8; --dk-danger: #F2AEB4; --dk-warn: #EBCB8B; --dk-warn-bg: #4D4531;
+  --dk-sel-bg: #445060; --dk-focus: #A8D8E6;
+  --dk-shadow: rgba(15, 18, 24, .5); --dk-scrim: rgba(15, 18, 24, .6);
+}
+
+/* ---- new sets ---- */
+
+/* Solar light: Solarized's cream and teal-grey, its text and accents deepened to clear 4.5:1. */
+:root[data-theme="solar-light"], [data-dk-theme="solar-light"] {
+  color-scheme: light;
+  --dk-bg: #FFFBEF; --dk-bg2: #EEE8D5; --dk-bg3: #FDF6E3;
+  --dk-line: #D9D2BC; --dk-hover: #E6DFC8;
+  --dk-fg: #073642; --dk-fg2: #36525B; --dk-fg3: #4A5F66;
+  --dk-accent: #1B659C; --dk-ok: #4B5E00; --dk-danger: #B0241F; --dk-warn: #735500; --dk-warn-bg: #F5E6B8;
+  --dk-sel-bg: #DDE8EC; --dk-focus: #268BD2;
+  --dk-shadow: rgba(0, 43, 54, .22); --dk-scrim: rgba(0, 43, 54, .4);
+}
+/* Solar dark: Solarized's deep teal ground, the accents lifted to clear 4.5:1. */
+:root[data-theme="solar-dark"], [data-dk-theme="solar-dark"] {
+  color-scheme: dark;
+  --dk-bg: #00212B; --dk-bg2: #073642; --dk-bg3: #002B36;
+  --dk-line: #1A4753; --dk-hover: #0E404C;
+  --dk-fg: #EEE8D5; --dk-fg2: #C2CBC9; --dk-fg3: #A3B0B0;
+  --dk-accent: #6DB5EC; --dk-ok: #A8BD2E; --dk-danger: #FF8C85; --dk-warn: #DDB13A; --dk-warn-bg: #3A3100;
+  --dk-sel-bg: #0B3F4D; --dk-focus: #2AA198;
+  --dk-shadow: rgba(0, 10, 14, .55); --dk-scrim: rgba(0, 10, 14, .65);
+}
+/* Sepia: old paper and brown ink, a burnt-sienna accent. Warmer and darker-grounded than Paper. */
+:root[data-theme="sepia"], [data-dk-theme="sepia"] {
+  color-scheme: light;
+  --dk-bg: #FBF4E6; --dk-bg2: #EADCC2; --dk-bg3: #F4EAD5;
+  --dk-line: #D5C3A2; --dk-hover: #E6D6B8;
+  --dk-fg: #3B2A1A; --dk-fg2: #54402C; --dk-fg3: #634D38;
+  --dk-accent: #8A4410; --dk-ok: #3B5E12; --dk-danger: #9E2519; --dk-warn: #684A00; --dk-warn-bg: #F6E3A8;
+  --dk-sel-bg: #EBDAB5; --dk-focus: #B5651D;
+  --dk-shadow: rgba(70, 45, 15, .25); --dk-scrim: rgba(70, 45, 15, .45);
+}
+/* Rose: a soft rose-and-plum light (Rosé Pine Dawn-like), a pine-teal accent. */
+:root[data-theme="rose"], [data-dk-theme="rose"] {
+  color-scheme: light;
+  --dk-bg: #FFFAF3; --dk-bg2: #F2E9E1; --dk-bg3: #FAF4ED;
+  --dk-line: #DFD5D0; --dk-hover: #EDE2DA;
+  --dk-fg: #3A3558; --dk-fg2: #514C73; --dk-fg3: #625E7E;
+  --dk-accent: #25637C; --dk-ok: #2F6B3F; --dk-danger: #A42F55; --dk-warn: #7C5200; --dk-warn-bg: #F8E6C4;
+  --dk-sel-bg: #E9E0EA; --dk-focus: #907AA9;
+  --dk-shadow: rgba(87, 82, 121, .2); --dk-scrim: rgba(87, 82, 121, .4);
+}
+/* Dusk: a violet night (Dracula-like), purple accent, bright greens and pinks. */
+:root[data-theme="dusk"], [data-dk-theme="dusk"] {
+  color-scheme: dark;
+  --dk-bg: #1E1F29; --dk-bg2: #282A36; --dk-bg3: #21222C;
+  --dk-line: #3A3C4E; --dk-hover: #343746;
+  --dk-fg: #F8F8F2; --dk-fg2: #D6D6E4; --dk-fg3: #AFB1CB;
+  --dk-accent: #BD93F9; --dk-ok: #50FA7B; --dk-danger: #FF7A85; --dk-warn: #F1FA8C; --dk-warn-bg: #3B3A1E;
+  --dk-sel-bg: #3A3558; --dk-focus: #FF79C6;
+  --dk-shadow: rgba(0, 0, 0, .5); --dk-scrim: rgba(0, 0, 0, .6);
+}
+/* Forest: moss-dark ground, sage text, a sea-glass accent. */
+:root[data-theme="forest"], [data-dk-theme="forest"] {
+  color-scheme: dark;
+  --dk-bg: #141D17; --dk-bg2: #1F2B23; --dk-bg3: #18231C;
+  --dk-line: #2E3D32; --dk-hover: #2A382F;
+  --dk-fg: #DCE8DE; --dk-fg2: #B8C9BB; --dk-fg3: #9FB4A4;
+  --dk-accent: #8FD0C4; --dk-ok: #93D98F; --dk-danger: #F2A091; --dk-warn: #E8C872; --dk-warn-bg: #3A3217;
+  --dk-sel-bg: #25402F; --dk-focus: #7FD1B0;
+  --dk-shadow: rgba(0, 0, 0, .5); --dk-scrim: rgba(0, 0, 0, .6);
+}
+/* High contrast dark: white on black, every text pair 7:1 or better. */
+:root[data-theme="contrast-dark"], [data-dk-theme="contrast-dark"] {
+  color-scheme: dark;
+  --dk-bg: #000000; --dk-bg2: #1A1A1A; --dk-bg3: #0A0A0A;
+  --dk-line: #8A8A8A; --dk-hover: #2A2A2A;
+  --dk-fg: #FFFFFF; --dk-fg2: #EDEDED; --dk-fg3: #D0D0D0;
+  --dk-accent: #8CBDFF; --dk-ok: #6EE7A0; --dk-danger: #FFA39C; --dk-warn: #FFD75E; --dk-warn-bg: #3A2E00;
+  --dk-sel-bg: #0F2A55; --dk-focus: #FFFFFF;
+  --dk-shadow: rgba(0, 0, 0, .6); --dk-scrim: rgba(0, 0, 0, .7);
 }

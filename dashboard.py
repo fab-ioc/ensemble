@@ -441,10 +441,12 @@ STATIC_DIR = Path(__file__).parent
 PAGE_FILES = ("index.html", "session.html", "fileview.html",
               "static/hl.js", "static/comments.js", "static/attach.js", "static/actions.js",
               # The Dock library (static/dock, a vendored copy) that a project's
-              # PO screen is built on: its modules, its stylesheet, its pop-out page.
+              # PO screen is built on: its modules and its stylesheet (its pop-out
+              # page is a module too, popout-page.js, opened from a blob: URL).
               "static/dock/src/index.js", "static/dock/src/dock.js", "static/dock/src/layout.js",
               "static/dock/src/host.js", "static/dock/src/panels-menu.js", "static/dock/src/help.js",
-              "static/dock/src/theme.js", "static/dock/css/dock.css", "static/dock/src/popout.html")
+              "static/dock/src/theme.js", "static/dock/src/theme-picker.js", "static/dock/src/install.js",
+              "static/dock/src/popout-page.js", "static/dock/css/dock.css")
 PAGE_META = b'<meta name="ensemble-pages" content="">'
 _STAMP_CACHE: dict[str, tuple[tuple[int, int], str]] = {}
 
