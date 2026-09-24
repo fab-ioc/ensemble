@@ -9110,9 +9110,10 @@ function pdEnsure() {
     sizes: { head: 32, strip: 28, unpinSize: 720 },
     popName: 'ensemble-panel-',
     popTitle: p => `${p.title} · ${(projectById(PD.pid) || {}).name || 'Ensemble'}`,
-    // The library's page from a blob: URL, with this page's base: a panel's
-    // relative addresses (a file viewer's frame, a task link) are this page's.
-    popHtml: L.POP_HTML.replace('<head>', `<head><base href="${esc(document.baseURI)}">`),
+    // The library's page from a blob: URL; the library gives it this page's
+    // base, so a panel's relative addresses (a file viewer's frame, a task
+    // link) are this page's.
+    popHtml: true,
     themeEvent: 'cd-theme',
     modalSelector: '[role="dialog"], dialog, .dk-help-pop, .dcm',
     text: { empty: 'Every panel is on a strip at an edge or hidden: the Panels menu above shows them.' },
