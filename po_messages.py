@@ -385,23 +385,29 @@ def _deliver(state: dict, room_id: str, now: float, require_idle: bool) -> str:
                 ids = {p["id"] for p in told}
                 # Marked on disk before typing, so a failed save afterwards
                 # can never type the same line twice (_load drops the mark).
+                # The wake is counted in the same write, so the hourly limit
+                # holds even when the save after typing fails.
+                keys = {pair_key(p["fromProjectId"], p["toProjectId"]) for p in told}
+                before = {k: list(state["wakes"].get(k, [])) for k in keys}
                 for p in told:
                     p["typing"] = now
+                for k in keys:
+                    state["wakes"][k] = _recent(state, k, now) + [now]
                 if not _save(state):
                     for p in told:
                         p.pop("typing", None)
+                    state["wakes"].update(before)
                     _log(f"not typed to the PO of {room_id}: the queue could not be saved")
                     return ""
                 changed = True
                 if _d._type_input(sess, wake):
                     how = "typed"
                     state["pending"] = [p for p in state["pending"] if p["id"] not in ids]
-                    for k in {pair_key(p["fromProjectId"], p["toProjectId"]) for p in told}:
-                        state["wakes"][k] = _recent(state, k, now) + [now]
                     _log(f"typed to the PO of {room_id}: {', '.join(sorted(ids))}")
                 else:
                     for p in told:
                         p.pop("typing", None)
+                    state["wakes"].update(before)
     if changed:
         _save(state)
     return how

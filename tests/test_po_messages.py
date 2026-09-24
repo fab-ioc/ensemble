@@ -365,6 +365,29 @@ class StoppedPo(_World):
         self.assertEqual(po_messages.tick(), [])
         self.assertEqual(len(self.typed("pty-dock")), 1)
 
+    def test_a_failed_save_after_typing_still_counts_the_wake(self):
+        n = po_messages.WAKES_PER_HOUR
+        for i in range(n - 1):
+            self.now += 60
+            self.assertTrue(self.ok(self.opten, "ensemble_message_po", projectId="Dock",
+                                    kind="bug", text=f"bug {i}")["delivered"])
+        real = po_messages._save
+        calls = []
+
+        def last_fails(state):
+            calls.append(1)
+            return real(state) if len(calls) < 3 else False   # enqueue, mark ok; cleanup fails
+        self.now += 60
+        with mock.patch.object(po_messages, "_save", side_effect=last_fails):
+            self.assertTrue(self.ok(self.opten, "ensemble_message_po", projectId="Dock",
+                                    kind="bug", text="the last one")["delivered"])
+        self.assertEqual(self.queue(), [])
+        self.now += 60
+        res = self.ok(self.opten, "ensemble_message_po", projectId="Dock", kind="bug", text="one too many")
+        self.assertFalse(res["delivered"])
+        self.assertTrue(res["held"])
+        self.assertEqual(len(self.typed("pty-dock")), n)
+
     def test_a_po_room_that_is_gone_leaves_the_queue(self):
         self.ptys.pop("pty-dock")
         self.ok(self.opten, "ensemble_message_po", projectId="Dock", kind="bug", text="Crash.")
