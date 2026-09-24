@@ -346,6 +346,9 @@ What a project's Workspace opens on: the reports and design notes its tasks put 
 folder, and a code project's Markdown under `docs/` in its checkout (`wsDocsHtml` in `index.html`
 is the reference). It is the project's knowledge, so it comes before the tree's task folders.
 
+- **The roadmap first**, above the list in every state (loading, empty, listed): "Roadmap",
+  "ROADMAP.md · always first" under it, and when it was saved. It opens in the roadmap's own view
+  and editor over the list (`wsRoadmapPaint`), with **← Documents** to come back.
 - **Newest first**, by the file's time, in the order the hub sends. A heading "Documents", the count
   ("12 documents, newest first") and a line saying where they live, in `--fg-muted`.
 - **A row:** the title (the file's name without `#12 ` and `.md`) with its folder under it in
@@ -525,7 +528,71 @@ bell's count.**
 - **Outside the chat:** the task card (`.cpts`, beside the cost) and the PO's header and pill say
   "2 to acknowledge · 1 open" in `--fg-muted` words, the tooltip in full. No lozenge: a card keeps
   its two.
+- **The Points panel** of a PO screen (see *Panels*; `pdPointsHtml` in `index.html` is the
+  reference) is the same list with room of its own: the summary line in `--fg-subtle`, then a row a
+  point: id and first words (two lines, `--fs-300`), then state, age, both links and the one click.
+  The chat tells its host every change (`pointsTell`, with each point's words as the chat cuts
+  them). While the panel is on screen the chat's own line steps aside (the frame carries
+  `data-points-elsewhere`); hidden, the line comes back. An arrow brings the PO chat panel forward
+  and lands on the balloon as the chat's own arrows do (`gotoMsg`); Ack and Drop post once and hand
+  the hub's answer to the chat, so both show the same state at once. The panel's tab carries the
+  count as quiet words (`.dk-badge`, `--fg-muted`), never a badge colour.
 - **Phone:** the summary, every control and every link are `--touch-min`.
+
+### Panels
+
+A project with a PO opens on its **PO screen**: a Dock (`static/dock`, a vendored copy of the Dock
+library; `VERSION` names its commit) of five panels, **PO chat, Points, Board, Workspace, Changes**
+(`PD_IDS` in `index.html`). The person arranges them: side by side, as tabs of one stack, floating,
+on a strip at an edge (slides out on hover or click), minimised, maximised, hidden from the Panels
+menu, or popped out into a window of their own. The layout is remembered in the browser
+(`cd-po-dock`; a phone's apart, `cd-po-dock-phone`), with **Reset layout** in the Panels menu. The
+library is never edited in this repository: a need goes to the Dock project's `ENSEMBLE-NEEDS.md`.
+
+- **The default** (`pdDefaultLayout`, measured in `tests/test_po_dock.py`): at a laptop's width (about
+  1440) the PO chat takes what Points (340px) leaves, side by side; Board, Workspace and Changes wait
+  on the right edge's strip, never on screen until opened, each sliding out over 72% of the width and
+  pinning back beside Points. From 1800px the Board is on screen too, on the right (46% of the width):
+  a chat's lines stop getting longer at about 700px, so a wider screen's width goes to the board. A
+  phone (`MOBILE_MQ`) is one column: every panel a tab of one stack, the PO chat first; nothing
+  floats, sits on a strip or pops out there, and a tab is not dragged.
+- **Tokens:** the library's `--dk-*` tokens read Ensemble's own (`--dk-bg` `--bg`, `--dk-bg2`
+  `--surface-sunken`, `--dk-bg3` `--surface`, `--dk-line` `--border`, `--dk-accent` `--accent`,
+  `--dk-focus` `--focus-ring`, …) in `:root`, so every theme and the person's accent apply without a
+  theme block; its `css/theme.css` is not loaded. Its stylesheet is loaded first and Ensemble's rules
+  after it put its chrome on Ensemble's scale.
+- **Chrome:** a title bar is 32px on `--surface-sunken` with a `--border` under it. A tab is
+  `--fs-200` at 600 in `--fg-subtle`, sentence case; the one in front is `--fg` on `--surface` with
+  the `--accent` underline (§1's selected tab). The bar's controls (move or hide, minimise, maximise,
+  pop out, float, unpin) are Subtle buttons, 24px, `--hover`. A splitter is 5px of `--bg`,
+  `--border-strong` on hover, `--accent` while dragged or focused (a control you are using). An edge
+  strip is `--surface-sunken` with its panels' names as Default buttons (`--fs-200`, 500); the one
+  slid out is `--selected-bg`. A floating window and a slid-out strip panel are `--r-300` with
+  `--e-200`; docked panels have a border, no shadow (§2). The drop preview is the drop target of §1.
+  Menus are `--surface-overlay`, `--r-300`, `--e-200`, rows 32px.
+- **The chrome row above the dock** is the project's crumbs with **Panels ▾** at its end (a Default
+  button, `pdCtlHtml`): each panel with its check, then Reset layout. No tab row: the panels are the
+  tabs. A tab asked for from elsewhere (a diff's Open file, an old "workspace" tab) brings its panel
+  forward instead.
+- **Panel code never looks its elements up by id in the main document** (`PD.els`, or `pdById`,
+  which is the library's `byId`), and asks an element for its own document and window
+  (`el.ownerDocument`: focus, a selection, a menu's room): a popped-out panel's elements are in its
+  window's document. A popped-out window gets the page's stylesheets, its theme attributes, its
+  document-wide listeners (`DOC_LISTENERS`, the library's own left out) and its frames' messages,
+  so a click, a key or a selection there works as here. **What opens over the page opens where the
+  person is working** (`pdHostDoc`, the library's `hostDoc`): the page's dialog (`pdModal()`, never
+  `$('#modal')` to open one), a toast, a menu under its button, a selection's Comment button; `$`
+  finds an element in a popped-out window when this page has none.
+- **The PO chat** is an exception to "the panel holds its content": its iframe stays in `#po-panel`
+  (rule 1) and lies over the panel's place (`pdSyncChat`: measured on every layout change, resize,
+  splitter drag and slide), at the panel's level (over its own floating window or strip, under any
+  other). It is hidden with `visibility`, never `display`, while its place is off screen. Popped
+  out, the panel's window holds a chat of its own; the one here stays loaded and hidden.
+- **The roadmap** is a document: the first row of the Workspace's Documents list ("Roadmap,
+  ROADMAP.md · always first", with when it was saved), opening in its own view and editor over the
+  list with **← Documents**. There is no Roadmap tab.
+- **Phone:** the tabs are `--touch-min` and scroll sideways within the title bar; the dock fills the
+  height under the chrome (`--vv-h`).
 
 ### Message editor
 
@@ -597,15 +664,15 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
    you are on, so reading a task never costs you the PO. It shows no status: anything that
    needs you already reaches the bell. The one number it carries is the person's own points with
    the PO (see *Points* in §4), as quiet `--fg-muted` words after the name ("2 to acknowledge · 1
-   open"), never a badge, and gone with the name when the bar runs short. On the project's Overview tab, where the PO already leads the
-   page, the pill focuses its composer instead of opening a second copy. (In the *Board wide*
-   layout of rule 8, the PO does not lead the Overview's Board view, so there the pill opens the
-   drawer.)
+   open"), never a badge, and gone with the name when the bar runs short. On the project's PO
+   screen (see *Panels* in §4), where the PO already leads the page, the pill brings the PO chat
+   panel forward and focuses its composer instead of opening a second copy. (A phone's open task
+   covers the PO screen, so there the pill opens the drawer over the task.)
 
    **A live session is built once and never re-parented.** The PO's conversation is one iframe in
-   `#po-panel`, a sibling of `#view`. It is a grid cell on the Overview tab and a fixed drawer
-   everywhere else, and only its classes change between the two. Moving an iframe in the DOM reloads
-   it, so navigating must restyle it, never move it.
+   `#po-panel`, which never moves. On the PO screen it lies over the PO chat panel's place; everywhere
+   else it is a fixed drawer; only its classes and its measured box change between the two. Moving
+   an iframe in the DOM reloads it, so navigating must restyle it, never move it.
 2. **The board groups; it never sorts.** Priority first, then most recently updated, in *both* views.
    The hover-freeze works by being the **only** place ordering happens — any second sort defeats it and
    cards move under the cursor. Two tasks must never swap places because someone flipped the view
@@ -656,19 +723,16 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
    other number in the chrome.
 7. **Colour is never the only signal.** Every lozenge is a word; every dot has a chip beside it. The
    design must survive being printed in grey.
-8. **A card never drops a signal to fit.** Board columns never wrap and never shrink below 248px,
-   except in *Board beside the PO* below; horizontal scroll is the escape valve. Page gutter 24px,
-   16px below 900px.
+8. **A card never drops a signal to fit.** Board columns never wrap and never shrink below 248px;
+   horizontal scroll is the escape valve. Page gutter 24px, 16px below 900px.
 
-   A project's Overview offers two board layouts, both kept (the CEO's choice, 2026-09-11).
-   **Board wide** (the default) gives the board the whole Overview in Board view and keeps 248px
-   columns; the PO becomes the pill's drawer, restyled and never moved. **Board beside the PO**
-   keeps the split and narrows the columns to 208px, and a card wraps its rows rather than dropping
-   anything. On a desktop, whenever columns lie past the edge of whatever scrolls the board (the
-   pane, or the board itself when stacked under the PO below 900px), both layouts show a fade and a
-   `›` naming them. A phone swipes its board and gets neither.
+   On a project's PO screen the board is the Board panel (see *Panels* in §4), however wide the
+   person makes it; its pane scrolls both ways. On a desktop, whenever columns lie past the edge of
+   the pane, it shows a fade and a `›` naming them. A phone swipes its board and gets neither. (The
+   *Board wide* and *Board beside the PO* layouts of 2026-09-11 gave way to the panels.)
 9. **A destination replaces whatever view is showing.** `Needs you` and `Active` must open from
-   anywhere: the home page, and a project's Overview, Changes, Workspace or Roadmap tab. So their branch runs
+   anywhere: the home page, a project's PO screen, and a project's Overview, Changes or Workspace
+   tab. So their branch runs
    first when the view is drawn, and anything that navigates into a project clears them. They once
    worked only from inside a project's Tasks tab, which is where they had been tested: from the page
    the owner opens on, the sidebar item highlighted and nothing else changed. A control that looks as

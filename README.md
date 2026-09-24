@@ -50,10 +50,9 @@ What the tabs show:
 
 | Tab | Shows |
 |---|---|
-| **Overview** (project) | The PO's chat and the board (or a list). Each card opens the task. |
-| **Workspace** | The project's or the task's folder, browsable like an editor. Files render (Markdown, code, images), and you can comment on lines and send the comments to a task's chat. In a documents project this tab is **Files**: upload, move, delete, **Recent changes** (who changed what), and every earlier version of every file, which you can restore. |
+| **Overview** (project) | A project with a PO opens on panels you arrange: **PO chat**, **Points** (your messages to the PO waiting for an answer or an acknowledgement), **Board** (or a list; each card opens the task), **Workspace** and **Changes**. On a laptop the chat and Points sit side by side and the others wait on a strip at the right edge; each panel can go side by side, into tabs, float, or pop out into a window of its own. **Panels ▾** shows or hides each one and resets the layout. A project without a PO shows the board, with the Workspace and Changes as tabs. |
+| **Workspace** | The project's or the task's folder, browsable like an editor. A project's opens on its Documents, the **roadmap** (`ROADMAP.md`, which you and the PO both edit) first. Files render (Markdown, code, images), and you can comment on lines and send the comments to a task's chat. In a documents project this tab is **Files**: upload, move, delete, **Recent changes** (who changed what), and every earlier version of every file, which you can restore. |
 | **Changes** | Uncommitted changes (git status and a per-file diff) in the project folder or a task's worktree, with line comments you can send to the task. |
-| **Roadmap** (project) | `ROADMAP.md` in the project folder. You and the PO both edit it. |
 | **Activity, Spec, Details** (task) | The task's chat, its spec, and its agents, branch, workspace and latest report. |
 
 Claude Code and Codex sessions you started yourself, outside Ensemble, are listed under **Unassigned** on the Projects page. You can move one into a project.

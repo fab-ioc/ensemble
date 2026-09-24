@@ -198,7 +198,8 @@ const drRange = () => ({ rows: [1] });
 let painted = null;
 const drPaint = v => { painted = v; };
 let btn = null;
-const document = { createElement: () => (btn = { style: {}, addEventListener() {}, remove() {} }), body: { appendChild() {} } };
+const document = { createElement: () => (btn = { style: {}, addEventListener() {}, remove() {} }), body: { appendChild() {} },
+  getSelection: () => window.getSelection(), get defaultView() { return window; } };   // the selection is its document's
 const window = { innerHeight: 800, innerWidth: 1200,
   getSelection: () => ({ isCollapsed: false, rangeCount: 1, removeAllRanges() {},
     getRangeAt: () => ({ startContainer: viewA2.els[0], endContainer: viewA2.els[2], endOffset: 1, getBoundingClientRect: () => ({ bottom: 10, left: 10 }) }) }) };
@@ -233,7 +234,7 @@ class TheWiring(unittest.TestCase):
         self.assertNotIn("wst-x", docs_tab, "the Documents tab has no ×")
         self.assertIn("strip.hidden = !docs && !v.tabs.length;", tabs)
         self.assertIn("if (!path) return;", js_function("wsCloseTab"), "Delete or a middle click leave it")
-        self.assertIn("wsDocsHtml(v.docsList)", js_function("wsPaintView"))
+        self.assertIn("wsDocsHtml(v.docsList, wsDocsRm(v))", js_function("wsPaintView"))
         self.assertIn("if (wsDocsShowing(v)) wsDocsLoad(v, false);", js_function("wsSync"))
 
     def test_the_switch_sits_above_a_code_projects_tree(self):

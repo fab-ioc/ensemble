@@ -436,7 +436,12 @@ STATIC_DIR = Path(__file__).parent
 # page gets written into its <meta name="ensemble-pages"> at serve time, so an
 # open tab can tell when the page it runs is no longer the one on disk.
 PAGE_FILES = ("index.html", "session.html", "fileview.html",
-              "static/hl.js", "static/comments.js", "static/attach.js", "static/actions.js")
+              "static/hl.js", "static/comments.js", "static/attach.js", "static/actions.js",
+              # The Dock library (static/dock, a vendored copy) that a project's
+              # PO screen is built on: its modules, its stylesheet, its pop-out page.
+              "static/dock/src/index.js", "static/dock/src/dock.js", "static/dock/src/layout.js",
+              "static/dock/src/host.js", "static/dock/src/panels-menu.js", "static/dock/src/help.js",
+              "static/dock/src/theme.js", "static/dock/css/dock.css", "static/dock/src/popout.html")
 PAGE_META = b'<meta name="ensemble-pages" content="">'
 _STAMP_CACHE: dict[str, tuple[tuple[int, int], str]] = {}
 
@@ -8541,8 +8546,11 @@ class Handler(BaseHTTPRequestHandler):
             mime = {".png": "image/png", ".ico": "image/x-icon",
                     ".svg": "image/svg+xml", ".jpg": "image/jpeg",
                     ".jpeg": "image/jpeg", ".gif": "image/gif",
-                    # The scripts the pages share (static/hl.js, comments.js).
-                    ".js": "text/javascript; charset=utf-8"}.get(ext, "application/octet-stream")
+                    # The scripts the pages share (static/hl.js, comments.js),
+                    # and the Dock library's stylesheet and pop-out page.
+                    ".js": "text/javascript; charset=utf-8",
+                    ".css": "text/css; charset=utf-8",
+                    ".html": "text/html; charset=utf-8"}.get(ext, "application/octet-stream")
             self._send_file(f, mime)
             return
         if p == "/api/live":

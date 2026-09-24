@@ -568,7 +568,7 @@ class TheMarkup(unittest.TestCase):
         self.assertIn("sec.classList.toggle('over', files && !at.row)", block, "the folder row, not the panel too")
         listen = js_function("docsDocListen")
         self.assertIn("document.addEventListener('scroll', away, { capture: true, passive: true })", listen)
-        self.assertIn("window.addEventListener('resize', away)", listen)
+        self.assertIn("pdOnResize(away)", listen, "a resize of the page's window or of a panel's own")
         self.assertNotIn("addEventListener('resize'", js_function("docsFilesWire"), "not one more listener per mount")
         self.assertNotIn("_asks", block)
         # A renamed row waiting for the repaint is not opened, menued or dragged.

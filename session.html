@@ -2859,8 +2859,26 @@ function pointsChanged(pv, ticket) {
   if (sig === POINTS_SIG) { pointsAges(); return; }
   POINTS_SIG = sig;
   POINTS = pointMaps(pv);
+  pointsTell(pv);
   showPointsLine();
   if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
+}
+// A chat framed in a project's PO screen (index.html) whose Points panel is
+// on screen: the panel lists the points, so the line above the chat does not
+// (the frame carries data-points-elsewhere while it does).
+function pointsElsewhere() {
+  try { return !!(window.frameElement && window.frameElement.hasAttribute('data-points-elsewhere')); } catch (e) { return false; }
+}
+// The page framing this chat hears of every change to the points, with each
+// one's first words as the chat's list shows them (the PO screen's Points panel).
+function pointsTell(pv) {
+  const words = {};
+  for (const p of (pv && pv.items) || []) words[p.id] = ptWords(p.text);
+  window.EMBED_POINTS = { room: ROOM, points: pv || null, words };
+  try {
+    const f = window.frameElement;
+    if (f) f.dispatchEvent(new f.ownerDocument.defaultView.CustomEvent('po-points', { detail: window.EMBED_POINTS }));
+  } catch (e) {}
 }
 function showPointsLine() {
   const el = $('#points-line');
@@ -2868,11 +2886,12 @@ function showPointsLine() {
   const html = pointsLineHtml(POINTS, POINTS_OPEN, mid => refHref(ROOM, mid));
   // The ages tick in place (pointsAges): they are not what makes a new line.
   const sig = html.replace(/(<span class="pt-age"[^>]*>)[^<]*/g, '$1');
-  if (sig === POINTS_LINE_SIG) { pointsAges(); return; }
+  const away = pointsElsewhere();
+  if (sig === POINTS_LINE_SIG) { if (el.hidden !== (!html || away)) el.hidden = !html || away; pointsAges(); return; }
   POINTS_LINE_SIG = sig;
   const hadFocus = el.contains(document.activeElement) ? document.activeElement : null;
   const focusKey = hadFocus ? (hadFocus.classList.contains('pt-sum') ? '.pt-sum' : hadFocus.dataset.ptAct ? `[data-pt="${hadFocus.dataset.pt}"][data-pt-act="${hadFocus.dataset.ptAct}"]` : '') : '';
-  el.hidden = !html;
+  el.hidden = !html || away;
   el.innerHTML = html;
   if (focusKey) { const f = el.querySelector(focusKey) || el.querySelector('.pt-sum'); if (f) f.focus(); }
 }
@@ -5087,7 +5106,8 @@ const ensUpd = window.ensUpd = (() => {   // a window property too: a host page 
     }
   } catch (e) {}
   // This page and the hub scripts it loads.
-  const deps = () => [PAGE].concat([...document.querySelectorAll('script[src^="/static/"]')].map(s => s.getAttribute('src').slice(1))).filter(Boolean);
+  // (A module a page imports is listed as a <link rel="modulepreload"> for this.)
+  const deps = () => [PAGE].concat([...document.querySelectorAll('script[src^="/static/"], link[href^="/static/"]')].map(s => s.getAttribute(s.tagName === 'LINK' ? 'href' : 'src').slice(1))).filter(Boolean);
   const S = { page: PAGE, loaded, pages: null, pending: false, hold: false, reloading: false, lastInput: Date.now(), checkedAt: Date.now(), checking: false, line: null, timer: 0 };
   const typed = new Set();      // the fields typed in since the page loaded
   let held = false;             // a pointer held down or a drag under way

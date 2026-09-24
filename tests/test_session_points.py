@@ -206,7 +206,7 @@ POLL_JS = r"""
 const vm = require('vm');
 const { code } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const out = { inFlight: 0, most: 0, rooms: 0, drawn: [], wants: [], notes: [] };
-const ctx = { out, POINTS_SIG: '', LAST_ITEMS: null, pointMaps: v => v, showPointsLine: () => {},
+const ctx = { out, POINTS_SIG: '', LAST_ITEMS: null, pointMaps: v => v, showPointsLine: () => {}, pointsTell: () => {},
   pointsAges: () => {}, renderBubbles: () => {}, POINTS: null, resolves: [] };
 vm.createContext(ctx);
 vm.runInContext(code + `

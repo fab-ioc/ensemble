@@ -1,0 +1,52 @@
+/* Dock theme: the colour tokens, light and dark, and the fonts. Every rule in dock.css uses these tokens only; an app's
+   own styles can use them too, so its screens and its panels look like one family.
+
+   Switching: set data-theme="light" | "dark" on <html> (theme.js applyTheme/createTheme do, and also set
+   data-scheme). With no data-theme the OS preference picks. A dock copies these attributes into its pop-out windows.
+
+   Overriding: redefine any token after this file, for every theme or for one:
+     :root { --dk-accent: #7a3cff; }
+     :root[data-theme="dark"] { --dk-accent: #b89aff; }
+   An app with more themes adds its own :root[data-theme="..."] block, setting every token below.
+
+   Meanings (a theme changes a colour's shade, never its meaning):
+     --dk-bg / --dk-bg2 / --dk-bg3   page ground / chrome (title bars, strips, splitters) / panel ground
+     --dk-line                       borders and dividers        --dk-hover     a hovered row or menu item
+     --dk-fg / --dk-fg2 / --dk-fg3   text: main / secondary / quiet
+     --dk-accent                     the active tab, a drop preview, a primary action
+     --dk-ok / --dk-danger / --dk-warn (+ --dk-warn-bg)   good / bad / needs attention
+     --dk-sel-bg                     a selected item's ground    --dk-focus     the keyboard focus ring
+     --dk-shadow / --dk-scrim        floating things' shadow / behind a modal
+     --dk-font / --dk-font-mono      text / title bars, tabs, menus
+   Every text token clears 4.5:1 on every ground token in both sets. */
+:root {
+  color-scheme: light;
+  --dk-bg: #FFFFFF; --dk-bg2: #EBEDF0; --dk-bg3: #F7F8F9;
+  --dk-line: #D0D4DB; --dk-hover: #E4E7EB;
+  --dk-fg: #172B4D; --dk-fg2: #44546F; --dk-fg3: #5E6A80;
+  --dk-accent: #0055CC; --dk-ok: #216E4E; --dk-danger: #AE2E24; --dk-warn: #7A5B00; --dk-warn-bg: #FFF7D6;
+  --dk-sel-bg: #E3EDFC; --dk-focus: #2684FF;
+  --dk-shadow: rgba(9, 30, 66, .25); --dk-scrim: rgba(9, 30, 66, .45);
+  --dk-font: "IBM Plex Sans", system-ui, sans-serif;
+  --dk-font-mono: "JetBrains Mono", Consolas, monospace;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --dk-bg: #1D2125; --dk-bg2: #2C333A; --dk-bg3: #22272B;
+  --dk-line: #38414A; --dk-hover: #38414A;
+  --dk-fg: #C7D1DB; --dk-fg2: #9FADBC; --dk-fg3: #94A2B2;
+  --dk-accent: #85B8FF; --dk-ok: #7EE2B8; --dk-danger: #FD9891; --dk-warn: #F5CD47; --dk-warn-bg: #3D2F04;
+  --dk-sel-bg: #1C2B41; --dk-focus: #579DFF;
+  --dk-shadow: rgba(3, 4, 4, .5); --dk-scrim: rgba(3, 4, 4, .6);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+    --dk-bg: #1D2125; --dk-bg2: #2C333A; --dk-bg3: #22272B;
+    --dk-line: #38414A; --dk-hover: #38414A;
+    --dk-fg: #C7D1DB; --dk-fg2: #9FADBC; --dk-fg3: #94A2B2;
+    --dk-accent: #85B8FF; --dk-ok: #7EE2B8; --dk-danger: #FD9891; --dk-warn: #F5CD47; --dk-warn-bg: #3D2F04;
+    --dk-sel-bg: #1C2B41; --dk-focus: #579DFF;
+    --dk-shadow: rgba(3, 4, 4, .5); --dk-scrim: rgba(3, 4, 4, .6);
+  }
+}

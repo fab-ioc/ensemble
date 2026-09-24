@@ -517,6 +517,7 @@ const PROJECTS = { projects: [
 ] };
 const pill = { hidden: true, _html: '', title: '', classList: { toggle() {} }, setAttribute() {}, set innerHTML(v) { this._inner = v; } };
 const document = { getElementById: id => id === 'po-pill' ? pill : null };
+var PD = { failed: '', lib: null };   // the PO screen's panels (not loaded here)
 const HL = undefined;
 let DOCS_TASKS = false;
 %(deps)s
@@ -547,7 +548,8 @@ out.poSplit = (poSplitProject() || {}).id || null;
 out.poDialog = kindDialogHtml(projectById('p-po'));
 out.poChoose = poChooseBtnHtml(projectById('p-po'));
 
-// A documents project with a PO: the PO beside the board, as in a code project.
+// A documents project with a PO: its PO screen, as in a code project, whichever
+// tab was last asked for (its Workspace is a panel there).
 at('p-dpo');
 out.dpoSplit = (poSplitProject() || {}).id || null;
 out.dpoNote = poNoteHtml();
@@ -628,7 +630,7 @@ const gone = s => s.deleted.map(d => d.path);
 """
 
 DEPS = ["esc", "agoSpan", "wsNorm", "wsSame", "wsJoin", "wsTabName", "wsFmtSize", "projectById", "registeredProjects",
-        "poRowOf", "poSplitProject", "poNoteHtml", "renderPoPill", "poAgent", "wsProjectForRow", "wsTaskFolder",
+        "poRowOf", "poDockProject", "poSplitProject", "poNoteHtml", "renderPoPill", "poAgent", "wsProjectForRow", "wsTaskFolder",
         "wsHidden", "wsRowsHtml", "wsCtxKey", "drParse", "drContent", "drHighlight", "drRowHtml",
         "WS_EMPTY", "WS_MAC", "WS_RECENT_KEY", "WS_ICON_TREE", "wsPanelHtml",
         "DOCS_TASKS_KEY", "docsTasksShown", "docsTasksSet", "docsApart", "docsInTask",
@@ -663,16 +665,18 @@ class ThePage(unittest.TestCase):
         self.assertFalse(checked, "unchecked by default")
 
     def test_the_workspace_tab_of_a_documents_project_is_its_files_panel(self):
-        i = INDEX.index("if (SELECTED_PROJECT && PROJECT_TAB === 'workspace') {")
-        branch = INDEX[i:INDEX.index("\n    return;\n  }", i)]
+        # The Workspace tab and a PO screen's Workspace panel draw it the same way.
+        branch = js_function("wsRenderInto")
+        self.assertIn("wsRenderInto(wsp, projectById(SELECTED_PROJECT));", INDEX)
+        self.assertIn("wsRenderInto(pdById('ws-panel'), pj);", js_function("renderPoDock"))
         self.assertIn("const docs = !!(pj && pj.path && isDocsProject(pj));", branch)
-        self.assertIn("wsCtxKey({ kind: 'project', projectId: SELECTED_PROJECT, docs })", branch)
+        self.assertIn("wsCtxKey({ kind: 'project', projectId: pj.id, docs })", branch)
         self.assertIn("delete panel.dataset.proj;", branch, "a code project's Workspace is never taken for the Files panel")
         self.assertIn("if (docs) docsPanelRender(panel, pj);", branch)
-        self.assertIn("wsMount(panel.querySelector('.wsp'), { kind: 'project', projectId: SELECTED_PROJECT });", branch,
+        self.assertIn("wsMount(panel.querySelector('.wsp'), { kind: 'project', projectId: pj.id });", branch,
                       "a code project's Workspace mounts as before")
-        self.assertIn("document.querySelector('#ws-panel:not([hidden]) .dcs-files')", INDEX)
-        self.assertIn("const dp = document.getElementById('ws-panel');", js_function("histClick"))
+        self.assertIn("const docsLiveSection = () => { const w = pdById('ws-panel'); return w && !w.hidden ? w.querySelector('.dcs-files') : null; };", INDEX)
+        self.assertIn("const dp = pdById('ws-panel');", js_function("histClick"))
         self.assertIn("docs: isDocsProject(projectById(pid))", js_function("chOpenInWorkspace"),
                       "the Changes tab's Open file lands in the Files panel's viewer")
 
@@ -692,7 +696,7 @@ class ThePage(unittest.TestCase):
     def test_a_documents_project_with_a_po_shows_the_po_beside_the_board(self):
         o = self.out
         self.assertEqual(o["dpoSplit"], "p-dpo")
-        self.assertIsNone(o["dpoSplitOnWorkspace"])
+        self.assertEqual((o["dpoSplitOnWorkspace"] or {}).get("id"), "p-dpo", "its Workspace is a panel of the PO screen")
         self.assertEqual(o["dpoNote"], "")
         self.assertEqual(o["dpoFrame"], '<div class="po-chrome">[chrome]</div><div class="po-board">[board]</div>[edges]')
         self.assertEqual(o["dpoChoose"], "")

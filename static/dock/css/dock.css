@@ -1,0 +1,119 @@
+/* Dock: panels that dock, tab, float, unpin, minimise, maximise and pop out. Tokens only (css/theme.css).
+
+   Layout tokens, set on the dock's root by createDock from its `sizes` option so CSS and layout agree:
+     --dk-head   a title bar's height (24px)     --dk-bar   a splitter's thickness (5px)
+     --dk-strip  an edge strip's thickness (22px) */
+.dock { --dk-head: 24px; --dk-bar: 5px; --dk-strip: 22px; position: relative; z-index: 0; min-width: 0; min-height: 0; overflow: hidden;
+  background: var(--dk-bg2); color: var(--dk-fg); font-family: var(--dk-font);
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: auto minmax(0, 1fr) auto; }
+.dk-mono { font-family: var(--dk-font-mono); font-variant-numeric: tabular-nums; }
+.dk-main { grid-row: 2; grid-column: 2; display: flex; min-width: 0; min-height: 0; overflow: hidden; }
+.dk-main > * { flex: 1 1 0px; }
+.dk-empty { margin: auto; color: var(--dk-fg3); font-size: 11px; padding: 20px; text-align: center; }
+.dk-split { display: flex; min-width: 0; min-height: 0; overflow: hidden; }
+.dk-split.dk-row { flex-direction: row; } .dk-split.dk-col { flex-direction: column; }
+.dk-bar { flex: 0 0 var(--dk-bar); background: var(--dk-bg2); touch-action: none; }
+.dk-row > .dk-bar { cursor: col-resize; border-left: 1px solid var(--dk-line); }
+.dk-col > .dk-bar { cursor: row-resize; border-top: 1px solid var(--dk-line); }
+.dk-bar:hover, .dk-bar.on, .dk-bar:focus-visible { background: var(--dk-accent); outline: none; }
+.dk-stack { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; background: var(--dk-bg3); }
+.dk-head { flex: 0 0 var(--dk-head); height: var(--dk-head); display: flex; align-items: stretch; background: var(--dk-bg2); border-bottom: 1px solid var(--dk-line);
+  user-select: none; -webkit-user-select: none; cursor: grab; min-width: 0; }
+.dk-dragging, .dk-dragging * { cursor: grabbing !important; }
+.dk-tabs { display: flex; align-items: stretch; min-width: 0; flex: 1 1 auto; overflow: hidden; }
+.dk-tab-wrap { display: flex; align-items: center; gap: 3px; padding-right: 6px; min-width: 0; border-right: 1px solid var(--dk-line); }
+.dk-tab { padding: 0 4px 0 9px; height: 100%; font: inherit; font-size: 10px; letter-spacing: .08em; color: var(--dk-fg3); text-transform: uppercase; background: none;
+  border: none; border-bottom: 2px solid transparent; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dk-tab-wrap.on { background: var(--dk-bg3); }
+.dk-tab.on { color: var(--dk-fg); border-bottom-color: var(--dk-accent); }
+.dk-badge { margin-left: 4px; padding: 0 4px; border: 1px solid var(--dk-warn); color: var(--dk-warn); font-size: 9px; letter-spacing: 0; text-transform: none; }
+.dk-ctl { display: flex; align-items: center; gap: 1px; padding: 0 3px; flex: none; margin-left: auto; }
+.dk-btn { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 1px solid transparent;
+  background: none; color: var(--dk-fg3); cursor: pointer; }
+.dk-btn svg { fill: none; stroke: currentColor; stroke-width: 1.3; }
+.dk-btn svg circle { fill: currentColor; stroke: none; }
+.dk-btn:hover, .dk-btn:focus-visible { color: var(--dk-fg); border-color: var(--dk-line); background: var(--dk-bg3); }
+.dock :focus-visible, .dk-pop-root :focus-visible, .dk-menu :focus-visible { outline: 2px solid var(--dk-focus); outline-offset: 1px; }
+.dk-body { flex: 1 1 0px; position: relative; min-height: 0; min-width: 0; overflow: hidden; }
+.dk-body > .dk-panel { position: absolute; inset: 0; }
+.dk-panel.dk-off { visibility: hidden; }
+/* minimised: its title bar only (standing on its side in a row) */
+.dk-stack.dk-min > .dk-body { flex: 0 0 0px; }
+.dk-row > .dk-stack.dk-min > .dk-head { flex: 1 1 auto; height: auto; writing-mode: vertical-rl; border-bottom: none; }
+.dk-row > .dk-stack.dk-min .dk-tabs { flex-direction: row; }
+.dk-row > .dk-stack.dk-min .dk-tab-wrap { border-right: none; border-bottom: 1px solid var(--dk-line); padding: 6px 0; }
+.dk-row > .dk-stack.dk-min .dk-tab { padding: 4px 0; border-bottom: none; border-left: 2px solid transparent; }
+.dk-row > .dk-stack.dk-min .dk-ctl { padding: 3px 0; margin: 0; margin-top: auto; }
+.dk-row > .dk-stack.dk-min [data-help] { writing-mode: horizontal-tb; }
+/* maximised: the whole dock (Esc restores) */
+.dk-stack.dk-max { position: absolute; inset: 0; z-index: 40; flex: none !important; min-width: 0 !important; min-height: 0 !important; box-shadow: 0 0 0 1px var(--dk-line); }
+.dk-float { position: absolute; display: flex; flex-direction: column; background: var(--dk-bg3); border: 1px solid var(--dk-line);
+  box-shadow: 0 10px 28px var(--dk-shadow); min-width: 0; }
+.dk-float > .dk-stack { flex: 1 1 0px; }
+.dk-float > .dk-stack > .dk-head { cursor: move; }
+.dk-float.dk-max { left: 0 !important; top: 0 !important; width: 100% !important; height: 100% !important; z-index: 40 !important; }
+.dk-float > .dk-stack.dk-max { position: static; }
+.dk-rz { position: absolute; z-index: 2; touch-action: none; }
+.dk-rz-e { top: 0; right: -3px; bottom: 6px; width: 6px; cursor: ew-resize; }
+.dk-rz-w { top: 0; left: -3px; bottom: 6px; width: 6px; cursor: ew-resize; }
+.dk-rz-s { left: 0; right: 6px; bottom: -3px; height: 6px; cursor: ns-resize; }
+.dk-rz-n { left: 0; right: 6px; top: -3px; height: 4px; cursor: ns-resize; }
+.dk-rz-se { right: -3px; bottom: -3px; width: 12px; height: 12px; cursor: nwse-resize; }
+.dk-float.dk-min .dk-rz, .dk-float.dk-max .dk-rz { display: none; }
+/* unpinned: a labelled strip on its edge; the panel slides out over the layout */
+.dk-strip { display: flex; gap: 2px; background: var(--dk-bg2); padding: 2px; overflow: hidden; }
+.dk-strip-left { grid-row: 1 / -1; grid-column: 1; flex-direction: column; width: var(--dk-strip); border-right: 1px solid var(--dk-line); }
+.dk-strip-right { grid-row: 1 / -1; grid-column: 3; flex-direction: column; width: var(--dk-strip); border-left: 1px solid var(--dk-line); }
+.dk-strip-top { grid-row: 1; grid-column: 2; height: var(--dk-strip); border-bottom: 1px solid var(--dk-line); }
+.dk-strip-bottom { grid-row: 3; grid-column: 2; height: var(--dk-strip); border-top: 1px solid var(--dk-line); }
+.dk-strip-btn { border: 1px solid var(--dk-line); background: var(--dk-bg3); color: var(--dk-fg2); font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
+  cursor: pointer; padding: 0 8px; white-space: nowrap; }
+.dk-strip-left .dk-strip-btn, .dk-strip-right .dk-strip-btn { writing-mode: vertical-rl; padding: 8px 0; }
+.dk-strip-left .dk-strip-btn { transform: rotate(180deg); }
+.dk-strip-btn:hover, .dk-strip-btn.on { color: var(--dk-fg); border-color: var(--dk-accent); background: var(--dk-sel-bg); }
+.dk-flyout { position: absolute; z-index: 30; display: flex; flex-direction: column; background: var(--dk-bg3); border: 1px solid var(--dk-line);
+  box-shadow: 0 10px 28px var(--dk-shadow); visibility: hidden; transition: transform .14s ease-out, visibility 0s linear .14s; }
+.dk-fly-left { transform: translateX(-105%); } .dk-fly-right { transform: translateX(105%); }
+.dk-fly-top { transform: translateY(-105%); } .dk-fly-bottom { transform: translateY(105%); }
+.dk-flyout.open { visibility: visible; transform: none; transition: transform .14s ease-out, visibility 0s; }
+.dk-flyout > .dk-head { cursor: default; }
+.dk-fly-grip { display: none; }
+/* a panel in a browser window of its own (popout.html), and what its place in the main window says meanwhile */
+body.dk-popwin { margin: 0; overflow: hidden; background: var(--dk-bg3); color: var(--dk-fg); font-family: var(--dk-font); }
+.dk-pop-root { height: 100vh; display: flex; flex-direction: column; background: var(--dk-bg3); }
+.dk-pop-root > .dk-stack { flex: 1 1 0px; }
+.dk-pop > .dk-head { cursor: default; }
+.dk-pop-back { align-self: center; font: inherit; font-size: 10px; padding: 1px 8px; border: 1px solid var(--dk-line); background: var(--dk-bg3); color: var(--dk-fg2);
+  cursor: pointer; white-space: nowrap; }
+.dk-pop-back:hover, .dk-pop-back:focus-visible { color: var(--dk-fg); border-color: var(--dk-accent); }
+.dk-pop-wait, .dk-pop-orphan { margin: auto; padding: 20px; color: var(--dk-fg3); font-size: 11.5px; text-align: center; }
+.dk-popped { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 16px; text-align: center;
+  color: var(--dk-fg3); font-size: 11px; background: var(--dk-bg3); }
+.dk-popped p { margin: 0; }
+.dk-popped-acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+.dk-textbtn { border: 1px solid var(--dk-line); background: var(--dk-bg2); color: var(--dk-fg); padding: 3px 10px; font: inherit; font-size: 11px; cursor: pointer; }
+.dk-note { position: fixed; top: 40px; left: 50%; transform: translateX(-50%); z-index: 100; max-width: min(560px, calc(100vw - 32px));
+  background: var(--dk-bg2); border: 1px solid var(--dk-warn); color: var(--dk-fg); padding: 6px 12px; font-size: 11.5px; box-shadow: 0 6px 18px var(--dk-shadow); }
+@media (prefers-reduced-motion: reduce) { .dk-flyout, .dk-flyout.open { transition: none; } }
+.dk-preview { position: absolute; z-index: 60; pointer-events: none; border: 2px solid var(--dk-accent); background: var(--dk-sel-bg); opacity: .6; }
+.dk-preview[hidden], .dk-parking[hidden] { display: none; }
+/* menus: a panel's own, and the Panels menu */
+.dk-menu { position: fixed; z-index: 30; display: flex; flex-direction: column; min-width: 150px; padding: 4px; background: var(--dk-bg); color: var(--dk-fg);
+  border: 1px solid var(--dk-line); box-shadow: 0 8px 24px var(--dk-shadow); font-size: 11px; font-family: var(--dk-font-mono); }
+.dk-menu[hidden] { display: none; }
+.dk-menu button { border: none; background: none; color: var(--dk-fg); font: inherit; text-align: left; padding: 4px 8px; cursor: pointer; }
+.dk-menu button:hover { background: var(--dk-hover); }
+.dk-menu button.on { background: var(--dk-sel-bg); font-weight: 600; }
+.dk-menu button.on::after { content: " \2713"; }
+.dk-menu button[disabled] { color: var(--dk-fg3); cursor: not-allowed; }
+.dk-menu-sep { height: 1px; background: var(--dk-line); margin: 4px 0; }
+/* help (help.js): a circled ? beside a tab, and its popover */
+.dk-help-q { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; flex: none; padding: 0;
+  border: 1px solid var(--dk-fg3); border-radius: 50%; background: transparent; color: var(--dk-fg3); font: 600 9px/1 var(--dk-font-mono);
+  letter-spacing: 0; text-transform: none; cursor: pointer; vertical-align: middle; }
+.dk-help-q:hover, .dk-help-q:focus-visible { border-color: var(--dk-accent); color: var(--dk-accent); }
+.dk-help-pop { position: fixed; z-index: 40; width: 300px; max-width: calc(100vw - 8px); padding: 8px 10px; background: var(--dk-bg);
+  color: var(--dk-fg); border: 1px solid var(--dk-line); box-shadow: 0 8px 24px var(--dk-shadow); font-size: 11.5px; line-height: 1.45; }
+.dk-help-pop[hidden] { display: none; }
+.dk-help-pop .dk-help-t { font-weight: 600; margin-bottom: 4px; }
+.dk-help-pop p { margin: 0 0 5px; color: var(--dk-fg2); }

@@ -1932,7 +1932,8 @@ const ensUpd = window.ensUpd = (() => {   // a window property too: a host page 
     }
   } catch (e) {}
   // This page and the hub scripts it loads.
-  const deps = () => [PAGE].concat([...document.querySelectorAll('script[src^="/static/"]')].map(s => s.getAttribute('src').slice(1))).filter(Boolean);
+  // (A module a page imports is listed as a <link rel="modulepreload"> for this.)
+  const deps = () => [PAGE].concat([...document.querySelectorAll('script[src^="/static/"], link[href^="/static/"]')].map(s => s.getAttribute(s.tagName === 'LINK' ? 'href' : 'src').slice(1))).filter(Boolean);
   const S = { page: PAGE, loaded, pages: null, pending: false, hold: false, reloading: false, lastInput: Date.now(), checkedAt: Date.now(), checking: false, line: null, timer: 0 };
   const typed = new Set();      // the fields typed in since the page loaded
   let held = false;             // a pointer held down or a drag under way

@@ -86,6 +86,7 @@ class HubStamps(unittest.TestCase):
         self.dir = Path(self.tmp.name)
         (self.dir / "static").mkdir()
         for rel in dashboard.PAGE_FILES:
+            (self.dir / rel).parent.mkdir(parents=True, exist_ok=True)   # static/dock/src/...
             (self.dir / rel).write_bytes(b"<!doctype html>\n" + dashboard.PAGE_META + b"\n<p>" + rel.encode() + b"</p>\n"
                                          if rel.endswith(".html") else b"// " + rel.encode() + b"\n")
         (self.dir / "static" / "pic.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 16)
@@ -721,8 +722,10 @@ async function main() {
       await p.evalIn('document.querySelector("#cdp-frame").remove(); 0');
       // The PO drawer open over the page, its conversation scrolled up: after
       // the reload it is open again on the same conversation at the same place.
-      await p.evalIn('window.__mark = 7; PO_PIN = SELECTED_PROJECT; PO_PEEK = true; renderPo(); 0');
+      // Over the projects page: on its own project's page the PO is a panel.
+      await p.evalIn('window.__mark = 7; const pid = SELECTED_PROJECT; SELECTED_PROJECT = null; renderRows(); PO_PIN = pid; PO_PEEK = true; renderPo(); 0');
       await p.until(poDrawn, 15000);
+      await sleep(600);   // shown again after the PO screen hid it: the chat goes to its end first
       await p.evalIn('(() => { const b = ' + poFrame + '.contentWindow.document.querySelector("#msgs"); b.scrollTop = Math.max(0, b.scrollHeight / 2); })(); 0');
       await sleep(300);
       out.poBefore = await p.evalIn(poPlace);
@@ -737,7 +740,7 @@ async function main() {
       poke('index.html');
       await p.evalIn('ensUpd.checkedAt = 0; ensUpd.lastInput = Date.now() - 100000; ensUpd.poll(); 0');
       await p.until('window.__mark === undefined && !!window.ensUpd && Object.keys(ensUpd.loaded).length > 0', 15000);
-      await p.until('typeof SELECTED_PROJECT !== "undefined" && !!SELECTED_PROJECT', 15000);
+      await p.until('typeof PROJECTS !== "undefined" && !!PROJECTS', 15000);
       await sleep(600);
       out.poClosed = await p.evalIn('({ peek: PO_PEEK, hidden: document.querySelector("#po-panel").hidden, proj: SELECTED_PROJECT, tab: PROJECT_TAB })');
       // A file index.html does not load (session.html) changes: nothing.
@@ -768,6 +771,7 @@ async function main() {
       await p.until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 0 && typeof ALL_ROWS !== "undefined" && ALL_ROWS.length > 0');
       await p.evalIn('window.__mark = 9; SELECTED_PROJECT = PROJECTS.projects[0].id; PROJECT_TAB = ' + JSON.stringify(tab) + '; renderRows(); openDetail(ALL_ROWS.find(r => r.roomId === ' + JSON.stringify(A.room) + ').sessionId); poPillClick(); 0');
       await p.until(poDrawn, 15000);
+      await sleep(600);   // the chat was behind the task: shown again, it goes to its end first
       await p.evalIn('(() => { const b = ' + poFrame + '.contentWindow.document.querySelector("#msgs"); b.scrollTop = Math.max(0, b.scrollHeight / 2); })(); 0');
       await sleep(300);
       const state = '(() => { const s = ' + poPlace + '; s.phone = isPhone(); s.detail = document.body.classList.contains("detail-open"); s.sid = SELECTED_SID; return s; })()';
@@ -818,6 +822,7 @@ class InChrome(unittest.TestCase):
         cls.static = base / "site"
         (cls.static / "static").mkdir(parents=True)
         for rel in dashboard.PAGE_FILES:
+            (cls.static / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / rel, cls.static / rel)
         state = base / "state"
         state.mkdir()
@@ -953,7 +958,9 @@ class InChrome(unittest.TestCase):
         self.assertGreaterEqual(held.pop("changed"), 1, "leaving the title fired change")
         self.assertEqual(held, {"mark": 1, "busy": True, "holding": True, "title": "a task title", "open": True})
         self.assertEqual(g["indexHiddenTitle"], {"mark": 1, "title": "a task title", "open": True}, "hidden with a title typed: no reload")
-        self.assertEqual((g["indexAfter"]["proj"], g["indexAfter"]["tab"]), (g["indexBefore"]["proj"], "workspace"))
+        # The project has a PO: its Workspace is a panel of its PO screen, so
+        # the tab asked for comes back as that screen (with the panel shown).
+        self.assertEqual((g["indexAfter"]["proj"], g["indexAfter"]["tab"]), (g["indexBefore"]["proj"], "tasks"))
         self.assertEqual(g["indexAfter"]["stamp"], g["indexDisk"])
         self.assertFalse(g["indexAfter"]["line"])
         self.assertEqual(g["indexOther"], {"mark": 4, "pending": False}, "session.html is not index.html's")
@@ -974,7 +981,7 @@ class InChrome(unittest.TestCase):
         g = self.got
         before, after = dict(g["poBefore"]), dict(g["poAfter"])
         self.assertEqual(before["room"], self.po_room)
-        self.assertTrue(before["peek"] and before["shown"] and not before["stick"] and before["key"])
+        self.assertTrue(before["peek"] and before["shown"] and not before["stick"] and before["key"], before)
         self.assertEqual(after["room"], before["room"], "the same PO conversation")
         self.assertEqual((after["peek"], after["shown"], after["pin"]), (True, True, before["pin"]))
         self.assertEqual((after["proj"], after["tab"]), (before["proj"], before["tab"]))
@@ -987,7 +994,8 @@ class InChrome(unittest.TestCase):
         for tab in ("tasks", "workspace"):
             b, a = self.got["phone"][tab]["before"], self.got["phone"][tab]["after"]
             self.assertTrue(b["phone"] and b["peek"] and b["shown"] and b["detail"] and b["sid"] and b["key"] and not b["stick"], (tab, b))
-            self.assertEqual((b["room"], b["tab"]), (self.po_room, tab))
+            # A PO project's Workspace tab is a panel of its PO screen.
+            self.assertEqual((b["room"], b["tab"]), (self.po_room, "tasks"))
             for k in ("phone", "peek", "shown", "detail", "sid", "room", "proj", "tab", "pin", "key"):
                 self.assertEqual(a[k], b[k], (tab, k))
             self.assertLessEqual(abs(a["off"] - b["off"]), 2, tab)
