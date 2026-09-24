@@ -5857,8 +5857,9 @@ function scopeBarHtml(pj) {
     + `</select><span class="scope-path" title="${esc(cur)}">${esc(tildeify(cur))}</span></div>`;
 }
 function wireScopeBar() {
-  const s = document.querySelector('.scope-sel');
-  if (s) s.onchange = () => { WS_SCOPE = s.value; CH_ROOT = ''; CH_FILE = ''; renderRows(); };
+  // In whichever window the panel is: a popped-out Changes panel redraws its own.
+  for (const s of pdQueryAll('.scope-sel'))
+    s.onchange = () => { WS_SCOPE = s.value; CH_ROOT = ''; CH_FILE = ''; renderRows(); };
 }
 // ---- Workspace: file tree + viewer -----------------------------------------
 // One component, two mount points — a project's Workspace tab and a task's
@@ -9064,8 +9065,13 @@ function pdLoad() {
           try { window.dispatchEvent(new MessageEvent('message', { data: e.data, origin: e.origin, source: e.source })); } catch (err) {}
         };
         w.addEventListener('message', relay);
+        const rs = [...PD_RESIZE];
+        for (const fn of rs) w.addEventListener('resize', fn);
+        PD_POP_WINS.set(w, rs);
         return () => {
           PD_POP_DOCS.delete(d);
+          PD_POP_WINS.delete(w);
+          for (const fn of rs) { try { w.removeEventListener('resize', fn); } catch (e) {} }
           for (const [t, fn, o] of ls) { try { d.removeEventListener(t, fn, o); } catch (e) {} }
           try { w.removeEventListener('message', relay); } catch (e) {}
         };
@@ -9082,6 +9088,13 @@ window.pdDocListenerAdded = (type, fn, o) => {
   if (type === 'visibilitychange') return;
   PD_POP_DOCS.forEach((ls, d) => { try { d.addEventListener(type, fn, o); ls.push([type, fn, o]); } catch (e) {} });
 };
+// A resize of any window the panels are in: the page's and each pop-out's.
+const PD_RESIZE = [], PD_POP_WINS = new Map();
+function pdOnResize(fn) {
+  PD_RESIZE.push(fn);
+  window.addEventListener('resize', fn);
+  PD_POP_WINS.forEach((rs, w) => { try { w.addEventListener('resize', fn); rs.push(fn); } catch (e) {} });
+}
 // A panel's own window: the pop-out page written into a blank window of this
 // origin (the hub serves no .html from /static before a restart).
 function pdOpenWindow(url, name, features) {
@@ -10835,7 +10848,7 @@ function docsDocListen() {
     }));
   });
   document.addEventListener('click', (ev) => {
-    document.querySelectorAll('.dcm:not([hidden])').forEach(m => {
+    pdQueryAll('.dcm:not([hidden])').forEach(m => {
       if (!m.contains(ev.target) && !(ev.target.closest && ev.target.closest('.wse-more'))) docsMenuClose(m, false);
     });
   });
@@ -10843,12 +10856,12 @@ function docsDocListen() {
   // Overview, the page; scroll does not bubble, so it is caught on the way
   // down) or a resize closes it.
   const away = (ev) => {
-    document.querySelectorAll('.dcm:not([hidden])').forEach(m => {
+    pdQueryAll('.dcm:not([hidden])').forEach(m => {
       if (!(ev && ev.target && ev.target.nodeType === 1 && m.contains(ev.target))) docsMenuClose(m, false);
     });
   };
   document.addEventListener('scroll', away, { capture: true, passive: true });
-  window.addEventListener('resize', away);
+  pdOnResize(away);
 }
 function docsFilesWire(el, pid) {
   const sec = el.querySelector('.dcs-files'), v = docsView(pid);
@@ -11300,7 +11313,7 @@ function docsNote(el, pid, c) {
     + `<button type="button" class="rm-btn subtle dcs-undo">Restore</button>`;
   note.hidden = false;
   const hide = () => {
-    if (note.contains(document.activeElement)) { fp.noteTimer = setTimeout(hide, 3000); return; }
+    if (note.contains(note.ownerDocument.activeElement)) { fp.noteTimer = setTimeout(hide, 3000); return; }
     note.hidden = true; note.innerHTML = '';
   };
   fp.noteTimer = setTimeout(hide, 10000);
@@ -13323,7 +13336,7 @@ function colChipsHtml(cols) {
 let _viewCount = '';
 function setViewCount(txt) {
   _viewCount = txt;
-  const el = document.getElementById('viewcount');
+  const el = pdById('viewcount');
   if (el) el.textContent = txt;
 }
 

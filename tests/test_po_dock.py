@@ -298,6 +298,7 @@ async function main() {
       const was = r.label; r.label = 'Renamed while out'; renderRows();
       const live = card.isConnected && card.ownerDocument === d && card.querySelector('.ctitle').textContent.includes('Renamed while out');
       r.label = was; renderRows();
+      const count = (d.getElementById('viewcount') || {}).textContent || '';
       const theme = document.documentElement.dataset.theme; document.documentElement.dataset.theme = 'dark';
       await new Promise(r => setTimeout(r, 200)); const followed = d.documentElement.dataset.theme; document.documentElement.dataset.theme = theme;
       await new Promise(r => setTimeout(r, 200));
@@ -307,7 +308,7 @@ async function main() {
       let heard = null; const hear = e => { if (e.data && e.data.type === 'dock-relay-check') heard = e.source === w; };
       window.addEventListener('message', hear); new w.Function("postMessage({ type: 'dock-relay-check' }, location.origin)")();
       await new Promise(r => setTimeout(r, 200)); window.removeEventListener('message', hear);
-      return { live, followed, back: d.documentElement.dataset.theme === theme, list, title: d.title, styled: getComputedStyle(d.querySelector('.card')).borderRadius, heard };
+      return { live, count, followed, back: d.documentElement.dataset.theme === theme, list, title: d.title, styled: getComputedStyle(d.querySelector('.card')).borderRadius, heard };
     })()`);
     await p.evalIn('PD.dock.popWindow("board").close(); 0');
     await p.until('!PD.dock.isOut("board") && PD.els.board.ownerDocument === document', 10000);
@@ -379,6 +380,17 @@ async function main() {
       await sleep(150);
       r.dialogInMain = MODAL_EL.ownerDocument === document && MODAL_EL.open;
       document.getElementById('cf-cancel').click(); await ask2;
+      // Its scope, changed twice: the panel redraws in its window and the new selector still works.
+      r.scope = [];
+      const pj = projectById(SELECTED_PROJECT), opts = scopeOptions(pj).map(o => o.path);
+      for (const i of [1, 0, 1]) {
+        const s = PD.els.changes.querySelector('.scope-sel');
+        if (!s || !opts[i]) { r.scope.push({ options: opts.length }); break; }
+        s.value = opts[i]; s.dispatchEvent(new w.Event('change'));
+        await sleep(400);
+        const s2 = PD.els.changes.querySelector('.scope-sel');
+        r.scope.push({ now: scopePath(pj) === opts[i], redrawn: s2 !== s, there: !!s2 && s2.ownerDocument === d });
+      }
       return r;
     })()`);
     await p.evalIn('PD.dock.popWindow("changes").close(); 0');
@@ -411,6 +423,32 @@ async function main() {
       const v = [...WS_VIEWS.values()].find(x => x.el && PD.els.workspace.contains(x.el));
       const tab = v && v.tabs.find(x => x.path.endsWith('ROADMAP.md'));
       r.tabHeard = !!tab && tab.st.view === 'source' && tab.st.wrap === true;
+      return r;
+    })()`);
+    await p.evalIn('PD.dock.popWindow("workspace").close(); 0');
+    await p.until('!PD.dock.isOut("workspace") && PD.els.workspace.ownerDocument === document', 10000);
+
+    // A documents project's Files panel in its own window: a row's menu closes on a click
+    // elsewhere, a scroll and a resize of that window.
+    await p.evalIn(`(() => { SELECTED_PROJECT = ${JSON.stringify(A.notes)}; renderRows(); return 0; })()`);
+    await p.until('document.body.classList.contains("po-dock") && !!PD.dock', 20000);
+    await p.evalIn('PD.dock.pin("workspace"); 0'); await sleep(300);
+    await p.until('!!PD.els.workspace.querySelector(".dcs-files .wsp-tree .wse[data-path] .wse-more")', 20000);
+    await p.click('PD.els.workspace.closest(".dk-stack").querySelector("[data-dk-act=pop]")');
+    await p.until('!!PD.dock.popWindow("workspace") && PD.els.workspace.ownerDocument !== document', 15000);
+    out.popFiles = await p.evalIn(`(async () => {
+      const sleep = ms => new Promise(r => setTimeout(r, ms));
+      const w = PD.dock.popWindow('workspace'), d = w.document, r = {};
+      await sleep(300);
+      const menu = PD.els.workspace.querySelector('.dcs-files .dcm');
+      const open = async () => { PD.els.workspace.querySelector('.dcs-files .wsp-tree .wse[data-path] .wse-more').click(); await sleep(150); return !menu.hidden; };
+      r.opened = await open();
+      d.body.click(); await sleep(150); r.click = menu.hidden;
+      await open();
+      PD.els.workspace.querySelector('.wsp-tree').dispatchEvent(new w.Event('scroll')); await sleep(150); r.scroll = menu.hidden;
+      await open();
+      w.dispatchEvent(new w.Event('resize')); await sleep(150); r.resize = menu.hidden;
+      r.inWindow = menu.ownerDocument === d;
       return r;
     })()`);
     await p.evalIn('PD.dock.popWindow("workspace").close(); 0');
@@ -504,13 +542,27 @@ class InChrome(unittest.TestCase):
         (code / "motor.py").write_text("".join(f"speed_{i} = {i * 2}\n" for i in range(12)), encoding="utf-8")
         members = lambda: [{"identity": "claude", "agent": "claude", "cwd": str(home)},
                            {"identity": "codex", "agent": "codex", "cwd": str(home)}]
-        task = chatroom.create_room("Wider board", members())
+        # The task works in a folder of its own: the Changes scope offers it beside the project.
+        wt = base / "wider-board"
+        wt.mkdir()
+        task = chatroom.create_room("Wider board", [{**m, "cwd": str(wt)} for m in members()])
         cls.task = task["id"]
+        chatroom.update_room({**chatroom.get_room(cls.task, public=False), "cwd": str(wt)})
         dashboard.assign_session_project(cls.task, cls.proj)
         po = chatroom.create_room("PO talk", members())
         cls.po = po["id"]
         dashboard.assign_session_project(cls.po, cls.proj)
         ok, why = dashboard.set_project_po(cls.proj, cls.po)
+        assert ok, why
+        # A documents project with a PO, for the Files panel in its own window.
+        ok, notes, _ = dashboard.register_project("Notes")
+        assert ok, notes
+        cls.notes = notes["id"]
+        assert dashboard.set_project_kind(cls.notes, "documents") == (True, "ok")
+        (Path(notes["path"]) / "minutes.md").write_text("# Minutes\n", encoding="utf-8")
+        npo = chatroom.create_room("Notes PO", members())
+        dashboard.assign_session_project(npo["id"], cls.notes)
+        ok, why = dashboard.set_project_po(cls.notes, npo["id"])
         assert ok, why
         # Two points: P1 answered, P2 waiting; then enough talk that both are far up.
         room = chatroom.get_room(cls.po, public=False)
@@ -533,7 +585,7 @@ class InChrome(unittest.TestCase):
         if shots:
             Path(shots).mkdir(parents=True, exist_ok=True)
         args = {"chrome": CHROME, "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{cls.port}", "proj": cls.proj,
-                "po": cls.po, "task": cls.task, "shots": shots}
+                "po": cls.po, "task": cls.task, "notes": cls.notes, "shots": shots}
         out = subprocess.run([NODE, "-e", CDP_JS, json.dumps(args)], capture_output=True, encoding="utf-8", timeout=400)
         assert out.returncode == 0, out.stderr[-4000:]
         cls.got = json.loads(out.stdout.strip().splitlines()[-1])
@@ -584,6 +636,7 @@ class InChrome(unittest.TestCase):
     def test_a_popped_out_board_stays_live_and_comes_back(self):
         b = self.got["popBoard"]
         self.assertTrue(b["live"], "a card patched in its own window")
+        self.assertRegex(b["count"], r"\d+ tasks?|\d+ of \d+", "the task count redrawn there")
         self.assertEqual((b["followed"], b["back"]), ("dark", True), "the theme follows")
         self.assertGreater(b["list"], 0, "a click there switches the view")
         self.assertEqual(b["title"], "Board · Motors")
@@ -614,6 +667,13 @@ class InChrome(unittest.TestCase):
         self.assertIs(c["answer"], False)
         self.assertTrue(c["toastInWindow"])
         self.assertTrue(c["dialogInMain"], "back in the main window, it opens here again")
+
+    def test_a_popped_out_changes_panel_keeps_its_scope_selector(self):
+        self.assertEqual(self.got["popChanges"]["scope"], [{"now": True, "redrawn": True, "there": True}] * 3,
+                         "every scope change, not only the first, is heard from the window")
+
+    def test_a_popped_out_files_menu_closes_as_in_the_page(self):
+        self.assertEqual(self.got["popFiles"], {"opened": True, "click": True, "scroll": True, "resize": True, "inWindow": True})
 
     def test_a_popped_out_workspace_works_in_its_own_window(self):
         self.assertEqual(self.got["popWs"], {"roadmapInWindow": True, "viewerInWindow": True, "tabHeard": True})
