@@ -45,6 +45,12 @@ export function mountThemePicker(theme, button, menu, { list = null, groups = GR
     button.setAttribute('aria-expanded', 'false');
     if (refocus) button.focus({ preventScroll: true });
   }
+  // The given item in view, scrolling the menu only (scrollIntoView would scroll the page and the dock too).
+  function reveal(item) {
+    if (!item) return;
+    const below = item.offsetTop + item.offsetHeight - (menu.scrollTop + menu.clientHeight);
+    if (item.offsetTop < menu.scrollTop) menu.scrollTop = item.offsetTop; else if (below > 0) menu.scrollTop += below;
+  }
   function open() {
     draw();
     menu.hidden = false;
@@ -56,11 +62,9 @@ export function mountThemePicker(theme, button, menu, { list = null, groups = GR
     menu.style.maxHeight = Math.max(160, vh - r.bottom - 12) + 'px';
     menu.style.left = Math.max(4, Math.min(r.right - menu.offsetWidth, vw - menu.offsetWidth - 4)) + 'px';
     const cur = menu.querySelector('[aria-checked="true"]') || menu.querySelector('button');
-    // The current set in view, scrolling the menu only (scrollIntoView would scroll the page and the dock too).
     if (cur) {
       cur.focus({ preventScroll: true });
-      const below = cur.offsetTop + cur.offsetHeight - (menu.scrollTop + menu.clientHeight);
-      if (cur.offsetTop < menu.scrollTop) menu.scrollTop = cur.offsetTop; else if (below > 0) menu.scrollTop += below;
+      reveal(cur);
     }
   }
   const onButton = () => { if (menu.hidden) open(); else close(false); };
@@ -76,8 +80,15 @@ export function mountThemePicker(theme, button, menu, { list = null, groups = GR
     if (e.key === 'Escape') { e.preventDefault(); close(true); }
     else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
-      items[(at + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus({ preventScroll: true });
-    } else if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); items[e.key === 'Home' ? 0 : items.length - 1].focus({ preventScroll: true }); }
+      const next = items[(at + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length];
+      next.focus({ preventScroll: true });
+      reveal(next);
+    } else if (e.key === 'Home' || e.key === 'End') {
+      e.preventDefault();
+      const next = items[e.key === 'Home' ? 0 : items.length - 1];
+      next.focus({ preventScroll: true });
+      reveal(next);
+    }
   };
   const onOutside = (e) => {
     if (!menu.hidden && e.target.isConnected && !menu.contains(e.target) && !button.contains(e.target)) close(false);
