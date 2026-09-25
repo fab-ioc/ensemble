@@ -557,7 +557,9 @@ PO_MESSAGE_TOOLS = [
         "description": (
             "Read a message between POs in full: one another project's PO sent "
             "you (the hub typed you a line naming its id) or one you sent. "
-            "Without an id, list the PO messages in your chat, newest first."
+            "Without an id, list the PO messages in your chat, newest first. "
+            "The id is for the tools only: in anything a person reads, call a "
+            "message by its name (\"opten PO's question of 09-25 18:57\") and subject."
         ),
         "inputSchema": {
             "type": "object",
@@ -1533,19 +1535,23 @@ def _read_message(ctx, args, handler):
     mid = str(args.get("id") or "").strip()
     if not mid:
         msgs = pm.messages_in(room)[::-1][:30]
-        return {"messages": [pm.view(m, full=False) for m in msgs],
-                "note": "read one in full with ensemble_read_message id=…" if msgs
+        return {"messages": [pm.view(m, full=False, room=room) for m in msgs],
+                "note": ("read one in full with ensemble_read_message id=…; the id is for the "
+                         "tools only: in text call a message by its name") if msgs
                         else "no PO messages in your chat yet"}
     m = pm.find(room, mid)
     if m is None:
         raise ToolError(f"no PO message {mid} in your chat")
-    out = pm.view(m)
-    replies = [r["id"] for r in pm.messages_in(room) if r.get("replyTo") == mid]
+    out = pm.view(m, room=room)
+    replies = [r for r in pm.messages_in(room) if r.get("replyTo") == mid]
     if replies:
-        out["replies"] = replies
+        out["replies"] = [r["id"] for r in replies]
+        out["replyNames"] = [pm.name_of(r) for r in replies]
     out["howToAnswer"] = (f"ensemble_message_po replyTo={mid} text=… (kind answer by default)"
                           if m.get("direction") == "received" else
                           f"a follow-up: ensemble_message_po replyTo={mid} kind=… text=…")
+    out["inText"] = (f'the id is for the tools only: in chat, titles, reports and documents '
+                     f'call it "{out["name"]}" with its subject, never {mid}')
     return out
 
 

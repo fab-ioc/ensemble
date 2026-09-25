@@ -154,7 +154,7 @@ class TheAskLine(unittest.TestCase):
         self.assertLess(SRC.index('<div id="ask-line" role="status" hidden></div>'), SRC.index('<div id="msgs"></div>'))
         self.assertIn("showAskLine(items);", js_function(SRC, "renderBubbles"))
         self.assertIn("showAskLine(null);", js_function(SRC, "refreshRoom"))
-        self.assertIn("ev.target.closest('a.ref-chip, a.sup-link, a.cu-link, a.ask-link, a.pt-link')", SRC)
+        self.assertIn("ev.target.closest('a.ref-chip, a.sup-link, a.cu-link, a.ask-link, a.pt-link, a.pm-link')", SRC)
 
     def test_it_looks_like_the_catch_up_line_from_tokens_alone(self):
         rule = SRC[SRC.index("  #ask-line {"):SRC.index("  /* Away from the end of the chat")]

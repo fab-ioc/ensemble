@@ -120,6 +120,7 @@ class SessionChips(unittest.TestCase):
             const(SESSION, "REF_BLOCK_RE"), fn(SESSION, "stripRefBlocks"), fn(SESSION, "refOfUrl"),
             block(SESSION, "// ---- Task references: begin", "// ---- Task references: end"),
             block(SESSION, "// ---- Numbered points: begin", "// ---- Numbered points: end"),
+            block(SESSION, "// ---- PO message names: begin", "// ---- PO message names: end"),
             fn(SESSION, "mdToHtml"), fn(SESSION, "itemsHtml"),
             SESSION[SESSION.index("const HUB_KIND_LABEL"):SESSION.index("};\n", SESSION.index("const HUB_KIND_LABEL")) + 3],
             SESSION[SESSION.index("const isHubInput"):SESSION.index("// The chip on an agent's balloon")],
