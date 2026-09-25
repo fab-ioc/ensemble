@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Ensemble, concept B "Chord": three voices (the coloured circles) held
+       together; where all three meet they make one white light, the outcome. -->
+  <defs>
+    <radialGradient id="ground-fill" cx=".5" cy=".42" r=".75">
+      <stop offset="0" stop-color="#3B2AB8"/>
+      <stop offset="1" stop-color="#120C45"/>
+    </radialGradient>
+  </defs>
+  <g id="ground"><rect width="512" height="512" fill="url(#ground-fill)"/></g>
+  <g id="motif" style="isolation:isolate">
+    <circle cx="256" cy="182" r="114" fill="#FF3D71" style="mix-blend-mode:screen"/>
+    <circle cx="192" cy="293" r="114" fill="#22E39B" style="mix-blend-mode:screen"/>
+    <circle cx="320" cy="293" r="114" fill="#3D7BFF" style="mix-blend-mode:screen"/>
+  </g>
+</svg>

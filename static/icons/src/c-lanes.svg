@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Ensemble, concept C "Lanes": an E made of a board's lanes. Three agents
+       (the coloured bars) held by one spine, the PO who joins their work. -->
+  <defs>
+    <linearGradient id="ground-fill" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0C66E4"/>
+      <stop offset="1" stop-color="#7B2FF7"/>
+    </linearGradient>
+  </defs>
+  <g id="ground"><rect width="512" height="512" fill="url(#ground-fill)"/></g>
+  <g id="motif">
+    <rect x="176" y="112" width="220" height="76" rx="38" fill="#FF7A59"/>
+    <rect x="176" y="218" width="176" height="76" rx="38" fill="#34E3A4"/>
+    <rect x="176" y="324" width="220" height="76" rx="38" fill="#FFD23F"/>
+    <rect x="128" y="112" width="84" height="288" rx="30" fill="#FFFFFF"/>
+  </g>
+</svg>
