@@ -133,6 +133,19 @@ class TheManifest(unittest.TestCase):
         self.assertIn('<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">', INDEX)
         self.assertIn('<meta name="theme-color"', INDEX)
         self.assertIn("import('/static/dock/src/install.js')", INDEX, "the button is the Dock library's")
+
+    def test_every_page_links_the_favicon_and_it_is_served(self):
+        for page in ("index.html", "session.html", "fileview.html"):
+            text = (ROOT / page).read_text(encoding="utf-8")
+            self.assertIn('<link rel="icon" type="image/svg+xml" href="/static/icons/favicon.svg">', text, page)
+            self.assertIn('<link rel="icon" href="/static/icons/favicon.ico"', text, page)
+        for path in ("/static/icons/favicon.svg", "/static/icons/favicon.ico"):
+            code, _, body = self.hub.get(path)
+            self.assertEqual(code, 200, path)
+        ico = (ROOT / "static" / "icons" / "favicon.ico").read_bytes()
+        count = struct.unpack("<HHH", ico[:6])[2]
+        sizes = {(ico[6 + 16 * i] or 256, ico[7 + 16 * i] or 256) for i in range(count)}
+        self.assertTrue({(16, 16), (32, 32)} <= sizes, sizes)
         self.assertIn('id="install-app-btn"', INDEX)
 
 
