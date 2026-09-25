@@ -42,6 +42,7 @@ class _FakeLauncher:
         self.calls = []
         self.held = {}
         self.fail_with = ""
+        self.on_start = None
 
     def _resume_room(self, room, text="", to="", key="", quiet=False):
         self.calls.append((room["id"], text, key))
@@ -55,6 +56,8 @@ class _FakeLauncher:
 
     def _start_or_resume_room(self, room):
         self.calls.append((room["id"], None, None))
+        if self.on_start:
+            self.on_start()
         return [{"identity": "claude", "ptyId": "pty-new"}]
 
     def pending_input(self, room_id):
@@ -457,6 +460,8 @@ class ResumedPo(_World):
     def test_a_waking_message_resumes_it_once_with_the_line_as_first_input(self):
         res = self.send()
         self.assertFalse(res["held"])
+        self.assertFalse(res["delivered"])
+        self.assertTrue(res["starting"])
         self.assertIn("starting it", res["note"])
         [(rid, text, key)] = self.launcher.calls
         self.assertEqual(rid, self.dock)
@@ -565,7 +570,7 @@ class ResumedPo(_World):
         chatroom.patch_participant(self.dock, "claude", {"sessionId": ""})
         self.send()
         self.assertEqual(self.launcher.calls, [])
-        self.assertIn("no conversation", self.queue()[0]["undelivered"]["why"])
+        self.assertIn("no recorded conversation", self.queue()[0]["undelivered"]["why"])
 
     def test_a_message_already_pending_is_delivered_by_the_first_tick(self):
         # As pm-e00a1c63 sat in the queue before this: no resuming mark.
@@ -619,26 +624,82 @@ class ResumedPo(_World):
         self.assertEqual(len(self.typed("pty-dock")), 1)
         self.assertEqual(self.launcher.calls, [])
 
-    def test_a_po_in_a_team_is_resumed_and_typed_the_line_when_idle(self):
-        # A line given to a team's resume would be posted as the CEO's words.
+    def make_team(self):
         room = chatroom.get_room(self.dock, public=False)
         room["mode"] = "collab"
         room["participants"].append({"identity": "codex", "agent": "codex", "kind": "agent"})
         chatroom.update_room(room)
-        self.send()
+
+        def comes_up():            # its terminal is recorded before it has settled
+            chatroom.patch_participant(self.dock, "claude", {"ptyId": "pty-dock"})
+            self.ptys["pty-dock"] = _FakePty()
+            self.idle["pty-dock"] = False
+        self.launcher.on_start = comes_up
+
+    def wakes(self):
+        return po_messages._load()["wakes"].get(po_messages.pair_key("proj-opten", "proj-dock"), [])
+
+    def test_a_po_in_a_team_is_resumed_and_typed_the_line_once_settled(self):
+        # A line given to a team's resume would be posted as the CEO's words.
+        self.make_team()
+        res = self.send()
+        self.assertTrue(res["starting"])
         self.assertEqual(self.launcher.calls, [(self.dock, None, None)])
         self.assertEqual(self.launcher.held, {})
-        [item] = self.queue()
-        self.assertNotIn("resuming", item)
-        # Up, and idle at the next look: typed the line, not resumed again.
-        chatroom.patch_participant(self.dock, "claude", {"ptyId": "pty-dock"})
-        self.ptys["pty-dock"] = _FakePty()
+        self.assertEqual(len(self.wakes()), 1)
+        # Another message while it comes up: nothing typed into it yet.
+        res2 = self.send(kind="question", text="And this?")
+        self.assertFalse(res2["delivered"])
+        self.assertEqual(self.typed("pty-dock"), [])
+        self.now += 60
+        self.assertEqual(po_messages.tick(), [])
+        self.assertEqual(self.typed("pty-dock"), [])
+        # Settled: typed the line it was started for, not counted again.
+        self.idle["pty-dock"] = True
         self.now += 60
         self.assertEqual(po_messages.tick(), [self.dock])
         [line] = self.typed("pty-dock")
         self.assertTrue(line.startswith("[from the opten PO] bug: Crash."))
+        self.assertNotIn("And this?", line)
+        self.assertEqual(len(self.wakes()), 1)
+        # Then what came meanwhile, as to any running PO.
+        self.now += 60
+        self.assertEqual(po_messages.tick(), [self.dock])
+        self.assertIn("And this?", self.typed("pty-dock")[1])
+        self.assertEqual(len(self.wakes()), 2)
         self.assertEqual(len(self.launcher.calls), 1)
         self.assertEqual(self.queue(), [])
+
+    def test_a_team_po_that_stops_while_coming_up_is_flagged(self):
+        self.make_team()
+        self.send()
+        self.ptys.pop("pty-dock")
+        self.now += 60
+        self.assertEqual(po_messages.tick(), [])
+        [item] = self.queue()
+        self.assertNotIn("resuming", item)
+        self.assertIn("stopped before", item["undelivered"]["why"])
+        self.now += 60
+        po_messages.tick()
+        self.assertEqual(len(self.launcher.calls), 2)     # started again, a minute on
+
+    def test_a_send_just_after_the_line_went_in_is_not_reported_delivered(self):
+        self.send(text="first")
+        self.launcher.typed_in(self.dock)           # in, before the next look
+        res = self.send(text="second")
+        self.assertFalse(res["delivered"])
+        self.assertTrue(res["starting"])            # still stopped here: started for it
+        self.assertEqual([p["firstLine"] for p in self.queue()], ["second"])
+        self.assertEqual(len(self.launcher.calls), 2)
+        self.assertIn("second", self.launcher.calls[1][1])
+
+    def test_a_codex_po_with_no_recorded_conversation_is_not_started(self):
+        chatroom.patch_participant(self.dock, "claude", {"sessionId": "", "agent": "codex"})
+        res = self.send()
+        self.assertFalse(res["delivered"])
+        self.assertEqual(self.launcher.calls, [])
+        self.assertIn("no recorded conversation", self.queue()[0]["undelivered"]["why"])
+        self.assertIn(self.dock, po_messages.held_by_room())
 
     def test_the_bell_shows_a_po_that_cannot_receive(self):
         import attention

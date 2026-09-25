@@ -28,8 +28,10 @@ it when the PO is running and idle:
 * **A PO that is stopped** (no live terminal; not being rotated, asked for
   its handover or replaced) is resumed for a message that wakes, the way a
   send to a stopped chat is (``Handler._resume_room``): the line is its first
-  input, and the room's launch guard never starts a second terminal for the
-  seat. The resume counts as the line for the hourly limit. The messages stay
+  input (in a room with more agents, where that would post it as the CEO's
+  words, it is typed at the first look that finds the PO settled), and the
+  room's launch guard never starts a second terminal for the seat. A PO with
+  no recorded conversation is never started blank. The resume counts as the line for the hourly limit. The messages stay
   queued, marked ``resuming``, until the line is in; a resume that fails
   (nothing to resume, a refused or failed start, the line not typed) leaves
   them queued, logged once, and the PO on the CEO's bell as not receiving
@@ -280,9 +282,9 @@ def send(room: dict, identity: str, project_id: str, target_ref: str, text: str,
         state = _load()
         state["pending"].append(item)
         queued = _save(state)
-        how = _deliver(state, to_room["id"], now, require_idle=False) if wakes and queued else ""
-    told = how == "typed"
-    held = False
+        if wakes and queued:
+            _deliver(state, to_room["id"], now, require_idle=False)
+    held = starting = False
     who = f"the {_name(target)} PO"
     if not queued:
         _log(f"{mid} {kind} {_name(me)} → {_name(target)}: in both chats, not queued")
@@ -291,15 +293,20 @@ def send(room: dict, identity: str, project_id: str, target_ref: str, text: str,
                 "note": (f"in {who}'s chat, but the hub could not save its list of messages to "
                          f"tell, so {who} is NOT told of it: send it again later, or tell "
                          f"{_d.operator_name()}")}
-    if not told:
-        with _LOCK:
-            st = _load()
-            held = any(p["id"] == mid and p.get("heldSince") for p in st["pending"])
+    # What became of this message, not of the look: a look may have told
+    # only what waited before it.
+    with _LOCK:
+        mine = next((p for p in _load()["pending"] if p["id"] == mid), None)
+    told = mine is None
+    if mine is not None:
+        held = bool(mine.get("heldSince"))
+        starting = bool(mine.get("resuming"))
     if told:
         note = f"delivered: {who} was typed a line and reads the whole text with ensemble_read_message"
-    elif how == "resuming":
-        note = (f"delivered: {who} was not running, so the hub is starting it; the line is its "
-                f"first input, and it reads the whole text with ensemble_read_message")
+    elif starting:
+        note = (f"{who} was not running, so the hub is starting it; the line is typed as its "
+                f"first input once it is up, and it reads the whole text with "
+                f"ensemble_read_message")
     elif held:
         note = (f"held: {WAKES_PER_HOUR} lines between your projects in the last hour already. "
                 f"It is in {who}'s chat, and {who} is told when the hour allows; "
@@ -311,9 +318,11 @@ def send(room: dict, identity: str, project_id: str, target_ref: str, text: str,
     else:
         note = (f"in {who}'s chat; {who} is busy, being replaced, or could not be started, so "
                 f"it is told when it is idle (a stopped PO is started for it, within a minute)")
-    _log(f"{mid} {kind} {_name(me)} → {_name(target)}: {how or ('held' if held else 'waits')}")
+    _log(f"{mid} {kind} {_name(me)} → {_name(target)}: "
+         f"{'typed' if told else 'starting the PO' if starting else 'held' if held else 'waits'}")
     return {"ok": True, "id": mid, "kind": kind, "to": f"{_name(target)} PO",
-            "toProjectId": target["id"], "delivered": told, "held": held, "note": note}
+            "toProjectId": target["id"], "delivered": told, "held": held,
+            **({"starting": True} if starting else {}), "note": note}
 
 
 # ---------------------------------------------------------------------------
@@ -374,10 +383,19 @@ def _deliver(state: dict, room_id: str, now: float, require_idle: bool) -> str:
             if len(_recent(state, k, now)) >= WAKES_PER_HOUR}
     free = [p for p in mine if pair_key(p["fromProjectId"], p["toProjectId"]) not in over]
     changed = False
+    before_how = ""
     if any(p.get("resuming") for p in mine):
         # A resume started for them is under way: nothing else until it is
-        # done (a second one would start the PO twice).
-        return _resume_outcome(state, room_id, mine, now)
+        # done (a second one would start the PO twice, and a line typed into
+        # a PO still coming up can be lost). Once done, what came meanwhile.
+        got = _resume_outcome(state, room_id, now)
+        if got != "done":
+            return "typed" if got == "typed" else ""
+        before_how = "typed"
+        mine = [p for p in state["pending"] if p.get("toRoomId") == room_id]
+        if not mine:
+            return before_how
+        free = [p for p in mine if pair_key(p["fromProjectId"], p["toProjectId"]) not in over]
     for p in mine:
         is_over = p not in free and (p.get("wake") or now - p["at"] >= QUIET_WAIT_S)
         if is_over and not p.get("heldSince"):
@@ -398,38 +416,50 @@ def _deliver(state: dict, room_id: str, now: float, require_idle: bool) -> str:
                 # What wakes first, then what waited longest.
                 order = sorted(free, key=lambda p: (p not in due, p["at"]))
                 wake, told = wake_line(order)
-                ids = {p["id"] for p in told}
-                # Marked on disk before typing, so a failed save afterwards
-                # can never type the same line twice (_load drops the mark).
-                # The wake is counted in the same write, so the hourly limit
-                # holds even when the save after typing fails.
-                keys = {pair_key(p["fromProjectId"], p["toProjectId"]) for p in told}
-                before = {k: list(state["wakes"].get(k, [])) for k in keys}
-                for p in told:
-                    p["typing"] = now
-                for k in keys:
-                    state["wakes"][k] = _recent(state, k, now) + [now]
-                if not _save(state):
-                    for p in told:
-                        p.pop("typing", None)
-                    state["wakes"].update(before)
-                    _log(f"not typed to the PO of {room_id}: the queue could not be saved")
-                    return ""
+                typed = _type_line(state, room_id, sess, wake, told, now, count=True)
+                if typed is None:
+                    return before_how
                 changed = True
-                if _d._type_input(sess, wake):
-                    how = "typed"
-                    state["pending"] = [p for p in state["pending"] if p["id"] not in ids]
-                    _log(f"typed to the PO of {room_id}: {', '.join(sorted(ids))}")
-                else:
-                    for p in told:
-                        p.pop("typing", None)
-                    state["wakes"].update(before)
+                how = typed
     if stopped is not None and any(p.get("wake") for p in due):
         # Only a message that wakes starts a PO; a quiet one goes along.
         how = _resume(state, stopped, free, due, now)
     if changed:
         _save(state)
-    return how
+    return how or before_how
+
+
+def _type_line(state: dict, room_id: str, sess, wake: str, told: list[dict], now: float,
+               count: bool) -> str | None:
+    """Type ``wake`` (telling ``told``) into the PO's terminal. Returns
+    ``typed``, "" when the terminal did not take it, None when the mark
+    could not be saved (nothing typed). ``count``: the line counts for the
+    hourly limit (not when the resume that brought the PO up was counted)."""
+    ids = {p["id"] for p in told}
+    # Marked on disk before typing, so a failed save afterwards can never
+    # type the same line twice (_load drops the mark). The wake is counted
+    # in the same write, so the hourly limit holds even when the save after
+    # typing fails.
+    keys = {pair_key(p["fromProjectId"], p["toProjectId"]) for p in told} if count else set()
+    before = {k: list(state["wakes"].get(k, [])) for k in keys}
+    for p in told:
+        p["typing"] = now
+    for k in keys:
+        state["wakes"][k] = _recent(state, k, now) + [now]
+    if not _save(state):
+        for p in told:
+            p.pop("typing", None)
+        state["wakes"].update(before)
+        _log(f"not typed to the PO of {room_id}: the queue could not be saved")
+        return None
+    if _d._type_input(sess, wake):
+        state["pending"] = [p for p in state["pending"] if p["id"] not in ids]
+        _log(f"typed to the PO of {room_id}: {', '.join(sorted(ids))}")
+        return "typed"
+    for p in told:
+        p.pop("typing", None)
+    state["wakes"].update(before)
+    return ""
 
 
 def _stopped(room_id: str) -> dict | None:
@@ -455,8 +485,10 @@ def _cannot_resume(room: dict) -> str:
     part = _d.chatroom.participant(room, _d.chatroom.po_identity(room)) or {}
     if not room.get("launched", True):
         return ""                           # a first launch: its spec comes first
-    if not part.get("sessionId") and part.get("agent") != "codex":
-        return "it has no conversation to resume"
+    if not part.get("sessionId"):
+        # Never a blank PO, nor a guess at its conversation (a codex seat
+        # would otherwise take the latest rollout in its folder, if any).
+        return "it has no recorded conversation to resume"
     return ""
 
 
@@ -488,14 +520,15 @@ def _resume(state: dict, room: dict, free: list[dict], due: list[dict], now: flo
     agents = _d.chatroom.agent_participants(room)
     team = room.get("mode") != "solo" and len(agents) > 1
     # A team's resume would post the line in its chat as the CEO's words:
-    # there only the PO is brought back, and the next look types it the line
-    # once it is idle, as to any running PO.
+    # there the room is brought back without it, and the line is typed at the
+    # first look that finds the PO settled (``_resume_outcome``); nothing
+    # else is typed to it before, and the line is not counted again.
     key = "" if team else f"pomsg:{told[0]['id']}"
     keys = {pair_key(p["fromProjectId"], p["toProjectId"]) for p in told}
     before = {k: list(state["wakes"].get(k, [])) for k in keys}
     # As a typed line: marked and counted in one write before the resume,
     # so it is never started twice for the same line.
-    for p in told if key else []:
+    for p in told:
         p["resuming"] = {"at": now, "key": key}
     for k in keys:
         state["wakes"][k] = _recent(state, k, now) + [now]
@@ -513,9 +546,8 @@ def _resume(state: dict, room: dict, free: list[dict], due: list[dict], now: flo
         if team:
             if not _d.hub_launcher()._start_or_resume_room(room):
                 raise RuntimeError("no agent of this task could be started")
-            _save(state)
             _log(f"the stopped PO of {room_id} was resumed for "
-                 f"{', '.join(p['id'] for p in told)}: typed once it is idle")
+                 f"{', '.join(p['id'] for p in told)}: typed once it is settled")
             return "resuming"
         result = _d.hub_launcher()._resume_room(room, text=wake, key=key)
     except Exception as e:      # noqa: BLE001 — a refusal or a failed spawn alike
@@ -538,31 +570,56 @@ def _resume(state: dict, room: dict, free: list[dict], due: list[dict], now: flo
     return "resuming"
 
 
-def _resume_outcome(state: dict, room_id: str, mine: list[dict], now: float) -> str:
-    """How the resume started for the messages marked ``resuming`` went.
-    Still holding the line: wait. Holding it as failed (the PO stopped, or
-    sat on a prompt, before it could be typed): taken back from the room,
-    queued again and flagged. Not holding it (typed; or the hub restarted
-    since, and as with a line being typed it counts as told): done."""
-    marked = [p for p in mine if p.get("resuming")]
+def _resume_outcome(state: dict, room_id: str, now: float) -> str:
+    """How the resume started for the messages marked ``resuming`` went:
+    ``done`` (the line is in: they left the queue), ``typed`` (typed now, to
+    a team's PO), ``failed`` (queued again and flagged), "" (still under
+    way: wait).
+
+    A line given to the resume (``key``): still held by it, wait; held as
+    failed (the PO stopped, or sat on a prompt, before it was typed), taken
+    back from the room so it is never typed twice. Not held: typed — or the
+    hub restarted since, and as with a line being typed it counts as told.
+    A team's (no key): typed once the PO is settled, not counted again (the
+    resume was); the PO stopped again meanwhile, failed."""
+    marked = [p for p in state["pending"] if p.get("toRoomId") == room_id and p.get("resuming")]
     key = marked[0]["resuming"].get("key", "")
-    held = _d.pending_input(room_id) or {}
-    has = any(it.get("key") == key for it in held.get("items") or [])
-    if has and held.get("state") != "failed":
-        return ""
     ids = {p["id"] for p in marked}
-    if has:
+    if not key:
+        with _d.rotation.GATE:
+            sess = _target(room_id, require_idle=True)
+            if sess is not None:
+                wake, told = wake_line(sorted(marked, key=lambda p: (not p.get("wake"), p["at"])))
+                for p in told:
+                    p.pop("resuming", None)
+                typed = _type_line(state, room_id, sess, wake, told, now, count=False)
+                if typed:
+                    _save(state)
+                    return "typed"
+                for p in told:
+                    p["resuming"] = {"at": now, "key": ""}
+                _save(state)
+                return ""
+            if _stopped(room_id) is None:
+                return ""       # coming up, busy, or being rotated
+        why = "the PO stopped before the line could be typed"
+    else:
+        held = _d.pending_input(room_id) or {}
+        has = any(it.get("key") == key for it in held.get("items") or [])
+        if has and held.get("state") != "failed":
+            return ""
+        if not has:
+            state["pending"] = [p for p in state["pending"] if p["id"] not in ids]
+            _save(state)
+            _log(f"typed to the PO of {room_id} once it was resumed: {', '.join(sorted(ids))}")
+            return "done"
         _d.discard_pending(room_id, key)
-        for p in marked:
-            p.pop("resuming", None)
-        _flag(marked, room_id, f"the PO was started but the line was not typed: "
-                               f"{held.get('error') or 'it stopped'}", now)
-        _save(state)
-        return ""
-    state["pending"] = [p for p in state["pending"] if p["id"] not in ids]
+        why = f"the PO was started but the line was not typed: {held.get('error') or 'it stopped'}"
+    for p in marked:
+        p.pop("resuming", None)
+    _flag(marked, room_id, why, now)
     _save(state)
-    _log(f"typed to the PO of {room_id} once it was resumed: {', '.join(sorted(ids))}")
-    return "typed"
+    return "failed"
 
 
 def tick(now: float | None = None) -> list[str]:
