@@ -13103,9 +13103,14 @@ document.addEventListener('click', (ev) => {
 function appInstallHint(s) {
   if (s.app) return 'Ensemble is running as an app: its own window, and pop-out panels without an address bar.';
   if (s.offer) return 'A window of its own with its own icon, and pop-out panels without an address bar.';
-  if (!s.secure) return `Chrome installs apps only from an https address, and ${s.host} is plain http. Open Ensemble at its`
-    + ' https address to install it (README, "Ensemble as an app"). Here, Chrome\'s ⋮ › Cast, save and share ›'
-    + ' Create shortcut… with "Open as window" gives a window without an address bar; its pop-outs keep theirs.';
+  if (!s.secure) {
+    const [name, port] = String(s.host).split(':');
+    return `Chrome installs apps only from an https address or from localhost, and ${s.host} is plain http.`
+      + ` On the hub machine itself, open http://localhost:${port || 80}/ and install from there.`
+      + ` From another computer, open https://${name}/ once tailscale serve is on (README, "Ensemble as an app").`
+      + ' Here, Chrome\'s ⋮ › Cast, save and share › Create shortcut… with "Open as window" gives a window'
+      + ' without an address bar; its pop-outs keep theirs.';
+  }
   if (!s.prompts) return 'This browser installs pages from its own menu: Safari on a Mac, File › Add to Dock;'
     + ' on an iPhone, Share › Add to Home Screen.';
   return 'Already installed in this browser (open it from the dock or taskbar), or Chrome has not offered it yet:'
