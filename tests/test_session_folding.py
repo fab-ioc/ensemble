@@ -246,7 +246,7 @@ vm.runInContext(code + `
   const withTaskBubble = items => items, rotationText = () => '', readingPlace = () => null, keepPlace = () => {};
   const showChatBar = () => {}, applyComments = () => {}, showLatest = () => {}, markLanded = () => {}, landPending = () => {};
   const showAskLine = () => {};
-  let PM_IDX = new Map(); const pmIndex = () => PM_IDX, pmPlain = t => t;
+  let PM_IDX = new Map(), PM_SIG = ''; const pmIndex = () => PM_IDX, pmPlain = t => t;
   let CU_POINT = null, CU_SHOWN = false, CU_OPENED = true, CU_SNAP = null;
   const readTick = () => {}, catchUpOpen = () => {}, refHref = (room, mid) => '?msg=' + mid;
   globalThis.t = {

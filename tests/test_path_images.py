@@ -321,7 +321,7 @@ class ThreePages(unittest.TestCase):
         self.assertIn("withPathAbbrevs(m.text, () => itemsHtml(it, bars, md, headBar))", js_function("pointItemsHtml"))
         self.assertIn("let h = inCtx() ? null : MD_CACHE.get(t); if (h == null) h = mdToHtml(t); if (!inCtx()) used.set(t, h);", SRC,
                       "an item of a message with abbreviations is drawn in its context, never from or into the cache")
-        self.assertIn("+ '|' + THUMB_GONE.size + '|' + PM_IDX.size;", SRC, "a picture gone from the hub redraws as its link")
+        self.assertIn("+ '|' + THUMB_GONE.size + '|' + PM_SIG;", SRC, "a picture gone from the hub redraws as its link")
 
 
 if __name__ == "__main__":

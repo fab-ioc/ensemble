@@ -1635,13 +1635,19 @@ const refPlain = t => String(t || '').replace(REF_URL_RE, u => {
 // Where a balloon writes the id of one of this chat's PO messages, it reads as
 // the message's name ("opten PO's question of 09-25 18:57"), a link to its
 // balloon with the id in the tooltip. An id this chat does not hold stays text.
-// A tool's argument (id=pm-…, replyTo=pm-…) and a link's msg=pm-… stay as written.
+// A tool's argument (id=pm-…, replyTo=pm-…) and a URL stay as written; in a
+// [label](link) the label says the name and the link is kept.
 // tests/test_po_message_names.py runs this block in Node.
 const PM_ID_RE = /(?<![\w\-=\/])pm-[0-9a-f]{8}(?![\w-])/g;
-let PM_IDX = new Map();     // id → the PO message, from what was last drawn
-function pmIndex(items) {
+const PM_SCAN_RE = /\[([^\]\n]*)\]\(([^)\s]*)\)|https?:\/\/[^\s<>()\[\]{}"'`*|\\]+|(?<![\w\-=\/])pm-[0-9a-f]{8}(?![\w-])/g;
+let PM_IDX = new Map();     // id → the PO message: the room's, and what is drawn
+let PM_SIG = '';            // which ids are known, for the markdown cache
+function pmIndex(items, room) {
   PM_IDX = new Map();
-  (items || []).forEach(m => { if (m && m.kind === 'pomsg' && m.id) PM_IDX.set(m.id, m); });
+  const add = m => { if (m && m.kind === 'pomsg' && m.id) PM_IDX.set(m.id, m); };
+  ((room && room.messages) || []).forEach(add);
+  (items || []).forEach(add);
+  PM_SIG = [...PM_IDX.keys()].join(',');
   return PM_IDX;
 }
 // The name the hub gave it when it was sent; else made the same way.
@@ -1657,10 +1663,18 @@ function pmLinkHtml(id) {
   return `<a class="pm-link" href="${esc(refHref(ROOM, id))}" data-ref-room="${esc(ROOM)}" data-ref-msg="${esc(id)}"`
     + ` title="${esc('Go to ' + name + ' (' + id + ')')}">${esc(name)}</a>`;
 }
-// Every known id in a text, parked as its link (REF_A i REF_Z).
-const parkPmRefs = (s, chips) => String(s).replace(PM_ID_RE, id => { const h = pmLinkHtml(id); return h ? REF_A + (chips.push(h) - 1) + REF_Z : id; });
+const pmWords = t => t.replace(PM_ID_RE, id => PM_IDX.has(id) ? pmName(PM_IDX.get(id)) : id);
+// Every known id in a text, parked as its link (REF_A i REF_Z); in a link's
+// label, its name as words; in a URL, as written.
+const parkPmRefs = (s, chips) => String(s).replace(PM_SCAN_RE, (m, label, target) => {
+  if (label !== undefined) return '[' + pmWords(label) + '](' + target + ')';
+  if (!m.startsWith('pm-')) return m;
+  const h = pmLinkHtml(m);
+  return h ? REF_A + (chips.push(h) - 1) + REF_Z : m;
+});
 // A folded row's line: a known id reads as the name.
-const pmPlain = t => String(t || '').replace(PM_ID_RE, id => PM_IDX.has(id) ? pmName(PM_IDX.get(id)) : id);
+const pmPlain = t => String(t || '').replace(PM_SCAN_RE, (m, label, target) =>
+  label !== undefined ? '[' + pmWords(label) + '](' + target + ')' : m.startsWith('pm-') ? pmWords(m) : m);
 // ---- PO message names: end ------------------------------------------------
 const fileBase = () => (ROOM_OBJ && ROOM_OBJ.cwd) || '';
 const fileHref = (p, line) => '/fileview?path=' + encodeURIComponent((p || '').trim()) + (line ? '&line=' + line : '')
@@ -2748,7 +2762,7 @@ function keepPlace(box, place) {
 function renderBubbles(items, opt = {}) {
   const box = $('#msgs');
   LAST_ITEMS = items;
-  pmIndex(items);
+  pmIndex(items, ROOM_OBJ);
   // Don't blow away the DOM while the user is mid-comment (it would drop their
   // selection / the open composer). Highlights are re-applied after each render.
   if (_cmtComposerOpen || _selBtn) return;
@@ -2796,7 +2810,7 @@ function renderBubbles(items, opt = {}) {
   });
   // A balloon's markdown is drawn once and reused while its text, and what its
   // links depend on, stay the same: every poll used to redraw every balloon.
-  const ctx = HUB_PORT + '|' + fileBase() + '|' + ROOM + '|' + REF_GEN + '|' + THUMB_GONE.size + '|' + PM_IDX.size;
+  const ctx = HUB_PORT + '|' + fileBase() + '|' + ROOM + '|' + REF_GEN + '|' + THUMB_GONE.size + '|' + PM_SIG;
   if (ctx !== MD_CTX) { MD_CACHE = new Map(); MD_CTX = ctx; }
   const used = new Map();
   // An item of a message with "..." paths is drawn in that message's context, never from or into the cache.
@@ -3249,11 +3263,13 @@ function landPending() {
       // A turn of a solo transcript older than the chat shows: draw back to it.
       // A line read while the agent was busy (":q<n>") has no place in the
       // numbering: the whole transcript is drawn for it.
+      // A PO message older than the turns shown: the whole transcript is drawn.
       const t = mid.match(/^(.+):(q?)(\d+)$/);
+      const pm = !t && SOLO_SID && PM_IDX.has(mid);
       let failed = false;
-      if (t && SOLO_SID && soloOwns(t[1])) {
+      if ((t && SOLO_SID && soloOwns(t[1])) || pm) {
         if (!(SOLO_WANT && SOLO_WANT.mid === mid)) {
-          SOLO_WANT = { sid: t[1], n: t[2] ? 0 : +t[3], mid };
+          SOLO_WANT = pm ? { sid: SOLO_SID, n: 0, mid } : { sid: t[1], n: t[2] ? 0 : +t[3], mid };
           renderSolo(SOLO_SID, SOLO_AGENT, true);
           return;
         }

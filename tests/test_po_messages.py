@@ -273,6 +273,34 @@ class Delivery(_World):
                                                         projectId="X", text="?"))
         self.assertIn("no PO message", self.refused(self.dock, "ensemble_message_po", replyTo="pm-zz", text="?"))
 
+    def test_a_reply_queued_before_names_were_kept_names_what_it_answers(self):
+        mid = self.ok(self.opten, "ensemble_message_po", projectId="Dock", kind="question", text="Q?")["id"]
+        old = {"id": "pm-0ld00001", "toRoomId": self.opten, "fromName": "Dock", "kind": "answer",
+               "firstLine": "A.", "at": T0, "replyTo": mid}
+        line, _ = po_messages.wake_line([old])
+        self.assertIn(f"(a reply to {NAME('opten', 'question')})", line)
+        self.assertNotIn(mid, line)
+        self.assertIn(f'in text call it "{NAME("Dock", "answer")}"', line)
+        # What it answers is gone from the chat: a reply, still no id.
+        line, _ = po_messages.wake_line([dict(old, replyTo="pm-90ne0000")])
+        self.assertIn("A. (a reply) — read it", line)
+        self.assertNotIn("pm-90ne0000", line)
+
+    def test_oversized_names_never_cut_the_handle_or_the_name(self):
+        long = "P" * 350
+        item = {"id": "pm-1a2b3c4d", "toRoomId": self.opten, "fromName": long, "kind": "answer",
+                "firstLine": "S" * 200, "at": T0, "replyTo": "pm-5e6f7a8b",
+                "replyName": po_messages.name_of({"fromProjectName": "Q" * 350, "poKind": "question", "ts": T0})}
+        line, told = po_messages.wake_line([item, dict(item, id="pm-99999999")])
+        self.assertLessEqual(len(line), po_messages._WAKE_MAX)
+        self.assertEqual([p["id"] for p in told], ["pm-1a2b3c4d"])
+        name = po_messages.name_of(item)
+        self.assertTrue(line.endswith(f"read it with ensemble_read_message id=pm-1a2b3c4d "
+                                      f'(the id is for the tools only; in text call it "{name}")'), line)
+        self.assertEqual(name, NAME("P" * 59 + "…", "answer"))
+        self.assertTrue(line.startswith(f"[from the {'P' * 59}… PO] answer: "))
+        self.assertIsNotNone(dashboard._PO_MESSAGE_HEAD.match(line))
+
 
 class LoopGuard(_World):
     def test_quiet_kinds_wait_then_go_with_the_next_line_or_when_idle(self):

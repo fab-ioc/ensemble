@@ -84,6 +84,7 @@ QUIET_WAIT_S = 30 * 60              # a quiet message waits this long for compan
 TICK_S = 60
 _FIRST_MAX = 200                    # a message's first line in the typed line
 _WAKE_MAX = 900                     # the whole line: a TUI takes one line
+_WHO_MAX = 60                       # a project's name in a message's name and line
 KIND = "pomsg"                      # the chat message's kind
 TOOL_HINT = "ensemble_read_message id="
 
@@ -213,13 +214,17 @@ def first_line(text: str) -> str:
     return ""
 
 
+def _clip(text: str, n: int) -> str:
+    return text if len(text) <= n else text[:n - 1] + "…"
+
+
 def name_of(m: dict) -> str:
     """What people call a PO message: "opten PO's question of 09-25 18:57".
     The name given when it was sent, else made from what it keeps."""
     if m.get("name"):
         return m["name"]
     ts = m.get("ts") or m.get("at") or 0
-    who = m.get("fromProjectName") or m.get("fromName") or "?"
+    who = _clip(m.get("fromProjectName") or m.get("fromName") or "?", _WHO_MAX)
     kind = m.get("poKind") or m.get("kind") or "message"
     return f"{who} PO's {kind} of {time.strftime('%m-%d %H:%M', time.localtime(ts))}"
 
@@ -352,15 +357,26 @@ def _answers(replied: dict | None) -> dict:
 # Delivering
 # ---------------------------------------------------------------------------
 
+def _reply_name(p: dict) -> str:
+    """The name of what a queued reply answers; for one queued before names
+    were kept, looked up in the target's chat. Never the id."""
+    if p.get("replyName") or not p.get("replyTo"):
+        return p.get("replyName") or ""
+    try:
+        replied = find(_d.chatroom.get_room(p.get("toRoomId") or "", public=False), p["replyTo"])
+    except Exception:
+        replied = None
+    return name_of(replied) if replied else ""
+
+
 def _line_for(p: dict) -> str:
-    reply = p.get("replyName") or p.get("replyTo")
-    return (f"[from the {p['fromName']} PO] {p['kind']}: {p['firstLine'] or '(no text)'}"
-            f"{' (a reply to ' + reply + ')' if reply else ''}")
+    reply = _reply_name(p)
+    return (f"[from the {_clip(p['fromName'], _WHO_MAX)} PO] {p['kind']}: {p['firstLine'] or '(no text)'}"
+            f"{(' (a reply to ' + reply + ')') if reply else ' (a reply)' if p.get('replyTo') else ''}")
 
 
 def _called(p: dict) -> str:
     return f'in text call it "{name_of(p)}"'
-
 
 
 def wake_line(items: list[dict]) -> tuple[str, list[dict]]:
@@ -368,8 +384,10 @@ def wake_line(items: list[dict]) -> tuple[str, list[dict]]:
     while the line stays under _WAKE_MAX."""
     def line(told):
         first = told[0]
-        head = (f"{_line_for(first)} — read it with {TOOL_HINT}{first['id']} "
+        # The handle and the name always fit: the words before them give way.
+        tail = (f" — read it with {TOOL_HINT}{first['id']} "
                 f"(the id is for the tools only; {_called(first)})")
+        head = _clip(_line_for(first), _WAKE_MAX - len(tail)) + tail
         if len(told) == 1:
             return head
         rest = "; ".join(f"{_line_for(p)} — id={p['id']} ({_called(p)})" for p in told[1:])

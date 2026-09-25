@@ -34,14 +34,26 @@ pmIndex([
   { kind: 'pomsg', id: 'pm-0000abcd', fromProjectName: 'Strats', poKind: 'answer', ts: at },
   { kind: 'human', id: 'pm-11112222', text: 'not a PO message' },
 ]);
-console.log(JSON.stringify({
+const first = ({
   heading: mdToHtml('## Strats answers to pm-e00a1c63 (0DTE Slab + 14DTE)'),
   code: mdToHtml('Re `pm-e00a1c63`: done.'),
   made: mdToHtml('See pm-0000abcd.'),
   unknown: mdToHtml('Old one: pm-deadbeef, and pm-11112222.'),
   toolArg: mdToHtml('I ran ensemble_read_message id=pm-e00a1c63 and replyTo=pm-e00a1c63.'),
   plain: pmPlain('Strats answers to pm-e00a1c63; pm-deadbeef stays'),
-}));
+  labelled: mdToHtml('[pm-e00a1c63](https://example.com/report)'),
+  target: mdToHtml('[both](https://example.com/?ids=pm-e00a1c63,pm-0000abcd) and https://x.org/a,pm-0000abcd'),
+  rowLink: pmPlain('[pm-e00a1c63](https://example.com/?ids=pm-e00a1c63,pm-0000abcd)'),
+});
+// Only the answer is drawn (the question is older than the turns shown): the room still knows it.
+const question = { kind: 'pomsg', id: 'pm-aaaa0001', name: "opten PO's question of 09-24 10:00" };
+const answer = { kind: 'pomsg', id: 'pm-bbbb0002', name: "Strats PO's answer of 09-25 09:00", text: 'Re pm-aaaa0001' };
+pmIndex([answer], { messages: [question, answer] });
+const older = { html: mdToHtml(answer.text), sig: PM_SIG };
+// The same number of messages known, but others: the cache's key changes.
+pmIndex([question]); const sigA = PM_SIG;
+pmIndex([answer]); const sigB = PM_SIG;
+console.log(JSON.stringify(Object.assign(first, { older, sigA, sigB })));
 """
 
 
@@ -88,14 +100,39 @@ class PoMessageNames(unittest.TestCase):
     def test_a_folded_row_says_the_name(self):
         self.assertEqual(self.r["plain"], "Strats answers to opten PO's question of 09-25 18:57; pm-deadbeef stays")
 
+    def test_a_markdown_link_keeps_its_target_and_nests_no_link(self):
+        self.assertEqual(self.links(self.r["labelled"]), [])
+        self.assertIn('href="https://example.com/report"', self.r["labelled"])
+        self.assertIn(">opten PO's question of 09-25 18:57</a>", self.r["labelled"])
+        self.assertEqual(self.r["labelled"].count("<a "), 1)
+        target = self.r["target"]
+        self.assertEqual(self.links(target), [])
+        self.assertIn("ids=pm-e00a1c63,pm-0000abcd", target)
+        self.assertIn("https://x.org/a,pm-0000abcd", target)
+        self.assertNotIn("pm-link", target)
+        self.assertEqual(self.r["rowLink"],
+                         "[opten PO's question of 09-25 18:57](https://example.com/?ids=pm-e00a1c63,pm-0000abcd)")
+
+    def test_an_older_question_than_the_turns_drawn_is_named_from_the_room(self):
+        self.assertEqual(self.links(self.r["older"]["html"]), ["opten PO's question of 09-24 10:00"])
+        self.assertIn("pm-aaaa0001", self.r["older"]["sig"])
+
+    def test_the_cache_key_changes_with_which_messages_are_known(self):
+        self.assertNotEqual(self.r["sigA"], self.r["sigB"])
+        self.assertIn("+ '|' + PM_SIG;", fn(SESSION, "renderBubbles"))
+
+    def test_a_link_to_an_older_po_message_draws_the_whole_transcript(self):
+        land = fn(SESSION, "landPending")
+        self.assertIn("const pm = !t && SOLO_SID && PM_IDX.has(mid);", land)
+        self.assertIn("SOLO_WANT = pm ? { sid: SOLO_SID, n: 0, mid }", land)
+
     def test_the_page_uses_them(self):
         md = fn(SESSION, "mdToHtml")
         self.assertIn("s = parkPmRefs(s, chips);", md)
         self.assertIn("pmLinkHtml(body.trim())", md)
         render = fn(SESSION, "renderBubbles")
-        self.assertIn("pmIndex(items);", render)
+        self.assertIn("pmIndex(items, ROOM_OBJ);", render)
         self.assertIn("plain: t => pmPlain(refPlain(t))", render)
-        self.assertIn("PM_IDX.size", render, "a new PO message redraws what names it")
         self.assertIn("a.pm-link')", SESSION, "a click lands on the balloon")
 
 
