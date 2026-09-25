@@ -42,6 +42,7 @@ const first = ({
   toolArg: mdToHtml('I ran ensemble_read_message id=pm-e00a1c63 and replyTo=pm-e00a1c63.'),
   plain: pmPlain('Strats answers to pm-e00a1c63; pm-deadbeef stays'),
   labelled: mdToHtml('[pm-e00a1c63](https://example.com/report)'),
+  codeLabel: mdToHtml('[`pm-e00a1c63`](https://example.com/report)'),
   target: mdToHtml('[both](https://example.com/?ids=pm-e00a1c63,pm-0000abcd) and https://x.org/a,pm-0000abcd'),
   rowLink: pmPlain('[pm-e00a1c63](https://example.com/?ids=pm-e00a1c63,pm-0000abcd)'),
 });
@@ -105,6 +106,11 @@ class PoMessageNames(unittest.TestCase):
         self.assertIn('href="https://example.com/report"', self.r["labelled"])
         self.assertIn(">opten PO's question of 09-25 18:57</a>", self.r["labelled"])
         self.assertEqual(self.r["labelled"].count("<a "), 1)
+        # In code inside the label too.
+        self.assertEqual(self.links(self.r["codeLabel"]), [])
+        self.assertEqual(self.r["codeLabel"].count("<a "), 1)
+        self.assertIn('href="https://example.com/report"', self.r["codeLabel"])
+        self.assertIn(">opten PO's question of 09-25 18:57</a>", self.r["codeLabel"])
         target = self.r["target"]
         self.assertEqual(self.links(target), [])
         self.assertIn("ids=pm-e00a1c63,pm-0000abcd", target)
@@ -129,7 +135,7 @@ class PoMessageNames(unittest.TestCase):
     def test_the_page_uses_them(self):
         md = fn(SESSION, "mdToHtml")
         self.assertIn("s = parkPmRefs(s, chips);", md)
-        self.assertIn("pmLinkHtml(body.trim())", md)
+        self.assertIn("PM_IDX.has(body.trim())) return body.trim();", md)
         render = fn(SESSION, "renderBubbles")
         self.assertIn("pmIndex(items, ROOM_OBJ);", render)
         self.assertIn("plain: t => pmPlain(refPlain(t))", render)

@@ -1697,9 +1697,10 @@ function mdToHtml(src) {
   });
   // Inline code `...`
   s = s.replace(/`([^`\n]+)`/g, (_, body) => {
-    // A PO message's id in code reads as its name too.
-    const pm = /^\s*pm-[0-9a-f]{8}\s*$/.test(body) ? pmLinkHtml(body.trim()) : null;
-    const i = codes.push(pm || codeSpanHtml(body)) - 1;
+    // A known PO message's id in code reads as its name too: left as the bare
+    // id for parkPmRefs, which knows whether it is in a link's label.
+    if (/^\s*pm-[0-9a-f]{8}\s*$/.test(body) && PM_IDX.has(body.trim())) return body.trim();
+    const i = codes.push(codeSpanHtml(body)) - 1;
     return ` I${i} `;
   });
   // A link to a balloon is its chip, parked like code and put back at the end.
