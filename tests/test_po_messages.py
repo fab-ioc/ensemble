@@ -3,7 +3,8 @@ ensemble_read_message): only a PO may write, to another project's PO; the
 message is kept whole in both PO chats and the target is typed one line; the
 answer goes back the same way; quiet kinds wait, a pair of projects wakes at
 most WAKES_PER_HOUR times an hour and the rest is held for the CEO's bell; a
-PO that is not running is told when it runs and is idle, never started."""
+stopped PO is resumed for a message that wakes, with its line as the first
+input (a PO with nothing to resume is flagged and told when it runs)."""
 from __future__ import annotations
 
 import json
@@ -22,8 +23,13 @@ T0 = 1_790_000_000.0
 
 
 class _FakePty:
-    def __init__(self):
+    def __init__(self, screen="> ", last_output=0.0):
         self.typed = []
+        self.screen = screen
+        self.last_output = last_output
+
+    def tail(self):
+        return self.screen
 
     def alive(self) -> bool:
         return True
@@ -31,6 +37,45 @@ class _FakePty:
     def send_line(self, text):
         self.typed.append(text)
         return 0
+
+
+class _FakeLauncher:
+    """The hub's resume of a stopped room (Handler._resume_room) and what it
+    holds for the room until the line is typed (pending_input)."""
+
+    def __init__(self):
+        self.calls = []
+        self.held = {}
+        self.fail_with = ""
+        self.on_start = None
+
+    def _resume_room(self, room, text="", to="", key="", quiet=False):
+        self.calls.append((room["id"], text, key))
+        state = "failed" if self.fail_with else "resuming"
+        self.held[room["id"]] = {"state": state, "error": self.fail_with,
+                                 "items": [{"text": text, "key": key}]}
+        if self.fail_with:
+            raise dashboard.StartRoomError(self.fail_with)
+        return {"resumed": [{"identity": "claude", "ptyId": "pty-new"}], "queued": 1,
+                "delivered": 0}
+
+    def _start_or_resume_room(self, room):
+        self.calls.append((room["id"], None, None))
+        if self.on_start:
+            self.on_start()
+        return [{"identity": "claude", "ptyId": "pty-new"}]
+
+    def pending_input(self, room_id):
+        return self.held.get(room_id)
+
+    def discard_pending(self, room_id, key=""):
+        return self.held.pop(room_id, None) is not None
+
+    def typed_in(self, room_id):
+        self.held.pop(room_id)
+
+    def stopped_after_start(self, room_id, why):
+        self.held[room_id].update(state="failed", error=why)
 
 
 class _World(unittest.TestCase):
@@ -64,7 +109,11 @@ class _World(unittest.TestCase):
         self.idle = {"pty-opten": True, "pty-dock": True, "pty-task": True}
         self.now = T0
         po_messages._HELD_CACHE = (0.0, 0.0, {})
+        self.launcher = _FakeLauncher()
         patches = [
+            mock.patch.object(dashboard, "hub_launcher", return_value=self.launcher),
+            mock.patch.object(dashboard, "pending_input", side_effect=self.launcher.pending_input),
+            mock.patch.object(dashboard, "discard_pending", side_effect=self.launcher.discard_pending),
             mock.patch.object(dashboard, "DASHBOARD_DIR", d / "state"),
             mock.patch.object(dashboard, "load_projects", side_effect=lambda: [dict(p) for p in self.projects]),
             mock.patch.object(dashboard, "load_session_projects", return_value={}),
@@ -314,8 +363,9 @@ class StoppedPo(_World):
         res = self.ok(self.opten, "ensemble_message_po", projectId="Dock", kind="bug", text="Crash.")
         self.assertFalse(res["delivered"])
         self.assertFalse(res["held"])
-        self.assertIn("not running", res["note"])
+        self.assertIn("could not be started", res["note"])
         self.assertEqual(len(self.pomsgs(self.dock)), 1)   # waits in its chat
+        self.assertEqual(self.launcher.calls, [])          # nothing to resume: not started
         self.assertEqual(po_messages.tick(), [])
         self.assertEqual(len(self.queue()), 1)
         # It runs again, busy at first: still waiting; idle: told once.
@@ -395,6 +445,326 @@ class StoppedPo(_World):
         self.assertEqual(po_messages.tick(), [])
         self.assertEqual(self.queue(), [])
         self.assertEqual(len(self.pomsgs(self.opten)), 1)   # the sender keeps its copy
+
+
+class ResumedPo(_World):
+    """A stopped PO with a conversation to resume is started for a message
+    that wakes, the line its first input."""
+
+    def setUp(self):
+        super().setUp()
+        self.ptys.pop("pty-dock")
+        chatroom.patch_participant(self.dock, "claude", {"sessionId": "sess-dock"})
+
+    def send(self, kind="bug", text="Crash."):
+        return self.ok(self.opten, "ensemble_message_po", projectId="Dock", kind=kind, text=text)
+
+    def logged(self, part):
+        return [c for c in po_messages._log.call_args_list if part in c.args[0]]
+
+    def test_a_waking_message_resumes_it_once_with_the_line_as_first_input(self):
+        res = self.send()
+        self.assertFalse(res["held"])
+        self.assertFalse(res["delivered"])
+        self.assertTrue(res["starting"])
+        self.assertIn("starting it", res["note"])
+        [(rid, text, key)] = self.launcher.calls
+        self.assertEqual(rid, self.dock)
+        self.assertEqual(text, "[from the opten PO] bug: Crash. — read it in full with "
+                               f"ensemble_read_message id={res['id']}.")
+        self.assertEqual(key, f"pomsg:{res['id']}")
+        # Queued until the line is in; a look meanwhile starts nothing more.
+        [item] = self.queue()
+        self.assertTrue(item["resuming"])
+        self.now += 60
+        self.assertEqual(po_messages.tick(), [])
+        self.assertEqual(len(self.launcher.calls), 1)
+        self.launcher.typed_in(self.dock)
+        self.assertEqual(po_messages.tick(), [self.dock])
+        self.assertEqual(self.queue(), [])
+        self.assertEqual(po_messages.tick(), [])
+        self.assertEqual(len(self.launcher.calls), 1)
+        self.assertEqual(po_messages.held_by_room(), {})
+
+    def test_a_message_sent_while_it_is_coming_up_waits_for_the_resume(self):
+        self.send(text="first")
+        self.send(text="second")
+        self.assertEqual(len(self.launcher.calls), 1)
+        self.launcher.typed_in(self.dock)
+        self.now += 60
+        po_messages.tick()                          # the first is in
+        self.assertEqual([p["firstLine"] for p in self.queue()], ["second"])
+        self.now += 60
+        po_messages.tick()                          # still stopped here: resumed for it
+        self.assertEqual(len(self.launcher.calls), 2)
+        self.assertIn("second", self.launcher.calls[1][1])
+
+    def test_a_quiet_message_does_not_start_it(self):
+        self.send(kind="info", text="FYI.")
+        self.now += po_messages.QUIET_WAIT_S + 60
+        self.assertEqual(po_messages.tick(), [])
+        self.assertEqual(self.launcher.calls, [])
+        self.assertEqual(len(self.queue()), 1)
+        # It goes along with the next message that wakes.
+        self.send(kind="question", text="Which release?")
+        [(_rid, text, _key)] = self.launcher.calls
+        self.assertIn("question: Which release?", text)
+        self.assertIn("info: FYI.", text)
+
+    def test_the_hourly_limit_holds_for_resumes(self):
+        n = po_messages.WAKES_PER_HOUR
+        for i in range(n):
+            self.now += 60
+            self.assertFalse(self.send(text=f"bug {i}")["held"])
+            self.launcher.typed_in(self.dock)
+            po_messages.tick()
+        self.assertEqual(len(self.launcher.calls), n)
+        self.now += 60
+        res = self.send(text="one too many")
+        self.assertTrue(res["held"])
+        self.assertEqual(len(self.launcher.calls), n)
+        self.now += 60
+        self.assertEqual(po_messages.tick(), [])
+        self.assertEqual(len(self.launcher.calls), n)
+        self.now += po_messages.WINDOW_S
+        po_messages.tick()
+        self.assertEqual(len(self.launcher.calls), n + 1)
+
+    def test_a_failed_resume_leaves_it_queued_and_flagged(self):
+        self.launcher.fail_with = "The agent kind is not installed."
+        res = self.send()
+        self.assertFalse(res["delivered"])
+        [item] = self.queue()
+        self.assertNotIn("resuming", item)
+        self.assertIn("not installed", item["undelivered"]["why"])
+        self.assertEqual(self.launcher.held, {})    # not also held for the room's Retry
+        self.assertFalse(any(po_messages._load()["wakes"].values()))   # the count is rolled back
+        held = po_messages.held_by_room()[self.dock]
+        self.assertEqual(held["count"], 1)
+        self.assertIn("not received", held["reason"])
+        self.assertIn("not installed", held["reason"])
+        # Tried again at each look (once a minute), logged once.
+        for _ in range(3):
+            self.now += 60
+            po_messages.tick()
+        self.assertEqual(len(self.launcher.calls), 4)
+        self.assertEqual(len(self.logged("not delivered to the stopped PO")), 1)
+        self.launcher.fail_with = ""
+        self.now += 60
+        po_messages.tick()
+        self.launcher.typed_in(self.dock)
+        self.now += 60
+        self.assertEqual(po_messages.tick(), [self.dock])
+        self.assertEqual(self.queue(), [])
+        self.assertEqual(po_messages.held_by_room(), {})
+
+    def test_a_line_not_typed_after_the_start_is_queued_again(self):
+        self.send()
+        self.launcher.stopped_after_start(self.dock, "a prompt is on the agent's screen")
+        self.now += 60
+        self.assertEqual(po_messages.tick(), [])
+        [item] = self.queue()
+        self.assertNotIn("resuming", item)
+        self.assertIn("prompt", item["undelivered"]["why"])
+        self.assertEqual(self.launcher.held, {})    # taken back from the room: typed once only
+        self.assertEqual(self.wakes(), [])          # nothing delivered: not counted
+        self.now += 60
+        po_messages.tick()
+        self.assertEqual(len(self.launcher.calls), 2)
+
+    def test_nothing_to_resume_is_flagged_not_started(self):
+        chatroom.patch_participant(self.dock, "claude", {"sessionId": ""})
+        self.send()
+        self.assertEqual(self.launcher.calls, [])
+        self.assertIn("no recorded conversation", self.queue()[0]["undelivered"]["why"])
+
+    def test_a_message_already_pending_is_delivered_by_the_first_tick(self):
+        # As pm-e00a1c63 sat in the queue before this: no resuming mark.
+        state = {"pending": [{"id": "pm-e00a1c63", "toRoomId": self.dock,
+                              "fromProjectId": "proj-opten", "toProjectId": "proj-dock",
+                              "fromName": "opten", "kind": "question",
+                              "firstLine": "Our open questions", "wake": True, "at": T0 - 3600}],
+                 "wakes": {}}
+        self.assertTrue(po_messages._save(state))
+        self.assertEqual(po_messages.tick(), [self.dock])
+        [(rid, text, _key)] = self.launcher.calls
+        self.assertEqual(rid, self.dock)
+        self.assertIn("question: Our open questions", text)
+        self.assertIn("id=pm-e00a1c63", text)
+        self.launcher.typed_in(self.dock)
+        self.now += 60
+        self.assertEqual(po_messages.tick(), [self.dock])
+        self.assertEqual(self.queue(), [])
+
+    def test_a_restart_during_the_resume_counts_it_as_told(self):
+        self.send()
+        self.launcher.held.clear()                  # the hub restarted: nothing held
+        self.now += 60
+        self.assertEqual(po_messages.tick(), [self.dock])
+        self.assertEqual(self.queue(), [])
+        self.assertEqual(len(self.launcher.calls), 1)
+
+    def test_a_po_rotating_awaiting_its_handover_or_replaced_is_not_resumed(self):
+        for name in ("is_rotating", "awaiting_handover", "room_rotating", "switching"):
+            with self.subTest(name), mock.patch.object(rotation, name, return_value=True):
+                self.now += 60
+                self.send(text=name)
+                po_messages.tick()
+                self.assertEqual(self.launcher.calls, [])
+        self.now += 60
+        po_messages.tick()
+        self.assertEqual(len(self.launcher.calls), 1)   # all four, in one line
+        self.assertEqual(len(self.queue()), 4)
+
+    def test_a_running_busy_po_is_not_resumed(self):
+        self.ptys["pty-dock"] = _FakePty()
+        self.idle["pty-dock"] = False
+        with mock.patch.object(po_messages, "_target", return_value=None):
+            self.send()                             # not typed at once (busy being replaced)
+        self.assertEqual(self.launcher.calls, [])
+        self.now += 60
+        self.assertEqual(po_messages.tick(), [])
+        self.assertEqual(self.launcher.calls, [])
+        self.idle["pty-dock"] = True
+        self.assertEqual(po_messages.tick(), [self.dock])
+        self.assertEqual(len(self.typed("pty-dock")), 1)
+        self.assertEqual(self.launcher.calls, [])
+
+    def make_team(self):
+        room = chatroom.get_room(self.dock, public=False)
+        room["mode"] = "collab"
+        room["participants"].append({"identity": "codex", "agent": "codex", "kind": "agent"})
+        chatroom.update_room(room)
+
+        def comes_up():            # its terminal is recorded before it has settled
+            chatroom.patch_participant(self.dock, "claude", {"ptyId": "pty-dock"})
+            self.ptys["pty-dock"] = _FakePty(screen="")
+            self.idle["pty-dock"] = False
+        self.launcher.on_start = comes_up
+
+    def wakes(self):
+        return po_messages._load()["wakes"].get(po_messages.pair_key("proj-opten", "proj-dock"), [])
+
+    def test_a_po_in_a_team_is_resumed_and_typed_the_line_once_settled(self):
+        # A line given to a team's resume would be posted as the CEO's words.
+        self.make_team()
+        res = self.send()
+        self.assertTrue(res["starting"])
+        self.assertEqual(self.launcher.calls, [(self.dock, None, None)])
+        self.assertEqual(self.launcher.held, {})
+        self.assertEqual(len(self.wakes()), 1)
+        # Another message while it comes up: nothing typed into it yet.
+        res2 = self.send(kind="question", text="And this?")
+        self.assertFalse(res2["delivered"])
+        self.assertEqual(self.typed("pty-dock"), [])
+        self.now += 60
+        self.assertEqual(po_messages.tick(), [])
+        self.assertEqual(self.typed("pty-dock"), [])
+        # Idle by the generic test, but no screen drawn yet: still nothing.
+        self.idle["pty-dock"] = True
+        self.now += 60
+        self.assertEqual(po_messages.tick(), [])
+        self.assertEqual(self.typed("pty-dock"), [])
+        # Drawn, but output a moment ago: still nothing.
+        self.ptys["pty-dock"].screen = "> "
+        self.ptys["pty-dock"].last_output = self.now - 1
+        self.assertEqual(po_messages.tick(), [])
+        self.assertEqual(self.typed("pty-dock"), [])
+        # Settled: typed the line it was started for, not counted again.
+        self.now += 60
+        self.assertEqual(po_messages.tick(), [self.dock])
+        [line] = self.typed("pty-dock")
+        self.assertTrue(line.startswith("[from the opten PO] bug: Crash."))
+        self.assertNotIn("And this?", line)
+        self.assertEqual(len(self.wakes()), 1)
+        # Then what came meanwhile, as to any running PO.
+        self.now += 60
+        self.assertEqual(po_messages.tick(), [self.dock])
+        self.assertIn("And this?", self.typed("pty-dock")[1])
+        self.assertEqual(len(self.wakes()), 2)
+        self.assertEqual(len(self.launcher.calls), 1)
+        self.assertEqual(self.queue(), [])
+
+    def test_a_team_po_that_stops_while_coming_up_is_flagged(self):
+        self.make_team()
+        self.send()
+        self.assertEqual(len(self.wakes()), 1)
+        self.ptys.pop("pty-dock")
+        self.now += 60
+        self.assertEqual(po_messages.tick(), [])
+        [item] = self.queue()
+        self.assertNotIn("resuming", item)
+        self.assertIn("stopped before", item["undelivered"]["why"])
+        self.assertEqual(self.wakes(), [])                 # nothing delivered: not counted
+        self.now += 60
+        po_messages.tick()
+        self.assertEqual(len(self.launcher.calls), 2)     # started again, a minute on
+
+    def test_a_send_just_after_the_line_went_in_is_not_reported_delivered(self):
+        self.send(text="first")
+        self.launcher.typed_in(self.dock)           # in, before the next look
+        res = self.send(text="second")
+        self.assertFalse(res["delivered"])
+        self.assertTrue(res["starting"])            # still stopped here: started for it
+        self.assertEqual([p["firstLine"] for p in self.queue()], ["second"])
+        self.assertEqual(len(self.launcher.calls), 2)
+        self.assertIn("second", self.launcher.calls[1][1])
+
+    def test_failures_after_the_start_never_use_up_the_hour(self):
+        self.send()
+        for i in range(po_messages.WAKES_PER_HOUR + 2):
+            if i:
+                self.now += 60
+                po_messages.tick()                  # takes it back; the next look starts it
+                self.now += 60
+                po_messages.tick()
+            self.launcher.stopped_after_start(self.dock, "it stopped")
+        self.assertEqual(len(self.launcher.calls), po_messages.WAKES_PER_HOUR + 2)
+        [item] = self.queue()
+        self.assertNotIn("heldSince", item)
+        self.assertLessEqual(len(self.wakes()), 1)
+
+    def test_a_team_po_on_a_prompt_is_flagged_and_typed_once_answered(self):
+        self.make_team()
+        self.send()
+        self.idle["pty-dock"] = True
+        self.ptys["pty-dock"].screen = "Do you want to proceed?\n> 1. Yes\n  2. No"
+        self.now += 60
+        self.assertEqual(po_messages.tick(), [])
+        self.assertNotIn("undelivered", self.queue()[0])
+        self.now += dashboard.RESUME_NOTE_WAIT_S
+        self.assertEqual(po_messages.tick(), [])
+        self.assertEqual(self.typed("pty-dock"), [])
+        self.assertIn("prompt", self.queue()[0]["undelivered"]["why"])
+        self.assertIn(self.dock, po_messages.held_by_room())
+        self.ptys["pty-dock"].screen = "> "
+        self.now += 60
+        self.assertEqual(po_messages.tick(), [self.dock])
+        self.assertEqual(len(self.typed("pty-dock")), 1)
+        self.assertEqual(len(self.launcher.calls), 1)
+
+    def test_a_codex_po_with_no_recorded_conversation_is_not_started(self):
+        chatroom.patch_participant(self.dock, "claude", {"sessionId": "", "agent": "codex"})
+        res = self.send()
+        self.assertFalse(res["delivered"])
+        self.assertEqual(self.launcher.calls, [])
+        self.assertIn("no recorded conversation", self.queue()[0]["undelivered"]["why"])
+        self.assertIn(self.dock, po_messages.held_by_room())
+
+    def test_the_bell_shows_a_po_that_cannot_receive(self):
+        import attention
+        self.launcher.fail_with = "no agent of this task could be started"
+        self.send()
+        with mock.patch.object(attention, "_classify_agent", return_value=None), \
+                mock.patch.object(attention, "_duplicate_ptys", return_value=None), \
+                mock.patch.object(attention, "_room_level", return_value=None), \
+                mock.patch.object(attention, "_claude_status_by_session", return_value={}), \
+                mock.patch.object(attention, "_evidence", return_value={"alive": False}), \
+                mock.patch.object(dashboard, "project_keys", return_value={}):
+            items = attention._items()
+        [it] = [i for i in items if i["roomId"] == self.dock]
+        self.assertEqual(it["state"], "waiting_for_you")
+        self.assertIn("not received", it["reason"])
 
 
 class WakeLine(unittest.TestCase):

@@ -430,8 +430,9 @@ What happens … How to reproduce … What we need …"
 - **Kinds.** `bug` and `question` wake the other PO. An `answer` wakes it only
   when it answers a bug or a question; `info`, and an answer to an answer,
   never do: it is told with its next message, or when it is idle within 30
-  minutes. So do not answer an answer to say thanks. A PO that is not running
-  is not started for a message; it is told when it next runs.
+  minutes. So do not answer an answer to say thanks. A stopped PO is started
+  for a message that wakes, and the line is its first input; a quiet one waits
+  until it next runs. A PO that is busy is told when it is idle.
 - **At most 6 wakes an hour between two projects.** More are held until the
   hour allows, and the product owner's bell shows it. Batch what you have.
 
