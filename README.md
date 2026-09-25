@@ -132,6 +132,24 @@ py dashboard.py --bind tailscale        # or --bind <an IP of this machine>; ENS
 
 State stays in `~/.ensemble` on the hub's machine. Every device sees the same projects, chats and settings.
 
+### Ensemble as an app
+
+Installed as an app, Ensemble runs in a window of its own with its own icon in the dock or taskbar and no address bar, and so do the PO screen's pop-out panels. The hub serves a web manifest (`/manifest.webmanifest`, icons in `static/icons/`, drawn by `tools/make_app_icons.py`); no service worker is needed.
+
+- **Install:** avatar menu › **Settings** › **Ensemble as an app** › **Install app**, or the install icon at the end of Chrome's address bar. The button shows only while the browser offers to install; otherwise the line under it says why.
+- **Chrome installs only from https or from this machine** (`http://127.0.0.1:8765`, `http://localhost:8765`). The tailnet's plain `http://<host>:8765` cannot be installed. There, Chrome's ⋮ › Cast, save and share › **Create shortcut…** with **Open as window** gives a window without an address bar, but its pop-out panels keep theirs. So does starting Chrome with `--app=http://<host>:8765/`.
+- **Safari:** on a Mac, File › **Add to Dock**; on an iPhone, Share › **Add to Home Screen**. Both work on plain http, and neither is driven by the button.
+- **Signed in:** the app shares the browser's cookies, so the token cookie from the first visit keeps it signed in. The hub renews the cookie for another year each time the page opens. A browser or app without the cookie gets a page that asks for the token (from `~/.ensemble/access-token.txt`). The token is never in the manifest or its start address.
+
+**An https address on the tailnet** with `tailscale serve`, on the hub's machine. It adds an https address, the machine's MagicDNS name (`https://<machine>.<tailnet domain>/`), in front of the hub and changes nothing else: `http://<host>:8765` keeps working.
+
+1. Restart the hub on this version or later **first**. `tailscale serve` connects to the hub over loopback, and an older hub would let those requests in without the token.
+2. In the Tailscale admin console, **DNS** › enable **MagicDNS** and **HTTPS Certificates** (once per tailnet; machine names then appear in the public certificate-transparency logs).
+3. On the hub's machine: `tailscale serve --bg 8765`. The setting survives restarts. `tailscale serve status` shows it; `tailscale serve reset` removes it.
+4. On the other device, open `https://<machine>.<tailnet domain>/?token=<token>` once (or open it without the token and paste it into the page that asks for it), then install from Settings or the address bar.
+
+A request that reaches the hub through a proxy on its own machine (one with a forwarding header such as `X-Forwarded-For` or `Tailscale-User-Login`, or a `Host` other than `127.0.0.1`/`localhost`) needs the token like any remote request. The proxy's https origin passes the hub's same-origin checks.
+
 **Backup.** In Settings, set **Backup of your projects**. The hub keeps `~/EnsembleProjects` as a git repository: it exports each task's chat to `chat.json`, commits on a schedule (hourly by default), and pushes to the remote you give. Only the remote URL is stored. Authentication is the machine's own git credential manager or SSH key. Task worktrees (`repo/`) and file history (`.history/`) are not included.
 
 **Security. Read this before you run it.**
@@ -197,7 +215,7 @@ Each project keeps its own files in its folder: `project.json`, `ROADMAP.md`, `P
 | `index.html` | The main page: projects, board, task panel, settings |
 | `session.html` | A task's or PO's chat page |
 | `fileview.html` | The file viewer that links open in |
-| `static/` | Scripts the pages share (syntax highlighting, comments) |
+| `static/` | Scripts the pages share (syntax highlighting, comments), the Dock library, the web manifest and app icons |
 | `chatroom.py` | Task rooms: participants, messages, who a message wakes |
 | `ensemble_tools.py` | The `ensemble_*` MCP tools and their role checks |
 | `digest.py` | The PO's progress check |

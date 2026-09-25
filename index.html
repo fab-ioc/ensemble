@@ -163,6 +163,17 @@
 })();
 </script>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 0 C13 8 16 11 24 12 C16 13 13 16 12 24 C11 16 8 13 0 12 C8 11 11 8 12 0 Z' fill='%23D97757'/></svg>">
+<!-- Installable as an app (Settings, "Ensemble as an app"): a window of its own
+     with no address bar, and so are the Dock's pop-out windows. The manifest's
+     scope is "/", which holds them. -->
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+<meta name="theme-color" content="#FFFFFF">
+<script>
+// The browser's offer to install can come before the Install app button's
+// module has loaded; kept here for it (appInstallMount).
+window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault(); window.EARLY_INSTALL_OFFER = e; });
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -3180,6 +3191,12 @@ window.DOC_LISTENERS_PAUSED = false;
   <div class="usage-foot" id="usage-foot"></div>
 </div>
 <div id="settings-panel" hidden>
+  <div class="settings-section" id="settings-app">
+    <h4>Ensemble as an app</h4>
+    <button type="button" id="install-app-btn" class="po-btn def" hidden
+            title="A window of its own, with its own icon in the dock or taskbar, and no address bar; its pop-out panels too">Install app</button>
+    <p class="cfg-hint" id="install-app-hint" aria-live="polite"></p>
+  </div>
   <div class="settings-section">
     <h4>Accent color</h4>
     <div class="swatch-row">
@@ -13076,6 +13093,48 @@ document.addEventListener('click', (ev) => {
   closeMeMenu();
   $('#settings-panel').hidden = true;
 });
+
+// ---- Ensemble as an app (Settings) ------------------------------------------
+// Installed (the manifest, /manifest.webmanifest), the page runs in a window of
+// its own with no address bar, and so do the Dock's pop-out panels. The button
+// is the Dock library's (install.js: shown only while the browser offers to
+// install); the line under it says what holds when there is no button.
+function appInstallHint(s) {
+  if (s.app) return 'Ensemble is running as an app: its own window, and pop-out panels without an address bar.';
+  if (s.offer) return 'A window of its own with its own icon, and pop-out panels without an address bar.';
+  if (!s.secure) return `Chrome installs apps only from an https address, and ${s.host} is plain http. Open Ensemble at its`
+    + ' https address to install it (README, "Ensemble as an app"). Here, Chrome\'s ⋮ › Cast, save and share ›'
+    + ' Create shortcut… with "Open as window" gives a window without an address bar; its pop-outs keep theirs.';
+  if (!s.prompts) return 'This browser installs pages from its own menu: Safari on a Mac, File › Add to Dock;'
+    + ' on an iPhone, Share › Add to Home Screen.';
+  return 'Already installed in this browser (open it from the dock or taskbar), or Chrome has not offered it yet:'
+    + ' ⋮ › Cast, save and share › Install page as app.';
+}
+function appInstallMount() {
+  const btn = $('#install-app-btn'), hint = $('#install-app-hint');
+  const paint = inst => {
+    hint.textContent = appInstallHint({ app: inst.isAppWindow(), offer: !btn.hidden, secure: window.isSecureContext,
+      prompts: 'onbeforeinstallprompt' in window, host: location.host });
+  };
+  import('/static/dock/src/install.js').then(inst => {
+    inst.mountInstallButton(btn, { onInstalled: () => toast('Ensemble is installed: open it from the dock or taskbar', 5000) });
+    // An offer made before the module arrived (kept by the listener below).
+    if (window.EARLY_INSTALL_OFFER && btn.hidden) {
+      try { window.dispatchEvent(window.EARLY_INSTALL_OFFER); } catch (e) { /* already taken */ }
+    }
+    new MutationObserver(() => paint(inst)).observe(btn, { attributes: true, attributeFilter: ['hidden'] });
+    paint(inst);
+  }).catch(() => { hint.textContent = appInstallHint({ app: false, offer: false, secure: window.isSecureContext, prompts: false, host: location.host }); });
+}
+appInstallMount();
+// The title bar of an installed window takes the theme's surface.
+function appThemeColor() {
+  const m = document.querySelector('meta[name="theme-color"]');
+  const c = getComputedStyle(document.documentElement).getPropertyValue('--surface').trim();
+  if (m && c) m.content = c;
+}
+window.addEventListener('cd-theme', appThemeColor);
+appThemeColor();
 
 // Jira link add/remove (in the detail panel)
 document.addEventListener('click', async (ev) => {

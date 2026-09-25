@@ -150,6 +150,62 @@ def _addr_is_loopback(host: str) -> bool:
     return h in _LOOPBACK
 
 
+# A proxy on this machine (`tailscale serve`, which gives the hub an https
+# address on the tailnet) connects from loopback, but the person behind it is
+# not local. Such a request says so: a forwarding header, or a Host that is
+# not this machine's loopback name. It then passes the token gate like any
+# remote request. Local programs (the browser, the agents' /mcp calls) send
+# neither.
+_PROXY_HEADERS = ("X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "Forwarded",
+                  "Tailscale-User-Login", "Tailscale-Funnel-Request")
+
+
+def _host_is_loopback(host_header: str) -> bool:
+    h = (host_header or "").strip().lower()
+    if h.startswith("["):
+        h = h[1:h.find("]")] if "]" in h else h[1:]
+    elif h.count(":") == 1:
+        h = h.split(":", 1)[0]
+    return h in _LOOPBACK
+
+
+# Served to anyone who can reach the hub, without the token: the browser
+# fetches a web manifest without cookies, and the icons it names follow.
+# Nothing in them is private.
+UNGATED_PATHS = ("/manifest.webmanifest",)
+UNGATED_PREFIXES = ("/static/icons/",)
+# What a page opened without the token cookie gets: a field for the token. Its
+# colours are the Light theme's tokens (--bg, --surface, --fg, --fg-subtle,
+# --border-strong, --accent, --focus-ring), written out: nothing else loads.
+SIGN_IN_PAGE = b"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ensemble: sign in</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/static/icons/icon-192.png">
+<style>
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #F7F8F9; color: #172B4D;
+         font: 14px/20px system-ui, -apple-system, "Segoe UI", sans-serif; }
+  form { background: #FFFFFF; border-radius: 8px; padding: 24px; width: min(360px, calc(100vw - 32px));
+         box-sizing: border-box; box-shadow: 0 1px 1px rgba(9,30,66,.25), 0 0 1px rgba(9,30,66,.31); }
+  h1 { font-size: 20px; line-height: 24px; font-weight: 600; margin: 0 0 8px; }
+  p { margin: 0 0 16px; color: #44546F; }
+  input { box-sizing: border-box; width: 100%; height: 40px; padding: 0 8px; font-size: 16px;
+          border: 1px solid #B3B9C4; border-radius: 6px; margin: 0 0 16px; }
+  button { height: 32px; padding: 0 12px; border: 0; border-radius: 6px; background: #0C66E4; color: #FFFFFF;
+           font: inherit; font-weight: 500; cursor: pointer; }
+  input:focus-visible, button:focus-visible { outline: none; box-shadow: 0 0 0 2px #FFFFFF, 0 0 0 4px #2684FF; }
+</style></head>
+<body><form method="get">
+<h1>Ensemble</h1>
+<p>This browser is not signed in to this hub. Paste the access token, from
+<code>~/.ensemble/access-token.txt</code> on the hub's machine. It is kept for a year.</p>
+<input name="token" type="password" autocomplete="current-password" aria-label="Access token" required autofocus>
+<button type="submit">Sign in</button>
+</form></body></html>
+"""
+
+
 # --- Who may restart the hub -------------------------------------------------
 # POST /api/update pulls the code and restarts the hub, ending every agent on
 # the machine. The loopback exemption above would let any agent do that with
@@ -8280,6 +8336,15 @@ class Handler(BaseHTTPRequestHandler):
         ip = self.client_address[0] if self.client_address else ""
         return ip[7:] if ip.startswith("::ffff:") else ip
 
+    def _is_local(self) -> bool:
+        """Whether the request comes from a program on this machine: over
+        loopback, and not through a proxy there (see _PROXY_HEADERS)."""
+        if not _addr_is_loopback(self._client_ip()):
+            return False
+        if any(self.headers.get(h) is not None for h in _PROXY_HEADERS):
+            return False
+        return _host_is_loopback(self.headers.get("Host") or "")
+
     def _presented_token(self, u) -> str:
         q = parse_qs(u.query)
         if q.get("token"):
@@ -8316,6 +8381,17 @@ class Handler(BaseHTTPRequestHandler):
         return (self.headers.get("Upgrade-Insecure-Requests") == "1"
                 and "text/html" in (self.headers.get("Accept") or ""))
 
+    def _token_cookie_headers(self) -> list[tuple[str, str]]:
+        """The access-token cookie again, a year from now, each time a remote
+        browser opens the page with it: an installed app, opened now and then,
+        stays signed in for as long as it is used."""
+        if not ACCESS_TOKEN or self._is_local() or not self._is_page_navigation():
+            return []
+        if not hmac.compare_digest(self._cookie(TOKEN_COOKIE), ACCESS_TOKEN):
+            return []
+        return [("Set-Cookie", f"{TOKEN_COOKIE}={ACCESS_TOKEN}; HttpOnly; SameSite=Lax; "
+                               "Path=/; Max-Age=31536000")]
+
     def _ui_key_headers(self) -> list[tuple[str, str]]:
         """The cookie that lets this browser use the Update now button. Only
         for a page navigation, so a script that merely fetches the page does
@@ -8330,7 +8406,14 @@ class Handler(BaseHTTPRequestHandler):
         # it to our own Host keeps out a page on another local port: that is
         # same-site, so SameSite alone would let its request carry the cookie.
         origin, host = self.headers.get("Origin") or "", self.headers.get("Host") or ""
-        if not host or origin not in (f"http://{host}", f"https://{host}"):
+        ours = [f"http://{host}", f"https://{host}"] if host else []
+        # Behind a proxy on this machine (tailscale serve) the page's origin
+        # is the proxy's host. A browser cannot set this header on a request
+        # of its own, so a page elsewhere cannot use it to pass.
+        fwd = (self.headers.get("X-Forwarded-Host") or "").split(",")[0].strip()
+        if fwd and _addr_is_loopback(self._client_ip()):
+            ours += [f"http://{fwd}", f"https://{fwd}"]
+        if origin not in ours:
             return False
         return self.headers.get("Sec-Fetch-Site") in (None, "same-origin")
 
@@ -8431,9 +8514,12 @@ class Handler(BaseHTTPRequestHandler):
         """Return True if the request may proceed. When an ACCESS_TOKEN is set,
         non-loopback requests must present it; a matching ?token= on a GET is
         swapped for an HttpOnly cookie via redirect so the URL stays clean."""
-        if not ACCESS_TOKEN or _addr_is_loopback(self._client_ip()):
+        if not ACCESS_TOKEN or self._is_local():
             return True
         u = urlparse(self.path)
+        if self.command in ("GET", "HEAD") and ".." not in u.path and "%" not in u.path and (
+                u.path in UNGATED_PATHS or u.path.startswith(UNGATED_PREFIXES)):
+            return True
         tok = self._presented_token(u)
         if tok and hmac.compare_digest(tok, ACCESS_TOKEN):
             q = parse_qs(u.query)
@@ -8454,8 +8540,16 @@ class Handler(BaseHTTPRequestHandler):
                 return False
             return True
         self.send_response(401)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
-        body = b"401 Unauthorized: append ?token=<your token> to the URL.\n"
+        if self.command == "GET" and self._is_page_navigation():
+            # A page opened without the cookie (a new browser, an installed
+            # app that lost it): a field for the token, which comes back as
+            # ?token= and is swapped for the cookie above.
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            body = SIGN_IN_PAGE
+        else:
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            body = b"401 Unauthorized: append ?token=<your token> to the URL.\n"
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         try:
@@ -8544,7 +8638,13 @@ class Handler(BaseHTTPRequestHandler):
             # The Update now button lives on this page; hand the browser the
             # key that /api/update asks for.
             self._send_file(STATIC_DIR / "index.html", "text/html; charset=utf-8",
-                            self._ui_key_headers())
+                            self._ui_key_headers() + self._token_cookie_headers())
+            return
+        if p == "/manifest.webmanifest":
+            # What makes the page installable as an app (a window of its own,
+            # no address bar; the Dock's pop-outs too, its scope being "/").
+            self._send_file(STATIC_DIR / "static" / "manifest.webmanifest",
+                            "application/manifest+json; charset=utf-8")
             return
         if p.startswith("/static/"):
             sub = p[len("/static/"):]
@@ -8836,7 +8936,7 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/agent/hooks":
             # What the Claude agents' hooks last said, and the newest events:
             # for checking the hooks arrive (no page reads this).
-            if not _addr_is_loopback(self._client_ip()):
+            if not self._is_local():
                 self._send_json(403, {"error": "loopback_only"})
                 return
             self._send_json(200, agent_hooks.snapshot())
@@ -10778,7 +10878,7 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
 
     def _agent_hook_answer(self) -> None:
-        if not _addr_is_loopback(self._client_ip()):
+        if not self._is_local():
             self._send_json(403, {"error": "loopback_only"})
             return
         if self.headers.get("Origin") and not self._same_origin_request():

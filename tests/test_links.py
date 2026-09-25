@@ -348,6 +348,9 @@ def wired(js: str, tokens: set[str], tag: str) -> bool:
             if re.search(rf"\b{var}\.(?:onclick\s*=|addEventListener\(\s*['\"](?:click|mousedown|pointerdown))",
                          js[m.end():m.end() + 3000]):
                 return True
+            # The Dock library wires its Install app button (install.js).
+            if re.search(rf"mountInstallButton\(\s*{var}\b", js[m.end():m.end() + 3000]):
+                return True
     if tag.startswith("js:"):                   # created in script, wired on the spot
         var = re.escape(tag[3:])
         if re.search(rf"\b{var}\.(?:onclick\s*=|addEventListener\(\s*['\"](?:click|mousedown|pointerdown))", js):
@@ -390,6 +393,7 @@ class TokenRedirect(unittest.TestCase):
             _presented_token = dashboard.Handler._presented_token
             _cookie = dashboard.Handler._cookie
             _client_ip = dashboard.Handler._client_ip
+            _is_local = dashboard.Handler._is_local
 
             def __init__(self, path):
                 self.path, self.command, self.headers = path, "GET", {}
