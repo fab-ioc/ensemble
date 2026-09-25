@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -20,6 +21,9 @@ import po_messages
 import rotation
 
 T0 = 1_790_000_000.0
+# What people call a message sent at T0 (the hub's clock).
+def NAME(project, kind, at=T0):
+    return f"{project} PO's {kind} of {time.strftime('%m-%d %H:%M', time.localtime(at))}"
 
 
 class _FakePty:
@@ -217,8 +221,11 @@ class Delivery(_World):
         self.assertEqual(got[0]["from"], f"claude@{self.opten}")
         self.assertEqual(got[0]["to"], "claude")
         [line] = self.typed("pty-dock")
-        self.assertEqual(line, f"[from the opten PO] bug: The splitter jumps on drop — read it in full "
-                               f"with ensemble_read_message id={mid}.")
+        self.assertEqual(line, f"[from the opten PO] bug: The splitter jumps on drop — read it "
+                               f"with ensemble_read_message id={mid} (the id is for the tools only; "
+                               f'in text call it "{NAME("opten", "bug")}")')
+        self.assertEqual(res["name"], NAME("opten", "bug"))
+        self.assertEqual({m["name"] for m in got + sent}, {NAME("opten", "bug")})
         self.assertEqual(self.typed("pty-opten"), [])
         self.assertEqual(self.queue(), [])
         # The typed line is hub input, not the CEO's words.
@@ -248,14 +255,51 @@ class Delivery(_World):
         back = self.pomsgs(self.opten)[-1]
         self.assertEqual((back["direction"], back["replyTo"], back["fromProjectName"], back["text"]),
                          ("received", mid, "Dock", "Yes, tagged v2.1.0."))
-        self.assertTrue(self.typed("pty-opten")[0].startswith(
-            f"[from the Dock PO] answer: Yes, tagged v2.1.0. (a reply to {mid}) — read it in full"))
+        self.assertEqual(self.typed("pty-opten")[0],
+            f"[from the Dock PO] answer: Yes, tagged v2.1.0. (a reply to {NAME('opten', 'question')}) — "
+            f"read it with ensemble_read_message id={res['id']} (the id is for the tools only; "
+            f'in text call it "{NAME("Dock", "answer")}")')
+        self.assertNotIn(mid, self.typed("pty-opten")[0].split(" id=")[0])
+        # The reply's result names itself and what it answers.
+        self.assertEqual((res["name"], res["answers"], res["answersId"]),
+                         (NAME("Dock", "answer"), NAME("opten", "question"), mid))
+        read = self.ok(self.opten, "ensemble_read_message", id=res["id"])
+        self.assertEqual((read["name"], read["replyToName"]), (NAME("Dock", "answer"), NAME("opten", "question")))
+        self.assertEqual(self.ok(self.dock, "ensemble_read_message", id=mid)["replyNames"], [NAME("Dock", "answer")])
         self.assertEqual(self.ok(self.dock, "ensemble_read_message", id=mid)["replies"], [res["id"]])
         # A reply names the other side itself; another project is refused.
         self.projects.append({"id": "proj-x", "name": "X", "poRoomId": self.task})
         self.assertIn("a reply goes there", self.refused(self.dock, "ensemble_message_po", replyTo=mid,
                                                         projectId="X", text="?"))
         self.assertIn("no PO message", self.refused(self.dock, "ensemble_message_po", replyTo="pm-zz", text="?"))
+
+    def test_a_reply_queued_before_names_were_kept_names_what_it_answers(self):
+        mid = self.ok(self.opten, "ensemble_message_po", projectId="Dock", kind="question", text="Q?")["id"]
+        old = {"id": "pm-0ld00001", "toRoomId": self.opten, "fromName": "Dock", "kind": "answer",
+               "firstLine": "A.", "at": T0, "replyTo": mid}
+        line, _ = po_messages.wake_line([old])
+        self.assertIn(f"(a reply to {NAME('opten', 'question')})", line)
+        self.assertNotIn(mid, line)
+        self.assertIn(f'in text call it "{NAME("Dock", "answer")}"', line)
+        # What it answers is gone from the chat: a reply, still no id.
+        line, _ = po_messages.wake_line([dict(old, replyTo="pm-90ne0000")])
+        self.assertIn("A. (a reply) — read it", line)
+        self.assertNotIn("pm-90ne0000", line)
+
+    def test_oversized_names_never_cut_the_handle_or_the_name(self):
+        long = "P" * 350
+        item = {"id": "pm-1a2b3c4d", "toRoomId": self.opten, "fromName": long, "kind": "answer",
+                "firstLine": "S" * 200, "at": T0, "replyTo": "pm-5e6f7a8b",
+                "replyName": po_messages.name_of({"fromProjectName": "Q" * 350, "poKind": "question", "ts": T0})}
+        line, told = po_messages.wake_line([item, dict(item, id="pm-99999999")])
+        self.assertLessEqual(len(line), po_messages._WAKE_MAX)
+        self.assertEqual([p["id"] for p in told], ["pm-1a2b3c4d"])
+        name = po_messages.name_of(item)
+        self.assertTrue(line.endswith(f"read it with ensemble_read_message id=pm-1a2b3c4d "
+                                      f'(the id is for the tools only; in text call it "{name}")'), line)
+        self.assertEqual(name, NAME("P" * 59 + "…", "answer"))
+        self.assertTrue(line.startswith(f"[from the {'P' * 59}… PO] answer: "))
+        self.assertIsNotNone(dashboard._PO_MESSAGE_HEAD.match(line))
 
 
 class LoopGuard(_World):
@@ -276,9 +320,10 @@ class LoopGuard(_World):
         # A bug takes them with it, in one line.
         bug = self.ok(self.opten, "ensemble_message_po", projectId="Dock", kind="bug", text="Crash.")["id"]
         line = self.typed("pty-dock")[-1]
-        self.assertTrue(line.startswith(f"[from the opten PO] bug: Crash. — read it in full with "
-                                        f"ensemble_read_message id={bug}. Also waiting for you: "))
-        self.assertIn(f"id={info}", line)
+        self.assertTrue(line.startswith(f"[from the opten PO] bug: Crash. — read it with "
+                                        f"ensemble_read_message id={bug} (the id is for the tools only; "
+                                        f'in text call it "{NAME("opten", "bug", self.now)}"). Also waiting for you: '))
+        self.assertIn(f'id={info} (in text call it "{NAME("opten", "info")}")', line)
         self.assertEqual(len(self.typed("pty-dock")), 2)
         self.assertEqual(self.queue(), [])
 
@@ -470,8 +515,9 @@ class ResumedPo(_World):
         self.assertIn("starting it", res["note"])
         [(rid, text, key)] = self.launcher.calls
         self.assertEqual(rid, self.dock)
-        self.assertEqual(text, "[from the opten PO] bug: Crash. — read it in full with "
-                               f"ensemble_read_message id={res['id']}.")
+        self.assertEqual(text, "[from the opten PO] bug: Crash. — read it with "
+                               f"ensemble_read_message id={res['id']} (the id is for the tools only; "
+                               f'in text call it "{NAME("opten", "bug")}")')
         self.assertEqual(key, f"pomsg:{res['id']}")
         # Queued until the line is in; a look meanwhile starts nothing more.
         [item] = self.queue()

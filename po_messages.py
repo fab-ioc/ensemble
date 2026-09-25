@@ -14,10 +14,15 @@ message, so it makes no points for him; it is no hub traffic either, so the
 page never folds it away as such. Neither copy rings anyone by itself
 (``rang`` is empty): the hub types the target PO one short line instead::
 
-    [from the opten PO] bug: The splitter jumps on drop — read it in full with ensemble_read_message id=pm-1a2b3c4d.
+    [from the opten PO] bug: The splitter jumps on drop — read it with ensemble_read_message id=pm-1a2b3c4d (the id is for the tools only; in text call it "opten PO's bug of 09-25 18:57")
 
 and the PO reads the whole text with ``ensemble_read_message``. Nothing long
 is ever typed, so nothing is cut.
+
+**Its name.** The id is a handle for the tools; people read a message by its
+name, who wrote it, what kind and when: "opten PO's bug of 09-25 18:57"
+(:func:`name_of`). It is fixed when the message is sent and kept in both
+copies (``name``), so the line, the tools and the page all say the same.
 
 **When the line is typed.** As a task's report is (``_ring_report``), at once,
 when the message is one that wakes and the target PO is running (or stopped:
@@ -79,6 +84,7 @@ QUIET_WAIT_S = 30 * 60              # a quiet message waits this long for compan
 TICK_S = 60
 _FIRST_MAX = 200                    # a message's first line in the typed line
 _WAKE_MAX = 900                     # the whole line: a TUI takes one line
+_WHO_MAX = 60                       # a project's name in a message's name and line
 KIND = "pomsg"                      # the chat message's kind
 TOOL_HINT = "ensemble_read_message id="
 
@@ -208,13 +214,31 @@ def first_line(text: str) -> str:
     return ""
 
 
-def view(m: dict, full: bool = True) -> dict:
-    out = {"id": m.get("id"), "direction": m.get("direction"), "kind": m.get("poKind"),
+def _clip(text: str, n: int) -> str:
+    return text if len(text) <= n else text[:n - 1] + "…"
+
+
+def name_of(m: dict) -> str:
+    """What people call a PO message: "opten PO's question of 09-25 18:57".
+    The name given when it was sent, else made from what it keeps."""
+    if m.get("name"):
+        return m["name"]
+    ts = m.get("ts") or m.get("at") or 0
+    who = _clip(m.get("fromProjectName") or m.get("fromName") or "?", _WHO_MAX)
+    kind = m.get("poKind") or m.get("kind") or "message"
+    return f"{who} PO's {kind} of {time.strftime('%m-%d %H:%M', time.localtime(ts))}"
+
+
+def view(m: dict, full: bool = True, room: dict | None = None) -> dict:
+    out = {"id": m.get("id"), "name": name_of(m), "direction": m.get("direction"), "kind": m.get("poKind"),
            "from": f"{m.get('fromProjectName')} PO", "to": f"{m.get('toProjectName')} PO",
            "fromProjectId": m.get("fromProjectId"), "toProjectId": m.get("toProjectId"),
            "at": time.strftime("%Y-%m-%d %H:%M", time.localtime(m.get("ts") or 0))}
     if m.get("replyTo"):
         out["replyTo"] = m["replyTo"]
+        replied = find(room, m["replyTo"]) if room else None
+        if m.get("replyName") or replied:
+            out["replyToName"] = m.get("replyName") or name_of(replied)
     if full:
         out["text"] = m.get("text", "")
     else:
@@ -263,10 +287,11 @@ def send(room: dict, identity: str, project_id: str, target_ref: str, text: str,
     if to_room["id"] == room["id"]:
         raise Refused(f"'{_name(target)}' is led from this same chat: there is nobody else to tell")
     mid = "pm-" + uuid.uuid4().hex[:8]
-    meta = {"id": mid, "poKind": kind, "fromProjectId": me["id"], "fromProjectName": _name(me),
-            "toProjectId": target["id"], "toProjectName": _name(target),
-            "fromRoomId": room["id"], "toRoomId": to_room["id"],
-            **({"replyTo": replied["id"]} if replied else {})}
+    name = name_of({"fromProjectName": _name(me), "poKind": kind, "ts": now})
+    reply = {"replyTo": replied["id"], "replyName": name_of(replied)} if replied else {}
+    meta = {"id": mid, "name": name, "poKind": kind, "fromProjectId": me["id"],
+            "fromProjectName": _name(me), "toProjectId": target["id"], "toProjectName": _name(target),
+            "fromRoomId": room["id"], "toRoomId": to_room["id"], **reply}
     got = _d.chatroom.post_po_message(to_room["id"], f"{identity}@{room['id']}", to_ident, text,
                                       {**meta, "direction": "received"})
     if got is None:
@@ -276,8 +301,7 @@ def send(room: dict, identity: str, project_id: str, target_ref: str, text: str,
     wakes = wakes_by_itself(kind, (replied or {}).get("poKind", ""))
     item = {"id": mid, "toRoomId": to_room["id"], "fromProjectId": me["id"],
             "toProjectId": target["id"], "fromName": _name(me), "kind": kind,
-            "firstLine": first_line(text), "wake": wakes, "at": now,
-            **({"replyTo": replied["id"]} if replied else {})}
+            "firstLine": first_line(text), "wake": wakes, "at": now, "name": name, **reply}
     with _LOCK:
         state = _load()
         state["pending"].append(item)
@@ -288,8 +312,8 @@ def send(room: dict, identity: str, project_id: str, target_ref: str, text: str,
     who = f"the {_name(target)} PO"
     if not queued:
         _log(f"{mid} {kind} {_name(me)} → {_name(target)}: in both chats, not queued")
-        return {"ok": True, "id": mid, "kind": kind, "to": f"{_name(target)} PO",
-                "toProjectId": target["id"], "delivered": False, "held": False, "queued": False,
+        return {"ok": True, "id": mid, "name": name, **_answers(replied), "kind": kind,
+                "to": f"{_name(target)} PO", "toProjectId": target["id"], "delivered": False, "held": False, "queued": False,
                 "note": (f"in {who}'s chat, but the hub could not save its list of messages to "
                          f"tell, so {who} is NOT told of it: send it again later, or tell "
                          f"{_d.operator_name()}")}
@@ -320,29 +344,54 @@ def send(room: dict, identity: str, project_id: str, target_ref: str, text: str,
                 f"it is told when it is idle (a stopped PO is started for it, within a minute)")
     _log(f"{mid} {kind} {_name(me)} → {_name(target)}: "
          f"{'typed' if told else 'starting the PO' if starting else 'held' if held else 'waits'}")
-    return {"ok": True, "id": mid, "kind": kind, "to": f"{_name(target)} PO",
-            "toProjectId": target["id"], "delivered": told, "held": held,
+    return {"ok": True, "id": mid, "name": name, **_answers(replied), "kind": kind,
+            "to": f"{_name(target)} PO", "toProjectId": target["id"], "delivered": told, "held": held,
             **({"starting": True} if starting else {}), "note": note}
+
+
+def _answers(replied: dict | None) -> dict:
+    return {"answers": name_of(replied), "answersId": replied["id"]} if replied else {}
 
 
 # ---------------------------------------------------------------------------
 # Delivering
 # ---------------------------------------------------------------------------
 
+def _reply_name(p: dict) -> str:
+    """The name of what a queued reply answers; for one queued before names
+    were kept, looked up in the target's chat. Never the id."""
+    if p.get("replyName") or not p.get("replyTo"):
+        return p.get("replyName") or ""
+    try:
+        replied = find(_d.chatroom.get_room(p.get("toRoomId") or "", public=False), p["replyTo"])
+    except Exception:
+        replied = None
+    return name_of(replied) if replied else ""
+
+
 def _line_for(p: dict) -> str:
-    return (f"[from the {p['fromName']} PO] {p['kind']}: {p['firstLine'] or '(no text)'}"
-            f"{' (a reply to ' + p['replyTo'] + ')' if p.get('replyTo') else ''}")
+    reply = _reply_name(p)
+    return (f"[from the {_clip(p['fromName'], _WHO_MAX)} PO] {p['kind']}: {p['firstLine'] or '(no text)'}"
+            f"{(' (a reply to ' + reply + ')') if reply else ' (a reply)' if p.get('replyTo') else ''}")
+
+
+def _called(p: dict) -> str:
+    return f'in text call it "{name_of(p)}"'
 
 
 def wake_line(items: list[dict]) -> tuple[str, list[dict]]:
     """(the typed line, the messages it tells). The first always; the others
     while the line stays under _WAKE_MAX."""
     def line(told):
-        head = f"{_line_for(told[0])} — read it in full with {TOOL_HINT}{told[0]['id']}."
+        first = told[0]
+        # The handle and the name always fit: the words before them give way.
+        tail = (f" — read it with {TOOL_HINT}{first['id']} "
+                f"(the id is for the tools only; {_called(first)})")
+        head = _clip(_line_for(first), _WAKE_MAX - len(tail)) + tail
         if len(told) == 1:
             return head
-        rest = "; ".join(f"{_line_for(p)} — id={p['id']}" for p in told[1:])
-        return f"{head} Also waiting for you: {rest}. Read each the same way."
+        rest = "; ".join(f"{_line_for(p)} — id={p['id']} ({_called(p)})" for p in told[1:])
+        return f"{head}. Also waiting for you: {rest}. Read each the same way."
 
     told = items[:1]
     for p in items[1:]:

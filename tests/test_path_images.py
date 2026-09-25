@@ -113,7 +113,7 @@ JS = r"""
 const vm = require('vm');
 const { code, cases } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const ctx = { console, URL, location: new URL('http://hub:8765/session?id=room-aaaa0001'), ROOM: 'room-aaaa0001', ROOM_OBJ: { cwd: 'C:\\t' },
-  HUB_PORT: '8765', CHAT_NAMES: {}, refOfUrl: () => null, refChipHtml: () => null, parkTaskRefs: (s, chips) => s,
+  HUB_PORT: '8765', CHAT_NAMES: {}, refOfUrl: () => null, refChipHtml: () => null, parkTaskRefs: (s, chips) => s, parkPmRefs: (s, chips) => s, pmLinkHtml: () => null,
   REF_A: '\uE004', REF_Z: '\uE005', REF_MARK_RE: /\uE004(\d+)\uE005/g, REF_URL_RE: /https?:\/\/[^\s<>()\[\]{}"'`*|\\]+/gi,
   attOwn: (room, p) => /attachments/.test(p), cases };
 vm.createContext(ctx);
@@ -321,7 +321,7 @@ class ThreePages(unittest.TestCase):
         self.assertIn("withPathAbbrevs(m.text, () => itemsHtml(it, bars, md, headBar))", js_function("pointItemsHtml"))
         self.assertIn("let h = inCtx() ? null : MD_CACHE.get(t); if (h == null) h = mdToHtml(t); if (!inCtx()) used.set(t, h);", SRC,
                       "an item of a message with abbreviations is drawn in its context, never from or into the cache")
-        self.assertIn("+ '|' + THUMB_GONE.size;", SRC, "a picture gone from the hub redraws as its link")
+        self.assertIn("+ '|' + THUMB_GONE.size + '|' + PM_SIG;", SRC, "a picture gone from the hub redraws as its link")
 
 
 if __name__ == "__main__":

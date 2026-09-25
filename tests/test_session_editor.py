@@ -57,7 +57,7 @@ const ctx = { ROOM: 'room-aaaa0001', console, URL,
   attSplit: t => { const lines = String(t || '').replace(/\s+$/, '').split('\n'); let n = lines.length;
     while (n && lines[n - 1].startsWith('[image] ')) n--; if (n === lines.length) return { words: String(t || ''), paths: [] };
     return { words: lines.slice(0, n).join('\n').replace(/\s+$/, ''), paths: lines.slice(n).map(l => l.slice(8).trim()) }; },
-  ATT_PREFIX: '[image] ', HUB_PORT: '8765', ROOM_OBJ: null, CHAT_NAMES: {}, refOfUrl: () => null, refChipHtml: () => null, parkTaskRefs: (s, chips) => s,
+  ATT_PREFIX: '[image] ', HUB_PORT: '8765', ROOM_OBJ: null, CHAT_NAMES: {}, refOfUrl: () => null, refChipHtml: () => null, parkTaskRefs: (s, chips) => s, parkPmRefs: (s, chips) => s, pmLinkHtml: () => null,
   linkify: t => t, unlinkify: t => t, codeSpanHtml: b => '<code>' + b + '</code>', REF_A: '\uE004', REF_Z: '\uE005', REF_MARK_RE: /\uE004(\d+)\uE005/g,
   REF_URL_RE: /https?:\/\/[^\s<>()\[\]{}"'`*|\\]+/gi, TASK_BLOCK_RE: /\n\n\[ref ((?:@[A-Za-z][\w-]*@|#)(?:[A-Za-z][A-Za-z0-9]*-)?\d{1,6})\] task [^\n]*\s*$/,
   refHref: (room, mid) => '/session?room=' + room + '&msg=' + mid, lastAnswer: p => (p.answers || [])[(p.answers || []).length - 1] || null,

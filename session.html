@@ -733,6 +733,9 @@
   .pt-state.answered, .pt-chip.answered { color:var(--fg); font-weight:600; }
   .pt-said { flex:1 1 100%; min-width:0; color:var(--fg-muted); overflow-wrap:anywhere; }
   a.pt-link { color:var(--link); white-space:nowrap; }
+  /* A PO message's id written in a balloon, as its name (pmLinkHtml). */
+  .msg .text.md a.pm-link { color:var(--link); }
+  .msg .text.md a.pm-link:focus-visible { outline:none; border-radius:var(--r-100); box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   .pt-btn { flex:0 0 auto; height:24px; padding:0 var(--s-200); background:transparent; border:none; border-radius:var(--r-200);
     color:var(--fg-subtle); font-size:var(--fs-200); line-height:16px; cursor:pointer; }
   .pt-btn:hover { background:var(--hover); color:var(--fg); }
@@ -1627,6 +1630,52 @@ const refPlain = t => String(t || '').replace(REF_URL_RE, u => {
   const ref = refOfUrl(u), r = ref && refInfo(ref.room, ref.msg);
   return r && r.state === 'ok' ? '↗ ' + refLabel(r) + ref.tail : u;
 });
+// ---- PO message names: begin ----------------------------------------------
+// A PO message's id (pm-1a2b3c4d, po_messages.py) is a handle for the tools.
+// Where a balloon writes the id of one of this chat's PO messages, it reads as
+// the message's name ("opten PO's question of 09-25 18:57"), a link to its
+// balloon with the id in the tooltip. An id this chat does not hold stays text.
+// A tool's argument (id=pm-…, replyTo=pm-…) and a URL stay as written; in a
+// [label](link) the label says the name and the link is kept.
+// tests/test_po_message_names.py runs this block in Node.
+const PM_ID_RE = /(?<![\w\-=\/])pm-[0-9a-f]{8}(?![\w-])/g;
+const PM_SCAN_RE = /\[([^\]\n]*)\]\(([^)\s]*)\)|https?:\/\/[^\s<>()\[\]{}"'`*|\\]+|(?<![\w\-=\/])pm-[0-9a-f]{8}(?![\w-])/g;
+let PM_IDX = new Map();     // id → the PO message: the room's, and what is drawn
+let PM_SIG = '';            // which ids are known, for the markdown cache
+function pmIndex(items, room) {
+  PM_IDX = new Map();
+  const add = m => { if (m && m.kind === 'pomsg' && m.id) PM_IDX.set(m.id, m); };
+  ((room && room.messages) || []).forEach(add);
+  (items || []).forEach(add);
+  PM_SIG = [...PM_IDX.keys()].join(',');
+  return PM_IDX;
+}
+// The name the hub gave it when it was sent; else made the same way.
+function pmName(m) {
+  if (m.name) return m.name;
+  const d = new Date((m.ts || 0) * 1000), p = n => String(n).padStart(2, '0');
+  return `${m.fromProjectName || '?'} PO's ${m.poKind || 'message'} of ${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function pmLinkHtml(id) {
+  const m = PM_IDX.get(id);
+  if (!m) return null;
+  const name = pmName(m);
+  return `<a class="pm-link" href="${esc(refHref(ROOM, id))}" data-ref-room="${esc(ROOM)}" data-ref-msg="${esc(id)}"`
+    + ` title="${esc('Go to ' + name + ' (' + id + ')')}">${esc(name)}</a>`;
+}
+const pmWords = t => t.replace(PM_ID_RE, id => PM_IDX.has(id) ? pmName(PM_IDX.get(id)) : id);
+// Every known id in a text, parked as its link (REF_A i REF_Z); in a link's
+// label, its name as words; in a URL, as written.
+const parkPmRefs = (s, chips) => String(s).replace(PM_SCAN_RE, (m, label, target) => {
+  if (label !== undefined) return '[' + pmWords(label) + '](' + target + ')';
+  if (!m.startsWith('pm-')) return m;
+  const h = pmLinkHtml(m);
+  return h ? REF_A + (chips.push(h) - 1) + REF_Z : m;
+});
+// A folded row's line: a known id reads as the name.
+const pmPlain = t => String(t || '').replace(PM_SCAN_RE, (m, label, target) =>
+  label !== undefined ? '[' + pmWords(label) + '](' + target + ')' : m.startsWith('pm-') ? pmWords(m) : m);
+// ---- PO message names: end ------------------------------------------------
 const fileBase = () => (ROOM_OBJ && ROOM_OBJ.cwd) || '';
 const fileHref = (p, line) => '/fileview?path=' + encodeURIComponent((p || '').trim()) + (line ? '&line=' + line : '')
   + (ROOM ? '&room=' + encodeURIComponent(ROOM) : '') + (fileBase() ? '&cwd=' + encodeURIComponent(fileBase()) : '');
@@ -1648,6 +1697,9 @@ function mdToHtml(src) {
   });
   // Inline code `...`
   s = s.replace(/`([^`\n]+)`/g, (_, body) => {
+    // A known PO message's id in code reads as its name too: left as the bare
+    // id for parkPmRefs, which knows whether it is in a link's label.
+    if (/^\s*pm-[0-9a-f]{8}\s*$/.test(body) && PM_IDX.has(body.trim())) return body.trim();
     const i = codes.push(codeSpanHtml(body)) - 1;
     return ` I${i} `;
   });
@@ -1659,6 +1711,7 @@ function mdToHtml(src) {
     const ref = refOfUrl(u), h = ref && refChipHtml(ref);
     return h ? REF_A + (chips.push(h) - 1) + REF_Z + ref.tail : u;
   });
+  s = parkPmRefs(s, chips);
   s = parkTaskRefs(s, chips);
   s = esc(s);
   // Inline spans (operate on escaped text; placeholders are safe).
@@ -2710,6 +2763,7 @@ function keepPlace(box, place) {
 function renderBubbles(items, opt = {}) {
   const box = $('#msgs');
   LAST_ITEMS = items;
+  pmIndex(items, ROOM_OBJ);
   // Don't blow away the DOM while the user is mid-comment (it would drop their
   // selection / the open composer). Highlights are re-applied after each render.
   if (_cmtComposerOpen || _selBtn) return;
@@ -2757,7 +2811,7 @@ function renderBubbles(items, opt = {}) {
   });
   // A balloon's markdown is drawn once and reused while its text, and what its
   // links depend on, stay the same: every poll used to redraw every balloon.
-  const ctx = HUB_PORT + '|' + fileBase() + '|' + ROOM + '|' + REF_GEN + '|' + THUMB_GONE.size;
+  const ctx = HUB_PORT + '|' + fileBase() + '|' + ROOM + '|' + REF_GEN + '|' + THUMB_GONE.size + '|' + PM_SIG;
   if (ctx !== MD_CTX) { MD_CACHE = new Map(); MD_CTX = ctx; }
   const used = new Map();
   // An item of a message with "..." paths is drawn in that message's context, never from or into the cache.
@@ -2771,7 +2825,7 @@ function renderBubbles(items, opt = {}) {
     keys.push(k);
     if (isDecision(m)) decKeys.push(k);
     return foldBalloonHtml(m, i, plan[i], { md, open: FOLD.open.has(k), un: unanswered.get(k), idle: SOLO_IDLE,
-      act: copyLinkHtml, plain: refPlain, superseded: sup.has(i), pts: ptBar, body });
+      act: copyLinkHtml, plain: t => pmPlain(refPlain(t)), superseded: sup.has(i), pts: ptBar, body });
   };
   const href = mid => refHref(ROOM, mid);
   const ptBar = m => pointBarHtml(m, POINTS, href);
@@ -3210,11 +3264,13 @@ function landPending() {
       // A turn of a solo transcript older than the chat shows: draw back to it.
       // A line read while the agent was busy (":q<n>") has no place in the
       // numbering: the whole transcript is drawn for it.
+      // A PO message older than the turns shown: the whole transcript is drawn.
       const t = mid.match(/^(.+):(q?)(\d+)$/);
+      const pm = !t && SOLO_SID && PM_IDX.has(mid);
       let failed = false;
-      if (t && SOLO_SID && soloOwns(t[1])) {
+      if ((t && SOLO_SID && soloOwns(t[1])) || pm) {
         if (!(SOLO_WANT && SOLO_WANT.mid === mid)) {
-          SOLO_WANT = { sid: t[1], n: t[2] ? 0 : +t[3], mid };
+          SOLO_WANT = pm ? { sid: SOLO_SID, n: 0, mid } : { sid: t[1], n: t[2] ? 0 : +t[3], mid };
           renderSolo(SOLO_SID, SOLO_AGENT, true);
           return;
         }
@@ -5046,7 +5102,7 @@ document.addEventListener('click', ev => {
 // at it; on its own, this page goes there. With a modifier key it is a link,
 // opening a new tab.
 function refClickHandler(ev) {
-  const a = ev.target.closest && ev.target.closest('a.ref-chip, a.sup-link, a.cu-link, a.ask-link, a.pt-link');
+  const a = ev.target.closest && ev.target.closest('a.ref-chip, a.sup-link, a.cu-link, a.ask-link, a.pt-link, a.pm-link');
   if (!a || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
   ev.preventDefault();
   const room = a.dataset.refRoom || ROOM, msg = a.dataset.refMsg;

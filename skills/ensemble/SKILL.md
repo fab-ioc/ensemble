@@ -422,11 +422,19 @@ What happens … How to reproduce … What we need …"
   terminal** (`po-tools/tell.py` or the like) instead: that arrives cut and
   reads as the product owner's words.
 - **The other PO is typed one line**: `[from the opten PO] bug: <first line> —
-  read it in full with ensemble_read_message id=pm-…`. Such a line is not the
+  read it with ensemble_read_message id=pm-… (the id is for the tools only; in
+  text call it "opten PO's bug of 09-25 18:57")`. Such a line is not the
   product owner's: read the message with `ensemble_read_message`, and answer
   with `ensemble_message_po replyTo=pm-… text=…` (kind `answer` by default; the
   answer goes to the PO who wrote). `ensemble_read_message` without an id lists
   the PO messages in your chat.
+- **Name a PO message for people, never by its id.** In anything a person
+  reads — chat, balloon and task titles, reports, documents — call a message by
+  who wrote it, its kind, its date and its subject: "Strats answers to opten
+  PO's question of 09-25 (0DTE Slab + 14DTE)", not "answers to pm-e00a1c63".
+  The tools give that name (`name`, and `answers` / `replyToName` for what a
+  reply answers); the date alone will do when it is the only one that day. A
+  `pm-…` id belongs only in tool arguments (`id=`, `replyTo=`).
 - **Kinds.** `bug` and `question` wake the other PO. An `answer` wakes it only
   when it answers a bug or a question; `info`, and an answer to an answer,
   never do: it is told with its next message, or when it is idle within 30
