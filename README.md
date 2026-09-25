@@ -146,10 +146,10 @@ Installed as an app, Ensemble runs in a window of its own with its own icon in t
 1. Restart the hub on this version or later **first**. `tailscale serve` connects to the hub over loopback, and an older hub would let those requests in without the token.
 2. In the Tailscale admin console, **DNS** › enable **MagicDNS** and **HTTPS Certificates** (once per tailnet; machine names then appear in the public certificate-transparency logs).
 3. On the hub's machine, in a terminal run as Administrator on Windows (Tailscale requires it there):
-   - `tailscale serve status` first: if something already serves https on port 443, it will be replaced, so pick another port with `--https=<port>` instead;
-   - then `tailscale serve --bg 8765`. The setting survives restarts. `tailscale serve status` shows it.
-   - To remove only this address: `tailscale serve --https=443 off`. Avoid `tailscale serve reset`: it removes every Serve address on the machine, not just this one.
-4. On the other device, open `https://<machine>.<tailnet domain>/?token=<token>` once (or open it without the token and paste it into the page that asks for it), then install from Settings or the address bar.
+   - `tailscale serve status` first, to pick the https port `<port>`: 443 if nothing uses it yet, otherwise a free one such as 8443 (a port already in use would be replaced);
+   - then `tailscale serve --https=<port> --bg 8765`. The setting survives restarts. `tailscale serve status` shows it.
+   - To remove only this address: `tailscale serve --https=<port> off`. Avoid `tailscale serve reset`: it removes every Serve address on the machine, not just this one.
+4. On the other device, open `https://<machine>.<tailnet domain>/?token=<token>` once (with `:<port>` after the domain when the port is not 443) (or open it without the token and paste it into the page that asks for it), then install from Settings or the address bar.
 
 A request that reaches the hub through a proxy on its own machine (one with a forwarding header such as `X-Forwarded-For` or `Tailscale-User-Login`, or a `Host` other than `127.0.0.1`/`localhost`) needs the token like any remote request. The proxy's https origin passes the hub's same-origin checks.
 
