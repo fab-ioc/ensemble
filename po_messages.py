@@ -529,7 +529,7 @@ def _resume(state: dict, room: dict, free: list[dict], due: list[dict], now: flo
     # As a typed line: marked and counted in one write before the resume,
     # so it is never started twice for the same line.
     for p in told:
-        p["resuming"] = {"at": now, "key": key}
+        p["resuming"] = {"at": now, "key": key}      # ``at``: the wake counted for it
     for k in keys:
         state["wakes"][k] = _recent(state, k, now) + [now]
 
@@ -588,6 +588,14 @@ def _resume_outcome(state: dict, room_id: str, now: float) -> str:
     if not key:
         with _d.rotation.GATE:
             sess = _target(room_id, require_idle=True)
+            if sess is not None and _unsettled(sess):
+                # A fresh terminal reads as idle before it has drawn its
+                # screen, and a prompt can sit quiet: the resume's own test.
+                if _unsettled(sess) == "prompt" and                         now - marked[0]["resuming"]["at"] >= _d.RESUME_NOTE_WAIT_S:
+                    _flag(marked, room_id, "a prompt is on the PO's screen: answer it in its "
+                                           "terminal, and the line is typed", now)
+                    _save(state)
+                return ""
             if sess is not None:
                 wake, told = wake_line(sorted(marked, key=lambda p: (not p.get("wake"), p["at"])))
                 for p in told:
@@ -615,11 +623,28 @@ def _resume_outcome(state: dict, room_id: str, now: float) -> str:
             return "done"
         _d.discard_pending(room_id, key)
         why = f"the PO was started but the line was not typed: {held.get('error') or 'it stopped'}"
+    # Nothing was delivered: the wake the resume counted is taken back.
+    for at in {p["resuming"].get("at") for p in marked}:
+        for k in {pair_key(p["fromProjectId"], p["toProjectId"]) for p in marked
+                  if p["resuming"].get("at") == at}:
+            ts = state["wakes"].get(k, [])
+            if at in ts:
+                ts.remove(at)
     for p in marked:
         p.pop("resuming", None)
     _flag(marked, room_id, why, now)
     _save(state)
     return "failed"
+
+
+def _unsettled(sess) -> str:
+    """Why a PO's terminal just brought up cannot be typed into yet, as the
+    resume's delivery tests it (``Handler._deliver_after_resume``): ``starting``
+    (no screen yet, or output within ``rotation.IDLE_S``), ``prompt``, or ""."""
+    tail = sess.tail()
+    if not tail or time.time() - sess.last_output < _d.rotation.IDLE_S:
+        return "starting"
+    return "prompt" if _d.attention.looks_like_prompt(tail) else ""
 
 
 def tick(now: float | None = None) -> list[str]:

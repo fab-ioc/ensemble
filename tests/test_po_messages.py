@@ -23,8 +23,13 @@ T0 = 1_790_000_000.0
 
 
 class _FakePty:
-    def __init__(self):
+    def __init__(self, screen="> ", last_output=0.0):
         self.typed = []
+        self.screen = screen
+        self.last_output = last_output
+
+    def tail(self):
+        return self.screen
 
     def alive(self) -> bool:
         return True
@@ -562,6 +567,7 @@ class ResumedPo(_World):
         self.assertNotIn("resuming", item)
         self.assertIn("prompt", item["undelivered"]["why"])
         self.assertEqual(self.launcher.held, {})    # taken back from the room: typed once only
+        self.assertEqual(self.wakes(), [])          # nothing delivered: not counted
         self.now += 60
         po_messages.tick()
         self.assertEqual(len(self.launcher.calls), 2)
@@ -632,7 +638,7 @@ class ResumedPo(_World):
 
         def comes_up():            # its terminal is recorded before it has settled
             chatroom.patch_participant(self.dock, "claude", {"ptyId": "pty-dock"})
-            self.ptys["pty-dock"] = _FakePty()
+            self.ptys["pty-dock"] = _FakePty(screen="")
             self.idle["pty-dock"] = False
         self.launcher.on_start = comes_up
 
@@ -654,8 +660,17 @@ class ResumedPo(_World):
         self.now += 60
         self.assertEqual(po_messages.tick(), [])
         self.assertEqual(self.typed("pty-dock"), [])
-        # Settled: typed the line it was started for, not counted again.
+        # Idle by the generic test, but no screen drawn yet: still nothing.
         self.idle["pty-dock"] = True
+        self.now += 60
+        self.assertEqual(po_messages.tick(), [])
+        self.assertEqual(self.typed("pty-dock"), [])
+        # Drawn, but output a moment ago: still nothing.
+        self.ptys["pty-dock"].screen = "> "
+        self.ptys["pty-dock"].last_output = self.now - 1
+        self.assertEqual(po_messages.tick(), [])
+        self.assertEqual(self.typed("pty-dock"), [])
+        # Settled: typed the line it was started for, not counted again.
         self.now += 60
         self.assertEqual(po_messages.tick(), [self.dock])
         [line] = self.typed("pty-dock")
@@ -673,12 +688,14 @@ class ResumedPo(_World):
     def test_a_team_po_that_stops_while_coming_up_is_flagged(self):
         self.make_team()
         self.send()
+        self.assertEqual(len(self.wakes()), 1)
         self.ptys.pop("pty-dock")
         self.now += 60
         self.assertEqual(po_messages.tick(), [])
         [item] = self.queue()
         self.assertNotIn("resuming", item)
         self.assertIn("stopped before", item["undelivered"]["why"])
+        self.assertEqual(self.wakes(), [])                 # nothing delivered: not counted
         self.now += 60
         po_messages.tick()
         self.assertEqual(len(self.launcher.calls), 2)     # started again, a minute on
@@ -692,6 +709,39 @@ class ResumedPo(_World):
         self.assertEqual([p["firstLine"] for p in self.queue()], ["second"])
         self.assertEqual(len(self.launcher.calls), 2)
         self.assertIn("second", self.launcher.calls[1][1])
+
+    def test_failures_after_the_start_never_use_up_the_hour(self):
+        self.send()
+        for i in range(po_messages.WAKES_PER_HOUR + 2):
+            if i:
+                self.now += 60
+                po_messages.tick()                  # takes it back; the next look starts it
+                self.now += 60
+                po_messages.tick()
+            self.launcher.stopped_after_start(self.dock, "it stopped")
+        self.assertEqual(len(self.launcher.calls), po_messages.WAKES_PER_HOUR + 2)
+        [item] = self.queue()
+        self.assertNotIn("heldSince", item)
+        self.assertLessEqual(len(self.wakes()), 1)
+
+    def test_a_team_po_on_a_prompt_is_flagged_and_typed_once_answered(self):
+        self.make_team()
+        self.send()
+        self.idle["pty-dock"] = True
+        self.ptys["pty-dock"].screen = "Do you want to proceed?\n> 1. Yes\n  2. No"
+        self.now += 60
+        self.assertEqual(po_messages.tick(), [])
+        self.assertNotIn("undelivered", self.queue()[0])
+        self.now += dashboard.RESUME_NOTE_WAIT_S
+        self.assertEqual(po_messages.tick(), [])
+        self.assertEqual(self.typed("pty-dock"), [])
+        self.assertIn("prompt", self.queue()[0]["undelivered"]["why"])
+        self.assertIn(self.dock, po_messages.held_by_room())
+        self.ptys["pty-dock"].screen = "> "
+        self.now += 60
+        self.assertEqual(po_messages.tick(), [self.dock])
+        self.assertEqual(len(self.typed("pty-dock")), 1)
+        self.assertEqual(len(self.launcher.calls), 1)
 
     def test_a_codex_po_with_no_recorded_conversation_is_not_started(self):
         chatroom.patch_participant(self.dock, "claude", {"sessionId": "", "agent": "codex"})
