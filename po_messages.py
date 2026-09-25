@@ -20,14 +20,20 @@ and the PO reads the whole text with ``ensemble_read_message``. Nothing long
 is ever typed, so nothing is cut.
 
 **When the line is typed.** As a task's report is (``_ring_report``), at once,
-when the message is one that wakes and the target PO is running. Otherwise it
-waits in :data:`pending` (``DASHBOARD_DIR/po_messages.json``) and the hub's
+when the message is one that wakes and the target PO is running (or stopped:
+see below). Otherwise it waits in :data:`pending` (``DASHBOARD_DIR/po_messages.json``) and the hub's
 once-a-minute look (riding the progress check's loop, like ``due.py``) types
 it when the PO is running and idle:
 
-* **A PO that is not running** is not resumed for it (reports never resume a
-  PO either): the message waits in its chat and it is typed the line when it
-  runs again and is idle, as a ``[due]`` item is.
+* **A PO that is stopped** (no live terminal; not being rotated, asked for
+  its handover or replaced) is resumed for a message that wakes, the way a
+  send to a stopped chat is (``Handler._resume_room``): the line is its first
+  input, and the room's launch guard never starts a second terminal for the
+  seat. The resume counts as the line for the hourly limit. The messages stay
+  queued, marked ``resuming``, until the line is in; a resume that fails
+  (nothing to resume, a refused or failed start, the line not typed) leaves
+  them queued, logged once, and the PO on the CEO's bell as not receiving
+  them, and the next look tries again. A PO running but busy waits for idle.
 * **Quiet kinds** — ``info``, and an ``answer`` to anything but a ``bug`` or a
   ``question`` — never wake the target by themselves: an answer to a
   question is what its asker waits for, but a thank-you for an answer is
@@ -291,6 +297,9 @@ def send(room: dict, identity: str, project_id: str, target_ref: str, text: str,
             held = any(p["id"] == mid and p.get("heldSince") for p in st["pending"])
     if told:
         note = f"delivered: {who} was typed a line and reads the whole text with ensemble_read_message"
+    elif how == "resuming":
+        note = (f"delivered: {who} was not running, so the hub is starting it; the line is its "
+                f"first input, and it reads the whole text with ensemble_read_message")
     elif held:
         note = (f"held: {WAKES_PER_HOUR} lines between your projects in the last hour already. "
                 f"It is in {who}'s chat, and {who} is told when the hour allows; "
@@ -300,8 +309,8 @@ def send(room: dict, identity: str, project_id: str, target_ref: str, text: str,
                 f"told with its next PO message, or when it is idle within "
                 f"{QUIET_WAIT_S // 60} minutes")
     else:
-        note = (f"in {who}'s chat; {who} is not running or is busy being replaced, so it is "
-                f"told when it runs and is idle (it is not started for this)")
+        note = (f"in {who}'s chat; {who} is busy, being replaced, or could not be started, so "
+                f"it is told when it is idle (a stopped PO is started for it, within a minute)")
     _log(f"{mid} {kind} {_name(me)} → {_name(target)}: {how or ('held' if held else 'waits')}")
     return {"ok": True, "id": mid, "kind": kind, "to": f"{_name(target)} PO",
             "toProjectId": target["id"], "delivered": told, "held": held, "note": note}
@@ -365,6 +374,10 @@ def _deliver(state: dict, room_id: str, now: float, require_idle: bool) -> str:
             if len(_recent(state, k, now)) >= WAKES_PER_HOUR}
     free = [p for p in mine if pair_key(p["fromProjectId"], p["toProjectId"]) not in over]
     changed = False
+    if any(p.get("resuming") for p in mine):
+        # A resume started for them is under way: nothing else until it is
+        # done (a second one would start the PO twice).
+        return _resume_outcome(state, room_id, mine, now)
     for p in mine:
         is_over = p not in free and (p.get("wake") or now - p["at"] >= QUIET_WAIT_S)
         if is_over and not p.get("heldSince"):
@@ -375,10 +388,13 @@ def _deliver(state: dict, room_id: str, now: float, require_idle: bool) -> str:
             changed = True
     due = [p for p in free if p.get("wake") or now - p["at"] >= QUIET_WAIT_S]
     how = ""
+    stopped = None
     if due:
         with _d.rotation.GATE:
             sess = _target(room_id, require_idle)
-            if sess is not None:
+            if sess is None:
+                stopped = _stopped(room_id)
+            else:
                 # What wakes first, then what waited longest.
                 order = sorted(free, key=lambda p: (p not in due, p["at"]))
                 wake, told = wake_line(order)
@@ -408,13 +424,150 @@ def _deliver(state: dict, room_id: str, now: float, require_idle: bool) -> str:
                     for p in told:
                         p.pop("typing", None)
                     state["wakes"].update(before)
+    if stopped is not None and any(p.get("wake") for p in due):
+        # Only a message that wakes starts a PO; a quiet one goes along.
+        how = _resume(state, stopped, free, due, now)
     if changed:
         _save(state)
     return how
 
 
+def _stopped(room_id: str) -> dict | None:
+    """The target PO's room when its PO is stopped and may be resumed for a
+    message: no live terminal, and not being rotated, asked for its
+    handover or replaced by a PO switch. None otherwise."""
+    rot, cr = _d.rotation, _d.chatroom
+    room = cr.get_room(room_id, public=False)
+    if room is None:
+        return None
+    ident = cr.po_identity(room)
+    part = cr.participant(room, ident) if ident else None
+    if not part or part.get("kind") != "agent" or rot._pty(part) is not None:
+        return None
+    if (rot.is_rotating(room_id, ident) or rot.awaiting_handover(room_id, ident)
+            or rot.room_rotating(room_id) or rot.switching(room_id)):
+        return None
+    return room
+
+
+def _cannot_resume(room: dict) -> str:
+    """Why the PO of this stopped room cannot be resumed, or ""."""
+    part = _d.chatroom.participant(room, _d.chatroom.po_identity(room)) or {}
+    if not room.get("launched", True):
+        return ""                           # a first launch: its spec comes first
+    if not part.get("sessionId") and part.get("agent") != "codex":
+        return "it has no conversation to resume"
+    return ""
+
+
+def _flag(items: list[dict], room_id: str, why: str, now: float) -> None:
+    """The PO could not be started for these: they stay queued, the CEO's
+    bell shows it, and the log says so once per reason."""
+    if any((p.get("undelivered") or {}).get("why") != why for p in items):
+        _log(f"not delivered to the stopped PO of {room_id} "
+             f"({', '.join(p['id'] for p in items)}): {why}")
+    for p in items:
+        was = p.get("undelivered") or {}
+        p["undelivered"] = {"since": was.get("since") or now, "why": why}
+
+
+def _resume(state: dict, room: dict, free: list[dict], due: list[dict], now: float) -> str:
+    """Resume the stopped PO of ``room`` with the line as its first input
+    (``Handler._resume_room``: the path of a send to a stopped chat, one
+    resume per room, never a second terminal for a seat). The messages
+    stay queued, marked ``resuming``, until that resume has typed the line
+    (``_resume_outcome``). Returns ``resuming``, ``typed`` or ""; saves."""
+    room_id = room["id"]
+    order = sorted(free, key=lambda p: (p not in due, p["at"]))
+    wake, told = wake_line(order)
+    why = _cannot_resume(room)
+    if why:
+        _flag(told, room_id, why, now)
+        _save(state)
+        return ""
+    agents = _d.chatroom.agent_participants(room)
+    team = room.get("mode") != "solo" and len(agents) > 1
+    # A team's resume would post the line in its chat as the CEO's words:
+    # there only the PO is brought back, and the next look types it the line
+    # once it is idle, as to any running PO.
+    key = "" if team else f"pomsg:{told[0]['id']}"
+    keys = {pair_key(p["fromProjectId"], p["toProjectId"]) for p in told}
+    before = {k: list(state["wakes"].get(k, [])) for k in keys}
+    # As a typed line: marked and counted in one write before the resume,
+    # so it is never started twice for the same line.
+    for p in told if key else []:
+        p["resuming"] = {"at": now, "key": key}
+    for k in keys:
+        state["wakes"][k] = _recent(state, k, now) + [now]
+
+    def undo():
+        for p in told:
+            p.pop("resuming", None)
+        state["wakes"].update(before)
+
+    if not _save(state):
+        undo()
+        _log(f"the PO of {room_id} not started: the queue could not be saved")
+        return ""
+    try:
+        if team:
+            if not _d.hub_launcher()._start_or_resume_room(room):
+                raise RuntimeError("no agent of this task could be started")
+            _save(state)
+            _log(f"the stopped PO of {room_id} was resumed for "
+                 f"{', '.join(p['id'] for p in told)}: typed once it is idle")
+            return "resuming"
+        result = _d.hub_launcher()._resume_room(room, text=wake, key=key)
+    except Exception as e:      # noqa: BLE001 — a refusal or a failed spawn alike
+        # The failed resume would keep the line for the room's Retry; this
+        # queue keeps it instead, so it is never typed twice.
+        if key:
+            _d.discard_pending(room_id, key)
+        undo()
+        _flag(told, room_id, f"the PO could not be started: {str(e)[:200] or e.__class__.__name__}", now)
+        _save(state)
+        return ""
+    if result.get("delivered"):
+        # It came up between the look and the resume: typed straight in.
+        ids = {p["id"] for p in told}
+        state["pending"] = [p for p in state["pending"] if p["id"] not in ids]
+        _save(state)
+        _log(f"typed to the PO of {room_id}: {', '.join(sorted(ids))}")
+        return "typed"
+    _log(f"the stopped PO of {room_id} is being resumed for {', '.join(p['id'] for p in told)}")
+    return "resuming"
+
+
+def _resume_outcome(state: dict, room_id: str, mine: list[dict], now: float) -> str:
+    """How the resume started for the messages marked ``resuming`` went.
+    Still holding the line: wait. Holding it as failed (the PO stopped, or
+    sat on a prompt, before it could be typed): taken back from the room,
+    queued again and flagged. Not holding it (typed; or the hub restarted
+    since, and as with a line being typed it counts as told): done."""
+    marked = [p for p in mine if p.get("resuming")]
+    key = marked[0]["resuming"].get("key", "")
+    held = _d.pending_input(room_id) or {}
+    has = any(it.get("key") == key for it in held.get("items") or [])
+    if has and held.get("state") != "failed":
+        return ""
+    ids = {p["id"] for p in marked}
+    if has:
+        _d.discard_pending(room_id, key)
+        for p in marked:
+            p.pop("resuming", None)
+        _flag(marked, room_id, f"the PO was started but the line was not typed: "
+                               f"{held.get('error') or 'it stopped'}", now)
+        _save(state)
+        return ""
+    state["pending"] = [p for p in state["pending"] if p["id"] not in ids]
+    _save(state)
+    _log(f"typed to the PO of {room_id} once it was resumed: {', '.join(sorted(ids))}")
+    return "typed"
+
+
 def tick(now: float | None = None) -> list[str]:
-    """Look at every PO with messages waiting once. Returns the rooms typed to."""
+    """Look at every PO with messages waiting once. Returns the rooms typed to,
+    or whose stopped PO was started for them."""
     now = time.time() if now is None else now
     with _LOCK:
         state = _load()
@@ -462,8 +615,9 @@ _HELD_CACHE: tuple = (0.0, 0.0, {})     # (file mtime, read at, result)
 
 
 def held_by_room() -> dict[str, dict]:
-    """PO rooms with messages held by the hourly limit: ``{roomId: {count,
-    since, reason}}``. Read from the queue file only when it changed."""
+    """PO rooms with messages held by the hourly limit, or that their
+    stopped PO could not be started for: ``{roomId: {count, since,
+    reason}}``. Read from the queue file only when it changed."""
     global _HELD_CACHE
     try:
         mtime = _state_file().stat().st_mtime
@@ -473,16 +627,29 @@ def held_by_room() -> dict[str, dict]:
         return _HELD_CACHE[2]
     out: dict[str, dict] = {}
     for p in _load()["pending"]:
-        if not p.get("heldSince"):
+        since = p.get("heldSince") or (p.get("undelivered") or {}).get("since")
+        if not since:
             continue
-        o = out.setdefault(p["toRoomId"], {"count": 0, "since": p["heldSince"], "from": set()})
+        o = out.setdefault(p["toRoomId"], {"count": 0, "since": since, "from": set(),
+                                           "held": 0, "why": ""})
         o["count"] += 1
-        o["since"] = min(o["since"], p["heldSince"])
+        o["since"] = min(o["since"], since)
         o["from"].add(p.get("fromName", "?"))
+        if p.get("heldSince"):
+            o["held"] += 1
+        else:
+            o["why"] = o["why"] or p["undelivered"].get("why", "")
     for o in out.values():
-        names = sorted(o.pop("from"))
-        o["reason"] = (f"{o['count']} message{'s' if o['count'] > 1 else ''} from the "
-                       f"{' and '.join(names)} PO held: more than {WAKES_PER_HOUR} "
-                       f"PO-to-PO wakes between the two projects in an hour")
+        names = " and ".join(sorted(o.pop("from")))
+        held, why = o.pop("held"), o.pop("why")
+        n = o["count"]
+        if held == n:
+            o["reason"] = (f"{n} message{'s' if n > 1 else ''} from the {names} PO held: "
+                           f"more than {WAKES_PER_HOUR} PO-to-PO wakes between the two "
+                           f"projects in an hour")
+        else:
+            o["reason"] = (f"{n} message{'s' if n > 1 else ''} from the {names} PO not "
+                           f"received: this PO is stopped and could not be started for "
+                           f"{'them' if n > 1 else 'it'} ({why})")
     _HELD_CACHE = (mtime, time.time(), out)
     return out

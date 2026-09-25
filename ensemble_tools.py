@@ -531,8 +531,8 @@ PO_MESSAGE_TOOLS = [
             "never several, and never type into another agent's terminal "
             "instead. A bug or question wakes that PO; an answer wakes it only "
             "when it answers a bug or question; info never does (it is told with "
-            "its next message, or within 30 minutes when idle). A PO that is not "
-            "running is told when it next runs. At most 6 wakes per hour between "
+            "its next message, or within 30 minutes when idle). A stopped PO is "
+            "started for a message that wakes it; a busy one is told when idle. At most 6 wakes per hour between "
             "two projects: more are held, and the CEO sees that."
         ),
         "inputSchema": {
