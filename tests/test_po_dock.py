@@ -374,6 +374,22 @@ async function main() {
       const maxed = await p.evalIn('!!PD.els.points.closest(".dk-max")'), minMaxed = await p.evalIn(isMin);
       await p.evalIn('PD.dock.restoreMax(); 0'); await sleep(200);
       out.minClick = { was, back, again, maxed, minMaxed, min: await p.evalIn(isMin) };
+      // A click, then a drag before the wait is out: the panel moves, minimised, and stays so.
+      await p.evalIn('PD.dock.float("points"); 0'); await sleep(300);
+      await p.evalIn('PD.dock.toggleMin("points"); 0'); await sleep(300);
+      const fl = 'PD.els.points.closest(".dk-float")';
+      const at = async () => p.evalIn(`(() => { const b = (${fl}).getBoundingClientRect(); return [Math.round(b.left), Math.round(b.top)]; })()`);
+      const [hx, hy] = await p.evalIn(`(() => { const h = (${fl}).querySelector('.dk-head'), b = h.getBoundingClientRect(); const t = h.querySelector('[data-dk-tab]').getBoundingClientRect(); return [Math.round(t.right + (b.right - t.right) / 4), Math.round(b.top + b.height / 2)]; })()`);
+      const from = await at(), wasMin = await p.evalIn(`(${fl}).classList.contains('dk-min')`);
+      for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x: hx, y: hy, button: 'left', clickCount: 1 }, p.sessionId);
+      await sleep(60);
+      await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: hx, y: hy, button: 'left', clickCount: 1 }, p.sessionId);
+      for (let i = 1; i <= 8; i++) await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: hx + i * 10, y: hy + i * 5, button: 'left', buttons: 1 }, p.sessionId);
+      await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: hx + 80, y: hy + 40, button: 'left', clickCount: 1 }, p.sessionId);
+      await sleep(700);
+      const to = await at();
+      out.minDrag = { wasMin, moved: to[0] !== from[0] || to[1] !== from[1], min: await p.evalIn(`(${fl}).classList.contains('dk-min')`) };
+      await p.evalIn('PD.dock.toggleMin("points"); PD.dock.dockBack("points"); 0'); await sleep(300);
     }
 
     // Layout changes keep every iframe's page: the PO chat's and an open file's.
@@ -855,6 +871,10 @@ class InChrome(unittest.TestCase):
     def test_a_documents_projects_documents_panel_lists_its_documents(self):
         self.assertEqual(self.got["docsProject"], {"first": "Roadmap", "rows": 1, "list": True},
                          "the roadmap first, then its documents, in the list view")
+
+    def test_a_minimised_panel_dragged_after_a_click_stays_minimised(self):
+        self.assertEqual(self.got["minDrag"], {"wasMin": True, "moved": True, "min": True},
+                         "the drag supersedes the click: no restore once the wait is out")
 
     def test_the_top_bar_shows_the_new_icon(self):
         self.assertTrue(self.got["first"]["logo"].endswith("/static/icons/favicon.svg"), self.got["first"]["logo"])

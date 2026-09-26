@@ -9225,6 +9225,7 @@ function pdEnsure() {
   PD.dock.onShown(id => pdShown(id));
   // Before the chat panel comes back from its window: the window's own chat goes.
   PD.dock.onPopIn(id => { if (id === 'po-chat') pdPopChat(false); });
+  PD_ROOT.addEventListener('pointerdown', pdMinCancel, true);
   PD_ROOT.addEventListener('click', pdMinDown, true);
   PD_ROOT.addEventListener('click', pdMinClick);
   pdPlaceChat();
@@ -9236,7 +9237,11 @@ function pdEnsure() {
 // time before it restores. Not a click on the bar's controls, and not the
 // click that ends a drag (the library cancels that one, after this has seen
 // it: so the panel is named on the way down, and shown on the way up, once the
-// library has had the click; its tab may be redrawn by then).
+// library has had the click; its tab may be redrawn by then). Any press
+// before the wait is out (a drag, a double click's second press) is a gesture
+// of its own: the pending restore is dropped. A known limit until the library
+// restores on a click itself: a double click slower than the wait restores
+// the panel, not maximises it.
 const PD_MIN_WAIT = 350;
 let PD_MIN_HIT = '', PD_MIN_T = 0;
 function pdMinDown(e) {
@@ -9248,6 +9253,10 @@ function pdMinDown(e) {
   if (!head || t.closest('.dk-ctl, [data-help], [data-dk-act]')) return;
   const tab = t.closest('[data-dk-tab]') || head.querySelector('[data-dk-tab][aria-selected="true"]') || head.querySelector('[data-dk-tab]');
   PD_MIN_HIT = tab ? tab.dataset.dkTab : '';
+}
+function pdMinCancel() {
+  clearTimeout(PD_MIN_T);
+  PD_MIN_T = 0;
 }
 function pdMinClick(e) {
   const id = PD_MIN_HIT;
