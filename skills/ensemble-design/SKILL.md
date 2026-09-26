@@ -552,10 +552,8 @@ library; `VERSION` names its commit) of six panels, **PO chat, Your asks, Board,
 Workspace, Changes** (`PD_IDS` in `index.html`; Your asks is `points`). The person arranges them: side by side, as tabs of one stack, floating,
 on a strip at an edge (slides out on hover or click), minimised, maximised, hidden from the Panels
 menu, or popped out into a window of their own. **One click on a minimised panel's title bar
-brings it back** (`pdMinClick`; its controls keep their own clicks, and a drag is not a click); it
-waits out a double click's time (`PD_MIN_WAIT`), so a double click still maximises, minimised or
-not; a press within the wait (a drag) drops the restore. A stopgap until Dock restores on a click
-itself: a double click slower than the wait restores instead of maximising. The layout is remembered in the browser (`cd-po-dock`; a phone's apart, `cd-po-dock-phone`), with **Reset layout** in the Panels menu. The
+brings it back** (the library's, from v0.3.5: `minClickRestores`, on by default); its controls
+keep their own clicks, a drag is not a click, and a double click still maximises. The layout is remembered in the browser (`cd-po-dock`; a phone's apart, `cd-po-dock-phone`), with **Reset layout** in the Panels menu. The
 library is never edited in this repository: a need goes to the Dock project's `ENSEMBLE-NEEDS.md`.
 
 - **The default** (`pdDefaultLayout`, measured in `tests/test_po_dock.py`): at a laptop's width (about

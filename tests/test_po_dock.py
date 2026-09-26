@@ -232,7 +232,7 @@ class ThePanels(unittest.TestCase):
         self.assertIn("import('/static/dock/src/index.js')", INDEX)
         self.assertNotIn("dock/css/theme.css", INDEX, "the --dk-* tokens read Ensemble's own")
         self.assertNotIn("static/dock/src/popout.html", dashboard.PAGE_FILES, "an inert page: nothing to update in it")
-        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.3\.4 [0-9a-f]{40}")
+        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.3\.5 [0-9a-f]{40}")
 
     def test_the_library_does_what_the_workarounds_did(self):
         # Dock v0.3.3 has each of Ensemble's needs (the Dock project's ENSEMBLE-NEEDS.md); the page uses them.
@@ -374,15 +374,22 @@ async function main() {
       const maxed = await p.evalIn('!!PD.els.points.closest(".dk-max")'), minMaxed = await p.evalIn(isMin);
       await p.evalIn('PD.dock.restoreMax(); 0'); await sleep(200);
       out.minClick = { was, back, again, maxed, minMaxed, min: await p.evalIn(isMin) };
-      // A click, then a drag before the wait is out: the panel moves, minimised, and stays so.
+      // A slow double click (the second press 450 ms after the first) still maximises it.
+      await p.evalIn('PD.dock.toggleMin("points"); 0'); await sleep(300);
+      for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 }, p.sessionId);
+      await sleep(450);
+      for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 2 }, p.sessionId);
+      await sleep(700);
+      out.slowDbl = { maxed: await p.evalIn('!!PD.els.points.closest(".dk-max")'), min: await p.evalIn(isMin) };
+      await p.evalIn('PD.dock.restoreMax(); 0'); await sleep(200);
+      if (await p.evalIn(isMin)) { await p.evalIn('PD.dock.toggleMin("points"); 0'); await sleep(200); }
+      // A drag on a minimised floating panel's title bar: it moves, and stays minimised.
       await p.evalIn('PD.dock.float("points"); 0'); await sleep(300);
       await p.evalIn('PD.dock.toggleMin("points"); 0'); await sleep(300);
       const fl = 'PD.els.points.closest(".dk-float")';
       const at = async () => p.evalIn(`(() => { const b = (${fl}).getBoundingClientRect(); return [Math.round(b.left), Math.round(b.top)]; })()`);
       const [hx, hy] = await p.evalIn(`(() => { const h = (${fl}).querySelector('.dk-head'), b = h.getBoundingClientRect(); const t = h.querySelector('[data-dk-tab]').getBoundingClientRect(); return [Math.round(t.right + (b.right - t.right) / 4), Math.round(b.top + b.height / 2)]; })()`);
       const from = await at(), wasMin = await p.evalIn(`(${fl}).classList.contains('dk-min')`);
-      for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x: hx, y: hy, button: 'left', clickCount: 1 }, p.sessionId);
-      await sleep(60);
       await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: hx, y: hy, button: 'left', clickCount: 1 }, p.sessionId);
       for (let i = 1; i <= 8; i++) await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: hx + i * 10, y: hy + i * 5, button: 'left', buttons: 1 }, p.sessionId);
       await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: hx + 80, y: hy + 40, button: 'left', clickCount: 1 }, p.sessionId);
@@ -872,9 +879,12 @@ class InChrome(unittest.TestCase):
         self.assertEqual(self.got["docsProject"], {"first": "Roadmap", "rows": 1, "list": True},
                          "the roadmap first, then its documents, in the list view")
 
-    def test_a_minimised_panel_dragged_after_a_click_stays_minimised(self):
+    def test_a_dragged_minimised_panel_stays_minimised(self):
         self.assertEqual(self.got["minDrag"], {"wasMin": True, "moved": True, "min": True},
-                         "the drag supersedes the click: no restore once the wait is out")
+                         "a drag on the title bar moves the panel and does not restore it")
+
+    def test_a_slow_double_click_on_a_minimised_panel_maximises_it(self):
+        self.assertEqual(self.got["slowDbl"], {"maxed": True, "min": False})
 
     def test_the_top_bar_shows_the_new_icon(self):
         self.assertTrue(self.got["first"]["logo"].endswith("/static/icons/favicon.svg"), self.got["first"]["logo"])

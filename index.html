@@ -9225,49 +9225,8 @@ function pdEnsure() {
   PD.dock.onShown(id => pdShown(id));
   // Before the chat panel comes back from its window: the window's own chat goes.
   PD.dock.onPopIn(id => { if (id === 'po-chat') pdPopChat(false); });
-  PD_ROOT.addEventListener('pointerdown', pdMinCancel, true);
-  PD_ROOT.addEventListener('click', pdMinDown, true);
-  PD_ROOT.addEventListener('click', pdMinClick);
   pdPlaceChat();
   return PD.dock;
-}
-// A minimised panel is its title bar only: a click on it (its name, or the bar
-// beside the name) shows it again, as its restore button does; a double click
-// still maximises it (the library's), so the click waits out a double click's
-// time before it restores. Not a click on the bar's controls, and not the
-// click that ends a drag (the library cancels that one, after this has seen
-// it: so the panel is named on the way down, and shown on the way up, once the
-// library has had the click; its tab may be redrawn by then). Any press
-// before the wait is out (a drag, a double click's second press) is a gesture
-// of its own: the pending restore is dropped. A known limit until the library
-// restores on a click itself: a double click slower than the wait restores
-// the panel, not maximises it.
-const PD_MIN_WAIT = 350;
-let PD_MIN_HIT = '', PD_MIN_T = 0;
-function pdMinDown(e) {
-  PD_MIN_HIT = '';
-  if (e.detail > 1) { clearTimeout(PD_MIN_T); PD_MIN_T = 0; return; }   // a double click: the library's
-  const t = e.target;
-  if (e.button || !t.closest) return;
-  const head = t.closest('.dk-stack.dk-min > .dk-head, .dk-float.dk-min .dk-head');
-  if (!head || t.closest('.dk-ctl, [data-help], [data-dk-act]')) return;
-  const tab = t.closest('[data-dk-tab]') || head.querySelector('[data-dk-tab][aria-selected="true"]') || head.querySelector('[data-dk-tab]');
-  PD_MIN_HIT = tab ? tab.dataset.dkTab : '';
-}
-function pdMinCancel() {
-  clearTimeout(PD_MIN_T);
-  PD_MIN_T = 0;
-}
-function pdMinClick(e) {
-  const id = PD_MIN_HIT;
-  PD_MIN_HIT = '';
-  if (!id || e.defaultPrevented || !PD.dock) return;
-  clearTimeout(PD_MIN_T);
-  PD_MIN_T = setTimeout(() => {
-    PD_MIN_T = 0;
-    const el = PD.els[id];
-    if (PD.dock && el && el.closest('.dk-min')) PD.dock.reveal(id);
-  }, PD_MIN_WAIT);
 }
 // A panel came on screen: what it shows is drawn now, not at the next refresh.
 function pdShown(id) {
