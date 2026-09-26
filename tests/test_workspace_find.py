@@ -733,12 +733,15 @@ class PageWiring(unittest.TestCase):
     def test_a_search_is_cancelled_by_typing_again(self):
         search = _fn(INDEX, "async function wsfSearch(")
         self.assertIn("new AbortController()", search)
-        self.assertIn("tag: v.uid + ':' + WSF_PAGE", search)
+        self.assertIn("tag = v.uid + ':' + WSF_PAGE", search)
+        self.assertIn("ask(docsDir, tag + ':docs')", search, "the Documents folder's search has its own tag")
         self.assertIn("if (gen !== f.gen) return;", search, "an answer to an older query is dropped")
         schedule = _fn(INDEX, "function wsfSchedule(")
         self.assertIn("f.ctl.abort()", schedule)
         self.assertLess(schedule.index("f.gen++;"), schedule.index("if (sent) wsfCancel(v);"), "the hub stops it too, with the newer count")
-        self.assertIn("cancel: '1', tag: v.uid + ':' + WSF_PAGE, n: String(v.find.gen)", _fn(INDEX, "function wsfCancel("))
+        cancel = _fn(INDEX, "function wsfCancel(")
+        self.assertIn("[v.uid + ':' + WSF_PAGE, v.uid + ':' + WSF_PAGE + ':docs']", cancel, "both searches are stopped")
+        self.assertIn("cancel: '1', tag, n: String(v.find.gen)", cancel)
         self.assertIn('if q.get("cancel", [""])[0] == "1":', DASHBOARD)
 
     def test_the_query_is_remembered_per_workspace(self):

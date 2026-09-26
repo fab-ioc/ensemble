@@ -1457,10 +1457,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .wse.none { color: var(--fg-muted); cursor: default; }
   .wse.none:hover { background: transparent; }
   .wsp-view { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-  /* A project's Documents list: the Workspace's tabs and viewer, no tree (its
-     folders show in the Workspace's), so nothing to follow there. */
-  .wsp.wsp-list { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
-  .wsp-list > .wsp-side, .wsp-list .wsp-follow { display: none; }
   /* Open files, as tabs above the viewer. A row that does not fit scrolls
      sideways within itself, never the page. */
   .wst { position: relative; display: flex; flex: none; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
@@ -1483,39 +1479,17 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .wsp-empty { color: var(--fg-subtle); padding: 24px; font-size: 13px; }
   /* "Show task folders" above a code project's tree. */
   .wsp-tasks { flex: none; padding: var(--s-100) var(--s-300); border-bottom: 1px solid var(--border); color: var(--fg-subtle); }
-  /* The Documents list: a project's Workspace opens on it, its fixed first
-     tab (see the design skill's "Documents list"). */
-  .wst-tab.wst-docs { padding-right: var(--s-300); font-weight: 600; }
-  .wsd { position: absolute; inset: 0; overflow: auto; padding: var(--s-400) var(--s-600); }
-  .wsd-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--s-100) var(--s-300); }
-  .wsd-h { margin: 0; font-size: var(--fs-500); font-weight: 600; color: var(--fg); }
-  .wsd-n, .wsd-where, .wsd-note { color: var(--fg-muted); font-size: var(--fs-200); }
-  .wsd-where { margin: var(--s-100) 0 var(--s-300); overflow-wrap: anywhere; }
-  /* The roadmap, always first; it opens over the list with the way back. */
-  .wsd-pins { margin-bottom: var(--s-200); border-bottom: 1px solid var(--border); }
-  .wsd-head + .wsd-pins { margin-top: var(--s-300); }
-  .wsd-rmwrap { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; min-height: 0; background: var(--surface); }
-  .wsd-rmwrap[hidden] { display: none; }
-  .wsd-rmbar { flex: none; display: flex; align-items: center; gap: var(--s-200); padding: var(--s-100) var(--s-200); border-bottom: 1px solid var(--border); }
-  .wsd-rmwrap > #rm-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-  .wsd-rmwrap > #rm-panel[hidden] { display: none; }
-  .wsd-rmwrap .rm { flex: 1 1 auto; height: auto; min-height: 0; border: 0; border-radius: 0; }
-  .wsd-note { margin: var(--s-300) 0 0; max-width: 72ch; overflow-wrap: anywhere; }
-  .wsd code { font-family: var(--font-mono); }
-  .wsd-list { list-style: none; margin: 0; padding: 0; }
-  .wsd-row { display: flex; align-items: center; gap: var(--s-300); padding: var(--s-050) 0; border-top: 1px solid var(--border); }
-  .wsd-open { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: var(--s-100) var(--s-200);
-    border: 0; border-radius: var(--r-200); background: transparent; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
-  .wsd-open:hover { background: var(--hover); }
-  .wsd-open:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
-  .wsd-t { max-width: 100%; font-size: var(--fs-300); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .wsd-f { max-width: 100%; color: var(--fg-muted); font-size: var(--fs-200); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .wsd-meta { flex: none; display: flex; align-items: center; gap: var(--s-300); color: var(--fg-muted); font-size: var(--fs-200); }
-  .wsd-when, .wsd-sz { white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .wsd-sz { min-width: 6ch; text-align: right; }
-  a.tno.wsd-no { margin: 0; text-decoration: none; }
-  a.tno.wsd-no:hover { color: var(--link); text-decoration: underline; }
-  a.tno.wsd-no:focus-visible { outline: none; border-radius: var(--r-100); box-shadow: 0 0 0 2px var(--focus-ring); }
+  /* Documents, the first node of a project's tree: the roadmap, then the
+     reports and design notes, newest first, each with its task's number. */
+  .wse .wse-tag { flex: none; color: var(--fg-muted); font-size: var(--fs-100); font-variant-numeric: tabular-nums; }
+  .wse.on .wse-tag { color: inherit; }
+  .wsk[data-docs] > .wse.none { white-space: normal; }
+  /* The roadmap's tab: its own view and editor (#rm-panel) where a viewer would be. */
+  .wsp-rm { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; min-height: 0; background: var(--surface); }
+  .wsp-rm[hidden] { display: none; }
+  .wsp-rm > #rm-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  .wsp-rm > #rm-panel[hidden] { display: none; }
+  .wsp-rm .rm { flex: 1 1 auto; height: auto; min-height: 0; border: 0; border-radius: 0; }
   /* Where am I: the file showing as a path of crumbs (see the design skill's
      "Breadcrumb"). A path too long for the bar keeps its end in view and
      scrolls sideways within itself; a fade says the start is cut. */
@@ -2839,15 +2813,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .wst { scrollbar-width: none; }
     .wst-tab { height: auto; min-height: var(--touch-min); padding-right: 0; }
     .wst-x { width: var(--touch-min); height: var(--touch-min); }
-    .wst-tab.wst-docs { padding-right: var(--s-300); }
     .chc-more, .chc-head a.tno { display: inline-flex; align-items: center; min-height: var(--touch-min); min-width: var(--touch-min); }
-    /* The Documents list: a row's title takes the width; its task, date and
-       size go under it; the title and the task are finger-sized. */
-    .wsd { padding: var(--s-300); }
-    .wsd-row { flex-wrap: wrap; row-gap: 0; }
-    .wsd-open { flex-basis: 100%; min-height: var(--touch-min); justify-content: center; }
-    .wsd-meta { padding-left: var(--s-200); }
-    .wsd-no { display: inline-flex; align-items: center; min-height: var(--touch-min); min-width: var(--touch-min); }
     /* The path above the file: every crumb and button finger-sized; the path
        is cut from the left and swipes sideways within itself. */
     .wsp-bar { padding-block: 0; }
@@ -2987,12 +2953,15 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .dk-menu button[disabled] { color: var(--fg-disabled); }
   .dk-menu-sep { background: var(--border); }
   .dk-empty { color: var(--fg-muted); }
-  .dk-textbtn, .dk-pop-back {
+  .dk-textbtn {
     height: 32px; padding: 0 var(--s-300); border: 1px solid var(--border-strong); border-radius: var(--r-200);
     background: var(--surface); color: var(--fg); font-family: var(--font-sans); font-size: var(--fs-300); font-weight: 500;
   }
-  .dk-pop-back { height: 24px; font-size: var(--fs-200); }
-  .dk-textbtn:hover, .dk-pop-back:hover, .dk-pop-back:focus-visible { background: var(--hover); border-color: var(--border-strong); color: var(--fg); }
+  .dk-textbtn:hover { background: var(--hover); border-color: var(--border-strong); color: var(--fg); }
+  /* A popped-out panel's window has no "Back to main window": closing the
+     window puts the panel back. (The library has no option for it yet; the
+     window gets this page's stylesheets.) */
+  .dk-pop-back { display: none; }
   .dk-note { border-color: var(--c-warning-bold); background: var(--surface-overlay); box-shadow: var(--e-200); }
   .dk-outnote { background: var(--surface-overlay); box-shadow: var(--e-200); }
   body.dk-popwin { background: var(--surface); color: var(--fg); font-family: var(--font-sans); font-size: var(--fs-300); }
@@ -3001,8 +2970,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .pd-pane { overflow: auto; padding: var(--s-300) var(--s-400); }
   .pd-board { background: var(--bg); }
   .pd-ws { display: flex; flex-direction: column; padding: var(--s-200); }
-  .pd-ws > #ws-panel, .pd-ws > #doclist-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-  .pd-ws > #ws-panel[hidden], .pd-ws > #doclist-panel[hidden] { display: none; }
+  .pd-ws > #ws-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  .pd-ws > #ws-panel[hidden] { display: none; }
   .pd-ws .wsp, .pd-ws .dcs { flex: 1 1 auto; height: auto; min-height: 0; }
   .pd-changes { display: flex; flex-direction: column; padding: var(--s-200) var(--s-300); }
   .pd-changes > .ch-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
@@ -3305,9 +3274,6 @@ window.DOC_LISTENERS_PAUSED = false;
   <section id="ws-panel" hidden></section>
   <!-- The roadmap panel, for the same reason: an unsaved draft is state. -->
   <section id="rm-panel" hidden></section>
-  <!-- A project's Documents list (the roadmap first), its own view with the
-       Workspace's tabs and viewer but no tree: kept for the same reason. -->
-  <section id="doclist-panel" hidden></section>
   <!-- A project with a PO: its Overview is a Dock of panels (#po-dock). The
        host is display:contents everywhere else, so the PO's conversation in it
        is the drawer the pill opens, as before. -->
@@ -3318,7 +3284,6 @@ window.DOC_LISTENERS_PAUSED = false;
       <div data-panel="po-chat" data-title="PO chat" class="pd-chat"></div>
       <div data-panel="points" data-title="Your asks" class="pd-points pd-pane"></div>
       <div data-panel="board" data-title="Board" class="pd-board pd-pane"></div>
-      <div data-panel="documents" data-title="Documents" class="pd-ws pd-docs"></div>
       <div data-panel="workspace" data-title="Workspace" class="pd-ws"></div>
       <div data-panel="changes" data-title="Changes" class="pd-changes"></div>
     </div>
@@ -5713,13 +5678,11 @@ function projectsChromeHtml() {
         + pdCtlHtml() + `</div>`;
     }
     // Tabs only when the project has a folder to browse (Unassigned has none).
-    // Its roadmap is a document, first in its Documents list.
+    // Its roadmap and documents are the first node of its Workspace's tree.
     const hasFolder = !!(pj && pj.path);
-    const docsTab = `<button data-ptab="documents" class="${PROJECT_TAB === 'documents' ? 'on' : ''}" title="The roadmap, then the reports and design notes the project's tasks wrote, newest first">Documents</button>`;
     const tabs = hasFolder ? `<div class="ptabs">`
       + `<button data-ptab="tasks" class="${PROJECT_TAB === 'tasks' ? 'on' : ''}" title="The project's PO and its tasks">Overview</button>`
-      + docsTab
-      + `<button data-ptab="workspace" class="${PROJECT_TAB === 'workspace' ? 'on' : ''}" title="Browse this project's folder like an IDE — files render, and you can comment in place">Workspace</button>`
+      + `<button data-ptab="workspace" class="${PROJECT_TAB === 'workspace' ? 'on' : ''}" title="The project's documents, the roadmap first, and its folders, like an IDE: files render, and you can comment in place">Workspace</button>`
       + `<button data-ptab="changes" class="${PROJECT_TAB === 'changes' ? 'on' : ''}" title="What landed on the main line, newest first, with each task and its files, and any uncommitted changes on top: per-file diff, line comments you can send to a task chat">Changes</button>`
       + `</div>` : '';
     return strip + `<div class="crumbs"><a href="#" class="crumb-back">← Projects</a><span class="sep">/</span><b>${esc(nm)}</b>${kindBtnHtml(pj)}${keyBtnHtml(pj)}${poChooseBtnHtml(pj)}${newTask}`
@@ -5856,7 +5819,7 @@ async function moveSessionToProject(sid) {
 // ---- Workspace tab: IDE-like, read-only view of a project's folder ----------
 // Lazy tree from /api/dir; a selected file renders in the existing fileview
 // (markdown/HTML + in-place comments) — one renderer, not two.
-let PROJECT_TAB = 'tasks';   // tasks | documents | workspace | changes | roadmap (= documents)  (per drill-in; reset on selecting a project)
+let PROJECT_TAB = 'tasks';   // tasks | workspace | changes; documents and roadmap (older names) are workspace  (per drill-in; reset on selecting a project)
 function wsFmtSize(n) {
   if (n == null) return '';
   if (n < 1024) return n + ' B';
@@ -5985,9 +5948,7 @@ function wsHidden(v, dir) {
 }
 // A documents project's Workspace tab is its Files panel, a view of its own
 // (docs:), so a project that changes kind never inherits the other's state.
-// A code project's Documents list is a view of its own too (documents:): its
-// open documents are not the Workspace's open files.
-function wsCtxKey(ctx) { return ctx.kind === 'task' ? 'task:' + ctx.sid : (ctx.list ? 'documents:' : ctx.docs ? 'docs:' : 'project:') + ctx.projectId; }
+function wsCtxKey(ctx) { return ctx.kind === 'task' ? 'task:' + ctx.sid : (ctx.docs ? 'docs:' : 'project:') + ctx.projectId; }
 
 // ---- Workspace tabs: begin ------------------------------------------------
 // The files open in a Workspace are tabs above the viewer, as in an editor.
@@ -6291,9 +6252,9 @@ function wsFindFrom(saved) {
 function wsHitRows(res) {
   const rows = [], hits = [];
   for (const f of (res && res.files) || []) {
-    rows.push({ kind: 'file', path: f.path, count: f.matches.reduce((a, m) => a + (m.n || m.ranges.length), 0) });
+    rows.push({ kind: 'file', path: f.path, abs: f.abs, count: f.matches.reduce((a, m) => a + (m.n || m.ranges.length), 0) });
     for (const m of f.matches) {
-      const h = { kind: 'hit', path: f.path, i: hits.length, ...m };
+      const h = { kind: 'hit', path: f.path, abs: f.abs, i: hits.length, ...m };
       rows.push(h); hits.push(h);
     }
   }
@@ -6514,7 +6475,7 @@ function wsView(ctx) {
     v = { key, ctx, el: null, open: new Set(), sel: '', scroll: 0, dirs: new Map(),
           roots: [], hide: new Set(), hideAllDirs: false, hideReady: true, busy: false, cursor: 0,
           tabs: [], frames: new Map(), live: [], uid: 'wst' + (++WS_UID),
-          recent: [], follow: false, mark: '', revealGen: 0, revealPending: '', revealTmp: new Set() };
+          recent: [], follow: false, mark: '', revealGen: 0, revealPending: '', revealTmp: new Set(), docsOpen: true };
     let s = {};
     try { s = JSON.parse(localStorage.getItem('cd-ws:' + key) || '{}') || {}; } catch (e) {}
     try {
@@ -6526,6 +6487,7 @@ function wsView(ctx) {
       v.sel = tb.active;
       v.recent = wsRecentFrom(s, tb.tabs, tb.active);
       v.follow = !!(s && s.follow === true);
+      v.docsOpen = !(s && s.docs === false);   // a project's Workspace opens with its Documents open
     } catch (e) {}
     v.find = { ...wsFindFrom(s && s.find), list: null, listing: '', pool: null, ranked: null, res: null,
                active: 0, gen: 0, ctl: null, timer: 0, pending: false, recent: false, rq: '', ritems: [], ractive: 0 };
@@ -6540,7 +6502,7 @@ function wsPersist(v) {
   // A folder a reveal opened is saved once its listings say it is there.
   try { localStorage.setItem('cd-ws:' + v.key, JSON.stringify({ open: [...v.open].filter(p => !v.revealTmp.has(p)), sel: v.sel, scroll: v.scroll, ...wsTabsSaved(v),
     find: { mode: f.mode, q: f.q, cs: f.cs, rx: f.rx },
-    recent: v.recent.map(x => ({ path: x.path, st: x.st })), follow: v.follow })); } catch (e) {}
+    recent: v.recent.map(x => ({ path: x.path, st: x.st })), follow: v.follow, docs: v.docsOpen })); } catch (e) {}
 }
 const WS_EMPTY = 'Open a file from the tree. Each file opens in a tab of its own; code is highlighted, Markdown and HTML render, and you can comment on any of it in place.';
 const WS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
@@ -6551,13 +6513,10 @@ function wsPanelHtml(o) {
   // tree (a documents project's is in its Files panel's header).
   const tasks = o && o.tasks ? `<label class="dcs-all wsp-tasks" title="Show the folders of the project's tasks in the tree">`
     + `<input type="checkbox" class="wsp-tasks-cb"${docsTasksShown() ? ' checked' : ''}> Show task folders</label>` : '';
-  // A project's Documents list (o.list) is the same pane without its tree:
-  // its tabs and viewer; a file's folders show in the Workspace's tree.
-  const list = !!(o && o.list);
-  const reveal = list ? 'Show in the Workspace’s tree' : 'Show in the tree';
+  const reveal = 'Show in the tree';
   // tabindex -1: a click anywhere in the pane gives it focus, so the Recent
   // shortcut, which acts only inside the pane, works after clicking the tree.
-  return `<div class="wsp${list ? ' wsp-list' : ''}" tabindex="-1">
+  return `<div class="wsp" tabindex="-1">
     <div class="wsp-side">
       <div class="wsf">
         <div class="wsf-row">
@@ -6576,7 +6535,7 @@ function wsPanelHtml(o) {
       <div class="wsf-res" role="listbox" aria-label="Results" hidden></div>
     </div>
     <div class="wsp-view">
-      <div class="wst" role="tablist" aria-label="${list ? 'Documents' : 'Open files'}" hidden></div>
+      <div class="wst" role="tablist" aria-label="Open files" hidden></div>
       <div class="wsp-bar" hidden><nav class="wsc" aria-label="Where the file is"><ol class="wsc-list"></ol></nav>`
     + `<button type="button" class="wsp-btn wsp-reveal" title="${reveal}" aria-label="${reveal}">${WS_ICON_TREE}</button>`
     + `<button type="button" class="wsp-btn wsp-follow" aria-pressed="false" title="Keep the tree on the file showing">Follow</button>`
@@ -6633,7 +6592,7 @@ function wsTreeHtml(v) {
   // place — would otherwise just be missing its first root with no explanation.
   const noTaskRoot = v.ctx.kind === 'task' && !v.roots.some(r => r.kind === 'task')
     ? '<div class="wse none">This task has no folder of its own — showing the project.</div>' : '';
-  return noTaskRoot + v.roots.map(r => {
+  return noTaskRoot + wsDocsNodeHtml(v, v.docsList, wsDocsRm(v)) + v.roots.map(r => {
     const open = v.open.has(r.path);
     return `<div class="wse dir wsroot ${esc(r.kind)}${v.mark && wsSame(v.mark, r.path) ? ' on' : ''}" data-path="${esc(r.path)}" title="${esc(r.path)}">`
       + `<span class="tw">${open ? '▾' : '▸'}</span><span class="nm">${esc(r.label)}</span>`
@@ -6702,18 +6661,14 @@ const wsTabEl = (strip, path) => [...strip.querySelectorAll('.wst-tab')].find(e 
 function wsPaintTabs(v) {
   const strip = v.el && v.el.querySelector('.wst');
   if (!strip) return;
-  // A project's Workspace has its Documents list as a fixed first tab: no ×,
-  // never closed, showing whenever no file tab is.
-  const docs = wsDocsCtx(v), docsOn = docs && wsDocsShowing(v);
-  const html = (docs ? `<div class="wst-tab wst-docs${docsOn ? ' on' : ''}" role="tab" id="${v.uid}-docs" aria-selected="${docsOn}" tabindex="${docsOn ? 0 : -1}"`
-      + ` data-path="" title="The project's documents, newest first"><span class="wst-nm">Documents</span></div>` : '')
-    + v.tabs.map((t, i) => {
-    const on = wsSame(t.path, v.sel), name = wsTabName(t.path);
-    return `<div class="wst-tab${on ? ' on' : ''}${t.missing ? ' gone' : ''}" role="tab" id="${v.uid}-${i}" aria-selected="${on}" tabindex="${on ? 0 : -1}"`
-      + ` data-path="${esc(t.path)}" title="${esc(tildeify(t.path) + (t.missing ? ' (no longer exists)' : ''))}" aria-label="${esc(name + (t.missing ? ', no longer exists' : ''))}">`
+  const html = v.tabs.map((t, i) => {
+    // The roadmap's tab is its own view, which says so when it is not written yet.
+    const on = wsSame(t.path, v.sel), name = wsTabName(t.path), gone = t.missing && !wsIsRoadmap(v, t.path);
+    return `<div class="wst-tab${on ? ' on' : ''}${gone ? ' gone' : ''}" role="tab" id="${v.uid}-${i}" aria-selected="${on}" tabindex="${on ? 0 : -1}"`
+      + ` data-path="${esc(t.path)}" title="${esc(tildeify(t.path) + (gone ? ' (no longer exists)' : ''))}" aria-label="${esc(name + (gone ? ', no longer exists' : ''))}">`
       + `<span class="wst-nm">${esc(name)}</span><span class="wst-x" aria-hidden="true" title="Close">×</span></div>`;
   }).join('');
-  strip.hidden = !docs && !v.tabs.length;
+  strip.hidden = !v.tabs.length;
   if (strip._sig === html) return;
   const f = strip.ownerDocument.activeElement;
   const focused = f && strip.contains(f) ? (f.dataset.path || '') : null;
@@ -6742,7 +6697,9 @@ function wsPaintView(v) {
   wsPaintTabs(v);
   const stage = box.querySelector('.wsp-frames'), bar = box.querySelector('.wsp-bar');
   const t = v.tabs.find(x => wsSame(x.path, v.sel)) || null;
-  const key = t && !t.missing ? wsNorm(t.path) : '';
+  // The roadmap shows in its own view and editor, not a viewer.
+  const rmTab = !!t && wsIsRoadmap(v, t.path), gone = !!t && t.missing && !rmTab;
+  const key = t && !t.missing && !rmTab ? wsNorm(t.path) : '';
   // A viewer whose tab closed or whose file went is dropped: if the file comes
   // back, it is read again rather than shown as it was.
   v.frames.forEach((f, k) => {
@@ -6751,13 +6708,11 @@ function wsPaintView(v) {
       const i = v.live.indexOf(k); if (i >= 0) v.live.splice(i, 1);
     }
   });
-  writeSlot(stage.querySelector('.wsp-note'), !t ? (wsDocsCtx(v) ? wsDocsHtml(v.docsList, wsDocsRm(v)) : `<div class="wsp-empty">${esc(WS_EMPTY)}</div>`)
-    : t.missing ? `<div class="wsp-empty wsp-gone"><p><b>${esc(wsTabName(t.path))}</b> no longer exists on the hub. It was moved, renamed or deleted since the tab was opened.</p>`
+  writeSlot(stage.querySelector('.wsp-note'), !t ? `<div class="wsp-empty">${esc(WS_EMPTY)}</div>`
+    : gone ? `<div class="wsp-empty wsp-gone"><p><b>${esc(wsTabName(t.path))}</b> no longer exists on the hub. It was moved, renamed or deleted since the tab was opened.</p>`
       + `<p class="wsp-gone-path">${esc(tildeify(t.path))}</p><button type="button" class="rm-btn wsp-gone-close">Close tab</button></div>`
     : '');
-  wsRoadmapPaint(v, stage, !t);
-  // The roadmap's date, first in the list: read at most every few seconds (rmLoad).
-  if (!t && wsDocsCtx(v)) rmLoad(v.ctx.projectId, false);
+  wsRoadmapPaint(v, stage, rmTab);
   bar.hidden = !t;
   const hb = bar.querySelector('.wsp-hist');
   if (hb) hb.hidden = !(t && wsDocsProjectOf(v));
@@ -6766,10 +6721,10 @@ function wsPaintView(v) {
   if (t) {
     const own = bar.querySelector('.wsp-own');
     own.href = wsFileUrl(v, t.path);
-    own.hidden = t.missing;
+    own.hidden = gone;
   }
   wsPaintCrumbs(v);
-  const tabEl = (t || wsDocsCtx(v)) && v.el.querySelector('.wst') && wsTabEl(v.el.querySelector('.wst'), t ? t.path : '');
+  const tabEl = t && v.el.querySelector('.wst') && wsTabEl(v.el.querySelector('.wst'), t.path);
   if (tabEl) stage.setAttribute('aria-labelledby', tabEl.id); else stage.removeAttribute('aria-labelledby');
   if (key && !v.frames.has(key)) {
     const f = document.createElement('iframe');
@@ -6838,12 +6793,22 @@ function wsScrollTreeTo(v, path) {
 async function wsReveal(v, path, opts) {
   const o = opts || {};
   const root = path ? wsRootOf(v.roots, path) : null;
-  if (!root) return false;
+  // A document the Documents node lists is shown there, first in the tree.
+  const doc = !o.dir && wsDocsHas(v, path);
+  if (!root && !doc) return false;
   const gen = ++v.revealGen, f = v.find;
   if (o.clear !== false) {
     f.recent = false; f.rq = '';
     if (f.q) { f.q = ''; wsfSchedule(v); }
     wsfPaint(v);
+  }
+  if (doc) {
+    v.docsOpen = true;
+    v.mark = o.clear === false ? '' : path;
+    wsPersist(v);
+    wsPaintTree(v);
+    if (!wsScrollTreeTo(v, path)) v.revealPending = path;
+    return true;
   }
   let plan = null;
   // Each round reads the folders not read yet; the next takes their real names
@@ -6878,7 +6843,7 @@ function wsFrameMessage(src, d) {
     const t = v.tabs.find(x => wsNorm(x.path) === k);
     if (!t) return;
     if (d.type === 'fv-key') {
-      if (d.key === 'recent' && !v.ctx.list) wsRecentToggle(v, undefined, true);
+      if (d.key === 'recent') wsRecentToggle(v, undefined, true);
     } else if (d.type === 'fv-state') {
       t.st = wsTabState(d.st);
       wsRecentNote(v.recent, t.path, t.st);
@@ -6898,7 +6863,6 @@ function wsShowTab(v, path) {
   const t = v.tabs.find(x => wsSame(x.path, path));
   if (t) wsRecentTouch(v.recent, t.path, t.st);
   wsPersist(v); wsPaintTree(v); wsPaintView(v);
-  if (!t && wsDocsCtx(v)) wsDocsLoad(v, false);
   const strip = v.el && v.el.querySelector('.wst');
   wsRevealTab(strip, strip && wsTabEl(strip, path));
   if (t && v.follow) wsReveal(v, t.path, { clear: false });
@@ -6925,116 +6889,148 @@ function wsOpenTabAt(v, path, line, hit) {
   wsShowTab(v, t.path);
 }
 function wsCloseTab(v, path) {
-  if (!path) return;                 // the Documents tab stays
+  if (!path) return;
   wsTabClose(v, path);
   wsShowTab(v, v.sel);
 }
 // ---- Workspace Documents: begin -------------------------------------------
-// A project's Documents (a panel of the PO screen, a tab beside Workspace
-// elsewhere) is the reports and design notes its tasks put in its Documents
-// folder, and for a code project the Markdown under its checkout's docs/
-// folder, newest first (/api/projects/documents). It is a Workspace view
-// without the tree (ctx.list): the list is its fixed first tab, showing
-// whenever no document's tab is, and a document opens in a tab beside it.
-// Pure down to wsDocsHtml, so tests/test_documents_list.py runs it in Node.
+// A project's Workspace leads with its Documents, the first node of its tree:
+// the roadmap (ROADMAP.md in the project's home, which the person and the PO
+// both edit), then the reports and design notes its tasks put in its
+// Documents folder, and for a code project the Markdown under its checkout's
+// docs/ folder, newest first as the hub sends them (/api/projects/documents).
+// A document opens in a tab like any file; the roadmap's tab is its own view
+// and editor (wsRoadmapPaint). Go to file and Text search find them as they
+// find any other file (wsDocsFindPool, wsDocsSearchDir, wsfMerge). Pure down
+// to wsfMerge, so tests/test_documents_list.py runs it in Node.
 const WS_DOCS_TTL = 15000;         // the list is read again at most this often
-const wsDocsCtx = v => !!(v && v.ctx && v.ctx.kind === 'project' && v.ctx.list);
-// Whether the Documents list is what shows: no file tab is.
-const wsDocsShowing = v => wsDocsCtx(v) && !v.tabs.some(x => wsSame(x.path, v.sel));
+// The project whose Documents a view leads with: a project's Workspace (a
+// documents project's Files panel too), never a task's.
+function wsDocsProject(v) {
+  const pj = v && v.ctx && v.ctx.kind === 'project' ? projectById(v.ctx.projectId) : null;
+  return pj && pj.path && pj.home ? pj : null;
+}
+function wsRoadmapPath(v) { const pj = wsDocsProject(v); return pj ? wsJoin(pj.home, 'ROADMAP.md') : ''; }
+const wsIsRoadmap = (v, path) => !!path && wsSame(path, wsRoadmapPath(v));
+// Whether the Documents node lists a file: the roadmap, or one of its documents.
+function wsDocsHas(v, path) {
+  if (!path || !wsDocsProject(v)) return false;
+  const d = v.docsList && v.docsList.data;
+  return wsIsRoadmap(v, path) || !!(d && (d.items || []).some(it => wsSame(it.path, path)));
+}
 function wsDocsDate(t) {
-  try { return new Date(t * 1000).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }); } catch (e) { return ''; }
+  try { return new Date(t * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); } catch (e) { return ''; }
 }
 function wsDocsWhen(t) {
   try { return new Date(t * 1000).toLocaleString(); } catch (e) { return ''; }
 }
-// One document: its title (and where it is under its folder), the task that
-// wrote it or "in the code", its date and size. The title opens it in a tab.
-function wsDocsRowHtml(it, key) {
-  const folder = histFolder(it.rel || '');
-  const chip = it.inCode ? '<span class="loz neutral">in the code</span>'
-    : it.no ? `<a class="tno wsd-no" href="#" data-task="${esc((key ? key + '-' : '#') + it.no)}" title="${esc(`Open task #${it.no}`)}">#${it.no}</a>` : '';
-  return `<li class="wsd-row"><button type="button" class="wsd-open" data-path="${esc(it.path)}" title="${esc(tildeify(it.path))}">`
-    + `<span class="wsd-t">${esc(it.title || wsTabName(it.path))}</span>`
-    + (folder ? `<span class="wsd-f">${esc(folder)}</span>` : '') + `</button>`
-    + `<span class="wsd-meta">${chip}<span class="wsd-when" title="${esc(wsDocsWhen(it.mtime))}">${esc(wsDocsDate(it.mtime))}</span>`
-    + `<span class="wsd-sz">${wsFmtSize(it.size)}</span></span></li>`;
+// A document's tooltip: where it is under its folder, the task it came from
+// (or the code's docs folder), when it was written and its size.
+function wsDocsTip(it) {
+  return [it.rel || wsTabName(it.path), it.inCode ? 'in the code’s docs folder' : it.no ? `from task #${it.no}` : '',
+    wsDocsWhen(it.mtime), wsFmtSize(it.size)].filter(Boolean).join(' · ');
 }
-// The roadmap, always first: ROADMAP.md in the project's home, which the
-// person and the PO both edit. It opens in the roadmap's own view and editor
-// (wsRoadmapPaint) over the list. `rm` is what was last read of it
-// ({ exists, mtime }), null before it has been read.
-function wsDocsPinHtml(rm) {
-  const when = rm && rm.exists && rm.mtime
-    ? `<span class="wsd-when" title="${esc(wsDocsWhen(rm.mtime))}">${esc(wsDocsDate(rm.mtime))}</span>`
-    : `<span class="wsd-when">${rm && !rm.exists ? 'not written yet' : ''}</span>`;
-  return `<ul class="wsd-list wsd-pins"><li class="wsd-row wsd-pin"><button type="button" class="wsd-open" data-roadmap="1" title="The project’s roadmap, ROADMAP.md in its folder: you and the PO both edit it">`
-    + `<span class="wsd-t">Roadmap</span><span class="wsd-f">ROADMAP.md · always first</span></button>`
-    + `<span class="wsd-meta">${when}<span class="wsd-sz"></span></span></li></ul>`;
-}
-// The list, or what stands in for it: loading, unreadable, or empty with what
-// would fill it. The roadmap is above it in every case.
-function wsDocsHtml(st, rm) {
+// The node, open or closed. `st` is the list as last read ({data, err}), `rm`
+// what was last read of the roadmap ({exists, mtime}), null before either.
+function wsDocsNodeHtml(v, st, rm) {
+  if (!wsDocsProject(v)) return '';
+  const open = v.docsOpen !== false, cur = v.mark || v.sel;
+  const head = `<div class="wse dir wsroot documents" data-docs="1" title="The roadmap, then the reports and design notes of the project’s tasks, newest first">`
+    + `<span class="tw">${open ? '▾' : '▸'}</span><span class="nm">Documents</span><span class="wsroot-kind">documents</span></div>`;
+  if (!open) return head + '<div class="wsk" data-docs="1" hidden></div>';
+  const row = (path, name, tag, tip, when, attr) => `<div class="wse file doc${wsSame(cur, path) ? ' on' : ''}" data-path="${esc(path)}"${attr || ''} title="${esc(tip)}">`
+    + `<span class="tw"></span><span class="nm">${esc(name)}</span>${tag ? `<span class="wse-tag">${esc(tag)}</span>` : ''}<span class="sz">${esc(when)}</span></div>`;
+  const rmWhen = rm && rm.exists && rm.mtime ? wsDocsDate(rm.mtime) : rm && !rm.exists ? 'not written yet' : '';
+  let body = row(wsRoadmapPath(v), 'Roadmap', '', 'ROADMAP.md, always first: the project’s roadmap, which you and the PO both edit'
+    + (rm && rm.exists && rm.mtime ? ' · saved ' + wsDocsWhen(rm.mtime) : ''), rmWhen, ' data-roadmap="1"');
   const s = st || {};
-  const head = n => `<div class="wsd-head"><h3 class="wsd-h">Documents</h3>${n}</div>`;
-  const pin = wsDocsPinHtml(rm || null);
-  if (!s.data) {
-    return `<div class="wsd">${head('')}${pin}<p class="wsd-note">${s.err ? 'The documents could not be read: ' + esc(s.err) : 'Loading the documents…'}</p></div>`;
-  }
+  if (!s.data) return head + `<div class="wsk" data-docs="1">${body}<div class="wse none">${s.err ? 'The documents could not be read: ' + esc(s.err) : 'Loading the documents…'}</div></div>`;
   const d = s.data, items = d.items || [];
-  const dir = d.dir ? `<code>${esc(tildeify(d.dir))}</code>` : 'the project’s Documents folder';
-  const where = d.codeDocs ? `In ${dir}, and in the code’s <code>docs</code> folder.` : `In ${dir}.`;
-  if (!items.length) {
-    return `<div class="wsd">${head('')}${pin}<p class="wsd-note">No documents yet. Tasks put their reports and design notes in ${dir}, `
-      + `named after the task (“#12 Title.md”); they show here, newest first. The task folders are in the Workspace.</p></div>`;
-  }
-  const n = `<span class="wsd-n">${items.length.toLocaleString('en-US')}${d.truncated ? '+' : ''} ${items.length === 1 ? 'document' : 'documents'}, newest first</span>`;
-  return `<div class="wsd">${head(n)}<p class="wsd-where">${where} The roadmap comes first.</p>${pin}`
-    + `<ul class="wsd-list">${items.map(it => wsDocsRowHtml(it, d.key || '')).join('')}</ul>`
-    + (d.truncated ? `<p class="wsd-note">The ${items.length.toLocaleString('en-US')} newest only; the rest are in the Workspace’s tree.</p>` : '')
-    + `</div>`;
+  const dir = d.dir ? tildeify(d.dir) : 'the project’s Documents folder';
+  if (!items.length) body += `<div class="wse none">No documents yet. Tasks put their reports and design notes in ${esc(dir)}, named after the task (“#12 Title.md”).</div>`;
+  body += items.map(it => row(it.path, it.title || wsTabName(it.path), it.inCode ? 'docs' : it.no ? '#' + it.no : '', wsDocsTip(it), wsDocsDate(it.mtime), '')).join('');
+  if (d.truncated) body += `<div class="wse none">The ${items.length.toLocaleString('en-US')} newest only; the rest are in ${esc(dir)}.</div>`;
+  return head + `<div class="wsk" data-docs="1">${body}</div>`;
 }
-// What the Documents list says of the roadmap: its last read.
+// What the Documents node says of the roadmap: its last read.
 function wsDocsRm(v) {
-  const d = wsDocsCtx(v) && RM.has(v.ctx.projectId) ? rmState(v.ctx.projectId).data : null;
+  const pj = wsDocsProject(v);
+  const d = pj && RM.has(pj.id) ? rmState(pj.id).data : null;
   return d ? { exists: !!d.exists, mtime: d.mtime || 0 } : null;
 }
-// The roadmap over the Documents list, in its own view and editor (the one
-// #rm-panel, moved into this Workspace while it shows), with the way back.
-function wsRoadmapPaint(v, stage, docsTab) {
-  const show = docsTab && wsDocsCtx(v) && !!v.roadmap;
-  let wrap = stage.querySelector(':scope > .wsd-rmwrap');
-  const panel = pdById('rm-panel');
-  if (!show || !panel) {
+const wsUnder = (dir, p) => !!dir && wsNorm(p).startsWith(wsNorm(dir) + '/');
+// What Go to file finds besides the files of the folder it lists (`rootPath`):
+// the roadmap and the documents outside it (a project whose code is elsewhere
+// keeps them in its home), each named as under the node, "Documents/…".
+function wsDocsFindPool(v, rootPath) {
+  if (!wsDocsProject(v)) return [];
+  const d = v.docsList && v.docsList.data, out = [], rp = wsRoadmapPath(v);
+  if (!wsUnder(rootPath, rp)) out.push({ abs: rp, path: 'Documents/ROADMAP.md' });
+  for (const it of (d && d.items) || []) if (!wsUnder(rootPath, it.path)) out.push({ abs: it.path, path: 'Documents/' + (it.rel || wsTabName(it.path)) });
+  return out;
+}
+// The Documents folder, when Text search has to search it besides its root.
+function wsDocsSearchDir(v, rootPath) {
+  const d = wsDocsProject(v) && v.docsList && v.docsList.data;
+  return d && d.exists && d.dir && !wsSame(d.dir, rootPath) && !wsUnder(rootPath, d.dir) ? d.dir : '';
+}
+// A text search of the root and one of the Documents folder, as one: the
+// documents first, as in the tree, named "Documents/…" and opened by `abs`.
+function wsfMerge(res, extra, dir) {
+  const sum = (a, b) => (a || 0) + (b || 0), sk = {}, rs = res.skipped || {}, es = extra.skipped || {};
+  for (const k of new Set([...Object.keys(rs), ...Object.keys(es)])) sk[k] = sum(rs[k], es[k]);
+  const files = extra.files.map(x => ({ ...x, path: 'Documents/' + x.path, abs: wsJoin(dir, dir.includes('\\') ? x.path.split('/').join('\\') : x.path) }));
+  return { ...res, files: files.concat(res.files), matches: sum(res.matches, extra.matches), filesSearched: sum(res.filesSearched, extra.filesSearched),
+    filesListed: sum(res.filesListed, extra.filesListed), truncated: !!(res.truncated || extra.truncated), timedOut: !!(res.timedOut || extra.timedOut),
+    listTruncated: !!(res.listTruncated || extra.listTruncated), skipped: sk };
+}
+// The roadmap's tab: its own view and editor (the one #rm-panel, moved into
+// this Workspace while it shows) where a file's viewer would be.
+function wsRoadmapPaint(v, stage, show) {
+  let wrap = stage.querySelector(':scope > .wsp-rm');
+  const panel = pdById('rm-panel'), pj = wsDocsProject(v);
+  if (!show || !panel || !pj) {
     if (wrap) wrap.hidden = true;
     if (wrap && panel && wrap.contains(panel)) panel.hidden = true;
     return;
   }
   if (!wrap) {
     wrap = stage.ownerDocument.createElement('div');
-    wrap.className = 'wsd-rmwrap';
-    wrap.innerHTML = '<div class="wsd-rmbar"><button type="button" class="rm-btn subtle wsd-back" title="Back to the Documents list">← Documents</button></div>';
+    wrap.className = 'wsp-rm';
     stage.appendChild(wrap);
   }
   wrap.hidden = false;
   if (panel.parentElement !== wrap) wrap.appendChild(panel);
   panel.hidden = false;
-  const pid = v.ctx.projectId;
-  if (panel.dataset.rmkey !== pid) { panel.dataset.rmkey = pid; rmBuild(panel, pid); }
+  if (panel.dataset.rmkey !== pj.id) { panel.dataset.rmkey = pj.id; rmBuild(panel, pj.id); }
   tickAgo(panel);
-  rmLoad(pid, !rmState(pid).data);
+  rmLoad(pj.id, !rmState(pj.id).data);
 }
-// Read the list, one read at a time, at most every WS_DOCS_TTL unless forced.
+// #rm-panel holds an unsaved draft, so it is never rebuilt: a Workspace about
+// to be rebuilt hands it back to its place beside #ws-panel first.
+function rmPark(el) {
+  const rm = pdById('rm-panel');
+  if (!rm || !el || !el.contains(rm)) return;
+  rm.hidden = true;
+  document.querySelector('main').insertBefore(rm, document.getElementById('po-dock-host'));
+}
+// Read the list, one read at a time, at most every WS_DOCS_TTL unless forced,
+// and the roadmap's date with it.
 async function wsDocsLoad(v, force) {
-  if (!wsDocsCtx(v)) return;
+  const pj = wsDocsProject(v);
+  if (!pj) return;
   const st = v.docsList || (v.docsList = { data: null, err: '', at: 0, inFlight: false });
   if (st.inFlight || (!force && st.at && Date.now() - st.at < WS_DOCS_TTL)) return;
   st.inFlight = true;
   try {
-    st.data = await api('/api/projects/documents?project=' + encodeURIComponent(v.ctx.projectId));
+    st.data = await api('/api/projects/documents?project=' + encodeURIComponent(pj.id));
     st.err = '';
   } catch (e) { st.err = (e && e.message) || 'failed'; }
   finally { st.inFlight = false; st.at = Date.now(); }
-  wsPaintView(v);
+  rmLoad(pj.id, false);
+  wsPaintTree(v);
+  const f = v.find;
+  if (!f.recent && f.mode === 'files' && f.q.trim()) { wsfRank(v); wsfPaint(v); }
 }
 // ---- Workspace Documents: end ---------------------------------------------
 // Every directory currently on screen: a root that is open, and every open
@@ -7126,7 +7122,7 @@ async function wsSync(v) {
     wsPaintTree(v);
     if (wsTabsCheck(v, v.dirs)) wsPaintView(v);
     else wsPaintCrumbs(v);   // the roots may have arrived since the path was drawn
-    if (wsDocsShowing(v)) wsDocsLoad(v, false);
+    if (v.docsOpen !== false || wsfOn(v.find)) wsDocsLoad(v, false);
     wsfEnsure(v);
     wsfPaint(v);
   } finally { v.busy = false; }
@@ -7139,10 +7135,8 @@ function wsMount(el, ctx) {
   // The viewers of an earlier mount went with its element; this one loads its
   // tabs' viewers afresh, each where it was left.
   v.frames = new Map(); v.live = [];
-  // A project's Workspace opens on its Documents list; its file tabs wait.
-  if (wsDocsCtx(v)) v.sel = '';
   wsRecompute(v);
-  if (!v.ctx.list && !v.open.size && v.roots.length) v.open.add(v.roots[0].path);   // first visit: open where you are
+  if (!v.open.size && v.roots.length) v.open.add(v.roots[0].path);   // first visit: open where you are
   wsTabsCheck(v, v.dirs);
   wsPaintTree(v);
   wsPaintView(v);
@@ -7152,7 +7146,7 @@ function wsMount(el, ctx) {
     const tab = e.target.closest('.wst-tab');
     if (!tab) return;
     if (e.target.closest('.wst-x')) wsCloseTab(v, tab.dataset.path);
-    else { if (!tab.dataset.path) v.roadmap = false; wsShowTab(v, tab.dataset.path); }   // Documents: the list, not the roadmap
+    else wsShowTab(v, tab.dataset.path);
   };
   // A middle click closes a tab, as in an editor or a browser; its press would
   // otherwise start the browser's autoscroll.
@@ -7188,15 +7182,6 @@ function wsMount(el, ctx) {
   // The button goes with the note, so focus moves to the tab now showing, or
   // to the pane when no tab is left, rather than dropping to the page.
   el.querySelector('.wsp-frames').onclick = (e) => {
-    const doc = e.target.closest('.wsd-open');
-    if (doc && doc.dataset.roadmap) { v.roadmap = true; wsShowTab(v, ''); return; }
-    if (doc) { wsOpenTab(v, doc.dataset.path); return; }
-    if (e.target.closest('.wsd-back')) {
-      v.roadmap = false; wsPaintView(v);
-      const pin = el.querySelector('.wsd-open[data-roadmap]');
-      if (pin) pin.focus({ preventScroll: true });
-      return;
-    }
     if (!e.target.closest('.wsp-gone-close')) return;
     wsRecentDrop(v.recent, v.sel);   // a file that is gone is not offered again
     wsCloseTab(v, v.sel);
@@ -7209,6 +7194,12 @@ function wsMount(el, ctx) {
   const tree = el.querySelector('.wsp-tree');
   tree.onclick = async (e) => {
     if (e.target.closest('.wse-more, .wse-edit, .wse-wait')) return;   // a row's menu, a name being typed, a renamed row waiting (the Files panel's)
+    if (e.target.closest('.wse[data-docs]')) {   // the Documents node
+      v.docsOpen = v.docsOpen === false;
+      wsPersist(v); wsPaintTree(v);
+      if (v.docsOpen) wsDocsLoad(v, false);
+      return;
+    }
     const d = e.target.closest('.wse.dir');
     if (d) {
       const p = d.dataset.path;
@@ -7230,13 +7221,6 @@ function wsMount(el, ctx) {
   // from the button beside it; Follow keeps the tree on the tab showing.
   const bar = el.querySelector('.wsp-bar'), nav = bar.querySelector('.wsc');
   bar.onclick = (e) => {
-    // The Documents list has no tree: a folder, or the file, shows in the Workspace's.
-    if (v.ctx.list) {
-      const d = e.target.closest('.wsc-dir');
-      if (d) wsRevealInWorkspace(v, d.dataset.path, { dir: true });
-      else if (e.target.closest('.wsp-reveal')) wsRevealInWorkspace(v, v.sel);
-      return;
-    }
     const d = e.target.closest('.wsc-dir');
     if (d) { wsReveal(v, d.dataset.path, { dir: true }); return; }
     if (e.target.closest('.wsp-reveal')) { wsReveal(v, v.sel); return; }
@@ -7252,7 +7236,7 @@ function wsMount(el, ctx) {
   if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => wsCrumbsEnd(bar)).observe(nav);
   // Recent files: Alt+R (⌥R on a Mac), only while the pane has focus.
   el.onkeydown = (e) => {
-    if (v.ctx.list || !wsIsRecentKey(e)) return;   // Recent is the tree's
+    if (!wsIsRecentKey(e)) return;
     e.preventDefault();
     wsRecentToggle(v, undefined, true);
   };
@@ -7277,17 +7261,6 @@ function wsMount(el, ctx) {
   wsfMount(v);
   wsSync(v);
   return v;
-}
-// A file or folder of the Documents list, shown in the project's Workspace:
-// its panel comes on screen (its tab, off the PO screen) and its tree opens to it.
-function wsRevealInWorkspace(v, path, o) {
-  if (!path) return;
-  const pid = v.ctx.projectId;
-  if (poDockProject()) pdReveal('workspace');
-  else { PROJECT_TAB = 'workspace'; renderRows(); }
-  const pj = projectById(pid);   // a documents project's Workspace is its Files view (docs:)
-  const w = WS_VIEWS.get(wsCtxKey({ kind: 'project', projectId: pid, docs: !!pj && isDocsProject(pj) }));
-  if (w && w.el && w.el.isConnected) wsReveal(w, path, o);
 }
 // ---- Workspace find: the box on screen -------------------------------------
 // It looks in the Workspace's first root: the task's folder in a task, the
@@ -7344,7 +7317,15 @@ function wsfRank(v) {
   const narrow = f.pool && f.pool.at === l.at && lq.startsWith(f.pool.q);
   const r = wsFuzzyRank(q, narrow ? f.pool.paths : l.files, WSF_SHOWN, narrow ? f.pool.lower : l.lower);
   f.pool = { at: l.at, q: lq, paths: r.pool, lower: r.poolLower };
-  f.ranked = { items: r.items, total: r.total, root: l.root };
+  // The project's documents outside the listed folder are found too.
+  let items = r.items, total = r.total;
+  const extra = wsDocsFindPool(v, l.root);
+  if (extra.length) {
+    const x = wsFuzzyRank(q, extra.map(e => e.path), WSF_SHOWN), abs = new Map(extra.map(e => [e.path, e.abs]));
+    items = items.concat(x.items.map(it => ({ ...it, abs: abs.get(it.path) }))).sort((a, b) => b.score - a.score).slice(0, WSF_SHOWN);
+    total += x.total;
+  }
+  f.ranked = { items, total, root: l.root };
   f.active = 0;
 }
 // Typing in Text mode waits a moment and then searches; typing again, or
@@ -7365,8 +7346,10 @@ function wsfSchedule(v) {
 // Dropping the answer is not enough: the hub stops the search it is running
 // for this box now, instead of when it finishes or times out.
 function wsfCancel(v) {
-  const qs = new URLSearchParams({ cancel: '1', tag: v.uid + ':' + WSF_PAGE, n: String(v.find.gen) });
-  fetch('/api/ws/search?' + qs, { keepalive: true }).catch(() => {});
+  for (const tag of [v.uid + ':' + WSF_PAGE, v.uid + ':' + WSF_PAGE + ':docs']) {   // and the Documents folder's
+    const qs = new URLSearchParams({ cancel: '1', tag, n: String(v.find.gen) });
+    fetch('/api/ws/search?' + qs, { keepalive: true }).catch(() => {});
+  }
 }
 async function wsfSearch(v) {
   const f = v.find, root = wsfRoot(v);
@@ -7378,14 +7361,20 @@ async function wsfSearch(v) {
   f.ctl = ctl;
   f.res = { busy: true };
   wsfPaint(v);
-  let res;
-  try {
-    // The box's own count goes with it: the hub runs the newest search even
-    // when two arrive the other way round.
-    const qs = new URLSearchParams({ root: root.path, q, case: f.cs ? '1' : '', regex: f.rx ? '1' : '', tag: v.uid + ':' + WSF_PAGE, n: String(gen) });
+  // The box's own count goes with it: the hub runs the newest search even
+  // when two arrive the other way round.
+  const ask = async (dir, tag) => {
+    const qs = new URLSearchParams({ root: dir, q, case: f.cs ? '1' : '', regex: f.rx ? '1' : '', tag, n: String(gen) });
     const r = await fetch('/api/ws/search?' + qs, { signal: ctl.signal });
     const d = await r.json().catch(() => ({}));
-    res = r.ok ? d : { error: d.error || String(r.status), detail: d.detail || '' };
+    return r.ok ? d : { error: d.error || String(r.status), detail: d.detail || '' };
+  };
+  // The project's Documents, when they are not under the root, are searched too.
+  const docsDir = wsDocsSearchDir(v, root.path), tag = v.uid + ':' + WSF_PAGE;
+  let res, extra = null;
+  try {
+    [res, extra] = await Promise.all([ask(root.path, tag),
+      docsDir ? ask(docsDir, tag + ':docs').catch(e => { if (ctl.signal.aborted) throw e; return null; }) : null]);
   } catch (e) {
     if (ctl.signal.aborted) return;
     res = { error: e.message || 'failed' };
@@ -7393,6 +7382,7 @@ async function wsfSearch(v) {
   if (gen !== f.gen) return;
   const apart = res.files && v.ctx.docs ? await docsApartOf(v) : null;
   if (apart) res = docsFindApart(res, apart);
+  if (res.files && extra && extra.files) res = wsfMerge(res, extra, docsDir);
   if (gen !== f.gen) return;
   if (v.ctx.docs) res.tasks = docsTasksShown();
   f.ctl = null;
@@ -7498,12 +7488,12 @@ function wsfOpen(v, i) {
   if (f.mode === 'files') {
     const it = f.ranked && f.ranked.items[i];
     if (!it) return;
-    wsOpenTabAt(v, wsfAbs(f.ranked.root, it.path), wsGotoQuery(f.q).line);
+    wsOpenTabAt(v, it.abs || wsfAbs(f.ranked.root, it.path), wsGotoQuery(f.q).line);
   } else {
     const h = f.res && f.res.files && wsfHits(f.res).hits[i];
     if (!h) return;
     const r0 = h.ranges[0];
-    wsOpenTabAt(v, wsfAbs(f.res.root, h.path), h.line, r0 ? { col: h.at + r0[0], len: r0[1] } : null);
+    wsOpenTabAt(v, h.abs || wsfAbs(f.res.root, h.path), h.line, r0 ? { col: h.at + r0[0], len: r0[1] } : null);
   }
   f.active = i;
   wsfMark(v, false);
@@ -8536,8 +8526,8 @@ async function rmLoad(pid, force) {
   } finally {
     st.inFlight = false;
     rmPaint(pdById('rm-panel'), pid);
-    // The Documents list's roadmap row says when it was saved.
-    WS_VIEWS.forEach(v => { if (wsDocsCtx(v) && v.ctx.projectId === pid && v.el && v.el.isConnected && !v.roadmap) wsPaintView(v); });
+    // The Documents node's roadmap row says when it was saved.
+    WS_VIEWS.forEach(v => { if (v.ctx.kind === 'project' && v.ctx.projectId === pid && v.el && v.el.isConnected) wsPaintTree(v); });
   }
 }
 async function rmSave(pid, overTheirs) {
@@ -8954,10 +8944,12 @@ function poPillClick() {
 // conversation (#po-panel) is in the PO chat panel (pdPlaceChat); popped out,
 // the panel's window gets a chat of its own.
 // Pure down to pdPointsHtml, so tests/test_po_dock.py runs them in Node.
-const PD_IDS = ['po-chat', 'points', 'board', 'documents', 'workspace', 'changes'];
-const PD_TITLES = { 'po-chat': 'PO chat', points: 'Your asks', board: 'Board', documents: 'Documents', workspace: 'Workspace', changes: 'Changes' };
+// A layout saved while there was a Documents panel loads without it: the
+// library drops a panel it does not know (its documents are in the Workspace).
+const PD_IDS = ['po-chat', 'points', 'board', 'workspace', 'changes'];
+const PD_TITLES = { 'po-chat': 'PO chat', points: 'Your asks', board: 'Board', workspace: 'Workspace', changes: 'Changes' };
 const PD_MIN = { 'po-chat': { w: 360, h: 200 }, points: { w: 260, h: 120 }, board: { w: 320, h: 160 },
-                 documents: { w: 360, h: 200 }, workspace: { w: 480, h: 200 }, changes: { w: 420, h: 200 } };
+                 workspace: { w: 480, h: 200 }, changes: { w: 420, h: 200 } };
 const PD_KEYS = { desk: 'cd-po-dock', phone: 'cd-po-dock-phone' };   // phone: the narrow dock's
 // From this width the Board is on screen too: the chat's lines stop getting
 // longer at about 700px, so a wider screen's width goes to the board.
@@ -8973,42 +8965,10 @@ function pdDefaultLayout(L, ctx) {
   const strip = id => ({ id, edge: 'right', size: Math.round(w * 0.72), home: { peers: [], near: 'points', side: 'right', size: Math.round(w * 0.4) } });
   if (w >= PD_WIDE) {
     return { root: L.split('row', [L.stack(['po-chat']), L.stack(['points'], { size: 320 }), L.stack(['board'], { size: Math.round(w * 0.46) })]),
-             auto: ['documents', 'workspace', 'changes'].map(strip) };
+             auto: ['workspace', 'changes'].map(strip) };
   }
   return { root: L.split('row', [L.stack(['po-chat']), L.stack(['points'], { size: 340 })]),
-           auto: ['board', 'documents', 'workspace', 'changes'].map(strip) };
-}
-// A layout saved before a panel existed gets it where the default puts it on
-// a laptop: on the right edge's strip, not on screen (the library would dock a
-// panel it has not heard of beside Your asks). `raw` is the saved layout;
-// the same layout comes back when it already has the panel, or is none.
-function pdLayoutWithPanel(raw, id, w) {
-  // A saved layout, with a docked root or none (every panel on a strip, floating, hidden or out).
-  if (!raw || typeof raw !== 'object' || !('root' in raw)) return raw;
-  const has = new Set();
-  const walk = n => {
-    if (!n || typeof n !== 'object') return;
-    if (Array.isArray(n.panels)) n.panels.forEach(p => has.add(p));
-    if (Array.isArray(n.kids)) n.kids.forEach(walk);
-  };
-  walk(raw.root);
-  (raw.floats || []).forEach(f => walk(f && f.stack));
-  (raw.auto || []).forEach(a => a && has.add(a.id));
-  (raw.hidden || []).forEach(h => h && has.add(h.id));
-  Object.keys(raw.out && typeof raw.out === 'object' ? raw.out : {}).forEach(k => has.add(k));
-  if (has.has(id)) return raw;
-  const x = w || 1440;
-  return { ...raw, auto: [...(Array.isArray(raw.auto) ? raw.auto : []),
-    { id, edge: 'right', size: Math.round(x * 0.72), home: { peers: [], near: 'points', side: 'right', size: Math.round(x * 0.4) } }] };
-}
-// Before the dock reads the saved layout: the panels added since it was saved.
-function pdAddNewPanels() {
-  try {
-    const s = localStorage.getItem(PD_KEYS.desk);
-    if (!s) return;
-    const raw = JSON.parse(s), got = pdLayoutWithPanel(raw, 'documents', window.innerWidth);
-    if (got !== raw) localStorage.setItem(PD_KEYS.desk, JSON.stringify(got));
-  } catch (e) {}
+           auto: ['board', 'workspace', 'changes'].map(strip) };
 }
 // What the Points panel lists, by stage (points.py): what waits for the PO,
 // what is in progress (planned, with its task and where it is), what is
@@ -9229,7 +9189,6 @@ function pdOnResize(fn) {
 function pdEnsure() {
   if (PD.dock) return PD.dock;
   const L = PD.lib;
-  pdAddNewPanels();
   window.DOC_LISTENERS_PAUSED = true;   // the dock's own listeners are not the page's
   try { PD.dock = L.createDock({
     root: PD_ROOT,
@@ -9277,7 +9236,7 @@ function pdDblGuard(e) {
 PD_ROOT.addEventListener('click', pdDblGuard, true);
 // A panel came on screen: what it shows is drawn now, not at the next refresh.
 function pdShown(id) {
-  if (id === 'board' || id === 'documents' || id === 'workspace' || id === 'changes') renderRows();
+  if (id === 'board' || id === 'workspace' || id === 'changes') renderRows();
   if (id === 'points') pdPaintPoints(true);
   pdPlaceChat();
 }
@@ -10269,6 +10228,7 @@ function docsPanelHtml(pj) {
 function docsPanelRender(el, pj) {
   if (el.dataset.proj !== pj.id) {
     el.dataset.proj = pj.id;
+    rmPark(el);
     el.innerHTML = docsPanelHtml(pj);
     const held = docsView(pj.id);
     if (held) docsHoldReset(held);         // a name being typed went with the old panel
@@ -11039,11 +10999,12 @@ function docsFilesWire(el, pid) {
     const d = e.target.closest('.wse.dir');
     // A task's folder takes nothing: selecting it selects no folder, so Add
     // files and New folder plainly go to the project.
-    if (d && !e.target.closest('.wse-edit')) { v.mark = d.dataset.task ? '' : d.dataset.path; wsPaintTree(v); }
+    if (d && !d.dataset.docs && !e.target.closest('.wse-edit')) { v.mark = d.dataset.task ? '' : d.dataset.path; wsPaintTree(v); }
   });
   tree.addEventListener('contextmenu', (e) => {
     const row = e.target.closest('.wse[data-path]');
-    if (!row || row.classList.contains('wsroot') || e.target.closest('.wse-edit, .wse-wait')) return;
+    // A row of the Documents node is a view of a file, not its place: no menu there.
+    if (!row || row.classList.contains('wsroot') || row.classList.contains('doc') || e.target.closest('.wse-edit, .wse-wait')) return;
     e.preventDefault();
     docsMenuOpen(menu, row, { left: e.clientX, right: e.clientX, top: e.clientY, bottom: e.clientY });
   });
@@ -11638,6 +11599,7 @@ function wsRenderInto(panel, pj) {
   if (panel.dataset.wskey !== key) {
     panel.dataset.wskey = key;
     delete panel.dataset.proj;
+    rmPark(panel);   // the roadmap's view, its draft kept
     if (!pj || !pj.path) panel.innerHTML = '<p class="empty">This project has no folder.</p>';
     else if (!docs) {
       panel.innerHTML = wsPanelHtml({ tasks: true });
@@ -11645,28 +11607,6 @@ function wsRenderInto(panel, pj) {
     }
   }
   if (docs) docsPanelRender(panel, pj);
-}
-// A project's Documents list, into #doclist-panel. A documents project has none:
-// its files are its documents, in its Workspace.
-function docsListRenderInto(panel, pj) {
-  if (!panel) return;
-  const key = pj && pj.path ? wsCtxKey({ kind: 'project', projectId: pj.id, list: true }) : 'none';
-  if (panel.dataset.wskey === key) return;
-  panel.dataset.wskey = key;
-  if (!pj || !pj.path) panel.innerHTML = '<p class="empty">This project has no folder.</p>';
-  else {
-    panel.innerHTML = wsPanelHtml({ list: true });
-    wsMount(panel.querySelector('.wsp'), { kind: 'project', projectId: pj.id, list: true });
-  }
-}
-// #doclist-panel sits in the Documents panel of a PO screen, else beside #view,
-// moved as #ws-panel is (below).
-function docsPlace(docked) {
-  const el = pdById('doclist-panel');
-  if (!el) return null;
-  const home = docked ? PD.els.documents : document.querySelector('main');
-  if (el.parentElement !== home) pdMove(home, el, docked ? null : PD_HOST);
-  return el;
 }
 // #ws-panel sits in the Workspace panel of a PO screen, else beside #view.
 // It moves only when the page changes between the two, never on a refresh,
@@ -11696,12 +11636,11 @@ function renderPoDock(pj) {
   // A tab asked for from somewhere else (a diff's Open file, a link back to
   // the Workspace) is a panel here: it comes on screen.
   if (PROJECT_TAB !== 'tasks') {
-    const want = { documents: 'documents', workspace: 'workspace', changes: 'changes', roadmap: 'documents' }[PROJECT_TAB];
+    const want = { documents: 'workspace', workspace: 'workspace', changes: 'changes', roadmap: 'workspace' }[PROJECT_TAB];
     PROJECT_TAB = 'tasks';
     if (want) pdReveal(want);
   }
   wsRenderInto(pdById('ws-panel'), pj);
-  docsListRenderInto(pdById('doclist-panel'), pj);
   chRenderInto(PD.els.changes, pj);
   return true;
 }
@@ -11719,13 +11658,13 @@ function renderRows() {
   paintSearchBadge(null);
   // The workspace panel is shown, never rebuilt — every branch below is free to
   // replace #view without touching it.
-  const wsp = wsPlace(docked), dcp = docsPlace(docked);
+  const wsp = wsPlace(docked);
   // Needs you owns the whole view, so the project's stateful panels step
-  // aside even if one of their tabs was last open. The roadmap is a document,
-  // first in the Documents list: an old "roadmap" tab is Documents.
-  if (PROJECT_TAB === 'roadmap') PROJECT_TAB = 'documents';
+  // aside even if one of their tabs was last open. The roadmap and the
+  // documents are the first node of the Workspace's tree: an old "roadmap"
+  // or "documents" tab is the Workspace.
+  if (PROJECT_TAB === 'roadmap' || PROJECT_TAB === 'documents') PROJECT_TAB = 'workspace';
   if (wsp) wsp.hidden = !(SELECTED_PROJECT && (docked || PROJECT_TAB === 'workspace')) || Boolean(SB_DEST);
-  if (dcp) dcp.hidden = !(SELECTED_PROJECT && (docked || PROJECT_TAB === 'documents')) || Boolean(SB_DEST);
   // A destination replaces whatever view is showing, the home page and a
   // project's Workspace and Changes included, so it runs before all of them;
   // entering a project clears it. Its entries are there to be clicked, so they
@@ -11768,13 +11707,6 @@ function renderRows() {
     setViewCount('');
     if (writeSlot($('#view'), projectsChromeHtml())) wireProjectsChrome();
     wsRenderInto(wsp, projectById(SELECTED_PROJECT));
-    return;
-  } else if (SELECTED_PROJECT && PROJECT_TAB === 'documents') {
-    // The Documents tab: the list and the documents opened from it, state
-    // outside #view as the Workspace's is.
-    setViewCount('');
-    if (writeSlot($('#view'), projectsChromeHtml())) wireProjectsChrome();
-    docsListRenderInto(dcp, projectById(SELECTED_PROJECT));
     return;
   }
   const parsed = parseSearchQuery(SEARCH_QUERY);
@@ -12043,8 +11975,8 @@ async function refresh({ now = false, until = 0 } = {}) {
     // A dropped poll must not cost you the workspace. The tree, the folders you
     // opened and the file you are reading are state, not a view of /api/sessions
     // — so say it in a toast and leave the panel where it is.
-    const wsp = pdById('ws-panel'), rmp = pdById('rm-panel'), dcp = pdById('doclist-panel');
-    if ((wsp && !wsp.hidden) || (rmp && !rmp.hidden) || (dcp && !dcp.hidden) || document.body.classList.contains('po-dock')) toast('refresh failed: ' + e.message, 4000, 'err');
+    const wsp = pdById('ws-panel'), rmp = pdById('rm-panel');
+    if ((wsp && !wsp.hidden) || (rmp && !rmp.hidden) || document.body.classList.contains('po-dock')) toast('refresh failed: ' + e.message, 4000, 'err');
     else $('#view').innerHTML = `<p class="empty">Error: ${esc(e.message)}</p>`;
   } finally {
     _refreshInFlight = false;
