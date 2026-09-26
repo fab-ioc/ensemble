@@ -2641,6 +2641,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     min-height: 44px; padding: var(--s-200) var(--s-300); border-radius: 0; background: transparent;
     color: var(--fg); font-weight: 400; text-align: left; }
   dialog button.pc-item:hover { background: var(--hover); }
+  dialog button.pc-item:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
   dialog .pc-t { font-size: var(--fs-300); overflow-wrap: anywhere; }
   dialog .pc-m { font-size: var(--fs-100); color: var(--fg-muted); }
   dialog .im-field input:focus,
