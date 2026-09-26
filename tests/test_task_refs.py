@@ -88,7 +88,7 @@ const lines = %s;
   await settle();
   const second = mdToHtml(text);
   const again = mdToHtml('#18 once more');
-  const notTasks = mdToHtml('PR #18, issue #18, finding #18');
+  const notTasks = mdToHtml('PR #18, issue #18, finding #18, [Image #18]');
   const asked = fetches.length;
   // A minute on, the task has ended: the chip asks again and redraws once.
   const realNow = Date.now, redrawsBefore = redraws;
@@ -159,7 +159,7 @@ class SessionChips(unittest.TestCase):
             self.assertIn(text, html)
         self.assertEqual(len(self.r["fetches"]), 3, "a number already asked about is not asked again")
         self.assertIn('class="task-chip"', self.r["again"])
-        self.assertNotIn("task-chip", self.r["notTasks"], "PR #18, issue #18, finding #18 are not tasks")
+        self.assertNotIn("task-chip", self.r["notTasks"], "PR #18, issue #18, finding #18 and an image placeholder are not tasks")
 
     def test_a_chip_asks_again_after_a_minute(self):
         ttl = self.r["ttl"]
@@ -213,7 +213,7 @@ const out = {
 SELECTED_PROJECT = '';
 out.all = taskRowId('#18');
 out.allUnique = taskRowId('3');
-out.skip = [notTaskRef('', '', 'see PR #4', 7), notTaskRef('', '', 'see #4', 4), notTaskRef('codex', '', 'PR @codex@4', 3)];
+out.skip = [notTaskRef('', '', 'see PR #4', 7), notTaskRef('', '', 'see #4', 4), notTaskRef('codex', '', 'PR @codex@4', 3), notTaskRef('', '', '[Image #4]', 7)];
 console.log(JSON.stringify(out));
 """
 
@@ -234,7 +234,7 @@ class IndexNumbers(unittest.TestCase):
         self.assertEqual(self.r["elsewhere"], "room-x")
         self.assertEqual(self.r["all"], "", "every project showing: a number two projects have names nothing")
         self.assertEqual(self.r["allUnique"], "room-y", "and a number only one has names its task")
-        self.assertEqual(self.r["skip"], [True, False, False])
+        self.assertEqual(self.r["skip"], [True, False, False, True])
 
     def test_a_spec_names_a_task(self):
         self.assertEqual(self.r["link"], '<a href="/?task=room-a" data-task="room-a" data-agent="codex" class="task-link"'

@@ -36,7 +36,7 @@ TEXT_REF = re.compile(r"(?<![\w&/#@.\\-])(?:@([A-Za-z][\w-]*)@|#)"
 NOT_TASK_BEFORE = re.compile(
     r"(?:^|[^\w])(?:pr|mr|pull request|issue|bug|ticket|resolve|resolved"
     r"|finding|step|item|point|round|option|question|comment|commit|line|page|part"
-    r"|phase|rule|case)s?\.?[ \t]*\Z", re.I)   # \Z: Python's $ also matches before a final newline
+    r"|phase|rule|case|image)s?\.?[ \t]*\Z", re.I)   # \Z: Python's $ also matches before a final newline
 _FENCE = re.compile(r"```[\s\S]*?(?:```|$)")
 _CODE = re.compile(r"`[^`\n]*`")
 

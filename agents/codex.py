@@ -17,6 +17,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import shutil
 import time
 from datetime import datetime
@@ -69,6 +70,12 @@ def _is_synthetic(text: str) -> bool:
     return t.startswith(_SYNTHETIC_PREFIXES) or low.startswith("# agents.md")
 
 
+# The parts around an image a person's turn carries (seen in codex 0.8x):
+# "<image name=[Image #1]>", the image, "</image>"; then the words with the
+# placeholder "[Image #1]" in them, which the chat page does not show.
+_IMAGE_WRAP = re.compile(r"^\s*(?:<image name=\[Image #\d+\]>|</image>)\s*$")
+
+
 def _text_of(content) -> str:
     """Flatten a Codex message `content` (str or list of typed parts)."""
     if isinstance(content, str):
@@ -77,6 +84,8 @@ def _text_of(content) -> str:
         parts = []
         for c in content:
             if isinstance(c, dict) and c.get("type") in ("text", "input_text", "output_text"):
+                if _IMAGE_WRAP.match(c.get("text") or ""):
+                    continue
                 parts.append(c.get("text", ""))
         return " ".join(parts).strip()
     return ""
