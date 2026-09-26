@@ -36,12 +36,12 @@ JS = r"""
 const vm = require('vm');
 const { code } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const posts = [];
-const ctx = { attSplit: t => ({ words: String(t || ''), paths: [] }),
+const ctx = { attSplit: t => ({ words: String(t || ''), paths: [] }), stripRefBlocks: t => t,
   ROOM: 'room-po', SOLO_MODE: true, pointsChanged: () => {}, pointsNote: () => {} };
 vm.createContext(ctx);
 vm.runInContext(code + `
   globalThis.t = { CHAT_NAMES, pointMaps, pointBarHtml, pointsSummary, pointsListHtml, pointsLineHtml, heldBy, foldPlan,
-    chatGroups, quietItem, catchUp, canApprove, approveDecision, pointAct, stripPointLines, hasPointLines, lastAnswer,
+    chatGroups, quietItem, catchUp, canApprove, approveDecision, pointAct, stripPointLines, hasPointLines, stripImagePlaceholders, hasImagePlaceholders, refPreview, lastAnswer,
     setPoints: v => { POINTS = v; }, points: () => POINTS };`, ctx);
 const T = ctx.t;
 const out = {};
@@ -63,6 +63,18 @@ out.summary = [T.pointsSummary(P), T.pointsSummary(T.pointMaps({ open: 0, answer
 out.list = T.pointsListHtml(P, href, 2000);
 out.lineClosed = T.pointsLineHtml(P, false, href, 2000);
 out.keep = [...P.keep].sort(); out.unacked = [...P.unacked].sort();
+out.images = [T.stripImagePlaceholders('[Image #2] [Image #3]\n\n## Points (2)\n**1.** a\n[image] C:\\t\\attachments\\a.png'),
+  T.stripImagePlaceholders('[Image #3] a picture of my own'), T.stripImagePlaceholders('look at [Image #1] this one'),
+  T.stripImagePlaceholders('see [image] x and [Image 2]'), T.stripImagePlaceholders('[Image]'),
+  T.stripImagePlaceholders('[Image #1]**1.** a\n[image]\n\n**2.** b\n[image] C:\\t\\attachments\\b.png'),
+  T.stripImagePlaceholders('Reproduce with this input:\n```text\n[image]\n```'),
+  T.stripImagePlaceholders('[Image #1] see\n[image]\n~~~\n[Image #2]\n[image]\n~~~\nafter'),
+  T.stripImagePlaceholders('Example:\n````markdown\n```text\n[image]\n[Image #2]\n```\n````\n[image]'),
+  T.stripImagePlaceholders('~~~~\n~~~\n[image]\n~~~~ not a close\n[Image #1]\n~~~~~\n[image]')];
+// A link's preview of the person's message reads as their balloon; an agent's is as written.
+out.previews = [T.refPreview({ from: 'user', text: '[Image #2] [Image #3]\n\nPlease compare these screenshots' }),
+  T.refPreview({ from: 'claude', text: 'Your [Image #2] shows it' })];
+out.hasImages = [T.hasImagePlaceholders('[Image #12]x'), T.hasImagePlaceholders('[image] a.png')];
 out.strip = [T.stripPointLines('Why?\n\n[point P3]'), T.stripPointLines('## Review comments (2)\n\n**1.** a\n\n[point P1]\n\n**2.** b\n\n[point P2]'),
   T.stripPointLines('plain  '), T.hasPointLines('say [point P1] inline')];
 
@@ -122,7 +134,7 @@ class Points(unittest.TestCase):
     def setUpClass(cls):
         # The page's own esc, which takes strings only: a number in the markup throws.
         esc = next(ln for ln in SRC.split("\n") if ln.startswith("const esc = "))
-        run = subprocess.run([NODE, "-e", JS], input=json.dumps({"code": esc + "\n" + fold_block(SRC)}),
+        run = subprocess.run([NODE, "-e", JS], input=json.dumps({"code": esc + "\n" + fold_block(SRC) + fn_src("refPreview")}),
                              capture_output=True, text=True, encoding="utf-8", timeout=60)
         if run.returncode:
             raise AssertionError(run.stderr)
@@ -169,6 +181,28 @@ class Points(unittest.TestCase):
 
     def test_the_hubs_point_lines_are_not_shown(self):
         self.assertEqual(self.r["strip"], ["Why?", "## Review comments (2)\n\n**1.** a\n\n**2.** b", "plain  ", False])
+
+    def test_an_agents_image_placeholders_are_not_shown(self):
+        # Claude Code's line of placeholders above a points message (P47), one
+        # in the words, Codex's, and a text without any, which is unchanged.
+        self.assertEqual(self.r["images"], [
+            "## Points (2)\n**1.** a\n[image] C:\\t\\attachments\\a.png",
+            "a picture of my own",
+            "look at this one",
+            "see [image] x and [Image 2]",
+            "",
+            # An image the hub could not show keeps a bare "[image]" line: not shown.
+            "**1.** a\n\n**2.** b\n[image] C:\\t\\attachments\\b.png",
+            # A code sample is the person's words, kept as typed.
+            "Reproduce with this input:\n```text\n[image]\n```",
+            "see\n~~~\n[Image #2]\n[image]\n~~~\nafter",
+            # A longer fence holds a shorter one; it closes only on its own.
+            "Example:\n````markdown\n```text\n[image]\n[Image #2]\n```\n````",
+            "~~~~\n~~~\n[image]\n~~~~ not a close\n[Image #1]\n~~~~~",
+        ])
+        self.assertEqual(self.r["hasImages"], [True, False])
+        self.assertEqual(self.r["previews"], ["Please compare these screenshots", "Your [Image #2] shows it"])
+        self.assertIn("text: stripImagePlaceholders(stripPointLines(m.text))", SRC, "the person's balloons are drawn without them")
 
     def test_an_open_point_or_an_unacknowledged_answer_never_folds(self):
         r = self.r

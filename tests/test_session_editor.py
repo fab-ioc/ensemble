@@ -148,6 +148,11 @@ out.strippedSame = T.stripRefBlocks('## Points (1)\n\n**1.** x') === '## Points 
 out.strippedHead = T.stripRefBlocks('## Points (1)\n\nIntro http://h/session?room=room-1&msg=m1\n\n[ref http://h/session?room=room-1&msg=m1] from claude in "Docs" at 2026-09-22 10:00:\n> Merged.\n\n[image] C:\\t\\attachments\\h.png\n\n**1.** x');
 out.html = T.mdToHtml('## Points (2)\n\nHead words\n\n**1.** first\n[image] C:\\t\\attachments\\a.png\n\n**2.** second\n\nmore');
 out.htmlHeadImg = T.mdToHtml('## Points (2)\n\nHead words\n[image] C:\\t\\attachments\\h.png\n\n**1.** first\n\n**2.** second');
+// A PO chat's images are in <state>/attachments/<room id>/.
+const po = n => '[image] C:\\s\\attachments\\room-aaaa0001\\' + n + '.png';
+out.htmlThree = T.mdToHtml(['## Points (5)', '**1.** one', '**2.** two', '**3.** three', po('a'), '**4.** four', po('b'), '**5.** five', po('c')].join('\n'));
+out.htmlThreeGaps = T.mdToHtml(['## Points (5)', '', '**1.** one', '', '**2.** two', '', '**3.** three', po('a'), '', '**4.** four', po('b'), '',
+  '**5.** five', po('c')].join('\n'));
 out.htmlInline = T.mdToHtml('words\n[image] C:\\t\\attachments\\a.png\nthen more');
 out.htmlNotOwn = T.mdToHtml('[image] C:\\elsewhere\\a.png\nwords');
 out.fold = [T.foldLine('## Points (2)\n\nAfter tests.\n\n**1.** a\n\n**2.** b'), T.foldLine('## Points (1)\n\n**1.** the first point\n[image] C:\\t\\attachments\\a.png'),
@@ -270,6 +275,14 @@ class Editor(unittest.TestCase):
         self.assertTrue(hh.startswith('<div class="ln">Head words</div><div class="att-thumbs"><a class="att-thumb" href="/api/room/attachment?room=room-aaaa0001&amp;name=h.png"'), hh)
         self.assertEqual(hh.count("att-thumbs"), 1, "the head's image is above the list, in no item")
         self.assertIn('<ol class="pt-items"><li class="pt-item"><div class="ln">first</div></li>', hh)
+        # P47: a screenshot under each of points 3 to 5, as the hub gives the balloon back.
+        for three in (self.r["htmlThree"], self.r["htmlThreeGaps"]):
+            items = three.split('<li class="pt-item">')[1:]
+            self.assertEqual(len(items), 5, three)
+            self.assertEqual([it.count('class="att-thumb"') for it in items], [0, 0, 1, 1, 1], three)
+            for it, name in zip(items[2:], "abc"):
+                self.assertIn(f'href="/api/room/attachment?room=room-aaaa0001&amp;name={name}.png"', it)
+            self.assertNotIn("[image]", three)
         inline = self.r["htmlInline"]
         self.assertTrue(inline.startswith('<div class="ln">words</div>\n<div class="att-thumbs">'), inline)
         self.assertTrue(inline.endswith('</div>\n<div class="ln">then more</div>'), inline)

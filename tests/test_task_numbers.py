@@ -143,6 +143,8 @@ class Refs(unittest.TestCase):
         got = [r["token"] for r in tn.find_text_refs(text)]
         self.assertEqual(got, ["#13", "#14", "#15", "#16", "#18", "@codex@8"])
         self.assertEqual([r["token"] for r in tn.find_text_refs("PR #ED-7")], ["#ED-7"], "a key makes it a task")
+        self.assertEqual(tn.find_text_refs("[Image #2] [Image #3]\n\nsee image #4, Images #5"), [],
+                         "an agent's image placeholder is not a task")
         self.assertEqual([r["token"] for r in tn.find_text_refs("Mapper #9 and suffix #10")], ["#9", "#10"],
                          "a word only ending in one of them does not count")
 
