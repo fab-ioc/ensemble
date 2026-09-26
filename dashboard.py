@@ -2306,11 +2306,9 @@ _FIRST_WORDS_KIND = {
 }
 
 
-def first_words(first: str, limit: int = 80) -> str:
-    """A title for a conversation that has none: its first line, trimmed, or
-    for hub text (HUB_INPUT_KINDS, a PO brief, a task agent's standing brief)
-    a short name of its kind. "" when there are no words at all."""
-    s = (first or "").strip()
+def _hub_words_kind(s: str) -> str | None:
+    """The short name of the hub conversation a first message begins, or None
+    when the words are a person's own."""
     if is_po_brief(s):
         return "Past PO conversation"
     kind = hub_input_kind(s)["kind"]
@@ -2319,6 +2317,23 @@ def first_words(first: str, limit: int = 80) -> str:
     body = s.lstrip("-").lstrip()
     if body.startswith((OWNER_OUTPUT_NOTE[:40], "You are '")):
         return "Task agent conversation"
+    return None
+
+
+def first_words_own(first: str) -> bool:
+    """Whether first_words gives a person's own words, not a hub kind's name."""
+    s = (first or "").strip()
+    return bool(s) and _hub_words_kind(s) is None
+
+
+def first_words(first: str, limit: int = 80) -> str:
+    """A title for a conversation that has none: its first line, trimmed, or
+    for hub text (HUB_INPUT_KINDS, a PO brief, a task agent's standing brief)
+    a short name of its kind. "" when there are no words at all."""
+    s = (first or "").strip()
+    kind = _hub_words_kind(s)
+    if kind is not None:
+        return kind
     line = " ".join(next((ln for ln in s.splitlines() if ln.strip()), "").split())
     if len(line) > limit:
         cut = line[:limit].rsplit(" ", 1)[0] or line[:limit]
@@ -6738,6 +6753,7 @@ def _past_row(sid: str, agent: str, found: dict | None) -> dict | None:
                  "first": first, "turns": turns}
     return {"sessionId": sid, "agent": agent or "claude", **facts,
             "last": "", "label": "", "firstWords": first_words(facts["first"]),
+            "ownWords": first_words_own(facts["first"]),
             "cost": c.get("dollars", 0.0), "costTokens": c.get("tokens"),
             "isLive": False, "pid": None, "status": "", "archived": False,
             "parent": "", "jira": [], "currentTheme": "", "idleSeconds": None}
@@ -6752,8 +6768,9 @@ def past_conversations(room_id: str) -> dict | None:
     room = chatroom.get_room(room_id)
     if room is None:
         return None
-    load_sessions(200)      # the old ones are found by the (cached) load
-    found = {x["sessionId"]: x for x in _PAST_FOUND.get(room_id, [])}
+    if _PAST_FOUND is None:     # no load since the hub started: the page's own
+        load_sessions(300)
+    found = {x["sessionId"]: x for x in (_PAST_FOUND or {}).get(room_id, [])}
     want = [(x["sessionId"], x["agent"], x["via"], x["at"]) for x in room_past_sessions(room)]
     have = {w[0] for w in want}
     want += [(sid, x["agent"], "before", 0.0) for sid, x in found.items() if sid not in have]
@@ -6802,7 +6819,7 @@ def _cut_task_rows(room_rows: list[dict], n: int) -> list[dict]:
 
 # The conversations the last sessions load gave to a PO by old_po_room:
 # {roomId: [{sessionId, agent, cwd, updatedAt, first, turns}]}.
-_PAST_FOUND: dict[str, list[dict]] = {}
+_PAST_FOUND: dict[str, list[dict]] | None = None     # None: no load yet
 
 
 def _load_sessions_uncached(n: int = 200) -> list[dict]:
@@ -7174,8 +7191,8 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
             })
     except Exception:
         pass
-    _PAST_FOUND.clear()
-    _PAST_FOUND.update(past_found)
+    global _PAST_FOUND
+    _PAST_FOUND = past_found        # rebound whole: a reader never sees it half made
     if collab_sids or collab_cwds:
         out = [r for r in out
                if r.get("sessionId") not in collab_sids

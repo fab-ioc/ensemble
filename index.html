@@ -10190,7 +10190,8 @@ function pastItemHtml(r) {
   let when = '';
   try { when = new Date((r.updatedAt || 0) * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }); } catch (e) {}
   const c = costChip(r);
-  const words = r.label || (r.firstWords && r.firstWords !== 'Past PO conversation' ? r.firstWords : '');
+  // The person's own first words only: a hub brief's kind says nothing here.
+  const words = r.label || (r.ownWords ? r.firstWords : '');
   const meta = [r.agent === 'codex' ? 'Codex' : 'Claude', c ? c.text : '',
                 r.turns ? `${r.turns} message${r.turns === 1 ? '' : 's'}` : '', PAST_VIA[r.via] || ''].filter(Boolean);
   return `<li><button type="button" class="pc-item" data-sid="${esc(r.sessionId)}" title="Read this conversation">`

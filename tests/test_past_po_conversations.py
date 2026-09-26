@@ -129,18 +129,24 @@ class OldPoConversations(unittest.TestCase):
         self.b.rooms[0]["participants"][0]["rotations"] = [{"fromSessionId": "rotated", "at": 50}]
         self.b.claude("rotated", str(self.b.base / "gone"), age_days=1, text=PO_BRIEF)
         self.b.claude("old-brief", self.proj, age_days=5, text=PO_BRIEF)
+        self.b.claude("old-seat", str(Path(self.po_cwd) / "claude"), age_days=6, text="Fix the header")
+        before = dashboard._PAST_FOUND
         self.b.load(50)
+        self.assertIsNot(dashboard._PAST_FOUND, before, "rebound whole, never cleared in place")
         with mock.patch.object(dashboard.chatroom, "get_room", return_value=self.b.rooms[0]), \
-                mock.patch.object(dashboard, "load_sessions", return_value=[]), \
+                mock.patch.object(dashboard, "load_sessions", side_effect=AssertionError(
+                    "the page's poll keeps the old ones found: opening the list loads nothing")), \
                 mock.patch.object(dashboard, "load_labels", return_value={"old-brief": "Named"}), \
                 mock.patch.object(dashboard, "PROJ_DIR", self.b.transcripts), \
                 mock.patch.object(dashboard, "compute_session_cost", return_value={"dollars": 1.5}):
             got = dashboard.past_conversations("room-po")
         rows = got["sessions"]
         self.assertEqual([(r["sessionId"], r["via"]) for r in rows],
-                         [("rotated", "rotation"), ("old-brief", "before")])
+                         [("rotated", "rotation"), ("old-brief", "before"), ("old-seat", "before")])
         self.assertTrue(all(r["pastOf"] == "room-po" for r in rows))
         self.assertEqual(rows[0]["firstWords"], "Past PO conversation")
+        # Only a person's own words title an entry of the list; a brief's kind does not.
+        self.assertEqual([r["ownWords"] for r in rows], [False, False, True])
         self.assertEqual(rows[1]["label"], "Named")
         self.assertEqual(rows[0]["cost"], 1.5)
         with mock.patch.object(dashboard.chatroom, "get_room", return_value=None):
@@ -155,6 +161,10 @@ class FirstWords(unittest.TestCase):
         self.assertEqual(fw(PO_BRIEF), "Past PO conversation")
         self.assertEqual(fw("You are the product owner (PO) of the project X"), "Past PO conversation")
         self.assertEqual(fw("You are 'claude', the engineer"), "Task agent conversation")
+        self.assertFalse(dashboard.first_words_own("You are 'claude', the engineer"))
+        self.assertFalse(dashboard.first_words_own(PO_BRIEF))
+        self.assertFalse(dashboard.first_words_own(""))
+        self.assertTrue(dashboard.first_words_own("lets work on this project"))
         long = "word " * 40
         got = fw(long)
         self.assertTrue(got.endswith("…"))
