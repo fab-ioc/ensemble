@@ -251,21 +251,29 @@ _ALL_TOOLS = [
             "answer, and it reaches you with a `[point P12]` line under it. "
             "Answer a point by starting a paragraph of your reply with "
             "`Re P12:` (one reply may answer several); the first reply to a "
-            "message holding a single point answers it by itself. action "
-            "\"list\" (default): the open points and the answered ones not yet "
-            "acknowledged. action \"answer\": a point answered by doing rather "
-            "than by saying (\"started as #75\"), with a one-line summary. "
-            "action \"split\": a message that holds several points becomes "
-            "P12a, P12b … (parts: one text each)."
+            "message holding a single point answers it by itself. A point has "
+            "stages: open (no reply) → planned (you said what will happen: "
+            "`Re P12 (planned #104):`, linked to that task) → delivered (live, "
+            "or answered for real: a later `Re P12:`) → acknowledged by them. "
+            "Never ask them to acknowledge a planned point. action \"list\" "
+            "(default): the open, planned and delivered points. action "
+            "\"plan\": a point you started work on (task: #104, summary: one "
+            "line). action \"answer\": a point delivered by doing rather than by "
+            "saying (\"#104 is live\"), with a one-line summary. action "
+            "\"split\": a message that holds several points becomes P12a, P12b "
+            "… (parts: one text each)."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "action": {"type": "string", "enum": ["list", "answer", "split"],
-                           "description": "list | answer | split (default list)."},
-                "point": {"type": "string", "description": "The point, e.g. P12 (answer, split)."},
+                "action": {"type": "string", "enum": ["list", "plan", "answer", "split"],
+                           "description": "list | plan | answer | split (default list)."},
+                "point": {"type": "string", "description": "The point, e.g. P12 (plan, answer, split)."},
+                "task": {"type": "string",
+                         "description": "With plan: the task doing the work, e.g. #104 (or ED-104)."},
                 "summary": {"type": "string",
-                            "description": "With answer: one line, what was done (\"started as #75\")."},
+                            "description": "With plan or answer: one line (\"started as #104\", "
+                                           "\"#104 is live\")."},
                 "parts": {"type": "array", "items": {"type": "string"},
                           "description": "With split: the points the message holds, one text each."},
             },
@@ -1493,14 +1501,20 @@ def _points(ctx, args, handler):
     rid = ctx["room"]["id"]
     action = (args.get("action") or "list").strip().lower()
     pid = (args.get("point") or "").strip()
-    if action == "answer":
+    if action in ("answer", "plan"):
         summary = " ".join(str(args.get("summary") or "").split())
+        task = pts.task_ref(args.get("task"))
+        if (args.get("task") or "").strip() and not task:
+            raise ToolError(f"task {args.get('task')!r} is not a task number: give #104 or ED-104")
+        if action == "plan" and not summary and task:
+            summary = f"started as {task}"
         if not pid or not summary:
-            raise ToolError("answer needs point (e.g. P12) and a one-line summary")
-        p = pts.answer_by_tool(rid, pid, summary[:300], ctx["identity"])
+            raise ToolError(f"{action} needs point (e.g. P12) and a one-line summary")
+        p = pts.answer_by_tool(rid, pid, summary[:300], ctx["identity"], plan=action == "plan", task=task)
         if p is None:
             raise ToolError(f"no point {pid} in your room")
-        return {"ok": True, "point": p["id"], "state": p["state"]}
+        return {"ok": True, "point": p["id"], "state": p["state"],
+                **({"task": p["task"]} if p.get("task") else {})}
     if action == "split":
         kids = pts.split(rid, pid, args.get("parts") or [])
         if kids is None:
@@ -1508,12 +1522,22 @@ def _points(ctx, args, handler):
                             "and two to 26 parts")
         return {"ok": True, "point": pid, "parts": [{"id": k["id"], "text": k["text"]} for k in kids]}
     if action != "list":
-        raise ToolError("action is list, answer or split")
+        raise ToolError("action is list, plan, answer or split")
     led = pts.sync(rid, force=True)
-    show = [p for p in led["points"] if p["state"] in ("open", "answered")]
-    return {"note": ("open: no answer yet; answered: waiting for the product owner to "
-                     "acknowledge. Answer an open one with 'Re Pn:' in your reply."),
-            "points": [{"id": p["id"], "state": p["state"], "owner": p.get("owner", ""),
+    show = [p for p in led["points"] if p["state"] in pts.LIVE]
+    task = pts.task_lookup(rid, ctx["room"]) if any(p.get("task") for p in show) else (lambda ref: None)
+
+    def where(p):
+        info = task(p["task"]) if p.get("task") else None
+        if not info:
+            return {"task": p["task"]} if p.get("task") else {}
+        return {"task": p["task"], "taskStatus": info.get("workflowName") or info.get("workflow") or "",
+                **({"note": "merged, awaiting go-live: say 'Re Pn:' once it is live"} if info.get("done") else {})}
+    return {"note": ("open: no reply yet; planned: you said what will happen, the work is not "
+                     "live; delivered: waiting for the product owner to acknowledge. Answer an "
+                     "open one with 'Re Pn:' (or 'Re Pn (planned #N):' when you start work on it); "
+                     "a planned one with 'Re Pn:' once it is live."),
+            "points": [{"id": p["id"], "state": p["state"], "owner": p.get("owner", ""), **where(p),
                         "since": time.strftime("%m-%d %H:%M", time.localtime(p.get("openedAt") or p["createdAt"])),
                         "text": pts.strip_point_lines(p["text"])[:1000],
                         **({"followUps": [f[:1000] for f in pts.follow_ups(p)]} if pts.follow_ups(p) else {})}
