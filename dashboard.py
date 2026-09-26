@@ -1042,6 +1042,9 @@ _SETTINGS_DEFAULTS = {
     # A point of the person's still open this many minutes while its agent is
     # idle and running: the hub types it one [points] line (points.py). 0 = off.
     "pointsRemindMin": points.DEFAULT_REMIND_MIN,
+    # A planned point whose task has been Done this many minutes and that its
+    # agent has not said is live: one [points] line, once. 0 = off.
+    "pointsDeliverRemindMin": points.DEFAULT_DELIVER_REMIND_MIN,
     # Compress noisy command output for hub-launched task owners/reviewers.
     # PO rooms, adopted sessions and ordinary user terminals are never wired.
     "rtkForTasks": True,
@@ -1202,12 +1205,12 @@ def _save_settings_locked(settings: dict) -> dict:
             v = rotation.clamp_tokens(v)
             if v is None:
                 continue
-        if k == "pointsRemindMin":
+        if k in ("pointsRemindMin", "pointsDeliverRemindMin"):
             try:
                 v = int(v)
             except (TypeError, ValueError):
                 continue
-            v = 0 if v <= 0 else max(5, min(1440, v))
+            v = 0 if v <= 0 else max(5, min(1440 if k == "pointsRemindMin" else 1440 * 7, v))
         if k in ("backupEnabled", "rtkForTasks"):
             v = bool(v)
         if k in ("codexToolOutputTokens", "readCapBytes", "readCapLines"):
@@ -4182,7 +4185,8 @@ def _task_index() -> list[dict]:
                  "previousNos": room.get("previousNos") or [], "title": room.get("title", ""),
                  "projectId": room.get("projectId") or "", "cwd": room.get("cwd") or "",
                  "launched": room.get("launched", True), "status": room.get("status", ""),
-                 "workflow": room.get("workflow"), "createdAt": room.get("createdAt"),
+                 "workflow": room.get("workflow"), "workflowAt": room.get("workflowAt"),
+                 "createdAt": room.get("createdAt"),
                  "branch": ((room.get("workspace") or {}).get("branch") or ""),
                  "participants": [{k: pp.get(k) for k in ("identity", "kind", "agent", "role", "ptyId", "pid")}
                                   for pp in room.get("participants") or []],

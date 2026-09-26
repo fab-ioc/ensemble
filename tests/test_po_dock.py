@@ -116,22 +116,31 @@ const out = {};
     out.oldSaved = { had: L.panelsUnder(saved.root), docked: L.panelsUnder(n.root), all: all.sort(), front };
   }
   const now = 1000000;
-  const told = { room: 'room-po', words: { P1: 'make the board wider', P2: 'and the chat taller', P3: 'old one', P4: 'start the task' },
-    points: { open: 1, answered: 2, items: [
+  // P1 "answered": a hub from before the stages (read as delivered).
+  const told = { room: 'room-po', words: { P1: 'make the board wider', P2: 'and the chat taller', P3: 'old one', P4: 'start the task',
+                                           P5: 'fix the gap', P6: 'ship it' },
+    points: { open: 1, planned: 2, delivered: 2, items: [
       { id: 'P2', state: 'open', mid: 'room-po:m5', createdAt: now - 600, answers: [] },
       { id: 'P1', state: 'answered', mid: 'room-po:m1', createdAt: now - 7200, answers: [{ mid: 'room-po:m2' }] },
       { id: 'P3', state: 'acked', mid: 'room-po:m0', createdAt: now - 9000, answers: [{ mid: 'room-po:m1b' }] },
-      { id: 'P4', state: 'answered', mid: 'room-po:m6', createdAt: now - 300, answers: [{ mid: '', summary: 'started as #75' }] },
+      { id: 'P4', state: 'delivered', mid: 'room-po:m6', createdAt: now - 300, answers: [
+        { mid: 'room-po:m7', kind: 'plan', task: '#75' }, { mid: '', summary: 'claude: #75 is live' }] },
+      { id: 'P5', state: 'planned', mid: 'room-po:m8', createdAt: now - 500, task: { ref: '#104', workflow: 'inprogress', workflowName: 'In progress', done: false },
+        answers: [{ mid: 'room-po:m9', kind: 'plan', task: '#104' }] },
+      { id: 'P6', state: 'planned', mid: 'room-po:m10', createdAt: now - 400, task: { ref: '#105', workflow: 'done', workflowName: 'Done', done: true },
+        answers: [{ mid: '', kind: 'plan', task: '#105', summary: 'claude: started as #105' }] },
     ] } };
   out.list = pdPointsHtml(told, now);
   out.none = pdPointsHtml({ room: 'room-po', words: {}, points: { open: 0, answered: 0, items: [told.points.items[2]] } }, now);
   out.before = pdPointsHtml(null, now);
   out.summary = pdPointsSummary(told.points);
+  out.summaryOld = pdPointsSummary({ open: 1, answered: 2 });
   console.log(JSON.stringify(out));
 })().catch(e => { console.error(e && e.stack || e); process.exit(1); });
 """
 
-PURE_FNS = ["esc", "PD_IDS", "PD_WIDE", "pdDefaultLayout", "PD_PT_WORD", "pdLastAnswer", "pdPtAge", "pdPointsSummary",
+PURE_FNS = ["esc", "PD_IDS", "PD_WIDE", "pdDefaultLayout", "PD_PT_WORD", "PD_PT_GROUPS", "pdPtState", "pdLatest",
+            "pdLastAnswer", "pdLastPlan", "pdTaskWords", "pdPtAge", "pdPointsSummary",
             "pdPointsHtml"]
 
 
@@ -183,13 +192,39 @@ class ThePanels(unittest.TestCase):
         self.assertNotIn("documents", INDEX[INDEX.index("const PD_IDS"):INDEX.index("const PD_KEYS")])
         self.assertNotIn('data-panel="documents"', INDEX)
 
-    def test_points_answers_first_then_waiting_oldest_first(self):
+    def test_points_are_grouped_by_stage_oldest_first_in_each(self):
         html = self.o["list"]
-        ids = [html.index(f'data-pt="{p}"') for p in ("P1", "P4", "P2")]
-        self.assertEqual(ids, sorted(ids), "P1 then P4 (answered, oldest first), then P2 (waiting)")
+        heads = [html.index(h) for h in (">Waiting for the PO <", ">In progress <", ">Ready for your check <")]
+        self.assertEqual(heads, sorted(heads), "waiting, then in progress, then ready for their check")
+        ids = [html.index(f'data-pt="{p}"') for p in ("P2", "P5", "P6", "P1", "P4")]
+        self.assertEqual(ids, sorted(ids), "P2 (waiting); P5, P6 (in progress); P1, P4 (delivered), oldest first in each")
+        self.assertLess(heads[1], ids[1])
+        self.assertLess(heads[2], ids[3])
         self.assertNotIn('data-pt="P3"', html, "an acknowledged point is not listed")
-        self.assertIn("Your asks: 1 waiting for an answer · 2 answered, not yet acknowledged", html)
-        self.assertEqual(self.o["summary"], "1 waiting for an answer · 2 answered, not yet acknowledged")
+        self.assertIn("Your asks: 1 waiting for the PO · 2 in progress · 2 ready for your check", html)
+        self.assertEqual(self.o["summary"], "1 waiting for the PO · 2 in progress · 2 ready for your check")
+        self.assertEqual(self.o["summaryOld"], "1 waiting for the PO · 2 ready for your check",
+                         "a hub from before the stages: answered is ready for their check")
+
+    def test_a_planned_point_shows_its_task_and_takes_no_thumbs_up(self):
+        html = self.o["list"]
+        p5 = html[html.index('data-pt="P5"'):html.index('data-pt="P6"')]
+        self.assertIn('<span class="pdp-state planned">#104 · in progress</span>', p5)
+        self.assertIn('data-mid="room-po:m9" title="Go to where the PO planned the work">plan ↓</a>', p5)
+        self.assertIn('data-pt-act="drop"', p5)
+        self.assertNotIn('data-pt-act="ack"', p5, "no thumbs up on work that is not live")
+        self.assertNotIn("answer ↓", p5)
+        p6 = html[html.index('data-pt="P6"'):html.index(">Ready for your check <")]
+        self.assertIn('<span class="pdp-state planned">#105 merged, awaiting go-live</span>', p6)
+        self.assertIn('<span class="pdp-said">claude: started as #105</span>', p6)
+        self.assertNotIn('data-pt-act="ack"', p6, "merged is not delivered")
+
+    def test_a_delivered_point_links_its_delivery_and_keeps_its_plan(self):
+        html = self.o["list"]
+        p4 = html[html.index('data-pt="P4"'):]
+        self.assertIn('data-mid="room-po:m7" title="Go to where the PO planned the work">plan ↓</a>', p4)
+        self.assertIn('<span class="pdp-said">claude: #75 is live</span>', p4, "the delivery, not the plan")
+        self.assertIn('data-pt="P4" data-pt-act="ack"', p4)
 
     def test_each_point_links_both_ends_and_has_its_one_click(self):
         html = self.o["list"]
@@ -198,13 +233,13 @@ class ThePanels(unittest.TestCase):
         self.assertIn('href="/session?room=room-po&amp;msg=room-po:m2"', html, "a real link: it opens in a tab too")
         self.assertIn('data-pt="P1" data-pt-act="ack"', html)
         self.assertIn('data-pt="P2" data-pt-act="drop"', html)
-        self.assertIn('<span class="pdp-said">started as #75</span>', html, "an answer given by doing shows what was done")
+        self.assertIn('<span class="pdp-said">claude: #75 is live</span>', html, "an answer given by doing shows what was done")
         self.assertIn('aria-label="Acknowledge the answer to P1: nothing is sent to the agent"', html)
         self.assertIn('<span class="pdp-age" data-at="992800">2h</span>', html)
 
     def test_no_points_and_not_yet_loaded_say_why(self):
         self.assertIn("No open asks.", self.o["none"])
-        self.assertIn("waits here for its answer", self.o["none"])
+        self.assertIn("waits here while the PO answers it", self.o["none"])
         self.assertIn("once it has loaded", self.o["before"])
 
     def test_no_documents_list_view_or_tab_is_left(self):
@@ -859,7 +894,7 @@ class InChrome(unittest.TestCase):
         self.assertEqual(f["po"], f["chat"], "the chat fills its panel")
         self.assertTrue(f["inPanel"], "the chat is in its panel, not laid over it")
         self.assertFalse(f["poOff"])
-        self.assertEqual(f["rows"], ["P1", "P2"])
+        self.assertEqual(f["rows"], ["P2", "P1"], "waiting for the PO, then ready for their check")
         self.assertEqual(f["badge"], "2")
         self.assertTrue(f["elsewhere"] and f["pointsLine"], "the chat's own points line steps aside for the panel")
         self.assertFalse(f["tabs"], "no tab row: the panels are the tabs")

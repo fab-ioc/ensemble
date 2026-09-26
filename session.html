@@ -730,7 +730,8 @@
   .pt-id { flex:0 0 auto; font-family:var(--font-mono); font-size:var(--fs-200); color:var(--fg); font-variant-numeric:tabular-nums; }
   .pt-words { flex:1 1 160px; min-width:0; color:var(--fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .pt-age, .pt-state { flex:0 0 auto; color:var(--fg-muted); font-variant-numeric:tabular-nums; }
-  .pt-state.answered, .pt-chip.answered { color:var(--fg); font-weight:600; }
+  .pt-state.delivered, .pt-chip.delivered { color:var(--fg); font-weight:600; }
+  #points-list .pt-group { padding:var(--s-200) 0 var(--s-050); color:var(--fg-subtle); font-size:var(--fs-200); font-weight:600; }
   .pt-said { flex:1 1 100%; min-width:0; color:var(--fg-muted); overflow-wrap:anywhere; }
   a.pt-link { color:var(--link); white-space:nowrap; }
   /* A PO message's id written in a balloon, as its name (pmLinkHtml). */
@@ -751,7 +752,7 @@
   .msg.user .pt-bar a.pt-link { color:var(--fg); text-decoration:underline; }
   /* --fg-muted there measured 4.25:1 in Light (12px): the bar's words on the
      person's balloon are --fg-subtle. */
-  .msg.user .pt-bar, .msg.user .pt-chip:not(.answered) { color:var(--fg-subtle); }
+  .msg.user .pt-bar, .msg.user .pt-chip:not(.delivered) { color:var(--fg-subtle); }
   /* Away from the end of the chat: back to it, with how many arrived since. */
   #to-latest { position:absolute; right:var(--s-400); bottom:var(--s-300); z-index:5; height:24px; padding:0 var(--s-300);
     border-radius:var(--r-full); background:var(--surface); color:var(--fg); border:1px solid var(--border-strong);
@@ -2554,7 +2555,7 @@ function askLineHtml(ask, mid, href) {
 // ---- The person's points: begin --------------------------------------------
 // Every message the person sends an agent is a point the hub keeps (P12) until
 // they acknowledge its answer (points.py). The room's poll carries them
-// (room.points: { items, open, answered, approvals }); the page only draws
+// (room.points: { items, open, planned, delivered, approvals }); the page only draws
 // them: a line above the chat with a list, and a bar under each balloon a
 // point lives in or is answered by. The hub types "[point P12]" under the
 // person's words for the agent; the balloon shows the words as sent.
@@ -2586,26 +2587,45 @@ const stripImagePlaceholders = t => {
     return r === l ? l : r.trim() ? r.replace(/^ | $/g, '') : null;
   }).filter(l => l !== null).join('\n').replace(/^\n+/, '');
 };
-const PT_WORD = { open: 'waiting for an answer', answered: 'answered', acked: 'acknowledged', dropped: 'dropped', split: 'split into parts' };
-// The answer a link goes to: the latest one with a balloon, else the latest.
-function lastAnswer(p) {
-  const a = (p && p.answers) || [];
+// A point's stages: open (no reply) → planned (the agent said what will
+// happen, usually as a task) → delivered (live, or answered for real) →
+// acknowledged by the person. Only a delivered one takes the thumbs up.
+const PT_WORD = { open: 'waiting for an answer', planned: 'in progress', delivered: 'ready for your check', acked: 'acknowledged', dropped: 'dropped', split: 'split into parts' };
+// A hub from before the stages says "answered" for delivered.
+const ptItem = p => p && p.state === 'answered' ? Object.assign({}, p, { state: 'delivered' }) : p;
+const isPlan = a => !!a && a.kind === 'plan';
+// The latest of a point's answers (with `plan`, of its plans) with a balloon, else the latest.
+function ptLatest(p, plan) {
+  const a = ((p && p.answers) || []).filter(x => isPlan(x) === !!plan);
   for (let i = a.length - 1; i >= 0; i--) if (a[i].mid) return a[i];
   return a.length ? a[a.length - 1] : null;
 }
+// The answer a link goes to is the delivery; the plan is a link of its own.
+const lastAnswer = p => ptLatest(p, false);
+const lastPlan = p => ptLatest(p, true);
+// Where a planned point's work is: "#104 · in progress", "#104 merged, awaiting go-live".
+function ptTaskWords(p) {
+  const t = p && p.task;
+  if (!t || !t.ref) return '';
+  if (t.done) return `${t.ref} merged, awaiting go-live`;
+  return t.workflowName ? `${t.ref} · ${t.workflowName.toLowerCase()}` : t.ref;
+}
 // The points by where they live: byMid (the person's balloon, and each
-// follow-up), byAnswer (a balloon that answers them), keep (balloons that never
-// fold: an open point's, an unacknowledged answer), unacked (those answers).
+// follow-up), byAnswer (a balloon that answers or plans them), keep (balloons
+// that never fold: an open or planned point's, its plan, an unacknowledged
+// answer), unacked (those answers).
 function pointMaps(pv) {
-  const P = { items: (pv && pv.items) || [], byMid: new Map(), byAnswer: new Map(), keep: new Set(),
-    unacked: new Set(), approvals: new Set((pv && pv.approvals) || []), open: (pv && pv.open) || 0, answered: (pv && pv.answered) || 0 };
+  const P = { items: ((pv && pv.items) || []).map(ptItem), byMid: new Map(), byAnswer: new Map(), keep: new Set(),
+    unacked: new Set(), approvals: new Set((pv && pv.approvals) || []), open: (pv && pv.open) || 0,
+    planned: (pv && pv.planned) || 0, delivered: (pv && (pv.delivered != null ? pv.delivered : pv.answered)) || 0 };
   const add = (map, k, p) => { if (!k) return; const l = map.get(k); if (!l) map.set(k, [p]); else if (!l.includes(p)) l.push(p); };
   for (const p of P.items) {
     const own = [p.mid, ...(p.followUps || [])].filter(Boolean);
     own.forEach(k => add(P.byMid, k, p));
     (p.answers || []).forEach(a => add(P.byAnswer, a.mid, p));
-    if (p.state === 'open') own.forEach(k => P.keep.add(k));
-    if (p.state === 'answered') { const a = lastAnswer(p); if (a && a.mid) { P.keep.add(a.mid); P.unacked.add(a.mid); } }
+    if (p.state === 'open' || p.state === 'planned') own.forEach(k => P.keep.add(k));
+    if (p.state === 'planned') { const a = lastPlan(p); if (a && a.mid) P.keep.add(a.mid); }
+    if (p.state === 'delivered') { const a = lastAnswer(p); if (a && a.mid) { P.keep.add(a.mid); P.unacked.add(a.mid); } }
   }
   return P;
 }
@@ -2622,11 +2642,12 @@ function ptAge(ts, now) {
   if (s < 48 * 3600) return Math.round(s / 3600) + 'h';
   return Math.round(s / 86400) + 'd';
 }
-// "Your points: 2 waiting for an answer · 3 answered, not yet acknowledged".
+// "Your asks: 2 waiting for an answer · 1 in progress · 3 ready for your check".
 function pointsSummary(P) {
   const bits = [];
   if (P.open) bits.push(`${P.open} waiting for an answer`);
-  if (P.answered) bits.push(`${P.answered} answered, not yet acknowledged`);
+  if (P.planned) bits.push(`${P.planned} in progress`);
+  if (P.delivered) bits.push(`${P.delivered} ready for your check`);
   return bits.length ? 'Your asks: ' + bits.join(' · ') : '';
 }
 const ptWords = (t, n = 80) => { t = foldLine(stripPointLines(String(t || '').replace(/^\*\*\d+\.\*\*\s*/, ''))); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
@@ -2635,22 +2656,32 @@ const ptLink = (mid, text, href, tip) => mid
 const ptBtn = (id, act, text, label) =>
   `<button type="button" class="pt-btn" data-pt="${esc(id)}" data-pt-act="${act}" aria-label="${esc(label)}" title="${esc(label)}">${text}</button>`;
 const ackBtn = id => ptBtn(id, 'ack', '👍 Ack', `Acknowledge the answer to ${id}: nothing is sent to the agent`);
-// The compact list under the line: what waits for an answer, then what was
-// answered, oldest first; both ends linked, and the one click that closes it.
+// The list's groups, in this order, each oldest first.
+const PT_GROUPS = [['open', () => CHAT_NAMES.po ? 'Waiting for the PO' : 'Waiting for an answer'],
+  ['planned', () => 'In progress'], ['delivered', () => 'Ready for your check']];
+// The compact list under the line, by stage: what waits for an answer, what
+// is in progress (with its task and where it is), what is ready for their
+// check; both ends linked (and the plan), and the one click that closes it.
 function pointsListHtml(P, href, now) {
-  const rows = P.items.filter(p => p.state === 'open' || p.state === 'answered')
-    .sort((a, b) => (a.state === b.state ? 0 : a.state === 'answered' ? -1 : 1) || (a.createdAt || 0) - (b.createdAt || 0));
-  return rows.map(p => {
-    const a = p.state === 'answered' ? lastAnswer(p) : null;
-    const said = a && !a.mid && a.summary ? `<span class="pt-said">${esc(a.summary)}</span>` : '';
-    return `<li class="pt-row" data-pt="${esc(p.id)}"><span class="pt-id">${esc(p.id)}</span>`
-      + `<span class="pt-words" title="${esc(stripPointLines(p.text))}">${esc(ptWords(p.text))}</span>`
-      + `<span class="pt-age" data-at="${esc(String(p.createdAt || 0))}">${esc(ptAge(p.createdAt, now))}</span>`
-      + `<span class="pt-state ${esc(p.state)}">${esc(PT_WORD[p.state] || p.state)}</span>${said}`
-      + ptLink(p.mid, 'your message ↑', href, 'Go to your message')
-      + (a ? ptLink(a.mid, 'answer ↓', href, 'Go to the answer') : '')
-      + (p.state === 'answered' ? ackBtn(p.id) : ptBtn(p.id, 'drop', 'Drop', `Drop ${p.id}: you no longer need an answer`))
-      + '</li>';
+  return PT_GROUPS.map(([st, head]) => {
+    const rows = P.items.filter(p => p.state === st).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    if (!rows.length) return '';
+    return `<li class="pt-group">${esc(head())}</li>` + rows.map(p => {
+      const a = st === 'delivered' ? lastAnswer(p) : null;
+      const plan = st !== 'open' ? lastPlan(p) : null;
+      const said = a && !a.mid && a.summary ? a.summary : st === 'planned' && plan && !plan.mid && plan.summary ? plan.summary : '';
+      const task = st === 'planned' ? ptTaskWords(p) : '';
+      return `<li class="pt-row" data-pt="${esc(p.id)}"><span class="pt-id">${esc(p.id)}</span>`
+        + `<span class="pt-words" title="${esc(stripPointLines(p.text))}">${esc(ptWords(p.text))}</span>`
+        + `<span class="pt-age" data-at="${esc(String(p.createdAt || 0))}">${esc(ptAge(p.createdAt, now))}</span>`
+        + `<span class="pt-state ${esc(p.state)}">${esc(task || PT_WORD[p.state] || p.state)}</span>`
+        + (said ? `<span class="pt-said">${esc(said)}</span>` : '')
+        + ptLink(p.mid, 'your message ↑', href, 'Go to your message')
+        + (plan ? ptLink(plan.mid, 'plan ↓', href, 'Go to where the work was planned') : '')
+        + (a ? ptLink(a.mid, 'answer ↓', href, 'Go to the answer') : '')
+        + (st === 'delivered' ? ackBtn(p.id) : ptBtn(p.id, 'drop', 'Drop', `Drop ${p.id}: you no longer need an answer`))
+        + '</li>';
+    }).join('');
   }).join('');
 }
 function pointsLineHtml(P, open, href, now) {
@@ -2680,18 +2711,24 @@ function pointBarHtml(m, P, href, pick) {
   if (!m || !m.id || !P) return '';
   const bits = [];
   for (const p of (P.byMid.get(m.id) || []).filter(p => !pick || pick(p))) {
-    const a = lastAnswer(p);
     // Linked down to its answer whatever the state, so an acknowledged
-    // question read again still leads to what answered it.
-    const word = p.id + ' · ' + (PT_WORD[p.state] || p.state);
-    bits.push(`<span class="pt-chip ${esc(p.state)}">${a && a.mid ? ptLink(a.mid, word + ' ↓', href, 'Go to the answer') : esc(word)}</span>`);
-    if (p.state === 'open') bits.push(ptBtn(p.id, 'drop', 'Drop', `Drop ${p.id}: you no longer need an answer`));
+    // question read again still leads to what answered it; a planned one
+    // to its plan, with where its task is.
+    const a = p.state === 'planned' ? lastPlan(p) : (lastAnswer(p) || lastPlan(p));
+    const word = p.id + ' · ' + (p.state === 'planned' && ptTaskWords(p) ? 'in progress, ' + ptTaskWords(p) : (PT_WORD[p.state] || p.state));
+    bits.push(`<span class="pt-chip ${esc(p.state)}">${a && a.mid ? ptLink(a.mid, word + ' ↓', href, isPlan(a) ? 'Go to the plan' : 'Go to the answer') : esc(word)}</span>`);
+    if (p.state === 'open' || p.state === 'planned') bits.push(ptBtn(p.id, 'drop', 'Drop', `Drop ${p.id}: you no longer need an answer`));
     if (p.state === 'acked' || p.state === 'dropped') bits.push(ptBtn(p.id, 'reopen', 'Reopen', `Reopen ${p.id}: it waits for an answer again`));
   }
   for (const p of P.byAnswer.get(m.id) || []) {
-    bits.push(`<span class="pt-chip">${p.mid && p.mid !== m.id ? ptLink(p.mid, 'answers ' + p.id + ' ↑', href, 'Go to your message') : esc('answers ' + p.id)}</span>`);
+    // A plan: "plans P12", never a thumbs up (the work is not live yet).
+    const here = (p.answers || []).filter(x => x.mid === m.id);
+    const plans = here.length && here.every(isPlan);
+    const verb = plans ? 'plans ' : 'answers ';
+    bits.push(`<span class="pt-chip">${p.mid && p.mid !== m.id ? ptLink(p.mid, verb + p.id + ' ↑', href, 'Go to your message') : esc(verb + p.id)}</span>`);
     const a = lastAnswer(p);
-    if (p.state === 'answered' && a && a.mid === m.id) bits.push(ackBtn(p.id));
+    if (plans) { if (p.state === 'planned' && ptTaskWords(p)) bits.push(`<span class="pt-chip">${esc(ptTaskWords(p))}</span>`); }
+    else if (p.state === 'delivered' && a && a.mid === m.id) bits.push(ackBtn(p.id));
     else if (p.state === 'acked') bits.push(`<span class="pt-chip">acknowledged</span>`);
   }
   if (canApprove(m)) {

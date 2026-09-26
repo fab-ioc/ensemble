@@ -2994,7 +2994,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .pdp-words { min-width: 0; color: var(--fg); font-size: var(--fs-300); line-height: var(--lh-300);
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
   .pdp-meta { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-100) var(--s-300); color: var(--fg-muted); }
-  .pdp-state.answered { color: var(--fg); font-weight: 600; }
+  .pdp-state.delivered { color: var(--fg); font-weight: 600; }
+  .pdp-groups { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s-300); }
+  .pdp-head { margin: 0; color: var(--fg-subtle); font-size: var(--fs-200); line-height: var(--lh-200); font-weight: 600; }
+  .pdp-n { color: var(--fg-muted); font-weight: 400; font-variant-numeric: tabular-nums; }
   .pdp-age { font-variant-numeric: tabular-nums; }
   .pdp-said { color: var(--fg-subtle); overflow-wrap: anywhere; }
   a.pdp-link { color: var(--link); white-space: nowrap; border-radius: var(--r-100); }
@@ -4688,18 +4691,21 @@ function costChipHtml(r, cls) {
   return c ? ` <span class="${cls || 'row-cost-chip'}" title="${c.title}">${c.text}</span>` : '';
 }
 // The person's points in a task's or a PO's chat (points.py; the row's
-// points: {open, answered}), as quiet words: "2 to acknowledge · 1 open". It
-// is information for them, like the cost: never a lozenge, never the bell.
+// points: {open, planned, delivered}), as quiet words: "2 to check · 1 in
+// progress · 1 open". It is information for them, like the cost: never a
+// lozenge, never the bell. (A hub from before the stages says "answered".)
 function pointsCountText(p) {
   if (!p) return '';
-  const bits = [];
-  if (p.answered) bits.push(`${p.answered} to acknowledge`);
+  const bits = [], d = (p && (p.delivered != null ? p.delivered : p.answered)) || 0;
+  if (d) bits.push(`${d} to check`);
+  if (p.planned) bits.push(`${p.planned} in progress`);
   if (p.open) bits.push(`${p.open} open`);
   return bits.join(' · ');
 }
 function pointsCountTip(p) {
-  const bits = [];
-  if (p && p.answered) bits.push(`${p.answered} answered, not yet acknowledged`);
+  const bits = [], d = (p && (p.delivered != null ? p.delivered : p.answered)) || 0;
+  if (d) bits.push(`${d} ready for your check`);
+  if (p && p.planned) bits.push(`${p.planned} in progress`);
   if (p && p.open) bits.push(`${p.open} waiting for an answer`);
   return bits.length ? 'Your asks: ' + bits.join(' · ') + '. Open the chat to see them.' : '';
 }
@@ -8964,14 +8970,27 @@ function pdDefaultLayout(L, ctx) {
   return { root: L.split('row', [L.stack(['po-chat']), L.stack(['points'], { size: 340 })]),
            auto: ['board', 'workspace', 'changes'].map(strip) };
 }
-// What the Points panel lists: the points waiting for an answer and the
-// answers not yet acknowledged, answers first, then oldest first; the same
-// order and words as the list above the chat (session.html pointsListHtml).
-const PD_PT_WORD = { open: 'waiting for an answer', answered: 'answered' };
-function pdLastAnswer(p) {
-  const a = (p && p.answers) || [];
+// What the Points panel lists, by stage (points.py): what waits for the PO,
+// what is in progress (planned, with its task and where it is), what is
+// ready for their check; oldest first in each; the same words as the list
+// above the chat (session.html pointsListHtml).
+const PD_PT_WORD = { open: 'waiting for an answer', planned: 'in progress', delivered: 'ready for your check' };
+const PD_PT_GROUPS = [['open', 'Waiting for the PO'], ['planned', 'In progress'], ['delivered', 'Ready for your check']];
+// A hub from before the stages says "answered" for delivered.
+const pdPtState = s => s === 'answered' ? 'delivered' : s;
+function pdLatest(p, plan) {
+  const a = ((p && p.answers) || []).filter(x => (x.kind === 'plan') === !!plan);
   for (let i = a.length - 1; i >= 0; i--) if (a[i].mid) return a[i];
   return a.length ? a[a.length - 1] : null;
+}
+const pdLastAnswer = p => pdLatest(p, false);
+const pdLastPlan = p => pdLatest(p, true);
+// "#104 · in progress", "#104 merged, awaiting go-live".
+function pdTaskWords(p) {
+  const t = p && p.task;
+  if (!t || !t.ref) return '';
+  if (t.done) return `${t.ref} merged, awaiting go-live`;
+  return t.workflowName ? `${t.ref} · ${t.workflowName.toLowerCase()}` : t.ref;
 }
 function pdPtAge(ts, now) {
   const s = Math.max(0, (now || Date.now() / 1000) - (ts || 0));
@@ -8981,41 +9000,51 @@ function pdPtAge(ts, now) {
   return Math.round(s / 86400) + 'd';
 }
 function pdPointsSummary(pv) {
-  const bits = [];
-  if (pv && pv.open) bits.push(`${pv.open} waiting for an answer`);
-  if (pv && pv.answered) bits.push(`${pv.answered} answered, not yet acknowledged`);
+  const bits = [], d = (pv && (pv.delivered != null ? pv.delivered : pv.answered)) || 0;
+  if (pv && pv.open) bits.push(`${pv.open} waiting for the PO`);
+  if (pv && pv.planned) bits.push(`${pv.planned} in progress`);
+  if (d) bits.push(`${d} ready for your check`);
   return bits.join(' · ');
 }
 // `told` is what the chat said ({ room, points, words }), null before it has.
-// Each row: its id, its first words, its state and age, "your message ↑" and
-// "answer ↓" (a click scrolls the PO chat to that balloon and marks it), and
-// its one click: 👍 Ack for an answer, Drop for one still waiting.
+// Each row: its id, its first words, its stage (a planned one: its task and
+// where it is) and age, "your message ↑", "plan ↓" and "answer ↓" (a click
+// scrolls the PO chat to that balloon and marks it), and its one click:
+// 👍 Ack for a delivered one, Drop for one still waiting or in progress.
 function pdPointsHtml(told, now) {
   if (!told || !told.points) return '<p class="pdp-empty">Your asks come from the PO’s conversation once it has loaded.</p>';
   const pv = told.points, words = told.words || {};
-  const rows = (pv.items || []).filter(p => p.state === 'open' || p.state === 'answered')
-    .sort((a, b) => (a.state === b.state ? 0 : a.state === 'answered' ? -1 : 1) || (a.createdAt || 0) - (b.createdAt || 0));
-  if (!rows.length) {
-    return '<div class="pdp"><p class="pdp-empty">No open asks. Every message you send the PO is an ask (P12) that waits here for its answer, and stays until you acknowledge the answer.</p></div>';
+  const items = (pv.items || []).map(p => Object.assign({}, p, { state: pdPtState(p.state) }));
+  if (!items.some(p => PD_PT_WORD[p.state])) {
+    return '<div class="pdp"><p class="pdp-empty">No open asks. Every message you send the PO is an ask (P12): it waits here while the PO answers it and does the work, and stays until you acknowledge what was delivered.</p></div>';
   }
   const href = mid => '/session?room=' + encodeURIComponent(told.room || '') + '&msg=' + encodeURIComponent(mid).replace(/%3A/gi, ':');
   const link = (mid, text, tip) => mid ? `<a class="pdp-link" href="${esc(href(mid))}" data-mid="${esc(mid)}" title="${esc(tip)}">${esc(text)}</a>` : '';
   const btn = (id, act, text, label) => `<button type="button" class="pdp-btn" data-pt="${esc(id)}" data-pt-act="${act}" aria-label="${esc(label)}" title="${esc(label)}">${text}</button>`;
-  const list = rows.map(p => {
-    const a = p.state === 'answered' ? pdLastAnswer(p) : null;
-    const said = a && !a.mid && a.summary ? `<span class="pdp-said">${esc(a.summary)}</span>` : '';
+  const row = p => {
+    const st = p.state;
+    const a = st === 'delivered' ? pdLastAnswer(p) : null;
+    const plan = st !== 'open' ? pdLastPlan(p) : null;
+    const said = a && !a.mid && a.summary ? a.summary : st === 'planned' && plan && !plan.mid && plan.summary ? plan.summary : '';
+    const task = st === 'planned' ? pdTaskWords(p) : '';
     const w = words[p.id] || '';
     return `<li class="pdp-row" data-pt="${esc(p.id)}"><div class="pdp-top"><span class="pdp-id">${esc(p.id)}</span>`
       + `<span class="pdp-words" title="${esc(w)}">${esc(w)}</span></div>`
-      + `<div class="pdp-meta"><span class="pdp-state ${esc(p.state)}">${esc(PD_PT_WORD[p.state])}</span>`
+      + `<div class="pdp-meta"><span class="pdp-state ${esc(st)}">${esc(task || PD_PT_WORD[st])}</span>`
       + `<span class="pdp-age" data-at="${esc(String(p.createdAt || 0))}">${esc(pdPtAge(p.createdAt, now))}</span>`
       + link(p.mid, 'your message ↑', 'Go to your message in the PO chat')
+      + (plan ? link(plan.mid, 'plan ↓', 'Go to where the PO planned the work') : '')
       + (a ? link(a.mid, 'answer ↓', 'Go to the answer in the PO chat') : '')
-      + (p.state === 'answered' ? btn(p.id, 'ack', '👍 Ack', `Acknowledge the answer to ${p.id}: nothing is sent to the agent`)
-                                : btn(p.id, 'drop', 'Drop', `Drop ${p.id}: you no longer need an answer`))
-      + `</div>${said}</li>`;
+      + (st === 'delivered' ? btn(p.id, 'ack', '👍 Ack', `Acknowledge the answer to ${p.id}: nothing is sent to the agent`)
+                            : btn(p.id, 'drop', 'Drop', `Drop ${p.id}: you no longer need an answer`))
+      + `</div>${said ? `<span class="pdp-said">${esc(said)}</span>` : ''}</li>`;
+  };
+  const groups = PD_PT_GROUPS.map(([st, head]) => {
+    const rows = items.filter(p => p.state === st).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    return rows.length ? `<li class="pdp-group" data-stage="${st}"><h3 class="pdp-head">${esc(head)} <span class="pdp-n">${rows.length}</span></h3>`
+      + `<ul class="pdp-list">${rows.map(row).join('')}</ul></li>` : '';
   }).join('');
-  return `<div class="pdp"><p class="pdp-sum">Your asks: ${esc(pdPointsSummary(pv))}</p><ul class="pdp-list">${list}</ul></div>`;
+  return `<div class="pdp"><p class="pdp-sum">Your asks: ${esc(pdPointsSummary(pv))}</p><ul class="pdp-groups">${groups}</ul></div>`;
 }
 
 // (A var, not a const: pdById is called from code that may run before this line.)
@@ -9334,7 +9363,7 @@ function pdPaintPoints(force) {
   const html = pdPointsHtml(told, Date.now() / 1000);
   const sig = html.replace(/(<span class="pdp-age"[^>]*>)[^<]*/g, '$1');
   const pv = told && told.points;
-  const n = pv ? (pv.open || 0) + (pv.answered || 0) : 0;
+  const n = pv ? (pv.open || 0) + (pv.planned || 0) + (pv.delivered != null ? pv.delivered : pv.answered || 0) : 0;
   if (PD.dock) PD.dock.setBadge('points', n ? String(n) : null, pv ? pdPointsSummary(pv) : null);
   if (!force && sig === PD.ptSig) {
     el.querySelectorAll('.pdp-age[data-at]').forEach(s => { const t = pdPtAge(+s.dataset.at); if (s.textContent !== t) s.textContent = t; });
