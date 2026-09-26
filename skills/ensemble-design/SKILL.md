@@ -409,8 +409,8 @@ Workspace's first root only: the task's folder in a task, the project's folder i
   still stands out on the marked line's wash).
 - **Typing again cancels** the search in flight, in the page and on the hub. The query, mode and options
   are remembered per Workspace with its tabs.
-- **Phone:** the box and a few rows sit above the file (45% of the height, 60% with a query); the field
-  is `--fs-400` and `--touch-min` tall, every toggle and result row `--touch-min`, and a matching line
+- **Phone:** the box is in the tree's pane, which is the whole Workspace while it shows (§8.9); the
+  field is `--fs-400` and `--touch-min` tall, every toggle and result row `--touch-min`, and a matching line
   wraps instead of cutting its match off at the edge.
 
 ### Recent files
@@ -589,8 +589,8 @@ library is never edited in this repository: a need goes to the Dock project's `E
   slid out is `--selected-bg`. A floating window and a slid-out strip panel are `--r-300` with
   `--e-200`; docked panels have a border, no shadow (§2). The drop preview is the drop target of §1.
   Menus are `--surface-overlay`, `--r-300`, `--e-200`, rows 32px.
-- **The chrome row above the dock** is the project's crumbs with **Panels ▾** at its end (a Default
-  button, `pdCtlHtml`): each panel with its check, then Reset layout. No tab row: the panels are the
+- **Panels ▾ is in the top bar** (`#bar-here`, §5.1; a Default button, `pdCtlHtml`): each panel
+  with its check, then Reset layout. Nothing sits between the bar and the dock. No tab row: the panels are the
   tabs. A tab asked for from elsewhere (a diff's Open file, an old "workspace" tab) brings its panel
   forward instead.
 - **Panel code never looks its elements up by id in the main document** (`PD.els`, or `pdById`,
@@ -683,6 +683,24 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
    search, what-needs-me, me, create. Filters, counts, grouping and sort belong to the view that owns
    them. This rule is what keeps the bar thin after the next five features — it is the reason the bar
    got heavy the first time.
+
+   **One bar, one order, at every width** (#107). Left to right: **where you are** (the logo
+   `Ensemble`, which is the way home, `/`, then the project's name as a Subtle button with a caret:
+   its menu switches project and holds the project's settings, its kind and key and, for a
+   documents project without one, setting up its PO), then **what you can do here** (`#bar-here`:
+   the PO screen's **Panels ▾**, `pdCtlHtml`; empty elsewhere), then the global group: search, the
+   PO pill, the plan chip, the bell, the avatar and **Create** (in a project, Create opens the new
+   task dialog with that project chosen). Panels is the one control about the page below that the
+   bar carries: a PO screen has no other row to hold it, and the bar is where the page's own
+   controls start. Nothing else joins `#bar-here` without replacing something.
+
+   **A project page has no rows of its own above its content.** No status row: what needs you is the
+   bell's count and its tray's *Show all* (the Needs you page); what changed is on the Changes panel
+   tab (a badge) or the Changes tab (a `.ptab-n` count), and on home in the Group-by row. No crumbs
+   row: the project's name is in the bar. A project without a PO keeps one row, its tabs
+   (`.ptabs`) with the board/list switch at their end. `--chrome-h` is the bar plus that row;
+   re-measure it if a row is ever added (a Workspace or Changes tab must fit the screen, no page
+   scroll).
 
    **The PO pill is identity, not view state.** It names who you talk to about the current project,
    the way the avatar names you: it reads the same on every page, and nothing about the view below
@@ -859,6 +877,13 @@ desktop is untouched by construction.
    opens over the bar, and stays open while it holds a query (§5.5: a filtered list shows why); the
    plan chip moves into the avatar menu, and its warnings still reach the banner. Anything new for the
    bar on a phone must replace something, not squeeze it.
+
+   **Home is one row; a project is two.** In a project (and no task open) the bar wraps: row one is
+   search, the PO, the bell, the avatar and Create; row two is the back arrow `←` (`#bar-back`, home;
+   phone only, the logo is the way back elsewhere), the project's name with its menu, truncated,
+   and Panels at the end. `--header-h` is redeclared on `body.in-proj` so everything hanging off the
+   bar follows. At 430×932 the PO screen's panel tabs start at 110px. An open task covers the page
+   under the bar, so the second row steps aside then.
 5. **An open task never covers the bar.** The bar is the way to the PO and to the project. On a phone
    the task takes the whole width *under* the bar, and the PO's pill opens the PO over it.
 6. **The keyboard never covers a composer.** The viewport tag carries
@@ -869,8 +894,15 @@ desktop is untouched by construction.
    it opens.
 8. **Touch selection is followed through `selectionchange`**, not `touchend`: the handles adjust the
    selection after the finger lifts.
-9. **Two panes side by side become one above the other** below the phone breakpoint (Workspace,
-   Changes). Beside each other on 390px, the file got 79px.
+9. **Two panes side by side become one above the other** below the phone breakpoint (Changes).
+   Beside each other on 390px, the file got 79px.
+
+   **The Workspace shows one pane at a time** (`wsPaintPane`, class `ws-tree` on `.wsp`): the file,
+   whole height, when a tab is shown; the tree and Find when there is no file, or when asked for
+   (**Files**, first in the path bar; Show in the tree; a folder in the path). From the tree, the
+   file's name with `›` (at the end of the Find row) goes back to it. Both panes share one grid
+   cell; the one not showing is `visibility: hidden`, never `display: none`, so the file's viewer
+   keeps its page and size. Neither switch shows off a phone.
 10. **Measure it.** In this environment `(pointer: coarse)` never matches, so to measure a phone's
     landscape layout rewrite the query in a test copy of the page (the audit's proxy does it for
     `?_coarse=1`), and give the frame's scrollbars zero width: a desktop frame's 9px scrollbar makes
