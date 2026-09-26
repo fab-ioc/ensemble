@@ -1974,7 +1974,17 @@ def resolve_message_ref(room_id: str, msg_id: str) -> dict | None:
 
 
 _CLAUDE_IMAGE_SOURCE = re.compile(r"^\[Image: source: (.+)\]$")
-_CLAUDE_IMAGE_TOKEN = re.compile(r"\[Image #\d+\]")
+_CLAUDE_IMAGE_TOKEN = re.compile(r"\[Image #\d+\][ \t]*")
+
+
+def _meta_texts(meta: dict) -> list[str]:
+    """Every text block of a meta entry: Claude Code (2.1.x, seen 2026-09-26)
+    logs the sources of a message's images as one entry with a block each."""
+    msg = meta.get("message")
+    c = msg.get("content") if isinstance(msg, dict) else None
+    if isinstance(c, str):
+        return [c]
+    return [x.get("text") or "" for x in c or [] if isinstance(x, dict) and x.get("type") == "text"]
 
 
 def _claude_image_source(turn: dict, meta: dict) -> None:
@@ -1982,16 +1992,28 @@ def _claude_image_source(turn: dict, meta: dict) -> None:
     itself: the message keeps ``[Image #1]`` and a bare ``[image]``, and the
     path follows in a meta entry ``[Image: source: <path>]``. For an image of a
     chat's attachments folder, the turn gets its ``[image] <path>`` line back,
-    so its balloon shows the thumbnail as for any other agent."""
-    msg = meta.get("message")
-    m = _CLAUDE_IMAGE_SOURCE.match(((_extract_text(msg.get("content")) if isinstance(msg, dict) else "") or "").strip())
-    if not m:
-        return
-    path = m.group(1).strip()
-    if not attachments.is_attachment_path(path, DASHBOARD_DIR) or not _CLAUDE_IMAGE_TOKEN.search(turn["text"]):
-        return
-    words, paths = message_refs.split_images(turn["text"])
-    words = _CLAUDE_IMAGE_TOKEN.sub("", words, count=1)
+    so its balloon shows the thumbnail as for any other agent. One entry may
+    name several images, in the order of their placeholders; the turn counts
+    those it has read (``_img``, ``_placed``: dropped by _claude_text_turns)."""
+    for text in _meta_texts(meta):
+        m = _CLAUDE_IMAGE_SOURCE.match(text.strip())
+        if m:
+            n = turn.get("_img", 0)
+            turn["_img"] = n + 1
+            # Its placeholder among those still in the text: an image placed
+            # before it took its own out.
+            if _claude_image_path(turn, m.group(1).strip(), n - turn.get("_placed", 0)):
+                turn["_placed"] = turn.get("_placed", 0) + 1
+
+
+def _claude_image_path(turn: dict, path: str, k: int) -> bool:
+    tokens = list(_CLAUDE_IMAGE_TOKEN.finditer(turn["text"]))
+    if not attachments.is_attachment_path(path, DASHBOARD_DIR) or not 0 <= k < len(tokens):
+        return False
+    t = tokens[k]
+    words, paths = message_refs.split_images(turn["text"][:t.start()] + turn["text"][t.end():])
+    # A line of placeholders the message began with goes whole.
+    words = words.lstrip()
     # An image inside a point left a bare "[image]" line in the middle of
     # the text: the path goes back there, in order. The bare lines at the
     # end are the message's own trailing images, put back below.
@@ -2003,11 +2025,12 @@ def _claude_image_source(turn: dict, meta: dict) -> None:
     if inline is not None:
         lines[inline] = message_refs.image_line(path)
         turn["text"] = message_refs.with_images("\n".join(lines).rstrip(), paths)
-        return
+        return True
     lines = words.split("\n")
     while lines and lines[-1].strip() in ("", message_refs.IMAGE_PREFIX.strip()):
         lines.pop()
     turn["text"] = message_refs.with_images("\n".join(lines).strip(), [*paths, path])
+    return True
 
 
 # Claude Code (2.1.278, seen 2026-09-21) logs text pasted into it (what the hub
@@ -2075,6 +2098,9 @@ def _claude_text_turns(tpath: Path) -> list[dict]:
                 turns.append(turn)
     except OSError:
         pass
+    for turn in turns:
+        turn.pop("_img", None)
+        turn.pop("_placed", None)
     return turns
 
 

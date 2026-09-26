@@ -41,7 +41,7 @@ const ctx = { attSplit: t => ({ words: String(t || ''), paths: [] }),
 vm.createContext(ctx);
 vm.runInContext(code + `
   globalThis.t = { CHAT_NAMES, pointMaps, pointBarHtml, pointsSummary, pointsListHtml, pointsLineHtml, heldBy, foldPlan,
-    chatGroups, quietItem, catchUp, canApprove, approveDecision, pointAct, stripPointLines, hasPointLines, lastAnswer,
+    chatGroups, quietItem, catchUp, canApprove, approveDecision, pointAct, stripPointLines, hasPointLines, stripImagePlaceholders, hasImagePlaceholders, lastAnswer,
     setPoints: v => { POINTS = v; }, points: () => POINTS };`, ctx);
 const T = ctx.t;
 const out = {};
@@ -63,6 +63,10 @@ out.summary = [T.pointsSummary(P), T.pointsSummary(T.pointMaps({ open: 0, answer
 out.list = T.pointsListHtml(P, href, 2000);
 out.lineClosed = T.pointsLineHtml(P, false, href, 2000);
 out.keep = [...P.keep].sort(); out.unacked = [...P.unacked].sort();
+out.images = [T.stripImagePlaceholders('[Image #2] [Image #3]\n\n## Points (2)\n**1.** a\n[image] C:\\t\\attachments\\a.png'),
+  T.stripImagePlaceholders('[Image #3] a picture of my own'), T.stripImagePlaceholders('look at [Image #1] this one'),
+  T.stripImagePlaceholders('see [image] x and [Image 2]'), T.stripImagePlaceholders('[Image]')];
+out.hasImages = [T.hasImagePlaceholders('[Image #12]x'), T.hasImagePlaceholders('[image] a.png')];
 out.strip = [T.stripPointLines('Why?\n\n[point P3]'), T.stripPointLines('## Review comments (2)\n\n**1.** a\n\n[point P1]\n\n**2.** b\n\n[point P2]'),
   T.stripPointLines('plain  '), T.hasPointLines('say [point P1] inline')];
 
@@ -169,6 +173,19 @@ class Points(unittest.TestCase):
 
     def test_the_hubs_point_lines_are_not_shown(self):
         self.assertEqual(self.r["strip"], ["Why?", "## Review comments (2)\n\n**1.** a\n\n**2.** b", "plain  ", False])
+
+    def test_an_agents_image_placeholders_are_not_shown(self):
+        # Claude Code's line of placeholders above a points message (P47), one
+        # in the words, Codex's, and a text without any, which is unchanged.
+        self.assertEqual(self.r["images"], [
+            "## Points (2)\n**1.** a\n[image] C:\\t\\attachments\\a.png",
+            "a picture of my own",
+            "look at this one",
+            "see [image] x and [Image 2]",
+            "",
+        ])
+        self.assertEqual(self.r["hasImages"], [True, False])
+        self.assertIn("text: stripImagePlaceholders(stripPointLines(m.text))", SRC, "the person's balloons are drawn without them")
 
     def test_an_open_point_or_an_unacknowledged_answer_never_folds(self):
         r = self.r

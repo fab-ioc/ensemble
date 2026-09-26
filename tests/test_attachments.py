@@ -379,6 +379,67 @@ class Attachments(unittest.TestCase):
         self.assertEqual([x["text"] for x in dashboard._claude_text_turns(t)], [
             f"## Points (2)\n\n**1.** first\n[image] {att / 'a.png'}\n\n[point P1]\n\n**2.** second\n\n[point P2]\n\n[image] {att / 'b.png'}"])
 
+    def transcript_turns(self, text, sources, one_entry=True):
+        """The turns read from a transcript where ``text`` was typed and Claude
+        Code logged its images' ``sources``: in one meta entry, a text block
+        each (2.1.x, seen 2026-09-26), or an entry each (older)."""
+        user = {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": text}]
+                + [{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBOR"}}] * len(sources)}}
+        block = lambda p: {"type": "text", "text": f"[Image: source: {p}]"}
+        meta = lambda ps: {"type": "user", "isMeta": True, "message": {"role": "user", "content": [block(p) for p in ps]}}
+        lines = [user] + ([meta(sources)] if one_entry else [meta([p]) for p in sources])
+        t = Path(self.tmp.name) / "m.jsonl"
+        t.write_text("\n".join(json.dumps(x) for x in lines), encoding="utf-8")
+        return [x["text"] for x in dashboard._claude_text_turns(t)]
+
+    def test_every_points_image_comes_back_in_its_point(self):
+        # P47: five points, 3 to 5 with a screenshot each. Claude Code began the
+        # turn with a line of placeholders and logged the three sources in one
+        # entry: only the first came back, and the line stayed.
+        att = self.folder()
+        a, b, c = (att / f"2026-09-26 06.4{i}.00 screenshot.png" for i in (3, 4, 7))
+        typed = ("[Image #2] [Image #3] [Image #4]\n\n<pasted_content id=\"a6b4\">\n## Points (5)\n**1.** one\n[point P42]\n"
+                 "**2.** two\n[point P43]\n**3.** three\n[image]\n[point P44]\n**4.** four\n[image]\n[point P45]\n"
+                 "**5.** five\n[image]\n[point P46]\n</pasted_content id=\"a6b4\">\n")
+        want = (f"## Points (5)\n**1.** one\n[point P42]\n**2.** two\n[point P43]\n**3.** three\n[image] {a}\n[point P44]\n"
+                f"**4.** four\n[image] {b}\n[point P45]\n**5.** five\n[image] {c}\n[point P46]")
+        self.assertEqual(self.transcript_turns(typed, [a, b, c]), [want])
+        self.assertEqual(self.transcript_turns(typed, [a, b, c], one_entry=False), [want], "an entry each, as before")
+        # Two of three points with one; the last point's image is its last line.
+        two = "[Image #1][Image #2]## Points (3)\n\n**1.** one\n[image]\n\n[point P1]\n\n**2.** two\n\n[point P2]\n\n**3.** three\n[image]\n\n[point P3]"
+        self.assertEqual(self.transcript_turns(two, [a, b]), [
+            f"## Points (3)\n\n**1.** one\n[image] {a}\n\n[point P1]\n\n**2.** two\n\n[point P2]\n\n**3.** three\n[image] {b}\n\n[point P3]"])
+
+    def test_one_two_and_three_images_without_points(self):
+        att = self.folder()
+        ps = [att / "a.png", att / "b.png", att / "c.png"]
+        for n in (1, 2, 3):
+            typed = "".join(f"[Image #{i + 1}] " for i in range(n)) + "what do these show?\n" + "\n".join(["[image]"] * n)
+            lines = "\n".join(f"[image] {p}" for p in ps[:n])
+            self.assertEqual(self.transcript_turns(typed, ps[:n]), [f"what do these show?\n\n{lines}"], n)
+            self.assertEqual(self.transcript_turns(typed, ps[:n], one_entry=False), [f"what do these show?\n\n{lines}"], n)
+        # Images only, no words.
+        self.assertEqual(self.transcript_turns("[Image #1][Image #2]\n[image]\n[image]", ps[:2]),
+                         [f"[image] {ps[0]}\n[image] {ps[1]}"])
+
+    def test_an_image_from_elsewhere_keeps_its_placeholder_for_the_page(self):
+        # Not this chat's: the hub cannot show it; the page drops the placeholder.
+        att = self.folder()
+        self.assertEqual(self.transcript_turns("[Image #1] [Image #2] mine\n[image]", ["C:\\Pictures\\cat.png", att / "a.png"]),
+                         [f"[Image #1] mine\n\n[image] {att / 'a.png'}"])
+
+    def test_a_codex_turn_with_an_image_keeps_its_words(self):
+        # What codex logs for an image pasted into it (seen live): the turn began
+        # with "<image name=…>" and was dropped as injected context.
+        from agents import codex
+        content = [{"type": "input_text", "text": "<image name=[Image #1]>"}, {"type": "input_image", "image_url": "data:x"},
+                   {"type": "input_text", "text": "</image>"}, {"type": "input_text", "text": "[Image #1] can you see this"}]
+        text = codex._text_of(content)
+        self.assertEqual(text, "[Image #1] can you see this")
+        self.assertFalse(codex._is_synthetic(text))
+        self.assertEqual(codex._text_of([{"type": "input_text", "text": "<environment_context>x</environment_context>"}]),
+                         "<environment_context>x</environment_context>")
+
     def test_with_images_and_split_images(self):
         paths = [r"C:\t\attachments\a.png", "/t/attachments/b c.png"]
         text = message_refs.with_images("hello", paths)

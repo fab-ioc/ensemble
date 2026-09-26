@@ -1523,8 +1523,9 @@ function refOfUrl(u) {
 const TASK_REF_RE = /(?<![\w&\/#@.\\-])(?:@([A-Za-z][\w-]*)@|#)(?:([A-Za-z][A-Za-z0-9]{0,5})-)?(\d{1,6})(?![\w-])/g;
 const TASK_BLOCK_RE = /\n\n\[ref ((?:@[A-Za-z][\w-]*@|#)(?:[A-Za-z][A-Za-z0-9]*-)?\d{1,6})\] task [^\n]*\s*$/;
 // A bare #12 after one of these words is someone else's number ("PR #12",
-// "fixes #34"), as task_numbers.NOT_TASK_BEFORE reads it; ED-12 and @codex@12 are tasks.
-const NOT_TASK_BEFORE_RE = /(?:^|[^\w])(?:pr|mr|pull request|issue|bug|ticket|resolve|resolved|finding|step|item|point|round|option|question|comment|commit|line|page|part|phase|rule|case)s?\.?[ \t]*$/i;
+// "fixes #34", "[Image #3]": an agent's placeholder for a pasted image), as
+// task_numbers.NOT_TASK_BEFORE reads it; ED-12 and @codex@12 are tasks.
+const NOT_TASK_BEFORE_RE = /(?:^|[^\w])(?:pr|mr|pull request|issue|bug|ticket|resolve|resolved|finding|step|item|point|round|option|question|comment|commit|line|page|part|phase|rule|case|image)s?\.?[ \t]*$/i;
 const notTaskRef = (who, key, s, at) => !who && !key && NOT_TASK_BEFORE_RE.test(s.slice(Math.max(0, at - 40), at));
 // What the hub said is kept a minute: a chip drawn after that asks again, so a
 // running task's chip ends when it does and a number given since becomes a chip.
@@ -2558,6 +2559,14 @@ function askLineHtml(ask, mid, href) {
 const POINT_LINE_RE = /\n*^\[point P\d{1,5}[a-z]?\][ \t]*$/gm;
 const hasPointLines = t => /^\[point P\d{1,5}[a-z]?\][ \t]*$/m.test(String(t || ''));
 const stripPointLines = t => hasPointLines(t) ? String(t).replace(POINT_LINE_RE, '').trim() : String(t || '');
+// Claude Code and Codex write "[Image #3]" into the person's turn for each
+// image it carries; the image shows as its thumbnail (the hub puts its
+// "[image] <path>" line back), the placeholder never, nor a line of nothing else.
+const IMAGE_PH_RE = /[ \t]*\[Image(?: #\d+)?\][ \t]*/g;
+const hasImagePlaceholders = t => /\[Image(?: #\d+)?\]/.test(String(t || ''));
+const stripImagePlaceholders = t => !hasImagePlaceholders(t) ? String(t || '') : String(t).split('\n')
+  .map(l => { const r = l.replace(IMAGE_PH_RE, ' '); return r === l ? l : r.trim() ? r.replace(/^ | $/g, '') : null; })
+  .filter(l => l !== null).join('\n').replace(/^\n+/, '');
 const PT_WORD = { open: 'waiting for an answer', answered: 'answered', acked: 'acknowledged', dropped: 'dropped', split: 'split into parts' };
 // The answer a link goes to: the latest one with a balloon, else the latest.
 function lastAnswer(p) {
@@ -2775,7 +2784,8 @@ function renderBubbles(items, opt = {}) {
   const given = items;       // as the conversation has them, point lines and all (sendsToShow)
   items = withTaskBubble(items, ROOM_OBJ && ROOM_OBJ.spec, 'from');
   // The person's words as sent: the hub's "[point P12]" lines are the agent's.
-  items = items.map(m => m && m.from === 'user' && hasPointLines(m.text) ? Object.assign({}, m, { text: stripPointLines(m.text) }) : m);
+  items = items.map(m => m && m.from === 'user' && (hasPointLines(m.text) || hasImagePlaceholders(m.text))
+    ? Object.assign({}, m, { text: stripImagePlaceholders(stripPointLines(m.text)) }) : m);
   // A balloon holding a comment's passage stays open, so its highlight shows;
   // so does one holding an open point, or an answer not yet acknowledged,
   // whatever would fold it (its age, its task, Just us).
