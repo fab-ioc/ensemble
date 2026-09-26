@@ -177,6 +177,7 @@ export function panelsFrom(container) {
  *   popHtml, popBase                        a pop-out page without a served file, and the base of its relative URLs
  *   themeAttrs, themeEvent                  what of the main page's <html> a pop-out window copies, and when
  *   help: { icon(key, panel), mount(doc), selector }            a panel's help control, and its popovers in a window
+ *   minClickRestores                        a click on a minimised panel's title bar restores it (default true)
  *   modalSelector, badgeClass, text, onReset, win
  *
  * Returns the dock's handle: layout(), isShown(id), isVisible(id), isAuto(id), frontOf(id), activate(id), reveal(id),
@@ -189,7 +190,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   copyStyles = true, themeAttrs = THEME_ATTRS, themeEvent = THEME_EVENT, help = {}, modalSelector = '[role="dialog"], .dk-help-pop',
   badgeClass = 'dk-badge', text = {}, onReset = null, migrate = null,
   defaultLayout, minSize, edgeOf, fill, defaultSize, sizes,
-  narrow = false, narrowLayout, narrowKey, can = null, popHtml = null, popBase,
+  narrow = false, narrowLayout, narrowKey, can = null, popHtml = null, popBase, minClickRestores = true,
   openWindow = (url, name, features) => (win && typeof win.open === 'function' ? win.open(url, name, features) : null) }) {
   const doc = root.ownerDocument;
   const T = { ...TEXT, ...text };
@@ -1535,6 +1536,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       if (id) act(b.dataset.dkAct, id, b);
       return;
     }
+    if (minClickRestores && restoreFromHead(e)) return;
     const tab = t.closest('[data-dk-tab]');
     if (tab && !t.closest(helpSel)) { api.activate(tab.dataset.dkTab); return; }
     const strip = t.closest('[data-dk-auto]');
@@ -1552,17 +1554,60 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     }
   });
 
+  // A click on a minimised stack's title bar (a tab, or the bar beside the tabs; not a control or help, and not the
+  // click that ends a drag or a move, which never gets here) restores it at once, as its restore control does, and a
+  // tab clicked comes to the front. Enter and Space on a focused tab click it, so they restore too.
+  let restored = null; // { id, x, y, t }: the last restore by a mouse click, whose second click may follow
+  function restoreFromHead(e) {
+    const t = e.target;
+    const head = t.closest('.dk-head');
+    if (!head || t.closest(`.dk-ctl, ${helpSel}`) || head.closest('.dk-flyout')) return false;
+    const node = stackAround(head);
+    if (!node || !node.min || !allowed(node.active, 'min')) return false;
+    const tab = t.closest('[data-dk-tab]');
+    if (tab) activate(layout, tab.dataset.dkTab);
+    delete node.min;
+    commit();
+    restored = e.detail === 1 ? { id: node.active, x: e.clientX, y: e.clientY, t: e.timeStamp } : null;
+    return true;
+  }
+  // The second click of a double click that restored a stack. Restoring can move the title bar away from the pointer (a
+  // stack at the bottom grows upwards), leaving its body or a neighbour there: that click is still the title bar's. It
+  // reaches nothing else, and its dblclick maximises or docks back as one on the title bar does. On the title bar
+  // itself it goes on as any click there (the stack is restored: a tab switches, nothing minimises again).
+  const DBL_MS = 500;
+  const DBL_PX = 6;
+  function secondClick(e) {
+    const r = restored;
+    if (!r || e.timeStamp - r.t > DBL_MS || Math.abs(e.clientX - r.x) > DBL_PX || Math.abs(e.clientY - r.y) > DBL_PX) return false;
+    const head = e.target.closest && e.target.closest('.dk-head');
+    return !(head && head.querySelector(`[data-dk-tab="${CSS_ESC(r.id)}"]`));
+  }
+  for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+    on(root, type, (e) => { if (secondClick(e)) { e.preventDefault(); e.stopPropagation(); } }, true);
+  }
+  on(root, 'dblclick', (e) => {
+    if (!secondClick(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const id = restored.id;
+    restored = null;
+    dblHead(id);
+  }, true);
+
   on(root, 'dblclick', (e) => {
     const head = e.target.closest('.dk-head');
     if (!head || e.target.closest(`.dk-ctl, ${helpSel}`) || head.closest('.dk-flyout')) return;
     // By the panel's name, not its element: the first click of the two may have redrawn the title bar.
     const tabEl = e.target.closest('[data-dk-tab]');
     const node = stackAround(head);
-    const id = tabEl ? tabEl.dataset.dkTab : node && node.active;
+    dblHead(tabEl ? tabEl.dataset.dkTab : node && node.active);
+  });
+  function dblHead(id) {
     const w = id && whereIs(layout, id);
     if (w && w.kind === 'float' && allowed(id, 'float')) { dockBack(layout, w.float, opts()); commit(); }
     else if (w && w.kind === 'dock' && allowed(id, 'max')) api.toggleMax(id);
-  });
+  }
   on(root, 'dblclick', (e) => {
     const bar = e.target.closest('.dk-bar');
     if (!bar || !bar._dk) return;

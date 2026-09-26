@@ -336,15 +336,19 @@ apply to them. Their rules instead:
   its label, and a plain note with **Close tab** where the file was. Not red: nothing is broken.
 - The row scrolls sideways within itself, never the page; on a phone each tab and its `×` are
   `--touch-min`.
-- **A project's Workspace has one fixed tab first: Documents** (see *Documents list*). It has no
-  `×`, Delete and a middle click leave it, and it shows whenever no file tab does: the Workspace
-  opens on it, and closing the last file comes back to it. A task's Workspace has no such tab.
+- **The Documents list has one fixed tab first: Documents** (see *Documents list*). It has no
+  `×`, Delete and a middle click leave it, and it shows whenever no file tab does: the list opens on
+  it, and closing the last file comes back to it. A Workspace (a project's or a task's) has no such
+  tab: it opens on its tree and an empty pane.
 
 ### Documents list
 
-What a project's Workspace opens on: the reports and design notes its tasks put in its Documents
-folder, and a code project's Markdown under `docs/` in its checkout (`wsDocsHtml` in `index.html`
-is the reference). It is the project's knowledge, so it comes before the tree's task folders.
+The project's knowledge, a place of its own: the reports and design notes its tasks put in its
+Documents folder, and a code project's Markdown under `docs/` in its checkout (`wsDocsHtml` in
+`index.html` is the reference). On a PO screen it is the **Documents** panel; elsewhere the
+project's **Documents** tab (Overview · Documents · Workspace · Changes). It is a Workspace view with
+no tree (`ctx.list`, `.wsp-list`): a document opens in a tab beside the fixed Documents tab, and a
+crumb's folder or Reveal goes to the Workspace and shows the file in its tree (`wsRevealInWorkspace`).
 
 - **The roadmap first**, above the list in every state (loading, empty, listed): "Roadmap",
   "ROADMAP.md · always first" under it, and when it was saved. It opens in the roadmap's own view
@@ -356,7 +360,7 @@ is the reference). It is the project's knowledge, so it comes before the tree's 
   `.tno` link to the task (`#12`), or a neutral lozenge "in the code"; the date (the full time is
   its tooltip; no ticking text); the size. One lozenge at most.
 - **Empty says what would fill it** (§5.5): where tasks put documents and how they are named. A
-  capped list says the rest are in the tree. Loading and unreadable are plain `--fg-muted` lines.
+  capped list says the rest are in the Workspace's tree. Loading and unreadable are plain `--fg-muted` lines.
 - Read at most every 15 s while it shows, one read at a time; rewritten only when it changes.
 - **"Show task folders"** (one switch, remembered in the browser, shared with a documents project's
   Files panel): off, the tree leaves the tasks' folders out of the project's home. Go to file and
@@ -501,8 +505,10 @@ answer (`points.py`). The chat shows it; `session.html`'s `pointBarHtml` and `po
 the reference. It is information for the person, not an alarm: **no colour of its own, never the
 bell's count.**
 
+- **The person's name for them is "your asks"**: "Your asks" is the panel, the line and the
+  summaries; the ids (`P12`), endpoints and `[point P12]` lines keep "point".
 - **The line** (`#points-line`) sits under the ask line, in its look (`--surface`, `--border`,
-  `--r-200`, `--fs-200`, `--fg-muted`): "Your points: 2 waiting for an answer · 3 answered, not yet
+  `--r-200`, `--fs-200`, `--fg-muted`): "Your asks: 2 waiting for an answer · 3 answered, not yet
   acknowledged". Hidden when both are 0. It is a disclosure button (`aria-expanded`, a `▸`/`▾`
   glyph) that opens a compact list under it, at most 40% of the height, scrolling within itself.
 - **A list row:** the id in `--font-mono`, its first words (`--fg`, one line, cut with `…`, the
@@ -524,11 +530,11 @@ bell's count.**
   "approved".
 - **Never folded:** a balloon holding an open point or an unacknowledged answer is drawn in full
   whatever would fold it (age, its task's row, Just us), and the catch-up line names "N answers to
-  your points to acknowledge" first.
+  your asks to acknowledge" first.
 - **Outside the chat:** the task card (`.cpts`, beside the cost) and the PO's header and pill say
   "2 to acknowledge · 1 open" in `--fg-muted` words, the tooltip in full. No lozenge: a card keeps
   its two.
-- **The Points panel** of a PO screen (see *Panels*; `pdPointsHtml` in `index.html` is the
+- **The Your asks panel** of a PO screen (see *Panels*; `pdPointsHtml` in `index.html` is the
   reference) is the same list with room of its own: the summary line in `--fg-subtle`, then a row a
   point: id and first words (two lines, `--fs-300`), then state, age, both links and the one click.
   The chat tells its host every change (`pointsTell`, with each point's words as the chat cuts
@@ -542,20 +548,26 @@ bell's count.**
 ### Panels
 
 A project with a PO opens on its **PO screen**: a Dock (`static/dock`, a vendored copy of the Dock
-library; `VERSION` names its commit) of five panels, **PO chat, Points, Board, Workspace, Changes**
-(`PD_IDS` in `index.html`). The person arranges them: side by side, as tabs of one stack, floating,
+library; `VERSION` names its commit) of six panels, **PO chat, Your asks, Board, Documents,
+Workspace, Changes** (`PD_IDS` in `index.html`; Your asks is `points`). The person arranges them: side by side, as tabs of one stack, floating,
 on a strip at an edge (slides out on hover or click), minimised, maximised, hidden from the Panels
-menu, or popped out into a window of their own. The layout is remembered in the browser
-(`cd-po-dock`; a phone's apart, `cd-po-dock-phone`), with **Reset layout** in the Panels menu. The
+menu, or popped out into a window of their own. **One click on a minimised panel's title bar
+brings it back** (the library's, from v0.3.5: `minClickRestores`, on by default); its controls
+keep their own clicks, a drag is not a click, and a double click still maximises (also when the
+restored chat's iframe slides under the pointer: for 500 ms after that click the dock's iframes
+let clicks through, `pdDblGuard`). The layout is remembered in the browser (`cd-po-dock`; a phone's apart, `cd-po-dock-phone`), with **Reset layout** in the Panels menu. The
 library is never edited in this repository: a need goes to the Dock project's `ENSEMBLE-NEEDS.md`.
 
 - **The default** (`pdDefaultLayout`, measured in `tests/test_po_dock.py`): at a laptop's width (about
-  1440) the PO chat takes what Points (340px) leaves, side by side; Board, Workspace and Changes wait
-  on the right edge's strip, never on screen until opened, each sliding out over 72% of the width and
-  pinning back beside Points. From 1800px the Board is on screen too, on the right (46% of the width):
+  1440) the PO chat takes what Your asks (340px) leaves, side by side; Board, Documents, Workspace
+  and Changes wait on the right edge's strip, never on screen until opened, each sliding out over 72% of the width and
+  pinning back beside Your asks. A panel added since a layout was saved joins it on the strip
+  (`pdAddNewPanels`), never on screen. From 1800px the Board is on screen too, on the right (46% of the width):
   a chat's lines stop getting longer at about 700px, so a wider screen's width goes to the board. A
   phone (`MOBILE_MQ`) is one column: every panel a tab of one stack, the PO chat first; nothing
   floats, sits on a strip or pops out there, and a tab is not dragged.
+- **Icon:** the top bar's mark is the app's icon (`/static/icons/favicon.svg`, 20px; 22px on a
+  phone), and a popped-out panel's window takes it as its own (`pdPopIcon`).
 - **Tokens:** the library's `--dk-*` tokens read Ensemble's own (`--dk-bg` `--bg`, `--dk-bg2`
   `--surface-sunken`, `--dk-bg3` `--surface`, `--dk-line` `--border`, `--dk-accent` `--accent`,
   `--dk-focus` `--focus-ring`, …) in `:root`, so every theme and the person's accent apply without a
@@ -591,7 +603,7 @@ library is never edited in this repository: a need goes to the Dock project's `E
   While the panel is hidden or popped out it waits at home, hidden with `visibility`, never
   `display`. Popped out, the panel's window holds a chat of its own (removed in `onPopIn`, before the
   panel comes back); the one here stays loaded.
-- **The roadmap** is a document: the first row of the Workspace's Documents list ("Roadmap,
+- **The roadmap** is a document: the first row of the Documents list ("Roadmap,
   ROADMAP.md · always first", with when it was saved), opening in its own view and editor over the
   list with **← Documents**. There is no Roadmap tab.
 - **Phone:** the same dock, narrow (the library's `narrow`, switched by `setNarrow` on resize; its

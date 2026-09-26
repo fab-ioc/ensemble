@@ -10,7 +10,8 @@ Checked in Node, with the page's own functions and the library's layout model:
 * the Points list: answers to acknowledge first, then what waits, oldest
   first; both ends linked by message id; Ack or Drop; an answer given by doing
   shows its summary; nothing listed says why;
-* the roadmap's row, first in the Documents list.
+* the roadmap's row, first in the Documents list;
+* a layout saved before the Documents panel existed gains it on the strip.
 
 Checked in headless Chrome over CDP, against a hub in a thread serving the
 pages, with one project whose PO room holds points:
@@ -23,7 +24,11 @@ pages, with one project whose PO room holds points:
 * F6 and Shift+F6 go between the stacks, also from inside the PO chat's
   composer (a frame), the arrow keys along a stack's tabs;
 * a Points arrow scrolls the PO chat to that balloon and marks it;
-* the roadmap opens from the Workspace's Documents list, in its own view;
+* the top bar shows the new icon; a pop-out window has it too;
+* the roadmap opens from the Documents panel, in its own view; a document
+  opens there in a tab;
+* a click on a minimised panel's title bar brings it back; a double click
+  still maximises it;
 * Reset layout brings the default back after a panel was hidden;
 * Ack in Points acknowledges the point, in the panel and in the chat;
 * a panel popped out into its own window (the Board, the PO chat) keeps its
@@ -95,6 +100,23 @@ const out = {};
     L.pinPanel(l, 'board', { cfg, viewportPx: 1440 });
     out.pinned = L.panelsUnder(l.root);
   }
+  // A layout saved before the Documents panel existed gains it on the strip; one that has it is kept.
+  {
+    const cfg = L.makeConfig({ ids: PD_IDS, fill: 'po-chat', defaultLayout: ctx => pdDefaultLayout(L, ctx) });
+    const l = L.normalizeLayout(null, { cfg, viewportPx: 1440 });
+    L.pinPanel(l, 'board', { cfg, viewportPx: 1440 });
+    const saved = JSON.parse(JSON.stringify(l));
+    saved.auto = saved.auto.filter(a => a.id !== 'documents');
+    const got = pdLayoutWithPanel(saved, 'documents', 1440);
+    const n = L.normalizeLayout(JSON.parse(JSON.stringify(got)), { cfg, viewportPx: 1440 });
+    const rootless = JSON.parse(JSON.stringify(saved));
+    rootless.root = null;
+    rootless.auto = [...['po-chat', 'points', 'board', 'workspace', 'changes'].map(id => ({ id, edge: 'right', size: 900 }))];
+    const r2 = L.normalizeLayout(JSON.parse(JSON.stringify(pdLayoutWithPanel(rootless, 'documents', 1440))), { cfg, viewportPx: 1440 });
+    out.rootless = { docked: L.panelsUnder(r2.root), auto: r2.auto.map(a => a.id) };
+    out.oldSaved = { docked: L.panelsUnder(n.root), auto: n.auto.map(a => [a.id, a.edge]),
+                     kept: pdLayoutWithPanel(got, 'documents', 1440) === got };
+  }
   const now = 1000000;
   const told = { room: 'room-po', words: { P1: 'make the board wider', P2: 'and the chat taller', P3: 'old one', P4: 'start the task' },
     points: { open: 1, answered: 2, items: [
@@ -115,7 +137,7 @@ const out = {};
 """
 
 PURE_FNS = ["esc", "PD_IDS", "PD_WIDE", "pdDefaultLayout", "PD_PT_WORD", "pdLastAnswer", "pdPtAge", "pdPointsSummary",
-            "pdPointsHtml", "wsDocsDate", "wsDocsWhen", "wsDocsPinHtml"]
+            "pdPointsHtml", "wsDocsDate", "wsDocsWhen", "wsDocsPinHtml", "pdLayoutWithPanel"]
 
 
 @unittest.skipUnless(NODE, "node is not installed")
@@ -136,7 +158,7 @@ class ThePanels(unittest.TestCase):
             a = self.o[key]
             self.assertEqual(a["docked"], ["po-chat", "points"], key)
             self.assertEqual(a["front"], ["po-chat", "points"], "side by side, both on screen")
-            self.assertEqual(a["auto"], [["board", "right"], ["workspace", "right"], ["changes", "right"]],
+            self.assertEqual(a["auto"], [["board", "right"], ["documents", "right"], ["workspace", "right"], ["changes", "right"]],
                              "the others wait on the right edge's strip, slid in")
             self.assertEqual((a["floats"], a["hidden"]), (0, 0))
             self.assertEqual(a["sizes"], [None, 340], "the chat takes what Points leaves")
@@ -145,24 +167,33 @@ class ThePanels(unittest.TestCase):
         a = self.o["at1920"]
         self.assertEqual(a["docked"], ["po-chat", "points", "board"])
         self.assertEqual(a["front"], ["po-chat", "points", "board"])
-        self.assertEqual(a["auto"], [["workspace", "right"], ["changes", "right"]])
+        self.assertEqual(a["auto"], [["documents", "right"], ["workspace", "right"], ["changes", "right"]])
 
     def test_a_phone_is_one_column_of_tabs(self):
         a = self.o["phone"]
         self.assertEqual(a["stacks"], 1)
-        self.assertEqual(a["docked"], ["po-chat", "points", "board", "workspace", "changes"])
+        self.assertEqual(a["docked"], ["po-chat", "points", "board", "documents", "workspace", "changes"])
         self.assertEqual(a["front"], ["po-chat"], "the chat first")
         self.assertEqual((a["auto"], a["floats"]), ([], 0), "nothing on a strip, nothing floating")
 
     def test_a_strip_panel_pinned_goes_beside_points(self):
         self.assertEqual(self.o["pinned"], ["po-chat", "points", "board"])
 
+    def test_a_layout_saved_before_documents_gains_it_on_the_strip(self):
+        o = self.o["oldSaved"]
+        self.assertEqual(o["docked"], ["po-chat", "points", "board"], "what was docked stays docked")
+        self.assertIn(["documents", "right"], o["auto"], "Documents waits on the right strip, not beside Points")
+        self.assertTrue(o["kept"], "a layout that has it is left alone")
+        r = self.o["rootless"]
+        self.assertNotIn("documents", r["docked"], "every panel on a strip: Documents joins them, it does not fill the page")
+        self.assertEqual(r["auto"].count("documents"), 1, r)
+
     def test_points_answers_first_then_waiting_oldest_first(self):
         html = self.o["list"]
         ids = [html.index(f'data-pt="{p}"') for p in ("P1", "P4", "P2")]
         self.assertEqual(ids, sorted(ids), "P1 then P4 (answered, oldest first), then P2 (waiting)")
         self.assertNotIn('data-pt="P3"', html, "an acknowledged point is not listed")
-        self.assertIn("Your points: 1 waiting for an answer · 2 answered, not yet acknowledged", html)
+        self.assertIn("Your asks: 1 waiting for an answer · 2 answered, not yet acknowledged", html)
         self.assertEqual(self.o["summary"], "1 waiting for an answer · 2 answered, not yet acknowledged")
 
     def test_each_point_links_both_ends_and_has_its_one_click(self):
@@ -177,7 +208,7 @@ class ThePanels(unittest.TestCase):
         self.assertIn('<span class="pdp-age" data-at="992800">2h</span>', html)
 
     def test_no_points_and_not_yet_loaded_say_why(self):
-        self.assertIn("No open points.", self.o["none"])
+        self.assertIn("No open asks.", self.o["none"])
         self.assertIn("waits here for its answer", self.o["none"])
         self.assertIn("once it has loaded", self.o["before"])
 
@@ -201,7 +232,7 @@ class ThePanels(unittest.TestCase):
         self.assertIn("import('/static/dock/src/index.js')", INDEX)
         self.assertNotIn("dock/css/theme.css", INDEX, "the --dk-* tokens read Ensemble's own")
         self.assertNotIn("static/dock/src/popout.html", dashboard.PAGE_FILES, "an inert page: nothing to update in it")
-        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.3\.4 [0-9a-f]{40}")
+        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.3\.5 [0-9a-f]{40}")
 
     def test_the_library_does_what_the_workarounds_did(self):
         # Dock v0.3.3 has each of Ensemble's needs (the Dock project's ENSEMBLE-NEEDS.md); the page uses them.
@@ -282,7 +313,8 @@ async function main() {
         fly: PD.dock.flyOpen(), chat: R(PD.els['po-chat']), po: R(PO_PANEL), poOff: PO_PANEL.classList.contains('pd-off'), inPanel: PO_PANEL.parentNode === PD.els['po-chat'],
         pointsLine: d.getElementById('points-line').hidden, elsewhere: f.hasAttribute('data-points-elsewhere'),
         rows: [...PD.els.points.querySelectorAll('.pdp-row')].map(r => r.dataset.pt), badge: (document.querySelector('[data-dk-tab="points"] .dk-badge') || {}).textContent || '',
-        tabs: !!document.querySelector('.ptabs'), panels: !!document.querySelector('.pd-panels') };
+        tabs: !!document.querySelector('.ptabs'), panels: !!document.querySelector('.pd-panels'),
+        logo: (document.querySelector('header h1 img.logo') || {}).src || '' };
     })()`);
     await p.shot('po-dock-1440x900');
     // An arrow in Points: the chat scrolls to that balloon and marks it.
@@ -298,15 +330,21 @@ async function main() {
       const er = el.getBoundingClientRect(), br = box.getBoundingClientRect();
       return { moved: before - box.scrollTop, inView: er.top >= br.top - 1 && er.top < br.bottom, landed: el.classList.contains('landed'), text: el.innerText.slice(0, 400) };
     })()`);
-    // The roadmap: first in the Workspace's Documents, opening in its own view.
-    await p.evalIn('document.querySelector(\'.dk-strip-btn[data-dk-auto="workspace"]\').click(); 0');
-    await p.until('!!PD.els.workspace.querySelector(".wsd-open[data-roadmap]") && PD.els.workspace.querySelectorAll(".wsd-row").length >= 1', 20000);
-    out.docs = await p.evalIn(`(() => { const rows = [...PD.els.workspace.querySelectorAll('.wsd-row')]; return { first: rows[0].querySelector('.wsd-t').textContent, n: rows.length, flyScroll: PD_ROOT.scrollLeft + PD_HOST.scrollLeft }; })()`);
-    await p.evalIn('PD.els.workspace.querySelector(".wsd-open[data-roadmap]").click(); 0');
+    // The roadmap: first in the Documents panel, opening in its own view.
+    await p.evalIn('document.querySelector(\'.dk-strip-btn[data-dk-auto="documents"]\').click(); 0');
+    await p.until('!!PD.els.documents.querySelector(".wsd-open[data-roadmap]") && PD.els.documents.querySelectorAll(".wsd-row").length >= 1', 20000);
+    out.docs = await p.evalIn(`(() => { const rows = [...PD.els.documents.querySelectorAll('.wsd-row')]; return { first: rows[0].querySelector('.wsd-t').textContent, n: rows.length, flyScroll: PD_ROOT.scrollLeft + PD_HOST.scrollLeft }; })()`);
+    await p.evalIn('PD.els.documents.querySelector(".wsd-open[data-roadmap]").click(); 0');
     await p.until('(() => { const rm = document.getElementById("rm-panel"); return !rm.hidden && rm.closest(".pd-ws") && /Motors roadmap/.test(rm.innerText); })()', 15000);
-    out.roadmap = await p.evalIn(`(() => { const rm = document.getElementById('rm-panel'); return { inWs: !!rm.closest('.pd-ws'), edit: !!rm.querySelector('button[data-rm="edit"]'), back: !!PD.els.workspace.querySelector('.wsd-back'), note: rm.querySelector('.rm-note').offsetHeight }; })()`);
+    out.roadmap = await p.evalIn(`(() => { const rm = document.getElementById('rm-panel'); return { inWs: !!rm.closest('.pd-ws'), edit: !!rm.querySelector('button[data-rm="edit"]'), back: !!PD.els.documents.querySelector('.wsd-back'), note: rm.querySelector('.rm-note').offsetHeight }; })()`);
     await p.shot('po-dock-roadmap');
-    await p.evalIn('PD.els.workspace.querySelector(".wsd-back").click(); PD.dock.closeFly(); 0');
+    await p.evalIn('PD.els.documents.querySelector(".wsd-back").click(); 0');
+    // A document opens in a tab of the Documents panel.
+    await p.until('!!PD.els.documents.querySelector(".wsd-open[data-path]")', 15000);
+    await p.evalIn('PD.els.documents.querySelector(".wsd-open[data-path]").click(); 0');
+    await p.until('(() => { const f = PD.els.documents.querySelector("iframe.wsp-frame"); try { return !!f && f.contentWindow.location.pathname === "/fileview"; } catch (e) { return false; } })()', 20000);
+    out.docOpen = await p.evalIn(`({ tab: (PD.els.documents.querySelector('.wst-tab.on:not(.wst-docs)') || {}).textContent || '', inWs: !!PD.els.workspace.querySelector('iframe.wsp-frame'), docsTab: !!PD.els.documents.querySelector('.wst-docs') })`);
+    await p.evalIn('PD.dock.closeFly(); 0');
     // Reset layout, from the Panels menu: Points hidden, then the default again.
     await p.evalIn('document.querySelector(".pd-panels").click(); 0');
     await p.evalIn('document.querySelector(".pd-menu [data-pd-toggle=\\"points\\"]").click(); 0');
@@ -319,6 +357,61 @@ async function main() {
     await p.evalIn('PD.els.points.querySelector(\'[data-pt="P1"][data-pt-act="ack"]\').click(); 0');
     await p.until('!PD.els.points.querySelector(\'.pdp-row[data-pt="P1"]\')', 10000);
     out.acked = await p.evalIn('({ rows: [...PD.els.points.querySelectorAll(".pdp-row")].map(r => r.dataset.pt), chat: pdChatFrame().contentWindow.eval("POINTS.items.find(p => p.id === \'P1\').state") })');
+
+    // A click on a minimised panel's title bar brings it back; a double click on it maximises it.
+    {
+      const tab = 'PD.els.points.closest(".dk-stack").querySelector(\'[data-dk-tab="points"]\')';
+      const isMin = 'PD.els.points.closest(".dk-stack").classList.contains("dk-min")';
+      await p.evalIn('PD.dock.toggleMin("points"); 0'); await sleep(300);
+      const was = await p.evalIn(isMin);
+      await p.click(tab); await sleep(700);
+      const back = !(await p.evalIn(isMin));
+      await p.evalIn('PD.dock.toggleMin("points"); 0'); await sleep(300);
+      const again = await p.evalIn(isMin);
+      const [x, y] = await p.evalIn(`(() => { const r = (${tab}).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+      for (const n of [1, 2]) for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: n }, p.sessionId);
+      await sleep(700);
+      const maxed = await p.evalIn('!!PD.els.points.closest(".dk-max")'), minMaxed = await p.evalIn(isMin);
+      await p.evalIn('PD.dock.restoreMax(); 0'); await sleep(200);
+      out.minClick = { was, back, again, maxed, minMaxed, min: await p.evalIn(isMin) };
+      // A slow double click (the second press 450 ms after the first) still maximises it.
+      await p.evalIn('PD.dock.toggleMin("points"); 0'); await sleep(300);
+      for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 }, p.sessionId);
+      await sleep(450);
+      for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 2 }, p.sessionId);
+      await sleep(700);
+      out.slowDbl = { maxed: await p.evalIn('!!PD.els.points.closest(".dk-max")'), min: await p.evalIn(isMin) };
+      await p.evalIn('PD.dock.restoreMax(); 0'); await sleep(200);
+      if (await p.evalIn(isMin)) { await p.evalIn('PD.dock.toggleMin("points"); 0'); await sleep(200); }
+      // A drag on a minimised floating panel's title bar: it moves, and stays minimised.
+      await p.evalIn('PD.dock.float("points"); 0'); await sleep(300);
+      await p.evalIn('PD.dock.toggleMin("points"); 0'); await sleep(300);
+      const fl = 'PD.els.points.closest(".dk-float")';
+      const at = async () => p.evalIn(`(() => { const b = (${fl}).getBoundingClientRect(); return [Math.round(b.left), Math.round(b.top)]; })()`);
+      const [hx, hy] = await p.evalIn(`(() => { const h = (${fl}).querySelector('.dk-head'), b = h.getBoundingClientRect(); const t = h.querySelector('[data-dk-tab]').getBoundingClientRect(); return [Math.round(t.right + (b.right - t.right) / 4), Math.round(b.top + b.height / 2)]; })()`);
+      const from = await at(), wasMin = await p.evalIn(`(${fl}).classList.contains('dk-min')`);
+      await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: hx, y: hy, button: 'left', clickCount: 1 }, p.sessionId);
+      for (let i = 1; i <= 8; i++) await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: hx + i * 10, y: hy + i * 5, button: 'left', buttons: 1 }, p.sessionId);
+      await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: hx + 80, y: hy + 40, button: 'left', clickCount: 1 }, p.sessionId);
+      await sleep(700);
+      const to = await at();
+      out.minDrag = { wasMin, moved: to[0] !== from[0] || to[1] !== from[1], min: await p.evalIn(`(${fl}).classList.contains('dk-min')`) };
+      await p.evalIn('PD.dock.toggleMin("points"); PD.dock.dockBack("points"); 0'); await sleep(300);
+      // The PO chat docked at the bottom and minimised: restoring it grows it upwards, and the second click of a
+      // double click lands on the chat's iframe; it still maximises.
+      await p.evalIn('PD.dock.dockEdge("po-chat", "bottom"); 0'); await sleep(300);
+      await p.evalIn('PD.dock.toggleMin("po-chat"); 0'); await sleep(300);
+      const ctab = 'PD.els["po-chat"].closest(".dk-stack").querySelector(\'[data-dk-tab="po-chat"]\')';
+      const [cx, cy] = await p.evalIn(`(() => { const r = (${ctab}).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+      for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x: cx, y: cy, button: 'left', clickCount: 1 }, p.sessionId);
+      await sleep(200);
+      // What is under the pointer without the guard (the chat's iframe), the guard left as it was.
+      const under = await p.evalIn(`(() => { const d = document.getElementById('po-dock'), on = d.classList.contains('pd-dbl'); d.classList.remove('pd-dbl'); const t = document.elementFromPoint(${cx}, ${cy}).tagName; d.classList.toggle('pd-dbl', on); return t; })()`);
+      for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x: cx, y: cy, button: 'left', clickCount: 2 }, p.sessionId);
+      await sleep(700);
+      out.chatDbl = { under, maxed: await p.evalIn('!!PD.els["po-chat"].closest(".dk-max")'), min: await p.evalIn('PD.els["po-chat"].closest(".dk-stack").classList.contains("dk-min")'), guard: await p.evalIn('document.getElementById("po-dock").classList.contains("pd-dbl")') };
+      await p.evalIn('PD.dock.restoreMax(); PD.dock.reset(); 0'); await sleep(400);
+    }
 
     // Layout changes keep every iframe's page: the PO chat's and an open file's.
     await p.evalIn('PD.dock.pin("workspace"); 0'); await sleep(300);
@@ -387,7 +480,7 @@ async function main() {
       let heard = null; const hear = e => { if (e.data && e.data.type === 'dock-relay-check') heard = e.source === w; };
       window.addEventListener('message', hear); new w.Function("postMessage({ type: 'dock-relay-check' }, location.origin)")();
       await new Promise(r => setTimeout(r, 200)); window.removeEventListener('message', hear);
-      return { live, count, followed, back: d.documentElement.dataset.theme === theme, list, title: d.title, styled: getComputedStyle(d.querySelector('.card')).borderRadius, heard };
+      return { icon: [...d.querySelectorAll('link[rel~="icon"]')].map(l => l.href), live, count, followed, back: d.documentElement.dataset.theme === theme, list, title: d.title, styled: getComputedStyle(d.querySelector('.card')).borderRadius, heard };
     })()`);
     await p.evalIn('PD.dock.popWindow("board").close(); 0');
     await p.until('!PD.dock.isOut("board") && PD.els.board.ownerDocument === document', 10000);
@@ -476,7 +569,7 @@ async function main() {
     await p.evalIn('PD.dock.popWindow("changes").close(); 0');
     await p.until('!PD.dock.isOut("changes") && PD.els.changes.ownerDocument === document', 10000);
 
-    // The Workspace in its own window: the roadmap opens there, a file's viewer reports to its tab.
+    // The Workspace in its own window: a file's viewer reports to its tab.
     await p.evalIn('PD.dock.pin("workspace"); 0'); await sleep(300);
     await p.until('!!PD.els.workspace.querySelector(".wsp-tree .wse[data-path]")', 20000);
     await p.click('PD.els.workspace.closest(".dk-stack").querySelector("[data-dk-act=pop]")');
@@ -484,11 +577,6 @@ async function main() {
     out.popWs = await p.evalIn(`(async () => {
       const sleep = ms => new Promise(r => setTimeout(r, ms));
       const w = PD.dock.popWindow('workspace'), d = w.document, r = {};
-      PD.els.workspace.querySelector('.wsd-open[data-roadmap]').click();
-      for (let i = 0; i < 50 && !/Motors roadmap/.test((d.getElementById('rm-panel') || {}).innerText || ''); i++) await sleep(100);
-      const rm = d.getElementById('rm-panel');
-      r.roadmapInWindow = !!rm && !rm.hidden && rm.ownerDocument === d;
-      PD.els.workspace.querySelector('.wsd-back').click();
       const file = [...PD.els.workspace.querySelectorAll('.wsp-tree .wse[data-path]')].find(x => x.dataset.path.endsWith('ROADMAP.md'));
       file.click();
       let f = null;
@@ -594,6 +682,18 @@ async function main() {
       }
       await q.close();
     }
+
+    // ---- A documents project: its Documents panel is the same list, the roadmap first
+    {
+      const q = await page(1440, 900);
+      await q.evalIn(`(() => { try { localStorage.removeItem('cd-po-dock'); } catch (e) {}
+        VIEW_MODE = 'board'; SELECTED_PROJECT = ${JSON.stringify(A.notes)}; PROJECT_TAB = 'tasks'; SB_DEST = ''; renderRows(); return 0; })()`);
+      await q.until('document.body.classList.contains("po-dock") && !!PD.dock', 30000);
+      await q.evalIn('PD.dock.reveal("documents"); 0');
+      await q.until('!!PD.els.documents.querySelector(".wsd-open[data-roadmap]") && !!PD.els.documents.querySelector(".wsd-open[data-path]")', 20000);
+      out.docsProject = await q.evalIn(`({ first: PD.els.documents.querySelector('.wsd-row .wsd-t').textContent, rows: PD.els.documents.querySelectorAll('.wsd-open[data-path]').length, list: !!PD.els.documents.querySelector('.wsp-list') })`);
+      await q.close();
+    }
   } finally {
     try { await c.send('Browser.close'); } catch (e) {}
     ch.kill();
@@ -639,6 +739,8 @@ class InChrome(unittest.TestCase):
         cls.proj = proj["id"]
         home = Path(proj.get("home") or proj["path"])
         (home / "ROADMAP.md").write_text("# Motors roadmap\n\nFirst the panels.\n", encoding="utf-8")
+        (home / "Documents").mkdir(exist_ok=True)
+        (home / "Documents" / "#1 Notes.md").write_text("# Notes\n\nA document.\n", encoding="utf-8")
         # A repository with an uncommitted change, for the Changes panel's diff.
         code = Path(proj["path"])
 
@@ -649,6 +751,8 @@ class InChrome(unittest.TestCase):
         git("config", "user.name", "t")
         (code / "motor.py").write_text("".join(f"speed_{i} = {i}\n" for i in range(12)), encoding="utf-8")
         git("add", "motor.py")
+        if (home / "Documents").resolve().is_relative_to(code.resolve()):
+            git("add", "Documents")   # committed: the Changes panel shows motor.py's change only
         git("commit", "-q", "-m", "motors")
         (code / "motor.py").write_text("".join(f"speed_{i} = {i * 2}\n" for i in range(12)), encoding="utf-8")
         members = lambda: [{"identity": "claude", "agent": "claude", "cwd": str(home)},
@@ -671,6 +775,9 @@ class InChrome(unittest.TestCase):
         cls.notes = notes["id"]
         assert dashboard.set_project_kind(cls.notes, "documents") == (True, "ok")
         (Path(notes["path"]) / "minutes.md").write_text("# Minutes\n", encoding="utf-8")
+        ndocs = Path(dashboard.project_documents_dir(dashboard.find_project(cls.notes)))
+        ndocs.mkdir(parents=True, exist_ok=True)
+        (ndocs / "#2 Plan.md").write_text("# Plan\n", encoding="utf-8")
         npo = chatroom.create_room("Notes PO", members())
         dashboard.assign_session_project(npo["id"], cls.notes)
         ok, why = dashboard.set_project_po(cls.notes, npo["id"])
@@ -715,7 +822,7 @@ class InChrome(unittest.TestCase):
     def test_the_default_at_1440_is_the_chat_and_points(self):
         f = self.got["first"]
         self.assertEqual(f["onScreen"], ["po-chat", "points"])
-        self.assertEqual(f["strip"], ["board", "workspace", "changes"])
+        self.assertEqual(f["strip"], ["board", "documents", "workspace", "changes"])
         self.assertIsNone(f["fly"], "nothing slid out")
         self.assertEqual(f["po"], f["chat"], "the chat fills its panel")
         self.assertTrue(f["inPanel"], "the chat is in its panel, not laid over it")
@@ -747,7 +854,7 @@ class InChrome(unittest.TestCase):
     def test_a_phone_width_turns_the_same_dock_narrow_and_back(self):
         n = self.got["toPhone"]
         self.assertTrue(n["same"] and n["narrow"], "setNarrow, not a second dock")
-        self.assertEqual(n["tabs"], ["po-chat", "points", "board", "workspace", "changes"])
+        self.assertEqual(n["tabs"], ["po-chat", "points", "board", "documents", "workspace", "changes"])
         self.assertEqual(n["front"], ["po-chat"])
         self.assertEqual((n["ctl"], n["strip"], n["scrollX"]), (0, 0, 0), "nothing that moves a panel, no strip")
         self.assertTrue(n["chatIn"] and n["kept"], "the chat moved with its panel, keeping its page")
@@ -776,10 +883,38 @@ class InChrome(unittest.TestCase):
         self.assertTrue(r["inWs"] and r["edit"] and r["back"], r)
         self.assertEqual(r["note"], 0, "no empty notice bar")
 
+    def test_a_document_opens_in_a_tab_of_the_documents_panel(self):
+        d = self.got["docOpen"]
+        self.assertIn("Notes", d["tab"])
+        self.assertFalse(d["inWs"], "not in the Workspace panel")
+        self.assertTrue(d["docsTab"], "the Documents tab stays first")
+
+    def test_a_documents_projects_documents_panel_lists_its_documents(self):
+        self.assertEqual(self.got["docsProject"], {"first": "Roadmap", "rows": 1, "list": True},
+                         "the roadmap first, then its documents, in the list view")
+
+    def test_a_dragged_minimised_panel_stays_minimised(self):
+        self.assertEqual(self.got["minDrag"], {"wasMin": True, "moved": True, "min": True},
+                         "a drag on the title bar moves the panel and does not restore it")
+
+    def test_a_double_click_on_a_minimised_bottom_chat_maximises_it(self):
+        self.assertEqual(self.got["chatDbl"], {"under": "IFRAME", "maxed": True, "min": False, "guard": False},
+                         "the second click lands where the chat's iframe now is; it is still the dock's, and the guard ends")
+
+    def test_a_slow_double_click_on_a_minimised_panel_maximises_it(self):
+        self.assertEqual(self.got["slowDbl"], {"maxed": True, "min": False})
+
+    def test_the_top_bar_shows_the_new_icon(self):
+        self.assertTrue(self.got["first"]["logo"].endswith("/static/icons/favicon.svg"), self.got["first"]["logo"])
+
+    def test_a_click_on_a_minimised_panel_brings_it_back(self):
+        self.assertEqual(self.got["minClick"], {"was": True, "back": True, "again": True, "maxed": True, "minMaxed": False, "min": False},
+                         "one click restores it; a double click on a minimised title bar maximises it, as before")
+
     def test_reset_layout_brings_the_default_back(self):
         self.assertEqual(self.got["hidden"], {"points": False, "line": False, "saved": True},
                          "Points hidden: the chat shows its own points line again; the layout is remembered")
-        self.assertEqual(self.got["reset"], {"points": True, "front": ["po-chat", "points"], "auto": ["board", "workspace", "changes"],
+        self.assertEqual(self.got["reset"], {"points": True, "front": ["po-chat", "points"], "auto": ["board", "documents", "workspace", "changes"],
                                              "line": True, "menu": False})
 
     def test_ack_in_points_acknowledges_it_everywhere(self):
@@ -792,6 +927,8 @@ class InChrome(unittest.TestCase):
         self.assertEqual((b["followed"], b["back"]), ("dark", True), "the theme follows")
         self.assertGreater(b["list"], 0, "a click there switches the view")
         self.assertEqual(b["title"], "Board · Motors")
+        self.assertEqual(len(b["icon"]), 1, b["icon"])
+        self.assertTrue(b["icon"][0].endswith("/static/icons/favicon.svg"), "the window has the app's icon")
         self.assertNotEqual(b["styled"], "0px", "the page's styles came along")
         self.assertTrue(b["heard"], "a message to the window reaches the page, with its source")
         self.assertTrue(self.got["boardBack"]["inDock"] and self.got["boardBack"]["cards"] > 0)
@@ -832,7 +969,7 @@ class InChrome(unittest.TestCase):
     def test_a_popped_out_workspace_works_in_its_own_window(self):
         ws = dict(self.got["popWs"])
         base = ws.pop("base")
-        self.assertEqual(ws, {"roadmapInWindow": True, "viewerInWindow": True, "viewerLoaded": True, "tabHeard": True},
+        self.assertEqual(ws, {"viewerInWindow": True, "viewerLoaded": True, "tabHeard": True},
                          "a relative frame address in the window is this page's (its base), not popout.html's")
         self.assertEqual(base, {"n": 1, "first": "BASE", "uri": True, "link": True},
                          "one <base href>, this page's, first in the head: a relative link there is this hub's")
@@ -850,7 +987,7 @@ class InChrome(unittest.TestCase):
             self.assertEqual(s[f"1800/{t}"]["shown"], ["po-chat", "points", "board"])
             p = s[f"390/{t}"]
             self.assertTrue(p["phone"])
-            self.assertEqual(p["tabs"], ["po-chat", "points", "board", "workspace", "changes"], "one column of tabs")
+            self.assertEqual(p["tabs"], ["po-chat", "points", "board", "documents", "workspace", "changes"], "one column of tabs")
             self.assertEqual(p["ctl"], 0, "no float, strip or pop-out controls on a phone")
             self.assertEqual(p["host"][2], 390)
         self.assertEqual(self.got["phoneTab"], {"front": "points", "chatHidden": True, "width": 390})

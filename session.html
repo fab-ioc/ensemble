@@ -1131,13 +1131,13 @@
       <div id="editor">
         <div class="ed-head">
           <div id="att-chips" class="att-chips" hidden></div>
-          <textarea id="input" placeholder="Message the agents — Ctrl+Enter to send. Start with @codex or @claude to direct it to one. Paste or drop a screenshot to attach it. Start with 1. (or press Ctrl+Shift+Enter) for numbered points, each with its own screenshots and links."></textarea>
+          <textarea id="input" placeholder="Message the agents — Ctrl+Enter to send. Start with @codex or @claude to direct it to one. Paste or drop a screenshot to attach it. Start with 1. (or press Ctrl+Shift+Enter) for numbered asks, each with its own screenshots and links."></textarea>
           <div class="ed-refs" id="ed-head-refs" hidden></div>
         </div>
         <ol id="ed-points"></ol>
       </div>
       <div class="ed-row">
-        <button type="button" id="add-point" title="Add a numbered point (Ctrl+Shift+Enter)">+ Add a point</button>
+        <button type="button" id="add-point" title="Add a numbered ask (Ctrl+Shift+Enter)">+ Add an ask</button>
         <span class="grow"></span>
         <button id="send" disabled>Send</button>
       </div>
@@ -2093,7 +2093,7 @@ function foldUnkeep(fold) {
 function foldLine(text) {
   // A message of numbered points: how many, then its first words.
   const it = pointItems(text);
-  if (it) { const first = foldLine(it.head || itemBody(it.items[0])); return `${it.items.length} point${it.items.length > 1 ? 's' : ''}` + (first ? ' · ' + first : ''); }
+  if (it) { const first = foldLine(it.head || itemBody(it.items[0])); return `${it.items.length} ask${it.items.length > 1 ? 's' : ''}` + (first ? ' · ' + first : ''); }
   const att = attSplit(text);
   const raw = String(att.paths.length && !att.words ? (att.paths.length > 1 ? att.paths.length + ' images' : 'Image') : att.words).replace(/\r/g, '');
   const line = raw.replace(/```[\s\S]*?(?:```|$)/g, '\n').split('\n')
@@ -2128,7 +2128,7 @@ function foldHeld(items, comments) {
 // folds the replies to the hub too.
 const HUB_KIND_LABEL = { digest: 'Progress check', due: 'Due now', report: 'Report', relay: 'Team message',
   resumed: 'Resumed', restart: 'Hub restarted', handover: 'Handover request', rotation: 'New session', madepo: 'Made PO', helper: 'Restart helper',
-  points: 'Your open points', pomsg: 'From another PO' };
+  points: 'Your open asks', pomsg: 'From another PO' };
 const isHubInput = m => !!m && m.from === 'user' && !!m.kind && m.kind !== 'human';
 // A message between two projects' POs (po_messages.py), kept in both POs'
 // rooms: a balloon of its own, never folded as hub traffic.
@@ -2237,7 +2237,7 @@ function answerChip(a, N = CHAT_NAMES) {
     rotation: ['after the handover', 'The first words of a fresh session, from the handover'],
     madepo: ['on becoming PO', 'The first words after the hub made this conversation a project’s PO'],
     helper: ['after a restart', 'A reply to the restart helper’s note after the hub restarted'],
-    points: ['on your open points', 'A reply to the hub naming your points that are still open'],
+    points: ['on your open asks', 'A reply to the hub naming your asks that are still open'],
     pomsg: ['on a PO message', 'A reply to the hub saying another project’s PO wrote a message'],
   }[a.kind];
   return said ? { text: said[0], tip: said[1] } : null;
@@ -2498,7 +2498,7 @@ function catchUp(items, point, justUs, N = CHAT_NAMES, unacked = null) {
   const named = [...words].filter(([, w]) => w.word && !acks.includes(w.i)).sort((a, b) => a[1].i - b[1].i);
   const s = n => n === 1 ? '' : 's';
   const parts = [];
-  if (acks.length) parts.push({ text: `${acks.length} answer${s(acks.length)} to your points to acknowledge`, mid: items[acks[0]].id || '' });
+  if (acks.length) parts.push({ text: `${acks.length} answer${s(acks.length)} to your asks to acknowledge`, mid: items[acks[0]].id || '' });
   if (decisions.length) parts.push({ text: `${decisions.length} decision${s(decisions.length)} waiting`, mid: items[decisions[0]].id || '' });
   if (!justUs) named.forEach(([name, w]) => parts.push({ text: name + ' ' + w.word, mid: items[w.i].id || '' }));
   if (answers.length) parts.push({ text: `${answers.length} answer${s(answers.length)} to you`, mid: items[answers[0]].id || '' });
@@ -2627,7 +2627,7 @@ function pointsSummary(P) {
   const bits = [];
   if (P.open) bits.push(`${P.open} waiting for an answer`);
   if (P.answered) bits.push(`${P.answered} answered, not yet acknowledged`);
-  return bits.length ? 'Your points: ' + bits.join(' · ') : '';
+  return bits.length ? 'Your asks: ' + bits.join(' · ') : '';
 }
 const ptWords = (t, n = 80) => { t = foldLine(stripPointLines(String(t || '').replace(/^\*\*\d+\.\*\*\s*/, ''))); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
 const ptLink = (mid, text, href, tip) => mid
@@ -2656,7 +2656,7 @@ function pointsListHtml(P, href, now) {
 function pointsLineHtml(P, open, href, now) {
   const sum = pointsSummary(P);
   if (!sum) return '';
-  return `<button type="button" class="pt-sum" aria-expanded="${open}" aria-controls="points-list" title="${open ? 'Hide the list' : 'Show each point, with its message and its answer'}">`
+  return `<button type="button" class="pt-sum" aria-expanded="${open}" aria-controls="points-list" title="${open ? 'Hide the list' : 'Show each ask, with your message and its answer'}">`
     + `<span class="pt-caret" aria-hidden="true">${open ? '▾' : '▸'}</span><span class="pt-sum-t">${esc(sum)}</span></button>`
     + `<ul id="points-list"${open ? '' : ' hidden'}>${open ? pointsListHtml(P, href, now) : ''}</ul>`;
 }
@@ -4408,11 +4408,11 @@ function edRender(focus) {
   const ol = $('#ed-points');
   const n = ED.points.length;
   ol.innerHTML = ED.points.map((p, i) => `<li class="ed-pt" data-pt="${esc(p.id)}"><span class="ed-n" aria-hidden="true">${i + 1}.</span>`
-    + `<textarea class="ed-text" rows="1" aria-label="Point ${i + 1}" placeholder="Point ${i + 1} — Enter for a new line, Tab for the next point, Backspace on an empty point removes it. Paste or drop a screenshot, or a link, to attach it to this point."></textarea>`
+    + `<textarea class="ed-text" rows="1" aria-label="Ask ${i + 1}" placeholder="Ask ${i + 1} — Enter for a new line, Tab for the next ask, Backspace on an empty ask removes it. Paste or drop a screenshot, or a link, to attach it to this ask."></textarea>`
     + `<div class="ed-more"><div class="att-chips" hidden></div><div class="ed-refs" hidden></div></div>`
-    + `<div class="ed-ctl"><button type="button" class="ed-btn" data-ed="up" title="Move this point up" aria-label="Move point ${i + 1} up"${i ? '' : ' disabled'}>▲</button>`
-    + `<button type="button" class="ed-btn" data-ed="down" title="Move this point down" aria-label="Move point ${i + 1} down"${i < n - 1 ? '' : ' disabled'}>▼</button>`
-    + `<button type="button" class="ed-btn" data-ed="x" title="Remove this point" aria-label="Remove point ${i + 1}">×</button></div></li>`).join('');
+    + `<div class="ed-ctl"><button type="button" class="ed-btn" data-ed="up" title="Move this ask up" aria-label="Move ask ${i + 1} up"${i ? '' : ' disabled'}>▲</button>`
+    + `<button type="button" class="ed-btn" data-ed="down" title="Move this ask down" aria-label="Move ask ${i + 1} down"${i < n - 1 ? '' : ' disabled'}>▼</button>`
+    + `<button type="button" class="ed-btn" data-ed="x" title="Remove this ask" aria-label="Remove ask ${i + 1}">×</button></div></li>`).join('');
   ED.points.forEach((p, i) => {
     const li = ol.children[i], ta = li.querySelector('textarea.ed-text');
     ta.value = p.text;

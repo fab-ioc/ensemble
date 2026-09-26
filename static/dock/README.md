@@ -12,7 +12,8 @@ Each app picks up a tagged version when it chooses. Changes to the library are m
 
 What a person can do with the panels: drag a tab to an edge of the dock or of another panel (split), into another panel
 (a tab), float it in a window inside the page, unpin it to a strip on its edge (it slides out on hover or click),
-minimise or maximise a stack, hide and show panels from a Panels menu, resize with the splitters (double-click one for
+minimise or maximise a stack (a click on a minimised one's title bar restores it, a double click maximises it), hide
+and show panels from a Panels menu, resize with the splitters (double-click one for
 the default size, arrow keys move a focused one), pop a panel out into a browser window of its own, and reset the layout.
 The layout is saved and comes back on reload.
 
@@ -132,6 +133,7 @@ text), and `src/host.js` for apps whose panels open dialogs (below).
 | `migrate` | none | `(raw) => layout`: turns a saved layout of another version into this one |
 | `narrow`, `narrowLayout`, `narrowKey` | `false`; every panel a tab of one stack, the `fill` panel in front; `storageKey + '.narrow'` | narrow (a phone): one column of tabs, nothing that moves a panel; its default layout; where its layout is kept (see "Narrow") |
 | `can` | none | `(id, action) => boolean`, action `move float unpin pop max min hide`: `false` takes that control, menu item (the Panels menu's too, for `hide`) and gesture away from a person (the app's own calls still work) |
+| `minClickRestores` | `true` | a click on a minimised stack's title bar (a tab, or the bar beside the tabs; not its controls or help, not the click that ends a drag) restores it, as its restore control does, with the tab clicked in front; so do Enter and Space on its focused tab. A double click still maximises it (docked) or docks it back (floating), also when restoring moved the title bar from under the pointer. `false`: as before v0.3.5, only the restore control (and a double click) restores |
 | `popUrl`, `popName`, `popTitle` | `'popout.html'`, `'dock-panel-'`, `(p) => p.title` | the pop-out window's page, window name prefix, and title |
 | `popHtml` | none | `true`: open the pop-out page (`POP_HTML`) from a `blob:` URL of its text instead of loading `popUrl`; or the text of a page of the app's own (it needs an element with id `dk-pop-root`; its scripts run as any page's) |
 | `popBase` | `document.baseURI` | with `popHtml`: the base URL of the pop-out page's relative URLs, put in it as `<base href>` (the page's own HTML `<base href>`, if it has one, is kept instead); the page is read with the browser's `DOMParser` and written back from it, so a comment before `<html>` is dropped; `false`: no `<base>`, the page as given, its base its `blob:` URL |
@@ -191,7 +193,8 @@ person can do, not the app's own calls.
 - **Tab** reaches a stack's front tab only; **Left** and **Right** move along its tabs (bringing each to the front),
   **Home** and **End** go to the first and last. The tabs are a `tablist` of `tab`s (`aria-selected`, a roving
   `tabindex`, an `id`), and a panel's element is their `tabpanel` (`aria-labelledby` its tab) unless the app gave it a
-  role of its own.
+  role of its own. **Enter** or **Space** on a minimised stack's tab restores the stack with that tab in front
+  (`minClickRestores`).
 - **F6** and **Shift+F6**, with focus anywhere in the dock, go to the next or previous stack's front tab: the docked
   stacks in order, then the floating windows, then a slid-out panel (only the maximised one while a stack is maximised).
   Outside the dock F6 stays the browser's. With focus inside an iframe in a panel (a text box in it, say) F6 works the
@@ -397,7 +400,12 @@ room, keeps receiving live updates, takes typing, clicks and its dialog, has the
 picked in the theme picker, comes back to its stack when its window closes (three ways) or from the Panels menu, and
 survives a reload of the main window (reopen, or bring it back, from the notice); all of it again with `popHtml`, where
 `popout.html` is never requested, a relative URL in the window resolves against the main page, `popBase: false` leaves
-the `blob:` URL as its base, and a page's own `<base>` is kept while one in a comment, svg or `<template>` is not. `needs.js` proves that the demo's iframe does not reload when splitters are dragged,
+the `blob:` URL as its base, and a page's own `<base>` is kept while one in a comment, svg or `<template>` is not. They
+also prove that one click on a minimised stack's tab or empty title bar restores it (docked and floating, another tab
+coming to the front), a control does only its own action, a drag or a move restores nothing, a double click ends
+maximised (docked, also at the bottom where the title bar moves) or docked back (floating), Enter and Space restore
+while the arrow keys still only switch tabs, and `minClickRestores: false` (the demo's `?minclick=false`) restores
+nothing on a click. `needs.js` proves that the demo's iframe does not reload when splitters are dragged,
 tabs switched, or other panels floated, unpinned, slid out or popped out, with and without `moveBefore`, and keeps its
 page with it when its own panel moves; that a strip slide-out scrolls nothing (with `overflow: clip`, and with `hidden`
 put back); the roving tabs, their roles and F6 (from inside an iframe panel too, after it reloads, and from one added later); narrow mode (no controls, no drag, no double-click maximise, its own

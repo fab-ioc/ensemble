@@ -93,7 +93,7 @@ class CostChip(unittest.TestCase):
         self.assertNotIn("ccost", self.r["cardNone"], "nothing used, nothing shown")
 
     def test_the_persons_points_are_quiet_words_on_the_card(self):
-        self.assertIn('<span class="cpts" title="Your points: 2 answered, not yet acknowledged · 1 waiting for an answer. '
+        self.assertIn('<span class="cpts" title="Your asks: 2 answered, not yet acknowledged · 1 waiting for an answer. '
                       'Open the chat to see them.">2 to acknowledge · 1 open</span>', self.r["cardPts"])
         self.assertNotIn("cpts", self.r["cardNone"])
         self.assertEqual(self.r["pts"], ["", "", "3 open"])

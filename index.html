@@ -651,8 +651,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   }
   .fm-item:hover { background: var(--hover); }
   .fm-item input { accent-color: var(--accent); margin: 0; }
+  /* The app's icon (static/icons, the "Lanes E"): a tile with its own
+     colours, the same in every theme. */
   header h1 .logo {
-    width: 20px; height: 20px;
+    width: 20px; height: 20px; flex: none;
     display: inline-block; vertical-align: middle;
   }
   #new-btn {
@@ -1455,6 +1457,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .wse.none { color: var(--fg-muted); cursor: default; }
   .wse.none:hover { background: transparent; }
   .wsp-view { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  /* A project's Documents list: the Workspace's tabs and viewer, no tree (its
+     folders show in the Workspace's), so nothing to follow there. */
+  .wsp.wsp-list { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .wsp-list > .wsp-side, .wsp-list .wsp-follow { display: none; }
   /* Open files, as tabs above the viewer. A row that does not fit scrolls
      sideways within itself, never the page. */
   .wst { position: relative; display: flex; flex: none; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
@@ -2941,6 +2947,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     border: 1px solid var(--border); border-radius: var(--r-300); overflow: clip;
   }
   body.po-dock #po-dock { position: absolute; inset: 0; background: var(--bg); }
+  /* Just after a click restored a minimised panel: its second click, if it
+     lands on the chat that slid under the pointer, is the dock's (pdDblGuard). */
+  #po-dock.pd-dbl iframe { pointer-events: none; }
   .dk-bar { background: var(--bg); }
   .dk-row > .dk-bar { border-left-color: var(--border); }
   .dk-col > .dk-bar { border-top-color: var(--border); }
@@ -2992,8 +3001,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .pd-pane { overflow: auto; padding: var(--s-300) var(--s-400); }
   .pd-board { background: var(--bg); }
   .pd-ws { display: flex; flex-direction: column; padding: var(--s-200); }
-  .pd-ws > #ws-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-  .pd-ws > #ws-panel[hidden] { display: none; }
+  .pd-ws > #ws-panel, .pd-ws > #doclist-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  .pd-ws > #ws-panel[hidden], .pd-ws > #doclist-panel[hidden] { display: none; }
   .pd-ws .wsp, .pd-ws .dcs { flex: 1 1 auto; height: auto; min-height: 0; }
   .pd-changes { display: flex; flex-direction: column; padding: var(--s-200) var(--s-300); }
   .pd-changes > .ch-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
@@ -3107,13 +3116,7 @@ window.DOC_LISTENERS_PAUSED = false;
 </div>
 <header>
   <h1>
-    <svg class="logo" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <path d="M12 5 L5.5 18 M12 5 L18.5 18 M5.5 18 L18.5 18" fill="none"
-            stroke="var(--accent)" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
-      <circle cx="12" cy="5" r="2.7" fill="var(--accent)"/>
-      <circle cx="5.5" cy="18" r="2.7" fill="var(--accent)"/>
-      <circle cx="18.5" cy="18" r="2.7" fill="var(--accent)"/>
-    </svg>
+    <img class="logo" src="/static/icons/favicon.svg" alt="" width="20" height="20">
     Ensemble
   </h1>
   <!-- Where am I. Jump projects without going home first. -->
@@ -3299,6 +3302,9 @@ window.DOC_LISTENERS_PAUSED = false;
   <section id="ws-panel" hidden></section>
   <!-- The roadmap panel, for the same reason: an unsaved draft is state. -->
   <section id="rm-panel" hidden></section>
+  <!-- A project's Documents list (the roadmap first), its own view with the
+       Workspace's tabs and viewer but no tree: kept for the same reason. -->
+  <section id="doclist-panel" hidden></section>
   <!-- A project with a PO: its Overview is a Dock of panels (#po-dock). The
        host is display:contents everywhere else, so the PO's conversation in it
        is the drawer the pill opens, as before. -->
@@ -3307,8 +3313,9 @@ window.DOC_LISTENERS_PAUSED = false;
     <!-- The panels, before the dock takes them. -->
     <div id="po-dock-panels" hidden>
       <div data-panel="po-chat" data-title="PO chat" class="pd-chat"></div>
-      <div data-panel="points" data-title="Points" class="pd-points pd-pane"></div>
+      <div data-panel="points" data-title="Your asks" class="pd-points pd-pane"></div>
       <div data-panel="board" data-title="Board" class="pd-board pd-pane"></div>
+      <div data-panel="documents" data-title="Documents" class="pd-ws pd-docs"></div>
       <div data-panel="workspace" data-title="Workspace" class="pd-ws"></div>
       <div data-panel="changes" data-title="Changes" class="pd-changes"></div>
     </div>
@@ -4729,7 +4736,7 @@ function pointsCountTip(p) {
   const bits = [];
   if (p && p.answered) bits.push(`${p.answered} answered, not yet acknowledged`);
   if (p && p.open) bits.push(`${p.open} waiting for an answer`);
-  return bits.length ? 'Your points: ' + bits.join(' · ') + '. Open the chat to see them.' : '';
+  return bits.length ? 'Your asks: ' + bits.join(' · ') + '. Open the chat to see them.' : '';
 }
 function pointsCountHtml(p, cls) {
   const t = pointsCountText(p);
@@ -5700,11 +5707,13 @@ function projectsChromeHtml() {
         + pdCtlHtml() + `</div>`;
     }
     // Tabs only when the project has a folder to browse (Unassigned has none).
-    // Its roadmap is a document, first in the Workspace's Documents list.
+    // Its roadmap is a document, first in its Documents list.
     const hasFolder = !!(pj && pj.path);
+    const docsTab = `<button data-ptab="documents" class="${PROJECT_TAB === 'documents' ? 'on' : ''}" title="The roadmap, then the reports and design notes the project's tasks wrote, newest first">Documents</button>`;
     const tabs = hasFolder ? `<div class="ptabs">`
       + `<button data-ptab="tasks" class="${PROJECT_TAB === 'tasks' ? 'on' : ''}" title="The project's PO and its tasks">Overview</button>`
-      + `<button data-ptab="workspace" class="${PROJECT_TAB === 'workspace' ? 'on' : ''}" title="Browse this project's folder like an IDE — files render, and you can comment in place. Its Documents list starts with the roadmap">Workspace</button>`
+      + docsTab
+      + `<button data-ptab="workspace" class="${PROJECT_TAB === 'workspace' ? 'on' : ''}" title="Browse this project's folder like an IDE — files render, and you can comment in place">Workspace</button>`
       + `<button data-ptab="changes" class="${PROJECT_TAB === 'changes' ? 'on' : ''}" title="What landed on the main line, newest first, with each task and its files, and any uncommitted changes on top: per-file diff, line comments you can send to a task chat">Changes</button>`
       + `</div>` : '';
     return strip + `<div class="crumbs"><a href="#" class="crumb-back">← Projects</a><span class="sep">/</span><b>${esc(nm)}</b>${kindBtnHtml(pj)}${keyBtnHtml(pj)}${poChooseBtnHtml(pj)}${newTask}`
@@ -5841,7 +5850,7 @@ async function moveSessionToProject(sid) {
 // ---- Workspace tab: IDE-like, read-only view of a project's folder ----------
 // Lazy tree from /api/dir; a selected file renders in the existing fileview
 // (markdown/HTML + in-place comments) — one renderer, not two.
-let PROJECT_TAB = 'tasks';   // tasks | workspace | changes | roadmap  (per drill-in; reset on selecting a project)
+let PROJECT_TAB = 'tasks';   // tasks | documents | workspace | changes | roadmap (= documents)  (per drill-in; reset on selecting a project)
 function wsFmtSize(n) {
   if (n == null) return '';
   if (n < 1024) return n + ' B';
@@ -5970,7 +5979,9 @@ function wsHidden(v, dir) {
 }
 // A documents project's Workspace tab is its Files panel, a view of its own
 // (docs:), so a project that changes kind never inherits the other's state.
-function wsCtxKey(ctx) { return ctx.kind === 'task' ? 'task:' + ctx.sid : (ctx.docs ? 'docs:' : 'project:') + ctx.projectId; }
+// A code project's Documents list is a view of its own too (documents:): its
+// open documents are not the Workspace's open files.
+function wsCtxKey(ctx) { return ctx.kind === 'task' ? 'task:' + ctx.sid : (ctx.list ? 'documents:' : ctx.docs ? 'docs:' : 'project:') + ctx.projectId; }
 
 // ---- Workspace tabs: begin ------------------------------------------------
 // The files open in a Workspace are tabs above the viewer, as in an editor.
@@ -6534,9 +6545,13 @@ function wsPanelHtml(o) {
   // tree (a documents project's is in its Files panel's header).
   const tasks = o && o.tasks ? `<label class="dcs-all wsp-tasks" title="Show the folders of the project's tasks in the tree">`
     + `<input type="checkbox" class="wsp-tasks-cb"${docsTasksShown() ? ' checked' : ''}> Show task folders</label>` : '';
+  // A project's Documents list (o.list) is the same pane without its tree:
+  // its tabs and viewer; a file's folders show in the Workspace's tree.
+  const list = !!(o && o.list);
+  const reveal = list ? 'Show in the Workspace’s tree' : 'Show in the tree';
   // tabindex -1: a click anywhere in the pane gives it focus, so the Recent
   // shortcut, which acts only inside the pane, works after clicking the tree.
-  return `<div class="wsp" tabindex="-1">
+  return `<div class="wsp${list ? ' wsp-list' : ''}" tabindex="-1">
     <div class="wsp-side">
       <div class="wsf">
         <div class="wsf-row">
@@ -6555,9 +6570,9 @@ function wsPanelHtml(o) {
       <div class="wsf-res" role="listbox" aria-label="Results" hidden></div>
     </div>
     <div class="wsp-view">
-      <div class="wst" role="tablist" aria-label="Open files" hidden></div>
+      <div class="wst" role="tablist" aria-label="${list ? 'Documents' : 'Open files'}" hidden></div>
       <div class="wsp-bar" hidden><nav class="wsc" aria-label="Where the file is"><ol class="wsc-list"></ol></nav>`
-    + `<button type="button" class="wsp-btn wsp-reveal" title="Show in the tree" aria-label="Show in the tree">${WS_ICON_TREE}</button>`
+    + `<button type="button" class="wsp-btn wsp-reveal" title="${reveal}" aria-label="${reveal}">${WS_ICON_TREE}</button>`
     + `<button type="button" class="wsp-btn wsp-follow" aria-pressed="false" title="Keep the tree on the file showing">Follow</button>`
     + `<button type="button" class="wsp-btn wsp-hist" aria-pressed="false" title="Every kept version of this file: compare one with the file now, open it or restore it" hidden>History</button>`
     + `<a class="wsp-own" target="_blank" title="Open in its own tab" aria-label="Open in its own tab">⧉</a></div>
@@ -6857,7 +6872,7 @@ function wsFrameMessage(src, d) {
     const t = v.tabs.find(x => wsNorm(x.path) === k);
     if (!t) return;
     if (d.type === 'fv-key') {
-      if (d.key === 'recent') wsRecentToggle(v, undefined, true);
+      if (d.key === 'recent' && !v.ctx.list) wsRecentToggle(v, undefined, true);
     } else if (d.type === 'fv-state') {
       t.st = wsTabState(d.st);
       wsRecentNote(v.recent, t.path, t.st);
@@ -6909,13 +6924,15 @@ function wsCloseTab(v, path) {
   wsShowTab(v, v.sel);
 }
 // ---- Workspace Documents: begin -------------------------------------------
-// A project's Workspace opens on its documents: the reports and design notes
-// its tasks put in its Documents folder, and for a code project the Markdown
-// under its checkout's docs/ folder, newest first (/api/projects/documents).
-// The list is the fixed first tab, showing whenever no file tab is. Pure down
-// to wsDocsHtml, so tests/test_documents_list.py runs it in Node.
+// A project's Documents (a panel of the PO screen, a tab beside Workspace
+// elsewhere) is the reports and design notes its tasks put in its Documents
+// folder, and for a code project the Markdown under its checkout's docs/
+// folder, newest first (/api/projects/documents). It is a Workspace view
+// without the tree (ctx.list): the list is its fixed first tab, showing
+// whenever no document's tab is, and a document opens in a tab beside it.
+// Pure down to wsDocsHtml, so tests/test_documents_list.py runs it in Node.
 const WS_DOCS_TTL = 15000;         // the list is read again at most this often
-const wsDocsCtx = v => !!(v && v.ctx && v.ctx.kind === 'project');
+const wsDocsCtx = v => !!(v && v.ctx && v.ctx.kind === 'project' && v.ctx.list);
 // Whether the Documents list is what shows: no file tab is.
 const wsDocsShowing = v => wsDocsCtx(v) && !v.tabs.some(x => wsSame(x.path, v.sel));
 function wsDocsDate(t) {
@@ -6962,12 +6979,12 @@ function wsDocsHtml(st, rm) {
   const where = d.codeDocs ? `In ${dir}, and in the code’s <code>docs</code> folder.` : `In ${dir}.`;
   if (!items.length) {
     return `<div class="wsd">${head('')}${pin}<p class="wsd-note">No documents yet. Tasks put their reports and design notes in ${dir}, `
-      + `named after the task (“#12 Title.md”); they show here, newest first. The task folders are in the tree.</p></div>`;
+      + `named after the task (“#12 Title.md”); they show here, newest first. The task folders are in the Workspace.</p></div>`;
   }
   const n = `<span class="wsd-n">${items.length.toLocaleString('en-US')}${d.truncated ? '+' : ''} ${items.length === 1 ? 'document' : 'documents'}, newest first</span>`;
   return `<div class="wsd">${head(n)}<p class="wsd-where">${where} The roadmap comes first.</p>${pin}`
     + `<ul class="wsd-list">${items.map(it => wsDocsRowHtml(it, d.key || '')).join('')}</ul>`
-    + (d.truncated ? `<p class="wsd-note">The ${items.length.toLocaleString('en-US')} newest only; the rest are in the tree.</p>` : '')
+    + (d.truncated ? `<p class="wsd-note">The ${items.length.toLocaleString('en-US')} newest only; the rest are in the Workspace’s tree.</p>` : '')
     + `</div>`;
 }
 // What the Documents list says of the roadmap: its last read.
@@ -7119,7 +7136,7 @@ function wsMount(el, ctx) {
   // A project's Workspace opens on its Documents list; its file tabs wait.
   if (wsDocsCtx(v)) v.sel = '';
   wsRecompute(v);
-  if (!v.open.size && v.roots.length) v.open.add(v.roots[0].path);   // first visit: open where you are
+  if (!v.ctx.list && !v.open.size && v.roots.length) v.open.add(v.roots[0].path);   // first visit: open where you are
   wsTabsCheck(v, v.dirs);
   wsPaintTree(v);
   wsPaintView(v);
@@ -7207,6 +7224,13 @@ function wsMount(el, ctx) {
   // from the button beside it; Follow keeps the tree on the tab showing.
   const bar = el.querySelector('.wsp-bar'), nav = bar.querySelector('.wsc');
   bar.onclick = (e) => {
+    // The Documents list has no tree: a folder, or the file, shows in the Workspace's.
+    if (v.ctx.list) {
+      const d = e.target.closest('.wsc-dir');
+      if (d) wsRevealInWorkspace(v, d.dataset.path, { dir: true });
+      else if (e.target.closest('.wsp-reveal')) wsRevealInWorkspace(v, v.sel);
+      return;
+    }
     const d = e.target.closest('.wsc-dir');
     if (d) { wsReveal(v, d.dataset.path, { dir: true }); return; }
     if (e.target.closest('.wsp-reveal')) { wsReveal(v, v.sel); return; }
@@ -7222,7 +7246,7 @@ function wsMount(el, ctx) {
   if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => wsCrumbsEnd(bar)).observe(nav);
   // Recent files: Alt+R (⌥R on a Mac), only while the pane has focus.
   el.onkeydown = (e) => {
-    if (!wsIsRecentKey(e)) return;
+    if (v.ctx.list || !wsIsRecentKey(e)) return;   // Recent is the tree's
     e.preventDefault();
     wsRecentToggle(v, undefined, true);
   };
@@ -7247,6 +7271,17 @@ function wsMount(el, ctx) {
   wsfMount(v);
   wsSync(v);
   return v;
+}
+// A file or folder of the Documents list, shown in the project's Workspace:
+// its panel comes on screen (its tab, off the PO screen) and its tree opens to it.
+function wsRevealInWorkspace(v, path, o) {
+  if (!path) return;
+  const pid = v.ctx.projectId;
+  if (poDockProject()) pdReveal('workspace');
+  else { PROJECT_TAB = 'workspace'; renderRows(); }
+  const pj = projectById(pid);   // a documents project's Workspace is its Files view (docs:)
+  const w = WS_VIEWS.get(wsCtxKey({ kind: 'project', projectId: pid, docs: !!pj && isDocsProject(pj) }));
+  if (w && w.el && w.el.isConnected) wsReveal(w, path, o);
 }
 // ---- Workspace find: the box on screen -------------------------------------
 // It looks in the Workspace's first root: the task's folder in a task, the
@@ -8755,7 +8790,7 @@ function poHeadHtml(pj, row, peek) {
   const model = shortModel(m.model);
   const pts = pointsCountText(row.points);
   const sub = [m.agent || '', model, row.label || ''].filter(Boolean).map(esc).join(' · ')
-    + (pts ? ` · <span class="po-pts" title="${esc(pointsCountTip(row.points))}">${esc('your points: ' + pts)}</span>` : '');
+    + (pts ? ` · <span class="po-pts" title="${esc(pointsCountTip(row.points))}">${esc('your asks: ' + pts)}</span>` : '');
   const acts = [];
   if (!row.isLive && !row.draft) acts.push(`<button class="po-btn def" data-po="resume" title="Relaunch the PO with its conversation">Resume</button>`);
   if (!row.draft) acts.push(`<button class="po-btn" data-po="switch" title="Hand the PO to the other agent (Claude or Codex) in the same room, from its written handover">Switch…</button>`);
@@ -8913,10 +8948,10 @@ function poPillClick() {
 // conversation (#po-panel) is in the PO chat panel (pdPlaceChat); popped out,
 // the panel's window gets a chat of its own.
 // Pure down to pdPointsHtml, so tests/test_po_dock.py runs them in Node.
-const PD_IDS = ['po-chat', 'points', 'board', 'workspace', 'changes'];
-const PD_TITLES = { 'po-chat': 'PO chat', points: 'Points', board: 'Board', workspace: 'Workspace', changes: 'Changes' };
+const PD_IDS = ['po-chat', 'points', 'board', 'documents', 'workspace', 'changes'];
+const PD_TITLES = { 'po-chat': 'PO chat', points: 'Your asks', board: 'Board', documents: 'Documents', workspace: 'Workspace', changes: 'Changes' };
 const PD_MIN = { 'po-chat': { w: 360, h: 200 }, points: { w: 260, h: 120 }, board: { w: 320, h: 160 },
-                 workspace: { w: 480, h: 200 }, changes: { w: 420, h: 200 } };
+                 documents: { w: 360, h: 200 }, workspace: { w: 480, h: 200 }, changes: { w: 420, h: 200 } };
 const PD_KEYS = { desk: 'cd-po-dock', phone: 'cd-po-dock-phone' };   // phone: the narrow dock's
 // From this width the Board is on screen too: the chat's lines stop getting
 // longer at about 700px, so a wider screen's width goes to the board.
@@ -8932,10 +8967,42 @@ function pdDefaultLayout(L, ctx) {
   const strip = id => ({ id, edge: 'right', size: Math.round(w * 0.72), home: { peers: [], near: 'points', side: 'right', size: Math.round(w * 0.4) } });
   if (w >= PD_WIDE) {
     return { root: L.split('row', [L.stack(['po-chat']), L.stack(['points'], { size: 320 }), L.stack(['board'], { size: Math.round(w * 0.46) })]),
-             auto: ['workspace', 'changes'].map(strip) };
+             auto: ['documents', 'workspace', 'changes'].map(strip) };
   }
   return { root: L.split('row', [L.stack(['po-chat']), L.stack(['points'], { size: 340 })]),
-           auto: ['board', 'workspace', 'changes'].map(strip) };
+           auto: ['board', 'documents', 'workspace', 'changes'].map(strip) };
+}
+// A layout saved before a panel existed gets it where the default puts it on
+// a laptop: on the right edge's strip, not on screen (the library would dock a
+// panel it has not heard of beside Your asks). `raw` is the saved layout;
+// the same layout comes back when it already has the panel, or is none.
+function pdLayoutWithPanel(raw, id, w) {
+  // A saved layout, with a docked root or none (every panel on a strip, floating, hidden or out).
+  if (!raw || typeof raw !== 'object' || !('root' in raw)) return raw;
+  const has = new Set();
+  const walk = n => {
+    if (!n || typeof n !== 'object') return;
+    if (Array.isArray(n.panels)) n.panels.forEach(p => has.add(p));
+    if (Array.isArray(n.kids)) n.kids.forEach(walk);
+  };
+  walk(raw.root);
+  (raw.floats || []).forEach(f => walk(f && f.stack));
+  (raw.auto || []).forEach(a => a && has.add(a.id));
+  (raw.hidden || []).forEach(h => h && has.add(h.id));
+  Object.keys(raw.out && typeof raw.out === 'object' ? raw.out : {}).forEach(k => has.add(k));
+  if (has.has(id)) return raw;
+  const x = w || 1440;
+  return { ...raw, auto: [...(Array.isArray(raw.auto) ? raw.auto : []),
+    { id, edge: 'right', size: Math.round(x * 0.72), home: { peers: [], near: 'points', side: 'right', size: Math.round(x * 0.4) } }] };
+}
+// Before the dock reads the saved layout: the panels added since it was saved.
+function pdAddNewPanels() {
+  try {
+    const s = localStorage.getItem(PD_KEYS.desk);
+    if (!s) return;
+    const raw = JSON.parse(s), got = pdLayoutWithPanel(raw, 'documents', window.innerWidth);
+    if (got !== raw) localStorage.setItem(PD_KEYS.desk, JSON.stringify(got));
+  } catch (e) {}
 }
 // What the Points panel lists: the points waiting for an answer and the
 // answers not yet acknowledged, answers first, then oldest first; the same
@@ -8964,12 +9031,12 @@ function pdPointsSummary(pv) {
 // "answer ↓" (a click scrolls the PO chat to that balloon and marks it), and
 // its one click: 👍 Ack for an answer, Drop for one still waiting.
 function pdPointsHtml(told, now) {
-  if (!told || !told.points) return '<p class="pdp-empty">The points come from the PO’s conversation once it has loaded.</p>';
+  if (!told || !told.points) return '<p class="pdp-empty">Your asks come from the PO’s conversation once it has loaded.</p>';
   const pv = told.points, words = told.words || {};
   const rows = (pv.items || []).filter(p => p.state === 'open' || p.state === 'answered')
     .sort((a, b) => (a.state === b.state ? 0 : a.state === 'answered' ? -1 : 1) || (a.createdAt || 0) - (b.createdAt || 0));
   if (!rows.length) {
-    return '<div class="pdp"><p class="pdp-empty">No open points. Every message you send the PO is a point (P12) that waits here for its answer, and stays until you acknowledge the answer.</p></div>';
+    return '<div class="pdp"><p class="pdp-empty">No open asks. Every message you send the PO is an ask (P12) that waits here for its answer, and stays until you acknowledge the answer.</p></div>';
   }
   const href = mid => '/session?room=' + encodeURIComponent(told.room || '') + '&msg=' + encodeURIComponent(mid).replace(/%3A/gi, ':');
   const link = (mid, text, tip) => mid ? `<a class="pdp-link" href="${esc(href(mid))}" data-mid="${esc(mid)}" title="${esc(tip)}">${esc(text)}</a>` : '';
@@ -8988,7 +9055,7 @@ function pdPointsHtml(told, now) {
                                 : btn(p.id, 'drop', 'Drop', `Drop ${p.id}: you no longer need an answer`))
       + `</div>${said}</li>`;
   }).join('');
-  return `<div class="pdp"><p class="pdp-sum">Your points: ${esc(pdPointsSummary(pv))}</p><ul class="pdp-list">${list}</ul></div>`;
+  return `<div class="pdp"><p class="pdp-sum">Your asks: ${esc(pdPointsSummary(pv))}</p><ul class="pdp-list">${list}</ul></div>`;
 }
 
 // (A var, not a const: pdById is called from code that may run before this line.)
@@ -9077,6 +9144,7 @@ function pdLoad() {
           b.href = document.baseURI;
           d.head.insertBefore(b, d.head.firstChild);
         }
+        pdPopIcon(d);
         const ls = window.DOC_LISTENERS.filter(([t]) => !skip.has(t));
         for (const [t, fn, o] of ls) d.addEventListener(t, fn, o);
         PD_POP_DOCS.set(d, ls);
@@ -9101,6 +9169,17 @@ function pdLoad() {
     .then(() => renderRows());
   return PD.loading;
 }
+// A panel's own window shows the app's icon in its tab and title bar, as this
+// page does (the library's page has none).
+function pdPopIcon(d) {
+  try {
+    d.querySelectorAll('link[rel~="icon"]').forEach(l => l.remove());
+    const l = d.createElement('link');
+    l.rel = 'icon'; l.type = 'image/svg+xml';
+    l.href = new URL('/static/icons/favicon.svg', location.href).href;
+    d.head.appendChild(l);
+  } catch (e) {}
+}
 // The pop-out windows' documents and the listeners given them; one the page
 // adds later (a panel wiring itself on first use) reaches them as well.
 const PD_POP_DOCS = new Map();
@@ -9121,6 +9200,7 @@ function pdOnResize(fn) {
 function pdEnsure() {
   if (PD.dock) return PD.dock;
   const L = PD.lib;
+  pdAddNewPanels();
   window.DOC_LISTENERS_PAUSED = true;   // the dock's own listeners are not the page's
   try { PD.dock = L.createDock({
     root: PD_ROOT,
@@ -9151,9 +9231,24 @@ function pdEnsure() {
   pdPlaceChat();
   return PD.dock;
 }
+// A click on a minimised panel's title bar restores it (Dock), and the bar can
+// move from under the pointer: the second click of a double click then lands
+// on the panel's body. Dock takes that click as the title bar's, but an
+// iframe there (the PO chat) would swallow it; so for Dock's double-click
+// time the dock's iframes let clicks through to their panel.
+const PD_DBL_MS = 500;
+let pdDblT = 0;
+function pdDblGuard(e) {
+  const head = e.detail === 1 && e.target.closest && e.target.closest('.dk-head');
+  if (!head || e.target.closest('.dk-ctl') || !head.closest('.dk-min')) return;
+  PD_ROOT.classList.add('pd-dbl');
+  clearTimeout(pdDblT);
+  pdDblT = setTimeout(() => PD_ROOT.classList.remove('pd-dbl'), PD_DBL_MS);
+}
+PD_ROOT.addEventListener('click', pdDblGuard, true);
 // A panel came on screen: what it shows is drawn now, not at the next refresh.
 function pdShown(id) {
-  if (id === 'board' || id === 'workspace' || id === 'changes') renderRows();
+  if (id === 'board' || id === 'documents' || id === 'workspace' || id === 'changes') renderRows();
   if (id === 'points') pdPaintPoints(true);
   pdPlaceChat();
 }
@@ -9351,7 +9446,7 @@ function pdMenuHtml() {
     return `<button type="button" role="menuitemcheckbox" data-pd-toggle="${id}" aria-checked="${vis}"${vis ? ' class="on"' : ''}`
       + `${last ? ' disabled title="The last panel on screen stays"' : ''}>${esc(PD_TITLES[id])}</button>`;
   }).join('') + '<div class="dk-menu-sep" role="separator"></div>'
-    + '<button type="button" role="menuitem" data-pd-reset title="The PO chat and Points side by side, the other panels on the strip at the right edge">Reset layout</button>';
+    + '<button type="button" role="menuitem" data-pd-reset title="The PO chat and Your asks side by side, the other panels on the strip at the right edge">Reset layout</button>';
 }
 function pdMenu(btn) {
   if (PD_MENU) { const same = PD_MENU.btn === btn; pdMenuClose(same); if (same) return; }
@@ -9558,7 +9653,7 @@ function poSwitchDialogHtml(pj, info, err, confirmMsg, typed) {
   const model = typed && typeof typed.model === 'string' ? typed.model : (t.model || '');
   return `
     <h3>Switch ${esc(pj.name)}’s PO</h3>
-    <p class="cfg-hint">Now ${esc(name(cur))}${info.model ? ' · <code>' + esc(info.model) + '</code>' : ''}${info.live ? '' : ' (not running)'}. A fresh ${esc(name(other))} session takes over in the same room, with the same chat and points, from the PO’s written handover. A running PO is asked to bring its handover up to date first; that can take a few minutes.</p>
+    <p class="cfg-hint">Now ${esc(name(cur))}${info.model ? ' · <code>' + esc(info.model) + '</code>' : ''}${info.live ? '' : ' (not running)'}. A fresh ${esc(name(other))} session takes over in the same room, with the same chat and asks, from the PO’s written handover. A running PO is asked to bring its handover up to date first; that can take a few minutes.</p>
     <div class="im-field">
       <label for="ps-model">${esc(name(other))} model <small>empty for its default</small></label>
       <input id="ps-model" type="text" value="${esc(model)}" spellcheck="false" autocomplete="off"${why ? ' disabled' : ''}>
@@ -9993,7 +10088,7 @@ function kindBtnHtml(pj) {
   if (!pj || !pj.registered || !pj.path || pj.id === UNASSIGNED_ID) return '';
   const docs = isDocsProject(pj);
   const tip = docs ? 'Its Workspace tab holds its files, and every version of them is kept. Click to change'
-                   : 'Its Overview is the PO screen: the PO chat, its points and the board as panels. Click to change';
+                   : 'Its Overview is the PO screen: the PO chat, your asks and the board as panels. Click to change';
   return `<button type="button" class="po-btn kind-btn" data-proj="${esc(pj.id)}" title="${tip}">${docs ? 'Documents project' : 'Code project'}</button>`;
 }
 // A documents project without a PO shows no note asking for one (it may need
@@ -10007,7 +10102,7 @@ function kindDialogHtml(pj) {
   const opt = (k, label, text) => `<label class="kind-opt"><input type="radio" name="kind" value="${k}"${(k === 'documents') === docs ? ' checked' : ''}> <b>${label}</b><br><span class="cfg-hint">${text}</span></label>`;
   return `<h3>What kind of project is ${esc(pj.name)}?</h3>`
     + `<div class="im-field" role="radiogroup" aria-label="Kind of project">`
-    + opt('code', 'Code project', 'Its Overview is the PO screen: the PO chat, its points and the board as panels. Tasks work in their own folders, copies or worktrees.')
+    + opt('code', 'Code project', 'Its Overview is the PO screen: the PO chat, your asks and the board as panels. Tasks work in their own folders, copies or worktrees.')
     + opt('documents', 'Documents project', 'Its Workspace tab holds its files, to add, move and restore them. Tasks work directly in the project folder, several at once, and every version of every file is kept with who changed it.')
     + `</div>`
     + `<div class="actions"><button id="kind-ok">Save</button><button id="kind-cancel" class="secondary">Cancel</button></div>`;
@@ -11522,6 +11617,28 @@ function wsRenderInto(panel, pj) {
   }
   if (docs) docsPanelRender(panel, pj);
 }
+// A project's Documents list, into #doclist-panel. A documents project has none:
+// its files are its documents, in its Workspace.
+function docsListRenderInto(panel, pj) {
+  if (!panel) return;
+  const key = pj && pj.path ? wsCtxKey({ kind: 'project', projectId: pj.id, list: true }) : 'none';
+  if (panel.dataset.wskey === key) return;
+  panel.dataset.wskey = key;
+  if (!pj || !pj.path) panel.innerHTML = '<p class="empty">This project has no folder.</p>';
+  else {
+    panel.innerHTML = wsPanelHtml({ list: true });
+    wsMount(panel.querySelector('.wsp'), { kind: 'project', projectId: pj.id, list: true });
+  }
+}
+// #doclist-panel sits in the Documents panel of a PO screen, else beside #view,
+// moved as #ws-panel is (below).
+function docsPlace(docked) {
+  const el = pdById('doclist-panel');
+  if (!el) return null;
+  const home = docked ? PD.els.documents : document.querySelector('main');
+  if (el.parentElement !== home) pdMove(home, el, docked ? null : PD_HOST);
+  return el;
+}
 // #ws-panel sits in the Workspace panel of a PO screen, else beside #view.
 // It moves only when the page changes between the two, never on a refresh,
 // and with moveBefore, so its file viewers keep their pages (browsers without
@@ -11550,11 +11667,12 @@ function renderPoDock(pj) {
   // A tab asked for from somewhere else (a diff's Open file, a link back to
   // the Workspace) is a panel here: it comes on screen.
   if (PROJECT_TAB !== 'tasks') {
-    const want = { workspace: 'workspace', changes: 'changes', roadmap: 'workspace' }[PROJECT_TAB];
+    const want = { documents: 'documents', workspace: 'workspace', changes: 'changes', roadmap: 'documents' }[PROJECT_TAB];
     PROJECT_TAB = 'tasks';
     if (want) pdReveal(want);
   }
   wsRenderInto(pdById('ws-panel'), pj);
+  docsListRenderInto(pdById('doclist-panel'), pj);
   chRenderInto(PD.els.changes, pj);
   return true;
 }
@@ -11572,12 +11690,13 @@ function renderRows() {
   paintSearchBadge(null);
   // The workspace panel is shown, never rebuilt — every branch below is free to
   // replace #view without touching it.
-  const wsp = wsPlace(docked);
+  const wsp = wsPlace(docked), dcp = docsPlace(docked);
   // Needs you owns the whole view, so the project's stateful panels step
-  // aside even if one of their tabs was last open. The roadmap is a document
-  // in the Workspace now: an old "roadmap" tab is the Workspace.
-  if (PROJECT_TAB === 'roadmap') PROJECT_TAB = 'workspace';
+  // aside even if one of their tabs was last open. The roadmap is a document,
+  // first in the Documents list: an old "roadmap" tab is Documents.
+  if (PROJECT_TAB === 'roadmap') PROJECT_TAB = 'documents';
   if (wsp) wsp.hidden = !(SELECTED_PROJECT && (docked || PROJECT_TAB === 'workspace')) || Boolean(SB_DEST);
+  if (dcp) dcp.hidden = !(SELECTED_PROJECT && (docked || PROJECT_TAB === 'documents')) || Boolean(SB_DEST);
   // A destination replaces whatever view is showing, the home page and a
   // project's Workspace and Changes included, so it runs before all of them;
   // entering a project clears it. Its entries are there to be clicked, so they
@@ -11620,6 +11739,13 @@ function renderRows() {
     setViewCount('');
     if (writeSlot($('#view'), projectsChromeHtml())) wireProjectsChrome();
     wsRenderInto(wsp, projectById(SELECTED_PROJECT));
+    return;
+  } else if (SELECTED_PROJECT && PROJECT_TAB === 'documents') {
+    // The Documents tab: the list and the documents opened from it, state
+    // outside #view as the Workspace's is.
+    setViewCount('');
+    if (writeSlot($('#view'), projectsChromeHtml())) wireProjectsChrome();
+    docsListRenderInto(dcp, projectById(SELECTED_PROJECT));
     return;
   }
   const parsed = parseSearchQuery(SEARCH_QUERY);
@@ -11888,8 +12014,8 @@ async function refresh({ now = false, until = 0 } = {}) {
     // A dropped poll must not cost you the workspace. The tree, the folders you
     // opened and the file you are reading are state, not a view of /api/sessions
     // — so say it in a toast and leave the panel where it is.
-    const wsp = pdById('ws-panel'), rmp = pdById('rm-panel');
-    if ((wsp && !wsp.hidden) || (rmp && !rmp.hidden) || document.body.classList.contains('po-dock')) toast('refresh failed: ' + e.message, 4000, 'err');
+    const wsp = pdById('ws-panel'), rmp = pdById('rm-panel'), dcp = pdById('doclist-panel');
+    if ((wsp && !wsp.hidden) || (rmp && !rmp.hidden) || (dcp && !dcp.hidden) || document.body.classList.contains('po-dock')) toast('refresh failed: ' + e.message, 4000, 'err');
     else $('#view').innerHTML = `<p class="empty">Error: ${esc(e.message)}</p>`;
   } finally {
     _refreshInFlight = false;
