@@ -19,6 +19,7 @@ Skipped without Node.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import unittest
@@ -46,11 +47,18 @@ vm.runInContext(code + `
 const T = ctx.t;
 const out = {};
 const href = mid => '/session?room=room-po&msg=' + mid;
-const pv = { open: 1, answered: 1, approvals: [], items: [
+// P2 "answered": a hub from before the stages (read as delivered).
+const pv = { open: 1, planned: 2, delivered: 2, approvals: [], items: [
   { id: 'P3', state: 'open', text: 'Why is the build red?\n\n[point P3]', createdAt: 1000, mid: 's:4', answers: [] },
   { id: 'P2', state: 'answered', text: 'Is #26 merged?', createdAt: 900, mid: 's:0', answers: [{ mid: 's:2', at: 950, how: 'implicit' }] },
   { id: 'P1', state: 'acked', text: 'Old one', createdAt: 800, mid: 's:9', answers: [{ mid: 's:10', at: 810 }] },
   { id: 'P4', state: 'answered', text: 'Start the docs task', createdAt: 1100, mid: 's:5', answers: [{ at: 1200, how: 'tool', summary: 'claude: started as #75' }] },
+  { id: 'P5', state: 'planned', text: 'Fix the gap', createdAt: 1300, mid: 's:11', task: { ref: '#104', workflow: 'inprogress', workflowName: 'In progress' },
+    answers: [{ mid: 's:12', at: 1310, how: 're', kind: 'plan', task: '#104' }] },
+  { id: 'P6', state: 'delivered', text: 'Ship the stages', createdAt: 1400, mid: 's:13', task: { ref: '#105' },
+    answers: [{ mid: 's:14', at: 1410, how: 're', kind: 'plan', task: '#105' }, { mid: 's:15', at: 1500, how: 're' }] },
+  { id: 'P7', state: 'planned', text: 'Merged one', createdAt: 1450, mid: 's:16', task: { ref: '#106', workflow: 'done', workflowName: 'Done', done: true },
+    answers: [{ mid: 's:17', at: 1460, how: 're', kind: 'plan', task: '#106' }] },
 ] };
 const P = T.pointMaps(pv);
 out.his = T.pointBarHtml({ id: 's:4', from: 'user' }, P, href);
@@ -59,7 +67,16 @@ out.hisAcked = T.pointBarHtml({ id: 's:9', from: 'user' }, P, href);
 out.agent = T.pointBarHtml({ id: 's:2', from: 'claude', text: 'Yes.' }, P, href);
 out.agentAcked = T.pointBarHtml({ id: 's:10', from: 'claude', text: 'Yes.' }, P, href);
 out.nothing = T.pointBarHtml({ id: 's:7', from: 'claude', text: 'x' }, P, href);
+out.hisPlanned = T.pointBarHtml({ id: 's:11', from: 'user' }, P, href);
+out.hisMerged = T.pointBarHtml({ id: 's:16', from: 'user' }, P, href);
+out.agentPlan = T.pointBarHtml({ id: 's:12', from: 'claude', text: 'Re P5 (planned #104): on it.' }, P, href);
+out.hisDelivered = T.pointBarHtml({ id: 's:13', from: 'user' }, P, href);
+out.oldPlan = T.pointBarHtml({ id: 's:14', from: 'claude', text: 'Re P6 (planned #105): on it.' }, P, href);
+out.delivery = T.pointBarHtml({ id: 's:15', from: 'claude', text: 'Re P6: live.' }, P, href);
 out.summary = [T.pointsSummary(P), T.pointsSummary(T.pointMaps({ open: 0, answered: 2, items: [] })), T.pointsSummary(T.pointMaps(null))];
+T.CHAT_NAMES.po = 'claude';
+out.listPo = T.pointsListHtml(P, href, 2000);
+T.CHAT_NAMES.po = '';
 out.list = T.pointsListHtml(P, href, 2000);
 out.lineClosed = T.pointsLineHtml(P, false, href, 2000);
 out.keep = [...P.keep].sort(); out.unacked = [...P.unacked].sort();
@@ -145,7 +162,7 @@ class Points(unittest.TestCase):
         self.assertIn("P3 · waiting for an answer", r["his"])
         self.assertIn('data-pt="P3" data-pt-act="drop"', r["his"])
         self.assertIn('class="pt-link" href="/session?room=room-po&amp;msg=s:2" data-ref-msg="s:2"', r["hisAnswered"])
-        self.assertIn("P2 · answered ↓", r["hisAnswered"])
+        self.assertIn("P2 · ready for your check ↓", r["hisAnswered"], "answered, from a hub before the stages, is delivered")
         self.assertIn("P1 · acknowledged ↓", r["hisAcked"])
         # Read again after the thumbs up, the question still leads to its answer.
         self.assertIn('data-ref-msg="s:10"', r["hisAcked"])
@@ -164,20 +181,58 @@ class Points(unittest.TestCase):
 
     def test_the_line_counts_and_lists_both_ends(self):
         r = self.r
-        self.assertEqual(r["summary"], ["Your asks: 1 waiting for an answer · 1 answered, not yet acknowledged",
-                                        "Your asks: 2 answered, not yet acknowledged", ""])
-        rows = r["list"].split("</li>")
-        self.assertEqual(len(rows) - 1, 3, "open and answered, not the acknowledged one")
-        self.assertIn('data-pt="P2"', rows[0], "an answer to acknowledge comes first")
-        self.assertIn("your message ↑", rows[0])
-        self.assertIn("answer ↓", rows[0])
+        self.assertEqual(r["summary"], ["Your asks: 1 waiting for an answer · 2 in progress · 2 ready for your check",
+                                        "Your asks: 2 ready for your check", ""])
+        rows = [x for x in r["list"].split("</li>") if 'class="pt-row"' in x]
+        self.assertEqual([re.search(r'data-pt="(P\w+)"', x).group(1) for x in rows], ["P3", "P5", "P7", "P2", "P4", "P6"],
+                         "waiting, in progress, ready for their check; oldest first in each; not the acknowledged one")
+        heads = re.findall(r'<li class="pt-group">([^<]*)</li>', r["list"])
+        self.assertEqual(heads, ["Waiting for an answer", "In progress", "Ready for your check"])
+        self.assertIn('<li class="pt-group">Waiting for the PO</li>', r["listPo"], "in the PO's chat it says who")
+        p2 = next(x for x in rows if 'data-pt="P2"' in x)
+        self.assertIn("your message ↑", p2)
+        self.assertIn("answer ↓", p2)
+        self.assertIn('data-pt="P2" data-pt-act="ack"', p2)
         self.assertIn("claude: started as #75", r["list"], "an answer given by doing says what was done")
         self.assertIn('data-pt="P3" data-pt-act="drop"', r["list"])
         self.assertIn("Why is the build red?", r["list"])
         self.assertNotIn("[point P3]", r["list"])
         self.assertIn('aria-expanded="false"', r["lineClosed"])
         self.assertIn("<ul id=\"points-list\" hidden>", r["lineClosed"])
-        self.assertEqual((r["keep"], r["unacked"]), (["s:2", "s:4"], ["s:2"]))
+        self.assertEqual((r["keep"], r["unacked"]), (["s:11", "s:12", "s:15", "s:16", "s:17", "s:2", "s:4"], ["s:15", "s:2"]),
+                         "an open or planned point's balloon and its plan, an unacknowledged delivery")
+
+    def test_a_planned_point_shows_its_task_and_takes_no_thumbs_up(self):
+        r = self.r
+        rows = [x for x in r["list"].split("</li>") if 'class="pt-row"' in x]
+        p5 = next(x for x in rows if 'data-pt="P5"' in x)
+        self.assertIn('<span class="pt-state planned">#104 · in progress</span>', p5)
+        self.assertIn('data-ref-msg="s:12" title="Go to where the work was planned">plan ↓</a>', p5)
+        self.assertIn('data-pt="P5" data-pt-act="drop"', p5)
+        self.assertNotIn('data-pt-act="ack"', p5)
+        p7 = next(x for x in rows if 'data-pt="P7"' in x)
+        self.assertIn('<span class="pt-state planned">#106 merged, awaiting go-live</span>', p7)
+        self.assertNotIn('data-pt-act="ack"', p7, "merged is not live")
+        self.assertIn("P5 · in progress, #104 · in progress ↓", r["hisPlanned"])
+        self.assertIn('data-ref-msg="s:12"', r["hisPlanned"])
+        self.assertIn("P7 · in progress, #106 merged, awaiting go-live ↓", r["hisMerged"])
+        self.assertIn("plans P5 ↑", r["agentPlan"])
+        self.assertIn("#104 · in progress", r["agentPlan"])
+        self.assertNotIn('data-pt-act="ack"', r["agentPlan"], "a plan takes no thumbs up")
+
+    def test_a_delivered_point_links_its_delivery_and_keeps_its_plan(self):
+        r = self.r
+        rows = [x for x in r["list"].split("</li>") if 'class="pt-row"' in x]
+        p6 = next(x for x in rows if 'data-pt="P6"' in x)
+        self.assertIn('data-ref-msg="s:14" title="Go to where the work was planned">plan ↓</a>', p6)
+        self.assertIn('data-ref-msg="s:15" title="Go to the answer">answer ↓</a>', p6)
+        self.assertIn('data-pt="P6" data-pt-act="ack"', p6)
+        self.assertIn('data-ref-msg="s:15"', r["hisDelivered"], "the person's balloon leads to the delivery, not the plan")
+        self.assertIn("P6 · ready for your check ↓", r["hisDelivered"])
+        self.assertIn("plans P6 ↑", r["oldPlan"])
+        self.assertNotIn('data-pt-act="ack"', r["oldPlan"])
+        self.assertIn("answers P6 ↑", r["delivery"])
+        self.assertIn('data-pt="P6" data-pt-act="ack"', r["delivery"])
 
     def test_the_hubs_point_lines_are_not_shown(self):
         self.assertEqual(self.r["strip"], ["Why?", "## Review comments (2)\n\n**1.** a\n\n**2.** b", "plain  ", False])
@@ -329,7 +384,7 @@ class PollAndLinks(unittest.TestCase):
 class Contrast(unittest.TestCase):
     def test_the_bar_on_the_persons_balloon_is_not_muted(self):
         # --fg-muted on --hover measured 4.25:1 in Light at 12px.
-        self.assertIn(".msg.user .pt-bar, .msg.user .pt-chip:not(.answered) { color:var(--fg-subtle); }", SRC)
+        self.assertIn(".msg.user .pt-bar, .msg.user .pt-chip:not(.delivered) { color:var(--fg-subtle); }", SRC)
 
 
 if __name__ == "__main__":

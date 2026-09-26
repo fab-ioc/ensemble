@@ -11,7 +11,11 @@ page's box, or one comment of a "## Review comments (N)" message: each comment
 is its own point). It gets an id numbered per room, ``P12``, and a state:
 
 * ``open``: no answer yet;
-* ``answered``: an answer is linked, the person has not acknowledged it;
+* ``planned``: the agent said what it will do (``Re P12 (planned #104):``),
+  usually as a task, which the point is then linked to; the work is not live;
+* ``delivered``: the answer is there for real (the change is live, the
+  question answered), the person has not acknowledged it. A ledger written
+  before the stages says ``answered`` for this, and is read so;
 * ``acked``: they acknowledged it (thumbs up, Ack, or a bare "thanks");
 * ``dropped``: they dismissed it themselves;
 * ``split``: a PO split it into sub-points (``P12a``, ``P12b``), which carry it.
@@ -37,7 +41,18 @@ one-agent chat, the room's messages of a team):
   line written between two tool calls ("Reading the log...", ``interim`` on
   the turn): the reply that ends the agent's turn answers;
 * a paragraph starting ``Re P12:`` answers P12 (several per reply);
-* ``ensemble_points`` answers one by doing ("P12: started as #75").
+* a paragraph starting ``Re P12 (planned #104):`` plans it: the point waits
+  on task #104 until a later ``Re P12:`` says it is live (the answer link is
+  then that delivery, the plan kept beside it);
+* ``ensemble_points`` answers one by doing ("P12: started as #75"), or plans
+  it (action ``plan``, with the task).
+
+The first reply that answers by itself, with no ``Re``, delivers: a question
+answered in words needs no plan. A thumbs up closes only a delivered point; on
+a plan it is a "go ahead" and the point stays in progress. When a planned
+point's task goes to Done the point says "merged, awaiting go-live": that is
+not a delivery (a restart may still be owed), and once it has been Done
+``pointsDeliverRemindMin`` its agent is reminded, once, to say it is live.
 
 A reply to a ``[report]``, ``[digest]``, ``[due]``, ``[handover]`` or restart
 note answers nothing unless it says ``Re Pn:``.
@@ -72,6 +87,8 @@ def bind(dashboard_module) -> None:
 PREFIX = "[points] "            # how the hub's lines about points start (HUB_INPUT_KINDS)
 TICK_S = 60                     # how often open points are looked at for a reminder
 DEFAULT_REMIND_MIN = 20         # settings.pointsRemindMin: open this long, the agent idle → one line
+DEFAULT_DELIVER_REMIND_MIN = 120  # settings.pointsDeliverRemindMin: a plan's task Done this long, not live
+LIVE = ("open", "planned", "delivered")    # still waiting on someone
 SYNC_EVERY_S = 3.0              # a room's answers are looked for at most this often
 SLACK_S = 120                   # a transcript's clock and the hub's may differ this much
 VIEW_MAX = 200                  # points a page is sent, newest first
@@ -92,11 +109,16 @@ _GONE: set[str] = set()         # rooms deleted while their ledger stays
 POINT_ID = r"P\d{1,5}[a-z]?"
 _POINT_LINE = re.compile(rf"^\[point ({POINT_ID})\][ \t]*$", re.M)
 _POINT_LINE_STRIP = re.compile(rf"\n*^\[point {POINT_ID}\][ \t]*$", re.M)
-# "Re P12:", "**Re P12, P14:**", "- Re P3 and P4:" at the start of a line.
+# "Re P12:", "**Re P12, P14:**", "- Re P3 and P4:" at the start of a line;
+# "Re P12 (planned #104):", "**Re P12** (planned ED-104):" plan it.
+_TASK_REF = r"#?(?:[A-Za-z][A-Za-z0-9]{0,5}-)?\d{1,6}"
+_PLAN_MARK = rf"\([ \t]*plan(?:ned)?(?:[ \t]*(?:as|in|,|:)?[ \t]*({_TASK_REF}))?[ \t]*\)"
 _RE_HEAD = re.compile(
     rf"^[ \t]*(?:[-*+][ \t]+)*(?:\*\*|__)?[ \t]*re[ \t]+"
-    rf"({POINT_ID}(?:[ \t]*(?:,|&|/|and)[ \t]*{POINT_ID})*)[ \t]*(?:\*\*|__)?[ \t]*:",
+    rf"({POINT_ID}(?:[ \t]*(?:,|&|/|and)[ \t]*{POINT_ID})*)[ \t]*(?P<plan>{_PLAN_MARK})?[ \t]*"
+    rf"(?:\*\*|__)?[ \t]*(?P<plan2>{_PLAN_MARK})?[ \t]*:",
     re.M | re.I)
+_TASK_REF_ONE = re.compile(r"#?(?:([A-Za-z][A-Za-z0-9]{0,5})-)?(\d{1,6})")
 _ID_IN = re.compile(POINT_ID, re.I)
 # A message of numbered items, one point each: the chat's review comments
 # ("## Review comments (N)") and the editor's points ("## Points (N)").
@@ -164,15 +186,40 @@ def _prose(text: str) -> str:
     return "\n".join(out)
 
 
-def re_ids(text: str) -> list[str]:
-    """The points a reply answers by ``Re Pn:`` at the start of a paragraph."""
-    out = []
+def task_ref(ref) -> str:
+    """A task as a plan names it: "#104", or "ED-104" with its project's key;
+    "" when it is not one."""
+    m = _TASK_REF_ONE.fullmatch(str(ref or "").strip())
+    if not m or not int(m.group(2)):
+        return ""
+    return f"{m.group(1).upper()}-{int(m.group(2))}" if m.group(1) else f"#{int(m.group(2))}"
+
+
+def re_marks(text: str) -> dict[str, dict]:
+    """The points a reply answers by ``Re Pn:`` at the start of a paragraph,
+    in order, each ``{"plan": bool, "task": "#104" or ""}``. A point said both
+    ways in one reply is delivered: the plain ``Re Pn:`` wins."""
+    out: dict[str, dict] = {}
     for m in _RE_HEAD.finditer(_prose(text)):
+        plan = m.group("plan") is not None or m.group("plan2") is not None
+        mark = m.group("plan") or m.group("plan2") or ""
+        tm = re.search(_TASK_REF + r"(?=[ \t]*\)$)", mark)
+        task = task_ref(tm.group(0)) if tm else ""
         for i in _ID_IN.findall(m.group(1)):
             i = _norm_id(i)
-            if i not in out:
-                out.append(i)
+            cur = out.get(i)
+            if cur is None:
+                out[i] = {"plan": plan, "task": task}
+            elif not plan:
+                cur.update(plan=False, task="")
+            elif cur["plan"] and task:
+                cur["task"] = task
     return out
+
+
+def re_ids(text: str) -> list[str]:
+    """The points a reply answers by ``Re Pn:`` at the start of a paragraph."""
+    return list(re_marks(text))
 
 
 def is_bare_ack(text: str) -> bool:
@@ -291,6 +338,8 @@ def _clean(led: dict, room_id: str) -> dict:
         p.setdefault("answers", [])
         p.setdefault("followUps", [])
         p.setdefault("state", "open")
+        if p["state"] == "answered":        # a ledger from before the stages
+            p["state"] = "delivered"
         p.setdefault("createdAt", 0.0)
     out["points"] = pts
     try:
@@ -449,19 +498,43 @@ def _set_state(p: dict, state: str, now: float) -> bool:
     return True
 
 
-def _answer(p: dict, key: str, mid: str, at: float, how: str, summary: str = "") -> bool:
-    """Link an answer. A new one moves an open point to answered; an answer
-    already linked only follows its run to its latest balloon."""
+def _last_at(p: dict, plan: bool) -> float:
+    return max([float(a.get("at") or 0) for a in p["answers"] if (a.get("kind") == "plan") == plan] + [0.0])
+
+
+def _answer(p: dict, key: str, mid: str, at: float, how: str, summary: str = "",
+            plan: bool = False, task: str = "") -> bool:
+    """Link an answer, or a plan. A new answer delivers an open or planned
+    point; a new plan moves an open point to planned, and a delivered one back
+    to planned when it is newer than the delivery (more work after all), and
+    links the task it names. One already linked only follows its run to its
+    latest balloon (and takes a task named since)."""
     for a in p["answers"]:
         if a.get("key") == key:
+            moved = False
+            if plan and task and a.get("task") != task:
+                a["task"] = p["task"] = task
+                moved = True
             if a.get("mid") != mid and mid:
                 a["mid"], a["at"] = mid, at
-                return True
-            return False
+                moved = True
+            return moved
+    now = at or time.time()
+    st = p.get("state")
+    if plan:
+        newer = (at or 0) >= _last_at(p, False)
+        p["answers"].append({"key": key, "mid": mid, "at": at, "how": how, "kind": "plan",
+                             **({"task": task} if task else {}),
+                             **({"summary": summary[:300]} if summary else {})})
+        if task:
+            p["task"] = task
+        if st == "open" or (st == "delivered" and newer):
+            _set_state(p, "planned", now)
+        return True
     p["answers"].append({"key": key, "mid": mid, "at": at, "how": how,
                          **({"summary": summary[:300]} if summary else {})})
-    if p.get("state") == "open":
-        _set_state(p, "answered", at or time.time())
+    if st == "open" or (st == "planned" and (at or 0) >= _last_at(p, True)):
+        _set_state(p, "delivered", now)
     return True
 
 
@@ -524,7 +597,7 @@ def take(room: dict, text: str, to: str = "", key: str = "", now: float | None =
                 # What this send changed, for discard() when it is refused
                 # or dropped: one entry per send, newest last.
                 u = {"key": key, "at": now, **{k: p.get(k) for k in _UNDO_FIELDS}}
-                if p["state"] in ("answered", "acked", "dropped"):
+                if p["state"] in ("planned", "delivered", "acked", "dropped"):
                     _set_state(p, "open", now)
                     p["reopenedAt"] = now
                 p["followKey"] = key or p.get("followKey", "")
@@ -537,7 +610,8 @@ def take(room: dict, text: str, to: str = "", key: str = "", now: float | None =
         if is_bare_ack(body):
             since = float(led.get("lastPersonAt") or 0)
             for p in led["points"]:
-                if p["state"] == "answered" and any(a.get("at", 0) > since for a in p["answers"]):
+                if p["state"] == "delivered" and any(a.get("at", 0) > since and a.get("kind") != "plan"
+                                                     for a in p["answers"]):
                     _set_state(p, "acked", now)
                     p["ackedBy"] = "reply"
             led["lastPersonAt"] = now
@@ -668,9 +742,10 @@ def _scan_turns(led: dict, sid: str, turns: list[dict]) -> bool:
             if len(found) == 1 and not t.get("queued"):
                 implicit, run = found[0], mid
             continue
-        said = [i for i in re_ids(text) if i in pts and (not ts or ts >= pts[i]["createdAt"] - SLACK_S)]
+        marks = re_marks(text)
+        said = [i for i in marks if i in pts and (not ts or ts >= pts[i]["createdAt"] - SLACK_S)]
         for i in said:
-            changed |= _answer(pts[i], mid, mid, ts, "re")
+            changed |= _answer(pts[i], mid, mid, ts, "re", **marks[i])
             seen.add((i, mid))
         if implicit and implicit not in said:
             if t.get("interim"):
@@ -733,9 +808,10 @@ def _scan_messages(led: dict, room: dict) -> bool:
         if frm not in agents:
             implicit = None             # the hub, another task's report: not a reply
             continue
-        said = [i for i in re_ids(text) if i in pts and ts >= pts[i]["createdAt"] - SLACK_S]
+        marks = re_marks(text)
+        said = [i for i in marks if i in pts and ts >= pts[i]["createdAt"] - SLACK_S]
         for i in said:
-            changed |= _answer(pts[i], mid, mid, ts, "re")
+            changed |= _answer(pts[i], mid, mid, ts, "re", **marks[i])
         if not implicit:
             continue
         if implicit in said:
@@ -817,7 +893,7 @@ def sync(room_id: str, force: bool = False, room: dict | None = None) -> dict:
     reads: dict[str, tuple] = {}
     pre = None
     if _solo(room):
-        live = [p["createdAt"] for p in led["points"] if p["state"] in ("open", "answered")]
+        live = [p["createdAt"] for p in led["points"] if p["state"] in LIVE]
         floor = (min(live) - SLACK_S) if live else None
         for sid in _session_ids(room, led):
             st = _session_stat(sid)
@@ -865,9 +941,10 @@ ACTIONS = ("ack", "drop", "reopen")
 
 
 def act(room_id: str, pid: str, action: str, now: float | None = None) -> dict | None:
-    """Ack (answered or open → acked), Drop (open or answered → dropped), or
-    Reopen (acked or dropped → open). Types nothing into anyone. Returns the
-    point, or None when there is no such point or the move does not apply."""
+    """Ack (delivered or open → acked: never a planned one, whose work is not
+    live yet), Drop (open, planned or delivered → dropped), or Reopen (acked
+    or dropped → open). Types nothing into anyone. Returns the point, or None
+    when there is no such point or the move does not apply."""
     now = time.time() if now is None else now
     if action not in ACTIONS:
         return None
@@ -877,10 +954,10 @@ def act(room_id: str, pid: str, action: str, now: float | None = None) -> dict |
         if p is None:
             return None
         st = p["state"]
-        if action == "ack" and st in ("open", "answered"):
+        if action == "ack" and st in ("open", "delivered"):
             _set_state(p, "acked", now)
             p["ackedBy"] = "click"
-        elif action == "drop" and st in ("open", "answered"):
+        elif action == "drop" and st in LIVE:
             _set_state(p, "dropped", now)
         elif action == "reopen" and st in ("acked", "dropped"):
             _set_state(p, "open", now)
@@ -893,7 +970,8 @@ def act(room_id: str, pid: str, action: str, now: float | None = None) -> dict |
 
 def approve(room_id: str, mid: str, now: float | None = None) -> bool:
     """A thumbs up on a decision: recorded once per balloon (False when it
-    already was), and every point that balloon answers is acknowledged."""
+    already was), and every point that balloon delivers is acknowledged. On a
+    plan it is a "go ahead": the point stays in progress."""
     now = time.time() if now is None else now
     mid = (mid or "").strip()
     if not mid:
@@ -904,7 +982,8 @@ def approve(room_id: str, mid: str, now: float | None = None) -> bool:
             return False
         led["approvals"][mid] = now
         for p in led["points"]:
-            if p["state"] in ("open", "answered") and any(a.get("mid") == mid for a in p["answers"]):
+            if p["state"] in ("open", "delivered") and any(a.get("mid") == mid and a.get("kind") != "plan"
+                                                          for a in p["answers"]):
                 u = {"mid": mid, "state": p["state"], "stateAt": p.get("stateAt"),
                      "ackedBy": p.get("ackedBy")}
                 _set_state(p, "acked", now)
@@ -940,15 +1019,18 @@ def unapprove(room_id: str, mid: str) -> None:
 # What an agent does (ensemble_points)
 # ---------------------------------------------------------------------------
 
-def answer_by_tool(room_id: str, pid: str, summary: str, identity: str) -> dict | None:
-    """An answer given by doing: "P12: started as #75"."""
+def answer_by_tool(room_id: str, pid: str, summary: str, identity: str,
+                   plan: bool = False, task: str = "") -> dict | None:
+    """An answer given by doing: "P12: it is live" (delivered), or with
+    ``plan`` a plan: "P12: started as #104" (planned, linked to ``task``)."""
     now = time.time()
     with _LOCK:
         led = load(room_id)
         p = _find(led, _norm_id(pid or ""))
         if p is None or p["state"] == "split":
             return None
-        _answer(p, f"tool:{int(now * 1000)}", "", now, "tool", summary=f"{identity}: {summary}".strip())
+        _answer(p, f"tool:{int(now * 1000)}", "", now, "tool", summary=f"{identity}: {summary}".strip(),
+                plan=plan, task=task_ref(task) if plan else "")
         _save(room_id, led)
         return dict(p)
 
@@ -978,33 +1060,85 @@ def split(room_id: str, pid: str, parts: list[str]) -> list[dict] | None:
 # ---------------------------------------------------------------------------
 
 def _counts(led: dict) -> dict:
-    return {"open": sum(1 for p in led["points"] if p["state"] == "open"),
-            "answered": sum(1 for p in led["points"] if p["state"] == "answered")}
+    return {st: sum(1 for p in led["points"] if p["state"] == st) for st in LIVE}
 
 
 def counts(room_id: str) -> dict | None:
-    """``{open, answered}`` for a task card or the PO pill, from the ledger as
-    it stands (no looking for answers: the chat and the reminder do that).
-    None when the room has no ledger."""
+    """``{open, planned, delivered}`` for a task card or the PO pill, from the
+    ledger as it stands (no looking for answers: the chat and the reminder do
+    that). None when the room has no ledger or nothing in it waits."""
     if not exists(room_id):
         return None
     c = _counts(load(room_id))
-    return c if c["open"] or c["answered"] else None
+    return c if any(c.values()) else None
 
 
-def _item(p: dict) -> dict:
+def _project_of(room_id: str, room: dict | None, projects: list[dict]) -> str:
+    """The project a room's points name tasks in: the one it is the PO of,
+    else its own."""
+    for pr in projects:
+        if (pr.get("poRoomId") or "") == room_id:
+            return pr.get("id", "")
+    return ((room or {}).get("projectId") or "").strip()
+
+
+def task_lookup(room_id: str, room: dict | None = None):
+    """A function from a task reference ("#104", "ED-104") to what a planned
+    point shows of it, ``{ref, roomId, title, workflow, done, doneAt}``, or
+    None when there is no such task. The hub's task index is read once."""
+    try:
+        projects = _d.load_projects()
+        index = _d._task_index()
+        keys = _d.project_keys(projects)
+        if room is None:
+            room = _d.chatroom.get_room(room_id)
+        pid = _project_of(room_id, room, projects)
+    except Exception as e:      # noqa: BLE001 — the points show without their tasks
+        _log(f"{room_id}: tasks not read: {e!r}")
+        return lambda ref: None
+    by_id = {r.get("id"): r for r in index}
+    memo: dict[str, dict | None] = {}
+
+    def get(ref: str) -> dict | None:
+        if ref in memo:
+            return memo[ref]
+        rid, _why = _d.task_numbers.find_task(index, ref, pid, keys, any_project=not pid)
+        r = by_id.get(rid) if rid else None
+        info = None
+        if r is not None:
+            wf = _d.normalize_workflow(r.get("workflow")) or ""
+            info = {"ref": ref, "roomId": rid, "title": r.get("title") or "", "workflow": wf,
+                    "workflowName": _d.WORKFLOW_LABELS.get(wf, ""), "done": wf == "done"}
+            if wf == "done":
+                try:
+                    info["doneAt"] = float(r.get("workflowAt") or 0) or None
+                except (TypeError, ValueError):
+                    info["doneAt"] = None
+        memo[ref] = info
+        return info
+    return get
+
+
+def _item(p: dict, task=None) -> dict:
     out = {k: p.get(k) for k in ("id", "state", "owner", "createdAt", "stateAt", "mid", "followUps",
                                  "parent", "comment") if p.get(k) not in (None, "", [])}
     out["text"] = strip_point_lines(p.get("text") or "")[:400]
     if p.get("follows"):
         out["follows"] = [{"text": (f.get("text") or "")[:400], "at": f.get("at")} for f in p["follows"]]
-    out["answers"] = [{k: a[k] for k in ("mid", "at", "how", "summary") if a.get(k)} for a in p["answers"]]
+    out["answers"] = [{k: a[k] for k in ("mid", "at", "how", "summary", "kind", "task") if a.get(k)}
+                      for a in p["answers"]]
+    if p.get("task"):
+        info = task(p["task"]) if task and p["state"] in LIVE else None
+        out["task"] = {k: v for k, v in (info or {"ref": p["task"]}).items() if v not in (None, "")}
+        if info and info.get("done") and not info.get("doneAt") and p.get("doneSeenAt"):
+            out["task"]["doneAt"] = p["doneSeenAt"]
     return out
 
 
 def view(room_id: str, room: dict | None = None) -> dict:
     """What the chat page shows: the points (newest first, capped), how many
-    wait for an answer and for an acknowledgement, and the decisions approved."""
+    wait for an answer, are in progress and wait for an acknowledgement, and
+    the decisions approved. A planned point carries its task and where it is."""
     try:
         led = sync(room_id, room=room)
     except Exception as e:
@@ -1014,10 +1148,11 @@ def view(room_id: str, room: dict | None = None) -> dict:
     pts = sorted(led["points"], key=order, reverse=True)
     # Every point still waiting on someone, however old; of the closed ones
     # the newest, up to the cap.
-    live = [p for p in pts if p["state"] in ("open", "answered")]
-    shut = [p for p in pts if p["state"] not in ("open", "answered")][:max(0, VIEW_MAX - len(live))]
+    live = [p for p in pts if p["state"] in LIVE]
+    shut = [p for p in pts if p["state"] not in LIVE][:max(0, VIEW_MAX - len(live))]
     pts = sorted(live + shut, key=order, reverse=True)
-    return {"items": [_item(p) for p in pts], **_counts(led),
+    task = task_lookup(room_id, room) if any(p.get("task") and p["state"] in LIVE for p in pts) else None
+    return {"items": [_item(p, task) for p in pts], **_counts(led),
             "approvals": sorted(led.get("approvals") or {})}
 
 
@@ -1027,6 +1162,16 @@ def open_points(room_id: str, identity: str = "", skip=()) -> list[dict]:
         return []
     led = load(room_id)
     return sorted((p for p in led["points"] if p["state"] == "open" and p["id"] not in skip
+                   and (not identity or p.get("owner") in ("", identity))),
+                  key=lambda p: p["createdAt"])
+
+
+def planned_points(room_id: str, identity: str = "") -> list[dict]:
+    """The planned points, oldest first; ``identity`` keeps that agent's."""
+    if not exists(room_id):
+        return []
+    led = load(room_id)
+    return sorted((p for p in led["points"] if p["state"] == "planned"
                    and (not identity or p.get("owner") in ("", identity))),
                   key=lambda p: p["createdAt"])
 
@@ -1081,18 +1226,29 @@ def note_line(room_id: str, identity: str = "", now: float | None = None, skip=(
 
 
 def prompt_block(room_id: str, identity: str = "", now: float | None = None) -> str:
-    """The open points verbatim, for a fresh session's first prompt. Empty
-    when there are none."""
+    """The open points verbatim, for a fresh session's first prompt, and a
+    line naming the planned ones it has still to deliver. Empty when there
+    are none."""
     now = time.time() if now is None else now
     pts = open_points(room_id, identity)
-    if not pts:
+    plans = planned_points(room_id, identity)
+    if not pts and not plans:
         return ""
     op = _d.operator_name()
+    plan_line = ""
+    if plans:
+        bits = "; ".join(f"{p['id']}" + (f" ({p['task']})" if p.get("task") else "")
+                         + f" \"{_first_words(p['text'], 48)}\"" for p in plans[:12])
+        more = f" and {len(plans) - 12} more" if len(plans) > 12 else ""
+        plan_line = (f"In progress, planned and not yet said live: {bits}{more}. When the work "
+                     f"is live, answer each with \"Re Pn:\"; never ask {op} to acknowledge a plan.")
+    if not pts:
+        return plan_line
     lines = [f"Open points from {op} (the CEO). The hub keeps this list, not your handover: "
              f"answer each with \"Re Pn:\" at the start of a paragraph of your reply (one reply "
              f"may answer several), or say why not the same way; an answer given by doing "
              f"something gets ensemble_points action=answer. Never leave one open silently."]
-    used = len(lines[0])
+    used = len(lines[0]) + len(plan_line)
     for i, p in enumerate(pts):
         words = " ".join(strip_point_lines(p["text"]).split())
         if len(words) > 400:
@@ -1106,7 +1262,7 @@ def prompt_block(room_id: str, identity: str = "", now: float | None = None) -> 
             break
         lines.append(ln)
         used += len(ln)
-    return "\n".join(lines)
+    return "\n".join(lines + ([plan_line] if plan_line else []))
 
 
 # ---------------------------------------------------------------------------
@@ -1121,13 +1277,35 @@ def remind_after_s() -> float:
     return max(0, v) * 60.0
 
 
+def deliver_after_s() -> float:
+    """How long a planned point's task is Done before its agent is reminded
+    to say it is live; 0: never."""
+    try:
+        v = int(_d.load_settings().get("pointsDeliverRemindMin", DEFAULT_DELIVER_REMIND_MIN))
+    except (TypeError, ValueError):
+        v = DEFAULT_DELIVER_REMIND_MIN
+    return max(0, v) * 60.0
+
+
 def reminder_line(items: list[dict], now: float) -> tuple[str, list[dict]]:
-    """(the typed line, the points it names): as many as fit, oldest first."""
+    """(the typed line, the points it names): as many as fit, oldest first.
+    An item with ``_done`` ((task, Done since)) is a planned point whose task
+    is Done and that nobody said is live; the others are open."""
     def line(told):
-        bits = "; ".join(f"{p['id']} \"{_first_words(follow_up(p) or p['text'], 48)}\" "
-                         f"(since {_when(p.get('openedAt') or p['createdAt'], now)})" for p in told)
-        return (f"{PREFIX}still open: {bits}. Answer each with \"Re Pn:\" at the start of a "
-                f"paragraph, or say why not.")
+        opn = [p for p in told if not p.get("_done")]
+        done = [p for p in told if p.get("_done")]
+        out = []
+        if opn:
+            bits = "; ".join(f"{p['id']} \"{_first_words(follow_up(p) or p['text'], 48)}\" "
+                             f"(since {_when(p.get('openedAt') or p['createdAt'], now)})" for p in opn)
+            out.append(f"still open: {bits}. Answer each with \"Re Pn:\" at the start of a "
+                       f"paragraph, or say why not.")
+        if done:
+            bits = "; ".join(f"{p['id']} \"{_first_words(p['text'], 48)}\" "
+                             f"({p['_done'][0]} Done since {_when(p['_done'][1], now)})" for p in done)
+            out.append(f"planned, its task Done, not yet said live: {bits}. When it is live, "
+                       f"answer with \"Re Pn:\"; if it waits for a restart or more work, say so.")
+        return PREFIX + " ".join(out)
     told = items[:1]
     for p in items[1:]:
         if len(line(told + [p])) > _WAKE_MAX:
@@ -1158,11 +1336,12 @@ def _deliver(room_id: str, owner: str, items: list[dict], now: float) -> list[di
 
 
 def tick(now: float | None = None) -> list[str]:
-    """Remind each idle agent, once, of its points open past the setting.
-    Returns the ids reminded."""
+    """Remind each idle agent, once, of its points open past the setting, and
+    of its planned points whose task has been Done past the other one without
+    being said live. Returns the ids reminded."""
     now = time.time() if now is None else now
-    after = remind_after_s()
-    if after <= 0:
+    after, done_after = remind_after_s(), deliver_after_s()
+    if after <= 0 and done_after <= 0:
         return []
     out = []
     try:
@@ -1174,22 +1353,55 @@ def tick(now: float | None = None) -> list[str]:
         if rid in _GONE:
             continue
         try:
-            out += _tick_room(rid, now, after)
+            out += _tick_room(rid, now, after, done_after)
         except Exception as e:      # noqa: BLE001 — the other rooms still get theirs
             _log(f"{rid}: reminder check failed: {e!r}")
     return out
 
 
 def _told(rid: str, p: dict) -> tuple:
+    if p.get("_done"):
+        return (rid, p["id"], "done", float(p["_done"][1]))
     return (rid, p["id"], float(p.get("openedAt") or p["createdAt"]))
 
 
-def _tick_room(rid: str, now: float, after: float) -> list[str]:
+def _done_owed(rid: str, led: dict, now: float, after: float) -> list[dict]:
+    """The planned points whose task has been Done ``after`` seconds and that
+    were not reminded of it, each with ``_done``. When a task is first seen
+    Done without the time it was moved, that moment is kept on the point."""
+    plans = [p for p in led["points"] if p["state"] == "planned" and p.get("task")]
+    if not plans or after <= 0:
+        return []
+    task = task_lookup(rid)
+    out, seen = [], {}
+    for p in plans:
+        info = task(p["task"])
+        if not info or not info.get("done"):
+            continue
+        at = info.get("doneAt") or p.get("doneSeenAt")
+        if not at:
+            seen[p["id"]] = now
+            continue
+        if p.get("doneReminded") and float(p["doneReminded"]) >= float(at):
+            continue
+        if now - float(at) >= after:
+            out.append({**p, "_done": (info.get("ref") or p["task"], float(at))})
+    if seen:
+        with _LOCK:
+            cur = load(rid)
+            for p in cur["points"]:
+                if p["id"] in seen and not p.get("doneSeenAt"):
+                    p["doneSeenAt"] = seen[p["id"]]
+            _save(rid, cur)
+    return out
+
+
+def _tick_room(rid: str, now: float, after: float, done_after: float = 0.0) -> list[str]:
     if _d.chatroom.get_room(rid) is None:
         _GONE.add(rid)                  # a deleted room: its ledger is not read again
         return []
     led = load(rid)
-    if not any(p["state"] == "open" for p in led["points"]):
+    if not any(p["state"] == "open" or (p["state"] == "planned" and p.get("task")) for p in led["points"]):
         return []
     try:
         led = sync(rid, force=True)
@@ -1197,8 +1409,10 @@ def _tick_room(rid: str, now: float, after: float) -> list[str]:
         _log(f"{rid}: answers not read: {e!r}")
     owed: dict[str, list] = {}
     for p in sorted(led["points"], key=lambda p: p["createdAt"]):
-        if p["state"] == "open" and not p.get("reminded") and _told(rid, p) not in _TOLD \
-                and now - float(p.get("openedAt") or p["createdAt"]) >= after:
+        if after > 0 and p["state"] == "open" and not p.get("reminded") and _told(rid, p) not in _TOLD                 and now - float(p.get("openedAt") or p["createdAt"]) >= after:
+            owed.setdefault(p.get("owner") or "", []).append(p)
+    for p in _done_owed(rid, led, now, done_after):
+        if _told(rid, p) not in _TOLD:
             owed.setdefault(p.get("owner") or "", []).append(p)
     out = []
     for owner, items in owed.items():
@@ -1219,10 +1433,13 @@ def _tick_room(rid: str, now: float, after: float) -> list[str]:
         try:
             with _LOCK:
                 cur = load(rid)
-                ids = {p["id"] for p in told}
+                opn = {p["id"] for p in told if not p.get("_done")}
+                done = {p["id"] for p in told if p.get("_done")}
                 for p in cur["points"]:
-                    if p["id"] in ids:
+                    if p["id"] in opn:
                         p["reminded"] = now
+                    if p["id"] in done:
+                        p["doneReminded"] = now
                 _save(rid, cur)
         except Exception as e:
             _log(f"{rid}: reminder not recorded: {e!r}")

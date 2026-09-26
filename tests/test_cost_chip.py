@@ -41,8 +41,9 @@ log.card = cardHtml({ roomId: 'room-1', sessionId: 's1', label: 'Codex task', pr
 log.cardPriced = cardHtml({ roomId: 'room-2', sessionId: 's2', label: 'Claude task', updatedAt: 0, cost: 2.5, costTokens: T({ input: 9 }) }, 60);
 log.cardNone = cardHtml({ roomId: 'room-3', sessionId: 's3', label: 'Fresh', updatedAt: 0, cost: 0, costTokens: null }, 60);
 log.cardPts = cardHtml({ roomId: 'room-4', sessionId: 's4', label: 'Asked', updatedAt: 0, cost: 0, costTokens: null,
-                         points: { open: 1, answered: 2 } }, 60);
-log.pts = [pointsCountText({ open: 0, answered: 0 }), pointsCountText(null), pointsCountText({ open: 3, answered: 0 })];
+                         points: { open: 1, planned: 1, delivered: 2 } }, 60);
+log.pts = [pointsCountText({ open: 0, planned: 0, delivered: 0 }), pointsCountText(null), pointsCountText({ open: 3, delivered: 0 }),
+           pointsCountText({ open: 1, answered: 2 })];
 console.log(JSON.stringify(log));
 """
 
@@ -93,10 +94,11 @@ class CostChip(unittest.TestCase):
         self.assertNotIn("ccost", self.r["cardNone"], "nothing used, nothing shown")
 
     def test_the_persons_points_are_quiet_words_on_the_card(self):
-        self.assertIn('<span class="cpts" title="Your asks: 2 answered, not yet acknowledged · 1 waiting for an answer. '
-                      'Open the chat to see them.">2 to acknowledge · 1 open</span>', self.r["cardPts"])
+        self.assertIn('<span class="cpts" title="Your asks: 2 ready for your check · 1 in progress · 1 waiting for an answer. '
+                      'Open the chat to see them.">2 to check · 1 in progress · 1 open</span>', self.r["cardPts"])
         self.assertNotIn("cpts", self.r["cardNone"])
-        self.assertEqual(self.r["pts"], ["", "", "3 open"])
+        self.assertEqual(self.r["pts"], ["", "", "3 open", "2 to check · 1 open"],
+                         "a hub from before the stages: answered is to check")
         self.assertIn(".cpts { font-size: var(--fs-100); color: var(--fg-muted);", INDEX)
 
     def test_the_row_and_the_card_use_it(self):

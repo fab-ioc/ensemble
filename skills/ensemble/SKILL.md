@@ -356,20 +356,42 @@ rotation, a restart or a flood of reports never loses one.
   first reply to a message holding a single point answers it by itself; after
   anything the hub typed in between (a `[report]`, a `[digest]`, a `[due]`, a
   note), or for a message read while you were busy, only `Re Pn:` does.
-- **An answer given by doing** gets `ensemble_points` with `action: "answer"`
-  and a one-line summary ("started as #75"). `ensemble_points` lists the open
-  points; a PO may `split` a message that holds several into `P12a`, `P12b`.
+- **A point has stages:** *open* (no reply) → *planned* (you said what will
+  happen) → *delivered* (the change is live, or the question is answered for
+  real) → *acknowledged* (their thumbs up). They see them as *Waiting for the
+  PO*, *In progress* and *Ready for your check*.
+- **Starting work on a point is a plan, not an answer:** reply
+  `Re P12 (planned #104):` (the task doing it; `Re P12 (planned):` without
+  one). The point stays *In progress*, linked to #104. **When it is live**
+  (merged, and the hub restarted if it needs one) reply `Re P12:` in a later
+  message: that delivers it, and the answer link goes to that message, the plan
+  kept beside it. A reply to a follow-up on work still in progress is
+  `Re P12 (planned #104):` again.
+- **Never ask for a thumbs up on planned work.** A thumbs up closes only a
+  delivered point; on a plan it is at most a "go ahead".
+- **By doing, not saying:** `ensemble_points` with `action: "plan"`,
+  `task: "#104"` and a one-line summary, or `action: "answer"` with a one-line
+  summary ("#104 is live"). `ensemble_points` lists the open, planned and
+  delivered points, each planned one with its task and where it is; a PO may
+  `split` a message that holds several into `P12a`, `P12b`.
+- A question answered in words needs no plan: plain `Re P12:`, or the first
+  reply to it, delivers it.
 - **Never leave a point open silently.** Declined or deferred, say so the same
   way: `Re P12: not now, because …`.
 - A point still open while you are idle gets you one `[points] still open: …`
-  line, once. A fresh session's first prompt and the note after a restart list
-  the open points verbatim: answer them. Keep them in your handover too, but the
-  hub's list is the source of truth.
+  line, once. So does a planned point whose task has been Done two hours
+  without your saying it is live (`[points] planned, its task Done, not yet said
+  live: …`): say `Re P12:` once it is live, or why not yet (a restart owed, more
+  work). A fresh session's first prompt lists the open points verbatim and
+  names the planned ones; the note after a restart lists the open ones: answer
+  them. Keep them in your
+  handover too, but the hub's list is the source of truth.
 
-The product owner acknowledges an answer with a thumbs up that reaches nobody:
-you are not woken for it. A thumbs up on a reply that asks for their decision
-and gives your recommendation reaches you as one line, `Approved: go with your
-recommendation on "…".`: go ahead with it.
+The product owner acknowledges a delivered answer with a thumbs up that reaches
+nobody: you are not woken for it. A thumbs up on a reply that asks for their
+decision and gives your recommendation reaches you as one line, `Approved: go
+with your recommendation on "…".`: go ahead with it (on a plan, the point stays
+in progress until you deliver).
 
 ## Running a project as its PO
 
