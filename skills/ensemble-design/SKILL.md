@@ -571,8 +571,9 @@ library is never edited in this repository: a need goes to the Dock project's `E
   a chat's lines stop getting longer at about 700px, so a wider screen's width goes to the board. A
   phone (`MOBILE_MQ`) is one column: every panel a tab of one stack, the PO chat first; nothing
   floats, sits on a strip or pops out there, and a tab is not dragged.
-- **Icon:** the top bar's mark is the app's icon (`/static/icons/favicon.svg`, 20px; 22px on a
-  phone), and a popped-out panel's window takes it as its own (`pdPopIcon`).
+- **Icon:** the top bar's mark is the wordmark, or where it does not fit the app's icon
+  (`/static/icons/favicon.svg`, 22px; see *The wordmark* in §5.1), and a popped-out panel's window
+  takes the icon as its own (`pdPopIcon`).
 - **Tokens:** the library's `--dk-*` tokens read Ensemble's own (`--dk-bg` `--bg`, `--dk-bg2`
   `--surface-sunken`, `--dk-bg3` `--surface`, `--dk-line` `--border`, `--dk-accent` `--accent`,
   `--dk-focus` `--focus-ring`, …) in `:root`, so every theme and the person's accent apply without a
@@ -684,8 +685,8 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
    them. This rule is what keeps the bar thin after the next five features — it is the reason the bar
    got heavy the first time.
 
-   **One bar, one order, at every width** (#107). Left to right: **where you are** (the logo
-   `Ensemble`, which is the way home, `/`, then the project's name as a Subtle button with a caret:
+   **One bar, one order, at every width** (#107). Left to right: **where you are** (the
+   wordmark, which is the way home, `/`, then the project's name as a Subtle button with a caret:
    its menu switches project and holds the project's settings, its kind and key and, for a
    documents project without one, setting up its PO), then **what you can do here** (`#bar-here`:
    the PO screen's **Panels ▾**, `pdCtlHtml`; empty elsewhere), then the global group: search, the
@@ -693,6 +694,24 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
    task dialog with that project chosen). Panels is the one control about the page below that the
    bar carries: a PO screen has no other row to hold it, and the bar is where the page's own
    controls start. Nothing else joins `#bar-here` without replacing something.
+
+   **The wordmark** (#108; `#bar-home`, drawn by `tools/make_wordmark.py`, which writes the SVG
+   between its markers in `index.html`) is ENSEMBLE in the icon's bars: the icon is its E, the
+   other letters are bars and stems on the icon's grid in `--fg`. It is the link home, named
+   "Ensemble, all projects" (`aria-label`; the SVG is `aria-hidden`, the icon's `alt` empty).
+   - **Sizes:** the icon 22px and the letters 15.84px (the E inside the icon), 125 × 22px in all (124.5 in the SVG),
+     in a 32px link (44px on a phone). Never scaled to fit: where the word does not fit, the icon
+     alone (`img.logo`, 22px) takes its place. The word shows above 900px and on a phone from
+     410px (row one, on home and in a project, with the back arrow and the name on row two); the
+     icon alone from 641px to 900px (a long project name and the plan chip leave the word no room
+     at 768) and on a phone under 410px (row one's controls take 262px).
+   - **Colour:** tokens only, so it reads in every theme: `--fg` for the letters, and the icon's
+     own colours inside its tile. The other two variants (`lanes`: each E the icon's coral, mint
+     and amber bars; `gradient`: the word in the icon's blue to violet) read `--wm-lane-1…3`
+     and `--wm-from`/`--wm-to`, set in each theme block and measured at 4.88:1 or better on its
+     `--surface`. Switching is `py tools/make_wordmark.py lanes`; `--preview DIR` draws all three in
+     every theme with the contrast table.
+   - Nothing else joins it: no product name in text, no badge but a non-default instance's.
 
    **A project page has no rows of its own above its content.** No status row: what needs you is the
    bell's count and its tray's *Show all* (the Needs you page); what changed is on the Changes panel
@@ -873,14 +892,15 @@ desktop is untouched by construction.
    smaller than that and leaves it zoomed.
 3. **Nothing needs hover.** Whatever a pointer reveals on hover is simply shown. A `title` tooltip may
    add detail, never carry the only copy of something.
-4. **The bar fits 360px: six 44px targets and Create.** Identity goes; search folds into a button and
+4. **The bar fits 360px: six 44px targets and Create.** Identity shrinks to the icon under 410px
+   (the wordmark from 410px, §5.1); search folds into a button and
    opens over the bar, and stays open while it holds a query (§5.5: a filtered list shows why); the
    plan chip moves into the avatar menu, and its warnings still reach the banner. Anything new for the
    bar on a phone must replace something, not squeeze it.
 
    **Home is one row; a project is two.** In a project (and no task open) the bar wraps: row one is
-   search, the PO, the bell, the avatar and Create; row two is the back arrow `←` (`#bar-back`, home;
-   phone only, the logo is the way back elsewhere), the project's name with its menu, truncated,
+   the wordmark, then search, the PO, the bell, the avatar and Create; row two is the back arrow `←` (`#bar-back`, home;
+   phone only, the wordmark is the way back elsewhere), the project's name with its menu, truncated,
    and Panels at the end. `--header-h` is redeclared on `body.in-proj` so everything hanging off the
    bar follows. At 430×932 the PO screen's panel tabs start at 110px. An open task covers the page
    under the bar, so the second row steps aside then.
