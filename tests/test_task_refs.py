@@ -255,7 +255,7 @@ class IndexNumbers(unittest.TestCase):
         self.assertIn("it.ref", fn(INDEX, "needsYouHtml"))
         self.assertIn("it.ref", fn(INDEX, "notifItemHtml"))
         self.assertIn("taskRefLinkHtml(", fn(INDEX, "mdToHtml"))
-        self.assertIn("keyBtnHtml(pj)", fn(INDEX, "projectsChromeHtml"))
+        self.assertIn("key-btn", fn(INDEX, "projMenuSettingsHtml"))
         self.assertIn("/api/projects/key", fn(INDEX, "keyChoose"))
 
 

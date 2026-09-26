@@ -408,7 +408,7 @@ class RecentAndWhereInTime(unittest.TestCase):
                          line(r"^const WSF_PAGE = .*$"), line(r"^const wsfRoot = .*$"), line(r"^const wsfAbs = .*$"),
                          line(r"^const wsfOn = .*$"), line(r"^const wsfSel = .*$"), line(r"^function wsRecentRank\(.*$"),
                          fn(INDEX, "function wsPersist("),
-                         fn(INDEX, "async function wsReveal("), fn(INDEX, "async function wsfList("),
+                         fn(INDEX, "async function wsReveal("), fn(INDEX, "function wsPaintPane("), fn(INDEX, "async function wsfList("),
                          fn(INDEX, "function wsfRank("), fn(INDEX, "async function wsfSearch("),
                          fn(INDEX, "function wsRecentToggle("), fn(INDEX, "function wsfOpen("),
                          fv_fn("function fvOnKey(").replace("hostPage()", "globalThis.hostPage()")])
