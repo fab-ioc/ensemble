@@ -9047,8 +9047,7 @@ function poDockProject() {
   return pj && poRowOf(pj) ? pj : null;
 }
 // The library and its stylesheet (read as text: a hub not restarted since
-// serves .css as a download), once. Its pop-out page needs nothing served
-// (popHtml).
+// serves .css as a download), once.
 function pdLoad() {
   if (PD.loading) return PD.loading;
   const text = u => fetch(u, { credentials: 'same-origin' }).then(r => { if (!r.ok) throw new Error(u + ': ' + r.status); return r.text(); });
@@ -9070,6 +9069,14 @@ function pdLoad() {
       lib.onEveryWindow(w => {
         if (w === window) return null;
         const d = w.document, skip = new Set(['visibilitychange']);
+        // The window's page is the library's popout.html, served beside it:
+        // its base is this page's, so a relative address in a panel means
+        // the same there as here.
+        if (!d.querySelector('base')) {
+          const b = d.createElement('base');
+          b.href = document.baseURI;
+          d.head.insertBefore(b, d.head.firstChild);
+        }
         const ls = window.DOC_LISTENERS.filter(([t]) => !skip.has(t));
         for (const [t, fn, o] of ls) d.addEventListener(t, fn, o);
         PD_POP_DOCS.set(d, ls);
@@ -9128,10 +9135,11 @@ function pdEnsure() {
     sizes: { head: 32, strip: 28, unpinSize: 720 },
     popName: 'ensemble-panel-',
     popTitle: p => `${p.title} · ${(projectById(PD.pid) || {}).name || 'Ensemble'}`,
-    // The library's page from a blob: URL; the library gives it this page's
-    // base, so a panel's relative addresses (a file viewer's frame, a task
-    // link) are this page's.
-    popHtml: true,
+    // The library's pop-out page as the hub serves it, not from a blob:
+    // URL: installed as an app, a window on a page inside the manifest's
+    // scope is an app window, where a blob: page gets Chrome's strip with
+    // the address and title over the panel (#101).
+    popUrl: '/static/dock/src/popout.html',
     themeEvent: 'cd-theme',
     modalSelector: '[role="dialog"], dialog, .dk-help-pop, .dcm',
     text: { empty: 'Every panel is on a strip at an edge or hidden: the Panels menu above shows them.' },

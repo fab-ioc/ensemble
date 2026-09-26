@@ -115,6 +115,16 @@ class TheManifest(unittest.TestCase):
         self.assertEqual(m["theme_color"], "#FFFFFF", "--surface in Light")
         self.assertNotIn("token", body.decode("utf-8").lower())
 
+    def test_the_pop_out_page_is_served_inside_its_scope(self):
+        # #101: installed as an app, Chrome opens a window on a page inside the
+        # scope as an app window; a blob: page got its address strip.
+        scope = json.loads(self.hub.get("/manifest.webmanifest")[2])["scope"]
+        self.assertIn("popUrl: '/static/dock/src/popout.html',", INDEX)
+        self.assertTrue("/static/dock/src/popout.html".startswith(scope))
+        code, h, body = self.hub.get("/static/dock/src/popout.html")
+        self.assertEqual((code, h["Content-Type"]), (200, "text/html; charset=utf-8"))
+        self.assertIn(b'id="dk-pop-root"', body)
+
     def test_its_icons_exist_at_their_sizes(self):
         m = json.loads(self.hub.get("/manifest.webmanifest")[2])
         purposes = {}
