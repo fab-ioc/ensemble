@@ -1504,7 +1504,7 @@ def _points(ctx, args, handler):
     if action in ("answer", "plan"):
         summary = " ".join(str(args.get("summary") or "").split())
         task = pts.task_ref(args.get("task"))
-        if (args.get("task") or "").strip() and not task:
+        if str(args.get("task") or "").strip() and not task:
             raise ToolError(f"task {args.get('task')!r} is not a task number: give #104 or ED-104")
         if action == "plan" and not summary and task:
             summary = f"started as {task}"
