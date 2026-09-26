@@ -443,6 +443,31 @@ class Attachments(unittest.TestCase):
         self.assertEqual(self.transcript_turns(tail, [att / "a.png", cat, own]),
                          [f"[Image #2]look\n[image]\n\n[image] {att / 'a.png'}\n[image] {own}"])
 
+    def test_an_image_that_cannot_be_told_to_a_point_goes_below_the_words(self):
+        # Review 2: one from elsewhere without a line, one with its line in
+        # point 1, this chat's in point 2: two lines for three images, so the
+        # hub cannot tell which is this chat's; never another point's.
+        att = self.folder()
+        own = att / "own.png"
+        mixed = ("[Image #1][Image #2][Image #3]## Points (2)\n\n**1.** a\n[image]\n\n[point P1]\n\n"
+                 "**2.** b\n[image]\n\n[point P2]")
+        want = (f"[Image #1][Image #2]## Points (2)\n\n**1.** a\n[image]\n\n[point P1]\n\n"
+                f"**2.** b\n[image]\n\n[point P2]\n\n[image] {own}")
+        for one in (True, False):
+            self.assertEqual(self.transcript_turns(mixed, ["C:/Pictures/pasted.png", "C:/Pictures/point.png", own], one), [want], one)
+        # A literal "[image]" in a code sample is no image's line: one from
+        # elsewhere without a line, this chat's in point 1, code in point 2.
+        code = ("[Image #1][Image #2]## Points (2)\n\n**1.** a\n[image]\n\n[point P1]\n\n"
+                "**2.** b\n```text\n[image]\n```\n\n[point P2]")
+        want = (f"[Image #1]## Points (2)\n\n**1.** a\n[image]\n\n[point P1]\n\n"
+                f"**2.** b\n```text\n[image]\n```\n\n[point P2]\n\n[image] {own}")
+        for one in (True, False):
+            self.assertEqual(self.transcript_turns(code, ["C:/Pictures/pasted.png", own], one), [want], one)
+        # With every image this chat's, the code line stays and each is in its point.
+        a = att / "a.png"
+        self.assertEqual(self.transcript_turns(code.replace("[Image #1][Image #2]", "[Image #1]"), [a]), [
+            f"## Points (2)\n\n**1.** a\n[image] {a}\n\n[point P1]\n\n**2.** b\n```text\n[image]\n```\n\n[point P2]"])
+
     def test_a_codex_turn_with_an_image_keeps_its_words(self):
         # What codex logs for an image pasted into it (seen live): the turn began
         # with "<image name=…>" and was dropped as injected context.

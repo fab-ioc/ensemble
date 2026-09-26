@@ -2564,13 +2564,24 @@ const stripPointLines = t => hasPointLines(t) ? String(t).replace(POINT_LINE_RE,
 // Claude Code and Codex write "[Image #3]" into the person's turn for each
 // image it carries; the image shows as its thumbnail (the hub puts its
 // "[image] <path>" line back), the placeholder never, nor a line of nothing
-// else, nor the bare "[image]" line of an image the hub cannot show.
+// else, nor the bare "[image]" line of an image the hub cannot show. A code
+// sample is the person's words: it keeps every line as typed.
 const IMAGE_PH_RE = /[ \t]*\[Image(?: #\d+)?\][ \t]*/g;
 const IMAGE_BARE_RE = /^[ \t]*\[image\][ \t]*$/;
+const IMAGE_FENCE_RE = /^\s*(```|~~~)/;
 const hasImagePlaceholders = t => /\[Image(?: #\d+)?\]|^[ \t]*\[image\][ \t]*$/m.test(String(t || ''));
-const stripImagePlaceholders = t => !hasImagePlaceholders(t) ? String(t || '') : String(t).split('\n')
-  .map(l => { if (IMAGE_BARE_RE.test(l)) return null; const r = l.replace(IMAGE_PH_RE, ' '); return r === l ? l : r.trim() ? r.replace(/^ | $/g, '') : null; })
-  .filter(l => l !== null).join('\n').replace(/^\n+/, '');
+const stripImagePlaceholders = t => {
+  if (!hasImagePlaceholders(t)) return String(t || '');
+  let fence = null;
+  return String(t).split('\n').map(l => {
+    const f = l.match(IMAGE_FENCE_RE);
+    if (f) { fence = fence === f[1] ? null : (fence || f[1]); return l; }
+    if (fence) return l;
+    if (IMAGE_BARE_RE.test(l)) return null;
+    const r = l.replace(IMAGE_PH_RE, ' ');
+    return r === l ? l : r.trim() ? r.replace(/^ | $/g, '') : null;
+  }).filter(l => l !== null).join('\n').replace(/^\n+/, '');
+};
 const PT_WORD = { open: 'waiting for an answer', answered: 'answered', acked: 'acknowledged', dropped: 'dropped', split: 'split into parts' };
 // The answer a link goes to: the latest one with a balloon, else the latest.
 function lastAnswer(p) {

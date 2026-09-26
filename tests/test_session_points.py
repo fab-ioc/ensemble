@@ -66,7 +66,9 @@ out.keep = [...P.keep].sort(); out.unacked = [...P.unacked].sort();
 out.images = [T.stripImagePlaceholders('[Image #2] [Image #3]\n\n## Points (2)\n**1.** a\n[image] C:\\t\\attachments\\a.png'),
   T.stripImagePlaceholders('[Image #3] a picture of my own'), T.stripImagePlaceholders('look at [Image #1] this one'),
   T.stripImagePlaceholders('see [image] x and [Image 2]'), T.stripImagePlaceholders('[Image]'),
-  T.stripImagePlaceholders('[Image #1]**1.** a\n[image]\n\n**2.** b\n[image] C:\\t\\attachments\\b.png')];
+  T.stripImagePlaceholders('[Image #1]**1.** a\n[image]\n\n**2.** b\n[image] C:\\t\\attachments\\b.png'),
+  T.stripImagePlaceholders('Reproduce with this input:\n```text\n[image]\n```'),
+  T.stripImagePlaceholders('[Image #1] see\n[image]\n~~~\n[Image #2]\n[image]\n~~~\nafter')];
 // A link's preview of the person's message reads as their balloon; an agent's is as written.
 out.previews = [T.refPreview({ from: 'user', text: '[Image #2] [Image #3]\n\nPlease compare these screenshots' }),
   T.refPreview({ from: 'claude', text: 'Your [Image #2] shows it' })];
@@ -189,6 +191,9 @@ class Points(unittest.TestCase):
             "",
             # An image the hub could not show keeps a bare "[image]" line: not shown.
             "**1.** a\n\n**2.** b\n[image] C:\\t\\attachments\\b.png",
+            # A code sample is the person's words, kept as typed.
+            "Reproduce with this input:\n```text\n[image]\n```",
+            "see\n~~~\n[Image #2]\n[image]\n~~~\nafter",
         ])
         self.assertEqual(self.r["hasImages"], [True, False])
         self.assertEqual(self.r["previews"], ["Please compare these screenshots", "Your [Image #2] shows it"])

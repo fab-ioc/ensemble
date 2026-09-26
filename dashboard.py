@@ -2015,19 +2015,22 @@ def _claude_image_path(turn: dict, path: str, k: int) -> bool:
     # A line of placeholders the message began with goes whole.
     words = words.lstrip()
     # Each "[image] <path>" line typed left a bare "[image]" line where it
-    # was: the path goes back on its own one. When every placeholder has
-    # one, the k-th still bare is this image's (an image from elsewhere keeps
-    # its line, and the page does not show it); else the first.
+    # was (one in a code sample is the person's words): the path goes back on
+    # its own one. When every placeholder has one, the k-th still bare is this
+    # image's (an image from elsewhere keeps its line, and the page does not
+    # show it). Else only one the message ends with is sure to be no other
+    # image's point: an image that cannot be told goes below the words.
     bare = message_refs.IMAGE_PREFIX.strip()
     lines = words.split("\n")
-    at = [i for i, ln in enumerate(lines) if ln.strip() == bare]
-    if not at:
+    code = message_refs.fenced_lines(lines)
+    at = [i for i, ln in enumerate(lines) if ln.strip() == bare and i not in code]
+    end = len(lines)
+    while end and lines[end - 1].strip() in ("", bare) and end - 1 not in code:
+        end -= 1
+    i = at[k] if len(at) == len(tokens) else at[0] if at and at[0] >= end else None
+    if i is None:
         turn["text"] = message_refs.with_images(words.strip(), [*paths, path])
         return True
-    i = at[k] if len(at) == len(tokens) else at[0]
-    end = len(lines)
-    while end and lines[end - 1].strip() in ("", bare):
-        end -= 1
     if i < end:
         # Inside the text (a point's image): a thumbnail where it is.
         lines[i] = message_refs.image_line(path)

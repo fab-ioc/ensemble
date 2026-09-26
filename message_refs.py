@@ -63,6 +63,19 @@ _FENCE = re.compile(r"^\s*(```|~~~)")
 _TAIL_LINE = re.compile(r"^(?:\[image\] \S.*|\[point P\d{1,5}[a-z]?\][ \t]*)$")
 
 
+def fenced_lines(lines: list[str]) -> set[int]:
+    """The indexes of ``lines`` inside a code fence, its fence lines included."""
+    out, fence = set(), None
+    for i, ln in enumerate(lines):
+        f = _FENCE.match(ln)
+        if f:
+            out.add(i)
+            fence = None if fence == f.group(1) else (fence or f.group(1))
+        elif fence is not None:
+            out.add(i)
+    return out
+
+
 def split_items(text: str) -> tuple[str, list[str]] | None:
     """A numbered-items message as ``(its head, each item)``, or None when it
     is not one. Items start at ``**N.**`` lines outside code fences; the head
