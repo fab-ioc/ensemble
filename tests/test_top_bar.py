@@ -15,7 +15,9 @@ pages, with a project that has a PO (Motors) and one that has none (Plain):
   130px of the top, and nothing is wider than the screen;
 * on a phone the Workspace shows one pane at a time: a file open shows the
   file; Files shows the tree and Find, and the file's name there goes back to
-  it; on a laptop both panes show and neither switch does.
+  it; the file's viewer is hidden with its pane, and under another panel's
+  tab; on a laptop both panes show and neither switch does;
+* at 768 (a fine pointer) the bar is the laptop's, in one row.
 
 Screenshots go to $ENSEMBLE_SHOTS when it is set. Skipped without Node or Chrome.
 """
@@ -76,7 +78,9 @@ const BAR = `(() => {
 const PANE = `(() => { const p = [...document.querySelectorAll('.wsp')].find(e => e.getBoundingClientRect().height); if (!p) return null;
   const vis = s => { const e = p.querySelector(s); return !!e && getComputedStyle(e).visibility === 'visible' && e.getBoundingClientRect().height > 0; };
   const shown = s => { const e = p.querySelector(s); return !!e && e.getBoundingClientRect().width > 0; };
+  const f = p.querySelector('.wsp-frame.on');
   return { side: vis('.wsp-side'), view: vis('.wsp-view'), files: shown('.wsp-files'), tofile: shown('.wsp-tofile'),
+    frame: f ? getComputedStyle(f).visibility : null,
     tofileText: (p.querySelector('.wsp-tofile') || {}).textContent || '' }; })()`;
 async function main() {
   const { ch, ws } = await launch();
@@ -128,6 +132,11 @@ async function main() {
       await p.shot('top-bar-1440-plain-' + tab);
     }
     await p.close();
+    // ---- a tablet's width, with a fine pointer
+    const t = await page(768, 1024);
+    await go(t, A.proj); await poReady(t); await sleep(400);
+    out.po768 = await t.evalIn(BAR);
+    await t.close();
     // ---- a phone
     const q = await page(430, 932, true);
     await q.until('!!document.querySelector("header")');
@@ -144,6 +153,10 @@ async function main() {
     await q.evalIn('[...document.querySelectorAll(".wsp-tofile")].find(e => e.getBoundingClientRect().width).click(); 0');
     await sleep(200);
     out.phoneBack = await q.evalIn(PANE);
+    // Another panel's tab: the Workspace's file does not show through it.
+    await q.evalIn("pdReveal('po-chat'); 0");
+    await sleep(300);
+    out.phoneChat = await q.evalIn(`(() => { const f = PD.els.workspace.querySelector('.wsp-frame.on'); return f ? getComputedStyle(f).visibility : null; })()`);
     await q.close();
   } finally {
     try { ch.kill(); } catch (e) {}
@@ -231,6 +244,9 @@ class TheTopBar(unittest.TestCase):
                          ["bar-home", "proj-switch", "bar-here", "search", "po-pill", "notif-btn", "me-btn", "new-btn"])
         self.assertEqual(self.got["po"]["name"], "Motors")
         self.assertLessEqual(self.got["po"]["header"], 50, "one row on a laptop")
+        self.assertEqual(self.order(self.got["po768"]), self.order(self.got["po"]), "the same at 768")
+        self.assertLessEqual(self.got["po768"]["header"], 50)
+        self.assertLessEqual(self.got["po768"]["scrollW"], self.got["po768"]["vw"])
 
     def test_home_has_nothing_here(self):
         home = self.got["home"]
@@ -278,14 +294,15 @@ class TheTopBar(unittest.TestCase):
 
     def test_the_workspace_on_a_phone_is_one_pane_at_a_time(self):
         f, t, b = self.got["phoneFile"], self.got["phoneTree"], self.got["phoneBack"]
-        self.assertEqual((f["side"], f["view"], f["files"]), (False, True, True), "a file open: the file")
-        self.assertEqual((t["side"], t["view"], t["tofile"]), (True, False, True), "Files: the tree and Find")
+        self.assertEqual((f["side"], f["view"], f["files"], f["frame"]), (False, True, True, "visible"), "a file open: the file")
+        self.assertEqual((t["side"], t["view"], t["tofile"], t["frame"]), (True, False, True, "hidden"), "Files: the tree and Find, the file's viewer hidden too")
         self.assertIn("#1 Notes.md", t["tofileText"])
-        self.assertEqual((b["side"], b["view"]), (False, True), "the file's name goes back to it")
+        self.assertEqual((b["side"], b["view"], b["frame"]), (False, True, "visible"), "the file's name goes back to it")
+        self.assertEqual(self.got["phoneChat"], "hidden", "another panel's tab hides the Workspace's file")
 
     def test_the_workspace_on_a_laptop_shows_both_panes_and_no_switch(self):
         w = self.got["wideWs"]
-        self.assertEqual((w["side"], w["view"], w["files"], w["tofile"]), (True, True, False, False))
+        self.assertEqual((w["side"], w["view"], w["files"], w["tofile"], w["frame"]), (True, True, False, False, "visible"))
 
 
 if __name__ == "__main__":

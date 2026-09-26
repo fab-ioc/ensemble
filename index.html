@@ -1146,9 +1146,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .seg.gb { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
   .seg.gb button { background: transparent; border: 0; color: var(--fg-subtle); font: inherit; font-size: 12px; padding: 5px 12px; cursor: pointer; }
   .seg.gb button.on { background: var(--selected-bg); color: var(--selected-fg); font-weight: 600; }
-  .crumbs { display: flex; align-items: center; gap: 8px; padding: 8px 4px 12px; font-size: 13px; color: var(--fg-subtle); }
-  .crumbs .crumb-back { color: var(--link); text-decoration: none; font-weight: 600; }
-  .crumbs .sep { color: var(--fg-muted); } .crumbs b { color: var(--fg); }
   .proj-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; padding: 4px 2px 20px; }
   .proj { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 15px; display: flex; flex-direction: column; gap: 10px; cursor: pointer; transition: border-color .12s, transform .12s; }
   .proj:hover { border-color: var(--border-strong); transform: translateY(-1px); }
@@ -1171,20 +1168,18 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .proj .badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px; }
   .proj .badge.changed { color: var(--c-warning-fg); background: var(--c-warning-bg); border: 1px solid transparent; }
   .proj .badge.clean { color: var(--fg-muted); border: 1px solid var(--border); }
-  /* Project actions: "+ New task" on a card, "+ New project" (card + bar button),
-     and the drilled-in crumb button. */
-  .proj .newtask, .newproj-btn, .crumb-newtask { font-size: 11.5px; font-weight: 600; padding: 4px 10px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface); color: var(--fg); cursor: pointer; white-space: nowrap; }
-  .proj .newtask:hover, .newproj-btn:hover, .crumb-newtask:hover { border-color: var(--border-strong); color: var(--fg); }
+  /* Project actions: "+ New task" on a card, "+ New project" (card + bar button). */
+  .proj .newtask, .newproj-btn { font-size: 11.5px; font-weight: 600; padding: 4px 10px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface); color: var(--fg); cursor: pointer; white-space: nowrap; }
+  .proj .newtask:hover, .newproj-btn:hover { border-color: var(--border-strong); color: var(--fg); }
   .proj .newtask { margin-left: auto; }
   .newproj-btn { margin-left: auto; }
-  .crumb-newtask { margin-left: 10px; }
   .proj.newproj { border-style: dashed; color: var(--fg-subtle); }
   .proj.newproj:hover { border-color: var(--border-strong); color: var(--fg); }
   .proj.unassigned { border-style: dashed; }
   .gitmark { display: inline-block; font-size: 9.5px; font-weight: 700; letter-spacing: .04em; padding: 1px 5px; border-radius: 4px; margin-left: 5px; color: var(--fg-subtle); border: 1px solid var(--border); vertical-align: 1px; }
   .srow.more, .srow.none { color: var(--fg-muted); cursor: default; font-size: 11.5px; }
   .srow.more:hover, .srow.none:hover { background: transparent; }
-  /* Project tabs (Tasks | Workspace) under the breadcrumb. */
+  /* A project's tabs (Overview | Workspace | Changes), right under the bar. */
   .ptabs { display: flex; gap: 2px; margin: 4px 0 10px; border-bottom: 1px solid var(--border); }
   .ptabs button { background: transparent; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px; padding: 6px 12px; font-size: 12.5px; font-weight: 600; color: var(--fg-subtle); cursor: pointer; }
   .ptabs button:hover { color: var(--fg); }
@@ -1492,6 +1487,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .wst[hidden], .wsp-bar[hidden], .wsp-own[hidden] { display: none; }
   /* The switches between the tree and the file: a phone's only (MOBILE_MQ). */
   .wsp-btn.wsp-files, .wsp-btn.wsp-tofile { display: none; }
+  /* A viewer showing says visibility: visible, which beats a hidden ancestor:
+     a panel off its tab (the Dock's .dk-off) hides its viewers too. */
+  .dk-panel.dk-off .wsp-frame.on { visibility: hidden; }
   .wsp-frames { position: relative; flex: 1; min-height: 0; }
   .wsp-gone p { margin: 0 0 var(--s-200); }
   .wsp-gone-path { font-family: var(--font-mono); font-size: var(--fs-200); color: var(--fg-muted); overflow-wrap: anywhere; }
@@ -2812,7 +2810,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .colsel { flex: 1 1 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
     .colsel::-webkit-scrollbar { display: none; }
     .colchip { flex: 0 0 auto; }
-    .ptabs button, .viewsw button, .fbtn, .fchip, .colchip, .colall, .crumb-back, .crumb-newtask, .proj .newtask,
+    .ptabs button, .viewsw button, .fbtn, .fchip, .colchip, .colall, .proj .newtask,
     .newproj-btn, .rm-btn, .po-btn, .dp-tab, .dp-popout, .dp-actions button,
     .dp-actions select, .scopebar select, .chp-repo, .srow, .wse, .chf,
     .dest-row, .dl-cbtns button, #usage-banner-dismiss, #update-banner-dismiss, #update-banner-go,
@@ -2852,6 +2850,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .wsp > .wsp-side, .wsp > .wsp-view { grid-area: 1 / 1; }
     .wsp > .wsp-side { border-bottom: 0; }
     .wsp.ws-tree > .wsp-view, .wsp:not(.ws-tree) > .wsp-side { visibility: hidden; pointer-events: none; }
+    .wsp.ws-tree > .wsp-view .wsp-frame.on { visibility: hidden; }   /* it says visible itself */
     .wsp-btn.wsp-files { display: inline-flex; align-items: center; font-weight: 600; }
     .wsp-btn.wsp-tofile { display: inline-flex; align-items: center; gap: var(--s-050); min-width: 0; max-width: 45%; }
     .wsp-btn.wsp-tofile[hidden] { display: none; }
@@ -2870,11 +2869,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
        is cut from the left and swipes sideways within itself. */
     .wsp-bar { padding-block: 0; }
     .wsc-dir, .wsp-btn, .wsp-own { height: var(--touch-min); min-width: var(--touch-min); }
-    /* The project's crumbs wrap rather than cut the kind, New task or the
-       view switch off at the edge of a 360px screen. */
-    .crumbs { flex-wrap: wrap; row-gap: var(--s-100); }
     /* A documents project's history and recent changes, finger-sized. */
-    .wsh-ver, .dch-file, .kind-btn, .key-btn { min-height: var(--touch-min); }
+    .wsh-ver, .dch-file { min-height: var(--touch-min); }
     /* The project setup dialog: a choice is its whole row, and every row,
        field and button is finger-sized. */
     dialog#setup-modal { width: calc(100vw - 2 * var(--s-400)); max-width: none; padding: var(--s-400); }
@@ -2956,7 +2952,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     height: calc(100dvh - var(--top-h)); padding-bottom: var(--s-400);
   }
   body.po-dock #view { flex: 0 0 auto; }
-  body.po-dock #view .crumbs { margin-bottom: var(--s-300); }
   /* The dock fills what the chrome leaves, under the task panel and the bar.
      The host clips to its rounded border. */
   body.po-dock #po-dock-host {
@@ -3056,8 +3051,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .pdp-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   .pdp-btn[disabled] { color: var(--fg-disabled); cursor: default; }
   .pdp-note { margin: 0; color: var(--fg-muted); font-size: var(--fs-200); }
-  /* The dock's own controls sit at the end of the Overview's crumbs row: the
-     Panels menu (show or hide each panel, Reset layout). */
+  /* The dock's own controls sit in the top bar (#bar-here): the Panels menu
+     (show or hide each panel, Reset layout). */
   .pd-ctl { display: inline-flex; align-items: center; gap: var(--s-100); margin-left: auto; }
   /* A phone: one column, the panels as tabs (the library's narrow mode, which
      draws no control that moves a panel). Tabs a finger can hit. */
@@ -5695,7 +5690,7 @@ function renderRuntimeConfig() {
   }
 }
 
-// Status strip + group-by control (landing) or breadcrumb (inside a project).
+// Group-by control (landing) or the project's tabs (inside a project).
 // SELECTED_PROJECT holds a project ID (from the registry, or '__unassigned__').
 // Membership comes from the server's per-project session list — recorded, not
 // re-derived from cwd — so drilling in can never show an empty table.
@@ -11766,7 +11761,7 @@ function renderRows() {
     return;
   } else if (SELECTED_PROJECT && PROJECT_TAB === 'workspace') {
     // Drilled into a project on the Workspace tab: file tree + viewer instead
-    // of the task table. The chrome — status strip, crumbs, tabs — is a view
+    // of the task table. The chrome — the tab row — is a view
     // of live data, written only when it changes so a tab is never replaced
     // under a click. The panel is STATE and lives outside #view entirely (see
     // the markup), so nothing here can destroy it.
