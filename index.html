@@ -2947,6 +2947,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     border: 1px solid var(--border); border-radius: var(--r-300); overflow: clip;
   }
   body.po-dock #po-dock { position: absolute; inset: 0; background: var(--bg); }
+  /* Just after a click restored a minimised panel: its second click, if it
+     lands on the chat that slid under the pointer, is the dock's (pdDblGuard). */
+  #po-dock.pd-dbl iframe { pointer-events: none; }
   .dk-bar { background: var(--bg); }
   .dk-row > .dk-bar { border-left-color: var(--border); }
   .dk-col > .dk-bar { border-top-color: var(--border); }
@@ -9228,6 +9231,21 @@ function pdEnsure() {
   pdPlaceChat();
   return PD.dock;
 }
+// A click on a minimised panel's title bar restores it (Dock), and the bar can
+// move from under the pointer: the second click of a double click then lands
+// on the panel's body. Dock takes that click as the title bar's, but an
+// iframe there (the PO chat) would swallow it; so for Dock's double-click
+// time the dock's iframes let clicks through to their panel.
+const PD_DBL_MS = 500;
+let pdDblT = 0;
+function pdDblGuard(e) {
+  const head = e.detail === 1 && e.target.closest && e.target.closest('.dk-head');
+  if (!head || e.target.closest('.dk-ctl') || !head.closest('.dk-min')) return;
+  PD_ROOT.classList.add('pd-dbl');
+  clearTimeout(pdDblT);
+  pdDblT = setTimeout(() => PD_ROOT.classList.remove('pd-dbl'), PD_DBL_MS);
+}
+PD_ROOT.addEventListener('click', pdDblGuard, true);
 // A panel came on screen: what it shows is drawn now, not at the next refresh.
 function pdShown(id) {
   if (id === 'board' || id === 'documents' || id === 'workspace' || id === 'changes') renderRows();

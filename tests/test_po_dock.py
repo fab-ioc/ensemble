@@ -397,6 +397,20 @@ async function main() {
       const to = await at();
       out.minDrag = { wasMin, moved: to[0] !== from[0] || to[1] !== from[1], min: await p.evalIn(`(${fl}).classList.contains('dk-min')`) };
       await p.evalIn('PD.dock.toggleMin("points"); PD.dock.dockBack("points"); 0'); await sleep(300);
+      // The PO chat docked at the bottom and minimised: restoring it grows it upwards, and the second click of a
+      // double click lands on the chat's iframe; it still maximises.
+      await p.evalIn('PD.dock.dockEdge("po-chat", "bottom"); 0'); await sleep(300);
+      await p.evalIn('PD.dock.toggleMin("po-chat"); 0'); await sleep(300);
+      const ctab = 'PD.els["po-chat"].closest(".dk-stack").querySelector(\'[data-dk-tab="po-chat"]\')';
+      const [cx, cy] = await p.evalIn(`(() => { const r = (${ctab}).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+      for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x: cx, y: cy, button: 'left', clickCount: 1 }, p.sessionId);
+      await sleep(200);
+      // What is under the pointer without the guard (the chat's iframe), the guard left as it was.
+      const under = await p.evalIn(`(() => { const d = document.getElementById('po-dock'), on = d.classList.contains('pd-dbl'); d.classList.remove('pd-dbl'); const t = document.elementFromPoint(${cx}, ${cy}).tagName; d.classList.toggle('pd-dbl', on); return t; })()`);
+      for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x: cx, y: cy, button: 'left', clickCount: 2 }, p.sessionId);
+      await sleep(700);
+      out.chatDbl = { under, maxed: await p.evalIn('!!PD.els["po-chat"].closest(".dk-max")'), min: await p.evalIn('PD.els["po-chat"].closest(".dk-stack").classList.contains("dk-min")'), guard: await p.evalIn('document.getElementById("po-dock").classList.contains("pd-dbl")') };
+      await p.evalIn('PD.dock.restoreMax(); PD.dock.reset(); 0'); await sleep(400);
     }
 
     // Layout changes keep every iframe's page: the PO chat's and an open file's.
@@ -882,6 +896,10 @@ class InChrome(unittest.TestCase):
     def test_a_dragged_minimised_panel_stays_minimised(self):
         self.assertEqual(self.got["minDrag"], {"wasMin": True, "moved": True, "min": True},
                          "a drag on the title bar moves the panel and does not restore it")
+
+    def test_a_double_click_on_a_minimised_bottom_chat_maximises_it(self):
+        self.assertEqual(self.got["chatDbl"], {"under": "IFRAME", "maxed": True, "min": False, "guard": False},
+                         "the second click lands where the chat's iframe now is; it is still the dock's, and the guard ends")
 
     def test_a_slow_double_click_on_a_minimised_panel_maximises_it(self):
         self.assertEqual(self.got["slowDbl"], {"maxed": True, "min": False})

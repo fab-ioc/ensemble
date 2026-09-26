@@ -553,7 +553,9 @@ Workspace, Changes** (`PD_IDS` in `index.html`; Your asks is `points`). The pers
 on a strip at an edge (slides out on hover or click), minimised, maximised, hidden from the Panels
 menu, or popped out into a window of their own. **One click on a minimised panel's title bar
 brings it back** (the library's, from v0.3.5: `minClickRestores`, on by default); its controls
-keep their own clicks, a drag is not a click, and a double click still maximises. The layout is remembered in the browser (`cd-po-dock`; a phone's apart, `cd-po-dock-phone`), with **Reset layout** in the Panels menu. The
+keep their own clicks, a drag is not a click, and a double click still maximises (also when the
+restored chat's iframe slides under the pointer: for 500 ms after that click the dock's iframes
+let clicks through, `pdDblGuard`). The layout is remembered in the browser (`cd-po-dock`; a phone's apart, `cd-po-dock-phone`), with **Reset layout** in the Panels menu. The
 library is never edited in this repository: a need goes to the Dock project's `ENSEMBLE-NEEDS.md`.
 
 - **The default** (`pdDefaultLayout`, measured in `tests/test_po_dock.py`): at a laptop's width (about
