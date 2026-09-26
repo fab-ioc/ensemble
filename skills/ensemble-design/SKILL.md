@@ -699,7 +699,7 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
    between its markers in `index.html`) is ENSEMBLE in the icon's bars: the icon is its E, the
    other letters are bars and stems on the icon's grid in `--fg`. It is the link home, named
    "Ensemble, all projects" (`aria-label`; the SVG is `aria-hidden`, the icon's `alt` empty).
-   - **Sizes:** the icon 22px and the letters 15.84px (the E inside the icon), 126 × 22px in all,
+   - **Sizes:** the icon 22px and the letters 15.84px (the E inside the icon), 125 × 22px in all (124.5 in the SVG),
      in a 32px link (44px on a phone). Never scaled to fit: where the word does not fit, the icon
      alone (`img.logo`, 22px) takes its place. The word shows above 900px and on a phone from
      410px (row one, on home and in a project, with the back arrow and the name on row two); the
