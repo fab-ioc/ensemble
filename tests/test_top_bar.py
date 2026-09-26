@@ -17,7 +17,10 @@ pages, with a project that has a PO (Motors) and one that has none (Plain):
   file; Files shows the tree and Find, and the file's name there goes back to
   it; the file's viewer is hidden with its pane, and under another panel's
   tab; on a laptop both panes show and neither switch does;
-* at 768 (a fine pointer) the bar is the laptop's, in one row.
+* at 768 (a fine pointer) the bar is the laptop's, in one row;
+* the wordmark leads the bar and goes home: the whole word at 1440, 1024 and
+  a 430 phone (row one, on home and in a project), the icon alone at 768 and
+  under 410px; nothing overlaps or runs off the screen at any of them.
 
 Screenshots go to $ENSEMBLE_SHOTS when it is set. Skipped without Node or Chrome.
 """
@@ -75,6 +78,25 @@ const BAR = `(() => {
     ptabs: !!document.querySelector('.ptabs'), panels: !!document.querySelector('#bar-here .pd-panels'), here: document.getElementById('bar-here').innerHTML.trim() !== '',
     name: document.getElementById('proj-switch-name').textContent, scrollW: document.documentElement.scrollWidth, vw: innerWidth };
 })()`;
+// The wordmark (#bar-home): which of it shows, where, and whether anything in
+// the bar runs off the screen or over another control.
+const WM = `(() => {
+  const a = document.getElementById('bar-home');
+  const vis = e => !!e && e.getBoundingClientRect().width > 0 && getComputedStyle(e).visibility !== 'hidden';
+  const box = e => { const b = e.getBoundingClientRect(); return { x: Math.round(b.left), y: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height), r: Math.round(b.right), b: Math.round(b.bottom) }; };
+  const ctl = ['bar-back', 'bar-home', 'proj-switch', 'bar-here', 'search', 'search-open', 'po-pill', 'usage-chip', 'notif-btn', 'me-btn', 'new-btn']
+    .map(id => document.getElementById(id)).filter(vis).map(e => ({ id: e.id, ...box(e) }));
+  const hit = [];
+  for (let i = 0; i < ctl.length; i++) for (let j = i + 1; j < ctl.length; j++) {
+    const p = ctl[i], q = ctl[j];
+    if (p.x < q.r - 1 && q.x < p.r - 1 && p.y < q.b - 1 && q.y < p.b - 1) hit.push(p.id + '/' + q.id);
+  }
+  const svg = a.querySelector('svg.bar-word'), img = a.querySelector('.logo'), hd = document.querySelector('header');
+  return { word: vis(svg), logo: vis(img), link: box(a), mark: box(vis(svg) ? svg : img), href: a.getAttribute('href'),
+    name: a.getAttribute('aria-label') || '', svgHidden: svg ? svg.getAttribute('aria-hidden') : null, imgAlt: img.getAttribute('alt'),
+    right: Math.max(...ctl.map(r => r.r)), overlaps: hit, vw: innerWidth, scrollW: document.documentElement.scrollWidth,
+    headerOver: hd.scrollWidth - hd.clientWidth };
+})()`;
 const PANE = `(() => { const p = [...document.querySelectorAll('.wsp')].find(e => e.getBoundingClientRect().height); if (!p) return null;
   const vis = s => { const e = p.querySelector(s); return !!e && getComputedStyle(e).visibility === 'visible' && e.getBoundingClientRect().height > 0; };
   const shown = s => { const e = p.querySelector(s); return !!e && e.getBoundingClientRect().width > 0; };
@@ -90,7 +112,7 @@ async function main() {
     const { targetId } = await c.send('Target.createTarget', { url: 'about:blank' });
     const { sessionId } = await c.send('Target.attachToTarget', { targetId, flatten: true });
     await c.send('Page.enable', {}, sessionId);
-    await c.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: !!mobile }, sessionId);
+    await c.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: mobile ? 3 : 1, mobile: !!mobile }, sessionId);
     if (mobile) await c.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 }, sessionId);
     const evalIn = async (expr) => { const r = await c.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }, sessionId); if (r.exceptionDetails) throw new Error(expr.slice(0, 120) + ' :: ' + JSON.stringify(r.exceptionDetails).slice(0, 600)); return r.result.value; };
     const until = async (expr, ms = 20000) => { const t = Date.now(); while (Date.now() - t < ms) { let v = null; try { v = await evalIn(expr); } catch (e) {} if (v) return v; await sleep(150); } throw new Error('timeout: ' + expr); };
@@ -109,13 +131,26 @@ async function main() {
     await p.until('!!PD.els.workspace.querySelector(".wst-tab.on")', 15000);
     await sleep(300);
   };
+  // The wordmark where the page is, and its picture in a light and a dark theme.
+  out.wm = {};
+  const wm = async (p, key) => {
+    out.wm[key] = await p.evalIn(WM);
+    for (const theme of ['light', 'dark']) {
+      await p.evalIn(`document.documentElement.dataset.theme = ${JSON.stringify(theme)}; 0`);
+      await sleep(100);
+      await p.shot('wordmark-' + key + '-' + theme);
+    }
+    await p.evalIn('document.documentElement.dataset.theme = "light"; 0');
+  };
   try {
     // ---- a laptop
     const p = await page(1440, 900);
     await p.until('!!document.querySelector("header")');
     out.home = await p.evalIn(BAR);
+    await wm(p, '1440-home');
     await go(p, A.proj); await poReady(p); await sleep(400);
     out.po = await p.evalIn(BAR);
+    await wm(p, '1440-po');
     await p.shot('top-bar-1440-po');
     await p.evalIn('document.getElementById("proj-switch").click(); 0');
     await p.until('!document.getElementById("proj-menu").hidden');
@@ -132,17 +167,32 @@ async function main() {
       await p.shot('top-bar-1440-plain-' + tab);
     }
     await p.close();
+    // ---- a small laptop: the wordmark goes home
+    const s = await page(1024, 768);
+    await s.until('!!document.querySelector("header")');
+    await wm(s, '1024-home');
+    await go(s, A.proj); await poReady(s); await sleep(400);
+    await wm(s, '1024-po');
+    await s.evalIn('document.getElementById("bar-home").click(); 0');
+    await sleep(300);
+    out.homeClick = await s.evalIn('({ proj: SELECTED_PROJECT, inProj: document.body.classList.contains("in-proj"), path: location.pathname })');
+    await s.close();
     // ---- a tablet's width, with a fine pointer
     const t = await page(768, 1024);
+    await t.until('!!document.querySelector("header")');
+    await wm(t, '768-home');
     await go(t, A.proj); await poReady(t); await sleep(400);
     out.po768 = await t.evalIn(BAR);
+    await wm(t, '768-po');
     await t.close();
     // ---- a phone
     const q = await page(430, 932, true);
     await q.until('!!document.querySelector("header")');
     out.phoneHome = await q.evalIn(BAR);
+    await wm(q, '430-home');
     await go(q, A.proj); await poReady(q); await sleep(400);
     out.phonePo = await q.evalIn(`({ ...${BAR}, tabsTop: Math.round(Math.min(...[...document.querySelectorAll('.dk-head')].map(e => e.getBoundingClientRect()).filter(b => b.height).map(b => b.top))) })`);
+    await wm(q, '430-po');
     await q.shot('top-bar-430-po');
     await openDoc(q);
     out.phoneFile = await q.evalIn(PANE);
@@ -158,6 +208,15 @@ async function main() {
     await sleep(300);
     out.phoneChat = await q.evalIn(`(() => { const f = PD.els.workspace.querySelector('.wsp-frame.on'); return f ? getComputedStyle(f).visibility : null; })()`);
     await q.close();
+    // ---- smaller phones
+    for (const w of [390, 360]) {
+      const r = await page(w, 800, true);
+      await r.until('!!document.querySelector("header")');
+      await wm(r, w + '-home');
+      await go(r, A.proj); await poReady(r); await sleep(400);
+      await wm(r, w + '-po');
+      await r.close();
+    }
   } finally {
     try { ch.kill(); } catch (e) {}
   }
@@ -227,6 +286,8 @@ class TheTopBar(unittest.TestCase):
         out = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding="utf-8", timeout=300)
         assert out.returncode == 0, out.stderr[-4000:]
         cls.got = json.loads(out.stdout.strip().splitlines()[-1])
+        if shots:
+            (Path(shots) / "wordmark.json").write_text(json.dumps(cls.got["wm"], indent=1), encoding="utf-8")
 
     @classmethod
     def tearDownClass(cls):
@@ -299,6 +360,39 @@ class TheTopBar(unittest.TestCase):
         self.assertIn("#1 Notes.md", t["tofileText"])
         self.assertEqual((b["side"], b["view"], b["frame"]), (False, True, "visible"), "the file's name goes back to it")
         self.assertEqual(self.got["phoneChat"], "hidden", "another panel's tab hides the Workspace's file")
+
+    def test_the_wordmark_is_the_way_home_at_every_width(self):
+        wm = self.got["wm"]
+        # Where the whole word shows, and where the icon alone does (768:
+        # a long project name and the plan chip leave it no room; under 410px
+        # a phone's row one has none).
+        word = {"1440-home", "1440-po", "1024-home", "1024-po", "430-home", "430-po"}
+        self.assertEqual(set(wm), word | {"768-home", "768-po", "390-home", "390-po", "360-home", "360-po"})
+        for k, g in wm.items():
+            with self.subTest(k):
+                self.assertEqual((g["word"], g["logo"]), (k in word, k not in word))
+                self.assertEqual(g["href"], "/")
+                self.assertIn("Ensemble", g["name"], "an accessible name")
+                self.assertEqual(g["imgAlt"], "")
+                self.assertEqual(g["svgHidden"], "true", "the link's name says it once")
+                self.assertEqual(g["mark"]["h"], 22)
+                self.assertLessEqual(g["mark"]["y"] + g["mark"]["h"], 49, "on the bar's first row")
+                self.assertGreaterEqual(g["mark"]["y"], 0)
+                self.assertLess(g["mark"]["x"], 24, "at the bar's left end")
+                self.assertEqual(g["overlaps"], [])
+                if k[:3] in ("430", "390", "360"):
+                    self.assertGreaterEqual(min(g["link"]["w"], g["link"]["h"]), 44, "finger-sized")
+                self.assertLessEqual(g["right"], g["vw"], "nothing runs off the screen")
+                self.assertLessEqual(g["scrollW"], g["vw"])
+                self.assertLessEqual(g["headerOver"], 0)
+        self.assertGreater(wm["1440-home"]["mark"]["w"], 120, "the whole word")
+        self.assertEqual(self.got["homeClick"], {"proj": None, "inProj": False, "path": "/"}, "a click goes home")
+
+    def test_the_wordmark_leaves_a_phone_project_its_room(self):
+        g = self.got["phonePo"]
+        at = {i["id"]: i for i in g["items"]}
+        self.assertLess(at["bar-home"]["y"], at["bar-back"]["y"], "on row one, above back and the name")
+        self.assertLessEqual(g["tabsTop"], 110, "the panel tabs start where they did")
 
     def test_the_workspace_on_a_laptop_shows_both_panes_and_no_switch(self):
         w = self.got["wideWs"]
