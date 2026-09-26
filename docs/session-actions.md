@@ -76,7 +76,7 @@ defers the top-slot rewrite while a menu is open.
 
 ## Inputs
 
-`state`: `kind` (`raw` | `room` | `orphan`), `sessionId`, `roomId`, `cwd`,
+`state`: `kind` (`raw` | `room` | `orphan` | `past`), `sessionId`, `roomId`, `cwd`,
 `pid`, `agent`, `label`, `live`, `draft`, `status`, `archived`, `members`,
 `makePo` (the hub's answer), `currentTheme`, `chatSchemeOn`, `resuming`.
 For a room, `status` is its lifecycle (`active` | `paused` | `waiting_human`)
@@ -98,6 +98,11 @@ and pop-out get the same model by construction.
 | room, stopped | Resume |
 | room, running | End (Default variant: it keeps the session) |
 | orphan | Open |
+| past (a conversation a task's seat left behind, opened from a PO's *Past conversations*) | none |
+
+A **past** conversation is read only: its only item is *Open in {FM} / Browse
+the folder* (off without a cwd). Continuing it would split its seat in two,
+and moving, archiving, deleting or making it a PO would take it from its task.
 
 ## More actions: groups in a fixed order
 

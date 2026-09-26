@@ -2657,6 +2657,17 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   dialog #su-folder-note[data-alert], dialog #su-err { color: var(--c-danger-fg); }
   dialog #su-err:empty, dialog .kind-opt[hidden] { display: none; }
   dialog #su-closed-field:not([hidden]) { display: block; margin: var(--s-200) 0 0; }
+  /* A PO's past conversations (pastList): one quiet row each, a button that opens it. */
+  dialog .pc-list { list-style: none; margin: var(--s-300) 0; padding: 0; max-height: 52vh; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: var(--r-200); }
+  dialog .pc-list li + li { border-top: 1px solid var(--border); }
+  dialog button.pc-item { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%;
+    min-height: 44px; padding: var(--s-200) var(--s-300); border-radius: 0; background: transparent;
+    color: var(--fg); font-weight: 400; text-align: left; }
+  dialog button.pc-item:hover { background: var(--hover); }
+  dialog button.pc-item:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+  dialog .pc-t { font-size: var(--fs-300); overflow-wrap: anywhere; }
+  dialog .pc-m { font-size: var(--fs-100); color: var(--fg-muted); }
   dialog .im-field input:focus,
   dialog .im-field textarea:focus {
     border-color: var(--focus-ring);
@@ -3918,7 +3929,7 @@ function applyPlatformChrome() {
 function actionState(r, isLive) {
   const isRoom = !!(r.headless && r.roomId);
   return {
-    kind: r.orphan ? 'orphan' : isRoom ? 'room' : 'raw',
+    kind: r.orphan ? 'orphan' : isRoom ? 'room' : r.pastOf ? 'past' : 'raw',
     sessionId: r.sessionId, roomId: r.roomId || '', cwd: r.cwd || '', pid: r.pid || '',
     agent: r.agent || '', label: r.label || '', live: !!isLive, draft: !!r.draft,
     status: isRoom ? (r.roomStatus || '') : (r.status || ''), resuming: !!r.resuming,
@@ -4116,7 +4127,7 @@ function openDetail(sid) {
   try { if (chat && chat.contentWindow) chat.contentWindow.postMessage({ ensemble: 'shown' }, location.origin); } catch (e) {}
   renderRows();
   loadCostDetail(sid);
-  const row = ALL_ROWS.find(x => x.sessionId === sid);
+  const row = rowBySid(sid);
   loadChatTheme(row ? row.cwd : '');
 }
 
@@ -4199,8 +4210,14 @@ async function loadChatTheme(cwd) {
   if (SELECTED_SID) renderDetail();
 }
 
+// What a row is called on a card and in the list: its name, or for a
+// conversation nobody named its first words as the hub gives them (the
+// person's own line, or what kind of hub conversation it is).
+function rowTitle(r) {
+  return r.label || r.firstWords || '(session)';
+}
 function detailTitle(r) {
-  return r.label || r.first
+  return r.label || r.firstWords || r.first
     || ((r.cwd || '').split(/[\\/]/).pop().replace(/^\d+_/, '').replace(/_/g, ' '))
     || (r.sessionId || '').replace(/^grp:/, '').slice(0, 8) || 'session';
 }
@@ -4476,7 +4493,7 @@ const DP_MENU_OPEN = '.wf-menu:not([hidden]), .ov-menu:not([hidden]), .pr-menu:n
 function renderDetail() {
   const sid = SELECTED_SID;
   if (!sid) { closeDetail(); return; }
-  const r = ALL_ROWS.find(x => x.sessionId === sid);
+  const r = rowBySid(sid);
   const panel = $('#detail-panel');
   if (!r) {
     panel.dataset.sig = '';
@@ -5020,7 +5037,7 @@ function renderHeadlessRow(r, parsed, now) {
   return `<tr class="row headless${attnCls} ${liveClasses}" data-room="${esc(r.roomId || '')}" data-orphan="${r.orphan ? '1' : ''}" data-sid="${esc(r.sessionId)}" draggable="false">
     <td>${statusDot}</td>
     ${prioCell(r)}
-    <td class="topic" title="${esc(attn ? attn.reason : r.cwd)}">${taskNoHtml(r, !SELECTED_PROJECT)}${esc(r.label || '(session)')}${agentBadges(r)}</td>
+    <td class="topic" title="${esc(attn ? attn.reason : r.cwd)}">${taskNoHtml(r, !SELECTED_PROJECT)}${esc(rowTitle(r))}${agentBadges(r)}</td>
     <td class="tag">${attnBadge}${liveBadge}</td>
     ${actionsTd}
   </tr>`;
@@ -5143,7 +5160,7 @@ function cardHtml(r, now) {
   const working = r.isLive && r.status === 'busy' ? ' working' : '';
   return `<article class="card${working}" draggable="true" data-room="${esc(r.roomId || '')}" data-sid="${esc(r.sessionId)}">
     ${loz}
-    <div class="ctitle">${taskNoHtml(r, !SELECTED_PROJECT)}${esc(r.label || '(session)')}</div>
+    <div class="ctitle">${taskNoHtml(r, !SELECTED_PROJECT)}${esc(rowTitle(r))}</div>
     <div class="crow1">${r.roomId ? prioIcon(prioOf(r)) : ''}${runChip(r)}${costChipHtml(r, 'ccost')}${pointsCountHtml(r.points, 'cpts')}${proj}</div>
     <div class="crow2">${cardAgents(r)}<span class="cwhen">${esc(fmtAgo(now - r.updatedAt))}</span></div>
   </article>`;
@@ -5787,7 +5804,7 @@ function projectsLandingHtml() {
     const count = tasks.length;
     const rows = tasks.slice(0, 4).map(sn => {
       const st = projectSessionState(sn);
-      return `<div class="srow" data-sid="${esc(sn.roomId || sn.sessionId || '')}"><span class="sdot ${st}"></span>${sn.roomId ? prioIcon(prioOf(sn)) : ''}<span class="stitle">${esc(sn.label || sn.sessionId || 'session')}</span><span class="stime">${agoSpan(sn.updatedAt)}</span></div>`;
+      return `<div class="srow" data-sid="${esc(sn.roomId || sn.sessionId || '')}"><span class="sdot ${st}"></span>${sn.roomId ? prioIcon(prioOf(sn)) : ''}<span class="stitle">${esc(sn.label || sn.firstWords || sn.sessionId || 'session')}</span><span class="stime">${agoSpan(sn.updatedAt)}</span></div>`;
     }).join('');
     const more = count > 4 ? `<div class="srow more">… ${count - 4} more</div>` : '';
     const wait = p.waiting ? `<span class="waitchip">⚠ ${p.waiting} waiting</span>` : '';
@@ -10131,6 +10148,8 @@ document.addEventListener('click', async (ev) => {
   if (kb) { kindChoose(kb.dataset.proj); return; }
   const kyb = ev.target.closest('.key-btn');
   if (kyb) { keyChoose(kyb.dataset.proj); return; }
+  const pab = ev.target.closest('.past-btn');
+  if (pab) { pastList(pab.dataset.proj); return; }
   const act = ev.target.closest('#po-panel .po-head [data-po]');
   if (act) {
     const head = act.closest('.po-head'), what = act.dataset.po;
@@ -10152,6 +10171,66 @@ document.addEventListener('click', async (ev) => {
   // beside, the bar, or a dialog it opened.
   if (PO_PEEK && !ev.target.closest('#po-panel, #detail-panel, #modal, header, #notif-tray, #detail-panel-resize')) poClosePeek();
 });
+
+// ---- A PO's past conversations ------------------------------------------------
+// Each rotation, switch or handover starts a PO afresh, and the conversation it
+// leaves is the PO's history, not a card of its own (/api/room/past, which also
+// finds the ones from before the hub recorded them). The project menu lists
+// them; each opens read only in the task panel, as any history does.
+const PAST_ROWS = new Map();   // sessionId -> a past conversation opened from its list
+function rowBySid(sid) {
+  return ALL_ROWS.find(x => x.sessionId === sid) || PAST_ROWS.get(sid) || null;
+}
+function pastCount(pj) {
+  const po = pj && poRowOf(pj);
+  return (po && po.pastConversations) || 0;
+}
+const PAST_VIA = { rotation: 'handed over', review: 'a review', retired: 'taken off the task', before: 'kept from before the record' };
+function pastItemHtml(r) {
+  let when = '';
+  try { when = new Date((r.updatedAt || 0) * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }); } catch (e) {}
+  const c = costChip(r);
+  // The person's own first words only: a hub brief's kind says nothing here.
+  const words = r.label || (r.ownWords ? r.firstWords : '');
+  const meta = [r.agent === 'codex' ? 'Codex' : 'Claude', c ? c.text : '',
+                r.turns ? `${r.turns} message${r.turns === 1 ? '' : 's'}` : '', PAST_VIA[r.via] || ''].filter(Boolean);
+  return `<li><button type="button" class="pc-item" data-sid="${esc(r.sessionId)}" title="Read this conversation">`
+    + `<span class="pc-t">${esc(when || r.sessionId.slice(0, 8))}${words ? ` · ${esc(words)}` : ''}</span>`
+    + `<span class="pc-m">${meta.map(esc).join(' · ')}</span></button></li>`;
+}
+function pastListHtml(pj, got, err) {
+  const rows = (got && got.sessions) || [];
+  const body = err ? `<p class="cfg-hint" role="alert">${esc(err)}</p>`
+    : !got ? '<p class="cfg-hint">Loading…</p>'
+    : rows.length ? `<ul class="pc-list">${rows.map(pastItemHtml).join('')}</ul>`
+    : '<p class="cfg-hint">None yet: this PO is still in its first conversation.</p>';
+  return `<h3>Past conversations of ${esc(pj.name)}’s PO</h3>`
+    + `<p class="cfg-hint">A PO is started afresh from its handover when its conversation grows long, or when it is switched to the other agent. The conversations it left are kept here, newest first. They are read only; nothing is deleted.</p>`
+    + body + `<div class="actions"><button id="pc-close" class="secondary">Close</button></div>`;
+}
+async function pastList(pid) {
+  const pj = projectById(pid), po = pj && poRowOf(pj);
+  if (!po) return;
+  const dlg = pdModal();
+  const paint = (got, err) => {
+    dlg.innerHTML = pastListHtml(pj, got, err);
+    dlg.querySelector('#pc-close').onclick = () => dlg.close();
+    dlg.querySelectorAll('.pc-item').forEach(b => { b.onclick = () => pastOpen(b.dataset.sid); });
+  };
+  paint(null, '');
+  dlg.showModal();
+  try {
+    const got = await api('/api/room/past?roomId=' + encodeURIComponent(po.roomId));
+    (got.sessions || []).forEach(r => PAST_ROWS.set(r.sessionId, r));
+    if (dlg.open) paint(got, '');
+  } catch (e) { if (dlg.open) paint(null, 'Could not load them: ' + histErr(e)); }
+}
+function pastOpen(sid) {
+  if (!PAST_ROWS.has(sid)) return;
+  const dlg = pdModal();
+  if (dlg.open) dlg.close();
+  openDetail(sid);
+}
 
 // ---- Documents project: begin ------------------------------------------------
 // A documents project is a folder of files, not code (car ads, a leasing
@@ -13104,8 +13183,9 @@ document.getElementById('bar-here').addEventListener('click', (e) => {
   const b = e.target.closest('.pd-panels');
   if (b) pdMenu(b);
 });
-// The project's settings, under the projects in its menu: its kind, its key
-// and, for a documents project without one, setting up its PO. They were
+// The project's settings, under the projects in its menu: its kind, its key,
+// its PO's past conversations and, for a documents project without one,
+// setting up its PO. They were
 // buttons beside its name; the page's click handler knows them by class.
 function projMenuSettingsHtml(pj) {
   if (!pj || !pj.registered || pj.id === UNASSIGNED_ID) return '';
@@ -13114,6 +13194,8 @@ function projMenuSettingsHtml(pj) {
       + `<span class="pm-name">Kind: ${isDocsProject(pj) ? 'Documents project' : 'Code project'}…</span></button>` : '',
     pj.key ? `<button class="pm-item pm-set key-btn" data-proj="${esc(pj.id)}" title="${esc(`Its tasks are ${pj.key}-18 where tasks of several projects are listed`)}">`
       + `<span class="pm-name">Key: ${esc(pj.key)}…</span></button>` : '',
+    pastCount(pj) ? `<button class="pm-item pm-set past-btn" data-proj="${esc(pj.id)}" title="The conversations its PO had before the current one: each rotation, switch or handover starts it afresh. Read only">`
+      + `<span class="pm-name">Past PO conversations (${pastCount(pj)})…</span></button>` : '',
     poChooseOffered(pj) ? `<button class="pm-item pm-set po-choose" data-proj="${esc(pj.id)}" title="Make a conversation you already had, or a fresh one, its PO: the other tasks report to it, and its conversation joins this page">`
       + `<span class="pm-name">Set up the PO…</span></button>` : '',
   ].filter(Boolean);

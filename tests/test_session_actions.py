@@ -67,6 +67,7 @@ const states = {
   noCwdTask: { kind: 'room', sessionId: 'room-6', roomId: 'room-6', cwd: '' },
   resuming: { kind: 'room', sessionId: 'room-7', roomId: 'room-7', cwd: 'C:\\t', resuming: true },
   orphan: { kind: 'orphan', sessionId: 'grp-1', makePo: { ok: false, code: 'orphan', reason: 'Its record is gone.' } },
+  past: { kind: 'past', sessionId: 'old-1', cwd: 'C:\\w', agent: 'claude', makePo: ok },
 };
 const shape = m => ({
   primary: m.primary && [m.primary.id, m.primary.label, !!m.primary.disabled, m.primary.reason || '', m.primary.variant || ''],
@@ -117,6 +118,10 @@ class TheMatrix(unittest.TestCase):
                                         ["finder", "ide", "colours", "chat-colours"], ["delete"]])
         self.assertEqual(g("draft"), g("taskOne"))
         self.assertEqual(g("orphan"), [["makepo"], ["delete"]])
+        # A seat's past conversation is read only: its folder, nothing that
+        # would continue, move or remove it.
+        self.assertEqual(g("past"), [["finder"]])
+        self.assertIsNone(self.o["past"]["hub"]["primary"])
         # Destructive last, and red.
         for k in ("rawHistory", "rawLive", "taskOne", "taskRunning", "orphan"):
             last = self.o[k]["hub"]["items"][g(k)[-1][0]]

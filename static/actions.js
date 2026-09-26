@@ -36,7 +36,7 @@ function makePoItem(s) {
   return { ...base, disabled: true, reason: why || 'It cannot become a PO.' };
 }
 
-// state: kind ('raw' | 'room' | 'orphan'), sessionId, roomId, cwd, pid, agent,
+// state: kind ('raw' | 'room' | 'orphan' | 'past'), sessionId, roomId, cwd, pid, agent,
 //   label, live, draft, status, archived, members, makePo, currentTheme,
 //   chatSchemeOn, resuming.
 // env: hub (this browser is on the hub machine), features {focus, themes,
@@ -71,7 +71,12 @@ function sessionActions(s, env) {
     return item;
   };
 
-  if (s.kind === 'orphan') {
+  if (s.kind === 'past') {
+    // A conversation a task's seat left behind (a PO's rotation, a switch, a
+    // handover): read only. Continuing it would split the seat in two, and
+    // moving, archiving or deleting it would take it from its task.
+    folder.push(finder);
+  } else if (s.kind === 'orphan') {
     primary = { id: 'open', label: 'Open', variant: 'primary', cls: 'orphan-open', data: { grp: sid }, title: 'Resume this collaboration headless' };
     org.push(makePoItem(s));
     danger.push({ id: 'delete', label: 'Delete…', danger: true, cls: 'orphan-delete', data: { grp: sid },
