@@ -138,6 +138,7 @@ text), and `src/host.js` for apps whose panels open dialogs (below).
 | `popHtml` | none | `true`: open the pop-out page (`POP_HTML`) from a `blob:` URL of its text instead of loading `popUrl`; or the text of a page of the app's own (it needs an element with id `dk-pop-root`; its scripts run as any page's) |
 | `popBase` | `document.baseURI` | with `popHtml`: the base URL of the pop-out page's relative URLs, put in it as `<base href>` (the page's own HTML `<base href>`, if it has one, is kept instead); the page is read with the browser's `DOMParser` and written back from it, so a comment before `<html>` is dropped; `false`: no `<base>`, the page as given, its base its `blob:` URL |
 | `copyStyles` | `true` | copy the page's `<link rel=stylesheet>` and `<style>` into a pop-out window |
+| `popBackButton` | `true` | the pop-out window's "Back to main window" button (`.dk-pop-back`); `false`: not rendered at all (closing the window still puts the panel back) |
 | `themeAttrs`, `themeEvent` | `data-theme data-scheme class style`, `'dock-theme'` | what of `<html>` a pop-out window copies, and the event that says the theme changed (a MutationObserver also watches) |
 | `help` | none | `{ icon(key, panel) → html, mount(doc) → { destroy } \| fn, selector }`; `createHelp()` makes one |
 | `modalSelector` | `[role="dialog"], .dk-help-pop` | clicks and Escape inside these leave unpinned panels and maximise alone |

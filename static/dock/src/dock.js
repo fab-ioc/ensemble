@@ -175,6 +175,7 @@ export function panelsFrom(container) {
  *   defaultLayout, minSize, edgeOf, fill, defaultSize, sizes    the layout's defaults (layout.js makeConfig)
  *   popUrl, popName, popTitle, copyStyles, openWindow           pop-out windows
  *   popHtml, popBase                        a pop-out page without a served file, and the base of its relative URLs
+ *   popBackButton                           the pop-out's "Back to main window" button (default true)
  *   themeAttrs, themeEvent                  what of the main page's <html> a pop-out window copies, and when
  *   help: { icon(key, panel), mount(doc), selector }            a panel's help control, and its popovers in a window
  *   minClickRestores                        a click on a minimised panel's title bar restores it (default true)
@@ -190,7 +191,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   copyStyles = true, themeAttrs = THEME_ATTRS, themeEvent = THEME_EVENT, help = {}, modalSelector = '[role="dialog"], .dk-help-pop',
   badgeClass = 'dk-badge', text = {}, onReset = null, migrate = null,
   defaultLayout, minSize, edgeOf, fill, defaultSize, sizes,
-  narrow = false, narrowLayout, narrowKey, can = null, popHtml = null, popBase, minClickRestores = true,
+  narrow = false, narrowLayout, narrowKey, can = null, popHtml = null, popBase, minClickRestores = true, popBackButton = true,
   openWindow = (url, name, features) => (win && typeof win.open === 'function' ? win.open(url, name, features) : null) }) {
   const doc = root.ownerDocument;
   const T = { ...TEXT, ...text };
@@ -931,8 +932,10 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     sec.setAttribute('aria-label', p.title);
     const head = cd.createElement('div');
     head.className = 'dk-head dk-mono';
-    head.innerHTML = `<div class="dk-tabs" role="tablist">${tabHtml(id, true, false)}</div><span class="dk-ctl">`
-      + `<button type="button" class="dk-pop-back" data-dk-pop="back" title="${escText(T.backToMainTitle)}">${icon('back')}<span>${escText(T.backToMain)}</span></button></span>`;
+    const backBtn = popBackButton
+      ? `<button type="button" class="dk-pop-back" data-dk-pop="back" title="${escText(T.backToMainTitle)}">${icon('back')}<span>${escText(T.backToMain)}</span></button>`
+      : '';
+    head.innerHTML = `<div class="dk-tabs" role="tablist">${tabHtml(id, true, false)}</div><span class="dk-ctl">${backBtn}</span>`;
     const body = cd.createElement('div');
     body.className = 'dk-body';
     p.el.classList.add('dk-panel');
@@ -1579,7 +1582,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   const DBL_PX = 6;
   function secondClick(e) {
     const r = restored;
-    if (!r || e.timeStamp - r.t > DBL_MS || Math.abs(e.clientX - r.x) > DBL_PX || Math.abs(e.clientY - r.y) > DBL_PX) return false;
+    if (!r || e.button !== 0 || e.timeStamp - r.t > DBL_MS || Math.abs(e.clientX - r.x) > DBL_PX || Math.abs(e.clientY - r.y) > DBL_PX) return false;
     const head = e.target.closest && e.target.closest('.dk-head');
     return !(head && head.querySelector(`[data-dk-tab="${CSS_ESC(r.id)}"]`));
   }
