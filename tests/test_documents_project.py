@@ -528,8 +528,8 @@ at('p-docs');
 out.docsPoSplit = poSplitProject();
 out.docsNote = poNoteHtml();
 out.docsFrame = overviewFrameHtml({ poSplit: false, chrome: '[chrome]', poNote: poNoteHtml(), inner: '[board]', edges: '' });
-out.docsKind = kindBtnHtml(projectById('p-docs'));
-out.docsChoose = poChooseBtnHtml(projectById('p-docs'));
+out.docsKind = projMenuSettingsHtml(projectById('p-docs'));
+out.docsChoose = out.docsKind;
 out.docsDialog = kindDialogHtml(projectById('p-docs'));
 renderPoPill(projectById('p-docs')); out.docsPill = pill.hidden;
 const panel = docsPanelHtml(projectById('p-docs'));
@@ -540,13 +540,13 @@ out.panelBox = [panel.indexOf('> Show task folders</label>'), panel.indexOf('cla
 at('p-code');
 out.codeNote = poNoteHtml();
 out.codeFrame = overviewFrameHtml({ poSplit: false, chrome: '[chrome]', poNote: poNoteHtml(), inner: '[board]', edges: '' });
-out.codeKind = kindBtnHtml(projectById('p-code'));
-out.codeChoose = poChooseBtnHtml(projectById('p-code'));
+out.codeKind = projMenuSettingsHtml(projectById('p-code'));
+out.codeChoose = out.codeKind;
 pill.hidden = true; renderPoPill(projectById('p-code')); out.codePill = pill.hidden;
 at('p-po');
 out.poSplit = (poSplitProject() || {}).id || null;
 out.poDialog = kindDialogHtml(projectById('p-po'));
-out.poChoose = poChooseBtnHtml(projectById('p-po'));
+out.poChoose = projMenuSettingsHtml(projectById('p-po'));
 
 // A documents project with a PO: its PO screen, as in a code project, whichever
 // tab was last asked for (its Workspace is a panel there).
@@ -555,7 +555,7 @@ out.dpoSplit = (poSplitProject() || {}).id || null;
 out.dpoNote = poNoteHtml();
 out.dpoFrame = overviewFrameHtml({ poSplit: true, chrome: '[chrome]', poNote: '', inner: '[board]', edges: '[edges]' });
 at('p-dpo', 'workspace'); out.dpoSplitOnWorkspace = poSplitProject();
-out.dpoChoose = poChooseBtnHtml(projectById('p-dpo'));
+out.dpoChoose = projMenuSettingsHtml(projectById('p-dpo'));
 out.dpoDialog = kindDialogHtml(projectById('p-dpo'));
 pill.hidden = true; pill._inner = ''; renderPoPill(projectById('p-dpo')); out.dpoPill = [pill.hidden, pill._inner || ''];
 
@@ -634,7 +634,7 @@ DEPS = ["esc", "agoSpan", "wsNorm", "wsSame", "wsJoin", "wsTabName", "wsFmtSize"
         "wsHidden", "wsRowsHtml", "wsCtxKey", "drParse", "drContent", "drHighlight", "drRowHtml",
         "WS_EMPTY", "WS_MAC", "WS_RECENT_KEY", "WS_ICON_TREE", "wsPanelHtml",
         "DOCS_TASKS_KEY", "docsTasksShown", "docsTasksSet", "docsApart", "docsInTask",
-        "pointsCountText", "pointsCountTip"]
+        "pointsCountText", "pointsCountTip", "projMenuSettingsHtml", "poChooseOffered"]
 
 
 @unittest.skipUnless(NODE, "node is not installed")
@@ -653,8 +653,9 @@ class ThePage(unittest.TestCase):
         self.assertEqual(o["docsNote"], "")
         self.assertTrue(o["docsPill"], "no PO pill")
         self.assertEqual(o["docsFrame"], "[chrome][board]", "no files above the board, no note asking for a PO")
-        self.assertIn(">Documents project<", o["docsKind"])
-        self.assertIn('class="po-btn po-choose" data-proj="p-docs"', o["docsChoose"])
+        # Its kind, and setting up its PO, are in the project's menu (the bar).
+        self.assertIn(">Kind: Documents project…<", o["docsKind"])
+        self.assertIn('class="pm-item pm-set po-choose" data-proj="p-docs"', o["docsChoose"])
         self.assertIn(">Set up the PO…<", o["docsChoose"])
         self.assertNotRegex(o["docsDialog"], r"has a PO|Choosing a PO|stays a code project|disabled",
                             "the Kind dialog no longer mentions the PO exclusion")
@@ -685,10 +686,10 @@ class ThePage(unittest.TestCase):
         self.assertIn("This project has no PO.", o["codeNote"])
         self.assertEqual(o["codeFrame"], "[chrome]" + o["codeNote"] + "[board]")
         self.assertFalse(o["codePill"], "the No PO pill still shows")
-        self.assertIn(">Code project<", o["codeKind"])
-        self.assertEqual(o["codeChoose"], "", "a code project says how to get a PO in its note")
+        self.assertIn(">Kind: Code project…<", o["codeKind"])
+        self.assertNotIn("po-choose", o["codeChoose"], "a code project says how to get a PO in its note")
         self.assertEqual(o["poSplit"], "p-po")
-        self.assertEqual(o["poChoose"], "")
+        self.assertNotIn("po-choose", o["poChoose"])
         self.assertNotRegex(o["poDialog"], r"has a PO|Choosing a PO|stays a code project")
         self.assertNotIn("disabled", o["poDialog"], "a project with a PO may become a documents project")
         self.assertIn("Its Overview is the PO screen: the PO chat, your asks and the board as panels.", o["poDialog"], "the code option describes the PO screen")
@@ -699,7 +700,7 @@ class ThePage(unittest.TestCase):
         self.assertEqual((o["dpoSplitOnWorkspace"] or {}).get("id"), "p-dpo", "its Workspace is a panel of the PO screen")
         self.assertEqual(o["dpoNote"], "")
         self.assertEqual(o["dpoFrame"], '<div class="po-chrome">[chrome]</div><div class="po-board">[board]</div>[edges]')
-        self.assertEqual(o["dpoChoose"], "")
+        self.assertNotIn("po-choose", o["dpoChoose"])
         self.assertNotRegex(o["dpoDialog"], r"has a PO|Choosing a PO|stays a code project|disabled")
         self.assertFalse(o["dpoPill"][0], "the PO pill shows")
         self.assertIn('<span class="po-pill-t">PO</span><span class="po-pill-p">Cars</span>', o["dpoPill"][1])

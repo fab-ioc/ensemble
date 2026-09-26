@@ -501,23 +501,40 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     text-rendering: optimizeLegibility;
     font-feature-settings: "ss01", "cv11";
   }
-  /* The bar carries identity, where-am-I, find, what-needs-me, me, create —
-     and nothing about the current view, which is the rule that keeps it thin
-     after the next five features. Its height is --header-h rather than an
-     accident of padding, because eight other surfaces hang off that number. */
+  /* The bar, left to right: where you are and the way back (the app / the
+     project and its menu), what you can do here (a PO screen's Panels), then
+     the global things: search, the PO, the plan, what needs you, you, Create.
+     Nothing else about the current view: that is the rule that keeps it thin
+     after the next five features. It is also the project's header, so a
+     project page has no crumbs row under it. Its height is --header-h rather
+     than an accident of padding, because eight other surfaces hang off that
+     number. */
   header {
     height: var(--header-h);
     padding: 0 var(--s-400); border-bottom: 1px solid var(--border);
     display: flex; gap: var(--s-200); align-items: center;
     position: sticky; top: var(--banner-h); background: var(--surface); z-index: 10;
   }
+  .bar-where { display: flex; align-items: center; gap: var(--s-100); min-width: 0; flex: 0 1 auto; }
   header h1 {
     font: 600 var(--fs-300)/1 var(--font-sans);
     margin: 0; flex-shrink: 0;
     letter-spacing: -0.01em;
     color: var(--fg);
-    display: inline-flex; align-items: center; gap: var(--s-200);
   }
+  #bar-home {
+    display: inline-flex; align-items: center; gap: var(--s-200); height: 32px; padding: 0 var(--s-100);
+    border-radius: var(--r-200); color: var(--fg); text-decoration: none;
+  }
+  #bar-home:hover { background: var(--hover); }
+  #bar-home:focus-visible, .bar-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .bar-sep { color: var(--fg-muted); flex: none; }
+  /* The project you are in is where you are: it reads as a name, not a
+     control, and its caret says it opens. */
+  #proj-switch { min-width: 0; max-width: 280px; }
+  body.in-proj #proj-switch { color: var(--fg); font-size: var(--fs-300); font-weight: 600; }
+  #bar-here { display: flex; align-items: center; gap: var(--s-100); flex: none; }
+  #bar-here:empty, .bar-break { display: none; }
   .bar-gap { flex: 1 1 0; min-width: var(--s-200); }
   .bar-btn {
     display: inline-flex; align-items: center; gap: 5px;
@@ -559,6 +576,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     border-radius: var(--r-full); padding: 0 6px; font-size: var(--fs-100); font-weight: 600;
   }
   .pm-rule { height: 1px; background: var(--border); margin: var(--s-100) 0; }
+  .pm-head { padding: var(--s-100) 10px; font-size: var(--fs-100); font-weight: 600; text-transform: uppercase;
+    letter-spacing: .05em; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #proj-menu { max-height: 60vh; overflow-y: auto; max-width: 320px; }
   /* Search syntax. A placeholder is not documentation. */
   #search-help-pop { width: 300px; padding: var(--s-300); }
@@ -683,14 +702,14 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     font-size: var(--fs-200);
     transition: border-color .12s, box-shadow .12s;
   }
-  /* Narrow laptop / side-by-side split. The switcher is the only way to
-     change project, so it keeps its place and gives up its label instead —
-     the name lives in the tooltip. */
+  /* Narrow laptop / side-by-side split. The app's name goes before the
+     project's: the icon still says which app, and the project is where you
+     are. A control never loses its label (it used to leave a lone caret). */
   @media (max-width: 900px) {
-    #proj-switch-name { display: none; }
+    .bar-word { display: none; }
     #plan-usage-slot .usage-chip-label { display: none; }   /* the numbers stay; the word goes */
-    #proj-switch { max-width: none; padding: 0 8px; }
-    .search-wrap { min-width: 140px; }
+    #proj-switch { max-width: 180px; padding: 0 8px; }
+    .search-wrap { min-width: 120px; }
   }
   #search:focus {
     outline: none; border-color: var(--focus-ring);
@@ -1119,14 +1138,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .tx-text.md a { color: var(--link); }
   .mention { color: var(--c-discovery-fg); font-weight: 600; background: var(--c-discovery-bg); border-radius: var(--r-100); padding: 0 3px; }
   /* Projects-first shell */
-  .statusbar { display: flex; align-items: center; gap: 14px; padding: 10px 4px 4px; font-size: 12.5px; color: var(--fg-subtle); flex-wrap: wrap; }
-  .statusbar .stat { display: inline-flex; align-items: center; gap: 6px; }
-  .statusbar .stat.needs { color: var(--c-warning-fg); background: var(--c-warning-bg); font-weight: 600; padding: 3px 11px; border-radius: var(--r-full); }
-  /* It looks like a chip, so it acts like one: it opens Needs you. */
-  .statusbar button.stat.needs { border: 0; font: inherit; font-weight: 600; cursor: pointer; }
-  .statusbar button.stat.needs:hover { filter: brightness(.96); }
-  .statusbar button.stat.needs:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
-  .statusbar .stat.okstat { color: var(--c-success-fg); }
   .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--run-working); animation: livep 1.6s infinite; }
   @keyframes livep { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run-working) 45%, transparent); } 70% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--run-working) 0%, transparent); } 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run-working) 0%, transparent); } }
   .listctl { display: flex; align-items: center; gap: 10px; padding: 6px 4px 12px; font-size: 12px; color: var(--fg-subtle); }
@@ -1176,6 +1187,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ptabs button { background: transparent; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px; padding: 6px 12px; font-size: 12.5px; font-weight: 600; color: var(--fg-subtle); cursor: pointer; }
   .ptabs button:hover { color: var(--fg); }
   .ptabs button.on { color: var(--fg); border-bottom-color: var(--accent); }
+  .ptabs.none { border-bottom: 0; }
+  .ptabs .viewsw { align-self: center; margin-bottom: var(--s-100); }
+  .ptab-n { margin-left: var(--s-100); color: var(--fg-muted); font-size: var(--fs-100); font-weight: 400; font-variant-numeric: tabular-nums; }
+  .lc-changed { color: var(--fg-subtle); white-space: nowrap; }
   /* ---- The PO ------------------------------------------------------------
      One element, #po-panel, in two places: inside the PO chat panel on a
      project's PO screen, and a drawer the bar's pill opens anywhere else.
@@ -2241,7 +2256,15 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     font-size: 11px; font-weight: 600; color: var(--fg-subtle);
     text-transform: uppercase; letter-spacing: .06em; padding: 4px 6px 8px;
   }
+  .notif-head { display: flex; align-items: center; gap: var(--s-100); }
   .notif-head #notif-sub { text-transform: none; letter-spacing: 0; font-weight: 400; }
+  #notif-all {
+    margin-left: auto; height: 24px; padding: 0 var(--s-200); border: 0; border-radius: var(--r-200);
+    background: transparent; color: var(--link); font: inherit; font-size: var(--fs-200);
+    text-transform: none; letter-spacing: 0; font-weight: 500; cursor: pointer;
+  }
+  #notif-all:hover { background: var(--hover); }
+  #notif-all:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   .notif-item {
     display: block; width: 100%; text-align: left; cursor: pointer;
     background: transparent; border: 0; border-radius: 8px;
@@ -2646,15 +2669,12 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      instead of the cramped desktop slide-over). Keep this selector in sync with
      MOBILE_MQ in the script. */
   @media (max-width: 640px), (max-width: 1024px) and (pointer: coarse) {
-    /* Header: ONE fixed-height row (panels below hang off --header-h, so it
-       must not wrap/grow). Logo-only brand, and search takes what is left.
+    /* Header: fixed-height rows (panels below hang off --header-h, so it
+       never grows by itself). Search takes what is left.
        The five filter buttons that used to have to scroll horizontally here
        are gone — they live in the view's own filter row now. */
     header { gap: 6px; padding: 0 10px; }
-    header h1 { font-size: 0; flex: 0 0 auto; }   /* hide wordmark, keep icon */
-    header h1 .logo { width: 22px; height: 22px; }
     .bar-gap { display: none; }                   /* no room to centre anything */
-    #proj-switch { max-width: 96px; }
     .search-wrap { flex: 1 1 auto; min-width: 0; max-width: none; }
     #search { min-width: 0; }
     #search-help { display: none; }               /* the popover needs a pointer */
@@ -2713,15 +2733,33 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
        bar, and the plan chip moves into the avatar menu (a warning still
        reaches the banner above the bar). */
     header { gap: 0; padding: 0 var(--s-100); }
-    header h1 { display: none; }
+    header h1, .bar-sep { display: none; }
     #plan-usage-slot { display: none; }
     .me-item.me-phone { display: flex; }
-    #proj-switch, #search-open, #notif-btn, #me-btn {
+    #bar-back, #search-open, #notif-btn, #me-btn {
       width: var(--touch-min); min-width: var(--touch-min); height: var(--touch-min);
       padding: 0; justify-content: center; border-color: transparent; border-radius: var(--r-200);
     }
+    #bar-back { font-size: var(--fs-500); color: var(--fg); }
     #search-open { display: inline-flex; margin-left: auto; }
-    #proj-switch { max-width: none; }
+    /* Home lists every project, so the bar is one row there. In a project
+       the bar has a second row: back, the project's name (its menu) and what
+       you can do here. An open task covers the page under the bar and needs
+       none of it, so the row steps aside then. --header-h follows, and with
+       it everything that hangs off the bar. */
+    .bar-where, #bar-here { display: none; }
+    body.in-proj:not(.detail-open) {
+      --header-h: calc(2 * var(--touch-min) + 3 * var(--s-100) + 1px);
+      --top-h: calc(var(--header-h) + var(--banner-h));
+      --chrome-h: calc(var(--top-h) + 217px);
+    }
+    body.in-proj:not(.detail-open) header { flex-wrap: wrap; align-content: center; row-gap: var(--s-100); }
+    body.in-proj:not(.detail-open) .bar-break { display: block; flex-basis: 100%; height: 0; order: 1; }
+    body.in-proj:not(.detail-open) .bar-where { display: flex; order: 2; flex: 1 1 0; }
+    body.in-proj:not(.detail-open) #bar-here:not(:empty) { display: flex; order: 3; }
+    body.in-proj.search-open:not(.detail-open) .search-wrap { bottom: auto; height: var(--touch-min); top: var(--s-100); }
+    #proj-switch { height: var(--touch-min); max-width: none; flex: 0 1 auto; padding: 0 var(--s-200); }
+    #proj-switch-name { min-width: 0; }
     #po-pill { height: var(--touch-min); min-width: var(--touch-min); justify-content: center; }
     #po-pill:not(.none) { padding: 0; border-color: transparent; }
     #me-btn { background: transparent; }
@@ -2791,8 +2829,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .wf-btn, .pr-btn { position: relative; }
     .wf-btn::after { content: ''; position: absolute; inset: calc((16px - var(--touch-min)) / 2) 0; }
     .pr-btn::after { content: ''; position: absolute; inset: calc((100% - var(--touch-min)) / 2) 0; }
-    .statusbar button.stat.needs { position: relative; }
-    .statusbar button.stat.needs::after { content: ''; position: absolute; inset: calc((100% - var(--touch-min)) / 2) 0; }
     .dp-meta { padding-top: var(--s-400); margin-top: calc(-1 * var(--s-400)); }
     #detail-panel .dp-meta { padding-bottom: var(--s-400); margin-bottom: calc(-1 * var(--s-100)); }
 
@@ -3083,14 +3119,23 @@ window.DOC_LISTENERS_PAUSED = false;
   </div>
 </div>
 <header>
-  <h1>
-    <img class="logo" src="/static/icons/favicon.svg" alt="" width="20" height="20">
-    Ensemble
-  </h1>
-  <!-- Where am I. Jump projects without going home first. -->
-  <button id="proj-switch" class="bar-btn" title="Switch project" aria-haspopup="true" aria-expanded="false">
-    <span id="proj-switch-name">All projects</span><span class="caret">▾</span>
-  </button>
+  <!-- Where you are, and the way back: the app (its every project) / the
+       project, whose menu switches project and holds the project's settings.
+       On a phone the back arrow stands for the app, and this group and the
+       next take the bar's second row. -->
+  <nav class="bar-where" aria-label="Where you are">
+    <button id="bar-back" class="bar-btn icon" type="button" title="All projects" aria-label="Back to all projects" hidden>←</button>
+    <h1><a id="bar-home" href="/" title="All projects">
+      <img class="logo" src="/static/icons/favicon.svg" alt="" width="20" height="20"><span class="bar-word">Ensemble</span>
+    </a></h1>
+    <span class="bar-sep" aria-hidden="true">/</span>
+    <button id="proj-switch" class="bar-btn" title="Switch project, or change this project's kind and key" aria-haspopup="true" aria-expanded="false">
+      <span id="proj-switch-name">All projects</span><span class="caret">▾</span>
+    </button>
+  </nav>
+  <!-- What you can do here: a PO screen's Panels menu (barPaint). -->
+  <div id="bar-here"></div>
+  <div class="bar-break"></div>
   <div class="bar-gap"></div>
   <!-- Phone only: the bar has no room for a search box, so search folds into
        this button and opens over the bar. -->
@@ -3154,7 +3199,7 @@ window.DOC_LISTENERS_PAUSED = false;
 </div>
 <div id="proj-menu" hidden></div>
 <div id="notif-tray" hidden>
-  <div class="notif-head">Needs you <span id="notif-sub"></span></div>
+  <div class="notif-head">Needs you <span id="notif-sub"></span><button type="button" id="notif-all" title="Every task that needs you, as a page">Show all</button></div>
   <div id="notif-list"></div>
 </div>
 <div id="usage-tray" hidden>
@@ -5656,37 +5701,32 @@ function pdCtlHtml() {
     + ` title="Show or hide each panel, or put them back as they were at first">Panels ▾</button></span>`;
 }
 function projectsChromeHtml() {
+  // What needs you is the bell's count, and uncommitted changes are counted
+  // where they are reviewed: each project's card and its Changes tab. The
+  // project's name, the way back and its settings are in the bar.
   const s = PROJECTS && PROJECTS.summary;
-  const needs = s ? s.needsYou : 0;
-  const strip = `<div class="statusbar">
-    ${needs ? `<button class="stat needs" title="Open Needs you">🔔 ${needs} need${needs > 1 ? '' : 's'} you</button>`
-            : `<span class="stat okstat">✓ nothing waiting</span>`}
-    <span class="stat">◆ ${s ? s.changed : 0} changed</span>
-  </div>`;
   if (SELECTED_PROJECT) {
     const pj = projectById(SELECTED_PROJECT);
-    const nm = pj ? pj.name : 'Project';
-    const newTask = SELECTED_PROJECT === UNASSIGNED_ID ? '' : `<button class="crumb-newtask" title="Create a task in this project and fire agents at it">+ New task</button>`;
-    // A PO screen's panels are its tabs: the Panels menu instead of the tab
-    // row, and the Board's own view switch is in its panel.
-    if (poDockProject()) {
-      return strip + `<div class="crumbs"><a href="#" class="crumb-back">← Projects</a><span class="sep">/</span><b>${esc(nm)}</b>${kindBtnHtml(pj)}${keyBtnHtml(pj)}${newTask}`
-        + pdCtlHtml() + `</div>`;
-    }
+    // A PO screen's panels are its tabs, and the bar holds its Panels menu;
+    // the Board's own view switch is in its panel.
+    if (poDockProject()) return '';
     // Tabs only when the project has a folder to browse (Unassigned has none).
     // Its roadmap and documents are the first node of its Workspace's tree.
     const hasFolder = !!(pj && pj.path);
-    const tabs = hasFolder ? `<div class="ptabs">`
+    const n = pj && pj.changed ? `<span class="ptab-n" title="${pj.changed} uncommitted file${pj.changed > 1 ? 's' : ''}">${pj.changed}</span>` : '';
+    const view = PROJECT_TAB === 'tasks' ? viewSwitchHtml() : '';
+    if (!hasFolder) return view ? `<div class="ptabs none">${view}</div>` : '';
+    return `<div class="ptabs">`
       + `<button data-ptab="tasks" class="${PROJECT_TAB === 'tasks' ? 'on' : ''}" title="The project's PO and its tasks">Overview</button>`
       + `<button data-ptab="workspace" class="${PROJECT_TAB === 'workspace' ? 'on' : ''}" title="The project's documents, the roadmap first, and its folders, like an IDE: files render, and you can comment in place">Workspace</button>`
-      + `<button data-ptab="changes" class="${PROJECT_TAB === 'changes' ? 'on' : ''}" title="What landed on the main line, newest first, with each task and its files, and any uncommitted changes on top: per-file diff, line comments you can send to a task chat">Changes</button>`
-      + `</div>` : '';
-    return strip + `<div class="crumbs"><a href="#" class="crumb-back">← Projects</a><span class="sep">/</span><b>${esc(nm)}</b>${kindBtnHtml(pj)}${keyBtnHtml(pj)}${poChooseBtnHtml(pj)}${newTask}`
-      + (PROJECT_TAB === 'tasks' ? viewSwitchHtml() : '') + `</div>` + tabs;
+      + `<button data-ptab="changes" class="${PROJECT_TAB === 'changes' ? 'on' : ''}" title="What landed on the main line, newest first, with each task and its files, and any uncommitted changes on top: per-file diff, line comments you can send to a task chat">Changes${n}</button>`
+      + view + `</div>`;
   }
-  return strip + `<div class="listctl"><span>Group by</span>
+  return `<div class="listctl"><span>Group by</span>
     <div class="seg gb">${['project', 'time', 'none'].map(g => `<button data-gb="${g}" class="${PROJ_GROUPBY === g ? 'on' : ''}">${g[0].toUpperCase() + g.slice(1)}</button>`).join('')}</div>
-    <button class="newproj-btn" title="Register a folder as a project (any folder — a repo, or just notes)">+ New project</button>${viewSwitchHtml()}</div>`;
+    <button class="newproj-btn" title="Register a folder as a project (any folder — a repo, or just notes)">+ New project</button>`
+    + (s && s.changed ? `<span class="lc-changed" title="Uncommitted files across every project: each card says which">◆ ${s.changed} changed</span>` : '')
+    + `${viewSwitchHtml()}</div>`;
 }
 function projectSessionState(sn) {
   if (sn.status === 'waiting' || sn.status === 'waiting_human') return 'wait';
@@ -5735,7 +5775,6 @@ function wireProjectsChrome() {
     PROJECT_TAB = b.dataset.ptab; renderRows();
   });
   document.querySelectorAll('.viewsw button[data-view]').forEach(b => b.onclick = () => setViewMode(b.dataset.view));
-  document.querySelectorAll('.pd-panels').forEach(b => b.onclick = () => pdMenu(b));
   document.querySelectorAll('.proj .srow[data-sid]').forEach(r => r.onclick = (e) => {
     e.stopPropagation(); if (r.dataset.sid) openDetail(r.dataset.sid);
   });
@@ -5746,10 +5785,6 @@ function wireProjectsChrome() {
   if (np) np.onclick = () => projectSetupFlow();
   const npb = document.querySelector('.newproj-btn');
   if (npb) npb.onclick = () => projectSetupFlow();
-  const ct = document.querySelector('.crumb-newtask');
-  if (ct) ct.onclick = () => showNewSessionModal(SELECTED_PROJECT);
-  const back = document.querySelector('.crumb-back');
-  if (back) back.onclick = (e) => { e.preventDefault(); SELECTED_PROJECT = null; SB_DEST = ''; renderRows(); };
 }
 // New project, asked for from another dialog (a new task's project, Move to
 // project): the setup dialog, registering only and staying there. Returns the
@@ -10069,18 +10104,10 @@ function overviewFrameHtml(o) {
   if (o.poSplit) return `<div class="po-chrome">${o.chrome}</div><div class="po-board">${o.inner}</div>${o.edges}`;
   return o.chrome + o.poNote + o.inner;
 }
-function kindBtnHtml(pj) {
-  if (!pj || !pj.registered || !pj.path || pj.id === UNASSIGNED_ID) return '';
-  const docs = isDocsProject(pj);
-  const tip = docs ? 'Its Workspace tab holds its files, and every version of them is kept. Click to change'
-                   : 'Its Overview is the PO screen: the PO chat, your asks and the board as panels. Click to change';
-  return `<button type="button" class="po-btn kind-btn" data-proj="${esc(pj.id)}" title="${tip}">${docs ? 'Documents project' : 'Code project'}</button>`;
-}
 // A documents project without a PO shows no note asking for one (it may need
-// none); this button beside its kind is how to give it one.
-function poChooseBtnHtml(pj) {
-  if (!isDocsProject(pj) || !pj.registered || pj.id === UNASSIGNED_ID || poRowOf(pj)) return '';
-  return `<button type="button" class="po-btn po-choose" data-proj="${esc(pj.id)}" title="Make a conversation you already had, or a fresh one, its PO: the other tasks report to it, and its conversation joins this page">Set up the PO…</button>`;
+// none); its project menu (projMenuSettingsHtml) is how to give it one.
+function poChooseOffered(pj) {
+  return !!pj && isDocsProject(pj) && pj.registered && pj.id !== UNASSIGNED_ID && !poRowOf(pj);
 }
 function kindDialogHtml(pj) {
   const docs = isDocsProject(pj);
@@ -10091,12 +10118,6 @@ function kindDialogHtml(pj) {
     + opt('documents', 'Documents project', 'Its Workspace tab holds its files, to add, move and restore them. Tasks work directly in the project folder, several at once, and every version of every file is kept with who changed it.')
     + `</div>`
     + `<div class="actions"><button id="kind-ok">Save</button><button id="kind-cancel" class="secondary">Cancel</button></div>`;
-}
-// The project's key, next to its kind: its tasks are ED-18 where several
-// projects' tasks are listed.
-function keyBtnHtml(pj) {
-  if (!pj || !pj.registered || !pj.key || pj.id === UNASSIGNED_ID) return '';
-  return `<button type="button" class="po-btn key-btn" data-proj="${esc(pj.id)}" title="${esc(`Its tasks are ${pj.key}-18 where tasks of several projects are listed. Click to change`)}">Key ${esc(pj.key)}</button>`;
 }
 function keyDialogHtml(pj, err) {
   return `<h3>The key of ${esc(pj.name)}</h3>`
@@ -11639,6 +11660,10 @@ function renderPoDock(pj) {
   }
   wsRenderInto(pdById('ws-panel'), pj);
   chRenderInto(PD.els.changes, pj);
+  // Its uncommitted files, counted on the tab where they are reviewed (the
+  // status row under the bar used to count every project's).
+  const n = pj.changed || 0;
+  PD.dock.setBadge('changes', n ? String(n) : null, n ? `${n} uncommitted file${n > 1 ? 's' : ''}` : null);
   return true;
 }
 
@@ -12050,8 +12075,10 @@ $('#search').addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && document.body.classList.contains('search-open')) { closeSearch(); $('#search-open').focus(); }
 });
 
+// In a project, Create starts its task there (the dialog still offers every
+// project): the project page's own "+ New task" was the same dialog.
 $('#new-btn').addEventListener('click', () => {
-  showNewSessionModal();
+  showNewSessionModal(SELECTED_PROJECT);
 });
 
 // ---------------------------------------------------------------------------
@@ -12550,6 +12577,11 @@ $('#notif-btn').addEventListener('click', (ev) => {
   tray.hidden = !tray.hidden;
   if (!tray.hidden) updateRoomsBadge();
 });
+// Needs you as a page: what the status row under the bar used to open.
+$('#notif-all').addEventListener('click', () => {
+  $('#notif-tray').hidden = true;
+  SB_DEST = 'needsyou'; renderRows();
+});
 document.addEventListener('click', (ev) => {
   if (ev.target.closest('#notif-btn') || ev.target.closest('#notif-tray')) return;
   $('#notif-tray').hidden = true;
@@ -12970,6 +13002,47 @@ function projSwitchLabel() {
 function syncProjSwitch() {
   const el = document.getElementById('proj-switch-name');
   if (el) el.textContent = projSwitchLabel();
+  barPaint();
+}
+// The bar is also the project's header: in a project, the way back and what
+// you can do here (a PO screen's Panels menu), written only when it changes.
+// On a phone this is the bar's second row (body.in-proj, in the stylesheet).
+function barPaint() {
+  const inProj = !!SELECTED_PROJECT;
+  document.body.classList.toggle('in-proj', inProj);
+  const back = document.getElementById('bar-back');
+  if (back) back.hidden = !inProj;
+  const here = document.getElementById('bar-here');
+  if (here) writeSlot(here, inProj && poDockProject() ? pdCtlHtml() : '');
+  const sw = document.getElementById('proj-switch');
+  if (sw) sw.title = inProj ? `${projSwitchLabel()}: switch project, or change this project's kind and key` : 'Switch project';
+}
+function goHome() {
+  SELECTED_PROJECT = null; SB_DEST = ''; renderRows();
+}
+document.getElementById('bar-back').addEventListener('click', goHome);
+document.getElementById('bar-home').addEventListener('click', (e) => {
+  if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;   // a new tab or window of home
+  e.preventDefault(); goHome();
+});
+document.getElementById('bar-here').addEventListener('click', (e) => {
+  const b = e.target.closest('.pd-panels');
+  if (b) pdMenu(b);
+});
+// The project's settings, under the projects in its menu: its kind, its key
+// and, for a documents project without one, setting up its PO. They were
+// buttons beside its name; the page's click handler knows them by class.
+function projMenuSettingsHtml(pj) {
+  if (!pj || !pj.registered || pj.id === UNASSIGNED_ID) return '';
+  const items = [
+    pj.path ? `<button class="pm-item pm-set kind-btn" data-proj="${esc(pj.id)}" title="Code or documents: what its Overview and Workspace are">`
+      + `<span class="pm-name">Kind: ${isDocsProject(pj) ? 'Documents project' : 'Code project'}…</span></button>` : '',
+    pj.key ? `<button class="pm-item pm-set key-btn" data-proj="${esc(pj.id)}" title="${esc(`Its tasks are ${pj.key}-18 where tasks of several projects are listed`)}">`
+      + `<span class="pm-name">Key: ${esc(pj.key)}…</span></button>` : '',
+    poChooseOffered(pj) ? `<button class="pm-item pm-set po-choose" data-proj="${esc(pj.id)}" title="Make a conversation you already had, or a fresh one, its PO: the other tasks report to it, and its conversation joins this page">`
+      + `<span class="pm-name">Set up the PO…</span></button>` : '',
+  ].filter(Boolean);
+  return items.length ? `<div class="pm-rule"></div><div class="pm-head">${esc(pj.name)}</div>` + items.join('') : '';
 }
 function closeProjMenu() {
   $('#proj-menu').hidden = true;
@@ -12987,7 +13060,8 @@ $('#proj-switch').addEventListener('click', (ev) => {
         return `<button class="pm-item${SELECTED_PROJECT === pj.id ? ' on' : ''}" data-proj="${esc(pj.id)}">`
           + `<span class="pm-name">${esc(pj.name)}</span>`
           + (needs ? `<span class="pm-needs">${needs}</span>` : '') + '</button>';
-      }).join('');
+      }).join('')
+    + projMenuSettingsHtml(projectById(SELECTED_PROJECT));
   m.hidden = false;
   const r = ev.currentTarget.getBoundingClientRect();
   m.style.top = Math.round(r.bottom + 6) + 'px';
@@ -12997,6 +13071,8 @@ $('#proj-switch').addEventListener('click', (ev) => {
 $('#proj-menu').addEventListener('click', (ev) => {
   const it = ev.target.closest('.pm-item');
   if (!it) return;
+  // This project's settings: the page's own click handler opens its dialog.
+  if (it.classList.contains('pm-set')) { closeProjMenu(); return; }
   ev.stopPropagation();
   closeProjMenu();
   SELECTED_PROJECT = it.dataset.proj || null;
@@ -13586,7 +13662,6 @@ document.addEventListener('click', (ev) => {
   const chip = ev.target.closest('.fchip[data-drop]');
   if (chip) { ev.stopPropagation(); toggleFilter(chip.dataset.drop); return; }
   if (ev.target.closest('.fchip.more')) { ev.stopPropagation(); openFiltersMenu(); return; }
-  if (ev.target.closest('.statusbar .stat.needs')) { ev.stopPropagation(); SB_DEST = 'needsyou'; renderRows(); return; }
   const colChip = ev.target.closest('.colchip[data-colk]');
   if (colChip) { ev.stopPropagation(); toggleCol(colChip.dataset.colk); return; }
   if (ev.target.closest('.colall')) { ev.stopPropagation(); setHiddenCols(new Set()); return; }
