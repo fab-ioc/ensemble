@@ -609,9 +609,8 @@ library is never edited in this repository: a need goes to the Dock project's `E
   `display`. Popped out, the panel's window holds a chat of its own (removed in `onPopIn`, before the
   panel comes back); the one here stays loaded.
 - **A popped-out window has no "Back to main window"** (the CEO's P50): closing the window puts
-  the panel back. The library draws the button with no option to leave it out, so Ensemble's
-  stylesheet, which the window gets, hides `.dk-pop-back`; the option asked of Dock is
-  `popBack: false`.
+  the panel back. Dock v0.3.6's `popBackButton: false` (passed to `createDock`) leaves the button
+  out entirely; no Ensemble CSS needed.
 - **The roadmap** is a document: the first row of the Workspace's Documents node, opening in a tab
   that is its own view and editor. There is no Roadmap tab or panel.
 - **Phone:** the same dock, narrow (the library's `narrow`, switched by `setNarrow` on resize; its

@@ -248,8 +248,8 @@ class ThePanels(unittest.TestCase):
             self.assertNotIn(gone, INDEX, gone)
 
     def test_a_popped_out_window_has_no_back_button(self):
-        css = INDEX[INDEX.index("/* ---- The PO screen as panels"):INDEX.index("</style>", INDEX.index("/* ---- The PO screen as panels"))]
-        self.assertIn(".dk-pop-back { display: none; }", css)
+        self.assertIn("popBackButton: false", INDEX)
+        self.assertNotIn(".dk-pop-back", INDEX, "the library leaves the button out; no CSS hiding needed")
 
     def test_the_library_is_vendored_and_served(self):
         self.assertTrue((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8").startswith("fab-ioc/dock "))
@@ -261,7 +261,7 @@ class ThePanels(unittest.TestCase):
         self.assertIn("import('/static/dock/src/index.js')", INDEX)
         self.assertNotIn("dock/css/theme.css", INDEX, "the --dk-* tokens read Ensemble's own")
         self.assertNotIn("static/dock/src/popout.html", dashboard.PAGE_FILES, "an inert page: nothing to update in it")
-        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.3\.5 [0-9a-f]{40}")
+        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.3\.6 [0-9a-f]{40}")
 
     def test_the_library_does_what_the_workarounds_did(self):
         # Dock v0.3.3 has each of Ensemble's needs (the Dock project's ENSEMBLE-NEEDS.md); the page uses them.
@@ -531,7 +531,7 @@ async function main() {
       window.addEventListener('message', hear); new w.Function("postMessage({ type: 'dock-relay-check' }, location.origin)")();
       await new Promise(r => setTimeout(r, 200)); window.removeEventListener('message', hear);
       const bb = d.querySelector('.dk-pop-back');
-      return { backBtn: bb ? bb.offsetWidth + bb.offsetHeight : -1, icon: [...d.querySelectorAll('link[rel~="icon"]')].map(l => l.href), live, count, followed, back: d.documentElement.dataset.theme === theme, list, title: d.title, styled: getComputedStyle(d.querySelector('.card')).borderRadius, heard };
+      return { backBtn: bb ? 'rendered' : 'absent', icon: [...d.querySelectorAll('link[rel~="icon"]')].map(l => l.href), live, count, followed, back: d.documentElement.dataset.theme === theme, list, title: d.title, styled: getComputedStyle(d.querySelector('.card')).borderRadius, heard };
     })()`);
     await p.evalIn('PD.dock.popWindow("board").close(); 0');
     await p.until('!PD.dock.isOut("board") && PD.els.board.ownerDocument === document', 10000);
@@ -1020,7 +1020,7 @@ class InChrome(unittest.TestCase):
         self.assertTrue(b["icon"][0].endswith("/static/icons/favicon.svg"), "the window has the app's icon")
         self.assertNotEqual(b["styled"], "0px", "the page's styles came along")
         self.assertTrue(b["heard"], "a message to the window reaches the page, with its source")
-        self.assertEqual(b["backBtn"], 0, "no Back to main window: closing the window puts the panel back")
+        self.assertEqual(b["backBtn"], "absent", "popBackButton: false: no Back to main window at all; closing the window puts the panel back")
         self.assertTrue(self.got["boardBack"]["inDock"] and self.got["boardBack"]["cards"] > 0)
 
     def test_a_popped_out_po_chat_takes_typing_and_comes_back(self):

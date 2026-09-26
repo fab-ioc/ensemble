@@ -2958,10 +2958,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     background: var(--surface); color: var(--fg); font-family: var(--font-sans); font-size: var(--fs-300); font-weight: 500;
   }
   .dk-textbtn:hover { background: var(--hover); border-color: var(--border-strong); color: var(--fg); }
-  /* A popped-out panel's window has no "Back to main window": closing the
-     window puts the panel back. (The library has no option for it yet; the
-     window gets this page's stylesheets.) */
-  .dk-pop-back { display: none; }
   .dk-note { border-color: var(--c-warning-bold); background: var(--surface-overlay); box-shadow: var(--e-200); }
   .dk-outnote { background: var(--surface-overlay); box-shadow: var(--e-200); }
   body.dk-popwin { background: var(--surface); color: var(--fg); font-family: var(--font-sans); font-size: var(--fs-300); }
@@ -9208,6 +9204,7 @@ function pdEnsure() {
     // scope is an app window, where a blob: page gets Chrome's strip with
     // the address and title over the panel (#101).
     popUrl: '/static/dock/src/popout.html',
+    popBackButton: false,
     themeEvent: 'cd-theme',
     modalSelector: '[role="dialog"], dialog, .dk-help-pop, .dcm',
     text: { empty: 'Every panel is on a strip at an edge or hidden: the Panels menu above shows them.' },
