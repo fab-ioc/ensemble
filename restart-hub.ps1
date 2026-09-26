@@ -32,7 +32,7 @@ $port = [int]$cfg.port
 $base = "http://127.0.0.1:$port"
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $log) | Out-Null
 function L($m) { "$((Get-Date).ToString('s')) [restart] $m" | Out-File -FilePath $log -Append -Encoding utf8 }
-function Ok($u) { try { $r = Invoke-WebRequest -Uri $u -UseBasicParsing -TimeoutSec 30; return ($r.StatusCode -eq 200) } catch { return $false } }
+function Ok($u, [int]$timeoutSec = 30) { try { $r = Invoke-WebRequest -Uri $u -UseBasicParsing -TimeoutSec $timeoutSec; return ($r.StatusCode -eq 200) } catch { return $false } }
 function Q($s) { '"' + ([string]$s -replace '"', '\"') + '"' }
 function Post($path, $obj) {
   $bytes = [Text.Encoding]::UTF8.GetBytes(($obj | ConvertTo-Json -Compress))
@@ -90,7 +90,16 @@ try {
 }
 $pfUp = $false
 for ($i = 0; $i -lt 30 -and -not $pfUp; $i++) { Nap 2; $pfUp = Ok "http://127.0.0.1:$pf/api/platform" }
-$pfOk = $pfUp -and (Ok "http://127.0.0.1:$pf/api/sessions?n=5") -and (Ok "http://127.0.0.1:$pf/") -and (Ok "http://127.0.0.1:$pf/api/projects")
+# /api/sessions walks every held transcript on a cold process (its cost/turn
+# caches are empty); measured live at 30-32s against this hub's real history,
+# right on top of the old 30s cap - the exact cause of "PREFLIGHT FAILED" on an
+# otherwise healthy hub. Give it real headroom; a genuinely broken /api/sessions
+# still fails preflight, just not until $sessTimeoutSec runs out.
+$sessTimeoutSec = 90
+if ($env:ENSEMBLE_PREFLIGHT_SESSIONS_TIMEOUT_S) {
+  try { $sessTimeoutSec = [int]$env:ENSEMBLE_PREFLIGHT_SESSIONS_TIMEOUT_S } catch {}
+}
+$pfOk = $pfUp -and (Ok "http://127.0.0.1:$pf/api/sessions?n=5" $sessTimeoutSec) -and (Ok "http://127.0.0.1:$pf/") -and (Ok "http://127.0.0.1:$pf/api/projects")
 try { Stop-Process -Id $pfp.Id -Force -ErrorAction Stop } catch {}
 HubProcs $pf | ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {} }
 if (-not $pfOk) {

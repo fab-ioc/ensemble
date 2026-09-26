@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import tempfile
@@ -55,6 +56,21 @@ class HelperScript(unittest.TestCase):
         # A test hub (noTask) or a hub not on the task's port never touches the task.
         self.assertIn("if (-not $cfg.noTask)", text)
         self.assertRegex(text, r"--port\\s\+\$port")
+
+    def test_sessions_probe_gets_its_own_longer_timeout(self):
+        # A cold /api/sessions walks every held transcript (measured 30-32s live,
+        # see the task report) - right on the old 30s cap, which is exactly why a
+        # healthy hub failed preflight on its first try. Only that probe gets the
+        # longer, overridable limit; / and /api/projects (always fast) keep the
+        # plain 30s default so a truly broken probe still fails in bounded time.
+        text = SCRIPT.decode("ascii")
+        self.assertRegex(text, r"function Ok\(\$u, \[int\]\$timeoutSec = 30\)")
+        self.assertRegex(text, r"\$sessTimeoutSec = 90")
+        self.assertIn("ENSEMBLE_PREFLIGHT_SESSIONS_TIMEOUT_S", text)
+        i = text.index("$pfOk = ")
+        line = text[i:text.index("\n", i)]
+        self.assertIn('Ok "http://127.0.0.1:$pf/api/sessions?n=5" $sessTimeoutSec', line)
+        self.assertIn('(Ok "http://127.0.0.1:$pf/") -and (Ok "http://127.0.0.1:$pf/api/projects")', line)
 
 
 class Plan(unittest.TestCase):
@@ -334,6 +350,67 @@ class WindowsBackend(unittest.TestCase):
                 self.assertFalse(plan.exists())
                 self.assertIn("PREFLIGHT FAILED", (d / "restart.log").read_text(encoding="utf-8-sig"))
                 lease.unlink(missing_ok=True)
+
+    def test_a_slow_sessions_probe_fails_only_past_its_configured_timeout(self):
+        # A stand-in for the real /api/sessions cold scan: instant on every path
+        # except /api/sessions, which sleeps a fixed, known time. Proves the
+        # sessions timeout is really wired into the preflight gate (not just
+        # present as a variable): too small for the sleep -> PREFLIGHT FAILED,
+        # exactly the reported bug, and the hub is left alone, same as any other
+        # preflight failure. (The pass case is proven live against the real hub
+        # and real transcripts - see the task report - rather than here, since a
+        # passing preflight makes this script go on to stop/start a "hub".)
+        shell = __import__("shutil").which("powershell")
+        if not shell:
+            self.skipTest("powershell not found")
+        fake_server = '''
+import os, sys, time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
+port = int(sys.argv[sys.argv.index("--port") + 1])
+sleep_s = float(os.environ.get("TEST_SESSIONS_SLEEP_S", "0"))
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if urlparse(self.path).path == "/api/sessions":
+            time.sleep(sleep_s)
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"{}")
+    def log_message(self, *a):
+        pass
+ThreadingHTTPServer(("127.0.0.1", port), H).serve_forever()
+'''
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            pf_port = s.getsockname()[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "fake_server.py").write_text(fake_server, encoding="utf-8")
+            lease = d / "restart.lease"
+            lease.write_text(json.dumps({"id": "mine", "at": time.time()}), encoding="utf-8")
+            script = d / "restart-copy.ps1"
+            script.write_bytes(SCRIPT)
+            plan = d / "plan.json"
+            plan.write_text(json.dumps({
+                "repo": str(d), "python": sys.executable, "script": str(d / "fake_server.py"),
+                "args": [], "port": 1, "hubPid": 0, "preflightPort": pf_port, "taskName": "none",
+                "noTask": True, "graceSeconds": 0, "resumeRooms": [], "wakeRoom": "",
+                "wakeText": "", "log": str(d / "restart.log"),
+                "preflightLog": str(d / "preflight.log"),
+                # A 3s /api/sessions is what the old hardcoded 30s cap would have
+                # passed easily; a 1s configured limit must still catch it.
+                "env": {"ENSEMBLE_PREFLIGHT_SESSIONS_TIMEOUT_S": "1", "TEST_SESSIONS_SLEEP_S": "3"},
+                "leasePath": str(lease), "leaseId": "mine"}), encoding="utf-8")
+            out = subprocess.run([shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                                  str(script), "-Plan", str(plan)],
+                                 capture_output=True, text=True, encoding="utf-8", timeout=60)
+            self.assertEqual(out.returncode, 1, out.stdout + out.stderr)
+            self.assertFalse(script.exists())
+            self.assertFalse(plan.exists())
+            self.assertFalse(lease.exists())          # its own lease is dropped
+            log = (d / "restart.log").read_text(encoding="utf-8-sig")
+            self.assertIn("PREFLIGHT FAILED", log)
+            self.assertNotIn("preflight passed", log)
 
 
 if __name__ == "__main__":
