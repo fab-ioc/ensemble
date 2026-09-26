@@ -176,7 +176,8 @@ def set_agents(room_id: str, members: list[dict],
     be wrong. Anything unmatched is a new agent — it gets a fresh identity, a
     fresh token, and a ``fresh`` flag so the launcher starts it from the task
     briefing instead of trying to resume a conversation it never had. Agents
-    that dropped out lose their participant record and their token.
+    that dropped out lose their participant record and their token; their
+    conversations are kept in the room's ``retiredSessions``.
 
     ``mode`` ("solo" / "collab"), when given, is written in the same breath, so
     the file is never briefly on disk with a new line-up and the old mode.
@@ -260,6 +261,22 @@ def set_agents(room_id: str, members: list[dict],
                 tokens[secrets.token_urlsafe(18)] = ident
             participants.append(part)
         participants.append({"identity": HUMAN_IDENTITY, "kind": "human"})
+        # A dropped agent's conversations stay the room's: its transcripts are
+        # the task's history, never sessions of no task (the board's cards).
+        retired = [r for r in room.get("retiredSessions") or [] if isinstance(r, dict)]
+        known = {r.get("sessionId") for r in retired}
+        now = _now()
+        for j, p in enumerate(existing):
+            if j in claimed:
+                continue
+            for sid in agent_conversations(p):
+                if sid not in known:
+                    known.add(sid)
+                    retired.append({"sessionId": sid, "identity": p.get("identity", ""),
+                                    "agent": (p.get("sessionKinds") or {}).get(sid) or p.get("agent", ""),
+                                    "at": now})
+        if retired:
+            room["retiredSessions"] = retired
         room["participants"] = participants
         room["tokens"] = tokens
         if mode:
@@ -267,6 +284,20 @@ def set_agents(room_id: str, members: list[dict],
         room["updatedAt"] = _now()
         _write(room)
         return room
+
+
+def agent_conversations(part: dict) -> list[str]:
+    """An agent's conversations on its task: its current one, one per review,
+    and each one a rotation, switch or handover moved it out of."""
+    sids = [part.get("sessionId") or ""]
+    sids += [r.get("sessionId") or "" for r in part.get("reviews") or [] if isinstance(r, dict)]
+    sids += [r.get("fromSessionId") or "" for r in part.get("rotations") or [] if isinstance(r, dict)]
+    out: list[str] = []
+    for s in sids:
+        s = s.strip()
+        if s and s not in out:
+            out.append(s)
+    return out
 
 
 NUMBER_FIELDS = ("no", "noProjectId", "previousNos")

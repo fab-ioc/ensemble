@@ -2295,6 +2295,37 @@ def hub_input_kind(text: str) -> dict:
     return {"kind": "human"}
 
 
+# What a conversation nobody named is called, told by how it starts: the
+# person's own first words, or for one the hub began, what kind it is.
+_FIRST_WORDS_KIND = {
+    "digest": "PO progress check", "due": "Due item", "report": "Task report",
+    "relay": "Team conversation", "resumed": "Resumed task", "restart": "After a hub restart",
+    "handover": "Handover", "rotation": "Task conversation after a handover",
+    "madepo": "PO conversation", "helper": "After a hub restart", "points": "Open points",
+    "pomsg": "Message from another PO",
+}
+
+
+def first_words(first: str, limit: int = 80) -> str:
+    """A title for a conversation that has none: its first line, trimmed, or
+    for hub text (HUB_INPUT_KINDS, a PO brief, a task agent's standing brief)
+    a short name of its kind. "" when there are no words at all."""
+    s = (first or "").strip()
+    if is_po_brief(s):
+        return "Past PO conversation"
+    kind = hub_input_kind(s)["kind"]
+    if kind != "human":
+        return _FIRST_WORDS_KIND.get(kind, "")
+    body = s.lstrip("-").lstrip()
+    if body.startswith((OWNER_OUTPUT_NOTE[:40], "You are '")):
+        return "Task agent conversation"
+    line = " ".join(next((ln for ln in s.splitlines() if ln.strip()), "").split())
+    if len(line) > limit:
+        cut = line[:limit].rsplit(" ", 1)[0] or line[:limit]
+        line = cut.rstrip(" ,.;:") + "…"
+    return line
+
+
 # The PO's message to a one-agent task (sent through /api/room/resume) starts
 # like this. Not hub traffic for the chat page, but not a person at the
 # terminal either.
@@ -2649,17 +2680,104 @@ def participant_session_ids(part: dict) -> list[str]:
     """Every conversation an agent has had on its task: its current one and,
     for a reviewer on mention, one per earlier review; for a rotated PO or task
     owner, each session it was rotated out of."""
-    sids = [part.get("sessionId") or ""]
-    sids += [r.get("sessionId") or "" for r in part.get("reviews") or []
-             if isinstance(r, dict)]
-    sids += [r.get("fromSessionId") or "" for r in part.get("rotations") or []
-             if isinstance(r, dict)]
-    out: list[str] = []
-    for s in sids:
-        s = s.strip()
-        if s and s not in out:
-            out.append(s)
+    return chatroom.agent_conversations(part)
+
+
+def room_past_sessions(room: dict) -> list[dict]:
+    """The conversations a task's seats have left behind, oldest first:
+    ``{sessionId, identity, agent, at, via}``, ``via`` being ``rotation`` (a
+    rotation, a PO switch or an owner's handover moved the seat out of it),
+    ``review`` (an earlier review) or ``retired`` (its agent was taken off the
+    task). A seat's current conversation is not one of them. Reads the room
+    record only."""
+    current = {(p.get("sessionId") or "").strip()
+               for p in room.get("participants") or [] if p.get("kind") == "agent"}
+    out: list[dict] = []
+    seen: set[str] = set(current) | {""}
+
+    def add(sid, ident, agent, at, via):
+        sid = (sid or "").strip()
+        if sid not in seen:
+            seen.add(sid)
+            out.append({"sessionId": sid, "identity": ident, "agent": agent,
+                        "at": float(at or 0), "via": via})
+    for p in room.get("participants") or []:
+        if p.get("kind") != "agent":
+            continue
+        ident = p.get("identity", "")
+        for r in p.get("rotations") or []:
+            if isinstance(r, dict):
+                sid = r.get("fromSessionId") or ""
+                add(sid, ident, r.get("fromAgent") or session_agent(p, sid), r.get("at"), "rotation")
+        for r in p.get("reviews") or []:
+            if isinstance(r, dict):
+                sid = r.get("sessionId") or ""
+                add(sid, ident, session_agent(p, sid), r.get("startedAt"), "review")
+    for r in room.get("retiredSessions") or []:
+        if isinstance(r, dict):
+            add(r.get("sessionId"), r.get("identity", ""), r.get("agent", ""), r.get("at"), "retired")
+    out.sort(key=lambda x: x["at"])
     return out
+
+
+# A project's PO conversations from before the hub recorded them on its room
+# (the rotation record, a PO switch or a member change): a fresh PO session was
+# started in the project's folder, or in a seat folder under the PO room's, and
+# on a retire it simply dropped out of the room. The hub's own first words say
+# which ones they are.
+_PO_BRIEF_HEADS = ("[rotation] You are the product owner (PO)", "[product owner] ",
+                   "You are the product owner (PO) of the project")
+
+
+def is_po_brief(first: str) -> bool:
+    """Whether a conversation's first user message is the hub's PO brief."""
+    s = (first or "").lstrip().lstrip("-").lstrip()
+    return s.startswith(_PO_BRIEF_HEADS)
+
+
+def _norm_folder(p: str) -> str:
+    return os.path.normcase(os.path.normpath(p)) if p else ""
+
+
+def po_seat_folders(projects: list[dict], rooms: list[dict]) -> tuple[dict, dict]:
+    """``(brief, seat)``: folder -> PO room id. A conversation started in a
+    ``brief`` folder (the project's, or its PO room's) belongs to that PO when
+    it opens with the hub's PO brief (is_po_brief), since the person works
+    there too. One started in a ``seat`` folder (``<PO room folder>/<claude,
+    codex or a seat's name>``) is the PO's whatever it says: the hub makes
+    those folders for its PO seats only."""
+    by_id = {r.get("id"): r for r in rooms}
+    brief: dict[str, str] = {}
+    seat: dict[str, str] = {}
+    for pj in projects:
+        rid = pj.get("poRoomId") or ""
+        room = by_id.get(rid)
+        if room is None:
+            continue
+        base = room.get("cwd") or ""
+        for f in (pj.get("path") or "", base):
+            if f:
+                brief.setdefault(_norm_folder(f), rid)
+        if not base:
+            continue
+        names = {"claude", "codex"} | {p.get("identity", "") for p in room.get("participants") or []
+                                       if p.get("kind") == "agent"}
+        for n in names:
+            if n and n not in (".", ".."):
+                k = _norm_folder(os.path.join(base, n))
+                if k != _norm_folder(base):
+                    seat.setdefault(k, rid)
+    return brief, seat
+
+
+def old_po_room(cwd: str, first: str, folders: tuple[dict, dict]) -> str:
+    """The PO room an unrecorded conversation belongs to by the rule of
+    po_seat_folders, or ""."""
+    k = _norm_folder(cwd)
+    if not k:
+        return ""
+    brief, seat = folders
+    return seat.get(k) or (brief.get(k, "") if is_po_brief(first) else "")
 
 
 def session_agent(part: dict, sid: str) -> str:
@@ -4513,7 +4631,7 @@ def build_projects() -> dict:
     keep = ("sessionId", "roomId", "label", "status", "isLive", "idleSeconds",
             "updatedAt", "agents", "members", "mode", "headless", "cwd",
             "taskDir", "priority", "priorityName", "workflow", "workflowName",
-            "lastAgent", "attention", "allocation", "reviewAllocations", "no")
+            "lastAgent", "attention", "allocation", "reviewAllocations", "no", "firstWords")
     # One group per registered project, plus a synthetic unassigned bucket.
     groups: dict = {}
     keys = project_keys(projects_reg)
@@ -6589,6 +6707,71 @@ def load_sessions(n: int = 200) -> list[dict]:
     return [dict(r) for r in rows]      # callers may annotate rows; never the cached ones
 
 
+def _past_row(sid: str, agent: str, found: dict | None) -> dict | None:
+    """One past conversation as a history row, read from its transcript
+    (``found``: what the sessions load already read of it)."""
+    if agent == "codex":
+        from agents import codex as _cx
+        cx = agents.get_agent("codex")
+        files = cx.rollouts_for_session(sid) if cx is not None else []
+        cs = _cx._parse_rollout(files[-1]) if files else None
+        if cs is None and found is None:
+            return None
+        row = cs.to_row() if cs is not None else {}
+        c = compute_codex_session_cost(sid)
+        facts = {"cwd": row.get("cwd") or (found or {}).get("cwd", ""),
+                 "updatedAt": row.get("updatedAt") or (found or {}).get("updatedAt", 0),
+                 "startedAt": row.get("startedAt") or 0,
+                 "first": (found or {}).get("first") or row.get("first", ""),
+                 "turns": row.get("turns") or (found or {}).get("turns", 0)}
+    else:
+        jsonl = find_transcript(sid)
+        if jsonl is None:
+            return None
+        first, _last, turns = first_last_user(jsonl)
+        try:
+            mtime = jsonl.stat().st_mtime
+        except OSError:
+            mtime = 0.0
+        c = compute_session_cost(jsonl)
+        facts = {"cwd": cwd_of(jsonl), "updatedAt": mtime, "startedAt": 0,
+                 "first": first, "turns": turns}
+    return {"sessionId": sid, "agent": agent or "claude", **facts,
+            "last": "", "label": "", "firstWords": first_words(facts["first"]),
+            "cost": c.get("dollars", 0.0), "costTokens": c.get("tokens"),
+            "isLive": False, "pid": None, "status": "", "archived": False,
+            "parent": "", "jira": [], "currentTheme": "", "idleSeconds": None}
+
+
+def past_conversations(room_id: str) -> dict | None:
+    """GET /api/room/past: the conversations a task's seats left behind — its
+    record's (room_past_sessions) and, for a PO, those from before the record
+    (old_po_room) — newest first, each a history row with ``pastOf`` (the
+    room) and ``via``. None when there is no such room. Reads transcripts:
+    asked for when the list is opened, never on the board's poll."""
+    room = chatroom.get_room(room_id)
+    if room is None:
+        return None
+    load_sessions(200)      # the old ones are found by the (cached) load
+    found = {x["sessionId"]: x for x in _PAST_FOUND.get(room_id, [])}
+    want = [(x["sessionId"], x["agent"], x["via"], x["at"]) for x in room_past_sessions(room)]
+    have = {w[0] for w in want}
+    want += [(sid, x["agent"], "before", 0.0) for sid, x in found.items() if sid not in have]
+    labels = load_labels()
+    out = []
+    for sid, agent, via, at in want:
+        try:
+            row = _past_row(sid, agent, found.get(sid))
+        except Exception:       # noqa: BLE001 — one unreadable transcript hides only itself
+            row = None
+        if row is None:
+            continue
+        row.update(label=labels.get(sid, ""), pastOf=room_id, via=via, retiredAt=at)
+        out.append(row)
+    out.sort(key=lambda r: -(r.get("updatedAt") or 0))
+    return {"roomId": room_id, "sessions": out}
+
+
 def _spec_rev(spec) -> str:
     """A few characters that change when the spec does; "" for no spec."""
     spec = spec if isinstance(spec, str) else ""
@@ -6615,6 +6798,11 @@ def _cut_task_rows(room_rows: list[dict], n: int) -> list[dict]:
     rest = sorted((r for r in room_rows if not _needed(r)),
                   key=lambda r: -(r.get("updatedAt") or 0))
     return needed + rest[:max(0, n - len(needed))]
+
+
+# The conversations the last sessions load gave to a PO by old_po_room:
+# {roomId: [{sessionId, agent, cwd, updatedAt, first, turns}]}.
+_PAST_FOUND: dict[str, list[dict]] = {}
 
 
 def _load_sessions_uncached(n: int = 200) -> list[dict]:
@@ -6658,6 +6846,17 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 collab_sids.add(pp["sessionId"])
             if pp.get("cwd"):
                 collab_cwds.add(_norm_cwd(pp["cwd"]))
+        # What its seats left behind (rotations, switches, handovers, reviews,
+        # an agent taken off it) is the task's too.
+        collab_sids.update(x["sessionId"] for x in room_past_sessions(rm))
+    # A PO's conversations from before its room recorded them, by their
+    # folder and first words (old_po_room): {roomId: [row]}, for its list of
+    # past conversations, and off the board.
+    try:
+        po_folders = po_seat_folders(load_projects(), rooms)
+    except Exception:
+        po_folders = ({}, {})
+    past_found: dict[str, list[dict]] = {}
 
     def _held(sid: str, cwd: str) -> bool:
         return sid in collab_sids or _norm_cwd(cwd or ".") in collab_cwds
@@ -6702,6 +6901,12 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
             continue
         seen.add(sid)
         row_cwd = (live and live.get("cwd")) or cwd_of(jsonl)
+        po_rid = "" if live else old_po_room(row_cwd, first, po_folders)
+        if po_rid:
+            past_found.setdefault(po_rid, []).append(
+                {"sessionId": sid, "agent": "claude", "cwd": row_cwd, "updatedAt": mtime,
+                 "first": first, "turns": turns})
+            continue
         row_label = labels.get(sid, "")
         out.append({
             "sessionId": sid,
@@ -6735,6 +6940,7 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
             ) if JIRA_ENABLED else []),
             "cost": compute_session_cost(jsonl).get("dollars", 0.0),
             "agent": "claude",
+            "firstWords": first_words(first),
         })
     # Live sessions without a transcript yet (rare — only at session birth).
     for sid, live in live_by_sid.items():
@@ -6817,6 +7023,12 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 and sid not in archived_set):
             continue
         seen.add(sid)
+        po_rid = "" if is_live else old_po_room(cs.cwd, cs.first, po_folders)
+        if po_rid:
+            past_found.setdefault(po_rid, []).append(
+                {"sessionId": sid, "agent": "codex", "cwd": cs.cwd, "updatedAt": cs.updated_at,
+                 "first": cs.first, "turns": cs.turns})
+            continue
         if is_live:
             _claimed_cwds.add(_ck)
         row = cs.to_row()
@@ -6837,6 +7049,7 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 - set(jira_unlinks.get(sid, []))
             ) if JIRA_ENABLED else []),
             "cost": 0.0,
+            "firstWords": first_words(row.get("first") or ""),
         })
         out.append(row)
     # Sort: the owner's priority first (1 = highest), then — as the tie-break
@@ -6955,9 +7168,14 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                               if rid in att_by_room else None),
                 # {open, answered}: the person's points waiting, or None.
                 "points": _points_counts(rid),
+                # How many conversations it has left behind (past_conversations).
+                "pastConversations": len({x["sessionId"] for x in room_past_sessions(rm)}
+                                         | {x["sessionId"] for x in past_found.get(rid, [])}),
             })
     except Exception:
         pass
+    _PAST_FOUND.clear()
+    _PAST_FOUND.update(past_found)
     if collab_sids or collab_cwds:
         out = [r for r in out
                if r.get("sessionId") not in collab_sids
@@ -8722,6 +8940,13 @@ class Handler(BaseHTTPRequestHandler):
             q = parse_qs(u.query)
             n = int(q.get("n", ["200"])[0])
             self._send_json(200, load_sessions(n))
+            return
+        if p == "/api/room/past":
+            got = past_conversations((parse_qs(u.query).get("roomId", [""])[0]).strip())
+            if got is None:
+                self._send_json(404, {"error": "no_such_room"})
+                return
+            self._send_json(200, got)
             return
         if p.startswith("/api/session/"):
             sid = p[len("/api/session/"):]
