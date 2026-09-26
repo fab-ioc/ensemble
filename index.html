@@ -286,7 +286,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     --header-h: 49px;                            /* 48px bar + 1px border */
     --banner-h: 0px;                             /* visible banners; set by script */
     --top-h: calc(var(--header-h) + var(--banner-h));   /* where content below the bar starts */
-    --chrome-h: calc(var(--top-h) + 217px);      /* + crumbs, tabs, padding */
+    --chrome-h: calc(var(--top-h) + 133px);      /* + the project's tab row, padding */
     --touch-min: 44px;                           /* the smallest thing a finger taps, on a phone */
   }
 
@@ -516,6 +516,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     position: sticky; top: var(--banner-h); background: var(--surface); z-index: 10;
   }
   .bar-where { display: flex; align-items: center; gap: var(--s-100); min-width: 0; flex: 0 1 auto; }
+  /* A phone's way back (MOBILE_MQ); elsewhere the logo is. */
+  #bar-back { display: none; }
   header h1 {
     font: 600 var(--fs-300)/1 var(--font-sans);
     margin: 0; flex-shrink: 0;
@@ -544,7 +546,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     cursor: pointer; white-space: nowrap; max-width: 220px;
   }
   .bar-btn:hover { background: var(--hover); color: var(--fg); }
-  .bar-btn .caret { color: var(--fg-muted); font-size: 9px; }
+  .bar-btn .caret { color: var(--fg-muted); font-size: var(--fs-100); }
   .bar-btn.icon { width: 32px; padding: 0; justify-content: center; position: relative; font-size: 14px; }
   #proj-switch #proj-switch-name { overflow: hidden; text-overflow: ellipsis; }
   .avatar-btn {
@@ -1488,6 +1490,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     border-radius: var(--r-100); color: var(--fg-muted); font-size: var(--fs-300); line-height: 1; }
   .wst-x:hover { background: var(--pressed); color: var(--fg); }
   .wst[hidden], .wsp-bar[hidden], .wsp-own[hidden] { display: none; }
+  /* The switches between the tree and the file: a phone's only (MOBILE_MQ). */
+  .wsp-btn.wsp-files, .wsp-btn.wsp-tofile { display: none; }
   .wsp-frames { position: relative; flex: 1; min-height: 0; }
   .wsp-gone p { margin: 0 0 var(--s-200); }
   .wsp-gone-path { font-family: var(--font-mono); font-size: var(--fs-200); color: var(--fg-muted); overflow-wrap: anywhere; }
@@ -2741,6 +2745,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
       padding: 0; justify-content: center; border-color: transparent; border-radius: var(--r-200);
     }
     #bar-back { font-size: var(--fs-500); color: var(--fg); }
+    #bar-back:not([hidden]) { display: inline-flex; }
     #search-open { display: inline-flex; margin-left: auto; }
     /* Home lists every project, so the bar is one row there. In a project
        the bar has a second row: back, the project's name (its menu) and what
@@ -2751,11 +2756,13 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     body.in-proj:not(.detail-open) {
       --header-h: calc(2 * var(--touch-min) + 3 * var(--s-100) + 1px);
       --top-h: calc(var(--header-h) + var(--banner-h));
-      --chrome-h: calc(var(--top-h) + 217px);
+      --chrome-h: calc(var(--top-h) + 190px);     /* the tab row is finger-sized here */
     }
     body.in-proj:not(.detail-open) header { flex-wrap: wrap; align-content: center; row-gap: var(--s-100); }
     body.in-proj:not(.detail-open) .bar-break { display: block; flex-basis: 100%; height: 0; order: 1; }
-    body.in-proj:not(.detail-open) .bar-where { display: flex; order: 2; flex: 1 1 0; }
+    /* At least the back arrow wide: a zero-width group would fit on the break's
+       line, beside it, and leave the row without back or name. */
+    body.in-proj:not(.detail-open) .bar-where { display: flex; order: 2; flex: 1 1 0; min-width: var(--touch-min); }
     body.in-proj:not(.detail-open) #bar-here:not(:empty) { display: flex; order: 3; }
     body.in-proj.search-open:not(.detail-open) .search-wrap { bottom: auto; height: var(--touch-min); top: var(--s-100); }
     #proj-switch { height: var(--touch-min); max-width: none; flex: 0 1 auto; padding: 0 var(--s-200); }
@@ -2838,8 +2845,17 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .wsp-side, .chp-files { border-right: 0; border-bottom: 1px solid var(--border); }
     /* Find: the box and a few rows fit above the file; with a query the
        results get most of the height, and every control is finger-sized. */
-    .wsp { grid-template-rows: minmax(220px, 45%) minmax(0, 1fr); }
-    .wsp.wsf-on, .wsp.wsf-text { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(260px, 60%) minmax(0, 1fr); }
+    /* The Workspace: one pane at a time, the tree and Find or the file, each
+       the whole height (wsPaintPane). The hidden one keeps its place and its
+       viewers: an iframe that is display:none reloads or loses its size. */
+    .wsp, #detail-panel .wsp, #detail-panel .wsp.wsf-on, .wsp.wsf-on, .wsp.wsf-text { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+    .wsp > .wsp-side, .wsp > .wsp-view { grid-area: 1 / 1; }
+    .wsp > .wsp-side { border-bottom: 0; }
+    .wsp.ws-tree > .wsp-view, .wsp:not(.ws-tree) > .wsp-side { visibility: hidden; pointer-events: none; }
+    .wsp-btn.wsp-files { display: inline-flex; align-items: center; font-weight: 600; }
+    .wsp-btn.wsp-tofile { display: inline-flex; align-items: center; gap: var(--s-050); min-width: 0; max-width: 45%; }
+    .wsp-btn.wsp-tofile[hidden] { display: none; }
+    .wsp-tofile-n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
     .wsf-q { height: var(--touch-min); font-size: var(--fs-400); }
     .wsf-mode button, .wsf-opt { height: var(--touch-min); min-width: var(--touch-min); }
     .wsr { min-height: var(--touch-min); align-items: center; }
@@ -6557,7 +6573,8 @@ function wsPanelHtml(o) {
     + `<button type="button" data-mode="recent" aria-pressed="false" aria-keyshortcuts="Alt+R" title="Files shown recently, most recent first (${WS_RECENT_KEY})">Recent</button></div>
           <span class="wsf-opts">`
     + `<button type="button" class="wsf-opt" data-opt="cs" aria-pressed="false" title="Match case" aria-label="Match case" hidden>Aa</button>`
-    + `<button type="button" class="wsf-opt" data-opt="rx" aria-pressed="false" title="Regular expression" aria-label="Regular expression" hidden>.*</button></span>
+    + `<button type="button" class="wsf-opt" data-opt="rx" aria-pressed="false" title="Regular expression" aria-label="Regular expression" hidden>.*</button></span>`
+    + `<button type="button" class="wsp-btn wsp-tofile" title="Back to the file" hidden><span class="wsp-tofile-n"></span> ›</button>
         </div>
         <input class="wsf-q" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-label="Go to file or search in files" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go">
         <div class="wsf-state" aria-live="polite" hidden></div>
@@ -6567,7 +6584,7 @@ function wsPanelHtml(o) {
     </div>
     <div class="wsp-view">
       <div class="wst" role="tablist" aria-label="Open files" hidden></div>
-      <div class="wsp-bar" hidden><nav class="wsc" aria-label="Where the file is"><ol class="wsc-list"></ol></nav>`
+      <div class="wsp-bar" hidden><button type="button" class="wsp-btn wsp-files" title="The tree and Find">Files</button><nav class="wsc" aria-label="Where the file is"><ol class="wsc-list"></ol></nav>`
     + `<button type="button" class="wsp-btn wsp-reveal" title="${reveal}" aria-label="${reveal}">${WS_ICON_TREE}</button>`
     + `<button type="button" class="wsp-btn wsp-follow" aria-pressed="false" title="Keep the tree on the file showing">Follow</button>`
     + `<button type="button" class="wsp-btn wsp-hist" aria-pressed="false" title="Every kept version of this file: compare one with the file now, open it or restore it" hidden>History</button>`
@@ -6745,6 +6762,12 @@ function wsPaintView(v) {
     : '');
   wsRoadmapPaint(v, stage, rmTab);
   bar.hidden = !t;
+  const back = v.el.querySelector('.wsp-tofile');
+  if (back) {
+    back.hidden = !t;
+    if (t) back.querySelector('.wsp-tofile-n').textContent = wsTabName(t.path);
+  }
+  wsPaintPane(v);
   const hb = bar.querySelector('.wsp-hist');
   if (hb) hb.hidden = !(t && wsDocsProjectOf(v));
   // A file's history belongs to its tab: showing another closes it.
@@ -6772,6 +6795,22 @@ function wsPaintView(v) {
     if (f) f.remove();
     v.frames.delete(k);
   });
+}
+// On a phone the Workspace shows one pane at a time (CSS in the MOBILE_MQ
+// block): the tree and Find, or the file. The tree when asked for (Files, Show
+// in the tree, a folder in the path) or when no file is open; the file when a
+// tab is shown. Elsewhere the class does nothing: both panes show.
+function wsPaintPane(v) {
+  const box = v.el;   // the .wsp itself
+  if (!box) return;
+  const t = v.tabs.find(x => wsSame(x.path, v.sel));
+  box.classList.toggle('ws-tree', v.pane === 'tree' || !t);
+}
+// Focus follows the switch to the other pane's switch back, not left on a
+// pane that is hidden now.
+function wsPaneFocus(v, sel) {
+  const b = v.el && v.el.querySelector(sel);
+  if (b && b.offsetParent) b.focus({ preventScroll: true });
 }
 // The path above the viewer: the file showing as its root, folders and name,
 // rewritten only when it changes (a tab shown, the roots arriving). A path too
@@ -6829,6 +6868,7 @@ async function wsReveal(v, path, opts) {
   if (!root && !doc) return false;
   const gen = ++v.revealGen, f = v.find;
   if (o.clear !== false) {
+    v.pane = 'tree'; wsPaintPane(v);
     f.recent = false; f.rq = '';
     if (f.q) { f.q = ''; wsfSchedule(v); }
     wsfPaint(v);
@@ -6890,6 +6930,7 @@ function wsFrameMessage(src, d) {
 // the tree.
 function wsShowTab(v, path) {
   v.sel = path;
+  v.pane = 'file';
   v.mark = '';
   const t = v.tabs.find(x => wsSame(x.path, path));
   if (t) wsRecentTouch(v.recent, t.path, t.st);
@@ -7254,6 +7295,7 @@ function wsMount(el, ctx) {
   bar.onclick = (e) => {
     const d = e.target.closest('.wsc-dir');
     if (d) { wsReveal(v, d.dataset.path, { dir: true }); return; }
+    if (e.target.closest('.wsp-files')) { v.pane = 'tree'; wsPaintPane(v); wsPaneFocus(v, '.wsp-tofile'); return; }
     if (e.target.closest('.wsp-reveal')) { wsReveal(v, v.sel); return; }
     if (e.target.closest('.wsp-hist')) { if (v.hist) histClose(v); else histOpen(v, v.sel); return; }
     if (e.target.closest('.wsp-follow')) {
@@ -7263,6 +7305,8 @@ function wsMount(el, ctx) {
       if (v.follow && v.sel) wsReveal(v, v.sel, { clear: false });
     }
   };
+  const toFile = el.querySelector('.wsp-tofile');
+  if (toFile) toFile.onclick = () => { v.pane = 'file'; wsPaintPane(v); wsPaneFocus(v, '.wsp-files'); };
   nav.onscroll = () => bar.classList.toggle('cut', nav.scrollLeft > 0);
   if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => wsCrumbsEnd(bar)).observe(nav);
   // Recent files: Alt+R (⌥R on a Mac), only while the pane has focus.
