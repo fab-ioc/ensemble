@@ -2027,7 +2027,13 @@ def _claude_image_path(turn: dict, path: str, k: int) -> bool:
     end = len(lines)
     while end and lines[end - 1].strip() in ("", bare) and end - 1 not in code:
         end -= 1
-    i = at[k] if len(at) == len(tokens) else at[0] if at and at[0] >= end else None
+    # Once one could not be told, a later match of the counts is chance: the
+    # rest are unsure too (``_unsure``: dropped by _claude_text_turns).
+    if len(at) == len(tokens) and not turn.get("_unsure"):
+        i = at[k]
+    else:
+        turn["_unsure"] = True
+        i = at[0] if at and at[0] >= end else None
     if i is None:
         turn["text"] = message_refs.with_images(words.strip(), [*paths, path])
         return True
@@ -2110,6 +2116,7 @@ def _claude_text_turns(tpath: Path) -> list[dict]:
     for turn in turns:
         turn.pop("_img", None)
         turn.pop("_placed", None)
+        turn.pop("_unsure", None)
     return turns
 
 

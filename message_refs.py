@@ -63,16 +63,24 @@ _FENCE = re.compile(r"^\s*(```|~~~)")
 _TAIL_LINE = re.compile(r"^(?:\[image\] \S.*|\[point P\d{1,5}[a-z]?\][ \t]*)$")
 
 
+_FENCE_RUN = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
+
+
 def fenced_lines(lines: list[str]) -> set[int]:
-    """The indexes of ``lines`` inside a code fence, its fence lines included."""
+    """The indexes of ``lines`` inside a code fence, its fence lines included.
+    A fence closes only on a line of its own character, at least as long and
+    with nothing after it: a ```` sample may hold a ``` one."""
     out, fence = set(), None
     for i, ln in enumerate(lines):
-        f = _FENCE.match(ln)
-        if f:
-            out.add(i)
-            fence = None if fence == f.group(1) else (fence or f.group(1))
-        elif fence is not None:
-            out.add(i)
+        f = _FENCE_RUN.match(ln)
+        if fence is None:
+            if f:
+                fence = f.group(1)
+                out.add(i)
+            continue
+        out.add(i)
+        if f and f.group(1)[0] == fence[0] and len(f.group(1)) >= len(fence) and not f.group(2).strip():
+            fence = None
     return out
 
 

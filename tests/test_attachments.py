@@ -463,6 +463,20 @@ class Attachments(unittest.TestCase):
                 f"**2.** b\n```text\n[image]\n```\n\n[point P2]\n\n[image] {own}")
         for one in (True, False):
             self.assertEqual(self.transcript_turns(code, ["C:/Pictures/pasted.png", own], one), [want], one)
+        # Review 3: a longer fence holds a shorter one, and its "[image]" too.
+        long = code.replace("```text\n[image]\n```", "````markdown\n```text\n[image]\n```\n````")
+        for one in (True, False):
+            self.assertEqual(self.transcript_turns(long, ["C:/Pictures/pasted.png", own], one), [
+                want.replace("```text\n[image]\n```", "````markdown\n```text\n[image]\n```\n````")], one)
+        # Review 3: once one could not be told, the next is not either, though
+        # the counts then match: this chat's two, then one from elsewhere.
+        first, second = att / "first.png", att / "second.png"
+        seq = ("[Image #1][Image #2][Image #3]## Points (2)\n\n**1.** a\n[image]\n\n[point P1]\n\n"
+               "**2.** b\n[image]\n\n[point P2]")
+        want_seq = (f"[Image #3]## Points (2)\n\n**1.** a\n[image]\n\n[point P1]\n\n"
+                    f"**2.** b\n[image]\n\n[point P2]\n\n[image] {first}\n[image] {second}")
+        for one in (True, False):
+            self.assertEqual(self.transcript_turns(seq, [first, second, "C:/Pictures/pasted.png"], one), [want_seq], one)
         # With every image this chat's, the code line stays and each is in its point.
         a = att / "a.png"
         self.assertEqual(self.transcript_turns(code.replace("[Image #1][Image #2]", "[Image #1]"), [a]), [

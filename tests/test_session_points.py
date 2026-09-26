@@ -68,7 +68,9 @@ out.images = [T.stripImagePlaceholders('[Image #2] [Image #3]\n\n## Points (2)\n
   T.stripImagePlaceholders('see [image] x and [Image 2]'), T.stripImagePlaceholders('[Image]'),
   T.stripImagePlaceholders('[Image #1]**1.** a\n[image]\n\n**2.** b\n[image] C:\\t\\attachments\\b.png'),
   T.stripImagePlaceholders('Reproduce with this input:\n```text\n[image]\n```'),
-  T.stripImagePlaceholders('[Image #1] see\n[image]\n~~~\n[Image #2]\n[image]\n~~~\nafter')];
+  T.stripImagePlaceholders('[Image #1] see\n[image]\n~~~\n[Image #2]\n[image]\n~~~\nafter'),
+  T.stripImagePlaceholders('Example:\n````markdown\n```text\n[image]\n[Image #2]\n```\n````\n[image]'),
+  T.stripImagePlaceholders('~~~~\n~~~\n[image]\n~~~~ not a close\n[Image #1]\n~~~~~\n[image]')];
 // A link's preview of the person's message reads as their balloon; an agent's is as written.
 out.previews = [T.refPreview({ from: 'user', text: '[Image #2] [Image #3]\n\nPlease compare these screenshots' }),
   T.refPreview({ from: 'claude', text: 'Your [Image #2] shows it' })];
@@ -194,6 +196,9 @@ class Points(unittest.TestCase):
             # A code sample is the person's words, kept as typed.
             "Reproduce with this input:\n```text\n[image]\n```",
             "see\n~~~\n[Image #2]\n[image]\n~~~\nafter",
+            # A longer fence holds a shorter one; it closes only on its own.
+            "Example:\n````markdown\n```text\n[image]\n[Image #2]\n```\n````",
+            "~~~~\n~~~\n[image]\n~~~~ not a close\n[Image #1]\n~~~~~",
         ])
         self.assertEqual(self.r["hasImages"], [True, False])
         self.assertEqual(self.r["previews"], ["Please compare these screenshots", "Your [Image #2] shows it"])
