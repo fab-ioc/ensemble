@@ -427,6 +427,21 @@ class Attachments(unittest.TestCase):
         att = self.folder()
         self.assertEqual(self.transcript_turns("[Image #1] [Image #2] mine\n[image]", ["C:\\Pictures\\cat.png", att / "a.png"]),
                          [f"[Image #1] mine\n\n[image] {att / 'a.png'}"])
+        # One with its own "[image]" line, in a point before or between this
+        # chat's: each of those stays in its own point, the other's line and
+        # placeholder stay (the page shows neither).
+        own, cat = att / "own.png", "C:\\Pictures\\cat.png"
+        two = "[Image #1][Image #2]## Points (2)\n\n**1.** a\n[image]\n\n[point P1]\n\n**2.** b\n[image]\n\n[point P2]"
+        want = f"[Image #1]## Points (2)\n\n**1.** a\n[image]\n\n[point P1]\n\n**2.** b\n[image] {own}\n\n[point P2]"
+        self.assertEqual(self.transcript_turns(two, [cat, own]), [want])
+        self.assertEqual(self.transcript_turns(two, [cat, own], one_entry=False), [want])
+        three = two.replace("[Image #2]", "[Image #2][Image #3]") + "\n\n**3.** c\n[image]"
+        self.assertEqual(self.transcript_turns(three.replace("## Points (2)", "## Points (3)"), [att / "a.png", cat, own]), [
+            f"[Image #2]## Points (3)\n\n**1.** a\n[image] {att / 'a.png'}\n\n[point P1]\n\n**2.** b\n[image]\n\n[point P2]\n\n**3.** c\n\n[image] {own}"])
+        # Trailing images with another's between them keep their order.
+        tail = "[Image #1][Image #2][Image #3]look\n[image]\n[image]\n[image]"
+        self.assertEqual(self.transcript_turns(tail, [att / "a.png", cat, own]),
+                         [f"[Image #2]look\n[image]\n\n[image] {att / 'a.png'}\n[image] {own}"])
 
     def test_a_codex_turn_with_an_image_keeps_its_words(self):
         # What codex logs for an image pasted into it (seen live): the turn began
@@ -439,6 +454,25 @@ class Attachments(unittest.TestCase):
         self.assertFalse(codex._is_synthetic(text))
         self.assertEqual(codex._text_of([{"type": "input_text", "text": "<environment_context>x</environment_context>"}]),
                          "<environment_context>x</environment_context>")
+
+    def test_a_codex_po_keeps_every_image_line_where_it_was_typed(self):
+        # Codex takes the typed "[image] <path>" lines as words: the turn it
+        # logs is the message as sent, so 1, 2 and 3 images, in points or not,
+        # reach the balloon in their places (placement: test_session_editor).
+        from agents import codex
+        att = self.folder()
+        a, b, c = (att / f"{n}.png" for n in "abc")
+        sent = [f"look\n\n[image] {a}",
+                f"## Points (2)\n\n**1.** one\n[image] {a}\n\n[point P1]\n\n**2.** two\n[image] {b}\n\n[point P2]",
+                f"## Points (3)\n\n**1.** one\n\n[point P3]\n\n**2.** two\n[image] {a}\n\n[point P4]\n\n**3.** three\n[image] {b}\n[image] {c}\n\n[point P5]"]
+        rollout = Path(self.tmp.name) / "rollout.jsonl"
+        rollout.write_text("\n".join(json.dumps({"type": "response_item", "timestamp": "2026-09-26T06:47:00Z", "payload": {
+            "type": "message", "id": f"m{i}", "role": "user", "content": [{"type": "input_text", "text": t}]}}) for i, t in enumerate(sent)),
+            encoding="utf-8")
+        agent = codex.CodexAgent()
+        agent.rollouts_for_session = lambda sid: [rollout]
+        self.assertEqual([t["text"] for t in agent.read_turns("s")], sent)
+        self.assertEqual(message_refs.all_images(sent[2]), [str(a), str(b), str(c)])
 
     def test_with_images_and_split_images(self):
         paths = [r"C:\t\attachments\a.png", "/t/attachments/b c.png"]

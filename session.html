@@ -1614,7 +1614,9 @@ function refWho(r) {
 }
 const refLabel = r => [refWho(r), (r.taskNo ? '#' + r.taskNo + ' ' : '') + (r.taskTitle || ''), refWhen(r.ts)].filter(Boolean).join(' · ');
 function refPreview(r) {
-  const t = attSplit(stripRefBlocks(r.text)).words.replace(/\s+/g, ' ').trim();
+  // The person's message as their balloon shows it: no image placeholders.
+  const text = r.from === 'user' ? stripImagePlaceholders(r.text) : r.text;
+  const t = attSplit(stripRefBlocks(text)).words.replace(/\s+/g, ' ').trim();
   return t.length > 60 ? t.slice(0, 59) + '…' : t;
 }
 // The chip for a link the hub has resolved, else null: the text keeps the link.
@@ -2561,11 +2563,13 @@ const hasPointLines = t => /^\[point P\d{1,5}[a-z]?\][ \t]*$/m.test(String(t || 
 const stripPointLines = t => hasPointLines(t) ? String(t).replace(POINT_LINE_RE, '').trim() : String(t || '');
 // Claude Code and Codex write "[Image #3]" into the person's turn for each
 // image it carries; the image shows as its thumbnail (the hub puts its
-// "[image] <path>" line back), the placeholder never, nor a line of nothing else.
+// "[image] <path>" line back), the placeholder never, nor a line of nothing
+// else, nor the bare "[image]" line of an image the hub cannot show.
 const IMAGE_PH_RE = /[ \t]*\[Image(?: #\d+)?\][ \t]*/g;
-const hasImagePlaceholders = t => /\[Image(?: #\d+)?\]/.test(String(t || ''));
+const IMAGE_BARE_RE = /^[ \t]*\[image\][ \t]*$/;
+const hasImagePlaceholders = t => /\[Image(?: #\d+)?\]|^[ \t]*\[image\][ \t]*$/m.test(String(t || ''));
 const stripImagePlaceholders = t => !hasImagePlaceholders(t) ? String(t || '') : String(t).split('\n')
-  .map(l => { const r = l.replace(IMAGE_PH_RE, ' '); return r === l ? l : r.trim() ? r.replace(/^ | $/g, '') : null; })
+  .map(l => { if (IMAGE_BARE_RE.test(l)) return null; const r = l.replace(IMAGE_PH_RE, ' '); return r === l ? l : r.trim() ? r.replace(/^ | $/g, '') : null; })
   .filter(l => l !== null).join('\n').replace(/^\n+/, '');
 const PT_WORD = { open: 'waiting for an answer', answered: 'answered', acked: 'acknowledged', dropped: 'dropped', split: 'split into parts' };
 // The answer a link goes to: the latest one with a balloon, else the latest.

@@ -2014,22 +2014,28 @@ def _claude_image_path(turn: dict, path: str, k: int) -> bool:
     words, paths = message_refs.split_images(turn["text"][:t.start()] + turn["text"][t.end():])
     # A line of placeholders the message began with goes whole.
     words = words.lstrip()
-    # An image inside a point left a bare "[image]" line in the middle of
-    # the text: the path goes back there, in order. The bare lines at the
-    # end are the message's own trailing images, put back below.
+    # Each "[image] <path>" line typed left a bare "[image]" line where it
+    # was: the path goes back on its own one. When every placeholder has
+    # one, the k-th still bare is this image's (an image from elsewhere keeps
+    # its line, and the page does not show it); else the first.
+    bare = message_refs.IMAGE_PREFIX.strip()
     lines = words.split("\n")
-    end = len(lines)
-    while end and lines[end - 1].strip() in ("", message_refs.IMAGE_PREFIX.strip()):
-        end -= 1
-    inline = next((i for i in range(end) if lines[i].strip() == message_refs.IMAGE_PREFIX.strip()), None)
-    if inline is not None:
-        lines[inline] = message_refs.image_line(path)
-        turn["text"] = message_refs.with_images("\n".join(lines).rstrip(), paths)
+    at = [i for i, ln in enumerate(lines) if ln.strip() == bare]
+    if not at:
+        turn["text"] = message_refs.with_images(words.strip(), [*paths, path])
         return True
-    lines = words.split("\n")
-    while lines and lines[-1].strip() in ("", message_refs.IMAGE_PREFIX.strip()):
-        lines.pop()
-    turn["text"] = message_refs.with_images("\n".join(lines).strip(), [*paths, path])
+    i = at[k] if len(at) == len(tokens) else at[0]
+    end = len(lines)
+    while end and lines[end - 1].strip() in ("", bare):
+        end -= 1
+    if i < end:
+        # Inside the text (a point's image): a thumbnail where it is.
+        lines[i] = message_refs.image_line(path)
+        turn["text"] = message_refs.with_images("\n".join(lines).rstrip(), paths)
+    else:
+        # One of the images the message ends with: below the words, in order.
+        del lines[i]
+        turn["text"] = message_refs.with_images("\n".join(lines).strip(), [*paths, path])
     return True
 
 
