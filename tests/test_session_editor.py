@@ -60,8 +60,7 @@ const ctx = { ROOM: 'room-aaaa0001', console, URL,
   ATT_PREFIX: '[image] ', HUB_PORT: '8765', ROOM_OBJ: null, CHAT_NAMES: {}, refOfUrl: () => null, refChipHtml: () => null, parkTaskRefs: (s, chips) => s, parkPmRefs: (s, chips) => s, pmLinkHtml: () => null,
   linkify: t => t, unlinkify: t => t, codeSpanHtml: b => '<code>' + b + '</code>', REF_A: '\uE004', REF_Z: '\uE005', REF_MARK_RE: /\uE004(\d+)\uE005/g,
   REF_URL_RE: /https?:\/\/[^\s<>()\[\]{}"'`*|\\]+/gi, TASK_BLOCK_RE: /\n\n\[ref ((?:@[A-Za-z][\w-]*@|#)(?:[A-Za-z][A-Za-z0-9]*-)?\d{1,6})\] task [^\n]*\s*$/,
-  refHref: (room, mid) => '/session?room=' + room + '&msg=' + mid, lastAnswer: p => (p.answers || [])[(p.answers || []).length - 1] || null,
-  PT_WORD: { open: 'waiting for an answer', answered: 'answered', acked: 'acknowledged', dropped: 'dropped' },
+  refHref: (room, mid) => '/session?room=' + room + '&msg=' + mid,
   ptBtn: (id, act, label) => `<button data-pt="${id}" data-pt-act="${act}">${label}</button>`, ackBtn: id => `<button data-pt="${id}" data-pt-act="ack">👍 Ack</button>`,
   ptLink: (mid, text) => `<a class="pt-link" data-mid="${mid}">${text}</a>`, canApprove: () => false,
   // The shared link block is not loaded: no "..." path resolves here.
@@ -188,7 +187,9 @@ class Editor(unittest.TestCase):
     def setUpClass(cls):
         code = "\n".join([ATTACH, MODEL, ITEMS, js_const("REF_BLOCK_RE"), js_function("stripRefBlocks"), js_function("mdToHtml"),
                           js_function("itemsHtml"), js_function("foldLine"), js_function("pointBarHtml"), js_function("ptOwn"),
-                          js_function("pointItemsHtml"), js_function("pointMaps"), js_const("headWords")])
+                          js_function("pointItemsHtml"), js_const("PT_WORD"), js_const("ptItem"), js_const("isPlan"),
+                          js_function("ptLatest"), js_const("lastAnswer"), js_const("lastPlan"),
+                          js_function("ptTaskWords"), js_function("pointMaps"), js_const("headWords")])
         run = subprocess.run([NODE, "-e", JS], input=json.dumps({"code": code}), capture_output=True, text=True,
                              encoding="utf-8", timeout=60)
         if run.returncode != 0:
@@ -296,7 +297,7 @@ class Editor(unittest.TestCase):
         h = self.r["perItem"]
         self.assertEqual(h.count('<div class="pt-bar">'), 3, "one bar per item, and one for the follow-up")
         first = h[h.index('<li class="pt-item">'):h.index('<li class="pt-item">', h.index('<li class="pt-item">') + 1)]
-        self.assertIn("P1 · answered", first)
+        self.assertIn("P1 · ready for your check", first, "a hub from before the stages says answered")
         self.assertNotIn("P2", first)
         self.assertIn('data-pt="P2" data-pt-act="drop"', h)
         self.assertTrue(h.endswith('<div class="pt-bar"><span class="pt-chip open">P3 · waiting for an answer</span><button data-pt="P3" data-pt-act="drop">Drop</button></div>'), h)

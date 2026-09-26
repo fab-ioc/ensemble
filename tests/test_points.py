@@ -220,7 +220,7 @@ class Ledger(_World):
         out, _ = self.send(rid, "Is #26 merged?", at=self.t0)
         self.add("sid-1", turn("user", out, self.t0 + 1), turn("assistant", "Checking.", self.t0 + 5),
                  turn("assistant", "Yes, merged at 10:05.", self.t0 + 9))
-        self.assertEqual(self.state(rid), {"P1": "answered"})
+        self.assertEqual(self.state(rid), {"P1": "delivered"})
         p = self.point(rid, "P1")
         self.assertEqual(p["mid"], "sid-1:0")
         self.assertEqual([a["mid"] for a in p["answers"]], ["sid-1:2"], "the run's last balloon")
@@ -256,7 +256,7 @@ class Ledger(_World):
                  turn("assistant", "Checking the page.", self.t0 + 8, interim=True),
                  turn("assistant", "Re P1: your tab ran the old page; reload once.", self.t0 + 9, interim=True),
                  turn("assistant", "The links open on the live page.", self.t0 + 10))
-        self.assertEqual(self.state(rid), {"P1": "answered", "P2": "answered"})
+        self.assertEqual(self.state(rid), {"P1": "delivered", "P2": "delivered"})
         self.assertEqual(self.point(rid, "P1")["answers"][0]["how"], "re")
         self.assertEqual(self.point(rid, "P2")["answers"][0]["mid"], "sid-1:7")
 
@@ -271,7 +271,7 @@ class Ledger(_World):
                  turn("user", "[report] update from task 'X' (#2, codex): half", self.t0 + 4),
                  turn("assistant", "Re P2: no.\n\n**Re P1:** yes, tomorrow.", self.t0 + 5),
                  turn("user", c, self.t0 + 6), turn("assistant", "Re P3: done", self.t0 + 7))
-        self.assertEqual(self.state(rid), {"P1": "answered", "P2": "answered", "P3": "answered"})
+        self.assertEqual(self.state(rid), {"P1": "delivered", "P2": "delivered", "P3": "delivered"})
         self.assertEqual(self.point(rid, "P1")["mid"], "sid-1:q0")
         self.assertEqual(self.point(rid, "P2")["answers"][0]["how"], "re")
         # An answer much later, in the next session, to a point reopened meanwhile.
@@ -282,14 +282,14 @@ class Ledger(_World):
         room["participants"][0]["rotations"] = [{"fromSessionId": "sid-1", "toSessionId": "sid-2"}]
         room["participants"][0]["sessionId"] = "sid-2"
         chatroom.update_room(room)
-        self.assertEqual(self.state(rid)["P3"], "answered")
+        self.assertEqual(self.state(rid)["P3"], "delivered")
         self.assertEqual(len(self.point(rid, "P3")["answers"]), 2)
 
     def test_a_session_read_again_keeps_only_the_answers_it_holds(self):
         rid = self.solo_room()
         out, _ = self.send(rid, "Why red?", at=self.t0)
         self.add("sid-1", turn("user", out, self.t0 + 1), turn("assistant", "Re P1: flaky.", self.t0 + 2))
-        self.assertEqual(self.state(rid), {"P1": "answered"})
+        self.assertEqual(self.state(rid), {"P1": "delivered"})
         # An answer linked under a turn count the session no longer has (a hub
         # that counted its turns otherwise) goes when the session is read again.
         led = points.load(rid)
@@ -298,18 +298,18 @@ class Ledger(_World):
         points._SCANNED.clear()
         points.sync(rid, force=True)
         p = self.point(rid, "P1")
-        self.assertEqual(([a["mid"] for a in p["answers"]], p["state"]), (["sid-1:1"], "answered"))
+        self.assertEqual(([a["mid"] for a in p["answers"]], p["state"]), (["sid-1:1"], "delivered"))
 
     def test_a_follow_up_reopens_with_the_same_id_and_the_thread_keeps_both(self):
         rid = self.solo_room()
         out, _ = self.send(rid, "Why red?", at=self.t0)
         self.add("sid-1", turn("user", out, self.t0 + 1), turn("assistant", "A flaky test.", self.t0 + 2))
-        self.assertEqual(self.state(rid), {"P1": "answered"})
+        self.assertEqual(self.state(rid), {"P1": "delivered"})
         again, ids = self.send(rid, "Re P1: which one?", at=self.t0 + 3)
         self.assertEqual((ids, again), (["P1"], "Re P1: which one?\n\n[point P1]"))
         self.assertEqual(self.state(rid), {"P1": "open"})
         self.add("sid-1", turn("user", again, self.t0 + 4), turn("assistant", "test_x.", self.t0 + 5))
-        self.assertEqual(self.state(rid), {"P1": "answered"})
+        self.assertEqual(self.state(rid), {"P1": "delivered"})
         p = self.point(rid, "P1")
         self.assertEqual((len(p["answers"]), p["followUps"]), (2, ["sid-1:2"]))
         self.assertEqual(len(points.load(rid)["points"]), 1)
@@ -322,7 +322,7 @@ class Ledger(_World):
                  turn("assistant", "Answer like this:\n\n```\nRe P1: your answer here\n```", self.t0 + 3))
         self.assertEqual(self.state(rid), {"P1": "open"})
         self.add("sid-1", turn("assistant", "Re P1: every message is kept until you ack it.", self.t0 + 4))
-        self.assertEqual(self.state(rid), {"P1": "answered"})
+        self.assertEqual(self.state(rid), {"P1": "delivered"})
 
     def test_old_unresolved_points_are_always_listed(self):
         rid = self.solo_room()
@@ -335,7 +335,7 @@ class Ledger(_World):
                 points.act(rid, f"P{k + 3}", "ack")
             v = points.view(rid)
         ids = [i["id"] for i in v["items"]]
-        self.assertEqual((v["open"], v["answered"]), (1, 1))
+        self.assertEqual((v["open"], v["delivered"]), (1, 1))
         self.assertIn("P1", ids)
         self.assertIn("P2", ids)
         self.assertEqual(len(ids), 5)
@@ -347,7 +347,7 @@ class Ledger(_World):
         b, _ = self.send(rid, "Two?", at=self.t0 + 1)
         self.add("sid-1", turn("user", a, self.t0 + 1), turn("assistant", "one", self.t0 + 2),
                  turn("user", b, self.t0 + 3), turn("assistant", "two", self.t0 + 4))
-        self.assertEqual(self.state(rid), {"P1": "answered", "P2": "answered"})
+        self.assertEqual(self.state(rid), {"P1": "delivered", "P2": "delivered"})
         self.assertEqual(points.act(rid, "P1", "ack")["state"], "acked")
         self.assertIsNone(points.act(rid, "P1", "ack"), "already acknowledged")
         self.assertIsNone(points.act(rid, "P1", "drop"))
@@ -371,7 +371,7 @@ class Ledger(_World):
         self.assertFalse(points.exists(other), "nothing written for a room with nothing open")
         # Taken in, it is answered by the reply after its balloon.
         self.add("sid-1", turn("assistant", "Yes, deployed.", self.t0 + 3))
-        self.assertEqual(self.state(rid), {"P1": "answered"})
+        self.assertEqual(self.state(rid), {"P1": "delivered"})
 
     def test_what_launched_a_room_is_not_taken_in(self):
         rid = self.solo_room()
@@ -412,7 +412,7 @@ class POCheck(_World):
         out, _ = self.send(rid, "Q?", at=self.t0)
         self.add("sid-1", turn("user", out, self.t0 + 1), turn("assistant", "A.", self.t0 + 2))
         with mock.patch.object(dashboard, "read_session_turns", side_effect=turns):
-            self.assertEqual(self.state(rid), {"P1": "answered"})
+            self.assertEqual(self.state(rid), {"P1": "delivered"})
             self.assertEqual(held, [False])
             # A session last written before the oldest waiting point is not read.
             room = chatroom.get_room(rid, public=False)
@@ -428,7 +428,7 @@ class POCheck(_World):
         rid = self.solo_room()
         out, _ = self.send(rid, "Q?", at=self.t0)
         self.add("sid-1", turn("user", out, self.t0 + 1), turn("assistant", "A.", self.t0 + 2))
-        self.assertEqual(self.state(rid), {"P1": "answered"})
+        self.assertEqual(self.state(rid), {"P1": "delivered"})
         self.gen += 1
         with mock.patch.object(dashboard, "read_session_turns", return_value=[]):
             points.sync(rid, force=True)
@@ -444,7 +444,7 @@ class POCheck(_World):
         chatroom.post_message(rid, "claude", "Resumed, carrying on.", to="user")
         self.assertEqual(self.state(rid), {"P1": "open"})
         chatroom.post_message(rid, "claude", "Re P1: yes, merged.", to="user")
-        self.assertEqual(self.state(rid), {"P1": "answered"})
+        self.assertEqual(self.state(rid), {"P1": "delivered"})
 
     def test_a_lone_surrogate_is_saved_and_no_temp_file_stays(self):
         rid = self.solo_room()
@@ -534,7 +534,7 @@ class Team(_World):
         self.post(rid, "claude", "Please review abc123", to="codex")
         self.assertEqual(self.state(rid), {"P1": "open"})
         self.post(rid, "claude", "Yes, done in abc123.", to="user")
-        self.assertEqual(self.state(rid), {"P1": "answered"})
+        self.assertEqual(self.state(rid), {"P1": "delivered"})
         # To the reviewer by name: its point.
         out, _ = self.send(rid, "@codex does it hold?", to="codex")
         self.assertEqual(self.point(rid, "P2")["owner"], "codex")
@@ -542,7 +542,7 @@ class Team(_World):
         self.post(rid, "codex", "verdict", to="user", kind="report")
         self.assertEqual(self.state(rid)["P2"], "open", "a report is not an implicit answer")
         self.post(rid, "claude", "Re P2: it holds, see the log.", to="user", kind="report")
-        self.assertEqual(self.state(rid)["P2"], "answered")
+        self.assertEqual(self.state(rid)["P2"], "delivered")
 
 
 class Prompts(_World):
@@ -608,7 +608,9 @@ class Prompts(_World):
         self.assertEqual(points.note_line(rid), "")
 
 
-class Reminder(_World):
+class _Idle(_World):
+    """An agent that is live and idle unless a test says otherwise."""
+
     def setUp(self):
         super().setUp()
         self.idle = True
@@ -625,6 +627,8 @@ class Reminder(_World):
             self.addCleanup(p.stop)
         self.live = True
 
+
+class Reminder(_Idle):
     def test_once_per_point_only_into_an_idle_live_agent(self):
         rid = self.solo_room()
         now = time.time()
@@ -817,7 +821,7 @@ class Endpoints(_World):
             self.assertEqual(status, 403)
             status, r = http("/api/room/points", {"roomId": rid, "id": "P1", "action": "ack"})
             self.assertEqual((status, r["point"]["state"]), (200, "acked"))
-            self.assertEqual((r["points"]["open"], r["points"]["answered"]), (0, 0))
+            self.assertEqual((r["points"]["open"], r["points"]["delivered"]), (0, 0))
             self.assertEqual(http("/api/room/points", {"roomId": rid, "id": "P1", "action": "ack"})[0], 409)
             self.assertEqual(http("/api/room/points", {"roomId": rid, "id": "P1", "action": "zap"})[0], 400)
         resume.assert_not_called()
@@ -847,17 +851,17 @@ class Endpoints(_World):
         rid = self.solo_room()
         out, _ = self.send(rid, "Why red?", at=self.t0)
         self.add("sid-1", turn("user", out, self.t0 + 1), turn("assistant", "Flaky.", self.t0 + 2))
-        self.assertEqual(self.state(rid), {"P1": "answered"})
+        self.assertEqual(self.state(rid), {"P1": "delivered"})
         before = self.point(rid, "P1")
         with mock.patch.object(dashboard.Handler, "_resume_room", side_effect=dashboard.StartRoomError("handover")):
             status, r = http("/api/room/resume", {"roomId": rid, "text": "Re P1: which test?", "key": "k2"})
         self.assertEqual((status, r.get("kept")), (400, False))
         p = self.point(rid, "P1")
-        self.assertEqual((p["state"], p["stateAt"], p.get("follows")), ("answered", before["stateAt"], []))
+        self.assertEqual((p["state"], p["stateAt"], p.get("follows")), ("delivered", before["stateAt"], []))
         # A refused new point goes; the one before it stays.
         with mock.patch.object(dashboard.Handler, "_resume_room", side_effect=dashboard.StartRoomError("no")):
             http("/api/room/resume", {"roomId": rid, "text": "Another thing", "key": "k3"})
-        self.assertEqual(self.state(rid), {"P1": "answered"})
+        self.assertEqual(self.state(rid), {"P1": "delivered"})
 
     def test_a_discarded_held_send_takes_its_points_back(self):
         rid = self.solo_room()
@@ -873,7 +877,7 @@ class Endpoints(_World):
         self.assertTrue(dashboard.discard_pending(rid))
         self.assertEqual(self.state(rid), {"P1": "open"})
         self.assertEqual(self.point(rid, "P1").get("follows"), [])
-        self.assertEqual(points.counts(rid), {"open": 1, "answered": 0})
+        self.assertEqual(points.counts(rid), {"open": 1, "planned": 0, "delivered": 0})
 
     def hold(self, rid, *items):
         res = dashboard._Resume()
@@ -886,7 +890,7 @@ class Endpoints(_World):
         rid = self.solo_room()
         out, _ = self.send(rid, "Why red?", at=self.t0)
         self.add("sid-1", turn("user", out, self.t0 + 1), turn("assistant", "Flaky.", self.t0 + 2))
-        self.assertEqual(self.state(rid), {"P1": "answered"})
+        self.assertEqual(self.state(rid), {"P1": "delivered"})
         before = self.point(rid, "P1")["stateAt"]
         a, _ = self.send(rid, "Re P1: which one?", key="k1", at=self.t0 + 3)
         b, _ = self.send(rid, "Re P1: and on Windows?", key="k2", at=self.t0 + 4)
@@ -895,7 +899,7 @@ class Endpoints(_World):
         self.assertEqual(status, 200)
         p = self.point(rid, "P1")
         self.assertEqual((p["state"], p["stateAt"], p.get("follows"), p.get("undo")),
-                         ("answered", before, [], None))
+                         ("delivered", before, [], None))
 
     def test_discarding_a_held_point_and_its_held_follow_up_removes_both(self):
         rid = self.solo_room()
@@ -928,7 +932,7 @@ class Endpoints(_World):
         # Its delivery failed; the person discards what was held.
         self.hold(rid, {"text": "Approved: go with your recommendation.", "key": "approve:sid-1:1"})
         self.assertTrue(dashboard.discard_pending(rid))
-        self.assertEqual(self.state(rid), {"P1": "answered"})
+        self.assertEqual(self.state(rid), {"P1": "delivered"})
         sent = []
         with mock.patch.object(dashboard.Handler, "_resume_room",
                                lambda h, room, text="", to="", key="": sent.append(key) or {"delivered": 1}):
@@ -940,10 +944,10 @@ class Endpoints(_World):
         out, _ = self.send(rid, "Which way?", at=self.t0)
         self.add("sid-1", turn("user", out, self.t0 + 1),
                  turn("assistant", "Decision needed: A or B?\n\nI recommend A.", self.t0 + 2))
-        self.assertEqual(self.state(rid), {"P1": "answered"})
+        self.assertEqual(self.state(rid), {"P1": "delivered"})
         with mock.patch.object(dashboard.Handler, "_resume_room", side_effect=dashboard.StartRoomError("no")):
             self.assertEqual(http("/api/room/approve", {"roomId": rid, "mid": "sid-1:1"})[0], 400)
-        self.assertEqual(self.state(rid), {"P1": "answered"})
+        self.assertEqual(self.state(rid), {"P1": "delivered"})
         self.assertNotIn("ackedBy", self.point(rid, "P1"))
 
     def test_a_ledger_that_cannot_be_written_is_answered_500(self):
@@ -960,7 +964,139 @@ class Endpoints(_World):
         self.send(rid, "Q?")
         room = dashboard._annotate_room_liveness(chatroom.get_room(rid), with_points=True)
         self.assertEqual((room["points"]["open"], [i["id"] for i in room["points"]["items"]]), (1, ["P1"]))
-        self.assertEqual(points.counts(rid), {"open": 1, "answered": 0})
+        self.assertEqual(points.counts(rid), {"open": 1, "planned": 0, "delivered": 0})
+
+
+class Stages(_World):
+    """A point follows the work: open → planned (a plan, its task linked) →
+    delivered (said live) → acked. A plan is never what the person acks."""
+
+    def test_plan_marks(self):
+        self.assertEqual(points.re_marks("Re P12 (planned #104): started"),
+                         {"P12": {"plan": True, "task": "#104"}})
+        self.assertEqual(points.re_marks("**Re P7** (plan ED-7): queued\n\nRe P3 (planned): later"),
+                         {"P7": {"plan": True, "task": "ED-7"}, "P3": {"plan": True, "task": ""}})
+        self.assertEqual(points.re_marks("Re P1 (planned #5): a\n\nRe P1: it is live"),
+                         {"P1": {"plan": False, "task": ""}}, "a plain Re Pn: in the same reply wins")
+        self.assertEqual(points.re_marks("Re P2, P4 (planned #9): both"),
+                         {"P2": {"plan": True, "task": "#9"}, "P4": {"plan": True, "task": "#9"}})
+        self.assertEqual((points.task_ref("ed-0104"), points.task_ref("104"), points.task_ref("x")),
+                         ("ED-104", "#104", ""))
+
+    def test_a_plan_is_in_progress_until_it_is_said_live(self):
+        rid = self.solo_room()
+        out, _ = self.send(rid, "Add a dark mode", at=self.t0)
+        self.add("sid-1", turn("user", out, self.t0 + 1),
+                 turn("assistant", "Re P1 (planned #104): started as #104.", self.t0 + 2))
+        self.assertEqual(self.state(rid), {"P1": "planned"})
+        p = self.point(rid, "P1")
+        self.assertEqual((p["task"], [a.get("kind") for a in p["answers"]]), ("#104", ["plan"]))
+        self.assertEqual(points.counts(rid), {"open": 0, "planned": 1, "delivered": 0})
+        # Neither a click nor a thumbs up nor a "thanks" acks a plan.
+        self.assertIsNone(points.act(rid, "P1", "ack"))
+        self.assertTrue(points.approve(rid, "sid-1:1"))
+        self.assertEqual(self.send(rid, "thanks", at=self.t0 + 3)[1], [])
+        self.assertEqual(self.state(rid), {"P1": "planned"})
+        # Later, in the same run, the work is live.
+        self.add("sid-1", turn("assistant", "Re P1: dark mode is live after the restart.", self.t0 + 4))
+        self.assertEqual(self.state(rid), {"P1": "delivered"})
+        p = self.point(rid, "P1")
+        self.assertEqual(([a.get("kind") for a in p["answers"]], p["task"]), (["plan", None], "#104"))
+        item = points.view(rid)["items"][0]
+        self.assertEqual((item["answers"][0]["kind"], item["task"]["ref"]), ("plan", "#104"))
+        self.assertEqual(points.act(rid, "P1", "ack")["state"], "acked")
+
+    def test_a_newer_plan_takes_a_delivered_point_back_and_a_follow_up_reopens_a_plan(self):
+        rid = self.solo_room()
+        out, _ = self.send(rid, "Fix the login", at=self.t0)
+        self.add("sid-1", turn("user", out, self.t0 + 1), turn("assistant", "Fixed.", self.t0 + 2))
+        self.assertEqual(self.state(rid), {"P1": "delivered"})
+        self.add("sid-1", turn("user", "[digest] 1 task moved", self.t0 + 3),
+                 turn("assistant", "Re P1 (planned #7): the rest needs a task.", self.t0 + 4))
+        self.assertEqual(self.state(rid), {"P1": "planned"})
+        again, _ = self.send(rid, "Re P1: and the logout too?", at=self.t0 + 5)
+        self.assertEqual(self.state(rid), {"P1": "open"})
+        self.add("sid-1", turn("user", again, self.t0 + 6),
+                 turn("assistant", "Re P1 (planned #7): folded into #7.", self.t0 + 7))
+        self.assertEqual(self.state(rid), {"P1": "planned"})
+
+    def test_approving_a_delivery_acks_it(self):
+        rid = self.solo_room()
+        out, _ = self.send(rid, "Use Postgres?", at=self.t0)
+        self.add("sid-1", turn("user", out, self.t0 + 1), turn("assistant", "Yes: it is set up.", self.t0 + 2))
+        self.assertEqual(self.state(rid), {"P1": "delivered"})
+        self.assertTrue(points.approve(rid, "sid-1:1"))
+        self.assertEqual(self.point(rid, "P1")["state"], "acked")
+
+    def test_a_ledger_from_before_the_stages_loads(self):
+        rid = self.solo_room()
+        self.send(rid, "Old", at=self.t0)
+        led = points.load(rid)
+        led["points"][0]["state"] = "answered"
+        points._path(rid).write_text(json.dumps(led), encoding="utf-8")
+        points._CACHE.clear()
+        self.assertEqual(points.load(rid)["points"][0]["state"], "delivered")
+
+    def test_plan_by_tool(self):
+        rid = self.solo_room()
+        self.send(rid, "Add export", at=self.t0)
+        ctx = {"room": chatroom.get_room(rid, public=False), "identity": "claude"}
+        import ensemble_tools
+        with mock.patch.object(ensemble_tools, "_d", dashboard):
+            r = ensemble_tools._points(ctx, {"action": "plan", "point": "P1", "task": "ed-12"}, None)
+            self.assertEqual(r, {"ok": True, "point": "P1", "state": "planned", "task": "ED-12"})
+            self.assertEqual(self.point(rid, "P1")["answers"][0]["summary"], "claude: started as ED-12")
+            with self.assertRaises(ensemble_tools.ToolError):
+                ensemble_tools._points(ctx, {"action": "plan", "point": "P1", "task": "soon"}, None)
+            r = ensemble_tools._points(ctx, {"action": "answer", "point": "P1", "summary": "live"}, None)
+            self.assertEqual(r["state"], "delivered")
+
+    def test_the_fresh_session_is_told_what_it_planned(self):
+        rid = self.solo_room()
+        self.send(rid, "Add export", at=self.t0)
+        points.answer_by_tool(rid, "P1", "started", "claude", plan=True, task="#12")
+        block = points.prompt_block(rid)
+        self.assertTrue(block.startswith("In progress, planned and not yet said live: P1 (#12) \"Add export\""))
+        self.assertIn("never ask sam to acknowledge a plan", block)
+        self.send(rid, "And import", at=self.t0 + 1)
+        block = points.prompt_block(rid)
+        self.assertIn("- P2 (since", block)
+        self.assertNotIn("- P1", block)
+        self.assertTrue(block.endswith("never ask sam to acknowledge a plan."))
+
+
+class DoneReminder(_Idle):
+    def test_a_plan_whose_task_is_done_is_reminded_once(self):
+        rid = self.solo_room()
+        now = time.time()
+        self.send(rid, "Add export", at=now - 5 * 3600)
+        points.act(rid, "P1", "ack")        # an open one is reminded on its own clock
+        points.act(rid, "P1", "reopen", now=now)
+        points.answer_by_tool(rid, "P1", "started", "claude", plan=True, task="#12")
+        task = {"ref": "#12", "done": False, "doneAt": None}
+        with mock.patch.object(points, "task_lookup", return_value=lambda ref: dict(task) if ref == "#12" else None):
+            self.assertEqual(points.tick(now), [], "not Done yet")
+            task.update(done=True, doneAt=now - 60 * 60)
+            self.assertEqual(points.tick(now), [], "Done for an hour")
+            self.assertEqual(points.tick(now + 61 * 60), ["P1"])
+            line = self.pty.typed[-1]
+            self.assertTrue(line.startswith('[points] planned, its task Done, not yet said live: P1 "Add export" '
+                                            '(#12 Done since '))
+            self.assertEqual(dashboard.hub_input_kind(line)["kind"], "points")
+            self.assertEqual(points.tick(now + 300 * 60), [])
+            self.assertEqual(len(self.pty.typed), 1)
+
+    def test_a_done_task_without_its_time_counts_from_when_it_was_seen(self):
+        rid = self.solo_room()
+        now = time.time()
+        self.send(rid, "Add export", at=now)
+        points.answer_by_tool(rid, "P1", "started", "claude", plan=True, task="#12")
+        with mock.patch.object(points, "task_lookup",
+                               return_value=lambda ref: {"ref": ref, "done": True, "doneAt": None}):
+            self.assertEqual(points.tick(now), [])
+            self.assertEqual(self.point(rid, "P1")["doneSeenAt"], now)
+            self.assertEqual(points.tick(now + 119 * 60), [])
+            self.assertEqual(points.tick(now + 121 * 60), ["P1"])
 
 
 if __name__ == "__main__":
