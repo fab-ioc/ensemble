@@ -34,9 +34,10 @@ pages, with one project whose PO room holds points:
 * a panel popped out into its own window (the Board, the PO chat) keeps its
   live updates, takes clicks and typing, follows the theme, and comes back
   when its window closes; the window's own chat is gone before the panel is
-  back, and the chat here was never reloaded; the window's base is this
-  page's (the library's <base href>), so a relative link or frame there is
-  this hub's;
+  back, and the chat here was never reloaded; the window's page is the
+  library's popout.html as this hub serves it (inside the manifest's scope,
+  so an installed app opens it as an app window, #101), and its base is this
+  page's, so a relative link or frame there is this hub's;
 * a resize to a phone's width turns the same dock narrow (one column of
   tabs), and back to the wide layout as it was, the saved layout unchanged;
 * at 1400x900, 1800x1000 and a 390 px phone, in Light, Dark and High
@@ -222,17 +223,17 @@ class ThePanels(unittest.TestCase):
             self.assertIn(f'href="/{rel}"', INDEX, f"the page lists {rel} for Page update")
         self.assertIn("import('/static/dock/src/index.js')", INDEX)
         self.assertNotIn("dock/css/theme.css", INDEX, "the --dk-* tokens read Ensemble's own")
-        self.assertNotIn("static/dock/src/popout.html", INDEX, "the pop-out page is the library's popHtml")
-        self.assertNotIn("static/dock/src/popout.html", dashboard.PAGE_FILES)
+        self.assertNotIn("static/dock/src/popout.html", dashboard.PAGE_FILES, "an inert page: nothing to update in it")
         self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.3\.4 [0-9a-f]{40}")
 
     def test_the_library_does_what_the_workarounds_did(self):
         # Dock v0.3.3 has each of Ensemble's needs (the Dock project's ENSEMBLE-NEEDS.md); the page uses them.
         dock = INDEX[INDEX.index("// ---- The PO screen as panels: begin"):INDEX.index("// ---- The PO screen as panels: end")]
         for gone in ("<base href", "POP_HTML", "pdSyncChat", "pdSchedule", "pdOpenWindow", "document.write", "phoneOnly", "unscroll", "PD.phone",
-                     "pd-phone", "popout.html", "ResizeObserver"):
+                     "pd-phone", "popHtml", "ResizeObserver"):
             self.assertNotIn(gone, dock, gone)
-        for used in ("popHtml: true,", "narrow: isPhone()", "narrowKey: PD_KEYS.phone", "PD.dock.setNarrow(isPhone())",
+        # #101: the served page, not a blob: one, which an installed app shows under Chrome's address strip.
+        for used in ("popUrl: '/static/dock/src/popout.html',", "narrow: isPhone()", "narrowKey: PD_KEYS.phone", "PD.dock.setNarrow(isPhone())",
                      "PD.dock.onPopIn(", "parent.moveBefore(el"):
             self.assertIn(used, dock, used)
         css = INDEX[INDEX.index("/* ---- The PO screen as panels"):INDEX.index("</style>", INDEX.index("/* ---- The PO screen as panels"))]
@@ -446,7 +447,7 @@ async function main() {
       const a = PD.els.points.querySelector('.pdp-row[data-pt="P2"] a.pdp-link'); a.click();
       for (let i = 0; i < 40 && w.eval('GOTO'); i++) await new Promise(r => setTimeout(r, 100));
       const el = [...d.querySelectorAll('.msg[data-mid]')].find(e => e.dataset.mid === a.dataset.mid);
-      const r = { typed: inp.value, mainHidden: PO_PANEL.classList.contains('pd-off') && getComputedStyle(PO_PANEL).visibility === 'hidden' && PO_PANEL.parentNode === PD_HOST, blob: PD.dock.popWindow('po-chat').location.protocol, line: d.getElementById('points-line').hidden, landed: !!el && el.classList.contains('landed'), size: [f.offsetWidth > 300, f.offsetHeight > 200] };
+      const r = { typed: inp.value, mainHidden: PO_PANEL.classList.contains('pd-off') && getComputedStyle(PO_PANEL).visibility === 'hidden' && PO_PANEL.parentNode === PD_HOST, page: PD.dock.popWindow('po-chat').location.pathname, line: d.getElementById('points-line').hidden, landed: !!el && el.classList.contains('landed'), size: [f.offsetWidth > 300, f.offsetHeight > 200] };
       inp.value = ''; inp.dispatchEvent(new Event('input'));
       return r;
     })()`);
@@ -544,7 +545,7 @@ async function main() {
       const v = [...WS_VIEWS.values()].find(x => x.el && PD.els.workspace.contains(x.el));
       const tab = v && v.tabs.find(x => x.path.endsWith('ROADMAP.md'));
       r.tabHeard = !!tab && tab.st.view === 'source' && tab.st.wrap === true;
-      // The window's base is this page's (the library's <base href>, once): a relative link there is this hub's.
+      // The window's base is this page's (its one <base href>, put there by the page): a relative link there is this hub's.
       const a = d.createElement('a'); a.href = 'fileview?x=1';
       r.base = { n: d.querySelectorAll('base').length, first: d.head.firstElementChild.tagName, uri: d.baseURI === document.baseURI,
         link: a.href === new URL('fileview?x=1', document.baseURI).href };
@@ -859,7 +860,7 @@ class InChrome(unittest.TestCase):
         c = self.got["popChat"]
         self.assertEqual(c["typed"], "typed in its own window")
         self.assertTrue(c["mainHidden"], "the chat here waits at home, out of sight")
-        self.assertEqual(c["blob"], "blob:", "the window's page is the library's popHtml, nothing served")
+        self.assertEqual(c["page"], "/static/dock/src/popout.html", "the window's page is the library's, as the hub serves it (#101)")
         self.assertTrue(c["line"], "Points is still shown: no points line there either")
         self.assertTrue(c["landed"], "an arrow goes to the chat in the window")
         self.assertEqual(c["size"], [True, True])
@@ -892,9 +893,9 @@ class InChrome(unittest.TestCase):
         ws = dict(self.got["popWs"])
         base = ws.pop("base")
         self.assertEqual(ws, {"viewerInWindow": True, "viewerLoaded": True, "tabHeard": True},
-                         "a relative frame address in the window is this page's (its base), not the blob: URL's")
+                         "a relative frame address in the window is this page's (its base), not popout.html's")
         self.assertEqual(base, {"n": 1, "first": "BASE", "uri": True, "link": True},
-                         "one <base href>, the library's, first in the head: a relative link there is this hub's")
+                         "one <base href>, this page's, first in the head: a relative link there is this hub's")
 
     def test_no_size_or_theme_overflows(self):
         s = self.got["sizes"]
