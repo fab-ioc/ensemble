@@ -65,11 +65,13 @@ out.list = wsDocsHtml({ data: { dir: 'C:\\home\\Documents', codeDocs: 'C:\\code\
 out.capped = wsDocsHtml({ data: { dir: 'C:\\home\\Documents', items: items.slice(0, 1), key: '', truncated: true } });
 
 // What shows: the list when no file tab is.
-const pv = { ctx: { kind: 'project', projectId: 'p1' }, tabs: [{ path: 'C:\\home\\a.md' }], sel: '' };
+const pv = { ctx: { kind: 'project', projectId: 'p1', list: true }, tabs: [{ path: 'C:\\home\\a.md' }], sel: '' };
 out.showing = [wsDocsShowing(pv)];
 pv.sel = 'C:\\home\\a.md'; out.showing.push(wsDocsShowing(pv));
 pv.sel = 'C:\\home\\gone.md'; out.showing.push(wsDocsShowing(pv));
 out.showing.push(wsDocsShowing({ ctx: { kind: 'task', sid: 's' }, tabs: [], sel: '' }));
+// A project's Workspace view (no list) is not the Documents list.
+out.showing.push(wsDocsShowing({ ctx: { kind: 'project', projectId: 'p1' }, tabs: [], sel: '' }));
 
 // Show task folders.
 const listing = { entries: [
@@ -146,11 +148,11 @@ class ThePureParts(unittest.TestCase):
     def test_a_capped_list_says_so_and_a_keyless_chip_is_the_number(self):
         h = self.o["capped"]
         self.assertIn("1+ document", h)
-        self.assertIn("The 1 newest only; the rest are in the tree.", h)
+        self.assertIn("The 1 newest only; the rest are in the Workspace’s tree.", h)
         self.assertIn('data-task="#40"', h)
 
     def test_the_list_shows_when_no_file_tab_does(self):
-        self.assertEqual(self.o["showing"], [True, False, True, False])
+        self.assertEqual(self.o["showing"], [True, False, True, False, False])
 
     def test_task_folders_are_hidden_in_the_home_until_shown(self):
         o = self.o

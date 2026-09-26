@@ -487,14 +487,15 @@ class RecentAndWhereAreWired(unittest.TestCase):
         self.assertIn("recent: v.recent.map(x => ({ path: x.path, st: x.st })), follow: v.follow", persist)
 
     def test_the_shortcut_acts_only_inside_the_pane(self):
-        self.assertIn('<div class="wsp" tabindex="-1">', INDEX, "a click in the pane gives it focus")
+        self.assertIn("""<div class="wsp${list ? ' wsp-list' : ''}" tabindex="-1">""", INDEX, "a click in the pane gives it focus")
         mount = fn(INDEX, "function wsMount(")
-        self.assertIn("el.onkeydown = (e) => {\n    if (!wsIsRecentKey(e)) return;", mount)
+        self.assertIn("el.onkeydown = (e) => {\n    if (v.ctx.list || !wsIsRecentKey(e)) return;", mount,
+                      "not in the Documents list: Recent is the tree's")
         self.assertNotIn("document.addEventListener('keydown'", mount, "no page-wide shortcut")
         self.assertIn("host.postMessage({ type: 'fv-key', key: 'recent' }, location.origin);", FILEVIEW)
         self.assertIn("ifr.contentDocument.addEventListener('keydown', fvOnKey, true)", FILEVIEW, "a rendered page too")
         self.assertIn("ev.code === 'KeyR'", FILEVIEW)
-        self.assertIn("if (d.key === 'recent') wsRecentToggle(v, undefined, true);", INDEX)
+        self.assertIn("if (d.key === 'recent' && !v.ctx.list) wsRecentToggle(v, undefined, true);", INDEX)
 
     def test_breadcrumb_and_show_in_tree(self):
         self.assertIn('<nav class="wsc" aria-label="Where the file is"><ol class="wsc-list"></ol></nav>', INDEX)
