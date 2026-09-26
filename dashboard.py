@@ -2705,18 +2705,23 @@ def room_past_sessions(room: dict) -> list[dict]:
     ``review`` (an earlier review) or ``retired`` (its agent was taken off the
     task). A seat's current conversation is not one of them. Reads the room
     record only."""
-    current = {(p.get("sessionId") or "").strip()
-               for p in room.get("participants") or [] if p.get("kind") == "agent"}
+    parts = [p for p in room.get("participants") or [] if isinstance(p, dict)]
+    current = {str(p.get("sessionId") or "").strip()
+               for p in parts if p.get("kind") == "agent"}
     out: list[dict] = []
     seen: set[str] = set(current) | {""}
 
     def add(sid, ident, agent, at, via):
-        sid = (sid or "").strip()
+        sid = str(sid or "").strip()
         if sid not in seen:
             seen.add(sid)
+            try:
+                at = float(at or 0)
+            except (TypeError, ValueError):
+                at = 0.0
             out.append({"sessionId": sid, "identity": ident, "agent": agent,
-                        "at": float(at or 0), "via": via})
-    for p in room.get("participants") or []:
+                        "at": at, "via": via})
+    for p in parts:
         if p.get("kind") != "agent":
             continue
         ident = p.get("identity", "")
