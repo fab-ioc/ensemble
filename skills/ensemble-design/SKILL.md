@@ -336,37 +336,42 @@ apply to them. Their rules instead:
   its label, and a plain note with **Close tab** where the file was. Not red: nothing is broken.
 - The row scrolls sideways within itself, never the page; on a phone each tab and its `×` are
   `--touch-min`.
-- **The Documents list has one fixed tab first: Documents** (see *Documents list*). It has no
-  `×`, Delete and a middle click leave it, and it shows whenever no file tab does: the list opens on
-  it, and closing the last file comes back to it. A Workspace (a project's or a task's) has no such
-  tab: it opens on its tree and an empty pane.
+- A Workspace (a project's or a task's) has no fixed tab: it opens on its tree and an empty pane.
+  The roadmap's tab (see *Documents*) shows the roadmap's own view and editor where a viewer would
+  be, and is never "no longer exists": not written yet, it offers to write it.
 
-### Documents list
+### Documents
 
-The project's knowledge, a place of its own: the reports and design notes its tasks put in its
-Documents folder, and a code project's Markdown under `docs/` in its checkout (`wsDocsHtml` in
-`index.html` is the reference). On a PO screen it is the **Documents** panel; elsewhere the
-project's **Documents** tab (Overview · Documents · Workspace · Changes). It is a Workspace view with
-no tree (`ctx.list`, `.wsp-list`): a document opens in a tab beside the fixed Documents tab, and a
-crumb's folder or Reveal goes to the Workspace and shows the file in its tree (`wsRevealInWorkspace`).
+The project's knowledge, in one place: the **first node of a project's Workspace tree**, above its
+folders (`wsDocsNodeHtml` in `index.html` is the reference). It holds the roadmap, then the reports
+and design notes its tasks put in its Documents folder and a code project's Markdown under `docs/`
+in its checkout. There is no Documents panel and no Documents tab or list view: they split the
+same thing in two (the CEO's P49). A task's Workspace has no such node.
 
-- **The roadmap first**, above the list in every state (loading, empty, listed): "Roadmap",
-  "ROADMAP.md · always first" under it, and when it was saved. It opens in the roadmap's own view
-  and editor over the list (`wsRoadmapPaint`), with **← Documents** to come back.
-- **Newest first**, by the file's time, in the order the hub sends. A heading "Documents", the count
-  ("12 documents, newest first") and a line saying where they live, in `--fg-muted`.
-- **A row:** the title (the file's name without `#12 ` and `.md`) with its folder under it in
-  `--fg-muted`, as one Subtle button that opens the file in a tab; then the task's number as a
-  `.tno` link to the task (`#12`), or a neutral lozenge "in the code"; the date (the full time is
-  its tooltip; no ticking text); the size. One lozenge at most.
+- **A root heading like the others** (`.wse.wsroot.documents`, its kind word "documents"), **open by
+  default**; opened or closed, it is remembered with the Workspace's tree.
+- **The roadmap first**, in every state (loading, empty, listed): "Roadmap", when it was saved on
+  the right (or "not written yet"), ROADMAP.md and the full time in its tooltip. It opens in a
+  file tab like any document, and that tab shows the roadmap's own view and editor
+  (`wsRoadmapPaint`, the one `#rm-panel`, parked by `rmPark` before a Workspace is rebuilt so a
+  draft survives).
+- **Then newest first**, by the file's time, in the order the hub sends. A row is a tree file row:
+  the title (the file's name without `#12 ` and `.md`), the task's number as a quiet `.wse-tag`
+  (`#12`, or `docs` for the code's), the date where a file's size would be; its folder, task, full
+  time and size are its tooltip. One click opens it in a tab. No links inside a row.
 - **Empty says what would fill it** (§5.5): where tasks put documents and how they are named. A
-  capped list says the rest are in the Workspace's tree. Loading and unreadable are plain `--fg-muted` lines.
-- Read at most every 15 s while it shows, one read at a time; rewritten only when it changes.
+  capped list says where the rest are. Loading and unreadable are plain `.wse.none` rows.
+- **Found like any file:** Go to file ranks the documents outside the folder it lists
+  (`wsDocsFindPool`, named "Documents/…"), and Text search also searches the Documents folder when
+  it is outside its root, merged with the documents first (`wsfMerge`). A query takes the tree's
+  place as always.
+- **Show in the tree** and Follow show a listed document on its row here, not in its folder.
+- Read at most every 15 s while it is open or the find box is in use, one read at a time;
+  rewritten only when it changes.
 - **"Show task folders"** (one switch, remembered in the browser, shared with a documents project's
   Files panel): off, the tree leaves the tasks' folders out of the project's home. Go to file and
   Text search still look everywhere.
-- **Phone:** the title takes the row, its task, date and size go under it; the title and the
-  task link are `--touch-min`.
+- An old link to a "documents" or "roadmap" project tab opens the Workspace.
 
 The project **Changes** tab uses the same idea for code: uncommitted files on top only when there
 are any, then **Landed on main**, a commit at a time (a merge counts as one), newest first: the
@@ -548,8 +553,8 @@ bell's count.**
 ### Panels
 
 A project with a PO opens on its **PO screen**: a Dock (`static/dock`, a vendored copy of the Dock
-library; `VERSION` names its commit) of six panels, **PO chat, Your asks, Board, Documents,
-Workspace, Changes** (`PD_IDS` in `index.html`; Your asks is `points`). The person arranges them: side by side, as tabs of one stack, floating,
+library; `VERSION` names its commit) of five panels, **PO chat, Your asks, Board, Workspace,
+Changes** (`PD_IDS` in `index.html`; Your asks is `points`). The person arranges them: side by side, as tabs of one stack, floating,
 on a strip at an edge (slides out on hover or click), minimised, maximised, hidden from the Panels
 menu, or popped out into a window of their own. **One click on a minimised panel's title bar
 brings it back** (the library's, from v0.3.5: `minClickRestores`, on by default); its controls
@@ -559,10 +564,10 @@ let clicks through, `pdDblGuard`). The layout is remembered in the browser (`cd-
 library is never edited in this repository: a need goes to the Dock project's `ENSEMBLE-NEEDS.md`.
 
 - **The default** (`pdDefaultLayout`, measured in `tests/test_po_dock.py`): at a laptop's width (about
-  1440) the PO chat takes what Your asks (340px) leaves, side by side; Board, Documents, Workspace
-  and Changes wait on the right edge's strip, never on screen until opened, each sliding out over 72% of the width and
-  pinning back beside Your asks. A panel added since a layout was saved joins it on the strip
-  (`pdAddNewPanels`), never on screen. From 1800px the Board is on screen too, on the right (46% of the width):
+  1440) the PO chat takes what Your asks (340px) leaves, side by side; Board, Workspace and
+  Changes wait on the right edge's strip, never on screen until opened, each sliding out over 72% of the width and
+  pinning back beside Your asks. A layout saved with a panel that is gone (the Documents panel)
+  loads without it: the library drops a panel it does not know. From 1800px the Board is on screen too, on the right (46% of the width):
   a chat's lines stop getting longer at about 700px, so a wider screen's width goes to the board. A
   phone (`MOBILE_MQ`) is one column: every panel a tab of one stack, the PO chat first; nothing
   floats, sits on a strip or pops out there, and a tab is not dragged.
@@ -603,9 +608,12 @@ library is never edited in this repository: a need goes to the Dock project's `E
   While the panel is hidden or popped out it waits at home, hidden with `visibility`, never
   `display`. Popped out, the panel's window holds a chat of its own (removed in `onPopIn`, before the
   panel comes back); the one here stays loaded.
-- **The roadmap** is a document: the first row of the Documents list ("Roadmap,
-  ROADMAP.md · always first", with when it was saved), opening in its own view and editor over the
-  list with **← Documents**. There is no Roadmap tab.
+- **A popped-out window has no "Back to main window"** (the CEO's P50): closing the window puts
+  the panel back. The library draws the button with no option to leave it out, so Ensemble's
+  stylesheet, which the window gets, hides `.dk-pop-back`; the option asked of Dock is
+  `popBack: false`.
+- **The roadmap** is a document: the first row of the Workspace's Documents node, opening in a tab
+  that is its own view and editor. There is no Roadmap tab or panel.
 - **Phone:** the same dock, narrow (the library's `narrow`, switched by `setNarrow` on resize; its
   layout kept apart, under `cd-po-dock-phone`): one column of tabs, no control that moves a panel.
   The title bar is `--touch-min` tall and its tabs scroll sideways; the dock fills the height under
