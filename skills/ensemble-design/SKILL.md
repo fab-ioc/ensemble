@@ -345,7 +345,7 @@ apply to them. Their rules instead:
 
 The project's knowledge, a place of its own: the reports and design notes its tasks put in its
 Documents folder, and a code project's Markdown under `docs/` in its checkout (`wsDocsHtml` in
-`index.html` is the reference). On a PO screen it is the **Documents** panel; elsewhere a code
+`index.html` is the reference). On a PO screen it is the **Documents** panel; elsewhere the
 project's **Documents** tab (Overview · Documents · Workspace · Changes). It is a Workspace view with
 no tree (`ctx.list`, `.wsp-list`): a document opens in a tab beside the fixed Documents tab, and a
 crumb's folder or Reveal goes to the Workspace and shows the file in its tree (`wsRevealInWorkspace`).
@@ -552,9 +552,9 @@ library; `VERSION` names its commit) of six panels, **PO chat, Your asks, Board,
 Workspace, Changes** (`PD_IDS` in `index.html`; Your asks is `points`). The person arranges them: side by side, as tabs of one stack, floating,
 on a strip at an edge (slides out on hover or click), minimised, maximised, hidden from the Panels
 menu, or popped out into a window of their own. **One click on a minimised panel's title bar
-brings it back** (`pdMinClick`; its controls keep their own clicks, and a drag is not a click); a
-double click on a title bar maximises. The layout is remembered in the browser
-(`cd-po-dock`; a phone's apart, `cd-po-dock-phone`), with **Reset layout** in the Panels menu. The
+brings it back** (`pdMinClick`; its controls keep their own clicks, and a drag is not a click); it
+waits out a double click's time (`PD_MIN_WAIT`), so a double click still maximises, minimised or
+not. The layout is remembered in the browser (`cd-po-dock`; a phone's apart, `cd-po-dock-phone`), with **Reset layout** in the Panels menu. The
 library is never edited in this repository: a need goes to the Dock project's `ENSEMBLE-NEEDS.md`.
 
 - **The default** (`pdDefaultLayout`, measured in `tests/test_po_dock.py`): at a laptop's width (about

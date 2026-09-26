@@ -5704,11 +5704,9 @@ function projectsChromeHtml() {
         + pdCtlHtml() + `</div>`;
     }
     // Tabs only when the project has a folder to browse (Unassigned has none).
-    // Its roadmap is a document, first in its Documents list (a code project's:
-    // a documents project's files are its documents, in its Workspace).
+    // Its roadmap is a document, first in its Documents list.
     const hasFolder = !!(pj && pj.path);
-    const docsTab = isDocsProject(pj) ? ''
-      : `<button data-ptab="documents" class="${PROJECT_TAB === 'documents' ? 'on' : ''}" title="The roadmap, then the reports and design notes the project's tasks wrote, newest first">Documents</button>`;
+    const docsTab = `<button data-ptab="documents" class="${PROJECT_TAB === 'documents' ? 'on' : ''}" title="The roadmap, then the reports and design notes the project's tasks wrote, newest first">Documents</button>`;
     const tabs = hasFolder ? `<div class="ptabs">`
       + `<button data-ptab="tasks" class="${PROJECT_TAB === 'tasks' ? 'on' : ''}" title="The project's PO and its tasks">Overview</button>`
       + docsTab
@@ -7278,7 +7276,8 @@ function wsRevealInWorkspace(v, path, o) {
   const pid = v.ctx.projectId;
   if (poDockProject()) pdReveal('workspace');
   else { PROJECT_TAB = 'workspace'; renderRows(); }
-  const w = WS_VIEWS.get(wsCtxKey({ kind: 'project', projectId: pid }));
+  const pj = projectById(pid);   // a documents project's Workspace is its Files view (docs:)
+  const w = WS_VIEWS.get(wsCtxKey({ kind: 'project', projectId: pid, docs: !!pj && isDocsProject(pj) }));
   if (w && w.el && w.el.isConnected) wsReveal(w, path, o);
 }
 // ---- Workspace find: the box on screen -------------------------------------
@@ -8975,7 +8974,8 @@ function pdDefaultLayout(L, ctx) {
 // panel it has not heard of beside Your asks). `raw` is the saved layout;
 // the same layout comes back when it already has the panel, or is none.
 function pdLayoutWithPanel(raw, id, w) {
-  if (!raw || typeof raw !== 'object' || !raw.root) return raw;
+  // A saved layout, with a docked root or none (every panel on a strip, floating, hidden or out).
+  if (!raw || typeof raw !== 'object' || !('root' in raw)) return raw;
   const has = new Set();
   const walk = n => {
     if (!n || typeof n !== 'object') return;
@@ -9232,13 +9232,16 @@ function pdEnsure() {
 }
 // A minimised panel is its title bar only: a click on it (its name, or the bar
 // beside the name) shows it again, as its restore button does; a double click
-// still maximises it (the library's). Not a click on the bar's controls, and
-// not the click that ends a drag (the library cancels that one, after this
-// has seen it: so the panel is named on the way down, and shown on the way
-// up, once the library has had the click; its tab may be redrawn by then).
-let PD_MIN_HIT = '';
+// still maximises it (the library's), so the click waits out a double click's
+// time before it restores. Not a click on the bar's controls, and not the
+// click that ends a drag (the library cancels that one, after this has seen
+// it: so the panel is named on the way down, and shown on the way up, once the
+// library has had the click; its tab may be redrawn by then).
+const PD_MIN_WAIT = 350;
+let PD_MIN_HIT = '', PD_MIN_T = 0;
 function pdMinDown(e) {
   PD_MIN_HIT = '';
+  if (e.detail > 1) { clearTimeout(PD_MIN_T); PD_MIN_T = 0; return; }   // a double click: the library's
   const t = e.target;
   if (e.button || !t.closest) return;
   const head = t.closest('.dk-stack.dk-min > .dk-head, .dk-float.dk-min .dk-head');
@@ -9249,7 +9252,13 @@ function pdMinDown(e) {
 function pdMinClick(e) {
   const id = PD_MIN_HIT;
   PD_MIN_HIT = '';
-  if (id && !e.defaultPrevented && PD.dock) PD.dock.reveal(id);
+  if (!id || e.defaultPrevented || !PD.dock) return;
+  clearTimeout(PD_MIN_T);
+  PD_MIN_T = setTimeout(() => {
+    PD_MIN_T = 0;
+    const el = PD.els[id];
+    if (PD.dock && el && el.closest('.dk-min')) PD.dock.reveal(id);
+  }, PD_MIN_WAIT);
 }
 // A panel came on screen: what it shows is drawn now, not at the next refresh.
 function pdShown(id) {
@@ -9658,7 +9667,7 @@ function poSwitchDialogHtml(pj, info, err, confirmMsg, typed) {
   const model = typed && typeof typed.model === 'string' ? typed.model : (t.model || '');
   return `
     <h3>Switch ${esc(pj.name)}’s PO</h3>
-    <p class="cfg-hint">Now ${esc(name(cur))}${info.model ? ' · <code>' + esc(info.model) + '</code>' : ''}${info.live ? '' : ' (not running)'}. A fresh ${esc(name(other))} session takes over in the same room, with the same chat and points, from the PO’s written handover. A running PO is asked to bring its handover up to date first; that can take a few minutes.</p>
+    <p class="cfg-hint">Now ${esc(name(cur))}${info.model ? ' · <code>' + esc(info.model) + '</code>' : ''}${info.live ? '' : ' (not running)'}. A fresh ${esc(name(other))} session takes over in the same room, with the same chat and asks, from the PO’s written handover. A running PO is asked to bring its handover up to date first; that can take a few minutes.</p>
     <div class="im-field">
       <label for="ps-model">${esc(name(other))} model <small>empty for its default</small></label>
       <input id="ps-model" type="text" value="${esc(model)}" spellcheck="false" autocomplete="off"${why ? ' disabled' : ''}>
@@ -11626,12 +11635,10 @@ function wsRenderInto(panel, pj) {
 // its files are its documents, in its Workspace.
 function docsListRenderInto(panel, pj) {
   if (!panel) return;
-  const docs = !!(pj && isDocsProject(pj));
-  const key = pj && pj.path && !docs ? wsCtxKey({ kind: 'project', projectId: pj.id, list: true }) : docs ? 'docs' : 'none';
+  const key = pj && pj.path ? wsCtxKey({ kind: 'project', projectId: pj.id, list: true }) : 'none';
   if (panel.dataset.wskey === key) return;
   panel.dataset.wskey = key;
-  if (docs) panel.innerHTML = '<p class="empty">A documents project’s files are its documents: they are in its Workspace.</p>';
-  else if (!pj || !pj.path) panel.innerHTML = '<p class="empty">This project has no folder.</p>';
+  if (!pj || !pj.path) panel.innerHTML = '<p class="empty">This project has no folder.</p>';
   else {
     panel.innerHTML = wsPanelHtml({ list: true });
     wsMount(panel.querySelector('.wsp'), { kind: 'project', projectId: pj.id, list: true });

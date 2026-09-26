@@ -275,8 +275,8 @@ class Editor(unittest.TestCase):
         self.assertTrue(inline.endswith('</div>\n<div class="ln">then more</div>'), inline)
         self.assertNotIn("att-thumbs", self.r["htmlNotOwn"], "an image from elsewhere is text")
 
-    def test_a_folded_row_counts_the_points(self):
-        self.assertEqual(self.r["fold"], ["2 points · After tests.", "1 point · the first point", "3 points · q"])
+    def test_a_folded_row_counts_the_asks(self):
+        self.assertEqual(self.r["fold"], ["2 asks · After tests.", "1 ask · the first point", "3 asks · q"])
 
     def test_each_item_gets_its_own_point_chip(self):
         self.assertEqual(self.r["own"], ["P1", "P2"], "the message's own points, in order; a follow-up is not among them")

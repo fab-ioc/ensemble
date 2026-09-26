@@ -109,6 +109,11 @@ const out = {};
     saved.auto = saved.auto.filter(a => a.id !== 'documents');
     const got = pdLayoutWithPanel(saved, 'documents', 1440);
     const n = L.normalizeLayout(JSON.parse(JSON.stringify(got)), { cfg, viewportPx: 1440 });
+    const rootless = JSON.parse(JSON.stringify(saved));
+    rootless.root = null;
+    rootless.auto = [...['po-chat', 'points', 'board', 'workspace', 'changes'].map(id => ({ id, edge: 'right', size: 900 }))];
+    const r2 = L.normalizeLayout(JSON.parse(JSON.stringify(pdLayoutWithPanel(rootless, 'documents', 1440))), { cfg, viewportPx: 1440 });
+    out.rootless = { docked: L.panelsUnder(r2.root), auto: r2.auto.map(a => a.id) };
     out.oldSaved = { docked: L.panelsUnder(n.root), auto: n.auto.map(a => [a.id, a.edge]),
                      kept: pdLayoutWithPanel(got, 'documents', 1440) === got };
   }
@@ -179,6 +184,9 @@ class ThePanels(unittest.TestCase):
         self.assertEqual(o["docked"], ["po-chat", "points", "board"], "what was docked stays docked")
         self.assertIn(["documents", "right"], o["auto"], "Documents waits on the right strip, not beside Points")
         self.assertTrue(o["kept"], "a layout that has it is left alone")
+        r = self.o["rootless"]
+        self.assertNotIn("documents", r["docked"], "every panel on a strip: Documents joins them, it does not fill the page")
+        self.assertEqual(r["auto"].count("documents"), 1, r)
 
     def test_points_answers_first_then_waiting_oldest_first(self):
         html = self.o["list"]
@@ -350,20 +358,22 @@ async function main() {
     await p.until('!PD.els.points.querySelector(\'.pdp-row[data-pt="P1"]\')', 10000);
     out.acked = await p.evalIn('({ rows: [...PD.els.points.querySelectorAll(".pdp-row")].map(r => r.dataset.pt), chat: pdChatFrame().contentWindow.eval("POINTS.items.find(p => p.id === \'P1\').state") })');
 
-    // A click on a minimised panel's title bar brings it back; a double click on a title bar still maximises.
+    // A click on a minimised panel's title bar brings it back; a double click on it maximises it.
     {
       const tab = 'PD.els.points.closest(".dk-stack").querySelector(\'[data-dk-tab="points"]\')';
       const isMin = 'PD.els.points.closest(".dk-stack").classList.contains("dk-min")';
       await p.evalIn('PD.dock.toggleMin("points"); 0'); await sleep(300);
       const was = await p.evalIn(isMin);
-      await p.click(tab); await sleep(300);
+      await p.click(tab); await sleep(700);
       const back = !(await p.evalIn(isMin));
+      await p.evalIn('PD.dock.toggleMin("points"); 0'); await sleep(300);
+      const again = await p.evalIn(isMin);
       const [x, y] = await p.evalIn(`(() => { const r = (${tab}).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
       for (const n of [1, 2]) for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: n }, p.sessionId);
-      await sleep(300);
-      const maxed = await p.evalIn('!!PD.els.points.closest(".dk-max")');
+      await sleep(700);
+      const maxed = await p.evalIn('!!PD.els.points.closest(".dk-max")'), minMaxed = await p.evalIn(isMin);
       await p.evalIn('PD.dock.restoreMax(); 0'); await sleep(200);
-      out.minClick = { was, back, maxed, min: await p.evalIn(isMin) };
+      out.minClick = { was, back, again, maxed, minMaxed, min: await p.evalIn(isMin) };
     }
 
     // Layout changes keep every iframe's page: the PO chat's and an open file's.
@@ -635,6 +645,18 @@ async function main() {
       }
       await q.close();
     }
+
+    // ---- A documents project: its Documents panel is the same list, the roadmap first
+    {
+      const q = await page(1440, 900);
+      await q.evalIn(`(() => { try { localStorage.removeItem('cd-po-dock'); } catch (e) {}
+        VIEW_MODE = 'board'; SELECTED_PROJECT = ${JSON.stringify(A.notes)}; PROJECT_TAB = 'tasks'; SB_DEST = ''; renderRows(); return 0; })()`);
+      await q.until('document.body.classList.contains("po-dock") && !!PD.dock', 30000);
+      await q.evalIn('PD.dock.reveal("documents"); 0');
+      await q.until('!!PD.els.documents.querySelector(".wsd-open[data-roadmap]") && !!PD.els.documents.querySelector(".wsd-open[data-path]")', 20000);
+      out.docsProject = await q.evalIn(`({ first: PD.els.documents.querySelector('.wsd-row .wsd-t').textContent, rows: PD.els.documents.querySelectorAll('.wsd-open[data-path]').length, list: !!PD.els.documents.querySelector('.wsp-list') })`);
+      await q.close();
+    }
   } finally {
     try { await c.send('Browser.close'); } catch (e) {}
     ch.kill();
@@ -716,6 +738,9 @@ class InChrome(unittest.TestCase):
         cls.notes = notes["id"]
         assert dashboard.set_project_kind(cls.notes, "documents") == (True, "ok")
         (Path(notes["path"]) / "minutes.md").write_text("# Minutes\n", encoding="utf-8")
+        ndocs = Path(dashboard.project_documents_dir(dashboard.find_project(cls.notes)))
+        ndocs.mkdir(parents=True, exist_ok=True)
+        (ndocs / "#2 Plan.md").write_text("# Plan\n", encoding="utf-8")
         npo = chatroom.create_room("Notes PO", members())
         dashboard.assign_session_project(npo["id"], cls.notes)
         ok, why = dashboard.set_project_po(cls.notes, npo["id"])
@@ -827,12 +852,16 @@ class InChrome(unittest.TestCase):
         self.assertFalse(d["inWs"], "not in the Workspace panel")
         self.assertTrue(d["docsTab"], "the Documents tab stays first")
 
+    def test_a_documents_projects_documents_panel_lists_its_documents(self):
+        self.assertEqual(self.got["docsProject"], {"first": "Roadmap", "rows": 1, "list": True},
+                         "the roadmap first, then its documents, in the list view")
+
     def test_the_top_bar_shows_the_new_icon(self):
         self.assertTrue(self.got["first"]["logo"].endswith("/static/icons/favicon.svg"), self.got["first"]["logo"])
 
     def test_a_click_on_a_minimised_panel_brings_it_back(self):
-        self.assertEqual(self.got["minClick"], {"was": True, "back": True, "maxed": True, "min": False},
-                         "one click restores it; a double click on its title bar then maximises it")
+        self.assertEqual(self.got["minClick"], {"was": True, "back": True, "again": True, "maxed": True, "minMaxed": False, "min": False},
+                         "one click restores it; a double click on a minimised title bar maximises it, as before")
 
     def test_reset_layout_brings_the_default_back(self):
         self.assertEqual(self.got["hidden"], {"points": False, "line": False, "saved": True},

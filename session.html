@@ -1131,13 +1131,13 @@
       <div id="editor">
         <div class="ed-head">
           <div id="att-chips" class="att-chips" hidden></div>
-          <textarea id="input" placeholder="Message the agents — Ctrl+Enter to send. Start with @codex or @claude to direct it to one. Paste or drop a screenshot to attach it. Start with 1. (or press Ctrl+Shift+Enter) for numbered points, each with its own screenshots and links."></textarea>
+          <textarea id="input" placeholder="Message the agents — Ctrl+Enter to send. Start with @codex or @claude to direct it to one. Paste or drop a screenshot to attach it. Start with 1. (or press Ctrl+Shift+Enter) for numbered asks, each with its own screenshots and links."></textarea>
           <div class="ed-refs" id="ed-head-refs" hidden></div>
         </div>
         <ol id="ed-points"></ol>
       </div>
       <div class="ed-row">
-        <button type="button" id="add-point" title="Add a numbered point (Ctrl+Shift+Enter)">+ Add a point</button>
+        <button type="button" id="add-point" title="Add a numbered ask (Ctrl+Shift+Enter)">+ Add an ask</button>
         <span class="grow"></span>
         <button id="send" disabled>Send</button>
       </div>
@@ -2090,7 +2090,7 @@ function foldUnkeep(fold) {
 function foldLine(text) {
   // A message of numbered points: how many, then its first words.
   const it = pointItems(text);
-  if (it) { const first = foldLine(it.head || itemBody(it.items[0])); return `${it.items.length} point${it.items.length > 1 ? 's' : ''}` + (first ? ' · ' + first : ''); }
+  if (it) { const first = foldLine(it.head || itemBody(it.items[0])); return `${it.items.length} ask${it.items.length > 1 ? 's' : ''}` + (first ? ' · ' + first : ''); }
   const att = attSplit(text);
   const raw = String(att.paths.length && !att.words ? (att.paths.length > 1 ? att.paths.length + ' images' : 'Image') : att.words).replace(/\r/g, '');
   const line = raw.replace(/```[\s\S]*?(?:```|$)/g, '\n').split('\n')
@@ -4379,11 +4379,11 @@ function edRender(focus) {
   const ol = $('#ed-points');
   const n = ED.points.length;
   ol.innerHTML = ED.points.map((p, i) => `<li class="ed-pt" data-pt="${esc(p.id)}"><span class="ed-n" aria-hidden="true">${i + 1}.</span>`
-    + `<textarea class="ed-text" rows="1" aria-label="Point ${i + 1}" placeholder="Point ${i + 1} — Enter for a new line, Tab for the next point, Backspace on an empty point removes it. Paste or drop a screenshot, or a link, to attach it to this point."></textarea>`
+    + `<textarea class="ed-text" rows="1" aria-label="Ask ${i + 1}" placeholder="Ask ${i + 1} — Enter for a new line, Tab for the next ask, Backspace on an empty ask removes it. Paste or drop a screenshot, or a link, to attach it to this ask."></textarea>`
     + `<div class="ed-more"><div class="att-chips" hidden></div><div class="ed-refs" hidden></div></div>`
-    + `<div class="ed-ctl"><button type="button" class="ed-btn" data-ed="up" title="Move this point up" aria-label="Move point ${i + 1} up"${i ? '' : ' disabled'}>▲</button>`
-    + `<button type="button" class="ed-btn" data-ed="down" title="Move this point down" aria-label="Move point ${i + 1} down"${i < n - 1 ? '' : ' disabled'}>▼</button>`
-    + `<button type="button" class="ed-btn" data-ed="x" title="Remove this point" aria-label="Remove point ${i + 1}">×</button></div></li>`).join('');
+    + `<div class="ed-ctl"><button type="button" class="ed-btn" data-ed="up" title="Move this ask up" aria-label="Move ask ${i + 1} up"${i ? '' : ' disabled'}>▲</button>`
+    + `<button type="button" class="ed-btn" data-ed="down" title="Move this ask down" aria-label="Move ask ${i + 1} down"${i < n - 1 ? '' : ' disabled'}>▼</button>`
+    + `<button type="button" class="ed-btn" data-ed="x" title="Remove this ask" aria-label="Remove ask ${i + 1}">×</button></div></li>`).join('');
   ED.points.forEach((p, i) => {
     const li = ol.children[i], ta = li.querySelector('textarea.ed-text');
     ta.value = p.text;
