@@ -152,8 +152,8 @@ class Points(unittest.TestCase):
 
     def test_the_line_counts_and_lists_both_ends(self):
         r = self.r
-        self.assertEqual(r["summary"], ["Your points: 1 waiting for an answer · 1 answered, not yet acknowledged",
-                                        "Your points: 2 answered, not yet acknowledged", ""])
+        self.assertEqual(r["summary"], ["Your asks: 1 waiting for an answer · 1 answered, not yet acknowledged",
+                                        "Your asks: 2 answered, not yet acknowledged", ""])
         rows = r["list"].split("</li>")
         self.assertEqual(len(rows) - 1, 3, "open and answered, not the acknowledged one")
         self.assertIn('data-pt="P2"', rows[0], "an answer to acknowledge comes first")
@@ -178,9 +178,9 @@ class Points(unittest.TestCase):
         self.assertTrue(all(2 not in g for g in r["groupsWith"]), "the answer stays out of its task's row")
 
     def test_the_catch_up_line_counts_unacknowledged_answers_first(self):
-        self.assertEqual(self.r["cu"][0], "1 answer to your points to acknowledge")
+        self.assertEqual(self.r["cu"][0], "1 answer to your asks to acknowledge")
         self.assertEqual(self.r["cu"][1], "1 decision waiting")
-        self.assertNotIn("1 answer to your points to acknowledge", self.r["cuPlain"])
+        self.assertNotIn("1 answer to your asks to acknowledge", self.r["cuPlain"])
 
     def test_a_thumbs_up_on_a_decision_sends_the_approval_once(self):
         r = self.r

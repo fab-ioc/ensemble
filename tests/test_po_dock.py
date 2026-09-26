@@ -161,7 +161,7 @@ class ThePanels(unittest.TestCase):
         ids = [html.index(f'data-pt="{p}"') for p in ("P1", "P4", "P2")]
         self.assertEqual(ids, sorted(ids), "P1 then P4 (answered, oldest first), then P2 (waiting)")
         self.assertNotIn('data-pt="P3"', html, "an acknowledged point is not listed")
-        self.assertIn("Your points: 1 waiting for an answer · 2 answered, not yet acknowledged", html)
+        self.assertIn("Your asks: 1 waiting for an answer · 2 answered, not yet acknowledged", html)
         self.assertEqual(self.o["summary"], "1 waiting for an answer · 2 answered, not yet acknowledged")
 
     def test_each_point_links_both_ends_and_has_its_one_click(self):
@@ -176,7 +176,7 @@ class ThePanels(unittest.TestCase):
         self.assertIn('<span class="pdp-age" data-at="992800">2h</span>', html)
 
     def test_no_points_and_not_yet_loaded_say_why(self):
-        self.assertIn("No open points.", self.o["none"])
+        self.assertIn("No open asks.", self.o["none"])
         self.assertIn("waits here for its answer", self.o["none"])
         self.assertIn("once it has loaded", self.o["before"])
 
