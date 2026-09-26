@@ -1048,8 +1048,15 @@ class Stages(_World):
             self.assertEqual(self.point(rid, "P1")["answers"][0]["summary"], "claude: started as ED-12")
             with self.assertRaises(ensemble_tools.ToolError):
                 ensemble_tools._points(ctx, {"action": "plan", "point": "P1", "task": "soon"}, None)
-            r = ensemble_tools._points(ctx, {"action": "answer", "point": "P1", "summary": "live"}, None)
-            self.assertEqual(r["state"], "delivered")
+            done = lambda ref: {"ref": ref, "done": True, "workflow": "done", "workflowName": "Done"}
+            with mock.patch.object(points, "task_lookup", return_value=done):
+                listed = ensemble_tools._points(ctx, {"action": "list"}, None)["points"][0]
+                self.assertEqual((listed["taskStatus"], listed["note"][:26]), ("Done", "merged, awaiting go-live: "))
+                r = ensemble_tools._points(ctx, {"action": "answer", "point": "P1", "summary": "live"}, None)
+                self.assertEqual(r["state"], "delivered")
+                listed = ensemble_tools._points(ctx, {"action": "list"}, None)["points"][0]
+                self.assertEqual(listed["taskStatus"], "Done")
+                self.assertNotIn("note", listed, "said live: no longer awaiting go-live")
 
     def test_the_fresh_session_is_told_what_it_planned(self):
         rid = self.solo_room()

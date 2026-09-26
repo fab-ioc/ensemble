@@ -1532,7 +1532,7 @@ def _points(ctx, args, handler):
         if not info:
             return {"task": p["task"]} if p.get("task") else {}
         return {"task": p["task"], "taskStatus": info.get("workflowName") or info.get("workflow") or "",
-                **({"note": "merged, awaiting go-live: say 'Re Pn:' once it is live"} if info.get("done") else {})}
+                **({"note": "merged, awaiting go-live: say 'Re Pn:' once it is live"} if info.get("done") and p["state"] == "planned" else {})}
     return {"note": ("open: no reply yet; planned: you said what will happen, the work is not "
                      "live; delivered: waiting for the product owner to acknowledge. Answer an "
                      "open one with 'Re Pn:' (or 'Re Pn (planned #N):' when you start work on it); "
