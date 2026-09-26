@@ -60,7 +60,8 @@ class CostChip(unittest.TestCase):
         i = INDEX.index("// ---- Cost chip: begin")
         src = "\n".join([re.search(r"^const esc = .*$", INDEX, re.M).group(0),
                          INDEX[INDEX.index("const fmtCost = "):INDEX.index("const fmtInt = ")],
-                         INDEX[i:INDEX.index("// ---- Cost chip: end", i)], fn(INDEX, "function cardHtml(")])
+                         INDEX[i:INDEX.index("// ---- Cost chip: end", i)], fn(INDEX, "function rowTitle("),
+                         fn(INDEX, "function cardHtml(")])
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "chip.cjs"
             script.write_text(JS % src, encoding="utf-8")

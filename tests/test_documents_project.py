@@ -634,7 +634,7 @@ DEPS = ["esc", "agoSpan", "wsNorm", "wsSame", "wsJoin", "wsTabName", "wsFmtSize"
         "wsHidden", "wsRowsHtml", "wsCtxKey", "drParse", "drContent", "drHighlight", "drRowHtml",
         "WS_EMPTY", "WS_MAC", "WS_RECENT_KEY", "WS_ICON_TREE", "wsPanelHtml",
         "DOCS_TASKS_KEY", "docsTasksShown", "docsTasksSet", "docsApart", "docsInTask",
-        "pointsCountText", "pointsCountTip", "projMenuSettingsHtml", "poChooseOffered"]
+        "pointsCountText", "pointsCountTip", "projMenuSettingsHtml", "poChooseOffered", "pastCount"]
 
 
 @unittest.skipUnless(NODE, "node is not installed")
