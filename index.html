@@ -248,9 +248,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     /* the wordmark (tools/make_wordmark.py): the icon's lanes and ground, shaded for this theme's bar */
     --wm-lane-1: #C73E1D; --wm-lane-2: #067A55; --wm-lane-3: #946200;
     --wm-from: #0C66E4; --wm-to: #7B2FF7;
-    /* the tiles wordmark: the icon's own ground, lanes and spine, the same in every theme (as the icon) */
-    --wm-tile-from: #0C66E4; --wm-tile-to: #7B2FF7; --wm-tile-spine: #FFFFFF;
-    --wm-tile-1: #FF7A59; --wm-tile-2: #34E3A4; --wm-tile-3: #FFD23F;
 
     /* Search match. Fixed for the same reason as the focus ring: a pale
        accent would make matches vanish, and a neutral tint disappears
@@ -696,17 +693,14 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   /* The app's icon (static/icons, the "Lanes E"): a tile with its own
      colours, the same in every theme. */
   /* The wordmark (tools/make_wordmark.py writes the SVG): ENSEMBLE in the
-     icon's bars, every letter on a tile of its own like the icon's E (#111,
-     "tiles"; the icon's colours, the same in every theme). Where it does not
-     fit, the icon alone. Its colours are tokens (--wm-*), so it is inline. */
+     icon's bars, the icon itself its E, the other letters --fg. Where it
+     does not fit, the icon alone. Its colours are tokens (--fg, --wm-*), so
+     it is inline and follows the theme. */
   header h1 .logo, header h1 .bar-word { flex: none; display: block; }
   header h1 .logo { width: 22px; height: 22px; display: none; }
   .wm-ink { fill: var(--fg); }
   .wm-l1 { fill: var(--wm-lane-1); } .wm-l2 { fill: var(--wm-lane-2); } .wm-l3 { fill: var(--wm-lane-3); }
   .wm-from { stop-color: var(--wm-from); } .wm-to { stop-color: var(--wm-to); }
-  .wm-spine { fill: var(--wm-tile-spine); }
-  .wm-t1 { fill: var(--wm-tile-1); } .wm-t2 { fill: var(--wm-tile-2); } .wm-t3 { fill: var(--wm-tile-3); }
-  .wm-tfrom { stop-color: var(--wm-tile-from); } .wm-tto { stop-color: var(--wm-tile-to); }
   #new-btn {
     background: var(--accent); color: var(--accent-fg);
     border: 0; padding: 6px 14px; border-radius: var(--r-200);
@@ -2799,7 +2793,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
        you can do here. An open task covers the page under the bar and needs
        none of it, so the row steps aside then. --header-h follows, and with
        it everything that hangs off the bar. */
-    /* The wordmark leads row one, on home and in a project alike (134px; row
+    /* The wordmark leads row one, on home and in a project alike (125px; row
        one's controls take 262px); below 410px it is the icon alone. The rest
        of where you are is row two's. */
     .bar-where { display: contents; }
@@ -3198,7 +3192,7 @@ window.DOC_LISTENERS_PAUSED = false;
   <nav class="bar-where" aria-label="Where you are">
     <button id="bar-back" class="bar-btn icon" type="button" title="All projects" aria-label="Back to all projects" hidden>←</button>
     <h1><a id="bar-home" href="/" title="All projects" aria-label="Ensemble, all projects">
-      <img class="logo" src="/static/icons/favicon.svg" alt="" width="22" height="22"><!-- wordmark: tools/make_wordmark.py --><svg class="bar-word wm-tiles" viewBox="0 -56 2444 400" width="134.4" height="22.0" aria-hidden="true" focusable="false"><defs><linearGradient id="wm-g" x1="0" y1="0" x2="1" y2="1"><stop class="wm-tfrom" offset="0"/><stop class="wm-tto" offset="1"/></linearGradient></defs><rect fill="url(#wm-g)" x="0" y="-56" width="272" height="400" rx="88"/><rect class="wm-t1" x="76" y="0" width="160" height="76" rx="38"/><rect class="wm-t2" x="76" y="106" width="128" height="76" rx="38"/><rect class="wm-t3" x="76" y="212" width="160" height="76" rx="38"/><rect class="wm-spine" x="36" y="0" width="84" height="288" rx="30"/><rect fill="url(#wm-g)" x="292" y="-56" width="308" height="400" rx="88"/><polygon class="wm-t2" points="340,0 412,0 552,288 480,288"/><rect class="wm-spine" x="328" y="0" width="84" height="288" rx="30"/><rect class="wm-spine" x="480" y="0" width="84" height="288" rx="30"/><rect fill="url(#wm-g)" x="620" y="-56" width="272" height="400" rx="88"/><rect class="wm-t1" x="656" y="0" width="84" height="182" rx="30"/><rect class="wm-t2" x="772" y="106" width="84" height="182" rx="30"/><rect class="wm-t1" x="656" y="0" width="200" height="76" rx="38"/><rect class="wm-t2" x="656" y="106" width="200" height="76" rx="38"/><rect class="wm-t3" x="656" y="212" width="200" height="76" rx="38"/><rect fill="url(#wm-g)" x="912" y="-56" width="272" height="400" rx="88"/><rect class="wm-t1" x="988" y="0" width="160" height="76" rx="38"/><rect class="wm-t2" x="988" y="106" width="128" height="76" rx="38"/><rect class="wm-t3" x="988" y="212" width="160" height="76" rx="38"/><rect class="wm-spine" x="948" y="0" width="84" height="288" rx="30"/><rect fill="url(#wm-g)" x="1204" y="-56" width="372" height="400" rx="88"/><polygon class="wm-t1" points="1252,0 1324,0 1432,236 1348,236"/><polygon class="wm-t3" points="1528,0 1456,0 1348,236 1432,236"/><rect class="wm-spine" x="1240" y="0" width="84" height="288" rx="30"/><rect class="wm-spine" x="1456" y="0" width="84" height="288" rx="30"/><rect fill="url(#wm-g)" x="1596" y="-56" width="288" height="400" rx="88"/><rect class="wm-t1" x="1744" y="0" width="84" height="182" rx="30"/><rect class="wm-t2" x="1764" y="106" width="84" height="182" rx="30"/><rect class="wm-t1" x="1672" y="0" width="156" height="76" rx="38"/><rect class="wm-t2" x="1672" y="106" width="176" height="76" rx="38"/><rect class="wm-t3" x="1672" y="212" width="176" height="76" rx="38"/><rect class="wm-spine" x="1632" y="0" width="84" height="288" rx="30"/><rect fill="url(#wm-g)" x="1904" y="-56" width="248" height="400" rx="88"/><rect class="wm-t3" x="1980" y="212" width="136" height="76" rx="38"/><rect class="wm-spine" x="1940" y="0" width="84" height="288" rx="30"/><rect fill="url(#wm-g)" x="2172" y="-56" width="272" height="400" rx="88"/><rect class="wm-t1" x="2248" y="0" width="160" height="76" rx="38"/><rect class="wm-t2" x="2248" y="106" width="128" height="76" rx="38"/><rect class="wm-t3" x="2248" y="212" width="160" height="76" rx="38"/><rect class="wm-spine" x="2208" y="0" width="84" height="288" rx="30"/></svg><!-- /wordmark -->
+      <img class="logo" src="/static/icons/favicon.svg" alt="" width="22" height="22"><!-- wordmark: tools/make_wordmark.py --><svg class="bar-word wm-tile" viewBox="0 -56 2264 400" width="124.5" height="22.0" aria-hidden="true" focusable="false"><image href="/static/icons/favicon.svg" x="0" y="-56" width="400" height="400"/><polygon class="wm-ink" points="460,0 532,0 672,288 600,288"/><rect class="wm-ink" x="448" y="0" width="84" height="288" rx="30"/><rect class="wm-ink" x="600" y="0" width="84" height="288" rx="30"/><rect class="wm-ink" x="732" y="0" width="84" height="182" rx="30"/><rect class="wm-ink" x="848" y="106" width="84" height="182" rx="30"/><rect class="wm-ink" x="732" y="0" width="200" height="76" rx="38"/><rect class="wm-ink" x="732" y="106" width="200" height="76" rx="38"/><rect class="wm-ink" x="732" y="212" width="200" height="76" rx="38"/><rect class="wm-ink" x="1020" y="0" width="160" height="76" rx="38"/><rect class="wm-ink" x="1020" y="106" width="128" height="76" rx="38"/><rect class="wm-ink" x="1020" y="212" width="160" height="76" rx="38"/><rect class="wm-ink" x="980" y="0" width="84" height="288" rx="30"/><polygon class="wm-ink" points="1240,0 1312,0 1420,236 1336,236"/><polygon class="wm-ink" points="1516,0 1444,0 1336,236 1420,236"/><rect class="wm-ink" x="1228" y="0" width="84" height="288" rx="30"/><rect class="wm-ink" x="1444" y="0" width="84" height="288" rx="30"/><rect class="wm-ink" x="1688" y="0" width="84" height="182" rx="30"/><rect class="wm-ink" x="1708" y="106" width="84" height="182" rx="30"/><rect class="wm-ink" x="1616" y="0" width="156" height="76" rx="38"/><rect class="wm-ink" x="1616" y="106" width="176" height="76" rx="38"/><rect class="wm-ink" x="1616" y="212" width="176" height="76" rx="38"/><rect class="wm-ink" x="1576" y="0" width="84" height="288" rx="30"/><rect class="wm-ink" x="1880" y="212" width="136" height="76" rx="38"/><rect class="wm-ink" x="1840" y="0" width="84" height="288" rx="30"/><rect class="wm-ink" x="2104" y="0" width="160" height="76" rx="38"/><rect class="wm-ink" x="2104" y="106" width="128" height="76" rx="38"/><rect class="wm-ink" x="2104" y="212" width="160" height="76" rx="38"/><rect class="wm-ink" x="2064" y="0" width="84" height="288" rx="30"/></svg><!-- /wordmark -->
     </a></h1>
     <span class="bar-sep" aria-hidden="true">/</span>
     <button id="proj-switch" class="bar-btn" title="Switch project, or change this project's kind and key" aria-haspopup="true" aria-expanded="false">

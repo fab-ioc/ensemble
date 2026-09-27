@@ -15,10 +15,6 @@ roles:
 * lanes:    every E is the icon's, its bars coral, mint and amber, and every
             other letter and each E's spine in --fg.
 * gradient: the whole word in the icon's blue-to-violet.
-* tiles:    every letter is its own icon: the icon's blue-to-violet tile, the
-            letter's bars in the lanes' coral, mint and amber, its stems and
-            links the icon's white spine. The same in every theme, as the icon.
-* band:     one long tile holding the whole word, coloured as tiles.
 
 Colours are tokens (--wm-*, in each theme block of index.html), so the SVG is
 inline and follows the theme. The page shows the icon alone (img.logo) where
@@ -35,15 +31,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PAGE = ROOT / "index.html"
-SHIPPED = "tiles"
-VARIANTS = ("tile", "lanes", "gradient", "tiles", "band")
+SHIPPED = "tile"
+VARIANTS = ("tile", "lanes", "gradient")
 CAP = 288            # the letters' height, the icon's E
 T, V = 76, 84        # a bar's height, a stem's width
 ROWS = (0, 106, 212) # the three lanes
 GAP = 48             # between letters
 TILE = 400           # the icon's tile around a 288 E (favicon.svg draws its E at 72% of the tile)
-PAD = (TILE - CAP) / 2   # the icon's ground above and below its E: 56
-TPAD, TGAP, TR = 36, 20, 88   # tiles: ground beside a letter, between tiles, a tile's corner (the icon's 112/512)
 BEGIN, END = "<!-- wordmark: tools/make_wordmark.py -->", "<!-- /wordmark -->"
 
 
@@ -55,8 +49,8 @@ def stem(x, y=0, h=CAP, role="stem"):
     return (role, ("rect", x, y, V, h, 30))
 
 
-def diag(*pts, role="diag"):
-    return (role, ("poly", pts))
+def diag(*pts):
+    return ("diag", ("poly", pts))
 
 
 # (width, shapes), drawn in order. A letter's spine goes over its bars, as the
@@ -64,12 +58,11 @@ def diag(*pts, role="diag"):
 # (S, B) go under them, so a lane stays whole.
 LETTERS = {
     "E": (200, [bar(0, 40, 160), bar(1, 40, 128), bar(2, 40, 160), stem(0)]),
-    "N": (236, [diag((12, 0), (84, 0), (224, 288), (152, 288), role="diag1"), stem(0), stem(152)]),
-    "S": (200, [stem(0, 0, 182, "link0"), stem(116, 106, 182, "link1"), bar(0, 0, 200), bar(1, 0, 200), bar(2, 0, 200)]),
-    "M": (300, [diag((12, 0), (84, 0), (192, 236), (108, 236), role="diag0"),
-                diag((288, 0), (216, 0), (108, 236), (192, 236), role="diag2"),
+    "N": (236, [diag((12, 0), (84, 0), (224, 288), (152, 288)), stem(0), stem(152)]),
+    "S": (200, [stem(0, 0, 182, "link"), stem(116, 106, 182, "link"), bar(0, 0, 200), bar(1, 0, 200), bar(2, 0, 200)]),
+    "M": (300, [diag((12, 0), (84, 0), (192, 236), (108, 236)), diag((288, 0), (216, 0), (108, 236), (192, 236)),
                 stem(0), stem(216)]),
-    "B": (216, [stem(112, 0, 182, "link0"), stem(132, 106, 182, "link1"), bar(0, 40, 156), bar(1, 40, 176), bar(2, 40, 176),
+    "B": (216, [stem(112, 0, 182, "link"), stem(132, 106, 182, "link"), bar(0, 40, 156), bar(1, 40, 176), bar(2, 40, 176),
                 stem(0)]),
     "L": (176, [bar(2, 40, 136), stem(0)]),
 }
@@ -78,20 +71,13 @@ CLS = {
     "tile": {},
     "lanes": {"bar0": "wm-l1", "bar1": "wm-l2", "bar2": "wm-l3"},
     "gradient": {},
-    "tiles": {"bar0": "wm-t1", "bar1": "wm-t2", "bar2": "wm-t3", "diag0": "wm-t1", "diag1": "wm-t2", "diag2": "wm-t3",
-              "link0": "wm-t1", "link1": "wm-t2"},
 }
-CLS["band"] = CLS["tiles"]
-INK = {"tile": "wm-ink", "lanes": "wm-ink", "gradient": None, "tiles": "wm-spine", "band": "wm-spine"}
-ON_TILE = ("tiles", "band")
+INK = {"tile": "wm-ink", "lanes": "wm-ink", "gradient": None}
 
 
 def shape_svg(s, dx, cls):
     kind = s[0]
     cls = f'class="{cls}"' if cls else 'fill="url(#wm-g)"'
-    if kind == "ground":
-        _, x, y, w, h, r = s
-        return f'<rect fill="url(#wm-g)" x="{x + dx:g}" y="{y:g}" width="{w:g}" height="{h:g}" rx="{r:g}"/>'
     if kind == "rect":
         _, x, y, w, h, r = s
         return f'<rect {cls} x="{x + dx:g}" y="{y:g}" width="{w:g}" height="{h:g}" rx="{r:g}"/>'
@@ -102,10 +88,6 @@ def shape_svg(s, dx, cls):
 def svg(variant: str, cap_px: float) -> str:
     """The inline SVG, cap_px tall letters (the icon's tile is 400/288 of that)."""
     parts, x = [], 0
-    if variant == "tiles":
-        return tiles_svg(cap_px)
-    if variant == "band":
-        x = PAD
     for i, ch in enumerate(WORD):
         w, shapes = LETTERS[ch]
         if variant == "tile" and i == 0:
@@ -113,19 +95,13 @@ def svg(variant: str, cap_px: float) -> str:
             x += TILE + GAP
             continue
         for role, s in shapes:
-            lane = CLS[variant].get(role) if ch == "E" or variant in ON_TILE else None   # lanes: each E is the icon's
+            lane = CLS[variant].get(role) if ch == "E" else None   # lanes: each E is the icon's
             parts.append(shape_svg(s, x, lane or INK[variant]))
         x += w + GAP
     width = x - GAP
     top, height = (-(TILE - CAP) / 2, TILE) if variant == "tile" else (0, CAP)
-    if variant == "band":
-        width += PAD
-        top, height = -PAD, TILE
-        parts.insert(0, shape_svg(("ground", 0, -PAD, width, TILE, TR), 0, None))
     scale = cap_px / CAP
     defs = ""
-    if variant == "band":
-        defs = TILE_DEFS
     if variant == "gradient":
         defs = ('<defs><linearGradient id="wm-g" gradientUnits="userSpaceOnUse" x1="0" y1="0" '
                 f'x2="{width:g}" y2="0"><stop class="wm-from" offset="0"/><stop class="wm-to" offset="1"/>'
@@ -133,28 +109,6 @@ def svg(variant: str, cap_px: float) -> str:
     return (f'<svg class="bar-word wm-{variant}" viewBox="0 {top:g} {width:g} {height:g}" '
             f'width="{width * scale:.1f}" height="{height * scale:.1f}" aria-hidden="true" focusable="false">'
             f'{defs}{"".join(parts)}</svg>')
-
-
-# The icon's ground: blue top left to violet bottom right, on every tile.
-TILE_DEFS = ('<defs><linearGradient id="wm-g" x1="0" y1="0" x2="1" y2="1">'
-             '<stop class="wm-tfrom" offset="0"/><stop class="wm-tto" offset="1"/></linearGradient></defs>')
-
-
-def tiles_svg(cap_px: float) -> str:
-    """One icon per letter: a tile TPAD wider than its letter on each side, as
-    tall as the icon's (the letter is the icon's E's height), TGAP apart."""
-    parts, x = [], 0
-    for ch in WORD:
-        w, shapes = LETTERS[ch]
-        parts.append(shape_svg(("ground", 0, -PAD, w + 2 * TPAD, TILE, TR), x, None))
-        for role, s in shapes:
-            parts.append(shape_svg(s, x + TPAD, CLS["tiles"].get(role) or INK["tiles"]))
-        x += w + 2 * TPAD + TGAP
-    width = x - TGAP
-    scale = cap_px / CAP
-    return (f'<svg class="bar-word wm-tiles" viewBox="0 {-PAD:g} {width:g} {TILE}" '
-            f'width="{width * scale:.1f}" height="{TILE * scale:.1f}" aria-hidden="true" focusable="false">'
-            f'{TILE_DEFS}{"".join(parts)}</svg>')
 
 
 # The size in the bar: the icon 22px, as it is on a phone's bar, so the letters
@@ -210,8 +164,6 @@ def preview(dest: Path) -> None:
     style = ["body{margin:0;font:14px/20px system-ui,sans-serif;background:#888}",
              ".wm-ink{fill:var(--fg)}.wm-l1{fill:var(--wm-lane-1)}.wm-l2{fill:var(--wm-lane-2)}.wm-l3{fill:var(--wm-lane-3)}",
              ".wm-from{stop-color:var(--wm-from)}.wm-to{stop-color:var(--wm-to)}",
-             ".wm-spine{fill:var(--wm-tile-spine)}.wm-t1{fill:var(--wm-tile-1)}.wm-t2{fill:var(--wm-tile-2)}.wm-t3{fill:var(--wm-tile-3)}",
-             ".wm-tfrom{stop-color:var(--wm-tile-from)}.wm-tto{stop-color:var(--wm-tile-to)}",
              ".bar{display:flex;align-items:center;gap:24px;min-height:48px;padding:8px 16px;background:var(--surface);"
              "color:var(--fg-muted);border-bottom:1px solid var(--border)}",
              ".bar .n{width:72px;font-size:12px}.bar .big{margin-left:auto}"]

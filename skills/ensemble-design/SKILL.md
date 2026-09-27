@@ -720,26 +720,22 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
    bar carries: a PO screen has no other row to hold it, and the bar is where the page's own
    controls start. Nothing else joins `#bar-here` without replacing something.
 
-   **The wordmark** (#108, #111; `#bar-home`, drawn by `tools/make_wordmark.py`, which writes the
-   SVG between its markers in `index.html`) is ENSEMBLE in the icon's bars, every letter on a tile
-   of its own like the icon's E (`tiles`): the icon's blue-to-violet ground, the letter's bars (and
-   N's and M's diagonals, S's and B's links) in the lanes' coral, mint and amber, its stems the
-   icon's white spine. It is the link home, named "Ensemble, all projects" (`aria-label`; the SVG
-   is `aria-hidden`, the icon's `alt` empty).
-   - **Sizes:** tiles 22px tall, the letters 15.84px (the E inside the icon), 134 × 22px in all
-     (134.4 in the SVG), in a 32px link (44px on a phone). Never scaled to fit: where the word does
-     not fit, the icon alone (`img.logo`, 22px) takes its place. The word shows above 900px and on a
-     phone from 410px (row one, on home and in a project, with the back arrow and the name on row
-     two); the icon alone from 641px to 900px (a long project name and the plan chip leave the word
-     no room at 768) and on a phone under 410px (row one's controls take 262px).
-   - **Colour:** tokens only. `tiles` and `band` (one long tile holding the word) read
-     `--wm-tile-*`, the icon's own colours, declared once in `:root`: like the icon they carry their
-     own ground and are the same in every theme. `tile` (the icon as the E, the other letters
-     `--fg`), `lanes` (each E the icon's coral, mint and amber bars) and `gradient` (the word in the
-     icon's blue to violet) read `--fg`, `--wm-lane-1…3` and `--wm-from`/`--wm-to`, set in each
-     theme block and measured at 4.88:1 or better on its `--surface`. Switching is
-     `py tools/make_wordmark.py tile`; `--preview DIR` draws every variant in every theme with the
-     contrast table.
+   **The wordmark** (#108; `#bar-home`, drawn by `tools/make_wordmark.py`, which writes the SVG
+   between its markers in `index.html`) is ENSEMBLE in the icon's bars: the icon is its E, the
+   other letters are bars and stems on the icon's grid in `--fg`. It is the link home, named
+   "Ensemble, all projects" (`aria-label`; the SVG is `aria-hidden`, the icon's `alt` empty).
+   - **Sizes:** the icon 22px and the letters 15.84px (the E inside the icon), 125 × 22px in all (124.5 in the SVG),
+     in a 32px link (44px on a phone). Never scaled to fit: where the word does not fit, the icon
+     alone (`img.logo`, 22px) takes its place. The word shows above 900px and on a phone from
+     410px (row one, on home and in a project, with the back arrow and the name on row two); the
+     icon alone from 641px to 900px (a long project name and the plan chip leave the word no room
+     at 768) and on a phone under 410px (row one's controls take 262px).
+   - **Colour:** tokens only, so it reads in every theme: `--fg` for the letters, and the icon's
+     own colours inside its tile. The other two variants (`lanes`: each E the icon's coral, mint
+     and amber bars; `gradient`: the word in the icon's blue to violet) read `--wm-lane-1…3`
+     and `--wm-from`/`--wm-to`, set in each theme block and measured at 4.88:1 or better on its
+     `--surface`. Switching is `py tools/make_wordmark.py lanes`; `--preview DIR` draws all three in
+     every theme with the contrast table.
    - Nothing else joins it: no product name in text, no badge but a non-default instance's.
 
    **A project page has no rows of its own above its content.** No status row: what needs you is the
