@@ -124,7 +124,7 @@ class LandingCueRestarts(unittest.TestCase):
     def test_navigating_to_the_same_balloon_again_restarts_the_cue(self):
         script = r"""
 let GOTO = '', LANDED = null, _landing = false, CHAT_DRAWN = true, LAST_ITEMS = [];
-let _cmtComposerOpen = false, _selBtn = null, STICK = false;
+let _cmtComposerOpen = false, selShown = () => false, STICK = false;
 const FOLD = { open: new Set() };
 let GROUP_OF_MID = new Map();
 const setTimeout = () => 0;

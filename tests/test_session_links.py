@@ -52,7 +52,7 @@ let GOTO = '', SOLO_WANT = null, LANDED = null, _landing = false, CHAT_DRAWN = f
 let SOLO_TURN_COUNT = -1, SOLO_FETCHING = false, SOLO_SID = 's-new', SOLO_AGENT = 'claude', SOLO_ROT = null, SOLO_ROTS = [];
 const SOLO_PREV = new Map();
 const PREV_TURNS_SHOWN = 60;
-let _cmtComposerOpen = false, _selBtn = null, STICK = false, LAST_ITEMS = [];
+let _cmtComposerOpen = false, selShown = () => false, STICK = false, LAST_ITEMS = [];
 const FOLD = { open: new Set() };
 let GROUP_OF_MID = new Map();
 // A retry of the transcript runs at once; the landed mark's fade never ends.

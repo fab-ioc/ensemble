@@ -38,6 +38,7 @@ FILEVIEW = (ROOT / "fileview.html").read_text(encoding="utf-8").replace("\r\n", 
 SESSION = (ROOT / "session.html").read_text(encoding="utf-8").replace("\r\n", "\n")
 HL = (ROOT / "static" / "hl.js").read_text(encoding="utf-8")
 STORE = (ROOT / "static" / "comments.js").read_text(encoding="utf-8")
+SELBAR_STUB = "const SelBar = { mount: () => ({ hide() {}, shown: () => false }) };  // static/selbar.js, which the page loads\n"
 NODE = shutil.which("node")
 
 
@@ -259,7 +260,7 @@ class DiffReview(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "review.cjs"
             script.write_text(JS, encoding="utf-8")
-            proc = subprocess.run([NODE, str(script)], input=json.dumps({"hl": HL, "store": STORE, "block": review_block()}),
+            proc = subprocess.run([NODE, str(script)], input=json.dumps({"hl": HL, "store": STORE + SELBAR_STUB, "block": review_block()}),
                                   capture_output=True, text=True, encoding="utf-8", timeout=120)
         if proc.returncode:
             raise AssertionError(proc.stderr)
