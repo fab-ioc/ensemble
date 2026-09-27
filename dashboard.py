@@ -7418,9 +7418,11 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 # board poll carries this row.
                 "reviewAllocations": [a for a in (rm.get("reviewAllocations") or [])
                                       if isinstance(a, dict) and a.get("changed")][-1:],
-                # {state, reason, agentIdentity} when this task needs a human.
+                # {state, reason, agentIdentity, since, askKind} when this task
+                # needs a human; askKind names what it put to them (a
+                # "completed" report is ready to review, not a question).
                 "attention": ({k: v for k, v in att_by_room[rid].items()
-                               if k in ("state", "reason", "agentIdentity", "since")}
+                               if k in ("state", "reason", "agentIdentity", "since", "askKind")}
                               if rid in att_by_room else None),
                 # {open, answered}: the person's points waiting, or None.
                 "points": _points_counts(rid),

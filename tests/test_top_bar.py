@@ -18,9 +18,10 @@ pages, with a project that has a PO (Motors) and one that has none (Plain):
   it; the file's viewer is hidden with its pane, and under another panel's
   tab; on a laptop both panes show and neither switch does;
 * at 768 (a fine pointer) the bar is the laptop's, in one row;
-* the wordmark leads the bar and goes home: the whole word at 1440, 1024 and
-  a 430 phone (row one, on home and in a project), the icon alone at 768 and
-  under 410px; nothing overlaps or runs off the screen at any of them.
+* the wordmark leads the bar and goes home: the whole word at 1440 and 1024
+  (and on a phone from 440px), the icon alone at 768 and under 440px, since
+  the Tasks button joined row one; nothing overlaps or runs off the screen at
+  any of them.
 
 Screenshots go to $ENSEMBLE_SHOTS when it is set. Skipped without Node or Chrome.
 """
@@ -70,7 +71,7 @@ class Cdp {
 }
 // What the bar shows, left to right, and where.
 const BAR = `(() => {
-  const ids = ['bar-back', 'bar-home', 'proj-switch', 'bar-here', 'search', 'search-open', 'po-pill', 'notif-btn', 'me-btn', 'new-btn'];
+  const ids = ['bar-back', 'bar-home', 'proj-switch', 'bar-here', 'search', 'search-open', 'po-pill', 'sw-btn', 'notif-btn', 'me-btn', 'new-btn'];
   const on = ids.map(id => document.getElementById(id)).filter(e => { const b = e.getBoundingClientRect(); return b.width > 0 && b.height > 0 && getComputedStyle(e).visibility !== 'hidden'; });
   const at = e => { const b = e.getBoundingClientRect(); return { id: e.id, x: Math.round(b.left), y: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height) }; };
   const h = document.querySelector('header').getBoundingClientRect();
@@ -84,7 +85,7 @@ const WM = `(() => {
   const a = document.getElementById('bar-home');
   const vis = e => !!e && e.getBoundingClientRect().width > 0 && getComputedStyle(e).visibility !== 'hidden';
   const box = e => { const b = e.getBoundingClientRect(); return { x: Math.round(b.left), y: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height), r: Math.round(b.right), b: Math.round(b.bottom) }; };
-  const ctl = ['bar-back', 'bar-home', 'proj-switch', 'bar-here', 'search', 'search-open', 'po-pill', 'usage-chip', 'notif-btn', 'me-btn', 'new-btn']
+  const ctl = ['bar-back', 'bar-home', 'proj-switch', 'bar-here', 'search', 'search-open', 'po-pill', 'usage-chip', 'sw-btn', 'notif-btn', 'me-btn', 'new-btn']
     .map(id => document.getElementById(id)).filter(vis).map(e => ({ id: e.id, ...box(e) }));
   const hit = [];
   for (let i = 0; i < ctl.length; i++) for (let j = i + 1; j < ctl.length; j++) {
@@ -302,7 +303,7 @@ class TheTopBar(unittest.TestCase):
 
     def test_left_to_right_where_you_are_what_you_can_do_then_the_rest(self):
         self.assertEqual(self.order(self.got["po"]),
-                         ["bar-home", "proj-switch", "bar-here", "search", "po-pill", "notif-btn", "me-btn", "new-btn"])
+                         ["bar-home", "proj-switch", "bar-here", "search", "po-pill", "sw-btn", "notif-btn", "me-btn", "new-btn"])
         self.assertEqual(self.got["po"]["name"], "Motors")
         self.assertLessEqual(self.got["po"]["header"], 50, "one row on a laptop")
         self.assertEqual(self.order(self.got["po768"]), self.order(self.got["po"]), "the same at 768")
@@ -343,8 +344,8 @@ class TheTopBar(unittest.TestCase):
     def test_a_project_on_a_phone_is_two_rows_and_the_panels_start_high(self):
         g = self.got["phonePo"]
         at = {i["id"]: i for i in g["items"]}
-        row1 = {k for k in ("search-open", "po-pill", "notif-btn", "me-btn", "new-btn") if k in at}
-        self.assertEqual(row1, {"search-open", "po-pill", "notif-btn", "me-btn", "new-btn"})
+        row1 = {k for k in ("search-open", "po-pill", "sw-btn", "notif-btn", "me-btn", "new-btn") if k in at}
+        self.assertEqual(row1, {"search-open", "po-pill", "sw-btn", "notif-btn", "me-btn", "new-btn"})
         for k in ("bar-back", "proj-switch", "bar-here"):
             self.assertIn(k, at, k)
             self.assertGreater(at[k]["y"], at["new-btn"]["y"] + 30, f"{k} is on the second row")
@@ -364,10 +365,10 @@ class TheTopBar(unittest.TestCase):
     def test_the_wordmark_is_the_way_home_at_every_width(self):
         wm = self.got["wm"]
         # Where the whole word shows, and where the icon alone does (768:
-        # a long project name and the plan chip leave it no room; under 410px
+        # a long project name and the plan chip leave it no room; under 440px
         # a phone's row one has none).
-        word = {"1440-home", "1440-po", "1024-home", "1024-po", "430-home", "430-po"}
-        self.assertEqual(set(wm), word | {"768-home", "768-po", "390-home", "390-po", "360-home", "360-po"})
+        word = {"1440-home", "1440-po", "1024-home", "1024-po"}   # a 430 phone: Tasks took its room
+        self.assertEqual(set(wm), word | {"768-home", "768-po", "430-home", "430-po", "390-home", "390-po", "360-home", "360-po"})
         for k, g in wm.items():
             with self.subTest(k):
                 self.assertEqual((g["word"], g["logo"]), (k in word, k not in word))
