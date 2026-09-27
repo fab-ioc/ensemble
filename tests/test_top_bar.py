@@ -97,6 +97,21 @@ const WM = `(() => {
     right: Math.max(...ctl.map(r => r.r)), overlaps: hit, vw: innerWidth, scrollW: document.documentElement.scrollWidth,
     headerOver: hd.scrollWidth - hd.clientWidth };
 })()`;
+// The PO pill (#po-pill) against the plan chip (#usage-chip) beside it: the
+// rightmost edge actually painted (the button's own box has \`max-width\`,
+// but an overflowing child — the bug — paints past it while still reporting
+// its own true rect, so the button's rect alone would miss it) and the gap
+// to the chip's left edge. A negative gap is an overlap (#125's "1 ope|PLAN").
+const GAP = `(() => {
+  const pill = document.getElementById('po-pill'), chip = document.getElementById('usage-chip');
+  if (!pill || pill.hidden) return null;
+  const pr = pill.getBoundingClientRect();
+  const kids = [...pill.querySelectorAll('*')].map(e => e.getBoundingClientRect().right);
+  const paintedRight = Math.max(pr.right, ...kids);
+  const out = { pillLeft: pr.left, pillRight: pr.right, paintedRight, pillWidth: pr.width, text: pill.textContent };
+  if (chip && !chip.hidden) { const cr = chip.getBoundingClientRect(); out.chipLeft = cr.left; out.gap = cr.left - paintedRight; }
+  return out;
+})()`;
 const PANE = `(() => { const p = [...document.querySelectorAll('.wsp')].find(e => e.getBoundingClientRect().height); if (!p) return null;
   const vis = s => { const e = p.querySelector(s); return !!e && getComputedStyle(e).visibility === 'visible' && e.getBoundingClientRect().height > 0; };
   const shown = s => { const e = p.querySelector(s); return !!e && e.getBoundingClientRect().width > 0; };
@@ -142,6 +157,31 @@ async function main() {
     }
     await p.evalIn('document.documentElement.dataset.theme = "light"; 0');
   };
+  // The pill vs. the plan chip, worst case: a long project name and a full
+  // three-part points count (the shape that overflowed in #125), in both
+  // themes. Mutates the live project/row objects; harmless, since every
+  // earlier `out.*` capture already froze its own snapshot by value.
+  const pillGap = async (p) => {
+    await p.evalIn(`(() => { const ctx = poContext(); const row = poRowOf(ctx);
+      row.points = { delivered: 8, planned: 3, open: 1 };
+      ctx.name = 'A Rather Long Ensemble Project Name';
+      renderPo();
+      // The plan chip needs a real usage source to show; this fixture has
+      // none, so show it with plausible content — only its position matters.
+      const chip = document.getElementById('usage-chip');
+      chip.hidden = false;
+      document.getElementById('usage-chip-body').innerHTML = '<span class="usage-chip-kind">C <b>15%</b></span>';
+      return 0; })()`);
+    await sleep(150);
+    const res = {};
+    for (const theme of ['light', 'dark']) {
+      await p.evalIn(`document.documentElement.dataset.theme = ${JSON.stringify(theme)}; 0`);
+      await sleep(100);
+      res[theme] = await p.evalIn(GAP);
+    }
+    await p.evalIn('document.documentElement.dataset.theme = "light"; 0');
+    return res;
+  };
   try {
     // ---- a laptop
     const p = await page(1440, 900);
@@ -152,6 +192,7 @@ async function main() {
     out.po = await p.evalIn(BAR);
     await wm(p, '1440-po');
     await p.shot('top-bar-1440-po');
+    out.pillGap1440 = await pillGap(p);
     await p.evalIn('document.getElementById("proj-switch").click(); 0');
     await p.until('!document.getElementById("proj-menu").hidden');
     out.menu = await p.evalIn('[...document.querySelectorAll("#proj-menu .pm-set")].map(b => b.className.replace("pm-item pm-set ", ""))');
@@ -167,6 +208,12 @@ async function main() {
       await p.shot('top-bar-1440-plain-' + tab);
     }
     await p.close();
+    // ---- a 16" Mac: the pill vs. the plan chip again, wider
+    const g = await page(1728, 1117);
+    await g.until('!!document.querySelector("header")');
+    await go(g, A.proj); await poReady(g); await sleep(400);
+    out.pillGap1728 = await pillGap(g);
+    await g.close();
     // ---- a small laptop: the wordmark goes home
     const s = await page(1024, 768);
     await s.until('!!document.querySelector("header")');
@@ -308,6 +355,17 @@ class TheTopBar(unittest.TestCase):
         self.assertEqual(self.order(self.got["po768"]), self.order(self.got["po"]), "the same at 768")
         self.assertLessEqual(self.got["po768"]["header"], 50)
         self.assertLessEqual(self.got["po768"]["scrollW"], self.got["po768"]["vw"])
+
+    def test_the_po_pill_never_overlaps_the_plan_chip(self):
+        for width, key in ((1440, "pillGap1440"), (1728, "pillGap1728")):
+            data = self.got[key]
+            for theme in ("light", "dark"):
+                g = data[theme]
+                with self.subTest(width=width, theme=theme):
+                    self.assertIsNotNone(g, "the pill is shown")
+                    self.assertIn("chipLeft", g, "the plan chip is shown beside it")
+                    self.assertGreaterEqual(g["gap"], 0,
+                        f"painted right {g['paintedRight']} vs chip left {g['chipLeft']}: {g['text']!r}")
 
     def test_home_has_nothing_here(self):
         home = self.got["home"]

@@ -1224,7 +1224,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   }
   #po-pill[hidden] { display: none; }
   #po-pill.none { padding-left: var(--s-300); color: var(--fg-subtle); }
-  #po-pill .po-pill-p { color: var(--fg-muted); font-weight: 400; overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
+  #po-pill .po-pill-p { color: var(--fg-muted); font-weight: 400; overflow: hidden; text-overflow: ellipsis; max-width: 140px; flex-shrink: 0; }
   #po-pill[aria-expanded="true"] { background: var(--selected-bg); color: var(--selected-fg); }
   /* --fg-muted on --selected-bg measured 4.41:1 in Light; the pill's own colour clears it. */
   #po-pill[aria-expanded="true"] .po-pill-p { color: inherit; }
@@ -1233,8 +1233,14 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      gives up its label: the PO's avatar alone still says who. */
   /* The person's points with the PO (points.py): quiet words, not a badge and
      not the bell's count. They go with the name when the bar runs short; the
-     PO's header and the chat's own line still say it. */
-  #po-pill .po-pill-n { color: var(--fg-muted); font-weight: 400; white-space: nowrap; font-variant-numeric: tabular-nums; }
+     PO's header and the chat's own line still say it. It is the pill's least
+     important part, so it is the one that gives way: `min-width: 0` lets it
+     shrink below its text's own width (nowrap alone pins a flex item's
+     minimum to its full content width) and `overflow`/`text-overflow` turn
+     that shrink into an ellipsis instead of text spilling into the plan chip
+     beside it. `.po-pill-p` keeps `flex-shrink: 0` so the name it names never
+     gives up its place first. */
+  #po-pill .po-pill-n { color: var(--fg-muted); font-weight: 400; white-space: nowrap; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex-shrink: 1; }
   #po-pill[aria-expanded="true"] .po-pill-n { color: inherit; }
   @media (max-width: 1100px) { #po-pill .po-pill-p, #po-pill .po-pill-n { display: none; } }
   @media (max-width: 900px), (max-width: 1024px) and (pointer: coarse) {
@@ -2741,6 +2747,13 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     /* List takes the whole width — no room reserved for side panes */
     main { padding-left: 0 !important; padding-right: 0 !important; }
     main { padding: 8px 12px 40px; }
+    /* The list's Task column: 560px (desktop's cap, so a title can wrap
+       instead of running the row wide) is itself wider than a phone's whole
+       screen, and an auto-layout table takes a cell's max-width as its
+       preferred size, not a shrinkable one — so the row simply ran past the
+       right edge under it. A small cap here forces real wrapping; table
+       layout still hands the column whatever room the other columns leave. */
+    .topic { max-width: 200px; }
 
     /* An open task takes the whole width under the bar, with no card chrome.
        The bar stays: it is the way to the PO (its pill opens the PO over the
@@ -4254,7 +4267,11 @@ function agentBadges(r) {
     const tip = [m.identity || m.agent, m.model || 'default model', m.role || '']
       .filter(Boolean).join(' · ');
     return `<span class="badge-agent ${esc(m.agent)}" title="${esc(tip)}">${label}</span>`;
-  }).join('');
+  // Joined with U+200B (zero-width space), not '': two badges glued edge to
+  // edge with no text node between them are one unbreakable run to the line
+  // breaker, wide enough on a phone's narrow list row to push it past the
+  // right edge. U+200B is an invisible line-break opportunity.
+  }).join('\u200b');
 }
 
 function detailHead(r, isRoom) {
