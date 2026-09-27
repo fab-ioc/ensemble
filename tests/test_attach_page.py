@@ -26,6 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 ATTACH = (ROOT / "static" / "attach.js").read_text(encoding="utf-8").replace("\r\n", "\n")
 INDEX = (ROOT / "index.html").read_text(encoding="utf-8").replace("\r\n", "\n")
+SELBAR_STUB = "const SelBar = { mount: () => ({ hide() {}, shown: () => false }) };  // static/selbar.js, which the page loads\n"
 SESSION = (ROOT / "session.html").read_text(encoding="utf-8").replace("\r\n", "\n")
 NODE = shutil.which("node")
 
@@ -143,7 +144,7 @@ class AttachPage(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         payload = {"attach": ATTACH,
-                   "review": block("// ---- Diff review: begin", "// ---- Diff review: end"),
+                   "review": SELBAR_STUB + block("// ---- Diff review: begin", "// ---- Diff review: end"),
                    "pure": block("// ---- Files panel, pure: begin", "// ---- Files panel, pure: end")}
         out = subprocess.run([NODE, "-e", JS], input=json.dumps(payload), capture_output=True,
                              text=True, encoding="utf-8", timeout=60)

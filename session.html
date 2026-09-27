@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
 <script src="/static/actions.js"></script>
 <script src="/static/comments.js"></script>
+<script src="/static/selbar.js"></script>
 <script src="/static/attach.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
@@ -781,7 +782,18 @@
   .msg .text.md th { background:var(--surface-sunken); font-weight:700; }
   /* In-place review comments */
   mark.cmt-hl { background:var(--match-bg); border-bottom:2px solid var(--c-warning-bold); border-radius:2px; color:var(--match-fg); cursor:pointer; }
-  .cmt-selbtn { position:fixed; z-index:60; font-size:12px; padding:5px 11px; background:var(--accent); color:var(--accent-fg); border:none; border-radius:6px; box-shadow:0 3px 12px rgba(0,0,0,.4); cursor:pointer; }
+  /* The bar a text selection brings up (static/selbar.js): Comment, the one
+     primary action, and Copy beside it. Copy only across two balloons. */
+  .sel-bar { position: fixed; z-index: 60; display: flex; align-items: center; gap: var(--s-100); padding: var(--s-100); background: var(--surface-overlay); border: 1px solid var(--border); border-radius: var(--r-200); box-shadow: var(--e-200); }
+  .sel-bar[hidden], .sel-bar [hidden] { display: none; }
+  .sel-bar button { height: 24px; padding: 0 var(--s-200); border: 0; border-radius: var(--r-200); font: inherit; font-size: var(--fs-200); font-weight: 500; white-space: nowrap; cursor: pointer; }
+  .sel-bar button:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .sel-bar .sel-cmt { background: var(--accent); color: var(--accent-fg); }
+  .sel-bar .sel-cmt:hover { background: var(--accent-hover); }
+  .sel-bar .sel-copy { background: transparent; color: var(--fg-subtle); }
+  .sel-bar .sel-copy:hover { background: var(--hover); color: var(--fg); }
+  .sel-bar .sel-sep { color: var(--fg-muted); font-size: var(--fs-200); }
+  .sel-bar .sel-said { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .cmt-composer { position:fixed; z-index:61; top:50%; left:50%; transform:translate(-50%,-50%); width:min(440px,92vw); background:var(--surface); border:1px solid var(--border); border-radius:10px; box-shadow:0 14px 44px rgba(0,0,0,.55); padding:14px; }
   .cmt-composer .cmt-quote { font-size:12px; color:var(--dim); border-left:3px solid var(--border-strong); padding:5px 9px; margin-bottom:9px; max-height:96px; overflow-y:auto; white-space:pre-wrap; }
   .cmt-composer textarea { width:100%; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:8px; font:inherit; resize:vertical; }
@@ -955,6 +967,8 @@
     header > * { flex: 0 0 auto; }
     header h1 { flex: 0 1 auto; max-width: 60vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     header .grow { display: none; }
+    .sel-bar { gap: var(--s-200); }
+    .sel-bar button { height: var(--touch-min); min-width: var(--touch-min); padding: 0 var(--s-300); font-size: var(--fs-300); }
     /* While you type, the header and info bar step aside: a landscape phone
        with its keyboard up leaves about 200px, and Send ended 1px under the
        keyboard at 300px with them showing. */
@@ -2835,7 +2849,7 @@ function renderBubbles(items, opt = {}) {
   pmIndex(items, ROOM_OBJ);
   // Don't blow away the DOM while the user is mid-comment (it would drop their
   // selection / the open composer). Highlights are re-applied after each render.
-  if (_cmtComposerOpen || _selBtn) return;
+  if (_cmtComposerOpen || selShown()) return;
   const _liveSel = window.getSelection();
   if (_liveSel && !_liveSel.isCollapsed && _liveSel.rangeCount &&
       box.contains(_liveSel.getRangeAt(0).commonAncestorContainer)) return;
@@ -3321,7 +3335,7 @@ function gotoMsg(mid) {
 }
 function landPending() {
   const box = $('#msgs');
-  if (!GOTO || !CHAT_DRAWN || _landing || !box || !box.clientHeight || _cmtComposerOpen || _selBtn) return;
+  if (!GOTO || !CHAT_DRAWN || _landing || !box || !box.clientHeight || _cmtComposerOpen || selShown()) return;
   _landing = true;
   try {
     const mid = GOTO;
@@ -4810,22 +4824,16 @@ const COMMENTS = CMT.list;  // {cid, at, mid, from, start, end, quote, note}
 const CMT_UNSTORED = CMT.unstored;
 let CMT_SENDING = false, CMT_ERROR = '';
 let _cmtComposerOpen = false;
-let _selBtn = null;
+// The bar over a selection in the chat (static/selbar.js), made once the page
+// has run: selShown() is safe before that.
+let SEL = null;
+function selShown() { return !!SEL && SEL.shown(); }
 const cmtId = CMT.id, cmtNow = CMT.now;
 function cmtSync() { CMT.sync(); }
 function cmtChanged() { cmtSync(); clearHighlights(); applyComments(); }
 function cmtAdd(c) { CMT.put(c); cmtChanged(); }
 function cmtRemove(cids) { CMT.remove(cids); cmtChanged(); }
 
-function _offsetInEl(root, node, nodeOffset) {
-  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
-  let off = 0, n;
-  while ((n = w.nextNode())) {
-    if (n === node) return off + nodeOffset;
-    off += n.nodeValue.length;
-  }
-  return -1;
-}
 function _markRange(root, start, end, cid) {
   const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
   let off = 0, n; const targets = [];
@@ -4876,37 +4884,23 @@ function cmtFind(c) {
   }
   return null;
 }
-function hideSelBtn() { if (_selBtn) { _selBtn.remove(); _selBtn = null; } }
-
-function _onSelect() {
-  setTimeout(() => {
-    const sel = window.getSelection();
-    if (!sel || sel.isCollapsed || !sel.rangeCount) { hideSelBtn(); return; }
-    const range = sel.getRangeAt(0);
-    const a = range.startContainer.parentElement?.closest('.msg .text.md');
-    const b = range.endContainer.parentElement?.closest('.msg .text.md');
-    if (!a || a !== b) { hideSelBtn(); return; }   // selection must sit in one bubble
-    let start = _offsetInEl(a, range.startContainer, range.startOffset);
-    let end = _offsetInEl(a, range.endContainer, range.endOffset);
-    if (start > end) { const t = start; start = end; end = t; }
-    if (start < 0 || end <= start) { hideSelBtn(); return; }
-    const msgEl = a.closest('.msg');
-    const data = { mid: msgEl.dataset.mid, from: msgEl.dataset.from, start, end,
-                   quote: (a.textContent || '').slice(start, end) };
-    const rect = range.getBoundingClientRect();
-    showSelBtn(rect, data);
-  }, 10);
-}
-function showSelBtn(rect, data) {
-  hideSelBtn();
-  const btn = document.createElement('button');
-  btn.className = 'cmt-selbtn'; btn.textContent = '💬 Comment';
-  document.body.appendChild(btn);
-  const top = rect.bottom + 6, left = Math.min(rect.left, window.innerWidth - 130);
-  btn.style.top = top + 'px'; btn.style.left = Math.max(6, left) + 'px';
-  btn.addEventListener('mousedown', e => e.preventDefault());  // keep the selection
-  btn.onclick = () => { hideSelBtn(); openComposer(data); };
-  _selBtn = btn;
+// A comment takes one balloon's words. A selection reaching past them (a drag
+// ending in the composer, a triple click, a start on a balloon's header) is cut
+// to the one balloon it covers; across two balloons the bar offers Copy only.
+function selResolve(sel) {
+  const box = $('#msgs'), range = sel.getRangeAt(0);
+  if (!box || !range.intersectsNode(box)) return null;
+  const hits = [];
+  for (const t of box.querySelectorAll('.msg .text.md')) {
+    if (!range.intersectsNode(t)) continue;
+    const c = SelBar.clampTo(t, range);
+    if (c && (t.textContent || '').slice(c.start, c.end).trim()) hits.push({ t, c });
+  }
+  if (hits.length !== 1) return { range, comment: null };
+  const { t, c } = hits[0], msgEl = t.closest('.msg');
+  return { range: SelBar.rangeIn(t, c.start, c.end),
+           comment: { mid: msgEl.dataset.mid, from: msgEl.dataset.from, start: c.start, end: c.end,
+                      quote: (t.textContent || '').slice(c.start, c.end) } };
 }
 function openComposer(data) {
   _cmtComposerOpen = true;
@@ -5188,16 +5182,7 @@ function refClickHandler(ev) {
 }
 document.addEventListener('click', refClickHandler);
 $('#goto-note .goto-x').addEventListener('click', () => showGotoNote(''));
-$('#msgs').addEventListener('mouseup', _onSelect);
-$('#msgs').addEventListener('touchend', _onSelect);
-$('#msgs').addEventListener('mousedown', () => hideSelBtn());
-// A touch selection is made with its handles after the finger lifts, so
-// touchend sees an empty or half-made selection. Follow the selection itself.
-if (TOUCH) {
-  let selTimer = 0;
-  document.addEventListener('selectionchange', () => { clearTimeout(selTimer); selTimer = setTimeout(_onSelect, 300); });
-}
-document.addEventListener('mousedown', e => { if (_selBtn && e.target !== _selBtn) hideSelBtn(); });
+SEL = SelBar.mount({ resolve: selResolve, comment: data => openComposer(data) });
 // In a solo session the terminal is the main surface — refocus it when the
 // window regains focus so you can just start typing.
 window.addEventListener('focus', () => {
@@ -5367,7 +5352,7 @@ const ensUpd = window.ensUpd = (() => {   // a window property too: a host page 
 // What this page holds and where it is, for the update block above: the
 // message box with words or points in it, a comment being written, a passage
 // picked; the balloon at the top of the view and its offset, or the end.
-window.ensUpdBusy = () => _cmtComposerOpen || !!_selBtn || !!($('#input') && $('#input').value.trim()) || ED.points.some(edUsed);
+window.ensUpdBusy = () => _cmtComposerOpen || selShown() || !!($('#input') && $('#input').value.trim()) || ED.points.some(edUsed);
 window.ensUpdPlace = () => {
   const box = $('#msgs');
   // A frame kept hidden has no scroll place to speak of: it opens as it would anyway.

@@ -496,6 +496,7 @@ STATIC_DIR = Path(__file__).parent
 # open tab can tell when the page it runs is no longer the one on disk.
 PAGE_FILES = ("index.html", "session.html", "fileview.html",
               "static/hl.js", "static/comments.js", "static/attach.js", "static/actions.js",
+              "static/selbar.js",
               # The Dock library (static/dock, a vendored copy) that a project's
               # PO screen is built on: its modules and its stylesheet (its pop-out
               # page is a module too, popout-page.js, opened from a blob: URL).

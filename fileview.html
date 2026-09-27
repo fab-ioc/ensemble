@@ -550,7 +550,18 @@
   .md th { background:var(--surface-sunken); font-weight:600; }
   /* In-place review comments */
   mark.cmt-hl { background:var(--match-bg); border-bottom:2px solid var(--c-warning-bold); border-radius:2px; color:var(--match-fg); cursor:pointer; }
-  .cmt-selbtn { position:fixed; z-index:60; font-size:12px; padding:5px 11px; background:var(--accent); color:var(--accent-fg); border:none; border-radius:var(--r-200); box-shadow:var(--e-200); cursor:pointer; }
+  /* The bar a text selection brings up (static/selbar.js): Comment, the one
+     primary action, and Copy beside it. Copy only across two balloons. */
+  .sel-bar { position: fixed; z-index: 60; display: flex; align-items: center; gap: var(--s-100); padding: var(--s-100); background: var(--surface-overlay); border: 1px solid var(--border); border-radius: var(--r-200); box-shadow: var(--e-200); }
+  .sel-bar[hidden], .sel-bar [hidden] { display: none; }
+  .sel-bar button { height: 24px; padding: 0 var(--s-200); border: 0; border-radius: var(--r-200); font: inherit; font-size: var(--fs-200); font-weight: 500; white-space: nowrap; cursor: pointer; }
+  .sel-bar button:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .sel-bar .sel-cmt { background: var(--accent); color: var(--accent-fg); }
+  .sel-bar .sel-cmt:hover { background: var(--accent-hover); }
+  .sel-bar .sel-copy { background: transparent; color: var(--fg-subtle); }
+  .sel-bar .sel-copy:hover { background: var(--hover); color: var(--fg); }
+  .sel-bar .sel-sep { color: var(--fg-muted); font-size: var(--fs-200); }
+  .sel-bar .sel-said { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .cmt-composer { position:fixed; z-index:61; top:50%; left:50%; transform:translate(-50%,-50%); width:min(440px,92vw); background:var(--surface-overlay); border:1px solid var(--border); border-radius:var(--r-300); box-shadow:var(--e-200); padding:14px; }
   .cmt-composer .cmt-quote { font-size:12px; color:var(--dim); border-left:3px solid var(--selected-fg); padding:5px 9px; margin-bottom:9px; max-height:96px; overflow-y:auto; white-space:pre-wrap; }
   .cmt-composer textarea { width:100%; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:8px; font:inherit; resize:vertical; }
@@ -582,7 +593,9 @@
      Keyed on a touch screen, not on width: on a desktop this page sits in the
      dashboard's Workspace pane, which can be narrower than a phone. */
   @media (pointer: coarse) {
-    header a.btn, header button.btn, .cmt-selbtn, .cmt-composer button, #cmt-tray button {
+    .sel-bar { gap: var(--s-200); }
+    .sel-bar button { height: var(--touch-min); min-width: var(--touch-min); padding: 0 var(--s-300); font-size: var(--fs-300); }
+    header a.btn, header button.btn, .cmt-composer button, #cmt-tray button {
       min-height: var(--touch-min); display: inline-flex; align-items: center; justify-content: center;
     }
     header a.btn, header button.btn { min-width: var(--touch-min); height: auto; }
@@ -626,6 +639,7 @@
 </header>
 <main id="main"><div class="err">Loading…</div></main>
 <script src="/static/hl.js"></script>
+<script src="/static/selbar.js"></script>
 <script>
 const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const _MDA = String.fromCharCode(0xE000), _MDZ = String.fromCharCode(0xE001);
@@ -1284,44 +1298,31 @@ function mdToHtml(src) {
 // Select text in the document → attach a comment; collect several; send them
 // all to the room the file was opened from (carried in ?room=), or copy them.
 const CMTS = [];               // {cid, start, end, quote, note, view}
-let _cseq = 1, _composerOpen = false, _selBtn = null, _cRoot = null;
+let _cseq = 1, _composerOpen = false, _cRoot = null;
+// The bar over a selection in the file (static/selbar.js), made once the page has run.
+let SEL = null;
+function selShown() { return !!SEL && SEL.shown(); }
+function hideSelBtn() { if (SEL) SEL.hide(); }
 const FV_MARK = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);   // this page's mark on its send keys
 // Which rendering of the file is showing. A passage's offsets count through
 // that rendering's text, so a comment is marked only in the view it was made in:
 // the same offsets in Markdown's source and its preview are different words.
 let CUR_VIEW = '';
-function _off(root, node, o) {
-  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null); let off = 0, n;
-  while ((n = w.nextNode())) { if (n === node) return off + o; off += n.nodeValue.length; }
-  return -1;
-}
 function _mark(root, start, end, cid) {
   const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null); let off = 0, n; const ts = [];
   while ((n = w.nextNode())) { const len = n.nodeValue.length, s = Math.max(start, off), e = Math.min(end, off + len); if (s < e) ts.push({ node: n, s: s - off, e: e - off }); off += len; }
   for (const t of ts.reverse()) { try { const r = document.createRange(); r.setStart(t.node, t.s); r.setEnd(t.node, t.e); const m = document.createElement('mark'); m.className = 'cmt-hl'; m.dataset.cid = cid; r.surroundContents(m); } catch (e) {} }
 }
 function clearHl() { document.querySelectorAll('mark.cmt-hl').forEach(m => { const p = m.parentNode; while (m.firstChild) p.insertBefore(m.firstChild, m); p.removeChild(m); p.normalize(); }); }
-function hideSelBtn() { if (_selBtn) { _selBtn.remove(); _selBtn = null; } }
-function _onSel() {
-  setTimeout(() => {
-    const sel = window.getSelection();
-    if (!sel || sel.isCollapsed || !sel.rangeCount) { hideSelBtn(); return; }
-    const r = sel.getRangeAt(0);
-    if (!_cRoot || !_cRoot.contains(r.commonAncestorContainer)) { hideSelBtn(); return; }
-    let start = _off(_cRoot, r.startContainer, r.startOffset), end = _off(_cRoot, r.endContainer, r.endOffset);
-    if (start > end) { const t = start; start = end; end = t; }
-    if (start < 0 || end <= start) { hideSelBtn(); return; }
-    showSelBtn(r.getBoundingClientRect(), { start, end, quote: (_cRoot.textContent || '').slice(start, end) });
-  }, 10);
-}
-function showSelBtn(rect, data) {
-  hideSelBtn();
-  const b = document.createElement('button'); b.className = 'cmt-selbtn'; b.textContent = '💬 Comment';
-  document.body.appendChild(b);
-  b.style.top = (rect.bottom + 6) + 'px'; b.style.left = Math.max(6, Math.min(rect.left, window.innerWidth - 130)) + 'px';
-  b.addEventListener('mousedown', e => e.preventDefault());
-  b.onclick = () => { hideSelBtn(); openComposer(data); };
-  _selBtn = b;
+// A comment takes the file's words: a selection reaching past them (into the
+// header, a drag ending outside) is cut to the part in the file.
+function selResolve(sel) {
+  const r = sel.getRangeAt(0);
+  if (!_cRoot || !_cRoot.isConnected || !r.intersectsNode(_cRoot)) return null;
+  const c = SelBar.clampTo(_cRoot, r);
+  if (!c) return null;
+  const quote = (_cRoot.textContent || '').slice(c.start, c.end);
+  return { range: SelBar.rangeIn(_cRoot, c.start, c.end), comment: quote.trim() ? { start: c.start, end: c.end, quote } : null };
 }
 // data.start < 0 means a comment on the file as a whole — the only kind an
 // image, a PDF or a rendered page can carry, and always available from the
@@ -1426,9 +1427,6 @@ function toast(msg) { const n = document.createElement('div'); n.className = 'cm
 let _cDocWired = false;
 function enableComments(root) {
   _cRoot = root;
-  root.addEventListener('mouseup', _onSel);
-  root.addEventListener('touchend', _onSel);
-  root.addEventListener('mousedown', hideSelBtn);
   // A highlighted passage points at its comment in the tray.
   root.addEventListener('click', e => {
     const m = e.target.closest && e.target.closest('mark.cmt-hl');
@@ -1436,13 +1434,7 @@ function enableComments(root) {
   });
   if (_cDocWired) return;                       // one document listener, not one per render
   _cDocWired = true;
-  document.addEventListener('mousedown', e => { if (_selBtn && e.target !== _selBtn) hideSelBtn(); });
-  // A touch selection is made with its handles after the finger lifts, so
-  // touchend sees an empty or half-made selection. Follow the selection itself.
-  if (window.matchMedia('(pointer: coarse)').matches) {
-    let selTimer = 0;
-    document.addEventListener('selectionchange', () => { clearTimeout(selTimer); selTimer = setTimeout(_onSel, 300); });
-  }
+  SEL = SelBar.mount({ resolve: selResolve, comment: data => openComposer(data) });
 }
 
 // ---- Rendering ------------------------------------------------------------
@@ -2056,7 +2048,7 @@ const ensUpd = window.ensUpd = (() => {   // a window property too: a host page 
 // What this page holds, for the update block above: a comment being written
 // or a passage picked. Where it is goes into the address it comes back to:
 // the same st= a Workspace tab reopens it with (see ensUpdPlace in the reader).
-window.ensUpdBusy = () => _composerOpen || !!_selBtn;
+window.ensUpdBusy = () => _composerOpen || selShown();
 setInterval(ensUpd.poll, 15000);   // asks every 30 s; a tick that lands a hair early is not skipped
 </script>
 </body>

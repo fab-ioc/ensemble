@@ -584,8 +584,8 @@ async function main() {
       r.rows = rows.length;
       d.getSelection().setBaseAndExtent(rows[0].querySelector('.dt'), 0, rows[2].querySelector('.dt'), 0);
       await sleep(500);
-      const btn = d.querySelector('.cmt-selbtn');
-      r.selInWindow = !!btn; r.selInMain = !!document.querySelector('.cmt-selbtn');
+      const btn = d.querySelector('.sel-bar .sel-cmt');
+      r.selInWindow = !!btn; r.selInMain = !!document.querySelector('.sel-bar');
       if (btn) { btn.click(); await sleep(300); }
       const ta = PD.els.changes.querySelector('.dcx textarea');
       r.commentBox = !!ta && ta.ownerDocument === d;

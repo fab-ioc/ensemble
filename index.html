@@ -1665,7 +1665,18 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .drv-away { padding: var(--s-200) 0; border-bottom: 1px solid var(--border); }
   .drv-away-h { padding: 0 var(--s-300); font-size: var(--fs-200); color: var(--fg-muted); }
   .drv-away .dc, .drv-away .dcx { margin-left: var(--s-300); }
-  .cmt-selbtn { position: fixed; z-index: 60; height: 32px; padding: 0 var(--s-300); border: 0; border-radius: var(--r-200); background: var(--accent); color: var(--accent-fg); font: inherit; font-size: var(--fs-300); font-weight: 500; box-shadow: var(--e-200); cursor: pointer; }
+  /* The bar a text selection brings up (static/selbar.js): Comment, the one
+     primary action, and Copy beside it. Copy only across two balloons. */
+  .sel-bar { position: fixed; z-index: 60; display: flex; align-items: center; gap: var(--s-100); padding: var(--s-100); background: var(--surface-overlay); border: 1px solid var(--border); border-radius: var(--r-200); box-shadow: var(--e-200); }
+  .sel-bar[hidden], .sel-bar [hidden] { display: none; }
+  .sel-bar button { height: 24px; padding: 0 var(--s-200); border: 0; border-radius: var(--r-200); font: inherit; font-size: var(--fs-200); font-weight: 500; white-space: nowrap; cursor: pointer; }
+  .sel-bar button:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .sel-bar .sel-cmt { background: var(--accent); color: var(--accent-fg); }
+  .sel-bar .sel-cmt:hover { background: var(--accent-hover); }
+  .sel-bar .sel-copy { background: transparent; color: var(--fg-subtle); }
+  .sel-bar .sel-copy:hover { background: var(--hover); color: var(--fg); }
+  .sel-bar .sel-sep { color: var(--fg-muted); font-size: var(--fs-200); }
+  .sel-bar .sel-said { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   /* The unsent comments and the one Submit, docked under the diff as the
      chat's tray is docked above its composer. */
   .cmt-tray { flex: 0 0 auto; max-height: 36vh; display: flex; flex-direction: column; background: var(--surface); border-top: 1px solid var(--border); overflow: hidden; }
@@ -2946,7 +2957,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .dc, .dcx, .drv-away .dc, .drv-away .dcx { margin-left: var(--s-200); margin-right: var(--s-200); }
     .dcx textarea { font-size: var(--fs-400); }
     .att-chip, .att-chip .att-x { height: var(--touch-min); }
-    .dc .rm-btn, .dcx .rm-btn, .drv-head .rm-btn, .cmt-tray .rm-btn, .cmt-selbtn, .cmt-to { height: auto; min-height: var(--touch-min); }
+    .dc .rm-btn, .dcx .rm-btn, .drv-head .rm-btn, .cmt-tray .rm-btn, .cmt-to { height: auto; min-height: var(--touch-min); }
+    .sel-bar { gap: var(--s-200); }
+    .sel-bar button { height: var(--touch-min); min-width: var(--touch-min); padding: 0 var(--s-300); font-size: var(--fs-300); }
     .cmt-item { padding-right: calc(var(--touch-min) + var(--s-100)); }
     .cmt-item-x { top: 0; right: 0; width: var(--touch-min); height: var(--touch-min); }
 
@@ -3132,6 +3145,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 <script src="/static/actions.js"></script>
 <script src="/static/hl.js"></script>
 <script src="/static/comments.js"></script>
+<script src="/static/selbar.js"></script>
 <script src="/static/attach.js"></script>
 <!-- The Dock library (static/dock), which a project's PO screen is built on.
      Imported when a PO screen is first drawn; listed here so the page knows it
@@ -8326,52 +8340,39 @@ async function drSubmit(rv) {
   }
 }
 // A selection across lines of a diff offers a comment on them, as a selection
-// in the chat does. Followed through selectionchange, so a phone's handles,
-// which move after the finger lifts, count.
-let DR_SELBTN = null, DR_SEL_T = 0;
-function drHideSel() { if (DR_SELBTN) { DR_SELBTN.remove(); DR_SELBTN = null; } }
-// The selection is the one of the document it changed in: a popped-out Changes
-// panel's window has its own (the event is passed on to this listener there).
-document.addEventListener('selectionchange', e => {
-  const doc = e && e.target && e.target.nodeType === 9 ? e.target : document;
-  clearTimeout(DR_SEL_T); DR_SEL_T = setTimeout(() => drOnSelect(doc), 150);
-});
-function drOnSelect(doc) {
-  doc = doc || document;
-  const s = doc.getSelection();
-  if (!s || s.isCollapsed || !s.rangeCount) { drHideSel(); return; }
+// in the chat does, with Copy beside it (static/selbar.js follows the selection,
+// a phone's handles and a popped-out Changes panel's window included). A
+// selection that starts or ends off the rows (the file bar, a comment card) is
+// cut to the rows it covers; one across two diffs is Copy only.
+function drSelResolve(s, doc) {
   const rg = s.getRangeAt(0);
   const rowOf = n => { const el = n && (n.nodeType === 1 ? n : n.parentElement); return el ? el.closest('.drv .dr') : null; };
-  const ra = rowOf(rg.startContainer), rb = rowOf(rg.endContainer);
+  let ra = rowOf(rg.startContainer), rb = rowOf(rg.endContainer);
+  const cut = !ra || !rb;
+  if (cut) {
+    const rows = [...doc.querySelectorAll('.drv .dr')].filter(el => rg.intersectsNode(el));
+    if (!rows.length) return null;
+    ra = ra || rows[0]; rb = rb || rows[rows.length - 1];
+  }
   let v = null;
   // The view whose own rows these are: several reviews (a commit's and the
   // uncommitted one) share a box, and only the one that drew it owns its rows.
-  if (ra && rb) DR_REVIEWS.forEach(rv => { const w = rv.view; if (w && w.els[+ra.dataset.i] === ra && w.els[+rb.dataset.i] === rb) v = w; });
-  if (!v) { drHideSel(); return; }
+  DR_REVIEWS.forEach(rv => { const w = rv.view; if (w && w.els[+ra.dataset.i] === ra && w.els[+rb.dataset.i] === rb) v = w; });
+  if (!v) return { range: rg, comment: null };
   const a = +ra.dataset.i;
   let b = +rb.dataset.i;
-  if (b > a && rg.endOffset === 0) b--;            // a selection that ends where the next line starts
-  if (!drRange(v.rows, a, b).rows.length) { drHideSel(); return; }
-  if (DR_SELBTN && DR_SELBTN.ownerDocument !== doc) drHideSel();
-  if (!DR_SELBTN) {
-    DR_SELBTN = doc.createElement('button');
-    DR_SELBTN.type = 'button';
-    DR_SELBTN.className = 'cmt-selbtn';
-    DR_SELBTN.textContent = '💬 Comment';
-    DR_SELBTN.addEventListener('mousedown', e => e.preventDefault());   // keep the selection
-    doc.body.appendChild(DR_SELBTN);
-  }
-  const rect = rg.getBoundingClientRect(), win = doc.defaultView || window;
-  DR_SELBTN.style.top = Math.min(win.innerHeight - 52, Math.max(8, rect.bottom + 8)) + 'px';
-  DR_SELBTN.style.left = Math.max(8, Math.min(rect.left, win.innerWidth - 150)) + 'px';
-  DR_SELBTN.onclick = () => {
-    drHideSel();
-    s.removeAllRanges();
-    const d = v.draft;
-    v.draft = { a: Math.min(a, b), b: Math.max(a, b), note: d && !d.cid ? d.note : '', focus: true };
-    drPaint(v);
-  };
+  if (b > a && !cut && rg.endOffset === 0) b--;    // a selection that ends where the next line starts
+  if (!drRange(v.rows, a, b).rows.length) return { range: rg, comment: null };
+  return { range: rg, comment: { v, a, b } };
 }
+function drSelComment(c, s) {
+  const { v, a, b } = c;
+  s.removeAllRanges();
+  const d = v.draft;
+  v.draft = { a: Math.min(a, b), b: Math.max(a, b), note: d && !d.cid ? d.note : '', focus: true };
+  drPaint(v);
+}
+const DR_SEL = SelBar.mount({ resolve: drSelResolve, comment: drSelComment });
 // Another copy of the page changed a review's comments.
 window.addEventListener('storage', e => {
   DR_REVIEWS.forEach(rv => { if (rv.store.hears(e.key)) drChanged(rv); });

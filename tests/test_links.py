@@ -27,6 +27,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 ROOT = Path(__file__).resolve().parent.parent
 PAGES = {n: (ROOT / n).read_text(encoding="utf-8") for n in ("index.html", "session.html", "fileview.html")}
+SELBAR_STUB = "const SelBar = { mount: () => ({ hide() {}, shown: () => false }) };  // static/selbar.js, which the page loads\n"
 BEGIN = "// ---- Links in rendered text: begin shared block"
 END = "// ---- Links in rendered text: end shared block"
 
@@ -638,7 +639,7 @@ class ChangesComments(unittest.TestCase):
         store = (ROOT / "static" / "comments.js").read_text(encoding="utf-8")
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "changes.cjs"
-            script.write_text(CHANGES_JS.replace("%s", store + src[i:j], 1), encoding="utf-8")
+            script.write_text(CHANGES_JS.replace("%s", store + SELBAR_STUB + src[i:j], 1), encoding="utf-8")
             out = subprocess.run([NODE, str(script)], capture_output=True, text=True, encoding="utf-8", timeout=60)
         self.assertEqual(out.returncode, 0, out.stderr)
         r = json.loads(out.stdout)
