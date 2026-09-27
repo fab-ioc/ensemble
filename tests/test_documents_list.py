@@ -248,30 +248,35 @@ viewA1.rv = null;
 const drRange = () => ({ rows: [1] });
 let painted = null;
 const drPaint = v => { painted = v; };
-let btn = null;
-const document = { createElement: () => (btn = { style: {}, addEventListener() {}, remove() {} }), body: { appendChild() {} },
-  getSelection: () => window.getSelection(), get defaultView() { return window; } };   // the selection is its document's
-const window = { innerHeight: 800, innerWidth: 1200,
-  getSelection: () => ({ isCollapsed: false, rangeCount: 1, removeAllRanges() {},
-    getRangeAt: () => ({ startContainer: viewA2.els[0], endContainer: viewA2.els[2], endOffset: 1, getBoundingClientRect: () => ({ bottom: 10, left: 10 }) }) }) };
-let DR_SELBTN = null;
+const document = { querySelectorAll: () => [] };
+const range = { startContainer: viewA2.els[0], endContainer: viewA2.els[2], endOffset: 1, intersectsNode: () => true };
+const sel = { removeAllRanges() {}, getRangeAt: () => range };
 %(fns)s
-drOnSelect();
-btn.onclick();
-console.log(JSON.stringify({ paintedA2: painted === viewA2, draft: viewA2.draft ? [viewA2.draft.a, viewA2.draft.b] : null, bTouched: !!viewB.draft }));
+const got = drSelResolve(sel, document);
+drSelComment(got.comment, sel);
+// Started on the file bar, off the rows: cut to the rows it covers.
+const bar = { nodeType: 1, closest: () => null };
+const cutRange = { startContainer: bar, endContainer: viewA2.els[1], endOffset: 0, intersectsNode: el => el === viewA2.els[0] || el === viewA2.els[1] };
+document.querySelectorAll = () => viewA2.els;
+const cut = drSelResolve({ getRangeAt: () => cutRange }, document);
+// From one diff into another: Copy only.
+const across = drSelResolve({ getRangeAt: () => ({ startContainer: viewA2.els[0], endContainer: viewB.els[2], endOffset: 1, intersectsNode: () => true }) }, document);
+console.log(JSON.stringify({ paintedA2: painted === viewA2, draft: viewA2.draft ? [viewA2.draft.a, viewA2.draft.b] : null, bTouched: !!viewB.draft,
+  cut: cut.comment ? [cut.comment.a, cut.comment.b, cut.comment.v === viewA2] : null, across: across.comment }));
 """
 
 
 @unittest.skipUnless(NODE, "node is not installed")
 class TheSelection(unittest.TestCase):
     def test_a_selection_comments_on_the_diff_on_screen_after_a_to_b_to_a(self):
-        fns = js_function("drHideSel") + "\n" + js_function("drOnSelect")
+        fns = js_function("drSelResolve") + "\n" + js_function("drSelComment")
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "s.js"
             p.write_text(SELECT_JS % {"fns": fns}, encoding="utf-8")
             proc = subprocess.run([NODE, str(p)], capture_output=True, text=True, encoding="utf-8", timeout=60)
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(json.loads(proc.stdout), {"paintedA2": True, "draft": [0, 2], "bTouched": False})
+        self.assertEqual(json.loads(proc.stdout), {"paintedA2": True, "draft": [0, 2], "bTouched": False,
+                                                   "cut": [0, 1, True], "across": None})
 
 
 class TheWiring(unittest.TestCase):
