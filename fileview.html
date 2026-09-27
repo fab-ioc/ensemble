@@ -562,10 +562,6 @@
   .sel-bar .sel-copy:hover { background: var(--hover); color: var(--fg); }
   .sel-bar .sel-sep { color: var(--fg-muted); font-size: var(--fs-200); }
   .sel-bar .sel-said { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  @media (pointer: coarse) {
-    .sel-bar { gap: var(--s-200); }
-    .sel-bar button { height: var(--touch-min); min-width: var(--touch-min); padding: 0 var(--s-300); font-size: var(--fs-300); }
-  }
   .cmt-composer { position:fixed; z-index:61; top:50%; left:50%; transform:translate(-50%,-50%); width:min(440px,92vw); background:var(--surface-overlay); border:1px solid var(--border); border-radius:var(--r-300); box-shadow:var(--e-200); padding:14px; }
   .cmt-composer .cmt-quote { font-size:12px; color:var(--dim); border-left:3px solid var(--selected-fg); padding:5px 9px; margin-bottom:9px; max-height:96px; overflow-y:auto; white-space:pre-wrap; }
   .cmt-composer textarea { width:100%; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:8px; font:inherit; resize:vertical; }
@@ -597,6 +593,8 @@
      Keyed on a touch screen, not on width: on a desktop this page sits in the
      dashboard's Workspace pane, which can be narrower than a phone. */
   @media (pointer: coarse) {
+    .sel-bar { gap: var(--s-200); }
+    .sel-bar button { height: var(--touch-min); min-width: var(--touch-min); padding: 0 var(--s-300); font-size: var(--fs-300); }
     header a.btn, header button.btn, .cmt-composer button, #cmt-tray button {
       min-height: var(--touch-min); display: inline-flex; align-items: center; justify-content: center;
     }

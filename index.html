@@ -1677,10 +1677,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .sel-bar .sel-copy:hover { background: var(--hover); color: var(--fg); }
   .sel-bar .sel-sep { color: var(--fg-muted); font-size: var(--fs-200); }
   .sel-bar .sel-said { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  @media (pointer: coarse) {
-    .sel-bar { gap: var(--s-200); }
-    .sel-bar button { height: var(--touch-min); min-width: var(--touch-min); padding: 0 var(--s-300); font-size: var(--fs-300); }
-  }
   /* The unsent comments and the one Submit, docked under the diff as the
      chat's tray is docked above its composer. */
   .cmt-tray { flex: 0 0 auto; max-height: 36vh; display: flex; flex-direction: column; background: var(--surface); border-top: 1px solid var(--border); overflow: hidden; }
@@ -2962,6 +2958,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .dcx textarea { font-size: var(--fs-400); }
     .att-chip, .att-chip .att-x { height: var(--touch-min); }
     .dc .rm-btn, .dcx .rm-btn, .drv-head .rm-btn, .cmt-tray .rm-btn, .cmt-to { height: auto; min-height: var(--touch-min); }
+    .sel-bar { gap: var(--s-200); }
+    .sel-bar button { height: var(--touch-min); min-width: var(--touch-min); padding: 0 var(--s-300); font-size: var(--fs-300); }
     .cmt-item { padding-right: calc(var(--touch-min) + var(--s-100)); }
     .cmt-item-x { top: 0; right: 0; width: var(--touch-min); height: var(--touch-min); }
 

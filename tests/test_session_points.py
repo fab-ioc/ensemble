@@ -334,7 +334,7 @@ const vm = require('vm');
 const { code } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const out = { renders: 0, notes: [] };
 const box = { clientHeight: 400, querySelectorAll: () => [] };
-const ctx = { out, $: () => box, CHAT_DRAWN: true, _landing: false, _cmtComposerOpen: false, _selBtn: null,
+const ctx = { out, $: () => box, CHAT_DRAWN: true, _landing: false, _cmtComposerOpen: false, selShown: () => false,
   GOTO: '', SOLO_WANT: null, SOLO_SID: 'now', SOLO_AGENT: 'claude', openGroupOf: () => {},
   soloOwns: sid => sid === 'now' || sid === 'old', renderSolo: () => { out.renders++; },
   showGotoNote: t => { if (t) out.notes.push(t); } };

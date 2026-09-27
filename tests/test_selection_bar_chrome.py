@@ -385,9 +385,10 @@ class TheWiring(unittest.TestCase):
                 self.assertIn('<script src="/static/selbar.js"></script>', src)
                 self.assertIn(mount, src)
                 self.assertNotIn("cmt-selbtn", src)
-                css = src[src.index(".sel-bar {"):]
-                coarse = css[css.index("@media (pointer: coarse)"):]
-                self.assertIn(".sel-bar button { height: var(--touch-min); min-width: var(--touch-min);", coarse[:300])
+                # In the page's own phone block (pointer: coarse, or index.html's MOBILE_MQ).
+                rule = src.index(".sel-bar button { height: var(--touch-min); min-width: var(--touch-min);")
+                block = src[src.rindex("(pointer: coarse) {", 0, rule):rule].replace("\r\n", "\n")
+                self.assertNotIn("\n  }\n", block, "no block closes between the query and the rule")
         self.assertIn("static/selbar.js", dashboard.PAGE_FILES)
 
 
