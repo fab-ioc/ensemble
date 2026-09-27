@@ -306,6 +306,9 @@ the row's `.row-cost-chip`): `+512 −4`, what a worktree task's branch has comm
 Nothing shows without a branch of its own, before the hub has counted it, or at `+0 −0` (merged, or
 nothing committed yet). Never green and red: a size is not a verdict. The hub counts it per pair of
 heads (the branch's, `main`'s) off the board's poll, so a new commit shows within about a minute.
+From five digits up it reads in thousands (`+12.3k −123k`; the tooltip keeps the exact numbers).
+The card's status line (`.crow1`) wraps rather than overflow: run, cost, count and points can
+outgrow a 248px card.
 
 ### Unread dot
 

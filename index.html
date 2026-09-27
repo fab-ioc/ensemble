@@ -2012,6 +2012,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     font-variant-numeric: tabular-nums; white-space: nowrap; letter-spacing: 0; }
   .dp-head h2 .tno { font-size: var(--fs-400); }
   .crow1, .crow2 { display: flex; align-items: center; gap: var(--s-200); min-width: 0; }
+  /* The status line wraps rather than run out of a narrow card: run, cost,
+     change count and points can outgrow 248px. */
+  .crow1 { flex-wrap: wrap; row-gap: var(--s-050); }
   .crow1 .prio-ico { display: inline-block; margin: 0; flex: 0 0 auto; }
   .run { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-200); color: var(--fg-subtle); }
   .run.off { color: var(--fg-muted); }
@@ -4834,7 +4837,9 @@ function changesChipHtml(r, cls) {
   const files = n('files');
   const tip = `Committed on its branch since it left main: ${n('add').toLocaleString('en-US')} lines added, `
     + `${n('del').toLocaleString('en-US')} removed${files ? `, in ${files} file${files === 1 ? '' : 's'}` : ''}. Its Changes tab shows them.`;
-  return ` <span class="${cls || 'row-cost-chip'}" title="${esc(tip)}">+${n('add')} −${n('del')}</span>`;
+  // Five digits and up read as thousands, so a big branch still fits a card.
+  const short = v => (v < 10000 ? String(v) : `${+(v / 1000).toFixed(v < 100000 ? 1 : 0)}k`);
+  return ` <span class="${cls || 'row-cost-chip'}" title="${esc(tip)}">+${short(n('add'))} −${short(n('del'))}</span>`;
 }
 // The unread dot: a task's chat (or a project's PO chat) has something newer
 // than this viewer last read. The read point is the one the chat's catch-up

@@ -40,6 +40,7 @@ log.chips = [
   { changes: { add: -2, del: 'x' } },
 ].map(r => changesChipHtml(r, 'ccost cchg'));
 log.rowChip = changesChipHtml({ changes: { add: 1, del: 2, files: 1 } });
+log.huge = [[9999, 10000], [12345, 123456]].map(([add, del]) => changesChipHtml({ changes: { add, del } }));
 
 // Unread: newsAt against the room's read point and the first time dots showed.
 const now = Date.now() / 1000;
@@ -104,6 +105,13 @@ class CardSignals(unittest.TestCase):
         self.assertIn("in 1 file.", small)
         self.assertEqual([zero, none, missing, junk], ["", "", "", ""])
         self.assertIn('class="row-cost-chip"', self.r["rowChip"])
+
+    def test_five_digits_read_as_thousands(self):
+        # A big branch still fits a card; the tooltip keeps the exact count.
+        four, five = self.r["huge"]
+        self.assertIn(">+9999 −10k</span>", four)
+        self.assertIn(">+12.3k −123k</span>", five)
+        self.assertIn("12,345 lines added, 123,456 removed", five)
 
     def test_unread_against_the_read_point(self):
         r = self.r
