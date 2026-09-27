@@ -2029,6 +2029,11 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%;
   }
   .ccost { font-size: var(--fs-100); color: var(--fg-muted); white-space: nowrap; font-variant-numeric: tabular-nums; cursor: default; }
+  /* Unread: the chat has something newer than this viewer last read. A dot,
+     --c-discovery ("new"), never the accent; its words are its label. */
+  .unread-dot { display: inline-block; width: 8px; height: 8px; border-radius: var(--r-full);
+    background: var(--c-discovery-bold); margin-right: var(--s-100); vertical-align: 1px; flex: 0 0 auto; }
+  .pm-item .unread-dot { margin: 0; }
   /* The person's points in the task: plain words like the cost, never a lozenge. */
   .cpts { font-size: var(--fs-100); color: var(--fg-muted); white-space: nowrap; font-variant-numeric: tabular-nums; cursor: default; }
   .cagent { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
@@ -4818,6 +4823,47 @@ function pointsCountHtml(p, cls) {
   const t = pointsCountText(p);
   return t ? `<span class="${cls}" title="${esc(pointsCountTip(p))}">${esc(t)}</span>` : '';
 }
+// A worktree task's change against main, beside its cost and in the same
+// quiet words: "+512 −4", what its branch has committed since it left main
+// (the hub's row.changes, counted per branch head). Nothing without a branch
+// of its own, before the hub has counted it, or when it changed nothing.
+function changesChipHtml(r, cls) {
+  const c = r && r.changes;
+  const n = k => (c && Number.isFinite(c[k]) && c[k] > 0 ? c[k] : 0);
+  if (!n('add') && !n('del')) return '';
+  const files = n('files');
+  const tip = `Committed on its branch since it left main: ${n('add').toLocaleString('en-US')} lines added, `
+    + `${n('del').toLocaleString('en-US')} removed${files ? `, in ${files} file${files === 1 ? '' : 's'}` : ''}. Its Changes tab shows them.`;
+  return ` <span class="${cls || 'row-cost-chip'}" title="${esc(tip)}">+${n('add')} −${n('del')}</span>`;
+}
+// The unread dot: a task's chat (or a project's PO chat) has something newer
+// than this viewer last read. The read point is the one the chat's catch-up
+// line keeps in this browser (session.html's markRead: cd-chat-read:<room>,
+// {ts of the last message read, at: when}); the hub's row.newsAt is when the
+// chat last got something that is not the person's own. What came before this
+// browser first showed dots is never unread, so the first load lights nothing.
+const UNREAD_SINCE_KEY = 'cd-unread-since';
+let UNREAD_SINCE = 0;
+function unreadSince() {
+  if (UNREAD_SINCE) return UNREAD_SINCE;
+  try {
+    UNREAD_SINCE = +localStorage.getItem(UNREAD_SINCE_KEY) || 0;
+    if (!UNREAD_SINCE) localStorage.setItem(UNREAD_SINCE_KEY, String(UNREAD_SINCE = Date.now() / 1000));
+  } catch (e) { UNREAD_SINCE = Date.now() / 1000; }
+  return UNREAD_SINCE;
+}
+function chatReadAt(rid) {
+  try {
+    const v = JSON.parse(localStorage.getItem('cd-chat-read:' + rid) || 'null');
+    return v && typeof v === 'object' ? Math.max(+v.ts || 0, +v.at || 0) : 0;
+  } catch (e) { return 0; }
+}
+function isUnread(r) {
+  return !!(r && r.roomId && r.newsAt > 0 && r.newsAt > Math.max(chatReadAt(r.roomId), unreadSince()));
+}
+function unreadDotHtml(r) {
+  return isUnread(r) ? '<span class="unread-dot" role="img" aria-label="New messages" title="New messages since you last read this chat"></span>' : '';
+}
 // ---- Cost chip: end ---------------------------------------------------------
 
 function topicCellHL(r, parsed) {
@@ -5037,7 +5083,7 @@ function renderHeadlessRow(r, parsed, now) {
   return `<tr class="row headless${attnCls} ${liveClasses}" data-room="${esc(r.roomId || '')}" data-orphan="${r.orphan ? '1' : ''}" data-sid="${esc(r.sessionId)}" draggable="false">
     <td>${statusDot}</td>
     ${prioCell(r)}
-    <td class="topic" title="${esc(attn ? attn.reason : r.cwd)}">${taskNoHtml(r, !SELECTED_PROJECT)}${esc(rowTitle(r))}${agentBadges(r)}</td>
+    <td class="topic" title="${esc(attn ? attn.reason : r.cwd)}">${unreadDotHtml(r)}${taskNoHtml(r, !SELECTED_PROJECT)}${esc(rowTitle(r))}${agentBadges(r)}${changesChipHtml(r)}</td>
     <td class="tag">${attnBadge}${liveBadge}</td>
     ${actionsTd}
   </tr>`;
@@ -5160,8 +5206,8 @@ function cardHtml(r, now) {
   const working = r.isLive && r.status === 'busy' ? ' working' : '';
   return `<article class="card${working}" draggable="true" data-room="${esc(r.roomId || '')}" data-sid="${esc(r.sessionId)}">
     ${loz}
-    <div class="ctitle">${taskNoHtml(r, !SELECTED_PROJECT)}${esc(rowTitle(r))}</div>
-    <div class="crow1">${r.roomId ? prioIcon(prioOf(r)) : ''}${runChip(r)}${costChipHtml(r, 'ccost')}${pointsCountHtml(r.points, 'cpts')}${proj}</div>
+    <div class="ctitle">${unreadDotHtml(r)}${taskNoHtml(r, !SELECTED_PROJECT)}${esc(rowTitle(r))}</div>
+    <div class="crow1">${r.roomId ? prioIcon(prioOf(r)) : ''}${runChip(r)}${costChipHtml(r, 'ccost')}${changesChipHtml(r, 'ccost cchg')}${pointsCountHtml(r.points, 'cpts')}${proj}</div>
     <div class="crow2">${cardAgents(r)}<span class="cwhen">${esc(fmtAgo(now - r.updatedAt))}</span></div>
   </article>`;
 }
@@ -12160,6 +12206,14 @@ async function refresh({ now = false, until = 0 } = {}) {
 }
 // A hidden tab stops polling; bring it up to date the moment it is looked at.
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+// A chat read to its end, in its panel or its own window, clears its unread
+// dot now rather than at the next poll.
+let _unreadPaint = 0;
+window.addEventListener('storage', e => {
+  if (e.key !== null && !String(e.key).startsWith('cd-chat-read:')) return;
+  clearTimeout(_unreadPaint);
+  _unreadPaint = setTimeout(renderRows, 150);
+});
 
 let _searchVersion = 0;
 var SEARCH_PHASE = '', SEARCH_HITS = 0;   // '' while typing, 'searching', 'deep'
@@ -13215,7 +13269,7 @@ $('#proj-switch').addEventListener('click', (ev) => {
     + list.map(pj => {
         const needs = projectNeeds(pj, list);
         return `<button class="pm-item${SELECTED_PROJECT === pj.id ? ' on' : ''}" data-proj="${esc(pj.id)}">`
-          + `<span class="pm-name">${esc(pj.name)}</span>`
+          + `<span class="pm-name">${esc(pj.name)}</span>${unreadDotHtml(poRowOf(pj))}`
           + (needs ? `<span class="pm-needs">${needs}</span>` : '') + '</button>';
       }).join('')
     + projMenuSettingsHtml(projectById(SELECTED_PROJECT));
