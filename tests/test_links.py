@@ -113,6 +113,11 @@ CASES = [
     "`Documents/Screen layout.md`",
     "`Documents/Screen layout/compare.html`",
     "Documents/Screen layout.md",
+    # 36-: review 1 — this project's own "#NNN Title.md" document names, and
+    # a command whose last word is a relative path must stay plain code.
+    "`Documents/#118 Relative Documents paths with spaces open as links.md`",
+    "`py tests/test_links.py`",
+    "`git add Documents/x.md`",
 ]
 
 
@@ -191,6 +196,15 @@ class GeneratedLinks(unittest.TestCase):
         # same as it would with no folder in front of it at all).
         paths = [viewer_path(h)[0] for h in hrefs(r[CASES[35]])]
         self.assertNotIn("Documents/Screen layout.md", paths)
+        # This project's own "#NNN Title.md" document names link too.
+        self.assertEqual(viewer_path(hrefs(r[CASES[36]])[0])[0],
+                         "Documents/#118 Relative Documents paths with spaces open as links.md")
+        # A command whose last word is a relative path is not swept in as one
+        # long, dead file link: the folder before the first separator never
+        # has a space, so "py tests", "git add Documents" never start a path.
+        for c in (CASES[37], CASES[38]):
+            self.assertEqual(hrefs(r[c]), [], c)
+            self.assertEqual(r[c], f'<code class="ic">{c[1:-1]}</code>', c)
 
     def test_on_the_hub_machine(self):
         r = self.render("http://127.0.0.1:8765/")
