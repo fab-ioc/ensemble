@@ -4271,7 +4271,7 @@ function agentBadges(r) {
   // edge with no text node between them are one unbreakable run to the line
   // breaker, wide enough on a phone's narrow list row to push it past the
   // right edge. U+200B is an invisible line-break opportunity.
-  }).join('​');
+  }).join('\u200b');
 }
 
 function detailHead(r, isRoom) {
