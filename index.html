@@ -6807,6 +6807,9 @@ function wsRoomForPath(v, path) {
       best = { id: sn.roomId, name: sn.label || sn.sessionId || 'task' }; bestLen = n.length;
     }
   });
+  // A file no task owns (Documents, the roadmap, the project's own code)
+  // is the project's: its comments go to the project's PO.
+  if (!best && pj && pj.poRoomId) best = { id: pj.poRoomId, name: (pj.name || 'the project') + ' PO' };
   return best;
 }
 function wsFileUrl(v, path) {
