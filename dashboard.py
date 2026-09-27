@@ -943,6 +943,7 @@ _BRANCH_LOCK = threading.Lock()
 _BRANCH_WAKE = threading.Event()
 _BRANCH_THREAD: threading.Thread | None = None
 _PACKED_REFS: dict[str, tuple[float, dict]] = {}             # common dir -> (mtime, {ref: sha})
+_SHA_RE = re.compile(r"[0-9a-f]{40}")
 _SHORTSTAT_RE = re.compile(r"(\d+) files? changed(?:, (\d+) insertions?\(\+\))?(?:, (\d+) deletions?\(-\))?")
 
 
@@ -957,15 +958,16 @@ def _read_small(path: Path) -> str:
 def _git_ref_sha(gitdir: Path, common: Path, ref: str) -> str:
     """A ref's sha from a checkout's git files: loose, else packed."""
     for d in (gitdir, common):
-        sha = _read_small(d / ref)
-        if len(sha) >= 40:
-            return sha[:40]
+        sha = _read_small(d / ref)[:40]
+        if _SHA_RE.fullmatch(sha):          # not a symbolic "ref: ..." line
+            return sha
     packed = common / "packed-refs"
     try:
         mtime = packed.stat().st_mtime
     except OSError:
         return ""
-    hit = _PACKED_REFS.get(str(common))
+    ckey = os.path.normpath(str(common))    # one parse per repo, not per worktree
+    hit = _PACKED_REFS.get(ckey)
     if not hit or hit[0] != mtime:
         refs = {}
         try:
@@ -974,9 +976,9 @@ def _git_ref_sha(gitdir: Path, common: Path, ref: str) -> str:
             text = ""
         for ln in text.splitlines():
             bits = ln.split(" ", 1)
-            if len(bits) == 2 and len(bits[0]) == 40 and not ln.startswith(("#", "^")):
+            if len(bits) == 2 and _SHA_RE.fullmatch(bits[0]):
                 refs[bits[1].strip()] = bits[0]
-        hit = _PACKED_REFS[str(common)] = (mtime, refs)
+        hit = _PACKED_REFS[ckey] = (mtime, refs)
     return hit[1].get(ref, "")
 
 
@@ -1054,7 +1056,10 @@ def _branch_worker() -> None:
                 _BRANCH_WAKE.clear()
                 continue
             root, key = next(iter(_BRANCH_WANT.items()))
-        got = _count_branch(root, key)
+        try:
+            got = _count_branch(root, key)
+        except Exception:                   # the thread is never restarted: never let it die
+            got = None
         with _BRANCH_LOCK:
             _BRANCH_CHANGES[root] = (key, got)
             if _BRANCH_WANT.get(root) == key:

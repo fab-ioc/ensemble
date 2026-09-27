@@ -185,6 +185,30 @@ class BranchChanges(unittest.TestCase):
         git(self.wt, "checkout", "-q", "--detach")
         self.assertIsNone(dashboard.branch_heads(str(self.wt)))
 
+    def test_a_symbolic_loose_ref_is_not_a_sha(self):
+        # main as a symbolic ref to a long branch name: never read as a sha.
+        git(self.main, "branch", "-q", "trunk-with-a-name-longer-than-forty-characters")
+        git(self.main, "symbolic-ref", "refs/heads/main", "refs/heads/trunk-with-a-name-longer-than-forty-characters")
+        self.assertIsNone(dashboard.branch_heads(str(self.wt)))
+
+    def test_the_worker_outlives_a_failed_count(self):
+        self.commit()
+        root = str(self.wt)
+        with mock.patch.object(dashboard, "_count_branch", side_effect=RuntimeError("boom")):
+            self.assertIsNone(dashboard.branch_changes(root))
+            deadline = time.time() + 20
+            while time.time() < deadline and root not in dashboard._BRANCH_CHANGES:
+                time.sleep(0.05)
+        self.assertEqual(dashboard._BRANCH_CHANGES[root][1], None)
+        self.assertTrue(dashboard._BRANCH_THREAD.is_alive())
+        dashboard._HEADS_SEEN.pop(root, None)
+        dashboard._BRANCH_CHANGES.pop(root, None)
+        got, deadline = None, time.time() + 20
+        while time.time() < deadline and got is None:
+            got = dashboard.branch_changes(root)
+            time.sleep(0.05)
+        self.assertEqual(got, {"add": 3, "del": 1, "files": 2})
+
     def test_a_poll_never_waits_for_git(self):
         self.commit()
         root = str(self.wt)
