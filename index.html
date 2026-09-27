@@ -2185,6 +2185,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   }
   .sw-row:hover { background: var(--hover); }
   .sw-row.on { background: var(--selected-bg); }
+  /* --fg-muted on --selected-bg is 4.4:1 in light; subtle keeps it over 4.5. */
+  .sw-row.on .sw-since, .sw-row.on .sw-proj { color: var(--fg-subtle); }
   .sw-title {
     font-size: var(--fs-300); line-height: 20px; color: var(--fg);
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
