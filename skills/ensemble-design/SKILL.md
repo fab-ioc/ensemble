@@ -300,6 +300,31 @@ Cost is plain `--fs-100` `--fg-muted` text (`.ccost`), never a lozenge or a pill
 is known, else the tokens used (`1.4M tokens`, which is what a Codex task has), the split in its
 tooltip; nothing while a task has used none.
 
+The **change count** sits right after the cost in the same plain words (`.ccost.cchg`; on a list row
+the row's `.row-cost-chip`): `+512 −4`, what a worktree task's branch has committed since it left
+`main`, lines added and removed, the file count in its tooltip (`changesChipHtml` is the reference).
+Nothing shows without a branch of its own, before the hub has counted it, or at `+0 −0` (merged, or
+nothing committed yet). Never green and red: a size is not a verdict. The hub counts it per pair of
+heads (the branch's, `main`'s) off the board's poll, so a new commit shows within about a minute.
+From five digits up it reads in thousands (`+12.3k −123k`; the tooltip keeps the exact numbers).
+The card's status line (`.crow1`) wraps rather than overflow: run, cost, count and points can
+outgrow a 248px card.
+
+### Unread dot
+
+A task's chat, or a project's PO chat, has something newer than **this viewer** last read: an 8px
+`--r-full` dot in `--c-discovery-bold` ("new"), never the accent, before the task's number on a card
+and a list row, and after the project's name in the project menu (`unreadDotHtml`). It is a dot
+with words: `aria-label="New messages"` and a tooltip saying since when.
+
+- **The read point is the catch-up line's** (`cd-chat-read:<room>` in the browser, per viewer):
+  reading a chat to its end, or Mark read, clears the dot in every open copy of the page at once.
+- **What counts:** anything in the chat that is not the person's own and not a landmark (a rotation,
+  a restart line); in a one-agent chat, the agent's last words. The hub sends it as `newsAt`.
+- **Nothing before this browser first showed dots is unread**, so the first load lights nothing.
+- It is not attention: `Needs you` says something waits on the person; the dot only says something
+  happened. It never adds to a count.
+
 Four signals must be legible **without hovering**: status, priority, assignees with their models, and
 any attention state. Models are shortened on a card (`gpt-5.6-luna` → `luna`); the full string lives in
 the issue view. Three or more agents show two, then `+1`.

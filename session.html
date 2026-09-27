@@ -3042,7 +3042,7 @@ const READ_KEY = () => 'cd-chat-read:' + (ROOM || location.pathname + location.s
 function loadRead() {
   try {
     const v = JSON.parse(localStorage.getItem(READ_KEY()) || 'null');
-    if (v && typeof v === 'object' && (v.id || v.ts)) return { id: String(v.id || ''), ts: +v.ts || 0 };
+    if (v && typeof v === 'object' && (v.id || v.ts)) return Object.assign({ id: String(v.id || ''), ts: +v.ts || 0 }, +v.at > 0 ? { at: +v.at } : {});
   } catch (e) {}
   return READ_MEM;
 }
@@ -3076,16 +3076,20 @@ function catchUpOpen() {
 // Everything up to the latest message is read: kept for this room, and the line
 // goes. The point only moves forward: a tab left behind (another tab read further)
 // keeps the later point, found in this tab's messages or else by its time.
+// `at` is when it was last read (seconds): the dashboard's unread dot compares
+// the hub's newsAt with the later of it and ts. It moves only when something
+// newer than it is in view, so a reader resting at the end writes nothing.
 function markRead() {
   clearTimeout(READ_TIMER); READ_TIMER = 0;
   const items = LAST_ITEMS || [];
   for (let i = items.length - 1; i >= 0; i--) {
     const m = items[i];
     if (!m || !m.id || m.id === 'task' || isLandmark(m)) continue;
-    const cur = loadRead(), ts = m.ts || Date.now() / 1000;
+    const cur = loadRead(), ts = m.ts || Date.now() / 1000, now = Math.max(Date.now() / 1000, ts);
     const at = cur && cur.id ? items.findIndex(x => x && x.id === cur.id) : -1;
-    if (!cur || (at >= 0 ? at < i : (cur.ts || 0) < ts)) {
-      READ_MEM = { id: m.id, ts };
+    const ahead = !cur || (at >= 0 ? at < i : (cur.ts || 0) < ts);
+    if (ahead || (cur.at || 0) < ts) {
+      READ_MEM = ahead ? { id: m.id, ts, at: now } : { id: cur.id, ts: cur.ts, at: now };
       try { localStorage.setItem(READ_KEY(), JSON.stringify(READ_MEM)); } catch (e) {}
     }
     break;

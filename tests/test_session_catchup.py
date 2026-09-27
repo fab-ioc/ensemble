@@ -9,7 +9,9 @@ The page's own functions run in Node and these check that:
   blocked or a question, the answers to the person, and counts the rest;
 * there is no line when nothing came after the point, or when fewer than
   three came and all are for the person;
-* Mark read keeps the latest message as the point, and the line goes;
+* Mark read keeps the latest message as the point, and the line goes; it
+  keeps when it was read too (the dashboard's unread dot), rewritten only when
+  something newer than that is in view;
 * a progress check's plain facts name a new or a stopped task;
 * another tab that read further moves this tab's line forward, never back;
 * in Just us only decisions and answers are named, the rest counted as hidden.
@@ -144,6 +146,16 @@ store.set('cd-chat-read:room-po', JSON.stringify({ id: 's:14', ts: 171 }));
 T.set(items.slice(0, 13).concat([Object.assign({}, items[13], { ts: 171 }), items[14]]), null);
 T.markRead();
 out.sameTimeFound = T.loadRead();
+// `at`, when it was read: a reader resting at the end writes nothing more, and
+// an `at` older than the last message moves on without moving the point.
+T.set(items, null);
+T.markRead();
+const rested = store.get('cd-chat-read:room-po');
+T.markRead();
+out.restWritesNothing = rested === store.get('cd-chat-read:room-po');
+store.set('cd-chat-read:room-po', JSON.stringify({ id: 's:14', ts: 171, at: 150 }));
+T.markRead();
+out.atMoves = T.loadRead();
 
 // Opening: on a line the chat scrolls to it; opened on a link, the landing stays.
 const box = { clientHeight: 500, scrollTop: 900, scrollHeight: 5000, line: { offsetTop: 300 },
@@ -250,6 +262,9 @@ class CatchUpLine(unittest.TestCase):
 
     def test_mark_read(self):
         o = self.out
+        # When it was read, for the dashboard's unread dot: now, never before the message.
+        self.assertGreater(o["marked"].pop("at"), 1_700_000_000)
+        self.assertGreater(o["markedSkipsLandmark"].pop("at"), 1_700_000_000)
         self.assertEqual(o["marked"], {"id": "s:14", "ts": 171})
         self.assertIsNone(o["markedState"]["point"])
         self.assertEqual(o["markedState"]["draws"], 1)
@@ -258,9 +273,17 @@ class CatchUpLine(unittest.TestCase):
 
     def test_the_point_never_moves_back(self):
         o = self.out
+        for k in ("stale", "sameTimeLater", "sameTimeFound"):
+            self.assertGreater(o[k].pop("at"), 1_700_000_000)
         self.assertEqual(o["stale"], {"id": "s:14", "ts": 171})
         self.assertEqual(o["sameTimeLater"], {"id": "s:13", "ts": 160})
         self.assertEqual(o["sameTimeFound"], {"id": "s:14", "ts": 171})
+
+    def test_when_it_was_read(self):
+        o = self.out
+        self.assertTrue(o["restWritesNothing"])
+        self.assertGreater(o["atMoves"].pop("at"), 171)
+        self.assertEqual(o["atMoves"], {"id": "s:14", "ts": 171})
 
     def test_opening_on_the_line_unless_on_a_link(self):
         o = self.out

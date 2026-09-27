@@ -628,6 +628,11 @@ def _pricing_for_model(model_id: str) -> tuple[float, float, float, float] | Non
 
 
 _COST_CACHE: dict[Path, tuple[float, dict]] = {}  # jsonl_path -> (mtime, result)
+# When a conversation last said something to read: the time of its last
+# assistant text, found by the cost pass over the same lines (so it costs no
+# read of its own). transcript path / codex session id -> epoch seconds.
+_SAID_AT: dict[Path, float] = {}
+_CODEX_SAID_AT: dict[str, float] = {}
 
 
 def compute_session_cost(jsonl_path: Path | None) -> dict:
@@ -650,6 +655,7 @@ def compute_session_cost(jsonl_path: Path | None) -> dict:
     # those lines carries the SAME cumulative usage for the underlying
     # response — summing them all triples the total. Dedupe by requestId.
     seen_requests: set[str] = set()
+    said = ""
     try:
         with jsonl_path.open(encoding="utf-8", errors="replace") as f:
             for line in f:
@@ -662,6 +668,11 @@ def compute_session_cost(jsonl_path: Path | None) -> dict:
                 msg = d.get("message")
                 if not isinstance(msg, dict):
                     continue
+                content = msg.get("content")
+                if isinstance(content, list) and any(
+                        isinstance(b, dict) and b.get("type") == "text" and str(b.get("text") or "").strip()
+                        for b in content):
+                    said = d.get("timestamp") or said
                 usage = msg.get("usage")
                 if not isinstance(usage, dict):
                     continue
@@ -705,6 +716,7 @@ def compute_session_cost(jsonl_path: Path | None) -> dict:
         "byModel": breakdown,
     }
     _COST_CACHE[jsonl_path] = (mtime, result)
+    _SAID_AT[jsonl_path] = _turn_epoch(said) if said else 0.0
     return result
 
 
@@ -777,13 +789,15 @@ def compute_codex_session_cost(session_id: str) -> dict:
     if cached and cached[0] == sig:
         return cached[1]
     by_model: dict[str, dict[str, int]] = {}
+    said = 0.0
     for name, _, _ in sig:
         model = "codex"
         prev_total = None
         try:
             with open(name, encoding="utf-8", errors="replace") as fh:
                 for line in fh:
-                    if '"turn_context"' not in line and '"token_count"' not in line:
+                    said_line = '"role":"assistant"' in line
+                    if not said_line and '"turn_context"' not in line and '"token_count"' not in line:
                         continue
                     try:
                         rec = json.loads(line)
@@ -791,6 +805,13 @@ def compute_codex_session_cost(session_id: str) -> dict:
                         continue
                     payload = rec.get("payload") if isinstance(rec, dict) else None
                     if not isinstance(payload, dict):
+                        continue
+                    if said_line:
+                        if (rec.get("type") == "response_item" and payload.get("type") == "message"
+                                and payload.get("role") == "assistant"
+                                and any(isinstance(b, dict) and str(b.get("text") or "").strip()
+                                        for b in payload.get("content") or [])):
+                            said = max(said, _turn_epoch(rec.get("timestamp") or ""))
                         continue
                     if rec.get("type") == "turn_context":
                         model = payload.get("model") or model
@@ -821,6 +842,7 @@ def compute_codex_session_cost(session_id: str) -> dict:
               "byModel": {m: {"dollars": 0.0, "tokens": t, "unknownPricing": True}
                           for m, t in by_model.items()}}
     _CODEX_COST_CACHE[session_id] = (sig, result)
+    _CODEX_SAID_AT[session_id] = said
     return result
 
 
@@ -864,6 +886,213 @@ def compute_room_cost(room: dict) -> dict:
                 b["unknownPricing"] = True
     total["dollars"] = round(total["dollars"], 4)
     return total
+
+
+def _news_landmark(m: dict) -> bool:
+    """A line the chat draws for orientation (a rotation, a restart), never
+    something said: session.html's isLandmark."""
+    return bool(m.get("divider")) or (m.get("kind") == "notice" and (
+        bool(m.get("rotation")) or m.get("noticeKind") == "restart"))
+
+
+def room_news_at(room: dict) -> float:
+    """When a task's chat last got something for its reader: epoch seconds, 0
+    for never. The page compares it with the read point the chat keeps per
+    viewer (its catch-up line's) to show an unread dot.
+
+    A chat of agents is its messages: the last one that is not the person's own
+    (hub input such as a report counts) and not a landmark. A one-agent chat is
+    its transcript (session.html's soloMode): the agent's last text, which the
+    cost pass found (compute_room_cost runs first), and the messages between
+    POs it shows among the turns. Reads no file."""
+    parts = [p for p in room.get("participants") or [] if isinstance(p, dict) and p.get("kind") == "agent"]
+    solo = room.get("mode") == "solo" or len(parts) == 1
+    news = 0.0
+    for m in reversed(room.get("messages") or []):
+        if not isinstance(m, dict):
+            continue
+        if solo:
+            if m.get("kind") != "pomsg":
+                continue
+        elif _news_landmark(m) or (m.get("from") == "user" and (m.get("kind") or "human") == "human"):
+            continue
+        try:
+            news = float(m.get("ts") or 0)
+        except (TypeError, ValueError):
+            continue
+        break
+    if solo:
+        for pp in parts:
+            for sid in participant_session_ids(pp):
+                if session_agent(pp, sid) == "codex":
+                    news = max(news, _CODEX_SAID_AT.get(sid, 0.0))
+                else:
+                    path = _TRANSCRIPT_PATHS.get(sid)
+                    news = max(news, _SAID_AT.get(path, 0.0) if path else 0.0)
+    return news
+
+
+# ---- A worktree task's change count against main: begin --------------------
+# "+512 −4" on a task's card: what its branch has committed since it left main.
+# Keyed by the branch's head and main's, read from the git files themselves (a
+# few small reads, no git process), so a poll costs no git; a key not counted
+# yet is counted by one background thread and shows on a later poll.
+_BRANCH_CHANGES: dict[str, tuple[tuple, dict | None]] = {}   # root -> (key, {add, del, files} | None)
+_BRANCH_WANT: dict[str, tuple] = {}                           # root -> key waiting to be counted
+_BRANCH_LOCK = threading.Lock()
+_BRANCH_WAKE = threading.Event()
+_BRANCH_THREAD: threading.Thread | None = None
+_PACKED_REFS: dict[str, tuple[float, dict]] = {}             # common dir -> (mtime, {ref: sha})
+_SHA_RE = re.compile(r"[0-9a-f]{40}")
+_SHORTSTAT_RE = re.compile(r"(\d+) files? changed(?:, (\d+) insertions?\(\+\))?(?:, (\d+) deletions?\(-\))?")
+
+
+def _read_small(path: Path) -> str:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read(4096).strip()
+    except OSError:
+        return ""
+
+
+def _git_ref_sha(gitdir: Path, common: Path, ref: str) -> str:
+    """A ref's sha from a checkout's git files: loose, else packed."""
+    for d in (gitdir, common):
+        sha = _read_small(d / ref)[:40]
+        if _SHA_RE.fullmatch(sha):          # not a symbolic "ref: ..." line
+            return sha
+    packed = common / "packed-refs"
+    try:
+        mtime = packed.stat().st_mtime
+    except OSError:
+        return ""
+    ckey = os.path.normpath(str(common))    # one parse per repo, not per worktree
+    hit = _PACKED_REFS.get(ckey)
+    if not hit or hit[0] != mtime:
+        refs = {}
+        try:
+            text = packed.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        for ln in text.splitlines():
+            bits = ln.split(" ", 1)
+            if len(bits) == 2 and _SHA_RE.fullmatch(bits[0]):
+                refs[bits[1].strip()] = bits[0]
+        hit = _PACKED_REFS[ckey] = (mtime, refs)
+    return hit[1].get(ref, "")
+
+
+_HEADS_SEEN: dict[str, tuple[float, tuple | None]] = {}   # root -> (read again after, heads)
+_HEADS_TTL = (15.0, 45.0)
+
+
+def branch_heads_cached(root: str) -> tuple[str, str] | None:
+    """branch_heads, read again after 15 to 45 s (each root its own time, so
+    the reads spread over the polls): about a millisecond a checkout on
+    Windows, which every poll of every task would add up."""
+    now = time.time()
+    hit = _HEADS_SEEN.get(root)
+    if hit and now < hit[0]:
+        return hit[1]
+    heads = branch_heads(root)
+    _HEADS_SEEN[root] = (now + random.uniform(*_HEADS_TTL), heads)
+    return heads
+
+
+def branch_heads(root: str) -> tuple[str, str] | None:
+    """(the branch's head, main's head) of a checkout, from its git files, or
+    None when it is on main itself, detached, or not readable as git."""
+    dotgit = Path(root) / ".git"
+    if dotgit.is_file():
+        line = _read_small(dotgit)
+        if not line.startswith("gitdir:"):
+            return None
+        gitdir = Path(line[len("gitdir:"):].strip())
+        if not gitdir.is_absolute():
+            gitdir = Path(root) / gitdir
+    elif dotgit.is_dir():
+        gitdir = dotgit
+    else:
+        return None
+    rel = _read_small(gitdir / "commondir")
+    common = (gitdir / rel) if rel else gitdir
+    head = _read_small(gitdir / "HEAD")
+    if not head.startswith("ref: "):
+        return None
+    ref = head[5:].strip()
+    sha = _git_ref_sha(gitdir, common, ref)
+    if not sha:
+        return None
+    for cand in ("main", "master"):
+        if ref == "refs/heads/" + cand:
+            return None
+        base = _git_ref_sha(gitdir, common, "refs/heads/" + cand)
+        if base:
+            return sha, base
+    return None
+
+
+def _count_branch(root: str, key: tuple) -> dict | None:
+    """``git diff --shortstat main...head``: what the branch changed since it
+    left main, committed. None when git fails."""
+    try:
+        out = _run(["git", "-C", root, "diff", "--shortstat", f"{key[1]}...{key[0]}"],
+                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    m = _SHORTSTAT_RE.search(out.stdout or "")
+    if not m:
+        return {"add": 0, "del": 0, "files": 0}
+    return {"add": int(m.group(2) or 0), "del": int(m.group(3) or 0), "files": int(m.group(1))}
+
+
+def _branch_worker() -> None:
+    while True:
+        _BRANCH_WAKE.wait()
+        with _BRANCH_LOCK:
+            if not _BRANCH_WANT:
+                _BRANCH_WAKE.clear()
+                continue
+            root, key = next(iter(_BRANCH_WANT.items()))
+        try:
+            got = _count_branch(root, key)
+        except Exception:                   # the thread is never restarted: never let it die
+            got = None
+        with _BRANCH_LOCK:
+            _BRANCH_CHANGES[root] = (key, got)
+            if _BRANCH_WANT.get(root) == key:
+                del _BRANCH_WANT[root]
+
+
+def branch_changes(root: str, background: bool = True) -> dict | None:
+    """A worktree checkout's {add, del, files} against main, or None: no branch
+    of its own, nothing counted yet for its current heads, or git failed. A
+    pair of heads not counted yet goes to the background thread (``background``
+    False counts it here, for tests), and meanwhile nothing is shown: a count
+    for older heads would be a wrong one."""
+    if not root:
+        return None
+    key = branch_heads_cached(root) if background else branch_heads(root)
+    if key is None:
+        return None
+    hit = _BRANCH_CHANGES.get(root)
+    if hit and hit[0] == key:
+        return hit[1]
+    if not background:
+        got = _count_branch(root, key)
+        _BRANCH_CHANGES[root] = (key, got)
+        return got
+    global _BRANCH_THREAD
+    with _BRANCH_LOCK:
+        _BRANCH_WANT[root] = key
+        if _BRANCH_THREAD is None:
+            _BRANCH_THREAD = threading.Thread(target=_branch_worker, name="branch-changes", daemon=True)
+            _BRANCH_THREAD.start()
+    _BRANCH_WAKE.set()
+    return None
+# ---- A worktree task's change count against main: end ----------------------
 
 
 def _extract_text(c):
@@ -7176,6 +7405,11 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 # Tokens across every conversation, Codex's included (which
                 # have no price, so "cost" alone shows nothing for them).
                 "costTokens": room_cost.get("tokens"),
+                # When its chat last got something to read (the unread dot),
+                # and a worktree branch's change against main (+N −N).
+                "newsAt": room_news_at(rm),
+                "changes": (branch_changes(rm.get("cwd", ""))
+                            if (rm.get("workspace") or {}).get("mode") == "worktree" else None),
                 "currentTheme": "",
                 "first": first_txt, "last": last_txt,
                 "lastAgent": last_agent_txt, "transcriptPath": "",
