@@ -108,6 +108,10 @@ CASES = [
     "C:\\x\\my notes.md here",
     "C:\\Foo is copied To the docs\\readme.md",
     "Use C:\\temp for scratch and docs\\b.md for notes",
+    # 33-: P64 — a relative path with a space, only where it stands alone.
+    "`Documents/Screen layout.md`",
+    "`Documents/Screen layout/compare.html`",
+    "Documents/Screen layout.md",
 ]
 
 
@@ -174,6 +178,18 @@ class GeneratedLinks(unittest.TestCase):
         self.assertEqual(r[CASES[21]], CASES[21])
         self.assertEqual(hrefs(r[CASES[22]]), ["https://a.example/"])
         self.assertTrue(r[CASES[22]].endswith(" then \ue0020\ue003"), r[CASES[22]])
+
+    def test_code_span_paths_may_have_a_space(self):
+        # P64: a code span stands alone, so a relative path there may hold a
+        # single space in a folder or file name.
+        r = self.render("http://hub-host:8765/")
+        self.assertEqual(viewer_path(hrefs(r[CASES[33]])[0])[0], "Documents/Screen layout.md")
+        self.assertEqual(viewer_path(hrefs(r[CASES[34]])[0])[0], "Documents/Screen layout/compare.html")
+        # Running text keeps today's rule: the whole spaced relative path is
+        # never linked as one (today's bare "layout.md" tail may still link,
+        # same as it would with no folder in front of it at all).
+        paths = [viewer_path(h)[0] for h in hrefs(r[CASES[35]])]
+        self.assertNotIn("Documents/Screen layout.md", paths)
 
     def test_on_the_hub_machine(self):
         r = self.render("http://127.0.0.1:8765/")
@@ -443,6 +459,45 @@ class HomePaths(unittest.TestCase):
                 self.assertEqual(Path(d["path"]), notes)
                 self.assertEqual(dashboard.resolve_file_ref("~/notes/a.md"), notes / "a.md")
             self.assertEqual(dashboard.list_dir("~/notes/")[0], 403, "outside the readable folders")
+
+
+class PoRoomFileBase(unittest.TestCase):
+    """P64: a PO's own room is linked to its project by the project's
+    poRoomId, not a room.projectId — the same case _task_project already
+    handles for a task-id link. _file_ref_bases must fall back the same way,
+    so `Documents/x.md` in the PO's balloon opens the project's Documents
+    folder in the project home, not the room's code checkout."""
+
+    def test_po_room_falls_back_to_the_project_home(self):
+        import dashboard
+        from unittest import mock
+
+        room = {"id": "room-po1", "cwd": r"C:\code\Ensemble", "taskDir": "", "sharedCwd": "", "participants": []}
+        projects = [{"id": "proj-1", "path": r"C:\code\Ensemble", "home": r"C:\home\Ensemble"}]
+        with mock.patch.object(dashboard.chatroom, "get_room", lambda rid: dict(room) if rid == room["id"] else None), \
+             mock.patch.object(dashboard, "load_projects", lambda: projects), \
+             mock.patch.object(dashboard, "load_session_projects", lambda: {}):
+            bases = dashboard._file_ref_bases(room_id="room-po1", cwd=room["cwd"])
+        self.assertEqual(bases, [r"C:\code\Ensemble", r"C:\home\Ensemble"])
+
+    def test_resolves_a_documents_path_under_the_project_home(self):
+        import tempfile
+        import dashboard
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            code = Path(tmp) / "code"
+            home = Path(tmp) / "home"
+            (home / "Documents").mkdir(parents=True)
+            (home / "Documents" / "x.md").write_text("hi", encoding="utf-8")
+            code.mkdir()
+            room = {"id": "room-po1", "cwd": str(code), "taskDir": "", "sharedCwd": "", "participants": []}
+            projects = [{"id": "proj-1", "path": str(code), "home": str(home)}]
+            with mock.patch.object(dashboard.chatroom, "get_room", lambda rid: dict(room) if rid == room["id"] else None), \
+                 mock.patch.object(dashboard, "load_projects", lambda: projects), \
+                 mock.patch.object(dashboard, "load_session_projects", lambda: {}):
+                fp = dashboard.resolve_file_ref("Documents/x.md", room_id="room-po1", cwd=room["cwd"])
+            self.assertEqual(fp, home / "Documents" / "x.md")
 
 
 CHANGES_JS = r"""
