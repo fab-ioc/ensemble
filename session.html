@@ -967,6 +967,8 @@
     header > * { flex: 0 0 auto; }
     header h1 { flex: 0 1 auto; max-width: 60vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     header .grow { display: none; }
+    .sel-bar { gap: var(--s-200); }
+    .sel-bar button { height: var(--touch-min); min-width: var(--touch-min); padding: 0 var(--s-300); font-size: var(--fs-300); }
     /* While you type, the header and info bar step aside: a landscape phone
        with its keyboard up leaves about 200px, and Send ended 1px under the
        keyboard at 300px with them showing. */
@@ -1090,8 +1092,6 @@
   .theme-dd-item.current .name { color: var(--selected-fg); font-weight: 600; }
   .theme-dd-item .star:focus-visible, .theme-dd-item .name:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
   @media (pointer: coarse) {
-    .sel-bar { gap: var(--s-200); }
-    .sel-bar button { height: var(--touch-min); min-width: var(--touch-min); padding: 0 var(--s-300); font-size: var(--fs-300); }
     .am-btn, .am-item, .theme-dd-item .star, .theme-dd-item .name { min-height: var(--touch-min); }
     .am-btn { height: auto; min-width: var(--touch-min); }
     .theme-dd-item .star { min-width: var(--touch-min); }
