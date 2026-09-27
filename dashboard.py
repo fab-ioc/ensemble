@@ -4654,7 +4654,10 @@ def unregister_project(project_id: str) -> bool:
 def _file_ref_bases(room_id: str = "", cwd: str = "") -> list[str]:
     """Folders a relative file mention ("docs/plan.md") may be relative to, in
     order: an explicit cwd, then the room's own folders (cwd, task dir, each
-    agent's cwd), then its project's code folder and home."""
+    agent's cwd), then its project's code folder and home — its project found
+    the same way _task_project finds it for a task-id link, so a PO's own
+    room (linked by the project's poRoomId, not a room.projectId) still
+    reaches its project's Documents folder in the project home."""
     bases: list[str] = []
 
     def add(x) -> None:
@@ -4672,9 +4675,10 @@ def _file_ref_bases(room_id: str = "", cwd: str = "") -> list[str]:
         for part in rm.get("participants") or []:
             if isinstance(part, dict):
                 add(part.get("cwd"))
-        pid = rm.get("projectId") or load_session_projects().get(room_id)
+        projects = load_projects()
+        pid = _task_project(rm, load_session_projects(), projects)
         if pid:
-            for pj in load_projects():
+            for pj in projects:
                 if pj.get("id") == pid:
                     add(pj.get("path"))
                     add(pj.get("home") or project_home(pj, create=False))

@@ -675,9 +675,19 @@ function splitLine(s) {
 const BARE_EXT = 'md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|sh|ps1|sql|xml|log|ini|cfg'
   + '|png|jpg|jpeg|gif|webp|svg|bmp|PNG|JPG|JPEG|GIF|WEBP|SVG|BMP';
 const BARE_RE = new RegExp('^[\\w-]+\\.(?:' + BARE_EXT + ')$');
-const looksFilePath = s => {
+// A code span stands alone, so a relative path there may hold a folder or
+// file name with spaces ("Documents/Screen layout.md", "Documents/#118 Fix
+// the thing.md") and a wider set of punctuation (#, &, (), ', , — the same
+// the absolute-path branch above already tolerates). Only the folder before
+// the first separator never has a space: that keeps a shell command whose
+// last word is a path ("py tests/test_links.py", "git add Documents/x.md")
+// from being swept in as one long, dead file link. Running text and a
+// markdown link target keep the tighter, no-spaces rule (looksFilePath(t)).
+const REL_PATH_SPACED_RE = /^(?:\.\.?[\\\/]|…[\\\/])?[\w.#&(),'-]+[\\\/](?:[\w.#&(),'-]+(?: [\w.#&(),'-]+)*[\\\/])*[\w.#&(),'-]+(?: [\w.#&(),'-]+)*\.\w{1,8}$/;
+const looksFilePath = (s, spaced) => {
   const t = splitLine((s || '').trim()).path;
   if (ABS_PATH_RE.test(t)) return /\S+\.\w{1,8}$/.test(t);
+  if (spaced) return REL_PATH_SPACED_RE.test(t) || BARE_RE.test(t);
   return /^(?:\.\.?[\\\/]|…[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}$/.test(t) || BARE_RE.test(t);
 };
 // A folder: a Windows, UNC or home path with no extension, or a macOS/Linux
@@ -803,7 +813,7 @@ function codeSpanHtml(body) {
   const t = body.trim();
   if (/^room-[0-9a-f]{8}$/.test(t)) return taskLinkHtml(t, code);
   if (/^(?:https?|file):\/\/\S+$/i.test(t)) return urlLinkHtml(t, code, 'code');
-  if (looksFilePath(t) || looksDirPath(t)) { const s = splitLine(t); return fileRefHtml(s.path, code, s.line, 'code') ?? code; }
+  if (looksFilePath(t, true) || looksDirPath(t)) { const s = splitLine(t); return fileRefHtml(s.path, code, s.line, 'code') ?? code; }
   return code;
 }
 // Running text, already escaped, in one pass so nothing is linked twice. The
