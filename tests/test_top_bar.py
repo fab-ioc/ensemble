@@ -19,8 +19,9 @@ pages, with a project that has a PO (Motors) and one that has none (Plain):
   tab; on a laptop both panes show and neither switch does;
 * at 768 (a fine pointer) the bar is the laptop's, in one row;
 * the wordmark leads the bar and goes home: the whole word at 1440, 1024 and
-  a 430 phone (row one, on home and in a project), the icon alone at 768 and
-  under 410px; nothing overlaps or runs off the screen at any of them.
+  a phone from 410 to 640px (row one, on home and in a project), the icon
+  alone at 768 and under 410px; the word is the "tiles" variant (#111);
+  nothing overlaps or runs off the screen at any of them.
 
 Screenshots go to $ENSEMBLE_SHOTS when it is set. Skipped without Node or Chrome.
 """
@@ -92,7 +93,7 @@ const WM = `(() => {
     if (p.x < q.r - 1 && q.x < p.r - 1 && p.y < q.b - 1 && q.y < p.b - 1) hit.push(p.id + '/' + q.id);
   }
   const svg = a.querySelector('svg.bar-word'), img = a.querySelector('.logo'), hd = document.querySelector('header');
-  return { word: vis(svg), logo: vis(img), link: box(a), mark: box(vis(svg) ? svg : img), href: a.getAttribute('href'),
+  return { word: vis(svg), logo: vis(img), cls: svg ? svg.getAttribute('class') : null, tiles: svg ? svg.querySelectorAll('rect[fill]').length : 0, link: box(a), mark: box(vis(svg) ? svg : img), href: a.getAttribute('href'),
     name: a.getAttribute('aria-label') || '', svgHidden: svg ? svg.getAttribute('aria-hidden') : null, imgAlt: img.getAttribute('alt'),
     right: Math.max(...ctl.map(r => r.r)), overlaps: hit, vw: innerWidth, scrollW: document.documentElement.scrollWidth,
     headerOver: hd.scrollWidth - hd.clientWidth };
@@ -209,7 +210,7 @@ async function main() {
     out.phoneChat = await q.evalIn(`(() => { const f = PD.els.workspace.querySelector('.wsp-frame.on'); return f ? getComputedStyle(f).visibility : null; })()`);
     await q.close();
     // ---- smaller phones
-    for (const w of [390, 360]) {
+    for (const w of [640, 410, 390, 360]) {
       const r = await page(w, 800, true);
       await r.until('!!document.querySelector("header")');
       await wm(r, w + '-home');
@@ -366,7 +367,7 @@ class TheTopBar(unittest.TestCase):
         # Where the whole word shows, and where the icon alone does (768:
         # a long project name and the plan chip leave it no room; under 410px
         # a phone's row one has none).
-        word = {"1440-home", "1440-po", "1024-home", "1024-po", "430-home", "430-po"}
+        word = {"1440-home", "1440-po", "1024-home", "1024-po", "640-home", "640-po", "430-home", "430-po", "410-home", "410-po"}
         self.assertEqual(set(wm), word | {"768-home", "768-po", "390-home", "390-po", "360-home", "360-po"})
         for k, g in wm.items():
             with self.subTest(k):
@@ -380,12 +381,14 @@ class TheTopBar(unittest.TestCase):
                 self.assertGreaterEqual(g["mark"]["y"], 0)
                 self.assertLess(g["mark"]["x"], 24, "at the bar's left end")
                 self.assertEqual(g["overlaps"], [])
-                if k[:3] in ("430", "390", "360"):
+                if k[:3] in ("640", "430", "410", "390", "360"):
                     self.assertGreaterEqual(min(g["link"]["w"], g["link"]["h"]), 44, "finger-sized")
                 self.assertLessEqual(g["right"], g["vw"], "nothing runs off the screen")
                 self.assertLessEqual(g["scrollW"], g["vw"])
                 self.assertLessEqual(g["headerOver"], 0)
         self.assertGreater(wm["1440-home"]["mark"]["w"], 120, "the whole word")
+        # #111: the shipped variant is "tiles", every letter on a tile of its own, like the icon's E.
+        self.assertEqual((wm["1440-home"]["cls"], wm["1440-home"]["tiles"]), ("bar-word wm-tiles", 8))
         self.assertEqual(self.got["homeClick"], {"proj": None, "inProj": False, "path": "/"}, "a click goes home")
 
     def test_the_wordmark_leaves_a_phone_project_its_room(self):
