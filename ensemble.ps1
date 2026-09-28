@@ -69,12 +69,8 @@ function Resolve-PythonW {
   return $py
 }
 
-function Get-RunningPid {
-  # Prefer the recorded PID; fall back to whoever is listening on the port.
-  if (Test-Path $PidFile) {
-    $p = (Get-Content $PidFile -ErrorAction SilentlyContinue | Select-Object -First 1)
-    if ($p -and (Get-Process -Id $p -ErrorAction SilentlyContinue)) { return [int]$p }
-  }
+function Get-PortPid {
+  # Whoever listens on the port ($null if nobody).
   try {
     $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop |
             Select-Object -First 1
@@ -83,9 +79,68 @@ function Get-RunningPid {
   return $null
 }
 
+function Get-CommandLine($ProcId) {
+  try {
+    $p = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcId" -ErrorAction Stop
+    if ($p) { return [string]$p.CommandLine }
+  } catch {}
+  return ''
+}
+
+function Test-Ensemble($ProcId) {
+  # True when the process is an Ensemble hub: this checkout's dashboard.py, or
+  # a server on the port that answers with Ensemble's X-Ensemble-Stamp header.
+  # The old claude-dashboard also listened on 8765 and must never be taken for
+  # us (neither "Already running" nor stopped).
+  $cmd = Get-CommandLine $ProcId
+  if ($cmd -and $cmd.ToLower().Contains($Server.ToLower())) { return $true }
+  # The probe says who holds the port, so it vouches only for the port's pid
+  # (a stale pid file's number may now be some other program).
+  if ($ProcId -ne (Get-PortPid)) { return $false }
+  try {
+    $r = Invoke-WebRequest -UseBasicParsing -Uri "$Url/static/hl.js" -TimeoutSec 2 -ErrorAction Stop
+    if ($r.Headers['X-Ensemble-Stamp']) { return $true }
+  } catch {}
+  return $false
+}
+
+function Get-RunningPid {
+  # The live Ensemble PID ($null if none): the recorded PID, else an Ensemble
+  # listening on the port. Something else on the port is not Ensemble.
+  if (Test-Path $PidFile) {
+    $p = (Get-Content $PidFile -ErrorAction SilentlyContinue | Select-Object -First 1)
+    if ($p -and (Get-Process -Id $p -ErrorAction SilentlyContinue) -and (Test-Ensemble ([int]$p))) { return [int]$p }
+  }
+  $q = Get-PortPid
+  if ($q -and (Test-Ensemble $q)) { return $q }
+  return $null
+}
+
+function Get-ForeignPid {
+  # PID of a process on the port that is NOT Ensemble ($null if none).
+  $q = Get-PortPid
+  if ($q -and -not (Test-Ensemble $q)) { return $q }
+  return $null
+}
+
+function Get-PidDescription($ProcId) {
+  $cmd = Get-CommandLine $ProcId
+  if ($cmd) { return "pid ${ProcId}: $cmd" }
+  return "pid $ProcId"
+}
+
 function Start-Dashboard {
   $existing = Get-RunningPid
   if ($existing) { Write-Host "Already running (pid $existing). $Url"; return }
+  $other = Get-ForeignPid
+  if ($other) {
+    Write-Host "error: port $Port is held by another program ($(Get-PidDescription $other)), not Ensemble."
+    if ((Get-CommandLine $other) -like '*\.claude\dashboard*') {
+      Write-Host 'That is the old claude-dashboard; remove its task: schtasks /Delete /TN ClaudeDashboard /F'
+    }
+    Write-Host "Stop it, or start Ensemble on another port: .\ensemble.ps1 start -Port 8766"
+    exit 1
+  }
   if (-not (Test-Path $Server)) { Write-Error "$Server not found"; exit 1 }
   $python = Resolve-PythonW
   if (-not $python) { Write-Error 'No real Python found (need python.org install / py launcher).'; exit 1 }
@@ -117,7 +172,13 @@ function Start-Dashboard {
 
 function Stop-Dashboard {
   $p = Get-RunningPid
-  if (-not $p) { Remove-Item $PidFile -ErrorAction SilentlyContinue; Write-Host 'Not running.'; return }
+  if (-not $p) {
+    Remove-Item $PidFile -ErrorAction SilentlyContinue
+    $other = Get-ForeignPid
+    if ($other) { Write-Host "Not running. Port $Port is held by another program ($(Get-PidDescription $other)), not Ensemble: left alone." }
+    else { Write-Host 'Not running.' }
+    return
+  }
   try { Stop-Process -Id $p -Force -ErrorAction Stop } catch {}
   Remove-Item $PidFile -ErrorAction SilentlyContinue
   Write-Host "Stopped (was pid $p)."
@@ -176,6 +237,9 @@ function Invoke-Doctor {
   if ($script:fail -eq 0) { Write-Host "All checks passed." }
   else { Write-Host "$script:fail check(s) failed."; exit 1 }
 }
+
+# Dot-sourced (the tests do, to check the functions above): define, do not run.
+if ($MyInvocation.InvocationName -eq '.') { return }
 
 switch ($Action) {
   'start'   { Start-Dashboard }

@@ -36,18 +36,60 @@ mkdir -p "$STATE_DIR" "$(dirname "$LOG")"
 
 url() { echo "http://127.0.0.1:$PORT"; }
 
+port_pid() {
+  # Whoever listens on the port (empty if nobody).
+  lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null | head -1 || true
+}
+
+is_ensemble() {
+  # True when pid $1 is an Ensemble hub: this checkout's dashboard.py, or a
+  # server on the port that answers with Ensemble's X-Ensemble-Stamp header.
+  # The old claude-dashboard also listened on 8765 and must never be taken
+  # for us (neither "Already running" nor killed by `stop`).
+  local cmd hdr
+  cmd="$(ps -o command= -p "$1" 2>/dev/null || true)"
+  [[ -n "$cmd" && "$cmd" == *"$SCRIPT"* ]] && return 0
+  # The probe says who holds the port, so it vouches only for the port's pid
+  # (a stale pid file's number may now be some other program).
+  [[ "$1" == "$(port_pid)" ]] || return 1
+  hdr="$(curl -s -m 2 -o /dev/null -D - "$(url)/static/hl.js" 2>/dev/null || true)"
+  [[ "$hdr" =~ [Xx]-[Ee]nsemble-[Ss]tamp: ]]
+}
+
 running_pid() {
-  # Returns the live PID (empty if none).
+  # Returns the live Ensemble PID (empty if none). Something else on the port
+  # is not Ensemble: see foreign_pid.
   if [[ -f "$PID_FILE" ]]; then
     local p
     p="$(cat "$PID_FILE" 2>/dev/null || true)"
-    if [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null; then
+    if [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null && is_ensemble "$p"; then
       echo "$p"
       return 0
     fi
   fi
-  # Fallback: anyone listening on the port?
-  lsof -ti "tcp:$PORT" 2>/dev/null | head -1 || true
+  # Fallback: an Ensemble listening on the port (e.g. started by launchd).
+  local q
+  q="$(port_pid)"
+  if [[ -n "$q" ]] && is_ensemble "$q"; then
+    echo "$q"
+  fi
+  return 0
+}
+
+foreign_pid() {
+  # PID of a process on the port that is NOT Ensemble (empty if none).
+  local q
+  q="$(port_pid)"
+  if [[ -n "$q" ]] && ! is_ensemble "$q"; then
+    echo "$q"
+  fi
+  return 0
+}
+
+describe_pid() {
+  local cmd
+  cmd="$(ps -o command= -p "$1" 2>/dev/null || true)"
+  echo "pid $1${cmd:+: $cmd}"
 }
 
 cmd_start() {
@@ -62,6 +104,16 @@ cmd_start() {
   if [[ -n "$pid" ]]; then
     echo "Already running (pid $pid). $(url)"
     return 0
+  fi
+  local other
+  other="$(foreign_pid)"
+  if [[ -n "$other" ]]; then
+    echo "error: port $PORT is held by another program ($(describe_pid "$other")), not Ensemble." >&2
+    if [[ "$(ps -o command= -p "$other" 2>/dev/null || true)" == *".claude/dashboard"* ]]; then
+      echo "That is the old claude-dashboard; remove its LaunchAgent: launchctl bootout gui/\$(id -u)/com.claude-code.dashboard; rm ~/Library/LaunchAgents/com.claude-code.dashboard.plist" >&2
+    fi
+    echo "Stop it, or start Ensemble on another port: $0 start --port 8766" >&2
+    exit 1
   fi
   if [[ ! -f "$SCRIPT" ]]; then
     echo "error: $SCRIPT not found" >&2
@@ -98,7 +150,13 @@ cmd_stop() {
   pid="$(running_pid)"
   if [[ -z "$pid" ]]; then
     rm -f "$PID_FILE"
-    echo "Not running."
+    local other
+    other="$(foreign_pid)"
+    if [[ -n "$other" ]]; then
+      echo "Not running. Port $PORT is held by another program ($(describe_pid "$other")), not Ensemble: left alone."
+    else
+      echo "Not running."
+    fi
     return 0
   fi
   kill "$pid" 2>/dev/null || true
@@ -152,6 +210,11 @@ cmd_update() {
     cmd_stop; cmd_start
   fi
 }
+
+# Sourced (the tests do, to check the functions above): define, do not run.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
 
 action="${1:-status}"
 shift || true

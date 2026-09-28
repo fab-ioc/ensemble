@@ -82,6 +82,8 @@ import ensemble_tools
 import history as file_history
 # A link to a chat balloon, written out for the agent it is sent to.
 import message_refs
+# Moving from claude-dashboard (the predecessor): its state is copied in at startup.
+import legacy_install
 import peer_process
 # The person's points: every point they raise is kept until they acknowledge its answer.
 import points
@@ -12542,6 +12544,14 @@ def main():
     # the keyboard focus for a few ms -- a desktop-wide flicker on every poll,
     # until the first agent start allocated the console as a side effect.
     ptyrun.ensure_windows_console()
+    # Moving from claude-dashboard: copy its state in once, and say so in the
+    # log, however this hub was started (see legacy_install).
+    try:
+        note = legacy_install.migrate(HOME, DASHBOARD_DIR)
+        if note:
+            print(note, flush=True)
+    except Exception as e:
+        print(f"claude-dashboard migration skipped: {e}", flush=True)
     # Remote bind, if any. Loopback is always served (agents reach /mcp on
     # 127.0.0.1, and so does the local browser) — a non-loopback bind adds a
     # SECOND, token-gated listener on that interface only (e.g. the tailnet IP),
