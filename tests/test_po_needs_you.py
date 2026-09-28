@@ -95,7 +95,7 @@ const isPhone = () => PHONE;
 var PD = { failed: '', lib: {} };
 const pdReveal = id => calls.push('reveal:' + id), pdPointsFrame = () => {}, pdPaintPoints = () => {}, pdPlaceChat = () => {};
 const el = () => ({ hidden: false, dataset: {}, kids: [], className: '',
-  querySelectorAll() { return this.kids; }, appendChild(k) { this.kids.push(k); }, remove() {} });
+  querySelectorAll() { return this.kids; }, querySelector() { return null; }, appendChild(k) { this.kids.push(k); }, remove() {} });
 let head, frames, panel;
 const document = { getElementById: id => (id === 'po-panel' ? panel : null), createElement: el,
   body: { classList: { on: new Set(), toggle(c, v) { v ? this.on.add(c) : this.on.delete(c); } } } };

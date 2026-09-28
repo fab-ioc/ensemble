@@ -577,12 +577,14 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   body.mid.bar-proj #proj-switch #proj-switch-name { display: none; }
   body.mid.bar-proj #proj-switch { padding: 0 var(--s-100); margin-left: calc(-1 * var(--s-100)); }
   body.mid #bar-crumbs { display: flex; align-items: center; gap: var(--s-100); min-width: 0; flex: 0 1 auto; }
-  #proj-go { color: var(--fg); font-size: var(--fs-300); font-weight: 600; min-width: 0; flex: 0 1 auto; max-width: 240px; padding-right: var(--s-050); }
+  /* Every part at the body size, as the mockup: the project a plain name,
+     the levels between quieter, where you are the one in weight. */
+  #proj-go { color: var(--fg); font-size: var(--fs-300); font-weight: 400; min-width: 0; flex: 0 1 auto; max-width: 240px; padding-right: var(--s-050); }
   .bar-crumb > span, .crumb-here { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  #bar-crumbs .bar-crumb { min-width: 0; flex: 0 1 auto; max-width: 280px; color: var(--fg-subtle); }
+  #bar-crumbs .bar-crumb { min-width: 0; flex: 0 1 auto; max-width: 280px; color: var(--fg-subtle); font-size: var(--fs-300); }
   #bar-crumbs .bar-crumb[data-crumb="task"] { flex-shrink: 4; max-width: 420px; }
   .crumb-sep { color: var(--fg-muted); flex: none; }
-  .crumb-here { color: var(--fg); font-size: var(--fs-200); font-weight: 500; padding: 0 var(--s-100); flex: 0 1 auto; max-width: 420px; }
+  .crumb-here { color: var(--fg); font-size: var(--fs-300); font-weight: 500; padding: 0 var(--s-100); flex: 0 1 auto; max-width: 420px; }
   .crumb-here[data-crumb="task"] { flex-shrink: 4; }
   .avatar-btn {
     width: 28px; height: 28px; padding: 0; justify-content: center;
@@ -754,6 +756,24 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     #proj-switch { max-width: 180px; padding: 0 8px; }
     .search-wrap { min-width: 120px; }
   }
+  /* Layout A (a desktop, body.mid): the mockup's bar. Where you are fills the
+     left; search is a quiet sunken box of about 300px on the right, beside
+     the global group, with the "/" that brings you to it. */
+  body.mid .search-wrap { flex: 0 1 300px; min-width: 160px; }
+  body.mid .search-wrap + .bar-gap { flex: 0 0 0; min-width: 0; }
+  body.mid #search { background: var(--surface-sunken); }
+  body.mid #search:focus { background: var(--surface); }
+  body.mid #search:placeholder-shown { padding-right: 56px; }
+  .search-kbd { display: none; }
+  body.mid .search-kbd {
+    display: inline-block; position: absolute; right: 30px; pointer-events: none;
+    font-family: var(--font-mono); font-size: var(--fs-100); line-height: 16px; padding: 0 var(--s-100);
+    border: 1px solid var(--border); border-radius: var(--r-100); background: var(--surface); color: var(--fg-muted);
+  }
+  body.mid .search-wrap:is(:has(#search:focus), :has(#search:not(:placeholder-shown)), :has(.search-state:not([hidden]))) .search-kbd { display: none; }
+  body.mid #po-pill { border-color: transparent; }
+  body.mid #po-pill:not([aria-expanded="true"]):hover { background: var(--hover); }
+  #notif-btn .bell { display: block; }
   #search:focus {
     outline: none; border-color: var(--focus-ring);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus-ring) 40%, transparent);
@@ -1318,8 +1338,21 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   }
   .po-who { flex: 1 1 auto; min-width: 0; }
   .po-name, .po-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .po-name { font-size: var(--fs-300); font-weight: 600; color: var(--fg); }
-  .po-sub { font-size: var(--fs-100); line-height: 16px; color: var(--fg-muted); }
+  .po-name { font-size: var(--fs-400); font-weight: 600; color: var(--fg); }
+  .po-sub { font-size: var(--fs-200); line-height: 16px; color: var(--fg-muted); }
+  .po-more { position: relative; display: inline-flex; }
+  .po-menu {
+    position: absolute; top: calc(100% + var(--s-100)); right: 0; z-index: 30; min-width: 200px;
+    display: flex; flex-direction: column; padding: var(--s-100);
+    background: var(--surface-overlay); border: 1px solid var(--border); border-radius: var(--r-300); box-shadow: var(--e-200);
+  }
+  .po-menu[hidden] { display: none; }
+  .po-mi {
+    height: 32px; padding: 0 10px; border: 0; border-radius: var(--r-200); background: transparent;
+    color: var(--fg); font: inherit; font-size: var(--fs-200); text-align: left; cursor: pointer; white-space: nowrap;
+  }
+  .po-mi:hover { background: var(--hover); }
+  .po-mi:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
   .po-acts { flex: 0 0 auto; display: flex; align-items: center; gap: var(--s-100); }
   .po-btn {
     height: 24px; padding: 0 var(--s-200); border-radius: var(--r-200);
@@ -3400,7 +3433,9 @@ window.DOC_LISTENERS_PAUSED = false;
        this button and opens over the bar. -->
   <button id="search-open" class="bar-btn icon" type="button" title="Search tasks" aria-label="Search tasks">🔍</button>
   <div class="search-wrap">
-    <input id="search" type="search" placeholder="Search tasks" autofocus>
+    <input id="search" type="search" placeholder="Search or jump to…" title="Search tasks (press / to come here)" aria-keyshortcuts="/">
+    <!-- The key that brings you here (the page's "/"); gone while you type. -->
+    <kbd class="search-kbd" aria-hidden="true">/</kbd>
     <span id="search-state" class="search-state" hidden></span>
     <!-- A placeholder is not documentation: the grep syntax lives behind this. -->
     <button id="search-help" type="button" title="Search syntax" aria-label="Search syntax">?</button>
@@ -3425,7 +3460,7 @@ window.DOC_LISTENERS_PAUSED = false;
   <!-- Notifications: tasks that need a human. Self-contained under the `notif`
        name; project status bars open the full view of the same data. -->
   <button id="notif-btn" class="bar-btn icon" title="What needs you" aria-label="What needs you">
-    🔔<span id="notif-count" hidden>0</span>
+    <svg class="bell" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11V7a4 4 0 0 1 8 0v4l1.25 1.5H2.75z"/><path d="M6.5 14a1.6 1.6 0 0 0 3 0"/></svg><span id="notif-count" hidden>0</span>
   </button>
   <button id="me-btn" class="bar-btn avatar-btn" title="You — settings and preferences"
           aria-haspopup="true" aria-expanded="false"><span id="me-initials">··</span></button>
@@ -9440,21 +9475,44 @@ function poAgent(row) {
   const kind = (m.agent || '').toLowerCase();
   return { m, cls: kind === 'claude' ? 'claude' : (kind === 'codex' ? 'codex' : 'other') };
 }
+// A project's tasks still to finish: not done, not a draft, not archived, not its PO.
+function poOpenCount(pj, rows) {
+  const rids = new Set((pj.sessions || []).map(s => s.roomId || s.sessionId).filter(Boolean));
+  return (rows || []).filter(r => r && rids.has(r.roomId) && r.roomId !== pj.poRoomId && r.headless
+                                  && !r.draft && !r.archived && workflowOf(r) !== 'done').length;
+}
+// The mockup's conversation header: who (the avatar, "Project · PO"), then one
+// quiet line of what is true (agent and model, the project, its open tasks,
+// the run chip, your asks). Resume is the one button while the PO is not
+// running; the rest wait in the ⋯ menu (.po-menu), whose items keep their
+// data-po so the one click handler serves both. A drawer keeps its ×.
 function poHeadHtml(pj, row, peek) {
   const { m, cls } = poAgent(row);
   const model = shortModel(m.model);
   const pts = pointsCountText(row.points);
-  const sub = [m.agent || '', model, row.label || ''].filter(Boolean).map(esc).join(' · ')
+  const open = poOpenCount(pj, ALL_ROWS);
+  const sub = [[m.agent || '', model].filter(Boolean).join(' '), `project ${pj.name}`,
+               `${open} task${open === 1 ? '' : 's'} open`].filter(Boolean).map(esc).join(' · ')
+    + ` · ${runChip(row)}`
     + (pts ? ` · <span class="po-pts" title="${esc(pointsCountTip(row.points))}">${esc('your asks: ' + pts)}</span>` : '');
-  const acts = [];
+  const acts = [], menu = [];
   if (!row.isLive && !row.draft) acts.push(`<button class="po-btn def" data-po="resume" title="Relaunch the PO with its conversation">Resume</button>`);
-  if (!row.draft) acts.push(`<button class="po-btn" data-po="switch" title="Hand the PO to the other agent (Claude or Codex) in the same room, from its written handover">Switch…</button>`);
-  acts.push(`<button class="po-btn" data-po="open" title="Open the PO's own task: spec, changes and files">Task</button>`);
-  acts.push(`<button class="po-btn" data-po="popout" title="Open the PO in its own window">Pop out</button>`);
+  if (!row.draft) menu.push(`<button class="po-mi" role="menuitem" data-po="switch" title="Hand the PO to the other agent (Claude or Codex) in the same room, from its written handover">Switch agent…</button>`);
+  menu.push(`<button class="po-mi" role="menuitem" data-po="open" title="Open the PO's own task: spec, changes and files">Open the PO's task</button>`);
+  menu.push(`<button class="po-mi" role="menuitem" data-po="popout" title="Open the PO in its own window">Pop out</button>`);
+  acts.push(`<span class="po-more"><button class="po-btn" data-po="more" title="More" aria-label="More actions for the PO" aria-haspopup="menu" aria-expanded="false">⋯</button>`
+    + `<span class="po-menu" role="menu" hidden>${menu.join('')}</span></span>`);
   if (peek) acts.push(`<button class="po-btn x" data-po="close" title="Close (Esc)" aria-label="Close the PO">×</button>`);
   return `<span class="av ${cls}">${esc((m.agent || '?')[0])}</span>`
     + `<div class="po-who"><div class="po-name">${esc(pj.name)} · PO</div><div class="po-sub">${sub}</div></div>`
-    + runChip(row) + `<div class="po-acts">${acts.join('')}</div>`;
+    + `<div class="po-acts">${acts.join('')}</div>`;
+}
+function poMenuOpen(head, open) {
+  const menu = head && head.querySelector('.po-menu'), btn = head && head.querySelector('[data-po="more"]');
+  if (!menu || !btn) return;
+  menu.hidden = !open;
+  btn.setAttribute('aria-expanded', String(open));
+  if (open) { const first = menu.querySelector('.po-mi'); if (first) first.focus(); }
 }
 function renderPoPill(ctx) {
   const b = document.getElementById('po-pill');
@@ -9513,7 +9571,8 @@ function renderPo() {
   // and keeps keyboard focus on the equivalent control when it is.
   const head = panel.querySelector('.po-head');
   const hh = poHeadHtml(pj, row, !split);
-  if (head._html !== hh) {
+  // Never under an open ⋯ menu: it is written once the menu closes.
+  if (head._html !== hh && !head.querySelector('.po-menu:not([hidden])')) {
     const focus = focusKeyIn(head);
     head._html = hh; head.innerHTML = hh;
     head.dataset.proj = pj.id; head.dataset.room = row.roomId; head.dataset.sid = row.sessionId;
@@ -10737,10 +10796,15 @@ document.addEventListener('click', async (ev) => {
   if (kyb) { keyChoose(kyb.dataset.proj); return; }
   const pab = ev.target.closest('.past-btn');
   if (pab) { pastList(pab.dataset.proj); return; }
+  // A click anywhere but its button closes the PO's ⋯ menu (an item acts, then closes it).
   const act = ev.target.closest('#po-panel .po-head [data-po]');
+  for (const h of document.querySelectorAll('#po-panel .po-head')) {
+    if (!act || act.dataset.po !== 'more' || act.closest('.po-head') !== h) poMenuOpen(h, false);
+  }
   if (act) {
     const head = act.closest('.po-head'), what = act.dataset.po;
-    if (what === 'close') poClosePeek();
+    if (what === 'more') poMenuOpen(head, act.getAttribute('aria-expanded') !== 'true');
+    else if (what === 'close') poClosePeek();
     else if (what === 'popout') openSessionWindow(head.dataset.room);
     else if (what === 'open') openDetail(head.dataset.sid);
     else if (what === 'switch') poSwitchFlow(head.dataset.proj);
@@ -14436,12 +14500,21 @@ document.addEventListener('click', (ev) => {
   openTaskLink(a.dataset.task, a.dataset.agent);
 }, true);
 document.addEventListener('keydown', (ev) => {
+  // Esc closes the PO's ⋯ menu first (the topmost thing), and nothing else.
+  const poMenu = ev.key === 'Escape' && document.querySelector('#po-panel .po-menu:not([hidden])');
+  if (poMenu) {
+    const head = poMenu.closest('.po-head');
+    poMenuOpen(head, false);
+    head.querySelector('[data-po="more"]').focus();
+    ev.stopImmediatePropagation(); ev.preventDefault();
+    return;
+  }
   // Arrows move through the priority levels while its menu has focus.
   if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
-    const menu = ev.target.closest && ev.target.closest('.pr-menu');
+    const menu = ev.target.closest && ev.target.closest('.pr-menu, .po-menu');
     if (!menu) return;
     ev.preventDefault();
-    const items = [...menu.querySelectorAll('.pr-item')];
+    const items = [...menu.querySelectorAll('.pr-item, .po-mi')];
     const i = items.indexOf(ev.target) + (ev.key === 'ArrowDown' ? 1 : -1);
     items[(i + items.length) % items.length].focus();
     return;
