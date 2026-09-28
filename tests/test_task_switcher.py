@@ -107,6 +107,12 @@ log.newcomer = keys(swFreeze(g3, log.groups)).running;
 log.wall = keys(swGroups(rows, [{ ...items[2], state: 'blocked' }], P, opts)).needs;
 // A row whose own attention says finished, with no bell item for it.
 log.fromRow = keys(swGroups([row('r6', 4, 'Reported', { attention: { state: 'waiting_for_you', askKind: 'completed', since: T0 } })], [], P, opts)).review;
+// A stopped engineer + reviewer task as the hub sends it: hasConversation is
+// set only for one-agent tasks, so its messages (turns) show it ran.
+const team = (rid, no, turns) => row(rid, no, 'Team', { isLive: false, hasConversation: false, turns,
+                                                        members: [{ agent: 'claude' }, { agent: 'codex' }] });
+const gt = swGroups([team('r1', 12, 2), team('r2', 7, 0)], [], P, opts);
+log.team = keys(gt);
 console.log(JSON.stringify(log));
 """
 
@@ -161,6 +167,11 @@ class TaskSwitcher(unittest.TestCase):
         })
         self.assertEqual(self.r["projects"]["running"], ["Ensemble Dashboard", "Ensemble Dashboard", "Motors"])
         self.assertEqual(self.r["projects"]["needs"], ["Motors", "Ensemble Dashboard", "Motors", "Motors"])
+
+    def test_a_stopped_team_task_is_paused_once_it_has_run(self):
+        # review 1: hasConversation is false for every multi-agent task
+        self.assertEqual(self.r["team"]["review"], ["r1"])
+        self.assertNotIn("r2", sum(self.r["team"].values(), []))   # never ran
 
     def test_a_task_row_says_what_a_card_says(self):
         h = self.r["html"]

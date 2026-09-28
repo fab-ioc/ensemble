@@ -5446,7 +5446,12 @@ function swTone(state) {
   return (state === 'agent_gone' || state === 'blocked') ? 'danger' : state === 'stalled' ? 'neutral' : 'warning';
 }
 // A task stopped part way: not running, not merged, and not left in the backlog.
-function swPaused(r) { return !r.isLive && ['inprogress', 'todo'].includes(workflowOf(r)) && !!r.hasConversation; }
+// hasConversation is set only for one-agent tasks, so a team task counts as
+// having run once its room holds a message.
+function swPaused(r) {
+  return !r.isLive && !r.draft && ['inprogress', 'todo'].includes(workflowOf(r))
+    && (!!r.hasConversation || (r.turns || 0) > 0);
+}
 // The five groups, from the rows, the bell's items and the registered projects.
 // opts.project keeps one project's entries; opts.dayStart (seconds) is where
 // "today" starts. Needs you and Ready for your check go oldest first; Running
