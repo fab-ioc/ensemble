@@ -1632,6 +1632,16 @@ async function showDir(path, main) {
 // Links in a rendered page. The page runs sandboxed without scripts, so a
 // click on a link only sent that frame to nowhere: every link opens in a tab
 // of its own instead, and the page's relative links open in this viewer.
+// The element an in-page "#id" link targets: getElementById first, then the
+// older a[name] convention (both are what a bare click would have found).
+// "#" alone (no id) targets the top of the document, per the HTML spec.
+function frameAnchorTarget(d, href) {
+  const raw = href.slice(1);
+  if (!raw) return d.body || d.documentElement;
+  let id = raw;
+  try { id = decodeURIComponent(raw); } catch (e) {}
+  return d.getElementById(id) || (d.getElementsByName(id) || [])[0] || null;
+}
 function wireFrameLinks(ifr) {
   let d = null;
   try { d = ifr.contentDocument; } catch (e) {}
@@ -1640,7 +1650,16 @@ function wireFrameLinks(ifr) {
     const a = ev.target.closest && ev.target.closest('a[href]');
     if (!a) return;
     const href = (a.getAttribute('href') || '').trim();
-    if (!href || href.startsWith('#')) return;          // in-page: the frame scrolls itself
+    if (!href) return;
+    if (href.startsWith('#')) {
+      // A <base href> (see withFileAtBase) makes the browser resolve this as
+      // a different document and navigate there for real instead of just
+      // scrolling, so scroll it here ourselves.
+      ev.preventDefault();
+      const t = frameAnchorTarget(d, href);
+      if (t && t.scrollIntoView) t.scrollIntoView();
+      return;
+    }
     ev.preventDefault();
     let url = href;
     if (/^(?:https?|file):/i.test(href)) {
@@ -1833,7 +1852,7 @@ function wireFrameLinks(ifr) {
   function withFileAtBase(html, base) {
     if (!base) return html;
     const tag = `<base href="${base}">`;
-    const head = /<head[^>]*>/i.exec(html);
+    const head = /<head(?:\s[^>]*)?>/i.exec(html);   // not <header ...>: a required boundary after "head"
     if (head) return html.slice(0, head.index + head[0].length) + tag + html.slice(head.index + head[0].length);
     const doctype = /^\s*<!doctype[^>]*>/i.exec(html);
     const at = doctype ? doctype[0].length : 0;

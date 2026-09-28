@@ -4,19 +4,25 @@ because fileview.html's renderPage() sets ifr.srcdoc = text, whose base URL is
 about:srcdoc — nothing relative resolves anywhere.
 
 * dashboard.py's resolve_file_at: serves a file inside a Windows-drive or a
-  POSIX-absolute folder, refuses a literal "." or ".." segment (a browser
-  resolving a <base href>'s "../x" already collapses it before the request is
-  sent — only a crafted request would carry the dots themselves), refuses a
-  folder outside workspace_access_ok's allowed roots, and 404s a missing file;
+  POSIX-absolute folder, refuses a literal "." or ".." segment — including
+  one hidden behind a percent-encoded "/" or "\" inside a single URL segment
+  (a browser resolving a <base href>'s "../x" already collapses it before the
+  request is sent — only a crafted request would carry the dots themselves) —
+  refuses a folder outside workspace_access_ok's allowed roots, and 404s a
+  missing file;
 * file_at_mime: a stylesheet gets text/css with a charset, a picture its own
   image type;
 * the route through the hub's handler: the same token gate as /api/file (a
-  local request needs none; a proxied/tailnet one does), and a real 200 with
-  the file's bytes;
-* fileview.html's fileAtBase + withFileAtBase (run in Node, skipped without
-  it): the base href built for a Windows and a POSIX folder, and where the
-  <base> tag lands — right after <head>, or after a doctype when there is
-  none, so it wins over everything the srcdoc fetches.
+  local request needs none; a proxied/tailnet one does), a real 200 with the
+  file's bytes, and the CSP sandbox + nosniff headers that keep an .html file
+  under this route from running as a same-origin document if opened directly;
+* fileview.html's fileAtBase + withFileAtBase + frameAnchorTarget (run in
+  Node, skipped without it): the base href built for a Windows and a POSIX
+  folder, where the <base> tag lands — right after <head> (not a <header>
+  element), or after a doctype when there is none, so it wins over everything
+  the srcdoc fetches — and the element an in-page "#id"/"#name"/"#" link
+  targets now that the <base> makes the browser treat it as cross-document
+  instead of just scrolling.
 """
 from __future__ import annotations
 
@@ -110,6 +116,16 @@ class ResolveFileAt(unittest.TestCase):
         ):
             self.assertIsNone(dashboard.resolve_file_at(at_tail("w", bad)), bad)
 
+    def test_refuses_a_dot_segment_hidden_behind_an_encoded_separator(self):
+        # "today%2F.." decodes to one segment "today/.." — the plain dot
+        # check never sees a bare ".." unless it's split on the separator
+        # first, the way an unencoded URL segment already would be.
+        for bad in (
+            self.segs + ["today/..", "style.css"],
+            self.segs + ["today\\..\\..", "style.css"],
+        ):
+            self.assertIsNone(dashboard.resolve_file_at(at_tail("w", bad)), bad)
+
     def test_refuses_a_folder_outside_allowed_roots(self):
         with tempfile.TemporaryDirectory() as outside:
             op = Path(outside)
@@ -193,6 +209,16 @@ class FileAtRoute(unittest.TestCase):
         self.assertEqual(hdrs["Content-Type"], "text/css; charset=utf-8")
         self.assertEqual(body, b"body { color: red; }")
 
+    def test_response_carries_a_sandbox_csp_and_nosniff(self):
+        # Unlike /api/file, this route can be opened directly (a pasted link,
+        # a bookmark); an .html file under it must not run as a same-origin
+        # document with the hub's own APIs and token cookie. CSP sandbox is
+        # ignored for non-document responses (images, CSS), so it's cheap to
+        # send on every response rather than branch on the file's type.
+        _, hdrs, _ = self.get(self.path("style.css"))
+        self.assertEqual(hdrs["Content-Security-Policy"], "sandbox")
+        self.assertEqual(hdrs["X-Content-Type-Options"], "nosniff")
+
     def test_a_missing_file_is_404(self):
         status, _, _ = self.get(self.path("nope.css"))
         self.assertEqual(status, 404)
@@ -220,14 +246,23 @@ class FileAtRoute(unittest.TestCase):
 class FileAtBaseHref(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        code = js_function("fileAtBase") + "\n" + js_function("withFileAtBase")
+        code = (js_function("fileAtBase") + "\n" + js_function("withFileAtBase") + "\n"
+                + js_function("frameAnchorTarget"))
         script = f"""
 {code}
 const cases = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const out = {{}};
 for (const [k, c] of Object.entries(cases)) {{
   if (c.kind === 'base') out[k] = fileAtBase(c.folder);
-  else out[k] = withFileAtBase(c.html, c.base);
+  else if (c.kind === 'inject') out[k] = withFileAtBase(c.html, c.base);
+  else {{
+    const d = {{
+      body: 'BODY', documentElement: 'DOCELEM',
+      getElementById: id => c.ids[id] || null,
+      getElementsByName: name => c.names[name] ? [c.names[name]] : [],
+    }};
+    out[k] = frameAnchorTarget(d, c.href);
+  }}
 }}
 console.log(JSON.stringify(out));
 """
@@ -241,6 +276,12 @@ console.log(JSON.stringify(out));
             "noHead": {"kind": "inject", "html": "<!doctype html>\n<p>hi</p>", "base": "/api/file-at/w/C%3A/x/"},
             "noDoctypeNoHead": {"kind": "inject", "html": "<p>hi</p>", "base": "/api/file-at/w/C%3A/x/"},
             "noBase": {"kind": "inject", "html": "<!doctype html>\n<p>hi</p>", "base": ""},
+            "headerNotHead": {"kind": "inject", "html": "<!doctype html>\n<body><header>hi</header></body>",
+                              "base": "/api/file-at/w/C%3A/x/"},
+            "anchorById": {"kind": "anchor", "href": "#t", "ids": {"t": "ELEM_T"}, "names": {}},
+            "anchorByName": {"kind": "anchor", "href": "#a%20b", "ids": {}, "names": {"a b": "ELEM_NAME"}},
+            "anchorEmpty": {"kind": "anchor", "href": "#", "ids": {}, "names": {}},
+            "anchorMissing": {"kind": "anchor", "href": "#nope", "ids": {}, "names": {}},
         }
         with tempfile.TemporaryDirectory() as tmp:
             f = Path(tmp) / "t.cjs"
@@ -267,6 +308,25 @@ console.log(JSON.stringify(out));
 
     def test_with_no_head_it_lands_after_the_doctype(self):
         self.assertTrue(self.out["noHead"].startswith('<!doctype html><base href="/api/file-at/w/C%3A/x/">'), self.out["noHead"])
+
+    def test_a_header_element_is_not_mistaken_for_head(self):
+        # <header> starts with "head" too; the regex needs a real boundary
+        # (a space or ">") right after it, or the <base> would land inside a
+        # visible <header>, before any <link> that precedes it.
+        self.assertTrue(self.out["headerNotHead"].startswith('<!doctype html><base href="/api/file-at/w/C%3A/x/">'),
+                        self.out["headerNotHead"])
+
+    def test_anchor_target_by_id(self):
+        self.assertEqual(self.out["anchorById"], "ELEM_T")
+
+    def test_anchor_target_by_name_with_decoded_href(self):
+        self.assertEqual(self.out["anchorByName"], "ELEM_NAME")
+
+    def test_bare_hash_targets_the_body(self):
+        self.assertEqual(self.out["anchorEmpty"], "BODY")
+
+    def test_an_unmatched_anchor_target_is_null(self):
+        self.assertIsNone(self.out["anchorMissing"])
 
     def test_with_no_doctype_and_no_head_it_lands_at_the_very_start(self):
         self.assertTrue(self.out["noDoctypeNoHead"].startswith('<base href="/api/file-at/w/C%3A/x/">'), self.out["noDoctypeNoHead"])

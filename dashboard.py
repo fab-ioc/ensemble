@@ -4730,9 +4730,12 @@ def resolve_file_at(tail: str) -> Path | None:
     resolution turns a stylesheet's "../shared/x.css" into the sibling folder
     it means, dot segments collapsed before the request is ever sent — a
     literal "." or ".." segment reaching here can only be a crafted request,
-    refused outright. The resolved file must still fall inside
-    workspace_access_ok (a registered project, a task folder, or ~/cs), the
-    same rule /api/dir and /api/ws/file already apply."""
+    refused outright (an encoded slash or backslash *inside* a segment is
+    split out first, so a "today%2F.." trick is caught the same way — this
+    layer is belt only; workspace_access_ok is the actual boundary below).
+    The resolved file must still fall inside workspace_access_ok (a
+    registered project, a task folder, or ~/cs), the same rule /api/dir and
+    /api/ws/file already apply."""
     raw = [s for s in tail.split("/") if s != ""]
     if len(raw) < 2:
         return None
@@ -4740,7 +4743,7 @@ def resolve_file_at(tail: str) -> Path | None:
         segs = [unquote(s, errors="strict") for s in raw]
     except (UnicodeDecodeError, ValueError):
         return None
-    if any(s in _FILE_AT_DOT for s in segs):
+    if any(part in _FILE_AT_DOT for s in segs for part in re.split(r"[\\/]", s)):
         return None
     style, rest = segs[0], segs[1:]
     if style == "w" and rest and re.fullmatch(r"[A-Za-z]:", rest[0]):
@@ -9362,11 +9365,21 @@ class Handler(BaseHTTPRequestHandler):
         if p.startswith("/api/file-at/"):
             # A rendered page's own picture, stylesheet or font, from the
             # <base href> fileview.html gives its srcdoc — see resolve_file_at.
+            # Unlike /api/file, this path can be opened directly (a pasted
+            # link, a bookmark): an .html file under it would otherwise run
+            # as a same-origin document with the hub's own APIs and token
+            # cookie. CSP sandbox (ignored for non-document responses like
+            # images and CSS) strips that down to an opaque origin, no
+            # script and no same-origin access, same as the srcdoc frame's
+            # own sandbox already gives it when it's not top-level.
             fp = resolve_file_at(p[len("/api/file-at/"):])
             if fp is None:
                 self._send_json(404, {"error": "not_found"})
                 return
-            self._send_file(fp, file_at_mime(fp))
+            self._send_file(fp, file_at_mime(fp), (
+                ("Content-Security-Policy", "sandbox"),
+                ("X-Content-Type-Options", "nosniff"),
+            ))
             return
         if p == "/api/platform":
             self._send_json(200, BACKEND.info())
