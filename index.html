@@ -3208,6 +3208,12 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .dk-strip-icon-btn .dk-strip-badge { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; border-radius: var(--r-100); }
   .dk-strip-btn.on .dk-strip-badge { background: var(--surface); }
   .dk-flyout.dk-fly-beside { border-top: 0; border-bottom: 0; }
+  /* The conversation keeps its 360px at any width: a tool's width is taken
+     when the dock is made (and a saved layout keeps it), so on a narrower
+     window the open tool gives way, and has its width again when there is
+     room. The library sizes it only against 85% of the dock: an ask for Dock. */
+  #po-dock:not(.dk-narrow) .dk-main { min-width: 360px; }
+  #po-dock:not(.dk-narrow) .dk-flyout.dk-fly-beside { max-width: calc(100% - var(--dk-strip) - 360px); }
   /* The middle is the conversation alone: no title bar over it. */
   #po-dock:not(.dk-narrow) .dk-stack:has(> .dk-body > .pd-chat) > .dk-head { display: none; }
   /* An open task is that conversation (pdPlaceTask): the task panel fills
@@ -9494,6 +9500,9 @@ function renderPo() {
   renderPoPill(ctx);
   // Where it is: in the PO chat panel, or at home as the drawer.
   if (PD.lib) pdPlaceChat();
+  // A task open in a project without a PO: its Your asks has no PO to
+  // follow, and says so (nothing of the PO seen before stays).
+  if (!dock && PD.dock && PD.chatKey !== null) { PD.chatKey = null; PD.ptSig = ''; pdPaintPoints(); }
   // While the panels load there is no panel yet for the PO to be in.
   if (!pj || (split && !PD.lib)) { panel.hidden = true; return; }
   if (pj.id !== PO_LAST) { PO_LAST = pj.id; try { localStorage.setItem('cd-po-last', pj.id); } catch (e) {} }
@@ -9636,7 +9645,8 @@ const PD_ICON = (() => {
 })();
 // How far a tool slides out: the diff and the files take most of what the
 // list and the strip leave (a conversation keeps at least its 360px); the
-// asks and the spec are reading widths. Taken when the dock is made.
+// asks and the spec are reading widths. Taken when the dock is made; on a
+// narrower window CSS keeps the conversation its 360px (the "tool strip").
 function pdToolSize(id, vw) {
   const avail = (vw || 1440) - (parseFloat(getComputedStyle(document.body).getPropertyValue('--list-w')) || 0) - 44;
   if (id === 'points') return 400;
@@ -10164,11 +10174,15 @@ function pdPointsFrame() {
 function pdHear(f) {
   try { const t = f.contentWindow && f.contentWindow.EMBED_POINTS; if (t && t !== PD.told) { PD.told = t; pdPaintPoints(); } } catch (e) {}
 }
+// What the current PO's chat said: never another PO's (a chat seen before
+// may still be telling).
+function pdTold() { return PD.told && PD.chatKey && PD.told.room === PD.chatKey ? PD.told : null; }
 // Drawn again only when what it lists changed; the ages tick in place.
 function pdPaintPoints(force) {
   const el = PD.els.points;
-  const told = PD.told && PD.told.room === PD.chatKey ? PD.told : null;
-  const html = pdPointsHtml(told, Date.now() / 1000);
+  const told = pdTold();
+  const html = PD.chatKey === null ? '<p class="pdp-empty">This project has no PO, so there are no asks to follow here.</p>'
+    : pdPointsHtml(told, Date.now() / 1000);
   const sig = html.replace(/(<span class="pdp-age"[^>]*>)[^<]*/g, '$1');
   const pv = told && told.points;
   const n = pv ? (pv.open || 0) + (pv.planned || 0) + (pv.delivered != null ? pv.delivered : pv.answered || 0) : 0;
@@ -10185,20 +10199,26 @@ function pdPaintPoints(force) {
 }
 // An arrow: the PO chat comes on screen and goes to that balloon, which it
 // marks for a moment (session.html gotoMsg), as the arrows in the chat do.
+// With a task in the middle, the task closes first: its project's PO takes
+// the middle (the asks listed are that PO's), then the chat goes there.
 function pdGoto(mid) {
+  if (pdTask()) closeDetail();
   pdReveal('po-chat');
+  let tries = 0;
   const go = () => {
     const f = pdVisibleChat();
-    try { if (f && f.contentWindow && f.contentWindow.gotoMsg) { f.contentWindow.gotoMsg(mid); return true; } } catch (e) {}
-    return false;
+    const shown = f && (!f.checkVisibility || f.checkVisibility({ visibilityProperty: true }));
+    try { if (shown && f.contentWindow && f.contentWindow.gotoMsg) { f.contentWindow.gotoMsg(mid); return; } } catch (e) {}
+    if (++tries < 20) setTimeout(go, 150);
   };
-  if (!go()) setTimeout(go, 300);
+  go();
 }
 // Ack and Drop, as in the chat: the hub's answer is handed to the chat too,
 // so both show the same points at once.
 const PD_PT_BUSY = new Set();
 async function pdPointAct(id, act, btn) {
-  const room = PD.told && PD.told.room;
+  const told = pdTold();
+  const room = told && told.room;
   const k = act + ':' + id;
   if (!room || PD_PT_BUSY.has(k)) return;
   PD_PT_BUSY.add(k);

@@ -42,6 +42,7 @@ sys.path.insert(0, str(ROOT))
 
 import chatroom  # noqa: E402
 import dashboard  # noqa: E402
+import points  # noqa: E402
 from tests.test_middle import contrast  # noqa: E402
 from tests.test_page_update import CHROME  # noqa: E402
 
@@ -216,6 +217,55 @@ async function main() {
         dpHome: document.getElementById('detail-panel').parentNode === document.body })`);
       await p.close();
     }
+    // ---- Your asks follow the conversation in the middle
+    {
+      const p = await page(1440, 900);
+      await go(p, A.proj); await poReady(p);
+      await p.until('!!pdTold() && !!pdTold().points && pdTold().points.items.length > 0', 20000);
+      await p.evalIn('window.__motors = pdTold(); (() => { const b = pdChatFrame().contentDocument.getElementById("msgs"); b.scrollTop = b.scrollHeight; })(); 0');
+      await openTask(p);
+      await p.click(tool('points')); await sleep(400);
+      const asks = `({ rows: [...PD.els.points.querySelectorAll('.pdp-row')].map(r => r.dataset.pt), text: PD.els.points.innerText.slice(0, 200),
+        badge: (document.querySelector('${tool('points')} .dk-strip-badge') || {}).textContent || '', fly: PD.dock.flyOpen() })`;
+      out.asksTask = await p.evalIn(asks);
+      // A link from a task: the task closes, the PO's conversation is on screen at that message.
+      const link = '#po-dock .pdp-row[data-pt="P1"] a.pdp-link[title^="Go to your message"]';
+      await p.evalIn(`window.__mid = document.querySelector(${JSON.stringify(link)}).dataset.mid; 0`);
+      await p.click(link);
+      await p.until('!document.body.classList.contains("dp-docked")', 10000);
+      await p.until('(() => { const f = pdChatFrame(); return !!f && !f.contentWindow.eval("GOTO"); })()', 10000).catch(() => null);
+      await sleep(400);
+      out.asksLink = await p.evalIn(`(() => { const f = pdChatFrame(), box = f.contentDocument.getElementById('msgs');
+        const el = [...box.querySelectorAll('.msg[data-mid]')].find(e => e.dataset.mid === window.__mid);
+        const er = el.getBoundingClientRect(), br = box.getBoundingClientRect();
+        return { open: document.body.classList.contains('detail-open'), shown: f.checkVisibility({ visibilityProperty: true }), poIn: PO_PANEL.parentNode === PD.els['po-chat'],
+          inView: er.top >= br.top - 1 && er.top < br.bottom, landed: el.classList.contains('landed') }; })()`);
+      // Then a task of a project without a PO, in the same page: nothing of Motors' PO stays, even if its chat tells again.
+      await go(p, A.plain, true); await sleep(500);
+      await p.evalIn(`openDetail(ALL_ROWS.find(r => r.roomId === ${JSON.stringify(A.plainTask)}).sessionId); 0`);
+      await p.until('document.body.classList.contains("dp-docked")', 20000); await sleep(400);
+      if (await p.evalIn('PD.dock.flyOpen()') !== 'points') { await p.click(tool('points')); await sleep(300); }
+      await p.evalIn('(() => { const f = document.querySelector("#po-panel iframe.po-session"); f.dispatchEvent(new CustomEvent("po-points", { detail: window.__motors })); })(); 0');
+      await sleep(200);
+      out.asksPlain = await p.evalIn(`({ ...${asks}, told: !!pdTold() })`);
+      await p.close();
+    }
+    // ---- widths: a tool opened on a wide window gives way on a narrower one, and a layout saved wide too
+    {
+      const p = await page(1728, 1117);
+      await go(p, A.proj); await poReady(p); await sleep(400);
+      await p.click(tool('changes')); await sleep(400);
+      out.fit = { 1728: await p.evalIn(STRIP) };
+      const size = async (w, h) => { await c.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false }, p.sessionId); await sleep(600); };
+      for (const [w, h] of [[1280, 800], [1024, 768]]) { await size(w, h); out.fit[w] = await p.evalIn(STRIP); }
+      await p.evalIn('ensUpd.reload(); 0'); await sleep(1500); await p.ready();
+      await go(p, A.proj, true); await poReady(p);
+      await p.until('PD.dock.flyOpen() === "changes"', 20000); await sleep(400);
+      out.fit.reload = await p.evalIn(STRIP);
+      await size(1728, 1117);
+      out.fit.wide = await p.evalIn(STRIP);
+      await p.close();
+    }
     // ---- a phone keeps its tabs
     {
       const q = await page(430, 932, true);
@@ -291,6 +341,14 @@ class TheStrip(unittest.TestCase):
         dashboard.assign_session_project(po["id"], cls.proj)
         ok, why = dashboard.set_project_po(cls.proj, po["id"])
         assert ok, why
+        # One ask to the PO, answered, then enough talk that it is far up.
+        text, ids = points.take(chatroom.get_room(po["id"], public=False), "Make the brakes quiet", to="claude", key="k1")
+        assert ids == ["P1"], ids
+        chatroom.post_message(po["id"], "user", text, to="claude")
+        chatroom.post_message(po["id"], "claude", "Re P1: working on it.", to="user")
+        for i in range(30):
+            chatroom.post_message(po["id"], "codex", f"note {i}\n\n" + "words " * 60, to="claude")
+        points.sync(po["id"], force=True)
         task = chatroom.create_room("Brakes that squeal", [{"identity": "claude", "agent": "claude", "cwd": str(home)}])
         chatroom.update_room({**chatroom.get_room(task["id"], public=False), "spec": "## Goal\nQuiet brakes on a long descent."})
         chatroom.post_message(task["id"], "user", "Why do the brakes squeal?")
@@ -440,6 +498,31 @@ class TheStrip(unittest.TestCase):
         self.assertFalse(c["dock"], "closed: the project's own board again")
         self.assertNotEqual(c["view"], "none")
         self.assertTrue(c["dpHome"])
+
+    def test_your_asks_follow_the_conversation_in_the_middle(self):
+        t = self.got["asksTask"]
+        self.assertEqual((t["fly"], t["rows"], t["badge"]), ("points", ["P1"], "1"), "a task: its project's PO's asks")
+        a = self.got["asksLink"]
+        self.assertFalse(a["open"], "the task closed")
+        self.assertTrue(a["shown"] and a["poIn"], "the PO's conversation is in the middle, on screen")
+        self.assertTrue(a["inView"] and a["landed"], a)
+        g = self.got["asksPlain"]
+        self.assertEqual(g["fly"], "points")
+        self.assertEqual((g["rows"], g["badge"], g["told"]), ([], "", False), "nothing of the other project's PO")
+        self.assertIn("no PO", g["text"])
+
+    def test_a_tool_gives_way_on_a_narrower_window(self):
+        for k in ("1728", "1280", "1024", "reload", "wide"):
+            g = self.got["fit"][k]
+            with self.subTest(k=k):
+                self.assertEqual(g["fly"], "changes")
+                self.assertGreaterEqual(g["mid"]["w"], 360, "the conversation keeps its minimum")
+                self.assertLessEqual(g["mid"]["r"], g["flyBox"]["x"], "nothing covered")
+                self.assertEqual(g["flyBox"]["r"], g["strip"]["x"])
+                self.no_scroll(g, k)
+        self.assertEqual(self.got["fit"]["1728"]["flyBox"]["w"], 760)
+        self.assertEqual(self.got["fit"]["wide"]["flyBox"]["w"], 760, "its width again when there is room")
+        self.assertLess(self.got["fit"]["1024"]["flyBox"]["w"], 760)
 
     def test_a_phone_keeps_its_tabs(self):
         g = self.got["phone"]
