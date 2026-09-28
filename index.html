@@ -1091,7 +1091,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   body.mid.detail-open main { padding-right: 20px; }
   body.mid #detail-panel {
     left: var(--list-w); width: auto; transition: none;
-    border-left: 0; padding: var(--s-300) var(--s-500) 0; gap: var(--s-300);
+    border-left: 0; padding: var(--s-300) var(--s-400) 0; gap: var(--s-300);
   }
   body.mid #detail-panel-resize, body.mid.detail-open #detail-panel-resize { display: none; }
   body.mid #detail-panel .dp-top, body.mid #detail-panel > .dp-tabs { width: 100%; max-width: var(--conv-w); margin-inline: auto; }
@@ -1100,7 +1100,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   body.mid #detail-panel .dp-pane[data-pane="spec"],
   body.mid #detail-panel .dp-pane[data-pane="details"] { width: 100%; max-width: var(--conv-w); margin-inline: auto; }
   body.mid #detail-panel.is-live .dp-pane[data-pane="activity"] { align-items: center; }
-  body.mid #detail-panel .dp-pane[data-pane="spec"], body.mid #detail-panel .dp-pane[data-pane="details"] { padding-bottom: var(--s-500); }
+  body.mid #detail-panel .dp-pane[data-pane="spec"], body.mid #detail-panel .dp-pane[data-pane="details"] { padding-bottom: var(--s-400); }
   body.mid #detail-panel .dp-pane[data-pane="workspace"] { padding: 0 0 var(--s-300); min-height: 0; height: var(--dp-fill, auto); flex: 0 0 auto; }
   /* The Workspace has the width again: tree and file side by side. */
   body.mid #detail-panel .wsp { grid-template-columns: minmax(220px, 300px) 1fr; grid-template-rows: none; }
