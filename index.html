@@ -9909,10 +9909,19 @@ function setupFolderNote(st) {
   }
   if (f.relative) return { text: 'Give the folder’s full path, such as C:\\work\\my-project or /home/me/my-project.', alert: true };
   if (!f.folder) return { text: '' };
-  if (f.project) return { text: `This folder is already the project “${f.project.name}”.`, alert: true, project: f.project };
+  // Other projects may share the folder: only the same name again is refused.
+  const on = f.projects || (f.project ? [f.project] : []);
+  const name = (st.name || '').trim().toLowerCase();
+  const same = name && on.find(p => String(p.name || '').trim().toLowerCase() === name);
+  if (same) return { text: `This folder is already the project “${same.name}”.`, alert: true, project: same };
   if (f.isFile) return { text: `${f.folder} is a file, not a folder.`, alert: true };
-  const same = ' Registering it changes nothing in it. Conversations already started in it show under the project, because they work there.';
-  if (f.exists) return { text: (f.isGit ? 'A git repository.' : 'A folder that is there already.') + same };
+  if (on.length) {
+    const names = on.map(p => `“${p.name}”`).join(', ');
+    return { text: `${on.length === 1 ? 'One project already uses' : `${on.length} projects already use`} this folder: ${names}. `
+      + 'The new project gets its own tasks, PO and branches in it. Registering it changes nothing in the folder.' };
+  }
+  const unchanged = ' Registering it changes nothing in it. Conversations already started in it show under the project, because they work there.';
+  if (f.exists) return { text: (f.isGit ? 'A git repository.' : 'A folder that is there already.') + unchanged };
   return { text: 'This folder is not there yet: it is made when you confirm.' };
 }
 // The conversations the list shows, in its groups: those started in the

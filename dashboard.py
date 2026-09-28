@@ -2998,11 +2998,13 @@ def po_seat_folders(projects: list[dict], rooms: list[dict]) -> tuple[dict, dict
     it opens with the hub's PO brief (is_po_brief), since the person works
     there too. One started in a ``seat`` folder (``<PO room folder>/<claude,
     codex or a seat's name>``) is the PO's whatever it says: the hub makes
-    those folders for its PO seats only."""
+    those folders for its PO seats only. Several projects on one code folder:
+    the oldest project's PO has the folder (old_po_room reads the brief's
+    project name first)."""
     by_id = {r.get("id"): r for r in rooms}
     brief: dict[str, str] = {}
     seat: dict[str, str] = {}
-    for pj in projects:
+    for pj in sorted(projects, key=_registered_order):
         rid = pj.get("poRoomId") or ""
         room = by_id.get(rid)
         if room is None:
@@ -3011,6 +3013,9 @@ def po_seat_folders(projects: list[dict], rooms: list[dict]) -> tuple[dict, dict
         for f in (pj.get("path") or "", base):
             if f:
                 brief.setdefault(_norm_folder(f), rid)
+                # By the project's name too, for a brief that names it:
+                # "…the PO) of the project 'Search'…".
+                brief.setdefault((_norm_folder(f), (pj.get("name") or "").strip().casefold()), rid)
         if not base:
             continue
         names = {"claude", "codex"} | {p.get("identity", "") for p in room.get("participants") or []
@@ -3030,7 +3035,16 @@ def old_po_room(cwd: str, first: str, folders: tuple[dict, dict]) -> str:
     if not k:
         return ""
     brief, seat = folders
-    return seat.get(k) or (brief.get(k, "") if is_po_brief(first) else "")
+    if seat.get(k):
+        return seat[k]
+    if not is_po_brief(first):
+        return ""
+    m = _BRIEF_PROJECT_RE.search(first or "")
+    named = brief.get((k, m.group(1).strip().casefold())) if m else ""
+    return named or brief.get(k, "")
+
+
+_BRIEF_PROJECT_RE = re.compile(r"of the project '([^'\n]+)'")
 
 
 def session_agent(part: dict, sid: str) -> str:
@@ -3102,21 +3116,28 @@ def path_is_git(path: str) -> bool:
 
 def load_projects() -> list[dict]:
     """The registered projects — explicit, never guessed. Two sources, merged
-    (deduped by normalized path):
+    (deduped by id):
       1. layout v2: every <PROJECTS_ROOT>/<dir>/project.json — the project's
          identity lives WITH its data, so a cloned projects root is
          self-describing on a new machine (no sidecar to restore);
       2. projects.json — external projects (absolute paths outside the root,
          e.g. a code repo) and legacy entries.
+    Several projects may share one code folder (``path``); each has its own
+    home. A folder in the root that is its own home is one project only: a
+    projects.json entry with another id for it is a leftover and is skipped.
     Each is {id, name, path, isGit, createdAt}."""
     out: list[dict] = []
     seen: set[str] = set()
+    own_homes: set[str] = set()     # in-root folders that are their project's home
 
-    def _add(p: dict) -> None:
+    def _add(p: dict, from_root: bool = False) -> None:
         key = os.path.normcase(os.path.normpath(p["path"]))
-        if key not in seen and p["id"] not in seen:
-            seen.add(key); seen.add(p["id"])
-            out.append(p)
+        if p["id"] in seen or (not from_root and key in own_homes):
+            return
+        seen.add(p["id"])
+        if from_root and key == os.path.normcase(os.path.normpath(p.get("home") or "")):
+            own_homes.add(key)
+        out.append(p)
 
     try:
         if PROJECTS_ROOT.is_dir():
@@ -3153,7 +3174,7 @@ def load_projects() -> list[dict]:
                          if project_docs.valid_name(meta.get("documentsDir") or "") else {}),
                       # Its own progress-digest interval, when it set one.
                       **({"digestIntervalMin": meta["digestIntervalMin"]}
-                         if "digestIntervalMin" in meta else {})})
+                         if "digestIntervalMin" in meta else {})}, from_root=True)
     except OSError:
         pass
     try:
@@ -3202,12 +3223,19 @@ def register_project(path: str, name: str = "", kind: str = "code",
     except OSError as e:
         return False, {}, f"cannot create/access folder: {e}"
     projects = load_projects()
-    for existing in projects:
-        if os.path.normcase(os.path.normpath(existing["path"])) == os.path.normcase(norm):
+    sharing = projects_on_folder(norm, projects)
+    new_name = name.strip() or os.path.basename(norm.rstrip("/\\")) or norm
+    if sharing and not name.strip():
+        # No name: the caller means the folder's project (the first one).
+        return True, sharing[0], "already registered"
+    for existing in sharing:
+        # The same name (or a name that makes the same home) again is the
+        # same project: registering it twice never makes a duplicate.
+        if _same_project_name(existing.get("name") or "", new_name):
             return True, existing, "already registered"
     proj = {
         "id": "proj-" + uuid.uuid4().hex[:8],
-        "name": (name.strip() or os.path.basename(norm.rstrip("/\\")) or norm),
+        "name": new_name,
         "path": norm,
         "isGit": path_is_git(norm),
         "createdAt": int(time.time()),
@@ -3215,7 +3243,10 @@ def register_project(path: str, name: str = "", kind: str = "code",
     projects.append(proj)
     # Its key now, so a project added later never changes this one's.
     proj["key"] = task_numbers.project_keys(projects)[proj["id"]]
-    kept_apart = _in_projects_root(norm) and existed and (kind or "code") != "documents"
+    # A folder another project already uses keeps that project's files: the
+    # new one always gets a home of its own (named after it, _free_home).
+    kept_apart = (_in_projects_root(norm) and existed and (kind or "code") != "documents") \
+        or (bool(sharing) and _in_projects_root(norm))
     if kept_apart:
         proj["home"] = _free_home(proj)
     save_projects(projects)
@@ -3374,6 +3405,26 @@ def _session_room(sid: str) -> dict | None:
 
 def _same_folder(a: str, b: str) -> bool:
     return os.path.normcase(os.path.normpath(a or ".")) == os.path.normcase(os.path.normpath(b or "."))
+
+
+def _registered_order(p: dict) -> tuple:
+    """Which of several projects on one folder comes first: the oldest."""
+    return (p.get("createdAt") or 0, p.get("id") or "")
+
+
+def projects_on_folder(folder: str, projects: list[dict] | None = None) -> list[dict]:
+    """Every project whose code folder is ``folder``, oldest first. Several
+    projects may share one code folder; each has its own home and tasks."""
+    projects = load_projects() if projects is None else projects
+    return sorted((p for p in projects if _same_folder(p.get("path", ""), folder)),
+                  key=_registered_order)
+
+
+def _same_project_name(a: str, b: str) -> bool:
+    """Two project names that are the same project on one folder: equal, or
+    making the same home folder name."""
+    a, b = (a or "").strip(), (b or "").strip()
+    return a.casefold() == b.casefold() or _safe_dir_name(a).casefold() == _safe_dir_name(b).casefold()
 
 
 # ---- Who may become a PO: one answer for the menu, the chooser and the request ----
@@ -3679,9 +3730,11 @@ def po_setup_folder(path: str, kind: str, name: str = "") -> dict:
     out["exists"] = os.path.isdir(folder)
     out["isFile"] = os.path.exists(folder) and not out["exists"]
     out["isGit"] = out["exists"] and path_is_git(folder)
-    for p in load_projects():
-        if _same_folder(p["path"], folder):
-            out["project"] = {"id": p["id"], "name": p.get("name") or p["id"]}
+    # Every project that already uses the folder, oldest first: information
+    # only — another project may share it. ``project`` is the first of them.
+    out["projects"] = [{"id": p["id"], "name": p.get("name") or p["id"]}
+                       for p in projects_on_folder(folder)]
+    out["project"] = out["projects"][0] if out["projects"] else None
     return out
 
 
@@ -4457,8 +4510,7 @@ def assign_task_number(rid: str, project_id: str, room_full: dict | None = None)
             n = room["no"]
         else:
             # The counter, and never a number a task of the project has.
-            n = max(proj.get("nextTaskNo") or 0,
-                    1 + max((r.get("no") or 0 for r in _task_index() if r.get("noProjectId") == pid), default=0))
+            n = _next_task_no(pid, projects)
             ok, _msg = _set_project_meta(pid, "nextTaskNo", n + 1)
             if not ok:
                 return None
@@ -4864,17 +4916,24 @@ def assign_session_project(sid: str, project_id: str) -> None:
 
 def _project_for_cwd(cwd: str, projects: list[dict]) -> str:
     """Best-effort membership for a session with no explicit link: the registered
-    project whose folder contains the session's cwd (longest match wins)."""
+    project whose folder contains the session's cwd (longest match wins). A
+    project's home counts too — it is its own, while several projects may
+    share one code folder: of those, the oldest (_registered_order) wins."""
     if not cwd:
         return ""
     c = os.path.normcase(os.path.normpath(cwd))
-    best_id, best_len = "", -1
+    best, best_rank = "", None
     for p in projects:
-        pp = os.path.normcase(os.path.normpath(p["path"]))
-        if c == pp or c.startswith(pp + os.sep):
-            if len(pp) > best_len:
-                best_id, best_len = p["id"], len(pp)
-    return best_id
+        for folder, is_home in ((p.get("path") or "", False), (p.get("home") or "", True)):
+            if not folder:
+                continue
+            pp = os.path.normcase(os.path.normpath(folder)).rstrip(os.sep)
+            if c == pp or c.startswith(pp + os.sep):
+                # Longest first; then a home over a shared code folder; then oldest.
+                rank = (-len(pp), not is_home, _registered_order(p))
+                if best_rank is None or rank < best_rank:
+                    best, best_rank = p["id"], rank
+    return best
 
 
 def _write_task_json(folder: str, data: dict) -> None:
@@ -4999,9 +5058,12 @@ def build_projects() -> dict:
             needs_you += 1
     projects = []
     total_changed = 0
+    counted: set[str] = set()       # a code folder several projects share counts once
     for gid, g in groups.items():
         g["changed"] = git_changed_count(g["path"]) if (g.get("isGit") and g.get("path")) else 0
-        total_changed += g["changed"]
+        if g["changed"] and _norm_folder(g["path"]) not in counted:
+            counted.add(_norm_folder(g["path"]))
+            total_changed += g["changed"]
         g["count"] = len(g["sessions"])
         # Priority first, most-recently-active first inside a priority — the
         # same rule the flat task list uses.
@@ -5308,15 +5370,21 @@ def _main_line(root: str) -> str:
 def _project_task_index(project_id: str) -> dict:
     """What names a task of a project in a commit: its branch and its title,
     each to its number."""
-    idx = {"branch": {}, "title": {}}
+    idx = {"branch": {}, "title": {}, "foreign": set()}
     if not project_id:
         return idx
     links = load_session_projects()
     for room in chatroom.list_rooms():
         no = room.get("no")
-        if not isinstance(no, int) or _room_project_id(room["id"], room, links) != project_id:
-            continue
         br = ((room.get("workspace") or {}).get("branch") or "").strip()
+        if _room_project_id(room["id"], room, links) != project_id:
+            # Another project's task (maybe on the same code folder): a
+            # merge of its branch is not this project's task.
+            if br:
+                idx["foreign"].add(br)
+            continue
+        if not isinstance(no, int):
+            continue
         if br:
             idx["branch"][br] = no
         t = (room.get("title") or "").strip().lower()
@@ -5335,11 +5403,12 @@ def commit_task_no(subject: str, idx: dict) -> int | None:
         # "origin/sess/x" or a pull request's "owner/sess/x": the task's
         # branch is the whole name or what follows its first part.
         br, branches = m.group(1) or m.group(2), idx.get("branch", {})
-        for cand in (br, br.split("/", 1)[1] if "/" in br else ""):
+        cands = (br, br.split("/", 1)[1] if "/" in br else "")
+        for cand in cands:
             if cand and cand in branches:
                 return branches[cand]
-        if m.group(2):
-            return None          # a pull request's number is not a task's
+        if m.group(2) or any(c and c in idx.get("foreign", ()) for c in cands):
+            return None          # a pull request's number, or another project's task
     m = _TASK_NO_RE.search(subject)
     if m:
         return int(m.group(1) or m.group(2))
@@ -6002,7 +6071,8 @@ def _init_task_folder(target: Path) -> tuple[bool, str]:
     return True, "ok"
 
 
-def setup_session_workspace(project: dict, mode: str, title: str) -> tuple[bool, str, dict, str]:
+def setup_session_workspace(project: dict, mode: str, title: str,
+                            key: str = "", task_no: int | None = None) -> tuple[bool, str, dict, str]:
     """Provision a session's own workspace for a project. The framework does NOT
     force a code checkout — the mode is the user's per-session choice, because a
     project (or a session) may have no code at all:
@@ -6011,6 +6081,9 @@ def setup_session_workspace(project: dict, mode: str, title: str) -> tuple[bool,
         inplace   work directly in the project folder (shared with the project)
         copy      a full copy of the project folder into a session dir
         worktree  a git worktree on its own branch (git projects only)
+
+    ``key`` and ``task_no`` (the project's key, the task's number) name a
+    worktree's branch (task_branch_name).
 
     Returns (ok, base_path, meta, msg). ``meta`` may carry {branch, mode}.
     ``base_path`` becomes the room cwd; project-backed modes also imply a shared
@@ -6055,22 +6128,50 @@ def setup_session_workspace(project: dict, mode: str, title: str) -> tuple[bool,
     if mode == "worktree":
         if not path_is_git(ppath):
             return False, "", {}, "worktree needs a git project"
-        branch = "sess/" + (slug or "session")
+        branch = _free_task_branch(ppath, task_branch_name(key, task_no, slug))
         try:
+            # A new branch always: one that is there already is another
+            # task's (maybe another project's on the same code folder), never
+            # this one's to take over — _free_task_branch skipped it.
             out = _run(
                 ["git", "-C", ppath, "worktree", "add", str(dest), "-b", branch],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
             if out.returncode != 0:
-                # Branch may already exist → attach without -b.
-                out2 = _run(
-                    ["git", "-C", ppath, "worktree", "add", str(dest), branch],
-                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
-                if out2.returncode != 0:
-                    return False, "", {}, f"worktree failed: {(out.stderr or out2.stderr or '').strip()[:200]}"
+                return False, "", {}, f"worktree failed: {(out.stderr or '').strip()[:200]}"
         except (OSError, subprocess.SubprocessError) as e:
             return False, "", {}, f"worktree failed: {e}"
         return True, str(dest), {"mode": "worktree", "branch": branch, **tmeta}, "ok"
     return False, "", {}, f"unknown workspace mode: {mode}"
+
+
+def task_branch_name(key: str, task_no, slug: str) -> str:
+    """A new task's branch: ``sess/<KEY>-<n>-<slug>``, so two projects on one
+    code folder never name a task's branch alike. Without a key or a number,
+    what there is (``sess/<n>-<slug>``, ``sess/<slug>``). Branches made before
+    this keep their names: the room records its branch (workspace.branch)."""
+    k = re.sub(r"[^A-Za-z0-9]", "", key or "")
+    n = task_no if isinstance(task_no, int) and task_no > 0 else None
+    head = "-".join(x for x in (k, str(n) if n else "") if x)
+    return "sess/" + "-".join(x for x in (head, slug or "session") if x)
+
+
+def _branch_exists(root: str, branch: str) -> bool:
+    try:
+        out = _run(["git", "-C", root, "rev-parse", "--verify", "--quiet", "refs/heads/" + branch],
+                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return out.returncode == 0
+
+
+def _free_task_branch(root: str, branch: str) -> str:
+    """``branch``, or ``branch-2``, ``-3``… when a branch of that name is there
+    already: a new task never attaches to a branch it did not make."""
+    name, n = branch, 2
+    while _branch_exists(root, name) and n < 100:
+        name = f"{branch}-{n}"
+        n += 1
+    return name
 
 
 def sanitize_slug(s: str, max_len: int = 60) -> str:
@@ -8604,7 +8705,29 @@ def create_task(title: str, spec: str, project_id: str, agent_list,
     # A documents project's tasks work in its folder unless told otherwise.
     if not workspace:
         workspace = "inplace" if project and project.get("kind") == "documents" else "empty"
-    ok, base, ws_meta, msg = setup_session_workspace(project, workspace, title)
+    # The numbers lock is held until the task has its number, so the number
+    # its branch is named with (_next_task_no) is the one it gets.
+    with _NUMBERS_LOCK:
+        return _create_task_locked(title, spec, project_id, project, workspace, prio,
+                                   preferences, human)
+
+
+def _next_task_no(project_id: str, projects: list[dict] | None = None) -> int:
+    """The number assign_task_number gives the project's next new task."""
+    projects = load_projects() if projects is None else projects
+    proj = next((p for p in projects if p["id"] == project_id), None) or {}
+    return max(proj.get("nextTaskNo") or 0,
+               1 + max((r.get("no") or 0 for r in _task_index() if r.get("noProjectId") == project_id),
+                       default=0))
+
+
+def _create_task_locked(title, spec, project_id, project, workspace, prio, preferences, human):
+    branch_of = {}          # what a worktree's branch is named after
+    if project is not None and workspace == "worktree":
+        projects = load_projects()
+        branch_of = {"key": project_keys(projects).get(project_id, "") or project.get("key", ""),
+                     "task_no": _next_task_no(project_id, projects)}
+    ok, base, ws_meta, msg = setup_session_workspace(project, workspace, title, **branch_of)
     if not ok:
         return False, None, msg
     members = [{"identity": pref["agent"], "agent": pref["agent"],
