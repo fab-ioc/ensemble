@@ -3039,12 +3039,13 @@ def old_po_room(cwd: str, first: str, folders: tuple[dict, dict]) -> str:
         return seat[k]
     if not is_po_brief(first):
         return ""
-    m = _BRIEF_PROJECT_RE.search(first or "")
-    named = brief.get((k, m.group(1).strip().casefold())) if m else ""
-    return named or brief.get(k, "")
-
-
-_BRIEF_PROJECT_RE = re.compile(r"of the project '([^'\n]+)'")
+    # The brief names its project ("…of the project 'CEO's tools', taking
+    # over"): the longest name of a project on this folder that it names.
+    said = (first or "").casefold()
+    named = [(len(key[1]), rid) for key, rid in brief.items()
+             if isinstance(key, tuple) and key[0] == k and key[1]
+             and f"of the project '{key[1]}'" in said]
+    return max(named)[1] if named else brief.get(k, "")
 
 
 def session_agent(part: dict, sid: str) -> str:
@@ -3129,14 +3130,25 @@ def load_projects() -> list[dict]:
     out: list[dict] = []
     seen: set[str] = set()
     own_homes: set[str] = set()     # in-root folders that are their project's home
+    homes: set[str] = set()         # every home a project.json claims
+    named: set[tuple] = set()       # (code folder, name as a home) of those projects
 
     def _add(p: dict, from_root: bool = False) -> None:
         key = os.path.normcase(os.path.normpath(p["path"]))
-        if p["id"] in seen or (not from_root and key in own_homes):
+        home = os.path.normcase(os.path.normpath(p["home"])) if p.get("home") else ""
+        as_named = (key, _safe_dir_name(p.get("name") or "").casefold())
+        if p["id"] in seen:
+            return
+        if not from_root and (key in own_homes or (home and home in homes) or as_named in named):
+            # A leftover of another id for a project the root already has: its
+            # home, or its folder under the same name (the same project).
             return
         seen.add(p["id"])
-        if from_root and key == os.path.normcase(os.path.normpath(p.get("home") or "")):
-            own_homes.add(key)
+        if from_root:
+            homes.add(home)
+            named.add(as_named)
+            if key == home:
+                own_homes.add(key)
         out.append(p)
 
     try:

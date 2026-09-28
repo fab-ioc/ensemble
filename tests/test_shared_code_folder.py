@@ -131,6 +131,19 @@ class Registering(Hub):
         dashboard.PROJECTS_FILE.write_text(json.dumps(entries), encoding="utf-8")
         self.assertEqual([p["id"] for p in dashboard.load_projects()], [a["id"]])
 
+    def test_a_leftover_entry_for_an_external_project(self):
+        # projects.json naming, under another id, an external project whose
+        # home the root already has: by that home, or by its folder and name.
+        a, _ = self.register("Checkout")
+        b, _ = self.register("Search")
+        home = dashboard.project_home(a)
+        dashboard.project_home(b)
+        entries = json.loads(dashboard.PROJECTS_FILE.read_text(encoding="utf-8"))
+        entries += [{"id": "proj-stale1", "name": "Old", "path": str(self.code), "home": home},
+                    {"id": "proj-stale2", "name": "checkout", "path": str(self.code)}]
+        dashboard.PROJECTS_FILE.write_text(json.dumps(entries), encoding="utf-8")
+        self.assertEqual(sorted(p["id"] for p in dashboard.load_projects()), sorted([a["id"], b["id"]]))
+
 
 class TheFolderNote(Hub):
 
@@ -178,6 +191,19 @@ class PastPoConversations(unittest.TestCase):
         self.assertEqual(dashboard.old_po_room(code, brief.format("checkout"), folders), "room-c")
         self.assertEqual(dashboard.old_po_room(code, brief.format("Gone"), folders), "room-c")
         self.assertEqual(dashboard.old_po_room(code, "hello", folders), "")
+
+    def test_a_name_with_an_apostrophe(self):
+        code = os.path.normpath("/w/repo")
+        projects = [{"id": "p1", "name": "Core", "path": code, "poRoomId": "room-c", "createdAt": 10},
+                    {"id": "p2", "name": "CEO's tools", "path": code, "poRoomId": "room-t", "createdAt": 20},
+                    {"id": "p3", "name": "CEO", "path": code, "poRoomId": "room-e", "createdAt": 30}]
+        rooms = [{"id": r, "cwd": code} for r in ("room-c", "room-t", "room-e")]
+        folders = dashboard.po_seat_folders(projects, rooms)
+        self.assertEqual(dashboard.old_po_room(
+            code, "[rotation] You are the product owner (PO) of the project 'CEO's tools', taking over.", folders),
+            "room-t")
+        self.assertEqual(dashboard.old_po_room(
+            code, "You are the product owner (PO) of the project 'CEO' in Ensemble", folders), "room-e")
 
 
 class TheChangesTab(unittest.TestCase):
