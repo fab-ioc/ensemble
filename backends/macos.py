@@ -6,12 +6,13 @@ from __future__ import annotations
 import plistlib
 import random
 import re
+import shutil
 import subprocess
 import time
 from pathlib import Path
 
 from .base import (
-    Backend, CS_ROOT, ICON_CACHE_DIR, NUMBERED_RE, PRESETS_DIR, app_slug,
+    Backend, CS_ROOT, HOME, ICON_CACHE_DIR, NUMBERED_RE, PRESETS_DIR, app_slug,
 )
 from .shared import SESS_DIR, claude_cmd, load_geometries, save_geometry
 from . import themes
@@ -570,23 +571,33 @@ class MacBackend(Backend):
 
     # ---------- self-update ----------
 
-    def self_update(self, install_dir) -> dict:
+    def self_update(self, install_dir, port=None, log_file=None) -> dict:
         """Spawn `ensemble update` detached so it survives our restart
-        (launchctl kickstart -k SIGKILLs us as part of the refresh)."""
+        (launchctl kickstart -k SIGKILLs us as part of the refresh). Through
+        bash, so a launcher that lost its executable bit still runs; with the
+        hub's port, so a restart without the LaunchAgent comes back on it; its
+        output appended to the hub's log, so a failed restart says why."""
         cli = Path(install_dir) / "ensemble"
         if not cli.exists():
             return {"started": False, "error": f"{cli} not found"}
+        log = Path(log_file) if log_file else HOME / "Library" / "Logs" / "ensemble.log"
+        argv = [shutil.which("bash") or "/bin/bash", str(cli), "update"]
+        if port:
+            argv += ["--port", str(port)]
         try:
-            subprocess.Popen(
-                [str(cli), "update"],
-                cwd=str(install_dir),
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL,
-                start_new_session=True,
-            )
+            log.parent.mkdir(parents=True, exist_ok=True)
+            with open(log, "ab") as out:
+                subprocess.Popen(
+                    argv,
+                    cwd=str(install_dir),
+                    stdout=out, stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL,
+                    start_new_session=True,
+                    env=dict(os.environ, ENSEMBLE_STDIO_IS_LOG="1"),
+                )
         except (subprocess.SubprocessError, OSError) as e:
             return {"started": False, "error": f"{e.__class__.__name__}: {e}"}
-        return {"started": True, "pid": os.getpid()}
+        return {"started": True, "pid": os.getpid(), "log": str(log)}
 
     # ---------- themes ----------
 

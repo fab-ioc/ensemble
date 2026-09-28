@@ -2636,6 +2636,19 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .update-hint {
     margin: 6px 0 0; font-size: 11.5px; color: var(--fg-muted);
   }
+  /* The hub did not come back: the title says so in the one red, the stage
+     line names the log, and a Default button closes the dialog. */
+  .update-modal.is-failed h3 { color: var(--c-danger-fg); }
+  .update-modal.is-failed .update-progress { display: none; }
+  .update-modal.is-failed .update-stage { user-select: all; overflow-wrap: anywhere; }
+  #update-close {
+    margin-top: 16px; height: 32px; padding: 0 14px; border-radius: var(--r-200);
+    background: var(--surface); border: 1px solid var(--border-strong); color: var(--fg);
+    font: inherit; font-size: var(--fs-300); font-weight: 500; cursor: pointer;
+  }
+  #update-close:hover { background: var(--hover); }
+  #update-close:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  #update-close[hidden] { display: none; }
   .actions button.busy::before { content: '⏳ '; }
   .actions button.busy { opacity: .6; pointer-events: none; }
   dialog {
@@ -3208,7 +3221,8 @@ window.DOC_LISTENERS_PAUSED = false;
     <h3>Updating Ensemble</h3>
     <div class="update-progress"><div class="update-progress-bar"></div></div>
     <p class="update-stage" id="update-stage">Fetching from origin…</p>
-    <p class="update-hint">The server will restart and the page will reload automatically.</p>
+    <p class="update-hint" id="update-hint">The server will restart and the page will reload automatically.</p>
+    <button type="button" id="update-close" hidden>Close</button>
   </div>
 </div>
 <header>
@@ -5746,6 +5760,7 @@ async function triggerUpdate() {
   const overlay = document.getElementById('update-overlay');
   if (banner) banner.hidden = true;
   if (overlay) overlay.hidden = false;
+  resetUpdateModal();   // an earlier attempt may have left it saying it failed
   setUpdateStage('Fetching from origin…');
 
   const startPid = RUNTIME_CFG && RUNTIME_CFG.pid;
@@ -5754,14 +5769,16 @@ async function triggerUpdate() {
   // e.g. the key is from before a restart and the page needs a reload — so
   // say why instead of waiting a minute for a restart that never comes.
   let refused = '';
+  let logPath = (RUNTIME_CFG && RUNTIME_CFG.logFile) || '';
   try {
     const r = await fetch('/api/update', { method: 'POST' });
+    const body = await r.json().catch(() => ({}));
+    if (body.log) logPath = body.log;
     if (r.status === 403) {
-      const body = await r.json().catch(() => ({}));
       refused = body.message || 'the hub refused the update';
     } else if (!r.ok && r.status !== 202) {
-      const body = await r.text();
-      throw new Error(`/api/update returned ${r.status}: ${body}`);
+      // The update never started (the hub is still up): say why now.
+      refused = `Update could not start: ${body.error || body.message || `HTTP ${r.status}`}`;
     }
   } catch {
     // Network error here is expected — the server may have died mid-request.
@@ -5797,12 +5814,42 @@ async function triggerUpdate() {
     } catch { /* still restarting */ }
   }
 
-  // Timed out — let the user retry.
+  // Timed out: the hub did not come back. Say where the reason is, and keep
+  // looking, so the page still reloads if it comes back after all.
+  showUpdateFailed(logPath);
   UPDATE_IN_PROGRESS = false;
   ensUpd.hold = false;
-  if (overlay) overlay.hidden = true;
-  if (banner) banner.hidden = false;
-  toast('update timed out — check `ensemble logs`', 6000, 'err');
+  while (true) {
+    await new Promise(r => setTimeout(r, 3000));
+    try {
+      const resp = await fetch('/api/config');
+      const cfg = resp.ok ? await resp.json() : null;
+      if (cfg && cfg.pid && cfg.pid !== startPid) { ensUpd.reload(); return; }
+    } catch { /* still down */ }
+  }
+}
+function resetUpdateModal() {
+  const modal = document.querySelector('#update-overlay .update-modal');
+  if (!modal) return;
+  modal.classList.remove('is-failed');
+  modal.querySelector('h3').textContent = 'Updating Ensemble';
+  document.getElementById('update-hint').textContent =
+    'The server will restart and the page will reload automatically.';
+  document.getElementById('update-close').hidden = true;
+}
+function showUpdateFailed(logPath) {
+  const overlay = document.getElementById('update-overlay');
+  const modal = overlay && overlay.querySelector('.update-modal');
+  if (!modal) return;
+  modal.classList.add('is-failed');
+  modal.querySelector('h3').textContent = 'The hub did not come back';
+  setUpdateStage(`See ${tildeify(logPath) || 'the hub log'}`);
+  document.getElementById('update-hint').textContent =
+    'The last lines there say why. This page reloads if the hub starts again.';
+  const close = document.getElementById('update-close');
+  close.hidden = false;
+  close.onclick = () => { overlay.hidden = true; };
+  close.focus();
 }
 function renderRuntimeConfig() {
   if (!RUNTIME_CFG) return;
