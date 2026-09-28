@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import signal
 import time
 from pathlib import Path
@@ -26,14 +25,8 @@ HOME = Path.home()
 # inside any single agent's config dir. (Agent adapters still read each agent's
 # own data, e.g. ~/.claude/projects or ~/.codex/sessions.)
 DASHBOARD_DIR = HOME / ".ensemble"
-_LEGACY_DASHBOARD_DIR = HOME / ".claude" / "dashboard"
-# One-time migration from the old Claude-nested location, so existing rooms,
-# labels and the agent registry carry over on first run.
-if not DASHBOARD_DIR.exists() and _LEGACY_DASHBOARD_DIR.exists():
-    try:
-        shutil.move(str(_LEGACY_DASHBOARD_DIR), str(DASHBOARD_DIR))
-    except OSError:
-        pass
+# The predecessor's state (~/.claude/dashboard) is copied in by
+# legacy_install.migrate() when the hub starts, never moved.
 PRESETS_DIR = DASHBOARD_DIR / "iterm-presets"   # macOS / iTerm only
 CS_ROOT = HOME / "cs"
 # The product name lives in ONE place; user-facing folder names derive from it,
