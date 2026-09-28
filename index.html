@@ -3216,7 +3216,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      (pd-fly-over), it lies over the middle instead, as a float. The library
      sizes it only against 85% of the dock: an ask for Dock. */
   #po-dock:not(.dk-narrow) .dk-main { min-width: var(--pd-main-min, 360px); }
-  #po-dock:not(.dk-narrow) .dk-flyout.dk-fly-beside { max-width: calc(100% - var(--dk-strip) - var(--pd-main-min, 360px)); }
+  #po-dock:not(.dk-narrow) .dk-flyout.dk-fly-beside { max-width: calc(100% - var(--dk-strip) - var(--pd-main-min, 360px)); min-width: min(300px, calc(100% - var(--dk-strip))); }
   #po-dock.pd-fly-over:not(.dk-narrow) .dk-main { margin-right: 0 !important; }
   #po-dock.pd-fly-over:not(.dk-narrow) .dk-flyout.dk-fly-beside { max-width: none; box-shadow: var(--e-200); border-left: 1px solid var(--border-strong); }
   /* The middle is the conversation alone: no title bar over it. */
@@ -10137,6 +10137,10 @@ function pdPopChat(out) {
   ph.appendChild(own);
 }
 (() => {
+  // The dock's width changes without a layout change or a window resize: it
+  // is shown after it is made (a reload measures it hidden), the task list
+  // comes and goes. What the middle needs is fitted again each time.
+  if (window.ResizeObserver) new ResizeObserver(() => { if (PD.dock && !PD.dock.narrow()) pdToolsFit(); }).observe(PD_ROOT);
   // Whether Points is on screen also changes without a layout change (a strip
   // panel slid out or back): those are class and style changes in the dock.
   new MutationObserver(() => {

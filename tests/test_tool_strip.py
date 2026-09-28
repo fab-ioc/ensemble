@@ -270,9 +270,10 @@ async function main() {
     {
       const PINNED = id => `(() => { const box = e => { const b = e.getBoundingClientRect(); return { x: Math.round(b.left), w: Math.round(b.width), r: Math.round(b.right) }; };
         const st = PD.els[${JSON.stringify('${id}')}].closest('.dk-stack'), main = document.querySelector('#po-dock .dk-main'), fly = document.querySelector('#po-dock .dk-flyout.open');
-        const acts = [...st.querySelectorAll(':scope > .dk-head [data-dk-act]')].map(b => { const r = b.getBoundingClientRect(), h = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        const hits = head => [...head.querySelectorAll('[data-dk-act]')].map(b => { const r = b.getBoundingClientRect(), h = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
           return { act: b.dataset.dkAct, hit: !!h && b.contains(h) }; });
-        return { vw: innerWidth, main: box(main), tool: box(st), chat: box(PD.els['po-chat']), fly: fly ? box(fly) : null, flyOpen: PD.dock.flyOpen(), auto: PD.dock.isAuto(${JSON.stringify('${id}')}), acts,
+        const acts = hits(st.querySelector(':scope > .dk-head')), flyActs = fly ? hits(fly.querySelector('.dk-head')) : [];
+        return { vw: innerWidth, main: box(main), tool: box(st), chat: box(PD.els['po-chat']), fly: fly ? box(fly) : null, flyOpen: PD.dock.flyOpen(), auto: PD.dock.isAuto(${JSON.stringify('${id}')}), acts, flyActs,
           over: document.getElementById('po-dock').classList.contains('pd-fly-over') }; })()`.split('${id}').join(id);
       const p = await page(1024, 768);
       await go(p, A.proj); await poReady(p); await sleep(400);
@@ -284,6 +285,11 @@ async function main() {
       await p.click(tool('workspace')); await sleep(600);
       out.pin1024Fly = await p.evalIn(PINNED('changes'));
       await p.shot('strip-1024-pinned-files-over');
+      // A reload at 1024: the same, measured once the dock shows.
+      await p.evalIn('ensUpd.reload(); 0'); await sleep(1500); await p.ready();
+      await go(p, A.proj, true); await poReady(p);
+      await p.until('PD.dock.flyOpen() === "workspace"', 20000); await sleep(600);
+      out.pin1024Reload = await p.evalIn(PINNED('changes'));
       await p.close();
       const q = await page(1728, 1117);
       await go(q, A.proj); await poReady(q); await sleep(400);
@@ -568,6 +574,12 @@ class TheStrip(unittest.TestCase):
         self.assertTrue(o["over"], "at 1024 there is no room beside both: it lies over them")
         self.assertEqual((o["main"], o["tool"]), (self.got["pin1024"]["main"], self.got["pin1024"]["tool"]), "the middle keeps its width")
         self.assertEqual(o["fly"]["r"], o["main"]["r"])
+        r = self.got["pin1024Reload"]
+        self.assertEqual(r["flyOpen"], "workspace", "remembered across the reload")
+        self.assertTrue(r["over"], "measured once the dock shows")
+        self.assertGreaterEqual(r["fly"]["w"], 300, "a usable width, not a sliver")
+        self.assertTrue(r["flyActs"] and all(a["hit"] for a in r["flyActs"]), r["flyActs"])
+        self.assertGreaterEqual(r["chat"]["w"], 360)
         g = self.got["pin1440"]
         self.assertEqual(g["flyOpen"], "workspace")
         self.assertFalse(g["over"], "room for Files beside the conversation and Changes")
