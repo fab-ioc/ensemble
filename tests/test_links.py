@@ -119,7 +119,7 @@ CASES = [
     "`py tests/test_links.py`",
     "`git add Documents/x.md`",
     # 39-: P70 - a Markdown link target is percent-encoded like a URL.
-    "[Final report](C:/Users/x/Documents/%23114%20Market-data%20manager.md)",
+    "[Final report](D:/work/Documents/%23114%20Market-data%20manager.md)",
     "[notes](D:/w/a%20b/c.md)",
     "[bad](C:/x/100%zz.md)",
 ]
@@ -163,7 +163,7 @@ class GeneratedLinks(unittest.TestCase):
     def test_markdown_link_target_is_percent_decoded(self):
         r = self.render("http://hub-host:8765/")
         self.assertEqual(viewer_path(hrefs(r[CASES[39]])[0])[0],
-                         "C:/Users/x/Documents/#114 Market-data manager.md")
+                         "D:/work/Documents/#114 Market-data manager.md")
         self.assertEqual(viewer_path(hrefs(r[CASES[40]])[0])[0], "D:/w/a b/c.md")
         self.assertEqual(viewer_path(hrefs(r[CASES[41]])[0])[0], "C:/x/100%zz.md")
 
