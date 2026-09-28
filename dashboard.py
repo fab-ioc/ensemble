@@ -24,6 +24,7 @@ import getpass
 import hashlib
 import hmac
 import json
+import mimetypes
 import os
 import plistlib
 import random
@@ -41,7 +42,7 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, parse_qsl, quote, urlencode, urlparse
+from urllib.parse import parse_qs, parse_qsl, quote, unquote, urlencode, urlparse
 
 # All OS-specific behavior (terminal control, process introspection, desktop
 # integration) lives behind a platform backend, selected by sys.platform.
@@ -4715,6 +4716,70 @@ def resolve_file_ref(raw: str, room_id: str = "", cwd: str = "") -> Path | None:
     return _find_file_by_tail(rel, bases)
 
 
+_FILE_AT_DOT = {"", ".", ".."}
+
+
+def resolve_file_at(tail: str) -> Path | None:
+    """The file a rendered page's own relative resource resolves to, from a
+    GET /api/file-at/<tail> whose <tail> is everything after that prefix,
+    still percent-encoded: ``<style>/<folder segments...>/<relative
+    segments...>``. ``style`` is "w" for a Windows drive (segments: its
+    letter as "C:", then its folders) or "p" for a POSIX absolute path
+    (segments: its folders, from "/"). fileview.html's <base href> mirrors a
+    file's real folder one path segment at a time, so the browser's own URL
+    resolution turns a stylesheet's "../shared/x.css" into the sibling folder
+    it means, dot segments collapsed before the request is ever sent — a
+    literal "." or ".." segment reaching here can only be a crafted request,
+    refused outright (an encoded slash or backslash *inside* a segment is
+    split out first, so a "today%2F.." trick is caught the same way — this
+    layer is belt only; workspace_access_ok is the actual boundary below).
+    The resolved file must still fall inside workspace_access_ok (a
+    registered project, a task folder, or ~/cs), the same rule /api/dir and
+    /api/ws/file already apply."""
+    raw = [s for s in tail.split("/") if s != ""]
+    if len(raw) < 2:
+        return None
+    try:
+        segs = [unquote(s, errors="strict") for s in raw]
+    except (UnicodeDecodeError, ValueError):
+        return None
+    if any(part in _FILE_AT_DOT for s in segs for part in re.split(r"[\\/]", s)):
+        return None
+    style, rest = segs[0], segs[1:]
+    if style == "w" and rest and re.fullmatch(r"[A-Za-z]:", rest[0]):
+        root, parts = rest[0] + "\\", rest[1:]
+    elif style == "p":
+        root, parts = "/", rest
+    else:
+        return None
+    if not parts:
+        return None
+    try:
+        real = os.path.realpath(os.path.join(root, *parts))
+    except OSError:
+        return None
+    if not workspace_access_ok(real):
+        return None
+    fp = Path(real)
+    return fp if fp.is_file() else None
+
+
+_FILE_AT_MIME_EXTRA = {".mjs": "text/javascript"}
+
+
+def file_at_mime(path: Path) -> str:
+    """The Content-Type for a file served through /api/file-at/: text kinds
+    (css, js, svg…) get a charset, so a stylesheet's non-ASCII bytes decode
+    right; anything mimetypes doesn't know falls back to a generic stream."""
+    ext = path.suffix.lower()
+    if ext in _FILE_AT_MIME_EXTRA:
+        return _FILE_AT_MIME_EXTRA[ext] + "; charset=utf-8"
+    guess, _ = mimetypes.guess_type(path.name)
+    if not guess:
+        return "application/octet-stream"
+    return guess + "; charset=utf-8" if guess.startswith("text/") else guess
+
+
 _FILE_SEARCH_SKIP = {"node_modules", ".venv", "venv", "__pycache__", "target", "dist",
                      "build", ".idea", ".tox", "site-packages", ".git"}
 
@@ -9296,6 +9361,25 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 # Everything else (md, code, text, unknown) as inline UTF-8 text.
                 self._send_file(fp, "text/plain; charset=utf-8")
+            return
+        if p.startswith("/api/file-at/"):
+            # A rendered page's own picture, stylesheet or font, from the
+            # <base href> fileview.html gives its srcdoc — see resolve_file_at.
+            # Unlike /api/file, this path can be opened directly (a pasted
+            # link, a bookmark): an .html file under it would otherwise run
+            # as a same-origin document with the hub's own APIs and token
+            # cookie. CSP sandbox (ignored for non-document responses like
+            # images and CSS) strips that down to an opaque origin, no
+            # script and no same-origin access, same as the srcdoc frame's
+            # own sandbox already gives it when it's not top-level.
+            fp = resolve_file_at(p[len("/api/file-at/"):])
+            if fp is None:
+                self._send_json(404, {"error": "not_found"})
+                return
+            self._send_file(fp, file_at_mime(fp), (
+                ("Content-Security-Policy", "sandbox"),
+                ("X-Content-Type-Options", "nosniff"),
+            ))
             return
         if p == "/api/platform":
             self._send_json(200, BACKEND.info())
