@@ -995,7 +995,8 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
     put = room.get("openToHuman")
     put = put if put and put.get("from") == identity else None
     q = (put or {}).get("text", "")
-    asked = {"quote": q, "since": float(put.get("ts") or 0), "askId": put.get("id", "")} if put else {}
+    asked = {"quote": q, "since": float(put.get("ts") or 0), "askId": put.get("id", ""),
+             "askKind": put.get("kind", "")} if put else {}
     still, still_extra = "", {}
     if put and put["kind"] != "completed":
         still = f"; {_ASK_NAMES.get(put['kind'], 'its message to you')} is still open: “{q}”"
@@ -1267,7 +1268,7 @@ def _items() -> list[dict]:
         if extra.get("since"):
             item["askedAt"] = float(extra["since"])     # the pages say "since 15:55"
         for k in ("quote", "cause", "exitCode", "lastLines", "waitedSeconds", "askId",
-                  "ptyIds", "heldPoMessages"):
+                  "askKind", "ptyIds", "heldPoMessages"):
             if k in extra and extra[k] not in (None, ""):
                 item[k] = extra[k]
         if held and "heldPoMessages" not in item:

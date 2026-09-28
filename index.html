@@ -770,7 +770,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .seg button.active { background: var(--selected-bg); color: var(--selected-fg); font-weight: 500; }
   main {
     padding: 8px 20px 40px;
-    transition: padding-right .22s cubic-bezier(0.16, 1, 0.3, 1);
+    transition: padding-right .22s cubic-bezier(0.16, 1, 0.3, 1), padding-left .22s cubic-bezier(0.16, 1, 0.3, 1);
   }
   table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
   thead { position: sticky; top: var(--top-h); background: var(--bg); z-index: 5; }
@@ -2159,6 +2159,62 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     grid-column: 2 / -1; grid-row: 2; font-size: var(--fs-200); color: var(--fg-subtle);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+  /* --- Task switcher ------------------------------------------------------
+     Every project's live tasks, left of any screen (#switcher; the script's
+     "Task switcher" block). Pinned it is docked: a border, no shadow, and the
+     page makes room. Unpinned it floats over the page (--e-200). */
+  body { --sw-w: 288px; }
+  #switcher {
+    position: fixed; left: 0; top: var(--top-h); bottom: 0; width: var(--sw-w); z-index: 25;
+    display: flex; flex-direction: column; min-height: 0;
+    background: var(--surface); border-right: 1px solid var(--border); box-shadow: var(--e-200);
+  }
+  #switcher[hidden] { display: none; }
+  body.sw-pinned #switcher { z-index: 15; box-shadow: none; }
+  body.sw-pinned main { padding-left: calc(var(--sw-w) + 20px); }
+  #sw-btn[aria-expanded="true"] { background: var(--selected-bg); color: var(--selected-fg); }
+  .sw-head {
+    flex: 0 0 auto; display: flex; align-items: center; gap: var(--s-100);
+    padding: var(--s-200) var(--s-200) var(--s-200) var(--s-400); border-bottom: 1px solid var(--border);
+  }
+  .sw-head h2 { margin: 0; font-size: var(--fs-300); line-height: 24px; font-weight: 600; color: var(--fg); }
+  .sw-sub { margin-right: auto; font-size: var(--fs-100); color: var(--fg-muted); }
+  .sw-btn {
+    height: 24px; min-width: 24px; padding: 0 var(--s-200); border: 0; border-radius: var(--r-200);
+    background: transparent; color: var(--fg-subtle); font: inherit; font-size: var(--fs-200); cursor: pointer;
+  }
+  .sw-btn:hover { background: var(--hover); color: var(--fg); }
+  .sw-btn[aria-pressed="true"] { background: var(--selected-bg); color: var(--selected-fg); }
+  .sw-btn.x { width: 24px; padding: 0; font-size: var(--fs-400); line-height: 1; }
+  .sw-btn:focus-visible, .sw-row:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  #sw-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 var(--s-200) var(--s-400); }
+  .sw-ghead {
+    display: flex; align-items: center; gap: var(--s-200); margin: var(--s-300) var(--s-200) var(--s-100);
+    font-size: var(--fs-100); line-height: 16px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .05em; color: var(--fg-subtle);
+  }
+  .sw-n { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+  .sw-none { margin: 0 var(--s-200) var(--s-200); font-size: var(--fs-200); color: var(--fg-muted); }
+  .sw-row {
+    display: flex; flex-direction: column; gap: var(--s-050); width: 100%; text-align: left;
+    padding: var(--s-200); border: 0; border-radius: var(--r-200);
+    background: transparent; color: var(--fg); font: inherit; cursor: pointer;
+  }
+  .sw-row:hover { background: var(--hover); }
+  .sw-row.on { background: var(--selected-bg); }
+  /* --fg-muted on --selected-bg is 4.4:1 in light; subtle keeps it over 4.5. */
+  .sw-row.on .sw-since, .sw-row.on .sw-proj { color: var(--fg-subtle); }
+  .sw-title {
+    font-size: var(--fs-300); line-height: 20px; color: var(--fg);
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .sw-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-050) var(--s-200); min-width: 0; }
+  .sw-meta .loz { align-self: center; }
+  .sw-since { font-size: var(--fs-100); color: var(--fg-muted); white-space: nowrap; }
+  .sw-proj {
+    margin-left: auto; max-width: 100%; font-size: var(--fs-100); color: var(--fg-muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   /* --- Issue view --------------------------------------------------------- */
   /* One row that says what this task IS: where it sits, how urgent, what is
      running, whether it needs you. The old row was ten chips of mixed kinds
@@ -2805,7 +2861,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .bar-sep { display: none; }
     #plan-usage-slot { display: none; }
     .me-item.me-phone { display: flex; }
-    #bar-back, #search-open, #notif-btn, #me-btn {
+    #bar-back, #sw-btn, #search-open, #notif-btn, #me-btn {
       width: var(--touch-min); min-width: var(--touch-min); height: var(--touch-min);
       padding: 0; justify-content: center; border-color: transparent; border-radius: var(--r-200);
     }
@@ -2818,15 +2874,15 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
        none of it, so the row steps aside then. --header-h follows, and with
        it everything that hangs off the bar. */
     /* The wordmark leads row one, on home and in a project alike (125px; row
-       one's controls take 262px); below 410px it is the icon alone. The rest
-       of where you are is row two's. */
+       one's controls take 306px since Tasks joined them); below 440px it is
+       the icon alone. The rest of where you are is row two's. */
     .bar-where { display: contents; }
     #proj-switch, #bar-here { display: none; }
     header h1 { order: 0; }
     #bar-home { height: var(--touch-min); min-width: var(--touch-min); justify-content: center; padding: 0 var(--s-200); }
     header h1 .bar-word { display: block; }
     header h1 .logo { display: none; }
-    @media (max-width: 409px) {
+    @media (max-width: 439px) {
       header h1 .bar-word { display: none; }
       header h1 .logo { display: block; }
     }
@@ -2873,6 +2929,14 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
        leaves it zoomed: every field is --fs-400 here. */
     input, select, textarea { font-size: var(--fs-400) !important; }
 
+    /* The task switcher is a full-screen list under the bar, never pinned. */
+    #switcher {
+      right: 0; width: auto; bottom: auto; height: calc(var(--vv-h, 100dvh) - var(--top-h));
+      border-right: 0; box-shadow: none;
+    }
+    #sw-pin { display: none; }
+    .sw-btn.x { width: var(--touch-min); height: var(--touch-min); }
+    .sw-row { min-height: var(--touch-min); padding: var(--s-200) var(--s-300); }
     /* Trays and menus fit the screen, and their rows are finger-sized. */
     #notif-tray, #usage-tray, #settings-panel { left: var(--s-200); right: var(--s-200); width: auto; }
     .me-item, .pm-item, .fm-item, .notif-item, .wf-item, .pr-item, .ov-menu button { min-height: var(--touch-min); }
@@ -3256,6 +3320,12 @@ window.DOC_LISTENERS_PAUSED = false;
       <span id="usage-chip-body"></span>
     </button>
   </div>
+  <!-- Tasks: every project's live tasks, what needs you, what is running and
+       what is ready to review (#switcher). Global, like the bell beside it: it
+       reads the same on every page; its list pins to the left of any screen. -->
+  <button id="sw-btn" class="bar-btn icon" type="button" aria-controls="switcher" aria-expanded="false"
+          title="Tasks in every project: what needs you, what is running, what is ready to review"
+          aria-label="Tasks in every project"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"><path d="M2.5 3.5h.5M6 3.5h7.5M2.5 8h.5M6 8h7.5M2.5 12.5h.5M6 12.5h7.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
   <!-- Notifications: tasks that need a human. Self-contained under the `notif`
        name; project status bars open the full view of the same data. -->
   <button id="notif-btn" class="bar-btn icon" title="What needs you" aria-label="What needs you">
@@ -3265,6 +3335,14 @@ window.DOC_LISTENERS_PAUSED = false;
           aria-haspopup="true" aria-expanded="false"><span id="me-initials">··</span></button>
   <button id="new-btn" title="Create a task">Create</button>
 </header>
+<aside id="switcher" hidden aria-label="Tasks in every project">
+  <div class="sw-head">
+    <h2>Tasks</h2><span class="sw-sub">every project</span>
+    <button id="sw-pin" class="sw-btn" type="button" aria-pressed="false">Pin</button>
+    <button id="sw-close" class="sw-btn x" type="button" title="Close" aria-label="Close the task list">×</button>
+  </div>
+  <div id="sw-list"></div>
+</aside>
 <div id="search-help-pop" hidden>
   <div class="shp-title">Search syntax</div>
   <dl>
@@ -5336,6 +5414,104 @@ function needsYouHtml() {
   }).join('');
   return `<div class="dest-head"><h2>Needs you</h2><span class="dest-count">${items.length}</span></div>${groups}`;
 }
+
+// ---- Task switcher: begin ---------------------------------------------------
+// Every project's live tasks in one narrow list: what needs you, what is
+// running, what is ready to review (the CEO's P58, after JetBrains Air). It is
+// the "what now" view; the board stays the planning view. It reads what the
+// page already polls, /api/sessions (every project's rows) and /api/attention
+// (the bell's items), and adds no poller. A task opens in its panel over the
+// page you are on. tests/test_task_switcher.py runs this block in Node.
+const SW_KEY = 'cd-switcher';          // 'pinned' while pinned, per browser
+const SW_GROUPS = [
+  ['needs', 'Needs you', 'Nothing is waiting on you.'],
+  ['running', 'Running', 'No task is working right now.'],
+  ['review', 'Ready to review', 'Nothing is waiting for your review.'],
+];
+// A finished report waits for a look, not an answer: it is ready to review.
+// Anything else the bell lists (blocked, a question, a prompt, a death, a
+// stall) needs you.
+function swReported(a) { return !!a && a.state === 'waiting_for_you' && a.askKind === 'completed'; }
+function swTone(state) {
+  return (state === 'agent_gone' || state === 'blocked') ? 'danger' : state === 'stalled' ? 'neutral' : 'warning';
+}
+// The three groups, from the rows and the bell's items. `poRooms` are the POs'
+// rooms (a PO is no task: it shows only when the bell lists it), `projOf(rid)`
+// a room's project. Needs you is oldest first, as is Ready to review; Running
+// goes by project and number, so it holds still while tasks start and stop.
+function swGroups(rows, items, poRooms, projOf) {
+  const byRoom = new Map((rows || []).filter(r => r && r.roomId).map(r => [r.roomId, r]));
+  const itemOf = new Map((items || []).map(it => [it.roomId, it]));
+  const g = { needs: [], running: [], review: [] };
+  for (const it of items || []) {
+    if (!it || !it.roomId || swReported(it)) continue;
+    const r = byRoom.get(it.roomId) || null;
+    if (r && (r.draft || r.archived)) continue;
+    g.needs.push({ key: it.roomId, row: r, it, po: !!it.isPo, project: it.project || '',
+                   at: Number(it.askedAt || it.since) || 0 });
+  }
+  const listed = new Set(g.needs.map(e => e.key));
+  const nameOf = rid => { const pj = projOf ? projOf(rid) : null; return (pj && pj.name) || ''; };
+  for (const r of byRoom.values()) {
+    if (!r.headless || r.draft || r.archived || listed.has(r.roomId) || (poRooms && poRooms.has(r.roomId))) continue;
+    const a = itemOf.get(r.roomId) || r.attention || null;
+    if (r.isLive && r.status === 'busy') {
+      g.running.push({ key: r.roomId, row: r, it: null, project: nameOf(r.roomId), at: 0 });
+    } else if (workflowOf(r) !== 'done' && (workflowOf(r) === 'inreview' || swReported(a))) {
+      g.review.push({ key: r.roomId, row: r, it: swReported(a) ? a : null, project: nameOf(r.roomId),
+                      at: Number(swReported(a) && (a.askedAt || a.since)) || Number(r.updatedAt) || 0 });
+    }
+  }
+  const byAge = (a, b) => (a.at - b.at) || String(a.key).localeCompare(String(b.key));
+  g.needs.sort(byAge);
+  g.review.sort(byAge);
+  g.running.sort((a, b) => a.project.localeCompare(b.project) || ((a.row.no || 0) - (b.row.no || 0))
+                           || String(a.key).localeCompare(String(b.key)));
+  return g;
+}
+// Nothing moves under the pointer: while it is over the list, every entry
+// keeps the group and place it had (`shown`: group -> keys), its content
+// fresh; newcomers go at the end of their group, and a task that left every
+// group leaves. The board's freeze, for this list.
+function swFreeze(g, shown) {
+  if (!shown) return g;
+  const all = new Map();
+  for (const k of Object.keys(g)) for (const e of g[k]) all.set(e.key, e);
+  const out = { needs: [], running: [], review: [] }, placed = new Set();
+  for (const k of Object.keys(out)) for (const key of shown[k] || []) {
+    if (all.has(key) && !placed.has(key)) { out[k].push(all.get(key)); placed.add(key); }
+  }
+  for (const k of Object.keys(out)) for (const e of g[k]) if (!placed.has(e.key)) out[k].push(e);
+  return out;
+}
+function swRowHtml(e, group, selected) {
+  const r = e.row || {};
+  const it = e.it;
+  // A task the rows do not hold (past the newest 300) still has the bell's words.
+  const title = e.po ? 'PO' : e.row ? rowTitle(r) : (it && it.title) || '(task)';
+  const no = e.po ? '' : e.row ? taskNoText(r, true) : (it && it.ref) || '';
+  const loz = group === 'needs' && it
+    ? `<span class="loz ${swTone(it.state)}" title="${esc(it.reason || '')}">${esc(ATTN_LABEL[it.state] || it.state)}</span>` : '';
+  const since = e.at && group !== 'running' ? `<span class="sw-since">${esc(sinceClock(e.at))}</span>` : '';
+  const run = e.row ? runChip(r) : '';
+  const tip = [no, title, e.project].filter(Boolean).join(' · ');
+  const data = e.po ? `data-po="${esc(it.projectId || '')}"` : `data-sid="${esc(r.sessionId || e.key)}"`;
+  return `<button type="button" class="sw-row${selected ? ' on' : ''}" ${data} data-room="${esc(e.key)}" title="${esc(tip)}"${selected ? ' aria-current="true"' : ''}>
+    <span class="sw-title">${e.row ? unreadDotHtml(r) : ''}${no ? `<span class="tno">${esc(no)}</span>` : ''}${esc(title)}</span>
+    <span class="sw-meta">${loz}${since}${run}${e.row ? changesChipHtml(r, 'ccost') : ''}<span class="sw-proj">${esc(e.project)}</span></span>
+  </button>`;
+}
+function swListHtml(g, selectedSid) {
+  return SW_GROUPS.map(([k, name, none]) => {
+    const list = g[k] || [];
+    const rows = list.map(e => swRowHtml(e, k, !!selectedSid && !e.po && e.row && e.row.sessionId === selectedSid)).join('');
+    return `<section class="sw-group" data-group="${k}" aria-label="${esc(name)}">
+      <h3 class="sw-ghead"><span>${esc(name)}</span><span class="sw-n">${list.length}</span></h3>
+      ${rows || `<p class="sw-none">${esc(none)}</p>`}
+    </section>`;
+  }).join('');
+}
+// ---- Task switcher: end -----------------------------------------------------
 
 // Placement is frozen while the mouse is over the board; content is not. This
 // is what keeps "what is running now" true under the cursor — a dot going
@@ -11917,6 +12093,7 @@ function renderPoDock(pj) {
 
 function renderRows() {
   syncProjSwitch();
+  swRender();
   // A project with a PO is a Dock of panels, once the library has loaded.
   const dockPj = poDockProject();
   if (dockPj && !PD.lib) pdLoad();
@@ -12791,6 +12968,7 @@ function renderAttention() {
   // The rows carry their own marker, so redraw the list when the set changed.
   const sig = items.map(i => i.roomId + ':' + i.state).join('|');
   if (sig !== _attnSig) { _attnSig = sig; renderRows(); }
+  else swRender();
 }
 
 function notifItemHtml(it) {
@@ -12841,6 +13019,79 @@ $('#notif-all').addEventListener('click', () => {
 document.addEventListener('click', (ev) => {
   if (ev.target.closest('#notif-btn') || ev.target.closest('#notif-tray')) return;
   $('#notif-tray').hidden = true;
+});
+
+// The task switcher's column (the pure half is the "Task switcher" block).
+// Opened from the bar's Tasks button; pinned, it sits left of every screen
+// and the page makes room for it; unpinned, it floats over the page and
+// closes once a task is picked. The pin (and whether a pinned list was left
+// open) is remembered per browser. A phone shows it full screen, never pinned.
+var SW_OPEN = false, SW_SHOWN = null;   // var: renderRows may run before this line
+function swPinned() { try { return localStorage.getItem(SW_KEY) === 'pinned'; } catch (e) { return false; } }
+function swDocked() { return SW_OPEN && swPinned() && !isPhone(); }
+function swRemember(key, val) { try { localStorage.setItem(key, val); } catch (e) {} }
+function swPaint() {
+  const el = $('#switcher'), btn = $('#sw-btn'), pin = $('#sw-pin');
+  if (!el) return;
+  el.hidden = !SW_OPEN;
+  document.body.classList.toggle('sw-open', SW_OPEN);
+  document.body.classList.toggle('sw-pinned', swDocked());
+  btn.setAttribute('aria-expanded', String(SW_OPEN));
+  pin.setAttribute('aria-pressed', String(swPinned()));
+  pin.title = swPinned() ? 'Unpin: float over the page, and close once a task is picked'
+                         : 'Pin to the left of every screen';
+  swRender();
+}
+function swToggle(open) {
+  SW_OPEN = open === undefined ? !SW_OPEN : !!open;
+  if (!SW_OPEN) SW_SHOWN = null;
+  if (swPinned() && !isPhone()) swRemember(SW_KEY + '-open', SW_OPEN ? '1' : '');
+  swPaint();
+}
+function swRender() {
+  if (!SW_OPEN) return;
+  const box = $('#sw-list'), el = $('#switcher');
+  const g = swFreeze(swGroups(ALL_ROWS, attentionItems(), currentPoRooms(), projectOfRoom),
+                     el.matches(':hover') ? SW_SHOWN : null);
+  SW_SHOWN = Object.fromEntries(Object.entries(g).map(([k, list]) => [k, list.map(e => e.key)]));
+  const a = document.activeElement;
+  const had = a && box.contains(a) && a.dataset.room;
+  if (writeSlot(box, swListHtml(g, SELECTED_SID)) && had) {
+    const back = box.querySelector(`.sw-row[data-room="${CSS.escape(had)}"]`);
+    if (back) back.focus();
+  }
+}
+$('#sw-btn').addEventListener('click', (ev) => {
+  ev.stopPropagation();
+  swToggle();
+  if (SW_OPEN) { const first = $('#sw-list .sw-row'); if (first && ev.detail === 0) first.focus(); }
+});
+$('#switcher').addEventListener('click', (ev) => {
+  if (ev.target.closest('#sw-close')) { swToggle(false); $('#sw-btn').focus(); return; }
+  if (ev.target.closest('#sw-pin')) {
+    swRemember(SW_KEY, swPinned() ? '' : 'pinned');
+    swRemember(SW_KEY + '-open', swPinned() ? '1' : '');
+    swPaint();
+    return;
+  }
+  const row = ev.target.closest('.sw-row');
+  if (!row) return;
+  // Over the page you are on: a task opens in its panel, the PO chat stays
+  // where it is. A PO opens as the bell opens it.
+  if (row.dataset.po) openPoOf(projectById(row.dataset.po));
+  else openDetail(row.dataset.sid);
+  if (!swDocked()) swToggle(false);
+});
+// Unpinned, it goes when you click beside it or press Escape, as a menu does.
+document.addEventListener('click', (ev) => {
+  if (!SW_OPEN || swDocked()) return;
+  if (ev.target.closest('#switcher, #sw-btn, #modal')) return;
+  swToggle(false);
+});
+document.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Escape' || !SW_OPEN || swDocked() || ev.defaultPrevented) return;
+  swToggle(false);
+  $('#sw-btn').focus();
 });
 // Poll while the tab is in front. Nothing here interrupts: no sound, no desktop
 // notification, no stealing focus — the badge just changes.
@@ -13962,6 +14213,15 @@ const isPhone = () => window.matchMedia(MOBILE_MQ).matches;
   const mq = window.matchMedia(MOBILE_MQ);
   const redraw = () => { BOARD_SIG = ''; renderRows(); };
   if (mq.addEventListener) mq.addEventListener('change', redraw); else if (mq.addListener) mq.addListener(redraw);
+})();
+// The task switcher: a pinned list comes back open, and crossing into or out
+// of the phone layout docks or frees it (it is never pinned on a phone).
+(() => {
+  const mq = window.matchMedia(MOBILE_MQ);
+  const cross = () => swPaint();
+  if (mq.addEventListener) mq.addEventListener('change', cross); else if (mq.addListener) mq.addListener(cross);
+  try { SW_OPEN = swPinned() && localStorage.getItem(SW_KEY + '-open') !== '' && !isPhone(); } catch (e) {}
+  swPaint();
 })();
 // The on-screen keyboard. Android (with interactive-widget=resizes-content in
 // the viewport tag) shrinks the page when it opens; iOS instead shrinks only the
