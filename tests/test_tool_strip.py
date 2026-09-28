@@ -266,6 +266,35 @@ async function main() {
       out.fit.wide = await p.evalIn(STRIP);
       await p.close();
     }
+    // ---- a pinned tool: all of it on screen, its controls reachable; a tool opened beside it too
+    {
+      const PINNED = id => `(() => { const box = e => { const b = e.getBoundingClientRect(); return { x: Math.round(b.left), w: Math.round(b.width), r: Math.round(b.right) }; };
+        const st = PD.els[${JSON.stringify('${id}')}].closest('.dk-stack'), main = document.querySelector('#po-dock .dk-main'), fly = document.querySelector('#po-dock .dk-flyout.open');
+        const acts = [...st.querySelectorAll(':scope > .dk-head [data-dk-act]')].map(b => { const r = b.getBoundingClientRect(), h = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+          return { act: b.dataset.dkAct, hit: !!h && b.contains(h) }; });
+        return { vw: innerWidth, main: box(main), tool: box(st), chat: box(PD.els['po-chat']), fly: fly ? box(fly) : null, flyOpen: PD.dock.flyOpen(), auto: PD.dock.isAuto(${JSON.stringify('${id}')}), acts,
+          over: document.getElementById('po-dock').classList.contains('pd-fly-over') }; })()`.split('${id}').join(id);
+      const p = await page(1024, 768);
+      await go(p, A.proj); await poReady(p); await sleep(400);
+      await p.click(tool('changes')); await sleep(400);
+      await p.click('#po-dock .dk-flyout.open [data-dk-act="pin"]'); await sleep(600);
+      out.pin1024 = await p.evalIn(PINNED('changes'));
+      await p.shot('strip-1024-pinned');
+      // No room beside both: Files lies over the middle, which keeps its width.
+      await p.click(tool('workspace')); await sleep(600);
+      out.pin1024Fly = await p.evalIn(PINNED('changes'));
+      await p.shot('strip-1024-pinned-files-over');
+      await p.close();
+      const q = await page(1728, 1117);
+      await go(q, A.proj); await poReady(q); await sleep(400);
+      await c.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, q.sessionId); await sleep(600);
+      await q.click(tool('changes')); await sleep(400);
+      await q.click('#po-dock .dk-flyout.open [data-dk-act="pin"]'); await sleep(600);
+      await q.click(tool('workspace')); await sleep(600);
+      out.pin1440 = await q.evalIn(PINNED('changes'));
+      await q.shot('strip-1440-pinned-and-files');
+      await q.close();
+    }
     // ---- a phone keeps its tabs
     {
       const q = await page(430, 932, true);
@@ -523,6 +552,27 @@ class TheStrip(unittest.TestCase):
         self.assertEqual(self.got["fit"]["1728"]["flyBox"]["w"], 760)
         self.assertEqual(self.got["fit"]["wide"]["flyBox"]["w"], 760, "its width again when there is room")
         self.assertLess(self.got["fit"]["1024"]["flyBox"]["w"], 760)
+
+    def test_a_pinned_tool_is_whole_and_its_controls_reachable(self):
+        for k in ("pin1024", "pin1440"):
+            g = self.got[k]
+            with self.subTest(k=k):
+                self.assertFalse(g["auto"], "pinned")
+                m, t = g["main"], g["tool"]
+                self.assertLessEqual(t["r"], m["r"], "the pinned tool is inside the middle, not clipped")
+                self.assertGreaterEqual(g["chat"]["w"], 360, "the conversation keeps its minimum")
+                self.assertGreaterEqual(t["w"], 300)
+                self.assertTrue(g["acts"] and all(a["hit"] for a in g["acts"]), g["acts"])
+        o = self.got["pin1024Fly"]
+        self.assertEqual(o["flyOpen"], "workspace")
+        self.assertTrue(o["over"], "at 1024 there is no room beside both: it lies over them")
+        self.assertEqual((o["main"], o["tool"]), (self.got["pin1024"]["main"], self.got["pin1024"]["tool"]), "the middle keeps its width")
+        self.assertEqual(o["fly"]["r"], o["main"]["r"])
+        g = self.got["pin1440"]
+        self.assertEqual(g["flyOpen"], "workspace")
+        self.assertFalse(g["over"], "room for Files beside the conversation and Changes")
+        self.assertLessEqual(g["main"]["r"], g["fly"]["x"], "Files covers nothing")
+        self.assertGreaterEqual(g["fly"]["w"], 300)
 
     def test_a_phone_keeps_its_tabs(self):
         g = self.got["phone"]

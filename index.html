@@ -3208,12 +3208,17 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .dk-strip-icon-btn .dk-strip-badge { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; border-radius: var(--r-100); }
   .dk-strip-btn.on .dk-strip-badge { background: var(--surface); }
   .dk-flyout.dk-fly-beside { border-top: 0; border-bottom: 0; }
-  /* The conversation keeps its 360px at any width: a tool's width is taken
-     when the dock is made (and a saved layout keeps it), so on a narrower
-     window the open tool gives way, and has its width again when there is
-     room. The library sizes it only against 85% of the dock: an ask for Dock. */
-  #po-dock:not(.dk-narrow) .dk-main { min-width: 360px; }
-  #po-dock:not(.dk-narrow) .dk-flyout.dk-fly-beside { max-width: calc(100% - var(--dk-strip) - 360px); }
+  /* The middle keeps what it needs at any width (--pd-main-min, pdToolsFit:
+     the conversation's 360px and the minimums of the tools pinned beside
+     it): a tool's width is taken when the dock is made (and a saved layout
+     keeps it), so on a narrower window the open tool gives way, and has its
+     width again when there is room. Where that leaves it too little room
+     (pd-fly-over), it lies over the middle instead, as a float. The library
+     sizes it only against 85% of the dock: an ask for Dock. */
+  #po-dock:not(.dk-narrow) .dk-main { min-width: var(--pd-main-min, 360px); }
+  #po-dock:not(.dk-narrow) .dk-flyout.dk-fly-beside { max-width: calc(100% - var(--dk-strip) - var(--pd-main-min, 360px)); }
+  #po-dock.pd-fly-over:not(.dk-narrow) .dk-main { margin-right: 0 !important; }
+  #po-dock.pd-fly-over:not(.dk-narrow) .dk-flyout.dk-fly-beside { max-width: none; box-shadow: var(--e-200); border-left: 1px solid var(--border-strong); }
   /* The middle is the conversation alone: no title bar over it. */
   #po-dock:not(.dk-narrow) .dk-stack:has(> .dk-body > .pd-chat) > .dk-head { display: none; }
   /* An open task is that conversation (pdPlaceTask): the task panel fills
@@ -9624,7 +9629,7 @@ function poPillClick() {
 const PD_IDS = ['po-chat', 'points', 'board', 'workspace', 'changes', 'spec'];
 const PD_TITLES = { 'po-chat': 'PO chat', points: 'Your asks', board: 'Board', workspace: 'Files', changes: 'Changes', spec: 'Spec' };
 const PD_MIN = { 'po-chat': { w: 360, h: 200 }, points: { w: 260, h: 120 }, board: { w: 320, h: 160 },
-                 workspace: { w: 480, h: 200 }, changes: { w: 420, h: 200 }, spec: { w: 320, h: 160 } };
+                 workspace: { w: 300, h: 200 }, changes: { w: 300, h: 200 }, spec: { w: 320, h: 160 } };
 // desk: the tool strip's (layout A step 3); the phone's narrow dock keeps its own.
 const PD_KEYS = { desk: 'cd-tool-strip', phone: 'cd-po-dock-phone' };
 // Layout A (#125), a desktop: the conversation in the middle (the PO's, or an
@@ -9925,7 +9930,7 @@ function pdEnsure() {
     modalSelector: '[role="dialog"], dialog, .dk-help-pop, .dcm',
     text: { empty: 'Every panel is on a strip at an edge or hidden: the Panels menu above shows them.' },
   }); } finally { window.DOC_LISTENERS_PAUSED = false; }
-  PD.dock.onChange(() => { pdKeepMiddle(); pdPlaceChat(); barCrumbs(); });
+  PD.dock.onChange(() => { pdKeepMiddle(); pdToolsFit(); pdPlaceChat(); barCrumbs(); });
   pdToolsFit();
   PD.dock.onShown(id => pdShown(id));
   // Before the chat panel comes back from its window: the window's own chat goes.
@@ -9987,8 +9992,24 @@ function pdToolOn(id) {
 // each panel. The spec is not one of them (a phone's open task has its own).
 function pdToolsFit() {
   const d = PD.dock;
-  if (!d || !d.narrow()) return;
-  if (d.isVisible('spec')) d.setVisible('spec', false);
+  if (!d) return;
+  if (d.narrow()) { if (d.isVisible('spec')) d.setVisible('spec', false); return; }
+  // A desktop: what the middle needs (its pinned tools too), and whether an
+  // open tool still has room beside it (else it lies over it).
+  const need = Math.max(PD_MIN['po-chat'].w, pdNeedW(d.layout().root));
+  PD_ROOT.style.setProperty('--pd-main-min', need + 'px');
+  const avail = PD_ROOT.clientWidth - 44;
+  PD_ROOT.classList.toggle('pd-fly-over', avail > 0 && avail - need < PD_FLY_MIN);
+}
+// The narrowest a tool opens beside the middle.
+const PD_FLY_MIN = 300;
+// The least width a layout node takes: its panels' minimums, side by side in
+// a row (with the 5px bars between), a minimised stack its title bar.
+function pdNeedW(n) {
+  if (!n) return 0;
+  if (n.t === 'stack') return n.min ? 33 : Math.max(0, ...n.panels.map(id => (PD_MIN[id] || { w: 0 }).w));
+  const k = (n.kids || []).map(pdNeedW);
+  return n.dir === 'row' ? k.reduce((a, b) => a + b, 0) + 5 * Math.max(0, k.length - 1) : Math.max(0, ...k);
 }
 // A click on a minimised panel's title bar restores it (Dock), and the bar can
 // move from under the pointer: the second click of a double click then lands
@@ -10125,6 +10146,7 @@ function pdPopChat(out) {
   // A resize can also make the screen a phone's, or no longer one: the dock
   // turns narrow or wide, each with its own layout.
   window.addEventListener('resize', () => {
+    if (PD.dock && !PD.dock.narrow()) pdToolsFit();
     if (!PD.dock || PD.dock.narrow() === pdNarrow()) return;
     PD.dock.setNarrow(pdNarrow());
     pdToolsFit();
