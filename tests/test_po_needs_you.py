@@ -99,7 +99,7 @@ const el = () => ({ hidden: false, dataset: {}, kids: [], className: '',
 let head, frames, panel;
 const document = { getElementById: id => (id === 'po-panel' ? panel : null), createElement: el,
   body: { classList: { on: new Set(), toggle(c, v) { v ? this.on.add(c) : this.on.delete(c); } } } };
-const renderPoPill = () => {}, focusKeyIn = () => null, restoreFocus = () => {};
+const renderPoPill = () => {}, focusKeyIn = () => null, restoreFocus = () => {}, swRender = () => {};
 const poHeadHtml = (pj, row) => pj.id + ':' + row.roomId;
 const renderRows = () => { calls.push('renderRows'); renderPo(); };
 const openDetail = id => calls.push('openDetail:' + id);

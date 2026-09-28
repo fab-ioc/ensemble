@@ -197,6 +197,16 @@ class TheBellKeepsIt(_Bell):
         self.report("completed", "Sold.")
         it = self.item()
         self.assertEqual((it["state"], it["quote"]), ("waiting_for_you", "Sold."))
+        self.assertEqual(it["askKind"], "completed")     # the task switcher: ready to review
+
+    def test_the_item_names_what_was_put_to_the_person(self):
+        # The task switcher (index.html) files a "completed" under Ready to
+        # review and the rest under Needs you; the board's row carries it too.
+        for kind in ("blocked", "question", "completed"):
+            self.report(kind, "Over to you.")
+            self.assertEqual(self.item()["askKind"], kind)
+        src = (ROOT / "dashboard.py").read_text(encoding="utf-8")
+        self.assertIn('if k in ("state", "reason", "agentIdentity", "since", "askKind")}', src)
 
     def test_a_one_agent_task_is_answered_by_a_person_in_its_terminal(self):
         asked = self.report("question", "Which price?")
