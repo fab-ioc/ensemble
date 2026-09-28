@@ -546,7 +546,7 @@ const mem = new Map();
 globalThis.localStorage = { get length() { return mem.size; }, key: i => [...mem.keys()][i] ?? null,
   getItem: k => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: k => mem.delete(k) };
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const toast = () => {}, wireScopeBar = () => {}, writeSlot = () => {}, wsJoin = (a, b) => a + '/' + b;
+const toast = () => {}, wireScopeBar = () => {}, writeSlot = () => {}, wsJoin = (a, b) => a + '/' + b, barCrumbs = () => {};
 // The page's own lookup reaches popped-out panels too; here there is one document.
 const pdById = id => document.getElementById(id);
 const PROJECTS = {

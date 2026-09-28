@@ -270,7 +270,7 @@ class ThePanels(unittest.TestCase):
                      "pd-phone", "popHtml", "ResizeObserver"):
             self.assertNotIn(gone, dock, gone)
         # #101: the served page, not a blob: one, which an installed app shows under Chrome's address strip.
-        for used in ("popUrl: '/static/dock/src/popout.html',", "narrow: isPhone()", "narrowKey: PD_KEYS.phone", "PD.dock.setNarrow(isPhone())",
+        for used in ("popUrl: '/static/dock/src/popout.html',", "narrow: pdNarrow()", "narrowKey: PD_KEYS.phone", "PD.dock.setNarrow(pdNarrow())",
                      "PD.dock.onPopIn(", "parent.moveBefore(el"):
             self.assertIn(used, dock, used)
         css = INDEX[INDEX.index("/* ---- The PO screen as panels"):INDEX.index("</style>", INDEX.index("/* ---- The PO screen as panels"))]
@@ -329,6 +329,7 @@ async function main() {
   };
   const go = (p, theme) => p.evalIn(`(() => {
     try { localStorage.removeItem('cd-po-dock'); localStorage.removeItem('cd-po-dock-phone'); localStorage.setItem('cd-view', 'board'); } catch (e) {}
+    pdNarrow = () => isPhone();   // the wide dock, kept for step 3's tool strip (a desktop's tabs: tests/test_middle.py)
     VIEW_MODE = 'board'; SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'tasks'; SB_DEST = ''; renderRows(); return 0; })()`);
   const ready = p => p.until('document.body.classList.contains("po-dock") && !!PD.dock && !!PD.told && !!PD.told.points && (() => { const f = pdChatFrame(); return !!(f && f.contentWindow && f.contentWindow.eval("typeof CHAT_DRAWN !== typeof void 0 && CHAT_DRAWN")); })()', 30000);
   const rect = 'const R = el => { const b = el.getBoundingClientRect(); return [Math.round(b.left), Math.round(b.top), Math.round(b.width), Math.round(b.height)]; };';
@@ -741,6 +742,7 @@ async function main() {
           { t: 'stack', panels: ['po-chat', 'documents'], active: 'documents' }, { t: 'stack', panels: ['points'], active: 'points', size: 340 }] },
         auto: [{ id: 'board', edge: 'right', size: 900 }, { id: 'documents', edge: 'right', size: 900 }, { id: 'workspace', edge: 'right', size: 900 }, { id: 'changes', edge: 'right', size: 900 }],
         floats: [], hidden: [{ id: 'documents' }] }));
+        pdNarrow = () => isPhone();   // the wide dock's saved layout
         VIEW_MODE = 'board'; SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'documents'; SB_DEST = ''; renderRows(); return 0; })()`);
       await q.until('document.body.classList.contains("po-dock") && !!PD.dock', 30000); await sleep(600);
       out.oldLayout = await q.evalIn(`(() => { const L = PD.dock.layout(), ids = []; (function walk(n) { if (!n) return; if (n.t === 'stack') ids.push(...n.panels); else n.kids.forEach(walk); })(L.root);

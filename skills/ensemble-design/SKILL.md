@@ -188,7 +188,9 @@ theme block, with the same values, and its own `.tk-*` rules.
 
 ### Layout
 
-`--header-h` (49px: 48px bar + 1px border) · `--chrome-h` · `--sidebar-w` · `--detail-w`.
+`--header-h` (49px: 48px bar + 1px border) · `--chrome-h` · `--sidebar-w` · `--detail-w` (a phone's
+task, only) · `--list-w` (the task list on the left in layout A: `--sw-w` while `body.sw-on`, else 0) · `--conv-w`
+(880px, the conversation's column in the middle; see *The middle* in §5).
 
 **Never hard-code a header offset.** Nine literal `49px`/`56px`/`266px` values used to tie the sticky
 table head, the sidebar, the detail panel, the notifications tray, the settings panel and the
@@ -577,6 +579,14 @@ bell's count.**
 
 ### Panels
 
+**Layout A, step 2 (#124):** at every width the dock is narrow (`pdNarrow()`): the PO screen is
+one column of tabs, **PO chat · Your asks · Board · Workspace · Changes**, filling the middle (see
+*The middle* in §5) with the PO chat first and its text in the `--conv-w` column. On a desktop
+the tabs are 36px, every panel is a tab (none hidden, since no menu shows one) and there is no
+Panels menu. Side by side, strips, floating and popping a panel out wait for the tool strip (step 3,
+Dock v0.4.0); the PO chat still pops out from its own header. What follows describes the wide dock,
+which is kept for that step.
+
 A project with a PO opens on its **PO screen**: a Dock (`static/dock`, a vendored copy of the Dock
 library; `VERSION` names its commit) of five panels, **PO chat, Your asks, Board, Workspace,
 Changes** (`PD_IDS` in `index.html`; Your asks is `points`). The person arranges them: side by side, as tabs of one stack, floating,
@@ -615,7 +625,8 @@ library is never edited in this repository: a need goes to the Dock project's `E
   slid out is `--selected-bg`. A floating window and a slid-out strip panel are `--r-300` with
   `--e-200`; docked panels have a border, no shadow (§2). The drop preview is the drop target of §1.
   Menus are `--surface-overlay`, `--r-300`, `--e-200`, rows 32px.
-- **Panels ▾ is in the top bar** (`#bar-here`, §5.1; a Default button, `pdCtlHtml`): each panel
+- **Panels ▾ is in the top bar on a phone** (`#bar-here`, §5.1; a Default button, `pdCtlHtml`;
+  not on a desktop in layout A): each panel
   with its check, then Reset layout. Nothing sits between the bar and the dock. No tab row: the panels are the
   tabs. A tab asked for from elsewhere (a diff's Open file, an old "workspace" tab) brings its panel
   forward instead.
@@ -750,8 +761,9 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
    **One bar, one order, at every width** (#107). Left to right: **where you are** (the
    wordmark, which is the way home, `/`, then the project's name as a Subtle button with a caret:
    its menu switches project and holds the project's settings, its kind and key and, for a
-   documents project without one, setting up its PO), then **what you can do here** (`#bar-here`:
-   the PO screen's **Panels ▾**, `pdCtlHtml`; empty elsewhere), then the global group: search, the
+   documents project without one, setting up its PO; on a desktop this is the breadcrumb, see
+   *The bar's breadcrumb* below), then **what you can do here** (`#bar-here`:
+   a phone's PO screen's **Panels ▾**, `pdCtlHtml`; empty elsewhere), then the global group: search, the
    PO pill, the plan chip, the bell, the avatar and **Create** (in a project, Create opens the new
    task dialog with that project chosen). Panels is the one control about the page below that the
    bar carries: a PO screen has no other row to hold it, and the bar is where the page's own
@@ -775,6 +787,26 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
      every theme with the contrast table.
    - Nothing else joins it: no product name in text, no badge but a non-default instance's.
 
+   **The bar's breadcrumb** (layout A, #124; a desktop, `body.mid`; `crumbsOf`, `barCrumbs` and
+   `crumbGo` in `index.html`, tested in `tests/test_middle.py`): one line after the wordmark,
+   `ENSEMBLE / project ▾ › #18 the task (or PO) › its tool › the file`, four levels at most.
+   - **The project** is `#proj-go`, `--fg` at `--fs-300` 600, a Subtle button that goes up to its
+     PO's conversation (closing an open task), or to its board when it has no PO. The caret beside
+     it (`#proj-switch`, its name hidden) keeps the project menu. With no project (home, or a task
+     in none) `#proj-switch` shows its name as before.
+   - **Then** the conversation: `PO` on a PO screen, or the open task's number and title; the
+     tool (a task's tab other than Activity, or a PO screen's tab other than PO chat, or a project
+     without a PO's Workspace or Changes tab); the file open in that Workspace or Changes, by its
+     name, the whole path in its tooltip.
+   - **Every part but the last is a Subtle button that goes up one level**, in `--fg-subtle`:
+     the conversation closes the tool and keeps the conversation (a task's Activity; a PO screen's
+     PO chat); the tool goes back to its list (Changes: the diff closes; Workspace: the tree, the
+     file shown in it). The last part is where you are: plain `--fg`, 500, `aria-current`.
+   - Separators are `›` in `--fg-muted`, not read aloud. Each part ellipsises, the task's title
+     first (`flex-shrink: 4`), so the bar keeps one row; search gives up width before it does.
+   - Written only when it changes (`writeSlot`). A phone has none: its row two keeps back and the
+     project's name, and step 5 moves this line under the task's title there.
+
    **A project page has no rows of its own above its content.** No status row: what needs you is the
    bell's count and its tray's *Show all* (the Needs you page); what changed is on the Changes panel
    tab (a badge) or the Changes tab (a `.ptab-n` count), and on home in the Group-by row. No crumbs
@@ -791,14 +823,26 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
    the PO (see *Points* in §4), as quiet `--fg-muted` words after the name ("2 to acknowledge · 1
    open"), never a badge, and gone with the name when the bar runs short. On the project's PO
    screen (see *Panels* in §4), where the PO already leads the page, the pill brings the PO chat
-   panel forward and focuses its composer instead of opening a second copy. (A phone's open task
-   covers the PO screen, so there the pill opens the drawer over the task.)
+   panel forward and focuses its composer instead of opening a second copy. On a desktop an open
+   task in the middle gives way to it (the task closes: the middle holds one conversation). (A
+   phone's open task covers the PO screen, so there the pill opens the drawer over the task.)
 
    **A live session is built once and never reloaded by navigation.** The PO's conversation is one
    iframe in `#po-panel`. On the PO screen it sits inside the PO chat panel; everywhere else it is a
    fixed drawer. It moves between the two only through `pdPlaceChat`/`pdMove`, which use
    `moveBefore` so the iframe keeps its page (a plain `appendChild` would reload it; browsers
    without `moveBefore` do reload it then). Never rebuild it, and never move it any other way.
+   **The middle** (layout A, #124; a desktop, `body.mid`, set by `midSync` from `MOBILE_MQ`).
+   The screen is list (left, the task switcher, `--list-w`) | middle | (later) the tool strip. The middle
+   holds **one conversation**, full height under the bar: a task's (`#detail-panel`, no longer a
+   380px panel, no slide, no resize handle) or a project's PO (its PO screen, the dock's narrow
+   tabs). Its text keeps to a centred column of `--conv-w` (880px): the chat's iframe, the task's
+   header and tabs, Spec and Details. A task's Changes and Workspace take the whole middle (the
+   Workspace's tree and file side by side again). Opening a task replaces what the middle showed;
+   closing it (×, Esc, the project's crumb, the PO pill) gives it back. The page does not scroll
+   while a task is open; each pane scrolls inside itself. The PO drawer (the pill on a page with
+   no PO screen) opens at the middle's right edge over an open task. The tab set of a task stays
+   `Activity · Changes · Workspace · Spec · Details` (see *Tabs*).
 2. **The board groups; it never sorts.** Priority first, then most recently updated, in *both* views.
    The hover-freeze works by being the **only** place ordering happens — any second sort defeats it and
    cards move under the cursor. Two tasks must never swap places because someone flipped the view
