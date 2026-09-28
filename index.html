@@ -771,7 +771,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     border: 1px solid var(--border); border-radius: var(--r-100); background: var(--surface); color: var(--fg-muted);
   }
   body.mid .search-wrap:is(:has(#search:focus), :has(#search:not(:placeholder-shown)), :has(.search-state:not([hidden]))) .search-kbd { display: none; }
+  /* The crumbs name the project and the PO's header (and its list row) your
+     asks, so the pill is its avatar and "PO" alone; the tooltip keeps it all. */
   body.mid #po-pill { border-color: transparent; }
+  body.mid #po-pill .po-pill-p, body.mid #po-pill .po-pill-n { display: none; }
   body.mid #po-pill:not([aria-expanded="true"]):hover { background: var(--hover); }
   #notif-btn .bell { display: block; }
   #search:focus {
