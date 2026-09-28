@@ -129,9 +129,9 @@ class ResolveFileAt(unittest.TestCase):
         # gate is exercised the same way; the final existence check is real.
         with mock.patch.object(dashboard, "workspace_access_ok", return_value=True), \
              mock.patch.object(Path, "is_file", return_value=True):
-            fp = dashboard.resolve_file_at(at_tail("p", ["home", "fabio", "proj", "style.css"]))
+            fp = dashboard.resolve_file_at(at_tail("p", ["home", "alex", "proj", "style.css"]))
             self.assertIsNotNone(fp)
-            self.assertTrue(str(fp).replace("\\", "/").endswith("home/fabio/proj/style.css"), fp)
+            self.assertTrue(str(fp).replace("\\", "/").endswith("home/alex/proj/style.css"), fp)
 
 
 class FileAtMime(unittest.TestCase):
@@ -232,8 +232,8 @@ for (const [k, c] of Object.entries(cases)) {{
 console.log(JSON.stringify(out));
 """
         cases = {
-            "win": {"kind": "base", "folder": "C:\\Users\\fabio\\EnsembleProjects\\Ensemble Dashboard\\Documents\\Screen layout"},
-            "posix": {"kind": "base", "folder": "/home/fabio/project/docs"},
+            "win": {"kind": "base", "folder": "C:\\Work\\alex\\EnsembleProjects\\Ensemble Dashboard\\Documents\\Screen layout"},
+            "posix": {"kind": "base", "folder": "/home/alex/project/docs"},
             "unc": {"kind": "base", "folder": "\\\\server\\share\\folder"},
             "empty": {"kind": "base", "folder": ""},
             "withHead": {"kind": "inject", "html": "<!doctype html>\n<html><head><title>t</title></head><body>hi</body></html>",
@@ -253,10 +253,10 @@ console.log(JSON.stringify(out));
 
     def test_a_windows_folder_becomes_a_w_style_base(self):
         self.assertEqual(self.out["win"],
-                         "/api/file-at/w/C%3A/Users/fabio/EnsembleProjects/Ensemble%20Dashboard/Documents/Screen%20layout/")
+                         "/api/file-at/w/C%3A/Work/alex/EnsembleProjects/Ensemble%20Dashboard/Documents/Screen%20layout/")
 
     def test_a_posix_folder_becomes_a_p_style_base(self):
-        self.assertEqual(self.out["posix"], "/api/file-at/p/home/fabio/project/docs/")
+        self.assertEqual(self.out["posix"], "/api/file-at/p/home/alex/project/docs/")
 
     def test_a_unc_or_empty_folder_gets_no_base(self):
         self.assertEqual(self.out["unc"], "")
