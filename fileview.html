@@ -992,6 +992,26 @@ function fvScrollOwner(main) {
   return document.scrollingElement;
 }
 function fileHref(p, line) { return '/fileview?path=' + encodeURIComponent(resolvePath(p, FILE_BASE)) + (line ? '&line=' + line : '') + CTX; }
+// The <base href> a rendered page gets, so its own relative pictures, styles
+// and stylesheet url()s load from its folder instead of about:srcdoc (which
+// resolves nowhere). /api/file-at/<style>/<folder segments...>/ mirrors the
+// folder's real path one segment per URL segment — a stylesheet's "../x.css"
+// then resolves, through the browser's own URL algorithm, to the sibling
+// folder it means; dashboard.py's resolve_file_at applies the same access
+// checks as /api/file and never lets a ".." segment (raw, not the browser's
+// already-resolved kind) or a path outside workspace_access_ok through.
+function fileAtBase(folder) {
+  folder = (folder || '').trim();
+  let parts;
+  if (/^[A-Za-z]:[\\\/]/.test(folder)) {
+    parts = ['w', folder[0].toUpperCase() + ':'].concat(folder.slice(2).split(/[\\\/]+/).filter(Boolean));
+  } else if (/^\//.test(folder)) {
+    parts = ['p'].concat(folder.slice(1).split(/\//).filter(Boolean));
+  } else {
+    return '';   // a UNC share or something this scheme does not cover — the page renders without a base, as before
+  }
+  return '/api/file-at/' + parts.map(encodeURIComponent).join('/') + '/';
+}
 
 
 // JSON that arrived as one long line, laid out one value per line. The text is
@@ -1805,6 +1825,20 @@ function wireFrameLinks(ifr) {
     enableComments(div);
     remarkAll();
   }
+  // A <base href> so the srcdoc document (base URL about:srcdoc) resolves its
+  // own relative pictures, stylesheets and srcset/poster/url()s from its own
+  // folder, the way it would opened straight off disk. Put right after <head>
+  // (or at the very top, past a doctype, when there is none) so it wins over
+  // anything the page fetches; the browser only honours the first <base>.
+  function withFileAtBase(html, base) {
+    if (!base) return html;
+    const tag = `<base href="${base}">`;
+    const head = /<head[^>]*>/i.exec(html);
+    if (head) return html.slice(0, head.index + head[0].length) + tag + html.slice(head.index + head[0].length);
+    const doctype = /^\s*<!doctype[^>]*>/i.exec(html);
+    const at = doctype ? doctype[0].length : 0;
+    return html.slice(0, at) + tag + html.slice(at);
+  }
   // A page is more useful rendered, so that stays the default; its source is
   // one click away and carries in-place comments.
   function renderPage() {
@@ -1824,7 +1858,7 @@ function wireFrameLinks(ifr) {
       putBack();
       report();
     });
-    ifr.srcdoc = text;
+    ifr.srcdoc = withFileAtBase(text, fileAtBase(FILE_BASE));
     main.appendChild(ifr);
   }
   const CSV_MAX = 5000;
