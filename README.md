@@ -109,6 +109,12 @@ Other commands are `stop`, `restart`, `status` and `logs`. The log is `~/Library
 
 The macOS scripts were read and adjusted but not run for this README; only the Windows steps were tried.
 
+### Moving from claude-dashboard
+
+1. Remove the old autostart, which also serves port 8765: `~/.claude/dashboard/install-launchd.sh uninstall` on macOS, `schtasks /Delete /TN ClaudeDashboard /F` on Windows.
+2. Install and start Ensemble as above. On its first start it copies the old labels, pins, archive, window sizes and favourite themes from `~/.claude/dashboard` into `~/.ensemble` (never over a file Ensemble already has) and says in its log what it copied and whether the old autostart is still there.
+3. `~/.claude/dashboard` is left as it was; delete it once you no longer need it.
+
 ### First project, PO and task
 
 1. **Create a project.** On the Projects page, click **+ New project**. For the folder, give a plain name (for example `Recipe Box`, created under `~/EnsembleProjects`) or the full path of an existing repository. Then give the project a name, and answer `code` or `documents`.
@@ -228,6 +234,7 @@ Each project keeps its own files in its folder: `project.json`, `ROADMAP.md`, `P
 | `agent_hooks.py`, `agent_hook.py` | What each Claude agent says it is doing, through its Claude Code hooks; `attention.py` reads it before the agent's screen |
 | `usage.py`, `usage_statusline.py` | Plan allowance readings for Claude and Codex |
 | `backup.py` | Backup of `~/EnsembleProjects` to a git remote |
+| `legacy_install.py` | Moving from claude-dashboard: copies its state into `~/.ensemble` at startup |
 | `history.py` | A documents project's file history |
 | `task_numbers.py`, `message_refs.py`, `workspace_search.py`, `peer_process.py` | Task numbers (`#18`, `ED-18`), links to messages, Workspace search, caller detection |
 | `agents/` | Adapters for Claude Code and Codex |
