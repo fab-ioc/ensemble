@@ -9178,14 +9178,19 @@ function poNoteHtml() {
 function openPoOf(pj) {
   if (!pj) return;
   const split = poSplitProject();
-  if (!poRowOf(pj) || (split && !(SELECTED_SID && isPhone()))) {
+  if (!poRowOf(pj) || poMidGo() || (split && !(SELECTED_SID && isPhone()))) {
     // A PO leads the page: this one, or go to the project this one leads.
     // On a desktop the middle holds one conversation: an open task gives it back.
-    if (SELECTED_SID && !isPhone()) closeDetail();
+    midLeave();
     if (!split || split.id !== pj.id) { SELECTED_PROJECT = pj.id; PROJECT_TAB = 'tasks'; WS_SCOPE = ''; SB_DEST = ''; renderRows(); }
     pdReveal('po-chat');
   } else { PO_PIN = pj.id; PO_PEEK = true; renderPo(); }
 }
+// A desktop has no drawer (layout A, #124): a PO opens in the middle, from any
+// page. Only where the dock failed to load is the drawer still how it opens.
+function poMidGo() { return !isPhone() && !PD.failed; }
+// On a desktop an open task fills the middle: going somewhere else closes it.
+function midLeave() { if (SELECTED_SID && document.body.classList.contains('mid')) closeDetail(); }
 function poFocusComposer() {
   const f = poSplitProject() && PD.dock ? pdVisibleChat() : document.querySelector('#po-panel iframe.po-session:not([hidden])');
   try { const i = f && f.contentDocument && f.contentDocument.getElementById('input'); if (i) i.focus(); } catch (e) {}
@@ -9201,6 +9206,7 @@ function poPillClick() {
   const ctx = poContext();
   if (!ctx) return;
   if (!poRowOf(ctx)) {           // no PO: go where the page says how to choose one
+    midLeave();
     SELECTED_PROJECT = ctx.id; PROJECT_TAB = 'tasks'; WS_SCOPE = ''; SB_DEST = '';
     renderRows(); return;
   }
@@ -9208,7 +9214,8 @@ function poPillClick() {
   // its panel comes on screen, and its box takes the keys.
   // On a desktop an open task is in the middle the PO's conversation is in:
   // the task gives way to it.
-  if (poSplitProject() && !(SELECTED_SID && isPhone())) { if (SELECTED_SID) closeDetail(); pdReveal('po-chat'); poFocusComposer(); return; }
+  if (poSplitProject() && !(SELECTED_SID && isPhone())) { midLeave(); pdReveal('po-chat'); poFocusComposer(); return; }
+  if (poMidGo()) { openPoOf(ctx); poFocusComposer(); return; }
   PO_PEEK = !PO_PEEK; PO_PIN = ''; renderPo();
   // Not on a phone: focus raises the keyboard over the conversation you came to read.
   if (PO_PEEK && !isPhone()) poFocusComposer();
@@ -9501,13 +9508,32 @@ function pdEnsure() {
     text: { empty: 'Every panel is on a strip at an edge or hidden: the Panels menu above shows them.' },
   }); } finally { window.DOC_LISTENERS_PAUSED = false; }
   PD.dock.onChange(() => { pdPlaceChat(); barCrumbs(); });
-  // Layout A: every tool is a tab on a desktop, where no menu shows a hidden one.
-  if (!isPhone() && PD.dock.narrow()) PD_IDS.forEach(id => { if (!PD.dock.isVisible(id)) PD.dock.setVisible(id, true); });
+  pdToolsFit();
   PD.dock.onShown(id => pdShown(id));
   // Before the chat panel comes back from its window: the window's own chat goes.
   PD.dock.onPopIn(id => { if (id === 'po-chat') pdPopChat(false); });
   pdPlaceChat();
   return PD.dock;
+}
+// Layout A: every tool is a tab on a desktop, where no menu shows a hidden one.
+// The phone and the desktop share the narrow layout, so what a phone hid is
+// remembered as it comes back, and hidden again when the screen is a phone's.
+const PD_PHONE_HIDDEN = 'cd-po-dock-phone-hidden';
+function pdToolsFit() {
+  const d = PD.dock;
+  if (!d || !d.narrow()) return;
+  let hid = [];
+  try { hid = JSON.parse(localStorage.getItem(PD_PHONE_HIDDEN) || '[]'); } catch (e) {}
+  if (!Array.isArray(hid)) hid = [];
+  if (isPhone()) {
+    hid.forEach(id => { if (id !== 'po-chat' && PD_IDS.includes(id) && d.isVisible(id)) d.setVisible(id, false); });
+    try { localStorage.removeItem(PD_PHONE_HIDDEN); } catch (e) {}
+    return;
+  }
+  const now = PD_IDS.filter(id => !d.isVisible(id));
+  if (!now.length) return;
+  try { localStorage.setItem(PD_PHONE_HIDDEN, JSON.stringify([...new Set([...hid, ...now])])); } catch (e) {}
+  now.forEach(id => d.setVisible(id, true));
 }
 // A click on a minimised panel's title bar restores it (Dock), and the bar can
 // move from under the pointer: the second click of a double click then lands
@@ -12918,6 +12944,7 @@ $('#notif-btn').addEventListener('click', (ev) => {
 // Needs you as a page: what the status row under the bar used to open.
 $('#notif-all').addEventListener('click', () => {
   $('#notif-tray').hidden = true;
+  midLeave();
   SB_DEST = 'needsyou'; renderRows();
 });
 document.addEventListener('click', (ev) => {
@@ -13360,6 +13387,7 @@ function barPaint() {
   if (sw) sw.title = inProj ? `${projSwitchLabel()}: switch project, or change this project's kind and key` : 'Switch project';
 }
 function goHome() {
+  midLeave();
   SELECTED_PROJECT = null; SB_DEST = ''; renderRows();
 }
 document.getElementById('bar-back').addEventListener('click', goHome);
@@ -13504,8 +13532,14 @@ function crumbGo(level) {
       const pj = crumbProject(r);
       const v = WS_VIEWS.get(wsCtxKey(r ? { kind: 'task', sid: r.sessionId } : { kind: 'project', projectId: pj && pj.id, docs: isDocsProject(pj) }));
       if (v && v.el) {
+        // Up to the tree itself: out of a search or Recent too, as a click in
+        // the tree does, with the file shown in it.
+        const f = v.find;
         v.pane = 'tree'; wsPaintPane(v);
-        if (v.sel) wsReveal(v, v.sel, { clear: false });
+        f.recent = false; f.rq = '';
+        if (f.q) { f.q = ''; wsfSchedule(v); }
+        wsfPaint(v);
+        if (v.sel) wsReveal(v, v.sel);
       }
     }
   }
@@ -13549,15 +13583,19 @@ $('#proj-switch').addEventListener('click', (ev) => {
   const m = $('#proj-menu');
   if (!m.hidden) { closeProjMenu(); return; }
   const list = (PROJECTS && PROJECTS.projects) || [];
-  m.innerHTML = `<button class="pm-item${!SELECTED_PROJECT ? ' on' : ''}" data-proj="">All projects</button>`
+  // On a desktop the caret is the project named beside it: an open task's,
+  // also one opened from Home.
+  const crumb = document.body.classList.contains('bar-proj') ? crumbProject(crumbTask()) : null;
+  const here = crumb ? crumb.id : SELECTED_PROJECT;
+  m.innerHTML = `<button class="pm-item${!here ? ' on' : ''}" data-proj="">All projects</button>`
     + (list.length ? '<div class="pm-rule"></div>' : '')
     + list.map(pj => {
         const needs = projectNeeds(pj, list);
-        return `<button class="pm-item${SELECTED_PROJECT === pj.id ? ' on' : ''}" data-proj="${esc(pj.id)}">`
+        return `<button class="pm-item${here === pj.id ? ' on' : ''}" data-proj="${esc(pj.id)}">`
           + `<span class="pm-name">${esc(pj.name)}</span>${unreadDotHtml(poRowOf(pj))}`
           + (needs ? `<span class="pm-needs">${needs}</span>` : '') + '</button>';
       }).join('')
-    + projMenuSettingsHtml(projectById(SELECTED_PROJECT));
+    + projMenuSettingsHtml(projectById(here));
   m.hidden = false;
   const r = ev.currentTarget.getBoundingClientRect();
   m.style.top = Math.round(r.bottom + 6) + 'px';
@@ -13571,6 +13609,7 @@ $('#proj-menu').addEventListener('click', (ev) => {
   if (it.classList.contains('pm-set')) { closeProjMenu(); return; }
   ev.stopPropagation();
   closeProjMenu();
+  midLeave();
   SELECTED_PROJECT = it.dataset.proj || null;
   PROJECT_TAB = 'tasks';
   WS_SCOPE = '';
@@ -14209,6 +14248,7 @@ midSync();
   const redraw = () => {
     BOARD_SIG = '';
     midSync();
+    pdToolsFit();
     renderRows();
     if (SELECTED_SID) { const p = $('#detail-panel'); if (p) p.dataset.sig = ''; renderDetail(); }
   };

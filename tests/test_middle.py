@@ -249,7 +249,86 @@ async function main() {
           return ['#proj-go', '#bar-crumbs .bar-crumb', '#bar-crumbs .crumb-here', '#bar-crumbs .crumb-sep'].map(s => [s, getComputedStyle(document.querySelector(s)).color, hd]); })()`);
       }
       await p.evalIn('document.documentElement.dataset.theme = "light"; 0');
+      // Going somewhere else with a task open: the task gives way (R1-F1).
+      await openTask(p);
+      await click(p, '#proj-switch');
+      await click(p, `#proj-menu .pm-item[data-proj="${A.plain}"]`);
+      await sleep(400);
+      out.menuAway = await p.evalIn(MID);
+      await openTask(p);
+      await click(p, '#bar-home');
+      await sleep(400);
+      out.homeAway = await p.evalIn(MID);
+      // A task opened from Home: the caret beside its project is that project's.
+      await openTask(p);
+      await click(p, '#proj-switch');
+      out.caretMenu = await p.evalIn(`(() => { const m = document.getElementById('proj-menu');
+        return { head: (m.querySelector('.pm-head') || {}).textContent || '', on: (m.querySelector('.pm-item.on') || { dataset: {} }).dataset.proj || '' }; })()`);
+      await click(p, '#proj-switch');
+      // The pill from Home with a task open, and a PO opened from Needs you and
+      // from Home: the PO takes the middle, no drawer (R1-F2).
+      await click(p, '#po-pill');
+      await poReady(p); await sleep(500);
+      out.pillHome = { ...(await p.evalIn(MID)), peek: await p.evalIn('PO_PEEK') };
+      await p.evalIn("SELECTED_PROJECT = null; SB_DEST = 'needsyou'; renderRows(); 0");
+      await sleep(300);
+      await click(p, '#po-pill');
+      await poReady(p); await sleep(400);
+      out.pillNeeds = { ...(await p.evalIn(MID)), peek: await p.evalIn('PO_PEEK') };
+      await p.evalIn('goHome(); 0');
+      await sleep(300);
+      await p.evalIn(`openPoOf(projectById(${JSON.stringify(A.proj)})); 0`);
+      await poReady(p); await sleep(400);
+      out.openPoHome = { ...(await p.evalIn(MID)), peek: await p.evalIn('PO_PEEK') };
+      // A Workspace's file, searched and in Recent: its tool crumb goes back to
+      // the tree, the file shown in it (R1-F3). The project's, then the task's.
+      let wsView = '', readme = '';
+      const wsUp = async (key, open, kind) => {
+        wsView = `[...WS_VIEWS.values()].find(x => x.el && x.el.isConnected && x.ctx.kind === ${JSON.stringify(kind)})`;
+        readme = (kind === 'task' ? '#detail-panel ' : '') + '.wsp .wsp-tree .wse.file[data-path$="README.md"]';
+        await open();
+        await p.until(`!!document.querySelector(${JSON.stringify(readme)})`);
+        await click(p, readme);
+        await sleep(500);
+        out[key + 'File'] = await p.evalIn(MID);
+        for (const mode of ['search', 'recent']) {
+          await p.evalIn(`(() => { const v = ${wsView}; wsOpenTab(v, v.sel);
+            if (${JSON.stringify(mode)} === 'search') { v.find.q = 'README'; wsfSchedule(v); } else v.find.recent = true;
+            wsfPaint(v); return 0; })()`);
+          await sleep(500);
+          const before = await p.evalIn(`(() => ({ hidden: ${wsView}.el.querySelector('.wsp-tree').hidden,
+            trail: [...document.querySelectorAll('#bar-crumbs [data-crumb]')].map(e => e.dataset.crumb) }))()`);
+          await click(p, '#bar-crumbs button[data-crumb="tool"]');
+          await sleep(700);
+          out[key + 'Up' + mode] = { ...(await p.evalIn(MID)), before, ...(await p.evalIn(`(() => { const v = ${wsView};
+            const el = v.el.querySelector(${JSON.stringify(readme)});
+            return { pane: v.pane, q: v.find.q, recent: v.find.recent, treeHidden: v.el.querySelector('.wsp-tree').hidden,
+              mark: v.mark || '', shown: !!el && el.getBoundingClientRect().height > 0 }; })()`)) };
+        }
+      };
+      await wsUp('plainWs', async () => { await go(p, A.plain, 'workspace'); }, 'project');
+      await wsUp('taskWs', async () => { await go(p, A.proj); await poReady(p); await openTask(p); await click(p, '#detail-panel .dp-tab[data-itab="workspace"]'); }, 'task');
       await p.close();
+    }
+    // ---- a tool hidden on a phone is a tab again on a desktop, and hidden again on the phone (R1-F4)
+    {
+      const r = await page(430, 932, true);
+      await go(r, A.proj); await poReady(r); await sleep(400);
+      await r.evalIn("PD.dock.setVisible('workspace', false); 0");
+      await sleep(200);
+      const tabs = `[...document.querySelectorAll('#po-dock .dk-tab')].filter(e => e.getBoundingClientRect().width > 0).map(e => e.textContent.trim())`;
+      out.bpPhone = { mid: await r.evalIn("document.body.classList.contains('mid')"), ws: await r.evalIn("PD.dock.isVisible('workspace')") };
+      await c.send('Emulation.setTouchEmulationEnabled', { enabled: false }, r.sessionId);
+      await c.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, r.sessionId);
+      await r.until("document.body.classList.contains('mid')");
+      await sleep(500);
+      out.bpDesk = { ws: await r.evalIn("PD.dock.isVisible('workspace')"), tabs: await r.evalIn(tabs) };
+      await c.send('Emulation.setDeviceMetricsOverride', { width: 430, height: 932, deviceScaleFactor: 3, mobile: true }, r.sessionId);
+      await c.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 }, r.sessionId);
+      await r.until("!document.body.classList.contains('mid')");
+      await sleep(500);
+      out.bpBack = { ws: await r.evalIn("PD.dock.isVisible('workspace')") };
+      await r.close();
     }
     // ---- a phone keeps its own layout
     const q = await page(430, 932, true);
@@ -329,9 +408,11 @@ class TheMiddle(unittest.TestCase):
         chatroom.post_message(task["id"], "user", "Why do the brakes squeal?")
         dashboard.assign_session_project(task["id"], cls.proj)
         cls.task = task["id"]
+        (home / "README.md").write_text("# Motors\n", encoding="utf-8")
         ok, plain, _ = dashboard.register_project("Plain")
         assert ok, plain
         cls.plain = plain["id"]
+        (Path(plain.get("home") or plain["path"]) / "README.md").write_text("# Plain\n", encoding="utf-8")
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
         cls.server.daemon_threads = True
         cls.server.handle_error = lambda *a: None   # a page closed mid-answer
@@ -431,6 +512,47 @@ class TheMiddle(unittest.TestCase):
                 with self.subTest(theme=theme, sel=sel):
                     need = 3.0 if sel.endswith("crumb-sep") else 4.5
                     self.assertGreaterEqual(contrast(fg, bg), need, f"{fg} on {bg}")
+
+    def test_going_elsewhere_with_a_task_open_closes_it(self):
+        g = self.got["menuAway"]
+        self.assertFalse(g["open"], "the project menu")
+        self.assertEqual((g["proj"], g["project"]), (self.plain, "Plain"))
+        self.assertFalse(self.got["homeAway"]["open"], "the wordmark")
+        self.assertIsNone(self.got["homeAway"]["proj"])
+
+    def test_the_caret_is_the_named_projects(self):
+        self.assertEqual(self.got["caretMenu"], {"head": "Motors", "on": self.proj})
+
+    def test_a_po_opens_in_the_middle_from_anywhere(self):
+        for key in ("pillHome", "pillNeeds", "openPoHome"):
+            with self.subTest(key=key):
+                g = self.got[key]
+                self.assertFalse(g["open"])
+                self.assertFalse(g["peek"], "no drawer")
+                self.assertEqual((g["proj"], g["front"]), (self.proj, "po-chat"))
+                self.full_height(g, key)
+
+    def test_a_workspace_tool_crumb_goes_back_to_the_tree(self):
+        for key in ("plainWs", "taskWs"):
+            f = self.got[key + "File"]
+            with self.subTest(key=key):
+                self.assertEqual(f["trail"][-1][0], "file", "the file is a crumb")
+                self.assertEqual((f["trail"][-2][0], f["trail"][-2][2]), ("tool", True), "its tool goes up")
+            for mode in ("search", "recent"):
+                g = self.got[key + "Up" + mode]
+                with self.subTest(key=key, mode=mode):
+                    self.assertTrue(g["before"]["hidden"], "the search hid the tree")
+                    self.assertIn("file", g["before"]["trail"])
+                    self.assertEqual((g["pane"], g["q"], g["recent"], g["treeHidden"]), ("tree", "", False, False))
+                    self.assertNotIn("file", [t[0] for t in g["trail"]])
+                    self.assertTrue(g["shown"], "the file is shown in the tree")
+                    self.assertTrue(g["mark"].endswith("README.md"), g["mark"])
+
+    def test_a_tool_hidden_on_a_phone_is_a_tab_on_a_desktop(self):
+        self.assertEqual(self.got["bpPhone"], {"mid": False, "ws": False})
+        self.assertTrue(self.got["bpDesk"]["ws"])
+        self.assertIn("Workspace", self.got["bpDesk"]["tabs"])
+        self.assertFalse(self.got["bpBack"]["ws"], "the phone keeps what it hid")
 
     def test_a_phone_keeps_its_layout(self):
         g = self.got["phone"]
