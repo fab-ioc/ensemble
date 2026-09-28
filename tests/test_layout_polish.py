@@ -124,8 +124,11 @@ class ThePoHeader(unittest.TestCase):
         h = self.r["live"]
         self.assertIn('<span class="av claude">c</span>', h)
         self.assertIn('<div class="po-name">Ensemble Dashboard · PO</div>', h)
-        self.assertIn('<div class="po-sub">claude opus · project Ensemble Dashboard · 2 tasks open · '
-                      '<span class="run"><span class="dot idle"></span>idle</span> · <span class="po-pts"', h)
+        # A part a span (CSS draws the " · "), so a narrow header cuts the project's name first.
+        self.assertIn('<div class="po-sub"><span>claude opus</span><span class="po-sub-proj">project Ensemble Dashboard</span>'
+                      '<span>2 tasks open</span><span class="run"><span class="dot idle"></span>idle</span><span class="po-pts"', h)
+        self.assertIn(".po-sub > * + *::before { content: \"·\";", INDEX)
+        self.assertIn(".po-sub > .po-sub-proj { flex-shrink: 1000; }", INDEX)
         self.assertNotIn("Ensemble Dashboard PO", h)  # the row's label is gone from it
 
     def test_resume_is_the_one_button_the_rest_is_in_a_menu(self):

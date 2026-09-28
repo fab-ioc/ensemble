@@ -1339,7 +1339,11 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .po-who { flex: 1 1 auto; min-width: 0; }
   .po-name, .po-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .po-name { font-size: var(--fs-400); font-weight: 600; color: var(--fg); }
-  .po-sub { font-size: var(--fs-200); line-height: 16px; color: var(--fg-muted); }
+  .po-sub { display: flex; align-items: baseline; min-width: 0; font-size: var(--fs-200); line-height: 16px; color: var(--fg-muted); }
+  .po-sub > * { flex: 0 0 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .po-sub > * + *::before { content: "·"; margin: 0 var(--s-100); }
+  .po-sub > .po-sub-proj { flex-shrink: 1000; }
+  .po-sub > .po-pts { flex-shrink: 1; }
   .po-more { position: relative; display: inline-flex; }
   .po-menu {
     position: absolute; top: calc(100% + var(--s-100)); right: 0; z-index: 30; min-width: 200px;
@@ -2313,7 +2317,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .sw-row.on { background: var(--selected-bg); }
   .sw-row.on .sw-title { font-weight: 600; }
   /* --fg-muted on --selected-bg is 4.4:1 in light; subtle keeps it over 4.5. */
-  .sw-row.on .sw-l2, .sw-row.on .sw-age, .sw-row.on .tno, .sw-row.on .sw-chg { color: var(--fg-subtle); }
+  .sw-row.on .sw-l2, .sw-row.on .sw-age, .sw-row.on .tno, .sw-row.on .sw-chg,
+  .sw-row:hover .sw-l2, .sw-row:hover .sw-age, .sw-row:hover .tno, .sw-row:hover .sw-chg { color: var(--fg-subtle); }
   .sw-st { grid-row: span 2; align-self: start; justify-self: center; margin-top: 6px;
     width: 8px; height: 8px; border-radius: var(--r-full); background: var(--run-off); }
   .sw-st.warning { background: var(--c-warning-bold); }
@@ -9491,10 +9496,14 @@ function poHeadHtml(pj, row, peek) {
   const model = shortModel(m.model);
   const pts = pointsCountText(row.points);
   const open = poOpenCount(pj, ALL_ROWS);
-  const sub = [[m.agent || '', model].filter(Boolean).join(' '), `project ${pj.name}`,
-               `${open} task${open === 1 ? '' : 's'} open`].filter(Boolean).map(esc).join(' · ')
-    + ` · ${runChip(row)}`
-    + (pts ? ` · <span class="po-pts" title="${esc(pointsCountTip(row.points))}">${esc('your asks: ' + pts)}</span>` : '');
+  // One part a span, so a narrow header cuts a part (the project's name
+  // first, then your asks) rather than letting the line run past the edge.
+  const who = [m.agent || '', model].filter(Boolean).join(' ');
+  const sub = (who ? `<span>${esc(who)}</span>` : '')
+    + `<span class="po-sub-proj">${esc('project ' + pj.name)}</span>`
+    + `<span>${open} task${open === 1 ? '' : 's'} open</span>`
+    + runChip(row)
+    + (pts ? `<span class="po-pts" title="${esc(pointsCountTip(row.points))}">${esc('your asks: ' + pts)}</span>` : '');
   const acts = [], menu = [];
   if (!row.isLive && !row.draft) acts.push(`<button class="po-btn def" data-po="resume" title="Relaunch the PO with its conversation">Resume</button>`);
   if (!row.draft) menu.push(`<button class="po-mi" role="menuitem" data-po="switch" title="Hand the PO to the other agent (Claude or Codex) in the same room, from its written handover">Switch agent…</button>`);

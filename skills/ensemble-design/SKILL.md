@@ -639,6 +639,13 @@ library is never edited in this repository: a need goes to the Dock project's `E
   person is working** (`pdHostDoc`, the library's `hostDoc`): the page's dialog (`pdModal()`, never
   `$('#modal')` to open one), a toast, a menu under its button, a selection's Comment button; `$`
   finds an element in a popped-out window when this page has none.
+- **The PO's header** (`poHeadHtml`, #126, the mockup's conversation header): its avatar,
+  "*Project* · PO" at `--fs-400` 600, and one `--fs-200` `--fg-muted` line of what is true: agent
+  and model, the project, its open tasks (`poOpenCount`), the run chip, your asks. **Resume** is
+  the one button (Default), and only while the PO is not running; Switch agent, the PO's task and
+  Pop out wait in a `⋯` menu (`.po-menu`, `--surface-overlay`, `--e-200`), whose items keep their
+  `data-po`. Esc or a click elsewhere closes it; the header is not rewritten while it is open. A
+  drawer keeps its `×`.
 - **The PO chat** is in its panel: `#po-panel` moves into the PO chat panel on a PO screen and back
   home (the drawer) anywhere else (`pdPlaceChat`, with `moveBefore`, so its iframe keeps its page;
   the library moves panels the same way, so a layout change reloads no chat and no open file).
@@ -672,8 +679,16 @@ a message is directed with its `@codex` / `@claude` prefix, which the placeholde
 - **Keys:** Ctrl/⌘+Enter sends; Ctrl/⌘+Shift+Enter adds a point; Enter in a point is a new line in
   it; Tab in the last point adds one once it has words (otherwise Tab moves focus, as a keyboard user
   expects); Backspace in an empty point removes it; `1. ` or `- ` typed at the very start of the head
-  turns its words into the first point. The placeholders say so: they are the only hint, so they are
-  `--fg-muted`, never the browser's default grey.
+  turns its words into the first point. The placeholders say so, so they are `--fg-muted`, never
+  the browser's default grey. The head's is short (`composePlaceholder`): who it goes to, how to
+  direct it and the keys, "Message the PO — @codex or @claude to direct it · #18 links a task ·
+  Ctrl+Enter sends" (no `@` part in a one-agent chat); numbered asks and images have buttons.
+- **With a mouse the box is one card** (layout A, #126; `@media not all and (pointer: coarse)`):
+  `--surface`, a `--border-strong` edge (`--focus-ring` while you type), `--r-300`, 24px from the
+  column's sides and 16px from its foot. Inside: the hint line (`#hint`, `--fg-muted`, gone when
+  empty), the words with no box of their own, growing with them (`field-sizing: content`), then
+  one row: **+ Add an ask** and **Attach** (Subtle; Attach opens the file picker for images, the
+  same path as a paste or a drop), then **Send**, the surface's one Primary button.
 - **Sent as one message the hub reads:** `## Points (N)`, the head, then one `**N.**` item per point
   with its `[image] <name>` lines inside it (an empty point is dropped; no point at all sends the
   words alone). The hub gives each item its own `P` number, chip and reminder (`points.py`), puts each
@@ -686,6 +701,19 @@ a message is directed with its `@codex` / `@claude` prefix, which the placeholde
   phone): it scrolls within itself.
 - **Phone:** every control and chip is `--touch-min`, every box `--fs-400`; the header and info bar
   step aside while any box in the editor has focus, as they did for the one box.
+
+### Balloons
+
+With a mouse (layout A, #126, from the mockup; the same media gate as the box's card), a chat reads
+as a conversation: **your balloon is a bubble on the right** (`align-self: flex-end`, at most 85% of
+the column, `--hover`, no edge), and **an agent's is plain text** on the page's ground, no box,
+under its header. This reverses the old left-aligned balloons with an edge: in the 880px column of
+the middle, the width they saved is not missed, and who said what reads at a glance.
+
+- **The header** (`.from`) is `--fs-200` 400 `--fg-muted`, sentence case, the name `--fg-subtle`
+  500; an agent's starts with its 20px avatar (`::before`, "C" or "X" on `--agent-*-bg/-fg`).
+- The hub's rows keep their sunken rows; a send on its way keeps its dashed edge.
+- **Phone:** unchanged, until layout A's phone step.
 
 ### A send on its way
 
@@ -717,29 +745,41 @@ bottom. It is how the person gets around; the board stays the planning view. `in
 `swGroups` / `swListHtml` (the "Task switcher" block) are the reference, and `#switcher` is one
 self-contained component, so a later layout can host it elsewhere.
 
-- **Docked, never floating:** `--surface`, a 1px `--border` on its right, no shadow. `body.sw-on`
+- **Docked, never floating:** `--surface-sunken` (the mockup's ground: the list is where you go,
+  the middle what you read), a 1px `--border` on its right, no shadow. `body.sw-on`
   gives `main` the room (`padding-left: var(--sw-w) + 20px`), so nothing it covers is lost. It has
   no button, pin or close: it is simply there. **A phone never shows it** (`isPhone()`); it keeps
   its own layout until layout A's phone step.
-- **Its head** is one control, the project filter (`#sw-proj`, a native `select`: "All projects",
-  then every registered project by name). The choice is remembered per browser
-  (`cd-switcher-project`), and every group follows it.
+- **Its head** is two quiet controls, each a native `select` with its box and arrow drawn away
+  (`.sw-pick`): the project filter as a chip on `--selected-bg` (`#sw-proj`: "All projects", then
+  every registered project by name; it narrows what you see) and **Group: status / project** as a
+  Subtle button (`#sw-by`). Both are remembered per browser (`cd-switcher-project`,
+  `cd-switcher-group`), and every group follows the filter.
 - **Five groups, in this order:** **Needs you** (the bell's items less finished reports, oldest
   first: the same set as the bell, never a second opinion), **Running** (live tasks not waiting for
   a check, by project and number, so a row does not jump each time its agent takes a turn),
   **Ready for your check** (In review, reported finished, or paused part way; not Done; oldest
   first), **Projects** (each project's PO, latest news first) and **Done today** (Done and last
-  changed since midnight), folded in a `details`. Group heads are `--fs-100` capitals in
-  `--fg-subtle` with the count in `--fg-muted`; an empty group says so in one muted line.
-- **A row is two lines.** One: the unread dot's 8px slot, the key and title (`--fs-300`, one line,
-  ellipsis, the full text in the tooltip) and the age at the end (`--fs-100`, `--fg-muted`, ticks
-  in place). Two (`--fs-100`, `--fg-muted`, indented to the title): Needs you's lozenge and the
-  project; Running's project, run chip and `+ −`; Ready's project, why (`in review`, `reported`,
-  `paused`) and `+ −`. A PO row is "*Project* · PO", then "N answers to check · M asks open" (or
-  what it is doing: idle, working, not running).
+  changed since midnight), folded in a `details`. Group heads are sentence case, `--fs-200` 600 in
+  `--fg-subtle`, the count after the name in `--fg-muted`. **An empty group is its head alone**,
+  quieter (500, `--fg-muted`) with its `0`: the list keeps its shape, so no group comes and goes
+  under the pointer as tasks move.
+- **Group: project** (`swByProject`): a head per project (its open task count), its PO first
+  (once, with its lozenge if it needs you), then its tasks in the status groups' order; tasks in no
+  project last, Done today still folded below.
+- **A row is two lines.** One: the state's 8px dot, the key (`--font-mono` `--fs-200`
+  `--fg-muted`) and title (`--fs-300`, one line, ellipsis, the full text in the tooltip) and the
+  age at the end (`--fs-100`, `--fg-muted`, ticks in place). The dot (`swState`) says the state in
+  the colour that means it: what needs you in its lozenge's tone, working `--run-working`, news you
+  have not read `--c-discovery-bold` ("new", standing in for the unread dot, and the title goes
+  600), idle `--run-idle`, done `--c-success-bold`, else `--run-off`; it carries its words in
+  `aria-label`. Two (`--fs-200`, `--fg-muted`, indented to the title): Needs you's lozenge, then
+  one line of words, the project first: who is on a running task ("claude, codex"), or why a task
+  is ready ("in review", "reported", "paused"), then `+ −`. A PO row is "*Project* · PO", then
+  "N answers to check · M asks open" (or what it is doing: idle, working, not running).
 - **Selected** is `--selected-bg`: the open task, else the PO on screen (its project's page, or
-  its drawer). Its muted words step up to `--fg-subtle` there (`--fg-muted` and `.tno` on
-  `--selected-bg` are 4.4:1 in Light).
+  its drawer). Its muted words step up to `--fg-subtle` there and under the pointer (`--fg-muted`
+  and `.tno` on `--selected-bg` or `--hover` are under 4.5:1 in Light).
 - **A row opens what it names where it opens today:** a task in its panel over the page you are
   on; a PO on its project's screen (the PO chat revealed).
 - **It never moves under the pointer:** while hovered, rows keep their group and place
@@ -790,7 +830,9 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
    **The bar's breadcrumb** (layout A, #124; a desktop, `body.mid`; `crumbsOf`, `barCrumbs` and
    `crumbGo` in `index.html`, tested in `tests/test_middle.py`): one line after the wordmark,
    `ENSEMBLE / project ▾ › #18 the task (or PO) › its tool › the file`, four levels at most.
-   - **The project** is `#proj-go`, `--fg` at `--fs-300` 600, a Subtle button that goes up to its
+   - **Every part is at the body size** (`--fs-300`, #126, as the mockup): weight says where you
+     are, not size.
+   - **The project** is `#proj-go`, `--fg` at `--fs-300` 400, a Subtle button that goes up to its
      PO's conversation (closing an open task), or to its board when it has no PO. The caret beside
      it (`#proj-switch`, its name hidden) keeps the project menu. With no project (home, or a task
      in none) `#proj-switch` shows its name as before.
@@ -806,6 +848,13 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
      first (`flex-shrink: 4`), so the bar keeps one row; search gives up width before it does.
    - Written only when it changes (`writeSlot`). A phone has none: its row two keeps back and the
      project's name, and step 5 moves this line under the task's title there.
+
+   **The global group on a desktop** (layout A, #126): where you are fills the left, so only the
+   gap before search grows. **Search** is a quiet box of about 300px on `--surface-sunken`
+   (`--surface` while you type), "Search or jump to…", with its key as a `kbd` (`/`, the page's
+   shortcut; the mockup's ⌘K does not exist) that goes while you type. It is never focused on load:
+   that made `/` useless. The PO pill has no edge at rest (a Subtle button); the bell is a drawn
+   stroke icon in `currentColor`, not an emoji, so it takes the bar's colours in every theme.
 
    **A project page has no rows of its own above its content.** No status row: what needs you is the
    bell's count and its tray's *Show all* (the Needs you page); what changed is on the Changes panel
