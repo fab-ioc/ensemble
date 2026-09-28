@@ -264,7 +264,7 @@ def _real_bash():
 
 
 BASH = _real_bash()
-OLD_CMD = "/usr/bin/python3 /Users/x/.claude/dashboard/dashboard.py --port 8765"
+OLD_CMD = "/usr/bin/python3 /home/u/.claude/dashboard/dashboard.py --port 8765"
 
 
 @unittest.skipUnless(BASH, "bash not on PATH")
