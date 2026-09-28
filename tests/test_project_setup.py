@@ -634,6 +634,13 @@ out.notes = [
   setupFolderNote(S({ kind: 'documents', name: 'Motors', folder: { kind: 'documents', folder: 'C:\\P\\Motors', exists: false } })),
   setupFolderNote(S({ mode: 'existing', project: { id: 'p1', name: 'Engine', path: 'C:\\w' } })),
 ];
+const two = [{ id: 'p1', name: 'Engine' }, { id: 'p2', name: 'Gearbox' }];
+out.shared = {
+  other: setupFolderNote(S({ name: 'Search', folder: { ...base.folder, projects: two, project: two[0] } })),
+  one: setupFolderNote(S({ name: 'Search', folder: { ...base.folder, projects: two.slice(0, 1), project: two[0] } })),
+  same: setupFolderNote(S({ name: ' gearbox ', folder: { ...base.folder, projects: two, project: two[0] } })),
+  submit: setupSubmit(S({ name: 'Search', choice: 'none', folder: { ...base.folder, projects: two, project: two[0] } })),
+};
 out.dialog = setupDialogHtml(base);
 out.dialogPre = setupDialogHtml(S({ choice: 'conv', sel: 'here' }));
 out.dialogRecent = setupDialogHtml(S({ choice: 'conv', sel: 'recent' }));
@@ -735,6 +742,17 @@ console.log(JSON.stringify(out));
         self.assertEqual(project["project"], {"id": "p1", "name": "Engine"})
         self.assertIn("C:\\P\\Motors", docs["text"])
         self.assertEqual(existing, {"text": ""})
+
+    def test_a_folder_other_projects_use(self):
+        s = self.out["shared"]
+        self.assertFalse(s["other"].get("alert"), "information, not a refusal")
+        self.assertTrue(s["other"]["text"].startswith("2 projects already use this folder: “Engine”, “Gearbox”."), s["other"])
+        self.assertIn("its own tasks, PO and branches", s["other"]["text"])
+        self.assertTrue(s["one"]["text"].startswith("One project already uses this folder: “Engine”."), s["one"])
+        self.assertTrue(s["same"].get("alert"))
+        self.assertEqual(s["same"]["text"], "This folder is already the project “Gearbox”.")
+        self.assertEqual(s["same"]["project"], {"id": "p2", "name": "Gearbox"})
+        self.assertEqual(s["submit"]["how"], "none")
 
     def test_the_dialog(self):
         d = self.out["dialog"]

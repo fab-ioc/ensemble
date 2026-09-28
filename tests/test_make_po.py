@@ -196,11 +196,24 @@ class NewProject(Hub):
 
     def test_a_folder_that_is_a_project_already(self):
         ok, existing, _ = dashboard.register_project(str(self.work), "Engine")
-        status, out = self.call({**self.session(), "name": "Engine 2", "kind": "code", "path": str(self.work)})
+        status, out = self.call({**self.session(), "name": "engine", "kind": "code", "path": str(self.work)})
         self.assertEqual(status, 409, out)
         self.assertIn("already the project “Engine”", out["message"])
         self.assertEqual([p["id"] for p in dashboard.load_projects()], [existing["id"]], "and it is left as it was")
         self.assertTrue(self.work.is_dir())
+
+    def test_a_second_project_on_a_folder_that_is_a_project_already(self):
+        ok, existing, _ = dashboard.register_project(str(self.work), "Engine")
+        status, out = self.call({**self.session(), "name": "Gearbox", "kind": "code", "path": str(self.work)})
+        self.assertEqual(status, 200, out)
+        projects = dashboard.load_projects()
+        self.assertEqual(sorted(p["name"] for p in projects), ["Engine", "Gearbox"])
+        gear = next(p for p in projects if p["name"] == "Gearbox")
+        self.assertTrue(gear["poRoomId"], "the new one has its own PO")
+        self.assertFalse(next(p for p in projects if p["id"] == existing["id"]).get("poRoomId"),
+                         "the one that was there is left as it was")
+        self.assertNotEqual(dashboard.project_home(gear, create=False),
+                            dashboard.project_home(existing, create=False))
 
     def test_a_conversation_the_hub_already_holds(self):
         status, out = self.call({**self.session(), "name": "Engine", "kind": "code", "path": str(self.work)})
