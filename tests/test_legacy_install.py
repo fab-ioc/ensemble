@@ -334,7 +334,7 @@ class PowerShellLauncherPort(unittest.TestCase):
     """ensemble.ps1 dot-sourced with the port lookup, the command line and the
     HTTP probe replaced: pid 4242 holds the port."""
 
-    OLD = r"C:\Python\python.exe C:\Users\x\.claude\dashboard\dashboard.py --port 8765"
+    OLD = r"D:\py\python.exe D:\u\.claude\dashboard\dashboard.py --port 8765"
 
     def run_ps(self, body: str, ensemble: bool):
         with tempfile.TemporaryDirectory() as home:
