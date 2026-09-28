@@ -1360,7 +1360,10 @@ function mdLinkHtml(m, txt, target) {
   const task = t.match(/^(?:\/?\?task=)?(room-[0-9a-f]{8})$/);
   if (task) return taskLinkHtml(task[1], txt);
   if (/^\/(?:fileview|session)?(?:\?|$)/.test(t)) return `<a href="${esc(t)}"${A_NEW}>${txt}</a>`;
-  if (looksFilePath(t) || looksDirPath(t)) { const s = splitLine(t); return fileRefHtml(s.path, txt, s.line, 'text') ?? m; }
+  // A Markdown link target is a URL: %23 is #, %20 a space.
+  let p = t;
+  if (/%[0-9A-Fa-f]{2}/.test(p)) { try { p = decodeURIComponent(p); } catch (e) {} }
+  if (looksFilePath(p) || looksDirPath(p)) { const s = splitLine(p); return fileRefHtml(s.path, txt, s.line, 'text') ?? m; }
   return m;
 }
 // A `code span` that names a place is a link too, and still reads as code.
