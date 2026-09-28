@@ -555,43 +555,60 @@ class WindowsBackend(Backend):
 
     # ---------- self-update ----------
 
-    def self_update(self, install_dir) -> dict:
+    def self_update(self, install_dir, port=None, log_file=None) -> dict:
         """git fetch+reset the install dir, then restart the server. If we're
         running under the Ensemble scheduled task, bouncing the task kills this
         process and relaunches it windowless; otherwise fall back to
-        `ensemble.ps1 restart`. Runs detached so it survives our exit."""
+        `ensemble.ps1 restart -Port <this hub's port>`. Runs detached so it
+        survives our exit; its output is appended to the hub's log, so a
+        failed restart says why."""
         install_dir = Path(install_dir)
         shell = shutil.which("pwsh") or shutil.which("powershell")
         if not shell:
             return {"started": False, "error": "PowerShell not found"}
+        log = Path(log_file) if log_file else DASHBOARD_DIR / "logs" / "ensemble.log"
         LAUNCH_DIR.mkdir(parents=True, exist_ok=True)
         script_path = LAUNCH_DIR / f"update-{uuid.uuid4().hex}.ps1"
         ps1 = install_dir / "ensemble.ps1"
+        port_arg = f" -Port {int(port)}" if port else ""
         body = (
+            "function Say($t) { Write-Output \"[update $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $t\" }\n"
+            f"Say {_ps_quote(f'Updating {install_dir} (hub port {port or 8765})...')}\n"
             f"Set-Location -LiteralPath {_ps_quote(str(install_dir))}\n"
-            "git fetch --quiet 2>$null\n"
+            "git fetch --quiet\n"
+            "if ($LASTEXITCODE -ne 0) { Say 'git fetch failed' }\n"
             "$up = (git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>$null)\n"
-            "if ($up) { git reset --hard $up 2>$null }\n"
+            "if ($up) { git reset --hard --quiet $up } else { Say 'warning: no upstream to update from' }\n"
             "$t = Get-ScheduledTask -TaskName Ensemble -ErrorAction SilentlyContinue\n"
             "if ($t) {\n"
             "  try { Stop-ScheduledTask -TaskName Ensemble -ErrorAction SilentlyContinue } catch {}\n"
             "  Start-Sleep -Seconds 1\n"
             "  Start-ScheduledTask -TaskName Ensemble\n"
+            "  Say 'Restarted via the Ensemble scheduled task.'\n"
             f"}} elseif (Test-Path {_ps_quote(str(ps1))}) {{\n"
-            f"  & {_ps_quote(str(ps1))} restart\n"
+            "  $global:LASTEXITCODE = 0\n"
+            f"  & {_ps_quote(str(ps1))} restart{port_arg}\n"
+            "  if ($LASTEXITCODE -ne 0) { Say \"the hub did not come back (ensemble.ps1 restart exited $LASTEXITCODE, reason above)\" }\n"
+            "  else { Say 'Done.' }\n"
+            "} else {\n"
+            f"  Say {_ps_quote(f'the hub was not restarted: {ps1} not found')}\n"
             "}\n"
             f"Remove-Item -LiteralPath {_ps_quote(str(script_path))} -ErrorAction SilentlyContinue\n"
         )
         try:
             script_path.write_text(body, encoding="utf-8")
-            subprocess.Popen(
-                [shell, "-NoProfile", "-ExecutionPolicy", "Bypass",
-                 "-WindowStyle", "Hidden", "-File", str(script_path)],
-                close_fds=True,
-            )
+            log.parent.mkdir(parents=True, exist_ok=True)
+            with open(log, "ab") as out:
+                subprocess.Popen(
+                    [shell, "-NoProfile", "-ExecutionPolicy", "Bypass",
+                     "-WindowStyle", "Hidden", "-File", str(script_path)],
+                    stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                    close_fds=True,
+                    env=dict(os.environ, ENSEMBLE_STDIO_IS_LOG="1"),
+                )
         except (OSError, subprocess.SubprocessError) as e:
             return {"started": False, "error": f"{e.__class__.__name__}: {e}"}
-        return {"started": True, "pid": os.getpid()}
+        return {"started": True, "pid": os.getpid(), "log": str(log)}
 
     def self_restart(self, plan: dict) -> dict:
         """Run restart-hub.ps1 (a copy, so a checkout change mid-restart cannot

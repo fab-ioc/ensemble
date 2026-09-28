@@ -196,9 +196,12 @@ class Backend:
 
     # ---------- self-update ----------
 
-    def self_update(self, install_dir: Path) -> dict:
+    def self_update(self, install_dir: Path, port: int | None = None,
+                    log_file: Path | None = None) -> dict:
         """Pull the latest code and restart the running server. Platform-specific
-        (launchd on macOS, Task Scheduler on Windows). Default: not wired up."""
+        (launchd on macOS, Task Scheduler on Windows). `port` is the hub's own,
+        for a restart without the service; the update's output is appended to
+        `log_file` (the hub's log). Default: not wired up."""
         return {"started": False, "error": "self-update not supported on this platform"}
 
     def self_restart(self, plan: dict) -> dict:

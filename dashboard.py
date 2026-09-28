@@ -7775,7 +7775,8 @@ def trigger_update() -> dict:
     bounce the machine's Ensemble scheduled task — the REAL hub."""
     if os.environ.get("ENSEMBLE_UPDATE_DRY_RUN"):
         return {"started": True, "dryRun": True, "pid": os.getpid()}
-    result = BACKEND.self_update(STATIC_DIR)
+    result = BACKEND.self_update(STATIC_DIR, port=HUB_PORT,
+                                 log_file=_LOG_FILE or DEFAULT_LOG_FILE)
     if result.get("started"):
         global _UPDATE_CHECK_CACHE
         _UPDATE_CHECK_CACHE = None
