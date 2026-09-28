@@ -84,7 +84,7 @@ cd ensemble
 .\ensemble.ps1 doctor     # checks Python, pywinpty, claude/codex, git, the hub
 ```
 
-Other commands are `stop`, `restart`, `status` and `logs`, and `-Port N` picks another port. The log is `%USERPROFILE%\.ensemble\logs\ensemble.log`. If PowerShell refuses to run the script, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.
+Other commands are `stop`, `restart`, `status` and `logs`, and `-Port N` picks another port. The log is `%USERPROFILE%\.ensemble\logs\ensemble.log`. `restart` and the dashboard's Update now bring the hub back on the port `start` last used (kept in `%USERPROFILE%\.ensemble\server.port`); the update's output goes to the same log. If PowerShell refuses to run the script, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.
 
 To start the hub at logon and restart it if it crashes:
 
@@ -105,7 +105,7 @@ cd ~/ensemble
 ./ensemble open
 ```
 
-Other commands are `stop`, `restart`, `status` and `logs`. The log is `~/Library/Logs/ensemble.log`. To start the hub at login, run `./install-launchd.sh`, which installs the LaunchAgent `com.ensemble.dashboard`. It also takes `status` and `uninstall`. The LaunchAgent keeps the `PATH` of the shell you run it from, so the hub finds `claude`, `codex`, `git` and `node` wherever they are installed.
+Other commands are `stop`, `restart`, `status` and `logs`, and `--port N` picks another port. The log is `~/Library/Logs/ensemble.log`. `restart` and the dashboard's Update now bring the hub back on the port `start` last used (kept in `~/.ensemble/server.port`); the update's output goes to the same log. To start the hub at login, run `./install-launchd.sh`, which installs the LaunchAgent `com.ensemble.dashboard`. It also takes `status` and `uninstall`. The LaunchAgent keeps the `PATH` of the shell you run it from, so the hub finds `claude`, `codex`, `git` and `node` wherever they are installed.
 
 The macOS scripts were read and adjusted but not run for this README; only the Windows steps were tried.
 
@@ -208,7 +208,7 @@ Environment variables, read at start:
 
 | Variable | Meaning |
 |---|---|
-| `ENSEMBLE_PORT` | Port (default `8765`; `--port` wins) |
+| `ENSEMBLE_PORT` | Port (default `8765`; `--port` wins; both win over the port `restart` reuses) |
 | `ENSEMBLE_BIND` | Extra listener: `tailscale`, an IP, or `0.0.0.0` (`--bind` wins) |
 | `ENSEMBLE_TOKEN` | The remote access token |
 | `ENSEMBLE_PERMISSION_MODE` | Claude's `--permission-mode` (default `bypassPermissions`; empty omits the flag) |

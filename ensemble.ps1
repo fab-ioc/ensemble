@@ -12,8 +12,13 @@
   .\ensemble.ps1 logs        # tail -f the log file
   .\ensemble.ps1 open        # open the dashboard in the default browser
 
+.PORT
+  -Port, else ENSEMBLE_PORT, else (all but start) the port the hub last
+  started on, else 8765.
+
 .STATE
   PID file: %USERPROFILE%\.ensemble\server.pid
+  Port:     %USERPROFILE%\.ensemble\server.port (the port start last started the hub on)
   Logs:     %USERPROFILE%\.ensemble\logs\ensemble.log
 #>
 [CmdletBinding()]
@@ -31,14 +36,46 @@ $Server    = Join-Path $ScriptDir 'dashboard.py'
 $StateDir  = Join-Path $env:USERPROFILE '.ensemble'
 $LogDir    = Join-Path $StateDir 'logs'
 $PidFile   = Join-Path $StateDir 'server.pid'
+$PortFile  = Join-Path $StateDir 'server.port'
 $Log       = Join-Path $LogDir 'ensemble.log'
 
+function Get-RecordedPort {
+  # The port start last started the hub on ($null if none or not a port).
+  try {
+    $t = [string](Get-Content -LiteralPath $PortFile -ErrorAction Stop | Select-Object -First 1)
+    $n = 0
+    if ([int]::TryParse($t.Trim(), [ref]$n) -and $n -ge 1 -and $n -le 65535) { return $n }
+  } catch {}
+  return $null
+}
+
+# restart/stop/status find the hub where it last ran, unless a port was given
+# (-Port, ENSEMBLE_PORT). start alone keeps the default.
+$PortSource = '-Port'
 if ($Port -eq 0) {
-  $Port = if ($env:ENSEMBLE_PORT) { [int]$env:ENSEMBLE_PORT } else { 8765 }
+  $recorded = Get-RecordedPort
+  if ($env:ENSEMBLE_PORT) { $Port = [int]$env:ENSEMBLE_PORT; $PortSource = 'ENSEMBLE_PORT' }
+  elseif ($Action -ne 'start' -and $recorded) { $Port = $recorded; $PortSource = "recorded in $PortFile" }
+  else { $Port = 8765; $PortSource = 'default' }
 }
 $Url = "http://127.0.0.1:$Port"
 
 New-Item -ItemType Directory -Force -Path $StateDir, $LogDir | Out-Null
+
+function Write-Note($Text) {
+  # To stderr, and to the log with a time unless stderr already goes there
+  # (the update the hub spawns sets ENSEMBLE_STDIO_IS_LOG). The hub holds the
+  # log open, so share it rather than Add-Content (which would be refused).
+  [Console]::Error.WriteLine($Text)
+  if ($env:ENSEMBLE_STDIO_IS_LOG) { return }
+  try {
+    $fs = [IO.FileStream]::new($Log, [IO.FileMode]::Append, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
+    try {
+      $b = [Text.Encoding]::UTF8.GetBytes("[ensemble $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $Text`r`n")
+      $fs.Write($b, 0, $b.Length)
+    } finally { $fs.Dispose() }
+  } catch {}
+}
 
 function Resolve-Python {
   foreach ($c in 'py', 'python', 'python3') {
@@ -134,11 +171,12 @@ function Start-Dashboard {
   if ($existing) { Write-Host "Already running (pid $existing). $Url"; return }
   $other = Get-ForeignPid
   if ($other) {
-    Write-Host "error: port $Port is held by another program ($(Get-PidDescription $other)), not Ensemble."
+    Write-Note "error: port $Port is held by another program ($(Get-PidDescription $other)), not Ensemble. Ensemble was not started."
+    if ($PortSource -ne '-Port') { Write-Note "Port $Port came from: $PortSource." }
     if ((Get-CommandLine $other) -like '*\.claude\dashboard*') {
-      Write-Host 'That is the old claude-dashboard; remove its task: schtasks /Delete /TN ClaudeDashboard /F'
+      Write-Note 'That is the old claude-dashboard; remove its task: schtasks /Delete /TN ClaudeDashboard /F'
     }
-    Write-Host "Stop it, or start Ensemble on another port: .\ensemble.ps1 start -Port 8766"
+    Write-Note "Stop it, or start Ensemble on another port: .\ensemble.ps1 start -Port 8766"
     exit 1
   }
   if (-not (Test-Path $Server)) { Write-Error "$Server not found"; exit 1 }
@@ -161,9 +199,10 @@ function Start-Dashboard {
   $proc.Id | Out-File -Encoding ascii $PidFile
   Start-Sleep -Milliseconds 500
   if (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue) {
+    [string]$Port | Out-File -Encoding ascii $PortFile
     Write-Host "Started (pid $($proc.Id)). $Url"
   } else {
-    Write-Host 'Failed to start. Last log lines:'
+    Write-Note "Failed to start on port $Port. Last log lines:"
     Get-Content $Log -Tail 20 -ErrorAction SilentlyContinue
     Remove-Item $PidFile -ErrorAction SilentlyContinue
     exit 1

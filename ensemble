@@ -8,9 +8,14 @@
 #   ensemble status
 #   ensemble logs       # tail -f the log file
 #   ensemble open       # open the dashboard in the default browser
+#   ensemble update [--port N]  # pull the latest code and restart (Update now)
+#
+# Port: --port, else ENSEMBLE_PORT, else (all but start) the port the hub last
+# started on, else 8765.
 #
 # State:
 #   PID file: ~/.ensemble/server.pid
+#   Port:     ~/.ensemble/server.port (the port `start` last started the hub on)
 #   Logs:     ~/Library/Logs/ensemble.log
 #
 # Tip: symlink this script onto your PATH so you can run it from anywhere:
@@ -27,12 +32,60 @@ while [ -L "$SOURCE" ]; do
 done
 DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null && pwd)"
 SCRIPT="$DIR/dashboard.py"
-PORT="${ENSEMBLE_PORT:-8765}"
 STATE_DIR="$HOME/.ensemble"
 PID_FILE="$STATE_DIR/server.pid"
+PORT_FILE="$STATE_DIR/server.port"
 LOG="$HOME/Library/Logs/ensemble.log"
+if [[ -n "${ENSEMBLE_PORT:-}" ]]; then
+  PORT="$ENSEMBLE_PORT"; PORT_SOURCE="ENSEMBLE_PORT"
+else
+  PORT=8765; PORT_SOURCE="default"
+fi
 
 mkdir -p "$STATE_DIR" "$(dirname "$LOG")"
+
+recorded_port() {
+  # The port `start` last started the hub on (empty if none or not a port).
+  local p
+  p="$(head -n 1 "$PORT_FILE" 2>/dev/null | tr -d '[:space:]' || true)"
+  if [[ "$p" =~ ^[0-9]{1,5}$ ]] && (( 10#$p >= 1 && 10#$p <= 65535 )); then
+    echo "$((10#$p))"
+  fi
+  return 0
+}
+
+use_recorded_port() {
+  # restart/stop/status/update find the hub where it last ran, unless a port
+  # was given (--port, ENSEMBLE_PORT). `start` alone keeps the default.
+  [[ "$PORT_SOURCE" == "default" ]] || return 0
+  local p
+  p="$(recorded_port)"
+  if [[ -n "$p" ]]; then
+    PORT="$p"; PORT_SOURCE="recorded in $PORT_FILE"
+  fi
+  return 0
+}
+
+parse_port_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --port) PORT="${2:-}"; PORT_SOURCE="--port"; shift 2 || shift ;;
+      *) echo "unknown arg: $1" >&2; exit 2 ;;
+    esac
+  done
+  if ! [[ "$PORT" =~ ^[0-9]{1,5}$ ]]; then
+    echo "error: not a port: '$PORT' (from $PORT_SOURCE)" >&2; exit 2
+  fi
+}
+
+log_note() {
+  # To stderr, and to the log with a time unless stderr already goes there
+  # (`ensemble update` spawned by the hub sets ENSEMBLE_STDIO_IS_LOG).
+  echo "$*" >&2
+  if [[ -z "${ENSEMBLE_STDIO_IS_LOG:-}" ]]; then
+    echo "[ensemble $(date '+%Y-%m-%d %H:%M:%S')] $*" >>"$LOG" 2>/dev/null || true
+  fi
+}
 
 url() { echo "http://127.0.0.1:$PORT"; }
 
@@ -93,12 +146,7 @@ describe_pid() {
 }
 
 cmd_start() {
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --port) PORT="$2"; shift 2 ;;
-      *) echo "unknown arg: $1" >&2; exit 2 ;;
-    esac
-  done
+  parse_port_args "$@"
   local pid
   pid="$(running_pid)"
   if [[ -n "$pid" ]]; then
@@ -108,11 +156,14 @@ cmd_start() {
   local other
   other="$(foreign_pid)"
   if [[ -n "$other" ]]; then
-    echo "error: port $PORT is held by another program ($(describe_pid "$other")), not Ensemble." >&2
-    if [[ "$(ps -o command= -p "$other" 2>/dev/null || true)" == *".claude/dashboard"* ]]; then
-      echo "That is the old claude-dashboard; remove its LaunchAgent: launchctl bootout gui/\$(id -u)/com.claude-code.dashboard; rm ~/Library/LaunchAgents/com.claude-code.dashboard.plist" >&2
+    log_note "error: port $PORT is held by another program ($(describe_pid "$other")), not Ensemble. Ensemble was not started."
+    if [[ "$PORT_SOURCE" != "--port" ]]; then
+      log_note "Port $PORT came from: $PORT_SOURCE."
     fi
-    echo "Stop it, or start Ensemble on another port: $0 start --port 8766" >&2
+    if [[ "$(ps -o command= -p "$other" 2>/dev/null || true)" == *".claude/dashboard"* ]]; then
+      log_note "That is the old claude-dashboard; remove its LaunchAgent: launchctl bootout gui/\$(id -u)/com.claude-code.dashboard; rm ~/Library/LaunchAgents/com.claude-code.dashboard.plist"
+    fi
+    log_note "Stop it, or start Ensemble on another port: $0 start --port 8766"
     exit 1
   fi
   if [[ ! -f "$SCRIPT" ]]; then
@@ -136,9 +187,10 @@ cmd_start() {
   # Quick health check.
   sleep 0.3
   if kill -0 "$new_pid" 2>/dev/null; then
+    echo "$PORT" > "$PORT_FILE"
     echo "Started (pid $new_pid). $(url)"
   else
-    echo "Failed to start. Last log lines:" >&2
+    log_note "Failed to start on port $PORT. Last log lines:"
     tail -n 20 "$LOG" >&2 || true
     rm -f "$PID_FILE"
     exit 1
@@ -187,7 +239,8 @@ cmd_open() { open "$(url)"; }
 # Pull the latest code and restart. Invoked by the in-app "Update now" button
 # (the server spawns `ensemble update` detached so it survives the restart).
 cmd_update() {
-  echo "Updating…"
+  parse_port_args "$@"
+  echo "[update $(date '+%Y-%m-%d %H:%M:%S')] Updating $DIR (hub port $PORT, from $PORT_SOURCE)…"
   git -C "$DIR" fetch --quiet || { echo "git fetch failed" >&2; exit 1; }
   local up
   up="$(git -C "$DIR" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
@@ -209,6 +262,7 @@ cmd_update() {
   else
     cmd_stop; cmd_start
   fi
+  echo "[update $(date '+%Y-%m-%d %H:%M:%S')] Done."
 }
 
 # Sourced (the tests do, to check the functions above): define, do not run.
@@ -219,19 +273,21 @@ fi
 action="${1:-status}"
 shift || true
 
+[[ "$action" == "start" ]] || use_recorded_port
+
 case "$action" in
   start)   cmd_start "$@" ;;
   stop)    cmd_stop ;;
-  restart) cmd_stop; cmd_start "$@" ;;
+  restart) parse_port_args "$@"; cmd_stop; cmd_start ;;
   status)  cmd_status ;;
   logs)    cmd_logs ;;
   open)    cmd_open ;;
-  update)  cmd_update ;;
+  update)  cmd_update "$@" ;;
   -h|--help|help)
-    sed -n '2,12p' "$0"
+    sed -n '2,19p' "$0"
     ;;
   *)
-    echo "Usage: $0 {start [--port N] | stop | restart [--port N] | status | logs | open | update}" >&2
+    echo "Usage: $0 {start [--port N] | stop | restart [--port N] | status | logs | open | update [--port N]}" >&2
     exit 2
     ;;
 esac
