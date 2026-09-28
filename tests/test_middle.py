@@ -151,6 +151,7 @@ const MID = `(() => {
   const chat = open ? dp.querySelector('iframe.dp-session') : document.querySelector('#po-panel iframe.po-session:not([hidden])');
   return { mid: document.body.classList.contains('mid'), open, vw: innerWidth, vh: innerHeight, top: Math.round(hd.bottom),
     panel: open ? box(dp) : box(document.getElementById('po-dock-host')), chat: vis(chat) ? box(chat) : null,
+    listR: (() => { const l = document.getElementById('switcher'); return l && !l.hidden ? Math.round(l.getBoundingClientRect().right) : 0; })(),
     convW: parseFloat(getComputedStyle(document.body).getPropertyValue('--conv-w')),
     project: vis(document.getElementById('proj-go')) ? document.querySelector('#proj-go .proj-go-name').textContent : null,
     trail: [...document.querySelectorAll('#bar-crumbs [data-crumb]')].filter(vis).map(e => [e.dataset.crumb, e.textContent, e.tagName === 'BUTTON']),
@@ -440,7 +441,8 @@ class TheMiddle(unittest.TestCase):
         self.assertTrue(g["mid"], what)
         self.assertLessEqual(abs(g["panel"]["y"] - g["top"]), 1, f"{what}: starts under the bar")
         self.assertLessEqual(abs(g["panel"]["b"] - g["vh"]), 1, f"{what}: reaches the bottom")
-        self.assertEqual(g["panel"]["x"], 0, f"{what}: from the left (no list yet)")
+        self.assertEqual(g["panel"]["x"], g["listR"], f"{what}: from the list's right edge")
+        self.assertGreater(g["listR"], 0, f"{what}: the task list is there")
         self.assertEqual(g["panel"]["r"], g["vw"], f"{what}: to the right edge")
         self.assertIsNotNone(g["chat"], f"{what}: the conversation shows")
         self.assertLessEqual(g["chat"]["w"], g["convW"] + 1, f"{what}: a column")

@@ -99,7 +99,7 @@ const el = () => ({ hidden: false, dataset: {}, kids: [], className: '',
 let head, frames, panel;
 const document = { getElementById: id => (id === 'po-panel' ? panel : null), createElement: el,
   body: { classList: { on: new Set(), toggle(c, v) { v ? this.on.add(c) : this.on.delete(c); } } } };
-const renderPoPill = () => {}, focusKeyIn = () => null, restoreFocus = () => {};
+const renderPoPill = () => {}, focusKeyIn = () => null, restoreFocus = () => {}, swRender = () => {};
 const poHeadHtml = (pj, row) => pj.id + ':' + row.roomId;
 const renderRows = () => { calls.push('renderRows'); renderPo(); };
 const openDetail = id => calls.push('openDetail:' + id);
@@ -109,7 +109,8 @@ const seen = () => ({ peek: PO_PEEK, pin: PO_PIN, drawer: document.body.classLis
   lit: panel.hidden ? [] : frames.kids.filter(f => !f.hidden).map(f => f.dataset.room) });
 const open = (rid, setup) => {
   PO_PEEK = false; PO_PIN = ''; SELECTED_PROJECT = ''; PROJECT_TAB = 'changes'; SB_DEST = 'needsyou'; SELECTED_SID = '';
-  PHONE = false; ALL_ROWS = ROWS; calls = []; tray.hidden = false;
+  // The drawer is a phone's (#124: a desktop opens a PO in the middle, below).
+  PHONE = true; ALL_ROWS = ROWS; calls = []; tray.hidden = false;
   head = el(); frames = el(); document.body.classList.on.clear();
   panel = { hidden: true, built: false, set innerHTML(v) { this.built = true; },
             hasAttribute() { return false; }, removeAttribute() {}, classList: { remove() {} },
@@ -138,6 +139,8 @@ open('po-gone'); PO_PEEK = false; renderPo(); log.pinAfterClose = PO_PIN;
 log.openPoNoRow = open('po-blocked', () => { ALL_ROWS = []; });
 log.openTask = open('room-a');
 log.openHidden = open('po-stalled');
+// A desktop: a PO opens in the middle from Needs you, never in a drawer.
+log.openPoDesk = open('po-blocked', () => { PHONE = false; });
 console.log(JSON.stringify(log));
 """
 
@@ -150,7 +153,7 @@ class PoNeedsYouPage(unittest.TestCase):
         heads = ("function sinceClock(", "function attnWhen(",
                  "function attentionItems(", "function notifItemHtml(", "function needsYouHtml(",
                  "function openAttentionItem(", "function openPoOf(", "function poRowOf(",
-                 "function projectOfRoom(", "function poDockProject(", "function poSplitProject(", "function poContext(", "function renderPo(", "function poPillClick(")
+                 "function projectOfRoom(", "function poDockProject(", "function poSplitProject(", "function poContext(", "function renderPo(", "function poPillClick(", "function poMidGo(", "function midLeave(")
         src = "\n".join([INDEX[i:INDEX.index("// ---- Task search: end", i)]] + [fn(INDEX, h) for h in heads])
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "po_needs_you.cjs"
@@ -234,6 +237,11 @@ class PoNeedsYouPage(unittest.TestCase):
         o = self.r["openTask"]
         self.assertEqual(o["calls"], ["renderRows", "openDetail:room-a"])
         self.assertEqual((o["project"], o["tab"], o["peek"]), ("p1", "tasks", False))
+
+    def test_a_desktop_opens_a_po_in_the_middle(self):
+        o = self.r["openPoDesk"]
+        self.assertEqual((o["calls"], o["project"], o["tab"], o["dest"], o["drawer"], o["leads"], o["room"]),
+                         (["renderRows", "reveal:po-chat"], "p1", "tasks", "", False, True, "po-blocked"))
 
     def test_a_hidden_po_item_opens_nothing(self):
         self.assertEqual(self.r["openHidden"]["calls"], [])

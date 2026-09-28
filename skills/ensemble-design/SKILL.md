@@ -189,7 +189,7 @@ theme block, with the same values, and its own `.tk-*` rules.
 ### Layout
 
 `--header-h` (49px: 48px bar + 1px border) · `--chrome-h` · `--sidebar-w` · `--detail-w` (a phone's
-task, only) · `--list-w` (the task list on the left in layout A; 0 until it is there) · `--conv-w`
+task, only) · `--list-w` (the task list on the left in layout A: `--sw-w` while `body.sw-on`, else 0) · `--conv-w`
 (880px, the conversation's column in the middle; see *The middle* in §5).
 
 **Never hard-code a header offset.** Nine literal `49px`/`56px`/`266px` values used to tie the sticky
@@ -709,12 +709,49 @@ agent." (with **Hide**), or "Not delivered: *reason*." with **Retry** and **Disc
 icon, same weight as every other card. It is the state the whole board sits in for a minute after
 every hub restart. If it ever looks broken, the design has failed.
 
+### The task list (left)
+
+Layout A's list (#115, built in #123 from #114's switcher): every project's tasks and POs in one
+300px column (`--sw-w`) left of every desktop page, under the bar, from the top of the page to the
+bottom. It is how the person gets around; the board stays the planning view. `index.html`'s
+`swGroups` / `swListHtml` (the "Task switcher" block) are the reference, and `#switcher` is one
+self-contained component, so a later layout can host it elsewhere.
+
+- **Docked, never floating:** `--surface`, a 1px `--border` on its right, no shadow. `body.sw-on`
+  gives `main` the room (`padding-left: var(--sw-w) + 20px`), so nothing it covers is lost. It has
+  no button, pin or close: it is simply there. **A phone never shows it** (`isPhone()`); it keeps
+  its own layout until layout A's phone step.
+- **Its head** is one control, the project filter (`#sw-proj`, a native `select`: "All projects",
+  then every registered project by name). The choice is remembered per browser
+  (`cd-switcher-project`), and every group follows it.
+- **Five groups, in this order:** **Needs you** (the bell's items less finished reports, oldest
+  first: the same set as the bell, never a second opinion), **Running** (live tasks not waiting for
+  a check, by project and number, so a row does not jump each time its agent takes a turn),
+  **Ready for your check** (In review, reported finished, or paused part way; not Done; oldest
+  first), **Projects** (each project's PO, latest news first) and **Done today** (Done and last
+  changed since midnight), folded in a `details`. Group heads are `--fs-100` capitals in
+  `--fg-subtle` with the count in `--fg-muted`; an empty group says so in one muted line.
+- **A row is two lines.** One: the unread dot's 8px slot, the key and title (`--fs-300`, one line,
+  ellipsis, the full text in the tooltip) and the age at the end (`--fs-100`, `--fg-muted`, ticks
+  in place). Two (`--fs-100`, `--fg-muted`, indented to the title): Needs you's lozenge and the
+  project; Running's project, run chip and `+ −`; Ready's project, why (`in review`, `reported`,
+  `paused`) and `+ −`. A PO row is "*Project* · PO", then "N answers to check · M asks open" (or
+  what it is doing: idle, working, not running).
+- **Selected** is `--selected-bg`: the open task, else the PO on screen (its project's page, or
+  its drawer). Its muted words step up to `--fg-subtle` there (`--fg-muted` and `.tno` on
+  `--selected-bg` are 4.4:1 in Light).
+- **A row opens what it names where it opens today:** a task in its panel over the page you are
+  on; a PO on its project's screen (the PO chat revealed).
+- **It never moves under the pointer:** while hovered, rows keep their group and place
+  (`swFreeze`); what changed lands when the pointer leaves. It redraws with the board's refresh and
+  the bell's, no poller of its own.
+
 ---
 
 ## 5. Layout and navigation rules
 
-**Three fixed zones and one overlay.** Top bar (global, thin) · left sidebar (*where you are*) ·
-content (*what you are looking at*) · the issue view as an overlay. Nothing else moves.
+**Three fixed zones and one overlay.** Top bar (global, thin) · the task list on the left (*where
+you can go*, §4) · content (*what you are looking at*) · the issue view as an overlay. Nothing else moves.
 
 1. **Nothing about the current view goes in the top bar.** The bar carries identity, where-am-I,
    search, what-needs-me, me, create. Filters, counts, grouping and sort belong to the view that owns
@@ -796,7 +833,7 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
    `moveBefore` so the iframe keeps its page (a plain `appendChild` would reload it; browsers
    without `moveBefore` do reload it then). Never rebuild it, and never move it any other way.
    **The middle** (layout A, #124; a desktop, `body.mid`, set by `midSync` from `MOBILE_MQ`).
-   The screen is list (left, `--list-w`, step 1) | middle | (later) the tool strip. The middle
+   The screen is list (left, the task switcher, `--list-w`) | middle | (later) the tool strip. The middle
    holds **one conversation**, full height under the bar: a task's (`#detail-panel`, no longer a
    380px panel, no slide, no resize handle) or a project's PO (its PO screen, the dock's narrow
    tabs). Its text keeps to a centred column of `--conv-w` (880px): the chat's iframe, the task's

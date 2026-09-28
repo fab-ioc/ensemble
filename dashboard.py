@@ -7603,9 +7603,11 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 # board poll carries this row.
                 "reviewAllocations": [a for a in (rm.get("reviewAllocations") or [])
                                       if isinstance(a, dict) and a.get("changed")][-1:],
-                # {state, reason, agentIdentity} when this task needs a human.
+                # {state, reason, agentIdentity, since, askKind} when this task
+                # needs a human; askKind names what it put to them (a
+                # "completed" report is ready to review, not a question).
                 "attention": ({k: v for k, v in att_by_room[rid].items()
-                               if k in ("state", "reason", "agentIdentity", "since")}
+                               if k in ("state", "reason", "agentIdentity", "since", "askKind")}
                               if rid in att_by_room else None),
                 # {open, answered}: the person's points waiting, or None.
                 "points": _points_counts(rid),
@@ -7775,7 +7777,8 @@ def trigger_update() -> dict:
     bounce the machine's Ensemble scheduled task — the REAL hub."""
     if os.environ.get("ENSEMBLE_UPDATE_DRY_RUN"):
         return {"started": True, "dryRun": True, "pid": os.getpid()}
-    result = BACKEND.self_update(STATIC_DIR)
+    result = BACKEND.self_update(STATIC_DIR, port=HUB_PORT,
+                                 log_file=_LOG_FILE or DEFAULT_LOG_FILE)
     if result.get("started"):
         global _UPDATE_CHECK_CACHE
         _UPDATE_CHECK_CACHE = None
