@@ -168,7 +168,8 @@ export function panelsFrom(container) {
 }
 
 /**
- * Mounts the dock in `root`. `panels` are [{ id, title, help?, el }] (each `el` is the panel's own element).
+ * Mounts the dock in `root`. `panels` are [{ id, title, help?, el, icon?, unpinSize? }] (each `el` is the panel's own
+ * element; `icon`, an SVG string or element, is its strip button; `unpinSize`, px, how far it slides out of its strip).
  *
  * Options (see the README for each):
  *   storage, storageKey, migrate             where the layout is kept (any { getItem, setItem, removeItem })
@@ -179,6 +180,8 @@ export function panelsFrom(container) {
  *   themeAttrs, themeEvent                  what of the main page's <html> a pop-out window copies, and when
  *   help: { icon(key, panel), mount(doc), selector }            a panel's help control, and its popovers in a window
  *   minClickRestores                        a click on a minimised panel's title bar restores it (default true)
+ *   stripHover, stripOpen                   hovering a strip button slides its panel out (default true); a panel slid
+ *                                           out lies 'over' the layout (default) or 'beside' it, the middle narrowing
  *   modalSelector, badgeClass, text, onReset, win
  *
  * Returns the dock's handle: layout(), isShown(id), isVisible(id), isAuto(id), frontOf(id), activate(id), reveal(id),
@@ -192,20 +195,27 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   badgeClass = 'dk-badge', text = {}, onReset = null, migrate = null,
   defaultLayout, minSize, edgeOf, fill, defaultSize, sizes,
   narrow = false, narrowLayout, narrowKey, can = null, popHtml = null, popBase, minClickRestores = true, popBackButton = true,
+  stripHover = true, stripOpen = 'over',
   openWindow = (url, name, features) => (win && typeof win.open === 'function' ? win.open(url, name, features) : null) }) {
   const doc = root.ownerDocument;
   const T = { ...TEXT, ...text };
   const layoutKey = key || storageKey;
   const ids = panels.map((p) => p.id);
-  const wideCfg = makeConfig({ ids, defaultLayout, minSize, edgeOf, fill, defaultSize, sizes });
+  // A panel's own unpinSize: how far it slides out of its strip when nothing else says (layout.js cfg.unpinSizeOf).
+  const unpinSizes = Object.fromEntries(panels.filter((p) => Number.isFinite(p.unpinSize) && p.unpinSize > 0).map((p) => [p.id, p.unpinSize]));
+  const ownUnpin = Object.keys(unpinSizes).length ? unpinSizes : undefined;
+  const wideCfg = makeConfig({ ids, defaultLayout, minSize, edgeOf, fill, defaultSize, sizes, unpinSize: ownUnpin });
   // Narrow (a phone): one column, every panel a tab of one stack, and no control or gesture that moves a panel. It has a
   // layout of its own, kept under its own key, so the wide one is there again when the window is wide again.
-  const narrowCfg = makeConfig({ ids, minSize, edgeOf, fill, defaultSize, sizes,
+  const narrowCfg = makeConfig({ ids, minSize, edgeOf, fill, defaultSize, sizes, unpinSize: ownUnpin,
     defaultLayout: narrowLayout || ((ctx) => oneColumn(wideCfg.defaultLayout(ctx), fill)) });
   const narrowStoreKey = narrowKey || layoutKey + '.narrow';
   let narrowOn = !!narrow;
   let cfg = narrowOn ? narrowCfg : wideCfg;
   const S = cfg.sizes;
+  // A strip panel slid out beside the layout (stripOpen: 'beside') takes room from it. Click-only (stripHover: false):
+  // no hover, and a panel slid out stays until it is closed.
+  const beside = stripOpen === 'beside';
   const popPage = popHtml === true ? POP_HTML : typeof popHtml === 'string' ? popHtml : null;
   /** Whether a person may do `action` to panel `id`: move, float, unpin, pop, max, min, hide. Narrow allows only hide. */
   function allowed(id, action) {
@@ -257,6 +267,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   const uid = 'dk' + (++docks); // ids of tabs, unique in the page
   root.classList.add('dock');
   root.classList.toggle('dk-narrow', narrowOn);
+  // Click-only: the strip lies above a panel sliding in or out, so a quick second click on its button reaches it.
+  root.classList.toggle('dk-strip-click', !stripHover);
   for (const n of [...root.childNodes]) if (n.nodeType !== 1) n.remove(); // the drawing keeps elements only
   // The sizes the stylesheet draws with are the ones the layout counts with: on the dock's root, and on a popped-out
   // window's (#dk-pop-root, not its <html>, whose style attribute the theme copies over). They are fixed for the dock's life.
@@ -592,17 +604,52 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     strip.setAttribute('role', 'toolbar');
     strip.setAttribute('aria-label', `unpinned panels, ${edge} edge`);
     for (const a of entries) {
+      const p = byId.get(a.id);
       const b = doc.createElement('button');
       b.type = 'button';
       b.className = 'dk-strip-btn dk-mono';
       b.dataset.dkAuto = a.id;
-      b.textContent = byId.get(a.id).title;
-      b.title = `${byId.get(a.id).title}: unpinned. Click or hover to slide it out; pin it from its title bar.`;
+      const ic = iconOf(p);
+      if (ic) {
+        // An icon: the title is its tooltip and its name.
+        b.classList.add('dk-strip-icon-btn');
+        const span = doc.createElement('span');
+        span.className = 'dk-strip-icon';
+        span.setAttribute('aria-hidden', 'true');
+        span.appendChild(ic);
+        b.appendChild(span);
+        b.title = p.title;
+        b.setAttribute('aria-label', p.title);
+      } else {
+        b.textContent = p.title;
+        b.title = stripHover ? `${p.title}: unpinned. Click or hover to slide it out; pin it from its title bar.`
+          : `${p.title}: unpinned. Click to slide it out; pin it from its title bar.`;
+      }
+      const badge = badges.get(a.id);
+      if (badge) b.appendChild(stripBadge(badge));
       b.setAttribute('aria-expanded', 'false');
       stripBtns.set(a.id, b);
       strip.appendChild(b);
     }
     return strip;
+  }
+
+  // A panel's icon as a node for its strip button: from an SVG (or any HTML) string, or a copy of an element.
+  function iconOf(p) {
+    if (!p.icon) return null;
+    if (typeof p.icon === 'string') {
+      const t = doc.createElement('template');
+      t.innerHTML = p.icon;
+      return t.content.childNodes.length ? t.content : null;
+    }
+    return p.icon.nodeType ? doc.importNode(p.icon, true) : null;
+  }
+  function stripBadge(badge) {
+    const s = doc.createElement('span');
+    s.className = badgeClass + ' dk-strip-badge';
+    s.textContent = badge.text;
+    s.title = badge.title || '';
+    return s;
   }
 
   function claimFlyout(a) {
@@ -621,7 +668,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       flyKept.set(a.id, k);
     }
     const { el, head } = k;
-    el.className = 'dk-flyout dk-fly-' + a.edge;
+    el.className = 'dk-flyout dk-fly-' + a.edge + (beside ? ' dk-fly-beside' : '');
     el.dataset.dkFly = a.id;
     el.setAttribute('role', 'region');
     el.setAttribute('aria-label', p.title);
@@ -647,6 +694,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const has = (edge) => layout.auto.some((x) => x.edge === edge);
     const across = a.edge === 'left' || a.edge === 'right' ? ext.w : ext.h;
     const size = Math.round(Math.min(a.size, across * 0.85));
+    el._dkSize = size;
     const s = el.style;
     s.top = s.bottom = s.left = s.right = s.width = s.height = '';
     const off = (edge) => (has(edge) ? 'var(--dk-strip)' : '0px');
@@ -764,6 +812,16 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       if (b) { b.setAttribute('aria-expanded', String(open)); b.classList.toggle('on', open); }
       if (open) shownEvent(id);
     }
+    besideSpace();
+  }
+  // Beside: the dock's middle leaves the open panel its room on that panel's edge (a margin of .dk-main, where the
+  // flyout lies), so the layout narrows instead of being covered. None of it is in the layout, or saved.
+  function besideSpace() {
+    if (!beside) return;
+    const a = flyOpen && layout.auto.find((x) => x.id === flyOpen);
+    const el = a && flyEls.get(a.id);
+    for (const e of EDGES) main.style['margin' + e[0].toUpperCase() + e.slice(1)] = el && a.edge === e ? el._dkSize + 'px' : '';
+    root.classList.toggle('dk-beside-open', !!el);
   }
 
   // ---- a panel in a window of its own ----
@@ -1047,12 +1105,14 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const a = layout.auto.find((x) => x.id === id);
     if (a) placeFlyout(a);
     markFlyouts();
+    if (beside) fitAll();
   }
   function closeFly(refocus) {
     if (!flyOpen) return;
     const id = flyOpen;
     flyOpen = null;
     markFlyouts();
+    if (beside) fitAll();
     const b = stripBtns.get(id);
     if (refocus && b) focusQuiet(b);
   }
@@ -1162,6 +1222,13 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       if (txt) badges.set(id, { text: txt, title }); else badges.delete(id);
       const tabs = [...root.querySelectorAll(`[data-dk-tab="${id}"]`)];
       if (live(id)) tabs.push(...pops.get(id).doc.querySelectorAll(`[data-dk-tab="${id}"]`));
+      // Its strip button's too, while it is unpinned (an icon's or a title's).
+      const sb = stripBtns.get(id);
+      if (sb) {
+        const old = sb.querySelector('.dk-strip-badge');
+        if (old) old.remove();
+        if (txt) sb.appendChild(stripBadge({ text: txt, title }));
+      }
       for (const tab of tabs) {
         let b = tab.querySelector('.' + badgeClass);
         if (!txt) { if (b) b.remove(); continue; }
@@ -1199,7 +1266,9 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       if (narrowOn || !w || w.kind === 'auto' || w.kind === 'hidden') return;
       closeOut(id);
       const edge = w.kind === 'dock' ? edgeFor(id) : cfg.edgeOf(id);
-      const size = w.kind === 'dock' ? unpinSize(id, edge) : w.kind === 'float' ? (edge === 'left' || edge === 'right' ? w.float.w : w.float.h) : undefined;
+      // A panel's own unpinSize, when it has one, is the depth it slides out at; else its size where it was.
+      const own = cfg.unpinSizeOf(id, edge);
+      const size = own !== null ? own : w.kind === 'dock' ? unpinSize(id, edge) : w.kind === 'float' ? (edge === 'left' || edge === 'right' ? w.float.w : w.float.h) : undefined;
       if (maxed === w.stack && w.stack.panels.length === 1) maxed = null;
       unpinPanel(layout, id, edge, size, opts());
       commit();
@@ -1735,10 +1804,12 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     save();
   });
 
-  // Hover slides an unpinned panel out; leaving it, or focus leaving it, slides it back.
+  // Hover slides an unpinned panel out; leaving it, or focus leaving it, slides it back. One that stays (click-only, or
+  // beside and opened by a click) goes back only by its button, its slide-in control, Esc, or another one opening.
+  const stays = () => !stripHover || (beside && !flyByHover);
   on(root, 'pointerover', (e) => {
     const strip = e.target.closest && e.target.closest('[data-dk-auto]');
-    if (strip && !gesture) {
+    if (strip && !gesture && stripHover) {
       clearTimeout(hoverTimer);
       const id = strip.dataset.dkAuto;
       hoverTimer = later(() => { if (flyOpen !== id) openFly(id, true); }, 250);
@@ -1750,6 +1821,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const from = e.target.closest && e.target.closest('[data-dk-auto]');
     if (from) clearTimeout(hoverTimer);
     if (!flyOpen || !insideFly(e.target) || insideFly(e.relatedTarget)) return;
+    if (stays()) return;
     clearTimeout(leaveTimer);
     leaveTimer = later(() => {
       if (!flyOpen) return;
@@ -1764,11 +1836,12 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       const now = doc.activeElement;
       if (now && now !== doc.body && insideFly(now)) return;
       if (flyByHover && (!now || now === doc.body)) return; // opened by hover: the pointer decides
+      if (stays()) return;
       closeFly(false);
     }, 0);
   });
   on(doc, 'pointerdown', (e) => {
-    if (flyOpen && !insideFly(e.target) && !(menu && menu.contains(e.target)) && !(e.target.closest && e.target.closest(modalSelector))) closeFly(false);
+    if (flyOpen && !stays() && !insideFly(e.target) && !(menu && menu.contains(e.target)) && !(e.target.closest && e.target.closest(modalSelector))) closeFly(false);
     if (menu && !menu.contains(e.target) && e.target !== menu._from && !(menu._from && menu._from.contains(e.target))) closeMenu(false);
   }, true);
 
@@ -1800,6 +1873,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       const ext = extent();
       for (const f of layout.floats) { clampFloat(f, ext.w, ext.h, S.floatMin); placeFloat(f); }
       for (const a of layout.auto) placeFlyout(a);
+      besideSpace();
       fitAll();
       closeMenu(false);
     });

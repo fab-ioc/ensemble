@@ -30,7 +30,8 @@ in a dialog, a 300-row list with a filter, notes (a tab beside the form), a page
 then move other panels around: it does not reload) and a log of what the dock did. The top bar has Install app (when the
 browser offers it), the Panels menu, a narrow switch (one column of tabs, as on a phone; a window under 640 px starts
 narrow), Reset layout and the theme picker (every colour set, each with a swatch). `?narrow` starts narrow, `?pophtml`
-pops panels out without `popout.html` (`popHtml`). The demo is installable: installed, it and its pop-out windows
+pops panels out without `popout.html` (`popHtml`). `?toolstrip=1` is Ensemble's layout A: the List on the left and the
+Counter in the middle, fixed, and Form, Notes, Page and Log as tools on a right strip 44 px wide (see "The tool strip"). The demo is installable: installed, it and its pop-out windows
 open without an address bar.
 
 ## Install
@@ -93,13 +94,14 @@ or clones a panel, so its listeners and state go wherever it goes.
 |---|---|
 | `layout()`, `config()` | the current layout (plain JSON) and the config made from the options |
 | `isShown(id)`, `isVisible(id)`, `isAuto(id)`, `isOut(id)`, `frontOf(id)` | where a panel is |
+| `openFly(id)`, `closeFly()`, `flyOpen()` | slide an unpinned panel out, slide the open one back in, the one out (or `null`) |
 | `activate(id)`, `reveal(id)` | bring a panel to the front of its stack; `reveal` also shows a hidden one, slides out an unpinned one, focuses its window |
 | `moveTo(id, target, side)`, `dockEdge(id, side)` | dock a panel beside a stack (`{ kind: 'stack', stack }`) or at the dock's edge; side `left right top bottom center` |
 | `float(id)`, `dockBack(id)`, `unpin(id)`, `pin(id)` | float in the page and back; unpin to an edge strip and back |
 | `toggleMin(id)`, `toggleMax(id)`, `restoreMax()`, `maximised()` | minimise / maximise its stack |
 | `setVisible(id, on)` | hide or show a panel |
 | `popOut(id)`, `popIn(id)`, `popWindow(id)`, `isOpenOut(id)` | a browser window of its own, and back where it was; its window; whether that window is open now (not after a reload) |
-| `setBadge(id, text, title)` | a small badge on the panel's tab (`null` removes it) |
+| `setBadge(id, text, title)` | a small badge on the panel's tab, and on its strip button while it is unpinned (`null` removes it) |
 | `onShown(fn)`, `onChange(fn)` | a panel came on screen (`fn(id)`); the layout changed (`fn(layout)`) |
 | `onPopIn(fn)` | `fn(id)` just before a popped-out panel's element moves back from its window (see "The pop-out contract") |
 | `narrow()`, `setNarrow(on)` | whether the dock is narrow; switch it (see "Narrow") |
@@ -122,7 +124,7 @@ text), and `src/host.js` for apps whose panels open dialogs (below).
 | Option | Default | |
 |---|---|---|
 | `root` | required | the element the dock fills |
-| `panels` | required | `[{ id, title, el, help? }]` |
+| `panels` | required | `[{ id, title, el, help?, icon?, unpinSize? }]`; `icon` and `unpinSize`: see "The tool strip" |
 | `defaultLayout` | every panel side by side | a node from `stack()` / `split()`, `{ root, floats, auto, hidden }`, or `(ctx) => either` with `ctx = { viewportPx, purpose: 'load' \| 'reset' \| 'home' }` |
 | `fill` | none | the panel whose place takes what is left in its split (the main view) |
 | `minSize` | `{ w: 240, h: 90 }` | `{ id: { w, h } }` or `(id) => { w, h }` |
@@ -134,6 +136,8 @@ text), and `src/host.js` for apps whose panels open dialogs (below).
 | `narrow`, `narrowLayout`, `narrowKey` | `false`; every panel a tab of one stack, the `fill` panel in front; `storageKey + '.narrow'` | narrow (a phone): one column of tabs, nothing that moves a panel; its default layout; where its layout is kept (see "Narrow") |
 | `can` | none | `(id, action) => boolean`, action `move float unpin pop max min hide`: `false` takes that control, menu item (the Panels menu's too, for `hide`) and gesture away from a person (the app's own calls still work) |
 | `minClickRestores` | `true` | a click on a minimised stack's title bar (a tab, or the bar beside the tabs; not its controls or help, not the click that ends a drag) restores it, as its restore control does, with the tab clicked in front; so do Enter and Space on its focused tab. A double click still maximises it (docked) or docks it back (floating), also when restoring moved the title bar from under the pointer. `false`: as before v0.3.5, only the restore control (and a double click) restores |
+| `stripHover` | `true` | hovering a strip button for 250 ms slides its panel out, and leaving it slides it back; `false`: only a click opens it, and it stays until its button is clicked again, it is closed (its slide-in control, `closeFly()`, pinned, another strip panel opened) or Esc is pressed |
+| `stripOpen` | `'over'` | where a strip panel slides out: `'over'` the layout; `'beside'` it, the middle narrowing to leave it its room (see "The tool strip") |
 | `popUrl`, `popName`, `popTitle` | `'popout.html'`, `'dock-panel-'`, `(p) => p.title` | the pop-out window's page, window name prefix, and title |
 | `popHtml` | none | `true`: open the pop-out page (`POP_HTML`) from a `blob:` URL of its text instead of loading `popUrl`; or the text of a page of the app's own (it needs an element with id `dk-pop-root`; its scripts run as any page's) |
 | `popBase` | `document.baseURI` | with `popHtml`: the base URL of the pop-out page's relative URLs, put in it as `<base href>` (the page's own HTML `<base href>`, if it has one, is kept instead); the page is read with the browser's `DOMParser` and written back from it, so a comment before `<html>` is dropped; `false`: no `<base>`, the page as given, its base its `blob:` URL |
@@ -152,6 +156,63 @@ default has it, and one that is not a layout, of another version (without `migra
 shows nothing gives the default.
 
 `examples/opten-config.js` is opTen's configuration, the drop-in for opTen's adoption.
+
+## The tool strip
+
+An unpinned panel has a button on its edge's strip. Five options, each off unless asked for, make the strip a tool strip
+(Ensemble's layout A: a list and a conversation fixed, the tools on the right edge):
+
+```js
+const ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16v11H9l-5 4z"/></svg>';
+createDock({
+  root,
+  panels: [
+    { id: 'asks', title: 'Your asks', el: asksEl, icon: ICON, unpinSize: 360 },
+    { id: 'changes', title: 'Changes', el: changesEl, icon: changesSvgElement, unpinSize: 760 },
+    …
+  ],
+  stripHover: false,          // a click opens a tool; it stays open until closed
+  stripOpen: 'beside',        // beside the middle, which narrows; not over it
+  sizes: { strip: 44 },       // a wider strip: its buttons, icons and badges scale with it
+  defaultLayout: { root: split('row', [stack(['list'], { size: 300 }), stack(['chat'])]),
+    auto: [{ id: 'asks', edge: 'right' }, { id: 'changes', edge: 'right' }] },
+});
+dock.setBadge('asks', '3', '3 asks waiting');
+```
+
+- **`icon`** (a panel's, an SVG string or an element): its strip button shows the icon, with the title as its tooltip
+  and `aria-label`. A string is put in as HTML (it is the app's own, not a person's); an element is copied, so the one
+  given stays the app's. Without `icon` the button is the title as vertical text, as before.
+- **Badges**: `setBadge(id, text, title)` also marks the panel's strip button: after the title on a text button, on the
+  icon's top right corner on an icon button. It has the tab badge's class (`badgeClass`) and `dk-strip-badge`.
+- **`stripHover: false`**: no 250 ms hover slide-out and no slide-in when the pointer or focus leaves or a click lands
+  elsewhere. A click on its button opens it; it goes back on another click on its button, its slide-in control, Esc
+  (focus goes back to its button), or another strip panel opening. The strip then lies above a panel sliding in or out,
+  so a quick second click reaches the button.
+- **`stripOpen: 'beside'`**: the panel slides out into room the layout gives it instead of over the layout: `.dk-main`
+  gets a margin on that edge as wide as the panel, the panel lies in it (between the middle and the strip, no shadow,
+  no slide), and the splits are fitted again, so the middle narrows and the `fill` panel gives first. One panel is out
+  at a time (so at most one per edge); opening another closes the first. It stays unpinned: nothing of it goes in the
+  layout or in storage, and a reload shows the strip with nothing open (an app that wants a tool open again calls
+  `openFly(id)`). Opened by a click it stays open through clicks in the middle; opened by hover (`stripHover` on) it
+  goes back when the pointer leaves, as over. The dock's root has `dk-beside-open` while a panel is out beside it.
+- **`sizes.strip`**: the strip's buttons, icons and badges scale with it (CSS variables, each today's look at 22 px):
+  the strip's padding and gap `strip / 11`, a title `max(--dk-fs-tab, strip × .3)`, an icon `strip × .55`, an icon's
+  badge `max(7px, strip × .3)`, a title's badge `max(--dk-badge-fs, strip × .27)`. Each can be set (below).
+- **`unpinSize`** (a panel's, px): how far it slides out of its strip, at least its `minSize`: when it is unpinned (by
+  a person or `unpin()`, instead of its size where it was), and for a strip entry in `defaultLayout` without a
+  `size`. A `size` on that entry, or one saved in the layout, wins. Once any panel gives one, a strip entry in
+  `defaultLayout` without a `size`, of a panel without its own, gets `sizes.unpinSize` (420). Without it,
+  `sizes.unpinSize` and the size where it was apply, as before. In the model: `makeConfig({ unpinSize: { id: px } | (id) => px })` and
+  `cfg.unpinSizeOf(id, edge)`.
+
+| Token | Default | Used by |
+|---|---|---|
+| `--dk-strip-pad` | `calc(var(--dk-strip) / 11)` | a strip's padding and the gap between its buttons |
+| `--dk-strip-fs` | `max(var(--dk-fs-tab, 10px), calc(var(--dk-strip) * .3))` | a strip button's title |
+| `--dk-strip-icon` | `calc(var(--dk-strip) * .55)` | a strip button's icon (width and height) |
+| `--dk-strip-badge-fs` | a title's: `max(var(--dk-badge-fs, 9px), calc(var(--dk-strip) * .27))`; an icon's: `max(7px, calc(var(--dk-strip) * .3))` | a strip button's badge |
+| `--dk-strip-badge-bg` | `var(--dk-bg3)` | an icon's badge's ground |
 
 ## Panels stay in place (iframes do not reload)
 
@@ -391,7 +452,8 @@ its address bar.
 npm test              # all of it
 npm run test:node     # the model, the dock in jsdom with stand-in windows, the theme, the opTen fixture, test/needs.test.js
 npm run test:browser  # headless Chrome (Puppeteer) against the demo: run.js (the pop-out window for real), run.js
-                      # --pophtml (the same with popHtml, the page from a blob: URL), needs.js (iframes, narrow, focus, keys)
+                      # --pophtml (the same with popHtml, the page from a blob: URL), needs.js (iframes, narrow, focus, keys),
+                      # toolstrip.js (the tool strip)
 npm run screenshots -- <dir>   # the theme picker, the demo in ten themes, a panel out, its window, the reload notice
 npm run evidence:app-window -- <dir>   # real Chrome and Edge (headed): the pop-out window in a tab, --app, installed, PiP
 ```
@@ -411,3 +473,8 @@ tabs switched, or other panels floated, unpinned, slid out or popped out, with a
 page with it when its own panel moves; that a strip slide-out scrolls nothing (with `overflow: clip`, and with `hidden`
 put back); the roving tabs, their roles and F6 (from inside an iframe panel too, after it reloads, and from one added later); narrow mode (no controls, no drag, no double-click maximise, its own
 layout, a phone-sized window); and that `dock-popin` and `onPopIn` come while the panel is still in its window.
+`toolstrip.js` proves the tool strip: without its options a text button in a 22 px strip, hover after 250 ms, over the
+layout, as in v0.3.6; icons (tooltip, accessible name) and badges (icon and text) in the strip at 22 and 44 px, each
+inside its button; click-only (no hover, stays through a click elsewhere, closes by its button, Esc, its control or
+another); beside (the middle narrows by exactly the panel's width, nothing covered, one at a time, nothing saved, a
+reload shows the strip); a width per panel; and `?toolstrip=1` with all of them.
