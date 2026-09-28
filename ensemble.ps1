@@ -94,6 +94,9 @@ function Test-Ensemble($ProcId) {
   # us (neither "Already running" nor stopped).
   $cmd = Get-CommandLine $ProcId
   if ($cmd -and $cmd.ToLower().Contains($Server.ToLower())) { return $true }
+  # The probe says who holds the port, so it vouches only for the port's pid
+  # (a stale pid file's number may now be some other program).
+  if ($ProcId -ne (Get-PortPid)) { return $false }
   try {
     $r = Invoke-WebRequest -UseBasicParsing -Uri "$Url/static/hl.js" -TimeoutSec 2 -ErrorAction Stop
     if ($r.Headers['X-Ensemble-Stamp']) { return $true }

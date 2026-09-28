@@ -131,7 +131,11 @@ def migrate(home: Path, state_dir: Path, platform: str | None = None) -> str | N
             kept.append(name)
             continue
         try:
-            shutil.copy2(src, dst)
+            # Via a temp file, so a copy cut short is not taken for Ensemble's
+            # own file on the next start.
+            tmp = dst.with_name(name + ".migrate.tmp")
+            shutil.copy2(src, tmp)
+            os.replace(tmp, dst)
             copied.append(name)
         except OSError:
             failed.append(name)

@@ -46,10 +46,14 @@ is_ensemble() {
   # server on the port that answers with Ensemble's X-Ensemble-Stamp header.
   # The old claude-dashboard also listened on 8765 and must never be taken
   # for us (neither "Already running" nor killed by `stop`).
-  local cmd
+  local cmd hdr
   cmd="$(ps -o command= -p "$1" 2>/dev/null || true)"
   [[ -n "$cmd" && "$cmd" == *"$SCRIPT"* ]] && return 0
-  curl -s -m 2 -o /dev/null -D - "$(url)/static/hl.js" 2>/dev/null | grep -qi '^x-ensemble-stamp:'
+  # The probe says who holds the port, so it vouches only for the port's pid
+  # (a stale pid file's number may now be some other program).
+  [[ "$1" == "$(port_pid)" ]] || return 1
+  hdr="$(curl -s -m 2 -o /dev/null -D - "$(url)/static/hl.js" 2>/dev/null || true)"
+  [[ "$hdr" =~ [Xx]-[Ee]nsemble-[Ss]tamp: ]]
 }
 
 running_pid() {

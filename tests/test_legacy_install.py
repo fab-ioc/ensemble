@@ -147,6 +147,17 @@ class Migrate(unittest.TestCase):
         self.migrate()
         self.assert_migrated()
 
+    def test_a_copy_cut_short_is_not_kept_as_ensembles_own(self):
+        def partial(src, dst):
+            Path(dst).write_text('{"s1": "o', encoding="utf-8")
+            raise OSError("disk full")
+
+        with mock.patch.object(legacy_install.shutil, "copy2", side_effect=partial):
+            self.migrate()
+        self.assertFalse((self.new / "labels.json").exists())
+        self.migrate()
+        self.assert_migrated()
+
     def test_no_old_install_no_change(self):
         shutil.rmtree(self.home / ".claude")
         self.assertIsNone(self.migrate())
@@ -325,6 +336,15 @@ kill() {{ echo "$*" >> "$KILL_LOG"; }}
         r, _ = self.run_sh(body, ensemble=False)
         self.assertIn("pid=[]", r.stdout, r.stderr)
 
+    def test_stale_pid_file_is_not_vouched_for_by_the_port_probe(self):
+        # pid file names 5555 (alive, some other program); Ensemble holds the
+        # port as 4242: stop must kill 4242, never 5555.
+        body = 'mkdir -p "$HOME/.ensemble"; echo 5555 > "$HOME/.ensemble/server.pid"; '                'echo "pid=[$(running_pid)]"; cmd_stop'
+        r, kills = self.run_sh(body, ensemble=True)
+        self.assertIn("pid=[4242]", r.stdout, r.stderr)
+        self.assertNotIn("5555", kills.replace("-0 5555", ""))
+        self.assertIn("Stopped (was pid 4242)", r.stdout)
+
 
 POWERSHELL = shutil.which("powershell") or shutil.which("pwsh")
 
@@ -365,6 +385,16 @@ function Stop-Process {{ [CmdletBinding()] param($Id, [switch]$Force) Write-Host
         self.assertNotIn("KILLED", out)
         self.assertNotIn("Already running", out)
         self.assertEqual(r.returncode, 1, out)
+
+    def test_stale_pid_file_is_not_vouched_for_by_the_port_probe(self):
+        body = ("New-Item -ItemType Directory -Force (Split-Path $PidFile) | Out-Null; "
+                "'5555' | Out-File -Encoding ascii $PidFile; "
+                "function Get-Process { [CmdletBinding()] param($Id) [pscustomobject]@{ Id = $Id } }; "
+                "Stop-Dashboard")
+        r = self.run_ps(body, ensemble=True)
+        out = r.stdout + r.stderr
+        self.assertIn("KILLED 4242", out)
+        self.assertNotIn("KILLED 5555", out)
 
     def test_an_ensemble_on_the_port_is_found_and_stopped(self):
         r = self.run_ps("Start-Dashboard; Stop-Dashboard", ensemble=True)
