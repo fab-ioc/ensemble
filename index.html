@@ -770,7 +770,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .seg button.active { background: var(--selected-bg); color: var(--selected-fg); font-weight: 500; }
   main {
     padding: 8px 20px 40px;
-    transition: padding-right .22s cubic-bezier(0.16, 1, 0.3, 1), padding-left .22s cubic-bezier(0.16, 1, 0.3, 1);
+    transition: padding-right .22s cubic-bezier(0.16, 1, 0.3, 1);
   }
   table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
   thead { position: sticky; top: var(--top-h); background: var(--bg); z-index: 5; }
@@ -2160,61 +2160,66 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   /* --- Task switcher ------------------------------------------------------
-     Every project's live tasks, left of any screen (#switcher; the script's
-     "Task switcher" block). Pinned it is docked: a border, no shadow, and the
-     page makes room. Unpinned it floats over the page (--e-200). */
-  body { --sw-w: 288px; }
+     Every project's tasks and POs, left of every desktop page (#switcher; the
+     script's "Task switcher" block). Docked: a border, no shadow, and the page
+     makes room for it. A phone never shows it. */
+  body { --sw-w: 300px; }
   #switcher {
-    position: fixed; left: 0; top: var(--top-h); bottom: 0; width: var(--sw-w); z-index: 25;
+    position: fixed; left: 0; top: var(--top-h); bottom: 0; width: var(--sw-w); z-index: 15;
     display: flex; flex-direction: column; min-height: 0;
-    background: var(--surface); border-right: 1px solid var(--border); box-shadow: var(--e-200);
+    background: var(--surface); border-right: 1px solid var(--border);
   }
   #switcher[hidden] { display: none; }
-  body.sw-pinned #switcher { z-index: 15; box-shadow: none; }
-  body.sw-pinned main { padding-left: calc(var(--sw-w) + 20px); }
-  #sw-btn[aria-expanded="true"] { background: var(--selected-bg); color: var(--selected-fg); }
+  body.sw-on main { padding-left: calc(var(--sw-w) + 20px); }
   .sw-head {
     flex: 0 0 auto; display: flex; align-items: center; gap: var(--s-100);
-    padding: var(--s-200) var(--s-200) var(--s-200) var(--s-400); border-bottom: 1px solid var(--border);
+    padding: var(--s-200) var(--s-300); border-bottom: 1px solid var(--border);
   }
-  .sw-head h2 { margin: 0; font-size: var(--fs-300); line-height: 24px; font-weight: 600; color: var(--fg); }
-  .sw-sub { margin-right: auto; font-size: var(--fs-100); color: var(--fg-muted); }
-  .sw-btn {
-    height: 24px; min-width: 24px; padding: 0 var(--s-200); border: 0; border-radius: var(--r-200);
-    background: transparent; color: var(--fg-subtle); font: inherit; font-size: var(--fs-200); cursor: pointer;
+  #sw-proj {
+    height: 28px; max-width: 100%; padding: 0 var(--s-600) 0 var(--s-200);
+    border: 1px solid var(--border); border-radius: var(--r-200); background: var(--surface); color: var(--fg);
+    font: inherit; font-size: var(--fs-200); cursor: pointer;
   }
-  .sw-btn:hover { background: var(--hover); color: var(--fg); }
-  .sw-btn[aria-pressed="true"] { background: var(--selected-bg); color: var(--selected-fg); }
-  .sw-btn.x { width: 24px; padding: 0; font-size: var(--fs-400); line-height: 1; }
-  .sw-btn:focus-visible, .sw-row:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  #sw-proj:hover { background: var(--hover); }
+  .sw-row:focus-visible, #sw-proj:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   #sw-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 var(--s-200) var(--s-400); }
   .sw-ghead {
     display: flex; align-items: center; gap: var(--s-200); margin: var(--s-300) var(--s-200) var(--s-100);
     font-size: var(--fs-100); line-height: 16px; font-weight: 600; text-transform: uppercase;
     letter-spacing: .05em; color: var(--fg-subtle);
   }
+  summary.sw-ghead { cursor: pointer; border-radius: var(--r-100); list-style: none; }
+  summary.sw-ghead::-webkit-details-marker { display: none; }
+  /* Folded or not, said by the caret before its name. */
+  summary.sw-ghead::before { content: "\25B8"; width: 8px; margin-right: calc(-1 * var(--s-100)); color: var(--fg-muted); }
+  details[open] > summary.sw-ghead::before { content: "\25BE"; }
+  summary.sw-ghead:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
   .sw-n { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
   .sw-none { margin: 0 var(--s-200) var(--s-200); font-size: var(--fs-200); color: var(--fg-muted); }
   .sw-row {
     display: flex; flex-direction: column; gap: var(--s-050); width: 100%; text-align: left;
-    padding: var(--s-200); border: 0; border-radius: var(--r-200);
+    padding: var(--s-100) var(--s-200); border: 0; border-radius: var(--r-200);
     background: transparent; color: var(--fg); font: inherit; cursor: pointer;
   }
   .sw-row:hover { background: var(--hover); }
   .sw-row.on { background: var(--selected-bg); }
   /* --fg-muted on --selected-bg is 4.4:1 in light; subtle keeps it over 4.5. */
-  .sw-row.on .sw-since, .sw-row.on .sw-proj { color: var(--fg-subtle); }
+  .sw-row.on .sw-l2, .sw-row.on .sw-age, .sw-row.on .sw-l2 .run, .sw-row.on .tno { color: var(--fg-subtle); }
+  .sw-l1 { display: flex; align-items: center; gap: var(--s-100); min-width: 0; }
+  .sw-dot { flex: 0 0 8px; display: flex; }
+  .sw-dot .unread-dot { margin: 0; }
   .sw-title {
-    font-size: var(--fs-300); line-height: 20px; color: var(--fg);
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-  }
-  .sw-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-050) var(--s-200); min-width: 0; }
-  .sw-meta .loz { align-self: center; }
-  .sw-since { font-size: var(--fs-100); color: var(--fg-muted); white-space: nowrap; }
-  .sw-proj {
-    margin-left: auto; max-width: 100%; font-size: var(--fs-100); color: var(--fg-muted);
+    flex: 1 1 auto; min-width: 0; font-size: var(--fs-300); line-height: 20px; color: var(--fg);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+  .sw-age { flex: 0 0 auto; font-size: var(--fs-100); color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+  .sw-l2 {
+    display: flex; align-items: center; gap: var(--s-200); min-width: 0; padding-left: var(--s-300);
+    font-size: var(--fs-100); line-height: 16px; color: var(--fg-muted); white-space: nowrap; overflow: hidden;
+  }
+  .sw-l2 .loz { flex: 0 0 auto; }
+  .sw-proj, .sw-sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .sw-chg { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
   /* --- Issue view --------------------------------------------------------- */
   /* One row that says what this task IS: where it sits, how urgent, what is
      running, whether it needs you. The old row was ten chips of mixed kinds
@@ -2861,7 +2866,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .bar-sep { display: none; }
     #plan-usage-slot { display: none; }
     .me-item.me-phone { display: flex; }
-    #bar-back, #sw-btn, #search-open, #notif-btn, #me-btn {
+    #bar-back, #search-open, #notif-btn, #me-btn {
       width: var(--touch-min); min-width: var(--touch-min); height: var(--touch-min);
       padding: 0; justify-content: center; border-color: transparent; border-radius: var(--r-200);
     }
@@ -2874,15 +2879,15 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
        none of it, so the row steps aside then. --header-h follows, and with
        it everything that hangs off the bar. */
     /* The wordmark leads row one, on home and in a project alike (125px; row
-       one's controls take 306px since Tasks joined them); below 440px it is
-       the icon alone. The rest of where you are is row two's. */
+       one's controls take 262px); below 410px it is the icon alone. The rest
+       of where you are is row two's. */
     .bar-where { display: contents; }
     #proj-switch, #bar-here { display: none; }
     header h1 { order: 0; }
     #bar-home { height: var(--touch-min); min-width: var(--touch-min); justify-content: center; padding: 0 var(--s-200); }
     header h1 .bar-word { display: block; }
     header h1 .logo { display: none; }
-    @media (max-width: 439px) {
+    @media (max-width: 409px) {
       header h1 .bar-word { display: none; }
       header h1 .logo { display: block; }
     }
@@ -2929,14 +2934,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
        leaves it zoomed: every field is --fs-400 here. */
     input, select, textarea { font-size: var(--fs-400) !important; }
 
-    /* The task switcher is a full-screen list under the bar, never pinned. */
-    #switcher {
-      right: 0; width: auto; bottom: auto; height: calc(var(--vv-h, 100dvh) - var(--top-h));
-      border-right: 0; box-shadow: none;
-    }
-    #sw-pin { display: none; }
-    .sw-btn.x { width: var(--touch-min); height: var(--touch-min); }
-    .sw-row { min-height: var(--touch-min); padding: var(--s-200) var(--s-300); }
     /* Trays and menus fit the screen, and their rows are finger-sized. */
     #notif-tray, #usage-tray, #settings-panel { left: var(--s-200); right: var(--s-200); width: auto; }
     .me-item, .pm-item, .fm-item, .notif-item, .wf-item, .pr-item, .ov-menu button { min-height: var(--touch-min); }
@@ -3320,12 +3317,6 @@ window.DOC_LISTENERS_PAUSED = false;
       <span id="usage-chip-body"></span>
     </button>
   </div>
-  <!-- Tasks: every project's live tasks, what needs you, what is running and
-       what is ready to review (#switcher). Global, like the bell beside it: it
-       reads the same on every page; its list pins to the left of any screen. -->
-  <button id="sw-btn" class="bar-btn icon" type="button" aria-controls="switcher" aria-expanded="false"
-          title="Tasks in every project: what needs you, what is running, what is ready to review"
-          aria-label="Tasks in every project"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"><path d="M2.5 3.5h.5M6 3.5h7.5M2.5 8h.5M6 8h7.5M2.5 12.5h.5M6 12.5h7.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
   <!-- Notifications: tasks that need a human. Self-contained under the `notif`
        name; project status bars open the full view of the same data. -->
   <button id="notif-btn" class="bar-btn icon" title="What needs you" aria-label="What needs you">
@@ -3335,11 +3326,10 @@ window.DOC_LISTENERS_PAUSED = false;
           aria-haspopup="true" aria-expanded="false"><span id="me-initials">··</span></button>
   <button id="new-btn" title="Create a task">Create</button>
 </header>
-<aside id="switcher" hidden aria-label="Tasks in every project">
+<!-- The list of every project's tasks and POs, left of every desktop page (#switcher). -->
+<aside id="switcher" hidden aria-label="Tasks and projects">
   <div class="sw-head">
-    <h2>Tasks</h2><span class="sw-sub">every project</span>
-    <button id="sw-pin" class="sw-btn" type="button" aria-pressed="false">Pin</button>
-    <button id="sw-close" class="sw-btn x" type="button" title="Close" aria-label="Close the task list">×</button>
+    <select id="sw-proj" aria-label="Show the tasks of" title="Show every project, or one"></select>
   </div>
   <div id="sw-list"></div>
 </aside>
@@ -5416,100 +5406,180 @@ function needsYouHtml() {
 }
 
 // ---- Task switcher: begin ---------------------------------------------------
-// Every project's live tasks in one narrow list: what needs you, what is
-// running, what is ready to review (the CEO's P58, after JetBrains Air). It is
-// the "what now" view; the board stays the planning view. It reads what the
-// page already polls, /api/sessions (every project's rows) and /api/attention
-// (the bell's items), and adds no poller. A task opens in its panel over the
-// page you are on. tests/test_task_switcher.py runs this block in Node.
-const SW_KEY = 'cd-switcher';          // 'pinned' while pinned, per browser
+// The list on the left of every desktop page (layout A, step 1): every
+// project's tasks by what they want from you, then each project's PO, then
+// what was done today. It is how you get around; the board stays the planning
+// view. It reads what the page already polls, /api/sessions (every project's
+// rows), /api/projects and /api/attention (the bell's items), and adds no
+// poller. It is one component (#switcher, `swMount`) so a later layout can
+// host it elsewhere. tests/test_task_switcher.py runs this block in Node.
+const SW_KEY = 'cd-switcher';          // SW_KEY + '-project': the filter, per browser
 const SW_GROUPS = [
   ['needs', 'Needs you', 'Nothing is waiting on you.'],
-  ['running', 'Running', 'No task is working right now.'],
-  ['review', 'Ready to review', 'Nothing is waiting for your review.'],
+  ['running', 'Running', 'No task is running.'],
+  ['review', 'Ready for your check', 'Nothing is waiting for your check.'],
+  ['projects', 'Projects', 'No project has a PO.'],
+  ['done', 'Done today', 'Nothing was done today.'],
 ];
-// A finished report waits for a look, not an answer: it is ready to review.
-// Anything else the bell lists (blocked, a question, a prompt, a death, a
-// stall) needs you.
-function swReported(a) { return !!a && a.state === 'waiting_for_you' && a.askKind === 'completed'; }
+// A finished report waits for a look, not an answer: it is ready for your
+// check. Anything else the bell lists (blocked, a question, a prompt, a death,
+// a stall) needs you. A hub from before `askKind` says it only in the reason.
+function swReported(a) {
+  if (!a || a.state !== 'waiting_for_you') return false;
+  return a.askKind ? a.askKind === 'completed' : / reported the work is finished/.test(a.reason || '');
+}
 function swTone(state) {
   return (state === 'agent_gone' || state === 'blocked') ? 'danger' : state === 'stalled' ? 'neutral' : 'warning';
 }
-// The three groups, from the rows and the bell's items. `poRooms` are the POs'
-// rooms (a PO is no task: it shows only when the bell lists it), `projOf(rid)`
-// a room's project. Needs you is oldest first, as is Ready to review; Running
-// goes by project and number, so it holds still while tasks start and stop.
-function swGroups(rows, items, poRooms, projOf) {
+// A task stopped part way: not running, not merged, and not left in the backlog.
+function swPaused(r) { return !r.isLive && ['inprogress', 'todo'].includes(workflowOf(r)) && !!r.hasConversation; }
+// The five groups, from the rows, the bell's items and the registered projects.
+// opts.project keeps one project's entries; opts.dayStart (seconds) is where
+// "today" starts. Needs you and Ready for your check go oldest first; Running
+// by project and number, so it holds still while agents take turns; Projects
+// latest first; Done today latest first.
+function swGroups(rows, items, projects, opts) {
+  const o = opts || {};
+  const projs = (projects || []).filter(p => p && p.registered !== false);
+  const pjOf = new Map(), poRooms = new Set();
+  for (const p of projs) {
+    if (p.poRoomId) poRooms.add(p.poRoomId);
+    for (const s of p.sessions || []) { const rid = s.roomId || s.sessionId; if (rid) pjOf.set(rid, p); }
+  }
   const byRoom = new Map((rows || []).filter(r => r && r.roomId).map(r => [r.roomId, r]));
   const itemOf = new Map((items || []).map(it => [it.roomId, it]));
-  const g = { needs: [], running: [], review: [] };
+  const g = { needs: [], running: [], review: [], projects: [], done: [] };
+  const entry = (rid, row, it, more) => {
+    const pj = pjOf.get(rid) || null;
+    return { key: rid, row, it, pid: (pj && pj.id) || (it && it.projectId) || '',
+             project: (pj && pj.name) || (it && it.project) || '', at: 0, ...more };
+  };
   for (const it of items || []) {
     if (!it || !it.roomId || swReported(it)) continue;
     const r = byRoom.get(it.roomId) || null;
     if (r && (r.draft || r.archived)) continue;
-    g.needs.push({ key: it.roomId, row: r, it, po: !!it.isPo, project: it.project || '',
-                   at: Number(it.askedAt || it.since) || 0 });
+    g.needs.push(entry(it.roomId, r, it, { po: !!it.isPo || poRooms.has(it.roomId),
+                                           at: Number(it.askedAt || it.since) || 0 }));
   }
   const listed = new Set(g.needs.map(e => e.key));
-  const nameOf = rid => { const pj = projOf ? projOf(rid) : null; return (pj && pj.name) || ''; };
+  const lastNews = r => Number(r.newsAt) || Number(r.updatedAt) || 0;
   for (const r of byRoom.values()) {
-    if (!r.headless || r.draft || r.archived || listed.has(r.roomId) || (poRooms && poRooms.has(r.roomId))) continue;
+    if (!r.headless || r.draft || r.archived || listed.has(r.roomId) || poRooms.has(r.roomId)) continue;
     const a = itemOf.get(r.roomId) || r.attention || null;
-    if (r.isLive && r.status === 'busy') {
-      g.running.push({ key: r.roomId, row: r, it: null, project: nameOf(r.roomId), at: 0 });
-    } else if (workflowOf(r) !== 'done' && (workflowOf(r) === 'inreview' || swReported(a))) {
-      g.review.push({ key: r.roomId, row: r, it: swReported(a) ? a : null, project: nameOf(r.roomId),
-                      at: Number(swReported(a) && (a.askedAt || a.since)) || Number(r.updatedAt) || 0 });
+    const wf = workflowOf(r);
+    if (wf === 'done') {
+      if (o.dayStart && Number(r.updatedAt) >= o.dayStart) g.done.push(entry(r.roomId, r, null, { at: Number(r.updatedAt) }));
+    } else if (wf === 'inreview' || swReported(a) || swPaused(r)) {
+      g.review.push(entry(r.roomId, r, swReported(a) ? a : null,
+                          { at: Number(swReported(a) && (a.askedAt || a.since)) || Number(r.updatedAt) || 0 }));
+    } else if (r.isLive) {
+      g.running.push(entry(r.roomId, r, null, { at: lastNews(r) }));
     }
   }
+  for (const p of projs) {
+    if (!p.poRoomId) continue;
+    const r = byRoom.get(p.poRoomId) || null;
+    g.projects.push({ key: p.poRoomId, row: r, it: itemOf.get(p.poRoomId) || null, po: true,
+                      pid: p.id, project: p.name || '', at: r ? lastNews(r) : 0 });
+  }
+  if (o.project) for (const k of Object.keys(g)) g[k] = g[k].filter(e => e.pid === o.project);
   const byAge = (a, b) => (a.at - b.at) || String(a.key).localeCompare(String(b.key));
+  const newest = (a, b) => (b.at - a.at) || a.project.localeCompare(b.project) || String(a.key).localeCompare(String(b.key));
   g.needs.sort(byAge);
   g.review.sort(byAge);
   g.running.sort((a, b) => a.project.localeCompare(b.project) || ((a.row.no || 0) - (b.row.no || 0))
                            || String(a.key).localeCompare(String(b.key)));
+  g.projects.sort(newest);
+  g.done.sort(newest);
   return g;
 }
 // Nothing moves under the pointer: while it is over the list, every entry
 // keeps the group and place it had (`shown`: group -> keys), its content
-// fresh; newcomers go at the end of their group, and a task that left every
+// fresh; newcomers go at the end of their group, and one that left every
 // group leaves. The board's freeze, for this list.
 function swFreeze(g, shown) {
   if (!shown) return g;
-  const all = new Map();
-  for (const k of Object.keys(g)) for (const e of g[k]) all.set(e.key, e);
-  const out = { needs: [], running: [], review: [] }, placed = new Set();
-  for (const k of Object.keys(out)) for (const key of shown[k] || []) {
-    if (all.has(key) && !placed.has(key)) { out[k].push(all.get(key)); placed.add(key); }
+  // Tasks share one place across the four task groups; a PO row in Projects
+  // is its own, beside that PO's entry in Needs you.
+  const id = (k, key) => (k === 'projects' ? 'p|' : 't|') + key;
+  const now = new Map();
+  for (const k of Object.keys(g)) for (const e of g[k]) now.set(id(k, e.key), e);
+  const out = {}, placed = new Set();
+  for (const k of Object.keys(g)) {
+    out[k] = [];
+    for (const key of shown[k] || []) {
+      const i = id(k, key);
+      if (now.has(i) && !placed.has(i)) { out[k].push(now.get(i)); placed.add(i); }
+    }
   }
-  for (const k of Object.keys(out)) for (const e of g[k]) if (!placed.has(e.key)) out[k].push(e);
+  for (const k of Object.keys(g)) for (const e of g[k]) {
+    const i = id(k, e.key);
+    if (!placed.has(i)) { out[k].push(e); placed.add(i); }
+  }
   return out;
+}
+// A PO's second line: what you asked it, then what it is doing.
+function swPoLine(e) {
+  const r = e.row;
+  if (!r) return 'not started';
+  const p = r.points || {};
+  const d = (p.delivered != null ? p.delivered : p.answered) || 0;
+  const bits = [];
+  if (d) bits.push(`${d} answer${d === 1 ? '' : 's'} to check`);
+  if (p.planned) bits.push(`${p.planned} in progress`);
+  if (p.open) bits.push(`${p.open} ask${p.open === 1 ? '' : 's'} open`);
+  if (bits.length) return bits.join(' · ');
+  return r.isLive ? (r.status === 'busy' ? 'working' : 'idle') : 'not running';
 }
 function swRowHtml(e, group, selected) {
   const r = e.row || {};
   const it = e.it;
   // A task the rows do not hold (past the newest 300) still has the bell's words.
-  const title = e.po ? 'PO' : e.row ? rowTitle(r) : (it && it.title) || '(task)';
+  const title = e.po ? `${e.project || 'Project'} · PO` : e.row ? rowTitle(r) : (it && it.title) || '(task)';
   const no = e.po ? '' : e.row ? taskNoText(r, true) : (it && it.ref) || '';
-  const loz = group === 'needs' && it
-    ? `<span class="loz ${swTone(it.state)}" title="${esc(it.reason || '')}">${esc(ATTN_LABEL[it.state] || it.state)}</span>` : '';
-  const since = e.at && group !== 'running' ? `<span class="sw-since">${esc(sinceClock(e.at))}</span>` : '';
-  const run = e.row ? runChip(r) : '';
-  const tip = [no, title, e.project].filter(Boolean).join(' · ');
-  const data = e.po ? `data-po="${esc(it.projectId || '')}"` : `data-sid="${esc(r.sessionId || e.key)}"`;
+  const bits = [];
+  if (group === 'needs' && it) bits.push(`<span class="loz ${swTone(it.state)}" title="${esc(it.reason || '')}">${esc(ATTN_LABEL[it.state] || it.state)}</span>`);
+  if (group === 'projects') bits.push(`<span class="sw-sub">${esc(swPoLine(e))}</span>`);
+  else {
+    if (e.project) bits.push(`<span class="sw-proj">${esc(e.project)}</span>`);
+    if (group === 'running' && e.row) bits.push(runChip(r));
+    if (group === 'review' && e.row) {
+      const why = workflowOf(r) === 'inreview' ? 'in review' : it ? 'reported' : 'paused';
+      bits.push(`<span class="sw-sub">${why}</span>`);
+    }
+    if (e.row && group !== 'needs') bits.push(changesChipHtml(r, 'sw-chg').trim());
+  }
+  const age = e.at ? `<span class="sw-age">${agoSpan(e.at)}</span>` : '';
+  const tip = [no, title, e.po ? '' : e.project].filter(Boolean).join(' · ');
+  const data = e.po ? `data-po="${esc(e.pid)}"` : `data-sid="${esc(r.sessionId || e.key)}"`;
   return `<button type="button" class="sw-row${selected ? ' on' : ''}" ${data} data-room="${esc(e.key)}" title="${esc(tip)}"${selected ? ' aria-current="true"' : ''}>
-    <span class="sw-title">${e.row ? unreadDotHtml(r) : ''}${no ? `<span class="tno">${esc(no)}</span>` : ''}${esc(title)}</span>
-    <span class="sw-meta">${loz}${since}${run}${e.row ? changesChipHtml(r, 'ccost') : ''}<span class="sw-proj">${esc(e.project)}</span></span>
+    <span class="sw-l1"><span class="sw-dot">${e.row ? unreadDotHtml(r) : ''}</span><span class="sw-title">${no ? `<span class="tno">${esc(no)}</span>` : ''}${esc(title)}</span>${age}</span>
+    <span class="sw-l2">${bits.join('')}</span>
   </button>`;
 }
-function swListHtml(g, selectedSid) {
+// sel: {sid} the open task, or {po} the project whose PO is on screen.
+// doneOpen: whether Done today is unfolded.
+function swListHtml(g, sel, doneOpen) {
+  const s = sel || {};
   return SW_GROUPS.map(([k, name, none]) => {
     const list = g[k] || [];
-    const rows = list.map(e => swRowHtml(e, k, !!selectedSid && !e.po && e.row && e.row.sessionId === selectedSid)).join('');
+    const on = e => e.po ? (!!s.po && k === 'projects' && e.pid === s.po) : (!!s.sid && !!e.row && e.row.sessionId === s.sid);
+    const rows = list.map(e => swRowHtml(e, k, on(e))).join('') || `<p class="sw-none">${esc(none)}</p>`;
+    const head = `<span>${esc(name)}</span><span class="sw-n">${list.length}</span>`;
+    if (k === 'done') {
+      return `<details class="sw-group" data-group="${k}"${doneOpen ? ' open' : ''}>
+      <summary class="sw-ghead">${head}</summary>${rows}</details>`;
+    }
     return `<section class="sw-group" data-group="${k}" aria-label="${esc(name)}">
-      <h3 class="sw-ghead"><span>${esc(name)}</span><span class="sw-n">${list.length}</span></h3>
-      ${rows || `<p class="sw-none">${esc(none)}</p>`}
-    </section>`;
+      <h3 class="sw-ghead">${head}</h3>${rows}</section>`;
   }).join('');
+}
+// The filter's choices: every registered project, by name.
+function swFilterHtml(projects, chosen) {
+  const opts = (projects || []).filter(p => p && p.registered !== false)
+    .slice().sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')))
+    .map(p => `<option value="${esc(p.id)}"${p.id === chosen ? ' selected' : ''}>${esc(p.name || p.id)}</option>`).join('');
+  return `<option value=""${chosen ? '' : ' selected'}>All projects</option>${opts}`;
 }
 // ---- Task switcher: end -----------------------------------------------------
 
@@ -9287,7 +9357,7 @@ function openPoOf(pj) {
     // A PO leads the page: this one, or go to the project this one leads.
     if (!split || split.id !== pj.id) { SELECTED_PROJECT = pj.id; PROJECT_TAB = 'tasks'; WS_SCOPE = ''; SB_DEST = ''; renderRows(); }
     pdReveal('po-chat');
-  } else { PO_PIN = pj.id; PO_PEEK = true; renderPo(); }
+  } else { PO_PIN = pj.id; PO_PEEK = true; renderPo(); swRender(); }
 }
 function poFocusComposer() {
   const f = poSplitProject() && PD.dock ? pdVisibleChat() : document.querySelector('#po-panel iframe.po-session:not([hidden])');
@@ -9296,6 +9366,7 @@ function poFocusComposer() {
 function poClosePeek() {
   PO_PEEK = false; PO_PIN = '';
   renderPo();
+  swRender();
   const b = document.getElementById('po-pill');
   if (b && !b.hidden) b.focus();
 }
@@ -9310,7 +9381,7 @@ function poPillClick() {
   // Already leading the page — unless a task covers it, as it does on a phone:
   // its panel comes on screen, and its box takes the keys.
   if (poSplitProject() && !(SELECTED_SID && isPhone())) { pdReveal('po-chat'); poFocusComposer(); return; }
-  PO_PEEK = !PO_PEEK; PO_PIN = ''; renderPo();
+  PO_PEEK = !PO_PEEK; PO_PIN = ''; renderPo(); swRender();
   // Not on a phone: focus raises the keyboard over the conversation you came to read.
   if (PO_PEEK && !isPhone()) poFocusComposer();
 }
@@ -13022,76 +13093,64 @@ document.addEventListener('click', (ev) => {
 });
 
 // The task switcher's column (the pure half is the "Task switcher" block).
-// Opened from the bar's Tasks button; pinned, it sits left of every screen
-// and the page makes room for it; unpinned, it floats over the page and
-// closes once a task is picked. The pin (and whether a pinned list was left
-// open) is remembered per browser. A phone shows it full screen, never pinned.
-var SW_OPEN = false, SW_SHOWN = null;   // var: renderRows may run before this line
-function swPinned() { try { return localStorage.getItem(SW_KEY) === 'pinned'; } catch (e) { return false; } }
-function swDocked() { return SW_OPEN && swPinned() && !isPhone(); }
-function swRemember(key, val) { try { localStorage.setItem(key, val); } catch (e) {} }
-function swPaint() {
-  const el = $('#switcher'), btn = $('#sw-btn'), pin = $('#sw-pin');
-  if (!el) return;
-  el.hidden = !SW_OPEN;
-  document.body.classList.toggle('sw-open', SW_OPEN);
-  document.body.classList.toggle('sw-pinned', swDocked());
-  btn.setAttribute('aria-expanded', String(SW_OPEN));
-  pin.setAttribute('aria-pressed', String(swPinned()));
-  pin.title = swPinned() ? 'Unpin: float over the page, and close once a task is picked'
-                         : 'Pin to the left of every screen';
-  swRender();
+// On every desktop page it sits left of the page, which makes room for it; a
+// phone keeps its own layout and never shows it. A row opens what it names
+// where it opens today: a task in its panel, a PO on its project's screen.
+// The project filter is remembered per browser.
+var SW_SHOWN = null, SW_DONE_OPEN = false;   // var: renderRows may run before this line
+function swOn() { try { return !isPhone(); } catch (e) { return false; } }   // before isPhone is defined
+function swProject() {
+  let id = '';
+  try { id = localStorage.getItem(SW_KEY + '-project') || ''; } catch (e) {}
+  return id && projectById(id) ? id : '';
 }
-function swToggle(open) {
-  SW_OPEN = open === undefined ? !SW_OPEN : !!open;
-  if (!SW_OPEN) SW_SHOWN = null;
-  if (swPinned() && !isPhone()) swRemember(SW_KEY + '-open', SW_OPEN ? '1' : '');
-  swPaint();
+// What is on screen: the open task, else the PO leading the page or peeked at.
+function swSelection() {
+  if (SELECTED_SID) return { sid: SELECTED_SID };
+  const peek = PO_PEEK && poContext();
+  if (peek) return { po: peek.id };
+  const pj = SELECTED_PROJECT && projectById(SELECTED_PROJECT);
+  return pj && pj.poRoomId ? { po: pj.id } : {};
 }
 function swRender() {
-  if (!SW_OPEN) return;
-  const box = $('#sw-list'), el = $('#switcher');
-  const g = swFreeze(swGroups(ALL_ROWS, attentionItems(), currentPoRooms(), projectOfRoom),
+  const el = document.getElementById('switcher');
+  if (!el) return;
+  const on = swOn();
+  el.hidden = !on;
+  document.body.classList.toggle('sw-on', on);
+  if (!on) { SW_SHOWN = null; return; }
+  const box = $('#sw-list'), pick = $('#sw-proj');
+  const projects = registeredProjects(), chosen = swProject();
+  writeSlot(pick, swFilterHtml(projects, chosen));
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const g = swFreeze(swGroups(ALL_ROWS, attentionItems(), projects, { project: chosen, dayStart: today / 1000 }),
                      el.matches(':hover') ? SW_SHOWN : null);
   SW_SHOWN = Object.fromEntries(Object.entries(g).map(([k, list]) => [k, list.map(e => e.key)]));
-  const a = document.activeElement;
-  const had = a && box.contains(a) && a.dataset.room;
-  if (writeSlot(box, swListHtml(g, SELECTED_SID)) && had) {
-    const back = box.querySelector(`.sw-row[data-room="${CSS.escape(had)}"]`);
-    if (back) back.focus();
+  const key = focusKeyIn(box), had = key && document.activeElement.dataset.room;
+  if (writeSlot(box, swListHtml(g, swSelection(), SW_DONE_OPEN)) && key) {
+    const back = had && box.querySelector(`.sw-row[data-room="${CSS.escape(had)}"]`);
+    if (back) back.focus(); else restoreFocus(box, key);
   }
 }
-$('#sw-btn').addEventListener('click', (ev) => {
-  ev.stopPropagation();
-  swToggle();
-  if (SW_OPEN) { const first = $('#sw-list .sw-row'); if (first && ev.detail === 0) first.focus(); }
+$('#sw-proj').addEventListener('change', (ev) => {
+  try { localStorage.setItem(SW_KEY + '-project', ev.target.value); } catch (e) {}
+  SW_SHOWN = null;
+  swRender();
 });
-$('#switcher').addEventListener('click', (ev) => {
-  if (ev.target.closest('#sw-close')) { swToggle(false); $('#sw-btn').focus(); return; }
-  if (ev.target.closest('#sw-pin')) {
-    swRemember(SW_KEY, swPinned() ? '' : 'pinned');
-    swRemember(SW_KEY + '-open', swPinned() ? '1' : '');
-    swPaint();
-    return;
-  }
+$('#sw-list').addEventListener('toggle', (ev) => {
+  if (ev.target.matches('details[data-group="done"]')) SW_DONE_OPEN = ev.target.open;
+}, true);
+$('#sw-list').addEventListener('click', (ev) => {
   const row = ev.target.closest('.sw-row');
   if (!row) return;
-  // Over the page you are on: a task opens in its panel, the PO chat stays
-  // where it is. A PO opens as the bell opens it.
-  if (row.dataset.po) openPoOf(projectById(row.dataset.po));
-  else openDetail(row.dataset.sid);
-  if (!swDocked()) swToggle(false);
-});
-// Unpinned, it goes when you click beside it or press Escape, as a menu does.
-document.addEventListener('click', (ev) => {
-  if (!SW_OPEN || swDocked()) return;
-  if (ev.target.closest('#switcher, #sw-btn, #modal')) return;
-  swToggle(false);
-});
-document.addEventListener('keydown', (ev) => {
-  if (ev.key !== 'Escape' || !SW_OPEN || swDocked() || ev.defaultPrevented) return;
-  swToggle(false);
-  $('#sw-btn').focus();
+  if (row.dataset.po) {
+    // Its project's screen, where the PO leads; the task panel steps aside.
+    const pj = projectById(row.dataset.po);
+    if (!pj) return;
+    if (PO_PEEK) { PO_PEEK = false; PO_PIN = ''; renderPo(); }
+    openProjectPage(pj.id);
+    pdReveal('po-chat');
+  } else openDetail(row.dataset.sid);
 });
 // Poll while the tab is in front. Nothing here interrupts: no sound, no desktop
 // notification, no stealing focus — the badge just changes.
@@ -14213,15 +14272,6 @@ const isPhone = () => window.matchMedia(MOBILE_MQ).matches;
   const mq = window.matchMedia(MOBILE_MQ);
   const redraw = () => { BOARD_SIG = ''; renderRows(); };
   if (mq.addEventListener) mq.addEventListener('change', redraw); else if (mq.addListener) mq.addListener(redraw);
-})();
-// The task switcher: a pinned list comes back open, and crossing into or out
-// of the phone layout docks or frees it (it is never pinned on a phone).
-(() => {
-  const mq = window.matchMedia(MOBILE_MQ);
-  const cross = () => swPaint();
-  if (mq.addEventListener) mq.addEventListener('change', cross); else if (mq.addListener) mq.addListener(cross);
-  try { SW_OPEN = swPinned() && localStorage.getItem(SW_KEY + '-open') !== '' && !isPhone(); } catch (e) {}
-  swPaint();
 })();
 // The on-screen keyboard. Android (with interactive-widget=resizes-content in
 // the viewport tag) shrinks the page when it opens; iOS instead shrinks only the

@@ -698,35 +698,49 @@ agent." (with **Hide**), or "Not delivered: *reason*." with **Retry** and **Disc
 icon, same weight as every other card. It is the state the whole board sits in for a minute after
 every hub restart. If it ever looks broken, the design has failed.
 
-### Task switcher
+### The task list (left)
 
-One list of the tasks that matter across every project (#114), opened from **Tasks** (`#sw-btn`,
-the list icon just before the bell). `index.html`'s `swGroups` / `swListHtml` are the reference.
+Layout A's list (#115, built in #123 from #114's switcher): every project's tasks and POs in one
+300px column (`--sw-w`) left of every desktop page, under the bar, from the top of the page to the
+bottom. It is how the person gets around; the board stays the planning view. `index.html`'s
+`swGroups` / `swListHtml` (the "Task switcher" block) are the reference, and `#switcher` is one
+self-contained component, so a later layout can host it elsewhere.
 
-- **Three groups, in this order:** **Needs you** (the bell's items minus finished reports, oldest
-  first; the same set as the bell, never a second opinion), **Running** (tasks at work, by project and
-  number), **Ready to review** (In review, or reported finished, and not Done; oldest first). Group
-  heads are `--fs-100` capitals in `--fg-subtle` with the count in `--fg-muted`; an empty group says
-  so in one muted line.
-- **A row:** key and title (`--fs-300`, two lines at most), then the lozenge the board shows for it,
-  "since …", the run chip, the change count, and the project's name at the end (`--fg-muted`). The
-  open task is `--selected-bg`; its muted words step up to `--fg-subtle` there (`--fg-muted` on
-  `--selected-bg` is 4.4:1 in Light).
-- **It never moves under the pointer:** while hovered, rows keep their places (`swFreeze`); what
-  changed lands when the pointer leaves. It redraws with the board's own refresh, no poller of its own.
-- **Unpinned** it floats over the page (`--surface`, `--e-200`, 288px), and a pick, a click beside
-  it or Escape closes it. **Pinned** (Pin, remembered per browser in `cd-switcher`) it sits left of
-  every screen, the page makes room for it (`body.sw-pinned`), and it stays open after a pick.
-- **A pick opens the task's panel over the page you are on:** a PO screen keeps its chat; a PO row
-  opens as the bell opens it.
-- **Phone:** full screen under the bar, no Pin.
+- **Docked, never floating:** `--surface`, a 1px `--border` on its right, no shadow. `body.sw-on`
+  gives `main` the room (`padding-left: var(--sw-w) + 20px`), so nothing it covers is lost. It has
+  no button, pin or close: it is simply there. **A phone never shows it** (`isPhone()`); it keeps
+  its own layout until layout A's phone step.
+- **Its head** is one control, the project filter (`#sw-proj`, a native `select`: "All projects",
+  then every registered project by name). The choice is remembered per browser
+  (`cd-switcher-project`), and every group follows it.
+- **Five groups, in this order:** **Needs you** (the bell's items less finished reports, oldest
+  first: the same set as the bell, never a second opinion), **Running** (live tasks not waiting for
+  a check, by project and number, so a row does not jump each time its agent takes a turn),
+  **Ready for your check** (In review, reported finished, or paused part way; not Done; oldest
+  first), **Projects** (each project's PO, latest news first) and **Done today** (Done and last
+  changed since midnight), folded in a `details`. Group heads are `--fs-100` capitals in
+  `--fg-subtle` with the count in `--fg-muted`; an empty group says so in one muted line.
+- **A row is two lines.** One: the unread dot's 8px slot, the key and title (`--fs-300`, one line,
+  ellipsis, the full text in the tooltip) and the age at the end (`--fs-100`, `--fg-muted`, ticks
+  in place). Two (`--fs-100`, `--fg-muted`, indented to the title): Needs you's lozenge and the
+  project; Running's project, run chip and `+ −`; Ready's project, why (`in review`, `reported`,
+  `paused`) and `+ −`. A PO row is "*Project* · PO", then "N answers to check · M asks open" (or
+  what it is doing: idle, working, not running).
+- **Selected** is `--selected-bg`: the open task, else the PO on screen (its project's page, or
+  its drawer). Its muted words step up to `--fg-subtle` there (`--fg-muted` and `.tno` on
+  `--selected-bg` are 4.4:1 in Light).
+- **A row opens what it names where it opens today:** a task in its panel over the page you are
+  on; a PO on its project's screen (the PO chat revealed).
+- **It never moves under the pointer:** while hovered, rows keep their group and place
+  (`swFreeze`); what changed lands when the pointer leaves. It redraws with the board's refresh and
+  the bell's, no poller of its own.
 
 ---
 
 ## 5. Layout and navigation rules
 
-**Three fixed zones and one overlay.** Top bar (global, thin) · left sidebar (*where you are*) ·
-content (*what you are looking at*) · the issue view as an overlay. Nothing else moves.
+**Three fixed zones and one overlay.** Top bar (global, thin) · the task list on the left (*where
+you can go*, §4) · content (*what you are looking at*) · the issue view as an overlay. Nothing else moves.
 
 1. **Nothing about the current view goes in the top bar.** The bar carries identity, where-am-I,
    search, what-needs-me, me, create. Filters, counts, grouping and sort belong to the view that owns
@@ -738,7 +752,7 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
    its menu switches project and holds the project's settings, its kind and key and, for a
    documents project without one, setting up its PO), then **what you can do here** (`#bar-here`:
    the PO screen's **Panels ▾**, `pdCtlHtml`; empty elsewhere), then the global group: search, the
-   PO pill, the plan chip, **Tasks** (the task switcher, §4), the bell, the avatar and **Create** (in a project, Create opens the new
+   PO pill, the plan chip, the bell, the avatar and **Create** (in a project, Create opens the new
    task dialog with that project chosen). Panels is the one control about the page below that the
    bar carries: a PO screen has no other row to hold it, and the bar is where the page's own
    controls start. Nothing else joins `#bar-here` without replacing something.
@@ -750,9 +764,9 @@ content (*what you are looking at*) · the issue view as an overlay. Nothing els
    - **Sizes:** the icon 22px and the letters 15.84px (the E inside the icon), 125 × 22px in all (124.5 in the SVG),
      in a 32px link (44px on a phone). Never scaled to fit: where the word does not fit, the icon
      alone (`img.logo`, 22px) takes its place. The word shows above 900px and on a phone from
-     440px (row one, on home and in a project, with the back arrow and the name on row two); the
+     410px (row one, on home and in a project, with the back arrow and the name on row two); the
      icon alone from 641px to 900px (a long project name and the plan chip leave the word no room
-     at 768) and on a phone under 440px (row one's controls, Tasks among them, take 306px).
+     at 768) and on a phone under 410px (row one's controls take 262px).
    - **Colour:** tokens only, so it reads in every theme: `--fg` for the letters, and the icon's
      own colours inside its tile. The other two variants (`lanes`: each E the icon's coral, mint
      and amber bars; `gradient`: the word in the icon's blue to violet) read `--wm-lane-1…3`
@@ -940,14 +954,14 @@ desktop is untouched by construction.
    smaller than that and leaves it zoomed.
 3. **Nothing needs hover.** Whatever a pointer reveals on hover is simply shown. A `title` tooltip may
    add detail, never carry the only copy of something.
-4. **The bar fits 360px: six 44px targets and Create.** Identity shrinks to the icon under 440px
-   (the wordmark from 440px, §5.1; Tasks took the 30px it had to spare); search folds into a button and
+4. **The bar fits 360px: six 44px targets and Create.** Identity shrinks to the icon under 410px
+   (the wordmark from 410px, §5.1); search folds into a button and
    opens over the bar, and stays open while it holds a query (§5.5: a filtered list shows why); the
    plan chip moves into the avatar menu, and its warnings still reach the banner. Anything new for the
    bar on a phone must replace something, not squeeze it.
 
    **Home is one row; a project is two.** In a project (and no task open) the bar wraps: row one is
-   the wordmark, then search, the PO, Tasks, the bell, the avatar and Create; row two is the back arrow `←` (`#bar-back`, home;
+   the wordmark, then search, the PO, the bell, the avatar and Create; row two is the back arrow `←` (`#bar-back`, home;
    phone only, the wordmark is the way back elsewhere), the project's name with its menu, truncated,
    and Panels at the end. `--header-h` is redeclared on `body.in-proj` so everything hanging off the
    bar follows. At 430×932 the PO screen's panel tabs start at 110px. An open task covers the page
