@@ -305,6 +305,7 @@ const APP = '["standalone","window-controls-overlay","minimal-ui","fullscreen","
 const pageReady = 'typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 0';
 const poReady = 'document.body.classList.contains("po-dock") && !!PD.dock';
 const goPo = p => p.evalIn(`(() => { try { localStorage.removeItem('cd-po-dock'); } catch (e) {}
+  pdNarrow = () => isPhone();   // the wide dock, kept for step 3's tool strip (a desktop's tabs: tests/test_middle.py)
   SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'tasks'; SB_DEST = ''; renderRows(); return 0; })()`);
 async function popBoard(c, p) {
   // The Board beside Points, then a real click on its pop-out control (a window opens only from one).

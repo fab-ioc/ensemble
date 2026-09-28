@@ -567,6 +567,23 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .bar-btn .caret { color: var(--fg-muted); font-size: var(--fs-100); }
   .bar-btn.icon { width: 32px; padding: 0; justify-content: center; position: relative; font-size: 14px; }
   #proj-switch #proj-switch-name { overflow: hidden; text-overflow: ellipsis; }
+  /* The breadcrumb (layout A, a desktop: body.mid): ENSEMBLE / project ▾ ›
+     conversation › tool › file, one line. Every part but the last goes up to
+     its level; the last is where you are. Each part gives way with an
+     ellipsis, the conversation's title first, so the bar keeps one row. The
+     project's name leads (#proj-go) and its caret keeps the menu. */
+  #proj-go, #bar-crumbs { display: none; }
+  body.mid.bar-proj #proj-go { display: inline-flex; }
+  body.mid.bar-proj #proj-switch #proj-switch-name { display: none; }
+  body.mid.bar-proj #proj-switch { padding: 0 var(--s-100); margin-left: calc(-1 * var(--s-100)); }
+  body.mid #bar-crumbs { display: flex; align-items: center; gap: var(--s-100); min-width: 0; flex: 0 1 auto; }
+  #proj-go { color: var(--fg); font-size: var(--fs-300); font-weight: 600; min-width: 0; flex: 0 1 auto; max-width: 240px; padding-right: var(--s-050); }
+  .bar-crumb > span, .crumb-here { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  #bar-crumbs .bar-crumb { min-width: 0; flex: 0 1 auto; max-width: 280px; color: var(--fg-subtle); }
+  #bar-crumbs .bar-crumb[data-crumb="task"] { flex-shrink: 4; max-width: 420px; }
+  .crumb-sep { color: var(--fg-muted); flex: none; }
+  .crumb-here { color: var(--fg); font-size: var(--fs-200); font-weight: 500; padding: 0 var(--s-100); flex: 0 1 auto; max-width: 420px; }
+  .crumb-here[data-crumb="task"] { flex-shrink: 4; }
   .avatar-btn {
     width: 28px; height: 28px; padding: 0; justify-content: center;
     border-radius: var(--r-full); background: var(--c-neutral-bg);
@@ -1063,6 +1080,46 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #detail-panel .wsp { grid-template-columns: 1fr; grid-template-rows: minmax(168px, 34%) minmax(0, 1fr); height: auto; flex: 1; min-height: 0; }
   #detail-panel .wsp.wsf-on { grid-template-rows: minmax(200px, 50%) minmax(0, 1fr); }
   #detail-panel .wsp-side { border-right: 0; border-bottom: 1px solid var(--border); }
+  /* ---- The middle (layout A, a desktop: body.mid) --------------------------
+     One conversation, full height, between the task list on the left
+     (--list-w, 0 until the list is there) and the right edge: a task's, in
+     #detail-panel, or a project's PO, in its screen (#po-dock, below). The
+     text keeps to a centred column (--conv-w); a task's tools (Changes,
+     Workspace) take the whole width when their tab is on. */
+  body { --list-w: 0px; --conv-w: 880px; }
+  body.mid.detail-open { overflow: hidden; }
+  body.mid.detail-open main { padding-right: 20px; }
+  body.mid #detail-panel {
+    left: var(--list-w); width: auto; transition: none;
+    border-left: 0; padding: var(--s-300) var(--s-500) 0; gap: var(--s-300);
+  }
+  body.mid #detail-panel-resize, body.mid.detail-open #detail-panel-resize { display: none; }
+  body.mid #detail-panel .dp-top, body.mid #detail-panel > .dp-tabs { width: 100%; max-width: var(--conv-w); margin-inline: auto; }
+  body.mid #detail-panel:has(iframe.dp-session) .dp-head { padding: 0; }
+  body.mid #detail-panel .dp-pane[data-pane="activity"] > *,
+  body.mid #detail-panel .dp-pane[data-pane="spec"],
+  body.mid #detail-panel .dp-pane[data-pane="details"] { width: 100%; max-width: var(--conv-w); margin-inline: auto; }
+  body.mid #detail-panel.is-live .dp-pane[data-pane="activity"] { align-items: center; }
+  body.mid #detail-panel .dp-pane[data-pane="spec"], body.mid #detail-panel .dp-pane[data-pane="details"] { padding-bottom: var(--s-500); }
+  body.mid #detail-panel .dp-pane[data-pane="workspace"] { padding: 0 0 var(--s-300); min-height: 0; height: var(--dp-fill, auto); flex: 0 0 auto; }
+  /* The Workspace has the width again: tree and file side by side. */
+  body.mid #detail-panel .wsp { grid-template-columns: minmax(220px, 300px) 1fr; grid-template-rows: none; }
+  body.mid #detail-panel .wsp.wsf-on { grid-template-rows: none; }
+  body.mid #detail-panel .wsp-side { border-right: 1px solid var(--border); border-bottom: 0; }
+  body.mid #detail-panel .dp-pane[data-pane="changes"] { padding: 0 0 var(--s-300); }
+  body.mid .tch { height: max(420px, calc(var(--dp-fill, 100vh) - var(--s-300))); }
+  /* A PO screen: its tools are tabs above the PO's conversation (the Dock's
+     narrow mode) and it fills the middle; the conversation keeps to the
+     column, its header lined up with it. */
+  body.mid.po-dock main { margin-left: var(--list-w); padding: 0; height: calc(100dvh - var(--top-h)); }
+  body.mid.po-dock #po-dock-host { border: 0; border-radius: 0; }
+  body.mid #po-dock.dk-narrow .dk-head { flex-basis: 36px; height: 36px; }
+  body.mid #po-dock.dk-narrow .pd-chat > #po-panel .po-frames { background: var(--bg); justify-content: center; }
+  body.mid #po-dock.dk-narrow .pd-chat > #po-panel .po-frames iframe { max-width: var(--conv-w); }
+  body.mid #po-dock.dk-narrow .pd-chat > #po-panel .po-head { padding-inline: max(var(--s-300), calc((100% - var(--conv-w)) / 2)); }
+  /* The PO drawer (the pill, over a task that is not in a PO's project)
+     sits at the right edge of the middle. */
+  body.mid.po-peek.detail-open #po-panel { right: 0; }
   .dp-meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: 11.5px; color: var(--fg-subtle); }
   .dp-meta .chip {
     background: var(--bg); border: 1px solid var(--border);
@@ -3222,9 +3279,15 @@ window.DOC_LISTENERS_PAUSED = false;
       <img class="logo" src="/static/icons/favicon.svg" alt="" width="22" height="22"><!-- wordmark: tools/make_wordmark.py --><svg class="bar-word wm-tile" viewBox="0 -56 2264 400" width="124.5" height="22.0" aria-hidden="true" focusable="false"><image href="/static/icons/favicon.svg" x="0" y="-56" width="400" height="400"/><polygon class="wm-ink" points="460,0 532,0 672,288 600,288"/><rect class="wm-ink" x="448" y="0" width="84" height="288" rx="30"/><rect class="wm-ink" x="600" y="0" width="84" height="288" rx="30"/><rect class="wm-ink" x="732" y="0" width="84" height="182" rx="30"/><rect class="wm-ink" x="848" y="106" width="84" height="182" rx="30"/><rect class="wm-ink" x="732" y="0" width="200" height="76" rx="38"/><rect class="wm-ink" x="732" y="106" width="200" height="76" rx="38"/><rect class="wm-ink" x="732" y="212" width="200" height="76" rx="38"/><rect class="wm-ink" x="1020" y="0" width="160" height="76" rx="38"/><rect class="wm-ink" x="1020" y="106" width="128" height="76" rx="38"/><rect class="wm-ink" x="1020" y="212" width="160" height="76" rx="38"/><rect class="wm-ink" x="980" y="0" width="84" height="288" rx="30"/><polygon class="wm-ink" points="1240,0 1312,0 1420,236 1336,236"/><polygon class="wm-ink" points="1516,0 1444,0 1336,236 1420,236"/><rect class="wm-ink" x="1228" y="0" width="84" height="288" rx="30"/><rect class="wm-ink" x="1444" y="0" width="84" height="288" rx="30"/><rect class="wm-ink" x="1688" y="0" width="84" height="182" rx="30"/><rect class="wm-ink" x="1708" y="106" width="84" height="182" rx="30"/><rect class="wm-ink" x="1616" y="0" width="156" height="76" rx="38"/><rect class="wm-ink" x="1616" y="106" width="176" height="76" rx="38"/><rect class="wm-ink" x="1616" y="212" width="176" height="76" rx="38"/><rect class="wm-ink" x="1576" y="0" width="84" height="288" rx="30"/><rect class="wm-ink" x="1880" y="212" width="136" height="76" rx="38"/><rect class="wm-ink" x="1840" y="0" width="84" height="288" rx="30"/><rect class="wm-ink" x="2104" y="0" width="160" height="76" rx="38"/><rect class="wm-ink" x="2104" y="106" width="128" height="76" rx="38"/><rect class="wm-ink" x="2104" y="212" width="160" height="76" rx="38"/><rect class="wm-ink" x="2064" y="0" width="84" height="288" rx="30"/></svg><!-- /wordmark -->
     </a></h1>
     <span class="bar-sep" aria-hidden="true">/</span>
+    <!-- The breadcrumb (body.mid, a desktop): the project, which goes up to
+         its PO's conversation, its menu on the caret beside it, then the
+         conversation, the tool and the file (barCrumbs). On a phone the
+         project's name is the menu button, as before. -->
+    <button id="proj-go" class="bar-btn bar-crumb" type="button"><span class="proj-go-name"></span></button>
     <button id="proj-switch" class="bar-btn" title="Switch project, or change this project's kind and key" aria-haspopup="true" aria-expanded="false">
       <span id="proj-switch-name">All projects</span><span class="caret">▾</span>
     </button>
+    <span id="bar-crumbs"></span>
   </nav>
   <!-- What you can do here: a PO screen's Panels menu (barPaint). -->
   <div id="bar-here"></div>
@@ -4661,6 +4724,7 @@ function renderDetail() {
 
   if (panel._fitFor !== sid) { panel._fitFor = sid; watchLiveChatFit(panel); }
   fitLiveChat();
+  barCrumbs();
 }
 
 // The live chat is exactly as tall as the panel below the header and tabs, so
@@ -4695,7 +4759,10 @@ function fitLiveChat() {
   fitTabs(panel);
   const pane = panel.querySelector('.dp-pane:not([hidden])');
   if (!pane) return;
-  const fits = pane.dataset.pane === 'changes' || (pane.dataset.pane === 'activity' && panel.classList.contains('is-live'));
+  // In the middle (body.mid) the Workspace fills it too: its tree and file
+  // scroll inside it, as they do on a project's screen.
+  const fits = pane.dataset.pane === 'changes' || (pane.dataset.pane === 'activity' && panel.classList.contains('is-live'))
+    || (pane.dataset.pane === 'workspace' && document.body.classList.contains('mid'));
   if (!fits) return;
   const padB = parseFloat(getComputedStyle(panel).paddingBottom) || 0;
   const v = Math.max(0, Math.round(panel.clientHeight - pane.offsetTop - padB)) + 'px';
@@ -6951,6 +7018,7 @@ function wsPaintPane(v) {
   if (!box) return;
   const t = v.tabs.find(x => wsSame(x.path, v.sel));
   box.classList.toggle('ws-tree', v.pane === 'tree' || !t);
+  barCrumbs();   // the file, or its tree, is where you are
 }
 // Focus follows the switch to the other pane's switch back, not left on a
 // pane that is hidden now.
@@ -8572,6 +8640,7 @@ async function chOpenDiff(file, cid, sha) {
   // A file of another commit (or of none) takes that one's review.
   if (sha !== CH_SHA) { CH_SHA = sha; chUseContext(files.dataset.project, files.dataset.root, sha); }
   CH_FILE = file;
+  barCrumbs();
   // The diff belongs to this repository's review: a comment on it lands there,
   // whatever is on screen by the time it is added.
   const seq = ++CH_DIFF, root = files.dataset.root, rv = CH_RV;
@@ -8600,6 +8669,7 @@ function wireChangesPanel(pj) {
   chUseContext((pj && pj.id) || '', '');
   const files = pdById('chp-files'); if (!files) return;
   CH_FILE = ''; CH_SHA = '';
+  barCrumbs();
   chLoadStatus();
   files.onclick = function (e) {
     const more = e.target.closest('.chc-more');
@@ -8908,6 +8978,7 @@ async function tchOpenDiff(v, file, cid) {
   const root = v.root;
   v.file = file;
   tchPaintList(v);
+  barCrumbs();
   box.innerHTML = '<div class="wsp-empty">loading diff…</div>';
   try {
     const d = await api('/api/git/diff?branch=1&path=' + encodeURIComponent(root) + '&file=' + encodeURIComponent(file));
@@ -9109,6 +9180,8 @@ function openPoOf(pj) {
   const split = poSplitProject();
   if (!poRowOf(pj) || (split && !(SELECTED_SID && isPhone()))) {
     // A PO leads the page: this one, or go to the project this one leads.
+    // On a desktop the middle holds one conversation: an open task gives it back.
+    if (SELECTED_SID && !isPhone()) closeDetail();
     if (!split || split.id !== pj.id) { SELECTED_PROJECT = pj.id; PROJECT_TAB = 'tasks'; WS_SCOPE = ''; SB_DEST = ''; renderRows(); }
     pdReveal('po-chat');
   } else { PO_PIN = pj.id; PO_PEEK = true; renderPo(); }
@@ -9133,7 +9206,9 @@ function poPillClick() {
   }
   // Already leading the page — unless a task covers it, as it does on a phone:
   // its panel comes on screen, and its box takes the keys.
-  if (poSplitProject() && !(SELECTED_SID && isPhone())) { pdReveal('po-chat'); poFocusComposer(); return; }
+  // On a desktop an open task is in the middle the PO's conversation is in:
+  // the task gives way to it.
+  if (poSplitProject() && !(SELECTED_SID && isPhone())) { if (SELECTED_SID) closeDetail(); pdReveal('po-chat'); poFocusComposer(); return; }
   PO_PEEK = !PO_PEEK; PO_PIN = ''; renderPo();
   // Not on a phone: focus raises the keyboard over the conversation you came to read.
   if (PO_PEEK && !isPhone()) poFocusComposer();
@@ -9391,6 +9466,10 @@ function pdOnResize(fn) {
   window.addEventListener('resize', fn);
   PD_POP_WINS.forEach((rs, w) => { try { w.addEventListener('resize', fn); rs.push(fn); } catch (e) {} });
 }
+// Layout A (#124): the PO screen is one conversation in the middle, its tools
+// tabs above it; that is the dock's narrow mode, at every width until the
+// tool strip (step 3) gives a desktop a wide dock again.
+function pdNarrow() { return true; }
 // The dock, made once. A phone's is narrow (one column of tabs, nothing that
 // moves a panel), with a layout of its own; a resize across that line
 // switches it (the listener after pdPopChat).
@@ -9403,7 +9482,7 @@ function pdEnsure() {
     panels: PD_IDS.map(id => ({ id, title: PD_TITLES[id], el: PD.els[id] })),
     storageKey: PD_KEYS.desk,
     defaultLayout: ctx => pdDefaultLayout(L, ctx),
-    narrow: isPhone(),
+    narrow: pdNarrow(),
     narrowKey: PD_KEYS.phone,
     narrowLayout: ctx => pdDefaultLayout(L, { ...ctx, phone: true }),
     fill: 'po-chat',
@@ -9421,7 +9500,9 @@ function pdEnsure() {
     modalSelector: '[role="dialog"], dialog, .dk-help-pop, .dcm',
     text: { empty: 'Every panel is on a strip at an edge or hidden: the Panels menu above shows them.' },
   }); } finally { window.DOC_LISTENERS_PAUSED = false; }
-  PD.dock.onChange(() => pdPlaceChat());
+  PD.dock.onChange(() => { pdPlaceChat(); barCrumbs(); });
+  // Layout A: every tool is a tab on a desktop, where no menu shows a hidden one.
+  if (!isPhone() && PD.dock.narrow()) PD_IDS.forEach(id => { if (!PD.dock.isVisible(id)) PD.dock.setVisible(id, true); });
   PD.dock.onShown(id => pdShown(id));
   // Before the chat panel comes back from its window: the window's own chat goes.
   PD.dock.onPopIn(id => { if (id === 'po-chat') pdPopChat(false); });
@@ -9448,6 +9529,7 @@ function pdShown(id) {
   if (id === 'board' || id === 'workspace' || id === 'changes') renderRows();
   if (id === 'points') pdPaintPoints(true);
   pdPlaceChat();
+  barCrumbs();
 }
 // Brings a panel on screen: shown if hidden, in front of its stack, slid out
 // if it is on a strip, its window raised if it is in one.
@@ -9518,8 +9600,8 @@ function pdPopChat(out) {
   // A resize can also make the screen a phone's, or no longer one: the dock
   // turns narrow or wide, each with its own layout.
   window.addEventListener('resize', () => {
-    if (!PD.dock || PD.dock.narrow() === isPhone()) return;
-    PD.dock.setNarrow(isPhone());
+    if (!PD.dock || PD.dock.narrow() === pdNarrow()) return;
+    PD.dock.setNarrow(pdNarrow());
     renderRows();
   });
 })();
@@ -13269,7 +13351,11 @@ function barPaint() {
   const back = document.getElementById('bar-back');
   if (back) back.hidden = !inProj;
   const here = document.getElementById('bar-here');
-  if (here) writeSlot(here, inProj && poDockProject() ? pdCtlHtml() : '');
+  // A desktop's PO screen has its tools as tabs, and no Panels menu (layout A).
+  // (A wide dock, kept for the tool strip of step 3, would have it again.)
+  const panels = !document.body.classList.contains('mid') || !pdNarrow();
+  if (here) writeSlot(here, inProj && poDockProject() && panels ? pdCtlHtml() : '');
+  barCrumbs();
   const sw = document.getElementById('proj-switch');
   if (sw) sw.title = inProj ? `${projSwitchLabel()}: switch project, or change this project's kind and key` : 'Switch project';
 }
@@ -13285,6 +13371,157 @@ document.getElementById('bar-here').addEventListener('click', (e) => {
   const b = e.target.closest('.pd-panels');
   if (b) pdMenu(b);
 });
+// ---- The breadcrumb: begin ---------------------------------------------------
+// Layout A (#124), a desktop: where you are, one line after the wordmark:
+// ENSEMBLE / project ▾ › #18 the task (or PO) › its tool › the file. Each part
+// but the last goes up one level: the project to its PO's conversation (its
+// board when it has no PO), the conversation closes the tool and keeps the
+// conversation, the tool goes back to its list. The last part is where you
+// are. Pure down to crumbsHtml, so tests/test_middle.py runs them in Node.
+// `s`: { project: { name } | null, po: whether the project's PO leads its
+// screen, task: { no, title } | null, tool: { k, name } | null, file: path }.
+var CRUMB_TOOL_UP = { changes: 'Back to the list of changed files', workspace: 'Back to the file tree',
+                        points: '', board: '' };
+function crumbsOf(s) {
+  const out = [];
+  if (!s) return out;
+  const pj = s.project;
+  if (pj) out.push({ level: 'project', text: pj.name, title: s.po ? `${pj.name}: its PO's conversation` : `${pj.name}: its board` });
+  if (s.task) {
+    const t = (s.task.no ? s.task.no + ' ' : '') + (s.task.title || '');
+    out.push({ level: 'task', text: t, title: s.tool ? `Back to the conversation: closes ${s.tool.name}` : t });
+  } else if (pj && s.po) {
+    out.push({ level: 'po', text: 'PO', title: s.tool ? `Back to the PO's conversation: closes ${s.tool.name}` : `${pj.name}'s PO` });
+  }
+  if (s.tool && (s.task || pj)) {
+    out.push({ level: 'tool', text: s.tool.name, key: s.tool.k, title: (s.file && CRUMB_TOOL_UP[s.tool.k]) || s.tool.name });
+    if (s.file) {
+      const name = String(s.file).split(/[\\/]/).filter(Boolean).pop() || s.file;
+      out.push({ level: 'file', text: name, title: s.file });
+    }
+  }
+  if (out.length) out[out.length - 1].current = true;
+  return out;
+}
+// Everything after the project (which is #proj-go): a button per level you
+// can go up to, the last one as text.
+function crumbsHtml(cs) {
+  return cs.filter(c => c.level !== 'project').map(c => '<span class="crumb-sep" aria-hidden="true">›</span>'
+    + (c.current
+      ? `<span class="crumb-here" data-crumb="${esc(c.level)}" aria-current="location" title="${esc(c.title || c.text)}">${esc(c.text)}</span>`
+      : `<button type="button" class="bar-btn bar-crumb" data-crumb="${esc(c.level)}" title="${esc(c.title || c.text)}"><span>${esc(c.text)}</span></button>`)).join('');
+}
+// What the page shows now, in crumbsOf's terms.
+function crumbTask() {
+  return SELECTED_SID && document.body.classList.contains('detail-open') ? rowBySid(SELECTED_SID) : null;
+}
+function crumbProject(r) {
+  if (r) return projectOfRoom(r.roomId || r.sessionId) || wsProjectForRow(r) || null;
+  if (!SELECTED_PROJECT || SB_DEST) return null;
+  return projectById(SELECTED_PROJECT) || null;
+}
+// The file open in a Workspace (unless its tree was asked for) or a Changes
+// list, of the task open or of the project.
+function crumbWsFile(ctx) {
+  const v = WS_VIEWS.get(wsCtxKey(ctx));
+  if (!v || !v.sel || v.pane === 'tree' || !v.el || !v.el.isConnected) return '';
+  return v.tabs.some(x => wsSame(x.path, v.sel)) ? v.sel : '';
+}
+function crumbState() {
+  const r = crumbTask();
+  const pj = crumbProject(r);
+  const dockPj = poDockProject();
+  const po = !!(pj && dockPj && dockPj.id === pj.id);
+  const s = { project: pj ? { name: pj.name } : null, po, task: null, tool: null, file: '' };
+  const pctx = pj ? { kind: 'project', projectId: pj.id, docs: isDocsProject(pj) } : null;
+  if (r) {
+    s.task = { no: taskNoText(r, false), title: detailTitle(r) };
+    const k = issueTab(r);
+    if (k !== 'activity') {
+      s.tool = { k, name: (ISSUE_TABS.find(t => t.k === k) || {}).name || k };
+      if (k === 'workspace') s.file = crumbWsFile({ kind: 'task', sid: r.sessionId });
+      if (k === 'changes') { const v = TCH_VIEWS.get(r.sessionId); s.file = (v && v.file) || ''; }
+    }
+  } else if (po) {
+    const front = PD.dock ? PD.dock.frontOf('po-chat') : '';
+    if (front && front !== 'po-chat') {
+      s.tool = { k: front, name: PD_TITLES[front] || front };
+      if (front === 'workspace') s.file = crumbWsFile(pctx);
+      if (front === 'changes') s.file = CH_FILE || '';
+    }
+  } else if (pj && (PROJECT_TAB === 'workspace' || PROJECT_TAB === 'changes')) {
+    s.tool = { k: PROJECT_TAB, name: PROJECT_TAB === 'workspace' ? 'Workspace' : 'Changes' };
+    s.file = PROJECT_TAB === 'workspace' ? crumbWsFile(pctx) : (CH_FILE || '');
+  }
+  return s;
+}
+// Written only when it changes; a desktop's only (a phone has its own row).
+function barCrumbs() {
+  const box = document.getElementById('bar-crumbs'), go = document.getElementById('proj-go');
+  if (!box || !go) return;
+  const mid = document.body.classList.contains('mid');
+  const cs = mid ? crumbsOf(crumbState()) : [];
+  const pc = cs.find(c => c.level === 'project');
+  document.body.classList.toggle('bar-proj', !!pc);
+  const name = go.querySelector('.proj-go-name');
+  if (pc) {
+    if (name.textContent !== pc.text) name.textContent = pc.text;
+    go.title = pc.current ? pc.text : pc.title;
+    if (pc.current) go.setAttribute('aria-current', 'location'); else go.removeAttribute('aria-current');
+  }
+  writeSlot(box, crumbsHtml(cs));
+}
+// Going up to a level.
+function crumbGo(level) {
+  const r = crumbTask();
+  if (level === 'project') {
+    const pj = crumbProject(r);
+    if (!pj) return;
+    if (SELECTED_SID) closeDetail();
+    if (SELECTED_PROJECT !== pj.id) WS_SCOPE = '';
+    SELECTED_PROJECT = pj.id; PROJECT_TAB = 'tasks'; SB_DEST = '';
+    renderRows();
+    if (poDockProject()) pdReveal('po-chat');
+  } else if (level === 'po') {
+    pdReveal('po-chat');
+  } else if (level === 'task') {
+    if (!r) return;
+    ISSUE_TAB_SID = r.sessionId; ISSUE_TAB = 'activity';
+    const p = $('#detail-panel'); if (p) p.dataset.sig = '';
+    renderDetail();
+  } else if (level === 'tool') {
+    const s = crumbState();
+    const k = s.tool && s.tool.k;
+    if (k === 'changes' && r) {
+      const v = TCH_VIEWS.get(r.sessionId);
+      if (v) { v.file = ''; tchPaintList(v); const box = v.el && v.el.querySelector('.tch-diff'); if (box) box.innerHTML = CH_DIFF_EMPTY; }
+    } else if (k === 'changes') {
+      CH_FILE = ''; CH_DIFF++;
+      const files = pdById('chp-files'), box = pdById('chp-diff');
+      if (files) files.querySelectorAll('.chf.on').forEach(x => x.classList.remove('on'));
+      if (box) box.innerHTML = CH_DIFF_EMPTY;
+    } else if (k === 'workspace') {
+      const pj = crumbProject(r);
+      const v = WS_VIEWS.get(wsCtxKey(r ? { kind: 'task', sid: r.sessionId } : { kind: 'project', projectId: pj && pj.id, docs: isDocsProject(pj) }));
+      if (v && v.el) {
+        v.pane = 'tree'; wsPaintPane(v);
+        if (v.sel) wsReveal(v, v.sel, { clear: false });
+      }
+    }
+  }
+  barCrumbs();
+}
+document.getElementById('proj-go').addEventListener('click', (e) => {
+  // A phone, or no project to go up to: the name is the menu, as before.
+  if (!document.body.classList.contains('bar-proj')) { e.stopPropagation(); $('#proj-switch').click(); return; }
+  crumbGo('project');
+});
+document.getElementById('bar-crumbs').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-crumb]');
+  if (b) crumbGo(b.dataset.crumb);
+});
+// ---- The breadcrumb: end -----------------------------------------------------
+
 // The project's settings, under the projects in its menu: its kind, its key,
 // its PO's past conversations and, for a documents project without one,
 // setting up its PO. They were
@@ -13958,9 +14195,23 @@ const isPhone = () => window.matchMedia(MOBILE_MQ).matches;
 // A phone has its own board and its own PO screen (one column of tabs), so
 // crossing into or out of the phone layout redraws the Overview rather than
 // waiting for data.
+// Anything wider is a desktop, with layout A's middle (body.mid): a task opens
+// full height in it and the breadcrumb is in the bar.
+function midSync() {
+  const on = !isPhone();
+  if (document.body.classList.contains('mid') === on) return false;
+  document.body.classList.toggle('mid', on);
+  return true;
+}
+midSync();
 (() => {
   const mq = window.matchMedia(MOBILE_MQ);
-  const redraw = () => { BOARD_SIG = ''; renderRows(); };
+  const redraw = () => {
+    BOARD_SIG = '';
+    midSync();
+    renderRows();
+    if (SELECTED_SID) { const p = $('#detail-panel'); if (p) p.dataset.sig = ''; renderDetail(); }
+  };
   if (mq.addEventListener) mq.addEventListener('change', redraw); else if (mq.addListener) mq.addListener(redraw);
 })();
 // The on-screen keyboard. Android (with interactive-widget=resizes-content in
@@ -15008,6 +15259,7 @@ window.ensUpdBusy = () => UPDATE_IN_PROGRESS || MODAL_EL.open || [...RM.values()
 window.ensUpdPlace = () => ({
   proj: SELECTED_PROJECT || '', tab: PROJECT_TAB, sb: SB_DEST,
   sid: document.body.classList.contains('detail-open') && SELECTED_SID ? SELECTED_SID : '',
+  itab: document.body.classList.contains('detail-open') && SELECTED_SID && ISSUE_TAB_SID === SELECTED_SID ? ISSUE_TAB : '',
   top: Math.round((document.scrollingElement || document.documentElement).scrollTop || 0),
   po: PO_PEEK ? 1 : 0, pin: PO_PEEK ? PO_PIN : '',   // the PO drawer open over the page, and whose PO it shows
 });
@@ -15150,7 +15402,11 @@ window.ensUpdPlace = () => ({
     if (back.po && !PROJECTS) await refreshProjects();
     if (back.po && !ALL_ROWS.some(r => r.roomId)) { try { await refresh({ now: true }); } catch (e) {} }
     renderRows();
-    if (back.sid && ALL_ROWS.some(r => r.sessionId === back.sid)) openDetail(back.sid);
+    if (back.sid && ALL_ROWS.some(r => r.sessionId === back.sid)) {
+      // On the tab it was on (the conversation, or one of its tools).
+      if (back.itab && ISSUE_TABS.some(t => t.k === back.itab)) { ISSUE_TAB_SID = back.sid; ISSUE_TAB = back.itab; }
+      openDetail(back.sid);
+    }
     // The PO drawer open again on the same conversation (its frame's place is
     // kept under the frame's url), after the task it was over: opening a task
     // by hand closes the drawer on a phone, and this is not that. renderPo
