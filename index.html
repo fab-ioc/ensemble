@@ -3209,7 +3209,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .dk-strip-btn.on .dk-strip-badge { background: var(--surface); }
   .dk-flyout.dk-fly-beside { border-top: 0; border-bottom: 0; }
   /* The middle keeps what it needs at any width (--pd-main-min, pdToolsFit:
-     the conversation's 360px and the minimums of the tools pinned beside
+     the conversation's 360px and the minimums of the tools docked beside
      it): a tool's width is taken when the dock is made (and a saved layout
      keeps it), so on a narrower window the open tool gives way, and has its
      width again when there is room. Where that leaves it too little room
@@ -9994,7 +9994,7 @@ function pdToolsFit() {
   const d = PD.dock;
   if (!d) return;
   if (d.narrow()) { if (d.isVisible('spec')) d.setVisible('spec', false); return; }
-  // A desktop: what the middle needs (its pinned tools too), and whether an
+  // A desktop: what the middle needs (the tools docked in it too), and whether an
   // open tool still has room beside it (else it lies over it).
   const need = Math.max(PD_MIN['po-chat'].w, pdNeedW(d.layout().root));
   PD_ROOT.style.setProperty('--pd-main-min', need + 'px');
