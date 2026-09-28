@@ -52,6 +52,27 @@ _PROCESS_TERMINATE = 0x0001
 _STILL_ACTIVE = 259
 _ERROR_ACCESS_DENIED = 5
 
+
+def open_append_fd(path) -> int:
+    """A file descriptor on `path` that a child process appends through. A
+    Python "ab" handle appends only because Python seeks before each write; a
+    child given it writes at its own position, over what the hub appended in
+    the meantime. A handle with FILE_APPEND_DATA and no FILE_WRITE_DATA has
+    Windows put every write at the end, whoever writes."""
+    import msvcrt
+    FILE_APPEND_DATA, SYNCHRONIZE = 0x0004, 0x00100000
+    share = 0x1 | 0x2 | 0x4          # read, write, delete: the hub holds it open
+    OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL = 4, 0x80
+    h = _kernel32.CreateFileW(str(path), FILE_APPEND_DATA | SYNCHRONIZE, share, None,
+                              OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, None)
+    if h is None or h == wintypes.HANDLE(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return msvcrt.open_osfhandle(h, os.O_APPEND | os.O_WRONLY)
+    except OSError:
+        _kernel32.CloseHandle(h)
+        raise
+
 # ---------- console keystroke injection (the chat "doorbell") ----------
 #
 # A separate process (this server) can push input into a live agent's Windows
@@ -598,7 +619,8 @@ class WindowsBackend(Backend):
         try:
             script_path.write_text(body, encoding="utf-8")
             log.parent.mkdir(parents=True, exist_ok=True)
-            with open(log, "ab") as out:
+            out = open_append_fd(log)
+            try:
                 subprocess.Popen(
                     [shell, "-NoProfile", "-ExecutionPolicy", "Bypass",
                      "-WindowStyle", "Hidden", "-File", str(script_path)],
@@ -606,6 +628,8 @@ class WindowsBackend(Backend):
                     close_fds=True,
                     env=dict(os.environ, ENSEMBLE_STDIO_IS_LOG="1"),
                 )
+            finally:
+                os.close(out)
         except (OSError, subprocess.SubprocessError) as e:
             return {"started": False, "error": f"{e.__class__.__name__}: {e}"}
         return {"started": True, "pid": os.getpid(), "log": str(log)}

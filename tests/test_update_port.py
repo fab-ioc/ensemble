@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -21,7 +22,11 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from backends import macos, windows  # noqa: E402
+from backends import macos  # noqa: E402
+
+windows = None
+if os.name == "nt":
+    from backends import windows  # noqa: E402  (loads kernel32)
 
 
 def _real_bash():
@@ -271,11 +276,16 @@ class SelfUpdateSpawn(unittest.TestCase):
                              Path(d) / "Library" / "Logs" / "ensemble.log")
             self.assertNotIn("--port", popen.call_args.args[0])
 
+    @unittest.skipUnless(windows, "Windows backend")
     def test_windows_restarts_on_the_port_and_logs(self):
         with tempfile.TemporaryDirectory() as d:
             log = Path(d) / "logs" / "ensemble.log"
+            opened = []
+            real_open = windows.open_append_fd
             with mock.patch.object(windows, "LAUNCH_DIR", Path(d) / "launch"), \
                     mock.patch.object(windows.shutil, "which", return_value="powershell.exe"), \
+                    mock.patch.object(windows, "open_append_fd",
+                                      side_effect=lambda p: opened.append(p) or real_open(p)), \
                     mock.patch.object(windows.subprocess, "Popen") as popen:
                 r = windows.WindowsBackend.self_update(object(), Path(d) / "repo",
                                                        port=8770, log_file=log)
@@ -285,9 +295,40 @@ class SelfUpdateSpawn(unittest.TestCase):
             self.assertIn("the hub did not come back", script)
             self.assertNotIn("2>$null }", script)  # git reset's errors reach the log
             kw = popen.call_args.kwargs
-            self.assertEqual(Path(kw["stdout"].name), log)
+            self.assertEqual(opened, [log])
+            self.assertIsInstance(kw["stdout"], int)
             self.assertEqual(kw["stderr"], subprocess.STDOUT)
             self.assertEqual(kw["env"]["ENSEMBLE_STDIO_IS_LOG"], "1")
+
+    @unittest.skipUnless(windows and POWERSHELL, "Windows PowerShell")
+    def test_windows_update_output_never_overwrites_the_hubs_lines(self):
+        # The hub appends to the log while the update child writes to it: every
+        # line of both must survive (a plain "ab" handle let the child write
+        # over the hub's line at its own stale position).
+        with tempfile.TemporaryDirectory() as d:
+            log, go = Path(d) / "ensemble.log", Path(d) / "go"
+            log.write_text("hub-start\n", encoding="utf-8")
+            hub = open(log, "a", encoding="utf-8", buffering=1)
+            script = (f"Write-Output 'update-first'; "
+                      f"while (-not (Test-Path '{go}')) {{ Start-Sleep -Milliseconds 50 }}; "
+                      "Write-Output 'update-last'")
+            fd = windows.open_append_fd(log)
+            try:
+                child = subprocess.Popen([POWERSHELL, "-NoProfile", "-Command", script],
+                                         stdout=fd, stderr=subprocess.STDOUT,
+                                         stdin=subprocess.DEVNULL, close_fds=True)
+            finally:
+                os.close(fd)
+            deadline = time.time() + 60
+            while "update-first" not in log.read_text(encoding="utf-8") and time.time() < deadline:
+                time.sleep(0.05)
+            hub.write("hub-concurrent-log-line\n")
+            go.write_text("x")
+            child.wait(timeout=60)
+            hub.close()
+            lines = log.read_text(encoding="utf-8").split()
+            self.assertEqual(lines, ["hub-start", "update-first",
+                                     "hub-concurrent-log-line", "update-last"])
 
     def test_hub_passes_its_port_and_log(self):
         import dashboard
@@ -309,6 +350,15 @@ class Page(unittest.TestCase):
         self.assertIn("function showUpdateFailed(logPath)", html)
         self.assertIn('id="update-close"', html)
         self.assertNotIn("update timed out", html)
+
+    def test_a_retry_starts_from_the_normal_dialog(self):
+        html = (ROOT / "index.html").read_text(encoding="utf-8")
+        body = html[html.index("async function triggerUpdate()"):html.index("function resetUpdateModal()")]
+        self.assertIn("resetUpdateModal();", body)
+        reset = html[html.index("function resetUpdateModal()"):html.index("function showUpdateFailed(")]
+        for undo in ("classList.remove('is-failed')", "'Updating Ensemble'",
+                     "getElementById('update-close').hidden = true"):
+            self.assertIn(undo, reset)
 
 
 if __name__ == "__main__":

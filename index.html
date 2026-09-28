@@ -5760,6 +5760,7 @@ async function triggerUpdate() {
   const overlay = document.getElementById('update-overlay');
   if (banner) banner.hidden = true;
   if (overlay) overlay.hidden = false;
+  resetUpdateModal();   // an earlier attempt may have left it saying it failed
   setUpdateStage('Fetching from origin…');
 
   const startPid = RUNTIME_CFG && RUNTIME_CFG.pid;
@@ -5826,6 +5827,15 @@ async function triggerUpdate() {
       if (cfg && cfg.pid && cfg.pid !== startPid) { ensUpd.reload(); return; }
     } catch { /* still down */ }
   }
+}
+function resetUpdateModal() {
+  const modal = document.querySelector('#update-overlay .update-modal');
+  if (!modal) return;
+  modal.classList.remove('is-failed');
+  modal.querySelector('h3').textContent = 'Updating Ensemble';
+  document.getElementById('update-hint').textContent =
+    'The server will restart and the page will reload automatically.';
+  document.getElementById('update-close').hidden = true;
 }
 function showUpdateFailed(logPath) {
   const overlay = document.getElementById('update-overlay');
