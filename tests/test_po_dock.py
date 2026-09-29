@@ -251,10 +251,11 @@ class ThePanels(unittest.TestCase):
                     "static/dock/src/theme-picker.js", "static/dock/src/install.js"):
             self.assertIn(rel, dashboard.PAGE_FILES)
             self.assertIn(f'href="/{rel}"', INDEX, f"the page lists {rel} for Page update")
-        self.assertIn("import('/static/dock/src/index.js')", INDEX)
+        self.assertIn("Promise.resolve('/static/dock/src/index.js')", INDEX)
+        self.assertIn("return import(u);", INDEX)
         self.assertNotIn("dock/css/theme.css", INDEX, "the --dk-* tokens read Ensemble's own")
         self.assertNotIn("static/dock/src/popout.html", dashboard.PAGE_FILES, "an inert page: nothing to update in it")
-        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.4\.0 [0-9a-f]{40}")
+        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.4\.2 [0-9a-f]{40}")
 
     def test_the_library_does_what_the_workarounds_did(self):
         # Dock v0.3.3 has each of Ensemble's needs (the Dock project's ENSEMBLE-NEEDS.md); the page uses them.
