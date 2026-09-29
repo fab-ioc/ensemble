@@ -745,8 +745,9 @@ self-contained component, so a later layout can host it elsewhere.
   **Ready for your check** (In review, reported finished, or paused part way; not Done; oldest
   first), **Projects** (each project's PO, latest news first), **Unassigned** (#128: every session
   in no project, the person's own terminal sessions and tasks started without one, newest first;
-  the newest 10, then a quiet "Show all (N)" line, `.sw-more`; left out while one project is
-  chosen) and **Done today** (Done and last changed since midnight). Unassigned and Done today
+  the newest 10, and the open one after them, then a quiet "Show all (N)" line, `.sw-more`; only
+  sessions the page holds a row for, so every row opens; no drafts or archived ones, as in every
+  group; left out while one project is chosen) and **Done today** (Done and last changed since midnight). Unassigned and Done today
   are folded in a `details`. The name is the one the home card, the project menu and the Move to
   project picker already use for the same sessions. Group heads are `--fs-100` capitals in
   `--fg-subtle` with the count in `--fg-muted`; an empty group says so in one muted line.

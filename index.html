@@ -5665,16 +5665,18 @@ function swGroups(rows, items, projects, opts) {
   }
   if (o.project) for (const k of Object.keys(g)) g[k] = g[k].filter(e => e.pid === o.project);
   else {
-    // Each session as the rows have it (its row is fresher), else as the group
-    // has it. A task in no project may also be in a group above: this is
-    // where it is filed, as a PO is both in Needs you and in Projects.
+    // Each session by its row: one the rows do not hold (the group reaches
+    // further back than the page's newest 300) would open as "Session not
+    // found", so it is left out, as are drafts and archived ones, as in every
+    // group. A task in no project may also be in a group above: this is where
+    // it is filed, as a PO is both in Needs you and in Projects.
     const bySid = new Map((rows || []).filter(r => r && r.sessionId).map(r => [r.sessionId, r]));
     g.unassigned = [];
     for (const s of o.unassigned || []) {
       const key = s && (s.roomId || s.sessionId);
       if (!key) continue;
-      const r = byRoom.get(key) || bySid.get(s.sessionId || key) || s;
-      if (r.archived) continue;
+      const r = byRoom.get(key) || bySid.get(s.sessionId || key);
+      if (!r || r.archived || r.draft) continue;
       g.unassigned.push({ key, row: r, it: null, pid: '', project: '', at: Number(r.updatedAt) || 0 });
     }
   }
@@ -5769,7 +5771,9 @@ function swListHtml(g, sel, doneOpen, un) {
     if (k === 'unassigned' && !g.unassigned) return '';
     const list = g[k] || [];
     const on = e => e.po ? (!!s.po && k === 'projects' && e.pid === s.po) : (!!s.sid && !!e.row && e.row.sessionId === s.sid);
-    const shown = k === 'unassigned' && !u.all ? list.slice(0, SW_UN_SHOW) : list;
+    // Folded to the newest few, the open one still shows, after them.
+    const shown = k === 'unassigned' && !u.all
+      ? list.filter((e, i) => i < SW_UN_SHOW || on(e)) : list;
     const rows = shown.map(e => swRowHtml(e, k, on(e))).join('') || `<p class="sw-none">${esc(none)}</p>`;
     const head = `<span>${esc(name)}</span><span class="sw-n">${list.length}</span>`;
     if (k === 'unassigned') {
@@ -13586,9 +13590,13 @@ function swRender() {
                               { project: chosen, dayStart: today / 1000, unassigned: (un && un.sessions) || [] }),
                      el.matches(':hover') ? SW_SHOWN : null);
   SW_SHOWN = Object.fromEntries(Object.entries(g).map(([k, list]) => [k, list.map(e => e.key)]));
+  // A task can be in two groups (Running and Unassigned): focus goes back to
+  // the row in the group it was in.
   const key = focusKeyIn(box), had = key && document.activeElement.dataset.room;
+  const hadGroup = had && document.activeElement.closest('[data-group]');
+  const inGroup = hadGroup ? `[data-group="${CSS.escape(hadGroup.dataset.group)}"] ` : '';
   if (writeSlot(box, swListHtml(g, swSelection(), SW_DONE_OPEN, SW_UN)) && key) {
-    const back = had && box.querySelector(`.sw-row[data-room="${CSS.escape(had)}"]`);
+    const back = had && box.querySelector(`${inGroup}.sw-row[data-room="${CSS.escape(had)}"]`);
     if (back) back.focus(); else restoreFocus(box, key);
   }
 }

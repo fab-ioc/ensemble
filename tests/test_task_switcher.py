@@ -82,11 +82,15 @@ const rows = [
     makePo: { ok: true, code: '' } })),
   row('rx', 3, 'No project task', { isLive: false, workflow: 'todo', hasConversation: false, updatedAt: T0 - 50, cwd: '' }),
   { sessionId: 'ua', archived: true, headless: false, updatedAt: T0 },
+  row('rd', 21, 'A draft in no project', { draft: true, workflow: 'backlog', isLive: false, updatedAt: T0 }),
 ];
-// The Unassigned group as /api/projects has it (roomId for a task); u-grp is
-// past the rows the page holds, so it is shown as the group has it.
-const unassigned = [...rows.filter(r => /^u\d|^rx$|^ua$/.test(r.sessionId)).map(r => ({ sessionId: r.sessionId, roomId: r.roomId || null })),
-                    { sessionId: 'u-grp', roomId: null, firstWords: 'Only in the group', updatedAt: T0 - 5000, isLive: false }];
+// The Unassigned group as /api/projects has it (build_projects' `keep`
+// fields: no archived, no agent). u-grp is past the rows the page holds (the
+// group reaches back 500, the rows 300): it would open as "Session not found".
+const kept = r => ({ sessionId: r.sessionId, roomId: r.roomId || null, label: r.label || '', status: r.status,
+                     isLive: !!r.isLive, updatedAt: r.updatedAt, headless: r.headless, cwd: r.cwd, firstWords: r.firstWords || null });
+const unassigned = [...rows.filter(r => /^u\d|^rx$|^ua$|^rd$/.test(r.sessionId)).map(kept),
+                    { sessionId: 'u-grp', roomId: null, label: '', firstWords: 'Only in the group', updatedAt: T0 - 5000, isLive: false }];
 const items = [
   { roomId: 'r9', state: 'waiting_for_you', askKind: 'question', askedAt: T0 + 200, since: T0 + 200, reason: 'claude asked: “Which?”', project: 'Motors', projectId: 'p2' },
   { roomId: 'r1', state: 'blocked', askKind: 'blocked', askedAt: T0 + 100, since: T0 + 100, reason: 'logged out', project: 'Ensemble Dashboard', projectId: 'p1' },
@@ -107,6 +111,7 @@ log.projects = Object.fromEntries(Object.entries(g).map(([k, l]) => [k, l.map(e 
 log.html = swListHtml(g, { sid: 'r2' }, false);
 log.unOpen = swListHtml(g, { sid: 'u3' }, false, { open: true });
 log.unAll = swListHtml(g, {}, false, { open: true, all: true });
+log.unSel = swListHtml(g, { sid: 'u12' }, false, { open: true });
 log.unFew = swListHtml(swGroups(rows, items, P, { ...opts, unassigned: unassigned.slice(0, 3) }), {}, false, { open: true });
 // A row opened from Unassigned has the task panel's bar, Make PO in its menu.
 log.bar = actionsCell(rows.find(r => r.sessionId === 'u2'), false);
@@ -193,8 +198,8 @@ class TaskSwitcher(unittest.TestCase):
             "review": ["r6", "r11", "r13", "r3"],
             # latest first; not a project without a PO, nor an unregistered one
             "projects": ["po-1", "po-2"],
-            # newest first; not the archived one; also a session past the rows
-            "unassigned": ["rx", "u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9", "u10", "u11", "u12", "u-grp"],
+            # newest first; not archived, not a draft, not one past the rows
+            "unassigned": ["rx", "u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9", "u10", "u11", "u12"],
             "done": ["r4"],                          # not yesterday's r12
         })
         self.assertEqual(self.r["projects"]["running"], ["Ensemble Dashboard", "Ensemble Dashboard", "Motors"])
@@ -296,15 +301,15 @@ class TaskSwitcher(unittest.TestCase):
         self.assertLess(h.index('data-group="projects"'), h.index('data-group="unassigned"'))
         self.assertLess(h.index('data-group="unassigned"'), h.index('data-group="done"'))
         self.assertRegex(h, r'<details class="sw-group" data-group="unassigned">\s*<summary class="sw-ghead"[^>]*>'
-                            r'<span>Unassigned</span><span class="sw-n">14</span></summary>')
+                            r'<span>Unassigned</span><span class="sw-n">13</span></summary>')
         un = h[h.index('data-group="unassigned"'):h.index('data-group="done"')]
         # The newest ten, then the way to the rest.
         self.assertEqual(re.findall(r'data-sid="([^"]+)"', un), ["rx", "u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9"])
-        self.assertIn('<button type="button" class="sw-more" data-more="unassigned" aria-expanded="false">Show all (14)</button>', un)
+        self.assertIn('<button type="button" class="sw-more" data-more="unassigned" aria-expanded="false">Show all (13)</button>', un)
         self.assertIn('<details class="sw-group" data-group="unassigned" open>', self.r["unOpen"])
         al = self.r["unAll"]
         al = al[al.index('data-group="unassigned"'):al.index('data-group="done"')]
-        self.assertEqual(len(re.findall(r'class="sw-row', al)), 14)
+        self.assertEqual(len(re.findall(r'class="sw-row', al)), 13)
         self.assertIn('aria-expanded="true">Show the newest 10</button>', al)
         few = self.r["unFew"]
         self.assertNotIn('sw-more', few)
@@ -320,8 +325,15 @@ class TaskSwitcher(unittest.TestCase):
         task = row_of(h, 'data-sid="rx"')
         self.assertIn('<span class="tno">#3</span>No project task', task)
         self.assertIn('<span class="sw-sub">task, not running</span>', task)
-        self.assertIn('>Only in the group</span>', row_of(self.r["unAll"], 'data-sid="u-grp"'))
-        self.assertNotIn('data-sid="ua"', self.r["unAll"])
+        # Every row listed opens: none the page has no row for (review 1).
+        for gone in ('data-sid="u-grp"', 'data-sid="ua"', 'data-sid="rd"'):
+            self.assertNotIn(gone, self.r["unAll"])
+        # Folded to ten, the open one (the 13th) still shows, after them.
+        sel = self.r["unSel"]
+        sel = sel[sel.index('data-group="unassigned"'):sel.index('data-group="done"')]
+        self.assertEqual(re.findall(r'data-sid="([^"]+)"', sel)[-1], "u12")
+        self.assertEqual(len(re.findall(r'class="sw-row', sel)), 11)
+        self.assertIn('class="sw-row on" data-sid="u12"', sel)
         # The open one is selected.
         self.assertIn('class="sw-row on" data-sid="u3"', self.r["unOpen"])
 
@@ -335,6 +347,8 @@ class TaskSwitcher(unittest.TestCase):
         self.assertIn("if (ev.target.closest('.sw-more[data-more=\"unassigned\"]')) { SW_UN.all = !SW_UN.all; swRender(); return; }", click)
         self.assertIn("} else openDetail(row.dataset.sid);", click)
         self.assertIn("SW_UN.open = ev.target.open", wiring)
+        # Focus goes back to the row in the group it was in (a task can be in two).
+        self.assertIn("box.querySelector(`${inGroup}.sw-row[data-room=\"${CSS.escape(had)}\"]`)", wiring)
         self.assertIn("unassigned: (un && un.sessions) || []", wiring)
         self.assertIn("function detailActions(r, isLive) {\n  return `<div class=\"dp-actions\">${actionsCell(r, isLive)}</div>`;", INDEX)
         bar = self.r["bar"]
