@@ -3225,11 +3225,17 @@ def project_folder_name(name: str) -> str:
     # Windows drops a trailing dot or space; a leading dot hides the folder.
     s = s.strip(" .-")[:PROJECT_FOLDER_MAX].rstrip(" .-")
     if _WIN_DEVICE_NAMES.match(s):
-        s += "-project"
+        s = s[:PROJECT_FOLDER_MAX - len("-project")].rstrip(" .-") + "-project"
     return s or "project"
 
 
-def _folder_taken(folder: str, projects: list[dict], homes: set[str]) -> bool:
+def _folder_key(folder: str) -> str:
+    """A folder compared without its case, on every system: the projects root
+    is on a case-insensitive disk by default on Windows and macOS alike."""
+    return os.path.normpath(folder).casefold()
+
+
+def _folder_taken(folder: str, taken: set[str]) -> bool:
     """``folder`` is another project's (its code folder or its home), or a file."""
     try:
         if os.path.exists(folder) and not os.path.isdir(folder):
@@ -3238,8 +3244,7 @@ def _folder_taken(folder: str, projects: list[dict], homes: set[str]) -> bool:
             return True
     except OSError:
         return True
-    return bool(projects_on_folder(folder, projects)) \
-        or os.path.normcase(os.path.normpath(folder)) in homes
+    return _folder_key(folder) in taken
 
 
 def new_code_folder(name: str, projects: list[dict] | None = None) -> str:
@@ -3247,13 +3252,15 @@ def new_code_folder(name: str, projects: list[dict] | None = None) -> str:
     <root>/<project_folder_name>, or -2, -3… when that is another project's.
     A folder there that is no project's is used as it is. Reads only."""
     projects = load_projects() if projects is None else projects
-    homes = set()
+    taken = set()
     for p in projects:
+        if p.get("path"):
+            taken.add(_folder_key(p["path"]))
         with contextlib.suppress(OSError):
-            homes.add(os.path.normcase(project_home(p, create=False)))
+            taken.add(_folder_key(project_home(p, create=False)))
     base = str(PROJECTS_ROOT / project_folder_name(name))
     folder, n = base, 2
-    while _folder_taken(folder, projects, homes):
+    while _folder_taken(folder, taken):
         folder = f"{base}-{n}"
         n += 1
     return os.path.normpath(folder)
@@ -3261,24 +3268,36 @@ def new_code_folder(name: str, projects: list[dict] | None = None) -> str:
 
 def _git_init_new(folder: str) -> str:
     """Make a folder the hub has just created a git repository with one empty
-    commit, so worktree tasks can start from it. "" or why it failed."""
+    commit, so worktree tasks can start from it. "" or why it failed; on a
+    failure the folder is left as it was made, with no .git (a repository
+    without a commit could have no worktree, and would not be kept apart)."""
     def git(*args):
         return _run(["git", "-C", folder, *args], capture_output=True, text=True,
                     encoding="utf-8", errors="replace", timeout=30)
+    why = ""
     try:
         out = git("init")
         if out.returncode != 0:
-            return (out.stderr or "").strip()[:200] or "git init failed"
-        out = git("commit", "--allow-empty", "-m", "Initial commit")
-        if out.returncode != 0:
-            # No identity configured on this machine: the hub's, for this one commit.
-            out = git("-c", "user.name=Ensemble", "-c", "user.email=ensemble@localhost",
-                      "commit", "--allow-empty", "-m", "Initial commit")
-        if out.returncode != 0:
-            return (out.stderr or "").strip()[:200] or "git commit failed"
+            why = (out.stderr or "").strip()[:200] or "git init failed"
+        else:
+            out = git("commit", "--allow-empty", "-m", "Initial commit")
+            if out.returncode != 0:
+                # No identity configured on this machine: the hub's, for this one commit.
+                out = git("-c", "user.name=Ensemble", "-c", "user.email=ensemble@localhost",
+                          "commit", "--allow-empty", "-m", "Initial commit")
+            if out.returncode != 0:
+                why = (out.stderr or "").strip()[:200] or "git commit failed"
     except (OSError, subprocess.SubprocessError) as e:
-        return str(e)
-    return ""
+        why = str(e) or "git failed"
+    if why:
+        dot_git = os.path.join(folder, ".git")
+        if os.path.isdir(dot_git):
+            try:
+                _files_remove(dot_git)          # its objects are read-only
+            except OSError:
+                shutil.rmtree(dot_git, ignore_errors=True)
+        print(f"[projects] {folder}: not made a git repository: {why}", flush=True)
+    return why
 
 
 def register_project(path: str, name: str = "", kind: str = "code",

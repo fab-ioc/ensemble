@@ -94,6 +94,12 @@ class TheFolder(Hub):
         (self.root / "Notes").write_text("x")
         self.assertEqual(self.folder("Notes"), str(self.root / "Notes-2"))
 
+    def test_past_another_projects_folder_in_another_case(self):
+        # Compared without case on every system (a macOS disk too, where
+        # normcase does not): a project on MY-DAY-JOB, not on disk yet.
+        other = {"id": "proj-x", "name": "Old", "path": str(self.root / "MY-DAY-JOB"), "home": str(self.base / "away")}
+        self.assertEqual(dashboard.new_code_folder("my day job", [other]), str(self.root / "my-day-job-2"))
+
     def test_a_folder_that_is_no_projects_is_used(self):
         (self.root / "Scratch").mkdir()
         self.assertEqual(self.folder("Scratch"), str(self.root / "Scratch"))
@@ -152,6 +158,22 @@ class GitInit(Hub):
         ok, proj, _ = dashboard.register_project(str(self.root / "Letters"), "Letters", "documents", init_git=True)
         self.assertTrue(ok)
         self.assertFalse((self.root / "Letters" / ".git").exists())
+
+    def test_a_failed_commit_leaves_no_repository(self):
+        # A signing setup or a failing hook: git init worked, no commit could be made.
+        real = dashboard._run
+
+        def run(argv, **kw):
+            if "commit" in argv:
+                return subprocess.CompletedProcess(argv, 1, "", "gpg failed to sign the data")
+            return real(argv, **kw)
+        folder = self.root / "Signed"
+        with mock.patch.object(dashboard, "_run", run):
+            ok, proj, _ = dashboard.register_project(str(folder), "Signed", init_git=True)
+        self.assertTrue(ok)
+        self.assertFalse((folder / ".git").exists(), "no half-made repository")
+        self.assertFalse(proj["isGit"])
+        self.assertFalse(dashboard._home_apart(dashboard.find_project(proj["id"])), "as a plain new folder")
 
     def test_a_failed_git_still_registers(self):
         def run(argv, **kw):
@@ -212,6 +234,20 @@ class EveryEndpoint(Hub):
         self.assertEqual(status, 200, out)
         self.assertEqual(os.path.normcase(out["project"]["path"]), os.path.normcase(str(code)))
         self.assertFalse((self.root / "My-Day-Job").exists())
+        self.assertEqual(commits(code), ["Initial commit"], "a typed folder the hub makes is a repository too")
+
+    def test_a_typed_folder_in_the_projects_root(self):
+        code = self.root / "Typed"
+        status, out = self.call({"fresh": "claude", "name": "Typed", "kind": "code", "path": str(code)})
+        self.assertEqual(status, 200, out)
+        self.assertEqual(commits(code), ["Initial commit"])
+        proj = dashboard.find_project(out["project"]["id"])
+        self.assertTrue(dashboard._home_apart(proj), "its tasks can be worktrees")
+
+    def test_a_typed_folder_that_was_there_is_untouched(self):
+        status, out = self.call_url("/api/projects/new", {"name": "Engine", "kind": "code", "path": str(self.work)})
+        self.assertEqual(status, 200, out)
+        self.assertFalse((self.work / ".git").exists())
 
     def test_a_failed_start_takes_the_new_folder_away(self):
         self.start_error = dashboard.StartRoomError("claude could not be started")

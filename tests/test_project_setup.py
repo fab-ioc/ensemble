@@ -755,7 +755,7 @@ console.log(JSON.stringify(out));
         self.assertIn("show under the project, because they work there", git["text"])
         self.assertFalse(git.get("alert"))
         self.assertTrue(folder["text"].startswith("A folder that is there already."))
-        self.assertIn("made when you confirm", missing["text"])
+        self.assertIn("made when you confirm, as a new git repository", missing["text"])
         for n in (relative, file, project, badName):
             self.assertTrue(n.get("alert"), n)
         self.assertEqual(project["project"], {"id": "p1", "name": "Engine"})

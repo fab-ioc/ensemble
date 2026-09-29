@@ -10832,7 +10832,7 @@ function setupFolderNote(st) {
   }
   const unchanged = ' Registering it changes nothing in it. Conversations already started in it show under the project, because they work there.';
   if (f.exists) return { text: (f.isGit ? 'A git repository.' : 'A folder that is there already.') + unchanged };
-  return { text: 'This folder is not there yet: it is made when you confirm.' };
+  return { text: 'This folder is not there yet: it is made when you confirm, as a new git repository.' };
 }
 // The code folder's hint while it is empty: the folder named after the
 // project that confirming uses (the hub's new_code_folder, `st.folder`).
