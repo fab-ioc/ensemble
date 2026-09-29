@@ -738,6 +738,7 @@ const refresh = async ({ now = false } = {}) => {
 };
 const openDetail = sid => { SELECTED_SID = sid; log.push('detail:' + sid + ':' + ISSUE_TAB); };
 const renderDetail = () => log.push('render:' + ISSUE_TAB);
+const pdTask = () => false, pdReveal = () => {};   // the tool strip (#125) is not loaded here
 const issueTab = () => ISSUE_TAB;
 const wsRoots = ctx => { const r = ALL_ROWS.find(x => x.sessionId === ctx.sid); return r && r.taskDir ? [{ path: r.taskDir }] : []; };
 const $ = () => ({ dataset: {} });
