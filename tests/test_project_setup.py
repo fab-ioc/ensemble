@@ -648,6 +648,25 @@ out.dialogInline = setupDialogHtml(S({ inline: true }));
 out.dialogExisting = setupDialogHtml(S({ mode: 'existing', project: { id: 'p1', name: 'Motors <x>', kind: 'documents', path: 'C:\\P\\Motors' } }));
 out.dialogNoAgents = setupDialogHtml(S({ installed: [] }));
 const docsInfo = { documents: true, offer: true, folder: 'C:\\w\\here', files: 2, bytes: 10 };
+// No code folder: the one the hub derives from the name (po_setup_folder, derived).
+const derived = { kind: 'code', folder: 'C:\\P\\My-Day-Job\\code', exists: false, isFile: false, isGit: false, project: null,
+                  relative: false, derived: true, projects: [] };
+const D = o => S({ path: '', name: 'My Day Job', folder: derived, ...o });
+out.derived = {
+  hint: setupPathHint(D({})),
+  hintThere: setupPathHint(D({ folder: { ...derived, exists: true } })),
+  hintWaiting: setupPathHint(D({ folder: null })),
+  hintNoName: setupPathHint(D({ name: '', folder: { ...derived, folder: '', derived: false } })),
+  note: setupFolderNote(D({})),
+  noteThere: setupFolderNote(D({ folder: { ...derived, exists: true } })),
+  dialog: setupDialogHtml(D({})),
+  none: setupSubmit(D({ choice: 'none' })),
+  fresh: setupSubmit(D({ choice: 'fresh', fresh: 'codex' })),
+  conv: setupSubmit(D({ choice: 'conv', sel: 'here' })),
+  inline: setupSubmit(D({ inline: true })),
+};
+out.derived.convBody = makePoBody(out.derived.conv.cand, out.derived.conv.target);
+out.derived.conv.cand = out.derived.conv.cand && out.derived.conv.cand.sessionId;
 out.submit = {
   noName: setupSubmit(S({ name: ' ' })),
   noPath: setupSubmit(S({ path: '' })),
@@ -736,7 +755,7 @@ console.log(JSON.stringify(out));
         self.assertIn("show under the project, because they work there", git["text"])
         self.assertFalse(git.get("alert"))
         self.assertTrue(folder["text"].startswith("A folder that is there already."))
-        self.assertIn("made when you confirm", missing["text"])
+        self.assertIn("made when you confirm, as a new git repository", missing["text"])
         for n in (relative, file, project, badName):
             self.assertTrue(n.get("alert"), n)
         self.assertEqual(project["project"], {"id": "p1", "name": "Engine"})
@@ -778,7 +797,7 @@ console.log(JSON.stringify(out));
     def test_what_confirming_asks(self):
         s = self.out["submit"]
         self.assertEqual(s["noName"], {"error": "Give the project a name."})
-        self.assertEqual(s["noPath"], {"error": "Give the code folder."})
+        self.assertEqual(s["noPath"], {"error": "Choose how the project gets its PO."}, "an empty folder is no refusal")
         self.assertIn("already the project “Engine”", s["isProject"]["error"])
         self.assertEqual(s["noChoice"], {"error": "Choose how the project gets its PO."})
         self.assertEqual(s["noConv"], {"error": "Choose a conversation."})
@@ -794,6 +813,28 @@ console.log(JSON.stringify(out));
         self.assertEqual(s["existing"], {"how": "conv", "cand": "here", "target": {"projectId": "p1"}})
         self.assertEqual(s["existingNone"], {"error": "Choose how the project gets its PO."})
         self.assertEqual(s["existingFresh"], {"how": "fresh", "body": {"fresh": "claude", "projectId": "p1"}})
+
+    def test_an_empty_code_folder(self):
+        # #131: only the name; the hub makes the folder named after it.
+        d = self.out["derived"]
+        self.assertEqual(d["hint"], "Leave empty: C:\\P\\My-Day-Job\\code will be created")
+        self.assertEqual(d["hintThere"], "Leave empty: C:\\P\\My-Day-Job\\code will be used")
+        self.assertIn("named after the project", d["hintWaiting"])
+        self.assertIn("named after the project", d["hintNoName"])
+        self.assertIn('placeholder="Leave empty: C:\\P\\My-Day-Job\\code will be created"', d["dialog"])
+        self.assertFalse(d["note"].get("alert"))
+        self.assertIn("C:\\P\\My-Day-Job\\code is made when you confirm, as a new git repository", d["note"]["text"])
+        self.assertIn("is used as it is", d["noteThere"]["text"])
+        # Every PO choice sends the empty folder: the hub derives it the same way.
+        target = {"name": "My Day Job", "kind": "code", "path": ""}
+        self.assertEqual(d["none"], {"how": "none", "body": target})
+        self.assertEqual(d["inline"], d["none"])
+        self.assertEqual(d["fresh"], {"how": "fresh", "body": {"fresh": "codex", **target}})
+        self.assertEqual(d["conv"], {"how": "conv", "cand": "here", "target": target})
+        # An empty "path", not none: without one the hub takes the conversation's folder.
+        self.assertEqual(d["convBody"]["path"], "")
+        # The name, typed with the folder empty, asks the hub again.
+        self.assertIn("if (st.kind === 'documents' || !st.path.trim()) reload();", INDEX)
 
     def test_where_it_opens(self):
         self.assertIn("if (np) np.onclick = () => projectSetupFlow();", INDEX)
