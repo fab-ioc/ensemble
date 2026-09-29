@@ -259,8 +259,11 @@ class ThePanels(unittest.TestCase):
         # Dock v0.3.3 has each of Ensemble's needs (the Dock project's ENSEMBLE-NEEDS.md); the page uses them.
         dock = INDEX[INDEX.index("// ---- The PO screen as panels: begin"):INDEX.index("// ---- The PO screen as panels: end")]
         for gone in ("<base href", "POP_HTML", "pdSyncChat", "pdSchedule", "pdOpenWindow", "document.write", "phoneOnly", "unscroll", "PD.phone",
-                     "pd-phone", "popHtml", "ResizeObserver"):
+                     "pd-phone", "popHtml"):
             self.assertNotIn(gone, dock, gone)
+        # #125: the one ResizeObserver left refits the tool strip; no phone or scroll workaround
+        self.assertEqual(dock.count("new ResizeObserver"), 1)
+        self.assertIn("pdToolsFit(); }).observe(PD_ROOT)", dock)
         # #101: the served page, not a blob: one, which an installed app shows under Chrome's address strip.
         for used in ("popUrl: '/static/dock/src/popout.html',", "narrow: pdNarrow()", "narrowKey: PD_KEYS.phone", "PD.dock.setNarrow(pdNarrow())",
                      "PD.dock.onPopIn(", "parent.moveBefore(el"):
