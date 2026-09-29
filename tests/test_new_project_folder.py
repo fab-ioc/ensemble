@@ -2,7 +2,8 @@
 
 * project_folder_name: the name, words joined by "-", without what a Windows
   or macOS folder name cannot hold, never empty.
-* new_code_folder: that name in the projects root, -2, -3… past another
+* new_project_folders: that name in the projects root is the project's
+  home, its code in home/code; the pair moves to -2, -3… past another
   project's folder.
 * register_project(init_git=True): a code folder it creates is a git
   repository with one empty commit, kept apart from the project's home so its
@@ -12,6 +13,7 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import unittest
@@ -71,10 +73,17 @@ class TheFolderName(unittest.TestCase):
 
 class TheFolder(Hub):
     def folder(self, name):
-        return dashboard.new_code_folder(name)
+        home, code = dashboard.new_project_folders(name)
+        self.assertEqual(code, os.path.join(home, "code"))
+        return home
 
     def test_in_the_projects_root(self):
-        self.assertEqual(self.folder("My Day Job"), str(self.root / "My-Day-Job"))
+        self.assertEqual(dashboard.new_project_folders("My Day Job"),
+                         (str(self.root / "My-Day-Job"), str(self.root / "My-Day-Job" / "code")))
+
+    def test_past_a_project_whose_code_is_in_it(self):
+        other = {"id": "proj-x", "name": "Old", "path": str(self.root / "Job" / "code"), "home": str(self.base / "away")}
+        self.assertEqual(dashboard.new_project_folders("Job", [other])[0], str(self.root / "Job-2"))
 
     def test_past_another_projects_folder(self):
         ok, first, _ = dashboard.register_project(str(self.root / "My-Day-Job"), "Old job")
@@ -98,7 +107,7 @@ class TheFolder(Hub):
         # Compared without case on every system (a macOS disk too, where
         # normcase does not): a project on MY-DAY-JOB, not on disk yet.
         other = {"id": "proj-x", "name": "Old", "path": str(self.root / "MY-DAY-JOB"), "home": str(self.base / "away")}
-        self.assertEqual(dashboard.new_code_folder("my day job", [other]), str(self.root / "my-day-job-2"))
+        self.assertEqual(dashboard.new_project_folders("my day job", [other])[0], str(self.root / "my-day-job-2"))
 
     def test_a_folder_that_is_no_projects_is_used(self):
         (self.root / "Scratch").mkdir()
@@ -188,11 +197,32 @@ class EveryEndpoint(Hub):
     """An empty folder on each request New project sends."""
 
     def made(self, out, folder="My-Day-Job"):
-        path = self.root / folder
+        # One folder in the projects root: the home, the new repository in it.
+        home = self.root / folder
+        path = home / "code"
         self.assertEqual(os.path.normcase(out["project"]["path"]), os.path.normcase(str(path)))
         self.assertEqual(out["project"]["name"], "My Day Job")
         self.assertEqual(commits(path), ["Initial commit"])
+        self.assertEqual(git(path, "status", "--porcelain").stdout, "", "nothing of the project's in the repository")
+        proj = dashboard.find_project(out["project"]["id"])
+        self.assertEqual(os.path.normcase(dashboard.project_home(proj, create=False)), os.path.normcase(str(home)))
+        self.assertEqual(json.loads((home / "project.json").read_text(encoding="utf-8"))["id"], proj["id"])
+        self.assertEqual(Path(dashboard._task_dir_for(proj, "A task")).parent, home, "tasks go in its home")
+        self.assertNotIn(" ", "".join(os.listdir(self.root)))
+        # Found again from the projects root alone, as on a restored machine.
+        with mock.patch.object(dashboard, "PROJECTS_FILE", self.base / "nothing.json"):
+            again = [p for p in dashboard.load_projects() if p["id"] == proj["id"]]
+        self.assertEqual(os.path.normcase(again[0]["path"]), os.path.normcase(str(path)))
         return path
+
+    def test_a_worktree_task_at_once(self):
+        status, out = self.call_url("/api/projects/new", {"name": "My Day Job", "kind": "code", "path": ""})
+        self.assertEqual(status, 200, out)
+        proj = dashboard.find_project(out["project"]["id"])
+        ok, base, meta, msg = dashboard.setup_session_workspace(proj, "worktree", "First task", proj["key"], 1)
+        self.assertTrue(ok, msg)
+        self.assertEqual(Path(base).parent.parent, self.root / "My-Day-Job")
+        self.assertEqual(sorted(os.listdir(self.root)), ["My-Day-Job"])
 
     def test_no_po(self):
         status, out = self.call_url("/api/projects/new", {"name": "My Day Job", "kind": "code", "path": ""})
@@ -256,6 +286,16 @@ class EveryEndpoint(Hub):
         self.nothing_left()
         self.assertEqual(os.listdir(self.root), [])
 
+    def test_a_home_that_cannot_be_made_leaves_nothing(self):
+        def fail(*a, **k):
+            raise OSError("disk full")
+        with mock.patch.object(dashboard, "_make_home", fail):
+            status, out = self.call_url("/api/projects/new", {"name": "My Day Job", "kind": "code", "path": ""})
+        self.assertEqual(status, 400, out)
+        self.assertIn("disk full", out["error"])
+        self.assertEqual(dashboard.load_projects(), [])
+        self.assertEqual(os.listdir(self.root), [])
+
     def test_documents_keep_their_name(self):
         # As before #131: a documents project's folder is its name, spaces and all.
         status, out = self.call_url("/api/projects/new", {"name": "My Letters", "kind": "documents", "path": "My Letters"})
@@ -265,7 +305,8 @@ class EveryEndpoint(Hub):
 
     def test_the_dialogs_preview(self):
         info = dashboard.po_setup_folder("", "code", "My Day Job")
-        self.assertEqual((info["folder"], info["derived"], info["exists"]), (str(self.root / "My-Day-Job"), True, False))
+        self.assertEqual((info["folder"], info["derived"], info["exists"]),
+                         (str(self.root / "My-Day-Job" / "code"), True, False))
         self.assertFalse(info["relative"])
         self.assertEqual(dashboard.po_setup_folder("", "code", "")["folder"], "")
         typed = dashboard.po_setup_folder(str(self.work), "code", "My Day Job")

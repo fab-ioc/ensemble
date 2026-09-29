@@ -649,7 +649,7 @@ out.dialogExisting = setupDialogHtml(S({ mode: 'existing', project: { id: 'p1', 
 out.dialogNoAgents = setupDialogHtml(S({ installed: [] }));
 const docsInfo = { documents: true, offer: true, folder: 'C:\\w\\here', files: 2, bytes: 10 };
 // No code folder: the one the hub derives from the name (po_setup_folder, derived).
-const derived = { kind: 'code', folder: 'C:\\P\\My-Day-Job', exists: false, isFile: false, isGit: false, project: null,
+const derived = { kind: 'code', folder: 'C:\\P\\My-Day-Job\\code', exists: false, isFile: false, isGit: false, project: null,
                   relative: false, derived: true, projects: [] };
 const D = o => S({ path: '', name: 'My Day Job', folder: derived, ...o });
 out.derived = {
@@ -817,13 +817,13 @@ console.log(JSON.stringify(out));
     def test_an_empty_code_folder(self):
         # #131: only the name; the hub makes the folder named after it.
         d = self.out["derived"]
-        self.assertEqual(d["hint"], "Leave empty: C:\\P\\My-Day-Job will be created")
-        self.assertEqual(d["hintThere"], "Leave empty: C:\\P\\My-Day-Job will be used")
+        self.assertEqual(d["hint"], "Leave empty: C:\\P\\My-Day-Job\\code will be created")
+        self.assertEqual(d["hintThere"], "Leave empty: C:\\P\\My-Day-Job\\code will be used")
         self.assertIn("named after the project", d["hintWaiting"])
         self.assertIn("named after the project", d["hintNoName"])
-        self.assertIn('placeholder="Leave empty: C:\\P\\My-Day-Job will be created"', d["dialog"])
+        self.assertIn('placeholder="Leave empty: C:\\P\\My-Day-Job\\code will be created"', d["dialog"])
         self.assertFalse(d["note"].get("alert"))
-        self.assertIn("C:\\P\\My-Day-Job is made when you confirm, as a new git repository", d["note"]["text"])
+        self.assertIn("C:\\P\\My-Day-Job\\code is made when you confirm, as a new git repository", d["note"]["text"])
         self.assertIn("is used as it is", d["noteThere"]["text"])
         # Every PO choice sends the empty folder: the hub derives it the same way.
         target = {"name": "My Day Job", "kind": "code", "path": ""}

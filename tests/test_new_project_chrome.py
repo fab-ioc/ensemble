@@ -50,10 +50,10 @@ async function main() {
     const type = async (text) => { for (const ch of text) await c.send('Input.insertText', { text: ch }, sessionId); };
     await evalIn('document.getElementById("su-name").focus(); 0');
     await type('My Day');
-    await until(`document.getElementById("su-path").placeholder.endsWith("My-Day will be created")`);
+    await until(`document.getElementById("su-path").placeholder.endsWith("My-Day\\\\code will be created")`);
     out.mid = await evalIn('document.getElementById("su-path").placeholder');
     await type(' Job');
-    await until(`document.getElementById("su-path").placeholder.endsWith("My-Day-Job will be created")`);
+    await until(`document.getElementById("su-path").placeholder.endsWith("My-Day-Job\\\\code will be created")`);
     out.hint = await evalIn('document.getElementById("su-path").placeholder');
     out.note = await evalIn('document.getElementById("su-folder-note").textContent');
     out.value = await evalIn('document.getElementById("su-path").value');
@@ -130,8 +130,8 @@ class NewProjectWithJustAName(unittest.TestCase):
     def test_the_hint_follows_the_name(self):
         g = self.got
         self.assertIn("named after the project", g["before"])
-        self.assertEqual(g["mid"], f"Leave empty: {self.root / 'My-Day'} will be created")
-        self.assertEqual(g["hint"], f"Leave empty: {self.root / 'My-Day-Job'} will be created")
+        self.assertEqual(g["mid"], f"Leave empty: {self.root / 'My-Day' / 'code'} will be created")
+        self.assertEqual(g["hint"], f"Leave empty: {self.root / 'My-Day-Job' / 'code'} will be created")
         self.assertIn("as a new git repository", g["note"])
         self.assertEqual(g["value"], "", "a hint, not a value")
 
@@ -139,7 +139,7 @@ class NewProjectWithJustAName(unittest.TestCase):
         self.assertEqual(self.got["err"], "")
         proj = dashboard.find_project(self.got["made"])
         self.assertEqual(proj["name"], "My Day Job")
-        folder = self.root / "My-Day-Job"
+        folder = self.root / "My-Day-Job" / "code"
         self.assertEqual(os.path.normcase(proj["path"]), os.path.normcase(str(folder)))
         log = subprocess.run(["git", "-C", str(folder), "log", "--format=%s"], capture_output=True,
                              text=True, encoding="utf-8")

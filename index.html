@@ -10835,7 +10835,7 @@ function setupFolderNote(st) {
   return { text: 'This folder is not there yet: it is made when you confirm, as a new git repository.' };
 }
 // The code folder's hint while it is empty: the folder named after the
-// project that confirming uses (the hub's new_code_folder, `st.folder`).
+// project that confirming uses (the hub's new_project_folders, `st.folder`).
 function setupPathHint(st) {
   const f = st.folder;
   if (f && f.derived && f.folder) return `Leave empty: ${f.folder} will be ${f.exists ? 'used' : 'created'}`;
@@ -10946,7 +10946,7 @@ function setupSubmit(st) {
   if (isNew) {
     const name = (st.name || '').trim(), path = (st.path || '').trim();
     if (!name) return { error: 'Give the project a name.' };
-    // No code folder: the hub makes one named after the project (new_code_folder).
+    // No code folder: the hub makes one named after the project (new_project_folders).
     const note = setupFolderNote(st);
     if (note.alert) return { error: note.text };
     target = { name, kind: docs ? 'documents' : 'code', path: docs ? '' : path };
