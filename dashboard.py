@@ -3207,14 +3207,91 @@ def save_projects(projects: list[dict]) -> None:
     tmp.replace(PROJECTS_FILE)
 
 
+# ---- A new code project's folder from its name ----
+# New project with a name and no folder: the folder is the name, words joined
+# by "-", without what a Windows or macOS folder name cannot hold, in the
+# projects root ("My Day Job" -> <root>/My-Day-Job). The dialog's preview
+# (po_setup_folder) and every request that creates a project use this one rule.
+_FOLDER_BAD_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
+_WIN_DEVICE_NAMES = re.compile(r"^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(\..*)?$", re.I)
+PROJECT_FOLDER_MAX = 64
+
+
+def project_folder_name(name: str) -> str:
+    """The folder name a project called ``name`` gets: never empty."""
+    s = re.sub(r"\s", " ", name or "")
+    s = _FOLDER_BAD_CHARS.sub("", s).strip()
+    s = re.sub(r"[ -]* [ -]*", "-", s)
+    # Windows drops a trailing dot or space; a leading dot hides the folder.
+    s = s.strip(" .-")[:PROJECT_FOLDER_MAX].rstrip(" .-")
+    if _WIN_DEVICE_NAMES.match(s):
+        s += "-project"
+    return s or "project"
+
+
+def _folder_taken(folder: str, projects: list[dict], homes: set[str]) -> bool:
+    """``folder`` is another project's (its code folder or its home), or a file."""
+    try:
+        if os.path.exists(folder) and not os.path.isdir(folder):
+            return True
+        if (Path(folder) / "project.json").exists():
+            return True
+    except OSError:
+        return True
+    return bool(projects_on_folder(folder, projects)) \
+        or os.path.normcase(os.path.normpath(folder)) in homes
+
+
+def new_code_folder(name: str, projects: list[dict] | None = None) -> str:
+    """The folder a new code project called ``name`` gets when none is given:
+    <root>/<project_folder_name>, or -2, -3… when that is another project's.
+    A folder there that is no project's is used as it is. Reads only."""
+    projects = load_projects() if projects is None else projects
+    homes = set()
+    for p in projects:
+        with contextlib.suppress(OSError):
+            homes.add(os.path.normcase(project_home(p, create=False)))
+    base = str(PROJECTS_ROOT / project_folder_name(name))
+    folder, n = base, 2
+    while _folder_taken(folder, projects, homes):
+        folder = f"{base}-{n}"
+        n += 1
+    return os.path.normpath(folder)
+
+
+def _git_init_new(folder: str) -> str:
+    """Make a folder the hub has just created a git repository with one empty
+    commit, so worktree tasks can start from it. "" or why it failed."""
+    def git(*args):
+        return _run(["git", "-C", folder, *args], capture_output=True, text=True,
+                    encoding="utf-8", errors="replace", timeout=30)
+    try:
+        out = git("init")
+        if out.returncode != 0:
+            return (out.stderr or "").strip()[:200] or "git init failed"
+        out = git("commit", "--allow-empty", "-m", "Initial commit")
+        if out.returncode != 0:
+            # No identity configured on this machine: the hub's, for this one commit.
+            out = git("-c", "user.name=Ensemble", "-c", "user.email=ensemble@localhost",
+                      "commit", "--allow-empty", "-m", "Initial commit")
+        if out.returncode != 0:
+            return (out.stderr or "").strip()[:200] or "git commit failed"
+    except (OSError, subprocess.SubprocessError) as e:
+        return str(e)
+    return ""
+
+
 def register_project(path: str, name: str = "", kind: str = "code",
-                     make_home: bool = True) -> tuple[bool, dict, str]:
+                     make_home: bool = True, init_git: bool = False) -> tuple[bool, dict, str]:
     """Register a folder as a project (idempotent by normalized path). The folder
     is created if missing. A code folder that was already in the projects root
     (empty or not) is used in place and never written to: the project's own
     files (its project.json, tasks, notes) go in a home beside it, made now
     (``make_home``, so a scan of the projects root finds it) or by the caller.
-    Returns (ok, project, message)."""
+    ``init_git`` (New project): a code folder this call creates becomes a git
+    repository with one empty commit, and, in the projects root, is kept
+    apart from the project's home like one that was there already, so its
+    tasks can be worktrees of it. Returns (ok, project, message)."""
     raw = (path or "").strip()
     if not raw:
         return False, {}, "empty path"
@@ -3234,6 +3311,9 @@ def register_project(path: str, name: str = "", kind: str = "code",
         p.mkdir(parents=True, exist_ok=True)
     except OSError as e:
         return False, {}, f"cannot create/access folder: {e}"
+    # Never a folder that was there already: only one this call made.
+    made_repo = init_git and not existed and (kind or "code") != "documents" \
+        and not _git_init_new(norm)
     projects = load_projects()
     sharing = projects_on_folder(norm, projects)
     new_name = name.strip() or os.path.basename(norm.rstrip("/\\")) or norm
@@ -3257,7 +3337,7 @@ def register_project(path: str, name: str = "", kind: str = "code",
     proj["key"] = task_numbers.project_keys(projects)[proj["id"]]
     # A folder another project already uses keeps that project's files: the
     # new one always gets a home of its own (named after it, _free_home).
-    kept_apart = (_in_projects_root(norm) and existed and (kind or "code") != "documents") \
+    kept_apart = (_in_projects_root(norm) and (existed or made_repo) and (kind or "code") != "documents") \
         or (bool(sharing) and _in_projects_root(norm))
     if kept_apart:
         proj["home"] = _free_home(proj)
@@ -3726,8 +3806,10 @@ def po_setup_folder(path: str, kind: str, name: str = "") -> dict:
     """What registering ``path`` (a code project) or ``name`` (a documents
     project, a folder in the projects folder) would find, for the setup
     dialog: {folder, exists, isFile, isGit, project (the one it already is),
-    relative (not a full path)}. Reads only."""
+    relative (not a full path), derived (a code project without a folder: the
+    one named after it that confirming makes, new_code_folder)}. Reads only."""
     kind = "documents" if (kind or "").strip().lower() == "documents" else "code"
+    derived = False
     if kind == "documents":
         raw = (name or "").strip()
         folder = str(PROJECTS_ROOT / raw) if raw and not _UNSAFE_DIR_CHARS.search(raw) and raw not in (".", "..") else ""
@@ -3735,8 +3817,10 @@ def po_setup_folder(path: str, kind: str, name: str = "") -> dict:
         raw = (path or "").strip()
         p = Path(os.path.expanduser(raw)) if raw else None
         folder = os.path.normpath(str(p)) if p is not None and p.is_absolute() else ""
+        if not raw and (name or "").strip():
+            folder, derived = new_code_folder(name), True
     out = {"kind": kind, "folder": folder, "exists": False, "isFile": False, "isGit": False,
-           "project": None, "relative": bool(raw) and not folder and kind == "code"}
+           "project": None, "relative": bool(raw) and not folder and kind == "code", "derived": derived}
     if not folder:
         return out
     out["exists"] = os.path.isdir(folder)
@@ -3815,9 +3899,8 @@ def _new_po_project(name: str, kind: str, path: str) -> tuple[dict, callable]:
             raise MakePoError("A documents project's name is also its folder's name: "
                               "use letters, digits, spaces, - and _ only.")
     else:
-        raw = (path or "").strip()
-        if not raw:
-            raise MakePoError("Give the code folder.")
+        # No folder: one named after the project, in the projects root.
+        raw = (path or "").strip() or new_code_folder(name)
         if not Path(os.path.expanduser(raw)).is_absolute():
             raise MakePoError("Give the code folder as a full path, such as "
                               + (r"C:\work\my-project." if os.name == "nt" else "/home/me/my-project."))
@@ -3835,7 +3918,7 @@ def _new_po_project(name: str, kind: str, path: str) -> tuple[dict, callable]:
         kept_json = (target / "project.json").read_bytes()
     except OSError:
         pass
-    ok, proj, msg = register_project(raw, name, kind, make_home=False)
+    ok, proj, msg = register_project(raw, name, kind, make_home=False, init_git=True)
     if not ok:
         raise MakePoError(f"The project could not be created: {msg}.")
     if proj["id"] in before or msg == "already registered":
@@ -3862,9 +3945,10 @@ def _new_po_project(name: str, kind: str, path: str) -> tuple[dict, callable]:
                 continue
             # Made by this request moments ago. A folder that carries another
             # project's id by now (New project took the same name meanwhile)
-            # is that project's: only ours, or an empty one, goes.
+            # is that project's: only ours, or an empty one, goes (the
+            # repository register_project made in it counts as empty).
             try:
-                empty = not os.listdir(folder)
+                empty = not [f for f in os.listdir(folder) if f != ".git"]
             except OSError:
                 empty = False
             if ours or empty:
@@ -11150,9 +11234,12 @@ class Handler(BaseHTTPRequestHandler):
         undo_project = None
         source_cwd = cwd if not rid else (agents_in[0].get("cwd") or room_full.get("cwd") or "")
         if project is None:
+            # No "path" at all: the conversation's own folder. An empty one
+            # (New project's folder left empty): the folder named after the
+            # project, as for the other ways to create one.
             project, undo_project = _new_po_project(
                 data.get("name") or label, data.get("kind") or "code",
-                data.get("path") or source_cwd)
+                (data.get("path") or "") if "path" in data else source_cwd)
             pid = project["id"]
 
         made_room = False
@@ -11891,8 +11978,11 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"ok": True, "room": chatroom.get_room(room["id"])})
             return
         if p == "/api/projects/new":
-            ok, proj, msg = register_project(data.get("path", ""), data.get("name", ""),
-                                             "documents" if (data.get("kind") or "").strip().lower() == "documents" else "code")
+            kind = "documents" if (data.get("kind") or "").strip().lower() == "documents" else "code"
+            path, name = (data.get("path") or "").strip(), (data.get("name") or "").strip()
+            if kind == "code" and not path and name:
+                path = new_code_folder(name)     # named after the project, in the projects root
+            ok, proj, msg = register_project(path, name, kind, init_git=kind == "code")
             if not ok:
                 self._send_json(400, {"error": msg})
                 return

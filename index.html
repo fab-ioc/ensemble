@@ -10817,6 +10817,8 @@ function setupFolderNote(st) {
   }
   if (f.relative) return { text: 'Give the folder’s full path, such as C:\\work\\my-project or /home/me/my-project.', alert: true };
   if (!f.folder) return { text: '' };
+  if (f.derived) return { text: f.exists ? `No folder given: ${f.folder}, which is there already, is used as it is.`
+                                         : `No folder given: ${f.folder} is made when you confirm, as a new git repository.` };
   // Other projects may share the folder: only the same name again is refused.
   const on = f.projects || (f.project ? [f.project] : []);
   const name = (st.name || '').trim().toLowerCase();
@@ -10831,6 +10833,13 @@ function setupFolderNote(st) {
   const unchanged = ' Registering it changes nothing in it. Conversations already started in it show under the project, because they work there.';
   if (f.exists) return { text: (f.isGit ? 'A git repository.' : 'A folder that is there already.') + unchanged };
   return { text: 'This folder is not there yet: it is made when you confirm.' };
+}
+// The code folder's hint while it is empty: the folder named after the
+// project that confirming uses (the hub's new_code_folder, `st.folder`).
+function setupPathHint(st) {
+  const f = st.folder;
+  if (f && f.derived && f.folder) return `Leave empty: ${f.folder} will be ${f.exists ? 'used' : 'created'}`;
+  return 'Leave empty: a folder named after the project is made in the projects folder';
 }
 // The conversations the list shows, in its groups: those started in the
 // project's folder, inside it, then elsewhere (five, until "Show more" or a
@@ -10920,7 +10929,7 @@ function setupDialogHtml(st) {
       + opt('su-kind', 'documents', 'Documents project', 'A folder of files in the projects folder, named after the project. Its tasks work directly in it, and every version of every file is kept.', st.kind === 'documents')
       + `</div>`
       + `<div class="im-field" id="su-path-field"${st.kind === 'documents' ? ' hidden' : ''}><label for="su-path">Code folder <small>made if it is not there</small></label>`
-      + `<input type="text" id="su-path" value="${esc(st.path || '')}" autocomplete="off" spellcheck="false"></div>`
+      + `<input type="text" id="su-path" value="${esc(st.path || '')}" placeholder="${esc(setupPathHint(st))}" autocomplete="off" spellcheck="false"></div>`
       + `<div class="im-field"><label for="su-name">Project name</label><input type="text" id="su-name" value="${esc(st.name || '')}" autocomplete="off"></div>`
       + `<p class="cfg-hint" id="su-folder-note" role="status"${note.alert ? ' data-alert="1"' : ''}>${esc(note.text)}${note.project ? ` <button type="button" class="secondary su-open-proj" data-proj="${esc(note.project.id)}">Open it</button>` : ''}</p>`
       : `<p class="cfg-hint">The other tasks of ${esc(st.project.name)} report to its PO, and its conversation leads the project’s page.</p>`)
@@ -10937,7 +10946,7 @@ function setupSubmit(st) {
   if (isNew) {
     const name = (st.name || '').trim(), path = (st.path || '').trim();
     if (!name) return { error: 'Give the project a name.' };
-    if (!docs && !path) return { error: 'Give the code folder.' };
+    // No code folder: the hub makes one named after the project (new_code_folder).
     const note = setupFolderNote(st);
     if (note.alert) return { error: note.text };
     target = { name, kind: docs ? 'documents' : 'code', path: docs ? '' : path };
@@ -10998,6 +11007,8 @@ async function projectSetupFlow(opts) {
     const n = setupFolderNote(st);
     el.innerHTML = esc(n.text) + (n.project ? ` <button type="button" class="secondary su-open-proj" data-proj="${esc(n.project.id)}">Open it</button>` : '');
     if (n.alert) el.dataset.alert = '1'; else delete el.dataset.alert;
+    const path = $d('#su-path');
+    if (path) path.placeholder = setupPathHint(st);
   };
   const paintBring = () => {
     const field = $d('#mp-bring-field');
@@ -11073,7 +11084,8 @@ async function projectSetupFlow(opts) {
       if (!nameTouched) { st.name = guess(st.path); name.value = st.name; }
       reload();
     };
-    if (name) name.oninput = () => { st.name = name.value; nameTouched = true; if (st.kind === 'documents') reload(); };
+    // The name names the folder of a documents project, and of a code project without one.
+    if (name) name.oninput = () => { st.name = name.value; nameTouched = true; if (st.kind === 'documents' || !st.path.trim()) reload(); };
     dlg.querySelectorAll('input[name="su-po"]').forEach(i => i.onchange = () => { st.choice = i.value; paintPo(); count(); });
     const agent = $d('#su-agent');
     if (agent) agent.onchange = () => { st.fresh = agent.value; };
