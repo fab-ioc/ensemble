@@ -97,7 +97,7 @@ class EveryLauncher(unittest.TestCase):
                 continue
             src = p.read_text(encoding="utf-8")
             # A second, unconverted launch() in a file that has one converted one.
-            self.assertNotIn("mkdtempSync(path.join(A.tmp, 'chrome-'))", src, p.name)
+            self.assertFalse("mkdtempSync(path.join(A.tmp, 'chrome-'))" in src, p.name)
             # Only lines naming --user-data-dir are checked: a Chrome without one would
             # open the personal profile, which no test here does.
             for line in src.splitlines():
@@ -108,7 +108,7 @@ class EveryLauncher(unittest.TestCase):
                       and "chrome_profile.JS" in src and "chrome_profile.node_args()" in src) \
                     or re.search(r"--user-data-dir=\{chrome_profile\.new_profile\(", line)
                 self.assertTrue(ok, f"{p.name}: {line.strip()}")
-        self.assertGreaterEqual(found, 10)
+        self.assertGreaterEqual(found, 11)
 
 
 if __name__ == "__main__":
