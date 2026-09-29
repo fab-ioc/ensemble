@@ -1,4 +1,4 @@
-"""Layout A step 3 (#125): the tool strip on the right (Dock v0.4.2).
+"""Layout A step 3 (#125): the tool strip on the right (Dock v0.5.0).
 
 In headless Chrome over CDP, against a hub in a thread serving the pages, with
 a project that has a PO (Motors), a task in it with a folder of its own, and a
@@ -122,6 +122,12 @@ async function main() {
     await sleep(400);
   };
   const tool = id => `#po-dock .dk-strip-btn[data-dk-auto="${id}"]`;
+  // Dock v0.5.0's title bar: ⋯, then a submenu (View Mode: 'mode', Move To: 'side'), then an item, with real clicks.
+  const menuPick = async (p, head, sub, item) => {
+    await p.click(`${head} [data-dk-act="menu"]`);
+    await p.click(`.dk-menu.dk-options [data-dk-sub="${sub}"]`);
+    await p.click(`.dk-menu.dk-submenu [data-dk-menu="${item}"]`);
+  };
   try {
     for (const [w, h] of [[1280, 800], [1440, 900], [1728, 1117]]) {
       const p = await page(w, h);
@@ -279,7 +285,7 @@ async function main() {
       const p = await page(1024, 768);
       await go(p, A.proj); await poReady(p); await sleep(400);
       await p.click(tool('changes')); await sleep(400);
-      await p.click('#po-dock .dk-flyout.open [data-dk-act="pin"]'); await sleep(600);
+      await menuPick(p, '#po-dock .dk-flyout.open', 'mode', 'mode:pinned'); await sleep(600);
       out.pin1024 = await p.evalIn(PINNED('changes'));
       await p.shot('strip-1024-pinned');
       // No room beside both: Files lies over the middle, which keeps its width.
@@ -296,11 +302,54 @@ async function main() {
       await go(q, A.proj); await poReady(q); await sleep(400);
       await c.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, q.sessionId); await sleep(600);
       await q.click(tool('changes')); await sleep(400);
-      await q.click('#po-dock .dk-flyout.open [data-dk-act="pin"]'); await sleep(600);
+      await menuPick(q, '#po-dock .dk-flyout.open', 'mode', 'mode:pinned'); await sleep(600);
       await q.click(tool('workspace')); await sleep(600);
       out.pin1440 = await q.evalIn(PINNED('changes'));
       await q.shot('strip-1440-pinned-and-files');
       await q.close();
+    }
+    // ---- each tool, and an open task's Spec, out in a window: closed, it comes back slid out on its side (P8);
+    // ⋯ › Move To is what moves it to another side (P9)
+    {
+      const SIDE = id => `(() => { const b = document.querySelector('${tool(id)}'), s = b && b.closest('.dk-strip'), r = PD.els[${JSON.stringify(id)}].getBoundingClientRect();
+        return { fly: PD.dock.flyOpen(), mode: PD.dock.viewMode(${JSON.stringify(id)}), side: PD.dock.side(${JSON.stringify(id)}), out: PD.dock.isOut(${JSON.stringify(id)}),
+          strip: s ? [...s.classList].filter(c => /^dk-strip-(left|right|top|bottom)$/.test(c)).join('') : null,
+          here: PD.els[${JSON.stringify(id)}].ownerDocument === document, shown: r.width > 0 && r.height > 0, saved: localStorage.getItem('cd-tool-open') }; })()`;
+      const p = await page(1440, 900);
+      await go(p, A.proj); await poReady(p); await sleep(400);
+      out.popBack = {};
+      const round = async (id) => {
+        if (await p.evalIn('PD.dock.flyOpen()') !== id) await p.click(tool(id));
+        await p.until(`PD.dock.flyOpen() === ${JSON.stringify(id)}`, 5000); await sleep(300);
+        const r = { before: await p.evalIn(SIDE(id)) };
+        await menuPick(p, '#po-dock .dk-flyout.open', 'mode', 'mode:window');
+        await p.until(`!!PD.dock.popWindow(${JSON.stringify(id)}) && PD.els[${JSON.stringify(id)}].ownerDocument !== document`, 15000);
+        r.out = await p.evalIn(SIDE(id));
+        await p.evalIn(`PD.dock.popWindow(${JSON.stringify(id)}).close(); 0`);
+        await p.until(`!PD.dock.isOut(${JSON.stringify(id)}) && PD.els[${JSON.stringify(id)}].ownerDocument === document`, 10000); await sleep(500);
+        r.back = await p.evalIn(SIDE(id));
+        return r;
+      };
+      for (const id of ${TOOLS}) out.popBack[id] = await round(id);
+      await openTask(p);
+      out.popBack.taskSpec = await round('spec');
+      await p.shot('strip-1440-spec-back');
+      // Move To › Left, then Pinned and Unpinned: the left side throughout; then back to the right.
+      out.moveTo = {};
+      await p.click('#po-dock .dk-flyout.open [data-dk-act="menu"]');
+      await p.click('.dk-menu.dk-options [data-dk-sub="side"]'); await sleep(200);
+      await p.shot('strip-1440-spec-move-to');
+      await p.click('.dk-menu.dk-submenu [data-dk-menu="side:left"]'); await sleep(500);
+      out.moveTo.left = await p.evalIn(SIDE('spec'));
+      await p.evalIn('PD.dock.setViewMode("spec", "pinned"); 0'); await sleep(400);
+      out.moveTo.pinned = await p.evalIn(SIDE('spec'));
+      await p.shot('strip-1440-spec-left-pinned');
+      await p.evalIn('PD.dock.setViewMode("spec", "unpinned"); 0'); await sleep(400);
+      out.moveTo.unpinned = await p.evalIn(SIDE('spec'));
+      if (await p.evalIn('PD.dock.flyOpen()') !== 'spec') { await p.click(tool('spec')); await sleep(400); }
+      await menuPick(p, '#po-dock .dk-flyout.open', 'side', 'side:right'); await sleep(500);
+      out.moveTo.right = await p.evalIn(SIDE('spec'));
+      await p.close();
     }
     // ---- a phone keeps its tabs
     {
@@ -333,8 +382,12 @@ class TheWiring(unittest.TestCase):
         self.assertIn("const PD_KEYS = { desk: 'cd-tool-strip', phone: 'cd-phone-tabs' };", INDEX)
         self.assertIn("function pdNarrow() { return isPhone(); }", INDEX)
 
-    def test_the_vendored_library_is_v0_4_2(self):
-        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.4\.2 ")
+    def test_the_vendored_library_is_v0_5_0(self):
+        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.5\.0 ")
+
+    def test_the_title_bar_is_dock_s_default(self):
+        dock = INDEX[INDEX.index("function pdEnsure()"):INDEX.index("// The middle is the conversation alone")]
+        self.assertNotIn("headButtons", dock, "v0.5.0's ⋯ and −, not the classic buttons")
 
 
 @unittest.skipUnless(NODE and CHROME, "needs Node and Chrome")
@@ -586,6 +639,25 @@ class TheStrip(unittest.TestCase):
         self.assertFalse(g["over"], "room for Files beside the conversation and Changes")
         self.assertLessEqual(g["main"]["r"], g["fly"]["x"], "Files covers nothing")
         self.assertGreaterEqual(g["fly"]["w"], 300)
+
+    def test_a_tool_out_in_a_window_comes_back_shown_on_its_side(self):
+        for k, g in self.got["popBack"].items():
+            id = "spec" if k == "taskSpec" else k
+            with self.subTest(tool=k):
+                self.assertEqual((g["before"]["fly"], g["before"]["side"], g["before"]["strip"]), (id, "right", "dk-strip-right"), g["before"])
+                self.assertEqual((g["out"]["mode"], g["out"]["out"], g["out"]["here"]), ("window", True, False), g["out"])
+                b = g["back"]
+                self.assertEqual((b["out"], b["here"], b["fly"], b["mode"]), (False, True, id, "unpinned"), "closing the window slides it out again")
+                self.assertTrue(b["shown"], b)
+                self.assertEqual((b["side"], b["strip"]), ("right", "dk-strip-right"), "on its own side")
+                self.assertEqual(b["saved"], id, "and remembered as the open tool")
+
+    def test_move_to_is_what_changes_a_side(self):
+        m = self.got["moveTo"]
+        self.assertEqual((m["left"]["side"], m["left"]["strip"]), ("left", "dk-strip-left"), m["left"])
+        self.assertEqual((m["pinned"]["mode"], m["pinned"]["side"]), ("pinned", "left"), "pinning keeps the side")
+        self.assertEqual((m["unpinned"]["mode"], m["unpinned"]["side"], m["unpinned"]["strip"]), ("unpinned", "left", "dk-strip-left"), "so does unpinning")
+        self.assertEqual((m["right"]["side"], m["right"]["strip"]), ("right", "dk-strip-right"), m["right"])
 
     def test_a_phone_keeps_its_tabs(self):
         g = self.got["phone"]
