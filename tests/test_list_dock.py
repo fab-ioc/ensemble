@@ -273,6 +273,8 @@ async function main() {
     // A page with no dock for the conversation yet: the list goes into its
     // window, a row clicked there makes that dock; the window stays the list's.
     const h = await page(1440, 900);
+    // Nothing to come back to (#135 reopens the last conversation or PO).
+    await h.evalIn(`['cd-last-conv', 'cd-po-last'].forEach(k => localStorage.removeItem(k)); location.reload(); 0`); await sleep(1500); await h.ready();
     await go(h, ''); await h.until('!!LD.dock && !PD.dock && !!SW_EL.querySelector(".sw-row")', 30000); await sleep(400);
     await h.evalIn('LD.dock.popOut("list"); 0');
     await h.until('!!LD.dock.popWindow("list") && SW_EL.ownerDocument !== document && !!SW_EL.querySelector(".sw-row")', 15000); await sleep(600);

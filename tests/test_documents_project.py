@@ -12,7 +12,7 @@
 * a new task in a documents project works in its folder unless told otherwise;
 * the page (index.html's "Documents project" block and the functions around
   it, run in Node; skipped without Node): the Overview shows no files; without
-  a PO it is the board with no PO note or pill but a Choose the PO… button;
+  a PO it is the board with no PO note but a Choose the PO… button;
   with a PO, the PO screen as in a code project; the Workspace tab
   mounts the Files panel; a code project's Overview is unchanged, the tree
   hides only real task folders unless "Task folders" is checked (never in a
@@ -506,7 +506,7 @@ def docs_block() -> str:
 
 PAGE = r"""
 const out = {};
-let SELECTED_PROJECT = null, PROJECT_TAB = 'tasks', SB_DEST = '', SELECTED_SID = null, PO_LAST = '', PO_PEEK = false;
+let SELECTED_PROJECT = null, PROJECT_TAB = 'tasks', SELECTED_SID = null, PO_LAST = '', PO_PEEK = false;
 const UNASSIGNED_ID = '__unassigned__', DR_CHUNK = 500;
 const docsPath = 'D:\\projects\\Motors', codePath = 'D:\\projects\\Opten';
 let ALL_ROWS = [{ roomId: 'room-po', sessionId: 'room-po', label: 'PO task' }, { roomId: 'room-d1', sessionId: 'room-d1', label: 'Sort papers', taskDir: docsPath + '\\sort_papers' },
@@ -517,8 +517,7 @@ const PROJECTS = { projects: [
   { id: 'p-po', name: 'Hub', kind: 'code', registered: true, path: 'C:\\x\\Hub', home: 'C:\\x\\Hub', poRoomId: 'room-po', sessions: [{ roomId: 'room-po' }] },
   { id: 'p-dpo', name: 'Cars', kind: 'documents', registered: true, path: 'C:\\x\\Cars', home: 'C:\\x\\Cars', poRoomId: 'room-dpo', sessions: [{ roomId: 'room-dpo' }] },
 ] };
-const pill = { hidden: true, _html: '', title: '', classList: { toggle() {} }, setAttribute() {}, set innerHTML(v) { this._inner = v; } };
-const document = { getElementById: id => id === 'po-pill' ? pill : null };
+const document = { getElementById: () => null };
 var PD = { failed: '', lib: null };   // the PO screen's panels (not loaded here)
 const HL = undefined;
 let DOCS_TASKS = false;
@@ -533,7 +532,6 @@ out.docsFrame = overviewFrameHtml({ poSplit: false, chrome: '[chrome]', poNote: 
 out.docsKind = projMenuSettingsHtml(projectById('p-docs'));
 out.docsChoose = out.docsKind;
 out.docsDialog = kindDialogHtml(projectById('p-docs'));
-renderPoPill(projectById('p-docs')); out.docsPill = pill.hidden;
 const panel = docsPanelHtml(projectById('p-docs'));
 out.panelOrder = [panel.indexOf('>Files<'), panel.indexOf('>Recent changes<')];
 out.panelHasTree = panel.includes('class="wsp-tree"') && panel.includes('wsp-hist"');
@@ -544,7 +542,6 @@ out.codeNote = poNoteHtml();
 out.codeFrame = overviewFrameHtml({ poSplit: false, chrome: '[chrome]', poNote: poNoteHtml(), inner: '[board]', edges: '' });
 out.codeKind = projMenuSettingsHtml(projectById('p-code'));
 out.codeChoose = out.codeKind;
-pill.hidden = true; renderPoPill(projectById('p-code')); out.codePill = pill.hidden;
 at('p-po');
 out.poSplit = (poSplitProject() || {}).id || null;
 out.poDialog = kindDialogHtml(projectById('p-po'));
@@ -559,7 +556,6 @@ out.dpoFrame = overviewFrameHtml({ poSplit: true, chrome: '[chrome]', poNote: ''
 at('p-dpo', 'workspace'); out.dpoSplitOnWorkspace = poSplitProject();
 out.dpoChoose = projMenuSettingsHtml(projectById('p-dpo'));
 out.dpoDialog = kindDialogHtml(projectById('p-dpo'));
-pill.hidden = true; pill._inner = ''; renderPoPill(projectById('p-dpo')); out.dpoPill = [pill.hidden, pill._inner || ''];
 
 // The tree: a documents project shows its own folders, hides real task folders.
 const entries = [
@@ -632,7 +628,7 @@ const gone = s => s.deleted.map(d => d.path);
 """
 
 DEPS = ["esc", "agoSpan", "wsNorm", "wsSame", "wsJoin", "wsTabName", "wsFmtSize", "projectById", "registeredProjects",
-        "poRowOf", "poDockProject", "poSplitProject", "poNoteHtml", "renderPoPill", "poAgent", "wsProjectForRow", "wsTaskFolder",
+        "poRowOf", "poDockProject", "poSplitProject", "poNoteHtml", "poAgent", "wsProjectForRow", "wsTaskFolder",
         "wsHidden", "wsRowsHtml", "wsCtxKey", "drParse", "drContent", "drHighlight", "drRowHtml",
         "WS_EMPTY", "WS_MAC", "WS_RECENT_KEY", "WS_ICON_TREE", "wsPanelHtml",
         "DOCS_TASKS_KEY", "docsTasksShown", "docsTasksSet", "docsApart", "docsInTask",
@@ -653,7 +649,6 @@ class ThePage(unittest.TestCase):
         o = self.out
         self.assertIsNone(o["docsPoSplit"])
         self.assertEqual(o["docsNote"], "")
-        self.assertTrue(o["docsPill"], "no PO pill")
         self.assertEqual(o["docsFrame"], "[chrome][board]", "no files above the board, no note asking for a PO")
         # Its kind, and setting up its PO, are in the project's menu (the bar).
         self.assertIn(">Kind: Documents project…<", o["docsKind"])
@@ -687,7 +682,6 @@ class ThePage(unittest.TestCase):
         o = self.out
         self.assertIn("This project has no PO.", o["codeNote"])
         self.assertEqual(o["codeFrame"], "[chrome]" + o["codeNote"] + "[board]")
-        self.assertFalse(o["codePill"], "the No PO pill still shows")
         self.assertIn(">Kind: Code project…<", o["codeKind"])
         self.assertNotIn("po-choose", o["codeChoose"], "a code project says how to get a PO in its note")
         self.assertEqual(o["poSplit"], "p-po")
@@ -704,8 +698,6 @@ class ThePage(unittest.TestCase):
         self.assertEqual(o["dpoFrame"], '<div class="po-chrome">[chrome]</div><div class="po-board">[board]</div>[edges]')
         self.assertNotIn("po-choose", o["dpoChoose"])
         self.assertNotRegex(o["dpoDialog"], r"has a PO|Choosing a PO|stays a code project|disabled")
-        self.assertFalse(o["dpoPill"][0], "the PO pill shows")
-        self.assertIn('<span class="po-pill-t">PO</span><span class="po-pill-p">Cars</span>', o["dpoPill"][1])
         # The code project's layout, nothing of its own: no files row in main's grid.
         self.assertNotIn("docs-split", INDEX)
         self.assertNotRegex(INDEX, r"grid-template-areas:[^;]*\bfiles\b")

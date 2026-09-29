@@ -550,8 +550,8 @@ them), the same tray, the same `## Review comments (N)` message.
 
 Every message the person sends an agent is a point (`P12`) the hub keeps until they acknowledge its
 answer (`points.py`). The chat shows it; `session.html`'s `pointBarHtml` and `pointsLineHtml` are
-the reference. It is information for the person, not an alarm: **no colour of its own, never the
-bell's count.**
+the reference. It is information for the person, not an alarm: **no colour of its own, never in
+Needs you.**
 
 - **The person's name for them is "your asks"**: "Your asks" is the panel, the line and the
   summaries; the ids (`P12`), endpoints and `[point P12]` lines keep "point".
@@ -579,7 +579,7 @@ bell's count.**
 - **Never folded:** a balloon holding an open point or an unacknowledged answer is drawn in full
   whatever would fold it (age, its task's row, Just us), and the catch-up line names "N answers to
   your asks to acknowledge" first.
-- **Outside the chat:** the task card (`.cpts`, beside the cost) and the PO's header and pill say
+- **Outside the chat:** the task card (`.cpts`, beside the cost), the PO's header and its list row say
   "2 to acknowledge · 1 open" in `--fg-muted` words, the tooltip in full. No lozenge: a card keeps
   its two.
 - **The Your asks panel** of a PO screen (see *Panels*; `pdPointsHtml` in `index.html` is the
@@ -821,20 +821,32 @@ self-contained component, so a later layout can host it elsewhere.
   the page). The layout is kept per browser (`cd-list-dock`). Before the library loads, or where it
   cannot, `#switcher` is the fixed column (`body.sw-on` gives `main` `padding-left: var(--list-w) + 20px`).
 - **On a phone it is home** (#129, `phList()`): the whole screen under a one-row bar, shown
-  whenever nothing else is (no project, open task, Needs you or cards page), with `main` out of the
+  whenever nothing else is (no project, open task or cards page), with `main` out of the
   way (`body.ph-list`). A row opens its conversation full screen; the bar's `←` brings the list
   back where it was (its scroll and the row last opened, marked: `PH_BACK`); a task that closes by
   itself (Esc, archived, deleted: `closeTask()`) goes back there too. Every row, group head
   that folds, "Show all" and head control is `--touch-min`. Its foot is a quiet **Project cards**
-  (`#sw-cards`, phone only): the home cards, with their Unassigned card, as a page of their own
-  (`PH_CARDS`; also the project menu's All projects on a phone), whose `←` goes back to the list.
+  (`#sw-cards`, phone only): the project cards, with their Unassigned card, as a page of their own
+  (`PH_CARDS`; also the project menu's All projects, which only a phone has), whose `←` goes back
+  to the list. It stays (#135): on a phone it is the one way to a project without a PO and to
+  **+ New project**, since the project menu sits in the bar's second row, hidden on the list.
+- **It is the app's home and its alarm** (#135): the bell, its tray, the Needs you page, the
+  desktop's home cards and the PO pill are gone. A desktop opens on the list plus the last
+  conversation (`cd-last-conv`), else the first Needs you entry, else an empty middle ("Pick a task
+  or a PO in the list", with **+ New project**; a search typed there shows the flat table). Every
+  way that led to Needs you (the wordmark on a desktop, `#needs`, a page saved on the old Needs you
+  page) lands on the list with Needs you scrolled into view and its head focused (`swShowNeeds`);
+  on a phone the list comes back where it was, then scrolls there. A project chosen in the list's
+  filter that would hide a Needs you entry gives way to All projects then: the bell showed every
+  project's.
 - **Its head** is two quiet controls, each a native `select` with its box and arrow drawn away
   (`.sw-pick`): the project filter as a chip on `--selected-bg` (`#sw-proj`: "All projects", then
   every registered project by name; it narrows what you see) and **Group: status / project** as a
   Subtle button (`#sw-by`). Both are remembered per browser (`cd-switcher-project`,
   `cd-switcher-group`), and every group follows the filter.
-- **Six groups, in this order:** **Needs you** (the bell's items less finished reports, oldest
-  first: the same set as the bell, never a second opinion), **Running** (live tasks not waiting for
+- **Six groups, in this order:** **Needs you** (`/api/attention`'s items less finished reports,
+  oldest first: blocked or waiting POs, a PO that could not start with its message waiting, held
+  PO-to-PO wakes and every task that waits on you), **Running** (live tasks not waiting for
   a check, by project and number, so a row does not jump each time its agent takes a turn),
   **Ready for your check** (In review, reported finished, or paused part way; not Done; oldest
   first), **Projects** (each project's PO, latest news first), **Unassigned** (#128: every session
@@ -861,7 +873,15 @@ self-contained component, so a later layout can host it elsewhere.
   is ready ("in review", "reported", "paused"), then `+ −`. An Unassigned row gives the folder it
   ran in, and `past session` (it opens read only) or `task, not running` when it is not running.
   A PO row is "*Project* · PO", then "N answers to check · M asks open" (or what it is doing:
-  idle, working, not running).
+  idle, working, not running). **A Needs you row** (`.sw-row.needs`) says since when it waits
+  ("since 14:05", else its age), names the agent in line two, and adds a third line (`.sw-why`,
+  `--fs-200` `--fg-muted`, two lines at most) with the reason; the tooltip holds the reason and a
+  dead agent's last screen. A tooltip is never the only copy (§8.3), so where there is more than
+  the row shows (a last screen, or a reason its two lines cut off, measured where it is drawn and
+  again when the list resizes: letters, not a character count, decide) a quiet **Details** line under
+  the row (`.sw-diag-btn`, a disclosure with `▸`/`▾`, `--touch-min` on a phone) opens the reason in
+  full and the last screen in `--font-mono` (`.sw-diag`, on `--surface`), kept open across redraws.
+  A PO's row names its agent too.
 - **Selected** is `--selected-bg`: the open task, else the PO on screen (its project's page, or
   its drawer). Its muted words step up to `--fg-subtle` there and under the pointer (`--fg-muted`
   and `.tno` on `--selected-bg` or `--hover` are under 4.5:1 in Light).
@@ -869,7 +889,7 @@ self-contained component, so a later layout can host it elsewhere.
   on; a PO on its project's screen (the PO chat revealed).
 - **It never moves under the pointer:** while hovered, rows keep their group and place
   (`swFreeze`); what changed lands when the pointer leaves. It redraws with the board's refresh and
-  the bell's, no poller of its own.
+  `/api/attention`'s, no poller of its own.
 
 ---
 
@@ -888,15 +908,16 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
    its menu switches project and holds the project's settings, its kind and key and, for a
    documents project without one, setting up its PO; on a desktop this is the breadcrumb, see
    *The bar's breadcrumb* below), then **what you can do here** (`#bar-here`:
-   a phone's PO screen's **Panels ▾**, `pdCtlHtml`; empty elsewhere), then the global group: search, the
-   PO pill, the plan chip, the bell, the avatar and **Create** (in a project, Create opens the new
+   a phone's PO screen's **Panels ▾**, `pdCtlHtml`; empty elsewhere), then the global group: search,
+   the plan chip, the avatar and **Create** (in a project, Create opens the new
    task dialog with that project chosen). Panels is the one control about the page below that the
    bar carries: a PO screen has no other row to hold it, and the bar is where the page's own
    controls start. Nothing else joins `#bar-here` without replacing something.
 
    **The wordmark** (#108; `#bar-home`, drawn by `tools/make_wordmark.py`, which writes the SVG
    between its markers in `index.html`) is ENSEMBLE in the icon's bars: the icon is its E, the
-   other letters are bars and stems on the icon's grid in `--fg`. It is the link home, named
+   other letters are bars and stems on the icon's grid in `--fg`. It is the link home (on a desktop,
+   the list's Needs you; on a phone, the list), named
    "Ensemble, all projects" (`aria-label`; the SVG is `aria-hidden`, the icon's `alt` empty).
    - **Sizes:** the icon 22px and the letters 15.84px (the E inside the icon), 125 × 22px in all (124.5 in the SVG),
      in a 32px link (44px on a phone). Never scaled to fit: where the word does not fit, the icon
@@ -940,29 +961,23 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
    gap before search grows. **Search** is a quiet box of about 300px on `--surface-sunken`
    (`--surface` while you type), "Search or jump to…", with its key as a `kbd` (`/`, the page's
    shortcut; the mockup's ⌘K does not exist) that goes while you type. It is never focused on load:
-   that made `/` useless. The PO pill has no edge at rest (a Subtle button); the bell is a drawn
-   stroke icon in `currentColor`, not an emoji, so it takes the bar's colours in every theme.
+   that made `/` useless. The bar has no PO pill and no bell (#135): each PO is a row of the list,
+   and what needs you is the list's Needs you.
 
    **A project page has no rows of its own above its content.** No status row: what needs you is the
-   bell's count and its tray's *Show all* (the Needs you page); what changed is on the Changes panel
-   tab (a badge) or the Changes tab (a `.ptab-n` count), and on home in the Group-by row. No crumbs
+   list's Needs you; what changed is on the Changes panel tab (a badge) or the Changes tab (a
+   `.ptab-n` count), and on a phone's cards page in its top row. No crumbs
    row: the project's name is in the bar. A project without a PO keeps one row, its tabs
    (`.ptabs`) with the board/list switch at their end. `--chrome-h` is the bar plus that row;
    re-measure it if a row is ever added (a Workspace or Changes tab must fit the screen, no page
    scroll).
 
-   **The PO pill is identity, not view state.** It names who you talk to about the current project,
-   the way the avatar names you: it reads the same on every page, and nothing about the view below
-   (filters, tab, board or list) changes it. It opens the PO's conversation as a drawer over the page
-   you are on, so reading a task never costs you the PO. It shows no status: anything that
-   needs you already reaches the bell. The one number it carries is the person's own points with
-   the PO (see *Points* in §4), as quiet `--fg-muted` words after the name ("2 to acknowledge · 1
-   open"), never a badge, and gone with the name when the bar runs short. On the project's PO
-   screen (see *Panels* in §4), where the PO already leads the page, the pill brings the PO chat
-   panel forward and focuses its composer instead of opening a second copy. On a desktop an open
-   task in the middle gives way to it (the task closes: the middle holds one conversation). A
-   phone does the same (#129, `poMidGo()`); the drawer is left only for a page whose dock failed to
-   load.
+   **A PO is a row of the list, not a control in the bar** (#135: the pill is gone). Its row in
+   Projects names it and carries the person's own points with it ("N answers to check · M asks
+   open", see *Points* in §4) and its lozenge only when it needs you. It opens on its project's
+   screen, the PO chat revealed; on a desktop an open task in the middle gives way to it (the
+   middle holds one conversation), and a phone does the same (#129, `poMidGo()`). The drawer
+   (`openPoOf`, `PO_PEEK`) is left only for a page whose dock failed to load.
 
    **A live session is built once and never reloaded by navigation.** The PO's conversation is one
    iframe in `#po-panel`. On the PO screen it sits inside the PO chat panel; everywhere else it is a
@@ -980,7 +995,7 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
    project's; closing it lands there), also for a project without a PO, whose open task gets the
    strip too. Its text keeps to a centred column of `--conv-w` (880px): the chat's iframe, the
    task's header. Opening a task replaces what the middle showed; closing it (×, Esc, the project's
-   crumb, the PO pill) gives it back. The page does not scroll; each pane scrolls inside itself.
+   crumb, the PO's row) gives it back. The page does not scroll; each pane scrolls inside itself.
    Where the dock cannot load, the task panel has its tabs as in step 2 (`Activity · Changes ·
    Workspace · Spec · Details`, see *Tabs*).
    **A phone** (#129) has no list beside it: one screen at a time. The list is home (§4 *The task
@@ -1044,14 +1059,12 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
    person makes it; its pane scrolls both ways. On a desktop, whenever columns lie past the edge of
    the pane, it shows a fade and a `›` naming them. A phone swipes its board and gets neither. (The
    *Board wide* and *Board beside the PO* layouts of 2026-09-11 gave way to the panels.)
-9. **A destination replaces whatever view is showing.** `Needs you` and `Active` must open from
-   anywhere: the home page, a project's PO screen, and a project's Overview, Changes or Workspace
-   tab. So their branch runs
-   first when the view is drawn, and anything that navigates into a project clears them. They once
-   worked only from inside a project's Tasks tab, which is where they had been tested: from the page
-   the owner opens on, the sidebar item highlighted and nothing else changed. A control that looks as
-   if it responded and does nothing is worse than one that is visibly off. Test a destination from
-   every starting view, not just one.
+9. **No destination pages: the list is where you go** (#135). `Needs you` and `Active` were once
+   pages that had to replace whatever view was showing, from every starting view; a control that
+   looked as if it responded and did nothing was the bug they kept having. Needs you is now the
+   list's first group, always on screen on a desktop, and every way that led to it lands there
+   (`swShowNeeds`). A new place to go is a group or a row of the list, not a page with its own
+   route; if an old address has to keep working, send it to the list.
 
 ### Attention vs. columns — a boundary that will decay if you let it
 
@@ -1109,7 +1122,7 @@ you change transition behaviour, change both, or they drift.
 - [ ] A panel's header updates on a status change without rebuilding its panes
 - [ ] Nothing clickable is replaced on a timer: ticking text is patched in place, and a refresh
       keeps the same elements
-- [ ] Needs you and Active open from the home page and from every project tab
+- [ ] Every way to Needs you (the wordmark on a desktop, `#needs`) lands on the list's Needs you
 - [ ] No hard-coded header/chrome offset
 - [ ] At most two lozenges on a card or row
 - [ ] Nothing added to the top bar that belongs to a view
@@ -1149,15 +1162,15 @@ desktop is untouched by construction.
    bar on a phone must replace something, not squeeze it.
 
    **Home is one row; everywhere else is two** (#129). On home, the list, the bar is one row.
-   Anywhere else (a project, an open task, the cards page, Needs you) the bar wraps (`body.row2`):
-   row one is the wordmark, then search, the PO, the bell, the avatar and Create; row two is the
+   Anywhere else (a project, an open task, the cards page) the bar wraps (`body.row2`):
+   row one is the wordmark, then search, the avatar and Create; row two is the
    back arrow `←` (`#bar-back`, to the list; phone only, the wordmark is the way back elsewhere),
    the project's name with its menu, truncated, where you are in it (an open task's breadcrumb) and
    Panels at the end. `--header-h` is redeclared on `body.row2` so everything hanging off the bar
    follows. At 430×932 the PO screen's panel tabs start at 110px.
 5. **An open task never covers the bar.** The bar is the way to the PO and to the project. On a phone
-   the task takes the whole width *under* the bar's two rows and the dock's tabs, and the PO's pill
-   goes to the PO's screen (the task closes, as on a desktop).
+   the task takes the whole width *under* the bar's two rows and the dock's tabs, and the PO's row
+   in the list goes to the PO's screen (the task closes, as on a desktop).
 6. **The keyboard never covers a composer.** The viewport tag carries
    `interactive-widget=resizes-content` (Android then shrinks the page); for iOS, which shrinks only
    the visual viewport, the pages set `--vv-h`/`--vv-top` from `visualViewport` and size anything
