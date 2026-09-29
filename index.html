@@ -3168,6 +3168,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     #notif-tray, #usage-tray, #settings-panel { left: var(--s-200); right: var(--s-200); width: auto; }
     .me-item, .pm-item, .fm-item, .notif-item, .wf-item, .pr-item, .ov-menu button, .theme-opt { min-height: var(--touch-min); }
     /* The theme list opens as a nested list inside the menu, not a flyout. */
+    /* With Theme unfolded the menu can outgrow a short screen: it scrolls (a desktop's flyout must not be clipped, so only here). */
+    #me-menu { max-height: calc(100dvh - var(--mm-top, var(--top-h)) - var(--s-300)); overflow-y: auto; overscroll-behavior: contain; }
     #me-menu .theme-list.me-flyout { position: static; min-width: 0; padding: 0 0 0 var(--s-300);
       background: transparent; border: 0; box-shadow: none; }
     /* The action bar and its menu, as the shared block's (pointer: coarse) rule. */
@@ -14947,8 +14949,9 @@ function openSettingsPanel(anchor) {
   const r = anchor.getBoundingClientRect();
   panel.style.top = Math.round(r.bottom + 6) + 'px';
   panel.style.setProperty('--sp-top', Math.round(r.bottom + 6) + 'px');
-  panel.style.right = Math.round(window.innerWidth - r.right) + 'px';
-  panel.style.left = 'auto';
+  // A phone's rule insets both edges; only a desktop hangs it off the avatar.
+  panel.style.right = isPhone() ? '' : Math.round(window.innerWidth - r.right) + 'px';
+  panel.style.left = isPhone() ? '' : 'auto';
 }
 function closeMeMenu() {
   setThemeSubmenu(false);
@@ -14965,6 +14968,7 @@ $('#me-btn').addEventListener('click', (ev) => {
   if (opening) {
     const r = ev.currentTarget.getBoundingClientRect();
     m.style.top = Math.round(r.bottom + 6) + 'px';
+    m.style.setProperty('--mm-top', Math.round(r.bottom + 6) + 'px');
     m.style.right = Math.round(window.innerWidth - r.right) + 'px';
   }
 });
@@ -14975,7 +14979,7 @@ $('#me-menu').addEventListener('keydown', (ev) => {
     const f = $('#me-themes .theme-opt'); if (f) f.focus();
     ev.preventDefault();
   } else if ((ev.key === 'ArrowLeft' || ev.key === 'Escape') && !$('#me-themes').hidden) {
-    setThemeSubmenu(false); b.focus(); ev.preventDefault();
+    setThemeSubmenu(false); b.focus(); ev.preventDefault(); ev.stopPropagation();
   }
 });
 $('#me-menu').addEventListener('click', (ev) => {

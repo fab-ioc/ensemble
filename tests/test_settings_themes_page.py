@@ -55,7 +55,7 @@ async function main() {
   };
   const RECT = `(e => { const r = e.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom }; })`;
   try {
-    for (const [name, w, h, mobile] of [['desktop', 1100, 420, false], ['phone', 390, 600, true]]) {
+    for (const [name, w, h, mobile] of [['desktop', 1100, 420, false], ['phone', 390, 600, true], ['short', 844, 390, true]]) {
       const { evalIn, until, targetId } = await page(w, h, mobile);
       const o = out[name] = {};
       // Settings: from the avatar menu, scrolled to its last section.
@@ -67,6 +67,8 @@ async function main() {
         const before = { scroll: p.scrollHeight, client: p.clientHeight, bottom: p.getBoundingClientRect().bottom, vh: innerHeight, lastBefore: last.getBoundingClientRect().bottom };
         p.scrollTop = p.scrollHeight;
         const lr = last.getBoundingClientRect(), pr = p.getBoundingClientRect();
+        const pr0 = p.getBoundingClientRect(), fields = [...p.querySelectorAll('input, button')].filter(e => e.getBoundingClientRect().width);
+        before.horizontal = { l: pr0.left, r: pr0.right, vw: innerWidth, fieldsLeft: Math.min(...fields.map(e => e.getBoundingClientRect().left)), fieldsRight: Math.max(...fields.map(e => e.getBoundingClientRect().right)) };
         return { ...before, scrolled: p.scrollTop, lastId: last.id, lastBottom: lr.bottom, panelBottom: pr.bottom, lastInPanel: lr.bottom <= pr.bottom + 1 }; })()`);
       o.settingsThemes = await evalIn(`[...document.querySelectorAll('#settings-themes .theme-opt')].map(b => b.dataset.appearance)`);
       await evalIn('document.getElementById("settings-panel").hidden = true; 0');
@@ -83,6 +85,19 @@ async function main() {
                  expanded: document.getElementById('me-theme-btn').getAttribute('aria-expanded'),
                  onScreen: lr.l >= 0 && lr.r <= innerWidth && lr.t >= 0 && lr.b <= innerHeight, listRect: lr, menuRect: mr,
                  inside: lr.l >= mr.l - 1 && lr.r <= mr.r + 1, vw: innerWidth, vh: innerHeight }; })()`);
+      // Every account action stays reachable with Theme open, however short the screen.
+      o.menuReach = await evalIn(`(() => { const m = document.getElementById('me-menu'); m.scrollTop = m.scrollHeight;
+        const items = [...m.querySelectorAll('.me-item, .theme-opt')].filter(e => e.getBoundingClientRect().height);
+        const last = m.querySelector('[data-me=settings]').getBoundingClientRect(), sys = m.querySelector('.theme-opt[data-appearance=system]').getBoundingClientRect();
+        const mr = m.getBoundingClientRect(); m.scrollTop = 0;
+        return { settingsBottom: last.bottom, sysBottom: sys.bottom, menuBottom: mr.bottom, vh: innerHeight, n: items.length }; })()`);
+      // Esc folds Theme and nothing under it: an open task stays open.
+      o.esc = await evalIn(`(() => { window.__closed = 0; const was = window.closeTask; window.closeTask = () => { window.__closed++; };
+        SELECTED_SID = 'x'; const f = document.querySelector('#me-themes .theme-opt'); f.focus();
+        f.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        const r = { folded: document.getElementById('me-themes').hidden, closed: window.__closed, menuOpen: !document.getElementById('me-menu').hidden };
+        SELECTED_SID = null; window.closeTask = was; return r; })()`);
+      await evalIn('document.getElementById("me-theme-btn").click(); 0');
       // Choose one: at once on the page, then on the hub.
       await evalIn('document.querySelector("#me-themes .theme-opt[data-appearance=fjord]").click(); 0');
       o.applied = await evalIn('document.documentElement.dataset.theme');
@@ -166,6 +181,11 @@ class SettingsScrollsAndThemeSubmenu(unittest.TestCase):
                 self.assertTrue(s["lastInPanel"], s)
                 self.assertLessEqual(s["lastBottom"], s["vh"], "the last section is on screen")
                 self.assertEqual(s["lastId"], "settings-runtime")
+                h = s["horizontal"]
+                self.assertGreaterEqual(h["l"], 0, "no part of the panel is left of the screen")
+                self.assertLessEqual(h["r"], h["vw"])
+                self.assertGreaterEqual(h["fieldsLeft"], 0)
+                self.assertLessEqual(h["fieldsRight"], h["vw"])
 
     def test_theme_submenu_lists_every_allowed_theme(self):
         allowed = sorted(dashboard._SETTINGS_ALLOWED_VALUES["theme"] - {""})
@@ -178,8 +198,20 @@ class SettingsScrollsAndThemeSubmenu(unittest.TestCase):
                 self.assertTrue(g["sub"]["swatches"])
                 self.assertEqual(g["sub"]["ticked"], ["light"], "the current theme is ticked")
                 self.assertEqual(g["sub"]["expanded"], "true")
-                self.assertTrue(g["sub"]["onScreen"], g["sub"])
-        self.assertTrue(self.got["phone"]["sub"]["inside"], "on a phone the list is inside the menu")
+                if name != "short":     # a short screen scrolls the menu instead (test below)
+                    self.assertTrue(g["sub"]["onScreen"], g["sub"])
+        self.assertTrue(self.got["phone"]["sub"]["inside"] and self.got["short"]["sub"]["inside"], "on a phone the list is inside the menu")
+
+    def test_theme_menu_stays_reachable_and_escape_only_folds_it(self):
+        for name, g in self.got.items():
+            with self.subTest(name):
+                r = g["menuReach"]
+                self.assertLessEqual(r["settingsBottom"], r["vh"], "Settings, the last action, can be scrolled to")
+                self.assertLessEqual(r["menuBottom"], r["vh"])
+                e = g["esc"]
+                self.assertTrue(e["folded"])
+                self.assertEqual(e["closed"], 0, "Esc did not also close the task")
+                self.assertTrue(e["menuOpen"], "the menu stays until asked")
 
     def test_choosing_a_theme_applies_and_saves_it(self):
         for name, g in self.got.items():
