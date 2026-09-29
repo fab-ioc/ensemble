@@ -2,6 +2,11 @@
 // floated, unpinned to a strip on its edge, minimised or maximised, or popped out into a browser window of its own.
 // The layout (layout.js) is remembered in the storage the app gives.
 //
+// Its controls follow IntelliJ's tool windows (v0.5.0): a title bar holds its tabs, ⋯ (Options) and − (Hide). Options
+// has View Mode (Dock Pinned: docked; Dock Unpinned: on its strip, sliding out beside the middle; Undock: on its strip,
+// sliding out over it; Float; Window: a browser window of its own), Move To (the side), Maximise and Hide. A panel's
+// side is kept through every change of mode (layout.js panelSide). headButtons: 'classic' gives the buttons of v0.4.
+//
 // The panels' own elements are moved between frames, never rebuilt: what they show, their listeners and their state stay
 // theirs. Scroll positions are carried across a move.
 //
@@ -15,7 +20,7 @@ import { addHostDoc, removeHostDoc, whenGone } from './host.js';
 import {
   EDGES, LAYOUT_VERSION, makeConfig, stackNode, locate, panelsUnder, contains, findStack, whereIs, isShownIn,
   moveTo, floatPanel, dockBack, unpinPanel, pinPanel, hidePanel, showPanel, activate, normalizeLayout, clampFloat,
-  popOutPanel, popInPanel,
+  popOutPanel, popInPanel, panelSide, viewModeOf, moveSide, dockFromFloat,
 } from './layout.js';
 import { POP_HTML } from './popout-page.js';
 
@@ -44,11 +49,23 @@ export const TEXT = {
   popFailed: (t) => `The window for ${t} did not load; it is back here.`,
   backToMain: 'Back to main window',
   backToMainTitle: 'put this panel back where it was in the main window and close this one',
+  // the title bar and its Options menu (IntelliJ's words)
+  options: 'Options',
+  hide: 'Hide',
+  viewMode: 'View Mode',
+  moveTo: 'Move To',
+  maximise: 'Maximise',
+  restore: 'Restore',
+  modes: { pinned: 'Dock Pinned', unpinned: 'Dock Unpinned', undock: 'Undock', float: 'Float', window: 'Window' },
+  sides: { left: 'Left', right: 'Right', top: 'Top', bottom: 'Bottom' },
 };
+/** The view modes, in the order the Options menu lists them (IntelliJ's). */
+export const VIEW_MODES = ['pinned', 'unpinned', 'undock', 'float', 'window'];
 
 const ICON = {
   menu: '<circle cx="3" cy="6" r="1"/><circle cx="6" cy="6" r="1"/><circle cx="9" cy="6" r="1"/>',
   min: '<path d="M2.5 9.5h7"/>',
+  hide: '<path d="M2.5 6h7"/>', // IntelliJ's −
   unmin: '<path d="M2.5 7.5 6 4l3.5 3.5"/>',
   max: '<rect x="2" y="2" width="8" height="8"/>',
   restore: '<rect x="2" y="4" width="6" height="6"/><path d="M4 4V2h6v6H8"/>',
@@ -182,12 +199,15 @@ export function panelsFrom(container) {
  *   minClickRestores                        a click on a minimised panel's title bar restores it (default true)
  *   stripHover, stripOpen                   hovering a strip button slides its panel out (default true); a panel slid
  *                                           out lies 'over' the layout (default) or 'beside' it, the middle narrowing
+ *                                           (a panel's own View Mode, Dock Unpinned or Undock, overrides it)
+ *   headButtons                             'menu' (default): a title bar has ⋯ and −; 'classic': v0.4's buttons
  *   modalSelector, badgeClass, text, onReset, win
  *
  * Returns the dock's handle: layout(), isShown(id), isVisible(id), isAuto(id), frontOf(id), activate(id), reveal(id),
  * setBadge(id, text, title), onShown(fn), onChange(fn), setVisible(id, on), reset(), float(id), dockBack(id), unpin(id),
  * pin(id), toggleMin(id), toggleMax(id), restoreMax(), moveTo(id, target, side), dockEdge(id, side), popOut(id),
- * popIn(id), isOut(id), popWindow(id), openFly(id), closeFly(), flyOpen(), maximised(), render(), destroy().
+ * popIn(id), isOut(id), popWindow(id), openFly(id), closeFly(), flyOpen(), maximised(), viewMode(id),
+ * setViewMode(id, mode), side(id), moveSide(id, side), render(), destroy().
  */
 export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage = defaultStorage(),
   win = typeof window !== 'undefined' ? window : null, popUrl = POP_URL, popName = 'dock-panel-', popTitle = (p) => p.title,
@@ -195,7 +215,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   badgeClass = 'dk-badge', text = {}, onReset = null, migrate = null,
   defaultLayout, minSize, edgeOf, fill, defaultSize, sizes,
   narrow = false, narrowLayout, narrowKey, can = null, popHtml = null, popBase, minClickRestores = true, popBackButton = true,
-  stripHover = true, stripOpen = 'over',
+  stripHover = true, stripOpen = 'over', headButtons = 'menu',
   openWindow = (url, name, features) => (win && typeof win.open === 'function' ? win.open(url, name, features) : null) }) {
   const doc = root.ownerDocument;
   const T = { ...TEXT, ...text };
@@ -213,9 +233,11 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   let narrowOn = !!narrow;
   let cfg = narrowOn ? narrowCfg : wideCfg;
   const S = cfg.sizes;
-  // A strip panel slid out beside the layout (stripOpen: 'beside') takes room from it. Click-only (stripHover: false):
-  // no hover, and a panel slid out stays until it is closed.
-  const beside = stripOpen === 'beside';
+  // A strip panel slid out beside the layout (stripOpen: 'beside', or its own View Mode Dock Unpinned) takes room from
+  // it. Click-only (stripHover: false): no hover, and a panel slid out stays until it is closed.
+  const openStyle = stripOpen === 'beside' ? 'beside' : 'over';
+  const besideOf = (a) => !!a && (a.open || openStyle) === 'beside';
+  const classic = headButtons === 'classic';
   const popPage = popHtml === true ? POP_HTML : typeof popHtml === 'string' ? popHtml : null;
   /** Whether a person may do `action` to panel `id`: move, float, unpin, pop, max, min, hide. Narrow allows only hide. */
   function allowed(id, action) {
@@ -394,12 +416,47 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     return items;
   }
 
+  // ---- IntelliJ's model: view modes and sides ----
+  const modeOf = (id) => viewModeOf(layout, id, openStyle);
+  // What a change of view mode needs `can` to allow: moving onto or off a strip 'unpin', into or out of a float
+  // 'float', into or out of a window 'pop'.
+  const NEEDS = { unpinned: 'unpin', undock: 'unpin', float: 'float', window: 'pop' };
+  function modeOk(id, from, to) {
+    if (narrowOn || !from || from === 'hidden') return false;
+    if (from === to) return true;
+    return [NEEDS[from], NEEDS[to]].filter(Boolean).every((a) => allowed(id, a));
+  }
+  // The Options menu of panel `id` (where: 'dock', 'float' or 'fly'): the view modes it may go to (its own checked),
+  // the sides (Move To), Maximise and Hide, as far as `can` and narrow allow. Empty parts are left out.
+  function optionsOf(id, where) {
+    const now = modeOf(id);
+    const modes = VIEW_MODES.filter((m) => modeOk(id, now, m));
+    const o = { modes: modes.length > 1 ? modes : [], now, sides: [], side: null, max: null, hide: null };
+    const w = whereIs(layout, id);
+    // The middle (the stack holding cfg.fill) is on no side: Move To offers the four, none checked.
+    const middle = w && w.kind === 'dock' && cfg.fill && w.stack.panels.includes(cfg.fill);
+    if (allowed(id, 'move')) { o.sides = EDGES.slice(); o.side = middle ? null : panelSide(layout, id, opts()); }
+    if (where !== 'fly' && w && w.stack && allowed(id, 'max')) o.max = maxed === w.stack ? T.restore : T.maximise;
+    if (hideOk(id, where)) o.hide = where !== 'fly' && w && w.stack && w.stack.min ? T.restore : T.hide;
+    o.any = !!(o.modes.length || o.sides.length || o.max);
+    return o;
+  }
+  // − hides a panel as IntelliJ's does, to what stands for its stripe icon: a strip panel slides back in; a docked or
+  // floating one is minimised to its title bar (which shows its icon, and a click brings it back).
+  function hideOk(id, where) { return where === 'fly' || allowed(id, 'min'); }
+
   function headHtml(node, where) {
     const id = node.active;
     const t = byId.get(id).title;
     const tabs = node.panels.map((pid) => tabHtml(pid, pid === id, where === 'dock' && allowed(pid, 'move'), !!node.min)).join('');
     const isMax = maxed === node;
     const c = [];
+    if (!classic) {
+      if (optionsOf(id, where).any) c.push(ctl('menu', 'menu', `${t}: ${T.options}`, `${T.viewMode}, ${T.moveTo}, ${T.maximise}, ${T.hide}`));
+      if (hideOk(id, where)) c.push(node.min ? ctl('hide', 'unmin', `${t}: ${T.restore}`, 'restore from its title bar')
+        : ctl('hide', 'hide', `${t}: ${T.hide}`, 'hide it to its title bar (a click on it brings it back)'));
+      return `<div class="dk-tabs" role="tablist" aria-label="${escText(t)}">${tabs}</div><span class="dk-ctl">${c.join('')}</span>`;
+    }
     if (menuItems(id, where).length) c.push(ctl('menu', 'menu', `${t}: move or hide`, 'dock at an edge, float, unpin or hide'));
     if (allowed(id, 'min')) c.push(node.min ? ctl('min', 'unmin', `${t}: restore`, 'restore from its title bar') : ctl('min', 'min', `${t}: minimise`, 'minimise to its title bar'));
     if (allowed(id, 'max')) c.push(isMax ? ctl('max', 'restore', `${t}: restore size`, 'restore (Esc)') : ctl('max', 'max', `${t}: maximise`, 'maximise (Esc restores)'));
@@ -683,11 +740,15 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       flyKept.set(a.id, k);
     }
     const { el, head } = k;
-    el.className = 'dk-flyout dk-fly-' + a.edge + (beside ? ' dk-fly-beside' : '');
+    el.className = 'dk-flyout dk-fly-' + a.edge + (besideOf(a) ? ' dk-fly-beside' : '');
     el.dataset.dkFly = a.id;
     el.setAttribute('role', 'region');
     el.setAttribute('aria-label', p.title);
-    const html = `<div class="dk-tabs" role="tablist" aria-label="${escText(p.title)}">${tabHtml(a.id, true, false)}</div><span class="dk-ctl">`
+    const tabs = `<div class="dk-tabs" role="tablist" aria-label="${escText(p.title)}">${tabHtml(a.id, true, false)}</div>`;
+    const html = !classic ? tabs + '<span class="dk-ctl">'
+      + (optionsOf(a.id, 'fly').any ? ctl('menu', 'menu', `${p.title}: ${T.options}`, `${T.viewMode}, ${T.moveTo}, ${T.hide}`) : '')
+      + ctl('hide', 'hide', `${p.title}: ${T.hide}`, 'slide it back in (Esc)') + '</span>'
+      : tabs + '<span class="dk-ctl">'
       + (allowed(a.id, 'pop') ? ctl('pop', 'pop', `${p.title}: pop out`, 'pop out into a browser window of its own (drag it to another monitor)') : '')
       + (allowed(a.id, 'float') ? ctl('float', 'float', `${p.title}: float`, 'float in its own window') : '')
       + ctl('hide-fly', 'min', `${p.title}: slide in`, 'slide it back in (Esc)')
@@ -832,8 +893,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   // Beside: the dock's middle leaves the open panel its room on that panel's edge (a margin of .dk-main, where the
   // flyout lies), so the layout narrows instead of being covered. None of it is in the layout, or saved.
   function besideSpace() {
-    if (!beside) return;
-    const a = flyOpen && layout.auto.find((x) => x.id === flyOpen);
+    const f = flyOpen && layout.auto.find((x) => x.id === flyOpen);
+    const a = besideOf(f) ? f : null;
     const el = a && flyEls.get(a.id);
     for (const e of EDGES) main.style['margin' + e[0].toUpperCase() + e.slice(1)] = el && a.edge === e ? el._dkSize + 'px' : '';
     root.classList.toggle('dk-beside-open', !!el);
@@ -870,9 +931,10 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   }
 
   // Where the window opens: where it was last time, else over the panel's place, its size.
+  const windowAt = new Map(); // where a panel's window was when it closed, while this page lasts (IntelliJ keeps it)
   function popGeometry(id) {
-    const g = outOf(id);
-    if (g && ['x', 'y', 'w', 'h'].every((k) => finite(g[k]))) return { ...g };
+    const g = outOf(id) || windowAt.get(id);
+    if (g && ['x', 'y', 'w', 'h'].every((k) => finite(g[k]))) return { x: g.x, y: g.y, w: g.w, h: g.h };
     const at = locate(layout.root, id);
     const d = at && dims(at.stack);
     const el = at && stackEls.get(at.stack);
@@ -1074,6 +1136,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
 
   // Its window is done with: the panel comes back into this document at once, and the window closes if asked.
   function release(id, pop, closeIt) {
+    const g = outOf(id);
+    if (g && ['x', 'y', 'w', 'h'].every((k) => finite(g[k]))) windowAt.set(id, { x: g.x, y: g.y, w: g.w, h: g.h });
     pops.delete(id);
     clearTimeout(pop.timer);
     clearInterval(pop.timer);
@@ -1095,7 +1159,16 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     release(id, pop, false);
     popInPanel(layout, id, opts());
     maxAgain(id, pop);
+    showBack(id);
     commit();
+  }
+  // Back from its window in the view mode it had, and seen (IntelliJ's Window mode left): a strip panel slides out, as
+  // it was before it went, rather than going back to its strip button alone. (Not after a reload: its note's "Bring it
+  // back here" leaves it on its strip, as before.)
+  function showBack(id) {
+    if (modeOf(id) !== 'unpinned' && modeOf(id) !== 'undock') return;
+    flyOpen = id;
+    flyByHover = false;
   }
   // Back from its window, maximised again if it went out maximised.
   function maxAgain(id, pop) {
@@ -1110,6 +1183,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (!outOf(id)) { if (pop) commit(); return false; }
     popInPanel(layout, id, opts());
     maxAgain(id, pop);
+    if (pop) showBack(id); // from its open window (its Back button): seen, as when its window is closed
     commit();
     return true;
   }
@@ -1128,14 +1202,14 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const a = layout.auto.find((x) => x.id === id);
     if (a) placeFlyout(a);
     markFlyouts();
-    if (beside) fitAll();
+    fitAll();
   }
   function closeFly(refocus) {
     if (!flyOpen) return;
     const id = flyOpen;
     flyOpen = null;
     markFlyouts();
-    if (beside) fitAll();
+    fitAll();
     const b = stripBtns.get(id);
     if (refocus && b) focusQuiet(b);
   }
@@ -1143,7 +1217,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (!el || !flyOpen) return false;
     const fly = flyEls.get(flyOpen);
     const b = stripBtns.get(flyOpen);
-    return !!((fly && fly.contains(el)) || (b && b.contains(el)));
+    // Its Options menu counts as the panel: working in it keeps the panel out.
+    return !!((fly && fly.contains(el)) || (b && b.contains(el)) || (menu && menu._id === flyOpen && inMenu(el)));
   }
 
   // ---- actions ----
@@ -1161,7 +1236,14 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     return null;
   }
 
+  // Where a panel floated last, while this page lasts: Float again puts it there (as IntelliJ keeps a window's bounds).
+  const floatedAt = new Map();
+  function leavingFloat(id) {
+    const w = whereIs(layout, id);
+    if (w && w.kind === 'float') floatedAt.set(id, { x: w.float.x, y: w.float.y, w: w.float.w, h: w.float.h });
+  }
   function floatRectFor(id) {
+    if (floatedAt.has(id)) return { ...floatedAt.get(id) };
     const node = locate(layout.root, id);
     const d = node && dims(node.stack);
     const ext = extent();
@@ -1171,23 +1253,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     return { x: Math.round((ext.w - w) / 2) + 24 * n, y: Math.round((ext.h - h) / 3) + 24 * n, w, h };
   }
 
-  // The edge an unpinned panel goes to: the dock's edge nearest its place, else its default edge.
-  function edgeFor(id) {
-    const at = locate(layout.root, id);
-    const el = at && stackEls.get(at.stack);
-    const r = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null;
-    const m = root.getBoundingClientRect ? root.getBoundingClientRect() : null;
-    if (r && r.width && m && m.width) {
-      const gaps = { left: r.left - m.left, right: m.right - r.right, top: r.top - m.top, bottom: m.bottom - r.bottom };
-      return EDGES.reduce((best, e) => (gaps[e] < gaps[best] ? e : best), 'left');
-    }
-    if (at && at.chain.length) {
-      const { split: sp, i } = at.chain[0];
-      if (sp.dir === 'row') return i === 0 ? 'left' : 'right';
-      return i === 0 ? 'top' : 'bottom';
-    }
-    return cfg.edgeOf(id);
-  }
+  // A panel's depth where it is docked, for a strip on `edge`.
   function unpinSize(id, edge) {
     const at = locate(layout.root, id);
     const d = at && dims(at.stack);
@@ -1196,8 +1262,85 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     return Math.max(edge === 'left' || edge === 'right' ? cfg.minSize(id).w : cfg.minSize(id).h, S.unpinSize);
   }
 
+  // Unpins a docked or floating panel to the strip on its side (the strip it was pinned from, else the side it stands
+  // on: layout.js panelSide), `open` its slide-out style when given. Not committed.
+  function unpinNow(id, open) {
+    const w = whereIs(layout, id);
+    if (narrowOn || !w || w.kind === 'auto' || w.kind === 'hidden') return false;
+    closeOut(id);
+    const edge = panelSide(layout, id, opts());
+    // A panel's own unpinSize, when it has one, is the depth it slides out at; else its size where it was.
+    const own = cfg.unpinSizeOf(id, edge);
+    const size = own !== null ? own : w.kind === 'dock' ? unpinSize(id, edge) : w.kind === 'float' ? (edge === 'left' || edge === 'right' ? w.float.w : w.float.h) : undefined;
+    if (maxed === w.stack && w.stack.panels.length === 1) maxed = null;
+    unpinPanel(layout, id, edge, size, opts(), open);
+    return true;
+  }
+
+  // IntelliJ's View Mode: panel `id` to `to` ('pinned', 'unpinned', 'undock', 'float', 'window'), on the side it has.
+  function setViewMode(id, to) {
+    const from = modeOf(id);
+    if (!VIEW_MODES.includes(to) || from === to || !modeOk(id, from, to)) return false;
+    if (to === 'window') { closeFly(false); return popOut(id); }
+    let now = from;
+    if (from === 'float') leavingFloat(id);
+    if (from === 'window') {
+      // Back from its window first (as its Back button does), then on to the mode asked for.
+      const pop = pops.get(id);
+      if (pop) release(id, pop, true);
+      popInPanel(layout, id, opts());
+      maxAgain(id, pop);
+      now = modeOf(id);
+    }
+    const strip = (m) => m === 'unpinned' || m === 'undock';
+    const style = (m) => (m === 'unpinned' ? 'beside' : 'over');
+    if (to === 'float') {
+      if (now !== 'float') {
+        const rect = floatRectFor(id);
+        const w = whereIs(layout, id);
+        if (w && w.stack && maxed === w.stack && w.stack.panels.length === 1) maxed = null;
+        floatPanel(layout, id, rect);
+      }
+      if (flyOpen === id) flyOpen = null;
+    } else if (to === 'pinned') {
+      if (strip(now)) pinPanel(layout, id, opts());
+      else if (now === 'float') dockFromFloat(layout, id, opts());
+      if (flyOpen === id) flyOpen = null;
+    } else if (strip(to)) {
+      if (strip(now)) {
+        const a = layout.auto.find((x) => x.id === id);
+        delete a.open;
+        if (style(to) !== openStyle) a.open = style(to);
+      } else unpinNow(id, style(to) === openStyle ? null : style(to));
+      // Seen in its new mode, as IntelliJ keeps a window it switched: slid out until it is left.
+      flyOpen = id;
+      flyByHover = false;
+    }
+    commit();
+    return true;
+  }
+  // IntelliJ's Move To: panel `id` to another side, in the view mode it has.
+  function moveSideNow(id, side) {
+    if (narrowOn || !allowed(id, 'move') || !EDGES.includes(side)) return false;
+    const w = whereIs(layout, id);
+    let size;
+    if (w && w.kind === 'dock') { const d = dims(w.stack); if (d && w.stack.panels.length === 1) size = side === 'left' || side === 'right' ? d.w : d.h; }
+    if (w && w.kind === 'dock' && maxed === w.stack && w.stack.panels.length === 1) maxed = null;
+    if (!moveSide(layout, id, side, { ...opts(), size })) return false;
+    commit();
+    return true;
+  }
+
   const api = {
     layout: () => layout,
+    /** A panel's view mode (IntelliJ's): 'pinned', 'unpinned', 'undock', 'float', 'window' or 'hidden'. */
+    viewMode: modeOf,
+    /** Changes a panel's view mode; its side stays. False when nothing changed (or `can` does not allow it). */
+    setViewMode: (id, mode) => setViewMode(id, mode),
+    /** A panel's side: 'left', 'right', 'top' or 'bottom', whatever its view mode. */
+    side: (id) => panelSide(layout, id, opts()),
+    /** Moves a panel to another side in the view mode it has (IntelliJ's Move To). */
+    moveSide: (id, side) => moveSideNow(id, side),
     config: () => cfg,
     isShown: shownNow,
     isVisible: (id) => { const w = whereIs(layout, id); return !!w && w.kind !== 'hidden'; },
@@ -1282,22 +1425,9 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     dockBack(id) {
       if (narrowOn) return;
       const w = whereIs(layout, id);
-      if (w && w.kind === 'float') { dockBack(layout, w.float, opts()); commit(); }
+      if (w && w.kind === 'float') { leavingFloat(id); dockBack(layout, w.float, opts()); commit(); }
     },
-    unpin(id) {
-      const w = whereIs(layout, id);
-      if (narrowOn || !w || w.kind === 'auto' || w.kind === 'hidden') return;
-      closeOut(id);
-      // Pinned from a strip: back to that strip's edge, wherever it docked.
-      const pinnedAt = layout.pinned && layout.pinned[id];
-      const edge = pinnedAt ? pinnedAt.edge : w.kind === 'dock' ? edgeFor(id) : cfg.edgeOf(id);
-      // A panel's own unpinSize, when it has one, is the depth it slides out at; else its size where it was.
-      const own = cfg.unpinSizeOf(id, edge);
-      const size = own !== null ? own : w.kind === 'dock' ? unpinSize(id, edge) : w.kind === 'float' ? (edge === 'left' || edge === 'right' ? w.float.w : w.float.h) : undefined;
-      if (maxed === w.stack && w.stack.panels.length === 1) maxed = null;
-      unpinPanel(layout, id, edge, size, opts());
-      commit();
-    },
+    unpin(id) { if (unpinNow(id)) commit(); },
     pin(id) { if (pinPanel(layout, id, opts())) { flyOpen = null; commit(); } },
     toggleMin(id) {
       const w = whereIs(layout, id);
@@ -1356,19 +1486,169 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     else if (name === 'unpin') api.unpin(id);
     else if (name === 'pin') api.pin(id);
     else if (name === 'hide-fly') closeFly(true);
+    else if (name === 'hide') hideNow(id, !!btn.closest('.dk-flyout'));
+  }
+  // − : a strip panel slides back in; a docked or floating one is minimised to its title bar, or restored from it.
+  function hideNow(id, fly) {
+    if (fly || (flyOpen === id && modeOf(id) !== 'pinned' && modeOf(id) !== 'float')) { closeFly(true); return; }
+    if (allowed(id, 'min')) api.toggleMin(id);
   }
 
   // ---- the per-panel menu: dock at an edge, float, unpin, hide ----
 
   let menu = null;
+  const inMenu = (el) => !!(menu && el && (menu.contains(el) || (menu._sub && menu._sub.contains(el))));
   function closeMenu(refocus) {
     if (!menu) return;
     const back = menu._from;
+    if (menu._sub) menu._sub.remove();
     menu.remove();
     menu = null;
     if (refocus && back && back.isConnected) focusQuiet(back);
   }
+  // A menu at (x, y), kept inside the window: moved left or up, or to the other side of `alt` (the x it may open
+  // leftwards from, for a submenu), when it would go past an edge.
+  function placeMenu(el, x, y, alt) {
+    const vw = viewport();
+    const vh = (win && win.innerHeight) || 900;
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    let left = x;
+    if (left + w > vw - 4) left = alt !== undefined ? alt - w : vw - 4 - w;
+    let top = y;
+    if (top + h > vh - 4) top = vh - 4 - h;
+    el.style.left = Math.max(4, left) + 'px';
+    el.style.top = Math.max(4, top) + 'px';
+  }
+  const menuButtons = (el) => [...el.querySelectorAll(':scope > button:not([disabled])')];
+  function moveFocus(el, key) {
+    const list = menuButtons(el);
+    if (!list.length) return;
+    const at = list.indexOf(doc.activeElement);
+    const down = key === 'ArrowDown';
+    let to;
+    if (key === 'Home') to = 0;
+    else if (key === 'End') to = list.length - 1;
+    else if (at < 0) to = down ? 0 : list.length - 1;
+    else to = (at + (down ? 1 : list.length - 1)) % list.length;
+    focusQuiet(list[to]);
+  }
+
+  // The Options menu (⋯): View Mode ▸, Move To ▸, Maximise or Restore, Hide.
+  function openOptions(btn, id) {
+    if (menu && menu._from === btn) { closeMenu(true); return; }
+    closeMenu(false);
+    const fly = !!btn.closest('.dk-flyout');
+    const w = whereIs(layout, id);
+    const o = optionsOf(id, fly ? 'fly' : w && w.kind === 'float' ? 'float' : 'dock');
+    const title = byId.get(id).title;
+    menu = doc.createElement('div');
+    menu.className = 'dk-menu dk-mono dk-options';
+    menu.setAttribute('role', 'menu');
+    menu.setAttribute('aria-label', `${title}: ${T.options}`);
+    const arrow = '<span class="dk-menu-arrow" aria-hidden="true">▸</span>';
+    const parts = [];
+    if (o.modes.length) parts.push(`<button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-dk-sub="mode">${escText(T.viewMode)}${arrow}</button>`);
+    if (o.sides.length) parts.push(`<button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-dk-sub="side">${escText(T.moveTo)}${arrow}</button>`);
+    const tail = [];
+    if (o.max) tail.push(`<button type="button" role="menuitem" data-dk-menu="max">${escText(o.max)}</button>`);
+    if (o.hide) tail.push(`<button type="button" role="menuitem" data-dk-menu="hide">${escText(o.hide)}</button>`);
+    if (parts.length && tail.length) parts.push('<div class="dk-menu-sep" role="separator"></div>');
+    menu.innerHTML = parts.join('') + tail.join('');
+    menu._from = btn;
+    menu._id = id;
+    menu._fly = fly;
+    menu._o = o;
+    doc.body.appendChild(menu);
+    const r = btn.getBoundingClientRect();
+    placeMenu(menu, r.right - menu.offsetWidth, r.bottom + 2);
+    if (r.bottom + 2 + menu.offsetHeight > ((win && win.innerHeight) || 900) - 4) placeMenu(menu, r.right - menu.offsetWidth, r.top - 2 - menu.offsetHeight);
+    focusQuiet(menuButtons(menu)[0]);
+    menu.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      if (b.dataset.dkSub) { openSub(b, true); return; }
+      pick(b.dataset.dkMenu);
+    });
+    // With a submenu open, the pointer switches it only after resting 150 ms, so a diagonal move towards the open
+    // submenu across another item does not swap it (entering the submenu cancels the switch).
+    const m = menu;
+    m.addEventListener('pointerover', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      clearTimeout(m._swap);
+      const go = () => {
+        if (menu !== m) return;
+        if (b.dataset.dkSub) { if (!m._sub || m._sub._kind !== b.dataset.dkSub) openSub(b, false); }
+        else closeSub(false);
+      };
+      if (m._sub && m._sub._kind !== b.dataset.dkSub) m._swap = later(go, 150);
+      else go();
+    });
+    menu.addEventListener('keydown', (e) => {
+      const b = e.target.closest && e.target.closest('button');
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMenu(true); }
+      else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) { e.preventDefault(); moveFocus(menu, e.key); }
+      else if (b && b.dataset.dkSub && (e.key === 'ArrowRight' || e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openSub(b, true); }
+      else if (e.key === 'Tab') closeMenu(false);
+    });
+  }
+  function closeSub(refocus) {
+    if (!menu || !menu._sub) return;
+    const parent = menu.querySelector(`[data-dk-sub="${menu._sub._kind}"]`);
+    menu._sub.remove();
+    menu._sub = null;
+    if (parent) parent.setAttribute('aria-expanded', 'false');
+    if (refocus && parent) focusQuiet(parent);
+  }
+  function openSub(parent, focus) {
+    const kind = parent.dataset.dkSub;
+    if (menu._sub && menu._sub._kind === kind) { if (focus) focusQuiet(menu._sub.querySelector('[aria-checked="true"]') || menuButtons(menu._sub)[0]); return; }
+    closeSub(false);
+    const o = menu._o;
+    const sub = doc.createElement('div');
+    sub.className = 'dk-menu dk-mono dk-submenu';
+    sub.setAttribute('role', 'menu');
+    sub.setAttribute('aria-label', kind === 'mode' ? T.viewMode : T.moveTo);
+    const item = (k, label, on) => `<button type="button" role="menuitemradio" aria-checked="${on}" data-dk-menu="${k}">${escText(label)}</button>`;
+    sub.innerHTML = kind === 'mode' ? o.modes.map((m) => item(`mode:${m}`, T.modes[m], m === o.now)).join('')
+      : o.sides.map((s) => item(`side:${s}`, T.sides[s], s === o.side)).join('');
+    sub._kind = kind;
+    menu._sub = sub;
+    parent.setAttribute('aria-expanded', 'true');
+    doc.body.appendChild(sub);
+    const r = parent.getBoundingClientRect();
+    const m = menu.getBoundingClientRect();
+    placeMenu(sub, m.right - 2, r.top - 4, m.left + 2);
+    sub.addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) pick(b.dataset.dkMenu); });
+    sub.addEventListener('pointerover', () => clearTimeout(menu && menu._swap));
+    sub.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' || e.key === 'ArrowLeft') { e.preventDefault(); e.stopPropagation(); closeSub(true); }
+      else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) { e.preventDefault(); moveFocus(sub, e.key); }
+      else if (e.key === 'Tab') closeMenu(false);
+    });
+    if (focus) focusQuiet(sub.querySelector('[aria-checked="true"]') || menuButtons(sub)[0]);
+  }
+  // An item chosen: the menu closes, then it acts.
+  function pick(k) {
+    if (!k || !menu) return;
+    const id = menu._id;
+    const fly = menu._fly;
+    closeMenu(false);
+    if (k.startsWith('mode:')) setViewMode(id, k.slice(5));
+    else if (k.startsWith('side:')) moveSideNow(id, k.slice(5));
+    else if (k === 'max') api.toggleMax(id);
+    else if (k === 'hide') hideNow(id, fly);
+    // Focus back in the panel's title bar where it still is, else on its strip button or tab.
+    const q = CSS_ESC(id);
+    const again = root.querySelector(`[data-dk-fly="${q}"].open [data-dk-tab]`)
+      || [...root.querySelectorAll(`[data-dk-tab="${q}"]`)].find((t) => !t.closest('.dk-flyout'))
+      || root.querySelector(`[data-dk-auto="${q}"]`);
+    if (again && !pops.has(id)) focusQuiet(again);
+  }
+
   function openMenu(btn, id) {
+    if (!classic) { openOptions(btn, id); return; }
     if (menu && menu._from === btn) { closeMenu(true); return; }
     closeMenu(false);
     const title = byId.get(id).title;
@@ -1702,8 +1982,9 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   });
   function dblHead(id) {
     const w = id && whereIs(layout, id);
-    if (w && w.kind === 'float' && allowed(id, 'float')) { dockBack(layout, w.float, opts()); commit(); }
-    else if (w && w.kind === 'dock' && allowed(id, 'max')) api.toggleMax(id);
+    // IntelliJ: a double click maximises, and again restores, docked or floating. Classic: a float's docks it back.
+    if (classic && w && w.kind === 'float' && allowed(id, 'float')) { dockBack(layout, w.float, opts()); commit(); }
+    else if (w && (w.kind === 'dock' || w.kind === 'float') && allowed(id, 'max')) api.toggleMax(id);
   }
   on(root, 'dblclick', (e) => {
     const bar = e.target.closest('.dk-bar');
@@ -1831,7 +2112,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
 
   // Hover slides an unpinned panel out; leaving it, or focus leaving it, slides it back. One that stays (click-only, or
   // beside and opened by a click) goes back only by its button, its slide-in control, Esc, or another one opening.
-  const stays = () => !stripHover || (beside && !flyByHover);
+  const stays = () => !stripHover || (besideOf(layout.auto.find((a) => a.id === flyOpen)) && !flyByHover);
   on(root, 'pointerover', (e) => {
     const strip = e.target.closest && e.target.closest('[data-dk-auto]');
     if (strip && !gesture && stripHover) {
@@ -1866,8 +2147,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     }, 0);
   });
   on(doc, 'pointerdown', (e) => {
-    if (flyOpen && !stays() && !insideFly(e.target) && !(menu && menu.contains(e.target)) && !(e.target.closest && e.target.closest(modalSelector))) closeFly(false);
-    if (menu && !menu.contains(e.target) && e.target !== menu._from && !(menu._from && menu._from.contains(e.target))) closeMenu(false);
+    if (flyOpen && !stays() && !insideFly(e.target) && !inMenu(e.target) && !(e.target.closest && e.target.closest(modalSelector))) closeFly(false);
+    if (menu && !inMenu(e.target) && e.target !== menu._from && !(menu._from && menu._from.contains(e.target))) closeMenu(false);
   }, true);
 
   on(doc, 'keydown', (e) => {

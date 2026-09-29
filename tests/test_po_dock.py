@@ -255,7 +255,7 @@ class ThePanels(unittest.TestCase):
         self.assertIn("return import(u);", INDEX)
         self.assertNotIn("dock/css/theme.css", INDEX, "the --dk-* tokens read Ensemble's own")
         self.assertNotIn("static/dock/src/popout.html", dashboard.PAGE_FILES, "an inert page: nothing to update in it")
-        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.4\.2 [0-9a-f]{40}")
+        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.5\.0 [0-9a-f]{40}")
 
     def test_the_library_does_what_the_workarounds_did(self):
         # Dock v0.3.3 has each of Ensemble's needs (the Dock project's ENSEMBLE-NEEDS.md); the page uses them.
@@ -288,6 +288,12 @@ const { spawn } = require('child_process');
 const fs = require('fs'), path = require('path');
 const A = JSON.parse(process.argv[2]);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+// A panel's ⋯ in its title bar, then View Mode › <mode> (Dock v0.5.0), with real clicks (a window opens only from one).
+const viewMode = async (p, panel, mode) => {
+  await p.click(`${panel}.closest(".dk-stack").querySelector(':scope > .dk-head [data-dk-act="menu"]')`);
+  await p.click('document.querySelector(".dk-menu.dk-options [data-dk-sub=mode]")');
+  await p.click(`document.querySelector('.dk-menu.dk-submenu [data-dk-menu="mode:${mode}"]')`);
+};
 async function launch() {
   const udd = chromeProfile(A);
   const ch = spawn(A.chrome, ['--headless=new', '--remote-debugging-port=0', '--user-data-dir=' + udd, '--no-first-run', '--no-default-browser-check',
@@ -498,7 +504,7 @@ async function main() {
 
     // ---- Pop-out: the Board, then the PO chat
     await p.evalIn('PD.dock.pin("board"); 0'); await sleep(300);
-    await p.click('PD.els.board.closest(".dk-stack").querySelector(\'[data-dk-act="pop"]\')');
+    await viewMode(p, 'PD.els.board', 'window');
     await p.until('!!PD.dock.popWindow("board") && PD.els.board.ownerDocument !== document && PD.els.board.querySelectorAll(".card").length > 0', 15000);
     out.popBoard = await p.evalIn(`(async () => {
       const w = PD.dock.popWindow('board'), d = w.document, r = ALL_ROWS.find(x => x.roomId === ${JSON.stringify(A.task)});
@@ -544,7 +550,7 @@ async function main() {
     // Changes in its own window: a diff, a selection across its lines, a dialog and a toast there.
     await p.evalIn('PD.dock.pin("changes"); 0'); await sleep(300);
     await p.until('!!PD.els.changes.querySelector(".chf[data-file]")', 20000);
-    await p.click('PD.els.changes.closest(".dk-stack").querySelector("[data-dk-act=pop]")');
+    await viewMode(p, 'PD.els.changes', 'window');
     await p.until('!!PD.dock.popWindow("changes") && PD.els.changes.ownerDocument !== document', 15000);
     out.popChanges = await p.evalIn(`(async () => {
       const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -594,7 +600,7 @@ async function main() {
     // The Workspace in its own window: a file's viewer reports to its tab.
     await p.evalIn('PD.dock.pin("workspace"); 0'); await sleep(300);
     await p.until('!!PD.els.workspace.querySelector(".wsp-tree .wse[data-path]")', 20000);
-    await p.click('PD.els.workspace.closest(".dk-stack").querySelector("[data-dk-act=pop]")');
+    await viewMode(p, 'PD.els.workspace', 'window');
     await p.until('!!PD.dock.popWindow("workspace") && PD.els.workspace.ownerDocument !== document', 15000);
     out.popWs = await p.evalIn(`(async () => {
       const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -654,7 +660,7 @@ async function main() {
     await p.until('document.body.classList.contains("po-dock") && !!PD.dock', 20000);
     await p.evalIn('PD.dock.pin("workspace"); 0'); await sleep(300);
     await p.until('!!PD.els.workspace.querySelector(".dcs-files .wsp-tree .wse[data-path] .wse-more")', 20000);
-    await p.click('PD.els.workspace.closest(".dk-stack").querySelector("[data-dk-act=pop]")');
+    await viewMode(p, 'PD.els.workspace', 'window');
     await p.until('!!PD.dock.popWindow("workspace") && PD.els.workspace.ownerDocument !== document', 15000);
     out.popFiles = await p.evalIn(`(async () => {
       const sleep = ms => new Promise(r => setTimeout(r, ms));

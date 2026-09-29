@@ -273,6 +273,12 @@ const { spawn } = require('child_process');
 const fs = require('fs'), path = require('path');
 const A = JSON.parse(process.argv[2]);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+// A panel's ⋯ in its title bar, then View Mode › <mode> (Dock v0.5.0), with real clicks (a window opens only from one).
+const viewMode = async (p, panel, mode) => {
+  await p.click(`${panel}.closest(".dk-stack").querySelector(':scope > .dk-head [data-dk-act="menu"]')`);
+  await p.click('document.querySelector(".dk-menu.dk-options [data-dk-sub=mode]")');
+  await p.click(`document.querySelector('.dk-menu.dk-submenu [data-dk-menu="mode:${mode}"]')`);
+};
 async function launch(extra) {
   const udd = chromeProfile(A);
   const ch = spawn(A.chrome, ['--headless=new', '--remote-debugging-port=0', '--user-data-dir=' + udd, '--no-first-run',
@@ -309,13 +315,15 @@ const goPo = p => p.evalIn(`(() => { try { localStorage.removeItem('cd-po-dock')
   pdNarrow = () => isPhone();   // the wide dock, kept for step 3's tool strip (a desktop's tabs: tests/test_middle.py)
   SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'tasks'; SB_DEST = ''; renderRows(); return 0; })()`);
 async function popBoard(c, p) {
-  // The Board beside Points, then a real click on its pop-out control (a window opens only from one).
+  // The Board beside Points, then real clicks on its ⋯ › View Mode › Window (a window opens only from one).
   await p.evalIn('PD.dock.pin("board"); 0'); await sleep(500);
   const before = new Set((await c.send('Target.getTargets')).targetInfos.map(t => t.targetId));
   // A headless window's first click can go to focusing it: once more if nothing opened.
   let clicks = 0;
   for (; clicks < 3 && !(await p.evalIn('!!PD.dock.popWindow("board")')); clicks++) {
-    await p.click('PD.els.board.closest(".dk-stack").querySelector("[data-dk-act=pop]")');
+    // A menu left open by a lost click is closed first.
+    await p.evalIn('(() => { const m = document.querySelector(".dk-menu.dk-options"); if (m) m.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); return 0; })()');
+    try { await viewMode(p, 'PD.els.board', 'window'); } catch (e) { /* again */ }
     try { await p.until('!!PD.dock.popWindow("board")', 3000); } catch (e) { /* again */ }
   }
   if (!(await p.evalIn('!!PD.dock.popWindow("board")'))) return { opened: false, clicks };

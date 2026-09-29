@@ -178,6 +178,14 @@ body.dk-popwin { margin: 0; overflow: hidden; background: var(--dk-bg3); color: 
 .dk-menu button.on::after { content: " \2713"; }
 .dk-menu button[disabled] { color: var(--dk-fg3); cursor: not-allowed; }
 .dk-menu-sep { height: 1px; background: var(--dk-line); margin: 4px 0; }
+/* a title bar's Options menu (⋯): View Mode ▸ and Move To ▸ open a submenu of choices, the current one checked */
+.dk-menu.dk-options button[aria-haspopup] { display: flex; align-items: center; gap: 12px; }
+.dk-menu-arrow { margin-left: auto; color: var(--dk-fg3); }
+.dk-menu button[aria-expanded="true"] { background: var(--dk-hover); }
+.dk-menu.dk-submenu { z-index: 31; min-width: 130px; }
+.dk-menu [role="menuitemradio"] { padding-left: 20px; position: relative; }
+.dk-menu [role="menuitemradio"][aria-checked="true"]::before { content: "\2713"; position: absolute; left: 6px; color: var(--dk-accent); }
+.dk-menu [role="menuitemradio"][aria-checked="true"] { font-weight: 600; }
 /* help (help.js): a circled ? beside a tab, and its popover */
 .dk-help-q { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; flex: none; padding: 0;
   border: 1px solid var(--dk-fg3); border-radius: 50%; background: transparent; color: var(--dk-fg3); font: 600 9px/1 var(--dk-font-mono);

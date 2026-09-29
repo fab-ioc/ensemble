@@ -591,8 +591,11 @@ shadow); a second click, its slide-in control or Esc puts it back; one is open a
 opens nothing (`stripHover: false`). Its width is its own (`pdToolSize`): Your asks 400, Spec 480,
 Changes, Files and the Board 60% of what the list and the strip leave (480 to 760, the conversation
 keeping at least 360). **The open tool is remembered per browser** (`cd-tool-open`) and opens
-again after a reload, and stays open when the middle changes conversation. Pin (its title bar)
-docks a tool beside the conversation; split, maximise and pop out work as the library's. **The
+again after a reload, and stays open when the middle changes conversation. A tool's title bar
+(Dock v0.5.0, IntelliJ's) is its tab, **⋯** and **−**: ⋯ holds View Mode (Dock Pinned docks it
+beside the conversation, Dock Unpinned, Undock, Float, Window pops it out), Move To (the side it
+is on; only this changes a side), Maximise and Hide; − slides it back in. Closing a tool's window
+brings it back slid out on its side. Split and maximise work as the library's. **The
 conversation cannot be moved**: no title bar, no control (`can`), and a tool dropped into its
 stack goes beside it (`pdKeepMiddle`). The Board's own **⤢** (`.pd-board-max`, beside its view
 switch) takes the whole width and gives it back. There is **no Panels menu on a desktop**: every
@@ -636,8 +639,9 @@ library is never edited in this repository: a need goes to the Dock project's `E
   (button sizes, hover and selected grounds, the focus ring).
 - **Chrome:** a title bar is 32px on `--surface-sunken` with a `--border` under it. A tab is
   `--fs-200` at 600 in `--fg-subtle`, sentence case; the one in front is `--fg` on `--surface` with
-  the `--accent` underline (§1's selected tab). The bar's controls (move or hide, minimise, maximise,
-  pop out, float, unpin) are Subtle buttons, 24px, `--hover`. A splitter is 5px of `--bg`,
+  the `--accent` underline (§1's selected tab). The bar's controls (**⋯** and **−**, the library's
+  default, not `headButtons: 'classic'`) are Subtle buttons, 24px, `--hover`; ⋯'s menu and its
+  submenus are the library's `.dk-menu`s, styled as every menu below. A splitter is 5px of `--bg`,
   `--border-strong` on hover, `--accent` while dragged or focused (a control you are using). An edge
   strip is `--surface-sunken`; the tool strip's buttons are square icon buttons (Default: `--surface`,
   `--border`, the icon `--fg-subtle`, 55% of the strip), their count 10px 600 `--fg` on `--surface`

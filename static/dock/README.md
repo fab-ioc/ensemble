@@ -10,6 +10,10 @@ Shared by two apps:
 
 Each app picks up a tagged version when it chooses. Changes to the library are made here, not in the apps.
 
+The panels work as IntelliJ IDEA's tool windows do (v0.5.0, see "Title bar and view modes"): a title bar holds its
+tabs, **⋯** (Options: View Mode, Move To, Maximise, Hide) and **−** (Hide), and a panel keeps its side whatever its view
+mode.
+
 What a person can do with the panels: drag a tab to an edge of the dock or of another panel (split), into another panel
 (a tab), float it in a window inside the page, unpin it to a strip on its edge (it slides out on hover or click),
 minimise or maximise a stack (a click on a minimised one's title bar restores it, a double click maximises it), hide
@@ -97,7 +101,9 @@ or clones a panel, so its listeners and state go wherever it goes.
 | `openFly(id)`, `closeFly()`, `flyOpen()` | slide an unpinned panel out, slide the open one back in, the one out (or `null`) |
 | `activate(id)`, `reveal(id)` | bring a panel to the front of its stack; `reveal` also shows a hidden one, slides out an unpinned one, focuses its window |
 | `moveTo(id, target, side)`, `dockEdge(id, side)` | dock a panel beside a stack (`{ kind: 'stack', stack }`) or at the dock's edge; side `left right top bottom center` |
-| `float(id)`, `dockBack(id)`, `unpin(id)`, `pin(id)` | float in the page and back; unpin to an edge strip and back |
+| `viewMode(id)`, `setViewMode(id, mode)` | a panel's view mode, IntelliJ's: `'pinned'` (Dock Pinned), `'unpinned'` (Dock Unpinned), `'undock'`, `'float'`, `'window'` (or `'hidden'`); change it, the side kept (false when nothing changed or `can` forbids it) |
+| `side(id)`, `moveSide(id, side)` | a panel's side (`left right top bottom`) in any mode; move it to another side in the mode it has (Move To) |
+| `float(id)`, `dockBack(id)`, `unpin(id)`, `pin(id)` | float in the page and back; unpin to the strip on its side and back (pinned, it docks on its strip's side) |
 | `toggleMin(id)`, `toggleMax(id)`, `restoreMax()`, `maximised()` | minimise / maximise its stack |
 | `setVisible(id, on)` | hide or show a panel |
 | `popOut(id)`, `popIn(id)`, `popWindow(id)`, `isOpenOut(id)` | a browser window of its own, and back where it was; its window; whether that window is open now (not after a reload) |
@@ -137,7 +143,8 @@ text), and `src/host.js` for apps whose panels open dialogs (below).
 | `can` | none | `(id, action) => boolean`, action `move float unpin pop max min hide`: `false` takes that control, menu item (the Panels menu's too, for `hide`) and gesture away from a person (the app's own calls still work) |
 | `minClickRestores` | `true` | a click on a minimised stack's title bar (a tab, or the bar beside the tabs; not its controls or help, not the click that ends a drag) restores it, as its restore control does, with the tab clicked in front; so do Enter and Space on its focused tab. A double click still maximises it (docked) or docks it back (floating), also when restoring moved the title bar from under the pointer. `false`: as before v0.3.5, only the restore control (and a double click) restores |
 | `stripHover` | `true` | hovering a strip button for 250 ms slides its panel out, and leaving it slides it back; `false`: only a click opens it, and it stays until its button is clicked again, it is closed (its slide-in control, `closeFly()`, pinned, another strip panel opened) or Esc is pressed |
-| `stripOpen` | `'over'` | where a strip panel slides out: `'over'` the layout; `'beside'` it, the middle narrowing to leave it its room (see "The tool strip") |
+| `stripOpen` | `'over'` | where a strip panel slides out: `'over'` the layout; `'beside'` it, the middle narrowing to leave it its room (see "The tool strip"). A panel's own View Mode (Dock Unpinned: beside, Undock: over) overrides it, and is saved as its strip entry's `open` |
+| `headButtons` | `'menu'` | a title bar's controls: `'menu'`, IntelliJ's ⋯ (Options) and − (Hide); `'classic'`, v0.4's buttons (menu, minimise, maximise, pop out, float or dock back, unpin; a flyout's pop out, float, slide in, pin) and its menu, exactly |
 | `popUrl`, `popName`, `popTitle` | `'popout.html'`, `'dock-panel-'`, `(p) => p.title` | the pop-out window's page, window name prefix, and title |
 | `popHtml` | none | `true`: open the pop-out page (`POP_HTML`) from a `blob:` URL of its text instead of loading `popUrl`; or the text of a page of the app's own (it needs an element with id `dk-pop-root`; its scripts run as any page's) |
 | `popBase` | `document.baseURI` | with `popHtml`: the base URL of the pop-out page's relative URLs, put in it as `<base href>` (the page's own HTML `<base href>`, if it has one, is kept instead); the page is read with the browser's `DOMParser` and written back from it, so a comment before `<html>` is dropped; `false`: no `<base>`, the page as given, its base its `blob:` URL |
@@ -156,6 +163,33 @@ default has it, and one that is not a layout, of another version (without `migra
 shows nothing gives the default.
 
 `examples/opten-config.js` is opTen's configuration, the drop-in for opTen's adoption.
+
+## Title bar and view modes
+
+As in IntelliJ IDEA's new UI, a panel's title bar has its tab(s), **⋯** (Options) and **−** (Hide), and nothing else:
+
+| Control | What it does |
+|---|---|
+| **⋯ › View Mode ▸** | **Dock Pinned** (docked in the layout), **Dock Unpinned** (on its strip, sliding out beside the middle, which narrows), **Undock** (on its strip, sliding out over the middle), **Float** (a window in the page), **Window** (a browser window of its own). Its own mode is checked; modes `can` or narrow forbid are left out |
+| **⋯ › Move To ▸** | **Left**, **Right**, **Top**, **Bottom**: the side, in the mode it has. (IntelliJ has Left Top, Left Bottom, … : Dock's strip holds one group per edge, so its sides are its four edges) |
+| **⋯ › Maximise / Restore** | also a double click on the title bar or a tab (docked or floating), and Esc restores |
+| **⋯ › Hide**, **−** | a slid-out panel slides back into its strip; a docked or floating one is minimised to its title bar (which shows its icon), and a click on it brings it back |
+
+The menus work with the mouse (hover or click opens a submenu) and the keys (↑ ↓ Home End, → or Enter opens a submenu on
+its checked item, ← or Esc closes it, Enter picks, Esc closes the menu and focus goes back to ⋯); they are `role="menu"`
+with `menuitem` and `menuitemradio` (`aria-checked`) items, and stay inside the window near its edges.
+
+**A panel's side is kept.** A strip panel pinned docks on its strip's side, beside the strip, as deep as it slid out
+(or at its own saved size); a docked panel unpinned goes to the strip on the side it stands (the side is read from the
+layout: where it is against the middle, the `fill` panel's place); Float and back, and Window and back, return it to its
+side and place. Move To (or a drag) is the only thing that changes it, and every mode after uses the new side.
+
+**Closing a panel's window** (its Back button, the OS close button or `window.close()`) puts it back in the mode it had
+before, on its side and at its place, and shows it: a strip panel slides out. After a reload of the main page, its
+note's "Bring it back here" leaves it on its strip, as before.
+
+A panel's window has its tab only (and "Back to main window" unless `popBackButton: false`); View Mode reaches Window
+from the main window. Float again, or Window again, opens where it was last (while the page lasts).
 
 ## The tool strip
 

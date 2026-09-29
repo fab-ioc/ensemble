@@ -1,7 +1,7 @@
 // The layout model: plain JSON, so it is stored as it is. No DOM here; dock.js draws it.
 //
-//   { v, root, floats: [{ stack, x, y, w, h, home, strip? }], auto: [{ id, edge, size, home }], hidden: [{ id, was }],
-//     out: { id: { x, y, w, h, was } }, pinned?: { id: strip } }
+//   { v, root, floats: [{ stack, x, y, w, h, home, strip?, side? }], auto: [{ id, edge, size, home, open? }],
+//     hidden: [{ id, was }], out: { id: { x, y, w, h, was } }, pinned?: { id: strip } }
 //
 // A node is a stack { t: 'stack', panels: [id], active: id, min?, size? } or a split { t: 'split', dir: 'row'|'col',
 // kids: [node], size? }. `size` is a node's px along its parent split; one child of each split (the one holding the
@@ -15,6 +15,13 @@
 // ({ id, edge, size, peers, index }). A panel taken off its strip (floated, popped out, hidden) keeps it and goes back
 // there, into the same place in the strip. A float made from a strip panel keeps it as `strip`, so Dock back takes the
 // panel back to its strip, not docked; `pinned` keeps it for a panel pinned from its strip, so Unpin puts it back there.
+//
+// A panel's side (v0.5.0, as an IntelliJ tool window's): the edge it belongs to, whatever its view mode. A strip panel's
+// is its strip's edge; a docked panel's is where it stands against the middle (sideOf); a floating one's, or one in its
+// own window, is the side it goes back to. Changing the view mode keeps it: a strip panel pinned docks on its strip's
+// side (pinPanel), a docked one unpinned goes to the strip on its side. Only a move changes it (moveSide, or a drag).
+// A strip entry's `open` ('beside' | 'over') is how it slides out when it differs from the dock's stripOpen: IntelliJ's
+// Dock Unpinned and Undock. A float's `side`, or a `was`'s, is a side given by moveSide while the panel was there.
 //
 // Everything that depends on the app (its panels, their minimum sizes, their default edges and layout) comes from a
 // config made by makeConfig(); every function that needs it takes it as `opts.cfg` (or `cfg`).
@@ -241,6 +248,7 @@ export function detach(layout, id) {
     if (!s.panels.length) layout.floats.splice(layout.floats.indexOf(w.float), 1);
     const { x, y, w: fw, h } = w.float;
     const was = { kind: 'float', home: w.float.strip ? homeIn(w.float) : w.float.home || null, float: { x, y, w: fw, h } };
+    if (EDGES.includes(w.float.side)) was.side = w.float.side;
     if (s.panels.length) { was.peers = s.panels.slice(); was.index = at; } // back into this floating stack while it lasts
     const strip = w.float.strip;
     if (strip && strip.id === id) { was.strip = { ...strip }; if (s.panels.length) delete w.float.strip; }
@@ -251,7 +259,8 @@ export function detach(layout, id) {
     const index = peers.indexOf(id);
     peers.splice(index, 1);
     layout.auto.splice(layout.auto.indexOf(w.entry), 1);
-    return { kind: 'auto', home: homeIn(w.entry), entry: { edge: w.entry.edge, size: w.entry.size }, peers, index };
+    const entry = withOpen({ edge: w.entry.edge, size: w.entry.size }, w.entry.open);
+    return { kind: 'auto', home: homeIn(w.entry), entry, peers, index };
   }
   if (w.kind === 'out') {
     delete layout.out[id];
@@ -269,8 +278,9 @@ function wasOf(was) {
   const keep = { kind: was.kind, home: orNone(was.home) };
   if (was.float) keep.float = was.float;
   if (was.peers) { keep.peers = was.peers.slice(); keep.index = was.index; }
-  if (was.entry) { keep.edge = was.entry.edge; keep.size = was.entry.size; }
+  if (was.entry) { keep.edge = was.entry.edge; keep.size = was.entry.size; withOpen(keep, was.entry.open); }
   if (was.strip) keep.strip = { ...was.strip };
+  if (was.side) keep.side = was.side;
   return keep;
 }
 
@@ -285,8 +295,11 @@ const sameHome = (a, b) => { const k = (h) => JSON.stringify(h, Object.keys(h ||
 
 // A strip panel's place, from what detach answered for it: { id, edge, size, peers, index }.
 function stripOf(id, was) {
-  return { id, edge: was.entry.edge, size: was.entry.size, peers: (was.peers || []).slice(), index: was.index };
+  return withOpen({ id, edge: was.entry.edge, size: was.entry.size, peers: (was.peers || []).slice(), index: was.index }, was.entry.open);
 }
+export const OPENS = ['beside', 'over'];
+// `entry` with the slide-out style `open` when it has one.
+function withOpen(entry, open) { if (OPENS.includes(open)) entry.open = open; return entry; }
 
 // Puts strip entry `entry` into layout.auto where it stood among `peers` (that edge's other panels then, in order; it
 // stood before peers[index]): after the nearest of the ones before it still on that edge, else before the nearest
@@ -342,12 +355,13 @@ function restore(layout, id, was, opts) {
   } else if (was.kind === 'float' && was.float) {
     const f = putHome({ stack: stackNode([id]), ...was.float }, orNone(was.home));
     if (was.strip) f.strip = { ...was.strip };
+    if (EDGES.includes(was.side)) f.side = was.side;
     layout.floats.push(f);
   } else if (was.kind === 'auto') {
     const edge = EDGES.includes(was.edge) ? was.edge : 'right';
-    insertAuto(layout, putHome({ id, edge, size: finite(was.size) ? was.size : unpinFallback(cfgOf(opts), id, edge) }, orNone(was.home)),
-      was.peers, was.index);
-  } else placeDocked(layout, id, was.home, opts);
+    const entry = putHome({ id, edge, size: finite(was.size) ? was.size : unpinFallback(cfgOf(opts), id, edge) }, orNone(was.home));
+    insertAuto(layout, withOpen(entry, was.open), was.peers, was.index);
+  } else placeDocked(layout, id, was.home, { ...opts, side: was.side });
 }
 
 const FREE = 'free';
@@ -415,7 +429,7 @@ function enclosing(root, ids) {
 }
 
 // Back where `home` says: into the stack holding most of the panels it shared one with, else beside the panel it was next to.
-function placeAtHome(layout, id, home, dims) {
+function placeAtHome(layout, id, home, dims, size) {
   if (!home) return false;
   let best = null, most = 0;
   for (const p of home.peers || []) {
@@ -426,17 +440,153 @@ function placeAtHome(layout, id, home, dims) {
   if (best) { insertAmong(best.stack, id, home.peers, home.index); return true; }
   if (home.near && EDGES.includes(home.side)) {
     const at = home.nearAll ? enclosing(layout.root, home.nearAll) : locate(layout.root, home.near);
-    if (at) { dockBeside(layout, at, id, home.side, home.free ? FREE : home.size, dims); return true; }
+    if (at) { dockBeside(layout, at, id, home.side, home.free ? FREE : finite(home.size) ? home.size : size, dims); return true; }
   }
   return false;
 }
 
-/** Docks a panel that is not docked: at its home, else where the default layout has it, else on its default edge. */
+/**
+ * Docks a panel that is not docked: at its home, else where the default layout has it, else on its default edge.
+ * `opts.side`: the side it must dock on (a strip panel pinned, a panel moved to a side): a home that would put it
+ * elsewhere is passed over, and with none left it docks along that edge of the dock, `opts.size` px (its strip's depth).
+ * `opts.size` is also its size beside a home that kept none.
+ */
 export function placeDocked(layout, id, home, opts = {}) {
   const cfg = cfgOf(opts);
-  if (placeAtHome(layout, id, home, opts.dims)) return;
-  if (placeAtHome(layout, id, homeOf(cfg.defaultLayout({ viewportPx: opts.viewportPx || 1600, purpose: 'home' }), id), opts.dims)) return;
-  dockAtEdge(layout, id, cfg.edgeOf(id), undefined, opts.extent, cfg);
+  const want = EDGES.includes(opts.side) ? opts.side : null;
+  const size = finite(opts.size) ? Math.round(opts.size) : undefined;
+  const at = (h) => {
+    if (!h) return false;
+    if (want) {
+      const t = clone(layout);
+      if (!placeAtHome(t, id, h, null, size) || sideOf(t, id, cfg) !== want) return false;
+    }
+    return placeAtHome(layout, id, h, opts.dims, size);
+  };
+  if (at(home)) return;
+  if (at(homeOf(cfg.defaultLayout({ viewportPx: opts.viewportPx || 1600, purpose: 'home' }), id))) return;
+  dockAtEdge(layout, id, want || cfg.edgeOf(id), want ? size : undefined, opts.extent, cfg);
+}
+
+// The child of split `sp` that takes what is left (dock.js draws it so): the one holding the fill panel, else the
+// largest (one without a size is), never a minimised stack.
+function fillOf(sp, cfg) {
+  if (cfg.fill) { const i = sp.kids.findIndex((k) => contains(k, cfg.fill)); if (i >= 0) return i; }
+  let best = -1, bestSize = -1;
+  sp.kids.forEach((k, i) => {
+    if (k.t === 'stack' && k.min) return;
+    const s = finite(k.size) ? k.size : Infinity;
+    if (s > bestSize) { best = i; bestSize = s; }
+  });
+  return best;
+}
+
+/**
+ * The side of the dock a docked panel stands on: from the top of the tree down, the first split where it is not in the
+ * child that takes what is left (the middle) puts it before that child (left, top) or after it (right, bottom). null
+ * for a panel in the middle itself, or alone, or not docked.
+ */
+export function sideOf(layout, id, cfg = makeConfig()) {
+  const at = locate(layout.root, id);
+  if (!at) return null;
+  for (const { split: sp, i } of at.chain) {
+    const f = fillOf(sp, cfg);
+    if (f < 0 || i === f) continue;
+    return sp.dir === 'row' ? (i < f ? 'left' : 'right') : (i < f ? 'top' : 'bottom');
+  }
+  return null;
+}
+
+// The side a panel that is away (`was`, as kept by `out` or `hidden`) goes back to.
+function sideOfWas(layout, id, was, cfg) {
+  if (!was) return cfg.edgeOf(id);
+  if (was.kind === 'auto') return EDGES.includes(was.edge) ? was.edge : 'right';
+  if (EDGES.includes(was.side)) return was.side;
+  if (was.strip && EDGES.includes(was.strip.edge)) return was.strip.edge;
+  const t = clone(layout);
+  placeDocked(t, id, was.home, { cfg });
+  return sideOf(t, id, cfg) || cfg.edgeOf(id);
+}
+
+/**
+ * A panel's side, whatever its view mode: its strip's edge; where it is docked (sideOf; in the middle, the strip it was
+ * pinned from, else its default edge); for a float or a window, the side it goes back to.
+ */
+export function panelSide(layout, id, opts = {}) {
+  const cfg = cfgOf(opts);
+  const w = whereIs(layout, id);
+  if (!w) return null;
+  if (w.kind === 'auto') return w.entry.edge;
+  if (w.kind === 'dock') return sideOf(layout, id, cfg) || (layout.pinned && layout.pinned[id] ? layout.pinned[id].edge : cfg.edgeOf(id));
+  if (w.kind === 'float') {
+    const f = w.float;
+    if (EDGES.includes(f.side)) return f.side;
+    if (f.strip && f.strip.id === id) return f.strip.edge;
+    return sideOfWas(layout, id, { kind: 'dock', home: f.home || null }, cfg);
+  }
+  return sideOfWas(layout, id, w.entry.was, cfg);
+}
+
+/**
+ * A panel's view mode, by IntelliJ's names: 'pinned' (Dock Pinned: docked), 'unpinned' (Dock Unpinned: on a strip,
+ * sliding out beside the middle), 'undock' (Undock: on a strip, sliding out over it), 'float', 'window' (in a window of
+ * its own), or 'hidden'. `open` is the dock's stripOpen, for a strip entry without its own.
+ */
+export function viewModeOf(layout, id, open = 'over') {
+  const w = whereIs(layout, id);
+  if (!w) return null;
+  if (w.kind === 'dock') return 'pinned';
+  if (w.kind === 'auto') return (w.entry.open || open) === 'beside' ? 'unpinned' : 'undock';
+  if (w.kind === 'float') return 'float';
+  if (w.kind === 'out') return 'window';
+  return 'hidden';
+}
+
+// A strip place moved to edge `side`: last there, as deep as before along the same direction, else as its own says;
+// the home that pointed at the old side goes.
+function stripTo(x, side, id, cfg) {
+  const across = (e) => (e === 'left' || e === 'right' ? 'w' : 'h');
+  if (across(x.edge) !== across(side)) x.size = unpinFallback(cfg, id, side);
+  x.edge = side;
+  x.peers = [];
+  delete x.index;
+  delete x.home;
+  return x;
+}
+
+/**
+ * Moves a panel to another side of the dock and keeps its view mode (IntelliJ's Move To): docked along that edge
+ * (`opts.size` px deep when given), last on that edge's strip, or, floating or in its own window, going back to that
+ * side. The strip place a pin kept is forgotten. Returns false when it is on that side already.
+ */
+export function moveSide(layout, id, side, opts = {}) {
+  const cfg = cfgOf(opts);
+  if (!EDGES.includes(side)) return false;
+  const w = whereIs(layout, id);
+  if (!w || w.kind === 'hidden' || panelSide(layout, id, opts) === side) return false;
+  forgetPinned(layout, id);
+  if (w.kind === 'dock') {
+    detach(layout, id);
+    dockAtEdge(layout, id, side, finite(opts.size) ? Math.round(opts.size) : undefined, opts.extent, cfg);
+    return true;
+  }
+  if (w.kind === 'auto') {
+    const e = w.entry;
+    layout.auto.splice(layout.auto.indexOf(e), 1);
+    const moved = stripTo(e, side, id, cfg);
+    delete moved.peers;
+    layout.auto.push(moved);
+    return true;
+  }
+  if (w.kind === 'float') {
+    const f = w.float;
+    if (f.strip && f.strip.id === id) { stripTo(f.strip, side, id, cfg); delete f.home; delete f.side; } else f.side = side;
+    return true;
+  }
+  const was = w.entry.was || (w.entry.was = { kind: 'dock', home: null });
+  if (was.kind === 'auto') stripTo(was, side, id, cfg);
+  else if (was.strip) { stripTo(was.strip, side, id, cfg); delete was.home; } else was.side = side;
+  return true;
 }
 
 /**
@@ -488,7 +638,7 @@ export function floatPanel(layout, id, rect) {
 function backToStrip(layout, id, strip, home, opts) {
   const edge = EDGES.includes(strip.edge) ? strip.edge : 'right';
   const size = finite(strip.size) ? strip.size : unpinFallback(cfgOf(opts), id, edge);
-  return insertAuto(layout, putHome({ id, edge, size }, orNone(home)), strip.peers, strip.index);
+  return insertAuto(layout, withOpen(putHome({ id, edge, size }, orNone(home)), strip.open), strip.peers, strip.index);
 }
 
 /** Docks a floating window's panels back where they came from, in one stack as they were. */
@@ -502,15 +652,36 @@ export function dockBack(layout, f, opts = {}) {
   if (strip) { backToStrip(layout, strip.id, strip, f.home, opts); panels = panels.filter((p) => p !== strip.id); }
   if (!panels.length) return true;
   const [first, ...rest] = panels;
-  placeDocked(layout, first, f.home, opts);
+  placeDocked(layout, first, f.home, { ...opts, side: EDGES.includes(f.side) ? f.side : undefined });
   const at = locate(layout.root, first);
   for (const p of rest) at.stack.panels.push(p);
   at.stack.active = panels.includes(f.stack.active) ? f.stack.active : first;
   return true;
 }
 
+/**
+ * Docks one panel of a floating window, on its side (View Mode › Dock Pinned from Float): one floated from its strip
+ * goes back there and is pinned (so Unpin finds its strip place); the only panel of a window docks back where it was; a
+ * tab of several docks where it was, the others floating on.
+ */
+export function dockFromFloat(layout, id, opts = {}) {
+  const w = whereIs(layout, id);
+  if (!w || w.kind !== 'float') return false;
+  const f = w.float;
+  if (f.strip && f.strip.id === id) {
+    if (f.stack.panels.length === 1) dockBack(layout, f, opts);
+    else { const was = detach(layout, id); backToStrip(layout, id, was.strip, was.home, opts); }
+    return pinPanel(layout, id, opts);
+  }
+  if (f.stack.panels.length === 1) return dockBack(layout, f, opts);
+  const side = panelSide(layout, id, opts);
+  const was = detach(layout, id);
+  placeDocked(layout, id, was.home, { ...opts, side });
+  return true;
+}
+
 /** Unpins a panel: it leaves the layout for a strip on `edge`, `size` px deep when it slides out. */
-export function unpinPanel(layout, id, edge, size, opts = {}) {
+export function unpinPanel(layout, id, edge, size, opts = {}, open) {
   // One that came from a strip (pinned from it, or floated from it) goes back to its place there.
   const pinned = layout.pinned && layout.pinned[id];
   const w = whereIs(layout, id);
@@ -520,9 +691,11 @@ export function unpinPanel(layout, id, edge, size, opts = {}) {
   const back = was.strip || fromFloat || ((was.kind === 'dock' || was.kind === 'float') && pinned && (!EDGES.includes(edge) || pinned.edge === edge) ? pinned : null);
   forgetPinned(layout, id);
   // Pinned from its strip: back with the home it had there, so a pin and an unpin leave the layout as it was.
-  if (back) return backToStrip(layout, id, back, back === pinned ? homeIn(pinned) : was.home, opts);
+  // `open` given ('beside', 'over', or null for the dock's own): how it slides out from now on.
+  const style = (entry) => { if (open !== undefined) { delete entry.open; withOpen(entry, open); } return entry; };
+  if (back) return style(backToStrip(layout, id, back, back === pinned ? homeIn(pinned) : was.home, opts));
   const e = EDGES.includes(edge) ? edge : 'right';
-  const entry = { id, edge: e, size: finite(size) ? Math.round(size) : unpinFallback(cfgOf(opts), id, e), home: was.home || null };
+  const entry = style({ id, edge: e, size: finite(size) ? Math.round(size) : unpinFallback(cfgOf(opts), id, e), home: was.home || null });
   layout.auto.push(entry);
   return entry;
 }
@@ -533,11 +706,13 @@ export function pinPanel(layout, id, opts = {}) {
   if (!w || w.kind !== 'auto') return false;
   const was = detach(layout, id);
   const place = stripOf(id, was);
-  placeDocked(layout, id, was.home, opts);
+  // On its strip's side, as deep as it slid out when its home kept no size.
+  placeDocked(layout, id, was.home, { ...opts, side: place.edge, size: place.size });
   // Its strip place is kept unless a plain unpin gives it back anyway: a panel unpinned from where it is docked again,
   // last on its strip (so pin and unpin of a docked panel's strip twin leave nothing behind).
   if (!(sameHome(was.home, homeOf(layout, id)) && place.index === place.peers.length)) {
     if (!layout.pinned) layout.pinned = {};
+    delete place.open; // how it slid out is chosen again when it goes back to a strip (View Mode), or the dock's own
     layout.pinned[id] = putHome(place, orNone(was.home));
   }
   return true;
@@ -623,6 +798,7 @@ function normStrip(x, id) {
   if (finite(x.size) && x.size > 0) out.size = x.size;
   out.peers = Array.isArray(x.peers) ? x.peers.filter((p) => typeof p === 'string') : [];
   if (finite(x.index)) out.index = x.index;
+  withOpen(out, x.open);
   return withHome(out, x);
 }
 // `out` with `from`'s home made safe, when `from` has one (null included); with none when it has none.
@@ -672,12 +848,13 @@ export function normalizeLayout(raw, opts = {}) {
       h: finite(f.h) && f.h > 0 ? f.h : 360 }, f);
     const strip = normStrip(f.strip);
     if (strip && s.panels.includes(strip.id)) nf.strip = strip;
+    if (EDGES.includes(f.side)) nf.side = f.side;
     layout.floats.push(nf);
   }
   for (const a of Array.isArray(raw.auto) ? raw.auto : []) {
     if (!a || !take(a.id)) continue;
     const edge = EDGES.includes(a.edge) ? a.edge : 'right';
-    layout.auto.push(withHome({ id: a.id, edge, size: finite(a.size) && a.size > 0 ? a.size : unpin(a.id, edge) }, a));
+    layout.auto.push(withOpen(withHome({ id: a.id, edge, size: finite(a.size) && a.size > 0 ? a.size : unpin(a.id, edge) }, a), a.open));
   }
   const normWas = (w, id) => {
     const was = w && typeof w === 'object' ? w : {};
@@ -693,7 +870,9 @@ export function normalizeLayout(raw, opts = {}) {
       keep.size = finite(was.size) ? was.size : unpin(id, keep.edge);
       // Where it stood in its strip (v0.4.2).
       if (Array.isArray(was.peers)) { keep.peers = was.peers.filter((p) => typeof p === 'string'); if (finite(was.index)) keep.index = was.index; }
+      withOpen(keep, was.open);
     }
+    if (keep.kind !== 'auto' && EDGES.includes(was.side)) keep.side = was.side; // a side given while it was away (v0.5.0)
     const strip = keep.kind === 'float' ? normStrip(was.strip, id) : null;
     if (strip) keep.strip = strip;
     return keep;
