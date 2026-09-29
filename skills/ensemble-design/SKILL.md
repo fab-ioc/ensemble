@@ -189,7 +189,8 @@ theme block, with the same values, and its own `.tk-*` rules.
 ### Layout
 
 `--header-h` (49px: 48px bar + 1px border) · `--chrome-h` · `--sidebar-w` · `--detail-w` (a phone's
-task, only) · `--list-w` (the task list on the left in layout A: `--sw-w` while `body.sw-on`, else 0) · `--conv-w`
+task, only) · `--list-w` (the task list on the left in layout A: `--sw-w` while `body.sw-on`, else 0; with the list in its dock,
+#137, where the page starts, and `--list-r` / `--list-t` / `--list-b` the other sides, set by `ldInsets`) · `--conv-w`
 (880px, the conversation's column in the middle; see *The middle* in §5).
 
 **Never hard-code a header offset.** Nine literal `49px`/`56px`/`266px` values used to tie the sticky
@@ -627,6 +628,9 @@ restored chat's iframe slides under the pointer: for 500 ms after that click the
 let clicks through, `pdDblGuard`). The layout is remembered in the browser (`cd-po-dock`; a phone's apart, `cd-phone-tabs`: a new key
 since #129, as the older one had Spec hidden), with **Reset layout** in the Panels menu. The
 library is never edited in this repository: a need goes to the Dock project's `ENSEMBLE-NEEDS.md`.
+The page has two docks (this one and the task list's, #137): every pop-out window is given the page's
+`__dockPopKey` (`pdLoad`'s `onEveryWindow`), else the dock made last would orphan the other's windows
+(Dock's ENSEMBLE-NEEDS item 9).
 
 - **The default** (`pdDefaultLayout`, measured in `tests/test_po_dock.py` and
   `tests/test_tool_strip.py`): on a desktop, at every width, the conversation alone and every tool
@@ -777,10 +781,23 @@ bottom. It is how the person gets around; the board stays the planning view. `in
 `swGroups` / `swListHtml` (the "Task switcher" block) are the reference, and `#switcher` is one
 self-contained component, so a later layout can host it elsewhere.
 
-- **Docked, never floating:** `--surface-sunken` (the mockup's ground: the list is where you go,
-  the middle what you read), a 1px `--border` on its right, no shadow. `body.sw-on`
-  gives `main` the room (`padding-left: var(--sw-w) + 20px`), so nothing it covers is lost. It has
-  no button, pin or close: it is simply there.
+- **A Dock panel of its own** (#137, "The list as a dock panel"): on a desktop `#switcher` is the
+  `list` panel of a second dock, `#list-dock`, laid over the area under the bar (fixed, `z-index` 15,
+  clicks going through it); its other panel is `#ld-page`, an empty stand-in for the page (the
+  `fill`, no title bar, never moved). **Docked at the left and pinned by default**: 300px on
+  `--surface-sunken` (the mockup's ground: the list is where you go, the middle what you read), the
+  splitter (5px) on its right, no shadow. Its ⋯ and − are the tools' (Dock v0.5.1): View Mode
+  (Dock Pinned, Dock Unpinned: a 44px left strip with its icon, sliding out beside the middle,
+  Undock: over it, Float, Window), Move To (the four sides), Maximise, and − (minimise). Docked and
+  slid out, ⋯ and − sit at the right end of its own head row (no tab: the filter keeps its width;
+  Move To replaces the drag), so pinned it looks as before; floating or minimised it has Dock's full
+  title bar. Nothing hides it for good (`can`: no `hide`; a desktop has no Panels menu). **The page
+  follows the stand-in** (`ldInsets` → `--list-w`, `--list-r`, `--list-t`, `--list-b` on `body`):
+  it takes the room the list leaves, unpinned, floating or in its window. Slid out, the list goes
+  back on a click elsewhere, in a conversation's frame (`pdChatClicked`) or once a row is opened. In
+  its own window a row still opens the conversation in the main window (the list's code stays in
+  the page). The layout is kept per browser (`cd-list-dock`). Before the library loads, or where it
+  cannot, `#switcher` is the fixed column (`body.sw-on` gives `main` `padding-left: var(--list-w) + 20px`).
 - **On a phone it is home** (#129, `phList()`): the whole screen under a one-row bar, shown
   whenever nothing else is (no project, open task, Needs you or cards page), with `main` out of the
   way (`body.ph-list`). A row opens its conversation full screen; the bar's `←` brings the list

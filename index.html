@@ -2274,9 +2274,51 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     background: var(--surface-sunken); border-right: 1px solid var(--border);
   }
   #switcher[hidden] { display: none; }
-  body.sw-on main { padding-left: calc(var(--sw-w) + 20px); }
+  body.sw-on main { padding-left: calc(var(--list-w) + 20px); }
   /* Layout A: the middle starts where the list ends. */
   body.sw-on { --list-w: var(--sw-w); }
+  /* ---- The list as a dock panel (#137) --------------------------------------
+     A desktop's list is a panel of a dock of its own (#list-dock), laid over
+     the area under the bar; its other panel is the page's stand-in (#ld-page),
+     the middle. Clicks go through the dock and its stand-in to the page; the
+     list, its title bar, strip, splitter, flyout and window take them. The
+     page is inset by where the stand-in is (ldInsets: --list-w and the other
+     three sides), so it takes the width the list leaves: unpinned, floating,
+     in its own window or hidden. */
+  body { --list-r: 0px; --list-t: 0px; --list-b: 0px; }
+  #list-dock {
+    position: fixed; left: 0; right: 0; top: var(--top-h); bottom: 0; z-index: 15;
+    pointer-events: none; background: transparent; --dk-strip-badge-bg: var(--surface);
+  }
+  #list-dock[hidden] { display: none; }
+  #list-dock .dk-main, #list-dock .dk-split, #list-dock .dk-stack:has(> .dk-body > #ld-page) { background: transparent; }
+  #list-dock .dk-stack:not(:has(> .dk-body > #ld-page)), #list-dock .dk-bar, #list-dock .dk-strip, #list-dock .dk-flyout,
+  #list-dock .dk-float, #list-dock .dk-outnote, #list-dock .dk-note, #list-dock .dk-empty { pointer-events: auto; }
+  #list-dock .dk-stack:has(> .dk-body > #ld-page) > .dk-head { display: none; }
+  #ld-page { background: transparent; }
+  /* The middle keeps its 360px: a list slid out beside it gives way. */
+  #list-dock .dk-main { min-width: 360px; }
+  #list-dock .dk-flyout.dk-fly-beside { max-width: calc(100% - var(--dk-strip) - 360px); }
+  /* The list in its panel: it fills it (not fixed at the left any more). */
+  #switcher.dk-panel { position: absolute; inset: 0; width: auto; top: 0; z-index: auto; border-right: 0; }
+  /* Docked, and slid out, the list's title bar is its own head's row: the
+     dock's ⋯ and − at its right end, over the free room there (the tab
+     would take the width the filter needs; Move To moves it instead of a
+     drag). Minimised, floating or in its own window the title bar is the
+     dock's, whole. */
+  #list-dock .dk-main .dk-stack:not(.dk-min):has(> .dk-body > #switcher) { position: relative; }
+  #list-dock .dk-main .dk-stack:not(.dk-min):has(> .dk-body > #switcher) > .dk-head,
+  #list-dock .dk-flyout:has(#switcher) > .dk-head {
+    position: absolute; top: var(--s-200); right: var(--s-100); z-index: 2; height: 32px; flex-basis: auto;
+    background: transparent; border: 0;
+  }
+  #list-dock .dk-main .dk-stack:not(.dk-min):has(> .dk-body > #switcher) > .dk-head > .dk-tabs,
+  #list-dock .dk-flyout:has(#switcher) > .dk-head > .dk-tabs { display: none; }
+  body.ld-on #switcher:not(.ld-own-head) .sw-head { padding-right: 64px; }
+  /* The page follows the stand-in on its other sides too (Move To). */
+  body.ld-on main { margin-right: var(--list-r); margin-top: var(--list-t); padding-bottom: calc(40px + var(--list-b)); }
+  body.mid.po-dock.ld-on main { height: calc(100dvh - var(--top-h) - var(--list-t) - var(--list-b)); padding-bottom: 0; }
+  body.ld-on thead { top: calc(var(--top-h) + var(--list-t)); }
   /* Two quiet controls, not form boxes: the project filter as a chip
      (--selected-bg: it narrows what you see) and the grouping as a Subtle
      button. Each is a native select underneath, so keyboard and screen
@@ -3591,6 +3633,11 @@ window.DOC_LISTENERS_PAUSED = false;
        Unassigned card, a page of their own. -->
   <button id="sw-cards" type="button" class="sw-more" data-noun="{Project} cards" data-noun-title="Every {project} as a card, with what it needs" title="Every project as a card, with what it needs">Project cards</button>
 </aside>
+<!-- On a desktop the list is a panel of a dock of its own (#137): laid over
+     the area under the bar, with #ld-page the page's stand-in, whose place the
+     page follows (the script's "The list as a dock panel"). -->
+<div id="list-dock" hidden></div>
+<div id="list-dock-panels" hidden><div id="ld-page" aria-hidden="true"></div></div>
 <div id="search-help-pop" hidden>
   <div class="shp-title">Search syntax</div>
   <dl>
@@ -3843,7 +3890,7 @@ const FOCUSABLE = 'button:not([disabled]), a[href], input, select, textarea, [ta
 const controlId = el => [el.tagName, el.classList[0] || '', el.dataset.wf || '', el.dataset.itab || '',
                          el.dataset.act || '', el.classList.contains('am-more') ? 'more' : ''].join('|');
 function focusKeyIn(root) {
-  const a = document.activeElement;
+  const a = root.ownerDocument.activeElement;   // a panel in its own window: that window's
   if (!a || a === root || !root.contains(a)) return null;
   return { id: controlId(a), index: [...root.querySelectorAll(FOCUSABLE)].indexOf(a) };
 }
@@ -10219,6 +10266,12 @@ function pdLoad() {
       // window, which is that one: what they say is passed on to this page.
       lib.onEveryWindow(w => {
         if (w === window) return null;
+        // Two docks share this page (the PO screen's and the list's, #137),
+        // and Dock v0.5.1 keeps one key on it for its windows to check they
+        // are still this page's: the dock made last wrote its own, and the
+        // other's windows would take themselves for orphans and close. Every
+        // window gets the page's key (an ask for Dock: one key per page).
+        try { w.__dockPopKey = window.__dockPopKey; } catch (e) {}
         const d = w.document, skip = new Set(['visibilitychange']);
         // The window's page is the library's popout.html, served beside it:
         // its base is this page's, so a relative address in a panel means
@@ -10407,10 +10460,13 @@ function pdToolRemember() {
 // hears no click inside a frame, nor focus moving into one while none of the
 // tool had it (after a click on its text, or in the file view).
 function pdChatClicked(win) {
-  const d = PD.dock;
-  if (!d || d.narrow() || !d.flyOpen() || document.querySelector('.dk-menu')) return;
+  if (document.querySelector('.dk-menu')) return;
   const f = [...document.querySelectorAll('iframe')].find(x => x.contentWindow === win);
-  if (f && !f.closest('.dk-flyout')) d.closeFly();
+  if (!f || f.closest('.dk-flyout')) return;
+  // The list slid out from its strip too (#137).
+  if (LD.dock && LD.dock.flyOpen()) LD.dock.closeFly();
+  const d = PD.dock;
+  if (d && !d.narrow() && d.flyOpen()) d.closeFly();
 }
 // The tool the breadcrumb names: the one slid out, else the first docked one
 // on screen.
@@ -13015,7 +13071,8 @@ function renderRows() {
   const dockPj = poDockProject();
   // An open task on a desktop is in the dock too, with its tools (#125).
   const taskDock = pdTaskWanted();
-  if ((dockPj || taskDock) && !PD.lib) pdLoad();
+  // The list is a dock panel on every desktop page (#137).
+  if ((dockPj || taskDock || !isPhone()) && !PD.lib) pdLoad();
   const docked = !!((dockPj || taskDock) && PD.lib);
   if (docked) pdEnsure();
   PD_ROOT.hidden = !docked;
@@ -13951,6 +14008,8 @@ document.addEventListener('click', (ev) => {
 // opens what it names where it opens today: a task in its panel, a PO on its
 // project's screen. The project filter is remembered per browser.
 var SW_SHOWN = null, SW_DONE_OPEN = false;   // var: renderRows may run before this line
+// The list's element, wherever it is: its column, its dock panel, its window.
+var SW_EL = document.getElementById('switcher');
 var SW_UN = { open: false, all: false };      // Unassigned: unfolded, and showing all
 // A phone: the project cards page, reached from the list's foot and the
 // project menu's All projects; and where the list was when it was left (its
@@ -13980,8 +14039,9 @@ function swSelection() {
   return pj && pj.poRoomId ? { po: pj.id } : {};
 }
 function swRender() {
-  const el = document.getElementById('switcher');
+  const el = SW_EL;
   if (!el) return;
+  ldSync();
   const on = swOn();
   const phone = phoneNow(), back = on && el.hidden;
   if (phone && !on && !el.hidden) {
@@ -14005,8 +14065,9 @@ function swRender() {
   SW_SHOWN = Object.fromEntries(Object.entries(g).map(([k, list]) => [k, list.map(e => e.key)]));
   // A task can be in two groups (Running and Unassigned): focus goes back to
   // the row in the group it was in.
-  const key = focusKeyIn(box), had = key && document.activeElement.dataset.room;
-  const hadGroup = had && document.activeElement.closest('[data-group]');
+  const act = box.ownerDocument.activeElement;   // its own window's, when it is out
+  const key = focusKeyIn(box), had = key && act.dataset.room;
+  const hadGroup = had && act.closest('[data-group]');
   const inGroup = hadGroup ? `[data-group="${CSS.escape(hadGroup.dataset.group)}"] ` : '';
   // A phone marks the row you last opened (nothing is open while the list shows).
   const sel = phone && !SELECTED_SID ? PH_BACK.sel || {} : swSelection();
@@ -14043,7 +14104,126 @@ $('#sw-list').addEventListener('click', (ev) => {
     openProjectPage(pj.id);
     pdReveal('po-chat');
   } else openDetail(row.dataset.sid);
+  // Slid out from its strip, the list goes back once a row is opened.
+  if (LD.dock && LD.dock.flyOpen() === 'list') LD.dock.closeFly();
 });
+
+// ---- The list as a dock panel (#137): begin ---------------------------------
+// On a desktop the list (#switcher) is a panel of a dock of its own, made with
+// the same library as the PO screen's (Dock): #list-dock, laid over the area
+// under the bar, holds it and #ld-page, an empty stand-in for the page (the
+// middle, its fill). Docked at the left and pinned by default, today's column;
+// its ⋯ and − do what they do for the tools: unpin it to a strip on its side
+// (it slides out beside the page and back on a click elsewhere), float it, pop
+// it into a window of its own, move it to another side, minimise it. The page
+// follows where the stand-in is (ldInsets), so it takes the room the list
+// leaves. The layout is kept per browser (LD_KEY). Nothing hides it for good:
+// its ⋯ has no Hide (only the Panels menu hides a panel, and a desktop has
+// none), and a closed window brings it back.
+// The list's element moves (into the dock, into its window) with its listeners;
+// its code stays in this page, so a row clicked in its window opens the task
+// here. Before the library loads, when it could not, and on a phone (where the
+// list is home, #129) there is no list dock: the list is the fixed column.
+const LD_KEY = 'cd-list-dock';
+const LD_W = 300;   // --sw-w: the column's width until it is resized
+const LD_ROOT = document.getElementById('list-dock');
+const LD_PAGE = document.getElementById('ld-page');
+// The list's place outside the dock, to go back to.
+const LD_HOME = { parent: SW_EL.parentNode, next: SW_EL.nextElementSibling };
+const LD_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M12 9h6M12 13h6M12 17h4"/></svg>';
+var LD = { dock: null, insets: '', ro: null };   // var: swRender may run before this line
+function ldWanted() { return !!PD.lib && !PD.failed && !isPhone(); }
+function ldDefaultLayout(L) {
+  return { root: L.split('row', [L.stack(['list'], { size: LD_W }), L.stack(['page'])]) };
+}
+function ldSync() {
+  if (!LD) return;   // before this block has run
+  const want = ldWanted();
+  if (want && !LD.dock) ldMake();
+  else if (!want && LD.dock) ldDrop();
+}
+function ldMake() {
+  const L = PD.lib;
+  LD_ROOT.hidden = false;
+  window.DOC_LISTENERS_PAUSED = true;   // the dock's own listeners are not the page's
+  try {
+    LD.dock = L.createDock({
+      root: LD_ROOT,
+      panels: [{ id: 'list', title: 'Tasks', el: SW_EL, icon: LD_ICON, unpinSize: LD_W },
+               { id: 'page', title: 'Page', el: LD_PAGE }],
+      storageKey: LD_KEY,
+      defaultLayout: () => ldDefaultLayout(L),
+      fill: 'page',
+      minSize: { list: { w: 220, h: 120 }, page: { w: 360, h: 200 } },
+      sizes: { head: 32, strip: 44 },
+      // As the tools: a click on its strip button opens it beside the page,
+      // a click elsewhere puts it back.
+      stripHover: false,
+      stripOpen: 'beside',
+      // The page stays where it is. The list goes anywhere but never away:
+      // without `hide`, no menu of the dock hides it.
+      can: (id, a) => id === 'list' && a !== 'hide',
+      popName: 'ensemble-list-',
+      popTitle: () => nounText('Tasks and {projects}') + ' · Ensemble',
+      popUrl: '/static/dock/src/popout.html',
+      popBackButton: false,
+      themeEvent: 'cd-theme',
+      modalSelector: '[role="dialog"], dialog, .dk-help-pop, .dcm',
+    });
+  } finally { window.DOC_LISTENERS_PAUSED = false; }
+  document.body.classList.add('ld-on');
+  LD.dock.onChange(() => { ldKeepPage(); ldInsets(); });
+  if (window.ResizeObserver) (LD.ro = new ResizeObserver(() => ldInsets())).observe(LD_PAGE);
+  ldKeepPage();
+  ldInsets();
+}
+// Back to the fixed column (a phone, or the library gone): its windows close
+// (the layout remembers the list was out), the list goes home.
+function ldDrop() {
+  const d = LD.dock;
+  LD.dock = null;
+  if (LD.ro) { LD.ro.disconnect(); LD.ro = null; }
+  window.DOC_LISTENERS_PAUSED = true;
+  try { d.destroy(); } finally { window.DOC_LISTENERS_PAUSED = false; }
+  LD_HOME.parent.insertBefore(SW_EL, LD_HOME.next && LD_HOME.next.parentNode === LD_HOME.parent ? LD_HOME.next : null);
+  SW_EL.classList.remove('dk-panel', 'dk-off', 'ld-own-head');
+  ['role', 'aria-labelledby', 'aria-hidden', 'data-dk-role', 'style'].forEach(a => SW_EL.removeAttribute(a));
+  document.getElementById('list-dock-panels').appendChild(LD_PAGE);
+  LD_ROOT.hidden = true;
+  document.body.classList.remove('ld-on');
+  ['--list-w', '--list-r', '--list-t', '--list-b'].forEach(v => document.body.style.removeProperty(v));
+  LD.insets = '';
+}
+// The page is the middle alone: the list dropped into its stack (a drag onto
+// its tab row) goes to the left of it.
+function ldKeepPage() {
+  const d = LD.dock;
+  const find = n => !n ? null : n.t === 'stack' ? (n.panels.includes('page') ? n : null) : (n.kids || []).map(find).find(Boolean) || null;
+  const st = d && find(d.layout().root);
+  if (st && st.panels.includes('list')) { d.dockEdge('list', 'left'); d.activate('page'); }
+}
+// The page's insets: where the stand-in is inside the dock. Docked at the left
+// that is the list's width and its splitter; on a strip, the strip (and the
+// list slid out beside the page); floating, in its window or hidden, nothing.
+function ldInsets() {
+  const d = LD.dock;
+  if (!d) return;
+  const R = LD_ROOT.getBoundingClientRect(), r = LD_PAGE.getBoundingClientRect();
+  const on = LD_PAGE.isConnected && r.width > 0 && r.height > 0;
+  const px = v => Math.max(0, Math.round(v)) + 'px';
+  const v = on ? [px(r.left - R.left), px(R.right - r.right), px(r.top - R.top), px(R.bottom - r.bottom)] : ['0px', '0px', '0px', '0px'];
+  // The list's own head makes room for the dock's ⋯ and − where the dock's
+  // title bar lies over it (docked, not minimised, or slid out).
+  const over = SW_EL.ownerDocument === document && !!SW_EL.closest('.dk-main .dk-stack:not(.dk-min), .dk-flyout');
+  SW_EL.classList.toggle('ld-own-head', !over);
+  const sig = v.join(' ');
+  if (sig === LD.insets) return;
+  LD.insets = sig;
+  const s = document.body.style;
+  s.setProperty('--list-w', v[0]); s.setProperty('--list-r', v[1]); s.setProperty('--list-t', v[2]); s.setProperty('--list-b', v[3]);
+}
+// ---- The list as a dock panel: end -------------------------------------------
 // Poll while the tab is in front. Nothing here interrupts: no sound, no desktop
 // notification, no stealing focus — the badge just changes.
 setInterval(() => { if (!document.hidden) updateRoomsBadge(); }, 5000);
