@@ -160,7 +160,7 @@
         }
       }).catch(function () {});
   }
-  window.cdTheme = { apply: apply, sync: sync, stored: stored, scheme: SCHEME,
+  window.cdTheme = { apply: apply, sync: sync, stored: stored, scheme: SCHEME, themes: Object.keys(SCHEME),
                      applyAccent: applyAccent, storedAccent: storedAccent, rgbOf: rgbOf, put: put,
                      chooseAccent: chooseAccent, saveAccent: saveAccent };
   apply();
