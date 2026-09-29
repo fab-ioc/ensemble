@@ -91,7 +91,7 @@ async function main() {
     const open = async () => {
       await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
       await until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 0', 30000);
-      await evalIn(`SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'tasks'; SB_DEST = ''; renderRows(); 0`);
+      await evalIn(`SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'tasks'; renderRows(); 0`);
     };
     const click = async (sel) => {
       const [x, y] = await evalIn(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
@@ -135,7 +135,7 @@ async function main() {
       await p.click('#dock-banner-go');
       await sleep(1500);
       await p.until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 0', 30000);
-      await p.evalIn(`SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'tasks'; SB_DEST = ''; renderRows(); 0`);
+      await p.evalIn(`SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'tasks'; renderRows(); 0`);
       await p.until('!!PD.lib && document.body.classList.contains("po-dock")', 20000);
       await sleep(300);
       out.reloaded = await p.evalIn(STATE);

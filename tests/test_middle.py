@@ -15,7 +15,8 @@ a project that has a PO (Motors) and a task in it, and one that has none
   conversation stays, a PO screen's tool goes back to the PO chat, the project
   goes to its PO's conversation and closes the task, a project without a PO
   goes back to its board;
-* the PO pill over an open task gives the middle back to the PO;
+* the PO's row in the list over an open task gives the middle back to the PO;
+* #needs lands on the list's Needs you, focused (#135);
 * the page reloaded for an update comes back on the same task and tab;
 * a phone has no middle; its open task's breadcrumb is in the bar's second
   row (tests/test_phone_layout.py, #129).
@@ -169,7 +170,7 @@ async function main() {
   const { ch, ws } = await launch();
   const c = new Cdp(ws); await c.open();
   const out = {};
-  const page = async (w, h, mobile) => {
+  const page = async (w, h, mobile, boot) => {
     const { targetId } = await c.send('Target.createTarget', { url: 'about:blank' });
     const { sessionId } = await c.send('Target.attachToTarget', { targetId, flatten: true });
     await c.send('Page.enable', {}, sessionId);
@@ -179,12 +180,16 @@ async function main() {
     const until = async (expr, ms = 20000) => { const t = Date.now(); while (Date.now() - t < ms) { let v = null; try { v = await evalIn(expr); } catch (e) {} if (v) return v; await sleep(150); } throw new Error('timeout: ' + expr); };
     const shot = async (name) => { if (!A.shots) return; const r = await c.send('Page.captureScreenshot', { format: 'png' }, sessionId); fs.writeFileSync(path.join(A.shots, name + '.png'), Buffer.from(r.data, 'base64')); };
     const ready = () => until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 1 && ALL_ROWS.some(r => r.roomId === ' + JSON.stringify(A.task) + ')', 30000);
+    // A desktop opens on the last conversation or the first Needs you entry
+    // (#135): each of these pages starts on none, as its checks expect.
+    if (!boot) await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensBootOpen = false;' }, sessionId);
     await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
     await ready();
+    await until('window.ensBooted === true', 30000);
     return { evalIn, until, shot, ready, sessionId, close: () => c.send('Target.closeTarget', { targetId }) };
   };
   const go = (p, proj, tab) => p.evalIn(`(() => { try { ['cd-tool-strip', 'cd-tool-open', 'cd-phone-tabs'].forEach(k => localStorage.removeItem(k)); } catch (e) {}
-    SELECTED_PROJECT = ${JSON.stringify(proj)}; PROJECT_TAB = ${JSON.stringify(tab || 'tasks')}; SB_DEST = ''; renderRows(); return 0; })()`);
+    SELECTED_PROJECT = ${JSON.stringify(proj)}; PROJECT_TAB = ${JSON.stringify(tab || 'tasks')}; renderRows(); return 0; })()`);
   const poReady = p => p.until('document.body.classList.contains("po-dock") && !!PD.dock && [...document.querySelectorAll(".dk-head, #po-dock .dk-strip-btn")].some(e => e.getBoundingClientRect().height) && !!document.querySelector("#po-panel iframe.po-session:not([hidden])")', 30000);
   const sid = `ALL_ROWS.find(r => r.roomId === ${JSON.stringify(A.task)}).sessionId`;
   const openTask = async (p) => {
@@ -232,11 +237,11 @@ async function main() {
       await click(p, '#bar-crumbs button[data-crumb="po"]');
       await sleep(400);
       out.poUp = await p.evalIn(MID);
-      // The pill over an open task: the PO's conversation takes the middle.
+      // The PO's row in the list over an open task: the PO's conversation takes the middle.
       await openTask(p);
-      await click(p, '#po-pill');
+      await click(p, `#sw-list .sw-row[data-po="${A.proj}"]`);
       await sleep(500);
-      out.pill = await p.evalIn(MID);
+      out.poRow = await p.evalIn(MID);
       // A project without a PO: Workspace, and back to its board.
       await go(p, A.plain, 'workspace');
       await p.until('!!document.querySelector(".wsp") && document.querySelector(".wsp").getBoundingClientRect().height > 0');
@@ -272,16 +277,17 @@ async function main() {
       out.caretMenu = await p.evalIn(`(() => { const m = document.getElementById('proj-menu');
         return { head: (m.querySelector('.pm-head') || {}).textContent || '', on: (m.querySelector('.pm-item.on') || { dataset: {} }).dataset.proj || '' }; })()`);
       await click(p, '#proj-switch');
-      // The pill from Home with a task open, and a PO opened from Needs you and
-      // from Home: the PO takes the middle, no drawer (R1-F2).
-      await click(p, '#po-pill');
+      // The PO's row with a task open, and a PO opened from Needs you (#needs)
+      // and from Home: the PO takes the middle, no drawer (R1-F2).
+      await click(p, `#sw-list .sw-row[data-po="${A.proj}"]`);
       await poReady(p); await sleep(500);
-      out.pillHome = { ...(await p.evalIn(MID)), peek: await p.evalIn('PO_PEEK') };
-      await p.evalIn("SELECTED_PROJECT = null; SB_DEST = 'needsyou'; renderRows(); 0");
+      out.rowHome = { ...(await p.evalIn(MID)), peek: await p.evalIn('PO_PEEK') };
+      await p.evalIn("goHome(); location.hash = '#needs'; 0");
       await sleep(300);
-      await click(p, '#po-pill');
+      out.needsHash = await p.evalIn(`({ hash: location.hash, focus: !!document.activeElement.closest('[data-group="needs"]'), mid: document.body.classList.contains('detail-open') })`);
+      await click(p, `#sw-list .sw-row[data-po="${A.proj}"]`);
       await poReady(p); await sleep(400);
-      out.pillNeeds = { ...(await p.evalIn(MID)), peek: await p.evalIn('PO_PEEK') };
+      out.rowNeeds = { ...(await p.evalIn(MID)), peek: await p.evalIn('PO_PEEK') };
       await p.evalIn('goHome(); 0');
       await sleep(300);
       await p.evalIn(`openPoOf(projectById(${JSON.stringify(A.proj)})); 0`);
@@ -316,6 +322,17 @@ async function main() {
       await wsUp('plainWs', async () => { await go(p, A.plain, 'workspace'); }, 'project');
       await wsUp('taskWs', async () => { await go(p, A.proj); await poReady(p); await openTask(p); await click(p, '#po-dock .dk-strip-btn[data-dk-auto="workspace"]'); }, 'task');
       await p.close();
+    }
+    // ---- a desktop opens on the last conversation (#135): the task the page
+    // before remembered, open in the middle
+    {
+      const b = await page(1440, 900, false);
+      await b.evalIn(`localStorage.setItem('cd-last-conv', JSON.stringify({ sid: ${sid} })); 0`);
+      await b.close();
+      const q = await page(1440, 900, false, true);
+      await q.until('document.body.classList.contains("detail-open")', 20000);
+      out.bootLast = { ...(await q.evalIn(MID)), sid: await q.evalIn(`SELECTED_SID === ${sid}`) };
+      await q.close();
     }
     // ---- a tool hidden on a phone is a tab again on a desktop, and hidden again on the phone (R1-F4)
     {
@@ -499,11 +516,21 @@ class TheMiddle(unittest.TestCase):
         self.assertEqual(self.got["poUp"]["front"], "po-chat")
         self.assertEqual(self.got["poUp"]["trail"], [["po", "PO", False]])
 
-    def test_the_pill_over_a_task_gives_the_middle_to_the_po(self):
-        g = self.got["pill"]
+    def test_the_po_row_over_a_task_gives_the_middle_to_the_po(self):
+        g = self.got["poRow"]
         self.assertFalse(g["open"])
         self.assertEqual(g["front"], "po-chat")
-        self.full_height(g, "PO from the pill")
+        self.full_height(g, "PO from its row")
+
+    def test_a_desktop_opens_on_the_last_conversation(self):
+        g = self.got["bootLast"]
+        self.assertTrue(g["open"] and g["sid"], "the task last open, in the middle")
+        self.assertEqual(g["proj"], self.proj)
+
+    def test_needs_lands_on_the_lists_needs_you(self):
+        g = self.got["needsHash"]
+        self.assertEqual(g["hash"], "", "the address is put back")
+        self.assertTrue(g["focus"], "Needs you's head has the focus")
 
     def test_a_project_without_a_po(self):
         g = self.got["plainWs"]
@@ -536,7 +563,7 @@ class TheMiddle(unittest.TestCase):
         self.assertEqual(self.got["caretMenu"], {"head": "Motors", "on": self.proj})
 
     def test_a_po_opens_in_the_middle_from_anywhere(self):
-        for key in ("pillHome", "pillNeeds", "openPoHome"):
+        for key in ("rowHome", "rowNeeds", "openPoHome"):
             with self.subTest(key=key):
                 g = self.got[key]
                 self.assertFalse(g["open"])

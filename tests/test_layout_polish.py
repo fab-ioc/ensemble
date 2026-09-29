@@ -72,15 +72,10 @@ class TheBar(unittest.TestCase):
         self.assertRegex(INDEX, r"#bar-crumbs \.bar-crumb \{[^}]*color: var\(--fg-subtle\); font-size: var\(--fs-300\);")
         self.assertRegex(INDEX, r"\.crumb-here \{ color: var\(--fg\); font-size: var\(--fs-300\); font-weight: 500;")
 
-    def test_the_bell_is_drawn(self):
-        bell = INDEX[INDEX.index('<button id="notif-btn"'):]
-        bell = bell[:bell.index("</button>")]
-        self.assertNotIn("🔔", bell)
-        self.assertIn('<svg class="bell"', bell)
-        self.assertIn('stroke="currentColor"', bell)
-        self.assertIn('aria-hidden="true"', bell)
-        self.assertIn('<span id="notif-count" hidden>0</span>', bell)
-
+    def test_the_bar_has_no_bell_and_no_pill(self):
+        # #135: the list's Needs you is the signal, and each PO is a list row.
+        for gone in ('id="notif-btn"', 'id="notif-tray"', 'id="po-pill"', '<svg class="bell"'):
+            self.assertNotIn(gone, INDEX)
 
 JS = r"""
 const WORKFLOW_KEYS = ['backlog', 'todo', 'inprogress', 'inreview', 'done'];

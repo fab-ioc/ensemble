@@ -43,7 +43,7 @@ Four things keep this running without you watching:
 
 - **The progress check.** Every 5 minutes by default, the hub looks at each project's tasks. It wakes the PO only when there is news: a column changed, new commits, work merged, a task blocked, stalled or dead.
 - **The handover.** A long conversation costs more with every turn. Past 200k tokens by default, the hub asks the task owner to write `TASK-HANDOVER.md` (or the PO to update `PO-HANDOVER.md`). It then starts a fresh session that reads the handover and carries on.
-- **Needs you.** The bell in the top bar lists every task waiting on a person, blocked, stalled, or whose agent died, across all projects.
+- **Needs you.** The first group of the task list on the left lists every task waiting on a person, blocked, stalled, or whose agent died, across all projects.
 - **Plan allowance.** The header shows how much of your Claude and Codex plans is used.
 
 What the tabs show:

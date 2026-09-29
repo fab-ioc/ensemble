@@ -95,7 +95,7 @@ const unassigned = [...rows.filter(r => /^u\d|^rx$|^ua$|^rd$/.test(r.sessionId))
                     { sessionId: 'u-grp', roomId: null, label: '', firstWords: 'Only in the group', updatedAt: T0 - 5000, isLive: false }];
 const items = [
   { roomId: 'r9', state: 'waiting_for_you', askKind: 'question', askedAt: T0 + 200, since: T0 + 200, reason: 'claude asked: “Which?”', project: 'Motors', projectId: 'p2' },
-  { roomId: 'r1', state: 'blocked', askKind: 'blocked', askedAt: T0 + 100, since: T0 + 100, reason: 'logged out', project: 'Ensemble Dashboard', projectId: 'p1' },
+  { roomId: 'r1', state: 'blocked', askKind: 'blocked', askedAt: T0 + 100, since: T0 + 100, reason: 'logged out', project: 'Ensemble Dashboard', projectId: 'p1', agentIdentity: 'codex', lastLines: 'Please log in' },
   { roomId: 'r6', state: 'waiting_for_you', askKind: 'completed', askedAt: T0 + 30, since: T0 + 30, reason: 'finished', project: 'Motors', projectId: 'p2' },
   { roomId: 'r13', state: 'waiting_for_you', askedAt: T0 + 60, since: T0 + 60, reason: 'claude reported the work is finished: “Done.”', project: 'Ensemble Dashboard', projectId: 'p1' },
   { roomId: 'po-2', isPo: true, title: 'PO', ref: '', state: 'agent_gone', since: T0 + 400, reason: 'died', project: 'Motors', projectId: 'p2' },
@@ -176,7 +176,7 @@ class TaskSwitcher(unittest.TestCase):
     def setUpClass(cls):
         src = "\n".join([
             NOUN, re.search(r"^const esc = .*$", INDEX, re.M).group(0),
-            INDEX[INDEX.index("const fmtAgo = "):INDEX.index("function sinceClock(")],
+            INDEX[INDEX.index("const fmtAgo = "):INDEX.index("function attnWhen(")],
             INDEX[INDEX.index("const fmtCost = "):INDEX.index("const fmtInt = ")],
             INDEX[INDEX.index("const WORKFLOW_COLS = "):INDEX.index("const DONE_AGE_DAYS")],
             (ROOT / "static" / "actions.js").read_text(encoding="utf-8"), BAR,
@@ -231,7 +231,7 @@ class TaskSwitcher(unittest.TestCase):
         blocked = row_of(h, 'data-sid="r1"')
         self.assertIn('<span class="loz danger" title="logged out">blocked</span>', blocked)
         self.assertIn('<span class="sw-st danger" role="img" aria-label="blocked"></span>', blocked)
-        self.assertIn('<span class="sw-sub">Ensemble Dashboard</span>', blocked)   # its project, second line
+        self.assertIn('<span class="sw-sub">Ensemble Dashboard · codex</span>', blocked)   # its project and agent, second line
         self.assertNotIn('class="sw-row on', blocked)
         old = row_of(h, 'data-sid="r-old"')
         self.assertIn('<span class="tno">MO-40</span> Past the newest 300', old)
@@ -289,6 +289,22 @@ class TaskSwitcher(unittest.TestCase):
         self.assertNotIn("sw-none", e)
         self.assertNotIn(" empty", self.r["html"][:self.r["html"].index('data-group="done"')])
 
+    def test_a_needs_you_row_says_since_when_who_and_why(self):
+        # #135: what only the bell showed is on the row.
+        r1 = row_of(self.r["html"], 'data-sid="r1"')
+        self.assertIn('class="sw-row needs"', r1)
+        self.assertRegex(r1, r'<span class="sw-age">since [^<]+</span>', "an ask its agent reported: since when")
+        self.assertIn('<span class="sw-sub">Ensemble Dashboard · codex</span>', r1, "the agent it is waiting on")
+        self.assertIn('<span class="sw-why">logged out</span>', r1, "the reason, a third line")
+        self.assertIn('title="ED-12 · ', r1)
+        self.assertIn('\nlogged out\n\nPlease log in"', r1, "the tooltip: the reason and the last screen")
+        old = row_of(self.r["html"], 'data-sid="r-old"')
+        self.assertIn('<span class="sw-age"><span data-ago=', old, "no ask time: its age")
+        po = row_of(self.r["html"], 'data-po="p2"')
+        self.assertNotIn("sw-why", row_of(self.r["html"], 'data-sid="r5"'), "only Needs you has a third line")
+        self.assertIn(".sw-why {", INDEX)
+        self.assertTrue(po)
+
     def test_the_list_can_group_by_project(self):
         h = self.r["byProject"]
         self.assertEqual(re.findall(r'data-group="project" data-proj="(\w*)"', h), ["p1", "p2"])   # by name
@@ -296,7 +312,7 @@ class TaskSwitcher(unittest.TestCase):
         # Its PO first (selected: it is on screen), then Needs you, Running, Ready.
         self.assertEqual(re.findall(r'data-room="([\w-]+)"', motors), ["po-2", "r-old", "r9", "r5", "r6"])
         self.assertEqual(motors.count('data-po="p2"'), 1)                 # once, with its lozenge
-        self.assertIn('class="sw-row on" data-po="p2"', motors)
+        self.assertIn('class="sw-row needs on" data-po="p2"', motors)
         self.assertIn('<span class="sw-gname">Motors</span><span class="sw-n">4</span>', motors)   # tasks, not the PO
         # Unassigned holds the tasks in no project (rx), then Done today, both below.
         self.assertNotIn('data-proj=""', h)

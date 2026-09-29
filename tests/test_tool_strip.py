@@ -112,12 +112,16 @@ async function main() {
       for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 }, sessionId);
     };
     const ready = () => until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 1 && ALL_ROWS.some(r => r.roomId === ' + JSON.stringify(A.task) + ')', 30000);
+    // A desktop opens on the last conversation or the first Needs you entry
+    // (#135): each of these pages starts on none, as its checks expect.
+    await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensBootOpen = false;' }, sessionId);
     await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
     await ready();
+    await until('window.ensBooted === true', 30000);
     return { evalIn, until, shot, click, ready, sessionId, close: () => c.send('Target.closeTarget', { targetId }) };
   };
   const go = (p, proj, keep) => p.evalIn(`(() => { if (!${!!keep}) try { ['cd-tool-strip', 'cd-tool-open', 'cd-phone-tabs'].forEach(k => localStorage.removeItem(k)); } catch (e) {}
-    SELECTED_PROJECT = ${JSON.stringify(proj)}; PROJECT_TAB = 'tasks'; SB_DEST = ''; renderRows(); return 0; })()`);
+    SELECTED_PROJECT = ${JSON.stringify(proj)}; PROJECT_TAB = 'tasks'; renderRows(); return 0; })()`);
   const poReady = p => p.until('document.body.classList.contains("po-dock") && !!PD.dock && !!document.querySelector("#po-dock .dk-strip-btn") && !!document.querySelector("#po-panel iframe.po-session:not([hidden])")', 30000);
   const sid = `ALL_ROWS.find(r => r.roomId === ${JSON.stringify(A.task)}).sessionId`;
   const openTask = async (p) => {

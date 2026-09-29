@@ -93,7 +93,7 @@ async function main() {
   const tool = id => `#po-dock .dk-strip-btn[data-dk-auto="${id}"]`;
   const ready = () => until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 0', 30000);
   const toPo = (keep) => evalIn(`(() => { if (!${!!keep}) try { ['cd-tool-strip', 'cd-tool-open'].forEach(k => localStorage.removeItem(k)); } catch (e) {}
-    SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'tasks'; SB_DEST = ''; renderRows(); return 0; })()`);
+    SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'tasks'; renderRows(); return 0; })()`);
   const poReady = () => until('document.body.classList.contains("po-dock") && !!PD.dock && !!document.querySelector("#po-dock .dk-strip-btn") && !!document.querySelector("#po-panel iframe.po-session:not([hidden])")', 30000);
   const fileOn = '(() => { const f = PD.els.workspace.querySelector("iframe.wsp-frame.on"); try { return !!f && f.contentDocument.readyState === "complete" && f.contentWindow.location.pathname === "/fileview"; } catch (e) { return false; } })()';
   const openTool = async (id) => { if (await evalIn('PD.dock.flyOpen()') !== id) { await click(tool(id)); } await until(`PD.dock.flyOpen() === ${JSON.stringify(id)}`, 5000); await sleep(350); };

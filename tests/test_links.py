@@ -556,7 +556,7 @@ const PROJECTS = {
 };
 const projectById = id => PROJECTS[id];
 const projectTasks = pj => ((pj && pj.sessions) || []);  // no PO here; test_task_search covers it
-let PROJECT_TAB = 'changes', SB_DEST = '', SELECTED_PROJECT = 'pA';
+let PROJECT_TAB = 'changes', SELECTED_PROJECT = 'pA';
 // The hub: two repositories in project A's folder; `slow[root]` holds that
 // root's answers back, `hold` holds back a send.
 const sent = []; let hold = null; const slow = {};
@@ -995,7 +995,7 @@ class HubMachineActions(unittest.TestCase):
 
 REAL_REFRESH_JS = r"""
 let ALL_ROWS = [], DISPLAYED_ORDER = [], DISPLAYED_WORKFLOW = new Map(), SELECTED_SID = null;
-let _projTs = Date.now() + 1e9, PROJECTS = [], _projFailed = false, SELECTED_PROJECT = null, PROJ_GROUPBY = '';
+let _projTs = Date.now() + 1e9, PROJECTS = [], _projFailed = false, SELECTED_PROJECT = null;
 const selectInteracting = () => false, workflowOf = () => '', renderRows = () => {}, renderDetail = () => {};
 const toast = () => {}, esc = s => String(s);
 const VIEW = { matches: () => false, innerHTML: '' };

@@ -756,7 +756,7 @@ async function main() {
       }
       await p.close();
     }
-    // ---- index.html on a phone (500 px): the pill over an open task, on
+    // ---- index.html on a phone (500 px): the PO opened over an open task, on
     // Overview and on Workspace, goes to the PO's screen (layout A, #129: no
     // drawer); after the reload the PO's conversation is there again, at the
     // same place.
@@ -764,7 +764,7 @@ async function main() {
     for (const tab of ['tasks', 'workspace']) {
       const p = await page(A.base + '/', 500);
       await p.until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 0 && typeof ALL_ROWS !== "undefined" && ALL_ROWS.length > 0');
-      await p.evalIn('window.__mark = 9; SELECTED_PROJECT = PROJECTS.projects[0].id; PROJECT_TAB = ' + JSON.stringify(tab) + '; renderRows(); openDetail(ALL_ROWS.find(r => r.roomId === ' + JSON.stringify(A.room) + ').sessionId); poPillClick(); 0');
+      await p.evalIn('window.__mark = 9; SELECTED_PROJECT = PROJECTS.projects[0].id; PROJECT_TAB = ' + JSON.stringify(tab) + '; renderRows(); openDetail(ALL_ROWS.find(r => r.roomId === ' + JSON.stringify(A.room) + ').sessionId); openPoOf(PROJECTS.projects[0]); 0');
       await p.until(poDrawn, 15000);
       await sleep(600);   // the chat was behind the task: shown again, it goes to its end first
       await p.evalIn('(() => { const b = ' + poFrame + '.contentWindow.document.querySelector("#msgs"); b.scrollTop = Math.max(0, b.scrollHeight / 2); })(); 0');

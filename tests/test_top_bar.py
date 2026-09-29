@@ -5,13 +5,13 @@ pages, with a project that has a PO (Motors) and one that has none (Plain):
 
 * left to right: where you are (home, then on a desktop the breadcrumb: the
   project's name and its menu's caret, then PO), what you can do here (a
-  phone's PO screen's Panels), then search, the PO, the bell, the avatar and
-  Create;
+  phone's PO screen's Panels), then search, the avatar and Create (#135: no
+  PO pill, no bell);
 * a project page has no status row and no crumbs row; the project's kind and
   key are in its menu; a project without a PO keeps one row of tabs;
 * the Workspace and Changes of a project without a PO fit the screen, with no
   page scroll;
-* on a phone, home is one row; a project is two: search, PO, bell, avatar and
+* on a phone, home is one row; a project is two: search, avatar and
   Create, then back, the name and Panels; the PO screen's tabs start within
   130px of the top, and nothing is wider than the screen;
 * on a phone the Workspace shows one pane at a time: a file open shows the
@@ -72,7 +72,7 @@ class Cdp {
 }
 // What the bar shows, left to right, and where.
 const BAR = `(() => {
-  const ids = ['bar-back', 'bar-home', 'proj-go', 'proj-switch', 'bar-here', 'search', 'search-open', 'po-pill', 'notif-btn', 'me-btn', 'new-btn'];
+  const ids = ['bar-back', 'bar-home', 'proj-go', 'proj-switch', 'bar-here', 'search', 'search-open', 'me-btn', 'new-btn'];
   const on = ids.map(id => document.getElementById(id)).filter(e => { const b = e.getBoundingClientRect(); return b.width > 0 && b.height > 0 && getComputedStyle(e).visibility !== 'hidden'; });
   const at = e => { const b = e.getBoundingClientRect(); return { id: e.id, x: Math.round(b.left), y: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height) }; };
   const h = document.querySelector('header').getBoundingClientRect();
@@ -87,7 +87,7 @@ const WM = `(() => {
   const a = document.getElementById('bar-home');
   const vis = e => !!e && e.getBoundingClientRect().width > 0 && getComputedStyle(e).visibility !== 'hidden';
   const box = e => { const b = e.getBoundingClientRect(); return { x: Math.round(b.left), y: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height), r: Math.round(b.right), b: Math.round(b.bottom) }; };
-  const ctl = ['bar-back', 'bar-home', 'proj-go', 'proj-switch', 'bar-crumbs', 'bar-here', 'search', 'search-open', 'po-pill', 'usage-chip', 'notif-btn', 'me-btn', 'new-btn']
+  const ctl = ['bar-back', 'bar-home', 'proj-go', 'proj-switch', 'bar-crumbs', 'bar-here', 'search', 'search-open', 'usage-chip', 'me-btn', 'new-btn']
     .map(id => document.getElementById(id)).filter(vis).map(e => ({ id: e.id, ...box(e) }));
   const hit = [];
   for (let i = 0; i < ctl.length; i++) for (let j = i + 1; j < ctl.length; j++) {
@@ -99,21 +99,6 @@ const WM = `(() => {
     name: a.getAttribute('aria-label') || '', svgHidden: svg ? svg.getAttribute('aria-hidden') : null, imgAlt: img.getAttribute('alt'),
     right: Math.max(...ctl.map(r => r.r)), overlaps: hit, vw: innerWidth, scrollW: document.documentElement.scrollWidth,
     headerOver: hd.scrollWidth - hd.clientWidth };
-})()`;
-// The PO pill (#po-pill) against the plan chip (#usage-chip) beside it: the
-// rightmost edge actually painted (the button's own box has \`max-width\`,
-// but an overflowing child — the bug — paints past it while still reporting
-// its own true rect, so the button's rect alone would miss it) and the gap
-// to the chip's left edge. A negative gap is an overlap (#125's "1 ope|PLAN").
-const GAP = `(() => {
-  const pill = document.getElementById('po-pill'), chip = document.getElementById('usage-chip');
-  if (!pill || pill.hidden) return null;
-  const pr = pill.getBoundingClientRect();
-  const kids = [...pill.querySelectorAll('*')].map(e => e.getBoundingClientRect().right);
-  const paintedRight = Math.max(pr.right, ...kids);
-  const out = { pillLeft: pr.left, pillRight: pr.right, paintedRight, pillWidth: pr.width, text: pill.textContent };
-  if (chip && !chip.hidden) { const cr = chip.getBoundingClientRect(); out.chipLeft = cr.left; out.gap = cr.left - paintedRight; }
-  return out;
 })()`;
 const PANE = `(() => { const p = [...document.querySelectorAll('.wsp')].find(e => e.getBoundingClientRect().height); if (!p) return null;
   const vis = s => { const e = p.querySelector(s); return !!e && getComputedStyle(e).visibility === 'visible' && e.getBoundingClientRect().height > 0; };
@@ -140,7 +125,7 @@ async function main() {
     return { evalIn, until, shot, close: () => c.send('Target.closeTarget', { targetId }) };
   };
   const go = (p, proj, tab) => p.evalIn(`(() => { try { localStorage.removeItem('cd-po-dock'); localStorage.removeItem('cd-phone-tabs'); } catch (e) {}
-    SELECTED_PROJECT = ${JSON.stringify(proj)}; PROJECT_TAB = ${JSON.stringify(tab || 'tasks')}; SB_DEST = ''; renderRows(); return 0; })()`);
+    SELECTED_PROJECT = ${JSON.stringify(proj)}; PROJECT_TAB = ${JSON.stringify(tab || 'tasks')}; renderRows(); return 0; })()`);
   const poReady = p => p.until('document.body.classList.contains("po-dock") && !!PD.dock && (document.body.classList.contains("mid") || !!document.querySelector("#bar-here .pd-panels")) && [...document.querySelectorAll(".dk-head")].some(e => e.getBoundingClientRect().height)', 30000);
   const openDoc = async (p) => {
     await p.evalIn("pdReveal('workspace'); 0");
@@ -160,31 +145,6 @@ async function main() {
     }
     await p.evalIn('document.documentElement.dataset.theme = "light"; 0');
   };
-  // The pill vs. the plan chip, worst case: a long project name and a full
-  // three-part points count (the shape that overflowed in #125), in both
-  // themes. Mutates the live project/row objects; harmless, since every
-  // earlier `out.*` capture already froze its own snapshot by value.
-  const pillGap = async (p) => {
-    await p.evalIn(`(() => { const ctx = poContext(); const row = poRowOf(ctx);
-      row.points = { delivered: 8, planned: 3, open: 1 };
-      ctx.name = 'A Rather Long Ensemble Project Name';
-      renderPo();
-      // The plan chip needs a real usage source to show; this fixture has
-      // none, so show it with plausible content — only its position matters.
-      const chip = document.getElementById('usage-chip');
-      chip.hidden = false;
-      document.getElementById('usage-chip-body').innerHTML = '<span class="usage-chip-kind">C <b>15%</b></span>';
-      return 0; })()`);
-    await sleep(150);
-    const res = {};
-    for (const theme of ['light', 'dark']) {
-      await p.evalIn(`document.documentElement.dataset.theme = ${JSON.stringify(theme)}; 0`);
-      await sleep(100);
-      res[theme] = await p.evalIn(GAP);
-    }
-    await p.evalIn('document.documentElement.dataset.theme = "light"; 0');
-    return res;
-  };
   try {
     // ---- a laptop
     const p = await page(1440, 900);
@@ -195,7 +155,6 @@ async function main() {
     out.po = await p.evalIn(BAR);
     await wm(p, '1440-po');
     await p.shot('top-bar-1440-po');
-    out.pillGap1440 = await pillGap(p);
     await p.evalIn('document.getElementById("proj-switch").click(); 0');
     await p.until('!document.getElementById("proj-menu").hidden');
     out.menu = await p.evalIn('[...document.querySelectorAll("#proj-menu .pm-set")].map(b => b.className.replace("pm-item pm-set ", ""))');
@@ -211,12 +170,6 @@ async function main() {
       await p.shot('top-bar-1440-plain-' + tab);
     }
     await p.close();
-    // ---- a 16" Mac: the pill vs. the plan chip again, wider
-    const g = await page(1728, 1117);
-    await g.until('!!document.querySelector("header")');
-    await go(g, A.proj); await poReady(g); await sleep(400);
-    out.pillGap1728 = await pillGap(g);
-    await g.close();
     // ---- a small laptop: the wordmark goes home
     const s = await page(1024, 768);
     await s.until('!!document.querySelector("header")');
@@ -352,7 +305,7 @@ class TheTopBar(unittest.TestCase):
 
     def test_left_to_right_where_you_are_what_you_can_do_then_the_rest(self):
         self.assertEqual(self.order(self.got["po"]),
-                         ["bar-home", "proj-go", "proj-switch", "search", "po-pill", "notif-btn", "me-btn", "new-btn"])
+                         ["bar-home", "proj-go", "proj-switch", "search", "me-btn", "new-btn"])
         self.assertEqual(self.got["po"]["name"], "Motors")
         self.assertEqual(self.got["po"]["crumb"], "Motors", "the breadcrumb starts at the project")
         self.assertEqual(self.got["po"]["trail"], ["PO"], "then its PO's conversation")
@@ -360,17 +313,6 @@ class TheTopBar(unittest.TestCase):
         self.assertEqual(self.order(self.got["po768"]), self.order(self.got["po"]), "the same at 768")
         self.assertLessEqual(self.got["po768"]["header"], 50)
         self.assertLessEqual(self.got["po768"]["scrollW"], self.got["po768"]["vw"])
-
-    def test_the_po_pill_never_overlaps_the_plan_chip(self):
-        for width, key in ((1440, "pillGap1440"), (1728, "pillGap1728")):
-            data = self.got[key]
-            for theme in ("light", "dark"):
-                g = data[theme]
-                with self.subTest(width=width, theme=theme):
-                    self.assertIsNotNone(g, "the pill is shown")
-                    self.assertIn("chipLeft", g, "the plan chip is shown beside it")
-                    self.assertGreaterEqual(g["gap"], 0,
-                        f"painted right {g['paintedRight']} vs chip left {g['chipLeft']}: {g['text']!r}")
 
     def test_home_has_nothing_here(self):
         home = self.got["home"]
@@ -409,8 +351,8 @@ class TheTopBar(unittest.TestCase):
     def test_a_project_on_a_phone_is_two_rows_and_the_panels_start_high(self):
         g = self.got["phonePo"]
         at = {i["id"]: i for i in g["items"]}
-        row1 = {k for k in ("search-open", "po-pill", "notif-btn", "me-btn", "new-btn") if k in at}
-        self.assertEqual(row1, {"search-open", "po-pill", "notif-btn", "me-btn", "new-btn"})
+        row1 = {k for k in ("search-open", "me-btn", "new-btn") if k in at}
+        self.assertEqual(row1, {"search-open", "me-btn", "new-btn"})
         for k in ("bar-back", "proj-switch", "bar-here"):
             self.assertIn(k, at, k)
             self.assertGreater(at[k]["y"], at["new-btn"]["y"] + 30, f"{k} is on the second row")

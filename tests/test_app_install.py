@@ -313,7 +313,7 @@ const pageReady = 'typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.pro
 const poReady = 'document.body.classList.contains("po-dock") && !!PD.dock';
 const goPo = p => p.evalIn(`(() => { try { localStorage.removeItem('cd-po-dock'); } catch (e) {}
   pdNarrow = () => isPhone();   // the wide dock, kept for step 3's tool strip (a desktop's tabs: tests/test_middle.py)
-  SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'tasks'; SB_DEST = ''; renderRows(); return 0; })()`);
+  SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'tasks'; renderRows(); return 0; })()`);
 async function popBoard(c, p) {
   // The Board beside Points, then real clicks on its ⋯ › View Mode › Window (a window opens only from one).
   await p.evalIn('PD.dock.pin("board"); 0'); await sleep(500);
