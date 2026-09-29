@@ -9610,9 +9610,11 @@ function poMenuOpen(head, open) {
   if (open) { const first = menu.querySelector('.po-mi'); if (first) first.focus(); }
   // Closed: the header held while it was open is written now.
   else if (was && head._next && head._next !== head._html) {
-    const focus = focusKeyIn(head);
+    // Focus on an item goes back to ⋯ (the item's twin is in a closed menu).
+    const inMenu = menu.contains(document.activeElement), focus = focusKeyIn(head);
     head._html = head._next; head.innerHTML = head._next;
-    restoreFocus(head, focus);
+    if (inMenu) { const more = head.querySelector('[data-po="more"]'); if (more) more.focus(); }
+    else restoreFocus(head, focus);
   }
 }
 // The menu closes when you leave it: Tab or a click into the conversation
@@ -9621,6 +9623,30 @@ function poMenusClose() {
   for (const m of document.querySelectorAll('#po-panel .po-menu:not([hidden])')) poMenuOpen(m.closest('.po-head'), false);
 }
 window.addEventListener('blur', poMenusClose);
+// A control in the PO's header. It acts first, and only then do the menus
+// close: closing writes the header it held, which replaces the control.
+async function poHeadClick(act) {
+  const head = act.closest('.po-head'), what = act.dataset.po;
+  let job = null;
+  if (what === 'more') poMenuOpen(head, act.getAttribute('aria-expanded') !== 'true');
+  else if (what === 'close') poClosePeek();
+  else if (what === 'popout') openSessionWindow(head.dataset.room);
+  else if (what === 'open') openDetail(head.dataset.sid);
+  else if (what === 'switch') poSwitchFlow(head.dataset.proj);
+  else if (what === 'resume') {
+    const room = head.dataset.room;
+    act.disabled = true;
+    job = (async () => {
+      try {
+        await api('/api/room/resume', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ roomId: room }) });
+        toast('PO resumed', 2000, 'ok'); await refresh();
+      } catch (e) { toast('resume failed: ' + e.message, 4000, 'err'); act.disabled = false; }
+    })();
+  }
+  for (const h of document.querySelectorAll('#po-panel .po-head')) if (what !== 'more' || h !== head) poMenuOpen(h, false);
+  if (job) await job;
+}
 document.addEventListener('focusout', (ev) => {
   const more = ev.target.closest && ev.target.closest('#po-panel .po-more');
   if (more && ev.relatedTarget && !more.contains(ev.relatedTarget)) poMenuOpen(more.closest('.po-head'), false);
@@ -11070,26 +11096,8 @@ document.addEventListener('click', async (ev) => {
   if (pab) { pastList(pab.dataset.proj); return; }
   // A click anywhere but its button closes the PO's ⋯ menu (an item acts, then closes it).
   const act = ev.target.closest('#po-panel .po-head [data-po]');
-  for (const h of document.querySelectorAll('#po-panel .po-head')) {
-    if (!act || act.dataset.po !== 'more' || act.closest('.po-head') !== h) poMenuOpen(h, false);
-  }
-  if (act) {
-    const head = act.closest('.po-head'), what = act.dataset.po;
-    if (what === 'more') poMenuOpen(head, act.getAttribute('aria-expanded') !== 'true');
-    else if (what === 'close') poClosePeek();
-    else if (what === 'popout') openSessionWindow(head.dataset.room);
-    else if (what === 'open') openDetail(head.dataset.sid);
-    else if (what === 'switch') poSwitchFlow(head.dataset.proj);
-    else if (what === 'resume') {
-      act.disabled = true;
-      try {
-        await api('/api/room/resume', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ roomId: head.dataset.room }) });
-        toast('PO resumed', 2000, 'ok'); await refresh();
-      } catch (e) { toast('resume failed: ' + e.message, 4000, 'err'); act.disabled = false; }
-    }
-    return;
-  }
+  if (act) { await poHeadClick(act); return; }
+  poMenusClose();
   // A peek closes when you click beside it — but not in the task it sits
   // beside, the bar, or a dialog it opened.
   if (PO_PEEK && !ev.target.closest('#po-panel, #detail-panel, #modal, header, #notif-tray, #detail-panel-resize')) poClosePeek();

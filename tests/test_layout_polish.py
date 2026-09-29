@@ -146,8 +146,8 @@ class ThePoHeader(unittest.TestCase):
     def test_the_menu_opens_closes_and_holds_its_header(self):
         click = INDEX[INDEX.index("const act = ev.target.closest('#po-panel .po-head [data-po]');"):]
         click = click[:click.index("// A peek closes when you click beside it")]
-        self.assertIn("if (what === 'more') poMenuOpen(head, act.getAttribute('aria-expanded') !== 'true');", click)
-        self.assertIn("poMenuOpen(h, false)", click)                  # any other click closes it
+        self.assertIn("if (act) { await poHeadClick(act); return; }\n  poMenusClose();", click)   # any other click closes it
+        self.assertIn("if (what === 'more') poMenuOpen(head, act.getAttribute('aria-expanded') !== 'true');", INDEX)
         # (what it holds, and for whom: tests/test_po_needs_you.py runs it)
         self.assertIn("if (head._html !== hh && (!samePo || !head.querySelector('.po-menu:not([hidden])')))", INDEX)
         # Esc closes the menu before anything else, and gives its button focus back.

@@ -99,14 +99,15 @@ const el = () => ({ hidden: false, dataset: {}, kids: [], className: '',
 let head, frames, panel;
 // A header with the ⋯ menu in it (#126): writing it closes the menu.
 const menuHead = () => { const h = el(); h.written = 0; h.shown = '';
-  h.menu = { hidden: true, querySelector: () => null, closest: () => h };
+  h.menu = { hidden: true, querySelector: () => null, closest: () => h, contains: () => false };
   h.btn = { setAttribute(k, v) { h.expanded = v; } };
   Object.defineProperty(h, 'innerHTML', { set(v) { h.written++; h.shown = v; h.menu.hidden = true; } });
   h.querySelector = sel => (sel === '.po-menu' ? h.menu : sel === '[data-po="more"]' ? h.btn
     : sel === '.po-menu:not([hidden])' ? (h.menu.hidden ? null : h.menu) : null);
   return h; };
 const document = { getElementById: id => (id === 'po-panel' ? panel : null), createElement: el,
-  querySelectorAll: sel => (sel === '#po-panel .po-menu:not([hidden])' && head && head.menu && !head.menu.hidden ? [head.menu] : []),
+  querySelectorAll: sel => (sel === '#po-panel .po-head' && head && head.menu ? [head]
+    : sel === '#po-panel .po-menu:not([hidden])' && head && head.menu && !head.menu.hidden ? [head.menu] : []),
   body: { classList: { on: new Set(), toggle(c, v) { v ? this.on.add(c) : this.on.delete(c); } } } };
 const renderPoPill = () => {}, focusKeyIn = () => null, restoreFocus = () => {}, swRender = () => {};
 let HEAD_TAIL = '';
@@ -161,6 +162,21 @@ poMenuOpen(head, true); HEAD_TAIL = ' +1'; renderPo(); log.menu.push(mh());
 poMenuOpen(head, false); log.menu.push(mh());
 poMenuOpen(head, true); overview('p2')(); renderPo(); log.menu.push(mh());
 HEAD_TAIL = ' +2'; poMenuOpen(head, true); renderPo(); poMenusClose(); log.menu.push(mh());
+// A control clicked while a change is held acts on its PO before the header is
+// written; a real control is detached by that write (closest() finds nothing).
+const acted = [];
+const openSessionWindow = r => acted.push('popout:' + r), poSwitchFlow = p => acted.push('switch:' + p), poClosePeek = () => acted.push('close');
+const api = (u, o) => { acted.push('api:' + u + ' ' + o.body); return new Promise(() => {}); };
+const toast = () => {}, refresh = () => {};
+const control = po => { const w = head.written; return { dataset: { po }, disabled: false, getAttribute: () => 'false',
+  closest: () => (head.written === w ? head : null) }; };
+log.clicks = [];
+for (const po of ['popout', 'open', 'switch', 'resume']) {
+  open('po-blocked', () => { PHONE = false; overview('p1')(); });
+  head.dataset.sid = 'sid-p1'; poMenuOpen(head, true); HEAD_TAIL = ' +' + po; renderPo(); acted.length = 0; calls = [];
+  poHeadClick(control(po));
+  log.clicks.push([po, acted.concat(calls.filter(c => c.startsWith('openDetail'))), head.shown, head.menu.hidden]);
+}
 HEAD_TAIL = '';
 console.log(JSON.stringify(log));
 """
@@ -174,7 +190,7 @@ class PoNeedsYouPage(unittest.TestCase):
         heads = ("function sinceClock(", "function attnWhen(",
                  "function attentionItems(", "function notifItemHtml(", "function needsYouHtml(",
                  "function openAttentionItem(", "function openPoOf(", "function poRowOf(",
-                 "function projectOfRoom(", "function poDockProject(", "function poSplitProject(", "function poContext(", "function renderPo(", "function poMenuOpen(", "function poMenusClose(", "function poPillClick(", "function poMidGo(", "function midLeave(")
+                 "function projectOfRoom(", "function poDockProject(", "function poSplitProject(", "function poContext(", "function renderPo(", "function poMenuOpen(", "function poMenusClose(", "async function poHeadClick(", "function poPillClick(", "function poMidGo(", "function midLeave(")
         src = "\n".join([INDEX[i:INDEX.index("// ---- Task search: end", i)]] + [fn(INDEX, h) for h in heads])
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "po_needs_you.cjs"
@@ -274,6 +290,14 @@ class PoNeedsYouPage(unittest.TestCase):
         ])
         self.assertIn("window.addEventListener('blur', poMenusClose);", INDEX)
         self.assertIn("if (more && ev.relatedTarget && !more.contains(ev.relatedTarget)) poMenuOpen(more.closest('.po-head'), false);", INDEX)
+
+    def test_a_control_acts_before_the_held_header_is_written(self):
+        self.assertEqual(self.r["clicks"], [
+            ["popout", ["popout:po-blocked"], "p1:po-blocked +popout", True],
+            ["open", ["openDetail:sid-p1"], "p1:po-blocked +open", True],
+            ["switch", ["switch:p1"], "p1:po-blocked +switch", True],
+            ["resume", ['api:/api/room/resume {"roomId":"po-blocked"}'], "p1:po-blocked +resume", True],
+        ])
 
     def test_a_hidden_po_item_opens_nothing(self):
         self.assertEqual(self.r["openHidden"]["calls"], [])
