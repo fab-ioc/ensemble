@@ -1614,8 +1614,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   /* The switches between the tree and the file: a phone's only (MOBILE_MQ). */
   .wsp-btn.wsp-files, .wsp-btn.wsp-tofile { display: none; }
   /* A viewer showing says visibility: visible, which beats a hidden ancestor:
-     a panel off its tab (the Dock's .dk-off) hides its viewers too. */
-  .dk-panel.dk-off .wsp-frame.on { visibility: hidden; }
+     a panel off its tab (the Dock's .dk-off) hides its viewers too, and so
+     does a strip tool that is not open (a closed .dk-flyout is laid out
+     beside the middle, hidden only by visibility: #132). */
+  .dk-panel.dk-off .wsp-frame.on, .dk-flyout:not(.open) .wsp-frame.on { visibility: hidden; }
   .wsp-frames { position: relative; flex: 1; min-height: 0; }
   .wsp-gone p { margin: 0 0 var(--s-200); }
   .wsp-gone-path { font-family: var(--font-mono); font-size: var(--fs-200); color: var(--fg-muted); overflow-wrap: anywhere; }
@@ -2795,6 +2797,20 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     cursor: pointer; border-radius: 3px;
   }
   #update-banner-dismiss:hover { color: var(--fg); background: var(--hover); }
+  /* The panels (the Dock) not loading (pdBanner): a warning, with Reload. */
+  #dock-banner {
+    display: flex; align-items: center; gap: 12px; padding: 8px 16px;
+    background: var(--c-warning-bg); border-bottom: 1px solid var(--border);
+    color: var(--fg); font-size: 13px; position: sticky; top: 0; z-index: 100;
+  }
+  #dock-banner[hidden] { display: none; }
+  #dock-banner-text { flex: 1; }
+  #dock-banner-go {
+    background: var(--surface); color: var(--fg); border: 1px solid var(--border-strong); padding: 4px 14px; border-radius: 5px;
+    cursor: pointer; font: inherit; font-weight: 600; font-size: 12px;
+  }
+  #dock-banner-go:hover { background: var(--hover); }
+  #dock-banner-go:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
   /* Full-screen overlay shown while update is in progress */
   #update-overlay {
     position: fixed; inset: 0; z-index: 200;
@@ -3126,7 +3142,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .ptabs button, .viewsw button, .fbtn, .fchip, .colchip, .colall, .proj .newtask,
     .newproj-btn, .rm-btn, .po-btn, .dp-tab, .dp-popout, .dp-actions button,
     .dp-actions select, .scopebar select, .chp-repo, .srow, .wse, .chf,
-    .dest-row, .dl-cbtns button, #usage-banner-dismiss, #update-banner-dismiss, #update-banner-go,
+    .dest-row, .dl-cbtns button, #usage-banner-dismiss, #update-banner-dismiss, #update-banner-go, #dock-banner-go,
     .seg button {
       min-height: var(--touch-min);
     }
@@ -3478,6 +3494,10 @@ window.DOC_LISTENERS_PAUSED = false;
   <span id="update-banner-text"></span>
   <button id="update-banner-go">Update now</button>
   <button id="update-banner-dismiss" title="Dismiss for this session" aria-label="Dismiss">×</button>
+</div>
+<div id="dock-banner" role="status" hidden>
+  <span id="dock-banner-text"></span>
+  <button id="dock-banner-go" type="button">Reload</button>
 </div>
 <div id="usage-banner" hidden>
   <span id="usage-banner-text"></span>
@@ -10096,13 +10116,26 @@ function poDockProject() {
   return pj && poRowOf(pj) ? pj : null;
 }
 // The library and its stylesheet (read as text: a hub not restarted since
-// serves .css as a download), once.
+// serves .css as a download), once. A try that fails (a hub restarting, a
+// dropped connection) is tried again after PD_RETRY; each failure goes to the
+// hub's log. Until the last one the page waits as it does for the first load;
+// after it the page says so above the bar, with Reload, and a project's
+// Overview is the board again (#132: it used to fall back silently).
+const PD_RETRY = window.PD_RETRY_MS || [1000, 3000, 10000, 30000];   // (a test shortens it)
 function pdLoad() {
   if (PD.loading) return PD.loading;
-  const text = u => fetch(u, { credentials: 'same-origin' }).then(r => { if (!r.ok) throw new Error(u + ': ' + r.status); return r.text(); });
-  window.DOC_LISTENERS_PAUSED = true;   // the library's module code listens on its own account
-  const lib = import('/static/dock/src/index.js').finally(() => { window.DOC_LISTENERS_PAUSED = false; });
-  PD.loading = Promise.all([lib, text('/static/dock/css/dock.css')])
+  const n = PD.tries = (PD.tries || 0) + 1;
+  const text = u => fetch(u, { credentials: 'same-origin', cache: n > 1 ? 'reload' : 'default' }).then(r => { if (!r.ok) throw new Error(u + ': ' + r.status); return r.text(); });
+  // The browser keeps a module that failed, and every module importing it,
+  // failed for the page's life: a new try asks under a new folder, which the
+  // hub serves as the same (/static/dock@N/), or, from a hub that does not
+  // yet, under a new query (enough when the first module was the one lost).
+  const at = n === 1 ? Promise.resolve('/static/dock/src/index.js')
+    : fetch(`/static/dock@${n}/src/index.js`, { credentials: 'same-origin', cache: 'reload' })
+      .then(r => r.ok, () => false).then(ok => ok ? `/static/dock@${n}/src/index.js` : `/static/dock/src/index.js?try=${n}`);
+  // The library's module code listens on its own account.
+  const lib = at.then(u => { window.DOC_LISTENERS_PAUSED = true; return import(u); }).finally(() => { window.DOC_LISTENERS_PAUSED = false; });
+  PD.loading = Promise.all([lib, text('/static/dock/css/dock.css' + (n > 1 ? '?try=' + n : ''))])
     .then(([lib, css]) => {
       const s = document.createElement('style');
       s.id = 'dock-css';
@@ -10147,9 +10180,38 @@ function pdLoad() {
         };
       });
     })
-    .catch(e => { PD.failed = (e && e.message) || 'failed'; console.warn('[po-dock] the panels could not load:', PD.failed); })
+    .then(() => { if (n > 1) pdLog(`the panels loaded on try ${n}`); pdBanner(); })
+    .catch(e => {
+      const why = (e && e.message) || String(e) || 'failed';
+      const wait = PD_RETRY[n - 1];
+      pdLog(`the panels did not load (try ${n} of ${PD_RETRY.length + 1}): ${why}` + (wait ? `; trying again in ${wait / 1000}s` : '; gave up'));
+      if (wait) {
+        PD.retryAt = Date.now() + wait;
+        PD.retryTimer = setTimeout(() => { PD.loading = null; PD.retryAt = 0; pdLoad(); }, wait);
+      } else PD.failed = why;
+      pdBanner();
+    })
     .then(() => renderRows());
   return PD.loading;
+}
+// A line in the hub's log (a page's console is seen by nobody).
+function pdLog(msg) {
+  console.warn('[po-dock] ' + msg);
+  try {
+    fetch('/api/page-log', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ what: 'po-dock', msg }) }).catch(() => {});
+  } catch (e) {}
+}
+// The panels not loading, said above the bar: while it tries again, and once
+// it has given up (the board and the PO's drawer stand in for them).
+function pdBanner() {
+  const b = document.getElementById('dock-banner');
+  if (!b) return;
+  const t = b.querySelector('#dock-banner-text');
+  if (PD.lib) { b.hidden = true; return; }
+  if (PD.failed) { t.textContent = 'The panels could not load, so the project shows its tabs instead. Reload to try again.'; b.hidden = false; return; }
+  if (PD.retryAt) { t.textContent = `The panels did not load: trying again (try ${PD.tries + 1} of ${PD_RETRY.length + 1}).`; b.hidden = false; return; }
+  b.hidden = true;
 }
 // A panel's own window shows the app's icon in its tab and title bar, as this
 // page does (the library's page has none).
@@ -14644,7 +14706,7 @@ queueMicrotask(markAppearance);
 // bar reads --top-h, so --banner-h has to say how much room they take right
 // now. A ResizeObserver sees a banner appear, grow or hide.
 (function trackBanners() {
-  const ids = ['update-banner', 'usage-banner'];
+  const ids = ['update-banner', 'dock-banner', 'usage-banner'];
   const apply = () => {
     const h = ids.reduce((sum, id) => {
       const el = document.getElementById(id);
@@ -16397,6 +16459,7 @@ window.ensUpdPlace = () => ({
   // Update banner: initial check + periodic. RUNTIME_CFG.pid must be set
   // before the first check so triggerUpdate can detect the new pid later.
   document.getElementById('update-banner-go')?.addEventListener('click', triggerUpdate);
+  document.getElementById('dock-banner-go')?.addEventListener('click', () => ensUpd.reload());
   document.getElementById('update-banner-dismiss')?.addEventListener('click', () => {
     UPDATE_DISMISSED = true;
     document.getElementById('update-banner').hidden = true;

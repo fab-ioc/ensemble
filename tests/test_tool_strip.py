@@ -1,4 +1,4 @@
-"""Layout A step 3 (#125): the tool strip on the right (Dock v0.4.0).
+"""Layout A step 3 (#125): the tool strip on the right (Dock v0.4.2).
 
 In headless Chrome over CDP, against a hub in a thread serving the pages, with
 a project that has a PO (Motors), a task in it with a folder of its own, and a
@@ -333,8 +333,8 @@ class TheWiring(unittest.TestCase):
         self.assertIn("const PD_KEYS = { desk: 'cd-tool-strip', phone: 'cd-phone-tabs' };", INDEX)
         self.assertIn("function pdNarrow() { return isPhone(); }", INDEX)
 
-    def test_the_vendored_library_is_v0_4_0(self):
-        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.4\.0 ")
+    def test_the_vendored_library_is_v0_4_2(self):
+        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.4\.2 ")
 
 
 @unittest.skipUnless(NODE and CHROME, "needs Node and Chrome")
