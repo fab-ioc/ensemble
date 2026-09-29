@@ -1614,8 +1614,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   /* The switches between the tree and the file: a phone's only (MOBILE_MQ). */
   .wsp-btn.wsp-files, .wsp-btn.wsp-tofile { display: none; }
   /* A viewer showing says visibility: visible, which beats a hidden ancestor:
-     a panel off its tab (the Dock's .dk-off) hides its viewers too. */
-  .dk-panel.dk-off .wsp-frame.on { visibility: hidden; }
+     a panel off its tab (the Dock's .dk-off) hides its viewers too, and so
+     does a strip tool that is not open (a closed .dk-flyout is laid out
+     beside the middle, hidden only by visibility: #132). */
+  .dk-panel.dk-off .wsp-frame.on, .dk-flyout:not(.open) .wsp-frame.on { visibility: hidden; }
   .wsp-frames { position: relative; flex: 1; min-height: 0; }
   .wsp-gone p { margin: 0 0 var(--s-200); }
   .wsp-gone-path { font-family: var(--font-mono); font-size: var(--fs-200); color: var(--fg-muted); overflow-wrap: anywhere; }
