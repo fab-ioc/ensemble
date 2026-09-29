@@ -2296,23 +2296,27 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #list-dock .dk-float, #list-dock .dk-outnote, #list-dock .dk-note, #list-dock .dk-empty { pointer-events: auto; }
   #list-dock .dk-stack:has(> .dk-body > #ld-page) > .dk-head { display: none; }
   #ld-page { background: transparent; }
+  /* The notice that offers the list back after a reload is its only way back
+     (a desktop has no Panels menu): it cannot be waved away. */
+  #list-dock .dk-outnote-x { display: none; }
   /* The middle keeps its 360px: a list slid out beside it gives way. */
   #list-dock .dk-main { min-width: 360px; }
-  #list-dock .dk-flyout.dk-fly-beside { max-width: calc(100% - var(--dk-strip) - 360px); }
+  #list-dock .dk-flyout.dk-fly-beside:is(.dk-fly-left, .dk-fly-right) { max-width: calc(100% - var(--dk-strip) - 360px); }
+  #list-dock .dk-flyout.dk-fly-beside:is(.dk-fly-top, .dk-fly-bottom) { max-height: calc(100% - var(--dk-strip) - 200px); }
   /* The list in its panel: it fills it (not fixed at the left any more). */
   #switcher.dk-panel { position: absolute; inset: 0; width: auto; top: 0; z-index: auto; border-right: 0; }
   /* Docked, and slid out, the list's title bar is its own head's row: the
      dock's ⋯ and − at its right end, over the free room there (the tab
      would take the width the filter needs; Move To moves it instead of a
-     drag). Minimised, floating or in its own window the title bar is the
-     dock's, whole. */
-  #list-dock .dk-main .dk-stack:not(.dk-min):has(> .dk-body > #switcher) { position: relative; }
-  #list-dock .dk-main .dk-stack:not(.dk-min):has(> .dk-body > #switcher) > .dk-head,
+     drag). Minimised, maximised, floating or in its own window the title
+     bar is the dock's, whole. */
+  #list-dock .dk-main .dk-stack:not(.dk-min):not(.dk-max):has(> .dk-body > #switcher) { position: relative; }
+  #list-dock .dk-main .dk-stack:not(.dk-min):not(.dk-max):has(> .dk-body > #switcher) > .dk-head,
   #list-dock .dk-flyout:has(#switcher) > .dk-head {
     position: absolute; top: var(--s-200); right: var(--s-100); z-index: 2; height: 32px; flex-basis: auto;
     background: transparent; border: 0;
   }
-  #list-dock .dk-main .dk-stack:not(.dk-min):has(> .dk-body > #switcher) > .dk-head > .dk-tabs,
+  #list-dock .dk-main .dk-stack:not(.dk-min):not(.dk-max):has(> .dk-body > #switcher) > .dk-head > .dk-tabs,
   #list-dock .dk-flyout:has(#switcher) > .dk-head > .dk-tabs { display: none; }
   body.ld-on #switcher:not(.ld-own-head) .sw-head { padding-right: 64px; }
   /* The page follows the stand-in on its other sides too (Move To). */
@@ -10279,6 +10283,10 @@ function poDockProject() {
 // after it the page says so above the bar, with Reload, and a project's
 // Overview is the board again (#132: it used to fall back silently).
 const PD_RETRY = window.PD_RETRY_MS || [1000, 3000, 10000, 30000];   // (a test shortens it)
+// The page's one key for its docks' windows (see onEveryWindow in pdLoad): a
+// dock made later does not change it, a reload does.
+var PD_POP_KEY = '';
+function pdKeepPopKey() { window.__dockPopKey = PD_POP_KEY = PD_POP_KEY || window.__dockPopKey; }
 function pdLoad() {
   if (PD.loading) return PD.loading;
   const n = PD.tries = (PD.tries || 0) + 1;
@@ -10310,8 +10318,9 @@ function pdLoad() {
         // Two docks share this page (the PO screen's and the list's, #137),
         // and Dock v0.5.1 keeps one key on it for its windows to check they
         // are still this page's: the dock made last wrote its own, and the
-        // other's windows would take themselves for orphans and close. Every
-        // window gets the page's key (an ask for Dock: one key per page).
+        // other's windows would take themselves for orphans and close. The
+        // page keeps the first key made (pdKeepPopKey, after each createDock)
+        // and every window gets it (an ask for Dock: one key per page).
         try { w.__dockPopKey = window.__dockPopKey; } catch (e) {}
         const d = w.document, skip = new Set(['visibilitychange']);
         // The window's page is the library's popout.html, served beside it:
@@ -10453,6 +10462,7 @@ function pdEnsure() {
     modalSelector: '[role="dialog"], dialog, .dk-help-pop, .dcm',
     text: { empty: 'Every panel is on a strip at an edge or hidden: the Panels menu above shows them.' },
   }); } finally { window.DOC_LISTENERS_PAUSED = false; }
+  pdKeepPopKey();
   PD.dock.onChange(() => { pdKeepMiddle(); pdToolsFit(); pdPlaceChat(); barCrumbs(); });
   pdToolsFit();
   PD.dock.onShown(id => pdShown(id));
@@ -14167,13 +14177,14 @@ $('#sw-list').addEventListener('click', (ev) => {
 // list is home, #129) there is no list dock: the list is the fixed column.
 const LD_KEY = 'cd-list-dock';
 const LD_W = 300;   // --sw-w: the column's width until it is resized
+const LD_H = 240;   // its height at the top or the bottom, until it is resized
 const LD_ROOT = document.getElementById('list-dock');
 const LD_PAGE = document.getElementById('ld-page');
 // The list's place outside the dock, to go back to.
 const LD_HOME = { parent: SW_EL.parentNode, next: SW_EL.nextElementSibling };
 const LD_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
   + '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M12 9h6M12 13h6M12 17h4"/></svg>';
-var LD = { dock: null, insets: '', ro: null };   // var: swRender may run before this line
+var LD = { dock: null, insets: '', ro: null, dir: '', size: { row: LD_W, col: LD_H } };   // var: swRender may run before this line
 function ldWanted() { return !!PD.lib && !PD.failed && !isPhone(); }
 function ldDefaultLayout(L) {
   return { root: L.split('row', [L.stack(['list'], { size: LD_W }), L.stack(['page'])]) };
@@ -14213,10 +14224,12 @@ function ldMake() {
       modalSelector: '[role="dialog"], dialog, .dk-help-pop, .dcm',
     });
   } finally { window.DOC_LISTENERS_PAUSED = false; }
+  pdKeepPopKey();
   document.body.classList.add('ld-on');
-  LD.dock.onChange(() => { ldKeepPage(); ldInsets(); });
+  LD.dock.onChange(() => { ldKeepPage(); ldAxisSize(); ldInsets(); });
   if (window.ResizeObserver) (LD.ro = new ResizeObserver(() => ldInsets())).observe(LD_PAGE);
   ldKeepPage();
+  ldAxisSize();
   ldInsets();
 }
 // Back to the fixed column (a phone, or the library gone): its windows close
@@ -14244,6 +14257,23 @@ function ldKeepPage() {
   const st = d && find(d.layout().root);
   if (st && st.panels.includes('list')) { d.dockEdge('list', 'left'); d.activate('page'); }
 }
+// Its size on each axis: moved from a side to the top (or back), Dock v0.5.1
+// gives it its old extent across (the column's whole height as the band's; an
+// ask for Dock, ENSEMBLE-NEEDS item 10). It gets the size it last had that way
+// (a column's width, a band's height), kept with the layout.
+function ldAxisSize() {
+  const d = LD.dock;
+  const find = (n, up) => !n ? null : n.t === 'stack' ? (n.panels.includes('list') && up ? [up, n] : null) : (n.kids || []).map(k => find(k, n)).find(Boolean) || null;
+  const at = d && find(d.layout().root, null);
+  if (!at) { LD.dir = ''; return; }
+  const [sp, st] = at;
+  if (LD.dir && sp.dir !== LD.dir && LD.size[sp.dir]) {
+    st.size = LD.size[sp.dir];
+    d.render();
+    try { localStorage.setItem(LD_KEY, JSON.stringify(d.layout())); } catch (e) {}
+  } else if (st.size > 0) LD.size[sp.dir] = st.size;
+  LD.dir = sp.dir;
+}
 // The page's insets: where the stand-in is inside the dock. Docked at the left
 // that is the list's width and its splitter; on a strip, the strip (and the
 // list slid out beside the page); floating, in its window or hidden, nothing.
@@ -14256,7 +14286,7 @@ function ldInsets() {
   const v = on ? [px(r.left - R.left), px(R.right - r.right), px(r.top - R.top), px(R.bottom - r.bottom)] : ['0px', '0px', '0px', '0px'];
   // The list's own head makes room for the dock's ⋯ and − where the dock's
   // title bar lies over it (docked, not minimised, or slid out).
-  const over = SW_EL.ownerDocument === document && !!SW_EL.closest('.dk-main .dk-stack:not(.dk-min), .dk-flyout');
+  const over = SW_EL.ownerDocument === document && !!SW_EL.closest('.dk-main .dk-stack:not(.dk-min):not(.dk-max), .dk-flyout');
   SW_EL.classList.toggle('ld-own-head', !over);
   const sig = v.join(' ');
   if (sig === LD.insets) return;

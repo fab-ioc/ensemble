@@ -207,6 +207,25 @@ async function main() {
     await p.evalIn('if (SELECTED_SID) closeDetail(); 0'); await sleep(300);
     await menuPick(p, HEAD, 'side', 'side:left');
     out.left = await p.evalIn(GEOM);
+    // Maximise: the list takes the dock's whole area; Restore: its column again.
+    const maxBy = async () => { await p.click(`${HEAD} [data-dk-act="menu"]`); await sleep(200); await p.click('.dk-menu.dk-options [data-dk-menu="max"]'); await sleep(500); };
+    await maxBy();
+    out.max = await p.evalIn(GEOM);
+    await p.shot('list-1440-max');
+    await maxBy();
+    out.restored = await p.evalIn(GEOM);
+    // At the top and at the bottom, unpinned: slid out, it spans the width.
+    for (const side of ['top', 'bottom']) {
+      await menuPick(p, HEAD, 'side', 'side:' + side);
+      out['at_' + side] = await p.evalIn(GEOM);
+      await menuPick(p, HEAD, 'mode', 'mode:unpinned');
+      if (!(await p.evalIn('LD.dock.flyOpen()'))) { await p.click('#list-dock .dk-strip-btn[data-dk-auto="list"]'); await sleep(500); }
+      out['fly_' + side] = await p.evalIn(GEOM);
+      await p.shot('list-1440-unpinned-' + side);
+      await menuPick(p, FLY, 'mode', 'mode:pinned');
+      await menuPick(p, HEAD, 'side', 'side:left');
+    }
+    out.leftAgain = await p.evalIn(GEOM);
     // Wider by the keys on its splitter (16px a press), kept over a reload.
     await p.evalIn(`document.querySelector('#list-dock .dk-bar').focus(); 0`);
     await p.key('ArrowRight', 'ArrowRight'); await p.key('ArrowRight', 'ArrowRight'); await sleep(400);
@@ -225,6 +244,25 @@ async function main() {
     await c.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, p.sessionId); await sleep(800);
     out.toDesk = await p.evalIn(GEOM);
     await p.close();
+    // A page with no dock for the conversation yet: the list goes into its
+    // window, a row clicked there makes that dock; the window stays the list's.
+    const h = await page(1440, 900);
+    await go(h, ''); await h.until('!!LD.dock && !PD.dock && !!SW_EL.querySelector(".sw-row")', 30000); await sleep(400);
+    await h.evalIn('LD.dock.popOut("list"); 0');
+    await h.until('!!LD.dock.popWindow("list") && SW_EL.ownerDocument !== document && !!SW_EL.querySelector(".sw-row")', 15000); await sleep(600);
+    await h.evalIn(`SW_EL.querySelector(${JSON.stringify(row)}).click(); 0`);
+    await h.until('!!PD.dock && !!SELECTED_SID', 15000).catch(() => null); await sleep(1500);
+    out.popThenDock = await h.evalIn(`(() => { const w = LD.dock.popWindow('list'); return { pd: !!PD.dock, sid: !!SELECTED_SID, out: LD.dock.isOut('list'), open: !!w && !w.closed,
+      there: SW_EL.ownerDocument !== document, sameKey: !!w && w.__dockPopKey === window.__dockPopKey }; })()`);
+    // A reload leaves it out, its window gone: the notice offering it back
+    // cannot be waved away, and brings it back.
+    await h.evalIn('location.reload(); 0'); await sleep(1500); await h.ready();
+    await h.until('!!LD.dock && !!document.querySelector("#list-dock .dk-outnote")', 20000).catch(() => null); await sleep(400);
+    out.note = await h.evalIn(`(() => { const n = document.querySelector('#list-dock .dk-outnote'); const x = n && n.querySelector('.dk-outnote-x');
+      return { out: LD.dock.isOut('list'), note: !!n, back: !!(n && n.querySelector('[data-dk-pop="back"]')), x: !!x && getComputedStyle(x).display !== 'none' }; })()`);
+    if (out.note.back) { await h.click('#list-dock .dk-outnote [data-dk-pop="back"]'); await sleep(600); }
+    out.noteBack = await h.evalIn(GEOM);
+    await h.close();
     // A phone: the list is home.
     const q = await page(430, 932, true);
     await q.evalIn(`(() => { SELECTED_PROJECT = ''; SB_DEST = ''; renderRows(); return 0; })()`);
@@ -402,6 +440,38 @@ class TheListDock(unittest.TestCase):
         self.opened(self.got["rightOpens"], "at the right")
         l = self.got["left"]
         self.assertEqual((l["side"], l["listW"], l["listR"]), ("left", "305px", "0px"))
+
+    def test_maximise_and_restore(self):
+        m = self.got["max"]
+        self.assertEqual(m["dock"] and m["mode"], "pinned")
+        self.assertEqual((m["list"]["x"], m["list"]["w"]), (0, m["vw"]), "the list takes the dock's whole width")
+        self.assertGreaterEqual(m["menuBtn"]["x"], 0)
+        r = self.got["restored"]
+        self.assertEqual((r["list"]["x"], r["list"]["w"], r["listW"]), (0, 300, "305px"))
+
+    def test_unpinned_at_the_top_and_bottom_spans_the_width(self):
+        for side in ("top", "bottom"):
+            g = self.got["fly_" + side]
+            a = self.got["at_" + side]
+            self.assertEqual((a["side"], a["mode"], a["list"]["h"], a["list"]["w"]), (side, "pinned", 240, a["vw"]), f"{side}: a 240px band")
+            self.assertEqual((g["side"], g["mode"], g["fly"]), (side, "unpinned", "list"), side)
+            self.assertGreaterEqual(g["list"]["w"], g["vw"] - 4, f"{side}: the whole width, inside the flyout's borders")
+        l = self.got["leftAgain"]
+        self.assertEqual((l["side"], l["mode"], l["listW"]), ("left", "pinned", "305px"), "back at the left: its column's width")
+
+    def test_a_window_stays_the_lists_when_the_other_dock_is_made(self):
+        g = self.got["popThenDock"]
+        self.assertTrue(g["pd"] and g["sid"], g)
+        self.assertTrue(g["out"] and g["open"] and g["there"], g)
+        self.assertTrue(g["sameKey"], "the window has the page's key")
+
+    def test_the_notice_offering_the_list_back_stays(self):
+        n = self.got["note"]
+        self.assertTrue(n["out"] and n["note"] and n["back"], n)
+        self.assertFalse(n["x"], "no × on it: it is the list's only way back")
+        b = self.got["noteBack"]
+        self.assertTrue(b["here"] and not b["out"], b)
+        self.assertGreater(b["list"]["w"], 0)
 
     def test_width_and_mode_survive_a_reload(self):
         self.assertEqual(self.got["wider"]["list"]["w"], 332, "two presses of → on its splitter")

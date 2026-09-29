@@ -643,9 +643,10 @@ restored chat's iframe slides under the pointer: for 500 ms after that click the
 let clicks through, `pdDblGuard`). The layout is remembered in the browser (`cd-po-dock`; a phone's apart, `cd-phone-tabs`: a new key
 since #129, as the older one had Spec hidden), with **Reset layout** in the Panels menu. The
 library is never edited in this repository: a need goes to the Dock project's `ENSEMBLE-NEEDS.md`.
-The page has two docks (this one and the task list's, #137): every pop-out window is given the page's
-`__dockPopKey` (`pdLoad`'s `onEveryWindow`), else the dock made last would orphan the other's windows
-(Dock's ENSEMBLE-NEEDS item 9).
+The page has two docks (this one and the task list's, #137): the page keeps the first key a dock
+made (`pdKeepPopKey`, after each `createDock`) and every pop-out window is given it (`pdLoad`'s
+`onEveryWindow`), else the dock made last would orphan the other's windows (Dock's ENSEMBLE-NEEDS
+item 9).
 
 - **The default** (`pdDefaultLayout`, measured in `tests/test_po_dock.py` and
   `tests/test_tool_strip.py`): on a desktop, at every width, the conversation alone and every tool
@@ -805,8 +806,12 @@ self-contained component, so a later layout can host it elsewhere.
   (Dock Pinned, Dock Unpinned: a 44px left strip with its icon, sliding out beside the middle,
   Undock: over it, Float, Window), Move To (the four sides), Maximise, and − (minimise). Docked and
   slid out, ⋯ and − sit at the right end of its own head row (no tab: the filter keeps its width;
-  Move To replaces the drag), so pinned it looks as before; floating or minimised it has Dock's full
-  title bar. Nothing hides it for good (`can`: no `hide`; a desktop has no Panels menu). **The page
+  Move To replaces the drag), so pinned it looks as before; floating, minimised or maximised it has
+  Dock's full title bar. At the top or the bottom it is a 240px band, and each axis keeps its own
+  size (`ldAxisSize`: Dock would carry the column's height over; ENSEMBLE-NEEDS item 10); slid out
+  there it spans the width (only a side flyout leaves the middle its 360px). Nothing hides it for
+  good (`can`: no `hide`; a desktop has no Panels menu), and the notice that offers it back after
+  a reload has no ×, being its only way back. **The page
   follows the stand-in** (`ldInsets` → `--list-w`, `--list-r`, `--list-t`, `--list-b` on `body`):
   it takes the room the list leaves, unpinned, floating or in its window. Slid out, the list goes
   back on a click elsewhere, in a conversation's frame (`pdChatClicked`) or once a row is opened. In
