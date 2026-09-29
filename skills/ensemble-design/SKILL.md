@@ -724,18 +724,23 @@ self-contained component, so a later layout can host it elsewhere.
 - **Its head** is one control, the project filter (`#sw-proj`, a native `select`: "All projects",
   then every registered project by name). The choice is remembered per browser
   (`cd-switcher-project`), and every group follows it.
-- **Five groups, in this order:** **Needs you** (the bell's items less finished reports, oldest
+- **Six groups, in this order:** **Needs you** (the bell's items less finished reports, oldest
   first: the same set as the bell, never a second opinion), **Running** (live tasks not waiting for
   a check, by project and number, so a row does not jump each time its agent takes a turn),
   **Ready for your check** (In review, reported finished, or paused part way; not Done; oldest
-  first), **Projects** (each project's PO, latest news first) and **Done today** (Done and last
-  changed since midnight), folded in a `details`. Group heads are `--fs-100` capitals in
+  first), **Projects** (each project's PO, latest news first), **Unassigned** (#128: every session
+  in no project, the person's own terminal sessions and tasks started without one, newest first;
+  the newest 10, then a quiet "Show all (N)" line, `.sw-more`; left out while one project is
+  chosen) and **Done today** (Done and last changed since midnight). Unassigned and Done today
+  are folded in a `details`. The name is the one the home card, the project menu and the Move to
+  project picker already use for the same sessions. Group heads are `--fs-100` capitals in
   `--fg-subtle` with the count in `--fg-muted`; an empty group says so in one muted line.
 - **A row is two lines.** One: the unread dot's 8px slot, the key and title (`--fs-300`, one line,
   ellipsis, the full text in the tooltip) and the age at the end (`--fs-100`, `--fg-muted`, ticks
   in place). Two (`--fs-100`, `--fg-muted`, indented to the title): Needs you's lozenge and the
   project; Running's project, run chip and `+ −`; Ready's project, why (`in review`, `reported`,
-  `paused`) and `+ −`. A PO row is "*Project* · PO", then "N answers to check · M asks open" (or
+  `paused`) and `+ −`; Unassigned's folder it ran in, then its run chip, or `past session` (it
+  opens read only) or `task, not running`. A PO row is "*Project* · PO", then "N answers to check · M asks open" (or
   what it is doing: idle, working, not running).
 - **Selected** is `--selected-bg`: the open task, else the PO on screen (its project's page, or
   its drawer). Its muted words step up to `--fg-subtle` there (`--fg-muted` and `.tno` on
