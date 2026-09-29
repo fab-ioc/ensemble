@@ -448,7 +448,8 @@ class TheMiddle(unittest.TestCase):
         self.assertTrue(g["mid"], what)
         self.assertLessEqual(abs(g["panel"]["y"] - g["top"]), 1, f"{what}: starts under the bar")
         self.assertLessEqual(abs(g["panel"]["b"] - g["vh"]), 1, f"{what}: reaches the bottom")
-        self.assertEqual(g["panel"]["x"], g["listR"], f"{what}: from the list's right edge")
+        # The list is a Dock panel (#137): its splitter (5px) lies between it and the middle.
+        self.assertEqual(g["panel"]["x"], g["listR"] + 5, f"{what}: from the list's right edge, past its splitter")
         self.assertGreater(g["listR"], 0, f"{what}: the task list is there")
         self.assertEqual(g["panel"]["r"], g["vw"] - g["strip"] - g["flyW"], f"{what}: to the tool strip (or the tool open beside it)")
         self.assertEqual(g["strip"], 44 if g["open"] or g["front"] else 0, f"{what}: the strip is 44px")

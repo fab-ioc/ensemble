@@ -2283,7 +2283,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      the middle. Clicks go through the dock and its stand-in to the page; the
      list, its title bar, strip, splitter, flyout and window take them. The
      page is inset by where the stand-in is (ldInsets: --list-w and the other
-     three sides), so it takes the width the list leaves: unpinned, floating,
+     three sides), so it takes the width the list leaves: on its strip, floating,
      in its own window or hidden. */
   body { --list-r: 0px; --list-t: 0px; --list-b: 0px; }
   #list-dock {
@@ -14112,7 +14112,7 @@ $('#sw-list').addEventListener('click', (ev) => {
 // On a desktop the list (#switcher) is a panel of a dock of its own, made with
 // the same library as the PO screen's (Dock): #list-dock, laid over the area
 // under the bar, holds it and #ld-page, an empty stand-in for the page (the
-// middle, its fill). Docked at the left and pinned by default, today's column;
+// middle, its fill). Docked at the left and kept open by default, today's column;
 // its ⋯ and − do what they do for the tools: unpin it to a strip on its side
 // (it slides out beside the page and back on a click elsewhere), float it, pop
 // it into a window of its own, move it to another side, minimise it. The page
