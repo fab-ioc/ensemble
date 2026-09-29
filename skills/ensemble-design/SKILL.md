@@ -773,7 +773,8 @@ self-contained component, so a later layout can host it elsewhere.
 - **On a phone it is home** (#129, `phList()`): the whole screen under a one-row bar, shown
   whenever nothing else is (no project, open task, Needs you or cards page), with `main` out of the
   way (`body.ph-list`). A row opens its conversation full screen; the bar's `←` brings the list
-  back where it was (its scroll and the row last opened, marked: `PH_BACK`). Every row, group head
+  back where it was (its scroll and the row last opened, marked: `PH_BACK`); a task that closes by
+  itself (Esc, archived, deleted: `closeTask()`) goes back there too. Every row, group head
   that folds, "Show all" and head control is `--touch-min`. Its foot is a quiet **Project cards**
   (`#sw-cards`, phone only): the home cards, with their Unassigned card, as a page of their own
   (`PH_CARDS`; also the project menu's All projects on a phone), whose `←` goes back to the list.

@@ -170,8 +170,10 @@ async function main() {
       await opened(p); await sleep(400);
       out.loose = await p.evalIn(LOOK);
       await p.shot('phone-390-unassigned-task');
-      await click(p, '#bar-back');
+      // Esc closes it the way ← does: back to the list, not a project's screen.
+      await p.evalIn(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); 0`);
       await sleep(300);
+      out.looseEsc = await p.evalIn(LOOK);
       // A PO row: its project's screen with the PO's Chat in front.
       await click(p, `#sw-list .sw-row[data-po="${A.proj}"]`);
       await p.until('document.body.classList.contains("po-dock") && !!document.querySelector("#po-panel iframe.po-session:not([hidden])")', 30000);
@@ -359,6 +361,7 @@ class ThePhone(unittest.TestCase):
         b = self.got["cardsBack"]
         self.assertIsNotNone(b["list"], "← goes back to the list")
         self.assertFalse(b["cardsPage"])
+        self.assertIn(self.task, b["on"], "the row you last opened is still marked")
 
     def test_the_project_menu(self):
         g = self.got["plainTask"]
@@ -378,6 +381,10 @@ class ThePhone(unittest.TestCase):
         self.assertIsNotNone(g["chat"])
         self.assertEqual([x[0] for x in g["trail"]], ["task"])
         self.fits(g, "an Unassigned task")
+        e = self.got["looseEsc"]
+        self.assertFalse(e["open"], "Esc closes the task")
+        self.assertIsNotNone(e["list"], "and goes back to the list")
+        self.assertIsNone(e["proj"])
 
     def test_a_po_row_opens_its_projects_screen(self):
         g = self.got["po"]
@@ -392,6 +399,18 @@ class TheWiring(unittest.TestCase):
         self.assertIn("function pdTask() { return pdTaskWanted() && !!PD.dock; }", INDEX)
         self.assertIn("function swOn() { try { return !isPhone() || phList(); }", INDEX)
         self.assertIn("const PD_KEYS = { desk: 'cd-tool-strip', phone: 'cd-phone-tabs' };", INDEX)
+
+    def test_a_task_closing_by_itself_goes_back_to_the_list(self):
+        self.assertIn("function closeTask() {\n  if (phoneNow()) goHome(); else closeDetail();\n}", INDEX)
+        for line in ("if (SELECTED_SID) closeTask();", "if (archiving && SELECTED_SID === sid) closeTask();",
+                     "if (SELECTED_SID === sid) closeTask();", "if (SELECTED_SID === row.sessionId) closeTask();"):
+            self.assertIn(line, INDEX)
+
+    def test_a_wider_screen_drops_the_cards_page(self):
+        self.assertIn("if (!isPhone()) PH_CARDS = false;", INDEX)
+
+    def test_chat_cannot_be_hidden_under_an_open_task(self):
+        self.assertIn("(isPhone() && !(id === 'po-chat' && a === 'hide' && pdTask()))", INDEX)
 
 
 if __name__ == "__main__":

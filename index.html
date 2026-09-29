@@ -4541,6 +4541,11 @@ function closeDetail() {
   document.body.classList.remove('detail-open');
   renderRows();
 }
+// The task closes by itself (Esc, archived, deleted): a phone goes back to
+// the list, as its ← does; a desktop stays on the project (#129).
+function closeTask() {
+  if (phoneNow()) goHome(); else closeDetail();
+}
 
 // --- Unified session detail --------------------------------------------------
 // One detail view for EVERY row — 1 agent or N, live or not, room or legacy.
@@ -10208,7 +10213,7 @@ function pdEnsure() {
     // The conversation stays where it is; a tool can be docked beside it, split,
     // popped out, but not hidden (nothing would show it again). A phone's
     // Panels menu hides and shows them.
-    can: (id, a) => isPhone() || (id !== 'po-chat' && a !== 'hide'),
+    can: (id, a) => (isPhone() && !(id === 'po-chat' && a === 'hide' && pdTask())) || (id !== 'po-chat' && a !== 'hide'),
     popName: 'ensemble-panel-',
     popTitle: p => `${p.id === 'po-chat' ? 'PO chat' : p.title} · ${(projectById(PD.pid) || {}).name || 'Ensemble'}`,
     // The library's pop-out page as the hub serves it, not from a blob:
@@ -13657,7 +13662,7 @@ async function deleteRoom(row) {
     });
     const nt = (r.transcripts || []).length, nf = (r.folders || []).length;
     toast(`deleted (${nt} transcript${nt === 1 ? '' : 's'}${nf ? `, ${nf} folder${nf === 1 ? '' : 's'}` : ''})`, 2600, 'ok');
-    if (SELECTED_SID === row.sessionId) closeDetail();
+    if (SELECTED_SID === row.sessionId) closeTask();
     await refresh(); updateRoomsBadge();
   } catch (e) { toast('delete failed: ' + e.message, 4000, 'err'); }
 }
@@ -13820,7 +13825,11 @@ function swRender() {
   if (!el) return;
   const on = swOn();
   const phone = phoneNow(), back = on && el.hidden;
-  if (phone && !on && !el.hidden) PH_BACK = { top: $('#sw-list').scrollTop, sel: swSelection() };
+  if (phone && !on && !el.hidden) {
+    // Leaving for the cards has no selection: keep the last-opened row marked.
+    const sel = swSelection();
+    PH_BACK = { top: $('#sw-list').scrollTop, sel: Object.keys(sel).length ? sel : PH_BACK.sel };
+  }
   el.hidden = !on;
   document.body.classList.toggle('sw-on', on);
   document.body.classList.toggle('ph-list', on && phone);
@@ -14974,7 +14983,7 @@ document.addEventListener('keydown', (ev) => {
     return;
   }
   if (PO_PEEK) { poClosePeek(); return; }   // the topmost thing closes first
-  if (SELECTED_SID) closeDetail();
+  if (SELECTED_SID) closeTask();
 });
 
 // ---------------------------------------------------------------------------
@@ -15220,6 +15229,7 @@ midSync();
   const mq = window.matchMedia(MOBILE_MQ);
   const redraw = () => {
     BOARD_SIG = '';
+    if (!isPhone()) PH_CARDS = false;   // a phone comes back to its list, not a stale cards page
     midSync();
     pdToolsFit();
     renderRows();
@@ -15878,7 +15888,7 @@ document.addEventListener('click', async (ev) => {
       const row = ALL_ROWS.find(x => x.sessionId === sid);
       if (row) row.archived = archiving;
       renderRows();
-      if (archiving && SELECTED_SID === sid) closeDetail();
+      if (archiving && SELECTED_SID === sid) closeTask();
       else if (SELECTED_SID === sid) renderDetail();
       toast(archiving ? 'archived' : 'restored', 1800, 'ok');
     } catch (e) { toast('archive failed: ' + e.message, 4000, 'err'); }
@@ -15911,7 +15921,7 @@ document.addEventListener('click', async (ev) => {
       const n = (r.files || []).length, nf = (r.folders || []).length;
       toast(`deleted (${n} transcript${n === 1 ? '' : 's'}${nf ? `, ${nf} folder` : ''})`, 2500, 'ok');
       ALL_ROWS = ALL_ROWS.filter(x => x.sessionId !== sid);
-      if (SELECTED_SID === sid) closeDetail();
+      if (SELECTED_SID === sid) closeTask();
       else renderRows();
       setTimeout(refresh, 600);
     } catch (e) { toast('delete failed: ' + e.message, 5000, 'err'); }

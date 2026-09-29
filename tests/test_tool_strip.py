@@ -327,7 +327,7 @@ class TheWiring(unittest.TestCase):
     def test_the_dock_is_a_tool_strip(self):
         dock = INDEX[INDEX.index("function pdEnsure()"):INDEX.index("// The middle is the conversation alone")]
         for used in ("stripHover: false", "stripOpen: 'beside'", "strip: 44", "icon: PD_ICON[id]", "unpinSize:",
-                     "can: (id, a) => isPhone() || (id !== 'po-chat' && a !== 'hide')"):
+                     "can: (id, a) => (isPhone() && !(id === 'po-chat' && a === 'hide' && pdTask())) || (id !== 'po-chat' && a !== 'hide')"):
             self.assertIn(used, dock, used)
         self.assertIn("const PD_TOOLS = ['points', 'changes', 'workspace', 'board', 'spec'];", INDEX)
         self.assertIn("const PD_KEYS = { desk: 'cd-tool-strip', phone: 'cd-phone-tabs' };", INDEX)
