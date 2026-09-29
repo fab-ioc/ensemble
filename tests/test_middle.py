@@ -288,6 +288,12 @@ async function main() {
       await click(p, `#sw-list .sw-row[data-po="${A.proj}"]`);
       await poReady(p); await sleep(400);
       out.rowNeeds = { ...(await p.evalIn(MID)), peek: await p.evalIn('PO_PEEK') };
+      // Where the dock failed to load, a PO's row opens its drawer (#135 R1-F4).
+      await p.evalIn('goHome(); PD.failed = "test"; 0'); await sleep(300);
+      await click(p, `#sw-list .sw-row[data-po="${A.proj}"]`);
+      await sleep(400);
+      out.rowFailed = await p.evalIn(`({ peek: PO_PEEK, drawer: !document.getElementById('po-panel').hidden })`);
+      await p.evalIn('PD.failed = ""; PO_PEEK = false; PO_PIN = ""; renderPo(); goHome(); 0'); await sleep(300);
       await p.evalIn('goHome(); 0');
       await sleep(300);
       await p.evalIn(`openPoOf(projectById(${JSON.stringify(A.proj)})); 0`);
@@ -360,6 +366,29 @@ async function main() {
     await go(q, A.proj); await poReady(q); await sleep(400);
     await openTask(q);
     out.phone = await q.evalIn(MID);
+    // #needs on a phone: the list comes back, then scrolls to Needs you (#135 R1-F2).
+    await q.evalIn('goHome(); 0'); await sleep(300);
+    await q.evalIn(`(() => { const b = document.getElementById('sw-list'); b.style.paddingBottom = '3000px'; b.scrollTop = 1000; return 0; })()`);
+    await go(q, A.proj); await sleep(300);
+    await q.evalIn("location.hash = '#needs'; 0"); await sleep(400);
+    out.phoneNeeds = await q.evalIn(`(() => { const b = document.getElementById('sw-list'), h = b.querySelector('[data-group="needs"] > .sw-ghead');
+      const top = h.getBoundingClientRect().top - b.getBoundingClientRect().top;
+      return { list: !document.getElementById('switcher').hidden, top, height: b.clientHeight, focus: document.activeElement === h }; })()`);
+    await q.evalIn(`document.getElementById('sw-list').style.paddingBottom = ''; 0`);
+    // A Needs you row's reason in full and its last screen, by touch (R1-F3).
+    out.phoneDiag = await q.evalIn(`(() => {
+      ATTENTION.items = [{ roomId: ${JSON.stringify(A.task)}, state: 'blocked', askKind: 'blocked', since: Date.now() / 1000,
+                           reason: 'r'.repeat(120), lastLines: 'last line one\\nlast line two', projectId: ${JSON.stringify(A.proj)} }];
+      swRender();
+      const btn = document.querySelector('#sw-list .sw-diag-btn');
+      if (!btn) return { none: true };
+      const h = btn.getBoundingClientRect().height, folded = document.getElementById(btn.getAttribute('aria-controls')).hidden;
+      btn.focus(); btn.click();
+      const b2 = document.querySelector('#sw-list .sw-diag-btn'), panel = document.getElementById(b2.getAttribute('aria-controls'));
+      const out = { h, folded, expanded: b2.getAttribute('aria-expanded'), shown: !panel.hidden && panel.getBoundingClientRect().height > 0,
+                    text: panel.textContent, focus: document.activeElement === b2 };
+      ATTENTION.items = []; SW_DIAG.clear(); swRender();
+      return out; })()`);
     await q.close();
   } finally {
     try { ch.kill(); } catch (e) {}
@@ -532,6 +561,9 @@ class TheMiddle(unittest.TestCase):
         self.assertEqual(g["hash"], "", "the address is put back")
         self.assertTrue(g["focus"], "Needs you's head has the focus")
 
+    def test_a_po_row_where_the_dock_failed_opens_its_drawer(self):
+        self.assertEqual(self.got["rowFailed"], {"peek": True, "drawer": True})
+
     def test_a_project_without_a_po(self):
         g = self.got["plainWs"]
         self.assertEqual(g["project"], "Plain")
@@ -599,6 +631,23 @@ class TheMiddle(unittest.TestCase):
         self.assertFalse(g["mid"])
         self.assertTrue(g["crumbsShown"], "its breadcrumb is in the bar's second row (#129)")
         self.assertTrue(g["open"])
+
+    def test_needs_on_a_phone_scrolls_the_list_to_needs_you(self):
+        g = self.got["phoneNeeds"]
+        self.assertTrue(g["list"], "the list")
+        self.assertTrue(0 <= g["top"] < g["height"], f"Needs you in view, not above it: {g}")
+        self.assertTrue(g["focus"])
+
+    def test_a_needs_you_rows_details_open_by_touch(self):
+        g = self.got["phoneDiag"]
+        self.assertNotIn("none", g, "a Details line under the row")
+        self.assertGreaterEqual(g["h"], 44, "a touch target")
+        self.assertTrue(g["folded"])
+        self.assertEqual(g["expanded"], "true")
+        self.assertTrue(g["shown"])
+        self.assertIn("r" * 120, g["text"])
+        self.assertIn("last line one\nlast line two", g["text"])
+        self.assertTrue(g["focus"], "the focus stays on it across the redraw")
 
 
 if __name__ == "__main__":

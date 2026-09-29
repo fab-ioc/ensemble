@@ -98,7 +98,7 @@ const items = [
   { roomId: 'r1', state: 'blocked', askKind: 'blocked', askedAt: T0 + 100, since: T0 + 100, reason: 'logged out', project: 'Ensemble Dashboard', projectId: 'p1', agentIdentity: 'codex', lastLines: 'Please log in' },
   { roomId: 'r6', state: 'waiting_for_you', askKind: 'completed', askedAt: T0 + 30, since: T0 + 30, reason: 'finished', project: 'Motors', projectId: 'p2' },
   { roomId: 'r13', state: 'waiting_for_you', askedAt: T0 + 60, since: T0 + 60, reason: 'claude reported the work is finished: “Done.”', project: 'Ensemble Dashboard', projectId: 'p1' },
-  { roomId: 'po-2', isPo: true, title: 'PO', ref: '', state: 'agent_gone', since: T0 + 400, reason: 'died', project: 'Motors', projectId: 'p2' },
+  { roomId: 'po-2', isPo: true, title: 'PO', ref: '', state: 'agent_gone', since: T0 + 400, reason: 'died', project: 'Motors', projectId: 'p2', agentIdentity: 'claude' },
   { roomId: 'r-old', state: 'stalled', since: T0 + 10, reason: 'quiet', title: 'Past the newest 300', ref: 'MO-40', project: 'Motors', projectId: 'p2' },
   { roomId: 'r7', state: 'blocked', since: T0, reason: 'a draft', project: 'Ensemble Dashboard', projectId: 'p1' },
 ];
@@ -111,6 +111,8 @@ const g = swGroups(rows, items, P, opts);
 log.groups = keys(g);
 log.projects = Object.fromEntries(Object.entries(g).map(([k, l]) => [k, l.map(e => e.project)]));
 log.html = swListHtml(g, { sid: 'r2' }, false);
+SW_DIAG.add('r1'); log.diagOpen = swListHtml(g, { sid: 'r2' }, false); SW_DIAG.clear();
+log.longWhy = swRowHtml({ key: 'r-long', row: null, it: { state: 'blocked', title: 'Long', reason: 'x'.repeat(81) }, pid: 'p2', project: 'Motors' }, 'needs', false);
 log.unOpen = swListHtml(g, { sid: 'u3' }, false, { open: true });
 log.unAll = swListHtml(g, {}, false, { open: true, all: true });
 log.unSel = swListHtml(g, { sid: 'u12' }, false, { open: true });
@@ -176,7 +178,7 @@ class TaskSwitcher(unittest.TestCase):
     def setUpClass(cls):
         src = "\n".join([
             NOUN, re.search(r"^const esc = .*$", INDEX, re.M).group(0),
-            INDEX[INDEX.index("const fmtAgo = "):INDEX.index("function attnWhen(")],
+            INDEX[INDEX.index("const fmtAgo = "):INDEX.index("const withoutAgo = ")],
             INDEX[INDEX.index("const fmtCost = "):INDEX.index("const fmtInt = ")],
             INDEX[INDEX.index("const WORKFLOW_COLS = "):INDEX.index("const DONE_AGE_DAYS")],
             (ROOT / "static" / "actions.js").read_text(encoding="utf-8"), BAR,
@@ -304,6 +306,22 @@ class TaskSwitcher(unittest.TestCase):
         self.assertNotIn("sw-why", row_of(self.r["html"], 'data-sid="r5"'), "only Needs you has a third line")
         self.assertIn(".sw-why {", INDEX)
         self.assertTrue(po)
+        self.assertIn('<span class="sw-sub">Motors · claude</span>', po, "a PO's agent too")
+
+    def test_what_the_tooltip_holds_is_reachable_without_hover(self):
+        # #135 review 1: a touch screen has no tooltip.
+        html, r1 = self.r["html"], 'data-room="r1"'
+        d = re.search(r'<button type="button" class="sw-diag-btn" ' + r1 + r'[^>]*>.*?</button><div class="sw-diag"[^>]*>.*?</div>', html, re.S)
+        self.assertTrue(d, "a Details line under the row")
+        d = d.group(0)
+        self.assertIn('aria-expanded="false" aria-controls="sw-diag-r1"', d)
+        self.assertIn('<div class="sw-diag" id="sw-diag-r1" hidden>', d, "folded by default")
+        self.assertIn('<p class="sw-diag-why">logged out</p><pre class="sw-diag-lines">Please log in</pre>', d)
+        self.assertIn('class="sw-diag-btn" data-room="r-long"', self.r["longWhy"], "a reason past two lines")
+        self.assertNotIn('class="sw-diag-btn" data-room="r9"', html, "the row shows all of a short one")
+        o = self.r["diagOpen"]
+        self.assertIn('aria-expanded="true" aria-controls="sw-diag-r1"', o)
+        self.assertIn('<div class="sw-diag" id="sw-diag-r1">', o, "open, it stays open across redraws")
 
     def test_the_list_can_group_by_project(self):
         h = self.r["byProject"]
@@ -401,7 +419,7 @@ class TaskSwitcher(unittest.TestCase):
         self.assertIn("} else openDetail(row.dataset.sid);", click)
         self.assertIn("SW_UN.open = ev.target.open", wiring)
         # Focus goes back to the row in the group it was in (a task can be in two).
-        self.assertIn("box.querySelector(`${inGroup}.sw-row[data-room=\"${CSS.escape(had)}\"]`)", wiring)
+        self.assertIn("box.querySelector(`${inGroup}${hadCls}[data-room=\"${CSS.escape(had)}\"]`)", wiring)
         self.assertIn("unassigned: (un && un.sessions) || []", wiring)
         self.assertIn("function detailActions(r, isLive) {\n  return `<div class=\"dp-actions\">${actionsCell(r, isLive)}</div>`;", INDEX)
         bar = self.r["bar"]
@@ -423,7 +441,8 @@ class TaskSwitcher(unittest.TestCase):
         click = wiring[wiring.index("$('#sw-list').addEventListener('click'"):]
         click = click[:click.index("\n});")]
         self.assertIn("openDetail(row.dataset.sid)", click)
-        self.assertIn("openProjectPage(pj.id)", click)
+        self.assertIn("if (pj) openPoConv(pj);", click)
+        self.assertIn("openProjectPage(pj.id);", fn(INDEX, "function openPoConv("))
         # The filter is remembered per browser.
         self.assertIn("localStorage.setItem(SW_KEY + '-project'", wiring)
         self.assertIn("localStorage.setItem(SW_KEY + '-group'", wiring)    # and the grouping

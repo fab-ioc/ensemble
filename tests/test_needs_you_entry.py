@@ -6,7 +6,8 @@ swShowNeeds and the last-conversation helpers run here in Node over a stand-in
 list (skipped without Node): on a desktop the list scrolls to Needs you and
 focuses its head (by project, the first row that needs you), and an empty
 middle opens the last conversation, else the first Needs you entry; on a phone
-it is the list itself. The wiring (the wordmark, `#needs` at load and on
+it is the list, scrolled there. A list filter that would hide an entry gives
+way, and a PO remembered where the dock failed opens in its drawer. The wiring (the wordmark, `#needs` at load and on
 hashchange, a page saved on the old Needs you page) is read from the source.
 The real page is driven in tests/test_middle.py (#needs in Chrome).
 """
@@ -35,7 +36,19 @@ JS = r"""
 const log = {};
 let PHONE = false, SELECTED_PROJECT = 'p1', SELECTED_SID = null, PH_CARDS = true, ALL_ROWS = [], calls = [];
 const store = new Map();
-const localStorage = { getItem: k => store.has(k) ? store.get(k) : null, setItem: (k, v) => { calls.push('save'); store.set(k, String(v)); } };
+const localStorage = { getItem: k => store.has(k) ? store.get(k) : null, setItem: (k, v) => { calls.push('save'); store.set(k, String(v)); },
+                       removeItem: k => store.delete(k) };
+// The list's filter, and the Needs you entries it would show without it.
+const SW_KEY = 'cd-switcher';
+let SW_SHOWN = 'frozen', NEEDS = [];
+const swProject = () => store.get(SW_KEY + '-project') || '';
+const swGroups = (rows, items, projects, o) => ({ needs: NEEDS.filter(e => !o.project || e.pid === o.project) });
+const attentionItems = () => [], registeredProjects = () => [];
+// A PO's conversation: the dock, or where it failed to load, the drawer.
+const PD = { failed: '' };
+let PO_PEEK = false, PO_PIN = '';
+const renderPo = () => {};
+const openPoOf = pj => calls.push('drawer:' + pj.id);
 const phoneNow = () => PHONE;
 const midLeave = () => calls.push('midLeave');
 const renderRows = () => calls.push('renderRows');
@@ -67,7 +80,7 @@ reset(); PHONE = true; SELECTED_PROJECT = 'p1'; goHome();
 log.homePhone = { calls, focused, project: SELECTED_PROJECT };
 // #needs, the old Show all and a page saved on the old Needs you page, on a phone: the list.
 reset(); SELECTED_PROJECT = 'p1'; PH_CARDS = true; swShowNeeds();
-log.needsPhone = { calls, project: SELECTED_PROJECT, cards: PH_CARDS };
+log.needsPhone = { calls, project: SELECTED_PROJECT, cards: PH_CARDS, focused, scrolled: head.scrolled };
 PHONE = false;
 // A desktop with a conversation open keeps it; Needs you comes into view.
 reset(); SELECTED_PROJECT = 'p1'; swShowNeeds();
@@ -89,6 +102,21 @@ log.poGone = calls;
 // Grouped by project: the first row that needs you, focused as it is.
 reset(); byProject = true; SELECTED_PROJECT = 'p1'; swShowNeeds();
 log.byProject = { focused, tab: firstRow.attrs.tabindex, scrolled: firstRow.scrolled };
+// A project chosen in the list's filter that hides a Needs you entry gives way.
+byProject = false;
+store.set(SW_KEY + '-project', 'p1'); NEEDS = [{ pid: 'p1' }, { pid: 'p2' }]; SW_SHOWN = 'frozen';
+reset(); swShowNeeds();
+log.filterHides = { project: swProject(), shown: SW_SHOWN, calls };
+store.set(SW_KEY + '-project', 'p1'); NEEDS = [{ pid: 'p1' }]; SW_SHOWN = 'frozen';
+reset(); goHome();
+log.filterFits = { project: swProject(), shown: SW_SHOWN };
+PHONE = true; NEEDS = [{ pid: '' }];
+reset(); swShowNeeds();
+log.filterPhone = swProject();
+PHONE = false; store.delete(SW_KEY + '-project');
+// A PO remembered where the dock failed to load: its drawer.
+reset(); PD.failed = 'no dock'; SELECTED_PROJECT = null; body.open = false; rememberConv({ po: 'p1' }); calls = []; swShowNeeds();
+log.poFailed = calls; PD.failed = '';
 // Nothing remembered, or garbage.
 store.set(LAST_CONV_KEY, '{nope'); log.garbage = lastConv();
 console.log(JSON.stringify(log));
@@ -100,7 +128,7 @@ class NeedsYouEntryPoints(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         heads = ("function goHome(", "function swFocusNeeds(", "function swShowNeeds(", "function lastConv(",
-                 "function rememberConv(", "function openConv(", "function openDefaultConv(")
+                 "function rememberConv(", "function openConv(", "function openPoConv(", "function openDefaultConv(")
         src = "\n".join([re.search(r"^const LAST_CONV_KEY = .*$", INDEX, re.M).group(0)] + [fn(INDEX, h) for h in heads])
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "needs_entry.cjs"
@@ -121,7 +149,9 @@ class NeedsYouEntryPoints(unittest.TestCase):
     def test_on_a_phone_every_way_is_the_list(self):
         self.assertEqual(self.r["homePhone"], {"calls": ["midLeave", "renderRows"], "focused": None, "project": None})
         n = self.r["needsPhone"]
-        self.assertEqual((n["calls"], n["project"], n["cards"]), (["midLeave", "renderRows"], None, False))
+        self.assertEqual((n["calls"], n["project"], n["cards"]), (["midLeave", "renderRows", "swRender"], None, False))
+        # #135 review 1: the list comes back where it was, then scrolls to Needs you.
+        self.assertEqual((n["focused"], n["scrolled"]), ("needs-head", {"block": "start"}))
 
     def test_a_desktop_keeps_what_it_shows(self):
         n = self.r["needsKeeps"]
@@ -136,6 +166,19 @@ class NeedsYouEntryPoints(unittest.TestCase):
         self.assertEqual(self.r["needsPo"][:2], ["project:p1", "reveal:po-chat"])
         self.assertIn("click:needs-row", self.r["poGone"], "a project with no PO any more")
         self.assertEqual(self.r["garbage"], {})
+
+    def test_a_filter_never_hides_what_needs_you(self):
+        # #135 review 1: the bell showed every project's.
+        self.assertEqual((self.r["filterHides"]["project"], self.r["filterHides"]["shown"]), ("", None),
+                         "a project chosen that hides an entry: All projects")
+        self.assertEqual(self.r["filterHides"]["calls"][-1], "swRender")
+        self.assertEqual((self.r["filterFits"]["project"], self.r["filterFits"]["shown"]), ("p1", "frozen"),
+                         "one that hides nothing stays")
+        self.assertEqual(self.r["filterPhone"], "", "a phone too (an entry in no project)")
+
+    def test_a_po_where_the_dock_failed_opens_in_its_drawer(self):
+        self.assertIn("drawer:p1", self.r["poFailed"])
+        self.assertNotIn("project:p1", self.r["poFailed"])
 
     def test_by_project_the_first_row_that_needs_you(self):
         b = self.r["byProject"]

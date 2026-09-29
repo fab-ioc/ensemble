@@ -1246,9 +1246,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--run-working); animation: livep 1.6s infinite; }
   @keyframes livep { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run-working) 45%, transparent); } 70% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--run-working) 0%, transparent); } 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run-working) 0%, transparent); } }
   .listctl { display: flex; align-items: center; gap: 10px; padding: 6px 4px 12px; font-size: 12px; color: var(--fg-subtle); }
-  .seg.gb { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-  .seg.gb button { background: transparent; border: 0; color: var(--fg-subtle); font: inherit; font-size: 12px; padding: 5px 12px; cursor: pointer; }
-  .seg.gb button.on { background: var(--selected-bg); color: var(--selected-fg); font-weight: 600; }
   .proj-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; padding: 4px 2px 20px; }
   .proj { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 15px; display: flex; flex-direction: column; gap: 10px; cursor: pointer; transition: border-color .12s, transform .12s; }
   .proj:hover { border-color: var(--border-strong); transform: translateY(-1px); }
@@ -2283,6 +2280,23 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
     overflow-wrap: anywhere;
   }
+  /* Its Details (where there is more than the row shows): a quiet disclosure
+     indented to the title, then the reason in full and the last screen. */
+  .sw-diag-btn {
+    display: block; width: 100%; text-align: left; padding: 0 var(--s-200) var(--s-100) calc(var(--s-200) * 2 + 16px);
+    border: 0; border-radius: var(--r-200); background: transparent; color: var(--fg-subtle);
+    font: inherit; font-size: var(--fs-200); line-height: 20px; cursor: pointer;
+  }
+  .sw-diag-btn:hover { background: var(--hover); }
+  .sw-diag-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface-sunken), 0 0 0 4px var(--focus-ring); }
+  .sw-diag { margin: 0 var(--s-200) var(--s-200) calc(var(--s-200) + 16px); padding: var(--s-200); border: 1px solid var(--border); border-radius: var(--r-200); background: var(--surface); }
+  .sw-diag-why { margin: 0; font-size: var(--fs-200); line-height: 16px; color: var(--fg); overflow-wrap: anywhere; }
+  .sw-diag-lines {
+    margin: var(--s-200) 0 0; max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+    font-family: var(--font-mono); font-size: var(--fs-100); line-height: 16px; color: var(--fg-subtle);
+  }
+  .sw-diag-why + .sw-diag-lines { border-top: 1px solid var(--border); padding-top: var(--s-200); }
+  .sw-diag > :first-child { margin-top: 0; }
   /* Unassigned's "Show all (N)": a quiet line under its rows. */
   .sw-more {
     display: block; width: 100%; text-align: left; padding: var(--s-100) var(--s-200);
@@ -3004,7 +3018,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .sw-pick select { height: var(--touch-min); }
     .sw-row { min-height: var(--touch-min); padding-block: var(--s-100); }
     .sw-row .sw-st { margin-top: var(--s-200); }
-    summary.sw-ghead, .sw-more { min-height: var(--touch-min); display: flex; align-items: center; }
+    summary.sw-ghead, .sw-more, .sw-diag-btn { min-height: var(--touch-min); display: flex; align-items: center; }
     #sw-list { padding-bottom: var(--s-200); }
     #sw-cards { display: flex; flex: none; border-top: 1px solid var(--border); border-radius: 0; padding: 0 var(--s-400); }
     /* The task's own ×, and its own tabs, are the bar's ← and the dock's tabs. */
@@ -3713,9 +3727,6 @@ function sinceClock(ts) {
   const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   return 'since ' + (d.toDateString() === new Date().toDateString() ? t
     : d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ', ' + t);
-}
-function attnWhen(it) {
-  return it.askedAt ? esc(sinceClock(it.askedAt)) : it.since ? agoSpan(it.since) + ' ago' : '';
 }
 const withoutAgo = html => html.replace(/(<span data-ago="[^"]*">)[^<]*/g, '$1');
 function tickAgo(root) {
@@ -5775,7 +5786,9 @@ function swAgents(r) {
 // check, or a PO's asks), then the change count. A Needs you row has a third:
 // why, in the hub's words (a PO that could not start, messages held for it,
 // a login gone), which its tooltip carries in full with a dead agent's last
-// screen.
+// screen. A touch screen has no tooltip, so where there is more than the row
+// shows (the last screen, a reason past its two lines) a Details line under
+// the row opens it in full (swDiagHtml).
 function swRowHtml(e, group, selected) {
   const r = e.row || {};
   const it = e.it;
@@ -5794,7 +5807,7 @@ function swRowHtml(e, group, selected) {
     if (!r.isLive) words.push(r.headless ? 'task, not running' : 'past session');
   } else {
     if (e.project) words.push(e.project);
-    if (needs && !e.po && it.agentIdentity) words.push(it.agentIdentity);
+    if (needs && it.agentIdentity) words.push(it.agentIdentity);
     if (group === 'running' && e.row && swAgents(r)) words.push(swAgents(r));
     if (group === 'review' && e.row) words.push(workflowOf(r) === 'inreview' ? 'in review' : it ? 'reported' : 'paused');
   }
@@ -5811,7 +5824,23 @@ function swRowHtml(e, group, selected) {
   return `<button type="button" class="sw-row${needs ? ' needs' : ''}${selected ? ' on' : ''}${unread ? ' unread' : ''}" ${data} data-room="${esc(e.key)}" title="${esc(tip)}"${selected ? ' aria-current="true"' : ''}>`
     + `<span class="sw-st ${st.cls}"${st.tip ? ` role="img" aria-label="${esc(st.tip)}"` : ''}></span>`
     + `<span class="sw-title">${no ? `<span class="tno">${esc(no)}</span> ` : ''}${esc(title)}</span>${age}`
-    + `<span class="sw-l2">${bits.join('')}</span>${why}</button>`;
+    + `<span class="sw-l2">${bits.join('')}</span>${why}</button>`
+    + (needs && (it.lastLines || String(it.reason || '').length > SW_WHY_FITS) ? swDiagHtml(e.key, it) : '');
+}
+// About what two lines of .sw-why hold in the list's 300px.
+const SW_WHY_FITS = 80;
+// The rooms whose Details are open; kept across redraws.
+const SW_DIAG = new Set();
+// A Needs you row's Details: a disclosure under the row, then the reason in
+// full and the last lines of its screen.
+function swDiagHtml(key, it) {
+  const open = SW_DIAG.has(key), id = 'sw-diag-' + key;
+  return `<button type="button" class="sw-diag-btn" data-room="${esc(key)}" aria-expanded="${open}" aria-controls="${esc(id)}"`
+    + ` aria-label="${esc(it.lastLines ? 'Details: why, and the last lines of its screen' : 'Details: why, in full')}">`
+    + `<span aria-hidden="true">${open ? '▾' : '▸'}</span> Details</button>`
+    + `<div class="sw-diag" id="${esc(id)}"${open ? '' : ' hidden'}>`
+    + (it.reason ? `<p class="sw-diag-why">${esc(it.reason)}</p>` : '')
+    + (it.lastLines ? `<pre class="sw-diag-lines">${esc(it.lastLines)}</pre>` : '') + '</div>';
 }
 // Group: status (the five groups) or project.
 const SW_BY = [['status', 'Group: status'], ['project', 'Group: {project}']];
@@ -11170,8 +11199,9 @@ document.addEventListener('click', async (ev) => {
   if (act) { await poHeadClick(act); return; }
   poMenusClose();
   // A peek closes when you click beside it — but not in the task it sits
-  // beside, the bar, or a dialog it opened.
-  if (PO_PEEK && !ev.target.closest('#po-panel, #detail-panel, #modal, header, #detail-panel-resize')) poClosePeek();
+  // beside, the bar, a dialog it opened, or the list's PO row that opened it
+  // (where the dock failed to load; the list may have redrawn it by now).
+  if (PO_PEEK && !ev.target.closest('#po-panel, #detail-panel, #modal, header, #detail-panel-resize, .sw-row[data-po]')) poClosePeek();
 });
 
 // ---- A PO's past conversations ------------------------------------------------
@@ -13749,11 +13779,12 @@ function swRender() {
   const key = focusKeyIn(box), had = key && document.activeElement.dataset.room;
   const hadGroup = had && document.activeElement.closest('[data-group]');
   const inGroup = hadGroup ? `[data-group="${CSS.escape(hadGroup.dataset.group)}"] ` : '';
+  const hadCls = had && document.activeElement.classList.contains('sw-diag-btn') ? '.sw-diag-btn' : '.sw-row';
   // A phone marks the row you last opened (nothing is open while the list shows).
   const sel = phone && !SELECTED_SID ? PH_BACK.sel || {} : swSelection();
   if (!phone) rememberConv(sel);
   if (writeSlot(box, swListHtml(g, sel, SW_DONE_OPEN, SW_UN, by)) && key) {
-    const back = had && box.querySelector(`${inGroup}.sw-row[data-room="${CSS.escape(had)}"]`);
+    const back = had && box.querySelector(`${inGroup}${hadCls}[data-room="${CSS.escape(had)}"]`);
     if (back) back.focus(); else restoreFocus(box, key);
   }
   if (back && phone) box.scrollTop = PH_BACK.top;
@@ -13775,17 +13806,29 @@ $('#sw-list').addEventListener('toggle', (ev) => {
 }, true);
 $('#sw-list').addEventListener('click', (ev) => {
   if (ev.target.closest('.sw-more[data-more="unassigned"]')) { SW_UN.all = !SW_UN.all; swRender(); return; }
+  const more = ev.target.closest('.sw-diag-btn');
+  if (more) {
+    // Details: open or folded, kept across redraws; the focus stays on it.
+    const k = more.dataset.room;
+    if (SW_DIAG.has(k)) SW_DIAG.delete(k); else SW_DIAG.add(k);
+    swRender();
+    return;
+  }
   const row = ev.target.closest('.sw-row');
   if (!row) return;
   if (row.dataset.po) {
-    // Its project's screen, where the PO leads; the task panel steps aside.
     const pj = projectById(row.dataset.po);
-    if (!pj) return;
-    if (PO_PEEK) { PO_PEEK = false; PO_PIN = ''; renderPo(); }
-    openProjectPage(pj.id);
-    pdReveal('po-chat');
+    if (pj) openPoConv(pj);
   } else openDetail(row.dataset.sid);
 });
+// A PO's conversation from the list: its project's screen, where the PO leads
+// (the task panel steps aside). Where the dock failed to load, its drawer.
+function openPoConv(pj) {
+  if (PD.failed) { openPoOf(pj); return; }
+  if (PO_PEEK) { PO_PEEK = false; PO_PIN = ''; renderPo(); }
+  openProjectPage(pj.id);
+  pdReveal('po-chat');
+}
 // Poll while the tab is in front. Nothing here interrupts: no sound, no desktop
 // notification, no stealing focus — the badge just changes.
 setInterval(() => { if (!document.hidden) updateRoomsBadge(); }, 5000);
@@ -14225,9 +14268,15 @@ function goHome() {
   PH_CARDS = false; SELECTED_PROJECT = null; renderRows();
   if (!phoneNow()) swFocusNeeds();
 }
-// The list's Needs you in view and focused (a desktop; by project, the first
-// row that needs you).
+// The list's Needs you in view and focused (by project, the first row that
+// needs you). It shows all of it: a project chosen in the list's filter that
+// would hide an entry gives way to All projects.
 function swFocusNeeds() {
+  const p = swProject();
+  if (p && swGroups(ALL_ROWS, attentionItems(), registeredProjects(), {}).needs.some(e => e.pid !== p)) {
+    try { localStorage.removeItem(SW_KEY + '-project'); } catch (e) {}
+    SW_SHOWN = null;
+  }
   swRender();
   const box = document.getElementById('sw-list');
   const at = box && (box.querySelector('[data-group="needs"] > .sw-ghead') || box.querySelector('.sw-row.needs'));
@@ -14239,9 +14288,9 @@ function swFocusNeeds() {
 // Where the bell, its Show all, the Needs you page and #needs used to go
 // (#135): the list with its Needs you in view. A phone's list is its home; a
 // desktop keeps what it shows, and a middle with nothing in it opens the
-// default conversation.
+// default conversation. A phone goes back to its list and scrolls it there.
 function swShowNeeds() {
-  if (phoneNow()) { goHome(); return; }
+  if (phoneNow()) { goHome(); swFocusNeeds(); return; }
   if (!document.body.classList.contains('detail-open') && !SELECTED_PROJECT) openDefaultConv();
   swFocusNeeds();
 }
@@ -14259,7 +14308,7 @@ function rememberConv(sel) {
 function openConv(c) {
   if (c.sid && ALL_ROWS.some(r => r.sessionId === c.sid)) { openDetail(c.sid); return true; }
   const pj = c.po && projectById(c.po);
-  if (pj && pj.poRoomId) { openProjectPage(pj.id); pdReveal('po-chat'); return true; }
+  if (pj && pj.poRoomId) { openPoConv(pj); return true; }
   return false;
 }
 function openDefaultConv() {

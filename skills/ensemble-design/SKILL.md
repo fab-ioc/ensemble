@@ -812,7 +812,9 @@ self-contained component, so a later layout can host it elsewhere.
   or a PO in the list", with **+ New project**; a search typed there shows the flat table). Every
   way that led to Needs you (the wordmark on a desktop, `#needs`, a page saved on the old Needs you
   page) lands on the list with Needs you scrolled into view and its head focused (`swShowNeeds`);
-  on a phone that is the list itself.
+  on a phone the list comes back where it was, then scrolls there. A project chosen in the list's
+  filter that would hide a Needs you entry gives way to All projects then: the bell showed every
+  project's.
 - **Its head** is two quiet controls, each a native `select` with its box and arrow drawn away
   (`.sw-pick`): the project filter as a chip on `--selected-bg` (`#sw-proj`: "All projects", then
   every registered project by name; it narrows what you see) and **Group: status / project** as a
@@ -850,7 +852,11 @@ self-contained component, so a later layout can host it elsewhere.
   idle, working, not running). **A Needs you row** (`.sw-row.needs`) says since when it waits
   ("since 14:05", else its age), names the agent in line two, and adds a third line (`.sw-why`,
   `--fs-200` `--fg-muted`, two lines at most) with the reason; the tooltip holds the reason and a
-  dead agent's last screen.
+  dead agent's last screen. A tooltip is never the only copy (§8.3), so where there is more than
+  the row shows (a last screen, a reason past about 80 characters) a quiet **Details** line under
+  the row (`.sw-diag-btn`, a disclosure with `▸`/`▾`, `--touch-min` on a phone) opens the reason in
+  full and the last screen in `--font-mono` (`.sw-diag`, on `--surface`), kept open across redraws.
+  A PO's row names its agent too.
 - **Selected** is `--selected-bg`: the open task, else the PO on screen (its project's page, or
   its drawer). Its muted words step up to `--fg-subtle` there and under the pointer (`--fg-muted`
   and `.tno` on `--selected-bg` or `--hover` are under 4.5:1 in Light).

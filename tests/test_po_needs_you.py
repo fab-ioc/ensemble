@@ -156,7 +156,7 @@ class PoNeedsYou(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         i = INDEX.index("// ---- Task search: begin")
-        heads = ("function sinceClock(", "function attnWhen(",
+        heads = ("function sinceClock(",
                  "function attentionItems(", "function openPoOf(", "function poRowOf(",
                  "function projectOfRoom(", "function poDockProject(", "function poSplitProject(", "function poContext(", "function renderPo(", "function poMenuOpen(", "function poMenusClose(", "async function poHeadClick(", "function poMidGo(", "function midLeave(")
         src = "\n".join([INDEX[i:INDEX.index("// ---- Task search: end", i)]] + [fn(INDEX, h) for h in heads])
@@ -217,8 +217,11 @@ class PoNeedsYou(unittest.TestCase):
         self.assertIn("openPoOf(pj);", fn(INDEX, "function openMsgLink("), "one way to open a project's PO")
         self.assertNotIn("PO_PEEK = true", fn(INDEX, "function openMsgLink("))
         self.assertIn("projectNeeds(pj, list)", INDEX[INDEX.index("$('#proj-switch').addEventListener('click'"):])
-        self.assertIn("openProjectPage(pj.id);\n    pdReveal('po-chat');", INDEX[INDEX.index("$('#sw-list').addEventListener('click'"):],
+        self.assertIn("if (pj) openPoConv(pj);", INDEX[INDEX.index("$('#sw-list').addEventListener('click'"):])
+        self.assertIn("openProjectPage(pj.id);\n  pdReveal('po-chat');", fn(INDEX, "function openPoConv("),
                       "a PO's row in Needs you opens its project's screen, the PO chat revealed")
+        self.assertIn("if (PD.failed) { openPoOf(pj); return; }", fn(INDEX, "function openPoConv("),
+                      "where the dock failed, its drawer")
         self.assertIn("if (isPoRoom(r.roomId, currentPoRooms())) return false;", fn(INDEX, "function inScope("),
                       "the PO is still no row")
 
