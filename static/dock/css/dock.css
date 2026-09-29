@@ -15,6 +15,11 @@
      --dk-badge-case (none)                                          a tab's badge
      --dk-radius        floating windows, slid-out panels, menus, notices (0)
      --dk-float-shadow  floating windows' and slid-out panels' shadow (0 10px 28px var(--dk-shadow))
+     A strip's buttons scale with --dk-strip (each is today's look at 22px):
+     --dk-strip-pad     its padding and gap (strip / 11: 2px)        --dk-strip-fs    a title's size (at least --dk-fs-tab)
+     --dk-strip-icon    an icon's size (strip * .55: 12px)           --dk-strip-badge-fs  a badge's (a title's: at least
+                        --dk-badge-fs; an icon's: strip * .3, at least 7px)
+     --dk-strip-badge-bg  an icon's badge's ground (var(--dk-bg3))
 
    Layers (z-index, inside the dock, which is a stacking context: position: relative; z-index: 0): floating windows 20 +
    their order (back to front), a slid-out panel 30, a maximised stack or window 40, the reload notice 55, the drop
@@ -84,23 +89,37 @@
 .dk-rz-se { right: -3px; bottom: -3px; width: 12px; height: 12px; cursor: nwse-resize; }
 .dk-float.dk-min .dk-rz, .dk-float.dk-max .dk-rz { display: none; }
 /* unpinned: a labelled strip on its edge; the panel slides out over the layout */
-.dk-strip { display: flex; gap: 2px; background: var(--dk-bg2); padding: 2px; overflow: hidden; }
+.dk-strip { display: flex; gap: var(--dk-strip-pad, calc(var(--dk-strip) / 11)); background: var(--dk-bg2); padding: var(--dk-strip-pad, calc(var(--dk-strip) / 11)); overflow: hidden; }
 .dk-strip-left { grid-row: 1 / -1; grid-column: 1; flex-direction: column; width: var(--dk-strip); border-right: 1px solid var(--dk-line); }
 .dk-strip-right { grid-row: 1 / -1; grid-column: 3; flex-direction: column; width: var(--dk-strip); border-left: 1px solid var(--dk-line); }
 .dk-strip-top { grid-row: 1; grid-column: 2; height: var(--dk-strip); border-bottom: 1px solid var(--dk-line); }
 .dk-strip-bottom { grid-row: 3; grid-column: 2; height: var(--dk-strip); border-top: 1px solid var(--dk-line); }
-.dk-strip-btn { border: 1px solid var(--dk-line); background: var(--dk-bg3); color: var(--dk-fg2); font-size: var(--dk-fs-tab, 10px); letter-spacing: var(--dk-tab-tracking, .06em);
+.dk-strip-btn { border: 1px solid var(--dk-line); background: var(--dk-bg3); color: var(--dk-fg2);
+  font-size: var(--dk-strip-fs, max(var(--dk-fs-tab, 10px), calc(var(--dk-strip) * .3))); letter-spacing: var(--dk-tab-tracking, .06em);
   text-transform: var(--dk-tab-case, uppercase);
-  cursor: pointer; padding: 0 8px; white-space: nowrap; }
-.dk-strip-left .dk-strip-btn, .dk-strip-right .dk-strip-btn { writing-mode: vertical-rl; padding: 8px 0; }
+  cursor: pointer; padding: 0 calc(var(--dk-strip) * 4 / 11); white-space: nowrap; }
+.dk-strip-left .dk-strip-btn, .dk-strip-right .dk-strip-btn { writing-mode: vertical-rl; padding: calc(var(--dk-strip) * 4 / 11) 0; }
 .dk-strip-left .dk-strip-btn { transform: rotate(180deg); }
+/* a strip button's badge: after its title, or on its icon's corner */
+.dk-strip-btn .dk-strip-badge { margin: 0; margin-inline-start: calc(var(--dk-strip) * 2 / 11); padding: 0; padding-inline: calc(var(--dk-strip) * 2 / 11); font-size: var(--dk-strip-badge-fs, max(var(--dk-badge-fs, 9px), calc(var(--dk-strip) * .27))); }
+.dk-strip-btn.dk-strip-icon-btn { position: relative; flex: none; aspect-ratio: 1; padding: 0; writing-mode: horizontal-tb; transform: none;
+  display: flex; align-items: center; justify-content: center; }
+.dk-strip-icon { display: flex; width: var(--dk-strip-icon, calc(var(--dk-strip) * .55)); height: var(--dk-strip-icon, calc(var(--dk-strip) * .55)); pointer-events: none; }
+.dk-strip-icon > svg { width: 100%; height: 100%; }
+.dk-strip-icon-btn .dk-strip-badge { position: absolute; top: 0; right: 0; margin: 0; line-height: 1.1; padding: 0 calc(var(--dk-strip) / 22 + 1px);
+  font-size: var(--dk-strip-badge-fs, max(7px, calc(var(--dk-strip) * .3)));
+  background: var(--dk-strip-badge-bg, var(--dk-bg3)); pointer-events: none; }
 .dk-strip-btn:hover, .dk-strip-btn.on { color: var(--dk-fg); border-color: var(--dk-accent); background: var(--dk-sel-bg); }
+/* stripHover: false: the strip above a panel sliding in or out (30), so its buttons always take the click */
+.dock.dk-strip-click > .dk-strip { position: relative; z-index: 31; }
 .dk-flyout { position: absolute; z-index: 30; display: flex; flex-direction: column; background: var(--dk-bg3); border: 1px solid var(--dk-line);
   border-radius: var(--dk-radius, 0); box-shadow: var(--dk-float-shadow, 0 10px 28px var(--dk-shadow)); overflow: clip; visibility: hidden; transition: transform .14s ease-out, visibility 0s linear .14s; }
 .dk-fly-left { transform: translateX(-105%); } .dk-fly-right { transform: translateX(105%); }
 .dk-fly-top { transform: translateY(-105%); } .dk-fly-bottom { transform: translateY(105%); }
 .dk-flyout.open { visibility: visible; transform: none; transition: transform .14s ease-out, visibility 0s; }
 .dk-flyout > .dk-head { cursor: default; }
+/* stripOpen: 'beside': the panel lies in the room the middle leaves it (a margin of .dk-main), not over it */
+.dk-flyout.dk-fly-beside { transform: none; box-shadow: none; border-radius: 0; transition: none; }
 .dk-fly-grip { display: none; }
 /* narrow (a phone): one column of tabs, which scroll sideways under a finger; nothing to drag */
 .dock.dk-narrow .dk-head { cursor: default; }

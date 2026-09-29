@@ -579,13 +579,28 @@ bell's count.**
 
 ### Panels
 
-**Layout A, step 2 (#124):** at every width the dock is narrow (`pdNarrow()`): the PO screen is
-one column of tabs, **PO chat · Your asks · Board · Workspace · Changes**, filling the middle (see
-*The middle* in §5) with the PO chat first and its text in the `--conv-w` column. On a desktop
-the tabs are 36px, every panel is a tab (none hidden, since no menu shows one) and there is no
-Panels menu. Side by side, strips, floating and popping a panel out wait for the tool strip (step 3,
-Dock v0.4.0); the PO chat still pops out from its own header. What follows describes the wide dock,
-which is kept for that step.
+**Layout A, step 3 (#125): the tool strip.** On a desktop the dock is the conversation in the
+middle and a **44px strip at the right edge** holding the tools, in this order: **Your asks ·
+Changes · Files · Board · Spec** (`PD_TOOLS`; Files is the panel `workspace`, Spec is `spec`: a
+task's Spec with its Details under it). Each is an icon button (`PD_ICON`, 24-unit SVG, 1.8 stroke
+in `currentColor`) whose name is its tooltip and `aria-label`; a count sits on the icon's top right
+corner (`setBadge`: Your asks' open asks; Changes' uncommitted files on a PO screen, the branch's
+lines added on a task, short: `+512`, `+1.7k`, the exact numbers in its tooltip). A click opens a
+tool **beside** the conversation, which narrows (`stripOpen: 'beside'`: nothing is covered, no
+shadow); a second click, its slide-in control or Esc puts it back; one is open at a time; hovering
+opens nothing (`stripHover: false`). Its width is its own (`pdToolSize`): Your asks 400, Spec 480,
+Changes, Files and the Board 60% of what the list and the strip leave (480 to 760, the conversation
+keeping at least 360). **The open tool is remembered per browser** (`cd-tool-open`) and opens
+again after a reload, and stays open when the middle changes conversation. Pin (its title bar)
+docks a tool beside the conversation; split, maximise and pop out work as the library's. **The
+conversation cannot be moved**: no title bar, no control (`can`), and a tool dropped into its
+stack goes beside it (`pdKeepMiddle`). The Board's own **⤢** (`.pd-board-max`, beside its view
+switch) takes the whole width and gives it back. There is **no Panels menu on a desktop**: every
+tool is always on the strip. The layout is kept under `cd-tool-strip` (the old `cd-po-dock` is not
+read). An open task is the same dock's middle (see *The middle* in §5), with its own Changes,
+Files and Spec in the tools. **A phone keeps step 2's tabs**: the dock is narrow there
+(`pdNarrow()` is `isPhone()`), one column of tabs `PO chat · Your asks · Board · Files ·
+Changes` (no Spec: a phone's open task has its own tabs) with Panels ▾ in the bar.
 
 A project with a PO opens on its **PO screen**: a Dock (`static/dock`, a vendored copy of the Dock
 library; `VERSION` names its commit) of five panels, **PO chat, Your asks, Board, Workspace,
@@ -598,14 +613,12 @@ restored chat's iframe slides under the pointer: for 500 ms after that click the
 let clicks through, `pdDblGuard`). The layout is remembered in the browser (`cd-po-dock`; a phone's apart, `cd-po-dock-phone`), with **Reset layout** in the Panels menu. The
 library is never edited in this repository: a need goes to the Dock project's `ENSEMBLE-NEEDS.md`.
 
-- **The default** (`pdDefaultLayout`, measured in `tests/test_po_dock.py`): at a laptop's width (about
-  1440) the PO chat takes what Your asks (340px) leaves, side by side; Board, Workspace and
-  Changes wait on the right edge's strip, never on screen until opened, each sliding out over 72% of the width and
-  pinning back beside Your asks. A layout saved with a panel that is gone (the Documents panel)
-  loads without it: the library drops a panel it does not know. From 1800px the Board is on screen too, on the right (46% of the width):
-  a chat's lines stop getting longer at about 700px, so a wider screen's width goes to the board. A
-  phone (`MOBILE_MQ`) is one column: every panel a tab of one stack, the PO chat first; nothing
-  floats, sits on a strip or pops out there, and a tab is not dragged.
+- **The default** (`pdDefaultLayout`, measured in `tests/test_po_dock.py` and
+  `tests/test_tool_strip.py`): on a desktop, at every width, the conversation alone and every tool
+  on the strip, none open. A layout saved with a panel that is gone (the Documents panel) loads
+  without it: the library drops a panel it does not know. A phone (`MOBILE_MQ`) is one column:
+  every panel a tab of one stack, the PO chat first; nothing floats, sits on a strip or pops out
+  there, and a tab is not dragged.
 - **Icon:** the top bar's mark is the wordmark, or where it does not fit the app's icon
   (`/static/icons/favicon.svg`, 22px; see *The wordmark* in §5.1), and a popped-out panel's window
   takes the icon as its own (`pdPopIcon`).
@@ -621,8 +634,10 @@ library is never edited in this repository: a need goes to the Dock project's `E
   the `--accent` underline (§1's selected tab). The bar's controls (move or hide, minimise, maximise,
   pop out, float, unpin) are Subtle buttons, 24px, `--hover`. A splitter is 5px of `--bg`,
   `--border-strong` on hover, `--accent` while dragged or focused (a control you are using). An edge
-  strip is `--surface-sunken` with its panels' names as Default buttons (`--fs-200`, 500); the one
-  slid out is `--selected-bg`. A floating window and a slid-out strip panel are `--r-300` with
+  strip is `--surface-sunken`; the tool strip's buttons are square icon buttons (Default: `--surface`,
+  `--border`, the icon `--fg-subtle`, 55% of the strip), their count 10px 600 `--fg` on `--surface`
+  in the icon's corner; the one open is `--selected-bg` with `--selected-fg`. A text strip button
+  (a panel without an icon) is its name, `--fs-200`, 500. A floating window and a slid-out strip panel are `--r-300` with
   `--e-200`; docked panels have a border, no shadow (§2). The drop preview is the drop target of §1.
   Menus are `--surface-overlay`, `--r-300`, `--e-200`, rows 32px.
 - **Panels ▾ is in the top bar on a phone** (`#bar-here`, §5.1; a Default button, `pdCtlHtml`;
@@ -838,16 +853,19 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
    `moveBefore` so the iframe keeps its page (a plain `appendChild` would reload it; browsers
    without `moveBefore` do reload it then). Never rebuild it, and never move it any other way.
    **The middle** (layout A, #124; a desktop, `body.mid`, set by `midSync` from `MOBILE_MQ`).
-   The screen is list (left, the task switcher, `--list-w`) | middle | (later) the tool strip. The middle
-   holds **one conversation**, full height under the bar: a task's (`#detail-panel`, no longer a
-   380px panel, no slide, no resize handle) or a project's PO (its PO screen, the dock's narrow
-   tabs). Its text keeps to a centred column of `--conv-w` (880px): the chat's iframe, the task's
-   header and tabs, Spec and Details. A task's Changes and Workspace take the whole middle (the
-   Workspace's tree and file side by side again). Opening a task replaces what the middle showed;
-   closing it (×, Esc, the project's crumb, the PO pill) gives it back. The page does not scroll
-   while a task is open; each pane scrolls inside itself. The PO drawer (the pill on a page with
-   no PO screen) opens at the middle's right edge over an open task. The tab set of a task stays
-   `Activity · Changes · Workspace · Spec · Details` (see *Tabs*).
+   The screen is list (left, the task switcher, `--list-w`) | middle | the tool strip (#125, see
+   *Panels* in §4). The middle holds **one conversation**, full height under the bar: a project's PO
+   or a task's. Both are the dock's middle: an open task's `#detail-panel` moves into the
+   conversation's place (`pdPlaceTask`, with `moveBefore`, so its live chat keeps its page;
+   `body.dp-docked`), its tabs go, and its Changes, Workspace, Spec and Details panes move into the
+   tools (`dpPlacePanes`; a tool holding a task's pane shows it instead of the PO's, `.pd-for-task`).
+   Opening a task on a desktop makes its project the page's (so Your asks and the Board are its
+   project's; closing it lands there), also for a project without a PO, whose open task gets the
+   strip too. Its text keeps to a centred column of `--conv-w` (880px): the chat's iframe, the
+   task's header. Opening a task replaces what the middle showed; closing it (×, Esc, the project's
+   crumb, the PO pill) gives it back. The page does not scroll; each pane scrolls inside itself.
+   Where the dock cannot load, the task panel has its tabs as in step 2 (`Activity · Changes ·
+   Workspace · Spec · Details`, see *Tabs*), as it does on a phone.
 2. **The board groups; it never sorts.** Priority first, then most recently updated, in *both* views.
    The hover-freeze works by being the **only** place ordering happens — any second sort defeats it and
    cards move under the cursor. Two tasks must never swap places because someone flipped the view
