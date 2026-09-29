@@ -77,13 +77,28 @@ his first look, and it looked nothing like the mockup.
   theme and red is "wrong" in every theme. Each theme's pairs are measured on that theme's ground.
 - **Adding a theme:** add its block to all three pages with the same token names as the Dark block,
   add its name and ground (`light` or `dark`) to the `SCHEME` map in each page's head script, add it
-  to the avatar menu and to the hub's allowed `theme` values in `dashboard.py`, then measure every
+  to the hub's allowed `theme` values in `dashboard.py` (the avatar menu's Theme submenu and Settings'
+  Theme list are built from `cdTheme.themes`, so they show it by themselves; give it a label and
+  swatch colours in `THEME_INFO` in `index.html`), then measure every
   pair in §3 on it, including its `--code-*` set in `fileview.html` (see *Code* below). The ground
   picks which way the accent's hover mixes.
 - **The choice follows the person, not the browser.** It is stored on the hub (`settings.theme`) so
   every device agrees. `localStorage['cd-theme']` is only the first-paint cache: the head script
   applies it before first paint, then fetches the hub's value and adopts it if it differs. If the
   hub has none yet, the page hands the hub its own, so a choice made before is kept.
+- **Theme is a submenu of the avatar menu, never a flat run of rows.** One item, *Theme*, with the
+  current theme's name and a `›` at its right; it opens a list of **every** theme plus Match system
+  (`themeListHtml`, built from `cdTheme.themes`, the `SCHEME` keys the hub also allows). A row is a
+  swatch (18px circle in the theme's ground, its accent as an 8px dot, ringed `--border`), the name,
+  and a `✓` on the current one (`--selected-bg` row, `role="menuitemradio"`). On a desktop the list
+  is a flyout to the left of the menu (the avatar is at the right edge); on a phone it is a nested
+  list inside the menu, indented, never a flyout off screen. Click, or → on the item, opens it; ←
+  and Esc fold it. Choosing a row applies it at once, saves it on the hub and closes the menu.
+  Settings' Theme section is the same list as radios.
+- **A floating panel scrolls itself.** The page is a fixed-height shell, so a tray or panel dropped
+  from the bar is `position: fixed` with a `max-height` of the room under its button and
+  `overflow-y: auto`; it never relies on the page to scroll it into view (Settings lost its lower
+  sections that way in #124).
 - **Never key a colour off `@media (prefers-color-scheme)` directly.** It needs a second copy of a
   theme block, and a build that follows the OS by default is exactly how this one drifted from its
   mockup.
