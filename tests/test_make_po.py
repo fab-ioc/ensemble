@@ -42,6 +42,8 @@ import rotation  # noqa: E402
 PORT = 8798
 NODE = shutil.which("node")
 INDEX = (ROOT / "index.html").read_text(encoding="utf-8").replace("\r\n", "\n")
+# The word for a board (static/noun.js): the page code below calls noun()/nounText().
+NOUN = (Path(__file__).resolve().parent.parent / "static" / "noun.js").read_text(encoding="utf-8")
 SESSION = (ROOT / "session.html").read_text(encoding="utf-8").replace("\r\n", "\n")
 URL = "/api/projects/po-from-session"
 
@@ -1044,7 +1046,7 @@ console.log(JSON.stringify(out));
     def setUpClass(cls):
         i = INDEX.index("// ---- A past session made a PO: begin")
         block = INDEX[i:INDEX.index("// ---- A past session made a PO: end", i)]
-        r = subprocess.run([NODE, "-"], input=cls.JS % block, capture_output=True, text=True, encoding="utf-8", timeout=60)
+        r = subprocess.run([NODE, "-"], input=cls.JS % (NOUN + block), capture_output=True, text=True, encoding="utf-8", timeout=60)
         if r.returncode != 0:
             raise AssertionError(r.stderr[-3000:])
         cls.out = json.loads(r.stdout.strip().splitlines()[-1])
@@ -1107,7 +1109,7 @@ console.log(JSON.stringify(out));
     def test_where_the_page_offers_it(self):
         # Offered in the shared action menu (static/actions.js): a task by its room, a session by its id.
         actions = (ROOT / "static" / "actions.js").read_text(encoding="utf-8")
-        self.assertIn("id: 'makepo', label: 'Make PO of a new project…', cls: 'makepo-btn',", actions)
+        self.assertIn("id: 'makepo', label: nounText('Make PO of a new {project}…'), cls: 'makepo-btn',", actions)
         self.assertIn("data: s.kind === 'room' ? { room: s.roomId } : { sid: s.sessionId },", actions)
         self.assertIn("SessionActions.actionBarHtml(SessionActions.sessionActions(actionState(r, isLive), actionEnv()))", INDEX)
         self.assertIn("if (row) await projectSetupFlow({ preselect: row });", INDEX)

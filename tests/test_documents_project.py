@@ -42,6 +42,8 @@ import ensemble_tools  # noqa: E402
 import history  # noqa: E402
 
 INDEX = (ROOT / "index.html").read_text(encoding="utf-8").replace("\r\n", "\n")
+# The word for a board (static/noun.js): the page code below calls noun()/nounText().
+NOUN = (Path(__file__).resolve().parent.parent / "static" / "noun.js").read_text(encoding="utf-8")
 NODE = shutil.which("node")
 GIT = shutil.which("git")
 PORT = 8798
@@ -641,7 +643,7 @@ DEPS = ["esc", "agoSpan", "wsNorm", "wsSame", "wsJoin", "wsTabName", "wsFmtSize"
 class ThePage(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        src = PAGE % {"deps": "\n".join(js_function(n) for n in DEPS), "block": docs_block()}
+        src = PAGE % {"deps": NOUN + "\n".join(js_function(n) for n in DEPS), "block": docs_block()}
         r = subprocess.run([NODE, "-"], input=src, capture_output=True, text=True, encoding="utf-8", timeout=60)
         if r.returncode != 0:
             raise AssertionError(r.stderr[-3000:])

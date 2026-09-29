@@ -38,6 +38,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 INDEX = (ROOT / "index.html").read_text(encoding="utf-8").replace("\r\n", "\n")
+# The word for a board (static/noun.js): the page code below calls noun()/nounText().
+NOUN = (Path(__file__).resolve().parent.parent / "static" / "noun.js").read_text(encoding="utf-8")
 NODE = shutil.which("node")
 
 JS = r"""
@@ -173,7 +175,7 @@ class TaskSwitcher(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         src = "\n".join([
-            re.search(r"^const esc = .*$", INDEX, re.M).group(0),
+            NOUN, re.search(r"^const esc = .*$", INDEX, re.M).group(0),
             INDEX[INDEX.index("const fmtAgo = "):INDEX.index("function sinceClock(")],
             INDEX[INDEX.index("const fmtCost = "):INDEX.index("const fmtInt = ")],
             INDEX[INDEX.index("const WORKFLOW_COLS = "):INDEX.index("const DONE_AGE_DAYS")],

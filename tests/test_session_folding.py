@@ -24,6 +24,8 @@ import unittest
 from pathlib import Path
 
 SRC = (Path(__file__).resolve().parent.parent / "session.html").read_text(encoding="utf-8").replace("\r\n", "\n")
+# The word for a board (static/noun.js): the page code below calls noun()/nounText().
+NOUN = (Path(__file__).resolve().parent.parent / "static" / "noun.js").read_text(encoding="utf-8")
 NODE = shutil.which("node")
 
 
@@ -115,7 +117,7 @@ _RUN = None
 def run() -> dict:
     global _RUN
     if _RUN is None:
-        code = fold_block(SRC) + js_function(SRC, "soloItems")
+        code = NOUN + fold_block(SRC) + js_function(SRC, "soloItems")
         out = subprocess.run([NODE, "-e", JS], input=json.dumps({"code": code}), capture_output=True,
                              text=True, encoding="utf-8", timeout=60)
         if out.returncode != 0:
@@ -333,7 +335,7 @@ class WhileThePageRedraws(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        code = fold_block(SRC) + sends_block(SRC) + js_function(SRC, "renderBubbles") + js_function(SRC, "patchChildren")
+        code = NOUN + fold_block(SRC) + sends_block(SRC) + js_function(SRC, "renderBubbles") + js_function(SRC, "patchChildren")
         out = subprocess.run([NODE, "-e", RENDER_JS], input=json.dumps({"code": code}), capture_output=True,
                              text=True, encoding="utf-8", timeout=60)
         if out.returncode != 0:

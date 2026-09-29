@@ -17,6 +17,12 @@
 'use strict';
 
 const escH = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// The word for a board (static/noun.js, loaded before this in every page).
+// Without it (a test that loads this file alone) the word stays "project".
+const nounText = root.nounText || (() => {
+  try { return require('./noun.js').nounText; } catch (e) {}
+  return s => String(s).replace(/\{(a |A )?([Pp])roject(s?)\}/g, (m, a, p, s) => (a || '') + p + 'roject' + s);
+})();
 
 const NO_FOLDER = 'No working folder is recorded for it.';
 const UNKNOWN_PO = 'Not known yet whether it can become a PO: the hub has not said.';
@@ -25,8 +31,8 @@ const UNKNOWN_PO = 'Not known yet whether it can become a PO: the hub has not sa
 // hub's answer (the row's makePo); a row without one is not known, not yes.
 function makePoItem(s) {
   const base = {
-    id: 'makepo', label: 'Make PO of a new project…', cls: 'makepo-btn',
-    title: 'Start a new project with this conversation as its PO: the task you talk to about the project, which its other tasks report to',
+    id: 'makepo', label: nounText('Make PO of a new {project}…'), cls: 'makepo-btn',
+    title: nounText('Start a new {project} with this conversation as its PO: the task you talk to about the {project}, which its other tasks report to'),
     data: s.kind === 'room' ? { room: s.roomId } : { sid: s.sessionId },
   };
   const mp = s.makePo;
@@ -54,7 +60,7 @@ function sessionActions(s, env) {
 
   const rename = { id: 'rename', label: 'Rename…', cls: 'rename-btn', data: { sid }, title: 'Change the name it is shown by' };
   const auto = { id: 'auto', label: 'Suggest a name', cls: 'auto-btn', data: { sid }, title: 'Ask Claude to suggest a name from the conversation' };
-  const move = { id: 'moveproj', label: 'Move to project…', cls: 'moveproj-btn', data: { sid }, title: 'File it under a project, or take it out of one' };
+  const move = { id: 'moveproj', label: nounText('Move to {project}…'), cls: 'moveproj-btn', data: { sid }, title: nounText('File it under {a project}, or take it out of one') };
   const finder = cwd
     ? { id: 'finder', label: hub ? `Open in ${FM}` : 'Browse the folder', cls: 'finder-btn', data: { path: cwd },
         title: hub ? `Open its working folder in ${FM}` : 'Browse its working folder in the file viewer' }

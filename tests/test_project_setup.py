@@ -680,7 +680,8 @@ console.log(JSON.stringify(out));
         def block(name):
             i = INDEX.index(f"// ---- {name}: begin")
             return INDEX[i:INDEX.index(f"// ---- {name}: end", i)]
-        src = cls.JS % (block("A past session made a PO") + block("Set up a project"), json.dumps(VERDICTS))
+        noun = (Path(dashboard.__file__).parent / "static" / "noun.js").read_text(encoding="utf-8")   # the page code calls nounText()
+        src = cls.JS % (noun + block("A past session made a PO") + block("Set up a project"), json.dumps(VERDICTS))
         r = subprocess.run([NODE, "-"], input=src, capture_output=True, text=True, encoding="utf-8", timeout=60)
         if r.returncode != 0:
             raise AssertionError(r.stderr[-3000:])

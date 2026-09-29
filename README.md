@@ -94,6 +94,8 @@ To start the hub at logon and restart it if it crashes:
 .\install-task.ps1 uninstall
 ```
 
+Both install scripts (this one and `install-launchd.sh` on macOS) ask once what the dashboard should call a board of tasks: Project (Enter), Initiative, Epic, Workstream or a word of your own. `-Noun Initiative` (or `ENSEMBLE_NOUN=Initiative` on macOS) answers without asking, and an install with no one at the console keeps Project. You can change it later in Settings; agents, file names and the API keep saying "project".
+
 The task runs as the current user. Keep the name `Ensemble`: the hub's restart helper (`restart-hub.ps1`) looks for a scheduled task by that name and restarts the hub through it.
 
 ### macOS

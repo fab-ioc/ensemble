@@ -499,7 +499,7 @@ STATIC_DIR = Path(__file__).parent
 # open tab can tell when the page it runs is no longer the one on disk.
 PAGE_FILES = ("index.html", "session.html", "fileview.html",
               "static/hl.js", "static/comments.js", "static/attach.js", "static/actions.js",
-              "static/selbar.js",
+              "static/selbar.js", "static/noun.js",
               # The Dock library (static/dock, a vendored copy) that a project's
               # PO screen is built on: its modules and its stylesheet (its pop-out
               # page is a module too, popout-page.js, opened from a blob: URL).
@@ -1299,6 +1299,10 @@ _SETTINGS_DEFAULTS = {
     # the theme's own accent. Empty = never chosen here (a page then hands up
     # its browser's), which is why the default is a word and not "".
     "accent": "",
+    # The word the pages use for a board, chosen at install and changeable
+    # here: "Initiative"/"Initiatives" where one real project holds several.
+    # Only what the person reads changes; routes, keys and agents keep "project".
+    "projectNoun": {"one": "Project", "many": "Projects"},
 }
 # An accent is an opaque colour a primary button can be painted with: #rgb or
 # #rrggbb, a CSS colour name, rgb(r g b) or hsl(h s% l%) (commas or spaces).
@@ -1348,6 +1352,34 @@ def valid_accent(v: str) -> bool:
         return (not pa and pb == pc == "%" and 0 <= a <= 360
                 and 0 <= b <= 100 and 0 <= c <= 100)
     return False
+
+
+def clean_project_noun(v) -> dict | None:
+    """{"one", "many"} with their spaces tidied, each a short line of plain
+    text, or None."""
+    if not isinstance(v, dict):
+        return None
+    out = {}
+    for n in ("one", "many"):
+        w = v.get(n)
+        if not isinstance(w, str):
+            return None
+        w = " ".join(w.split())
+        if not w or len(w) > 40 or any(c in w for c in "<>{}&\"'"):
+            return None
+        out[n] = w
+    return out
+
+
+def project_noun(n: str = "one", case: str = "lower") -> str:
+    """The word for a board in what the person reads, as static/noun.js
+    noun(): n "one"|"many", case "lower"|"title". A word that starts with two
+    capitals (OKR, OKRs) stays as it is."""
+    w = (clean_project_noun(load_settings().get("projectNoun"))
+         or _SETTINGS_DEFAULTS["projectNoun"])[n]
+    if case == "title":
+        return w[:1].upper() + w[1:]
+    return " ".join(x if x[:2].isupper() and len(x) > 1 else x.lower() for x in w.split(" "))
 
 
 _SETTINGS_ALLOWED_VALUES = {
@@ -1454,6 +1486,10 @@ def _save_settings_locked(settings: dict) -> dict:
             v = max(0, min(10_000_000, v))
             if k == "readCapLines":
                 v = max(1, min(100_000, v))
+        if k == "projectNoun":
+            v = clean_project_noun(v)
+            if v is None:
+                continue
         if k == "accent":
             # Never back to "": that reads as never chosen, and the next page
             # would hand up its own browser's colour over the choice.
@@ -3516,13 +3552,14 @@ def make_po_words(v: dict) -> dict:
     c = v.get("code") or ""
     q = lambda k: f"“{v.get(k) or ''}”"      # noqa: E731
     mins = int(v.get("min") or 1)
+    pn = project_noun()
     words = {
         "": ("", ""),
         "orphan": ("It is what is left of a collaboration whose task was deleted: several conversations, "
                    "none of them on its own.",
                    "Choose a conversation that is on its own, or start a fresh PO."),
         "held": (f"It is already the task {q('task')}.", "Choose that task instead."),
-        "is_po": (f"It is already the PO of {q('project')}.", "A PO leads one project: choose another conversation."),
+        "is_po": (f"It is already the PO of {q('project')}.", f"A PO leads one {pn}: choose another conversation."),
         "draft": ("It is a draft: it has not started, so it has no conversation yet.",
                   "Start it first, or start a fresh PO."),
         "agents": (f"It has {v.get('n', 0)} agents: only a task with one agent can be made a PO.",
@@ -3531,15 +3568,16 @@ def make_po_words(v: dict) -> dict:
                         f"can be made a PO.", "Choose a Claude or a Codex conversation."),
         "not_installed": (f"{v.get('agent', '').capitalize()} is not installed on this machine.",
                           f"Install {v.get('agent', '')}, or choose another conversation."),
-        "other_project": (f"It belongs to the project {q('project')}.",
-                          "Move it out of that project first (Move to project… in its menu), then choose it."),
+        "other_project": (f"It belongs to the {pn} {q('project')}.",
+                          f"Move it out of that {pn} first (Move to {pn}… in its menu), then choose it."),
         "no_conversation": ("It has no conversation yet: a PO made this way brings its conversation with it.",
                             "Start it first, or start a fresh PO."),
         "no_cwd": ((f"Its folder {v.get('cwd')} no longer exists, and a conversation can only be continued "
                     f"in the folder it was started in.") if v.get("cwd") else "The folder it was started in is not known.",
                    "Restore that folder, or choose another conversation."),
         "has_po": (f"{q('project')} already has a PO: {q('po')}.",
-                   "Open the project to talk to its PO."),
+                   f"Open the {pn} to talk to its PO."),
+
         "live": ("It is open in a terminal right now. Continued here as well, it would split in two.",
                  "Close it in that terminal first (quit the agent), then choose it again."),
         "unseen": ("Ensemble cannot see whether it is still open in a terminal. Continued in two places, "
@@ -12658,9 +12696,29 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
 
+def set_project_noun_cli(one: str, many: str) -> int:
+    """``dashboard.py --set-project-noun ONE MANY``: the install scripts'
+    way to save the word for a board, then exit. 0 when it was kept."""
+    want = clean_project_noun({"one": one, "many": many})
+    if want is None:
+        print(f"not a word for a board: {one!r} / {many!r} (up to 40 letters, no <>{{}}&\"')",
+              file=sys.stderr)
+        return 1
+    got = save_settings({"projectNoun": want}).get("projectNoun")
+    print(f"Ensemble calls a board: {got['one']} / {got['many']}")
+    return 0
+
+
 def main():
     global _LOG_FILE, ACCESS_TOKEN, HUB_PORT
     args = sys.argv[1:]
+    if "--set-project-noun" in args:
+        i = args.index("--set-project-noun")
+        if len(args) < i + 3:
+            print("usage: dashboard.py --set-project-noun ONE MANY", file=sys.stderr)
+            sys.exit(2)
+        sys.exit(set_project_noun_cli(args[i + 1], args[i + 2]))
+
     # Port: --port wins, else ENSEMBLE_PORT, else 8765.
     if "--port" in args:
         port = int(args[args.index("--port") + 1])

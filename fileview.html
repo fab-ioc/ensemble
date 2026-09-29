@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="ensemble-pages" content="">
 <title>file</title>
+<script src="/static/noun.js"></script>
 <link rel="icon" type="image/svg+xml" href="/static/icons/favicon.svg">
 <link rel="icon" href="/static/icons/favicon.ico" sizes="16x16 32x32 48x48">
 <!-- Syntax highlighting is this page's own (HL, below), coloured by the
@@ -130,6 +131,11 @@
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (s) {
         if (!s) return;
+        // The hub's word for a board (static/noun.js): kept for the next load,
+        // and the page told when it is not the word it painted with.
+        if (s.projectNoun && window.setNoun && window.setNoun(s.projectNoun)) {
+          try { window.dispatchEvent(new CustomEvent('cd-noun')); } catch (e) {}
+        }
         if (typeof s.theme === 'string') {
           var local = stored();
           if (s.theme && s.theme !== local) {
@@ -1700,7 +1706,7 @@ function wireFrameLinks(ifr) {
     const listed = await showDir(path, main);
     if (listed === true) return;
     if (listed === 'forbidden' && /[\\\/]$/.test(path)) {
-      main.innerHTML = '<div class="err">Could not list this folder (403) — it sits outside the folders the dashboard is allowed to read: registered projects and their task folders.</div>';
+      main.innerHTML = nounText('<div class="err">Could not list this folder (403) — it sits outside the folders the dashboard is allowed to read: registered {projects} and their task folders.</div>');
       return;
     }
   }
@@ -1741,7 +1747,7 @@ function wireFrameLinks(ifr) {
     let r = null, url = '';
     try { r = await fetch(src, { cache: 'no-store' }); } catch (e) {}
     if (r && r.status === 404) { notFound(); return; }
-    if (r && r.status === 403) { main.innerHTML = '<div class="err">Could not open file (403) — it sits outside the folders the dashboard is allowed to read: registered projects and their task folders.</div>'; return; }
+    if (r && r.status === 403) { main.innerHTML = nounText('<div class="err">Could not open file (403) — it sits outside the folders the dashboard is allowed to read: registered {projects} and their task folders.</div>'); return; }
     try { if (r && r.ok) url = URL.createObjectURL(new Blob([await r.arrayBuffer()], { type: MEDIA[ext] })); } catch (e) {}
     if (!url) { main.innerHTML = `<div class="err">Could not open file${r && !r.ok ? ' (' + r.status + ')' : ''}.</div>`; return; }
     // A PDF's place is inside the browser's own viewer, out of this page's
@@ -1758,7 +1764,7 @@ function wireFrameLinks(ifr) {
     if (res.status === 404 && absPath && (await showDir(path, main)) === true) return;
     // Say which of the two it is, rather than making the reader guess.
     if (res.status === 404) notFound();
-    else if (res.status === 403) main.innerHTML = '<div class="err">Could not open file (403) — it sits outside the folders the dashboard is allowed to read: registered projects and their task folders.</div>';
+    else if (res.status === 403) main.innerHTML = nounText('<div class="err">Could not open file (403) — it sits outside the folders the dashboard is allowed to read: registered {projects} and their task folders.</div>');
     else main.innerHTML = `<div class="err">Could not open file${res.status ? ' (' + res.status + ')' : ''}.${res.why ? ' ' + esc(res.why) : ''}</div>`;
     return;
   }
