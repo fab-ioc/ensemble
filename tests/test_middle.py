@@ -389,6 +389,29 @@ async function main() {
                     text: panel.textContent, focus: document.activeElement === b2 };
       ATTENTION.items = []; SW_DIAG.clear(); swRender();
       return out; })()`);
+    // A reason under 80 characters that two lines still cut at 360px: Details
+    // shows because it is measured, not counted (#135 R2); one that fits has none.
+    await c.send('Emulation.setDeviceMetricsOverride', { width: 360, height: 780, deviceScaleFactor: 3, mobile: true }, q.sessionId);
+    await sleep(400);
+    out.phoneClip = await q.evalIn(`(() => {
+      const task = ${JSON.stringify(A.task)};
+      const it = (roomId, reason) => ({ roomId, state: 'blocked', askKind: 'blocked', since: Date.now() / 1000, reason,
+                                        projectId: ${JSON.stringify(A.proj)}, title: roomId });
+      ATTENTION.items = [it(task, 'WWW_ADMIN_PASSWORD AND WWW_DATABASE_PASSWORD REQUIRED TO CONTINUE DEPLOYMENT.'), it('fake-short', 'logged out')];
+      swRender();
+      const N = '#sw-list [data-group="needs"] ';
+      const btn = k => document.querySelector(N + '.sw-diag-btn[data-room="' + k + '"]');
+      const why = document.querySelector(N + '.sw-row[data-room="' + task + '"] .sw-why');
+      const long = btn(task), short = btn('fake-short');
+      const r = { width: innerWidth, cut: why.scrollHeight > why.clientHeight, chars: why.textContent.length,
+                  longShown: !!long && !long.hidden && long.getBoundingClientRect().height > 0, shortShown: !!short && !short.hidden };
+      long.focus(); long.click();
+      const l2 = btn(task), panel = document.getElementById(l2.getAttribute('aria-controls'));
+      Object.assign(r, { open: !panel.hidden, text: panel.textContent, focus: document.activeElement === l2 });
+      l2.click();
+      Object.assign(r, { refolded: !btn(task).hidden && btn(task).getAttribute('aria-expanded') === 'false', refocus: document.activeElement === btn(task) });
+      ATTENTION.items = []; SW_DIAG.clear(); swRender();
+      return r; })()`);
     await q.close();
   } finally {
     try { ch.kill(); } catch (e) {}
@@ -648,6 +671,17 @@ class TheMiddle(unittest.TestCase):
         self.assertIn("r" * 120, g["text"])
         self.assertIn("last line one\nlast line two", g["text"])
         self.assertTrue(g["focus"], "the focus stays on it across the redraw")
+
+    def test_every_cut_reason_has_its_details(self):
+        g = self.got["phoneClip"]
+        self.assertEqual(g["width"], 360)
+        self.assertTrue(g["cut"] and g["chars"] < 80, f"a short reason two lines cut: {g}")
+        self.assertTrue(g["longShown"], "measured, not counted")
+        self.assertFalse(g["shortShown"], "a reason that fits has no Details")
+        self.assertTrue(g["open"])
+        self.assertIn("REQUIRED TO CONTINUE DEPLOYMENT.", g["text"])
+        self.assertTrue(g["focus"])
+        self.assertTrue(g["refolded"] and g["refocus"], "folded again, it stays (still cut) and keeps the focus")
 
 
 if __name__ == "__main__":

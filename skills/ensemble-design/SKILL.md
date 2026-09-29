@@ -853,7 +853,8 @@ self-contained component, so a later layout can host it elsewhere.
   ("since 14:05", else its age), names the agent in line two, and adds a third line (`.sw-why`,
   `--fs-200` `--fg-muted`, two lines at most) with the reason; the tooltip holds the reason and a
   dead agent's last screen. A tooltip is never the only copy (§8.3), so where there is more than
-  the row shows (a last screen, a reason past about 80 characters) a quiet **Details** line under
+  the row shows (a last screen, or a reason its two lines cut off, measured where it is drawn and
+  again when the list resizes: letters, not a character count, decide) a quiet **Details** line under
   the row (`.sw-diag-btn`, a disclosure with `▸`/`▾`, `--touch-min` on a phone) opens the reason in
   full and the last screen in `--font-mono` (`.sw-diag`, on `--surface`), kept open across redraws.
   A PO's row names its agent too.

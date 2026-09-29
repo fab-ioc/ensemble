@@ -314,11 +314,14 @@ class TaskSwitcher(unittest.TestCase):
         d = re.search(r'<button type="button" class="sw-diag-btn" ' + r1 + r'[^>]*>.*?</button><div class="sw-diag"[^>]*>.*?</div>', html, re.S)
         self.assertTrue(d, "a Details line under the row")
         d = d.group(0)
-        self.assertIn('aria-expanded="false" aria-controls="sw-diag-r1"', d)
+        self.assertIn('aria-expanded="false" aria-controls="sw-diag-r1" aria-label=', d, "a last screen: always shown")
         self.assertIn('<div class="sw-diag" id="sw-diag-r1" hidden>', d, "folded by default")
         self.assertIn('<p class="sw-diag-why">logged out</p><pre class="sw-diag-lines">Please log in</pre>', d)
-        self.assertIn('class="sw-diag-btn" data-room="r-long"', self.r["longWhy"], "a reason past two lines")
-        self.assertNotIn('class="sw-diag-btn" data-room="r9"', html, "the row shows all of a short one")
+        # #135 R2: a reason alone waits hidden until the page measures it cut (tests/test_middle.py).
+        self.assertIn('aria-controls="sw-diag-r-long" data-clip hidden aria-label=', self.r["longWhy"])
+        self.assertIn('aria-controls="sw-diag-r9" data-clip hidden aria-label=', html)
+        self.assertIn(".sw-diag-btn[hidden] { display: none; }", INDEX)
+        self.assertIn("swDiagFit(box);", fn(INDEX, "function swRender("))
         o = self.r["diagOpen"]
         self.assertIn('aria-expanded="true" aria-controls="sw-diag-r1"', o)
         self.assertIn('<div class="sw-diag" id="sw-diag-r1">', o, "open, it stays open across redraws")
@@ -328,7 +331,7 @@ class TaskSwitcher(unittest.TestCase):
         self.assertEqual(re.findall(r'data-group="project" data-proj="(\w*)"', h), ["p1", "p2"])   # by name
         motors = h[h.index('data-proj="p2"'):h.index('data-group="unassigned"')]
         # Its PO first (selected: it is on screen), then Needs you, Running, Ready.
-        self.assertEqual(re.findall(r'data-room="([\w-]+)"', motors), ["po-2", "r-old", "r9", "r5", "r6"])
+        self.assertEqual(re.findall(r'class="sw-row[^"]*" data-(?:po|sid)="[^"]*" data-room="([\w-]+)"', motors), ["po-2", "r-old", "r9", "r5", "r6"])
         self.assertEqual(motors.count('data-po="p2"'), 1)                 # once, with its lozenge
         self.assertIn('class="sw-row needs on" data-po="p2"', motors)
         self.assertIn('<span class="sw-gname">Motors</span><span class="sw-n">4</span>', motors)   # tasks, not the PO

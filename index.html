@@ -2288,6 +2288,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     font: inherit; font-size: var(--fs-200); line-height: 20px; cursor: pointer;
   }
   .sw-diag-btn:hover { background: var(--hover); }
+  .sw-diag-btn[hidden] { display: none; }
   .sw-diag-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface-sunken), 0 0 0 4px var(--focus-ring); }
   .sw-diag { margin: 0 var(--s-200) var(--s-200) calc(var(--s-200) + 16px); padding: var(--s-200); border: 1px solid var(--border); border-radius: var(--r-200); background: var(--surface); }
   .sw-diag-why { margin: 0; font-size: var(--fs-200); line-height: 16px; color: var(--fg); overflow-wrap: anywhere; }
@@ -5825,17 +5826,16 @@ function swRowHtml(e, group, selected) {
     + `<span class="sw-st ${st.cls}"${st.tip ? ` role="img" aria-label="${esc(st.tip)}"` : ''}></span>`
     + `<span class="sw-title">${no ? `<span class="tno">${esc(no)}</span> ` : ''}${esc(title)}</span>${age}`
     + `<span class="sw-l2">${bits.join('')}</span>${why}</button>`
-    + (needs && (it.lastLines || String(it.reason || '').length > SW_WHY_FITS) ? swDiagHtml(e.key, it) : '');
+    + (needs && (it.lastLines || it.reason) ? swDiagHtml(e.key, it) : '');
 }
-// About what two lines of .sw-why hold in the list's 300px.
-const SW_WHY_FITS = 80;
 // The rooms whose Details are open; kept across redraws.
 const SW_DIAG = new Set();
 // A Needs you row's Details: a disclosure under the row, then the reason in
-// full and the last lines of its screen.
+// full and the last lines of its screen. With a reason alone it waits hidden
+// (data-clip) until swDiagFit finds the reason cut off where it is drawn.
 function swDiagHtml(key, it) {
-  const open = SW_DIAG.has(key), id = 'sw-diag-' + key;
-  return `<button type="button" class="sw-diag-btn" data-room="${esc(key)}" aria-expanded="${open}" aria-controls="${esc(id)}"`
+  const open = SW_DIAG.has(key), id = 'sw-diag-' + key, clip = !it.lastLines && !open;
+  return `<button type="button" class="sw-diag-btn" data-room="${esc(key)}" aria-expanded="${open}" aria-controls="${esc(id)}"${clip ? ' data-clip hidden' : ''}`
     + ` aria-label="${esc(it.lastLines ? 'Details: why, and the last lines of its screen' : 'Details: why, in full')}">`
     + `<span aria-hidden="true">${open ? '▾' : '▸'}</span> Details</button>`
     + `<div class="sw-diag" id="${esc(id)}"${open ? '' : ' hidden'}>`
@@ -13783,12 +13783,26 @@ function swRender() {
   // A phone marks the row you last opened (nothing is open while the list shows).
   const sel = phone && !SELECTED_SID ? PH_BACK.sel || {} : swSelection();
   if (!phone) rememberConv(sel);
-  if (writeSlot(box, swListHtml(g, sel, SW_DONE_OPEN, SW_UN, by)) && key) {
+  const wrote = writeSlot(box, swListHtml(g, sel, SW_DONE_OPEN, SW_UN, by));
+  swDiagFit(box);   // before the focus goes back: a Details it lands on must show
+  if (wrote && key) {
     const back = had && box.querySelector(`${inGroup}${hadCls}[data-room="${CSS.escape(had)}"]`);
     if (back) back.focus(); else restoreFocus(box, key);
   }
   if (back && phone) box.scrollTop = PH_BACK.top;
 }
+// A reason's Details shows where its two lines cut it off, at the width the
+// list has now (measured, not counted: the letters decide). Nothing to
+// measure while the list is not drawn; its ResizeObserver measures again.
+function swDiagFit(box) {
+  if (!box || !box.clientWidth) return;
+  for (const b of box.querySelectorAll('.sw-diag-btn[data-clip]')) {
+    const why = b.previousElementSibling && b.previousElementSibling.querySelector('.sw-why');
+    const cut = !!why && why.scrollHeight > why.clientHeight + 1;
+    if (b.hidden === cut) b.hidden = !cut;
+  }
+}
+if (window.ResizeObserver) new ResizeObserver(() => swDiagFit($('#sw-list'))).observe($('#sw-list'));
 $('#sw-cards').addEventListener('click', () => { PH_CARDS = true; renderRows(); });
 $('#sw-proj').addEventListener('change', (ev) => {
   try { localStorage.setItem(SW_KEY + '-project', ev.target.value); } catch (e) {}
