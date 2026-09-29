@@ -598,9 +598,13 @@ stack goes beside it (`pdKeepMiddle`). The Board's own **⤢** (`.pd-board-max`,
 switch) takes the whole width and gives it back. There is **no Panels menu on a desktop**: every
 tool is always on the strip. The layout is kept under `cd-tool-strip` (the old `cd-po-dock` is not
 read). An open task is the same dock's middle (see *The middle* in §5), with its own Changes,
-Files and Spec in the tools. **A phone keeps step 2's tabs**: the dock is narrow there
-(`pdNarrow()` is `isPhone()`), one column of tabs `PO chat · Your asks · Board · Files ·
-Changes` (no Spec: a phone's open task has its own tabs) with Panels ▾ in the bar.
+Files and Spec in the tools. **A phone has the same tools as tabs** (#129): the dock is narrow
+there (`pdNarrow()` is `isPhone()`), one column of tabs in the strip's order, `Chat · Your asks ·
+Changes · Files · Board · Spec`, with Panels ▾ in the bar. An open task is that dock's Chat tab
+too (`pdTask()` holds on a phone), so its tools are the same tabs, not the task panel's own:
+tabs, not a sheet, because they are the same dock and panes as the desktop's strip (no new
+component) and the mockup (`a2-…-390.png`) shows a tab row. The conversation's tab is **Chat**
+(`PD_TITLES`), since it is a task's as often as the PO's; a popped-out window still says "PO chat".
 
 A project with a PO opens on its **PO screen**: a Dock (`static/dock`, a vendored copy of the Dock
 library; `VERSION` names its commit) of five panels, **PO chat, Your asks, Board, Workspace,
@@ -610,15 +614,16 @@ menu, or popped out into a window of their own. **One click on a minimised panel
 brings it back** (the library's, from v0.3.5: `minClickRestores`, on by default); its controls
 keep their own clicks, a drag is not a click, and a double click still maximises (also when the
 restored chat's iframe slides under the pointer: for 500 ms after that click the dock's iframes
-let clicks through, `pdDblGuard`). The layout is remembered in the browser (`cd-po-dock`; a phone's apart, `cd-po-dock-phone`), with **Reset layout** in the Panels menu. The
+let clicks through, `pdDblGuard`). The layout is remembered in the browser (`cd-po-dock`; a phone's apart, `cd-phone-tabs`: a new key
+since #129, as the older one had Spec hidden), with **Reset layout** in the Panels menu. The
 library is never edited in this repository: a need goes to the Dock project's `ENSEMBLE-NEEDS.md`.
 
 - **The default** (`pdDefaultLayout`, measured in `tests/test_po_dock.py` and
   `tests/test_tool_strip.py`): on a desktop, at every width, the conversation alone and every tool
   on the strip, none open. A layout saved with a panel that is gone (the Documents panel) loads
   without it: the library drops a panel it does not know. A phone (`MOBILE_MQ`) is one column:
-  every panel a tab of one stack, the PO chat first; nothing floats, sits on a strip or pops out
-  there, and a tab is not dragged.
+  every panel a tab of one stack, the Chat first and Spec last; nothing floats, sits on a strip or
+  pops out there, and a tab is not dragged.
 - **Icon:** the top bar's mark is the wordmark, or where it does not fit the app's icon
   (`/static/icons/favicon.svg`, 22px; see *The wordmark* in §5.1), and a popped-out panel's window
   takes the icon as its own (`pdPopIcon`).
@@ -673,9 +678,10 @@ library is never edited in this repository: a need goes to the Dock project's `E
 - **The roadmap** is a document: the first row of the Workspace's Documents node, opening in a tab
   that is its own view and editor. There is no Roadmap tab or panel.
 - **Phone:** the same dock, narrow (the library's `narrow`, switched by `setNarrow` on resize; its
-  layout kept apart, under `cd-po-dock-phone`): one column of tabs, no control that moves a panel.
-  The title bar is `--touch-min` tall and its tabs scroll sideways; the dock fills the height under
-  the chrome (`--vv-h`).
+  layout kept apart, under `cd-phone-tabs`): one column of tabs, no control that moves a panel.
+  The tab row is `--touch-min` tall (plus its 1px rule) and scrolls sideways; the dock fills the
+  height under the chrome (`--vv-h`). An open task's tabs sit straight under the bar (no gap, no
+  border: `body.dp-docked main`), and its own `×` is gone (the bar's `←` closes it).
 - **Keys** (the library's): F6 / Shift+F6 go between the stacks, the arrow keys along a stack's tabs;
   Tab reaches a stack's front tab only.
 
@@ -728,7 +734,7 @@ the middle, the width they saved is not missed, and who said what reads at a gla
 - **The header** (`.from`) is `--fs-200` 400 `--fg-muted`, sentence case, the name `--fg-subtle`
   500; an agent's starts with its 20px avatar (`::before`, "C" or "X" on `--agent-*-bg/-fg`).
 - The hub's rows keep their sunken rows; a send on its way keeps its dashed edge.
-- **Phone:** unchanged, until layout A's phone step.
+- **Phone:** the same, full width under the bar's two rows (#129).
 
 ### A send on its way
 
@@ -763,8 +769,15 @@ self-contained component, so a later layout can host it elsewhere.
 - **Docked, never floating:** `--surface-sunken` (the mockup's ground: the list is where you go,
   the middle what you read), a 1px `--border` on its right, no shadow. `body.sw-on`
   gives `main` the room (`padding-left: var(--sw-w) + 20px`), so nothing it covers is lost. It has
-  no button, pin or close: it is simply there. **A phone never shows it** (`isPhone()`); it keeps
-  its own layout until layout A's phone step.
+  no button, pin or close: it is simply there.
+- **On a phone it is home** (#129, `phList()`): the whole screen under a one-row bar, shown
+  whenever nothing else is (no project, open task, Needs you or cards page), with `main` out of the
+  way (`body.ph-list`). A row opens its conversation full screen; the bar's `←` brings the list
+  back where it was (its scroll and the row last opened, marked: `PH_BACK`); a task that closes by
+  itself (Esc, archived, deleted: `closeTask()`) goes back there too. Every row, group head
+  that folds, "Show all" and head control is `--touch-min`. Its foot is a quiet **Project cards**
+  (`#sw-cards`, phone only): the home cards, with their Unassigned card, as a page of their own
+  (`PH_CARDS`; also the project menu's All projects on a phone), whose `←` goes back to the list.
 - **Its head** is two quiet controls, each a native `select` with its box and arrow drawn away
   (`.sw-pick`): the project filter as a chip on `--selected-bg` (`#sw-proj`: "All projects", then
   every registered project by name; it narrows what you see) and **Group: status / project** as a
@@ -868,8 +881,10 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
      file shown in it). The last part is where you are: plain `--fg`, 500, `aria-current`.
    - Separators are `›` in `--fg-muted`, not read aloud. Each part ellipsises, the task's title
      first (`flex-shrink: 4`), so the bar keeps one row; search gives up width before it does.
-   - Written only when it changes (`writeSlot`). A phone has none: its row two keeps back and the
-     project's name, and step 5 moves this line under the task's title there.
+   - Written only when it changes (`writeSlot`). **A phone** shows it only while a task is open,
+     in the bar's second row (#129): `← project ▾ › #18 title › tab › file`, every part
+     `--touch-min` tall; the tab is the dock's tab in front of the Chat (`crumbState`), and the
+     task's part brings the Chat back. The project's part goes to its screen; `←` goes to the list.
 
    **The global group on a desktop** (layout A, #126): where you are fills the left, so only the
    gap before search grows. **Search** is a quiet box of about 300px on `--surface-sunken`
@@ -895,8 +910,9 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
    open"), never a badge, and gone with the name when the bar runs short. On the project's PO
    screen (see *Panels* in §4), where the PO already leads the page, the pill brings the PO chat
    panel forward and focuses its composer instead of opening a second copy. On a desktop an open
-   task in the middle gives way to it (the task closes: the middle holds one conversation). (A
-   phone's open task covers the PO screen, so there the pill opens the drawer over the task.)
+   task in the middle gives way to it (the task closes: the middle holds one conversation). A
+   phone does the same (#129, `poMidGo()`); the drawer is left only for a page whose dock failed to
+   load.
 
    **A live session is built once and never reloaded by navigation.** The PO's conversation is one
    iframe in `#po-panel`. On the PO screen it sits inside the PO chat panel; everywhere else it is a
@@ -916,7 +932,11 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
    task's header. Opening a task replaces what the middle showed; closing it (×, Esc, the project's
    crumb, the PO pill) gives it back. The page does not scroll; each pane scrolls inside itself.
    Where the dock cannot load, the task panel has its tabs as in step 2 (`Activity · Changes ·
-   Workspace · Spec · Details`, see *Tabs*), as it does on a phone.
+   Workspace · Spec · Details`, see *Tabs*).
+   **A phone** (#129) has no list beside it: one screen at a time. The list is home (§4 *The task
+   list*); a row opens the conversation full screen, in the same dock (narrow: its tools are tabs,
+   see *Panels*), and the project becomes the page's there too. `←` in the bar closes it and brings
+   the list back where it was.
 2. **The board groups; it never sorts.** Priority first, then most recently updated, in *both* views.
    The hover-freeze works by being the **only** place ordering happens — any second sort defeats it and
    cards move under the cursor. Two tasks must never swap places because someone flipped the view
@@ -1078,14 +1098,16 @@ desktop is untouched by construction.
    plan chip moves into the avatar menu, and its warnings still reach the banner. Anything new for the
    bar on a phone must replace something, not squeeze it.
 
-   **Home is one row; a project is two.** In a project (and no task open) the bar wraps: row one is
-   the wordmark, then search, the PO, the bell, the avatar and Create; row two is the back arrow `←` (`#bar-back`, home;
-   phone only, the wordmark is the way back elsewhere), the project's name with its menu, truncated,
-   and Panels at the end. `--header-h` is redeclared on `body.in-proj` so everything hanging off the
-   bar follows. At 430×932 the PO screen's panel tabs start at 110px. An open task covers the page
-   under the bar, so the second row steps aside then.
+   **Home is one row; everywhere else is two** (#129). On home, the list, the bar is one row.
+   Anywhere else (a project, an open task, the cards page, Needs you) the bar wraps (`body.row2`):
+   row one is the wordmark, then search, the PO, the bell, the avatar and Create; row two is the
+   back arrow `←` (`#bar-back`, to the list; phone only, the wordmark is the way back elsewhere),
+   the project's name with its menu, truncated, where you are in it (an open task's breadcrumb) and
+   Panels at the end. `--header-h` is redeclared on `body.row2` so everything hanging off the bar
+   follows. At 430×932 the PO screen's panel tabs start at 110px.
 5. **An open task never covers the bar.** The bar is the way to the PO and to the project. On a phone
-   the task takes the whole width *under* the bar, and the PO's pill opens the PO over it.
+   the task takes the whole width *under* the bar's two rows and the dock's tabs, and the PO's pill
+   goes to the PO's screen (the task closes, as on a desktop).
 6. **The keyboard never covers a composer.** The viewport tag carries
    `interactive-widget=resizes-content` (Android then shrinks the page); for iOS, which shrinks only
    the visual viewport, the pages set `--vv-h`/`--vv-top` from `visualViewport` and size anything

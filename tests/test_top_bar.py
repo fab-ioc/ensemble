@@ -139,7 +139,7 @@ async function main() {
     await until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 1', 30000);
     return { evalIn, until, shot, close: () => c.send('Target.closeTarget', { targetId }) };
   };
-  const go = (p, proj, tab) => p.evalIn(`(() => { try { localStorage.removeItem('cd-po-dock'); localStorage.removeItem('cd-po-dock-phone'); } catch (e) {}
+  const go = (p, proj, tab) => p.evalIn(`(() => { try { localStorage.removeItem('cd-po-dock'); localStorage.removeItem('cd-phone-tabs'); } catch (e) {}
     SELECTED_PROJECT = ${JSON.stringify(proj)}; PROJECT_TAB = ${JSON.stringify(tab || 'tasks')}; SB_DEST = ''; renderRows(); return 0; })()`);
   const poReady = p => p.until('document.body.classList.contains("po-dock") && !!PD.dock && (document.body.classList.contains("mid") || !!document.querySelector("#bar-here .pd-panels")) && [...document.querySelectorAll(".dk-head")].some(e => e.getBoundingClientRect().height)', 30000);
   const openDoc = async (p) => {

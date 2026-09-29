@@ -2302,6 +2302,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   }
   .sw-gname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sw-group.empty > .sw-ghead { font-weight: 500; color: var(--fg-muted); padding-bottom: 0; }
+  /* Not the page's empty state (.empty, a centred ∅), which it shares a class with. */
+  .sw-group.empty { padding: 0; text-align: left; font-size: inherit; color: inherit; }
+  .sw-group.empty::before { content: none; }
   summary.sw-ghead { cursor: pointer; border-radius: var(--r-100); list-style: none; }
   summary.sw-ghead::-webkit-details-marker { display: none; }
   /* Folded or not, said by the caret after its count. */
@@ -2354,6 +2357,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     font: inherit; font-size: var(--fs-200); line-height: 20px; cursor: pointer;
   }
   .sw-more:hover { background: var(--hover); color: var(--fg); }
+  #sw-cards { display: none; }   /* a phone's (#129) */
   .sw-more:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   /* --- Issue view --------------------------------------------------------- */
   /* One row that says what this task IS: where it sits, how urgent, what is
@@ -3035,11 +3039,12 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     #bar-back { font-size: var(--fs-500); color: var(--fg); }
     #bar-back:not([hidden]) { display: inline-flex; }
     #search-open { display: inline-flex; margin-left: auto; }
-    /* Home lists every project, so the bar is one row there. In a project
-       the bar has a second row: back, the project's name (its menu) and what
-       you can do here. An open task covers the page under the bar and needs
-       none of it, so the row steps aside then. --header-h follows, and with
-       it everything that hangs off the bar. */
+    /* Home is the list (#129), so the bar is one row there. Everywhere else
+       (a project, an open task, the cards page, Needs you) the bar has a
+       second row: back to the list, the project's name (its menu), where you
+       are in it (an open task: › #18 title › its tab › the file) and what you
+       can do here (Panels ▾). --header-h follows, and with it everything that
+       hangs off the bar. */
     /* The wordmark leads row one, on home and in a project alike (125px; row
        one's controls take 262px); below 410px it is the icon alone. The rest
        of where you are is row two's. */
@@ -3053,18 +3058,40 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
       header h1 .bar-word { display: none; }
       header h1 .logo { display: block; }
     }
-    body.in-proj:not(.detail-open) {
+    body.row2 {
       --header-h: calc(2 * var(--touch-min) + 3 * var(--s-100) + 1px);
       --top-h: calc(var(--header-h) + var(--banner-h));
       --chrome-h: calc(var(--top-h) + 190px);     /* the tab row is finger-sized here */
     }
-    body.in-proj:not(.detail-open) header { flex-wrap: wrap; align-content: center; row-gap: var(--s-100); }
-    body.in-proj:not(.detail-open) .bar-break { display: block; flex-basis: 100%; height: 0; order: 1; }
-    body.in-proj:not(.detail-open) #bar-back { order: 2; }
-    body.in-proj:not(.detail-open) #proj-switch { display: inline-flex; order: 2; margin-right: auto; }
-    body.detail-open #bar-back { display: none; }
-    body.in-proj:not(.detail-open) #bar-here:not(:empty) { display: flex; order: 3; }
-    body.in-proj.search-open:not(.detail-open) .search-wrap { bottom: auto; height: var(--touch-min); top: var(--s-100); }
+    body.row2 header { flex-wrap: wrap; align-content: center; row-gap: var(--s-100); }
+    body.row2 .bar-break { display: block; flex-basis: 100%; height: 0; order: 1; }
+    body.row2 #bar-back { order: 2; flex: none; }
+    body.row2 #proj-switch { display: inline-flex; order: 2; flex: 0 1 auto; min-width: 0; }
+    body.row2 #bar-crumbs { display: flex; align-items: center; order: 2; flex: 1 1 0; min-width: 0; }
+    body.row2 #bar-here:not(:empty) { display: flex; order: 3; flex: none; }
+    body.row2.search-open .search-wrap { bottom: auto; height: var(--touch-min); top: var(--s-100); }
+    /* An open task's breadcrumb: the project's name goes up to its screen,
+       the caret beside it is its menu, then the task and its tab; each part
+       a finger's height, the title giving way first. */
+    body.row2.bar-proj #proj-go { display: inline-flex; order: 2; height: var(--touch-min); max-width: 30%; padding: 0 var(--s-100); }
+    body.row2.bar-proj #proj-switch-name { display: none; }
+    body.row2.bar-proj #proj-switch { flex: none; min-width: var(--touch-min); padding: 0; justify-content: center; }
+    body.row2 #bar-crumbs .bar-crumb { height: var(--touch-min); max-width: none; padding: 0 var(--s-100); }
+    body.row2 #bar-crumbs .crumb-here { max-width: none; }
+    /* The list is home: the whole screen under the bar, the page under it
+       out of the way, every row and control a finger's size. Its foot goes
+       to the project cards. */
+    #switcher { width: auto; right: 0; border-right: 0; }
+    body.ph-list main { display: none; }
+    .sw-head { padding: var(--s-100) var(--s-200); }
+    .sw-pick select { height: var(--touch-min); }
+    .sw-row { min-height: var(--touch-min); padding-block: var(--s-100); }
+    .sw-row .sw-st { margin-top: var(--s-200); }
+    summary.sw-ghead, .sw-more { min-height: var(--touch-min); display: flex; align-items: center; }
+    #sw-list { padding-bottom: var(--s-200); }
+    #sw-cards { display: flex; flex: none; border-top: 1px solid var(--border); border-radius: 0; padding: 0 var(--s-400); }
+    /* The task's own ×, and its own tabs, are the bar's ← and the dock's tabs. */
+    body.dp-docked #detail-panel .dp-close { display: none; }
     #proj-switch { height: var(--touch-min); max-width: none; flex: 0 1 auto; padding: 0 var(--s-200); }
     #proj-switch-name { min-width: 0; }
     #po-pill { height: var(--touch-min); min-width: var(--touch-min); justify-content: center; }
@@ -3313,12 +3340,13 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   /* The middle is the conversation alone: no title bar over it. */
   #po-dock:not(.dk-narrow) .dk-stack:has(> .dk-body > .pd-chat) > .dk-head { display: none; }
   /* An open task is that conversation (pdPlaceTask): the task panel fills
-     the middle, its tabs gone (its tools are on the strip). */
-  body.mid.dp-docked #detail-panel {
-    position: absolute; inset: 0; width: auto; transform: none; transition: none; z-index: auto;
+     the middle, its tabs gone (its tools are on the strip; a phone's are the
+     dock's tabs). */
+  body.dp-docked #detail-panel {
+    position: absolute; inset: 0; width: auto; height: auto; transform: none; transition: none; z-index: auto;
   }
-  body.mid.dp-docked #detail-panel > .dp-tabs { display: none; }
-  body.mid.dp-docked #view { display: none; }
+  body.dp-docked #detail-panel > .dp-tabs { display: none; }
+  body.dp-docked #view { display: none; }
   /* A tool holding the task's pane shows that, not the PO's. */
   .pd-for-task > :not(.dp-pane) { display: none !important; }
   .pd-for-task > .dp-pane { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
@@ -3401,10 +3429,14 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .pd-ctl { display: inline-flex; align-items: center; gap: var(--s-100); margin-left: auto; }
   /* A phone: one column, the panels as tabs (the library's narrow mode, which
      draws no control that moves a panel). Tabs a finger can hit. */
-  .dock.dk-narrow .dk-head { flex-basis: var(--touch-min); height: var(--touch-min); }
+  .dock.dk-narrow .dk-head { flex-basis: calc(var(--touch-min) + 1px); height: calc(var(--touch-min) + 1px); }
+  .dock.dk-narrow .dk-tab { min-height: var(--touch-min); }
   @media (max-width: 640px), (max-width: 1024px) and (pointer: coarse) {
     body.po-dock main { height: calc(var(--vv-h, 100dvh) - var(--top-h)); padding-bottom: 0; }
     body.po-dock #po-dock-host { border-radius: 0; border-left: 0; border-right: 0; border-bottom: 0; }
+    /* An open task (#129): its tabs straight under the bar, nothing between. */
+    body.dp-docked main { padding-top: 0; }
+    body.dp-docked #po-dock-host { border-top: 0; }
     .pd-pane { padding: var(--s-200) var(--s-300); }
     .pdp-btn, a.pdp-link { min-height: var(--touch-min); display: inline-flex; align-items: center; }
     .pd-ctl .po-btn { min-height: var(--touch-min); }
@@ -3549,6 +3581,9 @@ window.DOC_LISTENERS_PAUSED = false;
     <label class="sw-pick sw-pick-by"><select id="sw-by" aria-label="Group the list by" title="Group the list by status or by project"></select><span class="caret" aria-hidden="true">▾</span></label>
   </div>
   <div id="sw-list"></div>
+  <!-- A phone, where the list is home (#129): the project cards, with their
+       Unassigned card, a page of their own. -->
+  <button id="sw-cards" type="button" class="sw-more" title="Every project as a card, with what it needs">Project cards</button>
 </aside>
 <div id="search-help-pop" hidden>
   <div class="shp-title">Search syntax</div>
@@ -4449,10 +4484,10 @@ function openDetail(sid) {
     CHAT_THEME = null;
   }
   SELECTED_SID = sid;
-  // Layout A (#125): on a desktop the task's project becomes the page's, so
-  // the tools beside it (Board, Your asks) are its project's, and closing it
-  // lands there.
-  if (!isPhone()) {
+  // Layout A (#125, #129): the task's project becomes the page's, so the
+  // tools beside it (Board, Your asks) are its project's, and the bar names
+  // it. On a phone the list is where closing it goes back to (phBack).
+  {
     const r = rowBySid(sid);
     const pj = r && (projectOfRoom(r.roomId || r.sessionId) || wsProjectForRow(r));
     if (pj) {
@@ -4525,6 +4560,11 @@ function closeDetail() {
   const p = $('#detail-panel'); if (p) p.dataset.sig = '';
   document.body.classList.remove('detail-open');
   renderRows();
+}
+// The task closes by itself (Esc, archived, deleted): a phone goes back to
+// the list, as its ← does; a desktop stays on the project (#129).
+function closeTask() {
+  if (phoneNow()) goHome(); else closeDetail();
 }
 
 // --- Unified session detail --------------------------------------------------
@@ -9835,22 +9875,24 @@ function poNoteHtml() {
 function openPoOf(pj) {
   if (!pj) return;
   const split = poSplitProject();
-  if (!poRowOf(pj) || poMidGo() || (split && !(SELECTED_SID && isPhone()))) {
+  if (!poRowOf(pj) || poMidGo() || split) {
     // A PO leads the page: this one, or go to the project this one leads.
-    // On a desktop the middle holds one conversation: an open task gives it back.
+    // The middle holds one conversation: an open task gives it back.
     midLeave();
     if (!split || split.id !== pj.id) { SELECTED_PROJECT = pj.id; PROJECT_TAB = 'tasks'; WS_SCOPE = ''; SB_DEST = ''; renderRows(); }
     pdReveal('po-chat');
   } else { PO_PIN = pj.id; PO_PEEK = true; renderPo(); swRender(); }
 }
-// A desktop has no drawer (layout A, #124): a PO opens in the middle, from any
-// page. Only where the dock failed to load is the drawer still how it opens.
+// Layout A has no drawer (#124; a phone too, #129): a PO opens in the middle,
+// from any page. Only where the dock failed to load is the drawer still how
+// it opens.
 function poMidGo() {
-  return !isPhone() && !PD.failed;
+  return !PD.failed;
 }
-// On a desktop an open task fills the middle: going somewhere else closes it.
+// An open task fills the middle (a phone's whole screen): going somewhere else
+// closes it.
 function midLeave() {
-  if (SELECTED_SID && document.body.classList.contains('mid')) closeDetail();
+  if (SELECTED_SID && document.body.classList.contains('detail-open')) closeDetail();
 }
 function poFocusComposer() {
   const f = poSplitProject() && PD.dock ? pdVisibleChat() : document.querySelector('#po-panel iframe.po-session:not([hidden])');
@@ -9872,12 +9914,12 @@ function poPillClick() {
     SELECTED_PROJECT = ctx.id; PROJECT_TAB = 'tasks'; WS_SCOPE = ''; SB_DEST = '';
     renderRows(); return;
   }
-  // Already leading the page — unless a task covers it, as it does on a phone:
-  // its panel comes on screen, and its box takes the keys.
-  // On a desktop an open task is in the middle the PO's conversation is in:
-  // the task gives way to it.
-  if (poSplitProject() && !(SELECTED_SID && isPhone())) { midLeave(); pdReveal('po-chat'); poFocusComposer(); return; }
-  if (poMidGo()) { openPoOf(ctx); poFocusComposer(); return; }
+  // Already leading the page: its panel comes on screen, and its box takes
+  // the keys. An open task is in the middle the PO's conversation is in: the
+  // task gives way to it.
+  if (poSplitProject()) { midLeave(); pdReveal('po-chat'); if (!isPhone()) poFocusComposer(); return; }
+  // Not on a phone: focus raises the keyboard over the conversation you came to read.
+  if (poMidGo()) { openPoOf(ctx); if (!isPhone()) poFocusComposer(); return; }
   PO_PEEK = !PO_PEEK; PO_PIN = ''; renderPo(); swRender();
   // Not on a phone: focus raises the keyboard over the conversation you came to read.
   if (PO_PEEK && !isPhone()) poFocusComposer();
@@ -9899,11 +9941,13 @@ function poPillClick() {
 // A layout saved while there was a Documents panel loads without it: the
 // library drops a panel it does not know (its documents are in the Workspace).
 const PD_IDS = ['po-chat', 'points', 'board', 'workspace', 'changes', 'spec'];
-const PD_TITLES = { 'po-chat': 'PO chat', points: 'Your asks', board: 'Board', workspace: 'Files', changes: 'Changes', spec: 'Spec' };
+// The conversation's tab is "Chat": on a phone it is an open task's too (#129).
+const PD_TITLES = { 'po-chat': 'Chat', points: 'Your asks', board: 'Board', workspace: 'Files', changes: 'Changes', spec: 'Spec' };
 const PD_MIN = { 'po-chat': { w: 360, h: 200 }, points: { w: 260, h: 120 }, board: { w: 320, h: 160 },
                  workspace: { w: 300, h: 200 }, changes: { w: 300, h: 200 }, spec: { w: 320, h: 160 } };
-// desk: the tool strip's (layout A step 3); the phone's narrow dock keeps its own.
-const PD_KEYS = { desk: 'cd-tool-strip', phone: 'cd-po-dock-phone' };
+// desk: the tool strip's (layout A step 3); the phone's narrow dock keeps its
+// own, a new one since its tabs hold the spec too (#129): an older one had it hidden.
+const PD_KEYS = { desk: 'cd-tool-strip', phone: 'cd-phone-tabs' };
 // Layout A (#125), a desktop: the conversation in the middle (the PO's, or an
 // open task's), its tools on a strip at the right edge, in this order. A click
 // on one opens it beside the conversation, which narrows; Pin docks it there.
@@ -9932,10 +9976,10 @@ function pdToolSize(id, vw) {
 }
 // The default layouts. A desktop: the conversation, every tool on the strip
 // (Pin puts one beside the conversation). A phone: every panel a tab of one
-// column, the spec left out (a phone's open task has its own tabs). `L` is
-// the library's layout model (stack, split).
+// column, the conversation first and the tools in the strip's order (#129).
+// `L` is the library's layout model (stack, split).
 function pdDefaultLayout(L, ctx) {
-  if (ctx && ctx.phone) return { root: L.stack(PD_IDS.filter(id => id !== 'spec'), { active: 'po-chat' }), hidden: [{ id: 'spec' }] };
+  if (ctx && ctx.phone) return { root: L.stack(['po-chat', ...PD_TOOLS], { active: 'po-chat' }) };
   return { root: L.stack(['po-chat']),
            auto: PD_TOOLS.map(id => ({ id, edge: 'right', home: { peers: [], near: 'po-chat', side: 'right' } })) };
 }
@@ -10194,17 +10238,17 @@ function pdOnResize(fn) {
   window.addEventListener('resize', fn);
   PD_POP_WINS.forEach((rs, w) => { try { w.addEventListener('resize', fn); rs.push(fn); } catch (e) {} });
 }
-// A phone's dock is narrow: one column of tabs (layout A's step 5 is still to
-// come). A desktop's is the tool strip (#125).
+// A phone's dock is narrow: one column of tabs (layout A on a phone, #129). A
+// desktop's is the tool strip (#125).
 function pdNarrow() { return isPhone(); }
-// Layout A: an open task on a desktop is the middle's conversation, in the
-// dock like the PO's, with the same tools on the strip (its own changes,
-// files and spec). Not while the dock cannot load: the task panel then has
-// its tabs as before.
+// Layout A: an open task is the middle's conversation, in the dock like the
+// PO's, with the same tools: on the strip on a desktop, as the tabs beside
+// its Chat on a phone (#129) (its own changes, files and spec). Not while
+// the dock cannot load: the task panel then has its tabs as before.
 function pdTaskWanted() {
-  return !isPhone() && !PD.failed && !!SELECTED_SID && document.body.classList.contains('detail-open');
+  return !PD.failed && !!SELECTED_SID && document.body.classList.contains('detail-open');
 }
-function pdTask() { return pdTaskWanted() && !!PD.dock && !PD.dock.narrow(); }
+function pdTask() { return pdTaskWanted() && !!PD.dock; }
 // The dock, made once. A phone's is narrow (one column of tabs, nothing that
 // moves a panel), with a layout of its own; a resize across that line
 // switches it (the listener after pdPopChat).
@@ -10231,9 +10275,9 @@ function pdEnsure() {
     // The conversation stays where it is; a tool can be docked beside it, split,
     // popped out, but not hidden (nothing would show it again). A phone's
     // Panels menu hides and shows them.
-    can: (id, a) => isPhone() || (id !== 'po-chat' && a !== 'hide'),
+    can: (id, a) => (isPhone() && !(id === 'po-chat' && a === 'hide' && pdTask())) || (id !== 'po-chat' && a !== 'hide'),
     popName: 'ensemble-panel-',
-    popTitle: p => `${p.title} · ${(projectById(PD.pid) || {}).name || 'Ensemble'}`,
+    popTitle: p => `${p.id === 'po-chat' ? 'PO chat' : p.title} · ${(projectById(PD.pid) || {}).name || 'Ensemble'}`,
     // The library's pop-out page as the hub serves it, not from a blob:
     // URL: installed as an app, a window on a page inside the manifest's
     // scope is an app window, where a blob: page gets Chrome's strip with
@@ -10303,11 +10347,10 @@ function pdToolOn(id) {
   return d.isVisible(id) && d.frontOf(id) === id;
 }
 // A phone's dock is one column of tabs, where the Panels menu shows or hides
-// each panel. The spec is not one of them (a phone's open task has its own).
+// each panel; an open task's are those tabs too (#129), the spec among them.
 function pdToolsFit() {
   const d = PD.dock;
-  if (!d) return;
-  if (d.narrow()) { if (d.isVisible('spec')) d.setVisible('spec', false); return; }
+  if (!d || d.narrow()) return;
   // A desktop: what the middle needs (the tools docked in it too), and whether an
   // open tool still has room beside it (else it lies over it).
   const need = Math.max(PD_MIN['po-chat'].w, pdNeedW(d.layout().root));
@@ -10400,6 +10443,8 @@ function pdPlaceTask(on) {
   const home = on ? ph : DP_RESIZE.parentNode;
   const moved = DP_EL.parentNode !== home;
   if (moved) pdMove(home, DP_EL, on ? null : DP_RESIZE);
+  // A Chat hidden earlier (a phone's Panels menu) comes back: the task is in it.
+  if (on && moved && PD.dock && !PD.dock.isVisible('po-chat')) PD.dock.setVisible('po-chat', true);
   document.body.classList.toggle('dp-docked', on);
   ['changes', 'workspace', 'spec'].forEach(id => PD.els[id].classList.toggle('pd-for-task', on));
   dpPlacePanes(DP_EL);
@@ -10607,8 +10652,10 @@ function pdMenuHtml() {
   const on = ids.filter(id => PD.dock.isVisible(id));
   return ids.map(id => {
     const vis = on.includes(id), last = vis && on.length === 1;
+    // A phone asks the dock's own rule: Chat stays while a task is open in it.
+    const kept = vis && !last && isPhone() && !PD.dock.can(id, 'hide');
     return `<button type="button" role="menuitemcheckbox" data-pd-toggle="${id}" aria-checked="${vis}"${vis ? ' class="on"' : ''}`
-      + `${last ? ' disabled title="The last panel on screen stays"' : ''}>${esc(PD_TITLES[id])}</button>`;
+      + `${last ? ' disabled title="The last panel on screen stays"' : kept ? ' disabled title="The open task is in it"' : ''}>${esc(PD_TITLES[id])}</button>`;
   }).join('') + '<div class="dk-menu-sep" role="separator"></div>'
     + '<button type="button" role="menuitem" data-pd-reset title="Every panel a tab again, the PO chat in front">Reset layout</button>';
 }
@@ -13681,7 +13728,7 @@ async function deleteRoom(row) {
     });
     const nt = (r.transcripts || []).length, nf = (r.folders || []).length;
     toast(`deleted (${nt} transcript${nt === 1 ? '' : 's'}${nf ? `, ${nf} folder${nf === 1 ? '' : 's'}` : ''})`, 2600, 'ok');
-    if (SELECTED_SID === row.sessionId) closeDetail();
+    if (SELECTED_SID === row.sessionId) closeTask();
     await refresh(); updateRoomsBadge();
   } catch (e) { toast('delete failed: ' + e.message, 4000, 'err'); }
 }
@@ -13805,13 +13852,22 @@ document.addEventListener('click', (ev) => {
 });
 
 // The task switcher's column (the pure half is the "Task switcher" block).
-// On every desktop page it sits left of the page, which makes room for it; a
-// phone keeps its own layout and never shows it. A row opens what it names
-// where it opens today: a task in its panel, a PO on its project's screen.
-// The project filter is remembered per browser.
+// On every desktop page it sits left of the page, which makes room for it. On
+// a phone it is home, the whole screen under the bar (#129), shown whenever
+// nothing else is: no project, open task, Needs you or cards page. A row
+// opens what it names where it opens today: a task in its panel, a PO on its
+// project's screen. The project filter is remembered per browser.
 var SW_SHOWN = null, SW_DONE_OPEN = false;   // var: renderRows may run before this line
 var SW_UN = { open: false, all: false };      // Unassigned: unfolded, and showing all
-function swOn() { try { return !isPhone(); } catch (e) { return false; } }   // before isPhone is defined
+// A phone: the project cards page, reached from the list's foot and the
+// project menu's All projects; and where the list was when it was left (its
+// scroll, the row opened), so coming back finds it there.
+var PH_CARDS = false, PH_BACK = { top: 0, sel: null };
+function phoneNow() { try { return isPhone(); } catch (e) { return false; } }   // before isPhone is defined
+function phList() {
+  return phoneNow() && !SELECTED_PROJECT && !SB_DEST && !PH_CARDS && !document.body.classList.contains('detail-open');
+}
+function swOn() { try { return !isPhone() || phList(); } catch (e) { return false; } }
 function swProject() {
   let id = '';
   try { id = localStorage.getItem(SW_KEY + '-project') || ''; } catch (e) {}
@@ -13834,8 +13890,15 @@ function swRender() {
   const el = document.getElementById('switcher');
   if (!el) return;
   const on = swOn();
+  const phone = phoneNow(), back = on && el.hidden;
+  if (phone && !on && !el.hidden) {
+    // Leaving for the cards has no selection: keep the last-opened row marked.
+    const sel = swSelection();
+    PH_BACK = { top: $('#sw-list').scrollTop, sel: Object.keys(sel).length ? sel : PH_BACK.sel };
+  }
   el.hidden = !on;
   document.body.classList.toggle('sw-on', on);
+  document.body.classList.toggle('ph-list', on && phone);
   if (!on) { SW_SHOWN = null; return; }
   const box = $('#sw-list'), pick = $('#sw-proj');
   const projects = registeredProjects(), chosen = swProject(), by = swBy();
@@ -13852,11 +13915,15 @@ function swRender() {
   const key = focusKeyIn(box), had = key && document.activeElement.dataset.room;
   const hadGroup = had && document.activeElement.closest('[data-group]');
   const inGroup = hadGroup ? `[data-group="${CSS.escape(hadGroup.dataset.group)}"] ` : '';
-  if (writeSlot(box, swListHtml(g, swSelection(), SW_DONE_OPEN, SW_UN, by)) && key) {
+  // A phone marks the row you last opened (nothing is open while the list shows).
+  const sel = phone && !SELECTED_SID ? PH_BACK.sel || {} : swSelection();
+  if (writeSlot(box, swListHtml(g, sel, SW_DONE_OPEN, SW_UN, by)) && key) {
     const back = had && box.querySelector(`${inGroup}.sw-row[data-room="${CSS.escape(had)}"]`);
     if (back) back.focus(); else restoreFocus(box, key);
   }
+  if (back && phone) box.scrollTop = PH_BACK.top;
 }
+$('#sw-cards').addEventListener('click', () => { PH_CARDS = true; renderRows(); });
 $('#sw-proj').addEventListener('change', (ev) => {
   try { localStorage.setItem(SW_KEY + '-project', ev.target.value); } catch (e) {}
   SW_SHOWN = null;
@@ -14293,7 +14360,7 @@ function syncMeInitials() {
 }
 
 function projSwitchLabel() {
-  if (!SELECTED_PROJECT) return 'All projects';
+  if (!SELECTED_PROJECT) return SB_DEST === 'needsyou' ? 'Needs you' : 'All projects';
   const pj = projectById(SELECTED_PROJECT);
   return pj ? pj.name : 'Project';
 }
@@ -14304,24 +14371,29 @@ function syncProjSwitch() {
 }
 // The bar is also the project's header: in a project, the way back and what
 // you can do here (a PO screen's Panels menu), written only when it changes.
-// On a phone this is the bar's second row (body.in-proj, in the stylesheet).
+// On a phone this is the bar's second row (body.row2, in the stylesheet):
+// everywhere but its home, the list (#129), with ← back to the list.
 function barPaint() {
   const inProj = !!SELECTED_PROJECT;
+  const row2 = phoneNow() && !phList();
   document.body.classList.toggle('in-proj', inProj);
+  document.body.classList.toggle('row2', row2);
   const back = document.getElementById('bar-back');
-  if (back) back.hidden = !inProj;
+  if (back) back.hidden = !(inProj || row2);
   const here = document.getElementById('bar-here');
   // A desktop's tools are on the strip at the right edge, each always there:
-  // no Panels menu (layout A, #125). A phone's tabs keep it.
+  // no Panels menu (layout A, #125). A phone's tabs keep it, an open task's too.
   const panels = !document.body.classList.contains('mid');
-  if (here) writeSlot(here, inProj && poDockProject() && panels ? pdCtlHtml() : '');
+  const tabs = poDockProject() || pdTaskWanted();
+  if (here) writeSlot(here, inProj && tabs && panels ? pdCtlHtml() : '');
   barCrumbs();
   const sw = document.getElementById('proj-switch');
   if (sw) sw.title = inProj ? `${projSwitchLabel()}: switch project, or change this project's kind and key` : 'Switch project';
 }
+// Home: the cards on a desktop, the list on a phone (#129).
 function goHome() {
   midLeave();
-  SELECTED_PROJECT = null; SB_DEST = ''; renderRows();
+  PH_CARDS = false; SELECTED_PROJECT = null; SB_DEST = ''; renderRows();
 }
 document.getElementById('bar-back').addEventListener('click', goHome);
 document.getElementById('bar-home').addEventListener('click', (e) => {
@@ -14397,7 +14469,17 @@ function crumbState() {
   const pctx = pj ? { kind: 'project', projectId: pj.id, docs: isDocsProject(pj) } : null;
   // The tool strip (#125): the tool open beside the conversation.
   const strip = PD.dock && !PD.dock.narrow() && document.body.classList.contains('po-dock');
-  if (r && strip && pdTask()) {
+  // A phone's tabs (#129): the task's tab in front of its Chat.
+  const tabs = PD.dock && PD.dock.narrow() && document.body.classList.contains('po-dock');
+  if (r && tabs && pdTask()) {
+    s.task = { no: taskNoText(r, false), title: detailTitle(r) };
+    const k = PD.dock.frontOf('po-chat');
+    if (k && k !== 'po-chat') {
+      s.tool = { k, name: PD_TITLES[k] || k };
+      if (k === 'workspace') s.file = crumbWsFile({ kind: 'task', sid: r.sessionId });
+      if (k === 'changes') { const v = TCH_VIEWS.get(r.sessionId); s.file = (v && v.file) || ''; }
+    }
+  } else if (r && strip && pdTask()) {
     s.task = { no: taskNoText(r, false), title: detailTitle(r) };
     const k = pdToolShown();
     if (k) {
@@ -14433,12 +14515,13 @@ function crumbState() {
   }
   return s;
 }
-// Written only when it changes; a desktop's only (a phone has its own row).
+// Written only when it changes. A phone has them in its bar's second row
+// while a task is open (#129): ← project ▾ › #18 title › tool › file.
 function barCrumbs() {
   const box = document.getElementById('bar-crumbs'), go = document.getElementById('proj-go');
   if (!box || !go) return;
   const mid = document.body.classList.contains('mid');
-  const cs = mid ? crumbsOf(crumbState()) : [];
+  const cs = mid || crumbTask() ? crumbsOf(crumbState()) : [];
   const pc = cs.find(c => c.level === 'project');
   document.body.classList.toggle('bar-proj', !!pc);
   const name = go.querySelector('.proj-go-name');
@@ -14465,7 +14548,7 @@ function crumbGo(level) {
     pdReveal('po-chat');
     if (PD.dock && !PD.dock.narrow()) PD.dock.closeFly();
   } else if (level === 'task' && pdTask()) {
-    PD.dock.closeFly();
+    if (PD.dock.narrow()) PD.dock.activate('po-chat'); else PD.dock.closeFly();
   } else if (level === 'task') {
     if (!r) return;
     ISSUE_TAB_SID = r.sessionId; ISSUE_TAB = 'activity';
@@ -14565,6 +14648,8 @@ $('#proj-menu').addEventListener('click', (ev) => {
   closeProjMenu();
   midLeave();
   SELECTED_PROJECT = it.dataset.proj || null;
+  // A phone's All projects is its cards page (its home is the list, #129).
+  if (!SELECTED_PROJECT && phoneNow()) PH_CARDS = true;
   PROJECT_TAB = 'tasks';
   WS_SCOPE = '';
   SB_DEST = '';
@@ -14964,7 +15049,7 @@ document.addEventListener('keydown', (ev) => {
     return;
   }
   if (PO_PEEK) { poClosePeek(); return; }   // the topmost thing closes first
-  if (SELECTED_SID) closeDetail();
+  if (SELECTED_SID) closeTask();
 });
 
 // ---------------------------------------------------------------------------
@@ -15210,6 +15295,7 @@ midSync();
   const mq = window.matchMedia(MOBILE_MQ);
   const redraw = () => {
     BOARD_SIG = '';
+    if (!isPhone()) PH_CARDS = false;   // a phone comes back to its list, not a stale cards page
     midSync();
     pdToolsFit();
     renderRows();
@@ -15868,7 +15954,7 @@ document.addEventListener('click', async (ev) => {
       const row = ALL_ROWS.find(x => x.sessionId === sid);
       if (row) row.archived = archiving;
       renderRows();
-      if (archiving && SELECTED_SID === sid) closeDetail();
+      if (archiving && SELECTED_SID === sid) closeTask();
       else if (SELECTED_SID === sid) renderDetail();
       toast(archiving ? 'archived' : 'restored', 1800, 'ok');
     } catch (e) { toast('archive failed: ' + e.message, 4000, 'err'); }
@@ -15901,7 +15987,7 @@ document.addEventListener('click', async (ev) => {
       const n = (r.files || []).length, nf = (r.folders || []).length;
       toast(`deleted (${n} transcript${n === 1 ? '' : 's'}${nf ? `, ${nf} folder` : ''})`, 2500, 'ok');
       ALL_ROWS = ALL_ROWS.filter(x => x.sessionId !== sid);
-      if (SELECTED_SID === sid) closeDetail();
+      if (SELECTED_SID === sid) closeTask();
       else renderRows();
       setTimeout(refresh, 600);
     } catch (e) { toast('delete failed: ' + e.message, 5000, 'err'); }

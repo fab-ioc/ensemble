@@ -333,9 +333,16 @@ class InChrome(unittest.TestCase):
                     self.assertTrue(abs(pk["t"] - (mo["b"] + 4)) <= 1 or abs(pk["b"] - (mo["t"] - 4)) <= 1, p)
                     self.inside(pk, p["vw"], p["vh"])
                 self.assertAlmostEqual(s["more"]["t"] - a["more"]["t"], 30, delta=1)
-                self.assertAlmostEqual(s["picker"]["t"] - a["picker"]["t"], 30, delta=1, msg="it moved with More")
+                # It follows More; where More moved too near an edge for it
+                # (a phone's task sits under the bar's two rows and the tabs,
+                # #129), it goes to More's other side, still against it.
                 w = self.got[v]["pickerWindowScrolled"]
-                self.assertAlmostEqual(w["picker"]["t"] - a["picker"]["t"], 60, delta=1, msg="a scroll of the window too")
+                if s["placement"] == a["placement"]:
+                    self.assertAlmostEqual(s["picker"]["t"] - a["picker"]["t"], 30, delta=1, msg="it moved with More")
+                if w["placement"] == a["placement"]:
+                    self.assertAlmostEqual(w["picker"]["t"] - a["picker"]["t"], 60, delta=1, msg="a scroll of the window too")
+                mo = w["more"]
+                self.assertTrue(abs(w["picker"]["t"] - (mo["b"] + 4)) <= 1 or abs(w["picker"]["b"] - (mo["t"] - 4)) <= 1, w)
                 self.assertEqual(self.got[v]["pickerClosed"], {"gone": True, "onMore": True})
 
 

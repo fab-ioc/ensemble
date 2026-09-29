@@ -169,9 +169,9 @@ class ThePanels(unittest.TestCase):
     def test_a_phone_is_one_column_of_tabs(self):
         a = self.o["phone"]
         self.assertEqual(a["stacks"], 1)
-        self.assertEqual(a["docked"], ["po-chat", "points", "board", "workspace", "changes"])
+        self.assertEqual(a["docked"], ["po-chat", "points", "changes", "workspace", "board", "spec"])
         self.assertEqual(a["front"], ["po-chat"], "the chat first")
-        self.assertEqual((a["auto"], a["floats"], a["hidden"]), ([], 0, 1), "nothing on a strip, nothing floating, the spec left out")
+        self.assertEqual((a["auto"], a["floats"], a["hidden"]), ([], 0, 0), "nothing on a strip, nothing floating, nothing hidden: the spec is a tab too (#129)")
 
     def test_a_tool_pinned_goes_beside_the_conversation(self):
         self.assertEqual(self.o["pinned"], ["po-chat", "board"])
@@ -325,7 +325,7 @@ async function main() {
     return { evalIn, until, click, shot, sessionId, close: () => c.send('Target.closeTarget', { targetId }) };
   };
   const go = (p, theme) => p.evalIn(`(() => {
-    try { ['cd-tool-strip', 'cd-tool-open', 'cd-po-dock-phone'].forEach(k => localStorage.removeItem(k)); localStorage.setItem('cd-view', 'board'); } catch (e) {}
+    try { ['cd-tool-strip', 'cd-tool-open', 'cd-phone-tabs'].forEach(k => localStorage.removeItem(k)); localStorage.setItem('cd-view', 'board'); } catch (e) {}
     VIEW_MODE = 'board'; SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'tasks'; SB_DEST = ''; renderRows(); return 0; })()`);
   const ready = p => p.until('document.body.classList.contains("po-dock") && !!PD.dock && !!PD.told && !!PD.told.points && (() => { const f = pdChatFrame(); return !!(f && f.contentWindow && f.contentWindow.eval("typeof CHAT_DRAWN !== typeof void 0 && CHAT_DRAWN")); })()', 30000);
   const rect = 'const R = el => { const b = el.getBoundingClientRect(); return [Math.round(b.left), Math.round(b.top), Math.round(b.width), Math.round(b.height)]; };';
@@ -892,7 +892,7 @@ class InChrome(unittest.TestCase):
     def test_a_phone_width_turns_the_same_dock_narrow_and_back(self):
         n = self.got["toPhone"]
         self.assertTrue(n["same"] and n["narrow"], "setNarrow, not a second dock")
-        self.assertEqual(n["tabs"], ["po-chat", "points", "board", "workspace", "changes"])
+        self.assertEqual(n["tabs"], ["po-chat", "points", "changes", "workspace", "board", "spec"])
         self.assertEqual(n["front"], ["po-chat"])
         self.assertEqual((n["ctl"], n["strip"], n["scrollX"]), (0, 0, 0), "nothing that moves a panel, no strip")
         self.assertTrue(n["chatIn"] and n["kept"], "the chat moved with its panel, keeping its page")
@@ -1038,7 +1038,7 @@ class InChrome(unittest.TestCase):
             self.assertEqual(s[f"1800/{t}"]["shown"], ["po-chat"])
             p = s[f"390/{t}"]
             self.assertTrue(p["phone"])
-            self.assertEqual(p["tabs"], ["po-chat", "points", "board", "workspace", "changes"], "one column of tabs")
+            self.assertEqual(p["tabs"], ["po-chat", "points", "changes", "workspace", "board", "spec"], "one column of tabs")
             self.assertEqual(p["ctl"], 0, "no float, strip or pop-out controls on a phone")
             self.assertEqual(p["host"][2], 390)
         self.assertEqual(self.got["phoneTab"], {"front": "points", "chatHidden": True, "width": 390})
