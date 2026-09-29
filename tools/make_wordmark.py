@@ -26,10 +26,13 @@ import argparse
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from tests import chrome_profile  # noqa: E402  (a seeded profile: no failed Windows sign-in)
 PAGE = ROOT / "index.html"
 SHIPPED = "tile"
 VARIANTS = ("tile", "lanes", "gradient")
@@ -203,7 +206,7 @@ def shot(page: Path, png: Path, w: int, h: int) -> None:
     with tempfile.TemporaryDirectory() as t:
         png.unlink(missing_ok=True)
         subprocess.run([b, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--force-device-scale-factor=2",
-                        f"--window-size={w},{h}", f"--user-data-dir={Path(t) / 'p'}", "--allow-file-access-from-files",
+                        f"--window-size={w},{h}", f"--user-data-dir={chrome_profile.new_profile(t)}", "--allow-file-access-from-files",
                         f"--screenshot={png}", page.as_uri()],
                        capture_output=True, encoding="utf-8", errors="replace", timeout=60)
 

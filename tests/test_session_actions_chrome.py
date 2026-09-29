@@ -33,16 +33,17 @@ sys.path.insert(0, str(ROOT / "tests"))
 import chatroom  # noqa: E402
 import dashboard  # noqa: E402
 from test_page_update import CHROME, NODE  # noqa: E402
+from tests import chrome_profile  # noqa: E402
 
 SCHEMES = [f"Scheme {i:02d}" for i in range(40)]
 
-CDP_JS = r"""
+CDP_JS = chrome_profile.JS + r"""
 const A = JSON.parse(process.argv[1]);
 const { spawn } = require('child_process');
 const fs = require('fs'), path = require('path');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function launch() {
-  const udd = fs.mkdtempSync(path.join(A.tmp, 'chrome-'));
+  const udd = chromeProfile(A);
   const ch = spawn(A.chrome, ['--headless=new', '--remote-debugging-port=0', '--user-data-dir=' + udd, '--no-first-run',
     '--no-default-browser-check', '--disable-gpu', '--window-size=1400,900', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
   const ws = await new Promise((res, rej) => {
@@ -247,7 +248,7 @@ class InChrome(unittest.TestCase):
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
         cls.server.daemon_threads = True
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
-        args = {"chrome": CHROME, "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{cls.server.server_address[1]}",
+        args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{cls.server.server_address[1]}",
                 "room": cls.room}
         out = subprocess.run([NODE, "-e", CDP_JS, json.dumps(args)], capture_output=True, encoding="utf-8", timeout=300)
         cls.err = out.stderr

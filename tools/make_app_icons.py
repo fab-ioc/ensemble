@@ -23,12 +23,15 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from tests import chrome_profile  # noqa: E402  (a seeded profile: no failed Windows sign-in)
 OUT = ROOT / "static" / "icons"
 SRC = OUT / "src"
 SHIPPED = "c-lanes"
@@ -79,7 +82,7 @@ def render(svg: str, work: Path) -> Image.Image:
     png.unlink(missing_ok=True)
     subprocess.run([browser(), "--headless=new", "--disable-gpu", "--hide-scrollbars",
                     "--default-background-color=00000000", f"--window-size={RENDER},{RENDER}",
-                    f"--user-data-dir={work / 'profile'}", f"--screenshot={png}", src.as_uri()],
+                    f"--user-data-dir={chrome_profile.new_profile(work)}", f"--screenshot={png}", src.as_uri()],
                    capture_output=True, encoding="utf-8", errors="replace", timeout=60)
     im = Image.open(png).convert("RGBA")
     im.load()

@@ -49,18 +49,8 @@ import chatroom  # noqa: E402
 import dashboard  # noqa: E402
 
 NODE = shutil.which("node")
-CHROME = next((p for p in (
-    os.environ.get("ENSEMBLE_CHROME", ""),
-    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    shutil.which("google-chrome") or "", shutil.which("chromium") or "",
-) if p and Path(p).exists()), "")
-# Every fresh Chrome profile makes Windows log one failed sign-in (Chrome's
-# blank-password probe); a full run locks the account. ENSEMBLE_NO_CHROME=1
-# skips the browser tests until the launchers reuse an initialised profile.
-if os.environ.get("ENSEMBLE_NO_CHROME"):
-    CHROME = ""
+from tests import chrome_profile  # noqa: E402
+from tests.chrome_profile import CHROME  # noqa: E402  (ENSEMBLE_NO_CHROME=1 empties it)
 PAGES =("index.html", "session.html", "fileview.html")
 BEGIN = "// ---- Page update: begin shared block"
 END = "// ---- Page update: end shared block"
@@ -523,7 +513,7 @@ class Rules(unittest.TestCase):
 
 # ---- headless Chrome over CDP ---------------------------------------------------
 
-CDP_JS = r"""
+CDP_JS = chrome_profile.JS + r"""
 // Drive headless Chrome over CDP: open each page on the hub, edit a byte of a
 // file it runs, and watch it reload (or not) under the rules. Steps and
 // outcomes are printed as JSON; the Python side asserts.
@@ -533,7 +523,7 @@ const A = JSON.parse(process.argv[1]);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 async function launch() {
-  const udd = fs.mkdtempSync(path.join(A.tmp, 'chrome-'));
+  const udd = chromeProfile(A);
   const ch = spawn(A.chrome, ['--headless=new', '--remote-debugging-port=0', '--user-data-dir=' + udd, '--no-first-run',
     '--no-default-browser-check', '--disable-gpu', '--window-size=1400,900', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
   const ws = await new Promise((res, rej) => {
@@ -887,7 +877,7 @@ class InChrome(unittest.TestCase):
         cls.port = cls.server.server_address[1]
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
-        args = {"chrome": CHROME, "tmp": cls.tmp.name, "static": str(cls.static), "base": f"http://127.0.0.1:{cls.port}",
+        args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "static": str(cls.static), "base": f"http://127.0.0.1:{cls.port}",
                 "room": cls.room, "file": str(cls.file), "diff": DIFF}
         out = subprocess.run([NODE, "-e", CDP_JS, json.dumps(args)], capture_output=True, encoding="utf-8", timeout=300)
         cls.err = out.stderr
