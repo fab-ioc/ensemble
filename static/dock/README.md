@@ -199,6 +199,10 @@ dock.setBadge('asks', '3', '3 asks waiting');
 - **`sizes.strip`**: the strip's buttons, icons and badges scale with it (CSS variables, each today's look at 22 px):
   the strip's padding and gap `strip / 11`, a title `max(--dk-fs-tab, strip × .3)`, an icon `strip × .55`, an icon's
   badge `max(7px, strip × .3)`, a title's badge `max(--dk-badge-fs, strip × .27)`. Each can be set (below).
+- **Off the strip and back**: a strip panel floated (its flyout's float control) keeps its place on the strip: the
+  float's Dock back control ("back to its strip"), a double click on its title bar, or Unpin puts it back on its strip,
+  closed, where it was among its neighbours. So does popping it out and back, hiding and showing it, and pinning then
+  unpinning it (with its original size and home). A minimised stack shows each panel's `icon` instead of its name.
 - **`unpinSize`** (a panel's, px): how far it slides out of its strip, at least its `minSize`: when it is unpinned (by
   a person or `unpin()`, instead of its size where it was), and for a strip entry in `defaultLayout` without a
   `size`. A `size` on that entry, or one saved in the layout, wins. Once any panel gives one, a strip entry in
@@ -454,9 +458,19 @@ npm run test:node     # the model, the dock in jsdom with stand-in windows, the 
 npm run test:browser  # headless Chrome (Puppeteer) against the demo: run.js (the pop-out window for real), run.js
                       # --pophtml (the same with popHtml, the page from a blob: URL), needs.js (iframes, narrow, focus, keys),
                       # toolstrip.js (the tool strip)
+npm run test:browser:check     # one Chrome: says whether it made the blank-password check (see below); run it first
 npm run screenshots -- <dir>   # the theme picker, the demo in ten themes, a panel out, its window, the reload notice
 npm run evidence:app-window -- <dir>   # real Chrome and Edge (headed): the pop-out window in a tab, --app, installed, PiP
 ```
+
+Every Chrome these start goes through `test/browser/chrome.js`, on a persistent profile per suite under
+`%LOCALAPPDATA%\dock-test-chrome\` (`run`, `run-pophtml`, `needs`, `toolstrip`, `screenshots`, `check`,
+`app-window-<browser>-<way>`; `DOCK_TEST_CHROME` moves them; a run at the same time as another gets `<suite>-2`). Why:
+Chrome on a new profile checks for a blank Windows password by signing in with an empty one, and Windows counts each
+as a failed sign-in (10 in 10 minutes lock the account). Before each launch the helper seeds the profile's
+`Local State` with that check's cached answer (`password_manager.os_password_last_changed` = now), so no launch makes
+it. Each test runs in a fresh browser context, so the persistent profile keeps nothing between tests. Deleting the
+folder is safe.
 
 The browser tests prove, on the demo page, that a popped-out panel leaves no place behind and its neighbours take the
 room, keeps receiving live updates, takes typing, clicks and its dialog, has the current theme and follows every set
