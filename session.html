@@ -904,9 +904,9 @@
   .ed-refs[hidden] { display:none; }
   #compose .ed-row { display:flex; align-items:center; gap:var(--s-200); }
   #compose .ed-row .grow { flex:1 1 auto; }
-  #add-point { height:32px; padding:0 var(--s-200); background:transparent; border:1px solid transparent; color:var(--fg-subtle); font-size:var(--fs-200); }
-  #add-point:hover { background:var(--hover); color:var(--fg); }
-  #add-point:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  #add-point, #attach { height:32px; padding:0 var(--s-200); background:transparent; border:1px solid transparent; color:var(--fg-subtle); font-size:var(--fs-200); }
+  #add-point:hover, #attach:hover { background:var(--hover); color:var(--fg); }
+  #attach:focus-visible, #add-point:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   /* A sent message of numbered points: each point its own list item with its
      text, thumbnails, link chips and its point chip (pointBarHtml). */
   .msg .text.md ol.pt-items { margin:var(--s-100) 0 0; padding-left:0; list-style:none; counter-reset:pt; }
@@ -953,6 +953,36 @@
   #theme-menu-s .tm-item:hover { background:var(--hover); color:var(--fg); }
   #theme-menu-s .tm-item.on { color:var(--selected-fg); font-weight:500; }
   #theme-menu-s .tm-rule { height:1px; background:var(--border); margin:var(--s-100) 0; }
+  /* ---- Layout A (#126): the mockup's conversation, with a mouse only -------
+     The box is one rounded card: the hint line quiet at its top, the words
+     borderless and growing with them, then + Add an ask · Attach · Send.
+     Balloons: yours a tinted bubble on the right; an agent's plain text under
+     its avatar and name. A phone keeps its own (the block below). */
+  @media not all and (pointer: coarse) {
+    #compose { border-top:0; margin:0 var(--s-600) var(--s-400); padding:var(--s-200) var(--s-300);
+      border:1px solid var(--border-strong); border-radius:var(--r-300); background:var(--surface); gap:var(--s-100); }
+    #compose:focus-within { border-color:var(--focus-ring); }
+    #hint { font-size:var(--fs-200); line-height:16px; color:var(--fg-muted); }
+    #hint:empty { display:none; }
+    #compose #input { border:0; padding:var(--s-100) 0; min-height:40px; resize:none; field-sizing:content; background:transparent; }
+    #compose #input:focus { outline:none; }
+    #send { height:32px; padding:0 var(--s-400); border-color:var(--accent); background:var(--accent); color:var(--accent-fg); font-weight:500; }
+    #send:hover { background:var(--accent-hover); border-color:var(--accent-hover); }
+    #send:disabled { border-color:var(--border); background:var(--surface-sunken); color:var(--fg-disabled); cursor:default; }
+    #send:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+    .msg.user:not(.hub) { align-self:flex-end; max-width:85%; border:1px solid transparent; background:var(--hover); }
+    .msg.user.pending { border:1px dashed var(--border-strong); }
+    .msg.user.pending.failed { border-color:var(--c-danger-bold); }
+    .msg:not(.user) { border-color:transparent; background:transparent; }
+    .msg .from { font-size:var(--fs-200); font-weight:400; text-transform:none; letter-spacing:0; color:var(--fg-muted); margin-bottom:var(--s-100); }
+    .msg.claude .from, .msg.codex .from { color:var(--fg-muted); }
+    .msg .from .who { color:var(--fg-subtle); font-weight:500; }
+    .msg.claude:not(.user) > .from::before, .msg.codex:not(.user) > .from::before {
+      display:inline-grid; place-items:center; width:20px; height:20px; margin-right:var(--s-200); vertical-align:middle;
+      border-radius:var(--r-full); font-size:var(--fs-100); font-weight:600; line-height:1; }
+    .msg.claude:not(.user) > .from::before { content:"C"; background:var(--agent-claude-bg); color:var(--agent-claude-fg); }
+    .msg.codex:not(.user) > .from::before { content:"X"; background:var(--agent-codex-bg); color:var(--agent-codex-fg); }
+  }
   /* ---- Phone (SKILL.md §8) ---------------------------------------------
      Keyed on a touch screen, not on width: on a desktop this page sits in the
      dashboard's task panel and the PO's drawer, both narrower than a phone
@@ -1146,13 +1176,16 @@
       <div id="editor">
         <div class="ed-head">
           <div id="att-chips" class="att-chips" hidden></div>
-          <textarea id="input" placeholder="Message the agents — Ctrl+Enter to send. Start with @codex or @claude to direct it to one. Paste or drop a screenshot to attach it. Start with 1. (or press Ctrl+Shift+Enter) for numbered asks, each with its own screenshots and links."></textarea>
+          <textarea id="input" placeholder="Message the agents — @codex or @claude to direct it · #18 links a task · Ctrl+Enter sends"></textarea>
           <div class="ed-refs" id="ed-head-refs" hidden></div>
         </div>
         <ol id="ed-points"></ol>
       </div>
       <div class="ed-row">
         <button type="button" id="add-point" title="Add a numbered ask (Ctrl+Shift+Enter)">+ Add an ask</button>
+        <!-- Pasting or dropping a screenshot still works; this is the way you can see. -->
+        <button type="button" id="attach" title="Attach screenshots or images (you can also paste or drop them)">Attach</button>
+        <input type="file" id="attach-input" accept="image/*" multiple hidden>
         <span class="grow"></span>
         <button id="send" disabled>Send</button>
       </div>
@@ -3597,6 +3630,14 @@ function chatNamesFor(room, solo) {
     po = solo ? ((agents[0] && agents[0].identity) || 'claude') : rep ? rep.to : (agents[0] && agents[0].identity) || '';
   }
   if (po !== CHAT_NAMES.po) { CHAT_NAMES.po = po; refChanged(); }
+  composePlaceholder(!!po, solo);
+}
+// The box's one hint, short: who it goes to, how to direct it, and the keys.
+// Numbered asks and images have buttons of their own under it.
+function composePlaceholder(isPo, solo) {
+  const who = isPo ? 'the PO' : solo ? 'the agent' : 'the agents';
+  const direct = solo ? '' : ' — @codex or @claude to direct it ·';
+  $('#input').placeholder = `Message ${who}${direct || ' —'} #18 links a task · Ctrl+Enter sends`;
 }
 // A one-agent chat is its transcript; the hub's rows live in the room. Each
 // goes in by its time, among the turns shown (never above the first of them).
@@ -4246,6 +4287,12 @@ const ATT = attBox(() => ROOM, box => {
   edSave();                  // the head's images are part of the draft
 });
 attWire($('#input'), $('#compose'), ATT);
+$('#attach').addEventListener('click', () => $('#attach-input').click());
+$('#attach-input').addEventListener('change', e => {
+  const files = [...(e.target.files || [])];
+  e.target.value = '';       // the same file again is a new pick
+  if (files.length) { ATT.add(files, false); $('#input').focus(); }
+});
 $('#att-chips').addEventListener('click', e => {
   const x = e.target.closest && e.target.closest('[data-att-x]');
   if (x) { ATT.remove(x.dataset.attX); $('#input').focus(); }

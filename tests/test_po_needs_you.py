@@ -95,12 +95,23 @@ const isPhone = () => PHONE;
 var PD = { failed: '', lib: {} };
 const pdReveal = id => calls.push('reveal:' + id), pdPointsFrame = () => {}, pdPaintPoints = () => {}, pdPlaceChat = () => {}, pdTaskWanted = () => false;
 const el = () => ({ hidden: false, dataset: {}, kids: [], className: '',
-  querySelectorAll() { return this.kids; }, appendChild(k) { this.kids.push(k); }, remove() {} });
+  querySelectorAll() { return this.kids; }, querySelector() { return null; }, appendChild(k) { this.kids.push(k); }, remove() {} });
 let head, frames, panel;
+// A header with the ⋯ menu in it (#126): writing it closes the menu.
+const menuHead = () => { const h = el(); h.written = 0; h.shown = '';
+  h.menu = { hidden: true, querySelector: () => null, closest: () => h, contains: () => false };
+  h.btn = { setAttribute(k, v) { h.expanded = v; } };
+  Object.defineProperty(h, 'innerHTML', { set(v) { h.written++; h.shown = v; h.menu.hidden = true; } });
+  h.querySelector = sel => (sel === '.po-menu' ? h.menu : sel === '[data-po="more"]' ? h.btn
+    : sel === '.po-menu:not([hidden])' ? (h.menu.hidden ? null : h.menu) : null);
+  return h; };
 const document = { getElementById: id => (id === 'po-panel' ? panel : null), createElement: el,
+  querySelectorAll: sel => (sel === '#po-panel .po-head' && head && head.menu ? [head]
+    : sel === '#po-panel .po-menu:not([hidden])' && head && head.menu && !head.menu.hidden ? [head.menu] : []),
   body: { classList: { on: new Set(), toggle(c, v) { v ? this.on.add(c) : this.on.delete(c); } } } };
 const renderPoPill = () => {}, focusKeyIn = () => null, restoreFocus = () => {}, swRender = () => {};
-const poHeadHtml = (pj, row) => pj.id + ':' + row.roomId;
+let HEAD_TAIL = '';
+const poHeadHtml = (pj, row) => pj.id + ':' + row.roomId + HEAD_TAIL;
 const renderRows = () => { calls.push('renderRows'); renderPo(); };
 const openDetail = id => calls.push('openDetail:' + id);
 const poFocusComposer = () => calls.push('focus');
@@ -111,7 +122,7 @@ const open = (rid, setup) => {
   PO_PEEK = false; PO_PIN = ''; SELECTED_PROJECT = ''; PROJECT_TAB = 'changes'; SB_DEST = 'needsyou'; SELECTED_SID = '';
   // The drawer is a phone's (#124: a desktop opens a PO in the middle, below).
   PHONE = true; ALL_ROWS = ROWS; calls = []; tray.hidden = false;
-  head = el(); frames = el(); document.body.classList.on.clear();
+  head = menuHead(); frames = el(); document.body.classList.on.clear();
   panel = { hidden: true, built: false, set innerHTML(v) { this.built = true; },
             hasAttribute() { return false; }, removeAttribute() {}, classList: { remove() {} },
             querySelector(sel) { return !this.built ? null : sel === '.po-frames' ? frames : head; } };
@@ -141,6 +152,32 @@ log.openTask = open('room-a');
 log.openHidden = open('po-stalled');
 // A desktop: a PO opens in the middle from Needs you, never in a drawer.
 log.openPoDesk = open('po-blocked', () => { PHONE = false; });
+// The ⋯ menu (#126): the header waits while it is open and is written when it
+// closes; another PO is written at once, its menu closed; leaving the page
+// (a click into the conversation's frame) closes it.
+const mh = () => [head.shown, head.menu.hidden, head.dataset.room || ''];
+open('po-blocked', () => { PHONE = false; overview('p1')(); });
+log.menu = [mh()];
+poMenuOpen(head, true); HEAD_TAIL = ' +1'; renderPo(); log.menu.push(mh());
+poMenuOpen(head, false); log.menu.push(mh());
+poMenuOpen(head, true); overview('p2')(); renderPo(); log.menu.push(mh());
+HEAD_TAIL = ' +2'; poMenuOpen(head, true); renderPo(); poMenusClose(); log.menu.push(mh());
+// A control clicked while a change is held acts on its PO before the header is
+// written; a real control is detached by that write (closest() finds nothing).
+const acted = [];
+const openSessionWindow = r => acted.push('popout:' + r), poSwitchFlow = p => acted.push('switch:' + p), poClosePeek = () => acted.push('close');
+const api = (u, o) => { acted.push('api:' + u + ' ' + o.body); return new Promise(() => {}); };
+const toast = () => {}, refresh = () => {};
+const control = po => { const w = head.written; return { dataset: { po }, disabled: false, getAttribute: () => 'false',
+  closest: () => (head.written === w ? head : null) }; };
+log.clicks = [];
+for (const po of ['popout', 'open', 'switch', 'resume']) {
+  open('po-blocked', () => { PHONE = false; overview('p1')(); });
+  head.dataset.sid = 'sid-p1'; poMenuOpen(head, true); HEAD_TAIL = ' +' + po; renderPo(); acted.length = 0; calls = [];
+  poHeadClick(control(po));
+  log.clicks.push([po, acted.concat(calls.filter(c => c.startsWith('openDetail'))), head.shown, head.menu.hidden]);
+}
+HEAD_TAIL = '';
 console.log(JSON.stringify(log));
 """
 
@@ -153,7 +190,7 @@ class PoNeedsYouPage(unittest.TestCase):
         heads = ("function sinceClock(", "function attnWhen(",
                  "function attentionItems(", "function notifItemHtml(", "function needsYouHtml(",
                  "function openAttentionItem(", "function openPoOf(", "function poRowOf(",
-                 "function projectOfRoom(", "function poDockProject(", "function poSplitProject(", "function poContext(", "function renderPo(", "function poPillClick(", "function poMidGo(", "function midLeave(")
+                 "function projectOfRoom(", "function poDockProject(", "function poSplitProject(", "function poContext(", "function renderPo(", "function poMenuOpen(", "function poMenusClose(", "async function poHeadClick(", "function poPillClick(", "function poMidGo(", "function midLeave(")
         src = "\n".join([INDEX[i:INDEX.index("// ---- Task search: end", i)]] + [fn(INDEX, h) for h in heads])
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "po_needs_you.cjs"
@@ -242,6 +279,25 @@ class PoNeedsYouPage(unittest.TestCase):
         o = self.r["openPoDesk"]
         self.assertEqual((o["calls"], o["project"], o["tab"], o["dest"], o["drawer"], o["leads"], o["room"]),
                          (["renderRows", "reveal:po-chat"], "p1", "tasks", "", False, True, "po-blocked"))
+
+    def test_the_po_menu_holds_its_header_only_for_the_same_po(self):
+        self.assertEqual(self.r["menu"], [
+            ["p1:po-blocked", True, "po-blocked"],
+            ["p1:po-blocked", False, "po-blocked"],        # open: the change waits
+            ["p1:po-blocked +1", True, "po-blocked"],      # closed: it is written
+            ["p2:po-waiting +1", True, "po-waiting"],      # another PO: written at once, menu closed
+            ["p2:po-waiting +2", True, "po-waiting"],      # leaving the page closes it and writes it
+        ])
+        self.assertIn("window.addEventListener('blur', poMenusClose);", INDEX)
+        self.assertIn("if (more && ev.relatedTarget && !more.contains(ev.relatedTarget)) poMenuOpen(more.closest('.po-head'), false);", INDEX)
+
+    def test_a_control_acts_before_the_held_header_is_written(self):
+        self.assertEqual(self.r["clicks"], [
+            ["popout", ["popout:po-blocked"], "p1:po-blocked +popout", True],
+            ["open", ["openDetail:sid-p1"], "p1:po-blocked +open", True],
+            ["switch", ["switch:p1"], "p1:po-blocked +switch", True],
+            ["resume", ['api:/api/room/resume {"roomId":"po-blocked"}'], "p1:po-blocked +resume", True],
+        ])
 
     def test_a_hidden_po_item_opens_nothing(self):
         self.assertEqual(self.r["openHidden"]["calls"], [])
