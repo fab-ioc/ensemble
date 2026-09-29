@@ -154,7 +154,7 @@
         }
       }).catch(function () {});
   }
-  window.cdTheme = { apply: apply, sync: sync, stored: stored, scheme: SCHEME,
+  window.cdTheme = { apply: apply, sync: sync, stored: stored, scheme: SCHEME, themes: Object.keys(SCHEME),
                      applyAccent: applyAccent, storedAccent: storedAccent, rgbOf: rgbOf, put: put,
                      chooseAccent: chooseAccent, saveAccent: saveAccent };
   apply();
@@ -2491,6 +2491,36 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   }
   #me-menu .me-rule { height: 1px; background: var(--border); margin: var(--s-100) 0; }
   #me-menu .me-item.on { background: var(--selected-bg); color: var(--selected-fg); font-weight: 500; }
+  /* Theme: an item that opens a list of every theme, each with a swatch of its
+     ground and accent. A flyout to the left of the menu (the avatar is at the
+     right edge); a phone gets it as a nested list under the item instead. */
+  .me-sub-wrap { position: relative; }
+  .me-sub .me-cur { margin-left: auto; color: var(--fg-muted); font-size: var(--fs-100); }
+  .me-sub .me-chev { color: var(--fg-muted); }
+  .me-sub .me-chev::before { content: '\203A'; }
+  .theme-list { display: flex; flex-direction: column; }
+  .theme-list[hidden] { display: none; }
+  #me-menu .theme-list.me-flyout {
+    position: absolute; top: calc(-1 * var(--s-100)); right: calc(100% + var(--s-100)); z-index: 61;
+    min-width: 200px; padding: var(--s-100); background: var(--surface-overlay);
+    border: 1px solid var(--border); border-radius: var(--r-300); box-shadow: var(--e-200);
+  }
+  .theme-opt { display: flex; align-items: center; gap: var(--s-200); width: 100%;
+    padding: 7px 10px; border: 0; border-radius: var(--r-200); background: transparent;
+    color: var(--fg); font: inherit; font-size: var(--fs-200); text-align: left; cursor: pointer; }
+  .theme-opt:hover { background: var(--hover); }
+  .theme-opt.on { background: var(--selected-bg); color: var(--selected-fg); font-weight: 500; }
+  .theme-opt .theme-tick { margin-left: auto; visibility: hidden; }
+  .theme-opt.on .theme-tick { visibility: visible; }
+  .theme-opt .theme-tick::before { content: '\2713'; }
+  /* A swatch: the theme's ground with its accent as a dot; ringed so a pale
+     ground shows on a pale menu. Colours are set per theme in THEME_INFO. */
+  .theme-sw { flex: 0 0 auto; width: 18px; height: 18px; border-radius: 50%;
+    border: 1px solid var(--border); display: inline-flex;
+    align-items: center; justify-content: center; }
+  .theme-sw i { width: 8px; height: 8px; border-radius: 50%; display: block; }
+  #settings-themes { display: flex; flex-direction: column; gap: 2px; }
+  #settings-themes .theme-opt { padding: 5px 8px; }
   /* --- Notifications: tasks that need you ------------------------------- */
   /* The bell takes .bar-btn.icon like every other icon control up here; only
      the count badge is its own. A bell with nothing in it says nothing, so
@@ -2670,7 +2700,12 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     content: '⚠'; color: var(--c-danger-fg); margin-right: 5px; font-size: 11px;
   }
   #settings-panel {
-    position: absolute; top: calc(var(--top-h) + var(--s-200)); right: 16px; z-index: 50;
+    /* Fixed, and as tall as the room under its button: the page is a fixed-height
+       shell (body.mid), so a panel hung off the document could not be scrolled
+       into view. Its own scrollbar reaches the last section. */
+    position: fixed; top: calc(var(--top-h) + var(--s-200)); right: 16px; z-index: 50;
+    max-height: calc(100dvh - var(--sp-top, var(--top-h)) - var(--s-300));
+    overflow-y: auto; overscroll-behavior: contain;
     background: var(--surface); border: 1px solid var(--border);
     border-radius: 10px; box-shadow: 0 12px 36px rgba(0,0,0,.12);
     padding: 16px; min-width: 280px;
@@ -3131,7 +3166,12 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 
     /* Trays and menus fit the screen, and their rows are finger-sized. */
     #notif-tray, #usage-tray, #settings-panel { left: var(--s-200); right: var(--s-200); width: auto; }
-    .me-item, .pm-item, .fm-item, .notif-item, .wf-item, .pr-item, .ov-menu button { min-height: var(--touch-min); }
+    .me-item, .pm-item, .fm-item, .notif-item, .wf-item, .pr-item, .ov-menu button, .theme-opt { min-height: var(--touch-min); }
+    /* The theme list opens as a nested list inside the menu, not a flyout. */
+    /* With Theme unfolded the menu can outgrow a short screen: it scrolls (a desktop's flyout must not be clipped, so only here). */
+    #me-menu { max-height: calc(100dvh - var(--mm-top, var(--top-h)) - var(--s-300)); overflow-y: auto; overscroll-behavior: contain; }
+    #me-menu .theme-list.me-flyout { position: static; min-width: 0; padding: 0 0 0 var(--s-300);
+      background: transparent; border: 0; box-shadow: none; }
     /* The action bar and its menu, as the shared block's (pointer: coarse) rule. */
     .am-btn, .am-item, .theme-dd-item .star, .theme-dd-item .name { min-height: var(--touch-min); }
     .am-btn { height: auto; min-width: var(--touch-min); }
@@ -3602,14 +3642,11 @@ window.DOC_LISTENERS_PAUSED = false;
   <div class="shp-eg">"prop-risk" replay OR quoting</div>
 </div>
 <div id="me-menu" hidden>
-  <div class="me-head">Theme</div>
-  <button class="me-item" role="menuitemradio" data-appearance="light">Light</button>
-  <button class="me-item" role="menuitemradio" data-appearance="dark">Dark</button>
-  <button class="me-item" role="menuitemradio" data-appearance="dim">Dim</button>
-  <button class="me-item" role="menuitemradio" data-appearance="paper">Paper</button>
-  <button class="me-item" role="menuitemradio" data-appearance="contrast">High contrast</button>
-  <button class="me-item" role="menuitemradio" data-appearance="fjord">Fjord</button>
-  <button class="me-item" role="menuitemradio" data-appearance="system">Match system</button>
+  <!-- Theme: a submenu; its list is built from cdTheme.themes (themeListHtml), so a theme added to the head script shows here by itself. -->
+  <div class="me-sub-wrap">
+    <button class="me-item me-sub" id="me-theme-btn" role="menuitem" aria-haspopup="menu" aria-expanded="false" aria-controls="me-themes">Theme <span class="me-cur" id="me-theme-cur"></span><span class="me-chev" aria-hidden="true"></span></button>
+    <div class="theme-list me-flyout" id="me-themes" role="menu" aria-label="Theme" hidden></div>
+  </div>
   <div class="me-rule"></div>
   <!-- Phone only: the plan chip has no room in the bar there, so its tray opens from here. -->
   <button class="me-item me-phone" data-me="usage">Plan allowance</button>
@@ -3632,6 +3669,10 @@ window.DOC_LISTENERS_PAUSED = false;
     <button type="button" id="install-app-btn" class="po-btn def" hidden
             title="A window of its own, with its own icon in the dock or taskbar, and no address bar; its pop-out panels too">Install app</button>
     <p class="cfg-hint" id="install-app-hint" aria-live="polite"></p>
+  </div>
+  <div class="settings-section">
+    <h4>Theme</h4>
+    <div id="settings-themes" role="radiogroup" aria-label="Theme"></div>
   </div>
   <div class="settings-section">
     <h4>Accent color</h4>
@@ -14773,13 +14814,54 @@ document.addEventListener('click', (ev) => {
 // and records a new choice. The choice is saved on the hub so every device
 // agrees; writing localStorage too moves every open page on this machine at
 // once, through the storage event.
+// Every theme the page's head script knows (cdTheme.themes, from its SCHEME
+// table, the same names the hub allows) plus Match system. Only the label and
+// the swatch are kept here; a theme without an entry shows under its own name
+// with a swatch of its ground, so a new theme appears by itself.
+const THEME_INFO = {
+  light: ['Light', '#F7F8F9', '#0C66E4'], dark: ['Dark', '#1D2125', '#579DFF'],
+  dim: ['Dim', '#242320', '#8DB0DC'], paper: ['Paper', '#F6F3EC', '#2A5DA8'],
+  contrast: ['High contrast', '#FFFFFF', '#003DA8'], fjord: ['Fjord', '#2E3440', '#93CBDB'],
+};
+function themeChoices() {
+  const names = (window.cdTheme && cdTheme.themes) || Object.keys(THEME_INFO);
+  const list = names.map(n => {
+    const i = THEME_INFO[n], dark = window.cdTheme && cdTheme.scheme[n] === 'dark';
+    return { name: n, label: i ? i[0] : n.charAt(0).toUpperCase() + n.slice(1),
+             bg: i ? i[1] : (dark ? '#1D2125' : '#F7F8F9'), dot: i ? i[2] : (dark ? '#579DFF' : '#0C66E4') };
+  });
+  list.push({ name: 'system', label: 'Match system', bg: 'linear-gradient(90deg, #F7F8F9 50%, #1D2125 50%)', dot: '#8590A2' });
+  return list;
+}
+function themeListHtml() {
+  return themeChoices().map(t =>
+    '<button type="button" class="theme-opt" role="menuitemradio" data-appearance="' + esc(t.name) + '">'
+    + '<span class="theme-sw" style="background:' + t.bg + '"><i style="background:' + t.dot + '"></i></span>'
+    + '<span class="theme-name">' + esc(t.label) + '</span><span class="theme-tick" aria-hidden="true"></span></button>').join('');
+}
+function renderThemeLists() {
+  const html = themeListHtml();
+  $('#me-themes').innerHTML = html;
+  const st = $('#settings-themes');
+  st.innerHTML = html;
+  st.querySelectorAll('.theme-opt').forEach(b => b.setAttribute('role', 'radio'));
+  markAppearance();
+}
+function setThemeSubmenu(open) {
+  const l = $('#me-themes'), b = $('#me-theme-btn');
+  l.hidden = !open;
+  b.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
 function markAppearance() {
   const pref = window.cdTheme ? cdTheme.stored() : 'light';
-  document.querySelectorAll('#me-menu .me-item[data-appearance]').forEach(b => {
+  document.querySelectorAll('#me-themes .theme-opt, #settings-themes .theme-opt').forEach(b => {
     const on = b.dataset.appearance === pref;
     b.classList.toggle('on', on);
     b.setAttribute('aria-checked', on ? 'true' : 'false');
   });
+  const cur = themeChoices().find(t => t.name === pref);
+  const c = document.getElementById('me-theme-cur');
+  if (c) c.textContent = cur ? cur.label : '';
 }
 async function setAppearance(pref) {
   try { localStorage.setItem('cd-theme', pref); } catch (e) {}
@@ -14793,7 +14875,7 @@ async function setAppearance(pref) {
   } catch (e) { toast('theme not saved to the hub: ' + e.message, 4000, 'err'); }
 }
 window.addEventListener('cd-theme', markAppearance);
-queueMicrotask(markAppearance);
+queueMicrotask(renderThemeLists);
 
 // The banners sit above the bar and push it down; everything hung off the
 // bar reads --top-h, so --banner-h has to say how much room they take right
@@ -14866,10 +14948,13 @@ function openSettingsPanel(anchor) {
   panel.hidden = false;
   const r = anchor.getBoundingClientRect();
   panel.style.top = Math.round(r.bottom + 6) + 'px';
-  panel.style.right = Math.round(window.innerWidth - r.right) + 'px';
-  panel.style.left = 'auto';
+  panel.style.setProperty('--sp-top', Math.round(r.bottom + 6) + 'px');
+  // A phone's rule insets both edges; only a desktop hangs it off the avatar.
+  panel.style.right = isPhone() ? '' : Math.round(window.innerWidth - r.right) + 'px';
+  panel.style.left = isPhone() ? '' : 'auto';
 }
 function closeMeMenu() {
+  setThemeSubmenu(false);
   $('#me-menu').hidden = true;
   $('#me-btn').setAttribute('aria-expanded', 'false');
 }
@@ -14883,16 +14968,33 @@ $('#me-btn').addEventListener('click', (ev) => {
   if (opening) {
     const r = ev.currentTarget.getBoundingClientRect();
     m.style.top = Math.round(r.bottom + 6) + 'px';
+    m.style.setProperty('--mm-top', Math.round(r.bottom + 6) + 'px');
     m.style.right = Math.round(window.innerWidth - r.right) + 'px';
   }
 });
+$('#me-menu').addEventListener('keydown', (ev) => {
+  const b = $('#me-theme-btn');
+  if (ev.key === 'ArrowRight' && document.activeElement === b) {
+    setThemeSubmenu(true);
+    const f = $('#me-themes .theme-opt'); if (f) f.focus();
+    ev.preventDefault();
+  } else if ((ev.key === 'ArrowLeft' || ev.key === 'Escape') && !$('#me-themes').hidden) {
+    setThemeSubmenu(false); b.focus(); ev.preventDefault(); ev.stopPropagation();
+  }
+});
 $('#me-menu').addEventListener('click', (ev) => {
+  const opt = ev.target.closest('.theme-opt');
+  if (opt) {
+    ev.stopPropagation();
+    setAppearance(opt.dataset.appearance);
+    closeMeMenu();
+    return;
+  }
   const it = ev.target.closest('.me-item');
   if (!it) return;
   ev.stopPropagation();
-  if (it.dataset.appearance) {
-    setAppearance(it.dataset.appearance);
-    closeMeMenu();
+  if (it.id === 'me-theme-btn') {          // Theme: open or fold its list
+    setThemeSubmenu($('#me-themes').hidden);
     return;
   }
   if (it.dataset.me === 'usage') {        // phone: the plan chip's tray, from here
@@ -14910,6 +15012,8 @@ $('#me-menu').addEventListener('click', (ev) => {
   }
 });
 $('#settings-panel').addEventListener('click', (ev) => {
+  const opt = ev.target.closest('.theme-opt');
+  if (opt) { ev.stopPropagation(); setAppearance(opt.dataset.appearance); return; }
   const sw = ev.target.closest('.swatch');
   if (!sw) return;
   ev.stopPropagation();
