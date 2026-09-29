@@ -10,29 +10,33 @@ a full suite run made enough of them to lock the account (10 in 10 minutes).
 Chrome skips the probe when the profile's ``Local State`` holds
 ``password_manager.os_password_last_changed`` > 0 and not older than the
 password's last change (NetUserGetInfo level 1: now - usri1_password_age), and
-then uses ``password_manager.os_password_blank`` as the answer. After a real
-probe Chrome itself writes "last change + 1 s" there.
+then takes ``password_manager.os_password_blank`` as the answer. Nothing else
+(no Chrome version) is part of that check.
+
+Headless Chrome never writes that answer back: after a launch on a new profile,
+closed with Browser.close, the directory had no Local State at all (measured
+2026-09-29). So a persistent profile does not learn it and keeps probing; the
+answer has to be written in before the launch.
 
 So every launch still gets its own new, empty profile directory (nothing leaks
-between tests: storage, service workers and caches start empty as before), but
-the directory is seeded with a ``Local State`` holding exactly those two
-values, computed here the way Chrome computes them:
+between tests: storage, service workers and caches start empty as before), and
+the helper writes a ``Local State`` holding just:
 
-* os_password_last_changed = the password's last change + 2 s (Chrome's own
-  skew is 1 s; usri1_password_age is whole seconds);
+* os_password_last_changed = now. The password was last changed before now,
+  so the check passes; a later password change is also before the next
+  launch's "now", so a change does not bring the probe back.
 * os_password_blank = false. The probe only fails when the password is not
   blank, so the only account it could lock is one this answer is right for.
 
-Initialisation therefore never launches Chrome and costs no failed sign-in at
-all, not even once. A password change moves the last change forward, and the
-next seed follows it, so a change does not bring the probe back either. A
-Chrome that stored these prefs under another name would probe again: the
-check below cannot see that (it reads our file, not Chrome's behaviour). The
-account's failed sign-in counter can, without elevation:
+Initialisation therefore never launches Chrome and costs no failed sign-in, not
+even once. A future Chrome that kept the answer under other names would probe
+again; ``check`` cannot see that (it reads our file, not Chrome's behaviour).
+The account's failed sign-in counter can, without elevation:
 ``([ADSI]"WinNT://./$env:USERNAME,user").BadPasswordAttempts.Value`` in
-PowerShell goes up by one per unseeded launch (measured 2026-09-29) and stays
-put across seeded ones; it resets once the lockout window (10 min) has passed,
-so compare readings taken inside one window.
+PowerShell went up by one per unseeded launch and stayed put across seeded ones
+(2026-09-29); it restarts once the lockout window (10 min) has passed, and
+other programs' failed sign-ins count too, so compare readings taken inside one
+window while nothing else launches Chrome.
 
 Use:
 
@@ -50,7 +54,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import sys
 import tempfile
 import time
 from pathlib import Path
@@ -69,40 +72,12 @@ LOCAL_STATE = "Local State"
 _EPOCH_1601 = 11644473600  # seconds from 1601-01-01 (Chrome's time base) to 1970-01-01
 
 
-def password_age() -> int | None:
-    """Seconds since this account's password was last set (NetUserGetInfo
-    level 1, as Chrome reads it), or None where there is none to read."""
-    if sys.platform != "win32":
-        return None
-    import ctypes
-    from ctypes import wintypes as w
-
-    class UserInfo1(ctypes.Structure):
-        _fields_ = [("name", w.LPWSTR), ("password", w.LPWSTR), ("password_age", w.DWORD), ("priv", w.DWORD),
-                    ("home_dir", w.LPWSTR), ("comment", w.LPWSTR), ("flags", w.DWORD), ("script_path", w.LPWSTR)]
-
-    size = w.DWORD(257)
-    name = ctypes.create_unicode_buffer(size.value)
-    if not ctypes.windll.advapi32.GetUserNameW(name, ctypes.byref(size)):
-        return None
-    info = ctypes.POINTER(UserInfo1)()
-    user = name.value.rsplit("\\", 1)[-1]
-    if ctypes.windll.netapi32.NetUserGetInfo(None, user, 1, ctypes.byref(info)) != 0:
-        return None  # Chrome then assumes "not blank" and does not probe
-    try:
-        return int(info.contents.password_age)
-    finally:
-        ctypes.windll.netapi32.NetApiBufferFree(info)
-
-
 def local_state() -> str:
     """The seed ``Local State`` text (see the module docstring)."""
-    age = password_age()
-    changed = time.time() - (age or 0) + 2
     return json.dumps({"password_manager": {
         "os_password_blank": False,
-        # An int64 pref: Chrome stores it as a decimal string.
-        "os_password_last_changed": str(int((changed + _EPOCH_1601) * 1_000_000)),
+        # An int64 pref (microseconds since 1601): Chrome stores it as a decimal string.
+        "os_password_last_changed": str(int((time.time() + _EPOCH_1601) * 1_000_000)),
     }})
 
 

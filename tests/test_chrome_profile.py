@@ -27,18 +27,14 @@ def chrome_time(unix: float) -> int:
 
 
 class Seed(unittest.TestCase):
-    def test_seed_says_not_blank_and_not_older_than_the_password(self):
+    def test_seed_says_not_blank_and_changed_now(self):
+        before = chrome_time(time.time())
         pm = json.loads(chrome_profile.local_state())["password_manager"]
+        after = chrome_time(time.time())
         self.assertIs(pm["os_password_blank"], False)
         self.assertIsInstance(pm["os_password_last_changed"], str, "an int64 pref is a string in Local State")
-        age = chrome_profile.password_age()
-        # What Chrome computes at launch (now - age), which must not be newer than the seed.
-        chrome_sees = chrome_time(time.time() - (age or 0))
-        self.assertGreaterEqual(int(pm["os_password_last_changed"]), chrome_sees)
-
-    @unittest.skipUnless(sys.platform == "win32", "the probe is Windows-only")
-    def test_password_age_is_read_on_windows(self):
-        self.assertIsNotNone(chrome_profile.password_age())
+        # Chrome probes again only if the password changed after this value: now is after any change so far.
+        self.assertTrue(before <= int(pm["os_password_last_changed"]) <= after)
 
     def test_new_profile_is_new_seeded_and_checked(self):
         with tempfile.TemporaryDirectory() as t:
