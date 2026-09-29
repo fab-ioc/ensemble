@@ -1,4 +1,4 @@
-"""#132 (fabio's P80): a Dock library that fails to load is tried again, and
+"""#132 (P80): a Dock library that fails to load is tried again, and
 a page that gives up says so.
 
 Before, one failed load of the panels' library (static/dock/src/index.js or

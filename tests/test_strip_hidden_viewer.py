@@ -4,7 +4,7 @@ Dock keeps one flyout per strip tool, each laid out beside the conversation,
 and hides the closed ones with ``visibility: hidden``. A Files viewer that is
 showing says ``visibility: visible`` itself (.wsp-frame.on), which beats a
 hidden ancestor: with a file open in Files and Your asks open instead, the
-closed Files flyout's viewer was painted over Your asks (fabio's P79).
+closed Files flyout's viewer was painted over Your asks (P79).
 
 In headless Chrome over CDP, against a hub in a thread, with a project that has
 a PO and a README in its folder: open the README in the strip's Files, then
