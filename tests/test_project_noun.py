@@ -110,10 +110,22 @@ class TheInstallScriptsWayIn(Isolated):
         sh = (ROOT / "install-launchd.sh").read_text(encoding="utf-8")
         for src in (ps, sh):
             self.assertIn("--set-project-noun", src)
-            self.assertIn("Word [Project]", src)
+            self.assertIn("Word [Enter keeps the current one: Project on a new install]", src)
         # Nobody at the console: no question, the hub keeps its word.
         self.assertIn("[Console]::IsInputRedirected", ps)
         self.assertIn("-t 0", sh)
+
+    def test_the_scripts_parse(self):
+        # A broken line stops every action of an installer before it runs.
+        if sys.platform == "win32":
+            ps = ("$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile("
+                  f"'{ROOT / 'install-task.ps1'}', [ref]$null, [ref]$e); $e | ForEach-Object {{ $_.Message }}")
+            out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, encoding="utf-8", timeout=60)
+            self.assertEqual((out.returncode, out.stdout.strip()), (0, ""), out.stderr)
+        bash = shutil.which("bash")
+        if bash:
+            out = subprocess.run([bash, "-n", "install-launchd.sh"], cwd=ROOT, capture_output=True, encoding="utf-8", timeout=60)
+            self.assertEqual(out.returncode, 0, out.stderr)
 
 
 class TheWords(Isolated):

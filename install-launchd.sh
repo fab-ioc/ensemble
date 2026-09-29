@@ -52,8 +52,8 @@ case "$action" in
     if [[ -z "$one" && -t 0 ]]; then
       echo
       echo "What should Ensemble call a board of tasks with its PO?"
-      echo "  1) Project (default)  2) Initiative  3) Epic  4) Workstream  - or type your own word"
-      read -r -p "Word [Project]: " one || one=""
+      echo "  1) Project  2) Initiative  3) Epic  4) Workstream  - or type your own word"
+      read -r -p "Word [Enter keeps the current one: Project on a new install]: " one || one=""
       one="$(echo "$one" | xargs)"
       if [[ -n "$one" && -z "$many" ]]; then
         case "$one" in 1|2|3|4|Project|Initiative|Epic|Workstream) ;;

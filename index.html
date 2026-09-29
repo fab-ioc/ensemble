@@ -3534,8 +3534,8 @@ window.DOC_LISTENERS_PAUSED = false;
          conversation, the tool and the file (barCrumbs). On a phone the
          project's name is the menu button, as before. -->
     <button id="proj-go" class="bar-btn bar-crumb" type="button"><span class="proj-go-name"></span></button>
-    <button id="proj-switch" class="bar-btn" title="Switch project, or change this project's kind and key" aria-haspopup="true" aria-expanded="false">
-      <span id="proj-switch-name">All projects</span><span class="caret">▾</span>
+    <button id="proj-switch" class="bar-btn" data-noun-title="Switch {project}, or change this {project}'s kind and key" title="Switch project, or change this project's kind and key" aria-haspopup="true" aria-expanded="false">
+      <span id="proj-switch-name" data-noun="All {projects}">All projects</span><span class="caret">▾</span>
     </button>
     <span id="bar-crumbs"></span>
   </nav>
@@ -9529,7 +9529,7 @@ function rmAction(pid, act) {
   if (act === 'edit') {
     const d = st.data || {};
     const pj = projectById(pid);
-    const text = d.exists ? d.text : `# ${(pj && pj.name) || 'Project'} roadmap\n\n`;
+    const text = d.exists ? d.text : `# ${(pj && pj.name) || noun('one', 'title')} roadmap\n\n`;
     Object.assign(st, { editing: true, draft: text, orig: text, base: d.version || '', conflict: null, showMine: false, err: '' });
     rmBuild(panel, pid);
     const ta = panel.querySelector('.rm-src');

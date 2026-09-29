@@ -65,8 +65,8 @@ function Read-ProjectNoun {
     if (-not [Environment]::UserInteractive -or [Console]::IsInputRedirected) { return $null }
     Write-Host ''
     Write-Host 'What should Ensemble call a board of tasks with its PO?'
-    Write-Host '  1) Project (default)  2) Initiative  3) Epic  4) Workstream  - or type your own word'
-    $one = (Read-Host 'Word [Project]').Trim()
+    Write-Host '  1) Project  2) Initiative  3) Epic  4) Workstream  - or type your own word'
+    $one = (Read-Host 'Word [Enter keeps the current one: Project on a new install]').Trim()
     if (-not $one) { return $null }
   }
   if ($presets.Contains($one)) { return $presets[$one] }
@@ -126,8 +126,7 @@ switch ($Action) {
       if ($LASTEXITCODE -ne 0) { Write-Warning 'The word was not saved; choose it later in Settings.' }
     }
 
-    # NB: avoid a local named $action
- — PowerShell vars are case-insensitive, so
+    # NB: avoid a local named $action — PowerShell vars are case-insensitive, so
     # it would clobber the $Action parameter. pythonw.exe + --log = no console
     # window, logs still captured to file.
     $taskAction = New-ScheduledTaskAction -Execute $python `
