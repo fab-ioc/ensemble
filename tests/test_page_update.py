@@ -756,10 +756,10 @@ async function main() {
       }
       await p.close();
     }
-    // ---- index.html on a phone (500 px): the PO drawer opened by the pill over
-    // an open task, on Overview and on Workspace, is over the task again after
-    // the reload (opening a task by hand closes the drawer there; a put-back is
-    // not that).
+    // ---- index.html on a phone (500 px): the pill over an open task, on
+    // Overview and on Workspace, goes to the PO's screen (layout A, #129: no
+    // drawer); after the reload the PO's conversation is there again, at the
+    // same place.
     out.phone = {};
     for (const tab of ['tasks', 'workspace']) {
       const p = await page(A.base + '/', 500);
@@ -985,10 +985,11 @@ class InChrome(unittest.TestCase):
         self.assertFalse(after["stick"])
         self.assertEqual(g["poClosed"], {"peek": False, "hidden": True, "proj": before["proj"], "tab": before["tab"]}, "closed before: closed after")
 
-    def test_on_a_phone_the_po_drawer_is_over_the_restored_task_again(self):
+    def test_on_a_phone_the_pos_screen_comes_back_at_the_same_place(self):
         for tab in ("tasks", "workspace"):
             b, a = self.got["phone"][tab]["before"], self.got["phone"][tab]["after"]
-            self.assertTrue(b["phone"] and b["peek"] and b["shown"] and b["detail"] and b["sid"] and b["key"] and not b["stick"], (tab, b))
+            self.assertTrue(b["phone"] and b["key"] and not b["stick"], (tab, b))
+            self.assertFalse(b["peek"] or b["shown"] or b["detail"] or b["sid"], (tab, b))
             # A PO project's Workspace tab is a panel of its PO screen.
             self.assertEqual((b["room"], b["tab"]), (self.po_room, "tasks"))
             for k in ("phone", "peek", "shown", "detail", "sid", "room", "proj", "tab", "pin", "key"):

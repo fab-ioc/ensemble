@@ -3243,13 +3243,126 @@ def save_projects(projects: list[dict]) -> None:
     tmp.replace(PROJECTS_FILE)
 
 
+# ---- A new code project's folder from its name ----
+# New project with a name and no folder: one folder in the projects root named
+# after it, words joined by "-", without what a Windows or macOS folder name
+# cannot hold ("My Day Job" -> <root>/My-Day-Job), is the project's home, and
+# its code is a new repository in it (<root>/My-Day-Job/code). The dialog's
+# preview (po_setup_folder) and every request that creates a project use this
+# one rule (new_project_folders).
+_FOLDER_BAD_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
+_WIN_DEVICE_NAMES = re.compile(r"^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(\..*)?$", re.I)
+PROJECT_FOLDER_MAX = 64
+
+
+def project_folder_name(name: str) -> str:
+    """The folder name a project called ``name`` gets: never empty."""
+    s = re.sub(r"\s", " ", name or "")
+    s = _FOLDER_BAD_CHARS.sub("", s).strip()
+    s = re.sub(r"[ -]* [ -]*", "-", s)
+    # Windows drops a trailing dot or space; a leading dot hides the folder.
+    s = s.strip(" .-")[:PROJECT_FOLDER_MAX].rstrip(" .-")
+    if _WIN_DEVICE_NAMES.match(s):
+        s = s[:PROJECT_FOLDER_MAX - len("-project")].rstrip(" .-") + "-project"
+    return s or "project"
+
+
+def _folder_key(folder: str) -> str:
+    """A folder compared without its case, on every system: the projects root
+    is on a case-insensitive disk by default on Windows and macOS alike."""
+    return os.path.normpath(folder).casefold()
+
+
+def _folder_taken(folder: str, taken: set[str]) -> bool:
+    """``folder`` is another project's (its code folder or its home), or a file."""
+    try:
+        if os.path.exists(folder) and not os.path.isdir(folder):
+            return True
+        if (Path(folder) / "project.json").exists():
+            return True
+    except OSError:
+        return True
+    return _folder_key(folder) in taken
+
+
+NEW_CODE_SUBFOLDER = "code"
+
+
+def new_project_folders(name: str, projects: list[dict] | None = None) -> tuple[str, str]:
+    """(home, code) for a new code project called ``name`` given no folder:
+    the home <root>/<project_folder_name> (its project.json, tasks, notes)
+    and its code in home/code. The pair moves on to -2, -3… together when
+    the home is another project's, or holds one's folder or a file. A
+    folder there that is no project's is used as it is. Reads only."""
+    projects = load_projects() if projects is None else projects
+    taken = set()
+    for p in projects:
+        if p.get("path"):
+            taken.add(_folder_key(p["path"]))
+        with contextlib.suppress(OSError):
+            taken.add(_folder_key(project_home(p, create=False)))
+    base = str(PROJECTS_ROOT / project_folder_name(name))
+    home, n = base, 2
+
+    def free(h: str) -> bool:
+        code = os.path.join(h, NEW_CODE_SUBFOLDER)
+        inside = _folder_key(h) + os.sep
+        return not (_folder_taken(h, taken) or _folder_taken(code, taken)
+                    or any(t.startswith(inside) for t in taken))
+    while not free(home):
+        home = f"{base}-{n}"
+        n += 1
+    home = os.path.normpath(home)
+    return home, os.path.join(home, NEW_CODE_SUBFOLDER)
+
+
+def _git_init_new(folder: str) -> str:
+    """Make a folder the hub has just created a git repository with one empty
+    commit, so worktree tasks can start from it. "" or why it failed; on a
+    failure the folder is left as it was made, with no .git (a repository
+    without a commit could have no worktree, and would not be kept apart)."""
+    def git(*args):
+        return _run(["git", "-C", folder, *args], capture_output=True, text=True,
+                    encoding="utf-8", errors="replace", timeout=30)
+    why = ""
+    try:
+        out = git("init")
+        if out.returncode != 0:
+            why = (out.stderr or "").strip()[:200] or "git init failed"
+        else:
+            out = git("commit", "--allow-empty", "-m", "Initial commit")
+            if out.returncode != 0:
+                # No identity configured on this machine: the hub's, for this one commit.
+                out = git("-c", "user.name=Ensemble", "-c", "user.email=ensemble@localhost",
+                          "commit", "--allow-empty", "-m", "Initial commit")
+            if out.returncode != 0:
+                why = (out.stderr or "").strip()[:200] or "git commit failed"
+    except (OSError, subprocess.SubprocessError) as e:
+        why = str(e) or "git failed"
+    if why:
+        dot_git = os.path.join(folder, ".git")
+        if os.path.isdir(dot_git):
+            try:
+                _files_remove(dot_git)          # its objects are read-only
+            except OSError:
+                shutil.rmtree(dot_git, ignore_errors=True)
+        print(f"[projects] {folder}: not made a git repository: {why}", flush=True)
+    return why
+
+
 def register_project(path: str, name: str = "", kind: str = "code",
-                     make_home: bool = True) -> tuple[bool, dict, str]:
+                     make_home: bool = True, init_git: bool = False,
+                     home: str = "") -> tuple[bool, dict, str]:
     """Register a folder as a project (idempotent by normalized path). The folder
     is created if missing. A code folder that was already in the projects root
     (empty or not) is used in place and never written to: the project's own
     files (its project.json, tasks, notes) go in a home beside it, made now
     (``make_home``, so a scan of the projects root finds it) or by the caller.
+    ``init_git`` (New project): a code folder this call creates becomes a git
+    repository with one empty commit, and, in the projects root, is kept
+    apart from the project's home like one that was there already, so its
+    tasks can be worktrees of it. ``home`` (New project given no folder,
+    new_project_folders): the code project's home, the folder ``path`` is in.
     Returns (ok, project, message)."""
     raw = (path or "").strip()
     if not raw:
@@ -3266,10 +3379,15 @@ def register_project(path: str, name: str = "", kind: str = "code",
         existed = p.is_dir()
     except OSError:
         existed = False
+    home = os.path.normpath(home) if home and (kind or "code") != "documents" else ""
+    home_was = bool(home) and os.path.isdir(home)     # before the code folder in it is made
     try:
         p.mkdir(parents=True, exist_ok=True)
     except OSError as e:
         return False, {}, f"cannot create/access folder: {e}"
+    # Never a folder that was there already: only one this call made.
+    made_repo = init_git and not existed and (kind or "code") != "documents" \
+        and not _git_init_new(norm)
     projects = load_projects()
     sharing = projects_on_folder(norm, projects)
     new_name = name.strip() or os.path.basename(norm.rstrip("/\\")) or norm
@@ -3293,19 +3411,23 @@ def register_project(path: str, name: str = "", kind: str = "code",
     proj["key"] = task_numbers.project_keys(projects)[proj["id"]]
     # A folder another project already uses keeps that project's files: the
     # new one always gets a home of its own (named after it, _free_home).
-    kept_apart = (_in_projects_root(norm) and existed and (kind or "code") != "documents") \
-        or (bool(sharing) and _in_projects_root(norm))
+    kept_apart = (_in_projects_root(norm) and (existed or made_repo) and (kind or "code") != "documents") \
+        or (bool(sharing) and _in_projects_root(norm)) or bool(home)
     if kept_apart:
-        proj["home"] = _free_home(proj)
+        proj["home"] = home or _free_home(proj)
     save_projects(projects)
     if kept_apart and make_home:
-        home_existed = os.path.isdir(proj["home"])
+        home_existed = home_was if home else os.path.isdir(proj["home"])
         try:
             _make_home(proj)                # the home, with its project.json
         except OSError as e:
             # Registered without a home, it could not be found again from
             # the projects root: registered not at all.
             unregister_project(proj["id"])
+            if home and not existed:
+                # The new code folder in it goes too, so its home can.
+                with contextlib.suppress(OSError):
+                    _files_remove(norm)
             _drop_home(proj, home_existed)
             return False, {}, f"cannot create the project's folder {proj['home']}: {e}"
     if _in_projects_root(norm) and not kept_apart:
@@ -3764,8 +3886,10 @@ def po_setup_folder(path: str, kind: str, name: str = "") -> dict:
     """What registering ``path`` (a code project) or ``name`` (a documents
     project, a folder in the projects folder) would find, for the setup
     dialog: {folder, exists, isFile, isGit, project (the one it already is),
-    relative (not a full path)}. Reads only."""
+    relative (not a full path), derived (a code project without a folder: the
+    one named after it that confirming makes, new_project_folders)}. Reads only."""
     kind = "documents" if (kind or "").strip().lower() == "documents" else "code"
+    derived = False
     if kind == "documents":
         raw = (name or "").strip()
         folder = str(PROJECTS_ROOT / raw) if raw and not _UNSAFE_DIR_CHARS.search(raw) and raw not in (".", "..") else ""
@@ -3773,8 +3897,10 @@ def po_setup_folder(path: str, kind: str, name: str = "") -> dict:
         raw = (path or "").strip()
         p = Path(os.path.expanduser(raw)) if raw else None
         folder = os.path.normpath(str(p)) if p is not None and p.is_absolute() else ""
+        if not raw and (name or "").strip():
+            folder, derived = new_project_folders(name)[1], True
     out = {"kind": kind, "folder": folder, "exists": False, "isFile": False, "isGit": False,
-           "project": None, "relative": bool(raw) and not folder and kind == "code"}
+           "project": None, "relative": bool(raw) and not folder and kind == "code", "derived": derived}
     if not folder:
         return out
     out["exists"] = os.path.isdir(folder)
@@ -3852,10 +3978,12 @@ def _new_po_project(name: str, kind: str, path: str) -> tuple[dict, callable]:
         if _UNSAFE_DIR_CHARS.search(name) or name in (".", ".."):
             raise MakePoError("A documents project's name is also its folder's name: "
                               "use letters, digits, spaces, - and _ only.")
-    else:
+    derived_home = ""
+    if kind != "documents":
         raw = (path or "").strip()
         if not raw:
-            raise MakePoError("Give the code folder.")
+            # No folder: a home named after the project, its code in it.
+            derived_home, raw = new_project_folders(name)
         if not Path(os.path.expanduser(raw)).is_absolute():
             raise MakePoError("Give the code folder as a full path, such as "
                               + (r"C:\work\my-project." if os.name == "nt" else "/home/me/my-project."))
@@ -3873,14 +4001,16 @@ def _new_po_project(name: str, kind: str, path: str) -> tuple[dict, callable]:
         kept_json = (target / "project.json").read_bytes()
     except OSError:
         pass
-    ok, proj, msg = register_project(raw, name, kind, make_home=False)
+    home_was = bool(derived_home) and os.path.isdir(derived_home)
+    ok, proj, msg = register_project(raw, name, kind, make_home=False, init_git=True, home=derived_home)
     if not ok:
         raise MakePoError(f"The project could not be created: {msg}.")
     if proj["id"] in before or msg == "already registered":
         raise MakePoError(f"The folder {proj['path']} is already the project “{proj.get('name', '')}”. "
                           f"Open that project and choose its PO there.", 409)
     home_before = project_home(proj, create=False)
-    home_existed = os.path.isdir(home_before)
+    # A derived home was made with the code folder in it: whether it was there before that.
+    home_existed = home_was if derived_home else os.path.isdir(home_before)
 
     def undo() -> None:
         unregister_project(proj["id"])
@@ -3900,9 +4030,10 @@ def _new_po_project(name: str, kind: str, path: str) -> tuple[dict, callable]:
                 continue
             # Made by this request moments ago. A folder that carries another
             # project's id by now (New project took the same name meanwhile)
-            # is that project's: only ours, or an empty one, goes.
+            # is that project's: only ours, or an empty one, goes (the
+            # repository register_project made in it counts as empty).
             try:
-                empty = not os.listdir(folder)
+                empty = not [f for f in os.listdir(folder) if f != ".git"]
             except OSError:
                 empty = False
             if ours or empty:
@@ -9420,6 +9551,13 @@ class Handler(BaseHTTPRequestHandler):
             if ".." in sub or sub.startswith("/"):
                 self.send_error(400)
                 return
+            # /static/dock@N/… is /static/dock/…: a page trying the Dock library
+            # again asks under a new address, since a browser keeps a module
+            # that failed (and every module that imports it) failed for the
+            # page's life (#132).
+            m = re.match(r"dock@\d{1,4}/", sub)
+            if m:
+                sub = "dock/" + sub[m.end():]
             f = STATIC_DIR / "static" / sub
             ext = f.suffix.lower()
             mime = {".png": "image/png", ".ico": "image/x-icon",
@@ -11188,9 +11326,12 @@ class Handler(BaseHTTPRequestHandler):
         undo_project = None
         source_cwd = cwd if not rid else (agents_in[0].get("cwd") or room_full.get("cwd") or "")
         if project is None:
+            # No "path" at all: the conversation's own folder. An empty one
+            # (New project's folder left empty): the folder named after the
+            # project, as for the other ways to create one.
             project, undo_project = _new_po_project(
                 data.get("name") or label, data.get("kind") or "code",
-                data.get("path") or source_cwd)
+                (data.get("path") or "") if "path" in data else source_cwd)
             pid = project["id"]
 
         made_room = False
@@ -11725,6 +11866,20 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/mcp":
             self._handle_mcp(data)
             return
+        if p == "/api/page-log":
+            # A page's own trouble (the panels' library not loading, #132), in
+            # the hub's log: a browser's console is read by nobody. One line,
+            # cut short, its line breaks flattened. Never from another site.
+            if self.headers.get("Origin") and not self._same_origin_request():
+                self._send_json(403, {"error": "cross_origin"})
+                return
+            def line(v, n):     # whitespace flattened, other control characters (a terminal's escapes) dropped
+                return "".join(c for c in " ".join(str(v).split()) if c >= " " and c != "")[:n]
+            what = line(data.get("what") or "page", 40) if isinstance(data, dict) else "page"
+            msg = line(data.get("msg") or "", 500) if isinstance(data, dict) else ""
+            print(f"[page] {what}: {msg}", flush=True)
+            self._send_json(200, {"ok": True})
+            return
         if p.startswith("/api/files/"):
             self._files_post(p, data)
             return
@@ -11929,8 +12084,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"ok": True, "room": chatroom.get_room(room["id"])})
             return
         if p == "/api/projects/new":
-            ok, proj, msg = register_project(data.get("path", ""), data.get("name", ""),
-                                             "documents" if (data.get("kind") or "").strip().lower() == "documents" else "code")
+            kind = "documents" if (data.get("kind") or "").strip().lower() == "documents" else "code"
+            path, name = (data.get("path") or "").strip(), (data.get("name") or "").strip()
+            home = ""
+            if kind == "code" and not path and name:
+                # A home named after the project, in the projects root, its code in it.
+                home, path = new_project_folders(name)
+            ok, proj, msg = register_project(path, name, kind, init_git=kind == "code", home=home)
             if not ok:
                 self._send_json(400, {"error": msg})
                 return

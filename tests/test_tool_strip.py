@@ -1,4 +1,4 @@
-"""Layout A step 3 (#125): the tool strip on the right (Dock v0.4.0).
+"""Layout A step 3 (#125): the tool strip on the right (Dock v0.4.2).
 
 In headless Chrome over CDP, against a hub in a thread serving the pages, with
 a project that has a PO (Motors), a task in it with a folder of its own, and a
@@ -112,7 +112,7 @@ async function main() {
     await ready();
     return { evalIn, until, shot, click, ready, sessionId, close: () => c.send('Target.closeTarget', { targetId }) };
   };
-  const go = (p, proj, keep) => p.evalIn(`(() => { if (!${!!keep}) try { ['cd-tool-strip', 'cd-tool-open', 'cd-po-dock-phone'].forEach(k => localStorage.removeItem(k)); } catch (e) {}
+  const go = (p, proj, keep) => p.evalIn(`(() => { if (!${!!keep}) try { ['cd-tool-strip', 'cd-tool-open', 'cd-phone-tabs'].forEach(k => localStorage.removeItem(k)); } catch (e) {}
     SELECTED_PROJECT = ${JSON.stringify(proj)}; PROJECT_TAB = 'tasks'; SB_DEST = ''; renderRows(); return 0; })()`);
   const poReady = p => p.until('document.body.classList.contains("po-dock") && !!PD.dock && !!document.querySelector("#po-dock .dk-strip-btn") && !!document.querySelector("#po-panel iframe.po-session:not([hidden])")', 30000);
   const sid = `ALL_ROWS.find(r => r.roomId === ${JSON.stringify(A.task)}).sessionId`;
@@ -327,14 +327,14 @@ class TheWiring(unittest.TestCase):
     def test_the_dock_is_a_tool_strip(self):
         dock = INDEX[INDEX.index("function pdEnsure()"):INDEX.index("// The middle is the conversation alone")]
         for used in ("stripHover: false", "stripOpen: 'beside'", "strip: 44", "icon: PD_ICON[id]", "unpinSize:",
-                     "can: (id, a) => isPhone() || (id !== 'po-chat' && a !== 'hide')"):
+                     "can: (id, a) => (isPhone() && !(id === 'po-chat' && a === 'hide' && pdTask())) || (id !== 'po-chat' && a !== 'hide')"):
             self.assertIn(used, dock, used)
         self.assertIn("const PD_TOOLS = ['points', 'changes', 'workspace', 'board', 'spec'];", INDEX)
-        self.assertIn("const PD_KEYS = { desk: 'cd-tool-strip', phone: 'cd-po-dock-phone' };", INDEX)
+        self.assertIn("const PD_KEYS = { desk: 'cd-tool-strip', phone: 'cd-phone-tabs' };", INDEX)
         self.assertIn("function pdNarrow() { return isPhone(); }", INDEX)
 
-    def test_the_vendored_library_is_v0_4_0(self):
-        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.4\.0 ")
+    def test_the_vendored_library_is_v0_4_2(self):
+        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.4\.2 ")
 
 
 @unittest.skipUnless(NODE and CHROME, "needs Node and Chrome")
@@ -591,9 +591,9 @@ class TheStrip(unittest.TestCase):
         g = self.got["phone"]
         self.assertTrue(g["narrow"])
         self.assertEqual(g["strip"], 0)
-        self.assertEqual(g["tabs"], ["po-chat", "points", "board", "workspace", "changes"])
+        self.assertEqual(g["tabs"], ["po-chat", "points", "changes", "workspace", "board", "spec"])
         self.assertTrue(g["panels"], "a phone keeps its Panels menu")
-        self.assertEqual(self.got["phoneTask"], {"docked": False, "tabs": 5})
+        self.assertEqual(self.got["phoneTask"], {"docked": True, "tabs": 0}, "a phone's open task is in the dock too, its tools the dock's tabs (#129)")
 
 
 if __name__ == "__main__":

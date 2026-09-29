@@ -581,7 +581,8 @@ class TheSessionsFiles(Hub):
         self.assertEqual(status, 200, out)
         self.assertFalse(out["files"]["ok"])
         self.assertIn("only into a documents project", out["files"]["message"])
-        self.assertEqual(self.tree(code), [])
+        # A new code folder is a new repository (#131), with nothing brought into it.
+        self.assertEqual([p for p in self.tree(code) if not p.startswith(".git/")], [])
         self.assertEqual(self.tree(dashboard.project_home(out["project"], create=False)), [])
         self.assertNotIn("copied to", dashboard._RESUMES[out["room"]["id"]].queue[0]["text"])
 

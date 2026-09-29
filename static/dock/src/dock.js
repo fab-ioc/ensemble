@@ -349,15 +349,24 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   const helpHtml = (p) => (p.help && typeof help.icon === 'function' ? help.icon(p.help, p) || '' : '');
   const tabId = (id) => `${uid}-tab-${idPart(id)}`;
   // A stack's tabs are a tablist with a roving tabindex: the front tab is the one Tab reaches, the arrow keys, Home and
-  // End move along them. Its panel's element is the tabpanel.
-  function tabHtml(id, active, draggable) {
+  // End move along them. Its panel's element is the tabpanel. `iconic` (a minimised stack's bar): a panel with an icon
+  // shows it, as its strip button does, with its title as tooltip and name.
+  function tabHtml(id, active, draggable, iconic = false) {
     const p = byId.get(id);
     const b = badges.get(id);
-    return `<span class="dk-tab-wrap${active ? ' on' : ''}" role="presentation"><button type="button" class="dk-tab${active ? ' on' : ''}" role="tab" id="${tabId(id)}" data-dk-tab="${escText(id)}"`
+    const ic = iconic ? iconHtml(p) : '';
+    return `<span class="dk-tab-wrap${active ? ' on' : ''}" role="presentation"><button type="button" class="dk-tab${active ? ' on' : ''}${ic ? ' dk-tab-iconic' : ''}" role="tab" id="${tabId(id)}" data-dk-tab="${escText(id)}"`
       + ` aria-selected="${active}" tabindex="${active ? 0 : -1}"${p.el.id ? ` aria-controls="${escText(p.el.id)}"` : ''}`
+      + `${ic ? ` aria-label="${escText(p.title)}"` : ''}`
       + ` title="${escText(p.title)}${draggable ? ': drag to dock it at an edge or into another panel as a tab' : ''}">`
-      + `${escText(p.title)}${b ? `<span class="${badgeClass}" title="${escText(b.title || '')}">${escText(b.text)}</span>` : ''}</button>`
+      + `${ic ? `<span class="dk-tab-icon" aria-hidden="true">${ic}</span>` : escText(p.title)}${b ? `<span class="${badgeClass}" title="${escText(b.title || '')}">${escText(b.text)}</span>` : ''}</button>`
       + `${helpHtml(p)}</span>`;
+  }
+  // A panel's icon as markup (the app's own SVG string, or an element's), '' for none.
+  function iconHtml(p) {
+    if (!p.icon) return '';
+    if (typeof p.icon === 'string') return p.icon;
+    return p.icon.nodeType === 1 ? p.icon.outerHTML : '';
   }
   const ctl = (act, name, label, title) => `<button type="button" class="dk-btn" data-dk-act="${act}" aria-label="${escText(label)}" title="${escText(title)}">${icon(name)}</button>`;
   function asTabPanel(id, front) {
@@ -370,10 +379,15 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     return el;
   }
 
+  // Whether a floating panel was floated from a strip: Dock back takes it back to its strip.
+  function fromStrip(id) {
+    const w = whereIs(layout, id);
+    return !!(w && w.kind === 'float' && w.float.strip && w.float.strip.id === id);
+  }
   // The per-panel menu's items, as far as `can` (and narrow) allow them.
   function menuItems(id, where) {
     const items = allowed(id, 'move') ? EDGES.map((e) => [`edge:${e}`, `Dock at the ${e} edge`]) : [];
-    if (allowed(id, 'float')) items.push(where === 'float' ? ['dock', 'Dock back where it was'] : ['float', 'Float']);
+    if (allowed(id, 'float')) items.push(where === 'float' ? ['dock', fromStrip(id) ? 'Back to its strip' : 'Dock back where it was'] : ['float', 'Float']);
     if (allowed(id, 'pop')) items.push(['pop', 'Pop out into its own window']);
     if (allowed(id, 'unpin')) items.push(['unpin', 'Unpin (auto-hide)']);
     if (allowed(id, 'hide') && !narrowOn) items.push(['hide', 'Hide (the Panels menu shows it again)']);
@@ -383,7 +397,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   function headHtml(node, where) {
     const id = node.active;
     const t = byId.get(id).title;
-    const tabs = node.panels.map((pid) => tabHtml(pid, pid === id, where === 'dock' && allowed(pid, 'move'))).join('');
+    const tabs = node.panels.map((pid) => tabHtml(pid, pid === id, where === 'dock' && allowed(pid, 'move'), !!node.min)).join('');
     const isMax = maxed === node;
     const c = [];
     if (menuItems(id, where).length) c.push(ctl('menu', 'menu', `${t}: move or hide`, 'dock at an edge, float, unpin or hide'));
@@ -391,7 +405,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (allowed(id, 'max')) c.push(isMax ? ctl('max', 'restore', `${t}: restore size`, 'restore (Esc)') : ctl('max', 'max', `${t}: maximise`, 'maximise (Esc restores)'));
     if (allowed(id, 'pop')) c.push(ctl('pop', 'pop', `${t}: pop out`, 'pop out into a browser window of its own (drag it to another monitor)'));
     if (allowed(id, 'float')) {
-      if (where === 'float') c.push(ctl('dock', 'dock', `${t}: dock back`, 'dock back where it was (or double-click the title bar)'));
+      if (where === 'float' && fromStrip(id)) c.push(ctl('dock', 'dock', `${t}: back to its strip`, 'back to its strip, where it was (or double-click the title bar)'));
+      else if (where === 'float') c.push(ctl('dock', 'dock', `${t}: dock back`, 'dock back where it was (or double-click the title bar)'));
       else c.push(ctl('float', 'float', `${t}: float`, 'float in its own window'));
     }
     if (allowed(id, 'unpin')) c.push(ctl('unpin', 'pin', `${t}: unpin`, 'pinned: unpin to a strip on its edge (auto-hide)'));
@@ -946,7 +961,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const pop = { win: child, doc: null, timer: null, started: Date.now() };
     pops.set(id, pop);
     const at = whereIs(layout, id);
-    if (maxed && at && at.stack === maxed && maxed.panels.length === 1) maxed = null;
+    // Maximised alone in its stack: it comes back maximised (while this page lasts; maximised is not stored).
+    if (maxed && at && at.stack === maxed && maxed.panels.length === 1) { maxed = null; pop.wasMax = true; }
     popOutPanel(layout, id, geo, opts());
     commit();
     waitForWindow(id, pop);
@@ -1078,7 +1094,13 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (leaving || pops.get(id) !== pop) return;
     release(id, pop, false);
     popInPanel(layout, id, opts());
+    maxAgain(id, pop);
     commit();
+  }
+  // Back from its window, maximised again if it went out maximised.
+  function maxAgain(id, pop) {
+    const w = pop && pop.wasMax ? whereIs(layout, id) : null;
+    if (w && w.kind === 'dock' && !maxed) { maxed = w.stack; delete w.stack.min; }
   }
 
   /** Back into the main window where it was; its own window closes. Also "Bring it back here" for one remembered as out. */
@@ -1087,6 +1109,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (pop) release(id, pop, true);
     if (!outOf(id)) { if (pop) commit(); return false; }
     popInPanel(layout, id, opts());
+    maxAgain(id, pop);
     commit();
     return true;
   }
@@ -1265,7 +1288,9 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       const w = whereIs(layout, id);
       if (narrowOn || !w || w.kind === 'auto' || w.kind === 'hidden') return;
       closeOut(id);
-      const edge = w.kind === 'dock' ? edgeFor(id) : cfg.edgeOf(id);
+      // Pinned from a strip: back to that strip's edge, wherever it docked.
+      const pinnedAt = layout.pinned && layout.pinned[id];
+      const edge = pinnedAt ? pinnedAt.edge : w.kind === 'dock' ? edgeFor(id) : cfg.edgeOf(id);
       // A panel's own unpinSize, when it has one, is the depth it slides out at; else its size where it was.
       const own = cfg.unpinSizeOf(id, edge);
       const size = own !== null ? own : w.kind === 'dock' ? unpinSize(id, edge) : w.kind === 'float' ? (edge === 'left' || edge === 'right' ? w.float.w : w.float.h) : undefined;

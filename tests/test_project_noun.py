@@ -51,7 +51,7 @@ class Isolated(unittest.TestCase):
         sent = {}
         h._send_json = lambda code, body: sent.update(code=code, body=body)
         h.headers = {}
-        with mock.patch.object(dashboard, "operator_name", lambda: "fabio"):
+        with mock.patch.object(dashboard, "operator_name", lambda: "sam"):
             h.do_GET()
         self.assertEqual(sent.get("code"), 200)
         return sent["body"]

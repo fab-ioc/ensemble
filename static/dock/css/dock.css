@@ -73,6 +73,14 @@
 .dk-row > .dk-stack.dk-min .dk-tab { padding: 4px 0; border-bottom: none; border-left: 2px solid transparent; }
 .dk-row > .dk-stack.dk-min .dk-ctl { padding: 3px 0; margin: 0; margin-top: auto; }
 .dk-row > .dk-stack.dk-min [data-help] { writing-mode: horizontal-tb; }
+/* a minimised panel with an icon: the icon, as on its strip button (the strip's icon size, within the title bar) */
+.dk-tab.dk-tab-iconic { display: inline-flex; align-items: center; justify-content: center; gap: 2px; padding: 0 6px; text-overflow: clip; }
+.dk-row > .dk-stack.dk-min .dk-tab.dk-tab-iconic { padding: 6px 0; writing-mode: horizontal-tb; flex-direction: column; }
+.dk-tab-icon { display: flex; flex: none; pointer-events: none;
+  width: min(var(--dk-strip-icon, calc(var(--dk-strip, 22px) * .55)), calc(var(--dk-head, 24px) - 8px));
+  height: min(var(--dk-strip-icon, calc(var(--dk-strip, 22px) * .55)), calc(var(--dk-head, 24px) - 8px)); }
+.dk-tab-icon > svg { width: 100%; height: 100%; }
+.dk-tab-iconic .dk-badge { margin: 0; }
 /* maximised: the whole dock (Esc restores) */
 .dk-stack.dk-max { position: absolute; inset: 0; z-index: 40; flex: none !important; min-width: 0 !important; min-height: 0 !important; box-shadow: 0 0 0 1px var(--dk-line); }
 .dk-float { position: absolute; display: flex; flex-direction: column; background: var(--dk-bg3); border: 1px solid var(--dk-line); border-radius: var(--dk-radius, 0);
@@ -110,8 +118,9 @@
   font-size: var(--dk-strip-badge-fs, max(7px, calc(var(--dk-strip) * .3)));
   background: var(--dk-strip-badge-bg, var(--dk-bg3)); pointer-events: none; }
 .dk-strip-btn:hover, .dk-strip-btn.on { color: var(--dk-fg); border-color: var(--dk-accent); background: var(--dk-sel-bg); }
-/* stripHover: false: the strip above a panel sliding in or out (30), so its buttons always take the click */
-.dock.dk-strip-click > .dk-strip { position: relative; z-index: 31; }
+/* the strip above a panel sliding in or out (30), so its buttons always take the click, and a panel sliding in over its
+   button (Esc, or its button clicked, with the pointer resting there) does not count as a new hover that slides it out */
+.dock > .dk-strip { position: relative; z-index: 31; }
 .dk-flyout { position: absolute; z-index: 30; display: flex; flex-direction: column; background: var(--dk-bg3); border: 1px solid var(--dk-line);
   border-radius: var(--dk-radius, 0); box-shadow: var(--dk-float-shadow, 0 10px 28px var(--dk-shadow)); overflow: clip; visibility: hidden; transition: transform .14s ease-out, visibility 0s linear .14s; }
 .dk-fly-left { transform: translateX(-105%); } .dk-fly-right { transform: translateX(105%); }
