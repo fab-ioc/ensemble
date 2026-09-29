@@ -422,7 +422,8 @@ class TaskSwitcher(unittest.TestCase):
         self.assertIn("} else openDetail(row.dataset.sid);", click)
         self.assertIn("SW_UN.open = ev.target.open", wiring)
         # Focus goes back to the row in the group it was in (a task can be in two).
-        self.assertIn("box.querySelector(`${inGroup}${hadCls}[data-room=\"${CSS.escape(had)}\"]`)", wiring)
+        self.assertIn("box.querySelector(`${inGroup}${cls}[data-room=\"${CSS.escape(had)}\"]`)", wiring)
+        self.assertIn("let back = had && at(hadCls);", wiring)
         self.assertIn("unassigned: (un && un.sessions) || []", wiring)
         self.assertIn("function detailActions(r, isLive) {\n  return `<div class=\"dp-actions\">${actionsCell(r, isLive)}</div>`;", INDEX)
         bar = self.r["bar"]
