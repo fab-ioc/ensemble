@@ -17,7 +17,8 @@ a project that has a PO (Motors) and a task in it, and one that has none
   goes back to its board;
 * the PO pill over an open task gives the middle back to the PO;
 * the page reloaded for an update comes back on the same task and tab;
-* a phone keeps its own layout: no middle, no breadcrumb.
+* a phone has no middle; its open task's breadcrumb is in the bar's second
+  row (tests/test_phone_layout.py, #129).
 
 Screenshots go to $ENSEMBLE_SHOTS when it is set. Skipped without Node or Chrome.
 """
@@ -182,7 +183,7 @@ async function main() {
     await ready();
     return { evalIn, until, shot, ready, sessionId, close: () => c.send('Target.closeTarget', { targetId }) };
   };
-  const go = (p, proj, tab) => p.evalIn(`(() => { try { ['cd-tool-strip', 'cd-tool-open', 'cd-po-dock-phone'].forEach(k => localStorage.removeItem(k)); } catch (e) {}
+  const go = (p, proj, tab) => p.evalIn(`(() => { try { ['cd-tool-strip', 'cd-tool-open', 'cd-phone-tabs'].forEach(k => localStorage.removeItem(k)); } catch (e) {}
     SELECTED_PROJECT = ${JSON.stringify(proj)}; PROJECT_TAB = ${JSON.stringify(tab || 'tasks')}; SB_DEST = ''; renderRows(); return 0; })()`);
   const poReady = p => p.until('document.body.classList.contains("po-dock") && !!PD.dock && [...document.querySelectorAll(".dk-head, #po-dock .dk-strip-btn")].some(e => e.getBoundingClientRect().height) && !!document.querySelector("#po-panel iframe.po-session:not([hidden])")', 30000);
   const sid = `ALL_ROWS.find(r => r.roomId === ${JSON.stringify(A.task)}).sessionId`;
@@ -566,10 +567,10 @@ class TheMiddle(unittest.TestCase):
         self.assertEqual(self.got["bpDesk"]["strip"], ["points", "changes", "workspace", "board", "spec"])
         self.assertFalse(self.got["bpBack"]["ws"], "the phone keeps what it hid")
 
-    def test_a_phone_keeps_its_layout(self):
+    def test_a_phone_has_no_middle(self):
         g = self.got["phone"]
         self.assertFalse(g["mid"])
-        self.assertFalse(g["crumbsShown"])
+        self.assertTrue(g["crumbsShown"], "its breadcrumb is in the bar's second row (#129)")
         self.assertTrue(g["open"])
 
 

@@ -412,7 +412,7 @@ class TaskSwitcher(unittest.TestCase):
         self.assertIn('<label class="sw-pick sw-pick-proj"><select id="sw-proj"', INDEX)
         self.assertIn('<label class="sw-pick sw-pick-by"><select id="sw-by"', INDEX)
         # Always there on a desktop, never on a phone; the page makes room.
-        self.assertIn("function swOn() { try { return !isPhone(); }", wiring)
+        self.assertIn("function swOn() { try { return !isPhone() || phList(); }", wiring)
         self.assertIn("body.sw-on main { padding-left: calc(var(--sw-w) + 20px); }", INDEX)
         self.assertIn("body { --sw-w: 300px; }", INDEX)
         # #114's button, pin and close are gone: the list is not a panel you open.

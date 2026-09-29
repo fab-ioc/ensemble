@@ -108,7 +108,7 @@ const menuHead = () => { const h = el(); h.written = 0; h.shown = '';
 const document = { getElementById: id => (id === 'po-panel' ? panel : null), createElement: el,
   querySelectorAll: sel => (sel === '#po-panel .po-head' && head && head.menu ? [head]
     : sel === '#po-panel .po-menu:not([hidden])' && head && head.menu && !head.menu.hidden ? [head.menu] : []),
-  body: { classList: { on: new Set(), toggle(c, v) { v ? this.on.add(c) : this.on.delete(c); } } } };
+  body: { classList: { on: new Set(), toggle(c, v) { v ? this.on.add(c) : this.on.delete(c); }, contains(c) { return this.on.has(c); } } } };
 const renderPoPill = () => {}, focusKeyIn = () => null, restoreFocus = () => {}, swRender = () => {};
 let HEAD_TAIL = '';
 const poHeadHtml = (pj, row) => pj.id + ':' + row.roomId + HEAD_TAIL;
@@ -120,8 +120,8 @@ const seen = () => ({ peek: PO_PEEK, pin: PO_PIN, drawer: document.body.classLis
   lit: panel.hidden ? [] : frames.kids.filter(f => !f.hidden).map(f => f.dataset.room) });
 const open = (rid, setup) => {
   PO_PEEK = false; PO_PIN = ''; SELECTED_PROJECT = ''; PROJECT_TAB = 'changes'; SB_DEST = 'needsyou'; SELECTED_SID = '';
-  // The drawer is a phone's (#124: a desktop opens a PO in the middle, below).
-  PHONE = true; ALL_ROWS = ROWS; calls = []; tray.hidden = false;
+  // A phone (#129: it opens a PO in the middle, as a desktop does since #124).
+  PHONE = true; PD.failed = ''; ALL_ROWS = ROWS; calls = []; tray.hidden = false;
   head = menuHead(); frames = el(); document.body.classList.on.clear();
   panel = { hidden: true, built: false, set innerHTML(v) { this.built = true; },
             hasAttribute() { return false; }, removeAttribute() {}, classList: { remove() {} },
@@ -152,6 +152,9 @@ log.openTask = open('room-a');
 log.openHidden = open('po-stalled');
 // A desktop: a PO opens in the middle from Needs you, never in a drawer.
 log.openPoDesk = open('po-blocked', () => { PHONE = false; });
+// Only where the dock failed to load is the drawer how a PO opens.
+log.openPoNoDock = open('po-blocked', () => { PD.failed = 'no dock'; });
+PD.failed = '';
 // The ⋯ menu (#126): the header waits while it is open and is written when it
 // closes; another PO is written at once, its menu closed; leaving the page
 // (a click into the conversation's frame) closes it.
@@ -234,9 +237,12 @@ class PoNeedsYouPage(unittest.TestCase):
 
     def test_the_click_opens_the_po_not_the_task_panel(self):
         o = self.r["openPo"]
-        self.assertEqual((o["drawer"], o["room"], o["lit"], o["pin"]), (True, "po-blocked", ["po-blocked"], "p1"),
-                         "the drawer over the page you are on")
-        self.assertEqual((o["dest"], o["tray"]), ("needsyou", True), "Needs you stays under it; the tray closes")
+        self.assertEqual((o["drawer"], o["leads"], o["room"], o["lit"], o["project"]), (False, True, "po-blocked", ["po-blocked"], "p1"),
+                         "a phone opens it in the middle, its project's screen (#129)")
+        n = self.r["openPoNoDock"]
+        self.assertEqual((n["drawer"], n["room"], n["lit"], n["pin"]), (True, "po-blocked", ["po-blocked"], "p1"),
+                         "where the dock failed to load: the drawer over the page you are on")
+        self.assertEqual((n["dest"], n["tray"]), ("needsyou", True), "Needs you stays under it; the tray closes")
         lead = self.r["openPoLeading"]
         self.assertEqual((lead["calls"], lead["drawer"], lead["leads"], lead["room"]), (["reveal:po-chat"], False, True, "po-blocked"),
                          "already leading its PO screen: the PO chat panel comes on screen")
@@ -250,17 +256,18 @@ class PoNeedsYouPage(unittest.TestCase):
                          ("p3", "tasks", True, False, "po-gone", ["po-gone"]), "a PO leads the page: go to the one asked for")
         phone = self.r["openPoOtherPhoneTask"]
         self.assertEqual((phone["project"], phone["drawer"], phone["room"], phone["lit"]),
-                         ("p1", True, "po-gone", ["po-gone"]), "a phone's open task on One's Overview: the same")
+                         ("p3", False, "po-gone", ["po-gone"]), "a phone's open task on One's Overview: the same (#129)")
 
     def test_the_pill_opens_the_po_it_names_after_a_pinned_drawer_ended(self):
         opened, screen, there, pill, again = self.r["pillSteps"]
-        self.assertEqual((opened["drawer"], opened["room"], opened["pin"]), (True, "po-gone", "p3"))
+        # A phone as a desktop (#129): every PO opens in the middle, no drawer.
+        self.assertEqual((opened["drawer"], opened["leads"], opened["room"], opened["pin"]), (False, True, "po-gone", ""))
         self.assertEqual((screen["leads"], screen["drawer"], screen["room"], screen["pin"]),
                          (True, False, "po-blocked", ""), "One's PO screen: its PO leads, the drawer and its pin end")
-        self.assertEqual((there["calls"], there["drawer"], there["leads"]), (["reveal:po-chat", "focus"], False, True),
-                         "the pill on the PO screen brings the PO chat panel forward and its box takes the keys")
-        self.assertEqual((pill["drawer"], pill["room"], pill["lit"], pill["pin"]),
-                         (True, "po-blocked", ["po-blocked"], ""), "One's pill opens One's PO, not the one pinned before")
+        self.assertEqual((there["calls"], there["drawer"], there["leads"]), (["reveal:po-chat"], False, True),
+                         "the pill on the PO screen brings the PO chat panel forward (no keyboard raised on a phone)")
+        self.assertEqual((pill["drawer"], pill["leads"], pill["room"], pill["lit"], pill["pin"]),
+                         (False, True, "po-blocked", ["po-blocked"], ""), "One's pill opens One's PO")
         self.assertEqual((again["drawer"], again["peek"]), (False, False), "and closes it")
         self.assertEqual(self.r["pinAfterClose"], "", "however a drawer ends, its pin goes with it")
         self.assertIn("if (pill) { poPillClick(); return; }", INDEX)
