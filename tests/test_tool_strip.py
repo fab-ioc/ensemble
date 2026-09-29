@@ -314,7 +314,7 @@ async function main() {
       const SIDE = id => `(() => { const b = document.querySelector('${tool(id)}'), s = b && b.closest('.dk-strip'), r = PD.els[${JSON.stringify(id)}].getBoundingClientRect();
         return { fly: PD.dock.flyOpen(), mode: PD.dock.viewMode(${JSON.stringify(id)}), side: PD.dock.side(${JSON.stringify(id)}), out: PD.dock.isOut(${JSON.stringify(id)}),
           strip: s ? [...s.classList].filter(c => /^dk-strip-(left|right|top|bottom)$/.test(c)).join('') : null,
-          here: PD.els[${JSON.stringify(id)}].ownerDocument === document, shown: r.width > 0 && r.height > 0, saved: localStorage.getItem('cd-tool-open') }; })()`;
+          here: PD.els[${JSON.stringify(id)}].ownerDocument === document, shown: r.width > 0 && r.height > 0 && r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight, saved: localStorage.getItem('cd-tool-open') }; })()`;
       const p = await page(1440, 900);
       await go(p, A.proj); await poReady(p); await sleep(400);
       out.popBack = {};
@@ -341,10 +341,10 @@ async function main() {
       await p.shot('strip-1440-spec-move-to');
       await p.click('.dk-menu.dk-submenu [data-dk-menu="side:left"]'); await sleep(500);
       out.moveTo.left = await p.evalIn(SIDE('spec'));
-      await p.evalIn('PD.dock.setViewMode("spec", "pinned"); 0'); await sleep(400);
+      await menuPick(p, '#po-dock .dk-flyout.open', 'mode', 'mode:pinned'); await sleep(400);
       out.moveTo.pinned = await p.evalIn(SIDE('spec'));
       await p.shot('strip-1440-spec-left-pinned');
-      await p.evalIn('PD.dock.setViewMode("spec", "unpinned"); 0'); await sleep(400);
+      await menuPick(p, '#po-dock .dk-stack > .dk-head:has([data-dk-tab="spec"])', 'mode', 'mode:unpinned'); await sleep(400);
       out.moveTo.unpinned = await p.evalIn(SIDE('spec'));
       if (await p.evalIn('PD.dock.flyOpen()') !== 'spec') { await p.click(tool('spec')); await sleep(400); }
       await menuPick(p, '#po-dock .dk-flyout.open', 'side', 'side:right'); await sleep(500);
