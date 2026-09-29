@@ -9604,10 +9604,27 @@ function poHeadHtml(pj, row, peek) {
 function poMenuOpen(head, open) {
   const menu = head && head.querySelector('.po-menu'), btn = head && head.querySelector('[data-po="more"]');
   if (!menu || !btn) return;
+  const was = !menu.hidden;
   menu.hidden = !open;
   btn.setAttribute('aria-expanded', String(open));
   if (open) { const first = menu.querySelector('.po-mi'); if (first) first.focus(); }
+  // Closed: the header held while it was open is written now.
+  else if (was && head._next && head._next !== head._html) {
+    const focus = focusKeyIn(head);
+    head._html = head._next; head.innerHTML = head._next;
+    restoreFocus(head, focus);
+  }
 }
+// The menu closes when you leave it: Tab or a click into the conversation
+// (an iframe, so no click reaches this page; its window loses focus instead).
+function poMenusClose() {
+  for (const m of document.querySelectorAll('#po-panel .po-menu:not([hidden])')) poMenuOpen(m.closest('.po-head'), false);
+}
+window.addEventListener('blur', poMenusClose);
+document.addEventListener('focusout', (ev) => {
+  const more = ev.target.closest && ev.target.closest('#po-panel .po-more');
+  if (more && ev.relatedTarget && !more.contains(ev.relatedTarget)) poMenuOpen(more.closest('.po-head'), false);
+});
 function renderPoPill(ctx) {
   const b = document.getElementById('po-pill');
   if (!b) return;
@@ -9668,8 +9685,11 @@ function renderPo() {
   // and keeps keyboard focus on the equivalent control when it is.
   const head = panel.querySelector('.po-head');
   const hh = poHeadHtml(pj, row, !split);
-  // Never under an open ⋯ menu: it is written once the menu closes.
-  if (head._html !== hh && !head.querySelector('.po-menu:not([hidden])')) {
+  // Never under an open ⋯ menu: it is written once the menu closes
+  // (head._next). Another PO is written at once: its menu starts closed.
+  head._next = hh;
+  const samePo = head.dataset.proj === pj.id && head.dataset.room === row.roomId;
+  if (head._html !== hh && (!samePo || !head.querySelector('.po-menu:not([hidden])'))) {
     const focus = focusKeyIn(head);
     head._html = hh; head.innerHTML = hh;
     head.dataset.proj = pj.id; head.dataset.room = row.roomId; head.dataset.sid = row.sessionId;
