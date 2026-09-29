@@ -198,7 +198,7 @@ class TheWiring(unittest.TestCase):
         h._send_json = lambda code, obj: sent.append((code, obj))
         with mock.patch.object(dashboard, "print", create=True, new=lambda *a, **k: lines.append(" ".join(map(str, a)))):
             # The same lines as _do_POST's, with a body of more than one line.
-            data = {"what": "po-dock", "msg": "the panels did not load\n(try 1 of 5): x" + "y" * 900}
+            data = {"what": "po-dock", "msg": "the panels did not load\n(try 1 of 5):\x1b[31m x" + "y" * 900}
             h.command = "POST"
             h.path = "/api/page-log"
             body = json.dumps(data).encode()
@@ -209,7 +209,8 @@ class TheWiring(unittest.TestCase):
             h._do_POST()
         self.assertEqual(sent, [(200, {"ok": True})])
         self.assertEqual(len(lines), 1)
-        self.assertTrue(lines[0].startswith("[page] po-dock: the panels did not load (try 1 of 5): xyyy"), lines[0])
+        self.assertTrue(lines[0].startswith("[page] po-dock: the panels did not load (try 1 of 5):[31m xyyy"), lines[0])
+        self.assertNotIn("\x1b", lines[0], "no terminal escapes in the log")
         self.assertLessEqual(len(lines[0]), len("[page] po-dock: ") + 500)
 
 

@@ -10165,7 +10165,7 @@ function pdBanner() {
   if (!b) return;
   const t = b.querySelector('#dock-banner-text');
   if (PD.lib) { b.hidden = true; return; }
-  if (PD.failed) { t.textContent = 'The panels could not load, so this is the old project page. Reload to try again.'; b.hidden = false; return; }
+  if (PD.failed) { t.textContent = 'The panels could not load, so the project shows its tabs instead. Reload to try again.'; b.hidden = false; return; }
   if (PD.retryAt) { t.textContent = `The panels did not load: trying again (try ${PD.tries + 1} of ${PD_RETRY.length + 1}).`; b.hidden = false; return; }
   b.hidden = true;
 }

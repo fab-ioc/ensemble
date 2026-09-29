@@ -11701,8 +11701,10 @@ class Handler(BaseHTTPRequestHandler):
             if self.headers.get("Origin") and not self._same_origin_request():
                 self._send_json(403, {"error": "cross_origin"})
                 return
-            what = " ".join(str(data.get("what") or "page").split())[:40] if isinstance(data, dict) else "page"
-            msg = " ".join(str(data.get("msg") or "").split())[:500] if isinstance(data, dict) else ""
+            def line(v, n):     # whitespace flattened, other control characters (a terminal's escapes) dropped
+                return "".join(c for c in " ".join(str(v).split()) if c >= " " and c != "")[:n]
+            what = line(data.get("what") or "page", 40) if isinstance(data, dict) else "page"
+            msg = line(data.get("msg") or "", 500) if isinstance(data, dict) else ""
             print(f"[page] {what}: {msg}", flush=True)
             self._send_json(200, {"ok": True})
             return
