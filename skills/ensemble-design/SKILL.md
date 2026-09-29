@@ -597,7 +597,8 @@ window loses focus. **A tool that should stay open is pinned** (⋯ › View Mod
 Float stays too. Its width is its own (`pdToolSize`): Your asks 400, Spec 480,
 Changes, Files and the Board 60% of what the list and the strip leave (480 to 760, the conversation
 keeping at least 360). **The open tool is remembered per browser** (`cd-tool-open`) and opens
-again after a reload, and stays open when the middle changes conversation. A tool's title bar
+again after a reload; the middle changing conversation by code (not a click in the list) leaves
+it out. A tool's title bar
 (Dock v0.5.0, IntelliJ's; each View Mode item's tooltip says what it does) is its tab, **⋯** and **−**: ⋯ holds View Mode (Dock Pinned docks it
 beside the conversation, Dock Unpinned, Undock, Float, Window pops it out), Move To (the side it
 is on; only this changes a side), Maximise and Hide; − slides it back in. Closing a tool's window
