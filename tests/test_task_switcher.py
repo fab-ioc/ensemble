@@ -12,6 +12,11 @@ cost chip, task number, age and workflow code around it:
   not yet merged (Done), oldest first, with its change count;
 * **Projects** is each registered project's PO, latest first, with its unread
   dot and "N answers to check · M asks open";
+* **Unassigned** (after Projects, folded) is every session in no project, as
+  /api/projects groups them: your own terminal sessions and tasks started
+  without one, newest first, the newest ten until "Show all (N)"; each opens
+  in the middle like any row, where its actions hold Make PO of a new
+  project…; it is left out while one project is chosen;
 * **Done today** is folded, and holds only what was done since midnight;
 * drafts, archived tasks, a PO's room and other sessions are in no task group;
 * "All projects" can be narrowed to one project, and every group follows;
@@ -69,7 +74,23 @@ const rows = [
   row('r14', 15, 'Idle between turns', {}),
   row('r15', 16, 'Parked, never run', { isLive: false, workflow: 'todo', hasConversation: false }),
   { sessionId: 'ext-1', label: 'A terminal session', isLive: true, status: 'busy', headless: false },
+  // In no project: twelve of your own sessions (u1 live, u3 named), a task
+  // started without a project that never ran, and an archived one.
+  ...Array.from({ length: 12 }, (_, i) => ({ sessionId: 'u' + (i + 1), agent: 'claude', headless: false,
+    isLive: i === 0, status: i === 0 ? 'busy' : 'idle', updatedAt: T0 - 100 * (i + 1),
+    firstWords: 'Question number ' + (i + 1), label: i === 2 ? 'Named one' : '', cwd: 'D:\\code\\work' + (i + 1),
+    makePo: { ok: true, code: '' } })),
+  row('rx', 3, 'No project task', { isLive: false, workflow: 'todo', hasConversation: false, updatedAt: T0 - 50, cwd: '' }),
+  { sessionId: 'ua', archived: true, headless: false, updatedAt: T0 },
+  row('rd', 21, 'A draft in no project', { draft: true, workflow: 'backlog', isLive: false, updatedAt: T0 }),
 ];
+// The Unassigned group as /api/projects has it (build_projects' `keep`
+// fields: no archived, no agent). u-grp is past the rows the page holds (the
+// group reaches back 500, the rows 300): it would open as "Session not found".
+const kept = r => ({ sessionId: r.sessionId, roomId: r.roomId || null, label: r.label || '', status: r.status,
+                     isLive: !!r.isLive, updatedAt: r.updatedAt, headless: r.headless, cwd: r.cwd, firstWords: r.firstWords || null });
+const unassigned = [...rows.filter(r => /^u\d|^rx$|^ua$|^rd$/.test(r.sessionId)).map(kept),
+                    { sessionId: 'u-grp', roomId: null, label: '', firstWords: 'Only in the group', updatedAt: T0 - 5000, isLive: false }];
 const items = [
   { roomId: 'r9', state: 'waiting_for_you', askKind: 'question', askedAt: T0 + 200, since: T0 + 200, reason: 'claude asked: “Which?”', project: 'Motors', projectId: 'p2' },
   { roomId: 'r1', state: 'blocked', askKind: 'blocked', askedAt: T0 + 100, since: T0 + 100, reason: 'logged out', project: 'Ensemble Dashboard', projectId: 'p1' },
@@ -80,7 +101,7 @@ const items = [
   { roomId: 'r7', state: 'blocked', since: T0, reason: 'a draft', project: 'Ensemble Dashboard', projectId: 'p1' },
 ];
 store.set('cd-unread-since', String(T0 - 1000));   // dots showed before any of this
-const opts = { dayStart: T0 - 100 };
+const opts = { dayStart: T0 - 100, unassigned };
 const keys = g => Object.fromEntries(Object.entries(g).map(([k, l]) => [k, l.map(e => e.key)]));
 const P = PROJECTS.projects;
 const log = {};
@@ -88,9 +109,15 @@ const g = swGroups(rows, items, P, opts);
 log.groups = keys(g);
 log.projects = Object.fromEntries(Object.entries(g).map(([k, l]) => [k, l.map(e => e.project)]));
 log.html = swListHtml(g, { sid: 'r2' }, false);
+log.unOpen = swListHtml(g, { sid: 'u3' }, false, { open: true });
+log.unAll = swListHtml(g, {}, false, { open: true, all: true });
+log.unSel = swListHtml(g, { sid: 'u12' }, false, { open: true });
+log.unFew = swListHtml(swGroups(rows, items, P, { ...opts, unassigned: unassigned.slice(0, 3) }), {}, false, { open: true });
+// A row opened from Unassigned has the task panel's bar, Make PO in its menu.
+log.bar = actionsCell(rows.find(r => r.sessionId === 'u2'), false);
 log.poSel = swListHtml(g, { po: 'p2' }, true);
 log.empty = swListHtml(swGroups([], [], [], opts), {}, false);
-log.byProject = swListHtml(g, { po: 'p2' }, false, 'project');
+log.byProject = swListHtml(g, { po: 'p2' }, false, {}, 'project');
 log.by = swGroupByHtml('project');
 // A running team task names who is on it.
 log.teamRow = swListHtml(swGroups([row('r2', 7, 'Team run', { status: 'busy', members: [{ agent: 'claude' }, { agent: 'codex' }] })], [], P, opts), {}, false);
@@ -120,6 +147,12 @@ log.team = keys(gt);
 console.log(JSON.stringify(log));
 """
 
+# The task panel's action bar, as the page builds it (static/actions.js).
+BAR = r"""
+const CHAT_SCHEME_ON = {}, PLATFORM = { features: {} };
+const onHubMachine = () => false, T = () => 'terminal', FM = () => 'file manager';
+"""
+
 
 def fn(src: str, head: str) -> str:
     i = src.index(head)
@@ -144,7 +177,9 @@ class TaskSwitcher(unittest.TestCase):
             INDEX[INDEX.index("const fmtAgo = "):INDEX.index("function sinceClock(")],
             INDEX[INDEX.index("const fmtCost = "):INDEX.index("const fmtInt = ")],
             INDEX[INDEX.index("const WORKFLOW_COLS = "):INDEX.index("const DONE_AGE_DAYS")],
-            fn(INDEX, "function workflowOf("), fn(INDEX, "function rowTitle("),
+            (ROOT / "static" / "actions.js").read_text(encoding="utf-8"), BAR,
+            fn(INDEX, "function actionState("), fn(INDEX, "function actionEnv("), fn(INDEX, "function actionsCell("),
+            fn(INDEX, "function workflowOf("), fn(INDEX, "function rowTitle("), fn(INDEX, "function detailTitle("),
             fn(INDEX, "function runChip("), block("Cost chip"), block("Task numbers"), block("Task switcher")])
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "switcher.cjs"
@@ -167,6 +202,8 @@ class TaskSwitcher(unittest.TestCase):
             "review": ["r6", "r11", "r13", "r3"],
             # latest first; not a project without a PO, nor an unregistered one
             "projects": ["po-1", "po-2"],
+            # newest first; not archived, not a draft, not one past the rows
+            "unassigned": ["rx", "u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9", "u10", "u11", "u12"],
             "done": ["r4"],                          # not yesterday's r12
         })
         self.assertEqual(self.r["projects"]["running"], ["Ensemble Dashboard", "Ensemble Dashboard", "Motors"])
@@ -245,24 +282,29 @@ class TaskSwitcher(unittest.TestCase):
             self.assertRegex(e, rf'<section class="sw-group empty" data-group="{k}" aria-label="{name}">\s*'
                                 rf'<h3 class="sw-ghead"><span class="sw-gname">{name}</span><span class="sw-n">0</span></h3></section>')
         self.assertIn('<details class="sw-group empty" data-group="done">', e)
-        self.assertEqual(e.count('<span class="sw-n">0</span>'), 5)
+        self.assertIn('<details class="sw-group empty" data-group="unassigned">', e)
+        self.assertEqual(e.count('<span class="sw-n">0</span>'), 6)
         self.assertNotIn("sw-none", e)
         self.assertNotIn(" empty", self.r["html"][:self.r["html"].index('data-group="done"')])
 
     def test_the_list_can_group_by_project(self):
         h = self.r["byProject"]
         self.assertEqual(re.findall(r'data-group="project" data-proj="(\w*)"', h), ["p1", "p2"])   # by name
-        motors = h[h.index('data-proj="p2"'):h.index('data-group="done"')]
+        motors = h[h.index('data-proj="p2"'):h.index('data-group="unassigned"')]
         # Its PO first (selected: it is on screen), then Needs you, Running, Ready.
         self.assertEqual(re.findall(r'data-room="([\w-]+)"', motors), ["po-2", "r-old", "r9", "r5", "r6"])
         self.assertEqual(motors.count('data-po="p2"'), 1)                 # once, with its lozenge
         self.assertIn('class="sw-row on" data-po="p2"', motors)
         self.assertIn('<span class="sw-gname">Motors</span><span class="sw-n">4</span>', motors)   # tasks, not the PO
-        self.assertIn('data-group="done"', h)                             # Done today stays below
+        # Unassigned holds the tasks in no project (rx), then Done today, both below.
+        self.assertNotIn('data-proj=""', h)
+        self.assertLess(h.index('data-group="unassigned"'), h.index('data-group="done"'))
+        self.assertIn('data-sid="rx"', h[h.index('data-group="unassigned"'):])
         self.assertEqual(self.r["by"], '<option value="status">Group: status</option>'
                                        '<option value="project" selected>Group: project</option>')
 
     def test_the_filter_keeps_one_project(self):
+        # One project: no Unassigned group at all.
         self.assertEqual(self.r["one"], {"needs": ["r-old", "r9", "po-2"], "running": ["r5"], "review": ["r6"],
                                          "projects": ["po-2"], "done": []})
         f = self.r["filter"]
@@ -279,7 +321,7 @@ class TaskSwitcher(unittest.TestCase):
         # place in Needs you.
         self.assertEqual(self.r["frozen"], {"needs": ["r-old", "r1", "r9", "po-2"], "running": ["r2", "r14", "r5"],
                                             "review": ["r6", "r11", "r13", "r3"], "projects": ["po-1", "po-2"],
-                                            "done": ["r4"]})
+                                            "unassigned": self.r["groups"]["unassigned"], "done": ["r4"]})
         self.assertIn("idle", self.r["frozenRun"][0])
         self.assertEqual(self.r["noFreeze"], self.r["thawed"])
         self.assertEqual(self.r["newcomer"], ["r2", "r14", "r5", "r10"])
@@ -287,6 +329,69 @@ class TaskSwitcher(unittest.TestCase):
     def test_a_finished_report_behind_a_wall_needs_you(self):
         self.assertEqual(self.r["wall"], ["r6"])
         self.assertEqual(self.r["fromRow"], ["r6"])
+
+    def test_unassigned_lists_the_sessions_in_no_project(self):
+        h = self.r["html"]
+        # After Projects, before Done today, folded, with its count.
+        self.assertLess(h.index('data-group="projects"'), h.index('data-group="unassigned"'))
+        self.assertLess(h.index('data-group="unassigned"'), h.index('data-group="done"'))
+        self.assertRegex(h, r'<details class="sw-group" data-group="unassigned">\s*<summary class="sw-ghead"[^>]*>'
+                            r'<span class="sw-gname">Unassigned</span><span class="sw-n">13</span></summary>')
+        un = h[h.index('data-group="unassigned"'):h.index('data-group="done"')]
+        # The newest ten, then the way to the rest.
+        self.assertEqual(re.findall(r'data-sid="([^"]+)"', un), ["rx", "u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9"])
+        self.assertIn('<button type="button" class="sw-more" data-more="unassigned" aria-expanded="false">Show all (13)</button>', un)
+        self.assertIn('<details class="sw-group" data-group="unassigned" open>', self.r["unOpen"])
+        al = self.r["unAll"]
+        al = al[al.index('data-group="unassigned"'):al.index('data-group="done"')]
+        self.assertEqual(len(re.findall(r'class="sw-row', al)), 13)
+        self.assertIn('aria-expanded="true">Show the newest 10</button>', al)
+        few = self.r["unFew"]
+        self.assertNotIn('sw-more', few)
+        self.assertIn('<span class="sw-n">3</span>', few)
+        # A row: its name (or first words), where it ran, whether it runs (the dot, #126).
+        live = row_of(h, 'data-sid="u1"')
+        self.assertIn('>Question number 1</span>', live)
+        self.assertIn('<span class="sw-sub">work1</span>', live)
+        self.assertIn('<span class="sw-st working" role="img" aria-label="working"></span>', live)
+        self.assertIn('title="Question number 1 · D:\\code\\work1"', live)
+        self.assertIn('<span class="sw-sub">work2 · past session</span>', row_of(h, 'data-sid="u2"'))
+        self.assertIn('>Named one</span>', row_of(h, 'data-sid="u3"'))
+        task = row_of(h, 'data-sid="rx"')
+        self.assertIn('<span class="tno">#3</span> No project task', task)
+        self.assertIn('<span class="sw-sub">task, not running</span>', task)
+        # Every row listed opens: none the page has no row for (review 1).
+        for gone in ('data-sid="u-grp"', 'data-sid="ua"', 'data-sid="rd"'):
+            self.assertNotIn(gone, self.r["unAll"])
+        # Folded to ten, the open one (the 13th) still shows, after them.
+        sel = self.r["unSel"]
+        sel = sel[sel.index('data-group="unassigned"'):sel.index('data-group="done"')]
+        self.assertEqual(re.findall(r'data-sid="([^"]+)"', sel)[-1], "u12")
+        self.assertEqual(len(re.findall(r'class="sw-row', sel)), 11)
+        self.assertIn('class="sw-row on" data-sid="u12"', sel)
+        # The open one is selected.
+        self.assertIn('class="sw-row on" data-sid="u3"', self.r["unOpen"])
+
+    def test_an_unassigned_row_opens_in_the_middle_with_make_po(self):
+        # The list's one click handler: a row that is not a PO opens with
+        # openDetail, the middle on a desktop; its panel's bar is actionsCell.
+        i = INDEX.index("// The task switcher's column")
+        wiring = INDEX[i:INDEX.index("\n// Poll while the tab is in front.", i)]
+        click = wiring[wiring.index("$('#sw-list').addEventListener('click'"):]
+        click = click[:click.index("\n});")]
+        self.assertIn("if (ev.target.closest('.sw-more[data-more=\"unassigned\"]')) { SW_UN.all = !SW_UN.all; swRender(); return; }", click)
+        self.assertIn("} else openDetail(row.dataset.sid);", click)
+        self.assertIn("SW_UN.open = ev.target.open", wiring)
+        # Focus goes back to the row in the group it was in (a task can be in two).
+        self.assertIn("box.querySelector(`${inGroup}.sw-row[data-room=\"${CSS.escape(had)}\"]`)", wiring)
+        self.assertIn("unassigned: (un && un.sessions) || []", wiring)
+        self.assertIn("function detailActions(r, isLive) {\n  return `<div class=\"dp-actions\">${actionsCell(r, isLive)}</div>`;", INDEX)
+        bar = self.r["bar"]
+        m = re.search(r'<button[^>]*class="[^"]*makepo-btn[^"]*"[^>]*>', bar)
+        self.assertTrue(m, bar)
+        self.assertNotIn("disabled", m.group(0))
+        self.assertIn('data-sid="u2"', m.group(0))
+        self.assertIn("Make PO of a new project…", bar)
 
     def test_the_page_wires_it_to_what_it_already_polls(self):
         # No poller of its own: the rows' poll and the bell's repaint it.

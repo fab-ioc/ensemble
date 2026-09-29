@@ -2345,6 +2345,14 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .sw-l2 .loz { flex: 0 0 auto; }
   .sw-sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .sw-chg { flex: 0 0 auto; font-size: var(--fs-100); font-variant-numeric: tabular-nums; }
+  /* Unassigned's "Show all (N)": a quiet line under its rows. */
+  .sw-more {
+    display: block; width: 100%; text-align: left; padding: var(--s-100) var(--s-200);
+    border: 0; border-radius: var(--r-200); background: transparent; color: var(--fg-subtle);
+    font: inherit; font-size: var(--fs-200); line-height: 20px; cursor: pointer;
+  }
+  .sw-more:hover { background: var(--hover); color: var(--fg); }
+  .sw-more:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   /* --- Issue view --------------------------------------------------------- */
   /* One row that says what this task IS: where it sits, how urgent, what is
      running, whether it needs you. The old row was ten chips of mixed kinds
@@ -5644,13 +5652,17 @@ function needsYouHtml() {
 // view. It reads what the page already polls, /api/sessions (every project's
 // rows), /api/projects and /api/attention (the bell's items), and adds no
 // poller. It is one component (#switcher, `swMount`) so a later layout can
-// host it elsewhere. tests/test_task_switcher.py runs this block in Node.
+// host it elsewhere. Under the POs, folded, the sessions in no project (the
+// Unassigned group): your own terminal sessions, and tasks started without one.
+// tests/test_task_switcher.py runs this block in Node.
 const SW_KEY = 'cd-switcher';          // SW_KEY + '-project': the filter, per browser
+const SW_UN_SHOW = 10;                 // Unassigned shows its newest ten until asked for all
 const SW_GROUPS = [
   ['needs', 'Needs you'],
   ['running', 'Running'],
   ['review', 'Ready for your check'],
   ['projects', 'Projects'],
+  ['unassigned', 'Unassigned'],
   ['done', 'Done today'],
 ];
 // A finished report waits for a look, not an answer: it is ready for your
@@ -5672,9 +5684,11 @@ function swPaused(r) {
 }
 // The five groups, from the rows, the bell's items and the registered projects.
 // opts.project keeps one project's entries; opts.dayStart (seconds) is where
-// "today" starts. Needs you and Ready for your check go oldest first; Running
-// by project and number, so it holds still while agents take turns; Projects
-// latest first; Done today latest first.
+// "today" starts; opts.unassigned is the Unassigned group's sessions (from
+// /api/projects), listed only while every project shows. Needs you and Ready
+// for your check go oldest first; Running by project and number, so it holds
+// still while agents take turns; Projects latest first; Unassigned and Done
+// today latest first.
 function swGroups(rows, items, projects, opts) {
   const o = opts || {};
   const projs = (projects || []).filter(p => p && p.registered !== false);
@@ -5720,6 +5734,22 @@ function swGroups(rows, items, projects, opts) {
                       pid: p.id, project: p.name || '', at: r ? lastNews(r) : 0 });
   }
   if (o.project) for (const k of Object.keys(g)) g[k] = g[k].filter(e => e.pid === o.project);
+  else {
+    // Each session by its row: one the rows do not hold (the group reaches
+    // further back than the page's newest 300) would open as "Session not
+    // found", so it is left out, as are drafts and archived ones, as in every
+    // group. A task in no project may also be in a group above: this is where
+    // it is filed, as a PO is both in Needs you and in Projects.
+    const bySid = new Map((rows || []).filter(r => r && r.sessionId).map(r => [r.sessionId, r]));
+    g.unassigned = [];
+    for (const s of o.unassigned || []) {
+      const key = s && (s.roomId || s.sessionId);
+      if (!key) continue;
+      const r = byRoom.get(key) || bySid.get(s.sessionId || key);
+      if (!r || r.archived || r.draft) continue;
+      g.unassigned.push({ key, row: r, it: null, pid: '', project: '', at: Number(r.updatedAt) || 0 });
+    }
+  }
   const byAge = (a, b) => (a.at - b.at) || String(a.key).localeCompare(String(b.key));
   const newest = (a, b) => (b.at - a.at) || a.project.localeCompare(b.project) || String(a.key).localeCompare(String(b.key));
   g.needs.sort(byAge);
@@ -5727,6 +5757,7 @@ function swGroups(rows, items, projects, opts) {
   g.running.sort((a, b) => a.project.localeCompare(b.project) || ((a.row.no || 0) - (b.row.no || 0))
                            || String(a.key).localeCompare(String(b.key)));
   g.projects.sort(newest);
+  if (g.unassigned) g.unassigned.sort(newest);
   g.done.sort(newest);
   return g;
 }
@@ -5737,8 +5768,8 @@ function swGroups(rows, items, projects, opts) {
 function swFreeze(g, shown) {
   if (!shown) return g;
   // Tasks share one place across the four task groups; a PO row in Projects
-  // is its own, beside that PO's entry in Needs you.
-  const id = (k, key) => (k === 'projects' ? 'p|' : 't|') + key;
+  // is its own, beside that PO's entry in Needs you, as is a row in Unassigned.
+  const id = (k, key) => (k === 'projects' ? 'p|' : k === 'unassigned' ? 'u|' : 't|') + key;
   const now = new Map();
   for (const k of Object.keys(g)) for (const e of g[k]) now.set(id(k, e.key), e);
   const out = {}, placed = new Set();
@@ -5794,12 +5825,18 @@ function swRowHtml(e, group, selected) {
   const r = e.row || {};
   const it = e.it;
   // A task the rows do not hold (past the newest 300) still has the bell's words.
-  const title = e.po ? `${e.project || 'Project'} · PO` : e.row ? rowTitle(r) : (it && it.title) || '(task)';
+  const title = e.po ? `${e.project || 'Project'} · PO` : group === 'unassigned' ? detailTitle(r)
+    : e.row ? rowTitle(r) : (it && it.title) || '(task)';
   const no = e.po ? '' : e.row ? taskNoText(r, true) : (it && it.ref) || '';
   const bits = [], words = [];
   if (group === 'needs' && it) bits.push(`<span class="loz ${swTone(it.state)}" title="${esc(it.reason || '')}">${esc(ATTN_LABEL[it.state] || it.state)}</span>`);
   if (group === 'projects') words.push(swPoLine(e));
-  else {
+  else if (group === 'unassigned') {
+    // Where it ran (the dot says whether it runs); a past one opens read only.
+    const folder = String(r.cwd || '').split(/[\\/]/).filter(Boolean).pop() || '';
+    if (folder) words.push(folder);
+    if (!r.isLive) words.push(r.headless ? 'task, not running' : 'past session');
+  } else {
     if (e.project) words.push(e.project);
     if (group === 'running' && e.row && swAgents(r)) words.push(swAgents(r));
     if (group === 'review' && e.row) words.push(workflowOf(r) === 'inreview' ? 'in review' : it ? 'reported' : 'paused');
@@ -5809,7 +5846,7 @@ function swRowHtml(e, group, selected) {
   const st = swState(e, group);
   const unread = !!e.row && isUnread(r);
   const age = `<span class="sw-age">${e.at ? agoSpan(e.at) : ''}</span>`;
-  const tip = [no, title, e.po ? '' : e.project].filter(Boolean).join(' · ');
+  const tip = [no, title, e.po ? '' : e.project, group === 'unassigned' ? r.cwd : ''].filter(Boolean).join(' · ');
   const data = e.po ? `data-po="${esc(e.pid)}"` : `data-sid="${esc(r.sessionId || e.key)}"`;
   return `<button type="button" class="sw-row${selected ? ' on' : ''}${unread ? ' unread' : ''}" ${data} data-room="${esc(e.key)}" title="${esc(tip)}"${selected ? ' aria-current="true"' : ''}>`
     + `<span class="sw-st ${st.cls}"${st.tip ? ` role="img" aria-label="${esc(st.tip)}"` : ''}></span>`
@@ -5837,10 +5874,14 @@ function swByProject(g) {
 }
 // sel: {sid} the open task, or {po} the project whose PO is on screen.
 // doneOpen: whether Done today is unfolded. by: 'status' or 'project'.
+// un: {open, all} for Unassigned, unfolded, and showing all its sessions
+// rather than the newest SW_UN_SHOW; it is left out while one project shows
+// (g has no unassigned then), and by project it takes the place of the
+// tasks in no project, which it holds.
 // An empty group is its heading alone, in one quiet line: the list keeps its
 // shape (no group comes and goes as tasks move) and says the count is 0.
-function swListHtml(g, sel, doneOpen, by) {
-  const s = sel || {};
+function swListHtml(g, sel, doneOpen, un, by) {
+  const s = sel || {}, u = un || {};
   const proj = by === 'project';
   const on = (e, k) => e.po ? (!!s.po && (k === 'projects' || proj) && e.pid === s.po)
                             : (!!s.sid && !!e.row && e.row.sessionId === s.sid);
@@ -5850,12 +5891,26 @@ function swListHtml(g, sel, doneOpen, by) {
     return `<details class="sw-group${list.length ? '' : ' empty'}" data-group="done"${doneOpen ? ' open' : ''}>
       <summary class="sw-ghead">${head('Done today', list.length)}</summary>${list.map(e => swRowHtml(e, 'done', on(e, 'done'))).join('')}</details>`;
   };
+  const unassigned = () => {
+    if (!g.unassigned) return '';
+    const list = g.unassigned;
+    // Folded to the newest few, the open one still shows, after them.
+    const shown = u.all ? list : list.filter((e, i) => i < SW_UN_SHOW || on(e, 'unassigned'));
+    const more = list.length <= SW_UN_SHOW ? ''
+      : `<button type="button" class="sw-more" data-more="unassigned" aria-expanded="${u.all ? 'true' : 'false'}">`
+        + (u.all ? `Show the newest ${SW_UN_SHOW}` : `Show all (${list.length})`) + '</button>';
+    return `<details class="sw-group${list.length ? '' : ' empty'}" data-group="unassigned"${u.open ? ' open' : ''}>
+      <summary class="sw-ghead" title="Sessions in no project: your own, and tasks started without one">${head('Unassigned', list.length)}</summary>`
+      + `${shown.map(e => swRowHtml(e, 'unassigned', on(e, 'unassigned'))).join('')}${more}</details>`;
+  };
   if (proj) {
-    return swByProject(g).map(p => `<section class="sw-group" data-group="project" data-proj="${esc(p.pid)}" aria-label="${esc(p.name)}">
-      <h3 class="sw-ghead">${head(p.name, p.list.filter(([e]) => !e.po).length)}</h3>${p.list.map(([e, k]) => swRowHtml(e, k, on(e, k))).join('')}</section>`).join('') + done();
+    return swByProject(g).filter(p => p.pid || !g.unassigned).map(p => `<section class="sw-group" data-group="project" data-proj="${esc(p.pid)}" aria-label="${esc(p.name)}">
+      <h3 class="sw-ghead">${head(p.name, p.list.filter(([e]) => !e.po).length)}</h3>${p.list.map(([e, k]) => swRowHtml(e, k, on(e, k))).join('')}</section>`).join('')
+      + unassigned() + done();
   }
   return SW_GROUPS.map(([k, name]) => {
     if (k === 'done') return done();
+    if (k === 'unassigned') return unassigned();
     const list = g[k] || [];
     return `<section class="sw-group${list.length ? '' : ' empty'}" data-group="${k}" aria-label="${esc(name)}">
       <h3 class="sw-ghead">${head(name, list.length)}</h3>${list.map(e => swRowHtml(e, k, on(e, k))).join('')}</section>`;
@@ -13693,6 +13748,7 @@ document.addEventListener('click', (ev) => {
 // where it opens today: a task in its panel, a PO on its project's screen.
 // The project filter is remembered per browser.
 var SW_SHOWN = null, SW_DONE_OPEN = false;   // var: renderRows may run before this line
+var SW_UN = { open: false, all: false };      // Unassigned: unfolded, and showing all
 function swOn() { try { return !isPhone(); } catch (e) { return false; } }   // before isPhone is defined
 function swProject() {
   let id = '';
@@ -13724,12 +13780,18 @@ function swRender() {
   writeSlot(pick, swFilterHtml(projects, chosen));
   writeSlot($('#sw-by'), swGroupByHtml(by));
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const g = swFreeze(swGroups(ALL_ROWS, attentionItems(), projects, { project: chosen, dayStart: today / 1000 }),
+  const un = projectById(UNASSIGNED_ID);
+  const g = swFreeze(swGroups(ALL_ROWS, attentionItems(), projects,
+                              { project: chosen, dayStart: today / 1000, unassigned: (un && un.sessions) || [] }),
                      el.matches(':hover') ? SW_SHOWN : null);
   SW_SHOWN = Object.fromEntries(Object.entries(g).map(([k, list]) => [k, list.map(e => e.key)]));
+  // A task can be in two groups (Running and Unassigned): focus goes back to
+  // the row in the group it was in.
   const key = focusKeyIn(box), had = key && document.activeElement.dataset.room;
-  if (writeSlot(box, swListHtml(g, swSelection(), SW_DONE_OPEN, by)) && key) {
-    const back = had && box.querySelector(`.sw-row[data-room="${CSS.escape(had)}"]`);
+  const hadGroup = had && document.activeElement.closest('[data-group]');
+  const inGroup = hadGroup ? `[data-group="${CSS.escape(hadGroup.dataset.group)}"] ` : '';
+  if (writeSlot(box, swListHtml(g, swSelection(), SW_DONE_OPEN, SW_UN, by)) && key) {
+    const back = had && box.querySelector(`${inGroup}.sw-row[data-room="${CSS.escape(had)}"]`);
     if (back) back.focus(); else restoreFocus(box, key);
   }
 }
@@ -13745,8 +13807,10 @@ $('#sw-by').addEventListener('change', (ev) => {
 });
 $('#sw-list').addEventListener('toggle', (ev) => {
   if (ev.target.matches('details[data-group="done"]')) SW_DONE_OPEN = ev.target.open;
+  if (ev.target.matches('details[data-group="unassigned"]')) SW_UN.open = ev.target.open;
 }, true);
 $('#sw-list').addEventListener('click', (ev) => {
+  if (ev.target.closest('.sw-more[data-more="unassigned"]')) { SW_UN.all = !SW_UN.all; swRender(); return; }
   const row = ev.target.closest('.sw-row');
   if (!row) return;
   if (row.dataset.po) {

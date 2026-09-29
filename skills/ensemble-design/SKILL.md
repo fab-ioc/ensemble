@@ -770,18 +770,23 @@ self-contained component, so a later layout can host it elsewhere.
   every registered project by name; it narrows what you see) and **Group: status / project** as a
   Subtle button (`#sw-by`). Both are remembered per browser (`cd-switcher-project`,
   `cd-switcher-group`), and every group follows the filter.
-- **Five groups, in this order:** **Needs you** (the bell's items less finished reports, oldest
+- **Six groups, in this order:** **Needs you** (the bell's items less finished reports, oldest
   first: the same set as the bell, never a second opinion), **Running** (live tasks not waiting for
   a check, by project and number, so a row does not jump each time its agent takes a turn),
   **Ready for your check** (In review, reported finished, or paused part way; not Done; oldest
-  first), **Projects** (each project's PO, latest news first) and **Done today** (Done and last
-  changed since midnight), folded in a `details`. Group heads are sentence case, `--fs-200` 600 in
-  `--fg-subtle`, the count after the name in `--fg-muted`. **An empty group is its head alone**,
-  quieter (500, `--fg-muted`) with its `0`: the list keeps its shape, so no group comes and goes
-  under the pointer as tasks move.
+  first), **Projects** (each project's PO, latest news first), **Unassigned** (#128: every session
+  in no project, the person's own terminal sessions and tasks started without one, newest first;
+  the newest 10, and the open one after them, then a quiet "Show all (N)" line, `.sw-more`; only
+  sessions the page holds a row for, so every row opens; no drafts or archived ones, as in every
+  group; left out while one project is chosen) and **Done today** (Done and last changed since
+  midnight). Unassigned and Done today are folded in a `details`. The name is the one the home
+  card, the project menu and the Move to project picker already use for the same sessions. Group
+  heads are sentence case, `--fs-200` 600 in `--fg-subtle`, the count after the name in
+  `--fg-muted`. **An empty group is its head alone**, quieter (500, `--fg-muted`) with its `0`: the
+  list keeps its shape, so no group comes and goes under the pointer as tasks move.
 - **Group: project** (`swByProject`): a head per project (its open task count), its PO first
-  (once, with its lozenge if it needs you), then its tasks in the status groups' order; tasks in no
-  project last, Done today still folded below.
+  (once, with its lozenge if it needs you), then its tasks in the status groups' order; then
+  Unassigned, which holds the tasks in no project, and Done today, both folded.
 - **A row is two lines.** One: the state's 8px dot, the key (`--font-mono` `--fs-200`
   `--fg-muted`) and title (`--fs-300`, one line, ellipsis, the full text in the tooltip) and the
   age at the end (`--fs-100`, `--fg-muted`, ticks in place). The dot (`swState`) says the state in
@@ -790,8 +795,10 @@ self-contained component, so a later layout can host it elsewhere.
   600), idle `--run-idle`, done `--c-success-bold`, else `--run-off`; it carries its words in
   `aria-label`. Two (`--fs-200`, `--fg-muted`, indented to the title): Needs you's lozenge, then
   one line of words, the project first: who is on a running task ("claude, codex"), or why a task
-  is ready ("in review", "reported", "paused"), then `+ −`. A PO row is "*Project* · PO", then
-  "N answers to check · M asks open" (or what it is doing: idle, working, not running).
+  is ready ("in review", "reported", "paused"), then `+ −`. An Unassigned row gives the folder it
+  ran in, and `past session` (it opens read only) or `task, not running` when it is not running.
+  A PO row is "*Project* · PO", then "N answers to check · M asks open" (or what it is doing:
+  idle, working, not running).
 - **Selected** is `--selected-bg`: the open task, else the PO on screen (its project's page, or
   its drawer). Its muted words step up to `--fg-subtle` there and under the pointer (`--fg-muted`
   and `.tno` on `--selected-bg` or `--hover` are under 4.5:1 in Light).
