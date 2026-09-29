@@ -14176,6 +14176,7 @@ $('#sw-list').addEventListener('click', (ev) => {
 // here. Before the library loads, when it could not, and on a phone (where the
 // list is home, #129) there is no list dock: the list is the fixed column.
 const LD_KEY = 'cd-list-dock';
+const LD_AXIS_KEY = 'cd-list-dock-axis';   // its size on each axis (ldAxisSize)
 const LD_W = 300;   // --sw-w: the column's width until it is resized
 const LD_H = 240;   // its height at the top or the bottom, until it is resized
 const LD_ROOT = document.getElementById('list-dock');
@@ -14198,6 +14199,8 @@ function ldSync() {
 function ldMake() {
   const L = PD.lib;
   LD_ROOT.hidden = false;
+  try { Object.assign(LD.size, JSON.parse(localStorage.getItem(LD_AXIS_KEY) || '{}')); } catch (e) {}
+  LD.dir = '';
   window.DOC_LISTENERS_PAUSED = true;   // the dock's own listeners are not the page's
   try {
     LD.dock = L.createDock({
@@ -14227,7 +14230,7 @@ function ldMake() {
   pdKeepPopKey();
   document.body.classList.add('ld-on');
   LD.dock.onChange(() => { ldKeepPage(); ldAxisSize(); ldInsets(); });
-  if (window.ResizeObserver) (LD.ro = new ResizeObserver(() => ldInsets())).observe(LD_PAGE);
+  if (window.ResizeObserver) (LD.ro = new ResizeObserver(() => { ldAxisSize(); ldInsets(); })).observe(LD_PAGE);
   ldKeepPage();
   ldAxisSize();
   ldInsets();
@@ -14260,18 +14263,22 @@ function ldKeepPage() {
 // Its size on each axis: moved from a side to the top (or back), Dock v0.5.1
 // gives it its old extent across (the column's whole height as the band's; an
 // ask for Dock, ENSEMBLE-NEEDS item 10). It gets the size it last had that way
-// (a column's width, a band's height), kept with the layout.
+// (a column's width, a band's height), kept per browser (LD_AXIS_KEY). A
+// splitter's resize tells no onChange: the page's ResizeObserver notes it.
 function ldAxisSize() {
   const d = LD.dock;
   const find = (n, up) => !n ? null : n.t === 'stack' ? (n.panels.includes('list') && up ? [up, n] : null) : (n.kids || []).map(k => find(k, n)).find(Boolean) || null;
   const at = d && find(d.layout().root, null);
-  if (!at) { LD.dir = ''; return; }
+  if (!at) return;   // not docked: the axis it was docked on stays
   const [sp, st] = at;
   if (LD.dir && sp.dir !== LD.dir && LD.size[sp.dir]) {
     st.size = LD.size[sp.dir];
     d.render();
     try { localStorage.setItem(LD_KEY, JSON.stringify(d.layout())); } catch (e) {}
-  } else if (st.size > 0) LD.size[sp.dir] = st.size;
+  } else if (st.size > 0 && LD.size[sp.dir] !== st.size) {
+    LD.size[sp.dir] = st.size;
+    try { localStorage.setItem(LD_AXIS_KEY, JSON.stringify(LD.size)); } catch (e) {}
+  }
   LD.dir = sp.dir;
 }
 // The page's insets: where the stand-in is inside the dock. Docked at the left
@@ -14280,6 +14287,17 @@ function ldAxisSize() {
 function ldInsets() {
   const d = LD.dock;
   if (!d) return;
+  // Slid out beside the page, the list is as big as the page's CSS lets it be
+  // (the middle keeps 360px across, 200px down), while Dock leaves it room for
+  // its own size (besideSpace, a margin on .dk-main): the room is cut to the
+  // list's. (An ask for Dock, ENSEMBLE-NEEDS item 12.)
+  const fly = LD_ROOT.querySelector('.dk-flyout.dk-fly-beside.open'), dm = LD_ROOT.querySelector('.dk-main');
+  const edge = fly && ['left', 'right', 'top', 'bottom'].find(e => fly.classList.contains('dk-fly-' + e));
+  if (edge && dm) {
+    const fr = fly.getBoundingClientRect(), m = 'margin' + edge[0].toUpperCase() + edge.slice(1);
+    const got = Math.round(edge === 'left' || edge === 'right' ? fr.width : fr.height);
+    if (parseFloat(dm.style[m]) > got) dm.style[m] = got + 'px';
+  }
   const R = LD_ROOT.getBoundingClientRect(), r = LD_PAGE.getBoundingClientRect();
   const on = LD_PAGE.isConnected && r.width > 0 && r.height > 0;
   const px = v => Math.max(0, Math.round(v)) + 'px';

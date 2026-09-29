@@ -79,7 +79,7 @@ const GEOM = `(() => {
   return { dock: !!d, mode: d ? d.viewMode('list') : null, side: d ? d.side('list') : null, fly: d ? d.flyOpen() : null, out: d ? d.isOut('list') : null,
     here: sw.ownerDocument === document, home: sw.parentNode === document.body, rootHidden: document.getElementById('list-dock').hidden,
     list: sw.ownerDocument === document ? box(sw) : null, main: box(mid), dockHost: box(document.getElementById('po-dock-host')),
-    strip: box(strip), stripSide: strip ? [...strip.classList].filter(c => /^dk-strip-(left|right|top|bottom)$/.test(c)).join('') : null,
+    strip: box(strip), flyBox: box(document.querySelector('#list-dock .dk-flyout.open')), stripSide: strip ? [...strip.classList].filter(c => /^dk-strip-(left|right|top|bottom)$/.test(c)).join('') : null,
     listW: cs.getPropertyValue('--list-w').trim(), listR: cs.getPropertyValue('--list-r').trim(),
     menuBtn: box(menu), bySel: sw.ownerDocument === document ? box(by) : null,
     sid: SELECTED_SID || null, open: document.body.classList.contains('detail-open'),
@@ -111,7 +111,7 @@ async function main() {
     await ready();
     return { evalIn, until, shot, click, key, ready, sessionId, close: () => c.send('Target.closeTarget', { targetId }) };
   };
-  const go = (p, proj, keep) => p.evalIn(`(() => { if (!${!!keep}) try { ['cd-list-dock', 'cd-tool-strip', 'cd-tool-open'].forEach(k => localStorage.removeItem(k)); } catch (e) {}
+  const go = (p, proj, keep) => p.evalIn(`(() => { if (!${!!keep}) try { ['cd-list-dock', 'cd-list-dock-axis', 'cd-tool-strip', 'cd-tool-open'].forEach(k => localStorage.removeItem(k)); } catch (e) {}
     SW_DONE_OPEN = true; SELECTED_PROJECT = ${JSON.stringify(proj)}; PROJECT_TAB = 'tasks'; SB_DEST = ''; renderRows(); return 0; })()`);
   const ldReady = p => p.until('!!LD.dock && !!PD.dock && document.body.classList.contains("po-dock") && !!SW_EL.querySelector(".sw-row")', 30000);
   const row = `.sw-row[data-room="${A.task}"]`;
@@ -230,9 +230,19 @@ async function main() {
     await p.evalIn(`document.querySelector('#list-dock .dk-bar').focus(); 0`);
     await p.key('ArrowRight', 'ArrowRight'); await p.key('ArrowRight', 'ArrowRight'); await sleep(400);
     out.wider = await p.evalIn(GEOM);
+    // Its resized width comes back after a spell at the top.
+    await menuPick(p, HEAD, 'side', 'side:top');
+    await menuPick(p, HEAD, 'side', 'side:left');
+    out.widerKept = await p.evalIn(GEOM);
     await p.evalIn('location.reload(); 0'); await sleep(1500); await p.ready();
     await go(p, A.proj, true); await ldReady(p); await sleep(600);
     out.reloadWide = await p.evalIn(GEOM);
+    // And over a reload taken at the top.
+    await menuPick(p, HEAD, 'side', 'side:top');
+    await p.evalIn('location.reload(); 0'); await sleep(1500); await p.ready();
+    await go(p, A.proj, true); await ldReady(p); await sleep(600);
+    await menuPick(p, HEAD, 'side', 'side:left');
+    out.widerKeptReload = await p.evalIn(GEOM);
     // Unpinned, kept over a reload.
     await menuPick(p, HEAD, 'mode', 'mode:unpinned');
     await p.evalIn('location.reload(); 0'); await sleep(1500); await p.ready();
@@ -244,6 +254,22 @@ async function main() {
     await c.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, p.sessionId); await sleep(800);
     out.toDesk = await p.evalIn(GEOM);
     await p.close();
+    // A short window: slid out at the top or the bottom, the list is cut to
+    // leave the middle 200px, and the middle starts where the list ends.
+    const s = await page(1440, 450);
+    await go(s, A.proj); await ldReady(s);
+    await s.evalIn('LD.dock.reset(); 0'); await sleep(600);   // the browser's layout, from the page before, as it was first
+    for (const side of ['top', 'bottom']) {
+      await menuPick(s, HEAD, 'side', 'side:' + side);
+      await menuPick(s, HEAD, 'mode', 'mode:unpinned');
+      if (!(await s.evalIn('LD.dock.flyOpen()'))) { await s.click('#list-dock .dk-strip-btn[data-dk-auto="list"]'); await sleep(500); }
+      await sleep(400);
+      out['short_' + side] = await s.evalIn(GEOM);
+      await s.shot('list-1440x450-unpinned-' + side);
+      await menuPick(s, FLY, 'mode', 'mode:pinned');
+      await menuPick(s, HEAD, 'side', 'side:left');
+    }
+    await s.close();
     // A page with no dock for the conversation yet: the list goes into its
     // window, a row clicked there makes that dock; the window stays the list's.
     const h = await page(1440, 900);
@@ -472,6 +498,21 @@ class TheListDock(unittest.TestCase):
         b = self.got["noteBack"]
         self.assertTrue(b["here"] and not b["out"], b)
         self.assertGreater(b["list"]["w"], 0)
+
+    def test_a_resized_width_comes_back_from_the_top(self):
+        self.assertEqual(self.got["widerKept"]["list"]["w"], 332)
+        self.assertEqual(self.got["widerKept"]["side"], "left")
+        g = self.got["widerKeptReload"]
+        self.assertEqual((g["side"], g["list"]["w"], g["listW"]), ("left", 332, "337px"), "also over a reload")
+
+    def test_a_short_window_slid_out_at_the_top_or_bottom(self):
+        for side in ("top", "bottom"):
+            g = self.got["short_" + side]
+            self.assertEqual((g["side"], g["mode"], g["fly"]), (side, "unpinned", "list"), side)
+            f, m = g["flyBox"], g["dockHost"]
+            gap = m["y"] - f["b"] if side == "top" else f["y"] - m["b"]
+            self.assertTrue(-1 <= gap <= 1, f"{side}: the middle meets the list ({gap}px)")
+            self.assertGreaterEqual(m["h"], 199, f"{side}: the middle keeps its 200px")
 
     def test_width_and_mode_survive_a_reload(self):
         self.assertEqual(self.got["wider"]["list"]["w"], 332, "two presses of → on its splitter")

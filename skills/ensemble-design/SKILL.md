@@ -808,8 +808,10 @@ self-contained component, so a later layout can host it elsewhere.
   slid out, ⋯ and − sit at the right end of its own head row (no tab: the filter keeps its width;
   Move To replaces the drag), so pinned it looks as before; floating, minimised or maximised it has
   Dock's full title bar. At the top or the bottom it is a 240px band, and each axis keeps its own
-  size (`ldAxisSize`: Dock would carry the column's height over; ENSEMBLE-NEEDS item 10); slid out
-  there it spans the width (only a side flyout leaves the middle its 360px). Nothing hides it for
+  size, a resized one too, kept per browser (`ldAxisSize`, `cd-list-dock-axis`: Dock would carry
+  the column's height over; ENSEMBLE-NEEDS item 10); slid out there it spans the width. Slid out, it
+  leaves the middle 360px across or 200px down, and the room Dock keeps beside it is cut to its
+  size (`ldInsets`; item 12). Nothing hides it for
   good (`can`: no `hide`; a desktop has no Panels menu), and the notice that offers it back after
   a reload has no ×, being its only way back. **The page
   follows the stand-in** (`ldInsets` → `--list-w`, `--list-r`, `--list-t`, `--list-b` on `body`):
