@@ -63,6 +63,8 @@ const clone = (x) => JSON.parse(JSON.stringify(x));
  *   edgeOf         { id: edge } or (id) => edge: where a panel goes when nothing else says; default 'right'
  *   fill           the panel whose place takes what is left in its split (e.g. the main view); default none
  *   defaultSize    (panelIds, dir, ctx) => px | null: a splitter's double-click size for the child holding panelIds
+ *   unpinSize      { id: px } or (id) => px: how far that panel slides out of its strip when nothing else says (at
+ *                  least its minSize); default sizes.unpinSize. cfg.unpinSizeOf(id, edge) is it, or null when not given
  *   sizes          overrides of SIZES
  */
 export function makeConfig(o = {}) {
@@ -72,6 +74,13 @@ export function makeConfig(o = {}) {
   const minSize = table(o.minSize, () => sizes.panelMin);
   const edgeOf = table(o.edgeOf, () => 'right');
   const cfg = { ids, sizes, minSize, edgeOf, fill: o.fill || null, defaultSize: typeof o.defaultSize === 'function' ? o.defaultSize : null };
+  const unpinOf = table(o.unpinSize, () => null);
+  cfg.unpinSizeOf = (id, edge) => {
+    const v = unpinOf(id);
+    if (!finite(v) || v <= 0) return null;
+    const m = minSize(id);
+    return Math.round(Math.max(edge === 'top' || edge === 'bottom' ? m.h : m.w, v));
+  };
   const declared = o.defaultLayout;
   cfg.defaultLayout = (ctx = {}) => {
     const c = { viewportPx: 1600, purpose: 'load', ...ctx };
@@ -81,6 +90,9 @@ export function makeConfig(o = {}) {
     if (d) {
       layout.root = d.root ? clone(d.root) : null;
       for (const k of ['floats', 'auto', 'hidden']) if (Array.isArray(d[k])) layout[k] = clone(d[k]);
+      // With panel unpinSizes given, a strip panel declared without a size slides out as far as its own says, else
+      // sizes.unpinSize. Without them the declared entries stay as declared (v0.3.6).
+      if (o.unpinSize) for (const a of layout.auto) if (a && !finite(a.size)) a.size = unpinFallback(cfg, a.id, a.edge);
     } else if (ids.length) {
       layout.root = ids.length === 1 ? stackNode([ids[0]]) : splitNode('row', ids.map((id) => stackNode([id])));
     }
@@ -92,6 +104,11 @@ export function makeConfig(o = {}) {
 }
 
 const cfgOf = (opts) => (opts && opts.cfg) || makeConfig();
+// How far an unpinned panel slides out when nothing else says: its own unpinSize, else sizes.unpinSize.
+function unpinFallback(cfg, id, edge) {
+  const own = typeof cfg.unpinSizeOf === 'function' ? cfg.unpinSizeOf(id, edge) : null;
+  return own !== null ? own : cfg.sizes.unpinSize;
+}
 
 // ---------- finding things ----------
 
@@ -277,8 +294,8 @@ function restore(layout, id, was, opts) {
   if (peerFloat) insertAmong(peerFloat.stack, id, was.peers, was.index);
   else if (was.kind === 'float' && was.float) layout.floats.push({ stack: stackNode([id]), ...was.float, home: was.home || null });
   else if (was.kind === 'auto') {
-    const unpin = cfgOf(opts).sizes.unpinSize;
-    layout.auto.push({ id, edge: EDGES.includes(was.edge) ? was.edge : 'right', size: finite(was.size) ? was.size : unpin, home: was.home || null });
+    const edge = EDGES.includes(was.edge) ? was.edge : 'right';
+    layout.auto.push({ id, edge, size: finite(was.size) ? was.size : unpinFallback(cfgOf(opts), id, edge), home: was.home || null });
   } else placeDocked(layout, id, was.home, opts);
 }
 
@@ -423,7 +440,8 @@ export function dockBack(layout, f, opts = {}) {
 export function unpinPanel(layout, id, edge, size, opts = {}) {
   const was = detach(layout, id);
   if (!was) return null;
-  const entry = { id, edge: EDGES.includes(edge) ? edge : 'right', size: finite(size) ? Math.round(size) : cfgOf(opts).sizes.unpinSize, home: was.home || null };
+  const e = EDGES.includes(edge) ? edge : 'right';
+  const entry = { id, edge: e, size: finite(size) ? Math.round(size) : unpinFallback(cfgOf(opts), id, e), home: was.home || null };
   layout.auto.push(entry);
   return entry;
 }
@@ -523,7 +541,7 @@ function withHome(out, from) {
 export function normalizeLayout(raw, opts = {}) {
   const cfg = cfgOf(opts);
   const ids = cfg.ids;
-  const unpin = cfg.sizes.unpinSize;
+  const unpin = (id, edge) => unpinFallback(cfg, id, edge);
   const fallback = () => cfg.defaultLayout({ viewportPx: opts.viewportPx || 1600, purpose: opts.purpose || 'load' });
   if (raw && typeof raw === 'object' && raw.v !== LAYOUT_VERSION && typeof opts.migrate === 'function') {
     try { raw = opts.migrate(raw); } catch { raw = null; }
@@ -557,9 +575,10 @@ export function normalizeLayout(raw, opts = {}) {
   }
   for (const a of Array.isArray(raw.auto) ? raw.auto : []) {
     if (!a || !take(a.id)) continue;
-    layout.auto.push(withHome({ id: a.id, edge: EDGES.includes(a.edge) ? a.edge : 'right', size: finite(a.size) && a.size > 0 ? a.size : unpin }, a));
+    const edge = EDGES.includes(a.edge) ? a.edge : 'right';
+    layout.auto.push(withHome({ id: a.id, edge, size: finite(a.size) && a.size > 0 ? a.size : unpin(a.id, edge) }, a));
   }
-  const normWas = (w) => {
+  const normWas = (w, id) => {
     const was = w && typeof w === 'object' ? w : {};
     const keep = withHome({ kind: ['dock', 'float', 'auto'].includes(was.kind) ? was.kind : 'dock' }, was);
     if (keep.kind === 'float' && was.float && ['x', 'y', 'w', 'h'].every((k) => finite(was.float[k]))) keep.float = { ...was.float };
@@ -568,12 +587,12 @@ export function normalizeLayout(raw, opts = {}) {
       const peers = was.peers.filter((p) => typeof p === 'string');
       if (peers.length) { keep.peers = peers; keep.index = finite(was.index) ? was.index : peers.length; }
     }
-    if (keep.kind === 'auto') { keep.edge = EDGES.includes(was.edge) ? was.edge : 'right'; keep.size = finite(was.size) ? was.size : unpin; }
+    if (keep.kind === 'auto') { keep.edge = EDGES.includes(was.edge) ? was.edge : 'right'; keep.size = finite(was.size) ? was.size : unpin(id, keep.edge); }
     return keep;
   };
   for (const h of Array.isArray(raw.hidden) ? raw.hidden : []) {
     if (!h || !take(h.id)) continue;
-    layout.hidden.push(h.was === undefined ? { id: h.id } : { id: h.id, was: normWas(h.was) });
+    layout.hidden.push(h.was === undefined ? { id: h.id } : { id: h.id, was: normWas(h.was, h.id) });
   }
   // The panels in windows of their own, with where those windows were. One stored with `was` has no place in the
   // layout; one stored before (no `was`) still has its place there, and leaves it below.
@@ -581,7 +600,7 @@ export function normalizeLayout(raw, opts = {}) {
   const older = [];
   for (const id of Object.keys(out)) {
     const g = out[id] && typeof out[id] === 'object' ? out[id] : {};
-    if (g.was && typeof g.was === 'object') { if (take(id)) layout.out[id] = { ...pickGeo(g), was: normWas(g.was) }; }
+    if (g.was && typeof g.was === 'object') { if (take(id)) layout.out[id] = { ...pickGeo(g), was: normWas(g.was, id) }; }
     else if (known.has(id)) older.push([id, g]);
   }
   // One that names none of today's panels says nothing about them: the default, not each panel placed one by one.

@@ -56,7 +56,12 @@ CHROME = next((p for p in (
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     shutil.which("google-chrome") or "", shutil.which("chromium") or "",
 ) if p and Path(p).exists()), "")
-PAGES = ("index.html", "session.html", "fileview.html")
+# Every fresh Chrome profile makes Windows log one failed sign-in (Chrome's
+# blank-password probe); a full run locks the account. ENSEMBLE_NO_CHROME=1
+# skips the browser tests until the launchers reuse an initialised profile.
+if os.environ.get("ENSEMBLE_NO_CHROME"):
+    CHROME = ""
+PAGES =("index.html", "session.html", "fileview.html")
 BEGIN = "// ---- Page update: begin shared block"
 END = "// ---- Page update: end shared block"
 
