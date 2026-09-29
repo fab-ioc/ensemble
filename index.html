@@ -13786,7 +13786,10 @@ function swRender() {
   const wrote = writeSlot(box, swListHtml(g, sel, SW_DONE_OPEN, SW_UN, by));
   swDiagFit(box);   // before the focus goes back: a Details it lands on must show
   if (wrote && key) {
-    const back = had && box.querySelector(`${inGroup}${hadCls}[data-room="${CSS.escape(had)}"]`);
+    // A Details the list widened away (it fits now) hands the focus to its row.
+    const at = (cls) => box.querySelector(`${inGroup}${cls}[data-room="${CSS.escape(had)}"]`);
+    let back = had && at(hadCls);
+    if (back && back.hidden) back = at('.sw-row');
     if (back) back.focus(); else restoreFocus(box, key);
   }
   if (back && phone) box.scrollTop = PH_BACK.top;

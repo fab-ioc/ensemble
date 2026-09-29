@@ -412,6 +412,26 @@ async function main() {
       Object.assign(r, { refolded: !btn(task).hidden && btn(task).getAttribute('aria-expanded') === 'false', refocus: document.activeElement === btn(task) });
       ATTENTION.items = []; SW_DIAG.clear(); swRender();
       return r; })()`);
+    // Open, then widened until it fits: folding it hides Details, and the focus
+    // goes to its row, not to the page (#135 R3).
+    await q.evalIn(`(() => {
+      ATTENTION.items = [{ roomId: ${JSON.stringify(A.task)}, state: 'blocked', askKind: 'blocked', since: Date.now() / 1000,
+                           reason: 'WWW_ADMIN_PASSWORD AND WWW_DATABASE_PASSWORD REQUIRED TO CONTINUE DEPLOYMENT.',
+                           projectId: ${JSON.stringify(A.proj)}, title: 'x' }];
+      swRender();
+      const b = document.querySelector('#sw-list [data-group="needs"] .sw-diag-btn:not([hidden])');
+      b.focus(); b.click(); return 0; })()`);
+    await c.send('Emulation.setDeviceMetricsOverride', { width: 430, height: 932, deviceScaleFactor: 3, mobile: true }, q.sessionId);
+    await sleep(400);
+    out.phoneWiden = await q.evalIn(`(() => {
+      const task = ${JSON.stringify(A.task)}, N = '#sw-list [data-group="needs"] ';
+      const b = document.querySelector(N + '.sw-diag-btn[data-room="' + task + '"]');
+      const r = { focusBefore: document.activeElement === b };
+      b.click();
+      const b2 = document.querySelector(N + '.sw-diag-btn[data-room="' + task + '"]'), a = document.activeElement;
+      Object.assign(r, { hidden: b2.hidden, onRow: a.matches(N + '.sw-row[data-room="' + task + '"]') });
+      ATTENTION.items = []; SW_DIAG.clear(); swRender();
+      return r; })()`);
     await q.close();
   } finally {
     try { ch.kill(); } catch (e) {}
@@ -682,6 +702,12 @@ class TheMiddle(unittest.TestCase):
         self.assertIn("REQUIRED TO CONTINUE DEPLOYMENT.", g["text"])
         self.assertTrue(g["focus"])
         self.assertTrue(g["refolded"] and g["refocus"], "folded again, it stays (still cut) and keeps the focus")
+
+    def test_a_details_widened_away_hands_the_focus_to_its_row(self):
+        g = self.got["phoneWiden"]
+        self.assertTrue(g["focusBefore"], g)
+        self.assertTrue(g["hidden"], f"it fits at 430px, so folded it has no Details: {g}")
+        self.assertTrue(g["onRow"], f"the focus is on its row, not the page: {g}")
 
 
 if __name__ == "__main__":
