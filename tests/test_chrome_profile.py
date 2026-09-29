@@ -96,6 +96,10 @@ class EveryLauncher(unittest.TestCase):
             if p.name in ("chrome_profile.py", "test_chrome_profile.py"):
                 continue
             src = p.read_text(encoding="utf-8")
+            # A second, unconverted launch() in a file that has one converted one.
+            self.assertNotIn("mkdtempSync(path.join(A.tmp, 'chrome-'))", src, p.name)
+            # Only lines naming --user-data-dir are checked: a Chrome without one would
+            # open the personal profile, which no test here does.
             for line in src.splitlines():
                 if "user-data-dir" not in line:
                     continue
