@@ -588,11 +588,18 @@ corner (`setBadge`: Your asks' open asks; Changes' uncommitted files on a PO scr
 lines added on a task, short: `+512`, `+1.7k`, the exact numbers in its tooltip). A click opens a
 tool **beside** the conversation, which narrows (`stripOpen: 'beside'`: nothing is covered, no
 shadow); a second click, its slide-in control or Esc puts it back; one is open at a time; hovering
-opens nothing (`stripHover: false`). Its width is its own (`pdToolSize`): Your asks 400, Spec 480,
+opens nothing (`stripHover: false`). **A click or focus elsewhere in the page puts it back too**
+(Dock v0.5.1, IntelliJ's Dock Unpinned and Undock), a click in the conversation included: the
+chat's frame tells the page of a click (`chat-clicked`, `pdChatClicked`), since the dock hears no click inside
+a frame. It stays out while it is used: typing in it, its ⋯ menu, a dialog or context menu it
+opened (`modalSelector`), its own frames (the file view), Your asks' arrow, and when the browser
+window loses focus. **A tool that should stay open is pinned** (⋯ › View Mode › Dock Pinned); a
+Float stays too. Its width is its own (`pdToolSize`): Your asks 400, Spec 480,
 Changes, Files and the Board 60% of what the list and the strip leave (480 to 760, the conversation
 keeping at least 360). **The open tool is remembered per browser** (`cd-tool-open`) and opens
-again after a reload, and stays open when the middle changes conversation. A tool's title bar
-(Dock v0.5.0, IntelliJ's) is its tab, **⋯** and **−**: ⋯ holds View Mode (Dock Pinned docks it
+again after a reload; the middle changing conversation by code (not a click in the list) leaves
+it out. A tool's title bar
+(Dock v0.5.0, IntelliJ's; each View Mode item's tooltip says what it does) is its tab, **⋯** and **−**: ⋯ holds View Mode (Dock Pinned docks it
 beside the conversation, Dock Unpinned, Undock, Float, Window pops it out), Move To (the side it
 is on; only this changes a side), Maximise and Hide; − slides it back in. Closing a tool's window
 brings it back slid out on its side. Split and maximise work as the library's. **The

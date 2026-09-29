@@ -4670,6 +4670,14 @@ window.addEventListener('message', (e) => {
 // Inside the dashboard, say this chat has started: a balloon link opened while
 // it was still loading is sent to it again.
 try { if (window.parent !== window) window.parent.postMessage({ type: 'chat-ready', roomId: ROOM }, location.origin); } catch (e) {}
+// Inside the dashboard, a click in this chat is one in its page: a tool slid
+// out beside the conversation goes back (the page's Dock sees no click inside
+// a frame). Not focus: the window coming back from another app keeps it.
+if (window.parent !== window) {
+  document.addEventListener('pointerdown', () => {
+    try { window.parent.postMessage({ type: 'chat-clicked', roomId: ROOM }, location.origin); } catch (e) {}
+  }, true);
+}
 
 // ---- Session actions ---------------------------------------------------------
 // The header shows the dashboard's action bar (static/actions.js, the matrix in

@@ -1,4 +1,4 @@
-"""Layout A step 3 (#125): the tool strip on the right (Dock v0.5.0).
+"""Layout A step 3 (#125): the tool strip on the right (Dock v0.5.1).
 
 In headless Chrome over CDP, against a hub in a thread serving the pages, with
 a project that has a PO (Motors), a task in it with a folder of its own, and a
@@ -17,6 +17,10 @@ project without a PO (Plain):
   tabs gone; a PO's Spec says why it has none;
 * a file open in Files keeps its page when the tool closes and opens again;
 * the Board's ⤢ takes the whole width and gives it back;
+* a tool opened by a click slides back on a click in the conversation (the
+  PO's or an open task's, after a click on the tool's own text or in its file
+  view too) or in the task list; typing in it, its ⋯ menu, Go to file, its
+  file view and Your asks' arrow keep it out; pinned, it stays (Dock v0.5.1);
 * at 1280, 1440 and 1728, nothing wider than the screen; in six themes the
   strip's icons and counts clear 4.5:1;
 * a phone keeps its tabs: no strip.
@@ -351,6 +355,59 @@ async function main() {
       out.moveTo.right = await p.evalIn(SIDE('spec'));
       await p.close();
     }
+    // ---- a tool slides back on a click or focus elsewhere (Dock v0.5.1), and stays while it is used or pinned
+    {
+      const p = await page(1440, 900);
+      await go(p, A.proj); await poReady(p); await sleep(400);
+      const fly = () => p.evalIn('PD.dock.flyOpen()');
+      const open = async (id) => { if (await fly() !== id) await p.click(tool(id)); await p.until(`PD.dock.flyOpen() === ${JSON.stringify(id)}`, 5000); await sleep(300); };
+      const key = async (k, code, vk) => { for (const type of ['keyDown', 'keyUp']) await c.send('Input.dispatchKeyEvent', { type, key: k, code, windowsVirtualKeyCode: vk }, p.sessionId); };
+      const chat = '#po-panel iframe.po-session:not([hidden])';
+      const ah = out.autoHide = {};
+      // Opened by a click, then a click in the conversation or the task list.
+      await open('points'); await p.click(chat); await sleep(400);
+      ah.chat = await fly();
+      await open('board'); await p.click('#sw-list'); await sleep(400);
+      ah.list = await fly();
+      // A click on the tool's own text first (nothing in it has focus), then the conversation.
+      await open('points'); await p.click('#po-dock .dk-flyout.open .dk-body'); await sleep(300);
+      ah.ownText = await fly();
+      await p.click(chat); await sleep(400);
+      ah.chatAfterText = await fly();
+      // Typing in a tool, its ⋯ menu, the file view's frame: it stays; then the conversation.
+      await open('workspace');
+      await p.until('!!PD.els.workspace.querySelector(".wsf-q")', 10000);
+      await p.click('#po-dock .wsf-q'); await sleep(200);
+      await c.send('Input.insertText', { text: 'READ' }, p.sessionId); await sleep(600);
+      ah.typing = { fly: await fly(), value: await p.evalIn('PD.els.workspace.querySelector(".wsf-q").value') };
+      await p.click('#po-dock .dk-flyout.open [data-dk-act="menu"]'); await sleep(300);
+      ah.menu = { fly: await fly(), menu: await p.evalIn('!!document.querySelector(".dk-menu.dk-options")') };
+      await key('Escape', 'Escape', 27); await sleep(300);
+      await p.click('#po-dock .wsf-q'); await sleep(200);
+      await key('Enter', 'Enter', 13);
+      await p.until('(() => { const f = PD.els.workspace.querySelector("iframe.wsp-frame.on"); try { return !!f && f.contentDocument.readyState === "complete" && f.contentWindow.location.pathname === "/fileview"; } catch (e) { return false; } })()', 20000);
+      await sleep(400);
+      ah.goToFile = await fly();
+      await p.click('#po-dock iframe.wsp-frame.on'); await sleep(400);
+      ah.fileFrame = { fly: await fly(), focus: await p.evalIn('document.activeElement.classList.contains("wsp-frame")') };
+      await p.click(chat); await sleep(400);
+      ah.chatAfterFrame = await fly();
+      // Your asks' arrow takes the conversation to the message: the list stays out.
+      await open('points');
+      await p.click('#po-dock .pdp-row[data-pt="P1"] a.pdp-link[data-mid]'); await sleep(1200);
+      ah.arrow = await fly();
+      // Pinned (Dock Pinned): a click in the conversation or the task list leaves it.
+      await menuPick(p, '#po-dock .dk-flyout.open', 'mode', 'mode:pinned'); await sleep(500);
+      await p.click(chat); await sleep(300);
+      await p.click('#sw-list'); await sleep(400);
+      ah.pinned = await p.evalIn(`({ mode: PD.dock.viewMode('points'), shown: PD.dock.isVisible('points') && PD.els.points.getBoundingClientRect().width > 0 })`);
+      // An open task: a click in its conversation puts its Spec back.
+      await openTask(p);
+      await open('spec');
+      await p.click('#detail-panel iframe.dp-session'); await sleep(400);
+      ah.taskChat = await fly();
+      await p.close();
+    }
     // ---- a phone keeps its tabs
     {
       const q = await page(430, 932, true);
@@ -382,8 +439,8 @@ class TheWiring(unittest.TestCase):
         self.assertIn("const PD_KEYS = { desk: 'cd-tool-strip', phone: 'cd-phone-tabs' };", INDEX)
         self.assertIn("function pdNarrow() { return isPhone(); }", INDEX)
 
-    def test_the_vendored_library_is_v0_5_0(self):
-        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.5\.0 ")
+    def test_the_vendored_library_is_v0_5_1(self):
+        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.5\.1 ")
 
     def test_the_title_bar_is_dock_s_default(self):
         dock = INDEX[INDEX.index("function pdEnsure()"):INDEX.index("// The middle is the conversation alone")]
@@ -518,6 +575,26 @@ class TheStrip(unittest.TestCase):
                 self.assertIsNone(c["fly"], "a second click puts it back")
                 self.assertEqual(c["mid"]["r"], c["strip"]["x"])
                 self.assertIsNone(c["saved"], "nothing open: nothing remembered")
+
+    def test_a_click_elsewhere_slides_a_tool_back(self):
+        g = self.got["autoHide"]
+        self.assertIsNone(g["chat"], "a click in the conversation")
+        self.assertIsNone(g["list"], "a click in the task list")
+        self.assertEqual(g["ownText"], "points", "a click on the tool's own text keeps it")
+        self.assertIsNone(g["chatAfterText"], "then the conversation: back (the chat's frame tells the page)")
+        self.assertIsNone(g["chatAfterFrame"], "from the file view's frame to the conversation: back")
+        self.assertIsNone(g["taskChat"], "an open task's conversation puts its Spec back")
+
+    def test_a_tool_in_use_stays_out(self):
+        g = self.got["autoHide"]
+        self.assertEqual(g["typing"], {"fly": "workspace", "value": "READ"}, "typing in Go to file")
+        self.assertEqual(g["menu"], {"fly": "workspace", "menu": True}, "its ⋯ menu open")
+        self.assertEqual(g["goToFile"], "workspace", "Go to file opens the file in the tool")
+        self.assertEqual(g["fileFrame"], {"fly": "workspace", "focus": True}, "a click in the file view's frame")
+        self.assertEqual(g["arrow"], "points", "Your asks' arrow takes the conversation to the message; the list stays")
+
+    def test_a_pinned_tool_stays(self):
+        self.assertEqual(self.got["autoHide"]["pinned"], {"mode": "pinned", "shown": True})
 
     def test_counts_show_on_the_buttons(self):
         g = self.got["taskPanes"]

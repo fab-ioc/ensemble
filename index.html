@@ -10337,8 +10337,10 @@ function pdEnsure() {
     fill: 'po-chat',
     minSize: PD_MIN,
     sizes: { head: 32, strip: 44, unpinSize: 720 },
-    // A click opens a tool beside the conversation, and it stays open until
-    // its button, its close control or Esc puts it back.
+    // A click opens a tool beside the conversation; a click or focus
+    // elsewhere in the page puts it back (Dock v0.5.1's stripAutoHide, and
+    // pdChatClicked for the conversation's frame), as do its button, its −
+    // and Esc. A tool that should stay open is docked (⋯ › View Mode).
     stripHover: false,
     stripOpen: 'beside',
     // The conversation stays where it is; a tool can be docked beside it, split,
@@ -10399,6 +10401,16 @@ function pdToolRemember() {
   // mount the first time they are on screen).
   if (id) pdShown(id);
   else barCrumbs();
+}
+// A click in a conversation (a chat's frame, session.html): a tool slid out
+// goes back, as it does for a click anywhere else in the page. Dock v0.5.1
+// hears no click inside a frame, nor focus moving into one while none of the
+// tool had it (after a click on its text, or in the file view).
+function pdChatClicked(win) {
+  const d = PD.dock;
+  if (!d || d.narrow() || !d.flyOpen() || document.querySelector('.dk-menu')) return;
+  const f = [...document.querySelectorAll('iframe')].find(x => x.contentWindow === win);
+  if (f && !f.closest('.dk-flyout')) d.closeFly();
 }
 // The tool the breadcrumb names: the one slid out, else the first docked one
 // on screen.
@@ -15035,6 +15047,7 @@ window.addEventListener('message', (ev) => {
   if (d && d.type === 'open-msg' && d.roomId && d.msg && ev.origin === location.origin) openMsgLink(String(d.roomId), String(d.msg));
   if (d && d.type === 'chat-ready' && d.roomId && ev.origin === location.origin) sendGotoMsg(String(d.roomId));
   if (d && d.type === 'goto-taken' && d.roomId && ev.origin === location.origin) GOTO_MSG.delete(String(d.roomId));
+  if (d && d.type === 'chat-clicked' && ev.origin === location.origin) pdChatClicked(ev.source);
   // A file viewer in a Workspace tab, saying how the tab was left.
   if (d && (d.type === 'fv-state' || d.type === 'fv-missing' || d.type === 'fv-key') && ev.origin === location.origin) wsFrameMessage(ev.source, d);
 });

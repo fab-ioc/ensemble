@@ -57,6 +57,14 @@ export const TEXT = {
   maximise: 'Maximise',
   restore: 'Restore',
   modes: { pinned: 'Dock Pinned', unpinned: 'Dock Unpinned', undock: 'Undock', float: 'Float', window: 'Window' },
+  // what each view mode does: the tooltip of its menu item
+  modeHints: {
+    pinned: 'Docked; stays open',
+    unpinned: 'Docked on its edge; hides when you click elsewhere',
+    undock: 'Over the content; hides when you click elsewhere',
+    float: 'A free window in the page; stays open',
+    window: 'Its own browser window',
+  },
   sides: { left: 'Left', right: 'Right', top: 'Top', bottom: 'Bottom' },
 };
 /** The view modes, in the order the Options menu lists them (IntelliJ's). */
@@ -200,6 +208,9 @@ export function panelsFrom(container) {
  *   stripHover, stripOpen                   hovering a strip button slides its panel out (default true); a panel slid
  *                                           out lies 'over' the layout (default) or 'beside' it, the middle narrowing
  *                                           (a panel's own View Mode, Dock Unpinned or Undock, overrides it)
+ *   stripAutoHide                           a panel slid out slides back when focus or a click goes elsewhere in the
+ *                                           page (default true, IntelliJ's); false: v0.5.0's, one opened by a click
+ *                                           stays (click-only, or beside) until closed
  *   headButtons                             'menu' (default): a title bar has ⋯ and −; 'classic': v0.4's buttons
  *   modalSelector, badgeClass, text, onReset, win
  *
@@ -215,7 +226,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   badgeClass = 'dk-badge', text = {}, onReset = null, migrate = null,
   defaultLayout, minSize, edgeOf, fill, defaultSize, sizes,
   narrow = false, narrowLayout, narrowKey, can = null, popHtml = null, popBase, minClickRestores = true, popBackButton = true,
-  stripHover = true, stripOpen = 'over', headButtons = 'menu',
+  stripHover = true, stripOpen = 'over', stripAutoHide = true, headButtons = 'menu',
   openWindow = (url, name, features) => (win && typeof win.open === 'function' ? win.open(url, name, features) : null) }) {
   const doc = root.ownerDocument;
   const T = { ...TEXT, ...text };
@@ -234,7 +245,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   let cfg = narrowOn ? narrowCfg : wideCfg;
   const S = cfg.sizes;
   // A strip panel slid out beside the layout (stripOpen: 'beside', or its own View Mode Dock Unpinned) takes room from
-  // it. Click-only (stripHover: false): no hover, and a panel slid out stays until it is closed.
+  // it. Click-only (stripHover: false): no hover opens one, nor does the pointer leaving close one.
   const openStyle = stripOpen === 'beside' ? 'beside' : 'over';
   const besideOf = (a) => !!a && (a.open || openStyle) === 'beside';
   const classic = headButtons === 'classic';
@@ -1610,8 +1621,9 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     sub.className = 'dk-menu dk-mono dk-submenu';
     sub.setAttribute('role', 'menu');
     sub.setAttribute('aria-label', kind === 'mode' ? T.viewMode : T.moveTo);
-    const item = (k, label, on) => `<button type="button" role="menuitemradio" aria-checked="${on}" data-dk-menu="${k}">${escText(label)}</button>`;
-    sub.innerHTML = kind === 'mode' ? o.modes.map((m) => item(`mode:${m}`, T.modes[m], m === o.now)).join('')
+    const item = (k, label, on, hint) => `<button type="button" role="menuitemradio" aria-checked="${on}" data-dk-menu="${k}"${hint ? ` title="${escText(hint)}"` : ''}>${escText(label)}</button>`;
+    const hints = T.modeHints || {};
+    sub.innerHTML = kind === 'mode' ? o.modes.map((m) => item(`mode:${m}`, T.modes[m], m === o.now, hints[m])).join('')
       : o.sides.map((s) => item(`side:${s}`, T.sides[s], s === o.side)).join('');
     sub._kind = kind;
     menu._sub = sub;
@@ -2110,9 +2122,16 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     save();
   });
 
-  // Hover slides an unpinned panel out; leaving it, or focus leaving it, slides it back. One that stays (click-only, or
-  // beside and opened by a click) goes back only by its button, its slide-in control, Esc, or another one opening.
-  const stays = () => !stripHover || (besideOf(layout.auto.find((a) => a.id === flyOpen)) && !flyByHover);
+  // Hover slides an unpinned panel out, and the pointer leaving it slides it back, unless it was opened otherwise
+  // (click-only, or beside and opened by a click): sticky. Focus or a click going elsewhere in the page slides back any
+  // panel slid out (IntelliJ's Dock Unpinned and Undock), sticky or not; with stripAutoHide: false (v0.5.0) a sticky one
+  // goes back only by its button, its slide-in control, Esc, or another one opening. Not while a gesture runs, nor while
+  // its Options menu is open, nor when the whole window loses focus (alt-tab, a popped-out window).
+  const sticky = () => !stripHover || (besideOf(layout.auto.find((a) => a.id === flyOpen)) && !flyByHover);
+  const stays = () => !stripAutoHide && sticky();
+  // A modal (modalSelector, or an open <dialog>, whose role is implicit) counts as the panel that opened it.
+  const inModal = (el) => !!(el && el.closest && el.closest(`${modalSelector}, dialog[open]`));
+  const menuOfFly = () => !!(menu && flyOpen && menu._id === flyOpen);
   on(root, 'pointerover', (e) => {
     const strip = e.target.closest && e.target.closest('[data-dk-auto]');
     if (strip && !gesture && stripHover) {
@@ -2127,7 +2146,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const from = e.target.closest && e.target.closest('[data-dk-auto]');
     if (from) clearTimeout(hoverTimer);
     if (!flyOpen || !insideFly(e.target) || insideFly(e.relatedTarget)) return;
-    if (stays()) return;
+    if (sticky()) return;
     clearTimeout(leaveTimer);
     leaveTimer = later(() => {
       if (!flyOpen) return;
@@ -2138,16 +2157,18 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   on(root, 'focusout', (e) => {
     if (!flyOpen || !insideFly(e.target)) return;
     later(() => {
-      if (!flyOpen || gesture) return;
+      if (!flyOpen || gesture || menuOfFly()) return;
+      if (typeof doc.hasFocus === 'function' && !doc.hasFocus()) return; // the window lost focus, not the panel
       const now = doc.activeElement;
-      if (now && now !== doc.body && insideFly(now)) return;
-      if (flyByHover && (!now || now === doc.body)) return; // opened by hover: the pointer decides
+      // Focus let go (a click on something that takes none, an element removed): a click elsewhere is pointerdown's.
+      if (!now || now === doc.body) return;
+      if (insideFly(now) || inModal(now)) return;
       if (stays()) return;
       closeFly(false);
     }, 0);
   });
   on(doc, 'pointerdown', (e) => {
-    if (flyOpen && !stays() && !insideFly(e.target) && !inMenu(e.target) && !(e.target.closest && e.target.closest(modalSelector))) closeFly(false);
+    if (flyOpen && !gesture && !stays() && !menuOfFly() && !insideFly(e.target) && !inMenu(e.target) && !inModal(e.target)) closeFly(false);
     if (menu && !inMenu(e.target) && e.target !== menu._from && !(menu._from && menu._from.contains(e.target))) closeMenu(false);
   }, true);
 

@@ -142,7 +142,8 @@ text), and `src/host.js` for apps whose panels open dialogs (below).
 | `narrow`, `narrowLayout`, `narrowKey` | `false`; every panel a tab of one stack, the `fill` panel in front; `storageKey + '.narrow'` | narrow (a phone): one column of tabs, nothing that moves a panel; its default layout; where its layout is kept (see "Narrow") |
 | `can` | none | `(id, action) => boolean`, action `move float unpin pop max min hide`: `false` takes that control, menu item (the Panels menu's too, for `hide`) and gesture away from a person (the app's own calls still work) |
 | `minClickRestores` | `true` | a click on a minimised stack's title bar (a tab, or the bar beside the tabs; not its controls or help, not the click that ends a drag) restores it, as its restore control does, with the tab clicked in front; so do Enter and Space on its focused tab. A double click still maximises it (docked) or docks it back (floating), also when restoring moved the title bar from under the pointer. `false`: as before v0.3.5, only the restore control (and a double click) restores |
-| `stripHover` | `true` | hovering a strip button for 250 ms slides its panel out, and leaving it slides it back; `false`: only a click opens it, and it stays until its button is clicked again, it is closed (its slide-in control, `closeFly()`, pinned, another strip panel opened) or Esc is pressed |
+| `stripHover` | `true` | hovering a strip button for 250 ms slides its panel out, and the pointer leaving it slides it back; `false`: only a click (or the keys, or `reveal`) opens it, and the pointer leaving keeps it. Either way a click or focus elsewhere hides it (`stripAutoHide`) |
+| `stripAutoHide` | `true` | a strip panel slid out (Dock Unpinned, Undock) slides back when a click or focus goes elsewhere in the page, as in IntelliJ, however it was opened; not while its ⋯ menu or a dialog is open, during a drag, when the whole window loses focus, or with focus in an iframe inside it. `false` (v0.5.0): one opened by a click with `stripHover: false` or beside stays until its button, its slide-in control, `closeFly()`, Esc or another strip panel |
 | `stripOpen` | `'over'` | where a strip panel slides out: `'over'` the layout; `'beside'` it, the middle narrowing to leave it its room (see "The tool strip"). A panel's own View Mode (Dock Unpinned: beside, Undock: over) overrides it, and is saved as its strip entry's `open` |
 | `headButtons` | `'menu'` | a title bar's controls: `'menu'`, IntelliJ's ⋯ (Options) and − (Hide); `'classic'`, v0.4's buttons (menu, minimise, maximise, pop out, float or dock back, unpin; a flyout's pop out, float, slide in, pin) and its menu, exactly |
 | `popUrl`, `popName`, `popTitle` | `'popout.html'`, `'dock-panel-'`, `(p) => p.title` | the pop-out window's page, window name prefix, and title |
@@ -154,7 +155,7 @@ text), and `src/host.js` for apps whose panels open dialogs (below).
 | `help` | none | `{ icon(key, panel) → html, mount(doc) → { destroy } \| fn, selector }`; `createHelp()` makes one |
 | `modalSelector` | `[role="dialog"], .dk-help-pop` | clicks and Escape inside these leave unpinned panels and maximise alone |
 | `badgeClass` | `'dk-badge'` | the class of a tab's badge |
-| `text` | `TEXT` | any of the words the dock shows |
+| `text` | `TEXT` | any of the words the dock shows (`modes` and `modeHints`: the View Mode items and their tooltips) |
 | `onReset` | none | called by `reset()` before the default layout comes back |
 | `openWindow`, `win` | `window.open`, `window` | stand-ins for tests |
 
@@ -178,6 +179,21 @@ As in IntelliJ IDEA's new UI, a panel's title bar has its tab(s), **⋯** (Optio
 The menus work with the mouse (hover or click opens a submenu) and the keys (↑ ↓ Home End, → or Enter opens a submenu on
 its checked item, ← or Esc closes it, Enter picks, Esc closes the menu and focus goes back to ⋯); they are `role="menu"`
 with `menuitem` and `menuitemradio` (`aria-checked`) items, and stay inside the window near its edges.
+
+The View Mode items say what they do (their tooltip, `text.modeHints`), as in IntelliJ:
+
+| View Mode | Where | When you click elsewhere | Tooltip |
+|---|---|---|---|
+| Dock Pinned | docked, the other panels make room | stays | Docked; stays open |
+| Dock Unpinned | on its edge's strip, sliding out beside the middle (which narrows) | hides | Docked on its edge; hides when you click elsewhere |
+| Undock | on its edge's strip, sliding out over the middle | hides | Over the content; hides when you click elsewhere |
+| Float | a free window in the page | stays | A free window in the page; stays open |
+| Window | its own browser window | stays | Its own browser window |
+
+"Hides" is a click, or focus (Tab, the app's own `focus()`), going elsewhere in the page: the panel slides back onto its
+strip. Its ⋯ menu, a dialog it opened (`modalSelector`, or an open `<dialog>`), an iframe inside it, and the whole
+browser window losing focus (alt-tab, a click in a panel's own window) keep it out. `stripAutoHide: false` gives
+v0.5.0's behaviour (see the options).
 
 **A panel's side is kept.** A strip panel pinned docks on its strip's side, beside the strip, as deep as it slid out
 (or at its own saved size); a docked panel unpinned goes to the strip on the side it stands (the side is read from the
@@ -219,17 +235,18 @@ dock.setBadge('asks', '3', '3 asks waiting');
   given stays the app's. Without `icon` the button is the title as vertical text, as before.
 - **Badges**: `setBadge(id, text, title)` also marks the panel's strip button: after the title on a text button, on the
   icon's top right corner on an icon button. It has the tab badge's class (`badgeClass`) and `dk-strip-badge`.
-- **`stripHover: false`**: no 250 ms hover slide-out and no slide-in when the pointer or focus leaves or a click lands
-  elsewhere. A click on its button opens it; it goes back on another click on its button, its slide-in control, Esc
-  (focus goes back to its button), or another strip panel opening. The strip then lies above a panel sliding in or out,
+- **`stripHover: false`**: no 250 ms hover slide-out and no slide-in when the pointer leaves. A click on its button
+  opens it; it goes back on a click or focus elsewhere in the page (v0.5.1; `stripAutoHide: false` keeps it through
+  those), another click on its button, its slide-in control, Esc (focus goes back to its button), or another strip
+  panel opening. The strip then lies above a panel sliding in or out,
   so a quick second click reaches the button.
 - **`stripOpen: 'beside'`**: the panel slides out into room the layout gives it instead of over the layout: `.dk-main`
   gets a margin on that edge as wide as the panel, the panel lies in it (between the middle and the strip, no shadow,
   no slide), and the splits are fitted again, so the middle narrows and the `fill` panel gives first. One panel is out
   at a time (so at most one per edge); opening another closes the first. It stays unpinned: nothing of it goes in the
   layout or in storage, and a reload shows the strip with nothing open (an app that wants a tool open again calls
-  `openFly(id)`). Opened by a click it stays open through clicks in the middle; opened by hover (`stripHover` on) it
-  goes back when the pointer leaves, as over. The dock's root has `dk-beside-open` while a panel is out beside it.
+  `openFly(id)`). A click or focus in the middle slides it back (v0.5.1; opened by a click, `stripAutoHide: false` keeps
+  it); opened by hover (`stripHover` on) it also goes back when the pointer leaves, as over. The dock's root has `dk-beside-open` while a panel is out beside it.
 - **`sizes.strip`**: the strip's buttons, icons and badges scale with it (CSS variables, each today's look at 22 px):
   the strip's padding and gap `strip / 11`, a title `max(--dk-fs-tab, strip × .3)`, an icon `strip × .55`, an icon's
   badge `max(7px, strip × .3)`, a title's badge `max(--dk-badge-fs, strip × .27)`. Each can be set (below).
@@ -491,14 +508,15 @@ npm test              # all of it
 npm run test:node     # the model, the dock in jsdom with stand-in windows, the theme, the opTen fixture, test/needs.test.js
 npm run test:browser  # headless Chrome (Puppeteer) against the demo: run.js (the pop-out window for real), run.js
                       # --pophtml (the same with popHtml, the page from a blob: URL), needs.js (iframes, narrow, focus, keys),
-                      # toolstrip.js (the tool strip)
+                      # toolstrip.js (the tool strip), scenarios.js, viewmodes.js (View Mode and Move To), autohide.js
+                      # (Dock Unpinned and Undock hide when focus leaves them)
 npm run test:browser:check     # one Chrome: says whether it made the blank-password check (see below); run it first
 npm run screenshots -- <dir>   # the theme picker, the demo in ten themes, a panel out, its window, the reload notice
 npm run evidence:app-window -- <dir>   # real Chrome and Edge (headed): the pop-out window in a tab, --app, installed, PiP
 ```
 
 Every Chrome these start goes through `test/browser/chrome.js`, on a persistent profile per suite under
-`%LOCALAPPDATA%\dock-test-chrome\` (`run`, `run-pophtml`, `needs`, `toolstrip`, `screenshots`, `check`,
+`%LOCALAPPDATA%\dock-test-chrome\` (`run`, `run-pophtml`, `needs`, `toolstrip`, `viewmodes`, `autohide`, `screenshots`, `check`,
 `app-window-<browser>-<way>`; `DOCK_TEST_CHROME` moves them; a run at the same time as another gets `<suite>-2`). Why:
 Chrome on a new profile checks for a blank Windows password by signing in with an empty one, and Windows counts each
 as a failed sign-in (10 in 10 minutes lock the account). Before each launch the helper seeds the profile's
@@ -523,6 +541,9 @@ put back); the roving tabs, their roles and F6 (from inside an iframe panel too,
 layout, a phone-sized window); and that `dock-popin` and `onPopIn` come while the panel is still in its window.
 `toolstrip.js` proves the tool strip: without its options a text button in a 22 px strip, hover after 250 ms, over the
 layout, as in v0.3.6; icons (tooltip, accessible name) and badges (icon and text) in the strip at 22 and 44 px, each
-inside its button; click-only (no hover, stays through a click elsewhere, closes by its button, Esc, its control or
-another); beside (the middle narrows by exactly the panel's width, nothing covered, one at a time, nothing saved, a
-reload shows the strip); a width per panel; and `?toolstrip=1` with all of them.
+inside its button; click-only (no hover, stays when the pointer leaves, hides on a click elsewhere, and with
+`stripAutoHide: false` stays through it and closes by its button, Esc, its control or another); beside (the middle narrows by exactly the panel's width, nothing covered, one at a time, nothing saved, a
+reload shows the strip); a width per panel; and `?toolstrip=1` with all of them. `autohide.js` proves that Dock Unpinned and Undock hide on a
+click or focus elsewhere, with hover on and off and in layout A, opened by a click, the keys, hover and `reveal`, their
+strip button and stored layout unchanged; typing, their ⋯ menu, their dialog, an iframe in them and the window's blur
+keep them; Esc closes them; Float and Dock Pinned stay; `stripAutoHide: false` is v0.5.0's; and the tooltips.
