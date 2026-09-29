@@ -45,16 +45,17 @@ sys.path.insert(0, str(ROOT))
 import chatroom  # noqa: E402
 import dashboard  # noqa: E402
 from tests.test_page_update import CHROME  # noqa: E402
+from tests import chrome_profile  # noqa: E402
 
 NODE = shutil.which("node")
 
-CDP_JS = r"""
+CDP_JS = chrome_profile.JS + r"""
 const { spawn } = require('child_process');
 const fs = require('fs'), path = require('path');
 const A = JSON.parse(process.argv[2]);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function launch() {
-  const udd = fs.mkdtempSync(path.join(A.tmp, 'chrome-'));
+  const udd = chromeProfile(A);
   const ch = spawn(A.chrome, ['--headless=new', '--remote-debugging-port=0', '--user-data-dir=' + udd, '--no-first-run', '--no-default-browser-check',
     '--disable-gpu', '--hide-scrollbars', '--window-size=1440,900', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
   const ws = await new Promise((res, rej) => {
@@ -328,7 +329,7 @@ class TheTopBar(unittest.TestCase):
         shots = os.environ.get("ENSEMBLE_SHOTS", "")
         if shots:
             Path(shots).mkdir(parents=True, exist_ok=True)
-        args = {"chrome": CHROME, "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{cls.server.server_address[1]}",
+        args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{cls.server.server_address[1]}",
                 "proj": cls.proj, "plain": cls.plain, "shots": shots}
         script = base / "top_bar_cdp.js"
         script.write_text(CDP_JS, encoding="utf-8")

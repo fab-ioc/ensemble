@@ -51,6 +51,7 @@ import chatroom  # noqa: E402
 import dashboard  # noqa: E402
 from tests.test_documents_project import INDEX, js_function  # noqa: E402
 from tests.test_page_update import CHROME  # noqa: E402
+from tests import chrome_profile  # noqa: E402
 
 NODE = shutil.which("node")
 TOKEN = "t0ken-for-the-test"
@@ -267,13 +268,13 @@ console.log(JSON.stringify(out));"""
 
 # ---- in headless Chrome -----------------------------------------------------------
 
-CDP_JS = r"""
+CDP_JS = chrome_profile.JS + r"""
 const { spawn } = require('child_process');
 const fs = require('fs'), path = require('path');
 const A = JSON.parse(process.argv[2]);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function launch(extra) {
-  const udd = fs.mkdtempSync(path.join(A.tmp, 'chrome-'));
+  const udd = chromeProfile(A);
   const ch = spawn(A.chrome, ['--headless=new', '--remote-debugging-port=0', '--user-data-dir=' + udd, '--no-first-run',
     '--no-default-browser-check', '--disable-gpu', '--disable-popup-blocking', '--window-size=1440,900', ...extra],
     { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -420,7 +421,7 @@ class InChrome(unittest.TestCase):
         ok, why = dashboard.set_project_po(proj["id"], po["id"])
         assert ok, why
         cls.hub = Hub()
-        args = {"chrome": CHROME, "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{cls.hub.port}", "proj": proj["id"],
+        args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{cls.hub.port}", "proj": proj["id"],
                 "shots": os.environ.get("ENSEMBLE_SHOTS", "")}
         script = base / "app_cdp.js"
         script.write_text(CDP_JS, encoding="utf-8")
