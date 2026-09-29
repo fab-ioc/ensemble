@@ -9382,6 +9382,13 @@ class Handler(BaseHTTPRequestHandler):
             if ".." in sub or sub.startswith("/"):
                 self.send_error(400)
                 return
+            # /static/dock@N/… is /static/dock/…: a page trying the Dock library
+            # again asks under a new address, since a browser keeps a module
+            # that failed (and every module that imports it) failed for the
+            # page's life (#132).
+            m = re.match(r"dock@\d{1,4}/", sub)
+            if m:
+                sub = "dock/" + sub[m.end():]
             f = STATIC_DIR / "static" / sub
             ext = f.suffix.lower()
             mime = {".png": "image/png", ".ico": "image/x-icon",
@@ -11686,6 +11693,18 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p == "/mcp":
             self._handle_mcp(data)
+            return
+        if p == "/api/page-log":
+            # A page's own trouble (the panels' library not loading, #132), in
+            # the hub's log: a browser's console is read by nobody. One line,
+            # cut short, its line breaks flattened. Never from another site.
+            if self.headers.get("Origin") and not self._same_origin_request():
+                self._send_json(403, {"error": "cross_origin"})
+                return
+            what = " ".join(str(data.get("what") or "page").split())[:40] if isinstance(data, dict) else "page"
+            msg = " ".join(str(data.get("msg") or "").split())[:500] if isinstance(data, dict) else ""
+            print(f"[page] {what}: {msg}", flush=True)
+            self._send_json(200, {"ok": True})
             return
         if p.startswith("/api/files/"):
             self._files_post(p, data)
