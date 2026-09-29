@@ -151,14 +151,18 @@ const MID = `(() => {
   const dp = document.getElementById('detail-panel');
   const chat = open ? dp.querySelector('iframe.dp-session') : document.querySelector('#po-panel iframe.po-session:not([hidden])');
   return { mid: document.body.classList.contains('mid'), open, vw: innerWidth, vh: innerHeight, top: Math.round(hd.bottom),
-    panel: open ? box(dp) : box(document.getElementById('po-dock-host')), chat: vis(chat) ? box(chat) : null,
+    panel: document.body.classList.contains('po-dock') && document.body.classList.contains('mid') ? box(PD.els['po-chat'])
+      : open ? box(dp) : box(document.getElementById('po-dock-host')), chat: vis(chat) ? box(chat) : null,
     listR: (() => { const l = document.getElementById('switcher'); return l && !l.hidden ? Math.round(l.getBoundingClientRect().right) : 0; })(),
     convW: parseFloat(getComputedStyle(document.body).getPropertyValue('--conv-w')),
     project: vis(document.getElementById('proj-go')) ? document.querySelector('#proj-go .proj-go-name').textContent : null,
     trail: [...document.querySelectorAll('#bar-crumbs [data-crumb]')].filter(vis).map(e => [e.dataset.crumb, e.textContent, e.tagName === 'BUTTON']),
     crumbsShown: vis(document.getElementById('bar-crumbs')) || vis(document.getElementById('proj-go')),
     header: Math.round(hd.height), scrollW: document.documentElement.scrollWidth, scrollH: document.documentElement.scrollHeight,
-    itab: SELECTED_SID ? ISSUE_TAB : '', front: PD.dock ? PD.dock.frontOf('po-chat') : '', proj: SELECTED_PROJECT, ptab: PROJECT_TAB };
+    itab: SELECTED_SID ? ISSUE_TAB : '', front: PD.dock ? PD.dock.frontOf('po-chat') : '', proj: SELECTED_PROJECT, ptab: PROJECT_TAB,
+    fly: PD.dock ? PD.dock.flyOpen() : null,
+    flyW: (() => { const f = document.querySelector('#po-dock .dk-flyout.open'); return f && document.body.classList.contains('po-dock') ? Math.round(f.getBoundingClientRect().width) : 0; })(),
+    strip: (() => { const s = document.querySelector('#po-dock .dk-strip-right'); return vis(s) && document.body.classList.contains('po-dock') ? Math.round(s.getBoundingClientRect().width) : 0; })() };
 })()`;
 async function main() {
   const { ch, ws } = await launch();
@@ -178,9 +182,9 @@ async function main() {
     await ready();
     return { evalIn, until, shot, ready, sessionId, close: () => c.send('Target.closeTarget', { targetId }) };
   };
-  const go = (p, proj, tab) => p.evalIn(`(() => { try { localStorage.removeItem('cd-po-dock'); localStorage.removeItem('cd-po-dock-phone'); } catch (e) {}
+  const go = (p, proj, tab) => p.evalIn(`(() => { try { ['cd-tool-strip', 'cd-tool-open', 'cd-po-dock-phone'].forEach(k => localStorage.removeItem(k)); } catch (e) {}
     SELECTED_PROJECT = ${JSON.stringify(proj)}; PROJECT_TAB = ${JSON.stringify(tab || 'tasks')}; SB_DEST = ''; renderRows(); return 0; })()`);
-  const poReady = p => p.until('document.body.classList.contains("po-dock") && !!PD.dock && [...document.querySelectorAll(".dk-head")].some(e => e.getBoundingClientRect().height) && !!document.querySelector("#po-panel iframe.po-session:not([hidden])")', 30000);
+  const poReady = p => p.until('document.body.classList.contains("po-dock") && !!PD.dock && [...document.querySelectorAll(".dk-head, #po-dock .dk-strip-btn")].some(e => e.getBoundingClientRect().height) && !!document.querySelector("#po-panel iframe.po-session:not([hidden])")', 30000);
   const sid = `ALL_ROWS.find(r => r.roomId === ${JSON.stringify(A.task)}).sessionId`;
   const openTask = async (p) => {
     await p.evalIn(`openDetail(${sid}); 0`);
@@ -199,7 +203,7 @@ async function main() {
       await p.shot(`middle-${w}-task`);
       if (w !== 1440) { await p.close(); continue; }
       // A task's tool, and the task's crumb that closes it.
-      await click(p, '#detail-panel .dp-tab[data-itab="changes"]');
+      await click(p, '#po-dock .dk-strip-btn[data-dk-auto="changes"]');
       await sleep(300);
       out.taskTool = await p.evalIn(MID);
       await p.shot('middle-1440-task-changes');
@@ -207,7 +211,7 @@ async function main() {
       await sleep(300);
       out.taskUp = await p.evalIn(MID);
       // The page reloaded for an update comes back on the task and its tab.
-      await click(p, '#detail-panel .dp-tab[data-itab="spec"]');
+      await click(p, '#po-dock .dk-strip-btn[data-dk-auto="spec"]');
       await sleep(200);
       await p.evalIn('ensUpd.reload(); 0');
       await sleep(1500);
@@ -287,7 +291,7 @@ async function main() {
       let wsView = '', readme = '';
       const wsUp = async (key, open, kind) => {
         wsView = `[...WS_VIEWS.values()].find(x => x.el && x.el.isConnected && x.ctx.kind === ${JSON.stringify(kind)})`;
-        readme = (kind === 'task' ? '#detail-panel ' : '') + '.wsp .wsp-tree .wse.file[data-path$="README.md"]';
+        readme = (kind === 'task' ? '.pd-ws > .dp-pane ' : '') + '.wsp .wsp-tree .wse.file[data-path$="README.md"]';
         await open();
         await p.until(`!!document.querySelector(${JSON.stringify(readme)})`);
         await click(p, readme);
@@ -309,7 +313,7 @@ async function main() {
         }
       };
       await wsUp('plainWs', async () => { await go(p, A.plain, 'workspace'); }, 'project');
-      await wsUp('taskWs', async () => { await go(p, A.proj); await poReady(p); await openTask(p); await click(p, '#detail-panel .dp-tab[data-itab="workspace"]'); }, 'task');
+      await wsUp('taskWs', async () => { await go(p, A.proj); await poReady(p); await openTask(p); await click(p, '#po-dock .dk-strip-btn[data-dk-auto="workspace"]'); }, 'task');
       await p.close();
     }
     // ---- a tool hidden on a phone is a tab again on a desktop, and hidden again on the phone (R1-F4)
@@ -318,13 +322,14 @@ async function main() {
       await go(r, A.proj); await poReady(r); await sleep(400);
       await r.evalIn("PD.dock.setVisible('workspace', false); 0");
       await sleep(200);
-      const tabs = `[...document.querySelectorAll('#po-dock .dk-tab')].filter(e => e.getBoundingClientRect().width > 0).map(e => e.textContent.trim())`;
+      const tabs = `[...document.querySelectorAll('#po-dock .dk-stack .dk-tab')].filter(e => e.getBoundingClientRect().width > 0).map(e => e.textContent.trim())`;
       out.bpPhone = { mid: await r.evalIn("document.body.classList.contains('mid')"), ws: await r.evalIn("PD.dock.isVisible('workspace')") };
       await c.send('Emulation.setTouchEmulationEnabled', { enabled: false }, r.sessionId);
       await c.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, r.sessionId);
       await r.until("document.body.classList.contains('mid')");
       await sleep(500);
-      out.bpDesk = { ws: await r.evalIn("PD.dock.isVisible('workspace')"), tabs: await r.evalIn(tabs) };
+      out.bpDesk = { ws: await r.evalIn("PD.dock.isVisible('workspace')"), tabs: await r.evalIn(tabs),
+        strip: await r.evalIn("[...document.querySelectorAll('#po-dock .dk-strip-btn')].filter(e => e.getBoundingClientRect().width > 0).map(e => e.dataset.dkAuto)") };
       await c.send('Emulation.setDeviceMetricsOverride', { width: 430, height: 932, deviceScaleFactor: 3, mobile: true }, r.sessionId);
       await c.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 }, r.sessionId);
       await r.until("!document.body.classList.contains('mid')");
@@ -444,7 +449,8 @@ class TheMiddle(unittest.TestCase):
         self.assertLessEqual(abs(g["panel"]["b"] - g["vh"]), 1, f"{what}: reaches the bottom")
         self.assertEqual(g["panel"]["x"], g["listR"], f"{what}: from the list's right edge")
         self.assertGreater(g["listR"], 0, f"{what}: the task list is there")
-        self.assertEqual(g["panel"]["r"], g["vw"], f"{what}: to the right edge")
+        self.assertEqual(g["panel"]["r"], g["vw"] - g["strip"] - g["flyW"], f"{what}: to the tool strip (or the tool open beside it)")
+        self.assertEqual(g["strip"], 44 if g["open"] or g["front"] else 0, f"{what}: the strip is 44px")
         self.assertIsNotNone(g["chat"], f"{what}: the conversation shows")
         self.assertLessEqual(g["chat"]["w"], g["convW"] + 1, f"{what}: a column")
         left, right = g["chat"]["x"] - g["panel"]["x"], g["panel"]["r"] - g["chat"]["r"]
@@ -473,9 +479,10 @@ class TheMiddle(unittest.TestCase):
         self.assertTrue(self.got["taskTool"]["trail"][0][2], "the task goes up")
 
     def test_the_task_crumb_closes_the_tool_and_keeps_the_conversation(self):
+        self.assertEqual(self.got["taskTool"]["fly"], "changes")
         g = self.got["taskUp"]
         self.assertTrue(g["open"])
-        self.assertEqual(g["itab"], "activity")
+        self.assertIsNone(g["fly"], "the tool went back to the strip")
         self.assertEqual([t[0] for t in g["trail"]], ["task"])
 
     def test_the_project_crumb_goes_to_its_pos_conversation(self):
@@ -485,8 +492,9 @@ class TheMiddle(unittest.TestCase):
         self.assertEqual(g["trail"], [["po", "PO", False]])
 
     def test_a_po_tool_goes_back_to_the_po_chat(self):
-        self.assertEqual(self.got["poTool"]["front"], "board")
+        self.assertEqual(self.got["poTool"]["fly"], "board")
         self.assertEqual(self.got["poTool"]["trail"], [["po", "PO", True], ["tool", "Board", False]])
+        self.assertIsNone(self.got["poUp"]["fly"])
         self.assertEqual(self.got["poUp"]["front"], "po-chat")
         self.assertEqual(self.got["poUp"]["trail"], [["po", "PO", False]])
 
@@ -503,10 +511,10 @@ class TheMiddle(unittest.TestCase):
         u = self.got["plainUp"]
         self.assertEqual((u["ptab"], u["trail"]), ("tasks", []), "back to its board")
 
-    def test_a_reload_comes_back_on_the_task_and_its_tab(self):
+    def test_a_reload_comes_back_on_the_task_and_its_tool(self):
         g = self.got["reloaded"]
         self.assertTrue(g["open"])
-        self.assertEqual(g["itab"], "spec")
+        self.assertEqual(g["fly"], "spec")
         self.assertEqual(g["proj"], self.proj)
 
     def test_the_crumbs_are_legible_in_every_theme(self):
@@ -551,10 +559,11 @@ class TheMiddle(unittest.TestCase):
                     self.assertTrue(g["shown"], "the file is shown in the tree")
                     self.assertTrue(g["mark"].endswith("README.md"), g["mark"])
 
-    def test_a_tool_hidden_on_a_phone_is_a_tab_on_a_desktop(self):
+    def test_a_tool_hidden_on_a_phone_is_on_the_strip_on_a_desktop(self):
         self.assertEqual(self.got["bpPhone"], {"mid": False, "ws": False})
         self.assertTrue(self.got["bpDesk"]["ws"])
-        self.assertIn("Workspace", self.got["bpDesk"]["tabs"])
+        self.assertEqual(self.got["bpDesk"]["tabs"], [], "no tabs on a desktop")
+        self.assertEqual(self.got["bpDesk"]["strip"], ["points", "changes", "workspace", "board", "spec"])
         self.assertFalse(self.got["bpBack"]["ws"], "the phone keeps what it hid")
 
     def test_a_phone_keeps_its_layout(self):

@@ -1108,15 +1108,14 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   body.mid #detail-panel .wsp-side { border-right: 1px solid var(--border); border-bottom: 0; }
   body.mid #detail-panel .dp-pane[data-pane="changes"] { padding: 0 0 var(--s-300); }
   body.mid .tch { height: max(420px, calc(var(--dp-fill, 100vh) - var(--s-300))); }
-  /* A PO screen: its tools are tabs above the PO's conversation (the Dock's
-     narrow mode) and it fills the middle; the conversation keeps to the
-     column, its header lined up with it. */
+  /* The dock (a PO's conversation, or an open task's, and the tool strip,
+     #125) fills the middle; the PO's conversation keeps to the column, its
+     header lined up with it. */
   body.mid.po-dock main { margin-left: var(--list-w); padding: 0; height: calc(100dvh - var(--top-h)); }
   body.mid.po-dock #po-dock-host { border: 0; border-radius: 0; }
-  body.mid #po-dock.dk-narrow .dk-head { flex-basis: 36px; height: 36px; }
-  body.mid #po-dock.dk-narrow .pd-chat > #po-panel .po-frames { background: var(--bg); justify-content: center; }
-  body.mid #po-dock.dk-narrow .pd-chat > #po-panel .po-frames iframe { max-width: var(--conv-w); }
-  body.mid #po-dock.dk-narrow .pd-chat > #po-panel .po-head { padding-inline: max(var(--s-300), calc((100% - var(--conv-w)) / 2)); }
+  body.mid #po-dock .pd-chat > #po-panel .po-frames { background: var(--bg); justify-content: center; }
+  body.mid #po-dock .pd-chat > #po-panel .po-frames iframe { max-width: var(--conv-w); }
+  body.mid #po-dock .pd-chat > #po-panel .po-head { padding-inline: max(var(--s-300), calc((100% - var(--conv-w)) / 2)); }
   /* The PO drawer (the pill, over a task that is not in a PO's project)
      sits at the right edge of the middle. */
   body.mid.po-peek.detail-open #po-panel { right: 0; }
@@ -3201,7 +3200,48 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .dk-strip-btn { border: 1px solid var(--border); border-radius: var(--r-200); background: var(--surface); color: var(--fg-subtle); font-weight: 500; }
   .dk-strip-btn:hover { background: var(--hover); border-color: var(--border-strong); color: var(--fg); }
   .dk-strip-btn.on { background: var(--selected-bg); border-color: var(--border-strong); color: var(--selected-fg); }
-  .dk-strip-left .dk-strip-btn, .dk-strip-right .dk-strip-btn { padding: var(--s-300) 0; }
+  .dk-strip-left .dk-strip-btn:not(.dk-strip-icon-btn), .dk-strip-right .dk-strip-btn:not(.dk-strip-icon-btn) { padding: var(--s-300) 0; }
+  /* ---- The tool strip (layout A, #125): a desktop's tools as icons on the
+     right edge, a count in an icon's corner; the open one lies beside the
+     conversation, which narrows. */
+  #po-dock { --dk-strip-badge-bg: var(--surface); --dk-strip-badge-fs: 10px; }
+  .dk-strip-icon-btn .dk-strip-badge { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; border-radius: var(--r-100); }
+  .dk-strip-btn.on .dk-strip-badge { background: var(--surface); }
+  .dk-flyout.dk-fly-beside { border-top: 0; border-bottom: 0; }
+  /* The middle keeps what it needs at any width (--pd-main-min, pdToolsFit:
+     the conversation's 360px and the minimums of the tools docked beside
+     it): a tool's width is taken when the dock is made (and a saved layout
+     keeps it), so on a narrower window the open tool gives way, and has its
+     width again when there is room. Where that leaves it too little room
+     (pd-fly-over), it lies over the middle instead, as a float. The library
+     sizes it only against 85% of the dock: an ask for Dock. */
+  #po-dock:not(.dk-narrow) .dk-main { min-width: var(--pd-main-min, 360px); }
+  #po-dock:not(.dk-narrow) .dk-flyout.dk-fly-beside { max-width: calc(100% - var(--dk-strip) - var(--pd-main-min, 360px)); min-width: min(300px, calc(100% - var(--dk-strip))); }
+  #po-dock.pd-fly-over:not(.dk-narrow) .dk-main { margin-right: 0 !important; }
+  #po-dock.pd-fly-over:not(.dk-narrow) .dk-flyout.dk-fly-beside { max-width: none; box-shadow: var(--e-200); border-left: 1px solid var(--border-strong); }
+  /* The middle is the conversation alone: no title bar over it. */
+  #po-dock:not(.dk-narrow) .dk-stack:has(> .dk-body > .pd-chat) > .dk-head { display: none; }
+  /* An open task is that conversation (pdPlaceTask): the task panel fills
+     the middle, its tabs gone (its tools are on the strip). */
+  body.mid.dp-docked #detail-panel {
+    position: absolute; inset: 0; width: auto; transform: none; transition: none; z-index: auto;
+  }
+  body.mid.dp-docked #detail-panel > .dp-tabs { display: none; }
+  body.mid.dp-docked #view { display: none; }
+  /* A tool holding the task's pane shows that, not the PO's. */
+  .pd-for-task > :not(.dp-pane) { display: none !important; }
+  .pd-for-task > .dp-pane { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  .pd-changes > .dp-pane .tch { flex: 1 1 auto; height: auto; min-height: 0; }
+  .pd-ws > .dp-pane .wsp { flex: 1 1 auto; height: auto; min-height: 0; }
+  .pd-spec { overflow: auto; padding: var(--s-300) var(--s-400); }
+  .pd-spec.pd-for-task > .dp-pane { display: block; flex: none; }
+  .pd-spec > .dp-pane[data-pane="details"] { margin-top: var(--s-400); }
+  .pd-spec-po { margin: 0; color: var(--fg-muted); font-size: var(--fs-300); max-width: 60ch; }
+  /* The Board's ⤢ (full width), at the end of its view switch's row. */
+  .pd-board-max { margin-left: var(--s-200); width: 28px; height: 28px; border: 1px solid var(--border); border-radius: var(--r-200);
+    background: var(--surface); color: var(--fg-subtle); font: inherit; cursor: pointer; }
+  .pd-board-max:hover { background: var(--hover); color: var(--fg); }
+  .pd-board-max:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
   .dk-float, .dk-flyout { border-color: var(--border); }
   .dk-stack.dk-max { box-shadow: 0 0 0 1px var(--border); }
   .dk-menu {
@@ -3565,8 +3605,9 @@ window.DOC_LISTENERS_PAUSED = false;
       <div data-panel="po-chat" data-title="PO chat" class="pd-chat"></div>
       <div data-panel="points" data-title="Your asks" class="pd-points pd-pane"></div>
       <div data-panel="board" data-title="Board" class="pd-board pd-pane"></div>
-      <div data-panel="workspace" data-title="Workspace" class="pd-ws"></div>
+      <div data-panel="workspace" data-title="Files" class="pd-ws"></div>
       <div data-panel="changes" data-title="Changes" class="pd-changes"></div>
+      <div data-panel="spec" data-title="Spec" class="pd-spec"><p class="pd-spec-po">A PO has no spec: its conversation is where the work is asked for. Open a task to read its spec and details here.</p></div>
     </div>
     <!-- The PO's conversation, for the same reason again: it is a live session.
          On a Dock it is in the PO chat panel (pdPlaceChat). -->
@@ -4310,6 +4351,17 @@ function openDetail(sid) {
     CHAT_THEME = null;
   }
   SELECTED_SID = sid;
+  // Layout A (#125): on a desktop the task's project becomes the page's, so
+  // the tools beside it (Board, Your asks) are its project's, and closing it
+  // lands there.
+  if (!isPhone()) {
+    const r = rowBySid(sid);
+    const pj = r && (projectOfRoom(r.roomId || r.sessionId) || wsProjectForRow(r));
+    if (pj) {
+      if (SELECTED_PROJECT !== pj.id) WS_SCOPE = '';
+      SELECTED_PROJECT = pj.id; PROJECT_TAB = 'tasks'; SB_DEST = '';
+    }
+  }
   const p = $('#detail-panel'); if (p) p.dataset.sig = '';
   document.body.classList.add('detail-open');
   // On a phone the PO's drawer is full width: a task opened from it comes to
@@ -4716,12 +4768,17 @@ function renderDetail() {
   if (panel.dataset.shell !== sid) {
     panel.dataset.shell = sid;
     delete panel.dataset.topPending;
+    // The last task's panes, wherever they are (a tool of the dock).
+    Object.values(panel._panes || {}).forEach(x => x.remove());
     panel.innerHTML = '<div class="dp-top"></div>'
       + '<div class="dp-tabs">' + ISSUE_TABS.map(t =>
           `<button class="dp-tab" data-itab="${t.k}">${esc(t.name)}</button>`).join('') + '</div>'
       + ISSUE_TABS.map(t => `<div class="dp-pane" data-pane="${t.k}" hidden></div>`).join('');
+    panel._panes = {};
+    panel.querySelectorAll('.dp-pane').forEach(x => { panel._panes[x.dataset.pane] = x; });
   }
   panel.classList.toggle('is-live', liveEmbed);
+  const docked = dpPlacePanes(panel);
 
   // Top slot.
   const top = panel.querySelector('.dp-top');
@@ -4742,12 +4799,16 @@ function renderDetail() {
   tickAgo(top);
 
   // Tabs: fixed five, fixed labels. Only which one is on moves.
+  // In the dock every pane is on screen with its tool, the conversation in
+  // the middle; a pane's tool on screen is what "shown" means for it.
   const cur = issueTab(r);
+  const panes = panel._panes;
   panel.querySelectorAll('.dp-tab[data-itab]').forEach(b => b.classList.toggle('on', b.dataset.itab === cur));
-  panel.querySelectorAll('.dp-pane').forEach(p => { p.hidden = p.dataset.pane !== cur; });
+  Object.values(panes).forEach(p => { p.hidden = !docked && p.dataset.pane !== cur; });
+  const on = k => docked ? pdToolOn(k === 'details' ? 'spec' : k) : cur === k;
 
   // Activity.
-  const act = panel.querySelector('.dp-pane[data-pane="activity"]');
+  const act = panes.activity;
   if (liveEmbed) {
     // Only the room identity may rebuild the terminal. A label, a pin or an
     // idle flip must not reconnect a running agent's session.
@@ -4773,8 +4834,8 @@ function renderDetail() {
 
   // Changes: this task's branch, mounted the first time the tab is shown and
   // re-read each time it is shown again.
-  const ch = panel.querySelector('.dp-pane[data-pane="changes"]');
-  const chShown = cur === 'changes';
+  const ch = panes.changes;
+  const chShown = on('changes');
   if (chShown && !ch._shown) {
     const tv = TCH_VIEWS.get(sid);
     if (ch.querySelector('.tch') && tv && tv.el === ch) tchSync(tv);
@@ -4784,14 +4845,14 @@ function renderDetail() {
   const chView = TCH_VIEWS.get(sid);
   if (chView && chView.el === ch) drPaintTray(chView.rv);   // Submit follows the task starting or stopping
   // Spec.
-  const sp = panel.querySelector('.dp-pane[data-pane="spec"]');
+  const sp = panes.spec;
   const spHtml = specPaneHtml(r);
   if (sp._html !== spHtml) { sp._html = spHtml; sp.innerHTML = spHtml; }
 
   // Workspace: main's Files pane, mounted once when it is first shown with a
   // folder to show, and never rebuilt after that.
-  const ws = panel.querySelector('.dp-pane[data-pane="workspace"]');
-  if (cur === 'workspace' && !ws.querySelector('.wsp')) {
+  const ws = panes.workspace;
+  if (on('workspace') && !ws.querySelector('.wsp')) {
     if (wsRoots({ kind: 'task', sid }).length) {
       ws.innerHTML = wsPanelHtml();
       wsMount(ws.querySelector('.wsp'), { kind: 'task', sid });
@@ -4802,13 +4863,31 @@ function renderDetail() {
   }
 
   // Details.
-  const det = panel.querySelector('.dp-pane[data-pane="details"]');
+  const det = panes.details;
   const detHtml = detailInfo(r);
   if (det._html !== detHtml) { det._html = detHtml; det.innerHTML = detHtml; }
 
   if (panel._fitFor !== sid) { panel._fitFor = sid; watchLiveChatFit(panel); }
   fitLiveChat();
+  if (docked) pdChangesBadge();
   barCrumbs();
+}
+// Where the task panel's panes are: its own, as tabs; or, while it is the
+// middle of the dock (pdTask), Changes, Files and Spec (with Details under
+// it) each in its tool. Moved only when that changes, with moveBefore, so an
+// open file or diff keeps its page. Returns whether they are in the dock.
+function dpPlacePanes(panel) {
+  const panes = panel && panel._panes;
+  if (!panes) return false;
+  const docked = !!(PD.dock && panel.parentNode === PD.els['po-chat']);
+  const tool = { changes: 'changes', workspace: 'workspace', spec: 'spec', details: 'spec' };
+  ISSUE_TABS.forEach(t => {
+    const x = panes[t.k];
+    const home = docked && tool[t.k] ? PD.els[tool[t.k]] : panel;
+    if (x && x.parentNode !== home) pdMove(home, x);
+  });
+  panel.classList.toggle('dp-in-dock', docked);
+  return docked;
 }
 
 // The live chat is exactly as tall as the panel below the header and tabs, so
@@ -4841,7 +4920,7 @@ function fitTabs(panel) {
 function fitLiveChat() {
   const panel = $('#detail-panel'); if (!panel) return;
   fitTabs(panel);
-  const pane = panel.querySelector('.dp-pane:not([hidden])');
+  const pane = panel.classList.contains('dp-in-dock') ? panel._panes && panel._panes.activity : panel.querySelector('.dp-pane:not([hidden])');
   if (!pane) return;
   // In the middle (body.mid) the Workspace fills it too: its tree and file
   // scroll inside it, as they do on a project's screen.
@@ -6218,7 +6297,10 @@ async function refreshProjects() {
 }
 function viewSwitchHtml() {
   const b = (m, label) => `<button data-view="${m}" class="${VIEW_MODE === m ? 'on' : ''}">${label}</button>`;
-  return `<div class="viewsw">${b('board', 'Board')}${b('list', 'List')}</div>`;
+  // On the tool strip (a desktop) the Board can take the whole width (#125).
+  const max = document.body.classList.contains('mid')
+    ? '<button type="button" class="pd-board-max" aria-label="Board: full width" title="Board: full width (again to put it back)">⤢</button>' : '';
+  return `<div class="viewsw">${b('board', 'Board')}${b('list', 'List')}</div>${max}`;
 }
 // The Panels menu of a project's PO screen: each panel shown or hidden, and
 // Reset layout (pdMenu).
@@ -9418,11 +9500,14 @@ function renderPo() {
   // lead the page) must not choose the PO the next time the pill opens it.
   if (!PO_PEEK) PO_PIN = '';
   const pj = split || (PO_PEEK ? ctx : null);
-  document.body.classList.toggle('po-dock', dock && !!PD.lib);
+  document.body.classList.toggle('po-dock', (dock || pdTaskWanted()) && !!PD.lib);
   document.body.classList.toggle('po-peek', !split && !!pj);
   renderPoPill(ctx);
   // Where it is: in the PO chat panel, or at home as the drawer.
   if (PD.lib) pdPlaceChat();
+  // A task open in a project without a PO: its Your asks has no PO to
+  // follow, and says so (nothing of the PO seen before stays).
+  if (!dock && PD.dock && PD.chatKey !== null) { PD.chatKey = null; PD.ptSig = ''; pdPaintPoints(); }
   // While the panels load there is no panel yet for the PO to be in.
   if (!pj || (split && !PD.lib)) { panel.hidden = true; return; }
   if (pj.id !== PO_LAST) { PO_LAST = pj.id; try { localStorage.setItem('cd-po-last', pj.id); } catch (e) {} }
@@ -9541,29 +9626,46 @@ function poPillClick() {
 // Pure down to pdPointsHtml, so tests/test_po_dock.py runs them in Node.
 // A layout saved while there was a Documents panel loads without it: the
 // library drops a panel it does not know (its documents are in the Workspace).
-const PD_IDS = ['po-chat', 'points', 'board', 'workspace', 'changes'];
-const PD_TITLES = { 'po-chat': 'PO chat', points: 'Your asks', board: 'Board', workspace: 'Workspace', changes: 'Changes' };
+const PD_IDS = ['po-chat', 'points', 'board', 'workspace', 'changes', 'spec'];
+const PD_TITLES = { 'po-chat': 'PO chat', points: 'Your asks', board: 'Board', workspace: 'Files', changes: 'Changes', spec: 'Spec' };
 const PD_MIN = { 'po-chat': { w: 360, h: 200 }, points: { w: 260, h: 120 }, board: { w: 320, h: 160 },
-                 workspace: { w: 480, h: 200 }, changes: { w: 420, h: 200 } };
-const PD_KEYS = { desk: 'cd-po-dock', phone: 'cd-po-dock-phone' };   // phone: the narrow dock's
-// From this width the Board is on screen too: the chat's lines stop getting
-// longer at about 700px, so a wider screen's width goes to the board.
-const PD_WIDE = 1800;
-// The default layout. A laptop (about 1440 wide): the PO chat and Points side
-// by side, the Board, Workspace and Changes on a strip at the right edge, one
-// click away (each slides out over most of the width, and pins back beside
-// Points). A wide screen adds the Board on the right. A phone: every panel a
-// tab of one column. `L` is the library's layout model (stack, split).
+                 workspace: { w: 300, h: 200 }, changes: { w: 300, h: 200 }, spec: { w: 320, h: 160 } };
+// desk: the tool strip's (layout A step 3); the phone's narrow dock keeps its own.
+const PD_KEYS = { desk: 'cd-tool-strip', phone: 'cd-po-dock-phone' };
+// Layout A (#125), a desktop: the conversation in the middle (the PO's, or an
+// open task's), its tools on a strip at the right edge, in this order. A click
+// on one opens it beside the conversation, which narrows; Pin docks it there.
+const PD_TOOLS = ['points', 'changes', 'workspace', 'board', 'spec'];
+// The strip's icons (stroke in the text colour): a list of asks, a branch, a
+// folder, board columns, a page.
+const PD_ICON = (() => {
+  const svg = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+  return {
+    points: svg('<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6h.01M4 12h.01M4 18h.01" stroke-width="3"/>'),
+    changes: svg('<circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="8" r="2"/><path d="M6 7v10M18 10c0 4-6 3-11.5 7.5"/>'),
+    workspace: svg('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'),
+    board: svg('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/>'),
+    spec: svg('<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h6"/>'),
+  };
+})();
+// How far a tool slides out: the diff and the files take most of what the
+// list and the strip leave (a conversation keeps at least its 360px); the
+// asks and the spec are reading widths. Taken when the dock is made; on a
+// narrower window CSS keeps the conversation its 360px (the "tool strip").
+function pdToolSize(id, vw) {
+  const avail = (vw || 1440) - (parseFloat(getComputedStyle(document.body).getPropertyValue('--list-w')) || 0) - 44;
+  if (id === 'points') return 400;
+  if (id === 'spec') return 480;
+  return Math.round(Math.max(480, Math.min(760, avail * 0.6, avail - 400)));
+}
+// The default layouts. A desktop: the conversation, every tool on the strip
+// (Pin puts one beside the conversation). A phone: every panel a tab of one
+// column, the spec left out (a phone's open task has its own tabs). `L` is
+// the library's layout model (stack, split).
 function pdDefaultLayout(L, ctx) {
-  const w = (ctx && ctx.viewportPx) || 1440;
-  if (ctx && ctx.phone) return { root: L.stack(PD_IDS.slice(), { active: 'po-chat' }) };
-  const strip = id => ({ id, edge: 'right', size: Math.round(w * 0.72), home: { peers: [], near: 'points', side: 'right', size: Math.round(w * 0.4) } });
-  if (w >= PD_WIDE) {
-    return { root: L.split('row', [L.stack(['po-chat']), L.stack(['points'], { size: 320 }), L.stack(['board'], { size: Math.round(w * 0.46) })]),
-             auto: ['workspace', 'changes'].map(strip) };
-  }
-  return { root: L.split('row', [L.stack(['po-chat']), L.stack(['points'], { size: 340 })]),
-           auto: ['board', 'workspace', 'changes'].map(strip) };
+  if (ctx && ctx.phone) return { root: L.stack(PD_IDS.filter(id => id !== 'spec'), { active: 'po-chat' }), hidden: [{ id: 'spec' }] };
+  return { root: L.stack(['po-chat']),
+           auto: PD_TOOLS.map(id => ({ id, edge: 'right', home: { peers: [], near: 'po-chat', side: 'right' } })) };
 }
 // What the Points panel lists, by stage (points.py): what waits for the PO,
 // what is in progress (planned, with its task and where it is), what is
@@ -9778,20 +9880,28 @@ function pdOnResize(fn) {
   window.addEventListener('resize', fn);
   PD_POP_WINS.forEach((rs, w) => { try { w.addEventListener('resize', fn); rs.push(fn); } catch (e) {} });
 }
-// Layout A (#124): the PO screen is one conversation in the middle, its tools
-// tabs above it; that is the dock's narrow mode, at every width until the
-// tool strip (step 3) gives a desktop a wide dock again.
-function pdNarrow() { return true; }
+// A phone's dock is narrow: one column of tabs (layout A's step 5 is still to
+// come). A desktop's is the tool strip (#125).
+function pdNarrow() { return isPhone(); }
+// Layout A: an open task on a desktop is the middle's conversation, in the
+// dock like the PO's, with the same tools on the strip (its own changes,
+// files and spec). Not while the dock cannot load: the task panel then has
+// its tabs as before.
+function pdTaskWanted() {
+  return !isPhone() && !PD.failed && !!SELECTED_SID && document.body.classList.contains('detail-open');
+}
+function pdTask() { return pdTaskWanted() && !!PD.dock && !PD.dock.narrow(); }
 // The dock, made once. A phone's is narrow (one column of tabs, nothing that
 // moves a panel), with a layout of its own; a resize across that line
 // switches it (the listener after pdPopChat).
 function pdEnsure() {
   if (PD.dock) return PD.dock;
   const L = PD.lib;
+  const vw = innerWidth;
   window.DOC_LISTENERS_PAUSED = true;   // the dock's own listeners are not the page's
   try { PD.dock = L.createDock({
     root: PD_ROOT,
-    panels: PD_IDS.map(id => ({ id, title: PD_TITLES[id], el: PD.els[id] })),
+    panels: PD_IDS.map(id => ({ id, title: PD_TITLES[id], el: PD.els[id], icon: PD_ICON[id], unpinSize: PD_ICON[id] ? pdToolSize(id, vw) : undefined })),
     storageKey: PD_KEYS.desk,
     defaultLayout: ctx => pdDefaultLayout(L, ctx),
     narrow: pdNarrow(),
@@ -9799,7 +9909,15 @@ function pdEnsure() {
     narrowLayout: ctx => pdDefaultLayout(L, { ...ctx, phone: true }),
     fill: 'po-chat',
     minSize: PD_MIN,
-    sizes: { head: 32, strip: 28, unpinSize: 720 },
+    sizes: { head: 32, strip: 44, unpinSize: 720 },
+    // A click opens a tool beside the conversation, and it stays open until
+    // its button, its close control or Esc puts it back.
+    stripHover: false,
+    stripOpen: 'beside',
+    // The conversation stays where it is; a tool can be docked beside it, split,
+    // popped out, but not hidden (nothing would show it again). A phone's
+    // Panels menu hides and shows them.
+    can: (id, a) => isPhone() || (id !== 'po-chat' && a !== 'hide'),
     popName: 'ensemble-panel-',
     popTitle: p => `${p.title} · ${(projectById(PD.pid) || {}).name || 'Ensemble'}`,
     // The library's pop-out page as the hub serves it, not from a blob:
@@ -9812,33 +9930,86 @@ function pdEnsure() {
     modalSelector: '[role="dialog"], dialog, .dk-help-pop, .dcm',
     text: { empty: 'Every panel is on a strip at an edge or hidden: the Panels menu above shows them.' },
   }); } finally { window.DOC_LISTENERS_PAUSED = false; }
-  PD.dock.onChange(() => { pdPlaceChat(); barCrumbs(); });
+  PD.dock.onChange(() => { pdKeepMiddle(); pdToolsFit(); pdPlaceChat(); barCrumbs(); });
   pdToolsFit();
   PD.dock.onShown(id => pdShown(id));
   // Before the chat panel comes back from its window: the window's own chat goes.
   PD.dock.onPopIn(id => { if (id === 'po-chat') pdPopChat(false); });
+  pdKeepMiddle();
   pdPlaceChat();
+  pdToolRestore();
   return PD.dock;
 }
-// Layout A: every tool is a tab on a desktop, where no menu shows a hidden one.
-// The phone and the desktop share the narrow layout, so what a phone hid is
-// remembered as it comes back, and hidden again when the screen is a phone's.
-const PD_PHONE_HIDDEN = 'cd-po-dock-phone-hidden';
+// The middle is the conversation alone: a tool dropped into its stack goes
+// beside it, at the right.
+function pdKeepMiddle() {
+  const d = PD.dock;
+  if (!d || d.narrow()) return;
+  const find = n => !n ? null : n.t === 'stack' ? (n.panels.includes('po-chat') ? n : null) : (n.kids || []).map(find).find(Boolean) || null;
+  const st = find(d.layout().root);
+  const extra = st ? st.panels.filter(id => id !== 'po-chat') : [];
+  extra.forEach(id => d.dockEdge(id, 'right'));
+  if (extra.length) d.activate('po-chat');
+}
+// The tool open beside the conversation, per browser: open again after a
+// reload (the library keeps a slid-out panel in no layout).
+const PD_TOOL_KEY = 'cd-tool-open';
+function pdToolSaved() {
+  try { return localStorage.getItem(PD_TOOL_KEY) || ''; } catch (e) { return ''; }
+}
+function pdToolRestore() {
+  const d = PD.dock, id = pdToolSaved();
+  if (d && !d.narrow() && PD_TOOLS.includes(id) && d.isAuto(id) && d.flyOpen() !== id) d.openFly(id);
+}
+function pdToolRemember() {
+  const d = PD.dock;
+  if (!d || d.narrow() || !document.body.classList.contains('po-dock')) return;
+  const id = d.flyOpen() || '';
+  if (id === (PD.flySeen || '')) return;
+  PD.flySeen = id;
+  try { if (id) localStorage.setItem(PD_TOOL_KEY, id); else localStorage.removeItem(PD_TOOL_KEY); } catch (e) {}
+  // What the tool shows is drawn as it comes out (a task's Changes and Files
+  // mount the first time they are on screen).
+  if (id) pdShown(id);
+  else barCrumbs();
+}
+// The tool the breadcrumb names: the one slid out, else the first docked one
+// on screen.
+function pdToolShown() {
+  const d = PD.dock;
+  if (!d) return '';
+  return d.flyOpen() || PD_TOOLS.find(id => !d.isAuto(id) && pdToolOn(id)) || '';
+}
+// Whether a tool is on screen: slid out, or docked in front of its stack.
+function pdToolOn(id) {
+  const d = PD.dock;
+  if (!d || !document.body.classList.contains('po-dock')) return false;
+  if (d.isAuto(id)) return d.flyOpen() === id;
+  if (d.popWindow(id)) return true;
+  return d.isVisible(id) && d.frontOf(id) === id;
+}
+// A phone's dock is one column of tabs, where the Panels menu shows or hides
+// each panel. The spec is not one of them (a phone's open task has its own).
 function pdToolsFit() {
   const d = PD.dock;
-  if (!d || !d.narrow()) return;
-  let hid = [];
-  try { hid = JSON.parse(localStorage.getItem(PD_PHONE_HIDDEN) || '[]'); } catch (e) {}
-  if (!Array.isArray(hid)) hid = [];
-  if (isPhone()) {
-    hid.forEach(id => { if (id !== 'po-chat' && PD_IDS.includes(id) && d.isVisible(id)) d.setVisible(id, false); });
-    try { localStorage.removeItem(PD_PHONE_HIDDEN); } catch (e) {}
-    return;
-  }
-  const now = PD_IDS.filter(id => !d.isVisible(id));
-  if (!now.length) return;
-  try { localStorage.setItem(PD_PHONE_HIDDEN, JSON.stringify([...new Set([...hid, ...now])])); } catch (e) {}
-  now.forEach(id => d.setVisible(id, true));
+  if (!d) return;
+  if (d.narrow()) { if (d.isVisible('spec')) d.setVisible('spec', false); return; }
+  // A desktop: what the middle needs (the tools docked in it too), and whether an
+  // open tool still has room beside it (else it lies over it).
+  const need = Math.max(PD_MIN['po-chat'].w, pdNeedW(d.layout().root));
+  PD_ROOT.style.setProperty('--pd-main-min', need + 'px');
+  const avail = PD_ROOT.clientWidth - 44;
+  PD_ROOT.classList.toggle('pd-fly-over', avail > 0 && avail - need < PD_FLY_MIN);
+}
+// The narrowest a tool opens beside the middle.
+const PD_FLY_MIN = 300;
+// The least width a layout node takes: its panels' minimums, side by side in
+// a row (with the 5px bars between), a minimised stack its title bar.
+function pdNeedW(n) {
+  if (!n) return 0;
+  if (n.t === 'stack') return n.min ? 33 : Math.max(0, ...n.panels.map(id => (PD_MIN[id] || { w: 0 }).w));
+  const k = (n.kids || []).map(pdNeedW);
+  return n.dir === 'row' ? k.reduce((a, b) => a + b, 0) + 5 * Math.max(0, k.length - 1) : Math.max(0, ...k);
 }
 // A click on a minimised panel's title bar restores it (Dock), and the bar can
 // move from under the pointer: the second click of a double click then lands
@@ -9859,6 +10030,7 @@ PD_ROOT.addEventListener('click', pdDblGuard, true);
 function pdShown(id) {
   if (id === 'board' || id === 'workspace' || id === 'changes') renderRows();
   if (id === 'points') pdPaintPoints(true);
+  if (pdTask() && id !== 'po-chat') renderDetail();
   pdPlaceChat();
   barCrumbs();
 }
@@ -9894,12 +10066,55 @@ function pdMove(parent, el, before) {
 function pdPlaceChat() {
   const ph = PD.els['po-chat'];
   const dock = document.body.classList.contains('po-dock') && !!PD.dock;
-  const inPanel = dock && !PO_PEEK && ph.ownerDocument === document && ph.isConnected && !ph.closest('.dk-parking');
+  const task = dock && pdTask();
+  const inPanel = dock && !task && !PO_PEEK && ph.ownerDocument === document && ph.isConnected && !ph.closest('.dk-parking');
   const home = inPanel ? ph : PD_HOST;
   if (PO_PANEL.parentNode !== home) pdMove(home, PO_PANEL);
   PO_PANEL.classList.toggle('pd-off', dock && !PO_PEEK && !inPanel);
+  pdPlaceTask(task);
   if (PD.dock) pdPopChat(ph.ownerDocument !== document);
   pdPointsFrame();   // what is on screen changed: the chat's points line follows
+}
+// An open task on a desktop (pdTask) is the middle's conversation: the task
+// panel moves into the conversation's place in the dock, and back to the page
+// when it closes or the dock goes (with moveBefore: its live chat keeps its
+// page). Its tools' panes follow (dpPlacePanes).
+function pdPlaceTask(on) {
+  const ph = PD.els['po-chat'];
+  const DP_EL = document.getElementById('detail-panel'), DP_RESIZE = document.getElementById('detail-panel-resize');
+  on = !!on && ph.ownerDocument === document;
+  const home = on ? ph : DP_RESIZE.parentNode;
+  const moved = DP_EL.parentNode !== home;
+  if (moved) pdMove(home, DP_EL, on ? null : DP_RESIZE);
+  document.body.classList.toggle('dp-docked', on);
+  ['changes', 'workspace', 'spec'].forEach(id => PD.els[id].classList.toggle('pd-for-task', on));
+  dpPlacePanes(DP_EL);
+  pdChangesBadge();
+  // Its panes are tabs again, or tools: which are on screen follows.
+  if (moved && SELECTED_SID) { DP_EL.dataset.sig = ''; renderDetail(); }
+}
+// The Changes button's count: the open task's branch ("+1656", its lines
+// added since it left main), else the PO's project's uncommitted files.
+function pdChangesBadge() {
+  if (!PD.dock) return;
+  let text = null, tip = null;
+  if (pdTask()) {
+    const r = rowBySid(SELECTED_SID), c = r && r.changes;
+    const add = c && Number.isFinite(c.add) && c.add > 0 ? c.add : 0, del = c && Number.isFinite(c.del) && c.del > 0 ? c.del : 0;
+    if (add || del) {
+      // Short enough for the button's corner: +40, +512, +1.7k, +12k.
+      const short = v => (v < 1000 ? String(v) : `${+(v / 1000).toFixed(v < 10000 ? 1 : 0)}k`);
+      text = add ? '+' + short(add) : '−' + short(del);
+      tip = `Committed on its branch since it left main: ${add.toLocaleString('en-US')} lines added, ${del.toLocaleString('en-US')} removed`;
+    }
+  } else {
+    const pj = poDockProject(), n = (pj && pj.changed) || 0;
+    if (n) { text = String(n); tip = `${n} uncommitted file${n > 1 ? 's' : ''}`; }
+  }
+  const sig = text + '|' + tip;
+  if (PD.chBadge === sig) return;
+  PD.chBadge = sig;
+  PD.dock.setBadge('changes', text, tip);
 }
 // Popped out, the panel's window gets a chat of its own (the same page as the
 // chat here, which stays loaded, out of sight); before it comes back, it goes.
@@ -9922,17 +10137,24 @@ function pdPopChat(out) {
   ph.appendChild(own);
 }
 (() => {
+  // The dock's width changes without a layout change or a window resize: it
+  // is shown after it is made (a reload measures it hidden), the task list
+  // comes and goes. What the middle needs is fitted again each time.
+  if (window.ResizeObserver) new ResizeObserver(() => { if (PD.dock && !PD.dock.narrow()) pdToolsFit(); }).observe(PD_ROOT);
   // Whether Points is on screen also changes without a layout change (a strip
   // panel slid out or back): those are class and style changes in the dock.
   new MutationObserver(() => {
     if (PD.raf) return;
-    PD.raf = requestAnimationFrame(() => { PD.raf = 0; pdPointsFrame(); });
+    PD.raf = requestAnimationFrame(() => { PD.raf = 0; pdPointsFrame(); pdToolRemember(); });
   }).observe(PD_ROOT, { subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'class'] });
   // A resize can also make the screen a phone's, or no longer one: the dock
   // turns narrow or wide, each with its own layout.
   window.addEventListener('resize', () => {
+    if (PD.dock && !PD.dock.narrow()) pdToolsFit();
     if (!PD.dock || PD.dock.narrow() === pdNarrow()) return;
     PD.dock.setNarrow(pdNarrow());
+    pdToolsFit();
+    pdToolRestore();
     renderRows();
   });
 })();
@@ -9978,11 +10200,15 @@ function pdPointsFrame() {
 function pdHear(f) {
   try { const t = f.contentWindow && f.contentWindow.EMBED_POINTS; if (t && t !== PD.told) { PD.told = t; pdPaintPoints(); } } catch (e) {}
 }
+// What the current PO's chat said: never another PO's (a chat seen before
+// may still be telling).
+function pdTold() { return PD.told && PD.chatKey && PD.told.room === PD.chatKey ? PD.told : null; }
 // Drawn again only when what it lists changed; the ages tick in place.
 function pdPaintPoints(force) {
   const el = PD.els.points;
-  const told = PD.told && PD.told.room === PD.chatKey ? PD.told : null;
-  const html = pdPointsHtml(told, Date.now() / 1000);
+  const told = pdTold();
+  const html = PD.chatKey === null ? '<p class="pdp-empty">This project has no PO, so there are no asks to follow here.</p>'
+    : pdPointsHtml(told, Date.now() / 1000);
   const sig = html.replace(/(<span class="pdp-age"[^>]*>)[^<]*/g, '$1');
   const pv = told && told.points;
   const n = pv ? (pv.open || 0) + (pv.planned || 0) + (pv.delivered != null ? pv.delivered : pv.answered || 0) : 0;
@@ -9999,20 +10225,26 @@ function pdPaintPoints(force) {
 }
 // An arrow: the PO chat comes on screen and goes to that balloon, which it
 // marks for a moment (session.html gotoMsg), as the arrows in the chat do.
+// With a task in the middle, the task closes first: its project's PO takes
+// the middle (the asks listed are that PO's), then the chat goes there.
 function pdGoto(mid) {
+  if (pdTask()) closeDetail();
   pdReveal('po-chat');
+  let tries = 0;
   const go = () => {
     const f = pdVisibleChat();
-    try { if (f && f.contentWindow && f.contentWindow.gotoMsg) { f.contentWindow.gotoMsg(mid); return true; } } catch (e) {}
-    return false;
+    const shown = f && (!f.checkVisibility || f.checkVisibility({ visibilityProperty: true }));
+    try { if (shown && f.contentWindow && f.contentWindow.gotoMsg) { f.contentWindow.gotoMsg(mid); return; } } catch (e) {}
+    if (++tries < 20) setTimeout(go, 150);
   };
-  if (!go()) setTimeout(go, 300);
+  go();
 }
 // Ack and Drop, as in the chat: the hub's answer is handed to the chat too,
 // so both show the same points at once.
 const PD_PT_BUSY = new Set();
 async function pdPointAct(id, act, btn) {
-  const room = PD.told && PD.told.room;
+  const told = pdTold();
+  const room = told && told.room;
   const k = act + ':' + id;
   if (!room || PD_PT_BUSY.has(k)) return;
   PD_PT_BUSY.add(k);
@@ -10035,6 +10267,13 @@ setInterval(() => { if (PD.dock && document.body.classList.contains('po-dock') &
 PD.els.board.addEventListener('click', e => {
   const b = e.target.closest && e.target.closest('.viewsw button[data-view]');
   if (b && VIEW_MODE !== b.dataset.view) setViewMode(b.dataset.view);
+  // ⤢: docked beside the conversation and maximised; again, back as it was.
+  if (e.target.closest && e.target.closest('.pd-board-max') && PD.dock && !PD.dock.narrow()) {
+    const d = PD.dock;
+    if (d.maximised()) { d.restoreMax(); return; }
+    if (d.isAuto('board')) d.pin('board');
+    d.toggleMax('board');
+  }
 });
 
 // ---- The Panels menu: each panel shown or hidden, and Reset layout
@@ -10050,13 +10289,14 @@ function pdMenuClose(refocus) {
   if (refocus && btn.isConnected) btn.focus();
 }
 function pdMenuHtml() {
-  const on = PD_IDS.filter(id => PD.dock.isVisible(id));
-  return PD_IDS.map(id => {
+  const ids = PD_IDS.filter(id => id !== 'spec');
+  const on = ids.filter(id => PD.dock.isVisible(id));
+  return ids.map(id => {
     const vis = on.includes(id), last = vis && on.length === 1;
     return `<button type="button" role="menuitemcheckbox" data-pd-toggle="${id}" aria-checked="${vis}"${vis ? ' class="on"' : ''}`
       + `${last ? ' disabled title="The last panel on screen stays"' : ''}>${esc(PD_TITLES[id])}</button>`;
   }).join('') + '<div class="dk-menu-sep" role="separator"></div>'
-    + '<button type="button" role="menuitem" data-pd-reset title="The PO chat and Your asks side by side, the other panels on the strip at the right edge">Reset layout</button>';
+    + '<button type="button" role="menuitem" data-pd-reset title="Every panel a tab again, the PO chat in front">Reset layout</button>';
 }
 function pdMenu(btn) {
   if (PD_MENU) { const same = PD_MENU.btn === btn; pdMenuClose(same); if (same) return; }
@@ -12323,8 +12563,7 @@ function renderPoDock(pj) {
   chRenderInto(PD.els.changes, pj);
   // Its uncommitted files, counted on the tab where they are reviewed (the
   // status row under the bar used to count every project's).
-  const n = pj.changed || 0;
-  PD.dock.setBadge('changes', n ? String(n) : null, n ? `${n} uncommitted file${n > 1 ? 's' : ''}` : null);
+  pdChangesBadge();
   return true;
 }
 
@@ -12333,11 +12572,16 @@ function renderRows() {
   swRender();
   // A project with a PO is a Dock of panels, once the library has loaded.
   const dockPj = poDockProject();
-  if (dockPj && !PD.lib) pdLoad();
-  const docked = !!(dockPj && PD.lib);
+  // An open task on a desktop is in the dock too, with its tools (#125).
+  const taskDock = pdTaskWanted();
+  if ((dockPj || taskDock) && !PD.lib) pdLoad();
+  const docked = !!((dockPj || taskDock) && PD.lib);
   if (docked) pdEnsure();
   PD_ROOT.hidden = !docked;
-  if (!docked && PD.els.changes.firstChild) { PD.els.changes.textContent = ''; }
+  // The PO's changes go with its screen (a task's own pane stays: it moves
+  // back to the task panel in renderPo).
+  const chb = !dockPj && PD.els.changes.querySelector(':scope > .ch-body');
+  if (chb) chb.remove();
   renderPo();
   paintSearchBadge(null);
   // The workspace panel is shown, never rebuilt — every branch below is free to
@@ -12408,7 +12652,7 @@ function renderRows() {
   const pool = ALL_ROWS.filter(r => inScope(r) && (FILTERS.has('archived') || !r.archived));
   // A PO screen draws its board in the Board panel, under the panel's own
   // view switch; the chrome above the panels is already in #view.
-  const view = dockPj ? PD.els.board : $('#view');
+  const view = docked ? PD.els.board : $('#view');
   // Hidden columns narrow both views: the board leaves them out, the list
   // leaves out their rows. The chips count every column, hidden or not.
   const frozen = view.matches(':hover');
@@ -12423,7 +12667,7 @@ function renderRows() {
   // A project with a PO has its board in a panel beside the PO's (see "The PO
   // screen as panels"); one without gets today's board under a note saying
   // how to give it one.
-  const poSplit = !!dockPj;
+  const poSplit = docked;
   const poNote = poSplit ? '' : poNoteHtml();
   // The board's pane gets an edge on each side, shown while columns lie past it.
   const edges = VIEW_MODE === 'board'
@@ -13746,9 +13990,9 @@ function barPaint() {
   const back = document.getElementById('bar-back');
   if (back) back.hidden = !inProj;
   const here = document.getElementById('bar-here');
-  // A desktop's PO screen has its tools as tabs, and no Panels menu (layout A).
-  // (A wide dock, kept for the tool strip of step 3, would have it again.)
-  const panels = !document.body.classList.contains('mid') || !pdNarrow();
+  // A desktop's tools are on the strip at the right edge, each always there:
+  // no Panels menu (layout A, #125). A phone's tabs keep it.
+  const panels = !document.body.classList.contains('mid');
   if (here) writeSlot(here, inProj && poDockProject() && panels ? pdCtlHtml() : '');
   barCrumbs();
   const sw = document.getElementById('proj-switch');
@@ -13777,7 +14021,7 @@ document.getElementById('bar-here').addEventListener('click', (e) => {
 // `s`: { project: { name } | null, po: whether the project's PO leads its
 // screen, task: { no, title } | null, tool: { k, name } | null, file: path }.
 var CRUMB_TOOL_UP = { changes: 'Back to the list of changed files', workspace: 'Back to the file tree',
-                        points: '', board: '' };
+                        points: '', board: '', spec: '' };
 function crumbsOf(s) {
   const out = [];
   if (!s) return out;
@@ -13830,7 +14074,24 @@ function crumbState() {
   const po = !!(pj && dockPj && dockPj.id === pj.id);
   const s = { project: pj ? { name: pj.name } : null, po, task: null, tool: null, file: '' };
   const pctx = pj ? { kind: 'project', projectId: pj.id, docs: isDocsProject(pj) } : null;
-  if (r) {
+  // The tool strip (#125): the tool open beside the conversation.
+  const strip = PD.dock && !PD.dock.narrow() && document.body.classList.contains('po-dock');
+  if (r && strip && pdTask()) {
+    s.task = { no: taskNoText(r, false), title: detailTitle(r) };
+    const k = pdToolShown();
+    if (k) {
+      s.tool = { k, name: PD_TITLES[k] || k };
+      if (k === 'workspace') s.file = crumbWsFile({ kind: 'task', sid: r.sessionId });
+      if (k === 'changes') { const v = TCH_VIEWS.get(r.sessionId); s.file = (v && v.file) || ''; }
+    }
+  } else if (po && strip && !r) {
+    const k = pdToolShown();
+    if (k) {
+      s.tool = { k, name: PD_TITLES[k] || k };
+      if (k === 'workspace') s.file = crumbWsFile(pctx);
+      if (k === 'changes') s.file = CH_FILE || '';
+    }
+  } else if (r) {
     s.task = { no: taskNoText(r, false), title: detailTitle(r) };
     const k = issueTab(r);
     if (k !== 'activity') {
@@ -13878,8 +14139,12 @@ function crumbGo(level) {
     SELECTED_PROJECT = pj.id; PROJECT_TAB = 'tasks'; SB_DEST = '';
     renderRows();
     if (poDockProject()) pdReveal('po-chat');
+    if (PD.dock && !PD.dock.narrow()) PD.dock.closeFly();
   } else if (level === 'po') {
     pdReveal('po-chat');
+    if (PD.dock && !PD.dock.narrow()) PD.dock.closeFly();
+  } else if (level === 'task' && pdTask()) {
+    PD.dock.closeFly();
   } else if (level === 'task') {
     if (!r) return;
     ISSUE_TAB_SID = r.sessionId; ISSUE_TAB = 'activity';
@@ -14708,6 +14973,8 @@ function openWorkspaceTab(sid) {
   ISSUE_TAB = 'workspace';
   if (SELECTED_SID !== sid) openDetail(sid);
   else { const p = $('#detail-panel'); if (p) p.dataset.sig = ''; renderDetail(); }
+  // On the tool strip: its Files tool comes out.
+  if (pdTask()) { pdReveal('workspace'); return; }
   const tab = document.querySelector('#detail-panel .dp-tab[data-itab="workspace"]');
   if (tab) tab.scrollIntoView({ block: 'nearest' });
 }
