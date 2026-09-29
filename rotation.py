@@ -369,11 +369,16 @@ def _transcript_of(part: dict):
 # Who is watched: the PO, and each running task's owner
 # ---------------------------------------------------------------------------
 
+def _noun() -> str:
+    """The word the person reads for a board (the projectNoun setting)."""
+    return _d.project_noun() if _d is not None else "project"
+
+
 def _po(project: dict) -> tuple[dict | None, dict | None, str]:
     """(room, participant, why-not). Both None when there is nothing to watch."""
     rid = (project.get("poRoomId") or "").strip()
     if not rid:
-        return None, None, "the project has no PO"
+        return None, None, f"the {_noun()} has no PO"
     room = _d.chatroom.get_room(rid)
     if room is None:
         return None, None, f"the PO task {rid} no longer exists"
@@ -1271,7 +1276,7 @@ def _manual_switch(project: dict, rid: str, agent: str, model: str) -> dict:
         flags = _SWITCHING[rid]["flags"]
     room, part, why = _po(project)
     if room is None or room["id"] != rid:
-        return {"result": "cancelled", "reason": why or "the project has another PO now"}
+        return {"result": "cancelled", "reason": why or f"the {_noun()} has another PO now"}
     sid, pty = part.get("sessionId"), part.get("ptyId")
     was_live = _pty(part) is not None
     asked = {"asked": False, "answered": False, "handoverUpdated": False}

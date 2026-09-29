@@ -26,6 +26,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 INDEX = (ROOT / "index.html").read_text(encoding="utf-8").replace("\r\n", "\n")
+# The word for a board (static/noun.js): the page code below calls noun()/nounText().
+NOUN = (Path(__file__).resolve().parent.parent / "static" / "noun.js").read_text(encoding="utf-8")
 SESSION = (ROOT / "session.html").read_text(encoding="utf-8").replace("\r\n", "\n")
 NODE = shutil.which("node")
 
@@ -105,7 +107,7 @@ class ThePoHeader(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         src = "\n".join([
-            re.search(r"^const esc = .*$", INDEX, re.M).group(0),
+            NOUN, re.search(r"^const esc = .*$", INDEX, re.M).group(0),
             fn(INDEX, "function workflowOf("), fn(INDEX, "function pointsCountText("),
             fn(INDEX, "function pointsCountTip("), fn(INDEX, "function runChip("), fn(INDEX, "function shortModel("),
             fn(INDEX, "function poAgent("), fn(INDEX, "function poOpenCount("), fn(INDEX, "function poHeadHtml(")])

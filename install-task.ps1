@@ -5,7 +5,8 @@
   session so it can drive Windows Terminal.
 
 .USAGE
-  .\install-task.ps1            # install + start
+  .\install-task.ps1            # install + start (asks what to call a board)
+  .\install-task.ps1 -Noun Initiative   # the same, without asking
   .\install-task.ps1 uninstall # remove
   .\install-task.ps1 status    # show task + recent log
 
@@ -23,7 +24,12 @@ param(
   # browse URL, e.g. "https://your-org.atlassian.net/browse/". -JiraPrefixes is
   # a comma-separated project-key list, e.g. "PTECH,PLAT".
   [string]$JiraBase = '',
-  [string]$JiraPrefixes = ''
+  [string]$JiraPrefixes = '',
+  # The word the pages use for a board (the projectNoun setting): asked once
+  # when the install runs in a console, Project on Enter. -Noun skips the
+  # question; -NounPlural goes with a word of your own (default: -Noun + "s").
+  [string]$Noun = '',
+  [string]$NounPlural = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -46,6 +52,29 @@ function Resolve-Python {
   $g = Get-Command 'py' -ErrorAction SilentlyContinue
   if ($g) { return $g.Source }
   return $null
+}
+
+# What to call a board: a preset by number or name, or a word of your own and
+# its plural. Returns @(one, many), or $null to keep what the hub has (Project
+# on a new install). Asked only when someone is at the console.
+function Read-ProjectNoun {
+  $presets = [ordered]@{ '1' = @('Project', 'Projects'); '2' = @('Initiative', 'Initiatives');
+                         '3' = @('Epic', 'Epics'); '4' = @('Workstream', 'Workstreams') }
+  $one = $Noun.Trim()
+  if (-not $one) {
+    if (-not [Environment]::UserInteractive -or [Console]::IsInputRedirected) { return $null }
+    Write-Host ''
+    Write-Host 'What should Ensemble call a board of tasks with its PO?'
+    Write-Host '  1) Project  2) Initiative  3) Epic  4) Workstream  - or type your own word'
+    $one = (Read-Host 'Word [Enter keeps the current one: Project on a new install]').Trim()
+    if (-not $one) { return $null }
+  }
+  if ($presets.Contains($one)) { return $presets[$one] }
+  foreach ($p in $presets.Values) { if ($p[0] -eq $one) { return $p } }
+  $many = $NounPlural.Trim()
+  if (-not $many -and -not $Noun) { $many = (Read-Host "Plural [$($one)s]").Trim() }
+  if (-not $many) { $many = "$($one)s" }
+  return @($one, $many)
 }
 
 function Resolve-PythonW {
@@ -87,6 +116,14 @@ switch ($Action) {
       }
       ($ht | ConvertTo-Json -Depth 6) | Out-File -Encoding utf8 $settingsFile
       Write-Host "Jira enabled -> $JiraBase"
+    }
+
+    # The word for a board, saved by the hub's own code so the settings file
+    # keeps its encoding and every other setting.
+    $nounPair = Read-ProjectNoun
+    if ($nounPair) {
+      & (Resolve-Python) $Server --set-project-noun $nounPair[0] $nounPair[1]
+      if ($LASTEXITCODE -ne 0) { Write-Warning 'The word was not saved; choose it later in Settings.' }
     }
 
     # NB: avoid a local named $action — PowerShell vars are case-insensitive, so

@@ -15,6 +15,8 @@ import unittest
 from pathlib import Path
 
 SRC = (Path(__file__).resolve().parent.parent / "session.html").read_text(encoding="utf-8").replace("\r\n", "\n")
+# The word for a board (static/noun.js): the page code below calls noun()/nounText().
+NOUN = (Path(__file__).resolve().parent.parent / "static" / "noun.js").read_text(encoding="utf-8")
 NODE = shutil.which("node")
 
 
@@ -77,7 +79,7 @@ console.log(JSON.stringify(out));
 class APoMessageBalloon(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        code = fold_block(SRC) + js_function(SRC, "soloItems") + js_function(SRC, "withHubRows")
+        code = NOUN + fold_block(SRC) + js_function(SRC, "soloItems") + js_function(SRC, "withHubRows")
         res = subprocess.run([NODE, "-e", JS], input=json.dumps({"code": code}), capture_output=True,
                              text=True, encoding="utf-8", timeout=60)
         if res.returncode != 0:

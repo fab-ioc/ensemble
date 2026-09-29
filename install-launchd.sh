@@ -3,7 +3,9 @@
 # restarts itself if it crashes.
 #
 # Usage:
-#   ./install-launchd.sh           # install + load
+#   ./install-launchd.sh           # install + load (asks what to call a board)
+#   ENSEMBLE_NOUN=Initiative ./install-launchd.sh   # the same, without asking
+#                                  # (ENSEMBLE_NOUN_PLURAL for a word of your own)
 #   ./install-launchd.sh uninstall # unload + remove
 #   ./install-launchd.sh status    # show status
 #
@@ -42,7 +44,38 @@ case "$action" in
         || echo "warning: pip install failed — run '$PYTHON -m pip install -r $REQ' manually" >&2
     fi
 
+    # The word the pages use for a board (the projectNoun setting): asked once
+    # when someone is at the terminal, Project on Enter (then nothing is
+    # written and the hub keeps what it has). Saved by the hub's own code.
+    one="${ENSEMBLE_NOUN:-}"
+    many="${ENSEMBLE_NOUN_PLURAL:-}"
+    if [[ -z "$one" && -t 0 ]]; then
+      echo
+      echo "What should Ensemble call a board of tasks with its PO?"
+      echo "  1) Project  2) Initiative  3) Epic  4) Workstream  - or type your own word"
+      read -r -p "Word [Enter keeps the current one: Project on a new install]: " one || one=""
+      one="$(echo "$one" | xargs)"
+      if [[ -n "$one" && -z "$many" ]]; then
+        case "$one" in 1|2|3|4|Project|Initiative|Epic|Workstream) ;;
+          *) read -r -p "Plural [${one}s]: " many || many="" ;;
+        esac
+      fi
+    fi
+    if [[ -n "$one" ]]; then
+      case "$one" in
+        1|Project) one="Project"; many="Projects" ;;
+        2|Initiative) one="Initiative"; many="Initiatives" ;;
+        3|Epic) one="Epic"; many="Epics" ;;
+        4|Workstream) one="Workstream"; many="Workstreams" ;;
+      esac
+      many="$(echo "$many" | xargs)"
+      [[ -n "$many" ]] || many="${one}s"
+      "$PYTHON" "$SCRIPT" --set-project-noun "$one" "$many" \
+        || echo "warning: the word was not saved; choose it later in Settings" >&2
+    fi
+
     mkdir -p "$(dirname "$PLIST")" "$(dirname "$LOG")"
+
 
     # launchd starts the hub with a bare PATH, and the hub must find `claude`,
     # `codex`, `git` and `node` wherever this Mac has them (npm global, nvm,

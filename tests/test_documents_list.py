@@ -39,6 +39,9 @@ def block(begin: str, end: str) -> str:
     return INDEX[i:INDEX.index(end, i)]
 
 
+# The word for a board (static/noun.js): the page code below calls noun()/nounText().
+NOUN = (Path(__file__).resolve().parent.parent / "static" / "noun.js").read_text(encoding="utf-8")
+
 JS = r"""
 const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const tildeify = p => p;
@@ -121,7 +124,7 @@ console.log(JSON.stringify(out));
 class ThePureParts(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        deps = "\n".join(js_function(n) for n in (
+        deps = NOUN + "\n".join(js_function(n) for n in (
             "wsNorm", "wsSame", "wsJoin", "wsFmtSize", "wsTabName", "docsApart", "wsHidden", "wsRowsHtml", "wsTreeHtml"))
         src = JS % {
             "deps": deps,

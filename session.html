@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="ensemble-pages" content="">
 <title>Ensemble — session</title>
+<script src="/static/noun.js"></script>
 <link rel="icon" type="image/svg+xml" href="/static/icons/favicon.svg">
 <link rel="icon" href="/static/icons/favicon.ico" sizes="16x16 32x32 48x48">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
@@ -133,6 +134,11 @@
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (s) {
         if (!s) return;
+        // The hub's word for a board (static/noun.js): kept for the next load,
+        // and the page told when it is not the word it painted with.
+        if (s.projectNoun && window.setNoun && window.setNoun(s.projectNoun)) {
+          try { window.dispatchEvent(new CustomEvent('cd-noun')); } catch (e) {}
+        }
         if (typeof s.theme === 'string') {
           var local = stored();
           if (s.theme && s.theme !== local) {
@@ -2245,7 +2251,7 @@ function reviewVerdict(m) {
 const isPersons = m => !!m && m.from === 'user' && !isHubInput(m);
 const isDigest = m => !!m && (isHubInput(m) ? m.kind === 'digest' : m.from === 'ensemble' && reportBase(m) === 'digest');
 // "opten PO", "Dock PO": a message between POs names both by their projects.
-const poSide = name => (name || 'Another project') + ' PO';
+const poSide = name => (name || nounText('Another {project}')) + ' PO';
 function senderName(m, N = CHAT_NAMES) {
   if (isPoMsg(m)) return poSide(m.fromProjectName);
   const t = taskReport(m);
@@ -2289,17 +2295,17 @@ function answerChip(a, N = CHAT_NAMES) {
     human: ['to you', 'A reply to your message'],
     report: [`on a report from ${a.taskId ? taskName(a.taskId, N) + (a.reporter ? ' ' + a.reporter : '') : a.taskTitle ? 'task ' + foldShort(a.taskTitle) : 'a task'}`,
       `A reply to a report${a.reportKind ? ' (' + a.reportKind + ')' : ''} from ${task}, which the hub typed in`],
-    digest: ['progress check', 'A reply to the hub’s progress check of the project'],
+    digest: ['progress check', nounText('A reply to the hub’s progress check of the {project}')],
     due: ['on a due item', 'A reply to the hub saying that something in the handover is due now'],
     relay: ['on a team message', 'A reply to the hub saying a teammate posted in the room'],
     resumed: ['after a resume', 'The first words after the task was started again'],
     restart: ['after a hub restart', 'The first words after the hub restarted in the middle of its turn'],
     handover: ['on the handover request', 'A reply to the hub asking for the handover to be written'],
     rotation: ['after the handover', 'The first words of a fresh session, from the handover'],
-    madepo: ['on becoming PO', 'The first words after the hub made this conversation a project’s PO'],
+    madepo: ['on becoming PO', nounText('The first words after the hub made this conversation {a project}’s PO')],
     helper: ['after a restart', 'A reply to the restart helper’s note after the hub restarted'],
     points: ['on your open asks', 'A reply to the hub naming your asks that are still open'],
-    pomsg: ['on a PO message', 'A reply to the hub saying another project’s PO wrote a message'],
+    pomsg: ['on a PO message', nounText('A reply to the hub saying another {project}’s PO wrote a message')],
   }[a.kind];
   return said ? { text: said[0], tip: said[1] } : null;
 }
@@ -2354,7 +2360,7 @@ function foldUnanswered(items) {
 function foldChips(m, un, idle, superseded) {
   let h = '';
   if (isPoMsg(m))
-    h += `<span class="hub-kind" title="A message between two projects’ POs: not a task’s report, and not yours to answer">PO to PO${m.poKind ? ' · ' + esc(m.poKind) : ''}</span>`;
+    h += `<span class="hub-kind" title="${esc(nounText('A message between two {projects}’ POs: not a task’s report, and not yours to answer'))}">PO to PO${m.poKind ? ' · ' + esc(m.poKind) : ''}</span>`;
   if (isHubInput(m) || taskReport(m) || isDigest(m))
     h += `<span class="hub-kind"${m.taskTitle ? ` title="${esc(m.taskTitle)}"` : ''}>${esc(hubLabel(m))}</span>`;
   const a = m.from !== 'user' ? answerChip(m.answers) : null;
