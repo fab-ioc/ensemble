@@ -151,6 +151,10 @@ async function main() {
       await click(p, row(A.plainTask));
       await opened(p); await sleep(400);
       out.plainTask = await p.evalIn(LOOK);
+      // Its Panels menu: Chat cannot be hidden while the task is in it.
+      await click(p, '.pd-panels');
+      out.panelsTask = await p.evalIn(`[...document.querySelectorAll('.pd-menu [data-pd-toggle]')].map(e => [e.dataset.pdToggle, e.disabled])`);
+      await p.evalIn(`pdMenuClose(false); 0`);
       await click(p, '#proj-switch');
       out.menu = await p.evalIn(`[...document.querySelectorAll('#proj-menu .pm-item')].map(e => [e.dataset.proj || '', Math.round(e.getBoundingClientRect().height)])`);
       await click(p, '#proj-menu .pm-item[data-proj=""]');
@@ -180,6 +184,16 @@ async function main() {
       await sleep(400);
       out.po = await p.evalIn(LOOK);
       await p.shot('phone-390-po');
+      // Chat hidden on the PO screen (its Panels menu allows it there), then a task:
+      // the Chat comes back with the task in it.
+      await p.evalIn(`PD.dock.setVisible('po-chat', false); 0`);
+      await sleep(200);
+      out.chatHidden = await p.evalIn(`PD.dock.isVisible('po-chat')`);
+      await click(p, '#bar-back');
+      await sleep(300);
+      await click(p, row(A.task));
+      await opened(p); await sleep(400);
+      out.afterHidden = await p.evalIn(LOOK);
       await p.close();
     }
   } finally {
@@ -368,6 +382,9 @@ class ThePhone(unittest.TestCase):
         self.assertEqual(g["project"], "Plain")
         self.assertEqual(g["tabs"][0], "Chat", "a project without a PO: the task's tabs all the same")
         self.assertTrue(all(h >= 44 for _, h in self.got["menu"]), self.got["menu"])
+        panels = dict(self.got["panelsTask"])
+        self.assertTrue(panels["po-chat"], "Chat stays while the task is in it")
+        self.assertFalse(panels["changes"], "a tool can still be hidden")
         m = self.got["menuAll"]
         self.assertFalse(m["open"], "the task gives way")
         self.assertTrue(m["cardsPage"] and m["unCard"], "All projects is the cards")
@@ -392,6 +409,13 @@ class ThePhone(unittest.TestCase):
         self.assertEqual(g["front"], "po-chat")
         self.assertEqual(g["tabs"][0], "Chat")
         self.fits(g, "a PO")
+
+    def test_a_chat_hidden_earlier_comes_back_with_a_task(self):
+        self.assertFalse(self.got["chatHidden"], "Chat was hidden on the PO screen")
+        g = self.got["afterHidden"]
+        self.assertTrue(g["open"] and g["docked"])
+        self.assertEqual(g["tabs"][0], "Chat", "the Chat tab is back")
+        self.assertIsNotNone(g["chat"], "and the task's conversation shows")
 
 
 class TheWiring(unittest.TestCase):
