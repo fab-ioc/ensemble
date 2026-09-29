@@ -15,7 +15,8 @@ a project that has a PO (Motors) and a task in it, and one that has none
   conversation stays, a PO screen's tool goes back to the PO chat, the project
   goes to its PO's conversation and closes the task, a project without a PO
   goes back to its board;
-* the PO pill over an open task gives the middle back to the PO;
+* the PO's row in the list over an open task gives the middle back to the PO;
+* #needs lands on the list's Needs you, focused (#135);
 * the page reloaded for an update comes back on the same task and tab;
 * a phone has no middle; its open task's breadcrumb is in the bar's second
   row (tests/test_phone_layout.py, #129).
@@ -169,7 +170,7 @@ async function main() {
   const { ch, ws } = await launch();
   const c = new Cdp(ws); await c.open();
   const out = {};
-  const page = async (w, h, mobile) => {
+  const page = async (w, h, mobile, boot) => {
     const { targetId } = await c.send('Target.createTarget', { url: 'about:blank' });
     const { sessionId } = await c.send('Target.attachToTarget', { targetId, flatten: true });
     await c.send('Page.enable', {}, sessionId);
@@ -179,12 +180,16 @@ async function main() {
     const until = async (expr, ms = 20000) => { const t = Date.now(); while (Date.now() - t < ms) { let v = null; try { v = await evalIn(expr); } catch (e) {} if (v) return v; await sleep(150); } throw new Error('timeout: ' + expr); };
     const shot = async (name) => { if (!A.shots) return; const r = await c.send('Page.captureScreenshot', { format: 'png' }, sessionId); fs.writeFileSync(path.join(A.shots, name + '.png'), Buffer.from(r.data, 'base64')); };
     const ready = () => until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 1 && ALL_ROWS.some(r => r.roomId === ' + JSON.stringify(A.task) + ')', 30000);
+    // A desktop opens on the last conversation or the first Needs you entry
+    // (#135): each of these pages starts on none, as its checks expect.
+    if (!boot) await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensBootOpen = false;' }, sessionId);
     await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
     await ready();
+    await until('window.ensBooted === true', 30000);
     return { evalIn, until, shot, ready, sessionId, close: () => c.send('Target.closeTarget', { targetId }) };
   };
   const go = (p, proj, tab) => p.evalIn(`(() => { try { ['cd-tool-strip', 'cd-tool-open', 'cd-phone-tabs'].forEach(k => localStorage.removeItem(k)); } catch (e) {}
-    SELECTED_PROJECT = ${JSON.stringify(proj)}; PROJECT_TAB = ${JSON.stringify(tab || 'tasks')}; SB_DEST = ''; renderRows(); return 0; })()`);
+    SELECTED_PROJECT = ${JSON.stringify(proj)}; PROJECT_TAB = ${JSON.stringify(tab || 'tasks')}; renderRows(); return 0; })()`);
   const poReady = p => p.until('document.body.classList.contains("po-dock") && !!PD.dock && [...document.querySelectorAll(".dk-head, #po-dock .dk-strip-btn")].some(e => e.getBoundingClientRect().height) && !!document.querySelector("#po-panel iframe.po-session:not([hidden])")', 30000);
   const sid = `ALL_ROWS.find(r => r.roomId === ${JSON.stringify(A.task)}).sessionId`;
   const openTask = async (p) => {
@@ -232,11 +237,11 @@ async function main() {
       await click(p, '#bar-crumbs button[data-crumb="po"]');
       await sleep(400);
       out.poUp = await p.evalIn(MID);
-      // The pill over an open task: the PO's conversation takes the middle.
+      // The PO's row in the list over an open task: the PO's conversation takes the middle.
       await openTask(p);
-      await click(p, '#po-pill');
+      await click(p, `#sw-list .sw-row[data-po="${A.proj}"]`);
       await sleep(500);
-      out.pill = await p.evalIn(MID);
+      out.poRow = await p.evalIn(MID);
       // A project without a PO: Workspace, and back to its board.
       await go(p, A.plain, 'workspace');
       await p.until('!!document.querySelector(".wsp") && document.querySelector(".wsp").getBoundingClientRect().height > 0');
@@ -272,16 +277,23 @@ async function main() {
       out.caretMenu = await p.evalIn(`(() => { const m = document.getElementById('proj-menu');
         return { head: (m.querySelector('.pm-head') || {}).textContent || '', on: (m.querySelector('.pm-item.on') || { dataset: {} }).dataset.proj || '' }; })()`);
       await click(p, '#proj-switch');
-      // The pill from Home with a task open, and a PO opened from Needs you and
-      // from Home: the PO takes the middle, no drawer (R1-F2).
-      await click(p, '#po-pill');
+      // The PO's row with a task open, and a PO opened from Needs you (#needs)
+      // and from Home: the PO takes the middle, no drawer (R1-F2).
+      await click(p, `#sw-list .sw-row[data-po="${A.proj}"]`);
       await poReady(p); await sleep(500);
-      out.pillHome = { ...(await p.evalIn(MID)), peek: await p.evalIn('PO_PEEK') };
-      await p.evalIn("SELECTED_PROJECT = null; SB_DEST = 'needsyou'; renderRows(); 0");
+      out.rowHome = { ...(await p.evalIn(MID)), peek: await p.evalIn('PO_PEEK') };
+      await p.evalIn("goHome(); location.hash = '#needs'; 0");
       await sleep(300);
-      await click(p, '#po-pill');
+      out.needsHash = await p.evalIn(`({ hash: location.hash, focus: !!document.activeElement.closest('[data-group="needs"]'), mid: document.body.classList.contains('detail-open') })`);
+      await click(p, `#sw-list .sw-row[data-po="${A.proj}"]`);
       await poReady(p); await sleep(400);
-      out.pillNeeds = { ...(await p.evalIn(MID)), peek: await p.evalIn('PO_PEEK') };
+      out.rowNeeds = { ...(await p.evalIn(MID)), peek: await p.evalIn('PO_PEEK') };
+      // Where the dock failed to load, a PO's row opens its drawer (#135 R1-F4).
+      await p.evalIn('goHome(); PD.failed = "test"; 0'); await sleep(300);
+      await click(p, `#sw-list .sw-row[data-po="${A.proj}"]`);
+      await sleep(400);
+      out.rowFailed = await p.evalIn(`({ peek: PO_PEEK, drawer: !document.getElementById('po-panel').hidden })`);
+      await p.evalIn('PD.failed = ""; PO_PEEK = false; PO_PIN = ""; renderPo(); goHome(); 0'); await sleep(300);
       await p.evalIn('goHome(); 0');
       await sleep(300);
       await p.evalIn(`openPoOf(projectById(${JSON.stringify(A.proj)})); 0`);
@@ -317,6 +329,17 @@ async function main() {
       await wsUp('taskWs', async () => { await go(p, A.proj); await poReady(p); await openTask(p); await click(p, '#po-dock .dk-strip-btn[data-dk-auto="workspace"]'); }, 'task');
       await p.close();
     }
+    // ---- a desktop opens on the last conversation (#135): the task the page
+    // before remembered, open in the middle
+    {
+      const b = await page(1440, 900, false);
+      await b.evalIn(`localStorage.setItem('cd-last-conv', JSON.stringify({ sid: ${sid} })); 0`);
+      await b.close();
+      const q = await page(1440, 900, false, true);
+      await q.until('document.body.classList.contains("detail-open")', 20000);
+      out.bootLast = { ...(await q.evalIn(MID)), sid: await q.evalIn(`SELECTED_SID === ${sid}`) };
+      await q.close();
+    }
     // ---- a tool hidden on a phone is a tab again on a desktop, and hidden again on the phone (R1-F4)
     {
       const r = await page(430, 932, true);
@@ -343,6 +366,72 @@ async function main() {
     await go(q, A.proj); await poReady(q); await sleep(400);
     await openTask(q);
     out.phone = await q.evalIn(MID);
+    // #needs on a phone: the list comes back, then scrolls to Needs you (#135 R1-F2).
+    await q.evalIn('goHome(); 0'); await sleep(300);
+    await q.evalIn(`(() => { const b = document.getElementById('sw-list'); b.style.paddingBottom = '3000px'; b.scrollTop = 1000; return 0; })()`);
+    await go(q, A.proj); await sleep(300);
+    await q.evalIn("location.hash = '#needs'; 0"); await sleep(400);
+    out.phoneNeeds = await q.evalIn(`(() => { const b = document.getElementById('sw-list'), h = b.querySelector('[data-group="needs"] > .sw-ghead');
+      const top = h.getBoundingClientRect().top - b.getBoundingClientRect().top;
+      return { list: !document.getElementById('switcher').hidden, top, height: b.clientHeight, focus: document.activeElement === h }; })()`);
+    await q.evalIn(`document.getElementById('sw-list').style.paddingBottom = ''; 0`);
+    // A Needs you row's reason in full and its last screen, by touch (R1-F3).
+    out.phoneDiag = await q.evalIn(`(() => {
+      ATTENTION.items = [{ roomId: ${JSON.stringify(A.task)}, state: 'blocked', askKind: 'blocked', since: Date.now() / 1000,
+                           reason: 'r'.repeat(120), lastLines: 'last line one\\nlast line two', projectId: ${JSON.stringify(A.proj)} }];
+      swRender();
+      const btn = document.querySelector('#sw-list .sw-diag-btn');
+      if (!btn) return { none: true };
+      const h = btn.getBoundingClientRect().height, folded = document.getElementById(btn.getAttribute('aria-controls')).hidden;
+      btn.focus(); btn.click();
+      const b2 = document.querySelector('#sw-list .sw-diag-btn'), panel = document.getElementById(b2.getAttribute('aria-controls'));
+      const out = { h, folded, expanded: b2.getAttribute('aria-expanded'), shown: !panel.hidden && panel.getBoundingClientRect().height > 0,
+                    text: panel.textContent, focus: document.activeElement === b2 };
+      ATTENTION.items = []; SW_DIAG.clear(); swRender();
+      return out; })()`);
+    // A reason under 80 characters that two lines still cut at 360px: Details
+    // shows because it is measured, not counted (#135 R2); one that fits has none.
+    await c.send('Emulation.setDeviceMetricsOverride', { width: 360, height: 780, deviceScaleFactor: 3, mobile: true }, q.sessionId);
+    await sleep(400);
+    out.phoneClip = await q.evalIn(`(() => {
+      const task = ${JSON.stringify(A.task)};
+      const it = (roomId, reason) => ({ roomId, state: 'blocked', askKind: 'blocked', since: Date.now() / 1000, reason,
+                                        projectId: ${JSON.stringify(A.proj)}, title: roomId });
+      ATTENTION.items = [it(task, 'WWW_ADMIN_PASSWORD AND WWW_DATABASE_PASSWORD REQUIRED TO CONTINUE DEPLOYMENT.'), it('fake-short', 'logged out')];
+      swRender();
+      const N = '#sw-list [data-group="needs"] ';
+      const btn = k => document.querySelector(N + '.sw-diag-btn[data-room="' + k + '"]');
+      const why = document.querySelector(N + '.sw-row[data-room="' + task + '"] .sw-why');
+      const long = btn(task), short = btn('fake-short');
+      const r = { width: innerWidth, cut: why.scrollHeight > why.clientHeight, chars: why.textContent.length,
+                  longShown: !!long && !long.hidden && long.getBoundingClientRect().height > 0, shortShown: !!short && !short.hidden };
+      long.focus(); long.click();
+      const l2 = btn(task), panel = document.getElementById(l2.getAttribute('aria-controls'));
+      Object.assign(r, { open: !panel.hidden, text: panel.textContent, focus: document.activeElement === l2 });
+      l2.click();
+      Object.assign(r, { refolded: !btn(task).hidden && btn(task).getAttribute('aria-expanded') === 'false', refocus: document.activeElement === btn(task) });
+      ATTENTION.items = []; SW_DIAG.clear(); swRender();
+      return r; })()`);
+    // Open, then widened until it fits: folding it hides Details, and the focus
+    // goes to its row, not to the page (#135 R3).
+    await q.evalIn(`(() => {
+      ATTENTION.items = [{ roomId: ${JSON.stringify(A.task)}, state: 'blocked', askKind: 'blocked', since: Date.now() / 1000,
+                           reason: 'WWW_ADMIN_PASSWORD AND WWW_DATABASE_PASSWORD REQUIRED TO CONTINUE DEPLOYMENT.',
+                           projectId: ${JSON.stringify(A.proj)}, title: 'x' }];
+      swRender();
+      const b = document.querySelector('#sw-list [data-group="needs"] .sw-diag-btn:not([hidden])');
+      b.focus(); b.click(); return 0; })()`);
+    await c.send('Emulation.setDeviceMetricsOverride', { width: 430, height: 932, deviceScaleFactor: 3, mobile: true }, q.sessionId);
+    await sleep(400);
+    out.phoneWiden = await q.evalIn(`(() => {
+      const task = ${JSON.stringify(A.task)}, N = '#sw-list [data-group="needs"] ';
+      const b = document.querySelector(N + '.sw-diag-btn[data-room="' + task + '"]');
+      const r = { focusBefore: document.activeElement === b };
+      b.click();
+      const b2 = document.querySelector(N + '.sw-diag-btn[data-room="' + task + '"]'), a = document.activeElement;
+      Object.assign(r, { hidden: b2.hidden, onRow: a.matches(N + '.sw-row[data-room="' + task + '"]') });
+      ATTENTION.items = []; SW_DIAG.clear(); swRender();
+      return r; })()`);
     await q.close();
   } finally {
     try { ch.kill(); } catch (e) {}
@@ -499,11 +588,24 @@ class TheMiddle(unittest.TestCase):
         self.assertEqual(self.got["poUp"]["front"], "po-chat")
         self.assertEqual(self.got["poUp"]["trail"], [["po", "PO", False]])
 
-    def test_the_pill_over_a_task_gives_the_middle_to_the_po(self):
-        g = self.got["pill"]
+    def test_the_po_row_over_a_task_gives_the_middle_to_the_po(self):
+        g = self.got["poRow"]
         self.assertFalse(g["open"])
         self.assertEqual(g["front"], "po-chat")
-        self.full_height(g, "PO from the pill")
+        self.full_height(g, "PO from its row")
+
+    def test_a_desktop_opens_on_the_last_conversation(self):
+        g = self.got["bootLast"]
+        self.assertTrue(g["open"] and g["sid"], "the task last open, in the middle")
+        self.assertEqual(g["proj"], self.proj)
+
+    def test_needs_lands_on_the_lists_needs_you(self):
+        g = self.got["needsHash"]
+        self.assertEqual(g["hash"], "", "the address is put back")
+        self.assertTrue(g["focus"], "Needs you's head has the focus")
+
+    def test_a_po_row_where_the_dock_failed_opens_its_drawer(self):
+        self.assertEqual(self.got["rowFailed"], {"peek": True, "drawer": True})
 
     def test_a_project_without_a_po(self):
         g = self.got["plainWs"]
@@ -536,7 +638,7 @@ class TheMiddle(unittest.TestCase):
         self.assertEqual(self.got["caretMenu"], {"head": "Motors", "on": self.proj})
 
     def test_a_po_opens_in_the_middle_from_anywhere(self):
-        for key in ("pillHome", "pillNeeds", "openPoHome"):
+        for key in ("rowHome", "rowNeeds", "openPoHome"):
             with self.subTest(key=key):
                 g = self.got[key]
                 self.assertFalse(g["open"])
@@ -572,6 +674,40 @@ class TheMiddle(unittest.TestCase):
         self.assertFalse(g["mid"])
         self.assertTrue(g["crumbsShown"], "its breadcrumb is in the bar's second row (#129)")
         self.assertTrue(g["open"])
+
+    def test_needs_on_a_phone_scrolls_the_list_to_needs_you(self):
+        g = self.got["phoneNeeds"]
+        self.assertTrue(g["list"], "the list")
+        self.assertTrue(0 <= g["top"] < g["height"], f"Needs you in view, not above it: {g}")
+        self.assertTrue(g["focus"])
+
+    def test_a_needs_you_rows_details_open_by_touch(self):
+        g = self.got["phoneDiag"]
+        self.assertNotIn("none", g, "a Details line under the row")
+        self.assertGreaterEqual(g["h"], 44, "a touch target")
+        self.assertTrue(g["folded"])
+        self.assertEqual(g["expanded"], "true")
+        self.assertTrue(g["shown"])
+        self.assertIn("r" * 120, g["text"])
+        self.assertIn("last line one\nlast line two", g["text"])
+        self.assertTrue(g["focus"], "the focus stays on it across the redraw")
+
+    def test_every_cut_reason_has_its_details(self):
+        g = self.got["phoneClip"]
+        self.assertEqual(g["width"], 360)
+        self.assertTrue(g["cut"] and g["chars"] < 80, f"a short reason two lines cut: {g}")
+        self.assertTrue(g["longShown"], "measured, not counted")
+        self.assertFalse(g["shortShown"], "a reason that fits has no Details")
+        self.assertTrue(g["open"])
+        self.assertIn("REQUIRED TO CONTINUE DEPLOYMENT.", g["text"])
+        self.assertTrue(g["focus"])
+        self.assertTrue(g["refolded"] and g["refocus"], "folded again, it stays (still cut) and keeps the focus")
+
+    def test_a_details_widened_away_hands_the_focus_to_its_row(self):
+        g = self.got["phoneWiden"]
+        self.assertTrue(g["focusBefore"], g)
+        self.assertTrue(g["hidden"], f"it fits at 430px, so folded it has no Details: {g}")
+        self.assertTrue(g["onRow"], f"the focus is on its row, not the page: {g}")
 
 
 if __name__ == "__main__":

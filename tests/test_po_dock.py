@@ -326,13 +326,17 @@ async function main() {
       for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 }, sessionId);
     };
     const shot = async (name) => { if (!A.shots) return; const r = await c.send('Page.captureScreenshot', { format: 'png' }, sessionId); fs.writeFileSync(path.join(A.shots, name + '.png'), Buffer.from(r.data, 'base64')); };
+    // A desktop opens on the last conversation or the first Needs you entry
+    // (#135): each of these pages starts on none, as its checks expect.
+    await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensBootOpen = false;' }, sessionId);
     await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
     await until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 0 && typeof ALL_ROWS !== "undefined" && ALL_ROWS.some(r => r.roomId === ' + JSON.stringify(A.po) + ')', 30000);
+    await until('window.ensBooted === true', 30000);
     return { evalIn, until, click, shot, sessionId, close: () => c.send('Target.closeTarget', { targetId }) };
   };
   const go = (p, theme) => p.evalIn(`(() => {
     try { ['cd-tool-strip', 'cd-tool-open', 'cd-phone-tabs'].forEach(k => localStorage.removeItem(k)); localStorage.setItem('cd-view', 'board'); } catch (e) {}
-    VIEW_MODE = 'board'; SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'tasks'; SB_DEST = ''; renderRows(); return 0; })()`);
+    VIEW_MODE = 'board'; SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'tasks'; renderRows(); return 0; })()`);
   const ready = p => p.until('document.body.classList.contains("po-dock") && !!PD.dock && !!PD.told && !!PD.told.points && (() => { const f = pdChatFrame(); return !!(f && f.contentWindow && f.contentWindow.eval("typeof CHAT_DRAWN !== typeof void 0 && CHAT_DRAWN")); })()', 30000);
   const rect = 'const R = el => { const b = el.getBoundingClientRect(); return [Math.round(b.left), Math.round(b.top), Math.round(b.width), Math.round(b.height)]; };';
   try {
@@ -717,7 +721,7 @@ async function main() {
           { t: 'stack', panels: ['po-chat', 'documents'], active: 'documents' }, { t: 'stack', panels: ['points'], active: 'points', size: 340 }] },
         auto: [{ id: 'board', edge: 'right', size: 900 }, { id: 'documents', edge: 'right', size: 900 }, { id: 'workspace', edge: 'right', size: 900 }, { id: 'changes', edge: 'right', size: 900 }],
         floats: [], hidden: [{ id: 'documents' }] }));
-        VIEW_MODE = 'board'; SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'documents'; SB_DEST = ''; renderRows(); return 0; })()`);
+        VIEW_MODE = 'board'; SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'documents'; renderRows(); return 0; })()`);
       await q.until('document.body.classList.contains("po-dock") && !!PD.dock', 30000); await sleep(600);
       out.oldLayout = await q.evalIn(`(() => { const L = PD.dock.layout(), ids = []; (function walk(n) { if (!n) return; if (n.t === 'stack') ids.push(...n.panels); else n.kids.forEach(walk); })(L.root);
         return { docked: ids, auto: L.auto.map(a => a.id), hidden: L.hidden.map(h => h.id), front: PD_IDS.filter(id => PD.dock.frontOf(id) === id),
@@ -729,7 +733,7 @@ async function main() {
     {
       const q = await page(1440, 900);
       await q.evalIn(`(() => { try { localStorage.removeItem('cd-tool-strip'); } catch (e) {}
-        VIEW_MODE = 'board'; SELECTED_PROJECT = ${JSON.stringify(A.notes)}; PROJECT_TAB = 'tasks'; SB_DEST = ''; renderRows(); return 0; })()`);
+        VIEW_MODE = 'board'; SELECTED_PROJECT = ${JSON.stringify(A.notes)}; PROJECT_TAB = 'tasks'; renderRows(); return 0; })()`);
       await q.until('document.body.classList.contains("po-dock") && !!PD.dock', 30000);
       await q.evalIn('PD.dock.reveal("workspace"); 0');
       await q.until('!!PD.els.workspace.querySelector(".wsp-tree > .wse[data-docs]") && PD.els.workspace.querySelectorAll(".wse.doc").length >= 2', 20000);
