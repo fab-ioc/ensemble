@@ -502,6 +502,7 @@ STATIC_DIR = Path(__file__).parent
 # page gets written into its <meta name="ensemble-pages"> at serve time, so an
 # open tab can tell when the page it runs is no longer the one on disk.
 PAGE_FILES = ("index.html", "session.html", "fileview.html",
+              "static/feedback.js", "static/feedback.css",
               "static/hl.js", "static/comments.js", "static/attach.js", "static/actions.js",
               "static/selbar.js", "static/noun.js",
               # The Dock library (static/dock, a vendored copy) that a project's
@@ -11918,7 +11919,7 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(data, dict):
                 raise ValueError("Expected a feedback object.")
             host = " ".join(self.headers.get(key, "") for key in ("Host", "X-Forwarded-Host", "Origin"))
-            result = (feedback.preview(data, load_settings(), host)
+            result = (feedback.preview(data, load_settings(), host, private_values=(ACCESS_TOKEN, _UI_KEY))
                       if path.endswith("/preview") else feedback.send(data.get("id")))
             self._send_json(200, result)
         except feedback.FeedbackError as error:

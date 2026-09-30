@@ -22,6 +22,7 @@ DEFAULT_REPO = "fab-ioc/ensemble"
 DEFAULT_RELAY = ""
 MAX_REQUEST = 40000
 MAX_BODY = 24000
+MAX_RELAY_REQUEST = 32000
 _drafts = {}
 _lock = threading.Lock()
 
@@ -74,7 +75,10 @@ def scrub(text, identities=()):
     text = re.sub(r"(?i)(?:https?://|www\.)[^\s<>\])]+", "[link removed]", text)
     text = re.sub(r"(?i)\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b", "[email removed]", text)
     text = re.sub(r"(?i)\b(?:github_pat_[\w]+|gh[pousr]_[\w]+|sk-[\w-]+|eyJ[\w.-]+)\b", "[token removed]", text)
-    text = re.sub(r"(?i)\b(?:bearer\s+\S+|(?:[\w-]*(?:token|secret|password|api[_-]?key))\s*[:=]\s*[^\s,;]+)", "[secret removed]", text)
+    secret_key = r'''["']?[\w-]*(?:token|secret|password|api[_-]?key)["']?\s*[:=]\s*'''
+    secret_value = r'''(?:"(?:\\.|[^"\\])*"|'(?:''|\\.|[^'\\])*'|[^\s,;]+)'''
+    text = re.sub(secret_key + secret_value, "[secret removed]", text, flags=re.I)
+    text = re.sub(r"(?i)\bbearer\s+\S+", "[secret removed]", text)
     text = re.sub(r"(?i)\b(?:[\w-]+\.)+(?:ts\.net|local|internal)\b", "[host removed]", text)
     text = re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b", "[address removed]", text)
     text = re.sub(r"(?i)(?<!\w)(?:[a-f0-9]{0,4}:){2,}[a-f0-9:]+(?:%[\w]+)?", "[address removed]", text)
@@ -82,7 +86,10 @@ def scrub(text, identities=()):
     text = re.sub(r"(?<!\w)@[\w-]+", "[account removed]", text)
     # Strip image markup too: a relative filename or embedded data may identify
     # someone or cause GitHub to fetch a tracking image when reading the issue.
-    text = re.sub(r"!\[[^\]]*\]\([^)]*\)|<[^>]+>|\[image\][^\n]*", "[image omitted]", text)
+    # Drop whole image-bearing lines, including full/collapsed/shortcut reference
+    # forms and nested alt text, plus reference definitions with relative URLs.
+    text = re.sub(r"(?m)^.*!\[.*$|^\s{0,3}\[[^\]\n]+\]:[^\n]*", "[image omitted]", text)
+    text = re.sub(r"<[^>]+>|\[image\][^\n]*", "[image omitted]", text)
     for value in sorted(set(identities), key=len, reverse=True):
         if value:
             text = re.sub(r"(?<!\w)" + re.escape(value) + r"(?!\w)", "[identity removed]", text, flags=re.I)
@@ -102,7 +109,12 @@ def identities(settings, host, name, login):
     return values
 
 
-def preview(data, settings, host=""):
+def relay_payload(plan):
+    return json.dumps({k: plan[k] for k in ("title", "body", "kind", "repo")},
+                      ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+
+def preview(data, settings, host="", private_values=()):
     if not isinstance(data, dict):
         raise FeedbackError("Expected a feedback object.")
     title, body = data.get("title", ""), data.get("description", "")
@@ -120,7 +132,7 @@ def preview(data, settings, host=""):
     route = "gh" if login and not anonymous else "relay" if relay else "browser"
     if not anonymous and route == "relay" and not name.strip():
         raise FeedbackError("Enter a name for the relay, or select Send anonymously.")
-    body = body.strip()
+    body = ("### Bug report" if kind == "bug" else "### Idea") + "\n\n" + body.strip()
     if data.get("technical", True):
         browser = data.get("browser")
         browser = browser if browser in ("Firefox", "Edge", "Chrome", "Safari") else "Other"
@@ -135,13 +147,15 @@ def preview(data, settings, host=""):
         body += "\n\nSubmitted by: " + name.strip()
     title = title.strip()
     if anonymous:
-        known = identities(settings, host, name, login)
+        known = identities(settings, host, name, login) + list(private_values)
         title, body = scrub(title, known), scrub(body, known)
     if len(title.encode("utf-16-le")) // 2 > 200 or len(body.encode()) > MAX_BODY:
         raise FeedbackError("The scrubbed preview is too large; shorten the title or description.")
     plan = dict(title=title, body=body, kind=kind, repo=repo, relay=relay,
                 route=route, anonymous=anonymous, login=login if route == "gh" else "",
                 attachments=[], created=time.monotonic(), state="ready")
+    if route == "relay" and len(relay_payload(plan)) > MAX_RELAY_REQUEST:
+        raise FeedbackError("The encoded feedback exceeds the relay's 32 KB limit; shorten the text.")
     with _lock:
         for key in list(_drafts):
             if time.monotonic() - _drafts[key]["created"] > 3600:
@@ -160,7 +174,7 @@ def fallback(plan, reason):
 
 
 def issue_url(url, repo):
-    return isinstance(url, str) and bool(re.fullmatch(r"https://github\.com/" + re.escape(repo) + r"/issues/\d+", url))
+    return isinstance(url, str) and bool(re.fullmatch(r"https://github\.com/" + re.escape(repo) + r"/issues/\d+", url, re.I))
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -189,12 +203,16 @@ def send(ident):
             r = run("gh", "api", "--hostname", "github.com", f'repos/{plan["repo"]}/issues', "--method", "POST", "--input", "-", input=json.dumps(payload))
             if r.returncode:
                 return dict(ok=False, message="GitHub refused the issue. Check gh authentication, repository access and labels; your text is kept.")
-            url = json.loads(r.stdout).get("html_url")
+            issue = json.loads(r.stdout)
+            url = issue.get("html_url")
             if not issue_url(url, plan["repo"]):
                 raise ValueError("bad response")
             result = dict(ok=True, url=url)
+            applied = {label.get("name", "").lower() for label in issue.get("labels", []) if isinstance(label, dict)}
+            if not {"feedback", plan["kind"]}.issubset(applied):
+                result["warning"] = "GitHub omitted requested labels (repository permission may be required). The Bug/Idea classification remains in the issue body."
         else:
-            raw = json.dumps(dict(title=plan["title"], body=plan["body"], kind=plan["kind"], repo=plan["repo"])).encode()
+            raw = relay_payload(plan)
             request = urllib.request.Request(plan["relay"], data=raw, headers={"Content-Type": "application/json"})
             try:
                 with urllib.request.build_opener(NoRedirect).open(request, timeout=25) as response:

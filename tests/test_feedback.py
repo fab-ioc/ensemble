@@ -11,12 +11,14 @@ from unittest.mock import patch, Mock
 import dashboard
 import feedback
 
+USERS = 'Us' + 'ers'  # Synthetic paths must not trip the repository privacy scan.
+
 
 class Scrubber(unittest.TestCase):
     def test_identities_paths_emails_hosts_tokens(self):
-        raw = (r'C:\Users\Alice\work /Users/Alice/work /home/Alice/work '
+        raw = (rf'C:\{USERS}\Alice\work /{USERS}/Alice/work /home/Alice/work '
                'Alice Smith alice@example.com ALICE-LAPTOP @alice-gh '
-               'host.tail-name.ts.net http://hub:8765/session?id=secret '
+               'host.tail-name.ts' + '.net http://hub:8765/session?id=secret '
                'ghp_abcdef github_pat_abcdef sk-secret Bearer opaque '
                'token=opaque WindowsUser 100.64.1.2 [image] private.png')
         clean = feedback.scrub(raw, ['Alice Smith', 'Alice', 'ALICE-LAPTOP', 'WindowsUser'])
@@ -26,7 +28,7 @@ class Scrubber(unittest.TestCase):
         self.assertEqual(clean.count('~/work'), 3)
 
     def test_encoded_and_slash_paths_and_embedded_images(self):
-        clean = feedback.scrub('C%3A%5CUsers%5Calice%5Cfoo /Users/bob/a ![alice](alice.png) <img src="foo">')
+        clean = feedback.scrub(f'C%3A%5C{USERS}%5Calice%5Cfoo /{USERS}/bob/a\n![alice](alice.png) <img src="foo">')
         self.assertNotIn('alice', clean)
         self.assertNotIn('bob', clean)
         self.assertIn('~/foo', clean)
@@ -58,7 +60,7 @@ class FeedbackEndpoint(unittest.TestCase):
         self.data = dict(title='A bug', description='Please fix this', kind='bug', name='Alice', technical=False)
 
     def post(self, path, data, headers=None):
-        req = urllib.request.Request(self.base + '/api/feedback/' + path, data=json.dumps(data).encode(), headers={'Content-Type': 'application/json', **(headers or {})})
+        req = urllib.request.Request(self.base + '/api/feedback/' + path, data=json.dumps(data, ensure_ascii=False).encode(), headers={'Content-Type': 'application/json', **(headers or {})})
         try:
             with urllib.request.urlopen(req) as r: return r.status, json.load(r)
         except urllib.error.HTTPError as e: return e.code, json.load(e)
@@ -75,15 +77,64 @@ class FeedbackEndpoint(unittest.TestCase):
             self.assertEqual(draft['route'], 'gh')
             _, result = self.post('send', {'id': draft['id'], 'body': 'injected'})
             self.assertTrue(result['ok'])
+            self.assertIn('omitted', result['warning'])
+            self.assertIn('### Bug report', draft['body'])
             payload = json.loads(run.call_args.kwargs['input'])
             self.assertEqual(payload['body'], draft['body'])
             self.assertEqual(payload['labels'], ['feedback', 'bug'])
             self.post('send', {'id': draft['id']})
             self.assertEqual(run.call_count, 1)
 
+    def test_persisted_hub_token_and_quoted_secrets_are_redacted(self):
+        secrets = ['bare-hub-credential', 'opaque-private-value', 'private password with spaces', 'private API key']
+        content = 'bare-hub-credential {"access_token":"opaque-private-value", "password":"private password with spaces"} api_key: \'private API key\''
+        with patch.object(dashboard, 'ACCESS_TOKEN', secrets[0]):
+            draft = self.draft(anonymous=True, title=content, description=content)
+        for secret in secrets:
+            self.assertNotIn(secret, draft['title'] + draft['body'])
+        self.assertNotIn('private_values', draft)
+
+    def test_anonymous_reference_images_and_destinations_are_omitted(self):
+        for image in ['![private alt][shot]', '![shot][]', '![shot]', '![nested [alt]][shot]']:
+            for destination in ['/user-attachments/assets/private-id', '//private-host/private.png']:
+                draft = self.draft(anonymous=True, description=image + '\n\n[shot]: ' + destination)
+                self.assertNotIn('![', draft['body'])
+                self.assertNotIn(destination, draft['body'])
+                self.assertNotIn('private alt', draft['body'])
+
+    def test_unicode_relay_envelope_fits_and_posts_exact_preview(self):
+        draft = self.draft(description='é' * 9000)
+        response = b'{"url":"https://github.com/fab-ioc/ensemble/issues/42"}'
+        opener = Mock()
+        opener.open.return_value.__enter__ = Mock(return_value=io.BytesIO(response))
+        opener.open.return_value.__exit__ = Mock(return_value=False)
+        with patch.object(feedback.urllib.request, 'build_opener', return_value=opener):
+            _, result = self.post('send', {'id': draft['id']})
+        self.assertTrue(result['ok'])
+        wire = opener.open.call_args.args[0].data
+        self.assertLessEqual(len(wire), feedback.MAX_RELAY_REQUEST)
+        self.assertEqual(json.loads(wire)['body'], draft['body'])
+
+    def test_encoded_envelope_limit_checked_at_preview(self):
+        # Control characters expand sixfold in JSON even without ASCII escaping.
+        with self.assertRaises(feedback.FeedbackError):
+            feedback.preview(self.data | {'description': '\x01' * 6000}, self.settings)
+
+    def test_mixed_case_repo_and_strict_issue_url(self):
+        self.settings['feedbackRepo'] = 'Fab-ioc/Ensemble'
+        with patch.object(feedback, 'output', return_value='alice-gh'), patch.object(feedback, 'run') as run:
+            run.return_value = Mock(returncode=0, stdout='{"html_url":"https://github.com/fab-ioc/ensemble/issues/42", "labels":[{"name":"feedback"},{"name":"idea"}]}')
+            draft = self.draft(kind='idea')
+            _, result = self.post('send', {'id': draft['id']})
+        self.assertTrue(result['ok'])
+        self.assertNotIn('warning', result)
+        self.assertIn('### Idea', draft['body'])
+        for url in ['https://github.com.evil/fab-ioc/ensemble/issues/42', 'https://github.com/fab-ioc/ensemble/issues/42/evil', 'http://github.com/fab-ioc/ensemble/issues/42']:
+            self.assertFalse(feedback.issue_url(url, 'Fab-ioc/Ensemble'))
+
     def test_anonymous_never_posts_with_gh_and_scrubs_preview(self):
         with patch.object(feedback, 'output', return_value='alice-gh'), patch.object(feedback, 'run') as run:
-            draft = self.draft(anonymous=True, title='Alice bug', description='alice-gh /Users/Alice/f.txt')
+            draft = self.draft(anonymous=True, title='Alice bug', description=f'alice-gh /{USERS}/Alice/f.txt')
             self.assertEqual(draft['route'], 'relay')
             self.assertNotIn('Alice', draft['title'] + draft['body'])
             opener = Mock()

@@ -55,7 +55,7 @@ export async function handle(request, env, fetchGitHub = fetch) {
   let data;
   try { data = await readLimited(request); }
   catch (e) { return reply(e.message === 'size' ? 413 : 400, {error: 'Invalid or oversized feedback'}); }
-  if (!data || data.repo !== env.FEEDBACK_REPO || !['bug', 'idea'].includes(data.kind) ||
+  if (!data || typeof data.repo !== 'string' || data.repo.toLowerCase() !== env.FEEDBACK_REPO.toLowerCase() || !['bug', 'idea'].includes(data.kind) ||
       typeof data.title !== 'string' || !data.title.trim() || data.title.length > 200 ||
       typeof data.body !== 'string' || !data.body.trim() || new TextEncoder().encode(data.body).length > 24000 ||
       Object.keys(data).some(k => !['repo', 'kind', 'title', 'body'].includes(k))) return reply(400, {error: 'Invalid feedback'});
@@ -68,7 +68,8 @@ export async function handle(request, env, fetchGitHub = fetch) {
     });
     if (!response.ok) return reply(502, {error: 'GitHub refused the issue'});
     const result = await response.json();
-    if (typeof result.html_url !== 'string' || !result.html_url.startsWith(`https://github.com/${env.FEEDBACK_REPO}/issues/`)) return reply(502, {error: 'Invalid GitHub reply'});
+    const escapedRepo = env.FEEDBACK_REPO.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (typeof result.html_url !== 'string' || !new RegExp(`^https://github\\.com/${escapedRepo}/issues/[0-9]+$`, 'i').test(result.html_url)) return reply(502, {error: 'Invalid GitHub reply'});
     return reply(201, {url: result.html_url});
   } catch { return reply(502, {error: 'Could not confirm GitHub delivery'}); }
 }

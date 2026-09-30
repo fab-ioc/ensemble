@@ -54,3 +54,10 @@ test('counter alarm deletes stored values', async () => {
   await new FeedbackLimit({storage: {deleteAll: async () => { deleted = true; }}}).alarm();
   assert.equal(deleted, true);
 });
+test('case-insensitive repo match and canonical URL still enforce exact issue path', async () => {
+  const env = fixture(); env.FEEDBACK_REPO = 'Fab-ioc/Ensemble';
+  for (const url of ['https://github.com/fab-ioc/ensemble/issues/42', 'https://github.com/fab-ioc/ensemble/issues/42/evil', 'https://github.com.evil/fab-ioc/ensemble/issues/42']) {
+    const r = await handle(request(), env, async () => Response.json({html_url: url}));
+    assert.equal(r.status, url.endsWith('/42') && !url.includes('.evil') ? 201 : 502);
+  }
+});

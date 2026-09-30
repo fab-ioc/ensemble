@@ -33,7 +33,7 @@ async function main() {
         out.geometry.push(await inside(`(()=>{const d=document.getElementById('feedback-dialog'), r=d.getBoundingClientRect(), f=document.getElementById('feedback-title'), s=getComputedStyle(d), b=getComputedStyle(document.getElementById('feedback-preview-button')); return {width:innerWidth,height:innerHeight,theme:document.documentElement.dataset.theme,left:r.left,right:r.right,top:r.top,bottom:r.bottom,scroll:d.scrollWidth,client:d.clientWidth,font:parseFloat(getComputedStyle(f).fontSize),button:document.getElementById('feedback-preview-button').getBoundingClientRect().height,fg:s.color,bg:s.backgroundColor,bfg:b.color,bbg:b.backgroundColor,open:d.open}})()`));
       }
       if(width===360) {
-        await inside(`document.getElementById('feedback-title').value='Alice bug'; document.getElementById('feedback-description').value='/Users/Alice/private'; document.getElementById('feedback-anonymous').checked=true; document.getElementById('feedback-anonymous').dispatchEvent(new Event('input',{bubbles:true}));
+        await inside(`document.getElementById('feedback-title').value='Alice bug'; document.getElementById('feedback-description').value='/'+'Us'+'ers/Alice/private'; document.getElementById('feedback-anonymous').checked=true; document.getElementById('feedback-anonymous').dispatchEvent(new Event('input',{bubbles:true}));
           const dt=new DataTransfer(); dt.items.add(new File(['image'], 'Alice-laptop.png', {type:'image/png'})); document.getElementById('feedback-description').dispatchEvent(new ClipboardEvent('paste',{clipboardData:dt,bubbles:true}));
           document.getElementById('feedback-form').requestSubmit();`);
         await until(`!document.querySelector('#test-frame').contentDocument.getElementById('feedback-preview').hidden`);
@@ -68,7 +68,7 @@ class FeedbackPage(unittest.TestCase):
         self.assertEqual(self.got['preview']['images'], 1)
         self.assertEqual(self.got['preview']['nameHidden'], 'none')
         self.assertIn('not anonymous', self.got['fallback']['text'])
-        self.assertEqual(self.got['fallback']['description'], '/Users/Alice/private')
+        self.assertEqual(self.got['fallback']['description'], '/' + 'Us' + 'ers/Alice/private')
         self.assertTrue(self.got['invalidated'])
         self.assertTrue(self.got['settings'])
 

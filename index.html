@@ -3569,6 +3569,12 @@ window.DOC_LISTENERS_PAUSED = false;
   <div class="usage-foot" id="usage-foot"></div>
 </div>
 <div id="settings-panel" hidden>
+  <div class="settings-section" id="settings-app">
+    <h4>Ensemble as an app</h4>
+    <button type="button" id="install-app-btn" class="po-btn def" hidden
+            title="A window of its own, with its own icon in the dock or taskbar, and no address bar; its pop-out panels too">Install app</button>
+    <p class="cfg-hint" id="install-app-hint" aria-live="polite"></p>
+  </div>
   <div class="settings-section" id="settings-feedback">
     <h4>Feedback</h4>
     <button type="button" class="po-btn def" id="feedback-open">Send feedback…</button>
@@ -3576,12 +3582,6 @@ window.DOC_LISTENERS_PAUSED = false;
     <label class="feedback-setting">Feedback relay URL<input id="feedback-relay" type="url" placeholder="https://… (optional)"></label>
     <button type="button" class="po-btn def" id="feedback-settings-save">Save feedback settings</button>
     <p class="cfg-hint" id="feedback-settings-status" role="status"></p>
-  </div>
-  <div class="settings-section" id="settings-app">
-    <h4>Ensemble as an app</h4>
-    <button type="button" id="install-app-btn" class="po-btn def" hidden
-            title="A window of its own, with its own icon in the dock or taskbar, and no address bar; its pop-out panels too">Install app</button>
-    <p class="cfg-hint" id="install-app-hint" aria-live="polite"></p>
   </div>
   <div class="settings-section">
     <h4>Theme</h4>
@@ -15004,6 +15004,8 @@ $('#me-menu').addEventListener('click', (ev) => {
     if (inp) inp.focus();
   }
 });
+$('#feedback-open').addEventListener('click', () => feedbackOpen());
+$('#feedback-settings-save').addEventListener('click', () => feedbackSaveSettings());
 $('#settings-panel').addEventListener('click', (ev) => {
   const opt = ev.target.closest('.theme-opt');
   if (opt) { ev.stopPropagation(); setAppearance(opt.dataset.appearance); return; }

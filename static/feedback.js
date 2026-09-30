@@ -56,7 +56,6 @@
     if (!dialog.open) dialog.showModal();
     el('feedback-title').focus();
   };
-  el('feedback-open').addEventListener('click', window.feedbackOpen);
   el('feedback-close').onclick = () => dialog.close();
   dialog.addEventListener('cancel', e => { e.stopPropagation(); if (busy) e.preventDefault(); });
   dialog.addEventListener('keydown', e => { if (e.key === 'Escape') e.stopPropagation(); });
@@ -91,10 +90,11 @@
       if (current !== revision) return;
       draft = result;
       el('feedback-post-title').textContent = result.title; el('feedback-post-body').textContent = result.body;
-      el('feedback-route').textContent = `Repository: ${result.repo}. Labels: feedback, ${result.kind}. ` +
+      el('feedback-route').textContent = `Repository: ${result.repo}. Requested labels: feedback, ${result.kind}. ` +
         (result.route === 'gh' ? `Posted as GitHub user ${result.login}.` : result.route === 'relay' ?
           (result.anonymous ? 'Posted anonymously through the relay.' : 'Posted through the relay with your typed name.') :
-          'No relay configured. GitHub requires login and posts under your account. This is not anonymous.');
+          'No relay configured. GitHub requires login and posts under your account. This is not anonymous.') +
+        (result.route !== 'relay' ? ' GitHub may omit labels without repository permission; the kind is included in the body.' : '');
       el('feedback-send').textContent = result.route === 'browser' ? 'Continue to GitHub options' : 'Send';
       el('feedback-send').hidden = false; el('feedback-preview').hidden = false;
       el('feedback-preview-button').className = 'po-btn def';
@@ -112,6 +112,7 @@
         completed = true; el('feedback-send').hidden = true;
         status(images.length && !draft.anonymous ? 'Issue created. Download the screenshots above, then drag them onto the GitHub issue.' : 'Issue created.');
         link(result.url, 'Open issue');
+        if (result.warning) el('feedback-status').append(' ' + result.warning);
       } else {
         status(result.message || 'Feedback failed. Your text is kept.');
         if (result.fallback) link(result.url, 'Open GitHub (not anonymous)');
@@ -123,7 +124,7 @@
     el('feedback-repo').value = s.feedbackRepo || 'fab-ioc/ensemble';
     el('feedback-relay').value = s.feedbackRelayUrl || '';
   }).catch(() => {});
-  el('feedback-settings-save').onclick = async () => {
+  window.feedbackSaveSettings = async () => {
     const repo = el('feedback-repo').value.trim(), relay = el('feedback-relay').value.trim();
     try {
       const r = await fetch('/api/settings', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({feedbackRepo: repo, feedbackRelayUrl: relay})});
