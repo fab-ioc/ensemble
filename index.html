@@ -4659,12 +4659,22 @@ function priorityPicker(r, isRoom) {
 // One row that answers "what is this task": where it sits, how urgent, what is
 // running, and whether it needs you. Identity details live in Details, where
 // they are reference rather than headline.
+// A task in a project with a PO asks its PO, not you (task → PO → CEO): the
+// row says so quietly, in the neutral tone — it is not on your list.
+function poWaitLoz(r) {
+  const w = r.waitingOnPo;
+  if (!w) return '';
+  const at = w.since ? new Date(w.since * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+  const tip = `${w.kind === 'blocked' ? 'Blocked' : 'Asked its PO'}${at ? ' at ' + at : ''}${w.line ? ': ' + w.line : ''}`;
+  return `<span class="loz neutral" title="${esc(tip)}">waiting for the PO</span>`;
+}
+
 function detailMeta(r, isLive, isRoom, now) {
   const attn = ATTENTION_BY_ROOM.get(r.roomId) || r.attention || null;
   const tone = (attn && (attn.state === 'agent_gone' || attn.state === 'blocked')) ? 'danger'
              : (attn && attn.state === 'stalled') ? 'neutral' : 'warning';
   const attnLoz = attn
-    ? `<span class="loz ${tone}" title="${esc(attn.reason || '')}">${esc(ATTN_LABEL[attn.state] || attn.state)}</span>` : '';
+    ? `<span class="loz ${tone}" title="${esc(attn.reason || '')}">${esc(ATTN_LABEL[attn.state] || attn.state)}</span>` : poWaitLoz(r);
   return `<div class="dp-meta">${workflowPicker(r, isRoom)}${attnLoz}${priorityPicker(r, isRoom)}${runChip(r)}
     <span class="dp-when">updated ${agoSpan(r.updatedAt)} ago</span></div>`;
 }
@@ -5490,7 +5500,7 @@ function renderHeadlessRow(r, parsed, now) {
   const attn = ATTENTION_BY_ROOM.get(r.roomId) || r.attention || null;
   const attnCls = attn ? ' needs-you' : '';
   const attnBadge = attn
-    ? `<span class="notif-chip ${esc(attn.state)}" title="${esc(attn.reason)}">${esc(ATTN_LABEL[attn.state] || attn.state)}</span>` : '';
+    ? `<span class="notif-chip ${esc(attn.state)}" title="${esc(attn.reason)}">${esc(ATTN_LABEL[attn.state] || attn.state)}</span>` : poWaitLoz(r);
   return `<tr class="row headless${attnCls} ${liveClasses}" data-room="${esc(r.roomId || '')}" data-orphan="${r.orphan ? '1' : ''}" data-sid="${esc(r.sessionId)}" draggable="false">
     <td>${statusDot}</td>
     ${prioCell(r)}
@@ -5611,7 +5621,7 @@ function cardHtml(r, now) {
   // The attention lozenge goes FIRST, above the title: it is the reason you
   // would look at this card at all.
   const loz = attn
-    ? `<span class="loz ${tone}" title="${esc(attn.reason || '')}">${esc(ATTN_LABEL[attn.state] || attn.state)}</span>` : '';
+    ? `<span class="loz ${tone}" title="${esc(attn.reason || '')}">${esc(ATTN_LABEL[attn.state] || attn.state)}</span>` : poWaitLoz(r);
   const proj = (!SELECTED_PROJECT && r.projectName)
     ? `<span class="cproj" title="${esc(r.projectName)}">${esc(r.projectName)}</span>` : '';
   const working = r.isLive && r.status === 'busy' ? ' working' : '';

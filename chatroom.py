@@ -624,14 +624,18 @@ def wake_targets(room: dict, sender: str, to: str, text: str) -> list[str]:
 # Messaging
 # ---------------------------------------------------------------------------
 
-def post_message(room_id: str, sender: str, text: str, to: str = "") -> dict | None:
+def post_message(room_id: str, sender: str, text: str, to: str = "",
+                 wait_for_human: bool = True) -> dict | None:
     """Append a message from ``sender`` to the room. ``to`` may be a specific
     participant identity or '' / 'all' to address every other participant.
 
     Returns a dict describing what the caller (dashboard) should do next:
         {message, recipients:[identity...], status, hopCount}
     ``recipients`` are the agent identities that should be rung; if the human is
-    a recipient the room enters ``waiting_human`` and the relay pauses.
+    a recipient the room enters ``waiting_human`` and the relay pauses —
+    unless ``wait_for_human`` is False: a task in a project with a PO asks
+    nobody by a message to the person (attention._open_to_human), so the room
+    stays active and nothing reads as waiting for them.
     """
     with _LOCK:
         room = _read(room_id)
@@ -669,6 +673,8 @@ def post_message(room_id: str, sender: str, text: str, to: str = "") -> dict | N
             room["hopCount"] = 0
             room["status"] = "active"
             room["waitingFor"] = ""
+        elif human_addressed and not agent_recipients and not wait_for_human:
+            pass                # read in the chat; it asks nobody
         elif human_addressed and not agent_recipients:
             # An agent tagged ONLY the human → pause and wait for input.
             room["status"] = "waiting_human"

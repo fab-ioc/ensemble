@@ -423,13 +423,16 @@ class AnsweredInTheTerminal(_Bell):
         self.report("completed", "Sold again.")
         self.assertEqual(chatroom.get_room(self.rid, public=False)["status"], "paused")
 
-    def test_in_a_team_room_the_terminal_answers_nothing(self):
+    def test_in_a_team_room_the_terminal_answers_it_too(self):
+        # ED-138: OP-140's PO answered its team's owner in the terminal, and
+        # the ask stayed open for hours.
         full = chatroom.get_room(self.rid, public=False)
         full["mode"] = "collab"
         chatroom.update_room(full)
         self.report("question", "Which price?")
-        self.type("9,500\r")
         self.assertEqual(self.item()["state"], "waiting_for_you")
+        self.type("9,500\r")
+        self.assertIsNone(self.item())
 
 
 class TheProgressCheck(_Checks):

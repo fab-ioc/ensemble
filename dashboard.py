@@ -74,6 +74,8 @@ import chatroom
 import digest
 # What a handover says is due at a time: the idle PO is typed it then.
 import due
+# A task in a PO project that stopped without saying so: nudge, then tell the PO.
+import stall
 # Messages between two projects' POs (ensemble_message_po).
 import po_messages
 # Task-management MCP tools (ensemble_*) served next to the chat tools.
@@ -127,6 +129,7 @@ ensemble_tools.bind(sys.modules[__name__])
 attention.bind(sys.modules[__name__])
 digest.bind(sys.modules[__name__])
 due.bind(sys.modules[__name__])
+stall.bind(sys.modules[__name__])
 po_messages.bind(sys.modules[__name__])
 rotation.bind(sys.modules[__name__])
 points.bind(sys.modules[__name__])
@@ -2537,6 +2540,7 @@ HUB_INPUT_KINDS = (
     ("[product owner] ", "madepo"),     # made_po_first_input: a session made a project's PO
     ("[from the restart helper, not ", "helper"),   # the note after a hub restart
     ("[points] ", "points"),            # points.py: the person's points still open
+    ("[stalled] ", "stalled"),          # stall.py: an idle owner with nothing open
 )
 # The kind is "completed", or a verdict such as "review 1 (changes requested)".
 # A message from another project's PO (po_messages.wake_line): the project's
@@ -2571,7 +2575,7 @@ _FIRST_WORDS_KIND = {
     "relay": "Team conversation", "resumed": "Resumed task", "restart": "After a hub restart",
     "handover": "Handover", "rotation": "Task conversation after a handover",
     "madepo": "PO conversation", "helper": "After a hub restart", "points": "Open points",
-    "pomsg": "Message from another PO",
+    "pomsg": "Message from another PO", "stalled": "Stall check",
 }
 
 
@@ -2625,18 +2629,19 @@ def typed_by_person(text: str) -> bool:
 
 
 def note_answer(room_id: str, identity: str) -> bool:
-    """A person (or the PO, for them) submitted a line to a one-agent task's
-    terminal: that answers the ask the task has open (attention._open_to_human
-    reads ``answeredAt``). Kept on the participant, so it outlives the terminal
-    — a hub restart or a rotation never brings an answered ask back — and
-    written only when there is an ask to answer: a person types many lines.
-    Never a line the hub types by itself (a doorbell, a progress check, the
-    note after a restart, the restart helper's)."""
+    """A person (or the PO) submitted a line to a task agent's terminal: that
+    answers the ask the task has open (attention._open_to_human reads
+    ``answeredAt``), in a one-agent task and a team alike. Kept on the
+    participant, so it outlives the terminal — a hub restart or a rotation
+    never brings an answered ask back — and written only when there is an ask
+    to answer: a person types many lines. Never a line the hub types by itself
+    (a doorbell, a progress check, the note after a restart, the restart
+    helper's)."""
     if not room_id or not identity:
         return False
     try:
         room = chatroom.get_room(room_id, public=False)
-        if not room or room.get("mode") != "solo":
+        if not room:
             return False
         ask = attention.open_ask(room)
         if not ask or ask.get("from") != identity:
@@ -4832,6 +4837,8 @@ def task_ref_info(rid: str, projects: list[dict] | None = None) -> dict | None:
         status = "draft"
     elif live:
         status = {"waiting_human": "waiting for you", "paused": "paused"}.get(entry.get("status"), "running")
+        if status == "waiting for you" and room_po_id(entry, projects):
+            status = "running"      # asks its PO, not you (attention._open_to_human)
     else:
         status = "not running"
     wf = workflow_of(entry)
@@ -5115,6 +5122,24 @@ def _project_for_cwd(cwd: str, projects: list[dict]) -> str:
                 if best_rank is None or rank < best_rank:
                     best, best_rank = p["id"], rank
     return best
+
+
+def room_po_id(room: dict, projects: list[dict] | None = None,
+               links: dict | None = None) -> str:
+    """The room of the PO a task reports to: its project's PO, or "" when the
+    project has none (or names one that is gone), when the task is in no
+    project, and for the PO's own room. A task in a project with a PO asks the
+    PO, never the CEO directly (attention._open_to_human, stall.py)."""
+    rid = (room or {}).get("id", "")
+    if not rid:
+        return ""
+    projects = load_projects() if projects is None else projects
+    links = load_session_projects() if links is None else links
+    pid = links.get(rid) or room.get("projectId") or _project_for_cwd(room.get("cwd", ""), projects)
+    po = next(((p.get("poRoomId") or "").strip() for p in projects if p.get("id") == pid), "")
+    if not po or po == rid or not chatroom._room_path(po).exists():
+        return ""
+    return po
 
 
 def _write_task_json(folder: str, data: dict) -> None:
@@ -7685,6 +7710,10 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
     except Exception:
         att_by_room = {}
     try:
+        po_waits = attention.waiting_on_po()
+    except Exception:
+        po_waits = {}
+    try:
         for rm in rooms:
             agents_in = [p for p in rm.get("participants", [])
                          if p.get("kind") == "agent"]
@@ -7778,6 +7807,9 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 "attention": ({k: v for k, v in att_by_room[rid].items()
                                if k in ("state", "reason", "agentIdentity", "since", "askKind")}
                               if rid in att_by_room else None),
+                # {since, kind, line, agent}: an ask its PO has not answered
+                # yet (task → PO → CEO) — shown quietly, it is not the CEO's.
+                "waitingOnPo": po_waits.get(rid),
                 # {open, answered}: the person's points waiting, or None.
                 "points": _points_counts(rid),
                 # How many conversations it has left behind (past_conversations).
@@ -8995,6 +9027,10 @@ def update_task(rid: str, title=None, spec=None,
         s = str(spec).strip()
         if not s:
             return False, None, "empty_spec"
+        if s != (room.get("spec") or "").strip():
+            # When it was last amended: an amendment after a task's open ask
+            # answers it (attention._open_to_human).
+            room["specAt"] = time.time()
         room["spec"] = s
         patch["spec"] = s
     if priority is not None:
@@ -11747,7 +11783,10 @@ class Handler(BaseHTTPRequestHandler):
             to = (args.get("to") or "").strip()
             if not text:
                 return err(-32602, "message is required")
-            result = chatroom.post_message(room_id, identity, text, to=to)
+            room = chatroom.get_room(room_id, public=False)
+            po = room_po_id(room) if room else ""
+            result = chatroom.post_message(room_id, identity, text, to=to,
+                                           wait_for_human=not po)
             if result is None:
                 return err(-32000, "room no longer exists")
             self._ring_recipients(room_id, result)
@@ -11760,7 +11799,12 @@ class Handler(BaseHTTPRequestHandler):
             elif status == "paused":
                 note = ("delivered, but the room reached its turn limit and is "
                         "paused for human review — stop and wait.")
-            if to.lower() in chatroom.BROADCAST and not result["recipients"]:
+            if po and (to == "user" or (to.lower() in chatroom.BROADCAST
+                                         and not result["recipients"])):
+                note = ("delivered to the chat. Your task reports to its PO: "
+                        "this message asks nobody. For a question, a block or "
+                        "progress, use ensemble_report (it reaches the PO).")
+            elif to.lower() in chatroom.BROADCAST and not result["recipients"]:
                 note += (" No teammate was woken: a message to everyone wakes only "
                          "the task's owner. To wake a reviewer or another "
                          "specialist, address it with `to` or @mention it.")

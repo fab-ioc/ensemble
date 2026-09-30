@@ -2195,7 +2195,7 @@ function foldHeld(items, comments) {
 // folds the replies to the hub too.
 const HUB_KIND_LABEL = { digest: 'Progress check', due: 'Due now', report: 'Report', relay: 'Team message',
   resumed: 'Resumed', restart: 'Hub restarted', handover: 'Handover request', rotation: 'New session', madepo: 'Made PO', helper: 'Restart helper',
-  points: 'Your open asks', pomsg: 'From another PO' };
+  points: 'Your open asks', pomsg: 'From another PO', stalled: 'Stall check' };
 const isHubInput = m => !!m && m.from === 'user' && !!m.kind && m.kind !== 'human';
 // A message between two projects' POs (po_messages.py), kept in both POs'
 // rooms: a balloon of its own, never folded as hub traffic.
@@ -2615,7 +2615,9 @@ function askLineHtml(ask, mid, href) {
   const line = String(ask.line || ask.text || '').trim() || 'see the report';
   const when = chatWhen(ask.ts);
   const said = mid ? `<a class="ask-link" href="${esc(href(mid))}" data-ref-msg="${esc(mid)}">${esc(line)}</a>` : esc(line);
-  return `<span class="ask-text">Waiting for you${when ? ' since ' + esc(when) : ''}: ${said}</span>`;
+  // A task in a project with a PO asks its PO, not you (task → PO → CEO).
+  const who = ask.to === 'po' ? 'Waiting for the PO' : 'Waiting for you';
+  return `<span class="ask-text">${who}${when ? ' since ' + esc(when) : ''}: ${said}</span>`;
 }
 // ---- The open ask: end
 // ---- The person's points: begin --------------------------------------------
@@ -3039,7 +3041,7 @@ function showAskLine(items) {
   const el = $('#ask-line'), ask = ROOM_OBJ && ROOM_OBJ.openAsk;
   if (!el) return;
   const mid = ask ? askBalloon(ask, items || LAST_ITEMS || [], SOLO_MODE) : '';
-  const sig = ask ? [ask.id, ask.ts, ask.line, mid, new Date().toDateString()].join('|') : '';
+  const sig = ask ? [ask.id, ask.ts, ask.line, ask.to, mid, new Date().toDateString()].join('|') : '';
   if (sig === ASK_SIG) return;
   ASK_SIG = sig;
   el.hidden = !ask;

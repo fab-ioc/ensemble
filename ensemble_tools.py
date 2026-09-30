@@ -125,16 +125,21 @@ _ALL_TOOLS = [
             "milestone worth knowing (\"update\"). The report goes to your "
             "project's PO — it is posted in the PO's room and wakes the PO — or, "
             "if the project has no PO, to the user. It is also recorded on your "
-            "task, so the board shows it: after completed / question / blocked "
-            "your task reads as waiting on a human, not as stalled. Write the "
-            "text as a self-contained Markdown summary — what was done or what is "
-            "needed, where (branch, commit, paths), how you verified it — because "
-            "the PO does not see your conversation. One report per event; do not "
-            "repeat it to be sure it arrived. A blocked or question report stays "
-            "on the user's Needs you list until the user answers in your chat or "
-            "you report completed; an update about something else leaves it "
-            "there. When what you asked for was resolved without an answer in "
-            "chat, say so: an update with clears: true."
+            "task, so the board shows it. Write the text as a self-contained "
+            "Markdown summary — what was done or what is needed, where (branch, "
+            "commit, paths), how you verified it — because the PO does not see "
+            "your conversation. One report per event; do not repeat it to be sure "
+            "it arrived. In a project with a PO, a blocked or question report is "
+            "an ask to the PO: your task reads as waiting for the PO until the PO "
+            "(or the user) answers — a line typed to you, a spec amendment, a chat "
+            "message — or until you report again; say you carry on with an update "
+            "(the way to give interim progress too; never a chat message to the "
+            "user). Something only the user can decide still goes to the PO: set "
+            "forCeo: true and the PO puts it to them. Without a PO, a blocked or "
+            "question stays on the user's Needs you list until the user answers "
+            "in your chat or you report completed; an update about something else "
+            "leaves it there. When what you asked for was resolved without an "
+            "answer, say so: an update with clears: true."
         ),
         "inputSchema": {
             "type": "object",
@@ -146,6 +151,10 @@ _ALL_TOOLS = [
                            "description": "With kind update: your open blocked / question "
                                           "is over (resolved without an answer in chat). "
                                           "Default false: the ask stays open."},
+                "forCeo": {"type": "boolean",
+                           "description": "With blocked / question: only the user (the CEO) "
+                                          "can decide it. It still goes to your PO, who "
+                                          "puts it to them. Default false."},
             },
             "required": ["kind", "text"],
         },
@@ -711,8 +720,8 @@ def _status(room: dict) -> str:
         return "draft"
     if _d._room_is_live(room):
         st = room.get("status", "active")
-        if st == "waiting_human":
-            return "waiting_user"
+        if st == "waiting_human" and not _d.room_po_id(room):
+            return "waiting_user"   # in a PO project it asks the PO, not the user
         if st == "paused":
             return "paused"
         return "running"
@@ -774,6 +783,27 @@ def _attention_view(item: dict | None) -> dict | None:
     return out
 
 
+def _po_wait_view(room: dict) -> dict:
+    """``waitingOn: "po"`` (+ since, kind) while the task waits for its PO's
+    answer, ``stalled`` (+ since, nudgedAt, toldAt) while the hub has nudged
+    it for stopping without a word (stall.py); {} otherwise."""
+    out = {}
+    try:
+        w = _d.attention.waiting_on_po().get(room["id"])
+    except Exception:
+        w = None
+    if w:
+        out["waitingOn"] = {"who": "po", "since": w["since"], "kind": w["kind"]}
+    try:
+        st = _d.stall.record(room["id"])
+    except Exception:
+        st = None
+    if st and st.get("nudgedAt"):
+        out["stalled"] = {"since": st.get("idleSince", 0), "nudgedAt": st["nudgedAt"],
+                          "toldAt": st.get("toldAt", 0)}
+    return out
+
+
 def _ref(room: dict, projects: dict) -> str:
     """ED-18: a task's number with its project's key; "" without a number."""
     if not room.get("no"):
@@ -814,6 +844,7 @@ def _row(room: dict, projects: dict, links: dict, labels: dict,
         "status": _status(room),
         "workflow": _d.workflow_of(room),
         "attention": _attention_view((attn or {}).get(room["id"])),
+        **_po_wait_view(room),
         "agents": _agents_summary(room),
         "updatedAt": room.get("updatedAt"),
     }
@@ -825,6 +856,7 @@ def _row(room: dict, projects: dict, links: dict, labels: dict,
         **ref,
         "id": room["id"],
         "attention": _attention_view((attn or {}).get(room["id"])),
+        **_po_wait_view(room),
         "title": _title(room, labels),
         "priority": prio,
         "priorityName": _d.PRIORITY_NAMES[prio],
@@ -987,7 +1019,10 @@ def _report(ctx, args, handler):
         po = None                   # no PO to route to: the report goes to the user
     routed = ({"roomId": po["roomId"], "identity": po["identity"], "title": po["title"]}
               if po else None)
-    heading = (f"**Report — {kind}**, sent to the PO (*{po['title']}*)" if po
+    # Only the CEO can decide it: still the PO's to carry (task → PO → CEO).
+    for_ceo = kind in ("blocked", "question") and args.get("forCeo") is True
+    what = f"{kind} for {_d.operator_name()}'s decision" if for_ceo and po else kind
+    heading = (f"**Report — {what}**, sent to the PO (*{po['title']}*)" if po
                else f"**Report — {kind}**")
     # Only an update can say an earlier ask is over: a completed ends it by
     # itself, a new blocked or question takes its place.
@@ -997,9 +1032,12 @@ def _report(ctx, args, handler):
         return {"ok": True, "kind": kind, "deliveredTo": "user",
                 "note": "recorded on your task; the board shows it to the user"}
     no = _d.task_label(room)
-    body = (f"**{kind}**{f' (its open ask to {_d.operator_name()} is over)' if clears else ''} — "
+    body = (f"**{what}**{' (its open ask is over)' if clears else ''} — "
             f"report from task {no + ' ' if no else ''}*{title}* "
-            f"(`{room['id']}`, {me}):\n\n{text}")
+            f"(`{room['id']}`, {me}):\n\n{text}"
+            + (f"\n\n_Only {_d.operator_name()} can decide this: if you agree, put it to "
+               f"them with a decision balloon in your chat, and answer the task when "
+               f"they have._" if for_ceo else ""))
     res = _d.chatroom.post_report(po["roomId"], f"{me}@{room['id']}", po["identity"], body,
                                   {"reportKind": kind, "taskId": room["id"], "taskNo": room.get("no") or None,
                                    "taskTitle": title, "reporter": me})
