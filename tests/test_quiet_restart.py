@@ -334,7 +334,11 @@ class Restore(_Hub):
         self.restart(wake_room=mine)
         self.assertEqual(self.typed(mine), {"claude": []})           # the helper types its note
         self.assertEqual(self.typed(other), {"claude": []})
-        self.assertEqual(self.typed(busy_po), {"claude": [dashboard.RESTART_NOTE]})
+        typed = self.typed(busy_po)['claude']
+        self.assertEqual(len(typed), 1)
+        self.assertTrue(typed[0].startswith('\x1b[200~[hub restarted] ## Board now'))
+        self.assertTrue(typed[0].endswith('\x1b[201~'))
+        self.assertIn(dashboard.RESTART_NOTE.partition('] ')[2], typed[0])
         rows = {rid: [m for m in chatroom.get_room(rid)["messages"] if m.get("noticeKind") == "restart"]
                 for rid in (mine, other, busy_po)}
         self.assertEqual([len(rows[r]) for r in (mine, other, busy_po)], [0, 1, 0])

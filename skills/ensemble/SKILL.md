@@ -433,6 +433,16 @@ to bring it up to date, then starts a fresh PO whose first prompt is to read it
 and `ROADMAP.md`. Anything in neither file is lost. Never hand a task's spec to
 a fresh session as an instruction: it redoes the work.
 
+`PO-HANDOVER.md` is a current-state document, not a log. Keep a top section
+`## Now` of at most about 60 lines: in flight, owed, promised, due, and
+decisions waiting on the CEO. Keep stable sections for how the CEO likes to
+work, how to change the hub, and lessons. At every rotation move history to
+`PO-HANDOVER-ARCHIVE.md`. Above 30 KB the hub's handover ask names the size
+and asks you to archive history before stopping; that warning does not block
+rotation. The generated `## Board now` in a fresh PO's first hub prompt is
+the current truth for tasks, points, due items and usage; the handover gives
+context. Read the handover and roadmap as before, and act on the board now.
+
 **The PO can change agent (Claude <-> Codex) in the same room.** Two ways: the
 hub fails a usage-limited PO over to the other kind by itself, and the person
 can switch it by hand ("Switch..." in the PO's header, or `POST /api/po/switch`

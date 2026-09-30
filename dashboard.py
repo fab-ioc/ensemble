@@ -98,6 +98,7 @@ import task_numbers
 import task_tool_hook
 # A fresh PO session from its written handover when its conversation gets long.
 import rotation
+import board_brief
 # Plan-allowance readings (account-wide, per agent kind), refreshed in the
 # background so no request path ever waits on the network.
 import usage
@@ -1948,6 +1949,14 @@ def resume_note_for(room: dict, part: dict) -> str:
     return RESUME_NOTE
 
 
+def po_hub_prompt(room: dict, prompt: str) -> str:
+    """Enrich only an already-owed PO prompt; never wake an idle PO for this."""
+    if "## Board now (from the hub," in prompt:
+        return prompt
+    project = next((p for p in load_projects() if p.get("poRoomId") == room.get("id")), None)
+    return board_brief.prepend(sys.modules[__name__], project, prompt, room) if project else prompt
+
+
 class _Resume:
     """One resume of a room, in flight from the request that started it until
     its agents have had their first input. Holds what was sent to the room
@@ -3515,8 +3524,8 @@ def made_po_charter(project: dict) -> str:
 
 
 def made_po_first_input(project: dict, brought: dict | None = None) -> str:
-    """What the hub types into a session it has just made a PO. One line, as
-    every hub input: it starts with MADE_PO_PREFIX, which is how the chat
+    """What the hub types into a session it has just made a PO. One input,
+    starting with MADE_PO_PREFIX, which is how the chat
     tells it from the person's words (HUB_INPUT_KINDS). ``brought`` is the
     copy of its files into the project's folder, when one was made."""
     docs = project.get("kind") == "documents"
@@ -3529,7 +3538,7 @@ def made_po_first_input(project: dict, brought: dict | None = None) -> str:
                  f"works in, {'were' if n != 1 else 'was'} copied to the project's folder "
                  f"{project_home(project, create=False)} ({n} file{'s' if n != 1 else ''}): that copy is the "
                  f"one to work on from now on, and the original folder is left as it was. ")
-    return (
+    return board_brief.prepend(sys.modules[__name__], project, (
         f"{MADE_PO_PREFIX}You are now the product owner (PO) of the project '{name}' in "
         f"Ensemble ({'a documents project' if docs else 'a code project'}); "
         f"{operator_name()} made you its PO from the dashboard because this conversation "
@@ -3542,7 +3551,7 @@ def made_po_first_input(project: dict, brought: dict | None = None) -> str:
         f"(the roadmap). Write the handover first: this conversation is long, and the hub will "
         f"later start a fresh PO session that knows only those two files. "
         f"3) Then tell {operator_name()} in a few lines what you understood the project to be "
-        f"and what you would start first, and wait for the answer before starting any task.")
+        f"and what you would start first, and wait for the answer before starting any task."))
 
 
 def made_po_fresh_input(project: dict) -> str:
@@ -3553,7 +3562,7 @@ def made_po_fresh_input(project: dict) -> str:
     name = project.get("name") or project["id"]
     hp, rp = rotation.handover_path(project), roadmap_path(project)
     where = project_home(project, create=False) if docs else project.get("path", "")
-    return (
+    return board_brief.prepend(sys.modules[__name__], project, (
         f"{MADE_PO_PREFIX}You are the new product owner (PO) of the project '{name}' in Ensemble "
         f"({'a documents project' if docs else 'a code project'}), started fresh by {operator_name()} "
         f"from the dashboard: this conversation has no history yet. From now on the project's tasks "
@@ -3566,7 +3575,7 @@ def made_po_fresh_input(project: dict) -> str:
         f"(the roadmap as far as you can tell). "
         f"4) Then tell {operator_name()} in a few lines what you understood the project to be, what you "
         f"need to know from them, and what you would start first, and wait for the answer before "
-        f"starting any task.")
+        f"starting any task."))
 
 
 def _session_room(sid: str) -> dict | None:
@@ -10372,6 +10381,7 @@ class Handler(BaseHTTPRequestHandler):
         briefing = collab_briefing(ident, part.get("role", ""), teammates, task)
         if rtk_brief:
             briefing += "\n\n" + rtk_brief
+        briefing = po_hub_prompt(room_full, briefing)
         ag = agents.get_agent(agent_key)
         label = room_full["title"][:60]
         model = (part.get("model") or "").strip()
@@ -10489,6 +10499,7 @@ class Handler(BaseHTTPRequestHandler):
         if rtk_brief:
             briefing += "\n\n" + rtk_brief
         ag = agents.get_agent(agent_key)
+        briefing = po_hub_prompt(room_full, briefing)
         if hasattr(ag, "ensure_trusted"):
             ag.ensure_trusted(cwd)
         label = f"{room_full['title'][:40]} · {ident}"
@@ -10549,7 +10560,8 @@ class Handler(BaseHTTPRequestHandler):
                 if hasattr(ag, "latest_session_id_for_cwd") else "")
             if codex_sid:
                 argv += ["resume", codex_sid]   # subcommand goes last
-            cmd = BACKEND.headless_launch(cwd, argv, "" if codex_sid else seed)
+            first = po_hub_prompt(room_full, seed) if seed and not codex_sid else ""
+            cmd = BACKEND.headless_launch(cwd, argv, first)
             sess = ptyrun.create(cmd, cwd=cwd, env=env, label=label, meta=meta)
             return {"ptyId": sess.id, "cwd": cwd, "sessionId": part.get("sessionId", ""),
                     "prompted": bool(seed and not codex_sid)}
@@ -10850,7 +10862,9 @@ class Handler(BaseHTTPRequestHandler):
                                          f"is unknown, everyone comes back quiet)")
                      + f", {len(snap['rooms'])} room(s)")
         out = []
-        for entry in snap["rooms"]:
+        # Restore task terminals before any PO: even a fresh launch prompt
+        # must see its tasks restored, regardless of snapshot room-id order.
+        for entry in sorted(snap["rooms"], key=lambda e: e.get("roomId") in po_rooms):
             rid = entry.get("roomId") or ""
             agents_was = [a for a in entry.get("agents") or [] if isinstance(a, dict)]
             was = ", ".join(f"{a.get('identity')} {a.get('state')}"
@@ -11132,7 +11146,12 @@ class Handler(BaseHTTPRequestHandler):
                     wake_for.setdefault(ident, []).append(chatroom.HUMAN_IDENTITY)
         not_typed: list[str] = []
         for ident, sess in ready.items():
-            parts = [notes[ident]] if ident in notes else []
+            note = notes.get(ident, "")
+            if note == RESTART_NOTE:
+                # Read the board at delivery, after restored task terminals
+                # are recorded, rather than while the PO is being launched.
+                note = po_hub_prompt(chatroom.get_room(room_id) or {}, note)
+            parts = [note] if ident in notes else []
             if ident in notes:
                 # A note that brings the agent back names the person's points
                 # still open, on a line of its own; those in the messages it
@@ -11171,7 +11190,7 @@ class Handler(BaseHTTPRequestHandler):
                 note_answer(room_id, ident)
             if ident in notes:
                 chatroom.patch_participant(room_id, ident, {"resumedAt": time.time()})
-            after_restart = notes.get(ident) == RESTART_NOTE
+            after_restart = (notes.get(ident) or "").startswith("[hub restarted] ")
             if after_restart:
                 _restart_log(f"restore {room_id}/{ident}: typed the one restart line (pty {sess.id})")
             what = [] if ident not in notes else ["the restart line" if after_restart
@@ -11971,6 +11990,13 @@ class Handler(BaseHTTPRequestHandler):
             # by its first words. Neither write is anyone's answer.
             hub_line = bool(data.get("hub")) or (
                 isinstance(typed, str) and hub_input_kind(typed)["kind"] != "human")
+            if isinstance(typed, str) and hub_input_kind(typed)["kind"] == "helper":
+                # Build after the restart, from the restored board; bracketed
+                # paste keeps the multiline brief in the helper's single input.
+                room = chatroom.get_room((sess.meta or {}).get("room", "")) or {}
+                typed = po_hub_prompt(room, typed)
+                if "\n" in typed:
+                    typed = "\x1b[200~" + typed + "\x1b[201~"
             # Only browser/person input is scrubbed. The hub's helper notes
             # carry hub=True (and the hub's other PTY writes use _type_input),
             # so their bytes remain exactly as authored.
