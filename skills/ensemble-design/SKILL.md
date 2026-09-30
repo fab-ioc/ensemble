@@ -386,6 +386,25 @@ apply to them. Their rules instead:
 - A Workspace (a project's or a task's) has no fixed tab: it opens on its tree and an empty pane.
   The roadmap's tab (see *Documents*) shows the roadmap's own view and editor where a viewer would
   be, and is never "no longer exists": not written yet, it offers to write it.
+- **A file in a window of its own** (#144, `wsOpenWindow`): the tab in front carries a monitor
+  button before its `×` (`.wst-win`, the `×`'s box and colours; the dock's Window glyph, "Open in
+  new window"), and Shift+Enter on a focused tab does the same. It opens the file view's page as a
+  sized window without the browser's bars (960 × 820, no larger than the screen; each new one a
+  step down and right of the window it is opened from), as the tab was left: view, Wrap, marked
+  line, scroll. One window per file: asked for again, that window comes forward; other files get
+  their own. A file row's menu offers it too: a right click on a file in any Workspace's tree
+  (`wsRowMenu`: Open, Open in new window), and a documents project's row menu. Only the tab in
+  front shows the button, so a row of tabs stays names and closes. **Not on a phone**: no button,
+  no menu item; the path bar's link still opens a browser tab. A blocked window says so in a toast.
+
+**A task in no project shows its files too** (#144). A task made without a project, a task brought
+in from a terminal conversation and a past conversation (the Unassigned group) have one root: the
+folder they run in, named **This task** or **This conversation** (`wsLoose`, `wsLooseFolder`), with
+the same tree, viewer, Find and Changes. When there is nothing to show, one line says why (§5.5):
+"No files in this task's folder yet.", "No files to show: this task's folder is no longer on the
+hub.", "…has no folder.", or that it ran in a home folder or a whole drive, "too wide to show as its
+own folder" (the hub's `folderWide`; it lists no such folder). A sentence in the tree
+(`.wse.none`) wraps; it is never cut.
 
 ### Documents
 

@@ -5324,15 +5324,89 @@ def _within(child: str, parent: str) -> bool:
 
 
 def workspace_access_ok(path: str) -> bool:
-    """A path is browsable only if it lives inside a registered project or under
-    the collaboration-session root (~/cs). Keeps the read-only file APIs from
-    wandering the whole disk even though the hub is single-user + token-gated."""
+    """A path is browsable only if it lives inside a registered project, under
+    the collaboration-session root (~/cs), or in the folder of a session the
+    task list shows (session_folder_ok: a task in no project, a past terminal
+    conversation). Keeps the read-only file APIs from wandering the whole disk
+    even though the hub is single-user + token-gated."""
     if not path:
         return False
     roots = [p["path"] for p in load_projects()]
     roots.append(str(CS_ROOT))
     roots.append(str(PROJECTS_ROOT))   # every project home and task folder
-    return any(_within(path, r) for r in roots)
+    return any(_within(path, r) for r in roots) or session_folder_ok(path)
+
+
+# The folders of the sessions the task list shows, per load_sessions(n): a task
+# in no project that runs where its conversation was started, a past terminal
+# conversation. Each is as realpath and normcase leave it; rebound whole by a
+# sessions load, so a reader never sees one half made.
+_SESSION_FOLDERS: dict[int, frozenset[str]] = {}
+
+
+def _session_folder_real(folder: str) -> str:
+    """A session's folder as the file APIs compare it, or "" when it is too
+    wide to be one session's own: the home folder or a folder above it, or a
+    whole drive. A conversation started there would open everything."""
+    try:
+        f = os.path.normcase(os.path.realpath(os.path.expanduser(folder)))
+        home = os.path.normcase(os.path.realpath(str(HOME)))
+    except OSError:
+        return ""
+    if not os.path.isabs(f) or os.path.dirname(f) == f:
+        return ""
+    if home == f or home.startswith(f + os.sep):
+        return ""
+    return f
+
+
+# folder as a row gives it -> (when it was resolved, _session_folder_real of it).
+# The task list is loaded every couple of seconds and resolving a real path
+# costs a system call or more per folder (0.13 ms each on Windows, 660 folders
+# on the owner's hub), so each is resolved again only once a minute.
+_SESSION_FOLDER_REAL: dict[str, tuple[float, str]] = {}
+_SESSION_FOLDER_TTL = 60.0
+_SESSION_FOLDER_KEEP = 5000
+
+
+def _session_folder_known(folder: str) -> str:
+    now = time.monotonic()
+    hit = _SESSION_FOLDER_REAL.get(folder)
+    if hit and now - hit[0] < _SESSION_FOLDER_TTL:
+        return hit[1]
+    real = _session_folder_real(folder)
+    if len(_SESSION_FOLDER_REAL) >= _SESSION_FOLDER_KEEP:
+        _SESSION_FOLDER_REAL.clear()
+    _SESSION_FOLDER_REAL[folder] = (now, real)
+    return real
+
+
+def _note_session_folders(n: int, rows: list[dict]) -> None:
+    """After a sessions load: remember its rows' folders for the file APIs, and
+    mark the rows whose folder is too wide to show (``folderWide``), so the
+    page says why it shows no files instead of asking and being refused."""
+    seen: dict[str, str] = {}
+    for r in rows:
+        own = r.get("taskDir") or r.get("cwd") or ""
+        for folder in (r.get("taskDir") or "", r.get("cwd") or ""):
+            if folder and folder not in seen:
+                seen[folder] = _session_folder_known(folder)
+        if own and not seen[own]:
+            r["folderWide"] = True
+    _SESSION_FOLDERS[n] = frozenset(f for f in seen.values() if f)
+
+
+def session_folder_ok(path: str) -> bool:
+    """Whether ``path`` is, or is inside, the folder of a session the task list
+    shows. Its real path is what counts, so ``..`` and a link cannot walk out."""
+    folders = list(_SESSION_FOLDERS.values())
+    if not any(folders):
+        return False
+    try:
+        c = os.path.normcase(os.path.realpath(path))
+    except OSError:
+        return False
+    return any(c == f or c.startswith(f + os.sep) for fs in folders for f in fs)
 
 
 _TEXT_MAX = 512 * 1024   # 512 KB read cap for the file viewer
@@ -7916,6 +7990,8 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
             r["makePo"] = make_po_answer(make_po_verdict(po_facts.of_row(r), None, now))
     except Exception as e:      # noqa: BLE001 — the list without it; the request checks again
         print(f"[make-po] verdicts not listed: {e!r}", flush=True)
+    # The file APIs may show what is in these rows' folders (workspace_access_ok).
+    _note_session_folders(n, out)
     out.sort(key=_key)
     return out
 
