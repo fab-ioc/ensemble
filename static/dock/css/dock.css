@@ -23,7 +23,7 @@
 
    Layers (z-index, inside the dock, which is a stacking context: position: relative; z-index: 0): floating windows 20 +
    their order (back to front), a slid-out panel 30, a maximised stack or window 40, the reload notice 55, the drop
-   preview 60. Menus (30), help popovers (40) and the dock's short notes (100) are fixed in the page's body. An app may
+   preview 60, a strip button's drop zones 61. Menus (30), help popovers (40) and the dock's short notes (100) are fixed in the page's body. An app may
    set z-index: auto on .dock; the layers then compete with the page's own, so give an ancestor isolation: isolate.
 
    Overflow is clip, not hidden, on the dock and its boxes: a box with overflow: hidden is a scroll container, and
@@ -167,6 +167,18 @@ body.dk-popwin { margin: 0; overflow: hidden; background: var(--dk-bg3); color: 
 @media (prefers-reduced-motion: reduce) { .dk-flyout, .dk-flyout.open { transition: none; } }
 .dk-preview { position: absolute; z-index: 60; pointer-events: none; border: 2px solid var(--dk-accent); background: var(--dk-sel-bg); opacity: .6; }
 .dk-preview[hidden], .dk-parking[hidden] { display: none; }
+/* a strip button dragged (stripReorder, v0.8.0): along its strip or onto another edge's. Every edge without a strip shows
+   one for the drag (a dashed ghost, over the layout); the strip it would land on is lit, and a line shows where. */
+.dock.dk-strip-reorder > .dk-strip .dk-strip-btn { touch-action: none; }
+.dock.dk-strip-dragging { user-select: none; -webkit-user-select: none; }
+.dk-strip-dnd { position: absolute; inset: 0; z-index: 61; pointer-events: none; }
+.dk-strip-dnd[hidden] { display: none; }
+.dk-strip-ghost { position: absolute; box-sizing: border-box; border: 1px dashed var(--dk-accent); background: var(--dk-bg2); opacity: .9; }
+.dk-strip-ghost.on, .dock > .dk-strip.dk-strip-target { background: var(--dk-sel-bg); box-shadow: inset 0 0 0 1px var(--dk-accent); }
+.dk-strip-mark { position: absolute; background: var(--dk-accent); }
+.dk-strip-btn.dk-strip-lifted { opacity: .4; }
+/* what the dock says to a screen reader only (a strip button moved) */
+.dk-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 /* menus: a panel's own, and the Panels menu */
 .dk-menu { position: fixed; z-index: 30; display: flex; flex-direction: column; min-width: 150px; padding: 4px; background: var(--dk-bg); color: var(--dk-fg);
   border: 1px solid var(--dk-line); border-radius: var(--dk-radius, 0); box-shadow: 0 8px 24px var(--dk-shadow); font-size: var(--dk-fs-menu, 11px);

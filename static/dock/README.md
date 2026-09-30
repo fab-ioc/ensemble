@@ -11,7 +11,7 @@ Shared by two apps:
 Each app picks up a tagged version when it chooses. Changes to the library are made here, not in the apps.
 
 The panels work as IntelliJ IDEA's tool windows do (v0.5.0, see "Title bar and view modes"): a title bar holds its
-tabs, **⋯** (Options: View Mode, Move To, Maximise, Hide) and **−** (Hide), and a panel keeps its side whatever its view
+tabs, **⋯** (Options: View Mode, Move To, Take Screenshot, Maximise, Hide) and **−** (Hide), and a panel keeps its side whatever its view
 mode.
 
 What a person can do with the panels: drag a tab to an edge of the dock or of another panel (split), into another panel
@@ -103,15 +103,18 @@ or clones a panel, so its listeners and state go wherever it goes.
 | `moveTo(id, target, side)`, `dockEdge(id, side)` | dock a panel beside a stack (`{ kind: 'stack', stack }`) or at the dock's edge; side `left right top bottom center` |
 | `viewMode(id)`, `setViewMode(id, mode)` | a panel's view mode, IntelliJ's: `'pinned'` (Dock Pinned), `'unpinned'` (Dock Unpinned), `'undock'`, `'float'`, `'window'` (or `'hidden'`); change it, the side kept (false when nothing changed or `can` forbids it) |
 | `side(id)`, `moveSide(id, side)` | a panel's side (`left right top bottom`) in any mode; move it to another side in the mode it has (Move To) |
+| `moveStrip(id, index, side?)` | a strip panel to place `index` (from 0) of its strip, or of the strip on `side` in the mode it has, as a drag of its button does; saved, `onChange` told; false when it is not on a strip, already there, or `index` is not a number (a string of digits counts as one) (v0.8.0) |
 | `float(id)`, `dockBack(id)`, `unpin(id)`, `pin(id)` | float in the page and back; unpin to the strip on its side and back (pinned, it docks on its strip's side) |
 | `toggleMin(id)`, `toggleMax(id)`, `restoreMax()`, `maximised()` | minimise / maximise its stack |
-| `setVisible(id, on)` | hide or show a panel |
+| `setVisible(id, on)`, `showPanel(id)` | hide or show a panel; showing a hidden Window reopens its window |
 | `popOut(id)`, `popIn(id)`, `popWindow(id)`, `isOpenOut(id)` | a browser window of its own, and back where it was; its window; whether that window is open now (not after a reload) |
 | `setBadge(id, text, title)` | a small badge on the panel's tab, and on its strip button while it is unpinned (`null` removes it) |
 | `onShown(fn)`, `onChange(fn)` | a panel came on screen (`fn(id)`); the layout changed (`fn(layout)`) |
 | `onPopIn(fn)` | `fn(id)` just before a popped-out panel's element moves back from its window (see "The pop-out contract") |
 | `narrow()`, `setNarrow(on)` | whether the dock is narrow; switch it (see "Narrow") |
 | `can(id, action)` | whether a person may do `action` to a panel here: the `can` option, and narrow |
+| `screenshot(id)` | `Promise<Blob \| null>`: capture the visible panel frame as a PNG; `null` on cancellation, rejects on failure |
+| `copyScreenshot(id)` | capture and copy the PNG, with a notice; resolves to the Blob (also when clipboard access fails), or `null` on cancellation/failure |
 | `reset()`, `render()`, `destroy()` | the default layout; redraw; take the dock off the page |
 
 Each panel's element also gets a `dock-shown` event when it comes on screen and a `dock-popin` event (`detail: { id,
@@ -130,6 +133,8 @@ text), and `src/host.js` for apps whose panels open dialogs (below).
 | Option | Default | |
 |---|---|---|
 | `root` | required | the element the dock fills |
+| `screenshot` | none | `async (id, el) => Blob \| null`: app capture hook; `el` is the whole panel frame in its current document, title bar included. Return an `image/png` Blob at the desired resolution, or `null` to cancel; errors become a failure notice when copying |
+| `screenshotItem` | `true` | `false` hides Take Screenshot; the API remains available |
 | `panels` | required | `[{ id, title, el, help?, icon?, unpinSize? }]`; `icon` and `unpinSize`: see "The tool strip" |
 | `defaultLayout` | every panel side by side | a node from `stack()` / `split()`, `{ root, floats, auto, hidden }`, or `(ctx) => either` with `ctx = { viewportPx, purpose: 'load' \| 'reset' \| 'home' }` |
 | `fill` | none | the panel whose place takes what is left in its split (the main view) |
@@ -144,13 +149,15 @@ text), and `src/host.js` for apps whose panels open dialogs (below).
 | `minClickRestores` | `true` | a click on a minimised stack's title bar (a tab, or the bar beside the tabs; not its controls or help, not the click that ends a drag) restores it, as its restore control does, with the tab clicked in front; so do Enter and Space on its focused tab. A double click still maximises it (docked) or docks it back (floating), also when restoring moved the title bar from under the pointer. `false`: as before v0.3.5, only the restore control (and a double click) restores |
 | `stripHover` | `true` | hovering a strip button for 250 ms slides its panel out, and the pointer leaving it slides it back; `false`: only a click (or the keys, or `reveal`) opens it, and the pointer leaving keeps it. Either way a click or focus elsewhere hides it (`stripAutoHide`) |
 | `stripAutoHide` | `true` | a strip panel slid out (Dock Unpinned, Undock) slides back when a click or focus goes elsewhere in the page, as in IntelliJ, however it was opened; not while its ⋯ menu or a dialog is open, during a drag, when the whole window loses focus, or with focus in an iframe inside it. `false` (v0.5.0): one opened by a click with `stripHover: false` or beside stays until its button, its slide-in control, `closeFly()`, Esc or another strip panel |
+| `stripReorder` | `true` | a strip button can be dragged along its strip to reorder it, or onto another edge (see "The tool strip"), and moved by **Alt+Shift+arrow**; `false`: neither (the app's `moveStrip` still works). `can(id, 'move')` false also keeps a panel's button still |
 | `stripOpen` | `'over'` | where a strip panel slides out: `'over'` the layout; `'beside'` it, the middle narrowing to leave it its room (see "The tool strip"). A panel's own View Mode (Dock Unpinned: beside, Undock: over) overrides it, and is saved as its strip entry's `open` |
 | `headButtons` | `'menu'` | a title bar's controls: `'menu'`, IntelliJ's ⋯ (Options) and − (Hide); `'classic'`, v0.4's buttons (menu, minimise, maximise, pop out, float or dock back, unpin; a flyout's pop out, float, slide in, pin) and its menu, exactly |
 | `popUrl`, `popName`, `popTitle` | `'popout.html'`, `'dock-panel-'`, `(p) => p.title` | the pop-out window's page, window name prefix, and title |
 | `popHtml` | none | `true`: open the pop-out page (`POP_HTML`) from a `blob:` URL of its text instead of loading `popUrl`; or the text of a page of the app's own (it needs an element with id `dk-pop-root`; its scripts run as any page's) |
 | `popBase` | `document.baseURI` | with `popHtml`: the base URL of the pop-out page's relative URLs, put in it as `<base href>` (the page's own HTML `<base href>`, if it has one, is kept instead); the page is read with the browser's `DOMParser` and written back from it, so a comment before `<html>` is dropped; `false`: no `<base>`, the page as given, its base its `blob:` URL |
 | `copyStyles` | `true` | copy the page's `<link rel=stylesheet>` and `<style>` into a pop-out window |
-| `popBackButton` | `true` | the pop-out window's "Back to main window" button (`.dk-pop-back`); `false`: not rendered at all (closing the window still puts the panel back) |
+| `popBackButton` | `true` | the pop-out window's "Back to main window" button (`.dk-pop-back`); `false`: not rendered; its Options menu still changes View Mode |
+| `windowClose` | `'hide'` | closing a panel's window hides it and keeps Window mode; `'dock'` restores v0.5.x's return to its previous main-page place |
 | `themeAttrs`, `themeEvent` | `data-theme data-scheme class style`, `'dock-theme'` | what of `<html>` a pop-out window copies, and the event that says the theme changed (a MutationObserver also watches) |
 | `help` | none | `{ icon(key, panel) → html, mount(doc) → { destroy } \| fn, selector }`; `createHelp()` makes one |
 | `modalSelector` | `[role="dialog"], .dk-help-pop` | clicks and Escape inside these leave unpinned panels and maximise alone |
@@ -173,6 +180,7 @@ As in IntelliJ IDEA's new UI, a panel's title bar has its tab(s), **⋯** (Optio
 |---|---|
 | **⋯ › View Mode ▸** | **Dock Pinned** (docked in the layout), **Dock Unpinned** (on its strip, sliding out beside the middle, which narrows), **Undock** (on its strip, sliding out over the middle), **Float** (a window in the page), **Window** (a browser window of its own). Its own mode is checked; modes `can` or narrow forbid are left out |
 | **⋯ › Move To ▸** | **Left**, **Right**, **Top**, **Bottom**: the side, in the mode it has. (IntelliJ has Left Top, Left Bottom, … : Dock's strip holds one group per edge, so its sides are its four edges) |
+| **⋯ › Take Screenshot** | Copy the visible panel as a PNG (browser/app capture support required; see “Panel screenshots”) |
 | **⋯ › Maximise / Restore** | also a double click on the title bar or a tab (docked or floating), and Esc restores |
 | **⋯ › Hide**, **−** | a slid-out panel slides back into its strip; a docked or floating one is minimised to its title bar (which shows its icon), and a click on it brings it back |
 
@@ -200,12 +208,16 @@ v0.5.0's behaviour (see the options).
 layout: where it is against the middle, the `fill` panel's place); Float and back, and Window and back, return it to its
 side and place. Move To (or a drag) is the only thing that changes it, and every mode after uses the new side.
 
-**Closing a panel's window** (its Back button, the OS close button or `window.close()`) puts it back in the mode it had
-before, on its side and at its place, and shows it: a strip panel slides out. After a reload of the main page, its
-note's "Bring it back here" leaves it on its strip, as before.
+**Closing a panel's window** (OS close, Ctrl+W or `window.close()`) hides it and keeps Window mode. Its former strip
+button, the Panels menu, `showPanel(id)`, `setVisible(id, true)` or `reveal(id)` reopens it in a window. Hidden windows
+remain hidden after reload, without an out-notice. If reopening is blocked, the panel docks on its side with a notice. `windowClose: 'dock'` restores the previous close-to-dock behavior.
 
-A panel's window has its tab only (and "Back to main window" unless `popBackButton: false`); View Mode reaches Window
-from the main window. Float again, or Window again, opens where it was last (while the page lasts).
+A panel's window has its tab, **⋯** and **−**, plus "Back to main window" unless `popBackButton: false`. Its Options
+menu offers View Mode (Window checked), Move To and Hide; choosing another View Mode closes the window and shows
+the panel in that mode on its side. Move To only changes its eventual side. Hide closes the window and hides the
+panel. Menus belong to that window and close when it loses focus. Classic headers also have Float and Unpin
+shortcuts; minimise, maximise and pop-out are omitted in a window. Back still restores its previous main-page mode,
+with a strip panel slid out. Float again, or Window again, opens where it was last.
 
 ## The tool strip
 
@@ -254,6 +266,22 @@ dock.setBadge('asks', '3', '3 asks waiting');
   float's Dock back control ("back to its strip"), a double click on its title bar, or Unpin puts it back on its strip,
   closed, where it was among its neighbours. So does popping it out and back, hiding and showing it, and pinning then
   unpinning it (with its original size and home). A minimised stack shows each panel's `icon` instead of its name.
+- **Reorder by drag and drop** (v0.8.0, IntelliJ's stripe; `stripReorder: false` turns it off): press a strip button
+  (icon or text) and drag it along its strip. From 5 px on the press is a drag: the panel slid out goes back, no hover
+  slides one out, the button is dimmed, and a line in the strip shows where it will land; let go and the order changes.
+  A press that moves less is still a click that opens or closes the panel. **Esc** cancels. Drag it onto another edge's
+  strip, or to an edge without one, and the panel moves to that side in the view mode it has (Dock Unpinned stays Dock
+  Unpinned), as Move To does. **Drop zones**: while dragging, every edge without a strip shows one for the drop (a
+  dashed ghost as thick as a strip, over the layout); the strip or ghost the pointer is within `sizes.strip +
+  sizes.edgeBand` px of is lit, with the line in it. Anywhere else the drop does nothing. The order and side are saved
+  with the layout (the strip draws an edge's panels in `layout.auto`'s order), and every way off the strip and back
+  (pinned, floated, in a window, minimised, hidden) returns the panel to its new place; its icon and badge move with
+  it. By keys: with a strip button focused, **Alt+Shift+Up/Down** (left and right strips) or **Alt+Shift+Left/Right**
+  (top and bottom) moves it one place; a screen reader hears where it is now ("Form: 2 of 4 on the right strip",
+  `text.stripMoved`, given the side's name from `text.sides`) from a hidden `role="status"` region (`.dk-live`), and the
+  button has `aria-keyshortcuts`. In the model: `moveStrip(layout, id, index, side)`. A hidden Window's strip button
+  (v0.7.0) cannot be dragged, and a drop just before or just after it lands in the same place: its place on the strip
+  follows the panel's, which is not on the strip while it is hidden.
 - **`unpinSize`** (a panel's, px): how far it slides out of its strip, at least its `minSize`: when it is unpinned (by
   a person or `unpin()`, instead of its size where it was), and for a strip entry in `defaultLayout` without a
   `size`. A `size` on that entry, or one saved in the layout, wins. Once any panel gives one, a strip entry in
@@ -268,6 +296,37 @@ dock.setBadge('asks', '3', '3 asks waiting');
 | `--dk-strip-icon` | `calc(var(--dk-strip) * .55)` | a strip button's icon (width and height) |
 | `--dk-strip-badge-fs` | a title's: `max(var(--dk-badge-fs, 9px), calc(var(--dk-strip) * .27))`; an icon's: `max(7px, calc(var(--dk-strip) * .3))` | a strip button's badge |
 | `--dk-strip-badge-bg` | `var(--dk-bg3)` | an icon's badge's ground |
+
+## Panel screenshots
+
+**⋯ → Take Screenshot** (after Move To) captures the visible title bar and body, closes the menu first, and copies a
+PNG. It works docked, floating, slid out, maximised and in a pop-out window. A notice says “Screenshot of &lt;title&gt; copied” or explains
+the failure. Cancel closes sharing and says “Screenshot cancelled”. Browser denial of screen permission has the same
+result because browsers do not distinguish it from cancelling the picker.
+Switching away from the panel or moving it to another frame during capture invalidates the screenshot, so another
+tab's content cannot be copied under the original panel's name. Take the screenshot again after the change.
+
+The default uses [Region Capture](https://developer.chrome.com/docs/web-platform/region-capture) in desktop Chrome
+and Edge, on HTTPS or localhost. **Every capture asks you to share this tab**: choose the current tab, not another tab,
+a window or the screen. Sharing stops after one captured frame, including on failure. The PNG has the panel's CSS
+width and height multiplied by `devicePixelRatio` (rounded to whole pixels). Browser capture may resample pixels and
+slightly change colours. It captures cross-origin iframes and overlapping content as seen on screen.
+
+An app's `screenshot` hook takes precedence and controls whether a prompt is needed. Without a hook or Region Capture,
+the item is hidden (including Firefox/Safari without those APIs). There is no DOM-rendering fallback: it would lose
+cross-origin iframe content and cannot faithfully render all CSS. Element Capture was considered, but removes
+overlapping content and requires eligible isolated targets; Region Capture matches “as seen” without changing panel CSS.
+
+The clipboard write reserves a Promise during the click. If permission or focus prevents copying, the captured PNG
+stays available in a notice with **Copy** (a fresh click retries), **Download**, and **Dismiss**. Call the APIs from a
+user gesture for browser capture/clipboard access. Hidden or inactive panels must be revealed first. With
+`headButtons: 'classic'`, screenshots in the main page are API-only. Pop-out windows have Take Screenshot in their
+Options menu (classic windows too), using that window's document, clipboard and device pixel ratio.
+
+Translate through `text.screenshot`, `text.screenshotHint`, `text.screenshotCopied(title)`,
+`text.screenshotCancelled`, `text.screenshotFailed(reason)`, `text.screenshotCopyFailed(reason)`,
+`text.screenshotCopy`, `text.screenshotDownload`, and `text.screenshotDismiss`. Set `screenshotHint` to describe
+your app hook when it does not prompt.
 
 ## Panels stay in place (iframes do not reload)
 
@@ -312,6 +371,9 @@ person can do, not the app's own calls.
   `tabindex`, an `id`), and a panel's element is their `tabpanel` (`aria-labelledby` its tab) unless the app gave it a
   role of its own. **Enter** or **Space** on a minimised stack's tab restores the stack with that tab in front
   (`minClickRestores`).
+- **Alt+Shift+arrow** on a focused strip button moves it one place along its strip (Up/Down on the left and right
+  strips, Left/Right on the top and bottom; `stripReorder`). No browser binds Alt+Shift+arrow (Back and Forward are
+  Alt+Left/Right, without Shift), and a button has no text selection for it to extend.
 - **F6** and **Shift+F6**, with focus anywhere in the dock, go to the next or previous stack's front tab: the docked
   stacks in order, then the floating windows, then a slid-out panel (only the maximised one while a stack is maximised).
   Outside the dock F6 stays the browser's. With focus inside an iframe in a panel (a text box in it, say) F6 works the
@@ -457,7 +519,7 @@ panel's). The Panels menu still lists it, marked "in its own window", with **Sho
 element is still in that window. That is the moment to take out what the app put in the panel for the window (an iframe
 of its own, say), before it lands in the main page. It is not fired for a panel whose window never showed it.
 
-**Closing the window** (its close button, `window.close()`, or the "Back to main window" button) puts the panel back
+**The "Back to main window" button** (or closing with `windowClose: 'dock'`) puts the panel back
 where it was: the same stack at the same index, or the same side of the same neighbour (a whole split, if that is what
 was there), its float, or its strip. If that place is gone it goes where the default layout has it, else on its edge.
 **Reloading the main window** keeps the layout, with the panel out: a small notice over the dock (not a place in the
@@ -513,6 +575,7 @@ npm run test:browser  # headless Chrome (Puppeteer) against the demo: run.js (th
 npm run test:browser:check     # one Chrome: says whether it made the blank-password check (see below); run it first
 npm run screenshots -- <dir>   # the theme picker, the demo in ten themes, a panel out, its window, the reload notice
 npm run evidence:app-window -- <dir>   # real Chrome and Edge (headed): the pop-out window in a tab, --app, installed, PiP
+node test/browser/screenshot-demo.js <dir>   # headed demo menu → screenshot → Ctrl+V evidence (start npm run demo first)
 ```
 
 Every Chrome these start goes through `test/browser/chrome.js`, on a persistent profile per suite under
@@ -526,7 +589,7 @@ folder is safe.
 
 The browser tests prove, on the demo page, that a popped-out panel leaves no place behind and its neighbours take the
 room, keeps receiving live updates, takes typing, clicks and its dialog, has the current theme and follows every set
-picked in the theme picker, comes back to its stack when its window closes (three ways) or from the Panels menu, and
+picked in the theme picker, comes back through its menu or Back button (or closing with windowClose: dock), and
 survives a reload of the main window (reopen, or bring it back, from the notice); all of it again with `popHtml`, where
 `popout.html` is never requested, a relative URL in the window resolves against the main page, `popBase: false` leaves
 the `blob:` URL as its base, and a page's own `<base>` is kept while one in a comment, svg or `<template>` is not. They
