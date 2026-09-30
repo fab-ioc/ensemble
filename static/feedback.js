@@ -9,13 +9,13 @@
     <h2 id="feedback-heading">Send feedback</h2>
     <form id="feedback-form">
       <label>Kind<select id="feedback-kind"><option value="bug">Bug</option><option value="idea">Idea</option></select></label>
-      <label>Title<input id="feedback-title" maxlength="200" required></label>
+      <label>Title<input id="feedback-title" maxlength="200" required autocomplete="off" data-bwignore data-1p-ignore data-lpignore="true"></label>
       <label>Description<textarea id="feedback-description" maxlength="20000" required placeholder="What happened, or what would help? Paste screenshots here."></textarea></label>
       <div id="feedback-images"></div>
       <p class="feedback-hint">Images stay in this dialog. Named submitters can download and attach them on GitHub after sending; anonymous posts omit images.</p>
       <label class="feedback-check"><input type="checkbox" id="feedback-technical" checked>Include technical details</label>
       <label class="feedback-check"><input type="checkbox" id="feedback-anonymous">Send anonymously</label>
-      <label id="feedback-name-label">Your name (for named relay feedback)<input id="feedback-name" maxlength="100" autocomplete="name"></label>
+      <label id="feedback-name-label">Your name (for named relay feedback)<input id="feedback-name" maxlength="100" autocomplete="off" data-bwignore data-1p-ignore data-lpignore="true"></label>
       <p class="feedback-hint">Screenshots and free text can still reveal who you are.</p>
       <div class="feedback-actions"><button class="po-btn primary" type="submit" id="feedback-preview-button">Preview</button><button class="po-btn def" type="button" id="feedback-close">Close</button></div>
     </form>
