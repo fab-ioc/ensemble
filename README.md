@@ -193,7 +193,8 @@ Two skills teach the agents the board. At every start the hub copies both into `
 **Settings** is in the menu at the top right. It covers:
 
 - Theme (Light, Dark, Dim, Paper, High contrast, Fjord, Match system) and accent colour.
-- The default Claude model for new sessions, and what the agents call you (your git `user.name` by default).
+- **Agent models**: the Claude model and the Codex model (and Codex's reasoning effort) an agent the hub starts runs on when its seat names none: task owners, reviewers, POs, handovers and PO switches. The choices are what each agent offers (Codex's come from its own model list), or the agent's own default. A seat that names a model keeps it. The choice is passed when the agent is launched; `~/.codex/config.toml` and Claude's settings are never changed. The plan allowance chip judges Codex by the pool the chosen model draws on.
+- What the agents call you (your git `user.name` by default).
 - When an agent counts as stalled (seconds).
 - The PO and task-owner handover limits (tokens; 0 = never).
 - RTK for task agents (compresses command output).

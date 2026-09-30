@@ -562,13 +562,18 @@ the final choice without a network call:
   kinds between owner and reviewer, so one task still does not spend one
   allowance twice. A changed seat uses that kind's default model unless the
   preference names an alternative model for it.
+- A seat that names no model runs on the one the person chose for its kind in
+  Settings (Agent models; for Codex a reasoning effort too), else on the
+  agent's own default. Leave `model` out unless the task needs a particular
+  one: a named model is kept whatever Settings says.
 - It judges each kind by its worst 5-hour or 7-day window. An untrusted value is
   a floor and still counts; an unavailable, rolled-over, reset-unknown or null
   value never causes a swap.
 - Codex has several pools, each an allowance of its own: the main one, the
   reserve (only the model `gpt-reserve` draws on it) and a model's own (Spark's).
   Codex is judged by the pool the agent would run on: the seat's named model if
-  any, else `model` in Codex's `config.toml`. A spent main pool does not count
+  any, else the Codex model chosen in Settings, else `model` in Codex's
+  `config.toml`. A spent main pool does not count
   against Codex while it runs on the reserve. `ensemble_plan_usage` says which
   pool is in use (`sources[].poolInUse`) and gives that pool's figure as
   `kinds.codex`; a spent pool that is not in use is under `notices`, not

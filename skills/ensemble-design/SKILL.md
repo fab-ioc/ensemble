@@ -819,6 +819,25 @@ agent." (with **Hide**), or "Not delivered: *reason*." with **Retry** and **Disc
 icon, same weight as every other card. It is the state the whole board sits in for a minute after
 every hub restart. If it ever looks broken, the design has failed.
 
+### A choice from a list, in Settings
+
+A setting whose values the hub knows is a `<select class="pref-select">` under its `<label
+class="pref-label" for>`, never free text (Settings' *Agent models*, #145, is the reference:
+`renderAgentModels` in `index.html`). 32px, `--surface` on `--border-strong`, `--r-200`, the value in
+`--font-mono` at `--fs-200`; `--touch-min` tall with `--fs-400` text on a phone.
+
+- **The first option is "leave it to the other side", and says what that is now:** "Codex's own
+  default (currently gpt-6-astra)". The rest are what can be chosen, fetched, never typed into the page.
+- **What is in effect is also said in words under the select** (`.cfg-hint`, `role="status"`): a
+  phone's select cuts a long choice short, and a consequence (the pool a model draws on) has no room
+  in an option.
+- **A choice is saved as it is made;** there is no Save button. The select keeps the focus and
+  its place meanwhile (never disabled, never rewritten while someone is in it), so arrow keys step
+  through it; choices are saved in the order they were made. A refused choice shows the hub's
+  reason in the toast and the select goes back to what is saved. A value saved earlier that is no
+  longer offered stays in the list, marked, until another is chosen.
+- Not red, not amber: a choice is not a state.
+
 ### The task list (left)
 
 Layout A's list (#115, built in #123 from #114's switcher): every project's tasks and POs in one

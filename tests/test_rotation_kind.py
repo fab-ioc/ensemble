@@ -82,6 +82,9 @@ class _Base(unittest.TestCase):
         self.patches = [
             mock.patch.object(dashboard.agents, "get_agent", side_effect=lambda k: _FakeAgent(
                 k, self.installed.get(k, False)) if k in ("claude", "codex") else None),
+            # Never this machine's settings: a model chosen there (Agent models)
+            # is what a seat that names none runs on.
+            mock.patch.object(dashboard, "SETTINGS_FILE", Path(self.temp.name) / "settings.json"),
         ]
         for p in self.patches:
             p.start()

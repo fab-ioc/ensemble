@@ -836,17 +836,32 @@ def choose_owner_kind(room: dict, part: dict, snapshot: dict | None = None,
 
 
 def _po_fallback_model(room: dict, kind: str) -> str:
-    """Use the PO seat's alternative model, then the configured kind default."""
+    """Use the PO seat's alternative model, then the model Settings chose for
+    the kind, then the older fallback of a hub where none is chosen. With a
+    model chosen in Settings the seat names none (""): the launch passes that
+    model, and the seat follows a later change of it. A chosen model that a
+    launch would not pass (Codex no longer lists it) counts as none chosen."""
     seat, _ = _preferred_seats(room)
     if seat:
         chosen = _d._seat_for_kind(seat, kind)
         if (seat.get("agent") == kind or (seat.get("alt") or {}).get("agent") == kind) \
                 and chosen.get("model"):
             return chosen["model"]
+    if _d.hub_launch_model(kind)[0]:
+        return ""
     models = _d.load_settings().get("poFallbackModels") or {}
     if isinstance(models, dict) and isinstance(models.get(kind), str):
         return models[kind]
     return DEFAULT_PO_FALLBACK_MODELS[kind]
+
+
+def _model_name(kind: str, model) -> str:
+    """The model a seat of ``kind`` runs on, for a notice: the one it names,
+    else the one Settings chose, else "default" (the agent's own)."""
+    try:
+        return (model or "").strip() or _d.hub_launch_model(kind)[0] or "default"
+    except Exception:
+        return "default"
 
 
 def _allowance_of(kind: str, model: str) -> tuple[dict, float, str]:
@@ -1120,8 +1135,8 @@ def _switch_po(project: dict, room: dict, part: dict, other: str, model: str,
             _await_death(old_pty)
         if cause == "usage_limit":
             text = (f"**PO provider failover** — {name(part['agent'])} "
-                    f"`{part.get('model') or 'default'}` → {name(other)} "
-                    f"`{model or 'default'}` at "
+                    f"`{_model_name(part['agent'], part.get('model'))}` → {name(other)} "
+                    f"`{_model_name(other, model)}` at "
                     f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(rec['at']))} "
                     f"because the previous provider hit its usage limit. The same PO room "
                     f"continues from `{HANDOVER_NAME}` and `ROADMAP.md`; the previous "
@@ -1135,8 +1150,9 @@ def _switch_po(project: dict, room: dict, part: dict, other: str, model: str,
                 how = "from the handover as it was (the PO was not running)"
             else:
                 how = "from the handover as it was"
-            text = (f"**PO switched** — {name(part['agent'])} `{part.get('model') or 'default'}` "
-                    f"→ {name(other)} `{model or 'default'}` at "
+            text = (f"**PO switched** — {name(part['agent'])} "
+                    f"`{_model_name(part['agent'], part.get('model'))}` "
+                    f"→ {name(other)} `{_model_name(other, model)}` at "
                     f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(rec['at']))}, as "
                     f"{_d.operator_name()} asked, {how}. The same PO room continues from "
                     f"`{HANDOVER_NAME}` and `ROADMAP.md`; the previous session "

@@ -2677,8 +2677,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #settings-panel #pref-nickname,
   #settings-panel #pref-stall-seconds,
   #settings-panel #pref-po-rotate,
-  #settings-panel #pref-task-rotate,
-  #settings-panel #pref-default-model {
+  #settings-panel #pref-task-rotate {
     width: 100%; padding: 5px 10px;
     border: 1px solid var(--border); border-radius: 6px;
     background: var(--bg); color: var(--fg); font: inherit;
@@ -2691,11 +2690,25 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #settings-panel #pref-nickname:focus,
   #settings-panel #pref-stall-seconds:focus,
   #settings-panel #pref-po-rotate:focus,
-  #settings-panel #pref-task-rotate:focus,
-  #settings-panel #pref-default-model:focus {
+  #settings-panel #pref-task-rotate:focus {
     border-color: var(--focus-ring);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus-ring) 40%, transparent);
   }
+  /* Agent models: one select a row, as wide as the panel (a long model name
+     is cut in the box, never widens it). */
+  #settings-panel .pref-select {
+    width: 100%; min-width: 0; max-width: 100%; height: 32px; padding: 0 var(--s-200);
+    border: 1px solid var(--border-strong); border-radius: var(--r-200);
+    background: var(--surface); color: var(--fg); font: inherit;
+    font-family: var(--font-mono); font-size: var(--fs-200);
+    text-overflow: ellipsis; outline: none;
+  }
+  #settings-panel .pref-select:focus-visible {
+    box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring);
+  }
+  #settings-panel .pref-select:disabled { color: var(--fg-disabled); }
+  #settings-models .pref-row ~ .pref-row { margin-top: var(--s-300); }
+  #settings-models .pref-row, #settings-models .cfg-hint { max-width: 420px; }
   #settings-panel .pref-btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
   #settings-panel .pref-btn-row button {
     background: var(--surface); border: 1px solid var(--border);
@@ -3072,6 +3085,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 
     /* Trays and menus fit the screen, and their rows are finger-sized. */
     #usage-tray, #settings-panel { left: var(--s-200); right: var(--s-200); width: auto; }
+    #settings-panel .pref-select { height: var(--touch-min); }
+    #settings-models .pref-row, #settings-models .cfg-hint { max-width: none; }
     .me-item, .pm-item, .fm-item, .wf-item, .pr-item, .ov-menu button, .theme-opt { min-height: var(--touch-min); }
     /* Appearance lists nest inside the menu. When unfolded the menu can outgrow
        a short screen: it scrolls (desktop flyouts must not be clipped, so only here). */
@@ -3587,22 +3602,38 @@ window.DOC_LISTENERS_PAUSED = false;
     <button type="button" class="po-btn def" id="feedback-settings-save">Save feedback settings</button>
     <p class="cfg-hint" id="feedback-settings-status" role="status"></p>
   </div>
+  <!-- The model an agent the hub starts runs on when its seat names none
+       (agent_models.py): one choice per agent kind, from what the agent offers. -->
+  <div class="settings-section" id="settings-models">
+    <h4>Agent models</h4>
+    <div class="pref-row">
+      <label class="pref-label" for="pref-model-claude">Claude model</label>
+      <select id="pref-model-claude" class="pref-select" data-kind="claude" data-field="model" disabled></select>
+    </div>
+    <!-- What runs, in words: a phone's select cuts a long choice short. -->
+    <p class="cfg-hint" id="pref-model-claude-note" role="status" hidden></p>
+    <div class="pref-row">
+      <label class="pref-label" for="pref-model-codex">Codex model</label>
+      <select id="pref-model-codex" class="pref-select" data-kind="codex" data-field="model" disabled></select>
+    </div>
+    <p class="cfg-hint" id="pref-model-codex-note" role="status" hidden></p>
+    <div class="pref-row">
+      <label class="pref-label" for="pref-effort-codex">Codex reasoning effort</label>
+      <select id="pref-effort-codex" class="pref-select" data-kind="codex" data-field="effort" disabled></select>
+    </div>
+    <p class="cfg-hint" id="pref-effort-codex-note" role="status" hidden></p>
+    <p class="cfg-hint">What an agent the hub starts runs on when its seat names no model: task owners, reviewers, POs, handovers and PO switches. A seat that names a model keeps it. A change applies from each agent's next start. It is passed at launch: Claude's and Codex's own settings are never changed.</p>
+    <!-- The New session dialog's model suggestions (#im-model). -->
+    <datalist id="model-presets">
+      <option value="opus"></option>
+      <option value="sonnet"></option>
+      <option value="haiku"></option>
+      <option value="fable"></option>
+    </datalist>
+  </div>
   <div class="settings-section" id="settings-prefs">
     <h4>Preferences</h4>
     <div class="pref-row">
-      <span class="pref-label">Default model for new sessions</span>
-      <input type="text" id="pref-default-model" list="model-presets"
-             placeholder="claude default (leave empty)"
-             autocomplete="off" spellcheck="false">
-      <datalist id="model-presets">
-        <option value="opus"></option>
-        <option value="sonnet"></option>
-        <option value="haiku"></option>
-        <option value="fable"></option>
-      </datalist>
-    </div>
-    <p class="cfg-hint">Passed as <code>claude --model &lt;value&gt;</code> for + New sessions. Aliases (<code>opus</code>, <code>sonnet</code>, …) or full IDs both work. Empty = let claude pick.</p>
-    <div class="pref-row" style="margin-top: 14px;">
       <span class="pref-label">What the agents call you</span>
       <input type="text" id="pref-nickname" placeholder="your git user name (default)"
              autocomplete="off" spellcheck="false" maxlength="60">
@@ -6266,13 +6297,135 @@ async function loadPrefs() {
     if (setNoun(PREFS.projectNoun)) window.dispatchEvent(new CustomEvent('cd-noun'));
     renderPrefs();
   } catch {}
+  loadAgentModels();
+}
+// Agent models (Settings): the model an agent the hub starts runs on when its
+// seat names none, per agent kind, and Codex's reasoning effort. The hub says
+// what can be chosen (/api/agent-models: Codex's own model list, Claude's
+// aliases) and what each agent's own default is now; a choice is saved as
+// settings.agentModels, and the plan chip's Codex pool follows it.
+let AGENT_MODELS = null;
+let _agentModelsAsked = 0;
+async function loadAgentModels() {
+  const asked = ++_agentModelsAsked;
+  let got = null;
+  try { got = await api('/api/agent-models'); } catch (e) {}
+  if (asked !== _agentModelsAsked) return;      // a later read answers
+  // A read that failed keeps what the last one said; with none yet, the
+  // section says it could not be read.
+  if (got) AGENT_MODELS = got;
+  renderAgentModels();
+}
+function agentModelOptions(kind) {
+  const a = AGENT_MODELS[kind], name = kind === 'codex' ? 'Codex' : 'Claude';
+  const opts = [['', `${name}’s own default` + (a.own.model ? ` (currently ${a.own.model})` : '')]];
+  for (const m of a.models) {
+    const what = m.pool ? `spends the ${m.pool} pool` : (m.description || '').replace(/\.$/, '');
+    opts.push([m.id, m.id + (what ? ' — ' + what : '')]);
+  }
+  // A value saved before (a full model id, a model no longer offered) stays selectable.
+  const saved = a.chosen.model;
+  if (saved && !opts.some(o => o[0] === saved)) {
+    opts.push([saved, saved + (a.gone ? ' (no longer offered)' : ' (saved earlier)')]);
+  }
+  return opts;
+}
+function renderAgentModels() {
+  const fill = (id, opts, value) => {
+    const sel = document.getElementById(id);
+    if (!sel || sel.ownerDocument.activeElement === sel) return;
+    sel.innerHTML = opts.map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join('');
+    sel.value = value;
+    sel.disabled = !AGENT_MODELS;
+  };
+  const note = document.getElementById('pref-model-codex-note');
+  const claudeNote = document.getElementById('pref-model-claude-note');
+  const effortNote = document.getElementById('pref-effort-codex-note');
+  if (!AGENT_MODELS) {
+    for (const id of ['pref-model-claude', 'pref-model-codex', 'pref-effort-codex']) {
+      fill(id, [['', 'Not available']], '');
+    }
+    if (claudeNote) claudeNote.hidden = true;
+    if (effortNote) effortNote.hidden = true;
+    if (note) { note.hidden = false; note.textContent = 'The hub did not say which models can be chosen. If it was updated just now, it needs a restart to offer this setting.'; }
+    return;
+  }
+  const x = AGENT_MODELS.codex, eff = x.effective;
+  fill('pref-model-claude', agentModelOptions('claude'), AGENT_MODELS.claude.chosen.model);
+  if (claudeNote) {
+    claudeNote.textContent = `Claude agents run on ${AGENT_MODELS.claude.effective.model || 'Claude’s own default'}.`;
+    claudeNote.hidden = false;
+  }
+  fill('pref-model-codex', agentModelOptions('codex'), x.chosen.model);
+  const ownEffort = x.own.effort
+    || ((x.models.find(m => m.id === eff.model) || {}).defaultEffort || '');
+  const efforts = [['', 'Codex’s own' + (ownEffort ? ` (currently ${ownEffort})` : '')]]
+    .concat(eff.efforts.map(e => [e, e]));
+  if (x.chosen.effort && !eff.efforts.includes(x.chosen.effort)) {
+    efforts.push([x.chosen.effort, `${x.chosen.effort} (not taken by ${eff.model || 'this model'})`]);
+  }
+  fill('pref-effort-codex', efforts, x.chosen.effort);
+  if (effortNote) {
+    // No efforts to offer: the model in effect is one Codex's list does not
+    // tell about (its config names none, or one its picker hides). An effort
+    // the model in effect does not take is kept for one that does.
+    const kept = x.chosen.effort && eff.efforts.length && !eff.efforts.includes(x.chosen.effort);
+    effortNote.hidden = eff.efforts.length > 0 && !kept;
+    effortNote.textContent = kept
+      ? `${eff.model} does not take “${x.chosen.effort}”, so Codex’s own effort is used with it. The choice is kept for a model that takes it.`
+      : `The hub cannot tell which efforts ${eff.model || 'Codex’s own default model'} takes. Choose a Codex model from the list to choose its effort.`;
+  }
+  if (note) {
+    const pool = (eff.pool || 'main') + ' pool';
+    note.textContent = !x.readable
+      ? 'Codex’s model list cannot be read here, so a model cannot be chosen. '
+        + (x.chosen.model ? `${x.chosen.model}, chosen before, is still passed as it is.` : 'Codex’s own default runs.')
+      : x.gone
+        ? `${x.chosen.model} is no longer offered by Codex, so its own default`
+          + `${x.own.model ? ' (' + x.own.model + ')' : ''} runs. Choose another model.`
+        : `Codex agents run on ${eff.model || 'Codex’s own default'} and draw on the ${pool}.`
+          + (x.poSwitchModel ? ` A PO switched to Codex still starts on ${x.poSwitchModel}, the hub’s older fallback, until a model is chosen here.` : '');
+    note.hidden = false;
+  }
+  // The New task dialog suggests what Codex offers.
+  if (x.models.length) MODEL_PRESETS.codex = x.models.map(m => m.id);
+}
+// Choices are saved one at a time, in the order they were made, so the hub
+// ends on the last one (arrow keys on a list make one choice a step). The
+// list keeps the focus and its place meanwhile: it is never disabled or
+// written again while someone is in it (renderAgentModels skips it).
+let _agentModelSaves = Promise.resolve();
+function setAgentModel(sel) {
+  // What was chosen, read now: the list may say something else by its turn.
+  // A save that throws must not be the end of every later one.
+  const value = sel.value;
+  _agentModelSaves = _agentModelSaves.then(() => saveAgentModel(sel, value)).catch(() => {});
+  return _agentModelSaves;
+}
+async function saveAgentModel(sel, value) {
+  const kind = sel.dataset.kind, field = sel.dataset.field;
+  try {
+    const r = await fetch('/api/settings', {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ agentModels: { [kind]: { [field]: value } } }),
+    });
+    const got = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(got.message || String(r.status));
+    PREFS = got;
+    const now = (got.agentModels || {})[kind] || {};
+    if (now[field] !== value) throw new Error('the hub needs a restart to know this setting');
+    toast('preference saved', 1500, 'ok');
+  } catch (e) {
+    toast('Not saved: ' + e.message, 6000, 'err');
+    // Back on what is saved, unless a later choice is already showing.
+    const kept = ((PREFS && PREFS.agentModels || {})[kind] || {})[field];
+    if (sel.value === value && typeof kept === 'string') sel.value = kept;
+  }
+  await loadAgentModels();        // the other lists, and this one once it is left
+  refreshUsage();                 // the pool Codex is judged by follows the model
 }
 function renderPrefs() {
   if (!PREFS) return;
-  const modelInput = document.getElementById('pref-default-model');
-  if (modelInput && document.activeElement !== modelInput) {
-    modelInput.value = PREFS.defaultModel || '';
-  }
   const nickInput = document.getElementById('pref-nickname');
   if (nickInput && document.activeElement !== nickInput) {
     nickInput.value = PREFS.operatorNickname || '';
@@ -11030,7 +11183,7 @@ function poSwitchDialogHtml(pj, info, err, confirmMsg, typed) {
     <h3>Switch ${esc(pj.name)}’s PO</h3>
     <p class="cfg-hint">Now ${esc(name(cur))}${info.model ? ' · <code>' + esc(info.model) + '</code>' : ''}${info.live ? '' : ' (not running)'}. A fresh ${esc(name(other))} session takes over in the same room, with the same chat and asks, from the PO’s written handover. A running PO is asked to bring its handover up to date first; that can take a few minutes.</p>
     <div class="im-field">
-      <label for="ps-model">${esc(name(other))} model <small>empty for its default</small></label>
+      <label for="ps-model">${esc(name(other))} model <small>empty for the hub’s choice: the model chosen in Settings, if one is</small></label>
       <input id="ps-model" type="text" value="${esc(model)}" spellcheck="false" autocomplete="off"${why ? ' disabled' : ''}>
     </div>
     ${why ? `<p class="cfg-hint" role="status">${esc(why)}</p>` : ''}
@@ -13627,7 +13780,6 @@ function updateNsHint(container) {
 // (docs, a cloned repo with commits, anything) is the agents' business.
 function showNewSessionModal(projectId) {
   const dlg = pdModal();
-  const def = (PREFS && PREFS.defaultModel) || '';
   const curProj = (projectId && projectId !== UNASSIGNED_ID) ? projectId : '';
   const projOpts = (sel) => `<option value="">${esc(nounText('(no {project} — Unassigned)'))}</option>`
     + registeredProjects().map(p => `<option value="${esc(p.id)}"${p.id === sel ? ' selected' : ''}>${esc(p.name)}</option>`).join('')
@@ -13663,7 +13815,9 @@ function showNewSessionModal(projectId) {
     </div>`;
   dlg.showModal();
   const agentsBox = $('#ns-agents');
-  addAgentRow(agentsBox, 'claude', def, 'engineer');
+  // No model named: the seat runs on the one chosen in Settings (Agent
+  // models), and follows a later change of it.
+  addAgentRow(agentsBox, 'claude', '', 'engineer');
   $('#ns-title').focus();
   // Workspace modes: 'empty' is always available (a task may have no code at
   // all); project-backed modes appear only with a project; worktree only if git.
@@ -14492,7 +14646,11 @@ function usageSourceHtml(src) {
     }).join('');
   }
   if (used) {
-    const how = used.model ? ` (model ${used.model})` : '';
+    // The model a seat that names none is started on: the one chosen in
+    // Settings (Agent models), else the agent's own default.
+    const from = used.from === 'settings' ? ', chosen in Settings'
+      : used.from === 'config' ? `, ${name}’s own default` : '';
+    const how = used.model ? ` (model ${used.model}${from})` : '';
     const unread = pools.some(p => p.inUse) ? ''
       : ' There is no reading for that pool yet.';
     inUse = `<div class="usage-why">${esc(name)} sessions currently use the
@@ -15135,6 +15293,7 @@ function openSettingsPanel(anchor) {
   // A phone's rule insets both edges; only a desktop hangs it off the avatar.
   panel.style.right = isPhone() ? '' : Math.round(window.innerWidth - r.right) + 'px';
   panel.style.left = isPhone() ? '' : 'auto';
+  loadAgentModels();            // what the agents offer may have changed
 }
 function closeMeMenu() {
   setAppearanceSubmenu(null, false);
@@ -16742,18 +16901,15 @@ window.ensUpdPlace = () => ({
     if (ev.key === 'Enter' && ev.target.matches('input')) document.getElementById('pref-noun-save').click();
   });
 
-  // Default model: save on blur, or on Enter
-  const modelInput = document.getElementById('pref-default-model');
-  if (modelInput) {
-    const commit = () => {
-      const v = modelInput.value.trim();
-      if (v !== (PREFS?.defaultModel || '')) setPref('defaultModel', v);
-    };
-    modelInput.addEventListener('blur', commit);
-    modelInput.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter') { ev.preventDefault(); modelInput.blur(); }
-    });
-  }
+  // Agent models: a choice is saved as it is made; a list that was left is
+  // written again (it is not while the focus is in it).
+  document.getElementById('settings-models')?.addEventListener('change', (ev) => {
+    const sel = ev.target.closest('select.pref-select');
+    if (sel) setAgentModel(sel);
+  });
+  document.getElementById('settings-models')?.addEventListener('focusout', () => {
+    setTimeout(renderAgentModels, 0);
+  });
   // Operator nickname: what the agents call you (save on blur/Enter)
   const nickInput = document.getElementById('pref-nickname');
   if (nickInput) {
