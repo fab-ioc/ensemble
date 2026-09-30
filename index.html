@@ -10645,7 +10645,7 @@ function pdMenuClose(refocus) {
 function pdMenuHtml() {
   const ids = PD.dock && document.body.classList.contains('po-dock') ? PD_IDS : [];
   const on = ids.filter(id => PD.dock.isVisible(id));
-  const list = LD.dock ? `<button type="button" role="menuitemcheckbox" data-pd-list aria-checked="${LD.dock.isVisible('list')}"${LD.dock.isVisible('list') && !LD.dock.can('list', 'hide') ? ' disabled title="This panel stays on screen"' : ''}>Tasks</button>` : '';
+  const list = LD.dock ? `<button type="button" role="menuitemcheckbox" data-pd-list aria-checked="${LD.dock.isVisible('list')}"${LD.dock.isVisible('list') ? ' class="on"' : ''}${LD.dock.isVisible('list') && !LD.dock.can('list', 'hide') ? ' disabled title="This panel stays on screen"' : ''}>Tasks</button>` : '';
   return list + ids.map(id => {
     const vis = on.includes(id), last = vis && on.length === 1;
     const kept = vis && !last && !PD.dock.can(id, 'hide');
@@ -14052,7 +14052,8 @@ function ldAxisSize() {
 }
 // The page's insets: where the stand-in is inside the dock. Docked at the left
 // that is the list's width and its splitter; on a strip, the strip (and the
-// list slid out beside the page); floating, in its window or hidden, nothing.
+// list slid out beside the page); floating or in its window, nothing. A hidden
+// Window may keep its former strip button, and then that strip takes space.
 function ldInsets() {
   const d = LD.dock;
   if (!d) return;
@@ -14444,7 +14445,7 @@ function barPaint() {
   if (back) back.hidden = !(inProj || row2);
   const here = document.getElementById('bar-here');
   // Panels also recovers a closed Window with no former strip button (the
-  // default pinned list, or a tool moved out of its strip before popping out).
+  // default docked list, or a tool moved out of its strip before popping out).
   const panels = !document.body.classList.contains('mid');
   const tabs = poDockProject() || pdTaskWanted();
   if (here) writeSlot(here, LD?.dock || (inProj && tabs && panels) ? pdCtlHtml() : '');

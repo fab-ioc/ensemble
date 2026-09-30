@@ -305,7 +305,7 @@ class TheTopBar(unittest.TestCase):
 
     def test_left_to_right_where_you_are_what_you_can_do_then_the_rest(self):
         self.assertEqual(self.order(self.got["po"]),
-                         ["bar-home", "proj-go", "proj-switch", "search", "me-btn", "new-btn"])
+                         ["bar-home", "proj-go", "proj-switch", "bar-here", "search", "me-btn", "new-btn"])
         self.assertEqual(self.got["po"]["name"], "Motors")
         self.assertEqual(self.got["po"]["crumb"], "Motors", "the breadcrumb starts at the project")
         self.assertEqual(self.got["po"]["trail"], ["PO"], "then its PO's conversation")
@@ -314,9 +314,9 @@ class TheTopBar(unittest.TestCase):
         self.assertLessEqual(self.got["po768"]["header"], 50)
         self.assertLessEqual(self.got["po768"]["scrollW"], self.got["po768"]["vw"])
 
-    def test_home_has_nothing_here(self):
+    def test_home_has_panels_to_recover_the_task_list(self):
         home = self.got["home"]
-        self.assertFalse(home["here"])
+        self.assertTrue(home["here"] and home["panels"])
         self.assertNotIn("bar-back", [i["id"] for i in home["items"]])
 
     def test_a_project_page_has_no_status_row_and_no_crumbs(self):
@@ -324,10 +324,10 @@ class TheTopBar(unittest.TestCase):
             self.assertFalse(self.got[k]["crumbs"], k)
             self.assertFalse(self.got[k]["statusbar"], k)
 
-    def test_a_po_screen_has_panels_in_the_bar_on_a_phone_only_and_no_tab_row(self):
-        # Layout A: a desktop's PO screen has its tools as tabs, no Panels menu.
-        self.assertFalse(self.got["po"]["panels"])
-        self.assertFalse(self.got["po"]["here"])
+    def test_a_po_screen_has_panels_in_the_bar_and_no_tab_row(self):
+        # Desktop Panels also recovers closed tool and task-list windows.
+        self.assertTrue(self.got["po"]["panels"])
+        self.assertTrue(self.got["po"]["here"])
         self.assertTrue(self.got["phonePo"]["panels"])
         self.assertFalse(self.got["po"]["ptabs"])
 
@@ -339,7 +339,7 @@ class TheTopBar(unittest.TestCase):
         for tab in ("workspace", "changes"):
             g = self.got["plain_" + tab]
             self.assertTrue(g["ptabs"], tab)
-            self.assertFalse(g["here"], tab)
+            self.assertTrue(g["here"] and g["panels"], "Panels recovers the task list")
             self.assertLessEqual(g["bottom"], g["vh"], tab)
             self.assertLessEqual(g["docH"], g["vh"], f"{tab}: no page scroll")
 
