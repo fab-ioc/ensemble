@@ -62,6 +62,8 @@ import attachments
 # Agent-type abstraction (WHAT runs in a session), orthogonal to the OS backend
 # (WHERE it runs). Codex discovery + the claude/codex registry live here.
 import agents
+# The model a hub-launched agent runs on when its seat names none (Settings).
+import agent_models
 # What each Claude agent last said about itself through its hooks.
 import agent_hooks
 # Which tasks need a human, and why (the /api/attention join).
@@ -1257,7 +1259,13 @@ _SETTINGS_DEFAULTS = {
     "feedbackRepo": feedback.DEFAULT_REPO,
     "feedbackRelayUrl": feedback.DEFAULT_RELAY,
     "openMode": "window",   # "window" (new iTerm window) | "tab" (new tab in front window)
-    "defaultModel": "",     # e.g. "opus" | "sonnet" | "haiku" | "fable" | full ID; empty = claude default
+    # The model a hub-launched agent runs on when its seat names none, per
+    # agent kind, and Codex's reasoning effort (agent_models.py). "" = the
+    # agent's own default: no flag is passed.
+    "agentModels": agent_models.normalise(None),
+    # The older name of agentModels.claude.model, kept in step with it: a
+    # value saved before is read from here, and an older page still writes it.
+    "defaultModel": "",
     "operatorNickname": "", # what the agents call you; empty = fall back to git user.name
     # Projects backup (see backup.py). Only the remote URL is stored — never credentials.
     "backupRemote": "",      # git remote for the projects root; empty = commit locally only
@@ -1396,7 +1404,6 @@ def project_noun(n: str = "one", case: str = "lower") -> str:
 _SETTINGS_ALLOWED_VALUES = {
     "openMode": {"window", "tab"},
     "theme": {"", "light", "dark", "dim", "paper", "contrast", "fjord", "system"},
-    # defaultModel is free-form — anything claude --model accepts.
 }
 
 
@@ -1418,8 +1425,79 @@ def load_settings() -> dict:
                 if k in _SETTINGS_DEFAULTS:
                     out[k] = v
     except (FileNotFoundError, json.JSONDecodeError):
-        pass
+        saved = None
+    # One Claude model, under both names: a defaultModel saved before
+    # agentModels existed is Claude's model.
+    saved = saved if isinstance(saved, dict) else {}
+    out["agentModels"] = agent_models.normalise(saved.get("agentModels"),
+                                                legacy_claude=saved.get("defaultModel"))
+    out["defaultModel"] = out["agentModels"]["claude"]["model"]
     return out
+
+
+def agent_models_error(data: dict) -> str:
+    """Why a settings change's models cannot be saved, or "" (it names none,
+    or they can)."""
+    current = load_settings()["agentModels"]
+    for change in _agent_model_changes(data):
+        current, why = agent_models.check(change, current)
+        if current is None:
+            return why
+    return ""
+
+
+def agent_models_info() -> dict:
+    """What Settings shows under Agent models (``agent_models.describe``), and
+    per kind ``poSwitchModel``: the model a PO switched to that kind starts on
+    while Settings chooses none (the older ``poFallbackModels``), "" otherwise."""
+    settings = load_settings()
+    info = agent_models.describe(settings.get("agentModels"))
+    older = settings.get("poFallbackModels")
+    older = older if isinstance(older, dict) else {}
+    for kind, shown in info.items():
+        model = older.get(kind, rotation.DEFAULT_PO_FALLBACK_MODELS.get(kind, ""))
+        shown["poSwitchModel"] = ("" if shown["chosen"]["model"] or not isinstance(model, str)
+                                  else model.strip())
+    return info
+
+
+def _agent_model_changes(data: dict) -> list:
+    """The changes to ``agentModels`` a settings change holds, the older
+    ``defaultModel`` (Claude's model) first."""
+    out = []
+    if "defaultModel" in data:
+        v = data["defaultModel"]
+        out.append({"claude": {"model": v}} if isinstance(v, str) else None)
+    if "agentModels" in data:
+        out.append(data["agentModels"])
+    return out
+
+
+def hub_launch_model(kind: str, seat_model: str = "", room: dict | None = None) -> tuple[str, str]:
+    """(model, reasoning effort) the hub passes when it starts an agent of
+    ``kind``: the seat's own model, else the one chosen in Settings; "" for
+    none (the agent's own default). A session adopted from the history keeps
+    what it names and nothing else: the hub did not start it."""
+    seat_model = (seat_model or "").strip()
+    if room is not None and room.get("adopted"):
+        return seat_model, ""
+    return agent_models.launch_choice(kind, seat_model, load_settings().get("agentModels"))
+
+
+def _codex_model_args(model: str, effort: str = "") -> list[str]:
+    """Codex's launch flags for a model and a reasoning effort: nothing for
+    "". Never written to ``~/.codex/config.toml``."""
+    args = ["-c", f'model="{model}"'] if model else []
+    return args + (["-c", f'model_reasoning_effort="{effort}"'] if effort else [])
+
+
+def _hub_codex_model() -> str:
+    """The Codex model a seat that names none is started on, "" for Codex's
+    own: what the plan chip and the allocation judge Codex's pool by."""
+    return hub_launch_model("codex")[0]
+
+
+usage.hub_codex_model = _hub_codex_model
 
 
 def save_settings(settings: dict) -> dict:
@@ -1430,8 +1508,13 @@ def save_settings(settings: dict) -> dict:
 
 def _save_settings_locked(settings: dict) -> dict:
     current = load_settings()
+    for change in _agent_model_changes(settings):
+        models, _why = agent_models.check(change, current["agentModels"])
+        if models is not None:
+            current["agentModels"] = models
+            current["defaultModel"] = models["claude"]["model"]
     for k, v in settings.items():
-        if k not in _SETTINGS_DEFAULTS:
+        if k not in _SETTINGS_DEFAULTS or k in ("agentModels", "defaultModel"):
             continue
         if k == "feedbackRepo" and not feedback.valid_repo(v):
             continue
@@ -1440,12 +1523,6 @@ def _save_settings_locked(settings: dict) -> dict:
         allowed = _SETTINGS_ALLOWED_VALUES.get(k)
         if allowed and v not in allowed:
             continue
-        # Free-form strings still get shape checks — the value is passed
-        # verbatim as claude's --model argument.
-        if k == "defaultModel":
-            if not isinstance(v, str) or len(v) > 80:
-                continue
-            v = v.strip()
         if k == "poFallbackModels":
             if not isinstance(v, dict) or any(
                     kind not in ("claude", "codex") or not isinstance(model, str)
@@ -1529,6 +1606,8 @@ def _save_settings_locked(settings: dict) -> dict:
     finally:
         with contextlib.suppress(OSError):
             tmp.unlink()
+    # The pool Codex is judged by follows the model chosen here.
+    usage.remark_codex()
     return current
 
 
@@ -10013,6 +10092,11 @@ class Handler(BaseHTTPRequestHandler):
             # human by name (nickname, else git user.name) instead of "user".
             self._send_json(200, {**load_settings(), "operatorName": operator_name()})
             return
+        if p == "/api/agent-models":
+            # What Settings offers for the model hub-launched agents run on:
+            # per kind the choice, the agent's own default and its models.
+            self._send_json(200, agent_models_info())
+            return
         if p.startswith("/api/cost/"):
             sid = p[len("/api/cost/"):]
             if sid.startswith("room-"):
@@ -10093,6 +10177,12 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/settings":
             if not isinstance(data, dict):
                 self._send_json(400, {"error": "expected_object"})
+                return
+            # A model the agent does not offer is refused, and says so; nothing
+            # of the change is saved.
+            why = agent_models_error(data)
+            if why:
+                self._send_json(400, {"error": "unknown_model", "message": why})
                 return
             self._send_json(200, save_settings(data))
             return
@@ -10401,7 +10491,7 @@ class Handler(BaseHTTPRequestHandler):
         briefing = po_hub_prompt(room_full, briefing)
         ag = agents.get_agent(agent_key)
         label = room_full["title"][:60]
-        model = (part.get("model") or "").strip()
+        model, effort = hub_launch_model(agent_key, part.get("model"), room_full)
         # Pre-clear each agent's first-run trust gate so the unattended launch
         # starts talking instead of blocking on a prompt no one can answer.
         if hasattr(ag, "ensure_trusted"):
@@ -10413,9 +10503,7 @@ class Handler(BaseHTTPRequestHandler):
                        "-c", 'approval_policy="never"',
                        "-c", f'mcp_servers.ensemble.url="{url}"',
                        "-c", 'mcp_servers.ensemble.bearer_token_env_var="CHAT_TOKEN"',
-                       *_codex_task_args(room_full)]
-            if model:
-                command += ["-c", f'model="{model}"']
+                       *_codex_task_args(room_full), *_codex_model_args(model, effort)]
             res = BACKEND.open_new(cwd, briefing, label=label, command=command,
                                    agent="codex", identity=ident,
                                    env={"CHAT_TOKEN": token, **rtk_env})
@@ -10488,7 +10576,8 @@ class Handler(BaseHTTPRequestHandler):
         checkout it reviews."""
         ident = part["identity"]
         agent_key = part["agent"]
-        model = (part.get("model") or "").strip()
+        # The seat's model, else the one Settings chose for its kind.
+        model, effort = hub_launch_model(agent_key, part.get("model"), room_full)
         token = next((t for t, i in room_full.get("tokens", {}).items()
                       if i == ident), "")
         base = room_full.get("cwd") or str(CS_ROOT)
@@ -10527,9 +10616,7 @@ class Handler(BaseHTTPRequestHandler):
             env.update(_agent_hook_env(self.server.server_address[1], room_full["id"], ident))
         if agent_key == "codex":
             argv = (["codex", "-c", "check_for_update_on_startup=false"] + codex_mcp
-                    + _codex_task_args(room_full))
-            if model:
-                argv += ["-c", f'model="{model}"']
+                    + _codex_task_args(room_full) + _codex_model_args(model, effort))
             cmd = BACKEND.headless_launch(cwd, argv, briefing)
             sess = ptyrun.create(cmd, cwd=cwd, env=env, label=label, meta=meta)
             return {"ptyId": sess.id, "cwd": cwd, "sessionId": ""}
@@ -10552,7 +10639,10 @@ class Handler(BaseHTTPRequestHandler):
         started with ``seed`` as its first prompt instead."""
         ident = part["identity"]
         agent_key = part["agent"]
-        model = (part.get("model") or "").strip()
+        # As at its launch: a resumed conversation carries on on the model
+        # Settings names now. A past session a person opened is left alone.
+        model, effort = (((part.get("model") or "").strip(), "") if human
+                         else hub_launch_model(agent_key, part.get("model"), room_full))
         token = next((t for t, i in room_full.get("tokens", {}).items()
                       if i == ident), "")
         base = room_full.get("cwd") or str(CS_ROOT)
@@ -10569,9 +10659,7 @@ class Handler(BaseHTTPRequestHandler):
             env.update(_agent_hook_env(self.server.server_address[1], room_full["id"], ident))
         if agent_key == "codex":
             argv = (["codex", "-c", "check_for_update_on_startup=false"] + codex_mcp
-                    + _codex_task_args(room_full))
-            if model:
-                argv += ["-c", f'model="{model}"']
+                    + _codex_task_args(room_full) + _codex_model_args(model, effort))
             codex_sid = part.get("sessionId") or (
                 ag.latest_session_id_for_cwd(cwd)
                 if hasattr(ag, "latest_session_id_for_cwd") else "")
@@ -12831,8 +12919,9 @@ class Handler(BaseHTTPRequestHandler):
                 # it as a `-c` config override).
                 raw_model = data.get("model")
                 sess_model = raw_model.strip()[:80] if isinstance(raw_model, str) else ""
-                if sess_model and agent_key == "codex":
-                    argv += ["-c", f'model="{sess_model}"']
+                if agent_key == "codex":
+                    # The model named, else the one Settings chose for Codex.
+                    argv += _codex_model_args(*hub_launch_model("codex", sess_model))
                 res = BACKEND.open_new(path, combined, label=desc,
                                        command=argv, open_mode=open_mode,
                                        agent=agent_key, identity=identity)
@@ -12849,13 +12938,13 @@ class Handler(BaseHTTPRequestHandler):
             labels[new_sid] = desc
             save_labels(labels)
             combined = "\n\n".join(p for p in (desc, user_prompt) if p)
-            # `model` from the client picker overrides the persisted default;
-            # missing → the persisted default → no --model flag. open_mode
+            # `model` from the client picker overrides the model Settings chose
+            # for Claude; missing → that one → no --model flag. open_mode
             # (window/tab, read above) is honored where the terminal supports it.
             raw_model = data.get("model")
             model_override = raw_model.strip()[:80] if isinstance(raw_model, str) else None
             chosen_model = (model_override if model_override is not None
-                            else settings.get("defaultModel", "")).strip() or None
+                            else hub_launch_model("claude")[0]).strip() or None
             res = BACKEND.open_new(path, combined, label=desc, session_id=new_sid,
                                    model=chosen_model, open_mode=open_mode)
             self._send_json(200, {"ok": True, "path": path, "result": res,

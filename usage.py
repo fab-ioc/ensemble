@@ -1222,6 +1222,13 @@ def codex_config_model(path=None) -> str:
     """The model Codex runs on when a launch names none: ``model`` in
     ``config.toml`` (the active ``profile``'s, when one is set). "" when
     there is no such file or line."""
+    return codex_config_value("model", path)
+
+
+def codex_config_value(key: str, path=None) -> str:
+    """A top-level text setting of Codex's ``config.toml`` (the active
+    ``profile``'s, when one is set and says it). "" when there is no such file
+    or line."""
     if path is None:
         home = os.environ.get("CODEX_HOME")
         path = (Path(home) if home else Path.home() / ".codex") / "config.toml"
@@ -1235,26 +1242,34 @@ def codex_config_model(path=None) -> str:
         import tomllib
         config = tomllib.loads(text)
         profile = (config.get("profiles") or {}).get(config.get("profile")) or {}
-        model = profile.get("model") or config.get("model")
-        return model.strip() if isinstance(model, str) else ""
+        value = profile.get(key) or config.get(key)
+        return value.strip() if isinstance(value, str) else ""
     except Exception:                                        # noqa: BLE001
         pass
     # No tomllib (Python < 3.11), or a file it will not take: the top-level
-    # `model = "..."` line, which sits above the first table.
+    # `key = "..."` line, which sits above the first table.
     for line in text.splitlines():
         if line.lstrip().startswith("["):
             break
-        found = re.match(r"""\s*model\s*=\s*(["'])(.*?)\1""", line)
+        found = re.match(rf"""\s*{re.escape(key)}\s*=\s*(["'])(.*?)\1""", line)
         if found:
             return found.group(2).strip()
+    return ""
+
+
+def hub_codex_model() -> str:
+    """The model the hub passes to a Codex agent whose seat names none, "" for
+    none (Codex's config then decides). dashboard.py replaces this with the
+    Settings choice; usage.py only reads it."""
     return ""
 
 
 def codex_pool_for_model(source: dict | None, model: str = "") -> dict:
     """The pool a Codex agent runs on: ``{id, label, model}``.
 
-    ``model`` is the seat's named model; without one it is the config's
-    (``source["configModel"]``). ``gpt-reserve`` draws on the reserve, Spark's
+    ``model`` is the seat's named model; without one it is the model a launch
+    that names none runs on (``source["configModel"]``: the one chosen in
+    Settings, else the config's). ``gpt-reserve`` draws on the reserve, Spark's
     slug on Spark's pool, anything else — no model at all, and a slug that
     matches some pool not known here, included — on the main pool.
     """
@@ -1273,19 +1288,43 @@ def codex_pool_for_model(source: dict | None, model: str = "") -> dict:
     return {"id": pool_id, "label": _pool_label(pool_id, slug), "model": slug}
 
 
-def _mark_pool_in_use(source: dict, config_model: str) -> dict:
-    """Say on the source, its pools and its windows which pool Codex sessions
-    currently run on — the config's model, since the hub names a model only
-    when a task's line-up does."""
-    source["configModel"] = config_model
+def _mark_pool_in_use(source: dict, config_model: str, hub_model: str = "") -> dict:
+    """Say on the source, its pools and its windows which pool Codex agents
+    run on when their seat names no model: the model chosen in Settings
+    (``hub_model``), else the config's. ``configModel`` is that model,
+    ``ownModel`` the config's, and ``poolInUse.from`` which of the two it is
+    ("settings" | "config")."""
+    source["ownModel"] = config_model
+    source["configModel"] = hub_model or config_model
     source.setdefault("pools", [])
     used = codex_pool_for_model(source, "")
+    used["from"] = "settings" if hub_model else "config"
     source["poolInUse"] = used
     for pool in source["pools"]:
         pool["inUse"] = pool["id"] == used["id"]
     for win in source.get("windows") or []:
         win["inUse"] = win.get("pool") == used["id"]
     return source
+
+
+def _hub_model() -> str:
+    try:
+        model = hub_codex_model()
+        return model.strip() if isinstance(model, str) else ""
+    except Exception:                                        # noqa: BLE001
+        return ""
+
+
+def remark_codex() -> None:
+    """The Settings choice changed: mark the cached Codex reading again, so the
+    chip and the allocation follow it without waiting for the next poll. No
+    file or network is read."""
+    hub_model = _hub_model()
+    with _LOCK:
+        source = _STATE["sources"].get("codex")
+        if source is not None:
+            _mark_pool_in_use(source, source.get("ownModel", source.get("configModel", "")),
+                              hub_model)
 
 
 def read_codex(now: float | None = None, files=None, app_server=None) -> dict:
@@ -1314,7 +1353,7 @@ def read_codex(now: float | None = None, files=None, app_server=None) -> dict:
         source = _read_codex_pools(now, files, app_server)
     except Exception as e:                                   # noqa: BLE001
         source = _unavailable("codex", _scrub(f"cannot read Codex's limits ({type(e).__name__})"))
-    return _mark_pool_in_use(source, config_model)
+    return _mark_pool_in_use(source, config_model, _hub_model())
 
 
 def _pool_windows(pool: dict, now: float) -> list[dict] | str:
