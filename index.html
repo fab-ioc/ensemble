@@ -6815,8 +6815,13 @@ function wsNoFolderWhy(r) {
       ? nounText('This task has no folder of its own, and no {project} folder to show instead.') : 'Loading…';
   }
   const own = r.taskDir || r.cwd || '', what = r.headless ? 'task' : 'conversation';
-  if (own && r.folderWide) return `No files to show: this ${what} ran in ${tildeify(own)}, a home folder or a whole drive, which is too wide to show as its own folder.`;
+  if (own && r.folderWide) return wsWideWhy(r, 'files');
   return `No files to show: this ${what} has no folder.`;
+}
+// The line for a folder too wide to show, in the Workspace ('files') and in
+// Changes ('changes'): the same reason in both.
+function wsWideWhy(r, things) {
+  return `No ${things} to show: this ${r.headless ? 'task' : 'conversation'} ran in ${tildeify(r.taskDir || r.cwd || '')}, a home folder or a whole drive, which is too wide to show as its own folder.`;
 }
 // The roots this context is allowed to see, in the order they are shown.
 //   task    — this task's folder, then the project's, with sibling tasks hidden;
@@ -9745,6 +9750,9 @@ async function tchRead(v) {
     const r = tchRow(v);
     const scope = r ? (r.cwd || r.taskDir || '') : '';
     if (!scope) { tchEmpty(v, 'No branch yet — nothing has run.'); return; }
+    // A folder the hub does not read (too wide) has no changes to ask for: the
+    // reason, as its Workspace gives it, not the hub's refusal.
+    if (r.folderWide && wsLoose(r)) { v.roots = []; v.root = ''; tchEmpty(v, wsWideWhy(r, 'changes')); return; }
     const rr = await api('/api/git/roots?path=' + encodeURIComponent(scope));
     v.roots = rr.roots || [];
     if (!v.roots.length) {

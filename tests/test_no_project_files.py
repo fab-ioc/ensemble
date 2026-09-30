@@ -780,6 +780,14 @@ async function main() {
         await sleep(400);
         out.others[k] = await p.evalIn(FILES);
         await p.shot('loose-1440-' + k);
+        if (k === 'wide') {
+          // Its Changes gives the same reason, not the hub's refusal.
+          await p.click(tool('changes'));
+          const NONE = `document.getElementById('detail-panel')._panes.changes.querySelector('.tch-none')`;
+          await p.until(`(() => { const x = ${NONE}; return !!x && !x.hidden && x.textContent.length > 0; })()`, 15000);
+          out.wideChanges = await p.evalIn(`({ text: ${NONE}.textContent, grid: document.getElementById('detail-panel')._panes.changes.querySelector('.tch').hidden, scrollW: document.documentElement.scrollWidth, vw: innerWidth })`);
+          await p.shot('loose-1440-wide-changes');
+        }
       }
       // A past conversation's file opens in the same viewer, with no chat to comment into.
       out.pastFile = await view(p, 'notes.md');
@@ -1054,6 +1062,11 @@ class ThePage(unittest.TestCase):
             self.assertTrue(g["empty"].startswith("No files to show: this task ran in "), g["empty"])
             self.assertTrue(g["empty"].endswith("a home folder or a whole drive, which is too wide to show as its own folder."), g["empty"])
             self.no_scroll(g, "a wide folder")
+        c = self.got["wideChanges"]
+        self.assertTrue(c["text"].startswith("No changes to show: this task ran in "), c["text"])
+        self.assertTrue(c["text"].endswith("a home folder or a whole drive, which is too wide to show as its own folder."), c["text"])
+        self.assertTrue(c["grid"], "the reason alone, no file list under it")
+        self.assertLessEqual(c["scrollW"], c["vw"])
 
     def test_a_task_brought_in_from_a_conversation_shows_where_it_runs(self):
         g = self.got["others"]["adopted"]
