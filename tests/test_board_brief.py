@@ -148,6 +148,31 @@ class Brief(unittest.TestCase):
                 self.assertIn(f'{ahead} ahead of main', running)
                 self.assertNotIn('#1 Task 1', done)
 
+    def test_reopened_work_stays_running_through_review_then_completion(self):
+        for branch, ahead in [('merged', '0'), ('sess/ED-1', '2')]:
+            with self.subTest(ahead=ahead):
+                self.rooms.clear()
+                room = self.room(1, workflow='inprogress', workflowAt=200,
+                                 report={'kind': 'completed', 'ts': 100},
+                                 lastReport={'kind': 'update', 'ts': 201},
+                                 workspace={'branch': branch})
+                self.assertIn('#1 Task 1; working', self.build())
+                room.update(workflow='inreview', workflowAt=300,
+                            participants=[{'review': {'startedAt': 301}}])
+                for state in ('waiting on reviewer', 'waiting on the PO'):
+                    text = self.build()
+                    running = text.split('### Running')[1].split('### Done')[0]
+                    done = text.split('### Done, not merged')[1].split('### Drafts')[0]
+                    self.assertIn(f'#1 Task 1; {state}', running)
+                    self.assertIn(f'{ahead} ahead of main', running)
+                    self.assertNotIn('#1 Task 1', done)
+                    room['participants'][0]['review']['endedAt'] = 302
+                # A new completion after reopening is still honored.
+                room['report'] = {'kind': 'completed', 'ts': 400}
+                text = self.build()
+                self.assertNotIn('#1 Task 1', text.split('### Running')[1].split('### Done')[0])
+                self.assertEqual('#1 Task 1' in text, ahead == '2')
+
     def test_po_first_prompt_routes_preserve_tag_and_context(self):
         for cause in ('', 'manual', 'usage_limit'):
             text = rotation.first_prompt(self.project, {'id': 'po'}, 'old', 200000,
