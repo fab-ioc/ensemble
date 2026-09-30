@@ -52,30 +52,39 @@ def view(room):
             "onReady": room.get("onReady", "start")}
 
 
-def reasons(room, project_id, git):
+def gate_state(room, project_id, git, now):
     gates = room.get("after") or []
     if not gates:
-        return []
-    out = []
+        return [], 0
+    out, times = [], []
     for gate in gates:
         target = _d.chatroom.get_room(gate["task"], public=False)
         if not target or _d.ensemble_tools._project_of_room(target) != project_id:
-            return []
+            return [], 0
         when = gate.get("when", "merged")
         if when == "merged":
             if target["id"] not in git:
                 git[target["id"]] = _d.digest._git_facts(target)
-            satisfied = git[target["id"]].get("merged", False)
+            facts = git[target["id"]]
+            satisfied = facts.get("merged", False)
+            at = 0
+            if satisfied and facts.get("sha"):
+                if target.get("mergedHead") == facts["sha"]:
+                    at = target.get("mergedAt") or 0
+                if not at and facts.get("base"):
+                    at = _d.digest._merged_at(target.get("cwd", ""), facts["base"], facts["sha"])
         else:
             reviews = [r for p in target.get("participants", [])
                        for r in [*(p.get("reviews") or []), p.get("review") or {}]
                        if r.get("endedAt") and r.get("verdict")]
             last = max(reviews, key=lambda r: r["endedAt"], default={})
             satisfied = last.get("verdict") == "approve"
+            at = last.get("endedAt", 0)
         if not satisfied:
-            return []
+            return [], 0
         out.append(f"{_d.task_label(target)} {when}")
-    return out
+        times.append(at or now)
+    return out, max([float(room.get("gateConfiguredAt") or room.get("createdAt") or now), *times])
 
 
 def deliver(project, text):
@@ -112,6 +121,50 @@ def _save(state):
     tmp.replace(path)
 
 
+def _ended_at(room, last_active, last_merge, now):
+    """The end of this lifecycle, never an old merge or a chat's timestamp.
+
+    Death records supply natural exits; explicit Stop records stoppedAt before
+    clearing those records. Legacy tasks with neither begin at observation.
+    """
+    floor = max(float(room.get("launchedAt") or 0), last_active)
+    if _d.workflow_of(room) == "done":
+        merged = float(room.get("mergedAt") or 0)
+        # A merge first discovered by the digest can predate our last look.
+        # A merge already present while the card was reopened cannot end it again.
+        if (merged and merged >= float(room.get("launchedAt") or 0)
+                and (not last_active or merged != last_merge)):
+            return merged
+        at = float(room.get("workflowAt") or 0)
+        if at and at >= floor:
+            return at
+    exits = [float((p.get("lastExit") or {}).get("endedAt") or 0)
+             for p in room.get("participants", [])]
+    at = max([float(room.get("stoppedAt") or 0), *exits])
+    if at and at >= floor:
+        return at
+    return now
+
+
+def _recover_attempt(room, action):
+    """An interrupted claim is reconciled and reported, never relaunched."""
+    if action.get("result") != "attempted":
+        return action
+    action = dict(action)
+    label = _d.task_label(room)
+    if action.get("onReady") == "tell":
+        action.update(result="tell", notice=f"{label} is unblocked: {action['reason']}. "
+                      "Notification recovered after an interrupted gate check.")
+    elif room.get("launched", True) or _d._room_is_live(room):
+        action.update(result="started", notice=f"{label} has a recorded start after an interrupted "
+                      "gate attempt. Check its current state; the hub did not retry the launch.")
+    else:
+        action.update(result="interrupted", notice=f"{label} gate launch was interrupted; no start "
+                      "is recorded. Check the task and start it manually if needed; the hub will not retry.")
+    _d.chatroom.patch_room(room["id"], gateAction=action)
+    return action
+
+
 def check(project, now=None):
     now = time.time() if now is None else now
     with _LOCK:
@@ -122,16 +175,18 @@ def check(project, now=None):
                  and _d.ensemble_tools._project_of_room(r) == project["id"]]
         git, ready = {}, []
         for room in rooms:
-            action = room.get("gateAction") or {}
+            action = _recover_attempt(room, room.get("gateAction") or {})
+            room["gateAction"] = action
             if action.get("notice") and not action.get("told") and deliver(project, action["notice"]):
                 action["told"] = now
                 _d.chatroom.patch_room(room["id"], gateAction=action)
             if room.get("launched", True) or _d.workflow_of(room) == "done":
                 continue
-            why = reasons(room, project["id"], git)
+            why, ready_at = gate_state(room, project["id"], git, now)
             if why and not room.get("gateAction"):
                 # Claim before launching, including failures and process interruption.
-                action = {"at": now, "result": "attempted"}
+                action = {"at": now, "readyAt": ready_at, "result": "attempted",
+                          "onReady": room.get("onReady", "start"), "reason": ", ".join(why)}
                 room["gateAction"] = action
                 if _d.chatroom.patch_room(room["id"], gateAction=action) is None:
                     continue
@@ -160,22 +215,28 @@ def check(project, now=None):
                 ready.append(room)
         # Reload after launches: normal allocation/start changes the live seats.
         rooms = [_d.chatroom.get_room(r["id"]) or r for r in rooms]
-        active = any(r.get("launched", True) and _d.workflow_of(r) != "done"
-                     and _d._room_is_live(r) for r in rooms)
-        ep = rec.get("episode")
-        if ep and any(r.get("launchedAt", 0) > ep["since"] for r in rooms):
+        active = [r for r in rooms if r.get("launched", True) and _d.workflow_of(r) != "done"
+                  and _d._room_is_live(r)]
+        starts = {r["id"]: float(r.get("launchedAt") or 0) for r in rooms}
+        if any(at > rec.get("starts", {}).get(rid, 0) for rid, at in starts.items()):
             rec.pop("episode", None)
+        rec["starts"] = starts  # consume every start once, independent of reconstructed time
+        last_active = {r["id"]: rec.get("lastActive", {}).get(r["id"], 0) for r in rooms}
+        active_merge = {r["id"]: rec.get("activeMerge", {}).get(r["id"], 0) for r in rooms}
+        last_active.update({r["id"]: now for r in active})
+        active_merge.update({r["id"]: r.get("mergedAt", 0) for r in active})
+        rec["lastActive"] = last_active
+        rec["activeMerge"] = active_merge
         if active or not ready or not project.get("poRoomId") or project.get("idleBoardAlert") is False:
             rec.pop("episode", None)
         else:
             ep = rec.get("episode")
             if ep is None:
                 # Use the recorded board transition, not the time we noticed it.
-                ended = [float((r.get("mergedAt") or r.get("workflowAt"))
-                               if _d.workflow_of(r) == "done" and (r.get("mergedAt") or r.get("workflowAt"))
-                               else r.get("updatedAt") or now)
+                ended = [_ended_at(r, last_active.get(r["id"], 0), active_merge.get(r["id"], 0), now)
                          for r in rooms if r.get("launched", True)]
-                available = min(float((r.get("gateAction") or {}).get("at") or
+                available = min(float((r.get("gateAction") or {}).get("readyAt") or
+                                      (r.get("gateAction") or {}).get("at") or
                                       r.get("updatedAt") or r.get("createdAt") or now) for r in ready)
                 since = min(now, max([available, *ended]))
                 ep = rec["episode"] = {"since": since, "count": 0, "last": 0}

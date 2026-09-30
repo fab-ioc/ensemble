@@ -9148,6 +9148,7 @@ def stop_task(rid: str) -> bool:
             ptyrun.forget_death(pid)
     # Cleared through the room lock, and only after the kills: writing the room
     # we read before a slow kill loop would drop a chat message posted during it.
+    chatroom.patch_room(rid, stoppedAt=time.time())
     chatroom.clear_exits(rid)
     return True
 

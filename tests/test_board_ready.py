@@ -1,5 +1,4 @@
 """Board episodes, declarative gates, and the PO's live usage context."""
-import copy
 import tempfile
 import unittest
 from pathlib import Path
@@ -98,6 +97,63 @@ class BoardTests(unittest.TestCase):
         self.assertEqual(self.episode()["count"], 1)
         self.assertEqual(len(self.sent), 2)
 
+    def test_observed_active_board_does_not_backdate_a_stop_without_exit_metadata(self):
+        self.room(1, priority=2)
+        task = self.room(2)
+        chatroom.patch_room(task["id"], launched=True, live=True)
+        self.check(2000)
+        chatroom.patch_room(task["id"], live=False)
+        self.check(2002)
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.episode()["since"], 2002)
+
+    def test_explicit_stop_records_transition_and_natural_death_uses_exit(self):
+        self.room(1, priority=2)
+        task = self.room(2)
+        chatroom.patch_room(task["id"], launched=True, live=True)
+        chatroom.patch_participant(task["id"], "codex", {"ptyId": "pty-task"})
+        self.check(2000)
+        with mock.patch.object(rotation, "note_stopped"), \
+             mock.patch.object(d, "room_ptys", return_value=[]), \
+             mock.patch.object(d.ptyrun, "forget_death"), \
+             mock.patch.object(d.ptyrun, "kill", side_effect=lambda pid: chatroom.patch_room(task["id"], live=False)), \
+             mock.patch("dashboard.time.time", return_value=2001):
+            self.assertTrue(d.stop_task(task["id"]))
+        self.check(2002)
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.episode()["since"], 2001)
+        chatroom.patch_room(task["id"], live=True, launchedAt=3000)
+        self.check(3100)
+        chatroom.patch_room(task["id"], live=False)
+        chatroom.record_exit(task["id"], "codex", {"ptyId": "pty-task", "endedAt": 3101})
+        self.check(3102)
+        self.assertEqual(self.episode()["since"], 3101)
+
+    def test_reopened_merged_task_starts_one_new_episode_with_repeat_cap(self):
+        self.room(1, priority=2)
+        task = self.room(2)
+        chatroom.patch_room(task["id"], launched=True, live=False,
+                            mergedAt=1100, workflow="done", workflowAt=1100)
+        self.check(1800)
+        chatroom.patch_room(task["id"], launchedAt=2000, live=True, workflow="inprogress", workflowAt=2000)
+        self.check(2100)
+        chatroom.patch_room(task["id"], workflow="done", workflowAt=2200)
+        self.sent.clear()
+        for at in (2400, 2700, 2801, 3000, 3300, 4601, 6401, 8201):
+            self.check(at)
+        self.assertEqual(self.episode()["since"], 2200)
+        self.assertEqual(self.episode()["count"], 3)
+        self.assertEqual(len(self.sent), 3)
+
+    def test_merge_discovered_late_keeps_its_actual_time(self):
+        self.room(1, priority=2)
+        task = self.room(2)
+        chatroom.patch_room(task["id"], launched=True, live=True, launchedAt=1000, workflow="inprogress")
+        self.check(1400)
+        chatroom.patch_room(task["id"], workflow="done", workflowAt=1500, mergedAt=1300)
+        self.check(1500)
+        self.assertEqual(self.episode()["since"], 1300)
+
     def test_documents_opt_out_and_no_po(self):
         self.room(1, priority=2)
         self.project["kind"] = "documents"
@@ -142,6 +198,23 @@ class BoardTests(unittest.TestCase):
         self.check(2000)
         self.assertIn("#141 (medium)", self.sent[-1])
 
+    def test_gate_idle_clock_uses_completion_time_between_ticks(self):
+        dep, task = self.gate(on_ready="tell")
+        chatroom.patch_room(dep["id"], launched=True, workflow="done", workflowAt=1500,
+                            mergedHead="abc", mergedAt=1300)
+        self.git[dep["id"]] = {"merged": True, "sha": "abc"}
+        self.check(1500)
+        self.assertEqual(self.episode()["since"], 1300)
+        self.check(1901)
+        self.assertIn("Board idle 10 min", self.sent[-1])
+
+    def test_already_satisfied_gate_clock_cannot_predate_configuration(self):
+        dep, task = self.gate("approved", "tell")
+        chatroom.patch_participant(dep["id"], "codex", {"review": {"endedAt": 1200, "verdict": "approve"}})
+        chatroom.patch_room(task["id"], gateConfiguredAt=1450)
+        self.check(1500)
+        self.assertEqual(self.episode()["since"], 1450)
+
     def test_all_gates_must_be_satisfied(self):
         dep, task = self.gate()
         other = self.room(142)
@@ -162,6 +235,31 @@ class BoardTests(unittest.TestCase):
         self.assertIn("allocation refused", self.sent[0])
         self.launch.assert_called_once()
         self.assertEqual(chatroom.get_room(task["id"])["gateAction"]["result"], "failed")
+
+    def test_interrupted_gate_attempt_is_reconciled_before_and_after_launch(self):
+        dep, task = self.gate()
+        self.git[dep["id"]] = {"merged": True}
+        busy = self.room(142)
+        chatroom.patch_room(busy["id"], launched=True, live=True)
+        for after_launch in (False, True):
+            with self.subTest(after_launch=after_launch):
+                chatroom.patch_room(task["id"], gateAction=None, launched=False, live=False)
+                self.sent.clear()
+                self.launch.reset_mock()
+                def interrupted(room):
+                    if after_launch:
+                        self.start(room)
+                    raise KeyboardInterrupt("hub interrupted before saving outcome")
+                self.launch.side_effect = interrupted
+                with self.assertRaises(KeyboardInterrupt):
+                    self.check(1000)
+                self.assertEqual(chatroom.get_room(task["id"])["gateAction"]["result"], "attempted")
+                for at in (1300, 1600, 1900):
+                    self.check(at)
+                self.launch.assert_called_once()
+                self.assertEqual(len(self.sent), 1)
+                self.assertIn("interrupted", self.sent[0])
+                self.assertIn("recorded start" if after_launch else "no start is recorded", self.sent[0])
 
     def test_successful_launch_notice_retries_without_launching_again(self):
         dep, task = self.gate()

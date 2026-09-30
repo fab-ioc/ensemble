@@ -1363,8 +1363,9 @@ def _create_task(ctx, args, handler):
                                         priority)
     if not ok:
         raise ToolError(err)
-    room_full.update(after=gates, onReady=args.get("onReady", "start"))
-    _d.chatroom.patch_room(room_full["id"], after=gates, onReady=room_full["onReady"])
+    room_full.update(after=gates, onReady=args.get("onReady", "start"), gateConfiguredAt=time.time())
+    _d.chatroom.patch_room(room_full["id"], after=gates, onReady=room_full["onReady"],
+                           gateConfiguredAt=room_full["gateConfiguredAt"])
     _d._patch_task_json(room_full.get("taskDir", ""), after=gates, onReady=room_full["onReady"])
     started = False
     if args.get("start") is True:
@@ -1417,6 +1418,7 @@ def _update_task(ctx, args, handler):
         gate_fields = {"after": gates, "onReady": args.get("onReady", room.get("onReady", "start"))}
         if gates != room.get("after", []) or gate_fields["onReady"] != room.get("onReady", "start"):
             gate_fields["gateAction"] = None
+            gate_fields["gateConfiguredAt"] = time.time()
     notes = []
     room2 = room
     if title is not None or spec is not None or priority is not None or workflow is not None:

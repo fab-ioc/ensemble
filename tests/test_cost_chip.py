@@ -61,7 +61,7 @@ class CostChip(unittest.TestCase):
         src = "\n".join([re.search(r"^const esc = .*$", INDEX, re.M).group(0),
                          INDEX[INDEX.index("const fmtCost = "):INDEX.index("const fmtInt = ")],
                          INDEX[i:INDEX.index("// ---- Cost chip: end", i)], fn(INDEX, "function rowTitle("),
-                         fn(INDEX, "function poWaitLoz("), fn(INDEX, "function cardHtml(")])
+                         fn(INDEX, "function poWaitLoz("), fn(INDEX, "function gateChip("), fn(INDEX, "function cardHtml(")])
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "chip.cjs"
             script.write_text(JS % src, encoding="utf-8")
@@ -104,7 +104,7 @@ class CostChip(unittest.TestCase):
 
     def test_the_row_and_the_card_use_it(self):
         self.assertIn("const costChip = costChipHtml(r);", INDEX)
-        self.assertIn("${runChip(r)}${costChipHtml(r, 'ccost')}${changesChipHtml(r, 'ccost cchg')}${pointsCountHtml(r.points, 'cpts')}${proj}", fn(INDEX, "function cardHtml("))
+        self.assertIn("${runChip(r)}${gateChip(r)}${costChipHtml(r, 'ccost')}${changesChipHtml(r, 'ccost cchg')}${pointsCountHtml(r.points, 'cpts')}${proj}", fn(INDEX, "function cardHtml("))
         self.assertIn(".ccost { font-size: var(--fs-100); color: var(--fg-muted);", INDEX, "plain muted text, not a pill")
 
 
