@@ -72,9 +72,9 @@ async function launch() {
   return { ch, ws };
 }
 class Cdp {
-  constructor(url) { this.url = url; this.id = 0; this.waits = new Map(); }
+  constructor(url) { this.url = url; this.id = 0; this.waits = new Map(); this.errors = []; }
   open() { return new Promise((res, rej) => { this.ws = new WebSocket(this.url); this.ws.onopen = () => res(); this.ws.onerror = e => rej(e);
-    this.ws.onmessage = ev => { const m = JSON.parse(ev.data); if (m.id && this.waits.has(m.id)) { const w = this.waits.get(m.id); this.waits.delete(m.id); m.error ? w.rej(new Error(m.error.message)) : w.res(m.result); } }; }); }
+    this.ws.onmessage = ev => { const m = JSON.parse(ev.data); if (m.method === 'Runtime.exceptionThrown' || (m.method === 'Runtime.consoleAPICalled' && m.params.type === 'error')) this.errors.push(m.params); if (m.id && this.waits.has(m.id)) { const w = this.waits.get(m.id); this.waits.delete(m.id); m.error ? w.rej(new Error(m.error.message)) : w.res(m.result); } }; }); }
   send(method, params = {}, sessionId) { const id = ++this.id; return new Promise((res, rej) => { this.waits.set(id, { res, rej }); this.ws.send(JSON.stringify({ id, method, params, sessionId })); }); }
 }
 // The strip, the tool open beside the middle, and the middle.
@@ -101,9 +101,10 @@ async function main() {
     const { targetId } = await c.send('Target.createTarget', { url: 'about:blank' });
     const { sessionId } = await c.send('Target.attachToTarget', { targetId, flatten: true });
     await c.send('Page.enable', {}, sessionId);
+    await c.send('Runtime.enable', {}, sessionId);
     await c.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: mobile ? 3 : 1, mobile: !!mobile }, sessionId);
     if (mobile) await c.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 }, sessionId);
-    const evalIn = async (expr) => { const r = await c.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }, sessionId); if (r.exceptionDetails) throw new Error(expr.slice(0, 120) + ' :: ' + JSON.stringify(r.exceptionDetails).slice(0, 600)); return r.result.value; };
+    const evalIn = async (expr, userGesture = false) => { const r = await c.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true, userGesture }, sessionId); if (r.exceptionDetails) throw new Error(expr.slice(0, 120) + ' :: ' + JSON.stringify(r.exceptionDetails).slice(0, 600)); return r.result.value; };
     const until = async (expr, ms = 20000) => { const t = Date.now(); while (Date.now() - t < ms) { let v = null; try { v = await evalIn(expr); } catch (e) {} if (v) return v; await sleep(150); } throw new Error('timeout: ' + expr); };
     const shot = async (name) => { if (!A.shots) return; const r = await c.send('Page.captureScreenshot', { format: 'png' }, sessionId); fs.writeFileSync(path.join(A.shots, name + '.png'), Buffer.from(r.data, 'base64')); };
     // A real click, as a person's.
@@ -320,7 +321,7 @@ async function main() {
     // ⋯ › Move To is what moves it to another side (P9)
     {
       const SIDE = id => `(() => { const b = document.querySelector('${tool(id)}'), s = b && b.closest('.dk-strip'), r = PD.els[${JSON.stringify(id)}].getBoundingClientRect();
-        return { fly: PD.dock.flyOpen(), mode: PD.dock.viewMode(${JSON.stringify(id)}), side: PD.dock.side(${JSON.stringify(id)}), out: PD.dock.isOut(${JSON.stringify(id)}),
+        return { visible: PD.dock.isVisible(${JSON.stringify(id)}), notice: !!document.querySelector('#po-dock .dk-outnote'), fly: PD.dock.flyOpen(), mode: PD.dock.viewMode(${JSON.stringify(id)}), side: PD.dock.side(${JSON.stringify(id)}), out: PD.dock.isOut(${JSON.stringify(id)}),
           strip: s ? [...s.classList].filter(c => /^dk-strip-(left|right|top|bottom)$/.test(c)).join('') : null,
           here: PD.els[${JSON.stringify(id)}].ownerDocument === document, shown: r.width > 0 && r.height > 0 && r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight, saved: localStorage.getItem('cd-tool-open') }; })()`;
       const p = await page(1440, 900);
@@ -336,11 +337,36 @@ async function main() {
         await p.evalIn(`PD.dock.popWindow(${JSON.stringify(id)}).close(); 0`);
         await p.until(`!PD.dock.isOut(${JSON.stringify(id)}) && PD.els[${JSON.stringify(id)}].ownerDocument === document`, 10000); await sleep(500);
         r.back = await p.evalIn(SIDE(id));
+        await p.click(tool(id));
+        await p.until(`!!PD.dock.popWindow(${JSON.stringify(id)}) && PD.els[${JSON.stringify(id)}].ownerDocument !== document`, 15000);
+        r.reopened = await p.evalIn(SIDE(id));
+        r.menu = await p.evalIn(`(() => {
+          const d = PD.dock.popWindow(${JSON.stringify(id)}).document;
+          d.querySelector('[data-dk-act="menu"]').click();
+          const result = { screenshot: !!d.querySelector('[data-dk-menu="screenshot"]'), hide: !!d.querySelector('[data-dk-menu="hide"]'), minus: !!d.querySelector('[data-dk-act="hide"]') };
+          d.querySelector('[data-dk-sub="mode"]').click();
+          d.querySelector('[data-dk-menu="mode:unpinned"]').click();
+          return result;
+        })()`);
+        await p.until(`!PD.dock.isOut(${JSON.stringify(id)}) && PD.dock.flyOpen() === ${JSON.stringify(id)}`, 10000);
+        r.docked = await p.evalIn(SIDE(id));
         return r;
       };
       for (const id of ${TOOLS}) out.popBack[id] = await round(id);
       await openTask(p);
       out.popBack.taskSpec = await round('spec');
+      out.captureSupport = await p.evalIn(`(() => {
+        const btn = () => document.querySelector('#po-dock .dk-flyout.open [data-dk-act="menu"]');
+        btn().click();
+        const supported = !!document.querySelector('[data-dk-menu="screenshot"]');
+        btn().click();
+        const crop = window.CropTarget;
+        window.CropTarget = undefined;
+        btn().click();
+        const unsupported = !!document.querySelector('[data-dk-menu="screenshot"]');
+        btn().click(); window.CropTarget = crop;
+        return { supported, unsupported, secure: isSecureContext };
+      })()`);
       await p.shot('strip-1440-spec-back');
       // Move To › Left, then Pinned and Unpinned: the left side throughout; then back to the right.
       out.moveTo = {};
@@ -357,6 +383,27 @@ async function main() {
       if (await p.evalIn('PD.dock.flyOpen()') !== 'spec') { await p.click(tool('spec')); await sleep(400); }
       await menuPick(p, '#po-dock .dk-flyout.open', 'side', 'side:right'); await sleep(500);
       out.moveTo.right = await p.evalIn(SIDE('spec'));
+      // Hide in the window, reopen from Panels, and reopen through each API.
+      const hidden = () => p.until('!PD.dock.isVisible("spec") && !PD.dock.isOut("spec")');
+      const popped = () => p.until('!!PD.dock.popWindow("spec") && PD.els.spec.ownerDocument !== document');
+      await menuPick(p, '#po-dock .dk-flyout.open', 'mode', 'mode:window'); await popped();
+      await p.evalIn(`PD.dock.popWindow('spec').document.querySelector('[data-dk-act="hide"]').click(); 0`); await hidden();
+      await p.click('.pd-panels'); await p.click('[data-pd-toggle="spec"]'); await popped();
+      out.panelReopen = await p.evalIn(SIDE('spec'));
+      await p.evalIn('pdMenuClose(false); PD.dock.popWindow("spec").close(); 0'); await hidden();
+      for (const call of ['showPanel("spec")', 'setVisible("spec", true)', 'reveal("spec")']) {
+        await p.evalIn('PD.dock.' + call + '; 0', true); await popped();
+        await p.evalIn('PD.dock.popWindow("spec").close(); 0'); await hidden();
+      }
+      await p.evalIn('location.reload(); 0'); await sleep(1500); await p.ready(); await go(p, A.proj, true); await poReady(p);
+      out.hiddenReload = await p.evalIn(SIDE('spec'));
+      // Deterministic popup denial: use the actual Dock fallback path.
+      out.blocked = await p.evalIn(`(() => {
+        const open = window.open;
+        try { window.open = () => null; PD.dock.reveal('spec'); }
+        finally { window.open = open; }
+        return { mode: PD.dock.viewMode('spec'), visible: PD.dock.isVisible('spec'), out: PD.dock.isOut('spec'), note: document.querySelector('.dk-note')?.textContent };
+      })()`);
       await p.close();
     }
     // ---- a tool slides back on a click or focus elsewhere (Dock v0.5.1), and stays while it is used or pinned
@@ -425,6 +472,7 @@ async function main() {
   } finally {
     try { ch.kill(); } catch (e) {}
   }
+  out.consoleErrors = c.errors;
   console.log(JSON.stringify(out));
 }
 main().catch(e => { console.error(e && e.stack || e); process.exit(1); });
@@ -437,14 +485,14 @@ class TheWiring(unittest.TestCase):
     def test_the_dock_is_a_tool_strip(self):
         dock = INDEX[INDEX.index("function pdEnsure()"):INDEX.index("// The middle is the conversation alone")]
         for used in ("stripHover: false", "stripOpen: 'beside'", "strip: 44", "icon: PD_ICON[id]", "unpinSize:",
-                     "can: (id, a) => (isPhone() && !(id === 'po-chat' && a === 'hide' && pdTask())) || (id !== 'po-chat' && a !== 'hide')"):
+                     "can: (id, a) => (isPhone() && !(id === 'po-chat' && a === 'hide' && pdTask())) || (id !== 'po-chat' && (a !== 'hide' || PD.dock?.viewMode(id) === 'window'))"):
             self.assertIn(used, dock, used)
         self.assertIn("const PD_TOOLS = ['points', 'changes', 'workspace', 'board', 'spec'];", INDEX)
         self.assertIn("const PD_KEYS = { desk: 'cd-tool-strip', phone: 'cd-phone-tabs' };", INDEX)
         self.assertIn("function pdNarrow() { return isPhone(); }", INDEX)
 
-    def test_the_vendored_library_is_v0_5_1(self):
-        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.5\.1 ")
+    def test_the_vendored_library_is_v0_7_0(self):
+        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.7\.0 67f3879")
 
     def test_the_title_bar_is_dock_s_default(self):
         dock = INDEX[INDEX.index("function pdEnsure()"):INDEX.index("// The middle is the conversation alone")]
@@ -552,7 +600,7 @@ class TheStrip(unittest.TestCase):
                 self.assertEqual((g["strip"]["w"], g["strip"]["r"]), (44, g["vw"]), "44px at the right edge")
                 self.assertEqual(g["mid"]["r"], g["strip"]["x"], "the conversation reaches the strip")
                 self.assertIsNone(g["fly"])
-                self.assertFalse(g["panels"], "no Panels menu")
+                self.assertTrue(g["panels"], "Panels recovers windows without a former strip button")
                 self.no_scroll(g, f"PO at {w}")
 
     def test_each_tool_opens_beside_the_conversation_at_its_width(self):
@@ -721,17 +769,20 @@ class TheStrip(unittest.TestCase):
         self.assertLessEqual(g["main"]["r"], g["fly"]["x"], "Files covers nothing")
         self.assertGreaterEqual(g["fly"]["w"], 300)
 
-    def test_a_tool_out_in_a_window_comes_back_shown_on_its_side(self):
+    def test_closed_tool_windows_hide_reopen_and_dock_from_their_menu(self):
         for k, g in self.got["popBack"].items():
             id = "spec" if k == "taskSpec" else k
             with self.subTest(tool=k):
                 self.assertEqual((g["before"]["fly"], g["before"]["side"], g["before"]["strip"]), (id, "right", "dk-strip-right"), g["before"])
                 self.assertEqual((g["out"]["mode"], g["out"]["out"], g["out"]["here"]), ("window", True, False), g["out"])
                 b = g["back"]
-                self.assertEqual((b["out"], b["here"], b["fly"], b["mode"]), (False, True, id, "unpinned"), "closing the window slides it out again")
-                self.assertTrue(b["shown"], b)
+                self.assertEqual((b["out"], b["here"], b["fly"], b["mode"]), (False, True, None, "window"))
+                self.assertFalse(b["visible"] or b["shown"] or b["notice"], b)
                 self.assertEqual((b["side"], b["strip"]), ("right", "dk-strip-right"), "on its own side")
-                self.assertEqual(b["saved"], id, "and remembered as the open tool")
+                self.assertNotEqual(b["saved"], id, "hidden windows are not restored as flyouts")
+                self.assertTrue(g["reopened"]["out"] and g["reopened"]["visible"])
+                self.assertTrue(all(g["menu"].values()), g["menu"])
+                self.assertEqual((g["docked"]["mode"], g["docked"]["fly"]), ("unpinned", id))
 
     def test_move_to_is_what_changes_a_side(self):
         m = self.got["moveTo"]
@@ -739,6 +790,16 @@ class TheStrip(unittest.TestCase):
         self.assertEqual((m["pinned"]["mode"], m["pinned"]["side"]), ("pinned", "left"), "pinning keeps the side")
         self.assertEqual((m["unpinned"]["mode"], m["unpinned"]["side"], m["unpinned"]["strip"]), ("unpinned", "left", "dk-strip-left"), "so does unpinning")
         self.assertEqual((m["right"]["side"], m["right"]["strip"]), ("right", "dk-strip-right"), m["right"])
+
+    def test_hidden_window_recovery_and_capture_support(self):
+        self.assertEqual(self.got["consoleErrors"], [])
+        self.assertEqual(self.got["captureSupport"], {"supported": True, "unsupported": False, "secure": True})
+        self.assertTrue(self.got["panelReopen"]["out"])
+        h = self.got["hiddenReload"]
+        self.assertEqual((h["mode"], h["visible"], h["out"], h["notice"]), ("window", False, False, False))
+        b = self.got["blocked"]
+        self.assertEqual((b["mode"], b["visible"], b["out"]), ("pinned", True, False))
+        self.assertIn("did not load; it is back here", b["note"])
 
     def test_a_phone_keeps_its_tabs(self):
         g = self.got["phone"]

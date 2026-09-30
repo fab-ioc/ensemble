@@ -23,6 +23,7 @@ import {
   popOutPanel, popInPanel, panelSide, viewModeOf, moveSide, dockFromFloat,
 } from './layout.js';
 import { POP_HTML } from './popout-page.js';
+import { afterPaint, canCapture, capturePanel, writePng } from './screenshot.js';
 
 export const LAYOUT_KEY = 'dock.layout';
 export const POP_URL = 'popout.html'; // beside the app's page: same origin, nothing in the URL
@@ -54,6 +55,15 @@ export const TEXT = {
   hide: 'Hide',
   viewMode: 'View Mode',
   moveTo: 'Move To',
+  screenshot: 'Take Screenshot',
+  screenshotHint: 'Copy this panel as a PNG; the browser asks to share this tab',
+  screenshotCopied: (t) => `Screenshot of ${t} copied`,
+  screenshotCancelled: 'Screenshot cancelled',
+  screenshotFailed: (reason) => `Screenshot failed: ${reason}`,
+  screenshotCopyFailed: (reason) => `Screenshot captured, but clipboard access failed: ${reason}`,
+  screenshotCopy: 'Copy',
+  screenshotDownload: 'Download',
+  screenshotDismiss: 'Dismiss',
   maximise: 'Maximise',
   restore: 'Restore',
   modes: { pinned: 'Dock Pinned', unpinned: 'Dock Unpinned', undock: 'Undock', float: 'Float', window: 'Window' },
@@ -202,6 +212,7 @@ export function panelsFrom(container) {
  *   popUrl, popName, popTitle, copyStyles, openWindow           pop-out windows
  *   popHtml, popBase                        a pop-out page without a served file, and the base of its relative URLs
  *   popBackButton                           the pop-out's "Back to main window" button (default true)
+ *   windowClose                             'hide' (default): keep Window mode hidden; 'dock': return to the main page
  *   themeAttrs, themeEvent                  what of the main page's <html> a pop-out window copies, and when
  *   help: { icon(key, panel), mount(doc), selector }            a panel's help control, and its popovers in a window
  *   minClickRestores                        a click on a minimised panel's title bar restores it (default true)
@@ -225,8 +236,9 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   copyStyles = true, themeAttrs = THEME_ATTRS, themeEvent = THEME_EVENT, help = {}, modalSelector = '[role="dialog"], .dk-help-pop',
   badgeClass = 'dk-badge', text = {}, onReset = null, migrate = null,
   defaultLayout, minSize, edgeOf, fill, defaultSize, sizes,
-  narrow = false, narrowLayout, narrowKey, can = null, popHtml = null, popBase, minClickRestores = true, popBackButton = true,
+  narrow = false, narrowLayout, narrowKey, can = null, popHtml = null, popBase, minClickRestores = true, popBackButton = true, windowClose = 'hide',
   stripHover = true, stripOpen = 'over', stripAutoHide = true, headButtons = 'menu',
+  screenshot: screenshotHook = null, screenshotItem = true,
   openWindow = (url, name, features) => (win && typeof win.open === 'function' ? win.open(url, name, features) : null) }) {
   const doc = root.ownerDocument;
   const T = { ...TEXT, ...text };
@@ -263,6 +275,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   const shownFns = [];
   const changeFns = [];
   const popInFns = [];
+  const captureChecks = new Set(); // invalidate pending captures when their panel/frame changes
   const undo = []; // what destroy() takes off
   const scrolls = new Map(); // panel id -> [[element, left, top]] from before its last move
   let stackEls = new Map(); // stack node -> its element
@@ -447,20 +460,30 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     // The middle (the stack holding cfg.fill) is on no side: Move To offers the four, none checked.
     const middle = w && w.kind === 'dock' && cfg.fill && w.stack.panels.includes(cfg.fill);
     if (allowed(id, 'move')) { o.sides = EDGES.slice(); o.side = middle ? null : panelSide(layout, id, opts()); }
-    if (where !== 'fly' && w && w.stack && allowed(id, 'max')) o.max = maxed === w.stack ? T.restore : T.maximise;
-    if (hideOk(id, where)) o.hide = where !== 'fly' && w && w.stack && w.stack.min ? T.restore : T.hide;
-    o.any = !!(o.modes.length || o.sides.length || o.max);
+    if (where !== 'fly' && where !== 'window' && w && w.stack && allowed(id, 'max')) o.max = maxed === w.stack ? T.restore : T.maximise;
+    if (hideOk(id, where)) o.hide = where !== 'fly' && where !== 'window' && w && w.stack && w.stack.min ? T.restore : T.hide;
+    o.any = !!(o.modes.length || o.sides.length || o.max || (!narrowOn && screenshotItem !== false && screenshotAvailable(id)));
     return o;
   }
   // − hides a panel as IntelliJ's does, to what stands for its stripe icon: a strip panel slides back in; a docked or
   // floating one is minimised to its title bar (which shows its icon, and a click brings it back).
-  function hideOk(id, where) { return where === 'fly' || allowed(id, 'min'); }
+  function hideOk(id, where) { return where === 'fly' || allowed(id, where === 'window' ? 'hide' : 'min'); }
 
   function headHtml(node, where) {
     const id = node.active;
     const t = byId.get(id).title;
     const tabs = node.panels.map((pid) => tabHtml(pid, pid === id, where === 'dock' && allowed(pid, 'move'), !!node.min)).join('');
     const isMax = maxed === node;
+    if (where === 'window') {
+      const c = [];
+      if (optionsOf(id, where).any) c.push(ctl('menu', 'menu', t + ': ' + T.options, [T.viewMode, T.moveTo, T.hide].join(', ')));
+      if (classic) {
+        if (allowed(id, 'float')) c.push(ctl('float', 'float', t + ': float', 'float in the main page'));
+        if (allowed(id, 'unpin')) c.push(ctl('unpin', 'pin', t + ': unpin', 'unpin to its strip'));
+      }
+      if (hideOk(id, where)) c.push(ctl('hide', 'hide', t + ': ' + T.hide, 'hide this window (the Panels menu shows it again)'));
+      return '<div class="dk-tabs" role="tablist" aria-label="' + escText(t) + '">' + tabs + '</div><span class="dk-ctl">' + c.join('') + '</span>';
+    }
     const c = [];
     if (!classic) {
       if (optionsOf(id, where).any) c.push(ctl('menu', 'menu', `${t}: ${T.options}`, `${T.viewMode}, ${T.moveTo}, ${T.maximise}, ${T.hide}`));
@@ -819,6 +842,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   }
 
   function render() {
+    for (const check of captureChecks) check();
     snapshotScrolls();
     const focused = doc.activeElement;
     const fkey = focusKey(focused);
@@ -839,7 +863,17 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const ext = extent();
     const floatBox = layout.floats.map((f, z) => { clampFloat(f, ext.w, ext.h, S.floatMin); return claimFloat(f, z, claimed); });
     const flyBox = layout.auto.map((a) => claimFlyout(a));
-    const strips = EDGES.map((edge) => layout.auto.filter((a) => a.edge === edge)).filter((e) => e.length).map((e) => buildStrip(e[0].edge, e));
+    const stripEntries = layout.auto.slice();
+    // Restore button order in reverse removal order, without restoring a hidden panel's body.
+    for (const h of [...layout.hidden].reverse()) {
+      if (!h.window) continue;
+      const a = (h.was && (h.was.kind === 'auto' ? h.was : h.was.strip)) || (layout.pinned && layout.pinned[h.id]);
+      if (!a) continue;
+      const peers = a.peers || [];
+      const next = stripEntries.findIndex((x) => x.edge === a.edge && peers.indexOf(x.id) >= (a.index || 0));
+      stripEntries.splice(next < 0 ? stripEntries.length : next, 0, { ...a, id: h.id });
+    }
+    const strips = EDGES.map((edge) => stripEntries.filter((a) => a.edge === edge)).filter((e) => e.length).map((e) => buildStrip(e[0].edge, e));
     const note = outNote();
     // Then from the root down.
     const rootKids = [main, ...strips, ...floatBox, ...flyBox, parking, preview, ...(note ? [note] : [])];
@@ -868,6 +902,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       if (doc.activeElement !== focused) focusQuiet(focused);
     } else if (fkey) focusAgain(fkey);
     fitAll();
+    for (const check of captureChecks) check();
     announceShown();
   }
 
@@ -892,6 +927,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   }
 
   function markFlyouts() {
+    for (const check of captureChecks) check();
     for (const [id, el] of flyEls) {
       const open = id === flyOpen;
       el.classList.toggle('open', open);
@@ -932,13 +968,109 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
 
   let noteEl = null;
   let noteTimer = null;
-  function notify(msg) {
-    if (destroyed || !doc.body) return;
-    if (!noteEl) { noteEl = doc.createElement('div'); noteEl.className = 'dk-note dk-mono'; noteEl.setAttribute('role', 'status'); }
+  function notify(msg, targetDoc = doc, actions = []) {
+    if (destroyed || !targetDoc.body) return;
+    if (noteEl) noteEl.remove();
+    noteEl = targetDoc.createElement('div'); noteEl.className = 'dk-note dk-mono'; noteEl.setAttribute('role', 'status');
     noteEl.textContent = msg;
-    doc.body.appendChild(noteEl);
+    for (const [label, action] of actions) {
+      const button = targetDoc.createElement('button');
+      button.type = 'button'; button.className = 'dk-textbtn'; button.textContent = label;
+      button.addEventListener('click', action);
+      noteEl.append(' ', button);
+    }
+    targetDoc.body.appendChild(noteEl);
     clearTimeout(noteTimer);
-    noteTimer = later(() => { if (noteEl) noteEl.remove(); }, 9000);
+    if (!actions.length) noteTimer = later(() => { if (noteEl) noteEl.remove(); }, 9000);
+  }
+
+  const capturing = new Set();
+  const captureAbort = new AbortController();
+  undo.push(() => captureAbort.abort());
+  function screenshotAvailable(id) {
+    return typeof screenshotHook === 'function' || canCapture(byId.get(id)?.el.ownerDocument.defaultView);
+  }
+  function screenshotVisible(id) {
+    return !destroyed && shownNow(id) && (!['unpinned', 'undock'].includes(modeOf(id)) || flyOpen === id);
+  }
+  async function screenshot(id) {
+    const p = byId.get(id);
+    if (!p || !screenshotVisible(id)) throw new Error('The panel is not visible.');
+    if (capturing.has(id)) throw new Error('A screenshot of this panel is already in progress.');
+    const el = p.el.closest('.dk-stack, .dk-flyout');
+    if (!el) throw new Error('The panel is not ready.');
+    const cd = el.ownerDocument;
+    const controller = new AbortController();
+    const stop = () => controller.abort(captureAbort.signal.reason);
+    const check = () => {
+      if (!screenshotVisible(id) || !el.isConnected || el.ownerDocument !== cd
+        || p.el.closest('.dk-stack, .dk-flyout') !== el || p.el.classList.contains('dk-off')) {
+        controller.abort(new Error('The panel changed during capture. Take the screenshot again.'));
+      }
+    };
+    // Remember invalidation even if the app switches away and back before capture resolves.
+    captureChecks.add(check);
+    captureAbort.signal.addEventListener('abort', stop, { once: true });
+    capturing.add(id);
+    closeMenu(false);
+    if (noteEl) noteEl.remove();
+    try {
+      let blob;
+      if (typeof screenshotHook === 'function') {
+        await afterPaint(cd.defaultView, controller.signal);
+        check(); controller.signal.throwIfAborted();
+        blob = await screenshotHook(id, el);
+      } else blob = await capturePanel(el, controller.signal);
+      check(); controller.signal.throwIfAborted();
+      if (blob === null) return null;
+      if (!blob || blob.type !== 'image/png' || typeof blob.arrayBuffer !== 'function') throw new Error('The screenshot hook must return a PNG Blob or null.');
+      return blob;
+    } catch (error) {
+      // Browsers deliberately do not distinguish picker cancellation from denied screen permission.
+      if (captureAbort.signal.aborted || (typeof screenshotHook !== 'function'
+        && (error?.name === 'NotAllowedError' || error?.name === 'AbortError'))) return null;
+      throw error;
+    } finally {
+      captureChecks.delete(check);
+      captureAbort.signal.removeEventListener('abort', stop);
+      capturing.delete(id);
+    }
+  }
+  async function copyScreenshot(id) {
+    const p = byId.get(id);
+    const cd = p?.el.ownerDocument || doc;
+    const view = cd.defaultView;
+    const pending = screenshot(id);
+    // Reserve the clipboard write during the click; capture/encoding may finish after activation expires.
+    const payload = pending.then((blob) => {
+      if (!blob) throw new Error('Screenshot cancelled');
+      return blob;
+    });
+    payload.catch(() => {}); // also handled when ClipboardItem itself is unavailable
+    const written = writePng(view, payload);
+    // A denied clipboard can reject before the picker resolves. Handle it immediately.
+    const result = written.then(() => null, (error) => error);
+    try {
+      const blob = await pending;
+      if (!blob) { notify(T.screenshotCancelled, cd); return null; }
+      const error = await result;
+      if (!error) { notify(T.screenshotCopied(p.title), cd); return blob; }
+      const offer = (reason) => notify(T.screenshotCopyFailed(reason?.message || String(reason)), cd, [
+        [T.screenshotCopy, async () => {
+          try { await writePng(view, blob); notify(T.screenshotCopied(p.title), cd); }
+          catch (e) { offer(e); }
+        }],
+        [T.screenshotDownload, () => {
+          const url = view.URL.createObjectURL(blob);
+          const a = cd.createElement('a'); a.href = url; a.download = `${id.replace(/[^\w-]/g, '_')}.png`;
+          cd.body.appendChild(a); a.click(); a.remove();
+          view.setTimeout(() => view.URL.revokeObjectURL(url), 1000);
+        }],
+        [T.screenshotDismiss, () => { noteEl?.remove(); noteEl = null; }],
+      ]);
+      offer(error);
+      return blob;
+    } catch (error) { notify(T.screenshotFailed(error?.message || String(error)), cd); return null; }
   }
 
   // Where the window opens: where it was last time, else over the panel's place, its size.
@@ -1082,7 +1214,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const backBtn = popBackButton
       ? `<button type="button" class="dk-pop-back" data-dk-pop="back" title="${escText(T.backToMainTitle)}">${icon('back')}<span>${escText(T.backToMain)}</span></button>`
       : '';
-    head.innerHTML = `<div class="dk-tabs" role="tablist">${tabHtml(id, true, false)}</div><span class="dk-ctl">${backBtn}</span>`;
+    head.innerHTML = headHtml({ active: id, panels: [id] }, 'window');
+    head.querySelector('.dk-ctl').insertAdjacentHTML('afterbegin', backBtn);
     const body = cd.createElement('div');
     body.className = 'dk-body';
     p.el.classList.add('dk-panel');
@@ -1097,7 +1230,15 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       const stop = typeof h === 'function' ? h : h && typeof h.destroy === 'function' ? h.destroy : null;
       if (stop) whenGone(cd, stop);
     }
-    const onBack = (e) => { if (e.target.closest('[data-dk-pop="back"]')) popIn(id); };
+    const onBack = (e) => {
+      if (e.target.closest('[data-dk-pop="back"]')) popIn(id);
+      const b = e.target.closest('[data-dk-act]');
+      if (b) act(b.dataset.dkAct, id, b);
+    };
+    const dismiss = (e) => { if (menu && menu.ownerDocument === cd && !inMenu(e.target) && !menu._from.contains(e.target)) closeMenu(false); };
+    const blur = () => { if (menu && menu.ownerDocument === cd) closeMenu(false); };
+    cd.addEventListener('pointerdown', dismiss);
+    pop.win.addEventListener('blur', blur);
     const onReveal = () => { try { pop.win.focus(); } catch { /* ignore */ } };
     const gone = () => windowGone(id, pop);
     const moved = () => rememberWindow(id, pop);
@@ -1113,6 +1254,9 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     // When the window goes (or its panel comes back), nothing of the dock's stays on it. The panel has already left
     // `sec` for this document by then (release).
     whenGone(cd, () => {
+      blur();
+      cd.removeEventListener('pointerdown', dismiss);
+      pop.win.removeEventListener('blur', blur);
       for (const t of later) clearTimeout(t);
       try {
         pop.win.removeEventListener('pagehide', gone);
@@ -1164,13 +1308,15 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (closeIt) { try { pop.win.close(); } catch { /* ignore */ } }
   }
 
-  // The person closed the window (or it went on its own): the panel is back in its place, and no longer out.
+  // A closed window is hidden in Window mode; the compatibility option restores its previous main-page place.
   function windowGone(id, pop) {
     if (leaving || pops.get(id) !== pop) return;
     release(id, pop, false);
-    popInPanel(layout, id, opts());
-    maxAgain(id, pop);
-    showBack(id);
+    if (windowClose === 'dock') {
+      popInPanel(layout, id, opts());
+      maxAgain(id, pop);
+      showBack(id);
+    } else hidePanel(layout, id);
     commit();
   }
   // Back from its window in the view mode it had, and seen (IntelliJ's Window mode left): a strip panel slides out, as
@@ -1194,7 +1340,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (!outOf(id)) { if (pop) commit(); return false; }
     popInPanel(layout, id, opts());
     maxAgain(id, pop);
-    if (pop) showBack(id); // from its open window (its Back button): seen, as when its window is closed
+    if (pop) showBack(id); // from its open window's Back button: seen
     commit();
     return true;
   }
@@ -1207,6 +1353,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   let leaveTimer = null;
   function openFly(id, byHover) {
     clearTimeout(leaveTimer);
+    if (hiddenWindow(id)) { if (!byHover) showHidden(id); return; }
     if (flyOpen === id) { if (!byHover) flyByHover = false; return; }
     flyOpen = id;
     flyByHover = !!byHover;
@@ -1299,6 +1446,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       // Back from its window first (as its Back button does), then on to the mode asked for.
       const pop = pops.get(id);
       if (pop) release(id, pop, true);
+      if (hiddenWindow(id)) showPanel(layout, id, opts());
       popInPanel(layout, id, opts());
       maxAgain(id, pop);
       now = modeOf(id);
@@ -1342,7 +1490,24 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     return true;
   }
 
+  const hiddenWindow = (id) => layout.hidden.find((h) => h.id === id && h.window);
+  function showHidden(id) {
+    if (!showPanel(layout, id, opts())) return false;
+    if (outOf(id)) {
+      if (popOut(id)) return true;
+      popInPanel(layout, id, opts());
+      const at = whereIs(layout, id);
+      if (at && at.kind === 'auto') pinPanel(layout, id, opts());
+      else if (at && at.kind === 'float') dockFromFloat(layout, id, opts());
+      notify(T.popFailed(byId.get(id).title));
+    }
+    commit();
+    return true;
+  }
+
   const api = {
+    screenshot,
+    copyScreenshot,
     layout: () => layout,
     /** A panel's view mode (IntelliJ's): 'pinned', 'unpinned', 'undock', 'float', 'window' or 'hidden'. */
     viewMode: modeOf,
@@ -1385,6 +1550,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     activate(id) { if (activate(layout, id)) commit(); },
     /** Makes a panel seen: shown if hidden, brought to the front of its stack, slid out if unpinned. */
     reveal(id) {
+      if (hiddenWindow(id)) { showHidden(id); return; }
       if (pops.has(id)) { try { pops.get(id).win.focus(); } catch { /* ignore */ } return; }
       if (outOf(id)) { popIn(id); return; } // remembered as out, its window not open: back here, where it can be seen
       let changed = false;
@@ -1414,10 +1580,11 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
         b.title = title || '';
       }
     },
+    showPanel(id) { api.setVisible(id, true); },
     setVisible(id, show) {
-      if (!show) closeOut(id);
-      const changed = show ? showPanel(layout, id, opts()) : hidePanel(layout, id);
-      if (changed) commit();
+      if (show) { showHidden(id); return; }
+      closeOut(id);
+      if (hidePanel(layout, id)) commit();
     },
     reset() {
       if (typeof onReset === 'function') { try { onReset(); } catch { /* the app's own */ } }
@@ -1489,6 +1656,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   function act(name, id, btn) {
     const f = floatAround(btn);
     if (name === 'menu') openMenu(btn, id);
+    else if (pops.has(id) && name === 'float') setViewMode(id, 'float');
+    else if (pops.has(id) && name === 'unpin') setViewMode(id, openStyle === 'beside' ? 'unpinned' : 'undock');
     else if (name === 'min') api.toggleMin(id);
     else if (name === 'max') api.toggleMax(id);
     else if (name === 'float') { closeFly(false); api.float(id); }
@@ -1501,6 +1670,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   }
   // − : a strip panel slides back in; a docked or floating one is minimised to its title bar, or restored from it.
   function hideNow(id, fly) {
+    if (pops.has(id)) { if (allowed(id, 'hide')) api.setVisible(id, false); return; }
     if (fly || (flyOpen === id && modeOf(id) !== 'pinned' && modeOf(id) !== 'float')) { closeFly(true); return; }
     if (allowed(id, 'min')) api.toggleMin(id);
   }
@@ -1520,8 +1690,9 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   // A menu at (x, y), kept inside the window: moved left or up, or to the other side of `alt` (the x it may open
   // leftwards from, for a submenu), when it would go past an edge.
   function placeMenu(el, x, y, alt) {
-    const vw = viewport();
-    const vh = (win && win.innerHeight) || 900;
+    const mw = el.ownerDocument.defaultView;
+    const vw = (mw && mw.innerWidth) || viewport();
+    const vh = (mw && mw.innerHeight) || 900;
     const w = el.offsetWidth;
     const h = el.offsetHeight;
     let left = x;
@@ -1535,7 +1706,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   function moveFocus(el, key) {
     const list = menuButtons(el);
     if (!list.length) return;
-    const at = list.indexOf(doc.activeElement);
+    const at = list.indexOf(el.ownerDocument.activeElement);
     const down = key === 'ArrowDown';
     let to;
     if (key === 'Home') to = 0;
@@ -1549,11 +1720,12 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   function openOptions(btn, id) {
     if (menu && menu._from === btn) { closeMenu(true); return; }
     closeMenu(false);
+    const menuWin = btn.ownerDocument.defaultView;
     const fly = !!btn.closest('.dk-flyout');
     const w = whereIs(layout, id);
-    const o = optionsOf(id, fly ? 'fly' : w && w.kind === 'float' ? 'float' : 'dock');
+    const o = optionsOf(id, pops.has(id) ? 'window' : fly ? 'fly' : w && w.kind === 'float' ? 'float' : 'dock');
     const title = byId.get(id).title;
-    menu = doc.createElement('div');
+    menu = btn.ownerDocument.createElement('div');
     menu.className = 'dk-menu dk-mono dk-options';
     menu.setAttribute('role', 'menu');
     menu.setAttribute('aria-label', `${title}: ${T.options}`);
@@ -1562,6 +1734,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (o.modes.length) parts.push(`<button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-dk-sub="mode">${escText(T.viewMode)}${arrow}</button>`);
     if (o.sides.length) parts.push(`<button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-dk-sub="side">${escText(T.moveTo)}${arrow}</button>`);
     const tail = [];
+    if (screenshotItem !== false && screenshotAvailable(id)) tail.push(`<button type="button" role="menuitem" data-dk-menu="screenshot" title="${escText(T.screenshotHint)}">${escText(T.screenshot)}</button>`);
     if (o.max) tail.push(`<button type="button" role="menuitem" data-dk-menu="max">${escText(o.max)}</button>`);
     if (o.hide) tail.push(`<button type="button" role="menuitem" data-dk-menu="hide">${escText(o.hide)}</button>`);
     if (parts.length && tail.length) parts.push('<div class="dk-menu-sep" role="separator"></div>');
@@ -1570,10 +1743,10 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     menu._id = id;
     menu._fly = fly;
     menu._o = o;
-    doc.body.appendChild(menu);
+    btn.ownerDocument.body.appendChild(menu);
     const r = btn.getBoundingClientRect();
     placeMenu(menu, r.right - menu.offsetWidth, r.bottom + 2);
-    if (r.bottom + 2 + menu.offsetHeight > ((win && win.innerHeight) || 900) - 4) placeMenu(menu, r.right - menu.offsetWidth, r.top - 2 - menu.offsetHeight);
+    if (r.bottom + 2 + menu.offsetHeight > ((menuWin && menuWin.innerHeight) || 900) - 4) placeMenu(menu, r.right - menu.offsetWidth, r.top - 2 - menu.offsetHeight);
     focusQuiet(menuButtons(menu)[0]);
     menu.addEventListener('click', (e) => {
       const b = e.target.closest('button');
@@ -1617,7 +1790,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (menu._sub && menu._sub._kind === kind) { if (focus) focusQuiet(menu._sub.querySelector('[aria-checked="true"]') || menuButtons(menu._sub)[0]); return; }
     closeSub(false);
     const o = menu._o;
-    const sub = doc.createElement('div');
+    const sub = menu.ownerDocument.createElement('div');
     sub.className = 'dk-menu dk-mono dk-submenu';
     sub.setAttribute('role', 'menu');
     sub.setAttribute('aria-label', kind === 'mode' ? T.viewMode : T.moveTo);
@@ -1628,7 +1801,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     sub._kind = kind;
     menu._sub = sub;
     parent.setAttribute('aria-expanded', 'true');
-    doc.body.appendChild(sub);
+    menu.ownerDocument.body.appendChild(sub);
     const r = parent.getBoundingClientRect();
     const m = menu.getBoundingClientRect();
     placeMenu(sub, m.right - 2, r.top - 4, m.left + 2);
@@ -1650,6 +1823,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (k.startsWith('mode:')) setViewMode(id, k.slice(5));
     else if (k.startsWith('side:')) moveSideNow(id, k.slice(5));
     else if (k === 'max') api.toggleMax(id);
+    else if (k === 'screenshot') void copyScreenshot(id);
     else if (k === 'hide') hideNow(id, fly);
     // Focus back in the panel's title bar where it still is, else on its strip button or tab.
     const q = CSS_ESC(id);
@@ -1660,21 +1834,21 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   }
 
   function openMenu(btn, id) {
-    if (!classic) { openOptions(btn, id); return; }
+    if (!classic || pops.has(id)) { openOptions(btn, id); return; }
     if (menu && menu._from === btn) { closeMenu(true); return; }
     closeMenu(false);
     const title = byId.get(id).title;
     const w = whereIs(layout, id);
     const items = menuItems(id, w && w.kind === 'float' ? 'float' : 'dock');
     if (!items.length) return;
-    menu = doc.createElement('div');
+    menu = btn.ownerDocument.createElement('div');
     menu.className = 'dk-menu dk-mono';
     menu.setAttribute('role', 'menu');
     menu.setAttribute('aria-label', `${title}: move or hide`);
     menu.innerHTML = items.map(([k, label]) => `<button type="button" role="menuitem" data-dk-menu="${k}">${escText(label)}</button>`).join('');
     menu._from = btn;
     menu._id = id;
-    doc.body.appendChild(menu);
+    btn.ownerDocument.body.appendChild(menu);
     const r = btn.getBoundingClientRect();
     menu.style.top = (r.bottom + 2) + 'px';
     menu.style.left = Math.max(4, Math.min(r.right - menu.offsetWidth, viewport() - menu.offsetWidth - 4)) + 'px';
@@ -2131,7 +2305,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   const stays = () => !stripAutoHide && sticky();
   // A modal (modalSelector, or an open <dialog>, whose role is implicit) counts as the panel that opened it.
   const inModal = (el) => !!(el && el.closest && el.closest(`${modalSelector}, dialog[open]`));
-  const menuOfFly = () => !!(menu && flyOpen && menu._id === flyOpen);
+  const menuOfFly = () => capturing.has(flyOpen) || !!(menu && flyOpen && menu._id === flyOpen);
   on(root, 'pointerover', (e) => {
     const strip = e.target.closest && e.target.closest('[data-dk-auto]');
     if (strip && !gesture && stripHover) {
@@ -2149,7 +2323,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (sticky()) return;
     clearTimeout(leaveTimer);
     leaveTimer = later(() => {
-      if (!flyOpen) return;
+      if (!flyOpen || capturing.has(flyOpen)) return;
       if (flyEls.get(flyOpen) && flyEls.get(flyOpen).contains(doc.activeElement)) return; // the person is working in it
       closeFly(false);
     }, 400);

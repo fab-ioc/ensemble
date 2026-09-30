@@ -622,11 +622,15 @@ it out. A tool's title bar
 (Dock v0.5.0, IntelliJ's; each View Mode item's tooltip says what it does) is its tab, **⋯** and **−**: ⋯ holds View Mode (Dock Pinned docks it
 beside the conversation, Dock Unpinned, Undock, Float, Window pops it out), Move To (the side it
 is on; only this changes a side), Maximise and Hide; − slides it back in. Closing a tool's window
-brings it back slid out on its side. Split and maximise work as the library's. **The
+hides it in Window mode (Dock v0.7.0); its former strip button or Panels reopens a window.
+The window's own ⋯ offers View Mode to dock it back, Move To, Take Screenshot and Hide;
+its − hides it too. Take Screenshot uses the browser's share-this-tab prompt where supported.
+Split and maximise work as the library's. **The
 conversation cannot be moved**: no title bar, no control (`can`), and a tool dropped into its
 stack goes beside it (`pdKeepMiddle`). The Board's own **⤢** (`.pd-board-max`, beside its view
-switch) takes the whole width and gives it back. There is **no Panels menu on a desktop**: every
-tool is always on the strip. The layout is kept under `cd-tool-strip` (the old `cd-po-dock` is not
+switch) takes the whole width and gives it back. **Panels is available on a desktop** (#143):
+it recovers Tasks and tools whose closed window has no former strip button, including Spec.
+The list's reload notice can be dismissed because Panels still offers recovery. The layout is kept under `cd-tool-strip` (the old `cd-po-dock` is not
 read). An open task is the same dock's middle (see *The middle* in §5), with its own Changes,
 Files and Spec in the tools. **A phone has the same tools as tabs** (#129): the dock is narrow
 there (`pdNarrow()` is `isPhone()`), one column of tabs in the strip's order, `Chat · Your asks ·
@@ -707,9 +711,10 @@ item 9).
   While the panel is hidden or popped out it waits at home, hidden with `visibility`, never
   `display`. Popped out, the panel's window holds a chat of its own (removed in `onPopIn`, before the
   panel comes back); the one here stays loaded.
-- **A popped-out window has no "Back to main window"** (the CEO's P50): closing the window puts
-  the panel back. Dock v0.3.6's `popBackButton: false` (passed to `createDock`) leaves the button
-  out entirely; no Ensemble CSS needed.
+- **A popped-out window has no "Back to main window"** (the CEO's P50): `popBackButton: false`
+  leaves the button out entirely; no Ensemble CSS needed. Closing hides the panel in Window mode
+  (Dock v0.7.0). The window's ⋯ → View Mode docks it back; Panels or its former strip button
+  reopens a hidden window.
 - **The roadmap** is a document: the first row of the Workspace's Documents node, opening in a tab
   that is its own view and editor. There is no Roadmap tab or panel.
 - **Phone:** the same dock, narrow (the library's `narrow`, switched by `setNarrow` on resize; its
@@ -815,9 +820,9 @@ self-contained component, so a later layout can host it elsewhere.
   size, a resized one too, kept per browser (`ldAxisSize`, `cd-list-dock-axis`: Dock would carry
   the column's height over; ENSEMBLE-NEEDS item 10); slid out there it spans the width. Slid out, it
   leaves the middle 360px across or 200px down, and the room Dock keeps beside it is cut to its
-  size (`ldInsets`; item 12). Nothing hides it for
-  good (`can`: no `hide`; a desktop has no Panels menu), and the notice that offers it back after
-  a reload has no ×, being its only way back. **The page
+  size (`ldInsets`; item 12). Closing its window or the window's Hide hides it in Window mode;
+  Panels reopens it even when it has no former strip button. The reload notice has its × again:
+  Panels remains available for recovery. **The page
   follows the stand-in** (`ldInsets` → `--list-w`, `--list-r`, `--list-t`, `--list-b` on `body`):
   it takes the room the list leaves, unpinned, floating or in its window. Slid out, the list goes
   back on a click elsewhere, in a conversation's frame (`pdChatClicked`) or once a row is opened. In
