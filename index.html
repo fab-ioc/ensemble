@@ -903,6 +903,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      button and the needs-you chip. */
   .badge-live { background: var(--c-success-bg); color: var(--c-success-fg); }
   /* A task created (e.g. by a planning agent) but never launched. */
+  .gate-chip { color: var(--fg-muted); font-size: var(--fs-100); border: 1px solid var(--border); border-radius: var(--r-100); padding: 0 var(--s-100); overflow-wrap: anywhere; }
   .badge-draft { background: var(--c-neutral-bg); color: var(--c-neutral-fg); }
   /* Agent-type badge (claude / codex). Distinguishes what CLI runs the session. */
   .badge-agent {
@@ -5480,7 +5481,7 @@ function renderHeadlessRow(r, parsed, now) {
   return `<tr class="row headless${attnCls} ${liveClasses}" data-room="${esc(r.roomId || '')}" data-orphan="${r.orphan ? '1' : ''}" data-sid="${esc(r.sessionId)}" draggable="false">
     <td>${statusDot}</td>
     ${prioCell(r)}
-    <td class="topic" title="${esc(attn ? attn.reason : r.cwd)}">${unreadDotHtml(r)}${taskNoHtml(r, !SELECTED_PROJECT)}${esc(rowTitle(r))}${agentBadges(r)}${changesChipHtml(r)}</td>
+    <td class="topic" title="${esc(attn ? attn.reason : r.cwd)}">${unreadDotHtml(r)}${taskNoHtml(r, !SELECTED_PROJECT)}${esc(rowTitle(r))}${gateChip(r)}${agentBadges(r)}${changesChipHtml(r)}</td>
     <td class="tag">${attnBadge}${liveBadge}</td>
     ${actionsTd}
   </tr>`;
@@ -5590,6 +5591,14 @@ function cardAgents(r) {
   return shown + extra;
 }
 
+function gateChip(r) {
+  if (!r.draft || !(r.after || []).length) return '';
+  const label = 'after ' + r.after.map(g => g.task).join(', ');
+  const detail = r.after.map(g => g.task + ' ' + (g.when || 'merged')).join(', ')
+    + '; then ' + (r.onReady || 'start');
+  return `<span class="gate-chip" title="${esc(detail)}">${esc(label)}</span>`;
+}
+
 function cardHtml(r, now) {
   const attn = ATTENTION_BY_ROOM.get(r.roomId) || r.attention || null;
   const tone = (attn && (attn.state === 'agent_gone' || attn.state === 'blocked')) ? 'danger'
@@ -5604,7 +5613,7 @@ function cardHtml(r, now) {
   return `<article class="card${working}" draggable="true" data-room="${esc(r.roomId || '')}" data-sid="${esc(r.sessionId)}">
     ${loz}
     <div class="ctitle">${unreadDotHtml(r)}${taskNoHtml(r, !SELECTED_PROJECT)}${esc(rowTitle(r))}</div>
-    <div class="crow1">${r.roomId ? prioIcon(prioOf(r)) : ''}${runChip(r)}${costChipHtml(r, 'ccost')}${changesChipHtml(r, 'ccost cchg')}${pointsCountHtml(r.points, 'cpts')}${proj}</div>
+    <div class="crow1">${r.roomId ? prioIcon(prioOf(r)) : ''}${runChip(r)}${gateChip(r)}${costChipHtml(r, 'ccost')}${changesChipHtml(r, 'ccost cchg')}${pointsCountHtml(r.points, 'cpts')}${proj}</div>
     <div class="crow2">${cardAgents(r)}<span class="cwhen">${esc(fmtAgo(now - r.updatedAt))}</span></div>
   </article>`;
 }

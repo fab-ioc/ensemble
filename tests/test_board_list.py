@@ -75,6 +75,7 @@ const OVERFLOW = `(() => {
     rowRight: rr ? rr.right : null,
     topicWidth: tr ? tr.width : null,
     badgeRights: badges,
+    gate: row?.querySelector('.gate-chip')?.textContent,
   };
 })()`;
 async function main() {
@@ -100,14 +101,15 @@ async function main() {
     await sleep(300);
   };
   try {
-    for (const w of [360, 390, 430]) {
+    for (const w of [360, 390, 430, 1280, 1440]) {
       const p = await page(w, 800);
       await openList(p);
       const res = {};
-      for (const theme of ['light', 'dark']) {
+      for (const theme of ['light', 'dark', 'dim', 'paper', 'contrast', 'fjord']) {
         await p.evalIn(`document.documentElement.dataset.theme = ${JSON.stringify(theme)}; 0`);
         await sleep(120);
         res[theme] = await p.evalIn(OVERFLOW);
+        res[theme].card = await p.evalIn(`cardHtml(ALL_ROWS.find(r => r.roomId === ${JSON.stringify(A.wideRoom)}), Date.now()/1000)`);
         await p.shot('board-list-' + w + '-' + theme);
       }
       out[w] = res;
@@ -169,6 +171,7 @@ class TheBoardListOnAPhone(unittest.TestCase):
         pin_members = [{"identity": "claude", "agent": "claude", "model": "m" * 90, "cwd": str(home)}]
         pin = chatroom.create_room("A task with one long model name", pin_members)
         dashboard.assign_session_project(pin["id"], cls.proj)
+        chatroom.patch_room(pin["id"], no=140)
         # The row actually measured: two ordinary agents and a realistic
         # long title, the shape of #115 in the screenshot that first showed
         # this.
@@ -181,6 +184,8 @@ class TheBoardListOnAPhone(unittest.TestCase):
             target_members,
         )
         dashboard.assign_session_project(room["id"], cls.proj)
+        chatroom.patch_room(room["id"], launched=False,
+                            after=[{"task": pin["id"], "when": "merged"}], onReady="start")
         cls.wide_room = room["id"]
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
         cls.server.daemon_threads = True
@@ -215,6 +220,14 @@ class TheBoardListOnAPhone(unittest.TestCase):
                     self.assertLessEqual(g["topicWidth"], g["vw"], "the Task column fits the screen")
                     for right in g["badgeRights"]:
                         self.assertLessEqual(right, g["vw"] + 1, "an agent badge stays on screen")
+
+    def test_gated_draft_on_card_and_list_across_themes_and_widths(self):
+        for width, themes in self.got.items():
+            for theme, got in themes.items():
+                with self.subTest(width=width, theme=theme):
+                    self.assertEqual(got["gate"], "after #140")
+                    self.assertIn('class="gate-chip"', got["card"])
+                    self.assertIn('after #140', got["card"])
 
 
 if __name__ == "__main__":

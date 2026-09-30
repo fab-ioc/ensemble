@@ -72,6 +72,8 @@ import bringfiles
 import chatroom
 # The PO's timed progress digest (only when something changed).
 import digest
+import board
+import po_usage
 # What a handover says is due at a time: the idle PO is typed it then.
 import due
 # A task in a PO project that stopped without saying so: nudge, then tell the PO.
@@ -128,6 +130,7 @@ BACKEND = get_backend()
 ensemble_tools.bind(sys.modules[__name__])
 attention.bind(sys.modules[__name__])
 digest.bind(sys.modules[__name__])
+board.bind(sys.modules[__name__])
 due.bind(sys.modules[__name__])
 stall.bind(sys.modules[__name__])
 po_messages.bind(sys.modules[__name__])
@@ -2083,6 +2086,8 @@ def _type_input(sess, text: str) -> bool:
     False when the terminal did not take it: a write was refused, or the
     process was gone right after (on Windows a write to an ended process
     is the only thing pywinpty reports; it returns 0 for what arrived)."""
+    if text.startswith("[digest] "):
+        text = "[digest] " + po_usage.head() + " | " + text[len("[digest] "):]
     body = "\x1b[200~" + text + "\x1b[201~" if "\n" in text else text
     try:
         took = sess.send_line(body)
@@ -2529,6 +2534,7 @@ def _relay_wake(sender: str) -> str:
 # the kind to fold hub traffic and to say what each reply answers; it keeps no
 # list of its own. A [word] not listed here is a person's (they type brackets).
 HUB_INPUT_KINDS = (
+    ("[board] ", "board"),
     ("[digest] ", "digest"),            # digest.py: the PO's progress check
     ("[due] ", "due"),                  # due.py: what its handover says is due now
     ("[report] ", "report"),            # _ring_report: a task's ensemble_report
@@ -2571,7 +2577,7 @@ def hub_input_kind(text: str) -> dict:
 # What a conversation nobody named is called, told by how it starts: the
 # person's own first words, or for one the hub began, what kind it is.
 _FIRST_WORDS_KIND = {
-    "digest": "PO progress check", "due": "Due item", "report": "Task report",
+    "board": "Board ready work", "digest": "PO progress check", "due": "Due item", "report": "Task report",
     "relay": "Team conversation", "resumed": "Resumed task", "restart": "After a hub restart",
     "handover": "Handover", "rotation": "Task conversation after a handover",
     "madepo": "PO conversation", "helper": "After a hub restart", "points": "Open points",
@@ -3215,6 +3221,7 @@ def load_projects() -> list[dict]:
                       # The task that is this project's product owner: every
                       # other task reports into it (ensemble_report).
                       "poRoomId": (meta.get("poRoomId") or "").strip(),
+                      "idleBoardAlert": meta.get("idleBoardAlert", True),
                       # A documents project leads with its files and keeps
                       # their history; anything else is a code project.
                       "kind": "documents" if meta.get("kind") == "documents" else "code",
@@ -3530,7 +3537,7 @@ def made_po_first_input(project: dict, brought: dict | None = None) -> str:
                  f"{project_home(project, create=False)} ({n} file{'s' if n != 1 else ''}): that copy is the "
                  f"one to work on from now on, and the original folder is left as it was. ")
     return (
-        f"{MADE_PO_PREFIX}You are now the product owner (PO) of the project '{name}' in "
+        f"{MADE_PO_PREFIX}{po_usage.head()} | You are now the product owner (PO) of the project '{name}' in "
         f"Ensemble ({'a documents project' if docs else 'a code project'}); "
         f"{operator_name()} made you its PO from the dashboard because this conversation "
         f"already holds the project's context. From now on the project's tasks report to you "
@@ -3554,7 +3561,7 @@ def made_po_fresh_input(project: dict) -> str:
     hp, rp = rotation.handover_path(project), roadmap_path(project)
     where = project_home(project, create=False) if docs else project.get("path", "")
     return (
-        f"{MADE_PO_PREFIX}You are the new product owner (PO) of the project '{name}' in Ensemble "
+        f"{MADE_PO_PREFIX}{po_usage.head()} | You are the new product owner (PO) of the project '{name}' in Ensemble "
         f"({'a documents project' if docs else 'a code project'}), started fresh by {operator_name()} "
         f"from the dashboard: this conversation has no history yet. From now on the project's tasks "
         f"report to you and you have the ensemble_* tools of a PO. "
@@ -5217,7 +5224,7 @@ def build_projects() -> dict:
     keep = ("sessionId", "roomId", "label", "status", "isLive", "idleSeconds",
             "updatedAt", "agents", "members", "mode", "headless", "cwd",
             "taskDir", "priority", "priorityName", "workflow", "workflowName",
-            "lastAgent", "attention", "allocation", "reviewAllocations", "no", "firstWords")
+            "lastAgent", "attention", "allocation", "reviewAllocations", "no", "firstWords", "after", "onReady")
     # One group per registered project, plus a synthetic unassigned bucket.
     groups: dict = {}
     keys = project_keys(projects_reg)
@@ -7772,6 +7779,7 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 # A draft is a task created (e.g. by a planning agent) but never
                 # launched; Open/Start launches it fresh with its spec.
                 "draft": not rm.get("launched", True),
+                **board.view(rm),
                 "hasConversation": len(agents_in) == 1 and bool((agents_in[0].get("sessionId") or "").strip()),
                 "isLive": live, "status": "busy" if (live and busy) else "idle",
                 # `status` above is the activity dot; the action bar needs the
@@ -10630,6 +10638,7 @@ class Handler(BaseHTTPRequestHandler):
                              "model": part.get("model", ""), "role": part.get("role", ""),
                              "ptyId": info["ptyId"]})
         room_full["launched"] = True
+        room_full["launchedAt"] = time.time()
         room_full["status"] = "active"
         room_full["hopCount"] = 0
         room_full["waitingFor"] = ""
@@ -10736,6 +10745,8 @@ class Handler(BaseHTTPRequestHandler):
             if not keep_state:
                 chatroom.patch_room(rid, status="active", hopCount=0, waitingFor="")
         else:
+            if resumed:
+                room_full["launchedAt"] = time.time()
             chatroom.update_room(room_full)
         self._deliver_after_resume(
             room_full["id"],
