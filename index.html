@@ -3416,6 +3416,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 <script src="/static/comments.js"></script>
 <script src="/static/selbar.js"></script>
 <script src="/static/attach.js"></script>
+<link rel="stylesheet" href="/static/feedback.css">
+<script src="/static/feedback.js" defer></script>
 <!-- The Dock library (static/dock), which a project's PO screen is built on.
      Imported when a PO screen is first drawn; listed here so the page knows it
      depends on them (Page update), and fetched early. -->
@@ -3557,6 +3559,7 @@ window.DOC_LISTENERS_PAUSED = false;
   <!-- Phone only: the plan chip has no room in the bar there, so its tray opens from here. -->
   <button class="me-item me-phone" data-me="usage">Plan allowance</button>
   <button class="me-item" data-me="theme">Accent colour</button>
+  <button class="me-item" data-me="feedback">Send feedback…</button>
   <button class="me-item" data-me="settings">Settings</button>
 </div>
 <div id="proj-menu" hidden></div>
@@ -3566,6 +3569,14 @@ window.DOC_LISTENERS_PAUSED = false;
   <div class="usage-foot" id="usage-foot"></div>
 </div>
 <div id="settings-panel" hidden>
+  <div class="settings-section" id="settings-feedback">
+    <h4>Feedback</h4>
+    <button type="button" class="po-btn def" id="feedback-open">Send feedback…</button>
+    <label class="feedback-setting">Feedback repository<input id="feedback-repo" type="text" placeholder="fab-ioc/ensemble"></label>
+    <label class="feedback-setting">Feedback relay URL<input id="feedback-relay" type="url" placeholder="https://… (optional)"></label>
+    <button type="button" class="po-btn def" id="feedback-settings-save">Save feedback settings</button>
+    <p class="cfg-hint" id="feedback-settings-status" role="status"></p>
+  </div>
   <div class="settings-section" id="settings-app">
     <h4>Ensemble as an app</h4>
     <button type="button" id="install-app-btn" class="po-btn def" hidden
@@ -14986,6 +14997,7 @@ $('#me-menu').addEventListener('click', (ev) => {
     return;
   }
   closeMeMenu();
+  if (it.dataset.me === 'feedback') { feedbackOpen(); return; }
   openSettingsPanel($('#me-btn'));
   if (it.dataset.me === 'theme') {
     const inp = document.getElementById('accent-input');

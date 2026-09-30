@@ -1,0 +1,10 @@
+{
+  "name": "ensemble-feedback",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+  "observability": {"enabled": false},
+  "vars": {"FEEDBACK_REPO": "fab-ioc/ensemble"},
+  "durable_objects": {"bindings": [{"name": "LIMITS", "class_name": "FeedbackLimit"}]},
+  "migrations": [{"tag": "v1", "new_sqlite_classes": ["FeedbackLimit"]}]
+}

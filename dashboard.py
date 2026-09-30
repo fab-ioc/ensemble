@@ -35,6 +35,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import feedback
 import sys
 import tempfile
 import threading
@@ -1248,6 +1249,8 @@ def save_archived(arch: set[str]) -> None:
 CODEX_TOOL_OUTPUT_TOKENS_DEFAULT = 4000
 
 _SETTINGS_DEFAULTS = {
+    "feedbackRepo": feedback.DEFAULT_REPO,
+    "feedbackRelayUrl": feedback.DEFAULT_RELAY,
     "openMode": "window",   # "window" (new iTerm window) | "tab" (new tab in front window)
     "defaultModel": "",     # e.g. "opus" | "sonnet" | "haiku" | "fable" | full ID; empty = claude default
     "operatorNickname": "", # what the agents call you; empty = fall back to git user.name
@@ -1424,6 +1427,10 @@ def _save_settings_locked(settings: dict) -> dict:
     current = load_settings()
     for k, v in settings.items():
         if k not in _SETTINGS_DEFAULTS:
+            continue
+        if k == "feedbackRepo" and not feedback.valid_repo(v):
+            continue
+        if k == "feedbackRelayUrl" and not feedback.valid_relay(v):
             continue
         allowed = _SETTINGS_ALLOWED_VALUES.get(k)
         if allowed and v not in allowed:
@@ -11897,11 +11904,36 @@ class Handler(BaseHTTPRequestHandler):
             res = {"ok": False, "error": "bad_payload"}
         self._send_json(200 if res.get("ok") else (400 if res.get("error") == "bad_payload" else 404), res)
 
+    def _feedback_post(self, path):
+        if self.headers.get("Origin") and not self._same_origin_request():
+            self._send_json(403, {"error": "cross_origin"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= feedback.MAX_REQUEST:
+                self.close_connection = True
+                self._send_json(413, {"error": "Feedback request exceeds 40 KB."})
+                return
+            data = json.loads(self.rfile.read(length))
+            if not isinstance(data, dict):
+                raise ValueError("Expected a feedback object.")
+            host = " ".join(self.headers.get(key, "") for key in ("Host", "X-Forwarded-Host", "Origin"))
+            result = (feedback.preview(data, load_settings(), host)
+                      if path.endswith("/preview") else feedback.send(data.get("id")))
+            self._send_json(200, result)
+        except feedback.FeedbackError as error:
+            self._send_json(400, {"error": str(error)})
+        except (ValueError, TypeError, RecursionError):
+            self._send_json(400, {"error": "Check the title (1–200 characters), description (1–20 KB), name for named relay feedback, and feedback settings."})
+
     def _do_POST(self):
         if not self._gate():
             return
         u = urlparse(self.path)
         p = u.path
+        if p in ("/api/feedback/preview", "/api/feedback/send"):
+            self._feedback_post(p)
+            return
         if p == "/api/files/upload":
             # Its body is the file itself: read in pieces, never as JSON.
             self._files_upload(u)
