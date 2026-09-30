@@ -154,7 +154,7 @@ class NewProject(Hub):
         queue = dashboard._RESUMES[rid].queue
         self.assertEqual(len(queue), 1)
         self.assertTrue(queue[0]["text"].startswith(dashboard.MADE_PO_PREFIX))
-        self.assertNotIn("\n", queue[0]["text"], "one line, as every hub input")
+        self.assertIn("## Board now", queue[0]["text"])
         for word in ("PO-HANDOVER.md", "ROADMAP.md", "Running a project as its PO", "sam"):
             self.assertIn(word, queue[0]["text"])
 
@@ -560,7 +560,7 @@ class TheSessionsFiles(Hub):
         self.assertIn("3 files brought from", log[0]["subject"])
         # The PO is told, in its one first input.
         text = dashboard._RESUMES[out["room"]["id"]].queue[0]["text"]
-        self.assertNotIn("\n", text)
+        self.assertIn("## Board now", text)
         self.assertIn(f"copied to the project's folder {home} (3 files)", text)
         self.assertIn("that copy is the one to work on", text)
         self.assertIn(str(self.work), text)
@@ -784,7 +784,7 @@ class WhatTheHubTypes(unittest.TestCase):
     def test_the_chat_reads_it_as_the_hubs(self):
         with mock.patch.object(dashboard, "operator_name", lambda: "sam"):
             text = dashboard.made_po_first_input(self.PROJECT)
-        self.assertNotIn("\n", text)
+        self.assertIn("## Board now", text)
         self.assertFalse(dashboard.typed_by_person(text))
         turns = dashboard.classify_turns([{"role": "user", "text": text}, {"role": "assistant", "text": "Understood."},
                                           {"role": "user", "text": "Go on"}, {"role": "assistant", "text": "Ok"}])
