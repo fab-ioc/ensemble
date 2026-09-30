@@ -99,15 +99,35 @@ made its PO's chat unreadable (2026-09-16). At most one `update` between two
 real events, and none within an hour of the last unless something changed.
 
 The report is posted in the PO's room and **wakes the PO**. It is also recorded
-on your task, so after `completed`, `question` or `blocked` the board shows your
-task as waiting on a human, with your report quoted, not as stalled. If the
-project has no PO, the report goes to the user instead.
+on your task, so the board shows it, with your report quoted. If the project
+has no PO, the report goes to the user instead.
 
-A `blocked` or `question` stays on the product owner's Needs you list, and as a
-line above your chat, until they answer in your chat or you report `completed`;
-an `update` about something else leaves it there, and so does going back to
-work. When what you were blocked on is resolved without an answer in chat (the
-login came back, the PO told you), say so with an `update` that carries
+**Task → PO → CEO.** In a project with a PO you report to the PO, never to the
+CEO (the product owner) directly:
+
+- A `blocked` or `question` is an ask **to the PO**. Your task reads "waiting
+  for the PO" (not "waiting for you"), and it is not on the CEO's Needs you
+  list. It closes when the PO or the CEO answers — a line typed to you, an
+  amendment of your spec, a message in your chat — or when you report again:
+  once you carry on, say so with an `update`.
+- **Interim progress is an `update`**, never `chat_send to="user"`. A chat
+  message to the user in a PO project asks nobody: the CEO may read it in your
+  chat, the PO never hears of it. (OP-140, 2026-09-30, said "starting phase
+  (b)" to the user and then sat idle for hours unnoticed.)
+- Something only the CEO can give still goes to the PO: a `blocked` or
+  `question` with `forCeo: true`. The PO decides whether to put it to them.
+- **Never stop without saying why.** When you are idle, nothing of yours is
+  open (no ask, no review running, not completed) and ten minutes pass, the hub
+  types you one `[stalled] Carry on …` line. Carry on from `TASK-HANDOVER.md`,
+  or report what stops you. If you are still idle ten minutes later, the PO is
+  told you stalled.
+
+Without a PO (a project that has none, or no project), a `blocked` or
+`question` stays on the product owner's Needs you list, and as a line above
+your chat, until they answer in your chat or you report `completed`; an
+`update` about something else leaves it there, and so does going back to work.
+When what you were blocked on is resolved without an answer in chat (the login
+came back, the PO told you), say so with an `update` that carries
 `clears: true`.
 
 - **Report once per event.** Every wake costs the PO its whole conversation
@@ -291,7 +311,12 @@ verdict in its `attention` field.
 | `agent_gone` | its terminal died and nobody asked it to — carries `exitCode` and the last lines it printed | relaunching, once you know why |
 | `blocked` | still running, but it cannot continue: its own output shows a usage or credit limit or an expired login, or it reported `blocked` (`cause: "reported"`). The offending line or the report is in `quote` | waiting for a reset, the product owner logging in, or the help it asked for |
 | `waiting_for_you` | it reported `completed` or asked a question, sent something to the user nobody answered, hit a permission, tool-approval or folder-trust prompt (Claude's or Codex's), or the collaboration paused at its hop limit. The report or message is in `quote` | a human answer |
-| `stalled` | it was woken to do something, or started again or handed to a fresh session and told to carry on, is not working, and never answered anyone. A one-agent task idle at its prompt has only finished its turn and is not stalled, unless it was started again and has done nothing since | a look, then a nudge or a restart |
+| `stalled` | (tasks without a PO; a PO project's stalls go to its PO, see *Reporting*) it was woken to do something, or started again or handed to a fresh session and told to carry on, is not working, and never answered anyone. A one-agent task idle at its prompt has only finished its turn and is not stalled, unless it was started again and has done nothing since | a look, then a nudge or a restart |
+
+In a project with a PO, a task's ask to the PO is not in this list: its row
+carries `waitingOn: {who: "po", since, kind}` instead, and `stalled: {since,
+nudgedAt, toldAt}` while the hub has nudged an idle owner that stopped without
+a word.
 
 Use it whenever you are asked what happened to work that was started, and
 **before** planning follow-up work: a task that died at its usage limit is not a
@@ -598,6 +623,17 @@ under a decision they have not answered yet is noise. Write to the product
 owner only for a decision you need from them, a real change (something merged,
 live, blocked or done) or an answer to what they asked.
 
+**Answer your tasks in the task.** A task's `question` or `blocked` waits for
+you, not for the product owner. Answer it where the hub sees the answer: a line
+typed to the task's agent, an amendment of its spec (`ensemble_update_task`),
+or a message in its chat. Never through a side channel (a cross-session message
+between Claude sessions): the hub cannot see it, and the task keeps reading
+"waiting for the PO". Put to the product owner only what only they can decide
+(a report with `forCeo`, or your own judgement), with a decision reply as
+below, then answer the task. A `[digest]` line "#N stalled since HH:MM" means
+the hub nudged an idle owner and it did not carry on: look at it, steer it or
+stop it.
+
 **Asking the product owner to decide.** Put the whole decision in one reply:
 
 1. a line of its own: `Decision needed: <the question, in one sentence>`;
@@ -707,7 +743,8 @@ Titles: short, imperative, unique within the project (they become folder names).
 ## Collaboration tools (only in multi-agent tasks)
 
 `chat_send` hands off your turn (to a teammate, or `to="user"` to pause and ask
-the product owner), `chat_read` reads new messages, `chat_whoami` shows the room
+the product owner — only in a project without a PO; with one, questions and
+progress go to the PO by `ensemble_report`), `chat_read` reads new messages, `chat_whoami` shows the room
 status. End every turn in a collaboration with a `chat_send`, and remember
 that a message to everyone wakes only the owner (see *Waking teammates*).
 These tools are absent in a solo task. There, `ensemble_report` is how

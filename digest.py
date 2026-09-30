@@ -73,6 +73,7 @@ from pathlib import Path
 import due
 import points
 import po_messages
+import stall
 
 # Windows: the model call must not open a console window (a console-less host,
 # pythonw.exe, would otherwise give it one and lose the keyboard focus to it).
@@ -313,6 +314,8 @@ def _task_facts(room: dict, attn: dict, labels: dict, now: float) -> dict:
         "ask": ask.get("kind", ""),
         "askAt": float(ask.get("ts") or 0),
         "askText": ask.get("text", "")[:300],
+        # Whom it is for: "po" (the digest's reader) or "user" (the CEO).
+        "askTo": ask.get("to", "user"),
     }
 
 
@@ -477,8 +480,13 @@ def plain_facts(project: dict, tasks: list[dict], changes: list[dict], since: fl
             bits.append(f"needs attention — {t['attention']}: {t['attentionReason'][:200]}")
         elif t.get("ask") in ("blocked", "question"):
             since = time.strftime("%H:%M", time.localtime(t.get("askAt") or 0))
-            bits.append(f"its {t['ask']} report is still open to {_d.operator_name()} "
-                        f"since {since}: {t.get('askText', '')[:200]}")
+            if t.get("askTo") == "po":
+                # Task → PO → CEO: its ask is the PO's (the digest's reader) to answer.
+                bits.append(f"is waiting for you (the PO) since {since}, its {t['ask']}: "
+                            f"{t.get('askText', '')[:200]}")
+            else:
+                bits.append(f"its {t['ask']} report is still open to {_d.operator_name()} "
+                            f"since {since}: {t.get('askText', '')[:200]}")
         if t["branch"]:
             # Three different facts, never one number: zero commits ahead is
             # both "merged" and "not started", and must not be left to guess.
@@ -699,6 +707,11 @@ def start_scheduler() -> None:
                 due.maybe_tick()
             except Exception as e:
                 _log(f"due check error: {str(e)[:200]}")
+            # A task in a PO project idle with nothing open (stall.py).
+            try:
+                stall.maybe_tick()
+            except Exception as e:
+                _log(f"stall check error: {str(e)[:200]}")
             # Messages between POs waiting for their PO to be idle (po_messages.py).
             try:
                 po_messages.maybe_tick()

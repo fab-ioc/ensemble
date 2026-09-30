@@ -549,43 +549,84 @@ _CACHE_LOCK = threading.Lock()
 _REPORT_HEADING = re.compile(r"\A\*\*Report — [^\n]*\n\n")
 
 
-def _open_to_human(room: dict, msgs: list) -> dict | None:
-    """What an agent put to the human that is still open: a report of
+def _po_of(room: dict) -> str:
+    """The room of the PO the task reports to, or "" (dashboard.room_po_id)."""
+    try:
+        return _d.room_po_id(room) if _d is not None else ""
+    except Exception:
+        return ""
+
+
+def _to_person(m: dict) -> bool:
+    """A plain message addressed to the person ("user"). Only that says the
+    agent carries on: a message to everyone that happened to wake nobody (a
+    stopped teammate) is team chatter and answers nothing (review 1)."""
+    return (m.get("to") or "").strip() == "user"
+
+
+def _open_to_human(room: dict, msgs: list, po: str | None = None) -> dict | None:
+    """What an agent put to a human that is still open: a report of
     completed / question / blocked, or a message sent to "user" —
-    ``{from, ts, kind, text, id}``, or None.
+    ``{from, ts, kind, text, id, line, to}``, or None. ``to`` is who it is
+    for: ``"po"`` for a report that went to the project's PO, ``"user"`` for
+    the CEO.
+
+    **Task → PO → CEO.** In a project with a PO (``po``: its room, as
+    ``dashboard.room_po_id`` says; None looks it up) a task's report goes to
+    the PO, and so does its ask: the task is waiting for the PO, and nothing of
+    it is the CEO's (the bell, Needs you, the task's "Waiting for you" line,
+    the digest). A plain message there asks nobody: the CEO reads it in the
+    task's chat, and it opens nothing. Tasks in a project without a PO, or in
+    no project, ask the CEO as they always did.
 
     An ask (``blocked``, ``question``, a message to the person) stays open
-    until the person speaks in the chat, the agent reports ``completed``, or a
-    later report of the agent's says the ask is over (``clears``, see
-    ``ensemble_report``). An ``update`` about something else does not close
-    it: a task blocked on a login reported that a group had approved its post,
-    and the block left the bell although nobody had logged in. A ``completed``
-    is not an ask: a later ``update`` (it is working again) still ends it.
+    until someone answers it: the person speaks in the chat, the agent
+    reports ``completed``, or a later report of the agent's says the ask is
+    over (``clears``, see ``ensemble_report``). An ``update`` about something
+    else does not close an ask to the CEO: a task blocked on a login reported
+    that a group had approved its post, and the block left the bell although
+    nobody had logged in. A ``completed`` is not an ask: a later ``update`` (it
+    is working again) still ends it.
+
+    An ask to the PO also closes when the agent carries on: any later
+    ``update`` report of its (the documented way to say so), or a later
+    message of its addressed to the person. OP-140 (2026-09-30) asked its PO
+    at 03:16, was answered at 03:17 by a route the hub never sees, told the
+    person at 05:00 it was starting the next phase, and was shown to the CEO
+    as waiting for him for hours.
 
     The newest ``blocked`` / ``question`` wins over a plain message sent after
     it. Teammate chatter does not answer anything — the redesign pair sent
     "ready to merge" to the user, then a thank-you to the designer, and the
     merge was still waiting on a human.
 
-    A one-agent task is answered in its terminal as often as in chat: what a
-    person (or the PO, for them) submitted to it after the ask closes it too.
-    That is kept on the participant (``answeredAt``, see
-    ``dashboard.note_answer``), not on the terminal, so the ask stays closed
-    across a hub restart and a rotation — and the bell, the chat's line and
-    the progress check all read this one rule. Such an answer ends the scan
-    where the person speaking in chat would: what the agent put to them after
-    it is as open as ever, whatever it had asked before."""
+    A task is answered in its terminal as often as in chat: what a person or
+    the PO submitted to the agent after the ask closes it (``answeredAt``, see
+    ``dashboard.note_answer``), in a one-agent task and a team alike, and so
+    does an amendment of the task's spec after it (``specAt``, written by
+    ``dashboard.update_task``). Both are kept on the room, not on the
+    terminal, so the ask stays closed across a hub restart and a rotation —
+    and the bell, the chat's line and the progress check all read this one
+    rule. Such an answer ends the scan where the person speaking in chat
+    would: what the agent put to them after it is as open as ever, whatever it
+    had asked before."""
+    if po is None:
+        po = _po_of(room)
     agents = {p.get("identity") for p in room.get("participants", [])
               if p.get("kind") == "agent"}
     answered: dict[str, float] = {}
-    if room.get("mode") == "solo":
-        for p in room.get("participants", []):
-            try:
-                answered[p.get("identity")] = float(p.get("answeredAt") or 0)
-            except (TypeError, ValueError):
-                pass
+    for p in room.get("participants", []):
+        try:
+            answered[p.get("identity")] = float(p.get("answeredAt") or 0)
+        except (TypeError, ValueError):
+            pass
+    try:
+        amended = float(room.get("specAt") or 0)
+    except (TypeError, ValueError):
+        amended = 0.0
     reports = [r for r in (room.get("lastReport"), room.get("lastRealReport")) if isinstance(r, dict)]
     updated = False         # a later update: the agent is working again
+    carried_on: set[str] = set()   # agents that updated or spoke to the person later
     message = None          # the newest plain message to the person
     for m in reversed(msgs):
         frm = m.get("from", "")
@@ -593,15 +634,21 @@ def _open_to_human(room: dict, msgs: list) -> dict | None:
             break
         if frm not in agents:
             continue
-        if answered.get(frm, 0) > float(m.get("ts") or 0):
-            break               # answered in its terminal after this
+        ts = float(m.get("ts") or 0)
+        if answered.get(frm, 0) > ts or amended > ts:
+            break               # answered in its terminal, or by the spec, after this
         if m.get("kind") == "report":
             kind = m.get("reportKind", "")
+            # To the PO when it went to one and the task still has one.
+            to_po = bool(m.get("reportTo")) and bool(po)
             if kind == "update":
                 if m.get("clears"):
                     break
                 updated = True
+                carried_on.add(frm)
                 continue
+            if to_po and frm in carried_on:
+                break
             if kind == "completed" and (updated or message):
                 break
             text = next((r.get("text", "") for r in reports if r.get("messageId") == m.get("id")),
@@ -609,11 +656,17 @@ def _open_to_human(room: dict, msgs: list) -> dict | None:
             if text is None:
                 text = _REPORT_HEADING.sub("", m.get("text", "") or "")
             return {"from": frm, "ts": m.get("ts", 0), "kind": kind, "id": m.get("id", ""),
-                    "text": " ".join((text or "").split())[:400], "line": _first_line(text)}
+                    "text": " ".join((text or "").split())[:400], "line": _first_line(text),
+                    "to": "po" if to_po else "user"}
+        if po:
+            # Nobody's ask in a project with a PO; the agent carrying on.
+            if _to_person(m):
+                carried_on.add(frm)
+            continue
         if (m.get("to") or "") == "user" and message is None:
             message = {"from": frm, "ts": m.get("ts", 0), "kind": "message", "id": m.get("id", ""),
                        "text": " ".join((m.get("text") or "").split())[:400],
-                       "line": _first_line(m.get("text"))}
+                       "line": _first_line(m.get("text")), "to": "user"}
     return message
 
 
@@ -641,9 +694,12 @@ def open_ask_now(room: dict) -> dict | None:
     return ask if ask and ask["kind"] != "completed" else None
 
 
-def _summarize(room: dict) -> dict:
-    """The few room fields attention needs, without its whole message log."""
+def _summarize(room: dict, po: str | None = None) -> dict:
+    """The few room fields attention needs, without its whole message log.
+    ``po``: the room of the PO the task reports to (see ``_open_to_human``)."""
     msgs = room.get("messages") or []
+    if po is None:
+        po = _po_of(room)
     # A task owner's "new session" notice is for the human and asks nothing of
     # anyone: the rotation itself is the ask (the participant's rotatedAt). A
     # PO's rotation sets no rotatedAt, so its notice still ends any older ask.
@@ -681,8 +737,19 @@ def _summarize(room: dict) -> dict:
         "lastMessage": {"from": last.get("from", ""), "to": last.get("to", ""),
                         "text": (last.get("text") or "")[:400], "ts": last.get("ts", 0),
                         "rang": rang or []},
-        "openToHuman": _open_to_human(room, msgs),
+        "specAt": room.get("specAt", 0),
+        "workflow": room.get("workflow", ""),
+        "po": po,
+        "openToHuman": _open_to_human(room, msgs, po),
     }
+
+
+def _po_still(summary: dict, projects: list[dict], links: dict) -> bool:
+    """A cached summary still names the PO its task reports to."""
+    try:
+        return _d.room_po_id(summary, projects, links) == summary.get("po", "")
+    except Exception:
+        return True
 
 
 def _room_summaries() -> list[dict]:
@@ -695,6 +762,12 @@ def _room_summaries() -> list[dict]:
         paths = list(_d.chatroom.ROOMS_DIR.glob("room-*.json"))
     except OSError:
         return out
+    # Whom each task reports to changes without its room file changing (a
+    # project gets a PO): that is part of what a cached summary is for.
+    try:
+        projects, links = _d.load_projects(), _d.load_session_projects()
+    except Exception:
+        projects, links = [], {}
     for p in paths:
         rid = p.stem
         live_ids.add(rid)
@@ -704,14 +777,18 @@ def _room_summaries() -> list[dict]:
             continue
         with _CACHE_LOCK:
             hit = _SUMMARY_CACHE.get(rid)
-        if hit and hit[0] == mtime:
+        if hit and hit[0] == mtime and _po_still(hit[1], projects, links):
             out.append(hit[1])
             continue
         try:
             room = json.loads(p.read_text(encoding="utf-8-sig"))
         except (OSError, json.JSONDecodeError):
             continue
-        summary = _summarize(room)
+        try:
+            po = _d.room_po_id(room, projects, links)
+        except Exception:
+            po = ""
+        summary = _summarize(room, po)
         with _CACHE_LOCK:
             _SUMMARY_CACHE[rid] = (mtime, summary)
         out.append(summary)
@@ -994,6 +1071,8 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
     # simply the newer thing.)
     put = room.get("openToHuman")
     put = put if put and put.get("from") == identity else None
+    if put and put.get("to") == "po":
+        put = None              # its PO's to answer, not the CEO's (task → PO → CEO)
     q = (put or {}).get("text", "")
     asked = {"quote": q, "since": float(put.get("ts") or 0), "askId": put.get("id", ""),
              "askKind": put.get("kind", "")} if put else {}
@@ -1045,6 +1124,10 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
     if status == "busy" or (ev["scan"]["busy"] and (idle is None or idle < _MIN_QUIET)):
         return None                # thinking is not a problem, however long
 
+    if room.get("po"):
+        # A task that reports to a PO stalls to its PO, never to the CEO: the
+        # hub nudges its owner and then tells the PO (stall.py).
+        return None
     if room.get("status") != "active":
         return None                # the room is waiting on the human, not on it
     asked, how = _owed_since(room, identity)
@@ -1111,6 +1194,10 @@ def _room_level(room: dict, live_agents: list[str]) -> tuple[str, str, dict] | N
         return ("waiting_for_you",
                 f"the agents handed off {room['hopCount']} times without you and "
                 f"paused at their limit — they need your steer", {})
+    if status == "waiting_human" and room.get("po"):
+        # A task's message to the person in a project with a PO asks nobody
+        # (see _open_to_human): what it needs goes to the PO as a report.
+        return None
     if status in ("waiting_human", "paused"):
         last = room.get("lastMessage") or {}
         who = last.get("from", "") or room.get("waitingFor", "") or "the agents"
@@ -1177,6 +1264,19 @@ def _duplicate_ptys(room: dict, now: float) -> tuple | None:
               f"Stop the task to end them all, then start it again")
     part = next((known[i] for i in ids if i in known), {})
     return ("blocked", reason, {"cause": "duplicate_pty", "ptyIds": ids}, part)
+
+
+def waiting_on_po() -> dict[str, dict]:
+    """Per task waiting for its PO (task → PO → CEO): ``{since, kind, line,
+    agent}`` of the ask its PO has not answered. From the cached summaries, so
+    a board poll pays only for the rooms that changed."""
+    out = {}
+    for r in _room_summaries():
+        ask = r.get("openToHuman")
+        if ask and ask.get("to") == "po" and ask.get("kind") in ("question", "blocked"):
+            out[r["id"]] = {"since": ask.get("ts", 0), "kind": ask["kind"],
+                            "line": ask.get("line", ""), "agent": ask.get("from", "")}
+    return out
 
 
 def _items() -> list[dict]:

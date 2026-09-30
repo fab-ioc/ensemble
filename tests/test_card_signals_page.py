@@ -87,7 +87,7 @@ class CardSignals(unittest.TestCase):
         src = "\n".join([re.search(r"^const esc = .*$", INDEX, re.M).group(0),
                          INDEX[INDEX.index("const fmtCost = "):INDEX.index("const fmtInt = ")],
                          INDEX[i:INDEX.index("// ---- Cost chip: end", i)], fn(INDEX, "function rowTitle("),
-                         fn(INDEX, "function cardHtml("), fn(INDEX, "function renderHeadlessRow(")])
+                         fn(INDEX, "function poWaitLoz("), fn(INDEX, "function cardHtml("), fn(INDEX, "function renderHeadlessRow(")])
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "signals.cjs"
             script.write_text(JS % src, encoding="utf-8")
