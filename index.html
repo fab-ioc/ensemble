@@ -2612,26 +2612,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     font-size: var(--fs-100); color: var(--fg-muted); padding: 8px 6px 2px;
     border-top: 1px solid var(--border); line-height: 1.5;
   }
-  /* Banner: only a *trusted* window that is genuinely hot right now. */
-  #usage-banner {
-    display: flex; align-items: center; gap: 12px; padding: 8px 16px;
-    background: var(--c-danger-bg);
-    border-bottom: 1px solid color-mix(in srgb, var(--c-danger-bold) 40%, var(--border));
-    color: var(--fg); font-size: 13px;
-    position: sticky; top: 0; z-index: 99;
-  }
-  #usage-banner[hidden] { display: none; }
-  #usage-banner.warn {
-    background: var(--c-warning-bg);
-    border-bottom-color: color-mix(in srgb, var(--c-warning-bold) 45%, var(--border));
-  }
-  #usage-banner-text { flex: 1; }
-  #usage-banner-dismiss {
-    background: transparent; border: 0; color: var(--fg-muted);
-    font-size: 16px; line-height: 1; padding: 4px 6px;
-    cursor: pointer; border-radius: var(--r-100);
-  }
-  #usage-banner-dismiss:hover { color: var(--fg); background: var(--hover); }
   /* A row whose task needs you, marked in the list itself. */
   tr.row.needs-you td.topic::before {
     content: '⚠'; color: var(--c-danger-fg); margin-right: 5px; font-size: 11px;
@@ -3122,7 +3102,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .ptabs button, .viewsw button, .fbtn, .fchip, .colchip, .colall, .proj .newtask,
     .newproj-btn, .rm-btn, .po-btn, .dp-tab, .dp-popout, .dp-actions button,
     .dp-actions select, .scopebar select, .chp-repo, .srow, .wse, .chf,
-    .dl-cbtns button, #usage-banner-dismiss, #update-banner-dismiss, #update-banner-go, #dock-banner-go,
+    .dl-cbtns button, #update-banner-dismiss, #update-banner-go, #dock-banner-go,
     .seg button {
       min-height: var(--touch-min);
     }
@@ -3131,7 +3111,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .listctl { flex-wrap: wrap; row-gap: var(--s-200); }
     .dcm .ov-item, .wse-edit, .dcs-all { min-height: var(--touch-min); }
     .po-btn.x, .dp-close, .dp-ov-btn, .chp-refresh, .wse-more,
-    #usage-banner-dismiss, #update-banner-dismiss {
+    #update-banner-dismiss {
       min-width: var(--touch-min); min-height: var(--touch-min);
       display: inline-flex; align-items: center; justify-content: center;
     }
@@ -3478,10 +3458,6 @@ window.DOC_LISTENERS_PAUSED = false;
 <div id="dock-banner" role="status" hidden>
   <span id="dock-banner-text"></span>
   <button id="dock-banner-go" type="button">Reload</button>
-</div>
-<div id="usage-banner" hidden>
-  <span id="usage-banner-text"></span>
-  <button id="usage-banner-dismiss" title="Dismiss until it gets worse" aria-label="Dismiss">×</button>
 </div>
 <div id="update-overlay" hidden>
   <div class="update-modal">
@@ -14113,22 +14089,12 @@ document.addEventListener('visibilitychange', () => {
 //     (main, reserve, a model's own), each an allowance of its own. The chip
 //     face carries only the pool Codex sessions run on; the tray lists each
 //     under its name. A full pool that is not in use is `notices`, never
-//     `alerts`: it stops nothing, so it takes no colour and no banner.
+//     `alerts`: it stops nothing, so it takes no colour.
 // Self-contained, like the notifications block above it: all the markup, CSS
 // and JS live under the `usage` name so the Jira-style board can lift it whole.
 const USAGE_POLL_MS = 30000;         // the server refreshes on its own timer
 let USAGE = { state: 'loading', sources: [], alerts: [] };
 let _usageInFlight = false;
-// What the user has waved away, per window: key -> {pct, resetsAt} at the
-// moment of dismissal. Keyed per window rather than by a bare number, because
-// the banner only ever renders the worst alert: a single number would let a
-// dismissal on one window silently suppress every other window at or below it,
-// on either source, including ones the user has never seen. `resetsAt` is kept
-// alongside so a dismissal expires when its window does — otherwise dismissing
-// at 96%, then the window resetting and refilling to 85%, would stay silent on
-// what is a genuinely new window.
-const _usageDismissed = new Map();
-const usageAlertKey = a => [a.source, a.kind, a.model || ''].join('|');
 const USAGE_SRC_NAME = { claude: 'Claude', codex: 'Codex' };
 const USAGE_SRC_SHORT = { claude: 'C', codex: 'X' };
 const USAGE_WIN_NAME = {
@@ -14395,60 +14361,8 @@ function renderUsage() {
     + 'These windows are shared by every task on this machine, so they say nothing '
     + 'about what any one task cost.';
 
-  renderUsageBanner(alerts);
 }
 
-// Which windows shout is the server's call (`alerts`), not this file's. A
-// window that has rolled over never does — its value is dead. A frozen one
-// does, qualified: the windows are anchored with a fixed reset, so an old
-// reading that has not rolled is a floor, and "at least 95%" is exactly the
-// warning this feature exists to give.
-function renderUsageBanner(alerts) {
-  const banner = $('#usage-banner');
-  // The loudest alert the user has not already waved away. A dismissal covers
-  // only its own window, and lapses when that window climbs further or resets.
-  const worst = (alerts || []).find(a => {
-    const d = _usageDismissed.get(usageAlertKey(a));
-    if (!d) return true;
-    if (d.resetsAt !== (a.resetsAt || '')) return true;   // a new window
-    return a.percent > d.pct;
-  });
-  if (!worst) {
-    banner.hidden = true;
-    return;
-  }
-  banner.hidden = false;
-  banner.classList.toggle('warn', worst.level === 'warn');
-  const who = USAGE_SRC_NAME[worst.source] || worst.source;
-  // Name the model when the hot window is a per-model weekly cap, so that one
-  // is not mistaken for the account-wide weekly window sitting next to it.
-  const win = (USAGE_WIN_NAME[worst.kind] || (worst.label + ' window')).toLowerCase()
-    + (worst.model ? ` (${worst.model})` : '');
-  const reset = worst.resetsAt ? ' · ' + usageResetText(worst.resetsAt) : '';
-  const pct = Math.round(worst.percent) + '%';
-  $('#usage-banner-text').textContent = worst.atLeast
-    ? `${who} ${win} window at least ${pct} used — reading frozen `
-      + `${fmtAgo(worst.ageSeconds)} ago${reset}`
-    : `${who} ${win} window ${pct} used${reset}`;
-  banner.dataset.pct = worst.percent;
-  banner.dataset.key = usageAlertKey(worst);
-  banner.dataset.resets = worst.resetsAt || '';
-}
-
-$('#usage-banner-dismiss').addEventListener('click', () => {
-  // Dismiss this window, in this window's current cycle, at this level. It
-  // returns when the window climbs further or when the window resets, and it
-  // never silences a different window or the other agent kind.
-  const banner = $('#usage-banner');
-  if (banner.dataset.key) {
-    _usageDismissed.set(banner.dataset.key, {
-      pct: Number(banner.dataset.pct || 0),
-      resetsAt: banner.dataset.resets || '',
-    });
-  }
-  banner.hidden = true;
-  renderUsageBanner(USAGE.alerts || []);   // another window may still be hot
-});
 $('#usage-chip').addEventListener('click', (ev) => {
   ev.stopPropagation();
   const tray = $('#usage-tray');
@@ -14930,7 +14844,7 @@ queueMicrotask(renderThemeLists);
 // bar reads --top-h, so --banner-h has to say how much room they take right
 // now. A ResizeObserver sees a banner appear, grow or hide.
 (function trackBanners() {
-  const ids = ['update-banner', 'dock-banner', 'usage-banner'];
+  const ids = ['update-banner', 'dock-banner'];
   const apply = () => {
     const h = ids.reduce((sum, id) => {
       const el = document.getElementById(id);
