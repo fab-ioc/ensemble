@@ -61,13 +61,29 @@ def valid_relay(value):
     return u.scheme == "https" and bool(u.hostname) and not (u.username or u.password or u.query or u.fragment)
 
 
+def _redact_secret_fields(text):
+    # Match complete values before percent-decoding can turn %22/%27 inside a
+    # quoted value into apparent delimiters. Decode keys separately so an
+    # encoded key does not defeat the same protection.
+    key = r'''(?P<key>["']?[\w%.-]+["']?)\s*[:=]\s*'''
+    value = r'''(?:"(?:\\.|[^"\\])*"|'(?:''|\\.|[^'\\])*'|[^\s,;]+)'''
+
+    def replace(match):
+        name = urllib.parse.unquote(match.group("key").strip("\"'"))
+        return ("[secret removed]" if re.search(r"(?:token|secret|password|api[_-]?key)$", name, re.I)
+                else match.group(0))
+
+    return re.sub(key + value, replace, text)
+
+
 def scrub(text, identities=()):
     """Conservative redaction, including encoded paths and links/tracking images.
 
     Unknown people in prose cannot be inferred reliably; the preview and warning
     remain essential. Known local identity values are removed case-insensitively.
     """
-    text = urllib.parse.unquote(str(text))
+    text = _redact_secret_fields(str(text))
+    text = _redact_secret_fields(urllib.parse.unquote(text))
     text = re.sub(r"(?i)[a-z]:[\\/]+users[\\/]+[^\\/\r\n]+[\\/]", "~/", text)
     text = re.sub(r"(?i)/(?:Users|home)/[^/\r\n]+/", "~/", text)
     text = re.sub(r"(?i)[a-z]:[\\/]+users[\\/]+[^\\/\s]+", "~", text)
@@ -75,9 +91,6 @@ def scrub(text, identities=()):
     text = re.sub(r"(?i)(?:https?://|www\.)[^\s<>\])]+", "[link removed]", text)
     text = re.sub(r"(?i)\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b", "[email removed]", text)
     text = re.sub(r"(?i)\b(?:github_pat_[\w]+|gh[pousr]_[\w]+|sk-[\w-]+|eyJ[\w.-]+)\b", "[token removed]", text)
-    secret_key = r'''["']?[\w-]*(?:token|secret|password|api[_-]?key)["']?\s*[:=]\s*'''
-    secret_value = r'''(?:"(?:\\.|[^"\\])*"|'(?:''|\\.|[^'\\])*'|[^\s,;]+)'''
-    text = re.sub(secret_key + secret_value, "[secret removed]", text, flags=re.I)
     text = re.sub(r"(?i)\bbearer\s+\S+", "[secret removed]", text)
     text = re.sub(r"(?i)\b(?:[\w-]+\.)+(?:ts\.net|local|internal)\b", "[host removed]", text)
     text = re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b", "[address removed]", text)

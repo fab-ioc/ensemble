@@ -46,6 +46,11 @@ npx wrangler@4 deploy
   No image uploads: an Issues-only token cannot upload image files. Pasted images
   remain in the dialog for manual attachment by named submitters on GitHub;
   anonymous issues omit them entirely. No image names reach the relay.
+- Scrubbing recognizes common credential field names, literal known identities,
+  and one layer of percent encoding. Unfamiliar secret-key aliases, nested/custom
+  encodings, Unicode lookalikes and identifying prose need the submitter's review;
+  the preview is not a general secret detector. Quoted secret fields are removed
+  before decoding can change their delimiters.
 - No relay secret or hub credential is sent by clients. This public endpoint can
   receive spam; per-IP limits are not a global anti-abuse guarantee. Free-plan
   quotas can make it unavailable. Monitor the repository, not request contents.

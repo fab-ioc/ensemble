@@ -102,6 +102,21 @@ class FeedbackEndpoint(unittest.TestCase):
                 self.assertNotIn(destination, draft['body'])
                 self.assertNotIn('private alt', draft['body'])
 
+    def test_percent_decoding_cannot_split_quoted_secret_values(self):
+        examples = ['{"password": "prefix%22 secret-tail"}',
+                    "password: 'prefix%27 secret-tail'",
+                    '{"pass%77ord": "prefix%22 secret-tail"}',
+                    '{"api_key": "prefix\\\" escaped-tail"}']
+        examples += [urllib.parse.quote(examples[0]), urllib.parse.quote(examples[1])]
+        for text in examples:
+            with self.subTest(text=text):
+                draft = self.draft(anonymous=True, title=text, description=text)
+                for field in ['title', 'body']:
+                    self.assertNotIn('secret-tail', draft[field])
+                    self.assertNotIn('escaped-tail', draft[field])
+                    self.assertNotIn('prefix', draft[field])
+                    self.assertIn('[secret removed]', draft[field])
+
     def test_unicode_relay_envelope_fits_and_posts_exact_preview(self):
         draft = self.draft(description='é' * 9000)
         response = b'{"url":"https://github.com/fab-ioc/ensemble/issues/42"}'
