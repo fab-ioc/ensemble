@@ -501,6 +501,38 @@ class AllocationTests(unittest.TestCase):
         self.assertEqual(allocation["chosen"]["agent"], "codex")
         self.assertIn("both agent kinds", allocation["reason"])
 
+    def test_review_never_goes_to_a_spent_kind_when_the_owners_is_not(self):
+        # ED-138, 09-30: Claude 88%, Codex 100% (both past the warning); the
+        # reviewer went to Codex and stopped at its usage-limit prompt.
+        room = self.room([
+            {"agent": "claude", "model": "opus", "role": "engineer"},
+            {"agent": "claude", "model": "", "role": "reviewer",
+             "alt": {"agent": "codex", "model": ""}},
+        ], launched=True)
+        reviewer = next(p for p in chatroom.agent_participants(room)
+                        if p["role"] == "reviewer")
+        snap = _snapshot([_window("seven_day", 88)], [_window("seven_day", 100)])
+
+        with mock.patch.object(dashboard.usage, "snapshot", return_value=snap):
+            _room, _reviewer, allocation = dashboard.apply_review_allocation(
+                room, reviewer["identity"])
+
+        self.assertEqual(allocation["chosen"]["agent"], "claude")
+        self.assertIn("95% alarm", allocation["reason"])
+
+    def test_first_launch_moves_an_owner_off_a_spent_kind(self):
+        room = self.room([
+            {"agent": "codex", "model": "", "role": "engineer"},
+            {"agent": "claude", "model": "", "role": "reviewer"},
+        ])
+        snap = _snapshot([_window("seven_day", 88)], [_window("seven_day", 100)])
+        with mock.patch.object(dashboard.usage, "snapshot", return_value=snap):
+            _FakeHandler()._start_room(room)
+
+        saved = chatroom.get_room(room["id"], public=False)
+        self.assertTrue(saved["allocation"]["changed"])
+        self.assertEqual(saved["allocation"]["chosen"][0]["agent"], "claude")
+
     def test_review_kind_round_trip_restores_primary_and_alt_models(self):
         room = self.room([
             {"agent": "claude", "model": "opus", "role": "engineer"},

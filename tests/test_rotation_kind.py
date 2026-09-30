@@ -155,6 +155,12 @@ class ChooseOwnerKindTests(_Base):
         self.assertFalse(c["changed"])
         self.assertFalse(c["alarm"])
 
+    def test_both_past_warning_but_only_the_owner_spent_switches(self):
+        room = self.room(owner="codex", owner_model="", reviewer="claude")
+        c = self.choose(room, _snap(88, 100))
+        self.assertTrue(c["changed"])
+        self.assertEqual(c["agent"], "claude")
+
     def test_both_past_alarm_stays_and_notes_the_alarm(self):
         c = self.choose(self.room(), _snap(96, 99))
         self.assertFalse(c["changed"])
