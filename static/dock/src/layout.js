@@ -19,7 +19,7 @@
 // A panel's side (v0.5.0, as an IntelliJ tool window's): the edge it belongs to, whatever its view mode. A strip panel's
 // is its strip's edge; a docked panel's is where it stands against the middle (sideOf); a floating one's, or one in its
 // own window, is the side it goes back to. Changing the view mode keeps it: a strip panel pinned docks on its strip's
-// side (pinPanel), a docked one unpinned goes to the strip on its side. Only a move changes it (moveSide, or a drag).
+// side (pinPanel), a docked one unpinned goes to the strip on its side. Only a move changes it (moveSide, moveStrip, or a drag).
 // A strip entry's `open` ('beside' | 'over') is how it slides out when it differs from the dock's stripOpen: IntelliJ's
 // Dock Unpinned and Undock. A float's `side`, or a `was`'s, is a side given by moveSide while the panel was there.
 //
@@ -587,6 +587,34 @@ export function moveSide(layout, id, side, opts = {}) {
   if (was.kind === 'auto') stripTo(was, side, id, cfg);
   else if (was.strip) { stripTo(was.strip, side, id, cfg); delete was.home; } else was.side = side;
   return true;
+}
+
+/**
+ * Moves a strip panel to place `index` (from 0) among the panels of the strip on `side` (default: its own), as a drag of
+ * its strip button does (IntelliJ's stripe). On another side it keeps its view mode, as moveSide does. The strip draws
+ * an edge's panels in layout.auto's order, so the order is that; a panel taken off its strip later (pinned, floated,
+ * popped out, hidden) keeps its new place there. Returns false when it is not on a strip, or already there.
+ */
+export function moveStrip(layout, id, index, side, opts = {}) {
+  const cfg = cfgOf(opts);
+  const a = layout.auto.find((x) => x.id === id);
+  if (!a) return false;
+  const edge = EDGES.includes(side) ? side : a.edge;
+  if (typeof index === 'string' && index.trim() !== '') index = Number(index);
+  if (index != null && !finite(index)) return false;
+  // Each strip's order, as drawn: layout.auto interleaves the edges, and its order across them draws nothing.
+  const strips = () => EDGES.map((e) => layout.auto.filter((x) => x.edge === e).map((x) => x.id).join()).join('|');
+  const was = strips();
+  const before = layout.auto.slice();
+  layout.auto.splice(layout.auto.indexOf(a), 1);
+  if (edge !== a.edge) { stripTo(a, edge, id, cfg); delete a.peers; }
+  const peers = layout.auto.filter((x) => x.edge === edge);
+  const at = finite(index) ? Math.max(0, Math.min(peers.length, Math.round(index))) : peers.length;
+  const i = at < peers.length ? layout.auto.indexOf(peers[at]) : peers.length ? layout.auto.indexOf(peers[peers.length - 1]) + 1 : layout.auto.length;
+  layout.auto.splice(i, 0, a);
+  if (strips() !== was) return true;
+  layout.auto.splice(0, layout.auto.length, ...before);
+  return false;
 }
 
 /**
