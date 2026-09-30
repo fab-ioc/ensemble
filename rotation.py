@@ -839,17 +839,17 @@ def _po_fallback_model(room: dict, kind: str) -> str:
     """Use the PO seat's alternative model, then the model Settings chose for
     the kind, then the older fallback of a hub where none is chosen. With a
     model chosen in Settings the seat names none (""): the launch passes that
-    model, and the seat follows a later change of it."""
+    model, and the seat follows a later change of it. A chosen model that a
+    launch would not pass (Codex no longer lists it) counts as none chosen."""
     seat, _ = _preferred_seats(room)
     if seat:
         chosen = _d._seat_for_kind(seat, kind)
         if (seat.get("agent") == kind or (seat.get("alt") or {}).get("agent") == kind) \
                 and chosen.get("model"):
             return chosen["model"]
-    settings = _d.load_settings()
-    if _d.agent_models.normalise(settings.get("agentModels"))[kind]["model"]:
+    if _d.hub_launch_model(kind)[0]:
         return ""
-    models = settings.get("poFallbackModels") or {}
+    models = _d.load_settings().get("poFallbackModels") or {}
     if isinstance(models, dict) and isinstance(models.get(kind), str):
         return models[kind]
     return DEFAULT_PO_FALLBACK_MODELS[kind]

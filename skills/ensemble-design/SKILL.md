@@ -810,7 +810,9 @@ class="pref-label" for>`, never free text (Settings' *Agent models*, #145, is th
 - **What is in effect is also said in words under the select** (`.cfg-hint`, `role="status"`): a
   phone's select cuts a long choice short, and a consequence (the pool a model draws on) has no room
   in an option.
-- **A choice is saved as it is made;** there is no Save button. A refused choice shows the hub's
+- **A choice is saved as it is made;** there is no Save button. The select keeps the focus and
+  its place meanwhile (never disabled, never rewritten while someone is in it), so arrow keys step
+  through it; choices are saved in the order they were made. A refused choice shows the hub's
   reason in the toast and the select goes back to what is saved. A value saved earlier that is no
   longer offered stays in the list, marked, until another is chosen.
 - Not red, not amber: a choice is not a state.

@@ -196,8 +196,15 @@ def check(change, current, models="read") -> tuple[dict | None, str]:
         named = "effort" in (change.get("codex") or {})
         model_changed = model != current["codex"]["model"]
         if effort not in takes and named and (model_changed or effort != current["codex"]["effort"]):
-            return None, (f"{runs_on or 'Codex’s own default model'} does not take the reasoning "
-                          f"effort “{effort}”" + (f": it takes {', '.join(takes)}." if takes else "."))
+            if not takes:
+                # A model the list does not tell about: Codex's own default
+                # when its config names none or one its picker hides, or a
+                # chosen model it no longer lists.
+                return None, ("The hub cannot tell which reasoning efforts "
+                              f"{model or 'Codex’s own default model'} takes: choose a Codex "
+                              "model from the list first.")
+            return None, (f"{runs_on} does not take the reasoning effort “{effort}”: it takes "
+                          f"{', '.join(takes)}.")
         if effort not in takes and model_changed:
             # Only the model was changed and the effort does not carry over to
             # it: back to Codex's own.

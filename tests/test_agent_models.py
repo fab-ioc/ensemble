@@ -8,8 +8,9 @@
   ``defaultModel`` one and the same as Claude's model;
 * the launch arguments of every seat kind the hub starts (a task's owner, its
   reviewer, a PO, a resume, an owner handover, a PO switch): the seat's own
-  model wins, else the one chosen, else no flag at all; never for a session
-  adopted from the history;
+  model wins, else the one chosen, else no flag at all; a conversation brought
+  in from the history is resumed as it was, and every session the hub starts
+  in its room afterwards takes the setting like any other;
 * the pool Codex is shown and judged by follows the model chosen.
 """
 from __future__ import annotations
@@ -222,8 +223,25 @@ class TheSetting(_Home):
         self.assertEqual(self.choose(codex={"effort": "xhigh"})["codex"]["effort"], "xhigh")
         self.assertEqual(self.choose(codex={"model": "gpt-6-sol"})["codex"], {"model": "gpt-6-sol", "effort": "xhigh"})
         # Both named together, and they do not go together: refused whole.
-        self.assertTrue(dashboard.agent_models_error(
-            {"agentModels": {"codex": {"model": "gpt-5.5", "effort": "max"}}}))
+        self.assertEqual(dashboard.agent_models_error(
+            {"agentModels": {"codex": {"model": "gpt-5.5", "effort": "max"}}}),
+            "gpt-5.5 does not take the reasoning effort “max”: it takes low, medium, high, xhigh.")
+
+    def test_an_effort_needs_a_model_the_list_tells_about(self):
+        """A stock Codex names no model in its config (or names one its picker
+        hides): the hub cannot tell what that model takes, and says that, not
+        that the model does not take it."""
+        for config in ("", 'model = "codex-auto-review"\n'):
+            with self.subTest(config=config):
+                (self.codex / "config.toml").write_text(config, encoding="utf-8")
+                why = dashboard.agent_models_error({"agentModels": {"codex": {"effort": "high"}}})
+                self.assertIn("cannot tell which reasoning efforts Codex’s own default model takes", why)
+                self.assertIn("choose a Codex model from the list first", why)
+                self.assertEqual(dashboard.agent_models_info()["codex"]["effective"]["efforts"], [])
+                # With a model from the list, its efforts can be chosen.
+                self.assertEqual(self.choose(codex={"model": "gpt-6-sol", "effort": "high"})["codex"],
+                                 {"model": "gpt-6-sol", "effort": "high"})
+                self.choose(codex={"model": "", "effort": ""})
 
     def test_no_model_list_no_codex_choice(self):
         (self.codex / "models_cache.json").unlink()
@@ -281,6 +299,9 @@ class _Agent:
 
     def installed(self):
         return True
+
+    def launch_argv(self, cwd, prompt="", extra=None):
+        return [self.display_name.lower()]
 
 
 class LaunchArguments(_Home):
@@ -404,7 +425,9 @@ class LaunchArguments(_Home):
         (self.codex / "models_cache.json").unlink()
         self.assertEqual(self.flags(self.seats("codex")["owner"]), {"model": "gpt-6-luna", "effort": None})
 
-    def test_a_session_adopted_from_the_history_is_left_alone(self):
+    # --- a room made from a past session (adopted) ----------------------------
+
+    def test_a_conversation_brought_in_from_the_history_is_resumed_as_it_was(self):
         self.choose(claude={"model": "opus"}, codex={"model": "gpt-6-sol", "effort": "high"})
         for kind in ("codex", "claude"):
             with self.subTest(kind=kind):
@@ -416,6 +439,58 @@ class LaunchArguments(_Home):
                 self.handler._resume_room_agent_pty(room, part, collab=False, human=True)
                 for argv in self.made:
                     self.assertEqual(self.flags(argv), {"model": None, "effort": None})
+
+    def test_every_session_the_hub_starts_in_such_a_room_takes_the_setting(self):
+        """A PO made from a past conversation lives in an adopted room for
+        good: its handovers, its switch to the other kind and a reviewer
+        started in an adopted task are the hub's own sessions."""
+        chosen = {"codex": {"model": "gpt-6-sol", "effort": "high"},
+                  "claude": {"model": "opus", "effort": None}}
+        self.choose(claude={"model": "opus"}, codex={"model": "gpt-6-sol", "effort": "high"})
+        for kind in ("codex", "claude"):
+            with self.subTest(kind=kind):
+                self.made.clear()
+                room, part = self.room(kind, "room-po", "ProductOwner", adopted=True)
+                part["sessionId"] = "0199-adopted"
+                # A PO handover: a fresh session of the same kind.
+                self.handler._launch_room_agent_pty(room, {**part, "sessionId": ""}, "", collab=False,
+                                                    prompt="carry on from PO-HANDOVER.md")
+                # A PO switch or failover to this kind: the seat names none.
+                model = rotation._po_fallback_model(room, kind)
+                self.assertEqual(model, "")
+                self.handler._launch_room_agent_pty(
+                    room, {**part, "agent": kind, "model": model, "sessionId": ""}, "", collab=False,
+                    prompt="carry on from PO-HANDOVER.md")
+                # A reviewer on mention in an adopted task.
+                task, reviewer = self.room(kind, role="reviewer", adopted=True)
+                self.handler._launch_room_agent_pty(task, reviewer, "", collab=True, prompt="review this")
+                # The fresh session, resumed later (a hub restart): it is the
+                # hub's own, recorded as a rotation of the seat, so it follows
+                # Settings; only the conversation as it was found does not.
+                part.update(sessionId="0199-fresh", rotations=[
+                    {"n": 1, "fromSessionId": "0199-adopted", "toSessionId": "0199-fresh"}])
+                self.handler._resume_room_agent_pty(room, part, collab=False)
+                self.assertEqual(len(self.made), 4)
+                for argv in self.made:
+                    self.assertEqual(self.flags(argv), chosen[kind], argv)
+                self.assertEqual(rotation._model_name(kind, model), chosen[kind]["model"])
+
+    def test_a_failover_in_an_adopted_po_room_with_nothing_chosen_keeps_the_older_fallback(self):
+        room, part = self.room("claude", "room-po", "ProductOwner", adopted=True)
+        model = rotation._po_fallback_model(room, "codex")
+        self.assertEqual(model, "gpt-5.6-sol")
+        self.handler._launch_room_agent_pty(room, {**part, "agent": "codex", "model": model}, "",
+                                            collab=False, prompt="carry on")
+        self.assertEqual(self.flags(self.made[-1]), {"model": "gpt-5.6-sol", "effort": None})
+
+    def test_a_chosen_model_codex_no_longer_lists_does_not_put_a_failover_on_codex_s_default(self):
+        self.choose(codex={"model": "gpt-6-luna"})
+        gone = {"models": [m for m in CACHE["models"] if m["slug"] != "gpt-6-luna"]}
+        (self.codex / "models_cache.json").write_text(json.dumps(gone) + "\n", encoding="utf-8")
+        room, part = self.room("claude", "room-po", "ProductOwner")
+        self.assertEqual(dashboard.hub_launch_model("codex")[0], "")
+        self.assertEqual(rotation._po_fallback_model(room, "codex"), "gpt-5.6-sol")
+        self.assertEqual(rotation._model_name("codex", "gpt-5.6-sol"), "gpt-5.6-sol")
 
     # --- who decides the seat's model before the launch ----------------------
 
@@ -462,13 +537,46 @@ class LaunchArguments(_Home):
         self.assertEqual(rotation._po_fallback_model(room, "codex"), "gpt-6-luna")
 
     def test_a_new_session_in_a_terminal(self):
+        """POST /api/new: no ``model`` is the one chosen in Settings, an empty
+        one is no flag at all, a named one is kept; the same for both kinds."""
+        opened: list[dict] = []
+
+        def open_new(path, prompt, **kw):
+            opened.append(kw)
+            return {"ok": True}
+
+        def new(body):
+            raw = json.dumps({"description": "try it", **body}).encode()
+            h = dashboard.Handler.__new__(dashboard.Handler)
+            h.path, h.command, h.request_version = "/api/new", "POST", "HTTP/1.1"
+            h.requestline = "POST /api/new HTTP/1.1"
+            h.headers = {"Content-Length": str(len(raw)), "Content-Type": "application/json",
+                         "Host": "127.0.0.1:8791"}
+            h.rfile, h.wfile = io.BytesIO(raw), io.BytesIO()
+            h.client_address = ("127.0.0.1", 50000)
+            h.server = types.SimpleNamespace(server_address=("127.0.0.1", 8791))
+            h.log_message = lambda *a: None
+            h.do_POST()
+            self.assertIn(b" 200 ", h.wfile.getvalue().split(b"\r\n", 1)[0])
+            return opened[-1]
+
         self.choose(claude={"model": "opus"}, codex={"model": "gpt-6-sol", "effort": "high"})
-        self.assertEqual(dashboard._codex_model_args(*dashboard.hub_launch_model("codex", "")),
-                         ["-c", 'model="gpt-6-sol"', "-c", 'model_reasoning_effort="high"'])
-        self.assertEqual(dashboard._codex_model_args(*dashboard.hub_launch_model("codex", "gpt-5.5")),
-                         ["-c", 'model="gpt-5.5"', "-c", 'model_reasoning_effort="high"'])
+        with mock.patch.object(dashboard.Handler, "_agent_peer", lambda h: ""), \
+                mock.patch.object(dashboard, "create_cs_session", return_value=(True, str(self.tmp), "")), \
+                mock.patch.object(dashboard, "load_labels", return_value={}), \
+                mock.patch.object(dashboard, "save_labels"), \
+                mock.patch.object(dashboard, "_allocate_agent_identity", return_value="codex"), \
+                mock.patch.object(dashboard.BACKEND, "open_new", side_effect=open_new):
+            self.assertEqual(self.flags(new({"agent": "codex"})["command"]),
+                             {"model": "gpt-6-sol", "effort": "high"})
+            self.assertEqual(self.flags(new({"agent": "codex", "model": ""})["command"]),
+                             {"model": None, "effort": None})
+            self.assertEqual(self.flags(new({"agent": "codex", "model": "gpt-5.5"})["command"]),
+                             {"model": "gpt-5.5", "effort": "high"})
+            self.assertEqual(new({"agent": "claude"})["model"], "opus")
+            self.assertIsNone(new({"agent": "claude", "model": ""})["model"])
+            self.assertEqual(new({"agent": "claude", "model": "haiku"})["model"], "haiku")
         self.assertEqual(dashboard._codex_model_args("", ""), [])
-        self.assertEqual(dashboard.hub_launch_model("claude")[0], "opus")
 
 
 # --- the pool Codex is shown and judged by ------------------------------------

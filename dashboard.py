@@ -1473,15 +1473,22 @@ def _agent_model_changes(data: dict) -> list:
     return out
 
 
-def hub_launch_model(kind: str, seat_model: str = "", room: dict | None = None) -> tuple[str, str]:
+def hub_launch_model(kind: str, seat_model: str = "") -> tuple[str, str]:
     """(model, reasoning effort) the hub passes when it starts an agent of
     ``kind``: the seat's own model, else the one chosen in Settings; "" for
-    none (the agent's own default). A session adopted from the history keeps
-    what it names and nothing else: the hub did not start it."""
-    seat_model = (seat_model or "").strip()
-    if room is not None and room.get("adopted"):
-        return seat_model, ""
-    return agent_models.launch_choice(kind, seat_model, load_settings().get("agentModels"))
+    none (the agent's own default)."""
+    return agent_models.launch_choice(kind, (seat_model or "").strip(),
+                                      load_settings().get("agentModels"))
+
+
+def _conversation_as_found(room: dict, part: dict) -> bool:
+    """Whether ``part``'s conversation is one the hub did not start: a past
+    session brought in from the history (the room is ``adopted``) that the hub
+    has not since handed to a fresh session of its own (a handover, a PO
+    rotation or switch, each recorded under ``rotations``). Resumed, it keeps
+    what it names and nothing else; every session the hub starts in the same
+    room takes the model chosen in Settings like any other."""
+    return bool(room.get("adopted")) and not part.get("rotations")
 
 
 def _codex_model_args(model: str, effort: str = "") -> list[str]:
@@ -10491,7 +10498,7 @@ class Handler(BaseHTTPRequestHandler):
         briefing = po_hub_prompt(room_full, briefing)
         ag = agents.get_agent(agent_key)
         label = room_full["title"][:60]
-        model, effort = hub_launch_model(agent_key, part.get("model"), room_full)
+        model, effort = hub_launch_model(agent_key, part.get("model"))
         # Pre-clear each agent's first-run trust gate so the unattended launch
         # starts talking instead of blocking on a prompt no one can answer.
         if hasattr(ag, "ensure_trusted"):
@@ -10577,7 +10584,7 @@ class Handler(BaseHTTPRequestHandler):
         ident = part["identity"]
         agent_key = part["agent"]
         # The seat's model, else the one Settings chose for its kind.
-        model, effort = hub_launch_model(agent_key, part.get("model"), room_full)
+        model, effort = hub_launch_model(agent_key, part.get("model"))
         token = next((t for t, i in room_full.get("tokens", {}).items()
                       if i == ident), "")
         base = room_full.get("cwd") or str(CS_ROOT)
@@ -10640,9 +10647,11 @@ class Handler(BaseHTTPRequestHandler):
         ident = part["identity"]
         agent_key = part["agent"]
         # As at its launch: a resumed conversation carries on on the model
-        # Settings names now. A past session a person opened is left alone.
-        model, effort = (((part.get("model") or "").strip(), "") if human
-                         else hub_launch_model(agent_key, part.get("model"), room_full))
+        # Settings names now. A past session brought in from the history is
+        # left alone until the hub starts a session of its own in its place.
+        model, effort = (((part.get("model") or "").strip(), "")
+                         if human or _conversation_as_found(room_full, part)
+                         else hub_launch_model(agent_key, part.get("model")))
         token = next((t for t, i in room_full.get("tokens", {}).items()
                       if i == ident), "")
         base = room_full.get("cwd") or str(CS_ROOT)
@@ -12919,8 +12928,9 @@ class Handler(BaseHTTPRequestHandler):
                 # it as a `-c` config override).
                 raw_model = data.get("model")
                 sess_model = raw_model.strip()[:80] if isinstance(raw_model, str) else ""
-                if agent_key == "codex":
-                    # The model named, else the one Settings chose for Codex.
+                # As for Claude below: no `model` → the one Settings chose
+                # for Codex; an empty one → no flag at all.
+                if agent_key == "codex" and (sess_model or not isinstance(raw_model, str)):
                     argv += _codex_model_args(*hub_launch_model("codex", sess_model))
                 res = BACKEND.open_new(path, combined, label=desc,
                                        command=argv, open_mode=open_mode,

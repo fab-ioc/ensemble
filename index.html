@@ -3616,7 +3616,8 @@ window.DOC_LISTENERS_PAUSED = false;
       <label class="pref-label" for="pref-effort-codex">Codex reasoning effort</label>
       <select id="pref-effort-codex" class="pref-select" data-kind="codex" data-field="effort" disabled></select>
     </div>
-    <p class="cfg-hint">What an agent the hub starts runs on when its seat names no model: task owners, reviewers, POs, handovers, PO switches and new sessions. A seat that names a model keeps it. A change applies from each agent's next start. It is passed at launch: Claude's and Codex's own settings are never changed.</p>
+    <p class="cfg-hint" id="pref-effort-codex-note" role="status" hidden></p>
+    <p class="cfg-hint">What an agent the hub starts runs on when its seat names no model: task owners, reviewers, POs, handovers and PO switches. A seat that names a model keeps it. A change applies from each agent's next start. It is passed at launch: Claude's and Codex's own settings are never changed.</p>
     <!-- The New session dialog's model suggestions (#im-model). -->
     <datalist id="model-presets">
       <option value="opus"></option>
@@ -6301,10 +6302,12 @@ let AGENT_MODELS = null;
 let _agentModelsAsked = 0;
 async function loadAgentModels() {
   const asked = ++_agentModelsAsked;
-  let got = null;               // a hub from before this setting: said below
+  let got = null;
   try { got = await api('/api/agent-models'); } catch (e) {}
   if (asked !== _agentModelsAsked) return;      // a later read answers
-  AGENT_MODELS = got;
+  // A read that failed keeps what the last one said; with none yet, the
+  // section says it could not be read.
+  if (got) AGENT_MODELS = got;
   renderAgentModels();
 }
 function agentModelOptions(kind) {
@@ -6331,12 +6334,14 @@ function renderAgentModels() {
   };
   const note = document.getElementById('pref-model-codex-note');
   const claudeNote = document.getElementById('pref-model-claude-note');
+  const effortNote = document.getElementById('pref-effort-codex-note');
   if (!AGENT_MODELS) {
     for (const id of ['pref-model-claude', 'pref-model-codex', 'pref-effort-codex']) {
       fill(id, [['', 'Not available']], '');
     }
     if (claudeNote) claudeNote.hidden = true;
-    if (note) { note.hidden = false; note.textContent = 'The hub needs a restart to offer this setting.'; }
+    if (effortNote) effortNote.hidden = true;
+    if (note) { note.hidden = false; note.textContent = 'The hub did not say which models can be chosen. If it was updated just now, it needs a restart to offer this setting.'; }
     return;
   }
   const x = AGENT_MODELS.codex, eff = x.effective;
@@ -6354,10 +6359,17 @@ function renderAgentModels() {
     efforts.push([x.chosen.effort, `${x.chosen.effort} (not taken by ${eff.model || 'this model'})`]);
   }
   fill('pref-effort-codex', efforts, x.chosen.effort);
+  if (effortNote) {
+    // No efforts to offer: the model in effect is one Codex's list does not
+    // tell about (its config names none, or one its picker hides).
+    effortNote.hidden = eff.efforts.length > 0;
+    effortNote.textContent = `The hub cannot tell which efforts ${eff.model || 'Codex’s own default model'} takes. Choose a Codex model from the list to choose its effort.`;
+  }
   if (note) {
     const pool = (eff.pool || 'main') + ' pool';
     note.textContent = !x.readable
-      ? 'Codex’s model list cannot be read here, so only its own default can run.'
+      ? 'Codex’s model list cannot be read here, so a model cannot be chosen. '
+        + (x.chosen.model ? `${x.chosen.model}, chosen before, is still passed as it is.` : 'Codex’s own default runs.')
       : x.gone
         ? `${x.chosen.model} is no longer offered by Codex, so its own default`
           + `${x.own.model ? ' (' + x.own.model + ')' : ''} runs. Choose another model.`
@@ -6368,12 +6380,20 @@ function renderAgentModels() {
   // The New task dialog suggests what Codex offers.
   if (x.models.length) MODEL_PRESETS.codex = x.models.map(m => m.id);
 }
-async function setAgentModel(sel) {
-  // What was chosen, read now: a list written again meanwhile (an earlier
-  // choice's answer) puts the select back on what was saved then.
-  const kind = sel.dataset.kind, field = sel.dataset.field, value = sel.value;
+// Choices are saved one at a time, in the order they were made, so the hub
+// ends on the last one (arrow keys on a list make one choice a step). The
+// list keeps the focus and its place meanwhile: it is never disabled or
+// written again while someone is in it (renderAgentModels skips it).
+let _agentModelSaves = Promise.resolve();
+function setAgentModel(sel) {
+  // What was chosen, read now: the list may say something else by its turn.
+  const value = sel.value;
+  _agentModelSaves = _agentModelSaves.then(() => saveAgentModel(sel, value));
+  return _agentModelSaves;
+}
+async function saveAgentModel(sel, value) {
+  const kind = sel.dataset.kind, field = sel.dataset.field;
   const effortWas = ((PREFS && PREFS.agentModels || {}).codex || {}).effort || '';
-  sel.disabled = true;
   try {
     const r = await fetch('/api/settings', {
       method: 'PUT', headers: {'Content-Type': 'application/json'},
@@ -6392,9 +6412,11 @@ async function setAgentModel(sel) {
     }
   } catch (e) {
     toast('Not saved: ' + e.message, 6000, 'err');
+    // Back on what is saved, unless a later choice is already showing.
+    const kept = ((PREFS && PREFS.agentModels || {})[kind] || {})[field];
+    if (sel.value === value && typeof kept === 'string') sel.value = kept;
   }
-  sel.blur();                     // the lists are written again, this one too
-  await loadAgentModels();
+  await loadAgentModels();        // the other lists, and this one once it is left
   refreshUsage();                 // the pool Codex is judged by follows the model
 }
 function renderPrefs() {
@@ -10999,7 +11021,7 @@ function poSwitchDialogHtml(pj, info, err, confirmMsg, typed) {
     <h3>Switch ${esc(pj.name)}’s PO</h3>
     <p class="cfg-hint">Now ${esc(name(cur))}${info.model ? ' · <code>' + esc(info.model) + '</code>' : ''}${info.live ? '' : ' (not running)'}. A fresh ${esc(name(other))} session takes over in the same room, with the same chat and asks, from the PO’s written handover. A running PO is asked to bring its handover up to date first; that can take a few minutes.</p>
     <div class="im-field">
-      <label for="ps-model">${esc(name(other))} model <small>empty for the one chosen in Settings, else its own default</small></label>
+      <label for="ps-model">${esc(name(other))} model <small>empty for the hub’s choice: the model chosen in Settings, if one is</small></label>
       <input id="ps-model" type="text" value="${esc(model)}" spellcheck="false" autocomplete="off"${why ? ' disabled' : ''}>
     </div>
     ${why ? `<p class="cfg-hint" role="status">${esc(why)}</p>` : ''}
@@ -16715,10 +16737,14 @@ window.ensUpdPlace = () => ({
     if (ev.key === 'Enter' && ev.target.matches('input')) document.getElementById('pref-noun-save').click();
   });
 
-  // Agent models: a choice is saved as it is made.
+  // Agent models: a choice is saved as it is made; a list that was left is
+  // written again (it is not while the focus is in it).
   document.getElementById('settings-models')?.addEventListener('change', (ev) => {
     const sel = ev.target.closest('select.pref-select');
     if (sel) setAgentModel(sel);
+  });
+  document.getElementById('settings-models')?.addEventListener('focusout', () => {
+    setTimeout(renderAgentModels, 0);
   });
   // Operator nickname: what the agents call you (save on blur/Enter)
   const nickInput = document.getElementById('pref-nickname');

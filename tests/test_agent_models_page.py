@@ -55,9 +55,11 @@ async function main() {
       const evalIn = async (expr) => { const r = await c.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }, sessionId); if (r.exceptionDetails) throw new Error(expr.slice(0, 120) + ' :: ' + JSON.stringify(r.exceptionDetails).slice(0, 600)); return r.result.value; };
       const until = async (expr, ms = 20000) => { const t = Date.now(); while (Date.now() - t < ms) { let v = null; try { v = await evalIn(expr); } catch (e) {} if (v) return v; await sleep(150); } throw new Error('timeout: ' + expr); };
       const saved = () => evalIn(`fetch('/api/settings').then(r => r.json()).then(s => s.agentModels)`);
-      const pick = (id, value) => evalIn(`(() => { const s = document.getElementById('${id}');
+      // As a person does it: the focus is in the list when its value changes.
+      const pick = (id, value) => evalIn(`(() => { const s = document.getElementById('${id}'); s.focus();
         if (![...s.options].some(o => o.value === '${value}')) s.add(new Option('${value}', '${value}'));
         s.value = '${value}'; s.dispatchEvent(new Event('change', { bubbles: true })); })(); 0`);
+      const place = (id) => evalIn(`(() => { const s = document.getElementById('${id}'); return { focused: document.activeElement === s, disabled: s.disabled, value: s.value }; })()`);
       const toastText = () => evalIn(`(() => { const t = document.querySelector('#status .msg'); return t ? t.textContent : ''; })()`);
       await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
       await until('typeof PROJECTS !== "undefined" && !!PROJECTS && !!AGENT_MODELS && !!PREFS', 30000);
@@ -96,6 +98,15 @@ async function main() {
       await until(`fetch('/api/settings').then(r => r.json()).then(s => s.agentModels.codex.model === 'gpt-reserve')`);
       await until(`/reserve pool/.test(document.getElementById('pref-model-codex-note').textContent)`);
       await until(`(USAGE.sources.find(s => s.source === 'codex').poolInUse || {}).from === 'settings'`);
+      o.placeKept = await place('pref-model-codex');
+      // Arrow keys make one choice a step: each is saved in turn, the last one stays.
+      o.steps = await evalIn(`(async () => { const s = document.getElementById('pref-model-codex'); s.focus();
+        for (const v of ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-reserve']) { s.value = v; s.dispatchEvent(new Event('change', { bubbles: true })); }
+        await _agentModelSaves;
+        const hub = await fetch('/api/settings').then(r => r.json());
+        return { hub: hub.agentModels.codex.model, shown: s.value, focused: document.activeElement === s, disabled: s.disabled }; })()`);
+      await until(`/gpt-reserve and draw on the reserve pool/.test(document.getElementById('pref-model-codex-note').textContent)`);
+      await until(`(USAGE.sources.find(s => s.source === 'codex').poolInUse || {}).model === 'gpt-reserve'`);
       o.reserve = await evalIn(`({ note: document.getElementById('pref-model-codex-note').textContent,
         select: document.getElementById('pref-model-codex').value,
         efforts: [...document.getElementById('pref-effort-codex').options].map(x => x.value),
@@ -114,15 +125,37 @@ async function main() {
         efforts: await evalIn(`[...document.getElementById('pref-effort-codex').options].map(x => x.value)`) };
       // A model Codex does not offer: refused, the reason shown, the select put back.
       await pick('pref-model-codex', 'gpt-7-nova');
-      await until(`document.getElementById('pref-model-codex').value === 'gpt-5.5' && !document.getElementById('pref-model-codex').disabled`);
-      o.refused = { saved: await saved(), toast: await toastText(),
-        offered: await evalIn(`[...document.getElementById('pref-model-codex').options].some(x => x.value === 'gpt-7-nova')`) };
+      await until(`document.getElementById('pref-model-codex').value === 'gpt-5.5' && /^Not saved/.test((document.querySelector('#status .msg') || {}).textContent || '')`);
+      o.refused = { saved: await saved(), toast: await toastText(), place: await place('pref-model-codex') };
+      // Once the list is left it is written again: what is not offered is gone.
+      await evalIn(`document.getElementById('pref-effort-codex').focus(); 0`);
+      await until(`![...document.getElementById('pref-model-codex').options].some(x => x.value === 'gpt-7-nova')`);
+      o.refused.offered = false;
       // Claude, and the older name of the same setting.
       await pick('pref-model-claude', 'opus');
       await until(`fetch('/api/settings').then(r => r.json()).then(s => s.agentModels.claude.model === 'opus')`);
       await until(`PREFS.defaultModel === 'opus' && document.getElementById('pref-model-claude').value === 'opus'`);
       o.claude = await evalIn(`fetch('/api/settings').then(r => r.json()).then(s => ({ both: [s.defaultModel, s.agentModels.claude.model] }))`);
+      await evalIn(`document.activeElement.blur(); 0`);
+      await until(`document.getElementById('pref-model-claude').options.length === 5`);
       o.after = await evalIn(MEASURE);
+      // What the notes say when the hub knows less (the page is told, not the hub).
+      o.said = await evalIn(`(() => { const keep = AGENT_MODELS, copy = () => JSON.parse(JSON.stringify(keep)), out = {};
+        const notes = () => ({ codex: document.getElementById('pref-model-codex-note').textContent,
+          effort: document.getElementById('pref-effort-codex-note').hidden ? '' : document.getElementById('pref-effort-codex-note').textContent,
+          efforts: [...document.getElementById('pref-effort-codex').options].map(x => x.value),
+          disabled: document.getElementById('pref-model-codex').disabled });
+        out.usual = notes();
+        let a = copy(); a.codex.readable = false; a.codex.models = []; AGENT_MODELS = a; renderAgentModels(); out.unreadableChosen = notes();
+        a = copy(); a.codex.readable = false; a.codex.models = []; a.codex.chosen = { model: '', effort: '' }; AGENT_MODELS = a; renderAgentModels(); out.unreadable = notes();
+        a = copy(); a.codex.chosen = { model: '', effort: '' }; a.codex.own = { model: '', effort: '' }; a.codex.effective = { model: '', effort: '', efforts: [], pool: null }; AGENT_MODELS = a; renderAgentModels(); out.noModel = notes();
+        AGENT_MODELS = null; renderAgentModels(); out.noAnswer = notes();
+        AGENT_MODELS = keep; renderAgentModels(); out.back = notes();
+        return out; })()`);
+      // A read that fails keeps what the last one said.
+      o.blip = await evalIn(`(async () => { const real = window.fetch; window.fetch = (u, ...a) => String(u).includes('/api/agent-models') ? Promise.reject(new Error('offline')) : real(u, ...a);
+        await loadAgentModels(); window.fetch = real;
+        return { kept: !!AGENT_MODELS, disabled: document.getElementById('pref-model-codex').disabled, note: document.getElementById('pref-model-codex-note').textContent }; })()`);
       // Back to nothing chosen for the next width.
       await evalIn(`fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agentModels: { claude: { model: '' }, codex: { model: '', effort: '' } } }) }).then(r => r.status)`);
       await c.send('Target.closeTarget', { targetId });
@@ -271,6 +304,36 @@ class AgentModelsInSettings(unittest.TestCase):
                 self.assertEqual(r["saved"]["codex"]["model"], "gpt-5.5")
                 self.assertEqual(r["toast"], "Not saved: Codex offers no model “gpt-7-nova”.")
                 self.assertFalse(r["offered"])
+
+    def test_a_list_keeps_the_focus_and_its_place_while_a_choice_is_saved(self):
+        for name, g in self.got.items():
+            with self.subTest(name):
+                self.assertEqual(g["placeKept"], {"focused": True, "disabled": False, "value": "gpt-reserve"})
+                # One choice a step, as arrow keys make them: saved in turn, the last one stays.
+                self.assertEqual(g["steps"], {"hub": "gpt-reserve", "shown": "gpt-reserve",
+                                              "focused": True, "disabled": False})
+                self.assertEqual(g["refused"]["place"], {"focused": True, "disabled": False, "value": "gpt-5.5"})
+
+    def test_the_notes_say_what_the_hub_does_not_know(self):
+        for name, g in self.got.items():
+            with self.subTest(name):
+                said = g["said"]
+                self.assertEqual(said["usual"]["effort"], "")
+                self.assertEqual(said["unreadableChosen"]["codex"],
+                                 "Codex’s model list cannot be read here, so a model cannot be chosen. "
+                                 "gpt-5.5, chosen before, is still passed as it is.")
+                self.assertEqual(said["unreadable"]["codex"],
+                                 "Codex’s model list cannot be read here, so a model cannot be chosen. "
+                                 "Codex’s own default runs.")
+                self.assertEqual(said["noModel"]["efforts"], [""])
+                self.assertEqual(said["noModel"]["effort"],
+                                 "The hub cannot tell which efforts Codex’s own default model takes. "
+                                 "Choose a Codex model from the list to choose its effort.")
+                self.assertTrue(said["noAnswer"]["disabled"])
+                self.assertIn("The hub did not say which models can be chosen.", said["noAnswer"]["codex"])
+                self.assertEqual(said["back"], said["usual"])
+                # One read that fails is not "needs a restart": the lists stay as they were.
+                self.assertEqual(g["blip"], {"kept": True, "disabled": False, "note": said["usual"]["codex"]})
 
     def test_claude_s_model_is_the_old_default_model_setting(self):
         for name, g in self.got.items():
