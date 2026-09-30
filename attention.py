@@ -558,14 +558,10 @@ def _po_of(room: dict) -> str:
 
 
 def _to_person(m: dict) -> bool:
-    """A plain message that reaches only the person: sent to "user", or to
-    everyone while waking no agent (chatroom.wake_targets)."""
-    to = (m.get("to") or "").strip()
-    if to == "user":
-        return True
-    if _d is None:
-        return False
-    return to.lower() in _d.chatroom.BROADCAST and m.get("rang") == []
+    """A plain message addressed to the person ("user"). Only that says the
+    agent carries on: a message to everyone that happened to wake nobody (a
+    stopped teammate) is team chatter and answers nothing (review 1)."""
+    return (m.get("to") or "").strip() == "user"
 
 
 def _open_to_human(room: dict, msgs: list, po: str | None = None) -> dict | None:
@@ -593,11 +589,11 @@ def _open_to_human(room: dict, msgs: list, po: str | None = None) -> dict | None
     is working again) still ends it.
 
     An ask to the PO also closes when the agent carries on: any later
-    ``update`` report of its (the documented way to say so), or a later word
-    of its to the person in the chat. OP-140 (2026-09-30) asked its PO at
-    03:16, was answered at 03:17 by a route the hub never sees, said in its
-    chat that it was coding, and was shown to the CEO as waiting for him for
-    hours.
+    ``update`` report of its (the documented way to say so), or a later
+    message of its addressed to the person. OP-140 (2026-09-30) asked its PO
+    at 03:16, was answered at 03:17 by a route the hub never sees, told the
+    person at 05:00 it was starting the next phase, and was shown to the CEO
+    as waiting for him for hours.
 
     The newest ``blocked`` / ``question`` wins over a plain message sent after
     it. Teammate chatter does not answer anything — the redesign pair sent

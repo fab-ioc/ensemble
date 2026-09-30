@@ -133,11 +133,36 @@ class ThePoAnswering(_PoBell):
                               wait_for_human=False)
         self.assertIsNone(self.ask())
 
+    def test_team_chatter_that_woke_nobody_answers_nothing(self):
+        # Review 1: a message to everyone whose teammate was stopped is not
+        # the owner carrying on.
+        self.ask_po()
+        time.sleep(0.002)
+        chatroom.post_message(self.rid, "claude", "Notes for whoever reviews next.", to="all",
+                              wait_for_human=False)
+        self.assertEqual(self.ask()["to"], "po")
+
     def test_an_update_leaves_an_ask_to_the_ceo_open(self):
         self.po = ""
         self.ask_po()
         chatroom.record_report(self.rid, "claude", "update", "Photos uploaded.")
         self.assertEqual(self.ask()["kind"], "question")
+
+
+class TheTaskList(_PoBell):
+    def test_a_list_reads_who_waits_once_not_per_row(self):
+        for n in range(3):
+            chatroom.create_room(f"Other {n}", [{"identity": "claude", "agent": "claude", "role": "engineer"}])
+        self.ask_po()
+        real = attention.waiting_on_po
+        with mock.patch.object(attention, "waiting_on_po", side_effect=real) as waits, \
+                mock.patch.object(ensemble_tools, "_projects", return_value={}), \
+                mock.patch.object(ensemble_tools, "_attention_by_room", return_value={}):
+            out = ensemble_tools._list_tasks({"projectId": ""}, {"projectId": "*"}, None)
+        self.assertEqual(waits.call_count, 1)
+        rows = out["tasks"] if isinstance(out, dict) else out
+        mine = next(r for r in rows if r["id"] == self.rid)
+        self.assertEqual(mine["waitingOn"]["who"], "po")
 
 
 class TeamThePoAnswering(ThePoAnswering):

@@ -252,11 +252,16 @@ def tick(now: float | None = None) -> dict[str, str]:
         return out
 
 
+def records() -> dict[str, dict]:
+    """Per task the hub has nudged and that is still stopped: ``{episode,
+    nudgedAt, toldAt, idleSince}``. One read of the file for a whole list."""
+    return {rid: rec for rid, rec in _load().items()
+            if rec.get("current") and rec.get("nudgedAt")}
+
+
 def record(room_id: str) -> dict | None:
-    """What the hub did about this task's stall while it is still stopped:
-    ``{episode, nudgedAt, toldAt, idleSince}``, else None."""
-    rec = _load().get(room_id)
-    return rec if rec and rec.get("current") and rec.get("nudgedAt") else None
+    """``records()`` for one task, or None."""
+    return records().get(room_id)
 
 
 def maybe_tick() -> None:

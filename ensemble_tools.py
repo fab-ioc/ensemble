@@ -783,21 +783,30 @@ def _attention_view(item: dict | None) -> dict | None:
     return out
 
 
-def _po_wait_view(room: dict) -> dict:
+def _po_waits() -> tuple[dict, dict]:
+    """(tasks waiting for their PO, tasks stalled), read once for a list."""
+    try:
+        waits = _d.attention.waiting_on_po()
+    except Exception:
+        waits = {}
+    try:
+        stalls = _d.stall.records()
+    except Exception:
+        stalls = {}
+    return waits, stalls
+
+
+def _po_wait_view(room: dict, po_waits: tuple | None = None) -> dict:
     """``waitingOn: "po"`` (+ since, kind) while the task waits for its PO's
     answer, ``stalled`` (+ since, nudgedAt, toldAt) while the hub has nudged
-    it for stopping without a word (stall.py); {} otherwise."""
+    it for stopping without a word (stall.py); {} otherwise. ``po_waits``:
+    ``_po_waits()``, read once by a caller listing many tasks."""
     out = {}
-    try:
-        w = _d.attention.waiting_on_po().get(room["id"])
-    except Exception:
-        w = None
+    waits, stalls = po_waits if po_waits is not None else _po_waits()
+    w = waits.get(room["id"])
     if w:
         out["waitingOn"] = {"who": "po", "since": w["since"], "kind": w["kind"]}
-    try:
-        st = _d.stall.record(room["id"])
-    except Exception:
-        st = None
+    st = stalls.get(room["id"])
     if st and st.get("nudgedAt"):
         out["stalled"] = {"since": st.get("idleSince", 0), "nudgedAt": st["nudgedAt"],
                           "toldAt": st.get("toldAt", 0)}
@@ -828,11 +837,12 @@ def _allocation_view(allocation) -> dict | None:
 
 def _row(room: dict, projects: dict, links: dict, labels: dict,
          attn: dict | None = None, detail: bool = False,
-         include_project: bool = False) -> dict:
+         include_project: bool = False, po_waits: tuple | None = None) -> dict:
     pid = _project_of_room(room, links)
     spec = room.get("spec", "") or ""
     prio = _d.priority_of(room)
     no = room.get("no") or None
+    po_view = _po_wait_view(room, po_waits)
     # The number first: it is how a person and a PO name the task.
     ref = ({"no": no, **({"ref": _ref(room, projects)} if detail or include_project else {})}
            if no else {})
@@ -844,7 +854,7 @@ def _row(room: dict, projects: dict, links: dict, labels: dict,
         "status": _status(room),
         "workflow": _d.workflow_of(room),
         "attention": _attention_view((attn or {}).get(room["id"])),
-        **_po_wait_view(room),
+        **po_view,
         "agents": _agents_summary(room),
         "updatedAt": room.get("updatedAt"),
     }
@@ -856,7 +866,7 @@ def _row(room: dict, projects: dict, links: dict, labels: dict,
         **ref,
         "id": room["id"],
         "attention": _attention_view((attn or {}).get(room["id"])),
-        **_po_wait_view(room),
+        **po_view,
         "title": _title(room, labels),
         "priority": prio,
         "priorityName": _d.PRIORITY_NAMES[prio],
@@ -1158,9 +1168,10 @@ def _list_tasks(ctx, args, handler):
             selected.append((r, rpid))
     include_project = len({rpid for _, rpid in selected}) > 1
     rows = []
+    po_waits = _po_waits()
     for r, _ in selected:
         row = _row(r, projects, links, labels, attn, detail=detail,
-                   include_project=include_project)
+                   include_project=include_project, po_waits=po_waits)
         rows.append(row)
     # Priority first (1 = highest), then the previous recency order inside it.
     rows.sort(key=lambda x: (x["priority"], -(x.get("updatedAt") or 0)))
