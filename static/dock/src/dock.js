@@ -1163,7 +1163,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (flyOpen === id) flyOpen = null;
     const el = byId.get(id).el;
     if (el.isConnected && !el.closest('.dk-parking')) scrolls.set(id, scrollsOf(el));
-    const pop = { win: child, doc: null, timer: null, started: Date.now() };
+    const pop = { win: child, doc: null, timer: null, started: Date.now(), requested: geo, offset: null };
     pops.set(id, pop);
     const at = whereIs(layout, id);
     // Maximised alone in its stack: it comes back maximised (while this page lasts; maximised is not stored).
@@ -1197,6 +1197,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
 
   function mountWindow(id, pop) {
     const cd = pop.win.document;
+    rememberWindow(id, pop);
     const p = byId.get(id);
     pop.doc = cd;
     try { pop.win.__dockPopKey = popKey; } catch { /* ignore */ }
@@ -1281,8 +1282,19 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   function rememberWindow(id, pop) {
     if (pops.get(id) !== pop || !layout.out || !layout.out[id]) return;
     let g = null;
-    try { g = { x: pop.win.screenX, y: pop.win.screenY, w: pop.win.innerWidth, h: pop.win.innerHeight }; } catch { return; }
-    if (!['x', 'y', 'w', 'h'].every((k) => finite(g[k])) || !(g.w > 0) || !(g.h > 0)) return;
+    try {
+      if (pop.win.closed || pop.win.document.visibilityState === 'hidden') return;
+      g = { x: pop.win.screenX, y: pop.win.screenY, w: pop.win.innerWidth, h: pop.win.innerHeight };
+    } catch { return; }
+    // Windows parks minimised windows near -32000; some browsers also report a tiny content area.
+    // Keep ordinary negative monitor coordinates and small user resizes, but never save that parked geometry.
+    if (!['x', 'y', 'w', 'h'].every((k) => finite(g[k])) || Math.abs(g.x) >= 30000 || Math.abs(g.y) >= 30000
+      || g.w < S.popMin.w / 2 || g.h < S.popMin.h / 2) return;
+    // window.open's request and the resulting CSS-pixel viewport can differ (frame, scaling, rounding or clamping).
+    // Calibrate once per window, after navigation. Save in request coordinates so the error cannot compound on reopen.
+    if (!pop.offset) pop.offset = Object.fromEntries(['x', 'y', 'w', 'h'].map((k) =>
+      [k, finite(pop.requested[k]) ? pop.requested[k] - g[k] : 0]));
+    for (const k of ['x', 'y', 'w', 'h']) g[k] += pop.offset[k];
     const was = layout.out[id];
     if (['x', 'y', 'w', 'h'].every((k) => was[k] === Math.round(g[k]))) return;
     popOutPanel(layout, id, g, opts()); // only its window's place changes
@@ -1291,6 +1303,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
 
   // Its window is done with: the panel comes back into this document at once, and the window closes if asked.
   function release(id, pop, closeIt) {
+    rememberWindow(id, pop);
     const g = outOf(id);
     if (g && ['x', 'y', 'w', 'h'].every((k) => finite(g[k]))) windowAt.set(id, { x: g.x, y: g.y, w: g.w, h: g.h });
     pops.delete(id);
