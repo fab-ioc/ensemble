@@ -61,7 +61,7 @@ export async function handle(request, env, fetchGitHub = fetch) {
       Object.keys(data).some(k => !['repo', 'kind', 'title', 'body'].includes(k))) return reply(400, {error: 'Invalid feedback'});
   try {
     const response = await fetchGitHub(`https://api.github.com/repos/${env.FEEDBACK_REPO}/issues`, {
-      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(20000),
+      method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(20000),
       headers: {'Authorization': `Bearer ${env.GITHUB_TOKEN}`, 'Accept': 'application/vnd.github+json',
         'Content-Type': 'application/json', 'User-Agent': 'Ensemble-feedback', 'X-GitHub-Api-Version': '2022-11-28'},
       body: JSON.stringify({title: data.title, body: data.body, labels: ['feedback', data.kind]})
