@@ -133,6 +133,21 @@ class Brief(unittest.TestCase):
         self.assertIn('3 ahead of main', text)
         self.assertNotIn('#2 Task 2', text)
 
+    def test_reopened_completion_is_running_with_or_without_new_commits(self):
+        for branch, ahead in [('merged', '0'), ('sess/ED-1', '2')]:
+            with self.subTest(ahead=ahead):
+                self.rooms.clear()
+                self.room(1, workflow='inprogress', workflowAt=200,
+                          report={'kind': 'completed', 'ts': 100},
+                          lastReport={'kind': 'update', 'ts': 201},
+                          workspace={'branch': branch})
+                text = self.build()
+                running = text.split('### Running')[1].split('### Done')[0]
+                done = text.split('### Done, not merged')[1].split('### Drafts')[0]
+                self.assertIn('#1 Task 1; working', running)
+                self.assertIn(f'{ahead} ahead of main', running)
+                self.assertNotIn('#1 Task 1', done)
+
     def test_po_first_prompt_routes_preserve_tag_and_context(self):
         for cause in ('', 'manual', 'usage_limit'):
             text = rotation.first_prompt(self.project, {'id': 'po'}, 'old', 200000,
@@ -213,6 +228,32 @@ class SizeWarning(_Base):
 
 
 class RestartRoutes(_Hub):
+    def test_snapshot_po_first_still_builds_after_its_task_is_restored(self):
+        po, task = self.room(title='PO'), self.room(title='Task')
+        self.projects.append({'id': 'p', 'poRoomId': po})
+        for rid in (po, task):
+            d.chatroom.patch_room(rid, projectId='p')
+            self.running(rid, 'claude', 'working')
+        d.take_restart_snapshot(self.lease(), wake_room='')
+        path = d._restart_snapshot_path()
+        import json
+        snap = json.loads(path.read_text(encoding='utf-8'))
+        snap['hubPid'] = -1
+        snap['rooms'].sort(key=lambda r: r['roomId'] != po)
+        path.write_text(json.dumps(snap), encoding='utf-8')
+        self.hub_stops()
+        observed = []
+        def brief(*args, **kw):
+            observed.append(d._room_is_live(d.chatroom.get_room(task, public=False)))
+            return '## Board now (from the hub, test)\n- task working'
+        h = self.handler()
+        with mock.patch.object(board_brief, 'build', side_effect=brief):
+            h._restore_after_restart('lease-1')
+            self.join()
+        self.assertEqual(observed, [True])
+        self.assertEqual(len(self.typed(po)['claude']), 1)
+        self.assertIn('task working', self.typed(po)['claude'][0])
+
     def test_only_mid_turn_po_gets_a_brief(self):
         rid = self.room()
         self.projects.append({'id': 'p', 'poRoomId': rid})

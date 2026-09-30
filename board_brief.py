@@ -99,7 +99,12 @@ def _tasks(d, project):
                           + (f"; after {_short(gate)}" if gate else ""))
             continue
         rep = d.chatroom.last_real_report(room)
-        completed = rep.get('kind') == 'completed' or d.workflow_of(room) == 'done'
+        workflow = d.workflow_of(room)
+        # A completion survives later update reports. A subsequent move back
+        # into progress explicitly reopens it and must win over that history.
+        reopened = (workflow == 'inprogress'
+                    and float(room.get('workflowAt') or 0) > float(rep.get('ts') or 0))
+        completed = workflow == 'done' or (rep.get('kind') == 'completed' and not reopened)
         if (not completed and d.ensemble_tools._status(room) == 'stopped'
                 and room['id'] not in attn and not d.attention.open_ask(room)):
             continue

@@ -10720,7 +10720,7 @@ class Handler(BaseHTTPRequestHandler):
                     pass                # its first prompt is its wake
                 elif restart is not None:
                     if restart.get(part["identity"]) in MID_TURN_STATES:
-                        notify[part["identity"]] = po_hub_prompt(room_full, RESTART_NOTE) if is_po else RESTART_NOTE
+                        notify[part["identity"]] = RESTART_NOTE
                 elif part["identity"] in own and not is_po:
                     notify[part["identity"]] = resume_note_for(room_full, part)
             part["ptyId"] = info["ptyId"]
@@ -10862,7 +10862,9 @@ class Handler(BaseHTTPRequestHandler):
                                          f"is unknown, everyone comes back quiet)")
                      + f", {len(snap['rooms'])} room(s)")
         out = []
-        for entry in snap["rooms"]:
+        # Restore task terminals before any PO: even a fresh launch prompt
+        # must see its tasks restored, regardless of snapshot room-id order.
+        for entry in sorted(snap["rooms"], key=lambda e: e.get("roomId") in po_rooms):
             rid = entry.get("roomId") or ""
             agents_was = [a for a in entry.get("agents") or [] if isinstance(a, dict)]
             was = ", ".join(f"{a.get('identity')} {a.get('state')}"
@@ -11144,7 +11146,12 @@ class Handler(BaseHTTPRequestHandler):
                     wake_for.setdefault(ident, []).append(chatroom.HUMAN_IDENTITY)
         not_typed: list[str] = []
         for ident, sess in ready.items():
-            parts = [notes[ident]] if ident in notes else []
+            note = notes.get(ident, "")
+            if note == RESTART_NOTE:
+                # Read the board at delivery, after restored task terminals
+                # are recorded, rather than while the PO is being launched.
+                note = po_hub_prompt(chatroom.get_room(room_id) or {}, note)
+            parts = [note] if ident in notes else []
             if ident in notes:
                 # A note that brings the agent back names the person's points
                 # still open, on a line of its own; those in the messages it
