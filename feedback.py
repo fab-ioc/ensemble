@@ -10,6 +10,7 @@ import platform
 import re
 import secrets
 import socket
+import ssl
 import subprocess
 import threading
 import time
@@ -23,6 +24,8 @@ DEFAULT_RELAY = "https://ensemble-feedback.fab-ioc.workers.dev"
 MAX_REQUEST = 40000
 MAX_BODY = 24000
 MAX_RELAY_REQUEST = 32000
+# Cloudflare refuses urllib's default "Python-urllib/x.y" with a 403 (error 1010).
+RELAY_HEADERS = {"Content-Type": "application/json", "User-Agent": "Ensemble-feedback/1 (+https://github.com/fab-ioc/ensemble)"}
 _drafts = {}
 _lock = threading.Lock()
 
@@ -258,7 +261,7 @@ def send(ident):
                 result["warning"] = "GitHub omitted requested labels (repository permission may be required). The Bug/Idea classification remains in the issue body."
         else:
             raw = relay_payload(plan)
-            request = urllib.request.Request(plan["relay"], data=raw, headers={"Content-Type": "application/json"})
+            request = urllib.request.Request(plan["relay"], data=raw, headers=RELAY_HEADERS)
             try:
                 with urllib.request.build_opener(NoRedirect).open(request, timeout=25) as response:
                     url = json.loads(response.read(4096)).get("url")
@@ -269,6 +272,12 @@ def send(ident):
                 if error.code in (400, 413, 429):
                     return dict(ok=False, message={400: "Relay repository or request does not match its configuration.", 413: "Relay size limit exceeded; shorten the description.", 429: "Relay limit reached (3 per hour per hub IP). Try later."}[error.code])
                 result = fallback(plan, "The relay failed. It may have created the issue; check the repository before retrying.")
+            except urllib.error.URLError as error:
+                if isinstance(error.reason, ssl.SSLCertVerificationError):
+                    # python.org's macOS Python ships without CA certificates until its installer script runs.
+                    result = fallback(plan, "This machine's Python cannot verify the relay's certificate. On a Mac, run \"Install Certificates.command\" in the Python folder under Applications, then send again.")
+                else:
+                    result = fallback(plan, "The relay is unreachable or returned an invalid reply. Check the repository before retrying to avoid duplicates.")
             except (OSError, ValueError):
                 result = fallback(plan, "The relay is unreachable or returned an invalid reply. Check the repository before retrying to avoid duplicates.")
         return result

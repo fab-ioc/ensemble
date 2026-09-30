@@ -170,7 +170,9 @@ class FeedbackEndpoint(unittest.TestCase):
         with patch.object(feedback.urllib.request, 'build_opener', return_value=opener):
             _, result = self.post('send', {'id': draft['id']})
         self.assertTrue(result['ok'])
-        wire = opener.open.call_args.args[0].data
+        request = opener.open.call_args.args[0]
+        self.assertFalse(request.get_header('User-agent').startswith('Python-urllib'))  # Cloudflare 1010
+        wire = request.data
         self.assertLessEqual(len(wire), feedback.MAX_RELAY_REQUEST)
         self.assertEqual(json.loads(wire)['body'], draft['body'])
 
@@ -231,6 +233,14 @@ class FeedbackEndpoint(unittest.TestCase):
         self.assertTrue(result['fallback'])
         self.assertNotIn('private host', result['message'])
         self.assertEqual(feedback._drafts[draft['id']]['state'], 'ready')
+
+    def test_missing_ca_certificates_are_named(self):
+        draft = self.draft(anonymous=True)
+        opener = Mock(); opener.open.side_effect = urllib.error.URLError(feedback.ssl.SSLCertVerificationError(1, 'unable to get local issuer certificate'))
+        with patch.object(feedback.urllib.request, 'build_opener', return_value=opener):
+            _, result = self.post('send', {'id': draft['id']})
+        self.assertTrue(result['fallback'])
+        self.assertIn('Install Certificates', result['message'])
 
     def test_rate_limit_does_not_bypass_through_fallback(self):
         draft = self.draft(anonymous=True)
