@@ -404,7 +404,9 @@ the same tree, viewer, Find and Changes. When there is nothing to show, one line
 "No files in this task's folder yet.", "No files to show: this task's folder is no longer on the
 hub.", "…has no folder.", or that it ran in a home folder or a whole drive, "too wide to show as its
 own folder" (the hub's `folderWide`; it lists no such folder). A sentence in the tree
-(`.wse.none`) wraps; it is never cut.
+(`.wse.none`) wraps; it is never cut. Changes says the same way when the folder is only part of a
+repository the hub does not read as a whole: "No changes to show: this folder is part of a larger
+git checkout (name), which is not read from here." (`partOf` from `/api/git/roots`).
 
 ### Documents
 

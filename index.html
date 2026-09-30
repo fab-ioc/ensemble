@@ -7610,7 +7610,8 @@ function wsPaintTabs(v) {
       + ` data-path="${esc(t.path)}" title="${esc(tildeify(t.path) + (gone ? ' (no longer exists)' : ''))}" aria-label="${esc(name + (gone ? ', no longer exists' : ''))}">`
       + `<span class="wst-nm">${esc(name)}</span>`
       // The tab in front can go to a window of its own (not a phone's: CSS).
-      + (on && !gone ? `<span class="wst-win" aria-hidden="true" title="Open in new window (Shift+Enter)">${WS_ICON_WIN}</span>` : '')
+      // (A roadmap not written yet is no file to open.)
+      + (on && !t.missing ? `<span class="wst-win" aria-hidden="true" title="Open in new window (Shift+Enter)">${WS_ICON_WIN}</span>` : '')
       + `<span class="wst-x" aria-hidden="true" title="Close">×</span></div>`;
   }).join('');
   strip.hidden = !v.tabs.length;
@@ -8224,7 +8225,12 @@ function wsMount(el, ctx) {
     if (!tab || e.altKey || e.ctrlKey || e.metaKey) return;
     const tabs = [...strip.querySelectorAll('.wst-tab')], i = tabs.indexOf(tab);
     let to = -1;
-    if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); if (!tab.classList.contains('gone')) wsOpenWindow(v, tab.dataset.path); return; }
+    if (e.key === 'Enter' && e.shiftKey) {
+      e.preventDefault();
+      const t = v.tabs.find(x => wsSame(x.path, tab.dataset.path));
+      if (t && !t.missing) wsOpenWindow(v, t.path);
+      return;
+    }
     if (e.key === 'ArrowRight') to = (i + 1) % tabs.length;
     else if (e.key === 'ArrowLeft') to = (i - 1 + tabs.length) % tabs.length;
     else if (e.key === 'Home') to = 0;
@@ -9368,7 +9374,9 @@ async function chLoadStatus() {
     if (!roots.length) {
       CH_ROOT = ''; CH_SHA = ''; box.dataset.root = '';
       chUseContext(box.dataset.project, '');
-      box.innerHTML = '<div class="chf none">No git repository here yet. When an agent clones one into this folder, its changes show up here.</div>';
+      box.innerHTML = '<div class="chf none">' + (rr.partOf
+        ? 'No changes to show: this folder is part of a larger git checkout (' + esc(rr.partOf) + '), which is not read from here.'
+        : 'No git repository here yet. When an agent clones one into this folder, its changes show up here.') + '</div>';
       return;
     }
     if (!CH_ROOT || !roots.some(function (r) { return r.path === CH_ROOT; })) { CH_ROOT = roots[0].path; CH_SHA = ''; }
@@ -9741,7 +9749,10 @@ async function tchRead(v) {
     v.roots = rr.roots || [];
     if (!v.roots.length) {
       v.root = '';
-      tchEmpty(v, "No git repository in this task's folder yet. When an agent clones one here, its branch shows up here.");
+      // A folder inside a checkout the hub does not read as a whole (a
+      // conversation started in part of a repository) has no changes of its own.
+      tchEmpty(v, rr.partOf ? `No changes to show: this folder is part of a larger git checkout (${rr.partOf}), which is not read from here.`
+        : "No git repository in this task's folder yet. When an agent clones one here, its branch shows up here.");
       return;
     }
     if (!v.roots.some(x => x.path === v.root)) v.root = v.roots[0].path;

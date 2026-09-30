@@ -284,8 +284,39 @@ class TheHubSide(unittest.TestCase):
         self.assertEqual(dashboard.list_dir(str(home / "sub"))[0], 200, "a folder inside home is one session's own")
         self.assertEqual(dashboard._session_folder_real(os.path.abspath(os.sep)), "", "a whole drive")
         self.assertEqual(dashboard._session_folder_real(str(home.parent)), "", "above home")
-        self.assertEqual(dashboard._session_folder_real("relative/folder"), "" if not os.path.isabs(os.path.realpath("relative/folder")) else
-                         dashboard._session_folder_real(os.path.realpath("relative/folder")))
+
+    def test_a_relative_folder_is_no_session_s_folder(self):
+        # Never resolved against the hub's own folder (its checkout would become readable).
+        self.assertIsNone(dashboard._session_folder_real("relative/x"))
+        self.assertIsNone(dashboard._session_folder_real("."))
+        if os.name == "nt":
+            self.assertIsNone(dashboard._session_folder_real("C:"), "a drive's current folder")
+        room = adopted_task("Started nowhere", "relative/x")
+        row = next(r for r in listed() if r.get("roomId") == room["id"])
+        self.assertNotIn("folderWide", row, "not too wide: just not a folder the hub can name")
+        self.assertEqual([f for fs in dashboard._SESSION_FOLDERS.values() for f in fs if "relative" in f], [])
+        self.refused(Path.cwd() / "relative" / "x")
+        self.refused(Path.cwd())
+
+    def test_a_path_that_cannot_be_resolved_is_refused_not_raised(self):
+        work = self.else_ / "work"
+        work.mkdir()
+        adopted_task("Old work", work)
+        listed()
+        with mock.patch("os.path.realpath", side_effect=ValueError("embedded null byte")):
+            self.assertIsNone(dashboard._session_folder_real(str(work)))
+            self.assertFalse(dashboard.session_folder_ok(str(work)))
+
+    def test_the_task_list_survives_a_failure_to_note_the_folders(self):
+        work = self.else_ / "work"
+        work.mkdir()
+        room = adopted_task("Old work", work)
+
+        def boom(folder):
+            raise RuntimeError("no")
+        with mock.patch.object(dashboard, "_session_folder_known", boom):
+            rows = listed()
+        self.assertTrue(any(r.get("roomId") == room["id"] for r in rows), "the list is what the page stands on")
 
     def test_a_folder_is_read_only_while_its_session_is_listed(self):
         work = self.else_ / "work"
@@ -296,6 +327,81 @@ class TheHubSide(unittest.TestCase):
         chatroom.delete_room(room["id"])
         listed()
         self.refused(work)
+
+    def test_a_listing_of_another_size_does_not_keep_a_folder_readable(self):
+        work = self.else_ / "work"
+        work.mkdir()
+        room = adopted_task("Old work", work)
+        dashboard.invalidate_session_listing()
+        dashboard.load_sessions(200)             # /api/sessions with no n
+        dashboard.load_sessions(5)               # a script's
+        self.refused(work)                       # a one-off size notes nothing
+        self.assertEqual(dashboard._SESSION_FOLDERS, {})
+        dashboard.load_sessions(300)             # the page's
+        dashboard.build_projects()               # the project grouping's, 500
+        dashboard.load_sessions(1000)
+        self.assertEqual(sorted(dashboard._SESSION_FOLDERS), [300, 500])
+        self.assertEqual(dashboard.list_dir(str(work))[0], 200)
+        chatroom.delete_room(room["id"])
+        dashboard.invalidate_session_listing()
+        dashboard.load_sessions(300)
+        dashboard.build_projects()
+        self.refused(work)
+
+    def test_the_sizes_noted_are_the_ones_the_hub_s_page_loads(self):
+        self.assertEqual(dashboard.SESSION_FOLDER_SIZES, frozenset({300, 500}))
+        self.assertIn("api('/api/sessions?n=300'", INDEX, "the page's task list")
+        src = (ROOT / "dashboard.py").read_text(encoding="utf-8")
+        grouping = src[src.index("def build_projects() -> dict:"):src.index("# ---- Workspace file browsing")]
+        self.assertIn("rows = load_sessions(500)", grouping, "the project grouping")
+
+    def test_the_check_never_loads_the_list_itself(self):
+        # A refused path on a hub just started costs no listing; any open page loads it.
+        work = self.else_ / "work"
+        work.mkdir()
+        adopted_task("Old work", work)
+        with mock.patch.object(dashboard, "load_sessions", side_effect=AssertionError("loaded")):
+            self.refused(work)
+        listed()
+        self.assertEqual(dashboard.list_dir(str(work))[0], 200)
+
+    def test_git_answers_for_the_folder_s_own_checkout_only(self):
+        if not GIT:
+            self.skipTest("needs git")
+        repo = self.else_ / "repo"
+        (repo / "sub").mkdir(parents=True)
+        (repo / "other").mkdir()
+        put(repo / "sub" / "mine.txt", "mine\n")
+        put(repo / "other" / "secret.txt", "one\n")
+        git(repo, "init", "-q")
+        git(repo, "add", ".")
+        git(repo, "commit", "-q", "-m", "first")
+        put(repo / "other" / "secret.txt", "two\n")
+        sha = subprocess.run([GIT, "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, encoding="utf-8").stdout.strip()
+        adopted_task("In a part of a checkout", repo / "sub")
+        listed()
+        sub = str(repo / "sub")
+        self.assertEqual(dashboard.list_dir(sub)[0], 200)
+        for what, (code, res) in (("status", dashboard.git_status(sub)), ("branch", dashboard.git_status(sub, True)),
+                                  ("diff", dashboard.git_diff(sub, "other/secret.txt")),
+                                  ("commit", dashboard.git_diff(sub, "other/secret.txt", commit=sha)), ("log", dashboard.git_log(sub))):
+            self.assertEqual((code, res.get("error")), (403, "path_not_allowed"), f"{what}: the repository is wider than the folder")
+        self.assertEqual(dashboard.git_roots(sub), (200, {"roots": [], "partOf": "repo"}), "and the page is told why there are no changes")
+        # A session whose folder is the checkout itself reads it.
+        own = self.else_ / "own"
+        own.mkdir()
+        put(own / "a.txt", "a\n")
+        git(own, "init", "-q")
+        git(own, "add", ".")
+        git(own, "commit", "-q", "-m", "first")
+        put(own / "a.txt", "b\n")
+        adopted_task("In its own checkout", own)
+        listed()
+        code, res = dashboard.git_status(str(own))
+        self.assertEqual((code, [f["path"] for f in res["files"]]), (200, ["a.txt"]))
+        self.assertEqual(dashboard.git_diff(str(own), "a.txt")[0], 200)
+        self.assertEqual(dashboard.git_log(str(own))[0], 200)
+        self.assertEqual([r["name"] for r in dashboard.git_roots(str(own))[1]["roots"]], ["own"])
 
     def test_a_project_s_task_is_as_before(self):
         ok, proj, _ = dashboard.register_project("Motors")
@@ -357,6 +463,16 @@ class ThePageCode(unittest.TestCase):
         self.assertIn(".wst-win { display: none; }", phone)
         self.assertIn("if (!path || isPhone()) return null;", INDEX)
         self.assertIn("const f = !v.ctx.docs && !isPhone() && e.target.closest('.wse.file[data-path]');", INDEX)
+
+    def test_a_folder_inside_a_larger_checkout_says_why_it_has_no_changes(self):
+        line = "this folder is part of a larger git checkout ("
+        self.assertIn("tchEmpty(v, rr.partOf ? `No changes to show: " + line + "${rr.partOf}), which is not read from here.`", INDEX, "a task's Changes")
+        self.assertIn("'No changes to show: " + line + "' + esc(rr.partOf) + '), which is not read from here.'", INDEX, "a project's Changes")
+
+    def test_a_file_that_is_not_there_gets_no_window(self):
+        # A tab whose file is gone, and a roadmap not written yet.
+        self.assertIn("(on && !t.missing ? `<span class=\"wst-win\"", INDEX)
+        self.assertIn("if (t && !t.missing) wsOpenWindow(v, t.path);", INDEX)
 
     def test_no_folder_says_why(self):
         self.assertIn("const why = issueEmpty(wsNoFolderWhy(r));", INDEX)
