@@ -529,6 +529,20 @@ def handover_written(hp: Path | None) -> bool:
         return False
 
 
+def handover_size_warning(hp: Path) -> str:
+    """Advisory only, attached to the existing once-per-attempt handover ask."""
+    try:
+        size = hp.stat().st_size
+    except OSError:
+        return ""
+    if size <= 30 * 1024:
+        return ""
+    return (f" {HANDOVER_NAME} is {size:,} bytes ({size / 1024:.1f} KB), over 30 KB. "
+            "Move history to PO-HANDOVER-ARCHIVE.md before stopping; keep a current-state "
+            "## Now of at most about 60 lines and stable guidance. This is advisory; "
+            "rotation proceeds even if you do not shorten it.")
+
+
 def _k(n) -> str:
     return f"{round((n or 0) / 1000)}k"
 
@@ -680,6 +694,7 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
         return _rotate(s, tr, done, answered=False, asked=False)
     hp = s["handover"]
     if s["kind"] == "po":
+        warning = "" if st.get("archiveWarnedSession") == sid else handover_size_warning(hp)
         ask = (f"[handover] Your conversation has reached {_k(tr['tokens'])} tokens "
                f"(the limit is {_k(limit)}), so the hub will start a fresh PO session that "
                f"picks up from your written handover instead of this history. "
@@ -692,7 +707,9 @@ def _check(s: dict, force: bool, immediate: bool) -> dict:
                f"{due_rule(_d.operator_name())} "
                f"Anything that is not in that file or in "
                f"ROADMAP.md will be forgotten. When it is current, end your turn; the hub "
-               f"rotates you as soon as you are idle.")
+               f"rotates you as soon as you are idle." + warning)
+        if warning:
+            st["archiveWarnedSession"] = sid
     else:
         ask = (f"[handover] Your conversation has reached {_k(tr['tokens'])} tokens "
                f"(the limit is {_k(limit)}), so the hub will start a fresh session for you "
@@ -1333,7 +1350,7 @@ def _ask_before_switch(project: dict, room: dict, part: dict, agent: str, flags:
            f"and {op}'s points still open (ensemble_points lists them; the hub keeps them "
            f"too). {due_rule(op)} Anything that is not in that file or in ROADMAP.md will be "
            f"forgotten. Start nothing new; when the file is current, end your turn and the "
-           f"hub switches you.")
+           f"hub switches you." + handover_size_warning(hp))
     sess = _pty(part)
     if sess is None:
         return out
@@ -1617,7 +1634,7 @@ def first_prompt(project: dict, room: dict, old_sid: str, tokens,
         f"tools show the tasks.",
         _d.OWNER_OUTPUT_NOTE,
         f"Now, before anything else, read {hp} (your handover) and {rp} (the roadmap). "
-        f"They are everything you know about this project: priorities, decisions and "
+        f"They give context for the hub's Board now: priorities, decisions and "
         f"why, what is in flight, what has been promised to {_d.operator_name()}, and "
         f"under '{DUE_HEADING}' what is due at a time.",
         # The summary is not the end of the turn: a fresh PO that summarised and
@@ -1633,7 +1650,7 @@ def first_prompt(project: dict, room: dict, old_sid: str, tokens,
     pts = _open_points(room)
     if pts:
         parts.append(pts)
-    return "\n\n".join(parts)
+    return _d.board_brief.prepend(_d, project, "\n\n".join(parts), room)
 
 
 def _open_points(room: dict) -> str:

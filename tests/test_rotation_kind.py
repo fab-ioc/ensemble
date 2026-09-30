@@ -469,7 +469,7 @@ class PoRotationUnchangedTests(_Base):
             out = rotation._rotate_marked(
                 s, {"tokens": 300_000}, lambda r, quiet=False, **x: {"result": r, **x},
                 True, True, (room["id"], "claude"), {"stopped": False})
-        snapshot.assert_called_once_with()
+        snapshot.assert_called()  # the board brief also reads this cache
         part = chatroom.participant(chatroom.get_room(room["id"], public=False), "claude")
         self.assertEqual((part["agent"], part["model"]), ("claude", "opus"))
         self.assertEqual([l["agent"] for l in launcher.launched], ["claude"])
