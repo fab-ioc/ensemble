@@ -8538,6 +8538,10 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
     if (float(preferred_usage["percent"]) >= warn
             and float(other_usage["percent"]) < warn):
         return result(other_kind, "switch_warning")
+    if (float(preferred_usage["percent"]) >= alarm
+            and float(other_usage["percent"]) < alarm):
+        # Both past the warning, but only one spent: never seat the spent one.
+        return result(other_kind, "switch_alarm")
     if float(preferred_usage["percent"]) < warn:
         return result(preferred_kind, "preferred_below_warning")
     return result(preferred_kind, "both_warning")
@@ -8600,7 +8604,7 @@ def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
     elif decision["decision"] == "other_uninstalled":
         name = _agent_kind_name(other_kind) if other_kind else "The other agent kind"
         reason = f"Preferred line-up kept because {name} is not installed on this machine."
-    elif decision["decision"] == "switch_warning":
+    elif decision["decision"] in ("switch_warning", "switch_alarm"):
         old_owner_kind = owner_kind
         chosen[owner_i] = _seat_for_kind(preferred[owner_i], other_kind)
         reviewer_i = _allocation_reviewer_index(preferred, owner_i)
@@ -8748,6 +8752,11 @@ def _review_allocation_reason(decision: dict, owner: dict) -> str:
                 f"{_usage_reason_phrase(preferred_kind, preferred_usage)} while "
                 f"{_usage_reason_phrase(owner_kind, owner_usage)} is below the "
                 f"{float(warn):g}% warning.")
+    if code == "switch_alarm":
+        return (f"Reviewer {action} {chosen_name}, the owner's kind: "
+                f"{_usage_reason_phrase(preferred_kind, figures.get(preferred_kind, {}))} "
+                f"is at or above the {float(alarm):g}% alarm while "
+                f"{_usage_reason_phrase(owner_kind, figures.get(owner_kind, {}))} is below it.")
     relation = f"different from owner {owner_name}"
     if code == "preferred_below_warning":
         detail = (f"{_usage_reason_phrase(preferred_kind, figures.get(preferred_kind, {}))} "

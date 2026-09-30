@@ -798,7 +798,8 @@ def choose_owner_kind(room: dict, part: dict, snapshot: dict | None = None,
         elif not installed(other):
             out["reason"] = (f"Owner kept on {name(cur)} because {name(other)} is not "
                              f"installed on this machine.")
-        elif float(mine["percent"]) >= warn and float(theirs["percent"]) < warn:
+        elif ((float(mine["percent"]) >= warn and float(theirs["percent"]) < warn)
+              or (float(mine["percent"]) >= alarm and float(theirs["percent"]) < alarm)):
             seat, _ = _preferred_seats(room)
             why = _d._usage_reason_phrase(cur, mine)
             out.update(agent=other, model=_model_for(seat, other), changed=True, why=why,
