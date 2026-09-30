@@ -262,6 +262,37 @@ class Stalls(_Stall):
         chatroom.post_message(self.rid, "user", "Any news?")
         self.assertEqual(stall.tick(t + 4 * stall.GRACE_S), {self.rid: "nudged"})
 
+    def test_a_busy_po_is_typed_the_line_once_it_is_idle(self):
+        # Review 2: the wake was lost when the PO was busy at that one look.
+        po_room = chatroom.get_room(self.po_rid, public=False)
+        chatroom.participant(po_room, "po")["ptyId"] = "pty-po"
+        chatroom.update_room(po_room)
+        po_sess = types.SimpleNamespace(alive=lambda: True, last_submit=lambda: 0.0,
+                                        info=lambda: {"idleSeconds": self.po_idle})
+        self.po_idle = 0.5                                  # busy
+        owner_pty = dashboard.rotation._pty.side_effect
+        typed_into = []
+
+        def pty(part):
+            return po_sess if part.get("ptyId") == "pty-po" else owner_pty(part)
+        dashboard.rotation._pty.side_effect = pty
+        dashboard._type_input.side_effect = lambda s, t: typed_into.append((s, t)) or True
+        t = time.time()
+        self.assertEqual(stall.tick(t), {self.rid: "nudged"})
+        self.assertEqual(stall.tick(t + stall.GRACE_S + 1),
+                         {self.rid: "PO told (in its chat; typed when it is idle)"})
+        self.assertEqual(stall.tick(t + stall.GRACE_S + 61), {})          # still busy
+        # The record is on disk, as after a restart: told, not yet woken.
+        self.assertTrue(stall._load()[self.rid]["toldAt"])
+        self.assertNotIn("wokeAt", stall._load()[self.rid])
+        self.po_idle = 30.0                                 # idle now
+        self.assertEqual(stall.tick(t + stall.GRACE_S + 121), {self.rid: "PO woken"})
+        self.assertEqual(stall.tick(t + 3 * stall.GRACE_S), {})
+        to_po = [txt for s, txt in typed_into if s is po_sess]
+        self.assertEqual(len(to_po), 1)
+        self.assertTrue(to_po[0].startswith("[digest] ") and "stalled since" in to_po[0])
+        self.assertEqual(len(self.told()), 1)                # one chat line
+
     def test_not_before_the_grace_period(self):
         self.idle = stall.GRACE_S - 5
         self.assertEqual(stall.tick(), {})

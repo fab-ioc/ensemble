@@ -11,7 +11,9 @@ Such a task is **stalled**. The hub
 1. types its owner one line, ``[stalled] Carry on …``, once the owner has been
    idle ``GRACE_S``;
 2. if the owner is still idle ``GRACE_S`` after that with nothing open, tells
-   the PO once: a line in the PO's room, typed into the PO when it is idle.
+   the PO once: a line in the PO's room, and one line typed into the PO —
+   at once if it is idle, else on a later look once it is (``wokeAt``), for
+   as long as the owner stays stalled.
 
 Once per **episode**: an episode is what happened since the last thing that
 could have set the owner going — a teammate's or a person's message, a report
@@ -176,33 +178,61 @@ def _look(rid: str, state: dict, now: float) -> str:
             rec.update(nudgedAt=now, owner=owner, idleSince=now - idle)
             state[rid] = rec
             return "nudged"
-        if rec.get("toldAt") or now - float(rec["nudgedAt"]) < GRACE_S:
+        if now - float(rec["nudgedAt"]) < GRACE_S or rec.get("wokeAt"):
             return ""
-        rec["toldAt"] = now
-        state[rid] = rec
-    told = _tell_po(room, rec, now)
-    return "PO told" + ("" if told else " (in its chat; not typed)")
+        if not rec.get("toldAt"):
+            # The line in the PO's room, once; the wake below until it lands.
+            if not _post_po(room, rec, now):
+                return ""
+            rec["toldAt"] = now
+            state[rid] = rec
+            did = "PO told"
+        else:
+            did = ""
+        # A busy, rotating or stopped PO is typed the line when it is next
+        # idle (review 2): the record keeps it pending, across a restart too.
+        if _wake_po(room, rec, now):
+            rec["wokeAt"] = now
+            state[rid] = rec
+            return (did + ", woken") if did else "PO woken"
+        return (did + " (in its chat; typed when it is idle)") if did else ""
 
 
-def _tell_po(room: dict, rec: dict, now: float) -> bool:
-    """A line in the PO's room, typed into the PO too when it is idle."""
-    rot, cr = _d.rotation, _d.chatroom
+def _words(room: dict, rec: dict, now: float) -> tuple[str, str, str]:
+    """(label, idle since, nudged at) as the PO is told them."""
+    since = time.strftime("%H:%M", time.localtime(float(rec.get("idleSince") or now)))
+    nudged = time.strftime("%H:%M", time.localtime(float(rec.get("nudgedAt") or now)))
+    return _d.task_label(room) or room.get("id", ""), since, nudged
+
+
+def _post_po(room: dict, rec: dict, now: float) -> bool:
+    """The line in the PO's room. False when there is no PO room."""
+    cr = _d.chatroom
     po = _d.room_po_id(room)
     po_room = cr.get_room(po, public=False) if po else None
     if not po_room:
         return False
     ident = cr.po_identity(po_room)
-    since = time.strftime("%H:%M", time.localtime(float(rec.get("idleSince") or now)))
-    nudged = time.strftime("%H:%M", time.localtime(float(rec.get("nudgedAt") or now)))
-    label = _d.task_label(room) or room.get("id", "")
+    label, since, nudged = _words(room, rec, now)
     title = room.get("title", "")
     body = (f"**{label} stalled since {since}** — {title}\n\n"
             f"Its owner is idle with nothing open: no question, block or report "
             f"waiting, no review running. The hub nudged it at {nudged} and it did "
             f"not carry on. Look at it (`ensemble_get_task {label}`) and steer it, "
             f"or stop it.")
-    cr.post_report(po, SENDER, ident, body,
-                   {"reportKind": "digest", "stalledTask": room.get("id", "")}, wake=False)
+    return bool(cr.post_report(po, SENDER, ident, body,
+                               {"reportKind": "digest", "stalledTask": room.get("id", "")}, wake=False))
+
+
+def _wake_po(room: dict, rec: dict, now: float) -> bool:
+    """Type the PO one line about it, if the PO is running and idle."""
+    rot, cr = _d.rotation, _d.chatroom
+    po = _d.room_po_id(room)
+    po_room = cr.get_room(po, public=False) if po else None
+    if not po_room:
+        return False
+    ident = cr.po_identity(po_room)
+    label, since, nudged = _words(room, rec, now)
     with rot.GATE:
         part = cr.participant(po_room, ident) if ident else None
         sess = rot._pty(part) if part else None
