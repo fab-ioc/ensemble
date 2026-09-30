@@ -19,7 +19,7 @@ import urllib.request
 from pathlib import Path
 
 DEFAULT_REPO = "fab-ioc/ensemble"
-DEFAULT_RELAY = ""
+DEFAULT_RELAY = "https://ensemble-feedback.fab-ioc.workers.dev"
 MAX_REQUEST = 40000
 MAX_BODY = 24000
 MAX_RELAY_REQUEST = 32000
@@ -170,7 +170,7 @@ def preview(data, settings, host="", private_values=()):
         raise FeedbackError("Enter a title (up to 200 characters) and description (up to 20 KB).")
     anonymous = data.get("anonymous") is True
     repo = settings.get("feedbackRepo", DEFAULT_REPO)
-    relay = settings.get("feedbackRelayUrl", DEFAULT_RELAY)
+    relay = settings.get("feedbackRelayUrl") or DEFAULT_RELAY  # an empty saved value (installs from before the relay) takes the default
     if not valid_repo(repo) or not valid_relay(relay):
         raise FeedbackError("Check the feedback repository and HTTPS relay URL in Settings.")
     login = output("gh", "api", "--hostname", "github.com", "user", "--jq", ".login")

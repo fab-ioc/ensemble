@@ -214,6 +214,7 @@ class FeedbackEndpoint(unittest.TestCase):
 
     def test_no_relay_fallback_is_explicit_and_keeps_scrubbed_text(self):
         self.settings['feedbackRelayUrl'] = ''
+        self.enterContext(patch.object(feedback, 'DEFAULT_RELAY', ''))
         draft = self.draft(anonymous=True)
         self.assertEqual(draft['route'], 'browser')
         _, result = self.post('send', {'id': draft['id']})
