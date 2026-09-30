@@ -1485,10 +1485,12 @@ def _conversation_as_found(room: dict, part: dict) -> bool:
     """Whether ``part``'s conversation is one the hub did not start: a past
     session brought in from the history (the room is ``adopted``) that the hub
     has not since handed to a fresh session of its own (a handover, a PO
-    rotation or switch, each recorded under ``rotations``). Resumed, it keeps
+    rotation or switch, each recorded under ``rotations``), in a seat that was
+    there then (one added to the task later is ``hubStarted``). Resumed, it keeps
     what it names and nothing else; every session the hub starts in the same
     room takes the model chosen in Settings like any other."""
-    return bool(room.get("adopted")) and not part.get("rotations")
+    return (bool(room.get("adopted")) and not part.get("rotations")
+            and not part.get("hubStarted"))
 
 
 def _codex_model_args(model: str, effort: str = "") -> list[str]:
@@ -10829,6 +10831,9 @@ class Handler(BaseHTTPRequestHandler):
                     room_full, part, room_full.get("spec", "") or "", collab=not solo)
                 part["sessionId"] = info["sessionId"]
                 part.update(spec_seen(part, room_full.get("spec", "") or ""))
+                # The hub's own session, also in a room made from a past one
+                # (_conversation_as_found): resumed, it follows Settings.
+                part["hubStarted"] = True
             else:
                 info = self._resume_room_agent_pty(room_full, part, collab=not solo, seed=seed)
                 if info.get("prompted"):
@@ -10857,7 +10862,8 @@ class Handler(BaseHTTPRequestHandler):
             for part in agents_in:
                 if part["identity"] in running:
                     continue
-                keep = {k: part[k] for k in ("ptyId", "cwd", "sessionId", "specSeen") if k in part}
+                keep = {k: part[k] for k in ("ptyId", "cwd", "sessionId", "specSeen", "hubStarted")
+                        if k in part}
                 gone = tuple(k for k in ("lastExit", "fresh", "resumedAt") if k not in part)
                 chatroom.patch_participant(rid, part["identity"], keep, drop=gone)
             if not keep_state:

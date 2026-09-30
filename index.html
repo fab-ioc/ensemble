@@ -6361,9 +6361,13 @@ function renderAgentModels() {
   fill('pref-effort-codex', efforts, x.chosen.effort);
   if (effortNote) {
     // No efforts to offer: the model in effect is one Codex's list does not
-    // tell about (its config names none, or one its picker hides).
-    effortNote.hidden = eff.efforts.length > 0;
-    effortNote.textContent = `The hub cannot tell which efforts ${eff.model || 'Codex’s own default model'} takes. Choose a Codex model from the list to choose its effort.`;
+    // tell about (its config names none, or one its picker hides). An effort
+    // the model in effect does not take is kept for one that does.
+    const kept = x.chosen.effort && eff.efforts.length && !eff.efforts.includes(x.chosen.effort);
+    effortNote.hidden = eff.efforts.length > 0 && !kept;
+    effortNote.textContent = kept
+      ? `${eff.model} does not take “${x.chosen.effort}”, so Codex’s own effort is used with it. The choice is kept for a model that takes it.`
+      : `The hub cannot tell which efforts ${eff.model || 'Codex’s own default model'} takes. Choose a Codex model from the list to choose its effort.`;
   }
   if (note) {
     const pool = (eff.pool || 'main') + ' pool';
@@ -6387,13 +6391,13 @@ function renderAgentModels() {
 let _agentModelSaves = Promise.resolve();
 function setAgentModel(sel) {
   // What was chosen, read now: the list may say something else by its turn.
+  // A save that throws must not be the end of every later one.
   const value = sel.value;
-  _agentModelSaves = _agentModelSaves.then(() => saveAgentModel(sel, value));
+  _agentModelSaves = _agentModelSaves.then(() => saveAgentModel(sel, value)).catch(() => {});
   return _agentModelSaves;
 }
 async function saveAgentModel(sel, value) {
   const kind = sel.dataset.kind, field = sel.dataset.field;
-  const effortWas = ((PREFS && PREFS.agentModels || {}).codex || {}).effort || '';
   try {
     const r = await fetch('/api/settings', {
       method: 'PUT', headers: {'Content-Type': 'application/json'},
@@ -6404,12 +6408,7 @@ async function saveAgentModel(sel, value) {
     PREFS = got;
     const now = (got.agentModels || {})[kind] || {};
     if (now[field] !== value) throw new Error('the hub needs a restart to know this setting');
-    // A model that does not take the effort chosen before: the hub put it back.
-    if (kind === 'codex' && field === 'model' && effortWas && !now.effort) {
-      toast(`Saved. Reasoning effort is back to Codex’s own: ${value || 'its default model'} does not take “${effortWas}”.`, 6000, 'ok');
-    } else {
-      toast('preference saved', 1500, 'ok');
-    }
+    toast('preference saved', 1500, 'ok');
   } catch (e) {
     toast('Not saved: ' + e.message, 6000, 'err');
     // Back on what is saved, unless a later choice is already showing.

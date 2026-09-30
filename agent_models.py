@@ -189,13 +189,19 @@ def check(change, current, models="read") -> tuple[dict | None, str]:
         if found is None:
             return None, f"Codex offers no model “{model}”."
         new["codex"]["model"] = model = found["id"]
+    # An effort is checked where it is named. A change of the model alone keeps
+    # the effort chosen before: it is passed to a model that takes it and left
+    # out for one that does not (launch_choice), so going through the model
+    # list, one model a step, never loses it.
     effort = new["codex"]["effort"]
-    if effort:
+    if effort and "effort" in (change.get("codex") or {}) and (
+            effort != current["codex"]["effort"] or model != current["codex"]["model"]):
         runs_on = model or codex_own()["model"]
         takes = _efforts_of(models, runs_on)
-        named = "effort" in (change.get("codex") or {})
-        model_changed = model != current["codex"]["model"]
-        if effort not in takes and named and (model_changed or effort != current["codex"]["effort"]):
+        if effort not in takes:
+            if models is None:
+                return None, ("Codex's model list cannot be read, so a reasoning effort cannot "
+                              "be chosen.")
             if not takes:
                 # A model the list does not tell about: Codex's own default
                 # when its config names none or one its picker hides, or a
@@ -205,10 +211,6 @@ def check(change, current, models="read") -> tuple[dict | None, str]:
                               "model from the list first.")
             return None, (f"{runs_on} does not take the reasoning effort “{effort}”: it takes "
                           f"{', '.join(takes)}.")
-        if effort not in takes and model_changed:
-            # Only the model was changed and the effort does not carry over to
-            # it: back to Codex's own.
-            new["codex"]["effort"] = ""
     return new, ""
 
 

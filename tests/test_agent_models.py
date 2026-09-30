@@ -31,6 +31,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import agent_models  # noqa: E402
+import chatroom  # noqa: E402
 import dashboard  # noqa: E402
 import rotation  # noqa: E402
 import usage  # noqa: E402
@@ -218,14 +219,40 @@ class TheSetting(_Home):
         # With Codex's own default model, the efforts are that model's.
         self.assertEqual(self.choose(codex={"model": "", "effort": "ultra"})["codex"],
                          {"model": "", "effort": "ultra"})
-        # The model alone changed and the effort does not carry over: Codex's own again.
-        self.assertEqual(self.choose(codex={"model": "gpt-5.5"})["codex"], {"model": "gpt-5.5", "effort": ""})
+        self.assertEqual(self.choose(codex={"model": "gpt-5.5"})["codex"]["model"], "gpt-5.5")
         self.assertEqual(self.choose(codex={"effort": "xhigh"})["codex"]["effort"], "xhigh")
         self.assertEqual(self.choose(codex={"model": "gpt-6-sol"})["codex"], {"model": "gpt-6-sol", "effort": "xhigh"})
         # Both named together, and they do not go together: refused whole.
         self.assertEqual(dashboard.agent_models_error(
             {"agentModels": {"codex": {"model": "gpt-5.5", "effort": "max"}}}),
             "gpt-5.5 does not take the reasoning effort “max”: it takes low, medium, high, xhigh.")
+
+    def test_going_through_the_model_list_never_loses_the_effort(self):
+        """Arrow keys on the model list save one model a step. The effort
+        chosen before is kept past a model that does not take it: left out
+        for that one, passed again to one that does."""
+        self.choose(codex={"model": "gpt-6-sol", "effort": "ultra"})
+        for model, passed, in_effect in (("gpt-6-luna", "", "high"), ("gpt-reserve", "", "high"),
+                                         ("gpt-6-luna", "", "high"), ("gpt-6-sol", "ultra", "ultra")):
+            with self.subTest(model=model):
+                self.assertEqual(self.choose(codex={"model": model})["codex"],
+                                 {"model": model, "effort": "ultra"})
+                self.assertEqual(dashboard.hub_launch_model("codex"), (model, passed))
+                info = dashboard.agent_models_info()["codex"]
+                self.assertEqual((info["chosen"]["effort"], info["effective"]["effort"]),
+                                 ("ultra", in_effect))
+        # Naming it for a model that does not take it is still refused.
+        self.choose(codex={"model": "gpt-6-luna"})
+        self.assertIn("gpt-5.5 does not take the reasoning effort “ultra”", dashboard.agent_models_error(
+            {"agentModels": {"codex": {"model": "gpt-5.5", "effort": "ultra"}}}))
+        self.assertEqual(self.choose(codex={"effort": "max"})["codex"]["effort"], "max")
+        self.assertIn("gpt-6-luna does not take the reasoning effort “ultra”",
+                      dashboard.agent_models_error({"agentModels": {"codex": {"effort": "ultra"}}}))
+        self.choose(codex={"model": "gpt-6-sol", "effort": "ultra"})
+        self.choose(codex={"model": "gpt-6-luna"})
+        # Left as it is while something else changes: never refused.
+        self.assertEqual(self.choose(claude={"model": "opus"})["codex"],
+                         {"model": "gpt-6-luna", "effort": "ultra"})
 
     def test_an_effort_needs_a_model_the_list_tells_about(self):
         """A stock Codex names no model in its config (or names one its picker
@@ -248,6 +275,8 @@ class TheSetting(_Home):
         self.assertIn("cannot be read",
                       dashboard.agent_models_error({"agentModels": {"codex": {"model": "gpt-6-sol"}}}))
         self.assertEqual(self.choose(codex={"model": "gpt-6-sol"})["codex"]["model"], "")
+        self.assertEqual(dashboard.agent_models_error({"agentModels": {"codex": {"effort": "high"}}}),
+                         "Codex's model list cannot be read, so a reasoning effort cannot be chosen.")
         self.assertEqual(self.choose(claude={"model": "haiku"})["claude"]["model"], "haiku")
 
     def test_claude_takes_an_alias_or_a_model_id(self):
@@ -474,6 +503,56 @@ class LaunchArguments(_Home):
                 for argv in self.made:
                     self.assertEqual(self.flags(argv), chosen[kind], argv)
                 self.assertEqual(rotation._model_name(kind, model), chosen[kind]["model"])
+
+    def test_a_seat_added_to_an_adopted_task_is_the_hub_s_own_when_resumed_too(self):
+        """The agents of a past session brought in as a task are edited: the
+        added seat is started by the hub (no rotation says so), and resumed
+        after a Stop or a hub restart it must not fall back to the agent's own
+        default; the conversation that was found stays as it was."""
+        self.choose(claude={"model": "opus"}, codex={"model": "gpt-6-sol", "effort": "high"})
+        for p in (mock.patch.object(chatroom, "ROOMS_DIR", self.tmp / "rooms"),
+                  mock.patch.object(dashboard, "_pty_alive", return_value=False),
+                  mock.patch.object(dashboard.Handler, "_deliver_after_resume")):
+            p.start()
+            self.addCleanup(p.stop)
+        rid = chatroom.create_room("a past session", [
+            {"identity": "claude", "agent": "claude", "model": ""}])["id"]
+        room = chatroom.get_room(rid, public=False)
+        room.update(cwd=str(self.tmp), sharedCwd=True, mode="solo", adopted=True)
+        found = chatroom.participant(room, "claude")
+        found.update(sessionId="0199-found", cwd=str(self.tmp))
+        chatroom.update_room(room)
+        # As chatroom.set_agents adds one: no conversation yet, marked fresh.
+        chatroom.set_agents(rid, [{"identity": "claude", "agent": "claude", "model": ""},
+                                  {"agent": "codex", "model": "", "role": ""},
+                                  {"agent": "claude", "model": "", "role": ""}])
+        room = chatroom.get_room(rid, public=False)
+        added = [p["identity"] for p in chatroom.agent_participants(room) if p.get("fresh")]
+        self.assertEqual(len(added), 2)
+        chosen = {"codex": {"model": "gpt-6-sol", "effort": "high"},
+                  "claude": {"model": "opus", "effort": None}}
+        for run in ("first start", "resumed"):
+            self.made.clear()
+            room = chatroom.get_room(rid, public=False)
+            for part in chatroom.agent_participants(room):
+                part.pop("ptyId", None)                 # the task was stopped
+            started = self.handler._start_or_resume_room_now(room)
+            self.assertEqual(len(started), 3, run)
+            flags = {}
+            for argv in self.made:
+                kind = "codex" if argv[0] == "codex" else "claude"
+                resumes = "resume" in argv or "--resume" in argv
+                flags[(kind, "0199-found" in argv)] = (self.flags(argv), resumes)
+            with self.subTest(run=run):
+                # The conversation as it was found: resumed, nothing passed.
+                self.assertEqual(flags[("claude", True)], ({"model": None, "effort": None}, True))
+                # The added seats: the setting at their first start and at every resume.
+                self.assertEqual(flags[("codex", False)][0], chosen["codex"])
+                self.assertEqual(flags[("claude", False)][0], chosen["claude"])
+                self.assertEqual(flags[("claude", False)][1], run == "resumed")
+        saved = chatroom.get_room(rid, public=False)
+        self.assertEqual({p["identity"]: bool(p.get("hubStarted")) for p in chatroom.agent_participants(saved)},
+                         {"claude": False, **{ident: True for ident in added}})
 
     def test_a_failover_in_an_adopted_po_room_with_nothing_chosen_keeps_the_older_fallback(self):
         room, part = self.room("claude", "room-po", "ProductOwner", adopted=True)

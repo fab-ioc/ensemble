@@ -11,8 +11,10 @@ the Chrome launch are tests/test_settings_themes_page.py's):
   under it read in every theme;
 * choosing a model saves it on the hub at once, and the plan chip's Codex line
   and the pool marked in use follow it; an effort the new model does not take
-  goes back to Codex's own, and says so; a model the agent does not offer is
-  refused, the hub's reason shown and the select put back;
+  is kept for a model that does (Codex's own is used meanwhile, and the row
+  says so), so arrow keys through the model list lose nothing; a model the
+  agent does not offer is refused, the hub's reason shown and the select put
+  back; a list keeps the focus while its choice is saved;
 * the old free-text "Default model" field is gone, and its setting is
   Claude's model.
 
@@ -113,16 +115,32 @@ async function main() {
         tray: usageSourceHtml(USAGE.sources.find(s => s.source === 'codex')).replace(/\\s+/g, ' '),
         chip: document.getElementById('usage-chip-body').textContent.replace(/\\s+/g, ' '),
         alarm: document.getElementById('usage-chip').classList.contains('alarm') })`);
-      // An effort, then a model that does not take it: back to Codex's own, and said.
+      // Arrow keys through the model list, past models that do not take the
+      // effort chosen: it is kept, and in effect again on a model that takes it.
+      await pick('pref-model-codex', 'gpt-6-sol');
+      await pick('pref-effort-codex', 'ultra');
+      await evalIn(`_agentModelSaves.then(() => 0)`);
+      o.stepsKeepEffort = await evalIn(`(async () => { const s = document.getElementById('pref-model-codex'); s.focus(); const seen = [];
+        for (const v of ['gpt-6-luna', 'gpt-reserve', 'gpt-6-luna', 'gpt-6-sol']) { s.value = v; s.dispatchEvent(new Event('change', { bubbles: true }));
+          await _agentModelSaves; seen.push([v, AGENT_MODELS.codex.chosen.effort, AGENT_MODELS.codex.effective.effort, document.getElementById('pref-effort-codex').value]); }
+        const hub = await fetch('/api/settings').then(r => r.json());
+        return { hub: hub.agentModels.codex, seen, toast: document.querySelector('#status .msg').textContent }; })()`);
+      await pick('pref-effort-codex', '');
+      await pick('pref-model-codex', 'gpt-reserve');
+      await evalIn(`_agentModelSaves.then(() => 0)`);
+      // An effort, then a model that does not take it: kept for a model that does, and said.
       await pick('pref-effort-codex', 'max');
       await until(`fetch('/api/settings').then(r => r.json()).then(s => s.agentModels.codex.effort === 'max')`);
       await until(`PREFS.agentModels.codex.effort === 'max'`);
       // ... chosen while the lists are still being written again after the effort.
       await pick('pref-model-codex', 'gpt-5.5');
       await until(`fetch('/api/settings').then(r => r.json()).then(s => s.agentModels.codex.model === 'gpt-5.5')`);
-      await until(`document.getElementById('pref-effort-codex').value === '' && !document.getElementById('pref-model-codex').disabled`);
-      o.effortBack = { saved: await saved(), toast: await toastText(),
-        efforts: await evalIn(`[...document.getElementById('pref-effort-codex').options].map(x => x.value)`) };
+      await until(`!document.getElementById('pref-effort-codex-note').hidden`);
+      o.effortKept = { saved: await saved(), toast: await toastText(),
+        note: await evalIn(`document.getElementById('pref-effort-codex-note').textContent`),
+        shown: await evalIn(`document.getElementById('pref-effort-codex').value`),
+        inEffect: await evalIn(`AGENT_MODELS.codex.effective.effort`),
+        efforts: await evalIn(`[...document.getElementById('pref-effort-codex').options].map(x => [x.value, x.textContent])`) };
       // A model Codex does not offer: refused, the reason shown, the select put back.
       await pick('pref-model-codex', 'gpt-7-nova');
       await until(`document.getElementById('pref-model-codex').value === 'gpt-5.5' && /^Not saved/.test((document.querySelector('#status .msg') || {}).textContent || '')`);
@@ -156,6 +174,12 @@ async function main() {
       o.blip = await evalIn(`(async () => { const real = window.fetch; window.fetch = (u, ...a) => String(u).includes('/api/agent-models') ? Promise.reject(new Error('offline')) : real(u, ...a);
         await loadAgentModels(); window.fetch = real;
         return { kept: !!AGENT_MODELS, disabled: document.getElementById('pref-model-codex').disabled, note: document.getElementById('pref-model-codex-note').textContent }; })()`);
+      o.guard = await evalIn(`(async () => { const real = window.renderAgentModels, s = document.getElementById('pref-model-codex');
+        window.renderAgentModels = () => { throw new Error('boom'); };
+        s.focus(); s.value = 'gpt-6-luna'; s.dispatchEvent(new Event('change', { bubbles: true })); await _agentModelSaves;
+        window.renderAgentModels = real;
+        s.value = 'gpt-6-sol'; s.dispatchEvent(new Event('change', { bubbles: true })); await _agentModelSaves; s.blur();
+        return fetch('/api/settings').then(r => r.json()).then(x => x.agentModels.codex.model); })()`);
       // Back to nothing chosen for the next width.
       await evalIn(`fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agentModels: { claude: { model: '' }, codex: { model: '', effort: '' } } }) }).then(r => r.status)`);
       await c.send('Target.closeTarget', { targetId });
@@ -288,14 +312,33 @@ class AgentModelsInSettings(unittest.TestCase):
                 self.assertNotIn("97%", r["chip"], "the spent main pool is not the one in use")
                 self.assertFalse(r["alarm"])
 
-    def test_an_effort_the_new_model_does_not_take_goes_back_and_says_so(self):
+    def test_an_effort_the_new_model_does_not_take_is_kept_for_one_that_does(self):
         for name, g in self.got.items():
             with self.subTest(name):
-                e = g["effortBack"]
-                self.assertEqual(e["saved"]["codex"], {"model": "gpt-5.5", "effort": ""})
-                self.assertEqual(e["efforts"], ["", "low", "medium", "high", "xhigh"])
-                self.assertIn("Reasoning effort is back to Codex’s own", e["toast"])
-                self.assertIn("gpt-5.5 does not take “max”", e["toast"])
+                e = g["effortKept"]
+                self.assertEqual(e["saved"]["codex"], {"model": "gpt-5.5", "effort": "max"})
+                self.assertEqual(e["shown"], "max")
+                self.assertEqual(e["inEffect"], "high", "Codex's own, while the model does not take it")
+                self.assertEqual([v for v, _ in e["efforts"]], ["", "low", "medium", "high", "xhigh", "max"])
+                self.assertIn(["max", "max (not taken by gpt-5.5)"], e["efforts"])
+                self.assertEqual(e["note"], "gpt-5.5 does not take “max”, so Codex’s own effort is used "
+                                            "with it. The choice is kept for a model that takes it.")
+
+    def test_arrow_keys_through_the_model_list_do_not_drop_the_effort(self):
+        for name, g in self.got.items():
+            with self.subTest(name):
+                k = g["stepsKeepEffort"]
+                self.assertEqual(k["hub"], {"model": "gpt-6-sol", "effort": "ultra"})
+                # Each step: the model saved, the effort chosen, the one in effect, the list's value.
+                self.assertEqual(k["seen"], [["gpt-6-luna", "ultra", "high", "ultra"],
+                                             ["gpt-reserve", "ultra", "high", "ultra"],
+                                             ["gpt-6-luna", "ultra", "high", "ultra"],
+                                             ["gpt-6-sol", "ultra", "ultra", "ultra"]])
+
+    def test_a_save_that_throws_does_not_end_the_later_ones(self):
+        for name, g in self.got.items():
+            with self.subTest(name):
+                self.assertEqual(g["guard"], "gpt-6-sol")
 
     def test_a_model_the_agent_does_not_offer_is_refused_and_the_select_put_back(self):
         for name, g in self.got.items():
@@ -318,7 +361,7 @@ class AgentModelsInSettings(unittest.TestCase):
         for name, g in self.got.items():
             with self.subTest(name):
                 said = g["said"]
-                self.assertEqual(said["usual"]["effort"], "")
+                self.assertIn("The choice is kept for a model that takes it.", said["usual"]["effort"])
                 self.assertEqual(said["unreadableChosen"]["codex"],
                                  "Codex’s model list cannot be read here, so a model cannot be chosen. "
                                  "gpt-5.5, chosen before, is still passed as it is.")
