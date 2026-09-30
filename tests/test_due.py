@@ -146,6 +146,7 @@ class _World(unittest.TestCase):
             mock.patch.object(rotation, "is_rotating", side_effect=lambda rid, ident: self.rotating),
             mock.patch.object(rotation, "awaiting_handover", side_effect=lambda rid, ident: self.asked),
             mock.patch.object(due, "_log"),
+            mock.patch.object(due.po_usage, "head", return_value="usage unknown"),
         ]
         for p in patches:
             p.start()
@@ -175,7 +176,7 @@ class WakeTests(_World):
         out = due.tick(at(15, 40) + 20)
         self.assertEqual([(o["line"], o["how"]) for o in out], [("- 15:40 — the paper-1 hand test", "typed")])
         self.assertEqual(self.sess.typed, [
-            "[due] 15:40 — the paper-1 hand test (from PO-HANDOVER.md). This is due and you are "
+            "[due] usage unknown | 15:40 — the paper-1 hand test (from PO-HANDOVER.md). This is due and you are "
             "idle: do it now, or tell sam why not."])
         self.assertEqual(dashboard.hub_input_kind(self.sess.typed[0]), {"kind": "due"})
         # The next looks, and the other item at its own time.
@@ -184,7 +185,7 @@ class WakeTests(_World):
         self.assertEqual(len(self.sess.typed), 1)
         due.tick(at(20, 31))
         self.assertEqual(len(self.sess.typed), 2)
-        self.assertTrue(self.sess.typed[1].startswith("[due] 20:30 — read the evening report (from"))
+        self.assertTrue(self.sess.typed[1].startswith("[due] usage unknown | 20:30 — read the evening report (from"))
         self.assertEqual(self.notices, [])
 
     def test_a_busy_po_is_not_woken_until_it_is_idle(self):
@@ -226,10 +227,10 @@ class WakeTests(_World):
         out = due.tick(at(15, 50))
         self.assertEqual([o["how"] for o in out], ["typed", "typed"])
         self.assertEqual(self.sess.typed, [
-            "[due] 15:40 — the test; 15:45 — chase the broker (from PO-HANDOVER.md). These are due "
+            "[due] usage unknown | 15:40 — the test; 15:45 — chase the broker (from PO-HANDOVER.md). These are due "
             "and you are idle: do them now, or tell sam why not."])
         due.tick(at(8, 31, day=19))
-        self.assertTrue(self.sess.typed[1].startswith("[due] 08:30 — tomorrow's (from"))
+        self.assertTrue(self.sess.typed[1].startswith("[due] usage unknown | 08:30 — tomorrow's (from"))
 
     def test_more_than_one_line_holds_the_rest_stay_due(self):
         # Review 1: six long items came to 901 characters with the last two cut

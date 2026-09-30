@@ -269,7 +269,9 @@ class RestartRoutes(_Hub):
         self.hub_stops()
         observed = []
         def brief(*args, **kw):
-            observed.append(d._room_is_live(d.chatroom.get_room(task, public=False)))
+            # Resume workers persist metadata concurrently with this snapshot.
+            with d.chatroom._LOCK:
+                observed.append(d._room_is_live(d.chatroom.get_room(task, public=False)))
             return '## Board now (from the hub, test)\n- task working'
         h = self.handler()
         with mock.patch.object(board_brief, 'build', side_effect=brief):

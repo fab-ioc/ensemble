@@ -1615,7 +1615,7 @@ def first_prompt(project: dict, room: dict, old_sid: str, tokens,
                    f"had grown to {_k(tokens)} tokens, and every wake re-sends the whole "
                    f"conversation, so the hub started you fresh. The old conversation is "
                    f"kept on disk (session {old_sid}); do not load it.")
-    parts = [opening]
+    parts = [opening, _d.po_usage.head()]
     # The spec was the old session's first prompt: one-shot steps it has already
     # carried out. Given as instructions it would be run again, so it is only
     # background here, and the handover — read last, and first — wins.

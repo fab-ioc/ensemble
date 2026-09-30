@@ -68,6 +68,17 @@ _PRIORITY_DOC = ("Priority: \"highest\", \"high\", \"medium\", \"low\" or \"lowe
                  "(a number 1-5 also works, 1 = highest).")
 
 
+_GATE_FIELDS = {
+    "after": {"type": "array", "description": "Start after every same-project task meets its condition. Empty clears gates.",
+              "items": {"type": "object", "properties": {
+                  "task": {"type": "string", "description": "Task reference, e.g. #140."},
+                  "when": {"type": "string", "enum": ["merged", "approved"], "default": "merged"}},
+                  "required": ["task"]}},
+    "onReady": {"type": "string", "enum": ["start", "tell"], "default": "start",
+                "description": "Start the draft or tell the PO once every gate is satisfied."},
+}
+
+
 def _priority_spec(tail: str) -> dict:
     # A plain string type — every other schema here is scalar, and the server
     # takes "2" and 2 alike, so nothing is lost by not declaring a union.
@@ -346,6 +357,7 @@ _ALL_TOOLS = [
                                              "default in a documents project), copy (a copy of the code folder), "
                                              "worktree (a git worktree on its own branch)."},
                 "priority": _priority_spec("Defaults to medium."),
+                **_GATE_FIELDS,
                 "start": {"type": "boolean",
                           "description": "Launch the agents now (default false = leave as a draft)."},
             },
@@ -379,6 +391,7 @@ _ALL_TOOLS = [
                 "title": {"type": "string", "description": "New title (omit to keep)."},
                 "spec": {"type": "string", "description": "New full spec (omit to keep). Replaces the old one."},
                 "priority": _priority_spec("Omit to keep the current one."),
+                **_GATE_FIELDS,
                 "workflow": {"type": "string",
                              "enum": list(WORKFLOW_NAMES),
                              "description": "Board column (omit to keep). backlog | todo | "
@@ -851,6 +864,7 @@ def _row(room: dict, projects: dict, links: dict, labels: dict,
         "id": room["id"],
         "title": _title(room, labels),
         "priority": prio,
+        **_d.board.view(room),
         "status": _status(room),
         "workflow": _d.workflow_of(room),
         "attention": _attention_view((attn or {}).get(room["id"])),
@@ -869,6 +883,7 @@ def _row(room: dict, projects: dict, links: dict, labels: dict,
         **po_view,
         "title": _title(room, labels),
         "priority": prio,
+        **_d.board.view(room),
         "priorityName": _d.PRIORITY_NAMES[prio],
         "status": _status(room),
         "workflow": _d.workflow_of(room),
@@ -1338,10 +1353,20 @@ def _create_task(ctx, args, handler):
         agent_list = [{"agent": ctx["part"].get("agent") or "claude"}]
     workspace = (args.get("workspace") or "").strip()
     priority = _priority(args.get("priority"))
+    try:
+        gates = _d.board.validate(args.get("after", []), args.get("onReady", "start"), pid)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+    if gates and args.get("start") is True:
+        raise ToolError("a gated task must be created as a draft; it acts on the next tick")
     ok, room_full, err = _d.create_task(title, spec, pid, agent_list, workspace,
                                         priority)
     if not ok:
         raise ToolError(err)
+    room_full.update(after=gates, onReady=args.get("onReady", "start"), gateConfiguredAt=time.time())
+    _d.chatroom.patch_room(room_full["id"], after=gates, onReady=room_full["onReady"],
+                           gateConfiguredAt=room_full["gateConfiguredAt"])
+    _d._patch_task_json(room_full.get("taskDir", ""), after=gates, onReady=room_full["onReady"])
     started = False
     if args.get("start") is True:
         try:
@@ -1352,6 +1377,7 @@ def _create_task(ctx, args, handler):
     allocation = room_full.get("allocation") if started else None
     return {"ok": True, "no": room_full.get("no") or None, "taskId": room_full["id"], "title": room_full["title"],
             "status": "running" if started else "draft",
+            **_d.board.view(room_full),
             "priority": _d.PRIORITY_NAMES[_d.priority_of(room_full)],
             "projectId": pid, "taskDir": room_full.get("taskDir", ""),
             "cwd": room_full.get("cwd", ""),
@@ -1367,7 +1393,7 @@ def _update_task(ctx, args, handler):
     _check_write_scope(ctx, _project_of_room(room), "update_task")
     if not is_admin_caller(ctx["room"], ctx["identity"]):
         changes_other_than_workflow = any(args.get(k) is not None
-                                          for k in ("title", "spec", "priority", "agents"))
+                                          for k in ("title", "spec", "priority", "agents", "after", "onReady"))
         if (room["id"] != ctx["room"]["id"] or changes_other_than_workflow
                 or _d.normalize_workflow(args.get("workflow")) != "inreview"):
             raise ToolError(
@@ -1379,8 +1405,20 @@ def _update_task(ctx, args, handler):
     workflow = _workflow(args.get("workflow"), ctx)
     agent_list = args.get("agents")
     if (title is None and spec is None and priority is None
-            and workflow is None and agent_list is None):
+            and workflow is None and agent_list is None and "after" not in args and "onReady" not in args):
         raise ToolError("give a new title, spec, priority, workflow and/or agents")
+    gate_fields = {}
+    if "after" in args or "onReady" in args:
+        try:
+            gates = _d.board.validate(args.get("after", room.get("after", [])),
+                                     args.get("onReady", room.get("onReady", "start")),
+                                     _project_of_room(room), room["id"])
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+        gate_fields = {"after": gates, "onReady": args.get("onReady", room.get("onReady", "start"))}
+        if gates != room.get("after", []) or gate_fields["onReady"] != room.get("onReady", "start"):
+            gate_fields["gateAction"] = None
+            gate_fields["gateConfiguredAt"] = time.time()
     notes = []
     room2 = room
     if title is not None or spec is not None or priority is not None or workflow is not None:
@@ -1405,7 +1443,11 @@ def _update_task(ctx, args, handler):
                                + (f", {a['role']}" if a["role"] else "") + ")"
                                for a in _agents_view(room2))
                      + f" — the task is now {room2.get('mode', '')}")
+    if gate_fields:
+        room2 = _d.chatroom.patch_room(room["id"], **gate_fields) or room2
+        _d._patch_task_json(room2.get("taskDir", ""), **gate_fields)
     return {"ok": True, "taskId": room2["id"], "title": _title(room2),
+            **_d.board.view(room2),
             "priority": _d.PRIORITY_NAMES[_d.priority_of(room2)],
             "status": _status(room2), "agents": _agents_view(room2),
             "mode": room2.get("mode", ""), "note": "; ".join(notes)}

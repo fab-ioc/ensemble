@@ -442,7 +442,7 @@ class RotateOwnerTests(_Base):
 
 
 class PoRotationUnchangedTests(_Base):
-    def test_po_rotation_never_reads_the_allowance(self):
+    def test_po_rotation_reads_context_without_changing_kind(self):
         launcher = _FakeLauncher()
         created = chatroom.create_room(
             "PO", [{"identity": "claude", "agent": "claude", "model": "opus",
@@ -465,10 +465,11 @@ class PoRotationUnchangedTests(_Base):
                 mock.patch.object(dashboard, "roadmap_path",
                                   return_value=Path(self.temp.name) / "ROADMAP.md"), \
                 mock.patch.object(dashboard.usage, "snapshot",
-                                  side_effect=AssertionError("PO read the allowance")):
+                                  return_value={"checkedAt": 0}) as snapshot:
             out = rotation._rotate_marked(
                 s, {"tokens": 300_000}, lambda r, quiet=False, **x: {"result": r, **x},
                 True, True, (room["id"], "claude"), {"stopped": False})
+        snapshot.assert_called()  # the board brief also reads this cache
         part = chatroom.participant(chatroom.get_room(room["id"], public=False), "claude")
         self.assertEqual((part["agent"], part["model"]), ("claude", "opus"))
         self.assertEqual([l["agent"] for l in launcher.launched], ["claude"])

@@ -71,6 +71,7 @@ import time
 from pathlib import Path
 
 import due
+import board
 import points
 import po_messages
 import stall
@@ -587,8 +588,7 @@ def _deliver(project: dict, room: dict, ident: str, text: str, how: str,
     part = _d.chatroom.participant(room, ident) or {}
     sess = _d.ptyrun.get(part.get("ptyId") or "")
     if sess and sess.alive():
-        sess.send_line(wake)
-        return True
+        return _d._type_input(sess, wake)
     return False
 
 
@@ -700,6 +700,10 @@ def start_scheduler() -> None:
                 _tick()
             except Exception as e:          # keep the loop alive
                 _log(f"scheduler error: {str(e)[:200]}")
+            try:
+                board.maybe_tick()
+            except Exception as e:
+                _log(f"board check error: {str(e)[:200]}")
             # What a handover says is due at a time (due.py) rides this loop,
             # once a minute whatever a project's interval: a digest that is
             # off, or has nothing new, must not keep a promise from its PO.

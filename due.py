@@ -52,6 +52,8 @@ import json
 import re
 import threading
 import time
+
+import po_usage
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -300,9 +302,11 @@ def wake_line(subj: dict, items: list[dict], now: float) -> tuple[str, list[dict
     tell = (f"tell {_d.operator_name()} why not" if subj["kind"] == "po"
             else "report why not")
 
+    usage_head = po_usage.head() + " | " if subj["kind"] == "po" else ""
+
     def line(told: list[dict]) -> str:
         one = len(told) == 1
-        return (f"{PREFIX}{_listed(told, now)} (from {subj['file']}). "
+        return (f"{PREFIX}{usage_head}{_listed(told, now)} (from {subj['file']}). "
                 f"{'This is' if one else 'These are'} due and you are idle: do "
                 f"{'it' if one else 'them'} now, or {tell}.")
 

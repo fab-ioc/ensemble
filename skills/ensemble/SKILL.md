@@ -420,6 +420,13 @@ in progress until you deliver).
 
 ## Running a project as its PO
 
+Gates belong in `after` (for example `[{"task":"#140","when":"merged"}]`),
+never only in handover prose; `onReady` is `start` by default, or `tell`.
+A `[board]` line means start the ready work or answer why not. Reading or
+editing engine code, builds and tests are task work; in a code project the
+PO's own hands are for merging, restarting and deploying only. Trust the
+live usage head over any figure in the handover.
+
 The PO is one long-lived session per project (`poRoomId` in the project's
 `project.json`). The product owner talks mainly to it, tasks report to it, and
 it reports to the product owner. What keeps that cheap and reliable:
