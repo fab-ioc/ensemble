@@ -61,6 +61,23 @@ def valid_relay(value):
     return u.scheme == "https" and bool(u.hostname) and not (u.username or u.password or u.query or u.fragment)
 
 
+# Any key that contains one of these words is treated as a secret, wherever the
+# word sits in the key (aws_secret_access_key, passwd, client_secret_id...).
+SECRET_KEY = re.compile(r"token|secret|passw|pwd|passphrase|api[_-]?key|private[_-]?key|access[_-]?key|credential|cookie|session", re.I)
+
+
+def _unquote_all(text):
+    # Double- or triple-encoded text must not hide a key from the field scan.
+    # Decode one level at a time and redact after each, so a value is removed
+    # whole before a deeper level can turn %22/%27 in it into delimiters.
+    for _ in range(5):
+        decoded = urllib.parse.unquote(text)
+        if decoded == text:
+            break
+        text = _redact_secret_fields(decoded)
+    return text
+
+
 def _redact_secret_fields(text):
     # Match complete values before percent-decoding can turn %22/%27 inside a
     # quoted value into apparent delimiters. Decode keys separately so an
@@ -79,7 +96,7 @@ def _redact_secret_fields(text):
         if field.start() < cursor:
             continue  # This field was inside a value already removed whole.
         name = urllib.parse.unquote(field.group("key").strip("\"'"))
-        if not re.search(r"(?:token|secret|password|api[_-]?key)$", name, re.I):
+        if not SECRET_KEY.search(name):
             continue
         scalar = value_pattern.match(text, field.end())
         if scalar:
@@ -96,7 +113,9 @@ def scrub(text, identities=()):
     remain essential. Known local identity values are removed case-insensitively.
     """
     text = _redact_secret_fields(str(text))
-    text = _redact_secret_fields(urllib.parse.unquote(text))
+    text = _unquote_all(text)
+    text = re.sub(r"-----BEGIN[^\n]*?-----[\s\S]*?(?:-----END[^\n]*?-----|$)", "[secret removed]", text)
+    text = re.sub(r"\b(?:AKIA|ASIA)[0-9A-Z]{12,}\b|\bxox[abposr]-[\w-]+", "[token removed]", text)
     text = re.sub(r"(?i)[a-z]:[\\/]+users[\\/]+[^\\/\r\n]+[\\/]", "~/", text)
     text = re.sub(r"(?i)/(?:Users|home)/[^/\r\n]+/", "~/", text)
     text = re.sub(r"(?i)[a-z]:[\\/]+users[\\/]+[^\\/\s]+", "~", text)

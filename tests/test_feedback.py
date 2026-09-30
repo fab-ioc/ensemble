@@ -117,6 +117,19 @@ class FeedbackEndpoint(unittest.TestCase):
                     self.assertNotIn('prefix', draft[field])
                     self.assertIn('[secret removed]', draft[field])
 
+    def test_secret_key_variants_encodings_and_formats(self):
+        examples = ['aws_secret_access_key = opaque-tail', 'passwd: opaque-tail', 'pwd=opaque-tail',
+                    'Cookie: session=opaque-tail', 'CLIENT_SECRET_ID=opaque-tail',
+                    'password%253Dopaque-tail', 'AWS_ACCESS_KEY_ID=AKIAOPAQUETAIL1234',
+                    'bot xoxb-111-opaque-tail', 'key:\n-----BEGIN PRIVATE KEY-----\nopaque-tail\n-----END PRIVATE KEY-----',
+                    'AKIAOPAQUETAIL1234 in prose']
+        for text in examples:
+            with self.subTest(text=text):
+                draft = self.draft(anonymous=True, title=text.replace('\n', ' '), description=text)
+                for field in ['title', 'body']:
+                    self.assertNotIn('opaque-tail', draft[field].lower())
+                    self.assertNotIn('AKIAOPAQUE', draft[field])
+
     def test_nested_credentials_removed_from_preview_and_relay_payload(self):
         examples = [
             '{"auth":{"access_token":"opaque-private-value"}}',
