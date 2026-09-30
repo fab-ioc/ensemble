@@ -5324,15 +5324,112 @@ def _within(child: str, parent: str) -> bool:
 
 
 def workspace_access_ok(path: str) -> bool:
-    """A path is browsable only if it lives inside a registered project or under
-    the collaboration-session root (~/cs). Keeps the read-only file APIs from
-    wandering the whole disk even though the hub is single-user + token-gated."""
+    """A path is browsable only if it lives inside a registered project, under
+    the collaboration-session root (~/cs), or in the folder of a session the
+    task list shows (session_folder_ok: a task in no project, a past terminal
+    conversation). Keeps the read-only file APIs from wandering the whole disk
+    even though the hub is single-user + token-gated."""
     if not path:
         return False
     roots = [p["path"] for p in load_projects()]
     roots.append(str(CS_ROOT))
     roots.append(str(PROJECTS_ROOT))   # every project home and task folder
-    return any(_within(path, r) for r in roots)
+    return any(_within(path, r) for r in roots) or session_folder_ok(path)
+
+
+# The folders of the sessions the task list shows: a task in no project that
+# runs where its conversation was started, a past terminal conversation. Per
+# listing size, its rows' folders as realpath and normcase leave them; an entry
+# is rebound whole by that size's next load, so a reader never sees one half
+# made and a folder whose session is gone stops being read with that load.
+_SESSION_FOLDERS: dict[int, frozenset[str]] = {}
+# Only the sizes the hub's own page keeps loading are noted: its task list
+# (index.html's refresh, /api/sessions?n=300) and the project grouping
+# (build_projects, 500). A size asked for once (a script's ?n=5, the default
+# 200) would never be loaded again, and what it noted would stay readable
+# until the hub restarts.
+SESSION_FOLDER_SIZES = frozenset({300, 500})
+
+
+def _session_folder_real(folder: str) -> str | None:
+    """A session's folder as the file APIs compare it; "" when it is too wide
+    to be one session's own (the home folder or a folder above it, or a whole
+    drive: a conversation started there would open everything); None when it
+    names no folder the hub can stand behind (a relative one is not resolved
+    against the hub's own folder)."""
+    try:
+        given = os.path.expanduser(folder)
+        if not os.path.isabs(given):
+            return None
+        f = os.path.normcase(os.path.realpath(given))
+        home = os.path.normcase(os.path.realpath(str(HOME)))
+    except (OSError, ValueError):      # ValueError: a NUL in the path, on a Mac
+        return None
+    if not os.path.isabs(f):
+        return None
+    if os.path.dirname(f) == f or home == f or home.startswith(f.rstrip(os.sep) + os.sep):
+        return ""
+    return f
+
+
+# folder as a row gives it -> (when it was resolved, _session_folder_real of it).
+# The task list is loaded every couple of seconds and resolving a real path
+# costs a system call or more per folder (0.13 ms each on Windows, 660 folders
+# on the owner's hub), so each is resolved again only once a minute.
+_SESSION_FOLDER_REAL: dict[str, tuple[float, str | None]] = {}
+_SESSION_FOLDER_TTL = 60.0
+_SESSION_FOLDER_KEEP = 5000
+
+
+def _session_folder_known(folder: str) -> str | None:
+    now = time.monotonic()
+    hit = _SESSION_FOLDER_REAL.get(folder)
+    if hit and now - hit[0] < _SESSION_FOLDER_TTL:
+        return hit[1]
+    real = _session_folder_real(folder)
+    if len(_SESSION_FOLDER_REAL) >= _SESSION_FOLDER_KEEP:
+        _SESSION_FOLDER_REAL.clear()
+    _SESSION_FOLDER_REAL[folder] = (now, real)
+    return real
+
+
+def _note_session_folders(n: int, rows: list[dict]) -> None:
+    """After a sessions load: remember its rows' folders for the file APIs
+    (for the sizes in SESSION_FOLDER_SIZES), and mark the rows whose folder is
+    too wide to show (``folderWide``), so the page says why it shows no files
+    instead of asking and being refused."""
+    seen: dict[str, str | None] = {}
+    for r in rows:
+        own = r.get("taskDir") or r.get("cwd") or ""
+        for folder in (r.get("taskDir") or "", r.get("cwd") or ""):
+            if isinstance(folder, str) and folder and folder not in seen:
+                seen[folder] = _session_folder_known(folder)
+        if isinstance(own, str) and own and seen.get(own) == "":
+            r["folderWide"] = True
+    if n in SESSION_FOLDER_SIZES:
+        _SESSION_FOLDERS[n] = frozenset(f for f in seen.values() if f)
+
+
+def session_folder_ok(path: str) -> bool:
+    """Whether ``path`` is, or is inside, the folder of a session the task list
+    shows. Its real path is what counts, so ``..`` and a link cannot walk out.
+    Nothing is until the list has been loaded once (any open page does that):
+    the check itself never loads it, so a refused path costs no listing."""
+    folders = list(_SESSION_FOLDERS.values())
+    if not any(folders):
+        return False
+    try:
+        c = os.path.normcase(os.path.realpath(path))
+    except (OSError, ValueError):
+        return False
+    return any(c == f or c.startswith(f + os.sep) for fs in folders for f in fs)
+
+
+def _git_root_refused(root: str) -> bool:
+    """Whether a repository's root lies outside what the file APIs may read:
+    a path inside a session's folder (or a project registered on part of a
+    checkout) does not open the whole repository it sits in."""
+    return bool(root) and not workspace_access_ok(root)
 
 
 _TEXT_MAX = 512 * 1024   # 512 KB read cap for the file viewer
@@ -5491,6 +5588,8 @@ def git_status(path: str, branch: bool = False) -> tuple[int, dict]:
     if not path or not workspace_access_ok(path):
         return 403, {"error": "path_not_allowed"}
     root = git_root(path)
+    if _git_root_refused(root):
+        return 403, {"error": "path_not_allowed"}
     if not root or not path_is_git(root):
         return 200, {"root": root, "isGit": False, "files": []}
     if branch:
@@ -5548,6 +5647,10 @@ def git_roots(path: str, depth: int = 3) -> tuple[int, dict]:
     # The projects root is the backup repo, not code: skip it and look inside.
     if enclosing and path_is_git(enclosing) and not _within(str(PROJECTS_ROOT), enclosing):
         name = os.path.basename(enclosing.rstrip("\\/")) or enclosing
+        if _git_root_refused(enclosing):
+            # Part of a checkout the file APIs do not read as a whole: its
+            # changes are not this folder's to show, and the page says so.
+            return 200, {"roots": [], "partOf": name}
         return 200, {"roots": [{"path": enclosing, "name": name}]}
     found: list[dict] = []
 
@@ -5652,6 +5755,8 @@ def git_log(path: str, n: int = 30, project_id: str = "") -> tuple[int, dict]:
     if not path or not workspace_access_ok(path):
         return 403, {"error": "path_not_allowed"}
     root = git_root(path)
+    if _git_root_refused(root):
+        return 403, {"error": "path_not_allowed"}
     if not root or not path_is_git(root):
         return 200, {"root": root, "isGit": False, "commits": []}
     n = max(1, min(GIT_LOG_MAX, n))
@@ -5691,6 +5796,8 @@ def git_diff(path: str, file: str, branch: bool = False, commit: str = "") -> tu
     if not path or not workspace_access_ok(path):
         return 403, {"error": "path_not_allowed"}
     root = git_root(path)
+    if _git_root_refused(root):
+        return 403, {"error": "path_not_allowed"}
     if not root or not path_is_git(root):
         return 200, {"root": root, "isGit": False, "diff": ""}
     if commit:
@@ -7916,6 +8023,11 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
             r["makePo"] = make_po_answer(make_po_verdict(po_facts.of_row(r), None, now))
     except Exception as e:      # noqa: BLE001 — the list without it; the request checks again
         print(f"[make-po] verdicts not listed: {e!r}", flush=True)
+    # The file APIs may show what is in these rows' folders (workspace_access_ok).
+    try:
+        _note_session_folders(n, out)
+    except Exception as e:      # noqa: BLE001 — the list without it: those folders are not read
+        print(f"[files] session folders not noted: {e!r}", flush=True)
     out.sort(key=_key)
     return out
 

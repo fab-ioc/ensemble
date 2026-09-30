@@ -1561,7 +1561,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .wse .nm { overflow: hidden; text-overflow: ellipsis; }
   .wse.dir .nm { font-weight: 600; }
   .wse .sz { margin-left: auto; padding-left: 8px; color: var(--fg-muted); font-size: 10.5px; font-variant-numeric: tabular-nums; }
-  .wse.none { color: var(--fg-muted); cursor: default; }
+  .wse.none { color: var(--fg-muted); cursor: default; white-space: normal; }   /* a sentence: it wraps in a narrow tree */
   .wse.none:hover { background: transparent; }
   .wsp-view { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
   /* Open files, as tabs above the viewer. A row that does not fit scrolls
@@ -1579,6 +1579,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .wst-x { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px;
     border-radius: var(--r-100); color: var(--fg-muted); font-size: var(--fs-300); line-height: 1; }
   .wst-x:hover { background: var(--pressed); color: var(--fg); }
+  /* The tab in front, to a window of its own: the same box as its close. */
+  .wst-win { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px;
+    border-radius: var(--r-100); color: var(--fg-muted); }
+  .wst-win:hover { background: var(--pressed); color: var(--fg); }
   .wst[hidden], .wsp-bar[hidden], .wsp-own[hidden] { display: none; }
   /* The switches between the tree and the file: a phone's only (MOBILE_MQ). */
   .wsp-btn.wsp-files, .wsp-btn.wsp-tofile { display: none; }
@@ -3143,6 +3147,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .wst { scrollbar-width: none; }
     .wst-tab { height: auto; min-height: var(--touch-min); padding-right: 0; }
     .wst-x { width: var(--touch-min); height: var(--touch-min); }
+    .wst-win { display: none; }   /* a phone has no second window: the path bar's link opens a browser tab */
     .chc-more, .chc-head a.tno { display: inline-flex; align-items: center; min-height: var(--touch-min); min-width: var(--touch-min); }
     /* The path above the file: every crumb and button finger-sized; the path
        is cut from the left and swipes sideways within itself. */
@@ -4966,9 +4971,10 @@ function renderDetail() {
     if (wsRoots({ kind: 'task', sid }).length) {
       ws.innerHTML = wsPanelHtml();
       wsMount(ws.querySelector('.wsp'), { kind: 'task', sid });
-    } else if (!ws._empty) {
-      ws._empty = true;
-      ws.innerHTML = issueEmpty(nounText('This task has no folder of its own, and no {project} folder to show instead.'));
+    } else {
+      // No folder to show: the pane says why, in one line.
+      const why = issueEmpty(wsNoFolderWhy(r));
+      if (ws._empty !== why) { ws._empty = why; ws.innerHTML = why; }
     }
   }
 
@@ -6792,8 +6798,34 @@ function wsTaskDirsOf(pj) {
   });
   return out;
 }
+// A row in no project (the Unassigned group: a task made without one, a past
+// terminal conversation) has one folder of its own: its task folder, else the
+// folder it ran in. None when the hub marks that folder too wide to show (a
+// home folder, a whole drive: folderWide).
+function wsLoose(r) {
+  const pj = r ? wsProjectForRow(r) : null;
+  return !!pj && !pj.registered;
+}
+function wsLooseFolder(r) { return r.folderWide ? '' : (r.taskDir || r.cwd || ''); }
+// Why a task's Workspace has nothing to show, in one line; 'Loading…' until the
+// projects say which one the task is in.
+function wsNoFolderWhy(r) {
+  if (!wsLoose(r)) {
+    return wsProjectForRow(r) || !ALL_ROWS.includes(r)
+      ? nounText('This task has no folder of its own, and no {project} folder to show instead.') : 'Loading…';
+  }
+  const own = r.taskDir || r.cwd || '', what = r.headless ? 'task' : 'conversation';
+  if (own && r.folderWide) return wsWideWhy(r, 'files');
+  return `No files to show: this ${what} has no folder.`;
+}
+// The line for a folder too wide to show, in the Workspace ('files') and in
+// Changes ('changes'): the same reason in both.
+function wsWideWhy(r, things) {
+  return `No ${things} to show: this ${r.headless ? 'task' : 'conversation'} ran in ${tildeify(r.taskDir || r.cwd || '')}, a home folder or a whole drive, which is too wide to show as its own folder.`;
+}
 // The roots this context is allowed to see, in the order they are shown.
-//   task    — this task's folder, then the project's, with sibling tasks hidden
+//   task    — this task's folder, then the project's, with sibling tasks hidden;
+//             in no project, the one folder it has (wsLooseFolder)
 //   project — the project folder, plus its home when that is a separate folder
 function wsRoots(ctx) {
   const out = [];
@@ -6803,6 +6835,10 @@ function wsRoots(ctx) {
   if (ctx.kind === 'task') {
     const r = ALL_ROWS.find(x => x.sessionId === ctx.sid || x.roomId === ctx.sid);
     if (!r) return out;
+    if (wsLoose(r)) {
+      push(wsLooseFolder(r), r.headless ? 'This task' : 'This conversation', 'task');
+      return out;
+    }
     push(r.taskDir || wsTaskFolder(r), 'This task', 'task');
     const pj = wsProjectForRow(r);
     if (pj && pj.path) push(pj.path, pj.name || noun('one', 'title'), 'project');
@@ -7406,6 +7442,8 @@ const WS_EMPTY = 'Open a file from the tree. Each file opens in a tab of its own
 const WS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '');
 const WS_RECENT_KEY = WS_MAC ? '⌥R' : 'Alt+R';
 const WS_ICON_TREE = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="5"/><circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/><path d="M8 1v2.5M8 12.5V15M1 8h2.5M12.5 8H15"/></svg>';
+// A window of its own: the monitor the dock's Window mode shows.
+const WS_ICON_WIN = '<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1.5" y="1.5" width="9" height="6.5"/><path d="M4 10.5h4M6 8v2.5"/></svg>';
 function wsPanelHtml(o) {
   // A code project's Workspace has the "Show task folders" switch above its
   // tree (a documents project's is in its Files panel's header).
@@ -7455,7 +7493,14 @@ function wsRowsHtml(v, dir) {
     const root = v.roots.find(r => r.kind === 'project');
     if (root && wsSame(root.path, dir)) return '<div class="wse none">loading…</div>';
   }
-  if (c.error) return `<div class="wse none">can't read: ${esc(c.error)}</div>`;
+  // A task's own folder, gone or empty, says so in words: it is the whole
+  // answer to "where are its files".
+  const own = v.roots.find(r => r.kind === 'task' && wsSame(r.path, dir));
+  const whose = own ? own.label.toLowerCase() + "'s folder" : '';
+  if (c.error) return own && /\bnot_found\b/.test(c.error)
+    ? `<div class="wse none">No files to show: ${esc(whose)} is no longer on the hub.</div>`
+    : `<div class="wse none">can't read: ${esc(c.error)}</div>`;
+  if (own && !c.entries.length) return `<div class="wse none">No files in ${esc(whose)} yet.</div>`;
   const hide = wsHidden(v, dir);
   const ents = hide
     ? c.entries.filter(e => !((hide.dirs && e.type === 'dir') || (hide.docs && docsApart(e, hide.tasks))
@@ -7568,7 +7613,11 @@ function wsPaintTabs(v) {
     const on = wsSame(t.path, v.sel), name = wsTabName(t.path), gone = t.missing && !wsIsRoadmap(v, t.path);
     return `<div class="wst-tab${on ? ' on' : ''}${gone ? ' gone' : ''}" role="tab" id="${v.uid}-${i}" aria-selected="${on}" tabindex="${on ? 0 : -1}"`
       + ` data-path="${esc(t.path)}" title="${esc(tildeify(t.path) + (gone ? ' (no longer exists)' : ''))}" aria-label="${esc(name + (gone ? ', no longer exists' : ''))}">`
-      + `<span class="wst-nm">${esc(name)}</span><span class="wst-x" aria-hidden="true" title="Close">×</span></div>`;
+      + `<span class="wst-nm">${esc(name)}</span>`
+      // The tab in front can go to a window of its own (not a phone's: CSS).
+      // (A roadmap not written yet is no file to open.)
+      + (on && !t.missing ? `<span class="wst-win" aria-hidden="true" title="Open in new window (Shift+Enter)">${WS_ICON_WIN}</span>` : '')
+      + `<span class="wst-x" aria-hidden="true" title="Close">×</span></div>`;
   }).join('');
   strip.hidden = !v.tabs.length;
   if (strip._sig === html) return;
@@ -7820,6 +7869,88 @@ function wsCloseTab(v, path) {
   wsTabClose(v, path);
   wsShowTab(v, v.sel);
 }
+// ---- A file in a window of its own (the CEO's P103) -------------------------
+// The file view's page in a sized window without the browser's bars, as the
+// dock's pop-outs open, so it can sit on another screen while the work goes on
+// here. It opens as its tab was left: the same view, Wrap, marked line and
+// scroll (the theme is the viewer's own, the hub's). One window per file:
+// asked for again, that window comes forward as the tab is now; other files
+// get windows of their own. From the tab in front (its button, or Shift+Enter
+// on the tab) and from a file row's menu. Not on a phone: a window there is a
+// browser tab, which the path bar's link already opens.
+const WS_WIN = { w: 960, h: 820 };
+let WS_WIN_N = 0;
+function wsWinName(path) {
+  let h = 0;
+  for (const c of wsNorm(path)) h = (h * 31 + c.charCodeAt(0)) | 0;
+  return 'ensemble-file-' + (h >>> 0).toString(36);
+}
+// The window's size (no larger than the screen has room for) and its place:
+// by the window it is opened from, each new one a step further down and right.
+function wsWinFeatures(win, n) {
+  const sc = (win && win.screen) || {}, fin = Number.isFinite;
+  const w = Math.max(320, Math.min(WS_WIN.w, (sc.availWidth || WS_WIN.w + 40) - 40));
+  const h = Math.max(240, Math.min(WS_WIN.h, (sc.availHeight || WS_WIN.h + 40) - 40));
+  let f = `popup=yes,width=${w},height=${h}`;
+  if (win && fin(win.screenX) && fin(win.screenY)) f += `,left=${Math.round(win.screenX + 80 + 24 * (n % 8))},top=${Math.round(win.screenY + 60 + 24 * (n % 8))}`;
+  return f;
+}
+function wsOpenWindow(v, path) {
+  if (!path || isPhone()) return null;
+  const t = v.tabs.find(x => wsSame(x.path, path));
+  const url = wsFileUrl(v, path) + (t ? '&st=' + encodeURIComponent(JSON.stringify(t.st)) : '');
+  // From the window the Workspace is in (the page, or its panel's own window).
+  const win = (v.el && v.el.ownerDocument.defaultView) || window;
+  let w = null;
+  try { w = win.open(url, wsWinName(path), wsWinFeatures(win, WS_WIN_N++)); } catch (e) {}
+  if (!w) { toast('The browser blocked the window: allow pop-ups for this page, then try again.', 5000, 'err'); return null; }
+  try { w.focus(); } catch (e) {}
+  return w;
+}
+// A file row's menu in a Workspace (a right click): Open, and Open in new
+// window. A documents project's Files panel has its own, with these and more
+// (docsMenuOpen). Gone on a click elsewhere, Escape, a scroll or a resize.
+function wsRowMenuClose(v) {
+  const m = v.rowMenu;
+  if (!m) return;
+  v.rowMenu = null;
+  m.off();
+  m.el.remove();
+}
+function wsRowMenu(v, row, x, y) {
+  wsRowMenuClose(v);
+  const doc = v.el.ownerDocument, win = doc.defaultView || window, path = row.dataset.path, name = wsTabName(path);
+  const el = doc.createElement('div');
+  el.className = 'dcm'; el.setAttribute('role', 'menu'); el.setAttribute('aria-label', 'Actions for ' + name);
+  const item = (act, label) => `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="${act}">${label}</button>`;
+  el.innerHTML = `<div class="dcm-head" title="${esc(tildeify(path))}">${esc(name)}</div>` + item('open', 'Open') + item('window', 'Open in new window');
+  v.el.appendChild(el);
+  docsMenuPlace(el, { left: x, right: x, top: y, bottom: y });
+  const close = () => wsRowMenuClose(v);
+  const away = e => { if (!(e.target && e.target.nodeType === 1 && el.contains(e.target))) close(); };
+  doc.addEventListener('pointerdown', away, true);
+  doc.addEventListener('scroll', away, { capture: true, passive: true });
+  win.addEventListener('resize', close);
+  win.addEventListener('blur', close);
+  v.rowMenu = { el, off: () => {
+    doc.removeEventListener('pointerdown', away, true);
+    doc.removeEventListener('scroll', away, { capture: true });
+    win.removeEventListener('resize', close);
+    win.removeEventListener('blur', close);
+  } };
+  el.onkeydown = (e) => {
+    const items = [...el.querySelectorAll('.dcm-item')], i = items.indexOf(doc.activeElement);
+    if (e.key === 'Escape' || e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); close(); }
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus(); }
+  };
+  el.onclick = (e) => {
+    const b = e.target.closest('.dcm-item');
+    if (!b) return;
+    close();
+    if (b.dataset.act === 'window') wsOpenWindow(v, path); else wsOpenTab(v, path);
+  };
+  el.querySelector('.dcm-item').focus({ preventScroll: true });
+}
 // ---- Workspace Documents: begin -------------------------------------------
 // A project's Workspace leads with its Documents, the first node of its tree:
 // the roadmap (ROADMAP.md in the project's home, which the person and the PO
@@ -8009,7 +8140,7 @@ function wsRecompute(v) {
   if (v.ctx.kind === 'task') {
     const r = ALL_ROWS.find(x => x.sessionId === v.ctx.sid || x.roomId === v.ctx.sid);
     const pj = r ? wsProjectForRow(r) : null;
-    v.hide = pj ? wsTaskDirsOf(pj) : new Set();
+    v.hide = pj && pj.registered ? wsTaskDirsOf(pj) : new Set();   // in no project there is no project root to filter
     v.hideAllDirs = !!(pj && pj.home && wsSame(pj.path, pj.home));
     // Until /api/projects lands there is no project to filter against, and the
     // root would briefly show every sibling. Say "loading" instead.
@@ -8063,7 +8194,15 @@ function wsMount(el, ctx) {
   // tabs' viewers afresh, each where it was left.
   v.frames = new Map(); v.live = [];
   wsRecompute(v);
-  if (!v.open.size && v.roots.length) v.open.add(v.roots[0].path);   // first visit: open where you are
+  if (!v.open.size && v.roots.length) {
+    v.open.add(v.roots[0].path);   // first visit: open where you are
+    // A task in no project gives each agent a folder under its own, named
+    // after it: with one agent, that is where its files are, so it opens too
+    // (a task with no such folder just shows its root).
+    const r = ctx.kind === 'task' ? ALL_ROWS.find(x => x.sessionId === ctx.sid || x.roomId === ctx.sid) : null;
+    const one = r && r.headless && wsLoose(r) && (r.members || []).length === 1 && r.members[0].identity;
+    if (one) v.open.add(wsJoin(v.roots[0].path, one));
+  }
   wsTabsCheck(v, v.dirs);
   wsPaintTree(v);
   wsPaintView(v);
@@ -8073,6 +8212,7 @@ function wsMount(el, ctx) {
     const tab = e.target.closest('.wst-tab');
     if (!tab) return;
     if (e.target.closest('.wst-x')) wsCloseTab(v, tab.dataset.path);
+    else if (e.target.closest('.wst-win')) wsOpenWindow(v, tab.dataset.path);
     else wsShowTab(v, tab.dataset.path);
   };
   // A middle click closes a tab, as in an editor or a browser; its press would
@@ -8083,12 +8223,19 @@ function wsMount(el, ctx) {
     if (tab) { e.preventDefault(); wsCloseTab(v, tab.dataset.path); }
   };
   // Arrows, Home and End move along the row; Enter or Space shows the tab;
-  // Delete closes it. Keys only act on a focused tab: no page-wide shortcuts.
+  // Shift+Enter opens it in a window of its own; Delete closes it. Keys only
+  // act on a focused tab: no page-wide shortcuts.
   strip.onkeydown = (e) => {
     const tab = e.target.closest('.wst-tab');
     if (!tab || e.altKey || e.ctrlKey || e.metaKey) return;
     const tabs = [...strip.querySelectorAll('.wst-tab')], i = tabs.indexOf(tab);
     let to = -1;
+    if (e.key === 'Enter' && e.shiftKey) {
+      e.preventDefault();
+      const t = v.tabs.find(x => wsSame(x.path, tab.dataset.path));
+      if (t && !t.missing) wsOpenWindow(v, t.path);
+      return;
+    }
     if (e.key === 'ArrowRight') to = (i + 1) % tabs.length;
     else if (e.key === 'ArrowLeft') to = (i - 1 + tabs.length) % tabs.length;
     else if (e.key === 'Home') to = 0;
@@ -8143,6 +8290,14 @@ function wsMount(el, ctx) {
     }
     const f = e.target.closest('.wse.file');
     if (f) wsOpenTab(v, f.dataset.path);
+  };
+  // A right click on a file: its menu (Open, Open in new window). A documents
+  // project's Files panel has its own menu; a phone has no window to open.
+  tree.oncontextmenu = (e) => {
+    const f = !v.ctx.docs && !isPhone() && e.target.closest('.wse.file[data-path]');
+    if (!f) return;
+    e.preventDefault();
+    wsRowMenu(v, f, e.clientX, e.clientY);
   };
   // The path above the viewer: a folder shows in the tree; so does the file,
   // from the button beside it; Follow keeps the tree on the tab showing.
@@ -8360,7 +8515,7 @@ function wsfPaint(v) {
   if (f.recent) wsRecentRank(v);
   const typed = f.recent ? f.rq : f.q;
   if (input.value !== typed) input.value = typed;
-  const where = !root ? '' : root.kind === 'task' ? ' in this task' : ' in ' + root.label;
+  const where = !root ? '' : root.kind === 'task' ? ' in ' + root.label.toLowerCase() : ' in ' + root.label;   // "in this task", "in this conversation"
   const ph = f.recent ? 'Filter recent files' : (f.mode === 'files' ? 'Go to file' : 'Search in files') + where;
   if (input.placeholder !== ph) input.placeholder = ph;
   box.querySelectorAll('.wsf-mode button').forEach(b => {
@@ -8370,7 +8525,7 @@ function wsfPaint(v) {
   });
   box.querySelectorAll('.wsf-opt').forEach(b => { b.hidden = f.recent || f.mode !== 'text'; b.setAttribute('aria-pressed', String(!!f[b.dataset.opt])); });
   const note = box.querySelector('.wsf-state');
-  const msg = f.recent ? wsRecentNoteText(v.recent.length, f.ritems.length, f.rq, v.ctx.kind === 'task' ? 'in this task' : nounText('in this {project}')) : wsFindNote(f);
+  const msg = f.recent ? wsRecentNoteText(v.recent.length, f.ritems.length, f.rq, v.ctx.kind === 'task' ? (root && root.kind === 'task' ? 'in ' + root.label.toLowerCase() : 'in this task') : nounText('in this {project}')) : wsFindNote(f);
   if (note.textContent !== msg) note.textContent = msg;
   note.hidden = !msg;
   el.classList.toggle('wsf-on', on);
@@ -9224,7 +9379,9 @@ async function chLoadStatus() {
     if (!roots.length) {
       CH_ROOT = ''; CH_SHA = ''; box.dataset.root = '';
       chUseContext(box.dataset.project, '');
-      box.innerHTML = '<div class="chf none">No git repository here yet. When an agent clones one into this folder, its changes show up here.</div>';
+      box.innerHTML = '<div class="chf none">' + (rr.partOf
+        ? 'No changes to show: this folder is part of a larger git checkout (' + esc(rr.partOf) + '), which is not read from here.'
+        : 'No git repository here yet. When an agent clones one into this folder, its changes show up here.') + '</div>';
       return;
     }
     if (!CH_ROOT || !roots.some(function (r) { return r.path === CH_ROOT; })) { CH_ROOT = roots[0].path; CH_SHA = ''; }
@@ -9593,11 +9750,17 @@ async function tchRead(v) {
     const r = tchRow(v);
     const scope = r ? (r.cwd || r.taskDir || '') : '';
     if (!scope) { tchEmpty(v, 'No branch yet — nothing has run.'); return; }
+    // A folder the hub does not read (too wide) has no changes to ask for: the
+    // reason, as its Workspace gives it, not the hub's refusal.
+    if (r.folderWide && wsLoose(r)) { v.roots = []; v.root = ''; tchEmpty(v, wsWideWhy(r, 'changes')); return; }
     const rr = await api('/api/git/roots?path=' + encodeURIComponent(scope));
     v.roots = rr.roots || [];
     if (!v.roots.length) {
       v.root = '';
-      tchEmpty(v, "No git repository in this task's folder yet. When an agent clones one here, its branch shows up here.");
+      // A folder inside a checkout the hub does not read as a whole (a
+      // conversation started in part of a repository) has no changes of its own.
+      tchEmpty(v, rr.partOf ? `No changes to show: this folder is part of a larger git checkout (${rr.partOf}), which is not read from here.`
+        : "No git repository in this task's folder yet. When an agent clones one here, its branch shows up here.");
       return;
     }
     if (!v.roots.some(x => x.path === v.root)) v.root = v.roots[0].path;
@@ -12403,8 +12566,9 @@ function docsFilesWire(el, pid) {
     // The folder list replaces the item clicked: the page's click-outside
     // check must not see a click from a button no longer in the menu.
     if (act === 'moveto') { e.stopPropagation(); docsMoveList(menu, c); return; }
-    docsMenuClose(menu, act === 'history' || act === 'open' ? false : act !== 'rename');
+    docsMenuClose(menu, act === 'history' || act === 'open' || act === 'window' ? false : act !== 'rename');
     if (act === 'dest') docsMove(el, pid, c.rel, upJoin(b.dataset.dir, upBase(c.rel)), c.dir);
+    else if (act === 'window') wsOpenWindow(v, c.abs);
     else if (act === 'open') {
       if (c.dir) { v.open.add(c.abs); v.mark = docsInTask(v, c.abs) ? '' : c.abs; wsPersist(v); wsSync(v); }
       else wsOpenTab(v, c.abs);
@@ -12427,7 +12591,8 @@ function docsMenuOpen(menu, row, rect) {
   menu._ctx = { abs: row.dataset.path, rel, dir };
   const item = (act, label, cls) => `<button type="button" role="menuitem" class="ov-item dcm-item${cls ? ' ' + cls : ''}" data-act="${act}">${label}</button>`;
   menu.innerHTML = `<div class="dcm-head" title="${esc(rel)}">${esc(upBase(rel))}</div>`
-    + item('open', dir ? 'Open folder' : 'Open') + (held ? '' : item('rename', 'Rename') + item('moveto', 'Move to…'))
+    + item('open', dir ? 'Open folder' : 'Open') + (dir || isPhone() ? '' : item('window', 'Open in new window'))
+    + (held ? '' : item('rename', 'Rename') + item('moveto', 'Move to…'))
     + (dir ? '' : item('history', 'History'))
     + (held ? `<div class="dcm-empty">In a task's folder, which its task looks after: it is not renamed, moved or deleted here.</div>`
             : '<div class="ov-rule" role="separator"></div>' + item('delete', 'Delete', 'danger'));
