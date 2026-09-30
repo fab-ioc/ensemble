@@ -56,7 +56,9 @@ main().then(()=>process.exit(0), e=>{console.error(e);process.exit(1)});
 class FeedbackPage(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        with patch.object(browser, 'CDP_JS', SCRIPT), patch.object(feedback, 'output', return_value=''), patch.object(feedback, 'identities', return_value=['Alice']):
+        # The default relay is live: a Send here must never reach it (it files real issues), so the relay is "down".
+        offline = patch.object(feedback.urllib.request, 'build_opener', side_effect=feedback.urllib.error.URLError('test: no network'))
+        with patch.object(browser, 'CDP_JS', SCRIPT), patch.object(feedback, 'output', return_value=''), patch.object(feedback, 'identities', return_value=['Alice']), offline:
             browser.SettingsScrollsAndThemeSubmenu.setUpClass.__func__(cls)
 
     @classmethod
