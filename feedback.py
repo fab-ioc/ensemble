@@ -66,14 +66,27 @@ def _redact_secret_fields(text):
     # quoted value into apparent delimiters. Decode keys separately so an
     # encoded key does not defeat the same protection.
     key = r'''(?P<key>["']?[\w%.-]+["']?)\s*[:=]\s*'''
-    value = r'''(?:"(?:\\.|[^"\\])*"|'(?:''|\\.|[^'\\])*'|[^\s,;]+)'''
+    # Quoted scalars have a definite boundary. For an unquoted or malformed
+    # value, remove the remaining line rather than risk publishing a suffix.
+    # Also cover YAML literal/folded secret blocks and their indented lines.
+    value = r'''(?:[|>][-+]?[ \t]*(?:\r?\n[ \t]+[^\r\n]*)+|"(?:\\.|[^"\\])*"|'(?:''|\\.|[^'\\])*'|[^\r\n]+)'''
 
-    def replace(match):
-        name = urllib.parse.unquote(match.group("key").strip("\"'"))
-        return ("[secret removed]" if re.search(r"(?:token|secret|password|api[_-]?key)$", name, re.I)
-                else match.group(0))
-
-    return re.sub(key + value, replace, text)
+    # Scan keys alone: consuming a non-secret value could hide credentials in
+    # nested objects/arrays. Only a recognized secret advances over its value.
+    value_pattern = re.compile(value)
+    parts, cursor = [], 0
+    for field in re.finditer(key, text):
+        if field.start() < cursor:
+            continue  # This field was inside a value already removed whole.
+        name = urllib.parse.unquote(field.group("key").strip("\"'"))
+        if not re.search(r"(?:token|secret|password|api[_-]?key)$", name, re.I):
+            continue
+        scalar = value_pattern.match(text, field.end())
+        if scalar:
+            parts.extend((text[cursor:field.start()], "[secret removed]"))
+            cursor = scalar.end()
+    parts.append(text[cursor:])
+    return "".join(parts)
 
 
 def scrub(text, identities=()):

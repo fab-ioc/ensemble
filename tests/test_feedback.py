@@ -117,6 +117,37 @@ class FeedbackEndpoint(unittest.TestCase):
                     self.assertNotIn('prefix', draft[field])
                     self.assertIn('[secret removed]', draft[field])
 
+    def test_nested_credentials_removed_from_preview_and_relay_payload(self):
+        examples = [
+            '{"auth":{"access_token":"opaque-private-value"}}',
+            '{"auth": {"password": "opaque private value"}}',
+            '{"auth":{"password":"opaque private value"}}',
+            '{"auth": {"token": "prefix%22 secret-tail"}}',
+            '{"auth":{"pass%77ord":"prefix%22 secret-tail"}}',
+            '{"config":[{"auth":{"password":"opaque private value"}}]}',
+            '{"name":"public","auth":{"access_token":"opaque-private-value","password":"opaque private value"}}',
+            'auth:\n  token: \'prefix%27 secret-tail\'',
+            'auth:\n  password: opaque private value',
+            'auth:\n  password: |\n    opaque private value',
+            '{"auth":{"password":{"value": "opaque private value"}}}',
+        ]
+        examples += [urllib.parse.quote(examples[0]), urllib.parse.quote(examples[3])]
+        for text in examples:
+            with self.subTest(text=text):
+                draft = self.draft(anonymous=True, title=text, description=text)
+                opener = Mock()
+                opener.open.return_value.__enter__ = Mock(return_value=io.BytesIO(b'{"url":"https://github.com/fab-ioc/ensemble/issues/42"}'))
+                opener.open.return_value.__exit__ = Mock(return_value=False)
+                with patch.object(feedback.urllib.request, 'build_opener', return_value=opener):
+                    _, result = self.post('send', {'id': draft['id']})
+                self.assertTrue(result['ok'])
+                wire = json.loads(opener.open.call_args.args[0].data)
+                for field in ('title', 'body'):
+                    self.assertEqual(wire[field], draft[field])
+                    for secret in ('opaque-private-value', 'opaque private value', 'prefix', 'secret-tail'):
+                        self.assertNotIn(secret, draft[field])
+                    self.assertIn('[secret removed]', draft[field])
+
     def test_unicode_relay_envelope_fits_and_posts_exact_preview(self):
         draft = self.draft(description='é' * 9000)
         response = b'{"url":"https://github.com/fab-ioc/ensemble/issues/42"}'
