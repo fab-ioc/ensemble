@@ -1,0 +1,44 @@
+#feedback-dialog {
+  box-sizing: border-box; width: min(640px, calc(100% - 32px));
+  max-height: calc(var(--vv-h, 100dvh) - 32px); overflow: auto;
+  margin: 16px auto; padding: var(--s-400); color: var(--fg);
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--r-300); box-shadow: var(--e-200); font-size: var(--fs-300);
+}
+#feedback-dialog::backdrop { background: var(--overlay-scrim, var(--bg)); }
+#feedback-dialog h2 { margin: 0 0 var(--s-300); font-size: var(--fs-500); font-weight: 600; }
+#feedback-dialog .po-btn { height: 32px; font-size: var(--fs-300); font-weight: 500; }
+#feedback-dialog .po-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+#feedback-dialog .po-btn.primary:hover { background: var(--accent-hover); }
+#feedback-dialog .po-btn:disabled { background: var(--surface-sunken); color: var(--fg-muted); cursor: default; }
+#feedback-dialog label, .feedback-setting { display: block; margin-top: var(--s-300); }
+#feedback-dialog [hidden] { display: none !important; }
+#feedback-dialog input:not([type=checkbox]), #feedback-dialog textarea, #feedback-dialog select,
+.feedback-setting input {
+  box-sizing: border-box; width: 100%; min-width: 0; padding: var(--s-200);
+  border: 1px solid var(--border-strong); border-radius: var(--r-200);
+  color: var(--fg); background: var(--surface); font: inherit;
+}
+#feedback-dialog textarea { resize: vertical; min-height: 120px; }
+#feedback-dialog input:focus-visible, #feedback-dialog textarea:focus-visible,
+#feedback-dialog select:focus-visible, .feedback-setting input:focus-visible {
+  outline: 2px solid var(--focus-ring); outline-offset: 2px;
+}
+#feedback-dialog .feedback-check { display: flex; gap: var(--s-200); align-items: center; min-height: 32px; }
+#feedback-dialog .feedback-check input { width: 20px; height: 20px; margin: 0; }
+#feedback-dialog .feedback-hint { color: var(--fg-muted); font-size: var(--fs-200); }
+#feedback-dialog .feedback-actions { display: flex; flex-wrap: wrap; gap: var(--s-200); margin-top: var(--s-300); }
+#feedback-preview { border-top: 1px solid var(--border); margin-top: var(--s-400); padding-top: var(--s-300); }
+#feedback-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; user-select: text; }
+#feedback-status { overflow-wrap: anywhere; }
+#feedback-dialog a { color: var(--link); }
+#feedback-images { display: flex; flex-wrap: wrap; gap: var(--s-200); margin-top: var(--s-200); }
+#feedback-images figure { margin: 0; max-width: 128px; }
+#feedback-images img { width: 128px; height: 80px; object-fit: contain; }
+#feedback-images a, #feedback-images button { display: block; }
+@media (max-width: 640px), (max-width: 1024px) and (pointer: coarse) {
+  #feedback-dialog { margin-top: calc(var(--vv-top, 0px) + 16px); }
+  #feedback-dialog input, #feedback-dialog textarea, #feedback-dialog select, .feedback-setting input { font-size: var(--fs-400); }
+  #feedback-dialog button, #feedback-dialog .feedback-check, #feedback-dialog a,
+  #feedback-open, #feedback-settings-save { min-height: var(--touch-min); min-width: var(--touch-min); }
+}
