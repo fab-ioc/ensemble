@@ -191,7 +191,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      TWO LAYERS, and they are never the same variable:
 
        INTERACTION (--accent, --selected-*, --link) — what you can DO.
-         User-themeable: the settings panel writes --accent.
+         User-themeable: the account menu's Accent submenu writes --accent.
        SEMANTIC (--c-*, --run-*, --prio-*, --agent-*, --match-*,
          --focus-ring) — what is TRUE. Fixed in both themes, because a
          status that repaints when someone picks a new accent has
@@ -2479,8 +2479,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   }
   #me-menu .me-rule { height: 1px; background: var(--border); margin: var(--s-100) 0; }
   #me-menu .me-item.on { background: var(--selected-bg); color: var(--selected-fg); font-weight: 500; }
-  /* Theme: an item that opens a list of every theme, each with a swatch of its
-     ground and accent. A flyout to the left of the menu (the avatar is at the
+  /* Theme and Accent share a swatch-and-tick list. A flyout to the left of the menu (the avatar is at the
      right edge); a phone gets it as a nested list under the item instead. */
   .me-sub-wrap { position: relative; }
   .me-sub .me-cur { margin-left: auto; color: var(--fg-muted); font-size: var(--fs-100); }
@@ -2507,8 +2506,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     border: 1px solid var(--border); display: inline-flex;
     align-items: center; justify-content: center; }
   .theme-sw i { width: 8px; height: 8px; border-radius: 50%; display: block; }
-  #settings-themes { display: flex; flex-direction: column; gap: 2px; }
-  #settings-themes .theme-opt { padding: 5px 8px; }
+  #me-accents { max-height: calc(100dvh - var(--mm-top, var(--top-h)) - 2 * var(--s-800)); overflow-y: auto; }
+  .accent-custom { padding: var(--s-200); color: var(--fg-muted); font-size: var(--fs-200); }
   /* Attention states map onto the semantic six — they are not new colour.
      Danger means wrong or destructive; a task waiting on a reply is not
      wrong, it is warning. waiting_for_you used to be the accent, i.e. the
@@ -2632,27 +2631,18 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     margin: 0 0 10px; font-size: 11px; font-weight: 600;
     color: var(--fg-subtle); text-transform: uppercase; letter-spacing: 0.06em;
   }
-  #settings-panel .swatch-row {
-    display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap;
-  }
-  #settings-panel .swatch {
-    width: 22px; height: 22px; border-radius: 50%;
-    border: 2px solid var(--border); padding: 0; cursor: pointer;
-    transition: transform .1s, border-color .1s;
-  }
-  #settings-panel .swatch:hover { transform: scale(1.1); }
-  #settings-panel .swatch.active { border-color: var(--fg); }
-  #settings-panel #accent-input {
-    width: 100%; padding: 6px 10px;
-    border: 1px solid var(--border); border-radius: 6px;
+  #accent-input {
+    width: 100%; min-width: 0; padding: var(--s-200);
+    border: 1px solid var(--border); border-radius: var(--r-200);
     background: var(--bg); color: var(--fg); font: inherit;
-    font-family: var(--font-mono); font-size: 12px;
+    font-family: var(--font-mono); font-size: var(--fs-200);
     outline: none;
   }
-  #settings-panel #accent-input:focus {
+  #accent-input:focus {
     border-color: var(--focus-ring);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus-ring) 40%, transparent);
+    box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring);
   }
+  #accent-input::placeholder { color: var(--fg-muted); }
   #settings-panel .settings-section + .settings-section {
     margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border);
   }
@@ -3081,11 +3071,13 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     /* Trays and menus fit the screen, and their rows are finger-sized. */
     #usage-tray, #settings-panel { left: var(--s-200); right: var(--s-200); width: auto; }
     .me-item, .pm-item, .fm-item, .wf-item, .pr-item, .ov-menu button, .theme-opt { min-height: var(--touch-min); }
-    /* The theme list opens as a nested list inside the menu, not a flyout. */
-    /* With Theme unfolded the menu can outgrow a short screen: it scrolls (a desktop's flyout must not be clipped, so only here). */
+    /* Appearance lists nest inside the menu. When unfolded the menu can outgrow
+       a short screen: it scrolls (desktop flyouts must not be clipped, so only here). */
     #me-menu { max-height: calc(100dvh - var(--mm-top, var(--top-h)) - var(--s-300)); overflow-y: auto; overscroll-behavior: contain; }
     #me-menu .theme-list.me-flyout { position: static; min-width: 0; padding: 0 0 0 var(--s-300);
       background: transparent; border: 0; box-shadow: none; }
+    #me-accents { max-height: none; overflow: visible; }
+    #accent-input { min-height: var(--touch-min); }
     /* The action bar and its menu, as the shared block's (pointer: coarse) rule. */
     .am-btn, .am-item, .theme-dd-item .star, .theme-dd-item .name { min-height: var(--touch-min); }
     .am-btn { height: auto; min-width: var(--touch-min); }
@@ -3553,10 +3545,18 @@ window.DOC_LISTENERS_PAUSED = false;
     <button class="me-item me-sub" id="me-theme-btn" role="menuitem" aria-haspopup="menu" aria-expanded="false" aria-controls="me-themes">Theme <span class="me-cur" id="me-theme-cur"></span><span class="me-chev" aria-hidden="true"></span></button>
     <div class="theme-list me-flyout" id="me-themes" role="menu" aria-label="Theme" hidden></div>
   </div>
+  <div class="me-sub-wrap">
+    <button class="me-item me-sub" id="me-accent-btn" role="menuitem" aria-haspopup="menu" aria-expanded="false" aria-controls="me-accents">Accent <span class="me-cur" id="me-accent-cur"></span><span class="me-chev" aria-hidden="true"></span></button>
+    <div class="theme-list me-flyout" id="me-accents" role="menu" aria-label="Accent" hidden>
+      <div id="me-accent-options" role="group" aria-label="Colours"></div>
+      <label class="accent-custom">Custom colour
+        <input type="text" id="accent-input" placeholder="#xxxxxx or color name" spellcheck="false" autocomplete="off">
+      </label>
+    </div>
+  </div>
   <div class="me-rule"></div>
   <!-- Phone only: the plan chip has no room in the bar there, so its tray opens from here. -->
   <button class="me-item me-phone" data-me="usage">Plan allowance</button>
-  <button class="me-item" data-me="theme">Accent colour</button>
   <button class="me-item" data-me="settings">Settings</button>
 </div>
 <div id="proj-menu" hidden></div>
@@ -3571,24 +3571,6 @@ window.DOC_LISTENERS_PAUSED = false;
     <button type="button" id="install-app-btn" class="po-btn def" hidden
             title="A window of its own, with its own icon in the dock or taskbar, and no address bar; its pop-out panels too">Install app</button>
     <p class="cfg-hint" id="install-app-hint" aria-live="polite"></p>
-  </div>
-  <div class="settings-section">
-    <h4>Theme</h4>
-    <div id="settings-themes" role="radiogroup" aria-label="Theme"></div>
-  </div>
-  <div class="settings-section">
-    <h4>Accent color</h4>
-    <div class="swatch-row">
-      <button class="swatch is-default" data-color="" style="background:#0C66E4" title="Blue (default)"></button>
-      <button class="swatch" data-color="#0055CC" style="background:#0055CC" title="Deep blue"></button>
-      <button class="swatch" data-color="#1F845A" style="background:#1F845A" title="Green"></button>
-      <button class="swatch" data-color="#1D7AFC" style="background:#1D7AFC" title="Bright blue"></button>
-      <button class="swatch" data-color="#6E5DC6" style="background:#6E5DC6" title="Violet"></button>
-      <button class="swatch" data-color="#943D73" style="background:#943D73" title="Magenta"></button>
-      <button class="swatch" data-color="#C25D3C" style="background:#C25D3C" title="Terracotta (was the default)"></button>
-      <button class="swatch" data-color="#44546F" style="background:#44546F" title="Neutral"></button>
-    </div>
-    <input type="text" id="accent-input" placeholder="#xxxxxx or color name" spellcheck="false" autocomplete="off">
   </div>
   <div class="settings-section" id="settings-prefs">
     <h4>Preferences</h4>
@@ -14815,28 +14797,28 @@ function themeChoices() {
   list.push({ name: 'system', label: 'Match system', bg: 'linear-gradient(90deg, #F7F8F9 50%, #1D2125 50%)', dot: '#8590A2' });
   return list;
 }
-function themeListHtml() {
-  return themeChoices().map(t =>
-    '<button type="button" class="theme-opt" role="menuitemradio" data-appearance="' + esc(t.name) + '">'
-    + '<span class="theme-sw" style="background:' + t.bg + '"><i style="background:' + t.dot + '"></i></span>'
+function appearanceListHtml(choices, attribute) {
+  return choices.map(t =>
+    '<button type="button" class="theme-opt" role="menuitemradio" data-' + attribute + '="' + esc(t.name) + '">'
+    + '<span class="theme-sw" aria-hidden="true" style="background:' + esc(t.bg) + '">' + (t.dot ? '<i style="background:' + esc(t.dot) + '"></i>' : '') + '</span>'
     + '<span class="theme-name">' + esc(t.label) + '</span><span class="theme-tick" aria-hidden="true"></span></button>').join('');
 }
+function themeListHtml() { return appearanceListHtml(themeChoices(), 'appearance'); }
 function renderThemeLists() {
-  const html = themeListHtml();
-  $('#me-themes').innerHTML = html;
-  const st = $('#settings-themes');
-  st.innerHTML = html;
-  st.querySelectorAll('.theme-opt').forEach(b => b.setAttribute('role', 'radio'));
+  $('#me-themes').innerHTML = themeListHtml();
   markAppearance();
 }
-function setThemeSubmenu(open) {
-  const l = $('#me-themes'), b = $('#me-theme-btn');
-  l.hidden = !open;
-  b.setAttribute('aria-expanded', open ? 'true' : 'false');
+function setAppearanceSubmenu(button, open) {
+  document.querySelectorAll('#me-menu .me-sub').forEach(b => {
+    const on = b === button && open;
+    const list = document.getElementById(b.getAttribute('aria-controls'));
+    list.hidden = !on;
+    b.setAttribute('aria-expanded', on ? 'true' : 'false');
+  });
 }
 function markAppearance() {
   const pref = window.cdTheme ? cdTheme.stored() : 'light';
-  document.querySelectorAll('#me-themes .theme-opt, #settings-themes .theme-opt').forEach(b => {
+  document.querySelectorAll('#me-themes .theme-opt').forEach(b => {
     const on = b.dataset.appearance === pref;
     b.classList.toggle('on', on);
     b.setAttribute('aria-checked', on ? 'true' : 'false');
@@ -14844,6 +14826,7 @@ function markAppearance() {
   const cur = themeChoices().find(t => t.name === pref);
   const c = document.getElementById('me-theme-cur');
   if (c) c.textContent = cur ? cur.label : '';
+  markAccent(window.cdTheme ? cdTheme.storedAccent() : '');
 }
 async function setAppearance(pref) {
   try { localStorage.setItem('cd-theme', pref); } catch (e) {}
@@ -14887,12 +14870,42 @@ queueMicrotask(renderThemeLists);
 // from the hub; this marks the swatches and records a new choice. Writing
 // localStorage moves every open page in this browser at once, through the
 // storage event; the hub moves every other browser at its next sync.
+// The one preset list: adding a colour here adds its menu row automatically.
+const ACCENT_CHOICES = [
+  ['', 'Theme default'], ['#0055CC', 'Deep blue'], ['#1F845A', 'Green'],
+  ['#1D7AFC', 'Bright blue'], ['#6E5DC6', 'Violet'], ['#943D73', 'Magenta'],
+  ['#C25D3C', 'Terracotta'], ['#44546F', 'Neutral'],
+];
+function renderAccentList() {
+  $('#me-accent-options').innerHTML = appearanceListHtml(
+    ACCENT_CHOICES.map(([name, label]) => ({ name, label, bg: name || 'var(--accent)' })), 'color');
+  markAccent(window.cdTheme ? cdTheme.storedAccent() : '');
+}
 function markAccent(color) {
-  $('#settings-panel').querySelectorAll('.swatch').forEach(s => {
-    s.classList.toggle('active', (s.dataset.color || '') === (color || ''));
+  color = color || '';
+  const options = $('#me-accent-options');
+  const known = ACCENT_CHOICES.find(([c]) => c.toLowerCase() === color.toLowerCase());
+  let custom = options.querySelector('[data-custom]');
+  if (!known && window.cdTheme && cdTheme.rgbOf(color)) {
+    if (!custom) {
+      options.insertAdjacentHTML('beforeend', appearanceListHtml([{name: color, label: 'Custom colour', bg: color}], 'color'));
+      custom = options.lastElementChild;
+      custom.dataset.custom = 'true';
+    }
+    custom.dataset.color = color;
+    custom.querySelector('.theme-sw').style.background = color;
+  } else if (custom) custom.remove();
+  options.querySelectorAll('.theme-opt').forEach(s => {
+    const on = s.dataset.color.toLowerCase() === color.toLowerCase();
+    s.classList.toggle('on', on);
+    s.setAttribute('aria-checked', on ? 'true' : 'false');
   });
+  const own = themeChoices().find(t => t.name === document.documentElement.dataset.theme) || themeChoices()[0];
+  const def = options.querySelector('[data-color=""] .theme-sw');
+  if (def) def.style.background = own.dot;
+  $('#me-accent-cur').textContent = known ? known[1] : 'Custom';
   const inp = $('#accent-input');
-  if (inp && document.activeElement !== inp) inp.value = color || '';
+  if (inp && document.activeElement !== inp) inp.value = color;
 }
 let _accentSave = null;
 // "" is the theme's own accent, saved on the hub as "default". Typing saves
@@ -14918,6 +14931,7 @@ function setAccent(color, typing = false) {
 }
 window.addEventListener('cd-accent', ev => markAccent(ev.detail && ev.detail.accent));
 queueMicrotask(() => {
+  renderAccentList();
   const c = window.cdTheme ? cdTheme.storedAccent() : '';
   markAccent(c && cdTheme.rgbOf(c) ? c : '');
 });
@@ -14936,7 +14950,7 @@ function openSettingsPanel(anchor) {
   panel.style.left = isPhone() ? '' : 'auto';
 }
 function closeMeMenu() {
-  setThemeSubmenu(false);
+  setAppearanceSubmenu(null, false);
   $('#me-menu').hidden = true;
   $('#me-btn').setAttribute('aria-expanded', 'false');
 }
@@ -14955,28 +14969,30 @@ $('#me-btn').addEventListener('click', (ev) => {
   }
 });
 $('#me-menu').addEventListener('keydown', (ev) => {
-  const b = $('#me-theme-btn');
-  if (ev.key === 'ArrowRight' && document.activeElement === b) {
-    setThemeSubmenu(true);
-    const f = $('#me-themes .theme-opt'); if (f) f.focus();
+  const b = ev.target.closest('.me-sub');
+  const open = $('#me-menu .me-sub[aria-expanded="true"]');
+  if (ev.key === 'ArrowRight' && b) {
+    setAppearanceSubmenu(b, true);
+    const f = document.getElementById(b.getAttribute('aria-controls')).querySelector('.theme-opt'); if (f) f.focus();
     ev.preventDefault();
-  } else if ((ev.key === 'ArrowLeft' || ev.key === 'Escape') && !$('#me-themes').hidden) {
-    setThemeSubmenu(false); b.focus(); ev.preventDefault(); ev.stopPropagation();
+  } else if (open && (ev.key === 'Escape' || (ev.key === 'ArrowLeft' && ev.target.tagName !== 'INPUT'))) {
+    setAppearanceSubmenu(null, false); open.focus(); ev.preventDefault(); ev.stopPropagation();
   }
 });
 $('#me-menu').addEventListener('click', (ev) => {
   const opt = ev.target.closest('.theme-opt');
   if (opt) {
     ev.stopPropagation();
-    setAppearance(opt.dataset.appearance);
+    if (opt.hasAttribute('data-color')) setAccent(opt.dataset.color);
+    else setAppearance(opt.dataset.appearance);
     closeMeMenu();
     return;
   }
   const it = ev.target.closest('.me-item');
   if (!it) return;
   ev.stopPropagation();
-  if (it.id === 'me-theme-btn') {          // Theme: open or fold its list
-    setThemeSubmenu($('#me-themes').hidden);
+  if (it.classList.contains('me-sub')) {
+    setAppearanceSubmenu(it, it.getAttribute('aria-expanded') !== 'true');
     return;
   }
   if (it.dataset.me === 'usage') {        // phone: the plan chip's tray, from here
@@ -14987,20 +15003,6 @@ $('#me-menu').addEventListener('click', (ev) => {
   }
   closeMeMenu();
   openSettingsPanel($('#me-btn'));
-  if (it.dataset.me === 'theme') {
-    const inp = document.getElementById('accent-input');
-    if (inp) inp.focus();
-  }
-});
-$('#settings-panel').addEventListener('click', (ev) => {
-  const opt = ev.target.closest('.theme-opt');
-  if (opt) { ev.stopPropagation(); setAppearance(opt.dataset.appearance); return; }
-  const sw = ev.target.closest('.swatch');
-  if (!sw) return;
-  ev.stopPropagation();
-  const color = sw.dataset.color || '';
-  $('#accent-input').value = color;
-  setAccent(color);
 });
 $('#accent-input').addEventListener('input', (ev) => {
   const v = ev.target.value.trim();

@@ -77,8 +77,8 @@ his first look, and it looked nothing like the mockup.
   theme and red is "wrong" in every theme. Each theme's pairs are measured on that theme's ground.
 - **Adding a theme:** add its block to all three pages with the same token names as the Dark block,
   add its name and ground (`light` or `dark`) to the `SCHEME` map in each page's head script, add it
-  to the hub's allowed `theme` values in `dashboard.py` (the avatar menu's Theme submenu and Settings'
-  Theme list are built from `cdTheme.themes`, so they show it by themselves; give it a label and
+  to the hub's allowed `theme` values in `dashboard.py` (the avatar menu's Theme submenu is built
+  from `cdTheme.themes`, so it shows it by itself; give it a label and
   swatch colours in `THEME_INFO` in `index.html`), then measure every
   pair in §3 on it, including its `--code-*` set in `fileview.html` (see *Code* below). The ground
   picks which way the accent's hover mixes.
@@ -94,7 +94,11 @@ his first look, and it looked nothing like the mockup.
   is a flyout to the left of the menu (the avatar is at the right edge); on a phone it is a nested
   list inside the menu, indented, never a flyout off screen. Click, or → on the item, opens it; ←
   and Esc fold it. Choosing a row applies it at once, saves it on the hub and closes the menu.
-  Settings' Theme section is the same list as radios.
+  **Accent** is the neighbouring submenu, with the same row renderer (`appearanceListHtml`),
+  swatches, tick, keyboard behaviour and phone nesting. Its presets come from `ACCENT_CHOICES`;
+  adding one there adds its row. Theme default restores the current theme's own accent; the
+  custom colour field keeps opaque CSS colours available, and a custom choice gets a ticked row.
+  Only one submenu opens at a time. Both choices live here, not in Settings.
 - **A floating panel scrolls itself.** The page is a fixed-height shell, so a tray or panel dropped
   from the bar is `position: fixed` with a `max-height` of the room under its button and
   `overflow-y: auto`; it never relies on the page to scroll it into view (Settings lost its lower

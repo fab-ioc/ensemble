@@ -1,4 +1,4 @@
-"""#136 in a real page: Settings scrolls to its last section; Theme is a submenu.
+"""#136/#142 in a real page: Settings scrolls; Theme and Accent are submenus.
 
 In headless Chrome over CDP, against a hub in a thread, at a short desktop
 window and at a phone's width:
@@ -10,8 +10,8 @@ window and at a phone's width:
   (dashboard._SETTINGS_ALLOWED_VALUES["theme"], less the empty "default"), with
   the current one ticked and a swatch each; on a phone the list is inside the
   menu and on screen, not a flyout off it;
-* choosing one applies it at once and the hub saves it; Settings offers the
-  same list.
+* choosing a theme or accent applies it at once and the hub saves it;
+  Settings contains neither appearance control.
 
 Skipped without Node or Chrome; launches go through tests/chrome_profile.py.
 """
@@ -55,7 +55,7 @@ async function main() {
   };
   const RECT = `(e => { const r = e.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom }; })`;
   try {
-    for (const [name, w, h, mobile] of [['desktop', 1100, 420, false], ['phone', 390, 600, true], ['short', 844, 390, true]]) {
+    for (const [name, w, h, mobile] of [['desktop', 1100, 420, false], ['wide1280', 1280, 720, false], ['wide1440', 1440, 900, false], ['phone', 390, 600, true], ['phone360', 360, 800, true], ['phone430', 430, 932, true], ['short', 844, 390, true]]) {
       const { evalIn, until, targetId } = await page(w, h, mobile);
       const o = out[name] = {};
       // Settings: from the avatar menu, scrolled to its last section.
@@ -70,7 +70,8 @@ async function main() {
         const pr0 = p.getBoundingClientRect(), fields = [...p.querySelectorAll('input, button')].filter(e => e.getBoundingClientRect().width);
         before.horizontal = { l: pr0.left, r: pr0.right, vw: innerWidth, fieldsLeft: Math.min(...fields.map(e => e.getBoundingClientRect().left)), fieldsRight: Math.max(...fields.map(e => e.getBoundingClientRect().right)) };
         return { ...before, scrolled: p.scrollTop, lastId: last.id, lastBottom: lr.bottom, panelBottom: pr.bottom, lastInPanel: lr.bottom <= pr.bottom + 1 }; })()`);
-      o.settingsThemes = await evalIn(`[...document.querySelectorAll('#settings-themes .theme-opt')].map(b => b.dataset.appearance)`);
+      o.settingsAppearance = await evalIn(`document.querySelectorAll('#settings-panel .theme-opt, #settings-panel #accent-input, #settings-panel .swatch, #settings-themes').length`);
+      o.settingsHeadings = await evalIn(`[...document.querySelectorAll('#settings-panel h4')].map(e => e.textContent)`);
       await evalIn('document.getElementById("settings-panel").hidden = true; 0');
       // Theme submenu.
       await evalIn('document.getElementById("me-btn").click(); 0');
@@ -110,6 +111,59 @@ async function main() {
       // Back to light for the next width (the hub keeps the choice).
       await evalIn(`document.querySelector('#me-themes .theme-opt[data-appearance=light]').click(); 0`);
       await until(`fetch('/api/settings').then(r => r.json()).then(s => s.theme === 'light')`);
+      // Accent uses the same component; opening it folds Theme.
+      await evalIn('document.getElementById("me-btn").click(); document.getElementById("me-theme-btn").click(); 0');
+      o.accentClosedBefore = await evalIn('document.getElementById("me-accents").hidden');
+      await evalIn('document.getElementById("me-accent-btn").click(); 0');
+      o.accent = await evalIn(`(() => { const l = document.getElementById('me-accents'), R = ${RECT}; const lr = R(l), mr = R(document.getElementById('me-menu'));
+        const opts = [...l.querySelectorAll('.theme-opt')];
+        return { colors: opts.map(b => b.dataset.color), labels: opts.map(b => b.querySelector('.theme-name').textContent),
+          swatches: opts.every(b => b.querySelector('.theme-sw').getBoundingClientRect().width === 18),
+          ticked: opts.filter(b => b.getAttribute('aria-checked') === 'true').map(b => b.dataset.color),
+          themeFolded: document.getElementById('me-themes').hidden, expanded: document.getElementById('me-accent-btn').getAttribute('aria-expanded'),
+          inside: lr.l >= mr.l - 1 && lr.r <= mr.r + 1, onScreen: lr.l >= 0 && lr.r <= innerWidth && lr.t >= 0 && lr.b <= innerHeight,
+          minTarget: Math.min(...opts.map(b => b.getBoundingClientRect().height)), position: getComputedStyle(l).position };
+      })()`);
+      o.accentReach = await evalIn(`(() => { const m = document.getElementById('me-menu'), l = document.getElementById('me-accents');
+        l.scrollTop = l.scrollHeight; m.scrollTop = m.scrollHeight;
+        const input = document.getElementById('accent-input').getBoundingClientRect(), settings = m.querySelector('[data-me=settings]').getBoundingClientRect();
+        const result = { inputBottom: input.bottom, settingsBottom: settings.bottom, vh: innerHeight };
+        l.scrollTop = 0; m.scrollTop = 0; return result; })()`);
+      // Keyboard fold returns focus, does not close the task, and reopens with Right.
+      o.accentKeys = await evalIn(`(() => { let closed = 0; const was = window.closeTask; window.closeTask = () => closed++;
+        SELECTED_SID = 'x'; const b = document.getElementById('me-accent-btn'), first = document.querySelector('#me-accents .theme-opt'); first.focus();
+        first.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true, cancelable: true}));
+        const folded = document.getElementById('me-accents').hidden && document.activeElement === b;
+        b.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight', bubbles: true, cancelable: true}));
+        const focused = document.activeElement === first;
+        first.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowLeft', bubbles: true, cancelable: true}));
+        const left = document.getElementById('me-accents').hidden && document.activeElement === b;
+        b.click(); SELECTED_SID = null; window.closeTask = was; return {folded, focused, left, closed}; })()`);
+      await evalIn(`document.querySelector('#me-accents [data-color="#6E5DC6"]').click(); 0`);
+      o.accentApplied = await evalIn(`document.documentElement.style.getPropertyValue('--accent')`);
+      o.accentMenuClosed = await evalIn('document.getElementById("me-menu").hidden');
+      await until(`fetch('/api/settings').then(r => r.json()).then(s => s.accent === '#6E5DC6')`);
+      await evalIn('document.getElementById("me-btn").click(); document.getElementById("me-accent-btn").click(); 0');
+      o.accentTicked = await evalIn(`[...document.querySelectorAll('#me-accents [aria-checked=true]')].map(e => e.dataset.color)`);
+      o.accentCur = await evalIn('document.getElementById("me-accent-cur").textContent');
+      // The default swatch follows the theme even with a custom accent applied.
+      o.defaultSwatches = await evalIn(`(() => { const result = [];
+        for (const t of cdTheme.themes) { localStorage.setItem('cd-theme', t); cdTheme.apply();
+          result.push({ theme: t, color: document.querySelector('#me-accents [data-color=""] .theme-sw').style.background, expected: THEME_INFO[t][2] }); }
+        localStorage.setItem('cd-theme', 'light'); cdTheme.apply(); return result; })()`);
+      // Preserve custom input and its tick, including after it is chosen on another device.
+      await evalIn(`const inp = document.getElementById('accent-input'); inp.value = 'rebeccapurple'; inp.dispatchEvent(new Event('input', {bubbles: true})); 0`);
+      await until(`fetch('/api/settings').then(r => r.json()).then(s => s.accent === 'rebeccapurple')`);
+      o.customTicked = await evalIn(`[...document.querySelectorAll('#me-accents [aria-checked=true]')].map(e => e.dataset.color)`);
+      // New presets need no separate menu edit.
+      o.futureAccent = await evalIn(`(() => { ACCENT_CHOICES.push(['#123456', 'Future']); renderAccentList();
+        const found = !!document.querySelector('#me-accents [data-color="#123456"] .theme-sw');
+        ACCENT_CHOICES.pop(); renderAccentList(); return found; })()`);
+      await evalIn(`document.querySelector('#me-accents [data-color=""]').click(); 0`);
+      await until(`fetch('/api/settings').then(r => r.json()).then(s => s.accent === 'default')`);
+      o.defaultApplied = await evalIn(`document.documentElement.style.getPropertyValue('--accent') === '' && !localStorage.getItem('cd-accent')`);
+      await evalIn('document.getElementById("me-btn").click(); document.getElementById("me-accent-btn").click(); 0');
+      o.defaultTicked = await evalIn(`[...document.querySelectorAll('#me-accents [aria-checked=true]')].map(e => e.dataset.color)`);
       await c.send('Target.closeTarget', { targetId });
     }
   } finally {
@@ -175,9 +229,10 @@ class SettingsScrollsAndThemeSubmenu(unittest.TestCase):
         for name, g in self.got.items():
             s = g["settings"]
             with self.subTest(name):
-                self.assertGreater(s["scroll"], s["client"], "the panel is taller than its room, so it must scroll")
+                self.assertGreaterEqual(s["scroll"], s["client"])
                 self.assertLessEqual(s["bottom"], s["vh"], "the panel stays on screen")
-                self.assertGreater(s["scrolled"], 0, "it scrolls")
+                if s["scroll"] > s["client"]:
+                    self.assertGreater(s["scrolled"], 0, "it scrolls when needed")
                 self.assertTrue(s["lastInPanel"], s)
                 self.assertLessEqual(s["lastBottom"], s["vh"], "the last section is on screen")
                 self.assertEqual(s["lastId"], "settings-runtime")
@@ -193,7 +248,8 @@ class SettingsScrollsAndThemeSubmenu(unittest.TestCase):
             with self.subTest(name):
                 self.assertTrue(g["closedBefore"], "folded until Theme is chosen")
                 self.assertEqual(sorted(g["sub"]["names"]), allowed)
-                self.assertEqual(sorted(g["settingsThemes"]), allowed, "Settings offers the same list")
+                self.assertEqual(g["settingsAppearance"], 0)
+                self.assertFalse(any(h in {"Theme", "Accent", "Accent color", "Accent colour"} for h in g["settingsHeadings"]))
                 self.assertEqual(len(set(g["sub"]["labels"])), len(allowed))
                 self.assertTrue(g["sub"]["swatches"])
                 self.assertEqual(g["sub"]["ticked"], ["light"], "the current theme is ticked")
@@ -221,6 +277,44 @@ class SettingsScrollsAndThemeSubmenu(unittest.TestCase):
                 self.assertTrue(g["menuClosed"])
                 self.assertEqual(g["tickedAfter"], ["fjord"])
                 self.assertEqual(g["cur"], "Fjord")
+
+    def test_accent_submenu_choices_layout_and_keyboard(self):
+        colors = ["", "#0055CC", "#1F845A", "#1D7AFC", "#6E5DC6", "#943D73", "#C25D3C", "#44546F"]
+        for name, g in self.got.items():
+            with self.subTest(name):
+                a = g["accent"]
+                self.assertTrue(g["accentClosedBefore"])
+                self.assertEqual(a["colors"], colors)
+                self.assertEqual(len(set(a["labels"])), len(colors))
+                self.assertTrue(a["swatches"])
+                self.assertEqual(a["ticked"], [""])
+                self.assertEqual(a["expanded"], "true")
+                self.assertTrue(a["themeFolded"])
+                if name.startswith("phone") or name == "short":
+                    self.assertTrue(a["inside"])
+                    self.assertEqual(a["position"], "static")
+                    self.assertGreaterEqual(a["minTarget"], 44)
+                else:
+                    self.assertTrue(a["onScreen"], a)
+                for bottom in ("inputBottom", "settingsBottom"):
+                    self.assertLessEqual(g["accentReach"][bottom], g["accentReach"]["vh"])
+                self.assertEqual(g["accentKeys"], {"folded": True, "focused": True, "left": True, "closed": 0})
+                self.assertTrue(g["futureAccent"])
+
+    def test_accent_applies_saves_and_resets_to_theme_default(self):
+        for name, g in self.got.items():
+            with self.subTest(name):
+                self.assertEqual(g["accentApplied"], "#6E5DC6")
+                self.assertTrue(g["accentMenuClosed"])
+                self.assertEqual(g["accentTicked"], ["#6E5DC6"])
+                self.assertEqual(g["accentCur"], "Violet")
+                self.assertEqual(g["customTicked"], ["rebeccapurple"])
+                self.assertTrue(g["defaultApplied"])
+                self.assertEqual(g["defaultTicked"], [""])
+                for sw in g["defaultSwatches"]:
+                    hex_color = sw["expected"].lstrip("#")
+                    rgb = ", ".join(str(int(hex_color[i:i + 2], 16)) for i in (0, 2, 4))
+                    self.assertEqual(sw["color"], f"rgb({rgb})", sw["theme"])
 
 
 if __name__ == "__main__":
