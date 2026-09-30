@@ -6110,7 +6110,7 @@ async function moveTask(rid, col) {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ roomId: rid, workflow: col }),
     });
-    offerTransition(rid, col, row);
+    offerTransition(rid, col);
   } catch (e) {
     row.workflow = from;                                // put it back
     DISPLAYED_WORKFLOW.set(rid, from);
@@ -6128,10 +6128,25 @@ async function moveTask(rid, col) {
 // process on its own. But the common case should stay one gesture, so the
 // card offers the matching action inline — dismissable, and ignoring it
 // leaves the card exactly where it was dropped.
-function offerTransition(rid, col, row) {
+// The board remounts its cards on the refresh, so an offer lives in OFFERS
+// (room -> column it was dropped in) and is put back on every render until it
+// is answered or no longer applies (the task started, stopped or moved on).
+const OFFERS = new Map();
+function offerTransition(rid, col) {
+  OFFERS.set(rid, col);
+  showOffers();
+}
+function showOffers() {
+  for (const [rid, col] of OFFERS) {
+    const row = ALL_ROWS.find(x => x.roomId === rid);
+    if (!row || workflowOf(row) !== col || !showOffer(rid, col, row)) OFFERS.delete(rid);
+  }
+}
+// False when the offer no longer applies; true when shown (or its card is
+// just not on screen right now).
+function showOffer(rid, col, row) {
   const view = boardHost();
   const card = view && view.querySelector(`.card[data-room="${CSS.escape(rid)}"]`);
-  if (!card || card.querySelector('.offer')) return;
   let html = '';
   if (col === 'inprogress' && !row.isLive) {
     html = `<div class="offer">Nothing is running. Start the agents?`
@@ -6142,13 +6157,15 @@ function offerTransition(rid, col, row) {
          + `<button class="ok" data-act="stop">Stop</button>`
          + `<button class="no">Leave running</button></div>`;
   }
-  if (!html) return;
+  if (!html) return false;
+  if (!card || card.querySelector('.offer')) return true;
   card.insertAdjacentHTML('beforeend', html);
   const offer = card.querySelector('.offer');
   offer.addEventListener('click', async (ev) => {
     const btn = ev.target.closest('button');
     if (!btn) return;
     ev.stopPropagation();
+    OFFERS.delete(rid);
     offer.remove();
     if (!btn.dataset.act) return;
     const url = btn.dataset.act === 'start' ? '/api/room/resume' : '/api/room/close';
@@ -6158,6 +6175,7 @@ function offerTransition(rid, col, row) {
       await refresh();
     } catch (e) { toast('failed: ' + e.message, 4000, 'err'); }
   });
+  return true;
 }
 
 
@@ -13044,6 +13062,7 @@ function renderRows() {
       if (fr && fr._html !== html) { fr.outerHTML = html; view.querySelector('.filterbar')._html = html; }
       boardEdges();
     }
+    if (OFFERS.size) showOffers();
     setViewCount(_viewCount);
     return;
   }
