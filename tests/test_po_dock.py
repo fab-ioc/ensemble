@@ -248,14 +248,14 @@ class ThePanels(unittest.TestCase):
         self.assertTrue((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8").startswith("fab-ioc/dock "))
         for rel in ("static/dock/src/index.js", "static/dock/src/dock.js", "static/dock/src/layout.js",
                     "static/dock/src/host.js", "static/dock/css/dock.css", "static/dock/src/popout-page.js",
-                    "static/dock/src/theme-picker.js", "static/dock/src/install.js"):
+                    "static/dock/src/theme-picker.js", "static/dock/src/install.js", "static/dock/src/screenshot.js"):
             self.assertIn(rel, dashboard.PAGE_FILES)
             self.assertIn(f'href="/{rel}"', INDEX, f"the page lists {rel} for Page update")
         self.assertIn("Promise.resolve('/static/dock/src/index.js')", INDEX)
         self.assertIn("return import(u);", INDEX)
         self.assertNotIn("dock/css/theme.css", INDEX, "the --dk-* tokens read Ensemble's own")
         self.assertNotIn("static/dock/src/popout.html", dashboard.PAGE_FILES, "an inert page: nothing to update in it")
-        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.5\.1 [0-9a-f]{40}")
+        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.7\.0 67f3879[0-9a-f]{33}")
 
     def test_the_library_does_what_the_workarounds_did(self):
         # Dock v0.3.3 has each of Ensemble's needs (the Dock project's ENSEMBLE-NEEDS.md); the page uses them.
@@ -662,7 +662,8 @@ async function main() {
     // elsewhere, a scroll and a resize of that window.
     await p.evalIn(`(() => { SELECTED_PROJECT = ${JSON.stringify(A.notes)}; renderRows(); return 0; })()`);
     await p.until('document.body.classList.contains("po-dock") && !!PD.dock', 20000);
-    await p.evalIn('PD.dock.pin("workspace"); 0'); await sleep(300);
+    // It was closed in Window mode above, so explicitly dock it for this test.
+    await p.evalIn('PD.dock.setViewMode("workspace", "pinned"); 0'); await sleep(300);
     await p.until('!!PD.els.workspace.querySelector(".dcs-files .wsp-tree .wse[data-path] .wse-more")', 20000);
     await viewMode(p, 'PD.els.workspace', 'window');
     await p.until('!!PD.dock.popWindow("workspace") && PD.els.workspace.ownerDocument !== document', 15000);
@@ -878,7 +879,7 @@ class InChrome(unittest.TestCase):
         self.assertEqual(f["badge"], "2", "the count on Your asks' strip button")
         self.assertFalse(f["elsewhere"] or f["pointsLine"], "Your asks is slid in: the chat shows its own points line")
         self.assertFalse(f["tabs"], "no tab row: the panels are the tabs")
-        self.assertFalse(f["panels"], "no Panels menu on a desktop")
+        self.assertTrue(f["panels"], "Panels recovers hidden windows on a desktop")
 
     def test_layout_changes_reload_no_iframe(self):
         k = self.got["kept"]
@@ -998,12 +999,12 @@ class InChrome(unittest.TestCase):
         self.assertTrue(b["icon"][0].endswith("/static/icons/favicon.svg"), "the window has the app's icon")
         self.assertNotEqual(b["styled"], "0px", "the page's styles came along")
         self.assertTrue(b["heard"], "a message to the window reaches the page, with its source")
-        self.assertEqual(b["backBtn"], "absent", "popBackButton: false: no Back to main window at all; closing the window puts the panel back")
+        self.assertEqual(b["backBtn"], "absent", "popBackButton: false: use the window's View Mode menu to dock back")
         self.assertTrue(self.got["boardBack"]["inDock"] and self.got["boardBack"]["cards"] > 0)
 
     def test_the_middle_cannot_be_moved(self):
-        self.assertEqual(self.got["middle"], {"head": "none", "acts": [], "toolActs": ["move", "float", "unpin", "pop", "max", "min"]},
-                         "the conversation has no title bar and no control; a tool can be pinned, split, popped out, not hidden")
+        self.assertEqual(self.got["middle"], {"head": "none", "acts": [], "toolActs": ["move", "float", "unpin", "pop", "max", "min", "hide"]},
+                         "the conversation stays fixed; the Board still in Window mode supports Hide")
 
     def test_the_chats_points_line_follows_whether_points_is_on_screen(self):
         self.assertEqual(self.got["pointsSeen"], {"slidIn": False, "slidOut": True, "back": False, "pinned": True,

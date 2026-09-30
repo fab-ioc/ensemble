@@ -13,8 +13,8 @@ a project that has a PO (Motors), a task in it, and a session in no project
   is out, Dock Unpinned), everything when it floats or is in its window;
 * slid out, it goes back once a row is opened;
 * popped out into its own window, a row clicked there opens the task in the
-  main window, and Unassigned still folds there; closing the window brings it
-  back;
+  main window, and Unassigned still folds there; closing hides it, Panels
+  reopens its window, and the window's View Mode brings it back;
 * Move To › Right puts it at the right, the page following;
 * its width and mode are kept over a reload;
 * a phone keeps the list home (no list dock), also when a desktop window is
@@ -76,7 +76,7 @@ const GEOM = `(() => {
   const strip = document.querySelector('#list-dock .dk-strip');
   const menu = document.querySelector('#list-dock [data-dk-act="menu"]'), by = sw.querySelector('#sw-by');
   const cs = getComputedStyle(document.body);
-  return { dock: !!d, mode: d ? d.viewMode('list') : null, side: d ? d.side('list') : null, fly: d ? d.flyOpen() : null, out: d ? d.isOut('list') : null,
+  return { visible: d ? d.isVisible('list') : null, notice: !!document.querySelector('#list-dock .dk-outnote'), dock: !!d, mode: d ? d.viewMode('list') : null, side: d ? d.side('list') : null, fly: d ? d.flyOpen() : null, out: d ? d.isOut('list') : null,
     here: sw.ownerDocument === document, home: sw.parentNode === document.body, rootHidden: document.getElementById('list-dock').hidden,
     list: sw.ownerDocument === document ? box(sw) : null, main: box(mid), dockHost: box(document.getElementById('po-dock-host')),
     strip: box(strip), flyBox: box(document.querySelector('#list-dock .dk-flyout.open')), stripSide: strip ? [...strip.classList].filter(c => /^dk-strip-(left|right|top|bottom)$/.test(c)).join('') : null,
@@ -193,10 +193,26 @@ async function main() {
       await new Promise(r => setTimeout(r, 600));
       return { box: true, was, now, folded: SW_UN.open, row: !!r, opened: !!SELECTED_SID && (rowBySid(SELECTED_SID) || {}).roomId === ${JSON.stringify(A.loose)} };
     })()`);
-    // Closing its window brings it back as it was (floating).
+    // Closing hides it; Panels reopens Window mode, also after a reload.
     await p.evalIn('LD.dock.popWindow("list").close(); 0');
     await p.until('!LD.dock.isOut("list") && SW_EL.ownerDocument === document', 10000); await sleep(500);
     out.windowBack = await p.evalIn(GEOM);
+    await p.evalIn('location.reload(); 0'); await sleep(1500); await p.ready();
+    await go(p, A.proj, true); await ldReady(p); await sleep(600);
+    await p.until('!!LD.dock && !!document.querySelector(".pd-panels")');
+    out.hiddenReload = await p.evalIn(GEOM);
+    await p.click('.pd-panels'); await p.click('[data-pd-list]');
+    await p.until('!!LD.dock.popWindow("list") && SW_EL.ownerDocument !== document');
+    out.windowReopened = await p.evalIn(GEOM);
+    await p.evalIn(`(() => {
+      pdMenuClose(false);
+      const d = LD.dock.popWindow('list').document;
+      d.querySelector('[data-dk-act="menu"]').click();
+      d.querySelector('[data-dk-sub="mode"]').click();
+      d.querySelector('[data-dk-menu="mode:float"]').click();
+      return 0;
+    })()`);
+    await p.until('LD.dock.viewMode("list") === "float" && SW_EL.ownerDocument === document');
     // Dock Pinned again, then Move To › Right: the page follows; and back to the left.
     await menuPick(p, FLOAT, 'mode', 'mode:pinned');
     out.pinnedAgain = await p.evalIn(GEOM);
@@ -290,6 +306,15 @@ async function main() {
       return { out: LD.dock.isOut('list'), note: !!n, back: !!(n && n.querySelector('[data-dk-pop="back"]')), x: !!x && getComputedStyle(x).display !== 'none' }; })()`);
     if (out.note.back) { await h.click('#list-dock .dk-outnote [data-dk-pop="back"]'); await sleep(600); }
     out.noteBack = await h.evalIn(GEOM);
+    // No former strip place: a window from the default pinned list still has Panels.
+    await h.evalIn('LD.dock.reset(); LD.dock.popOut("list"); 0');
+    await h.until('!!LD.dock.popWindow("list") && SW_EL.ownerDocument !== document');
+    await h.evalIn('LD.dock.popWindow("list").close(); 0');
+    await h.until('!LD.dock.isVisible("list")');
+    out.pinnedHidden = await h.evalIn(GEOM);
+    await h.click('.pd-panels'); await h.click('[data-pd-list]');
+    await h.until('!!LD.dock.popWindow("list") && SW_EL.ownerDocument !== document');
+    out.pinnedReopened = await h.evalIn(GEOM);
     await h.close();
     // A phone: the list is home.
     const q = await page(430, 932, true);
@@ -312,7 +337,7 @@ class TheWiring(unittest.TestCase):
     def test_the_list_is_a_panel_of_a_dock_of_its_own(self):
         block = INDEX[INDEX.index("// ---- The list as a dock panel (#137): begin"):INDEX.index("// ---- The list as a dock panel: end")]
         for used in ("el: SW_EL", "fill: 'page'", "stripHover: false", "stripOpen: 'beside'", "strip: 44",
-                     "can: (id, a) => id === 'list' && a !== 'hide'", "storageKey: LD_KEY",
+                     "can: (id, a) => id === 'list' && (a !== 'hide' || LD.dock?.viewMode(id) === 'window')", "storageKey: LD_KEY",
                      "L.split('row', [L.stack(['list'], { size: LD_W }), L.stack(['page'])])"):
             self.assertIn(used, block, used)
         self.assertIn("const LD_KEY = 'cd-list-dock';", block)
@@ -454,7 +479,15 @@ class TheListDock(unittest.TestCase):
         self.assertTrue(u["folded"], "the page knows it is open")
         self.assertTrue(u["opened"], "its row opens that conversation here")
         b = self.got["windowBack"]
-        self.assertEqual((b["out"], b["here"], b["mode"]), (False, True, "float"), "closing the window brings it back as it was")
+        self.assertEqual((b["out"], b["here"], b["mode"]), (False, True, "window"))
+        self.assertFalse(b["visible"] or b["notice"])
+        h = self.got["hiddenReload"]
+        self.assertEqual((h["visible"], h["out"], h["mode"], h["notice"]), (False, False, "window", False))
+        self.assertEqual((h["listW"], h["dockHost"]["x"]), ("44px", 44), "its former strip button takes space")
+        self.assertTrue(self.got["windowReopened"]["out"])
+        p = self.got["pinnedHidden"]
+        self.assertEqual((p["visible"], p["mode"], p["listW"], p["notice"]), (False, "window", "0px", False))
+        self.assertTrue(self.got["pinnedReopened"]["out"])
 
     def test_move_to_right_and_back(self):
         self.assertEqual(self.got["pinnedAgain"]["mode"], "pinned")
@@ -496,7 +529,7 @@ class TheListDock(unittest.TestCase):
     def test_the_notice_offering_the_list_back_stays(self):
         n = self.got["note"]
         self.assertTrue(n["out"] and n["note"] and n["back"], n)
-        self.assertFalse(n["x"], "no × on it: it is the list's only way back")
+        self.assertTrue(n["x"], "Panels provides recovery after dismissing the notice")
         b = self.got["noteBack"]
         self.assertTrue(b["here"] and not b["out"], b)
         self.assertGreater(b["list"]["w"], 0)

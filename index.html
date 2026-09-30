@@ -2213,9 +2213,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #list-dock .dk-float, #list-dock .dk-outnote, #list-dock .dk-note, #list-dock .dk-empty { pointer-events: auto; }
   #list-dock .dk-stack:has(> .dk-body > #ld-page) > .dk-head { display: none; }
   #ld-page { background: transparent; }
-  /* The notice that offers the list back after a reload is its only way back
-     (a desktop has no Panels menu): it cannot be waved away. */
-  #list-dock .dk-outnote-x { display: none; }
   /* The middle keeps its 360px: a list slid out beside it gives way. */
   #list-dock .dk-main { min-width: 360px; }
   #list-dock .dk-flyout.dk-fly-beside:is(.dk-fly-left, .dk-fly-right) { max-width: calc(100% - var(--dk-strip) - 360px); }
@@ -3424,6 +3421,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 <link rel="modulepreload" href="/static/dock/src/theme-picker.js">
 <link rel="modulepreload" href="/static/dock/src/install.js">
 <link rel="modulepreload" href="/static/dock/src/popout-page.js">
+<link rel="modulepreload" href="/static/dock/src/screenshot.js">
 <link rel="preload" as="fetch" crossorigin="anonymous" href="/static/dock/css/dock.css">
 <script>
 // The page's document-wide listeners, kept so a panel popped out into a window
@@ -10126,7 +10124,7 @@ function pdLoad() {
       lib.onEveryWindow(w => {
         if (w === window) return null;
         // Two docks share this page (the PO screen's and the list's, #137),
-        // and Dock v0.5.1 keeps one key on it for its windows to check they
+        // and Dock v0.7.0 keeps one key on it for its windows to check they
         // are still this page's: the dock made last wrote its own, and the
         // other's windows would take themselves for orphans and close. The
         // page keeps the first key made (pdKeepPopKey, after each createDock)
@@ -10256,10 +10254,9 @@ function pdEnsure() {
     // and Esc. A tool that should stay open is docked (⋯ › View Mode).
     stripHover: false,
     stripOpen: 'beside',
-    // The conversation stays where it is; a tool can be docked beside it, split,
-    // popped out, but not hidden (nothing would show it again). A phone's
-    // Panels menu hides and shows them.
-    can: (id, a) => (isPhone() && !(id === 'po-chat' && a === 'hide' && pdTask())) || (id !== 'po-chat' && a !== 'hide'),
+    // The conversation stays in the middle. A tool's window can hide; its
+    // former strip button or Panels reopens it in Window mode.
+    can: (id, a) => (isPhone() && !(id === 'po-chat' && a === 'hide' && pdTask())) || (id !== 'po-chat' && (a !== 'hide' || PD.dock?.viewMode(id) === 'window')),
     popName: 'ensemble-panel-',
     popTitle: p => `${p.id === 'po-chat' ? 'PO chat' : p.title} · ${(projectById(PD.pid) || {}).name || 'Ensemble'}`,
     // The library's pop-out page as the hub serves it, not from a blob:
@@ -10646,20 +10643,20 @@ function pdMenuClose(refocus) {
   if (refocus && btn.isConnected) btn.focus();
 }
 function pdMenuHtml() {
-  const ids = PD_IDS.filter(id => id !== 'spec');
+  const ids = PD.dock && document.body.classList.contains('po-dock') ? PD_IDS : [];
   const on = ids.filter(id => PD.dock.isVisible(id));
-  return ids.map(id => {
+  const list = LD.dock ? `<button type="button" role="menuitemcheckbox" data-pd-list aria-checked="${LD.dock.isVisible('list')}"${LD.dock.isVisible('list') && !LD.dock.can('list', 'hide') ? ' disabled title="This panel stays on screen"' : ''}>Tasks</button>` : '';
+  return list + ids.map(id => {
     const vis = on.includes(id), last = vis && on.length === 1;
-    // A phone asks the dock's own rule: Chat stays while a task is open in it.
-    const kept = vis && !last && isPhone() && !PD.dock.can(id, 'hide');
+    const kept = vis && !last && !PD.dock.can(id, 'hide');
     return `<button type="button" role="menuitemcheckbox" data-pd-toggle="${id}" aria-checked="${vis}"${vis ? ' class="on"' : ''}`
-      + `${last ? ' disabled title="The last panel on screen stays"' : kept ? ' disabled title="The open task is in it"' : ''}>${esc(PD_TITLES[id])}</button>`;
+      + `${last ? ' disabled title="The last panel on screen stays"' : kept ? ' disabled title="This panel stays on screen"' : ''}>${esc(PD_TITLES[id])}</button>`;
   }).join('') + '<div class="dk-menu-sep" role="separator"></div>'
-    + '<button type="button" role="menuitem" data-pd-reset title="Every panel a tab again, the PO chat in front">Reset layout</button>';
+    + '<button type="button" role="menuitem" data-pd-reset title="Put the panels back in their default layout">Reset layout</button>';
 }
 function pdMenu(btn) {
   if (PD_MENU) { const same = PD_MENU.btn === btn; pdMenuClose(same); if (same) return; }
-  if (!PD.dock) return;
+  if (!PD.dock && !LD.dock) return;
   const menu = document.createElement('div');
   menu.className = 'dk-menu pd-menu';
   menu.setAttribute('role', 'menu');
@@ -10674,6 +10671,12 @@ function pdMenu(btn) {
   const first = menu.querySelector('button:not([disabled])');
   if (first) first.focus();
   menu.addEventListener('click', e => {
+    if (e.target.closest('[data-pd-list]:not([disabled])')) {
+      LD.dock.setVisible('list', !LD.dock.isVisible('list'));
+      menu.innerHTML = pdMenuHtml();
+      menu.querySelector('[data-pd-list]')?.focus();
+      return;
+    }
     const t = e.target.closest('[data-pd-toggle]');
     if (t && !t.disabled) {
       const id = t.dataset.pdToggle;
@@ -10683,7 +10686,7 @@ function pdMenu(btn) {
       if (again) again.focus();
       return;
     }
-    if (e.target.closest('[data-pd-reset]')) { pdMenuClose(true); PD.dock.reset(); }
+    if (e.target.closest('[data-pd-reset]')) { pdMenuClose(true); LD.dock?.reset(); PD.dock?.reset(); }
   });
   menu.addEventListener('keydown', e => {
     const items = [...menu.querySelectorAll('button:not([disabled])')];
@@ -13936,9 +13939,8 @@ function openPoConv(pj) {
 // (it slides out beside the page and back on a click elsewhere), float it, pop
 // it into a window of its own, move it to another side, minimise it. The page
 // follows where the stand-in is (ldInsets), so it takes the room the list
-// leaves. The layout is kept per browser (LD_KEY). Nothing hides it for good:
-// its ⋯ has no Hide (only the Panels menu hides a panel, and a desktop has
-// none), and a closed window brings it back.
+// leaves. The layout is kept per browser (LD_KEY). Closing its window hides
+// it in Window mode; Panels reopens it, including after a reload.
 // The list's element moves (into the dock, into its window) with its listeners;
 // its code stays in this page, so a row clicked in its window opens the task
 // here. Before the library loads, when it could not, and on a phone (where the
@@ -13984,9 +13986,8 @@ function ldMake() {
       // a click elsewhere puts it back.
       stripHover: false,
       stripOpen: 'beside',
-      // The page stays where it is. The list goes anywhere but never away:
-      // without `hide`, no menu of the dock hides it.
-      can: (id, a) => id === 'list' && a !== 'hide',
+      // The page stays where it is. A hidden list window reopens from Panels.
+      can: (id, a) => id === 'list' && (a !== 'hide' || LD.dock?.viewMode(id) === 'window'),
       popName: 'ensemble-list-',
       popTitle: () => nounText('Tasks and {projects}') + ' · Ensemble',
       popUrl: '/static/dock/src/popout.html',
@@ -14028,7 +14029,7 @@ function ldKeepPage() {
   const st = d && find(d.layout().root);
   if (st && st.panels.includes('list')) { d.dockEdge('list', 'left'); d.activate('page'); }
 }
-// Its size on each axis: moved from a side to the top (or back), Dock v0.5.1
+// Its size on each axis: moved from a side to the top (or back), Dock v0.7.0
 // gives it its old extent across (the column's whole height as the band's; an
 // ask for Dock, ENSEMBLE-NEEDS item 10). It gets the size it last had that way
 // (a column's width, a band's height), kept per browser (LD_AXIS_KEY). A
@@ -14442,11 +14443,11 @@ function barPaint() {
   const back = document.getElementById('bar-back');
   if (back) back.hidden = !(inProj || row2);
   const here = document.getElementById('bar-here');
-  // A desktop's tools are on the strip at the right edge, each always there:
-  // no Panels menu (layout A, #125). A phone's tabs keep it, an open task's too.
+  // Panels also recovers a closed Window with no former strip button (the
+  // default pinned list, or a tool moved out of its strip before popping out).
   const panels = !document.body.classList.contains('mid');
   const tabs = poDockProject() || pdTaskWanted();
-  if (here) writeSlot(here, inProj && tabs && panels ? pdCtlHtml() : '');
+  if (here) writeSlot(here, LD?.dock || (inProj && tabs && panels) ? pdCtlHtml() : '');
   barCrumbs();
   const sw = document.getElementById('proj-switch');
   if (sw) sw.title = inProj ? `${projSwitchLabel()}: switch ${noun('one')}, or change this ${noun('one')}'s kind and key` : nounText('Switch {project}');

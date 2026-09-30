@@ -538,7 +538,7 @@ export function viewModeOf(layout, id, open = 'over') {
   if (w.kind === 'dock') return 'pinned';
   if (w.kind === 'auto') return (w.entry.open || open) === 'beside' ? 'unpinned' : 'undock';
   if (w.kind === 'float') return 'float';
-  if (w.kind === 'out') return 'window';
+  if (w.kind === 'out' || (w.kind === 'hidden' && w.entry.window)) return 'window';
   return 'hidden';
 }
 
@@ -718,19 +718,22 @@ export function pinPanel(layout, id, opts = {}) {
   return true;
 }
 
-/** Hides a panel; `showPanel` puts it back as it was (docked, floating or unpinned). One that was out comes back where
- * it was before it went out. */
+/** Hides a panel; `showPanel` restores its mode. A Window keeps its geometry separately from its main-page place. */
 export function hidePanel(layout, id) {
   const w = whereIs(layout, id);
   if (!w || w.kind === 'hidden') return false;
-  layout.hidden.push({ id, was: wasOf(detach(layout, id)) });
+  const window = w.kind === 'out' ? pickGeo(w.entry) : null;
+  layout.hidden.push({ id, was: wasOf(detach(layout, id)), ...(window ? { window } : {}) });
   return true;
 }
 
 export function showPanel(layout, id, opts = {}) {
   const w = whereIs(layout, id);
   if (!w || w.kind !== 'hidden') return false;
-  restore(layout, id, detach(layout, id).was || { kind: 'dock' }, opts);
+  const window = w.entry.window;
+  const was = detach(layout, id).was || { kind: 'dock' };
+  if (window) (layout.out || (layout.out = {}))[id] = { ...window, was };
+  else restore(layout, id, was, opts);
   return true;
 }
 
@@ -879,7 +882,9 @@ export function normalizeLayout(raw, opts = {}) {
   };
   for (const h of Array.isArray(raw.hidden) ? raw.hidden : []) {
     if (!h || !take(h.id)) continue;
-    layout.hidden.push(h.was === undefined ? { id: h.id } : { id: h.id, was: normWas(h.was, h.id) });
+    const entry = h.was === undefined ? { id: h.id } : { id: h.id, was: normWas(h.was, h.id) };
+    if (h.window && typeof h.window === 'object') entry.window = pickGeo(h.window);
+    layout.hidden.push(entry);
   }
   // The panels in windows of their own, with where those windows were. One stored with `was` has no place in the
   // layout; one stored before (no `was`) still has its place there, and leaves it below.
@@ -902,7 +907,7 @@ export function normalizeLayout(raw, opts = {}) {
   // A panel the stored layout does not know (added since it was stored) goes where the default has it.
   for (const id of ids) if (!seen.has(id)) placeDocked(layout, id, null, opts);
   const visible = ids.filter((id) => { const w = whereIs(layout, id); return w && w.kind !== 'hidden'; });
-  if (!visible.length) return fallback();
+  if (!visible.length && !layout.hidden.some((h) => h.window)) return fallback();
   // A panel a layout stored before was out and still in its place (a hidden one is not out): it leaves its place now.
   for (const [id, g] of older) {
     const w = whereIs(layout, id);

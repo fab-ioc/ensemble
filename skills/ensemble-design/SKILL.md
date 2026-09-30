@@ -622,11 +622,15 @@ it out. A tool's title bar
 (Dock v0.5.0, IntelliJ's; each View Mode item's tooltip says what it does) is its tab, **⋯** and **−**: ⋯ holds View Mode (Dock Pinned docks it
 beside the conversation, Dock Unpinned, Undock, Float, Window pops it out), Move To (the side it
 is on; only this changes a side), Maximise and Hide; − slides it back in. Closing a tool's window
-brings it back slid out on its side. Split and maximise work as the library's. **The
+hides it in Window mode (Dock v0.7.0); its former strip button or Panels reopens a window.
+The window's own ⋯ offers View Mode to dock it back, Move To, Take Screenshot and Hide;
+its − hides it too. Take Screenshot uses the browser's share-this-tab prompt where supported.
+Split and maximise work as the library's. **The
 conversation cannot be moved**: no title bar, no control (`can`), and a tool dropped into its
 stack goes beside it (`pdKeepMiddle`). The Board's own **⤢** (`.pd-board-max`, beside its view
-switch) takes the whole width and gives it back. There is **no Panels menu on a desktop**: every
-tool is always on the strip. The layout is kept under `cd-tool-strip` (the old `cd-po-dock` is not
+switch) takes the whole width and gives it back. **Panels is available on a desktop** (#143):
+it recovers Tasks and tools whose closed window has no former strip button, including Spec.
+The list's reload notice can be dismissed because Panels still offers recovery. The layout is kept under `cd-tool-strip` (the old `cd-po-dock` is not
 read). An open task is the same dock's middle (see *The middle* in §5), with its own Changes,
 Files and Spec in the tools. **A phone has the same tools as tabs** (#129): the dock is narrow
 there (`pdNarrow()` is `isPhone()`), one column of tabs in the strip's order, `Chat · Your asks ·
