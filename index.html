@@ -10999,7 +10999,7 @@ function poSwitchDialogHtml(pj, info, err, confirmMsg, typed) {
     <h3>Switch ${esc(pj.name)}’s PO</h3>
     <p class="cfg-hint">Now ${esc(name(cur))}${info.model ? ' · <code>' + esc(info.model) + '</code>' : ''}${info.live ? '' : ' (not running)'}. A fresh ${esc(name(other))} session takes over in the same room, with the same chat and asks, from the PO’s written handover. A running PO is asked to bring its handover up to date first; that can take a few minutes.</p>
     <div class="im-field">
-      <label for="ps-model">${esc(name(other))} model <small>empty for its default</small></label>
+      <label for="ps-model">${esc(name(other))} model <small>empty for the one chosen in Settings, else its own default</small></label>
       <input id="ps-model" type="text" value="${esc(model)}" spellcheck="false" autocomplete="off"${why ? ' disabled' : ''}>
     </div>
     ${why ? `<p class="cfg-hint" role="status">${esc(why)}</p>` : ''}

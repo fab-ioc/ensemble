@@ -62,6 +62,10 @@ class _Case(unittest.TestCase):
                                    side_effect=lambda *a: self.config_model)
         config.start()
         self.addCleanup(config.stop)
+        # ... and no model chosen in this machine's Settings: Codex's config decides.
+        chosen = mock.patch.object(usage, "hub_codex_model", return_value="")
+        chosen.start()
+        self.addCleanup(chosen.stop)
         # Never this machine's own session records: a test that gives no files
         # reads none.
         rollouts = mock.patch.object(usage, "_rollout_files", return_value=[])
