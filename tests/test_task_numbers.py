@@ -489,6 +489,28 @@ class Addresses(Hub):
         status, _, body = self.call("GET", f"/api/task/ref?ref=%235&room={self.a}")
         self.assertEqual(status, 404)
 
+    def test_a_chip_says_whether_the_task_is_the_rooms_projects(self):
+        # #152: the chip shows #2 for the room's own project's task, ED-2 / O-1
+        # (and its card names the project) for another's.
+        status, _, body = self.call("GET", f"/api/task/ref?ref=%232&room={self.a}")
+        info = json.loads(body)
+        self.assertEqual((status, info["inProject"], info["project"]), (200, True, "Ensemble Dashboard"))
+        status, _, body = self.call("GET", f"/api/task/ref?ref=O-1&room={self.a}")
+        info = json.loads(body)
+        self.assertEqual((info["roomId"], info["inProject"], info["project"]), (self.x, False, "OPtionTradingENgine"))
+        # A PO's message from another project (?project=): its bare #1 is that
+        # project's task, read in the room's project it is someone else's.
+        status, _, body = self.call("GET", f"/api/task/ref?ref=%231&room={self.a}&project={self.ot}")
+        info = json.loads(body)
+        self.assertEqual((status, info["roomId"], info["ref"], info["inProject"]), (200, self.x, "O-1", False))
+        status, _, body = self.call("GET", f"/api/task/ref?ref=%231&project={self.ot}")
+        info = json.loads(body)
+        self.assertEqual((info["roomId"], info["inProject"]), (self.x, True), "no room: the project it was read in is the one shown")
+        status, _, body = self.call("GET", f"/api/task/ref?ref=%232&room={self.a}&project={self.ot}")
+        self.assertEqual(status, 404, "read in the other project alone")
+        status, _, body = self.call("GET", "/api/task/ref?ref=ED-2")
+        self.assertEqual(json.loads(body)["inProject"], False, "no context: the full form")
+
     def test_a_projects_key_is_set_on_its_settings(self):
         status, _, body = self.call("POST", "/api/projects/key", {"projectId": self.ot, "key": "ot"})
         self.assertEqual((status, json.loads(body)), (200, {"ok": True, "key": "OT"}))
@@ -514,13 +536,30 @@ class WhatTheHubWrites(Addresses):
         self.assertEqual(out, text + "\n\n"
                          '[ref #2] task "Beta" — not running, Done; claude (engineer), codex (reviewer); '
                          "branch sess/beta; last report (completed): Merged and tested.\n\n"
-                         '[ref #O-1] task #1 "Trading one" — not running, Done; claude (engineer), codex (reviewer)')
+                         '[ref #O-1] task O-1 "Trading one" — not running, Done; claude (engineer), codex (reviewer)')
         self.assertEqual(mr.strip_message_refs(out), text)
         self.assertEqual(dashboard.with_message_refs("#1 here", self.x).split("\n\n")[1][:30], '[ref #1] task "Trading one" — ')
         self.assertEqual(dashboard.with_message_refs("no refs #9", self.a), "no refs #9")
         with mock.patch.object(dashboard, "_task_index", side_effect=AssertionError("read")):
             self.assertEqual(dashboard.with_message_refs("names no task", self.a), "names no task",
                              "a message naming no task reads nothing")
+
+    def test_a_pos_message_from_another_project_names_that_projects_tasks(self):
+        # #152, point 4: "Dock #27" in a PO-to-PO message pasted into this
+        # project's PO room is Dock's task, not this project's #27.
+        pomsg = {"from": "claude@room-other", "kind": "pomsg", "fromProjectId": self.ot, "toProjectId": self.ed,
+                 "direction": "received", "text": "Needs 15 and 16 are drafted as #1"}
+        self.assertEqual(dashboard.ref_project(pomsg), self.ot)
+        self.assertEqual(dashboard.ref_project({"from": "user", "kind": "human", "text": "#1"}), "", "a person's bare number is this project's")
+        self.assertEqual(dashboard.ref_project({"from": "user", "text": "#1", "fromProjectId": self.ot}), "", "only a PO's message carries its project")
+        self.assertEqual(dashboard.ref_project(None), "")
+        out = dashboard.with_message_refs(pomsg["text"], self.a, dashboard.ref_project(pomsg))
+        self.assertEqual(out.split("\n\n")[1][:34], '[ref #1] task O-1 "Trading one" — ', out)
+        self.assertEqual(dashboard.with_message_refs(pomsg["text"], self.a).split("\n\n")[1][:27], '[ref #1] task "Alpha" — not', "without the project: the room's own #1")
+        # The sender's own room keeps the same message with its own project: the same reading as before.
+        sent = {**pomsg, "direction": "sent", "fromProjectId": self.ed}
+        self.assertEqual(dashboard.with_message_refs(sent["text"], self.a, dashboard.ref_project(sent)),
+                         dashboard.with_message_refs(sent["text"], self.a))
 
     def test_task_lines_come_after_balloon_blocks_and_strip_together(self):
         url = f"http://127.0.0.1:8765/session?room={self.a}&msg=aaaaaaaaaaaa"

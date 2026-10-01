@@ -76,7 +76,7 @@ const TaskCard = (() => {
     const id = o.agent || '';
     const href = o.href || ('/session?id=' + encodeURIComponent(t.roomId) + (id ? '&agent=' + encodeURIComponent(id) : ''));
     const ref = t.ref || t.label || '';
-    const card = { ref, title: t.title || '', state: stateText(t),
+    const card = { ref: word(t, o.key), title: t.title || '', state: stateText(t),
                    agents: (t.agents || []).map(a => a.identity || a.agent).filter(Boolean),
                    project: t.inProject === false ? (t.project || '') : '', href, task: t.roomId || '', agent: id };
     const dot = dotOf(t);

@@ -2652,11 +2652,22 @@ def attachment_url(room_id: str, name: str) -> str:
     return "/api/room/attachment?" + urlencode({"room": room_id, "name": name})
 
 
-def with_message_refs(text: str, room_id: str = "") -> str:
+def with_message_refs(text: str, room_id: str = "", project_id: str = "") -> str:
     """A chat message as the agent receives it: its balloon links written out,
     and a line for each task it names by number (#18 in the project of the
-    room it was sent in, ED-18 in any)."""
-    return message_refs.expand_message_refs(text, resolve_message_ref, task_lookup_for(room_id))
+    room it was sent in — or in ``project_id`` when the message's own context
+    gives one, see ref_project — ED-18 in any)."""
+    return message_refs.expand_message_refs(text, resolve_message_ref, task_lookup_for(room_id, project_id))
+
+
+def ref_project(item: dict | None) -> str:
+    """The project a message's bare task numbers (#27) are read in, when it is
+    not the room's own: a message from another project's PO (kind ``pomsg``,
+    po_messages) names that project's tasks. "" means the room's project. The
+    pages read a balloon the same way (session.html's taskRefProject)."""
+    if not isinstance(item, dict) or item.get("kind") != "pomsg":
+        return ""
+    return str(item.get("fromProjectId") or "")
 
 
 def attachment_paths(room: dict, given) -> list[str]:
@@ -3180,7 +3191,7 @@ Do NOT design or implement — the engineer builds, you review. Check the work a
 ## What you were asked
 From {who}:
 
-{_quote_block(with_message_refs(msg.get('text', ''), room.get('id', '')) if refs_expanded_for(room, sender) else msg.get('text', ''))}
+{_quote_block(with_message_refs(msg.get('text', ''), room.get('id', ''), ref_project(msg)) if refs_expanded_for(room, sender) else msg.get('text', ''))}
 
 Recent conversation before it:
 {context}
@@ -5140,19 +5151,25 @@ def http_task_id(value, project_id: str = "") -> tuple[str, dict | None]:
 
 def task_lookup_for(room_id: str = "", project_id: str = ""):
     """``lookup(key, no)`` for message_refs: the task a number in a message
-    names, read in the project of the room it was sent in. Nothing is read
-    until a message names a task."""
-    project: list[str] = []
+    names, read in the project of the room it was sent in, or in
+    ``project_id`` when given (a PO's message from another project,
+    ref_project). A task of another project than the room's is labelled in
+    full (O-1), so the agent sees which project's task the line is about.
+    Nothing is read until a message names a task."""
+    project: list[str] = []      # [the project numbers are read in, the room's own]
 
     def lookup(key: str, no: int) -> dict | None:
         if not project:
-            pid = project_id
-            if room_id and not pid:
+            own = ""
+            if room_id:
                 room = next((e for e in _task_index() if e["id"] == room_id), None)
-                pid = _task_project(room, load_session_projects(), load_projects()) if room else ""
-            project.append(pid)
+                own = _task_project(room, load_session_projects(), load_projects()) if room else ""
+            project.extend([project_id or own, own])
         rid, _why = resolve_task_ref(f"{key}-{no}" if key else f"#{no}", project[0])
-        return task_ref_info(rid) if rid else None
+        info = task_ref_info(rid) if rid else None
+        if info and info.get("projectId") and info["projectId"] != (project[1] or project[0]):
+            info["label"] = info["ref"]
+        return info
     return lookup
 
 
@@ -10333,20 +10350,26 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p == "/api/task/ref":
             # The task a number in a chat names, for the chip that shows it:
-            # ?ref=#18 read in the project of ?room= (or ?project=), ?ref=ED-18
-            # in any. 404 with a sentence when it names none.
+            # ?ref=#18 read in the project of ?project= (a PO's message from
+            # another project), else of ?room=; ?ref=ED-18 in any. 404 with a
+            # sentence when it names none. ``inProject`` says whether the task
+            # belongs to the room's project (else the one it was read in): the
+            # chip then shows #18, otherwise ED-18 and its card names the project.
             q = parse_qs(u.query)
             ctx_room = (q.get("room", [""])[0] or "").strip()
             pid = (q.get("project", [""])[0] or "").strip()
-            if ctx_room and not pid:
+            ctx_pid = ""
+            if ctx_room:
                 rm = chatroom.get_room(ctx_room)
-                pid = _task_project(rm, load_session_projects(), load_projects()) if rm else ""
-            rid, why = resolve_task_ref(q.get("ref", [""])[0], pid)
+                ctx_pid = _task_project(rm, load_session_projects(), load_projects()) if rm else ""
+            rid, why = resolve_task_ref(q.get("ref", [""])[0], pid or ctx_pid)
             info = task_ref_info(rid) if rid else None
             if info is None:
                 self._send_json(404, {"error": "no_such_task", "message": why or "no such task"})
                 return
             info.pop("report", None)
+            shown = ctx_pid or pid
+            info["inProject"] = bool(shown) and info.get("projectId") == shown
             self._send_json(200, info)
             return
         if p == "/api/room/attachment":
@@ -11468,7 +11491,7 @@ class Handler(BaseHTTPRequestHandler):
                 raise StartRoomError("handing over to a fresh session, try again shortly")
             if any(typed_by_person(it["text"]) for it in items):
                 sess.last_input = time.time()
-            if not _type_input(sess, "\n\n".join(with_message_refs(it["text"], rid) for it in items)):
+            if not _type_input(sess, "\n\n".join(with_message_refs(it["text"], rid, ref_project(it)) for it in items)):
                 return items     # it looked alive, but the write found it gone
         _typed_sends(rid, items)
         if any(hub_input_kind(it["text"])["kind"] == "human" for it in items):
@@ -11641,7 +11664,7 @@ class Handler(BaseHTTPRequestHandler):
                 if line:
                     parts.append(line)
             if solo:
-                parts += [with_message_refs(it["text"], room_id) for it in items]
+                parts += [with_message_refs(it["text"], room_id, ref_project(it)) for it in items]
             elif ident in wake_for:
                 parts.append(_relay_wake(wake_for.pop(ident)[-1]))
             if not parts:
@@ -12324,7 +12347,7 @@ class Handler(BaseHTTPRequestHandler):
                 room = chatroom.get_room(room_id) or {}
                 body = "\n".join(
                     f"[from {m['from']}] "
-                    + (with_message_refs(m["text"], room_id) if refs_expanded_for(room, m["from"]) else m["text"])
+                    + (with_message_refs(m["text"], room_id, ref_project(m)) if refs_expanded_for(room, m["from"]) else m["text"])
                     for m in msgs)
             return ok({"content": [{"type": "text", "text": body}],
                        "isError": False})
