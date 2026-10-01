@@ -53,7 +53,8 @@ defers the top-slot rewrite while a menu is open.
    kept open**; the anchor falls back to the More button, then to the last
    rect, if the item goes away. Keep other users of `.ov-item` (the workspace
    context menu `.dcm`) untouched.
-4. **`session.html`**: the header keeps the title, status and `⧉ Dock`, and
+4. **`session.html`**: the header keeps the title and status (its `⧉ Dock` went
+   with #148: a task's panel pops out with the Dock panel it is in), and
    replaces the button wall with the same bar from the same model. It acts
    in place for Terminals, Pause, Rename, Suggest a name, Folder, Terminal
    colours, Chat in terminal colours, End and Resume/Start. Agents and models,

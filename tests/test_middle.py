@@ -153,7 +153,7 @@ const MID = `(() => {
   const dp = document.getElementById('detail-panel');
   const chat = open ? dp.querySelector('iframe.dp-session') : document.querySelector('#po-panel iframe.po-session:not([hidden])');
   return { mid: document.body.classList.contains('mid'), open, vw: innerWidth, vh: innerHeight, top: Math.round(hd.bottom),
-    panel: document.body.classList.contains('po-dock') && document.body.classList.contains('mid') ? box(PD.els['po-chat'])
+    panel: document.body.classList.contains('po-dock') && document.body.classList.contains('mid') ? box(PD.els['po-chat'].closest('.dk-stack') || PD.els['po-chat'])
       : open ? box(dp) : box(document.getElementById('po-dock-host')), chat: vis(chat) ? box(chat) : null,
     listR: (() => { const l = document.getElementById('switcher'); return l && !l.hidden ? Math.round(l.getBoundingClientRect().right) : 0; })(),
     convW: parseFloat(getComputedStyle(document.body).getPropertyValue('--conv-w')),
@@ -346,7 +346,8 @@ async function main() {
       await go(r, A.proj); await poReady(r); await sleep(400);
       await r.evalIn("PD.dock.setVisible('workspace', false); 0");
       await sleep(200);
-      const tabs = `[...document.querySelectorAll('#po-dock .dk-stack .dk-tab')].filter(e => e.getBoundingClientRect().width > 0).map(e => e.textContent.trim())`;
+      // The middle's own title tab (#148) is not a tool tab: leave it out.
+      const tabs = `[...document.querySelectorAll('#po-dock .dk-stack .dk-tab')].filter(e => e.getBoundingClientRect().width > 0 && !e.closest('.dk-stack').contains(PD.els['po-chat'])).map(e => e.textContent.trim())`;
       out.bpPhone = { mid: await r.evalIn("document.body.classList.contains('mid')"), ws: await r.evalIn("PD.dock.isVisible('workspace')") };
       await c.send('Emulation.setTouchEmulationEnabled', { enabled: false }, r.sessionId);
       await c.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, r.sessionId);
@@ -535,6 +536,7 @@ class TheMiddle(unittest.TestCase):
 
     def full_height(self, g, what):
         self.assertTrue(g["mid"], what)
+        # The middle is the conversation's Dock stack (#148): its title bar sits right under the page bar.
         self.assertLessEqual(abs(g["panel"]["y"] - g["top"]), 1, f"{what}: starts under the bar")
         self.assertLessEqual(abs(g["panel"]["b"] - g["vh"]), 1, f"{what}: reaches the bottom")
         # The list is a Dock panel (#137): its splitter (5px) lies between it and the middle.

@@ -343,7 +343,13 @@ class Parity(unittest.TestCase):
             self.assertEqual(src.count('<script src="/static/actions.js"></script>'), 1, name)
             self.assertIn("SessionActions.actionBarHtml(SessionActions.sessionActions(", src, name)
             # Loaded before the page's own script, so its click handler runs first.
-            self.assertLess(src.index('<script src="/static/actions.js"></script>'), src.index("<script>\n", src.index("</head>") - 20000), name)
+            # index.html (#148): after the DOC_LISTENERS wrapper, so its document listeners reach a panel's own window too.
+            tag = src.index('<script src="/static/actions.js"></script>')
+            if name == "index.html":
+                self.assertLess(src.index("window.DOC_LISTENERS = [];"), tag, name)
+                self.assertLess(tag, src.index("</head>"), name)
+            else:
+                self.assertLess(tag, src.index("<script>\n", src.index("</head>") - 20000), name)
 
     def test_the_styles_are_the_same_in_both_pages(self):
         self.assertEqual(css_block(SESSION), css_block(INDEX))
