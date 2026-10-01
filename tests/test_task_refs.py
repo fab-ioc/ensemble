@@ -34,6 +34,7 @@ import unittest
 from pathlib import Path
 
 import message_refs as mr
+import task_numbers as tn
 
 ROOT = Path(__file__).resolve().parent.parent
 SESSION = (ROOT / "session.html").read_text(encoding="utf-8").replace("\r\n", "\n")
@@ -90,9 +91,14 @@ const TASKS = {
   'ED-7': { roomId: 'room-c', no: 7, label: '#7', ref: 'ED-7', title: 'Gamma', status: 'not running', workflowName: 'Done', agents, project: 'Ensemble Dashboard', inProject: true },
   '#18@proj-dock': { roomId: 'room-d', no: 18, label: '#18', ref: 'D-18', title: 'Dock eighteen', status: 'not running', workflowName: 'In progress', agents, project: 'Dock', inProject: false },
 };
+// The hub's project list (/api/task/projects): this chat is Ensemble Dashboard's; Dock is called Dock.
+const PROJECTS_CTX = { own: 'proj-ed', nouns: ['project', 'projects'], projects: [
+  { id: 'proj-ed', key: 'ED', name: 'Ensemble Dashboard', aliases: ['Ensemble Dashboard', 'Ensemble'] },
+  { id: 'proj-dock', key: 'D', name: 'Dock', aliases: ['Dock'] } ] };
 const fetches = [];
 function fetch(url) {
   fetches.push(url);
+  if (url.startsWith('/api/task/projects')) return Promise.resolve({ status: 200, ok: true, json: () => Promise.resolve(PROJECTS_CTX) });
   const q = new URL(url, 'http://h').searchParams;
   const t = TASKS[q.get('ref') + (q.get('project') ? '@' + q.get('project') : '')];
   return Promise.resolve(t ? { status: 200, ok: true, json: () => Promise.resolve(t) }
@@ -118,6 +124,17 @@ const lines = %s;
   const home = mdToHtml('#18 by the Dock PO');
   const dockAsked = fetches.slice(asked);
   const projects = [taskRefProject({ kind: 'pomsg', fromProjectId: 'proj-dock' }), taskRefProject({ kind: 'human', fromProjectId: 'proj-dock' }), taskRefProject({ from: 'user' })];
+  // #156: a bare number right after another project's name is that project's;
+  // one with the name earlier in its sentence stays this chat's, and when
+  // Dock has the number too its card says the project was assumed.
+  const namedBefore = fetches.length;
+  const namedText = "Dock released #18 as v0.11.0. Answered Dock about #18, and Dock's #7 is nobody's. Plain #18 again.";
+  mdToHtml(namedText);
+  await settle();
+  const named = mdToHtml(namedText);
+  await settle();                 // Dock's #7 asked, then ours: both answered before the next count
+  const namedAsked = fetches.slice(namedBefore);
+  const preview = edRefsHtml('Dock #18 and #18');
   // A minute on, the task has ended: the chip asks again and redraws once.
   const realNow = Date.now, redrawsBefore = redraws, askedBefore = fetches.length;
   TASKS['#18'] = Object.assign({}, TASKS['#18'], { status: 'not running', workflowName: 'Done' });
@@ -129,7 +146,7 @@ const lines = %s;
   await settle();
   const ttl = { asked: fetches.length - askedBefore, redraws: redraws - redrawsBefore, later };
   Date.now = realNow;
-  console.log(JSON.stringify({ first, second, again, notTasks, ttl, fetches: fetches.slice(0, asked), redraws, dock, home, dockAsked, projects,
+  console.log(JSON.stringify({ first, second, again, notTasks, ttl, fetches: fetches.slice(0, asked), redraws, dock, home, dockAsked, projects, named, namedAsked, preview,
     stripped: lines.map(stripRefBlocks),
     report: [hubLabel, senderName].map(f => f({ from: 'user', kind: 'report', taskTitle: 'Docs', taskId: '#18', reporter: 'claude', reportKind: 'completed' })),
     oldReport: [hubLabel, senderName].map(f => f({ from: 'user', kind: 'report', taskTitle: 'Docs', taskId: 'room-1a2b3c4d', reporter: 'claude', reportKind: 'completed' })) }));
@@ -149,7 +166,7 @@ class SessionChips(unittest.TestCase):
             block(SESSION, "// ---- Task references: begin", "// ---- Task references: end"),
             block(SESSION, "// ---- Numbered points: begin", "// ---- Numbered points: end"),
             block(SESSION, "// ---- PO message names: begin", "// ---- PO message names: end"),
-            fn(SESSION, "mdToHtml"), fn(SESSION, "itemsHtml"),
+            fn(SESSION, "mdToHtml"), fn(SESSION, "itemsHtml"), fn(SESSION, "edRefsHtml"),
             SESSION[SESSION.index("const HUB_KIND_LABEL"):SESSION.index("};\n", SESSION.index("const HUB_KIND_LABEL")) + 3],
             SESSION[SESSION.index("const isHubInput"):SESSION.index("// The chip on an agent's balloon")],
             fn(SESSION, "hubLabel")])
@@ -165,8 +182,9 @@ class SessionChips(unittest.TestCase):
     def test_chips_once_the_hub_has_answered(self):
         self.assertNotIn("task-chip", self.r["first"], "until the hub answers, the text stays")
         self.assertEqual(sorted(self.r["fetches"]), sorted([
+            "/api/task/projects?room=room-ctx",
             "/api/task/ref?ref=%2318&room=room-ctx", "/api/task/ref?ref=ED-7&room=room-ctx",
-            "/api/task/ref?ref=%2399&room=room-ctx"]), "one request per task, in this chat's room")
+            "/api/task/ref?ref=%2399&room=room-ctx"]), "one request per task, in this chat's room, and the project list once")
         self.assertGreaterEqual(self.r["redraws"], 3)
         found = chips(self.r["second"])
         self.assertEqual(len(found), 3, self.r["second"])
@@ -191,7 +209,7 @@ class SessionChips(unittest.TestCase):
         self.assertIn('<code class="ic">#18</code>', html_)
         for text in ("not #99", "page#18", "x#18"):
             self.assertIn(text, html_)
-        self.assertEqual(len(self.r["fetches"]), 3, "a number already asked about is not asked again")
+        self.assertEqual(len(self.r["fetches"]), 4, "a number already asked about is not asked again")
         self.assertIn('class="task-chip', self.r["again"])
         self.assertNotIn("task-chip", self.r["notTasks"], "PR #18, issue #18, finding #18 and an image placeholder are not tasks")
 
@@ -228,10 +246,69 @@ class SessionChips(unittest.TestCase):
         self.assertIn('<script src="/static/taskcard.js"></script>', SESSION)
         self.assertIn("TaskCard.init({ open: openTaskFrom });", SESSION)
         self.assertIn("TASK_REF_PID = taskRefProject(m);", fn(SESSION, "renderBubbles"), "each balloon is drawn in its own project")
-        self.assertIn("taskChipHtml(m[1] || '', m[2] || '', +m[3])", fn(SESSION, "edRefsHtml"), "the box preview shows the chips too")
+        self.assertIn("TaskCard.refsIn(text, taskRefCtx())", fn(SESSION, "edRefsHtml"), "the box preview reads the words the same way")
+        self.assertIn("const h = taskChipHtml(r);", fn(SESSION, "edRefsHtml"), "the box preview shows the chips too")
         refresh = fn(SESSION, "refreshRoom")
         self.assertIn("`${tno} · ${room.title}`", refresh, "the tab title")
         self.assertIn("setText($('#tno'), tno);", refresh, "the header")
+
+    def test_a_number_after_another_projects_name_is_that_projects(self):
+        # #156: "Dock released #18" is Dock's #18, asked in Dock; "Answered Dock
+        # about #18" is this chat's, and as Dock has an #18 too the card says
+        # this project was assumed; "Dock's #7" names no task in Dock and
+        # none here: text. A plain #18 is this chat's, from its own cache.
+        found = chips(self.r["named"])
+        self.assertEqual(len(found), 3, self.r["named"])
+        released, about, plain = found
+        self.assertIn('data-task="room-d"', released)
+        self.assertIn('<span class="ref-who">D-18</span>', released, "another project's task reads in full")
+        self.assertEqual((card(released)["project"], card(released).get("assumed")), ("Dock", None))
+        self.assertIn('data-task="room-b"', about, "a name earlier in the sentence does not move the number")
+        self.assertIn('<span class="ref-who">#18</span>', about)
+        self.assertEqual((card(about)["project"], card(about)["assumed"]), ("Ensemble Dashboard", True), "its card says which project was assumed")
+        self.assertIn("assumed Ensemble Dashboard", html.unescape(about))
+        self.assertIn('data-task="room-b"', plain)
+        self.assertEqual(card(plain)["project"], "", "a plain number: nothing to say")
+        self.assertEqual(sorted(self.r["namedAsked"]), ["/api/task/ref?ref=%237&room=room-ctx", "/api/task/ref?ref=%237&room=room-ctx&project=proj-dock"],
+                         "Dock's #18 was asked before (the PO message); #7 is asked in Dock, then here")
+        preview = chips(self.r["preview"])
+        self.assertEqual([re.search(r'data-task="([^"]*)"', c).group(1) for c in preview], ["room-d", "room-b"], "the box preview: one chip per task, Dock's and ours")
+
+    def test_the_page_reads_names_as_the_hub_does(self):
+        # The same texts through task_numbers.all_text_refs (the hub) and
+        # TaskCard.refsIn (the pages) give the same references, projects and
+        # weak names: the rule lives in two languages and must not drift.
+        projects = tn.project_names(
+            [{"id": "dock", "key": "D", "name": "Dock"}, {"id": "ed", "key": "ED", "name": "Ensemble Dashboard"},
+             {"id": "op", "key": "OP", "name": "OPtionTradingENgine"}, {"id": "st", "key": "S", "name": "Strats"}],
+            {"dock": "Dock PO", "ed": "claude-dashboard windows port iterm2 to windows terminal", "op": "opten",
+             "st": "Deeper understanding of my option trading strategies"})
+        ctx = {"projects": projects, "own": "op", "nouns": ["initiative", "initiatives"]}
+        cases = [
+            "Re P230: no wait was needed. Dock released #27 as v0.11.0 while our task was running, so it's in.",
+            "Dock's #27 (`setTitle` and `bodyAttrs`) is running in the Dock project.",
+            "Opten PO is posting something like this \nDock released \n#27\n27. Amend a tranche by hand\nDone\n as v0.11.0 \n\nby the 27 resolve wrong",
+            "#27 is ours. Dock is next.", "in Dock: #27 and ED-3", "project Dock #27", "the Dock initiative’s #27",
+            "Dock released #27 so opTen can upgrade.", "- Dock v0.11.0 is out\n- #27 is next", "PR #27 in Dock", "`Dock #27` in code",
+            "#fff and #112233 are colours; ## 27 heading", "| Dock | #27 | Strats #4 |", "Dock PO's @codex@27 and @reviewer@ED-2",
+            "ensemble dashboard #5! Strats? #6", "see page#27 and &#27; and x-#27 and D-27 and #D-27 and #ZZ-9",
+            "```\nDock #1\n```\nDock #2 after the fence. Then #3 (Ensemble).", "Answered Ensemble about #11",
+            "Ensemble's 8 needs (#4) has 6 new commits", "Dock **v0.11.0** (#27) was tagged", "Dock v0.11.0 with #27 is tagged",
+            "Console on Dock v0.3.3 (#98) has new commits", "You don't have to wait for Dock: #100 already works",
+            "Dock task #27 and the Dock project's #28; told Strats that #9 is done. Then #3?", "Ensemble and Dock: #5",
+        ]
+        keys = ("token", "who", "key", "no", "start", "end", "project", "how", "others")
+        py = [[{k: r[k] for k in keys} for r in tn.all_text_refs(c, ctx)] for c in cases]
+        got = node(TASKCARD + "\nconst [cases, ctx] = %s;\nconsole.log(JSON.stringify(cases.map(c => TaskCard.refsIn(c, ctx))));\n"
+                   % json.dumps([cases, ctx]))
+        self.assertEqual(got, py)
+        # What the rule says, pinned: the real sentence is Dock's; a name earlier in the sentence is only a weak one.
+        self.assertEqual([(r["token"], r["project"], r["how"], r["others"]) for r in py[0]], [("#27", "dock", "name", [])])
+        self.assertEqual([(r["project"], r["how"]) for r in py[2]], [("dock", "name")], "the CEO's paste: the name right before, a line break between")
+        self.assertEqual([(r["project"], r["how"], r["others"]) for r in py[17]], [("op", "", ["ed"])])
+        self.assertEqual([(r["project"], r["how"], r["others"]) for r in py[18]], [("op", "", ["ed"])], "a title before a bracketed number")
+        self.assertEqual([r["project"] for r in py[23]], ["dock", "dock", "op", "op"])
+        self.assertEqual(py[23][2]["others"], ["dock", "st"])
 
 
 INDEX_JS = r"""

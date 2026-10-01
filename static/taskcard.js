@@ -13,7 +13,9 @@
 //
 // TaskCard.chipHtml(t, o) draws the chip for a task the hub (/api/task/ref)
 // or the board described: { roomId, label, ref, title, workflowName, status,
-// agents, project, inProject }. TaskCard.refs(o) is the resolver for the pages
+// agents, project, inProject }. TaskCard.refsIn(text, ctx) finds a text's
+// references and says which project each bare number is read in (#156: a
+// name right before it); TaskCard.refs(o) is the resolver for the pages
 // without a board: it asks the hub once per number (and project), keeps the
 // answer a minute, and has the page draw again (o.changed) when it comes.
 // Design: skills/ensemble-design/SKILL.md, "Task chip and card".
@@ -25,20 +27,125 @@ const TaskCard = (() => {
   const DOUBLE = 500;       // the second click of a double click, within this of the first
   const HOVER_IN = 500, HOVER_OUT = 300;
 
-  // Text's task references (#18, #ED-18, @codex@18), as task_numbers.py reads them.
-  const TASK_REF_RE = /(?<![\w&\/#@.\\-])(?:@([A-Za-z][\w-]*)@|#)(?:([A-Za-z][A-Za-z0-9]{0,5})-)?(\d{1,6})(?![\w-])/g;
+  // Text's task references (#18, #ED-18, @codex@18, and ED-18 on its own with
+  // its key in capitals), as task_numbers.py reads them: the agent, the key
+  // after # or @, the key of the bare form, the number.
+  const TASK_REF_RE = /(?<![\w&\/#@.\\-])(?:(?:@([A-Za-z][\w-]*)@|#)(?:([A-Za-z][A-Za-z0-9]{0,5})-)?|([A-Z][A-Z0-9]{0,5})-)(\d{1,6})(?![\w-])/g;
   // A bare #12 after one of these words is someone else's number ("PR #12",
   // "fixes #34", "[Image #3]": an agent's placeholder for a pasted image), as
   // task_numbers.NOT_TASK_BEFORE reads it; ED-12 and @codex@12 are tasks.
   const NOT_TASK_BEFORE_RE = /(?:^|[^\w])(?:pr|mr|pull request|issue|bug|ticket|resolve|resolved|finding|step|item|point|round|option|question|comment|commit|line|page|part|phase|rule|case|image)s?\.?[ \t]*$/i;
   const notTaskRef = (who, key, s, at) => !who && !key && NOT_TASK_BEFORE_RE.test(s.slice(Math.max(0, at - 40), at));
 
+  // ---- Which project a bare number is read in (#156) -----------------------
+  // As task_numbers.read_project reads it on the hub (tests/test_task_refs.py
+  // runs both on the same texts): a bare #27 right after a project's name —
+  // "Dock #27", "Dock's #27", "the Dock project's #27", "in Dock: #27",
+  // "Dock task #27", "Dock released #27", "Dock v0.11.0 (#27)", "Dock v0.11.0
+  // with #27" — is that project's (how 'name'); else the context's own
+  // (how ''). `others` are the other projects its sentence names before it
+  // ("Answered Ensemble about #11"): too weak to read the number there, but
+  // when one of them has the number too the number is ambiguous — the chip
+  // keeps the own project and its card says it was assumed. ctx: { projects:
+  // [{ id, key, name, aliases }], own, nouns } from /api/task/projects
+  // (refs(o).ctx()), or the board's list.
+  const SENTENCE_END_RE = /[.!?]+(?=\s|$)|\n[ \t]*\n|^[ \t]*#{1,6}[ \t][^\n]*|^[ \t]*(?:[-*+]|\d{1,3}[.)]|>|\|)(?=\s|$)|\|/gm;
+  const NOUNS = ['project', 'board'];
+  const POSS = "(?:['’]s)?", VERSION = '(?:\\s+[*_]*v?\\d+(?:\\.\\d+)+[*_]*)?', LINK = '(?:\\s+(?:\\w{2,}ed|with|as|task))?';
+  const rxEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const blank = m => m.replace(/[^\n]/g, ' ');
+  // The text with its code blocks and code spans blanked, the same length.
+  const withoutCode = s => s.replace(/```[\s\S]*?(?:```|$)/g, blank).replace(/`[^`\n]*`/g, blank);
+  function nameRes(ctx) {
+    if (ctx._res !== undefined) return ctx._res;
+    const by = new Map();
+    for (const p of ctx.projects || []) for (const a of p.aliases || []) by.set(String(a).toLowerCase(), p.id);
+    if (!by.size) return (ctx._res = null);
+    const alts = [...by.keys()].sort((a, b) => b.length - a.length).map(rxEsc).join('|');
+    const nouns = [...new Set([...NOUNS, ...(ctx.nouns || [])])].filter(Boolean).sort((a, b) => b.length - a.length).map(rxEsc).join('|');
+    return (ctx._res = { by, names: new RegExp(`(?<![\\w-])(${alts})(?![\\w-])`, 'gi'),
+      before: new RegExp(`(?<![\\w-])(${alts})${POSS}(?:\\s+(?:${nouns}))?${POSS}${VERSION}${LINK}(?:\\s*[:,–—-])?\\s*\\(?\\s*$`, 'i') });
+  }
+  // What the sentence holding `start` says before it.
+  function sentenceBefore(plain, start) {
+    let a = 0;
+    for (const m of plain.slice(0, start).matchAll(SENTENCE_END_RE)) a = m.index + m[0].length;
+    return plain.slice(a, start);
+  }
+  function readProject(plain, start, end, ctx) {
+    const R = nameRes(ctx), own = ctx.own || '';
+    if (!R) return { project: own, how: '', others: [] };
+    const said = sentenceBefore(plain, start);
+    const m = R.before.exec(said.slice(-80));
+    if (m) return { project: R.by.get(m[1].toLowerCase()), how: 'name', others: [] };
+    const others = [];
+    for (const n of said.matchAll(R.names)) {
+      const pid = R.by.get(n[1].toLowerCase());
+      if (pid !== own && !others.includes(pid)) others.push(pid);
+    }
+    return { project: own, how: '', others };
+  }
+  // The task references in a text, in order, each mention once: { token, who,
+  // key, no, start, end, project, how, others } as task_numbers.all_text_refs
+  // gives them. Without a ctx a bare number's project is '' (the hub's default).
+  function refsIn(text, ctx) {
+    const plain = withoutCode(String(text ?? ''));
+    const byKey = new Map(((ctx && ctx.projects) || []).filter(p => p.key).map(p => [String(p.key).toUpperCase(), p.id]));
+    const out = [];
+    for (const m of plain.matchAll(TASK_REF_RE)) {
+      const who = m[1] || '', key = (m[2] || m[3] || '').toUpperCase(), no = +m[4], at = m.index;
+      if (notTaskRef(who, key, plain, at)) continue;
+      if (m[3] && ctx && !byKey.has(key)) continue;    // UTF-8, ISO-8601: a bare key no project has is not a task
+      const r = { token: m[0], who, key, no, start: at, end: at + m[0].length, project: '', how: '', others: [] };
+      if (key) { r.project = byKey.get(key) || ''; r.how = 'key'; }
+      else if (ctx) Object.assign(r, readProject(plain, r.start, r.end, ctx));
+      out.push(r);
+    }
+    return out;
+  }
+  // The text with each reference fn(ref) answers for replaced by its answer
+  // (null: left as written); the words between go through `plain` when given
+  // (a page escaping them for HTML: the references are read in the raw text).
+  function replaceRefs(text, ctx, fn, plain = s => s) {
+    const s = String(text ?? '');
+    let out = '', at = 0;
+    for (const r of refsIn(s, ctx)) {
+      const h = fn(r);
+      if (h == null) continue;
+      out += plain(s.slice(at, r.start)) + h;
+      at = r.end;
+    }
+    return out + plain(s.slice(at));
+  }
+
   // ---- The resolver: a number → the hub's answer ----------------------------
   // o: { room: this chat's room (the hub reads #18 in its project), changed() }.
   // info(key, no, project): the answer, or { state: 'pending' | 'gone' };
-  // `project` reads a bare number in another project (a PO's message).
+  // `project` reads a bare number in another project (a PO's message, or one
+  // a name near the number says). ctx(own): the context refsIn reads a text
+  // in — the hub's project list (/api/task/projects, asked once and kept a
+  // while; the page draws again when it comes), with `own` the project a
+  // bare number is read in by default (this chat's unless given).
+  const PROJECTS_TTL = 300000;
   function refs(o) {
     const cache = new Map();   // "#18", "ED-18", "#18@proj-…" → { state, at, ...the task }
+    let projects = null, projectsAt = 0, loading = false;
+    const ctxs = new Map();
+    function loadProjects() {
+      loading = true;
+      fetch('/api/task/projects' + (o.room ? '?room=' + encodeURIComponent(o.room) : ''))
+        .then(res => res.ok ? res.json() : Promise.reject(new Error('error ' + res.status)))
+        .then(d => { projects = d && Array.isArray(d.projects) ? d : { projects: [], own: '', nouns: [] }; projectsAt = Date.now(); ctxs.clear(); loading = false; o.changed(); })
+        .catch(() => { projectsAt = Date.now() - PROJECTS_TTL + 15000; loading = false; });   // asked again in a while
+    }
+    function ctx(own) {
+      if (!loading && (!projects || Date.now() - projectsAt > PROJECTS_TTL)) loadProjects();
+      if (!projects) return null;
+      const k = own || '';
+      let c = ctxs.get(k);
+      if (!c) ctxs.set(k, c = { projects: projects.projects, own: k || projects.own || '', nouns: projects.nouns || [] });
+      return c;
+    }
     function info(key, no, project) {
       const ref = key ? key.toUpperCase() + '-' + no : '#' + no;
       const k = ref + (project && !key ? '@' + project : '');
@@ -60,7 +167,23 @@ const TaskCard = (() => {
         .catch(() => setTimeout(() => { if (r.state === 'pending') cache.delete(k); o.changed(); }, 15000));
       return r;
     }
-    return { info, cache };
+    // The hub's answer for one of refsIn's references, read where its text
+    // says: a keyed number as written; a bare number named another project's
+    // in that project, and in `own` (the project bare numbers are read in: ''
+    // this chat's, a PO message's sender's) when the named project has no
+    // such task; else in `own`. `assumed` when another project its sentence
+    // names before it has the number too: the card says which was assumed.
+    function resolve(r, own) {
+      if (r.key) return { t: info(r.key, r.no, ''), assumed: false };
+      const c = ctx(own), ownId = c ? c.own : '';
+      const ask = pid => info('', r.no, pid && pid !== ownId ? pid : (own || ''));
+      if (r.how === 'name' && r.project && r.project !== ownId) {
+        const t = ask(r.project);
+        if (t.state !== 'gone') return { t, assumed: false };
+      }
+      return { t: ask(ownId), assumed: (r.others || []).some(pid => ask(pid).state === 'ok') };
+    }
+    return { info, cache, ctx, resolve };
   }
 
   // ---- The chip ---------------------------------------------------------------
@@ -71,16 +194,18 @@ const TaskCard = (() => {
   const word = (t, key) => (key || t.inProject === false) ? (t.ref || t.label) : (t.label || t.ref);
   const dotOf = t => t.status === 'running' ? 'run' : (t.status === 'waiting for you' || t.status === 'paused') ? 'wait' : '';
   // o: { key: the key as written, agent: the agent it opens at, href: the link
-  // (the page's own; else this page's /session) }.
+  // (the page's own; else this page's /session), assumed: the number's
+  // sentence names two projects and this one was assumed (the card says so) }.
   function chipHtml(t, o = {}) {
     const id = o.agent || '';
     const href = o.href || ('/session?id=' + encodeURIComponent(t.roomId) + (id ? '&agent=' + encodeURIComponent(id) : ''));
     const ref = t.ref || t.label || '';
     const card = { ref: word(t, o.key), title: t.title || '', state: stateText(t),
                    agents: (t.agents || []).map(a => a.identity || a.agent).filter(Boolean),
-                   project: t.inProject === false ? (t.project || '') : '', href, task: t.roomId || '', agent: id };
+                   project: (t.inProject === false || o.assumed) ? (t.project || '') : '', href, task: t.roomId || '', agent: id };
+    if (o.assumed) card.assumed = true;
     const dot = dotOf(t);
-    const label = `Task ${ref}: ${t.title || ''}` + (id ? ` at ${id}` : '') + (card.project ? ` (${card.project})` : '');
+    const label = `Task ${ref}: ${t.title || ''}` + (id ? ` at ${id}` : '') + (card.project ? ` (${card.assumed ? 'assumed ' : ''}${card.project})` : '');
     return `<a class="task-chip${dot ? ' tc-' + dot : ''}" href="${esc(href)}" data-task="${esc(t.roomId || '')}"${id ? ` data-agent="${esc(id)}"` : ''}`
       + ` data-card="${esc(JSON.stringify(card))}" aria-label="${esc(label)}" aria-haspopup="dialog" aria-expanded="false">`
       + (dot ? '<span class="tc-dot" aria-hidden="true"></span>' : '')
@@ -145,7 +270,7 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
     el.setAttribute('role', 'dialog');
     el.setAttribute('aria-label', 'Task ' + c.ref);
     el.innerHTML = `<span class="tc-no">${esc(c.ref)}</span>`
-      + (c.project ? `<span class="tc-proj">${esc(c.project)}</span>` : '')
+      + (c.project ? `<span class="tc-proj${c.assumed ? ' tc-assumed' : ''}"${c.assumed ? ' title="The sentence names more than one project: this one was assumed"' : ''}>${c.assumed ? 'assumed ' : ''}${esc(c.project)}</span>` : '')
       + `<a class="tc-title" href="${esc(c.href)}" data-task="${esc(c.task)}"${c.agent ? ` data-agent="${esc(c.agent)}"` : ''} title="${esc('Open task ' + c.ref)}">${esc(c.title)}</a>`
       + (c.state ? `<span class="tc-state">${esc(c.state)}</span>` : '')
       + (c.agents && c.agents.length ? `<span class="tc-agents">${esc(c.agents.join(' · '))}</span>` : '');
@@ -236,7 +361,7 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
     return S;
   }
 
-  return { refs, chipHtml, stateText, init, TASK_REF_RE, NOT_TASK_BEFORE_RE, notTaskRef,
+  return { refs, chipHtml, stateText, init, TASK_REF_RE, NOT_TASK_BEFORE_RE, notTaskRef, refsIn, replaceRefs, readProject,
            open: (chip, doc) => { const S = stateOf(doc); if (S) openCard(S, chip); },
            close: doc => { const S = stateOf(doc); if (S) closeCard(S); }, el: doc => { const S = stateOf(doc); return S ? S.el : null; },
            CSS, esc };
