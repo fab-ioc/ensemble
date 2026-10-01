@@ -1159,7 +1159,6 @@
   <span id="hop" class="dim"></span>
   <span class="grow"></span>
   <span id="actions"></span>
-  <button id="dock" hidden title="Dock this session back into the dashboard panel">⧉ Dock</button>
   <!-- Not shown: the dashboard's Terminal clicks it, and "Show terminals" in the menu too. -->
   <button id="terms" hidden tabindex="-1" title="Show/hide the raw per-agent terminals">🖥 Terminals</button>
 </header>
@@ -5262,18 +5261,6 @@ window.addEventListener('focus', () => {
   const t = Object.values(terms)[0];
   if (t) { try { t.term.focus(); } catch (e) {} }
 });
-// Floating window (opened by the dashboard) → offer "Dock" to move it back into
-// the panel. When embedded as the panel's iframe, this is hidden (the panel has
-// its own "Pop out").
-const inIframe = window.parent !== window;
-if (!inIframe && window.opener) {
-  const dockBtn = $('#dock');
-  dockBtn.hidden = false;
-  dockBtn.onclick = () => {
-    try { window.opener.postMessage({ type: 'dock-session', roomId: ROOM }, '*'); } catch (e) {}
-    window.close();
-  };
-}
 // ---- Page update: begin shared block ----------------------------------------
 // The hub serves the pages from disk, so a merge is live on the next load; this
 // keeps a tab that stays open on the current page. At load the page knows the

@@ -134,13 +134,13 @@ HEAD_TAIL = ' +2'; poMenuOpen(head, true); renderPo(); poMenusClose(); log.menu.
 // A control clicked while a change is held acts on its PO before the header is
 // written; a real control is detached by that write (closest() finds nothing).
 const acted = [];
-const openSessionWindow = r => acted.push('popout:' + r), poSwitchFlow = p => acted.push('switch:' + p), poClosePeek = () => acted.push('close');
+const poSwitchFlow = p => acted.push('switch:' + p), poClosePeek = () => acted.push('close');
 const api = (u, o) => { acted.push('api:' + u + ' ' + o.body); return new Promise(() => {}); };
 const toast = () => {}, refresh = () => {};
 const control = po => { const w = head.written; return { dataset: { po }, disabled: false, getAttribute: () => 'false',
   closest: () => (head.written === w ? head : null) }; };
 log.clicks = [];
-for (const po of ['popout', 'open', 'switch', 'resume']) {
+for (const po of ['open', 'switch', 'resume']) {
   open('po-blocked', () => { PHONE = false; overview('p1')(); });
   head.dataset.sid = 'sid-p1'; poMenuOpen(head, true); HEAD_TAIL = ' +' + po; renderPo(); acted.length = 0; calls = [];
   poHeadClick(control(po));
@@ -197,7 +197,6 @@ class PoNeedsYou(unittest.TestCase):
 
     def test_a_control_acts_before_the_held_header_is_written(self):
         self.assertEqual(self.r["clicks"], [
-            ["popout", ["popout:po-blocked"], "p1:po-blocked +popout", True],
             ["open", ["openDetail:sid-p1"], "p1:po-blocked +open", True],
             ["switch", ["switch:p1"], "p1:po-blocked +switch", True],
             ["resume", ['api:/api/room/resume {"roomId":"po-blocked"}'], "p1:po-blocked +resume", True],

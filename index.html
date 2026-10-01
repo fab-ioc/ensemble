@@ -1043,9 +1043,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     color: var(--fg-subtle); font-size: 18px; padding: 2px 6px; border-radius: 4px; line-height: 1;
   }
   .dp-close:hover { background: var(--hover); color: var(--fg); }
-  .dp-popout { background: var(--bg); border: 1px solid var(--border); cursor: pointer;
-    color: var(--fg); font-size: 12px; padding: 3px 8px; border-radius: 6px; }
-  .dp-popout:hover { background: var(--hover); }
   /* Embedded /session view — fills the panel below the header. */
   iframe.dp-session { width: 100%; flex: 1; border: 0; display: block; background: var(--bg); }
   #detail-panel:has(iframe.dp-session) { display: flex; flex-direction: column; padding: 0; }
@@ -3109,7 +3106,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .colsel::-webkit-scrollbar { display: none; }
     .colchip { flex: 0 0 auto; }
     .ptabs button, .viewsw button, .fbtn, .fchip, .colchip, .colall, .proj .newtask,
-    .newproj-btn, .rm-btn, .po-btn, .dp-tab, .dp-popout, .dp-actions button,
+    .newproj-btn, .rm-btn, .po-btn, .dp-tab, .dp-actions button,
     .dp-actions select, .scopebar select, .chp-repo, .srow, .wse, .chf,
     .dl-cbtns button, #update-banner-dismiss, #update-banner-go, #dock-banner-go,
     .seg button {
@@ -3307,8 +3304,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #po-dock:not(.dk-narrow) .dk-flyout.dk-fly-beside { max-width: calc(100% - var(--dk-strip) - var(--pd-main-min, 360px)); min-width: min(300px, calc(100% - var(--dk-strip))); }
   #po-dock.pd-fly-over:not(.dk-narrow) .dk-main { margin-right: 0 !important; }
   #po-dock.pd-fly-over:not(.dk-narrow) .dk-flyout.dk-fly-beside { max-width: none; box-shadow: var(--e-200); border-left: 1px solid var(--border-strong); }
-  /* The middle is the conversation alone: no title bar over it. */
-  #po-dock:not(.dk-narrow) .dk-stack:has(> .dk-body > .pd-chat) > .dk-head { display: none; }
+  /* The middle has a title bar as the tools have (#148): its ⋯ holds View
+     Mode (Float, Window), Take Screenshot, Maximise and Hide; − minimises.
+     Where the task panel is popped out with it (body.dp-docked in that
+     window), the same rules fit it to the window. */
   /* An open task is that conversation (pdPlaceTask): the task panel fills
      the middle, its tabs gone (its tools are on the strip; a phone's are the
      dock's tabs). */
@@ -3421,7 +3420,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 </style>
 <!-- Shared with fileview.html and session.html: the code highlighter, and the
      store that keeps review comments until they are delivered. -->
-<script src="/static/actions.js"></script>
 <script src="/static/hl.js"></script>
 <script src="/static/comments.js"></script>
 <script src="/static/selbar.js"></script>
@@ -3461,6 +3459,9 @@ window.DOC_LISTENERS_PAUSED = false;
   };
 })();
 </script>
+<!-- After the wrapper above: the action bar's own document listeners (its
+     More menu) reach a panel's window too, where the task panel can be (#148). -->
+<script src="/static/actions.js"></script>
 </head>
 <body>
 <div id="update-banner" hidden>
@@ -4495,6 +4496,11 @@ function openDetail(sid) {
   }
   const p = $('#detail-panel'); if (p) p.dataset.sig = '';
   document.body.classList.add('detail-open');
+  // The task is the conversation's panel (#148): a person opening one while
+  // that panel is hidden (its window closed) brings the panel back, in the
+  // mode it had (its window again). A poll never does this: pdPlaceTask
+  // only shows a hidden panel the task is moved into.
+  if (reopened && PD.dock && !PD.dock.narrow() && !PD.dock.isVisible('po-chat')) { try { PD.dock.setVisible('po-chat', true); } catch (e) {} }
   // On a phone the PO's drawer is full width: a task opened from it comes to
   // the front, and its PO row in the list brings the PO back.
   if (PO_PEEK && isPhone()) { PO_PEEK = false; renderPo(); }
@@ -4625,7 +4631,6 @@ function agentBadges(r) {
 function detailHead(r, isRoom) {
   return `<div class="dp-head">
       <h2>${taskNoHtml(r, false)}${esc(detailTitle(r))}</h2>
-      ${isRoom && r.roomId ? `<button class="dp-popout" data-room="${esc(r.roomId)}" title="Pop out to a floating window">⧉ Pop out</button>` : ''}
       <button class="dp-close" title="Close (Esc)">×</button>
     </div>`;
 }
@@ -4731,10 +4736,13 @@ function issueEmpty(msg) {
   return `<div class="dp-empty">${esc(msg)}</div>`;
 }
 
-// The task panel's actions: the same bar as the pop-out's header, from the
-// same model (docs/session-actions.md).
+// The task panel's actions: the same bar as a list row's, from the same model
+// (docs/session-actions.md). Its ⋯ is the interim home of the task's actions
+// until they move into the panel's own ⋯ menu (Dock need 14, see pdEnsure).
+const DOCK_MENU_INTERIM = 'More actions · for now here: they move into the panel’s ⋯ menu once Dock takes app items';
 function detailActions(r, isLive) {
-  return `<div class="dp-actions">${actionsCell(r, isLive)}</div>`;
+  const bar = SessionActions.actionBarHtml(SessionActions.sessionActions(actionState(r, isLive), actionEnv()), { interim: DOCK_MENU_INTERIM });
+  return `<div class="dp-actions">${bar}</div>`;
 }
 
 function jiraSection(r) {
@@ -5491,7 +5499,7 @@ function renderHeadlessRow(r, parsed, now) {
   const actions = r.orphan
     ? `<button class="orphan-open" data-grp="${esc(r.sessionId)}" title="Resume this collaboration headless (its room record is gone)">▶ Open</button>`
       + `<button class="orphan-delete" data-grp="${esc(r.sessionId)}" title="Delete — every agent transcript and the ~/cs scratch folder">🗑</button>`
-    : `<button class="room-open" data-room="${esc(r.roomId)}" title="Open in a floating window">▶ Open ↗</button>`
+    : `<button class="room-open" data-room="${esc(r.roomId)}" title="Open">▶ Open</button>`
       + (r.isLive
           ? `<button class="room-end" data-room="${esc(r.roomId)}" title="End — stop the agent(s), keep the session">✕ End</button>`
           : (r.draft
@@ -10028,6 +10036,14 @@ function poOpenCount(pj, rows) {
 // the run chip, your asks). Resume is the one button while the PO is not
 // running; the rest wait in the ⋯ menu (.po-menu), whose items keep their
 // data-po so the one click handler serves both. A drawer keeps its ×.
+// The PO's menu items, as data: the header's ⋯ draws them today; the panel's
+// own ⋯ menu takes them once the library offers app items (Dock need 14).
+function poMenuItems(row) {
+  const items = [];
+  if (!row.draft) items.push({ key: 'switch', label: 'Switch agent…', title: 'Hand the PO to the other agent (Claude or Codex) in the same room, from its written handover' });
+  items.push({ key: 'open', label: "Open the PO's task", title: "Open the PO's own task: spec, changes and files" });
+  return items;
+}
 function poHeadHtml(pj, row, peek) {
   const { m, cls } = poAgent(row);
   const model = shortModel(m.model);
@@ -10041,12 +10057,12 @@ function poHeadHtml(pj, row, peek) {
     + `<span>${open} task${open === 1 ? '' : 's'} open</span>`
     + runChip(row)
     + (pts ? `<span class="po-pts" title="${esc(pointsCountTip(row.points))}">${esc('your asks: ' + pts)}</span>` : '');
-  const acts = [], menu = [];
+  const acts = [];
   if (!row.isLive && !row.draft) acts.push(`<button class="po-btn def" data-po="resume" title="Relaunch the PO with its conversation">Resume</button>`);
-  if (!row.draft) menu.push(`<button class="po-mi" role="menuitem" data-po="switch" title="Hand the PO to the other agent (Claude or Codex) in the same room, from its written handover">Switch agent…</button>`);
-  menu.push(`<button class="po-mi" role="menuitem" data-po="open" title="Open the PO's own task: spec, changes and files">Open the PO's task</button>`);
-  menu.push(`<button class="po-mi" role="menuitem" data-po="popout" title="Open the PO in its own window">Pop out</button>`);
-  acts.push(`<span class="po-more"><button class="po-btn" data-po="more" title="More" aria-label="More actions for the PO" aria-haspopup="menu" aria-expanded="false">⋯</button>`
+  const menu = poMenuItems(row).map(it => `<button class="po-mi" role="menuitem" data-po="${esc(it.key)}" title="${esc(it.title)}">${esc(it.label)}</button>`);
+  // The interim ⋯ (Dock need 14, see pdEnsure): these items go into the
+  // panel's own ⋯ menu once the library takes app items.
+  acts.push(`<span class="po-more"><button class="po-btn" data-po="more" data-interim="dock-menu" title="${esc(DOCK_MENU_INTERIM)}" aria-label="More actions for the PO" aria-haspopup="menu" aria-expanded="false">⋯</button>`
     + `<span class="po-menu" role="menu" hidden>${menu.join('')}</span></span>`);
   if (peek) acts.push(`<button class="po-btn x" data-po="close" title="Close (Esc)" aria-label="Close the PO">×</button>`);
   return `<span class="av ${cls}">${esc((m.agent || '?')[0])}</span>`
@@ -10082,7 +10098,6 @@ async function poHeadClick(act) {
   let job = null;
   if (what === 'more') poMenuOpen(head, act.getAttribute('aria-expanded') !== 'true');
   else if (what === 'close') poClosePeek();
-  else if (what === 'popout') openSessionWindow(head.dataset.room);
   else if (what === 'open') openDetail(head.dataset.sid);
   else if (what === 'switch') poSwitchFlow(head.dataset.proj);
   else if (what === 'resume') {
@@ -10456,6 +10471,22 @@ function pdLoad() {
           d.head.insertBefore(b, d.head.firstChild);
         }
         pdPopIcon(d);
+        // The page's body classes (mid, dp-docked, detail-open…) hold in the
+        // window too: the task panel's rules are keyed on them (#148). The
+        // library mirrors <html>'s theme attributes only (an ask for Dock:
+        // body attributes the same way). Only classes copied from here are
+        // taken off again, so the window keeps any of its own.
+        const mirrored = new Set();
+        const mirror = () => {
+          try {
+            const want = new Set(document.body.className.split(/\s+/).filter(Boolean));
+            for (const c of mirrored) if (!want.has(c)) { d.body.classList.remove(c); mirrored.delete(c); }
+            for (const c of want) if (!mirrored.has(c)) { d.body.classList.add(c); mirrored.add(c); }
+          } catch (e) {}
+        };
+        mirror();
+        const bodyMo = new MutationObserver(mirror);
+        bodyMo.observe(document.body, { attributes: true, attributeFilter: ['class'] });
         const ls = window.DOC_LISTENERS.filter(([t]) => !skip.has(t));
         for (const [t, fn, o] of ls) d.addEventListener(t, fn, o);
         PD_POP_DOCS.set(d, ls);
@@ -10468,6 +10499,7 @@ function pdLoad() {
         for (const fn of rs) w.addEventListener('resize', fn);
         PD_POP_WINS.set(w, rs);
         return () => {
+          try { bodyMo.disconnect(); } catch (e) {}
           PD_POP_DOCS.delete(d);
           PD_POP_WINS.delete(w);
           for (const fn of rs) { try { w.removeEventListener('resize', fn); } catch (e) {} }
@@ -10570,11 +10602,31 @@ function pdEnsure() {
     // and Esc. A tool that should stay open is docked (⋯ › View Mode).
     stripHover: false,
     stripOpen: 'beside',
-    // The conversation stays in the middle. A tool's window can hide; its
-    // former strip button or Panels reopens it in Window mode.
-    can: (id, a) => (isPhone() && !(id === 'po-chat' && a === 'hide' && pdTask())) || (id !== 'po-chat' && (a !== 'hide' || PD.dock?.viewMode(id) === 'window')),
+    // The conversation (the middle, the dock's fill) has the tools' title bar
+    // (#148): it can float, pop out into a window of its own (an open task
+    // goes with it, pdPlaceTask), maximise and minimise; its window can
+    // hide, as a tool's can, and its former place or Panels reopens it in
+    // Window mode. It is not MOVED to a side: that would leave the middle
+    // empty with no way back but Reset layout (a product decision, not a
+    // library limit).
+    // Dock need 14 (begin): the task's actions (Rename, Delete task… the
+    // action bar's ⋯) and the PO's (Switch agent, the PO's task) belong in
+    // this ⋯ menu, under Dock's own items. Dock v0.8.0 takes no app items
+    // there (asked of the Dock PO as Ensemble need 14: per-panel
+    // `menuItems(id)` above Dock's own, `onMenu` pick, submenus, working
+    // popped out). Until then each keeps ONE interim ⋯ of its own, marked
+    // data-interim="dock-menu" (detailActions, poHeadHtml). The switch is:
+    //   menuItems: id => id !== 'po-chat' ? [] : pdTask()
+    //     ? SessionActions.sessionActions(actionState(rowBySid(SELECTED_SID), …), actionEnv()).groups
+    //     : poMenuItems(poRowOf(poDockProject())),
+    //   onMenu: (id, key) => pdTask() ? runTaskAction(…) : poHeadClick({ dataset: { po: key }, … }),
+    // then drop `interim` from detailActions and the ⋯ from poHeadHtml.
+    // Dock need 14 (end).
+    can: (id, a) => (isPhone() && !(id === 'po-chat' && a === 'hide' && pdTask()))
+      || (id !== 'po-chat' ? (a !== 'hide' || PD.dock?.viewMode(id) === 'window')
+          : (a === 'float' || a === 'pop' || a === 'max' || a === 'min' || (a === 'hide' && PD.dock?.viewMode(id) === 'window'))),
     popName: 'ensemble-panel-',
-    popTitle: p => `${p.id === 'po-chat' ? 'PO chat' : p.title} · ${(projectById(PD.pid) || {}).name || 'Ensemble'}`,
+    popTitle: p => `${p.id === 'po-chat' ? pdChatTitle() : p.title} · ${(projectById(PD.pid) || {}).name || 'Ensemble'}`,
     // The library's pop-out page as the hub serves it, not from a blob:
     // URL: installed as an app, a window on a page inside the manifest's
     // scope is an app window, where a blob: page gets Chrome's strip with
@@ -10741,16 +10793,34 @@ function pdPlaceChat() {
   PO_PANEL.classList.toggle('pd-off', dock && !PO_PEEK && !inPanel);
   pdPlaceTask(task);
   if (PD.dock) pdPopChat(ph.ownerDocument !== document);
+  pdPopTitle();
   pdPointsFrame();   // what is on screen changed: the chat's points line follows
+}
+// What the conversation's window is called: the open task (#148 "#12 The
+// title"), else the PO's chat; popTitle adds the project.
+function pdChatTitle() {
+  const r = pdTaskWanted() ? rowBySid(SELECTED_SID) : null;
+  return r ? [taskNoText(r, false), detailTitle(r)].filter(Boolean).join(' ') : 'PO chat';
+}
+// The library reads popTitle once, when the window opens (an ask for Dock: a
+// way to re-title it): the title follows the task that is in it from here.
+function pdPopTitle() {
+  const w = PD.dock && PD.dock.popWindow('po-chat');
+  if (!w) return;
+  const t = `${pdChatTitle()} · ${(projectById(PD.pid) || {}).name || 'Ensemble'}`;
+  try { if (w.document.title !== t) w.document.title = t; } catch (e) {}
 }
 // An open task on a desktop (pdTask) is the middle's conversation: the task
 // panel moves into the conversation's place in the dock, and back to the page
 // when it closes or the dock goes (with moveBefore: its live chat keeps its
-// page). Its tools' panes follow (dpPlacePanes).
+// page). Its tools' panes follow (dpPlacePanes). The conversation's panel in a
+// window of its own takes the task with it (#148): the panel is adopted into
+// that document (insertBefore; its chat reloads there, as the library's
+// contract says of a popped-out panel), and comes back the same way.
 function pdPlaceTask(on) {
   const ph = PD.els['po-chat'];
-  const DP_EL = document.getElementById('detail-panel'), DP_RESIZE = document.getElementById('detail-panel-resize');
-  on = !!on && ph.ownerDocument === document;
+  const DP_EL = pdById('detail-panel'), DP_RESIZE = document.getElementById('detail-panel-resize');
+  on = !!on;
   const home = on ? ph : DP_RESIZE.parentNode;
   const moved = DP_EL.parentNode !== home;
   if (moved) pdMove(home, DP_EL, on ? null : DP_RESIZE);
@@ -10788,11 +10858,13 @@ function pdChangesBadge() {
 }
 // Popped out, the panel's window gets a chat of its own (the same page as the
 // chat here, which stays loaded, out of sight); before it comes back, it goes.
+// While a task is open the window holds the task instead (pdPlaceTask): no
+// chat of its own then, and the PO's comes when the task closes.
 function pdPopChat(out) {
   const ph = PD.els['po-chat'];
   const main = pdChatFrame();
   let own = ph.querySelector('iframe.pd-own');
-  if (!out) { if (own) own.remove(); return; }
+  if (!out || pdTask()) { if (own) own.remove(); return; }
   if (!main) return;
   if (own && own.dataset.room === main.dataset.room) return;
   if (own) own.remove();
@@ -13479,7 +13551,7 @@ SessionActions.onOpen = (menu) => {
   if (hide) hide.hidden = !capturedTermsShown();
 };
 SessionActions.onClose = () => {
-  const dpp = document.getElementById('detail-panel');
+  const dpp = pdById('detail-panel');
   if (dpp && dpp.dataset.topPending) setTimeout(renderDetail, 0);
 };
 
@@ -14058,15 +14130,6 @@ async function deleteRoom(row) {
     if (SELECTED_SID === row.sessionId) closeTask();
     await refresh(); updateRoomsBadge();
   } catch (e) { toast('delete failed: ' + e.message, 4000, 'err'); }
-}
-
-// Open a collaboration in its own pop-out window (movable to another screen).
-// `agent` (an identity) makes the window land on that agent's terminal — how a
-// notification about one agent gets you to the evidence in one click.
-function openSessionWindow(roomId, agent) {
-  const q = '/session?id=' + encodeURIComponent(roomId)
-    + (agent ? '&agent=' + encodeURIComponent(agent) : '');
-  window.open(q, 'session-' + roomId, 'width=1200,height=820');
 }
 
 // --- What needs you ----------------------------------------------------------
@@ -15465,13 +15528,9 @@ document.addEventListener('click', async (ev) => {
 // Close detail panel
 document.addEventListener('click', (ev) => {
   if (ev.target.closest('.dp-close')) closeDetail();
-  const popout = ev.target.closest('.dp-popout');
-  if (popout) { openSessionWindow(popout.dataset.room); closeDetail(); }
 });
-// A floating session window can ask to dock back into the panel.
 window.addEventListener('message', (ev) => {
   const d = ev.data;
-  if (d && d.type === 'dock-session' && d.roomId) openDetail(d.roomId);
   if (d && d.type === 'session-action' && d.roomId && ev.origin === location.origin) {
     try { window.focus(); } catch (e) {}
     runTaskAction(String(d.roomId), String(d.act || ''));
@@ -15569,7 +15628,7 @@ document.addEventListener('keydown', (ev) => {
   if (THEME_MENU || MODAL_EL.open) return;
   // A menu in the task panel's header closes before the panel does, and hands
   // focus back to the control that opened it.
-  const menu = document.querySelector('#detail-panel .dp-top :is(.wf-menu, .ov-menu, .pr-menu):not([hidden])');
+  const menu = $('#detail-panel .dp-top :is(.wf-menu, .ov-menu, .pr-menu):not([hidden])');
   if (menu) {
     dpMenuHide(menu);
     const opener = menu.parentElement.querySelector('.wf-btn, .dp-ov-btn, .pr-btn');
@@ -15690,11 +15749,11 @@ function dpMenuHide(m) {
   if (b) b.setAttribute('aria-expanded', 'false');
 }
 document.addEventListener('click', (ev) => {
-  document.querySelectorAll(DP_MENU_OPEN).forEach(m => {
+  pdQueryAll(DP_MENU_OPEN).forEach(m => {
     if (!m.parentElement.contains(ev.target)) dpMenuHide(m);
   });
   // The panel's top slot waited for a menu to close; apply it now it has.
-  const dpp = document.getElementById('detail-panel');
+  const dpp = pdById('detail-panel');
   if (dpp && dpp.dataset.topPending && !dpp.querySelector(DP_MENU_OPEN)) setTimeout(renderDetail, 0);
   const ovBtn = ev.target.closest('.dp-ov-btn');
   if (ovBtn) {
@@ -15719,7 +15778,7 @@ document.addEventListener('click', (ev) => {
   if (itab) {
     ev.stopPropagation();
     ISSUE_TAB = itab.dataset.itab;
-    const panel = document.getElementById('detail-panel');
+    const panel = pdById('detail-panel');
     if (panel) panel.dataset.sig = '';
     renderDetail();
     return;
@@ -15741,7 +15800,7 @@ document.addEventListener('click', (ev) => {
     const rid = wrap && wrap.querySelector('.wf-btn') ? wrap.querySelector('.wf-btn').dataset.room : '';
     wrap.querySelector('.wf-menu').hidden = true;
     if (rid) {
-      const panel = document.getElementById('detail-panel');
+      const panel = pdById('detail-panel');
       if (panel) panel.dataset.sig = '';
       moveTask(rid, wfItem.dataset.wf).then(() => renderDetail());
     }
@@ -15911,7 +15970,7 @@ function openWorkspaceTab(sid) {
   else { const p = $('#detail-panel'); if (p) p.dataset.sig = ''; renderDetail(); }
   // On the tool strip: its Files tool comes out.
   if (pdTask()) { pdReveal('workspace'); return; }
-  const tab = document.querySelector('#detail-panel .dp-tab[data-itab="workspace"]');
+  const tab = $('#detail-panel .dp-tab[data-itab="workspace"]');
   if (tab) tab.scrollIntoView({ block: 'nearest' });
 }
 
@@ -16006,7 +16065,7 @@ function termsAction() {
   return showCapturedTerminal(SELECTED_SID);
 }
 function toggleCapturedTerms() {
-  const ifr = document.querySelector('#detail-panel iframe.dp-session');
+  const ifr = $('#detail-panel iframe.dp-session');
   if (ifr && ifr.contentWindow) ifr.contentWindow.postMessage({ ensemble: 'toggleTerms' }, '*');
 }
 
@@ -16015,7 +16074,7 @@ function toggleCapturedTerms() {
 // one agent's, and its .ah header opens it. tests/test_links.py checks that
 // session.html still has them.
 function capturedTermsShown() {
-  const ifr = document.querySelector('#detail-panel iframe.dp-session');
+  const ifr = $('#detail-panel iframe.dp-session');
   try {
     const d = ifr && ifr.contentDocument;
     return !!(d && d.getElementById('terms') && !d.body.classList.contains('term-hidden'));
@@ -16273,12 +16332,18 @@ async function autoRename(btn) {
 }
 
 document.addEventListener('click', async (ev) => {
-  // Headless session rows: Open ↗ pops the window, ✕ ends/dismisses, and a
-  // click anywhere on the row opens it.
+  // Headless session rows: Open opens the task in the page (its panel can
+  // pop out with the conversation's ⋯, #148), ✕ ends/dismisses, and a click
+  // anywhere on the row opens it.
   const orphanOpen = ev.target.closest('.orphan-open');
   if (orphanOpen) { ev.stopPropagation(); adoptOrphan(orphanOpen.dataset.grp); return; }
   const roomOpen = ev.target.closest('.room-open');
-  if (roomOpen) { ev.stopPropagation(); openSessionWindow(roomOpen.dataset.room); return; }
+  if (roomOpen) {
+    ev.stopPropagation();
+    const row = ALL_ROWS.find(x => x.roomId === roomOpen.dataset.room);
+    if (row) openDetail(row.sessionId);
+    return;
+  }
   const roomResume = ev.target.closest('.room-resume');
   if (roomResume) {
     ev.stopPropagation();

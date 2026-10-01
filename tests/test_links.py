@@ -741,7 +741,8 @@ const renderDetail = () => log.push('render:' + ISSUE_TAB);
 const pdTask = () => false, pdReveal = () => {};   // the tool strip (#125) is not loaded here
 const issueTab = () => ISSUE_TAB;
 const wsRoots = ctx => { const r = ALL_ROWS.find(x => x.sessionId === ctx.sid); return r && r.taskDir ? [{ path: r.taskDir }] : []; };
-const $ = () => ({ dataset: {} });
+// $ finds the task panel in whichever window holds it (#148): the frame for its chat, a stub for the rest.
+const $ = s => (s.includes('iframe.dp-session') ? globalThis.document.querySelector(s) : { dataset: {}, scrollIntoView() {} });
 globalThis.window = { open: (u) => log.push('window:' + u) };
 globalThis.document = {
   querySelector: s => {
