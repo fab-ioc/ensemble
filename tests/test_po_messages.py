@@ -254,6 +254,23 @@ class Delivery(_World):
             self.assertEqual(self.ok(self.opten, "ensemble_read_message", id=res["id"])["text"],
                              "Needs 15 and 16 are drafted as #27.\n[refs read in proj-opten]", "the sender's copy: its own project")
 
+    def test_the_senders_own_numbers_go_out_in_full(self):
+        # #156: "drafted as #27" from opten's PO is stored as "drafted as
+        # O-27" in both chats, so Dock's PO reads and copies a number it
+        # cannot take for its own #27; "Dock #5" (Dock's) and code stay.
+        chatroom.set_task_number(self.task, "proj-opten", 27)
+        dock_task = chatroom.create_room("Dock five", [{"identity": "claude", "agent": "claude", "role": "engineer"}])["id"]
+        chatroom.patch_room(dock_task, projectId="proj-dock")
+        chatroom.set_task_number(dock_task, "proj-dock", 5)
+        with mock.patch.object(dashboard, "with_message_refs", side_effect=lambda t, r, p="": t):
+            res = self.ok(self.opten, "ensemble_message_po", projectId="Dock", kind="bug",
+                          text="Needs 15 and 16 are drafted as #27, after Dock #5; `#27` in code; #99 is nobody's.")
+        for rid in (self.dock, self.opten):
+            [m] = self.pomsgs(rid)
+            self.assertEqual(m["text"], "Needs 15 and 16 are drafted as O-27, after Dock #5; `#27` in code; #99 is nobody's.")
+        self.assertIn("drafted as O-27, after Dock #5", self.typed("pty-dock")[0], "the typed line says it too")
+        self.assertEqual(res["delivered"], True)
+
     def test_a_line_tells_one_projects_messages(self):
         # A line's bare numbers are read in one project (wake_input): a
         # message from a third project waits for a line of its own.

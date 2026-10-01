@@ -50,7 +50,7 @@ _BLOCK = re.compile(
     r"|from [^\n]* in \"[^\n]*\" at (?:\d{4}-\d\d-\d\d \d\d:\d\d|an unknown time):(?:\n>(?: [^\n]*)?)+)"
     r"\s*$")
 # The one line written under a task named by its number, in exactly its shape.
-_TASK_BLOCK = re.compile(r"\n\n\[ref ((?:@[A-Za-z][\w-]*@|#)(?:[A-Za-z][A-Za-z0-9]*-)?\d{1,6})\] task [^\n]*\s*$")
+_TASK_BLOCK = re.compile(r"\n\n\[ref ((?:(?:@[A-Za-z][\w-]*@|#)(?:[A-Za-z][A-Za-z0-9]*-)?|[A-Z][A-Z0-9]*-)\d{1,6})\] task [^\n]*\s*$")
 
 
 IMAGE_PREFIX = "[image] "
@@ -301,11 +301,17 @@ def expand_message_refs(text: str, lookup, task_lookup=None) -> str:
         out = expand_message_refs(words, lookup, task_lookup)
         return text if out == words else with_images(out, images)
     refs = find_message_refs(text)
-    trefs = task_numbers.find_text_refs(text) if task_lookup else []
+    # A lookup that reads names (dashboard.TaskLookup) says which project each
+    # bare number is read in; a plain lookup(key, no) reads them its own way.
+    find = getattr(task_lookup, "find", None) or task_numbers.find_text_refs
+    trefs = find(text) if task_lookup else []
     blocks = []
     for ref in trefs:
+        if ref.get("ambiguous"):
+            continue            # another project named in its sentence has the number too: no line rather than a guess
         try:
-            task = task_lookup(ref["key"], ref["no"])
+            task = (task_lookup(ref["key"], ref["no"], ref["project"]) if ref.get("project") and ref.get("how") == "name"
+                    else task_lookup(ref["key"], ref["no"]))
         except Exception:       # noqa: BLE001 — a bad reference never stops a message
             task = None
         if task:
