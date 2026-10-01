@@ -121,7 +121,7 @@ async function main() {
     await until('window.ensBooted === true', 30000);
     return { evalIn, until, shot, click, ready, sessionId, close: () => c.send('Target.closeTarget', { targetId }) };
   };
-  const go = (p, proj, keep) => p.evalIn(`(() => { if (!${!!keep}) try { ['cd-tool-strip', 'cd-tool-open', 'cd-phone-tabs'].forEach(k => localStorage.removeItem(k)); } catch (e) {}
+  const go = (p, proj, keep) => p.evalIn(`(() => { if (!${!!keep}) try { ['cd-tool-strip', 'cd-tool-open', 'cd-phone-tabs', 'cd-ws-panels', 'cd-chat-panels'].forEach(k => localStorage.removeItem(k)); } catch (e) {}
     SELECTED_PROJECT = ${JSON.stringify(proj)}; PROJECT_TAB = 'tasks'; renderRows(); return 0; })()`);
   const poReady = p => p.until('document.body.classList.contains("po-dock") && !!PD.dock && !!document.querySelector("#po-dock .dk-strip-btn") && !!document.querySelector("#po-panel iframe.po-session:not([hidden])")', 30000);
   const sid = `ALL_ROWS.find(r => r.roomId === ${JSON.stringify(A.task)}).sessionId`;
@@ -173,18 +173,18 @@ async function main() {
       await p.until('PD.els.spec.textContent.includes("Quiet brakes")', 10000).catch(() => null);
       out.taskSpec = { ...(await p.evalIn(STRIP)), specText: await p.evalIn('PD.els.spec.innerText.slice(0, 400)') };
       await p.shot('strip-1440-task-spec');
-      // Files: the task's folder; a file opened keeps its page when the tool closes and opens again.
+      // Files: the task's folder; a file opened is a panel of the dock (#150) and keeps its page when the tool closes and opens again.
       await p.click(tool('workspace'));
       await p.until('!!PD.els.workspace.querySelector(".dp-pane .wsp .wsp-tree .wse.file[data-path$=\\"README.md\\"]")');
       await p.evalIn('PD.els.workspace.querySelector(".dp-pane .wsp .wsp-tree .wse.file[data-path$=\\"README.md\\"]").click(); 0');
-      await p.until('(() => { const f = PD.els.workspace.querySelector(".dp-pane iframe.wsp-frame.on"); try { return !!f && f.contentDocument.readyState === "complete" && f.contentWindow.location.pathname === "/fileview"; } catch (e) { return false; } })()', 20000);
+      await p.until('(() => { const f = (() => { const id = [...PD.rt.keys()].find(k => k.startsWith("file:") && k.endsWith("/readme.md")); const e = id && PD.rt.get(id); return e ? e.el.querySelector("iframe.wsp-frame.on") : null; })(); try { return !!f && f.contentDocument.readyState === "complete" && f.contentWindow.location.pathname === "/fileview"; } catch (e) { return false; } })()', 20000);
       out.taskFiles = await p.evalIn(STRIP);
       await p.shot('strip-1440-task-files');
-      await p.evalIn('PD.els.workspace.querySelector(".dp-pane iframe.wsp-frame.on").contentWindow.__kept = 1; 0');
+      await p.evalIn('(() => { const id = [...PD.rt.keys()].find(k => k.startsWith("file:") && k.endsWith("/readme.md")); const e = id && PD.rt.get(id); return e ? e.el.querySelector("iframe.wsp-frame.on") : null; })().contentWindow.__kept = 1; 0');
       await p.click(tool('workspace')); await sleep(300);
       await p.click(tool('board')); await sleep(300);
       await p.click(tool('workspace')); await sleep(300);
-      out.fileKept = await p.evalIn('(() => { const f = PD.els.workspace.querySelector(".dp-pane iframe.wsp-frame.on"); return !!(f && f.contentWindow && f.contentWindow.__kept); })()');
+      out.fileKept = await p.evalIn('(() => { const f = (() => { const id = [...PD.rt.keys()].find(k => k.startsWith("file:") && k.endsWith("/readme.md")); const e = id && PD.rt.get(id); return e ? e.el.querySelector("iframe.wsp-frame.on") : null; })(); return !!(f && f.contentWindow && f.contentWindow.__kept); })()');
       // A reload opens the same tool on the same task.
       await p.evalIn('ensUpd.reload(); 0');
       await sleep(1500);
@@ -436,9 +436,12 @@ async function main() {
       await key('Escape', 'Escape', 27); await sleep(300);
       await p.click('#po-dock .wsf-q'); await sleep(200);
       await key('Enter', 'Enter', 13);
-      await p.until('(() => { const f = PD.els.workspace.querySelector("iframe.wsp-frame.on"); try { return !!f && f.contentDocument.readyState === "complete" && f.contentWindow.location.pathname === "/fileview"; } catch (e) { return false; } })()', 20000);
+      await p.until('(() => { const f = (() => { const id = [...PD.rt.keys()].find(k => k.startsWith("file:") && k.endsWith("/readme.md")); const e = id && PD.rt.get(id); return e ? e.el.querySelector("iframe.wsp-frame.on") : null; })(); try { return !!f && f.contentDocument.readyState === "complete" && f.contentWindow.location.pathname === "/fileview"; } catch (e) { return false; } })()', 20000);
       await sleep(400);
       ah.goToFile = await fly();
+      // The file is a panel of the dock (#150), under the tool at this width: a click in the conversation
+      // puts the tool back, then a click in the file's frame focuses it (and opens no tool).
+      await p.click(chat); await sleep(400);
       await p.click('#po-dock iframe.wsp-frame.on'); await sleep(400);
       ah.fileFrame = { fly: await fly(), focus: await p.evalIn('document.activeElement.classList.contains("wsp-frame")') };
       await p.click(chat); await sleep(400);
@@ -463,6 +466,9 @@ async function main() {
     {
       const q = await page(430, 932, true);
       await go(q, A.proj); await q.until('document.body.classList.contains("po-dock") && !!PD.dock', 30000); await sleep(400);
+      // The earlier pages saved their file panel (cd-ws-panels) and this page restored it
+      // before go() cleared the key: a phone's own tabs are the fixed ones.
+      await q.evalIn('[...PD.rt.keys()].forEach(id => PD.dock.removePanel(id)); 0'); await sleep(200);
       out.phone = await q.evalIn(`({ narrow: PD.dock.narrow(), strip: document.querySelectorAll('#po-dock .dk-strip-btn').length,
         tabs: [...document.querySelectorAll('#po-dock .dk-tab')].filter(e => e.getBoundingClientRect().width > 0).map(e => e.dataset.dkTab), panels: !!document.querySelector('.pd-panels') })`);
       await q.evalIn(`openDetail(${sid}); 0`); await sleep(600);
@@ -643,8 +649,8 @@ class TheStrip(unittest.TestCase):
         g = self.got["autoHide"]
         self.assertEqual(g["typing"], {"fly": "workspace", "value": "READ"}, "typing in Go to file")
         self.assertEqual(g["menu"], {"fly": "workspace", "menu": True}, "its ⋯ menu open")
-        self.assertEqual(g["goToFile"], "workspace", "Go to file opens the file in the tool")
-        self.assertEqual(g["fileFrame"], {"fly": "workspace", "focus": True}, "a click in the file view's frame")
+        self.assertEqual(g["goToFile"], "workspace", "Go to file opens the file as a panel; the tool stays")
+        self.assertEqual(g["fileFrame"], {"fly": None, "focus": True}, "a click in the file's panel, outside the tool")
         self.assertEqual(g["arrow"], "points", "Your asks' arrow takes the conversation to the message; the list stays")
 
     def test_a_pinned_tool_stays(self):

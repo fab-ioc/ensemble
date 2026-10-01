@@ -91,7 +91,9 @@ them from `/api/room` (`status`, `pending`); the dashboard from the
 `/api/sessions` row's `roomStatus` and `resuming`, not its `status`, which
 is only the busy/idle dot.
 `env`: `hub` (`onHubMachine()`), `features` (`focus`, `themes`, `send`,
-`geometry`), `terminalName`, `fileManagerName`. **No view parameter**: docked
+`geometry`), `terminalName`, `fileManagerName`, `panels` (the page has the
+dock's panels, `pdPanelsOn()`: a room's chat can open as a panel of its own,
+#150; the pop-out never sets it). **No view parameter**: docked
 and pop-out get the same model by construction.
 
 ## Primary action
@@ -114,6 +116,12 @@ and moving, archiving, deleting or making it a PO would take it from its task.
 
 Items not listed for a state are left out. **(off: reason)** means shown
 disabled with that reason.
+
+**0. Open** (only with `env.panels`, #150)
+
+| Item | room (any state) |
+|---|---|
+| Open in new panel | ✓: its chat as a panel of the dock beside the conversation (`panel-btn`, `pdChatOpen`); from the middle's ⋯ it moves the task out of the middle; a chat panel's own ⋯ leaves it out |
 
 **1. Run**
 

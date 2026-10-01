@@ -419,7 +419,9 @@ class TaskSwitcher(unittest.TestCase):
         click = wiring[wiring.index("$('#sw-list').addEventListener('click'"):]
         click = click[:click.index("\n});")]
         self.assertIn("if (ev.target.closest('.sw-more[data-more=\"unassigned\"]')) { SW_UN.all = !SW_UN.all; swRender(); return; }", click)
-        self.assertIn("} else openDetail(row.dataset.sid);", click)
+        # (A Ctrl/⌘ click opens its chat as a panel instead, #150.)
+        self.assertIn("else openDetail(row.dataset.sid);", click)
+        self.assertIn("(ev.ctrlKey || ev.metaKey) && pdRowPanel(row.dataset.sid)", click)
         self.assertIn("SW_UN.open = ev.target.open", wiring)
         # Focus goes back to the row in the group it was in (a task can be in two).
         self.assertIn("box.querySelector(`${inGroup}${cls}[data-room=\"${CSS.escape(had)}\"]`)", wiring)

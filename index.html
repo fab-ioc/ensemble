@@ -3425,6 +3425,19 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      host, out of sight (never display:none, which tells the chat it has no
      height). */
   .pd-chat > #po-panel { position: absolute; inset: 0; border: 0; border-radius: 0; }
+  /* A task's chat as a panel of its own (#150): its frame fills the panel. */
+  .pd-chat-x > iframe.dp-session { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
+  /* A file as a panel of its own (#150): the path bar over its viewer, the
+     note where the viewer would be when the file is gone, the history box
+     over it for a documents project. The Files pane is then the tree alone
+     (no tab row, no viewer), unless the roadmap's own view is the tab showing. */
+  .wfp { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--surface); }
+  .wfp > .wsp-bar { flex: none; }
+  .wfp > .wsp-frames { flex: 1 1 auto; min-height: 0; position: relative; }
+  .wfp .wsp-note:empty { display: none; }
+  .wsp.ws-panels:not(.ws-rm) { grid-template-columns: minmax(0, 1fr); }
+  .wsp.ws-panels:not(.ws-rm) > .wsp-side { border-right: 0; }
+  .wsp.ws-panels:not(.ws-rm) > .wsp-view { display: none; }
   body.po-dock #po-panel.pd-off { position: absolute; inset: 0; visibility: hidden; border: 0; }
   /* Points: the person's points with the PO, as a list of their own. */
   .pdp { display: flex; flex-direction: column; gap: var(--s-200); }
@@ -4373,7 +4386,7 @@ function actionState(r, isLive) {
 }
 function actionEnv() {
   return { hub: onHubMachine(), features: PLATFORM.features || {},
-           terminalName: T(), fileManagerName: FM() };
+           terminalName: T(), fileManagerName: FM(), panels: typeof pdPanelsOn === 'function' && pdPanelsOn() };
 }
 // One primary action and the More menu: in a list row, and in the task panel.
 function actionsCell(r, isLive) {
@@ -4534,6 +4547,13 @@ const detailWMax = () =>
 })();
 
 function openDetail(sid) {
+  // A task open as a chat panel of its own (#150): that panel comes on
+  // screen; the middle is not a second chat of it.
+  {
+    const r0 = rowBySid(sid);
+    const cid = r0 && r0.roomId ? pdChatId(r0.roomId) : '';
+    if (cid && PD.dock && PD.rt.has(cid)) { try { PD.dock.reveal(cid); } catch (e) {} return; }
+  }
   const reopened = !document.body.classList.contains('detail-open') || sid !== SELECTED_SID;
   if (sid !== SELECTED_SID) {
     // Selecting a different session — drop any cached conversation/cost.
@@ -7869,7 +7889,9 @@ const wsTabEl = (strip, path) => [...strip.querySelectorAll('.wst-tab')].find(e 
 function wsPaintTabs(v) {
   const strip = v.el && v.el.querySelector('.wst');
   if (!strip) return;
-  const html = v.tabs.map((t, i) => {
+  // Files as panels: only the roadmap's tab is the pane's (its own view).
+  const tabs = wsPanelsMode() ? v.tabs.filter(t => wsIsRoadmap(v, t.path)) : v.tabs;
+  const html = tabs.map((t, i) => {
     // The roadmap's tab is its own view, which says so when it is not written yet.
     const on = wsSame(t.path, v.sel), name = wsTabName(t.path), gone = t.missing && !wsIsRoadmap(v, t.path);
     return `<div class="wst-tab${on ? ' on' : ''}${gone ? ' gone' : ''}" role="tab" id="${v.uid}-${i}" aria-selected="${on}" tabindex="${on ? 0 : -1}"`
@@ -7880,7 +7902,7 @@ function wsPaintTabs(v) {
       + (on && !t.missing ? `<span class="wst-win" aria-hidden="true" title="Open in new window (Shift+Enter)">${WS_ICON_WIN}</span>` : '')
       + `<span class="wst-x" aria-hidden="true" title="Close">×</span></div>`;
   }).join('');
-  strip.hidden = !v.tabs.length;
+  strip.hidden = !tabs.length;
   if (strip._sig === html) return;
   const f = strip.ownerDocument.activeElement;
   const focused = f && strip.contains(f) ? (f.dataset.path || '') : null;
@@ -7906,11 +7928,25 @@ function wsRevealTab(strip, tab) {
 function wsPaintView(v) {
   const box = v.el && v.el.querySelector('.wsp-view');
   if (!box) return;
+  // A paint can add a panel, whose coming on screen asks for a paint: one at a time.
+  if (v.painting) return;
+  v.painting = true;
+  try { wsPaintViewNow(v, box); } finally { v.painting = false; }
+}
+function wsPaintViewNow(v, box) {
+  // Files as panels of the dock (wsPanelsSync): the pane is the tree, and
+  // the roadmap's own view while that is the tab showing; else the tabs are
+  // in the pane, over the viewer.
+  const panels = wsPanelsMode();
+  v.el.classList.toggle('ws-panels', panels);
+  if (panels) wsPanelsSync(v);
   wsPaintTabs(v);
   const stage = box.querySelector('.wsp-frames'), bar = box.querySelector('.wsp-bar');
-  const t = v.tabs.find(x => wsSame(x.path, v.sel)) || null;
+  const sel = v.tabs.find(x => wsSame(x.path, v.sel)) || null;
   // The roadmap shows in its own view and editor, not a viewer.
-  const rmTab = !!t && wsIsRoadmap(v, t.path), gone = !!t && t.missing && !rmTab;
+  const rmTab = !!sel && wsIsRoadmap(v, sel.path);
+  v.el.classList.toggle('ws-rm', panels && rmTab);
+  const t = panels && !rmTab ? null : sel, gone = !!t && t.missing && !rmTab;
   const key = t && !t.missing && !rmTab ? wsNorm(t.path) : '';
   // A viewer whose tab closed or whose file went is dropped: if the file comes
   // back, it is read again rather than shown as it was.
@@ -7920,7 +7956,7 @@ function wsPaintView(v) {
       const i = v.live.indexOf(k); if (i >= 0) v.live.splice(i, 1);
     }
   });
-  writeSlot(stage.querySelector('.wsp-note'), !t ? `<div class="wsp-empty">${esc(WS_EMPTY)}</div>`
+  writeSlot(stage.querySelector('.wsp-note'), panels ? '' : !t ? `<div class="wsp-empty">${esc(WS_EMPTY)}</div>`
     : gone ? `<div class="wsp-empty wsp-gone"><p><b>${esc(wsTabName(t.path))}</b> no longer exists on the hub. It was moved, renamed or deleted since the tab was opened.</p>`
       + `<p class="wsp-gone-path">${esc(tildeify(t.path))}</p><button type="button" class="rm-btn wsp-gone-close">Close tab</button></div>`
     : '');
@@ -7934,8 +7970,9 @@ function wsPaintView(v) {
   wsPaintPane(v);
   const hb = bar.querySelector('.wsp-hist');
   if (hb) hb.hidden = !(t && wsDocsProjectOf(v));
-  // A file's history belongs to its tab: showing another closes it.
-  if (v.hist && (!t || !wsSame(v.hist.path, t.path))) { v.hist = null; histPaint(v); }
+  // A file's history belongs to its tab: showing another closes it (a panel's
+  // goes with the panel shown, wsFilePanelShown).
+  if (!panels && v.hist && (!t || !wsSame(v.hist.path, t.path))) { v.hist = null; histPaint(v); }
   if (t) {
     const own = bar.querySelector('.wsp-own');
     own.href = wsFileUrl(v, t.path);
@@ -7944,6 +7981,12 @@ function wsPaintView(v) {
   wsPaintCrumbs(v);
   const tabEl = t && v.el.querySelector('.wst') && wsTabEl(v.el.querySelector('.wst'), t.path);
   if (tabEl) stage.setAttribute('aria-labelledby', tabEl.id); else stage.removeAttribute('aria-labelledby');
+  if (panels) {
+    // Each panel's viewer, or its note (a file gone, or back).
+    v.tabs.forEach(x => wsPanelPaint(v, x));
+    v.frames.forEach((f, k) => { if (v.panels && v.panels.has(k)) { f.classList.add('on'); f.inert = false; } });
+    return;
+  }
   if (key && !v.frames.has(key)) {
     const f = document.createElement('iframe');
     f.className = 'wsp-frame';
@@ -7968,7 +8011,9 @@ function wsPaintPane(v) {
   const box = v.el;   // the .wsp itself
   if (!box) return;
   const t = v.tabs.find(x => wsSame(x.path, v.sel));
-  box.classList.toggle('ws-tree', v.pane === 'tree' || !t);
+  // Files as panels: the pane is the tree, unless the roadmap's view shows.
+  const panelsTree = wsPanelsMode() && !(t && wsIsRoadmap(v, t.path));
+  box.classList.toggle('ws-tree', panelsTree || v.pane === 'tree' || !t);
   barCrumbs();   // the file, or its tree, is where you are
 }
 // Focus follows the switch to the other pane's switch back, not left on a
@@ -7994,6 +8039,8 @@ function wsCrumbsEnd(bar) {
   bar.classList.toggle('cut', nav.scrollLeft > 0);
 }
 function wsPaintCrumbs(v) {
+  // The file panels' bars too (Follow, and a path drawn before the roots came).
+  if (v.panels && v.panels.size) v.tabs.forEach(t => wsPanelPaint(v, t));
   const bar = v.el && v.el.querySelector('.wsp-bar');
   if (!bar) return;
   bar.querySelector('.wsp-follow').setAttribute('aria-pressed', String(v.follow));
@@ -8086,6 +8133,7 @@ function wsFrameMessage(src, d) {
       clearTimeout(v.persistTimer);
       v.persistTimer = setTimeout(() => wsPersist(v), 400);
     } else if (d.type === 'fv-missing') {
+      if (wsPanelMissing(v, t)) return;   // a panel coming back after a reload, its file gone: closed quietly
       wsTabGone(t, v.dirs);
       if (wsTabsCheck(v, v.dirs)) wsPaintView(v);
     }
@@ -8111,6 +8159,11 @@ function wsOpenTab(v, path) { wsOpenTabAt(v, path, 0); }
 // there. A search result also gives where its match is on the line
 // ({col, len}), and the viewer marks it.
 function wsOpenTabAt(v, path, line, hit) {
+  // A file another Workspace shows as a panel: shown there (one panel per file).
+  if (wsPanelsMode() && !wsIsRoadmap(v, path)) {
+    const other = PD.rt.get(wsPanelId(path));
+    if (other && other.kind === 'file' && other.v !== v) { wsOpenTabAt(other.v, other.path, line, hit); return; }
+  }
   const t = wsTabOpen(v, path);
   // Picked from the tree or a diff, so it is there now, whatever was said before.
   t.gone404 = false; t.goneSig = null; t.retrySig = null; t.seen = null;
@@ -8123,12 +8176,225 @@ function wsOpenTabAt(v, path, line, hit) {
     }
   }
   wsTabsCheck(v, v.dirs);
+  if (wsPanelsMode() && !wsIsRoadmap(v, t.path)) { wsPanelShow(v, t); return; }
   wsShowTab(v, t.path);
 }
 function wsCloseTab(v, path) {
   if (!path) return;
+  if (wsPanelsMode() && v.panels && v.panels.has(wsNorm(path))) { PD.dock.removePanel(wsPanelId(path)); return; }
   wsTabClose(v, path);
   wsShowTab(v, v.sel);
+}
+// ---- Files as panels of the dock (#150, the CEO's P105) ---------------------
+// On a PO screen, and an open task's (the same dock), each file opened from a
+// Workspace's tree is a closable panel of the dock, as an editor's tab: the
+// path bar over its viewer, beside the conversation first, then a tab of the
+// file panel last shown; the tree keeps the whole Files pane. The tab model
+// (v.tabs, wsTabOpen, wsTabClose) stays the source of truth: a panel is a
+// tab's face, and closing the tab (the panel's ×, a middle click, ⋯ › Close,
+// Ctrl+F4) is Dock's removePanel, told back by dock-removed (wsPanelRemoved).
+// The roadmap keeps its own view in the Files pane: it is no file. Without
+// the dock (it could not load, or a page without one) the tabs are in the
+// pane as before (wsPaintView's other branch). One panel per file on the
+// page: a Workspace that opens a file another Workspace shows reveals that
+// panel. Ids are file:<path>, lower case with forward slashes (wsNorm).
+function wsPanelsMode() { return typeof pdPanelsOn === 'function' && pdPanelsOn(); }
+const wsPanelId = path => 'file:' + wsNorm(path);
+const WS_PANELS_KEY = 'cd-ws-panels';
+// The Workspaces that have file panels (each view's ctx), so a reload opens
+// them again in their kept places (pdRuntimeRestore).
+function wsPanelsRemember() {
+  const list = [...WS_VIEWS.values()].filter(v => v.panels && v.panels.size).map(v => v.ctx);
+  try { if (list.length) localStorage.setItem(WS_PANELS_KEY, JSON.stringify(list)); else localStorage.removeItem(WS_PANELS_KEY); } catch (e) {}
+}
+function wsPanelsSaved() {
+  try { const l = JSON.parse(localStorage.getItem(WS_PANELS_KEY) || '[]'); return Array.isArray(l) ? l.filter(c => c && typeof c === 'object' && c.kind) : []; } catch (e) { return []; }
+}
+// Where a new file panel goes: a tab of the file panel last shown, else
+// beside the conversation, at its right, while the row has room for one
+// (pdFits); else a tab of the conversation's stack.
+function wsPanelWhere() {
+  const last = PD.rtLast.file;
+  if (last && PD.rt.has(last)) return { kind: 'stack', stack: last };
+  return pdFits(pdMinOf('file:').w) ? { beside: 'po-chat', side: 'right' } : { kind: 'stack', stack: 'po-chat' };
+}
+// A file panel's element: the path bar (where the file is, Show in the tree,
+// Follow, History for a documents project, ⧉ its own tab) over its viewer,
+// with the note and the history box of a pane's viewer.
+function wsPanelEl(v, t) {
+  const el = document.createElement('div');
+  el.className = 'wfp';
+  const reveal = 'Show in the tree';
+  el.innerHTML = `<div class="wsp-bar"><button type="button" class="wsp-btn wsp-files" title="The tree and Find">Files</button><nav class="wsc" aria-label="Where the file is"><ol class="wsc-list"></ol></nav>`
+    + `<button type="button" class="wsp-btn wsp-reveal" title="${reveal}" aria-label="${reveal}">${WS_ICON_TREE}</button>`
+    + `<button type="button" class="wsp-btn wsp-follow" aria-pressed="${v.follow}" title="Keep the tree on the file showing">Follow</button>`
+    + `<button type="button" class="wsp-btn wsp-hist" aria-pressed="false" title="Every kept version of this file: compare one with the file now, open it or restore it" hidden>History</button>`
+    + `<a class="wsp-own" target="_blank" title="Open in its own tab" aria-label="Open in its own tab">⧉</a></div>`
+    + `<div class="wsp-frames" role="tabpanel"><div class="wsp-note"></div><div class="wsh" role="region" aria-label="File history" hidden></div></div>`;
+  const path = t.path, bar = el.querySelector('.wsp-bar'), nav = bar.querySelector('.wsc');
+  bar.onclick = (e) => {
+    const d = e.target.closest('.wsc-dir');
+    if (d) { wsReveal(v, d.dataset.path, { dir: true }); pdReveal('workspace'); return; }
+    if (e.target.closest('.wsp-files')) { v.pane = 'tree'; wsPaintPane(v); pdReveal('workspace'); return; }
+    if (e.target.closest('.wsp-reveal')) { wsReveal(v, path); pdReveal('workspace'); return; }
+    if (e.target.closest('.wsp-hist')) { if (v.hist && wsSame(v.hist.path, path)) histClose(v); else histOpen(v, path); return; }
+    if (e.target.closest('.wsp-follow')) {
+      v.follow = !v.follow;
+      wsPersist(v);
+      wsPaintCrumbs(v);
+      if (v.follow) wsReveal(v, path, { clear: false });
+    }
+  };
+  // The note's Close closes the panel (a file that is gone is not offered again).
+  el.querySelector('.wsp-frames').onclick = (e) => {
+    if (!e.target.closest('.wsp-gone-close')) return;
+    wsRecentDrop(v.recent, path);
+    if (PD.dock) PD.dock.removePanel(wsPanelId(path));
+  };
+  nav.onscroll = () => bar.classList.toggle('cut', nav.scrollLeft > 0);
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => wsCrumbsEnd(bar)).observe(nav);
+  const hist = el.querySelector('.wsh');
+  hist.onclick = (e) => histClick(v, e);
+  hist.onkeydown = (e) => { if (e.key === 'Escape') { e.preventDefault(); histClose(v); } };
+  return el;
+}
+// The panel's ⋯: Show in the tree, and its own window (Dock's Window mode,
+// from the click, as the old file window was).
+function wsPanelMenuItems(v, path, ctx) {
+  const items = [{ id: 'reveal', label: 'Show in the tree', run: () => { wsReveal(v, path); pdReveal('workspace'); } }];
+  if (!(ctx && ctx.where === 'window') && !isPhone()) items.push({ id: 'window', label: 'Open in new window', run: () => { try { PD.dock.setViewMode(wsPanelId(path), 'window'); } catch (e) {} } });
+  return items;
+}
+// Add the panel for a tab: with `where`, or in its kept place (a reload, a
+// file opened again after its panel closed).
+function wsPanelAdd(v, t, where) {
+  const id = wsPanelId(t.path), k = wsNorm(t.path);
+  if (!v.panels) v.panels = new Map();
+  const el = wsPanelEl(v, t);
+  v.panels.set(k, { id, el, path: t.path, at: Date.now() });
+  PD.rt.set(id, { kind: 'file', v, path: t.path, el });
+  let res = null;
+  try { res = PD.dock.addPanel({ id, title: wsTabName(t.path), el, closable: true, menuItems: (pid, ctx) => wsPanelMenuItems(v, t.path, ctx) }, where); } catch (e) { res = null; }
+  if (res !== 'added') { v.panels.delete(k); PD.rt.delete(id); return false; }
+  wsPanelPaint(v, t);
+  wsPanelsRemember();
+  pdTabTips();
+  return true;
+}
+// A tab's panel, drawn: its viewer (loaded once, kept while the panel is;
+// again from the tab's saved state after a reload), or the note that the file
+// is gone; the path bar's buttons and link.
+function wsPanelPaint(v, t) {
+  const P = v.panels && v.panels.get(wsNorm(t.path));
+  if (!P) return;
+  const stage = P.el.querySelector('.wsp-frames'), bar = P.el.querySelector('.wsp-bar');
+  const key = wsNorm(t.path), gone = !!t.missing;
+  writeSlot(stage.querySelector('.wsp-note'), gone
+    ? `<div class="wsp-empty wsp-gone"><p><b>${esc(wsTabName(t.path))}</b> no longer exists on the hub. It was moved, renamed or deleted since it was opened.</p>`
+      + `<p class="wsp-gone-path">${esc(tildeify(t.path))}</p><button type="button" class="rm-btn wsp-gone-close">Close</button></div>`
+    : '');
+  if (gone) {
+    const f = v.frames.get(key);
+    if (f) { f.remove(); v.frames.delete(key); }
+  } else if (!v.frames.has(key)) {
+    const f = document.createElement('iframe');
+    f.className = 'wsp-frame on';
+    f.title = wsTabName(t.path);
+    f.setAttribute('allow', 'clipboard-write');
+    f.src = wsFileUrl(v, t.path) + '&st=' + encodeURIComponent(JSON.stringify(t.st));
+    stage.appendChild(f);
+    v.frames.set(key, f);
+  }
+  bar.querySelector('.wsp-follow').setAttribute('aria-pressed', String(v.follow));
+  bar.querySelector('.wsp-hist').hidden = !wsDocsProjectOf(v);
+  const own = bar.querySelector('.wsp-own');
+  own.href = wsFileUrl(v, t.path);
+  own.hidden = gone;
+  const list = bar.querySelector('.wsc-list'), html = wsCrumbsHtml(v, t.path);
+  if (list._sig !== html) { list._sig = html; list.innerHTML = html; wsCrumbsEnd(bar); }
+}
+// Every tab of the view has its panel (a reload: each in its kept place; a
+// view whose tabs were in the pane before the dock came: as new tabs), and no
+// panel is left for a tab the model dropped (past WS_TABS_MAX). A file another
+// Workspace shows as a panel is left to it.
+function wsPanelsSync(v) {
+  if (!v.panels) v.panels = new Map();
+  const extra = [...v.panels.values()].filter(P => !v.tabs.some(x => wsNorm(x.path) === wsNorm(P.path)));
+  extra.forEach(P => { try { PD.dock.removePanel(P.id); } catch (e) {} });
+  const elsewhere = [];
+  for (const t of v.tabs) {
+    if (wsIsRoadmap(v, t.path)) continue;
+    const k = wsNorm(t.path);
+    if (v.panels.has(k)) continue;
+    const other = PD.rt.get(wsPanelId(t.path));
+    if (other && other.v !== v) { elsewhere.push(t.path); continue; }
+    const f = v.frames.get(k);
+    if (f) { f.remove(); v.frames.delete(k); }
+    wsPanelAdd(v, t, undefined);
+  }
+  elsewhere.forEach(p => wsTabClose(v, p));
+}
+// Show a tab as its panel: the one it has, brought on screen, or a new one.
+// A panel the dock shows comes to the front of its stack (activate), so the
+// tree it was picked from stays out, as it does for a new panel (addPanel);
+// one hidden, parked or in a window of its own needs reveal.
+function wsPanelShow(v, t) {
+  const P = v.panels && v.panels.get(wsNorm(t.path));
+  if (P) {
+    wsPanelPaint(v, t);
+    const d = PD.dock;
+    try { if (d.isVisible(P.id) && !d.popWindow(P.id) && !d.isOut(P.id)) d.activate(P.id); else d.reveal(P.id); } catch (e) {}
+  }
+  else if (!wsPanelAdd(v, t, wsPanelWhere())) { wsShowTab(v, t.path); return; }
+  wsFilePanelShown(v, t.path);
+  wsPaintView(v);
+}
+// A file panel came on screen (Dock's onShown, or shown by wsPanelShow): the
+// bookkeeping a tab shown gets (wsShowTab), without a viewer to switch.
+function wsFilePanelShown(v, path) {
+  const t = v.tabs.find(x => wsSame(x.path, path));
+  if (!t) return;
+  v.sel = t.path;
+  v.mark = '';
+  wsRecentTouch(v.recent, t.path, t.st);
+  // A file's history belongs to its panel: another shown closes it.
+  if (v.hist && !wsSame(v.hist.path, t.path)) { v.hist = null; histPaint(v); }
+  wsPersist(v); wsPaintTree(v);
+  if (v.follow) wsReveal(v, t.path, { clear: false });
+  PD.rtLast.file = wsPanelId(t.path);
+  barCrumbs();
+}
+// The panel closed (its ×, ⋯ › Close, a middle click, Ctrl+F4, the note's
+// Close, or removePanel): its tab goes; Dock chose the next front tab itself.
+function wsPanelRemoved(id) {
+  const e = PD.rt.get(id);
+  if (!e || e.kind !== 'file') return;
+  PD.rt.delete(id);
+  const v = e.v, k = wsNorm(e.path);
+  if (v.panels) v.panels.delete(k);
+  const f = v.frames.get(k);
+  if (f) { f.remove(); v.frames.delete(k); }
+  const i = v.live.indexOf(k); if (i >= 0) v.live.splice(i, 1);
+  if (v.hist && wsSame(v.hist.path, e.path)) { v.hist = null; histPaint(v); }
+  if (wsTabAt(v, e.path) >= 0) wsTabClose(v, e.path);
+  if (PD.rtLast.file === id) PD.rtLast.file = '';
+  wsPersist(v); wsPaintTree(v); wsPaintView(v);
+  wsPanelsRemember();
+}
+// The viewer said 404 while its panel was coming back after a reload (a
+// file gone meanwhile): the panel goes quietly, its kept place with it.
+const WS_RESTORE_MS = 15000;
+function wsPanelMissing(v, t) {
+  const P = v.panels && v.panels.get(wsNorm(t.path));
+  if (!P || !P.restored || Date.now() - P.restored > WS_RESTORE_MS) return false;
+  wsRecentDrop(v.recent, t.path);
+  try { PD.dock.removePanel(P.id); PD.dock.forget(P.id); } catch (e) {}
+  return true;
+}
+// The box a file's history draws in: its panel's, else the pane's.
+function histBox(v) {
+  const P = v.hist && v.panels && v.panels.get(wsNorm(v.hist.path));
+  return (P ? P.el : v.el) || null;
 }
 // ---- A file in a window of its own (the CEO's P103) -------------------------
 // The file view's page in a sized window without the browser's bars, as the
@@ -8208,7 +8474,15 @@ function wsRowMenu(v, row, x, y) {
     const b = e.target.closest('.dcm-item');
     if (!b) return;
     close();
-    if (b.dataset.act === 'window') wsOpenWindow(v, path); else wsOpenTab(v, path);
+    if (b.dataset.act !== 'window') { wsOpenTab(v, path); return; }
+    // Files as panels: the file's panel, in a window of its own (from the click).
+    if (wsPanelsMode() && !wsIsRoadmap(v, path)) {
+      wsOpenTab(v, path);
+      const e = PD.rt.get(wsPanelId(path));
+      if (e && e.kind === 'file') { try { PD.dock.setViewMode(wsPanelId(path), 'window'); } catch (err) {} }
+      return;
+    }
+    wsOpenWindow(v, path);
   };
   el.querySelector('.dcm-item').focus({ preventScroll: true });
 }
@@ -8452,8 +8726,9 @@ function wsMount(el, ctx) {
   v.el = el;
   v.scrollPending = v.scroll > 0;    // a fresh element has to be put back where it was
   // The viewers of an earlier mount went with its element; this one loads its
-  // tabs' viewers afresh, each where it was left.
-  v.frames = new Map(); v.live = [];
+  // tabs' viewers afresh, each where it was left. A file panel's viewer is
+  // the panel's, not the pane's: it stays.
+  v.frames = new Map([...v.frames].filter(([k]) => v.panels && v.panels.has(k))); v.live = [];
   wsRecompute(v);
   if (!v.open.size && v.roots.length) {
     v.open.add(v.roots[0].path);   // first visit: open where you are
@@ -10806,7 +11081,16 @@ function pdPointsHtml(told, now) {
 
 // (A var, not a const: pdById is called from code that may run before this line.)
 var PD = { lib: null, loading: null, failed: '', dock: null, els: {},
-           pid: '', told: null, ptSig: '', chatKey: '', chKey: '', raf: 0 };
+           pid: '', told: null, ptSig: '', chatKey: '', chKey: '', raf: 0,
+           // The panels added at runtime (#150): file:<path> and chat:<room>,
+           // each { kind, el, … }; the file and the chat panel last shown
+           // (where the next one of its kind opens); whether the saved ones
+           // were opened again after this load.
+           rt: new Map(), rtLast: { file: '', chat: '' }, restored: false };
+// Files and chats open as panels of the dock (#150): on a PO screen, and an
+// open task's (the same dock), once the library is there. Else a file is a
+// tab of its Workspace pane and a chat the middle, as before.
+function pdPanelsOn() { return !!PD.dock && document.body.classList.contains('po-dock'); }
 document.querySelectorAll('#po-dock-panels > [data-panel]').forEach(el => { PD.els[el.dataset.panel] = el; });
 const PD_ROOT = document.getElementById('po-dock');
 const PD_HOST = document.getElementById('po-dock-host');
@@ -11039,7 +11323,7 @@ function pdEnsure() {
     narrowKey: PD_KEYS.phone,
     narrowLayout: ctx => pdDefaultLayout(L, { ...ctx, phone: true }),
     fill: 'po-chat',
-    minSize: PD_MIN,
+    minSize: pdMinOf,
     sizes: { head: 32, strip: 44, unpinSize: 720 },
     // A click opens a tool beside the conversation; a click or focus
     // elsewhere in the page puts it back (Dock v0.5.1's stripAutoHide, and
@@ -11077,7 +11361,7 @@ function pdEnsure() {
   // A panel this page no longer has (Documents, #103) keeps no place in a
   // stored layout (Dock v0.10.0 parks unknown panels instead of dropping them).
   try { PD.dock.forget('documents'); } catch (e) {}
-  PD.dock.onChange(() => { pdKeepMiddle(); pdToolsFit(); pdPlaceChat(); barCrumbs(); });
+  PD.dock.onChange(() => { pdKeepMiddle(); pdToolsFit(); pdPlaceChat(); barCrumbs(); pdTabTips(); });
   pdToolsFit();
   PD.dock.onShown(id => pdShown(id));
   // Before the chat panel comes back from its window: the window's own chat goes.
@@ -11085,7 +11369,172 @@ function pdEnsure() {
   pdKeepMiddle();
   pdPlaceChat();
   pdToolRestore();
+  // The files and chats that were panels before the reload, each in its kept place.
+  pdRuntimeRestore();
   return PD.dock;
+}
+// The least a panel takes: a tool's or the conversation's own; a chat panel
+// the conversation's; a file panel a reading width.
+function pdMinOf(id) {
+  if (PD_MIN[id]) return PD_MIN[id];
+  return String(id).startsWith('chat:') ? PD_MIN['po-chat'] : { w: 280, h: 160 };
+}
+// A file panel's tab says the file's path when hovered (Dock's tooltip is the
+// title, the name alone; it has no retitle API). Cheap and idempotent, after
+// every layout change and redraw.
+// What a panel is called in the breadcrumb: a tool's name, a file's name, a
+// chat's task.
+function pdPanelName(k) {
+  if (PD_TITLES[k]) return PD_TITLES[k];
+  const e = PD.rt.get(k);
+  if (!e) return k;
+  if (e.kind === 'file') return wsTabName(e.path);
+  const r = ALL_ROWS.find(x => x.roomId === e.room);
+  return r ? pdRowTitle(r) : 'Chat';
+}
+function pdTabTips() {
+  if (!PD.rt.size) return;
+  for (const d of pdHostDocs()) {
+    d.querySelectorAll('.dk-tab[data-dk-tab^="file:"]').forEach(tab => {
+      const e = PD.rt.get(tab.dataset.dkTab), t = e ? tildeify(e.path) : '';
+      if (t && tab.title !== t) tab.title = t;
+    });
+  }
+}
+
+// ---- Files and chats as panels (#150, the CEO's P105 and P110) --------------
+// A task's chat as a panel of its own, beside the conversation (then beside
+// the chat panel last shown), as many as you like: from a row's ⋯ (Open in
+// new panel, the action model's), a Ctrl/⌘ or middle click on a row, or the
+// middle's own ⋯ (which moves the task out of the middle: one chat per task
+// on the page). Its ⋯ holds the task's actions, as the middle's does. The
+// rooms open are kept per browser (cd-chat-panels) and opened again after a
+// reload, each in its kept place (a room no longer listed is dropped).
+const PD_CHATS_KEY = 'cd-chat-panels';
+const pdChatId = roomId => 'chat:' + roomId;
+// The room's chat panel, if it has one, goes (dock-removed -> pdChatRemoved).
+function pdChatUnpanel(roomId) {
+  const cid = pdChatId(roomId);
+  if (PD.dock && PD.rt.has(cid)) { try { PD.dock.removePanel(cid); } catch (e) {} }
+}
+// What a chat panel is called: "#12 The title" (the conversation's window too).
+function pdRowTitle(r) { return [taskNoText(r, false), detailTitle(r)].filter(Boolean).join(' ') || 'Chat'; }
+function pdChatsRemember() {
+  const rooms = [...PD.rt.values()].filter(e => e.kind === 'chat').map(e => e.room);
+  try { if (rooms.length) localStorage.setItem(PD_CHATS_KEY, JSON.stringify(rooms)); else localStorage.removeItem(PD_CHATS_KEY); } catch (e) {}
+}
+function pdChatsSaved() {
+  try { const l = JSON.parse(localStorage.getItem(PD_CHATS_KEY) || '[]'); return Array.isArray(l) ? l.filter(x => typeof x === 'string' && x) : []; } catch (e) { return []; }
+}
+// The chat panel's frame (session.html, embedded), if the room has a panel.
+function pdChatFrameOf(roomId) {
+  const e = PD.rt.get(pdChatId(roomId));
+  return e && e.kind === 'chat' ? e.el.querySelector('iframe.dp-session') : null;
+}
+function pdChatOpen(roomId, o) {
+  const d = PD.dock;
+  // (A restore runs as the dock is made, before the page's body says po-dock.)
+  if (!d || !roomId || !(o && o.restore ? true : pdPanelsOn())) return false;
+  const id = pdChatId(roomId);
+  if (PD.rt.has(id)) { try { d.reveal(id); } catch (e) {} return true; }
+  const r = ALL_ROWS.find(x => x.roomId === roomId);
+  if (!r) return false;
+  // One chat per task on the page: the task in the middle moves out to its panel.
+  const mid = SELECTED_SID ? rowBySid(SELECTED_SID) : null;
+  if (mid && mid.roomId === roomId) {
+    closeDetail();
+    // Its chat in the middle goes with it: the panel's is the one (a middle
+    // closed otherwise keeps its page, off screen, for a quick reopen). The
+    // pane forgets the room too, so the task's next turn in the middle gets
+    // a new page rather than an empty pane (renderDetail rebuilds on a change).
+    const f = pdById('detail-panel').querySelector('iframe.dp-session');
+    if (f) { f.parentElement.removeAttribute('data-room'); f.remove(); }
+  }
+  const el = document.createElement('div');
+  el.className = 'pd-chat pd-chat-x';
+  el.dataset.room = roomId;
+  // data-chat-slow: not the person's conversation, so it polls less while
+  // it is not being typed in (session.html).
+  el.innerHTML = `<iframe class="dp-session" data-room="${esc(roomId)}" data-chat-slow src="/session?id=${encodeURIComponent(roomId)}&embed=1" title="${esc(pdRowTitle(r))}" allow="clipboard-read; clipboard-write"></iframe>`;
+  PD.rt.set(id, { kind: 'chat', room: roomId, el });
+  // Beside the chat panel last shown (else the conversation) while the row has
+  // room for one more (pdFits); else a tab of its stack.
+  const last = PD.rtLast.chat && PD.rt.has(PD.rtLast.chat) ? PD.rtLast.chat : 'po-chat';
+  const where = o && o.restore ? undefined : pdFits(pdMinOf(id).w) ? { beside: last, side: 'right' } : { kind: 'stack', stack: last };
+  let res = null;
+  try { res = d.addPanel({ id, title: pdRowTitle(r), el, closable: true, menuItems: (pid, ctx) => pdChatMenuItems(roomId, ctx) }, where); } catch (e) { res = null; }
+  if (res !== 'added') { PD.rt.delete(id); return res === 'exists'; }
+  pdChatsRemember();
+  pdToolsFit();
+  return true;
+}
+// The chat panel's ⋯: the task's actions, as the middle's (without Open in
+// new panel: it is one).
+function pdChatMenuItems(roomId, ctx) {
+  const r = ALL_ROWS.find(x => x.roomId === roomId), e = PD.rt.get(pdChatId(roomId));
+  if (!r || !e) return [];
+  return pdActionItems(r, ctx, { el: e.el, room: roomId, skip: ['panel'] });
+}
+function pdChatRemoved(id) {
+  const e = PD.rt.get(id);
+  if (!e || e.kind !== 'chat') return;
+  PD.rt.delete(id);
+  e.el.innerHTML = '';   // its chat page goes with the frame
+  if (PD.rtLast.chat === id) PD.rtLast.chat = '';
+  pdChatsRemember();
+}
+// A panel added at runtime was taken out of the dock (its ×, ⋯ › Close, a
+// middle click, Ctrl+F4, or removePanel): disposed here.
+function pdRuntimeRemoved(id) {
+  const e = PD.rt.get(id);
+  if (!e) return;
+  if (e.kind === 'file') wsPanelRemoved(id); else pdChatRemoved(id);
+  pdToolsFit();
+}
+PD_ROOT.addEventListener('dock-removed', e => { try { pdRuntimeRemoved(e.detail && e.detail.id); } catch (err) {} });
+// Once after the dock is made: the file and chat panels of the last visit,
+// each in its kept place (no `where`: Dock parks a panel a stored layout
+// names until it is added). A Workspace whose task or project is gone, or a
+// room no longer listed, is dropped, its kept places with it; a file panel
+// whose viewer finds its file gone closes quietly (wsPanelMissing). A room
+// that is the task in the middle is dropped too: one chat per task.
+function pdRuntimeRestore() {
+  if (PD.restored || !PD.dock) return;
+  PD.restored = true;
+  let front0 = '';   // what is in front of the conversation's stack before the panels come
+  try { front0 = PD.dock.frontOf('po-chat'); } catch (e) {}
+  for (const ctx of wsPanelsSaved()) {
+    const ok = ctx.kind === 'task' ? !!(ctx.sid && (rowBySid(ctx.sid) || ALL_ROWS.some(r => r.roomId === ctx.sid)))
+      : ctx.kind === 'project' ? !!(ctx.projectId && projectById(ctx.projectId)) : false;
+    if (!ok) {
+      let s = {};
+      try { s = JSON.parse(localStorage.getItem('cd-ws:' + wsCtxKey(ctx)) || '{}') || {}; } catch (e) {}
+      wsTabsFrom(s).tabs.forEach(t => { try { PD.dock.forget(wsPanelId(t.path)); } catch (e) {} });
+      continue;
+    }
+    const v = wsView(ctx);
+    v.painting = true;   // the pane is not mounted: its panels only
+    try { wsPanelsSync(v); } finally { v.painting = false; }
+    const now = Date.now();
+    if (v.panels) v.panels.forEach(P => { P.restored = now; });
+  }
+  const mid = SELECTED_SID ? rowBySid(SELECTED_SID) : null;
+  for (const room of pdChatsSaved()) {
+    if (ALL_ROWS.some(r => r.roomId === room) && !(mid && mid.roomId === room)) pdChatOpen(room, { restore: true });
+    else { try { PD.dock.forget(pdChatId(room)); } catch (e) {} }
+  }
+  pdChatsRemember();
+  wsPanelsRemember();
+  pdTabTips();
+  // Each panel came back in its kept place, and in front of its stack as a
+  // panel added is; the page opens on the conversation, so a file or chat
+  // panel that is a tab of the conversation's stack goes behind it: behind
+  // the tool the person left in front (a phone's Board), as Dock kept it,
+  // else the conversation.
+  try {
+    const f = PD.dock.frontOf('po-chat');
+    if (f !== 'po-chat' && PD.rt.has(f)) PD.dock.activate(front0 && front0 !== f && PD.els[front0] && !PD.rt.has(front0) ? front0 : 'po-chat');
+  } catch (e) {}
 }
 // The open task's actions in the conversation panel's ⋯ menu (need 14, the
 // CEO's P109): the same model as a list row's (static/actions.js), asked each
@@ -11099,17 +11548,31 @@ function pdMenuItems(ctx) {
   if (!pdTask()) return [];
   const r = rowBySid(SELECTED_SID);
   if (!r) return [];
+  return pdActionItems(r, ctx, { el: PD.els['po-chat'] });
+}
+// A row's action model as Dock menu items: the middle's (the open task) and
+// a chat panel's (#150, o.room: its own frame gets the terminal items, o.skip
+// the items it has no use for).
+function pdActionItems(r, ctx, o) {
+  o = o || {};
   const model = SessionActions.sessionActions(actionState(r, !!r.isLive), actionEnv());
   const items = [];
-  model.groups.forEach((g, i) => {
-    if (i) items.push({ sep: true });
+  const frame = o.room ? pdChatFrameOf(o.room) : null;
+  let n = 0;
+  model.groups.forEach(g => {
+    const group = [];
     for (const it of g) {
+      if (o.skip && o.skip.includes(it.id)) continue;
       // Hide terminal is offered only while the captured terminal is up
       // (the bar's menu showed it as it opened).
-      if (it.hidden && !capturedTermsShown()) continue;
-      items.push({ id: it.id, label: it.label, title: it.disabled ? it.reason : it.title, disabled: !!it.disabled,
-                   checked: it.role === 'menuitemcheckbox' ? !!it.checked : undefined, run: () => pdRunAction(it, ctx) });
+      if (it.hidden && !capturedTermsShown(frame)) continue;
+      const act = o.room && (it.cls === 'dp-terms-btn' || it.cls === 'dp-terms-hide') ? { ...it, data: { ...(it.data || {}), room: o.room } } : it;
+      group.push({ id: it.id, label: it.label, title: it.disabled ? it.reason : it.title, disabled: !!it.disabled,
+                   checked: it.role === 'menuitemcheckbox' ? !!it.checked : undefined, run: () => pdRunAction(act, ctx, o.el) });
     }
+    if (!group.length) return;
+    if (n++) items.push({ sep: true });
+    items.push(...group);
   });
   return items;
 }
@@ -11121,23 +11584,23 @@ function pdMenuItems(ctx) {
 // button has no place, so one that opens something under its button is
 // given the panel's ⋯ as `_at`, in the window the menu was in: Terminal
 // colours' picker, Open in editor's repo picker).
-function pdRunAction(it, ctx) {
+function pdRunAction(it, ctx, el) {
   const b = document.createElement('button');
   b.type = 'button';
   b.className = it.cls || '';
   b.dataset.act = it.id;
   Object.entries(it.data || {}).forEach(([k, v]) => { if (v !== undefined && v !== null) b.dataset[k] = v; });
   b.hidden = true;
-  b._at = pdMenuButton(ctx);
+  b._at = pdMenuButton(ctx, el);
   if (it.popup) { openThemeMenu(b, b._at); return; }
   document.body.appendChild(b);
   try { b.click(); } finally { b.remove(); }
 }
-// The conversation panel's ⋯ button, in whichever document holds the panel
-// now: the nearest ancestor of the panel's element that has one (its stack,
-// float or window's frame).
-function pdMenuButton(ctx) {
-  const el = PD.els['po-chat'];
+// A panel's ⋯ button (the conversation's, or the panel `el` given), in
+// whichever document holds the panel now: the nearest ancestor of the panel's
+// element that has one (its stack, float or window's frame).
+function pdMenuButton(ctx, el) {
+  el = el || PD.els['po-chat'];
   for (let n = el && el.parentElement; n; n = n.parentElement) {
     const b = n.querySelector('[data-dk-act="menu"]');
     if (b) return b;
@@ -11151,7 +11614,8 @@ function pdKeepMiddle() {
   if (!d || d.narrow()) return;
   const find = n => !n ? null : n.t === 'stack' ? (n.panels.includes('po-chat') ? n : null) : (n.kids || []).map(find).find(Boolean) || null;
   const st = find(d.layout().root);
-  const extra = st ? st.panels.filter(id => id !== 'po-chat') : [];
+  // (A file or a chat panel may be a tab of the conversation's stack, #150.)
+  const extra = st ? st.panels.filter(id => PD_TOOLS.includes(id)) : [];
   extra.forEach(id => d.dockEdge(id, 'right'));
   if (extra.length) d.activate('po-chat');
 }
@@ -11223,9 +11687,19 @@ const PD_FLY_MIN = 300;
 // a row (with the 5px bars between), a minimised stack its title bar.
 function pdNeedW(n) {
   if (!n) return 0;
-  if (n.t === 'stack') return n.min ? 33 : Math.max(0, ...n.panels.map(id => (PD_MIN[id] || { w: 0 }).w));
+  if (n.t === 'stack') return n.min ? 33 : Math.max(0, ...n.panels.map(id => pdMinOf(id).w));
   const k = (n.kids || []).map(pdNeedW);
   return n.dir === 'row' ? k.reduce((a, b) => a + b, 0) + 5 * Math.max(0, k.length - 1) : Math.max(0, ...k);
+}
+// Whether a panel `w` wide has room beside what the dock holds (what the row
+// needs, pdNeedW, plus a bar, out of the dock's width less the strip): a new
+// file or chat panel goes beside the last while it fits, else it is a tab
+// (#150: a row that overflows is clipped, not scrolled). A phone's dock
+// places nothing beside anything.
+function pdFits(w) {
+  const d = PD.dock;
+  if (!d || d.narrow()) return false;
+  return PD_ROOT.clientWidth - 44 - pdNeedW(d.layout().root) - 5 >= w;
 }
 // A click on a minimised panel's title bar restores it (Dock), and the bar can
 // move from under the pointer: the second click of a double click then lands
@@ -11244,11 +11718,32 @@ function pdDblGuard(e) {
 PD_ROOT.addEventListener('click', pdDblGuard, true);
 // A panel came on screen: what it shows is drawn now, not at the next refresh.
 function pdShown(id) {
+  const rt = PD.rt.get(id);
+  if (rt) {
+    // A file panel: its tab is the one showing in its Workspace. A chat panel:
+    // its chat opens at the latest message (as the middle's, openDetail).
+    if (rt.kind === 'file') wsFilePanelShown(rt.v, rt.path);
+    else {
+      PD.rtLast.chat = id;
+      pdWakeChat(rt.el.querySelector('iframe.dp-session'));
+      barCrumbs();
+    }
+    pdTabTips();
+    return;
+  }
   if (id === 'board' || id === 'workspace' || id === 'changes') renderRows();
   if (id === 'points') pdPaintPoints(true);
   if (pdTask() && id !== 'po-chat') renderDetail();
   pdPlaceChat();
   barCrumbs();
+}
+// A chat page off screen (behind a tab, or the PO's while a task is in the
+// middle) polls every 30 s: told it is shown, it opens at its latest message,
+// says what came meanwhile, and polls now (session.html's `shown`). Not when
+// a link is taking it to one of its messages: that lands it (goto-msg).
+function pdWakeChat(f) {
+  if (!f || !f.contentWindow || GOTO_MSG.has(String(f.dataset.room || ''))) return;
+  try { f.contentWindow.postMessage({ ensemble: 'shown' }, location.origin); } catch (e) {}
 }
 // Brings a panel on screen: shown if hidden, in front of its stack, slid out
 // if it is on a strip, its window raised if it is in one.
@@ -11286,7 +11781,11 @@ function pdPlaceChat() {
   const inPanel = dock && !task && !PO_PEEK && ph.ownerDocument === document && ph.isConnected && !ph.closest('.dk-parking');
   const home = inPanel ? ph : PD_HOST;
   if (PO_PANEL.parentNode !== home) pdMove(home, PO_PANEL);
-  PO_PANEL.classList.toggle('pd-off', dock && !PO_PEEK && !inPanel);
+  const off = dock && !PO_PEEK && !inPanel, wasOff = PO_PANEL.classList.contains('pd-off');
+  PO_PANEL.classList.toggle('pd-off', off);
+  // Out of sight (a task in the middle) the PO's chat polled every 30 s:
+  // back on screen it catches up now.
+  if (wasOff && !off) pdWakeChat(pdChatFrame());
   pdPlaceTask(task);
   if (PD.dock) pdPopChat(ph.ownerDocument !== document);
   pdPopTitle();
@@ -11388,7 +11887,7 @@ function pdPopChat(out) {
   // panel slid out or back): those are class and style changes in the dock.
   new MutationObserver(() => {
     if (PD.raf) return;
-    PD.raf = requestAnimationFrame(() => { PD.raf = 0; pdPointsFrame(); pdToolRemember(); });
+    PD.raf = requestAnimationFrame(() => { PD.raf = 0; pdPointsFrame(); pdToolRemember(); pdTabTips(); });
   }).observe(PD_ROOT, { subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'class'] });
   // A resize can also make the screen a phone's, or no longer one: the dock
   // turns narrow or wide, each with its own layout.
@@ -12578,13 +13077,14 @@ function histOpen(v, path) {
   v.hist = { path, rel, pid: pj.id, entries: null, more: false, err: '', sel: '', mode: 'diff', dseq: 0 };
   histPaint(v);
   histLoadFile(v);
-  const c = v.el && v.el.querySelector('.wsh-close');
+  const box = histBox(v), c = box && box.querySelector('.wsh-close');
   if (c) c.focus({ preventScroll: true });
 }
 function histClose(v) {
+  const box = histBox(v);
   v.hist = null;
   histPaint(v);
-  const b = v.el && v.el.querySelector('.wsp-hist');
+  const b = box && box.querySelector('.wsp-hist');
   if (b && !b.hidden) b.focus({ preventScroll: true });
 }
 // A file's versions, 100 at a time: older ones are added below on request,
@@ -12609,12 +13109,17 @@ async function histLoadFile(v, older) {
   if (h.sel && !older) histShow(v);
 }
 function histPaint(v) {
-  const box = v.el && v.el.querySelector('.wsh');
-  if (!box) return;
   const h = v.hist || null;
+  // The history shows in one box, the file's panel's or the pane's: the others are empty.
+  const home = histBox(v), box = home && home.querySelector('.wsh');
+  const all = [v.el, ...(v.panels ? [...v.panels.values()].map(P => P.el) : [])].filter(Boolean);
+  for (const el of all) {
+    const b = el.querySelector('.wsh'), hb = el.querySelector('.wsp-hist');
+    if (hb) hb.setAttribute('aria-pressed', h && b === box ? 'true' : 'false');
+    if (b && b !== box) { b.hidden = true; if (b._key) { b.innerHTML = ''; b._key = null; } }
+  }
+  if (!box) return;
   box.hidden = !h;
-  const hb = v.el.querySelector('.wsp-hist');
-  if (hb) hb.setAttribute('aria-pressed', h ? 'true' : 'false');
   if (!h) { box.innerHTML = ''; box._key = null; return; }
   if (box._key !== h) {
     box._key = h;
@@ -12624,7 +13129,7 @@ function histPaint(v) {
   if (!h.sel) writeSlot(box.querySelector('.wsh-detail'), '');
 }
 async function histShow(v) {
-  const h = v.hist, box = v.el && v.el.querySelector('.wsh-detail');
+  const h = v.hist, home = histBox(v), box = home && home.querySelector('.wsh-detail');
   const e = h && box && (h.entries || []).find(x => x.rev === h.sel);
   if (!e) return;
   const f = histFileOf(e, h.rel) || { path: h.rel, status: 'M' };
@@ -14080,10 +14585,13 @@ SessionActions.onClose = () => {
 // and Show in Workspace. Each opens the task here and asks before it acts.
 const TASK_ACTS = ['agents', 'moveproj', 'makepo', 'delete', 'workspace'];
 async function runTaskAction(rid, act) {
-  if (!TASK_ACTS.includes(act)) return;
+  if (!TASK_ACTS.includes(act) && act !== 'panel') return;
   let row = ALL_ROWS.find(x => x.roomId === rid);
   if (!row) { await refresh({ now: true }); row = ALL_ROWS.find(x => x.roomId === rid); }
   if (!row) { toast('That task is not in the list', 4000, 'err'); return; }
+  // Its chat as a panel of its own (#150), where the page has the panels;
+  // else in the middle.
+  if (act === 'panel') { if (!pdChatOpen(rid)) openDetail(row.sessionId); return; }
   if (SELECTED_SID !== row.sessionId) openDetail(row.sessionId);
   if (act === 'agents') {
     if (row.isLive) toast('Running: end it first, then reassign.', 4000);
@@ -14819,9 +15327,24 @@ $('#sw-list').addEventListener('click', (ev) => {
   if (row.dataset.po) {
     const pj = projectById(row.dataset.po);
     if (pj) openPoConv(pj);
-  } else openDetail(row.dataset.sid);
+  } else if ((ev.ctrlKey || ev.metaKey) && pdRowPanel(row.dataset.sid)) { /* its chat as a panel of its own (#150) */ }
+  else openDetail(row.dataset.sid);
   // Slid out from its strip, the list goes back once a row is opened.
   if (LD.dock && LD.dock.flyOpen() === 'list') LD.dock.closeFly();
+});
+// A middle click on a task's row: its chat as a panel of its own (#150), as
+// a browser opens a link in a new tab (Ctrl/⌘ and a click do the same). A
+// session with no room has no chat to panel: it opens as a click does.
+function pdRowPanel(sid) {
+  const r = sid ? rowBySid(sid) : null;
+  return !!(r && r.roomId && r.headless && !r.orphan && pdChatOpen(r.roomId));
+}
+$('#sw-list').addEventListener('mousedown', (ev) => { if (ev.button === 1 && ev.target.closest('.sw-row[data-sid]')) ev.preventDefault(); });
+$('#sw-list').addEventListener('auxclick', (ev) => {
+  const row = ev.button === 1 && ev.target.closest('.sw-row[data-sid]');
+  if (!row) return;
+  ev.preventDefault();
+  if (!pdRowPanel(row.dataset.sid)) openDetail(row.dataset.sid);
 });
 // A PO's conversation from the list: its project's screen, where the PO leads
 // (the task panel steps aside). Where the dock failed to load, its drawer.
@@ -15461,6 +15984,23 @@ function crumbWsFile(ctx) {
   if (!v || !v.sel || v.pane === 'tree' || !v.el || !v.el.isConnected) return '';
   return v.tabs.some(x => wsSame(x.path, v.sel)) ? v.sel : '';
 }
+// Files as panels (#150): the Workspace's file whose panel is on screen (in
+// front of its stack, or in a window of its own) is where the person is:
+// task › Files › README.md, whether or not the tree is out. Its Files crumb
+// brings the tree, with the file shown in it.
+function crumbWsPanel(ctx) {
+  if (!wsPanelsMode()) return '';
+  const v = WS_VIEWS.get(wsCtxKey(ctx));
+  if (!v || !v.sel || !v.panels) return '';
+  const P = v.panels.get(wsNorm(v.sel));
+  return P && pdToolOn(P.id) ? v.sel : '';
+}
+// The tool and file a file panel in front stands for (a phone's tab, a
+// desktop with no tool out), else null.
+function crumbFilePanel(ctx) {
+  const f = crumbWsPanel(ctx);
+  return f ? { tool: { k: 'workspace', name: pdPanelName('workspace') }, file: f } : null;
+}
 function crumbState() {
   const r = crumbTask();
   const pj = crumbProject(r);
@@ -15472,29 +16012,35 @@ function crumbState() {
   const strip = PD.dock && !PD.dock.narrow() && document.body.classList.contains('po-dock');
   // A phone's tabs (#129): the task's tab in front of its Chat.
   const tabs = PD.dock && PD.dock.narrow() && document.body.classList.contains('po-dock');
+  const tctx = r ? { kind: 'task', sid: r.sessionId } : null;
   if (r && tabs && pdTask()) {
     s.task = { no: taskNoText(r, false), title: detailTitle(r) };
-    const k = PD.dock.frontOf('po-chat');
-    if (k && k !== 'po-chat') {
-      s.tool = { k, name: PD_TITLES[k] || k };
-      if (k === 'workspace') s.file = crumbWsFile({ kind: 'task', sid: r.sessionId });
+    const k = PD.dock.frontOf('po-chat'), fp = crumbFilePanel(tctx), e = k ? PD.rt.get(k) : null;
+    if (fp) Object.assign(s, fp);
+    else if (e && e.kind === 'chat') {
+      // A chat panel's tab in front: that task is the one on screen.
+      const cr = ALL_ROWS.find(x => x.roomId === e.room);
+      if (cr) s.task = { no: taskNoText(cr, false), title: detailTitle(cr) };
+    } else if (k && k !== 'po-chat' && !e) {
+      s.tool = { k, name: pdPanelName(k) };
+      if (k === 'workspace') s.file = crumbWsFile(tctx);
       if (k === 'changes') { const v = TCH_VIEWS.get(r.sessionId); s.file = (v && v.file) || ''; }
     }
   } else if (r && strip && pdTask()) {
     s.task = { no: taskNoText(r, false), title: detailTitle(r) };
-    const k = pdToolShown();
+    const k = pdToolShown(), fp = crumbFilePanel(tctx);
     if (k) {
-      s.tool = { k, name: PD_TITLES[k] || k };
-      if (k === 'workspace') s.file = crumbWsFile({ kind: 'task', sid: r.sessionId });
+      s.tool = { k, name: pdPanelName(k) };
+      if (k === 'workspace') s.file = crumbWsFile(tctx) || (fp ? fp.file : '');
       if (k === 'changes') { const v = TCH_VIEWS.get(r.sessionId); s.file = (v && v.file) || ''; }
-    }
+    } else if (fp) Object.assign(s, fp);
   } else if (po && strip && !r) {
-    const k = pdToolShown();
+    const k = pdToolShown(), fp = crumbFilePanel(pctx);
     if (k) {
-      s.tool = { k, name: PD_TITLES[k] || k };
-      if (k === 'workspace') s.file = crumbWsFile(pctx);
+      s.tool = { k, name: pdPanelName(k) };
+      if (k === 'workspace') s.file = crumbWsFile(pctx) || (fp ? fp.file : '');
       if (k === 'changes') s.file = CH_FILE || '';
-    }
+    } else if (fp) Object.assign(s, fp);
   } else if (r) {
     s.task = { no: taskNoText(r, false), title: detailTitle(r) };
     const k = issueTab(r);
@@ -15504,9 +16050,10 @@ function crumbState() {
       if (k === 'changes') { const v = TCH_VIEWS.get(r.sessionId); s.file = (v && v.file) || ''; }
     }
   } else if (po) {
-    const front = PD.dock ? PD.dock.frontOf('po-chat') : '';
-    if (front && front !== 'po-chat') {
-      s.tool = { k: front, name: PD_TITLES[front] || front };
+    const front = PD.dock ? PD.dock.frontOf('po-chat') : '', fp = crumbFilePanel(pctx);
+    if (fp) Object.assign(s, fp);
+    else if (front && front !== 'po-chat' && !PD.rt.has(front)) {
+      s.tool = { k: front, name: pdPanelName(front) };
       if (front === 'workspace') s.file = crumbWsFile(pctx);
       if (front === 'changes') s.file = CH_FILE || '';
     }
@@ -15578,6 +16125,9 @@ function crumbGo(level) {
         if (f.q) { f.q = ''; wsfSchedule(v); }
         wsfPaint(v);
         if (v.sel) wsReveal(v, v.sel);
+        // Files as panels: the tree is the Files tool itself (slid out, or a
+        // phone's tab), brought on screen when it is not.
+        if (wsPanelsMode()) pdReveal('workspace');
       }
     }
   }
@@ -16469,6 +17019,10 @@ function openWorkspaceTab(sid) {
   }
   ISSUE_TAB_SID = sid;
   ISSUE_TAB = 'workspace';
+  // A task open as a chat panel (#150): its tools are the middle's, so it
+  // comes back to the middle (its panel closes: one chat per task) and its
+  // Files tool comes out there, not another task's.
+  if (row && row.roomId) pdChatUnpanel(row.roomId);
   if (SELECTED_SID !== sid) openDetail(sid);
   else { const p = $('#detail-panel'); if (p) p.dataset.sig = ''; renderDetail(); }
   // On the tool strip: its Files tool comes out.
@@ -16567,8 +17121,8 @@ function termsAction() {
   if (onHubMachine()) { toggleCapturedTerms(); return null; }
   return showCapturedTerminal(SELECTED_SID);
 }
-function toggleCapturedTerms() {
-  const ifr = $('#detail-panel iframe.dp-session');
+function toggleCapturedTerms(frame) {
+  const ifr = frame || $('#detail-panel iframe.dp-session');
   if (ifr && ifr.contentWindow) ifr.contentWindow.postMessage({ ensemble: 'toggleTerms' }, '*');
 }
 
@@ -16576,8 +17130,8 @@ function toggleCapturedTerms() {
 // the body's term-hidden class show the terminals, each .agent in #agentcol is
 // one agent's, and its .ah header opens it. tests/test_links.py checks that
 // session.html still has them.
-function capturedTermsShown() {
-  const ifr = $('#detail-panel iframe.dp-session');
+function capturedTermsShown(frame) {
+  const ifr = frame || $('#detail-panel iframe.dp-session');
   try {
     const d = ifr && ifr.contentDocument;
     return !!(d && d.getElementById('terms') && !d.body.classList.contains('term-hidden'));
@@ -16901,16 +17455,31 @@ document.addEventListener('click', async (ev) => {
     } catch (e) { toast('priority failed: ' + e.message, 4000, 'err'); await refresh(); }
     return;
   }
+  // Open in new panel (#150): the task's chat as a panel of its own, from a
+  // row's ⋯ or the middle's (which moves the task out of the middle).
+  const panelBtn = ev.target.closest('.panel-btn');
+  if (panelBtn) {
+    ev.stopPropagation();
+    if (!pdChatOpen(panelBtn.dataset.room)) {
+      // No panels on this page: the middle, as a row's click.
+      const r = ALL_ROWS.find(x => x.roomId === panelBtn.dataset.room);
+      if (r) openDetail(r.sessionId); else toast('That task is not in the list', 4000, 'err');
+    }
+    return;
+  }
   const dpTerms = ev.target.closest('.dp-terms-btn');
   if (dpTerms) {
     ev.stopPropagation();
-    termsAction();
+    // A chat panel's own terminals (its frame), else the open task's.
+    const pf = dpTerms.dataset.room ? pdChatFrameOf(dpTerms.dataset.room) : null;
+    if (pf) toggleCapturedTerms(pf); else termsAction();
     return;
   }
   const dpTermsHide = ev.target.closest('.dp-terms-hide');
   if (dpTermsHide) {
     ev.stopPropagation();
-    if (capturedTermsShown()) toggleCapturedTerms();
+    const pf = dpTermsHide.dataset.room ? pdChatFrameOf(dpTermsHide.dataset.room) : null;
+    if (capturedTermsShown(pf)) toggleCapturedTerms(pf);
     return;
   }
   const dpPause = ev.target.closest('.dp-pause-btn');
@@ -17237,6 +17806,8 @@ document.addEventListener('click', async (ev) => {
   const sid = sel.dataset.sid;
   if (!sid) return;
   if (DETAIL_MODE) {
+    // Ctrl/⌘ and a click: its chat as a panel of its own (#150).
+    if ((ev.ctrlKey || ev.metaKey) && pdRowPanel(sid)) return;
     openDetail(sid);
     return;
   }
