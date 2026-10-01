@@ -11390,6 +11390,11 @@ function pdTabTips() {
 // reload, each in its kept place (a room no longer listed is dropped).
 const PD_CHATS_KEY = 'cd-chat-panels';
 const pdChatId = roomId => 'chat:' + roomId;
+// The room's chat panel, if it has one, goes (dock-removed -> pdChatRemoved).
+function pdChatUnpanel(roomId) {
+  const cid = pdChatId(roomId);
+  if (PD.dock && PD.rt.has(cid)) { try { PD.dock.removePanel(cid); } catch (e) {} }
+}
 // What a chat panel is called: "#12 The title" (the conversation's window too).
 function pdRowTitle(r) { return [taskNoText(r, false), detailTitle(r)].filter(Boolean).join(' ') || 'Chat'; }
 function pdChatsRemember() {
@@ -16993,10 +16998,7 @@ function openWorkspaceTab(sid) {
   // A task open as a chat panel (#150): its tools are the middle's, so it
   // comes back to the middle (its panel closes: one chat per task) and its
   // Files tool comes out there, not another task's.
-  {
-    const cid = row && row.roomId ? pdChatId(row.roomId) : '';
-    if (cid && PD.dock && PD.rt.has(cid)) { try { PD.dock.removePanel(cid); } catch (e) {} }
-  }
+  if (row && row.roomId) pdChatUnpanel(row.roomId);
   if (SELECTED_SID !== sid) openDetail(sid);
   else { const p = $('#detail-panel'); if (p) p.dataset.sig = ''; renderDetail(); }
   // On the tool strip: its Files tool comes out.

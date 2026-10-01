@@ -738,7 +738,7 @@ const refresh = async ({ now = false } = {}) => {
 };
 const openDetail = sid => { SELECTED_SID = sid; log.push('detail:' + sid + ':' + ISSUE_TAB); };
 const renderDetail = () => log.push('render:' + ISSUE_TAB);
-const pdTask = () => false, pdReveal = () => {};   // the tool strip (#125) is not loaded here
+const pdTask = () => false, pdReveal = () => {}, pdChatUnpanel = () => {};   // the tool strip (#125, #150) is not loaded here
 const issueTab = () => ISSUE_TAB;
 const wsRoots = ctx => { const r = ALL_ROWS.find(x => x.sessionId === ctx.sid); return r && r.taskDir ? [{ path: r.taskDir }] : []; };
 // $ finds the task panel in whichever window holds it (#148): the frame for its chat, a stub for the rest.
