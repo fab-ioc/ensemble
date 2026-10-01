@@ -1278,6 +1278,29 @@ class FollowUps(_World):
         self.assertEqual(items["P2"]["quote"], "A *flaky* test, in `test_x`")
         self.assertNotIn("quote", items["P1"])
 
+    def test_the_backlog_reads_the_answers_words_before_it_links(self):
+        # Two points share a balloon; the ledger predates follow-ups and its
+        # answers have no words; the transcripts are not re-read (a rotated
+        # session). The comment quotes P1's paragraph: the link goes to P1,
+        # not to the newest point of the balloon.
+        rid = self.shared()
+        with mock.patch.object(points, "_follow_new"):
+            self.send(rid, "## Review comments (1)\n\n**1.** > A flaky test, in test_x\n\nWhich test exactly?",
+                      at=self.t0 + 10)
+        led = points.load(rid)
+        led["derived"] = 0
+        for p in led["points"]:
+            for a in p["answers"]:
+                a.pop("said", None)
+        points._save(rid, led)
+        points._SYNCED.clear()
+        with mock.patch.object(points, "_scan_turns", return_value=False):
+            led = points.sync(rid, force=True)
+        self.assertEqual(led["derived"], points.DERIVED)
+        self.assertEqual(self.state(rid), {"P1": "followed", "P2": "delivered", "P3": "open"})
+        self.assertEqual((self.point(rid, "P1")["followedBy"], self.point(rid, "P3")["replyTo"]), ("P3", "P1"))
+        self.assertEqual(self.point(rid, "P2")["answers"][0]["said"], "Re P2: The CI cache was stale; it is purged nightly now.")
+
     def test_what_an_answer_says_to_a_point(self):
         text = ("Hello.\n\nRe P3: it is live now.\n\nMore on it: reload the page.\n\nRe P4 (planned #9): on it.\n\n"
                 "```\nRe P3: not this\n```")

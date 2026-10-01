@@ -741,17 +741,12 @@ def _follow_new(led: dict, made: list[dict], room_id: str, now: float) -> None:
 
 
 def derive_follow_ups(led: dict, room_id: str) -> bool:
-    """An older ledger, once: every point's follow-up link where it can be
-    derived (a later point quoting or linking an answer), and the words of
-    every answer that has none. Returns whether anything changed."""
+    """An older ledger, once: the words of every answer that has none, then
+    every point's follow-up link where it can be derived (a later point
+    quoting or linking an answer). The words come first: a link is kept for
+    good, and which point of a shared balloon a quote follows is read from
+    them. Returns whether anything changed."""
     changed = False
-    cache: dict = {}
-    for p in sorted(led["points"], key=lambda x: (x["createdAt"], x["id"])):
-        if p.get("replyTo") or p["state"] == "split":
-            continue
-        parent = follow_parent(led, p, room_id, cache, scan=10 ** 6)
-        if parent is not None:
-            changed |= _link_follow(parent, p, float(p["createdAt"]))
     for p in led["points"]:
         for a in p.get("answers") or []:
             if a.get("said") or not a.get("mid"):
@@ -763,6 +758,13 @@ def derive_follow_ups(led: dict, room_id: str) -> bool:
             if ref and ref.get("text"):
                 a["said"] = said(ref["text"], p["id"], "re" if a.get("how") == "re" else "plain")
                 changed = True
+    cache: dict = {}
+    for p in sorted(led["points"], key=lambda x: (x["createdAt"], x["id"])):
+        if p.get("replyTo") or p["state"] == "split":
+            continue
+        parent = follow_parent(led, p, room_id, cache, scan=10 ** 6)
+        if parent is not None:
+            changed |= _link_follow(parent, p, float(p["createdAt"]))
     return changed
 
 
