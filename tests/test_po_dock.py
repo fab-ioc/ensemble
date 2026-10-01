@@ -267,7 +267,7 @@ class ThePanels(unittest.TestCase):
                 continue
             seen.add(rel)
             src = (ROOT / rel).read_text(encoding="utf-8")
-            for m in re.finditer(r"^(?:import|export)\b[^;]*?\bfrom\s+'\./([\w.-]+\.js)'", src, re.M):
+            for m in re.finditer(r"""^(?:import|export)\b[^;]*?\bfrom\s+['"]\./([\w.-]+\.js)['"]""", src, re.M):
                 todo.append("static/dock/src/" + m.group(1))
         self.assertGreaterEqual(len(seen), 10, seen)
         for rel in sorted(seen):

@@ -39,7 +39,8 @@ class FeedbackEndpoint(unittest.TestCase):
     def setUpClass(cls):
         cls.gate = patch.object(dashboard.Handler, '_gate', return_value=True)
         cls.logs = patch.object(dashboard.Handler, 'log_message')
-        cls.gate.start(); cls.logs.start()
+        cls.gate.start(); cls.addClassCleanup(cls.gate.stop)   # undone even when setUpClass fails
+        cls.logs.start(); cls.addClassCleanup(cls.logs.stop)
         cls.server = ThreadingHTTPServer(('127.0.0.1', 0), dashboard.Handler)
         cls.server.daemon_threads = True
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
@@ -48,7 +49,6 @@ class FeedbackEndpoint(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.server.shutdown(); cls.server.server_close()
-        cls.gate.stop(); cls.logs.stop()
 
     def setUp(self):
         feedback._drafts.clear()

@@ -505,6 +505,7 @@ class Endpoint(unittest.TestCase):
     def setUpClass(cls):
         cls.quiet = mock.patch.object(dashboard.Handler, "log_message", lambda *a: None)
         cls.quiet.start()
+        cls.addClassCleanup(cls.quiet.stop)   # undone even when setUpClass fails
         cls.server = dashboard.ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
         cls.port = cls.server.server_address[1]
@@ -513,7 +514,6 @@ class Endpoint(unittest.TestCase):
     def tearDownClass(cls):
         cls.server.shutdown()
         cls.server.server_close()
-        cls.quiet.stop()
 
     def setUp(self):
         agent_hooks.reset()

@@ -281,10 +281,10 @@ class Endpoints(unittest.TestCase):
         cls.patch = mock.patch.object(dashboard, "workspace_access_ok",
                                       lambda p: any(dashboard._within(p, a) for a in allowed))
         cls.patch.start()
+        cls.addClassCleanup(cls.patch.stop)   # undone even when setUpClass fails
 
     @classmethod
     def tearDownClass(cls):
-        cls.patch.stop()
         if cls.junction and os.name == "nt":
             os.rmdir(cls.root / "jn")                                 # the link, never what it points at
         shutil.rmtree(cls.tmp, ignore_errors=True)

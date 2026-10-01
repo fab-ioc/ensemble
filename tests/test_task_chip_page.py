@@ -245,6 +245,7 @@ class ChipAndCard(unittest.TestCase):
         ]
         for p in cls.patches:
             p.start()
+            cls.addClassCleanup(p.stop)   # undone even when setUpClass fails
         points._CACHE.clear(); points._SYNCED.clear(); points._SCANNED.clear(); points._ADOPT_SEEN.clear()
         ok, proj, _ = dashboard.register_project("Motors")
         assert ok, proj
@@ -296,8 +297,6 @@ class ChipAndCard(unittest.TestCase):
     def tearDownClass(cls):
         cls.server.shutdown()
         cls.server.server_close()
-        for p in cls.patches:
-            p.stop()
         cls.tmp.cleanup()
 
     def _both(self):
