@@ -263,6 +263,10 @@ def send(room: dict, identity: str, project_id: str, target_ref: str, text: str,
     me = projects.get(project_id)
     if not me:
         raise Refused("your task has no project, so there is no PO to write as")
+    # A bare #27 that is this project's task goes out as ED-27: the other PO
+    # reads and copies a number it cannot take for its own (#156). What names
+    # another project's task, or nothing, stays as written.
+    text = _d.qualify_task_refs(text, me["id"])
     replied = None
     if str(reply_to or "").strip():
         replied = find(room, reply_to)

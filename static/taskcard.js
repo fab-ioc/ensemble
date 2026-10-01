@@ -33,12 +33,111 @@ const TaskCard = (() => {
   const NOT_TASK_BEFORE_RE = /(?:^|[^\w])(?:pr|mr|pull request|issue|bug|ticket|resolve|resolved|finding|step|item|point|round|option|question|comment|commit|line|page|part|phase|rule|case|image)s?\.?[ \t]*$/i;
   const notTaskRef = (who, key, s, at) => !who && !key && NOT_TASK_BEFORE_RE.test(s.slice(Math.max(0, at - 40), at));
 
+  // ---- Which project a bare number is read in (#156) -----------------------
+  // As task_numbers.read_project reads it on the hub (tests/test_task_refs.py
+  // runs both on the same texts): a bare #27 right after a project's name
+  // ("Dock #27", "Dock's #27", "project Dock: #27") is that project's; else
+  // the one project its sentence names ("Dock released #27 as v0.11.0"); else
+  // the context's own project. A sentence naming two projects, none right
+  // before the number, is ambiguous: the own project, marked, and the card
+  // says it was assumed. ctx: { projects: [{ id, key, name, aliases }], own,
+  // nouns } from /api/task/projects (refs(o).ctx()), or the board's list.
+  const SENTENCE_END_RE = /[.!?]+(?=\s|$)|\n[ \t]*\n|^[ \t]*(?:[-*+]|\d{1,3}[.)]|#{1,6}|>|\|)(?=\s|$)|\|/gm;
+  const NOUNS = ['project', 'board'];
+  const rxEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const blank = m => m.replace(/[^\n]/g, ' ');
+  // The text with its code blocks and code spans blanked, the same length.
+  const withoutCode = s => s.replace(/```[\s\S]*?(?:```|$)/g, blank).replace(/`[^`\n]*`/g, blank);
+  function nameRes(ctx) {
+    if (ctx._res !== undefined) return ctx._res;
+    const by = new Map();
+    for (const p of ctx.projects || []) for (const a of p.aliases || []) by.set(String(a).toLowerCase(), p.id);
+    if (!by.size) return (ctx._res = null);
+    const alts = [...by.keys()].sort((a, b) => b.length - a.length).map(rxEsc).join('|');
+    const nouns = [...new Set([...NOUNS, ...(ctx.nouns || [])])].filter(Boolean).sort((a, b) => b.length - a.length).map(rxEsc).join('|');
+    return (ctx._res = { by, names: new RegExp(`(?<![\\w-])(${alts})(?![\\w-])`, 'gi'),
+      before: new RegExp(`(?<![\\w-])(${alts})(?:['’]s)?(?:\\s+(?:${nouns}))?(?:['’]s)?(?:\\s*[:,–—-])?(?:\\s+task)?\\s*$`, 'i') });
+  }
+  function sentenceOf(plain, start, end) {
+    let a = 0;
+    for (const m of plain.matchAll(SENTENCE_END_RE)) {
+      const e = m.index + m[0].length;
+      if (e <= start) a = e;
+      else if (m.index >= end) return plain.slice(a, m.index);
+    }
+    return plain.slice(a);
+  }
+  function readProject(plain, start, end, ctx) {
+    const R = nameRes(ctx), own = ctx.own || '';
+    if (!R) return { project: own, how: '', ambiguous: false };
+    const m = R.before.exec(plain.slice(Math.max(0, start - 80), start));
+    if (m) return { project: R.by.get(m[1].toLowerCase()), how: 'name', ambiguous: false };
+    const found = [];
+    for (const n of sentenceOf(plain, start, end).matchAll(R.names)) {
+      const pid = R.by.get(n[1].toLowerCase());
+      if (!found.includes(pid)) found.push(pid);
+    }
+    if (found.length === 1) return { project: found[0], how: 'sentence', ambiguous: false };
+    return { project: own, how: '', ambiguous: found.length > 1 };
+  }
+  // The task references in a text, in order, each mention once: { token, who,
+  // key, no, start, end, project, how, ambiguous } as task_numbers.all_text_refs
+  // gives them. Without a ctx a bare number's project is '' (the hub's default).
+  function refsIn(text, ctx) {
+    const plain = withoutCode(String(text ?? ''));
+    const byKey = new Map(((ctx && ctx.projects) || []).filter(p => p.key).map(p => [String(p.key).toUpperCase(), p.id]));
+    const out = [];
+    for (const m of plain.matchAll(TASK_REF_RE)) {
+      const who = m[1] || '', key = (m[2] || '').toUpperCase(), no = +m[3], at = m.index;
+      if (notTaskRef(who, key, plain, at)) continue;
+      const r = { token: m[0], who, key, no, start: at, end: at + m[0].length, project: '', how: '', ambiguous: false };
+      if (key) { r.project = byKey.get(key) || ''; r.how = 'key'; }
+      else if (ctx) Object.assign(r, readProject(plain, r.start, r.end, ctx));
+      out.push(r);
+    }
+    return out;
+  }
+  // The text with each reference fn(ref) answers for replaced by its answer (null: left as written).
+  function replaceRefs(text, ctx, fn) {
+    const s = String(text ?? '');
+    let out = '', at = 0;
+    for (const r of refsIn(s, ctx)) {
+      const h = fn(r);
+      if (h == null) continue;
+      out += s.slice(at, r.start) + h;
+      at = r.end;
+    }
+    return out + s.slice(at);
+  }
+
   // ---- The resolver: a number → the hub's answer ----------------------------
   // o: { room: this chat's room (the hub reads #18 in its project), changed() }.
   // info(key, no, project): the answer, or { state: 'pending' | 'gone' };
-  // `project` reads a bare number in another project (a PO's message).
+  // `project` reads a bare number in another project (a PO's message, or one
+  // a name near the number says). ctx(own): the context refsIn reads a text
+  // in — the hub's project list (/api/task/projects, asked once and kept a
+  // while; the page draws again when it comes), with `own` the project a
+  // bare number is read in by default (this chat's unless given).
+  const PROJECTS_TTL = 300000;
   function refs(o) {
     const cache = new Map();   // "#18", "ED-18", "#18@proj-…" → { state, at, ...the task }
+    let projects = null, projectsAt = 0, loading = false;
+    const ctxs = new Map();
+    function loadProjects() {
+      loading = true;
+      fetch('/api/task/projects' + (o.room ? '?room=' + encodeURIComponent(o.room) : ''))
+        .then(res => res.ok ? res.json() : Promise.reject(new Error('error ' + res.status)))
+        .then(d => { projects = d && Array.isArray(d.projects) ? d : { projects: [], own: '', nouns: [] }; projectsAt = Date.now(); ctxs.clear(); loading = false; o.changed(); })
+        .catch(() => { projectsAt = Date.now() - PROJECTS_TTL + 15000; loading = false; });   // asked again in a while
+    }
+    function ctx(own) {
+      if (!loading && (!projects || Date.now() - projectsAt > PROJECTS_TTL)) loadProjects();
+      if (!projects) return null;
+      const k = own || '';
+      let c = ctxs.get(k);
+      if (!c) ctxs.set(k, c = { projects: projects.projects, own: k || projects.own || '', nouns: projects.nouns || [] });
+      return c;
+    }
     function info(key, no, project) {
       const ref = key ? key.toUpperCase() + '-' + no : '#' + no;
       const k = ref + (project && !key ? '@' + project : '');
@@ -60,7 +159,7 @@ const TaskCard = (() => {
         .catch(() => setTimeout(() => { if (r.state === 'pending') cache.delete(k); o.changed(); }, 15000));
       return r;
     }
-    return { info, cache };
+    return { info, cache, ctx };
   }
 
   // ---- The chip ---------------------------------------------------------------
@@ -71,16 +170,18 @@ const TaskCard = (() => {
   const word = (t, key) => (key || t.inProject === false) ? (t.ref || t.label) : (t.label || t.ref);
   const dotOf = t => t.status === 'running' ? 'run' : (t.status === 'waiting for you' || t.status === 'paused') ? 'wait' : '';
   // o: { key: the key as written, agent: the agent it opens at, href: the link
-  // (the page's own; else this page's /session) }.
+  // (the page's own; else this page's /session), assumed: the number's
+  // sentence names two projects and this one was assumed (the card says so) }.
   function chipHtml(t, o = {}) {
     const id = o.agent || '';
     const href = o.href || ('/session?id=' + encodeURIComponent(t.roomId) + (id ? '&agent=' + encodeURIComponent(id) : ''));
     const ref = t.ref || t.label || '';
     const card = { ref: word(t, o.key), title: t.title || '', state: stateText(t),
                    agents: (t.agents || []).map(a => a.identity || a.agent).filter(Boolean),
-                   project: t.inProject === false ? (t.project || '') : '', href, task: t.roomId || '', agent: id };
+                   project: (t.inProject === false || o.assumed) ? (t.project || '') : '', href, task: t.roomId || '', agent: id };
+    if (o.assumed) card.assumed = true;
     const dot = dotOf(t);
-    const label = `Task ${ref}: ${t.title || ''}` + (id ? ` at ${id}` : '') + (card.project ? ` (${card.project})` : '');
+    const label = `Task ${ref}: ${t.title || ''}` + (id ? ` at ${id}` : '') + (card.project ? ` (${card.assumed ? 'assumed ' : ''}${card.project})` : '');
     return `<a class="task-chip${dot ? ' tc-' + dot : ''}" href="${esc(href)}" data-task="${esc(t.roomId || '')}"${id ? ` data-agent="${esc(id)}"` : ''}`
       + ` data-card="${esc(JSON.stringify(card))}" aria-label="${esc(label)}" aria-haspopup="dialog" aria-expanded="false">`
       + (dot ? '<span class="tc-dot" aria-hidden="true"></span>' : '')
@@ -145,7 +246,7 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
     el.setAttribute('role', 'dialog');
     el.setAttribute('aria-label', 'Task ' + c.ref);
     el.innerHTML = `<span class="tc-no">${esc(c.ref)}</span>`
-      + (c.project ? `<span class="tc-proj">${esc(c.project)}</span>` : '')
+      + (c.project ? `<span class="tc-proj${c.assumed ? ' tc-assumed' : ''}"${c.assumed ? ' title="The sentence names more than one project: this one was assumed"' : ''}>${c.assumed ? 'assumed ' : ''}${esc(c.project)}</span>` : '')
       + `<a class="tc-title" href="${esc(c.href)}" data-task="${esc(c.task)}"${c.agent ? ` data-agent="${esc(c.agent)}"` : ''} title="${esc('Open task ' + c.ref)}">${esc(c.title)}</a>`
       + (c.state ? `<span class="tc-state">${esc(c.state)}</span>` : '')
       + (c.agents && c.agents.length ? `<span class="tc-agents">${esc(c.agents.join(' · '))}</span>` : '');
@@ -236,7 +337,7 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
     return S;
   }
 
-  return { refs, chipHtml, stateText, init, TASK_REF_RE, NOT_TASK_BEFORE_RE, notTaskRef,
+  return { refs, chipHtml, stateText, init, TASK_REF_RE, NOT_TASK_BEFORE_RE, notTaskRef, refsIn, replaceRefs, readProject,
            open: (chip, doc) => { const S = stateOf(doc); if (S) openCard(S, chip); },
            close: doc => { const S = stateOf(doc); if (S) closeCard(S); }, el: doc => { const S = stateOf(doc); return S ? S.el : null; },
            CSS, esc };

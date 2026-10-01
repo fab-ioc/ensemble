@@ -1610,23 +1610,37 @@ const TASK_REFS = TaskCard.refs({ room: ROOM, changed: () => refChanged() });
 // tasks. '' means this chat's project (the hub's default).
 const taskRefProject = m => (m && m.kind === 'pomsg' && m.fromProjectId) || '';
 let TASK_REF_PID = '';         // the balloon being drawn: taskRefProject(m)
-const taskRefInfo = (key, no) => TASK_REFS.info(key, no, TASK_REF_PID);
-// The chip for a number the hub has resolved, else null. @codex@18 opens the
-// task at that agent (a role, @reviewer@18, is the agent holding it).
-function taskChipHtml(who, key, no) {
-  const t = taskRefInfo(key, no);
+// The context a balloon's numbers are read in (TaskCard.refsIn, #156): the
+// hub's project list with their names, `own` this chat's project or the
+// balloon's (TASK_REF_PID); null until the hub has answered (then a bare
+// number reads as this chat's, as before, and the chat is drawn again).
+const taskRefCtx = () => TASK_REFS.ctx(TASK_REF_PID);
+// The project a reference is asked in: its own key says; a bare number read
+// in another project by a name near it (r.project, not the context's own)
+// is asked there; the rest in the balloon's (TASK_REF_PID: '' is this chat's).
+function taskRefAskIn(r) {
+  if (r.key) return '';
+  const c = taskRefCtx();
+  return (r.project && (!c || r.project !== c.own)) ? r.project : TASK_REF_PID;
+}
+const taskRefInfo = (key, no, project) => TASK_REFS.info(key, no, project === undefined ? TASK_REF_PID : project);
+// The chip for a reference the hub has resolved, else null: r is one of
+// TaskCard.refsIn's ({ who, key, no, project, ambiguous }). @codex@18 opens
+// the task at that agent (a role, @reviewer@18, is the agent holding it); an
+// ambiguous number's card says which project was assumed.
+function taskChipHtml(r) {
+  const t = taskRefInfo(r.key, r.no, taskRefAskIn(r));
   if (t.state !== 'ok') return null;
-  const w = String(who || '').toLowerCase();
+  const w = String(r.who || '').toLowerCase();
   const agent = w ? (t.agents || []).find(a => (a.identity || '').toLowerCase() === w
     || String(a.role || '').split(':')[0].trim().toLowerCase() === w) : null;
-  return TaskCard.chipHtml(t, { key, agent: agent ? agent.identity : '' });
+  return TaskCard.chipHtml(t, { key: r.key, agent: agent ? agent.identity : '', assumed: !!r.ambiguous });
 }
 // Every resolved task number in a text, parked as a chip (REF_A i REF_Z).
 function parkTaskRefs(s, chips) {
-  return String(s).replace(TASK_REF_RE, (m, who, key, no, at, str) => {
-    if (notTaskRef(who, key, str, at)) return m;
-    const h = taskChipHtml(who || '', key || '', +no);
-    return h ? REF_A + (chips.push(h) - 1) + REF_Z : m;
+  return TaskCard.replaceRefs(String(s), taskRefCtx(), r => {
+    const h = taskChipHtml(r);
+    return h ? REF_A + (chips.push(h) - 1) + REF_Z : null;
   });
 }
 // ---- Task references: end --------------------------------------------------
@@ -4829,10 +4843,11 @@ function edRefsHtml(text) {
     const h = refChipHtml(ref);
     if (h) out.push(h);
   }
-  for (const m of String(text || '').matchAll(TASK_REF_RE)) {
-    if (notTaskRef(m[1], m[2], m.input, m.index) || seen.has(m[0])) continue;
-    seen.add(m[0]);
-    const h = taskChipHtml(m[1] || '', m[2] || '', +m[3]);
+  for (const r of TaskCard.refsIn(text, taskRefCtx())) {
+    const k = r.token + '@' + (r.project || '');
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const h = taskChipHtml(r);
     if (h) out.push(h);
   }
   return out.join('');

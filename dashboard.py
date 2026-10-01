@@ -5206,28 +5206,87 @@ def http_task_id(value, project_id: str = "") -> tuple[str, dict | None]:
     return (rid, None) if rid else ("", {"error": "no_such_task", "message": why})
 
 
-def task_lookup_for(room_id: str = "", project_id: str = ""):
-    """``lookup(key, no)`` for message_refs: the task a number in a message
-    names, read in the project of the room it was sent in, or in
-    ``project_id`` when given (a PO's message from another project,
-    ref_project). A task of another project than the room's is labelled in
-    full (O-1), so the agent sees which project's task the line is about.
-    Nothing is read until a message names a task."""
-    project: list[str] = []      # [the project numbers are read in, the room's own]
+def ref_context(own: str = "", projects: list[dict] | None = None) -> dict:
+    """The context a text's bare task numbers are read in (task_numbers
+    .read_project, #156): every project's name and what chats call it (its
+    key, its first word, its PO chat's title: task_numbers.project_names),
+    the board noun, and ``own`` — the project a bare number is read in when
+    its sentence names no other."""
+    projects = load_projects() if projects is None else projects
+    keys = project_keys(projects)
+    titles = {}
+    for p in projects:
+        prid = (p.get("poRoomId") or "").strip()
+        if prid:
+            po = next((e for e in _task_index() if e["id"] == prid), None)
+            if po:
+                titles[p["id"]] = po.get("title") or ""
+    rows = [{"id": p["id"], "name": p.get("name") or "", "key": keys.get(p["id"], "")} for p in projects]
+    nouns = sorted({project_noun("one"), project_noun("many")} - {""})
+    return {"projects": task_numbers.project_names(rows, titles), "own": own or "", "nouns": nouns}
 
-    def lookup(key: str, no: int) -> dict | None:
-        if not project:
-            own = ""
-            if room_id:
-                room = next((e for e in _task_index() if e["id"] == room_id), None)
-                own = _task_project(room, load_session_projects(), load_projects()) if room else ""
-            project.extend([project_id or own, own])
-        rid, _why = resolve_task_ref(f"{key}-{no}" if key else f"#{no}", project[0])
+
+def room_project(room_id: str) -> str:
+    """The project a room belongs to, "" for none or an unknown room."""
+    if not room_id:
+        return ""
+    room = next((e for e in _task_index() if e["id"] == room_id), None)
+    return _task_project(room, load_session_projects(), load_projects()) if room else ""
+
+
+class TaskLookup:
+    """What message_refs asks of the hub for a message's task numbers
+    (task_lookup_for): ``find(text)`` — the tasks the text names, each with
+    the project it is read in (ref_context: the room's own, or
+    ``project_id`` for a PO's message from another project, unless a name
+    near the number says another; an ambiguous number is marked and gets no
+    line) — and ``lookup(key, no, project)``, the task one of them names.
+    A task of another project than the room's is labelled in full (O-1), so
+    the agent sees which project's task the line is about. Nothing is read
+    until a message names a task."""
+
+    def __init__(self, room_id: str = "", project_id: str = ""):
+        self.room_id, self.project_id = room_id, project_id
+        self._project: list[str] = []      # [the project numbers are read in, the room's own]
+        self._ctx: dict | None = None
+
+    def _projects(self) -> list[str]:
+        if not self._project:
+            own = room_project(self.room_id)
+            self._project.extend([self.project_id or own, own])
+        return self._project
+
+    def find(self, text: str) -> list[dict]:
+        if "#" not in (text or "") and "@" not in (text or ""):
+            return []
+        if self._ctx is None:
+            self._ctx = ref_context(self._projects()[0])
+        return task_numbers.find_text_refs(text, self._ctx)
+
+    def __call__(self, key: str, no: int, project: str = "") -> dict | None:
+        read_in, own = self._projects()
+        rid, _why = resolve_task_ref(f"{key}-{no}" if key else f"#{no}", project or read_in)
         info = task_ref_info(rid) if rid else None
-        if info and info.get("projectId") and info["projectId"] != (project[1] or project[0]):
+        if info and info.get("projectId") and info["projectId"] != (own or read_in):
             info["label"] = info["ref"]
         return info
-    return lookup
+
+
+def task_lookup_for(room_id: str = "", project_id: str = "") -> TaskLookup:
+    """The TaskLookup for a message sent in ``room_id``, its bare numbers read
+    in ``project_id`` when given (a PO's message from another project,
+    ref_project), else in the room's project."""
+    return TaskLookup(room_id, project_id)
+
+
+def qualify_task_refs(text: str, project_id: str) -> str:
+    """``text`` with each bare ``#18`` that is ``project_id``'s task written
+    as ``ED-18`` (task_numbers.qualify_text), so another project's reader
+    cannot take it for its own #18 (#156: a PO's message to another PO)."""
+    if "#" not in (text or "") or not project_id:
+        return text
+    ctx = ref_context(project_id)
+    return task_numbers.qualify_text(text, ctx, lambda pid, no: bool(resolve_task_ref(f"#{no}", pid)[0]))
 
 
 def unregister_project(project_id: str) -> bool:
@@ -5567,8 +5626,12 @@ def build_projects() -> dict:
     # One group per registered project, plus a synthetic unassigned bucket.
     groups: dict = {}
     keys = project_keys(projects_reg)
+    # What chats call each project (task_numbers.aliases): the page reads a
+    # spec's "Dock #27" in Dock with it (TaskCard.refsIn).
+    aliases = {r["id"]: r["aliases"] for r in ref_context("", projects_reg)["projects"]}
     for p in projects_reg:
         groups[p["id"]] = {"id": p["id"], "name": p["name"], "path": p["path"], "key": keys.get(p["id"], ""),
+                           "aliases": aliases.get(p["id"], []),
                            "home": project_home(p, create=False),
                            # Where its tasks put reports and design notes.
                            "documentsDir": project_documents_dir(p),
@@ -10516,6 +10579,14 @@ class Handler(BaseHTTPRequestHandler):
             shown = ctx_pid or pid
             info["inProject"] = bool(shown) and info.get("projectId") == shown
             self._send_json(200, info)
+            return
+        if p == "/api/task/projects":
+            # What the pages need to read a text's bare numbers in the right
+            # project (TaskCard.refsIn, as task_numbers.read_project does on
+            # the hub): every project's id, key, name and what chats call it,
+            # the board noun, and the project of ?room= as `own`.
+            ctx = ref_context(room_project((parse_qs(u.query).get("room", [""])[0] or "").strip()))
+            self._send_json(200, {"projects": ctx["projects"], "own": ctx["own"], "nouns": ctx["nouns"]})
             return
         if p == "/api/room/attachment":
             self._attachment_get(u)
