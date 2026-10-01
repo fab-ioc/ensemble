@@ -77,6 +77,8 @@ LAYOUT = (ROOT / "static" / "dock" / "src" / "layout.js").as_uri()
 
 PURE_JS = r"""
 const out = {};
+// pdPointsHtml renders task chips through taskChipsIn (index.html); these tests check the points markup, not the chips.
+const taskChipsIn = (t) => esc(String(t || ''));
 %(fns)s
 (async () => {
   const L = await import(%(layout)s);
