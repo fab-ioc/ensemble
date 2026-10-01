@@ -103,10 +103,14 @@ def plan_numbers(tasks: list[dict], next_no: int = 0) -> tuple[dict[str, int], i
     (``2026 roadmap`` is a year, not #2026); the rest take the numbers after
     the highest one, oldest first. Once a project has a counter, titles are
     not read. Returns ``({id: no}, next counter)``: with nothing to number,
-    nothing changes."""
-    used = {int(t["no"]) for t in tasks if t.get("no")}
-    todo = sorted((t for t in tasks if not t.get("no")),
-                  key=lambda t: (t.get("createdAt") or 0, t.get("id") or ""))
+    nothing changes. A number two tasks share is the older one's; the
+    others are numbered as if they had none."""
+    order = lambda t: (t.get("createdAt") or 0, t.get("id") or "")
+    keeper: dict[int, dict] = {}
+    for t in sorted((t for t in tasks if t.get("no")), key=order):
+        keeper.setdefault(int(t["no"]), t)
+    used = set(keeper)
+    todo = sorted((t for t in tasks if not t.get("no") or keeper[int(t["no"])] is not t), key=order)
     in_titles = Counter(n for n in (title_no(t.get("title") or "") for t in tasks) if n)
     counter = int(next_no or 0)
     out: dict[str, int] = {}
