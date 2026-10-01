@@ -376,13 +376,17 @@ _ALL_TOOLS = [
             "Only a ProductOwner moves a task to \"done\"; it means accepted after "
             "testing, not handed over. "
             "Title, spec and priority work on drafts and on stopped or running "
-            "tasks (a running agent does not re-read the spec; tell it in chat "
-            "if it must know). Reassigning agents — adding one, dropping one, "
-            "changing a model or a role — is allowed only while the task is NOT "
-            "running: stop it first, reassign, start it again. Agents that stay "
-            "keep their identity and their conversation; pass their \"identity\" "
-            "to be sure which is which. One agent left makes the task solo, two "
-            "or more a collaboration."
+            "tasks. A spec change to a RUNNING task reaches its owner by itself: "
+            "the hub types it one line with what changed (the owner carries on and "
+            "acts only on the change), so never stop and start a task to make it "
+            "read an amendment. A stopped task's owner is told at its next start. "
+            "Reassigning agents — adding one, dropping one, changing a model or a "
+            "role — works on a stopped task, and on a running one only for a seat "
+            "nobody is sitting in (the on-mention reviewer between reviews, a stopped "
+            "or new seat): a running agent's own seat cannot change; stop the task "
+            "first. Agents that stay keep their identity and their conversation; "
+            "pass their \"identity\" to be sure which is which. One agent left makes "
+            "the task solo, two or more a collaboration."
         ),
         "inputSchema": {
             "type": "object",
@@ -413,9 +417,12 @@ _ALL_TOOLS = [
             "resuming their previous conversation. A draft's first launch checks "
             "the latest cached plan allowance, records the preferred and chosen "
             "line-ups, and returns the reason; a relaunch keeps the kinds that own "
-            "the existing conversations. A resumed owner is then told to re-read "
-            "its spec and carry on (the spec itself is not sent again). Fails if the "
-            "task is already running."
+            "the existing conversations. A resumed owner is then typed one line: "
+            "stopped in the middle of a turn, it carries on; stopped between turns, "
+            "it is told only what is new (a spec change, a message) and not to redo "
+            "its last turn. The spec itself is not sent again. A start is never the "
+            "way to deliver a ruling: amend the spec (ensemble_update_task) or send a "
+            "message; both reach a running owner. Fails if the task is already running."
         ),
         "inputSchema": {"type": "object", "properties": {"taskId": _TASK_ID_SPEC},
                         "required": ["taskId"]},
@@ -1429,13 +1436,16 @@ def _update_task(ctx, args, handler):
             gate_fields["gateConfiguredAt"] = time.time()
     notes = []
     room2 = room
+    old_spec = room.get("spec", "") or ""
     if title is not None or spec is not None or priority is not None or workflow is not None:
         ok, room2, err = _d.update_task(room["id"], title=title, spec=spec,
                                         priority=priority, workflow=workflow)
         if not ok:
             raise ToolError(err)
-        if _status(room2) in ("running", "waiting_user", "paused") and spec is not None:
-            notes.append("the task is running — its agents will not re-read the spec")
+        new_spec = room2.get("spec", "") or ""
+        if (spec is not None and new_spec.strip() != old_spec.strip()
+                and _status(room2) in ("running", "waiting_user", "paused")):
+            notes.append(_tell_owner_spec_changed(ctx, handler, room2, old_spec, new_spec))
     if agent_list is not None:
         # "That task is running" would be true of your own task too, but it is
         # not the useful answer.
@@ -1445,12 +1455,16 @@ def _update_task(ctx, args, handler):
         ok, room3, err = _d.reassign_task(room["id"], agent_list)
         if not ok:
             raise ToolError(_reassign_error(err))
-        room2 = room3
+        was_mode, room2 = room.get("mode", ""), room3
         notes.append("agents reassigned: " +
                      ", ".join(f"{a['identity']} ({a['agent']}"
                                + (f", {a['role']}" if a["role"] else "") + ")"
                                for a in _agents_view(room2))
                      + f" — the task is now {room2.get('mode', '')}")
+        if was_mode == "solo" and room2.get("mode") == "collab" and _d._room_is_live(room2):
+            notes.append("its owner runs on and was briefed as a solo agent: it learns of "
+                         "the new seat only from a message, so tell it in the task's chat "
+                         "(a review starts when the reviewer is @mentioned)")
     if gate_fields:
         room2 = _d.chatroom.patch_room(room["id"], **gate_fields) or room2
         _d._patch_task_json(room2.get("taskDir", ""), **gate_fields)
@@ -1461,11 +1475,76 @@ def _update_task(ctx, args, handler):
             "mode": room2.get("mode", ""), "note": "; ".join(notes)}
 
 
+def _amender_name(ctx, room: dict) -> str:
+    """Who amended the spec, as the owner should read it: never a bare
+    identity (identities are per room: the planner 'claude' of another task
+    and the owner 'claude' collide)."""
+    po = _d.room_po_id(room)
+    if po and po == ctx["room"]["id"]:
+        return "Your PO"
+    role = _role_head(ctx.get("part") or {})
+    if not role:
+        # An administrator by the project's poRoomId, with no role of its own.
+        return "An administrator"
+    if role == "productowner":
+        # A PO that is not this task's PO: name its project, not its room
+        # (PO rooms are titled "<project> PO").
+        project = _projects().get(_project_of_room(ctx["room"]))
+        name = ((project or {}).get("name") or "").strip()
+        return f"The PO of project {name}" if name else "A PO"
+    where = _d.task_label(ctx["room"]) or _title(ctx["room"])
+    return f"The {role} of {where}" if where else f"The {role}"
+
+
+def _tell_owner_spec_changed(ctx, handler, room: dict, old_spec: str, new_spec: str) -> str:
+    """A running task's spec was amended: type the owners one line with the
+    change (dashboard.spec_change_line), so no one stops and starts the task to
+    make it read the spec. Returns the note for the caller.
+
+    The owner is marked as having seen this revision only when it was idle
+    at the ring, so the line became its prompt at once: a line typed into a
+    busy owner sits queued in its TUI, and a stop before its turn ends would
+    lose it; the next resume note must then still send it to read the spec.
+    An administrator amending its own task's spec is not rung: it wrote it."""
+    if room["id"] == ctx["room"]["id"]:
+        return "you amended your own spec: nobody else to tell"
+    line, inlined = _d.spec_change_line(room, old_spec, new_spec, by=_amender_name(ctx, room))
+    owners = _d.chatroom.owners(room)
+    try:
+        statuses = _d.attention._claude_status_by_session()
+        idle = {ident for ident in owners
+                if _d.attention.turn_state(_d.chatroom.participant(room, ident) or {}, statuses)[0]
+                == "idle"}
+    except Exception:       # noqa: BLE001 — unknown reads as busy: no mark
+        idle = set()
+    try:
+        rung = handler._ring(room["id"], owners, line)
+    except Exception:       # noqa: BLE001 — the amendment is saved either way
+        rung = []
+    if not rung:
+        return ("the task is running but its owner could not be told (its terminal did "
+                "not take the line); tell it in chat")
+    if inlined:
+        for ident in rung:
+            part = _d.chatroom.participant(room, ident)
+            if part and ident in idle:
+                try:
+                    _d.chatroom.patch_participant(room["id"], ident, _d.spec_seen(part, new_spec))
+                except Exception:   # noqa: BLE001
+                    pass
+    return ("the owner has been told what changed (" + ", ".join(rung) + ")"
+            + ("" if inlined else "; the change was too long to inline, it will read the spec again"))
+
+
 def _reassign_error(err: str) -> str:
     """Turn reassign_task's error code into something an agent can act on."""
-    if err == "task_is_running":
-        return ("that task is running — agents cannot be reassigned under a live "
-                "task; stop it (ensemble_stop_task), reassign, then start it again")
+    if err.startswith("task_is_running"):
+        _code, _sep, why = err.partition(": ")
+        return ("that task is running — a seat whose agent is running cannot be "
+                "changed" + (f" ({why})" if why else "") + "; the on-mention reviewer's "
+                "seat and stopped seats can, without stopping the task. To change a "
+                "running agent, stop the task (ensemble_stop_task), reassign, then "
+                "start it again")
     if err == "need_an_agent":
         return "a task needs at least one agent"
     if err.startswith("agent_unavailable:"):

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import difflib
 import getpass
 import hashlib
 import hmac
@@ -2020,7 +2021,29 @@ RESUME_NOTE_SAME_SPEC = (
     "last read it. Carry on from where "
     f"you were; do not start over. {OWNER_OUTPUT_NOTE} Report with ensemble_report when you finish or "
     "are blocked.")
-RESUME_NOTES = (RESUME_NOTE, RESUME_NOTE_SAME_SPEC)
+# For an owner whose turn had ENDED when it was stopped (stop_task records
+# the state as ``stoppedState``): it is told only what is new. Measured
+# (#149): an idle owner told to "carry on" redid a check pass of 10 to 27
+# calls, 2 to 5M tokens a time, and often reported again what it had reported.
+RESUME_NOTE_IDLE = (
+    "[resumed] Your task was started again. Your last turn had ended when you were "
+    "stopped: do not redo it. Your spec may have changed while you were stopped: "
+    "read it again with ensemble_get_task and act only on what changed. Nothing "
+    "else is new unless a message follows this line (in a team: chat_read). If you "
+    "had reported, your report stands: do not report again; say in one line that you "
+    "wait, and wait. The same if you are waiting for an answer. Only unfinished work "
+    f"of yours that nothing holds up goes on. {OWNER_OUTPUT_NOTE} Report with "
+    "ensemble_report only when new work is finished or newly blocked.")
+RESUME_NOTE_IDLE_SAME_SPEC = (
+    "[resumed] Your task was started again. Your last turn had ended when you were "
+    "stopped: do not redo it. Your spec has not changed since you last read it: do "
+    "not read it again. Nothing else is new unless a message follows this line (in a "
+    "team: chat_read). If you had reported, your report stands: do not report again; "
+    "say in one line that you wait, and wait. The same if you are waiting for an "
+    "answer. Only unfinished work of yours that nothing holds up goes on. "
+    f"{OWNER_OUTPUT_NOTE} Report with ensemble_report only when new work is finished "
+    "or newly blocked.")
+RESUME_NOTES = (RESUME_NOTE, RESUME_NOTE_SAME_SPEC, RESUME_NOTE_IDLE, RESUME_NOTE_IDLE_SAME_SPEC)
 # After a planned hub restart, only to an agent that was in the middle of a
 # turn when the hub stopped (restore_after_restart). One that was idle is typed
 # nothing: a line reads as an order, and an idle task told to "carry on" redid
@@ -2041,11 +2064,52 @@ def spec_seen(part: dict, spec: str) -> dict:
 
 def resume_note_for(room: dict, part: dict) -> str:
     """The resume note for an owner: without "read your spec again" when this
-    very session has read the spec as it stands."""
+    very session has read the spec as it stands, and the "do not redo your
+    last turn" one when stop_task saw its turn over (``stoppedState`` idle).
+    No record, or a turn under way, reads as mid-turn: a stop the hub did not
+    see (a crash, a record from before the state was kept) never costs a
+    real resume."""
     seen = part.get("specSeen")
-    if isinstance(seen, dict) and seen.get("sessionId") and             seen.get("sessionId") == (part.get("sessionId") or "") and             seen.get("rev") == _spec_rev(room.get("spec", "") or ""):
-        return RESUME_NOTE_SAME_SPEC
-    return RESUME_NOTE
+    same = (isinstance(seen, dict) and bool(seen.get("sessionId"))
+            and seen.get("sessionId") == (part.get("sessionId") or "")
+            and seen.get("rev") == _spec_rev(room.get("spec", "") or ""))
+    if part.get("stoppedState") == "idle":
+        return RESUME_NOTE_IDLE_SAME_SPEC if same else RESUME_NOTE_IDLE
+    return RESUME_NOTE_SAME_SPEC if same else RESUME_NOTE
+
+
+# A spec amendment to a RUNNING task reaches its owner as one line, the change
+# inline when it is short. Measured (#149): 28 of the week's 58 stop+start
+# pairs were a PO writing a ruling into the spec and restarting the task so
+# the owner would read it, at about 3M tokens a resume; one line costs a wake.
+SPEC_CHANGE_INLINE_MAX = 1200
+SPEC_CHANGE_NOTE = (
+    "Carry on from where you are: do not start over, do not redo what you have "
+    "done, act only on what changed.")
+
+
+def spec_change_line(room: dict, old_spec: str, new_spec: str, by: str = "") -> tuple[str, bool]:
+    """``(line, inlined)``: what is typed into a task's owner when its spec is
+    amended while it runs. The lines added and removed are inline when they fit
+    SPEC_CHANGE_INLINE_MAX characters (the owner then needs no ensemble_get_task:
+    it is marked as having seen this revision); a longer change sends it to
+    read the spec again."""
+    who = (by or "").strip() or "An administrator"
+    when = time.strftime("%H:%M")
+    a = (old_spec or "").splitlines()
+    b = (new_spec or "").splitlines()
+    # The first two lines are the file headers (only when something differs);
+    # a spec line that itself starts with "---" (a Markdown rule) is a change.
+    changed = [ln for ln in list(difflib.unified_diff(a, b, n=0, lineterm=""))[2:]
+               if not ln.startswith("@@")]
+    body = "\n".join(changed)
+    label = task_label(room) or room.get("id", "")
+    if changed and len(body) <= SPEC_CHANGE_INLINE_MAX:
+        return (f"[spec] {who} amended your spec at {when}. What changed "
+                f"(- was, + is now):\n{body}\n{SPEC_CHANGE_NOTE}", True)
+    return (f"[spec] {who} amended your spec at {when}; the change is too long for this "
+            f"line. Read the spec again with ensemble_get_task taskId={label} spec=true. "
+            f"{SPEC_CHANGE_NOTE}", False)
 
 
 def po_hub_prompt(room: dict, prompt: str) -> str:
@@ -2663,6 +2727,7 @@ HUB_INPUT_KINDS = (
     ("[report] ", "report"),            # _ring_report: a task's ensemble_report
     ("[relay] ", "relay"),              # _relay_wake: a team room's doorbell
     ("[resumed] ", "resumed"),          # RESUME_NOTE
+    ("[spec] ", "spec"),                # spec_change_line: the spec was amended under it
     ("[hub restarted] ", "restart"),    # RESTART_NOTE: it was mid-turn at a hub restart
     ("[handover] ", "handover"),        # rotation.py: write your handover now
     ("[rotation] ", "rotation"),        # rotation.py: a fresh session's first prompt
@@ -2701,7 +2766,8 @@ def hub_input_kind(text: str) -> dict:
 # person's own first words, or for one the hub began, what kind it is.
 _FIRST_WORDS_KIND = {
     "board": "Board ready work", "digest": "PO progress check", "due": "Due item", "report": "Task report",
-    "relay": "Team conversation", "resumed": "Resumed task", "restart": "After a hub restart",
+    "relay": "Team conversation", "resumed": "Resumed task", "spec": "Spec amendment",
+    "restart": "After a hub restart",
     "handover": "Handover", "rotation": "Task conversation after a handover",
     "madepo": "PO conversation", "helper": "After a hub restart", "points": "Open points",
     "pomsg": "Message from another PO", "stalled": "Stall check",
@@ -9394,13 +9460,49 @@ def update_task(rid: str, title=None, spec=None,
     return True, room, ""
 
 
+def _seats_kept_live(rid: str, room: dict, members: list[dict]) -> tuple[set[str], str]:
+    """``(identities, why_not)``: the running agents of a live task when a
+    reassignment may go ahead under it, or the empty set and the reason it may
+    not. Every agent with a live terminal must appear in ``members`` as it is
+    (same identity, kind, model and role), and no agent of the room may run
+    outside its record. What may change while the task runs is thus a seat
+    nobody is sitting in: the on-mention reviewer between reviews, a stopped or
+    new seat (#149: 3 of the week's 58 stop+start pairs only reassigned the
+    reviewer). The reason names the seat and the field, so a caller that
+    resent a seat without its model learns what it changed."""
+    if _room_has_linked_agent(room):
+        return set(), "an agent runs in a terminal the hub does not own"
+    parts = chatroom.agent_participants(room)
+    named = {p.get("ptyId") for p in parts if p.get("ptyId")}
+    if any(x["id"] not in named for x in room_ptys(rid)):
+        return set(), "a terminal of the task is not in its record"
+    by_ident = {(m.get("identity") or ""): m for m in members}
+    kept: set[str] = set()
+    for p in parts:
+        if not _pty_alive(p.get("ptyId")):
+            continue
+        ident = p.get("identity") or ""
+        m = by_ident.get(ident)
+        if m is None:
+            return set(), f"{ident} is running and is not in the new line-up"
+        for field in ("agent", "model", "role"):
+            want, have = (m.get(field) or "").strip(), (p.get(field) or "").strip()
+            if want != have:
+                return set(), f"{ident} is running: {field} '{want}' != '{have}'"
+        kept.add(ident)
+    return kept, ""
+
+
 def reassign_task(rid: str, agent_list, human: bool = False) -> tuple[bool, dict | None, str]:
     """Change WHO works a task — add an agent, drop one, or change an agent's
-    model or role — on a task that is not running.
+    model or role.
 
-    Refused outright while the task is live: hot-swapping an agent under a
-    running collaboration is a product decision we've taken the other way. Stop
-    the task first, reassign, start it again.
+    On a running task only a seat nobody is sitting in may change (the
+    on-mention reviewer between its reviews, a stopped or a new seat): every
+    running agent must stay exactly as it is, or the call is refused with
+    ``task_is_running`` (:func:`_seats_kept_live`). Hot-swapping a working
+    agent is a product decision we've taken the other way: stop the task
+    first, reassign, start it again.
 
     Agents that stay keep their identity, bearer token, session id and working
     dir (see :func:`chatroom.set_agents`), so a retained agent resumes its own
@@ -9410,8 +9512,7 @@ def reassign_task(rid: str, agent_list, human: bool = False) -> tuple[bool, dict
     room = chatroom.get_room(rid, public=False)
     if room is None:
         return False, None, "no_such_room"
-    if _room_is_live(room) or _room_has_live_pty(rid) or _room_has_linked_agent(room):
-        return False, None, "task_is_running"
+    live = _room_is_live(room) or _room_has_live_pty(rid) or _room_has_linked_agent(room)
     preferences, err = normalize_agent_preferences(agent_list, human=human)
     if err:
         return False, None, err
@@ -9422,8 +9523,13 @@ def reassign_task(rid: str, agent_list, human: bool = False) -> tuple[bool, dict
     members = [{"identity": ident, "agent": pref["agent"],
                 "model": pref.get("model", ""), "role": pref.get("role", "")}
                for ident, pref in zip(idents, preferences)]
+    keep_live: set[str] = set()
+    if live:
+        keep_live, why = _seats_kept_live(rid, room, members)
+        if not keep_live:
+            return False, None, f"task_is_running: {why}"
     mode = "solo" if len(preferences) < 2 else "collab"
-    room = chatroom.set_agents(rid, members, mode=mode)
+    room = chatroom.set_agents(rid, members, mode=mode, keep_live=keep_live)
     if room is None:
         return False, None, "no_such_room"
     assigned = [{"identity": pp["identity"], "agent": pp.get("agent", ""),
@@ -9439,6 +9545,29 @@ def reassign_task(rid: str, agent_list, human: bool = False) -> tuple[bool, dict
                      agentPreference=preferences,
                      **({"allocation": None} if not room.get("launched", True) else {}))
     return True, room, ""
+
+
+def _record_stopped_states(rid: str, room: dict) -> None:
+    """Before a stop kills a task's agents: write on each one whether its turn
+    was over (``stoppedState``: working | waiting | idle | stopped, as
+    attention.turn_state sees it). The next start reads it (resume_note_for):
+    an owner stopped between turns is told not to redo its last one; one
+    stopped mid-turn is told to carry on. A state that cannot be read is left
+    unrecorded, which the resume treats as mid-turn: the safe side."""
+    try:
+        statuses = attention._claude_status_by_session()
+    except Exception:       # noqa: BLE001 — never let the record stop a stop
+        statuses = {}
+    for part in room.get("participants", []):
+        if part.get("kind") != "agent" or not part.get("ptyId"):
+            continue
+        try:
+            state = attention.turn_state(part, statuses)[0]
+        except Exception:   # noqa: BLE001
+            continue
+        if state == "stopped":
+            continue
+        chatroom.patch_participant(rid, part.get("identity", ""), {"stoppedState": state})
 
 
 def stop_task(rid: str) -> bool:
@@ -9458,6 +9587,7 @@ def stop_task(rid: str) -> bool:
         room = chatroom.get_room(rid, public=False)
         if not room:
             return False
+        _record_stopped_states(rid, room)
         pids = [part.get("ptyId") for part in room.get("participants", []) if part.get("ptyId")]
         # And any terminal of the room its record does not name (a launch that
         # failed before writing it): Stop leaves nothing of the task running.
@@ -11033,12 +11163,14 @@ class Handler(BaseHTTPRequestHandler):
                 resumed.append({"identity": part["identity"], "ptyId": part["ptyId"]})
                 continue
             if restart is not None and restart.get(part["identity"]) == "stopped":
+                part.pop("stoppedState", None)
                 continue                    # was not running when the hub stopped
             part.pop("resumedAt", None)     # set again once the note is typed
             if chatroom.is_on_mention(room_full, part):
                 # Never resumed: a reviewer is started fresh for each request,
                 # and resuming would reload the very history this avoids.
                 part.pop("fresh", None)
+                part.pop("stoppedState", None)
                 continue
             if part.pop("fresh", False):
                 # Assigned to the task after it had already run: there is no
@@ -11060,6 +11192,9 @@ class Handler(BaseHTTPRequestHandler):
                         notify[part["identity"]] = RESTART_NOTE
                 elif part["identity"] in own and not is_po:
                     notify[part["identity"]] = resume_note_for(room_full, part)
+            # The state it was stopped in has been read (resume_note_for);
+            # left on, it would colour a later start after a stop no one saw.
+            part.pop("stoppedState", None)
             part["ptyId"] = info["ptyId"]
             part["cwd"] = info["cwd"]
             # Drop any recorded death: this agent is running again, and an
@@ -11081,7 +11216,8 @@ class Handler(BaseHTTPRequestHandler):
                     continue
                 keep = {k: part[k] for k in ("ptyId", "cwd", "sessionId", "specSeen", "hubStarted")
                         if k in part}
-                gone = tuple(k for k in ("lastExit", "fresh", "resumedAt") if k not in part)
+                gone = tuple(k for k in ("lastExit", "fresh", "resumedAt", "stoppedState")
+                             if k not in part)
                 chatroom.patch_participant(rid, part["identity"], keep, drop=gone)
             if not keep_state:
                 chatroom.patch_room(rid, status="active", hopCount=0, waitingFor="")
@@ -12869,7 +13005,7 @@ class Handler(BaseHTTPRequestHandler):
             rid = (data.get("roomId") or "").strip()
             ok, room_full, err = reassign_task(rid, data.get("agents") or [], human=True)
             if not ok:
-                code = {"no_such_room": 404, "task_is_running": 409}.get(err, 400)
+                code = {"no_such_room": 404, "task_is_running": 409}.get(err.split(":")[0], 400)
                 self._send_json(code, {"error": err})
                 return
             self._send_json(200, {"ok": True, "room": chatroom.get_room(rid)})
