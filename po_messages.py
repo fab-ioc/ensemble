@@ -381,7 +381,8 @@ def _called(p: dict) -> str:
 
 def wake_line(items: list[dict]) -> tuple[str, list[dict]]:
     """(the typed line, the messages it tells). The first always; the others
-    while the line stays under _WAKE_MAX."""
+    from the same project while the line stays under _WAKE_MAX (a line's bare
+    task numbers are read in one project, the first message's: wake_input)."""
     def line(told):
         first = told[0]
         # The handle and the name always fit: the words before them give way.
@@ -395,10 +396,19 @@ def wake_line(items: list[dict]) -> tuple[str, list[dict]]:
 
     told = items[:1]
     for p in items[1:]:
+        if p.get("fromProjectId") != told[0].get("fromProjectId"):
+            continue
         if len(line(told + [p])) > _WAKE_MAX:
             break
         told.append(p)
     return line(told)[:_WAKE_MAX], told
+
+
+def wake_input(room_id: str, wake: str, told: list[dict]) -> str:
+    """The wake line as the PO's terminal gets it: a task the message's first
+    line names by number (#27) read in the sender's project, written out under
+    it (dashboard.with_message_refs) — not as the receiving project's #27."""
+    return _d.with_message_refs(wake, room_id, str(told[0].get("fromProjectId") or "") if told else "")
 
 
 def _target(room_id: str, require_idle: bool):
@@ -501,7 +511,7 @@ def _type_line(state: dict, room_id: str, sess, wake: str, told: list[dict], now
         state["wakes"].update(before)
         _log(f"not typed to the PO of {room_id}: the queue could not be saved")
         return None
-    if _d._type_input(sess, wake):
+    if _d._type_input(sess, wake_input(room_id, wake, told)):
         state["pending"] = [p for p in state["pending"] if p["id"] not in ids]
         _log(f"typed to the PO of {room_id}: {', '.join(sorted(ids))}")
         return "typed"
@@ -598,7 +608,7 @@ def _resume(state: dict, room: dict, free: list[dict], due: list[dict], now: flo
             _log(f"the stopped PO of {room_id} was resumed for "
                  f"{', '.join(p['id'] for p in told)}: typed once it is settled")
             return "resuming"
-        result = _d.hub_launcher()._resume_room(room, text=wake, key=key)
+        result = _d.hub_launcher()._resume_room(room, text=wake, key=key, project=told[0]["fromProjectId"])
     except Exception as e:      # noqa: BLE001 — a refusal or a failed spawn alike
         # The failed resume would keep the line for the room's Retry; this
         # queue keeps it instead, so it is never typed twice.

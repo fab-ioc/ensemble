@@ -1745,6 +1745,9 @@ def _read_message(ctx, args, handler):
     if m is None:
         raise ToolError(f"no PO message {mid} in your chat")
     out = pm.view(m, room=room)
+    # Its task numbers read in the sender's project (dashboard.ref_project): a
+    # received message's "Dock #27" is Dock's, the agent's own stays its own.
+    out["text"] = _d.with_message_refs(out.get("text", ""), room.get("id", ""), str(m.get("fromProjectId") or ""))
     replies = [r for r in pm.messages_in(room) if r.get("replyTo") == mid]
     if replies:
         out["replies"] = [r["id"] for r in replies]

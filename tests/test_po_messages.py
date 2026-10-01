@@ -49,12 +49,14 @@ class _FakeLauncher:
 
     def __init__(self):
         self.calls = []
+        self.projects = []      # the project each resume's line reads its task numbers in
         self.held = {}
         self.fail_with = ""
         self.on_start = None
 
-    def _resume_room(self, room, text="", to="", key="", quiet=False):
+    def _resume_room(self, room, text="", to="", key="", quiet=False, project=""):
         self.calls.append((room["id"], text, key))
+        self.projects.append(project)
         state = "failed" if self.fail_with else "resuming"
         self.held[room["id"]] = {"state": state, "error": self.fail_with,
                                  "items": [{"text": text, "key": key}]}
@@ -233,6 +235,37 @@ class Delivery(_World):
         self.assertEqual(info, {"kind": "pomsg", "fromProject": "opten", "poKind": "bug"})
         self.assertFalse(dashboard.typed_by_person(line))
         self.assertEqual(dashboard.hub_input_kind("[from the PO] carry on")["kind"], "human")
+
+    def test_the_line_and_the_message_name_tasks_in_the_senders_project(self):
+        # #152: "drafted as #27" in opten's message is opten's #27, not Dock's:
+        # the typed line and the message read in full get their task lines
+        # from with_message_refs read in the sender's project (the lines
+        # themselves: tests/test_task_numbers.py WhatTheHubWrites).
+        with mock.patch.object(dashboard, "with_message_refs", side_effect=lambda t, r, p="": f"{t}\n[refs read in {p}]") as refs:
+            res = self.ok(self.opten, "ensemble_message_po", projectId="Dock", kind="bug", text="Needs 15 and 16 are drafted as #27.")
+            [line] = self.typed("pty-dock")
+            line = line.replace("\x1b[200~", "").replace("\x1b[201~", "")     # two lines: typed as a paste
+            self.assertEqual(line.split("\n"), [f"[from the opten PO] bug: Needs 15 and 16 are drafted as #27. — read it with "
+                                                f"ensemble_read_message id={res['id']} (the id is for the tools only; "
+                                                f'in text call it "{NAME("opten", "bug")}")', "[refs read in proj-opten]"])
+            self.assertEqual(refs.call_args.args[1], self.dock, "read for the receiving room")
+            got = self.ok(self.dock, "ensemble_read_message", id=res["id"])
+            self.assertEqual(got["text"], "Needs 15 and 16 are drafted as #27.\n[refs read in proj-opten]")
+            self.assertEqual(self.ok(self.opten, "ensemble_read_message", id=res["id"])["text"],
+                             "Needs 15 and 16 are drafted as #27.\n[refs read in proj-opten]", "the sender's copy: its own project")
+
+    def test_a_line_tells_one_projects_messages(self):
+        # A line's bare numbers are read in one project (wake_input): a
+        # message from a third project waits for a line of its own.
+        a = {"id": "pm-a0000000", "fromProjectId": "proj-opten", "toProjectId": "proj-dock", "fromName": "opten",
+             "kind": "info", "firstLine": "A", "at": T0, "name": "n"}
+        b = dict(a, id="pm-b0000000", fromProjectId="proj-lonely", fromName="Lonely", firstLine="B")
+        c = dict(a, id="pm-c0000000", firstLine="C")
+        line, told = po_messages.wake_line([a, b, c])
+        self.assertEqual([p["id"] for p in told], ["pm-a0000000", "pm-c0000000"])
+        self.assertIn("Also waiting for you: [from the opten PO] info: C", line)
+        self.assertNotIn("Lonely", line)
+        self.assertEqual([p["id"] for p in po_messages.wake_line([b, a, c])[1]], ["pm-b0000000"])
 
     def test_read_in_full_and_listed(self):
         mid = self.ok(self.opten, "ensemble_message_po", projectId="Dock", kind="bug", text=self.TEXT)["id"]
@@ -519,6 +552,7 @@ class ResumedPo(_World):
                                f"ensemble_read_message id={res['id']} (the id is for the tools only; "
                                f'in text call it "{NAME("opten", "bug")}")')
         self.assertEqual(key, f"pomsg:{res['id']}")
+        self.assertEqual(self.launcher.projects, ["proj-opten"], "the line's #N are opten's tasks (dashboard.send_item, ref_project)")
         # Queued until the line is in; a look meanwhile starts nothing more.
         [item] = self.queue()
         self.assertTrue(item["resuming"])
