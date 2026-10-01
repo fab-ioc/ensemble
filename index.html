@@ -1090,13 +1090,14 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      narrow panel like the Workspace pane. */
   #detail-panel .dp-pane[data-pane="changes"] { padding: var(--s-200) var(--s-300); }
   .tch[hidden] { display: none; }
-  .tch { display: grid; grid-template-rows: auto minmax(120px, 30vh) minmax(0, 1fr) auto;
+  .tch { display: grid; grid-template-rows: auto minmax(0, 1fr); grid-template-columns: var(--ch-w, 300px) auto minmax(0, 1fr);
     height: max(420px, calc(var(--dp-fill, 100vh) - 2 * var(--s-200))); border: 1px solid var(--border); border-radius: var(--r-300); overflow: hidden; background: var(--surface); }
-  .tch-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-100) var(--s-200); padding: var(--s-200) var(--s-300); border-bottom: 1px solid var(--border); font-size: var(--fs-200); color: var(--fg-subtle); min-width: 0; }
+  .tch-head { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-100) var(--s-200); padding: var(--s-200) var(--s-300); border-bottom: 1px solid var(--border); font-size: var(--fs-200); color: var(--fg-subtle); min-width: 0; }
   .tch-branch { font-family: var(--font-mono); color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  .tch-head .chp-refresh { margin-left: auto; }
-  .tch-files { overflow: auto; border-bottom: 1px solid var(--border); padding: var(--s-100); font-size: var(--fs-200); }
-  .tch-diff { overflow: auto; min-width: 0; min-height: 200px; }
+  .tch-head .chp-tree { margin-left: auto; }
+  .tch-files { overflow: auto; padding: var(--s-100); font-size: var(--fs-200); min-width: 0; }
+  .tch-right { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .tch-diff { flex: 1 1 auto; overflow: auto; min-width: 0; min-height: 0; }
   /* The panel is a narrow, user-resized column: same component, stacked. */
   #detail-panel .wsp { grid-template-columns: 1fr; grid-template-rows: minmax(168px, 34%) minmax(0, 1fr); height: auto; flex: 1; min-height: 0; }
   #detail-panel .wsp.wsf-on { grid-template-rows: minmax(200px, 50%) minmax(0, 1fr); }
@@ -1628,18 +1629,47 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      by visibility, not display, so a hidden viewer keeps its scroll position. */
   .wsp-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; visibility: hidden; }
   .wsp-frame.on { visibility: visible; }
-  /* Changes tab: changed files (left) + unified diff with line comments (right). */
-  .chp { display: grid; grid-template-columns: minmax(220px, 320px) 1fr; height: calc(100vh - var(--chrome-h)); min-height: 420px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
-  .chp-files { overflow: auto; border-right: 1px solid var(--border); padding: 8px 6px; font-size: 12.5px; }
+  /* Changes tab: the changed files (left) and the diff with its line comments
+     (right), two panes with a splitter between them (--ch-w is the list's
+     width, remembered in the browser: chWireSplit). */
+  .chp { display: grid; grid-template-columns: var(--ch-w, 300px) auto minmax(0, 1fr); height: calc(100vh - var(--chrome-h)); min-height: 420px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
+  .chp-files { overflow: auto; padding: 8px 6px; font-size: 12.5px; min-width: 0; }
   .chp-head { display: flex; align-items: center; gap: 8px; padding: 4px 6px 8px; color: var(--fg-subtle); font-size: 11.5px; font-weight: 600; }
   .chp-refresh { margin-left: auto; background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--fg-subtle); cursor: pointer; padding: 1px 7px; }
   .chp-refresh:hover { border-color: var(--border-strong); color: var(--fg); }
+  .chp-refresh:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  /* "Folders": the list as a tree by folder, or flat. Pressed is a selection. */
+  .chp-tree { margin-left: auto; font: inherit; font-size: var(--fs-100); font-weight: 600; }
+  .chp-tree[aria-pressed="true"] { background: var(--selected-bg); color: var(--selected-fg); border-color: var(--border-strong); }
+  .chp-tree + .chp-refresh { margin-left: 0; }
+  /* The splitter between the files and the diff: Dock's bar (5px, the chrome
+     ground; the accent while it is held, hovered or focused), dragged, moved
+     with ← and →, double-clicked back to the default width. */
+  .ch-split { width: 5px; background: var(--surface-sunken); border-left: 1px solid var(--border); cursor: col-resize; touch-action: none; }
+  .ch-split:hover, .ch-split.on, .ch-split:focus-visible { background: var(--accent); outline: none; }
+  /* A panel too narrow for two panes (under CH_STACK_MIN, a tool beside the
+     conversation: ch-narrow, set by chWireSplit): the files above the diff,
+     as before, and no splitter. */
+  .chp.ch-narrow, .tch.ch-narrow { grid-template-columns: minmax(0, 1fr); }
+  .chp.ch-narrow { grid-template-rows: minmax(120px, 35%) minmax(0, 1fr); }
+  .tch.ch-narrow { grid-template-rows: auto minmax(120px, 30vh) minmax(0, 1fr); }
+  .ch-narrow > .ch-split { display: none; }
+  .ch-narrow > .chp-files, .ch-narrow > .tch-files { border-bottom: 1px solid var(--border); }
   .chf { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
   .chf:hover { background: var(--hover); }
   .chf.on { background: var(--selected-bg); color: var(--selected-fg); }
   .chf.none { color: var(--fg-muted); cursor: default; }
   .chf.none:hover { background: transparent; }
   .chf .nm { overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+  /* The files as a tree: a folder row with its totals, what is under it
+     indented a step per level (--d, set on the row). */
+  .chf[style*="--d"] { padding-left: calc(6px + var(--d, 0) * 14px); }
+  .chf.dir .nm { font-weight: 600; font-family: var(--font-sans); font-size: var(--fs-200); }
+  .chf .tw { width: 12px; flex: 0 0 auto; color: var(--fg-muted); font-size: 10px; }
+  .chf .nm { flex: 1; min-width: 0; }
+  .chf .cnt { flex: none; margin-left: auto; padding-left: var(--s-100); color: var(--fg-muted); font-size: var(--fs-100); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .chf.on .cnt, .chf.on .tw { color: inherit; }
+  .chf:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
   /* The project's Changes: uncommitted files on top when there are any, then
      what landed on the main line, a commit at a time. */
   .chp-sec { display: flex; align-items: baseline; gap: var(--s-200); margin: var(--s-300) 0 var(--s-100); padding: 0 6px;
@@ -1652,7 +1682,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .chc-subj { flex: 1; min-width: 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
     overflow-wrap: anywhere; color: var(--fg); font-weight: 500; }
   .chc-when { flex: none; color: var(--fg-muted); font-size: var(--fs-200); white-space: nowrap; }
-  .chc .chf { padding-left: var(--s-300); }
+  .chc .chf { padding-left: calc(var(--s-300) + var(--d, 0) * 14px); }
   .chc-more { margin: 0 0 0 var(--s-300); padding: 2px 6px; border: 0; border-radius: var(--r-200); background: transparent; color: var(--link); font: inherit; font-size: var(--fs-200); cursor: pointer; }
   .chc-more:hover { background: var(--hover); }
   .chc-more:focus-visible, .chc-head a.tno:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
@@ -1666,6 +1696,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      signal; long lines wrap within the diff, never widen the page. */
   .drv-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-100) var(--s-300); padding: var(--s-100) var(--s-300); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 2; background: var(--surface); font-size: var(--fs-200); color: var(--fg-muted); }
   .drv-head .grow { flex: 1; }
+  .drv-head .seg button { padding: 2px var(--s-200); font-size: var(--fs-200); }
+  .drv-head .drv-mode[hidden] { display: none; }   /* .seg's own display would beat hidden */
+  .drv-back { display: none; }
   .drv-path { font-family: var(--font-mono); color: var(--fg); overflow-wrap: anywhere; min-width: 0; }
   .drv-count { font-variant-numeric: tabular-nums; white-space: nowrap; }
   .drv { --gw: 3ch; font-family: var(--font-mono); font-size: var(--fs-200); line-height: var(--lh-300); color: var(--fg); tab-size: 4; font-variant-ligatures: none; padding-bottom: var(--s-400); }
@@ -1685,6 +1718,20 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .dr.k-hunk { background: var(--c-progress-bg); color: var(--c-progress-fg); }
   .dr.k-meta { color: var(--fg-muted); }
   .dr.k-hunk .dg, .dr.k-meta .dg { cursor: default; }
+  /* Side by side: a display row (.sr) is an old cell and a new cell, each a
+     row of its own side with one line number; a run of removed lines faces
+     the added ones line for line, the extra ones an empty cell; a hunk header
+     spans both. Cards and the comment box sit under the row, lined up with
+     the old side's code. */
+  .drv.split .sr { display: flex; align-items: stretch; min-height: var(--lh-300); }
+  .drv.split .sr > .dr { flex: 1 1 50%; min-width: 0; }
+  .drv.split .sr > .dr.new { border-left: 1px solid var(--border); }
+  .drv.split .sr.full > .dr { flex: 1 1 100%; border-left: 0; }
+  .drv.split .dr.old .dg::after, .drv.split .dr.new .dg::before { content: none; display: none; }
+  .drv.split .dr.k-none { background: var(--surface-sunken); }
+  /* A drag down one column: the other column's text stays out of the selection. */
+  .drv.split.sel-old .dr.new .dt, .drv.split.sel-new .dr.old .dt { user-select: none; -webkit-user-select: none; }
+  .drv.split .dc, .drv.split .dcx { margin-left: calc(var(--gw) + var(--s-300) + var(--s-600)); }
   /* The lines a comment being written is on. */
   .dr.sel { box-shadow: inset 2px 0 0 var(--accent); }
   .dr.sel .dg { background: var(--selected-bg); color: var(--selected-fg); }
@@ -3134,8 +3181,20 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 
     /* Workspace and Changes: the tree above the file, not beside it. Beside
        it, a 390px phone left the file 79px wide. */
-    .wsp, .chp { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(120px, 35%) minmax(0, 1fr); }
-    .wsp-side, .chp-files { border-right: 0; border-bottom: 1px solid var(--border); }
+    .wsp { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(120px, 35%) minmax(0, 1fr); }
+    .wsp-side { border-right: 0; border-bottom: 1px solid var(--border); }
+    /* Changes: one pane at a time, the files or the diff (ch-show-diff, set
+       when a file opens; "‹ Files" in the diff's bar goes back). No splitter. */
+    .chp, .chp.ch-narrow { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+    .tch, .tch.ch-narrow { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+    .chp > .chp-files, .chp > .chp-diff { grid-area: 1 / 1; }
+    .tch > .tch-files, .tch > .tch-right { grid-area: 2 / 1; }
+    .ch-narrow > .chp-files, .ch-narrow > .tch-files { border-bottom: 0; }
+    .ch-split { display: none; }
+    .chp:not(.ch-show-diff) > .chp-diff, .chp.ch-show-diff > .chp-files,
+    .tch:not(.ch-show-diff) > .tch-right, .tch.ch-show-diff > .tch-files { display: none; }
+    .drv-back { display: inline-flex; align-items: center; }
+    .chf, .chp-tree { min-height: var(--touch-min); }
     /* Find: the box and a few rows fit above the file; with a query the
        results get most of the height, and every control is finger-sized. */
     /* The Workspace: one pane at a time, the tree and Find or the file, each
@@ -9040,13 +9099,57 @@ function drChanged(rv) {
   if (rv.view) drPaint(rv.view);
   drPaintTray(rv);
 }
-function drRowHtml(r, i) {
+function drRowHtml(r, i, side) {
   const g = drContent(r) ? ` data-o="${r.o ?? ''}" data-n="${r.n ?? ''}"` : '';
-  return `<div class="dr k-${r.k}" data-i="${i}"><span class="dg"${g}></span><span class="dt">${r.h}</span></div>`;
+  return `<div class="dr k-${r.k}${side ? ' ' + side : ''}" data-i="${i}"><span class="dg"${g}></span><span class="dt">${r.h}</span></div>`;
+}
+// Side by side: the diff's rows as display rows, each an old row and a new
+// row ([old index, new index], -1 for an empty cell), or [i] for a row that
+// spans both (a hunk header). A run of removed lines followed by added ones
+// is paired line for line; a context line is on both sides.
+function drPairs(rows) {
+  const out = [];
+  let i = 0;
+  while (i < rows.length) {
+    const r = rows[i];
+    if (!drContent(r)) { out.push([i]); i++; continue; }
+    if (r.k === 'ctx') { out.push([i, i]); i++; continue; }
+    const dels = [], adds = [];
+    while (i < rows.length && rows[i].k === 'del') dels.push(i++);
+    while (i < rows.length && rows[i].k === 'add') adds.push(i++);
+    for (let q = 0; q < Math.max(dels.length, adds.length); q++) out.push([q < dels.length ? dels[q] : -1, q < adds.length ? adds[q] : -1]);
+  }
+  return out;
+}
+function drPairHtml(rows, pair) {
+  if (pair.length === 1) return '<div class="sr full">' + drRowHtml(rows[pair[0]], pair[0]) + '</div>';
+  const cell = (i, side) => (i < 0 ? `<div class="dr k-none ${side}"></div>` : drRowHtml(rows[i], i, side));
+  return '<div class="sr">' + cell(pair[0], 'old') + cell(pair[1], 'new') + '</div>';
+}
+// Unified or side by side: the person's choice, remembered in this browser;
+// a Changes panel (the files and the diff together) under DR_SPLIT_MIN px
+// wide shows unified whatever the choice.
+const DR_SPLIT_MIN = 900;
+const drSplitWanted = () => chPref('cd-diff-mode', 'unified') === 'split';
+function drNarrow(box) {
+  const panel = (box && box.closest ? box.closest('.tch, .chp') : null) || box;
+  const w = panel ? panel.clientWidth : 0;
+  return !!w && w < DR_SPLIT_MIN;
+}
+// The element a comment or the comment box goes under for row i: the row, or
+// side by side the display row holding its cell. drRowEls: the cells showing
+// row i (a context line has two).
+const drRowEl = (v, i) => (v.split && v.els[i] ? v.els[i].parentElement : v.els[i]);
+function drRowEls(v, i) {
+  const el = v.els[i];
+  if (!el) return [];
+  if (!v.split || !el.parentElement) return [el];
+  return [...el.parentElement.children].filter(c => c.dataset && +c.dataset.i === i);
 }
 // Show a file's diff in `box` for review. The rows are written once; comments,
-// the selection and the comment box are laid over them by drPaint.
-function drShow(rv, box, root, file, text) {
+// the selection and the comment box are laid over them by drPaint. `keep`
+// carries a draft over a redraw in the other mode.
+function drShow(rv, box, root, file, text, keep) {
   const t0 = performance.now();
   const rows = drParse(text);
   const base = file.replace(/\/$/, '').split('/').pop();
@@ -9056,9 +9159,11 @@ function drShow(rv, box, root, file, text) {
     if (r.k === 'add') adds++; else if (r.k === 'del') dels++;
     top = Math.max(top, r.o || 0, r.n || 0);
   }
-  const v = { rv, box, root, file, rows, draft: null, els: [] };
-  rv.view = v;
   const content = rows.some(drContent);
+  const want = drSplitWanted(), narrow = drNarrow(box);
+  const split = want && !narrow && content;
+  const v = { rv, box, root, file, text, rows, draft: keep && keep.draft ? keep.draft : null, els: [], split, want, content };
+  rv.view = v;
   let body = '';
   if (!content && /\/$/.test(file) && root) {
     // An untracked folder is one entry to git: it opens as a folder instead.
@@ -9068,23 +9173,40 @@ function drShow(rv, box, root, file, text) {
     body = '<div class="wsp-empty">No text differences to show: a binary file, or a change git has no lines for.</div>';
   } else {
     // The header lines say again what the file bar says; the rest are shown.
+    const shown = i => !(rows[i].k === 'meta' && /^(?:diff --git|index |--- |\+\+\+ )/.test(rows[i].t));
     const parts = [];
-    rows.forEach((r, i) => { if (!(r.k === 'meta' && /^(?:diff --git|index |--- |\+\+\+ )/.test(r.t))) parts.push(drRowHtml(r, i)); });
+    if (split) drPairs(rows).forEach(pr => { if (pr.length > 1 || shown(pr[0])) parts.push(drPairHtml(rows, pr)); });
+    else rows.forEach((r, i) => { if (shown(i)) parts.push(drRowHtml(r, i)); });
     for (let i = 0; i < parts.length; i += DR_CHUNK) body += '<div class="drv-chunk">' + parts.slice(i, i + DR_CHUNK).join('') + '</div>';
   }
   const hint = drCoarse() ? 'Tap a line to comment on it' : 'Click a line number to comment · Shift-click for a range';
+  const mode = content ? `<span class="seg drv-mode" role="group" aria-label="How the diff reads"${narrow ? ' hidden' : ''}>`
+    + `<button type="button" data-mode="unified" class="${split ? '' : 'active'}" aria-pressed="${!split}">Unified</button>`
+    + `<button type="button" data-mode="split" class="${split ? 'active' : ''}" aria-pressed="${split}">Side by side</button></span>` : '';
   box.innerHTML = '<div class="drv-head">'
+    + (rv.back ? '<button type="button" class="rm-btn subtle drv-back" aria-label="Back to the files">‹ Files</button>' : '')
     + `<span class="drv-path" title="${esc(file)}">${esc(file)}</span>`
     + (content ? `<span class="drv-count">+${adds} −${dels}</span><span class="drv-hint">${hint}</span>` : '')
-    + '<span class="grow"></span>'
+    + '<span class="grow"></span>' + mode
     + (rv.open && !/\/$/.test(file) ? '<button type="button" class="rm-btn subtle drv-open">Open file</button>' : '')
     + '</div><div class="drv-away" hidden></div>'
-    + `<div class="drv" style="--gw:${Math.max(3, String(top).length)}ch">${body}</div>`;
+    + `<div class="drv${split ? ' split' : ''}" style="--gw:${Math.max(3, String(top).length)}ch">${body}</div>`;
   // The bar tells whether the box still shows this diff: a repository or file
   // picked since wrote over it, and nothing may be painted there any more.
   v.head = box.querySelector('.drv-head');
-  box.querySelectorAll('.drv .dr').forEach(el => { v.els[+el.dataset.i] = el; });
+  box.querySelectorAll('.drv .dr[data-i]').forEach(el => { v.els[+el.dataset.i] = el; });
+  drWatch(v);
   box.onmousedown = e => { if (e.shiftKey && e.target.closest('.dg')) e.preventDefault(); };
+  // Side by side: a drag down one column selects, and Copy takes, that column
+  // alone: the other side's text is unselectable from the press until the next.
+  box.onpointerdown = e => {
+    const drv = v.split && e.target.closest ? e.target.closest('.drv.split') : null;
+    if (!drv) return;
+    const cell = e.target.closest('.sr:not(.full) > .dr');
+    const side = cell ? (cell.classList.contains('old') ? 'old' : cell.classList.contains('new') ? 'new' : '') : '';
+    drv.classList.toggle('sel-old', side === 'old');
+    drv.classList.toggle('sel-new', side === 'new');
+  };
   box.onclick = e => drClick(v, e);
   box.oninput = e => { if (v.draft && e.target.matches('.dcx textarea')) v.draft.note = e.target.value; };
   box.onkeydown = e => {
@@ -9112,9 +9234,46 @@ function drShow(rv, box, root, file, text) {
   window.__drRenderMs = Math.round(performance.now() - t0);
   return v;
 }
+// The same diff again in the other mode (the switch, or the box crossing
+// DR_SPLIT_MIN): the comment being written and the scroll position stay.
+function drRerender(v) {
+  if (v.rv.view !== v || !v.box.isConnected || !v.head || !v.head.isConnected) return;
+  const top = v.box.scrollTop;
+  const nv = drShow(v.rv, v.box, v.root, v.file, v.text, { draft: v.draft });
+  if (top) nv.box.scrollTop = top;
+}
+function drSetMode(v, mode) {
+  chSetPref('cd-diff-mode', mode === 'split' ? 'split' : 'unified');
+  drRerender(v);
+}
+// The box's width decides whether side by side fits: watched, so a panel
+// resized or a splitter dragged redraws the diff in the mode that fits and
+// shows or hides the switch.
+function drWatch(v) {
+  if (typeof ResizeObserver === 'undefined') return;
+  const box = v.box;
+  if (!box._drRo) {
+    box._drRo = new ResizeObserver(() => {
+      const w = box._drView;
+      if (!w || w.rv.view !== w || !w.head || !w.head.isConnected) return;
+      const narrow = drNarrow(box);
+      const seg = box.querySelector('.drv-mode');
+      if (seg) seg.hidden = narrow;
+      const should = drSplitWanted() && !narrow && w.content;
+      if (should === w.split) return;
+      if (w._raf) cancelAnimationFrame(w._raf);
+      w._raf = requestAnimationFrame(() => drRerender(w));
+    });
+    box._drRo.observe(box);
+  }
+  box._drView = v;
+}
 function drClick(v, e) {
   const { rv } = v, t = e.target;
   if (t.closest('.drv-open')) { rv.open(v.root, v.file, drLineOf(v.rows, 0, v.rows.findIndex(r => r.k === 'add' || r.k === 'del'))); return; }
+  const mb = t.closest('.drv-mode button');
+  if (mb) { drSetMode(v, mb.dataset.mode); return; }
+  if (t.closest('.drv-back')) { if (rv.back) rv.back(); return; }
   const card = t.closest('.dc');
   if (card) {
     const c = rv.store.list.find(z => z.cid === card.dataset.cid);
@@ -9247,7 +9406,7 @@ function drPaint(v) {
     if (i >= 0 && v.els[i]) { if (!at.has(i)) at.set(i, []); at.get(i).push(c); }
     else away.push(c);
   }
-  for (const [i, cs] of at) v.els[i].insertAdjacentHTML('afterend', cs.map(c => d && d.cid === c.cid ? '<div class="dcx"></div>' : drCardHtml(rv, c)).join(''));
+  for (const [i, cs] of at) drRowEl(v, i).insertAdjacentHTML('afterend', cs.map(c => d && d.cid === c.cid ? '<div class="dcx"></div>' : drCardHtml(rv, c)).join(''));
   const aw = box.querySelector('.drv-away');
   aw.hidden = !away.length;
   aw.innerHTML = away.length ? '<div class="drv-away-h">On lines no longer in this diff</div>' + away.map(c => d && d.cid === c.cid ? '<div class="dcx"></div>' : drCardHtml(rv, c)).join('') : '';
@@ -9258,8 +9417,8 @@ function drPaint(v) {
     else if (d.cid) { v.draft = null; }           // its comment is gone: another copy removed or sent it
     else {
       const a = Math.min(d.a, d.b), b = Math.max(d.a, d.b);
-      for (let i = a; i <= b; i++) if (v.els[i]) v.els[i].classList.add('sel');
-      let ref = v.els[b];
+      for (let i = a; i <= b; i++) drRowEls(v, i).forEach(el => el.classList.add('sel'));
+      let ref = drRowEl(v, b);
       while (ref && ref.nextElementSibling && ref.nextElementSibling.classList.contains('dc')) ref = ref.nextElementSibling;
       if (ref) ref.insertAdjacentElement('afterend', el); else v.draft = null;
     }
@@ -9416,18 +9575,20 @@ async function drSubmit(rv) {
 // cut to the rows it covers; one across two diffs is Copy only.
 function drSelResolve(s, doc) {
   const rg = s.getRangeAt(0);
-  const rowOf = n => { const el = n && (n.nodeType === 1 ? n : n.parentElement); return el ? el.closest('.drv .dr') : null; };
+  const rowOf = n => { const el = n && (n.nodeType === 1 ? n : n.parentElement); return el ? el.closest('.drv .dr[data-i]') : null; };
   let ra = rowOf(rg.startContainer), rb = rowOf(rg.endContainer);
   const cut = !ra || !rb;
   if (cut) {
-    const rows = [...doc.querySelectorAll('.drv .dr')].filter(el => rg.intersectsNode(el));
+    const rows = [...doc.querySelectorAll('.drv .dr[data-i]')].filter(el => rg.intersectsNode(el));
     if (!rows.length) return null;
     ra = ra || rows[0]; rb = rb || rows[rows.length - 1];
   }
   let v = null;
   // The view whose own rows these are: several reviews (a commit's and the
-  // uncommitted one) share a box, and only the one that drew it owns its rows.
-  DR_REVIEWS.forEach(rv => { const w = rv.view; if (w && w.els[+ra.dataset.i] === ra && w.els[+rb.dataset.i] === rb) v = w; });
+  // uncommitted one) share a box, and only the one that drew it owns its rows
+  // (side by side, a context line's two cells are both its).
+  const owns = (w, el) => { const e = w.els[+el.dataset.i]; return !!e && (e === el || (w.split && e.parentElement === el.parentElement)); };
+  DR_REVIEWS.forEach(rv => { const w = rv.view; if (w && owns(w, ra) && owns(w, rb)) v = w; });
   if (!v) return { range: rg, comment: null };
   const a = +ra.dataset.i;
   let b = +rb.dataset.i;
@@ -9452,6 +9613,88 @@ function drPath(root, file) {
   const sep = root.includes('\\') ? '\\' : '/';
   return root.replace(/[\\/]+$/, '') + sep + file.replace(/\//g, sep);
 }
+// ---- The splitter between the files and the diff -----------------------------
+// A plain bar in Dock's look, since a dock inside a panel would be a second
+// layout to save: dragged (pointer capture, so a fast drag never loses it),
+// ← and → move it 16px, a double click puts the default width back. One width
+// for every Changes panel (a task's and the project's), applied to each
+// panel showing, in a popped-out window too.
+const CH_W_KEY = 'cd-ch-w', CH_W_DEFAULT = 300, CH_W_MIN = 180, CH_W_STEP = 16;
+const CH_STACK_MIN = 680;   // a panel narrower than this stacks the files above the diff
+function chWidth() { const n = parseInt(chPref(CH_W_KEY, ''), 10); return n > 0 ? n : 0; }
+function chApplyWidth(grid) {
+  if (!grid || !grid.style || !grid.querySelector) return;
+  const w = chWidth();
+  if (w) grid.style.setProperty('--ch-w', w + 'px'); else grid.style.removeProperty('--ch-w');
+  const bar = grid.querySelector('.ch-split');
+  if (bar && bar.setAttribute) bar.setAttribute('aria-valuenow', String(w || CH_W_DEFAULT));
+}
+function chApplyWidthAll() {
+  const docs = typeof pdHostDocs === 'function' ? pdHostDocs() : [document];
+  docs.forEach(doc => { try { doc.querySelectorAll('.chp, .tch').forEach(chApplyWidth); } catch (e) {} });
+}
+const chSplitHtml = () => '<div class="ch-split" role="separator" aria-orientation="vertical" aria-label="Resize the file list" tabindex="0"'
+  + ` aria-valuemin="${CH_W_MIN}" aria-valuenow="${CH_W_DEFAULT}" title="Drag to resize the file list · double-click for the default width"></div>`;
+function chWireSplit(grid) {
+  const bar = grid && grid.querySelector ? grid.querySelector('.ch-split') : null;
+  if (!bar || !bar.addEventListener || bar._wired) return;
+  bar._wired = true;
+  chApplyWidth(grid);
+  // The panel's width decides whether two panes fit (a tool beside the
+  // conversation is about 500px): watched, so a resize restacks it.
+  const fit = () => grid.classList.toggle('ch-narrow', grid.clientWidth > 0 && grid.clientWidth < CH_STACK_MIN);
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(fit).observe(grid);
+  fit();
+  const clamp = w => Math.max(CH_W_MIN, Math.min(Math.max(CH_W_MIN, Math.round(grid.getBoundingClientRect().width * 0.6)), Math.round(w)));
+  const set = w => { chSetPref(CH_W_KEY, clamp(w)); chApplyWidthAll(); };
+  bar.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const files = grid.querySelector('.chp-files, .tch-files');
+    const x0 = e.clientX, w0 = files ? files.getBoundingClientRect().width : CH_W_DEFAULT;
+    bar.classList.add('on');
+    try { bar.setPointerCapture(e.pointerId); } catch (x) {}
+    const move = ev => set(w0 + ev.clientX - x0);
+    const up = () => { bar.classList.remove('on'); bar.removeEventListener('pointermove', move); bar.removeEventListener('pointerup', up); bar.removeEventListener('pointercancel', up); };
+    bar.addEventListener('pointermove', move); bar.addEventListener('pointerup', up); bar.addEventListener('pointercancel', up);
+  });
+  bar.addEventListener('dblclick', () => { chSetPref(CH_W_KEY, null); chApplyWidthAll(); });
+  bar.addEventListener('keydown', e => {
+    const d = e.key === 'ArrowRight' ? CH_W_STEP : e.key === 'ArrowLeft' ? -CH_W_STEP : e.key === 'Home' ? -1e6 : e.key === 'End' ? 1e6 : 0;
+    if (!d) return;
+    e.preventDefault();
+    set((chWidth() || CH_W_DEFAULT) + d);
+  });
+}
+// Keys in a file list: ↑ ↓ Home End move along the rows showing (one row is
+// in the tab order, the focused one), Enter or Space opens a file or folds a
+// folder, → opens a closed folder and ← closes an open one.
+function chListKey(e) {
+  const row = e.target.closest ? e.target.closest('.chf[data-file], .chf.dir') : null;
+  if (!row) return;
+  const rows = [...e.currentTarget.querySelectorAll('.chf[data-file], .chf.dir')], i = rows.indexOf(row), n = rows.length;
+  const go = to => { const r = rows[(to + n) % n]; if (!r) return; rows.forEach(x => { x.tabIndex = -1; }); r.tabIndex = 0; r.focus({ preventScroll: true }); r.scrollIntoView({ block: 'nearest' }); };
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); go(i + (e.key === 'ArrowDown' ? 1 : -1)); }
+  else if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); go(e.key === 'Home' ? 0 : n - 1); }
+  else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); row.click(); }
+  else if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && row.classList.contains('dir')) {
+    const open = row.getAttribute('aria-expanded') === 'true';
+    if (open === (e.key === 'ArrowLeft')) { e.preventDefault(); row.click(); }
+  }
+}
+// After a list is drawn: one row in the tab order (the file showing, else
+// the first), and a folder just folded or opened keeps the focus.
+function chListFocus(box, focusDir) {
+  if (!box || !box.querySelectorAll) return;
+  const rows = [...box.querySelectorAll('.chf[data-file], .chf.dir')];
+  if (!rows.length) return;
+  const first = rows.find(r => r.classList.contains('on')) || rows[0];
+  rows.forEach(r => { r.tabIndex = r === first ? 0 : -1; });
+  if (focusDir) {
+    const d = rows.find(r => r.dataset.dir === focusDir.dir && (r.dataset.commit || '') === (focusDir.sha || ''));
+    if (d) { rows.forEach(r => { r.tabIndex = -1; }); d.tabIndex = 0; d.focus({ preventScroll: true }); }
+  }
+}
 // ---- Diff review: end ---------------------------------------------------------
 
 // ---- Changes tab: what landed on main and the uncommitted changes of a git project, per-file
@@ -9469,6 +9712,9 @@ let CH_LOAD = 0, CH_DIFF = 0;
 const CH_DIFF_EMPTY = '<div class="wsp-empty">Select a changed file to review its diff. Click a line number to comment; submit the comments to a task\'s chat.</div>';
 let CH_SHA = '';                      // the commit whose file is shown, or '' for an uncommitted one
 const CH_OPEN = new Set();            // commits whose every file is listed
+const CH_CLOSED = new Set();          // folders folded in the tree ("<sha>|<path>")
+let CH_LIST = null;                   // what the list shows: {pid, repoSel, files, log}, redrawn without the hub
+const chView = () => ({ tree: chTreeOn(), closed: (path, sha) => CH_CLOSED.has((sha || '') + '|' + path) });
 const CH_FILES_SHOWN = 8;             // a commit's files listed before "+N more"
 // ---- Changes, landed on main: begin ------------------------------------------
 // What landed on the project's main line, newest first (/api/git/log): each
@@ -9476,14 +9722,85 @@ const CH_FILES_SHOWN = 8;             // a commit's files listed before "+N more
 // so tests/test_documents_list.py runs it in Node.
 // A merge's "Merge #90: " goes: the task's chip says it.
 const chSubject = s => String(s || '').replace(/^Merge #\d+:\s*/, '') || String(s || '');
-function chFileHtml(f, sha, on) {
-  const code = (f.status || '?').replace(/\s/g, '') || '?';
-  return '<div class="chf' + (on ? ' on' : '') + '" data-file="' + esc(f.path) + '"' + (sha ? ' data-commit="' + esc(sha) + '"' : '') + '>'
-    + '<span class="chst st-' + esc(code[0]) + '">' + esc(code) + '</span><span class="nm" title="' + esc(f.path) + '">' + esc(f.path) + '</span></div>';
+// A choice remembered in this browser (the tree or flat list, the diff's
+// mode, the file list's width); storage that is blocked gives the default.
+function chPref(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch (e) { return d; } }
+function chSetPref(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, String(v)); } catch (e) {} }
+// The files grouped by folder ("Folders", on by default) or as one flat list,
+// the choice remembered in this browser.
+const chTreeOn = () => chPref('cd-ch-tree', '1') !== '0';
+const chBase = p => String(p || '').replace(/\/$/, '').split('/').pop();
+// "+12 −3": the lines a file's change adds and removes (the hub counts them
+// per file; none for a binary file).
+function chCountHtml(add, del) {
+  if (add == null && del == null) return '';
+  const n = x => (x || 0).toLocaleString('en-US');
+  return `<span class="cnt" title="${n(add)} added, ${n(del)} removed">+${n(add)} −${n(del)}</span>`;
 }
+// The changed files as a tree: {name, path, dirs: [...], files: [...], add,
+// del, n (files under it)}. A folder holding one folder and no file becomes
+// one row ("static/dock/src"). Folders first, by name, then the files.
+function chTree(files) {
+  const mk = (name, path) => ({ name, path, dirs: new Map(), files: [] });
+  const root = mk('', '');
+  for (const f of files || []) {
+    const parts = String(f.path || '').replace(/\/$/, '').split('/');
+    let d = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (!d.dirs.has(parts[i])) d.dirs.set(parts[i], mk(parts[i], d.path ? d.path + '/' + parts[i] : parts[i]));
+      d = d.dirs.get(parts[i]);
+    }
+    d.files.push(f);
+  }
+  const fold = d => {
+    let dirs = [...d.dirs.values()].map(fold).map(k => {
+      let x = k;
+      while (!x.files.length && x.dirs.length === 1) { const only = x.dirs[0]; x = { ...only, name: x.name + '/' + only.name }; }
+      return x;
+    });
+    dirs.sort((a, b) => a.name.localeCompare(b.name));
+    const own = d.files.slice().sort((a, b) => chBase(a.path).localeCompare(chBase(b.path)));
+    let add = 0, del = 0, n = own.length;
+    for (const f of own) { add += f.add || 0; del += f.del || 0; }
+    for (const k of dirs) { add += k.add; del += k.del; n += k.n; }
+    return { name: d.name, path: d.path, dirs, files: own, add, del, n };
+  };
+  return fold(root);
+}
+// A file's row: its status, its name (the path in a flat list), its counts.
+function chFileHtml(f, sha, on, depth, tree) {
+  const code = (f.status || '?').replace(/\s/g, '') || '?';
+  return '<div class="chf' + (on ? ' on' : '') + '" data-file="' + esc(f.path) + '"' + (sha ? ' data-commit="' + esc(sha) + '"' : '')
+    + (depth ? ' style="--d:' + depth + '"' : '') + ' tabindex="-1"' + (on ? ' aria-current="true"' : '') + ' title="' + esc(f.path) + '">'
+    + '<span class="chst st-' + esc(code[0]) + '">' + esc(code) + '</span><span class="nm">' + esc(tree ? chBase(f.path) + (/\/$/.test(f.path) ? '/' : '') : f.path) + '</span>' + chCountHtml(f.add, f.del) + '</div>';
+}
+// The rows of a tree: a folder's row (its caret, name and totals; folded, it
+// shows only its row), then what is under it a step deeper.
+function chTreeRowsHtml(node, sha, closed, row, depth) {
+  depth = depth || 0;
+  let h = '';
+  for (const d of node.dirs) {
+    const shut = closed(d.path, sha);
+    h += '<div class="chf dir" data-dir="' + esc(d.path) + '"' + (sha ? ' data-commit="' + esc(sha) + '"' : '') + ' style="--d:' + depth + '" tabindex="-1" aria-expanded="' + (shut ? 'false' : 'true')
+      + '" title="' + esc(d.path + ' · ' + d.n + (d.n === 1 ? ' file' : ' files')) + '"><span class="tw">' + (shut ? '▸' : '▾') + '</span><span class="nm">' + esc(d.name) + '</span>' + chCountHtml(d.add, d.del) + '</div>'
+      + (shut ? '' : chTreeRowsHtml(d, sha, closed, row, depth + 1));
+  }
+  for (const f of node.files) h += row(f, depth);
+  return h;
+}
+// One group of files (the uncommitted ones, a commit's, a branch's) as rows:
+// a tree when view.tree, else flat. cur: {file, sha}, the file showing;
+// view.closed(path, sha) says whether a folder is folded.
+function chFilesHtml(files, sha, cur, view) {
+  const on = f => !!cur && (cur.sha || '') === (sha || '') && cur.file === f.path;
+  if (!view) view = { tree: chTreeOn(), closed: () => false };
+  if (!view.tree) return files.map(f => chFileHtml(f, sha, on(f), 0, false)).join('');
+  return chTreeRowsHtml(chTree(files), sha, view.closed || (() => false), (f, d) => chFileHtml(f, sha, on(f), d, true), 0);
+}
+const chTreeBtnHtml = tree => '<button type="button" class="chp-refresh chp-tree" aria-pressed="' + (tree ? 'true' : 'false') + '" title="Group the files by folder">Folders</button>';
 // log: the hub's answer; key: the project's key, for the task links; open: the
-// commits listed in full; cur: {file, sha}, the file shown.
-function chLogHtml(log, key, open, cur) {
+// commits listed in full; cur: {file, sha}, the file shown; view: tree or flat.
+function chLogHtml(log, key, open, cur, view) {
   const commits = (log && log.commits) || [];
   const ref = (log && log.ref && log.ref !== 'HEAD') ? log.ref : 'the main line';
   const head = '<h4 class="chp-sec">Landed on ' + esc(ref) + '</h4>';
@@ -9498,7 +9815,7 @@ function chLogHtml(log, key, open, cur) {
     return '<div class="chc" data-sha="' + esc(c.sha) + '"><div class="chc-head">' + chip
       + '<span class="chc-subj" title="' + esc(c.subject + ' · ' + c.sha.slice(0, 10) + ' · ' + (c.author || '')) + '">' + esc(chSubject(c.subject)) + '</span>'
       + '<span class="chc-when" title="' + esc(when) + '">' + agoSpan(c.time) + '</span></div>'
-      + shown.map(function (f) { return chFileHtml(f, c.sha, !!cur && cur.sha === c.sha && cur.file === f.path); }).join('')
+      + chFilesHtml(shown, c.sha, cur, view)
       + (rest > 0 ? '<button type="button" class="chc-more" data-sha="' + esc(c.sha) + '">+' + rest + ' more</button>' : '')
       + (c.more && (all || rest <= 0) ? '<div class="chf none">and ' + c.more + ' more files not listed</div>' : '')
       + (!files.length ? '<div class="chf none">no files changed</div>' : '')
@@ -9519,13 +9836,21 @@ function chUseContext(pid, root, sha) {
     what: () => (sha ? 'commit ' + sha.slice(0, 10) : (projectById(pid) || {}).kind === 'documents' ? 'the changes since the last snapshot' : 'the uncommitted changes'),
     open: (r, file, line) => chOpenInWorkspace(pid, r, file, line),
     pick: c => { if (c.root === CH_ROOT) chOpenDiff(c.file, c.cid, sha || ''); },
+    back: () => chShowDiff(false),
   });
   drSetTray(CH_RV, pdById('chp-tray'));
+}
+// On a phone the panel shows the files or the diff: the diff once a file is
+// picked, the files again from "‹ Files".
+function chShowDiff(on) {
+  const files = pdById('chp-files'), grid = files && files.closest ? files.closest('.chp') : null;
+  if (grid) grid.classList.toggle('ch-show-diff', !!on);
 }
 function changesPanelHtml(pj) {
   if (!pj || !pj.path) return `<p class="empty">${esc(nounText('This {project} has no folder.'))}</p>`;
   return scopeBarHtml(pj) + '<div class="chp">'
     + '<div class="chp-files" id="chp-files" data-project="' + esc(pj.id) + '" data-scope="' + esc(scopePath(pj)) + '" data-root=""><div class="chf none">loading…</div></div>'
+    + chSplitHtml()
     + '<div class="chp-diff"><div class="chp-dbox" id="chp-diff">' + CH_DIFF_EMPTY + '</div><div class="cmt-tray" id="chp-tray" hidden></div></div>'
     + '</div>';
 }
@@ -9535,10 +9860,11 @@ function changesPanelHtml(pj) {
 function chPickRepo(root) {
   const box = pdById('chp-files'), diff = pdById('chp-diff');
   if (!box) return;
-  CH_ROOT = root; CH_FILE = ''; CH_SHA = ''; CH_DIFF++;
+  CH_ROOT = root; CH_FILE = ''; CH_SHA = ''; CH_DIFF++; CH_LIST = null;
   box.dataset.root = root;
   box.innerHTML = '<div class="chf none">loading…</div>';
   if (diff) diff.innerHTML = CH_DIFF_EMPTY;
+  chShowDiff(false);
   chUseContext(box.dataset.project, root);
   chLoadStatus();
 }
@@ -9580,17 +9906,24 @@ async function chLoadStatus() {
       api('/api/git/log?path=' + encodeURIComponent(CH_ROOT) + '&project=' + encodeURIComponent(pid) + '&n=30').catch(function (e) { return { error: e.message, commits: [] }; }),
     ]);
     if (stale()) return;
-    const files = st.files || [];
-    const cur = { file: CH_FILE, sha: CH_SHA };
-    // Uncommitted changes on top, only when there are any.
-    const unc = files.length ? '<h4 class="chp-sec">Uncommitted <span class="chp-count">' + files.length + ' changed</span></h4>'
-      + files.map(function (f) { return chFileHtml(f, '', !CH_SHA && f.path === CH_FILE); }).join('') : '';
-    box.innerHTML = '<div class="chp-head">' + repoSel + '<button class="chp-refresh" title="Refresh">↻</button></div>'
-      + unc + (log.error ? '<div class="chf none">what landed is unavailable: ' + esc(log.error) + '</div>'
-                         : chLogHtml(log, (projectById(pid) || {}).key || '', CH_OPEN, cur));
-    const rb = box.querySelector('.chp-refresh'); if (rb) rb.onclick = chLoadStatus;
-    const rs = box.querySelector('.chp-repo'); if (rs) rs.onchange = function () { chPickRepo(rs.value); };
+    CH_LIST = { pid, repoSel, files: st.files || [], log };
+    chPaintList(box);
   } catch (e) { if (!stale()) box.innerHTML = '<div class="chf none">status unavailable: ' + esc(e.message) + '</div>'; }
+}
+// The list from what the hub last said: the uncommitted changes on top, only
+// when there are any, then what landed. Drawn again, without the hub, for a
+// folder folded or the tree switched off.
+function chPaintList(box, focusDir) {
+  const l = CH_LIST; if (!l || !box) return;
+  const cur = { file: CH_FILE, sha: CH_SHA }, view = chView(), files = l.files, log = l.log;
+  const unc = files.length ? '<h4 class="chp-sec">Uncommitted <span class="chp-count">' + files.length + ' changed</span></h4>' + chFilesHtml(files, '', cur, view) : '';
+  box.innerHTML = '<div class="chp-head">' + l.repoSel + chTreeBtnHtml(view.tree) + '<button class="chp-refresh" title="Refresh">↻</button></div>'
+    + unc + (log.error ? '<div class="chf none">what landed is unavailable: ' + esc(log.error) + '</div>'
+                       : chLogHtml(log, (projectById(l.pid) || {}).key || '', CH_OPEN, cur, view));
+  const rb = box.querySelector('.chp-refresh'); if (rb) rb.onclick = chLoadStatus;
+  const rs = box.querySelector('.chp-repo'); if (rs) rs.onchange = function () { chPickRepo(rs.value); };
+  const tb = box.querySelector('.chp-tree'); if (tb) tb.onclick = function () { chSetPref('cd-ch-tree', view.tree ? '0' : '1'); chPaintList(box); };
+  chListFocus(box, focusDir);
 }
 async function chLoadHistory(box, pj, stale) {
   box.dataset.history = '1';
@@ -9600,15 +9933,20 @@ async function chLoadHistory(box, pj, stale) {
     CH_ROOT = pj.path; CH_SHA = ''; box.dataset.root = CH_ROOT;
     chUseContext(pj.id, CH_ROOT);
     const files = st.files || [], big = files.filter(function (f) { return f.tooLarge; }).length;
-    box.innerHTML = '<div class="chp-head"><span class="chp-repo1" title="' + esc(pj.path) + '">Since the last snapshot</span><span class="chp-count">' + files.length + ' changed</span>'
-      + '<button class="chp-refresh" title="Refresh">↻</button></div>'
-      + (files.length ? files.map(function (f) {
-          const code = f.status || '?';
-          return '<div class="chf' + (f.path === CH_FILE ? ' on' : '') + '" data-file="' + esc(f.path) + '">'
-            + '<span class="chst st-' + esc(code[0]) + '">' + esc(code) + '</span><span class="nm">' + esc(f.path) + '</span></div>';
-        }).join('') : '<div class="chf none">Nothing changed since the last snapshot. The file history takes one within a few minutes of a change.</div>')
-      + (big ? '<div class="chf none">' + big + (big > 1 ? ' files are' : ' file is') + ' over 50 MB, so the history does not keep ' + (big > 1 ? 'them' : 'it') + '.</div>' : '');
-    const rb = box.querySelector('.chp-refresh'); if (rb) rb.onclick = chLoadStatus;
+    CH_LIST = null;
+    const paint = function (focusDir) {
+      const view = chView();
+      box.innerHTML = '<div class="chp-head"><span class="chp-repo1" title="' + esc(pj.path) + '">Since the last snapshot</span><span class="chp-count">' + files.length + ' changed</span>'
+        + chTreeBtnHtml(view.tree) + '<button class="chp-refresh" title="Refresh">↻</button></div>'
+        + (files.length ? chFilesHtml(files, '', { file: CH_FILE, sha: '' }, view)
+                        : '<div class="chf none">Nothing changed since the last snapshot. The file history takes one within a few minutes of a change.</div>')
+        + (big ? '<div class="chf none">' + big + (big > 1 ? ' files are' : ' file is') + ' over 50 MB, so the history does not keep ' + (big > 1 ? 'them' : 'it') + '.</div>' : '');
+      const rb = box.querySelector('.chp-refresh'); if (rb) rb.onclick = chLoadStatus;
+      const tb = box.querySelector('.chp-tree'); if (tb) tb.onclick = function () { chSetPref('cd-ch-tree', view.tree ? '0' : '1'); paint(); };
+      box._paint = paint;
+      chListFocus(box, focusDir);
+    };
+    paint();
   } catch (e) { if (!stale()) box.innerHTML = '<div class="chf none">changes unavailable: ' + esc(e.message) + '</div>'; }
 }
 async function chOpenDiff(file, cid, sha) {
@@ -9619,10 +9957,15 @@ async function chOpenDiff(file, cid, sha) {
   if (sha !== CH_SHA) { CH_SHA = sha; chUseContext(files.dataset.project, files.dataset.root, sha); }
   CH_FILE = file;
   barCrumbs();
+  chShowDiff(true);
   // The diff belongs to this repository's review: a comment on it lands there,
   // whatever is on screen by the time it is added.
   const seq = ++CH_DIFF, root = files.dataset.root, rv = CH_RV;
-  files.querySelectorAll('.chf').forEach(function (x) { x.classList.toggle('on', x.dataset.file === file && (x.dataset.commit || '') === sha); });
+  files.querySelectorAll('.chf').forEach(function (x) {
+    const on = x.dataset.file === file && (x.dataset.commit || '') === sha;
+    x.classList.toggle('on', on);
+    if (on) x.setAttribute('aria-current', 'true'); else x.removeAttribute('aria-current');
+  });
   box.innerHTML = '<div class="wsp-empty">loading diff…</div>';
   try {
     const d = files.dataset.history
@@ -9646,15 +9989,26 @@ function wireChangesPanel(pj) {
   // No repository yet, so nothing to comment on until the status names one.
   chUseContext((pj && pj.id) || '', '');
   const files = pdById('chp-files'); if (!files) return;
-  CH_FILE = ''; CH_SHA = '';
+  CH_FILE = ''; CH_SHA = ''; CH_LIST = null;
   barCrumbs();
+  chWireSplit(files.closest ? files.closest('.chp') : null);
   chLoadStatus();
   files.onclick = function (e) {
     const more = e.target.closest('.chc-more');
-    if (more) { CH_OPEN.add(more.dataset.sha); chLoadStatus(); return; }
+    if (more) { CH_OPEN.add(more.dataset.sha); if (CH_LIST) chPaintList(files); else chLoadStatus(); return; }
+    const d = e.target.closest('.chf.dir');
+    if (d) {
+      // A folder folded or opened: the list again, the folder keeping the focus.
+      const key = (d.dataset.commit || '') + '|' + d.dataset.dir;
+      if (CH_CLOSED.has(key)) CH_CLOSED.delete(key); else CH_CLOSED.add(key);
+      const at = { dir: d.dataset.dir, sha: d.dataset.commit || '' };
+      if (CH_LIST) chPaintList(files, at); else if (files._paint) files._paint(at);
+      return;
+    }
     const f = e.target.closest('.chf'); if (!f || !f.dataset.file) return;
     chOpenDiff(f.dataset.file, '', f.dataset.commit || '');
   };
+  files.onkeydown = chListKey;
 }
 
 // ---- Roadmap tab: the project's ROADMAP.md, read and edited in place --------
@@ -9854,7 +10208,7 @@ function tchRow(v) { return ALL_ROWS.find(x => x.sessionId === v.sid || x.roomId
 function tchMount(el, sid) {
   let v = TCH_VIEWS.get(sid);
   if (!v) {
-    v = { sid, root: '', roots: [], files: [], info: null, file: '', busy: false, again: false };
+    v = { sid, root: '', roots: [], files: [], info: null, file: '', busy: false, again: false, closed: new Set() };
     // This task's review: its comments go to its own chat and no other.
     v.rv = drReview('task:' + sid, {
       target: () => {
@@ -9864,24 +10218,38 @@ function tchMount(el, sid) {
       what: () => v.info && v.info.branch ? '`' + v.info.branch + '`' + (v.info.base ? ' against `' + v.info.base + '`' : '') : '',
       open: (root, file, line) => tchOpenInWorkspace(v.sid, root, file, line),
       pick: c => { if (c.root === v.root) tchOpenDiff(v, c.file, c.cid); },
+      back: () => tchShowDiff(v, false),
     });
     TCH_VIEWS.set(sid, v);
   }
   v.el = el;
   el.innerHTML = '<div class="tch-none" hidden></div><div class="tch">'
     + '<div class="tch-head"><span>loading…</span></div>'
-    + '<div class="tch-files"></div>'
-    + '<div class="tch-diff"><div class="wsp-empty">Select a changed file to review its diff. Click a line number to comment; the comments go to this task\'s chat.</div></div>'
-    + '<div class="cmt-tray" hidden></div></div>';
-  el.querySelector('.tch-files').onclick = e => {
+    + '<div class="tch-files" aria-label="Changed files"></div>' + chSplitHtml()
+    + '<div class="tch-right"><div class="tch-diff"><div class="wsp-empty">Select a changed file to review its diff. Click a line number to comment; the comments go to this task\'s chat.</div></div>'
+    + '<div class="cmt-tray" hidden></div></div></div>';
+  chWireSplit(el.querySelector('.tch'));
+  const list = el.querySelector('.tch-files');
+  list.onclick = e => {
+    const d = e.target.closest('.chf.dir');
+    if (d) {
+      if (v.closed.has(d.dataset.dir)) v.closed.delete(d.dataset.dir); else v.closed.add(d.dataset.dir);
+      tchPaintList(v, { dir: d.dataset.dir, sha: '' });
+      return;
+    }
     const f = e.target.closest('.chf'); if (f && f.dataset.file) tchOpenDiff(v, f.dataset.file);
   };
+  list.onkeydown = chListKey;
   const head = el.querySelector('.tch-head');
-  head.onclick = e => { if (e.target.closest('.chp-refresh')) tchSync(v); };
+  head.onclick = e => {
+    if (e.target.closest('.chp-refresh:not(.chp-tree)')) tchSync(v);
+    else if (e.target.closest('.chp-tree')) { chSetPref('cd-ch-tree', chTreeOn() ? '0' : '1'); tchWrite(head, tchHeadHtml(v)); tchPaintList(v); }
+  };
   head.onchange = e => {
     const s = e.target.closest('.chp-repo'); if (!s) return;
     v.root = s.value; v.file = '';
     el.querySelector('.tch-diff').innerHTML = '<div class="wsp-empty">Select a changed file to review its diff.</div>';
+    tchShowDiff(v, false);
     tchSync(v);
   };
   tchSync(v).then(() => { if (v.file) tchOpenDiff(v, v.file); });
@@ -9889,13 +10257,25 @@ function tchMount(el, sid) {
   return v;
 }
 function tchWrite(node, html) { if (node && node._sig !== html) { node._sig = html; node.innerHTML = html; } }
-function tchPaintList(v) {
+// On a phone the pane shows the files or the diff (see chShowDiff).
+function tchShowDiff(v, on) {
+  const grid = v.el && v.el.querySelector('.tch');
+  if (grid && grid.classList) grid.classList.toggle('ch-show-diff', !!on);
+}
+function tchPaintList(v, focusDir) {
   const box = v.el && v.el.querySelector('.tch-files'); if (!box) return;
-  tchWrite(box, v.files.length ? v.files.map(f => {
-    const code = (f.status || '?').replace(/\s/g, '') || '?';
-    return '<div class="chf' + (f.path === v.file ? ' on' : '') + '" data-file="' + esc(f.path) + '">'
-      + '<span class="chst st-' + esc(code[0]) + '">' + esc(code) + '</span><span class="nm">' + esc(f.path) + '</span></div>';
-  }).join('') : '<div class="chf none">No changes on this branch yet.</div>');
+  const html = v.files.length ? chFilesHtml(v.files, '', { file: v.file, sha: '' }, { tree: chTreeOn(), closed: p => v.closed.has(p) })
+    : '<div class="chf none">No changes on this branch yet.</div>';
+  if (box._sig === html && !focusDir) return;
+  // A redraw (Enter opening a file, a poll) replaces the rows: the keyboard
+  // stays on the list, on its current row.
+  const had = box.contains(box.ownerDocument.activeElement);
+  tchWrite(box, html);
+  chListFocus(box, focusDir);
+  if (had && !focusDir) {
+    const cur = box.querySelector('.chf[tabindex="0"]');
+    if (cur && cur.focus) cur.focus({ preventScroll: true });
+  }
 }
 function tchHeadHtml(v) {
   const i = v.info || {};
@@ -9911,7 +10291,7 @@ function tchHeadHtml(v) {
     ? 'vs ' + esc(i.base) + ' · ' + i.ahead + ' commit' + (i.ahead === 1 ? '' : 's') + ' · ' + files
     : (i.branch ? 'uncommitted on ' + esc(i.branch) + ' · ' + files : files);
   return repo + (i.branch ? '<span class="tch-branch" title="' + esc(v.root) + '">' + esc(i.branch) + '</span>' : '')
-    + '<span>' + against + '</span><button class="chp-refresh" title="Refresh">↻</button>';
+    + '<span>' + against + '</span>' + chTreeBtnHtml(chTreeOn()) + '<button class="chp-refresh" title="Refresh">↻</button>';
 }
 function tchEmpty(v, msg) {
   const none = v.el.querySelector('.tch-none'), grid = v.el.querySelector('.tch');
@@ -9963,6 +10343,7 @@ async function tchOpenDiff(v, file, cid) {
   v.file = file;
   tchPaintList(v);
   barCrumbs();
+  tchShowDiff(v, true);
   box.innerHTML = '<div class="wsp-empty">loading diff…</div>';
   try {
     const d = await api('/api/git/diff?branch=1&path=' + encodeURIComponent(root) + '&file=' + encodeURIComponent(file));

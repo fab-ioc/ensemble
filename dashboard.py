@@ -5886,6 +5886,74 @@ def git_branch_base(root: str) -> dict:
     return {"branch": branch, "base": "", "mergeBase": "", "ahead": 0}
 
 
+# How many lines a change adds and removes, per file, as the Changes tab's
+# "+N −M" chips show it: None for a binary file (git has no count for it).
+_NUMSTAT_MAX_BYTES = 2 * 1024 * 1024
+_NUMSTAT_RE = re.compile(r"^(\d+|-)\t(\d+|-)\t(.*)$", re.S)
+
+
+def _numstat_pair(m: re.Match) -> tuple[int | None, int | None]:
+    return (None if m.group(1) == "-" else int(m.group(1)), None if m.group(2) == "-" else int(m.group(2)))
+
+
+def _git_numstat(root: str, *args: str) -> dict[str, tuple[int | None, int | None]]:
+    """``git diff --numstat -z`` by path (a rename's new path), ``{}`` when
+    git fails: the counts are an extra, never the reason a list fails."""
+    try:
+        out = _run(["git", "-C", root, "diff", "--numstat", "-z", *args],
+                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if out.returncode != 0:
+        return {}
+    parts = (out.stdout or "").split("\x00")
+    counts: dict[str, tuple[int | None, int | None]] = {}
+    i = 0
+    while i < len(parts):
+        m = _NUMSTAT_RE.match(parts[i])
+        if not m:
+            i += 1
+            continue
+        path = m.group(3)
+        if path == "" and i + 2 < len(parts):     # a rename or copy: old path, then new
+            path = parts[i + 2]
+            i += 3
+        else:
+            i += 1
+        counts[path] = _numstat_pair(m)
+    return counts
+
+
+def _count_lines(path: str) -> int | None:
+    """Lines of a file git does not diff yet (untracked): every one is
+    added. None for a binary file or one over the size the diff would show."""
+    try:
+        if os.path.getsize(path) > _NUMSTAT_MAX_BYTES:
+            return None
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError:
+        return None
+    if b"\x00" in data[:8192]:
+        return None
+    if not data:
+        return 0
+    return data.count(b"\n") + (0 if data.endswith(b"\n") else 1)
+
+
+def _with_counts(files: list[dict], counts: dict, root: str) -> None:
+    """Each file's ``add``/``del`` from the numstat; an untracked file's from
+    its own lines (git has no diff for it); a binary's are None."""
+    for f in files:
+        if f["path"] in counts:
+            f["add"], f["del"] = counts[f["path"]]
+        elif str(f.get("status", "")).startswith("?") and not f["path"].endswith("/"):
+            n = _count_lines(os.path.join(root, f["path"]))
+            f["add"], f["del"] = n, (0 if n is not None else None)
+        else:
+            f["add"], f["del"] = None, None
+
+
 def _git_branch_files(root: str, mb: str) -> list[dict] | None:
     """Files that differ between the merge-base and the working tree, plus
     untracked ones: a branch's whole change, committed and not."""
@@ -5914,6 +5982,7 @@ def _git_branch_files(root: str, mb: str) -> list[dict] | None:
         files += [{"path": p, "status": "?"} for p in (un.stdout or "").split("\x00") if p and p not in seen]
     except (OSError, subprocess.SubprocessError):
         return None
+    _with_counts(files, _git_numstat(root, mb), root)
     return files
 
 
@@ -5950,15 +6019,17 @@ def git_status(path: str, branch: bool = False) -> tuple[int, dict]:
                 i += 1
                 continue
             xy, name = rec[:2], rec[3:]
-            if xy and xy[0] == "R":                # rename: new path is next part
+            if xy and (xy[0] in "RC" or xy[1:2] in ("R", "C")):   # a rename or copy (index or work tree): the record names the new path, the next part the old one
                 i += 1
-                name = parts[i] if i < len(parts) else name
             files.append({"path": name, "status": xy.strip() or "?",
                           "staged": xy[0] not in (" ", "?")})
             i += 1
     except (OSError, subprocess.SubprocessError) as e:
         return 500, {"error": f"git_status_failed: {e}"}
     files.sort(key=lambda f: f["path"].lower())
+    # Lines added and removed since the last commit, staged or not; a repository
+    # with no commit yet has no HEAD to count against, so every file counts as new.
+    _with_counts(files, _git_numstat(root, "HEAD") if _git_ok(root, "rev-parse", "--verify", "--quiet", "HEAD") else {}, root)
     return 200, {"root": root, "isGit": True, "files": files}
 
 
@@ -6095,8 +6166,9 @@ def git_log(path: str, n: int = 30, project_id: str = "") -> tuple[int, dict]:
     n = max(1, min(GIT_LOG_MAX, n))
     ref = _main_line(root)
     try:
+        # --raw for each file's status, --numstat for its lines added and removed.
         out = _run(["git", "-c", "core.quotepath=false", "-C", root, "log", ref, "--first-parent",
-                    "-n", str(n), "--diff-merges=first-parent", "--name-status", "--no-renames",
+                    "-n", str(n), "--diff-merges=first-parent", "--raw", "--numstat", "--no-renames",
                     "--format=%x1e%H%x1f%ct%x1f%an%x1f%s"],
                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
     except (OSError, subprocess.SubprocessError) as e:
@@ -6112,11 +6184,20 @@ def git_log(path: str, n: int = 30, project_id: str = "") -> tuple[int, dict]:
         parts = head.split("\x1f")
         if len(parts) < 4 or not _SHA_RE.match(parts[0]):
             continue
-        files = []
+        files, counts = [], {}
         for line in body.splitlines():
-            code, _, name = line.partition("\t")
-            if code and name:
-                files.append({"path": name, "status": code[0]})
+            if line.startswith(":"):
+                # ":100644 100644 abc1234 def5678 M<TAB>path"
+                meta, _, name = line.partition("\t")
+                code = meta.split()[-1] if meta.split() else ""
+                if code and name:
+                    files.append({"path": name, "status": code[0]})
+                continue
+            m = _NUMSTAT_RE.match(line)
+            if m:
+                counts[m.group(3)] = _numstat_pair(m)
+        for f in files:
+            f["add"], f["del"] = counts.get(f["path"], (None, None))
         commits.append({"sha": parts[0], "time": int(parts[1]) if parts[1].isdigit() else 0,
                         "author": parts[2], "subject": parts[3],
                         "no": commit_task_no(parts[3], idx),

@@ -485,6 +485,40 @@ are any, then **Landed on main**, a commit at a time (a merge counts as one), ne
 task's `.tno` link, the subject without `Merge #NN: `, when, then its files as the Changes rows
 (the first 8, then "+N more"). A file opens that commit's diff, with line comments of its own.
 
+### Changes: the files and the diff
+
+A task's Changes (its branch against the line it left) and the project's are the same component
+(#153, issue #4): the changed files on the left, the diff on the right, a splitter between them.
+`tchMount` and `changesPanelHtml` in `index.html` are the reference.
+
+- **Grouped by folder, by default.** The files are a tree (`chTree`, `chFilesHtml`): folders first,
+  by name, then the files; a folder holding one folder and no file is one row (`static/dock/src`),
+  never a chain of single rows. A folder row is `--fs-200`/600 with a `▾`/`▸` caret; a file row keeps
+  its status lozenge and shows its **name**, the whole path in its tooltip. Each row ends in its
+  lines, `+12 −3` (`.cnt`, `--fs-100` `--fg-muted`, tabular; the hub counts them per file with
+  `git diff --numstat`; a binary file shows none); a folder's are its total. A level is a 14px step
+  (`--d` on the row). In the project's Changes each group (Uncommitted, each commit's files) is its
+  own tree, so a folder folded under one commit stays open under another. **Folders** (a small
+  bordered button beside Refresh, pressed is `--selected-bg`) switches to the flat list, the whole
+  paths in the hub's order, and back; the choice is remembered in the browser (`cd-ch-tree`).
+  Folded folders are not remembered: a refresh opens the tree.
+- **Keys:** one row is in the tab order (the file showing, else the first); ↑ ↓ Home End move along
+  the rows showing, Enter or Space opens a file or folds a folder, → opens a folded folder, ← folds
+  an open one. A folder folded or opened keeps the focus (`chListKey`, `chListFocus`).
+- **Two panes and a splitter** (`chWireSplit`): the list's width is `--ch-w` on the grid, 300px by
+  default, at least 180px and at most 60% of the panel. The splitter is a plain bar in Dock's look,
+  not a dock inside the panel (that would be a second layout to save): 5px, `--surface-sunken` with
+  a `--border` hairline, the accent while it is held, hovered or focused, `col-resize`; dragged with
+  pointer capture, ← and → move it 16px, Home and End to the ends, a double click puts the default
+  back. **One width for every Changes panel** (`cd-ch-w`), applied to each panel showing, a popped-out
+  window's included. A `role="separator"` with `aria-valuenow`.
+- **A narrow panel stacks them.** Under 680px of panel width (a tool open beside the conversation is
+  about 500px) the files sit above the diff as before, with no splitter (`ch-narrow`, set from a
+  ResizeObserver on the panel). On a phone the panel shows **one pane at a time**: the files, then
+  the diff once a file is picked (`ch-show-diff`), with **‹ Files** at the start of the diff's bar
+  (`.drv-back`, phone only) the way back; the pane not showing is `display: none` (no iframe here).
+
+
 ### Find in a Workspace
 
 The box above a Workspace's tree (`.wsf` in `index.html`; `wsfMount` is the reference). It looks in the
@@ -583,6 +617,22 @@ A changed file in a Changes tab (the task's and the project's) reads as in an ID
 - The file bar says what the diff is (path, `+N −N`, how to comment) and offers **Open file**, which
   opens it in a Workspace tab at its first changed line. `diff --git`/`index`/`---`/`+++` lines are not
   shown: the bar says it.
+- **Unified or side by side** (#153): a `.seg` in the bar, **Unified | Side by side**, pressed is
+  `--selected-bg`; the choice is remembered in the browser (`cd-diff-mode`, unified by default). Side
+  by side (`drPairs`, `.drv.split`) is a display row (`.sr`) per pair: an old cell and a new cell, each
+  a `.dr` of its own side with one line number (`::before` on the old side, `::after` on the new), a
+  `--border` hairline between the halves. A run of removed lines faces the added ones line for line;
+  the extra ones face an empty `--surface-sunken` cell; a context line is on both sides; a hunk header
+  spans both (`.sr.full`). Highlighting, the selection bar and line comments work on either side: a
+  comment on a removed line's cell says "removed line N" and its card sits under the display row,
+  lined up with the old side's code. A drag down one column selects that column alone (the press
+  puts `sel-old` / `sel-new` on `.drv`, which makes the other side's text `user-select: none` until
+  the next press), so the highlight and Copy never interleave the two sides. **A panel under 900px
+  wide shows unified** whatever the choice
+  and hides the switch (a ResizeObserver on the box; the choice is kept, and side by side returns with
+  the width), so a phone and a tool beside the conversation never get two cramped columns. Rows are
+  in chunks of 500 both ways: the largest merge of the week (5,784 lines) paints in under 100 ms in
+  either mode.
 
 ### Line comments
 
@@ -1321,8 +1371,9 @@ desktop is untouched by construction.
    it opens.
 8. **Touch selection is followed through `selectionchange`**, not `touchend`: the handles adjust the
    selection after the finger lifts.
-9. **Two panes side by side become one above the other** below the phone breakpoint (Changes).
-   Beside each other on 390px, the file got 79px.
+9. **Two panes side by side become one above the other** below the phone breakpoint, or one at a
+   time (Changes: the files, then the diff with **‹ Files** back, §4 *Changes*). Beside each other on
+   390px, the file got 79px.
 
    **The Workspace shows one pane at a time** (`wsPaintPane`, class `ws-tree` on `.wsp`): the file,
    whole height, when a tab is shown; the tree and Find when there is no file, or when asked for
