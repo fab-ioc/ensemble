@@ -42,6 +42,23 @@ branch, and what finished since the last digest.
 * idle time, which moves every second, and attention reasons, which carry
   durations.
 
+**What rings the PO** (#147, measured over 2026-09-24..10-01: of 581 digest
+wakes, 447 said only such things and the PO acted on 26 of them — housekeeping
+it would have done at its next wake anyway): only news the PO must act on,
+which nothing else tells it —
+
+* a task became blocked, its agent is gone, or it stalled;
+* a task is waiting for the CEO for the first time (an ask without a report:
+  a question balloon, a stop at a prompt).
+
+Everything else is **quiet news** — commits, a move, a merge, a status, a new
+task, a rename, a problem that is over: the PO made most of it happen itself,
+and a completion or an ask reaches it as a ``[report]`` the moment it is made.
+A check that finds only quiet news sends nothing and wakes nobody; the
+changes stay against the baseline (``pending``) and ride the next digest that
+does go out, where they are the context. "Check now" (``force``) sends
+everything, as before.
+
 The baseline (what the PO was last told) is kept in ``DASHBOARD_DIR/digests.json``
 so a hub restart neither re-sends the same news nor forgets news it has not
 delivered. It advances only when a digest is delivered: while the PO is not
@@ -372,8 +389,13 @@ def _attention_news(old: dict, t: dict) -> str:
     """How the task's attention changed, when that is news; "" otherwise."""
     told, told_waiting = _told(old)
     now = t.get("attention") or ""
+    over = old.get("pendingOver") or ""     # a problem over, not yet told (quiet)
     if now in _PROBLEMS and now != told:
-        return f"attention {told or 'none'} → {now}"
+        if now == over:
+            return f"attention {now} again"
+        return f"attention {told or over or 'none'} → {now}"
+    if over and now not in _PROBLEMS:
+        return f"attention {over} → {now or 'none'}"
     if told in _PROBLEMS and now not in _PROBLEMS:
         if told == "blocked" and t.get("ask") == "blocked":
             # Its block is still open to the CEO: the agent going busy, or
@@ -381,7 +403,7 @@ def _attention_news(old: dict, t: dict) -> str:
             return ""
         return f"attention {told} → {now or 'none'}"
     if now == _WAITING and told_waiting != _mark(t):
-        return f"attention {told or 'none'} → {now}"
+        return f"attention {now} again" if told == now else f"attention {told or 'none'} → {now}"
     return ""
 
 
@@ -399,10 +421,43 @@ def told_baseline(before: dict, tasks: list[dict]) -> dict:
     return out
 
 
+def quiet_baseline(before: dict, tasks: list[dict]) -> dict:
+    """The baseline after a check that sent nothing (quiet news only): the
+    same, except that a problem now over is marked told-as-over, so the same
+    problem coming back is news again; what ended stays pending as context
+    (``pendingOver``) until a digest goes out."""
+    out = dict(before)
+    for t in tasks:
+        old = before.get(t["id"])
+        if old is None:
+            continue
+        told = _told(old)[0]
+        now = t.get("attention") or ""
+        if told in _PROBLEMS and now not in _PROBLEMS                 and not (told == "blocked" and t.get("ask") == "blocked"):
+            out[t["id"]] = {**old, "toldAttention": now, "toldWaiting": _told(old)[1],
+                            "pendingOver": old.get("pendingOver") or told}
+    return out
+
+
+def _wakes(t: dict, old: dict) -> bool:
+    """Whether the task's attention news needs the PO: it is now a problem
+    the PO was not told of, or it waits for the CEO anew (``_attention_news``
+    already found the change news)."""
+    now = t.get("attention") or ""
+    return now in _PROBLEMS or now == _WAITING
+
+
+def needs_po(changes: list[dict]) -> list[dict]:
+    """The changes that ring the PO (see the module docstring); the rest is
+    quiet news that rides the next digest."""
+    return [c for c in changes if c.get("wakes")]
+
+
 def diff(before: dict, tasks: list[dict]) -> list[dict]:
     """What is news since ``before`` (the per-task baseline), one entry per
-    task that has some: ``{id, title, what: [..], finished: bool}``. See the
-    module docstring for what is and is not news."""
+    task that has some: ``{id, title, what: [..], finished: bool, wakes: bool}``
+    — ``wakes`` when the news needs the PO. See the module docstring for what
+    is and is not news, and what rings."""
     changes = []
     now_ids = set()
     for t in tasks:
@@ -410,9 +465,9 @@ def diff(before: dict, tasks: list[dict]) -> list[dict]:
         old = before.get(t["id"])
         if old is None:
             changes.append({"id": t["id"], "label": t.get("label") or t["id"], "title": t["title"],
-                            "what": ["new task"], "finished": False})
+                            "what": ["new task"], "finished": False, "wakes": _wakes(t, {})})
             continue
-        what, finished = [], False
+        what, finished, wakes = [], False, False
         if old.get("title") != t["title"]:
             what.append(f"renamed from '{old.get('title')}'")
         if old.get("status") != t["status"]:
@@ -424,6 +479,7 @@ def diff(before: dict, tasks: list[dict]) -> list[dict]:
         attention = _attention_news(old, t)
         if attention:
             what.append(attention)
+            wakes = _wakes(t, old)
         if t["merged"] and not old.get("merged"):
             what.append(f"its work merged into {t['base']}")
             finished = True
@@ -436,11 +492,11 @@ def diff(before: dict, tasks: list[dict]) -> list[dict]:
             finished |= t["reportKind"] == "completed"
         if what:
             changes.append({"id": t["id"], "label": t.get("label") or t["id"], "title": t["title"],
-                            "what": what, "finished": finished})
+                            "what": what, "finished": finished, "wakes": wakes})
     for tid, old in before.items():
         if tid not in now_ids:
             changes.append({"id": tid, "label": old.get("label") or tid, "title": old.get("title", tid),
-                            "what": ["no longer in this project"], "finished": False})
+                            "what": ["no longer in this project"], "finished": False, "wakes": False})
     return changes
 
 
@@ -629,6 +685,14 @@ def _check(project: dict, force: bool) -> dict:
         base["lastCheck"] = now
         _save_baseline(pid, base)
         return done("nothing new — skipped, PO not woken")
+    if not needs_po(changes) and not force:
+        # Quiet news only: the baseline stays, so it rides the next digest
+        # that does go out (see the module docstring, "What rings the PO").
+        base["lastCheck"] = now
+        base["tasks"] = quiet_baseline(before, tasks)
+        _save_baseline(pid, base)
+        return done(f"{len(changes)} quiet change(s) — nothing that needs the PO, "
+                    "kept for the next digest", pending=len(changes))
     room, ident, why = _po_target(project)
     if room is None:
         # Keep the old baseline: these changes go into the next digest.

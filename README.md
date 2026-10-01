@@ -35,13 +35,13 @@ A PO's chat. It shows your messages, a task's report (`#1 claude → PO Complete
 1. **You tell the PO what you want**, in its chat.
 2. **The PO plans.** It creates tasks as **drafts** (Backlog), each with a written spec, a priority and a preferred line-up: which agent kind owns the task, which one reviews it, and which models they use. When a task starts, the hub may swap Claude and Codex between the two seats if one plan allowance is nearly used up.
 3. **The PO starts a task** (In progress). The hub launches the task's agents without a visible terminal, gives them the spec as their first prompt, and connects them to the hub's `ensemble` MCP server. In a code project, a task normally works in its own git worktree on a branch `sess/<task-slug>`.
-4. **Review.** The owner asks the reviewer by @mentioning it. The hub starts a fresh reviewer session for that one review. Its verdict goes to the owner and the PO, and is added to `REVIEW-LOG.md` in the task folder.
+4. **Review.** The owner asks the reviewer by @mentioning it. The hub starts a fresh reviewer session for that one review; from the second review on, it is briefed with the change since the last review rather than the whole branch. Its verdict goes to the owner and the PO, and is added to `REVIEW-LOG.md` in the task folder. A "changes requested" verdict before the third review is posted in the PO's chat without waking the PO: the owner is already on it.
 5. **Report.** The owner reports `completed`, `blocked` or `question`. The report lands in the PO's chat and wakes the PO, and the owner moves its card to In review.
 6. **Merge and Done.** The PO reviews the diff, merges the branch into the project's main branch and runs the project's tests. The hub sees the merge and moves the card to Done by itself. A documents project has no merges, so you drag its cards to Done yourself.
 
 Four things keep this running without you watching:
 
-- **The progress check.** Every 5 minutes by default, the hub looks at each project's tasks. It wakes the PO only when there is news: a column changed, new commits, work merged, a task blocked, stalled or dead.
+- **The progress check.** Every 5 minutes by default, the hub looks at each project's tasks. It wakes the PO only for news that needs it: a task blocked, stalled or dead, or waiting for you for the first time. Quiet news (a column changed, new commits, work merged, a new task) is kept and told in the next digest that goes out.
 - **The handover.** A long conversation costs more with every turn. Past 200k tokens by default, the hub asks the task owner to write `TASK-HANDOVER.md` (or the PO to update `PO-HANDOVER.md`). It then starts a fresh session that reads the handover and carries on.
 - **Needs you.** The first group of the task list on the left lists every task waiting on a person, blocked, stalled, or whose agent died, across all projects.
 - **Plan allowance.** The header shows how much of your Claude and Codex plans is used.

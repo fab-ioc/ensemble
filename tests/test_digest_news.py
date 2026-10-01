@@ -1,5 +1,7 @@
 """The PO's progress digest is sent only for news (digest.diff / digest.check):
-a report alone, or "waiting for you" flapping, sends nothing."""
+a report alone, or "waiting for you" flapping, sends nothing — and since #147
+only news that needs the PO rings (a problem, a first wait for the CEO); quiet
+news (commits, moves, statuses, merges) waits for the next digest that does."""
 from __future__ import annotations
 
 import tempfile
@@ -64,11 +66,11 @@ class _Checks(unittest.TestCase):
         self.sent.append({"text": text, "changes": changes})
         return True
 
-    def check(self, **facts) -> bool:
+    def check(self, force: bool = False, **facts) -> bool:
         """Set the task's facts, run a check; True when a digest went out."""
         self.task.update(facts)
         n = len(self.sent)
-        digest.check(PROJECT)
+        self.last = digest.check(PROJECT, force=force)
         return len(self.sent) > n
 
     def report(self, kind: str, text: str) -> None:
@@ -92,21 +94,24 @@ class ReportsAreNotTriggers(_Checks):
 
     def test_a_report_is_context_when_a_digest_goes_out_for_another_reason(self):
         self.check(report=100.0, reportKind="completed", reportText="Spec written.")
-        self.assertTrue(self.check(column="inreview"))
+        self.assertFalse(self.check(column="inreview"))      # quiet: pending
+        self.assertTrue(self.check(attention="waiting_for_you"))
         change = self.sent[-1]["changes"][0]
+        self.assertIn("moved inprogress → inreview", change["what"])
         self.assertIn("reported completed", change["what"])
         self.assertTrue(change["finished"])
         self.assertIn("report (completed): Spec written.", self.sent[-1]["text"])
         # Told once: the next digest does not repeat it.
-        self.assertTrue(self.check(head="def5678"))
+        self.assertTrue(self.check(attention="blocked", head="def5678"))
+        self.assertIn("new commits", self.last_what())
         self.assertNotIn("reported completed", self.last_what())
         self.assertNotIn("report (completed)", self.sent[-1]["text"])
 
     def test_an_update_report_is_never_mentioned(self):
         self.report("update", "Handed to a fresh session")
         self.assertFalse(self.check())
-        self.assertTrue(self.check(head="def5678"))
-        self.assertEqual(self.last_what(), ["new commits"])
+        self.assertTrue(self.check(head="def5678", attention="stalled"))
+        self.assertEqual(self.last_what(), ["attention none → stalled", "new commits"])
         self.assertNotIn("Handed to a fresh session", self.sent[-1]["text"])
 
     def test_an_update_does_not_replace_the_last_real_report(self):
@@ -175,8 +180,10 @@ class WaitingForYou(_Checks):
         self.report("update", "Tidying up")
         self.assertFalse(self.check(column="inreview"))
         self.po_running = True
-        self.assertTrue(self.check())
+        self.assertFalse(self.check())                       # quiet news only
+        self.assertTrue(self.check(attention="stalled"))
         change = self.sent[-1]["changes"][0]
+        self.assertIn("moved inprogress → inreview", change["what"])
         self.assertIn("reported completed", change["what"])
         self.assertTrue(change["finished"])
         self.assertIn("report (completed): Spec written.", self.sent[-1]["text"])
@@ -184,12 +191,14 @@ class WaitingForYou(_Checks):
     def test_waiting_is_news_again_after_a_commit_or_a_move(self):
         self.check(attention="waiting_for_you")
         self.assertFalse(self.check(attention=""))
-        self.assertTrue(self.check(head="def5678"))
+        self.assertFalse(self.check(head="def5678"))         # quiet on its own
         self.assertTrue(self.check(attention="waiting_for_you"))
+        self.assertEqual(self.last_what(), ["attention waiting_for_you again", "new commits"])
         self.assertFalse(self.check(attention=""))
-        self.assertTrue(self.check(column="inreview"))
+        self.assertFalse(self.check(column="inreview"))
         self.assertTrue(self.check(attention="waiting_for_you"))
-        self.assertEqual(len(self.sent), 5)
+        self.assertIn("moved inprogress → inreview", self.last_what())
+        self.assertEqual(len(self.sent), 3)
 
     def test_waiting_while_a_digest_goes_out_is_told(self):
         # Waiting at the moment a commit is digested: that digest told it.
@@ -204,11 +213,42 @@ class Problems(_Checks):
         self.assertEqual(self.last_what(), ["attention none → blocked"])
         self.assertFalse(self.check(attention="blocked"))
         self.assertFalse(self.check(attention="blocked"))
-        self.assertTrue(self.check(attention=""))
-        self.assertEqual(self.last_what(), ["attention blocked → none"])
+        # Over: quiet (the PO made that happen, or the next digest says so).
         self.assertFalse(self.check(attention=""))
+        self.assertIn("1 quiet change(s)", self.last["result"])
+        self.assertFalse(self.check(attention=""))
+        self.assertIn("1 quiet change(s)", self.last["result"])
+        # Blocked again: news again, even though the end was never sent.
         self.assertTrue(self.check(attention="blocked"))
-        self.assertEqual(len(self.sent), 3)
+        self.assertEqual(self.last_what(), ["attention blocked again"])
+        self.assertFalse(self.check(attention="blocked"))
+        self.assertEqual(len(self.sent), 2)
+
+    def test_a_problem_that_is_over_rides_the_next_digest(self):
+        self.check(attention="stalled")
+        self.assertFalse(self.check(attention=""))
+        self.assertFalse(self.check(head="def5678"))
+        self.assertTrue(self.check(attention="waiting_for_you"))
+        self.assertEqual(self.last_what(),
+                         ["attention stalled → waiting_for_you", "new commits"])
+        self.assertFalse(self.check(attention=""))
+        self.assertFalse(self.check(attention="waiting_for_you"))
+
+    def test_a_stall_coming_back_is_news(self):
+        self.assertTrue(self.check(attention="stalled"))
+        self.assertFalse(self.check(attention=""))
+        self.assertTrue(self.check(attention="stalled"))
+        self.assertEqual(self.last_what(), ["attention stalled again"])
+        self.assertFalse(self.check(attention=""))
+        self.assertTrue(self.check(attention="agent_gone"))
+        self.assertEqual(self.last_what(), ["attention stalled → agent_gone"])
+
+    def test_every_problem_rings(self):
+        for problem in ("blocked", "agent_gone", "stalled"):
+            with self.subTest(problem=problem):
+                self.assertTrue(self.check(attention=problem))
+                self.assertTrue(self.sent[-1]["changes"][0]["wakes"])
+                self.assertFalse(self.check(attention=""))
 
     def test_a_problem_that_turns_into_waiting_is_over(self):
         self.check(attention="stalled")
@@ -223,15 +263,41 @@ class Problems(_Checks):
         self.assertEqual(self.last_what(), ["attention stalled → agent_gone"])
 
 
-class StillNews(_Checks):
-    def test_commits_moves_and_status_still_send(self):
-        self.assertTrue(self.check(head="def5678"))
-        self.assertEqual(self.last_what(), ["new commits"])
-        self.assertTrue(self.check(column="inreview"))
-        self.assertEqual(self.last_what(), ["moved inprogress → inreview"])
-        self.assertTrue(self.check(status="stopped"))
-        self.assertEqual(self.last_what(), ["status running → stopped"])
+class QuietNews(_Checks):
+    def test_commits_moves_and_status_wait_for_a_ringing_digest(self):
+        self.assertFalse(self.check(head="def5678"))
+        self.assertEqual(self.last["result"],
+                         "1 quiet change(s) — nothing that needs the PO, kept for the next digest")
+        self.assertEqual(self.last["pending"], 1)
+        self.assertFalse(self.check(column="inreview"))
+        self.assertFalse(self.check(status="stopped"))
         self.assertFalse(self.check())
+        self.assertEqual(self.last["pending"], 1)
+        self.assertTrue(self.check(attention="blocked"))
+        self.assertEqual(self.last_what(), ["status running → stopped", "moved inprogress → inreview",
+                                            "attention none → blocked", "new commits"])
+        self.assertEqual(self.last["pending"], 0)
+        self.assertFalse(self.check())
+        self.assertEqual(self.last["result"], "nothing new — skipped, PO not woken")
+
+    def test_a_merge_is_quiet(self):
+        self.assertFalse(self.check(merged=True, column="done"))
+        self.assertIn("quiet", self.last["result"])
+
+    def test_check_now_sends_quiet_news(self):
+        self.assertFalse(self.check(head="def5678"))
+        self.assertTrue(self.check(force=True))
+        self.assertEqual(self.last_what(), ["new commits"])
+        self.assertFalse(self.sent[-1]["changes"][0]["wakes"])
+        self.assertFalse(self.check())
+        self.assertEqual(self.last["result"], "nothing new — skipped, PO not woken")
+
+    def test_a_new_task_is_quiet(self):
+        self.store["p1"]["tasks"] = {}
+        self.assertFalse(self.check())
+        self.assertIn("1 quiet change(s)", self.last["result"])
+        self.assertTrue(self.check(attention="blocked"))
+        self.assertEqual(self.last_what(), ["new task"])
 
     def test_nothing_new_is_logged_as_such(self):
         out = digest.check(PROJECT)

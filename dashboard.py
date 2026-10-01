@@ -2867,6 +2867,15 @@ def collab_briefing(ident: str, role: str, teammates: list, task: str,
 REVIEW_LOG_NAME = "REVIEW-LOG.md"
 REVIEW_VERDICTS = {"approve": "approved", "changes_requested": "changes requested",
                    "comment": "comments"}
+# A "changes requested" verdict before this review number is posted in the
+# PO's room without ringing the PO: the engineer is already on it (#147,
+# measured 2026-09-24..10-01: of 111 such wakes on rounds 1-2 the PO acted on
+# 30, all housekeeping — 37M tokens/week; from round 3 on it acted on 60%: a
+# loop forming, which it should see). Approved and comment verdicts always
+# ring: approved is in practice the "done" signal when an owner only moves
+# its task to In review. The PO still reads the quiet verdict at its next
+# wake — it is in its room like any report.
+VERDICT_WAKES_FROM = 3
 _REVIEW_LAUNCH_LOCK = threading.Lock()
 _REVIEW_LOG_LOCK = threading.Lock()
 # A message said with a key (review comments carry one made from the comments
@@ -2946,14 +2955,24 @@ def review_repo(room: dict) -> str:
     return ""
 
 
-def review_git_context(root: str) -> dict:
-    """Branch, base, commits and diff of the work under review."""
+def review_git_context(root: str, since: dict | None = None) -> dict:
+    """Branch, base, commits and diff of the work under review.
+
+    ``since`` is the previous review of this task (``{n, branch, head}``):
+    when it read this same branch at a commit that is still in its history
+    and the branch has not taken main in since (its merge-base is unchanged,
+    so the change since is the branch's own), the context also carries the
+    change since then — ``since``, ``sinceReview``, ``sinceCommits``,
+    ``sinceStat``, ``sinceDiff`` — and the brief leads with that instead of
+    the whole diff (#147: 115 of 247 later review rounds re-read the whole
+    branch against main, 205M tokens a week). A rebased branch, a different
+    branch, or main merged in since fall back to the whole diff."""
     if not root:
         return {}
     info = git_branch_base(root)
     mb = info.get("mergeBase") or ""
     against = mb or "HEAD"
-    return {
+    ctx = {
         "root": root, **info, "against": against,
         "head": _git_out(root, "rev-parse", "--short", "HEAD"),
         "status": _git_out(root, "status", "--short")[:2000],
@@ -2961,6 +2980,29 @@ def review_git_context(root: str) -> dict:
         "stat": _git_out(root, "diff", "--stat", against)[:3000],
         "diff": _git_out(root, "diff", against, timeout=20),
     }
+    old = str((since or {}).get("head") or "").strip()
+    if old and (since or {}).get("branch") == info.get("branch") \
+            and _git_ok(root, "merge-base", "--is-ancestor", old, "HEAD") \
+            and (not mb or _git_ok(root, "merge-base", "--is-ancestor", mb, old)):
+        ctx.update({
+            "since": old, "sinceReview": (since or {}).get("n") or 0,
+            "sinceCommits": _git_out(root, "log", "--oneline", f"{old}..HEAD")[:2000],
+            "sinceStat": _git_out(root, "diff", "--stat", old)[:3000],
+            "sinceDiff": _git_out(root, "diff", old, timeout=20),
+        })
+    return ctx
+
+
+def last_review_line(log_text: str) -> str:
+    """One line on the latest entry of a review log: its number, verdict and
+    summary; "" for an empty log."""
+    heads = list(re.finditer(r"^## Review (\d+) — ([^\n]*?) — [^\n]*$", log_text or "", re.M))
+    if not heads:
+        return ""
+    last = heads[-1]
+    rest = log_text[last.end():]
+    m = re.search(r"^- Summary: ([^\n]*)$", rest, re.M)
+    return f"Review {last.group(1)}: {last.group(2).strip()}" + (f" — {m.group(1).strip()}" if m else "")
 
 
 def _quote_block(text: str) -> str:
@@ -2989,6 +3031,7 @@ def review_brief(room: dict, part: dict, msg: dict, n: int, git: dict,
     if len(spec) > _BRIEF_SPEC_MAX:
         spec = spec[:_BRIEF_SPEC_MAX] + "\n\n… (cut — read the full spec with ensemble_get_task)"
     log_path = review_log_path(room)
+    last = last_review_line(log_text)
     if not log_text.strip():
         log = "(empty — this is the first review of this task)"
     elif len(log_text) > _BRIEF_LOG_MAX:
@@ -2996,25 +3039,48 @@ def review_brief(room: dict, part: dict, msg: dict, n: int, git: dict,
                + log_text[-_BRIEF_LOG_MAX:])
     else:
         log = log_text.strip()
+    if last:
+        log = f"Last: {last}\n\n{log}"
     if git.get("root"):
         diff = git.get("diff", "")
+        whole = f"git -C \"{git['root']}\" diff {git['against']}"
         lines = [f"Checkout: `{git['root']}`",
                  f"Branch `{git.get('branch') or '?'}` at `{git.get('head') or '?'}`"
                  + (f", compared with `{git['base']}` from merge-base `{git['mergeBase'][:10]}` "
                     f"({git.get('ahead', 0)} commits ahead)" if git.get("base") else
-                    " (on the main line — the change is what is uncommitted)"),
-                 f"Diff command: `git -C \"{git['root']}\" diff {git['against']}` "
-                 "(committed and uncommitted changes together)."]
-        if git.get("commits"):
-            lines.append("Commits:\n```\n" + git["commits"] + "\n```")
-        if git.get("status"):
-            lines.append("Uncommitted:\n```\n" + git["status"] + "\n```")
-        lines.append("Diff stat:\n```\n" + (git.get("stat") or "(no changes)") + "\n```")
-        if diff and len(diff) <= _BRIEF_DIFF_MAX:
-            lines.append("Diff:\n````diff\n" + diff + "\n````")
-        elif diff:
-            lines.append(f"The diff is {len(diff):,} characters — read it with the "
-                         "command above, file by file.")
+                    " (on the main line — the change is what is uncommitted)")]
+        if git.get("since"):
+            # A later review: lead with what changed since the last one read
+            # the branch; the whole change only as a stat and a command.
+            since, prev = git["since"], git.get("sinceReview") or 0
+            since_cmd = f"git -C \"{git['root']}\" diff {since}"
+            sdiff = git.get("sinceDiff", "")
+            lines.append(f"**Since review {prev or 'the last one'}**, which read this branch at "
+                         f"`{since}`: `{since_cmd}` is what changed since (committed and "
+                         "uncommitted together). The earlier reviews read the whole change; "
+                         f"read the whole diff (`{whole}`) only where the change since touches it.")
+            lines.append("Commits since:\n```\n" + (git.get("sinceCommits") or "(none)") + "\n```")
+            if git.get("status"):
+                lines.append("Uncommitted:\n```\n" + git["status"] + "\n```")
+            lines.append("Diff stat since:\n```\n" + (git.get("sinceStat") or "(no changes)") + "\n```")
+            if sdiff and len(sdiff) <= _BRIEF_DIFF_MAX:
+                lines.append("Diff since:\n````diff\n" + sdiff + "\n````")
+            elif sdiff:
+                lines.append(f"The diff since is {len(sdiff):,} characters — read it with "
+                             "the command above, file by file.")
+            lines.append("Whole change, stat only:\n```\n" + (git.get("stat") or "(no changes)") + "\n```")
+        else:
+            lines.append(f"Diff command: `{whole}` (committed and uncommitted changes together).")
+            if git.get("commits"):
+                lines.append("Commits:\n```\n" + git["commits"] + "\n```")
+            if git.get("status"):
+                lines.append("Uncommitted:\n```\n" + git["status"] + "\n```")
+            lines.append("Diff stat:\n```\n" + (git.get("stat") or "(no changes)") + "\n```")
+            if diff and len(diff) <= _BRIEF_DIFF_MAX:
+                lines.append("Diff:\n````diff\n" + diff + "\n````")
+            elif diff:
+                lines.append(f"The diff is {len(diff):,} characters — read it with the "
+                             "command above, file by file.")
         work = "\n\n".join(lines)
     else:
         work = ("No git checkout was found for this task. Review what the request "
@@ -3052,6 +3118,16 @@ Recent conversation before it:
     # The brief travels in a PowerShell here-string, which a line starting
     # with '@ would end early.
     return re.sub(r"(?m)^'@", " '@", brief)
+
+
+def previous_review(part: dict) -> dict:
+    """The reviewer seat's latest finished review (``{n, branch, head, ...}``),
+    {} before its first."""
+    hist = [r for r in (part.get("reviews") or []) if isinstance(r, dict)]
+    if hist:
+        return hist[-1]
+    cur = part.get("review") or {}
+    return cur if cur.get("endedAt") else {}
 
 
 def finish_review(room_id: str, identity: str, verdict: str) -> dict | None:
@@ -5613,6 +5689,17 @@ def _git_out(root: str, *args: str, timeout: int = 8) -> str:
     except (OSError, subprocess.SubprocessError):
         return ""
     return (out.stdout or "").strip() if out.returncode == 0 else ""
+
+
+def _git_ok(root: str, *args: str, timeout: int = 8) -> bool:
+    """Whether ``git -C root <args>`` succeeds (a yes/no question such as
+    ``merge-base --is-ancestor``)."""
+    try:
+        out = _run(["git", "-C", root, *args], capture_output=True, text=True,
+                   encoding="utf-8", errors="replace", timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return out.returncode == 0
 
 
 def git_branch_base(root: str) -> dict:
@@ -10495,7 +10582,7 @@ class Handler(BaseHTTPRequestHandler):
             log_text = read_review_log(room_full)
             n = review_count(log_text) + 1
             root = review_repo(room_full)
-            git = review_git_context(root)
+            git = review_git_context(root, since=previous_review(part))
             brief = review_brief(room_full, part, msg, n, git, log_text)
             try:
                 info = self._launch_room_agent_pty(room_full, part, "", collab=True,

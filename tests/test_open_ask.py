@@ -445,17 +445,20 @@ class TheProgressCheck(_Checks):
         # nothing on its screen says blocked. The ask is as open as it was.
         self.assertFalse(self.check(attention="", ask="blocked"))
         self.assertFalse(self.check(attention="", ask="blocked"))
-        # Something else is news meanwhile (a restart stopped it): the digest
-        # that goes out still does not say the block is over.
-        self.assertTrue(self.check(status="stopped"))
-        self.assertEqual(self.last_what(), ["status running → stopped"])
-        self.assertTrue(self.check(status="running", head="def5678"))
-        self.assertEqual(self.last_what(), ["status stopped → running", "new commits"])
+        # Something else is news meanwhile (a restart stopped it; quiet since
+        # #147): the digest that goes out still does not say the block is over.
+        self.assertFalse(self.check(status="stopped"))
+        self.assertTrue(self.check(force=True, status="running", head="def5678"))
+        self.assertEqual(self.last_what(), ["new commits"])
         self.assertNotIn("blocked →", self.sent[-1]["text"])
         self.assertIn("its blocked report is still open", self.sent[-1]["text"])
-        # It closes (the person answered, or a report cleared it): now it is over.
-        self.assertTrue(self.check(attention="", ask=""))
-        self.assertEqual(self.last_what(), ["attention blocked → none"])
+        self.assertFalse(self.check(attention="", ask="blocked"))
+        # It closes (the person answered, or a report cleared it): now it is
+        # over — quiet news, told with the next digest that rings.
+        self.assertFalse(self.check(attention="", ask=""))
+        self.assertIn("quiet", self.last["result"])
+        self.assertTrue(self.check(attention="waiting_for_you"))
+        self.assertEqual(self.last_what(), ["attention blocked → waiting_for_you"])
         self.assertFalse(self.check())
 
     def test_the_facts_carry_the_open_ask(self):
@@ -473,8 +476,10 @@ class TheProgressCheck(_Checks):
 
     def test_a_wall_on_the_screen_is_still_over_when_it_goes(self):
         self.assertTrue(self.check(attention="blocked"))        # a usage limit: no ask
-        self.assertTrue(self.check(attention=""))
-        self.assertEqual(self.last_what(), ["attention blocked → none"])
+        self.assertFalse(self.check(attention=""))              # over: quiet (#147)
+        self.assertIn("1 quiet change(s)", self.last["result"])
+        self.assertTrue(self.check(attention="blocked"))         # back: news again
+        self.assertEqual(self.last_what(), ["attention blocked again"])
 
 
 class TheReportTool(_Room):
