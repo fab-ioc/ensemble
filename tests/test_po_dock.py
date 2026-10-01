@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -248,9 +249,28 @@ class ThePanels(unittest.TestCase):
         self.assertTrue((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8").startswith("fab-ioc/dock "))
         for rel in ("static/dock/src/index.js", "static/dock/src/dock.js", "static/dock/src/layout.js",
                     "static/dock/src/host.js", "static/dock/css/dock.css", "static/dock/src/popout-page.js",
-                    "static/dock/src/theme-picker.js", "static/dock/src/install.js", "static/dock/src/screenshot.js"):
+                    "static/dock/src/theme-picker.js", "static/dock/src/install.js", "static/dock/src/screenshot.js",
+                    "static/dock/src/menu-items.js"):
             self.assertIn(rel, dashboard.PAGE_FILES)
             self.assertIn(f'href="/{rel}"', INDEX, f"the page lists {rel} for Page update")
+        # Every module the library's entry point reaches (a vendored version may
+        # add one: v0.10.0's menu-items.js) is a page file: stamped by the hub
+        # and listed by the page, or an edit to it never reaches an open tab, and
+        # a hub serving a copy of the page files (test_page_update) cannot draw
+        # the panels at all.
+        seen, todo = set(), ["static/dock/src/index.js"]
+        while todo:
+            rel = todo.pop()
+            if rel in seen:
+                continue
+            seen.add(rel)
+            src = (ROOT / rel).read_text(encoding="utf-8")
+            for m in re.finditer(r"^(?:import|export)\b[^;]*?\bfrom\s+'\./([\w.-]+\.js)'", src, re.M):
+                todo.append("static/dock/src/" + m.group(1))
+        self.assertGreaterEqual(len(seen), 10, seen)
+        for rel in sorted(seen):
+            self.assertIn(rel, dashboard.PAGE_FILES, f"{rel} is imported by the dock but not a page file")
+            self.assertIn(f'<link rel="modulepreload" href="/{rel}">', INDEX, f"the page lists {rel} for Page update")
         self.assertIn("Promise.resolve('/static/dock/src/index.js')", INDEX)
         self.assertIn("return import(u);", INDEX)
         self.assertNotIn("dock/css/theme.css", INDEX, "the --dk-* tokens read Ensemble's own")
@@ -785,6 +805,7 @@ class InChrome(unittest.TestCase):
         ]
         for p in cls.patches:
             p.start()
+            cls.addClassCleanup(p.stop)   # undone even when setUpClass fails
         ok, proj, _ = dashboard.register_project("Motors")
         assert ok, proj
         cls.proj = proj["id"]
@@ -866,8 +887,6 @@ class InChrome(unittest.TestCase):
     def tearDownClass(cls):
         cls.server.shutdown()
         cls.server.server_close()
-        for p in cls.patches:
-            p.stop()
         cls.tmp.cleanup()
 
     def test_the_default_at_1440_is_the_chat_and_the_tool_strip(self):

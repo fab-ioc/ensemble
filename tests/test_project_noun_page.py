@@ -183,6 +183,7 @@ class TheMainScreensSayInitiative(unittest.TestCase):
         ]
         for p in cls.patches:
             p.start()
+            cls.addClassCleanup(p.stop)   # undone even when setUpClass fails
         dashboard.save_settings({"projectNoun": {"one": "Initiative", "many": "Initiatives"}})
         ok, proj, _ = dashboard.register_project("Motors")
         assert ok, proj
@@ -211,8 +212,6 @@ class TheMainScreensSayInitiative(unittest.TestCase):
     def tearDownClass(cls):
         cls.server.shutdown()
         cls.server.server_close()
-        for p in cls.patches:
-            p.stop()
         cls.tmp.cleanup()
 
     def test_no_screen_says_project(self):

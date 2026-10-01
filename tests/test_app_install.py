@@ -96,13 +96,12 @@ class TheManifest(unittest.TestCase):
         cls.patches = [mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None)]
         for p in cls.patches:
             p.start()
+            cls.addClassCleanup(p.stop)   # undone even when setUpClass fails
         cls.hub = Hub()
 
     @classmethod
     def tearDownClass(cls):
         cls.hub.close()
-        for p in cls.patches:
-            p.stop()
 
     def test_it_is_served_as_a_manifest_and_names_the_app(self):
         code, h, body = self.hub.get("/manifest.webmanifest")
@@ -169,13 +168,12 @@ class TheGate(unittest.TestCase):
                        mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None)]
         for p in cls.patches:
             p.start()
+            cls.addClassCleanup(p.stop)   # undone even when setUpClass fails
         cls.hub = Hub()
 
     @classmethod
     def tearDownClass(cls):
         cls.hub.close()
-        for p in cls.patches:
-            p.stop()
 
     PROXIED = {"Host": "hub.tailnet.example", "X-Forwarded-For": "100.64.0.7",
                "X-Forwarded-Proto": "https", "X-Forwarded-Host": "hub.tailnet.example"}
@@ -418,6 +416,7 @@ class InChrome(unittest.TestCase):
         ]
         for p in cls.patches:
             p.start()
+            cls.addClassCleanup(p.stop)   # undone even when setUpClass fails
         ok, proj, _ = dashboard.register_project("Motors")
         assert ok, proj
         members = [{"identity": "claude", "agent": "claude", "cwd": str(proj["path"])},
@@ -440,8 +439,6 @@ class InChrome(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.hub.close()
-        for p in cls.patches:
-            p.stop()
         cls.tmp.cleanup()
 
     def test_the_page_is_installable_on_localhost(self):

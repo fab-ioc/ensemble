@@ -842,7 +842,9 @@ class InChrome(unittest.TestCase):
         ]
         for p in cls.patches:
             p.start()
+            cls.addClassCleanup(p.stop)   # undone even when setUpClass fails
         dashboard._STAMP_CACHE.clear()
+        cls.addClassCleanup(dashboard._STAMP_CACHE.clear)
         (base / "transcripts").mkdir()
         (base / "cs").mkdir()
         # One project with one long file, and one task room with many messages.
@@ -888,9 +890,6 @@ class InChrome(unittest.TestCase):
     def tearDownClass(cls):
         cls.server.shutdown()
         cls.server.server_close()
-        for p in cls.patches:
-            p.stop()
-        dashboard._STAMP_CACHE.clear()
         cls.tmp.cleanup()
 
     def test_session_holds_while_the_box_has_words_then_reloads_at_the_same_balloon(self):

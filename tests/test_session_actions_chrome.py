@@ -239,6 +239,7 @@ class InChrome(unittest.TestCase):
         ]
         for p in cls.patches:
             p.start()
+            cls.addClassCleanup(p.stop)   # undone even when setUpClass fails
         work = root / "Motors"
         work.mkdir()
         room = chatroom.create_room("Actions", [{"identity": "claude", "agent": "claude", "cwd": str(work)}])
@@ -259,8 +260,6 @@ class InChrome(unittest.TestCase):
     def tearDownClass(cls):
         cls.server.shutdown()
         cls.server.server_close()
-        for p in cls.patches:
-            p.stop()
         cls.tmp.cleanup()
 
     VIEWS = ("docked/1280", "popout/1280", "docked/360", "popout/360")
