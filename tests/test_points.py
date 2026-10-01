@@ -1207,6 +1207,77 @@ class FollowUps(_World):
         # A fresh ledger needs no derivation.
         self.assertEqual(points._empty("room-x")["derived"], points.DERIVED)
 
+    def shared(self):
+        """Two points answered by one balloon (sid-1:2): "Re P1: ... Re P2: ..."."""
+        rid = self.solo_room()
+        out1, _ = self.send(rid, "Why red?", at=self.t0)
+        out2, _ = self.send(rid, "And the cache?", at=self.t0 + 1)
+        self.add("sid-1", turn("user", out1, self.t0 + 1), turn("user", out2, self.t0 + 2),
+                 turn("assistant", "Re P1: A flaky test, in test_x; the build is green again.\n\n"
+                                   "Re P2: The CI cache was stale; it is purged nightly now.", self.t0 + 3))
+        self.assertEqual(self.state(rid), {"P1": "delivered", "P2": "delivered"})
+        return rid
+
+    def test_a_comment_closes_the_point_whose_paragraph_it_quotes(self):
+        rid = self.shared()
+        out, ids = self.send(rid, "## Review comments (1)\n\n**1.** > The CI cache was stale\n\nPurged by whom?",
+                             at=self.t0 + 10)
+        self.assertEqual(ids, ["P3"])
+        self.assertEqual(self.state(rid), {"P1": "delivered", "P2": "followed", "P3": "open"})
+        self.assertEqual((self.point(rid, "P2")["followedBy"], self.point(rid, "P3")["replyTo"]), ("P3", "P2"))
+        self.assertNotIn("followedBy", self.point(rid, "P1"))
+
+    def test_a_bare_link_to_a_shared_balloon_picks_the_point_named_else_the_newest(self):
+        rid = self.shared()
+        self.send(rid, f"On P1 in http://h/session?room={rid}&msg=sid-1:2 - which test?", at=self.t0 + 10)
+        self.assertEqual(self.state(rid), {"P1": "followed", "P2": "delivered", "P3": "open"})
+        self.assertEqual(self.point(rid, "P3")["replyTo"], "P1")
+        self.send(rid, f"And http://h/session?room={rid}&msg=sid-1:2 - nightly when?", at=self.t0 + 11)
+        self.assertEqual(self.state(rid), {"P1": "followed", "P2": "followed", "P3": "open", "P4": "open"})
+        self.assertEqual(self.point(rid, "P4")["replyTo"], "P2")
+
+    def test_re_pn_from_the_person_reopens_a_followed_point(self):
+        rid = self.solo_room()
+        self.answered(rid)
+        self.send(rid, "## Review comments (1)\n\n**1.** > A flaky test, in test_x\n\nWhich test exactly?",
+                  at=self.t0 + 10)
+        self.assertEqual(self.state(rid)["P1"], "followed")
+        out, ids = self.send(rid, "Re P1: and the cache?", at=self.t0 + 20)
+        self.assertEqual(ids, ["P1"])
+        self.assertEqual(self.state(rid)["P1"], "open")
+        self.assertEqual(self.point(rid, "P1")["reopenedAt"], self.t0 + 20)
+
+    def test_a_comment_on_a_plan_only_links_until_it_is_delivered(self):
+        rid = self.solo_room()
+        out, _ = self.send(rid, "Why red?", at=self.t0)
+        self.add("sid-1", turn("user", out, self.t0 + 1),
+                 turn("assistant", "Re P1 (planned #104): a task will look at the flaky test.", self.t0 + 2))
+        self.assertEqual(self.state(rid), {"P1": "planned"})
+        out, _ = self.send(rid, "## Review comments (1)\n\n**1.** > a task will look at the flaky test\n\nWhich task?",
+                           at=self.t0 + 10)
+        self.assertEqual(self.state(rid), {"P1": "planned", "P2": "open"})
+        self.assertEqual((self.point(rid, "P1")["followedBy"], self.point(rid, "P2")["replyTo"]), ("P2", "P1"))
+        self.add("sid-1", turn("user", out, self.t0 + 11), turn("assistant", "Re P1: it is live.", self.t0 + 12))
+        self.assertEqual(self.state(rid)["P1"], "delivered")
+
+    def test_a_thumbs_up_on_the_answer_acknowledges_a_followed_point(self):
+        rid = self.solo_room()
+        self.answered(rid)
+        self.send(rid, "## Review comments (1)\n\n**1.** > A flaky test, in test_x\n\nWhich test exactly?",
+                  at=self.t0 + 10)
+        self.assertEqual(self.state(rid)["P1"], "followed")
+        self.assertTrue(points.approve(rid, "sid-1:1", now=self.t0 + 20))
+        self.assertEqual(self.state(rid)["P1"], "acked")
+
+    def test_the_view_carries_the_words_a_comment_quoted(self):
+        rid = self.solo_room()
+        self.answered(rid)
+        self.send(rid, "## Review comments (1)\n\n**1.** > A *flaky* test, in `test_x`\n\nWhich test exactly?",
+                  at=self.t0 + 10)
+        items = {i["id"]: i for i in points.view(rid)["items"]}
+        self.assertEqual(items["P2"]["quote"], "A *flaky* test, in `test_x`")
+        self.assertNotIn("quote", items["P1"])
+
     def test_what_an_answer_says_to_a_point(self):
         text = ("Hello.\n\nRe P3: it is live now.\n\nMore on it: reload the page.\n\nRe P4 (planned #9): on it.\n\n"
                 "```\nRe P3: not this\n```")

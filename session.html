@@ -2834,10 +2834,13 @@ const ptAnswerOf = p => p ? (p.state === 'planned' ? lastPlan(p) : (lastAnswer(p
 const ptSaid = (a, n = 200) => { const t = a ? String(a.said || a.summary || '') : ''; return t.length > n ? t.slice(0, n - 1) + '…' : t; };
 // The thread a point is in: "follow-up to P103 ↑" (linked to P103's answer)
 // and, on P103, "followed up by P105 ↓" (linked to P105's message).
+// The passage of the answer a follow-up leads to: its "Re Pn:" paragraph; an
+// answer without one (a first reply) lands on the words the follow-up quoted.
+const ptPartTo = (up, a, p) => (a && a.how !== 're' && p && p.quote) ? 'q:' + p.quote : 're:' + up.id;
 function ptThreadHtml(p, P, href) {
   const bits = [];
   const up = p.replyTo && P.byId.get(p.replyTo);
-  if (up) { const a = ptAnswerOf(up); bits.push(`<span class="pt-chip pt-thread">follow-up to ${a && a.mid ? ptLink(a.mid, up.id + ' ↑', href, `Go to the answer to ${up.id}, which this follows up`, 're:' + up.id) : esc(up.id)}</span>`); }
+  if (up) { const a = ptAnswerOf(up); bits.push(`<span class="pt-chip pt-thread">follow-up to ${a && a.mid ? ptLink(a.mid, up.id + ' ↑', href, `Go to the answer to ${up.id}, which this follows up`, ptPartTo(up, a, p)) : esc(up.id)}</span>`); }
   const down = p.followedBy && P.byId.get(p.followedBy);
   if (down) bits.push(`<span class="pt-chip pt-thread">followed up by ${down.mid ? ptLink(down.mid, down.id + ' ↓', href, `Go to ${down.id}, your follow-up`, 'pt:' + down.id) : esc(down.id)}</span>`);
   return bits.join('');
@@ -3071,7 +3074,10 @@ function renderBubbles(items, opt = {}) {
   };
   // An opened group stays open while some of it is kept apart for a while.
   const every = chatGroups(items);
-  FOLD.groups.forEach(k => { if (k.startsWith('g:') && !every.some(g => g.key === k)) FOLD.groups.delete(k); });
+  FOLD.groups.forEach(k => {
+    if (k.startsWith('g:') && !every.some(g => g.key === k)) FOLD.groups.delete(k);
+    if (clean && k.startsWith('gap:') && !gaps.some(g => g.key === k)) FOLD.groups.delete(k);   // a gap that is no more
+  });
   const groups = every.map(g => FOLD.groups.has(g.key) ? g : groupKept(g, kept)).filter(Boolean);
   const groupAt = new Map(), hiddenIn = new Map();
   GROUP_OF_MID = new Map();
@@ -3562,7 +3568,8 @@ function partOf(el, part) {
   if (!text) return null;
   if (m[1] === 're') {
     const re = new RegExp('^\\W*re\\s+' + escRe(m[2]) + '\\b', 'i');
-    return [...text.querySelectorAll(':scope > *, li')].find(b => re.test(b.textContent || '')) || null;
+    // A list item before the blocks around it, so a "Re P12" item marks itself, not its whole list.
+    return [...text.querySelectorAll('li'), ...text.querySelectorAll(':scope > *')].find(b => re.test(b.textContent || '')) || null;
   }
   const q = m[2].trim();
   const i = q ? (text.textContent || '').indexOf(q) : -1;

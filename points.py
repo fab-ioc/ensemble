@@ -299,9 +299,15 @@ def norm_text(text: str) -> str:
 
 
 def quotes(text: str) -> list[str]:
-    """The passages a point quotes: each run of ``> `` lines (a review
-    comment starts ``**1.** > the passage``; the person may quote by hand),
-    outside code fences, normalised, those long enough to name a balloon."""
+    """The passages a point quotes, normalised, those long enough to name a
+    balloon (:func:`raw_quotes` for the words as written)."""
+    return [q for q in (norm_text(x) for x in raw_quotes(text)) if len(q) >= _QUOTE_MIN]
+
+
+def raw_quotes(text: str) -> list[str]:
+    """The passages a point quotes, as written: each run of ``> `` lines (a
+    review comment starts ``**1.** > the passage``; the person may quote by
+    hand), outside code fences."""
     out, cur, fence = [], [], None
     for ln in strip_point_lines(text).split("\n"):
         f = _FENCE_ANY.match(ln)
@@ -321,7 +327,7 @@ def quotes(text: str) -> list[str]:
             cur = []
     if cur:
         out.append(" ".join(cur))
-    return [q for q in (norm_text(x) for x in out) if len(q) >= _QUOTE_MIN]
+    return [" ".join(x.split()) for x in out if x.strip()]
 
 
 def balloon_refs(text: str, room_id: str) -> list[str]:
@@ -635,9 +641,18 @@ def _balloon_words(room_id: str, mid: str, cache: dict) -> str:
     return cache[mid]
 
 
-def _answer_mids(p: dict) -> list[tuple[float, str]]:
-    """(when, balloon) of each answer and plan of a point that has a balloon."""
-    return [(float(a.get("at") or 0), a["mid"]) for a in p.get("answers") or [] if a.get("mid")]
+def _answer_mids(p: dict) -> list[tuple[float, str, dict]]:
+    """(when, balloon, answer) of each answer and plan of a point that has a balloon."""
+    return [(float(a.get("at") or 0), a["mid"], a) for a in p.get("answers") or [] if a.get("mid")]
+
+
+_PID_RE = re.compile(r"\bP(\d{1,5}[a-z]?)\b", re.I)
+
+
+def _named_ids(text: str) -> set[str]:
+    """The point ids a text names (``P45``), outside its quoted passages."""
+    body = "\n".join(ln for ln in strip_point_lines(text).split("\n") if not re.match(r"^\s*(?:\*\*\d+\.\*\*\s*)?>", ln))
+    return {_norm_id("P" + m) for m in _PID_RE.findall(body)}
 
 
 def _ancestors(pts: dict, p: dict) -> set[str]:
@@ -652,8 +667,12 @@ def follow_parent(led: dict, p: dict, room_id: str, cache: dict | None = None,
                   scan: int = _FOLLOW_SCAN) -> dict | None:
     """The point ``p`` follows up, or None: an older point whose answer (or
     plan) balloon ``p`` links to, else one whose answer holds a passage ``p``
-    quotes. The newest such answer wins. A point never follows itself, its
-    own descendants, a point of the same message, or one made after it."""
+    quotes. A link beats a quote; among links, and among quotes, the newest
+    balloon wins. One balloon may answer several points ("Re P1: … Re P2:
+    …"): of those, the point whose own words (``said``) ``p`` quotes, else
+    the one ``p`` names (``P2``), else the newest. A point never follows
+    itself, its own descendants, a point of the same message, or one made
+    after it."""
     cache = {} if cache is None else cache
     pts = _live(led)
     text = p.get("text") or ""
@@ -664,13 +683,29 @@ def follow_parent(led: dict, p: dict, room_id: str, cache: dict | None = None,
     others = [o for o in led["points"] if o is not p and o.get("mid") != p.get("mid")
               and o["createdAt"] <= p["createdAt"] and o["state"] != "split"
               and o["id"] not in _ancestors(pts, p) and p["id"] not in _ancestors(pts, o)]
-    answers = sorted(((at, mid, o) for o in others for at, mid in _answer_mids(o)), key=lambda x: -x[0])
+    # Newest balloon first; of one balloon, the newest point first.
+    answers = sorted(((at, mid, o, a) for o in others for at, mid, a in _answer_mids(o)),
+                     key=lambda x: (-x[0], -float(x[2]["createdAt"]), x[2]["id"]))
+    said_has = lambda a: bool(qs) and any(q in norm_text(a.get("said") or "") for q in qs)   # noqa: E731
+    named = _named_ids(text)
     if refs:
-        for _at, mid, o in answers:
-            if mid in refs:
-                return o
+        linked = [(mid, o, a) for _at, mid, o, a in answers if mid in refs]
+        if linked:
+            first = linked[0][0]
+            same = [(o, a) for mid, o, a in linked if mid == first]
+            for o, a in same:
+                if said_has(a):
+                    return o
+            for o, _a in same:
+                if o["id"] in named:
+                    return o
+            return same[0][0]
     if qs:
-        for _at, mid, o in answers[:scan]:
+        seen = answers[:scan]
+        for _at, _mid, o, a in seen:
+            if said_has(a):
+                return o
+        for _at, mid, o, _a in seen:
             words = _balloon_words(room_id, mid, cache)
             if words and any(q in words for q in qs):
                 return o
@@ -679,13 +714,14 @@ def follow_parent(led: dict, p: dict, room_id: str, cache: dict | None = None,
 
 def _link_follow(parent: dict, child: dict, now: float) -> bool:
     """``child`` follows up ``parent``: the parent is handled (closed as
-    ``followed`` while it was still waiting on someone; an acknowledged or
+    ``followed`` while it was waiting for the person's check; one in
+    progress stays so, its delivery still to come, and an acknowledged or
     dropped one only gets the link), the child carries ``replyTo``."""
     if child.get("replyTo") == parent["id"]:
         return False
     parent.setdefault("followedBy", child["id"])     # the first follow-up; later ones only point back
     child["replyTo"] = parent["id"]
-    if parent["state"] in LIVE:
+    if parent["state"] == "delivered":
         _set_state(parent, "followed", now)
         parent["followedAt"] = now
     return True
@@ -789,7 +825,7 @@ def take(room: dict, text: str, to: str = "", key: str = "", now: float | None =
                 # What this send changed, for discard() when it is refused
                 # or dropped: one entry per send, newest last.
                 u = {"key": key, "at": now, **{k: p.get(k) for k in _UNDO_FIELDS}}
-                if p["state"] in ("planned", "delivered", "acked", "dropped"):
+                if p["state"] in ("planned", "delivered", "acked", "dropped", "followed"):
                     _set_state(p, "open", now)
                     p["reopenedAt"] = now
                 p["followKey"] = key or p.get("followKey", "")
@@ -1186,7 +1222,7 @@ def approve(room_id: str, mid: str, now: float | None = None) -> bool:
             return False
         led["approvals"][mid] = now
         for p in led["points"]:
-            if p["state"] in ("open", "delivered") and any(a.get("mid") == mid and a.get("kind") != "plan"
+            if p["state"] in ("open", "delivered", "followed") and any(a.get("mid") == mid and a.get("kind") != "plan"
                                                           for a in p["answers"]):
                 u = {"mid": mid, "state": p["state"], "stateAt": p.get("stateAt"),
                      "ackedBy": p.get("ackedBy")}
@@ -1327,6 +1363,12 @@ def _item(p: dict, task=None) -> dict:
     out = {k: p.get(k) for k in ("id", "state", "owner", "createdAt", "stateAt", "mid", "followUps",
                                  "parent", "comment", "followedBy", "replyTo") if p.get(k) not in (None, "", [])}
     out["text"] = strip_point_lines(p.get("text") or "")[:400]
+    if p.get("replyTo"):
+        # The passage of the answer a follow-up quotes, as written, so a link
+        # to that answer can land on those words when it has no "Re Pn:" paragraph.
+        rq = raw_quotes(p.get("text") or "")
+        if rq:
+            out["quote"] = rq[0][:200]
     if p.get("follows"):
         out["follows"] = [{"text": (f.get("text") or "")[:400], "at": f.get("at")} for f in p["follows"]]
     out["answers"] = [{k: a[k] for k in ("mid", "at", "how", "summary", "kind", "task", "said") if a.get(k)}

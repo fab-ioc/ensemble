@@ -134,6 +134,11 @@ out.barChild = T.pointBarHtml({ id: 'u2', from: 'user' }, P, href);
 out.barChildAnswer = T.pointBarHtml({ id: 'a2', from: 'claude', text: 'test_login.' }, P, href);
 out.keep = [...P.keep].sort();
 out.word = T.PT_WORD.followed;
+// A follow-up of an ask whose answer has no "Re Pn:" paragraph (a first reply)
+// leads to the words it quoted; one whose answer has the paragraph leads there.
+const pv2 = { ...pv, items: [...pv.items.map(p => p.id === 'P2' ? { ...p, state: 'followed', followedBy: 'P3' } : p),
+  { id: 'P3', state: 'open', text: '**1.** > test_login\n\nWhich file?', createdAt: 130, mid: 'u3', replyTo: 'P2', comment: true, quote: 'test_login', answers: [] }] };
+out.listQ = T.pointsListHtml(T.pointMaps(pv2), href, 2000);
 console.log(JSON.stringify(out));
 """
 
@@ -199,6 +204,13 @@ class InNode(unittest.TestCase):
         self.assertIn('data-ref-part="pt:P2" title="Go to your message">your message ↑</a>', lst)
         self.assertEqual(self.o["word"], "followed up")
         self.assertEqual(self.o["keep"], ["a2"], "a followed-up ask may fold; the unacknowledged answer never")
+
+    def test_a_follow_up_of_a_first_reply_leads_to_the_words_it_quoted(self):
+        lst = self.o["listQ"]
+        p3 = lst[lst.index('data-pt="P3"'):]
+        self.assertIn('follow-up to <a class="pt-link" href="/session?room=room-po&amp;msg=a2&amp;part=q:test_login" data-ref-msg="a2" data-ref-part="q:test_login"', p3,
+                      "P2's answer has no 'Re P2' paragraph: the link lands on the quoted words")
+        self.assertIn('data-ref-part="re:P1"', self.o["list"], "P1's answer has one: the link lands on it")
 
     def test_the_bars_read_as_one_thread(self):
         self.assertIn("P1 · followed up ↓", self.o["barHis"])

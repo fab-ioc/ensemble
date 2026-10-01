@@ -603,7 +603,9 @@ Needs you.**
   "plan ↓" carry `re:P12` and mark the block starting "Re P12"; "your message ↑" carries `pt:P12`
   and marks the numbered item holding that ask's chip; a quote (`q:…`) marks its words. Only when
   the balloon has no such passage is the balloon itself marked. The mark is the landing mark
-  (`.landed`: the drop-target treatment, fading), on the passage. A copied link carries `&part=`.
+  (`.landed`: the drop-target treatment, fading), on the passage. A link from an ask carries `&part=`
+  and can be copied as such; the balloon's own **Copy link** names the balloon. A comment on a
+  *plan* balloon only links the thread: the ask stays in progress until its delivery.
 - **The bar under a balloon** (`.pt-bar`, a hairline `--border` above it): on the person's balloon
   each point and where it stands ("P12 · waiting for an answer", "P12 · answered ↓" linked to the
   answer, "acknowledged", "dropped") with Drop or Reopen; on the agent's, "answers P12 ↑" linked to

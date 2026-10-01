@@ -10348,7 +10348,9 @@ function pdPointsHtml(told, now) {
   const thread = p => {
     const bits = [];
     const up = p.replyTo && byId.get(p.replyTo), ua = answerOf(up);
-    if (up) bits.push(`<span class="pdp-thread">follow-up to ${ua && ua.mid ? link(ua.mid, up.id + ' ↑', `Go to the answer to ${up.id}, which this follows up`, 're:' + up.id) : esc(up.id)}</span>`);
+    // An answer without a "Re Pn:" paragraph (a first reply) lands on the words the follow-up quoted.
+    const upPart = ua && ua.how !== 're' && p.quote ? 'q:' + p.quote : 're:' + (up ? up.id : '');
+    if (up) bits.push(`<span class="pdp-thread">follow-up to ${ua && ua.mid ? link(ua.mid, up.id + ' ↑', `Go to the answer to ${up.id}, which this follows up`, upPart) : esc(up.id)}</span>`);
     const down = p.followedBy && byId.get(p.followedBy);
     if (down) bits.push(`<span class="pdp-thread">followed up by ${down.mid ? link(down.mid, down.id + ' ↓', `Go to ${down.id}, your follow-up`, 'pt:' + down.id) : esc(down.id)}</span>`);
     return bits.join('');
