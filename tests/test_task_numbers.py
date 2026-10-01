@@ -35,6 +35,7 @@ import dashboard  # noqa: E402
 import digest  # noqa: E402
 import ensemble_tools  # noqa: E402
 import message_refs as mr  # noqa: E402
+import po_messages  # noqa: E402
 import task_numbers as tn  # noqa: E402
 
 PORT = 8798
@@ -717,6 +718,40 @@ class WhatTheHubWrites(Addresses):
         sent = {**pomsg, "direction": "sent", "fromProjectId": self.ed}
         self.assertEqual(dashboard.with_message_refs(sent["text"], self.a, dashboard.ref_project(sent)),
                          dashboard.with_message_refs(sent["text"], self.a))
+
+    def test_the_pos_message_reaches_the_agent_by_every_path(self):
+        # Review 1 of #152: the rule above must hold where an agent actually
+        # gets a PO's message: the wake line typed to a live or resumed PO,
+        # chat_read in a team, and ensemble_read_message.
+        meta = {"id": "pm-00000001", "name": "OPtionTradingENgine PO's info", "poKind": "info", "fromProjectId": self.ot,
+                "fromProjectName": "OPtionTradingENgine", "toProjectId": self.ed, "toProjectName": "Ensemble Dashboard",
+                "fromRoomId": "room-other", "toRoomId": self.po, "direction": "received"}
+        item = {"id": meta["id"], "fromProjectId": self.ot, "toProjectId": self.ed, "fromName": "OPtionTradingENgine",
+                "kind": "info", "firstLine": "Needs 15 and 16 are drafted as #1", "at": 0.0, "name": meta["name"]}
+        line, told = po_messages.wake_line([item])
+        typed = po_messages.wake_input(self.a, line, told)
+        self.assertTrue(typed.startswith(line), typed)
+        self.assertIn('[ref #1] task O-1 "Trading one"', typed, "a live PO's line: the sender's #1")
+        self.assertNotIn("Alpha", typed)
+        # A stopped PO: the line waits as a send item that carries the project.
+        it = dashboard.send_item(line, "", 0.0, "pomsg:" + meta["id"], self.ot)
+        self.assertEqual(dashboard.ref_project(it), self.ot)
+        self.assertNotIn("kind", dashboard.send_item("hello", "", 0.0, "k"), "a person's send names no project")
+        self.assertEqual(dashboard.ref_project(dashboard.send_item("hello", "", 0.0, "k")), "")
+        # A team's chat_read: the PO message's sender is nobody in the room, its refs are written out all the same.
+        chatroom.post_po_message(self.a, "claude@room-other", "claude", "Needs 15 and 16 are drafted as #1", meta)
+        res = dashboard.Handler._mcp_tool_call(SimpleNamespace(), "chat_read", {}, self.a, "claude", lambda x: x, lambda *a: a)
+        self.assertIn('[ref #1] task O-1 "Trading one"', res["content"][0]["text"])
+        self.assertTrue(dashboard.refs_expanded({}, {"from": "claude@room-other", "kind": "pomsg"}))
+        self.assertFalse(dashboard.refs_expanded({}, {"from": "claude@room-other", "kind": "chat"}))
+        # ensemble_read_message, by the receiving PO and by the sender.
+        chatroom.post_po_message(self.po, "claude@room-other", "claude", "Needs 15 and 16 are drafted as #1", meta)
+        out, err = self.tool("ensemble_read_message", {"id": meta["id"]})
+        self.assertFalse(err, out)
+        self.assertIn('[ref #1] task O-1 "Trading one"', out["text"])
+        chatroom.post_po_message(self.po, "claude", "claude@room-other", "Look at #1", {**meta, "id": "pm-00000002", "fromProjectId": self.ed, "direction": "sent"})
+        out, err = self.tool("ensemble_read_message", {"id": "pm-00000002"})
+        self.assertIn('[ref #1] task "Alpha"', out["text"], "the sender's own #1")
 
     def test_task_lines_come_after_balloon_blocks_and_strip_together(self):
         url = f"http://127.0.0.1:8765/session?room={self.a}&msg=aaaaaaaaaaaa"

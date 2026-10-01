@@ -2660,6 +2660,17 @@ def with_message_refs(text: str, room_id: str = "", project_id: str = "") -> str
     return message_refs.expand_message_refs(text, resolve_message_ref, task_lookup_for(room_id, project_id))
 
 
+def send_item(text: str, to: str, at: float, key: str = "", project: str = "") -> dict:
+    """What a send to a room holds until it is typed or posted (_resume_room,
+    _deliver_now): the text, its recipient, when, the send's key — and, for
+    another project's PO's message, that project (kind ``pomsg``, read by
+    ref_project when the line is typed)."""
+    it = {"text": text, "to": to, "at": at, "key": key}
+    if project:
+        it.update(kind="pomsg", fromProjectId=project)
+    return it
+
+
 def ref_project(item: dict | None) -> str:
     """The project a message's bare task numbers (#27) are read in, when it is
     not the room's own: a message from another project's PO (kind ``pomsg``,
@@ -2712,6 +2723,14 @@ def refs_expanded_for(room: dict, sender: str) -> bool:
     return sender == chatroom.HUMAN_IDENTITY or any(
         chatroom.is_product_owner_part(p) and p.get("identity") == sender
         for p in chatroom.agent_participants(room or {}))
+
+
+def refs_expanded(room: dict, msg: dict) -> bool:
+    """Whether a room message reaches an agent with its references written
+    out (with_message_refs): refs_expanded_for its sender, or a message from
+    another project's PO (kind ``pomsg``, whose sender is ``claude@room-…``,
+    nobody in this room) — its numbers read in that project, ref_project."""
+    return refs_expanded_for(room, msg.get("from", "")) or msg.get("kind") == "pomsg"
 
 
 class _NotTyped(Exception):
@@ -3191,7 +3210,7 @@ Do NOT design or implement — the engineer builds, you review. Check the work a
 ## What you were asked
 From {who}:
 
-{_quote_block(with_message_refs(msg.get('text', ''), room.get('id', ''), ref_project(msg)) if refs_expanded_for(room, sender) else msg.get('text', ''))}
+{_quote_block(with_message_refs(msg.get('text', ''), room.get('id', ''), ref_project(msg)) if refs_expanded(room, msg) else msg.get('text', ''))}
 
 Recent conversation before it:
 {context}
@@ -11307,7 +11326,7 @@ class Handler(BaseHTTPRequestHandler):
     # as ONE input: an agent is woken once, never twice.
 
     def _resume_room(self, room_full: dict, text: str = "", to: str = "",
-                     key: str = "", quiet: bool = False) -> dict:
+                     key: str = "", quiet: bool = False, project: str = "") -> dict:
         """Resume a room, delivering ``text`` (if any) once it is up — or, when
         it is already running, deliver right away. What a failed resume still
         holds comes along with ANY new attempt (a fresh text, a plain Resume,
@@ -11317,10 +11336,12 @@ class Handler(BaseHTTPRequestHandler):
         queued, delivered}. Raises StartRoomError when the hub refuses; the
         message is then kept for a retry. ``quiet``: bring the agents back
         without the resume note (a room that was only stopped by a hub crash
-        or restart); a text still goes in."""
+        or restart); a text still goes in. ``project``: the text is another
+        project's PO's message (po_messages), whose bare task numbers are read
+        in that project when the line is typed (ref_project)."""
         rid = room_full["id"]
         now = time.time()
-        items = [{"text": text, "to": to, "at": now, "key": key}] if text else []
+        items = [send_item(text, to, now, key, project)] if text else []
         start = direct = carried = False
         with _RESUMES_LOCK:
             res = _RESUMES.get(rid)
@@ -12392,7 +12413,7 @@ class Handler(BaseHTTPRequestHandler):
                 room = chatroom.get_room(room_id) or {}
                 body = "\n".join(
                     f"[from {m['from']}] "
-                    + (with_message_refs(m["text"], room_id, ref_project(m)) if refs_expanded_for(room, m["from"]) else m["text"])
+                    + (with_message_refs(m["text"], room_id, ref_project(m)) if refs_expanded(room, m) else m["text"])
                     for m in msgs)
             return ok({"content": [{"type": "text", "text": body}],
                        "isError": False})

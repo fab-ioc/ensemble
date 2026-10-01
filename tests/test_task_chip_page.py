@@ -13,7 +13,11 @@ whose messages name tasks by number — this project's #18 and #2, and Dock's
   Enter on a focused chip opens it;
 * on a computer, resting the pointer on a chip opens the card after a moment
   and leaving closes it;
-* a double click opens the task (the page goes to it);
+* a double click opens the task once, leaving no card (the page goes to it);
+* the pointer crossing from the chip to its card keeps the card; crossing to
+  another chip and away does not leave it open;
+* a chip in another document (a panel popped out into a window of its own)
+  gets its card in that document;
 * on the phone the card wraps and the title is a finger's height.
 
 Screenshots go to $ENSEMBLE_SHOTS when it is set. Skipped without Node and
@@ -155,7 +159,44 @@ async function main() {
         await p.evalIn(`(() => { const a = document.querySelector('#msgs a.task-chip[data-task="${A.eighteen}"]'); a.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, pointerType: 'mouse', relatedTarget: document.body })); return 0; })()`);
         await sleep(500);
         o.hoverLeft = await p.evalIn(VIEW);
+        // The pointer crosses from the chip onto its card: the card stays; off the card: it closes.
+        const over = (sel, to) => p.evalIn(`(() => { const a = document.querySelector('${sel}'); a.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, pointerType: 'mouse' })); return 0; })()`);
+        const out_ = (sel, toSel) => p.evalIn(`(() => { const a = document.querySelector('${sel}'); a.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, pointerType: 'mouse', relatedTarget: ${toSel ? "document.querySelector('" + toSel + "')" : 'document.body'} })); return 0; })()`);
+        const eighteen = `#msgs a.task-chip[data-task="${A.eighteen}"]`;
+        await over(eighteen); await sleep(700);
+        await out_(eighteen, '.task-card .tc-title'); await over('.task-card .tc-title'); await sleep(500);
+        o.hoverToCard = await p.evalIn(VIEW);
+        await out_('.task-card .tc-title'); await sleep(500);
+        o.hoverOffCard = await p.evalIn(VIEW);
+        // From the chip onto another chip and away before its card: nothing stays open.
+        await over(eighteen); await sleep(700);
+        o.hoverAgain = await p.evalIn(VIEW);
+        await out_(eighteen, two); await over(two); await sleep(100); await out_(two); await sleep(500);
+        o.hoverAcross = await p.evalIn(VIEW);
       }
+      // A chip in another document (a popped-out panel): its card opens there, not here.
+      o.other = await p.evalIn(`(async () => {
+        const sleep = ms => new Promise(r => setTimeout(r, ms));
+        const f = document.createElement('iframe'); f.style.cssText = 'position:fixed;left:0;top:0;width:600px;height:200px'; document.body.appendChild(f);
+        await sleep(200);     // the frame's document settled (its own resize/load are over)
+        const d = f.contentDocument; d.body.innerHTML = document.querySelector('${two}').outerHTML;
+        const r = { there: false, title: '', here: false, styled: false, err: '' };
+        try {
+          TaskCard.init({ doc: d, open: () => {} });
+          const chip = d.querySelector('a.task-chip');
+          chip.dispatchEvent(new f.contentWindow.MouseEvent('click', { bubbles: true, cancelable: true, button: 0, detail: 1 }));
+          await sleep(150);
+          const card = d.querySelector('.task-card');
+          Object.assign(r, { there: !!card, title: card ? card.querySelector('.tc-title').textContent : '', here: !!document.querySelector('.task-card'), styled: !!d.getElementById('task-card-style'),
+                             same: d === f.contentDocument, html: d.body.innerHTML.length });
+        } catch (e) { r.err = String(e && e.stack || e); }
+        f.remove(); return r; })()`);
+      // A double click: the task once, no card left behind (counted with the page's opener swapped out).
+      await p.evalIn(`(() => { const S = TaskCard.init(); window.__opens = []; window.__open = S.openTask; S.openTask = a => { window.__opens.push(a.getAttribute('href')); }; return 0; })()`);
+      await p.click(two, 2);
+      await sleep(700);
+      o.dbl = await p.evalIn(`({ opens: window.__opens, card: !!document.querySelector('.task-card'), expanded: document.querySelector('${two}').getAttribute('aria-expanded') })`);
+      await p.evalIn(`(() => { TaskCard.init().openTask = window.__open; return 0; })()`);
       // A double click opens the task: the page goes to it.
       await p.click(two, 2);
       await p.until(`location.search.includes('id=${A.two}') || location.search.includes('room=${A.two}')`, 15000);
@@ -338,9 +379,26 @@ class ChipAndCard(unittest.TestCase):
         self.assertEqual(o["hover"]["card"]["title"], "Chips in chat")
         self.assertIsNone(o["hoverLeft"]["card"], "leaving closes it")
 
+    def test_the_pointer_crossing_to_the_card_keeps_it(self):
+        o = self.got["1280"]
+        if not o["chips"]["fine"]:
+            self.skipTest("this Chrome reports no fine pointer")
+        self.assertIsNotNone(o["hoverToCard"]["card"], "onto the card over the gap: it stays")
+        self.assertEqual(o["hoverToCard"]["card"]["title"], "Chips in chat")
+        self.assertIsNone(o["hoverOffCard"]["card"], "off the card: it closes")
+        self.assertIsNotNone(o["hoverAgain"]["card"])
+        self.assertIsNone(o["hoverAcross"]["card"], "onto another chip and away: not left open (review 1)")
+
+    def test_a_chip_in_another_document_gets_its_card_there(self):
+        for w, o in self._both():
+            with self.subTest(width=w):
+                self.assertEqual(o["other"], {"there": True, "title": LONG, "here": False, "styled": True, "err": "", "same": True, "html": o["other"].get("html")})
+
     def test_a_double_click_opens_the_task(self):
         for w, o in self._both():
             with self.subTest(width=w):
+                self.assertEqual(o["dbl"], {"opens": [f"/session?id={self.two}"], "card": False, "expanded": "false"},
+                                 "opened once, no card left behind")
                 self.assertEqual(o["opened"], f"/session?id={self.two}")
 
 

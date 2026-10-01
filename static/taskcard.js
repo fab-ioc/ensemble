@@ -213,7 +213,9 @@ a.task-chip.tc-wait .tc-dot { background:var(--c-warning-bold, var(--fg-muted));
     doc.addEventListener('pointerover', ev => {
       if (ev.pointerType === 'touch' || !fine()) return;
       const a = chipOf(ev);
-      if (a || inCard(ev)) { clearTimeout(S.leave); S.leave = 0; }
+      // Back on the open card's chip, or on the card: it stays. (Another chip
+      // does not keep it: the card would be left open with the pointer gone.)
+      if ((a && S.chip === a) || inCard(ev)) { clearTimeout(S.leave); S.leave = 0; }
       if (a && !(S.el && S.chip === a) && !S.timer) {
         S.timer = setTimeout(() => {
           S.timer = 0;

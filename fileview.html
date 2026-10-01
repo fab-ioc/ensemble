@@ -1605,7 +1605,8 @@ function showTrayItem(cid) {
   setTimeout(() => it.classList.remove('hit'), 1200);
 }
 // A task link inside the dashboard (the Workspace pane) opens the task there;
-// in a tab of its own it opens the dashboard in a new tab, on that task. A
+// in a tab of its own it opens the dashboard in a new tab, on that task, so
+// the file stays open here — the card's title and a double click alike. A
 // chip (a.task-chip) is TaskCard's: one click its card, a double click the task.
 function openTaskFrom(a) {
   const host = hostPage();
@@ -1615,7 +1616,6 @@ function openTaskFrom(a) {
 document.addEventListener('click', ev => {
   const a = ev.target.closest && ev.target.closest('a[data-task]');
   if (!a || a.classList.contains('task-chip') || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;
-  if (!hostPage()) return;
   ev.preventDefault();
   openTaskFrom(a);
 });

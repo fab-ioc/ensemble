@@ -40,8 +40,13 @@ def render_code() -> str:
     block, the highlighter, the JSON and CSV helpers and mdToHtml."""
     start = PAGE.index("const esc = s =>")
     end = PAGE.index("// ---- In-place review comments")
-    # The page's resolver, below the comment layer, with a hub that never answers (a number stays text).
-    refs = "const fetch = () => new Promise(() => {}); const TASK_REFS = TaskCard.refs({ room: ROOM, changed: () => {} });\n"
+    # The page's resolver, below the comment layer, with a stand-in hub that
+    # knows #18 (answered after the first draw: a number is text until then).
+    refs = """const TASK = { roomId: 'room-b', no: 18, label: '#18', ref: 'ED-18', title: 'Beta <b>', status: 'running', workflowName: 'In progress',
+  agents: [{ identity: 'claude' }, { identity: 'codex', role: 'reviewer' }], project: 'Ensemble Dashboard', inProject: true };
+const fetch = url => Promise.resolve(/ref=%2318/.test(url) ? { status: 200, ok: true, json: () => Promise.resolve(TASK) } : { status: 404, ok: false, json: () => Promise.resolve({}) });
+const TASK_REFS = TaskCard.refs({ room: ROOM, changed: () => {} });
+"""
     return TASKCARD + "\n" + HL + PAGE[start:end] + refs
 
 
@@ -50,10 +55,13 @@ globalThis.location = new URL('http://127.0.0.1:8765/fileview?path=' + encodeURI
 %s
 const cases = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const out = {};
+const settle = async () => { for (let i = 0; i < 20; i++) await new Promise(r => setImmediate(r)); };
+(async () => {
 for (const c of cases) {
   const t0 = Date.now();
   if (c.kind === 'rows') { const r = HL.rows(c.text, c.lang); out[c.name] = { html: r.html, lines: r.lines, ms: Date.now() - t0 }; }
   else if (c.kind === 'md') out[c.name] = { html: mdToHtml(c.text), ms: Date.now() - t0 };
+  else if (c.kind === 'chips') { const first = mdToHtml(c.text); await settle(); out[c.name] = { first, html: mdToHtml(c.text) }; }
   else if (c.kind === 'pretty') out[c.name] = { text: jsonLayout(c.text, false) };
   else if (c.kind === 'lang') out[c.name] = { lang: HL.langOf(c.text, c.body || '') };
   else if (c.kind === 'slow') {
@@ -65,6 +73,7 @@ for (const c of cases) {
   }
 }
 console.log(JSON.stringify(out));
+})().catch(e => { console.error(e && e.stack || e); process.exit(1); });
 """
 
 PYTHON = '''import os
@@ -185,6 +194,7 @@ class FileViewRendering(unittest.TestCase):
             {"kind": "lang", "name": "lang_dockerfile", "text": "Dockerfile"},
             {"kind": "lang", "name": "lang_shebang", "text": "run", "body": "#!/usr/bin/env python3\nprint(1)\n"},
             {"kind": "md", "name": "escapes", "text": ESCAPES},
+            {"kind": "chips", "name": "chips", "text": "See #18 and @codex@18; not `#18` in code, not PR #18, not item #18, not #99."},
         ] + [{"kind": "rows", "name": "lang:" + k, "lang": k, "text": v} for k, v in SAMPLES.items()] + [
             {"kind": "slow", "name": f"slow:{lang}:{name}", "lang": lang, "n": 50_000, **shape}
             for lang in ("yaml", "toml", "ini", "markdown", "python", "javascript", "css", "bash")
@@ -253,6 +263,23 @@ class FileViewRendering(unittest.TestCase):
         self.assertIn('<img class="md-img" src="/api/file?path=C%3A%5Cp%5Cdocs%5Cimg%5Cshot.png"', h)
         self.assertIn('<pre class="cb" data-lang="python"><code><span class="tk-kw">def</span> <span class="tk-fn">hello</span>', h)
         self.assertIn('<span class="tk-com"># greet</span>', h)
+
+    def test_a_task_number_is_a_chip_once_the_hub_has_answered(self):
+        # #152: a Markdown file's #18 asks the hub (in this file's chat) and
+        # becomes a chip — the number only, the card's words in data-card.
+        o = self.out["chips"]
+        self.assertNotIn("task-chip", o["first"], "text until the hub answers")
+        chips = re.findall(r'<a class="task-chip[^"]*"[^>]*>.*?</a>', o["html"])
+        self.assertEqual(len(chips), 2, o["html"])
+        self.assertEqual([re.sub(r"<[^>]+>", "", c) for c in chips], ["#18", "@codex #18"])
+        self.assertIn('data-task="room-b"', chips[0])
+        self.assertIn('href="/session?id=room-b&amp;agent=codex"', chips[1])
+        card = json.loads(html.unescape(re.search(r'data-card="([^"]*)"', chips[0]).group(1)))
+        self.assertEqual((card["ref"], card["title"], card["state"], card["project"]), ("#18", "Beta <b>", "In progress · running", ""))
+        rest = o["html"].split("</a>")[-1]
+        self.assertIn(">#18</code>", rest)
+        for plain in ("PR #18", "item #18", "#99"):
+            self.assertIn(plain, rest, "someone else's number, or none, stays text")
 
     def test_backslash_escapes_start_no_link_image_or_code(self):
         p = self.out["escapes"]["html"].split("\n")

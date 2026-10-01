@@ -15690,7 +15690,11 @@ document.addEventListener('click', (ev) => {
   ev.stopPropagation();
   openTaskLink(a.dataset.task, a.dataset.agent);
 }, true);
-TaskCard.init({ open: a => openTaskLink(a.dataset.task, a.dataset.agent) });
+// TaskCard's listeners are this document's own, not mirrored into a panel's
+// window (DOC_LISTENERS): a mirrored copy would put a pop-out chip's card in
+// this window. Each pop-out document gets its own init (pdCardsInWindows).
+window.DOC_LISTENERS_PAUSED = true;
+try { TaskCard.init({ open: a => openTaskLink(a.dataset.task, a.dataset.agent) }); } finally { window.DOC_LISTENERS_PAUSED = false; }
 // A chip in a panel popped out into a window of its own (another document,
 // Dock's hostDocs) gets its card there too; init is a no-op on a document done.
 function pdCardsInWindows() {
