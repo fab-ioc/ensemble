@@ -10697,8 +10697,10 @@ function pdMenuItems(ctx) {
 // here also when the menu was in the panel's window): the handlers are keyed
 // on the class and data an action bar's item carries (the document's click
 // listener), so a stand-in with that class and data is clicked, and gone
-// after it (a handler keeps what it read from it). Terminal colours opens its
-// picker instead, against the panel's ⋯ in the window the menu was in.
+// after it (a handler keeps what it read from it: its data; a detached
+// button has no place, so one that opens something under its button is
+// given the panel's ⋯ as `_at`, in the window the menu was in: Terminal
+// colours' picker, Open in editor's repo picker).
 function pdRunAction(it, ctx) {
   const b = document.createElement('button');
   b.type = 'button';
@@ -10706,7 +10708,8 @@ function pdRunAction(it, ctx) {
   b.dataset.act = it.id;
   Object.entries(it.data || {}).forEach(([k, v]) => { if (v !== undefined && v !== null) b.dataset[k] = v; });
   b.hidden = true;
-  if (it.popup) { openThemeMenu(b, pdMenuButton(ctx)); return; }
+  b._at = pdMenuButton(ctx);
+  if (it.popup) { openThemeMenu(b, b._at); return; }
   document.body.appendChild(b);
   try { b.click(); } finally { b.remove(); }
 }
@@ -16017,7 +16020,7 @@ async function ideAction(btn) {
     btn.classList.remove('busy');
     if (!repos.length) { toast(nounText('no {project} found in this session'), 3000, 'err'); return; }
     if (repos.length === 1) { await openInEditor(repos[0].path, repos[0].editor); return; }
-    showIjMenu(btn, repos);
+    showIjMenu(btn._at || btn, repos);   // a stand-in (pdRunAction) names the ⋯ to open under
   } catch (e) {
     btn.classList.remove('busy');
     toast('repo lookup failed: ' + e.message);
@@ -16357,12 +16360,15 @@ async function openInEditor(path, editor) {
 }
 
 function closeIjMenu() {
-  document.querySelectorAll('.ij-menu').forEach(m => m.remove());
+  pdQueryAll('.ij-menu').forEach(m => m.remove());
 }
 
+// The repo picker, under its anchor, in the anchor's window (a panel's own
+// when picked from the conversation panel's ⋯ there).
 function showIjMenu(anchor, repos) {
   closeIjMenu();
-  const menu = document.createElement('div');
+  const doc = anchor.ownerDocument, win = doc.defaultView || window;
+  const menu = doc.createElement('div');
   menu.className = 'ij-menu';
   menu.innerHTML = repos.map(r => `
     <button class="ij-menu-item" data-path="${esc(r.path)}" data-editor="${esc(r.editor || '')}" title="${esc(r.path)} → ${esc(r.editor || 'default')}">
@@ -16371,9 +16377,9 @@ function showIjMenu(anchor, repos) {
       <span class="ij-editor">${esc(r.editor || '')}</span>
     </button>`
   ).join('');
-  document.body.appendChild(menu);
+  doc.body.appendChild(menu);
   const rect = anchor.getBoundingClientRect();
-  menu.style.left = Math.min(rect.left, window.innerWidth - menu.offsetWidth - 8) + 'px';
+  menu.style.left = Math.min(rect.left, win.innerWidth - menu.offsetWidth - 8) + 'px';
   menu.style.top = (rect.bottom + 4) + 'px';
   menu.addEventListener('click', async (ev) => {
     const item = ev.target.closest('.ij-menu-item');

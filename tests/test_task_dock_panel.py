@@ -355,7 +355,12 @@ class TheWiring(unittest.TestCase):
         self.assertIn("function pdRunAction(it, ctx)", INDEX)
         self.assertIn("function pdMenuButton(ctx)", INDEX)
         self.assertIn("{ menu: !pdTask() }", INDEX)
-        self.assertIn("if (it.popup) { openThemeMenu(b, pdMenuButton(ctx)); return; }", INDEX)
+        # A detached stand-in has no place: what opens under its button opens under the panel's ⋯, in that window.
+        self.assertIn("b._at = pdMenuButton(ctx);", INDEX)
+        self.assertIn("if (it.popup) { openThemeMenu(b, b._at); return; }", INDEX)
+        self.assertIn("showIjMenu(btn._at || btn, repos);", INDEX)
+        self.assertIn("const doc = anchor.ownerDocument, win = doc.defaultView || window;", INDEX)
+        self.assertIn("pdQueryAll('.ij-menu').forEach(m => m.remove());", INDEX)
         self.assertIn("const groups = opts && opts.menu === false ? [] : (model && model.groups) || [];", ACTIONS)
         for old in ("Dock need 14 (begin)", "Dock need 14 (end)", "{ interim: DOCK_MENU_INTERIM }"):
             self.assertNotIn(old, INDEX, old)
