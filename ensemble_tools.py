@@ -1455,12 +1455,16 @@ def _update_task(ctx, args, handler):
         ok, room3, err = _d.reassign_task(room["id"], agent_list)
         if not ok:
             raise ToolError(_reassign_error(err))
-        room2 = room3
+        was_mode, room2 = room.get("mode", ""), room3
         notes.append("agents reassigned: " +
                      ", ".join(f"{a['identity']} ({a['agent']}"
                                + (f", {a['role']}" if a["role"] else "") + ")"
                                for a in _agents_view(room2))
                      + f" — the task is now {room2.get('mode', '')}")
+        if was_mode == "solo" and room2.get("mode") == "collab" and _d._room_is_live(room2):
+            notes.append("its owner runs on and was briefed as a solo agent: it learns of "
+                         "the new seat only from a message, so tell it in the task's chat "
+                         "(a review starts when the reviewer is @mentioned)")
     if gate_fields:
         room2 = _d.chatroom.patch_room(room["id"], **gate_fields) or room2
         _d._patch_task_json(room2.get("taskDir", ""), **gate_fields)
@@ -1471,16 +1475,39 @@ def _update_task(ctx, args, handler):
             "mode": room2.get("mode", ""), "note": "; ".join(notes)}
 
 
+def _amender_name(ctx, room: dict) -> str:
+    """Who amended the spec, as the owner should read it: never a bare
+    identity (identities are per room: the planner 'claude' of another task
+    and the owner 'claude' collide)."""
+    po = _d.room_po_id(room)
+    if po and po == ctx["room"]["id"]:
+        return "Your PO"
+    role = _role_head(ctx.get("part") or {}) or "an administrator"
+    where = _d.task_label(ctx["room"]) or _title(ctx["room"])
+    return f"The {role} of {where}" if where else f"The {role}"
+
+
 def _tell_owner_spec_changed(ctx, handler, room: dict, old_spec: str, new_spec: str) -> str:
     """A running task's spec was amended: type the owners one line with the
     change (dashboard.spec_change_line), so no one stops and starts the task to
-    make it read the spec. Returns the note for the caller. An owner told the
-    whole change inline has seen this revision: its next resume note need not
-    send it to read the spec again."""
-    po = _d.room_po_id(room)
-    by = "Your PO" if po and po == ctx["room"]["id"] else ctx["identity"]
-    line, inlined = _d.spec_change_line(room, old_spec, new_spec, by=by)
+    make it read the spec. Returns the note for the caller.
+
+    The owner is marked as having seen this revision only when it was idle
+    at the ring, so the line became its prompt at once: a line typed into a
+    busy owner sits queued in its TUI, and a stop before its turn ends would
+    lose it; the next resume note must then still send it to read the spec.
+    An administrator amending its own task's spec is not rung: it wrote it."""
+    if room["id"] == ctx["room"]["id"]:
+        return "you amended your own spec: nobody else to tell"
+    line, inlined = _d.spec_change_line(room, old_spec, new_spec, by=_amender_name(ctx, room))
     owners = _d.chatroom.owners(room)
+    try:
+        statuses = _d.attention._claude_status_by_session()
+        idle = {ident for ident in owners
+                if _d.attention.turn_state(_d.chatroom.participant(room, ident) or {}, statuses)[0]
+                == "idle"}
+    except Exception:       # noqa: BLE001 — unknown reads as busy: no mark
+        idle = set()
     try:
         rung = handler._ring(room["id"], owners, line)
     except Exception:       # noqa: BLE001 — the amendment is saved either way
@@ -1491,7 +1518,7 @@ def _tell_owner_spec_changed(ctx, handler, room: dict, old_spec: str, new_spec: 
     if inlined:
         for ident in rung:
             part = _d.chatroom.participant(room, ident)
-            if part:
+            if part and ident in idle:
                 try:
                     _d.chatroom.patch_participant(room["id"], ident, _d.spec_seen(part, new_spec))
                 except Exception:   # noqa: BLE001
@@ -1502,11 +1529,13 @@ def _tell_owner_spec_changed(ctx, handler, room: dict, old_spec: str, new_spec: 
 
 def _reassign_error(err: str) -> str:
     """Turn reassign_task's error code into something an agent can act on."""
-    if err == "task_is_running":
+    if err.startswith("task_is_running"):
+        _code, _sep, why = err.partition(": ")
         return ("that task is running — a seat whose agent is running cannot be "
-                "changed; the on-mention reviewer's seat and stopped seats can, without "
-                "stopping the task. To change a running agent, stop the task "
-                "(ensemble_stop_task), reassign, then start it again")
+                "changed" + (f" ({why})" if why else "") + "; the on-mention reviewer's "
+                "seat and stopped seats can, without stopping the task. To change a "
+                "running agent, stop the task (ensemble_stop_task), reassign, then "
+                "start it again")
     if err == "need_an_agent":
         return "a task needs at least one agent"
     if err.startswith("agent_unavailable:"):

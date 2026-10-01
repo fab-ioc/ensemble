@@ -211,8 +211,10 @@ turn, and only what is new:
 > stopped: do not redo it. Your spec may have changed while you were stopped:
 > read it again with ensemble_get_task and act only on what changed. Nothing
 > else is new unless a message follows this line (in a team: chat_read). If you
-> had reported, or are waiting for an answer, you still are: say so in one line
-> and wait. Only unfinished work of yours that nothing holds up goes on. …
+> had reported, your report stands: do not report again; say in one line that
+> you wait, and wait. The same if you are waiting for an answer. Only unfinished
+> work of yours that nothing holds up goes on. … Report with ensemble_report
+> only when new work is finished or newly blocked.
 
 If you get that line, do exactly that: an idle owner told to "carry on" used to
 redo a whole check pass (10 to 27 calls, 2 to 5M tokens) and report again what
@@ -304,8 +306,12 @@ background commands and subagents another 277M. So:
 
 - **A wait under 10 minutes runs in the foreground.** `Bash` takes a `timeout`
   of up to 600000 ms; a loop that polls and sleeps inside one call costs no
-  wake at all, and its result is in the same turn. More than half of the
-  week's background waits were under 10 minutes.
+  wake at all, and its result is in the same turn. Checked from a hub-started
+  Claude task on 2026-10-01: `sleep 3`, an `until … sleep 1` loop and
+  PowerShell `Start-Sleep` all ran in the foreground. If your harness refuses
+  `sleep`, use `Start-Sleep` in PowerShell, or a command that itself waits
+  (`timeout 300 tail -f log`); never fall back to a background command. More
+  than half of the week's background waits were under 10 minutes.
 - **A longer wait goes on a `## Due` line** in your handover (see *Due*): one
   `[due]` wake when the time comes, delivered when you are idle, and no process
   held open meanwhile. "Check the deploy log at 18:30" is a due line, not a

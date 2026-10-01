@@ -96,7 +96,9 @@ class TheResumeNote(_Stops):
         self.assertIn("do not redo it", note)
         self.assertIn("read it again with ensemble_get_task", note)
         self.assertIn("act only on what changed", note)
-        self.assertIn("If you had reported, or are waiting for an answer, you still are", note)
+        self.assertIn("your report stands: do not report again", note)
+        self.assertIn("only when new work is finished or newly blocked", note)
+        self.assertIn("do not report again", dashboard.RESUME_NOTE_IDLE_SAME_SPEC)
         self.assertEqual(dashboard.hub_input_kind(note), {"kind": "resumed"})
         self.assertNotIn("stoppedState", self.part(rid), "the state outlived the start it was for")
         self.assertTrue(self.part(rid).get("resumedAt"))
@@ -214,22 +216,56 @@ class ASpecAmendmentReachesARunningOwner(_Stops):
         self.assertFalse(inlined)
         self.assertIn("ensemble_get_task taskId=room-1 spec=true", long)
         self.assertLess(len(long), 400)
+        # A spec line that itself starts with "---" (a Markdown rule) or "+++"
+        # is a change like any other, not a diff header to drop.
+        rule, inlined = dashboard.spec_change_line({"id": "room-1"}, "Sell.", "Sell.\n---\n+++ more")
+        self.assertTrue(inlined)
+        self.assertIn("+---\n++++ more", rule)
+        self.assertNotIn("+++ b", rule)
 
-    def test_a_running_owner_is_typed_the_change_and_has_seen_the_spec(self):
+    def test_an_idle_owner_is_typed_the_change_and_has_seen_the_spec(self):
         rid = self.room(spec="Sell the X5.\nBy Friday.")
-        self.running(rid, "claude", "working")
+        self.running(rid, "claude", "idle")
         h = _Ring()
         out = self.amend(rid, "Sell the X5.\nBy Monday.", h)
         self.assertEqual(len(h.rung), 1)
         room_id, idents, line = h.rung[0]
         self.assertEqual((room_id, idents), (rid, ["claude"]))
-        self.assertTrue(line.startswith("[spec] claude amended your spec at "), line)
+        # Never a bare identity: the owner is 'claude' too.
+        self.assertTrue(line.startswith("[spec] The planner of planner amended your spec at "), line)
         self.assertIn("-By Friday.\n+By Monday.", line)
         self.assertIn("the owner has been told what changed (claude)", out["note"])
         self.assertNotIn("will not re-read", out["note"])
         seen = self.part(rid)["specSeen"]
         self.assertEqual(seen, {"rev": dashboard._spec_rev("Sell the X5.\nBy Monday."),
                                 "sessionId": "sid-claude"})
+
+    def test_a_busy_owner_is_typed_the_change_but_has_not_seen_it(self):
+        # The line sits queued in its TUI; a stop before its turn ends loses
+        # it, so the next start must still send it to read the spec.
+        rid = self.room(spec="Sell the X5.")
+        chatroom.patch_participant(rid, "claude", dashboard.spec_seen(self.part(rid), "Sell the X5."))
+        self.running(rid, "claude", "working")
+        h = _Ring()
+        out = self.amend(rid, "Sell the X3.", h)
+        self.assertEqual(len(h.rung), 1)
+        self.assertIn("the owner has been told what changed (claude)", out["note"])
+        self.assertEqual(self.part(rid)["specSeen"]["rev"], dashboard._spec_rev("Sell the X5."))
+        self.stop(rid)
+        self.start(rid)
+        self.assertEqual(self.typed(rid), {"claude": [dashboard.RESUME_NOTE]})
+
+    def test_amending_your_own_spec_rings_nobody(self):
+        ctx = self.caller()
+        rid = ctx["room"]["id"]
+        full = chatroom.get_room(rid, public=False)
+        full.update(launched=True, spec="Plan it.")
+        chatroom.update_room(full)
+        self.running(rid, "claude", "working")
+        h = _Ring()
+        out = ensemble_tools._update_task(ctx, {"taskId": rid, "spec": "Plan it well."}, h)
+        self.assertEqual(h.rung, [])
+        self.assertIn("your own spec", out["note"])
 
     def test_the_po_is_named_as_the_po(self):
         rid = self.room(spec="Sell the X5.")
@@ -319,27 +355,30 @@ class ReassigningASeatUnderALiveTask(_Stops):
     def test_a_running_agents_own_seat_cannot_change(self):
         rid = self.room(agents=("claude", "codex"), roles=["engineer", "reviewer"])
         self.running(rid, "claude", "working")
-        for lineup in (self.lineup(owner_model="opus"),
-                       self.lineup(owner_role="designer"),
-                       [self.lineup()[1]],                                # the owner dropped
-                       [{"agent": "codex", "role": "engineer"}, self.lineup()[1]]):   # its kind changed
+        for lineup, why in ((self.lineup(owner_model="opus"), "claude is running: model 'opus' != ''"),
+                            (self.lineup(owner_role="designer"), "claude is running: role 'designer' != 'engineer'"),
+                            ([self.lineup()[1]], "claude is running and is not in the new line-up"),
+                            ([{"agent": "codex", "role": "engineer"}, self.lineup()[1]],
+                             "claude is running and is not in the new line-up")):
             ok, _room, err = dashboard.reassign_task(rid, lineup)
-            self.assertEqual((ok, err), (False, "task_is_running"), lineup)
+            self.assertEqual((ok, err), (False, "task_is_running: " + why), lineup)
         self.assertEqual(self.part(rid)["model"], "")
+        text = ensemble_tools._reassign_error("task_is_running: claude is running: model 'opus' != ''")
+        self.assertIn("(claude is running: model 'opus' != '')", text)
 
     def test_a_reviewer_in_the_middle_of_a_review_cannot_change_either(self):
         rid = self.room(agents=("claude", "codex"), roles=["engineer", "reviewer"])
         self.running(rid, "claude", "idle")
         self.running(rid, "codex", "working")
         ok, _room, err = dashboard.reassign_task(rid, self.lineup(reviewer_model="gpt-5-high"))
-        self.assertEqual((ok, err), (False, "task_is_running"))
+        self.assertEqual((ok, err), (False, "task_is_running: codex is running: model 'gpt-5-high' != ''"))
 
     def test_a_terminal_the_record_does_not_name_refuses(self):
         rid = self.room(agents=("claude", "codex"), roles=["engineer", "reviewer"])
         self.listed.append({"id": "stray", "alive": True, "meta": {"room": rid}})
         self.ptys["stray"] = FakePty("stray")
         ok, _room, err = dashboard.reassign_task(rid, self.lineup(reviewer_model="gpt-5-high"))
-        self.assertEqual((ok, err), (False, "task_is_running"))
+        self.assertEqual((ok, err), (False, "task_is_running: a terminal of the task is not in its record"))
 
     def test_a_stopped_task_reassigns_as_before(self):
         rid = self.room(agents=("claude", "codex"), roles=["engineer", "reviewer"])
@@ -353,6 +392,19 @@ class ReassigningASeatUnderALiveTask(_Stops):
     def test_the_error_names_what_can_change(self):
         text = ensemble_tools._reassign_error("task_is_running")
         self.assertIn("reviewer's seat and stopped seats can, without stopping the task", text)
+
+    def test_the_tool_says_a_live_owner_does_not_know_its_new_reviewer(self):
+        rid = self.room()
+        self.running(rid, "claude", "idle")
+        made = chatroom.create_room("planner", [{"identity": "claude", "agent": "claude",
+                                                 "role": "planner"}])
+        caller = chatroom.get_room(made["id"], public=False)
+        ctx = {"room": caller, "identity": "claude",
+               "part": chatroom.participant(caller, "claude"), "projectId": ""}
+        out = ensemble_tools._update_task(
+            ctx, {"taskId": rid, "agents": [self.lineup()[0], {"agent": "codex", "role": "reviewer"}]}, None)
+        self.assertIn("the task is now collab", out["note"])
+        self.assertIn("briefed as a solo agent", out["note"])
 
 
 if __name__ == "__main__":
