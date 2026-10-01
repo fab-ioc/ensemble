@@ -319,7 +319,7 @@ class ThreePages(unittest.TestCase):
 
     def test_the_points_of_a_balloon_are_drawn_in_its_context(self):
         self.assertIn("withPathAbbrevs(m.text, () => itemsHtml(it, bars, md, headBar))", js_function("pointItemsHtml"))
-        self.assertIn("let h = inCtx() ? null : MD_CACHE.get(t); if (h == null) h = mdToHtml(t); if (!inCtx()) used.set(t, h);", SRC,
+        self.assertIn("let h = inCtx() ? null : MD_CACHE.get(ck); if (h == null) h = mdToHtml(t); if (!inCtx()) used.set(ck, h);", SRC,
                       "an item of a message with abbreviations is drawn in its context, never from or into the cache")
         self.assertIn("+ '|' + THUMB_GONE.size + '|' + PM_SIG;", SRC, "a picture gone from the hub redraws as its link")
 

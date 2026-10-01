@@ -77,6 +77,8 @@ LAYOUT = (ROOT / "static" / "dock" / "src" / "layout.js").as_uri()
 
 PURE_JS = r"""
 const out = {};
+// pdPointsHtml renders task chips through taskChipsIn (index.html); these tests check the points markup, not the chips.
+const taskChipsIn = (t) => esc(String(t || ''));
 %(fns)s
 (async () => {
   const L = await import(%(layout)s);
@@ -513,6 +515,8 @@ async function main() {
     await p.evalIn('PD.dock.pin("board"); 0'); await sleep(300);
     await viewMode(p, 'PD.els.board', 'window');
     await p.until('!!PD.dock.popWindow("board") && PD.els.board.ownerDocument !== document && PD.els.board.querySelectorAll(".card").length > 0', 15000);
+    // The window has TaskCard's style: the window's setup gave it its own card (#152).
+    await p.until('!!PD.dock.popWindow("board").document.getElementById("task-card-style")', 10000);
     out.popBoard = await p.evalIn(`(async () => {
       const w = PD.dock.popWindow('board'), d = w.document, r = ALL_ROWS.find(x => x.roomId === ${JSON.stringify(A.task)});
       const card = PD.els.board.querySelector('.card[data-sid="' + CSS.escape(r.sessionId) + '"]');
@@ -530,7 +534,15 @@ async function main() {
       window.addEventListener('message', hear); new w.Function("postMessage({ type: 'dock-relay-check' }, location.origin)")();
       await new Promise(r => setTimeout(r, 200)); window.removeEventListener('message', hear);
       const bb = d.querySelector('.dk-pop-back');
-      return { backBtn: bb ? 'rendered' : 'absent', icon: [...d.querySelectorAll('link[rel~="icon"]')].map(l => l.href), live, count, followed, back: d.documentElement.dataset.theme === theme, list, title: d.title, styled: getComputedStyle(d.querySelector('.card')).borderRadius, heard };
+      // A task chip there (#152): one click opens its card in the window, not in this document.
+      d.body.insertAdjacentHTML('beforeend', '<p id="chip-probe">' + TaskCard.chipHtml({ roomId: r.roomId, label: '#1', ref: 'ED-1', title: 'Chip in a window', workflowName: 'To do', status: 'not running', agents: [], inProject: true }) + '</p>');
+      const chipEl = d.querySelector('#chip-probe a.task-chip');
+      chipEl.dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true, button: 0, detail: 1 }));
+      await new Promise(r => setTimeout(r, 200));
+      const chip = { there: !!d.querySelector('.task-card'), here: !!document.querySelector('.task-card'),
+                     mirrored: window.DOC_LISTENERS.map(([t]) => t).filter(t => ['dblclick', 'pointerover', 'pointerout'].includes(t)) };
+      TaskCard.close(d); d.getElementById('chip-probe').remove();
+      return { backBtn: bb ? 'rendered' : 'absent', icon: [...d.querySelectorAll('link[rel~="icon"]')].map(l => l.href), live, count, followed, back: d.documentElement.dataset.theme === theme, list, title: d.title, styled: getComputedStyle(d.querySelector('.card')).borderRadius, heard, chip };
     })()`);
     await p.evalIn('PD.dock.popWindow("board").close(); 0');
     await p.until('!PD.dock.isOut("board") && PD.els.board.ownerDocument === document', 10000);
@@ -1005,6 +1017,12 @@ class InChrome(unittest.TestCase):
         self.assertTrue(b["heard"], "a message to the window reaches the page, with its source")
         self.assertEqual(b["backBtn"], "absent", "popBackButton: false: use the window's View Mode menu to dock back")
         self.assertTrue(self.got["boardBack"]["inDock"] and self.got["boardBack"]["cards"] > 0)
+
+    def test_a_chip_in_a_popped_out_panel_opens_its_card_there(self):
+        # Review 1 of #152: TaskCard's listeners are not mirrored into the
+        # window (DOC_LISTENERS_PAUSED around its init); the window's setup
+        # (onEveryWindow) gives its document its own init.
+        self.assertEqual(self.got["popBoard"]["chip"], {"there": True, "here": False, "mirrored": []})
 
     def test_the_middle_cannot_be_moved(self):
         self.assertEqual(self.got["middle"], {"head": "flex", "acts": ["float", "pop", "max", "min"], "toolActs": ["move", "float", "unpin", "pop", "max", "min", "hide"]},
