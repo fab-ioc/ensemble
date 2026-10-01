@@ -4893,7 +4893,7 @@ window.addEventListener('message', (e) => {
   else if (d.ensemble === 'pause') pauseToggle();
   // The dashboard opened this chat's panel again: a closed task panel only
   // slides off screen, so its size never says so. Open at the latest message.
-  else if (d.ensemble === 'shown' && e.source === window.parent) { toLatest(); if (CHAT_DRAWN && !GOTO) catchUpOpen(); }
+  else if (d.ensemble === 'shown' && e.source === window.parent) { toLatest(); if (CHAT_DRAWN && !GOTO) catchUpOpen(); if (typeof tickNow === 'function') tickNow(); }
   // The dashboard opened this chat for a link to one of its balloons.
   else if (d.ensemble === 'goto-msg' && e.source === window.parent && e.origin === location.origin) {
     GOTO_OPEN = true;
@@ -5035,6 +5035,7 @@ const ACTS = {
     ACTIONS_HTML = ''; renderActions();
   },
   agents() { toDashboard('agents'); },
+  panel() { toDashboard('panel'); },   // its chat as a panel of the dashboard's dock (#150)
   moveproj() { toDashboard('moveproj'); },
   makepo() { toDashboard('makepo'); },
   delete() { toDashboard('delete'); },
@@ -5676,9 +5677,35 @@ function updPutBack(box) {
   STICK = nearEnd(box);
   showLatest();
 }
-if (!ROOM) { $('#title').textContent = '(no session id)'; }
 // The poll also asks, every 30 s, whether the page on disk is still this one.
-else { refresh(); setInterval(() => { refresh(); ensUpd.poll(); }, 2000); }
+// Embedded in the dashboard (#150): a chat off screen (the page's tab in the
+// background, or its panel behind another tab, parked or hidden: the host's
+// own classes on the frame's ancestors, same origin) polls the room every
+// 30 s as a keep-alive; a chat panel of its own that is not being typed in
+// (data-chat-slow on its frame, no focus here) every 10 s; the one in use
+// every 2 s. Coming back on screen, or into focus, it polls at once.
+let TICK = 0;
+function chatOffScreen() {
+  if (document.hidden) return true;
+  try { const f = window.frameElement; return !!(f && f.closest('.dk-off, .dk-parking, .pd-off')); } catch (e) { return false; }
+}
+function chatSlow() {
+  try { const f = window.frameElement; return !!(f && f.hasAttribute('data-chat-slow')) && !document.hasFocus(); } catch (e) { return false; }
+}
+function tick() {
+  TICK++;
+  ensUpd.poll();
+  if (chatOffScreen()) { if (TICK % 15) return; }
+  else if (chatSlow() && TICK % 5) return;
+  refresh();
+}
+function tickNow() { TICK = 0; refresh(); }
+if (window.parent !== window) {
+  window.addEventListener('focus', tickNow);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) tickNow(); });
+}
+if (!ROOM) { $('#title').textContent = '(no session id)'; }
+else { refresh(); setInterval(tick, 2000); }
 </script>
 </body>
 </html>

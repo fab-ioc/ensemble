@@ -365,9 +365,29 @@ pane behind a tab (a live session or a transcript under Activity; files, or "thi
 yet", under Workspace) and which tab is selected by default. Never the set, the order or a label. A
 tab that renames itself when a task starts is a quieter version of tabs that reorder.
 
-**File tabs are not panel tabs.** Inside the Workspace pane, each open file is a tab above the viewer,
-as in an editor; these come and go as files are opened and closed, so the fixed-set rule does not
-apply to them. Their rules instead:
+**Each open file is a panel of the dock** (#150, the CEO's P105). Where the page has the dock (a
+PO screen, an open task's: `pdPanelsOn()`), a file opened from a Workspace's tree is a closable
+panel of its own (`file:<path>`, `wsPanelShow`), as IntelliJ's editor tabs are: its tab is the
+file's name, its tooltip the path (`pdTabTips`), its ⋯ holds *Show in the tree* and *Open in new
+window* above Dock's own. The first file opens beside the conversation, at its right; the next
+ones are tabs of the file panel last shown (`wsPanelWhere`); a file already open comes to the
+front, never opens twice; a line asked for (a diff, a search hit) reloads its viewer at that line.
+The panel is the path bar (where the file is, Show in the tree, Follow, History for a documents
+project, ⧉ its own tab) over the viewer (`.wfp`); a file that is gone shows the note where the
+viewer was, with **Close**. The Files pane keeps the tree alone (`.ws-panels`: no tab row, no
+viewer), except the roadmap, which is no file: its own view and editor still open in the pane, as
+its one tab. A file closes as any closable panel (× on its tab, a middle click, ⋯ › Close, Ctrl+F4)
+and its tab goes from the Workspace's model (`wsPanelRemoved`); the Workspaces that have panels
+are remembered per browser (`cd-ws-panels`) and a reload puts each file back in its kept place
+(`pdRuntimeRestore`: Dock parks a panel a stored layout names until it is added; a file gone
+meanwhile closes quietly). One panel per file on the page: a Workspace that opens a file another
+Workspace shows reveals that panel. A file's panel may be a tab of the conversation's stack: only
+the tools are kept out of the middle (`pdKeepMiddle`). The tab model (`v.tabs`) stays the source
+of truth, so Recent, Go to file and Text search open through it unchanged.
+
+**Without the dock** (it could not load, or a page with none) the tabs are in the pane, as
+before: each open file a tab above the viewer, as in an editor; these come and go as files are
+opened and closed, so the fixed-set rule does not apply to them. Their rules:
 
 - Opened from the tree, added at the end; a file already open is switched to, never opened twice.
   The row is never re-sorted.
@@ -386,7 +406,9 @@ apply to them. Their rules instead:
 - A Workspace (a project's or a task's) has no fixed tab: it opens on its tree and an empty pane.
   The roadmap's tab (see *Documents*) shows the roadmap's own view and editor where a viewer would
   be, and is never "no longer exists": not written yet, it offers to write it.
-- **A file in a window of its own** (#144, `wsOpenWindow`): the tab in front carries a monitor
+- **A file in a window of its own**: with the dock, the panel's View Mode › Window, also from the
+  file row's menu (*Open in new window*, `wsRowMenu`) and the panel's ⋯; the window is Dock's,
+  named after the file. Without the dock (#144, `wsOpenWindow`): the tab in front carries a monitor
   button before its `×` (`.wst-win`, the `×`'s box and colours; the dock's Window glyph, "Open in
   new window"), and Shift+Enter on a focused tab does the same. It opens the file view's page as a
   sized window without the browser's bars (960 × 820, no larger than the screen; each new one a
@@ -698,7 +720,24 @@ content besides Take Screenshot: `pdPlaceTask` redraws the row when the task com
 runs the page's handler through a stand-in button with the item's class and data (`pdRunAction`);
 Terminal colours opens its picker under the panel's ⋯, in that ⋯'s window. The bar under the task's
 name keeps the primary alone (`actionBarHtml(model, { menu: false })`); its More ⋯ returns only
-when the dock could not load. **Still interim**: the PO's two (Switch agent, the PO's task) wait in
+when the dock could not load. **As many chats as you like** (#150, the CEO's P110): a task's chat
+opens as a closable panel of its own (`chat:<room>`, `pdChatOpen`; its tab "#12 The title",
+`pdRowTitle`), beside the conversation at its right, then beside the chat panel last shown, from
+*Open in new panel* (the action model's first group, offered where the page has the panels,
+`env.panels`: in the middle's ⋯, where it moves the task out of the middle, so there is one chat
+per task on the page; a plain click on a panelled task's row reveals its panel instead of taking
+the middle), from a **Ctrl/⌘ click** or a **middle click** on a task's row (`pdRowPanel`; a
+session with no room opens as a click does), and from a task link (`runTaskAction('panel')`). Its
+⋯ holds the task's actions as the middle's does (`pdChatMenuItems`, without Open in new panel;
+its terminal items act on its own frame); its chat is `session.html` embedded, polling its room
+every 10 s while nobody types in it (`data-chat-slow`) and every 30 s while it is off screen
+(behind a tab, parked, hidden: the host's classes on the frame's ancestors, `chatOffScreen`),
+at once when it comes back or into focus; the middle's own chat polls every 2 s as before. The
+rooms open are remembered per browser (`cd-chat-panels`) and come back in their kept places
+after a reload (`pdRuntimeRestore`; a room no longer listed, or the task in the middle, is
+dropped). File and chat panels are the runtime panels (`PD.rt`; `pdMinOf` their least size:
+a chat the conversation's, a file 280 × 160); `dock-removed` disposes them (`pdRuntimeRemoved`).
+On a phone both are tabs of the one column, as everything is. **Still interim**: the PO's two (Switch agent, the PO's task) wait in
 its header's ⋯, marked `data-interim="dock-menu"`, until they follow the same hook. The Board's own **⤢** (`.pd-board-max`, beside its view
 switch) takes the whole width and gives it back. **Panels is available on a desktop** (#143):
 it recovers Tasks and tools whose closed window has no former strip button, including Spec.
