@@ -65,8 +65,9 @@ class Cdp {
 // open Files; and, over a grid of the open tool (or the middle), what a point hits.
 const PAINT = `(() => {
   const fly = PD.dock.flyOpen(), open = document.querySelector('#po-dock .dk-flyout.open');
+  // A viewer is painted only in an open Files, or in a file's own panel (#150).
   const frames = [...document.querySelectorAll('iframe.wsp-frame')].filter(f => f.checkVisibility({ visibilityProperty: true }))
-    .map(f => { const b = f.getBoundingClientRect(); return { inOpenFiles: fly === 'workspace' && !!open && open.contains(f), x: Math.round(b.left), w: Math.round(b.width) }; });
+    .map(f => { const b = f.getBoundingClientRect(); return { inOpenFiles: fly === 'workspace' && !!open && open.contains(f), inPanel: !!f.closest('.wfp'), x: Math.round(b.left), w: Math.round(b.width) }; });
   const area = open || PD.els['po-chat'], r = area.getBoundingClientRect(), strays = [];
   for (let i = 1; i < 8; i++) for (let j = 1; j < 8; j++) {
     const x = r.left + r.width * i / 8, y = r.top + r.height * j / 8, h = document.elementFromPoint(x, y);
@@ -92,10 +93,11 @@ async function main() {
   };
   const tool = id => `#po-dock .dk-strip-btn[data-dk-auto="${id}"]`;
   const ready = () => until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 0', 30000);
-  const toPo = (keep) => evalIn(`(() => { if (!${!!keep}) try { ['cd-tool-strip', 'cd-tool-open'].forEach(k => localStorage.removeItem(k)); } catch (e) {}
+  const toPo = (keep) => evalIn(`(() => { if (!${!!keep}) try { ['cd-tool-strip', 'cd-tool-open', 'cd-ws-panels', 'cd-chat-panels'].forEach(k => localStorage.removeItem(k)); } catch (e) {}
     SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'tasks'; renderRows(); return 0; })()`);
   const poReady = () => until('document.body.classList.contains("po-dock") && !!PD.dock && !!document.querySelector("#po-dock .dk-strip-btn") && !!document.querySelector("#po-panel iframe.po-session:not([hidden])")', 30000);
-  const fileOn = '(() => { const f = PD.els.workspace.querySelector("iframe.wsp-frame.on"); try { return !!f && f.contentDocument.readyState === "complete" && f.contentWindow.location.pathname === "/fileview"; } catch (e) { return false; } })()';
+  // The README's viewer, loaded: in the file's own panel (#150).
+  const fileOn = '(() => { const f = document.querySelector("#po-dock .wfp iframe.wsp-frame.on"); try { return !!f && f.contentDocument.readyState === "complete" && f.contentWindow.location.pathname === "/fileview"; } catch (e) { return false; } })()';
   const openTool = async (id) => { if (await evalIn('PD.dock.flyOpen()') !== id) { await click(tool(id)); } await until(`PD.dock.flyOpen() === ${JSON.stringify(id)}`, 5000); await sleep(350); };
   try {
     await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
@@ -214,19 +216,19 @@ class OnlyTheOpenToolIsPainted(unittest.TestCase):
         cls.server.server_close()
         cls.tmp.cleanup()
 
-    def test_the_file_shows_in_files(self):
+    def test_the_file_shows_in_its_own_panel(self):
         g = self.got["files"]
         self.assertEqual(g["fly"], "workspace")
-        self.assertEqual([f["inOpenFiles"] for f in g["frames"]], [True], g)
+        self.assertEqual([(f["inOpenFiles"], f["inPanel"]) for f in g["frames"]], [(False, True)], "the file is a panel of its own (#150), not a viewer of Files")
         self.assertEqual(g["strays"], [])
 
-    def test_only_the_open_tool_is_painted(self):
+    def test_only_the_open_tool_and_the_file_panels_are_painted(self):
         for step, fly in (("points", "points"), ("changes", "changes"), ("board", "board"), ("spec", "spec"), ("none", None),
                           ("reload", "points"), ("dockBack", "points"), ("narrow", "points")):
             g = self.got[step]
             with self.subTest(step=step):
                 self.assertEqual(g["fly"], fly)
-                self.assertEqual(g["frames"], [], "no Files viewer painted outside an open Files")
+                self.assertEqual([f["inPanel"] for f in g["frames"]], [True] * len(g["frames"]), "no Files viewer painted outside a file's own panel")
                 self.assertEqual(g["strays"], [], "every point of the open tool hits that tool")
 
     def test_files_popped_out(self):

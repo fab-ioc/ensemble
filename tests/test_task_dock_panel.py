@@ -352,11 +352,11 @@ class TheWiring(unittest.TestCase):
         # #150: the conversation panel's menuItems hook (Dock v0.9.0+), the bar without its own ⋯ while the task is in the dock.
         self.assertIn("menuItems: id === 'po-chat' ? (pid, ctx) => pdMenuItems(ctx) : undefined", INDEX)
         self.assertIn("function pdMenuItems(ctx)", INDEX)
-        self.assertIn("function pdRunAction(it, ctx)", INDEX)
-        self.assertIn("function pdMenuButton(ctx)", INDEX)
+        self.assertIn("function pdRunAction(it, ctx, el)", INDEX)
+        self.assertIn("function pdMenuButton(ctx, el)", INDEX)
         self.assertIn("{ menu: !pdTask() }", INDEX)
         # A detached stand-in has no place: what opens under its button opens under the panel's ⋯, in that window.
-        self.assertIn("b._at = pdMenuButton(ctx);", INDEX)
+        self.assertIn("b._at = pdMenuButton(ctx, el);", INDEX)
         self.assertIn("if (it.popup) { openThemeMenu(b, b._at); return; }", INDEX)
         self.assertIn("showIjMenu(btn._at || btn, repos);", INDEX)
         self.assertIn("const doc = anchor.ownerDocument, win = doc.defaultView || window;", INDEX)

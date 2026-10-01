@@ -46,7 +46,8 @@ function makePoItem(s) {
 //   label, live, draft, status, archived, members, makePo, currentTheme,
 //   chatSchemeOn, resuming.
 // env: hub (this browser is on the hub machine), features {focus, themes,
-//   send, geometry}, terminalName, fileManagerName.
+//   send, geometry}, terminalName, fileManagerName, panels (the page has the
+//   dock's panels: a room's chat can open as one, #150).
 function sessionActions(s, env) {
   s = s || {}; env = env || {};
   const f = env.features || {};
@@ -54,7 +55,7 @@ function sessionActions(s, env) {
   const T = env.terminalName || 'terminal', FM = env.fileManagerName || 'file manager';
   const sid = s.sessionId || '', rid = s.roomId || '', cwd = s.cwd || '';
   const live = !!s.live;
-  const run = [], org = [], folder = [], danger = [];
+  const open = [], run = [], org = [], folder = [], danger = [];
   const off = (item, reason) => ({ ...item, disabled: true, reason });
   let primary = null;
 
@@ -89,6 +90,11 @@ function sessionActions(s, env) {
       title: 'Delete every agent transcript and the ~/cs scratch folder' });
   } else if (s.kind === 'room') {
     const room = { room: rid };
+    // Where the page has the panels (#150, env.panels): its chat as a panel
+    // of its own, beside the conversation, as many as you like. First, as a
+    // browser's "Open in new tab" is.
+    if (env.panels) open.push({ id: 'panel', label: 'Open in new panel', cls: 'panel-btn', data: room,
+      title: 'Its chat as a panel of its own, beside the conversation (as many as you like)' });
     if (s.draft) primary = { id: 'start', label: 'Start', variant: 'primary', cls: 'room-resume-inline', data: room, title: 'Launch the agent(s) with the task spec' };
     else if (live) primary = { id: 'end', label: 'End', variant: 'default', cls: 'room-end', data: room, title: 'Stop the agent(s) and keep the session' };
     else primary = { id: 'resume', label: 'Resume', variant: 'primary', cls: 'room-resume-inline', data: room, title: 'Relaunch the agent(s) with their conversation' };
@@ -151,7 +157,7 @@ function sessionActions(s, env) {
   const clean = it => it.disabled ? { ...it, cls: undefined, data: {} } : it;
   return {
     primary: primary && clean(primary),
-    groups: [run, org, folder, danger].map(g => g.map(clean)).filter(g => g.length),
+    groups: [open, run, org, folder, danger].map(g => g.map(clean)).filter(g => g.length),
   };
 }
 

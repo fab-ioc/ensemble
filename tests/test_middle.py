@@ -660,7 +660,13 @@ class TheMiddle(unittest.TestCase):
                     self.assertTrue(g["before"]["hidden"], "the search hid the tree")
                     self.assertIn("file", g["before"]["trail"])
                     self.assertEqual((g["pane"], g["q"], g["recent"], g["treeHidden"]), ("tree", "", False, False))
-                    self.assertNotIn("file", [t[0] for t in g["trail"]])
+                    # A task's file is a panel of the dock (#150), still on screen with
+                    # the tree out: it stays the crumb. A plain project's is a tab of the
+                    # pane, so the tree takes its place.
+                    if key == "taskWs":
+                        self.assertEqual(g["trail"][-1][0], "file", "the file panel is where the person is")
+                    else:
+                        self.assertNotIn("file", [t[0] for t in g["trail"]])
                     self.assertTrue(g["shown"], "the file is shown in the tree")
                     self.assertTrue(g["mark"].endswith("README.md"), g["mark"])
 

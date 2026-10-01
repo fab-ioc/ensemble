@@ -357,9 +357,13 @@ async function main() {
     return { evalIn, until, click, shot, sessionId, close: () => c.send('Target.closeTarget', { targetId }) };
   };
   const go = (p, theme) => p.evalIn(`(() => {
-    try { ['cd-tool-strip', 'cd-tool-open', 'cd-phone-tabs'].forEach(k => localStorage.removeItem(k)); localStorage.setItem('cd-view', 'board'); } catch (e) {}
+    try { ['cd-tool-strip', 'cd-tool-open', 'cd-phone-tabs', 'cd-ws-panels', 'cd-chat-panels'].forEach(k => localStorage.removeItem(k)); localStorage.setItem('cd-view', 'board'); } catch (e) {}
     VIEW_MODE = 'board'; SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'tasks'; renderRows(); return 0; })()`);
+  // The file panels open (#150) closed, so the dock is the tools and the conversation again.
+  const closeFiles = p => p.evalIn(`(() => { [...PD.rt.keys()].filter(k => k.startsWith('file:')).forEach(id => PD.dock.removePanel(id)); return PD.rt.size; })()`);
   const ready = p => p.until('document.body.classList.contains("po-dock") && !!PD.dock && !!PD.told && !!PD.told.points && (() => { const f = pdChatFrame(); return !!(f && f.contentWindow && f.contentWindow.eval("typeof CHAT_DRAWN !== typeof void 0 && CHAT_DRAWN")); })()', 30000);
+  // A file opened from Files is a panel of its own (#150, .wfp): its viewer loaded.
+  const FILE_ON = '(() => { const f = document.querySelector("#po-dock .wfp iframe.wsp-frame.on"); try { return !!f && f.contentDocument.readyState === "complete" && f.contentWindow.location.pathname === "/fileview"; } catch (e) { return false; } })()';
   const rect = 'const R = el => { const b = el.getBoundingClientRect(); return [Math.round(b.left), Math.round(b.top), Math.round(b.width), Math.round(b.height)]; };';
   try {
     // ---- 1440 x 900: the default, the arrows, the roadmap, reset, Ack
@@ -406,11 +410,12 @@ async function main() {
     out.roadmap = await p.evalIn(`(() => { const rm = document.getElementById('rm-panel'); return { inWs: !!rm.closest('.wsp-frames'), edit: !!rm.querySelector('button[data-rm="edit"]'),
       tab: (PD.els.workspace.querySelector('.wst-tab.on .wst-nm') || {}).textContent || '', frame: !!PD.els.workspace.querySelector('iframe.wsp-frame.on'), note: rm.querySelector('.rm-note').offsetHeight }; })()`);
     await p.shot('po-dock-roadmap');
-    // A document opens in a tab of its own, and the roadmap's view steps aside.
+    // A document opens as a panel of its own (#150), and the roadmap's view steps aside.
     await p.evalIn('[...PD.els.workspace.querySelectorAll(".wse.doc[data-path]")].find(x => x.dataset.path.endsWith("#1 Notes.md")).click(); 0');
-    await p.until('(() => { const f = PD.els.workspace.querySelector("iframe.wsp-frame.on"); try { return !!f && f.contentWindow.location.pathname === "/fileview"; } catch (e) { return false; } })()', 20000);
-    out.docOpen = await p.evalIn(`({ tab: (PD.els.workspace.querySelector('.wst-tab.on .wst-nm') || {}).textContent || '', rmHidden: document.getElementById('rm-panel').hidden,
-      marked: [...PD.els.workspace.querySelectorAll('.wse.doc.on')].map(x => x.querySelector('.nm').textContent), tabs: PD.els.workspace.querySelectorAll('.wst-tab').length })`);
+    await p.until(FILE_ON, 20000);
+    out.docOpen = await p.evalIn(`({ tab: [...document.querySelectorAll('#po-dock .dk-tab[data-dk-tab^="file:"]')].map(t => t.textContent).join(), rmHidden: document.getElementById('rm-panel').hidden,
+      marked: [...PD.els.workspace.querySelectorAll('.wse.doc.on')].map(x => x.querySelector('.nm').textContent), tabs: PD.els.workspace.querySelectorAll('.wst-tab').length,
+      panels: document.querySelectorAll('#po-dock .wfp').length, inFiles: PD.els.workspace.querySelectorAll('iframe.wsp-frame').length })`);
     // The find box narrows the documents as it does any file: Go to file, then Text.
     out.filter = await p.evalIn(`(async () => {
       const sleep = ms => new Promise(r => setTimeout(r, ms)), ws = PD.els.workspace, inp = ws.querySelector('.wsf-q'), r = {};
@@ -427,6 +432,7 @@ async function main() {
       return r;
     })()`);
     await p.evalIn('PD.dock.closeFly(); 0');
+    await closeFiles(p); await sleep(200);
     // Points pinned beside the chat (remembered), then the default layout again.
     await p.evalIn('PD.dock.pin("points"); 0');
     await sleep(300);
@@ -486,10 +492,11 @@ async function main() {
     await p.evalIn('PD.dock.pin("workspace"); 0'); await sleep(300);
     await p.until('!!PD.els.workspace.querySelector(".wsp-tree .wse[data-path]")', 20000);
     await p.evalIn('[...PD.els.workspace.querySelectorAll(".wsp-tree .wse[data-path]")].find(x => x.dataset.path.endsWith("motor.py")).click(); 0');
-    await p.until('(() => { const f = PD.els.workspace.querySelector("iframe.wsp-frame.on"); try { return !!f && f.contentDocument.readyState === "complete" && f.contentWindow.location.pathname === "/fileview"; } catch (e) { return false; } })()', 20000);
+    await p.until(FILE_ON + ' && [...PD.rt.keys()].some(k => k.endsWith("motor.py"))', 20000);
     out.kept = await p.evalIn(`(async () => {
       const sleep = ms => new Promise(r => setTimeout(r, ms));
-      const file = () => PD.els.workspace.querySelector('iframe.wsp-frame.on');
+      // The file is a panel of its own (#150): its viewer is in that panel.
+      const file = () => { const e = PD.rt.get([...PD.rt.keys()].find(k => k.endsWith('motor.py'))); return e && e.el.querySelector('iframe.wsp-frame.on'); };
       file().contentWindow.__kept = 1; pdChatFrame().contentWindow.__kept = 1;
       const alive = () => { const f = file(), c = pdChatFrame(); return [!!(f && f.contentWindow && f.contentWindow.__kept), !!(c && c.contentWindow && c.contentWindow.__kept)]; };
       const r = { moveBefore: typeof Element.prototype.moveBefore === 'function' };
@@ -502,8 +509,8 @@ async function main() {
       PD.dock.float('po-chat'); await sleep(300); r.floatChat = alive(); r.chatIn = PO_PANEL.parentNode === PD.els['po-chat'];
       PD.dock.dockBack('po-chat'); await sleep(300); r.dockChat = alive();
       PD.dock.reset(); await sleep(400); r.reset = alive();
-      // The file closed again.
-      const x = PD.els.workspace.querySelector('.wst-tab.on .wst-x'); if (x) x.click(); await sleep(200);
+      // The file closed again (its panel, #150).
+      [...PD.rt.keys()].filter(k => k.startsWith('file:')).forEach(id => PD.dock.removePanel(id)); await sleep(200);
       return r;
     })()`);
     // Keys: F6 between the stacks, the arrows along a stack's tabs.
@@ -646,13 +653,16 @@ async function main() {
       const w = PD.dock.popWindow('workspace'), d = w.document, r = {};
       const file = [...PD.els.workspace.querySelectorAll('.wsp-tree .wse[data-path]')].find(x => x.dataset.path.endsWith('motor.py'));
       file.click();
+      // The file is a panel of its own (#150), of this page's dock, not of the Files window.
       let f = null;
+      const fp = () => { const e = PD.rt.get([...PD.rt.keys()].find(k => k.endsWith('motor.py'))); return e && e.el.querySelector('iframe.wsp-frame.on'); };
       for (let i = 0; i < 80; i++) {
-        f = PD.els.workspace.querySelector('iframe.wsp-frame.on');
+        f = fp();
         try { if (f && f.contentDocument && f.contentDocument.readyState === 'complete' && f.contentWindow.location.pathname === '/fileview') break; } catch (e) {}
         await sleep(100);
       }
       r.viewerInWindow = !!f && f.ownerDocument === d;
+      r.viewerInPage = !!f && f.ownerDocument === document;
       try { r.viewerLoaded = f.contentWindow.location.pathname === '/fileview'; } catch (e) { r.viewerLoaded = String(e); }
       new f.contentWindow.Function("parent.postMessage({ type: 'fv-state', st: { view: 'source', wrap: true, marks: {} } }, location.origin)")();
       await sleep(300);
@@ -667,6 +677,7 @@ async function main() {
     })()`);
     await p.evalIn('PD.dock.popWindow("workspace").close(); 0');
     await p.until('!PD.dock.isOut("workspace") && PD.els.workspace.ownerDocument === document', 10000);
+    await closeFiles(p); await sleep(200);
 
     // A phone's width: the same dock turns narrow, and wide again as it was.
     await p.evalIn('window.__saved = localStorage.getItem("cd-tool-strip"); window.__dock = PD.dock; window.__wide = (() => { const L = PD.dock.layout(); return JSON.stringify([L.root, L.auto.map(a => [a.id, a.edge]), L.floats, L.hidden]); })(); pdChatFrame().contentWindow.__kept = 1; 0');
@@ -753,7 +764,7 @@ async function main() {
     // ---- A layout saved with a Documents panel (docked, in front): the page loads without it
     {
       const q = await page(1440, 900);
-      await q.evalIn(`(() => { localStorage.removeItem('cd-tool-strip'); localStorage.setItem('cd-po-dock', JSON.stringify({ root: { t: 'split', dir: 'row', kids: [
+      await q.evalIn(`(() => { ['cd-tool-strip', 'cd-ws-panels', 'cd-chat-panels'].forEach(k => localStorage.removeItem(k)); localStorage.setItem('cd-po-dock', JSON.stringify({ root: { t: 'split', dir: 'row', kids: [
           { t: 'stack', panels: ['po-chat', 'documents'], active: 'documents' }, { t: 'stack', panels: ['points'], active: 'points', size: 340 }] },
         auto: [{ id: 'board', edge: 'right', size: 900 }, { id: 'documents', edge: 'right', size: 900 }, { id: 'workspace', edge: 'right', size: 900 }, { id: 'changes', edge: 'right', size: 900 }],
         floats: [], hidden: [{ id: 'documents' }] }));
@@ -976,12 +987,12 @@ class InChrome(unittest.TestCase):
         r = self.got["roadmap"]
         self.assertEqual(r, {"inWs": True, "edit": True, "tab": "ROADMAP.md", "frame": False, "note": 0}, r)
 
-    def test_a_document_opens_in_a_workspace_tab(self):
+    def test_a_document_opens_as_a_panel_of_its_own(self):
         d = self.got["docOpen"]
-        self.assertEqual(d["tab"], "#1 Notes.md")
+        self.assertEqual(d["tab"], "#1 Notes.md", "a panel of the dock named after the file (#150)")
         self.assertTrue(d["rmHidden"], "the roadmap's view steps aside")
         self.assertEqual(d["marked"], ["Notes"], "its row is the one marked")
-        self.assertEqual(d["tabs"], 2, "the roadmap's tab and the document's")
+        self.assertEqual((d["tabs"], d["panels"], d["inFiles"]), (1, 1, 0), "the roadmap's tab stays in Files; the document is a panel, no viewer in Files")
 
     def test_the_find_box_narrows_the_documents(self):
         f = self.got["filter"]
@@ -1073,8 +1084,8 @@ class InChrome(unittest.TestCase):
     def test_a_popped_out_workspace_works_in_its_own_window(self):
         ws = dict(self.got["popWs"])
         base = ws.pop("base")
-        self.assertEqual(ws, {"viewerInWindow": True, "viewerLoaded": True, "tabHeard": True},
-                         "a relative frame address in the window is this page's (its base), not popout.html's")
+        self.assertEqual(ws, {"viewerInWindow": False, "viewerInPage": True, "viewerLoaded": True, "tabHeard": True},
+                         "a file picked in the Files window is a panel of this page's dock (#150), its viewer heard here")
         self.assertEqual(base, {"n": 1, "first": "BASE", "uri": True, "link": True},
                          "one <base href>, this page's, first in the head: a relative link there is this hub's")
 
