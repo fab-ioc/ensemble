@@ -105,7 +105,8 @@ class ThePoHeader(unittest.TestCase):
             NOUN, re.search(r"^const esc = .*$", INDEX, re.M).group(0),
             fn(INDEX, "function workflowOf("), fn(INDEX, "function pointsCountText("),
             fn(INDEX, "function pointsCountTip("), fn(INDEX, "function runChip("), fn(INDEX, "function shortModel("),
-            fn(INDEX, "function poAgent("), fn(INDEX, "function poOpenCount("), fn(INDEX, "function poHeadHtml(")])
+            fn(INDEX, "function poAgent("), fn(INDEX, "function poOpenCount("), fn(INDEX, "function poMenuItems("),
+            re.search(r"^const DOCK_MENU_INTERIM = .*$", INDEX, re.M).group(0), fn(INDEX, "function poHeadHtml(")])
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "pohead.cjs"
             script.write_text(JS % src, encoding="utf-8")
@@ -134,9 +135,12 @@ class ThePoHeader(unittest.TestCase):
         self.assertIn('<button class="po-btn def" data-po="resume"', stopped)
         for h in (live, stopped):
             menu = re.search(r'<span class="po-menu" role="menu" hidden>(.*?)</span>', h).group(1)
-            self.assertEqual(re.findall(r'data-po="(\w+)"', menu), ["switch", "open", "popout"])
-            self.assertEqual(menu.count('role="menuitem"'), 3)
-            self.assertIn('data-po="more" title="More" aria-label="More actions for the PO" aria-haspopup="menu" aria-expanded="false">⋯</button>', h)
+            # #148: Pop out is the panel's own ⋯ (View Mode › Window); the two
+            # left wait here until Dock takes app items (data-interim).
+            self.assertEqual(re.findall(r'data-po="(\w+)"', menu), ["switch", "open"])
+            self.assertEqual(menu.count('role="menuitem"'), 2)
+            self.assertIn('data-po="more" data-interim="dock-menu" title="More actions · for now here: they move into the panel’s ⋯ menu once Dock takes app items" aria-label="More actions for the PO" aria-haspopup="menu" aria-expanded="false">⋯</button>', h)
+            self.assertNotIn('data-po="popout"', h)
         self.assertNotIn('data-po="close"', live)
         self.assertIn('data-po="close"', stopped)     # a drawer keeps its ×
 

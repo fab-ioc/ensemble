@@ -175,8 +175,12 @@ function itemHtml(it) {
     + '</button>';
 }
 
-function actionBarHtml(model) {
+// opts.interim: the More button's title, and data-interim="dock-menu" on it,
+// where the menu is the interim home of items that belong in a Dock panel's
+// own ⋯ menu (index.html, Dock need 14).
+function actionBarHtml(model, opts) {
   const p = model && model.primary;
+  const interim = opts && opts.interim;
   const primary = p
     ? `<button type="button" class="am-btn am-primary${p.variant === 'primary' ? ' is-primary' : ''}${p.disabled ? '' : ' ' + p.cls}" data-act="${escH(p.id)}"`
       + (p.disabled ? '' : dataAttrs(p.data))
@@ -184,7 +188,7 @@ function actionBarHtml(model) {
     : '';
   const groups = (model && model.groups) || [];
   const menu = groups.length
-    ? `<span class="am-wrap"><button type="button" class="am-btn am-more" aria-haspopup="menu" aria-expanded="false" aria-label="More actions" title="More actions">`
+    ? `<span class="am-wrap"><button type="button" class="am-btn am-more"${interim ? ' data-interim="dock-menu"' : ''} aria-haspopup="menu" aria-expanded="false" aria-label="More actions" title="${escH(interim || 'More actions')}">`
       + `<span class="am-dots" aria-hidden="true">⋯</span> More</button>`
       + `<div class="am-menu" role="menu" aria-label="More actions" hidden>`
       + groups.map(g => g.map(itemHtml).join('')).join('<div class="am-sep" role="separator"></div>')
@@ -258,13 +262,17 @@ const api = { sessionActions, actionBarHtml, popupPlace, themeListHtml, makePoIt
 // menu closes first.
 if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
   const S = { open: null, children: new Set() };
+  // The window an element is shown in: a popup opens, and is placed, in the
+  // window its trigger is in (a Dock panel's own window holds the task panel
+  // and its bar, index.html #148), not always this page's.
+  const winOf = el => (el && el.ownerDocument && el.ownerDocument.defaultView) || window;
   // What is on screen: the visual viewport where there is one (it shrinks when
   // a phone's keyboard opens, and scrolls when zoomed), else the window.
-  const viewport = () => {
-    const v = window.visualViewport;
+  const viewport = (w = window) => {
+    const v = w.visualViewport;
     if (v && v.width && v.height) return { width: v.width, height: v.height, left: v.offsetLeft, top: v.offsetTop };
-    return { width: document.documentElement.clientWidth || innerWidth,
-             height: document.documentElement.clientHeight || innerHeight, left: 0, top: 0 };
+    return { width: w.document.documentElement.clientWidth || w.innerWidth,
+             height: w.document.documentElement.clientHeight || w.innerHeight, left: 0, top: 0 };
   };
   const shown = el => !!(el && el.isConnected && el.getClientRects().length);
 
@@ -274,7 +282,7 @@ if (typeof document !== 'undefined' && typeof document.addEventListener === 'fun
     el.style.maxHeight = ''; el.style.width = '';
     el.style.left = '0px'; el.style.top = '0px';
     const size = { width: el.offsetWidth, height: el.offsetHeight };
-    const p = popupPlace(rect, size, viewport(), o);
+    const p = popupPlace(rect, size, viewport(winOf(el)), o);
     el.style.left = p.left + 'px'; el.style.top = p.top + 'px';
     if (p.width) el.style.width = p.width + 'px';
     if (p.maxHeight) el.style.maxHeight = p.maxHeight + 'px';
@@ -290,17 +298,18 @@ if (typeof document !== 'undefined' && typeof document.addEventListener === 'fun
       place(el, last, o);
     };
     go();
+    const w = winOf(el), vv = w.visualViewport;
     const opt = { capture: true, passive: true };
     // Not its own scrolling (a long list inside it). A scroll of the window
     // itself has the window as its target, which is not a node.
-    const onScroll = ev => { const t = ev.target; if (!(t instanceof Node && el.contains(t))) go(); };
-    window.addEventListener('scroll', onScroll, opt);
-    window.addEventListener('resize', go);
-    if (window.visualViewport) { visualViewport.addEventListener('resize', go); visualViewport.addEventListener('scroll', go); }
+    const onScroll = ev => { const t = ev.target; if (!(t instanceof w.Node && el.contains(t))) go(); };
+    w.addEventListener('scroll', onScroll, opt);
+    w.addEventListener('resize', go);
+    if (vv) { vv.addEventListener('resize', go); vv.addEventListener('scroll', go); }
     return { update: go, stop() {
-      window.removeEventListener('scroll', onScroll, opt);
-      window.removeEventListener('resize', go);
-      if (window.visualViewport) { visualViewport.removeEventListener('resize', go); visualViewport.removeEventListener('scroll', go); }
+      w.removeEventListener('scroll', onScroll, opt);
+      w.removeEventListener('resize', go);
+      if (vv) { vv.removeEventListener('resize', go); vv.removeEventListener('scroll', go); }
     } };
   }
 
@@ -311,7 +320,7 @@ if (typeof document !== 'undefined' && typeof document.addEventListener === 'fun
     if (!menu) return;
     if (typeof api.onOpen === 'function') { try { api.onOpen(menu, trigger); } catch (e) {} }
     menu._amHome = trigger.parentElement;
-    document.body.appendChild(menu);
+    trigger.ownerDocument.body.appendChild(menu);
     menu.hidden = false;
     trigger.setAttribute('aria-expanded', 'true');
     const t = track(menu, () => shown(trigger) ? trigger.getBoundingClientRect() : null, { align: 'end' },

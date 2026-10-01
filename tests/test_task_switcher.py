@@ -425,7 +425,9 @@ class TaskSwitcher(unittest.TestCase):
         self.assertIn("box.querySelector(`${inGroup}${cls}[data-room=\"${CSS.escape(had)}\"]`)", wiring)
         self.assertIn("let back = had && at(hadCls);", wiring)
         self.assertIn("unassigned: (un && un.sessions) || []", wiring)
-        self.assertIn("function detailActions(r, isLive) {\n  return `<div class=\"dp-actions\">${actionsCell(r, isLive)}</div>`;", INDEX)
+        # The task bar's actions are the same as a row's, with its ⋯ marked interim until Dock's panel menu takes them (#148).
+        self.assertIn("function detailActions(r, isLive) {\n  const bar = SessionActions.actionBarHtml(SessionActions.sessionActions(actionState(r, isLive), actionEnv()), { interim: DOCK_MENU_INTERIM });\n"
+                      "  return `<div class=\"dp-actions\">${bar}</div>`;", INDEX)
         bar = self.r["bar"]
         m = re.search(r'<button[^>]*class="[^"]*makepo-btn[^"]*"[^>]*>', bar)
         self.assertTrue(m, bar)
