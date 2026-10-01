@@ -316,7 +316,7 @@ class TheWiring(unittest.TestCase):
         self.assertIn("drReview('project:' + pid + '|' + root + (sha ? '@' + sha : '')", js_function("chUseContext"))
         load = js_function("chLoadStatus")
         self.assertIn("/api/git/log?path=", load)
-        self.assertIn("files.length ? '<h4 class=\"chp-sec\">Uncommitted", load, "uncommitted only when there are any")
+        self.assertIn("files.length ? '<h4 class=\"chp-sec\">Uncommitted", js_function("chPaintList"), "uncommitted only when there are any")
         wire = js_function("wireChangesPanel")
         self.assertIn("chOpenDiff(f.dataset.file, '', f.dataset.commit || '')", wire)
 
