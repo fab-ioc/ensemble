@@ -627,17 +627,73 @@ def _answer(p: dict, key: str, mid: str, at: float, how: str, summary: str = "",
 # A follow-up closes the point it follows
 # ---------------------------------------------------------------------------
 
+_TEXTS: dict[str, tuple[list, dict]] = {}     # session -> (its stat, balloon id -> text)
+_TEXTS_MAX = 32                               # sessions kept: a PO chat rotates often, its old ones never change
+
+
+def _session_texts(room: dict, sid: str) -> dict[str, str] | None:
+    """A solo chat's balloon texts by id for one of its own sessions, or
+    None. Kept while the transcript is unchanged (its stat): a rotated
+    session is read once, not on every send that scans its answers."""
+    st = _session_stat(sid)
+    hit = _TEXTS.get(sid)
+    if hit is not None and st is not None and hit[0] == st:
+        return hit[1]
+    turns = _d.solo_turns(room, sid)
+    if turns is None:
+        return None
+    texts = {}
+    for mid, t in turns.items():
+        text = t.get("text") or ""
+        if t.get("role") == "user":
+            text = strip_point_lines(_d.message_refs.strip_message_refs(text))
+        texts[mid] = text
+    if st is not None:
+        _TEXTS.pop(sid, None)
+        _TEXTS[sid] = (st, texts)
+        while len(_TEXTS) > _TEXTS_MAX:
+            _TEXTS.pop(next(iter(_TEXTS)))
+    return texts
+
+
+def _balloon_text(room_id: str, mid: str, cache: dict) -> str | None:
+    """A balloon's text as its link shows it, or None when the hub cannot
+    find it. A solo chat's balloon is a transcript turn: its session is read
+    once (:func:`_session_texts`, held in ``cache`` under ``("sid", sid)``
+    for the pass) and serves every balloon of that session; a room's message
+    is resolved on its own. The pass of a send reads only the sessions its
+    quote scan reaches; the one-off derivation is handed every session,
+    read outside the lock."""
+    key = ("text", mid)
+    if key in cache:
+        return cache[key]
+    text = None
+    sid, sep, n = mid.rpartition(":")
+    if sep and sid and (n.isdigit() or (n[:1] == "q" and n[1:].isdigit())):
+        if ("room",) not in cache:
+            cache[("room",)] = _d.chatroom.get_room(room_id)
+        room = cache[("room",)]
+        if ("sid", sid) not in cache:
+            cache[("sid", sid)] = _session_texts(room, sid) if room else None
+        text = (cache[("sid", sid)] or {}).get(mid)
+    else:
+        ref = _d.resolve_message_ref(room_id, mid)
+        text = (ref.get("text") or "") if ref else None
+    cache[key] = text
+    return text
+
+
 def _balloon_words(room_id: str, mid: str, cache: dict) -> str:
     """A balloon's text, normalised, read once per pass ("" when the hub
     cannot find it)."""
     if mid in cache:
         return cache[mid]
     try:
-        ref = _d.resolve_message_ref(room_id, mid)
+        text = _balloon_text(room_id, mid, cache)
     except Exception as e:      # noqa: BLE001 — a balloon that cannot be read names nothing
         _log(f"{room_id}: balloon {mid} not read: {e!r}")
-        ref = None
-    cache[mid] = norm_text((ref or {}).get("text") or "") if ref else ""
+        text = None
+    cache[mid] = norm_text(text or "")
     return cache[mid]
 
 
@@ -740,25 +796,41 @@ def _follow_new(led: dict, made: list[dict], room_id: str, now: float) -> None:
             _link_follow(parent, p, now)
 
 
-def derive_follow_ups(led: dict, room_id: str) -> bool:
+def warm_balloons(room_id: str, room: dict, led: dict) -> dict:
+    """The reading of the one-off derivation, done ahead of it: every session
+    of the room read once, as the cache :func:`derive_follow_ups` takes.
+    Called before the lock, so a long backlog does not hold up sends."""
+    cache: dict = {("room",): room}
+    for sid in _session_ids(room, led):
+        try:
+            cache[("sid", sid)] = _session_texts(room, sid)
+        except Exception as e:  # noqa: BLE001 — that session's balloons name nothing
+            _log(f"{room_id}: session {sid} not read: {e!r}")
+            cache[("sid", sid)] = None
+    return cache
+
+
+def derive_follow_ups(led: dict, room_id: str, cache: dict | None = None) -> bool:
     """An older ledger, once: the words of every answer that has none, then
     every point's follow-up link where it can be derived (a later point
     quoting or linking an answer). The words come first: a link is kept for
     good, and which point of a shared balloon a quote follows is read from
-    them. Returns whether anything changed."""
+    them. ``cache`` is :func:`warm_balloons`'s reading, when the caller did
+    it ahead. Returns whether anything changed."""
     changed = False
+    cache = {} if cache is None else cache
     for p in led["points"]:
         for a in p.get("answers") or []:
             if a.get("said") or not a.get("mid"):
                 continue
             try:
-                ref = _d.resolve_message_ref(room_id, a["mid"])
-            except Exception:   # noqa: BLE001
-                ref = None
-            if ref and ref.get("text"):
-                a["said"] = said(ref["text"], p["id"], "re" if a.get("how") == "re" else "plain")
+                text = _balloon_text(room_id, a["mid"], cache)
+            except Exception as e:  # noqa: BLE001 — that answer keeps no words
+                _log(f"{room_id}: answer {a['mid']} of {p['id']} not read: {e!r}")
+                text = None
+            if text:
+                a["said"] = said(text, p["id"], "re" if a.get("how") == "re" else "plain")
                 changed = True
-    cache: dict = {}
     for p in sorted(led["points"], key=lambda x: (x["createdAt"], x["id"])):
         if p.get("replyTo") or p["state"] == "split":
             continue
@@ -1139,6 +1211,9 @@ def sync(room_id: str, force: bool = False, room: dict | None = None) -> dict:
         if adopt:
             sid = (next(iter(_agents(room)), {}).get("sessionId") or "").strip()
             pre = _d.read_session_turns(sid) if sid else None
+    warm = None
+    if led.get("derived") != DERIVED and led["points"]:
+        warm = warm_balloons(room_id, room, led)     # the one-off derivation's reading, outside the lock too
     with _LOCK:
         led = load(room_id)
         changed = False
@@ -1165,7 +1240,7 @@ def sync(room_id: str, force: bool = False, room: dict | None = None) -> dict:
             # A ledger from before follow-ups: the links it holds the words
             # for, once (the backlog the CEO cleared by hand until now).
             try:
-                derive_follow_ups(led, room_id)
+                derive_follow_ups(led, room_id, warm)
             except Exception as e:  # noqa: BLE001 — the ledger stands as it is
                 _log(f"{room_id}: follow-ups not derived: {e!r}")
             led["derived"] = DERIVED

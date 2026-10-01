@@ -90,6 +90,7 @@ class _World(unittest.TestCase):
         points._ADOPT_SEEN.clear()
         points._TOLD.clear()
         points._GONE.clear()
+        points._TEXTS.clear()
         self.t0 = time.time() - 3600
 
     def solo_room(self, sid="sid-1"):
@@ -1300,6 +1301,69 @@ class FollowUps(_World):
         self.assertEqual(self.state(rid), {"P1": "followed", "P2": "delivered", "P3": "open"})
         self.assertEqual((self.point(rid, "P1")["followedBy"], self.point(rid, "P3")["replyTo"]), ("P3", "P1"))
         self.assertEqual(self.point(rid, "P2")["answers"][0]["said"], "Re P2: The CI cache was stale; it is purged nightly now.")
+
+    def test_the_backlog_reads_each_session_once(self):
+        # The derivation is handed every session's balloons, read once
+        # (outside the lock, by sync): no link is resolved on its own.
+        rid = self.shared()
+        with mock.patch.object(points, "_follow_new"):
+            self.send(rid, "## Review comments (1)\n\n**1.** > A flaky test, in test_x\n\nWhich test exactly?",
+                      at=self.t0 + 10)
+        led = points.load(rid)
+        led["derived"] = 0
+        for p in led["points"]:
+            for a in p["answers"]:
+                a.pop("said", None)
+        points._save(rid, led)
+        points._SYNCED.clear()
+        points._TEXTS.clear()
+        reads = dashboard.read_session_turns.call_count
+        with mock.patch.object(points, "_scan_turns", return_value=False), \
+                mock.patch.object(dashboard, "resolve_message_ref", side_effect=AssertionError("resolved alone")):
+            led = points.sync(rid, force=True)
+        self.assertEqual(dashboard.read_session_turns.call_count - reads, 1)
+        self.assertEqual(led["derived"], points.DERIVED)
+        self.assertEqual(self.point(rid, "P3")["replyTo"], "P1")
+        self.assertEqual(sum(1 for p in led["points"] for a in p["answers"] if a.get("said")), 2)
+
+    def test_a_session_that_cannot_be_read_is_logged_not_swallowed(self):
+        rid = self.solo_room()
+        self.answered(rid)
+        led = points.load(rid)
+        led["derived"] = 0
+        led["points"][0]["answers"][0].pop("said", None)
+        points._save(rid, led)
+        points._SYNCED.clear()
+        points._TEXTS.clear()
+        with mock.patch.object(points, "_scan_turns", return_value=False), \
+                mock.patch.object(dashboard, "read_session_turns", side_effect=OSError("gone")):
+            led = points.sync(rid, force=True)
+        self.assertEqual(led["derived"], points.DERIVED)
+        self.assertNotIn("said", led["points"][0]["answers"][0])
+        self.assertTrue(any("sid-1 not read" in str(c.args[0]) for c in points._log.call_args_list), points._log.call_args_list)
+
+    def test_a_quote_naming_nothing_reads_a_session_once_and_remembers_it(self):
+        rid = self.solo_room()
+        self.answered(rid)
+        for i, (q, a) in enumerate([("Which test?", "test_login."), ("Merged?", "Yes, in #9.")]):
+            out, _ = self.send(rid, q, at=self.t0 + 10 + i)
+            self.add("sid-1", turn("user", out, self.t0 + 11 + i), turn("assistant", a, self.t0 + 12 + i))
+        self.assertEqual(self.state(rid), {"P1": "delivered", "P2": "delivered", "P3": "delivered"})
+        reads = dashboard.read_session_turns.call_count
+        with mock.patch.object(dashboard, "resolve_message_ref", side_effect=AssertionError("resolved alone")):
+            # Three answers in one session: the quote scan reads it once ...
+            self.send(rid, "> Something nobody here ever wrote down\n\nwhat?", at=self.t0 + 20)
+            self.assertEqual(dashboard.read_session_turns.call_count - reads, 1)
+            # ... and not again while the transcript is unchanged ...
+            self.send(rid, "> Another thing nobody here ever wrote down\n\nwhat?", at=self.t0 + 21)
+            self.assertEqual(dashboard.read_session_turns.call_count - reads, 1)
+            # ... but once more after it grew (the send's scan of the new
+            # turns is a read of its own, as before).
+            self.add("sid-1", turn("assistant", "Also: the cache was stale.", self.t0 + 22))
+            self.send(rid, "> A third thing nobody here ever wrote down\n\nwhat?", at=self.t0 + 23)
+            self.assertEqual(dashboard.read_session_turns.call_count - reads, 3)
+        self.assertEqual(self.state(rid)["P4"], "open")
+        self.assertNotIn("replyTo", self.point(rid, "P4"))
 
     def test_what_an_answer_says_to_a_point(self):
         text = ("Hello.\n\nRe P3: it is live now.\n\nMore on it: reload the page.\n\nRe P4 (planned #9): on it.\n\n"
