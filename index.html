@@ -11422,9 +11422,11 @@ function pdChatOpen(roomId, o) {
   if (mid && mid.roomId === roomId) {
     closeDetail();
     // Its chat in the middle goes with it: the panel's is the one (a middle
-    // closed otherwise keeps its page, off screen, for a quick reopen).
+    // closed otherwise keeps its page, off screen, for a quick reopen). The
+    // pane forgets the room too, so the task's next turn in the middle gets
+    // a new page rather than an empty pane (renderDetail rebuilds on a change).
     const f = pdById('detail-panel').querySelector('iframe.dp-session');
-    if (f) f.remove();
+    if (f) { f.parentElement.removeAttribute('data-room'); f.remove(); }
   }
   const el = document.createElement('div');
   el.className = 'pd-chat pd-chat-x';

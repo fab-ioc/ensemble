@@ -197,6 +197,24 @@ async function main() {
     await p.until(`PD.rt.has('chat:' + ${JSON.stringify(TA)}) && !SELECTED_SID`, 10000); await sleep(600);
     out.chatA = await p.evalIn(STATE);
     await p.shot('150-chat-panel-1440');
+    // × on the panel, then A's row: the middle shows A with its own chat page
+    // (the pane forgot the room when the page left with the panel).
+    {
+      const cidA = 'chat:' + TA, xA = `#po-dock .dk-tab-wrap.on > .dk-tab-x[data-dk-close="${cidA}"]`;
+      await p.evalIn(`PD.dock.activate(${JSON.stringify(cidA)}); 0`); await sleep(300);
+      await p.click(xA); await sleep(500);
+      if (await p.evalIn(`PD.rt.has(${JSON.stringify(cidA)})`)) { await p.click(xA); await sleep(500); }
+      out.backA = { gone: !(await p.evalIn(`PD.rt.has(${JSON.stringify(cidA)})`)) };
+      await p.click(row(TA));
+      await p.until(`SELECTED_SID && pdTask() && (PD.els["po-chat"].querySelector("iframe.dp-session") || {}).dataset?.room === ${JSON.stringify(TA)}`, 15000); await sleep(600);
+      Object.assign(out.backA, await p.evalIn(STATE));
+      out.backA.frameSrc = await p.evalIn(`(PD.els["po-chat"].querySelector("iframe.dp-session") || {}).src || ''`);
+      // Out again, as before, for the rest.
+      await p.click(`${HEAD} [data-dk-act="menu"]`); await sleep(300);
+      await p.evalIn(PICK('Open in new panel'));
+      await p.until(`PD.rt.has(${JSON.stringify(cidA)}) && !SELECTED_SID`, 10000); await sleep(600);
+      out.chatA2 = await p.evalIn(STATE);
+    }
     // Ctrl+click and a middle click on rows: two more.
     await p.click(row(TB), { modifiers: 2 });
     await p.until(`PD.rt.has('chat:' + ${JSON.stringify(TB)})`, 10000); await sleep(400);
@@ -458,6 +476,23 @@ class FilesAndChatsAsPanels(unittest.TestCase):
         tab = next(t for t in g["tabs"] if t["id"] == chats[0]["id"])
         self.assertEqual(tab["text"], "Brakes that squeal", "named after the task (a numbered task says #12 first)")
         self.assertTrue(tab["x"], "closable")
+
+    def test_a_task_back_in_the_middle_after_its_panel_closes_has_its_chat(self):
+        # Open in new panel took the middle's chat page with the task; × on the
+        # panel, then the row: the middle shows the task with a new chat page
+        # of its own, not the task's header over an empty pane.
+        g = self.got["backA"]
+        self.assertTrue(g["gone"], "the × closed the chat panel")
+        self.assertEqual([e for e in g["rt"] if e["kind"] == "chat"], [], "no chat panel left")
+        self.assertIsNotNone(g["sid"], "the task is in the middle")
+        self.assertEqual(g["middleRoom"], self.tasks[0], "with its own chat page")
+        self.assertEqual(g["detailFrames"], 1)
+        self.assertIn("/session?id=" + self.tasks[0], g["frameSrc"])
+        # Out again: the same panel as the first time.
+        g2 = self.got["chatA2"]
+        chats = [e for e in g2["rt"] if e["kind"] == "chat"]
+        self.assertEqual([e["room"] for e in chats], [self.tasks[0]])
+        self.assertIsNone(g2["sid"]); self.assertEqual(g2["detailFrames"], 0)
 
     def test_ctrl_click_and_a_middle_click_open_more_and_their_menu_is_the_tasks(self):
         g = self.got["chats"]
