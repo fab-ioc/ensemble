@@ -5212,15 +5212,12 @@ def ref_context(own: str = "", projects: list[dict] | None = None) -> dict:
     key, its first word, its PO chat's title: task_numbers.project_names),
     the board noun, and ``own`` — the project a bare number is read in when
     its sentence names no other."""
-    projects = load_projects() if projects is None else projects
+    projects = [p for p in (load_projects() if projects is None else projects) if p.get("id")]
     keys = project_keys(projects)
-    titles = {}
-    for p in projects:
-        prid = (p.get("poRoomId") or "").strip()
-        if prid:
-            po = next((e for e in _task_index() if e["id"] == prid), None)
-            if po:
-                titles[p["id"]] = po.get("title") or ""
+    po_rooms = {(p.get("poRoomId") or "").strip() for p in projects} - {""}
+    po_titles = {e["id"]: e.get("title") or "" for e in _task_index() if e["id"] in po_rooms} if po_rooms else {}
+    titles = {p["id"]: po_titles[(p.get("poRoomId") or "").strip()] for p in projects
+              if (p.get("poRoomId") or "").strip() in po_titles}
     rows = [{"id": p["id"], "name": p.get("name") or "", "key": keys.get(p["id"], "")} for p in projects]
     nouns = sorted({project_noun("one"), project_noun("many")} - {""})
     return {"projects": task_numbers.project_names(rows, titles), "own": own or "", "nouns": nouns}
@@ -5249,6 +5246,7 @@ class TaskLookup:
         self.room_id, self.project_id = room_id, project_id
         self._project: list[str] = []      # [the project numbers are read in, the room's own]
         self._ctx: dict | None = None
+        self._snap: tuple | None = None    # (task index, projects) read once per message
 
     def _projects(self) -> list[str]:
         if not self._project:
@@ -5256,16 +5254,45 @@ class TaskLookup:
             self._project.extend([self.project_id or own, own])
         return self._project
 
+    def _resolve(self, ref: str, project_id: str) -> str:
+        """resolve_task_ref on one reading of the rooms and projects."""
+        if self._snap is None:
+            projects = load_projects()
+            self._snap = (_task_index(), project_keys(projects), {p["id"]: p.get("name", "") for p in projects})
+        index, keys, names = self._snap
+        return task_numbers.find_task(index, ref, (project_id or "").strip(), keys, names)[0]
+
     def find(self, text: str) -> list[dict]:
-        if "#" not in (text or "") and "@" not in (text or ""):
+        """The tasks ``text`` names, each with the project its bare number is
+        read in: a project named right before it that has such a task, else
+        the one bare numbers are read in. A number another project named
+        earlier in its sentence also has is ``ambiguous`` (no line is
+        written for it: message_refs)."""
+        if not any(c in (text or "") for c in "#@-"):      # nothing a task is ever named by
             return []
         if self._ctx is None:
             self._ctx = ref_context(self._projects()[0])
-        return task_numbers.find_text_refs(text, self._ctx)
+        own = self._ctx["own"]
+        exists = lambda pid, no: bool(pid) and bool(self._resolve(f"#{no}", pid))    # noqa: E731
+        out = []
+        for ref in task_numbers.find_text_refs(text, self._ctx):
+            ref["ambiguous"] = False
+            if ref["key"]:
+                out.append(ref)
+                continue
+            if ref["how"] == "name" and ref["project"] != own and not exists(ref["project"], ref["no"]):
+                # The named project has no such task: the own project's, if
+                # it has one, with the name counting as a weak one.
+                ref["others"] = [ref["project"], *ref["others"]]
+                ref["project"], ref["how"] = own, ""
+            if ref["how"] != "name":
+                ref["ambiguous"] = any(exists(pid, ref["no"]) for pid in ref["others"])
+            out.append(ref)
+        return out
 
     def __call__(self, key: str, no: int, project: str = "") -> dict | None:
         read_in, own = self._projects()
-        rid, _why = resolve_task_ref(f"{key}-{no}" if key else f"#{no}", project or read_in)
+        rid = self._resolve(f"{key}-{no}" if key else f"#{no}", project or read_in)
         info = task_ref_info(rid) if rid else None
         if info and info.get("projectId") and info["projectId"] != (own or read_in):
             info["label"] = info["ref"]

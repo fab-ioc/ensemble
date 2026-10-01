@@ -387,8 +387,14 @@ and every page loads it; no page has chip or card CSS of its own.
   the chip keeps it. Never over a card that was clicked open, so nothing flickers.
 - **Which task:** a bare `#27` is read in the project of the chat it is in — or of the task a spec
   belongs to — and under a message from another project's PO (`pomsg`) in that project; `D-27` in
-  any. The hub says whether the task is the project shown's (`inProject`): the chip writes `#27` for
-  that and `D-27` otherwise, and the card names the project.
+  any. A bare number right after a project's name (`Dock #27`, `Dock's #27`, `project Dock: #27`) or
+  whose sentence names one other project (`Dock released #27 as v0.11.0`) is that project's
+  (`TaskCard.refsIn`, as `task_numbers.read_project` reads it on the hub; names are the project's,
+  its first word, and its PO chat's title). The hub says whether the task is the project shown's
+  (`inProject`): the chip writes `#27` for that and `D-27` otherwise, and the card names the project.
+  A sentence naming two projects makes a bare number **ambiguous**: the chip assumes the chat's own
+  project and its card says so — `assumed Ensemble Dashboard` in the project's place (`.tc-assumed`,
+  with a title saying why) — while the hub attaches no `[ref]` line for it.
 
 ### Avatar
 

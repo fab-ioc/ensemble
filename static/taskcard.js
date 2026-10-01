@@ -13,7 +13,9 @@
 //
 // TaskCard.chipHtml(t, o) draws the chip for a task the hub (/api/task/ref)
 // or the board described: { roomId, label, ref, title, workflowName, status,
-// agents, project, inProject }. TaskCard.refs(o) is the resolver for the pages
+// agents, project, inProject }. TaskCard.refsIn(text, ctx) finds a text's
+// references and says which project each bare number is read in (#156: a
+// name right before it); TaskCard.refs(o) is the resolver for the pages
 // without a board: it asks the hub once per number (and project), keeps the
 // answer a minute, and has the page draw again (o.changed) when it comes.
 // Design: skills/ensemble-design/SKILL.md, "Task chip and card".
@@ -25,8 +27,10 @@ const TaskCard = (() => {
   const DOUBLE = 500;       // the second click of a double click, within this of the first
   const HOVER_IN = 500, HOVER_OUT = 300;
 
-  // Text's task references (#18, #ED-18, @codex@18), as task_numbers.py reads them.
-  const TASK_REF_RE = /(?<![\w&\/#@.\\-])(?:@([A-Za-z][\w-]*)@|#)(?:([A-Za-z][A-Za-z0-9]{0,5})-)?(\d{1,6})(?![\w-])/g;
+  // Text's task references (#18, #ED-18, @codex@18, and ED-18 on its own with
+  // its key in capitals), as task_numbers.py reads them: the agent, the key
+  // after # or @, the key of the bare form, the number.
+  const TASK_REF_RE = /(?<![\w&\/#@.\\-])(?:(?:@([A-Za-z][\w-]*)@|#)(?:([A-Za-z][A-Za-z0-9]{0,5})-)?|([A-Z][A-Z0-9]{0,5})-)(\d{1,6})(?![\w-])/g;
   // A bare #12 after one of these words is someone else's number ("PR #12",
   // "fixes #34", "[Image #3]": an agent's placeholder for a pasted image), as
   // task_numbers.NOT_TASK_BEFORE reads it; ED-12 and @codex@12 are tasks.
@@ -35,15 +39,19 @@ const TaskCard = (() => {
 
   // ---- Which project a bare number is read in (#156) -----------------------
   // As task_numbers.read_project reads it on the hub (tests/test_task_refs.py
-  // runs both on the same texts): a bare #27 right after a project's name
-  // ("Dock #27", "Dock's #27", "project Dock: #27") is that project's; else
-  // the one project its sentence names ("Dock released #27 as v0.11.0"); else
-  // the context's own project. A sentence naming two projects, none right
-  // before the number, is ambiguous: the own project, marked, and the card
-  // says it was assumed. ctx: { projects: [{ id, key, name, aliases }], own,
-  // nouns } from /api/task/projects (refs(o).ctx()), or the board's list.
-  const SENTENCE_END_RE = /[.!?]+(?=\s|$)|\n[ \t]*\n|^[ \t]*(?:[-*+]|\d{1,3}[.)]|#{1,6}|>|\|)(?=\s|$)|\|/gm;
+  // runs both on the same texts): a bare #27 right after a project's name —
+  // "Dock #27", "Dock's #27", "the Dock project's #27", "in Dock: #27",
+  // "Dock task #27", "Dock released #27", "Dock v0.11.0 (#27)", "Dock v0.11.0
+  // with #27" — is that project's (how 'name'); else the context's own
+  // (how ''). `others` are the other projects its sentence names before it
+  // ("Answered Ensemble about #11"): too weak to read the number there, but
+  // when one of them has the number too the number is ambiguous — the chip
+  // keeps the own project and its card says it was assumed. ctx: { projects:
+  // [{ id, key, name, aliases }], own, nouns } from /api/task/projects
+  // (refs(o).ctx()), or the board's list.
+  const SENTENCE_END_RE = /[.!?]+(?=\s|$)|\n[ \t]*\n|^[ \t]*#{1,6}[ \t][^\n]*|^[ \t]*(?:[-*+]|\d{1,3}[.)]|>|\|)(?=\s|$)|\|/gm;
   const NOUNS = ['project', 'board'];
+  const POSS = "(?:['’]s)?", VERSION = '(?:\\s+[*_]*v?\\d+(?:\\.\\d+)+[*_]*)?', LINK = '(?:\\s+(?:\\w{2,}ed|with|as|task))?';
   const rxEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const blank = m => m.replace(/[^\n]/g, ' ');
   // The text with its code blocks and code spans blanked, the same length.
@@ -56,58 +64,57 @@ const TaskCard = (() => {
     const alts = [...by.keys()].sort((a, b) => b.length - a.length).map(rxEsc).join('|');
     const nouns = [...new Set([...NOUNS, ...(ctx.nouns || [])])].filter(Boolean).sort((a, b) => b.length - a.length).map(rxEsc).join('|');
     return (ctx._res = { by, names: new RegExp(`(?<![\\w-])(${alts})(?![\\w-])`, 'gi'),
-      before: new RegExp(`(?<![\\w-])(${alts})(?:['’]s)?(?:\\s+(?:${nouns}))?(?:['’]s)?(?:\\s*[:,–—-])?(?:\\s+task)?\\s*$`, 'i') });
+      before: new RegExp(`(?<![\\w-])(${alts})${POSS}(?:\\s+(?:${nouns}))?${POSS}${VERSION}${LINK}(?:\\s*[:,–—-])?\\s*\\(?\\s*$`, 'i') });
   }
-  function sentenceOf(plain, start, end) {
+  // What the sentence holding `start` says before it.
+  function sentenceBefore(plain, start) {
     let a = 0;
-    for (const m of plain.matchAll(SENTENCE_END_RE)) {
-      const e = m.index + m[0].length;
-      if (e <= start) a = e;
-      else if (m.index >= end) return plain.slice(a, m.index);
-    }
-    return plain.slice(a);
+    for (const m of plain.slice(0, start).matchAll(SENTENCE_END_RE)) a = m.index + m[0].length;
+    return plain.slice(a, start);
   }
   function readProject(plain, start, end, ctx) {
     const R = nameRes(ctx), own = ctx.own || '';
-    if (!R) return { project: own, how: '', ambiguous: false };
-    const m = R.before.exec(plain.slice(Math.max(0, start - 80), start));
-    if (m) return { project: R.by.get(m[1].toLowerCase()), how: 'name', ambiguous: false };
-    const found = [];
-    for (const n of sentenceOf(plain, start, end).matchAll(R.names)) {
+    if (!R) return { project: own, how: '', others: [] };
+    const said = sentenceBefore(plain, start);
+    const m = R.before.exec(said.slice(-80));
+    if (m) return { project: R.by.get(m[1].toLowerCase()), how: 'name', others: [] };
+    const others = [];
+    for (const n of said.matchAll(R.names)) {
       const pid = R.by.get(n[1].toLowerCase());
-      if (!found.includes(pid)) found.push(pid);
+      if (pid !== own && !others.includes(pid)) others.push(pid);
     }
-    if (found.length === 1) return { project: found[0], how: 'sentence', ambiguous: false };
-    return { project: own, how: '', ambiguous: found.length > 1 };
+    return { project: own, how: '', others };
   }
   // The task references in a text, in order, each mention once: { token, who,
-  // key, no, start, end, project, how, ambiguous } as task_numbers.all_text_refs
+  // key, no, start, end, project, how, others } as task_numbers.all_text_refs
   // gives them. Without a ctx a bare number's project is '' (the hub's default).
   function refsIn(text, ctx) {
     const plain = withoutCode(String(text ?? ''));
     const byKey = new Map(((ctx && ctx.projects) || []).filter(p => p.key).map(p => [String(p.key).toUpperCase(), p.id]));
     const out = [];
     for (const m of plain.matchAll(TASK_REF_RE)) {
-      const who = m[1] || '', key = (m[2] || '').toUpperCase(), no = +m[3], at = m.index;
+      const who = m[1] || '', key = (m[2] || m[3] || '').toUpperCase(), no = +m[4], at = m.index;
       if (notTaskRef(who, key, plain, at)) continue;
-      const r = { token: m[0], who, key, no, start: at, end: at + m[0].length, project: '', how: '', ambiguous: false };
+      const r = { token: m[0], who, key, no, start: at, end: at + m[0].length, project: '', how: '', others: [] };
       if (key) { r.project = byKey.get(key) || ''; r.how = 'key'; }
       else if (ctx) Object.assign(r, readProject(plain, r.start, r.end, ctx));
       out.push(r);
     }
     return out;
   }
-  // The text with each reference fn(ref) answers for replaced by its answer (null: left as written).
-  function replaceRefs(text, ctx, fn) {
+  // The text with each reference fn(ref) answers for replaced by its answer
+  // (null: left as written); the words between go through `plain` when given
+  // (a page escaping them for HTML: the references are read in the raw text).
+  function replaceRefs(text, ctx, fn, plain = s => s) {
     const s = String(text ?? '');
     let out = '', at = 0;
     for (const r of refsIn(s, ctx)) {
       const h = fn(r);
       if (h == null) continue;
-      out += s.slice(at, r.start) + h;
+      out += plain(s.slice(at, r.start)) + h;
       at = r.end;
     }
-    return out + s.slice(at);
+    return out + plain(s.slice(at));
   }
 
   // ---- The resolver: a number → the hub's answer ----------------------------
@@ -159,7 +166,23 @@ const TaskCard = (() => {
         .catch(() => setTimeout(() => { if (r.state === 'pending') cache.delete(k); o.changed(); }, 15000));
       return r;
     }
-    return { info, cache, ctx };
+    // The hub's answer for one of refsIn's references, read where its text
+    // says: a keyed number as written; a bare number named another project's
+    // in that project, and in `own` (the project bare numbers are read in: ''
+    // this chat's, a PO message's sender's) when the named project has no
+    // such task; else in `own`. `assumed` when another project its sentence
+    // names before it has the number too: the card says which was assumed.
+    function resolve(r, own) {
+      if (r.key) return { t: info(r.key, r.no, ''), assumed: false };
+      const c = ctx(own), ownId = c ? c.own : '';
+      const ask = pid => info('', r.no, pid && pid !== ownId ? pid : (own || ''));
+      if (r.how === 'name' && r.project && r.project !== ownId) {
+        const t = ask(r.project);
+        if (t.state !== 'gone') return { t, assumed: false };
+      }
+      return { t: ask(ownId), assumed: (r.others || []).some(pid => ask(pid).state === 'ok') };
+    }
+    return { info, cache, ctx, resolve };
   }
 
   // ---- The chip ---------------------------------------------------------------

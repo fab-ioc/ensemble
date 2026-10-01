@@ -26,10 +26,12 @@ TITLE_NO_SLACK = 50
 _TITLE_NO = re.compile(r"^\s*(?:#(\d{1,4})(?!\w)|(\d{1,4})(?:\.|\s))")
 # What names a task: its id, or its number with or without the project's key.
 _REF = re.compile(r"^#?(?:([A-Za-z][A-Za-z0-9]{0,%d})-)?(\d{1,6})$" % (KEY_MAX - 1))
-# A task named in chat text: #18, #ED-18, @codex@18, @reviewer@ED-18. Not in a
-# word, a path or a URL fragment (page#18), and not an HTML entity (&#18;).
-TEXT_REF = re.compile(r"(?<![\w&/#@.\\-])(?:@([A-Za-z][\w-]*)@|#)"
-                      r"(?:([A-Za-z][A-Za-z0-9]{0,%d})-)?(\d{1,6})(?![\w-])" % (KEY_MAX - 1))
+# A task named in chat text: #18, #ED-18, @codex@18, @reviewer@ED-18, and
+# ED-18 on its own (its key in capitals, as the hub writes it: #156). Not in
+# a word, a path or a URL fragment (page#18), and not an HTML entity (&#18;).
+# Groups: the agent, the key after # or @, the key of the bare form, the number.
+TEXT_REF = re.compile(r"(?<![\w&/#@.\\-])(?:(?:@([A-Za-z][\w-]*)@|#)"
+                      r"(?:([A-Za-z][A-Za-z0-9]{0,%d})-)?|([A-Z][A-Z0-9]{0,%d})-)(\d{1,6})(?![\w-])" % (KEY_MAX - 1, KEY_MAX - 1))
 # A bare #12 right after one of these words is someone else's number (a pull
 # request, an issue, a review finding), not a task: "PR #12", "fixes #34".
 # ED-12 and @codex@12 are always tasks.
@@ -41,13 +43,18 @@ _FENCE = re.compile(r"```[\s\S]*?(?:```|$)")
 _CODE = re.compile(r"`[^`\n]*`")
 # Where a sentence ends, for the project a bare number is read in (#156): a
 # full stop, ! or ? before a space or the end (v0.11.0 keeps its dots), a
-# blank line, a line that starts a list item, a heading, a quote or a table
-# row, and a table's cell bar.
-_SENTENCE_END = re.compile(r"[.!?]+(?=\s|$)|\n[ \t]*\n|^[ \t]*(?:[-*+]|\d{1,3}[.)]|#{1,6}|>|\|)(?=\s|$)|\|", re.M)
-# A possessive after a project's name: Dock's #27.
+# blank line, a heading line (whole), a line that starts a list item, a
+# quote or a table row, and a table's cell bar.
+_SENTENCE_END = re.compile(r"[.!?]+(?=\s|$)|\n[ \t]*\n|^[ \t]*#{1,6}[ \t][^\n]*|^[ \t]*(?:[-*+]|\d{1,3}[.)]|>|\|)(?=\s|$)|\|", re.M)
+# What may stand between a project's name and its number (read_project):
+# a possessive ("Dock's #27"), the board noun ("the Dock project's #27"), a
+# version, emphasised or not ("Dock v0.11.0 (#27)", "Dock **v0.11.0** (#27)"),
+# one word that is a verb in the past ("Dock released #27") or "with", "as"
+# or "task" ("Dock v0.11.0 with #27", "Dock task #27"), then a colon, comma
+# or dash and an opening bracket.
 _POSS = r"(?:['’]s)?"
-# What may stand between a project's name and its number: "Dock's #27",
-# "the Dock project's #27", "project Dock: #27", "in Dock, #27", "Dock task #27".
+_VERSION = r"(?:\s+[*_]*v?\d+(?:\.\d+)+[*_]*)?"
+_LINK = r"(?:\s+(?:\w{2,}ed|with|as|task))?"
 NOUNS = ("project", "board")
 
 
@@ -94,59 +101,57 @@ def project_names(projects: list[dict], po_titles: dict[str, str] | None = None)
 
 def _name_res(ctx: dict) -> tuple[re.Pattern | None, re.Pattern | None, dict[str, str]]:
     """(the regex of every alias, the regex of an alias right before a
-    number, {alias lower: project id}) for a context; None with no names."""
-    cached = ctx.get("_res")
-    if cached is not None:
-        return cached
+    number, {alias lower: project id}) for a context; None with no names.
+    (re's own cache keeps the compiled patterns between calls.)"""
     by: dict[str, str] = {}
     for p in ctx.get("projects") or []:
         for a in p.get("aliases") or []:
             by[a.lower()] = p["id"]
     if not by:
-        ctx["_res"] = (None, None, by)
-        return ctx["_res"]
+        return None, None, by
     alts = "|".join(re.escape(a) for a in sorted(by, key=len, reverse=True))
     nouns = "|".join(re.escape(n) for n in sorted({*NOUNS, *(ctx.get("nouns") or ())}, key=len, reverse=True) if n)
     names = re.compile(r"(?<![\w-])(%s)(?![\w-])" % alts, re.I)
-    before = re.compile(r"(?<![\w-])(%s)%s(?:\s+(?:%s))?%s(?:\s*[:,–—-])?(?:\s+task)?\s*\Z"
-                        % (alts, _POSS, nouns, _POSS), re.I)
-    ctx["_res"] = (names, before, by)
-    return ctx["_res"]
+    before = re.compile(r"(?<![\w-])(%s)%s(?:\s+(?:%s))?%s%s%s(?:\s*[:,–—-])?\s*\(?\s*\Z"
+                        % (alts, _POSS, nouns, _POSS, _VERSION, _LINK), re.I)
+    return names, before, by
 
 
-def _sentence(plain: str, start: int, end: int) -> str:
-    """The sentence of ``plain`` holding [start, end)."""
+def _sentence_before(plain: str, start: int) -> str:
+    """What ``plain``'s sentence says before ``start``."""
     a = 0
-    for m in _SENTENCE_END.finditer(plain):
+    for m in _SENTENCE_END.finditer(plain, 0, start):
         if m.end() <= start:
             a = m.end()
-        elif m.start() >= end:
-            return plain[a:m.start()]
-    return plain[a:]
+    return plain[a:start]
 
 
-def read_project(plain: str, start: int, end: int, ctx: dict) -> tuple[str, str, bool]:
-    """``(project id, how, ambiguous)`` for the bare number at [start, end)
-    of ``plain``: the project named right before it ("Dock #27", "Dock's
-    #27", "project Dock: #27"; how "name"); else the one project its sentence
-    names ("Dock released #27 as v0.11.0"; how "sentence"); else the
-    context's own project (how ""). A sentence naming two projects, none
-    right before the number, is ambiguous: the own project, and True."""
+def read_project(plain: str, start: int, end: int, ctx: dict) -> tuple[str, str, list[str]]:
+    """``(project id, how, others)`` for the bare number at [start, end) of
+    ``plain``: the project named right before it — "Dock #27", "Dock's #27",
+    "the Dock project's #27", "in Dock: #27", "Dock task #27", "Dock released
+    #27", "Dock v0.11.0 (#27)", "Dock v0.11.0 with #27" — with how "name";
+    else the context's own project (how ""). ``others`` are the other
+    projects its sentence names before it ("Answered Ensemble about #11",
+    "Ensemble needs 9–12 (#20)"): too weak to read the number there (measured
+    on real chats, such a name is the task's title or whom it was told far
+    more often than its project), but a reader that finds the number in one
+    of them too treats it as ambiguous (dashboard.TaskLookup, the pages:
+    no line, and the card says which project was assumed)."""
     names, before, by = _name_res(ctx)
     own = ctx.get("own") or ""
     if names is None:
-        return own, "", False
-    m = before.search(plain[max(0, start - 80):start])      # a slice, as the page's copy reads it
+        return own, "", []
+    said = _sentence_before(plain, start)
+    m = before.search(said[-80:])      # a slice, as the page's copy reads it
     if m:
-        return by[m.group(1).lower()], "name", False
-    found: list[str] = []
-    for n in names.finditer(_sentence(plain, start, end)):
+        return by[m.group(1).lower()], "name", []
+    others: list[str] = []
+    for n in names.finditer(said):
         pid = by[n.group(1).lower()]
-        if pid not in found:
-            found.append(pid)
-    if len(found) == 1:
-        return found[0], "sentence", False
-    return own, "", len(found) > 1
+        if pid != own and pid not in others:
+            others.append(pid)
+    return own, "", others
 
 
 def normalize_key(key) -> str:
@@ -310,27 +315,27 @@ def _without_code(text: str) -> str:
 
 def all_text_refs(text: str, ctx: dict | None = None) -> list[dict]:
     """Every task named in chat text, in order, each mention once:
-    ``[{token, who, key, no, start, end, project, how, ambiguous}]`` — ``who``
+    ``[{token, who, key, no, start, end, project, how, others}]`` — ``who``
     is the identity or role before the number (``@codex@18``), else "". Code
     is not read, nor a bare number after a word that says it is not a task
     (:data:`NOT_TASK_BEFORE`). With ``ctx`` (``{projects: project_names(),
     own: the project the text belongs to, nouns: [the board noun]}``) a bare
-    number's ``project`` is the one :func:`read_project` gives it and a
-    key's the project with that key ("" for a key nobody has); without one
-    every ``project`` is ""."""
+    number's ``project``, ``how`` and ``others`` are :func:`read_project`'s
+    and a key's project is the one with that key ("" for a key nobody has,
+    how "key"); without one every ``project`` is ""."""
     out: list[dict] = []
     plain = _without_code(text)
     by_key = {p["key"]: p["id"] for p in (ctx or {}).get("projects") or [] if p.get("key")}
     for m in TEXT_REF.finditer(plain):
-        key, no = (m.group(2) or "").upper(), int(m.group(3))
+        key, no = (m.group(2) or m.group(3) or "").upper(), int(m.group(4))
         if not m.group(1) and not key and NOT_TASK_BEFORE.search(plain[max(0, m.start() - 40):m.start()]):
             continue
         ref = {"token": m.group(0), "who": m.group(1) or "", "key": key, "no": no,
-               "start": m.start(), "end": m.end(), "project": "", "how": "", "ambiguous": False}
+               "start": m.start(), "end": m.end(), "project": "", "how": "", "others": []}
         if key:
             ref["project"], ref["how"] = by_key.get(key, ""), "key"
         elif ctx:
-            ref["project"], ref["how"], ref["ambiguous"] = read_project(plain, m.start(), m.end(), ctx)
+            ref["project"], ref["how"], ref["others"] = read_project(plain, m.start(), m.end(), ctx)
         out.append(ref)
     return out
 
@@ -351,21 +356,23 @@ def find_text_refs(text: str, ctx: dict | None = None) -> list[dict]:
 
 
 def qualify_text(text: str, ctx: dict, exists) -> str:
-    """``text`` with each bare ``#18`` that reads as the own project's task
-    (:func:`read_project`: named so, or named by nothing) written in full,
-    ``ED-18``, when ``exists(project id, no)`` says the project has it — so
-    the text says which project's task it means wherever it is read next
-    (a PO's message to another project's PO, #156). A number read in another
-    project, an ambiguous one, a keyed one, an agent's (``@codex@18``) and
-    anything in code stay as written; without a key for the own project
-    nothing changes."""
+    """``text`` with each bare ``#18`` that is the own project's task written
+    in full, ``ED-18``, so the text says which project's task it means
+    wherever it is read next (a PO's message to another project's PO, #156).
+    A bare number is the own project's unless another project's name right
+    before it says otherwise (:func:`read_project`) and that project has the
+    task (``exists(project id, no)``); the own project must have it too. A
+    keyed number, an agent's (``@codex@18``) and anything in code stay as
+    written; without a key for the own project nothing changes."""
     own = ctx.get("own") or ""
     key = next((p.get("key") or "" for p in ctx.get("projects") or [] if p["id"] == own), "")
     if not own or not key:
         return text
     out = text
     for ref in reversed(all_text_refs(text, ctx)):
-        if ref["who"] or ref["key"] or ref["ambiguous"] or ref["project"] != own:
+        if ref["who"] or ref["key"]:
+            continue
+        if ref["project"] != own and exists(ref["project"], ref["no"]):
             continue
         if not exists(own, ref["no"]):
             continue
