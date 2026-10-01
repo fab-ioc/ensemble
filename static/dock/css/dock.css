@@ -45,11 +45,26 @@
 .dk-head { flex: 0 0 var(--dk-head); height: var(--dk-head); display: flex; align-items: stretch; background: var(--dk-bg2); border-bottom: 1px solid var(--dk-line);
   user-select: none; -webkit-user-select: none; cursor: grab; min-width: 0; }
 .dk-dragging, .dk-dragging * { cursor: grabbing !important; }
-.dk-tabs { display: flex; align-items: stretch; min-width: 0; flex: 1 1 auto; overflow: hidden; }
-.dk-tab-wrap { display: flex; align-items: center; gap: 3px; padding-right: 6px; min-width: 0; border-right: 1px solid var(--dk-line); }
+/* the tab row scrolls sideways when its tabs do not fit (v0.10.0): the wheel, a thin scrollbar, the ▾ list; a tab keeps
+   its width up to --dk-tab-max, its title cut short with an ellipsis */
+.dk-tabs { display: flex; align-items: stretch; min-width: 0; flex: 1 1 auto; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; }
+.dk-tabs::-webkit-scrollbar { height: 0; }
+.dk-head.dk-over .dk-tabs::-webkit-scrollbar { height: 3px; }
+.dk-tabs::-webkit-scrollbar-thumb { background: var(--dk-line); }
+.dk-tabs::-webkit-scrollbar-thumb:hover { background: var(--dk-fg3); }
+@supports not selector(::-webkit-scrollbar) { .dk-tabs { scrollbar-width: none; } .dk-head.dk-over .dk-tabs { scrollbar-width: thin; } }
+.dk-tab-wrap { display: flex; flex: none; align-items: center; gap: 3px; padding-right: 6px; min-width: 0; border-right: 1px solid var(--dk-line); }
 .dk-tab { padding: 0 4px 0 9px; height: 100%; font: inherit; font-size: var(--dk-fs-tab, 10px); font-weight: var(--dk-tab-weight, 400); letter-spacing: var(--dk-tab-tracking, .08em);
   color: var(--dk-fg3); text-transform: var(--dk-tab-case, uppercase); background: none;
-  border: none; border-bottom: 2px solid transparent; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  border: none; border-bottom: 2px solid transparent; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: var(--dk-tab-max, 160px); }
+/* a closable panel's ×: on the front tab and the one under the pointer (IntelliJ's editor tabs) */
+.dk-tab-x { width: 14px; height: 14px; flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 0; margin-left: -2px;
+  border: none; background: none; color: var(--dk-fg3); cursor: pointer; visibility: hidden; }
+.dk-tab-x svg { width: 9px; height: 9px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+.dk-tab-wrap.on .dk-tab-x, .dk-tab-wrap:hover .dk-tab-x, .dk-tab-x:focus-visible { visibility: visible; }
+.dk-tab-x:hover { color: var(--dk-fg); background: var(--dk-hover); }
+/* ▾ (there only while the row overflows) */
+.dk-tabs-btn { flex: none; align-self: center; margin: 0 1px 0 2px; }
 .dk-tab-wrap.on { background: var(--dk-bg3); }
 .dk-tab.on { color: var(--dk-fg); border-bottom-color: var(--dk-accent); }
 .dk-badge { margin-left: 4px; padding: var(--dk-badge-pad, 0 4px); border: var(--dk-badge-border, 1px solid var(--dk-warn)); border-radius: var(--dk-badge-radius, 0);
@@ -189,6 +204,10 @@ body.dk-popwin { margin: 0; overflow: hidden; background: var(--dk-bg3); color: 
 .dk-menu button.on { background: var(--dk-sel-bg); font-weight: 600; }
 .dk-menu button.on::after { content: " \2713"; }
 .dk-menu button[disabled] { color: var(--dk-fg3); cursor: not-allowed; }
+.dk-menu.dk-tablist { max-height: min(60vh, 480px); overflow-y: auto; max-width: min(90vw, 420px); }
+.dk-menu.dk-tablist button { display: flex; gap: 12px; align-items: baseline; white-space: nowrap; }
+.dk-tablist-title { overflow: hidden; text-overflow: ellipsis; }
+.dk-tablist-tag { margin-left: auto; color: var(--dk-fg3); font-size: var(--dk-fs-small, 9.5px); }
 .dk-menu-sep { height: 1px; background: var(--dk-line); margin: 4px 0; }
 /* a title bar's Options menu (⋯): View Mode ▸ and Move To ▸ open a submenu of choices, the current one checked */
 .dk-menu.dk-options button[aria-haspopup] { display: flex; align-items: center; gap: 12px; }
@@ -198,6 +217,14 @@ body.dk-popwin { margin: 0; overflow: hidden; background: var(--dk-bg3); color: 
 .dk-menu [role="menuitemradio"] { padding-left: 20px; position: relative; }
 .dk-menu [role="menuitemradio"][aria-checked="true"]::before { content: "\2713"; position: absolute; left: 6px; color: var(--dk-accent); }
 .dk-menu [role="menuitemradio"][aria-checked="true"] { font-weight: 600; }
+/* the app's own items (v0.10.0): a checkbox item, a submenu, a disabled item (focusable; its title says why) */
+.dk-menu button[data-dk-app][aria-haspopup] { display: flex; align-items: center; gap: 12px; }
+.dk-menu [role="menuitemcheckbox"] { padding-left: 20px; position: relative; }
+/* a menu with a checkbox item indents all its app items alike, so the labels line up */
+.dk-menu:has(> [role="menuitemcheckbox"]) > button[data-dk-app] { padding-left: 20px; }
+.dk-menu [role="menuitemcheckbox"][aria-checked="true"]::before { content: "\2713"; position: absolute; left: 6px; color: var(--dk-accent); }
+.dk-menu button[aria-disabled="true"] { color: var(--dk-fg3); cursor: not-allowed; }
+.dk-menu button[aria-disabled="true"]:hover { background: none; }
 /* help (help.js): a circled ? beside a tab, and its popover */
 .dk-help-q { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; flex: none; padding: 0;
   border: 1px solid var(--dk-fg3); border-radius: 50%; background: transparent; color: var(--dk-fg3); font: 600 9px/1 var(--dk-font-mono);

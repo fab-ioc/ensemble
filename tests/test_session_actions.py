@@ -81,6 +81,7 @@ for (const [k, s] of Object.entries(states)) {
              bare: shape(A.sessionActions(s, bare)), html: A.actionBarHtml(A.sessionActions(s, env(true))) };
 }
 out.empty = A.actionBarHtml({ primary: null, groups: [] });
+out.noMenu = A.actionBarHtml(A.sessionActions(states.taskRunning, env(true)), { menu: false });
 console.log(JSON.stringify(out));
 """
 
@@ -182,6 +183,13 @@ class TheMatrix(unittest.TestCase):
         # The primary action carries its handler's class.
         self.assertIn('class="am-btn am-primary room-end" data-act="end" data-room="room-2"', h)
         self.assertEqual(self.o["empty"], '<div class="am-bar"></div>')
+        # menu: false (#150): the primary alone, the groups being in the Dock
+        # panel's own ⋯ menu (index.html, pdMenuItems).
+        n = self.o["noMenu"]
+        self.assertIn('class="am-btn am-primary room-end" data-act="end" data-room="room-2"', n)
+        self.assertNotIn("am-more", n)
+        self.assertNotIn("am-menu", n)
+        self.assertNotIn("data-interim", ACTIONS)
 
 
 MAKEPO_JS = r"""
@@ -504,7 +512,9 @@ class Wiring(unittest.TestCase):
         self.assertIn("const TASK_ACTS = ['agents', 'moveproj', 'makepo', 'delete', 'workspace'];", INDEX)
 
     def test_the_colour_picker_is_anchored_to_its_item(self):
-        self.assertIn("menu._am = SessionActions.child(menu, trigger);", INDEX)
+        # #150: the dashboard's picker opens against the anchor it is given (the panel's ⋯, in its window) or its item.
+        self.assertIn("const anchor = at || trigger;", INDEX)
+        self.assertIn("menu._am = SessionActions.child(menu, anchor);", INDEX)
         self.assertIn("menu._am = SessionActions.child(menu, trigger);", SESSION)
         self.assertNotIn("const top = rect.bottom + 4;", INDEX)
 

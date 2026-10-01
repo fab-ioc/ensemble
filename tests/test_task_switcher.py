@@ -425,8 +425,8 @@ class TaskSwitcher(unittest.TestCase):
         self.assertIn("box.querySelector(`${inGroup}${cls}[data-room=\"${CSS.escape(had)}\"]`)", wiring)
         self.assertIn("let back = had && at(hadCls);", wiring)
         self.assertIn("unassigned: (un && un.sessions) || []", wiring)
-        # The task bar's actions are the same as a row's, with its ⋯ marked interim until Dock's panel menu takes them (#148).
-        self.assertIn("function detailActions(r, isLive) {\n  const bar = SessionActions.actionBarHtml(SessionActions.sessionActions(actionState(r, isLive), actionEnv()), { interim: DOCK_MENU_INTERIM });\n"
+        # The task bar's actions are the same as a row's; in the dock the bar keeps the primary alone, the rest are the panel's ⋯ (#150).
+        self.assertIn("function detailActions(r, isLive) {\n  const bar = SessionActions.actionBarHtml(SessionActions.sessionActions(actionState(r, isLive), actionEnv()), { menu: !pdTask() });\n"
                       "  return `<div class=\"dp-actions\">${bar}</div>`;", INDEX)
         bar = self.r["bar"]
         m = re.search(r'<button[^>]*class="[^"]*makepo-btn[^"]*"[^>]*>', bar)

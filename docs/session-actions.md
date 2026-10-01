@@ -46,6 +46,11 @@ defers the top-slot rewrite while a menu is open.
 3. **`index.html`**: `actionsCell` and the docked panel both render
    `actionBarHtml(sessionActions(...))`; the bar sits in `.dp-actions`; remove
    the old ⋯ from `dp-head` and the draft Start from the summary (one primary).
+   Since #150 the docked panel's bar keeps the primary alone
+   (`actionBarHtml(model, { menu: false })`): its groups are the conversation
+   panel's ⋯ menu (Dock's `menuItems` hook, `pdMenuItems`), and a pick there
+   clicks a stand-in button with the item's `cls` and data (`pdRunAction`), so
+   the same document click dispatcher serves the list rows, the bar and Dock's menu.
    Add `.am-menu:not([hidden])` to `DP_MENU_OPEN`. Menu keyboard: Enter / Space
    / ArrowDown open on the first item, ArrowUp on the last; arrows, Home and End
    move; Escape and Tab close; focus returns to the trigger. Outside click

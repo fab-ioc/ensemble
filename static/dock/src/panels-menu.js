@@ -5,11 +5,13 @@
 
 import { escText, TEXT } from './dock.js';
 
-export function mountPanelsMenu(dock, button, menu, panels, win = typeof window !== 'undefined' ? window : null, { resetLabel = 'Reset layout',
+export function mountPanelsMenu(dock, button, menu, list, win = typeof window !== 'undefined' ? window : null, { resetLabel = 'Reset layout',
   outTag = TEXT.popTag, showLabel = TEXT.popShow, openLabel = TEXT.popOpen, backLabel = TEXT.popBack } = {}) {
   const doc = button.ownerDocument;
   if (!menu.classList.contains('dk-menu')) menu.classList.add('dk-menu');
+  // `panels` may be a function (() => dock.panels()): a dock whose panels come and go (addPanel) lists them as they are.
   function draw() {
+    const panels = typeof list === 'function' ? list() : list;
     const visible = panels.filter((p) => dock.isVisible(p.id));
     menu.innerHTML = panels.map((p) => {
       const on = dock.isVisible(p.id);

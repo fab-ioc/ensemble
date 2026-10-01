@@ -689,10 +689,17 @@ takes its place; a row clicked in the list puts the task there. Closing the wind
 (the task waits, parked); its former place or Panels reopens the window. The page's body classes
 are mirrored into every panel window (`onEveryWindow`), so rules keyed on `body.dp-docked` and
 `body.mid` hold there. There is no ⧉ Pop out, no `session.html` window and no ⧉ Dock any more:
-the panel's View Mode is the one way out and back. **Interim** (Dock need 14): the task's actions
-stay in the action bar's ⋯ and the PO's two in its header's ⋯, each marked
-`data-interim="dock-menu"` with a title saying so, until the library takes app items in a panel's
-own ⋯ menu; the switch is written in one comment block in `pdEnsure`. The Board's own **⤢** (`.pd-board-max`, beside its view
+the panel's View Mode is the one way out and back. **The task's actions are in the panel's ⋯**
+(#150, Dock v0.10.0's app items, need 14): the conversation panel's `menuItems` hook
+(`pdMenuItems`) gives Dock the open task's action model (the same groups as a list row's,
+`static/actions.js`), drawn above Dock's own items with the model's separators, wherever the menu
+is: docked, floating, in the panel's own window, and on a phone's tab row (where it is the ⋯'s only
+content besides Take Screenshot: `pdPlaceTask` redraws the row when the task comes or goes). A pick
+runs the page's handler through a stand-in button with the item's class and data (`pdRunAction`);
+Terminal colours opens its picker under the panel's ⋯, in that ⋯'s window. The bar under the task's
+name keeps the primary alone (`actionBarHtml(model, { menu: false })`); its More ⋯ returns only
+when the dock could not load. **Still interim**: the PO's two (Switch agent, the PO's task) wait in
+its header's ⋯, marked `data-interim="dock-menu"`, until they follow the same hook. The Board's own **⤢** (`.pd-board-max`, beside its view
 switch) takes the whole width and gives it back. **Panels is available on a desktop** (#143):
 it recovers Tasks and tools whose closed window has no former strip button, including Spec.
 The list's reload notice can be dismissed because Panels still offers recovery. The layout is kept under `cd-tool-strip` (the old `cd-po-dock` is not
@@ -716,15 +723,15 @@ restored chat's iframe slides under the pointer: for 500 ms after that click the
 let clicks through, `pdDblGuard`). The layout is remembered in the browser (`cd-po-dock`; a phone's apart, `cd-phone-tabs`: a new key
 since #129, as the older one had Spec hidden), with **Reset layout** in the Panels menu. The
 library is never edited in this repository: a need goes to the Dock project's `ENSEMBLE-NEEDS.md`.
-The page has two docks (this one and the task list's, #137): the page keeps the first key a dock
-made (`pdKeepPopKey`, after each `createDock`) and every pop-out window is given it (`pdLoad`'s
-`onEveryWindow`), else the dock made last would orphan the other's windows (Dock's ENSEMBLE-NEEDS
-item 9).
+The page has two docks (this one and the task list's, #137): Dock v0.9.0+ keeps one pop-out key
+per page, so both docks' windows find their way back (the page's own `pdKeepPopKey` went with
+#150; ENSEMBLE-NEEDS item 9 is met).
 
 - **The default** (`pdDefaultLayout`, measured in `tests/test_po_dock.py` and
   `tests/test_tool_strip.py`): on a desktop, at every width, the conversation alone and every tool
   on the strip, none open. A layout saved with a panel that is gone (the Documents panel) loads
-  without it: the library drops a panel it does not know. A phone (`MOBILE_MQ`) is one column:
+  without it: Dock v0.10.0 parks a panel it does not know, so `pdEnsure` tells it to `forget`
+  that one. A phone (`MOBILE_MQ`) is one column:
   every panel a tab of one stack, the Chat first and Spec last; nothing floats, sits on a strip or
   pops out there, and a tab is not dragged.
 - **Icon:** the top bar's mark is the wordmark, or where it does not fit the app's icon
@@ -770,8 +777,8 @@ item 9).
   wait in a `⋯` menu (`.po-menu`, `--surface-overlay`, `--e-200`; `poMenuItems` is the data), whose
   items keep their `data-po`. Esc or a click elsewhere closes it; the header is not rewritten while
   it is open. A drawer keeps its `×`. Pop out is the panel's own (⋯ › View Mode › Window, #148);
-  this `⋯` is interim (`data-interim="dock-menu"`): its items go into the panel's ⋯ once Dock takes
-  app items (need 14).
+  this `⋯` is interim (`data-interim="dock-menu"`): its items can go into the panel's ⋯ the way
+  the task's did in #150 (`pdMenuItems`, Dock's `menuItems` hook); a small follow-up.
 - **The PO chat** is in its panel: `#po-panel` moves into the PO chat panel on a PO screen and back
   home (the drawer) anywhere else (`pdPlaceChat`, with `moveBefore`, so its iframe keeps its page;
   the library moves panels the same way, so a layout change reloads no chat and no open file).
@@ -903,10 +910,11 @@ self-contained component, so a later layout can host it elsewhere.
   slid out, ⋯ and − sit at the right end of its own head row (no tab: the filter keeps its width;
   Move To replaces the drag), so pinned it looks as before; floating, minimised or maximised it has
   Dock's full title bar. At the top or the bottom it is a 240px band, and each axis keeps its own
-  size, a resized one too, kept per browser (`ldAxisSize`, `cd-list-dock-axis`: Dock would carry
-  the column's height over; ENSEMBLE-NEEDS item 10); slid out there it spans the width. Slid out, it
-  leaves the middle 360px across or 200px down, and the room Dock keeps beside it is cut to its
-  size (`ldInsets`; item 12). Closing its window or the window's Hide hides it in Window mode;
+  size, a resized one too (Dock v0.10.0's `layout.depth`, kept in the layout: the page's
+  `ldAxisSize` and its `cd-list-dock-axis` key went with #150, `ldMake` clears the old key once;
+  ENSEMBLE-NEEDS item 10); slid out there it spans the width. Slid out, it
+  leaves the middle 360px across or 200px down, and Dock lays out the flyout's room to the panel's
+  own size (item 12; `ldInsets` only sets the page's insets now). Closing its window or the window's Hide hides it in Window mode;
   Panels reopens it even when it has no former strip button. The reload notice has its × again:
   Panels remains available for recovery. **The page
   follows the stand-in** (`ldInsets` → `--list-w`, `--list-r`, `--list-t`, `--list-b` on `body`):
