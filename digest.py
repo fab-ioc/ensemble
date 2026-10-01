@@ -48,8 +48,12 @@ it would have done at its next wake anyway): only news the PO must act on,
 which nothing else tells it —
 
 * a task became blocked, its agent is gone, or it stalled;
-* a task is waiting for the CEO for the first time (an ask without a report:
-  a question balloon, a stop at a prompt).
+* a task is waiting for the CEO anew (as before: the first time since its
+  last report, commit, status or column change), whatever caused the wait — a
+  question balloon, a stop at a prompt, or a report the PO already got: the
+  first check after a ``[report]`` still rings, as it did (a duplicate worth
+  measuring before it is cut; a report posted while the PO was down rings
+  nowhere else).
 
 Everything else is **quiet news** — commits, a move, a merge, a status, a new
 task, a rename, a problem that is over: the PO made most of it happen itself,
@@ -439,7 +443,7 @@ def quiet_baseline(before: dict, tasks: list[dict]) -> dict:
     return out
 
 
-def _wakes(t: dict, old: dict) -> bool:
+def _wakes(t: dict) -> bool:
     """Whether the task's attention news needs the PO: it is now a problem
     the PO was not told of, or it waits for the CEO anew (``_attention_news``
     already found the change news)."""
@@ -465,7 +469,7 @@ def diff(before: dict, tasks: list[dict]) -> list[dict]:
         old = before.get(t["id"])
         if old is None:
             changes.append({"id": t["id"], "label": t.get("label") or t["id"], "title": t["title"],
-                            "what": ["new task"], "finished": False, "wakes": _wakes(t, {})})
+                            "what": ["new task"], "finished": False, "wakes": _wakes(t)})
             continue
         what, finished, wakes = [], False, False
         if old.get("title") != t["title"]:
@@ -479,7 +483,7 @@ def diff(before: dict, tasks: list[dict]) -> list[dict]:
         attention = _attention_news(old, t)
         if attention:
             what.append(attention)
-            wakes = _wakes(t, old)
+            wakes = _wakes(t)
         if t["merged"] and not old.get("merged"):
             what.append(f"its work merged into {t['base']}")
             finished = True

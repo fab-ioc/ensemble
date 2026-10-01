@@ -2873,8 +2873,8 @@ REVIEW_VERDICTS = {"approve": "approved", "changes_requested": "changes requeste
 # 30, all housekeeping — 37M tokens/week; from round 3 on it acted on 60%: a
 # loop forming, which it should see). Approved and comment verdicts always
 # ring: approved is in practice the "done" signal when an owner only moves
-# its task to In review. The PO still reads the quiet verdict at its next
-# wake — it is in its room like any report.
+# its task to In review. The quiet verdict is in the PO's room like any
+# report; the PO sees it when it next reads its chat.
 VERDICT_WAKES_FROM = 3
 _REVIEW_LAUNCH_LOCK = threading.Lock()
 _REVIEW_LOG_LOCK = threading.Lock()
