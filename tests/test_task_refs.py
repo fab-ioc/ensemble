@@ -322,8 +322,14 @@ class IndexNumbers(unittest.TestCase):
         self.assertIn("taskChipsIn(", INDEX[INDEX.index("function pdPointsHtml"):], "Your asks' words show the chips")
         self.assertIn('<script src="/static/taskcard.js"></script>', INDEX)
         self.assertIn("TaskCard.init({ open: a => openTaskLink(a.dataset.task, a.dataset.agent) });", INDEX)
-        self.assertIn("TaskCard.init({ doc: d, open:", fn(INDEX, "pdCardsInWindows"), "a panel popped out into a window gets the card there")
-        self.assertIn("pdCardsInWindows();", INDEX[INDEX.index("PD.dock.onChange("):INDEX.index("\n", INDEX.index("PD.dock.onChange("))])
+        # A panel popped out into a window gets the card there: init on the
+        # window's document where the window is set up (onEveryWindow), after
+        # the page's listeners are mirrored into it.
+        pop = INDEX[INDEX.index("lib.onEveryWindow(w => {"):]
+        pop = pop[:pop.index("return () => {")]
+        self.assertIn("TaskCard.init({ doc: d, open: a => openTaskLink(a.dataset.task, a.dataset.agent) });", pop)
+        self.assertLess(pop.index("PD_POP_DOCS.set(d, ls);"), pop.index("TaskCard.init({ doc: d"))
+        self.assertNotIn("pdCardsInWindows", INDEX)
         self.assertIn("key-btn", fn(INDEX, "projMenuSettingsHtml"))
         self.assertIn("/api/projects/key", fn(INDEX, "keyChoose"))
 

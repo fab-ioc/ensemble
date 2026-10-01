@@ -10523,6 +10523,10 @@ function pdLoad() {
         const ls = window.DOC_LISTENERS.filter(([t]) => !skip.has(t));
         for (const [t, fn, o] of ls) d.addEventListener(t, fn, o);
         PD_POP_DOCS.set(d, ls);
+        // A chip in the window gets its card in that document (TaskCard's
+        // listeners are not mirrored: they are each document's own); init is a
+        // no-op on a document done, and the window closing takes it with it.
+        try { TaskCard.init({ doc: d, open: a => openTaskLink(a.dataset.task, a.dataset.agent) }); } catch (e) {}
         const relay = e => {
           if (e.origin !== location.origin) return;
           try { window.dispatchEvent(new MessageEvent('message', { data: e.data, origin: e.origin, source: e.source })); } catch (err) {}
@@ -10670,7 +10674,7 @@ function pdEnsure() {
   // A panel this page no longer has (Documents, #103) keeps no place in a
   // stored layout (Dock v0.10.0 parks unknown panels instead of dropping them).
   try { PD.dock.forget('documents'); } catch (e) {}
-  PD.dock.onChange(() => { pdKeepMiddle(); pdToolsFit(); pdPlaceChat(); barCrumbs(); pdCardsInWindows(); });
+  PD.dock.onChange(() => { pdKeepMiddle(); pdToolsFit(); pdPlaceChat(); barCrumbs(); });
   pdToolsFit();
   PD.dock.onShown(id => pdShown(id));
   // Before the chat panel comes back from its window: the window's own chat goes.
@@ -15692,17 +15696,10 @@ document.addEventListener('click', (ev) => {
 }, true);
 // TaskCard's listeners are this document's own, not mirrored into a panel's
 // window (DOC_LISTENERS): a mirrored copy would put a pop-out chip's card in
-// this window. Each pop-out document gets its own init (pdCardsInWindows).
+// this window. Each pop-out document gets its own init where the window is
+// set up (onEveryWindow in pdLoad).
 window.DOC_LISTENERS_PAUSED = true;
 try { TaskCard.init({ open: a => openTaskLink(a.dataset.task, a.dataset.agent) }); } finally { window.DOC_LISTENERS_PAUSED = false; }
-// A chip in a panel popped out into a window of its own (another document,
-// Dock's hostDocs) gets its card there too; init is a no-op on a document done.
-function pdCardsInWindows() {
-  for (const d of pdHostDocs()) {
-    if (d === document) continue;
-    try { TaskCard.init({ doc: d, open: a => openTaskLink(a.dataset.task, a.dataset.agent) }); } catch (e) {}
-  }
-}
 document.addEventListener('keydown', (ev) => {
   // Esc closes the PO's ⋯ menu first (the topmost thing), and nothing else.
   const poMenu = ev.key === 'Escape' && document.querySelector('#po-panel .po-menu:not([hidden])');

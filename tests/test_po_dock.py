@@ -515,7 +515,7 @@ async function main() {
     await p.evalIn('PD.dock.pin("board"); 0'); await sleep(300);
     await viewMode(p, 'PD.els.board', 'window');
     await p.until('!!PD.dock.popWindow("board") && PD.els.board.ownerDocument !== document && PD.els.board.querySelectorAll(".card").length > 0', 15000);
-    // The window has TaskCard's style: pdCardsInWindows gave it its own card (#152).
+    // The window has TaskCard's style: the window's setup gave it its own card (#152).
     await p.until('!!PD.dock.popWindow("board").document.getElementById("task-card-style")', 10000);
     out.popBoard = await p.evalIn(`(async () => {
       const w = PD.dock.popWindow('board'), d = w.document, r = ALL_ROWS.find(x => x.roomId === ${JSON.stringify(A.task)});
@@ -1020,8 +1020,8 @@ class InChrome(unittest.TestCase):
 
     def test_a_chip_in_a_popped_out_panel_opens_its_card_there(self):
         # Review 1 of #152: TaskCard's listeners are not mirrored into the
-        # window (DOC_LISTENERS_PAUSED around its init); pdCardsInWindows
-        # gives the window its own.
+        # window (DOC_LISTENERS_PAUSED around its init); the window's setup
+        # (onEveryWindow) gives its document its own init.
         self.assertEqual(self.got["popBoard"]["chip"], {"there": True, "here": False, "mirrored": []})
 
     def test_the_middle_cannot_be_moved(self):
