@@ -369,9 +369,11 @@ tab that renames itself when a task starts is a quieter version of tabs that reo
 PO screen, an open task's: `pdPanelsOn()`), a file opened from a Workspace's tree is a closable
 panel of its own (`file:<path>`, `wsPanelShow`), as IntelliJ's editor tabs are: its tab is the
 file's name, its tooltip the path (`pdTabTips`), its ⋯ holds *Show in the tree* and *Open in new
-window* above Dock's own. The first file opens beside the conversation, at its right; the next
-ones are tabs of the file panel last shown (`wsPanelWhere`); a file already open comes to the
-front, never opens twice; a line asked for (a diff, a search hit) reloads its viewer at that line.
+window* above Dock's own. The first file opens beside the conversation, at its right, while the row has room for
+one more (`pdFits`: the dock's width less the strip, against what the row's panels need at the
+least, `pdNeedW`; else it is a tab of the conversation's stack, since a row that overflows is
+clipped, not scrolled); the next ones are tabs of the file panel last shown (`wsPanelWhere`); a
+file already open comes to the front, never opens twice; a line asked for (a diff, a search hit) reloads its viewer at that line.
 The panel is the path bar (where the file is, Show in the tree, Follow, History for a documents
 project, ⧉ its own tab) over the viewer (`.wfp`); a file that is gone shows the note where the
 viewer was, with **Close**. The Files pane keeps the tree alone (`.ws-panels`: no tab row, no
@@ -722,7 +724,8 @@ Terminal colours opens its picker under the panel's ⋯, in that ⋯'s window. T
 name keeps the primary alone (`actionBarHtml(model, { menu: false })`); its More ⋯ returns only
 when the dock could not load. **As many chats as you like** (#150, the CEO's P110): a task's chat
 opens as a closable panel of its own (`chat:<room>`, `pdChatOpen`; its tab "#12 The title",
-`pdRowTitle`), beside the conversation at its right, then beside the chat panel last shown, from
+`pdRowTitle`), beside the conversation at its right, then beside the chat panel last shown, while the row
+has room for one more (`pdFits` again), else a tab of that panel's stack, from
 *Open in new panel* (the action model's first group, offered where the page has the panels,
 `env.panels`: in the middle's ⋯, where it moves the task out of the middle, so there is one chat
 per task on the page; a plain click on a panelled task's row reveals its panel instead of taking

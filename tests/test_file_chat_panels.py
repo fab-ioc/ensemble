@@ -100,7 +100,8 @@ const STATE = `(() => {
   const mid = PD.els['po-chat'].querySelector('iframe.dp-session');
   return { rt, tabs, files, panels, chat: box(PD.els['po-chat']), where, sid: SELECTED_SID || null, task: pdTask(), middleRoom: mid ? mid.dataset.room : null,
     poFrame: !!pdChatFrame() && PO_PANEL.parentNode === PD.els['po-chat'], saved: { ws: localStorage.getItem('cd-ws-panels'), chats: localStorage.getItem('cd-chat-panels') },
-    vw: innerWidth, scrollW: document.documentElement.scrollWidth, narrow: d.narrow(), fly: d.flyOpen() };
+    vw: innerWidth, scrollW: document.documentElement.scrollWidth, narrow: d.narrow(), fly: d.flyOpen(),
+    avail: PD_ROOT.clientWidth - 44, need: pdNeedW(L.root) };
 })()`;
 async function main() {
   const { ch, ws } = await launch();
@@ -166,7 +167,18 @@ async function main() {
     // × on a tab closes the file (a real click on the front tab's ×).
     await p.evalIn(`PD.dock.activate(${fid('c.txt')}); 0`); await sleep(300);
     const cid = await p.evalIn(fid('c.txt'));
-    await p.click(`#po-dock .dk-tab-x[data-dk-close="${cid}"]`); await sleep(500);
+    const xSel = `#po-dock .dk-tab-wrap.on > .dk-tab-x[data-dk-close="${cid}"]`;
+    // (The × shown: on the front tab, visible, and what a click there lands on.)
+    out.xProbe = await p.evalIn(`(() => { const all = document.querySelectorAll('.dk-tab-x[data-dk-close="${cid}"]'), e = document.querySelector(${JSON.stringify(xSel)});
+      if (!e) return { n: all.length, found: false };
+      const r = e.getBoundingClientRect(), u = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return { n: all.length, found: true, box: [r.left, r.top, r.width, r.height], vis: getComputedStyle(e).visibility, under: u ? (u.closest('[data-dk-close]') === e ? 'x' : u.className) : null }; })()`);
+    // (The Files flyout is still out: Dock closes it on the press, the row
+    // widens under the pointer, and that click lands on nothing — a person's
+    // first click shuts the flyout, the second closes the tab.)
+    await p.click(xSel); await sleep(500);
+    out.xFirst = await p.evalIn(`({ fly: PD.dock.flyOpen(), still: PD.rt.has(${JSON.stringify(cid)}) })`);
+    if (out.xFirst.still) { await p.click(xSel); await sleep(500); }
     out.closed = await p.evalIn(STATE);
     out.closed.wsSaved = await p.evalIn(`(() => { const s = JSON.parse(localStorage.getItem('cd-ws:project:' + ${JSON.stringify(A.proj)}) || '{}'); return (s.tabs || []).map(t => t.path.split(/[\\\\/]/).pop()); })()`);
     // A reload: the two come back where they were.
@@ -210,11 +222,13 @@ async function main() {
         d.querySelector('#input').value = text;
         await f.contentWindow.fetch('/api/room/say', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: r, text: d.querySelector('#input').value }) });
         res[r] = { typed: d.querySelector('#input').value === text };
+        d.querySelector('#input').value = '';   // sent: the composer is empty again (a chat holds off redrawing while one types)
       }
       for (const r of rooms) {
         const text = 'Said in the panel of ' + r;
         const room = await fetch('/api/room?id=' + encodeURIComponent(r)).then(x => x.json());
-        res[r].inRoom = (room.messages || []).some(m => m.text === text);
+        // (The hub adds its [point Pn] line under what the user says.)
+        res[r].inRoom = (room.messages || []).some(m => String(m.text || '').startsWith(text));
         let shown = false;
         for (let i = 0; i < 160 && !shown; i++) { shown = says(r, text); if (!shown) await sleep(250); }
         res[r].shown = shown;
@@ -229,8 +243,11 @@ async function main() {
     await p.evalIn(`PD.dock.activate('chat:' + ${JSON.stringify(TB)}); 0`); await sleep(200);
     await p.click(row(TA)); await sleep(600);
     out.revealA = await p.evalIn(STATE);
-    // Hidden behind a tab: the chat there polls every 30 s (its frame knows from the host's class).
+    // Hidden behind a tab: the chat there polls every 30 s (its frame knows from
+    // the host's class). D is a tab of B's stack (the row had no room for it).
+    await p.evalIn(`PD.dock.activate('chat:' + ${JSON.stringify(TD)}); 0`); await sleep(300);
     out.offScreen = await p.evalIn(`(() => { const f = ${chatFrame(TB)}; try { return { off: f.contentWindow.chatOffScreen(), slow: f.contentWindow.chatSlow(), cls: !!f.closest('.dk-off') }; } catch (e) { return String(e); } })()`);
+    out.offScreen.state = await p.evalIn(STATE);
     await p.close();
     // A phone: the panels are tabs of the one column.
     const ph = await page(390, 844, true);
@@ -299,8 +316,11 @@ class FilesAndChatsAsPanels(unittest.TestCase):
         assert ok, why
         chatroom.post_message(po["id"], "user", "Hello PO", to="claude")
         cls.tasks = []
+        # (Two agents: a solo room's chat is its agent's transcript, which these
+        # have none of; a team room's chat is the room's messages.)
+        team = [{"identity": "claude", "agent": "claude", "cwd": str(home)}, {"identity": "codex", "agent": "codex", "cwd": str(home)}]
         for title in ("Brakes that squeal", "Wipers that smear", "A horn that honks twice", "Lights that flicker"):
-            t = chatroom.create_room(title, [{"identity": "claude", "agent": "claude", "cwd": str(home)}])
+            t = chatroom.create_room(title, team)
             chatroom.post_message(t["id"], "user", "About: " + title)
             dashboard.assign_session_project(t["id"], cls.proj)
             cls.tasks.append(t["id"])
@@ -407,8 +427,20 @@ class FilesAndChatsAsPanels(unittest.TestCase):
         self.assertEqual([e["room"] for e in chats], [self.tasks[0], self.tasks[1], self.tasks[3]])
         self.assertIsNone(g["sid"], "a Ctrl+click and a middle click open no task in the middle")
         a, b, d = chats
-        self.assertGreaterEqual(b["box"]["x"], a["box"]["x"] + a["box"]["w"] - 6, "each new chat beside the chat panel last shown")
-        self.assertGreaterEqual(d["box"]["x"], b["box"]["x"] + b["box"]["w"] - 6)
+        # Each new chat goes beside the chat panel last shown while the row has
+        # room for one more (its minimum, 360, after what the row needs and a
+        # bar), else it is a tab of that panel's stack: the rule, checked
+        # against the room there was as each opened.
+        before = self.got["chatA"]
+        self.assertGreater(before["need"], 0)
+        fits_b = before["avail"] - before["need"] - 5 >= 360
+        if fits_b:
+            self.assertGreaterEqual(b["box"]["x"], a["box"]["x"] + a["box"]["w"] - 6, "B beside A: it fit")
+            self.assertNotEqual(b["where"], a["where"])
+        else:
+            self.assertEqual(b["where"], a["where"], f"B a tab of A's stack: no room ({before['avail']} - {before['need']})")
+        self.assertEqual(d["where"], b["where"], f"D a tab of B's stack at 1440: no room ({g['avail']} - {g['need']})")
+        self.assertLessEqual(g["scrollW"], g["vw"], "nothing pushed off screen")
         self.assertEqual(json.loads(g["saved"]["chats"]), [self.tasks[0], self.tasks[1], self.tasks[3]], "remembered per browser")
         m = self.got["chatMenu"]
         self.assertTrue(m and m["app"], m)
@@ -433,8 +465,22 @@ class FilesAndChatsAsPanels(unittest.TestCase):
             self.assertEqual(s[r], {"typed": True, "inRoom": True, "shown": True, "others": True}, r)
 
     def test_a_chat_behind_a_tab_knows_it_is_off_screen(self):
-        o = self.got["offScreen"]
+        o = dict(self.got["offScreen"])
+        st = o.pop("state")
+        b = next(e for e in st["rt"] if e["room"] == self.tasks[1])
+        d = next(e for e in st["rt"] if e["room"] == self.tasks[3])
+        self.assertEqual(b["where"], d["where"], "B and D share a stack")
+        self.assertTrue(d["front"] and not b["front"], "D in front, B behind it")
         self.assertEqual(o, {"off": True, "slow": True, "cls": True}, o)
+
+    def test_the_tabs_x_is_the_front_tabs_and_visible(self):
+        x = self.got["xProbe"]
+        self.assertTrue(x["found"], x)
+        self.assertEqual(x["vis"], "visible", x)
+        self.assertEqual(x["under"], "x", x)
+        # With the Files flyout out, the first click on it shuts the flyout
+        # (Dock's: the row widens under the pointer); the file stays.
+        self.assertEqual(self.got["xFirst"], {"fly": None, "still": True})
 
     def test_chat_panels_poll_less(self):
         one, four = self.got["rate"]["one"], self.got["rate"]["four"]
@@ -443,10 +489,14 @@ class FilesAndChatsAsPanels(unittest.TestCase):
         self.assertGreater(rooms(one), 15, f"the one chat polls its room every 2 s: {rooms(one):.0f}/min")
         mid = self.per_minute(four, "/api/room?id=" + self.tasks[2])
         self.assertGreater(mid, 15, f"the middle's chat polls every 2 s: {mid:.0f}/min")
+        seen = {e["room"]: e for e in self.got["third"]["rt"] if e["kind"] == "chat"}
         for r in (self.tasks[0], self.tasks[1], self.tasks[3]):
             rate = self.per_minute(four, "/api/room?id=" + r)
             self.assertLessEqual(rate, 12, f"a chat panel nobody types in polls every 10 s: {rate:.0f}/min")
-            self.assertGreater(rate, 0, "but it polls")
+            # (One behind a tab polls every 30 s: in a 12 s window maybe not at all.)
+            if seen[r]["front"]:
+                self.assertGreater(rate, 0, f"but one on screen polls: {rate:.0f}/min")
+        self.assertTrue(any(seen[r]["front"] for r in seen), seen)
         self.assertLess(total(four), total(one) * 2.6, f"four chats cost less than twice one: {total(one):.0f} → {total(four):.0f} requests/min")
         print(f"\n[#150] requests/min: one chat {total(one):.0f} (room {rooms(one):.0f}); four chats {total(four):.0f} (rooms {rooms(four):.0f})")
 

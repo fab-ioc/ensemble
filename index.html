@@ -8117,11 +8117,12 @@ function wsPanelsSaved() {
   try { const l = JSON.parse(localStorage.getItem(WS_PANELS_KEY) || '[]'); return Array.isArray(l) ? l.filter(c => c && typeof c === 'object' && c.kind) : []; } catch (e) { return []; }
 }
 // Where a new file panel goes: a tab of the file panel last shown, else
-// beside the conversation, at its right.
+// beside the conversation, at its right, while the row has room for one
+// (pdFits); else a tab of the conversation's stack.
 function wsPanelWhere() {
   const last = PD.rtLast.file;
   if (last && PD.rt.has(last)) return { kind: 'stack', stack: last };
-  return { beside: 'po-chat', side: 'right' };
+  return pdFits(pdMinOf('file:').w) ? { beside: 'po-chat', side: 'right' } : { kind: 'stack', stack: 'po-chat' };
 }
 // A file panel's element: the path bar (where the file is, Show in the tree,
 // Follow, History for a documents project, ⧉ its own tab) over its viewer,
@@ -11000,7 +11001,8 @@ function pdChatFrameOf(roomId) {
 }
 function pdChatOpen(roomId, o) {
   const d = PD.dock;
-  if (!d || !roomId || !pdPanelsOn()) return false;
+  // (A restore runs as the dock is made, before the page's body says po-dock.)
+  if (!d || !roomId || !(o && o.restore ? true : pdPanelsOn())) return false;
   const id = pdChatId(roomId);
   if (PD.rt.has(id)) { try { d.reveal(id); } catch (e) {} return true; }
   const r = ALL_ROWS.find(x => x.roomId === roomId);
@@ -11015,8 +11017,10 @@ function pdChatOpen(roomId, o) {
   // it is not being typed in (session.html).
   el.innerHTML = `<iframe class="dp-session" data-room="${esc(roomId)}" data-chat-slow src="/session?id=${encodeURIComponent(roomId)}&embed=1" title="${esc(pdRowTitle(r))}" allow="clipboard-read; clipboard-write"></iframe>`;
   PD.rt.set(id, { kind: 'chat', room: roomId, el });
-  const last = PD.rtLast.chat;
-  const where = o && o.restore ? undefined : { beside: last && PD.rt.has(last) ? last : 'po-chat', side: 'right' };
+  // Beside the chat panel last shown (else the conversation) while the row has
+  // room for one more (pdFits); else a tab of its stack.
+  const last = PD.rtLast.chat && PD.rt.has(PD.rtLast.chat) ? PD.rtLast.chat : 'po-chat';
+  const where = o && o.restore ? undefined : pdFits(pdMinOf(id).w) ? { beside: last, side: 'right' } : { kind: 'stack', stack: last };
   let res = null;
   try { res = d.addPanel({ id, title: pdRowTitle(r), el, closable: true, menuItems: (pid, ctx) => pdChatMenuItems(roomId, ctx) }, where); } catch (e) { res = null; }
   if (res !== 'added') { PD.rt.delete(id); return res === 'exists'; }
@@ -11235,6 +11239,16 @@ function pdNeedW(n) {
   if (n.t === 'stack') return n.min ? 33 : Math.max(0, ...n.panels.map(id => pdMinOf(id).w));
   const k = (n.kids || []).map(pdNeedW);
   return n.dir === 'row' ? k.reduce((a, b) => a + b, 0) + 5 * Math.max(0, k.length - 1) : Math.max(0, ...k);
+}
+// Whether a panel `w` wide has room beside what the dock holds (what the row
+// needs, pdNeedW, plus a bar, out of the dock's width less the strip): a new
+// file or chat panel goes beside the last while it fits, else it is a tab
+// (#150: a row that overflows is clipped, not scrolled). A phone's dock
+// places nothing beside anything.
+function pdFits(w) {
+  const d = PD.dock;
+  if (!d || d.narrow()) return false;
+  return PD_ROOT.clientWidth - 44 - pdNeedW(d.layout().root) - 5 >= w;
 }
 // A click on a minimised panel's title bar restores it (Dock), and the bar can
 // move from under the pointer: the second click of a double click then lands
