@@ -107,7 +107,8 @@ async function main() {
         // What the page shows instead, and what the hub answered, for the failure's message.
         const view = await evalIn(VIEW).catch(() => null);
         const projects = await evalIn(`fetch('/api/task/projects?room=${A.room}').then(r => r.status + ' ' + r.url).then(t => fetch('/api/task/projects?room=${A.room}').then(r => r.text()).then(b => t + ' ' + b))`).catch(err => String(err));
-        throw new Error(e.message + '\n' + JSON.stringify(view) + '\n' + projects);
+        const shown = await evalIn(`(document.querySelector('#msgs') || {}).innerHTML ? document.querySelector('#msgs').innerHTML.slice(0, 2500) : document.body.innerText.slice(0, 800)`).catch(err => String(err));
+        throw new Error(e.message + '\n' + JSON.stringify(view) + '\n' + projects + '\n' + shown);
       }
       await sleep(400);
       const o = { chips: await evalIn(VIEW) };
@@ -182,8 +183,10 @@ class WhichProject(unittest.TestCase):
                 {"identity": "codex", "agent": "codex", "model": "", "role": "reviewer"}]
         cls.ours = cls.task(OPTEN_27, cls.opten, team, 27)
         cls.dock = cls.task(DOCK_27, cls.dockProj, team, 27)
-        # The opTen PO's chat, titled "opten" as the CEO named it.
-        cls.room = chatroom.create_room("opten", [{"identity": "claude", "agent": "claude", "model": "", "role": "ProductOwner"}])["id"]
+        # The opTen PO's chat, titled "opten" as the CEO named it (a team room,
+        # so its balloons are the room's messages and not a transcript).
+        cls.room = chatroom.create_room("opten", [{"identity": "claude", "agent": "claude", "model": "", "role": "ProductOwner"},
+                                                  {"identity": "codex", "agent": "codex", "model": "", "role": "reviewer"}])["id"]
         full = chatroom.get_room(cls.room, public=False)
         full["projectId"] = cls.opten
         chatroom.update_room(full)
@@ -253,7 +256,7 @@ class WhichProject(unittest.TestCase):
                 self.assertEqual(assumed["proj"], "assumed OPtionTradingENgine", "Dock has a #27 too: the card says which project was assumed")
                 self.assertTrue(assumed["assumed"])
                 self.assertIn("more than one project", assumed["projTitle"])
-                self.assertEqual(o["chips"]["chips"][2]["label"], f"Task OP-27: {OPTEN_27} (assumed OPtionTradingENgine)")
+                self.assertEqual(o["chips"]["chips"][2]["label"], f"Task O-27: {OPTEN_27} (assumed OPtionTradingENgine)")
                 plain = o["plainCard"]["card"]
                 self.assertEqual((plain["title"], plain["proj"], plain["assumed"]), (OPTEN_27, "", False), "a plain number: nothing to say")
 
