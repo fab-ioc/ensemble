@@ -99,10 +99,10 @@ or clones a panel, so its listeners and state go wherever it goes.
 | `layout()`, `config()` | the current layout (plain JSON) and the config made from the options |
 | `isShown(id)`, `isVisible(id)`, `isAuto(id)`, `isOut(id)`, `frontOf(id)` | where a panel is |
 | `openFly(id)`, `closeFly()`, `flyOpen()` | slide an unpinned panel out, slide the open one back in, the one out (or `null`) |
-| `activate(id)`, `reveal(id)` | bring a panel to the front of its stack; `reveal` also shows a hidden one, slides out an unpinned one, focuses its window |
+| `activate(id)`, `reveal(id)` | bring a panel to the front of its stack; `reveal` also shows a hidden one, slides out an unpinned one, focuses its window, and brings one out with no window (after a reload) back where it was, seen |
 | `moveTo(id, target, side)`, `dockEdge(id, side)` | dock a panel beside a stack (`{ kind: 'stack', stack }`) or at the dock's edge; side `left right top bottom center` |
 | `viewMode(id)`, `setViewMode(id, mode)` | a panel's view mode, IntelliJ's: `'pinned'` (Dock Pinned), `'unpinned'` (Dock Unpinned), `'undock'`, `'float'`, `'window'` (or `'hidden'`); change it, the side kept (false when nothing changed or `can` forbids it) |
-| `side(id)`, `moveSide(id, side)` | a panel's side (`left right top bottom`) in any mode; move it to another side in the mode it has (Move To) |
+| `side(id)`, `moveSide(id, side)` | a panel's side (`left right top bottom`) in any mode; move it to another side in the mode it has (Move To), as deep as it last was on that axis (see "Title bar and view modes") |
 | `moveStrip(id, index, side?)` | a strip panel to place `index` (from 0) of its strip, or of the strip on `side` in the mode it has, as a drag of its button does; saved, `onChange` told; false when it is not on a strip, already there, or `index` is not a number (a string of digits counts as one) (v0.8.0) |
 | `float(id)`, `dockBack(id)`, `unpin(id)`, `pin(id)` | float in the page and back; unpin to the strip on its side and back (pinned, it docks on its strip's side) |
 | `toggleMin(id)`, `toggleMax(id)`, `restoreMax()`, `maximised()` | minimise / maximise its stack |
@@ -111,18 +111,24 @@ or clones a panel, so its listeners and state go wherever it goes.
 | `setBadge(id, text, title)` | a small badge on the panel's tab, and on its strip button while it is unpinned (`null` removes it) |
 | `onShown(fn)`, `onChange(fn)` | a panel came on screen (`fn(id)`); the layout changed (`fn(layout)`) |
 | `onPopIn(fn)` | `fn(id)` just before a popped-out panel's element moves back from its window (see "The pop-out contract") |
+| `onMenu(fn)` | `fn(id, itemId)` when an app item of a ⋯ menu that has no `run` of its own is picked, after the `onMenu` option; returns a function that takes `fn` off (see "App items in the ⋯ menu") (v0.9.0) |
 | `narrow()`, `setNarrow(on)` | whether the dock is narrow; switch it (see "Narrow") |
 | `can(id, action)` | whether a person may do `action` to a panel here: the `can` option, and narrow |
 | `screenshot(id)` | `Promise<Blob \| null>`: capture the visible panel frame as a PNG; `null` on cancellation, rejects on failure |
 | `copyScreenshot(id)` | capture and copy the PNG, with a notice; resolves to the Blob (also when clipboard access fails), or `null` on cancellation/failure |
+| `addPanel(panel, where?)` | add a panel `{ id, title, el, help?, icon?, closable?, unpinSize? }` at runtime, in front, saved, `onChange` told; `'added'`, or `'exists'` when the dock has that id (it is shown, as `reveal`, and nothing is added); `null` after `destroy()`. See "Panels at runtime" (v0.10.0) |
+| `removePanel(id)` | take a panel out (any panel, closable or not, given to `createDock` or added): its window closes, its strip button, flyout or float goes, the tab on its left comes to the front; its place is kept for `addPanel`. Returns its element, detached and without the dock's classes, and fires `dock-removed` (`detail: { id, el }`) on the root; `null` for an id the dock does not have, or after `destroy()` (v0.10.0) |
+| `close(id)`, `onClose(fn)` | close a closable panel as its × does: every `fn(id)` first (`false`, or a promise of `false`, keeps it), then `removePanel`; `Promise<boolean>`, whether it closed (v0.10.0) |
+| `panels()`, `slots()`, `forget(id?)` | the dock's panels now; the ids whose places are kept for when they are added again (oldest first); drop one of those places, or all, returning how many went (v0.10.0) |
 | `reset()`, `render()`, `destroy()` | the default layout; redraw; take the dock off the page |
 
 Each panel's element also gets a `dock-shown` event when it comes on screen and a `dock-popin` event (`detail: { id,
 window }`, it bubbles) just before it moves back from its own window, and a `dock-reveal` event dispatched from anything
-inside a panel brings that panel on screen.
+inside a panel brings that panel on screen. The root gets `dock-removed` (`detail: { id, el }`) after `removePanel` or a
+close.
 
 Also exported: `panelsFrom(container)` (reads `data-panel`, `data-title`, `data-panel-help`), `mountPanelsMenu(dock,
-button, menu, panels)`, `createHelp(content)`, `createTheme()`, `applyTheme()`, `THEME_LIST`, `mountThemePicker(theme,
+button, menu, panels)` (`panels` a list, or a function such as `() => dock.panels()` for a dock whose panels come and go), `createHelp(content)`, `createTheme()`, `applyTheme()`, `THEME_LIST`, `mountThemePicker(theme,
 button, menu)`, `isAppWindow()` and `mountInstallButton(button)` (`src/install.js`), the layout model (`src/layout.js`:
 `makeConfig`, `normalizeLayout`, `stack`, `split`, `moveTo`, `floatPanel`, `popOutPanel`, `popInPanel`, …, all pure
 functions over JSON), `oneColumn(layout, prefer)` (any layout as one stack of tabs), `POP_HTML` (the pop-out page as
@@ -135,7 +141,10 @@ text), and `src/host.js` for apps whose panels open dialogs (below).
 | `root` | required | the element the dock fills |
 | `screenshot` | none | `async (id, el) => Blob \| null`: app capture hook; `el` is the whole panel frame in its current document, title bar included. Return an `image/png` Blob at the desired resolution, or `null` to cancel; errors become a failure notice when copying |
 | `screenshotItem` | `true` | `false` hides Take Screenshot; the API remains available |
-| `panels` | required | `[{ id, title, el, help?, icon?, unpinSize? }]`; `icon` and `unpinSize`: see "The tool strip" |
+| `panels` | required | `[{ id, title, el, help?, icon?, unpinSize?, menuItems?, closable? }]`; `icon` and `unpinSize`: see "The tool strip"; `menuItems`: see "App items in the ⋯ menu"; `closable: true`: see "Panels at runtime". More can be added later (`addPanel`) |
+| `menuItems` | none | `(id, ctx) => items`: the app's items in the ⋯ menu of a panel that has no `menuItems` of its own (see "App items in the ⋯ menu") |
+| `onMenu` | none | `(id, itemId) => void`: an app item without a `run` of its own was picked (so do `onMenu(fn)`'s) |
+| `keepSlots` | `50` | how many places of removed panels (and of panels a stored layout names that the app has not added yet) the layout keeps for `addPanel`; beyond it the oldest go (see "Panels at runtime") |
 | `defaultLayout` | every panel side by side | a node from `stack()` / `split()`, `{ root, floats, auto, hidden }`, or `(ctx) => either` with `ctx = { viewportPx, purpose: 'load' \| 'reset' \| 'home' }` |
 | `fill` | none | the panel whose place takes what is left in its split (the main view) |
 | `minSize` | `{ w: 240, h: 90 }` | `{ id: { w, h } }` or `(id) => { w, h }` |
@@ -145,7 +154,7 @@ text), and `src/host.js` for apps whose panels open dialogs (below).
 | `storage`, `storageKey` (`key`) | `localStorage`, `'dock.layout'` | anything with `getItem` / `setItem` / `removeItem` |
 | `migrate` | none | `(raw) => layout`: turns a saved layout of another version into this one |
 | `narrow`, `narrowLayout`, `narrowKey` | `false`; every panel a tab of one stack, the `fill` panel in front; `storageKey + '.narrow'` | narrow (a phone): one column of tabs, nothing that moves a panel; its default layout; where its layout is kept (see "Narrow") |
-| `can` | none | `(id, action) => boolean`, action `move float unpin pop max min hide`: `false` takes that control, menu item (the Panels menu's too, for `hide`) and gesture away from a person (the app's own calls still work) |
+| `can` | none | `(id, action) => boolean`, action `move float unpin pop max min hide close`: `false` takes that control, menu item (the Panels menu's too, for `hide`) and gesture away from a person (the app's own calls still work) |
 | `minClickRestores` | `true` | a click on a minimised stack's title bar (a tab, or the bar beside the tabs; not its controls or help, not the click that ends a drag) restores it, as its restore control does, with the tab clicked in front; so do Enter and Space on its focused tab. A double click still maximises it (docked) or docks it back (floating), also when restoring moved the title bar from under the pointer. `false`: as before v0.3.5, only the restore control (and a double click) restores |
 | `stripHover` | `true` | hovering a strip button for 250 ms slides its panel out, and the pointer leaving it slides it back; `false`: only a click (or the keys, or `reveal`) opens it, and the pointer leaving keeps it. Either way a click or focus elsewhere hides it (`stripAutoHide`) |
 | `stripAutoHide` | `true` | a strip panel slid out (Dock Unpinned, Undock) slides back when a click or focus goes elsewhere in the page, as in IntelliJ, however it was opened; not while its ⋯ menu or a dialog is open, during a drag, when the whole window loses focus, or with focus in an iframe inside it. `false` (v0.5.0): one opened by a click with `stripHover: false` or beside stays until its button, its slide-in control, `closeFly()`, Esc or another strip panel |
@@ -157,6 +166,7 @@ text), and `src/host.js` for apps whose panels open dialogs (below).
 | `popBase` | `document.baseURI` | with `popHtml`: the base URL of the pop-out page's relative URLs, put in it as `<base href>` (the page's own HTML `<base href>`, if it has one, is kept instead); the page is read with the browser's `DOMParser` and written back from it, so a comment before `<html>` is dropped; `false`: no `<base>`, the page as given, its base its `blob:` URL |
 | `copyStyles` | `true` | copy the page's `<link rel=stylesheet>` and `<style>` into a pop-out window |
 | `popBackButton` | `true` | the pop-out window's "Back to main window" button (`.dk-pop-back`); `false`: not rendered; its Options menu still changes View Mode |
+| `outNoteDismiss` | `true` | the after-a-reload notice of panels out with no window has a × that closes it (the panels stay out: the Panels menu, `reveal(id)` or a strip panel's own strip button brings each back); `false`: no ×, the notice stays until each is reopened or brought back, for a dock with no Panels menu |
 | `windowClose` | `'hide'` | closing a panel's window hides it and keeps Window mode; `'dock'` restores v0.5.x's return to its previous main-page place |
 | `themeAttrs`, `themeEvent` | `data-theme data-scheme class style`, `'dock-theme'` | what of `<html>` a pop-out window copies, and the event that says the theme changed (a MutationObserver also watches) |
 | `help` | none | `{ icon(key, panel) → html, mount(doc) → { destroy } \| fn, selector }`; `createHelp()` makes one |
@@ -166,7 +176,8 @@ text), and `src/host.js` for apps whose panels open dialogs (below).
 | `onReset` | none | called by `reset()` before the default layout comes back |
 | `openWindow`, `win` | `window.open`, `window` | stand-ins for tests |
 
-A saved layout is checked before use: unknown panels and repeats are dropped, a panel it does not mention goes where the
+A saved layout is checked before use: repeats are dropped, a panel it names that the app has not given (or added) keeps
+its place, unseen, for `addPanel` (v0.10.0; before, it was dropped), a panel it does not mention goes where the
 default has it, and one that is not a layout, of another version (without `migrate`), names none of today's panels or
 shows nothing gives the default.
 
@@ -207,6 +218,13 @@ v0.5.0's behaviour (see the options).
 (or at its own saved size); a docked panel unpinned goes to the strip on the side it stands (the side is read from the
 layout: where it is against the middle, the `fill` panel's place); Float and back, and Window and back, return it to its
 side and place. Move To (or a drag) is the only thing that changes it, and every mode after uses the new side.
+
+**A panel's size is kept per axis**, as IntelliJ keeps a tool window's. Move To from left or right to top or bottom (or
+back) remembers how deep the panel was across the axis it leaves, and on the other axis it is as deep as it last was
+there; the first time, its size in the default layout when it stands along that axis there, else `defaultSize`, else a
+quarter of the dock (at least its `minSize`). Left to right keeps its width. A strip panel moved across axes does the
+same with how far it slides out. The sizes are saved with the layout (`layout.depth`, `{ id: { w, h } }`); a layout
+stored before has none, and loads as it is.
 
 **Closing a panel's window** (OS close, Ctrl+W or `window.close()`) hides it and keeps Window mode. Its former strip
 button, the Panels menu, `showPanel(id)`, `setVisible(id, true)` or `reveal(id)` reopens it in a window. Hidden windows
@@ -253,7 +271,8 @@ dock.setBadge('asks', '3', '3 asks waiting');
   panel opening. The strip then lies above a panel sliding in or out,
   so a quick second click reaches the button.
 - **`stripOpen: 'beside'`**: the panel slides out into room the layout gives it instead of over the layout: `.dk-main`
-  gets a margin on that edge as wide as the panel, the panel lies in it (between the middle and the strip, no shadow,
+  gets a margin on that edge as wide as the panel is laid out (the app's CSS `max-width`/`max-height` on `.dk-flyout`
+  counts, and the margin follows the panel's size as the window or the CSS changes it), the panel lies in it (between the middle and the strip, no shadow,
   no slide), and the splits are fitted again, so the middle narrows and the `fill` panel gives first. One panel is out
   at a time (so at most one per edge); opening another closes the first. It stays unpinned: nothing of it goes in the
   layout or in storage, and a reload shows the strip with nothing open (an app that wants a tool open again calls
@@ -328,6 +347,58 @@ Translate through `text.screenshot`, `text.screenshotHint`, `text.screenshotCopi
 `text.screenshotCopy`, `text.screenshotDownload`, and `text.screenshotDismiss`. Set `screenshotHint` to describe
 your app hook when it does not prompt.
 
+## App items in the ⋯ menu
+
+A panel's own actions (stop, resume, move to another project …) go in its ⋯ menu, **above Dock's own items**, with a
+separator between, so there is one menu and not a second "more…" one (v0.9.0). Give a panel `menuItems`, or the dock
+a `menuItems` option for every panel without its own:
+
+```js
+const dock = createDock({
+  root, panels: [{ id: 'task', title: 'Task', el,
+    menuItems: (id, ctx) => [
+      { id: 'watch', label: 'Watch', checked: task.watched, run: () => task.toggleWatch() },
+      task.running ? { id: 'stop', label: 'Stop', run: () => task.stop() } : { id: 'resume', label: 'Resume', run: () => task.resume() },
+      { id: 'po', label: 'Make PO', disabled: !task.canLead, title: 'Only a running task can be PO' },
+      { sep: true },
+      { id: 'move', label: 'Move to project', sub: projects.map((p) => ({ id: `project:${p.id}`, label: p.name, checked: p.id === task.project })) },
+    ] }],
+  // Items without a run of their own come here (and to dock.onMenu(fn)'s).
+  onMenu: (id, itemId) => { if (itemId.startsWith('project:')) moveTask(id, itemId.slice(8)); },
+});
+```
+
+- **Asked on every open.** The hook is called each time the menu opens, so the items follow the panel's state; there
+  is nothing to refresh. (A menu already open is not refreshed.) It is also called while a title bar is drawn for a
+  panel that has nothing of Dock's in its menu, to know whether ⋯ shows at all (with classic heads, on each slide-out; in narrow mode, on each tab switch), so keep the
+  hook cheap and free of side effects. Return `[]` (or nothing) for no items.
+- **`ctx`**: `{ where, mode, side, window }`: `where` is `'dock'`, `'float'`, `'fly'` (slid out of its strip) or
+  `'window'` (its own window); `mode` its view mode (`viewMode(id)`); `side` its side, or `null` for the middle;
+  `window` the window the menu is in (the panel's own window when it is out).
+- **An item**: `{ id, label, title?, disabled?, checked?, sub?, run? }`, or `{ sep: true }`. `label` and `title` are
+  text (escaped, never HTML); `id` defaults to the label. `checked` (a boolean) makes it a checkbox item
+  (`menuitemcheckbox`, ✓ when true). `title` is its tooltip; on a disabled item, say why. Separators are never first,
+  last or doubled; anything that is not an item is left out.
+- **Disabled** (`disabled: true`): shown, focusable and read out (`aria-disabled="true"`), with its title; a click,
+  Enter or Space does nothing and the menu stays open.
+- **A submenu** (`sub: [items]`): `Move to project ▸`, one level deep as Dock's own View Mode ▸ and Move To ▸ (an item
+  inside one keeps no `sub`). The same pointer and keys: hover opens it, and with one open another item takes over
+  after resting 150 ms; ↑ ↓ Home End move, Enter, Space or → open it on its checked item (else its first), ← or Esc
+  close it, Tab closes the menu. An empty `sub` leaves its item disabled.
+- **A pick**: the menu closes, then the item's `run(id, itemId)` is called; an item without `run` goes to the `onMenu`
+  option and then to every `dock.onMenu(fn)` (which returns a function that takes `fn` off). It runs in the dock's
+  page (where `createDock` was called), also when the menu was in the panel's own window. An exception (or a rejected
+  promise) from the hook, `run` or `onMenu` is reported (`reportError`, else `console.error`) and the dock carries on: a
+  hook that throws gives no app items that time.
+- **Everywhere ⋯ is**: docked, floating, slid out of a strip (Dock Unpinned, Undock: working in the menu keeps the
+  panel out), in its own window, narrow, and with `headButtons: 'classic'`, where they go above v0.4's menu items (a
+  slid-out panel's title bar there gets a ⋯ for them alone). A panel with app items but nothing of Dock's in its menu
+  (narrow, or `can` forbidding the rest) still gets ⋯.
+
+`normalizeMenuItems(items)` and `menuItemsHtml(items)` (`src/menu-items.js`) are what the dock uses to clean and draw
+them. The demo's Notes panel has Watch (checked), Stop / Resume, Archive (disabled, with its reason) and Move to
+project ▸ Alpha, Beta, Gamma; each pick is a line in the Log.
+
 ## Panels stay in place (iframes do not reload)
 
 A browser reloads every `<iframe>` in an element that leaves the document, even for a moment. So a layout change moves a
@@ -346,6 +417,61 @@ the one holding the panels it held), and puts children in order moving the fewes
 | the panel popped out, or back from its window | the panel, into another document | its iframes reload (always, `moveBefore` or not) |
 
 A panel that is hidden or out waits in a hidden element of the dock (`.dk-parking`), not out of the document.
+
+## Panels at runtime
+
+A dock's panels are not fixed by `createDock`'s `panels` (v0.10.0): `addPanel` adds one, `removePanel` takes one out, and a
+panel declared `closable: true` can be closed by a person, as IntelliJ's editor tabs (Ensemble opens each file it shows
+as a panel of its own).
+
+```js
+const el = document.createElement('section');
+dock.addPanel({ id: 'file:README.md', title: 'README.md', el, closable: true });          // a tab where you work
+dock.addPanel({ id: 'file:a.js', title: 'a.js', el: el2, closable: true }, 'window');       // in its own window
+dock.onClose((id) => (unsaved.has(id) ? askToClose(id) : true));                          // false keeps it
+root.addEventListener('dock-removed', (e) => dispose(e.detail.id, e.detail.el));
+```
+
+- **Where it goes.** `where` is `{ kind: 'stack', stack: panelId }` (a tab of that panel's stack, docked or floating),
+  `{ beside: panelId, side }` (docked beside it, as `moveTo`'s split; beside a floating one, a tab of it), an edge
+  (`'left' | 'right' | 'top' | 'bottom'`, docked along it) or a view mode (`'pinned'`, `'unpinned'`, `'undock'`,
+  `'float'`, `'window'`: placed as a tab, then switched as View Mode does, so `can()` decides; `'window'` opens its
+  window at once, which a browser allows only from a click). With none it goes back where it was when it was removed
+  (or before a reload, below); else it is a tab of the stack last worked in (a tab clicked, focus in it, the last one
+  added), else of the middle (the `fill` panel's stack). A new tab goes right of the front one, as IntelliJ's. A
+  `where` given wins over a kept place, which is then dropped. In narrow `where` is ignored (one column). A target
+  that is not there counts as none. The panel comes to the front (a strip panel slides out), and the layout is saved.
+- **An id the dock has**: `addPanel` shows that panel (`reveal`) and answers `'exists'`; nothing is added or moved.
+- **Removing.** `removePanel(id)` takes any panel out: its own window closes (no note offers it again), its strip button
+  and flyout, its float, its menu go; the next tab of its stack is **the one on its left** (the first tab's right
+  neighbour when the first is removed), as IntelliJ's default; maximised alone, the dock is no longer maximised. Focus
+  that was in it goes to that tab. The element is handed back, detached, with the dock's classes and the `role` and
+  `aria-labelledby` it gave taken off; the dock forgets the panel (its badge, its window's place), and `dock-removed`
+  fires on the root.
+- **Closable panels.** `closable: true` gives the panel an **×** on its tab (seen on the front tab and the one under the
+  pointer; not on a minimised stack's bar, whose tabs are icons: there a middle click or ⋯ → Close closes it), closing on a **middle click** on its tab, **Close** in its ⋯ menu (in its
+  window's too, and in the classic menu) and **Ctrl+F4** with focus in it (see "Keys"). `can(id, 'close')` is true only
+  for those (and the app's `can` may still say no). Closing asks every `onClose` hook first: one answering `false`, a
+  promise of `false`, or throwing or rejecting keeps the panel (an app asks "unsaved changes?" there); with no promise
+  among the answers it closes at once. Then it is `removePanel`. A panel that is not closable keeps the − (Hide), as
+  before. `removePanel` asks no hook.
+- **Its place is kept.** A removed panel's place (its stack and neighbours, its split side, its strip and place on it,
+  its float's rectangle, its window's geometry, whether it was pinned from a strip) stays in the stored layout as
+  `parked`, drawn nowhere and no tab. Stack-mates removed one after the other come back together, whichever is added
+  first. After a reload, a stored layout that names a panel the app has not added yet loads without error and without a
+  hole: the panel's place is kept the same way, and `addPanel` with no `where` puts it back there (one that was in its
+  own window is offered again by the note, as after any reload: a window opens only from a click). Hidden when removed,
+  it comes back shown, in the place it had. At most `keepSlots` places are kept (50 by default), the oldest dropped
+  first; `slots()` lists them, `forget(id)` drops one, `forget()` all.
+- **Many tabs.** Tabs keep their width (a title longer than `--dk-tab-max`, 160 px, is cut with an ellipsis; the tooltip
+  has it whole). When a stack's tabs do not fit, its tab row scrolls sideways: the wheel over it, a thin scrollbar
+  under it (drag it; dragging a tab moves the panel, as anywhere, so the row itself does not pan), and the keys (Left, Right, Home, End) scroll the tab they reach into view; the front tab is
+  scrolled into view whenever it changes. A **▾** at the end of the row (there only while the row overflows, IntelliJ's
+  Show Hidden Tabs) lists every tab of the stack, the front one checked and those out of view tagged *not in view*;
+  picking one brings it to the front, into view, focused.
+
+The demo's **new file** button adds File 1, File 2, … (closable; typed in, one asks before it closes), kept across a
+reload in `dock-demo.files`; `?files=30` starts with 30 of them in one stack.
 
 ## Narrow
 
@@ -381,6 +507,11 @@ person can do, not the app's own calls.
   dock, again each time the iframe loads a page, and on iframes the app adds later; `destroy()` takes them off. A
   **cross-origin** iframe's document cannot be reached, so the dock skips it, silently, and F6 inside it stays the
   browser's (as do iframes nested inside a panel's iframe, and a panel's in its own window).
+- **Ctrl+F4**, with focus in a closable panel (its tab, or anything in it), closes it (v0.10.0), as IntelliJ's editor.
+  Chrome and Edge keep Ctrl+F4 in an ordinary browser tab (it closes the tab, and the page never sees the key), so
+  there it works only in an installed app window or `--app` window, or in a panel's own window; the ×, a middle click on
+  the tab and ⋯ → Close work everywhere. Firefox likewise closes the tab. Nothing else in the dock binds it.
+- A **middle click** on a closable panel's tab closes it; its press starts no autoscroll.
 - **Escape** restores a maximised stack and slides a slid-out panel back in; arrow keys on a focused splitter move it.
 
 Every focus the dock gives is `{ preventScroll: true }`, and `.dock` and its boxes are `overflow: clip`, not `hidden`, so
@@ -487,7 +618,8 @@ data and listeners stay where they were, so it keeps updating. What the host app
 1. **A pop-out page on the same origin** as the app's page, at `popUrl` (relative to the page). `src/popout.html` is
    that page; serve it (for example as `dock/src/popout.html`) or copy it. It needs only an element with id
    `dk-pop-root`; the dock copies the main page's stylesheets and theme attributes into it, and it closes itself when
-   the main window closes or reloads.
+   the main window closes or reloads. The page has one key for its windows (`window.__dockPopKey`), shared by every dock
+   on it, so two docks on one page keep each other's windows open, and `destroy()` of one leaves the others'.
    **Or no page at all**: with `popHtml: true` the dock makes the same page (`POP_HTML`) a `Blob` and opens the
    window at its `blob:` URL, which is on the app's origin; `popHtml: '<!doctype html>…'` does the same with an app's
    own page. Nothing is fetched from the server, so a server that cannot serve `popout.html` does not matter. The
@@ -571,7 +703,8 @@ npm run test:node     # the model, the dock in jsdom with stand-in windows, the 
 npm run test:browser  # headless Chrome (Puppeteer) against the demo: run.js (the pop-out window for real), run.js
                       # --pophtml (the same with popHtml, the page from a blob: URL), needs.js (iframes, narrow, focus, keys),
                       # toolstrip.js (the tool strip), scenarios.js, viewmodes.js (View Mode and Move To), autohide.js
-                      # (Dock Unpinned and Undock hide when focus leaves them)
+                      # (Dock Unpinned and Undock hide when focus leaves them), stripreorder.js, runtime.js (panels added,
+                      # removed and closed at runtime, and 40 tabs in one stack), menuitems.js (the app's items in ⋯)
 npm run test:browser:check     # one Chrome: says whether it made the blank-password check (see below); run it first
 npm run screenshots -- <dir>   # the theme picker, the demo in ten themes, a panel out, its window, the reload notice
 npm run evidence:app-window -- <dir>   # real Chrome and Edge (headed): the pop-out window in a tab, --app, installed, PiP
@@ -579,7 +712,7 @@ node test/browser/screenshot-demo.js <dir>   # headed demo menu → screenshot �
 ```
 
 Every Chrome these start goes through `test/browser/chrome.js`, on a persistent profile per suite under
-`%LOCALAPPDATA%\dock-test-chrome\` (`run`, `run-pophtml`, `needs`, `toolstrip`, `viewmodes`, `autohide`, `screenshots`, `check`,
+`%LOCALAPPDATA%\dock-test-chrome\` (`run`, `run-pophtml`, `needs`, `toolstrip`, `runtime`, `viewmodes`, `autohide`, `menuitems`, `screenshots`, `check`,
 `app-window-<browser>-<way>`; `DOCK_TEST_CHROME` moves them; a run at the same time as another gets `<suite>-2`). Why:
 Chrome on a new profile checks for a blank Windows password by signing in with an empty one, and Windows counts each
 as a failed sign-in (10 in 10 minutes lock the account). Before each launch the helper seeds the profile's
@@ -610,3 +743,7 @@ reload shows the strip); a width per panel; and `?toolstrip=1` with all of them.
 click or focus elsewhere, with hover on and off and in layout A, opened by a click, the keys, hover and `reveal`, their
 strip button and stored layout unchanged; typing, their ⋯ menu, their dialog, an iframe in them and the window's blur
 keep them; Esc closes them; Float and Dock Pinned stay; `stripAutoHide: false` is v0.5.0's; and the tooltips.
+`menuitems.js` proves the app's ⋯ items docked, floating, slid out (Dock Unpinned, Undock), in a Window, narrow and
+with classic title bars: above Dock's own with a separator, a pick runs once with its ids and closes the menu (the
+strip panel staying out), `onMenu` for items without `run`, disabled items, the submenu by pointer and keys, the hook
+asked on each open, a throwing `run`; and the demo's Notes path in the page and in its window.

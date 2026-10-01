@@ -20,10 +20,12 @@ import { addHostDoc, removeHostDoc, whenGone } from './host.js';
 import {
   EDGES, LAYOUT_VERSION, makeConfig, stackNode, locate, panelsUnder, contains, findStack, whereIs, isShownIn,
   moveTo, floatPanel, dockBack, unpinPanel, pinPanel, hidePanel, showPanel, activate, normalizeLayout, clampFloat,
-  popOutPanel, popInPanel, panelSide, viewModeOf, moveSide, moveStrip, dockFromFloat,
+  popOutPanel, popInPanel, panelSide, viewModeOf, moveSide, moveStrip, dockFromFloat, insertPanel, parkPanel, forgetPanel,
+  parkedOf,
 } from './layout.js';
 import { POP_HTML } from './popout-page.js';
 import { afterPaint, canCapture, capturePanel, writePng } from './screenshot.js';
+import { normalizeMenuItems, menuItemsHtml, itemAt } from './menu-items.js';
 
 export const LAYOUT_KEY = 'dock.layout';
 export const POP_URL = 'popout.html'; // beside the app's page: same origin, nothing in the URL
@@ -66,6 +68,12 @@ export const TEXT = {
   screenshotDismiss: 'Dismiss',
   maximise: 'Maximise',
   restore: 'Restore',
+  // a closable panel's (v0.10.0): its tab's ×, its Options menu's item; and a stack's ▾ list of its tabs
+  close: 'Close',
+  closeTab: (t) => `Close ${t}`,
+  closeHint: 'close (Ctrl+F4, or a middle click on its tab)',
+  tabList: 'Show all tabs',
+  tabHidden: 'not in view',
   modes: { pinned: 'Dock Pinned', unpinned: 'Dock Unpinned', undock: 'Undock', float: 'Float', window: 'Window' },
   // what each view mode does: the tooltip of its menu item
   modeHints: {
@@ -95,6 +103,7 @@ const ICON = {
   unpin: '<path d="M4 1.5h4M5 1.5v4L3 7.5h6L7 5.5v-4M6 7.5V11" transform="rotate(45 6 6)"/>',
   pop: '<rect x="1.5" y="1.5" width="9" height="6.5"/><path d="M4 10.5h4M6 8v2.5"/>', // a monitor: a window of its own
   back: '<path d="M5 2.5 1.5 6 5 9.5M1.5 6h9"/>', // an arrow home
+  tabs: '<path d="M3 4.5 6 7.5 9 4.5"/>', // ▾: every tab of the stack
   close: '<path d="M3 3l6 6M9 3l-6 6"/>',
 };
 const icon = (name) => `<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" focusable="false">${ICON[name]}</svg>`;
@@ -227,6 +236,8 @@ export function panelsFrom(container) {
  *   stripReorder                            a strip button can be dragged along its strip, or to another edge's, and
  *                                           moved along it by Alt+Shift+arrow (default true, IntelliJ's stripe)
  *   headButtons                             'menu' (default): a title bar has ⋯ and −; 'classic': v0.4's buttons
+ *   outNoteDismiss                          the notice of panels out with no window has a × (default true); false: it
+ *                                           stays until each is reopened or brought back (a dock with no Panels menu)
  *   modalSelector, badgeClass, text, onReset, win
  *
  * Returns the dock's handle: layout(), isShown(id), isVisible(id), isAuto(id), frontOf(id), activate(id), reveal(id),
@@ -241,8 +252,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   badgeClass = 'dk-badge', text = {}, onReset = null, migrate = null,
   defaultLayout, minSize, edgeOf, fill, defaultSize, sizes,
   narrow = false, narrowLayout, narrowKey, can = null, popHtml = null, popBase, minClickRestores = true, popBackButton = true, windowClose = 'hide',
-  stripHover = true, stripOpen = 'over', stripAutoHide = true, stripReorder = true, headButtons = 'menu',
-  screenshot: screenshotHook = null, screenshotItem = true,
+  stripHover = true, stripOpen = 'over', stripAutoHide = true, stripReorder = true, headButtons = 'menu', outNoteDismiss = true,
+  screenshot: screenshotHook = null, screenshotItem = true, menuItems: appMenuItems = null, onMenu = null, keepSlots,
   openWindow = (url, name, features) => (win && typeof win.open === 'function' ? win.open(url, name, features) : null) }) {
   const doc = root.ownerDocument;
   const T = { ...TEXT, ...text };
@@ -250,11 +261,11 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   const ids = panels.map((p) => p.id);
   // A panel's own unpinSize: how far it slides out of its strip when nothing else says (layout.js cfg.unpinSizeOf).
   const unpinSizes = Object.fromEntries(panels.filter((p) => Number.isFinite(p.unpinSize) && p.unpinSize > 0).map((p) => [p.id, p.unpinSize]));
-  const ownUnpin = Object.keys(unpinSizes).length ? unpinSizes : undefined;
-  const wideCfg = makeConfig({ ids, defaultLayout, minSize, edgeOf, fill, defaultSize, sizes, unpinSize: ownUnpin });
+  // Always the live object: a panel added at runtime (addPanel) puts its own in.
+  const wideCfg = makeConfig({ ids, defaultLayout, minSize, edgeOf, fill, defaultSize, sizes, unpinSize: unpinSizes, keepSlots });
   // Narrow (a phone): one column, every panel a tab of one stack, and no control or gesture that moves a panel. It has a
   // layout of its own, kept under its own key, so the wide one is there again when the window is wide again.
-  const narrowCfg = makeConfig({ ids, minSize, edgeOf, fill, defaultSize, sizes, unpinSize: ownUnpin,
+  const narrowCfg = makeConfig({ ids, minSize, edgeOf, fill, defaultSize, sizes, unpinSize: unpinSizes, keepSlots,
     defaultLayout: narrowLayout || ((ctx) => oneColumn(wideCfg.defaultLayout(ctx), fill)) });
   const narrowStoreKey = narrowKey || layoutKey + '.narrow';
   let narrowOn = !!narrow;
@@ -266,9 +277,11 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   const besideOf = (a) => !!a && (a.open || openStyle) === 'beside';
   const classic = headButtons === 'classic';
   const popPage = popHtml === true ? POP_HTML : typeof popHtml === 'string' ? popHtml : null;
-  /** Whether a person may do `action` to panel `id`: move, float, unpin, pop, max, min, hide. Narrow allows only hide. */
+  /** Whether a person may do `action` to panel `id`: move, float, unpin, pop, max, min, hide, close. Narrow allows only
+   * hide and close; close, only a panel declared `closable: true`. */
   function allowed(id, action) {
-    if (narrowOn && action !== 'hide') return false;
+    if (action === 'close') { const p = byId.get(id); if (!p || p.closable !== true) return false; }
+    else if (narrowOn && action !== 'hide') return false;
     if (typeof can !== 'function') return true;
     try { return can(id, action) !== false; } catch { return true; }
   }
@@ -279,6 +292,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   const shownFns = [];
   const changeFns = [];
   const popInFns = [];
+  const menuFns = []; // api.onMenu's: told of a pick of an app item that has no run of its own
   const captureChecks = new Set(); // invalidate pending captures when their panel/frame changes
   const undo = []; // what destroy() takes off
   const scrolls = new Map(); // panel id -> [[element, left, top]] from before its last move
@@ -301,7 +315,11 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     timers.add(t);
     return t;
   }
-  const popKey = Math.random().toString(36).slice(2); // a popped-out window checks it still belongs to this page
+  // A popped-out window checks it still belongs to this page: one key per page, shared by every dock on it (a second
+  // dock reuses the page's key, so neither's windows take themselves for orphans; destroy() leaves it to the others).
+  let popKey = null;
+  if (win) { try { popKey = win.__dockPopKey || null; } catch { /* a stub */ } }
+  if (typeof popKey !== 'string' || !popKey) popKey = Math.random().toString(36).slice(2);
   if (win) { try { win.__dockPopKey = popKey; } catch { /* a stub */ } }
   let layout = load();
 
@@ -357,6 +375,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   // ---- panels in windows of their own ----
   const outOf = (id) => (layout.out ? layout.out[id] : null);
   const live = (id) => !!(pops.get(id) && pops.get(id).doc); // in its own window, and drawn there
+  const outIdle = (id) => !!outOf(id) && !pops.has(id); // remembered as out, its window not open (after a reload)
   // A panel is on screen when its own window shows it, or in the main window when it is not out.
   const shownNow = (id) => live(id) || (!outOf(id) && isShownIn(layout, id));
 
@@ -420,7 +439,13 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       + `${ic ? ` aria-label="${escText(p.title)}"` : ''}`
       + ` title="${escText(p.title)}${draggable ? ': drag to dock it at an edge or into another panel as a tab' : ''}">`
       + `${ic ? `<span class="dk-tab-icon" aria-hidden="true">${ic}</span>` : escText(p.title)}${b ? `<span class="${badgeClass}" title="${escText(b.title || '')}">${escText(b.text)}</span>` : ''}</button>`
-      + `${helpHtml(p)}</span>`;
+      + `${helpHtml(p)}${!iconic && allowed(id, 'close') ? closeHtml(id) : ''}</span>`;
+  }
+  // A closable panel's × on its tab (IntelliJ's editor tabs): seen on the front tab and under the pointer. Out of the Tab
+  // order (Ctrl+F4 closes the focused panel).
+  function closeHtml(id) {
+    const t = byId.get(id).title;
+    return `<button type="button" class="dk-tab-x" data-dk-close="${escText(id)}" tabindex="-1" aria-label="${escText(T.closeTab(t))}" title="${escText(T.closeTab(t))}: ${escText(T.closeHint)}">${icon('close')}</button>`;
   }
   // A panel's icon as markup (the app's own SVG string, or an element's), '' for none.
   function iconHtml(p) {
@@ -445,14 +470,28 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     return !!(w && w.kind === 'float' && w.float.strip && w.float.strip.id === id);
   }
   // The per-panel menu's items, as far as `can` (and narrow) allow them.
-  function menuItems(id, where) {
+  function classicItems(id, where) {
     const items = allowed(id, 'move') ? EDGES.map((e) => [`edge:${e}`, `Dock at the ${e} edge`]) : [];
     if (allowed(id, 'float')) items.push(where === 'float' ? ['dock', fromStrip(id) ? 'Back to its strip' : 'Dock back where it was'] : ['float', 'Float']);
     if (allowed(id, 'pop')) items.push(['pop', 'Pop out into its own window']);
     if (allowed(id, 'unpin')) items.push(['unpin', 'Unpin (auto-hide)']);
     if (allowed(id, 'hide') && !narrowOn) items.push(['hide', 'Hide (the Panels menu shows it again)']);
+    if (allowed(id, 'close')) items.push(['close', T.close]);
     return items;
   }
+  // The app's own items for panel `id`'s ⋯ menu (v0.9.0), normalised: its own menuItems hook, else the dock's. Asked
+  // each time the menu opens, as they follow the panel's state; a hook that throws gives none.
+  function appItemsOf(id, where, w) {
+    const p = byId.get(id);
+    const hook = p && typeof p.menuItems === 'function' ? p.menuItems : appMenuItems;
+    if (typeof hook !== 'function') return [];
+    try {
+      const ctx = { where, mode: modeOf(id), side: panelSide(layout, id, opts()) || null, window: w || win };
+      return normalizeMenuItems(hook(id, ctx));
+    } catch (e) { report(e); return []; }
+  }
+  // Whether a title bar shows ⋯ for the app's items alone (asked only when Dock has none of its own there).
+  const hasAppItems = (id, where) => appItemsOf(id, where, where === 'window' && pops.get(id) ? pops.get(id).win : win).length > 0;
 
   // ---- IntelliJ's model: view modes and sides ----
   const modeOf = (id) => viewModeOf(layout, id, openStyle);
@@ -476,7 +515,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (allowed(id, 'move')) { o.sides = EDGES.slice(); o.side = middle ? null : panelSide(layout, id, opts()); }
     if (where !== 'fly' && where !== 'window' && w && w.stack && allowed(id, 'max')) o.max = maxed === w.stack ? T.restore : T.maximise;
     if (hideOk(id, where)) o.hide = where !== 'fly' && where !== 'window' && w && w.stack && w.stack.min ? T.restore : T.hide;
-    o.any = !!(o.modes.length || o.sides.length || o.max || (!narrowOn && screenshotItem !== false && screenshotAvailable(id)));
+    o.close = allowed(id, 'close');
+    o.any = !!(o.modes.length || o.sides.length || o.max || o.close || (!narrowOn && screenshotItem !== false && screenshotAvailable(id)));
     return o;
   }
   // − hides a panel as IntelliJ's does, to what stands for its stripe icon: a strip panel slides back in; a docked or
@@ -490,7 +530,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const isMax = maxed === node;
     if (where === 'window') {
       const c = [];
-      if (optionsOf(id, where).any) c.push(ctl('menu', 'menu', t + ': ' + T.options, [T.viewMode, T.moveTo, T.hide].join(', ')));
+      if (optionsOf(id, where).any || hasAppItems(id, where)) c.push(ctl('menu', 'menu', t + ': ' + T.options, [T.viewMode, T.moveTo, T.hide].join(', ')));
       if (classic) {
         if (allowed(id, 'float')) c.push(ctl('float', 'float', t + ': float', 'float in the main page'));
         if (allowed(id, 'unpin')) c.push(ctl('unpin', 'pin', t + ': unpin', 'unpin to its strip'));
@@ -500,12 +540,12 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     }
     const c = [];
     if (!classic) {
-      if (optionsOf(id, where).any) c.push(ctl('menu', 'menu', `${t}: ${T.options}`, `${T.viewMode}, ${T.moveTo}, ${T.maximise}, ${T.hide}`));
+      if (optionsOf(id, where).any || hasAppItems(id, where)) c.push(ctl('menu', 'menu', `${t}: ${T.options}`, `${T.viewMode}, ${T.moveTo}, ${T.maximise}, ${T.hide}`));
       if (hideOk(id, where)) c.push(node.min ? ctl('hide', 'unmin', `${t}: ${T.restore}`, 'restore from its title bar')
         : ctl('hide', 'hide', `${t}: ${T.hide}`, 'hide it to its title bar (a click on it brings it back)'));
       return `<div class="dk-tabs" role="tablist" aria-label="${escText(t)}">${tabs}</div><span class="dk-ctl">${c.join('')}</span>`;
     }
-    if (menuItems(id, where).length) c.push(ctl('menu', 'menu', `${t}: move or hide`, 'dock at an edge, float, unpin or hide'));
+    if (classicItems(id, where).length || hasAppItems(id, where)) c.push(ctl('menu', 'menu', `${t}: move or hide`, 'dock at an edge, float, unpin or hide'));
     if (allowed(id, 'min')) c.push(node.min ? ctl('min', 'unmin', `${t}: restore`, 'restore from its title bar') : ctl('min', 'min', `${t}: minimise`, 'minimise to its title bar'));
     if (allowed(id, 'max')) c.push(isMax ? ctl('max', 'restore', `${t}: restore size`, 'restore (Esc)') : ctl('max', 'max', `${t}: maximise`, 'maximise (Esc restores)'));
     if (allowed(id, 'pop')) c.push(ctl('pop', 'pop', `${t}: pop out`, 'pop out into a browser window of its own (drag it to another monitor)'));
@@ -556,7 +596,14 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     sec.setAttribute('aria-label', byId.get(node.active).title);
     for (const k of ['minWidth', 'minHeight', 'flex']) sec.style[k] = '';
     const html = headHtml(node, where);
-    if (parts.html !== html) { head.innerHTML = html; parts.html = html; }
+    if (parts.html !== html) {
+      // The tab row keeps where it was scrolled to when its title bar is drawn again.
+      const row = head.querySelector('.dk-tabs');
+      const left = row ? row.scrollLeft : 0;
+      head.innerHTML = html;
+      parts.html = html;
+      if (left) head.querySelector('.dk-tabs').scrollLeft = left;
+    }
     parts.node = node;
     stackEls.set(node, sec);
     return parts;
@@ -795,9 +842,10 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     el.setAttribute('aria-label', p.title);
     const tabs = `<div class="dk-tabs" role="tablist" aria-label="${escText(p.title)}">${tabHtml(a.id, true, false)}</div>`;
     const html = !classic ? tabs + '<span class="dk-ctl">'
-      + (optionsOf(a.id, 'fly').any ? ctl('menu', 'menu', `${p.title}: ${T.options}`, `${T.viewMode}, ${T.moveTo}, ${T.hide}`) : '')
+      + (optionsOf(a.id, 'fly').any || hasAppItems(a.id, 'fly') ? ctl('menu', 'menu', `${p.title}: ${T.options}`, `${T.viewMode}, ${T.moveTo}, ${T.hide}`) : '')
       + ctl('hide', 'hide', `${p.title}: ${T.hide}`, 'slide it back in (Esc)') + '</span>'
       : tabs + '<span class="dk-ctl">'
+      + (hasAppItems(a.id, 'fly') ? ctl('menu', 'menu', `${p.title}: ${T.options}`, T.options) : '')
       + (allowed(a.id, 'pop') ? ctl('pop', 'pop', `${p.title}: pop out`, 'pop out into a browser window of its own (drag it to another monitor)') : '')
       + (allowed(a.id, 'float') ? ctl('float', 'float', `${p.title}: float`, 'float in its own window') : '')
       + ctl('hide-fly', 'min', `${p.title}: slide in`, 'slide it back in (Esc)')
@@ -880,9 +928,11 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const flyBox = layout.auto.map((a) => claimFlyout(a));
     const stripEntries = layout.auto.slice();
     // Restore button order in reverse removal order, without restoring a hidden panel's body.
-    for (const h of [...layout.hidden].reverse()) {
+    // So does a strip panel out with no window (after a reload): its button brings it back to its strip, slid out.
+    const idleOut = ids.filter(outIdle).map((id) => ({ id, was: layout.out[id].was, window: true, out: true }));
+    for (const h of [...layout.hidden, ...idleOut].reverse()) {
       if (!h.window) continue;
-      const a = (h.was && (h.was.kind === 'auto' ? h.was : h.was.strip)) || (layout.pinned && layout.pinned[h.id]);
+      const a = (h.was && (h.was.kind === 'auto' ? h.was : h.was.strip)) || (!h.out && layout.pinned && layout.pinned[h.id]);
       if (!a) continue;
       const peers = a.peers || [];
       const next = stripEntries.findIndex((x) => x.edge === a.edge && peers.indexOf(x.id) >= (a.index || 0));
@@ -917,8 +967,53 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       if (doc.activeElement !== focused) focusQuiet(focused);
     } else if (fkey) focusAgain(fkey);
     fitAll();
+    fitTabs(true);
     for (const check of captureChecks) check();
     announceShown();
+  }
+
+  // ---- many tabs: the tab row scrolls (v0.10.0) ----
+  // A title bar whose tabs do not fit is marked .dk-over (its ▾ shows, and a thin scrollbar). `front`: after a drawing,
+  // a stack whose front tab changed scrolls it into view.
+  const RO = doc.defaultView && doc.defaultView.ResizeObserver;
+  const tabsRO = RO ? new RO((recs) => { for (const r of recs) overflowOf(r.target.parentNode); }) : null;
+  if (tabsRO) undo.push(() => tabsRO.disconnect());
+  const watchedRows = new Set(); // the rows tabsRO watches: those of stacks drawn now (a stack thrown away lets go of its)
+  // ▾ (every tab of the stack) is there only while the row overflows, right after it.
+  function overflowOf(head) {
+    const row = head && head.querySelector(':scope > .dk-tabs');
+    if (!row) return;
+    const over = !head.closest('.dk-min') && row.scrollWidth > row.clientWidth + 1;
+    head.classList.toggle('dk-over', over);
+    let btn = head.querySelector(':scope > [data-dk-tabs]');
+    if (over && !btn) {
+      btn = doc.createElement('button');
+      btn.type = 'button';
+      btn.className = 'dk-btn dk-tabs-btn';
+      btn.dataset.dkTabs = '';
+      btn.setAttribute('aria-haspopup', 'menu');
+      btn.setAttribute('aria-label', T.tabList);
+      btn.title = T.tabList;
+      btn.innerHTML = icon('tabs');
+      row.after(btn);
+    } else if (!over && btn) btn.remove();
+  }
+  function fitTabs(front) {
+    const rows = new Set();
+    for (const [node, sec] of stackEls) {
+      const head = sec.querySelector(':scope > .dk-head');
+      const row = head && head.querySelector(':scope > .dk-tabs');
+      if (!row) continue;
+      rows.add(row);
+      if (tabsRO && !watchedRows.has(row)) { tabsRO.observe(row); watchedRows.add(row); }
+      overflowOf(head);
+      if (front && sec._dkFront !== node.active) {
+        sec._dkFront = node.active;
+        const tab = row.querySelector('[data-dk-tab].on');
+        if (tab) showTab(tab);
+      }
+    }
+    for (const row of watchedRows) if (!rows.has(row)) { tabsRO.unobserve(row); watchedRows.delete(row); }
   }
 
   function stillHas(node) {
@@ -958,26 +1053,42 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const f = flyOpen && layout.auto.find((x) => x.id === flyOpen);
     const a = besideOf(f) ? f : null;
     const el = a && flyEls.get(a.id);
-    for (const e of EDGES) main.style['margin' + e[0].toUpperCase() + e.slice(1)] = el && a.edge === e ? el._dkSize + 'px' : '';
+    // As deep as it is laid out: the app's CSS (max-width, max-height) may draw it smaller than its own size.
+    // (A beside flyout has no transform, so its box is its layout's, to the fraction of a px.)
+    const r = el && el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+    const across = r && (a.edge === 'left' || a.edge === 'right' ? r.width : r.height);
+    const px = el ? (across > 0 ? across : el._dkSize) : 0;
+    for (const e of EDGES) main.style['margin' + e[0].toUpperCase() + e.slice(1)] = el && a.edge === e ? px + 'px' : '';
     root.classList.toggle('dk-beside-open', !!el);
+    watchBeside(el);
+  }
+  // Its laid-out size changes with the page (a CSS clamp against the window, a class): the room beside it follows.
+  const besideRO = RO ? new RO(() => { if (!destroyed) besideSpace(); }) : null;
+  if (besideRO) undo.push(() => besideRO.disconnect());
+  let besideWatched = null;
+  function watchBeside(el) {
+    if (!besideRO || el === besideWatched) return;
+    if (besideWatched) besideRO.unobserve(besideWatched);
+    besideWatched = el || null;
+    if (el) besideRO.observe(el);
   }
 
   // ---- a panel in a window of its own ----
 
   // Panels remembered as out whose windows are not open (after a reload): a small notice over the dock offers, for
-  // each, to open its window again or to bring it back. It is not a place in the layout; closing it leaves them in the
-  // Panels menu.
+  // each, to open its window again or to bring it back. It is not a place in the layout; closing it (outNoteDismiss)
+  // leaves them to the Panels menu, reveal(id), and a strip panel's own strip button.
   let outNoteOff = false;
   function outNote() {
     const waiting = ids.filter((id) => outOf(id) && !pops.has(id));
-    if (!waiting.length || outNoteOff) return null;
+    if (!waiting.length || (outNoteOff && outNoteDismiss !== false)) return null;
     const el = doc.createElement('div');
     el.className = 'dk-outnote dk-mono';
     el.setAttribute('role', 'status');
     const btn = (k, label, title, cls = '') => `<button type="button" class="dk-textbtn${cls}" data-dk-pop="${k}" title="${escText(title)}">${escText(label)}</button>`;
     el.innerHTML = waiting.map((id) => `<div class="dk-outnote-row" data-dk-out="${escText(id)}"><span>${escText(T.popWas(byId.get(id).title))}</span>`
       + `<span class="dk-outnote-acts">${btn('reopen', T.popReopen, T.popReopenTitle, ' dk-primary')}${btn('back', T.popKeep, T.popKeepTitle)}</span></div>`).join('')
-      + `<button type="button" class="dk-btn dk-outnote-x" data-dk-pop="dismiss" aria-label="${escText(T.popNoteClose)}" title="${escText(T.popNoteClose)}">${icon('close')}</button>`;
+      + (outNoteDismiss === false ? '' : `<button type="button" class="dk-btn dk-outnote-x" data-dk-pop="dismiss" aria-label="${escText(T.popNoteClose)}" title="${escText(T.popNoteClose)}">${icon('close')}</button>`);
     return el;
   }
 
@@ -1247,6 +1358,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       if (stop) whenGone(cd, stop);
     }
     const onBack = (e) => {
+      if (e.target.closest('[data-dk-close]')) { void closeNow(id); return; }
       if (e.target.closest('[data-dk-pop="back"]')) popIn(id);
       const b = e.target.closest('[data-dk-act]');
       if (b) act(b.dataset.dkAct, id, b);
@@ -1254,6 +1366,12 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const dismiss = (e) => { if (menu && menu.ownerDocument === cd && !inMenu(e.target) && !menu._from.contains(e.target)) closeMenu(false); };
     const blur = () => { if (menu && menu.ownerDocument === cd) closeMenu(false); };
     cd.addEventListener('pointerdown', dismiss);
+    // Ctrl+F4 and a middle click on its tab close it here too (a closable panel).
+    const onKey = (e) => onCtrlF4(e, id);
+    const onAux = (e) => { if (middleTab(e)) { e.preventDefault(); if (e.type === 'auxclick') void closeNow(id); } };
+    cd.addEventListener('keydown', onKey);
+    head.addEventListener('mousedown', onAux);
+    head.addEventListener('auxclick', onAux);
     pop.win.addEventListener('blur', blur);
     const onReveal = () => { try { pop.win.focus(); } catch { /* ignore */ } };
     const gone = () => windowGone(id, pop);
@@ -1272,6 +1390,9 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     whenGone(cd, () => {
       blur();
       cd.removeEventListener('pointerdown', dismiss);
+      cd.removeEventListener('keydown', onKey);
+      head.removeEventListener('mousedown', onAux);
+      head.removeEventListener('auxclick', onAux);
       pop.win.removeEventListener('blur', blur);
       for (const t of later) clearTimeout(t);
       try {
@@ -1382,6 +1503,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   function openFly(id, byHover) {
     clearTimeout(leaveTimer);
     if (hiddenWindow(id)) { if (!byHover) showHidden(id); return; }
+    if (outIdle(id)) { if (!byHover) api.reveal(id); return; } // its button after a reload: back on its strip, slid out
     if (flyOpen === id) { if (!byHover) flyByHover = false; return; }
     flyOpen = id;
     flyByHover = !!byHover;
@@ -1510,10 +1632,12 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   function moveSideNow(id, side) {
     if (narrowOn || !allowed(id, 'move') || !EDGES.includes(side)) return false;
     const w = whereIs(layout, id);
-    let size;
-    if (w && w.kind === 'dock') { const d = dims(w.stack); if (d && w.stack.panels.length === 1) size = side === 'left' || side === 'right' ? d.w : d.h; }
+    // Its depth on the axis it leaves is measured as drawn (not while maximised); on the new side it is as deep as it
+    // last was on that axis (layout.depth), else its default (layout.js moveSide).
+    const wasMax = maxed;
+    const measure = (node) => (node === wasMax ? null : dims(node));
     if (w && w.kind === 'dock' && maxed === w.stack && w.stack.panels.length === 1) maxed = null;
-    if (!moveSide(layout, id, side, { ...opts(), size })) return false;
+    if (!moveSide(layout, id, side, { ...opts(), dims: measure })) return false;
     commit();
     return true;
   }
@@ -1549,6 +1673,187 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     return true;
   }
 
+  // ---- panels added and removed at runtime (v0.10.0) ----
+
+  // The panel last worked in (a tab clicked or activated, focus in its stack, one added): a new panel with no `where`
+  // goes into its stack as a tab, as IntelliJ opens a file in the editor tabs last used.
+  let lastActive = null;
+  const panelOf = (el) => { const p = el && el.closest && el.closest('.dk-panel'); return p ? ids.find((id) => byId.get(id).el === p) || null : null; };
+  on(root, 'focusin', (e) => {
+    const t = e.target;
+    const tab = t.closest && t.closest('[data-dk-tab]');
+    const id = tab ? tab.dataset.dkTab : panelOf(t);
+    if (id && byId.has(id)) lastActive = id;
+  });
+  function nearOf() {
+    const w = lastActive && byId.has(lastActive) ? whereIs(layout, lastActive) : null;
+    return w && (w.kind === 'dock' || w.kind === 'float') ? lastActive : null;
+  }
+
+  const WHERE_MODES = new Set([...VIEW_MODES, 'hidden']);
+  function addNow(p, where) {
+    if (destroyed) return null;
+    if (!p || typeof p.id !== 'string' || !p.id || !p.el || p.el.nodeType !== 1) throw new TypeError('addPanel: a panel needs an id and an element');
+    if (byId.has(p.id)) { api.reveal(p.id); lastActive = p.id; return 'exists'; }
+    const id = p.id;
+    const entry = { ...p, title: p.title == null ? id : String(p.title) };
+    byId.set(id, entry);
+    panelEls.add(entry.el);
+    ids.push(id);
+    wideCfg.add(id);
+    narrowCfg.add(id);
+    if (Number.isFinite(entry.unpinSize) && entry.unpinSize > 0) unpinSizes[id] = entry.unpinSize;
+    const o = { ...opts(), near: nearOf() };
+    // Narrow: one column, so `where` says nothing. A view mode goes through setViewMode, as the Options menu's does
+    // (`can` decides); a stack, a side or an edge is the app's own placement, as api.moveTo.
+    const mode = typeof where === 'string' && WHERE_MODES.has(where) ? where : null;
+    if (narrowOn || where == null) insertPanel(layout, id, null, o);
+    else if (mode) { forgetPanel(layout, id); insertPanel(layout, id, mode === 'hidden' ? 'hidden' : 'pinned', o); }
+    else insertPanel(layout, id, where, o);
+    lastActive = id;
+    activate(layout, id);
+    if (mode && mode !== 'pinned' && mode !== 'hidden' && !narrowOn && setViewMode(id, mode)) return 'added';
+    const w = whereIs(layout, id);
+    if (w && w.kind === 'auto') { flyOpen = id; flyByHover = false; }
+    commit();
+    return 'added';
+  }
+
+  // Takes panel `id` out of the dock: its window closes, its menu and flyout too, its place is kept (parked) for when
+  // it is added again, and its element goes back to the app, detached and without the dock's classes.
+  function removeNow(id) {
+    const p = destroyed ? null : byId.get(id);
+    if (!p) return null;
+    const el = p.el;
+    const before = whereIs(layout, id);
+    const hadFocus = !!(doc.activeElement && (el.contains(doc.activeElement) || (doc.activeElement.closest && doc.activeElement.closest(`[data-dk-tab="${CSS_ESC(id)}"]`))));
+    if (menu && menu._id === id) closeMenu(false);
+    const pop = pops.get(id);
+    if (pop) release(id, pop, true);
+    if (flyOpen === id) flyOpen = null;
+    if (gesture && gesture.id === id) { gesture = null; preview.hidden = true; root.classList.remove('dk-dragging'); endStripDrag(); }
+    if (maxed && before && before.stack === maxed && maxed.panels.length === 1) maxed = null;
+    parkPanel(layout, id, opts());
+    ids.splice(ids.indexOf(id), 1);
+    wideCfg.drop(id);
+    narrowCfg.drop(id);
+    delete unpinSizes[id];
+    byId.delete(id);
+    panelEls.delete(el);
+    for (const m of [badges, scrolls, flyKept, floatedAt, windowAt]) m.delete(id);
+    wasShown.delete(id);
+    closing.delete(id);
+    if (lastActive === id) lastActive = before && before.stack ? before.stack.active || null : null;
+    el.remove();
+    el.classList.remove('dk-panel', 'dk-off');
+    el.removeAttribute('aria-hidden');
+    if (el.dataset.dkRole !== undefined) { el.removeAttribute('role'); el.removeAttribute('aria-labelledby'); delete el.dataset.dkRole; }
+    commit();
+    // Focus goes to the tab that came to the front in its stack (the one on its left), when it was in the panel.
+    if (hadFocus && before && before.stack && before.stack.panels.length) focusTab(before.stack.active);
+    dockEvent(root, 'dock-removed', { id, el });
+    return el;
+  }
+
+  // Close (×, a middle click, ⋯ → Close, Ctrl+F4, api.close): the onClose hooks first, any of which may cancel (false,
+  // or a promise of false: "unsaved changes?"; one that throws or rejects cancels too). Without a promise among their
+  // answers it closes at once. A second close while hooks are still answering is not run.
+  const closeFns = [];
+  const closing = new Set();
+  function closeNow(id) {
+    if (!byId.has(id) || !allowed(id, 'close') || closing.has(id)) return Promise.resolve(false);
+    const answers = [];
+    for (const fn of closeFns) {
+      try { answers.push(fn(id)); } catch (e) { report(e); return Promise.resolve(false); }
+    }
+    if (answers.includes(false)) return Promise.resolve(false);
+    if (!answers.some((a) => a && typeof a.then === 'function')) { removeNow(id); return Promise.resolve(true); }
+    closing.add(id);
+    return Promise.all(answers).then((r) => {
+      if (!closing.has(id)) return false;
+      closing.delete(id);
+      if (r.includes(false) || destroyed || !byId.has(id)) return false;
+      removeNow(id);
+      return true;
+    }, (e) => { closing.delete(id); report(e); return false; });
+  }
+  // The panel a key press in a document was for: its focused tab's, else the one around the focus.
+  function panelAt(t) {
+    const tab = t && t.closest && t.closest('[data-dk-tab]');
+    if (tab) return tab.dataset.dkTab;
+    const id = panelOf(t);
+    if (id) return id;
+    const node = t && stackAround(t);
+    return node ? node.active : null;
+  }
+  // Ctrl+F4 closes the focused panel when it is closable (in an ordinary browser tab the browser keeps Ctrl+F4 for
+  // itself and closes the tab: then only an installed app window, or a panel's own window, sees it).
+  function onCtrlF4(e, id) {
+    if (e.key !== 'F4' || !e.ctrlKey || e.altKey || e.shiftKey || e.metaKey || e.defaultPrevented) return;
+    if (!id || !allowed(id, 'close')) return;
+    e.preventDefault();
+    void closeNow(id);
+  }
+  on(root, 'keydown', (e) => onCtrlF4(e, panelAt(e.target)));
+  // A middle click on a closable panel's tab closes it (and its press starts no autoscroll).
+  // The wheel over a tab row that overflows scrolls it sideways.
+  on(root, 'wheel', (e) => {
+    const row = e.target.closest && e.target.closest('.dk-head.dk-over > .dk-tabs');
+    if (!row || e.ctrlKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    const before = row.scrollLeft;
+    row.scrollLeft += e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+    if (row.scrollLeft !== before) e.preventDefault();
+  }, { passive: false });
+  const middleTab = (e) => { const tab = e.button === 1 && e.target.closest && e.target.closest('[data-dk-tab]'); return tab && allowed(tab.dataset.dkTab, 'close') ? tab : null; };
+  on(root, 'mousedown', (e) => { if (middleTab(e)) e.preventDefault(); });
+  on(root, 'auxclick', (e) => { const tab = middleTab(e); if (tab) { e.preventDefault(); void closeNow(tab.dataset.dkTab); } });
+
+  // ▾: every tab of the stack, the front one checked and those scrolled out of the row tagged (IntelliJ's Show Hidden
+  // Tabs). Picking one brings it to the front and into view.
+  function openTabList(btn) {
+    if (menu && menu._from === btn) { closeMenu(true); return; }
+    closeMenu(false);
+    const node = stackAround(btn);
+    if (!node) return;
+    const row = btn.closest('.dk-head').querySelector('.dk-tabs');
+    const box = row.getBoundingClientRect();
+    const hidden = (id) => {
+      const tab = row.querySelector(`[data-dk-tab="${CSS_ESC(id)}"]`);
+      const r = tab && tab.getBoundingClientRect();
+      return !r || r.left < box.left - 1 || r.right > box.right + 1;
+    };
+    menu = btn.ownerDocument.createElement('div');
+    menu.className = 'dk-menu dk-mono dk-tablist';
+    menu.setAttribute('role', 'menu');
+    menu.setAttribute('aria-label', T.tabList);
+    menu.innerHTML = node.panels.map((id) => {
+      const off = hidden(id);
+      return `<button type="button" role="menuitemradio" aria-checked="${id === node.active}" data-dk-pick="${escText(id)}"${off ? ' class="dk-off-view"' : ''}>`
+        + `<span class="dk-tablist-title">${escText(byId.get(id).title)}</span>${off ? `<span class="dk-tablist-tag">${escText(T.tabHidden)}</span>` : ''}</button>`;
+    }).join('');
+    menu._from = btn;
+    menu._id = node.active;
+    btn.ownerDocument.body.appendChild(menu);
+    const r = btn.getBoundingClientRect();
+    placeMenu(menu, r.right - menu.offsetWidth, r.bottom + 2);
+    focusQuiet(menu.querySelector('[aria-checked="true"]') || menuButtons(menu)[0]);
+    const m = menu;
+    m.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-dk-pick]');
+      if (!b) return;
+      const id = b.dataset.dkPick;
+      closeMenu(false);
+      lastActive = id;
+      api.activate(id);
+      focusTab(id);
+    });
+    m.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMenu(true); }
+      else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) { e.preventDefault(); moveFocus(m, e.key); }
+      else if (e.key === 'Tab') closeMenu(false);
+    });
+  }
+
   const api = {
     screenshot,
     copyScreenshot,
@@ -1573,6 +1878,12 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     onChange: (fn) => { changeFns.push(fn); },
     /** `fn(id)` just before a popped-out panel's element moves back from its window (also the `dock-popin` event). */
     onPopIn: (fn) => { popInFns.push(fn); },
+    /** `fn(id, itemId)` when an app item of a ⋯ menu that has no `run` of its own is picked (as the onMenu option).
+     * Returns a function that takes `fn` off again. */
+    onMenu: (fn) => {
+      menuFns.push(fn);
+      return () => { const i = menuFns.indexOf(fn); if (i >= 0) menuFns.splice(i, 1); };
+    },
     /** Whether the dock is narrow (one column of tabs; see the `narrow` option). */
     narrow: () => narrowOn,
     /** Narrow on or off. Each has a layout of its own, kept apart. Going narrow closes pop-out windows (the wide layout
@@ -1594,12 +1905,32 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     /** Whether a person may do `action` to panel `id` here (the `can` option, and narrow). */
     can: allowed,
     render,
-    activate(id) { if (activate(layout, id)) commit(); },
+    activate(id) { if (byId.has(id)) lastActive = id; if (activate(layout, id)) commit(); },
+    /** Adds a panel { id, title, el, help?, icon?, closable?, unpinSize? } at runtime, active, where `where` says:
+     * { kind: 'stack', stack: panelId } (a tab of that panel's stack), { beside: panelId, side } (docked beside it),
+     * an edge ('left' | 'right' | 'top' | 'bottom'), or a view mode ('pinned', 'unpinned', 'undock', 'float', 'window').
+     * With none: where it was when it was removed (or before a reload), else a tab of the stack last worked in, else of
+     * the middle. 'exists' (it is shown instead) when the dock has that id already; else 'added'. */
+    addPanel: (p, where) => addNow(p, where),
+    /** Takes a panel out (any panel, closable or not): its window closes, its place is kept for addPanel. Returns its
+     * element, detached, and fires `dock-removed` { id, el } on the root; null when there is no such panel. */
+    removePanel: (id) => removeNow(id),
+    /** Closes a closable panel as its × does: the onClose hooks, then removePanel. A promise of whether it closed. */
+    close: (id) => closeNow(id),
+    /** `fn(id)` before a panel closes (not before removePanel): false, or a promise of false, keeps it. */
+    onClose: (fn) => { closeFns.push(fn); },
+    /** Drops the place kept for a removed panel (`id`), or for all of them (none given). Returns how many went. */
+    forget(id) { const n = forgetPanel(layout, id); if (n) save(); return n; },
+    /** The panels whose places are kept for when they are added again, oldest first (at most the keepSlots option). */
+    slots: () => parkedOf(layout),
+    /** The dock's panels now, in the order they were given and added. */
+    panels: () => ids.map((id) => byId.get(id)),
     /** Makes a panel seen: shown if hidden, brought to the front of its stack, slid out if unpinned. */
     reveal(id) {
       if (hiddenWindow(id)) { showHidden(id); return; }
       if (pops.has(id)) { try { pops.get(id).win.focus(); } catch { /* ignore */ } return; }
-      if (outOf(id)) { popIn(id); return; } // remembered as out, its window not open: back here, where it can be seen
+      // Remembered as out, its window not open (after a reload, its notice dismissed or not): back here, and seen.
+      if (outOf(id)) popIn(id);
       let changed = false;
       if (whereIs(layout, id) && whereIs(layout, id).kind === 'hidden') changed = showPanel(layout, id, opts()) || changed;
       changed = activate(layout, id) || changed;
@@ -1763,19 +2094,15 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     focusQuiet(list[to]);
   }
 
-  // The Options menu (⋯): View Mode ▸, Move To ▸, Maximise or Restore, Hide.
+  // The Options menu (⋯): the app's items (v0.9.0), then View Mode ▸, Move To ▸, Take Screenshot, Maximise or Restore,
+  // Hide.
   function openOptions(btn, id) {
     if (menu && menu._from === btn) { closeMenu(true); return; }
     closeMenu(false);
-    const menuWin = btn.ownerDocument.defaultView;
     const fly = !!btn.closest('.dk-flyout');
     const w = whereIs(layout, id);
-    const o = optionsOf(id, pops.has(id) ? 'window' : fly ? 'fly' : w && w.kind === 'float' ? 'float' : 'dock');
-    const title = byId.get(id).title;
-    menu = btn.ownerDocument.createElement('div');
-    menu.className = 'dk-menu dk-mono dk-options';
-    menu.setAttribute('role', 'menu');
-    menu.setAttribute('aria-label', `${title}: ${T.options}`);
+    const where = pops.has(id) ? 'window' : fly ? 'fly' : w && w.kind === 'float' ? 'float' : 'dock';
+    const o = optionsOf(id, where);
     const arrow = '<span class="dk-menu-arrow" aria-hidden="true">▸</span>';
     const parts = [];
     if (o.modes.length) parts.push(`<button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-dk-sub="mode">${escText(T.viewMode)}${arrow}</button>`);
@@ -1784,12 +2111,28 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (screenshotItem !== false && screenshotAvailable(id)) tail.push(`<button type="button" role="menuitem" data-dk-menu="screenshot" title="${escText(T.screenshotHint)}">${escText(T.screenshot)}</button>`);
     if (o.max) tail.push(`<button type="button" role="menuitem" data-dk-menu="max">${escText(o.max)}</button>`);
     if (o.hide) tail.push(`<button type="button" role="menuitem" data-dk-menu="hide">${escText(o.hide)}</button>`);
-    if (parts.length && tail.length) parts.push('<div class="dk-menu-sep" role="separator"></div>');
-    menu.innerHTML = parts.join('') + tail.join('');
+    if (o.close) tail.push(`<button type="button" role="menuitem" data-dk-menu="close" title="${escText(T.closeHint)}">${escText(T.close)}</button>`);
+    if (parts.length && tail.length) parts.push(MENU_SEP);
+    showMenu(btn, id, { cls: 'dk-menu dk-mono dk-options', label: `${byId.get(id).title}: ${T.options}`, own: parts.join('') + tail.join(''), where, fly, o });
+  }
+  const MENU_SEP = '<div class="dk-menu-sep" role="separator"></div>';
+  // Puts up a ⋯ menu under `btn`, in its window: the app's items for `where` above `own` (Dock's), a separator between.
+  // Nothing at all: no menu.
+  function showMenu(btn, id, { cls, label, own, where, fly = false, o = null, classicMenu = false }) {
+    const menuWin = btn.ownerDocument.defaultView;
+    const app = appItemsOf(id, where, menuWin);
+    if (!app.length && !own) return;
+    menu = btn.ownerDocument.createElement('div');
+    menu.className = cls;
+    menu.setAttribute('role', 'menu');
+    menu.setAttribute('aria-label', label);
+    menu.innerHTML = menuItemsHtml(app) + (app.length && own ? MENU_SEP : '') + own;
     menu._from = btn;
     menu._id = id;
     menu._fly = fly;
     menu._o = o;
+    menu._app = app;
+    menu._classic = classicMenu;
     btn.ownerDocument.body.appendChild(menu);
     const r = btn.getBoundingClientRect();
     placeMenu(menu, r.right - menu.offsetWidth, r.bottom + 2);
@@ -1797,9 +2140,9 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     focusQuiet(menuButtons(menu)[0]);
     menu.addEventListener('click', (e) => {
       const b = e.target.closest('button');
-      if (!b) return;
+      if (!b || off(b)) return;
       if (b.dataset.dkSub) { openSub(b, true); return; }
-      pick(b.dataset.dkMenu);
+      pick(b);
     });
     // With a submenu open, the pointer switches it only after resting 150 ms, so a diagonal move towards the open
     // submenu across another item does not swap it (entering the submenu cancels the switch).
@@ -1808,22 +2151,25 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       const b = e.target.closest('button');
       if (!b) return;
       clearTimeout(m._swap);
+      const kind = off(b) ? undefined : b.dataset.dkSub;
       const go = () => {
         if (menu !== m) return;
-        if (b.dataset.dkSub) { if (!m._sub || m._sub._kind !== b.dataset.dkSub) openSub(b, false); }
+        if (kind) { if (!m._sub || m._sub._kind !== kind) openSub(b, false); }
         else closeSub(false);
       };
-      if (m._sub && m._sub._kind !== b.dataset.dkSub) m._swap = later(go, 150);
+      if (m._sub && m._sub._kind !== kind) m._swap = later(go, 150);
       else go();
     });
     menu.addEventListener('keydown', (e) => {
       const b = e.target.closest && e.target.closest('button');
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMenu(true); }
       else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) { e.preventDefault(); moveFocus(menu, e.key); }
-      else if (b && b.dataset.dkSub && (e.key === 'ArrowRight' || e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openSub(b, true); }
+      else if (b && b.dataset.dkSub && (e.key === 'ArrowRight' || e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); if (!off(b)) openSub(b, true); }
       else if (e.key === 'Tab') closeMenu(false);
     });
   }
+  // A disabled app item: it can be focused and read (its title says why), and does nothing.
+  const off = (b) => b.getAttribute('aria-disabled') === 'true';
   function closeSub(refocus) {
     if (!menu || !menu._sub) return;
     const parent = menu.querySelector(`[data-dk-sub="${menu._sub._kind}"]`);
@@ -1832,19 +2178,24 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (parent) parent.setAttribute('aria-expanded', 'false');
     if (refocus && parent) focusQuiet(parent);
   }
+  // The first item of a submenu to focus: Dock's own focus their checked one.
+  const subFirst = (sub) => sub.querySelector('[aria-checked="true"]') || menuButtons(sub)[0];
   function openSub(parent, focus) {
     const kind = parent.dataset.dkSub;
-    if (menu._sub && menu._sub._kind === kind) { if (focus) focusQuiet(menu._sub.querySelector('[aria-checked="true"]') || menuButtons(menu._sub)[0]); return; }
+    if (menu._sub && menu._sub._kind === kind) { if (focus) focusQuiet(subFirst(menu._sub)); return; }
     closeSub(false);
     const o = menu._o;
+    const appSub = kind.startsWith('app:') ? itemAt(menu._app, kind.slice(4)) : null;
+    if (kind.startsWith('app:') && !(appSub && appSub.sub)) return;
     const sub = menu.ownerDocument.createElement('div');
     sub.className = 'dk-menu dk-mono dk-submenu';
     sub.setAttribute('role', 'menu');
-    sub.setAttribute('aria-label', kind === 'mode' ? T.viewMode : T.moveTo);
+    sub.setAttribute('aria-label', appSub ? appSub.label : kind === 'mode' ? T.viewMode : T.moveTo);
     const item = (k, label, on, hint) => `<button type="button" role="menuitemradio" aria-checked="${on}" data-dk-menu="${k}"${hint ? ` title="${escText(hint)}"` : ''}>${escText(label)}</button>`;
     const hints = T.modeHints || {};
-    sub.innerHTML = kind === 'mode' ? o.modes.map((m) => item(`mode:${m}`, T.modes[m], m === o.now, hints[m])).join('')
-      : o.sides.map((s) => item(`side:${s}`, T.sides[s], s === o.side)).join('');
+    sub.innerHTML = appSub ? menuItemsHtml(appSub.sub, kind.slice(4) + '.')
+      : kind === 'mode' ? o.modes.map((m) => item(`mode:${m}`, T.modes[m], m === o.now, hints[m])).join('')
+        : o.sides.map((s) => item(`side:${s}`, T.sides[s], s === o.side)).join('');
     sub._kind = kind;
     menu._sub = sub;
     parent.setAttribute('aria-expanded', 'true');
@@ -1852,76 +2203,82 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const r = parent.getBoundingClientRect();
     const m = menu.getBoundingClientRect();
     placeMenu(sub, m.right - 2, r.top - 4, m.left + 2);
-    sub.addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) pick(b.dataset.dkMenu); });
+    sub.addEventListener('click', (e) => { const b = e.target.closest('button'); if (b && !off(b)) pick(b); });
     sub.addEventListener('pointerover', () => clearTimeout(menu && menu._swap));
     sub.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' || e.key === 'ArrowLeft') { e.preventDefault(); e.stopPropagation(); closeSub(true); }
       else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) { e.preventDefault(); moveFocus(sub, e.key); }
       else if (e.key === 'Tab') closeMenu(false);
     });
-    if (focus) focusQuiet(sub.querySelector('[aria-checked="true"]') || menuButtons(sub)[0]);
+    if (focus) focusQuiet(subFirst(sub));
   }
   // An item chosen: the menu closes, then it acts.
-  function pick(k) {
-    if (!k || !menu) return;
+  function pick(b) {
+    if (!b || !menu) return;
     const id = menu._id;
     const fly = menu._fly;
+    if (b.dataset.dkApp) {
+      const it = itemAt(menu._app, b.dataset.dkApp);
+      if (!it || it.disabled || it.sub) return;
+      closeMenu(false);
+      refocusAfterPick(id);
+      runApp(it, id);
+      return;
+    }
+    const k = b.dataset.dkMenu;
+    if (!k) return;
+    const classicMenu = menu._classic;
     closeMenu(false);
+    if (classicMenu) {
+      if (k.startsWith('edge:')) api.dockEdge(id, k.slice(5));
+      else if (k === 'float') api.float(id);
+      else if (k === 'pop') api.popOut(id);
+      else if (k === 'dock') api.dockBack(id);
+      else if (k === 'unpin') api.unpin(id);
+      else if (k === 'hide') api.setVisible(id, false);
+      else if (k === 'close') void closeNow(id);
+      return;
+    }
     if (k.startsWith('mode:')) setViewMode(id, k.slice(5));
     else if (k.startsWith('side:')) moveSideNow(id, k.slice(5));
     else if (k === 'max') api.toggleMax(id);
     else if (k === 'screenshot') void copyScreenshot(id);
     else if (k === 'hide') hideNow(id, fly);
-    // Focus back in the panel's title bar where it still is, else on its strip button or tab.
+    else if (k === 'close') { void closeNow(id); return; }
+    refocusAfterPick(id);
+  }
+  // Focus back in the panel's title bar where it still is, else on its strip button or tab.
+  function refocusAfterPick(id) {
     const q = CSS_ESC(id);
     const again = root.querySelector(`[data-dk-fly="${q}"].open [data-dk-tab]`)
       || [...root.querySelectorAll(`[data-dk-tab="${q}"]`)].find((t) => !t.closest('.dk-flyout'))
       || root.querySelector(`[data-dk-auto="${q}"]`);
     if (again && !pops.has(id)) focusQuiet(again);
   }
+  // An app item picked: its own run, else the onMenu option and api.onMenu's. App code that throws (or rejects) is
+  // reported, and the dock carries on.
+  function runApp(it, id) {
+    const fns = it.run ? [it.run] : [onMenu, ...menuFns].filter((f) => typeof f === 'function');
+    for (const fn of fns) {
+      try {
+        const r = fn(id, it.id);
+        if (r && typeof r.then === 'function') r.then(null, report);
+      } catch (e) { report(e); }
+    }
+  }
 
+  // headButtons: 'classic': the menu of v0.4 (dock at an edge, float, pop out, unpin, hide), the app's items above it.
   function openMenu(btn, id) {
     if (!classic || pops.has(id)) { openOptions(btn, id); return; }
     if (menu && menu._from === btn) { closeMenu(true); return; }
     closeMenu(false);
-    const title = byId.get(id).title;
+    const fly = !!btn.closest('.dk-flyout');
     const w = whereIs(layout, id);
-    const items = menuItems(id, w && w.kind === 'float' ? 'float' : 'dock');
-    if (!items.length) return;
-    menu = btn.ownerDocument.createElement('div');
-    menu.className = 'dk-menu dk-mono';
-    menu.setAttribute('role', 'menu');
-    menu.setAttribute('aria-label', `${title}: move or hide`);
-    menu.innerHTML = items.map(([k, label]) => `<button type="button" role="menuitem" data-dk-menu="${k}">${escText(label)}</button>`).join('');
-    menu._from = btn;
-    menu._id = id;
-    btn.ownerDocument.body.appendChild(menu);
-    const r = btn.getBoundingClientRect();
-    menu.style.top = (r.bottom + 2) + 'px';
-    menu.style.left = Math.max(4, Math.min(r.right - menu.offsetWidth, viewport() - menu.offsetWidth - 4)) + 'px';
-    focusQuiet(menu.querySelector('button'));
-    menu.addEventListener('click', (e) => {
-      const b = e.target.closest('[data-dk-menu]');
-      if (!b) return;
-      const k = b.dataset.dkMenu;
-      const pid = menu._id;
-      closeMenu(false);
-      if (k.startsWith('edge:')) api.dockEdge(pid, k.slice(5));
-      else if (k === 'float') api.float(pid);
-      else if (k === 'pop') api.popOut(pid);
-      else if (k === 'dock') api.dockBack(pid);
-      else if (k === 'unpin') api.unpin(pid);
-      else if (k === 'hide') api.setVisible(pid, false);
-    });
-    menu.addEventListener('keydown', (e) => {
-      const list = [...menu.querySelectorAll('button')];
-      const at = list.indexOf(doc.activeElement);
-      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMenu(true); }
-      else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        e.preventDefault();
-        list[(at + (e.key === 'ArrowDown' ? 1 : list.length - 1)) % list.length].focus({ preventScroll: true });
-      }
-    });
+    const where = fly ? 'fly' : w && w.kind === 'float' ? 'float' : 'dock';
+    // A slid-out panel's own buttons are on its title bar: its menu has the app's items only.
+    const items = fly ? [] : classicItems(id, where);
+    const own = items.map(([k, label]) => `<button type="button" role="menuitem" data-dk-menu="${k}">${escText(label)}</button>`).join('');
+    showMenu(btn, id, { cls: 'dk-menu dk-mono', label: `${byId.get(id).title}: move or hide`, own, where, fly, classicMenu: true });
   }
 
   // ---- pointer: dragging a panel, moving and sizing a float, the splitters ----
@@ -2069,7 +2426,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     const rz = t.closest && t.closest('[data-dk-rz]');
     if (rz) { const f = floatAround(rz); if (f) startFloat(e, f, rz.dataset.dkRz); return; }
     const head = t.closest && t.closest('.dk-head');
-    if (!head || t.closest(`.dk-ctl, ${helpSel}`)) return;
+    if (!head || t.closest(`.dk-ctl, ${helpSel}, [data-dk-close], [data-dk-tabs]`)) return;
     const f = floatAround(head);
     const floatTab = f && t.closest('[data-dk-tab]');
     // A tab is the panel itself, floating or docked: dragging it takes that one panel to an edge or into another
@@ -2228,8 +2585,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   // Something inside a panel asks to be seen (a dock-reveal event bubbling from it): its panel comes on screen.
   on(root, 'dock-reveal', (e) => {
     const el = e.target.closest && e.target.closest('.dk-panel');
-    const p = el && panels.find((x) => x.el === el);
-    if (p) api.reveal(p.id);
+    const id = el && ids.find((x) => byId.get(x).el === el);
+    if (id) api.reveal(id);
   });
   on(root, 'pointerdown', onDown);
   on(doc, 'pointermove', onMove);
@@ -2248,6 +2605,10 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       else if (row && k === 'reopen') popOut(row.dataset.dkOut);
       return;
     }
+    const x = t.closest('[data-dk-close]');
+    if (x) { void closeNow(x.dataset.dkClose); return; }
+    const list = t.closest('[data-dk-tabs]');
+    if (list) { openTabList(list); return; }
     const b = t.closest('[data-dk-act]');
     if (b) {
       const fly = b.closest('.dk-flyout');
@@ -2281,7 +2642,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   function restoreFromHead(e) {
     const t = e.target;
     const head = t.closest('.dk-head');
-    if (!head || t.closest(`.dk-ctl, ${helpSel}`) || head.closest('.dk-flyout')) return false;
+    if (!head || t.closest(`.dk-ctl, ${helpSel}, [data-dk-close], [data-dk-tabs]`) || head.closest('.dk-flyout')) return false;
     const node = stackAround(head);
     if (!node || !node.min || !allowed(node.active, 'min')) return false;
     const tab = t.closest('[data-dk-tab]');
@@ -2317,7 +2678,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
 
   on(root, 'dblclick', (e) => {
     const head = e.target.closest('.dk-head');
-    if (!head || e.target.closest(`.dk-ctl, ${helpSel}`) || head.closest('.dk-flyout')) return;
+    if (!head || e.target.closest(`.dk-ctl, ${helpSel}, [data-dk-close], [data-dk-tabs]`) || head.closest('.dk-flyout')) return;
     // By the panel's name, not its element: the first click of the two may have redrawn the title bar.
     const tabEl = e.target.closest('[data-dk-tab]');
     const node = stackAround(head);
@@ -2349,7 +2710,8 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   function showTab(tab) {
     const list = tab.closest('.dk-tabs');
     if (!list || !tab.getBoundingClientRect) return;
-    const a = tab.getBoundingClientRect();
+    // The tab with its × and ? (they sit beside the button, in its wrap).
+    const a = (tab.closest('.dk-tab-wrap') || tab).getBoundingClientRect();
     const b = list.getBoundingClientRect();
     if (a.left < b.left) list.scrollLeft -= b.left - a.left;
     else if (a.right > b.right) list.scrollLeft += a.right - b.right;

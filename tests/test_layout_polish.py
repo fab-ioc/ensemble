@@ -136,10 +136,11 @@ class ThePoHeader(unittest.TestCase):
         for h in (live, stopped):
             menu = re.search(r'<span class="po-menu" role="menu" hidden>(.*?)</span>', h).group(1)
             # #148: Pop out is the panel's own ⋯ (View Mode › Window); the two
-            # left wait here until Dock takes app items (data-interim).
+            # left wait here (data-interim): the task's actions moved into
+            # the panel's ⋯ with Dock v0.9.0's app items (#150), these can follow.
             self.assertEqual(re.findall(r'data-po="(\w+)"', menu), ["switch", "open"])
             self.assertEqual(menu.count('role="menuitem"'), 2)
-            self.assertIn('data-po="more" data-interim="dock-menu" title="More actions · for now here: they move into the panel’s ⋯ menu once Dock takes app items" aria-label="More actions for the PO" aria-haspopup="menu" aria-expanded="false">⋯</button>', h)
+            self.assertIn('data-po="more" data-interim="dock-menu" title="More actions · for now here: they move into the panel’s ⋯ menu, as the task’s have" aria-label="More actions for the PO" aria-haspopup="menu" aria-expanded="false">⋯</button>', h)
             self.assertNotIn('data-po="popout"', h)
         self.assertNotIn('data-po="close"', live)
         self.assertIn('data-po="close"', stopped)     # a drawer keeps its ×
