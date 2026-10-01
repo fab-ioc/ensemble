@@ -42,7 +42,7 @@ def render_code() -> str:
     end = PAGE.index("// ---- In-place review comments")
     # The page's resolver, below the comment layer, with a hub that never answers (a number stays text).
     refs = "const fetch = () => new Promise(() => {}); const TASK_REFS = TaskCard.refs({ room: ROOM, changed: () => {} });\n"
-    return TASKCARD + "\n" + HL + refs + PAGE[start:end]
+    return TASKCARD + "\n" + HL + PAGE[start:end] + refs
 
 
 JS = r"""
