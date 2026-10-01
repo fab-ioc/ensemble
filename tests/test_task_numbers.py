@@ -15,10 +15,12 @@
 """
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -117,6 +119,15 @@ class Titles(unittest.TestCase):
         self.assertEqual(tn.plan_numbers(tasks, 0), ({"b": 53, "a": 54, "y": 55, "c": 56}, 57))
         tasks[2]["title"] = "55. Too far"
         self.assertEqual(tn.plan_numbers(tasks, 0)[0], {"a": 1, "y": 2, "b": 3, "c": 4})
+
+
+class Plans(unittest.TestCase):
+    def test_a_shared_number_is_the_older_tasks(self):
+        tasks = [{"id": "a", "title": "A", "createdAt": 300, "no": 6}, {"id": "b", "title": "B", "createdAt": 100, "no": None},
+                 {"id": "c", "title": "C", "createdAt": 150, "no": 6}, {"id": "d", "title": "D", "createdAt": 200, "no": 5}]
+        self.assertEqual(tn.plan_numbers(tasks, 7), ({"b": 7, "a": 8}, 9))
+        self.assertEqual(tn.plan_numbers([t for t in tasks if t["id"] != "b"], 7), ({"a": 7}, 8))
+        self.assertEqual(tn.plan_numbers([tasks[2], tasks[3]], 7), ({}, 7), "nothing shared, nothing changes")
 
 
 class Refs(unittest.TestCase):
@@ -333,7 +344,152 @@ class Numbering(Hub):
         self.assertIn("give its key", dashboard.resolve_task_ref("#1")[1])
 
 
+class Creation(Hub):
+    """A task created through the tool or the page, started or a draft, gets
+    one number: stored in the room and task.json, returned by the call, and in
+    its branch's name — whatever happens to the project's counter (#151)."""
+
+    def setUp(self):
+        super().setUp()
+        self.po = self.room("The PO", self.ed)
+        dashboard.set_project_po(self.ed, self.po)
+        self.tasks = self.root / "tasks"
+
+        def workspace(project, mode, title, key="", task_no=None):
+            task_dir = self.tasks / dashboard.sanitize_slug(title)
+            branch = dashboard.task_branch_name(key, task_no, dashboard.sanitize_slug(title))
+            return True, str(task_dir / "repo"), {"mode": "worktree", "branch": branch, "taskDir": str(task_dir)}, "ok"
+        p = mock.patch.object(dashboard, "setup_session_workspace", workspace)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def tool(self, args, started: list | None = None):
+        handler = SimpleNamespace(_start_room=lambda room_full: (started if started is not None else []).append(
+            {"id": room_full["id"], "no": room_full.get("no")}) or [{"identity": "claude", "ptyId": "pty-1"}])
+        text, err = ensemble_tools.call("ensemble_create_task", args, self.po, "claude", handler)
+        return (json.loads(text) if not err else text), err
+
+    def check(self, rid: str, no: int):
+        room = chatroom.get_room(rid)
+        self.assertEqual((room["no"], room["noProjectId"]), (no, self.ed))
+        self.assertEqual(room["workspace"]["branch"], f"sess/ED-{no}-" + dashboard.sanitize_slug(room["title"]))
+        on_disk = json.loads((Path(room["taskDir"]) / "task.json").read_text(encoding="utf-8"))
+        self.assertEqual((on_disk["no"], on_disk["previousNos"]), (no, []))
+
+    def test_the_tool_numbers_a_started_task_and_a_draft(self):
+        started = []
+        out, err = self.tool({"title": "Dock v0.10.0: drop the stopgaps", "spec": "Do it", "workspace": "worktree",
+                              "start": True}, started)
+        self.assertFalse(err, out)
+        self.assertEqual((out["no"], out["status"]), (1, "running"))
+        self.check(out["taskId"], 1)
+        self.assertEqual(started, [{"id": out["taskId"], "no": 1}], "the launch saw the number")
+        out, err = self.tool({"title": "Each open file its own panel", "spec": "Later", "workspace": "worktree",
+                              "start": False, "after": [{"task": "#1"}]})
+        self.assertFalse(err, out)
+        self.assertEqual((out["no"], out["status"]), (2, "draft"))
+        self.check(out["taskId"], 2)
+        self.assertEqual(self.meta(self.ed)["nextTaskNo"], 3)
+
+    def test_the_page_numbers_a_started_task_and_a_draft(self):
+        with mock.patch.object(dashboard.Handler, "_start_room",
+                               lambda self, room_full: [{"identity": "claude", "ptyId": "pty-1", "no": room_full.get("no")}]):
+            status, _, body = self.call("POST", "/api/room/new", {
+                "title": "From the page", "task": "Spec", "projectId": self.ed, "workspace": "worktree",
+                "agents": [{"agent": "claude"}]})
+            self.assertEqual(status, 200, body)
+            out = json.loads(body)
+            self.assertEqual((out["room"]["no"], out["launched"][0]["no"]), (1, 1))
+            self.check(out["room"]["id"], 1)
+            status, _, body = self.call("POST", "/api/room/new", {
+                "title": "A draft from the page", "task": "Spec", "projectId": self.ed, "workspace": "worktree",
+                "agents": [{"agent": "claude"}], "start": False})
+            self.assertEqual(status, 200, body)
+            out = json.loads(body)
+            self.assertEqual((out["room"]["no"], out["launched"]), (2, []))
+            self.check(out["room"]["id"], 2)
+
+    def test_a_counter_the_hub_cannot_write_costs_no_number(self):
+        # 2026-10-01: project.json's replace lost a Windows reader race (WinError 5).
+        log = io.StringIO()
+        with mock.patch.object(dashboard, "_set_project_meta", return_value=(False, "[WinError 5] Access is denied")), \
+                contextlib.redirect_stdout(log):
+            out, err = self.tool({"title": "First", "spec": "Spec", "workspace": "worktree", "start": True})
+        self.assertFalse(err, out)
+        self.assertEqual(out["no"], 1)
+        self.check(out["taskId"], 1)
+        self.assertIn("counter could not be moved to 2", log.getvalue())
+        self.assertNotIn("nextTaskNo", self.meta(self.ed))
+        out, err = self.tool({"title": "Second", "spec": "Spec", "workspace": "worktree"})
+        self.assertEqual(out["no"], 2, "the room's number counts, not the counter")
+        self.check(out["taskId"], 2)
+        self.assertEqual(self.meta(self.ed)["nextTaskNo"], 3)
+
+    def test_the_counter_write_waits_out_a_reader(self):
+        calls = []
+
+        def replace(dest):
+            calls.append(dest)
+            if len(calls) < 3:
+                raise PermissionError(5, "Access is denied")
+        with mock.patch.object(dashboard.time, "sleep", lambda s: None):
+            dashboard._replace_retrying(SimpleNamespace(replace=replace), Path("project.json"))
+            self.assertEqual(len(calls), 3)
+            calls.clear()
+            with self.assertRaises(PermissionError):
+                dashboard._replace_retrying(SimpleNamespace(replace=replace), Path("project.json"), attempts=2)
+
+    def test_concurrent_creates_take_distinct_numbers(self):
+        results, errors = [], []
+
+        def create(i):
+            ok, room_full, err = dashboard.create_task(f"Task {i}", "Spec", self.ed, [{"agent": "claude"}], "worktree")
+            (results if ok else errors).append(room_full if ok else err)
+        threads = [threading.Thread(target=create, args=(i,)) for i in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(errors, [])
+        self.assertEqual(sorted(r["no"] for r in results), list(range(1, 9)))
+        self.assertEqual(len({r["workspace"]["branch"] for r in results}), 8)
+        for r in results:
+            self.check(r["id"], r["no"])
+        self.assertEqual(self.meta(self.ed)["nextTaskNo"], 9)
+
+
 class Backfill(Hub):
+    def test_a_shared_or_missing_number_is_repaired_at_start(self):
+        # 2026-10-01: the Dock task (older, started, branch ED-150) lost its number;
+        # the draft created after it got #150 and a branch named ED-150 too.
+        dock = self.room("Dock v0.10.0", self.ed, created=100)
+        draft = self.room("Each open file", self.ed, created=200)
+        early = self.room("Early", self.ed, created=150)
+        late = self.room("Late", self.ed, created=300)
+        for rid, branch in ((dock, "sess/ED-150-dock"), (draft, "sess/ED-150-each_open_file")):
+            full = chatroom.get_room(rid, public=False)
+            full["workspace"] = {"mode": "worktree", "branch": branch}
+            full["taskDir"] = str(self.root / rid)
+            chatroom.update_room(full)
+        chatroom.set_task_number(draft, self.ed, 150)
+        chatroom.set_task_number(early, self.ed, 149)
+        chatroom.set_task_number(late, self.ed, 149)              # shares it with an older task
+        dashboard._set_project_meta(self.ed, "nextTaskNo", 152)   # #151 was created meanwhile
+        out = dashboard.backfill_task_numbers()
+        self.assertEqual([(r["id"], r["old"], r["no"], r["why"]) for r in out["renumbered"]],
+                         [(dock, None, 152, "had no number"), (late, 149, 153, "shared #149 with an older task")])
+        self.assertEqual({r["project"] for r in out["renumbered"]}, {"Ensemble Dashboard"})
+        self.assertEqual([self.no(r) for r in (dock, draft, early, late)], [152, 150, 149, 153])
+        self.assertEqual(self.meta(self.ed)["nextTaskNo"], 154)
+        for rid in (dock, late):
+            self.assertFalse(chatroom.get_room(rid).get("previousNos"), "a shared number was never its own")
+        self.assertEqual(chatroom.get_room(dock)["workspace"]["branch"], "sess/ED-150-dock", "the branch keeps its name")
+        on_disk = json.loads((self.root / dock / "task.json").read_text(encoding="utf-8"))
+        self.assertEqual(on_disk["no"], 152)
+        self.assertEqual(dashboard.resolve_task_ref("#150", self.ed), (draft, ""))
+        self.assertEqual(dashboard.resolve_task_ref("#152", self.ed), (dock, ""))
+        self.assertEqual(dashboard.backfill_task_numbers(), {"numbered": 0, "keys": 0, "renumbered": []})
+
     def test_old_tasks_are_numbered_once(self):
         titles = ["TWS NonBlocking API", "5. One broker connection", "1. Show each option chain",
                   "3R. CP0 shared rules takeover", "18. 0DTE management", "20. One New York trading day"]
@@ -347,7 +503,8 @@ class Backfill(Hub):
             meta.pop("key", None)
             (Path(dashboard.find_project(p)["path"]) / "project.json").write_text(json.dumps(meta), encoding="utf-8")
         out = dashboard.backfill_task_numbers()
-        self.assertEqual(out, {"numbered": 9, "keys": 2})
+        self.assertEqual((out["numbered"], out["keys"], len(out["renumbered"])), (9, 2, 9))
+        self.assertEqual({r["why"] for r in out["renumbered"]}, {"had no number"})
         self.assertEqual([self.no(r) for r in trading], [21, 5, 1, 22, 18, 20])
         self.assertEqual([self.no(r) for r in ours], [1, 2, 3])
         self.assertEqual((self.no(po), self.no(loose)), (None, None))
@@ -356,7 +513,7 @@ class Backfill(Hub):
 
         files = {p: p.read_bytes() for p in list(chatroom.ROOMS_DIR.glob("*.json")) + list(self.root.glob("*/project.json"))}
         time.sleep(0.02)
-        self.assertEqual(dashboard.backfill_task_numbers(), {"numbered": 0, "keys": 0})
+        self.assertEqual(dashboard.backfill_task_numbers(), {"numbered": 0, "keys": 0, "renumbered": []})
         self.assertEqual({p: p.read_bytes() for p in files}, files, "a second start changes nothing")
         # A task created after the backfill continues the counter.
         self.assertEqual(self.no(self.room("21. New after restart", self.ot, numbered=True)), 23)

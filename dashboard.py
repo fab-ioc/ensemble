@@ -4912,10 +4912,26 @@ def _set_project_meta(project_id: str, key: str, value) -> tuple[bool, str]:
         try:
             tmp = pj.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(meta, indent=2), encoding="utf-8")
-            tmp.replace(pj)
+            _replace_retrying(tmp, pj)
         except OSError as e:
             return False, f"cannot write {pj}: {e}"
     return True, "ok"
+
+
+def _replace_retrying(tmp: Path, dest: Path, attempts: int = 8) -> None:
+    """``tmp.replace(dest)``, tried again for a moment on Windows' WinError 5:
+    the replace is refused while any other handle has ``dest`` open, and the
+    hub's pollers read every project.json dozens of times a second
+    (load_projects), so one write in three lost that race on 2026-10-01 — and
+    with it, a new task's number (#151)."""
+    for attempt in range(attempts):
+        try:
+            tmp.replace(dest)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(0.05 * (attempt + 1))
 
 
 # ---- Task numbers (#18) and project keys (ED) --------------------------------
@@ -4961,11 +4977,19 @@ def _po_room_ids(projects: list[dict]) -> set[str]:
     return {(p.get("poRoomId") or "").strip() for p in projects if (p.get("poRoomId") or "").strip()}
 
 
-def assign_task_number(rid: str, project_id: str, room_full: dict | None = None) -> int | None:
+def assign_task_number(rid: str, project_id: str, room_full: dict | None = None,
+                       no: int | None = None) -> int | None:
     """Give a task the next number of ``project_id`` (a new task, or one moved
     in), unless it has one there already or is a project's PO. ``room_full``,
-    a copy of the room the caller will write back, gets the number too.
-    Returns the number, or None."""
+    a copy of the room the caller will write back, gets the number too. ``no``
+    is the number a caller computed under the numbers lock before (create_task
+    named the branch with it); it is used when it is still free.
+
+    The number goes into the room record first and the project's counter is
+    moved after it: the room is what every lookup reads and what _next_task_no
+    counts, so a counter write that fails (logged) costs nothing but a note —
+    before 2026-10-01 it cost the task its number, and the next task took the
+    same one (#151). Returns the number, or None."""
     pid = (project_id or "").strip()
     if not rid or not pid:
         return None
@@ -4979,12 +5003,14 @@ def assign_task_number(rid: str, project_id: str, room_full: dict | None = None)
             n = room["no"]
         else:
             # The counter, and never a number a task of the project has.
-            n = _next_task_no(pid, projects)
-            ok, _msg = _set_project_meta(pid, "nextTaskNo", n + 1)
-            if not ok:
-                return None
+            n = max(_next_task_no(pid, projects), int(no or 0))
             room = chatroom.set_task_number(rid, pid, n) or room
             _patch_task_json(room.get("taskDir", ""), no=n, previousNos=room.get("previousNos") or [])
+        if (proj.get("nextTaskNo") or 0) <= n:
+            ok, msg = _set_project_meta(pid, "nextTaskNo", n + 1)
+            if not ok:
+                print(f"task numbers: {rid} is #{n} in {proj.get('name') or pid}, but the project's "
+                      f"counter could not be moved to {n + 1}: {msg}", flush=True)
         if room_full is not None:
             for k in chatroom.NUMBER_FIELDS:
                 if k in room:
@@ -5004,9 +5030,15 @@ def backfill_task_numbers() -> dict:
     """Numbers for the tasks that have none, and a key for every project —
     run when the hub starts. Per project, oldest task first; a title a person
     numbered by hand keeps its number when no other task has it (see
-    task_numbers.plan_numbers). A second run changes nothing. Returns
-    ``{numbered, keys}``."""
-    numbered, keyed = 0, 0
+    task_numbers.plan_numbers). A number two tasks share is the older one's:
+    the others get the next free numbers (#151: a counter write lost to a
+    Windows reader race left a task without its number, and the next task
+    took it). Only the stored number changes — a branch or worktree named
+    with the old number keeps its name. A second run changes nothing. Returns
+    ``{numbered, keys, renumbered}``: ``renumbered`` lists every task whose
+    number changed or was given, ``{id, title, project, old, no, why}``, for
+    the hub's log."""
+    numbered, keyed, renumbered = 0, 0, []
     with _NUMBERS_LOCK:
         projects = load_projects()
         keys = project_keys(projects)
@@ -5034,13 +5066,19 @@ def backfill_task_numbers() -> dict:
                     continue
                 if n is None:                    # numbered here, but never said where
                     n = r["no"]
-                done = chatroom.set_task_number(r["id"], p["id"], n)
+                had = r.get("no") if r.get("no") and r.get("noProjectId", p["id"]) == p["id"] else None
+                # A number another task of the project keeps was never this
+                # task's: not a previous number an old reference may use.
+                done = chatroom.set_task_number(r["id"], p["id"], n, forget_old=bool(had))
                 if done and r["id"] in plan:
                     numbered += 1
                     _patch_task_json(done.get("taskDir", ""), no=n, previousNos=done.get("previousNos") or [])
+                    renumbered.append({"id": r["id"], "title": r.get("title", ""), "project": p.get("name") or p["id"],
+                                       "old": had, "no": n,
+                                       "why": f"shared #{had} with an older task" if had else "had no number"})
             if nxt != (p.get("nextTaskNo") or 0):
                 _set_project_meta(p["id"], "nextTaskNo", nxt)
-    return {"numbered": numbered, "keys": keyed}
+    return {"numbered": numbered, "keys": keyed, "renumbered": renumbered}
 
 
 _TASK_INDEX: dict[str, tuple[tuple, dict]] = {}
@@ -9360,11 +9398,14 @@ def _next_task_no(project_id: str, projects: list[dict] | None = None) -> int:
 
 
 def _create_task_locked(title, spec, project_id, project, workspace, prio, preferences, human):
+    # The task's number, decided once under the numbers lock: it names the
+    # worktree's branch, it is in the room record's first write, and
+    # assign_task_number moves the project's counter past it.
+    task_no = _next_task_no(project_id) if project is not None else None
     branch_of = {}          # what a worktree's branch is named after
     if project is not None and workspace == "worktree":
-        projects = load_projects()
-        branch_of = {"key": project_keys(projects).get(project_id, "") or project.get("key", ""),
-                     "task_no": _next_task_no(project_id, projects)}
+        branch_of = {"key": project_keys(load_projects()).get(project_id, "") or project.get("key", ""),
+                     "task_no": task_no}
     ok, base, ws_meta, msg = setup_session_workspace(project, workspace, title, **branch_of)
     if not ok:
         return False, None, msg
@@ -9392,10 +9433,13 @@ def _create_task_locked(title, spec, project_id, project, workspace, prio, prefe
     room_full["lineupPickedByHuman"] = bool(human)
     if project_id:
         assign_session_project(room["id"], project_id)
+    if task_no:
+        room_full["no"], room_full["noProjectId"] = task_no, project_id
     if ws_meta.get("taskDir"):
         _write_task_json(ws_meta["taskDir"], {
             "roomId": room["id"], "projectId": project_id, "title": title,
             "spec": spec, "priority": prio,
+            **({"no": task_no, "previousNos": []} if task_no else {}),
             # The room's participants, not the requested list: create_room
             # de-duplicates identities (claude, claude-2), and task.json is
             # meant to mirror the room record — which is what reassignment
@@ -9410,8 +9454,9 @@ def _create_task_locked(title, spec, project_id, project, workspace, prio, prefe
     # Persist BEFORE any launch so an interrupted spawn leaves a resumable
     # draft, not a corrupt room with no cwd.
     chatroom.update_room(room_full)
-    if project_id:
-        assign_task_number(room["id"], project_id, room_full)
+    if project_id and assign_task_number(room["id"], project_id, room_full, no=task_no) is None:
+        print(f"task numbers: {room['id']} \u201c{title}\u201d was created in {project_id} without a number",
+              flush=True)
     return True, room_full, ""
 
 
@@ -13571,6 +13616,10 @@ def main():
         done = backfill_task_numbers()
         if done["numbered"] or done["keys"]:
             print(f"task numbers: {done['numbered']} task(s) numbered, {done['keys']} project key(s) set", flush=True)
+        for r in done["renumbered"]:
+            was = f"#{r['old']} -> " if r["old"] else ""
+            print(f"task numbers: {r['project']}: {r['id']} \u201c{r['title'][:60]}\u201d {was}#{r['no']} ({r['why']})",
+                  flush=True)
     except Exception as e:
         print(f"task numbers backfill skipped: {e}", flush=True)
 
