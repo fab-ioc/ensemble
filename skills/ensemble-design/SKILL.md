@@ -1095,6 +1095,10 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
      the conversation closes the tool and keeps the conversation (a task's Activity; a PO screen's
      PO chat); the tool goes back to its list (Changes: the diff closes; Workspace: the tree, the
      file shown in it). The last part is where you are: plain `--fg`, 500, `aria-current`.
+   - **A file that is a panel of the dock** (#150, `crumbWsPanel`): while its panel is on screen
+     (in front of its stack, or in a window of its own) it is where you are, `› Files › README.md`,
+     whether or not the tree is out; its Files part brings the tree (the flyout, a phone's Files
+     tab) with the file shown in it, and the file part stays, since the panel is still there.
    - Separators are `›` in `--fg-muted`, not read aloud. Each part ellipsises, the task's title
      first (`flex-shrink: 4`), so the bar keeps one row; search gives up width before it does.
    - Written only when it changes (`writeSlot`). **A phone** shows it only while a task is open,

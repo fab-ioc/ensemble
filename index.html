@@ -8241,9 +8241,16 @@ function wsPanelsSync(v) {
   elsewhere.forEach(p => wsTabClose(v, p));
 }
 // Show a tab as its panel: the one it has, brought on screen, or a new one.
+// A panel the dock shows comes to the front of its stack (activate), so the
+// tree it was picked from stays out, as it does for a new panel (addPanel);
+// one hidden, parked or in a window of its own needs reveal.
 function wsPanelShow(v, t) {
   const P = v.panels && v.panels.get(wsNorm(t.path));
-  if (P) { wsPanelPaint(v, t); try { PD.dock.reveal(P.id); } catch (e) {} }
+  if (P) {
+    wsPanelPaint(v, t);
+    const d = PD.dock;
+    try { if (d.isVisible(P.id) && !d.popWindow(P.id) && !d.isOut(P.id)) d.activate(P.id); else d.reveal(P.id); } catch (e) {}
+  }
   else if (!wsPanelAdd(v, t, wsPanelWhere())) { wsShowTab(v, t.path); return; }
   wsFilePanelShown(v, t.path);
   wsPaintView(v);
@@ -11084,6 +11091,10 @@ function pdRuntimeRestore() {
   pdChatsRemember();
   wsPanelsRemember();
   pdTabTips();
+  // Each panel came back in its kept place, and in front of its stack as a
+  // panel added is; the page opens on the conversation, so a panel that is a
+  // tab of the conversation's stack goes behind it.
+  try { if (PD.dock.frontOf('po-chat') !== 'po-chat') PD.dock.activate('po-chat'); } catch (e) {}
 }
 // The open task's actions in the conversation panel's ⋯ menu (need 14, the
 // CEO's P109): the same model as a list row's (static/actions.js), asked each
@@ -11276,6 +11287,7 @@ function pdShown(id) {
       PD.rtLast.chat = id;
       const f = rt.el.querySelector('iframe.dp-session');
       try { if (f && f.contentWindow) f.contentWindow.postMessage({ ensemble: 'shown' }, location.origin); } catch (e) {}
+      barCrumbs();
     }
     pdTabTips();
     return;
@@ -15517,6 +15529,23 @@ function crumbWsFile(ctx) {
   if (!v || !v.sel || v.pane === 'tree' || !v.el || !v.el.isConnected) return '';
   return v.tabs.some(x => wsSame(x.path, v.sel)) ? v.sel : '';
 }
+// Files as panels (#150): the Workspace's file whose panel is on screen (in
+// front of its stack, or in a window of its own) is where the person is:
+// task › Files › README.md, whether or not the tree is out. Its Files crumb
+// brings the tree, with the file shown in it.
+function crumbWsPanel(ctx) {
+  if (!wsPanelsMode()) return '';
+  const v = WS_VIEWS.get(wsCtxKey(ctx));
+  if (!v || !v.sel || !v.panels) return '';
+  const P = v.panels.get(wsNorm(v.sel));
+  return P && pdToolOn(P.id) ? v.sel : '';
+}
+// The tool and file a file panel in front stands for (a phone's tab, a
+// desktop with no tool out), else null.
+function crumbFilePanel(ctx) {
+  const f = crumbWsPanel(ctx);
+  return f ? { tool: { k: 'workspace', name: pdPanelName('workspace') }, file: f } : null;
+}
 function crumbState() {
   const r = crumbTask();
   const pj = crumbProject(r);
@@ -15528,29 +15557,35 @@ function crumbState() {
   const strip = PD.dock && !PD.dock.narrow() && document.body.classList.contains('po-dock');
   // A phone's tabs (#129): the task's tab in front of its Chat.
   const tabs = PD.dock && PD.dock.narrow() && document.body.classList.contains('po-dock');
+  const tctx = r ? { kind: 'task', sid: r.sessionId } : null;
   if (r && tabs && pdTask()) {
     s.task = { no: taskNoText(r, false), title: detailTitle(r) };
-    const k = PD.dock.frontOf('po-chat');
-    if (k && k !== 'po-chat') {
+    const k = PD.dock.frontOf('po-chat'), fp = crumbFilePanel(tctx), e = k ? PD.rt.get(k) : null;
+    if (fp) Object.assign(s, fp);
+    else if (e && e.kind === 'chat') {
+      // A chat panel's tab in front: that task is the one on screen.
+      const cr = ALL_ROWS.find(x => x.roomId === e.room);
+      if (cr) s.task = { no: taskNoText(cr, false), title: detailTitle(cr) };
+    } else if (k && k !== 'po-chat' && !e) {
       s.tool = { k, name: pdPanelName(k) };
-      if (k === 'workspace') s.file = crumbWsFile({ kind: 'task', sid: r.sessionId });
+      if (k === 'workspace') s.file = crumbWsFile(tctx);
       if (k === 'changes') { const v = TCH_VIEWS.get(r.sessionId); s.file = (v && v.file) || ''; }
     }
   } else if (r && strip && pdTask()) {
     s.task = { no: taskNoText(r, false), title: detailTitle(r) };
-    const k = pdToolShown();
+    const k = pdToolShown(), fp = crumbFilePanel(tctx);
     if (k) {
       s.tool = { k, name: pdPanelName(k) };
-      if (k === 'workspace') s.file = crumbWsFile({ kind: 'task', sid: r.sessionId });
+      if (k === 'workspace') s.file = crumbWsFile(tctx) || (fp ? fp.file : '');
       if (k === 'changes') { const v = TCH_VIEWS.get(r.sessionId); s.file = (v && v.file) || ''; }
-    }
+    } else if (fp) Object.assign(s, fp);
   } else if (po && strip && !r) {
-    const k = pdToolShown();
+    const k = pdToolShown(), fp = crumbFilePanel(pctx);
     if (k) {
       s.tool = { k, name: pdPanelName(k) };
-      if (k === 'workspace') s.file = crumbWsFile(pctx);
+      if (k === 'workspace') s.file = crumbWsFile(pctx) || (fp ? fp.file : '');
       if (k === 'changes') s.file = CH_FILE || '';
-    }
+    } else if (fp) Object.assign(s, fp);
   } else if (r) {
     s.task = { no: taskNoText(r, false), title: detailTitle(r) };
     const k = issueTab(r);
@@ -15560,8 +15595,9 @@ function crumbState() {
       if (k === 'changes') { const v = TCH_VIEWS.get(r.sessionId); s.file = (v && v.file) || ''; }
     }
   } else if (po) {
-    const front = PD.dock ? PD.dock.frontOf('po-chat') : '';
-    if (front && front !== 'po-chat') {
+    const front = PD.dock ? PD.dock.frontOf('po-chat') : '', fp = crumbFilePanel(pctx);
+    if (fp) Object.assign(s, fp);
+    else if (front && front !== 'po-chat' && !PD.rt.has(front)) {
       s.tool = { k: front, name: pdPanelName(front) };
       if (front === 'workspace') s.file = crumbWsFile(pctx);
       if (front === 'changes') s.file = CH_FILE || '';
@@ -15634,6 +15670,9 @@ function crumbGo(level) {
         if (f.q) { f.q = ''; wsfSchedule(v); }
         wsfPaint(v);
         if (v.sel) wsReveal(v, v.sel);
+        // Files as panels: the tree is the Files tool itself (slid out, or a
+        // phone's tab), brought on screen when it is not.
+        if (wsPanelsMode()) pdReveal('workspace');
       }
     }
   }

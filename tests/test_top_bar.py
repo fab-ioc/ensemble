@@ -14,10 +14,11 @@ pages, with a project that has a PO (Motors) and one that has none (Plain):
 * on a phone, home is one row; a project is two: search, avatar and
   Create, then back, the name and Panels; the PO screen's tabs start within
   130px of the top, and nothing is wider than the screen;
-* on a phone the Workspace shows one pane at a time: a file open shows the
-  file; Files shows the tree and Find, and the file's name there goes back to
-  it; the file's viewer is hidden with its pane, and under another panel's
-  tab; on a laptop both panes show and neither switch does;
+* a file opened from the Workspace is a panel of the dock (#150): on a phone
+  its tab shows the file alone; Files in its path bar shows the tree and Find
+  (the Files tab), and the file's tab goes back to it; its viewer is hidden
+  under another panel's tab; on a laptop the tree and the file's panel show
+  and no switch does;
 * at 768 (a fine pointer) the bar is the laptop's, in one row;
 * the wordmark leads the bar and goes home: the whole word at 1440, 1024 and
   a 430 phone (row one, on home and in a project), the icon alone at 768 and
@@ -100,13 +101,14 @@ const WM = `(() => {
     right: Math.max(...ctl.map(r => r.r)), overlaps: hit, vw: innerWidth, scrollW: document.documentElement.scrollWidth,
     headerOver: hd.scrollWidth - hd.clientWidth };
 })()`;
-const PANE = `(() => { const p = [...document.querySelectorAll('.wsp')].find(e => e.getBoundingClientRect().height); if (!p) return null;
-  const vis = s => { const e = p.querySelector(s); return !!e && getComputedStyle(e).visibility === 'visible' && e.getBoundingClientRect().height > 0; };
-  const shown = s => { const e = p.querySelector(s); return !!e && e.getBoundingClientRect().width > 0; };
-  const f = p.querySelector('.wsp-frame.on');
-  return { side: vis('.wsp-side'), view: vis('.wsp-view'), files: shown('.wsp-files'), tofile: shown('.wsp-tofile'),
-    frame: f ? getComputedStyle(f).visibility : null,
-    tofileText: (p.querySelector('.wsp-tofile') || {}).textContent || '' }; })()`;
+// The Files pane (the tree) and the file's panel (#150: a file opened is a panel of the dock, the one last shown).
+const PANE = `(() => { const p = [...document.querySelectorAll('.wsp')].find(e => e.getBoundingClientRect().height) || null;
+  const vis = (r, s) => { const e = r && r.querySelector(s); return !!e && getComputedStyle(e).visibility === 'visible' && e.getBoundingClientRect().height > 0; };
+  const shown = (r, s) => { const e = r && r.querySelector(s); return !!e && e.getBoundingClientRect().width > 0; };
+  const fp = (() => { const d = PD.dock; if (!d || !PD.rt) return null; const on = id => { const e = PD.rt.get(id); return !!e && e.kind === 'file' && !d.popWindow(id); };
+    const id = on(PD.rtLast.file) ? PD.rtLast.file : [...PD.rt.keys()].find(on); return id ? PD.rt.get(id).el : null; })();
+  return { side: vis(p, '.wsp-side'), view: vis(p, '.wsp-view'), files: shown(fp, '.wsp-files'), panel: !!fp && fp.getBoundingClientRect().width > 0,
+    frameShown: vis(fp, '.wsp-frame.on'), tab: !!fp && !!document.querySelector('#po-dock .dk-tab[data-dk-tab="' + PD.rtLast.file.replace(/"/g, '') + '"]') }; })()`;
 async function main() {
   const { ch, ws } = await launch();
   const c = new Cdp(ws); await c.open();
@@ -131,7 +133,7 @@ async function main() {
     await p.evalIn("pdReveal('workspace'); 0");
     await p.until('[...PD.els.workspace.querySelectorAll(".wse.doc[data-path]")].some(x => x.dataset.path.endsWith("#1 Notes.md"))', 20000);
     await p.evalIn('[...PD.els.workspace.querySelectorAll(".wse.doc[data-path]")].find(x => x.dataset.path.endsWith("#1 Notes.md")).click(); 0');
-    await p.until('!!PD.els.workspace.querySelector(".wst-tab.on")', 15000);
+    await p.until('(() => { const e = PD.rt.get(PD.rtLast.file); const f = e && e.el.querySelector("iframe.wsp-frame.on"); try { return !!f && f.contentDocument.readyState === "complete"; } catch (x) { return false; } })()', 15000);
     await sleep(300);
   };
   // The wordmark where the page is, and its picture in a light and a dark theme.
@@ -203,13 +205,13 @@ async function main() {
     await sleep(200);
     out.phoneTree = await q.evalIn(PANE);
     await q.shot('top-bar-430-tree');
-    await q.evalIn('[...document.querySelectorAll(".wsp-tofile")].find(e => e.getBoundingClientRect().width).click(); 0');
+    await q.evalIn('PD.dock.activate(PD.rtLast.file); 0');
     await sleep(200);
     out.phoneBack = await q.evalIn(PANE);
     // Another panel's tab: the Workspace's file does not show through it.
     await q.evalIn("pdReveal('po-chat'); 0");
     await sleep(300);
-    out.phoneChat = await q.evalIn(`(() => { const f = PD.els.workspace.querySelector('.wsp-frame.on'); return f ? getComputedStyle(f).visibility : null; })()`);
+    out.phoneChat = await q.evalIn(PANE);
     await q.close();
     // ---- smaller phones
     for (const w of [390, 360]) {
@@ -363,11 +365,10 @@ class TheTopBar(unittest.TestCase):
 
     def test_the_workspace_on_a_phone_is_one_pane_at_a_time(self):
         f, t, b = self.got["phoneFile"], self.got["phoneTree"], self.got["phoneBack"]
-        self.assertEqual((f["side"], f["view"], f["files"], f["frame"]), (False, True, True, "visible"), "a file open: the file")
-        self.assertEqual((t["side"], t["view"], t["tofile"], t["frame"]), (True, False, True, "hidden"), "Files: the tree and Find, the file's viewer hidden too")
-        self.assertIn("#1 Notes.md", t["tofileText"])
-        self.assertEqual((b["side"], b["view"], b["frame"]), (False, True, "visible"), "the file's name goes back to it")
-        self.assertEqual(self.got["phoneChat"], "hidden", "another panel's tab hides the Workspace's file")
+        self.assertEqual((f["side"], f["panel"], f["files"], f["frameShown"]), (False, True, True, True), "a file open: its panel's tab, the tree behind it")
+        self.assertEqual((t["side"], t["frameShown"], t["tab"]), (True, False, True), "Files: the tree and Find; the file keeps its tab, its viewer hidden")
+        self.assertEqual((b["side"], b["frameShown"]), (False, True), "the file's tab goes back to it")
+        self.assertFalse(self.got["phoneChat"]["frameShown"], "another panel's tab hides the Workspace's file")
 
     def test_the_wordmark_is_the_way_home_at_every_width(self):
         wm = self.got["wm"]
@@ -402,9 +403,9 @@ class TheTopBar(unittest.TestCase):
         self.assertLess(at["bar-home"]["y"], at["bar-back"]["y"], "on row one, above back and the name")
         self.assertLessEqual(g["tabsTop"], 110, "the panel tabs start where they did")
 
-    def test_the_workspace_on_a_laptop_shows_both_panes_and_no_switch(self):
+    def test_the_workspace_on_a_laptop_shows_the_tree_and_the_file_s_panel(self):
         w = self.got["wideWs"]
-        self.assertEqual((w["side"], w["view"], w["files"], w["tofile"], w["frame"]), (True, True, False, False, "visible"))
+        self.assertEqual((w["side"], w["view"], w["files"], w["panel"], w["frameShown"]), (True, False, False, True, True), "the tree alone in the pane, the file in its panel, no switch")
 
 
 if __name__ == "__main__":
