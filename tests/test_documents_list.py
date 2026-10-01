@@ -293,8 +293,8 @@ class TheWiring(unittest.TestCase):
         self.assertIn("wsDocsNodeHtml(v, v.docsList, wsDocsRm(v))", js_function("wsTreeHtml"))
 
     def test_the_roadmaps_tab_is_its_own_view(self):
-        view = js_function("wsPaintView")
-        self.assertIn("const rmTab = !!t && wsIsRoadmap(v, t.path)", view)
+        view = js_function("wsPaintViewNow")   # (wsPaintView guards against re-entry, #150)
+        self.assertIn("const rmTab = !!sel && wsIsRoadmap(v, sel.path);", view)
         self.assertIn("wsRoadmapPaint(v, stage, rmTab);", view)
         self.assertIn("rmPark(panel);", js_function("wsRenderInto"), "its draft outlives a rebuilt Workspace")
         self.assertIn("rmPark(el);", js_function("docsPanelRender"))

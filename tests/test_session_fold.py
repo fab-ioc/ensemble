@@ -476,7 +476,7 @@ class ThePageUsesIt(unittest.TestCase):
     def test_reopening_a_task_panel_goes_to_the_latest(self):
         index = (ROOT / "index.html").read_text(encoding="utf-8").replace("\r\n", "\n")
         self.assertIn("ensemble: 'shown'", js_function(index, "openDetail"))
-        self.assertRegex(SRC, r"d\.ensemble === 'shown' && e\.source === window\.parent\) \{ toLatest\(\); if \(CHAT_DRAWN && !GOTO\) catchUpOpen\(\); \}")
+        self.assertRegex(SRC, r"d\.ensemble === 'shown' && e\.source === window\.parent\) \{ toLatest\(\); if \(CHAT_DRAWN && !GOTO\) catchUpOpen\(\); if \(typeof tickNow === 'function'\) tickNow\(\); \}")
 
 
 if __name__ == "__main__":
