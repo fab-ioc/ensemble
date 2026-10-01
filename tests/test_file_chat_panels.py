@@ -99,6 +99,7 @@ const STATE = `(() => {
     frame: !!el.querySelector('iframe.wsp-frame.on'), note: el.querySelector('.wsp-note').textContent, own: (el.querySelector('.wsp-own') || {}).href || '' }));
   const mid = PD.els['po-chat'].querySelector('iframe.dp-session');
   return { rt, tabs, files, panels, chat: box(PD.els['po-chat']), where, sid: SELECTED_SID || null, task: pdTask(), middleRoom: mid ? mid.dataset.room : null,
+    detailFrames: document.querySelectorAll('#detail-panel iframe.dp-session').length, poOff: PO_PANEL.classList.contains('pd-off'),
     poFrame: !!pdChatFrame() && PO_PANEL.parentNode === PD.els['po-chat'], saved: { ws: localStorage.getItem('cd-ws-panels'), chats: localStorage.getItem('cd-chat-panels') },
     vw: innerWidth, scrollW: document.documentElement.scrollWidth, narrow: d.narrow(), fly: d.flyOpen(),
     avail: PD_ROOT.clientWidth - 44, need: pdNeedW(L.root) };
@@ -220,9 +221,12 @@ async function main() {
       for (const r of rooms) {
         const f = frameOf(r), d = f.contentDocument, text = 'Said in the panel of ' + r;
         d.querySelector('#input').value = text;
-        await f.contentWindow.fetch('/api/room/say', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: r, text: d.querySelector('#input').value }) });
         res[r] = { typed: d.querySelector('#input').value === text };
-        d.querySelector('#input').value = '';   // sent: the composer is empty again (a chat holds off redrawing while one types)
+        // The panel's own Send (the chat page's path: it posts to its room and empties the box).
+        d.querySelector('#send').click();
+        let sent = false;
+        for (let i = 0; i < 80 && !sent; i++) { sent = d.querySelector('#input').value === ''; if (!sent) await sleep(250); }
+        res[r].sent = sent;
       }
       for (const r of rooms) {
         const text = 'Said in the panel of ' + r;
@@ -248,12 +252,37 @@ async function main() {
     await p.evalIn(`PD.dock.activate('chat:' + ${JSON.stringify(TD)}); 0`); await sleep(300);
     out.offScreen = await p.evalIn(`(() => { const f = ${chatFrame(TB)}; try { return { off: f.contentWindow.chatOffScreen(), slow: f.contentWindow.chatSlow(), cls: !!f.closest('.dk-off') }; } catch (e) { return String(e); } })()`);
     out.offScreen.state = await p.evalIn(STATE);
+    // The task leaves the middle (C): the PO's chat, off screen till now and
+    // polling every 30 s, is told it is shown and catches up at once.
+    await p.evalIn(`(() => { const w = pdChatFrame().contentWindow; w.__shown = 0; w.addEventListener('message', e => { if (e.data && e.data.ensemble === 'shown') w.__shown++; }); return 0; })()`);
+    out.poWake = { before: await p.evalIn('({ off: PO_PANEL.classList.contains("pd-off"), task: pdTask() })') };
+    await p.evalIn('closeDetail(); 0');
+    await p.until('!PO_PANEL.classList.contains("pd-off") && !pdTask()', 10000); await sleep(400);
+    out.poWake.after = await p.evalIn('({ off: PO_PANEL.classList.contains("pd-off"), shown: pdChatFrame().contentWindow.__shown, poFrame: !!pdChatFrame() && PO_PANEL.parentNode === PD.els["po-chat"] })');
+    // Show in Workspace on a panelled task (A; the IDE action off the hub):
+    // the task comes back to the middle, its panel closes, its Files tool
+    // comes out — nobody else's.
+    await p.evalIn(`openWorkspaceTab(ALL_ROWS.find(r => r.roomId === ${JSON.stringify(TA)}).sessionId); 0`);
+    await p.until(`!PD.rt.has('chat:' + ${JSON.stringify(TA)}) && pdTask() && (PD.els["po-chat"].querySelector("iframe.dp-session") || {}).dataset?.room === ${JSON.stringify(TA)}`, 15000); await sleep(600);
+    out.showInWs = await p.evalIn(`({ middleRoom: (PD.els["po-chat"].querySelector("iframe.dp-session") || {}).dataset?.room, files: pdToolOn('workspace'), forTask: PD.els.workspace.classList.contains('pd-for-task'),
+      chats: [...PD.rt.values()].filter(e => e.kind === 'chat').map(e => e.room).sort(), saved: localStorage.getItem('cd-chat-panels') })`);
     await p.close();
     // A phone: the panels are tabs of the one column.
     const ph = await page(390, 844, true);
     await go(ph, A.proj, true); await pdReady(ph); await sleep(1200);
     out.phone = await ph.evalIn(STATE);
     await ph.shot('150-phone-390');
+    // The tab the person left on (Board) is the one a reload opens on; a
+    // file or chat tab goes behind the conversation.
+    await ph.evalIn('PD.dock.activate("board"); 0'); await sleep(400);
+    out.phoneReload = { left: await ph.evalIn('PD.dock.frontOf("po-chat")') };
+    try { await ph.evalIn('location.reload(); 0'); } catch (e) {}
+    await sleep(1500); await ph.ready(); await go(ph, A.proj, true); await pdReady(ph); await sleep(800);
+    out.phoneReload.board = await ph.evalIn('PD.dock.frontOf("po-chat")');
+    await ph.evalIn(`PD.dock.activate('chat:' + ${JSON.stringify(TB)}); 0`); await sleep(400);
+    try { await ph.evalIn('location.reload(); 0'); } catch (e) {}
+    await sleep(1500); await ph.ready(); await go(ph, A.proj, true); await pdReady(ph); await sleep(800);
+    out.phoneReload.chat = await ph.evalIn('PD.dock.frontOf("po-chat")');
     await ph.close();
   } finally {
     try { ch.kill(); } catch (e) {}
@@ -284,6 +313,11 @@ class FilesAndChatsAsPanels(unittest.TestCase):
             REQS.append((time.time() * 1000, self.path))
             return orig_get(self)
 
+        def resumed(self, room_full, text="", to="", key="", quiet=False):
+            if text:
+                chatroom.post_message(room_full["id"], "user", text, to=to or "")
+            return {"resumed": False, "queued": 0, "delivered": 1 if text else 0}
+
         cls.patches = [
             mock.patch.object(dashboard, "PROJECTS_ROOT", cls.root),
             mock.patch.object(dashboard, "DASHBOARD_DIR", state),
@@ -299,6 +333,9 @@ class FilesAndChatsAsPanels(unittest.TestCase):
             mock.patch.object(dashboard.Handler, "_agent_peer", lambda h: ""),
             mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None),
             mock.patch.object(dashboard.Handler, "do_GET", counted),
+            # Send in a stopped room's chat resumes its agents (session.html →
+            # /api/room/resume): here the line only lands in the room.
+            mock.patch.object(dashboard.Handler, "_resume_room", resumed),
             mock.patch.dict(os.environ, {"CODEX_HOME": str(base / "codex")}),
         ]
         for p in cls.patches:
@@ -415,6 +452,7 @@ class FilesAndChatsAsPanels(unittest.TestCase):
         self.assertEqual([e["room"] for e in chats], [self.tasks[0]])
         self.assertIsNone(g["sid"], "the middle has no task")
         self.assertTrue(g["poFrame"], "the middle shows the PO's chat again")
+        self.assertEqual(g["detailFrames"], 0, "the middle's chat page went with the task: one page per task polls")
         self.assertNotEqual(chats[0]["where"], g["where"]["po-chat"], "beside the conversation")
         self.assertGreater(chats[0]["box"]["x"], g["chat"]["x"] + g["chat"]["w"] - 1, "at its right")
         tab = next(t for t in g["tabs"] if t["id"] == chats[0]["id"])
@@ -462,7 +500,28 @@ class FilesAndChatsAsPanels(unittest.TestCase):
     def test_each_panel_is_its_rooms_chat(self):
         s = self.got["said"]
         for r in (self.tasks[0], self.tasks[1], self.tasks[3]):
-            self.assertEqual(s[r], {"typed": True, "inRoom": True, "shown": True, "others": True}, r)
+            self.assertEqual(s[r], {"typed": True, "sent": True, "inRoom": True, "shown": True, "others": True}, r)
+
+    def test_the_po_chat_catches_up_when_the_task_leaves_the_middle(self):
+        w = self.got["poWake"]
+        self.assertEqual(w["before"], {"off": True, "task": True}, "with a task in the middle the PO's chat is out of sight")
+        self.assertFalse(w["after"]["off"])
+        self.assertTrue(w["after"]["poFrame"], "the PO's chat is the middle again")
+        self.assertGreaterEqual(w["after"]["shown"], 1, "and was told so: it polls now, not in 30 s")
+
+    def test_show_in_workspace_on_a_panelled_task_brings_it_to_the_middle(self):
+        g = self.got["showInWs"]
+        self.assertEqual(g["middleRoom"], self.tasks[0], "the task is the middle's")
+        self.assertEqual(g["chats"], sorted([self.tasks[1], self.tasks[3]]), "its panel closed (one chat per task)")
+        self.assertEqual(json.loads(g["saved"]), [self.tasks[1], self.tasks[3]], "and is not remembered")
+        self.assertTrue(g["files"], "its Files tool is out")
+        self.assertTrue(g["forTask"], "showing the task's files, not the project's")
+
+    def test_a_phone_reload_opens_on_the_tab_left_unless_it_is_a_panel(self):
+        r = self.got["phoneReload"]
+        self.assertEqual(r["left"], "board")
+        self.assertEqual(r["board"], "board", "a tool tab left in front is the one a reload opens on")
+        self.assertEqual(r["chat"], "po-chat", "a chat panel's tab goes behind the conversation")
 
     def test_a_chat_behind_a_tab_knows_it_is_off_screen(self):
         o = dict(self.got["offScreen"])
@@ -504,7 +563,8 @@ class FilesAndChatsAsPanels(unittest.TestCase):
         g = self.got["phone"]
         self.assertTrue(g["narrow"])
         rt = g["rt"]
-        self.assertEqual(sorted(e["kind"] for e in rt), ["chat", "chat", "chat", "file", "file"])
+        # (A's chat came back to the middle: two chats and two files remain.)
+        self.assertEqual(sorted(e["kind"] for e in rt), ["chat", "chat", "file", "file"])
         self.assertEqual({e["where"] for e in rt} | {g["where"]["po-chat"]}, {"root"}, "every panel a tab of the one column")
         self.assertEqual(g["scrollW"], g["vw"], "no sideways scroll")
 
@@ -515,6 +575,8 @@ class FilesAndChatsAsPanels(unittest.TestCase):
         self.assertIn(".dk-off, .dk-parking, .pd-off", SESSION)
         self.assertIn("'file:' + wsNorm(path)", INDEX)
         self.assertIn("dock-removed", INDEX)
+        self.assertIn("if (wasOff && !off) pdWakeChat(pdChatFrame());", INDEX)
+        self.assertIn("if (f !== 'po-chat' && PD.rt.has(f)) PD.dock.activate(front0 && front0 !== f && PD.els[front0] && !PD.rt.has(front0) ? front0 : 'po-chat');", INDEX)
 
 
 if __name__ == "__main__":

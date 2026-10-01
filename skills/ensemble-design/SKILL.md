@@ -782,13 +782,18 @@ per task on the page; a plain click on a panelled task's row reveals its panel i
 the middle), from a **Ctrl/⌘ click** or a **middle click** on a task's row (`pdRowPanel`; a
 session with no room opens as a click does), and from a task link (`runTaskAction('panel')`). Its
 ⋯ holds the task's actions as the middle's does (`pdChatMenuItems`, without Open in new panel;
-its terminal items act on its own frame); its chat is `session.html` embedded, polling its room
+its terminal items act on its own frame; *Show in Workspace* brings the task back to the middle,
+where its tools are, its panel closing, and its Files tool comes out: `openWorkspaceTab`); its
+chat is `session.html` embedded, polling its room
 every 10 s while nobody types in it (`data-chat-slow`) and every 30 s while it is off screen
 (behind a tab, parked, hidden: the host's classes on the frame's ancestors, `chatOffScreen`),
 at once when it comes back or into focus; the middle's own chat polls every 2 s as before. The
 rooms open are remembered per browser (`cd-chat-panels`) and come back in their kept places
 after a reload (`pdRuntimeRestore`; a room no longer listed, or the task in the middle, is
-dropped). File and chat panels are the runtime panels (`PD.rt`; `pdMinOf` their least size:
+dropped; a runtime panel that came back in front of the conversation's stack goes behind the
+tab the person left in front, a tool or the conversation). The PO's chat, out of sight while a
+task is in the middle, is told it is shown when the task leaves (`pdWakeChat`), so it catches up
+at once rather than at its next 30 s tick. File and chat panels are the runtime panels (`PD.rt`; `pdMinOf` their least size:
 a chat the conversation's, a file 280 × 160); `dock-removed` disposes them (`pdRuntimeRemoved`).
 On a phone both are tabs of the one column, as everything is. **Still interim**: the PO's two (Switch agent, the PO's task) wait in
 its header's ⋯, marked `data-interim="dock-menu"`, until they follow the same hook. The Board's own **⤢** (`.pd-board-max`, beside its view

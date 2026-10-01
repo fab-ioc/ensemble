@@ -11397,7 +11397,13 @@ function pdChatOpen(roomId, o) {
   if (!r) return false;
   // One chat per task on the page: the task in the middle moves out to its panel.
   const mid = SELECTED_SID ? rowBySid(SELECTED_SID) : null;
-  if (mid && mid.roomId === roomId) closeDetail();
+  if (mid && mid.roomId === roomId) {
+    closeDetail();
+    // Its chat in the middle goes with it: the panel's is the one (a middle
+    // closed otherwise keeps its page, off screen, for a quick reopen).
+    const f = pdById('detail-panel').querySelector('iframe.dp-session');
+    if (f) f.remove();
+  }
   const el = document.createElement('div');
   el.className = 'pd-chat pd-chat-x';
   el.dataset.room = roomId;
@@ -11449,6 +11455,8 @@ PD_ROOT.addEventListener('dock-removed', e => { try { pdRuntimeRemoved(e.detail 
 function pdRuntimeRestore() {
   if (PD.restored || !PD.dock) return;
   PD.restored = true;
+  let front0 = '';   // what is in front of the conversation's stack before the panels come
+  try { front0 = PD.dock.frontOf('po-chat'); } catch (e) {}
   for (const ctx of wsPanelsSaved()) {
     const ok = ctx.kind === 'task' ? !!(ctx.sid && (rowBySid(ctx.sid) || ALL_ROWS.some(r => r.roomId === ctx.sid)))
       : ctx.kind === 'project' ? !!(ctx.projectId && projectById(ctx.projectId)) : false;
@@ -11473,9 +11481,14 @@ function pdRuntimeRestore() {
   wsPanelsRemember();
   pdTabTips();
   // Each panel came back in its kept place, and in front of its stack as a
-  // panel added is; the page opens on the conversation, so a panel that is a
-  // tab of the conversation's stack goes behind it.
-  try { if (PD.dock.frontOf('po-chat') !== 'po-chat') PD.dock.activate('po-chat'); } catch (e) {}
+  // panel added is; the page opens on the conversation, so a file or chat
+  // panel that is a tab of the conversation's stack goes behind it: behind
+  // the tool the person left in front (a phone's Board), as Dock kept it,
+  // else the conversation.
+  try {
+    const f = PD.dock.frontOf('po-chat');
+    if (f !== 'po-chat' && PD.rt.has(f)) PD.dock.activate(front0 && front0 !== f && PD.els[front0] && !PD.rt.has(front0) ? front0 : 'po-chat');
+  } catch (e) {}
 }
 // The open task's actions in the conversation panel's ⋯ menu (need 14, the
 // CEO's P109): the same model as a list row's (static/actions.js), asked each
@@ -11666,8 +11679,7 @@ function pdShown(id) {
     if (rt.kind === 'file') wsFilePanelShown(rt.v, rt.path);
     else {
       PD.rtLast.chat = id;
-      const f = rt.el.querySelector('iframe.dp-session');
-      try { if (f && f.contentWindow) f.contentWindow.postMessage({ ensemble: 'shown' }, location.origin); } catch (e) {}
+      pdWakeChat(rt.el.querySelector('iframe.dp-session'));
       barCrumbs();
     }
     pdTabTips();
@@ -11678,6 +11690,14 @@ function pdShown(id) {
   if (pdTask() && id !== 'po-chat') renderDetail();
   pdPlaceChat();
   barCrumbs();
+}
+// A chat page off screen (behind a tab, or the PO's while a task is in the
+// middle) polls every 30 s: told it is shown, it opens at its latest message,
+// says what came meanwhile, and polls now (session.html's `shown`). Not when
+// a link is taking it to one of its messages: that lands it (goto-msg).
+function pdWakeChat(f) {
+  if (!f || !f.contentWindow || GOTO_MSG.has(String(f.dataset.room || ''))) return;
+  try { f.contentWindow.postMessage({ ensemble: 'shown' }, location.origin); } catch (e) {}
 }
 // Brings a panel on screen: shown if hidden, in front of its stack, slid out
 // if it is on a strip, its window raised if it is in one.
@@ -11715,7 +11735,11 @@ function pdPlaceChat() {
   const inPanel = dock && !task && !PO_PEEK && ph.ownerDocument === document && ph.isConnected && !ph.closest('.dk-parking');
   const home = inPanel ? ph : PD_HOST;
   if (PO_PANEL.parentNode !== home) pdMove(home, PO_PANEL);
-  PO_PANEL.classList.toggle('pd-off', dock && !PO_PEEK && !inPanel);
+  const off = dock && !PO_PEEK && !inPanel, wasOff = PO_PANEL.classList.contains('pd-off');
+  PO_PANEL.classList.toggle('pd-off', off);
+  // Out of sight (a task in the middle) the PO's chat polled every 30 s:
+  // back on screen it catches up now.
+  if (wasOff && !off) pdWakeChat(pdChatFrame());
   pdPlaceTask(task);
   if (PD.dock) pdPopChat(ph.ownerDocument !== document);
   pdPopTitle();
@@ -16938,6 +16962,13 @@ function openWorkspaceTab(sid) {
   }
   ISSUE_TAB_SID = sid;
   ISSUE_TAB = 'workspace';
+  // A task open as a chat panel (#150): its tools are the middle's, so it
+  // comes back to the middle (its panel closes: one chat per task) and its
+  // Files tool comes out there, not another task's.
+  {
+    const cid = row && row.roomId ? pdChatId(row.roomId) : '';
+    if (cid && PD.dock && PD.rt.has(cid)) { try { PD.dock.removePanel(cid); } catch (e) {} }
+  }
   if (SELECTED_SID !== sid) openDetail(sid);
   else { const p = $('#detail-panel'); if (p) p.dataset.sig = ''; renderDetail(); }
   // On the tool strip: its Files tool comes out.
@@ -17375,7 +17406,11 @@ document.addEventListener('click', async (ev) => {
   const panelBtn = ev.target.closest('.panel-btn');
   if (panelBtn) {
     ev.stopPropagation();
-    if (!pdChatOpen(panelBtn.dataset.room)) toast('The panels are not loaded: the chat opens in the middle instead.', 4000, 'err');
+    if (!pdChatOpen(panelBtn.dataset.room)) {
+      // No panels on this page: the middle, as a row's click.
+      const r = ALL_ROWS.find(x => x.roomId === panelBtn.dataset.room);
+      if (r) openDetail(r.sessionId); else toast('That task is not in the list', 4000, 'err');
+    }
     return;
   }
   const dpTerms = ev.target.closest('.dp-terms-btn');

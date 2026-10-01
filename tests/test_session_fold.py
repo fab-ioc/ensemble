@@ -476,7 +476,8 @@ class ThePageUsesIt(unittest.TestCase):
     def test_reopening_a_task_panel_goes_to_the_latest(self):
         index = (ROOT / "index.html").read_text(encoding="utf-8").replace("\r\n", "\n")
         self.assertIn("ensemble: 'shown'", js_function(index, "openDetail"))
-        self.assertRegex(SRC, r"d\.ensemble === 'shown' && e\.source === window\.parent\) \{ toLatest\(\); if \(CHAT_DRAWN && !GOTO\) catchUpOpen\(\); if \(typeof tickNow === 'function'\) tickNow\(\); \}")
+        # (A link to a balloon in the same gesture wins: no jump to the latest then.)
+        self.assertRegex(SRC, r"d\.ensemble === 'shown' && e\.source === window\.parent\) \{\s*if \(!GOTO && Date\.now\(\) - GOTO_AT > 2000\) \{ toLatest\(\); if \(CHAT_DRAWN\) catchUpOpen\(\); \}\s*if \(typeof tickNow === 'function'\) tickNow\(\);\s*\}")
 
 
 if __name__ == "__main__":
