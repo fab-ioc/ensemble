@@ -646,6 +646,7 @@
 <main id="main"><div class="err">Loading…</div></main>
 <script src="/static/hl.js"></script>
 <script src="/static/selbar.js"></script>
+<script src="/static/taskcard.js"></script>
 <script>
 const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const _MDA = String.fromCharCode(0xE000), _MDZ = String.fromCharCode(0xE001);
@@ -1156,6 +1157,18 @@ function mdToHtml(src) {
       : escaped != null ? ph(esc(escaped))
       : ticks != null ? ph(codeSpanHtml(ticks.length > 1 ? body.trim() : body))
       : ph(`<img class="md-img" src="${esc(mdImgSrc(url))}" alt="${esc(alt)}" loading="lazy">`));
+  // A task named by its number (#18, ED-18, @codex@18) is its chip, as the hub
+  // reads the number in this file's chat (TaskCard; the page draws again when
+  // the hub answers). A number that names no task stays text.
+  s = s.replace(TaskCard.TASK_REF_RE, (m, who, key, no, at, str) => {
+    if (TaskCard.notTaskRef(who, key, str, at)) return m;
+    const t = TASK_REFS.info(key || '', +no);
+    if (t.state !== 'ok') return m;
+    const w = String(who || '').toLowerCase();
+    const agent = w ? (t.agents || []).find(a => (a.identity || '').toLowerCase() === w
+      || String(a.role || '').split(':')[0].trim().toLowerCase() === w) : null;
+    return ph(TaskCard.chipHtml(t, { key: key || '', agent: agent ? agent.identity : '' }));
+  });
   s = esc(s);
 
   const BR = String.fromCharCode(0xE004);
@@ -1592,15 +1605,25 @@ function showTrayItem(cid) {
   setTimeout(() => it.classList.remove('hit'), 1200);
 }
 // A task link inside the dashboard (the Workspace pane) opens the task there;
-// in a tab of its own it opens the dashboard in a new tab, on that task.
+// in a tab of its own it opens the dashboard in a new tab, on that task. A
+// chip (a.task-chip) is TaskCard's: one click its card, a double click the task.
+function openTaskFrom(a) {
+  const host = hostPage();
+  if (host) host.postMessage({ type: 'open-task', roomId: a.dataset.task, agent: a.dataset.agent || '' }, location.origin);
+  else window.open(a.href, '_blank', 'noopener');
+}
 document.addEventListener('click', ev => {
   const a = ev.target.closest && ev.target.closest('a[data-task]');
-  if (!a || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;
-  const host = hostPage();
-  if (!host) return;
+  if (!a || a.classList.contains('task-chip') || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;
+  if (!hostPage()) return;
   ev.preventDefault();
-  host.postMessage({ type: 'open-task', roomId: a.dataset.task }, location.origin);
+  openTaskFrom(a);
 });
+// The tasks a Markdown file names, as the hub reads them in this file's chat;
+// the file is drawn again when an answer comes.
+let FV_PAINT = null;
+const TASK_REFS = TaskCard.refs({ room: ROOM, changed: () => { if (FV_PAINT) FV_PAINT(); } });
+TaskCard.init({ open: openTaskFrom });
 // The Workspace's Recent shortcut (Alt+R, ⌥R on a Mac: index.html's
 // wsIsRecentKey) works while reading a file there too: the Workspace hears it.
 // Not while typing a comment or composing a character: ⌥R types ® on a Mac.
@@ -1917,6 +1940,7 @@ function wireFrameLinks(ifr) {
     enableComments(wrap);
     remarkAll();
   }
+  FV_PAINT = () => { if (view === 'md' || (isMd && view !== 'source')) paint(); };
   function paint() {
     clearHl();
     hideSelBtn();
