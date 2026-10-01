@@ -240,7 +240,7 @@ vm.createContext(ctx);
 vm.runInContext(code + `
   let FOLD = { base: null, open: new Set(), groups: new Set(), hid: null };
   let GROUP_OF_MID = new Map(), CHAT_VIEW = null, LAST_ITEMS = null, STICK = true, SEEN = new Set(), NEW_N = 0, DEC_N = 0;
-  let COMMENTS = [], JUST_US = false, SOLO_IDLE = false, ROOM_OBJ = null, ROOM_PENDING = null;
+  let COMMENTS = [], TEAM_ALL = true, GAP_OF_MID = new Map(), GAP_N = 0, GAP_MSGS = 0, SOLO_IDLE = false, ROOM_OBJ = null, ROOM_PENDING = null;
   let MD_CACHE = new Map(), MD_CTX = '', _cmtComposerOpen = false, selShown = () => false, PATH_ABBR = null;
   const THUMB_GONE = new Set();
   const ROOM_NOS = new Map(), HUB_PORT = '', ROOM = 'room-po', REF_GEN = 0;

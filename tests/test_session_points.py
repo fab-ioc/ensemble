@@ -161,7 +161,7 @@ class Points(unittest.TestCase):
         r = self.r
         self.assertIn("P3 · waiting for an answer", r["his"])
         self.assertIn('data-pt="P3" data-pt-act="drop"', r["his"])
-        self.assertIn('class="pt-link" href="/session?room=room-po&amp;msg=s:2" data-ref-msg="s:2"', r["hisAnswered"])
+        self.assertIn('class="pt-link" href="/session?room=room-po&amp;msg=s:2&amp;part=re:P2" data-ref-msg="s:2" data-ref-part="re:P2"', r["hisAnswered"])
         self.assertIn("P2 · ready for your check ↓", r["hisAnswered"], "answered, from a hub before the stages, is delivered")
         self.assertIn("P1 · acknowledged ↓", r["hisAcked"])
         # Read again after the thumbs up, the question still leads to its answer.
@@ -207,7 +207,7 @@ class Points(unittest.TestCase):
         rows = [x for x in r["list"].split("</li>") if 'class="pt-row"' in x]
         p5 = next(x for x in rows if 'data-pt="P5"' in x)
         self.assertIn('<span class="pt-state planned">#104 · in progress</span>', p5)
-        self.assertIn('data-ref-msg="s:12" title="Go to where the work was planned">plan ↓</a>', p5)
+        self.assertIn('data-ref-msg="s:12" data-ref-part="re:P5" title="Go to where the work was planned">plan ↓</a>', p5)
         self.assertIn('data-pt="P5" data-pt-act="drop"', p5)
         self.assertNotIn('data-pt-act="ack"', p5)
         p7 = next(x for x in rows if 'data-pt="P7"' in x)
@@ -224,8 +224,8 @@ class Points(unittest.TestCase):
         r = self.r
         rows = [x for x in r["list"].split("</li>") if 'class="pt-row"' in x]
         p6 = next(x for x in rows if 'data-pt="P6"' in x)
-        self.assertIn('data-ref-msg="s:14" title="Go to where the work was planned">plan ↓</a>', p6)
-        self.assertIn('data-ref-msg="s:15" title="Go to the answer">answer ↓</a>', p6)
+        self.assertIn('data-ref-msg="s:14" data-ref-part="re:P6" title="Go to where the work was planned">plan ↓</a>', p6)
+        self.assertIn('data-ref-msg="s:15" data-ref-part="re:P6" title="Go to the answer">answer ↓</a>', p6)
         self.assertIn('data-pt="P6" data-pt-act="ack"', p6)
         self.assertIn('data-ref-msg="s:15"', r["hisDelivered"], "the person's balloon leads to the delivery, not the plan")
         self.assertIn("P6 · ready for your check ↓", r["hisDelivered"])

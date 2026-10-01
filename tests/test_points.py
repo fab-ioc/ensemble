@@ -90,6 +90,7 @@ class _World(unittest.TestCase):
         points._ADOPT_SEEN.clear()
         points._TOLD.clear()
         points._GONE.clear()
+        points._TEXTS.clear()
         self.t0 = time.time() - 3600
 
     def solo_room(self, sid="sid-1"):
@@ -1104,6 +1105,276 @@ class DoneReminder(_Idle):
             self.assertEqual(self.point(rid, "P1")["doneSeenAt"], now)
             self.assertEqual(points.tick(now + 119 * 60), [])
             self.assertEqual(points.tick(now + 121 * 60), ["P1"])
+
+
+class FollowUps(_World):
+    """A comment on a passage of an answer, or a message linking or quoting
+    it, follows up the point it answered: that point is handled ("followed",
+    no thumbs up owed), the follow-up is its child, and the chain goes on
+    the same way (#146, issue #3)."""
+
+    def answered(self, rid, text="Why red?", answer="A flaky test, in test_x; the build is green again."):
+        out, ids = self.send(rid, text, at=self.t0)
+        self.add("sid-1", turn("user", out, self.t0 + 1), turn("assistant", answer, self.t0 + 2))
+        self.assertEqual(self.state(rid)[ids[0]], "delivered")
+        return ids[0]
+
+    def test_a_comment_quoting_the_answer_closes_the_point(self):
+        rid = self.solo_room()
+        self.answered(rid)
+        out, ids = self.send(rid, "## Review comments (1)\n\n**1.** > A flaky test, in test_x\n\nWhich test exactly?",
+                             at=self.t0 + 10)
+        self.assertEqual(ids, ["P2"])
+        self.assertEqual(self.state(rid), {"P1": "followed", "P2": "open"})
+        p1, p2 = self.point(rid, "P1"), self.point(rid, "P2")
+        self.assertEqual((p1["followedBy"], p2["replyTo"]), ("P2", "P1"))
+        self.assertEqual(p1["followedAt"], self.t0 + 10)
+        self.assertEqual(points.counts(rid), {"open": 1, "planned": 0, "delivered": 0})
+        v = points.view(rid)
+        items = {i["id"]: i for i in v["items"]}
+        self.assertEqual((items["P1"]["followedBy"], items["P2"]["replyTo"]), ("P2", "P1"))
+        self.assertEqual(items["P1"]["answers"][0]["said"], "A flaky test, in test_x; the build is green again.")
+
+    def test_a_message_linking_the_answers_balloon_closes_it_too(self):
+        rid = self.solo_room()
+        self.answered(rid)
+        self.send(rid, f"About this http://h/session?room={rid}&msg=sid-1:1 which test?", at=self.t0 + 10)
+        self.assertEqual(self.state(rid), {"P1": "followed", "P2": "open"})
+        # A link to another room's balloon, or to no answer, closes nothing.
+        self.send(rid, "And http://h/session?room=room-other&msg=sid-1:1 is elsewhere", at=self.t0 + 11)
+        self.assertEqual(self.state(rid)["P3"], "open")
+        self.assertNotIn("replyTo", self.point(rid, "P3"))
+
+    def test_the_chain_goes_on_and_a_thumbs_up_still_works(self):
+        rid = self.solo_room()
+        self.answered(rid)
+        out, _ = self.send(rid, "## Review comments (1)\n\n**1.** > A flaky test, in test_x\n\nWhich test exactly?",
+                           at=self.t0 + 10)
+        self.add("sid-1", turn("user", out, self.t0 + 11), turn("assistant", "Re P2: test_login, fixed in #9.", self.t0 + 12))
+        self.assertEqual(self.state(rid), {"P1": "followed", "P2": "delivered"})
+        self.send(rid, "## Review comments (1)\n\n**1.** > test_login, fixed in #9\n\nIs #9 merged?", at=self.t0 + 20)
+        self.assertEqual(self.state(rid), {"P1": "followed", "P2": "followed", "P3": "open"})
+        self.assertEqual(self.point(rid, "P3")["replyTo"], "P2")
+        # The thread is sent whole: P1 is closed, but P3 waits and P1 is its root.
+        self.assertEqual(sorted(i["id"] for i in points.view(rid)["items"]), ["P1", "P2", "P3"])
+        # A thumbs up closes a followed point as before; Reopen opens it again.
+        self.assertEqual(points.act(rid, "P1", "ack")["state"], "acked")
+        self.assertEqual(points.act(rid, "P2", "reopen")["state"], "open")
+        self.assertIsNone(points.act(rid, "P2", "drop", now=self.t0 + 30) and None)
+
+    def test_a_late_answer_does_not_reopen_a_followed_point(self):
+        rid = self.solo_room()
+        self.answered(rid)
+        out, _ = self.send(rid, "## Review comments (1)\n\n**1.** > A flaky test, in test_x\n\nWhich test exactly?",
+                           at=self.t0 + 10)
+        self.add("sid-1", turn("user", out, self.t0 + 11), turn("assistant", "Re P1: also, the CI cache was stale.", self.t0 + 12))
+        self.assertEqual(self.state(rid)["P1"], "followed")
+        self.assertEqual(len(self.point(rid, "P1")["answers"]), 2)
+
+    def test_an_acknowledged_point_quoted_later_only_gets_the_link(self):
+        rid = self.solo_room()
+        self.answered(rid)
+        points.act(rid, "P1", "ack")
+        self.send(rid, "## Review comments (1)\n\n**1.** > the build is green again\n\nStill green?", at=self.t0 + 10)
+        self.assertEqual(self.state(rid), {"P1": "acked", "P2": "open"})
+        self.assertEqual((self.point(rid, "P1")["followedBy"], self.point(rid, "P2")["replyTo"]), ("P2", "P1"))
+
+    def test_a_short_or_unknown_quote_closes_nothing(self):
+        rid = self.solo_room()
+        self.answered(rid)
+        self.send(rid, "## Review comments (1)\n\n**1.** > green\n\nnice", at=self.t0 + 10)
+        self.send(rid, "> Something nobody here ever wrote down\n\nwhat about this?", at=self.t0 + 11)
+        self.assertEqual(self.state(rid), {"P1": "delivered", "P2": "open", "P3": "open"})
+
+    def test_the_backlog_is_derived_once(self):
+        rid = self.solo_room()
+        self.answered(rid)
+        # A ledger written before follow-ups: the comment was a plain new point.
+        with mock.patch.object(points, "_follow_new"):
+            self.send(rid, "## Review comments (1)\n\n**1.** > A flaky test, in test_x\n\nWhich test exactly?", at=self.t0 + 10)
+        led = points.load(rid)
+        self.assertEqual(led["points"][0]["state"], "delivered")
+        led["derived"] = 0
+        for p in led["points"]:
+            for a in p["answers"]:
+                a.pop("said", None)
+        points._save(rid, led)
+        points._SYNCED.clear()
+        led = points.sync(rid, force=True)
+        self.assertEqual(led["derived"], points.DERIVED)
+        self.assertEqual(self.state(rid), {"P1": "followed", "P2": "open"})
+        p1 = self.point(rid, "P1")
+        self.assertEqual((p1["followedBy"], p1["answers"][0]["said"][:13]), ("P2", "A flaky test,"))
+        # A fresh ledger needs no derivation.
+        self.assertEqual(points._empty("room-x")["derived"], points.DERIVED)
+
+    def shared(self):
+        """Two points answered by one balloon (sid-1:2): "Re P1: ... Re P2: ..."."""
+        rid = self.solo_room()
+        out1, _ = self.send(rid, "Why red?", at=self.t0)
+        out2, _ = self.send(rid, "And the cache?", at=self.t0 + 1)
+        self.add("sid-1", turn("user", out1, self.t0 + 1), turn("user", out2, self.t0 + 2),
+                 turn("assistant", "Re P1: A flaky test, in test_x; the build is green again.\n\n"
+                                   "Re P2: The CI cache was stale; it is purged nightly now.", self.t0 + 3))
+        self.assertEqual(self.state(rid), {"P1": "delivered", "P2": "delivered"})
+        return rid
+
+    def test_a_comment_closes_the_point_whose_paragraph_it_quotes(self):
+        rid = self.shared()
+        out, ids = self.send(rid, "## Review comments (1)\n\n**1.** > The CI cache was stale\n\nPurged by whom?",
+                             at=self.t0 + 10)
+        self.assertEqual(ids, ["P3"])
+        self.assertEqual(self.state(rid), {"P1": "delivered", "P2": "followed", "P3": "open"})
+        self.assertEqual((self.point(rid, "P2")["followedBy"], self.point(rid, "P3")["replyTo"]), ("P3", "P2"))
+        self.assertNotIn("followedBy", self.point(rid, "P1"))
+
+    def test_a_bare_link_to_a_shared_balloon_picks_the_point_named_else_the_newest(self):
+        rid = self.shared()
+        self.send(rid, f"On P1 in http://h/session?room={rid}&msg=sid-1:2 - which test?", at=self.t0 + 10)
+        self.assertEqual(self.state(rid), {"P1": "followed", "P2": "delivered", "P3": "open"})
+        self.assertEqual(self.point(rid, "P3")["replyTo"], "P1")
+        self.send(rid, f"And http://h/session?room={rid}&msg=sid-1:2 - nightly when?", at=self.t0 + 11)
+        self.assertEqual(self.state(rid), {"P1": "followed", "P2": "followed", "P3": "open", "P4": "open"})
+        self.assertEqual(self.point(rid, "P4")["replyTo"], "P2")
+
+    def test_re_pn_from_the_person_reopens_a_followed_point(self):
+        rid = self.solo_room()
+        self.answered(rid)
+        self.send(rid, "## Review comments (1)\n\n**1.** > A flaky test, in test_x\n\nWhich test exactly?",
+                  at=self.t0 + 10)
+        self.assertEqual(self.state(rid)["P1"], "followed")
+        out, ids = self.send(rid, "Re P1: and the cache?", at=self.t0 + 20)
+        self.assertEqual(ids, ["P1"])
+        self.assertEqual(self.state(rid)["P1"], "open")
+        self.assertEqual(self.point(rid, "P1")["reopenedAt"], self.t0 + 20)
+
+    def test_a_comment_on_a_plan_only_links_until_it_is_delivered(self):
+        rid = self.solo_room()
+        out, _ = self.send(rid, "Why red?", at=self.t0)
+        self.add("sid-1", turn("user", out, self.t0 + 1),
+                 turn("assistant", "Re P1 (planned #104): a task will look at the flaky test.", self.t0 + 2))
+        self.assertEqual(self.state(rid), {"P1": "planned"})
+        out, _ = self.send(rid, "## Review comments (1)\n\n**1.** > a task will look at the flaky test\n\nWhich task?",
+                           at=self.t0 + 10)
+        self.assertEqual(self.state(rid), {"P1": "planned", "P2": "open"})
+        self.assertEqual((self.point(rid, "P1")["followedBy"], self.point(rid, "P2")["replyTo"]), ("P2", "P1"))
+        self.add("sid-1", turn("user", out, self.t0 + 11), turn("assistant", "Re P1: it is live.", self.t0 + 12))
+        self.assertEqual(self.state(rid)["P1"], "delivered")
+
+    def test_a_thumbs_up_on_the_answer_acknowledges_a_followed_point(self):
+        rid = self.solo_room()
+        self.answered(rid)
+        self.send(rid, "## Review comments (1)\n\n**1.** > A flaky test, in test_x\n\nWhich test exactly?",
+                  at=self.t0 + 10)
+        self.assertEqual(self.state(rid)["P1"], "followed")
+        self.assertTrue(points.approve(rid, "sid-1:1", now=self.t0 + 20))
+        self.assertEqual(self.state(rid)["P1"], "acked")
+
+    def test_the_view_carries_the_words_a_comment_quoted(self):
+        rid = self.solo_room()
+        self.answered(rid)
+        self.send(rid, "## Review comments (1)\n\n**1.** > A *flaky* test, in `test_x`\n\nWhich test exactly?",
+                  at=self.t0 + 10)
+        items = {i["id"]: i for i in points.view(rid)["items"]}
+        self.assertEqual(items["P2"]["quote"], "A *flaky* test, in `test_x`")
+        self.assertNotIn("quote", items["P1"])
+
+    def test_the_backlog_reads_the_answers_words_before_it_links(self):
+        # Two points share a balloon; the ledger predates follow-ups and its
+        # answers have no words; the transcripts are not re-read (a rotated
+        # session). The comment quotes P1's paragraph: the link goes to P1,
+        # not to the newest point of the balloon.
+        rid = self.shared()
+        with mock.patch.object(points, "_follow_new"):
+            self.send(rid, "## Review comments (1)\n\n**1.** > A flaky test, in test_x\n\nWhich test exactly?",
+                      at=self.t0 + 10)
+        led = points.load(rid)
+        led["derived"] = 0
+        for p in led["points"]:
+            for a in p["answers"]:
+                a.pop("said", None)
+        points._save(rid, led)
+        points._SYNCED.clear()
+        with mock.patch.object(points, "_scan_turns", return_value=False):
+            led = points.sync(rid, force=True)
+        self.assertEqual(led["derived"], points.DERIVED)
+        self.assertEqual(self.state(rid), {"P1": "followed", "P2": "delivered", "P3": "open"})
+        self.assertEqual((self.point(rid, "P1")["followedBy"], self.point(rid, "P3")["replyTo"]), ("P3", "P1"))
+        self.assertEqual(self.point(rid, "P2")["answers"][0]["said"], "Re P2: The CI cache was stale; it is purged nightly now.")
+
+    def test_the_backlog_reads_each_session_once(self):
+        # The derivation is handed every session's balloons, read once
+        # (outside the lock, by sync): no link is resolved on its own.
+        rid = self.shared()
+        with mock.patch.object(points, "_follow_new"):
+            self.send(rid, "## Review comments (1)\n\n**1.** > A flaky test, in test_x\n\nWhich test exactly?",
+                      at=self.t0 + 10)
+        led = points.load(rid)
+        led["derived"] = 0
+        for p in led["points"]:
+            for a in p["answers"]:
+                a.pop("said", None)
+        points._save(rid, led)
+        points._SYNCED.clear()
+        points._TEXTS.clear()
+        reads = dashboard.read_session_turns.call_count
+        with mock.patch.object(points, "_scan_turns", return_value=False), \
+                mock.patch.object(dashboard, "resolve_message_ref", side_effect=AssertionError("resolved alone")):
+            led = points.sync(rid, force=True)
+        self.assertEqual(dashboard.read_session_turns.call_count - reads, 1)
+        self.assertEqual(led["derived"], points.DERIVED)
+        self.assertEqual(self.point(rid, "P3")["replyTo"], "P1")
+        self.assertEqual(sum(1 for p in led["points"] for a in p["answers"] if a.get("said")), 2)
+
+    def test_a_session_that_cannot_be_read_is_logged_not_swallowed(self):
+        rid = self.solo_room()
+        self.answered(rid)
+        led = points.load(rid)
+        led["derived"] = 0
+        led["points"][0]["answers"][0].pop("said", None)
+        points._save(rid, led)
+        points._SYNCED.clear()
+        points._TEXTS.clear()
+        with mock.patch.object(points, "_scan_turns", return_value=False), \
+                mock.patch.object(dashboard, "read_session_turns", side_effect=OSError("gone")):
+            led = points.sync(rid, force=True)
+        self.assertEqual(led["derived"], points.DERIVED)
+        self.assertNotIn("said", led["points"][0]["answers"][0])
+        self.assertTrue(any("sid-1 not read" in str(c.args[0]) for c in points._log.call_args_list), points._log.call_args_list)
+
+    def test_a_quote_naming_nothing_reads_a_session_once_and_remembers_it(self):
+        rid = self.solo_room()
+        self.answered(rid)
+        for i, (q, a) in enumerate([("Which test?", "test_login."), ("Merged?", "Yes, in #9.")]):
+            out, _ = self.send(rid, q, at=self.t0 + 10 + i)
+            self.add("sid-1", turn("user", out, self.t0 + 11 + i), turn("assistant", a, self.t0 + 12 + i))
+        self.assertEqual(self.state(rid), {"P1": "delivered", "P2": "delivered", "P3": "delivered"})
+        reads = dashboard.read_session_turns.call_count
+        with mock.patch.object(dashboard, "resolve_message_ref", side_effect=AssertionError("resolved alone")):
+            # Three answers in one session: the quote scan reads it once ...
+            self.send(rid, "> Something nobody here ever wrote down\n\nwhat?", at=self.t0 + 20)
+            self.assertEqual(dashboard.read_session_turns.call_count - reads, 1)
+            # ... and not again while the transcript is unchanged ...
+            self.send(rid, "> Another thing nobody here ever wrote down\n\nwhat?", at=self.t0 + 21)
+            self.assertEqual(dashboard.read_session_turns.call_count - reads, 1)
+            # ... but once more after it grew (the send's scan of the new
+            # turns is a read of its own, as before).
+            self.add("sid-1", turn("assistant", "Also: the cache was stale.", self.t0 + 22))
+            self.send(rid, "> A third thing nobody here ever wrote down\n\nwhat?", at=self.t0 + 23)
+            self.assertEqual(dashboard.read_session_turns.call_count - reads, 3)
+        self.assertEqual(self.state(rid)["P4"], "open")
+        self.assertNotIn("replyTo", self.point(rid, "P4"))
+
+    def test_what_an_answer_says_to_a_point(self):
+        text = ("Hello.\n\nRe P3: it is live now.\n\nMore on it: reload the page.\n\nRe P4 (planned #9): on it.\n\n"
+                "```\nRe P3: not this\n```")
+        self.assertEqual(points.said(text, "P3"), "Re P3: it is live now. More on it: reload the page.")
+        self.assertEqual(points.said(text, "P4"), "Re P4 (planned #9): on it.")
+        self.assertEqual(points.said(text, "P5"), "Hello. Re P3: it is live now. More on it: reload the page. Re P4 (planned #9): on it.")
+        self.assertEqual(points.said("Yes, " + "word " * 100, "P1", "plain")[-1], "…")
+        # Markup goes (underscores too: the page's foldNorm does the same on the balloon's side).
+        self.assertEqual(points.quotes("**1.** > A *flaky* test\n> in `test_x`\n\nwhy?\n\n> short"), ["a flaky test in testx"])
+        self.assertEqual(points.quotes("```\n> not a quote at all here\n```"), [])
 
 
 if __name__ == "__main__":

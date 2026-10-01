@@ -588,7 +588,24 @@ Needs you.**
   whole text its tooltip), its age ("12m", patched in place, never a redraw), its state in words,
   "your message ↑" and "answer ↓" as links (`--link`), and its one click: **👍 Ack** for an answer,
   **Drop** for one still waiting. Answers to acknowledge first, then the waiting ones, oldest first.
-  An answer given by doing shows its summary under the row.
+  **The answer's own words show under the ask** (`.pt-said`, `--fg-muted`: the hub's `said`, the
+  `Re Pn:` paragraph of the answer, else its first words, else an answer by doing's summary), so
+  the ask reads with its answer without a jump (#146). A delivered ask has **Comment** beside its
+  👍: it puts a new ask in the box, linked to the answer; sent, the hub reads the link and closes the
+  ask as *followed up*. Nothing is posted by the click.
+- **A follow-up closes an ask** (`points.py`, #146, issue #3): a comment on a passage of an answer,
+  or a message linking or quoting one, makes the answered ask *followed up* (`followedBy`), the new
+  ask its child (`replyTo`), down the chain. No thumbs up is owed; Ack and Reopen still work. The
+  thread reads as quiet `.pt-thread` chips, "follow-up to P108 ↑" (linked to P108's answer) and
+  "followed up by P109 ↓" (linked to the follow-up); a followed-up ask is closed and not listed,
+  except as the root of a thread that still waits.
+- **A link lands on the passage, not the balloon** (`gotoMsg(mid, part)`, `partOf`): "answer ↓" and
+  "plan ↓" carry `re:P12` and mark the block starting "Re P12"; "your message ↑" carries `pt:P12`
+  and marks the numbered item holding that ask's chip; a quote (`q:…`) marks its words. Only when
+  the balloon has no such passage is the balloon itself marked. The mark is the landing mark
+  (`.landed`: the drop-target treatment, fading), on the passage. A link from an ask carries `&part=`
+  and can be copied as such; the balloon's own **Copy link** names the balloon. A comment on a
+  *plan* balloon only links the thread: the ask stays in progress until its delivery.
 - **The bar under a balloon** (`.pt-bar`, a hairline `--border` above it): on the person's balloon
   each point and where it stands ("P12 · waiting for an answer", "P12 · answered ↓" linked to the
   answer, "acknowledged", "dropped") with Drop or Reopen; on the agent's, "answers P12 ↑" linked to
@@ -602,8 +619,20 @@ Needs you.**
   question) *and* holds a recommendation; it is the one control that types, once, and becomes
   "approved".
 - **Never folded:** a balloon holding an open point or an unacknowledged answer is drawn in full
-  whatever would fold it (age, its task's row, Just us), and the catch-up line names "N answers to
-  your asks to acknowledge" first.
+  whatever would fold it (age, its task's row, a Team activity gap), and the catch-up line names
+  "N answers to your asks to acknowledge" first.
+- **Team activity** (#146): over a transcript the hub types into, the chat shows the person only
+  what is theirs (`forCeo`: their messages, the answers to them, a `Re Pn:` or `To <name>:` /
+  `For you:` paragraph wherever it is, a decision, a message to them, a PO-to-PO message naming
+  them). Every run of the rest, hub lines and the PO's notes on them alike, is **one row**
+  (`.msg-fold.gap`, the hub row's look: `--surface-sunken`, a 1px left rule, no colour): "Team
+  activity · 14 messages · 10:05–11:30 · 5 progress checks, 3 reports, 4 PO notes". A click opens
+  it in place (its row stays above, `aria-expanded`), as a task's group row does; a balloon link
+  into a closed gap opens it. The bar (`#chatbar`) says what is behind the lines ("… 86 team
+  messages behind 8 lines") and its one button, **Team activity** (`#team-all`, pressed =
+  `--selected-bg`), shows everything in place as before, per browser (`cd-chat-team`). It replaced
+  "Just us", which still drew ~600 rows between the CEO's ~105 balloons over three days (measured in
+  the #146 report). Never interleave hub rows between the person's balloons in the default view.
 - **Outside the chat:** the task card (`.cpts`, beside the cost), the PO's header and its list row say
   "2 to acknowledge · 1 open" in `--fg-muted` words, the tooltip in full. No lozenge: a card keeps
   its two.

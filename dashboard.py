@@ -2333,21 +2333,10 @@ def resolve_message_ref(room_id: str, msg_id: str) -> dict | None:
     sid, sep, n = msg_id.rpartition(":")
     if not sep or not sid or not (n.isdigit() or (n[:1] == "q" and n[1:].isdigit()))             or "/" in sid or "\\" in sid:
         return None
-    # Only a solo chat shows transcript turns, and only its own agent's sessions
-    # (the current one or one it was rotated from) are this room's: a link
-    # naming another session gets nothing, not that session's text.
-    agents_in = chatroom.agent_participants(room)
-    if room.get("mode") != "solo" and len(agents_in) != 1:
-        return None
-    owner = next((p for p in agents_in if p.get("sessionId") == sid
-                  or any(sid in (r.get("fromSessionId"), r.get("toSessionId")) for r in p.get("rotations") or [])),
-                 None)
+    owner = _solo_owner(room, sid)
     if owner is None:
         return None
-    raw = read_session_turns(sid)
-    if not raw:
-        return None
-    t = dict(page_turn_ids(sid, raw)).get(msg_id)
+    t = (solo_turns(room, sid) or {}).get(msg_id)
     if t is None:
         return None
     frm = chatroom.HUMAN_IDENTITY if t.get("role") == "user" else (owner.get("identity") or "agent")
@@ -2356,6 +2345,35 @@ def resolve_message_ref(room_id: str, msg_id: str) -> dict | None:
         text = points.strip_point_lines(message_refs.strip_message_refs(text))
     return {**out, "from": frm, "who": who(frm), "ts": _turn_epoch(t.get("timestamp")),
             "text": text, "where": f"the transcript of session {sid}"}
+
+
+def _solo_owner(room: dict, sid: str) -> dict | None:
+    """The agent of a solo chat whose session ``sid`` is (the current one or
+    one it was rotated from), or None. Only a solo chat shows transcript
+    turns, and only its own agent's sessions are this room's: a link naming
+    another session gets nothing, not that session's text."""
+    if not sid or "/" in sid or "\\" in sid:
+        return None
+    agents_in = chatroom.agent_participants(room)
+    if room.get("mode") != "solo" and len(agents_in) != 1:
+        return None
+    return next((p for p in agents_in if p.get("sessionId") == sid
+                 or any(sid in (r.get("fromSessionId"), r.get("toSessionId")) for r in p.get("rotations") or [])),
+                None)
+
+
+def solo_turns(room: dict, sid: str) -> dict[str, dict] | None:
+    """A solo chat's turns by the id their balloon has on the chat page
+    (``<sid>:<n>``), for one of its own agent's sessions, or None. One read
+    of the transcript serves every balloon of the session: a pass over many
+    (the points ledger's follow-ups) keeps the map instead of resolving each
+    link on its own."""
+    if _solo_owner(room, sid) is None:
+        return None
+    raw = read_session_turns(sid)
+    if not raw:
+        return None
+    return dict(page_turn_ids(sid, raw))
 
 
 _CLAUDE_IMAGE_SOURCE = re.compile(r"^\[Image: source: (.+)\]$")

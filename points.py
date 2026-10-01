@@ -17,6 +17,12 @@ is its own point). It gets an id numbered per room, ``P12``, and a state:
   question answered), the person has not acknowledged it. A ledger written
   before the stages says ``answered`` for this, and is read so;
 * ``acked``: they acknowledged it (thumbs up, Ack, or a bare "thanks");
+* ``followed``: a later point of theirs follows it up (``followedBy``): a
+  comment on a passage of its answer, or a message linking or quoting that
+  answer. The follow-up is the point's child (``replyTo`` on it), the chain
+  goes on the same way, and no thumbs up is owed (#146, the CEO's P107 and
+  issue #3: he was pressing thumbs up only to clear what he had already
+  followed up). A thumbs up still closes it the same way.
 * ``dropped``: they dismissed it themselves;
 * ``split``: a PO split it into sub-points (``P12a``, ``P12b``), which carry it.
 
@@ -96,6 +102,11 @@ TEXT_MAX = 2000                 # a point's words kept
 _WAKE_MAX = 900                 # a typed line: a TUI takes one line
 _PROMPT_MAX = 2500              # the open points in a first prompt (a command line)
 _WORDS = 60                     # a point's first words in a line
+_QUOTE_MIN = 12                 # a quoted passage this long (normalised) names the balloon it is from
+_SAID_MAX = 600                 # of an answer, the words a list shows: its "Re Pn:" paragraph(s)
+_SAID_PLAIN = 300               # … or, for a first reply, its first words
+_FOLLOW_SCAN = 60               # answers looked at (newest first) for a new point's quote
+DERIVED = 1                     # the follow-up links of an older ledger are derived once (led["derived"])
 
 _LOCK = threading.RLock()
 _CACHE: dict[str, tuple] = {}   # room id -> (mtime, ledger): what is on disk
@@ -277,6 +288,75 @@ def _first_words(text: str, n: int = _WORDS) -> str:
     return t if len(t) <= n else t[:n - 1].rstrip() + "…"
 
 
+_MD_NOISE = re.compile(r"[*_`#>|~\\\[\]]")
+
+
+def norm_text(text: str) -> str:
+    """Loose text for finding a quoted passage in a balloon's markdown: no
+    markup characters, one space between words, lower case (the chat page's
+    foldNorm, for the same job)."""
+    return " ".join(_MD_NOISE.sub("", text or "").split()).lower()
+
+
+def quotes(text: str) -> list[str]:
+    """The passages a point quotes, normalised, those long enough to name a
+    balloon (:func:`raw_quotes` for the words as written)."""
+    return [q for q in (norm_text(x) for x in raw_quotes(text)) if len(q) >= _QUOTE_MIN]
+
+
+def raw_quotes(text: str) -> list[str]:
+    """The passages a point quotes, as written: each run of ``> `` lines (a
+    review comment starts ``**1.** > the passage``; the person may quote by
+    hand), outside code fences."""
+    out, cur, fence = [], [], None
+    for ln in strip_point_lines(text).split("\n"):
+        f = _FENCE_ANY.match(ln)
+        if fence:
+            if f and f.group(1)[0] == fence[0] and len(f.group(1)) >= len(fence) and not f.group(2).strip():
+                fence = None
+            continue
+        if f:
+            fence = f.group(1)
+            continue
+        m = re.match(r"^\s*(?:\*\*\d+\.\*\*\s*)?>\s?(.*)$", ln)
+        if m:
+            cur.append(m.group(1))
+            continue
+        if cur:
+            out.append(" ".join(cur))
+            cur = []
+    if cur:
+        out.append(" ".join(cur))
+    return [" ".join(x.split()) for x in out if x.strip()]
+
+
+def balloon_refs(text: str, room_id: str) -> list[str]:
+    """The balloons of this room the text links to, by message id, in order."""
+    return [mid for _url, room, mid in message_refs.find_message_refs(text or "") if room == room_id]
+
+
+def said(text: str, pid: str, how: str = "re") -> str:
+    """What an answer says to a point, for a list that shows the point with
+    its answer: the paragraph starting ``Re Pn:`` and those after it up to the
+    next ``Re Pm:`` (``how`` "re"), else the reply's first words."""
+    prose = _prose(text).strip()
+    if how == "re":
+        paras = [p.strip() for p in re.split(r"\n[ \t]*\n", prose) if p.strip()]
+        heads = [(_RE_HEAD.match(p), p) for p in paras]
+        start = next((i for i, (m, _p) in enumerate(heads)
+                      if m and _norm_id(pid) in [_norm_id(x) for x in _ID_IN.findall(m.group(1))]), None)
+        if start is not None:
+            take = [paras[start]]
+            for m, p in heads[start + 1:]:
+                if m:
+                    break
+                take.append(p)
+            out = " ".join("\n\n".join(take).split())
+            return out if len(out) <= _SAID_MAX else out[:_SAID_MAX - 1].rstrip() + "…"
+    out = " ".join(prose.split())
+    return out if len(out) <= _SAID_PLAIN else out[:_SAID_PLAIN - 1].rstrip() + "…"
+
+
 def _deliverable(text: str, ids: list[str]) -> str:
     """The message as typed to the agent: a ``[point Pn]`` line under it, or
     under each item of a review-comments or points message (under the item's
@@ -315,7 +395,7 @@ def _path(room_id: str) -> Path:
 
 def _empty(room_id: str) -> dict:
     return {"version": 1, "roomId": room_id, "next": 1, "points": [],
-            "approvals": {}, "lastPersonAt": 0.0}
+            "approvals": {}, "lastPersonAt": 0.0, "derived": DERIVED}
 
 
 def _valid(d) -> bool:
@@ -326,6 +406,7 @@ def _clean(led: dict, room_id: str) -> dict:
     """Whatever is not a point is dropped, and the counter never goes back
     below a number in use."""
     out = _empty(room_id)
+    out["derived"] = led.get("derived") if isinstance(led.get("derived"), int) else 0
     if isinstance(led.get("approvals"), dict):
         out["approvals"] = led["approvals"]
     try:
@@ -503,12 +584,14 @@ def _last_at(p: dict, plan: bool) -> float:
 
 
 def _answer(p: dict, key: str, mid: str, at: float, how: str, summary: str = "",
-            plan: bool = False, task: str = "") -> bool:
+            plan: bool = False, task: str = "", words: str = "") -> bool:
     """Link an answer, or a plan. A new answer delivers an open or planned
     point; a new plan moves an open point to planned, and a delivered one back
     to planned when it is newer than the delivery (more work after all), and
     links the task it names. One already linked only follows its run to its
-    latest balloon (and takes a task named since)."""
+    latest balloon (and takes a task named since). ``words``: what it says to
+    the point (:func:`said`), kept as ``said`` for the lists. A point already
+    followed up stays so: its follow-up, not a late answer, closed it."""
     for a in p["answers"]:
         if a.get("key") == key:
             moved = False
@@ -518,24 +601,243 @@ def _answer(p: dict, key: str, mid: str, at: float, how: str, summary: str = "",
             if a.get("mid") != mid and mid:
                 a["mid"], a["at"] = mid, at
                 moved = True
+            if words and a.get("said") != words:
+                a["said"] = words
+                moved = True
             return moved
     now = at or time.time()
     st = p.get("state")
+    extra = {**({"summary": summary[:300]} if summary else {}), **({"said": words} if words else {})}
     if plan:
         newer = (at or 0) >= _last_at(p, False)
         p["answers"].append({"key": key, "mid": mid, "at": at, "how": how, "kind": "plan",
-                             **({"task": task} if task else {}),
-                             **({"summary": summary[:300]} if summary else {})})
+                             **({"task": task} if task else {}), **extra})
         if task:
             p["task"] = task
         if st == "open" or (st == "delivered" and newer):
             _set_state(p, "planned", now)
         return True
-    p["answers"].append({"key": key, "mid": mid, "at": at, "how": how,
-                         **({"summary": summary[:300]} if summary else {})})
+    p["answers"].append({"key": key, "mid": mid, "at": at, "how": how, **extra})
     if st == "open" or (st == "planned" and (at or 0) >= _last_at(p, True)):
         _set_state(p, "delivered", now)
     return True
+
+
+# ---------------------------------------------------------------------------
+# A follow-up closes the point it follows
+# ---------------------------------------------------------------------------
+
+_TEXTS: dict[str, tuple[list, dict]] = {}     # session -> (its stat, balloon id -> text)
+_TEXTS_MAX = 32                               # sessions kept: a PO chat rotates often, its old ones never change
+
+
+def _session_texts(room: dict, sid: str) -> dict[str, str] | None:
+    """A solo chat's balloon texts by id for one of its own sessions, or
+    None. Kept while the transcript is unchanged (its stat): a rotated
+    session is read once, not on every send that scans its answers."""
+    st = _session_stat(sid)
+    hit = _TEXTS.get(sid)
+    if hit is not None and st is not None and hit[0] == st:
+        return hit[1]
+    turns = _d.solo_turns(room, sid)
+    if turns is None:
+        return None
+    texts = {}
+    for mid, t in turns.items():
+        text = t.get("text") or ""
+        if t.get("role") == "user":
+            text = strip_point_lines(_d.message_refs.strip_message_refs(text))
+        texts[mid] = text
+    if st is not None:
+        _TEXTS.pop(sid, None)
+        _TEXTS[sid] = (st, texts)
+        while len(_TEXTS) > _TEXTS_MAX:
+            _TEXTS.pop(next(iter(_TEXTS)))
+    return texts
+
+
+def _balloon_text(room_id: str, mid: str, cache: dict) -> str | None:
+    """A balloon's text as its link shows it, or None when the hub cannot
+    find it. A solo chat's balloon is a transcript turn: its session is read
+    once (:func:`_session_texts`, held in ``cache`` under ``("sid", sid)``
+    for the pass) and serves every balloon of that session; a room's message
+    is resolved on its own. The pass of a send reads only the sessions its
+    quote scan reaches; the one-off derivation is handed every session,
+    read outside the lock."""
+    key = ("text", mid)
+    if key in cache:
+        return cache[key]
+    text = None
+    sid, sep, n = mid.rpartition(":")
+    if sep and sid and (n.isdigit() or (n[:1] == "q" and n[1:].isdigit())):
+        if ("room",) not in cache:
+            cache[("room",)] = _d.chatroom.get_room(room_id)
+        room = cache[("room",)]
+        if ("sid", sid) not in cache:
+            cache[("sid", sid)] = _session_texts(room, sid) if room else None
+        text = (cache[("sid", sid)] or {}).get(mid)
+    else:
+        ref = _d.resolve_message_ref(room_id, mid)
+        text = (ref.get("text") or "") if ref else None
+    cache[key] = text
+    return text
+
+
+def _balloon_words(room_id: str, mid: str, cache: dict) -> str:
+    """A balloon's text, normalised, read once per pass ("" when the hub
+    cannot find it)."""
+    if mid in cache:
+        return cache[mid]
+    try:
+        text = _balloon_text(room_id, mid, cache)
+    except Exception as e:      # noqa: BLE001 — a balloon that cannot be read names nothing
+        _log(f"{room_id}: balloon {mid} not read: {e!r}")
+        text = None
+    cache[mid] = norm_text(text or "")
+    return cache[mid]
+
+
+def _answer_mids(p: dict) -> list[tuple[float, str, dict]]:
+    """(when, balloon, answer) of each answer and plan of a point that has a balloon."""
+    return [(float(a.get("at") or 0), a["mid"], a) for a in p.get("answers") or [] if a.get("mid")]
+
+
+_PID_RE = re.compile(r"\bP(\d{1,5}[a-z]?)\b", re.I)
+
+
+def _named_ids(text: str) -> set[str]:
+    """The point ids a text names (``P45``), outside its quoted passages."""
+    body = "\n".join(ln for ln in strip_point_lines(text).split("\n") if not re.match(r"^\s*(?:\*\*\d+\.\*\*\s*)?>", ln))
+    return {_norm_id("P" + m) for m in _PID_RE.findall(body)}
+
+
+def _ancestors(pts: dict, p: dict) -> set[str]:
+    out, cur = set(), p
+    while cur and cur.get("replyTo") and cur["replyTo"] not in out:
+        out.add(cur["replyTo"])
+        cur = pts.get(cur["replyTo"])
+    return out
+
+
+def follow_parent(led: dict, p: dict, room_id: str, cache: dict | None = None,
+                  scan: int = _FOLLOW_SCAN) -> dict | None:
+    """The point ``p`` follows up, or None: an older point whose answer (or
+    plan) balloon ``p`` links to, else one whose answer holds a passage ``p``
+    quotes. A link beats a quote; among links, and among quotes, the newest
+    balloon wins. One balloon may answer several points ("Re P1: … Re P2:
+    …"): of those, the point whose own words (``said``) ``p`` quotes, else
+    the one ``p`` names (``P2``), else the newest. A point never follows
+    itself, its own descendants, a point of the same message, or one made
+    after it."""
+    cache = {} if cache is None else cache
+    pts = _live(led)
+    text = p.get("text") or ""
+    refs = balloon_refs(text, room_id)
+    qs = quotes(text)
+    if not refs and not qs:
+        return None
+    others = [o for o in led["points"] if o is not p and o.get("mid") != p.get("mid")
+              and o["createdAt"] <= p["createdAt"] and o["state"] != "split"
+              and o["id"] not in _ancestors(pts, p) and p["id"] not in _ancestors(pts, o)]
+    # Newest balloon first; of one balloon, the newest point first.
+    answers = sorted(((at, mid, o, a) for o in others for at, mid, a in _answer_mids(o)),
+                     key=lambda x: (-x[0], -float(x[2]["createdAt"]), x[2]["id"]))
+    said_has = lambda a: bool(qs) and any(q in norm_text(a.get("said") or "") for q in qs)   # noqa: E731
+    named = _named_ids(text)
+    if refs:
+        linked = [(mid, o, a) for _at, mid, o, a in answers if mid in refs]
+        if linked:
+            first = linked[0][0]
+            same = [(o, a) for mid, o, a in linked if mid == first]
+            for o, a in same:
+                if said_has(a):
+                    return o
+            for o, _a in same:
+                if o["id"] in named:
+                    return o
+            return same[0][0]
+    if qs:
+        seen = answers[:scan]
+        for _at, _mid, o, a in seen:
+            if said_has(a):
+                return o
+        for _at, mid, o, _a in seen:
+            words = _balloon_words(room_id, mid, cache)
+            if words and any(q in words for q in qs):
+                return o
+    return None
+
+
+def _link_follow(parent: dict, child: dict, now: float) -> bool:
+    """``child`` follows up ``parent``: the parent is handled (closed as
+    ``followed`` while it was waiting for the person's check; one in
+    progress stays so, its delivery still to come, and an acknowledged or
+    dropped one only gets the link), the child carries ``replyTo``."""
+    if child.get("replyTo") == parent["id"]:
+        return False
+    parent.setdefault("followedBy", child["id"])     # the first follow-up; later ones only point back
+    child["replyTo"] = parent["id"]
+    if parent["state"] == "delivered":
+        _set_state(parent, "followed", now)
+        parent["followedAt"] = now
+    return True
+
+
+def _follow_new(led: dict, made: list[dict], room_id: str, now: float) -> None:
+    """Each point just made follows up what it links to or quotes."""
+    cache: dict = {}
+    for p in made:
+        try:
+            parent = follow_parent(led, p, room_id, cache)
+        except Exception as e:  # noqa: BLE001 — the point is made anyway
+            _log(f"{room_id}: follow-up of {p['id']} not read: {e!r}")
+            parent = None
+        if parent is not None:
+            _link_follow(parent, p, now)
+
+
+def warm_balloons(room_id: str, room: dict, led: dict) -> dict:
+    """The reading of the one-off derivation, done ahead of it: every session
+    of the room read once, as the cache :func:`derive_follow_ups` takes.
+    Called before the lock, so a long backlog does not hold up sends."""
+    cache: dict = {("room",): room}
+    for sid in _session_ids(room, led):
+        try:
+            cache[("sid", sid)] = _session_texts(room, sid)
+        except Exception as e:  # noqa: BLE001 — that session's balloons name nothing
+            _log(f"{room_id}: session {sid} not read: {e!r}")
+            cache[("sid", sid)] = None
+    return cache
+
+
+def derive_follow_ups(led: dict, room_id: str, cache: dict | None = None) -> bool:
+    """An older ledger, once: the words of every answer that has none, then
+    every point's follow-up link where it can be derived (a later point
+    quoting or linking an answer). The words come first: a link is kept for
+    good, and which point of a shared balloon a quote follows is read from
+    them. ``cache`` is :func:`warm_balloons`'s reading, when the caller did
+    it ahead. Returns whether anything changed."""
+    changed = False
+    cache = {} if cache is None else cache
+    for p in led["points"]:
+        for a in p.get("answers") or []:
+            if a.get("said") or not a.get("mid"):
+                continue
+            try:
+                text = _balloon_text(room_id, a["mid"], cache)
+            except Exception as e:  # noqa: BLE001 — that answer keeps no words
+                _log(f"{room_id}: answer {a['mid']} of {p['id']} not read: {e!r}")
+                text = None
+            if text:
+                a["said"] = said(text, p["id"], "re" if a.get("how") == "re" else "plain")
+                changed = True
+    for p in sorted(led["points"], key=lambda x: (x["createdAt"], x["id"])):
+        if p.get("replyTo") or p["state"] == "split":
+            continue
+        parent = follow_parent(led, p, room_id, cache, scan=10 ** 6)
+        if parent is not None:
+            changed |= _link_follow(parent, p, float(p["createdAt"]))
+    return changed
 
 
 def _see_balloon(p: dict, mid: str, sid: str = "") -> bool:
@@ -597,7 +899,7 @@ def take(room: dict, text: str, to: str = "", key: str = "", now: float | None =
                 # What this send changed, for discard() when it is refused
                 # or dropped: one entry per send, newest last.
                 u = {"key": key, "at": now, **{k: p.get(k) for k in _UNDO_FIELDS}}
-                if p["state"] in ("planned", "delivered", "acked", "dropped"):
+                if p["state"] in ("planned", "delivered", "acked", "dropped", "followed"):
                     _set_state(p, "open", now)
                     p["reopenedAt"] = now
                 p["followKey"] = key or p.get("followKey", "")
@@ -623,6 +925,9 @@ def take(room: dict, text: str, to: str = "", key: str = "", now: float | None =
         if split and _REVIEW_HEAD.match(body):
             for p in made:
                 p["comment"] = True
+        # A comment on an answer, or a message linking or quoting one, follows
+        # up the point it answered: that point is handled, no thumbs up owed.
+        _follow_new(led, made, rid, now)
         led["lastPersonAt"] = now
         _save(rid, led)
         ids = [p["id"] for p in made]
@@ -743,16 +1048,16 @@ def _scan_turns(led: dict, sid: str, turns: list[dict]) -> bool:
                 implicit, run = found[0], mid
             continue
         marks = re_marks(text)
-        said = [i for i in marks if i in pts and (not ts or ts >= pts[i]["createdAt"] - SLACK_S)]
-        for i in said:
-            changed |= _answer(pts[i], mid, mid, ts, "re", **marks[i])
+        told = [i for i in marks if i in pts and (not ts or ts >= pts[i]["createdAt"] - SLACK_S)]
+        for i in told:
+            changed |= _answer(pts[i], mid, mid, ts, "re", words=said(text, i), **marks[i])
             seen.add((i, mid))
-        if implicit and implicit not in said:
+        if implicit and implicit not in told:
             if t.get("interim"):
                 continue        # written between two tool calls: still working
-            changed |= _answer(pts[implicit], "after:" + run, mid, ts, "implicit")
+            changed |= _answer(pts[implicit], "after:" + run, mid, ts, "implicit", words=said(text, implicit, "plain"))
             seen.add((implicit, "after:" + run))
-        elif implicit in said:
+        elif implicit in told:
             implicit = None
     # The whole session was read: an answer linked in it before that it does
     # not hold now (its turns were counted otherwise then) goes. The state
@@ -809,12 +1114,12 @@ def _scan_messages(led: dict, room: dict) -> bool:
             implicit = None             # the hub, another task's report: not a reply
             continue
         marks = re_marks(text)
-        said = [i for i in marks if i in pts and ts >= pts[i]["createdAt"] - SLACK_S]
-        for i in said:
-            changed |= _answer(pts[i], mid, mid, ts, "re", **marks[i])
+        told = [i for i in marks if i in pts and ts >= pts[i]["createdAt"] - SLACK_S]
+        for i in told:
+            changed |= _answer(pts[i], mid, mid, ts, "re", words=said(text, i), **marks[i])
         if not implicit:
             continue
-        if implicit in said:
+        if implicit in told:
             implicit = None
             continue
         if m.get("kind") in ("report", "notice"):
@@ -826,7 +1131,7 @@ def _scan_messages(led: dict, room: dict) -> bool:
             implicit = None             # it may answer what the hub typed: only Re Pn:
             continue
         if frm == pts[implicit].get("owner") and to in ("user", "", "all", "everyone", "*"):
-            changed |= _answer(pts[implicit], "after:" + ukey, mid, ts, "implicit")
+            changed |= _answer(pts[implicit], "after:" + ukey, mid, ts, "implicit", words=said(text, implicit, "plain"))
             implicit = None
     return changed
 
@@ -906,6 +1211,9 @@ def sync(room_id: str, force: bool = False, room: dict | None = None) -> dict:
         if adopt:
             sid = (next(iter(_agents(room)), {}).get("sessionId") or "").strip()
             pre = _d.read_session_turns(sid) if sid else None
+    warm = None
+    if led.get("derived") != DERIVED and led["points"]:
+        warm = warm_balloons(room_id, room, led)     # the one-off derivation's reading, outside the lock too
     with _LOCK:
         led = load(room_id)
         changed = False
@@ -928,6 +1236,15 @@ def sync(room_id: str, force: bool = False, room: dict | None = None) -> dict:
         if _SCANNED.get((room_id, "~room")) != mark:
             changed |= _scan_messages(led, room)
             _SCANNED[(room_id, "~room")] = mark
+        if led.get("derived") != DERIVED and led["points"]:
+            # A ledger from before follow-ups: the links it holds the words
+            # for, once (the backlog the CEO cleared by hand until now).
+            try:
+                derive_follow_ups(led, room_id, warm)
+            except Exception as e:  # noqa: BLE001 — the ledger stands as it is
+                _log(f"{room_id}: follow-ups not derived: {e!r}")
+            led["derived"] = DERIVED
+            changed = True
         if changed:
             _save(room_id, led)
         return led
@@ -954,12 +1271,12 @@ def act(room_id: str, pid: str, action: str, now: float | None = None) -> dict |
         if p is None:
             return None
         st = p["state"]
-        if action == "ack" and st in ("open", "delivered"):
+        if action == "ack" and st in ("open", "delivered", "followed"):
             _set_state(p, "acked", now)
             p["ackedBy"] = "click"
         elif action == "drop" and st in LIVE:
             _set_state(p, "dropped", now)
-        elif action == "reopen" and st in ("acked", "dropped"):
+        elif action == "reopen" and st in ("acked", "dropped", "followed"):
             _set_state(p, "open", now)
             p["reopenedAt"] = now
         else:
@@ -982,7 +1299,7 @@ def approve(room_id: str, mid: str, now: float | None = None) -> bool:
             return False
         led["approvals"][mid] = now
         for p in led["points"]:
-            if p["state"] in ("open", "delivered") and any(a.get("mid") == mid and a.get("kind") != "plan"
+            if p["state"] in ("open", "delivered", "followed") and any(a.get("mid") == mid and a.get("kind") != "plan"
                                                           for a in p["answers"]):
                 u = {"mid": mid, "state": p["state"], "stateAt": p.get("stateAt"),
                      "ackedBy": p.get("ackedBy")}
@@ -1121,11 +1438,17 @@ def task_lookup(room_id: str, room: dict | None = None):
 
 def _item(p: dict, task=None) -> dict:
     out = {k: p.get(k) for k in ("id", "state", "owner", "createdAt", "stateAt", "mid", "followUps",
-                                 "parent", "comment") if p.get(k) not in (None, "", [])}
+                                 "parent", "comment", "followedBy", "replyTo") if p.get(k) not in (None, "", [])}
     out["text"] = strip_point_lines(p.get("text") or "")[:400]
+    if p.get("replyTo"):
+        # The passage of the answer a follow-up quotes, as written, so a link
+        # to that answer can land on those words when it has no "Re Pn:" paragraph.
+        rq = raw_quotes(p.get("text") or "")
+        if rq:
+            out["quote"] = rq[0][:200]
     if p.get("follows"):
         out["follows"] = [{"text": (f.get("text") or "")[:400], "at": f.get("at")} for f in p["follows"]]
-    out["answers"] = [{k: a[k] for k in ("mid", "at", "how", "summary", "kind", "task") if a.get(k)}
+    out["answers"] = [{k: a[k] for k in ("mid", "at", "how", "summary", "kind", "task", "said") if a.get(k)}
                       for a in p["answers"]]
     if p.get("task"):
         info = task(p["task"]) if task and p["state"] in LIVE else None
@@ -1146,10 +1469,17 @@ def view(room_id: str, room: dict | None = None) -> dict:
         led = load(room_id)
     order = lambda p: (p["createdAt"], p["id"])     # noqa: E731
     pts = sorted(led["points"], key=order, reverse=True)
-    # Every point still waiting on someone, however old; of the closed ones
-    # the newest, up to the cap.
-    live = [p for p in pts if p["state"] in LIVE]
-    shut = [p for p in pts if p["state"] not in LIVE][:max(0, VIEW_MAX - len(live))]
+    # Every point still waiting on someone, however old, with the points it
+    # follows up (its thread); of the closed ones the newest, up to the cap.
+    by_id = {p["id"]: p for p in pts}
+    keep = {p["id"] for p in pts if p["state"] in LIVE}
+    for pid in list(keep):
+        cur = by_id.get(pid)
+        while cur and cur.get("replyTo") and cur["replyTo"] not in keep:
+            keep.add(cur["replyTo"])
+            cur = by_id.get(cur["replyTo"])
+    live = [p for p in pts if p["id"] in keep]
+    shut = [p for p in pts if p["id"] not in keep][:max(0, VIEW_MAX - len(live))]
     pts = sorted(live + shut, key=order, reverse=True)
     task = task_lookup(room_id, room) if any(p.get("task") and p["state"] in LIVE for p in pts) else None
     return {"items": [_item(p, task) for p in pts], **_counts(led),

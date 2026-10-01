@@ -3384,7 +3384,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .pdp-head { margin: 0; color: var(--fg-subtle); font-size: var(--fs-200); line-height: var(--lh-200); font-weight: 600; }
   .pdp-n { color: var(--fg-muted); font-weight: 400; font-variant-numeric: tabular-nums; }
   .pdp-age { font-variant-numeric: tabular-nums; }
-  .pdp-said { color: var(--fg-subtle); overflow-wrap: anywhere; }
+  .pdp-said { margin: 0; color: var(--fg-subtle); overflow-wrap: anywhere; }
+  .pdp-thread { color: var(--fg-muted); }
+  /* Two buttons on a delivered row: the first takes the room, the second sits after it. */
+  .pdp-btn + .pdp-btn { margin-left: 0; }
   a.pdp-link { color: var(--link); white-space: nowrap; border-radius: var(--r-100); }
   a.pdp-link:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
   .pdp-btn { height: 24px; padding: 0 var(--s-200); margin-left: auto; border: 0; border-radius: var(--r-200); background: transparent;
@@ -10289,6 +10292,8 @@ function pdDefaultLayout(L, ctx) {
 // ready for their check; oldest first in each; the same words as the list
 // above the chat (session.html pointsListHtml).
 const PD_PT_WORD = { open: 'waiting for an answer', planned: 'in progress', delivered: 'ready for your check' };
+// What the answer says (the hub's `said`, else an answer by doing's summary).
+const pdSaid = (a, n = 200) => { const t = a ? String(a.said || a.summary || '') : ''; return t.length > n ? t.slice(0, n - 1) + '…' : t; };
 const PD_PT_GROUPS = [['open', 'Waiting for the PO'], ['planned', 'In progress'], ['delivered', 'Ready for your check']];
 // A hub from before the stages says "answered" for delivered.
 const pdPtState = s => s === 'answered' ? 'delivered' : s;
@@ -10332,26 +10337,45 @@ function pdPointsHtml(told, now) {
   if (!items.some(p => PD_PT_WORD[p.state])) {
     return '<div class="pdp"><p class="pdp-empty">No open asks. Every message you send the PO is an ask (P12): it waits here while the PO answers it and does the work, and stays until you acknowledge what was delivered.</p></div>';
   }
-  const href = mid => '/session?room=' + encodeURIComponent(told.room || '') + '&msg=' + encodeURIComponent(mid).replace(/%3A/gi, ':');
-  const link = (mid, text, tip) => mid ? `<a class="pdp-link" href="${esc(href(mid))}" data-mid="${esc(mid)}" title="${esc(tip)}">${esc(text)}</a>` : '';
+  const href = (mid, part) => '/session?room=' + encodeURIComponent(told.room || '') + '&msg=' + encodeURIComponent(mid).replace(/%3A/gi, ':')
+    + (part ? '&part=' + encodeURIComponent(part).replace(/%3A/gi, ':') : '');
+  // part: the passage the chat lands on ("re:P12" the answer's paragraph, "pt:P12" the ask's item).
+  const link = (mid, text, tip, part) => mid ? `<a class="pdp-link" href="${esc(href(mid, part))}" data-mid="${esc(mid)}"${part ? ` data-part="${esc(part)}"` : ''} title="${esc(tip)}">${esc(text)}</a>` : '';
   const btn = (id, act, text, label) => `<button type="button" class="pdp-btn" data-pt="${esc(id)}" data-pt-act="${act}" aria-label="${esc(label)}" title="${esc(label)}">${text}</button>`;
+  const byId = new Map(items.map(p => [p.id, p]));
+  const answerOf = p => p ? (p.state === 'planned' ? pdLastPlan(p) : (pdLastAnswer(p) || pdLastPlan(p))) : null;
+  // The thread: "follow-up to P103 ↑" (its answer), "followed up by P105 ↓" (the follow-up).
+  const thread = p => {
+    const bits = [];
+    const up = p.replyTo && byId.get(p.replyTo), ua = answerOf(up);
+    // An answer without a "Re Pn:" paragraph (a first reply) lands on the words the follow-up quoted.
+    const upPart = ua && ua.how !== 're' && p.quote ? 'q:' + p.quote : 're:' + (up ? up.id : '');
+    if (up) bits.push(`<span class="pdp-thread">follow-up to ${ua && ua.mid ? link(ua.mid, up.id + ' ↑', `Go to the answer to ${up.id}, which this follows up`, upPart) : esc(up.id)}</span>`);
+    const down = p.followedBy && byId.get(p.followedBy);
+    if (down) bits.push(`<span class="pdp-thread">followed up by ${down.mid ? link(down.mid, down.id + ' ↓', `Go to ${down.id}, your follow-up`, 'pt:' + down.id) : esc(down.id)}</span>`);
+    return bits.join('');
+  };
   const row = p => {
     const st = p.state;
     const a = st === 'delivered' ? pdLastAnswer(p) : null;
     const plan = st !== 'open' ? pdLastPlan(p) : null;
-    const said = a && !a.mid && a.summary ? a.summary : st === 'planned' && plan && !plan.mid && plan.summary ? plan.summary : '';
+    // The answer's own words under the ask; a plan's summary for one in progress.
+    const said = pdSaid(a) || (st === 'planned' ? pdSaid(plan) : '');
     const task = st === 'planned' ? pdTaskWords(p) : '';
     const w = words[p.id] || '';
     return `<li class="pdp-row" data-pt="${esc(p.id)}"><div class="pdp-top"><span class="pdp-id">${esc(p.id)}</span>`
       + `<span class="pdp-words" title="${esc(w)}">${esc(w)}</span></div>`
+      + (said ? `<p class="pdp-said">${esc(said)}</p>` : '')
       + `<div class="pdp-meta"><span class="pdp-state ${esc(st)}">${esc(task || PD_PT_WORD[st])}</span>`
       + `<span class="pdp-age" data-at="${esc(String(p.createdAt || 0))}">${esc(pdPtAge(p.createdAt, now))}</span>`
-      + link(p.mid, 'your message ↑', 'Go to your message in the PO chat')
-      + (plan ? link(plan.mid, 'plan ↓', 'Go to where the PO planned the work') : '')
-      + (a ? link(a.mid, 'answer ↓', 'Go to the answer in the PO chat') : '')
+      + thread(p)
+      + link(p.mid, 'your message ↑', 'Go to your message in the PO chat', 'pt:' + p.id)
+      + (plan ? link(plan.mid, 'plan ↓', 'Go to where the PO planned the work', 're:' + p.id) : '')
+      + (a ? link(a.mid, 'answer ↓', 'Go to the answer in the PO chat', 're:' + p.id) : '')
       + (st === 'delivered' ? btn(p.id, 'ack', '👍 Ack', `Acknowledge the answer to ${p.id}: nothing is sent to the agent`)
+                              + btn(p.id, 'comment', 'Comment', `Comment on the answer to ${p.id}: a new ask linked to it goes in the chat’s box; sending it closes ${p.id}`)
                             : btn(p.id, 'drop', 'Drop', `Drop ${p.id}: you no longer need an answer`))
-      + `</div>${said ? `<span class="pdp-said">${esc(said)}</span>` : ''}</li>`;
+      + `</div></li>`;
   };
   const groups = PD_PT_GROUPS.map(([st, head]) => {
     const rows = items.filter(p => p.state === st).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
@@ -10974,14 +10998,28 @@ function pdPaintPoints(force) {
 // marks for a moment (session.html gotoMsg), as the arrows in the chat do.
 // With a task in the middle, the task closes first: its project's PO takes
 // the middle (the asks listed are that PO's), then the chat goes there.
-function pdGoto(mid) {
+function pdGoto(mid, part) {
   if (pdTask()) closeDetail();
   pdReveal('po-chat');
   let tries = 0;
   const go = () => {
     const f = pdVisibleChat();
     const shown = f && (!f.checkVisibility || f.checkVisibility({ visibilityProperty: true }));
-    try { if (shown && f.contentWindow && f.contentWindow.gotoMsg) { f.contentWindow.gotoMsg(mid); return; } } catch (e) {}
+    try { if (shown && f.contentWindow && f.contentWindow.gotoMsg) { f.contentWindow.gotoMsg(mid, part || ''); return; } } catch (e) {}
+    if (++tries < 20) setTimeout(go, 150);
+  };
+  go();
+}
+// Comment on a point's answer: the chat puts a new ask linked to the answer
+// in its box (session.html pointComment) and comes on screen with it.
+function pdComment(id) {
+  if (pdTask()) closeDetail();
+  pdReveal('po-chat');
+  let tries = 0;
+  const go = () => {
+    const f = pdVisibleChat();
+    const shown = f && (!f.checkVisibility || f.checkVisibility({ visibilityProperty: true }));
+    try { if (shown && f.contentWindow && f.contentWindow.pointComment) { f.contentWindow.pointComment(id); return; } } catch (e) {}
     if (++tries < 20) setTimeout(go, 150);
   };
   go();
@@ -11005,8 +11043,9 @@ async function pdPointAct(id, act, btn) {
 }
 PD.els.points.addEventListener('click', e => {
   const a = e.target.closest && e.target.closest('a.pdp-link[data-mid]');
-  if (a) { if (e.ctrlKey || e.metaKey || e.shiftKey || e.button) return; e.preventDefault(); pdGoto(a.dataset.mid); return; }
+  if (a) { if (e.ctrlKey || e.metaKey || e.shiftKey || e.button) return; e.preventDefault(); pdGoto(a.dataset.mid, a.dataset.part || ''); return; }
   const b = e.target.closest && e.target.closest('.pdp-btn[data-pt]');
+  if (b && b.dataset.ptAct === 'comment') { pdComment(b.dataset.pt); return; }
   if (b && !b.disabled) pdPointAct(b.dataset.pt, b.dataset.ptAct, b);
 });
 setInterval(() => { if (PD.dock && document.body.classList.contains('po-dock') && !document.hidden) pdPaintPoints(); }, 30000);
@@ -15544,7 +15583,7 @@ window.addEventListener('message', (ev) => {
   if (d && d.type === 'open-task' && d.roomId && ev.origin === location.origin) openTaskLink(String(d.roomId), String(d.agent || ''));
   // A balloon link clicked in a chat framed here; a chat framed here that has
   // started, or has landed on the balloon it was sent to.
-  if (d && d.type === 'open-msg' && d.roomId && d.msg && ev.origin === location.origin) openMsgLink(String(d.roomId), String(d.msg));
+  if (d && d.type === 'open-msg' && d.roomId && d.msg && ev.origin === location.origin) openMsgLink(String(d.roomId), String(d.msg), String(d.part || ''));
   if (d && d.type === 'chat-ready' && d.roomId && ev.origin === location.origin) sendGotoMsg(String(d.roomId));
   if (d && d.type === 'goto-taken' && d.roomId && ev.origin === location.origin) GOTO_MSG.delete(String(d.roomId));
   if (d && d.type === 'chat-clicked' && ev.origin === location.origin) pdChatClicked(ev.source);
@@ -15557,15 +15596,15 @@ window.addEventListener('message', (ev) => {
 // opens as the dashboard opens them, and the chat framed there is told which
 // balloon to land on; a chat still loading is told when it starts
 // (chat-ready). A conversation that is neither here opens in a tab of its own.
-const GOTO_MSG = new Map();   // roomId → message id, until that chat has landed
-function openMsgLink(rid, msg) {
+const GOTO_MSG = new Map();   // roomId → { msg, part }: message id and passage, until that chat has landed
+function openMsgLink(rid, msg, part) {
   const pj = registeredProjects().find(p => p.poRoomId === rid && poRowOf(p));
   const row = ALL_ROWS.find(r => r.roomId === rid || r.sessionId === rid);
   if (!pj && !row) {
-    window.open('/session?room=' + encodeURIComponent(rid) + '&msg=' + encodeURIComponent(msg), '_blank', 'noopener');
+    window.open('/session?room=' + encodeURIComponent(rid) + '&msg=' + encodeURIComponent(msg) + (part ? '&part=' + encodeURIComponent(part) : ''), '_blank', 'noopener');
     return;
   }
-  GOTO_MSG.set(rid, msg);
+  GOTO_MSG.set(rid, { msg, part: part || '' });
   if (pj) {
     openPoOf(pj);
   } else {
@@ -15574,11 +15613,11 @@ function openMsgLink(rid, msg) {
   sendGotoMsg(rid);
 }
 function sendGotoMsg(rid) {
-  const msg = GOTO_MSG.get(rid);
-  if (!msg) return;
+  const g = GOTO_MSG.get(rid);
+  if (!g) return;
   document.querySelectorAll('iframe.dp-session, iframe.po-session').forEach(f => {
     if (f.dataset.room !== rid || !f.contentWindow) return;
-    try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg }, location.origin); } catch (e) {}
+    try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg: g.msg, part: g.part || '' }, location.origin); } catch (e) {}
   });
 }
 // A task link names it by id or number (#18, ED-18); with an agent (@codex@18,

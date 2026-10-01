@@ -613,14 +613,18 @@
     font-size:var(--fs-100); font-weight:600; text-transform:uppercase; letter-spacing:.05em; vertical-align:baseline; }
   .lz-warn { background:var(--c-warning-bg); color:var(--c-warning-fg); }
   .lz-neutral { background:var(--c-neutral-bg); color:var(--c-neutral-fg); }
-  /* Over a transcript the hub types into: what is folded, and Just us. */
+  /* Over a transcript the hub types into: what is folded, and Team activity. */
   #chatbar { flex:0 0 auto; display:flex; align-items:center; gap:var(--s-200); padding:var(--s-050) 12px;
     border-bottom:1px solid var(--border); color:var(--fg-muted); font-size:var(--fs-200); line-height:16px; }
   #chatbar[hidden] { display:none; }
   #chatbar-note { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  #just-us { flex:0 0 auto; height:24px; padding:0 var(--s-200); font-size:var(--fs-200); line-height:16px; }
-  #just-us[aria-pressed="true"] { background:var(--selected-bg); color:var(--selected-fg); }
-  #just-us:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  #team-all { flex:0 0 auto; height:24px; padding:0 var(--s-200); font-size:var(--fs-200); line-height:16px; }
+  #team-all[aria-pressed="true"] { background:var(--selected-bg); color:var(--selected-fg); }
+  #team-all:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  /* A gap of team activity: one quiet row, in the hub row's look; opened, it
+     stays above what it holds (the task group's row does the same). */
+  .msg-fold.gap { border-left-width:1px; }
+  .msg-fold.gap .gkinds { color:var(--fg-muted); }
   /* A balloon opened from its row folds again from its header. */
   .msg .from .fold-btn { float:right; margin:-2px -4px 0 var(--s-200); padding:0 var(--s-100); background:transparent; border:none;
     color:var(--fg-muted); font-size:var(--fs-100); font-weight:400; text-transform:none; letter-spacing:0; line-height:16px; }
@@ -642,13 +646,17 @@
      as box-shadow (ring layer first, so it sits on top of the fill) so the
      real background never changes and the fade at the end reveals it cleanly
      instead of cutting to it. */
-  .msg.landed { animation:landed 2.4s ease-out; }
+  .msg.landed, .msg .landed { animation:landed 2.4s ease-out; }
+  /* Only the relevant passage (ED-146): a "Re P12:" paragraph, a numbered item
+     or the quoted words take the mark, not the balloon around them. */
+  .msg .text.md .landed { border-radius:var(--r-100); }
+  .msg .text.md mark.landed-q { background:transparent; color:inherit; }
   @keyframes landed {
     0%, 40% { box-shadow:inset 0 0 0 2px var(--accent), inset 0 0 0 999px var(--selected-bg); }
     100% { box-shadow:inset 0 0 0 2px transparent, inset 0 0 0 999px transparent; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .msg.landed { animation:none; box-shadow:inset 0 0 0 2px var(--accent), inset 0 0 0 999px var(--selected-bg); }
+    .msg.landed, .msg .landed { animation:none; box-shadow:inset 0 0 0 2px var(--accent), inset 0 0 0 999px var(--selected-bg); }
   }
   /* A link to another balloon, as a chip naming it: who, where, when, its first words. */
   .msg .text.md a.ref-chip, a.ref-chip { display:inline-flex; align-items:baseline; gap:var(--s-100); max-width:100%; box-sizing:border-box;
@@ -1023,6 +1031,8 @@
     #promptcard .pc-x, #cmt-tray .cmt-item-x, #livetail .lt-more { min-width: var(--touch-min); }
     .att-chip { height: var(--touch-min); }
     .att-chip .att-x { height: var(--touch-min); }
+    /* Your asks: every link in the list and under a balloon is a tap target. */
+    #points-list a.pt-link, .pt-bar a.pt-link, .pt-bar .pt-chip { display: inline-flex; align-items: center; min-height: var(--touch-min); }
     .msg .pend-state button { min-height: var(--touch-min); }   /* Retry / Discard under a failed message */
     /* Nothing needs hover: Copy link always shows. A chip keeps its look in the
        line of text and takes a finger's height with an invisible margin. */
@@ -1166,7 +1176,7 @@
 <main>
   <div id="chatcol">
     <div id="msgpane">
-      <div id="chatbar" hidden><span id="chatbar-note"></span><button type="button" id="just-us" aria-pressed="false" title="Show only your messages and the answers to them in full; everything else folds to one line">Just us</button></div>
+      <div id="chatbar" hidden><span id="chatbar-note"></span><button type="button" id="team-all" aria-pressed="false" title="Show everything in place: progress checks, task reports and the PO’s notes on them. Off, they sit behind one line per gap">Team activity</button></div>
       <div id="goto-note" role="status" hidden><span></span><button type="button" class="goto-x" title="Dismiss this note">Dismiss</button></div>
       <div id="ask-line" role="status" hidden></div>
       <div id="points-line" hidden></div>
@@ -1648,7 +1658,9 @@ function parkTaskRefs(s, chips) {
 function hasMessageRefs(text) {
   return [...String(text || '').matchAll(/https?:\/\/[^\s<>()\[\]{}"'`*|\\]+/gi)].some(m => refOfUrl(m[0]));
 }
-const refHref = (room, msg) => '/session?room=' + encodeURIComponent(room) + '&msg=' + encodeURIComponent(msg).replace(/%3A/gi, ':');
+// part: the passage of the balloon to land on ("re:P12", "pt:P12", "q:<quote>"; landPending).
+const refHref = (room, msg, part) => '/session?room=' + encodeURIComponent(room) + '&msg=' + encodeURIComponent(msg).replace(/%3A/gi, ':')
+  + (part ? '&part=' + encodeURIComponent(part).replace(/%3A/gi, ':') : '');
 const REFS = new Map();   // "room|msg" → { state: 'pending' | 'ok' | 'gone', who, taskTitle, ts, text }
 let REF_GEN = 0, _refRedraw = 0;
 // Balloons draw again once, after the answers that arrived together.
@@ -2339,6 +2351,91 @@ function quietItem(m, justUs) {
   if (isHubInput(m)) return true;
   return !!justUs && !!m && m.from !== 'user' && !!m.answers && !forPersonKind(m.answers.kind) && !isDecision(m);
 }
+// ---- What the person reads by default (#146): begin ------------------------
+// Measured on the Ensemble PO chat over three days (the task's report): of
+// ~760 balloons, ~105 were the CEO's own messages, the answers to them and the
+// one decision asked of him; the rest was hub traffic (progress checks, task
+// reports, handover and session notes, PO-to-PO messages) and the PO's notes
+// on it. So the chat shows him only what is his, and folds every run of the
+// rest into one "Team activity" line (gapsOf), opened in place by a click;
+// "Team activity" in the bar shows everything, as before.
+// "Re Pn:" at the start of a paragraph (points.py's _RE_HEAD, loosely).
+const RE_HEAD_RE = /^[ \t]*(?:[-*+][ \t]+)*(?:\*\*|__)?[ \t]*re[ \t]+P\d{1,5}[a-z]?\b[^\n]{0,80}?:/im;
+const hasReMarks = t => RE_HEAD_RE.test(String(t || ''));
+const escRe = s => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// A paragraph addressed to the person: "To sam:", "For you,", "To the CEO:".
+const toCeoRe = (N = CHAT_NAMES) => new RegExp('^[ \\t]*(?:\\*\\*|__)?(?:To|For) (?:you|the CEO|the product owner'
+  + (N.operator && N.operator !== 'you' ? '|' + escRe(N.operator) : '') + ')\\b[^\\n]{0,40}?[:,]', 'im');
+// A PO-to-PO message that names the person, or asks for a decision.
+const namesCeo = (t, N = CHAT_NAMES) => /\b(?:CEO|product owner|Decision needed)\b/i.test(t || '')
+  || (!!N.operator && N.operator !== 'you' && new RegExp('\\b' + escRe(N.operator) + '\\b', 'i').test(t || ''));
+// For the person: their own messages, an answer to them (a reply to their
+// message, a "Re Pn:" paragraph wherever it is, a paragraph addressed to
+// them), a decision asked of them, a message to them, and a PO-to-PO message
+// that names them. A landmark is a line, not a balloon (foldPlan), and goes
+// with the gap around it. Everything else is team activity.
+function forCeo(m, N = CHAT_NAMES) {
+  if (!m) return false;
+  if (isPersons(m)) return true;
+  if (isHubInput(m) || isLandmark(m) || m.from === 'ensemble') return false;
+  if (isPoMsg(m)) return namesCeo(m.text, N);
+  if (isDecision(m)) return true;
+  if (m.answers) return forPersonKind(m.answers.kind) || hasReMarks(m.text) || toCeoRe(N).test(m.text || '');
+  if (m.to === 'user') return true;
+  if (taskReport(m)) return false;
+  return hasReMarks(m.text) || toCeoRe(N).test(m.text || '');
+}
+// Each run of team activity as one gap: { key, first, last, idx: [i…], seen }.
+// A balloon that must stay in view (held: a comment's passage, an open point)
+// ends a run. The key is the first item's, so a gap a message joined is the
+// same gap (its row changes in place).
+function gapsOf(items, held, N = CHAT_NAMES) {
+  const out = [];
+  let cur = null;
+  items.forEach((m, i) => {
+    const team = !!m && m.id !== 'task' && !forCeo(m, N) && !(held && held(m, i));
+    if (!team) { if (cur) out.push(cur); cur = null; return; }
+    if (!cur) cur = { key: 'gap:' + foldKey(m, i), first: i, last: i, idx: [] };
+    cur.last = i; cur.idx.push(i);
+  });
+  if (cur) out.push(cur);
+  out.forEach(g => { g.seen = foldKey(items[g.last], g.last); });
+  return out;
+}
+// What a gap holds, counted by kind: "5 progress checks, 3 reports, 4 PO
+// notes, 2 PO to PO, 1 new session".
+function gapWords(g, items, N = CHAT_NAMES) {
+  const n = new Map();
+  const add = k => n.set(k, (n.get(k) || 0) + 1);
+  for (const i of g.idx) {
+    const m = items[i];
+    if (isHubRow(m)) add('restart note');
+    else if (isLandmark(m)) add('new session');
+    else if (isPoMsg(m)) add('PO to PO');
+    else if (isDigest(m)) add('progress check');
+    else if (taskReport(m)) add('report');
+    else if (isHubInput(m)) add(({ handover: 'handover note', rotation: 'session note', points: 'reminder', due: 'due item',
+      helper: 'restart note', restart: 'restart note', resumed: 'resume note', relay: 'team message', stalled: 'stall check' })[m.kind] || 'hub line');
+    else if (whoName(m.from, N) === 'PO' || m.answers) add('PO note');
+    else add('message');
+  }
+  const plural = { 'progress check': 'progress checks', report: 'reports', 'PO note': 'PO notes', 'PO to PO': 'PO to PO',
+    'new session': 'new sessions', 'handover note': 'handover notes', 'session note': 'session notes', reminder: 'reminders',
+    'due item': 'due items', 'restart note': 'restart notes', 'resume note': 'resume notes', 'team message': 'team messages',
+    'stall check': 'stall checks', 'hub line': 'hub lines', message: 'messages' };
+  return [...n].map(([k, c]) => `${c} ${c === 1 ? k : plural[k] || k}`).join(', ');
+}
+// The gap's row: "Team activity · 14 messages · 5 progress checks, … · 10:05–11:30".
+function gapRowHtml(g, items, open, N = CHAT_NAMES) {
+  const t0 = chatTime(items[g.first].ts), t1 = chatTime(items[g.last].ts);
+  const when = t0 && t1 ? (t0 === t1 ? t0 : t0 + '–' + t1) : (t0 || t1);
+  const n = g.idx.length;
+  const title = open ? 'Fold the team activity again' : `Show these ${n} message${n === 1 ? '' : 's'} in place`;
+  return `<button type="button" class="msg-fold gap user hub" data-key="${esc(g.key)}" data-group="${esc(g.key)}" data-seen="${esc(g.key + '|' + g.seen)}" aria-expanded="${open}" title="${esc(title)}">`
+    + `<span class="from"><span class="who hub-who">Team activity</span></span><span class="gsum">${n} message${n === 1 ? '' : 's'}${when ? ' · ' + esc(when) : ''}</span>`
+    + `<span class="fl gkinds">${esc(gapWords(g, items, N))}</span></button>`;
+}
+// ---- What the person reads by default: end ---------------------------------
 // The person's messages that got no agent text before the next input: key →
 // 'past' (the hub typed something since) or 'last' (nothing since, so the agent
 // may still be on it). Messages in a row share the answer after them. Only
@@ -2657,7 +2754,9 @@ const stripImagePlaceholders = t => {
 // A point's stages: open (no reply) → planned (the agent said what will
 // happen, usually as a task) → delivered (live, or answered for real) →
 // acknowledged by the person. Only a delivered one takes the thumbs up.
-const PT_WORD = { open: 'waiting for an answer', planned: 'in progress', delivered: 'ready for your check', acked: 'acknowledged', dropped: 'dropped', split: 'split into parts' };
+// A point followed up (a comment on its answer, a message linking or quoting
+// it: points.py) is handled: "followed up by P105", no thumbs up owed.
+const PT_WORD = { open: 'waiting for an answer', planned: 'in progress', delivered: 'ready for your check', acked: 'acknowledged', dropped: 'dropped', split: 'split into parts', followed: 'followed up' };
 // A hub from before the stages says "answered" for delivered.
 const ptItem = p => p && p.state === 'answered' ? Object.assign({}, p, { state: 'delivered' }) : p;
 const isPlan = a => !!a && a.kind === 'plan';
@@ -2682,11 +2781,12 @@ function ptTaskWords(p) {
 // that never fold: an open or planned point's, its plan, an unacknowledged
 // answer), unacked (those answers).
 function pointMaps(pv) {
-  const P = { items: ((pv && pv.items) || []).map(ptItem), byMid: new Map(), byAnswer: new Map(), keep: new Set(),
+  const P = { items: ((pv && pv.items) || []).map(ptItem), byMid: new Map(), byAnswer: new Map(), byId: new Map(), keep: new Set(),
     unacked: new Set(), approvals: new Set((pv && pv.approvals) || []), open: (pv && pv.open) || 0,
     planned: (pv && pv.planned) || 0, delivered: (pv && (pv.delivered != null ? pv.delivered : pv.answered)) || 0 };
   const add = (map, k, p) => { if (!k) return; const l = map.get(k); if (!l) map.set(k, [p]); else if (!l.includes(p)) l.push(p); };
   for (const p of P.items) {
+    P.byId.set(p.id, p);
     const own = [p.mid, ...(p.followUps || [])].filter(Boolean);
     own.forEach(k => add(P.byMid, k, p));
     (p.answers || []).forEach(a => add(P.byAnswer, a.mid, p));
@@ -2718,11 +2818,33 @@ function pointsSummary(P) {
   return bits.length ? 'Your asks: ' + bits.join(' · ') : '';
 }
 const ptWords = (t, n = 80) => { t = foldLine(stripPointLines(String(t || '').replace(/^\*\*\d+\.\*\*\s*/, ''))); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
-const ptLink = (mid, text, href, tip) => mid
-  ? `<a class="pt-link" href="${esc(href(mid))}" data-ref-msg="${esc(mid)}"${tip ? ` title="${esc(tip)}"` : ''}>${esc(text)}</a>` : '';
+// part: the passage to land on ("re:P12" the answer's paragraph, "pt:P12"
+// the point's item on the person's balloon), else the whole balloon.
+const ptLink = (mid, text, href, tip, part) => mid
+  ? `<a class="pt-link" href="${esc(href(mid) + (part ? '&part=' + encodeURIComponent(part).replace(/%3A/gi, ':') : ''))}" data-ref-msg="${esc(mid)}"${part ? ` data-ref-part="${esc(part)}"` : ''}${tip ? ` title="${esc(tip)}"` : ''}>${esc(text)}</a>` : '';
 const ptBtn = (id, act, text, label) =>
   `<button type="button" class="pt-btn" data-pt="${esc(id)}" data-pt-act="${act}" aria-label="${esc(label)}" title="${esc(label)}">${text}</button>`;
 const ackBtn = id => ptBtn(id, 'ack', '👍 Ack', `Acknowledge the answer to ${id}: nothing is sent to the agent`);
+// Comment: a new ask in the box, linked to the answer, which closes this one when sent.
+const commentBtn = id => ptBtn(id, 'comment', 'Comment', `Comment on the answer to ${id}: a new ask linked to it goes in the box; sending it closes ${id}`);
+// The answer a point's links go to: its delivery, else its plan.
+const ptAnswerOf = p => p ? (p.state === 'planned' ? lastPlan(p) : (lastAnswer(p) || lastPlan(p))) : null;
+// What the answer says, for a list: its "Re Pn:" paragraph (the hub's
+// `said`), else the summary of an answer given by doing.
+const ptSaid = (a, n = 200) => { const t = a ? String(a.said || a.summary || '') : ''; return t.length > n ? t.slice(0, n - 1) + '…' : t; };
+// The thread a point is in: "follow-up to P103 ↑" (linked to P103's answer)
+// and, on P103, "followed up by P105 ↓" (linked to P105's message).
+// The passage of the answer a follow-up leads to: its "Re Pn:" paragraph; an
+// answer without one (a first reply) lands on the words the follow-up quoted.
+const ptPartTo = (up, a, p) => (a && a.how !== 're' && p && p.quote) ? 'q:' + p.quote : 're:' + up.id;
+function ptThreadHtml(p, P, href) {
+  const bits = [];
+  const up = p.replyTo && P.byId.get(p.replyTo);
+  if (up) { const a = ptAnswerOf(up); bits.push(`<span class="pt-chip pt-thread">follow-up to ${a && a.mid ? ptLink(a.mid, up.id + ' ↑', href, `Go to the answer to ${up.id}, which this follows up`, ptPartTo(up, a, p)) : esc(up.id)}</span>`); }
+  const down = p.followedBy && P.byId.get(p.followedBy);
+  if (down) bits.push(`<span class="pt-chip pt-thread">followed up by ${down.mid ? ptLink(down.mid, down.id + ' ↓', href, `Go to ${down.id}, your follow-up`, 'pt:' + down.id) : esc(down.id)}</span>`);
+  return bits.join('');
+}
 // The list's groups, in this order, each oldest first.
 const PT_GROUPS = [['open', () => CHAT_NAMES.po ? 'Waiting for the PO' : 'Waiting for an answer'],
   ['planned', () => 'In progress'], ['delivered', () => 'Ready for your check']];
@@ -2736,17 +2858,19 @@ function pointsListHtml(P, href, now) {
     return `<li class="pt-group">${esc(head())}</li>` + rows.map(p => {
       const a = st === 'delivered' ? lastAnswer(p) : null;
       const plan = st !== 'open' ? lastPlan(p) : null;
-      const said = a && !a.mid && a.summary ? a.summary : st === 'planned' && plan && !plan.mid && plan.summary ? plan.summary : '';
+      // The answer's own words under the ask (the hub's `said`), a plan's summary for one in progress.
+      const said = ptSaid(a) || (st === 'planned' ? ptSaid(plan) : '');
       const task = st === 'planned' ? ptTaskWords(p) : '';
       return `<li class="pt-row" data-pt="${esc(p.id)}"><span class="pt-id">${esc(p.id)}</span>`
         + `<span class="pt-words" title="${esc(stripPointLines(p.text))}">${esc(ptWords(p.text))}</span>`
         + `<span class="pt-age" data-at="${esc(String(p.createdAt || 0))}">${esc(ptAge(p.createdAt, now))}</span>`
         + `<span class="pt-state ${esc(p.state)}">${esc(task || PT_WORD[p.state] || p.state)}</span>`
         + (said ? `<span class="pt-said">${esc(said)}</span>` : '')
-        + ptLink(p.mid, 'your message ↑', href, 'Go to your message')
-        + (plan ? ptLink(plan.mid, 'plan ↓', href, 'Go to where the work was planned') : '')
-        + (a ? ptLink(a.mid, 'answer ↓', href, 'Go to the answer') : '')
-        + (st === 'delivered' ? ackBtn(p.id) : ptBtn(p.id, 'drop', 'Drop', `Drop ${p.id}: you no longer need an answer`))
+        + ptThreadHtml(p, P, href)
+        + ptLink(p.mid, 'your message ↑', href, 'Go to your message', 'pt:' + p.id)
+        + (plan ? ptLink(plan.mid, 'plan ↓', href, 'Go to where the work was planned', 're:' + p.id) : '')
+        + (a ? ptLink(a.mid, 'answer ↓', href, 'Go to the answer', 're:' + p.id) : '')
+        + (st === 'delivered' ? ackBtn(p.id) + commentBtn(p.id) : ptBtn(p.id, 'drop', 'Drop', `Drop ${p.id}: you no longer need an answer`))
         + '</li>';
     }).join('');
   }).join('');
@@ -2780,23 +2904,25 @@ function pointBarHtml(m, P, href, pick) {
   for (const p of (P.byMid.get(m.id) || []).filter(p => !pick || pick(p))) {
     // Linked down to its answer whatever the state, so an acknowledged
     // question read again still leads to what answered it; a planned one
-    // to its plan, with where its task is.
-    const a = p.state === 'planned' ? lastPlan(p) : (lastAnswer(p) || lastPlan(p));
+    // to its plan, with where its task is; a followed-up one to its follow-up.
+    const a = ptAnswerOf(p);
     const word = p.id + ' · ' + (p.state === 'planned' && ptTaskWords(p) ? 'in progress, ' + ptTaskWords(p) : (PT_WORD[p.state] || p.state));
-    bits.push(`<span class="pt-chip ${esc(p.state)}">${a && a.mid ? ptLink(a.mid, word + ' ↓', href, isPlan(a) ? 'Go to the plan' : 'Go to the answer') : esc(word)}</span>`);
+    bits.push(`<span class="pt-chip ${esc(p.state)}" data-pt-id="${esc(p.id)}">${a && a.mid ? ptLink(a.mid, word + ' ↓', href, isPlan(a) ? 'Go to the plan' : 'Go to the answer', 're:' + p.id) : esc(word)}</span>`);
+    bits.push(ptThreadHtml(p, P, href));
     if (p.state === 'open' || p.state === 'planned') bits.push(ptBtn(p.id, 'drop', 'Drop', `Drop ${p.id}: you no longer need an answer`));
-    if (p.state === 'acked' || p.state === 'dropped') bits.push(ptBtn(p.id, 'reopen', 'Reopen', `Reopen ${p.id}: it waits for an answer again`));
+    if (p.state === 'acked' || p.state === 'dropped' || p.state === 'followed') bits.push(ptBtn(p.id, 'reopen', 'Reopen', `Reopen ${p.id}: it waits for an answer again`));
   }
   for (const p of P.byAnswer.get(m.id) || []) {
     // A plan: "plans P12", never a thumbs up (the work is not live yet).
     const here = (p.answers || []).filter(x => x.mid === m.id);
     const plans = here.length && here.every(isPlan);
     const verb = plans ? 'plans ' : 'answers ';
-    bits.push(`<span class="pt-chip">${p.mid && p.mid !== m.id ? ptLink(p.mid, verb + p.id + ' ↑', href, 'Go to your message') : esc(verb + p.id)}</span>`);
+    bits.push(`<span class="pt-chip">${p.mid && p.mid !== m.id ? ptLink(p.mid, verb + p.id + ' ↑', href, 'Go to your message', 'pt:' + p.id) : esc(verb + p.id)}</span>`);
     const a = lastAnswer(p);
     if (plans) { if (p.state === 'planned' && ptTaskWords(p)) bits.push(`<span class="pt-chip">${esc(ptTaskWords(p))}</span>`); }
-    else if (p.state === 'delivered' && a && a.mid === m.id) bits.push(ackBtn(p.id));
+    else if (p.state === 'delivered' && a && a.mid === m.id) bits.push(ackBtn(p.id) + commentBtn(p.id));
     else if (p.state === 'acked') bits.push(`<span class="pt-chip">acknowledged</span>`);
+    else if (p.state === 'followed') bits.push(ptThreadHtml({ followedBy: p.followedBy }, P, href) || '<span class="pt-chip">followed up</span>');
   }
   if (canApprove(m)) {
     bits.push(P.approvals.has(m.id) ? '<span class="pt-chip">approved</span>'
@@ -2868,9 +2994,15 @@ let LAST_ITEMS = null;     // what was last drawn, to draw it again after a clic
 let SEEN = new Set(), NEW_N = 0;   // balloons seen at the end; how many came since
 let DEC_N = 0;             // of those, how many ask for a decision
 let SOLO_IDLE = false;     // the solo agent is not working: its silence is an answer not given
-// Just us: only the person's messages and the answers to them in full. Per browser.
-let JUST_US = false;
-try { JUST_US = localStorage.getItem('cd-chat-just-us') === '1'; } catch (e) {}
+// Team activity: everything in place (hub traffic as rows, the PO's notes on
+// it as balloons), as the chat was before #146. Off, the default, the person
+// reads only what is theirs, the rest one line per gap (forCeo, gapsOf). Per
+// browser. (It replaced "Just us", which folded each hub message to a row of
+// its own: ~600 rows between ~105 balloons over three days.)
+let TEAM_ALL = false;
+try { TEAM_ALL = localStorage.getItem('cd-chat-team') === '1'; } catch (e) {}
+let GAP_OF_MID = new Map();     // a message in a closed gap → the gap's key, to land on it
+let GAP_N = 0, GAP_MSGS = 0;    // the gaps drawn, and the messages in them
 let MD_CACHE = new Map(), MD_CTX = '';
 // The catch-up line: the read point it counts from while it shows (null: no
 // line), whether it is drawn, and whether the chat has been opened on it yet.
@@ -2914,24 +3046,43 @@ function renderBubbles(items, opt = {}) {
   // whatever would fold it (its age, its task, Just us).
   const heldKeys = foldHeld(items, COMMENTS);
   const held = heldBy(heldKeys, POINTS.keep);
-  const quiet = (m, i) => quietItem(m, JUST_US);
+  const quiet = (m, i) => quietItem(m, false);
   const prevBase = stick ? null : FOLD.base, prevHid = FOLD.hid || new Set();
   const plan = foldPlan(items, FOLD, stick, held, quiet);
   const unanswered = foldUnanswered(items);
+  // The person's view (#146): over a transcript the hub types into, and
+  // unless Team activity is on, each run of what is not theirs is one gap
+  // row; opened, its messages draw as the full view draws them.
+  const clean = !TEAM_ALL && items.some(m => isHubInput(m) || (m.from !== 'user' && m.answers));
+  const gaps = clean ? gapsOf(items, held) : [];
+  const gapAt = new Map(), inGap = new Set();
+  GAP_OF_MID = new Map();
+  GAP_N = gaps.length; GAP_MSGS = 0;
+  for (const g of gaps) {
+    gapAt.set(g.first, g);
+    if (FOLD.groups.has(g.key)) { GAP_N--; continue; }   // opened: its messages are in view
+    GAP_MSGS += g.idx.length;
+    g.idx.forEach(i => { inGap.add(i); if (items[i].id) GAP_OF_MID.set(items[i].id, g.key); });
+  }
   // A task's messages fold under one row. Scrolled up, nothing drawn in view
   // folds into a group: only what was in one stays, and what arrives joins.
+  // In the person's view a message that is theirs never folds into a task's row.
   const drawnBefore = !!prevBase && items.some((m, i) => prevBase.has(foldKey(m, i)));
   const kept = i => {
     const m = items[i], k = foldKey(m, i);
-    return (held && held(m, i)) || (drawnBefore && prevBase.has(k) && !prevHid.has(k));
+    return (held && held(m, i)) || (drawnBefore && prevBase.has(k) && !prevHid.has(k)) || (clean && forCeo(m));
   };
   // An opened group stays open while some of it is kept apart for a while.
   const every = chatGroups(items);
-  FOLD.groups.forEach(k => { if (!every.some(g => g.key === k)) FOLD.groups.delete(k); });
+  FOLD.groups.forEach(k => {
+    if (k.startsWith('g:') && !every.some(g => g.key === k)) FOLD.groups.delete(k);
+    if (clean && k.startsWith('gap:') && !gaps.some(g => g.key === k)) FOLD.groups.delete(k);   // a gap that is no more
+  });
   const groups = every.map(g => FOLD.groups.has(g.key) ? g : groupKept(g, kept)).filter(Boolean);
   const groupAt = new Map(), hiddenIn = new Map();
   GROUP_OF_MID = new Map();
   for (const g of groups) {
+    if (inGap.has(g.at)) continue;      // inside a closed gap: the gap's row says it all
     groupAt.set(g.at, g);
     g.hidden.forEach(i => { hiddenIn.set(i, g); if (items[i].id) GROUP_OF_MID.set(items[i].id, g.key); });
   }
@@ -2966,15 +3117,23 @@ function renderBubbles(items, opt = {}) {
   const body = m => { const it = m.from === 'user' && m.id ? pointItems(m.text) : null; return it ? pointItemsHtml(m, it, POINTS, href, md) : null; };
   const rows = [];
   // The catch-up line goes above what is drawn first for the first message after the read point.
-  const cu = CU_POINT ? catchUp(items, readPoint(items, CU_POINT), JUST_US, CHAT_NAMES, POINTS.unacked) : null;
-  const cuSig = JUST_US + '|' + CHAT_NAMES.po + '|' + REF_GEN + '|' + [...POINTS.unacked].join(',');
+  const cu = CU_POINT ? catchUp(items, readPoint(items, CU_POINT), clean, CHAT_NAMES, POINTS.unacked) : null;
+  const cuSig = clean + '|' + CHAT_NAMES.po + '|' + REF_GEN + '|' + [...POINTS.unacked].join(',');
   if (cu && (!CU_SNAP || CU_SNAP.sig !== cuSig)) CU_SNAP = { sig: cuSig, html: catchUpHtml(cu, mid => refHref(ROOM, mid)) };
   let cuHtml = cu ? CU_SNAP.html : '';
   CU_SHOWN = !!cu;
   items.forEach((m, i) => {
     const k = foldKey(m, i);
+    const gp = gapAt.get(i);
     const g = groupAt.get(i);
-    if (cuHtml && i >= cu.first && (g || !hiddenIn.has(i))) { rows.push(cuHtml); cuHtml = ''; }
+    if (cuHtml && i >= cu.first && (gp || g || !hiddenIn.has(i))) { rows.push(cuHtml); cuHtml = ''; }
+    if (gp) {
+      // Team activity: one row for the run; opened, the run draws under it.
+      const open = FOLD.groups.has(gp.key);
+      keys.push(gp.key + '|' + gp.seen);
+      rows.push(gapRowHtml(gp, items, open));
+    }
+    if (inGap.has(i)) return;
     if (g) {
       // Its row, and when opened the group in order under it: "Latest ↓" counts
       // the row, not what is folded in it.
@@ -3172,7 +3331,7 @@ function readElsewhere(e) {
   const items = withTaskBubble(LAST_ITEMS, ROOM_OBJ && ROOM_OBJ.spec, 'from');
   const now = readPoint(items, CU_POINT), then = readPoint(items, stored);
   if (then.i < now.i || (then.i === now.i && then.ts <= now.ts)) return;
-  CU_POINT = catchUp(items, then, JUST_US) ? stored : null;
+  CU_POINT = catchUp(items, then, !TEAM_ALL) ? stored : null;
   CU_SNAP = null;
   renderBubbles(LAST_ITEMS);
 }
@@ -3195,23 +3354,29 @@ function readerLeaves() {
 window.addEventListener('pagehide', readerLeaves);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') readerLeaves(); else readTick(false); });
 // The bar over a transcript the hub types into: what is folded, and Just us.
+// What the bar says: in the person's view, how much team activity sits
+// behind its lines (never an absence without its reason); with Team
+// activity on, how many hub messages are folded to rows.
+function chatBarNote(teamAll, quietRows, gapN, gapMsgs) {
+  const s = n => n === 1 ? '' : 's';
+  if (teamAll) return quietRows ? `Everything shown · ${quietRows} message${s(quietRows)} from the hub folded to a row` : 'Everything shown';
+  return gapMsgs ? `Your messages and the answers to you · ${gapMsgs} team message${s(gapMsgs)} behind ${gapN} line${s(gapN)}`
+    : 'Your messages and the answers to you · no team activity hidden';
+}
 function showChatBar(items, quietRows) {
-  const bar = $('#chatbar'), btn = $('#just-us');
+  const bar = $('#chatbar'), btn = $('#team-all');
   if (!bar || !btn) return;
   const any = items.some(m => isHubInput(m) || (m.from !== 'user' && m.answers));
   bar.hidden = !any;
   if (!any) return;
-  const pressed = JUST_US ? 'true' : 'false';
+  const pressed = TEAM_ALL ? 'true' : 'false';
   if (btn.getAttribute('aria-pressed') !== pressed) btn.setAttribute('aria-pressed', pressed);
-  const n = quietRows, s = n === 1 ? '' : 's';
-  setText($('#chatbar-note'), JUST_US
-    ? `Just you and the answers to you · ${n} other message${s} folded`
-    : n ? `${n} message${s} from the hub folded` : 'Nothing from the hub folded');
+  setText($('#chatbar-note'), chatBarNote(TEAM_ALL, quietRows, GAP_N, GAP_MSGS));
 }
-function toggleJustUs() {
-  JUST_US = !JUST_US;
+function toggleTeam() {
+  TEAM_ALL = !TEAM_ALL;
   foldUnkeep(FOLD);
-  try { localStorage.setItem('cd-chat-just-us', JUST_US ? '1' : '0'); } catch (e) {}
+  try { localStorage.setItem('cd-chat-team', TEAM_ALL ? '1' : '0'); } catch (e) {}
   if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
   else showChatBar([], 0);
 }
@@ -3302,18 +3467,21 @@ function groupToggle(el) {
     if (now) now.focus({ preventScroll: true });
   }
 }
-// A message folded in a group: its group opens, drawn around the group's row.
+// A message folded in a group, or behind a gap's line: it opens, drawn
+// around its row (a gap first, then the group inside it).
 function openGroupOf(box, mid) {
-  const key = GROUP_OF_MID.get(mid);
-  if (!key || FOLD.groups.has(key) || !LAST_ITEMS) return;
-  FOLD.groups.add(key);
-  const row = [...box.children].find(k => k.dataset.group === key);
-  renderBubbles(LAST_ITEMS, row ? { anchor: row } : {});
+  for (const key of [GAP_OF_MID.get(mid), GROUP_OF_MID.get(mid)]) {
+    if (!key || FOLD.groups.has(key) || !LAST_ITEMS) continue;
+    FOLD.groups.add(key);
+    const row = [...box.children].find(k => k.dataset.group === key);
+    renderBubbles(LAST_ITEMS, row ? { anchor: row } : {});
+  }
 }
 function renderMsgs(room) { CHAT_DRAWN = true; renderBubbles(room.messages); }
 // ---- Copy link, and landing on a linked balloon ----------------------------
 let CHAT_DRAWN = false;    // the conversation itself has been drawn, not just the page
 let GOTO = (qs.get('msg') || '').trim();   // the balloon to land on once it is drawn
+let GOTO_PART = (qs.get('part') || '').trim();   // … and the passage of it (refHref)
 let GOTO_OPEN = !!GOTO;    // the chat was opened for that link: no catch-up jump over it
 let SOLO_WANT = null;      // {sid, n, loaded}: an older transcript turn than shown, asked for by a link
 let LANDED = null;         // {mid, at}: the balloon just landed on, marked again if a redraw replaces it
@@ -3375,12 +3543,64 @@ function showGotoNote(text) {
 }
 // Land on a balloon: open it if it is folded, bring it to the middle of the
 // chat and mark it for a moment. It waits until the conversation is drawn and
-// the chat has a height (a hidden frame has none).
-function gotoMsg(mid) {
+// the chat has a height (a hidden frame has none). With a part ("re:P12",
+// "pt:P12", "q:<quote>"), only that passage is marked (#146, issue #3: "highlight
+// just the relevant answer or point, rather than the full balloon").
+function gotoMsg(mid, part) {
   GOTO = String(mid || '').trim();
+  GOTO_PART = String(part || '').trim();
   if (SOLO_WANT && SOLO_WANT.failed) SOLO_WANT = null;   // a new try loads it again
   showGotoNote('');
   landPending();
+}
+// The passage of a balloon a part names, or null for the whole balloon:
+// "re:P12" the block (paragraph, list item, heading) starting "Re P12"; "pt:P12"
+// the item of a numbered message holding P12's chip; "q:<text>" the quoted
+// words, wrapped in a mark of their own (unwrapped when the mark fades).
+function partOf(el, part) {
+  const m = String(part || '').match(/^(re|pt|q):([\s\S]+)$/);
+  if (!m || !el) return null;
+  const text = el.querySelector('.text.md');
+  if (m[1] === 'pt') {
+    const chip = [...el.querySelectorAll('.pt-chip[data-pt-id]')].find(x => x.dataset.ptId === m[2]);
+    return chip ? chip.closest('li.pt-item') : null;
+  }
+  if (!text) return null;
+  if (m[1] === 're') {
+    const re = new RegExp('^\\W*re\\s+' + escRe(m[2]) + '\\b', 'i');
+    // A list item before the blocks around it, so a "Re P12" item marks itself, not its whole list.
+    return [...text.querySelectorAll('li'), ...text.querySelectorAll(':scope > *')].find(b => re.test(b.textContent || '')) || null;
+  }
+  const q = m[2].trim();
+  const i = q ? (text.textContent || '').indexOf(q) : -1;
+  if (i < 0) return null;
+  const w = document.createTreeWalker(text, NodeFilter.SHOW_TEXT, null);
+  let off = 0, n;
+  const parts = [];
+  while ((n = w.nextNode())) {
+    const len = n.nodeValue.length, s = Math.max(i, off), e = Math.min(i + q.length, off + len);
+    if (s < e) parts.push({ node: n, s: s - off, e: e - off });
+    off += len;
+  }
+  let first = null;
+  for (const t of parts.reverse()) {
+    try {
+      const r = document.createRange();
+      r.setStart(t.node, t.s); r.setEnd(t.node, t.e);
+      const mk = document.createElement('mark');
+      mk.className = 'landed-q';
+      r.surroundContents(mk);
+      first = mk;
+    } catch (e) {}
+  }
+  return first;
+}
+function unwrapMarks(root) {
+  (root || document).querySelectorAll('mark.landed-q').forEach(mk => {
+    const p = mk.parentNode;
+    while (mk.firstChild) p.insertBefore(mk.firstChild, mk);
+    p.removeChild(mk); p.normalize();
+  });
 }
 function landPending() {
   const box = $('#msgs');
@@ -3420,29 +3640,42 @@ function landPending() {
       return;
     }
     GOTO = '';
-    box.scrollTop = Math.max(0, el.offsetTop - Math.max(8, (box.clientHeight - el.offsetHeight) / 2));
+    const part = GOTO_PART;
+    GOTO_PART = '';
+    unwrapMarks(box);
+    const at = partOf(el, part) || el;   // the whole balloon when it has no such passage
+    const top = at === el ? el.offsetTop : el.offsetTop + (at.getBoundingClientRect().top - el.getBoundingClientRect().top);
+    box.scrollTop = Math.max(0, top - Math.max(8, (box.clientHeight - at.offsetHeight) / 2));
     STICK = nearEnd(box);
     showLatest();
-    el.classList.remove('landed');
-    el.style.animationDelay = '';
-    void el.offsetWidth;          // start the fade again on a second landing
-    LANDED = { mid, at: Date.now() };
-    markLanded(el);
+    at.classList.remove('landed');
+    at.style.animationDelay = '';
+    void at.offsetWidth;          // start the fade again on a second landing
+    LANDED = { mid, part, at: Date.now() };
+    markLanded(at);
   } finally { _landing = false; }
 }
-// The landed mark, on the balloon or on the node a redraw put in its place
-// (a chip resolving changes its HTML), where the fade has got to.
+// The landed mark, on the balloon (or its passage) or on the node a redraw
+// put in its place (a chip resolving changes its HTML), where the fade has
+// got to.
 function markLanded(el) {
   if (!LANDED) return;
   const age = Date.now() - LANDED.at;
   if (age >= 2600) { LANDED = null; return; }
   const box = $('#msgs');
-  el = el || (box && [...box.querySelectorAll('.msg[data-mid]')].find(e => e.dataset.mid === LANDED.mid));
+  if (!el) {
+    const msg = box && [...box.querySelectorAll('.msg[data-mid]')].find(e => e.dataset.mid === LANDED.mid);
+    if (msg && LANDED.part && !msg.querySelector('.landed')) el = partOf(msg, LANDED.part) || msg;
+    else el = msg;
+  }
   if (!el || el.classList.contains('landed')) return;
   el.style.animationDelay = age ? -age + 'ms' : '';
   el.classList.add('landed');
   clearTimeout(el._landed);
-  el._landed = setTimeout(() => { el.classList.remove('landed'); el.style.animationDelay = ''; }, 2600 - age);
+  el._landed = setTimeout(() => {
+    el.classList.remove('landed'); el.style.animationDelay = '';
+    if (el.matches && el.matches('mark.landed-q')) unwrapMarks(el.closest('.msg') || box);
+  }, 2600 - age);
 }
 // The task text is the first message of the conversation. Prepend it as a user
 // bubble unless the history already records it verbatim.
@@ -4664,7 +4897,7 @@ window.addEventListener('message', (e) => {
   // The dashboard opened this chat for a link to one of its balloons.
   else if (d.ensemble === 'goto-msg' && e.source === window.parent && e.origin === location.origin) {
     GOTO_OPEN = true;
-    gotoMsg(d.msg);
+    gotoMsg(d.msg, d.part || '');
     try { window.parent.postMessage({ type: 'goto-taken', roomId: ROOM }, location.origin); } catch (err) {}
   }
 });
@@ -5140,6 +5373,18 @@ function showTrayItem(cid) {
 }
 // The person's points: a thumbs up, Drop or Reopen types nothing into the
 // agent; a thumbs up on a decision is the one that does, once.
+// Comment on the answer to a point: a new ask in the box, linked to the
+// answer's balloon (its chip shows under the box), the cursor in it. Sent, the
+// hub reads the link and closes the point as followed up (points.py). Nothing
+// is posted here. False when the point has no answer balloon to link.
+function pointComment(id) {
+  const p = POINTS.byId.get(id), a = ptAnswerOf(p);
+  if (!a || !a.mid) return false;
+  const ta = $('#input');
+  if (edHeadToPoint(ED, ta.value)) { ta.value = ''; edGrow(ta); SEND_KEY = ''; }
+  edAddAt(ED.points.length, msgLink(a.mid) + '\n');
+  return true;
+}
 function pointClick(e) {
   const b = e.target.closest && e.target.closest('.pt-btn');
   if (!b || b.disabled) return false;
@@ -5148,6 +5393,7 @@ function pointClick(e) {
     if (m) { b.disabled = true; approveDecision(m, postOk).then(() => { b.disabled = false; }); }
     return true;
   }
+  if (b.dataset.ptAct === 'comment') { pointComment(b.dataset.pt); return true; }
   b.disabled = true;
   pointAct(b.dataset.pt, b.dataset.ptAct, postOk).then(() => { if (b.isConnected) b.disabled = false; });
   return true;
@@ -5183,7 +5429,7 @@ $('#msgs').addEventListener('click', e => {
   }
 });
 $('#to-latest').addEventListener('click', toLatest);
-$('#just-us').addEventListener('click', toggleJustUs);
+$('#team-all').addEventListener('click', toggleTeam);
 // Where the reader is: at the end the chat follows new messages; scrolled up it
 // stays put and "Latest ↓" offers the way back. A hidden frame scrolls to 0 and
 // says nothing about the reader, so it is not counted.
@@ -5244,11 +5490,11 @@ function refClickHandler(ev) {
   const a = ev.target.closest && ev.target.closest('a.ref-chip, a.sup-link, a.cu-link, a.ask-link, a.pt-link, a.pm-link');
   if (!a || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
   ev.preventDefault();
-  const room = a.dataset.refRoom || ROOM, msg = a.dataset.refMsg;
-  if (room === ROOM) { gotoMsg(msg); return; }
+  const room = a.dataset.refRoom || ROOM, msg = a.dataset.refMsg, part = a.dataset.refPart || '';
+  if (room === ROOM) { gotoMsg(msg, part); return; }
   let host = null;
   try { if (window.parent !== window && window.parent.location.origin === location.origin) host = window.parent; } catch (e) {}
-  if (host) host.postMessage({ type: 'open-msg', roomId: room, msg }, location.origin);
+  if (host) host.postMessage({ type: 'open-msg', roomId: room, msg, ...(part ? { part } : {}) }, location.origin);
   else location.href = a.href;
 }
 document.addEventListener('click', refClickHandler);
