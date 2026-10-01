@@ -4739,12 +4739,15 @@ function issueEmpty(msg) {
   return `<div class="dp-empty">${esc(msg)}</div>`;
 }
 
-// The task panel's actions: the same bar as a list row's, from the same model
-// (docs/session-actions.md). Its ⋯ is the interim home of the task's actions
-// until they move into the panel's own ⋯ menu (Dock need 14, see pdEnsure).
-const DOCK_MENU_INTERIM = 'More actions · for now here: they move into the panel’s ⋯ menu once Dock takes app items';
+// The task panel's actions: the same model as a list row's
+// (docs/session-actions.md). The bar keeps the one primary action (End,
+// Resume, Start); the rest are in the conversation panel's ⋯ menu, above
+// Dock's own items (pdMenuItems), not in a More menu of their own. Only when
+// the task is not in the dock (the library could not load) does the bar
+// keep its More menu.
+const DOCK_MENU_INTERIM = 'More actions · for now here: they move into the panel’s ⋯ menu, as the task’s have';
 function detailActions(r, isLive) {
-  const bar = SessionActions.actionBarHtml(SessionActions.sessionActions(actionState(r, isLive), actionEnv()), { interim: DOCK_MENU_INTERIM });
+  const bar = SessionActions.actionBarHtml(SessionActions.sessionActions(actionState(r, isLive), actionEnv()), { menu: !pdTask() });
   return `<div class="dp-actions">${bar}</div>`;
 }
 
@@ -10447,10 +10450,6 @@ function poDockProject() {
 // after it the page says so above the bar, with Reload, and a project's
 // Overview is the board again (#132: it used to fall back silently).
 const PD_RETRY = window.PD_RETRY_MS || [1000, 3000, 10000, 30000];   // (a test shortens it)
-// The page's one key for its docks' windows (see onEveryWindow in pdLoad): a
-// dock made later does not change it, a reload does.
-var PD_POP_KEY = '';
-function pdKeepPopKey() { window.__dockPopKey = PD_POP_KEY = PD_POP_KEY || window.__dockPopKey; }
 function pdLoad() {
   if (PD.loading) return PD.loading;
   const n = PD.tries = (PD.tries || 0) + 1;
@@ -10479,13 +10478,9 @@ function pdLoad() {
       // window, which is that one: what they say is passed on to this page.
       lib.onEveryWindow(w => {
         if (w === window) return null;
-        // Two docks share this page (the PO screen's and the list's, #137),
-        // and Dock v0.7.0 keeps one key on it for its windows to check they
-        // are still this page's: the dock made last wrote its own, and the
-        // other's windows would take themselves for orphans and close. The
-        // page keeps the first key made (pdKeepPopKey, after each createDock)
-        // and every window gets it (an ask for Dock: one key per page).
-        try { w.__dockPopKey = window.__dockPopKey; } catch (e) {}
+        // Two docks share this page (the PO screen's and the list's, #137):
+        // since Dock v0.9.0 the page has one pop-out key for both, so a
+        // window of one is not orphaned by the other.
         const d = w.document, skip = new Set(['visibilitychange']);
         // The window's page is the library's popout.html, served beside it:
         // its base is this page's, so a relative address in a panel means
@@ -10616,7 +10611,8 @@ function pdEnsure() {
   window.DOC_LISTENERS_PAUSED = true;   // the dock's own listeners are not the page's
   try { PD.dock = L.createDock({
     root: PD_ROOT,
-    panels: PD_IDS.map(id => ({ id, title: PD_TITLES[id], el: PD.els[id], icon: PD_ICON[id], unpinSize: PD_ICON[id] ? pdToolSize(id, vw) : undefined })),
+    panels: PD_IDS.map(id => ({ id, title: PD_TITLES[id], el: PD.els[id], icon: PD_ICON[id], unpinSize: PD_ICON[id] ? pdToolSize(id, vw) : undefined,
+                                menuItems: id === 'po-chat' ? (pid, ctx) => pdMenuItems(ctx) : undefined })),
     storageKey: PD_KEYS.desk,
     defaultLayout: ctx => pdDefaultLayout(L, ctx),
     narrow: pdNarrow(),
@@ -10638,19 +10634,11 @@ function pdEnsure() {
     // Window mode. It is not MOVED to a side: that would leave the middle
     // empty with no way back but Reset layout (a product decision, not a
     // library limit).
-    // Dock need 14 (begin): the task's actions (Rename, Delete task… the
-    // action bar's ⋯) and the PO's (Switch agent, the PO's task) belong in
-    // this ⋯ menu, under Dock's own items. Dock v0.8.0 takes no app items
-    // there (asked of the Dock PO as Ensemble need 14: per-panel
-    // `menuItems(id)` above Dock's own, `onMenu` pick, submenus, working
-    // popped out). Until then each keeps ONE interim ⋯ of its own, marked
-    // data-interim="dock-menu" (detailActions, poHeadHtml). The switch is:
-    //   menuItems: id => id !== 'po-chat' ? [] : pdTask()
-    //     ? SessionActions.sessionActions(actionState(rowBySid(SELECTED_SID), …), actionEnv()).groups
-    //     : poMenuItems(poRowOf(poDockProject())),
-    //   onMenu: (id, key) => pdTask() ? runTaskAction(…) : poHeadClick({ dataset: { po: key }, … }),
-    // then drop `interim` from detailActions and the ⋯ from poHeadHtml.
-    // Dock need 14 (end).
+    // Its ⋯ also holds the open task's own actions (Rename, Delete task…),
+    // above Dock's: the panel's menuItems above (pdMenuItems, Dock v0.9.0's
+    // app items, need 14, the CEO's P109). The PO's two (Switch agent, the
+    // PO's task) still wait in its header's ⋯ (poHeadHtml), marked
+    // data-interim="dock-menu": they can follow the same way.
     can: (id, a) => (isPhone() && !(id === 'po-chat' && a === 'hide' && pdTask()))
       || (id !== 'po-chat' ? (a !== 'hide' || PD.dock?.viewMode(id) === 'window')
           : (a === 'float' || a === 'pop' || a === 'max' || a === 'min' || (a === 'hide' && PD.dock?.viewMode(id) === 'window'))),
@@ -10666,7 +10654,9 @@ function pdEnsure() {
     modalSelector: '[role="dialog"], dialog, .dk-help-pop, .dcm',
     text: { empty: 'Every panel is on a strip at an edge or hidden: the Panels menu above shows them.' },
   }); } finally { window.DOC_LISTENERS_PAUSED = false; }
-  pdKeepPopKey();
+  // A panel this page no longer has (Documents, #103) keeps no place in a
+  // stored layout (Dock v0.10.0 parks unknown panels instead of dropping them).
+  try { PD.dock.forget('documents'); } catch (e) {}
   PD.dock.onChange(() => { pdKeepMiddle(); pdToolsFit(); pdPlaceChat(); barCrumbs(); });
   pdToolsFit();
   PD.dock.onShown(id => pdShown(id));
@@ -10676,6 +10666,60 @@ function pdEnsure() {
   pdPlaceChat();
   pdToolRestore();
   return PD.dock;
+}
+// The open task's actions in the conversation panel's ⋯ menu (need 14, the
+// CEO's P109): the same model as a list row's (static/actions.js), asked each
+// time the menu opens, drawn by Dock above its own items (View Mode, Take
+// Screenshot, Maximise, Hide) wherever the menu is: docked, floating, in the
+// panel's own window, on a phone's tab row (where it is the ⋯'s only content).
+// The bar under the task's name keeps the one primary action (detailActions).
+// With no task open the menu is Dock's alone (the PO's items stay in its
+// header's ⋯ for now).
+function pdMenuItems(ctx) {
+  if (!pdTask()) return [];
+  const r = rowBySid(SELECTED_SID);
+  if (!r) return [];
+  const model = SessionActions.sessionActions(actionState(r, !!r.isLive), actionEnv());
+  const items = [];
+  model.groups.forEach((g, i) => {
+    if (i) items.push({ sep: true });
+    for (const it of g) {
+      // Hide terminal is offered only while the captured terminal is up
+      // (the bar's menu showed it as it opened).
+      if (it.hidden && !capturedTermsShown()) continue;
+      items.push({ id: it.id, label: it.label, title: it.disabled ? it.reason : it.title, disabled: !!it.disabled,
+                   checked: it.role === 'menuitemcheckbox' ? !!it.checked : undefined, run: () => pdRunAction(it, ctx) });
+    }
+  });
+  return items;
+}
+// A pick runs the page's handler for the item, in this page (Dock calls run
+// here also when the menu was in the panel's window): the handlers are keyed
+// on the class and data an action bar's item carries (the document's click
+// listener), so a stand-in with that class and data is clicked, and gone
+// after it (a handler keeps what it read from it). Terminal colours opens its
+// picker instead, against the panel's ⋯ in the window the menu was in.
+function pdRunAction(it, ctx) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = it.cls || '';
+  b.dataset.act = it.id;
+  Object.entries(it.data || {}).forEach(([k, v]) => { if (v !== undefined && v !== null) b.dataset[k] = v; });
+  b.hidden = true;
+  if (it.popup) { openThemeMenu(b, pdMenuButton(ctx)); return; }
+  document.body.appendChild(b);
+  try { b.click(); } finally { b.remove(); }
+}
+// The conversation panel's ⋯ button, in whichever document holds the panel
+// now: the nearest ancestor of the panel's element that has one (its stack,
+// float or window's frame).
+function pdMenuButton(ctx) {
+  const el = PD.els['po-chat'];
+  for (let n = el && el.parentElement; n; n = n.parentElement) {
+    const b = n.querySelector('[data-dk-act="menu"]');
+    if (b) return b;
+  }
+  return ctx && ctx.window ? ctx.window.document.querySelector('[data-dk-act="menu"]') : null;
 }
 // The middle is the conversation alone: a tool dropped into its stack goes
 // beside it, at the right.
@@ -10859,6 +10903,11 @@ function pdPlaceTask(on) {
   ['changes', 'workspace', 'spec'].forEach(id => PD.els[id].classList.toggle('pd-for-task', on));
   dpPlacePanes(DP_EL);
   pdChangesBadge();
+  // A phone's tab row has a ⋯ only for the task's actions (nothing of Dock's
+  // moves a panel there), and Dock asks for them while it draws the row: so
+  // the row is drawn again when the task comes or goes (render keeps the
+  // row's elements, nothing reloads).
+  if (moved && PD.dock && PD.dock.narrow()) PD.dock.render();
   // Its panes are tabs again, or tools: which are on screen follows.
   if (moved && SELECTED_SID) { DP_EL.dataset.sig = ''; renderDetail(); }
 }
@@ -13547,9 +13596,13 @@ function renderThemeMenu(menu, current) {
 
 // The colour picker opens beside the item that opened it, flipped and kept
 // inside the window, and follows it on scroll and resize (static/actions.js).
-// If the More menu closes first, it stays, against the More button.
-function openThemeMenu(trigger) {
+// If the More menu closes first, it stays, against the More button. Picked
+// from the conversation panel's ⋯ menu (pdRunAction), `trigger` is a stand-in
+// carrying the item's data and `at` the panel's ⋯ button, which the picker
+// opens under, in that button's window.
+function openThemeMenu(trigger, at) {
   closeThemeMenu();
+  const anchor = at || trigger;
   const current = trigger.dataset.current || '';
   THEME_MENU_FILTER = '';
   const menu = document.createElement('div');
@@ -13564,10 +13617,10 @@ function openThemeMenu(trigger) {
     <input type="text" class="theme-dd-search" placeholder="Search schemes…" aria-label="Search colour schemes">
     <div class="theme-dd-list"></div>
   `;
-  document.body.appendChild(menu);
+  anchor.ownerDocument.body.appendChild(menu);   // the menu's window, which may be a panel's own
   renderThemeMenu(menu, current);
   menu._amFrom = trigger;
-  menu._am = SessionActions.child(menu, trigger);
+  menu._am = SessionActions.child(menu, anchor);
   trigger.setAttribute('aria-expanded', 'true');
   menu.querySelector('.theme-dd-search').focus({ preventScroll: true });
   THEME_MENU = menu;
@@ -14372,7 +14425,6 @@ function openPoConv(pj) {
 // here. Before the library loads, when it could not, and on a phone (where the
 // list is home, #129) there is no list dock: the list is the fixed column.
 const LD_KEY = 'cd-list-dock';
-const LD_AXIS_KEY = 'cd-list-dock-axis';   // its size on each axis (ldAxisSize)
 const LD_W = 300;   // --sw-w: the column's width until it is resized
 const LD_H = 240;   // its height at the top or the bottom, until it is resized
 const LD_ROOT = document.getElementById('list-dock');
@@ -14381,7 +14433,7 @@ const LD_PAGE = document.getElementById('ld-page');
 const LD_HOME = { parent: SW_EL.parentNode, next: SW_EL.nextElementSibling };
 const LD_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
   + '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M12 9h6M12 13h6M12 17h4"/></svg>';
-var LD = { dock: null, insets: '', ro: null, dir: '', size: { row: LD_W, col: LD_H } };   // var: swRender may run before this line
+var LD = { dock: null, insets: '', ro: null };   // var: swRender may run before this line
 function ldWanted() { return !!PD.lib && !PD.failed && !isPhone(); }
 function ldDefaultLayout(L) {
   return { root: L.split('row', [L.stack(['list'], { size: LD_W }), L.stack(['page'])]) };
@@ -14395,8 +14447,9 @@ function ldSync() {
 function ldMake() {
   const L = PD.lib;
   LD_ROOT.hidden = false;
-  try { Object.assign(LD.size, JSON.parse(localStorage.getItem(LD_AXIS_KEY) || '{}')); } catch (e) {}
-  LD.dir = '';
+  // Its size on each axis is the layout's own since Dock v0.9.0 (layout.depth):
+  // the page's copy of it (#137, 'cd-list-dock-axis') is not read any more.
+  try { localStorage.removeItem('cd-list-dock-axis'); } catch (e) {}
   window.DOC_LISTENERS_PAUSED = true;   // the dock's own listeners are not the page's
   try {
     LD.dock = L.createDock({
@@ -14408,6 +14461,9 @@ function ldMake() {
       fill: 'page',
       minSize: { list: { w: 220, h: 120 }, page: { w: 360, h: 200 } },
       sizes: { head: 32, strip: 44 },
+      // Its depth the first time on an axis (Dock v0.10.0 keeps each axis's
+      // size in the layout after that): a 300px column, a 240px band.
+      defaultSize: (ids, dir) => (dir === 'col' ? LD_H : LD_W),
       // As the tools: a click on its strip button opens it beside the page,
       // a click elsewhere puts it back.
       stripHover: false,
@@ -14422,12 +14478,11 @@ function ldMake() {
       modalSelector: '[role="dialog"], dialog, .dk-help-pop, .dcm',
     });
   } finally { window.DOC_LISTENERS_PAUSED = false; }
-  pdKeepPopKey();
   document.body.classList.add('ld-on');
-  LD.dock.onChange(() => { ldKeepPage(); ldAxisSize(); ldInsets(); });
-  if (window.ResizeObserver) (LD.ro = new ResizeObserver(() => { ldAxisSize(); ldInsets(); })).observe(LD_PAGE);
+  LD.dock.onChange(() => { ldKeepPage(); ldInsets(); });
+  // A splitter's resize tells no onChange: the page's ResizeObserver notes it.
+  if (window.ResizeObserver) (LD.ro = new ResizeObserver(() => ldInsets())).observe(LD_PAGE);
   ldKeepPage();
-  ldAxisSize();
   ldInsets();
 }
 // Back to the fixed column (a phone, or the library gone): its windows close
@@ -14455,45 +14510,15 @@ function ldKeepPage() {
   const st = d && find(d.layout().root);
   if (st && st.panels.includes('list')) { d.dockEdge('list', 'left'); d.activate('page'); }
 }
-// Its size on each axis: moved from a side to the top (or back), Dock v0.7.0
-// gives it its old extent across (the column's whole height as the band's; an
-// ask for Dock, ENSEMBLE-NEEDS item 10). It gets the size it last had that way
-// (a column's width, a band's height), kept per browser (LD_AXIS_KEY). A
-// splitter's resize tells no onChange: the page's ResizeObserver notes it.
-function ldAxisSize() {
-  const d = LD.dock;
-  const find = (n, up) => !n ? null : n.t === 'stack' ? (n.panels.includes('list') && up ? [up, n] : null) : (n.kids || []).map(k => find(k, n)).find(Boolean) || null;
-  const at = d && find(d.layout().root, null);
-  if (!at) return;   // not docked: the axis it was docked on stays
-  const [sp, st] = at;
-  if (LD.dir && sp.dir !== LD.dir && LD.size[sp.dir]) {
-    st.size = LD.size[sp.dir];
-    d.render();
-    try { localStorage.setItem(LD_KEY, JSON.stringify(d.layout())); } catch (e) {}
-  } else if (st.size > 0 && LD.size[sp.dir] !== st.size) {
-    LD.size[sp.dir] = st.size;
-    try { localStorage.setItem(LD_AXIS_KEY, JSON.stringify(LD.size)); } catch (e) {}
-  }
-  LD.dir = sp.dir;
-}
 // The page's insets: where the stand-in is inside the dock. Docked at the left
 // that is the list's width and its splitter; on a strip, the strip (and the
-// list slid out beside the page); floating or in its window, nothing. A hidden
-// Window may keep its former strip button, and then that strip takes space.
+// list slid out beside the page, as big as the page's CSS lets it be: Dock
+// v0.9.0 leaves the middle exactly its laid-out room); floating or in its
+// window, nothing. A hidden Window may keep its former strip button, and then
+// that strip takes space.
 function ldInsets() {
   const d = LD.dock;
   if (!d) return;
-  // Slid out beside the page, the list is as big as the page's CSS lets it be
-  // (the middle keeps 360px across, 200px down), while Dock leaves it room for
-  // its own size (besideSpace, a margin on .dk-main): the room is cut to the
-  // list's. (An ask for Dock, ENSEMBLE-NEEDS item 12.)
-  const fly = LD_ROOT.querySelector('.dk-flyout.dk-fly-beside.open'), dm = LD_ROOT.querySelector('.dk-main');
-  const edge = fly && ['left', 'right', 'top', 'bottom'].find(e => fly.classList.contains('dk-fly-' + e));
-  if (edge && dm) {
-    const fr = fly.getBoundingClientRect(), m = 'margin' + edge[0].toUpperCase() + edge.slice(1);
-    const got = Math.round(edge === 'left' || edge === 'right' ? fr.width : fr.height);
-    if (parseFloat(dm.style[m]) > got) dm.style[m] = got + 'px';
-  }
   const R = LD_ROOT.getBoundingClientRect(), r = LD_PAGE.getBoundingClientRect();
   const on = LD_PAGE.isConnected && r.width > 0 && r.height > 0;
   const px = v => Math.max(0, Math.round(v)) + 'px';

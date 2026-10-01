@@ -1,4 +1,4 @@
-"""#148: the task panel runs on Dock.
+"""#148: the task panel runs on Dock. #150: the task's actions are in its ⋯.
 
 The middle of a PO screen (the Chat panel, the dock's fill) has the tools'
 title bar: its ⋯ offers View Mode (Float, Window), Take Screenshot, Maximise
@@ -6,28 +6,35 @@ and Hide, and − minimises. An open task is that panel's content (pdPlaceTask),
 so it goes with the panel into a window of its own, and the panel's window is
 named after the task. The hand-made controls are gone: no ⧉ Pop out in the
 task's header, no Pop out in the PO's ⋯, no ⧉ Dock in session.html, no
-/session window. Until Dock takes app items in its ⋯ menu (need 14), the
-task's actions stay in the action bar's ⋯ and the PO's two in its header's ⋯,
-both marked data-interim="dock-menu".
+/session window. Since Dock v0.10.0 takes app items in a panel's ⋯ menu
+(need 14, P109), the open task's actions (the model of static/actions.js,
+pdMenuItems) are there, above Dock's own, and the action bar under the task's
+name keeps the primary alone: no "More" ⋯ of its own. The PO's two still
+wait in its header's ⋯, marked data-interim="dock-menu".
 
 In headless Chrome over CDP, against a hub in a thread serving the pages, with
 a project that has a PO (Motors) and a task in it:
 
 * a desktop (1440×900): the open task's middle has a title bar with ⋯, and no
-  ⧉ Pop out; the action bar's ⋯ is the one interim control;
+  ⧉ Pop out; the bar has no ⋯ of its own; the middle's ⋯ holds every action
+  of the model (Rename…, Delete task…, Agents and models…), above Dock's own,
+  with the model's separators; a pick (Rename…) runs the page's handler;
 * ⋯ › View Mode › Window: the task panel is in the panel's window, with its
   chat, and the window is named "Brakes that squeal · Motors"; no PO chat of
-  the window's own; the interim ⋯ there opens its menu in that window;
+  the window's own; the ⋯ there holds the same items, in that window, and a
+  pick there runs in the page too; Terminal colours… (when it is offered)
+  opens its picker in the window;
 * × there closes the task: the window shows the PO's chat; a row clicked in
   the list puts the task back in the window;
 * closing the window hides the panel (the task waits, parked); Panels reopens
   the window; its ⋯ › View Mode › Dock Pinned brings it back to the middle;
 * Maximise and Restore, Float and Dock Pinned again; Move To is not offered;
-* every action of the model is in the bar's ⋯;
+* every action of the model is in the middle's ⋯, in the model's order;
 * the PO's conversation: its ⋯ holds Switch agent and the PO's task only; the
   panel's ⋯ › Window pops the PO chat out (a chat of the window's own);
-* a phone (430×932): no ⧉ Pop out, no ⋯ over the Chat tab (narrow dock), the
-  interim ⋯ present.
+* a phone (430×932): no ⧉ Pop out, no ⋯ of the bar's; the Chat tab's row has
+  one ⋯, for the task's actions (and Dock's Take Screenshot: a narrow dock
+  moves no panel).
 
 Screenshots go to $ENSEMBLE_SHOTS when it is set. Skipped without Node or Chrome.
 """
@@ -98,7 +105,7 @@ const STATE = `(() => {
     max: d ? !!d.maximised() : null, narrow: d ? d.narrow() : null,
     headShown: !!head && getComputedStyle(head).display !== 'none' && head.getBoundingClientRect().height > 0, head: box(head), menuBtn: !!menuBtn,
     anyMenuBtn: count('#po-dock [data-dk-act="menu"]'),
-    popout: count('.dp-popout'), interimTask: count('.am-more[data-interim="dock-menu"]'), interimPo: count('[data-po="more"][data-interim="dock-menu"]'),
+    popout: count('.dp-popout'), taskMore: count('#detail-panel .am-more'), interimPo: count('[data-po="more"][data-interim="dock-menu"]'),
     sid: SELECTED_SID || null, open: document.body.classList.contains('detail-open'), task: pdTask(),
     dpWhere: !dp ? null : dp.ownerDocument === document ? 'page' : w && dp.ownerDocument === w.document ? 'window' : 'elsewhere',
     dpInPanel: !!dp && dp.parentNode === ph, dpParked: !!dp && !!dp.closest('.dk-parking'), dpHome: !!dp && dp.parentNode === document.getElementById('detail-panel-resize').parentNode,
@@ -108,6 +115,7 @@ const STATE = `(() => {
     poMenu: [...document.querySelectorAll('#po-panel .po-menu [data-po]')].map(b => b.dataset.po),
     barActs: bar ? [...bar.querySelectorAll('.am-item')].map(b => b.dataset.act) : null,
     modelActs: model ? model.groups.flat().map(i => i.id) : null,
+    modelMenu: model ? pdMenuItems({ where: 'dock', mode: 'pinned', side: null, window }).map(i => i.sep ? '-' : i.label) : null,
     barBox: box(bar), dp: box(dp), float: box(document.querySelector('#po-dock .dk-float')),
     vw: innerWidth, scrollW: document.documentElement.scrollWidth };
 })()`;
@@ -168,6 +176,14 @@ async function main() {
     d.querySelector('[data-dk-menu="${item}"]').click();
     return 0; })()`);
   const HEAD = '#po-dock .dk-stack:has(> .dk-body > .pd-chat)', FLOAT = '#po-dock .dk-float';
+  // What an open ⋯ menu holds, in document d: the app's items (with the separators) and Dock's own, in order.
+  const MENU = (d = 'document') => `(() => { const m = ${d}.querySelector('.dk-menu.dk-options'); if (!m) return null;
+    const rows = [...m.children].map(e => e.matches('[role="separator"]') ? '-' : e.dataset.dkApp !== undefined ? 'app' : e.dataset.dkMenu !== undefined || e.dataset.dkSub !== undefined ? 'own' : '?');
+    return { subs: [...m.querySelectorAll('[data-dk-sub]')].map(b => b.dataset.dkSub), items: [...m.querySelectorAll('[data-dk-menu]')].map(b => b.dataset.dkMenu),
+      app: [...m.querySelectorAll('[data-dk-app]')].map(b => ({ id: b.dataset.dkApp, label: b.textContent, disabled: b.getAttribute('aria-disabled') === 'true', title: b.title, role: b.getAttribute('role'), checked: b.getAttribute('aria-checked') })),
+      rows, inPage: m.ownerDocument === document }; })()`;
+  // The app item whose label starts with `label`, in the open menu of document d, clicked (Dock's own click handling).
+  const PICK = (label, d = 'document') => `(() => { const b = [...${d}.querySelectorAll('.dk-menu.dk-options [data-dk-app]')].find(x => x.textContent.startsWith(${JSON.stringify(label)})); if (!b) return false; b.click(); return true; })()`;
   const inWindow = '!!PD.dock.popWindow("po-chat") && pdById("detail-panel").ownerDocument === PD.dock.popWindow("po-chat").document && !!PD.els["po-chat"].querySelector("iframe.dp-session")';
   try {
     const p = await page(1440, 900);
@@ -178,31 +194,55 @@ async function main() {
     await p.until('!!SELECTED_SID && pdTask() && !!PD.els["po-chat"].querySelector("iframe.dp-session")', 15000); await sleep(600);
     out.docked = await p.evalIn(STATE);
     await p.shot('task-1440-docked');
-    // The middle's ⋯: View Mode, no Move To, Maximise, Hide.
+    // The middle's ⋯: the task's actions, then View Mode, no Move To, Maximise, Hide.
+    await p.evalIn('window.__prompted = null; window.prompt = (m, c) => { window.__prompted = [m, c]; return null; }; 0');
     await p.click(`${HEAD} [data-dk-act="menu"]`); await sleep(200);
-    out.menu = await p.evalIn(`(() => { const m = document.querySelector('.dk-menu.dk-options'); return m ? { subs: [...m.querySelectorAll('[data-dk-sub]')].map(b => b.dataset.dkSub), items: [...m.querySelectorAll('[data-dk-menu]')].map(b => b.dataset.dkMenu) } : null; })()`);
+    out.menu = await p.evalIn(MENU());
+    await p.shot('task-1440-menu');
+    // A pick: Rename… asks for the label (the page's handler, through a stand-in button).
+    out.pick = { found: await p.evalIn(PICK('Rename')) };
+    await sleep(300);
+    Object.assign(out.pick, await p.evalIn(`({ prompted: window.__prompted, menuOpen: !!document.querySelector('.dk-menu.dk-options'), standIns: document.querySelectorAll('body > button.rename-btn').length })`));
+    await p.click(`${HEAD} [data-dk-act="menu"]`); await sleep(200);
     await p.click('.dk-menu.dk-options [data-dk-sub="mode"]'); await sleep(200);
     out.modes = await p.evalIn(`[...document.querySelectorAll('.dk-menu.dk-submenu [data-dk-menu]')].map(b => b.dataset.dkMenu)`);
-    await p.shot('task-1440-menu');
     // Window: the task goes with the panel.
     await p.click('.dk-menu.dk-submenu [data-dk-menu="mode:window"]');
     await p.until(inWindow, 15000); await sleep(800);
     out.window = await p.evalIn(STATE);
     await p.shotWin('task-window');
     await p.shot('task-1440-window-page');
-    // The interim ⋯ opens its menu in the window.
-    out.interimMenu = await p.evalIn(`(async () => {
+    // The window's ⋯ holds the task's actions too, in that window; a pick there runs in the page.
+    const WD = `PD.dock.popWindow('po-chat').document`;
+    out.winMenu = await p.evalIn(`(async () => {
       const w = PD.dock.popWindow('po-chat'), d = w.document;
-      const more = d.querySelector('.am-more[data-interim="dock-menu"]');
-      if (!more) return { more: false };
-      more.click(); await new Promise(r => setTimeout(r, 300));
-      const m = d.querySelector('.am-menu:not([hidden])');
-      const res = { more: true, open: !!m, inWindow: !!m && m.ownerDocument === d && m.parentNode === d.body, inPage: !!document.querySelector('.am-menu:not([hidden])'),
-        acts: m ? [...m.querySelectorAll('.am-item')].map(b => b.dataset.act) : [], title: more.title, expanded: more.getAttribute('aria-expanded') };
+      const btn = d.querySelector('[data-dk-act="menu"]');
+      if (!btn) return { btn: false };
+      btn.click(); await new Promise(r => setTimeout(r, 300));
+      const res = Object.assign({ btn: true }, ${MENU('d')} || { open: false });
+      const m = d.querySelector('.dk-menu.dk-options');
+      res.open = !!m; res.inWindow = !!m && m.ownerDocument === d; res.inPageToo = !!document.querySelector('.dk-menu.dk-options');
       const r = m && m.getBoundingClientRect(); if (r) res.box = [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height), w.innerWidth, w.innerHeight];
       return res; })()`);
     await p.shotWin('task-window-menu');
-    await p.evalIn('SessionActions.closeMenu(); 0');
+    await p.evalIn('window.__prompted = null; 0');
+    out.winPick = { found: await p.evalIn(PICK('Rename', WD)) };
+    await sleep(300);
+    Object.assign(out.winPick, await p.evalIn(`({ prompted: window.__prompted, menuOpen: !!${WD}.querySelector('.dk-menu.dk-options') })`));
+    // Terminal colours… there (when the hub offers it): its picker opens in the window, under the ⋯.
+    out.winColours = await p.evalIn(`(async () => {
+      const d = ${WD};
+      const mb = d.querySelector('[data-dk-act="menu"]');
+      mb.click(); await new Promise(r => setTimeout(r, 300));
+      const b = [...d.querySelectorAll('.dk-menu.dk-options [data-dk-app]')].find(x => x.textContent.startsWith('Terminal colours'));
+      if (!b) { mb.click(); return { offered: false }; }
+      if (b.getAttribute('aria-disabled') === 'true') { mb.click(); return { offered: true, disabled: true }; }
+      b.click(); await new Promise(r => setTimeout(r, 400));
+      const m = d.querySelector('.theme-dd-menu'), btn = d.querySelector('[data-dk-act="menu"]');
+      const res = { offered: true, disabled: false, inWindow: !!m, inPage: !!document.querySelector('.theme-dd-menu'), focusIn: !!m && m.contains(d.activeElement) };
+      if (m && btn) { const a = m.getBoundingClientRect(), t = btn.getBoundingClientRect(); res.under = a.top >= t.bottom - 1 && a.right <= d.defaultView.innerWidth && a.left >= 0; }
+      closeThemeMenu();
+      return res; })()`);
     // × there closes the task: the window shows the PO's chat.
     await p.evalIn(`PD.dock.popWindow('po-chat').document.querySelector('.dp-close').click(); 0`);
     await p.until('!SELECTED_SID && !!PD.els["po-chat"].querySelector("iframe.pd-own")', 10000); await sleep(500);
@@ -260,13 +300,21 @@ async function main() {
     await p.until('PD.dock.viewMode("po-chat") === "pinned" && PD.els["po-chat"].ownerDocument === document', 15000); await sleep(400);
     out.poBack = await p.evalIn(STATE);
     await p.close();
-    // A phone: the Chat tab, no ⋯ over it, no ⧉ Pop out, the interim ⋯.
+    // A phone: the Chat tab, no ⧉ Pop out, no ⋯ of the bar's; the tab row's ⋯ holds the task's actions alone.
     const q = await page(430, 932, true);
     await go(q, A.proj); await pdReady(q); await sleep(600);
+    out.phonePo = await q.evalIn(STATE);
     await q.evalIn(`(() => { const r = ALL_ROWS.find(x => x.roomId === ${JSON.stringify(A.task)}); openDetail(r.sessionId); return 0; })()`);
     await q.until('!!SELECTED_SID && pdTask() && !!PD.els["po-chat"].querySelector("iframe.dp-session")', 15000); await sleep(800);
     out.phone = await q.evalIn(STATE);
     await q.shot('task-430-phone');
+    await q.evalIn('window.__prompted = null; window.prompt = (m, c) => { window.__prompted = [m, c]; return null; }; 0');
+    await q.click('#po-dock [data-dk-act="menu"]'); await sleep(300);
+    out.phoneMenu = await q.evalIn(MENU());
+    await q.shot('task-430-phone-menu');
+    out.phonePick = { found: await q.evalIn(PICK('Rename')) };
+    await sleep(300);
+    Object.assign(out.phonePick, await q.evalIn(`({ prompted: window.__prompted, menuOpen: !!document.querySelector('.dk-menu.dk-options') })`));
     await q.close();
   } finally {
     try { ch.kill(); } catch (e) {}
@@ -300,14 +348,22 @@ class TheWiring(unittest.TestCase):
         for old in ('id="dock"', "dock-session", "window.opener.postMessage"):
             self.assertNotIn(old, SESSION, old)
 
-    def test_the_interim_controls_are_marked_and_the_switch_is_in_one_place(self):
-        self.assertEqual(INDEX.count("Dock need 14 (begin)"), 1)
-        self.assertEqual(INDEX.count("Dock need 14 (end)"), 1)
-        self.assertIn("const DOCK_MENU_INTERIM = 'More actions · for now here: they move into the panel’s ⋯ menu once Dock takes app items';", INDEX)
-        self.assertIn("{ interim: DOCK_MENU_INTERIM }", INDEX)
+    def test_the_tasks_actions_are_the_panels_app_items_and_the_pos_still_wait(self):
+        # #150: the conversation panel's menuItems hook (Dock v0.9.0+), the bar without its own ⋯ while the task is in the dock.
+        self.assertIn("menuItems: id === 'po-chat' ? (pid, ctx) => pdMenuItems(ctx) : undefined", INDEX)
+        self.assertIn("function pdMenuItems(ctx)", INDEX)
+        self.assertIn("function pdRunAction(it, ctx)", INDEX)
+        self.assertIn("function pdMenuButton(ctx)", INDEX)
+        self.assertIn("{ menu: !pdTask() }", INDEX)
+        self.assertIn("if (it.popup) { openThemeMenu(b, pdMenuButton(ctx)); return; }", INDEX)
+        self.assertIn("const groups = opts && opts.menu === false ? [] : (model && model.groups) || [];", ACTIONS)
+        for old in ("Dock need 14 (begin)", "Dock need 14 (end)", "{ interim: DOCK_MENU_INTERIM }"):
+            self.assertNotIn(old, INDEX, old)
+        self.assertNotIn("data-interim", ACTIONS)
+        # The PO's two are a follow-up: still in its header's ⋯, still marked.
+        self.assertIn("const DOCK_MENU_INTERIM = 'More actions · for now here: they move into the panel’s ⋯ menu, as the task’s have';", INDEX)
         self.assertIn('data-po="more" data-interim="dock-menu"', INDEX)
         self.assertIn("function poMenuItems(row)", INDEX)
-        self.assertIn("""${interim ? ' data-interim="dock-menu"' : ''}""", ACTIONS)
 
     def test_the_menu_opens_in_the_triggers_window(self):
         self.assertIn("trigger.ownerDocument.body.appendChild(menu);", ACTIONS)
@@ -405,7 +461,7 @@ class TheTaskPanel(unittest.TestCase):
         self.assertEqual(g["frame"], self.task, f"{what}: with its chat")
         self.assertFalse(g["own"], f"{what}: no PO chat of the window's own while the task is there")
         self.assertEqual(g["popout"], 0, f"{what}: no ⧉ Pop out")
-        self.assertEqual(g["interimTask"], 1, f"{what}: the action bar's ⋯ is the one interim control")
+        self.assertEqual(g["taskMore"], 0, f"{what}: the bar has no ⋯ of its own; the actions are the middle's")
 
     def test_the_open_task_has_the_middles_title_bar_and_no_pop_out_of_its_own(self):
         g = self.got["docked"]
@@ -417,6 +473,11 @@ class TheTaskPanel(unittest.TestCase):
         self.assertEqual(m["subs"], ["mode"], "View Mode, no Move To: the middle is on no side")
         self.assertIn("max", m["items"])
         self.assertIn("hide", m["items"])
+        self.assertTrue(m["app"], "the task's actions are there")
+        last_app = len(m["rows"]) - 1 - m["rows"][::-1].index("app")
+        self.assertEqual(m["rows"][last_app + 1], "-", "a separator between the app's items and Dock's")
+        self.assertTrue(all(r != "app" for r in m["rows"][last_app + 1:]) and "own" in m["rows"][last_app + 1:], f"Dock's own items follow the app's: {m['rows']}")
+        self.assertNotIn("?", m["rows"])
         self.assertEqual(self.got["modes"], ["mode:pinned", "mode:float", "mode:window"], "the conversation docks, floats or has its window; no strip for it")
 
     def test_window_mode_takes_the_task_with_it(self):
@@ -426,15 +487,21 @@ class TheTaskPanel(unittest.TestCase):
         self.assertEqual(g["winTitle"], "Brakes that squeal · Motors", "the window is named after the task (a numbered task would say #12 first)")
         self.assertIn("dp-docked", g["winBody"], "the page's body classes hold in the window (the panel's rules key on them)")
         self.assertIn("mid", g["winBody"])
-        i = self.got["interimMenu"]
-        self.assertTrue(i["more"] and i["open"] and i["inWindow"], i)
-        self.assertFalse(i["inPage"], "the menu is in the window, not under this page")
-        self.assertEqual(i["expanded"], "true")
-        self.assertTrue(i["title"].startswith("More actions · for now here"), i["title"])
-        self.assertIn("rename", i["acts"])
-        self.assertIn("delete", i["acts"])
+        self.assertEqual(g["taskMore"], 0, "no ⋯ of the bar's in the window either")
+        i = self.got["winMenu"]
+        self.assertTrue(i["btn"] and i["open"] and i["inWindow"], i)
+        self.assertFalse(i["inPageToo"], "the menu is in the window, not under this page")
+        self.assertEqual([a["label"] for a in i["app"]], [l for l in g["modelMenu"] if l != "-"], "the same actions as docked")
+        self.assertIn("hide", i["items"], "Dock's own below them (a window's: Hide)")
         x, y, w, h, vw, vh = i["box"]
         self.assertTrue(x >= 0 and y >= 0 and x + w <= vw and y + h <= vh, f"placed inside the window: {i['box']}")
+        k = self.got["winPick"]
+        self.assertTrue(k["found"], "Rename… is there")
+        self.assertFalse(k["menuOpen"], "the menu closed on the pick")
+        self.assertTrue(k["prompted"] and k["prompted"][0].startswith("Label for this session"), f"the pick ran the page's handler: {k}")
+        c = self.got["winColours"]
+        if c["offered"] and not c["disabled"]:
+            self.assertTrue(c["inWindow"] and not c["inPage"] and c["under"] and c["focusIn"], f"the colour picker opens in the window, under its ⋯: {c}")
 
     def test_closing_the_task_there_shows_the_po_chat_and_a_row_brings_it_back(self):
         g = self.got["closedThere"]
@@ -480,12 +547,25 @@ class TheTaskPanel(unittest.TestCase):
         self.assertEqual(self.got["unmin"]["mode"], "pinned")
         self.task_in(self.got["unmin"], "page", "after −")
 
-    def test_every_action_of_the_model_is_in_the_bars_menu(self):
+    def test_every_action_of_the_model_is_in_the_middles_menu(self):
         g = self.got["docked"]
-        self.assertTrue(g["barActs"] and g["modelActs"], g)
-        self.assertEqual(g["barActs"], g["modelActs"])
-        for act in ("rename", "delete", "agents"):
-            self.assertIn(act, g["barActs"])
+        self.assertTrue(g["modelActs"] and g["modelMenu"], g)
+        self.assertEqual(g["barActs"], [], "the bar keeps the primary alone (am-btn, not am-item)")
+        m = self.got["menu"]
+        labels = [a["label"] for a in m["app"]]
+        self.assertEqual(labels, [l for l in g["modelMenu"] if l != "-"], "the model's items, in its order (Hide terminal only while a terminal shows)")
+        self.assertEqual(m["rows"][:len(g["modelMenu"])], ["-" if l == "-" else "app" for l in g["modelMenu"]], "the model's groups, with its separators")
+        for label in ("Rename…", "Delete task…", "Agents and models…"):
+            self.assertIn(label, labels)
+        off = [a for a in m["app"] if a["disabled"]]
+        for a in off:
+            self.assertTrue(a["title"], f"a disabled item says why: {a}")
+        for a in m["app"]:
+            self.assertIn(a["role"], ("menuitem", "menuitemcheckbox"))
+        k = self.got["pick"]
+        self.assertTrue(k["found"] and not k["menuOpen"], k)
+        self.assertTrue(k["prompted"] and k["prompted"][0].startswith("Label for this session"), f"Rename… ran the page's handler: {k}")
+        self.assertEqual(k["standIns"], 0, "the stand-in button is gone after the click")
 
     def test_the_po_conversation(self):
         for what in ("po", "poAgain"):
@@ -494,7 +574,7 @@ class TheTaskPanel(unittest.TestCase):
             self.assertEqual(g["poMenu"], ["switch", "open"], f"{what}: Switch agent and the PO's task; Pop out is the panel's")
             self.assertEqual((g["popout"], g["interimPo"]), (0, 1), what)
             self.assertTrue(g["headShown"] and g["menuBtn"], f"{what}: the middle's title bar")
-        self.assertEqual(self.got["po"]["interimTask"], 0, "no task panel drawn yet")
+        self.assertEqual(self.got["po"]["taskMore"], 0, "no task panel drawn yet")
         w = self.got["poWindow"]
         self.assertEqual((w["mode"], w["phWhere"], w["own"], w["winTitle"]), ("window", "window", True, "PO chat · Motors"))
         self.assertEqual(w["interimPo"], 1, "the PO's header, with its ⋯, is in the window")
@@ -502,11 +582,19 @@ class TheTaskPanel(unittest.TestCase):
         self.assertEqual((b["mode"], b["phWhere"], b["own"]), ("pinned", "page", False))
 
     def test_a_phone(self):
+        self.assertEqual(self.got["phonePo"]["anyMenuBtn"], 0, "no ⋯ over a phone's tabs while no task is open: Dock has nothing to offer there")
         g = self.got["phone"]
         self.assertTrue(g["narrow"], "a narrow dock")
         self.task_in(g, "page", "phone")
-        self.assertEqual(g["anyMenuBtn"], 0, "no ⋯ over a phone's tabs")
+        self.assertEqual(g["anyMenuBtn"], 1, "one ⋯ on the tab row: the task's actions")
         self.assertLessEqual(g["scrollW"], g["vw"])
+        m = self.got["phoneMenu"]
+        self.assertTrue(m and m["app"], m)
+        self.assertEqual(m["subs"], [], "nothing of Dock's that moves a panel on a phone")
+        self.assertLessEqual(set(m["items"]), {"screenshot"}, "at most Dock's Take Screenshot besides the task's actions")
+        self.assertEqual([a["label"] for a in m["app"]], [l for l in g["modelMenu"] if l != "-"])
+        k = self.got["phonePick"]
+        self.assertTrue(k["found"] and not k["menuOpen"] and k["prompted"] and k["prompted"][0].startswith("Label for this session"), k)
 
 
 if __name__ == "__main__":

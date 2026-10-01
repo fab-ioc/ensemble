@@ -175,20 +175,19 @@ function itemHtml(it) {
     + '</button>';
 }
 
-// opts.interim: the More button's title, and data-interim="dock-menu" on it,
-// where the menu is the interim home of items that belong in a Dock panel's
-// own ⋯ menu (index.html, Dock need 14).
+// opts.menu: false leaves the More menu out — the bar is the primary action
+// alone, the groups being offered elsewhere (the Dock panel's own ⋯ menu in
+// index.html, pdMenuItems).
 function actionBarHtml(model, opts) {
   const p = model && model.primary;
-  const interim = opts && opts.interim;
   const primary = p
     ? `<button type="button" class="am-btn am-primary${p.variant === 'primary' ? ' is-primary' : ''}${p.disabled ? '' : ' ' + p.cls}" data-act="${escH(p.id)}"`
       + (p.disabled ? '' : dataAttrs(p.data))
       + ` title="${escH(p.disabled ? p.reason : p.title)}"${p.disabled ? ' aria-disabled="true"' : ''}>${escH(p.label)}</button>`
     : '';
-  const groups = (model && model.groups) || [];
+  const groups = opts && opts.menu === false ? [] : (model && model.groups) || [];
   const menu = groups.length
-    ? `<span class="am-wrap"><button type="button" class="am-btn am-more"${interim ? ' data-interim="dock-menu"' : ''} aria-haspopup="menu" aria-expanded="false" aria-label="More actions" title="${escH(interim || 'More actions')}">`
+    ? `<span class="am-wrap"><button type="button" class="am-btn am-more" aria-haspopup="menu" aria-expanded="false" aria-label="More actions" title="More actions">`
       + `<span class="am-dots" aria-hidden="true">⋯</span> More</button>`
       + `<div class="am-menu" role="menu" aria-label="More actions" hidden>`
       + groups.map(g => g.map(itemHtml).join('')).join('<div class="am-sep" role="separator"></div>')
