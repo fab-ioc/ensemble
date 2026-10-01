@@ -185,6 +185,7 @@ class OnlyTheOpenToolIsPainted(unittest.TestCase):
         ]
         for p in cls.patches:
             p.start()
+            cls.addClassCleanup(p.stop)   # undone even when setUpClass fails
         ok, proj, _ = dashboard.register_project("Motors")
         assert ok, proj
         home = Path(proj.get("home") or proj["path"])
@@ -213,8 +214,6 @@ class OnlyTheOpenToolIsPainted(unittest.TestCase):
     def tearDownClass(cls):
         cls.server.shutdown()
         cls.server.server_close()
-        for p in cls.patches:
-            p.stop()
         cls.tmp.cleanup()
 
     def test_the_file_shows_in_its_own_panel(self):

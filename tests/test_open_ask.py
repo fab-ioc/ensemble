@@ -279,6 +279,7 @@ class AnsweredInTheTerminal(_Bell):
     def setUpClass(cls):
         cls.quiet = mock.patch.object(dashboard.Handler, "log_message", lambda *a: None)
         cls.quiet.start()
+        cls.addClassCleanup(cls.quiet.stop)   # undone even when setUpClass fails
         cls.server = dashboard.ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
 
@@ -286,7 +287,6 @@ class AnsweredInTheTerminal(_Bell):
     def tearDownClass(cls):
         cls.server.shutdown()
         cls.server.server_close()
-        cls.quiet.stop()
 
     def type(self, data, **more):
         req = urllib.request.Request(

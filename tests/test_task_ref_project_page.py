@@ -170,6 +170,7 @@ class WhichProject(unittest.TestCase):
         ]
         for p in cls.patches:
             p.start()
+            cls.addClassCleanup(p.stop)
         points._CACHE.clear(); points._SYNCED.clear(); points._SCANNED.clear(); points._ADOPT_SEEN.clear()
         ok, opten, _ = dashboard.register_project("OPtionTradingENgine")
         assert ok, opten
@@ -227,8 +228,6 @@ class WhichProject(unittest.TestCase):
     def tearDownClass(cls):
         cls.server.shutdown()
         cls.server.server_close()
-        for p in cls.patches:
-            p.stop()
         cls.tmp.cleanup()
 
     def _both(self):

@@ -376,6 +376,7 @@ class TheListDock(unittest.TestCase):
         ]
         for p in cls.patches:
             p.start()
+            cls.addClassCleanup(p.stop)   # undone even when setUpClass fails
         ok, proj, _ = dashboard.register_project("Motors")
         assert ok, proj
         cls.proj = proj["id"]
@@ -413,8 +414,6 @@ class TheListDock(unittest.TestCase):
     def tearDownClass(cls):
         cls.server.shutdown()
         cls.server.server_close()
-        for p in cls.patches:
-            p.stop()
         cls.tmp.cleanup()
 
     def opened(self, g, what):

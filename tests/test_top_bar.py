@@ -150,7 +150,8 @@ async function main() {
   try {
     // ---- a laptop
     const p = await page(1440, 900);
-    await p.until('!!document.querySelector("header")');
+    // Home's Panels (the task list's dock, loaded as a module) is in the bar once the dock is: wait for it, not a while.
+    await p.until('!!document.querySelector("header") && !!document.querySelector("#bar-here .pd-panels")');
     out.home = await p.evalIn(BAR);
     await wm(p, '1440-home');
     await go(p, A.proj); await poReady(p); await sleep(400);
@@ -261,6 +262,7 @@ class TheTopBar(unittest.TestCase):
         ]
         for p in cls.patches:
             p.start()
+            cls.addClassCleanup(p.stop)   # undone even when setUpClass fails
         ok, proj, _ = dashboard.register_project("Motors")
         assert ok, proj
         cls.proj = proj["id"]
@@ -298,8 +300,6 @@ class TheTopBar(unittest.TestCase):
     def tearDownClass(cls):
         cls.server.shutdown()
         cls.server.server_close()
-        for p in cls.patches:
-            p.stop()
         cls.tmp.cleanup()
 
     def order(self, bar):

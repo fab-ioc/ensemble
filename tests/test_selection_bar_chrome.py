@@ -252,6 +252,7 @@ class InChrome(unittest.TestCase):
         ]
         for p in cls.patches:
             p.start()
+            cls.addClassCleanup(p.stop)   # undone even when setUpClass fails
         work = root / "Motors"
         work.mkdir()
         notes = work / "notes.txt"
@@ -293,8 +294,6 @@ class InChrome(unittest.TestCase):
     def tearDownClass(cls):
         cls.server.shutdown()
         cls.server.server_close()
-        for p in cls.patches:
-            p.stop()
         cls.tmp.cleanup()
 
     def inside(self, g, margin=8):

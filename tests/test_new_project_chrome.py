@@ -104,6 +104,7 @@ class NewProjectWithJustAName(unittest.TestCase):
         ]
         for p in cls.patches:
             p.start()
+            cls.addClassCleanup(p.stop)   # undone even when setUpClass fails
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
         cls.server.daemon_threads = True
         cls.server.handle_error = lambda *a: None
@@ -123,8 +124,6 @@ class NewProjectWithJustAName(unittest.TestCase):
     def tearDownClass(cls):
         cls.server.shutdown()
         cls.server.server_close()
-        for p in cls.patches:
-            p.stop()
         cls.tmp.cleanup()
 
     def test_the_hint_follows_the_name(self):
