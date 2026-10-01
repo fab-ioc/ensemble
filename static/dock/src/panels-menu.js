@@ -19,12 +19,13 @@ export function mountPanelsMenu(dock, button, menu, list, win = typeof window !=
       const kept = on && !last && dock.can && !dock.can(p.id, 'hide'); // the app's can(id, 'hide') says no
       const out = !!(dock.isOut && dock.isOut(p.id));
       const id = escText(p.id);
+      const title = (dock.title && dock.title(p.id)) || p.title; // its title now (setTitle)
       let html = `<button type="button" role="menuitemcheckbox" data-panel-toggle="${id}" aria-checked="${on}"${on ? ' class="on"' : ''}`
-        + `${last ? ' disabled title="the last panel on screen stays"' : kept ? ' disabled' : ''}>${escText(p.title)}`
+        + `${last ? ' disabled title="the last panel on screen stays"' : kept ? ' disabled' : ''}>${escText(title)}`
         + `${out ? ` <span class="dk-menu-tag">${escText(outTag)}</span>` : ''}</button>`;
       if (out) {
         const open = dock.isOpenOut ? dock.isOpenOut(p.id) : true;
-        html += `<div class="dk-menu-sub" role="group" aria-label="${escText(p.title)}: ${escText(outTag)}">`
+        html += `<div class="dk-menu-sub" role="group" aria-label="${escText(title)}: ${escText(outTag)}">`
           + `<button type="button" role="menuitem" data-panel-pop="show" data-panel-id="${id}">${escText(open ? showLabel : openLabel)}</button>`
           + `<button type="button" role="menuitem" data-panel-pop="back" data-panel-id="${id}">${escText(backLabel)}</button></div>`;
       }

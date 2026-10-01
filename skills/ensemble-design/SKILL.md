@@ -796,11 +796,11 @@ offers View Mode back, Take Screenshot and Hide. **It cannot be moved to a side*
 Reset layout), and a tool dropped into its stack goes beside it (`pdKeepMiddle`). **Its window
 holds the open task** (`pdPlaceTask` adopts `#detail-panel` into that document: the task's header,
 action bar and chat, which reloads there as the library says of a popped-out panel) and is named
-after it ("#12 The title · Project", `pdChatTitle`, kept in step by `pdPopTitle`); with no task
+after it ("#12 The title · Project", `pdChatTitle`, kept in step by `pdSyncTitles` through Dock's `setTitle` (v0.11.0), so its tab, title bar, Panels row and window title all follow); with no task
 open it holds the PO's chat (`iframe.pd-own`). × in the window closes the task and the PO's chat
 takes its place; a row clicked in the list puts the task there. Closing the window hides the panel
 (the task waits, parked); its former place or Panels reopens the window. The page's body classes
-are mirrored into every panel window (`onEveryWindow`), so rules keyed on `body.dp-docked` and
+are copied into every panel window by the library (`bodyAttrs: ['class']`, Dock v0.11.0), so rules keyed on `body.dp-docked` and
 `body.mid` hold there. There is no ⧉ Pop out, no `session.html` window and no ⧉ Dock any more:
 the panel's View Mode is the one way out and back. **The task's actions are in the panel's ⋯**
 (#150, Dock v0.10.0's app items, need 14): the conversation panel's `menuItems` hook
@@ -845,8 +845,8 @@ there (`pdNarrow()` is `isPhone()`), one column of tabs in the strip's order, `C
 Changes · Files · Board · Spec`, with Panels ▾ in the bar. An open task is that dock's Chat tab
 too (`pdTask()` holds on a phone), so its tools are the same tabs, not the task panel's own:
 tabs, not a sheet, because they are the same dock and panes as the desktop's strip (no new
-component) and the mockup (`a2-…-390.png`) shows a tab row. The conversation's tab is **Chat**
-(`PD_TITLES`), since it is a task's as often as the PO's; a popped-out window still says "PO chat".
+component) and the mockup (`a2-…-390.png`) shows a tab row. The conversation's tab names what it holds
+("PO chat", or "#12 The title" with a task in the middle: `pdSyncTitles`, Dock's `setTitle`), as a task's chat panel names its task; `PD_TITLES` keeps "Chat" only for the first paint. The Tabs rule above ("a tab that renames itself…") is about the task panel's fixed tab set; a dock panel names its content, as a file panel does.
 
 A project with a PO opens on its **PO screen**: a Dock (`static/dock`, a vendored copy of the Dock
 library; `VERSION` names its commit) of five panels, **PO chat, Your asks, Board, Workspace,

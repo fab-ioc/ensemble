@@ -381,9 +381,13 @@ class TheWiring(unittest.TestCase):
         self.assertIn("const DP_EL = pdById('detail-panel')", INDEX)
         self.assertNotIn("on = !!on && ph.ownerDocument === document;", INDEX)
         self.assertIn("if (!out || pdTask()) { if (own) own.remove(); return; }", INDEX)
-        self.assertIn("popTitle: p => `${p.id === 'po-chat' ? pdChatTitle() : p.title}", INDEX)
-        self.assertIn("function pdPopTitle()", INDEX)
-        self.assertIn("bodyMo.observe(document.body, { attributes: true, attributeFilter: ['class'] });", INDEX)
+        # #154: the library names the window after the panel's title, which follows the task (setTitle),
+        # and mirrors the page's body classes itself (bodyAttrs); Ensemble's two stopgaps went.
+        self.assertIn("popTitle: p => `${p.title} · ${(projectById(PD.pid) || {}).name || 'Ensemble'}`,", INDEX)
+        self.assertIn("try { d.setTitle('po-chat', pdChatTitle()); } catch (e) {}", INDEX)
+        self.assertIn("bodyAttrs: ['class'],", INDEX)
+        for gone in ("function pdPopTitle()", "bodyMo.observe(document.body", "w.document.title = t"):
+            self.assertNotIn(gone, INDEX, gone)
         # Nothing looks for the task panel in this document alone any more.
         self.assertEqual(re.findall(r"document\.(?:getElementById\('detail-panel'\)|querySelector\('#detail-panel)", INDEX), [])
 
