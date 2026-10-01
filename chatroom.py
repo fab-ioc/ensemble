@@ -151,7 +151,7 @@ def _unique_identity(base: str, used: set[str]) -> str:
 
 
 def set_agents(room_id: str, members: list[dict],
-               mode: str = "") -> dict | None:
+               mode: str = "", keep_live: set | frozenset = frozenset()) -> dict | None:
     """Replace a room's agent line-up, keeping the agents that are staying.
 
     ``members`` are the same ``{identity?, agent, model, role}`` dicts
@@ -181,6 +181,11 @@ def set_agents(room_id: str, members: list[dict],
 
     ``mode`` ("solo" / "collab"), when given, is written in the same breath, so
     the file is never briefly on disk with a new line-up and the old mode.
+
+    ``keep_live`` names retained agents that are RUNNING while the line-up
+    changes (dashboard.reassign_task lets a seat nobody sits in change under a
+    live task): their ``ptyId`` and ``pid`` stay, so the record keeps saying
+    what is true. Any other retained agent's are dropped, as before.
 
     Returns the updated full room (tokens included), or None if there is no
     such room. Messages are untouched: a removed agent's turns stay in the log.
@@ -232,8 +237,9 @@ def set_agents(room_id: str, members: list[dict],
                 # them here so the record stops lying. ``sessionId`` and ``cwd``
                 # deliberately survive: they are not liveness, they are how the
                 # agent finds its own transcript again when the task restarts.
-                part["pid"] = None
-                part.pop("ptyId", None)
+                if part["identity"] not in keep_live:
+                    part["pid"] = None
+                    part.pop("ptyId", None)
                 tok = tokens_by_identity.get(part["identity"])
                 if not tok:                     # shouldn't happen; don't strand it
                     tok = secrets.token_urlsafe(18)

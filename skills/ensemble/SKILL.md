@@ -193,21 +193,57 @@ A snapshot is taken when you end a turn or report, and every few minutes.
 `ensemble_start_task` (or Start on the dashboard) on a task that has run before
 resumes each agent's conversation where it stopped. A resumed session comes
 back at an empty prompt, so once its terminal has settled the hub types one
-line into the task's owner:
+line into the task's owner. Which line depends on what the stop interrupted:
+`ensemble_stop_task` records whether each agent was in the middle of a turn.
+
+An owner stopped **in the middle of a turn** is told to carry on:
 
 > [resumed] Your task was started again. Your spec may have changed while you
 > were stopped: read it again with ensemble_get_task, then carry on from where
 > you were; do not start over. Report with ensemble_report when you finish or
 > are blocked.
 
+An owner stopped **between turns** (it had reported, or was waiting for an
+answer, or had simply finished what it was asked) is told not to redo its last
+turn, and only what is new:
+
+> [resumed] Your task was started again. Your last turn had ended when you were
+> stopped: do not redo it. Your spec may have changed while you were stopped:
+> read it again with ensemble_get_task and act only on what changed. Nothing
+> else is new unless a message follows this line (in a team: chat_read). If you
+> had reported, your report stands: do not report again; say in one line that
+> you wait, and wait. The same if you are waiting for an answer. Only unfinished
+> work of yours that nothing holds up goes on. … Report with ensemble_report
+> only when new work is finished or newly blocked.
+
+If you get that line, do exactly that: an idle owner told to "carry on" used to
+redo a whole check pass (10 to 27 calls, 2 to 5M tokens) and report again what
+it had already reported. A stop whose state the hub could not read is treated
+as mid-turn, so a real resume is never lost.
+
 The spec itself is never sent again: a session told its spec again redoes the
-work. So when you change a stopped task's spec, the change reaches its owner
-through that line. When the spec has not changed since this session last read
-it (at its launch, or with `ensemble_get_task` on its own task), the line says
-so instead of sending it to read the spec again. A reviewer on mention is not
-resumed, an agent added since the last run starts fresh with its brief, and a
-project's PO does not get the line (the rotation and the restart helper brief
-it).
+work. When the spec has not changed since this session last read it (at its
+launch, with `ensemble_get_task` on its own task, or through a `[spec]` line),
+either line says so instead of sending it to read the spec again. A reviewer on
+mention is not resumed, an agent added since the last run starts fresh with its
+brief, and a project's PO does not get the line (the rotation and the restart
+helper brief it).
+
+**A spec change reaches a running owner by itself.** `ensemble_update_task`
+with a new `spec` on a running task types its owner one line starting `[spec]`
+with the lines that changed (`- was`, `+ is now`), or, when the change is long,
+with the instruction to read the spec again; the owner carries on from where it
+is and acts only on the change. So **never stop and start a task to make it
+read a ruling**: amend the spec, or send it a message. Both reach it while it
+runs. Never stop and start a task as a "kick" either: a message wakes it for
+far less than a resume, which re-sends its whole conversation and, on an idle
+owner, used to start a redo. A stopped task's owner is told of an amendment at
+its next start, through the line above.
+
+**The reviewer's seat can change while the task runs.** A seat nobody is
+sitting in (the on-mention reviewer between its reviews, a stopped or a new
+seat) can be reassigned under a live task; a running agent's own seat (its
+kind, model or role) cannot: stop the task, reassign, start it again.
 
 **A hub restart is not a start.** A planned restart (`ensemble_restart_hub`,
 the dashboard's button) brings every room that was running back by itself; the
@@ -259,6 +295,33 @@ tasks included: nobody watches a task's terminal. Only a past session someone
 opens from the history to drive by hand keeps Codex's prompts.
 
 Task sessions may also have RTK enabled by the hub. In a shell that is not transparently hooked, prefix noisy git, test, search, listing and log commands with `rtk` (for example `rtk git status`, `rtk pytest`, `rtk grep` or `rtk ls`); if a recovery hint names hidden output you need, run `rtk recall <hash> --full`. Do not install it globally or edit global agent configuration: the hub's `rtkForTasks` setting controls future task launches.
+
+## Waiting on something: no background command, no subagent
+
+Every wake re-sends your whole conversation, and a background command or a
+subagent wakes you once when it finishes (a `<task-notification>`). Measured
+over a week: a PO's background commands were 112 wakes and 99M tokens, almost
+all of them "wait until the log says X" loops and sleeps, and task owners'
+background commands and subagents another 277M. So:
+
+- **A wait under 10 minutes runs in the foreground.** `Bash` takes a `timeout`
+  of up to 600000 ms; a loop that polls and sleeps inside one call costs no
+  wake at all, and its result is in the same turn. Checked from a hub-started
+  Claude task on 2026-10-01: `sleep 3`, an `until … sleep 1` loop and
+  PowerShell `Start-Sleep` all ran in the foreground. If your harness refuses
+  `sleep`, use `Start-Sleep` in PowerShell, or a command that itself waits
+  (`timeout 300 tail -f log`); never fall back to a background command. More
+  than half of the week's background waits were under 10 minutes.
+- **A longer wait goes on a `## Due` line** in your handover (see *Due*): one
+  `[due]` wake when the time comes, delivered when you are idle, and no process
+  held open meanwhile. "Check the deploy log at 18:30" is a due line, not a
+  disk watcher.
+- **A subagent only when its result is needed and would otherwise flood your
+  context** (reading a large log or many files for a conclusion): never to
+  wait, never to run a command you could run yourself.
+- **Never hold a command open to watch for something that will reach you
+  anyway**: a task's report, a reviewer's verdict and a teammate's message
+  wake you by themselves.
 
 ## Waking teammates (multi-agent tasks)
 
@@ -635,6 +698,21 @@ reach you as `[report] completed from task '…' (#18, codex)`, and
 **Wakes cost your whole conversation.** Reports and the `[digest]` wake you;
 never poll. Keep turns short and the history small: hand large reading to a
 subagent, and don't re-read what you already have.
+
+**Do not start a background command or subagent to wait on something.** See
+*Waiting on something* above: a wait under 10 minutes runs in the foreground
+(`timeout` up to 600000 ms, no wake); a longer one is a `## Due` line (one
+`[due]` wake, when you are idle); a subagent only for a result that would flood
+your context. Measured over a week, a PO's background waits cost 99M tokens in
+112 wakes; the 68 under 10 minutes alone were about 60M, 8.6M a day.
+
+**Never stop and start a task to tell it something.** A ruling goes into its
+spec (`ensemble_update_task`: a running owner is typed what changed, a stopped
+one is told at its next start) or into its chat. A restart re-sends the
+owner's whole conversation (3M tokens on average) and an owner that was idle
+redid its last turn; 58 of the week's 62 resumes were such stop+start pairs.
+The reviewer's seat can be changed while the task runs; only a running agent's
+own seat needs a stop.
 
 **Nothing new for the product owner: write nothing.** A progress check, a
 task's report or a rotation note that changes nothing for the product owner
