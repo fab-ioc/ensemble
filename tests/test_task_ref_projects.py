@@ -97,6 +97,8 @@ class Rules(unittest.TestCase):
         self.assertEqual(read("```\nDock #1\n```\nDock #2 after the fence."), [("#2", "dock", "name", [])], "the code keeps its length: offsets hold")
         self.assertEqual(read("#fff is a colour; ## 27 a heading; page#27 a fragment"), [])
         self.assertEqual(read("D-27 and #D-27 and #ZZ-9"), [("D-27", "dock", "key", []), ("#D-27", "dock", "key", []), ("#ZZ-9", "", "key", [])])
+        self.assertEqual(read("UTF-8, ISO-8601 and SHA-256 are not tasks; ZZ-9 is nobody's"), [], "a bare key no project has")
+        self.assertEqual([r["token"] for r in tn.all_text_refs("ZZ-9 and #ZZ-9")], ["ZZ-9", "#ZZ-9"], "without a context the hub decides")
         self.assertEqual(read("Dock #27", {"projects": [], "own": "op"}), [("#27", "op", "", [])], "no names: the own project")
         self.assertEqual(tn.all_text_refs("Dock #27")[0]["project"], "", "no context: nothing read")
         self.assertEqual([r["start"] for r in tn.all_text_refs("ab #1 cd #2")], [3, 9])
@@ -119,7 +121,7 @@ class Rewrite(unittest.TestCase):
     def test_what_stays(self):
         self.assertEqual(self.q("Dock released #27 as v0.11.0"), "Dock released #27 as v0.11.0", "another project's task, which it has")
         self.assertEqual(self.q("Dock #99 and #99 are nobody's"), "Dock #99 and #99 are nobody's")
-        self.assertEqual(self.q("Ensemble #27 is ours"), "Ensemble OP-27 is ours", "a name whose project has no such task: ours, when we have it")
+        self.assertEqual(self.q("Ensemble #27 is ours"), "Ensemble #27 is ours", "named another project's: the sender's words stay, even when that project has no such task")
         self.assertEqual(self.q("`#27` and ```\n#27\n``` and @codex@27 and OP-27 and D-27 and #D-27"), "`#27` and ```\n#27\n``` and @codex@27 and OP-27 and D-27 and #D-27")
         self.assertEqual(self.q("PR #27 and issue #154"), "PR #27 and issue #154")
         self.assertEqual(self.q("#fff #112233"), "#fff #112233")

@@ -95,6 +95,7 @@ const TaskCard = (() => {
     for (const m of plain.matchAll(TASK_REF_RE)) {
       const who = m[1] || '', key = (m[2] || m[3] || '').toUpperCase(), no = +m[4], at = m.index;
       if (notTaskRef(who, key, plain, at)) continue;
+      if (m[3] && ctx && !byKey.has(key)) continue;    // UTF-8, ISO-8601: a bare key no project has is not a task
       const r = { token: m[0], who, key, no, start: at, end: at + m[0].length, project: '', how: '', others: [] };
       if (key) { r.project = byKey.get(key) || ''; r.how = 'key'; }
       else if (ctx) Object.assign(r, readProject(plain, r.start, r.end, ctx));

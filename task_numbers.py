@@ -330,6 +330,8 @@ def all_text_refs(text: str, ctx: dict | None = None) -> list[dict]:
         key, no = (m.group(2) or m.group(3) or "").upper(), int(m.group(4))
         if not m.group(1) and not key and NOT_TASK_BEFORE.search(plain[max(0, m.start() - 40):m.start()]):
             continue
+        if m.group(3) and ctx and key not in by_key:
+            continue        # UTF-8, ISO-8601: a bare key no project has is not a task
         ref = {"token": m.group(0), "who": m.group(1) or "", "key": key, "no": no,
                "start": m.start(), "end": m.end(), "project": "", "how": "", "others": []}
         if key:
@@ -360,19 +362,18 @@ def qualify_text(text: str, ctx: dict, exists) -> str:
     in full, ``ED-18``, so the text says which project's task it means
     wherever it is read next (a PO's message to another project's PO, #156).
     A bare number is the own project's unless another project's name right
-    before it says otherwise (:func:`read_project`) and that project has the
-    task (``exists(project id, no)``); the own project must have it too. A
-    keyed number, an agent's (``@codex@18``) and anything in code stay as
-    written; without a key for the own project nothing changes."""
+    before it says otherwise (:func:`read_project`) — that stays as the
+    sender wrote it, whether or not that project has the task — and the own
+    project must have it (``exists(project id, no)``). A keyed number, an
+    agent's (``@codex@18``) and anything in code stay as written; without a
+    key for the own project nothing changes."""
     own = ctx.get("own") or ""
     key = next((p.get("key") or "" for p in ctx.get("projects") or [] if p["id"] == own), "")
     if not own or not key:
         return text
     out = text
     for ref in reversed(all_text_refs(text, ctx)):
-        if ref["who"] or ref["key"]:
-            continue
-        if ref["project"] != own and exists(ref["project"], ref["no"]):
+        if ref["who"] or ref["key"] or ref["project"] != own:
             continue
         if not exists(own, ref["no"]):
             continue

@@ -5268,7 +5268,7 @@ class TaskLookup:
         the one bare numbers are read in. A number another project named
         earlier in its sentence also has is ``ambiguous`` (no line is
         written for it: message_refs)."""
-        if not any(c in (text or "") for c in "#@-"):      # nothing a task is ever named by
+        if not task_numbers.TEXT_REF.search(text or ""):      # nothing a task is named by: no reading
             return []
         if self._ctx is None:
             self._ctx = ref_context(self._projects()[0])
@@ -5281,9 +5281,7 @@ class TaskLookup:
                 out.append(ref)
                 continue
             if ref["how"] == "name" and ref["project"] != own and not exists(ref["project"], ref["no"]):
-                # The named project has no such task: the own project's, if
-                # it has one, with the name counting as a weak one.
-                ref["others"] = [ref["project"], *ref["others"]]
+                # The named project has no such task: the own project's, if it has one.
                 ref["project"], ref["how"] = own, ""
             if ref["how"] != "name":
                 ref["ambiguous"] = any(exists(pid, ref["no"]) for pid in ref["others"])
