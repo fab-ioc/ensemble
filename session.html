@@ -13,6 +13,7 @@
 <script src="/static/comments.js"></script>
 <script src="/static/selbar.js"></script>
 <script src="/static/attach.js"></script>
+<script src="/static/taskcard.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
 <script>
@@ -666,16 +667,10 @@
   a.ref-chip .ref-arrow { color:var(--link); }
   a.ref-chip .ref-who { flex:0 0 auto; font-weight:500; }
   a.ref-chip .ref-prev { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; color:var(--fg-muted); }
-  /* A task named by its number, as a chip: #18, its title, its column. */
-  .msg .text.md a.task-chip, a.task-chip { display:inline-flex; align-items:baseline; gap:var(--s-100); max-width:100%; box-sizing:border-box;
-    vertical-align:baseline; padding:0 var(--s-100); background:var(--surface-sunken); color:var(--fg); border:1px solid var(--border);
-    border-radius:var(--r-100); font-size:var(--fs-200); line-height:16px; text-decoration:none; white-space:nowrap; overflow:hidden; }
-  a.task-chip:hover { background:var(--hover); }
-  a.task-chip:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
-  a.task-chip .ref-who { flex:0 0 auto; font-weight:500; font-variant-numeric:tabular-nums; }
-  a.task-chip .ref-prev { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; }
-  a.task-chip .ref-state, .tno { flex:0 0 auto; color:var(--fg-muted); }
-  .tno { margin-right:var(--s-100); font-weight:400; font-variant-numeric:tabular-nums; }
+  /* A task named by its number is a chip showing the number alone (#18); its
+     card, on a click, says the rest. The chip and the card are drawn and styled
+     by static/taskcard.js (TaskCard), the same on every page. */
+  .tno { flex:0 0 auto; color:var(--fg-muted); margin-right:var(--s-100); font-weight:400; font-variant-numeric:tabular-nums; }
   /* Images a message carries: thumbnails that open full size (static/attach.js). */
   .att-thumbs { display:flex; flex-wrap:wrap; gap:var(--s-200); margin-top:var(--s-200); }
   .att-thumb { display:block; max-width:100%; border:1px solid var(--border); border-radius:var(--r-200); overflow:hidden; background:var(--surface-sunken); line-height:0; }
@@ -1023,8 +1018,8 @@
     .ed-btn, #add-point { min-height: var(--touch-min); min-width: var(--touch-min); }
     .ed-pt .ed-n { padding-top: 12px; }
     .ed-pt textarea.ed-text { min-height: var(--touch-min); }
-    .ed-refs a.ref-chip { min-height: var(--touch-min); align-items: center; }
-    .ed-refs a.ref-chip::after { content: none; }
+    .ed-refs a.ref-chip, .ed-refs a.task-chip { min-height: var(--touch-min); align-items: center; }
+    .ed-refs a.ref-chip::after, .ed-refs a.task-chip::after { content: none; }
     .ed-refs a.ref-chip { overflow: hidden; }   /* its label is cut, never past the edge */
     button, select, .agent .ah { min-height: var(--touch-min); }
     button { min-width: var(--touch-min); }
@@ -1037,9 +1032,9 @@
     /* Nothing needs hover: Copy link always shows. A chip keeps its look in the
        line of text and takes a finger's height with an invisible margin. */
     .msg:not(:hover) .from .copy-link:not(:focus-visible):not(.done) { clip-path: none; }
-    .msg .text.md a.ref-chip, a.ref-chip, .msg .text.md a.task-chip, a.task-chip { position: relative; overflow: visible; }
-    a.ref-chip::after, a.task-chip::after { content: ''; position: absolute; left: 0; right: 0; top: -14px; bottom: -14px; }
-    a.ref-chip .ref-prev, a.task-chip .ref-prev { max-width: 40vw; }
+    .msg .text.md a.ref-chip, a.ref-chip { position: relative; overflow: visible; }
+    a.ref-chip::after { content: ''; position: absolute; left: 0; right: 0; top: -14px; bottom: -14px; }
+    a.ref-chip .ref-prev { max-width: 40vw; }
     /* A phone zooms into any field under 16px and stays zoomed. The ids and
        classes are here because those fields' own rules set font: inherit. */
     textarea, select, input, #compose textarea, .cmt-composer textarea { font-size: var(--fs-400); }
@@ -1591,10 +1586,13 @@ function refOfUrl(u) {
 }
 // ---- Task references: begin ------------------------------------------------
 // A task named by its number in chat text (#18, #ED-18, @codex@18,
-// @reviewer@ED-18) is a chip naming it, as the hub reads the number in this
-// chat's project (/api/task/ref): "#18 · title · state". A number that names no
-// task stays text. The hub writes one line under the message for the agent
-// (message_refs.py), which the balloon drops (stripRefBlocks).
+// @reviewer@ED-18) is a chip naming it (static/taskcard.js: the number alone,
+// its card on a click, the task on a double click), as the hub reads the
+// number in this chat's project (/api/task/ref) — or, under a PO's message
+// from another project, in that project (taskRefProject), when it reads as
+// that project's task (D-27) and the card names the project. A number that
+// names no task stays text. The hub writes one line under the message for the
+// agent (message_refs.py), which the balloon drops (stripRefBlocks).
 // tests/test_task_refs.py runs this block in Node.
 const TASK_REF_RE = /(?<![\w&\/#@.\\-])(?:@([A-Za-z][\w-]*)@|#)(?:([A-Za-z][A-Za-z0-9]{0,5})-)?(\d{1,6})(?![\w-])/g;
 const TASK_BLOCK_RE = /\n\n\[ref ((?:@[A-Za-z][\w-]*@|#)(?:[A-Za-z][A-Za-z0-9]*-)?\d{1,6})\] task [^\n]*\s*$/;
@@ -1603,31 +1601,16 @@ const TASK_BLOCK_RE = /\n\n\[ref ((?:@[A-Za-z][\w-]*@|#)(?:[A-Za-z][A-Za-z0-9]*-
 // task_numbers.NOT_TASK_BEFORE reads it; ED-12 and @codex@12 are tasks.
 const NOT_TASK_BEFORE_RE = /(?:^|[^\w])(?:pr|mr|pull request|issue|bug|ticket|resolve|resolved|finding|step|item|point|round|option|question|comment|commit|line|page|part|phase|rule|case|image)s?\.?[ \t]*$/i;
 const notTaskRef = (who, key, s, at) => !who && !key && NOT_TASK_BEFORE_RE.test(s.slice(Math.max(0, at - 40), at));
-// What the hub said is kept a minute: a chip drawn after that asks again, so a
-// running task's chip ends when it does and a number given since becomes a chip.
-const TASK_REF_TTL = 60000;
-const TASK_REFS = new Map();   // "#18" or "ED-18" → { state: 'pending' | 'ok' | 'gone', at, ...the task }
-function taskRefInfo(key, no) {
-  const k = key ? key.toUpperCase() + '-' + no : '#' + no;
-  let r = TASK_REFS.get(k);
-  if (r && (r.state === 'pending' || Date.now() - r.at < TASK_REF_TTL)) return r;
-  if (r) r.at = Date.now();      // asked again once; the old answer shows meanwhile
-  else TASK_REFS.set(k, r = { state: 'pending' });
-  const was = r.state === 'pending' ? '' : JSON.stringify(r);
-  fetch('/api/task/ref?ref=' + encodeURIComponent(k) + (ROOM ? '&room=' + encodeURIComponent(ROOM) : ''))
-    .then(res => res.status === 404 ? { gone: true } : res.ok ? res.json() : Promise.reject(new Error('error ' + res.status)))
-    .then(d => {
-      const now = d && !d.gone && d.roomId ? Object.assign({ state: 'ok' }, d) : { state: 'gone' };
-      const changed = JSON.stringify(Object.assign({}, now, { at: r.at })) !== was;
-      TASK_REFS.set(k, Object.assign(now, { at: Date.now() }));
-      if (changed) refChanged();
-    })
-    // The hub did not answer: what it said before (or text) for now, asked again in a while.
-    .catch(() => setTimeout(() => { if (r.state === 'pending') TASK_REFS.delete(k); refChanged(); }, 15000));
-  return r;
-}
-// Its column, and what it is doing when that is not the calm default.
-const taskRefState = t => [t.workflowName, t.status && t.status !== 'not running' ? t.status : ''].filter(Boolean).join(' · ');
+// What the hub said is kept a minute (TaskCard.refs): a chip drawn after that
+// asks again, so a running task's chip ends when it does and a number given
+// since becomes a chip.
+const TASK_REFS = TaskCard.refs({ room: ROOM, changed: () => refChanged() });
+// The project a balloon's bare numbers are read in, when it is not this
+// chat's: a PO's message from another project (pomsg) names that project's
+// tasks. '' means this chat's project (the hub's default).
+const taskRefProject = m => (m && m.kind === 'pomsg' && m.fromProjectId) || '';
+let TASK_REF_PID = '';         // the balloon being drawn: taskRefProject(m)
+const taskRefInfo = (key, no) => TASK_REFS.info(key, no, TASK_REF_PID);
 // The chip for a number the hub has resolved, else null. @codex@18 opens the
 // task at that agent (a role, @reviewer@18, is the agent holding it).
 function taskChipHtml(who, key, no) {
@@ -1636,14 +1619,7 @@ function taskChipHtml(who, key, no) {
   const w = String(who || '').toLowerCase();
   const agent = w ? (t.agents || []).find(a => (a.identity || '').toLowerCase() === w
     || String(a.role || '').split(':')[0].trim().toLowerCase() === w) : null;
-  const id = agent ? agent.identity : '';
-  const href = '/session?id=' + encodeURIComponent(t.roomId) + (id ? '&agent=' + encodeURIComponent(id) : '');
-  const name = key ? (t.ref || t.label) : (t.label || t.ref);
-  const state = taskRefState(t);
-  const tip = `Open task ${t.ref || t.label}: ${t.title}` + (id ? ` at ${id}` : '') + (t.project ? ` (${t.project})` : '');
-  return `<a class="task-chip" href="${esc(href)}" data-task="${esc(t.roomId)}"${id ? ` data-agent="${esc(id)}"` : ''} title="${esc(tip)}">`
-    + `<span class="ref-who">${esc((id ? '@' + id + ' ' : '') + name)}</span><span class="ref-prev">${esc(t.title)}</span>`
-    + (state ? `<span class="ref-state">${esc(state)}</span>` : '') + `</a>`;
+  return TaskCard.chipHtml(t, { key, agent: agent ? agent.identity : '' });
 }
 // Every resolved task number in a text, parked as a chip (REF_A i REF_Z).
 function parkTaskRefs(s, chips) {
@@ -3100,7 +3076,8 @@ function renderBubbles(items, opt = {}) {
   const used = new Map();
   // An item of a message with "..." paths is drawn in that message's context, never from or into the cache.
   const inCtx = () => !!(PATH_ABBR && PATH_ABBR.n);
-  const md = t => { t = t || ''; let h = inCtx() ? null : MD_CACHE.get(t); if (h == null) h = mdToHtml(t); if (!inCtx()) used.set(t, h); return h; };
+  // A PO's message from another project reads its numbers there: its own cache entries.
+  const md = t => { t = t || ''; const ck = TASK_REF_PID ? TASK_REF_PID + '|' + t : t; let h = inCtx() ? null : MD_CACHE.get(ck); if (h == null) h = mdToHtml(t); if (!inCtx()) used.set(ck, h); return h; };
   let folded = 0, quietRows = 0;
   const firstFull = plan.indexOf('full');
   const keys = [], decKeys = [];
@@ -3108,8 +3085,11 @@ function renderBubbles(items, opt = {}) {
     const k = foldKey(m, i);
     keys.push(k);
     if (isDecision(m)) decKeys.push(k);
-    return foldBalloonHtml(m, i, plan[i], { md, open: FOLD.open.has(k), un: unanswered.get(k), idle: SOLO_IDLE,
-      act: copyLinkHtml, plain: t => pmPlain(refPlain(t)), superseded: sup.has(i), pts: ptBar, body });
+    TASK_REF_PID = taskRefProject(m);
+    try {
+      return foldBalloonHtml(m, i, plan[i], { md, open: FOLD.open.has(k), un: unanswered.get(k), idle: SOLO_IDLE,
+        act: copyLinkHtml, plain: t => pmPlain(refPlain(t)), superseded: sup.has(i), pts: ptBar, body });
+    } finally { TASK_REF_PID = ''; }
   };
   const href = mid => refHref(ROOM, mid);
   const ptBar = m => pointBarHtml(m, POINTS, href);
@@ -4840,6 +4820,8 @@ function edAddLast() {
 $('#add-point').onclick = () => edAddLast();
 // The balloon links in a box, as the chips the sent balloon will show (the
 // hub resolves them; a link it has not answered for yet stays plain text).
+// The box's preview: a chip for each balloon link and each task the words
+// name, once each, as the balloon will show them.
 function edRefsHtml(text) {
   const out = [], seen = new Set();
   for (const m of String(text || '').matchAll(REF_URL_RE)) {
@@ -4847,6 +4829,12 @@ function edRefsHtml(text) {
     if (!ref || seen.has(ref.url)) continue;
     seen.add(ref.url);
     const h = refChipHtml(ref);
+    if (h) out.push(h);
+  }
+  for (const m of String(text || '').matchAll(TASK_REF_RE)) {
+    if (notTaskRef(m[1], m[2], m.input, m.index) || seen.has(m[0])) continue;
+    seen.add(m[0]);
+    const h = taskChipHtml(m[1] || '', m[2] || '', +m[3]);
     if (h) out.push(h);
   }
   return out.join('');
@@ -5479,16 +5467,25 @@ try { new ResizeObserver(msgsResized).observe($('#msgs')); } catch (e) {}
 window.addEventListener('resize', msgsResized);
 // A task link inside the dashboard (its task panel, the PO's drawer) opens the
 // task there, beside you. In a window of its own it opens the dashboard in a
-// new tab, on that task.
+// new tab, on that task. A chip (a.task-chip) is TaskCard's: one click its
+// card, a double click the task, through openTaskFrom.
+function dashboardHost() {
+  try { if (window.parent !== window && window.parent.location.origin === location.origin) return window.parent; } catch (e) {}
+  return null;
+}
+function openTaskFrom(a) {
+  const host = dashboardHost();
+  if (host) host.postMessage({ type: 'open-task', roomId: a.dataset.task, agent: a.dataset.agent || '' }, location.origin);
+  else location.href = a.href;
+}
 document.addEventListener('click', ev => {
   const a = ev.target.closest && ev.target.closest('a[data-task]');
-  if (!a || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;
-  let host = null;
-  try { if (window.parent !== window && window.parent.location.origin === location.origin) host = window.parent; } catch (e) {}
-  if (!host) return;
+  if (!a || a.classList.contains('task-chip') || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;
+  if (!dashboardHost()) return;
   ev.preventDefault();
-  host.postMessage({ type: 'open-task', roomId: a.dataset.task, agent: a.dataset.agent || '' }, location.origin);
+  openTaskFrom(a);
 });
+TaskCard.init({ open: openTaskFrom });
 // A balloon link's chip — a point's "your message ↑" / "answer ↓" (pt-link)
 // as much as a ref-chip, sup-link or ask-link: in this conversation it lands
 // on the balloon; inside the dashboard, the dashboard opens that task or PO

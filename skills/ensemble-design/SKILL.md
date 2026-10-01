@@ -351,6 +351,45 @@ Four signals must be legible **without hovering**: status, priority, assignees w
 any attention state. Models are shortened on a card (`gpt-5.6-luna` → `luna`); the full string lives in
 the issue view. Three or more agents show two, then `+1`.
 
+### Task chip and card
+
+A task named by its number in text — a chat balloon, the message box's preview, a spec or report, Your
+asks, a file view's Markdown — is a **chip showing the number alone**: `#27` in the project shown,
+`D-27` for another project's task (and as written when the text spelled the key out), `@codex #27`
+when it names an agent. Nothing else is inline: the title, column and state are one click away.
+`static/taskcard.js` (`TaskCard`) is the one implementation — `chipHtml` draws the chip, `init`
+installs the card on a document, `refs` asks the hub (`/api/task/ref`) for pages without a board —
+and every page loads it; no page has chip or card CSS of its own.
+
+- **Chip:** inline-flex on the text's baseline, `0 var(--s-100)`, 16px line, `--surface-sunken` on a
+  `--border`, `--r-100`, `--fs-200`/500, tabular numerals, `--hover` while hovered or open. A 6px dot
+  before the number while the task runs (`--c-success-bold`) or waits for someone
+  (`--c-warning-bold`); no dot otherwise. On a phone the chip keeps its size in the line and takes a
+  finger's height through an invisible margin (the `::after` the `ref-chip` uses).
+- **Card:** one line, `position: fixed` at z-index 1200, 4px under the chip and left-aligned with it
+  (pushed in from the viewport's edges by 8px; above the chip when there is no room below), never
+  moving the text — it overlaps whatever is under it. `--surface-overlay` on a `--border`, `--r-200`,
+  `--e-200`, `var(--s-100) var(--s-200)`, `--fs-200` on a 20px line, `role="dialog"`. Its parts, in
+  order, `--s-200` apart: the number (600) · the project in `--fg-muted` **only when it is not the
+  one shown** (so a wrong match is visible) · the full title as a `--link` to the task (ellipsis
+  past 720px, never wrapped) · the column and state (`In progress · running`) in `--fg-muted` · the
+  agents (`claude · codex`). On a phone it wraps: number, project and state on the first line, the
+  title under them on a full-width row at least `--touch-min` tall, `--fs-300`.
+- **One click (a tap, or Enter) opens the card; the same again closes it.** Escape closes it and
+  gives the chip the focus back; so does a press anywhere else, scrolling, a resize, or leaving the
+  window. Only one card is open at a time.
+- **A double click (or Enter on a chip whose card is open) opens the task,** the way a single click
+  did before: in the dashboard the task panel, in a window of its own the dashboard on that task
+  (the page passes `open` to `TaskCard.init`). The card's title does the same with one click, so a
+  phone reaches the task in two taps. A click with a modifier is the link it always was.
+- **Hover, on a computer only** (`(hover: hover) and (pointer: fine)`): the card after 500ms of
+  rest, kept while the pointer is on the chip or the card, gone 300ms after it leaves; a click on
+  the chip keeps it. Never over a card that was clicked open, so nothing flickers.
+- **Which task:** a bare `#27` is read in the project of the chat it is in — or of the task a spec
+  belongs to — and under a message from another project's PO (`pomsg`) in that project; `D-27` in
+  any. The hub says whether the task is the project shown's (`inProject`): the chip writes `#27` for
+  that and `D-27` otherwise, and the card names the project.
+
 ### Avatar
 
 20px, `--r-full`, **solid** fill from the agent tokens with light text. Solid fill is load-bearing, not

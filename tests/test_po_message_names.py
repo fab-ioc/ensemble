@@ -14,7 +14,7 @@ import re
 import shutil
 import unittest
 
-from tests.test_task_refs import ATTACH, SESSION, block, const, fn, node
+from tests.test_task_refs import ATTACH, SESSION, TASKCARD, block, const, fn, node
 
 NODE = shutil.which("node")
 
@@ -63,7 +63,7 @@ class PoMessageNames(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         src = "\n".join([
-            ATTACH,
+            TASKCARD, ATTACH,
             block(SESSION, "// ---- Links in rendered text: begin shared block", "// ---- Links in rendered text: end shared block"),
             const(SESSION, "REF_URL_RE"), const(SESSION, "REF_A"), const(SESSION, "REF_MARK_RE"),
             const(SESSION, "REF_BLOCK_RE"), fn(SESSION, "stripRefBlocks"), fn(SESSION, "refOfUrl"),
