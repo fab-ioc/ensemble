@@ -1,6 +1,7 @@
-"""The session action bar in a real browser: the task panel (index.html) and the
-popped-out window (session.html), served by a hub in a thread, driven by
-headless Chrome over CDP at 1280x800 and 360x640.
+"""The session action bar in a real browser: the task panel (index.html, while
+the panels could not load: with them, its actions are the Dock panel's own ⋯,
+test_task_dock_panel) and the popped-out window (session.html), served by a hub
+in a thread, driven by headless Chrome over CDP at 1280x800 and 360x640.
 
 * the More menu opens by keyboard and by click, is moved to <body> while it is
   open and put back after; Arrow/Home/End move through its items, Escape and
@@ -55,7 +56,7 @@ async function launch() {
 class Cdp {
   constructor(url) { this.url = url; this.id = 0; this.waits = new Map(); }
   open() { return new Promise((res, rej) => { this.ws = new WebSocket(this.url); this.ws.onopen = () => res(); this.ws.onerror = e => rej(e);
-    this.ws.onmessage = ev => { const m = JSON.parse(ev.data); if (m.id && this.waits.has(m.id)) { const w = this.waits.get(m.id); this.waits.delete(m.id); m.error ? w.rej(new Error(m.error.message)) : w.res(m.result); } }; }); }
+    this.ws.onmessage = ev => { const m = JSON.parse(ev.data); if (m.id && this.waits.has(m.id)) { const w = this.waits.get(m.id); this.waits.delete(m.id); m.error ? w.rej(new Error(m.error.message)) : w.res(m.result); } else if (m.method === 'Fetch.requestPaused') this.send('Fetch.failRequest', { requestId: m.params.requestId, errorReason: 'Failed' }, m.sessionId).catch(() => {}); }; }); }
   send(method, params = {}, sessionId) { const id = ++this.id; return new Promise((res, rej) => { this.waits.set(id, { res, rej }); this.ws.send(JSON.stringify({ id, method, params, sessionId })); }); }
 }
 const KEYS = { ArrowDown: 40, ArrowUp: 38, Home: 36, End: 35, Escape: 27, Tab: 9 };
@@ -175,11 +176,21 @@ async function main() {
         return p;
       };
       {
-        const p = await page(A.base + '/', 'typeof ALL_ROWS !== "undefined" && ALL_ROWS.some(r => r.roomId === ' + JSON.stringify(A.room) + ')');
+        // The task panel's actions are the Dock panel's own ⋯ items (#150,
+        // test_task_dock_panel). The bar under the task's name keeps a More
+        // menu of its own only while the panels could not load: the library's
+        // entry module fails here every time, on a short retry schedule.
+        const p = await page(A.base + '/', 'true');
+        await c.send('Fetch.enable', { patterns: [{ urlPattern: '*/static/dock*/src/index.js*' }] }, p.sessionId);
+        await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.PD_RETRY_MS = [200, 200, 200];' }, p.sessionId);
+        await c.send('Page.navigate', { url: A.base + '/' }, p.sessionId);
+        await p.until('typeof ALL_ROWS !== "undefined" && ALL_ROWS.some(r => r.roomId === ' + JSON.stringify(A.room) + ')');
+        // The open task asks for the panels; they give up, and the task is drawn again with its own bar.
         await p.evalIn('openDetail(ALL_ROWS.find(r => r.roomId === ' + JSON.stringify(A.room) + ').sessionId); 0');
+        await p.until('!!PD.failed');
         await p.until('(() => { const b = document.querySelector("#detail-panel .am-more"); return !!b && b.getClientRects().length > 0; })()');
         await sleep(600);
-        out['docked/' + W] = await drive(c, p, '#detail-panel .am-more', W, H);
+        out['panel/' + W] = await drive(c, p, '#detail-panel .am-more', W, H);
         await p.close();
       }
       {
@@ -262,7 +273,7 @@ class InChrome(unittest.TestCase):
         cls.server.server_close()
         cls.tmp.cleanup()
 
-    VIEWS = ("docked/1280", "popout/1280", "docked/360", "popout/360")
+    VIEWS = ("panel/1280", "popout/1280", "panel/360", "popout/360")
 
     def inside(self, r, vw, vh, margin=8):
         self.assertGreaterEqual(r["l"], margin - 0.5, r)
@@ -332,14 +343,18 @@ class InChrome(unittest.TestCase):
                     self.assertTrue(abs(pk["t"] - (mo["b"] + 4)) <= 1 or abs(pk["b"] - (mo["t"] - 4)) <= 1, p)
                     self.inside(pk, p["vw"], p["vh"])
                 self.assertAlmostEqual(s["more"]["t"] - a["more"]["t"], 30, delta=1)
-                # It follows More; where More moved too near an edge for it
-                # (a phone's task sits under the bar's two rows and the tabs,
-                # #129), it goes to More's other side, still against it.
+                # It follows More: the edge against More moves with it (above
+                # More and held to the window's height, it grows instead of
+                # moving: the top stays at the margin). Where More moved too
+                # near an edge for it (a phone's task sits under the bar's two
+                # rows and the tabs, #129), it goes to More's other side, still
+                # against it.
                 w = self.got[v]["pickerWindowScrolled"]
+                edge = lambda p: p["picker"]["b"] if p["placement"] == "above" else p["picker"]["t"]
                 if s["placement"] == a["placement"]:
-                    self.assertAlmostEqual(s["picker"]["t"] - a["picker"]["t"], 30, delta=1, msg="it moved with More")
+                    self.assertAlmostEqual(edge(s) - edge(a), 30, delta=1, msg="it moved with More")
                 if w["placement"] == a["placement"]:
-                    self.assertAlmostEqual(w["picker"]["t"] - a["picker"]["t"], 60, delta=1, msg="a scroll of the window too")
+                    self.assertAlmostEqual(edge(w) - edge(a), 60, delta=1, msg="a scroll of the window too")
                 mo = w["more"]
                 self.assertTrue(abs(w["picker"]["t"] - (mo["b"] + 4)) <= 1 or abs(w["picker"]["b"] - (mo["t"] - 4)) <= 1, w)
                 self.assertEqual(self.got[v]["pickerClosed"], {"gone": True, "onMore": True})
