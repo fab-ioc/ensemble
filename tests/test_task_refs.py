@@ -330,6 +330,11 @@ class IndexNumbers(unittest.TestCase):
         self.assertIn("TaskCard.init({ doc: d, open: a => openTaskLink(a.dataset.task, a.dataset.agent) });", pop)
         self.assertLess(pop.index("PD_POP_DOCS.set(d, ls);"), pop.index("TaskCard.init({ doc: d"))
         self.assertNotIn("pdCardsInWindows", INDEX)
+        # The home bar's Panels menu is painted when the list dock arrives, not at
+        # the next poll: the dock library may land after the first render (the
+        # extra script in the head made test_top_bar's home probe miss it).
+        self.assertIn("barPaint();", fn(INDEX, "ldMake"))
+        self.assertIn("barPaint();", fn(INDEX, "ldDrop"))
         self.assertIn("key-btn", fn(INDEX, "projMenuSettingsHtml"))
         self.assertIn("/api/projects/key", fn(INDEX, "keyChoose"))
 

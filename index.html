@@ -14885,6 +14885,9 @@ function ldMake() {
   if (window.ResizeObserver) (LD.ro = new ResizeObserver(() => ldInsets())).observe(LD_PAGE);
   ldKeepPage();
   ldInsets();
+  // The bar's Panels menu is the dock's: painted now, not at the next poll
+  // (the library may land after the first render of the list).
+  barPaint();
 }
 // Back to the fixed column (a phone, or the library gone): its windows close
 // (the layout remembers the list was out), the list goes home.
@@ -14902,6 +14905,7 @@ function ldDrop() {
   document.body.classList.remove('ld-on');
   ['--list-w', '--list-r', '--list-t', '--list-b'].forEach(v => document.body.style.removeProperty(v));
   LD.insets = '';
+  barPaint();
 }
 // The page is the middle alone: the list dropped into its stack (a drag onto
 // its tab row) goes to the left of it.
