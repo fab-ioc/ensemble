@@ -535,7 +535,7 @@ async function main() {
     await p.evalIn('PD.dock.popWindow("board").close(); 0');
     await p.until('!PD.dock.isOut("board") && PD.els.board.ownerDocument === document', 10000);
     out.boardBack = await p.evalIn('({ inDock: !!PD.els.board.closest("#po-dock"), cards: PD.els.board.querySelectorAll(".card").length })');
-    // The middle stays where it is: no title bar, nothing that moves it.
+    // The middle stays where it is: it has the tools' title bar (#148) but nothing that moves it to a side.
     out.middle = await p.evalIn(`(() => { const st = PD.els['po-chat'].closest('.dk-stack'), head = st.querySelector('.dk-head');
       return { head: getComputedStyle(head).display, acts: ['move', 'float', 'unpin', 'pop', 'max', 'min', 'hide'].filter(a => PD.dock.can('po-chat', a)),
         toolActs: ['move', 'float', 'unpin', 'pop', 'max', 'min', 'hide'].filter(a => PD.dock.can('board', a)) }; })()`);
@@ -1007,8 +1007,9 @@ class InChrome(unittest.TestCase):
         self.assertTrue(self.got["boardBack"]["inDock"] and self.got["boardBack"]["cards"] > 0)
 
     def test_the_middle_cannot_be_moved(self):
-        self.assertEqual(self.got["middle"], {"head": "none", "acts": [], "toolActs": ["move", "float", "unpin", "pop", "max", "min", "hide"]},
-                         "the conversation stays fixed; the Board still in Window mode supports Hide")
+        self.assertEqual(self.got["middle"], {"head": "flex", "acts": ["float", "pop", "max", "min"], "toolActs": ["move", "float", "unpin", "pop", "max", "min", "hide"]},
+                         "the conversation has the tools' title bar (#148) but no Move: it stays in the middle; "
+                         "it floats, pops out, maximises and minimises; Hide only once it is in Window mode (the Board is, so it supports Hide)")
 
     def test_the_chats_points_line_follows_whether_points_is_on_screen(self):
         self.assertEqual(self.got["pointsSeen"], {"slidIn": False, "slidOut": True, "back": False, "pinned": True,

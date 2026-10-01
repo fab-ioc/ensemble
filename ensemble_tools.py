@@ -1126,7 +1126,10 @@ def _review_done(ctx, args, handler):
     if res:
         handler._ring_recipients(room["id"], res)
 
-    # To the PO, as a report into its room (it wakes the PO).
+    # To the PO, as a report into its room. It wakes the PO — except an early
+    # "changes requested", which the engineer is already acting on
+    # (dashboard.VERDICT_WAKES_FROM): posted, read at the PO's next wake.
+    rings = verdict != "changes_requested" or int(n) >= _d.VERDICT_WAKES_FROM
     po_woken = False
     if po:
         no = _d.task_label(room)
@@ -1136,15 +1139,17 @@ def _review_done(ctx, args, handler):
         pres = _d.chatroom.post_report(po["roomId"], f"{me}@{room['id']}", po["identity"], body,
                                        {"reportKind": "review", "verdict": verdict,
                                         "taskId": room["id"], "taskNo": room.get("no") or None,
-                                        "taskTitle": title, "reporter": me})
+                                        "taskTitle": title, "reporter": me}, wake=rings)
         po_woken = bool(handler._ring_report(po["roomId"], pres, room["id"], title, me,
                                              f"review {n} ({label})",
-                                             summary or findings)) if pres else False
+                                             summary or findings)) if pres and rings else False
 
     _d.finish_review(room["id"], me, verdict)
     return {"ok": True, "review": n, "verdict": verdict, "log": str(path),
             "sentTo": to or "everyone",
-            "po": ({"roomId": po["roomId"], "identity": po["identity"], "woken": po_woken}
+            "po": ({"roomId": po["roomId"], "identity": po["identity"], "woken": po_woken,
+                    **({} if rings else {"why": f"a changes-requested verdict before review "
+                                                f"{_d.VERDICT_WAKES_FROM} is posted without a wake"})}
                    if po else "none — this project has no PO"),
             "note": "recorded. Your session ends in a few seconds; there is nothing more to do."}
 

@@ -674,8 +674,23 @@ hides it in Window mode (Dock v0.7.0); its former strip button or Panels reopens
 The window's own ⋯ offers View Mode to dock it back, Move To, Take Screenshot and Hide;
 its − hides it too. Take Screenshot uses the browser's share-this-tab prompt where supported.
 Split and maximise work as the library's. **The
-conversation cannot be moved**: no title bar, no control (`can`), and a tool dropped into its
-stack goes beside it (`pdKeepMiddle`). The Board's own **⤢** (`.pd-board-max`, beside its view
+conversation has the same title bar** (#148): its Chat tab, ⋯ with View Mode (Dock Pinned, Float,
+Window: no strip for it), Take Screenshot, Maximise and Hide, and − (minimise); its window's ⋯
+offers View Mode back, Take Screenshot and Hide. **It cannot be moved to a side** (`can` refuses
+`move`: it is the dock's `fill`, and Move To would leave the middle empty with no way back but
+Reset layout), and a tool dropped into its stack goes beside it (`pdKeepMiddle`). **Its window
+holds the open task** (`pdPlaceTask` adopts `#detail-panel` into that document: the task's header,
+action bar and chat, which reloads there as the library says of a popped-out panel) and is named
+after it ("#12 The title · Project", `pdChatTitle`, kept in step by `pdPopTitle`); with no task
+open it holds the PO's chat (`iframe.pd-own`). × in the window closes the task and the PO's chat
+takes its place; a row clicked in the list puts the task there. Closing the window hides the panel
+(the task waits, parked); its former place or Panels reopens the window. The page's body classes
+are mirrored into every panel window (`onEveryWindow`), so rules keyed on `body.dp-docked` and
+`body.mid` hold there. There is no ⧉ Pop out, no `session.html` window and no ⧉ Dock any more:
+the panel's View Mode is the one way out and back. **Interim** (Dock need 14): the task's actions
+stay in the action bar's ⋯ and the PO's two in its header's ⋯, each marked
+`data-interim="dock-menu"` with a title saying so, until the library takes app items in a panel's
+own ⋯ menu; the switch is written in one comment block in `pdEnsure`. The Board's own **⤢** (`.pd-board-max`, beside its view
 switch) takes the whole width and gives it back. **Panels is available on a desktop** (#143):
 it recovers Tasks and tools whose closed window has no former strip button, including Spec.
 The list's reload notice can be dismissed because Panels still offers recovery. The layout is kept under `cd-tool-strip` (the old `cd-po-dock` is not
@@ -749,10 +764,12 @@ item 9).
 - **The PO's header** (`poHeadHtml`, #126, the mockup's conversation header): its avatar,
   "*Project* · PO" at `--fs-400` 600, and one `--fs-200` `--fg-muted` line of what is true: agent
   and model, the project, its open tasks (`poOpenCount`), the run chip, your asks. **Resume** is
-  the one button (Default), and only while the PO is not running; Switch agent, the PO's task and
-  Pop out wait in a `⋯` menu (`.po-menu`, `--surface-overlay`, `--e-200`), whose items keep their
-  `data-po`. Esc or a click elsewhere closes it; the header is not rewritten while it is open. A
-  drawer keeps its `×`.
+  the one button (Default), and only while the PO is not running; Switch agent and the PO's task
+  wait in a `⋯` menu (`.po-menu`, `--surface-overlay`, `--e-200`; `poMenuItems` is the data), whose
+  items keep their `data-po`. Esc or a click elsewhere closes it; the header is not rewritten while
+  it is open. A drawer keeps its `×`. Pop out is the panel's own (⋯ › View Mode › Window, #148);
+  this `⋯` is interim (`data-interim="dock-menu"`): its items go into the panel's ⋯ once Dock takes
+  app items (need 14).
 - **The PO chat** is in its panel: `#po-panel` moves into the PO chat panel on a PO screen and back
   home (the drawer) anywhere else (`pdPlaceChat`, with `moveBefore`, so its iframe keeps its page;
   the library moves panels the same way, so a layout change reloads no chat and no open file).
