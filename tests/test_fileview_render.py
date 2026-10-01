@@ -30,6 +30,8 @@ ROOT = Path(__file__).resolve().parent.parent
 PAGE = (ROOT / "fileview.html").read_text(encoding="utf-8")
 # The highlighter the page loads from /static/hl.js, shared with index.html.
 HL = (ROOT / "static" / "hl.js").read_text(encoding="utf-8")
+# The task chips (static/taskcard.js, #152) the page draws for #18 in Markdown.
+TASKCARD = (ROOT / "static" / "taskcard.js").read_text(encoding="utf-8")
 NODE = shutil.which("node")
 
 
@@ -38,7 +40,9 @@ def render_code() -> str:
     block, the highlighter, the JSON and CSV helpers and mdToHtml."""
     start = PAGE.index("const esc = s =>")
     end = PAGE.index("// ---- In-place review comments")
-    return HL + PAGE[start:end]
+    # The page's resolver, below the comment layer, with a hub that never answers (a number stays text).
+    refs = "const fetch = () => new Promise(() => {}); const TASK_REFS = TaskCard.refs({ room: ROOM, changed: () => {} });\n"
+    return TASKCARD + "\n" + HL + refs + PAGE[start:end]
 
 
 JS = r"""
