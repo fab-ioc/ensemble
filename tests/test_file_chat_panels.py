@@ -358,6 +358,7 @@ class FilesAndChatsAsPanels(unittest.TestCase):
         ]
         for p in cls.patches:
             p.start()
+            cls.addClassCleanup(p.stop)
         ok, proj, _ = dashboard.register_project("Motors")
         assert ok, proj
         cls.proj = proj["id"]
@@ -398,8 +399,6 @@ class FilesAndChatsAsPanels(unittest.TestCase):
     def tearDownClass(cls):
         cls.server.shutdown()
         cls.server.server_close()
-        for p in cls.patches:
-            p.stop()
         cls.tmp.cleanup()
 
     # The requests of a kind within a window, per minute.
