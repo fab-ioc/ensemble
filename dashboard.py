@@ -5983,7 +5983,7 @@ def git_status(path: str, branch: bool = False) -> tuple[int, dict]:
                 i += 1
                 continue
             xy, name = rec[:2], rec[3:]
-            if xy and xy[0] in "RC":               # a rename or copy: the record names the new path, the next part the old one
+            if xy and (xy[0] in "RC" or xy[1:2] in ("R", "C")):   # a rename or copy (index or work tree): the record names the new path, the next part the old one
                 i += 1
             files.append({"path": name, "status": xy.strip() or "?",
                           "staged": xy[0] not in (" ", "?")})

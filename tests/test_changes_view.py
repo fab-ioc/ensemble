@@ -130,6 +130,15 @@ class TheHubCounts(unittest.TestCase):
         code, res = dashboard.git_status(str(self.repo), True)
         self.assertEqual(code, 200, res)
         self.assertEqual(self.by_path(res["files"])["src/app/utils.py"], (1, 0))
+        # A rename in the work tree (" R": the new name only intended to be added): the same record, the old path after it.
+        git(self.repo, "reset", "-q")
+        git(self.repo, "add", "-N", "src/app/utils.py")
+        code, res = dashboard.git_status(str(self.repo))
+        self.assertEqual(code, 200, res)
+        paths = [f["path"] for f in res["files"]]
+        self.assertEqual([f["status"] for f in res["files"] if f["path"] == "src/app/utils.py"], ["R"])
+        self.assertNotIn("src/app/util.py", paths)
+        self.assertTrue(all("/" in p or p in ("README.md", "pic.png", "docs/") for p in paths), f"no phantom row from the old path: {paths}")
 
     def test_what_landed_carries_its_lines(self):
         git(self.repo, "stash", "-u", "-q")
