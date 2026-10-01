@@ -1482,7 +1482,16 @@ def _amender_name(ctx, room: dict) -> str:
     po = _d.room_po_id(room)
     if po and po == ctx["room"]["id"]:
         return "Your PO"
-    role = _role_head(ctx.get("part") or {}) or "an administrator"
+    role = _role_head(ctx.get("part") or {})
+    if not role:
+        # An administrator by the project's poRoomId, with no role of its own.
+        return "An administrator"
+    if role == "productowner":
+        # A PO that is not this task's PO: name its project, not its room
+        # (PO rooms are titled "<project> PO").
+        project = _projects().get(_project_of_room(ctx["room"]))
+        name = ((project or {}).get("name") or "").strip()
+        return f"The PO of project {name}" if name else "A PO"
     where = _d.task_label(ctx["room"]) or _title(ctx["room"])
     return f"The {role} of {where}" if where else f"The {role}"
 

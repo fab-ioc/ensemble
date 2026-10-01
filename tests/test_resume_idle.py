@@ -278,6 +278,35 @@ class ASpecAmendmentReachesARunningOwner(_Stops):
             ensemble_tools._update_task(ctx, {"taskId": rid, "spec": "Sell the X3."}, h)
         self.assertTrue(h.rung[0][2].startswith("[spec] Your PO amended your spec at "), h.rung[0][2])
 
+    def test_another_projects_po_is_named_by_its_project_never_its_room(self):
+        # PO rooms are titled "<project> PO": "The productowner of Other PO"
+        # would read as a room; the owner is told the project instead.
+        rid = self.room(spec="Sell the X5.")
+        self.running(rid, "claude", "idle")
+        made = chatroom.create_room("Other PO", [{"identity": "claude", "agent": "claude",
+                                                  "role": "ProductOwner"}])
+        po_room = chatroom.get_room(made["id"], public=False)
+        ctx = {"room": po_room, "identity": "claude",
+               "part": chatroom.participant(po_room, "claude"), "projectId": ""}
+        self.projects = [{"id": "p", "name": "Ensemble", "poRoomId": "room-gone"},
+                         {"id": "o", "name": "Other", "poRoomId": po_room["id"]}]
+        with mock.patch.object(ensemble_tools._d, "load_session_projects",
+                               lambda: {rid: "p", po_room["id"]: "o"}):
+            self.assertEqual(ensemble_tools._amender_name(ctx, chatroom.get_room(rid, public=False)),
+                             "The PO of project Other")
+        with mock.patch.object(ensemble_tools._d, "load_session_projects", lambda: {rid: "p"}):
+            self.assertEqual(ensemble_tools._amender_name(ctx, chatroom.get_room(rid, public=False)),
+                             "A PO")
+
+    def test_an_administrator_without_a_role_is_an_administrator(self):
+        rid = self.room(spec="Sell the X5.")
+        made = chatroom.create_room("", [{"identity": "claude", "agent": "claude"}])
+        admin = chatroom.get_room(made["id"], public=False)
+        ctx = {"room": admin, "identity": "claude",
+               "part": chatroom.participant(admin, "claude"), "projectId": ""}
+        self.assertEqual(ensemble_tools._amender_name(ctx, chatroom.get_room(rid, public=False)),
+                         "An administrator")
+
     def test_a_long_change_sends_the_owner_to_read_the_spec(self):
         rid = self.room(spec="Sell the X5.")
         self.running(rid, "claude", "idle")
