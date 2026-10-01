@@ -11794,10 +11794,13 @@ function pdChatTitle() {
 // conversation's task, or the PO's chat; a chat panel's task, renamed. Here
 // when the middle changes (pdPlaceChat) and after each refresh of the rows. A
 // file panel is named by its path, which is also its id: nothing to follow.
+// On a phone (the narrow dock, tabs that scroll sideways) the conversation's
+// tab keeps reading "Chat", so the 390px tab row grows no longer than it was
+// (Board stays on screen); the full title is a computer's.
 function pdSyncTitles() {
   const d = PD.dock;
   if (!d) return;
-  try { d.setTitle('po-chat', pdChatTitle()); } catch (e) {}
+  try { d.setTitle('po-chat', d.narrow() ? PD_TITLES['po-chat'] : pdChatTitle()); } catch (e) {}
   for (const [id, e] of PD.rt) {
     if (e.kind !== 'chat') continue;
     const r = ALL_ROWS.find(x => x.roomId === e.room);
@@ -11894,6 +11897,7 @@ function pdPopChat(out) {
     if (PD.dock && !PD.dock.narrow()) pdToolsFit();
     if (!PD.dock || PD.dock.narrow() === pdNarrow()) return;
     PD.dock.setNarrow(pdNarrow());
+    pdSyncTitles();   // a phone's conversation tab is "Chat", a computer's the conversation's name
     pdToolsFit();
     pdToolRestore();
     renderRows();
@@ -15418,6 +15422,8 @@ function ldMake() {
       can: (id, a) => id === 'list' && (a !== 'hide' || LD.dock?.viewMode(id) === 'window'),
       popName: 'ensemble-list-',
       popTitle: () => nounText('Tasks and {projects}') + ' · Ensemble',
+      // No bodyAttrs: the page's body classes are copied into the PO dock's windows only (#154);
+      // nothing in the list's window is keyed on them (ldInsets sets ld-own-head there).
       popUrl: '/static/dock/src/popout.html',
       popBackButton: false,
       themeEvent: 'cd-theme',

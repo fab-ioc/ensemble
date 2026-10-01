@@ -21,7 +21,10 @@ and two tasks: the conversation's tab, its Panels-menu row and its window's
 title read "PO chat", then the task's name once a task is in the middle, then
 the renamed task after a rename through the hub; a chat panel's tab follows its
 task's rename too; a body class added to the page reaches the window and leaves
-it again, the window's own class staying. Skipped without Node or Chrome.
+it again, the window's own class staying; on a phone (the narrow dock) the
+conversation's tab keeps reading "Chat" so the tab row needs no scrolling, and
+a computer's shows the task again; the page threw no exception meanwhile
+(CDP ``Runtime.exceptionThrown``). Skipped without Node or Chrome.
 """
 from __future__ import annotations
 
@@ -66,7 +69,7 @@ class TheLibraryDoesIt(unittest.TestCase):
         self.assertIn("bodyAttrs: ['class'],", INDEX)
         self.assertIn("popTitle: p => `${p.title} · ${(projectById(PD.pid) || {}).name || 'Ensemble'}`,", INDEX)
         self.assertIn("function pdSyncTitles() {", INDEX)
-        self.assertIn("try { d.setTitle('po-chat', pdChatTitle()); } catch (e) {}", INDEX)
+        self.assertIn("d.setTitle('po-chat', d.narrow() ? PD_TITLES['po-chat'] : pdChatTitle())", INDEX)
         self.assertIn("if (r) { try { d.setTitle(id, pdRowTitle(r)); } catch (err) {} }", INDEX)
         # When: the middle changes, and after each refresh of the rows (a rename).
         self.assertIn("if (PD.dock) pdPopChat(ph.ownerDocument !== document);\n  pdSyncTitles();", INDEX)
@@ -96,9 +99,11 @@ async function launch() {
   return { ch, ws };
 }
 class Cdp {
-  constructor(url) { this.url = url; this.id = 0; this.waits = new Map(); }
+  constructor(url) { this.url = url; this.id = 0; this.waits = new Map(); this.exceptions = []; }
   open() { return new Promise((res, rej) => { this.ws = new WebSocket(this.url); this.ws.onopen = () => res(); this.ws.onerror = e => rej(e);
-    this.ws.onmessage = ev => { const m = JSON.parse(ev.data); if (m.id && this.waits.has(m.id)) { const w = this.waits.get(m.id); this.waits.delete(m.id); m.error ? w.rej(new Error(m.error.message)) : w.res(m.result); } }; }); }
+    this.ws.onmessage = ev => { const m = JSON.parse(ev.data); if (m.id && this.waits.has(m.id)) { const w = this.waits.get(m.id); this.waits.delete(m.id); m.error ? w.rej(new Error(m.error.message)) : w.res(m.result); }
+      // The page's own exceptions and unhandled rejections (Runtime.enable), kept for the report.
+      if (m.method === 'Runtime.exceptionThrown') { const d = m.params.exceptionDetails; this.exceptions.push((d.text || '') + ' ' + (d.exception && d.exception.description || '') + ' @' + (d.url || '') + ':' + d.lineNumber); } }; }); }
   send(method, params = {}, sessionId) { const id = ++this.id; return new Promise((res, rej) => { this.waits.set(id, { res, rej }); this.ws.send(JSON.stringify({ id, method, params, sessionId })); }); }
 }
 // What a panel is called everywhere: the dock's title, its tab (text and tooltip) in this page and in its window, its
@@ -118,6 +123,7 @@ async function main() {
   const { targetId } = await c.send('Target.createTarget', { url: 'about:blank' });
   const { sessionId } = await c.send('Target.attachToTarget', { targetId, flatten: true });
   await c.send('Page.enable', {}, sessionId);
+  await c.send('Runtime.enable', {}, sessionId);
   await c.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
   const evalIn = async (expr) => { const r = await c.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }, sessionId); if (r.exceptionDetails) throw new Error(expr.slice(0, 120) + ' :: ' + JSON.stringify(r.exceptionDetails).slice(0, 600)); return r.result.value; };
   const until = async (expr, ms = 20000) => { const t = Date.now(); while (Date.now() - t < ms) { let v = null; try { v = await evalIn(expr); } catch (e) {} if (v) return v; await sleep(150); } throw new Error('timeout: ' + expr); };
@@ -149,7 +155,7 @@ async function main() {
       const there = b.classList.contains('probe-theme');
       document.body.classList.remove('probe-theme'); await new Promise(r => setTimeout(r, 300));
       const gone = !b.classList.contains('probe-theme');
-      return { was, there, gone, own: b.classList.contains('dk-popwin'), mid: b.classList.contains('mid'), after: b.className, observers: 0 };
+      return { was, there, gone, own: b.classList.contains('dk-popwin'), mid: b.classList.contains('mid'), after: b.className };
     })()`);
     // A task into the middle: its window is named after it.
     await click(`.sw-row[data-room="${TA}"]`);
@@ -176,7 +182,24 @@ async function main() {
     await until('PD.els["po-chat"].ownerDocument === document && PD.dock.isVisible("po-chat")', 10000);
     await sleep(300);
     out.back = await evalIn(NAMES('po-chat'));
-    out.errors = await evalIn('(window.__pdErrors || []).slice(0, 5)');
+    // A phone (the narrow dock, the task still in the middle): the conversation's tab keeps reading "Chat", so
+    // the fixed tabs all fit the 390px row without scrolling; a computer again: the task's name is back.
+    await evalIn(`pdChatUnpanel(${JSON.stringify(TB)}); 0`);
+    await until(`!PD.rt.has('chat:' + ${JSON.stringify(TB)})`, 10000);
+    await c.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 3, mobile: true }, sessionId);
+    await until('PD.dock.narrow() && PD.dock.title("po-chat") === "Chat"', 15000);
+    await sleep(500);
+    out.phone = await evalIn(`(() => { const n = ${NAMES('po-chat')}; const tabs = PD_ROOT.querySelector('.dk-tabs');
+      const wraps = [...tabs.querySelectorAll('.dk-tab-wrap')];
+      const R = tabs.getBoundingClientRect();
+      return { ...n, narrow: PD.dock.narrow(), task: !!pdTask(), tabs: wraps.map(w => (w.querySelector('.dk-tab') || {}).textContent),
+               fits: tabs.scrollWidth <= tabs.clientWidth + 1, row: Math.round(tabs.clientWidth), need: Math.round(tabs.scrollWidth),
+               rects: wraps.map(w => { const r = w.getBoundingClientRect(); return [(w.querySelector('.dk-tab') || {}).textContent, Math.round(r.left - R.left), Math.round(r.right - R.left)]; }) }; })()`);
+    await c.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
+    await until(`!PD.dock.narrow() && PD.dock.title('po-chat') === ${rowTitle(TA)}`, 15000);
+    await sleep(300);
+    out.wideAgain = await evalIn(NAMES('po-chat'));
+    out.errors = c.exceptions;
   } finally {
     try { await c.send('Browser.close'); } catch (e) {}
     ch.kill();
@@ -309,6 +332,25 @@ class TitlesAndBodyClassesInTheBrowser(unittest.TestCase):
         self.assertTrue(b["mid"], "the page's own classes (mid) were copied at open")
         self.assertIn("dk-popwin", self.got["poChatOut"]["win"]["body"])
         self.assertIn("po-dock", self.got["poChatOut"]["win"]["body"])
+
+    def test_a_phone_keeps_chat_on_the_conversation_tab_so_the_row_stays_short(self):
+        p = self.got["phone"]
+        self.assertTrue(p["narrow"], p)
+        self.assertTrue(p["task"], "the task is still in the middle on the phone")
+        self.everywhere(p, "Chat", window=False)
+        for name in ("Chat", "Your asks", "Board", "Spec"):
+            self.assertIn(name, p["tabs"], p["tabs"])
+        # The tab is "Chat"'s width, not a title's 160px, and Board is on screen without scrolling (the six fixed
+        # tabs need some 374px of a 390px phone's 331px row since #129: Spec's end was off it before this too).
+        rect = {name: (left, right) for name, left, right in p["rects"]}
+        self.assertLessEqual(rect["Chat"][1] - rect["Chat"][0], 60, p["rects"])
+        self.assertLessEqual(rect["Board"][1], p["row"] + 1, f"Board off the row: {p['rects']} in {p['row']}px")
+        self.assertLess(p["need"], p["row"] + 60, f"the tab row needs {p['need']}px in {p['row']}px, tabs {p['tabs']}")
+        # A computer again: the conversation's name is back.
+        self.everywhere(self.got["wideAgain"], self.got["renamed"]["a"], window=False)
+
+    def test_the_page_threw_no_exception_meanwhile(self):
+        self.assertEqual(self.got["errors"], [])
 
 
 if __name__ == "__main__":

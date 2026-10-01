@@ -384,7 +384,7 @@ class TheWiring(unittest.TestCase):
         # #154: the library names the window after the panel's title, which follows the task (setTitle),
         # and mirrors the page's body classes itself (bodyAttrs); Ensemble's two stopgaps went.
         self.assertIn("popTitle: p => `${p.title} · ${(projectById(PD.pid) || {}).name || 'Ensemble'}`,", INDEX)
-        self.assertIn("try { d.setTitle('po-chat', pdChatTitle()); } catch (e) {}", INDEX)
+        self.assertIn("d.setTitle('po-chat', d.narrow() ? PD_TITLES['po-chat'] : pdChatTitle())", INDEX)
         self.assertIn("bodyAttrs: ['class'],", INDEX)
         for gone in ("function pdPopTitle()", "bodyMo.observe(document.body", "w.document.title = t"):
             self.assertNotIn(gone, INDEX, gone)

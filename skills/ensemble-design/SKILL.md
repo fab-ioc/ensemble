@@ -855,7 +855,7 @@ Changes · Files · Board · Spec`, with Panels ▾ in the bar. An open task is 
 too (`pdTask()` holds on a phone), so its tools are the same tabs, not the task panel's own:
 tabs, not a sheet, because they are the same dock and panes as the desktop's strip (no new
 component) and the mockup (`a2-…-390.png`) shows a tab row. The conversation's tab names what it holds
-("PO chat", or "#12 The title" with a task in the middle: `pdSyncTitles`, Dock's `setTitle`), as a task's chat panel names its task; `PD_TITLES` keeps "Chat" only for the first paint. The Tabs rule above ("a tab that renames itself…") is about the task panel's fixed tab set; a dock panel names its content, as a file panel does.
+on a computer ("PO chat", or "#12 The title" with a task in the middle: `pdSyncTitles`, Dock's `setTitle`), as a task's chat panel names its task; on a phone (the narrow dock) it keeps reading **Chat** (`PD_TITLES`), so the 390 px tab row grows no longer than it was (Board stays on screen). The Tabs rule above ("a tab that renames itself…") is about the task panel's fixed tab set; a dock panel names its content, as a file panel does.
 
 A project with a PO opens on its **PO screen**: a Dock (`static/dock`, a vendored copy of the Dock
 library; `VERSION` names its commit) of five panels, **PO chat, Your asks, Board, Workspace,
