@@ -140,7 +140,7 @@ const out = {};
 """
 
 PURE_FNS = ["esc", "PD_IDS", "PD_TOOLS", "pdDefaultLayout", "PD_PT_WORD", "PD_PT_GROUPS", "pdPtState", "pdLatest",
-            "pdLastAnswer", "pdLastPlan", "pdTaskWords", "pdPtAge", "pdPointsSummary",
+            "pdLastAnswer", "pdLastPlan", "pdTaskWords", "pdPtAge", "pdPointsSummary", "pdSaid",
             "pdPointsHtml"]
 
 
@@ -203,30 +203,30 @@ class ThePanels(unittest.TestCase):
         html = self.o["list"]
         p5 = html[html.index('data-pt="P5"'):html.index('data-pt="P6"')]
         self.assertIn('<span class="pdp-state planned">#104 · in progress</span>', p5)
-        self.assertIn('data-mid="room-po:m9" title="Go to where the PO planned the work">plan ↓</a>', p5)
+        self.assertIn('data-mid="room-po:m9" data-part="re:P5" title="Go to where the PO planned the work">plan ↓</a>', p5)
         self.assertIn('data-pt-act="drop"', p5)
         self.assertNotIn('data-pt-act="ack"', p5, "no thumbs up on work that is not live")
         self.assertNotIn("answer ↓", p5)
         p6 = html[html.index('data-pt="P6"'):html.index(">Ready for your check <")]
         self.assertIn('<span class="pdp-state planned">#105 merged, awaiting go-live</span>', p6)
-        self.assertIn('<span class="pdp-said">claude: started as #105</span>', p6)
+        self.assertIn('<p class="pdp-said">claude: started as #105</p>', p6)
         self.assertNotIn('data-pt-act="ack"', p6, "merged is not delivered")
 
     def test_a_delivered_point_links_its_delivery_and_keeps_its_plan(self):
         html = self.o["list"]
         p4 = html[html.index('data-pt="P4"'):]
-        self.assertIn('data-mid="room-po:m7" title="Go to where the PO planned the work">plan ↓</a>', p4)
-        self.assertIn('<span class="pdp-said">claude: #75 is live</span>', p4, "the delivery, not the plan")
+        self.assertIn('data-mid="room-po:m7" data-part="re:P4" title="Go to where the PO planned the work">plan ↓</a>', p4)
+        self.assertIn('<p class="pdp-said">claude: #75 is live</p>', p4, "the delivery, not the plan")
         self.assertIn('data-pt="P4" data-pt-act="ack"', p4)
 
     def test_each_point_links_both_ends_and_has_its_one_click(self):
         html = self.o["list"]
-        self.assertIn('data-mid="room-po:m1" title="Go to your message in the PO chat">your message ↑</a>', html)
-        self.assertIn('data-mid="room-po:m2" title="Go to the answer in the PO chat">answer ↓</a>', html)
-        self.assertIn('href="/session?room=room-po&amp;msg=room-po:m2"', html, "a real link: it opens in a tab too")
+        self.assertIn('data-mid="room-po:m1" data-part="pt:P1" title="Go to your message in the PO chat">your message ↑</a>', html)
+        self.assertIn('data-mid="room-po:m2" data-part="re:P1" title="Go to the answer in the PO chat">answer ↓</a>', html)
+        self.assertIn('href="/session?room=room-po&amp;msg=room-po:m2&amp;part=re:P1"', html, "a real link: it opens in a tab too")
         self.assertIn('data-pt="P1" data-pt-act="ack"', html)
         self.assertIn('data-pt="P2" data-pt-act="drop"', html)
-        self.assertIn('<span class="pdp-said">claude: #75 is live</span>', html, "an answer given by doing shows what was done")
+        self.assertIn('<p class="pdp-said">claude: #75 is live</p>', html, "an answer given by doing shows what was done")
         self.assertIn('aria-label="Acknowledge the answer to P1: nothing is sent to the agent"', html)
         self.assertIn('<span class="pdp-age" data-at="992800">2h</span>', html)
 
@@ -364,7 +364,10 @@ async function main() {
       await new Promise(r => setTimeout(r, 200));
       const el = [...box.querySelectorAll('.msg[data-mid]')].find(e => e.dataset.mid === a.dataset.mid);
       const er = el.getBoundingClientRect(), br = box.getBoundingClientRect();
-      return { moved: before - box.scrollTop, inView: er.top >= br.top - 1 && er.top < br.bottom, landed: el.classList.contains('landed'), text: el.innerText.slice(0, 400) };
+      // #146: the mark lands on the "Re P1" paragraph inside the balloon, not on the balloon.
+      const part = el.querySelector('.landed');
+      return { moved: before - box.scrollTop, inView: er.top >= br.top - 1 && er.top < br.bottom, landed: !!part && !el.classList.contains('landed'),
+        partText: part ? part.textContent.trim() : '', text: el.innerText.slice(0, 400) };
     })()`);
     // The Workspace: its tree leads with the Documents node, open, the roadmap first.
     await p.evalIn('document.querySelector(\'.dk-strip-btn[data-dk-auto="workspace"]\').click(); 0');
@@ -925,6 +928,7 @@ class InChrome(unittest.TestCase):
         self.assertGreater(a["moved"], 200, "the chat scrolled up to it")
         self.assertTrue(a["inView"] and a["landed"], a)
         self.assertIn("it is wider now", a["text"])
+        self.assertTrue(a["partText"].startswith("Re P1:"), a)   # #146: only the passage is marked
 
     def test_the_workspace_tree_leads_with_documents_open(self):
         d = self.got["docs"]

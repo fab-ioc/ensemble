@@ -161,7 +161,7 @@ out.atMoves = T.loadRead();
 const box = { clientHeight: 500, scrollTop: 900, scrollHeight: 5000, line: { offsetTop: 300 },
   querySelector: () => box.line };
 Object.assign(ctx, { $: () => box, nearEnd: () => false, showLatest: () => {}, withTaskBubble: x => x, ROOM_OBJ: null });
-vm.runInContext(`var JUST_US = false, GOTO = '', GOTO_OPEN = false, STICK = true, CU_OPENED = false, CU_SNAP = null;
+vm.runInContext(`var TEAM_ALL = true, GOTO = '', GOTO_OPEN = false, STICK = true, CU_OPENED = false, CU_SNAP = null;
   globalThis.t.open = (items, link) => { LAST_ITEMS = items; GOTO_OPEN = link; store.clear(); READ_MEM = null; catchUpOpen(); return GOTO_OPEN; };`, Object.assign(ctx, { store }));
 T.open(items, false);
 out.openJump = box.scrollTop;

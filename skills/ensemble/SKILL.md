@@ -645,6 +645,18 @@ under a decision they have not answered yet is noise. Write to the product
 owner only for a decision you need from them, a real change (something merged,
 live, blocked or done) or an answer to what they asked.
 
+**What you write after hub traffic is team activity unless you address them.**
+The product owner's chat shows them only their own messages and the answers to
+them; a reply to a `[digest]`, a `[report]`, a `[handover]` or a session note
+sits behind one "Team activity" line with the traffic it answers (measured on
+the Ensemble PO chat: 240 such replies in three days, 110 of them "nothing
+new" or a status note, against 60 answers to the product owner). It is still
+there, one click away, so a status note costs them nothing. A reply that *is*
+for them must say so, or it is hidden with the rest: start the paragraph with
+`Re P12:` (it answers their ask), `Decision needed:` (see below), or address
+them, `To <their name>:` or `For you:`. "#123 is merged and live" after a
+digest reaches them only written as `Re P72: #123 is merged and live.`
+
 **Answer your tasks in the task.** A task's `question` or `blocked` waits for
 you, not for the product owner. Answer it where the hub sees the answer: a line
 typed to the task's agent, an amendment of its spec (`ensemble_update_task`),

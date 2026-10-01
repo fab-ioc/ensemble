@@ -126,7 +126,7 @@ class LandingCueRestarts(unittest.TestCase):
 let GOTO = '', LANDED = null, _landing = false, CHAT_DRAWN = true, LAST_ITEMS = [];
 let _cmtComposerOpen = false, selShown = () => false, STICK = false;
 const FOLD = { open: new Set() };
-let GROUP_OF_MID = new Map();
+let GROUP_OF_MID = new Map(), GAP_OF_MID = new Map(), GOTO_PART = '';
 const setTimeout = () => 0;
 const clearTimeout = () => {};
 function showGotoNote() {}
@@ -146,7 +146,7 @@ function node(id) {
 const box = { clientHeight: 400, scrollTop: 0,
               querySelectorAll: sel => sel === '.msg[data-mid]' ? drawn.map(node) : [] };
 const $ = s => s === '#msgs' ? box : null;
-""" + "\n".join([js_function(n) for n in ("openGroupOf", "landPending", "markLanded")]) + r"""
+""" + "\n".join([js_function(n) for n in ("openGroupOf", "partOf", "unwrapMarks", "landPending", "markLanded")]) + r"""
 const out = {};
 GOTO = 'm1';
 landPending();
@@ -193,7 +193,8 @@ class LandedCueCss(unittest.TestCase):
 
     def test_the_animated_rule_still_targets_the_whole_balloon(self):
         block = self.block()
-        self.assertIn(".msg.landed { animation:landed", block)
+        # ED-146: the same rule marks a passage inside the balloon (a "Re P12:" paragraph).
+        self.assertIn(".msg.landed, .msg .landed { animation:landed", block)
         self.assertIn("@keyframes landed", block)
 
 
