@@ -11192,22 +11192,8 @@ function pdLoad() {
           d.head.insertBefore(b, d.head.firstChild);
         }
         pdPopIcon(d);
-        // The page's body classes (mid, dp-docked, detail-open…) hold in the
-        // window too: the task panel's rules are keyed on them (#148). The
-        // library mirrors <html>'s theme attributes only (an ask for Dock:
-        // body attributes the same way). Only classes copied from here are
-        // taken off again, so the window keeps any of its own.
-        const mirrored = new Set();
-        const mirror = () => {
-          try {
-            const want = new Set(document.body.className.split(/\s+/).filter(Boolean));
-            for (const c of mirrored) if (!want.has(c)) { d.body.classList.remove(c); mirrored.delete(c); }
-            for (const c of want) if (!mirrored.has(c)) { d.body.classList.add(c); mirrored.add(c); }
-          } catch (e) {}
-        };
-        mirror();
-        const bodyMo = new MutationObserver(mirror);
-        bodyMo.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+        // (The page's body classes hold in the window too, mirrored by the
+        // library: bodyAttrs in pdEnsure.)
         const ls = window.DOC_LISTENERS.filter(([t]) => !skip.has(t));
         for (const [t, fn, o] of ls) d.addEventListener(t, fn, o);
         PD_POP_DOCS.set(d, ls);
@@ -11224,7 +11210,6 @@ function pdLoad() {
         for (const fn of rs) w.addEventListener('resize', fn);
         PD_POP_WINS.set(w, rs);
         return () => {
-          try { bodyMo.disconnect(); } catch (e) {}
           PD_POP_DOCS.delete(d);
           PD_POP_WINS.delete(w);
           for (const fn of rs) { try { w.removeEventListener('resize', fn); } catch (e) {} }
@@ -11348,7 +11333,14 @@ function pdEnsure() {
       || (id !== 'po-chat' ? (a !== 'hide' || PD.dock?.viewMode(id) === 'window')
           : (a === 'float' || a === 'pop' || a === 'max' || a === 'min' || (a === 'hide' && PD.dock?.viewMode(id) === 'window'))),
     popName: 'ensemble-panel-',
-    popTitle: p => `${p.id === 'po-chat' ? pdChatTitle() : p.title} · ${(projectById(PD.pid) || {}).name || 'Ensemble'}`,
+    // A window is named after its panel, then the project. The library asks
+    // again when a panel's title changes (Dock v0.11.0's setTitle, pdSyncTitles).
+    popTitle: p => `${p.title} · ${(projectById(PD.pid) || {}).name || 'Ensemble'}`,
+    // The page's body classes (mid, dp-docked, detail-open…) hold in every
+    // panel window too: the task panel's rules are keyed on them (#148). The
+    // library copies them and keeps them in step, as it does <html>'s theme
+    // attributes (Dock v0.11.0's bodyAttrs, need 16); the window keeps its own.
+    bodyAttrs: ['class'],
     // The library's pop-out page as the hub serves it, not from a blob:
     // URL: installed as an app, a window on a page inside the manifest's
     // scope is an app window, where a blob: page gets Chrome's strip with
@@ -11381,8 +11373,8 @@ function pdMinOf(id) {
   return String(id).startsWith('chat:') ? PD_MIN['po-chat'] : { w: 280, h: 160 };
 }
 // A file panel's tab says the file's path when hovered (Dock's tooltip is the
-// title, the name alone; it has no retitle API). Cheap and idempotent, after
-// every layout change and redraw.
+// title, the name alone; the path would not fit a tab). Cheap and idempotent,
+// after every layout change and redraw.
 // What a panel is called in the breadcrumb: a tool's name, a file's name, a
 // chat's task.
 function pdPanelName(k) {
@@ -11789,22 +11781,32 @@ function pdPlaceChat() {
   if (wasOff && !off) pdWakeChat(pdChatFrame());
   pdPlaceTask(task);
   if (PD.dock) pdPopChat(ph.ownerDocument !== document);
-  pdPopTitle();
+  pdSyncTitles();
   pdPointsFrame();   // what is on screen changed: the chat's points line follows
 }
-// What the conversation's window is called: the open task (#148 "#12 The
-// title"), else the PO's chat; popTitle adds the project.
+// What the conversation is called: the open task (#148 "#12 The title"), else
+// the PO's chat; popTitle adds the project to its window's name.
 function pdChatTitle() {
   const r = pdTaskWanted() ? rowBySid(SELECTED_SID) : null;
   return r ? [taskNoText(r, false), detailTitle(r)].filter(Boolean).join(' ') : 'PO chat';
 }
-// The library reads popTitle once, when the window opens (an ask for Dock: a
-// way to re-title it): the title follows the task that is in it from here.
-function pdPopTitle() {
-  const w = PD.dock && PD.dock.popWindow('po-chat');
-  if (!w) return;
-  const t = `${pdChatTitle()} · ${(projectById(PD.pid) || {}).name || 'Ensemble'}`;
-  try { if (w.document.title !== t) w.document.title = t; } catch (e) {}
+// A panel's title follows what it shows (Dock v0.11.0's setTitle, need 15:
+// its tab, title bar, the Panels menu and its window's name at once): the
+// conversation's task, or the PO's chat; a chat panel's task, renamed. Here
+// when the middle changes (pdPlaceChat) and after each refresh of the rows. A
+// file panel is named by its path, which is also its id: nothing to follow.
+// On a phone (the narrow dock, tabs that scroll sideways) the conversation's
+// tab keeps reading "Chat", so the 390px tab row grows no longer than it was
+// (Board stays on screen); the full title is a computer's.
+function pdSyncTitles() {
+  const d = PD.dock;
+  if (!d) return;
+  try { d.setTitle('po-chat', d.narrow() ? PD_TITLES['po-chat'] : pdChatTitle()); } catch (e) {}
+  for (const [id, e] of PD.rt) {
+    if (e.kind !== 'chat') continue;
+    const r = ALL_ROWS.find(x => x.roomId === e.room);
+    if (r) { try { d.setTitle(id, pdRowTitle(r)); } catch (err) {} }
+  }
 }
 // An open task on a desktop (pdTask) is the middle's conversation: the task
 // panel moves into the conversation's place in the dock, and back to the page
@@ -11896,6 +11898,7 @@ function pdPopChat(out) {
     if (PD.dock && !PD.dock.narrow()) pdToolsFit();
     if (!PD.dock || PD.dock.narrow() === pdNarrow()) return;
     PD.dock.setNarrow(pdNarrow());
+    pdSyncTitles();   // a phone's conversation tab is "Chat", a computer's the conversation's name
     pdToolsFit();
     pdToolRestore();
     renderRows();
@@ -12054,7 +12057,7 @@ function pdMenuHtml() {
     const vis = on.includes(id), last = vis && on.length === 1;
     const kept = vis && !last && !PD.dock.can(id, 'hide');
     return `<button type="button" role="menuitemcheckbox" data-pd-toggle="${id}" aria-checked="${vis}"${vis ? ' class="on"' : ''}`
-      + `${last ? ' disabled title="The last panel on screen stays"' : kept ? ' disabled title="This panel stays on screen"' : ''}>${esc(PD_TITLES[id])}</button>`;
+      + `${last ? ' disabled title="The last panel on screen stays"' : kept ? ' disabled title="This panel stays on screen"' : ''}>${esc(PD.dock.title(id) || PD_TITLES[id])}</button>`;
   }).join('') + '<div class="dk-menu-sep" role="separator"></div>'
     + '<button type="button" role="menuitem" data-pd-reset title="Put the panels back in their default layout">Reset layout</button>';
 }
@@ -14672,6 +14675,7 @@ async function refresh({ now = false, until = 0 } = {}) {
     }
     renderRows();
     if (SELECTED_SID) renderDetail();
+    pdSyncTitles();   // a task renamed: its chat panel's tab, the conversation's window
   } catch (e) {
     // Out of time: the action that asked gives up and says so itself.
     if (e && e.name === 'TimeoutError') return;
@@ -15419,6 +15423,8 @@ function ldMake() {
       can: (id, a) => id === 'list' && (a !== 'hide' || LD.dock?.viewMode(id) === 'window'),
       popName: 'ensemble-list-',
       popTitle: () => nounText('Tasks and {projects}') + ' · Ensemble',
+      // No bodyAttrs: the page's body classes are copied into the PO dock's windows only (#154);
+      // nothing in the list's window is keyed on them (ldInsets sets ld-own-head there).
       popUrl: '/static/dock/src/popout.html',
       popBackButton: false,
       themeEvent: 'cd-theme',

@@ -998,6 +998,7 @@ REAL_REFRESH_JS = r"""
 let ALL_ROWS = [], DISPLAYED_ORDER = [], DISPLAYED_WORKFLOW = new Map(), SELECTED_SID = null;
 let _projTs = Date.now() + 1e9, PROJECTS = [], _projFailed = false, SELECTED_PROJECT = null;
 const selectInteracting = () => false, workflowOf = () => '', renderRows = () => {}, renderDetail = () => {};
+const pdSyncTitles = () => {};   // the panels' titles (#154) are not here
 const toast = () => {}, esc = s => String(s);
 const VIEW = { matches: () => false, innerHTML: '' };
 const $ = () => VIEW;

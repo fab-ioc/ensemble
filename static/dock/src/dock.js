@@ -225,6 +225,8 @@ export function panelsFrom(container) {
  *   popBackButton                           the pop-out's "Back to main window" button (default true)
  *   windowClose                             'hide' (default): keep Window mode hidden; 'dock': return to the main page
  *   themeAttrs, themeEvent                  what of the main page's <html> a pop-out window copies, and when
+ *   bodyAttrs                               what of the main page's <body> a panel's window copies (default none; a
+ *                                           panel's own `bodyAttrs` overrides it)
  *   help: { icon(key, panel), mount(doc), selector }            a panel's help control, and its popovers in a window
  *   minClickRestores                        a click on a minimised panel's title bar restores it (default true)
  *   stripHover, stripOpen                   hovering a strip button slides its panel out (default true); a panel slid
@@ -241,14 +243,15 @@ export function panelsFrom(container) {
  *   modalSelector, badgeClass, text, onReset, win
  *
  * Returns the dock's handle: layout(), isShown(id), isVisible(id), isAuto(id), frontOf(id), activate(id), reveal(id),
- * setBadge(id, text, title), onShown(fn), onChange(fn), setVisible(id, on), reset(), float(id), dockBack(id), unpin(id),
+ * setBadge(id, text, title), setTitle(id, title), title(id), onShown(fn), onChange(fn), setVisible(id, on), reset(),
+ * float(id), dockBack(id), unpin(id),
  * pin(id), toggleMin(id), toggleMax(id), restoreMax(), moveTo(id, target, side), dockEdge(id, side), popOut(id),
  * popIn(id), isOut(id), popWindow(id), openFly(id), closeFly(), flyOpen(), maximised(), viewMode(id),
  * setViewMode(id, mode), side(id), moveSide(id, side), moveStrip(id, index, side), render(), destroy().
  */
 export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage = defaultStorage(),
   win = typeof window !== 'undefined' ? window : null, popUrl = POP_URL, popName = 'dock-panel-', popTitle = (p) => p.title,
-  copyStyles = true, themeAttrs = THEME_ATTRS, themeEvent = THEME_EVENT, help = {}, modalSelector = '[role="dialog"], .dk-help-pop',
+  copyStyles = true, themeAttrs = THEME_ATTRS, themeEvent = THEME_EVENT, bodyAttrs = [], help = {}, modalSelector = '[role="dialog"], .dk-help-pop',
   badgeClass = 'dk-badge', text = {}, onReset = null, migrate = null,
   defaultLayout, minSize, edgeOf, fill, defaultSize, sizes,
   narrow = false, narrowLayout, narrowKey, can = null, popHtml = null, popBase, minClickRestores = true, popBackButton = true, windowClose = 'hide',
@@ -1235,7 +1238,35 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       }
     } catch { /* the window is going */ }
   }
-  function syncThemes() { for (const pop of pops.values()) if (pop.doc) syncTheme(pop.doc); }
+  function syncThemes() { for (const [id, pop] of pops) if (pop.doc) { syncTheme(pop.doc); syncBody(id, pop); } }
+
+  // And the attributes of <body> the app names (bodyAttrs, or the panel's own), set or taken off as the main page's are.
+  // A class is merged: the window keeps its own (dk-popwin, and any its page had before the first copy) and takes the
+  // main page's, dropping only those it copied that the main page no longer has.
+  function bodyAttrsOf(id) {
+    const p = byId.get(id);
+    const l = p && Array.isArray(p.bodyAttrs) ? p.bodyAttrs : bodyAttrs;
+    return Array.isArray(l) ? l : [];
+  }
+  function syncBody(id, pop) {
+    try {
+      const from = doc.body;
+      const to = pop.doc.body;
+      if (!from || !to) return;
+      for (const a of bodyAttrsOf(id)) {
+        if (a === 'class') {
+          if (!pop.ownCls) pop.ownCls = new Set(to.classList);
+          const now = new Set(from.classList);
+          for (const c of pop.copiedCls || []) if (!now.has(c) && !pop.ownCls.has(c)) to.classList.remove(c);
+          for (const c of now) to.classList.add(c);
+          pop.copiedCls = now;
+          continue;
+        }
+        const v = from.getAttribute(a);
+        if (v === null) to.removeAttribute(a); else if (to.getAttribute(a) !== v) to.setAttribute(a, v);
+      }
+    } catch { /* the window is going */ }
+  }
 
   // The window gets the main page's stylesheets, so the panel looks as it did (popout.html need not know them).
   function syncStyles(cd) {
@@ -1329,6 +1360,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     try { pop.win.__dockPopKey = popKey; } catch { /* ignore */ }
     cd.title = popTitle(p);
     syncTheme(cd);
+    syncBody(id, pop);
     syncStyles(cd);
     const host = cd.getElementById(POP_ROOT_ID);
     host.textContent = '';
@@ -1338,11 +1370,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     sec.setAttribute('aria-label', p.title);
     const head = cd.createElement('div');
     head.className = 'dk-head dk-mono';
-    const backBtn = popBackButton
-      ? `<button type="button" class="dk-pop-back" data-dk-pop="back" title="${escText(T.backToMainTitle)}">${icon('back')}<span>${escText(T.backToMain)}</span></button>`
-      : '';
-    head.innerHTML = headHtml({ active: id, panels: [id] }, 'window');
-    head.querySelector('.dk-ctl').insertAdjacentHTML('afterbegin', backBtn);
+    windowHead(id, head);
     const body = cd.createElement('div');
     body.className = 'dk-body';
     p.el.classList.add('dk-panel');
@@ -1413,6 +1441,15 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     }, 1000);
     render();
     shownEvent(id);
+  }
+
+  // A window's title bar: its tab, its controls and "Back to main window".
+  function windowHead(id, head) {
+    const backBtn = popBackButton
+      ? `<button type="button" class="dk-pop-back" data-dk-pop="back" title="${escText(T.backToMainTitle)}">${icon('back')}<span>${escText(T.backToMain)}</span></button>`
+      : '';
+    head.innerHTML = headHtml({ active: id, panels: [id] }, 'window');
+    head.querySelector('.dk-ctl').insertAdjacentHTML('afterbegin', backBtn);
   }
 
   function rememberWindow(id, pop) {
@@ -1690,14 +1727,54 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     return w && (w.kind === 'dock' || w.kind === 'float') ? lastActive : null;
   }
 
+  // A panel's title at runtime (setTitle): the app owns it, so the layout does not keep it. A panel given to
+  // createDock is its own entry; one added at runtime is a copy of the app's object (sourceOf), and that object keeps
+  // the title set for it (retitled) for when it is added again.
+  const sourceOf = new WeakMap();
+  const retitled = new WeakMap();
+  function setTitleNow(id, title) {
+    const p = destroyed ? null : byId.get(id);
+    if (!p) return;
+    const t = title == null ? id : String(title);
+    retitled.set(sourceOf.get(p) || p, t);
+    if (p.title === t) return;
+    const was = p.title;
+    p.title = t;
+    // An open menu of the panel keeps its items; its name follows.
+    if (menu && menu._id === id) {
+      const label = menu.getAttribute('aria-label') || '';
+      if (label.startsWith(was + ':')) menu.setAttribute('aria-label', t + label.slice(was.length));
+    }
+    const pop = pops.get(id);
+    if (pop && pop.doc) {
+      try {
+        pop.doc.title = popTitle(p);
+        const sec = pop.doc.querySelector(`#${POP_ROOT_ID} > .dk-pop`);
+        const head = sec && sec.querySelector(':scope > .dk-head');
+        if (sec) sec.setAttribute('aria-label', t);
+        if (head) {
+          const f = pop.doc.activeElement;
+          const act = f && head.contains(f) ? (f.dataset.dkAct ? `[data-dk-act="${f.dataset.dkAct}"]` : f.dataset.dkTab !== undefined ? '[data-dk-tab]' : null) : null;
+          windowHead(id, head);
+          const again = act && head.querySelector(act);
+          if (again) focusQuiet(again);
+        }
+      } catch { /* the window is going */ }
+    }
+    render();
+  }
+
   const WHERE_MODES = new Set([...VIEW_MODES, 'hidden']);
   function addNow(p, where) {
     if (destroyed) return null;
     if (!p || typeof p.id !== 'string' || !p.id || !p.el || p.el.nodeType !== 1) throw new TypeError('addPanel: a panel needs an id and an element');
     if (byId.has(p.id)) { api.reveal(p.id); lastActive = p.id; return 'exists'; }
     const id = p.id;
-    const entry = { ...p, title: p.title == null ? id : String(p.title) };
+    // Added again with the same object: the title setTitle gave it last time.
+    const entry = { ...p, title: retitled.has(p) ? retitled.get(p) : p.title == null ? id : String(p.title) };
     byId.set(id, entry);
+    sourceOf.set(entry, p);
+    watchBody();
     panelEls.add(entry.el);
     ids.push(id);
     wideCfg.add(id);
@@ -1939,6 +2016,11 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
       if (w && w.kind === 'auto') openFly(id, false);
       if (w && w.stack && w.stack.min) { delete w.stack.min; commit(); }
     },
+    /** Gives panel `id` a new title, everywhere it shows: its tab, title bar, strip button, menus and its window's
+     * title. Not kept in the layout (the app owns it). Nothing for an id the dock does not have. */
+    setTitle: (id, title) => setTitleNow(id, title),
+    /** A panel's title now (null for an id the dock does not have). */
+    title: (id) => (byId.has(id) ? byId.get(id).title : null),
     setBadge(id, txt, title) {
       if (txt) badges.set(id, { text: txt, title }); else badges.delete(id);
       const tabs = [...root.querySelectorAll(`[data-dk-tab="${id}"]`)];
@@ -2922,6 +3004,20 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     mo.observe(doc.documentElement, { attributes: true, attributeFilter: themeAttrs });
     undo.push(() => mo.disconnect());
   }
+  // So does a change of the <body> attributes the app named (bodyAttrs, and its panels' own: added ones too).
+  let bodyMo = null;
+  let bodyWatched = '';
+  function watchBody() {
+    if (!MO || !doc.body || destroyed) return;
+    const names = [...new Set([bodyAttrs, ...[...byId.values()].map((p) => p.bodyAttrs)].filter(Array.isArray).flat())].sort();
+    if (names.join('\n') === bodyWatched) return;
+    bodyWatched = names.join('\n');
+    if (bodyMo) bodyMo.disconnect();
+    bodyMo = names.length ? new MO(syncThemes) : null;
+    if (bodyMo) bodyMo.observe(doc.body, { attributes: true, attributeFilter: names });
+  }
+  undo.push(() => { if (bodyMo) bodyMo.disconnect(); });
+  watchBody();
 
   render();
   save();
