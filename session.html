@@ -1594,8 +1594,8 @@ function refOfUrl(u) {
 // names no task stays text. The hub writes one line under the message for the
 // agent (message_refs.py), which the balloon drops (stripRefBlocks).
 // tests/test_task_refs.py runs this block in Node.
-const TASK_REF_RE = /(?<![\w&\/#@.\\-])(?:@([A-Za-z][\w-]*)@|#)(?:([A-Za-z][A-Za-z0-9]{0,5})-)?(\d{1,6})(?![\w-])/g;
-const TASK_BLOCK_RE = /\n\n\[ref ((?:@[A-Za-z][\w-]*@|#)(?:[A-Za-z][A-Za-z0-9]*-)?\d{1,6})\] task [^\n]*\s*$/;
+const TASK_REF_RE = /(?<![\w&\/#@.\\-])(?:(?:@([A-Za-z][\w-]*)@|#)(?:([A-Za-z][A-Za-z0-9]{0,5})-)?|([A-Z][A-Z0-9]{0,5})-)(\d{1,6})(?![\w-])/g;
+const TASK_BLOCK_RE = /\n\n\[ref ((?:(?:@[A-Za-z][\w-]*@|#)(?:[A-Za-z][A-Za-z0-9]*-)?|[A-Z][A-Z0-9]*-)\d{1,6})\] task [^\n]*\s*$/;
 // A bare #12 after one of these words is someone else's number ("PR #12",
 // "fixes #34", "[Image #3]": an agent's placeholder for a pasted image), as
 // task_numbers.NOT_TASK_BEFORE reads it; ED-12 and @codex@12 are tasks.
@@ -1610,23 +1610,31 @@ const TASK_REFS = TaskCard.refs({ room: ROOM, changed: () => refChanged() });
 // tasks. '' means this chat's project (the hub's default).
 const taskRefProject = m => (m && m.kind === 'pomsg' && m.fromProjectId) || '';
 let TASK_REF_PID = '';         // the balloon being drawn: taskRefProject(m)
+// The context a balloon's numbers are read in (TaskCard.refsIn, #156): the
+// hub's project list with their names, `own` this chat's project or the
+// balloon's (TASK_REF_PID); null until the hub has answered (then a bare
+// number reads as this chat's, as before, and the chat is drawn again).
+const taskRefCtx = () => TASK_REFS.ctx(TASK_REF_PID);
 const taskRefInfo = (key, no) => TASK_REFS.info(key, no, TASK_REF_PID);
-// The chip for a number the hub has resolved, else null. @codex@18 opens the
-// task at that agent (a role, @reviewer@18, is the agent holding it).
-function taskChipHtml(who, key, no) {
-  const t = taskRefInfo(key, no);
+// The chip for a reference the hub has resolved, else null: r is one of
+// TaskCard.refsIn's, read where its text says (TASK_REFS.resolve: a bare
+// number named another project's in that project, the rest in the balloon's,
+// TASK_REF_PID: '' is this chat's). @codex@18 opens the task at that agent
+// (a role, @reviewer@18, is the agent holding it); a number another project
+// in its sentence has too gets a card saying which project was assumed.
+function taskChipHtml(r) {
+  const { t, assumed } = TASK_REFS.resolve(r, TASK_REF_PID);
   if (t.state !== 'ok') return null;
-  const w = String(who || '').toLowerCase();
+  const w = String(r.who || '').toLowerCase();
   const agent = w ? (t.agents || []).find(a => (a.identity || '').toLowerCase() === w
     || String(a.role || '').split(':')[0].trim().toLowerCase() === w) : null;
-  return TaskCard.chipHtml(t, { key, agent: agent ? agent.identity : '' });
+  return TaskCard.chipHtml(t, { key: r.key, agent: agent ? agent.identity : '', assumed });
 }
 // Every resolved task number in a text, parked as a chip (REF_A i REF_Z).
 function parkTaskRefs(s, chips) {
-  return String(s).replace(TASK_REF_RE, (m, who, key, no, at, str) => {
-    if (notTaskRef(who, key, str, at)) return m;
-    const h = taskChipHtml(who || '', key || '', +no);
-    return h ? REF_A + (chips.push(h) - 1) + REF_Z : m;
+  return TaskCard.replaceRefs(String(s), taskRefCtx(), r => {
+    const h = taskChipHtml(r);
+    return h ? REF_A + (chips.push(h) - 1) + REF_Z : null;
   });
 }
 // ---- Task references: end --------------------------------------------------
@@ -4831,10 +4839,11 @@ function edRefsHtml(text) {
     const h = refChipHtml(ref);
     if (h) out.push(h);
   }
-  for (const m of String(text || '').matchAll(TASK_REF_RE)) {
-    if (notTaskRef(m[1], m[2], m.input, m.index) || seen.has(m[0])) continue;
-    seen.add(m[0]);
-    const h = taskChipHtml(m[1] || '', m[2] || '', +m[3]);
+  for (const r of TaskCard.refsIn(text, taskRefCtx())) {
+    const k = r.token + '@' + (r.project || '');
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const h = taskChipHtml(r);
     if (h) out.push(h);
   }
   return out.join('');

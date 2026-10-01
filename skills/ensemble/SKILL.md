@@ -542,6 +542,10 @@ ensemble_message_po projectId=Dock kind=bug text="## The splitter jumps on drop
 What happens … How to reproduce … What we need …"
 ```
 
+- **Another project's task is `KEY-N`** (`D-27` for Dock's #27, the key every task row and
+  `ensemble_get_task` show), never a bare `#27`: the hub rewrites your own project's bare numbers to
+  `KEY-N` as the message is stored, and reads a bare number near another project's name in that
+  project, but `KEY-N` is the one form nobody can misread.
 - **One whole message.** Write the full report in `text` (what happens, where,
   how to reproduce, what you need and by when): it is kept whole and shown in
   both POs' chats, where the product owner sees it marked as PO to PO. Do not

@@ -689,12 +689,12 @@ class WhatTheHubWrites(Addresses):
         full["workspace"] = {"branch": "sess/beta"}
         full["lastReport"] = {"kind": "completed", "text": "\n  Merged and tested.\nMore detail."}
         chatroom.update_room(full)
-        text = "Check #2 with @codex@2, and O-1 is not a ref but #O-1 is; #9 is nobody."
+        text = "Check #2 with @codex@2, and O-1 is a ref (#156), as #O-1 is; o-1 is not; #9 is nobody."
         out = dashboard.with_message_refs(text, self.a)
         self.assertEqual(out, text + "\n\n"
                          '[ref #2] task "Beta" — not running, Done; claude (engineer), codex (reviewer); '
                          "branch sess/beta; last report (completed): Merged and tested.\n\n"
-                         '[ref #O-1] task O-1 "Trading one" — not running, Done; claude (engineer), codex (reviewer)')
+                         '[ref O-1] task "Trading one" — not running, Done; claude (engineer), codex (reviewer)')
         self.assertEqual(mr.strip_message_refs(out), text)
         self.assertEqual(dashboard.with_message_refs("#1 here", self.x).split("\n\n")[1][:30], '[ref #1] task "Trading one" — ')
         self.assertEqual(dashboard.with_message_refs("no refs #9", self.a), "no refs #9")

@@ -1160,14 +1160,14 @@ function mdToHtml(src) {
   // A task named by its number (#18, ED-18, @codex@18) is its chip, as the hub
   // reads the number in this file's chat (TaskCard; the page draws again when
   // the hub answers). A number that names no task stays text.
-  s = s.replace(TaskCard.TASK_REF_RE, (m, who, key, no, at, str) => {
-    if (TaskCard.notTaskRef(who, key, str, at)) return m;
-    const t = TASK_REFS.info(key || '', +no);
-    if (t.state !== 'ok') return m;
-    const w = String(who || '').toLowerCase();
+  // A bare number right after another project's name is that project's (#156).
+  s = TaskCard.replaceRefs(s, TASK_REFS.ctx(''), r => {
+    const { t, assumed } = TASK_REFS.resolve(r, '');
+    if (t.state !== 'ok') return null;
+    const w = String(r.who || '').toLowerCase();
     const agent = w ? (t.agents || []).find(a => (a.identity || '').toLowerCase() === w
       || String(a.role || '').split(':')[0].trim().toLowerCase() === w) : null;
-    return ph(TaskCard.chipHtml(t, { key: key || '', agent: agent ? agent.identity : '' }));
+    return ph(TaskCard.chipHtml(t, { key: r.key, agent: agent ? agent.identity : '', assumed }));
   });
   s = esc(s);
 
