@@ -1,7 +1,8 @@
 // The layout model: plain JSON, so it is stored as it is. No DOM here; dock.js draws it.
 //
 //   { v, root, floats: [{ stack, x, y, w, h, home, strip?, side? }], auto: [{ id, edge, size, home, open? }],
-//     hidden: [{ id, was }], out: { id: { x, y, w, h, was } }, pinned?: { id: strip } }
+//     hidden: [{ id, was }], out: { id: { x, y, w, h, was } }, pinned?: { id: strip }, depth?: { id: { w?, h? } },
+//     parked?: [{ id, was, window?, pinned? }] }
 //
 // A node is a stack { t: 'stack', panels: [id], active: id, min?, size? } or a split { t: 'split', dir: 'row'|'col',
 // kids: [node], size? }. `size` is a node's px along its parent split; one child of each split (the one holding the
@@ -23,10 +24,16 @@
 // A strip entry's `open` ('beside' | 'over') is how it slides out when it differs from the dock's stripOpen: IntelliJ's
 // Dock Unpinned and Undock. A float's `side`, or a `was`'s, is a side given by moveSide while the panel was there.
 //
+// Panels added and removed at runtime (v0.10.0): `parked` keeps the place of a panel the app removed (removePanel), and
+// of one a stored layout names that the app has not added yet (after a reload), as a hidden panel's `was` does, so
+// adding it again puts it back there. A parked panel is drawn nowhere and is no tab. Beyond cfg.keepSlots the oldest go.
+//
 // Everything that depends on the app (its panels, their minimum sizes, their default edges and layout) comes from a
 // config made by makeConfig(); every function that needs it takes it as `opts.cfg` (or `cfg`).
 
 export const LAYOUT_VERSION = 1;
+/** How many places of removed panels a layout keeps by default (makeConfig's keepSlots); the oldest go first. */
+export const PARK_MAX = 50;
 export const EDGES = ['left', 'right', 'top', 'bottom'];
 
 /** The layout defaults, in px. Each can be overridden through createDock's `sizes` option. */
@@ -78,6 +85,10 @@ const clone = (x) => JSON.parse(JSON.stringify(x));
  *   unpinSize      { id: px } or (id) => px: how far that panel slides out of its strip when nothing else says (at
  *                  least its minSize); default sizes.unpinSize. cfg.unpinSizeOf(id, edge) is it, or null when not given
  *   sizes          overrides of SIZES
+ *   keepSlots      how many places of removed (or not yet added) panels a layout keeps in `parked`; default PARK_MAX
+ *
+ * cfg.add(id) and cfg.drop(id) add a panel at runtime and take one away (cfg.ids follows them). The default layout puts
+ * a panel added so as a tab in the middle (placeNew), not on its edge.
  */
 export function makeConfig(o = {}) {
   const sizes = { ...SIZES, ...(o.sizes || {}) };
@@ -85,7 +96,10 @@ export function makeConfig(o = {}) {
   const table = (v, fallback) => (typeof v === 'function' ? (id) => v(id) || fallback(id) : (id) => (v && v[id]) || fallback(id));
   const minSize = table(o.minSize, () => sizes.panelMin);
   const edgeOf = table(o.edgeOf, () => 'right');
-  const cfg = { ids, sizes, minSize, edgeOf, fill: o.fill || null, defaultSize: typeof o.defaultSize === 'function' ? o.defaultSize : null };
+  const cfg = { ids, sizes, minSize, edgeOf, fill: o.fill || null, defaultSize: typeof o.defaultSize === 'function' ? o.defaultSize : null,
+    keepSlots: finite(o.keepSlots) && o.keepSlots >= 0 ? Math.floor(o.keepSlots) : PARK_MAX, added: new Set() };
+  cfg.add = (id) => { if (!ids.includes(id)) { ids.push(id); cfg.added.add(id); } };
+  cfg.drop = (id) => { const i = ids.indexOf(id); if (i >= 0) ids.splice(i, 1); cfg.added.delete(id); };
   const unpinOf = table(o.unpinSize, () => null);
   cfg.unpinSizeOf = (id, edge) => {
     const v = unpinOf(id);
@@ -104,12 +118,13 @@ export function makeConfig(o = {}) {
       for (const k of ['floats', 'auto', 'hidden']) if (Array.isArray(d[k])) layout[k] = clone(d[k]);
       // With panel unpinSizes given, a strip panel declared without a size slides out as far as its own says, else
       // sizes.unpinSize. Without them the declared entries stay as declared (v0.3.6).
-      if (o.unpinSize) for (const a of layout.auto) if (a && !finite(a.size)) a.size = unpinFallback(cfg, a.id, a.edge);
+      if (o.unpinSize && (typeof o.unpinSize === 'function' || Object.keys(o.unpinSize).length)) for (const a of layout.auto) if (a && !finite(a.size)) a.size = unpinFallback(cfg, a.id, a.edge);
     } else if (ids.length) {
       layout.root = ids.length === 1 ? stackNode([ids[0]]) : splitNode('row', ids.map((id) => stackNode([id])));
     }
-    // A panel the default does not mention goes on its edge.
-    for (const id of ids) if (!whereIs(layout, id)) dockAtEdge(layout, id, cfg.edgeOf(id), undefined, null, cfg);
+    // A panel the default does not mention goes on its edge; one added at runtime, as a tab in the middle.
+    for (const id of ids) if (!whereIs(layout, id) && !cfg.added.has(id)) dockAtEdge(layout, id, cfg.edgeOf(id), undefined, null, cfg);
+    for (const id of ids) if (!whereIs(layout, id)) placeNew(layout, id, null, cfg);
     return layout;
   };
   return cfg;
@@ -324,12 +339,16 @@ function forgetPinned(layout, id) {
 // Puts panel `id` into stack `s` where it was among `peers` (the stack's other panels then; it stood before
 // peers[index]): after the nearest of the panels before it that is still there, else before the nearest after it.
 function insertAmong(s, id, peers, index) {
+  insertNear(s.panels, id, peers, index);
+  s.active = id;
+}
+// The same for a plain list: `id` into `list` where it stood among `peers`.
+function insertNear(list, id, peers, index) {
   const at = finite(index) ? Math.max(0, Math.min(peers.length, index)) : peers.length;
   let i = -1;
-  for (let k = at - 1; k >= 0 && i < 0; k--) { const j = s.panels.indexOf(peers[k]); if (j >= 0) i = j + 1; }
-  for (let k = at; k < peers.length && i < 0; k++) { const j = s.panels.indexOf(peers[k]); if (j >= 0) i = j; }
-  s.panels.splice(i < 0 ? s.panels.length : i, 0, id);
-  s.active = id;
+  for (let k = at - 1; k >= 0 && i < 0; k--) { const j = list.indexOf(peers[k]); if (j >= 0) i = j + 1; }
+  for (let k = at; k < peers.length && i < 0; k++) { const j = list.indexOf(peers[k]); if (j >= 0) i = j; }
+  list.splice(i < 0 ? list.length : i, 0, id);
 }
 
 // The floating stack a panel that was in one goes back to: the one holding most of its peers, and of those the one
@@ -542,11 +561,40 @@ export function viewModeOf(layout, id, open = 'over') {
   return 'hidden';
 }
 
-// A strip place moved to edge `side`: last there, as deep as before along the same direction, else as its own says;
-// the home that pointed at the old side goes.
-function stripTo(x, side, id, cfg) {
-  const across = (e) => (e === 'left' || e === 'right' ? 'w' : 'h');
-  if (across(x.edge) !== across(side)) x.size = unpinFallback(cfg, id, side);
+// A panel's depth on each axis (IntelliJ keeps a tool window's size): `layout.depth[id]` is { w?, h? }, its px
+// across a left/right side (w) and a top/bottom one (h), as it was when Move To took it off that axis. Moved back onto
+// an axis it has been on, it is that deep again; the first time, as deep as its default says (depthDefault).
+const axisOf = (side) => (side === 'left' || side === 'right' ? 'w' : 'h');
+function keepDepth(layout, id, axis, px) {
+  if (!finite(px) || px <= 0) return;
+  const all = layout.depth || (layout.depth = {});
+  (all[id] || (all[id] = {}))[axis] = Math.round(px);
+}
+function depthOn(layout, id, axis) {
+  const d = layout.depth && layout.depth[id];
+  return d && finite(d[axis]) && d[axis] > 0 ? d[axis] : null;
+}
+// A docked panel's depth on `side` the first time it goes there: its stack's size in the default layout when it stands
+// along that axis there, else the app's defaultSize, else none (dockAtEdge's own).
+function depthDefault(id, side, opts) {
+  const cfg = cfgOf(opts);
+  const dir = dirOf(side);
+  const viewportPx = opts.viewportPx || 1600;
+  const def = cfg.defaultLayout({ viewportPx, purpose: 'home' });
+  const at = locate(def.root, id);
+  const up = at && at.chain.length ? at.chain[at.chain.length - 1] : null;
+  if (up && up.split.dir === dir && finite(at.stack.size) && at.stack.size > 0) return at.stack.size;
+  const px = cfg.defaultSize ? cfg.defaultSize([id], dir, { viewportPx, extent: opts.extent }) : null;
+  return finite(px) && px > 0 ? px : undefined;
+}
+
+// A strip place moved to edge `side`: last there, as deep as before along the same direction, else as deep as it was
+// last on that axis (layout.depth), else as its own says; the home that pointed at the old side goes.
+function stripTo(layout, x, side, id, cfg) {
+  if (axisOf(x.edge) !== axisOf(side)) {
+    keepDepth(layout, id, axisOf(x.edge), x.size);
+    x.size = depthOn(layout, id, axisOf(side)) || unpinFallback(cfg, id, side);
+  }
   x.edge = side;
   x.peers = [];
   delete x.index;
@@ -556,8 +604,9 @@ function stripTo(x, side, id, cfg) {
 
 /**
  * Moves a panel to another side of the dock and keeps its view mode (IntelliJ's Move To): docked along that edge
- * (`opts.size` px deep when given), last on that edge's strip, or, floating or in its own window, going back to that
- * side. The strip place a pin kept is forgotten. Returns false when it is on that side already.
+ * (`opts.size` px deep when given, else as deep as it last was on that axis: layout.depth), last on that edge's strip,
+ * or, floating or in its own window, going back to that side. The strip place a pin kept is forgotten. Returns false
+ * when it is on that side already.
  */
 export function moveSide(layout, id, side, opts = {}) {
   const cfg = cfgOf(opts);
@@ -566,26 +615,36 @@ export function moveSide(layout, id, side, opts = {}) {
   if (!w || w.kind === 'hidden' || panelSide(layout, id, opts) === side) return false;
   forgetPinned(layout, id);
   if (w.kind === 'dock') {
+    // Its depth on the axis it leaves is kept (measured by opts.dims, else its stack's size along that split); on
+    // the new side it is as deep as it was last on that axis, else as its default says.
+    const from = sideOf(layout, id, cfg);
+    const at = locate(layout.root, id);
+    if (from && !at.stack.min) {
+      const d = typeof opts.dims === 'function' ? opts.dims(at.stack) : null;
+      const up = at.chain.length ? at.chain[at.chain.length - 1] : null;
+      keepDepth(layout, id, axisOf(from), d ? d[axisOf(from)] : up && up.split.dir === dirOf(from) ? at.stack.size : null);
+    }
+    const size = finite(opts.size) ? opts.size : depthOn(layout, id, axisOf(side)) || depthDefault(id, side, { ...opts, cfg });
     detach(layout, id);
-    dockAtEdge(layout, id, side, finite(opts.size) ? Math.round(opts.size) : undefined, opts.extent, cfg);
+    dockAtEdge(layout, id, side, finite(size) ? Math.round(size) : undefined, opts.extent, cfg);
     return true;
   }
   if (w.kind === 'auto') {
     const e = w.entry;
     layout.auto.splice(layout.auto.indexOf(e), 1);
-    const moved = stripTo(e, side, id, cfg);
+    const moved = stripTo(layout, e, side, id, cfg);
     delete moved.peers;
     layout.auto.push(moved);
     return true;
   }
   if (w.kind === 'float') {
     const f = w.float;
-    if (f.strip && f.strip.id === id) { stripTo(f.strip, side, id, cfg); delete f.home; delete f.side; } else f.side = side;
+    if (f.strip && f.strip.id === id) { stripTo(layout, f.strip, side, id, cfg); delete f.home; delete f.side; } else f.side = side;
     return true;
   }
   const was = w.entry.was || (w.entry.was = { kind: 'dock', home: null });
-  if (was.kind === 'auto') stripTo(was, side, id, cfg);
-  else if (was.strip) { stripTo(was.strip, side, id, cfg); delete was.home; } else was.side = side;
+  if (was.kind === 'auto') stripTo(layout, was, side, id, cfg);
+  else if (was.strip) { stripTo(layout, was.strip, side, id, cfg); delete was.home; } else was.side = side;
   return true;
 }
 
@@ -607,7 +666,7 @@ export function moveStrip(layout, id, index, side, opts = {}) {
   const was = strips();
   const before = layout.auto.slice();
   layout.auto.splice(layout.auto.indexOf(a), 1);
-  if (edge !== a.edge) { stripTo(a, edge, id, cfg); delete a.peers; }
+  if (edge !== a.edge) { stripTo(layout, a, edge, id, cfg); delete a.peers; }
   const peers = layout.auto.filter((x) => x.edge === edge);
   const at = finite(index) ? Math.max(0, Math.min(peers.length, Math.round(index))) : peers.length;
   const i = at < peers.length ? layout.auto.indexOf(peers[at]) : peers.length ? layout.auto.indexOf(peers[peers.length - 1]) + 1 : layout.auto.length;
@@ -806,6 +865,156 @@ export function activate(layout, id) {
   return true;
 }
 
+// ---------- panels added and removed at runtime (v0.10.0) ----------
+
+// A new tab right of the front one (IntelliJ's editor tabs), in front.
+function tabAfterActive(s, id) {
+  const at = s.panels.indexOf(s.active);
+  s.panels.splice(at < 0 ? s.panels.length : at + 1, 0, id);
+  s.active = id;
+}
+
+/**
+ * Puts a panel that is not in the layout where a new one goes: as a tab of panel `near`'s stack when that one is docked
+ * or floating, else as a tab in the middle (the stack holding cfg.fill, else the one that takes what is left at each
+ * split from the top), else the whole layout when it is empty.
+ */
+export function placeNew(layout, id, near, cfg = makeConfig()) {
+  const w = typeof near === 'string' && near !== id ? whereIs(layout, near) : null;
+  if (w && (w.kind === 'dock' || w.kind === 'float')) { tabAfterActive(w.stack, id); return; }
+  if (!layout.root) { layout.root = stackNode([id]); return; }
+  const at = cfg.fill && locate(layout.root, cfg.fill);
+  let node = at ? at.stack : layout.root;
+  while (node.t === 'split') { const f = fillOf(node, cfg); node = node.kids[f < 0 ? 0 : f]; }
+  tabAfterActive(node, id);
+}
+
+// The list a panel's place counts its neighbours in: its home's peers (docked), its floating stack's or its strip's.
+function peersRef(was) {
+  if (!was) return null;
+  if (was.kind === 'dock') return was.home && Array.isArray(was.home.peers) ? was.home : null;
+  return (was.kind === 'float' || was.kind === 'auto') && Array.isArray(was.peers) ? was : null;
+}
+// The panels of its stack (or strip) parked before it are its peers too, where they stood: whichever of them is added
+// back first, the others find it and join it.
+function withParkedPeers(layout, id, was) {
+  const r = peersRef(was);
+  if (!r || !layout.parked) return;
+  const order = r.peers.slice();
+  order.splice(finite(r.index) ? Math.max(0, Math.min(order.length, r.index)) : order.length, 0, id);
+  for (const z of layout.parked) {
+    const rz = peersRef(z.was);
+    if (!rz || z.was.kind !== was.kind || !rz.peers.includes(id) || order.includes(z.id)) continue;
+    insertNear(order, z.id, rz.peers, rz.index);
+  }
+  r.peers = order.filter((p) => p !== id);
+  r.index = order.indexOf(id);
+}
+
+/** The panels whose places the layout keeps (parked), oldest first. */
+export const parkedOf = (layout) => (Array.isArray(layout.parked) ? layout.parked.map((p) => p.id) : []);
+
+/**
+ * Takes a panel out of the layout and keeps its place (its stack and neighbours, its float, its strip place, its
+ * window's geometry, its view mode) in `parked`, newest last, at most `opts.max` (default cfg.keepSlots) of them: the
+ * oldest go first. Wherever it was (docked, floating, on a strip, in its own window, hidden), its neighbours take the
+ * room; the next tab of its stack is the one on its left (the first tab's right). False when the layout does not hold it.
+ */
+export function parkPanel(layout, id, opts = {}) {
+  const w = whereIs(layout, id);
+  if (!w) return false;
+  const window = w.kind === 'out' ? pickGeo(w.entry) : w.kind === 'hidden' && w.entry.window ? pickGeo(w.entry.window) : null;
+  const pinned = layout.pinned && layout.pinned[id];
+  const was = wasOf(detach(layout, id));
+  forgetPinned(layout, id);
+  const entry = { id, was };
+  if (window) entry.window = window;
+  if (pinned) entry.pinned = pinned;
+  withParkedPeers(layout, id, was);
+  forgetPanel(layout, id);
+  (layout.parked || (layout.parked = [])).push(entry);
+  capParked(layout, finite(opts.max) ? opts.max : cfgOf(opts).keepSlots);
+  return true;
+}
+
+function capParked(layout, max) {
+  if (!layout.parked) return;
+  const n = Math.max(0, Math.floor(max));
+  const gone = layout.parked.length > n ? layout.parked.splice(0, layout.parked.length - n) : [];
+  if (layout.depth) for (const p of gone) delete layout.depth[p.id];
+  if (!layout.parked.length) delete layout.parked;
+}
+
+/** Drops the place kept for a panel (`id`), or for every one (no `id`). Returns how many it dropped. */
+export function forgetPanel(layout, id) {
+  if (!layout.parked) return 0;
+  const before = layout.parked.length;
+  const gone = layout.parked.filter((p) => id === undefined || p.id === id);
+  layout.parked = id === undefined ? [] : layout.parked.filter((p) => p.id !== id);
+  if (layout.depth) for (const p of gone) delete layout.depth[p.id];
+  const n = before - layout.parked.length;
+  if (!layout.parked.length) delete layout.parked;
+  return n;
+}
+
+/**
+ * Puts a parked panel back where it was: its stack, beside its neighbour, its float, its strip place, or (it was in its
+ * own window) out, with that window's geometry, as one remembered after a reload. False when none is kept for it.
+ */
+export function unparkPanel(layout, id, opts = {}) {
+  const i = layout.parked ? layout.parked.findIndex((p) => p.id === id) : -1;
+  if (i < 0 || whereIs(layout, id)) return false;
+  const [e] = layout.parked.splice(i, 1);
+  if (!layout.parked.length) delete layout.parked;
+  const was = e.was || { kind: 'dock', home: null };
+  if (e.window) (layout.out || (layout.out = {}))[id] = { ...e.window, was };
+  else restore(layout, id, was, opts);
+  if (e.pinned) (layout.pinned || (layout.pinned = {}))[id] = e.pinned;
+  return true;
+}
+
+/**
+ * Puts panel `id`, not in the layout yet, where `where` says:
+ *   none (null)                        back in its kept place (unparkPanel), else placeNew beside `opts.near`
+ *   { kind: 'stack', stack: panelId }  a tab of that panel's stack, right of its front tab (docked or floating)
+ *   { beside: panelId, side }          docked beside that panel, on `side` (as moveTo's split)
+ *   'left' | 'right' | 'top' | 'bottom'  docked along that edge of the dock
+ *   a view mode ('pinned', 'unpinned', 'undock', 'float', 'window') or 'hidden': placed new, then so (`opts.rect` the
+ *     float's, `opts.geo` the window's, `opts.open` a strip panel's slide-out style)
+ * A `where` given wins over the kept place, which is dropped. A target that is not there: as with none, placeNew.
+ * Returns false when the layout holds the panel already.
+ */
+export function insertPanel(layout, id, where, opts = {}) {
+  const cfg = cfgOf(opts);
+  if (whereIs(layout, id)) return false;
+  if (where == null) {
+    if (!unparkPanel(layout, id, opts)) placeNew(layout, id, opts.near, cfg);
+    return true;
+  }
+  forgetPanel(layout, id);
+  const target = (pid) => (typeof pid === 'string' && pid !== id ? whereIs(layout, pid) : null);
+  if (typeof where === 'object' && where.beside !== undefined) {
+    const w = target(where.beside);
+    if (w && w.kind === 'dock') dockBeside(layout, { stack: w.stack, chain: w.chain }, id, EDGES.includes(where.side) ? where.side : 'right', undefined, opts.dims);
+    else if (w && w.kind === 'float') tabAfterActive(w.stack, id);
+    else placeNew(layout, id, opts.near, cfg);
+    return true;
+  }
+  if (typeof where === 'object') {
+    const w = target(where.stack);
+    if (w && (w.kind === 'dock' || w.kind === 'float')) tabAfterActive(w.stack, id);
+    else placeNew(layout, id, opts.near, cfg);
+    return true;
+  }
+  if (EDGES.includes(where)) { dockAtEdge(layout, id, where, undefined, opts.extent, cfg); return true; }
+  placeNew(layout, id, opts.near, cfg);
+  if (where === 'unpinned' || where === 'undock') unpinPanel(layout, id, panelSide(layout, id, opts), undefined, opts, opts.open);
+  else if (where === 'float') floatPanel(layout, id, opts.rect || { x: 80, y: 60, w: 480, h: 360 });
+  else if (where === 'window') popOutPanel(layout, id, opts.geo || {}, opts);
+  else if (where === 'hidden') hidePanel(layout, id);
+  return true;
+}
+
 // ---------- a stored layout ----------
 
 // A stored `home`, made safe. It keeps the fields it has and adds none, so a layout that comes through here again (a
@@ -854,7 +1063,9 @@ export function normalizeLayout(raw, opts = {}) {
   if (!raw || typeof raw !== 'object' || raw.v !== LAYOUT_VERSION) return fallback();
   const known = new Set(ids);
   const seen = new Set();
-  const take = (p) => typeof p === 'string' && known.has(p) && !seen.has(p) && (seen.add(p), true);
+  // A panel the app has not added (yet) keeps its place: it is read as any other, then parked (v0.10.0).
+  const ghosts = new Set();
+  const take = (p) => typeof p === 'string' && p !== '' && !seen.has(p) && (seen.add(p), known.has(p) || ghosts.add(p), true);
   const size = (n, out) => { if (finite(n.size) && n.size > 0) out.size = Math.round(n.size); return out; };
   const normStack = (n) => {
     if (!n || n.t !== 'stack' || !Array.isArray(n.panels)) return null;
@@ -926,16 +1137,55 @@ export function normalizeLayout(raw, opts = {}) {
   // Where each panel pinned from a strip stood in it, for Unpin (v0.4.2).
   if (raw.pinned && typeof raw.pinned === 'object' && !Array.isArray(raw.pinned)) {
     for (const id of Object.keys(raw.pinned)) {
-      const strip = known.has(id) ? normStrip(raw.pinned[id], id) : null;
+      const strip = known.has(id) || ghosts.has(id) ? normStrip(raw.pinned[id], id) : null;
       if (strip) (layout.pinned || (layout.pinned = {}))[id] = strip;
     }
   }
+  // The places kept for panels removed, or not added yet (v0.10.0). One the app has now (it declares it again) goes back
+  // to its place; the others stay kept, and so do the places of the panels above that it has not added.
+  const kept = [];
+  for (const p of Array.isArray(raw.parked) ? raw.parked : []) {
+    if (!p || typeof p.id !== 'string' || p.id === '' || seen.has(p.id) || kept.some((k) => k.id === p.id)) continue;
+    const e = { id: p.id, was: normWas(p.was, p.id) };
+    if (p.window && typeof p.window === 'object') e.window = pickGeo(p.window);
+    const strip = normStrip(p.pinned, p.id);
+    if (strip) e.pinned = strip;
+    kept.push(e);
+  }
+  if (kept.length) layout.parked = kept.filter((e) => !known.has(e.id));
+  for (const e of kept) {
+    if (!known.has(e.id)) continue;
+    seen.add(e.id);
+    (layout.parked || (layout.parked = [])).push(e);
+    unparkPanel(layout, e.id, opts);
+  }
+  for (const id of ghosts) parkPanel(layout, id, { ...opts, max: Infinity });
+  capParked(layout, cfg.keepSlots);
+  const parked = layout.parked;
+  // The default, with the parked panels' places and their depths (layout.depth then holds only theirs and today's).
+  const orDefault = () => {
+    const d = fallback();
+    if (parked) d.parked = parked;
+    if (parked && layout.depth) {
+      for (const e of parked) if (layout.depth[e.id]) (d.depth || (d.depth = {}))[e.id] = layout.depth[e.id];
+    }
+    return d;
+  };
+  // Each panel's depth per axis, from Move To (a layout stored before has none: each panel's default the first time);
+  // a panel removed keeps its own with its place.
+  if (raw.depth && typeof raw.depth === 'object' && !Array.isArray(raw.depth)) {
+    for (const id of Object.keys(raw.depth)) {
+      const keep = known.has(id) || (parked || []).some((e) => e.id === id);
+      const d = keep && raw.depth[id] && typeof raw.depth[id] === 'object' ? raw.depth[id] : null;
+      if (d) for (const k of ['w', 'h']) keepDepth(layout, id, k, d[k]);
+    }
+  }
   // One that names none of today's panels says nothing about them: the default, not each panel placed one by one.
-  if (!seen.size) return fallback();
+  if (!ids.some((id) => seen.has(id))) return orDefault();
   // A panel the stored layout does not know (added since it was stored) goes where the default has it.
   for (const id of ids) if (!seen.has(id)) placeDocked(layout, id, null, opts);
   const visible = ids.filter((id) => { const w = whereIs(layout, id); return w && w.kind !== 'hidden'; });
-  if (!visible.length && !layout.hidden.some((h) => h.window)) return fallback();
+  if (!visible.length && !layout.hidden.some((h) => h.window)) return orDefault();
   // A panel a layout stored before was out and still in its place (a hidden one is not out): it leaves its place now.
   for (const [id, g] of older) {
     const w = whereIs(layout, id);

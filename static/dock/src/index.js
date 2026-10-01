@@ -4,6 +4,7 @@
 export * from './layout.js';
 export { createDock, panelsFrom, escText, TEXT, VIEW_MODES, LAYOUT_KEY, POP_URL, POP_ROOT_ID, POP_HTML, THEME_ATTRS, oneColumn } from './dock.js';
 export { mountPanelsMenu } from './panels-menu.js';
+export { normalizeMenuItems, menuItemsHtml } from './menu-items.js';
 export { createHelp } from './help.js';
 export { createTheme, applyTheme, THEMES, THEME_LIST, THEME_KEY, THEME_EVENT } from './theme.js';
 export { mountThemePicker, swatchHtml } from './theme-picker.js';
