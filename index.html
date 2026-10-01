@@ -1729,6 +1729,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .drv.split .sr.full > .dr { flex: 1 1 100%; border-left: 0; }
   .drv.split .dr.old .dg::after, .drv.split .dr.new .dg::before { content: none; display: none; }
   .drv.split .dr.k-none { background: var(--surface-sunken); }
+  /* A drag down one column: the other column's text stays out of the selection. */
+  .drv.split.sel-old .dr.new .dt, .drv.split.sel-new .dr.old .dt { user-select: none; -webkit-user-select: none; }
   .drv.split .dc, .drv.split .dcx { margin-left: calc(var(--gw) + var(--s-300) + var(--s-600)); }
   /* The lines a comment being written is on. */
   .dr.sel { box-shadow: inset 2px 0 0 var(--accent); }
@@ -9182,6 +9184,16 @@ function drShow(rv, box, root, file, text, keep) {
   box.querySelectorAll('.drv .dr[data-i]').forEach(el => { v.els[+el.dataset.i] = el; });
   drWatch(v);
   box.onmousedown = e => { if (e.shiftKey && e.target.closest('.dg')) e.preventDefault(); };
+  // Side by side: a drag down one column selects, and Copy takes, that column
+  // alone: the other side's text is unselectable from the press until the next.
+  box.onpointerdown = e => {
+    const drv = v.split && e.target.closest ? e.target.closest('.drv.split') : null;
+    if (!drv) return;
+    const cell = e.target.closest('.sr:not(.full) > .dr');
+    const side = cell ? (cell.classList.contains('old') ? 'old' : cell.classList.contains('new') ? 'new' : '') : '';
+    drv.classList.toggle('sel-old', side === 'old');
+    drv.classList.toggle('sel-new', side === 'new');
+  };
   box.onclick = e => drClick(v, e);
   box.oninput = e => { if (v.draft && e.target.matches('.dcx textarea')) v.draft.note = e.target.value; };
   box.onkeydown = e => {
@@ -9747,7 +9759,7 @@ function chFileHtml(f, sha, on, depth, tree) {
   const code = (f.status || '?').replace(/\s/g, '') || '?';
   return '<div class="chf' + (on ? ' on' : '') + '" data-file="' + esc(f.path) + '"' + (sha ? ' data-commit="' + esc(sha) + '"' : '')
     + (depth ? ' style="--d:' + depth + '"' : '') + ' tabindex="-1"' + (on ? ' aria-current="true"' : '') + ' title="' + esc(f.path) + '">'
-    + '<span class="chst st-' + esc(code[0]) + '">' + esc(code) + '</span><span class="nm">' + esc(tree ? chBase(f.path) : f.path) + '</span>' + chCountHtml(f.add, f.del) + '</div>';
+    + '<span class="chst st-' + esc(code[0]) + '">' + esc(code) + '</span><span class="nm">' + esc(tree ? chBase(f.path) + (/\/$/.test(f.path) ? '/' : '') : f.path) + '</span>' + chCountHtml(f.add, f.del) + '</div>';
 }
 // The rows of a tree: a folder's row (its caret, name and totals; folded, it
 // shows only its row), then what is under it a step deeper.
@@ -10242,8 +10254,15 @@ function tchPaintList(v, focusDir) {
   const html = v.files.length ? chFilesHtml(v.files, '', { file: v.file, sha: '' }, { tree: chTreeOn(), closed: p => v.closed.has(p) })
     : '<div class="chf none">No changes on this branch yet.</div>';
   if (box._sig === html && !focusDir) return;
+  // A redraw (Enter opening a file, a poll) replaces the rows: the keyboard
+  // stays on the list, on its current row.
+  const had = box.contains(box.ownerDocument.activeElement);
   tchWrite(box, html);
   chListFocus(box, focusDir);
+  if (had && !focusDir) {
+    const cur = box.querySelector('.chf[tabindex="0"]');
+    if (cur && cur.focus) cur.focus({ preventScroll: true });
+  }
 }
 function tchHeadHtml(v) {
   const i = v.info || {};

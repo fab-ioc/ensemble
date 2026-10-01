@@ -586,7 +586,10 @@ A changed file in a Changes tab (the task's and the project's) reads as in an ID
   the extra ones face an empty `--surface-sunken` cell; a context line is on both sides; a hunk header
   spans both (`.sr.full`). Highlighting, the selection bar and line comments work on either side: a
   comment on a removed line's cell says "removed line N" and its card sits under the display row,
-  lined up with the old side's code. **A panel under 900px wide shows unified** whatever the choice
+  lined up with the old side's code. A drag down one column selects that column alone (the press
+  puts `sel-old` / `sel-new` on `.drv`, which makes the other side's text `user-select: none` until
+  the next press), so the highlight and Copy never interleave the two sides. **A panel under 900px
+  wide shows unified** whatever the choice
   and hides the switch (a ResizeObserver on the box; the choice is kept, and side by side returns with
   the width), so a phone and a tool beside the conversation never get two cramped columns. Rows are
   in chunks of 500 both ways: the largest merge of the week (5,784 lines) paints in under 100 ms in

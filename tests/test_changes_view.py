@@ -118,6 +118,19 @@ class TheHubCounts(unittest.TestCase):
         self.assertEqual(got["src/app/util.py"], (1, 0))
         self.assertEqual(got["docs/"], (None, None), "git lists an untracked folder as one entry: no count")
 
+    def test_a_renamed_file_is_listed_under_its_new_path_with_its_lines(self):
+        git(self.repo, "mv", "src/app/util.py", "src/app/utils.py")
+        git(self.repo, "add", "src/app/utils.py")
+        code, res = dashboard.git_status(str(self.repo))
+        self.assertEqual(code, 200, res)
+        by = {f["path"]: f for f in res["files"]}
+        self.assertNotIn("src/app/util.py", by, "the old path is gone")
+        self.assertEqual(by["src/app/utils.py"]["status"], "R")
+        self.assertEqual((by["src/app/utils.py"]["add"], by["src/app/utils.py"]["del"]), (1, 0), "the edit it carried along")
+        code, res = dashboard.git_status(str(self.repo), True)
+        self.assertEqual(code, 200, res)
+        self.assertEqual(self.by_path(res["files"])["src/app/utils.py"], (1, 0))
+
     def test_what_landed_carries_its_lines(self):
         git(self.repo, "stash", "-u", "-q")
         git(self.repo, "checkout", "-q", "main")
@@ -156,6 +169,7 @@ out.rows = chTreeRowsHtml(t, '', p => closed.has(p), (f, d) => chFileHtml(f, '',
 out.grouped = chFilesHtml(files, 'abc', { file: 'docs/notes.md', sha: 'abc' }, { tree: true, closed: () => false });
 out.flatList = chFilesHtml(files, '', { file: 'README.md', sha: '' }, { tree: false });
 out.count = [chCountHtml(2, 1), chCountHtml(null, null), chCountHtml(12345, 0)];
+out.folderEntry = chFileHtml({ path: 'docs/', status: '?' }, '', false, 0, true);
 // Side by side: the pairs.
 const rows = drParse('@@ -1,6 +1,7 @@\n a\n-b\n-c\n+B\n d\n+E\n+F\n-g\n');
 out.pairs = drPairs(rows).map(p => p.map(i => (i < 0 ? '-' : rows[i].k + ':' + rows[i].t)));
@@ -198,6 +212,7 @@ class ThePureParts(unittest.TestCase):
         self.assertIn('<div class="chf on" data-file="README.md" tabindex="-1" aria-current="true" title="README.md">', h)
         self.assertIn('data-file="pic.png" tabindex="-1" title="pic.png"><span class="chst st-M">M</span><span class="nm">pic.png</span></div>', h, "a binary file has no count")
         self.assertEqual(self.got["count"], ['<span class="cnt" title="2 added, 1 removed">+2 −1</span>', "", '<span class="cnt" title="12,345 added, 0 removed">+12,345 −0</span>'])
+        self.assertIn('<span class="nm">docs/</span>', self.got["folderEntry"], "an untracked folder entry keeps its slash in a tree, so it does not read as a file")
 
     def test_a_commit_s_files_group_too_and_the_flat_list_stays(self):
         g = self.got["grouped"]
@@ -276,13 +291,14 @@ async function main() {
     const click = async (sel) => { const [x, y] = await at(sel); await mouse('mouseMoved', x, y); await mouse('mousePressed', x, y); await mouse('mouseReleased', x, y); };
     const dblclick = async (sel) => { const [x, y] = await at(sel); for (const n of [1, 2]) { await mouse('mousePressed', x, y, { clickCount: n }); await mouse('mouseReleased', x, y, { clickCount: n }); } };
     const drag = async (sel, dx) => { const [x, y] = await at(sel); await mouse('mouseMoved', x, y); await mouse('mousePressed', x, y); for (const s of [0.3, 0.6, 1]) { await mouse('mouseMoved', x + dx * s, y); await sleep(30); } await mouse('mouseReleased', x + dx, y); };
+    const dragTo = async (x1, y1, x2, y2) => { await mouse('mouseMoved', x1, y1); await mouse('mousePressed', x1, y1); for (const s of [0.3, 0.6, 1]) { await mouse('mouseMoved', x1 + (x2 - x1) * s, y1 + (y2 - y1) * s); await sleep(30); } await mouse('mouseReleased', x2, y2); };
     const key = async (k, code, vk) => { for (const t of ['keyDown', 'keyUp']) await c.send('Input.dispatchKeyEvent', { type: t, key: k, code, windowsVirtualKeyCode: vk }, sessionId); };
     await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensBootOpen = false;' }, sessionId);
     await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
     await until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 0 && ALL_ROWS.some(r => r.roomId === ' + JSON.stringify(A.task) + ')', 30000);
     await until('window.ensBooted === true', 30000);
     try { await evalIn(`['cd-tool-strip', 'cd-tool-open', 'cd-phone-tabs', 'cd-ch-tree', 'cd-diff-mode', 'cd-ch-w'].forEach(k => localStorage.removeItem(k)); 0`); } catch (e) {}
-    return { evalIn, until, shot, click, dblclick, drag, key, sessionId, targetId, close: () => c.send('Target.closeTarget', { targetId }) };
+    return { evalIn, until, shot, click, dblclick, drag, dragTo, key, sessionId, targetId, close: () => c.send('Target.closeTarget', { targetId }) };
   };
   const tool = id => `#po-dock .dk-strip-btn[data-dk-auto="${id}"]`;
   const tab = name => `[...document.querySelectorAll('#po-dock .dk-stack .dk-tab')].find(e => e.textContent.trim().startsWith(${JSON.stringify(name)}))`;
@@ -311,6 +327,11 @@ async function main() {
       out.reopened = await p.evalIn(LIST);
       await p.key('ArrowDown', 'ArrowDown', 40); await sleep(100);
       out.downFocus = await p.evalIn(`({ file: document.activeElement.dataset.file || '', dir: document.activeElement.dataset.dir || '', tab: document.activeElement.tabIndex })`);
+      // Enter opens the file; the list is redrawn, the keyboard stays on its row: ↓ moves on.
+      await p.key('Enter', 'Enter', 13); await diffShown(p); await sleep(200);
+      out.enterFocus = await p.evalIn(`({ file: document.activeElement.dataset.file || '', on: ${PANE}.querySelector('.tch-files .chf.on').dataset.file, path: ${PANE}.querySelector('.drv-path').textContent })`);
+      await p.key('ArrowDown', 'ArrowDown', 40); await sleep(100);
+      out.enterDown = await p.evalIn(`document.activeElement.dataset.file || ''`);
       // Folders off: the flat list, remembered; on again.
       await p.click(`#po-dock .tch-head .chp-tree`); await sleep(200);
       out.flat = await p.evalIn(LIST);
@@ -346,6 +367,13 @@ async function main() {
         const txt = (el, pseudo) => getComputedStyle(el, pseudo).content; return { oldBefore: txt(old, '::before'), oldAfter: txt(old, '::after'), newBefore: txt(nw, '::before'), newAfter: txt(nw, '::after'),
           oldW: Math.round(sr.querySelector('.dr.old').getBoundingClientRect().width), newW: Math.round(sr.querySelector('.dr.new').getBoundingClientRect().width), tokens: sr.querySelectorAll('[class^="tk-"], [class*=" tk-"]').length }; })()`);
       await p.shot('changes-1280-split');
+      // A drag down the new column, from the context line above the pair to the
+      // added line: the selection (what Copy takes) is that column alone.
+      const [sx1, sy1, sx2, sy2] = await p.evalIn(`(() => { const srs = [...${PANE}.querySelectorAll('.drv .sr')]; const i = srs.findIndex(s => s.querySelector('.k-del') && s.querySelector('.k-add'));
+        const a = srs[i - 1].querySelector('.dr.new .dt').getBoundingClientRect(), b = srs[i].querySelector('.dr.new .dt').getBoundingClientRect(); return [a.left + 2, a.top + a.height / 2, b.right - 2, b.top + b.height / 2]; })()`);
+      await p.dragTo(sx1, sy1, sx2, sy2); await sleep(200);
+      out.colSel = await p.evalIn(`({ text: getSelection().toString(), cls: ${PANE}.querySelector('.drv').className })`);
+      await p.evalIn(`getSelection().removeAllRanges(); 0`); await sleep(100);
       // A comment on the removed line: its box under the row, the card, the tray, the message.
       await p.evalIn(`${PANE}.querySelector('.drv .sr .dr.old.k-del .dg').click(); 0`);
       await p.until(`!!${PANE}.querySelector('.dcx textarea')`, 5000);
@@ -545,6 +573,17 @@ class ThePage(unittest.TestCase):
         r = self.got["reopened"]
         self.assertIn("src/app/main.py", [x["file"] for x in r["rows"]], "→ opens it again")
         self.assertEqual(self.got["downFocus"], {"file": "src/app/main.py", "dir": "", "tab": 0}, "↓ moves to the next row and makes it the tab stop")
+        e = self.got["enterFocus"]
+        self.assertEqual((e["on"], e["path"]), ("src/app/main.py", "src/app/main.py"), "Enter opens the row's file")
+        self.assertEqual(e["file"], "src/app/main.py", "the redrawn list keeps the keyboard on the row")
+        self.assertEqual(self.got["enterDown"], "src/app/util.py", "↓ still moves on")
+
+    def test_a_drag_down_one_column_selects_that_column_alone(self):
+        s = self.got["colSel"]
+        self.assertIn("sel-new", s["cls"].split())
+        self.assertIn("def helper(x):", s["text"])
+        self.assertIn("return x + 2", s["text"])
+        self.assertNotIn("x + 1", s["text"], "the old column's line between is not selected, so Copy leaves it out")
 
     def test_folders_switches_to_the_flat_list_and_is_remembered(self):
         f = self.got["flat"]
