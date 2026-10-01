@@ -21,11 +21,13 @@ The page (ThePage), in headless Chrome over CDP against a hub in a thread, at
   (read only), show the folder they ran in;
 * an empty folder, a folder that is gone, no folder at all and a folder too
   wide each say so in one line;
-* a file in a window of its own (the CEO's P103): the button on the tab in
-  front, Shift+Enter on the tab and a file row's menu open the file view as a
-  sized window without the browser's bars, as the tab was left (view, line,
-  match) and in the hub's theme; one window per file, several files at once;
-  from a docked Files tool and from a project's task too; not on a phone.
+* a file in a window of its own (the CEO's P103): with files as panels of
+  the dock (#150) the file's panel goes to a window of its own from its ⋯
+  (Open in new window) and from a file row's menu, as the panel was (view,
+  line, match) and in the hub's theme, in a sized window without the
+  browser's bars; one window per file, several files at once; from a docked
+  Files tool and from a project's task too; not on a phone. (The page's own
+  file window, wsOpenWindow, stays for a page without the dock.)
 
 TheWindowOverTheTailnet: that window is the hub's own page, so the browser's
 token cookie opens it and nothing about the token is in its address.
@@ -513,13 +515,19 @@ class TheWindowOverTheTailnet(unittest.TestCase):
 
 
 CDP_JS = test_tool_strip.CDP_JS[:test_tool_strip.CDP_JS.index("// The strip, the tool open beside the middle")] + r"""
-// The Files pane of the open task, wherever it is (the tool strip's Files, a phone's Files tab).
+// The file panel in front: a file is a panel of the dock (#150), in front of its stack (not in a window of its own).
+const FRONT_PANEL = `(() => { const d = PD.dock; if (!d || !PD.rt) return null;
+  const on = id => { const e = PD.rt.get(id); return !!e && e.kind === 'file' && !d.popWindow(id) && d.isVisible(id) && d.frontOf(id) === id; };
+  const id = on(PD.rtLast.file) ? PD.rtLast.file : [...PD.rt.keys()].find(on); return id ? PD.rt.get(id).el : null; })()`;
+// The Files pane of the open task, wherever it is (the tool strip's Files, a phone's Files tab), and the file panel in front.
 const FILES = `(() => {
   const box = e => { if (!e) return null; const b = e.getBoundingClientRect(); return { x: Math.round(b.left), y: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height), r: Math.round(b.right), b: Math.round(b.bottom) }; };
   const vis = e => !!e && e.getBoundingClientRect().width > 0 && e.getBoundingClientRect().height > 0 && getComputedStyle(e).visibility !== 'hidden';
   const pane = document.getElementById('detail-panel')._panes.workspace, wsp = pane.querySelector('.wsp');
   const v = WS_VIEWS.get('task:' + SELECTED_SID);
-  const small = sel => [...pane.querySelectorAll(sel)].filter(vis).map(e => [sel, e.textContent.trim().slice(0, 24), Math.round(e.getBoundingClientRect().width), Math.round(e.getBoundingClientRect().height)])
+  // The file panel on screen (#150: a file is a panel of the dock, in front of its stack).
+  const fp = ${FRONT_PANEL};
+  const small = (sel, root) => [...(root || pane).querySelectorAll(sel)].filter(vis).map(e => [sel, e.textContent.trim().slice(0, 24), Math.round(e.getBoundingClientRect().width), Math.round(e.getBoundingClientRect().height)])
     .filter(([, , w, h]) => w < 44 - 0.5 || h < 44 - 0.5);
   return { vw: innerWidth, vh: innerHeight, scrollW: document.documentElement.scrollWidth, scrollH: document.documentElement.scrollHeight,
     pane: box(pane), paneShown: vis(pane), mounted: !!wsp, empty: (pane.querySelector('.dp-empty') || {}).textContent || '',
@@ -528,25 +536,25 @@ const FILES = `(() => {
     dirs: [...pane.querySelectorAll('.wsp-tree .wse.dir:not(.wsroot) .nm')].map(e => e.textContent),
     notes: [...pane.querySelectorAll('.wsp-tree .wse.none')].map(e => e.textContent),
     noteBoxes: [...pane.querySelectorAll('.wsp-tree .wse.none')].map(e => [Math.round(e.getBoundingClientRect().width), e.scrollWidth, Math.round(e.parentElement.getBoundingClientRect().width)]),
-    tabs: [...pane.querySelectorAll('.wst-tab')].map(e => [e.querySelector('.wst-nm').textContent, e.classList.contains('on')]),
-    wins: [...pane.querySelectorAll('.wst-tab')].map(e => { const w = e.querySelector('.wst-win'); return [e.querySelector('.wst-nm').textContent, !!w, vis(w), w ? w.title : '', w ? box(w) : null, box(e.querySelector('.wst-x'))]; }),
-    crumbs: [...pane.querySelectorAll('.wsc-list li')].map(e => e.textContent.trim()),
+    tabs: [...PD.rt.entries()].filter(([, e]) => e.kind === 'file').map(([id, e]) => [wsTabName(e.path), PD.dock.frontOf(id) === id]),
+    own: fp ? vis(fp.querySelector('.wsp-own')) : false,
+    crumbs: [...(fp || pane).querySelectorAll('.wsc-list li')].map(e => e.textContent.trim()),
     placeholder: wsp ? wsp.querySelector('.wsf-q').placeholder : '',
     results: [...pane.querySelectorAll('.wsf-res .wsr')].map(e => e.textContent.replace(/\\s+/g, ' ').trim()),
     state: wsp ? wsp.querySelector('.wsf-state').textContent : '',
     treePane: wsp ? wsp.classList.contains('ws-tree') : null,
-    tree: wsp ? box(wsp.querySelector('.wsp-side')) : null, view: wsp ? box(wsp.querySelector('.wsp-view')) : null,
-    treeShown: wsp ? vis(wsp.querySelector('.wsp-side')) : null, viewShown: wsp ? vis(wsp.querySelector('.wsp-view')) : null,
-    frame: wsp ? box(wsp.querySelector('iframe.wsp-frame.on')) : null,
+    tree: wsp ? box(wsp.querySelector('.wsp-side')) : null, view: fp ? box(fp.querySelector('.wsp-frames')) : wsp ? box(wsp.querySelector('.wsp-view')) : null,
+    treeShown: wsp ? vis(wsp.querySelector('.wsp-side')) : null, viewShown: fp ? vis(fp.querySelector('.wsp-frames')) : wsp ? vis(wsp.querySelector('.wsp-view')) : null,
+    frame: fp ? box(fp.querySelector('iframe.wsp-frame.on')) : null,
     rootsOf: v ? v.roots.map(r => [r.label, r.kind]) : null,
     qFont: wsp ? parseFloat(getComputedStyle(wsp.querySelector('.wsf-q')).fontSize) : 0,
-    small: [].concat(small('.wsp-tree .wse:not(.none)'), small('.wsf-mode button'), small('.wsf-q'), small('.wst-tab'), small('.wsp-bar button'), small('.wsf-res .wsr')),
+    small: [].concat(small('.wsp-tree .wse:not(.none)'), small('.wsf-mode button'), small('.wsf-q'), small('.wsp-bar button, .wsp-bar .wsp-own', fp || pane), small('.wsf-res .wsr')),
     trail: [...document.querySelectorAll('#bar-crumbs [data-crumb]')].filter(vis).map(e => [e.dataset.crumb, e.textContent]) };
 })()`;
 // The file showing, as its viewer drew it.
 const VIEWER = `(() => {
-  const pane = document.getElementById('detail-panel')._panes.workspace;
-  const f = pane.querySelector('iframe.wsp-frame.on'); if (!f) return null;
+  const fp = ${FRONT_PANEL};
+  const f = fp && fp.querySelector('iframe.wsp-frame.on'); if (!f) return null;
   const d = f.contentDocument, main = d.getElementById('main');
   const page = main.querySelector('iframe');
   return { url: f.contentWindow.location.pathname + f.contentWindow.location.search, title: d.title,
@@ -576,13 +584,17 @@ async function main() {
       const [x, y] = await evalIn(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) throw new Error('no ' + ${JSON.stringify(sel)}); const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
       for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 }, sessionId);
     };
+    const clickEl = async (expr) => {
+      const [x, y] = await evalIn(`(() => { const e = ${expr}; if (!e) throw new Error('no element: ' + ${JSON.stringify(expr.slice(0, 80))}); const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+      for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 }, sessionId);
+    };
     const type = text => c.send('Input.insertText', { text }, sessionId);
     const key = async (k, code, vk) => { for (const t of ['keyDown', 'keyUp']) await c.send('Input.dispatchKeyEvent', { type: t, key: k, code, windowsVirtualKeyCode: vk }, sessionId); };
     await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensBootOpen = false;' }, sessionId);
     await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
     await until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 1 && ALL_ROWS.some(r => r.roomId === ' + JSON.stringify(A.loose) + ')', 30000);
     await until('window.ensBooted === true', 30000);
-    try { await evalIn(`Object.keys(localStorage).filter(k => k.startsWith('cd-ws:') || ['cd-tool-strip', 'cd-tool-open', 'cd-phone-tabs'].includes(k)).forEach(k => localStorage.removeItem(k)); 0`); } catch (e) {}
+    try { await evalIn(`Object.keys(localStorage).filter(k => k.startsWith('cd-ws:') || ['cd-tool-strip', 'cd-tool-open', 'cd-phone-tabs', 'cd-ws-panels', 'cd-chat-panels'].includes(k)).forEach(k => localStorage.removeItem(k)); 0`); } catch (e) {}
     // What the page asks window.open for, and the windows it gets.
     await evalIn(`window.__wo = []; (() => { const o = window.open.bind(window); window.open = (u, n, f) => { const w = o(u, n, f); window.__wo.push([u, n, f, !!w]); return w; }; })(); 0`);
     const rclick = async (sel) => {
@@ -590,18 +602,22 @@ async function main() {
       for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'right', clickCount: 1 }, sessionId);
     };
     const skey = async (k, code, vk) => { for (const t of ['keyDown', 'keyUp']) await c.send('Input.dispatchKeyEvent', { type: t, key: k, code, windowsVirtualKeyCode: vk, modifiers: 8 }, sessionId); };
-    return { evalIn, until, shot, click, rclick, type, key, skey, sessionId, targetId, close: () => c.send('Target.closeTarget', { targetId }) };
+    return { evalIn, until, shot, click, clickEl, rclick, type, key, skey, sessionId, targetId, close: () => c.send('Target.closeTarget', { targetId }) };
   };
   const PANE = `document.getElementById('detail-panel')._panes.workspace`;
-  // The file windows open now, and one of them as its page drew it.
-  const wins = async () => (await c.send('Target.getTargets')).targetInfos.filter(t => t.type === 'page' && t.url.includes('/fileview?'));
+  // The file windows open now (Dock's pop-out page, the file's panel in it), and one of them as its viewer drew it.
+  const wins = async () => (await c.send('Target.getTargets')).targetInfos.filter(t => t.type === 'page' && t.url.includes('popout.html'));
   const WIN = `(() => {
-    const main = document.getElementById('main'), page = main.querySelector('iframe');
-    if (document.readyState !== 'complete' || main.querySelector(':scope > .err')) return null;
-    return { name: window.name, path: new URLSearchParams(location.search).get('path'), st: new URLSearchParams(location.search).get('st'),
-      room: new URLSearchParams(location.search).get('room'), top: window.parent === window, opener: !!window.opener,
+    const fr = document.querySelector('iframe.wsp-frame'); if (!fr || document.readyState !== 'complete') return null;
+    let d, fw; try { d = fr.contentDocument; fw = fr.contentWindow; } catch (e) { return null; }
+    if (!d || d.readyState !== 'complete' || fw.location.pathname !== '/fileview') return null;
+    const main = d.getElementById('main'), page = main && main.querySelector('iframe');
+    if (!main || main.querySelector(':scope > .err')) return null;
+    const q = new URLSearchParams(fw.location.search);
+    return { name: window.name, path: q.get('path'), st: q.get('st'),
+      room: q.get('room'), top: window.parent === window, opener: !!window.opener,
       w: innerWidth, h: innerHeight, outer: [outerWidth, outerHeight], bars: [menubar.visible, toolbar.visible, locationbar.visible],
-      theme: document.documentElement.dataset.theme || '', title: document.title,
+      theme: d.documentElement.dataset.theme || '', title: d.title,
       h1: (main.querySelector('h1') || {}).textContent || '', tokens: main.querySelectorAll('[class^="tk-"], [class*=" tk-"]').length,
       marked: [...main.querySelectorAll('.ln-row.is-marked')].map(e => e.dataset.n), hit: (main.querySelector('mark.fv-hit') || {}).textContent || '',
       view: (main.querySelector('.ln-row') ? 'source' : 'preview'),
@@ -627,6 +643,31 @@ async function main() {
     return null;
   };
   const tool = id => `#po-dock .dk-strip-btn[data-dk-auto="${id}"]`;
+  // A file's panel: its id, its element, the ⋯ of the stack of the panel last shown, and a menu item of the dock's
+  // open menu.
+  const fid = name => `[...PD.rt.keys()].find(k => k.startsWith('file:') && k.endsWith('/' + ${JSON.stringify(name.toLowerCase())}))`;
+  const fpanel = name => `(() => { const e = PD.rt.get(${fid(name)}); return e ? e.el : null; })()`;
+  const FP_MENU = `PD.rt.get(PD.rtLast.file).el.closest('.dk-stack').querySelector('[data-dk-act="menu"]')`;
+  const ITEM = label => `[...document.querySelectorAll('.dk-menu.dk-options [data-dk-app]')].find(x => x.textContent.startsWith(${JSON.stringify(label)}))`;
+  const MENU = `(() => { const m = document.querySelector('.dk-menu.dk-options'); if (!m) return null; return { app: [...m.querySelectorAll('[data-dk-app]')].map(b => b.textContent) }; })()`;
+  // The front file panel's ⋯ › Open in new window, real clicks (a pop-up needs the gesture); the flyout closed first,
+  // as a person would (it lies over the panel at 1440).
+  const popOut = async (p) => {
+    await p.evalIn('PD.dock.closeFly(); 0'); await sleep(300);
+    await p.clickEl(FP_MENU); await sleep(300);
+    const menu = await p.evalIn(MENU);
+    const before = await wins();
+    await p.clickEl(ITEM('Open in new window'));
+    const t = await opened(before);
+    return { menu, win: t ? await inWin(t) : null };
+  };
+  // Every panel in a window back in the dock, its window closed.
+  const popInAll = async (p) => {
+    await p.evalIn(`[...PD.rt.keys()].filter(id => PD.dock.viewMode(id) === 'window').forEach(id => PD.dock.popIn(id)); 0`);
+    await sleep(600);
+    for (const x of await wins()) await c.send('Target.closeTarget', { targetId: x.targetId });
+    await sleep(300);
+  };
   const tab = name => `[...document.querySelectorAll('#po-dock .dk-stack .dk-tab')].find(e => e.textContent.trim().startsWith(${JSON.stringify(name)}))`;
   const open = async (p, sid) => {
     await p.evalIn(`openDetail(${JSON.stringify(sid)}); 0`);
@@ -640,8 +681,8 @@ async function main() {
     await p.until(`(() => { const x = ${PANE}; return !!x && x.getBoundingClientRect().width > 0 && (!!x.querySelector('.wsp') || !!x.querySelector('.dp-empty')); })()`, 15000);
   };
   const file = name => `${PANE}.querySelector('.wsp-tree .wse.file[data-path$=${JSON.stringify(JSON.stringify(name)).slice(1, -1)}]')`;
-  const shown = (p, name) => p.until(`(() => { const f = ${PANE}.querySelector('iframe.wsp-frame.on'); try {
-    return !!f && f.contentDocument.readyState === 'complete' && f.contentWindow.location.pathname === '/fileview'
+  const shown = (p, name) => p.until(`(() => { const id = ${fid(name)}; const e = id && PD.rt.get(id); const f = e && e.el.querySelector('iframe.wsp-frame.on'); try {
+    return !!f && PD.dock.frontOf(id) === id && f.contentDocument.readyState === 'complete' && f.contentWindow.location.pathname === '/fileview'
       && decodeURIComponent(f.contentWindow.location.search).includes(${JSON.stringify(name)}) && !f.contentDocument.querySelector('#main > .err'); } catch (e) { return false; } })()`, 20000);
   const view = async (p, name) => {
     await p.until(`!!${file(name)}`, 15000);
@@ -699,31 +740,29 @@ async function main() {
           wsWinFeatures({ screen: { availWidth: 2560, availHeight: 1440 }, screenX: 100, screenY: 50 }, 2),
           wsWinFeatures({ screen: { availWidth: 900, availHeight: 700 }, screenX: -1600, screenY: 0 }, 0), wsWinFeatures({}, 0),
           wsWinName('C:\\\\a\\\\b.md') === wsWinName('c:/a/b.md'), wsWinName('C:\\\\a\\\\b.md') !== wsWinName('C:\\\\a\\\\c.md')]`);
-        // The tab in front (tool.py, left by Go to file): its button, a real click.
-        let before = await wins();
-        await p.click('#po-dock .wst-tab.on .wst-win');
-        let t = await opened(before);
-        W.py = t ? await inWin(t) : null;
+        // The file panel in front (tool.py, left by Go to file): its ⋯ › Open in new window.
+        let r1 = await popOut(p);
+        W.menu0 = r1.menu; W.py = r1.win;
         W.asked = await p.evalIn('window.__wo.slice()');
         if (A.shots && W.py) { const r = await c.send('Page.captureScreenshot', { format: 'png' }, W.py.sessionId); fs.writeFileSync(path.join(A.shots, 'window-py.png'), Buffer.from(r.data, 'base64')); }
-        // A search result opens README.md at its line; Shift+Enter on its tab: a second window, at that line.
+        // A search result opens README.md at its line; its panel's ⋯ › Open in new window: a second window, at that line.
+        await files(p);
         await p.evalIn(`${PANE}.querySelector('.wsf-mode button[data-mode="text"]').click(); (() => { const q = ${PANE}.querySelector('.wsf-q'); q.value = 'squeal'; q.dispatchEvent(new Event('input', { bubbles: true })); })(); 0`);
         await p.until(`${PANE}.querySelectorAll('.wsf-res .wsr').length > 1`, 20000); await sleep(300);
         await p.evalIn(`[...${PANE}.querySelectorAll('.wsf-res .wsr')].find(e => e.textContent.includes('brakes **squeal**')).click(); 0`);
         await shown(p, 'README.md'); await sleep(600);
-        await p.evalIn(`${PANE}.querySelector('.wst-tab.on').focus(); 0`);
-        before = await wins();
-        await p.skey('Enter', 'Enter', 13);
-        t = await opened(before);
-        W.md = t ? await inWin(t) : null;
+        W.md = (await popOut(p)).win;
         W.two = (await wins()).length;
-        // The same file asked for again: its window, not a third.
-        before = await wins();
-        await p.click('#po-dock .wst-tab.on .wst-win'); await sleep(800);
-        W.again = { count: (await wins()).length, names: (await p.evalIn('window.__wo.map(a => a[1])')) };
+        // The same file asked for again (its row's menu): its window, not a third.
+        await files(p);
         await p.evalIn(`(() => { const q = ${PANE}.querySelector('.wsf-q'); q.value = ''; q.dispatchEvent(new Event('input', { bubbles: true })); ${PANE}.querySelector('.wsf-mode button[data-mode="files"]').click(); })(); 0`);
         await sleep(300);
+        await p.until(`!!${file('README.md')}`, 10000);
+        await p.rclick('#po-dock .wsp-tree .wse.file[data-path$="README.md"]'); await sleep(300);
+        await p.click('#po-dock .dcm .dcm-item[data-act="window"]'); await sleep(800);
+        W.again = { count: (await wins()).length, asked: (await p.evalIn('window.__wo.length')), mode: await p.evalIn(`PD.dock.viewMode(${fid('README.md')})`) };
         // A file row's menu (a right click): Open, Open in new window.
+        await files(p);
         await p.until(`!!${file('page.html')}`, 10000);
         await p.rclick('#po-dock .wsp-tree .wse.file[data-path$="page.html"]'); await sleep(300);
         W.menu = await p.evalIn(`(() => { const m = ${PANE}.querySelector('.dcm'); if (!m) return null; const b = m.getBoundingClientRect();
@@ -736,25 +775,26 @@ async function main() {
         W.html = t ? await inWin(t) : null;
         W.menuGone = await p.evalIn(`!${PANE}.querySelector('.dcm')`);
         W.three = (await wins()).length;
-        // Escape closes the menu without opening anything.
+        // Escape closes the menu without opening anything. (The pop-out closed the flyout, as Dock does.)
+        await files(p);
         await p.rclick('#po-dock .wsp-tree .wse.file[data-path$="page.html"]'); await sleep(200);
         await p.key('Escape', 'Escape', 27); await sleep(200);
         W.escaped = await p.evalIn(`({ gone: !${PANE}.querySelector('.dcm'), fly: PD.dock.flyOpen() })`);
-        // Files docked beside the conversation (Dock Pinned): the same button.
+        // The three back in the dock; Files docked beside the conversation (Dock Pinned): the same from a file opened there.
+        await popInAll(p);
+        W.back = await p.evalIn(`[...PD.rt.keys()].map(id => PD.dock.viewMode(id))`);
+        await files(p);
         await p.click('#po-dock .dk-flyout.open [data-dk-act="menu"]');
         await p.click('.dk-menu.dk-options [data-dk-sub="mode"]');
         await p.click('.dk-menu.dk-submenu [data-dk-menu="mode:pinned"]'); await sleep(600);
         await p.evalIn(`${file('deep.txt')}.click(); 0`);
         await shown(p, 'deep.txt'); await sleep(400);
-        before = await wins();
-        await p.click('#po-dock .wst-tab.on .wst-win');
-        t = await opened(before);
-        W.pinned = { mode: await p.evalIn(`PD.dock.viewMode('workspace')`), win: t ? await inWin(t) : null };
+        W.pinned = { mode: await p.evalIn(`PD.dock.viewMode('workspace')`), win: (await popOut(p)).win };
         // A blocked window says so.
         W.blocked = await p.evalIn(`(() => { const o = window.open; window.open = () => null; let r; try { r = wsOpenWindow(WS_VIEWS.get('task:' + SELECTED_SID), WS_VIEWS.get('task:' + SELECTED_SID).sel); } finally { window.open = o; }
           return { got: r, toast: ((document.getElementById("status") || {}).textContent || "") }; })()`);
-        for (const x of await wins()) await c.send('Target.closeTarget', { targetId: x.targetId });
-        await p.evalIn(`PD.dock.reset(); 0`); await sleep(400);
+        await popInAll(p);
+        await p.evalIn(`PD.dock.setViewMode('workspace', 'unpinned'); 0`); await sleep(400);
         await p.evalIn(`(async () => { localStorage.setItem('cd-theme', 'light'); await cdTheme.put({ theme: 'light' }); cdTheme.apply(); })()`);
       }
       // Changes: the folder is a git checkout.
@@ -799,11 +839,8 @@ async function main() {
       {
         await p.evalIn(`${file('task.json')}.click(); 0`);
         await shown(p, 'task.json'); await sleep(400);
-        const before = await wins();
-        await p.click('#po-dock .wst-tab.on .wst-win');
-        const t = await opened(before);
-        out.projWindow = t ? await inWin(t) : null;
-        for (const x of await wins()) await c.send('Target.closeTarget', { targetId: x.targetId });
+        out.projWindow = (await popOut(p)).win;
+        await popInAll(p);
       }
       await p.close();
     }
@@ -823,22 +860,24 @@ async function main() {
       await p.shot(`loose-${w}-files`);
       o.md = await view(p, 'README.md');
       await p.shot(`loose-${w}-md`);
-      // No window of its own on a phone: no button, no menu, and the function declines.
+      // No window of its own on a phone: no menu item, no row menu, and the function declines.
       o.noWindow = await p.evalIn(`(() => { const v = WS_VIEWS.get('task:' + SELECTED_SID);
         const row = ${PANE}.querySelector('.wsp-tree .wse.file');
         row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 50, clientY: 300 }));
-        return { got: wsOpenWindow(v, v.sel), asked: window.__wo.length, menu: !!${PANE}.querySelector('.dcm'), own: !!${PANE}.querySelector('.wsp-own') && ${PANE}.querySelector('.wsp-own').getBoundingClientRect().width > 0 }; })()`);
-      // Files, first in the path bar: back to the tree; then the code and the page.
-      await p.evalIn(`${PANE}.querySelector('.wsp-files').click(); 0`); await sleep(300);
+        const own = ${fpanel('README.md')}.querySelector('.wsp-own');
+        return { got: wsOpenWindow(v, v.sel), asked: window.__wo.length, menu: !!${PANE}.querySelector('.dcm'), own: !!own && own.getBoundingClientRect().width > 0,
+          items: wsPanelMenuItems(v, v.sel, {}).map(i => i.label) }; })()`);
+      // Files, first in the panel's path bar: back to the tree; then the code and the page.
+      await p.evalIn(`${fpanel('README.md')}.querySelector('.wsp-files').click(); 0`); await sleep(300);
       o.back = await p.evalIn(FILES);
       o.py = await view(p, 'tool.py');
       await p.shot(`loose-${w}-py`);
-      await p.evalIn(`${PANE}.querySelector('.wsp-files').click(); 0`); await sleep(300);
+      await p.evalIn(`${fpanel('tool.py')}.querySelector('.wsp-files').click(); 0`); await sleep(300);
       o.html = await view(p, 'page.html');
       await p.shot(`loose-${w}-html`);
       if (w === 390) {
         // Go to file and Text search, from the tree's pane.
-        await p.evalIn(`${PANE}.querySelector('.wsp-files').click(); 0`); await sleep(300);
+        await p.evalIn(`${fpanel('page.html')}.querySelector('.wsp-files').click(); 0`); await sleep(300);
         await p.evalIn(`(() => { const q = ${PANE}.querySelector('.wsf-q'); q.focus(); q.value = 'tool'; q.dispatchEvent(new Event('input', { bubbles: true })); })(); 0`);
         await p.until(`${PANE}.querySelectorAll('.wsf-res .wsr').length > 0`, 15000); await sleep(300);
         o.goto = await p.evalIn(FILES);
@@ -1133,22 +1172,14 @@ class ThePage(unittest.TestCase):
 
     # ---- a file in a window of its own (P103)
 
-    def test_the_tab_in_front_has_the_window_button(self):
-        tabs = {t[0]: t for t in self.got["windows"]["tabs"]}
-        name, has, shown, title, box, x = tabs["tool.py"]
-        self.assertTrue(has and shown)
-        self.assertEqual(title, "Open in new window (Shift+Enter)")
-        self.assertEqual((box["w"], box["h"]), (x["w"], x["h"]), "the same box as its close")
-        self.assertLessEqual(box["r"], x["x"], "before the close, not over it")
-        for other in ("README.md", "page.html"):
-            self.assertFalse(tabs[other][1], "only the tab in front")
-
-    def test_the_button_opens_the_file_view_in_a_sized_window(self):
+    def test_the_file_panel_s_menu_opens_it_in_a_sized_window(self):
         w = self.got["windows"]
+        self.assertEqual(w["menu0"]["app"], ["Show in the tree", "Open in new window"], "the panel's own items")
         url, name, feat, got = w["asked"][0]
-        self.assertTrue(url.startswith("/fileview?path="))
+        self.assertIn("popout.html", url, "Dock's pop-out page, the file's panel in it")
+        self.assertTrue(name.startswith("ensemble-panel-file:"), name)
         self.assertTrue(got, "a window came back")
-        self.assertRegex(feat, r"^popup=yes,width=\d+,height=\d+,left=-?\d+,top=-?\d+$")
+        self.assertRegex(feat, r"^popup=yes,width=\d+,height=\d+(,left=-?\d+,top=-?\d+)?$")
         g = w["py"]
         self.assertEqual((g["title"], g["path"]), ("tool.py", str(self.cwd / "tool.py")))
         self.assertTrue(g["top"] and g["opener"], "a window of its own, not a frame")
@@ -1165,7 +1196,7 @@ class ThePage(unittest.TestCase):
         self.assertEqual(bare, "popup=yes,width=960,height=820")
         self.assertTrue(same and differ, "one name per file, however its path is written")
 
-    def test_shift_enter_opens_the_tab_as_it_was_left(self):
+    def test_a_panel_goes_to_its_window_as_it_was(self):
         g = self.got["windows"]["md"]
         self.assertEqual(g["title"], "README.md")
         self.assertEqual((g["view"], g["marked"], g["hit"]), ("source", ["3"], "squeal"), "the same view, line and match")
@@ -1173,9 +1204,7 @@ class ThePage(unittest.TestCase):
 
     def test_the_same_file_again_is_the_same_window(self):
         a = self.got["windows"]["again"]
-        self.assertEqual(a["count"], 2)
-        self.assertEqual(a["names"][1], a["names"][2])
-        self.assertNotEqual(a["names"][0], a["names"][1])
+        self.assertEqual((a["count"], a["asked"], a["mode"]), (2, 2, "window"), "no third window, no second ask")
 
     def test_a_file_row_s_menu_opens_it_in_a_window(self):
         w = self.got["windows"]
@@ -1187,6 +1216,7 @@ class ThePage(unittest.TestCase):
         self.assertEqual(w["escaped"], {"gone": True, "fly": "workspace"}, "Escape closes the menu, not the tool")
 
     def test_a_docked_files_tool_and_a_project_s_task_open_windows_too(self):
+        self.assertEqual(set(self.got["windows"]["back"]), {"pinned"}, "popped back in: every file panel docked again")
         p = self.got["windows"]["pinned"]
         self.assertEqual((p["mode"], p["win"]["title"]), ("pinned", "deep.txt"))
         g = self.got["projWindow"]
@@ -1202,10 +1232,8 @@ class ThePage(unittest.TestCase):
         for w in self.PHONES:
             with self.subTest(w=w):
                 o = self.got[f"phone{w}"]
-                self.assertEqual(o["noWindow"], {"got": None, "asked": 0, "menu": False, "own": True},
-                                 "no window, no menu; the path bar's link to a browser tab stays")
-                for name, has, shown, *_ in o["md"]["files"]["wins"]:
-                    self.assertFalse(shown, "the tab's button is not shown")
+                self.assertEqual(o["noWindow"], {"got": None, "asked": 0, "menu": False, "own": True, "items": ["Show in the tree"]},
+                                 "no window in the panel's menu, no row menu; the path bar's link to a browser tab stays")
 
 
 if __name__ == "__main__":
