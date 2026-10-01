@@ -10079,7 +10079,7 @@ function poMenuOpen(head, open) {
   // Closed: the header held while it was open is written now.
   else if (was && head._next && head._next !== head._html) {
     // Focus on an item goes back to ⋯ (the item's twin is in a closed menu).
-    const inMenu = menu.contains(document.activeElement), focus = focusKeyIn(head);
+    const inMenu = menu.contains(head.ownerDocument.activeElement), focus = focusKeyIn(head);
     head._html = head._next; head.innerHTML = head._next;
     if (inMenu) { const more = head.querySelector('[data-po="more"]'); if (more) more.focus(); }
     else restoreFocus(head, focus);
@@ -10087,8 +10087,9 @@ function poMenuOpen(head, open) {
 }
 // The menu closes when you leave it: Tab or a click into the conversation
 // (an iframe, so no click reaches this page; its window loses focus instead).
+// The header may be in the conversation's own window (#148): every window is searched.
 function poMenusClose() {
-  for (const m of document.querySelectorAll('#po-panel .po-menu:not([hidden])')) poMenuOpen(m.closest('.po-head'), false);
+  for (const m of pdQueryAll('#po-panel .po-menu:not([hidden])')) poMenuOpen(m.closest('.po-head'), false);
 }
 window.addEventListener('blur', poMenusClose);
 // A control in the PO's header. It acts first, and only then do the menus
@@ -10566,6 +10567,10 @@ function pdOnResize(fn) {
   window.addEventListener('resize', fn);
   PD_POP_WINS.forEach((rs, w) => { try { w.addEventListener('resize', fn); rs.push(fn); } catch (e) {} });
 }
+// The task's chat is fitted by a ResizeObserver of this page; with the task
+// in the conversation's own window (#148) and this page's tab in the
+// background, that observer waits, so the window's resize refits it too.
+pdOnResize(() => { if (pdById('detail-panel')) fitLiveChat(); });
 // A phone's dock is narrow: one column of tabs (layout A on a phone, #129). A
 // desktop's is the tool strip (#125).
 function pdNarrow() { return isPhone(); }

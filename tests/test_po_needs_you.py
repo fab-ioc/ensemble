@@ -97,6 +97,7 @@ let head, frames, panel;
 // A header with the ⋯ menu in it (#126): writing it closes the menu.
 const menuHead = () => { const h = el(); h.written = 0; h.shown = '';
   h.menu = { hidden: true, querySelector: () => null, closest: () => h, contains: () => false };
+  h.ownerDocument = document;
   h.btn = { setAttribute(k, v) { h.expanded = v; } };
   Object.defineProperty(h, 'innerHTML', { set(v) { h.written++; h.shown = v; h.menu.hidden = true; } });
   h.querySelector = sel => (sel === '.po-menu' ? h.menu : sel === '[data-po="more"]' ? h.btn
@@ -107,6 +108,7 @@ const document = { getElementById: id => (id === 'po-panel' ? panel : null), cre
     : sel === '#po-panel .po-menu:not([hidden])' && head && head.menu && !head.menu.hidden ? [head.menu] : []),
   body: { classList: { on: new Set(), toggle(c, v) { v ? this.on.add(c) : this.on.delete(c); }, contains(c) { return this.on.has(c); } } } };
 const focusKeyIn = () => null, restoreFocus = () => {}, swRender = () => {};
+const pdQueryAll = sel => [...document.querySelectorAll(sel)];
 let HEAD_TAIL = '';
 const poHeadHtml = (pj, row) => pj.id + ':' + row.roomId + HEAD_TAIL;
 const renderRows = () => { calls.push('renderRows'); renderPo(); };

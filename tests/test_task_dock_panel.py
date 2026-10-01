@@ -287,6 +287,13 @@ class TheWiring(unittest.TestCase):
         self.assertNotIn("a === 'move'", can)
         self.assertNotIn("#po-dock:not(.dk-narrow) .dk-stack:has(> .dk-body > .pd-chat) > .dk-head { display: none; }", INDEX)
 
+    def test_the_pos_menu_and_the_chats_fit_follow_the_panel_into_its_window(self):
+        # Review 1: the PO's header may be in the conversation's window; its menu closes from there too.
+        self.assertIn("for (const m of pdQueryAll('#po-panel .po-menu:not([hidden])')) poMenuOpen(m.closest('.po-head'), false);", INDEX)
+        self.assertIn("const inMenu = menu.contains(head.ownerDocument.activeElement), focus = focusKeyIn(head);", INDEX)
+        # The chat's ResizeObserver lives in this page; the window's own resize refits it while this tab is in the background.
+        self.assertIn("pdOnResize(() => { if (pdById('detail-panel')) fitLiveChat(); });", INDEX)
+
     def test_the_old_controls_are_gone(self):
         for old in ("dp-popout", "openSessionWindow", "dock-session", 'data-po="popout"', "Open in a floating window"):
             self.assertNotIn(old, INDEX, old)
