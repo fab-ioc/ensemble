@@ -322,6 +322,8 @@ class IndexNumbers(unittest.TestCase):
         self.assertIn("taskChipsIn(", INDEX[INDEX.index("function pdPointsHtml"):], "Your asks' words show the chips")
         self.assertIn('<script src="/static/taskcard.js"></script>', INDEX)
         self.assertIn("TaskCard.init({ open: a => openTaskLink(a.dataset.task, a.dataset.agent) });", INDEX)
+        self.assertIn("TaskCard.init({ doc: d, open:", fn(INDEX, "pdCardsInWindows"), "a panel popped out into a window gets the card there")
+        self.assertIn("pdCardsInWindows();", INDEX[INDEX.index("PD.dock.onChange("):INDEX.index("\n", INDEX.index("PD.dock.onChange("))])
         self.assertIn("key-btn", fn(INDEX, "projMenuSettingsHtml"))
         self.assertIn("/api/projects/key", fn(INDEX, "keyChoose"))
 

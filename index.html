@@ -10670,7 +10670,7 @@ function pdEnsure() {
   // A panel this page no longer has (Documents, #103) keeps no place in a
   // stored layout (Dock v0.10.0 parks unknown panels instead of dropping them).
   try { PD.dock.forget('documents'); } catch (e) {}
-  PD.dock.onChange(() => { pdKeepMiddle(); pdToolsFit(); pdPlaceChat(); barCrumbs(); });
+  PD.dock.onChange(() => { pdKeepMiddle(); pdToolsFit(); pdPlaceChat(); barCrumbs(); pdCardsInWindows(); });
   pdToolsFit();
   PD.dock.onShown(id => pdShown(id));
   // Before the chat panel comes back from its window: the window's own chat goes.
@@ -15691,6 +15691,14 @@ document.addEventListener('click', (ev) => {
   openTaskLink(a.dataset.task, a.dataset.agent);
 }, true);
 TaskCard.init({ open: a => openTaskLink(a.dataset.task, a.dataset.agent) });
+// A chip in a panel popped out into a window of its own (another document,
+// Dock's hostDocs) gets its card there too; init is a no-op on a document done.
+function pdCardsInWindows() {
+  for (const d of pdHostDocs()) {
+    if (d === document) continue;
+    try { TaskCard.init({ doc: d, open: a => openTaskLink(a.dataset.task, a.dataset.agent) }); } catch (e) {}
+  }
+}
 document.addEventListener('keydown', (ev) => {
   // Esc closes the PO's ⋯ menu first (the topmost thing), and nothing else.
   const poMenu = ev.key === 'Escape' && document.querySelector('#po-panel .po-menu:not([hidden])');
