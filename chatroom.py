@@ -328,17 +328,19 @@ def update_room(room: dict) -> None:
         _write(room)
 
 
-def set_task_number(room_id: str, project_id: str, no: int) -> dict | None:
+def set_task_number(room_id: str, project_id: str, no: int, forget_old: bool = False) -> dict | None:
     """Give a task its number in a project — read-modify-write under the room
     lock, no ``updatedAt`` bump (numbering is not activity). A number it had
     in another project is kept in ``previousNos`` so an old reference still
-    finds it. Returns the public room, or None when it no longer exists."""
+    finds it — unless ``forget_old``: a number it shared with another task
+    (the hub's start repair) was never its own. Returns the public room, or
+    None when it no longer exists."""
     with _LOCK:
         room = _read(room_id)
         if room is None:
             return None
         old, old_pid = room.get("no"), room.get("noProjectId")
-        if old and old_pid and (old_pid, old) != (project_id, no):
+        if old and old_pid and (old_pid, old) != (project_id, no) and not forget_old:
             prev = [p for p in room.get("previousNos") or [] if isinstance(p, dict)]
             if not any(p.get("projectId") == old_pid and p.get("no") == old for p in prev):
                 prev.append({"projectId": old_pid, "no": old})
