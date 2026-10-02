@@ -393,8 +393,23 @@ def silent_for(room: dict, part: dict, ev: dict, now: float) -> float:
 
 
 def _look_silent(rid: str, state: dict, now: float, statuses: dict) -> str:
-    """Tell the PO once per silent episode (the attention item shows it)."""
-    cr = _d.chatroom
+    """Tell the PO once per silent episode (the attention item shows it).
+    Under the gate, as ``_look``: a seat being handed over is left alone."""
+    with _d.rotation.GATE:
+        return _look_silent_gated(rid, state, now, statuses)
+
+
+def silent_owner_owes(room: dict, identity: str) -> bool:
+    """Whether a silent owner counts at all: it owes something
+    (``attention._owed_since``). A solo task nobody has written to, or an
+    owner that spoke last, does not. The one rule for the attention item and
+    the PO's line. ``room`` is a room record or attention's summary of one."""
+    view = room if "lastMessage" in room else {**room, "lastMessage": _last_message(room)}
+    return bool(_d.attention._owed_since(view, identity)[0])
+
+
+def _look_silent_gated(rid: str, state: dict, now: float, statuses: dict) -> str:
+    cr, rot = _d.chatroom, _d.rotation
     room = cr.get_room(rid, public=False)
     if not room or not _d._room_is_live(room) or not _d.room_po_id(room):
         return ""
@@ -402,8 +417,13 @@ def _look_silent(rid: str, state: dict, now: float, statuses: dict) -> str:
     part = cr.participant(room, owners[0]) if owners else None
     if not part:
         return ""
+    if rot.is_rotating(rid, owners[0]) or rot.awaiting_handover(rid, owners[0]):
+        return ""
+    if limit_hit(part):
+        return ""                       # at a model limit: _look_limit tells the PO
     view = {**room, "owners": owners, "workflow": _d.workflow_of(room)}
-    quiet = silent_for(view, part, _d.attention._evidence(part, statuses), now)
+    quiet = silent_for(view, part, _d.attention._evidence(part, statuses), now) \
+        if silent_owner_owes(view, owners[0]) else 0.0
     rec = state.get(rid)
     if quiet < SILENT_S:
         if rec and (rec.get("silent") or {}).get("current"):

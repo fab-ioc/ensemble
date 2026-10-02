@@ -200,6 +200,8 @@ class Allocation(_State):
     def test_allocation_skips_a_limited_model_and_names_it(self):
         self.limit()
         self.assertEqual(dashboard.hub_launch_model("claude", "")[0], "opus")
+        with mock.patch.object(dashboard.agent_models, "launch_choice", return_value=("", "max")):
+            self.assertEqual(dashboard.hub_launch_model("claude", ""), ("opus", ""))
         reason = dashboard._with_model_note("Preferred line-up kept.", [{"agent": "claude", "model": ""}])
         self.assertIn("Runs Opus: Fable (the default) hit its model limit", reason)
         self.assertEqual(dashboard.seat_model_display("claude", ""), "fable at its limit, next start opus")
@@ -374,21 +376,59 @@ class SilentOwner(unittest.TestCase):
 
 
 class SilentOwnerTellsThePo(_Stall):
-    def test_the_po_is_told_once_per_silent_episode(self):
+    def silent(self, **room):
+        """The owner silent past SILENT_S since its resume; ``room`` fields
+        are set on the room record."""
         self.sess.last_output = time.time() - stall.SILENT_S - 120
         self.idle = 5.0                     # not idle by the nudge's clock: only the backstop
         self.sess.info = lambda: {"idleSeconds": self.idle}
         full = self.room()
         chatroom.participant(full, "claude")["resumedAt"] = time.time() - stall.SILENT_S - 120
         full["messages"] = []
+        full.update(room)
         chatroom.update_room(full)
+
+    def silent_lines(self):
+        return [m for m in chatroom.get_room(self.po_rid, public=False)["messages"]
+                if "silent since" in (m.get("text") or "")]
+
+    def tick(self, t=None):
         with mock.patch.object(dashboard.rotation, "_idle", return_value=False):
-            t = time.time()
-            self.assertIn("PO told (silent)", stall.tick(t)[self.rid])
-            self.assertEqual(stall.tick(t + 60).get(self.rid, ""), "")
-        silent = [m for m in chatroom.get_room(self.po_rid, public=False)["messages"]
-                  if "silent since" in (m.get("text") or "")]
-        self.assertEqual(len(silent), 1)
+            return stall.tick(t or time.time()).get(self.rid, "")
+
+    def test_the_po_is_told_once_per_silent_episode(self):
+        self.silent()
+        t = time.time()
+        self.assertIn("PO told (silent)", self.tick(t))
+        self.assertEqual(self.tick(t + 60), "")
+        self.assertEqual(len(self.silent_lines()), 1)
+
+    def test_an_owner_at_its_model_limit_is_not_silent_too(self):
+        self.silent()
+        with mock.patch.object(stall, "limit_hit", return_value={"model": "Fable", "at": time.time()}), \
+                mock.patch.object(stall, "_look_limit", return_value=""):
+            self.assertNotIn("silent", self.tick())
+        self.assertEqual(self.silent_lines(), [])
+
+    def test_an_owner_that_owes_nothing_is_not_silent(self):
+        # It spoke last (after its resume), to nobody: the ball is elsewhere.
+        spoke = time.time() - stall.SILENT_S - 60
+        self.silent(messages=[{"from": "claude", "text": "Done for now.", "ts": spoke, "rang": []}])
+        self.assertNotIn("silent", self.tick())
+        self.assertEqual(self.silent_lines(), [])
+        # The attention item follows the same rule.
+        room = {**self.room(), "owners": ["claude"],
+                "lastMessage": {"from": "claude", "ts": spoke, "rang": []}}
+        self.assertFalse(stall.silent_owner_owes(room, "claude"))
+        room["lastMessage"] = {"from": "user", "ts": spoke, "rang": ["claude"]}
+        self.assertTrue(stall.silent_owner_owes(room, "claude"))
+
+    def test_a_seat_being_handed_over_is_left_alone(self):
+        self.silent()
+        for gate in ("is_rotating", "awaiting_handover"):
+            with mock.patch.object(dashboard.rotation, gate, return_value=True):
+                self.assertNotIn("silent", self.tick(), gate)
+        self.assertEqual(self.silent_lines(), [])
 
 
 if __name__ == "__main__":

@@ -1495,7 +1495,9 @@ def hub_launch_model(kind: str, seat_model: str = "") -> tuple[str, str]:
         try:
             pick = model_limit.choose("")
             if pick["fallback"]:
-                model = pick["fallback"]
+                # The effort was chosen for the other model: the fallback
+                # runs on its own default.
+                model, effort = pick["fallback"], ""
         except Exception:                                    # noqa: BLE001
             pass
     return model, effort

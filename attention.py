@@ -1181,7 +1181,8 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
             return ("waiting_for_you", f"{who} asked: “{q}”", asked)
         return ("waiting_for_you", f"{who} is waiting on your reply: “{q}”", asked)
 
-    if _d is not None and identity in (room.get("owners") or []) and _owed_since(room, identity)[0]:
+    if _d is not None and identity in (room.get("owners") or []) \
+            and _d.stall.silent_owner_owes(room, identity):
         # The backstop (ED-159): an owner that has produced nothing at all for
         # SILENT_S — no transcript growth, hook event, screen change or commit
         # — and that nothing excuses (stall.silence_excuse) is stalled, PO or
