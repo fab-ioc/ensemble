@@ -767,6 +767,37 @@
   /* --fg-muted there measured 4.25:1 in Light (12px): the bar's words on the
      person's balloon are --fg-subtle. */
   .msg.user .pt-bar, .msg.user .pt-chip:not(.delivered) { color:var(--fg-subtle); }
+  /* An ask in an agent's balloon (askCardHtml): its question, a button per
+     answer (Default buttons, the recommended one marked by a neutral lozenge,
+     never by colour), and a comment. Answered, the buttons settle. */
+  .msg .qa { margin:var(--s-200) 0; padding:var(--s-200) var(--s-300); border:1px solid var(--border); border-radius:var(--r-200);
+    background:var(--surface); min-width:0; max-width:100%; }
+  .qa-q { display:flex; flex-wrap:wrap; align-items:baseline; gap:var(--s-100) var(--s-200); }
+  .qa-no { flex:0 0 auto; color:var(--fg-subtle); font-size:var(--fs-200); font-weight:600; }
+  .qa-qt { flex:1 1 200px; min-width:0; color:var(--fg); font-weight:600; overflow-wrap:anywhere; }
+  .qa-opts { display:flex; flex-wrap:wrap; gap:var(--s-200); margin-top:var(--s-200); }
+  .qa-opt { display:inline-flex; flex-wrap:wrap; align-items:center; gap:var(--s-050) var(--s-200); max-width:100%; min-height:32px;
+    padding:var(--s-100) var(--s-300); background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--r-200);
+    color:var(--fg); font:inherit; text-align:left; cursor:pointer; }
+  .qa-opt:hover:not(:disabled) { background:var(--hover); }
+  .qa-opt:disabled { cursor:default; color:var(--fg-muted); }
+  .qa-opt.on { color:var(--fg); border-color:var(--fg); font-weight:600; }
+  .qa-ol { min-width:0; overflow-wrap:anywhere; }
+  .qa-od { flex:1 1 100%; min-width:0; color:var(--fg-muted); font-size:var(--fs-200); font-weight:400; overflow-wrap:anywhere; }
+  .qa-cm { display:flex; flex-wrap:wrap; align-items:flex-end; gap:var(--s-200); margin-top:var(--s-200); }
+  .qa-cm textarea { flex:1 1 200px; min-width:0; max-width:100%; box-sizing:border-box; min-height:32px; resize:vertical;
+    padding:var(--s-100) var(--s-200); background:var(--surface); color:var(--fg); border:1px solid var(--border-strong);
+    border-radius:var(--r-200); font:inherit; }
+  .qa-send { flex:0 0 auto; min-height:32px; padding:0 var(--s-300); background:var(--surface); border:1px solid var(--border-strong);
+    border-radius:var(--r-200); color:var(--fg); font:inherit; cursor:pointer; }
+  .qa-send:hover { background:var(--hover); }
+  .qa-opt:focus-visible, .qa-send:focus-visible, .qa-cm textarea:focus-visible { outline:none;
+    box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .qa-note { margin-top:var(--s-100); color:var(--fg-muted); font-size:var(--fs-200); overflow-wrap:anywhere; }
+  .qa-done { margin-top:var(--s-200); color:var(--fg-muted); overflow-wrap:anywhere; }
+  .qa-done strong { color:var(--fg); }
+  .qa-dc { display:block; margin-top:var(--s-050); color:var(--fg-muted); white-space:pre-wrap; }
+  .qa.busy .qa-dw { font-style:italic; }
   /* Away from the end of the chat: back to it, with how many arrived since. */
   #to-latest { position:absolute; right:var(--s-400); bottom:var(--s-300); z-index:5; height:24px; padding:0 var(--s-300);
     border-radius:var(--r-full); background:var(--surface); color:var(--fg); border:1px solid var(--border-strong);
@@ -1027,6 +1058,8 @@
     .ed-refs a.ref-chip { overflow: hidden; }   /* its label is cut, never past the edge */
     button, select, .agent .ah { min-height: var(--touch-min); }
     button { min-width: var(--touch-min); }
+    .qa-opt, .qa-send { min-height: var(--touch-min); }
+    .qa-cm textarea { min-height: var(--touch-min); font-size: var(--fs-400); }
     #promptcard .pc-x, #cmt-tray .cmt-item-x, #livetail .lt-more { min-width: var(--touch-min); }
     .att-chip { height: var(--touch-min); }
     .att-chip .att-x { height: var(--touch-min); }
@@ -2330,12 +2363,221 @@ function hubBody(m) {
   const h = t.indexOf(head), at = h >= 0 ? t.indexOf('): ', h + head.length) : -1;
   return at >= 0 ? t.slice(at + 3) : t;
 }
+// ---- Asks (#163, GitHub issue 7): begin ------------------------------------
+// A line of its own starting "Ask:" marks a question for the person; the list
+// right under it is its options (asks.py has the whole rule, and parses the
+// same way: the tests hold the two to the same answers). Each ask gets a row
+// of quick answers under it: a button per option (the recommended one marked),
+// Yes and No, and a comment; one click sends "Re “<ask>”: <option>" as the
+// person's message, once. A message without the marker gets nothing.
+const QA_RE = {
+  fence: /^[ \t]*(```|~~~)/, quote: /^[ \t]*>[ \t]?/,
+  ask: /^([ \t]*)((?:(?:#{1,6}|[-*+]|[0-9]{1,3}[.)])[ \t]+)*)(?:\*\*|__)?[ \t]*ask(?:[ \t]*\(([^)\n]{1,24})\))?[ \t]*(?:\*\*|__)?[ \t]*:[ \t]*(?:\*\*|__)?[ \t]*(.*)$/i,
+  item: /^([ \t]*)(?:[-*+]|[0-9]{1,3}[.)]|[A-Za-z][.)])[ \t]+(\S.*)$/,
+  listLead: /(?:[-*+]|[0-9]{1,3}[.)])[ \t]+/,
+  // The hub reads the same lines and spaces (asks.py _LINE_BREAKS, _OTHER_SPACE).
+  breaks: /\r\n?|[\u2028\u2029]/g,
+  space: /[\x0b\x0c\x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u202f\u205f\u3000\ufeff]/g,
+  checkbox: /^\[[ xX]\][ \t]+/,
+  rec: /[ \t]*(?:\*\*|__|\*|_)?[(\[][ \t]*recommended[ \t]*[)\]](?:\*\*|__|\*|_)?|[ \t]+[—–-][ \t]*(?:\*\*|__|\*|_)?recommended(?:\*\*|__|\*|_)?\.?[ \t]*$/i,
+  recLead: /^(?:\*\*|__)?recommended(?:\*\*|__)?[ \t]*[:—–-][ \t]*(?:\*\*|__)?[ \t]*/i,
+  boldHead: /^(?:\*\*|__)([^*_\n]+?)(?:\*\*|__)[ \t]*(.*)$/,
+  split: /[ \t]+[—–][ \t]+|[ \t]+-{1,2}[ \t]+|:[ \t]+/,
+  yesno: /^(?:yes[ \t]*(?:\/|-|or)[ \t]*no|y\/n|yesno)$/i,
+};
+const ASK_Q_MAX = 200, ASK_LABEL_MAX = 80;
+const askPlain = s => String(s || '').replace(/\*\*|__|`/g, '').split(/\s+/).filter(Boolean).join(' ');
+const askIndent = s => s.replace(/\t/g, '    ').length;
+const askLines = text => String(text || '').replace(QA_RE.breaks, '\n').replace(QA_RE.space, ' ').split('\n');
+// Cut by characters, as the hub does: never half an emoji.
+const askCut = (s, n) => Array.from(s).slice(0, n).join('');
+function askOption(text) {
+  let t = text.trim().replace(QA_RE.checkbox, ''), rec = false;
+  if (QA_RE.recLead.test(t)) { t = t.replace(QA_RE.recLead, ''); rec = true; }
+  if (QA_RE.rec.test(t)) { t = t.replace(QA_RE.rec, '').trim(); rec = true; }
+  let label, detail;
+  const b = t.match(QA_RE.boldHead);
+  if (b) { label = b[1]; detail = b[2].replace(/^[ \t]*[:—–-]+[ \t]*/, ''); }
+  else { const s = QA_RE.split.exec(t); label = s ? t.slice(0, s.index) : t; detail = s ? t.slice(s.index + s[0].length) : ''; }
+  label = askPlain(label).replace(/[.:;,]+$/, '').trim();
+  if (Array.from(label).length > ASK_LABEL_MAX) label = askCut(label, ASK_LABEL_MAX - 1).trimEnd() + '…';
+  return label ? { label, detail: askPlain(detail), recommended: rec } : null;
+}
+// [{ n, question, kind: decision | yesno | open, options: [{ label, detail,
+// recommended }], recommended: index or -1, line, end }]: its lines, end exclusive.
+function parseAsks(text) {
+  const lines = askLines(text);
+  const bare = lines.map(l => l.replace(QA_RE.quote, ''));
+  const out = [];
+  let fenced = false, i = 0;
+  while (i < lines.length) {
+    const ln = bare[i];
+    if (QA_RE.fence.test(ln)) { fenced = !fenced; i++; continue; }
+    const m = fenced ? null : ln.match(QA_RE.ask);
+    if (!m) { i++; continue; }
+    const start = i, nested = QA_RE.listLead.test(m[2] || ''), ind = askIndent(m[1]);
+    let q = m[4].replace(/(?:\*\*|__)[ \t]*$/, '').trim();
+    i++;
+    if (!q) {
+      let j = i;
+      while (j < lines.length && !bare[j].trim()) j++;
+      if (j < lines.length && !QA_RE.item.test(bare[j]) && !QA_RE.ask.test(bare[j]) && !QA_RE.fence.test(bare[j])) { q = bare[j].trim(); i = j + 1; }
+    }
+    let opts = [], end = i, j = i, gap = 0;
+    while (j < lines.length) {
+      const b = bare[j];
+      if (!b.trim()) { if (++gap > 1) break; j++; continue; }
+      const it = b.match(QA_RE.item);
+      if (!it || QA_RE.ask.test(b) || QA_RE.fence.test(b)) break;
+      if (nested && askIndent(it[1]) <= ind) break;
+      const o = askOption(it[2]);
+      if (o) opts.push(o);
+      gap = 0; j++; end = j;
+    }
+    i = end;
+    const question = askCut(askPlain(q), ASK_Q_MAX);
+    if (!question) continue;
+    const tag = (m[3] || '').split(/\s+/).filter(Boolean).join(' ');
+    const labels = opts.map(o => o.label.toLowerCase()).sort();
+    let kind;
+    if (opts.length && labels.length === 2 && labels[0] === 'no' && labels[1] === 'yes') kind = 'yesno';
+    else if (opts.length) kind = 'decision';
+    else if (QA_RE.yesno.test(tag)) { kind = 'yesno'; opts = [{ label: 'Yes', detail: '', recommended: false }, { label: 'No', detail: '', recommended: false }]; }
+    else kind = 'open';
+    const rec = opts.findIndex(o => o.recommended);
+    opts.forEach((o, k) => { o.recommended = k === rec; });
+    out.push({ n: out.length, question, kind, options: opts, recommended: rec, line: start, end: Math.max(end, start + 1) });
+  }
+  return out;
+}
+// Parsed once per text: every poll draws the same balloons.
+const ASK_CACHE = new Map();
+function asksOf(m) {
+  if (!m || !m.id || m.from === 'user' || m.divider || m.kind === 'pomsg' || m.kind === 'report' || m.kind === 'notice') return [];
+  const t = String(m.text || '');
+  if (!/ask/i.test(t)) return [];
+  let a = ASK_CACHE.get(t);
+  if (!a) { a = parseAsks(t); ASK_CACHE.set(t, a); if (ASK_CACHE.size > 500) ASK_CACHE.delete(ASK_CACHE.keys().next().value); }
+  return a;
+}
+const hasAsks = m => asksOf(m).length > 0;
+// How an ask stands: { option, comment, at } once answered (the hub's, or this
+// page's click on its way), { approved: label } when a thumbs up on the
+// balloon chose its recommendation, else null.
+const ASK_LOCAL = new Map();     // "mid:n" → the answer this page sent, until the hub has it
+function askAnswer(m, a, P) {
+  const got = ((P && P.asks) || {})[m.id] || {};
+  if (got[a.n] || got[String(a.n)]) return got[a.n] || got[String(a.n)];
+  const local = ASK_LOCAL.get(m.id + ':' + a.n);
+  if (local) return local;
+  if (P && P.approvals && P.approvals.has(m.id) && a.recommended >= 0) return { approved: a.options[a.recommended].label };
+  return null;
+}
+// Waiting for the person, by the hub's rules (asks.open_in): a week at most
+// (one of unknown time, until answered), and only until they write in the
+// chat after it, answering it in words or setting it aside. Its card still
+// answers then; it just no longer holds the balloon or asks for attention.
+const ASK_OPEN_S = 7 * 86400;
+// A Done task waits for nobody (asks.open_by_room): its column as stored.
+const roomDone = () => String((typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ && ROOM_OBJ.workflow) || '').toLowerCase().replace(/[\s_-]/g, '') === 'done';
+const askSettled = (m, P) => roomDone() || (!!m.ts && ((Date.now() / 1000 - m.ts >= ASK_OPEN_S) || m.ts < ((P && P.asksSettledAt) || 0)));
+const openAsks = (m, P) => askSettled(m, P) ? [] : asksOf(m).filter(a => !askAnswer(m, a, P));
+// One ask drawn: its question, then its quick answers or, answered, what was
+// answered with the buttons settled (pressed, disabled).
+function askCardHtml(m, a, total, P) {
+  const got = askAnswer(m, a, P), key = m.id + ':' + a.n;
+  const chosen = got ? (got.approved || got.option || '') : '';
+  const busy = !!(got && got.pending);
+  const head = `<div class="qa-q"><span class="qa-no">${total > 1 ? `Ask ${a.n + 1} of ${total}` : 'Ask'}</span><span class="qa-qt">${esc(a.question)}</span></div>`;
+  const opts = a.options.map(o => {
+    const on = !!chosen && o.label === chosen;
+    return `<button type="button" class="qa-opt${o.recommended ? ' rec' : ''}${on ? ' on' : ''}" data-ask="${esc(key)}" data-opt="${esc(o.label)}"`
+      + `${got ? ' disabled' : ''} aria-pressed="${on}" title="${esc(got ? (on ? 'Your answer' : 'Answered') : `Answer “${o.label}”${o.detail ? ': ' + o.detail : ''}, with your comment if you wrote one. Sent once.`)}">`
+      + `<span class="qa-ol">${esc(o.label)}</span>${o.recommended ? '<span class="lz lz-neutral">recommended</span>' : ''}`
+      + `${o.detail ? `<span class="qa-od">${esc(o.detail)}</span>` : ''}</button>`;
+  }).join('');
+  if (got) {
+    const said = got.approved ? `Approved: ${got.approved}` : (got.option || '');
+    const words = busy ? 'Sending…' : 'You answered';
+    return `<div class="qa${busy ? ' busy' : ''} done" data-ask="${esc(key)}">${head}${opts ? `<div class="qa-opts">${opts}</div>` : ''}`
+      + `<div class="qa-done"><span class="qa-dw">${words}${said ? ':' : ''}</span>${said ? ` <strong>${esc(said)}</strong>` : ''}`
+      + `${got.comment ? `<span class="qa-dc">${esc(got.comment)}</span>` : ''}</div></div>`;
+  }
+  const open = a.kind === 'open';
+  const aside = !askSettled(m, P) ? ''
+    : `<div class="qa-note">${roomDone() ? 'This task is done' : m.ts < ((P && P.asksSettledAt) || 0) ? 'You wrote in the chat after this' : 'Over a week old'}: no longer waiting for you. It can still be answered here.</div>`;
+  return `<div class="qa" data-ask="${esc(key)}">${head}${aside}${opts ? `<div class="qa-opts" role="group" aria-label="${esc('Answer: ' + a.question)}">${opts}</div>` : ''}`
+    + `<div class="qa-cm"><textarea rows="1" data-ask="${esc(key)}" aria-label="${esc((open ? 'Your answer to: ' : 'Comment on: ') + a.question)}" placeholder="${open ? 'Your answer' : 'Comment (optional)'}" title="${open ? '' : 'Goes with the answer you press, or alone with Send comment'}"></textarea>`
+    + `<button type="button" class="qa-send" data-ask="${esc(key)}" title="${open ? 'Send your answer' : 'Send your comment alone'}">${open ? 'Send' : 'Send comment'}</button></div></div>`;
+}
+// An agent's balloon with asks: its words as always, each ask's lines drawn
+// as its card in their place, then the balloon's bar.
+function askBodyHtml(m, P, md, bar) {
+  const found = asksOf(m);
+  if (!found.length) return null;
+  const lines = askLines(m.text);
+  return withPathAbbrevs(m.text, () => {
+    let h = '', at = 0;
+    const words = (a, b) => { const t = lines.slice(a, b).join('\n'); return t.trim() ? md(t) : ''; };
+    for (const a of found) { h += words(at, a.line) + askCardHtml(m, a, found.length, P); at = a.end; }
+    h += words(at, lines.length);
+    return `<div class="text md">${h}</div>${bar ? bar(m) : ''}`;
+  });
+}
+// The draft comments, kept across a redraw that replaces a balloon.
+const ASK_DRAFT = new Map();
+function askRestoreDrafts(box) {
+  box.querySelectorAll('.qa-cm textarea[data-ask]').forEach(ta => {
+    const d = ASK_DRAFT.get(ta.dataset.ask);
+    if (d && !ta.value) ta.value = d;
+  });
+}
+// A click on an option (or Send): sent once from this page, and the hub takes
+// it once from any device. The reply's points settle the card.
+async function askSend(key, option, post) {
+  if (ASK_LOCAL.has(key)) return null;
+  const cut = key.lastIndexOf(':'), mid = key.slice(0, cut), n = +key.slice(cut + 1);
+  const m = (LAST_ITEMS || []).find(x => x && x.id === mid);
+  const a = m && asksOf(m)[n];
+  if (!a || askAnswer(m, a, POINTS)) return null;
+  const comment = (ASK_DRAFT.get(key) || '').trim();
+  if (!option && !comment) { pointsNote(a.kind === 'open' ? 'Write your answer first.' : 'Pick an answer, or write a comment first.'); return null; }
+  ASK_LOCAL.set(key, { option, comment, pending: true });
+  if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
+  try {
+    const r = await post('/api/room/ask', { roomId: ROOM, mid, n, option, comment, to: SOLO_MODE ? '' : m.from });
+    ASK_DRAFT.delete(key);
+    if (r && r.points) pointsChanged(r.points, ptTicket());
+    return r;
+  } catch (e) {
+    // The hub's points first: a kept answer is recorded, its card settled.
+    if (e && e.points) pointsChanged(e.points, ptTicket());
+    if (e && e.kept) {
+      ASK_DRAFT.delete(key);
+      pointsNote('Your answer is kept but not delivered yet: Retry it in the chat.');
+      setTimeout(refresh, 400);
+    } else {
+      pointsNote('Not sent: ' + ((e && (e.reason || e.message)) || 'the hub did not answer') + '. Try again.');
+    }
+    return null;
+  } finally {
+    ASK_LOCAL.delete(key);
+    if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
+  }
+}
+function askClick(e) {
+  const b = e.target.closest && e.target.closest('.qa-opt, .qa-send');
+  if (!b || b.disabled) return false;
+  askSend(b.dataset.ask, b.classList.contains('qa-opt') ? b.dataset.opt : '', postOk);
+  return true;
+}
+// ---- Asks: end
 // A line of its own asking for the person's decision ("Decision needed: …").
 const DECISION_RE = /^[ \t]*(?:(?:[-*+>]|#{1,6})[ \t]+)*(?:\*\*|__)?Decision needed:/m;
 // The reply to these is the person's to read: their own words, and the hub's
 // note that made this conversation a PO (it ends by telling them what it understood).
 const forPersonKind = k => k === 'human' || k === 'madepo';
-const isDecision = m => !!m && !m.divider && m.from !== 'user' && DECISION_RE.test(m.text || '');
+const isDecision = m => !!m && !m.divider && m.from !== 'user' && (DECISION_RE.test(m.text || '') || hasAsks(m));
 // Quiet: a row at any age. A hub input always; in Just us also an agent's
 // reply to one. A decision is the person's whatever it answers, so it stays.
 function quietItem(m, justUs) {
@@ -2547,7 +2789,8 @@ function foldChips(m, un, idle, superseded) {
     h += `<span class="hub-kind"${m.taskTitle ? ` title="${esc(m.taskTitle)}"` : ''}>${esc(hubLabel(m))}</span>`;
   const a = m.from !== 'user' ? answerChip(m.answers) : null;
   if (a) h += `<span class="answers" title="${esc(a.tip)}">${esc(a.text)}</span>`;
-  if (isDecision(m)) h += '<span class="lz lz-warn">needs your decision</span>';
+  if (hasAsks(m)) { const k = openAsks(m, POINTS).length; if (k) h += `<span class="lz lz-warn">${k > 1 ? k + ' to answer' : 'needs your answer'}</span>`; }
+  else if (isDecision(m)) h += '<span class="lz lz-warn">needs your decision</span>';
   if (superseded) h += '<span class="lz lz-neutral" title="A later message from the same task stands in its place">superseded</span>';
   if (un === 'past' || (un === 'last' && idle))
     h += '<span class="no-answer" title="The agent wrote nothing back before its next input">no answer yet</span>';
@@ -2868,7 +3111,7 @@ function ptTaskWords(p) {
 // answer), unacked (those answers).
 function pointMaps(pv) {
   const P = { items: ((pv && pv.items) || []).map(ptItem), byMid: new Map(), byAnswer: new Map(), byId: new Map(), keep: new Set(),
-    unacked: new Set(), approvals: new Set((pv && pv.approvals) || []), open: (pv && pv.open) || 0,
+    unacked: new Set(), approvals: new Set((pv && pv.approvals) || []), asks: (pv && pv.asks) || {}, asksSettledAt: (pv && pv.asksSettledAt) || 0, open: (pv && pv.open) || 0,
     planned: (pv && pv.planned) || 0, delivered: (pv && (pv.delivered != null ? pv.delivered : pv.answered)) || 0 };
   const add = (map, k, p) => { if (!k) return; const l = map.get(k); if (!l) map.set(k, [p]); else if (!l.includes(p)) l.push(p); };
   for (const p of P.items) {
@@ -3131,7 +3374,9 @@ function renderBubbles(items, opt = {}) {
   // so does one holding an open point, or an answer not yet acknowledged,
   // whatever would fold it (its age, its task, Just us).
   const heldKeys = foldHeld(items, COMMENTS);
-  const held = heldBy(heldKeys, POINTS.keep);
+  // A balloon with an ask still to answer never folds either (#163).
+  const heldPts = heldBy(heldKeys, POINTS.keep);
+  const held = (m, i) => (!!heldPts && heldPts(m, i)) || openAsks(m, POINTS).length > 0;
   const quiet = (m, i) => quietItem(m, false);
   const prevBase = stick ? null : FOLD.base, prevHid = FOLD.hid || new Set();
   const plan = foldPlan(items, FOLD, stick, held, quiet);
@@ -3204,7 +3449,8 @@ function renderBubbles(items, opt = {}) {
   const href = mid => refHref(ROOM, mid);
   const ptBar = m => pointBarHtml(m, POINTS, href);
   // The person's numbered points: a chip per item (pointItemsHtml).
-  const body = m => { const it = m.from === 'user' && m.id ? pointItems(m.text) : null; return it ? pointItemsHtml(m, it, POINTS, href, md) : null; };
+  // An agent's asks: a card of quick answers in each one's place (askBodyHtml).
+  const body = m => { if (m.from !== 'user') return askBodyHtml(m, POINTS, md, ptBar); const it = m.id ? pointItems(m.text) : null; return it ? pointItemsHtml(m, it, POINTS, href, md) : null; };
   const rows = [];
   // The catch-up line goes above what is drawn first for the first message after the read point.
   const cu = CU_POINT ? catchUp(items, readPoint(items, CU_POINT), clean, CHAT_NAMES, POINTS.unacked) : null;
@@ -3263,6 +3509,7 @@ function renderBubbles(items, opt = {}) {
       ? `<div class="pend-state" role="status">Not delivered: ${esc(ROOM_PENDING.error || 'the session did not come up')}. <button type="button" class="pend-retry">Retry</button><button type="button" class="pend-discard">Discard</button></div>`
       : '') + '</div>'));
   patchChildren(box, rows);
+  askRestoreDrafts(box);
   showAskLine(items);
   MD_CACHE = used;
   if (stick) {
@@ -4589,7 +4836,8 @@ async function postOk(path, body) {
   const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   let d = null;
   try { d = await r.json(); } catch (e) {}
-  if (!r.ok || !d || d.error) throw Object.assign(new Error((d && d.error) || ('error ' + r.status)), { status: r.status, kept: !!(d && d.kept), send: d && d.send });
+  if (!r.ok || !d || d.error) throw Object.assign(new Error((d && d.error) || ('error ' + r.status)), { status: r.status, kept: !!(d && d.kept), send: d && d.send,
+    points: d && d.points, reason: d && typeof d.message === 'string' ? d.message : '' });
   return d;
 }
 // Why a send did not arrive, in words.
@@ -5509,7 +5757,12 @@ $('#points-line').addEventListener('click', e => {
   if (pointClick(e)) return;
   if (e.target.closest && e.target.closest('.pt-sum')) { POINTS_OPEN = !POINTS_OPEN; showPointsLine(); }
 });
+$('#msgs').addEventListener('input', e => {
+  const ta = e.target.closest && e.target.closest('.qa-cm textarea[data-ask]');
+  if (ta) ASK_DRAFT.set(ta.dataset.ask, ta.value);
+});
 $('#msgs').addEventListener('click', e => {
+  if (askClick(e)) return;
   if (pointClick(e)) return;
   const cl = e.target.closest && e.target.closest('.copy-link');
   if (cl) { copyLink(cl); return; }

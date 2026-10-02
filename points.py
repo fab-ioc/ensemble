@@ -395,7 +395,7 @@ def _path(room_id: str) -> Path:
 
 def _empty(room_id: str) -> dict:
     return {"version": 1, "roomId": room_id, "next": 1, "points": [],
-            "approvals": {}, "lastPersonAt": 0.0, "derived": DERIVED}
+            "approvals": {}, "asks": {}, "asksSettledAt": 0.0, "lastPersonAt": 0.0, "derived": DERIVED}
 
 
 def _valid(d) -> bool:
@@ -409,6 +409,12 @@ def _clean(led: dict, room_id: str) -> dict:
     out["derived"] = led.get("derived") if isinstance(led.get("derived"), int) else 0
     if isinstance(led.get("approvals"), dict):
         out["approvals"] = led["approvals"]
+    if isinstance(led.get("asks"), dict):
+        out["asks"] = led["asks"]
+    try:
+        out["asksSettledAt"] = float(led.get("asksSettledAt") or 0)
+    except (TypeError, ValueError):
+        out["asksSettledAt"] = 0.0
     try:
         out["lastPersonAt"] = float(led.get("lastPersonAt") or 0)
     except (TypeError, ValueError):
@@ -1310,6 +1316,49 @@ def approve(room_id: str, mid: str, now: float | None = None) -> bool:
         return True
 
 
+def answer_ask(room_id: str, mid: str, n: int, answer: dict, now: float | None = None) -> dict | None:
+    """One ask of a balloon answered (asks.py): recorded once, from any
+    device. None when it is new; the answer recorded before when it was
+    already answered."""
+    now = time.time() if now is None else now
+    with _LOCK:
+        led = load(room_id)
+        got = led["asks"].setdefault(mid, {})
+        if str(n) in got:
+            return got[str(n)]
+        got[str(n)] = {**answer, "at": now}
+        _save(room_id, led)
+        return None
+
+
+def settle_asks(room_id: str, text: str, now: float | None = None) -> None:
+    """The person wrote in the chat (not a quick answer): the asks of the
+    messages before it wait for them no more. Their cards still answer.
+    Only words of their own, as take() reads them: a command or hub input
+    settles nothing."""
+    body = (text or "").strip()
+    if not room_id or not body or body.startswith("/") or _d.hub_input_kind(body)["kind"] != "human" \
+            or body.startswith(_d.PO_MESSAGE_PREFIX):
+        return
+    now = time.time() if now is None else now
+    with _LOCK:
+        led = load(room_id)
+        if float(led.get("asksSettledAt") or 0) < now:
+            led["asksSettledAt"] = now
+            _save(room_id, led)
+
+
+def unanswer_ask(room_id: str, mid: str, n: int) -> None:
+    """The answer could not be sent: the ask may be answered again."""
+    with _LOCK:
+        led = load(room_id)
+        got = led["asks"].get(mid) or {}
+        if got.pop(str(n), None) is not None:
+            if not got:
+                led["asks"].pop(mid, None)
+            _save(room_id, led)
+
+
 def unapprove(room_id: str, mid: str) -> None:
     """The approval could not be delivered: it may be given again, and the
     points it acknowledged are as they were (unless they moved since)."""
@@ -1483,7 +1532,8 @@ def view(room_id: str, room: dict | None = None) -> dict:
     pts = sorted(live + shut, key=order, reverse=True)
     task = task_lookup(room_id, room) if any(p.get("task") and p["state"] in LIVE for p in pts) else None
     return {"items": [_item(p, task) for p in pts], **_counts(led),
-            "approvals": sorted(led.get("approvals") or {})}
+            "approvals": sorted(led.get("approvals") or {}),
+            "asks": led.get("asks") or {}, "asksSettledAt": float(led.get("asksSettledAt") or 0)}
 
 
 def open_points(room_id: str, identity: str = "", skip=()) -> list[dict]:

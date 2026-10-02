@@ -98,6 +98,7 @@ import legacy_install
 import peer_process
 # The person's points: every point they raise is kept until they acknowledge its answer.
 import points
+import asks
 # The person's sends: each kept by its key until the agent's conversation shows it.
 import sends
 # A project's Documents folder: its tasks' reports, newest first.
@@ -147,6 +148,7 @@ model_limit.bind(sys.modules[__name__])
 po_messages.bind(sys.modules[__name__])
 rotation.bind(sys.modules[__name__])
 points.bind(sys.modules[__name__])
+asks.bind(sys.modules[__name__])
 sends.bind(sys.modules[__name__])
 # Capture each agent terminal's dying screen onto its task, before the reaper
 # drops the buffer — that evidence is why a death is visible at all.
@@ -2351,6 +2353,12 @@ def discard_pending(room_id: str, key: str = "") -> bool:
                 points.unapprove(room_id, key[len("approve:"):])
             else:
                 points.discard(room_id, points.point_ids(it.get("text") or ""), key)
+                if key.startswith("ask:"):
+                    # A quick answer never delivered: its ask is open again.
+                    mid, _, n = key[len("ask:"):].rpartition(":")
+                    if mid and n.isdigit():
+                        points.unanswer_ask(room_id, mid, int(n))
+                        asks.forget()
         except Exception as e:      # noqa: BLE001 — the discard itself stands
             print(f"[points] {room_id}: held points not taken back: {e!r}", flush=True)
     return True
@@ -8274,6 +8282,19 @@ def _points_view(rid: str) -> dict | None:
         return None
 
 
+def _settle_asks(rid: str, text: str, key: str) -> None:
+    """A message of the person's went through: words of their own in the chat
+    answer, or set aside, the asks before them (asks.py) — they wait for the
+    person no more. A quick answer or a thumbs-up settles only its own."""
+    if key.startswith(("ask:", "approve:")):
+        return
+    try:
+        points.settle_asks(rid, text)
+        asks.forget()
+    except Exception as e:  # noqa: BLE001
+        print(f"[asks] {rid}: not settled: {e!r}", flush=True)
+
+
 def _points_discard(rid: str, ids: list, key: str) -> None:
     """Take a refused send's points back; the refusal is answered either way."""
     try:
@@ -11284,6 +11305,102 @@ class Handler(BaseHTTPRequestHandler):
                 return r.get("pid")
         return None
 
+    def _room_resume(self, data: dict) -> tuple[int, dict]:
+        """/api/room/resume (see there) as (status, reply): a send of the
+        person's, and the quick answer to an ask, go this one way."""
+        rid, bad = http_task_id(data.get("roomId") or data.get("task") or "", data.get("projectId") or "")
+        if bad:
+            return (404, bad)
+        room_full = chatroom.get_room(rid, public=False)
+        if room_full is None:
+            return (404, {"error": "no_such_room"})
+        key = str(data.get("key") or "").strip()[:200]
+        # A send queued by a hub since restarted failed: the same key
+        # again is its retry (not a duplicate), and Discard can drop it.
+        sends.reconcile(rid)
+        if data.get("discard"):
+            return (200, {"ok": True, "discarded": discard_pending(rid, key)})
+        if data.get("dismiss"):
+            # Hide a send that was typed in but that its conversation
+            # does not show (the agent answered a prompt with it): it
+            # was delivered, so its points stay.
+            s = sends.get(rid, key)
+            gone = bool(s and s["state"] in ("delivered", "confirmed") and sends.drop(rid, [key]))
+            return (200, {"ok": True, "dismissed": gone})
+        text = (data.get("text") or "").strip()
+        to = (data.get("to") or "").strip()
+        # Every send of the person's has a key, and with it a receipt the
+        # page shows until the conversation has it (sends.py).
+        if text and not key:
+            key = sends.new_key()
+        # ``quiet``: no resume note — for a room that a hub crash stopped,
+        # whose agent has nothing new to do (the planned restart brings
+        # rooms back this way by itself).
+        quiet = data.get("quiet") is True
+        pids: list = []
+        # A draft (created but never launched, e.g. by a planning agent)
+        # starts fresh; anything else resumes its agents' conversations.
+        try:
+            with _SAY_KEYS_LOCK if key else contextlib.nullcontext():
+                prior = sends.get(rid, key) if key else None
+                held = bool(key) and key_held(rid, key)
+                # A send that failed and that no resume holds any more
+                # (its hub restarted, its agent stopped before reading
+                # it): the same key again is its retry, with its text.
+                again = prior is not None and prior["state"] == "failed" and not held
+                if key and not held and not again and (prior is not None or _say_key_seen(rid, key)):
+                    # The same send again (a lost reply, another tab):
+                    # taken once. Its receipt says where it is.
+                    return (200, {"ok": True, "duplicate": True,
+                                  **({"send": prior} if prior else {})})
+                if again:
+                    text, to = prior["text"], prior.get("to") or ""
+                else:
+                    # The images only once the send is known not to be a
+                    # duplicate: a retried lost reply copies nothing again.
+                    try:
+                        paths = attachment_paths(room_full, data.get("attachments"))
+                    except attachments.Refused as e:
+                        return (e.status, e.payload())
+                    # The person's words become points, each with its line
+                    # for the agent; a retry of a held send keeps its own.
+                    if text and not held:
+                        text, pids = self._take_points(room_full, text, to, key)
+                    text = message_refs.with_images(text, paths, attachment_names(data.get("attachments")))
+                if text and not held:
+                    sends.accept(rid, key, text, to)
+                result = (self._resume_room(room_full, text=text, to=to, key=key, quiet=True)
+                          if quiet else self._resume_room(room_full, text=text, to=to, key=key))
+                if key:
+                    _SAY_KEYS[(rid, key)] = time.time()
+                # Never an ok that did nothing: a send the hub neither
+                # delivered nor holds on a resume under way failed, and
+                # is kept for Retry (the #82 send to a Done task).
+                why = _send_left_behind(rid, key) if key else ""
+                if why:
+                    raise StartRoomError(why)
+                _settle_asks(rid, text, key)
+        except Exception as exc:    # noqa: BLE001 — refused, in words; the text is kept
+            print(f"[resume] {rid}: refused — {exc!r}", flush=True)
+            # ``kept``: the text is held here, shown in the chat as not
+            # delivered with Retry — the page need not keep it too.
+            with _RESUMES_LOCK:
+                res = _RESUMES.get(rid)
+                kept = bool(text) and res is not None and any(
+                    (key and it.get("key") == key) or it["text"] == text for it in res.queue)
+            s = sends.get(rid, key) if (key and text) else None
+            if s is not None and s["state"] == "failed":
+                kept = True
+            elif s is not None and not kept:
+                sends.drop(rid, [key])      # the page keeps it in the box
+            if not kept:
+                _points_discard(rid, pids, key)
+            return (400, {"error": str(exc) or exc.__class__.__name__, "kept": kept,
+                          **({"send": sends.get(rid, key)} if kept and key else {})})
+        return (200, {"ok": True, **result,
+                      **({"send": sends.get(rid, key)} if text and key else {}),
+                      "room": chatroom.get_room(rid)})
+
     def _take_points(self, room_full: dict, text: str, to: str, key: str) -> tuple[str, list]:
         """The person's message as its agent gets it, with its points
         (points.take); as it was when the ledger cannot be written."""
@@ -13534,6 +13651,7 @@ class Handler(BaseHTTPRequestHandler):
                 _points_discard(rid, pids, key)
                 self._send_json(404, {"error": "no_such_room"})
                 return
+            _settle_asks(rid, text, key)
             self._ring_recipients(rid, result)
             self._send_json(200, {"ok": True, "result": result})
             return
@@ -13563,6 +13681,68 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send_json(200, {"ok": True, "point": {"id": pt["id"], "state": pt["state"]},
                                   "points": _points_view(rid)})
+            return
+        if p == "/api/room/ask":
+            # The quick answer to one ask of a balloon (asks.py):
+            # {roomId, mid, n, option?, comment?, to?}. The hub reads the ask
+            # from the balloon itself, takes the answer once per ask from any
+            # device, and sends it as the person's message ("Re “<ask>”:
+            # <option>" and the comment), a point like any other. The same
+            # ask again is a duplicate, with the answer it already has.
+            if self._files_cross_site():
+                return
+            rid = (data.get("roomId") or "").strip()
+            mid = str(data.get("mid") or "").strip()[:200]
+            room_full = chatroom.get_room(rid, public=False) if rid else None
+            if room_full is None:
+                self._send_json(404, {"error": "no_such_room"})
+                return
+            try:
+                n = int(data.get("n"))
+            except (TypeError, ValueError):
+                n = -1
+            if not mid or n < 0:
+                self._send_json(400, {"error": "missing_fields"})
+                return
+            try:
+                found = asks.parse(points._balloon_text(rid, mid, {}) or "")
+            except Exception as e:  # noqa: BLE001
+                print(f"[asks] {rid}: {mid} not read: {e!r}", flush=True)
+                found = []
+            if n >= len(found):
+                self._send_json(404, {"error": "no_such_ask",
+                                      "message": "That question is not in the message any more."})
+                return
+            ask = found[n]
+            option = asks.check(ask, str(data.get("option") or ""))
+            comment = str(data.get("comment") or "").strip()[:4000]
+            if option is None or not (option or comment):
+                self._send_json(400, {"error": "bad_answer",
+                                      "message": "Pick one of its options, or write a comment."})
+                return
+            to = (data.get("to") or "").strip()
+            if to and not chatroom.participant(room_full, to):
+                to = ""
+            try:
+                before = points.answer_ask(rid, mid, n, {"option": option, "comment": comment,
+                                                         "question": ask["question"]})
+            except Exception as e:  # noqa: BLE001
+                print(f"[asks] {rid}: answer not saved: {e!r}", flush=True)
+                self._send_json(500, {"error": "not_saved", "message": "The hub could not save that. Try again."})
+                return
+            if before is not None:
+                self._send_json(200, {"ok": True, "duplicate": True, "answer": before,
+                                      "points": _points_view(rid)})
+                return
+            asks.forget()
+            code, reply = self._room_resume({"roomId": rid, "to": to, "key": f"ask:{mid}:{n}",
+                                             "text": asks.answer_text(ask, option, comment)})
+            if code != 200 and not reply.get("kept"):
+                try:
+                    points.unanswer_ask(rid, mid, n)
+                except Exception as e:  # noqa: BLE001
+                    print(f"[asks] {rid}: answer not taken back: {e!r}", flush=True)
+            self._send_json(code, {**reply, "points": _points_view(rid)})
             return
         if p == "/api/room/approve":
             # A thumbs up on a balloon asking for a decision: "yes, go with
@@ -13758,104 +13938,8 @@ class Handler(BaseHTTPRequestHandler):
             # that key (the resume it started failed later): then the same
             # send is its retry. ``roomId`` may be a number (#18 with
             # ``projectId``, ED-18), or ``task`` may give it.
-            rid, bad = http_task_id(data.get("roomId") or data.get("task") or "", data.get("projectId") or "")
-            if bad:
-                self._send_json(404, bad)
-                return
-            room_full = chatroom.get_room(rid, public=False)
-            if room_full is None:
-                self._send_json(404, {"error": "no_such_room"})
-                return
-            key = str(data.get("key") or "").strip()[:200]
-            # A send queued by a hub since restarted failed: the same key
-            # again is its retry (not a duplicate), and Discard can drop it.
-            sends.reconcile(rid)
-            if data.get("discard"):
-                self._send_json(200, {"ok": True, "discarded": discard_pending(rid, key)})
-                return
-            if data.get("dismiss"):
-                # Hide a send that was typed in but that its conversation
-                # does not show (the agent answered a prompt with it): it
-                # was delivered, so its points stay.
-                s = sends.get(rid, key)
-                gone = bool(s and s["state"] in ("delivered", "confirmed") and sends.drop(rid, [key]))
-                self._send_json(200, {"ok": True, "dismissed": gone})
-                return
-            text = (data.get("text") or "").strip()
-            to = (data.get("to") or "").strip()
-            # Every send of the person's has a key, and with it a receipt the
-            # page shows until the conversation has it (sends.py).
-            if text and not key:
-                key = sends.new_key()
-            # ``quiet``: no resume note — for a room that a hub crash stopped,
-            # whose agent has nothing new to do (the planned restart brings
-            # rooms back this way by itself).
-            quiet = data.get("quiet") is True
-            pids: list = []
-            # A draft (created but never launched, e.g. by a planning agent)
-            # starts fresh; anything else resumes its agents' conversations.
-            try:
-                with _SAY_KEYS_LOCK if key else contextlib.nullcontext():
-                    prior = sends.get(rid, key) if key else None
-                    held = bool(key) and key_held(rid, key)
-                    # A send that failed and that no resume holds any more
-                    # (its hub restarted, its agent stopped before reading
-                    # it): the same key again is its retry, with its text.
-                    again = prior is not None and prior["state"] == "failed" and not held
-                    if key and not held and not again and (prior is not None or _say_key_seen(rid, key)):
-                        # The same send again (a lost reply, another tab):
-                        # taken once. Its receipt says where it is.
-                        self._send_json(200, {"ok": True, "duplicate": True,
-                                              **({"send": prior} if prior else {})})
-                        return
-                    if again:
-                        text, to = prior["text"], prior.get("to") or ""
-                    else:
-                        # The images only once the send is known not to be a
-                        # duplicate: a retried lost reply copies nothing again.
-                        try:
-                            paths = attachment_paths(room_full, data.get("attachments"))
-                        except attachments.Refused as e:
-                            self._send_json(e.status, e.payload())
-                            return
-                        # The person's words become points, each with its line
-                        # for the agent; a retry of a held send keeps its own.
-                        if text and not held:
-                            text, pids = self._take_points(room_full, text, to, key)
-                        text = message_refs.with_images(text, paths, attachment_names(data.get("attachments")))
-                    if text and not held:
-                        sends.accept(rid, key, text, to)
-                    result = (self._resume_room(room_full, text=text, to=to, key=key, quiet=True)
-                              if quiet else self._resume_room(room_full, text=text, to=to, key=key))
-                    if key:
-                        _SAY_KEYS[(rid, key)] = time.time()
-                    # Never an ok that did nothing: a send the hub neither
-                    # delivered nor holds on a resume under way failed, and
-                    # is kept for Retry (the #82 send to a Done task).
-                    why = _send_left_behind(rid, key) if key else ""
-                    if why:
-                        raise StartRoomError(why)
-            except Exception as exc:    # noqa: BLE001 — refused, in words; the text is kept
-                print(f"[resume] {rid}: refused — {exc!r}", flush=True)
-                # ``kept``: the text is held here, shown in the chat as not
-                # delivered with Retry — the page need not keep it too.
-                with _RESUMES_LOCK:
-                    res = _RESUMES.get(rid)
-                    kept = bool(text) and res is not None and any(
-                        (key and it.get("key") == key) or it["text"] == text for it in res.queue)
-                s = sends.get(rid, key) if (key and text) else None
-                if s is not None and s["state"] == "failed":
-                    kept = True
-                elif s is not None and not kept:
-                    sends.drop(rid, [key])      # the page keeps it in the box
-                if not kept:
-                    _points_discard(rid, pids, key)
-                self._send_json(400, {"error": str(exc) or exc.__class__.__name__, "kept": kept,
-                                      **({"send": sends.get(rid, key)} if kept and key else {})})
-                return
-            self._send_json(200, {"ok": True, **result,
-                                  **({"send": sends.get(rid, key)} if text and key else {}),
-                                  "room": chatroom.get_room(rid)})
+            code, reply = self._room_resume(data)
+            self._send_json(code, reply)
             return
         if p == "/api/room/close":
             # End a session: stop every agent's PTY but KEEP the room (marked

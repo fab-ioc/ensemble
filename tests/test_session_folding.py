@@ -228,7 +228,7 @@ class El {
 const box = { kids: [], scrollTop: 0, clientHeight: 400, scrollHeight: 4000,
   get children() { return this.kids.slice(); },
   get firstElementChild() { return this.kids[0] || null; },
-  contains: () => false,
+  contains: () => false, querySelectorAll: () => [],
   insertBefore(n, ref) { if (n.parent) n.remove(); n.parent = this; const i = ref ? this.kids.indexOf(ref) : this.kids.length; this.kids.splice(i, 0, n); } };
 const ctx = {
   esc: s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])),

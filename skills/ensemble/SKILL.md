@@ -787,6 +787,32 @@ The chat marks that reply "needs your decision" and the "Latest" control counts
 it while it is unread. Never say something needs their decision without the
 question, and never spread one decision across several turns.
 
+**Several questions in one message: one `Ask:` each.** When a reply holds
+more than one thing only the product owner can answer, give each its own
+`Ask:` line, and the chat draws a quick-answer row under each: a button per
+option, Yes and No, and a comment box. Their click comes back to you as their
+message, `Re “<question>”: <option>` with their comment under it, once.
+
+```
+1. **Ask:** Which retention for old transcripts?
+   - **30 days** — saves about 2 GB (recommended)
+   - **90 days** — what we have now
+2. **Ask (yes/no):** Turn on the nightly backup?
+3. **Ask:** Anything else to fold into this release?
+```
+
+- The `Ask:` line stands on its own (a list, quote or bold mark before it is
+  fine); the question is the rest of that line.
+- The options are the list right under it (under a numbered ask, indented
+  deeper). Lead each with its name in bold or before ` — `; the rest is what it
+  means for them. Mark at most one `(recommended)`; a thumbs up on the message
+  then answers each ask with its recommendation.
+- `Ask (yes/no):` with no list, or a list of exactly Yes and No, gives Yes and
+  No buttons; an ask with no options gets a comment box only.
+- Only for their real decisions and questions: an `Ask:` stays on their Needs
+  you list until they answer it, write to the chat after it, or a week passes. Never mark your own rhetorical
+  questions, or quote the marker inside code.
+
 **Your replies to the hub are tagged.** The chat folds what the hub typed in
 (`[report]`, `[digest]`, `[handover]`, …) to one line and tags your answer to it,
 e.g. "on a report from task X" or "progress check". When that answer is meant
