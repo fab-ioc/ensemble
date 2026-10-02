@@ -733,6 +733,52 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   }
   #new-btn:hover { background: var(--accent-hover); }
   #new-btn:active { background: var(--accent-pressed); }
+  #new-btn { display: inline-flex; align-items: center; gap: var(--s-100); }
+  #new-btn .nb-caret { font-size: var(--fs-100); line-height: 1; }
+  /* Create's menu (#165): the bar's menu shape, hung from the right of its
+     button. Each item has a tile in one of the wordmark's colours (--wm-*,
+     brand, not status: measured at 4.88:1 or better against --surface, which
+     draws the glyph), the less-used ones a neutral tile. */
+  #create-menu {
+    position: fixed; z-index: 60; background: var(--surface-overlay);
+    border: 1px solid var(--border); border-radius: var(--r-300);
+    box-shadow: var(--e-200); padding: var(--s-100);
+    min-width: 280px; max-width: min(380px, calc(100vw - 2 * var(--s-200)));
+    max-height: calc(100dvh - var(--cm-top, var(--top-h)) - var(--s-300)); overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  #create-menu[hidden] { display: none; }
+  .cm-item {
+    display: flex; align-items: center; gap: var(--s-300); width: 100%; min-height: 40px;
+    padding: var(--s-100) var(--s-200); border: 0; border-radius: var(--r-200);
+    background: transparent; color: var(--fg); font: inherit; font-size: var(--fs-300);
+    text-align: left; cursor: pointer;
+  }
+  .cm-item:hover { background: var(--hover); }
+  .cm-item:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .cm-tile {
+    flex: 0 0 auto; width: 28px; height: 28px; border-radius: var(--r-200);
+    display: inline-flex; align-items: center; justify-content: center; color: var(--surface);
+  }
+  .cm-tile svg { width: 18px; height: 18px; }
+  .cm-tile.t-from { background: var(--wm-from); }
+  .cm-tile.t-to { background: var(--wm-to); }
+  .cm-tile.t-lane2 { background: var(--wm-lane-2); }
+  .cm-tile.t-lane3 { background: var(--wm-lane-3); }
+  .cm-tile.t-quiet { background: var(--c-neutral-bg); color: var(--c-neutral-fg); }
+  .cm-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+  .cm-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+  .cm-sub { font-size: var(--fs-100); color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cm-key {
+    flex: 0 0 auto; font: inherit; font-size: var(--fs-100); color: var(--fg-muted);
+    border: 1px solid var(--border); border-radius: var(--r-100); padding: 0 var(--s-100);
+    background: var(--surface-sunken);
+  }
+  .cm-rule { height: 1px; background: var(--border); margin: var(--s-100) 0; }
+  /* The board a dialog was opened for, fixed: words, not a disabled select
+     (--fg-disabled clears no contrast threshold). */
+  .ns-fixed { padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--r-200);
+    background: var(--surface-sunken); color: var(--fg); }
   /* A flex item's min-width defaults to auto, which for a wrapper around an
      <input> resolves to the input's intrinsic width — so the bar refused to
      shrink and overflowed the viewport at 820px. min-width:0 alone fixes the
@@ -3173,7 +3219,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     #usage-tray, #settings-panel { left: var(--s-200); right: var(--s-200); width: auto; }
     #settings-panel .pref-select { height: var(--touch-min); }
     #settings-models .pref-row, #settings-models .cfg-hint { max-width: none; }
-    .me-item, .pm-item, .fm-item, .wf-item, .pr-item, .ov-menu button, .theme-opt { min-height: var(--touch-min); }
+    .me-item, .pm-item, .fm-item, .wf-item, .pr-item, .ov-menu button, .theme-opt, .cm-item { min-height: var(--touch-min); }
+    /* Create's menu: the width of the screen less the gutters, under the bar. */
+    #create-menu { left: var(--s-200); right: var(--s-200) !important; min-width: 0; max-width: none; }
+    .cm-key { display: none; }
     /* Appearance lists nest inside the menu. When unfolded the menu can outgrow
        a short screen: it scrolls (desktop flyouts must not be clipped, so only here). */
     #me-menu { max-height: calc(100dvh - var(--mm-top, var(--top-h)) - var(--s-300)); overflow-y: auto; overscroll-behavior: contain; }
@@ -3653,8 +3702,11 @@ window.DOC_LISTENERS_PAUSED = false;
   </div>
   <button id="me-btn" class="bar-btn avatar-btn" title="You — settings and preferences"
           aria-haspopup="true" aria-expanded="false"><span id="me-initials">··</span></button>
-  <button id="new-btn" title="Create a task">Create</button>
+  <button id="new-btn" title="Create a task, a sub-task or a project" data-noun-title="Create a task, a sub-task or {a project}"
+          aria-haspopup="menu" aria-expanded="false" aria-controls="create-menu">Create<span class="nb-caret" aria-hidden="true">▾</span></button>
 </header>
+<!-- Create's menu (#165): built on each opening from where you are (createMenuItems). -->
+<div id="create-menu" role="menu" aria-label="Create" tabindex="-1" hidden></div>
 <!-- The list of every project's tasks and POs, left of every desktop page (#switcher). -->
 <aside id="switcher" hidden aria-label="Tasks and projects" data-noun-aria-label="Tasks and {projects}">
   <div class="sw-head">
@@ -4419,8 +4471,6 @@ function applyPlatformChrome() {
     hideIf('pref-rearrange-row', true);
     hideIf('pref-rearrange-hint', true);
   }
-  const nb = document.getElementById('new-btn');
-  if (nb) nb.title = `Start a new claude session in a new ${T()} window`;
 }
 
 // The state the shared action model (static/actions.js) reads, from a row of
@@ -14996,11 +15046,114 @@ $('#search').addEventListener('blur', () => {
   if (!$('#search').value.trim()) document.body.classList.remove('search-open');
 });
 
-// In a project, Create starts its task there (the dialog still offers every
-// project): the project page's own "+ New task" was the same dialog.
-$('#new-btn').addEventListener('click', () => {
-  showNewSessionModal(SELECTED_PROJECT);
+// ---- Create's menu (#165): begin ----------------------------------------------
+// Create opens a menu of what can be made from where you are: a task in the
+// project shown (the default, Enter), a sub-task of the open task, a task in
+// any project, a new project, then the less-used creators already reachable
+// elsewhere. Built on each opening, so it always names the project and task
+// on screen. Plain data first (createMenuItems), so the tests run it in Node.
+const CM_ICON = {
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  sub: '<path d="M6 4v9a3 3 0 0 0 3 3h9"/><path d="M14 12l4 4-4 4"/>',
+  pick: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 10h8M8 14h5"/>',
+  board: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/>',
+  po: '<circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>',
+};
+const cmIcon = k => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${CM_ICON[k]}</svg>`;
+// ctx: { project: {id, name, ...} | null, task: row | null, poOffered: bool }.
+function createMenuItems(ctx) {
+  const pj = ctx.project, t = ctx.task;
+  const items = [];
+  if (pj) items.push({ act: 'here', icon: 'plus', tile: 't-from', def: true, proj: pj.id,
+    name: `New task in ${pj.name}`, sub: nounText('Starts in this {project}') });
+  if (t) {
+    const n = taskNoText(t) || `“${detailTitle(t)}”`;
+    items.push({ act: 'sub', icon: 'sub', tile: 't-to', sid: t.sessionId,
+      name: `Sub-task of ${n}`, sub: t.no ? `A follow-up of ${n}, in its ${noun('one')}` : 'A follow-up of this task' });
+  }
+  items.push({ act: 'pick', icon: 'pick', tile: 't-lane2',
+    name: 'New task…', sub: nounText('Choose its {project}') });
+  items.push({ act: 'project', icon: 'board', tile: 't-lane3',
+    name: nounText('New {project}…'), sub: 'A name, then code or documents' });
+  if (pj && ctx.poOffered) items.push({ rule: true }, { act: 'po', icon: 'po', tile: 't-quiet', proj: pj.id,
+    name: `Set up the PO of ${pj.name}…`, sub: 'From a conversation you had, or a fresh one' });
+  return items;
+}
+function createMenuHtml(items) {
+  return items.map(it => it.rule ? '<div class="cm-rule" role="separator"></div>'
+    : `<button type="button" class="cm-item" role="menuitem" data-create="${it.act}"`
+      + (it.proj ? ` data-proj="${esc(it.proj)}"` : '') + (it.sid ? ` data-sid="${esc(it.sid)}"` : '')
+      + ` title="${esc(it.name + ' · ' + it.sub)}">`
+      + `<span class="cm-tile ${it.tile}">${cmIcon(it.icon)}</span>`
+      + `<span class="cm-text"><span class="cm-name">${esc(it.name)}</span><span class="cm-sub">${esc(it.sub)}</span></span>`
+      + (it.def ? '<kbd class="cm-key" title="Enter picks it">Enter</kbd>' : '') + '</button>').join('');
+}
+// Where you are: the open task's project, else the project shown (its PO
+// screen or its board).
+function createMenuCtx() {
+  const task = crumbTask();
+  const pj = crumbProject(task);
+  const project = pj && pj.registered !== false && pj.id !== UNASSIGNED_ID ? pj : null;
+  return { project, task, poOffered: !!project && poChooseOffered(project) };
+}
+function closeCreateMenu(back) {
+  const m = $('#create-menu');
+  if (m.hidden) return;
+  m.hidden = true;
+  $('#new-btn').setAttribute('aria-expanded', 'false');
+  if (back) $('#new-btn').focus();
+}
+function openCreateMenu() {
+  const m = $('#create-menu'), b = $('#new-btn');
+  closeMeMenu(); closeProjMenu(); $('#settings-panel').hidden = true;
+  m.innerHTML = createMenuHtml(createMenuItems(createMenuCtx()));
+  m.hidden = false;
+  b.setAttribute('aria-expanded', 'true');
+  const r = b.getBoundingClientRect();
+  m.style.top = Math.round(r.bottom + 6) + 'px';
+  m.style.setProperty('--cm-top', Math.round(r.bottom + 6) + 'px');
+  m.style.right = Math.round(window.innerWidth - r.right) + 'px';
+  const first = m.querySelector('.cm-item');
+  if (first) first.focus();
+}
+$('#new-btn').addEventListener('click', (ev) => {
+  ev.stopPropagation();
+  if ($('#create-menu').hidden) openCreateMenu(); else closeCreateMenu();
 });
+$('#new-btn').addEventListener('keydown', (ev) => {
+  if (ev.key === 'ArrowDown' && $('#create-menu').hidden) { ev.preventDefault(); openCreateMenu(); }
+});
+$('#create-menu').addEventListener('keydown', (ev) => {
+  const items = [...$('#create-menu').querySelectorAll('.cm-item')];
+  const i = items.indexOf(document.activeElement);
+  const go = j => { const it = items[(j + items.length) % items.length]; if (it) it.focus(); };
+  if (ev.key === 'Escape') { closeCreateMenu(true); ev.preventDefault(); ev.stopPropagation(); }
+  else if (ev.key === 'ArrowDown') { go(i + 1); ev.preventDefault(); }
+  else if (ev.key === 'ArrowUp') { go(i - 1); ev.preventDefault(); }
+  else if (ev.key === 'Home') { go(0); ev.preventDefault(); }
+  else if (ev.key === 'End') { go(items.length - 1); ev.preventDefault(); }
+  else if (ev.key === 'Tab') closeCreateMenu();
+});
+$('#create-menu').addEventListener('click', (ev) => {
+  const it = ev.target.closest('.cm-item');
+  if (!it) return;
+  ev.stopPropagation();
+  closeCreateMenu();
+  const act = it.dataset.create;
+  if (act === 'here') showNewSessionModal(it.dataset.proj, { fixed: true });
+  else if (act === 'sub') {
+    const t = rowBySid(it.dataset.sid);
+    const pj = t ? crumbProject(t) : null;
+    showNewSessionModal(pj ? pj.id : '', { fixed: !!pj, followOf: t });
+  } else if (act === 'pick') showNewSessionModal(createMenuCtx().project?.id || SELECTED_PROJECT, { choose: true });
+  else if (act === 'project') projectSetupFlow();
+  else if (act === 'po') projectSetupFlow({ projectId: it.dataset.proj });
+});
+document.addEventListener('click', (ev) => {
+  if (!ev.target.closest('#create-menu') && !ev.target.closest('#new-btn')) closeCreateMenu();
+});
+window.addEventListener('resize', () => closeCreateMenu());
+// ---- Create's menu: end -------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Multiagent "Duo": create a room of two agents (each with its own model) that
@@ -15111,17 +15264,26 @@ function updateNsHint(container) {
 // A task (Jira-style): pick the project it belongs to, write the specification,
 // fire agents at it. The task gets its own workspace folder; what goes in it
 // (docs, a cloned repo with commits, anything) is the agents' business.
-function showNewSessionModal(projectId) {
+// opts (Create's menu, #165): fixed, the project is given and not offered;
+// choose, the project chooser opens at once; followOf, a task row: the new
+// task is its follow-up, said in the spec's first line (the hub has no
+// sub-task link, and a gate holds only a draft, while this starts the task).
+function showNewSessionModal(projectId, opts) {
+  const o = opts || {};
   const dlg = pdModal();
   const curProj = (projectId && projectId !== UNASSIGNED_ID) ? projectId : '';
+  const fixedPj = o.fixed && curProj ? projectById(curProj) : null;
+  const follow = o.followOf || null;
+  const followNo = follow ? (taskNoText(follow) || `“${detailTitle(follow)}”`) : '';
   const projOpts = (sel) => `<option value="">${esc(nounText('(no {project} — Unassigned)'))}</option>`
     + registeredProjects().map(p => `<option value="${esc(p.id)}"${p.id === sel ? ' selected' : ''}>${esc(p.name)}</option>`).join('')
     + `<option value="__new__">${esc(nounText('+ New {project}…'))}</option>`;
   dlg.innerHTML = `
-    <h3>New task</h3>
+    <h3>${follow ? `Sub-task of ${esc(followNo)}` : 'New task'}</h3>
     <div class="im-field">
-      <label>${esc(noun('one', 'title'))} <small>the board this task belongs to</small></label>
-      <select id="ns-proj">${projOpts(curProj)}</select>
+      <label${fixedPj ? '' : ' for="ns-proj"'}>${esc(noun('one', 'title'))} <small>the board this task belongs to</small></label>
+      ${fixedPj ? `<input type="hidden" id="ns-proj" value="${esc(fixedPj.id)}"><div class="ns-fixed" id="ns-proj-fixed">${esc(fixedPj.name)}</div>`
+        : `<select id="ns-proj">${projOpts(curProj)}</select>`}
     </div>
     <div class="im-field">
       <label>Task <small>short title — becomes the session name and its folder</small></label>
@@ -15151,7 +15313,15 @@ function showNewSessionModal(projectId) {
   // No model named: the seat runs on the one chosen in Settings (Agent
   // models), and follows a later change of it.
   addAgentRow(agentsBox, 'claude', '', 'engineer');
+  if (follow) $('#ns-task').value = `Follow-up of ${followNo}${follow.no ? ` (${detailTitle(follow)})` : ''}.\n\n`;
   $('#ns-title').focus();
+  // New task…: the chooser opens (a select opens only on a click, so
+  // showPicker; a browser without it gets the select focused).
+  if (o.choose && !fixedPj) {
+    const ps = $('#ns-proj');
+    ps.focus();
+    try { ps.showPicker(); } catch (e) {}
+  }
   // Workspace modes: 'empty' is always available (a task may have no code at
   // all); project-backed modes appear only with a project; worktree only if git.
   const WS = {
@@ -16436,6 +16606,7 @@ function closeProjMenu() {
 }
 $('#proj-switch').addEventListener('click', (ev) => {
   ev.stopPropagation();
+  closeCreateMenu();
   const m = $('#proj-menu');
   if (!m.hidden) { closeProjMenu(); return; }
   const list = (PROJECTS && PROJECTS.projects) || [];
@@ -16679,6 +16850,7 @@ function closeMeMenu() {
 }
 $('#me-btn').addEventListener('click', (ev) => {
   ev.stopPropagation();
+  closeCreateMenu();
   const m = $('#me-menu');
   const opening = m.hidden;
   $('#settings-panel').hidden = true;
@@ -16926,6 +17098,13 @@ document.addEventListener('click', (ev) => {
 window.DOC_LISTENERS_PAUSED = true;
 try { TaskCard.init({ open: a => openTaskLink(a.dataset.task, a.dataset.agent) }); } finally { window.DOC_LISTENERS_PAUSED = false; }
 document.addEventListener('keydown', (ev) => {
+  // Esc closes Create's menu wherever the focus went (a click on its padding
+  // leaves it on the page), not the open task under it.
+  if (ev.key === 'Escape' && !$('#create-menu').hidden) {
+    closeCreateMenu(true);
+    ev.stopImmediatePropagation(); ev.preventDefault();
+    return;
+  }
   // Esc closes the PO's ⋯ menu first (the topmost thing), and nothing else.
   const poMenu = ev.key === 'Escape' && document.querySelector('#po-panel .po-menu:not([hidden])');
   if (poMenu) {

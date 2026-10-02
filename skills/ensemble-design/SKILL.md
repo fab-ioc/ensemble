@@ -289,6 +289,33 @@ avatar got recorded as checked; it failed AA by 0.12, invisible by eye.
 
 ## 4. Components
 
+### Create's menu
+
+**Create ▾** (#165; `createMenuItems`, `createMenuHtml` and `openCreateMenu` in `index.html`) opens
+a menu under it, right-aligned with it, in the bar's menu shape (`--surface-overlay`, `--r-300`,
+`--e-200`), built on each opening from where the person is. Its items, in this order, each only
+when it applies:
+
+1. **New task in ‹board›** while a board is shown or a task of one is open: the new-task dialog
+   with that board fixed (its name as words, `.ns-fixed`, never a disabled select). It is the
+   default: focused on opening, with an `Enter` `kbd` (not on a phone).
+2. **Sub-task of #N** while a task is open: the same dialog in that task's board, its spec
+   starting "Follow-up of #N (title)." The hub has no sub-task link; a gate holds only a draft.
+3. **New task…**: the dialog with the board chooser opened (`showPicker`).
+4. **New ‹board word›…**: the setup dialog (`projectSetupFlow`).
+5. After a rule, the less-used creators already reachable elsewhere: today *Set up the PO of
+   ‹board›…*, for a documents board without a PO.
+
+Every name uses the board word (`nounText`). A row is a 28px tile, the name (`--fs-300`, 500)
+and a line under it (`--fs-100`, `--fg-muted`). **The tiles are the wordmark's colours**, brand,
+not status: `--wm-from`, `--wm-to`, `--wm-lane-2`, `--wm-lane-3` with the glyph in `--surface`
+(4.88:1 or better in every theme, as measured for the wordmark; `tests/test_create_menu.py`
+reads 5.1 or better), and `--c-neutral-bg`/`-fg` for the less-used ones. Never `--wm-lane-1`
+(it reads as the one red) and never the accent. Keys: ArrowDown on Create opens it, arrows,
+Home and End move (wrapping), Escape closes it and gives Create the focus back, Tab and a click
+elsewhere close it. On a phone it spans the screen less the gutters and every row is
+`--touch-min`.
+
 ### Button — four variants, no fifth
 
 | Variant | Rest | Use |
@@ -1166,8 +1193,7 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
    documents project without one, setting up its PO; on a desktop this is the breadcrumb, see
    *The bar's breadcrumb* below), then **what you can do here** (`#bar-here`:
    a phone's PO screen's **Panels ▾**, `pdCtlHtml`; empty elsewhere), then the global group: search,
-   the plan chip, the avatar and **Create** (in a project, Create opens the new
-   task dialog with that project chosen). Panels is the one control about the page below that the
+   the plan chip, the avatar and **Create ▾** (a menu, see *Create's menu* in §4). Panels is the one control about the page below that the
    bar carries: a PO screen has no other row to hold it, and the bar is where the page's own
    controls start. Nothing else joins `#bar-here` without replacing something.
 

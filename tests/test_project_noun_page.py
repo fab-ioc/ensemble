@@ -122,8 +122,16 @@ async function main() {
       res.menu = await p.evalIn(SCAN('#proj-menu'));
       await p.shot(`noun-${name}-menu`);
       await p.evalIn(`document.body.click(), document.getElementById('proj-menu').hidden = true, 0`);
+      // Create is a menu (#165): it names the board shown, and its New task
+      // in that board opens the dialog with the board fixed.
       await p.evalIn(`document.getElementById('new-btn').click(), 0`);
+      await p.until(`!document.getElementById('create-menu').hidden`);
+      res.createMenu = await p.evalIn(SCAN('#create-menu'));
+      res.createMenuText = await p.evalIn(`document.getElementById('create-menu').innerText`);
+      await p.shot(`noun-${name}-create-menu`);
+      await p.evalIn(`document.querySelector('#create-menu [data-create="here"]').click(), 0`);
       await p.until(`!!document.querySelector('#modal[open] #ns-proj')`);
+      res.createFixed = await p.evalIn(`(document.getElementById('ns-proj-fixed') || {}).textContent || ''`);
       await sleep(300);
       res.create = await p.evalIn(SCAN('#modal'));
       res.createText = await p.evalIn(`document.getElementById('modal').innerText`);
@@ -216,7 +224,7 @@ class TheMainScreensSayInitiative(unittest.TestCase):
 
     def test_no_screen_says_project(self):
         for size in ("desktop", "phone"):
-            for screen in ("home", "board", "menu", "create", "settings"):
+            for screen in ("home", "board", "menu", "createMenu", "create", "settings"):
                 with self.subTest(size=size, screen=screen):
                     self.assertEqual(self.got[size][screen], [])
 
@@ -226,6 +234,9 @@ class TheMainScreensSayInitiative(unittest.TestCase):
             with self.subTest(size=size):
                 self.assertIn("nitiative", g["homeText"])
                 self.assertIn("Initiative", g["createText"])
+                self.assertIn("New task in Motors", g["createMenuText"])
+                self.assertIn("New initiative…", g["createMenuText"])
+                self.assertEqual(g["createFixed"], "Motors")
                 self.assertIn("initiative", g["settingsText"])
                 self.assertEqual(g["picked"], ["Initiative"])
                 f = g["fits"]
