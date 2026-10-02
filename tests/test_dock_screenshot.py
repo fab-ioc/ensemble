@@ -1,7 +1,7 @@
 """#158: Dock v0.12.0 vendored; ⋯ › Take Screenshot copies a PNG of the panel
 without Chrome asking to share the tab.
 
-Dock v0.12.0 (Dock #28, fabio's P23) draws the panel from its own page
+Dock v0.12.0 (Dock #28, the CEO's P23) draws the panel from its own page
 content (``src/draw.js``) and copies the PNG. Its ``screenshotMode`` stays at
 the default ``'auto'``: it asks to share the tab only for what drawing cannot
 read (a cross-origin iframe, a tainted image, a read over 3 s). Every panel
