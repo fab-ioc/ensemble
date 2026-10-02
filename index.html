@@ -3706,7 +3706,7 @@ window.DOC_LISTENERS_PAUSED = false;
           aria-haspopup="menu" aria-expanded="false" aria-controls="create-menu">Create<span class="nb-caret" aria-hidden="true">▾</span></button>
 </header>
 <!-- Create's menu (#165): built on each opening from where you are (createMenuItems). -->
-<div id="create-menu" role="menu" aria-label="Create" hidden></div>
+<div id="create-menu" role="menu" aria-label="Create" tabindex="-1" hidden></div>
 <!-- The list of every project's tasks and POs, left of every desktop page (#switcher). -->
 <aside id="switcher" hidden aria-label="Tasks and projects" data-noun-aria-label="Tasks and {projects}">
   <div class="sw-head">
@@ -15105,7 +15105,7 @@ function closeCreateMenu(back) {
 }
 function openCreateMenu() {
   const m = $('#create-menu'), b = $('#new-btn');
-  closeMeMenu(); $('#settings-panel').hidden = true;
+  closeMeMenu(); closeProjMenu(); $('#settings-panel').hidden = true;
   m.innerHTML = createMenuHtml(createMenuItems(createMenuCtx()));
   m.hidden = false;
   b.setAttribute('aria-expanded', 'true');
@@ -15145,7 +15145,7 @@ $('#create-menu').addEventListener('click', (ev) => {
     const t = rowBySid(it.dataset.sid);
     const pj = t ? crumbProject(t) : null;
     showNewSessionModal(pj ? pj.id : '', { fixed: !!pj, followOf: t });
-  } else if (act === 'pick') showNewSessionModal(SELECTED_PROJECT, { choose: true });
+  } else if (act === 'pick') showNewSessionModal(createMenuCtx().project?.id || SELECTED_PROJECT, { choose: true });
   else if (act === 'project') projectSetupFlow();
   else if (act === 'po') projectSetupFlow({ projectId: it.dataset.proj });
 });
@@ -16606,6 +16606,7 @@ function closeProjMenu() {
 }
 $('#proj-switch').addEventListener('click', (ev) => {
   ev.stopPropagation();
+  closeCreateMenu();
   const m = $('#proj-menu');
   if (!m.hidden) { closeProjMenu(); return; }
   const list = (PROJECTS && PROJECTS.projects) || [];
@@ -16849,6 +16850,7 @@ function closeMeMenu() {
 }
 $('#me-btn').addEventListener('click', (ev) => {
   ev.stopPropagation();
+  closeCreateMenu();
   const m = $('#me-menu');
   const opening = m.hidden;
   $('#settings-panel').hidden = true;
@@ -17096,6 +17098,13 @@ document.addEventListener('click', (ev) => {
 window.DOC_LISTENERS_PAUSED = true;
 try { TaskCard.init({ open: a => openTaskLink(a.dataset.task, a.dataset.agent) }); } finally { window.DOC_LISTENERS_PAUSED = false; }
 document.addEventListener('keydown', (ev) => {
+  // Esc closes Create's menu wherever the focus went (a click on its padding
+  // leaves it on the page), not the open task under it.
+  if (ev.key === 'Escape' && !$('#create-menu').hidden) {
+    closeCreateMenu(true);
+    ev.stopImmediatePropagation(); ev.preventDefault();
+    return;
+  }
   // Esc closes the PO's ⋯ menu first (the topmost thing), and nothing else.
   const poMenu = ev.key === 'Escape' && document.querySelector('#po-panel .po-menu:not([hidden])');
   if (poMenu) {

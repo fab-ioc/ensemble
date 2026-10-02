@@ -147,6 +147,22 @@ async function main() {
         await openMenu(p);
         await p.evalIn(`document.querySelector('main').click(), document.body.click(), 0`);
         k.clickAway = await p.evalIn(`document.getElementById('create-menu').hidden`);
+        // One of the bar's menus at a time, whichever opens second.
+        const OPEN = `[...['create-menu', 'me-menu', 'proj-menu']].filter(i => !document.getElementById(i).hidden).join(',')`;
+        await openMenu(p);
+        await p.evalIn(`document.getElementById('me-btn').click(), 0`);
+        k.thenAvatar = await p.evalIn(OPEN);
+        await p.evalIn(`document.getElementById('new-btn').click(), 0`);
+        k.thenCreate = await p.evalIn(OPEN);
+        await p.evalIn(`document.getElementById('proj-switch').click(), 0`);
+        k.thenBoard = await p.evalIn(OPEN);
+        await p.evalIn(`document.getElementById('new-btn').click(), 0`);
+        k.boardThenCreate = await p.evalIn(OPEN);
+        // Focus left on the page (a click on the menu's padding): Esc closes
+        // the menu, not the task under it.
+        await p.evalIn(`document.activeElement.blur(), 0`);
+        await p.key('Escape');
+        k.escFromPage = await p.evalIn(`document.getElementById('create-menu').hidden && !!crumbTask()`);
         res.keys = k;
         out[word.one + '-' + size] = res;
         await p.close();
@@ -283,7 +299,10 @@ class CreateMenu(unittest.TestCase):
         for word, size, g in self.runs():
             with self.subTest(word=word["one"], size=size):
                 self.assertEqual(g["keys"], {"first": "here", "second": "sub", "wrapped": "project", "closed": True,
-                                             "back": "new-btn", "taskStillOpen": True, "clickAway": True})
+                                             "back": "new-btn", "taskStillOpen": True, "clickAway": True,
+                                             "thenAvatar": "me-menu", "thenCreate": "create-menu",
+                                             "thenBoard": "proj-menu", "boardThenCreate": "create-menu",
+                                             "escFromPage": True})
 
 
 if __name__ == "__main__":
