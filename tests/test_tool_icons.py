@@ -25,8 +25,10 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -200,17 +202,25 @@ class TheDrawings(unittest.TestCase):
         self.assertEqual(len(set(got[0])), 6)
 
     def test_the_style_switch_rewrites_one_line(self):
+        # On a copy: the real page may be served by a live hub, or read by another test meanwhile.
         orig = make_tool_icons.PAGE.read_bytes()
-        try:
-            with contextlib.redirect_stdout(io.StringIO()):
-                make_tool_icons.ship("tile")
-            now = make_tool_icons.PAGE.read_bytes()
-            self.assertIn(b"const TOOL_ICON_STYLE = 'tile';", now)
-            self.assertEqual(now.count(b"\n"), orig.count(b"\n"))
-            self.assertEqual(now.count(b"\r\n"), orig.count(b"\r\n"), "its line ends kept")
-            self.assertEqual(len(now) - len(orig), len("tile") - len(make_tool_icons.SHIPPED), "one word changed")
-        finally:
-            make_tool_icons.PAGE.write_bytes(orig)
+        with tempfile.TemporaryDirectory() as d:
+            for crlf in (False, True):
+                with self.subTest(crlf=crlf):
+                    src = orig.replace(b"\r\n", b"\n")
+                    if crlf:
+                        src = src.replace(b"\n", b"\r\n")
+                    copy = Path(d) / "index.html"
+                    copy.write_bytes(src)
+                    with mock.patch.object(make_tool_icons, "PAGE", copy), \
+                            contextlib.redirect_stdout(io.StringIO()):
+                        make_tool_icons.ship("tile")
+                    now = copy.read_bytes()
+                    self.assertIn(b"const TOOL_ICON_STYLE = 'tile';", now)
+                    self.assertEqual(now.count(b"\n"), src.count(b"\n"))
+                    self.assertEqual(now.count(b"\r\n"), src.count(b"\r\n"), "its line ends kept")
+                    self.assertEqual(len(now) - len(src), len("tile") - len(make_tool_icons.SHIPPED), "one word changed")
+        self.assertEqual(make_tool_icons.PAGE.read_bytes(), orig, "the real page untouched")
         self.assertIn(f"const TOOL_ICON_STYLE = '{make_tool_icons.SHIPPED}';", INDEX)
 
 

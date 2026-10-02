@@ -345,9 +345,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
       /* the wordmark (tools/make_wordmark.py): the icon's lanes and ground, shaded for this theme's bar */
       --wm-lane-1: #FF7A59; --wm-lane-2: #34E3A4; --wm-lane-3: #FFD23F;
       --wm-from: #6CA8FF; --wm-to: #C4A3FF;
-    /* the tool icons (#166): which tool, never what is true; 3:1 or better on the strip */
-    --tool-points: #F5C431; --tool-changes: #34D399; --tool-workspace: #579DFF;
-    --tool-board: #B18CFF; --tool-spec: #4CC9D9; --tool-list: #FF9A5C; --tool-ink: #1D2125;
+      /* the tool icons (#166): which tool, never what is true; 3:1 or better on the strip */
+      --tool-points: #F5C431; --tool-changes: #34D399; --tool-workspace: #579DFF;
+      --tool-board: #B18CFF; --tool-spec: #4CC9D9; --tool-list: #FF9A5C; --tool-ink: #1D2125;
       --match-bg: #7F5F01; --match-fg: #FFF7D6;
       --code-kw: #BE96E6; --code-str: #37BE59; --code-num: #57AEEC; --code-fn: #87A5EE;
       --code-ty: #E79523; --code-attr: #25B7D4; --code-meta: #E59269; --code-tag: #2FBC8D;
@@ -3519,6 +3519,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .dk-menu button:hover { background: var(--hover); }
   .dk-menu button.on { background: transparent; font-weight: 500; }
   .dk-menu button[disabled] { color: var(--fg-disabled); }
+  .dk-menu button[disabled] .ti { --ti: currentColor; }
   .dk-menu-sep { background: var(--border); }
   .dk-empty { color: var(--fg-muted); }
   .dk-textbtn {

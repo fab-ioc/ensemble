@@ -201,7 +201,7 @@ blue to violet ground); orange, not coral, so nothing reads as the one red.
   and one row selected. 24-unit grid, 1.8 outline, a 22% tint of the same colour under it.
 - **Styles:** `glyph` (shipped), `tile` (the drawing on a tile of the tool's colour, as the app
   icon) and `dot` (the drawing in the button's colour, a dot of the tool's). Switching is
-  `py tools/make_tool_icons.py tile`; the comparison is `Documents/Tool icons.md`.
+  `py tools/make_tool_icons.py tile`; the comparison is `Documents/#166 Tool icons.md`.
 - They appear on the tool strip, the task list's strip, the Panels menu (16px, before the name)
   and a popped-out tool's window tab (a tile, `pdPopIconHref`, in the theme's colours).
 
