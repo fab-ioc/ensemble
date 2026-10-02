@@ -148,6 +148,11 @@ def _phrase(pattern: str) -> re.Pattern:
 # credential causes come before the generic "run /login" hint — a real line
 # often says both, and "invalid API key" is the useful half.
 _BLOCK_RULES: list[tuple[re.Pattern, str, str]] = [
+    # A model's own limit, apart from the plan's windows (ED-159): "You've
+    # reached your Fable limit. Run /usage-credits to continue or switch
+    # models with /model." The reason names the model (``_model_why``).
+    (_phrase(r"you'?ve reached your \S+ (?:[\d.]+ )?limit"), "is at its model limit", "model_limit"),
+    (_phrase(r"run /usage-credits"), "is at its model limit", "model_limit"),
     (_phrase(r"you'?ve hit your usage limit"), "hit its usage limit", "usage_limit"),
     (_phrase(r"usage limit reached"), "hit its usage limit", "usage_limit"),
     (_phrase(r"\b\d+-hour limit reached"), "hit its usage limit", "usage_limit"),
@@ -224,7 +229,7 @@ _PROMPT_PHRASES = _phrase(
 _CURSOR_LINE = re.compile(r"^\s*[❯➤▶›>]\s*\S")
 _NUMBERED_OPTION = re.compile(r"^\s*[❯➤▶›>]?\s*\d+[.)]\s+\S")
 
-_LEADING_GLYPHS = re.compile(r"^[\s•■⏺⏵❯➤▶>*\-|]+")
+_LEADING_GLYPHS = re.compile(r"^[\s•■⏺⏵❯➤▶>*\-|⎿]+")
 _TRAILING_GLYPHS = re.compile(r"[\s•■⏺⏵❯➤▶>*|]+$")
 
 
@@ -462,7 +467,32 @@ def find_block(tail: str) -> tuple[str, str, str] | None:
             break
     start, _, why, cause = cluster[0]
     end = max(h[1] for h in cluster)
-    return (why, cause, _quote_at(text, start, end))
+    quote = _quote_at(text, start, end)
+    if cause == "model_limit":
+        why = _model_why(quote)
+    return (why, cause, quote)
+
+
+def model_limit_words(model: str, until: float = 0) -> str:
+    """"blocked: model limit (Fable) until 22:17" — how a model limit reads in
+    a reason, naming the model and, when known, when it clears."""
+    name = _d.model_limit.title(model) if _d is not None and model else (model or "")
+    out = f"blocked: model limit ({name})" if name else "blocked: model limit"
+    if until:
+        out += " until " + time.strftime("%H:%M", time.localtime(until))
+    return out
+
+
+def _model_why(quote: str) -> str:
+    """The reason for a model-limit line read off the screen: the model it
+    names, and when the hub knows it clears."""
+    ml = _d.model_limit if _d is not None else None
+    hit = ml.parse_line(quote) if ml else None
+    model = (hit or {}).get("model", "")
+    until = float((hit or {}).get("resetAt") or 0)
+    if ml and model and not until:
+        until = float((ml.limited(model) or {}).get("until") or 0)
+    return "is " + model_limit_words(model, until)
 
 
 def _last_at(pat: re.Pattern, text: str) -> int:

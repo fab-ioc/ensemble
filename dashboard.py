@@ -67,6 +67,8 @@ import agents
 import agent_models
 # What each Claude agent last said about itself through its hooks.
 import agent_hooks
+# A Claude model at its own limit: seen, remembered, seated around (ED-159).
+import model_limit
 # Which tasks need a human, and why (the /api/attention join).
 import attention
 # Multi-agent chat rooms (pairing live sessions into a collaborating "duo").
@@ -138,6 +140,7 @@ digest.bind(sys.modules[__name__])
 board.bind(sys.modules[__name__])
 due.bind(sys.modules[__name__])
 stall.bind(sys.modules[__name__])
+model_limit.bind(sys.modules[__name__])
 po_messages.bind(sys.modules[__name__])
 rotation.bind(sys.modules[__name__])
 points.bind(sys.modules[__name__])
@@ -1478,9 +1481,53 @@ def _agent_model_changes(data: dict) -> list:
 def hub_launch_model(kind: str, seat_model: str = "") -> tuple[str, str]:
     """(model, reasoning effort) the hub passes when it starts an agent of
     ``kind``: the seat's own model, else the one chosen in Settings; "" for
-    none (the agent's own default)."""
-    return agent_models.launch_choice(kind, (seat_model or "").strip(),
-                                      load_settings().get("agentModels"))
+    none (the agent's own default).
+
+    A Claude seat that names no model never runs a model at its own limit
+    (``model_limit.choose``): the next model along runs instead. A seat that
+    names one keeps it; the allocation reason warns."""
+    model, effort = agent_models.launch_choice(kind, (seat_model or "").strip(),
+                                               load_settings().get("agentModels"))
+    if kind == "claude" and not (seat_model or "").strip():
+        try:
+            pick = model_limit.choose("")
+            if pick["fallback"]:
+                model = pick["fallback"]
+        except Exception:                                    # noqa: BLE001
+            pass
+    return model, effort
+
+
+def model_note(kind: str, seat_model: str = "") -> str:
+    """What an allocation reason adds about the model a Claude seat runs: the
+    fallback from a model at its limit, or a warning for a seat that names
+    one; "" otherwise (and for Codex)."""
+    if kind != "claude":
+        return ""
+    try:
+        return model_limit.choose(seat_model)["note"]
+    except Exception:                                        # noqa: BLE001
+        return ""
+
+
+def seat_model_display(kind: str, seat_model: str = "") -> str:
+    """The model a seat runs, for a person: the seat's own, else what it
+    resolves to (``fable (default)``, ``opus (Settings)``)."""
+    seat_model = (seat_model or "").strip()
+    if seat_model:
+        return seat_model
+    try:
+        if kind == "claude":
+            return model_limit.display("")
+        if kind == "codex":
+            model = hub_launch_model("codex")[0]
+            if model:
+                return f"{model} (Settings)"
+            own = agent_models.codex_own()["model"]
+            return f"{own} (default)" if own else ""
+    except Exception:                                        # noqa: BLE001
+        pass
+    return ""
 
 
 def _conversation_as_found(room: dict, part: dict) -> bool:
@@ -9219,6 +9266,18 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
     return result(preferred_kind, "both_warning")
 
 
+def _with_model_note(reason: str, seats: list[dict]) -> str:
+    """``reason`` with what it judged of each Claude seat's model (ED-159): a
+    model at its own limit that a seat naming none would have run, and the one
+    that runs instead, or a warning for a seat that names a limited model."""
+    notes = []
+    for seat in seats:
+        note = model_note(seat.get("agent", ""), seat.get("model", ""))
+        if note and note not in notes:
+            notes.append(note)
+    return " ".join([reason, *notes]) if notes else reason
+
+
 def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
                                    installed=None) -> tuple[list[dict], dict]:
     """Choose the first-launch line-up and return it with its audit record."""
@@ -9243,7 +9302,7 @@ def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
         return chosen, {
             "preferred": preferred,
             "chosen": copy.deepcopy(chosen),
-            "reason": reason,
+            "reason": _with_model_note(reason, chosen),
             "changed": changed,
             "at": time.time(),
             "usage": {"snapshotState": snapshot.get("state"),
@@ -9508,7 +9567,8 @@ def apply_review_allocation(room_full: dict, identity: str) -> tuple[dict, dict,
         "owner": {"identity": owner.get("identity", ""), "agent": owner_kind},
         "preferred": _seat_for_kind(seat_preference, preferred_kind),
         "chosen": chosen,
-        "reason": _review_allocation_reason(decision, owner),
+        "reason": _with_model_note(_review_allocation_reason(decision, owner),
+                                   [chosen]),
         "changed": decision["changed"],
         "at": time.time(),
         "usage": {
