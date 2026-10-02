@@ -115,7 +115,7 @@ or clones a panel, so its listeners and state go wherever it goes.
 | `onMenu(fn)` | `fn(id, itemId)` when an app item of a ⋯ menu that has no `run` of its own is picked, after the `onMenu` option; returns a function that takes `fn` off (see "App items in the ⋯ menu") (v0.9.0) |
 | `narrow()`, `setNarrow(on)` | whether the dock is narrow; switch it (see "Narrow") |
 | `can(id, action)` | whether a person may do `action` to a panel here: the `can` option, and narrow |
-| `screenshot(id)` | `Promise<Blob \| null>`: capture the visible panel frame as a PNG; `null` on cancellation, rejects on failure |
+| `screenshot(id)` | `Promise<Blob \| null>`: draw (or capture, see `screenshotMode`) the visible panel frame as a PNG; `null` on cancellation, rejects on failure |
 | `copyScreenshot(id)` | capture and copy the PNG, with a notice; resolves to the Blob (also when clipboard access fails), or `null` on cancellation/failure |
 | `addPanel(panel, where?)` | add a panel `{ id, title, el, help?, icon?, closable?, unpinSize? }` at runtime, in front, saved, `onChange` told; `'added'`, or `'exists'` when the dock has that id (it is shown, as `reveal`, and nothing is added); `null` after `destroy()`. See "Panels at runtime" (v0.10.0) |
 | `removePanel(id)` | take a panel out (any panel, closable or not, given to `createDock` or added): its window closes, its strip button, flyout or float goes, the tab on its left comes to the front; its place is kept for `addPanel`. Returns its element, detached and without the dock's classes, and fires `dock-removed` (`detail: { id, el }`) on the root; `null` for an id the dock does not have, or after `destroy()` (v0.10.0) |
@@ -142,6 +142,7 @@ text), and `src/host.js` for apps whose panels open dialogs (below).
 | `root` | required | the element the dock fills |
 | `screenshot` | none | `async (id, el) => Blob \| null`: app capture hook; `el` is the whole panel frame in its current document, title bar included. Return an `image/png` Blob at the desired resolution, or `null` to cancel; errors become a failure notice when copying |
 | `screenshotItem` | `true` | `false` hides Take Screenshot; the API remains available |
+| `screenshotMode` | `'auto'` | `'auto'`: Dock draws the frame, no prompt, and asks to share the tab only for what it cannot read (a cross-origin iframe, a tainted canvas); `'draw'`: never asks; `'capture'`: always asks (Region Capture, as before v0.12.0). See “Panel screenshots” |
 | `panels` | required | `[{ id, title, el, help?, icon?, unpinSize?, menuItems?, closable?, bodyAttrs? }]`; `icon` and `unpinSize`: see "The tool strip"; `menuItems`: see "App items in the ⋯ menu"; `closable: true`: see "Panels at runtime"; `bodyAttrs`: the option, for this panel's window. More can be added later (`addPanel`); `setTitle` changes a title |
 | `menuItems` | none | `(id, ctx) => items`: the app's items in the ⋯ menu of a panel that has no `menuItems` of its own (see "App items in the ⋯ menu") |
 | `onMenu` | none | `(id, itemId) => void`: an app item without a `run` of its own was picked (so do `onMenu(fn)`'s) |
@@ -193,7 +194,7 @@ As in IntelliJ IDEA's new UI, a panel's title bar has its tab(s), **⋯** (Optio
 |---|---|
 | **⋯ › View Mode ▸** | **Dock Pinned** (docked in the layout), **Dock Unpinned** (on its strip, sliding out beside the middle, which narrows), **Undock** (on its strip, sliding out over the middle), **Float** (a window in the page), **Window** (a browser window of its own). Its own mode is checked; modes `can` or narrow forbid are left out |
 | **⋯ › Move To ▸** | **Left**, **Right**, **Top**, **Bottom**: the side, in the mode it has. (IntelliJ has Left Top, Left Bottom, … : Dock's strip holds one group per edge, so its sides are its four edges) |
-| **⋯ › Take Screenshot** | Copy the visible panel as a PNG (browser/app capture support required; see “Panel screenshots”) |
+| **⋯ › Take Screenshot** | Copy the visible panel as a PNG, without a prompt by default (see “Panel screenshots”) |
 | **⋯ › Maximise / Restore** | also a double click on the title bar or a tab (docked or floating), and Esc restores |
 | **⋯ › Hide**, **−** | a slid-out panel slides back into its strip; a docked or floating one is minimised to its title bar (which shows its icon), and a click on it brings it back |
 
@@ -322,21 +323,50 @@ dock.setBadge('asks', '3', '3 asks waiting');
 
 **⋯ → Take Screenshot** (after Move To) captures the visible title bar and body, closes the menu first, and copies a
 PNG. It works docked, floating, slid out, maximised and in a pop-out window. A notice says “Screenshot of &lt;title&gt; copied” or explains
-the failure. Cancel closes sharing and says “Screenshot cancelled”. Browser denial of screen permission has the same
-result because browsers do not distinguish it from cancelling the picker.
+the failure. The PNG has the frame's CSS width and height multiplied by `devicePixelRatio` (rounded to whole pixels).
 Switching away from the panel or moving it to another frame during capture invalidates the screenshot, so another
 tab's content cannot be copied under the original panel's name. Take the screenshot again after the change.
 
-The default uses [Region Capture](https://developer.chrome.com/docs/web-platform/region-capture) in desktop Chrome
-and Edge, on HTTPS or localhost. **Every capture asks you to share this tab**: choose the current tab, not another tab,
-a window or the screen. Sharing stops after one captured frame, including on failure. The PNG has the panel's CSS
-width and height multiplied by `devicePixelRatio` (rounded to whole pixels). Browser capture may resample pixels and
-slightly change colours. It captures cross-origin iframes and overlapping content as seen on screen.
+**No prompt (v0.12.0).** By default Dock draws the frame itself (`src/draw.js`): a copy of its DOM with every element's
+computed style written in, inside an SVG `<foreignObject>`, painted on a canvas at `devicePixelRatio`. It keeps the
+theme, `::before`/`::after`/placeholders, the web fonts in use (embedded), typed values, ticks and `<select>` choices,
+textarea text, every scroll position, `<img>`, `<canvas>` and `<video>` pixels, inline SVG, CSS `url()` images and
+same-origin iframes (drawn from their documents). It needs only standard APIs, so it also works where Region Capture
+does not exist (Firefox, Safari). Compared with Chrome's own screenshot of the frame, at most ~2% of a frame's pixels
+differ (`test/browser/screenshot-draw.js`). What a drawing does not show the same:
 
-An app's `screenshot` hook takes precedence and controls whether a prompt is needed. Without a hook or Region Capture,
-the item is hidden (including Firefox/Safari without those APIs). There is no DOM-rendering fallback: it would lose
-cross-origin iframe content and cannot faithfully render all CSS. Element Capture was considered, but removes
-overlapping content and requires eligible isolated targets; Region Capture matches “as seen” without changing panel CSS.
+- text is anti-aliased in grey, not with the screen's coloured (LCD) subpixels;
+- scrollbars are not drawn; their room is kept blank;
+- shadow DOM content is not drawn; content of the page outside the frame that overlaps it (a popup over the panel) is
+  not drawn either;
+- a WebGL canvas made without `preserveDrawingBuffer` may come out empty; fonts loaded only with `new FontFace` (no
+  `@font-face` rule) are not embedded;
+- an `<input>` scrolled sideways shows its start; a horizontal scrollbar's room is not kept when the scrolling area
+  has a bottom border; `::before`/`::after` of a scrolling area itself do not move with its scroll;
+- form controls are drawn by the browser's image renderer; on Windows Chromium Dock gives checkboxes, radios, ranges and
+  progress bars with no `accent-color` the system accent, as the screen shows them.
+
+What drawing cannot read at all: a **cross-origin iframe** (another site's page), a **tainted canvas** (drawn from
+another site's image) or an image (`<img>` or CSS `url()`) on another site that does not allow reading it (CORS). An
+image the server does not have (an HTTP error) shows nothing on the page either and is drawn as nothing. Reading the
+images and fonts must take under 3 s: asking to share the tab needs the click, which a browser honours for ~5 s, so
+longer counts as "cannot read" in `'auto'` (`'draw'` waits). For those, `screenshotMode` decides:
+
+| `screenshotMode` | Behaviour |
+| --- | --- |
+| `'auto'` (default) | draws; for what drawing cannot read, or if drawing fails, asks to share the tab (Region Capture, below). Without Region Capture it draws anyway, a cross-origin iframe's area filled with `--dk-bg` |
+| `'draw'` | never asks: a cross-origin iframe's area is filled with `--dk-bg`, an unreadable canvas or image left empty |
+| `'capture'` | always asks to share the tab, as before v0.12.0 |
+
+**Region Capture** ([Region Capture](https://developer.chrome.com/docs/web-platform/region-capture), desktop Chrome
+and Edge, on HTTPS or localhost) **asks you to share this tab**: choose the current tab, not another tab, a window or
+the screen. Sharing stops after one captured frame, including on failure. Cancel closes sharing and says “Screenshot
+cancelled”; browser denial of screen permission has the same result because browsers do not distinguish it from
+cancelling the picker. Browser capture may resample pixels and slightly change colours. It captures cross-origin
+iframes and overlapping content as seen on screen.
+
+An app's `screenshot` hook takes precedence over all of this and controls whether a prompt is needed. With
+`screenshotMode: 'capture'` and no hook, the item is hidden where Region Capture is missing.
 
 The clipboard write reserves a Promise during the click. If permission or focus prevents copying, the captured PNG
 stays available in a notice with **Copy** (a fresh click retries), **Download**, and **Dismiss**. Call the APIs from a
@@ -346,8 +376,9 @@ Options menu (classic windows too), using that window's document, clipboard and 
 
 Translate through `text.screenshot`, `text.screenshotHint`, `text.screenshotCopied(title)`,
 `text.screenshotCancelled`, `text.screenshotFailed(reason)`, `text.screenshotCopyFailed(reason)`,
-`text.screenshotCopy`, `text.screenshotDownload`, and `text.screenshotDismiss`. Set `screenshotHint` to describe
-your app hook when it does not prompt.
+`text.screenshotCopy`, `text.screenshotDownload`, and `text.screenshotDismiss`. The item's tooltip is
+`text.screenshotHint` (“Copy this panel as a PNG”), or `text.screenshotHintCapture` (it adds “the browser asks to share
+this tab”) with `screenshotMode: 'capture'` and no hook. Set `screenshotHint` to describe your app hook when it prompts.
 
 ## App items in the ⋯ menu
 
@@ -706,15 +737,18 @@ npm run test:browser  # headless Chrome (Puppeteer) against the demo: run.js (th
                       # --pophtml (the same with popHtml, the page from a blob: URL), needs.js (iframes, narrow, focus, keys),
                       # toolstrip.js (the tool strip), scenarios.js, viewmodes.js (View Mode and Move To), autohide.js
                       # (Dock Unpinned and Undock hide when focus leaves them), stripreorder.js, runtime.js (panels added,
-                      # removed and closed at runtime, and 40 tabs in one stack), menuitems.js (the app's items in ⋯)
+                      # removed and closed at runtime, and 40 tabs in one stack), menuitems.js (the app's items in ⋯),
+                      # titlebody.js, screenshot.js (Take Screenshot with Region Capture and app hooks),
+                      # screenshot-draw.js (drawn, no prompt: pixel checks against Chrome's screenshot, the fall-backs)
 npm run test:browser:check     # one Chrome: says whether it made the blank-password check (see below); run it first
 npm run screenshots -- <dir>   # the theme picker, the demo in ten themes, a panel out, its window, the reload notice
 npm run evidence:app-window -- <dir>   # real Chrome and Edge (headed): the pop-out window in a tab, --app, installed, PiP
 node test/browser/screenshot-demo.js <dir>   # headed demo menu → screenshot → Ctrl+V evidence (start npm run demo first)
+node test/browser/screenshot-draw-demo.js <dir>   # headed: the drawn screenshot (no prompt), Form and Page, docked and in a window
 ```
 
 Every Chrome these start goes through `test/browser/chrome.js`, on a persistent profile per suite under
-`%LOCALAPPDATA%\dock-test-chrome\` (`run`, `run-pophtml`, `needs`, `toolstrip`, `runtime`, `viewmodes`, `autohide`, `menuitems`, `screenshots`, `check`,
+`%LOCALAPPDATA%\dock-test-chrome\` (`run`, `run-pophtml`, `needs`, `toolstrip`, `runtime`, `viewmodes`, `autohide`, `menuitems`, `titlebody`, `screenshot`, `screenshot-draw`, `screenshot-draw-demo`, `screenshots`, `check`,
 `app-window-<browser>-<way>`; `DOCK_TEST_CHROME` moves them; a run at the same time as another gets `<suite>-2`). Why:
 Chrome on a new profile checks for a blank Windows password by signing in with an empty one, and Windows counts each
 as a failed sign-in (10 in 10 minutes lock the account). Before each launch the helper seeds the profile's

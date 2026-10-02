@@ -25,6 +25,7 @@ import {
 } from './layout.js';
 import { POP_HTML } from './popout-page.js';
 import { afterPaint, canCapture, capturePanel, writePng } from './screenshot.js';
+import { canDraw, drawPanel } from './draw.js';
 import { normalizeMenuItems, menuItemsHtml, itemAt } from './menu-items.js';
 
 export const LAYOUT_KEY = 'dock.layout';
@@ -58,7 +59,8 @@ export const TEXT = {
   viewMode: 'View Mode',
   moveTo: 'Move To',
   screenshot: 'Take Screenshot',
-  screenshotHint: 'Copy this panel as a PNG; the browser asks to share this tab',
+  screenshotHint: 'Copy this panel as a PNG',
+  screenshotHintCapture: 'Copy this panel as a PNG; the browser asks to share this tab',
   screenshotCopied: (t) => `Screenshot of ${t} copied`,
   screenshotCancelled: 'Screenshot cancelled',
   screenshotFailed: (reason) => `Screenshot failed: ${reason}`,
@@ -256,7 +258,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   defaultLayout, minSize, edgeOf, fill, defaultSize, sizes,
   narrow = false, narrowLayout, narrowKey, can = null, popHtml = null, popBase, minClickRestores = true, popBackButton = true, windowClose = 'hide',
   stripHover = true, stripOpen = 'over', stripAutoHide = true, stripReorder = true, headButtons = 'menu', outNoteDismiss = true,
-  screenshot: screenshotHook = null, screenshotItem = true, menuItems: appMenuItems = null, onMenu = null, keepSlots,
+  screenshot: screenshotHook = null, screenshotItem = true, screenshotMode = 'auto', menuItems: appMenuItems = null, onMenu = null, keepSlots,
   openWindow = (url, name, features) => (win && typeof win.open === 'function' ? win.open(url, name, features) : null) }) {
   const doc = root.ownerDocument;
   const T = { ...TEXT, ...text };
@@ -1116,8 +1118,12 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
   const capturing = new Set();
   const captureAbort = new AbortController();
   undo.push(() => captureAbort.abort());
+  // screenshotMode (v0.12.0): 'auto' draws the frame from its DOM and asks to share the tab (Region Capture) only for
+  // what drawing cannot read (a cross-origin iframe); 'draw' never asks; 'capture' always does (v0.7.0). A hook wins.
+  const shotMode = ['auto', 'draw', 'capture'].includes(screenshotMode) ? screenshotMode : 'auto';
   function screenshotAvailable(id) {
-    return typeof screenshotHook === 'function' || canCapture(byId.get(id)?.el.ownerDocument.defaultView);
+    const view = byId.get(id)?.el.ownerDocument.defaultView;
+    return typeof screenshotHook === 'function' || (shotMode !== 'capture' && canDraw(view)) || (shotMode !== 'draw' && canCapture(view));
   }
   function screenshotVisible(id) {
     return !destroyed && shownNow(id) && (!['unpinned', 'undock'].includes(modeOf(id)) || flyOpen === id);
@@ -1149,7 +1155,18 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
         await afterPaint(cd.defaultView, controller.signal);
         check(); controller.signal.throwIfAborted();
         blob = await screenshotHook(id, el);
-      } else blob = await capturePanel(el, controller.signal);
+      } else if (shotMode === 'capture') blob = await capturePanel(el, controller.signal);
+      else {
+        // Without Region Capture, 'auto' draws what it can, as 'draw' does; a drawing that fails is then a failure.
+        const fallback = shotMode === 'auto' && canCapture(cd.defaultView);
+        try {
+          blob = await drawPanel(el, { signal: controller.signal, blank: !fallback });
+        } catch (error) {
+          if (!fallback || controller.signal.aborted) throw error;
+          check(); controller.signal.throwIfAborted();
+          blob = await capturePanel(el, controller.signal);
+        }
+      }
       check(); controller.signal.throwIfAborted();
       if (blob === null) return null;
       if (!blob || blob.type !== 'image/png' || typeof blob.arrayBuffer !== 'function') throw new Error('The screenshot hook must return a PNG Blob or null.');
@@ -2190,7 +2207,7 @@ export function createDock({ root, panels, storageKey = LAYOUT_KEY, key, storage
     if (o.modes.length) parts.push(`<button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-dk-sub="mode">${escText(T.viewMode)}${arrow}</button>`);
     if (o.sides.length) parts.push(`<button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-dk-sub="side">${escText(T.moveTo)}${arrow}</button>`);
     const tail = [];
-    if (screenshotItem !== false && screenshotAvailable(id)) tail.push(`<button type="button" role="menuitem" data-dk-menu="screenshot" title="${escText(T.screenshotHint)}">${escText(T.screenshot)}</button>`);
+    if (screenshotItem !== false && screenshotAvailable(id)) tail.push(`<button type="button" role="menuitem" data-dk-menu="screenshot" title="${escText(typeof screenshotHook !== 'function' && shotMode === 'capture' ? T.screenshotHintCapture : T.screenshotHint)}">${escText(T.screenshot)}</button>`);
     if (o.max) tail.push(`<button type="button" role="menuitem" data-dk-menu="max">${escText(o.max)}</button>`);
     if (o.hide) tail.push(`<button type="button" role="menuitem" data-dk-menu="hide">${escText(o.hide)}</button>`);
     if (o.close) tail.push(`<button type="button" role="menuitem" data-dk-menu="close" title="${escText(T.closeHint)}">${escText(T.close)}</button>`);

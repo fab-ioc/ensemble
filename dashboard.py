@@ -522,6 +522,7 @@ PAGE_FILES = ("index.html", "session.html", "fileview.html",
               "static/dock/src/host.js", "static/dock/src/panels-menu.js", "static/dock/src/help.js",
               "static/dock/src/theme.js", "static/dock/src/theme-picker.js", "static/dock/src/install.js",
               "static/dock/src/popout-page.js", "static/dock/src/screenshot.js", "static/dock/src/menu-items.js",
+              "static/dock/src/draw.js",
               "static/dock/css/dock.css")
 PAGE_META = b'<meta name="ensemble-pages" content="">'
 _STAMP_CACHE: dict[str, tuple[tuple[int, int], str]] = {}
