@@ -1530,6 +1530,61 @@ def seat_model_display(kind: str, seat_model: str = "") -> str:
     return ""
 
 
+def _hook_turn_ended(pty_id, room_id, identity, session_id) -> None:
+    """A Claude agent's turn ended (its ``Stop`` hook): whether it ended on a
+    model's own limit line, which the hook does not say (ED-159). The limit is
+    kept on the hook state (attention shows the agent blocked) and remembered
+    for seating; the PO hears of it from the stall check. A turn that ended
+    normally on a seat that named no model teaches the CLI's default."""
+    if not (isinstance(session_id, str) and re.fullmatch(r"[\w-]+", session_id or "")):
+        return
+    try:
+        tpath = find_transcript(session_id)
+        hit = model_limit.from_transcript(tpath)
+        agent_hooks.set_limit(pty_id, hit, session_id)
+        part = chatroom.participant(chatroom.get_room(room_id, public=False) or {}, identity) or {}
+        if hit:
+            model_limit.note(hit, room=room_id, identity=identity,
+                             fallback_model=model_limit.last_model(tpath) or part.get("model") or "")
+        learn_cli_default(part, tpath, hit)
+    except Exception as e:                                   # noqa: BLE001
+        print(f"[hook] model limit check: {str(e)[:200]}", flush=True)
+
+
+def learn_cli_default(part: dict, tpath, hit: dict | None = None) -> None:
+    """Remember the model Claude Code ran on its own (ED-159): a seat that
+    names no model, with nothing in Settings or Claude's settings, ran the
+    CLI's default: the model of its last reply, or the model its limit line
+    names."""
+    if (part.get("model") or "").strip() or _settings_claude_model() or \
+            agent_models.claude_own()["model"] or model_limit.choose("")["fallback"]:
+        return                      # it was launched with a model (a fallback too)
+    model_limit.learn_default(model_limit.last_model(tpath) or (hit or {}).get("model") or "")
+
+
+def _settings_claude_model() -> str:
+    """The Claude model chosen in Settings › Agent models, or ""."""
+    return agent_models.launch_choice("claude", "", load_settings().get("agentModels"))[0]
+
+
+_SHOWN: dict[str, tuple[float, str]] = {}
+
+
+def seat_model_shown(kind: str, seat_model: str = "") -> str:
+    """``seat_model_display``, cached a few seconds per kind for a seat that
+    names no model: a task list asks once per seat."""
+    seat_model = (seat_model or "").strip()
+    if seat_model or not kind:
+        return seat_model
+    now = time.time()
+    hit = _SHOWN.get(kind)
+    if hit and now - hit[0] < 5:
+        return hit[1]
+    shown = seat_model_display(kind, "")
+    _SHOWN[kind] = (now, shown)
+    return shown
+
+
 def _conversation_as_found(room: dict, part: dict) -> bool:
     """Whether ``part``'s conversation is one the hub did not start: a past
     session brought in from the history (the room is ``adopted``) that the hub
@@ -8435,6 +8490,8 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 "members": [{"identity": p.get("identity", ""),
                              "agent": p.get("agent", ""),
                              "model": p.get("model", ""),
+                             # What a seat with no model runs (ED-159).
+                             "modelShown": seat_model_shown(p.get("agent", ""), p.get("model", "")),
                              "role": p.get("role", ""),
                              **({"onMention": True,
                                  "reviewing": _pty_alive(p.get("ptyId"))}
@@ -12718,6 +12775,12 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:                   # whatever it was, it is not the agent's problem
             res = {"ok": False, "error": "bad_payload"}
         self._send_json(200 if res.get("ok") else (400 if res.get("error") == "bad_payload" else 404), res)
+        if res.get("ok"):
+            event = payload.get("event") or {}
+            if event.get("hook_event_name") in ("Stop", "StopFailure") and not event.get("agent_id"):
+                threading.Thread(target=_hook_turn_ended, daemon=True,
+                                 args=(payload.get("ptyId"), payload.get("room"),
+                                       payload.get("identity"), event.get("session_id"))).start()
 
     def _feedback_post(self, path):
         if self.headers.get("Origin") and not self._same_origin_request():

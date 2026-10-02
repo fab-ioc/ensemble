@@ -22,6 +22,20 @@ new starts a new episode; nothing new, nothing is said again. The records are
 kept in ``DASHBOARD_DIR/stalls.json``, so a hub restart does not repeat them.
 
 Tasks with no PO are the attention detector's (the CEO's bell), as before.
+
+Two more ways a task stops without saying so (ED-159):
+
+* **A model at its limit.** An agent's turn ended on the CLI's own line
+  "You've reached your Fable limit" (``model_limit``). The limit is
+  remembered so no seat is given that model, a reviewer that hit it in the
+  middle of a review has its review ended as failed, and the PO is told once
+  per limit (a line in its room, and typed when it is idle). Attention shows
+  the task blocked.
+* **A silent owner.** A running task whose owner has produced nothing for
+  ``SILENT_S``: no transcript growth, no hook event, no screen change, no
+  commit (:func:`last_sign`), and nothing excuses it (:func:`silence_excuse`).
+  Attention shows it stalled; the PO is told once per silent episode, unless
+  the idle nudge above already told it.
 """
 from __future__ import annotations
 
@@ -50,6 +64,9 @@ _QUIET = ("inreview", "done")
 
 _LOCK = threading.Lock()
 _LAST = 0.0
+
+# An owner that has produced nothing for this long is silent (ED-159 point 4).
+SILENT_S = 30 * 60
 
 
 def _log(msg: str) -> None:
@@ -150,6 +167,8 @@ def _look(rid: str, state: dict, now: float) -> str:
             return ""
         if rot.is_rotating(rid, owner) or rot.awaiting_handover(rid, owner):
             return ""
+        if limit_hit(part):
+            return ""                   # at a model limit: _look_limit tells the PO
         sess = rot._pty(part)
         if sess is None:
             return ""
@@ -169,7 +188,9 @@ def _look(rid: str, state: dict, now: float) -> str:
         rec = state.get(rid) or {}
         ep = episode(room, owner, last_submit, float(rec.get("nudgedAt") or 0))
         if rec.get("episode") != ep:
-            rec = {"episode": ep}
+            # The silent look's record, and when the PO last heard of it,
+            # outlive an episode: they are about a different clock.
+            rec = {"episode": ep, **{k: rec[k] for k in ("silent", "lastToldAt") if rec.get(k)}}
         rec["current"] = True           # stopped right now (record())
         state[rid] = rec
         if not rec.get("nudgedAt"):
@@ -184,7 +205,7 @@ def _look(rid: str, state: dict, now: float) -> str:
             # The line in the PO's room, once; the wake below until it lands.
             if not _post_po(room, rec, now):
                 return ""
-            rec["toldAt"] = now
+            rec["toldAt"] = rec["lastToldAt"] = now
             state[rid] = rec
             did = "PO told"
         else:
@@ -250,6 +271,296 @@ def _wake_po(room: dict, rec: dict, now: float) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# A silent owner (ED-159)
+# ---------------------------------------------------------------------------
+
+_COMMIT_CACHE: dict[str, tuple[float, float]] = {}   # cwd -> (read at, commit time)
+
+
+def commit_at(cwd: str, now: float | None = None) -> float:
+    """When the checkout at ``cwd`` last moved its HEAD (a commit, a merge, a
+    checkout): the mtime of its ``logs/HEAD``, read through a worktree's
+    ``.git`` file. 0 when there is none. Cached for a minute."""
+    if not cwd:
+        return 0.0
+    now = time.time() if now is None else now
+    hit = _COMMIT_CACHE.get(cwd)
+    if hit and now - hit[0] < 60:
+        return hit[1]
+    at = 0.0
+    try:
+        git = Path(cwd) / ".git"
+        if git.is_file():
+            line = git.read_text(encoding="utf-8").strip()
+            if line.startswith("gitdir:"):
+                git = Path(line[7:].strip())
+                if not git.is_absolute():
+                    git = Path(cwd) / git
+        at = (git / "logs" / "HEAD").stat().st_mtime
+    except (OSError, ValueError):
+        at = 0.0
+    _COMMIT_CACHE[cwd] = (now, at)
+    return at
+
+
+def _file_mtime(path) -> float:
+    try:
+        return Path(path).stat().st_mtime if path else 0.0
+    except OSError:
+        return 0.0
+
+
+def last_sign(room: dict, part: dict, ev: dict) -> float:
+    """The last time the owner did anything, or was given something to go on:
+    its transcript growing, a hook event, its screen printing, a commit in its
+    checkout, a resume, rotation, answer or spec amendment. 0 when nothing is
+    known. A line the hub typed into it is not its own doing."""
+    ts = [0.0]
+    try:
+        ts.append(_file_mtime(_d.rotation._transcript_of(part)[0]))
+    except Exception:
+        pass
+    ts.append(float((ev.get("hook") or {}).get("lastEventAt") or 0))
+    ts.append(float(ev.get("lastOutput") or 0))
+    ts.append(commit_at(room.get("cwd", "")))
+    for k in ("resumedAt", "rotatedAt", "answeredAt"):
+        try:
+            ts.append(float(part.get(k) or 0))
+        except (TypeError, ValueError):
+            pass
+    last = _last_message(room)
+    try:
+        ts.append(float(room.get("specAt") or 0))
+        ts.append(float(last.get("ts") or 0))     # its own, or one to it
+    except (TypeError, ValueError):
+        pass
+    return max(ts)
+
+
+def _last_message(room: dict) -> dict:
+    if "lastMessage" in room:
+        return room.get("lastMessage") or {}
+    msgs = room.get("messages") or []
+    return msgs[-1] if msgs else {}
+
+
+def _open_ask(room: dict):
+    if "openToHuman" in room:
+        return room.get("openToHuman")
+    return _d.attention.open_ask(room)
+
+
+def silence_excuse(room: dict, part: dict, ev: dict) -> str:
+    """"" when a quiet owner may be silent; else what excuses the quiet: a
+    background run of its own, a reviewer at work, an ask waiting on the PO or
+    the CEO (a completed report too), a hand-off to a teammate, a task in
+    review, done, paused or stopped. ``room`` is a room record or attention's
+    summary of one."""
+    if not room.get("launched", True):
+        return "a draft"
+    if room.get("status") in ("paused", "waiting_human"):
+        return "paused" if room.get("status") == "paused" else "waiting on the CEO"
+    if (room.get("workflow") or "") in _QUIET:
+        return "in review or done"
+    ident = part.get("identity", "")
+    if ident not in (room.get("owners") or []):
+        return "not the owner"
+    if not ev.get("alive"):
+        return "not running"
+    if ev.get("claudeStatus") == "shell":
+        return "a background run"
+    if _open_ask(room):
+        return "an ask is open"
+    last = _last_message(room)
+    if last.get("from") == ident and last.get("rang"):
+        return "handed to a teammate"
+    for p in room.get("participants") or []:
+        if p.get("identity") == ident or p.get("kind") != "agent":
+            continue
+        rev = p.get("review") or {}
+        if rev.get("startedAt") and not rev.get("endedAt"):
+            return "a review is running"
+    return ""
+
+
+def silent_for(room: dict, part: dict, ev: dict, now: float) -> float:
+    """How long the owner has been silent; 0 when it is not (excused, or
+    nothing is known)."""
+    if silence_excuse(room, part, ev):
+        return 0.0
+    sign = last_sign(room, part, ev)
+    return max(0.0, now - sign) if sign else 0.0
+
+
+def _look_silent(rid: str, state: dict, now: float, statuses: dict) -> str:
+    """Tell the PO once per silent episode (the attention item shows it)."""
+    cr = _d.chatroom
+    room = cr.get_room(rid, public=False)
+    if not room or not _d._room_is_live(room) or not _d.room_po_id(room):
+        return ""
+    owners = cr.owners(room)
+    part = cr.participant(room, owners[0]) if owners else None
+    if not part:
+        return ""
+    view = {**room, "owners": owners, "workflow": _d.workflow_of(room)}
+    quiet = silent_for(view, part, _d.attention._evidence(part, statuses), now)
+    rec = state.get(rid)
+    if quiet < SILENT_S:
+        if rec and (rec.get("silent") or {}).get("current"):
+            rec["silent"]["current"] = False
+        return ""
+    rec = rec or {}
+    since = round(now - quiet, 3)
+    srec = rec.get("silent") or {}
+    if srec.get("since") != since:
+        srec = {"since": since}
+    srec["current"] = True
+    rec["silent"] = srec
+    state[rid] = rec
+    if srec.get("wokeAt"):
+        return ""
+    if max(float(rec.get("toldAt") or 0), float(rec.get("lastToldAt") or 0)) >= since:
+        return ""                       # the idle nudge already told the PO
+    label = _d.task_label(room) or rid
+    at = time.strftime("%H:%M", time.localtime(since))
+    did = ""
+    if not srec.get("toldAt"):
+        po = _d.room_po_id(room)
+        po_room = cr.get_room(po, public=False) if po else None
+        if not po_room:
+            return ""
+        body = (f"**{label} silent since {at}** — {room.get('title', '')}\n\n"
+                f"Its owner has produced nothing for {int(quiet // 60)} min: no transcript "
+                f"growth, no hook event, no screen change, no commit, and nothing excuses "
+                f"it (no background run, review or open ask). Look at it "
+                f"(`ensemble_get_task {label}`) and steer it, or stop it.")
+        if not cr.post_report(po, SENDER, cr.po_identity(po_room), body,
+                              {"reportKind": "digest", "silentTask": rid}, wake=False):
+            return ""
+        srec["toldAt"] = now
+        did = "PO told (silent)"
+    wake = (f"[digest] {label} silent since {at}: its owner has produced nothing for "
+            f"{int(quiet // 60)} min with nothing open. Details with ensemble_get_task {label}.")
+    if _type_po(room, wake):
+        srec["wokeAt"] = now
+        return (did + ", woken") if did else "PO woken (silent)"
+    return did
+
+
+# ---------------------------------------------------------------------------
+# A model at its limit (ED-159)
+# ---------------------------------------------------------------------------
+
+def _type_po(room: dict, line: str) -> bool:
+    """Type the task's PO one line, if the PO is running and idle."""
+    rot, cr = _d.rotation, _d.chatroom
+    po = _d.room_po_id(room)
+    po_room = cr.get_room(po, public=False) if po else None
+    if not po_room:
+        return False
+    ident = cr.po_identity(po_room)
+    with rot.GATE:
+        part = cr.participant(po_room, ident) if ident else None
+        sess = rot._pty(part) if part else None
+        if sess is None or rot.is_rotating(po, ident) or rot.awaiting_handover(po, ident):
+            return False
+        tpath, reader = rot._transcript_of(part)
+        if not rot._idle(part, reader(tpath)) or rot._submitted_lately(sess):
+            return False
+        return _d._type_input(sess, line)
+
+
+def limit_hit(part: dict) -> dict | None:
+    """The model limit an agent's conversation ended on, or None. Claude only."""
+    if (part.get("agent") or "claude") != "claude":
+        return None
+    try:
+        return _d.model_limit.from_transcript(_d.rotation._transcript_of(part)[0])
+    except Exception:
+        return None
+
+
+def _seat_model(part: dict) -> str:
+    """The model an agent ran on, for a line that names none."""
+    try:
+        return _d.model_limit.last_model(_d.rotation._transcript_of(part)[0]) or \
+            (part.get("model") or "")
+    except Exception:
+        return part.get("model") or ""
+
+
+def _look_limit(rid: str, now: float) -> str:
+    """Each agent of a task whose turn ended on a model limit: the limit is
+    remembered, a review it was doing ends as failed, and the PO hears of it
+    once per limit (with no PO, the attention item is the CEO's bell)."""
+    cr, ml = _d.chatroom, _d.model_limit
+    room = cr.get_room(rid, public=False)
+    if not room or not room.get("launched", True) or not _d._room_is_live(room):
+        return ""
+    done = []
+    for part in cr.agent_participants(room):
+        ident = part.get("identity", "")
+        hit = limit_hit(part)
+        if not hit:
+            continue
+        key = f"{rid}/{ident}"
+        rec = ml.note(hit, room=rid, identity=ident, fallback_model=_seat_model(part)) or {}
+        try:
+            _d.learn_cli_default(part, _d.rotation._transcript_of(part)[0], hit)
+        except Exception:
+            pass
+        old = ml.reported(key)
+        if old.get("at") == hit["at"] and old.get("wokeAt"):
+            continue
+        if old.get("at") != hit["at"]:
+            old = {"at": hit["at"]}
+        model = rec.get("model") or hit.get("model") or ""
+        words = _d.attention.model_limit_words(model, float(rec.get("until") or 0))
+        rev = part.get("review") or {}
+        failed = ""
+        if rev.get("startedAt") and not rev.get("endedAt") and not old.get("reviewFailed"):
+            try:
+                _d.finish_review(rid, ident, "failed")
+                old["reviewFailed"] = now
+                failed = f" Its review {rev.get('n') or ''} ended as failed.".replace("  ", " ")
+            except Exception as e:          # noqa: BLE001
+                _log(f"{rid}: cannot end the review of {ident}: {str(e)[:120]}")
+        label = _d.task_label(room) or rid
+        po = _d.room_po_id(room)
+        if not po:
+            ml.set_reported(key, {**old, "wokeAt": now})    # the CEO's bell shows it
+            done.append(f"{ident} {words}{failed}")
+            continue
+        if not old.get("toldAt"):
+            po_room = cr.get_room(po, public=False)
+            if not po_room:
+                continue
+            at = time.strftime("%H:%M", time.localtime(float(hit["at"])))
+            body = (f"**{label} {ident} is {words}** — {room.get('title', '')}\n\n"
+                    f"Its turn ended at {at} on the CLI's own line: “{hit.get('line', '')}”."
+                    f"{failed} The hub seats no Claude agent on this model until the limit "
+                    f"clears; a seat that names it keeps it, with a warning. Switch the seat's "
+                    f"model and resume it, or wait for the reset.")
+            if not cr.post_report(po, SENDER, cr.po_identity(po_room), body,
+                                  {"reportKind": "digest", "limitTask": rid}, wake=False):
+                continue
+            old["toldAt"] = now
+            news = True
+        else:
+            news = bool(failed)
+        wake = (f"[digest] {label} {ident} is {words}: its turn ended on "
+                f"“{hit.get('line', '')[:120]}”. Details with ensemble_get_task {label}.")
+        if _type_po(room, wake):
+            old["wokeAt"] = now
+            news = True
+        ml.set_reported(key, old)
+        if news:
+            done.append(f"{ident} {words}{failed}"
+                        + (", PO woken" if old.get("wokeAt") else " (PO told; typed when idle)"))
+    return "; ".join(done)
+
+
+# ---------------------------------------------------------------------------
 # Looking
 # ---------------------------------------------------------------------------
 
@@ -264,17 +575,26 @@ def tick(now: float | None = None) -> dict[str, str]:
             ids = [p.stem for p in _d.chatroom.ROOMS_DIR.glob("room-*.json")]
         except OSError:
             ids = []
+        try:
+            statuses = _d.attention._claude_status_by_session()
+        except Exception:
+            statuses = {}
         for rid in ids:
             if rid in state:
                 state[rid]["current"] = False   # until this look finds it stopped again
-            try:
-                did = _look(rid, state, now)
-            except Exception as e:          # one task must not stop the others
-                _log(f"{rid}: {str(e)[:200]}")
-                continue
-            if did:
-                out[rid] = did
-                _log(f"{rid}: {did}")
+            dids = []
+            for look in (lambda: _look(rid, state, now), lambda: _look_limit(rid, now),
+                         lambda: _look_silent(rid, state, now, statuses)):
+                try:
+                    did = look()
+                except Exception as e:      # one task must not stop the others
+                    _log(f"{rid}: {str(e)[:200]}")
+                    continue
+                if did:
+                    dids.append(did)
+            if dids:
+                out[rid] = "; ".join(dids)
+                _log(f"{rid}: {out[rid]}")
         for rid in [r for r in state if r not in ids]:
             state.pop(rid, None)
         if json.dumps(state, sort_keys=True) != before:

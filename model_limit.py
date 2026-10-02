@@ -172,14 +172,31 @@ def from_entry(d: dict) -> dict | None:
     return {**hit, "at": at}
 
 
+_SEEN: dict[str, tuple[tuple, dict | None]] = {}   # path -> ((mtime, size), hit)
+
+
 def from_transcript(path) -> dict | None:
     """The limit a Claude conversation ended on: ``{model, family, line,
     resetAt, at}`` when its newest entry is the CLI's limit line, else None.
-    Anything after it (a reply, a tool call) means the agent got past it."""
+    Anything after it (a reply, a tool call) means the agent got past it.
+    Read again only when the file changed (attention asks on every poll)."""
     if not path:
         return None
-    entries = _last_entries(Path(path))
-    return from_entry(entries[0]) if entries else None
+    p = Path(path)
+    try:
+        st = p.stat()
+        key = (st.st_mtime, st.st_size)
+    except OSError:
+        return None
+    seen = _SEEN.get(str(p))
+    if seen and seen[0] == key:
+        return dict(seen[1]) if seen[1] else None
+    entries = _last_entries(p)
+    hit = from_entry(entries[0]) if entries else None
+    if len(_SEEN) > 500:
+        _SEEN.clear()
+    _SEEN[str(p)] = (key, hit)
+    return dict(hit) if hit else None
 
 
 def last_model(path) -> str:
@@ -241,8 +258,8 @@ def note(hit: dict, *, room: str = "", identity: str = "", fallback_model: str =
     with _LOCK:
         d = _load()
         old = d["limits"].get(fam) or {}
-        if float(old.get("at") or 0) > at:
-            return old                      # a newer sighting already stands
+        if float(old.get("at") or 0) >= at:
+            return old                      # this sighting, or a newer one, stands
         d["limits"][fam] = rec
         _save(d)
     return rec

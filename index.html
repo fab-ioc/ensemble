@@ -4699,10 +4699,12 @@ function agentBadges(r) {
   const members = (r.members && r.members.length) ? r.members
     : (r.agent ? [{ agent: r.agent, model: '', identity: r.agent }] : []);
   return members.map(m => {
-    const label = m.model ? `${esc(m.agent)} ${esc(m.model)}` : esc(m.agent);
+    // A seat that names no model shows the one it resolves to (ED-159).
+    const runs = m.model || (m.modelShown || '').split(' ')[0];
+    const label = runs ? `${esc(m.agent)} ${esc(runs)}` : esc(m.agent);
     // Tooltip carries what the badge has no room for: who this is and what
     // charter they were given.
-    const tip = [m.identity || m.agent, m.model || 'default model', m.role || '']
+    const tip = [m.identity || m.agent, m.model || m.modelShown || 'default model', m.role || '']
       .filter(Boolean).join(' · ');
     return `<span class="badge-agent ${esc(m.agent)}" title="${esc(tip)}">${label}</span>`;
   // Joined with U+200B (zero-width space), not '': two badges glued edge to
@@ -4870,7 +4872,7 @@ function detailInfo(r) {
       // A seat keeps its name when a handover moves it to the other kind.
       const who = m.identity || m.agent;
       const kind = m.agent && who.split('-')[0] !== m.agent ? ` (${m.agent})` : '';
-      const bits = [esc(who + kind), esc(m.model || 'default model')];
+      const bits = [esc(who + kind), esc(m.model || m.modelShown || 'default model')];
       if (m.role) bits.push(esc(m.role));
       // A reviewer on mention is not a running agent: it starts per request.
       if (m.onMention) bits.push(m.reviewing ? 'reviewing now' : 'on mention');
@@ -5738,8 +5740,8 @@ function cardAgents(r) {
   const shown = members.slice(0, 2).map(m => {
     const kind = (m.agent || '').toLowerCase();
     const cls = kind === 'claude' ? 'claude' : (kind === 'codex' ? 'codex' : 'other');
-    const model = shortModel(m.model);
-    const tip = [m.identity || m.agent, m.model || 'default model', m.role || '',
+    const model = shortModel(m.model) || (m.modelShown || '').split(' ')[0];
+    const tip = [m.identity || m.agent, m.model || m.modelShown || 'default model', m.role || '',
                  m.onMention ? (m.reviewing ? 'reviewing now' : 'on mention') : ''].filter(Boolean).join(' · ');
     return `<span class="cagent" title="${esc(tip)}"><span class="av ${cls}">${esc((m.agent || '?')[0])}</span>`
          + `<span class="cagent-t">${esc(m.agent)}${model ? ' ' + esc(model) : ''}</span></span>`;
