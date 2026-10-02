@@ -143,6 +143,12 @@ out.plain = plain.map(p => { const [h, m] = pair(p); return { text: p[2].slice(0
 out.toMate = T.forCeo({ id: 'tm', from: 'claude', to: 'codex', text: 'Can you check P232? It is blocked.', ts: 99 })
   || T.forCeo({ id: 'tm2', from: 'claude', to: 'codex', text: 'Fix it before I write Re P232, the ruling.', ts: 99 });
 out.noMsg = T.ceoWhy(null);
+// Review 2: a negation ends at a comma or "but"/"and"; "Nothing blocks…" and
+// "Noted." do not open an acknowledgement; "Re P77 -" and "Re P77 (" answer.
+out.clauses = ["#141 hasn't reported yet, but #142 is blocked on the TWS login.", "Not only is #141 merged, but #142 is now blocked.",
+  "#144 is not merged yet and #145 failed its review.", "I chose one folder per project, with no spaces, which matches what you asked for.",
+  "Nothing blocks the merge any more: #141 is live.", "Noted. #141 is live now.", "Re P77 - done.", "Re P77 (planned #9) the button is back."]
+  .map(text => [text, T.ceoWhy(po(text, 'digest', {}))]);
 // An ask that is closed no longer keeps a message in view.
 const closed = po('The handover lists P232 for the next session.', 'handover', {});
 out.openAsk = T.forCeo(closed);
@@ -193,6 +199,10 @@ class RealCases(unittest.TestCase):
             self.assertFalse(c["forCeo"], c)
         self.assertFalse(self.o["toMate"], "a message to a teammate is the team's, whatever it says")
         self.assertEqual(self.o["noMsg"], "")
+
+    def test_a_negation_takes_back_only_its_own_clause(self):
+        for text, why in self.o["clauses"]:
+            self.assertTrue(why, text)
 
     def test_an_ask_keeps_a_message_only_while_open(self):
         self.assertTrue(self.o["openAsk"])

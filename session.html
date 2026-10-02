@@ -2377,16 +2377,18 @@ const namesCeo = (t, N = CHAT_NAMES) => /\b(?:CEO|product owner|Decision needed)
 // them. So each signal is a shape the person is meant to act on, a negated
 // one ("nothing … needs a decision") does not count, and a note that opens
 // by saying there is nothing for them folds unless it answers them.
-// "Re P77, here's…" / "Re P77 —" anywhere, not a quoted one ("I'll answer
+// "Re P77, here's…" / "Re P77 —" / "Re P77 - done" / "Re P12 (planned
+// #9)" anywhere, not a quoted one ("I'll answer
 // "Re P198" once…").
-const RE_ANY_RE = /(?<!["“'`])\bre[ \t]+P\d{1,5}[a-z]?\b(?!["”'`])[ \t]*[,:—–]/i;
+const RE_ANY_RE = /(?<!["“'`])\bre[ \t]+P\d{1,5}[a-z]?\b(?!["”'`])[ \t]*(?:[,:—–(]|-[ \t])/i;
 // "P231", "P12a": the asks a text names (never "7515P", never "P0" alone).
 const POINT_ID_RE = /\bP[1-9]\d{0,4}[a-z]?\b/g;
 const pointIdsIn = t => [...new Set(String(t || '').match(POINT_ID_RE) || [])];
-// A negation earlier in the same sentence: "nothing needs you", "isn't
-// blocked", "no decision from me", "neither is waiting on you".
+// A negation earlier in the same clause: "nothing needs you", "isn't
+// blocked", "no decision from me", "neither is waiting on you"; a comma or
+// "but"/"and" ends it ("#141 hasn't reported, but #142 is blocked").
 const NEG_RE = /\b(?:no|not|nothing|none|neither|nor|never|without)\b|n['’]t\b/i;
-const negated = (t, i) => NEG_RE.test(t.slice(Math.max(0, i - 50), i).split(/[.!?;:\n]/).pop());
+const negated = (t, i) => NEG_RE.test(t.slice(Math.max(0, i - 50), i).split(/[.!?;:,\n]|\b(?:but|and|yet|although|though|while)\b/i).pop());
 // Some match of re that no negation before it in its sentence takes back.
 const saysPlainly = (re, t) => {
   const g = new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g');
@@ -2406,8 +2408,9 @@ const STATE_RE = /\b(?:is|are|now|went|goes|go|be|been|it['’]s)[ \t]+live\b|\b
 // (theirs to do).
 const ASK_RE = /\b(?:decisions?[ \t]+(?:needed|for[ \t]+you|that[ \t]+are[ \t]+yours|are[ \t]+yours|of[ \t]+yours)|(?:you|your)[ \t]+(?:to[ \t]+)?(?:decide|call)|a[ \t]+yes[ \t]+on|needs?[ \t]+(?:a[ \t]+)?hub[ \t]+restart|restart[ \t]+the[ \t]+hub)\b/i;
 // "Nothing new: …", "No action needed. …", "Nothing needs you." in the first
-// words: the PO's own word that the note is the team's.
-const ACK_OPEN_RE = /^[\s*_>#-]*(?:nothing\b|no[ \t]+(?:action|change|reply|new|decision)\b|no-op\b|noted\b|none[ \t]+of\b|neither\b[^.\n]{0,40}\b(?:needs?|is|are)\b)/i;
+// words: the PO's own word that the note is the team's ("Nothing blocks the
+// merge: #141 is live" and "Noted. #141 is live now" are not that).
+const ACK_OPEN_RE = /^[\s*_>#-]*(?:nothing[ \t]+(?:new|to|needs?|for|here|else|has|changed|in|on|from|is|was)\b|no[ \t]+(?:action|change|reply|new|decision)\b|no-op\b|none[ \t]+of\b|neither\b[^.\n]{0,40}\b(?:needs?|is|are)\b)/i;
 // Why a message is the person's to read ('' when it is plainly the team's):
 // 'answer' (a "Re Pn", a paragraph addressed to them), and, in what is not
 // addressed to a teammate nor opens by saying it is nothing for them, 'ask'
