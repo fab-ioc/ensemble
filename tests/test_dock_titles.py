@@ -56,8 +56,9 @@ VERSION = (ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8")
 
 
 class TheLibraryDoesIt(unittest.TestCase):
-    def test_dock_v0_11_0_is_vendored(self):
-        self.assertRegex(VERSION, r"^fab-ioc/dock v0\.11\.0 4e01e8d03db07a93234295fdb53c4022f2a74eea \(tag v0\.11\.0, 2026-10-01\)")
+    def test_dock_v0_11_0_or_later_is_vendored(self):
+        # The exact tag is pinned in test_po_dock; v0.11.0's API must stay.
+        self.assertRegex(VERSION, r"^fab-ioc/dock v0\.(1[1-9]|[2-9]\d)\.\d+ [0-9a-f]{40} \(tag v0\.")
         self.assertIn("setTitle: (id, title) => setTitleNow(id, title),", DOCK_JS)
         self.assertIn("title: (id) => (byId.has(id) ? byId.get(id).title : null),", DOCK_JS)
         self.assertIn("bodyAttrs = [],", DOCK_JS)
