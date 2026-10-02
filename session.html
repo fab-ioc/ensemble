@@ -767,6 +767,36 @@
   /* --fg-muted there measured 4.25:1 in Light (12px): the bar's words on the
      person's balloon are --fg-subtle. */
   .msg.user .pt-bar, .msg.user .pt-chip:not(.delivered) { color:var(--fg-subtle); }
+  /* An ask in an agent's balloon (askCardHtml): its question, a button per
+     answer (Default buttons, the recommended one marked by a neutral lozenge,
+     never by colour), and a comment. Answered, the buttons settle. */
+  .msg .qa { margin:var(--s-200) 0; padding:var(--s-200) var(--s-300); border:1px solid var(--border); border-radius:var(--r-200);
+    background:var(--surface); min-width:0; max-width:100%; }
+  .qa-q { display:flex; flex-wrap:wrap; align-items:baseline; gap:var(--s-100) var(--s-200); }
+  .qa-no { flex:0 0 auto; color:var(--fg-subtle); font-size:var(--fs-200); font-weight:600; }
+  .qa-qt { flex:1 1 200px; min-width:0; color:var(--fg); font-weight:600; overflow-wrap:anywhere; }
+  .qa-opts { display:flex; flex-wrap:wrap; gap:var(--s-200); margin-top:var(--s-200); }
+  .qa-opt { display:inline-flex; flex-wrap:wrap; align-items:center; gap:var(--s-050) var(--s-200); max-width:100%; min-height:32px;
+    padding:var(--s-100) var(--s-300); background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--r-200);
+    color:var(--fg); font:inherit; text-align:left; cursor:pointer; }
+  .qa-opt:hover:not(:disabled) { background:var(--hover); }
+  .qa-opt:disabled { cursor:default; color:var(--fg-muted); }
+  .qa-opt.on { color:var(--fg); border-color:var(--fg); font-weight:600; }
+  .qa-ol { min-width:0; overflow-wrap:anywhere; }
+  .qa-od { flex:1 1 100%; min-width:0; color:var(--fg-muted); font-size:var(--fs-200); font-weight:400; overflow-wrap:anywhere; }
+  .qa-cm { display:flex; flex-wrap:wrap; align-items:flex-end; gap:var(--s-200); margin-top:var(--s-200); }
+  .qa-cm textarea { flex:1 1 200px; min-width:0; max-width:100%; box-sizing:border-box; min-height:32px; resize:vertical;
+    padding:var(--s-100) var(--s-200); background:var(--surface); color:var(--fg); border:1px solid var(--border-strong);
+    border-radius:var(--r-200); font:inherit; }
+  .qa-send { flex:0 0 auto; min-height:32px; padding:0 var(--s-300); background:var(--surface); border:1px solid var(--border-strong);
+    border-radius:var(--r-200); color:var(--fg); font:inherit; cursor:pointer; }
+  .qa-send:hover { background:var(--hover); }
+  .qa-opt:focus-visible, .qa-send:focus-visible, .qa-cm textarea:focus-visible { outline:none;
+    box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .qa-done { margin-top:var(--s-200); color:var(--fg-muted); overflow-wrap:anywhere; }
+  .qa-done strong { color:var(--fg); }
+  .qa-dc { display:block; margin-top:var(--s-050); color:var(--fg-muted); white-space:pre-wrap; }
+  .qa.busy .qa-dw { font-style:italic; }
   /* Away from the end of the chat: back to it, with how many arrived since. */
   #to-latest { position:absolute; right:var(--s-400); bottom:var(--s-300); z-index:5; height:24px; padding:0 var(--s-300);
     border-radius:var(--r-full); background:var(--surface); color:var(--fg); border:1px solid var(--border-strong);
@@ -1027,6 +1057,8 @@
     .ed-refs a.ref-chip { overflow: hidden; }   /* its label is cut, never past the edge */
     button, select, .agent .ah { min-height: var(--touch-min); }
     button { min-width: var(--touch-min); }
+    .qa-opt, .qa-send { min-height: var(--touch-min); }
+    .qa-cm textarea { min-height: var(--touch-min); font-size: var(--fs-400); }
     #promptcard .pc-x, #cmt-tray .cmt-item-x, #livetail .lt-more { min-width: var(--touch-min); }
     .att-chip { height: var(--touch-min); }
     .att-chip .att-x { height: var(--touch-min); }
@@ -2458,7 +2490,7 @@ function askCardHtml(m, a, total, P) {
   }
   const open = a.kind === 'open';
   return `<div class="qa" data-ask="${esc(key)}">${head}${opts ? `<div class="qa-opts" role="group" aria-label="${esc('Answer: ' + a.question)}">${opts}</div>` : ''}`
-    + `<div class="qa-cm"><textarea rows="1" data-ask="${esc(key)}" aria-label="${esc((open ? 'Your answer to: ' : 'Comment on: ') + a.question)}" placeholder="${open ? 'Your answer' : 'Comment (optional): goes with the button you press'}"></textarea>`
+    + `<div class="qa-cm"><textarea rows="1" data-ask="${esc(key)}" aria-label="${esc((open ? 'Your answer to: ' : 'Comment on: ') + a.question)}" placeholder="${open ? 'Your answer' : 'Comment (optional)'}" title="${open ? '' : 'Goes with the answer you press, or alone with Send comment'}"></textarea>`
     + `<button type="button" class="qa-send" data-ask="${esc(key)}" title="${open ? 'Send your answer' : 'Send your comment alone'}">${open ? 'Send' : 'Send comment'}</button></div></div>`;
 }
 // An agent's balloon with asks: its words as always, each ask's lines drawn
@@ -3452,6 +3484,7 @@ function renderBubbles(items, opt = {}) {
       ? `<div class="pend-state" role="status">Not delivered: ${esc(ROOM_PENDING.error || 'the session did not come up')}. <button type="button" class="pend-retry">Retry</button><button type="button" class="pend-discard">Discard</button></div>`
       : '') + '</div>'));
   patchChildren(box, rows);
+  askRestoreDrafts(box);
   showAskLine(items);
   MD_CACHE = used;
   if (stick) {
@@ -5697,6 +5730,10 @@ function pointClick(e) {
 $('#points-line').addEventListener('click', e => {
   if (pointClick(e)) return;
   if (e.target.closest && e.target.closest('.pt-sum')) { POINTS_OPEN = !POINTS_OPEN; showPointsLine(); }
+});
+$('#msgs').addEventListener('input', e => {
+  const ta = e.target.closest && e.target.closest('.qa-cm textarea[data-ask]');
+  if (ta) ASK_DRAFT.set(ta.dataset.ask, ta.value);
 });
 $('#msgs').addEventListener('click', e => {
   if (askClick(e)) return;
