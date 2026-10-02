@@ -9561,8 +9561,8 @@ def _agent_kind_name(kind: str) -> str:
     return (agent.display_name if agent is not None else kind.title())
 
 
-def _pinned_why(kind: str, reading: dict, warn) -> str:
-    """Why a pinned seat stayed: past the warning it ignores that too."""
+def _keep_agents_why(kind: str, reading: dict, warn) -> str:
+    """Why a kept seat stayed: past the warning it ignores that too."""
     percent = reading.get("percent")
     if percent is not None and float(percent) >= float(warn):
         return (f"ignoring pacing and the {float(warn):g}% warning "
@@ -9594,7 +9594,7 @@ def _seat_for_kind(preference: dict, kind: str) -> dict:
 def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
                                installed=None, current_kind: str = "",
                                codex_model: str = "", pace: dict | None = None,
-                               pinned: bool = False, now: float | None = None) -> dict:
+                               keep_agents: bool = False, now: float | None = None) -> dict:
     """Choose one seat's kind using the allowance rules shared by task launch
     and reviews.
 
@@ -9609,7 +9609,7 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
     :func:`pace_settings`, read when omitted): a preferred kind ahead of its
     pace line gives way to the other kind while that one is not
     (``switch_pace``); with both ahead, the one less far ahead is chosen
-    (``both_ahead_of_pace``). A ``pinned`` seat (a task told to keep its
+    (``both_ahead_of_pace``). A ``keep_agents`` seat (a task told to keep its
     agents) ignores pacing and the warning and leaves only for a spent kind.
     """
     other_kind = {"claude": "codex", "codex": "claude"}.get(preferred_kind, "")
@@ -9636,7 +9636,7 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
             "warnPercent": warn,
             "alarmPercent": alarm,
             "figures": figures,
-            "pace": {"enabled": bool(pace.get("enabled")), "pinned": bool(pinned),
+            "pace": {"enabled": bool(pace.get("enabled")), "keepAgents": bool(keep_agents),
                      "marginPoints": pace.get("margin", PACE_MARGIN_DEFAULT),
                      "kinds": paced},
         }
@@ -9660,12 +9660,12 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
         return result(preferred_kind, "unknown")
     if not other_kind or not installed(other_kind):
         return result(preferred_kind, "other_uninstalled")
-    if pinned:
+    if keep_agents:
         # Kept regardless of pace and the warning; never on a spent kind.
         if (float(preferred_usage["percent"]) >= alarm
                 and float(other_usage["percent"]) < alarm):
             return result(other_kind, "switch_alarm")
-        return result(preferred_kind, "pinned")
+        return result(preferred_kind, "keep_agents")
     if (float(preferred_usage["percent"]) >= warn
             and float(other_usage["percent"]) < warn):
         return result(other_kind, "switch_warning")
@@ -9702,10 +9702,10 @@ def _with_model_note(reason: str, seats: list[dict]) -> str:
 
 def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
                                    installed=None, pace: dict | None = None,
-                                   pinned: bool = False,
+                                   keep_agents: bool = False,
                                    now: float | None = None) -> tuple[list[dict], dict]:
     """Choose the first-launch line-up and return it with its audit record.
-    ``pinned``: the task keeps its agents whatever their pace (ED-164)."""
+    ``keep_agents``: the task keeps its agents whatever their pace (ED-164)."""
     preferred = copy.deepcopy(preferred)
     pace = pace_settings() if pace is None else pace
     chosen = [{"agent": seat.get("agent", ""),
@@ -9755,7 +9755,7 @@ def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
 
     decision = choose_agent_kind_for_seat(owner_kind, snapshot, installed=installed,
                                           codex_model=codex_model, pace=pace,
-                                          pinned=pinned, now=now)
+                                          keep_agents=keep_agents, now=now)
     paced = decision["pace"]["kinds"]
     audit.update(decision=decision["decision"], pace=decision["pace"])
     if decision["decision"] == "both_alarm":
@@ -9783,9 +9783,9 @@ def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
             why = _usage_reason_phrase(old_owner_kind, owner_usage)
         reason = f"Owner switched to {_agent_kind_name(other_kind)}: {why}."
         return result(reason, True)
-    elif decision["decision"] == "pinned":
+    elif decision["decision"] == "keep_agents":
         reason = ("Preferred line-up kept: this task keeps its agents, "
-                  f"{_pinned_why(owner_kind, decision['figures'].get(owner_kind, {}), warn)}.")
+                  f"{_keep_agents_why(owner_kind, decision['figures'].get(owner_kind, {}), warn)}.")
     elif decision["decision"] == "both_ahead_of_pace":
         reason = (f"Preferred line-up kept: both kinds are ahead of pace and "
                   f"{_agent_kind_name(owner_kind)} no further: "
@@ -9841,7 +9841,7 @@ def apply_first_launch_allocation(room_full: dict) -> dict | None:
     try:
         snapshot = usage.snapshot()
         chosen, allocation = choose_first_launch_allocation(
-            preferred, snapshot, pinned=room_full.get("keepAgents") is True)
+            preferred, snapshot, keep_agents=room_full.get("keepAgents") is True)
     except StartRoomError:
         raise
     except Exception as exc:                              # noqa: BLE001
@@ -9938,9 +9938,9 @@ def _review_allocation_reason(decision: dict, owner: dict) -> str:
                 f"{_usage_reason_phrase(owner_kind, figures.get(owner_kind, {}))} is below it.")
     paced = (decision.get("pace") or {}).get("kinds") or {}
     other_kind = {"claude": "codex", "codex": "claude"}.get(preferred_kind, "")
-    if code == "pinned":
+    if code == "keep_agents":
         return (f"Reviewer {action} {chosen_name}: this task keeps its agents, "
-                f"{_pinned_why(chosen_kind, figures.get(chosen_kind, {}), warn)}.")
+                f"{_keep_agents_why(chosen_kind, figures.get(chosen_kind, {}), warn)}.")
     if code == "switch_pace":
         return (f"Reviewer {action} {chosen_name}: "
                 f"{_pace_reason_phrase(preferred_kind, paced.get(preferred_kind, {}))}, "
@@ -9984,8 +9984,8 @@ def apply_review_allocation(room_full: dict, identity: str) -> tuple[dict, dict,
     preferred_kind = {"claude": "codex", "codex": "claude"}.get(owner_kind, "")
     current_kind = part.get("agent", "")
     seat_preference = _participant_seat_preference(room_full, identity, part)
-    pinned = room_full.get("keepAgents") is True
-    if pinned and seat_preference.get("agent") in ("claude", "codex"):
+    keep_agents = room_full.get("keepAgents") is True
+    if keep_agents and seat_preference.get("agent") in ("claude", "codex"):
         # A task that keeps its agents reviews on the kind its seat names.
         preferred_kind = seat_preference["agent"]
     snapshot = {}
@@ -9997,7 +9997,7 @@ def apply_review_allocation(room_full: dict, identity: str) -> tuple[dict, dict,
                        else _seat_for_kind(seat_preference, "codex")["model"])
         decision = choose_agent_kind_for_seat(
             preferred_kind, snapshot, installed=installed, current_kind=current_kind,
-            codex_model=codex_model, pinned=pinned)
+            codex_model=codex_model, keep_agents=keep_agents)
     except StartRoomError:
         raise
     except Exception as exc:                              # noqa: BLE001
@@ -10067,8 +10067,8 @@ def apply_review_allocation(room_full: dict, identity: str) -> tuple[dict, dict,
 
 
 def set_keep_agents(rid: str, on: bool) -> tuple[bool, dict | None, str]:
-    """Pin a task's seats to the kinds its line-up names, whatever the week's
-    pace (ED-164), or let them be paced again. A pinned seat still leaves a
+    """Keep a task's seats to the kinds its line-up names, whatever the week's
+    pace (ED-164), or let them be paced again. A kept seat still leaves a
     kind that is spent (at the alarm). Returns (ok, room, error)."""
     room = chatroom.get_room((rid or "").strip(), public=False)
     if room is None:

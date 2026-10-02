@@ -1602,6 +1602,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      does a strip tool that is not open (a closed .dk-flyout is laid out
      beside the middle, hidden only by visibility: #132). */
   .dk-panel.dk-off .wsp-frame.on, .dk-flyout:not(.open) .wsp-frame.on { visibility: hidden; }
+  /* A task's ⋯ taller than its window (a small popped-out one) scrolls inside
+     it; the Dock only moves a menu up, so its foot would be cut off. */
+  .dk-menu { max-height: calc(100vh - 8px); overflow-y: auto; overscroll-behavior: contain; }
+  .dk-menu > * { flex-shrink: 0; }
   .wsp-frames { position: relative; flex: 1; min-height: 0; }
   .wsp-gone p { margin: 0 0 var(--s-200); }
   .wsp-gone-path { font-family: var(--font-mono); font-size: var(--fs-200); color: var(--fg-muted); overflow-wrap: anywhere; }

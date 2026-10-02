@@ -811,7 +811,7 @@ def choose_owner_kind(room: dict, part: dict, snapshot: dict | None = None,
         # The current kind runs the conversation, so it counts as installed.
         decision = _d.choose_agent_kind_for_seat(
             cur, snap, installed=lambda k: k == cur or installed(k), current_kind=cur,
-            codex_model=codex_model, pinned=room.get("keepAgents") is True)
+            codex_model=codex_model, keep_agents=room.get("keepAgents") is True)
         figures, code = decision["figures"], decision["decision"]
         paced = decision["pace"]["kinds"]
         out["usage"] = {"checkedAt": snap.get("checkedAt"), "warnPercent": warn,
@@ -841,9 +841,9 @@ def choose_owner_kind(room: dict, part: dict, snapshot: dict | None = None,
                 why = _d._usage_reason_phrase(cur, mine)
             out.update(agent=other, model=_model_for(seat, other), changed=True, why=why,
                        reason=f"Owner switched to {name(other)}: {why}.")
-        elif code == "pinned":
+        elif code == "keep_agents":
             out["reason"] = (f"Owner kept on {name(cur)}: this task keeps its agents, "
-                             f"{_d._pinned_why(cur, mine, warn)}.")
+                             f"{_d._keep_agents_why(cur, mine, warn)}.")
         elif code == "both_ahead_of_pace":
             out["reason"] = (f"Owner kept on {name(cur)}: both kinds are ahead of pace and "
                              f"{name(cur)} no further: " + pace_why.replace(", while ", "; ")

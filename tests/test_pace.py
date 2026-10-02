@@ -159,13 +159,13 @@ class TheSeatChoice(unittest.TestCase):
         self.assertEqual((d["chosenKind"], d["decision"]), ("codex", "preferred_below_warning"))
 
     def test_a_pinned_seat_ignores_pace_and_the_warning(self):
-        d = self.choose(_snap(30, 52), pinned=True)
-        self.assertEqual((d["chosenKind"], d["decision"]), ("codex", "pinned"))
-        d = self.choose(_snap(30, 88), pinned=True)
-        self.assertEqual((d["chosenKind"], d["decision"]), ("codex", "pinned"))
+        d = self.choose(_snap(30, 52), keep_agents=True)
+        self.assertEqual((d["chosenKind"], d["decision"]), ("codex", "keep_agents"))
+        d = self.choose(_snap(30, 88), keep_agents=True)
+        self.assertEqual((d["chosenKind"], d["decision"]), ("codex", "keep_agents"))
 
     def test_a_pinned_seat_never_goes_to_a_spent_kind(self):
-        d = self.choose(_snap(30, 96), pinned=True)
+        d = self.choose(_snap(30, 96), keep_agents=True)
         self.assertEqual((d["chosenKind"], d["decision"]), ("claude", "switch_alarm"))
 
     def test_first_launch_swaps_owner_and_reviewer_and_says_why(self):
@@ -181,13 +181,13 @@ class TheSeatChoice(unittest.TestCase):
         self.assertEqual(alloc["usage"]["decision"], "switch_pace")
         chosen, alloc = dashboard.choose_first_launch_allocation(
             lineup, _snap(30, 52), installed=lambda k: True, pace=PACE_ON, now=self.NOW,
-            pinned=True)
+            keep_agents=True)
         self.assertEqual([s["agent"] for s in chosen], ["codex", "claude"])
         self.assertIn("keeps its agents", alloc["reason"])
         self.assertNotIn("warning", alloc["reason"])
         chosen, alloc = dashboard.choose_first_launch_allocation(
             lineup, _snap(30, 88), installed=lambda k: True, pace=PACE_ON, now=self.NOW,
-            pinned=True)
+            keep_agents=True)
         self.assertEqual([s["agent"] for s in chosen], ["codex", "claude"])
         self.assertIn("keeps its agents, ignoring pacing and the 80% warning "
                       "(Codex 7-day window at 88%)", alloc["reason"])
