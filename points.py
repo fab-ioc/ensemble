@@ -1331,9 +1331,15 @@ def answer_ask(room_id: str, mid: str, n: int, answer: dict, now: float | None =
         return None
 
 
-def settle_asks(room_id: str, now: float | None = None) -> None:
+def settle_asks(room_id: str, text: str, now: float | None = None) -> None:
     """The person wrote in the chat (not a quick answer): the asks of the
-    messages before it wait for them no more. Their cards still answer."""
+    messages before it wait for them no more. Their cards still answer.
+    Only words of their own, as take() reads them: a command or hub input
+    settles nothing."""
+    body = (text or "").strip()
+    if not room_id or not body or body.startswith("/") or _d.hub_input_kind(body)["kind"] != "human" \
+            or body.startswith(_d.PO_MESSAGE_PREFIX):
+        return
     now = time.time() if now is None else now
     with _LOCK:
         led = load(room_id)

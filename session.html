@@ -2478,7 +2478,9 @@ function askAnswer(m, a, P) {
 // chat after it, answering it in words or setting it aside. Its card still
 // answers then; it just no longer holds the balloon or asks for attention.
 const ASK_OPEN_S = 7 * 86400;
-const askSettled = (m, P) => !!m.ts && ((Date.now() / 1000 - m.ts >= ASK_OPEN_S) || m.ts < ((P && P.asksSettledAt) || 0));
+// A Done task waits for nobody (asks.open_by_room): its column as stored.
+const roomDone = () => String((typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ && ROOM_OBJ.workflow) || '').toLowerCase().replace(/[\s_-]/g, '') === 'done';
+const askSettled = (m, P) => roomDone() || (!!m.ts && ((Date.now() / 1000 - m.ts >= ASK_OPEN_S) || m.ts < ((P && P.asksSettledAt) || 0)));
 const openAsks = (m, P) => askSettled(m, P) ? [] : asksOf(m).filter(a => !askAnswer(m, a, P));
 // One ask drawn: its question, then its quick answers or, answered, what was
 // answered with the buttons settled (pressed, disabled).
@@ -2503,7 +2505,7 @@ function askCardHtml(m, a, total, P) {
   }
   const open = a.kind === 'open';
   const aside = !askSettled(m, P) ? ''
-    : `<div class="qa-note">${m.ts < ((P && P.asksSettledAt) || 0) ? 'You wrote in the chat after this' : 'Over a week old'}: no longer waiting for you. It can still be answered here.</div>`;
+    : `<div class="qa-note">${roomDone() ? 'This task is done' : m.ts < ((P && P.asksSettledAt) || 0) ? 'You wrote in the chat after this' : 'Over a week old'}: no longer waiting for you. It can still be answered here.</div>`;
   return `<div class="qa" data-ask="${esc(key)}">${head}${aside}${opts ? `<div class="qa-opts" role="group" aria-label="${esc('Answer: ' + a.question)}">${opts}</div>` : ''}`
     + `<div class="qa-cm"><textarea rows="1" data-ask="${esc(key)}" aria-label="${esc((open ? 'Your answer to: ' : 'Comment on: ') + a.question)}" placeholder="${open ? 'Your answer' : 'Comment (optional)'}" title="${open ? '' : 'Goes with the answer you press, or alone with Send comment'}"></textarea>`
     + `<button type="button" class="qa-send" data-ask="${esc(key)}" title="${open ? 'Send your answer' : 'Send your comment alone'}">${open ? 'Send' : 'Send comment'}</button></div></div>`;

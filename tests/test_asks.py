@@ -110,6 +110,11 @@ out.settledOpen = T.openAsks(m, S).length;
 out.settledBody = T.askBodyHtml(m, S, t => t, null);
 out.ages = [T.openAsks({ ...m, ts: now - 6 * 86400 }, none).length, T.openAsks({ ...m, ts: now - 8 * 86400 }, none).length,
   T.openAsks({ ...m, ts: 0 }, S).length];
+// A Done task waits for nobody, as on the hub.
+ctx.ROOM_OBJ = { workflow: 'done' };
+out.doneOpen = T.openAsks(m, none).length;
+out.doneBody = T.askBodyHtml(m, none, t => t, null);
+delete ctx.ROOM_OBJ;
 console.log(JSON.stringify(out));
 """
 
@@ -200,6 +205,8 @@ class TheMarker(unittest.TestCase):
         self.assertIn("You wrote in the chat after this", self.o["settledBody"])
         self.assertEqual(self.o["settledBody"].count("<textarea"), 3, "the cards still answer")
         self.assertEqual(self.o["ages"], [3, 0, 3], "6 days: open; 8 days: not; unknown time: until answered")
+        self.assertEqual(self.o["doneOpen"], 0, "a Done task waits for nobody")
+        self.assertIn("This task is done", self.o["doneBody"])
 
 
 class TheEndpoint(_World):
@@ -268,6 +275,17 @@ class TheEndpoint(_World):
             self.assertEqual(http("/api/room/resume", {"roomId": rid, "text": "1. yes 2. nothing else", "key": "k9"})[0], 200)
         self.assertEqual(asks.open_in(chatroom.get_room(rid)), [])
         self.assertGreater(points.view(rid)["asksSettledAt"], self.t0 + 2)
+
+    def test_a_command_or_a_refused_send_does_not_end_the_wait(self):
+        rid = self._room()
+        with mock.patch.object(dashboard.Handler, "_resume_room", self._resume([])):
+            self.assertEqual(http("/api/room/resume", {"roomId": rid, "text": "/compact", "key": "k1"})[0], 200)
+        self.assertEqual(len(asks.open_in(chatroom.get_room(rid))), 3, "a command is not words of theirs")
+        with mock.patch.object(dashboard.Handler, "_resume_room", lambda h, room, **k: {}):
+            status, r = http("/api/room/resume", {"roomId": rid, "text": "not now", "key": "k2"})
+        self.assertEqual(status, 400, r)
+        self.assertEqual(len(asks.open_in(chatroom.get_room(rid))), 3, "a send that did not go settles nothing")
+        self.assertFalse(points.view(rid).get("asksSettledAt"))
 
     def test_a_done_task_asks_nothing(self):
         rid = self._room()

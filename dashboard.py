@@ -8282,6 +8282,19 @@ def _points_view(rid: str) -> dict | None:
         return None
 
 
+def _settle_asks(rid: str, text: str, key: str) -> None:
+    """A message of the person's went through: words of their own in the chat
+    answer, or set aside, the asks before them (asks.py) — they wait for the
+    person no more. A quick answer or a thumbs-up settles only its own."""
+    if key.startswith(("ask:", "approve:")):
+        return
+    try:
+        points.settle_asks(rid, text)
+        asks.forget()
+    except Exception as e:  # noqa: BLE001
+        print(f"[asks] {rid}: not settled: {e!r}", flush=True)
+
+
 def _points_discard(rid: str, ids: list, key: str) -> None:
     """Take a refused send's points back; the refusal is answered either way."""
     try:
@@ -11366,6 +11379,7 @@ class Handler(BaseHTTPRequestHandler):
                 why = _send_left_behind(rid, key) if key else ""
                 if why:
                     raise StartRoomError(why)
+                _settle_asks(rid, text, key)
         except Exception as exc:    # noqa: BLE001 — refused, in words; the text is kept
             print(f"[resume] {rid}: refused — {exc!r}", flush=True)
             # ``kept``: the text is held here, shown in the chat as not
@@ -11390,14 +11404,6 @@ class Handler(BaseHTTPRequestHandler):
     def _take_points(self, room_full: dict, text: str, to: str, key: str) -> tuple[str, list]:
         """The person's message as its agent gets it, with its points
         (points.take); as it was when the ledger cannot be written."""
-        if not key.startswith(("ask:", "approve:")):
-            # Words of their own in the chat answer, or set aside, the asks
-            # before them (asks.py): they wait for the person no more.
-            try:
-                points.settle_asks(room_full.get("id", ""))
-                asks.forget()
-            except Exception as e:  # noqa: BLE001
-                print(f"[asks] {room_full.get('id')}: not settled: {e!r}", flush=True)
         try:
             return points.take(room_full, text, to, key)
         except Exception as e:      # noqa: BLE001 — the message goes anyway
@@ -13645,6 +13651,7 @@ class Handler(BaseHTTPRequestHandler):
                 _points_discard(rid, pids, key)
                 self._send_json(404, {"error": "no_such_room"})
                 return
+            _settle_asks(rid, text, key)
             self._ring_recipients(rid, result)
             self._send_json(200, {"ok": True, "result": result})
             return
