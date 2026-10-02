@@ -1371,6 +1371,10 @@ def _items() -> list[dict]:
         held_po = _d.po_messages.held_by_room()
     except Exception:
         held_po = {}
+    try:
+        open_asks = _d.asks.open_by_room(rooms, now)
+    except Exception:
+        open_asks = {}
 
     for room in rooms:
         if not room.get("launched", True):
@@ -1401,6 +1405,17 @@ def _items() -> list[dict]:
             # the CEO sees two POs are talking more than they should.
             found.append(("waiting_for_you", held["reason"],
                           {"since": held["since"], "heldPoMessages": held["count"]}, {}))
+        marked = open_asks.get(room["id"])
+        if marked and not any(f[0] == "waiting_for_you" for f in found):
+            # Questions an agent marked for the person (asks.py), each
+            # waiting for its quick answer: the room waits for them.
+            who = agents[0].get("identity") or "an agent"
+            k = len(marked)
+            reason = (f"{who} asked you {k} question{'s' if k != 1 else ''}: "
+                      f"“{marked[0]['question'][:160]}”" + (" and more" if k > 1 else ""))
+            found.append(("waiting_for_you", reason,
+                          {"since": marked[0]["ts"], "quote": marked[0]["question"],
+                           "askKind": "asks", "openAsks": k}, {}))
         if not found:
             continue
         # One item per task: the worst thing wrong with it.
@@ -1441,7 +1456,8 @@ def _items() -> list[dict]:
         if extra.get("since"):
             item["askedAt"] = float(extra["since"])     # the pages say "since 15:55"
         for k in ("quote", "cause", "exitCode", "lastLines", "waitedSeconds", "askId",
-                  "askKind", "ptyIds", "heldPoMessages", "model", "until", "silentSeconds"):
+                  "askKind", "ptyIds", "heldPoMessages", "model", "until", "silentSeconds",
+                  "openAsks"):
             if k in extra and extra[k] not in (None, ""):
                 item[k] = extra[k]
         if held and "heldPoMessages" not in item:
