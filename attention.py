@@ -151,7 +151,7 @@ _BLOCK_RULES: list[tuple[re.Pattern, str, str]] = [
     # A model's own limit, apart from the plan's windows (ED-159): "You've
     # reached your Fable limit. Run /usage-credits to continue or switch
     # models with /model." The reason names the model (``_model_why``).
-    (_phrase(r"you'?ve reached your \S+ (?:[\d.]+ )?limit"), "is at its model limit", "model_limit"),
+    (_phrase(r"you'?ve reached your (?:fable|opus|sonnet|haiku) (?:[\d.]+ )?limit"), "is at its model limit", "model_limit"),
     (_phrase(r"run /usage-credits"), "is at its model limit", "model_limit"),
     (_phrase(r"you'?ve hit your usage limit"), "hit its usage limit", "usage_limit"),
     (_phrase(r"usage limit reached"), "hit its usage limit", "usage_limit"),
@@ -923,6 +923,8 @@ def _limit_block(part: dict, hit: dict) -> tuple[str, str, str, dict]:
             model = part.get("model") or ""
     rec = ml.limited(model) or {} if model else {}
     until = float(hit.get("resetAt") or 0) or float(rec.get("until") or 0)
+    if until and until <= time.time():
+        until = 0.0                             # passed: no "until" to show
     line = hit.get("line") or ""
     return ("is " + model_limit_words(model, until), "model_limit", line,
             {"model": ml.title(model) if model else "", "until": until})

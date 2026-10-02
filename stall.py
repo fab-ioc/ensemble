@@ -527,6 +527,25 @@ def _look_limit(rid: str, now: float) -> str:
                 _log(f"{rid}: cannot end the review of {ident}: {str(e)[:120]}")
         label = _d.task_label(room) or rid
         po = _d.room_po_id(room)
+        until = float(rec.get("until") or hit.get("resetAt") or 0) or \
+            float(hit["at"]) + ml.CLEAR_AFTER_S
+        if _d.rotation._pty(part) is None or until <= now:
+            # A stale hit: the agent is gone or the limit has cleared. Only a
+            # review it ended is news; nobody is woken for it.
+            if failed and po and not old.get("toldAt"):
+                po_room = cr.get_room(po, public=False)
+                at = time.strftime("%H:%M", time.localtime(float(hit["at"])))
+                body = (f"**{label} {ident} was stopped by a model limit "
+                        f"({_d.model_limit.title(model) or 'model'}) at {at}** — "
+                        f"{room.get('title', '')}\n\n{failed.strip()}")
+                if po_room and cr.post_report(po, SENDER, cr.po_identity(po_room), body,
+                                              {"reportKind": "digest", "limitTask": rid}, wake=False):
+                    old["toldAt"] = now
+            ml.set_reported(key, {**old, "wokeAt": old.get("wokeAt") or now, "stale": True})
+            if failed:
+                done.append(f"{ident} was stopped by a model limit "
+                            f"({_d.model_limit.title(model) or 'model'}).{failed}")
+            continue
         if not po:
             ml.set_reported(key, {**old, "wokeAt": now})    # the CEO's bell shows it
             done.append(f"{ident} {words}{failed}")

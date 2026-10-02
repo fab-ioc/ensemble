@@ -67,6 +67,11 @@ class _State(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
+    @staticmethod
+    def launched(model):
+        """A hub terminal started with ``--model model`` ("" for none)."""
+        return types.SimpleNamespace(meta={"launchModel": model})
+
     def transcript(self, *entries, name="t.jsonl") -> Path:
         p = self.dir / name
         p.write_text("".join(json.dumps(e) + "\n" for e in entries), encoding="utf-8")
@@ -111,17 +116,66 @@ class TheLine(_State):
                             "event": {"hook_event_name": "Stop", "session_id": "s1"}}, owner)
         tpath = self.transcript(_reply(), _user(), _limit_entry())
         with mock.patch.object(dashboard, "find_transcript", return_value=tpath), \
-                mock.patch.object(dashboard.chatroom, "get_room", return_value=None):
+                mock.patch.object(dashboard.chatroom, "get_room", return_value=None), \
+                mock.patch.object(dashboard.ptyrun, "get", return_value=self.launched("")):
             dashboard._hook_turn_ended("p1", "room-x", "claude", "s1")
         st = agent_hooks.state_for("p1")
         self.assertEqual((st["state"], st["limit"]["model"]), ("idle", "Fable"))
         self.assertTrue(st["lastEventAt"])
         self.assertTrue(model_limit.limited("claude-fable-5-1", now=st["limit"]["at"] + 60))
-        self.assertEqual(model_limit.cli_default(), "claude-fable-5-1")     # learnt from its reply
+        self.assertEqual(model_limit.cli_default(), "Fable")     # the model its line names
         # The next prompt drops it.
         agent_hooks.record({"room": "room-x", "identity": "claude", "ptyId": "p1",
                             "event": {"hook_event_name": "UserPromptSubmit", "session_id": "s1"}}, owner)
         self.assertNotIn("limit", agent_hooks.state_for("p1"))
+
+
+class LearningTheDefault(_State):
+    def test_only_a_terminal_started_with_no_model_teaches_the_default(self):
+        tpath = self.transcript(_reply(model="claude-opus-5-5"))
+        for sess in (self.launched("opus"), None, types.SimpleNamespace(meta={})):
+            with mock.patch.object(dashboard.ptyrun, "get", return_value=sess):
+                dashboard.learn_cli_default({"ptyId": "p"}, tpath)
+            self.assertEqual(model_limit.cli_default(), "")
+        with mock.patch.object(dashboard.ptyrun, "get", return_value=self.launched("")):
+            dashboard.learn_cli_default({"ptyId": "p"}, tpath)
+        self.assertEqual(model_limit.cli_default(), "claude-opus-5-5")
+
+    def test_a_hit_teaches_the_model_its_line_names(self):
+        tpath = self.transcript(_reply(model="claude-opus-5-5"), _user(), _limit_entry())
+        hit = model_limit.from_transcript(tpath)
+        with mock.patch.object(dashboard.ptyrun, "get", return_value=self.launched("")):
+            dashboard.learn_cli_default({"ptyId": "p"}, tpath, hit)
+        self.assertEqual(model_limit.family(model_limit.cli_default()), "fable")
+
+
+class NearMisses(_State):
+    def test_other_limit_lines_are_no_model_limit(self):
+        for line in ("You've reached your usage limit", "You've reached your weekly limit · resets 3pm"):
+            screen = f"● Working\n\n  ⎿  {line}\n\n❯ \n"
+            hit = attention.find_block(screen)
+            self.assertNotEqual(hit and hit[1], "model_limit", line)
+            self.assertIsNone(model_limit.parse_line(line), line)
+            entry = {**_limit_entry(), "apiError": "rate_limit"}
+            entry["message"] = {**entry["message"], "content": [{"type": "text", "text": line}]}
+            got = model_limit.from_entry(entry)
+            self.assertIsNone(got and model_limit.note(got, fallback_model="claude-fable-5-1"), line)
+        self.assertEqual(model_limit.active(), {})
+
+    def test_a_credits_line_without_a_model_names_the_one_that_ran(self):
+        entry = {**_limit_entry()}
+        entry["message"] = {**entry["message"], "content": [{"type": "text", "text":
+                                                             "Run /usage-credits to continue."}]}
+        hit = model_limit.from_entry(entry)
+        self.assertTrue(hit["credits"])
+        self.assertEqual(model_limit.note(hit, fallback_model="claude-opus-5-5")["family"], "opus")
+
+    def test_reported_records_are_pruned_after_a_day(self):
+        old = time.time() - model_limit.REPORTED_KEEP_S - 60
+        model_limit.set_reported("room-a/claude", {"at": old, "toldAt": old})
+        model_limit.set_reported("room-b/claude", {"at": time.time()})
+        self.assertEqual(model_limit.reported("room-a/claude"), {})
+        self.assertTrue(model_limit.reported("room-b/claude"))
 
 
 class Allocation(_State):
@@ -148,7 +202,7 @@ class Allocation(_State):
         self.assertEqual(dashboard.hub_launch_model("claude", "")[0], "opus")
         reason = dashboard._with_model_note("Preferred line-up kept.", [{"agent": "claude", "model": ""}])
         self.assertIn("Runs Opus: Fable (the default) hit its model limit", reason)
-        self.assertEqual(dashboard.seat_model_display("claude", ""), "opus (Fable at its limit)")
+        self.assertEqual(dashboard.seat_model_display("claude", ""), "fable at its limit, next start opus")
         dashboard._SHOWN.clear()
         # Opus at its limit too: the next one along.
         self.limit("Opus")
@@ -234,6 +288,31 @@ class ResumeEndingInTheLine(_Stall):
         fin.assert_called_once_with(self.rid, "claude-2", "failed")
         self.assertIn("ended as failed", did)
         self.assertIn("ended as failed", self.told()[0]["text"])
+        # Its terminal is gone (a reviewer ends): told as past, nobody woken.
+        self.assertIn("was stopped by a model limit (Fable) at", self.told()[0]["text"])
+        self.assertEqual(self.typed, [])
+
+    def test_a_stale_hit_is_marked_without_a_word(self):
+        for dead in ("pty", "cleared"):
+            model_limit.set_reported(f"{self.rid}/claude", None)
+            if dead == "pty":
+                dashboard.rotation._pty.side_effect = lambda part: None
+                t = time.time()
+            else:
+                dashboard.rotation._pty.side_effect = None
+                t = time.time() + model_limit.CLEAR_AFTER_S + 60
+            with mock.patch.object(dashboard, "finish_review") as fin:
+                # (five hours on, the silent backstop may speak; the limit does not)
+                self.assertNotIn("model limit", stall.tick(t).get(self.rid, ""), dead)
+            fin.assert_not_called()
+            self.assertEqual(self.told(), [], dead)
+            self.assertNotIn(stall.NUDGE, self.typed)
+            self.assertTrue(model_limit.reported(f"{self.rid}/claude").get("stale"), dead)
+
+    def test_a_passed_reset_is_not_shown(self):
+        part = {"identity": "claude", "agent": "claude"}
+        hit = {"model": "Fable", "family": "fable", "line": LINE, "resetAt": time.time() - 60}
+        self.assertEqual(attention._limit_block(part, hit)[3]["until"], 0.0)
 
 
 class SilentOwner(unittest.TestCase):

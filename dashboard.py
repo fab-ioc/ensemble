@@ -1546,25 +1546,24 @@ def _hook_turn_ended(pty_id, room_id, identity, session_id) -> None:
         if hit:
             model_limit.note(hit, room=room_id, identity=identity,
                              fallback_model=model_limit.last_model(tpath) or part.get("model") or "")
-        learn_cli_default(part, tpath, hit)
+        learn_cli_default(part, tpath, hit, pty_id)
     except Exception as e:                                   # noqa: BLE001
         print(f"[hook] model limit check: {str(e)[:200]}", flush=True)
 
 
-def learn_cli_default(part: dict, tpath, hit: dict | None = None) -> None:
-    """Remember the model Claude Code ran on its own (ED-159): a seat that
-    names no model, with nothing in Settings or Claude's settings, ran the
-    CLI's default: the model of its last reply, or the model its limit line
-    names."""
-    if (part.get("model") or "").strip() or _settings_claude_model() or \
-            agent_models.claude_own()["model"] or model_limit.choose("")["fallback"]:
-        return                      # it was launched with a model (a fallback too)
-    model_limit.learn_default(model_limit.last_model(tpath) or (hit or {}).get("model") or "")
-
-
-def _settings_claude_model() -> str:
-    """The Claude model chosen in Settings › Agent models, or ""."""
-    return agent_models.launch_choice("claude", "", load_settings().get("agentModels"))[0]
+def learn_cli_default(part: dict, tpath, hit: dict | None = None, pty_id: str = "") -> None:
+    """Remember the model Claude Code ran on its own (ED-159): a terminal the
+    hub started with no ``--model`` (its ``launchModel`` is ""), with nothing
+    in Claude's own settings, ran the CLI's default: the model its limit line
+    names, else the model of its last reply. A terminal started on a model
+    (the seat's, Settings', a fallback's) or not by the hub teaches nothing."""
+    sess = ptyrun.get(pty_id or part.get("ptyId") or "")
+    meta = getattr(sess, "meta", None) or {}
+    if meta.get("launchModel", None) != "" or agent_models.claude_own()["model"]:
+        return
+    model = ((hit or {}).get("model") if (hit or {}).get("family") else "") \
+        or model_limit.last_model(tpath)
+    model_limit.learn_default(model or "")
 
 
 _SHOWN: dict[str, tuple[float, str]] = {}
@@ -11347,7 +11346,8 @@ class Handler(BaseHTTPRequestHandler):
         if hasattr(ag, "ensure_trusted"):
             ag.ensure_trusted(cwd)
         label = f"{room_full['title'][:40]} · {ident}"
-        meta = {"room": room_full["id"], "identity": ident, "agent": agent_key}
+        meta = {"room": room_full["id"], "identity": ident, "agent": agent_key,
+                "launchModel": model}
         codex_mcp, claude_mcp, env = self._mcp_wiring(token, collab)
         env.update(rtk_env)
         if agent_key != "codex":
@@ -11391,7 +11391,8 @@ class Handler(BaseHTTPRequestHandler):
         if hasattr(ag, "ensure_trusted"):
             ag.ensure_trusted(cwd)
         label = f"{room_full['title'][:40]} · {ident}"
-        meta = {"room": room_full["id"], "identity": ident, "agent": agent_key}
+        meta = {"room": room_full["id"], "identity": ident, "agent": agent_key,
+                "launchModel": model}
         codex_mcp, claude_mcp, env = self._mcp_wiring(token, collab, human=human)
         rtk_args, rtk_env, _ = _rtk_task_wiring(room_full, agent_key)
         env.update(rtk_env)

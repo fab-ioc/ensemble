@@ -60,7 +60,7 @@ FALLBACK = ("fable", "opus", "sonnet", "haiku")
 # The CLI's own wording. "You've reached your Fable limit." with or without the
 # apostrophe, any model name of one or two words ("Opus 5.5"), and the advice
 # that follows it ("Run /usage-credits to continue").
-LINE = re.compile(r"you'?ve\s*reached\s*your\s*([A-Za-z][\w.\-]*(?:\s[\d.]+)?)\s*limit", re.I)
+LINE = re.compile(r"you'?ve\s*reached\s*your\s*((?:fable|opus|sonnet|haiku)(?:\s[\d.]+)?)\s*limit", re.I)
 CREDITS = re.compile(r"run\s*/usage-credits", re.I)
 _RESET = re.compile(r"resets?\s*(?:at\s*)?(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?", re.I)
 # The transcript's mark of a model at its limit (seen 2026-10-01).
@@ -169,7 +169,10 @@ def from_entry(d: dict) -> dict | None:
                "resetAt": 0.0}
     if hit is None:
         return None
-    return {**hit, "at": at}
+    # A line that names no model is a model's limit only when the CLI says so:
+    # its usage-credits error, or the advice to run /usage-credits.
+    credits = d.get("apiError") in API_ERRORS or bool(CREDITS.search(hit.get("line", "")))
+    return {**hit, "at": at, "credits": credits}
 
 
 _SEEN: dict[str, tuple[tuple, dict | None]] = {}   # path -> ((mtime, size), hit)
@@ -246,9 +249,10 @@ def _save(d: dict) -> None:
 
 def note(hit: dict, *, room: str = "", identity: str = "", fallback_model: str = "") -> dict | None:
     """Remember that a model hit its limit. ``fallback_model`` names the model
-    when the line does not (the model the conversation ran on). Returns the
-    stored record, or None when no model can be named."""
-    fam = hit.get("family") or family(fallback_model)
+    when the line does not (the model the conversation ran on), and only for a
+    hit the CLI marked as a model's limit (``credits``): any other limit line
+    is not one. Returns the stored record, or None when no model can be named."""
+    fam = hit.get("family") or (family(fallback_model) if hit.get("credits") else "")
     if not fam:
         return None
     at = float(hit.get("at") or time.time())
@@ -306,9 +310,18 @@ def reported(key: str) -> dict:
     return dict(_load()["reported"].get(key) or {})
 
 
+REPORTED_KEEP_S = 86400
+
+
 def set_reported(key: str, rec: dict | None) -> None:
+    """Record (or with None drop) what was told about ``key``; records older
+    than a day are pruned on the way."""
     with _LOCK:
         d = _load()
+        cut = time.time() - REPORTED_KEEP_S
+        d["reported"] = {k: v for k, v in d["reported"].items()
+                         if isinstance(v, dict) and max(float(v.get(t) or 0) for t in
+                                                        ("at", "toldAt", "wokeAt", "reviewFailed")) > cut}
         if rec is None:
             d["reported"].pop(key, None)
         else:
@@ -322,8 +335,8 @@ def set_reported(key: str, rec: dict | None) -> None:
 
 def _settings_model() -> str:
     try:
-        return (_d.agent_models.normalise(_d.load_settings().get("agentModels"),
-                                          _d.load_settings().get("defaultModel"))
+        s = _d.load_settings()
+        return (_d.agent_models.normalise(s.get("agentModels"), s.get("defaultModel"))
                 ["claude"]["model"] or "")
     except Exception:
         return ""
@@ -397,13 +410,14 @@ _SOURCE_WORDS = {"settings": "chosen in Settings", "claude settings": "Claude's 
 def display(seat_model: str = "") -> str:
     """How a Claude seat's model reads to a person: the seat's own, else the
     model it resolves to with where that comes from (``fable (default)``,
-    ``opus (Settings)``), and ``opus (Fable at its limit)`` when a limit makes
-    the launch fall back. "" only when nothing is known."""
+    ``opus (Settings)``), and ``fable at its limit, next start opus`` when a
+    limit makes the next launch fall back: the first word is what runs now.
+    "" only when nothing is known."""
     c = choose(seat_model)
     if c["source"] == "seat":
         return c["resolved"]
     if c["fallback"]:
-        return f"{c['fallback']} ({title(c['resolved'])} at its limit)"
+        return f"{family(c['resolved']) or c['resolved']} at its limit, next start {c['fallback']}"
     if not c["resolved"]:
         return ""
     word = {"settings": "Settings", "claude settings": "Claude settings",
