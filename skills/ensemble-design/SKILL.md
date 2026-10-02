@@ -177,6 +177,36 @@ rendering the *identical* fill as the `In review` lozenge in the same row.
 bold, below the large-text threshold, so there is no exemption. Note that `claude` and `codex` both
 begin with **C** — colour is load-bearing in that circle, not decorative.
 
+### Tool identity
+
+`--tool-points` (Your asks, amber) · `--tool-changes` (green) · `--tool-workspace` (Files, blue) ·
+`--tool-board` (violet) · `--tool-spec` (teal) · `--tool-list` (the task list, orange) ·
+`--tool-ink` (a drawing on a tile of one of them). Each tool's icon is drawn in its own colour so
+the strip can be scanned the way IntelliJ's tool windows are (#166). Like an avatar, a tool
+colour says **which**, never **what is true**: it is not a status, so it sits outside the
+semantic six, and nothing else uses these tokens but Create's menu, whose tiles take the colour
+of the tool a new thing lands in. The hues are the app icon's (its lanes and its
+blue to violet ground); orange, not coral, so nothing reads as the one red.
+
+- **3:1 or better** (WCAG 1.4.11, a graphic) on `--surface` (the button), `--surface-sunken` (the
+  strip) and the hovered button, in every theme; measured 4.19 to 8.6. `--tool-ink` clears 3:1
+  on each colour. `py tools/make_tool_icons.py --preview DIR` prints the table.
+- **The drawings and the renderer are one place:** `TOOL_GLYPH` and `toolIcon(id)` in
+  `index.html`. Never draw a tool's icon again elsewhere; call `toolIcon`. Its SVG is
+  `class="ti ti-<id>"`, painted in `currentColor`, and `.ti { color: var(--ti) }` gives it the
+  tool's colour. **Where one colour is needed, set `--ti: currentColor`**: the open tool's
+  button does (`--selected-fg`, as every selected control).
+- **A drawing per tool, each its own silhouette at 16px:** Your asks a speech bubble with a
+  question, Changes a branch with solid commits, Files a folder with its tree, Board three lanes
+  with cards (the app icon's lanes), Spec a page with a check, the task list rows with state dots
+  and one row selected. 24-unit grid, 1.8 outline, a 22% tint of the same colour under it.
+- **Styles:** `glyph` (shipped), `tile` (the drawing on a tile of the tool's colour, as the app
+  icon) and `dot` (the drawing in the button's colour, a dot of the tool's). Switching is
+  `py tools/make_tool_icons.py tile`; the comparison is `Documents/#166 Tool icons.md`.
+- They appear on the tool strip, the task list's strip, the Panels menu (16px, before the name),
+  a popped-out tool's window tab (a tile, `pdPopIconHref`, in the theme's colours) and Create's
+  menu (New ‹board word›…: the board's drawing on its tile, `cmIcon`).
+
 ### Search match
 
 `--match-bg` / `--match-fg`. Fixed, for the same reason as the focus ring. A match must be *found by
@@ -307,11 +337,12 @@ when it applies:
    ‹board›…*, for a documents board without a PO.
 
 Every name uses the board word (`nounText`). A row is a 28px tile, the name (`--fs-300`, 500)
-and a line under it (`--fs-100`, `--fg-muted`). **The tiles are the wordmark's colours**, brand,
-not status: `--wm-from`, `--wm-to`, `--wm-lane-2`, `--wm-lane-3` with the glyph in `--surface`
-(4.88:1 or better in every theme, as measured for the wordmark; `tests/test_create_menu.py`
-reads 5.1 or better), and `--c-neutral-bg`/`-fg` for the less-used ones. Never `--wm-lane-1`
-(it reads as the one red) and never the accent. Keys: ArrowDown on Create opens it, arrows,
+and a line under it (`--fs-100`, `--fg-muted`). **A tile wears the colour of the tool where the
+new thing lands** (*Tool identity*, #166): the task items `--tool-list`, New ‹board word›…
+`--tool-board` with the board's own drawing (`toolIcon('board')`, the strip's), the glyph in
+`--tool-ink` (4.7:1 or better in every theme; `tests/test_create_menu.py` reads 4.5 or
+better), and `--c-neutral-bg`/`-fg` for the less-used ones. The items tell apart by drawing
+and name; never a colour of another tool, never the accent. Keys: ArrowDown on Create opens it, arrows,
 Home and End move (wrapping), Escape closes it and gives Create the focus back, Tab and a click
 elsewhere close it. On a phone it spans the screen less the gutters and every row is
 `--touch-min`.
@@ -810,8 +841,8 @@ Needs you.**
 **Layout A, step 3 (#125): the tool strip.** On a desktop the dock is the conversation in the
 middle and a **44px strip at the right edge** holding the tools, in this order: **Your asks ·
 Changes · Files · Board · Spec** (`PD_TOOLS`; Files is the panel `workspace`, Spec is `spec`: a
-task's Spec with its Details under it). Each is an icon button (`PD_ICON`, 24-unit SVG, 1.8 stroke
-in `currentColor`) whose name is its tooltip and `aria-label`; a count sits on the icon's top right
+task's Spec with its Details under it). Each is an icon button (`PD_ICON`, from `toolIcon`, in its
+tool's colour: see *Tool identity* in §2) whose name is its tooltip and `aria-label`; a count sits on the icon's top right
 corner (`setBadge`: Your asks' open asks; Changes' uncommitted files on a PO screen, the branch's
 lines added on a task, short: `+512`, `+1.7k`, the exact numbers in its tooltip). A click opens a
 tool **beside** the conversation, which narrows (`stripOpen: 'beside'`: nothing is covered, no
@@ -932,8 +963,8 @@ per page, so both docks' windows find their way back (the page's own `pdKeepPopK
   submenus are the library's `.dk-menu`s, styled as every menu below. A splitter is 5px of `--bg`,
   `--border-strong` on hover, `--accent` while dragged or focused (a control you are using). An edge
   strip is `--surface-sunken`; the tool strip's buttons are square icon buttons (Default: `--surface`,
-  `--border`, the icon `--fg-subtle`, 55% of the strip), their count 10px 600 `--fg` on `--surface`
-  in the icon's corner; the one open is `--selected-bg` with `--selected-fg`. A text strip button
+  `--border`, the icon in its `--tool-*` colour, 55% of the strip), their count 10px 600 `--fg` on `--surface`
+  in the icon's corner; the one open is `--selected-bg` with `--selected-fg`, its icon too. A text strip button
   (a panel without an icon) is its name, `--fs-200`, 500. A floating window and a slid-out strip panel are `--r-300` with
   `--e-200`; docked panels have a border, no shadow (§2). The drop preview is the drop target of §1.
   Menus are `--surface-overlay`, `--r-300`, `--e-200`, rows 32px.

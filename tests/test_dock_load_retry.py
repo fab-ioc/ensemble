@@ -184,7 +184,7 @@ class FlakyHandler(dashboard.Handler):
 
 class TheWiring(unittest.TestCase):
     def test_a_failed_load_is_tried_again_and_logged(self):
-        load = INDEX[INDEX.index("function pdLoad()"):INDEX.index("// A panel's own window shows the app's icon")]
+        load = INDEX[INDEX.index("function pdLoad()"):INDEX.index("// A panel's own window shows its tool's icon")]
         self.assertIn("PD_RETRY[n - 1]", load)
         self.assertIn("'?try=' + n", load, "a new try asks under another address")
         self.assertIn("fetch('/api/page-log'", load)

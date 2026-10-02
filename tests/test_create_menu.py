@@ -54,12 +54,15 @@ const MEASURE = `(() => {
   const lum = c => { const [r, g, b] = c.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
   const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
   const r = m.getBoundingClientRect();
+  const __toolBg = id => { const e = document.createElement('i'); e.style.background = 'var(--tool-' + id + ')'; document.body.append(e); const c = getComputedStyle(e).backgroundColor; e.remove(); return c; };
   const items = [...m.querySelectorAll('.cm-item')].map(b => {
     const t = b.querySelector('.cm-tile'), cs = getComputedStyle(t), n = b.querySelector('.cm-name'), s = b.querySelector('.cm-sub');
     return { act: b.dataset.create, name: n.textContent, sub: s.textContent, def: !!b.querySelector('.cm-key'),
              h: Math.round(b.getBoundingClientRect().height),
              cut: n.scrollWidth > n.clientWidth + 1 || s.scrollWidth > s.clientWidth + 1,
-             tile: Math.round(ratio(rgb(cs.color), rgb(cs.backgroundColor)) * 100) / 100 };
+             tile: Math.round(ratio(rgb(cs.color), rgb(cs.backgroundColor)) * 100) / 100,
+             bg: cs.backgroundColor, ti: [...(t.querySelector('.ti') || {classList: []}).classList].join(' '),
+             toolBg: { list: __toolBg('list'), board: __toolBg('board') } };
   });
   return { open: !m.hidden, items, focused: document.activeElement && document.activeElement.dataset.create || '',
            inView: r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight,
@@ -274,6 +277,13 @@ class CreateMenu(unittest.TestCase):
                     for i in m["items"]:
                         self.assertFalse(i["cut"], i)
                         self.assertGreaterEqual(i["tile"], 4.5, i)
+                        # #166: a tile wears the colour of the tool where the new thing lands;
+                        # New <board> is the strip's own Board icon, in the Board colour.
+                        if i["act"] == "project":
+                            self.assertIn("ti-board", i["ti"], i)
+                            self.assertEqual(i["bg"], i["toolBg"]["board"], i)
+                        elif i["act"] in ("here", "sub", "pick"):
+                            self.assertEqual(i["bg"], i["toolBg"]["list"], i)
                         if size == "390":
                             self.assertGreaterEqual(i["h"], 44, i)
 
