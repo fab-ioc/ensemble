@@ -401,6 +401,27 @@ def _reset_epoch(value):
     return None, "bad"
 
 
+PACE_WEEK_S = 7 * 24 * 3600
+
+
+def pace_mark(resets_at, now: float, margin: float, cap: float) -> dict | None:
+    """The weekly pace line of a 7-day window that resets at ``resets_at``
+    (ED-164): the share of the window gone by at ``now``, as a percent, plus
+    ``margin`` points, never above ``cap`` (the warning). None when the reset
+    time is unknown or unreadable: such a window is not paced.
+
+    The window starts 7 days before its reset. A reset already passed reads as
+    the whole week gone (the cap); one more than a week off as none gone."""
+    end, how = _reset_epoch(resets_at)
+    if how != "ok" or end is None:
+        return None
+    start = end - PACE_WEEK_S
+    elapsed = min(1.0, max(0.0, (float(now) - start) / PACE_WEEK_S))
+    line = min(float(cap), elapsed * 100 + float(margin))
+    return {"pace": round(line, 1), "elapsed": round(elapsed, 4),
+            "startsAt": start, "resetsAt": resets_at}
+
+
 def _minute_iso(epoch: float) -> str:
     """A reset time as ISO-8601, to the nearest minute.
 

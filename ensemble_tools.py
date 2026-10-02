@@ -358,6 +358,11 @@ _ALL_TOOLS = [
                                              "worktree (a git worktree on its own branch)."},
                 "priority": _priority_spec("Defaults to medium."),
                 **_GATE_FIELDS,
+                "keepAgents": {"type": "boolean",
+                               "description": "Keep this task's agents on the kinds the line-up "
+                                              "names, ignoring the hub's weekly pacing (use only "
+                                              "when the product owner asks). A seat still leaves "
+                                              "a kind whose allowance is spent. false = paced again."},
                 "start": {"type": "boolean",
                           "description": "Launch the agents now (default false = leave as a draft)."},
             },
@@ -406,6 +411,11 @@ _ALL_TOOLS = [
                            "description": "The task's complete new agent line-up, replacing the old "
                                           "one (omit to keep it). List every agent that should be on "
                                           "the task, not just the change; anyone left out is removed."},
+                "keepAgents": {"type": "boolean",
+                               "description": "Keep this task's agents on the kinds the line-up "
+                                              "names, ignoring the hub's weekly pacing (use only "
+                                              "when the product owner asks). A seat still leaves "
+                                              "a kind whose allowance is spent. false = paced again."},
             },
             "required": ["taskId"],
         },
@@ -923,6 +933,7 @@ def _row(room: dict, projects: dict, links: dict, labels: dict,
         "projectId": pid,
         "project": (projects.get(pid) or {}).get("name", "") if pid else "",
         "agents": _agents_view(room),
+        "keepAgents": room.get("keepAgents") is True,
         "allocation": _allocation_view(room.get("allocation")),
         "specPreview": (spec[:160] + "…") if len(spec) > 160 else spec,
         "messages": len(room.get("messages", []) or []),
@@ -1278,7 +1289,15 @@ def _plan_usage(ctx, args, handler):
         # names no model: each kind's worst current window, Codex's taken from
         # the pool its agents run on.
         "kinds": {kind: _d._kind_usage(snap, kind) for kind in ("claude", "codex")},
-        "note": ("Codex has several pools, each its own allowance: the main one "
+        # Each kind's weekly pace mark: past it, new seats go to the other kind.
+        "pace": _d.pace_view(snap),
+        "note": ("`pace`: the hub spreads each kind's 7-day allowance over the "
+                 "week. A kind whose 7-day percent is above its pace mark "
+                 "(share of the week gone + the margin, capped at the warning) is "
+                 "ahead of pace, and new owners, reviews and handovers go to the "
+                 "other kind while that one is not; a task created or updated "
+                 "with keepAgents=true is not paced. "
+                 "Codex has several pools, each its own allowance: the main one "
                  "(windows with model=null), the reserve (only the model "
                  "gpt-reserve draws on it) and a model's own. Judge Codex by the "
                  "pool its agents run on — sources[].poolInUse, windows[].inUse, "
@@ -1403,6 +1422,9 @@ def _create_task(ctx, args, handler):
                                         priority)
     if not ok:
         raise ToolError(err)
+    if args.get("keepAgents") is True:
+        _d.set_keep_agents(room_full["id"], True)
+        room_full["keepAgents"] = True
     room_full.update(after=gates, onReady=args.get("onReady", "start"), gateConfiguredAt=time.time())
     _d.chatroom.patch_room(room_full["id"], after=gates, onReady=room_full["onReady"],
                            gateConfiguredAt=room_full["gateConfiguredAt"])
@@ -1433,7 +1455,8 @@ def _update_task(ctx, args, handler):
     _check_write_scope(ctx, _project_of_room(room), "update_task")
     if not is_admin_caller(ctx["room"], ctx["identity"]):
         changes_other_than_workflow = any(args.get(k) is not None
-                                          for k in ("title", "spec", "priority", "agents", "after", "onReady"))
+                                          for k in ("title", "spec", "priority", "agents", "after", "onReady",
+                                                    "keepAgents"))
         if (room["id"] != ctx["room"]["id"] or changes_other_than_workflow
                 or _d.normalize_workflow(args.get("workflow")) != "inreview"):
             raise ToolError(
@@ -1444,9 +1467,12 @@ def _update_task(ctx, args, handler):
     priority = _priority(args.get("priority"))
     workflow = _workflow(args.get("workflow"), ctx)
     agent_list = args.get("agents")
-    if (title is None and spec is None and priority is None
+    keep = args.get("keepAgents")
+    if keep is not None and not isinstance(keep, bool):
+        raise ToolError("keepAgents must be true or false")
+    if (title is None and spec is None and priority is None and keep is None
             and workflow is None and agent_list is None and "after" not in args and "onReady" not in args):
-        raise ToolError("give a new title, spec, priority, workflow and/or agents")
+        raise ToolError("give a new title, spec, priority, workflow, agents and/or keepAgents")
     gate_fields = {}
     if "after" in args or "onReady" in args:
         try:
@@ -1490,6 +1516,13 @@ def _update_task(ctx, args, handler):
             notes.append("its owner runs on and was briefed as a solo agent: it learns of "
                          "the new seat only from a message, so tell it in the task's chat "
                          "(a review starts when the reviewer is @mentioned)")
+    if keep is not None:
+        ok, room4, err = _d.set_keep_agents(room["id"], keep)
+        if not ok:
+            raise ToolError(err)
+        room2 = room4
+        notes.append("its agents keep their kinds, ignoring pacing" if keep
+                     else "its agents are paced over the week again")
     if gate_fields:
         room2 = _d.chatroom.patch_room(room["id"], **gate_fields) or room2
         _d._patch_task_json(room2.get("taskDir", ""), **gate_fields)

@@ -2681,6 +2681,17 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     font-size: var(--fs-100); color: var(--fg-subtle); margin-top: 5px; line-height: 1.45;
   }
   .usage-why.bad { color: var(--c-danger-fg); }
+  /* The week's pace (ED-164): a tick on the 7-day bar where today's share of
+     the allowance ends, and a line in words. Ahead of pace is a warning: it
+     needs nobody yet, but new seats go to the other kind. */
+  .usage-bar { position: relative; }
+  .usage-pace-tick {
+    position: absolute; top: -1px; bottom: -1px; width: 2px; margin-left: -1px;
+    background: var(--fg-subtle);
+  }
+  .usage-pace { font-size: var(--fs-100); color: var(--fg-subtle); margin-top: 5px;
+    font-variant-numeric: tabular-nums; }
+  .usage-pace .ahead { color: var(--c-warning-fg); font-weight: 600; }
   /* A Codex pool's heading in the tray: its name, and whether Codex sessions
      run on it. Words, not colour: being in use is not a status. */
   .usage-pool {
@@ -2756,6 +2767,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #settings-panel .pref-seg button { flex: 1; font-size: 12px; padding: 6px 10px; }
   #settings-panel #pref-nickname,
   #settings-panel #pref-stall-seconds,
+  #settings-panel #pref-pace-margin,
   #settings-panel #pref-po-rotate,
   #settings-panel #pref-task-rotate {
     width: 100%; padding: 5px 10px;
@@ -2764,11 +2776,13 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     font-family: var(--font-mono); font-size: 12px;
     outline: none;
   }
-  #settings-panel #pref-stall-seconds { width: 6em; }
+  #settings-panel #pref-stall-seconds,
+  #settings-panel #pref-pace-margin { width: 6em; }
   #settings-panel #pref-po-rotate,
   #settings-panel #pref-task-rotate { width: 8em; }
   #settings-panel #pref-nickname:focus,
   #settings-panel #pref-stall-seconds:focus,
+  #settings-panel #pref-pace-margin:focus,
   #settings-panel #pref-po-rotate:focus,
   #settings-panel #pref-task-rotate:focus {
     border-color: var(--focus-ring);
@@ -3753,6 +3767,20 @@ window.DOC_LISTENERS_PAUSED = false;
     </div>
     <p class="cfg-hint" id="pref-effort-codex-note" role="status" hidden></p>
     <p class="cfg-hint">What an agent the hub starts runs on when its seat names no model: task owners, reviewers, POs, handovers and PO switches. A seat that names a model keeps it. A change applies from each agent's next start. It is passed at launch: Claude's and Codex's own settings are never changed.</p>
+    <!-- ED-164: spread each kind's 7-day allowance over the week. -->
+    <div class="pref-row" style="margin-top: 14px;">
+      <span class="pref-label" id="pref-pace-label">Pace each agent's week</span>
+      <div class="seg pref-seg" id="pref-pace-week" role="group" aria-labelledby="pref-pace-label">
+        <button type="button" data-val="on">On</button>
+        <button type="button" data-val="off">Off</button>
+      </div>
+    </div>
+    <div class="pref-row" style="margin-top: 14px;">
+      <label class="pref-label" for="pref-pace-margin">Head start</label>
+      <span><input type="number" id="pref-pace-margin" min="0" max="100" step="1"
+             placeholder="15" autocomplete="off"> <span class="pref-label">points</span></span>
+    </div>
+    <p class="cfg-hint">A kind whose 7-day use is past the share of the week gone by, plus the head start, is ahead of pace (15 points: about 15% at a reset, 43% after two days, the warning from day 4.6). A new owner, review or handover then goes to the other kind while that one is not. Pacing never stops work, and a task set to keep its agents is not paced.</p>
     <!-- The New session dialog's model suggestions (#im-model). -->
     <datalist id="model-presets">
       <option value="opus"></option>
@@ -4435,6 +4463,7 @@ function actionState(r, isLive) {
     archived: !!r.archived, members: r.members || [],
     makePo: r.makePo, currentTheme: r.currentTheme || '',
     chatSchemeOn: !!(r.cwd && CHAT_SCHEME_ON[r.cwd]),
+    keepAgents: !!r.keepAgents,
   };
 }
 function actionEnv() {
@@ -6693,6 +6722,18 @@ function renderPrefs() {
     const one = document.getElementById('pref-noun-one'), many = document.getElementById('pref-noun-many');
     if (!preset && one && document.activeElement !== one) one.value = w.one;
     if (!preset && many && document.activeElement !== many) many.value = w.many;
+  }
+  const paceSeg = document.getElementById('pref-pace-week');
+  if (paceSeg) {
+    const value = PREFS.paceWeek === false ? 'off' : 'on';
+    paceSeg.querySelectorAll('button').forEach(b => {
+      b.classList.toggle('active', b.dataset.val === value);
+      b.setAttribute('aria-pressed', String(b.dataset.val === value));
+    });
+  }
+  const paceMargin = document.getElementById('pref-pace-margin');
+  if (paceMargin && document.activeElement !== paceMargin) {
+    paceMargin.value = PREFS.paceMarginPoints ?? 15;
   }
   const rtkSeg = document.getElementById('pref-rtk-tasks');
   if (rtkSeg) {
@@ -15884,8 +15925,10 @@ function usageChipPart(src) {
     (named ? `<i class="usage-chip-wname">${esc(w.label)}</i>` : '')
     + `<span class="${w.trusted && !w.rolledOver ? '' : 'untrusted'}">${usageChipValue(w)}</span>`
   ).join('<i class="usage-chip-sep">/</i>');
+  const pace = usagePaceOf(src);
   const tip = name + (used ? ` (sessions use the ${usageCodexPoolName(used)})` : '')
-    + ' — ' + all.map(w => usageChipTip(w, name)).join(' · ');
+    + ' — ' + all.map(w => usageChipTip(w, name)).join(' · ')
+    + (pace ? ` · ${usagePaceText(name, pace)}${pace.ahead ? ', ahead of pace' : ''}` : '');
   return `<span class="usage-chip-kind" title="${esc(tip)}"
     >${esc(short)} ${usedName ? `<i class="usage-chip-wname">${esc(usedName)}</i>` : ''}<b>${body}</b></span>`;
 }
@@ -15895,7 +15938,7 @@ function usageCodexPoolName(pool) {
   return ((pool && pool.label) || 'main') + ' pool';
 }
 
-function usageWindowRow(win, srcName) {
+function usageWindowRow(win, srcName, pace) {
   const name = USAGE_WIN_NAME[win.kind] || (win.label + ' window');
   // A Codex pool's windows sit under the pool's own heading, which names it.
   const label = win.model && !win.pool ? `${name} · ${win.model}` : name;
@@ -15919,9 +15962,13 @@ function usageWindowRow(win, srcName) {
     pctCls = win.trusted ? '' : 'unknown';
   }
   const reset = !win.rolledOver && win.resetsAt ? usageResetText(win.resetsAt) : '';
+  // Today's pace mark on this kind's paced 7-day bar.
+  const tick = pace && pace.state === 'known' && !win.rolledOver && win.percent != null
+    ? `<b class="usage-pace-tick" style="left:${Math.max(0, Math.min(100, pace.pace))}%"
+         title="Pace: ${esc(String(pace.pace))}% by today"></b>` : '';
   return `<div class="usage-win" title="${esc(why || reset)}">
     <span class="usage-win-label">${esc(label)}</span>
-    <span class="usage-bar"><i class="${barCls}" style="width:${barPct}%"></i></span>
+    <span class="usage-bar"><i class="${barCls}" style="width:${barPct}%"></i>${tick}</span>
     <span class="usage-win-pct ${pctCls}">${esc(pct)}</span>
     <span class="usage-win-reset">${esc(win.rolledOver ? 'reset passed'
       : win.resetUnknown ? 'no reset time' : reset)}</span>
@@ -15981,7 +16028,11 @@ function usageSourceHtml(src) {
   // run on. A source without pools (Claude) lists its windows as before.
   const pools = src.pools || [];
   const used = src.poolInUse || null;
-  let rows = wins.map(w => usageWindowRow(w, name)).join('');
+  // The week's pace (ED-164): the 7-day window of the pool the hub judges.
+  const pace = usagePaceOf(src);
+  const paceFor = w => pace && w.kind === 'seven_day'
+    && (!pace.pool || (w.pool || 'codex') === pace.pool) ? pace : null;
+  let rows = wins.map(w => usageWindowRow(w, name, paceFor(w))).join('');
   let inUse = '', spent = '', via = '';
   if (pools.length > 1 || (used && !pools.some(p => p.inUse))) {
     // ... and each pool says how old its own reading is. A lone pool in use
@@ -15992,7 +16043,7 @@ function usageSourceHtml(src) {
       return `<div class="usage-pool"><span>${esc(usageCodexPoolName(p))}</span>
         ${p.inUse ? '<span class="usage-pool-use">in use</span>' : ''}
         ${ageHtml(p.ageSeconds, mine.every(w => w.trusted))}</div>`
-        + mine.map(w => usageWindowRow(w, name)).join('');
+        + mine.map(w => usageWindowRow(w, name, paceFor(w))).join('');
     }).join('');
   }
   if (used) {
@@ -16026,8 +16077,29 @@ function usageSourceHtml(src) {
     </div>
     ${inUse}
     ${rows}
+    ${usagePaceLine(name, pace)}
     ${spent}${frozen}${rolled}${unverifiable}${via}
   </div>`;
+}
+
+// A kind's pace mark from /api/usage (ED-164), or null when the hub does not
+// pace (switched off in Settings) or cannot date this kind's week.
+function usagePaceOf(src) {
+  const p = USAGE.pace;
+  if (!p || !p.enabled) return null;
+  const k = (p.kinds || {})[src.source];
+  return k && k.state === 'known' ? k : null;
+}
+
+// "Codex 7-day 52% · pace 43%" and, past the mark, "ahead of pace".
+function usagePaceText(name, pace) {
+  return `${name} 7-day ${pace.atLeast ? '≥' : ''}${Math.round(pace.percent)}% · pace ${Math.round(pace.pace)}%`;
+}
+function usagePaceLine(name, pace) {
+  if (!pace) return '';
+  const pool = pace.poolLabel ? ` (${pace.poolLabel} pool)` : '';
+  return `<div class="usage-pace" title="The share of the week gone by plus ${esc(String((USAGE.pace || {}).marginPoints ?? 15))} points, never above the warning. Ahead of it, new seats go to the other kind while that one is not.">${esc(usagePaceText(name, pace) + pool)}${
+    pace.ahead ? ' · <span class="ahead">ahead of pace</span>' : ' · within pace'}</div>`;
 }
 
 function renderUsage() {
@@ -18042,6 +18114,25 @@ document.addEventListener('click', async (ev) => {
     } catch (e) { toast('error: ' + e.message, 5000, 'err'); }
     return;
   }
+  // Per-task switch (ED-164): keep its agents' kinds, ignoring the week's pace.
+  const keepBtn = ev.target.closest('.keep-agents-btn');
+  if (keepBtn) {
+    ev.stopPropagation();
+    const rid = keepBtn.dataset.room || '';
+    const want = keepBtn.dataset.on !== '1';
+    try {
+      const r = await api('/api/room/keep-agents', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ roomId: rid, on: want }),
+      });
+      const row = ALL_ROWS.find(x => x.roomId === rid);
+      if (row) row.keepAgents = !!r.keepAgents;
+      toast(r.keepAgents ? 'its agents are kept, ignoring pacing' : 'its agents are paced over the week', 2200, 'ok');
+      renderDetail();
+      await refresh();
+    } catch (e) { toast('error: ' + e.message, 5000, 'err'); }
+    return;
+  }
   // Per-task switch: the chat in the folder's scheme, or the dashboard theme.
   const chatSchemeBtn = ev.target.closest('.chat-scheme-btn');
   if (chatSchemeBtn) {
@@ -18295,6 +18386,27 @@ window.ensUpdPlace = () => ({
     const b = ev.target.closest('button[data-val]');
     if (b) setPref('rtkForTasks', b.dataset.val === 'on');
   });
+  // The week's pace (ED-164): the switch, and the head start in points.
+  document.getElementById('pref-pace-week')?.addEventListener('click', async (ev) => {
+    const b = ev.target.closest('button[data-val]');
+    if (!b) return;
+    await setPref('paceWeek', b.dataset.val === 'on');
+    refreshUsage();
+  });
+  const paceMarginInput = document.getElementById('pref-pace-margin');
+  if (paceMarginInput) {
+    const commitPace = async () => {
+      const v = Number(paceMarginInput.value);
+      if (paceMarginInput.value !== '' && Number.isFinite(v) && v !== (PREFS?.paceMarginPoints ?? null)) {
+        await setPref('paceMarginPoints', v);
+        refreshUsage();
+      }
+    };
+    paceMarginInput.addEventListener('blur', commitPace);
+    paceMarginInput.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); paceMarginInput.blur(); }
+    });
+  }
   document.getElementById('pref-noun')?.addEventListener('click', (ev) => {
     const b = ev.target.closest('button');
     if (!b) return;

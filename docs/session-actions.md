@@ -140,6 +140,7 @@ disabled with that reason.
 | Rename | ✓ | ✓ | – |
 | Suggest a name | ✓ | ✓ | – |
 | Agents and models | – | ✓; off while running: “Running: end it first, then reassign” | – |
+| Keep these agents (ignore pacing), a checkbox (ED-164) | – | ✓, running or not; acts in place in both pages | – |
 | Move to project | ✓ | ✓ | – |
 | Make PO of a new project… | see below | see below | off: orphan reason |
 | Archive / Unarchive | history only | – | – |
