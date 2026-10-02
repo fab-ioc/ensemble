@@ -184,7 +184,8 @@ begin with **C** — colour is load-bearing in that circle, not decorative.
 `--tool-ink` (a drawing on a tile of one of them). Each tool's icon is drawn in its own colour so
 the strip can be scanned the way IntelliJ's tool windows are (#166). Like an avatar, a tool
 colour says **which**, never **what is true**: it is not a status, so it sits outside the
-semantic six, and nothing else uses these tokens. The hues are the app icon's (its lanes and its
+semantic six, and nothing else uses these tokens but Create's menu, whose tiles take the colour
+of the tool a new thing lands in. The hues are the app icon's (its lanes and its
 blue to violet ground); orange, not coral, so nothing reads as the one red.
 
 - **3:1 or better** (WCAG 1.4.11, a graphic) on `--surface` (the button), `--surface-sunken` (the
@@ -202,8 +203,9 @@ blue to violet ground); orange, not coral, so nothing reads as the one red.
 - **Styles:** `glyph` (shipped), `tile` (the drawing on a tile of the tool's colour, as the app
   icon) and `dot` (the drawing in the button's colour, a dot of the tool's). Switching is
   `py tools/make_tool_icons.py tile`; the comparison is `Documents/#166 Tool icons.md`.
-- They appear on the tool strip, the task list's strip, the Panels menu (16px, before the name)
-  and a popped-out tool's window tab (a tile, `pdPopIconHref`, in the theme's colours).
+- They appear on the tool strip, the task list's strip, the Panels menu (16px, before the name),
+  a popped-out tool's window tab (a tile, `pdPopIconHref`, in the theme's colours) and Create's
+  menu (New ‹board word›…: the board's drawing on its tile, `cmIcon`).
 
 ### Search match
 
@@ -335,11 +337,12 @@ when it applies:
    ‹board›…*, for a documents board without a PO.
 
 Every name uses the board word (`nounText`). A row is a 28px tile, the name (`--fs-300`, 500)
-and a line under it (`--fs-100`, `--fg-muted`). **The tiles are the wordmark's colours**, brand,
-not status: `--wm-from`, `--wm-to`, `--wm-lane-2`, `--wm-lane-3` with the glyph in `--surface`
-(4.88:1 or better in every theme, as measured for the wordmark; `tests/test_create_menu.py`
-reads 5.1 or better), and `--c-neutral-bg`/`-fg` for the less-used ones. Never `--wm-lane-1`
-(it reads as the one red) and never the accent. Keys: ArrowDown on Create opens it, arrows,
+and a line under it (`--fs-100`, `--fg-muted`). **A tile wears the colour of the tool where the
+new thing lands** (*Tool identity*, #166): the task items `--tool-list`, New ‹board word›…
+`--tool-board` with the board's own drawing (`toolIcon('board')`, the strip's), the glyph in
+`--tool-ink` (4.7:1 or better in every theme; `tests/test_create_menu.py` reads 4.5 or
+better), and `--c-neutral-bg`/`-fg` for the less-used ones. The items tell apart by drawing
+and name; never a colour of another tool, never the accent. Keys: ArrowDown on Create opens it, arrows,
 Home and End move (wrapping), Escape closes it and gives Create the focus back, Tab and a click
 elsewhere close it. On a phone it spans the screen less the gutters and every row is
 `--touch-min`.

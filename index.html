@@ -779,10 +779,11 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     display: inline-flex; align-items: center; justify-content: center; color: var(--surface);
   }
   .cm-tile svg { width: 18px; height: 18px; }
-  .cm-tile.t-from { background: var(--wm-from); }
-  .cm-tile.t-to { background: var(--wm-to); }
-  .cm-tile.t-lane2 { background: var(--wm-lane-2); }
-  .cm-tile.t-lane3 { background: var(--wm-lane-3); }
+  /* A tile wears the colour of the tool where the new thing lands (#166):
+     a task the task list's, a board the board's; a tool's own drawing in one ink. */
+  .cm-tile.t-list { background: var(--tool-list); color: var(--tool-ink); }
+  .cm-tile.t-board { background: var(--tool-board); color: var(--tool-ink); }
+  .cm-tile .ti { --ti: currentColor; }
   .cm-tile.t-quiet { background: var(--c-neutral-bg); color: var(--c-neutral-fg); }
   .cm-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
   .cm-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
@@ -15150,24 +15151,24 @@ const CM_ICON = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   sub: '<path d="M6 4v9a3 3 0 0 0 3 3h9"/><path d="M14 12l4 4-4 4"/>',
   pick: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 10h8M8 14h5"/>',
-  board: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/>',
   po: '<circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>',
 };
-const cmIcon = k => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${CM_ICON[k]}</svg>`;
+// A tool's own icon (toolIcon) where the item makes that tool's thing.
+const cmIcon = k => TOOL_GLYPH[k] ? toolIcon(k, 'glyph') : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${CM_ICON[k]}</svg>`;
 // ctx: { project: {id, name, ...} | null, task: row | null, poOffered: bool }.
 function createMenuItems(ctx) {
   const pj = ctx.project, t = ctx.task;
   const items = [];
-  if (pj) items.push({ act: 'here', icon: 'plus', tile: 't-from', def: true, proj: pj.id,
+  if (pj) items.push({ act: 'here', icon: 'plus', tile: 't-list', def: true, proj: pj.id,
     name: `New task in ${pj.name}`, sub: nounText('Starts in this {project}') });
   if (t) {
     const n = taskNoText(t) || `“${detailTitle(t)}”`;
-    items.push({ act: 'sub', icon: 'sub', tile: 't-to', sid: t.sessionId,
+    items.push({ act: 'sub', icon: 'sub', tile: 't-list', sid: t.sessionId,
       name: `Sub-task of ${n}`, sub: t.no ? `A follow-up of ${n}, in its ${noun('one')}` : 'A follow-up of this task' });
   }
-  items.push({ act: 'pick', icon: 'pick', tile: 't-lane2',
+  items.push({ act: 'pick', icon: 'pick', tile: 't-list',
     name: 'New task…', sub: nounText('Choose its {project}') });
-  items.push({ act: 'project', icon: 'board', tile: 't-lane3',
+  items.push({ act: 'project', icon: 'board', tile: 't-board',
     name: nounText('New {project}…'), sub: 'A name, then code or documents' });
   if (pj && ctx.poOffered) items.push({ rule: true }, { act: 'po', icon: 'po', tile: 't-quiet', proj: pj.id,
     name: `Set up the PO of ${pj.name}…`, sub: 'From a conversation you had, or a fresh one' });
