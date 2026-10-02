@@ -69,6 +69,12 @@ FIXTURES = {
     "quoted": "> Ask (yes/no): Restart tonight?",
     "rec_lead": "Ask: Which one?\n1. Recommended: Keep it — less churn\n2. [x] Drop it",
     "plain": "What do you think? Should we ship on Friday?",
+    # Where Python and JS regexes differ (review 1): lone CRs and Unicode line
+    # breaks, other spaces, non-ASCII digits, a long label with emoji.
+    "breaks": "Ask: Q one?" + chr(13) + chr(13) + chr(10) + "- A" + chr(10) + "- B" + chr(0x2028) + "Ask: Q" + chr(0xa0) + "two?" + chr(0x2029) + "- C",
+    "spaces": "Ask:" + chr(0x3000) + "Which" + chr(0x1f) + "one" + chr(0xfeff) + "?\n- **Keep" + chr(0x85) + "it** " + chr(0x2003) + "— less churn",
+    "digits": "Ask: Which?\n" + chr(0x661) + ". Not an option\n1. Real",
+    "emoji": "Ask: Which name?\n- " + ("Name " + chr(0x1f600)) * 16 + " — long\n- Short",
 }
 
 NODE_JS = r"""
@@ -84,7 +90,8 @@ const T = ctx.t;
 Object.assign(T.CHAT_NAMES, { operator: 'sam', po: 'claude', taskNo: () => null });
 const out = { parsed: {} };
 for (const [k, v] of Object.entries(fixtures)) out.parsed[k] = JSON.parse(JSON.stringify(T.parseAsks(v)));
-const m = { id: 's:1', from: 'claude', kind: 'human', text: fixtures.claude, ts: 10 };
+const now = Date.now() / 1000;
+const m = { id: 's:1', from: 'claude', kind: 'human', text: fixtures.claude, ts: now - 60 };
 const plain = { id: 's:2', from: 'claude', kind: 'digest', text: fixtures.plain, ts: 11 };
 const none = T.pointMaps(null);
 out.body = T.askBodyHtml(m, none, t => '<p>' + esc(t) + '</p>', null);
@@ -97,6 +104,12 @@ out.openAfter = T.openAsks(m, P).map(a => a.n);
 out.answered = T.askBodyHtml(m, P, t => t, null);
 const A = T.pointMaps({ open: 0, planned: 0, delivered: 0, items: [], approvals: ['s:1'] });
 out.approvedOpen = T.openAsks(m, A).map(a => a.n);
+// Words of the person's in the chat after it, or a week gone: not waiting any more.
+const S = T.pointMaps({ open: 0, planned: 0, delivered: 0, items: [], approvals: [], asksSettledAt: now - 30 });
+out.settledOpen = T.openAsks(m, S).length;
+out.settledBody = T.askBodyHtml(m, S, t => t, null);
+out.ages = [T.openAsks({ ...m, ts: now - 6 * 86400 }, none).length, T.openAsks({ ...m, ts: now - 8 * 86400 }, none).length,
+  T.openAsks({ ...m, ts: 0 }, S).length];
 console.log(JSON.stringify(out));
 """
 
@@ -139,6 +152,15 @@ class TheMarker(unittest.TestCase):
         self.assertEqual(asks.parse(FIXTURES["quoted"])[0]["kind"], "yesno")
         r = asks.parse(FIXTURES["rec_lead"])[0]
         self.assertEqual([(o["label"], o["recommended"]) for o in r["options"]], [("Keep it", True), ("Drop it", False)])
+        b = asks.parse(FIXTURES["breaks"])
+        self.assertEqual([(a["question"], [o["label"] for o in a["options"]]) for a in b],
+                         [("Q one?", ["A", "B"]), ("Q two?", ["C"])])
+        sp = asks.parse(FIXTURES["spaces"])[0]
+        self.assertEqual((sp["question"], sp["options"][0]["label"]), ("Which one ?", "Keep it"))
+        self.assertEqual(asks.parse(FIXTURES["digits"])[0]["kind"], "open", "only 0-9 lead a numbered list")
+        e = asks.parse(FIXTURES["emoji"])[0]["options"][0]["label"]
+        self.assertEqual(len(e), 80)
+        self.assertTrue(e.endswith("…"))
 
     def test_the_answer_quotes_its_ask(self):
         a = asks.parse(THREE)[0]
@@ -172,6 +194,12 @@ class TheMarker(unittest.TestCase):
         self.assertEqual(a.count("<textarea"), 2)
         self.assertIn('aria-pressed="true"', a)
         self.assertEqual(self.o["approvedOpen"], [1, 2], "a thumbs up answers the ask that had a recommendation")
+
+    def test_words_in_the_chat_or_a_week_end_the_wait(self):
+        self.assertEqual(self.o["settledOpen"], 0)
+        self.assertIn("You wrote in the chat after this", self.o["settledBody"])
+        self.assertEqual(self.o["settledBody"].count("<textarea"), 3, "the cards still answer")
+        self.assertEqual(self.o["ages"], [3, 0, 3], "6 days: open; 8 days: not; unknown time: until answered")
 
 
 class TheEndpoint(_World):
@@ -219,6 +247,35 @@ class TheEndpoint(_World):
             status, r = http("/api/room/ask", {"roomId": rid, "mid": "sid-1:1", "n": 1, "option": "Yes"})
         self.assertEqual(status, 400)
         self.assertNotIn("1", (points.load(rid)["asks"].get("sid-1:1") or {}), "refused: it may be answered again")
+
+    def test_a_kept_answer_discarded_opens_its_ask_again(self):
+        rid = self._room()
+        # Nothing takes it: the send fails, kept for Retry, and the ask stays answered.
+        with mock.patch.object(dashboard.Handler, "_resume_room", lambda h, room, **k: {}):
+            status, r = http("/api/room/ask", {"roomId": rid, "mid": "sid-1:1", "n": 1, "option": "Yes"})
+        self.assertEqual((status, r.get("kept")), (400, True), r)
+        self.assertIn("1", r["points"]["asks"]["sid-1:1"], "the reply carries the answer it keeps")
+        status, r = http("/api/room/resume", {"roomId": rid, "key": "ask:sid-1:1:1", "discard": True})
+        self.assertEqual((status, r.get("discarded")), (200, True), r)
+        self.assertNotIn("sid-1:1", points.load(rid)["asks"], "discarded: it may be answered again")
+        self.assertEqual([a["n"] for a in asks.open_in(chatroom.get_room(rid))], [0, 1, 2])
+
+    def test_words_in_the_chat_end_the_wait_and_a_quick_answer_does_not(self):
+        rid = self._room()
+        with mock.patch.object(dashboard.Handler, "_resume_room", self._resume([])):
+            http("/api/room/ask", {"roomId": rid, "mid": "sid-1:1", "n": 0, "option": "30 days"})
+            self.assertEqual([a["n"] for a in asks.open_in(chatroom.get_room(rid))], [1, 2])
+            self.assertEqual(http("/api/room/resume", {"roomId": rid, "text": "1. yes 2. nothing else", "key": "k9"})[0], 200)
+        self.assertEqual(asks.open_in(chatroom.get_room(rid)), [])
+        self.assertGreater(points.view(rid)["asksSettledAt"], self.t0 + 2)
+
+    def test_a_done_task_asks_nothing(self):
+        rid = self._room()
+        room = chatroom.get_room(rid)
+        asks.forget()
+        self.assertEqual(list(asks.open_by_room([room])), [rid])
+        asks.forget()
+        self.assertEqual(asks.open_by_room([{**room, "workflow": "done"}]), {})
 
     def test_a_room_with_open_asks_waits_for_the_person(self):
         rid = self._room()

@@ -61,11 +61,15 @@ CACHE_S = 5.0           # the open asks of every room are worked out at most thi
 _FENCE = re.compile(r"^[ \t]*(```|~~~)")
 _QUOTE = re.compile(r"^[ \t]*>[ \t]?")
 _ASK = re.compile(
-    r"^(?P<ind>[ \t]*)(?P<lead>(?:(?:#{1,6}|[-*+]|\d{1,3}[.)])[ \t]+)*)"
+    r"^(?P<ind>[ \t]*)(?P<lead>(?:(?:#{1,6}|[-*+]|[0-9]{1,3}[.)])[ \t]+)*)"
     r"(?:\*\*|__)?[ \t]*ask(?:[ \t]*\((?P<kind>[^)\n]{1,24})\))?[ \t]*(?:\*\*|__)?[ \t]*:"
     r"[ \t]*(?:\*\*|__)?[ \t]*(?P<q>.*)$", re.I)
-_ITEM = re.compile(r"^(?P<ind>[ \t]*)(?:[-*+]|\d{1,3}[.)]|[A-Za-z][.)])[ \t]+(?P<t>\S.*)$")
-_LIST_LEAD = re.compile(r"(?:[-*+]|\d{1,3}[.)])[ \t]+")
+_ITEM = re.compile(r"^(?P<ind>[ \t]*)(?:[-*+]|[0-9]{1,3}[.)]|[A-Za-z][.)])[ \t]+(?P<t>\S.*)$")
+_LIST_LEAD = re.compile(r"(?:[-*+]|[0-9]{1,3}[.)])[ \t]+")
+# The page reads the same lines and spaces: every line break its "." stops at
+# is a new line, and every other space either language trims is a plain one.
+_LINE_BREAKS = re.compile(r"\r\n?|[\u2028\u2029]")
+_OTHER_SPACE = re.compile(r"[\x0b\x0c\x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u202f\u205f\u3000\ufeff]")
 _CHECKBOX = re.compile(r"^\[[ xX]\][ \t]+")
 _REC = re.compile(
     r"[ \t]*(?:\*\*|__|\*|_)?[(\[][ \t]*recommended[ \t]*[)\]](?:\*\*|__|\*|_)?"
@@ -111,7 +115,7 @@ def parse(text: str) -> list[dict]:
     """The asks a message marks, in order: ``{n, question, kind, options:
     [{label, detail, recommended}], recommended (index or -1), line, end}``
     (``line``..``end``: its lines, end exclusive). [] for an unmarked one."""
-    lines = (text or "").replace("\r\n", "\n").split("\n")
+    lines = _OTHER_SPACE.sub(" ", _LINE_BREAKS.sub("\n", text or "")).split("\n")
     bare = [_QUOTE.sub("", ln, count=1) for ln in lines]
     fenced, out, i = False, [], 0
     while i < len(lines):
@@ -210,12 +214,12 @@ _ROOM_CACHE: dict[str, tuple] = {}      # room id → (updatedAt, [(mid, ts, [qu
 _RESULT: tuple[float, dict] = (0.0, {})
 
 
-def _marked(mid: str, ts: float, text: str) -> tuple | None:
+def _marked(mid: str, ts: float, text: str, who: str) -> tuple | None:
     found = parse(text)
-    return (mid, ts, [a["question"] for a in found]) if found else None
+    return (mid, ts, [a["question"] for a in found], who) if found else None
 
 
-def _session_asks(room: dict, sid: str) -> list[tuple]:
+def _session_asks(room: dict, sid: str, who: str) -> list[tuple]:
     st = _d.points._session_stat(sid)
     hit = _SID_CACHE.get(sid)
     if hit is not None and st is not None and hit[0] == st:
@@ -225,7 +229,7 @@ def _session_asks(room: dict, sid: str) -> list[tuple]:
     for mid, t in turns.items():
         if t.get("role") == "user":
             continue
-        x = _marked(mid, _d._turn_epoch(t.get("timestamp")), t.get("text") or "")
+        x = _marked(mid, _d._turn_epoch(t.get("timestamp")), t.get("text") or "", who)
         if x:
             found.append(x)
     if st is not None:
@@ -234,13 +238,13 @@ def _session_asks(room: dict, sid: str) -> list[tuple]:
 
 
 def message_asks(room: dict) -> list[tuple]:
-    """A room's agents' messages that mark asks: ``[(mid, ts, [questions])]``,
-    from what the room holds (a team's messages)."""
+    """A room's agents' messages that mark asks: ``[(mid, ts, [questions],
+    who)]``, from what the room holds (a team's messages)."""
     agents = {p.get("identity") for p in room.get("participants", []) if p.get("kind") == "agent"}
     out = []
     for m in room.get("messages") or []:
         if m.get("from") in agents and m.get("kind") not in ("report", "notice"):
-            x = _marked(m.get("id", ""), float(m.get("ts") or 0), m.get("text") or "")
+            x = _marked(m.get("id", ""), float(m.get("ts") or 0), m.get("text") or "", m.get("from") or "")
             if x and x[0]:
                 out.append(x)
     return out
@@ -260,7 +264,7 @@ def _room_asks(summary: dict) -> list[tuple]:
                 room = _d.chatroom.get_room(rid)
                 if room is None:
                     return []
-            out += _session_asks(room, sid)
+            out += _session_asks(room, sid, p.get("identity") or "")
         return out
     hit = _ROOM_CACHE.get(rid)
     if hit is not None and hit[0] == summary.get("updatedAt"):
@@ -280,9 +284,12 @@ def answered(room_id: str) -> dict:
 
 def open_in(summary: dict, now: float | None = None) -> list[dict]:
     """The asks of a room still waiting for the person, oldest first:
-    ``[{mid, n, question, ts}]``. An ask counts for :data:`OPEN_DAYS`; one
-    whose message was approved with a thumbs up ("go with your
-    recommendation") is answered if it has a recommendation."""
+    ``[{mid, n, question, ts, who}]``. An ask counts for :data:`OPEN_DAYS`
+    (one whose time is unknown, until answered), and until the person
+    writes in the chat after it (``asksSettledAt``: they answered in words,
+    or set it aside); one whose message was approved with a thumbs up ("go
+    with your recommendation") is answered if it has a recommendation. The
+    page's ``openAsks`` keeps the same rules."""
     now = time.time() if now is None else now
     rid = summary.get("id", "")
     marked = [x for x in _room_asks(summary) if not x[1] or now - x[1] < OPEN_DAYS * 86400]
@@ -290,15 +297,18 @@ def open_in(summary: dict, now: float | None = None) -> list[dict]:
         return []
     led = _d.points.load(rid) if _d.points.exists(rid) else {}
     done, approved = led.get("asks") or {}, led.get("approvals") or {}
+    settled = float(led.get("asksSettledAt") or 0)
     out = []
-    for mid, ts, qs in marked:
+    for mid, ts, qs, who in marked:
+        if ts and ts < settled:
+            continue
         got = done.get(mid) or {}
         for n, q in enumerate(qs):
             if str(n) in got:
                 continue
             if mid in approved and _approved_settles(rid, mid, n):
                 continue
-            out.append({"mid": mid, "n": n, "question": q, "ts": ts})
+            out.append({"mid": mid, "n": n, "question": q, "ts": ts, "who": who})
     out.sort(key=lambda a: (a["ts"], a["n"]))
     return out
 
@@ -322,8 +332,8 @@ def open_by_room(summaries: list[dict], now: float | None = None) -> dict[str, l
             return _RESULT[1]
         out = {}
         for s in summaries:
-            if not s.get("launched", True):
-                continue
+            if not s.get("launched", True) or _d.normalize_workflow(s.get("workflow")) == "done":
+                continue        # a draft asks nothing yet; a Done task's asks are over
             try:
                 got = open_in(s, now)
             except Exception as e:      # noqa: BLE001 — one room's trouble hides no other's

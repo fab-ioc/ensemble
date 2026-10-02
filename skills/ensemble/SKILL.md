@@ -810,7 +810,7 @@ message, `Re “<question>”: <option>` with their comment under it, once.
 - `Ask (yes/no):` with no list, or a list of exactly Yes and No, gives Yes and
   No buttons; an ask with no options gets a comment box only.
 - Only for their real decisions and questions: an `Ask:` stays on their Needs
-  you list until answered (for a week). Never mark your own rhetorical
+  you list until they answer it, write to the chat after it, or a week passes. Never mark your own rhetorical
   questions, or quote the marker inside code.
 
 **Your replies to the hub are tagged.** The chat folds what the hub typed in

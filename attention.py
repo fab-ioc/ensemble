@@ -752,6 +752,7 @@ def _summarize(room: dict, po: str | None = None) -> dict:
         "hopCount": room.get("hopCount", 0),
         "maxHops": room.get("maxHops", 0),
         "launched": room.get("launched", True),
+        "workflow": room.get("workflow", ""),   # its column as stored (asks.open_by_room)
         "cwd": room.get("cwd", ""),
         "projectId": room.get("projectId", ""),
         "createdAt": room.get("createdAt", 0),
@@ -1409,7 +1410,7 @@ def _items() -> list[dict]:
         if marked and not any(f[0] == "waiting_for_you" for f in found):
             # Questions an agent marked for the person (asks.py), each
             # waiting for its quick answer: the room waits for them.
-            who = agents[0].get("identity") or "an agent"
+            who = marked[0].get("who") or "an agent"
             k = len(marked)
             reason = (f"{who} asked you {k} question{'s' if k != 1 else ''}: "
                       f"“{marked[0]['question'][:160]}”" + (" and more" if k > 1 else ""))

@@ -395,7 +395,7 @@ def _path(room_id: str) -> Path:
 
 def _empty(room_id: str) -> dict:
     return {"version": 1, "roomId": room_id, "next": 1, "points": [],
-            "approvals": {}, "asks": {}, "lastPersonAt": 0.0, "derived": DERIVED}
+            "approvals": {}, "asks": {}, "asksSettledAt": 0.0, "lastPersonAt": 0.0, "derived": DERIVED}
 
 
 def _valid(d) -> bool:
@@ -411,6 +411,10 @@ def _clean(led: dict, room_id: str) -> dict:
         out["approvals"] = led["approvals"]
     if isinstance(led.get("asks"), dict):
         out["asks"] = led["asks"]
+    try:
+        out["asksSettledAt"] = float(led.get("asksSettledAt") or 0)
+    except (TypeError, ValueError):
+        out["asksSettledAt"] = 0.0
     try:
         out["lastPersonAt"] = float(led.get("lastPersonAt") or 0)
     except (TypeError, ValueError):
@@ -1327,6 +1331,17 @@ def answer_ask(room_id: str, mid: str, n: int, answer: dict, now: float | None =
         return None
 
 
+def settle_asks(room_id: str, now: float | None = None) -> None:
+    """The person wrote in the chat (not a quick answer): the asks of the
+    messages before it wait for them no more. Their cards still answer."""
+    now = time.time() if now is None else now
+    with _LOCK:
+        led = load(room_id)
+        if float(led.get("asksSettledAt") or 0) < now:
+            led["asksSettledAt"] = now
+            _save(room_id, led)
+
+
 def unanswer_ask(room_id: str, mid: str, n: int) -> None:
     """The answer could not be sent: the ask may be answered again."""
     with _LOCK:
@@ -1512,7 +1527,7 @@ def view(room_id: str, room: dict | None = None) -> dict:
     task = task_lookup(room_id, room) if any(p.get("task") and p["state"] in LIVE for p in pts) else None
     return {"items": [_item(p, task) for p in pts], **_counts(led),
             "approvals": sorted(led.get("approvals") or {}),
-            "asks": led.get("asks") or {}}
+            "asks": led.get("asks") or {}, "asksSettledAt": float(led.get("asksSettledAt") or 0)}
 
 
 def open_points(room_id: str, identity: str = "", skip=()) -> list[dict]:

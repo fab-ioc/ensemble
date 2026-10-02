@@ -2353,6 +2353,12 @@ def discard_pending(room_id: str, key: str = "") -> bool:
                 points.unapprove(room_id, key[len("approve:"):])
             else:
                 points.discard(room_id, points.point_ids(it.get("text") or ""), key)
+                if key.startswith("ask:"):
+                    # A quick answer never delivered: its ask is open again.
+                    mid, _, n = key[len("ask:"):].rpartition(":")
+                    if mid and n.isdigit():
+                        points.unanswer_ask(room_id, mid, int(n))
+                        asks.forget()
         except Exception as e:      # noqa: BLE001 — the discard itself stands
             print(f"[points] {room_id}: held points not taken back: {e!r}", flush=True)
     return True
@@ -11384,6 +11390,14 @@ class Handler(BaseHTTPRequestHandler):
     def _take_points(self, room_full: dict, text: str, to: str, key: str) -> tuple[str, list]:
         """The person's message as its agent gets it, with its points
         (points.take); as it was when the ledger cannot be written."""
+        if not key.startswith(("ask:", "approve:")):
+            # Words of their own in the chat answer, or set aside, the asks
+            # before them (asks.py): they wait for the person no more.
+            try:
+                points.settle_asks(room_full.get("id", ""))
+                asks.forget()
+            except Exception as e:  # noqa: BLE001
+                print(f"[asks] {room_full.get('id')}: not settled: {e!r}", flush=True)
         try:
             return points.take(room_full, text, to, key)
         except Exception as e:      # noqa: BLE001 — the message goes anyway

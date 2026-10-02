@@ -793,6 +793,7 @@
   .qa-send:hover { background:var(--hover); }
   .qa-opt:focus-visible, .qa-send:focus-visible, .qa-cm textarea:focus-visible { outline:none;
     box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .qa-note { margin-top:var(--s-100); color:var(--fg-muted); font-size:var(--fs-200); overflow-wrap:anywhere; }
   .qa-done { margin-top:var(--s-200); color:var(--fg-muted); overflow-wrap:anywhere; }
   .qa-done strong { color:var(--fg); }
   .qa-dc { display:block; margin-top:var(--s-050); color:var(--fg-muted); white-space:pre-wrap; }
@@ -2371,9 +2372,12 @@ function hubBody(m) {
 // person's message, once. A message without the marker gets nothing.
 const QA_RE = {
   fence: /^[ \t]*(```|~~~)/, quote: /^[ \t]*>[ \t]?/,
-  ask: /^([ \t]*)((?:(?:#{1,6}|[-*+]|\d{1,3}[.)])[ \t]+)*)(?:\*\*|__)?[ \t]*ask(?:[ \t]*\(([^)\n]{1,24})\))?[ \t]*(?:\*\*|__)?[ \t]*:[ \t]*(?:\*\*|__)?[ \t]*(.*)$/i,
-  item: /^([ \t]*)(?:[-*+]|\d{1,3}[.)]|[A-Za-z][.)])[ \t]+(\S.*)$/,
-  listLead: /(?:[-*+]|\d{1,3}[.)])[ \t]+/,
+  ask: /^([ \t]*)((?:(?:#{1,6}|[-*+]|[0-9]{1,3}[.)])[ \t]+)*)(?:\*\*|__)?[ \t]*ask(?:[ \t]*\(([^)\n]{1,24})\))?[ \t]*(?:\*\*|__)?[ \t]*:[ \t]*(?:\*\*|__)?[ \t]*(.*)$/i,
+  item: /^([ \t]*)(?:[-*+]|[0-9]{1,3}[.)]|[A-Za-z][.)])[ \t]+(\S.*)$/,
+  listLead: /(?:[-*+]|[0-9]{1,3}[.)])[ \t]+/,
+  // The hub reads the same lines and spaces (asks.py _LINE_BREAKS, _OTHER_SPACE).
+  breaks: /\r\n?|[\u2028\u2029]/g,
+  space: /[\x0b\x0c\x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u202f\u205f\u3000\ufeff]/g,
   checkbox: /^\[[ xX]\][ \t]+/,
   rec: /[ \t]*(?:\*\*|__|\*|_)?[(\[][ \t]*recommended[ \t]*[)\]](?:\*\*|__|\*|_)?|[ \t]+[—–-][ \t]*(?:\*\*|__|\*|_)?recommended(?:\*\*|__|\*|_)?\.?[ \t]*$/i,
   recLead: /^(?:\*\*|__)?recommended(?:\*\*|__)?[ \t]*[:—–-][ \t]*(?:\*\*|__)?[ \t]*/i,
@@ -2384,6 +2388,9 @@ const QA_RE = {
 const ASK_Q_MAX = 200, ASK_LABEL_MAX = 80;
 const askPlain = s => String(s || '').replace(/\*\*|__|`/g, '').split(/\s+/).filter(Boolean).join(' ');
 const askIndent = s => s.replace(/\t/g, '    ').length;
+const askLines = text => String(text || '').replace(QA_RE.breaks, '\n').replace(QA_RE.space, ' ').split('\n');
+// Cut by characters, as the hub does: never half an emoji.
+const askCut = (s, n) => Array.from(s).slice(0, n).join('');
 function askOption(text) {
   let t = text.trim().replace(QA_RE.checkbox, ''), rec = false;
   if (QA_RE.recLead.test(t)) { t = t.replace(QA_RE.recLead, ''); rec = true; }
@@ -2393,13 +2400,13 @@ function askOption(text) {
   if (b) { label = b[1]; detail = b[2].replace(/^[ \t]*[:—–-]+[ \t]*/, ''); }
   else { const s = QA_RE.split.exec(t); label = s ? t.slice(0, s.index) : t; detail = s ? t.slice(s.index + s[0].length) : ''; }
   label = askPlain(label).replace(/[.:;,]+$/, '').trim();
-  if (label.length > ASK_LABEL_MAX) label = label.slice(0, ASK_LABEL_MAX - 1).trimEnd() + '…';
+  if (Array.from(label).length > ASK_LABEL_MAX) label = askCut(label, ASK_LABEL_MAX - 1).trimEnd() + '…';
   return label ? { label, detail: askPlain(detail), recommended: rec } : null;
 }
 // [{ n, question, kind: decision | yesno | open, options: [{ label, detail,
 // recommended }], recommended: index or -1, line, end }]: its lines, end exclusive.
 function parseAsks(text) {
-  const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
+  const lines = askLines(text);
   const bare = lines.map(l => l.replace(QA_RE.quote, ''));
   const out = [];
   let fenced = false, i = 0;
@@ -2428,7 +2435,7 @@ function parseAsks(text) {
       gap = 0; j++; end = j;
     }
     i = end;
-    const question = askPlain(q).slice(0, ASK_Q_MAX);
+    const question = askCut(askPlain(q), ASK_Q_MAX);
     if (!question) continue;
     const tag = (m[3] || '').split(/\s+/).filter(Boolean).join(' ');
     const labels = opts.map(o => o.label.toLowerCase()).sort();
@@ -2466,7 +2473,13 @@ function askAnswer(m, a, P) {
   if (P && P.approvals && P.approvals.has(m.id) && a.recommended >= 0) return { approved: a.options[a.recommended].label };
   return null;
 }
-const openAsks = (m, P) => asksOf(m).filter(a => !askAnswer(m, a, P));
+// Waiting for the person, by the hub's rules (asks.open_in): a week at most
+// (one of unknown time, until answered), and only until they write in the
+// chat after it, answering it in words or setting it aside. Its card still
+// answers then; it just no longer holds the balloon or asks for attention.
+const ASK_OPEN_S = 7 * 86400;
+const askSettled = (m, P) => !!m.ts && ((Date.now() / 1000 - m.ts >= ASK_OPEN_S) || m.ts < ((P && P.asksSettledAt) || 0));
+const openAsks = (m, P) => askSettled(m, P) ? [] : asksOf(m).filter(a => !askAnswer(m, a, P));
 // One ask drawn: its question, then its quick answers or, answered, what was
 // answered with the buttons settled (pressed, disabled).
 function askCardHtml(m, a, total, P) {
@@ -2489,7 +2502,9 @@ function askCardHtml(m, a, total, P) {
       + `${got.comment ? `<span class="qa-dc">${esc(got.comment)}</span>` : ''}</div></div>`;
   }
   const open = a.kind === 'open';
-  return `<div class="qa" data-ask="${esc(key)}">${head}${opts ? `<div class="qa-opts" role="group" aria-label="${esc('Answer: ' + a.question)}">${opts}</div>` : ''}`
+  const aside = !askSettled(m, P) ? ''
+    : `<div class="qa-note">${m.ts < ((P && P.asksSettledAt) || 0) ? 'You wrote in the chat after this' : 'Over a week old'}: no longer waiting for you. It can still be answered here.</div>`;
+  return `<div class="qa" data-ask="${esc(key)}">${head}${aside}${opts ? `<div class="qa-opts" role="group" aria-label="${esc('Answer: ' + a.question)}">${opts}</div>` : ''}`
     + `<div class="qa-cm"><textarea rows="1" data-ask="${esc(key)}" aria-label="${esc((open ? 'Your answer to: ' : 'Comment on: ') + a.question)}" placeholder="${open ? 'Your answer' : 'Comment (optional)'}" title="${open ? '' : 'Goes with the answer you press, or alone with Send comment'}"></textarea>`
     + `<button type="button" class="qa-send" data-ask="${esc(key)}" title="${open ? 'Send your answer' : 'Send your comment alone'}">${open ? 'Send' : 'Send comment'}</button></div></div>`;
 }
@@ -2498,7 +2513,7 @@ function askCardHtml(m, a, total, P) {
 function askBodyHtml(m, P, md, bar) {
   const found = asksOf(m);
   if (!found.length) return null;
-  const lines = String(m.text || '').replace(/\r\n/g, '\n').split('\n');
+  const lines = askLines(m.text);
   return withPathAbbrevs(m.text, () => {
     let h = '', at = 0;
     const words = (a, b) => { const t = lines.slice(a, b).join('\n'); return t.trim() ? md(t) : ''; };
@@ -2533,7 +2548,15 @@ async function askSend(key, option, post) {
     if (r && r.points) pointsChanged(r.points, ptTicket());
     return r;
   } catch (e) {
-    pointsNote('Not sent: ' + ((e && e.message) || 'the hub did not answer') + '. Try again.');
+    // The hub's points first: a kept answer is recorded, its card settled.
+    if (e && e.points) pointsChanged(e.points, ptTicket());
+    if (e && e.kept) {
+      ASK_DRAFT.delete(key);
+      pointsNote('Your answer is kept but not delivered yet: Retry it in the chat.');
+      setTimeout(refresh, 400);
+    } else {
+      pointsNote('Not sent: ' + ((e && (e.reason || e.message)) || 'the hub did not answer') + '. Try again.');
+    }
     return null;
   } finally {
     ASK_LOCAL.delete(key);
@@ -3086,7 +3109,7 @@ function ptTaskWords(p) {
 // answer), unacked (those answers).
 function pointMaps(pv) {
   const P = { items: ((pv && pv.items) || []).map(ptItem), byMid: new Map(), byAnswer: new Map(), byId: new Map(), keep: new Set(),
-    unacked: new Set(), approvals: new Set((pv && pv.approvals) || []), asks: (pv && pv.asks) || {}, open: (pv && pv.open) || 0,
+    unacked: new Set(), approvals: new Set((pv && pv.approvals) || []), asks: (pv && pv.asks) || {}, asksSettledAt: (pv && pv.asksSettledAt) || 0, open: (pv && pv.open) || 0,
     planned: (pv && pv.planned) || 0, delivered: (pv && (pv.delivered != null ? pv.delivered : pv.answered)) || 0 };
   const add = (map, k, p) => { if (!k) return; const l = map.get(k); if (!l) map.set(k, [p]); else if (!l.includes(p)) l.push(p); };
   for (const p of P.items) {
@@ -4811,7 +4834,8 @@ async function postOk(path, body) {
   const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   let d = null;
   try { d = await r.json(); } catch (e) {}
-  if (!r.ok || !d || d.error) throw Object.assign(new Error((d && d.error) || ('error ' + r.status)), { status: r.status, kept: !!(d && d.kept), send: d && d.send });
+  if (!r.ok || !d || d.error) throw Object.assign(new Error((d && d.error) || ('error ' + r.status)), { status: r.status, kept: !!(d && d.kept), send: d && d.send,
+    points: d && d.points, reason: d && typeof d.message === 'string' ? d.message : '' });
   return d;
 }
 // Why a send did not arrive, in words.
