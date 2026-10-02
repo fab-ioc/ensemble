@@ -73,7 +73,7 @@ PROBE = r"""(w => { if (w.__shot) return 0; const P = w.__shot = { prompts: 0, c
   const md = w.navigator.mediaDevices;
   if (md && md.getDisplayMedia) md.getDisplayMedia = async () => { P.prompts++; throw new w.DOMException('probe', 'NotAllowedError'); };
   w.__shotInfo = async b => { const bmp = await w.createImageBitmap(b); const cv = w.document.createElement('canvas'); cv.width = bmp.width; cv.height = bmp.height;
-    const g = cv.getContext('2d'); g.drawImage(bmp, 0, 0); const d = g.getImageData(0, 0, cv.width, cv.height).data; const cols = new Set();
+    const g = cv.getContext('2d'); g.drawImage(bmp, 0, 0); w.__shotLast = g; const d = g.getImageData(0, 0, cv.width, cv.height).data; const cols = new Set();
     for (let i = 0; i < d.length; i += 4 * 13) cols.add((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]);
     return { type: b.type, bytes: b.size, w: bmp.width, h: bmp.height, colors: cols.size }; };
   const cb = w.navigator.clipboard;
@@ -135,7 +135,12 @@ async function main() {
     if (!item) throw new Error('no Take Screenshot in ' + id + "'s menu: " + await evalIn(`(() => { const m = document.querySelector('.dk-menu'); return m ? m.outerHTML.slice(0, 1500) : 'no menu; ' + (${menuBtn} || {}).outerHTML; })()`));
     await clickEl(`document.querySelector('.dk-menu.dk-options [data-dk-menu="screenshot"]')`);
     await until(`window.__shot.clips.length > ${n}`, 15000);
-    return { item, stack: await box(stack), clip: await evalIn('window.__shot.clips.at(-1)'), prompts: await evalIn('window.__shot.prompts') };
+    // The colours in the panel's frame area alone (its iframe), so a frame drawn blank under a drawn title bar fails.
+    const frame = await evalIn(`(() => { const s = ${stack}.getBoundingClientRect(), f = [...${stack}.querySelectorAll('iframe')].find(x => x.offsetWidth > 0);
+      if (!f) return null; const r = f.getBoundingClientRect(); const x = Math.round(r.left - s.left), y = Math.round(r.top - s.top), w = Math.round(r.width), h = Math.round(r.height);
+      const d = window.__shotLast.getImageData(x, y, w, h).data; const cols = new Set(); for (let i = 0; i < d.length; i += 4 * 7) cols.add((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]);
+      return { w, h, colors: cols.size }; })()`);
+    return { item, frame, stack: await box(stack), clip: await evalIn('window.__shot.clips.at(-1)'), prompts: await evalIn('window.__shot.prompts') };
   };
   // dock.screenshot(id): the Blob the item copies, drawn in the panel's own window.
   const api = (dock, id, win = 'window') => evalIn(`(async () => { const d = ${dock}, w = ${win}; ${PROBE}(w);
@@ -288,6 +293,11 @@ class TakeScreenshotInTheBrowser(unittest.TestCase):
             self.assertEqual(r["item"]["text"], "Take Screenshot", name)
             self.assertEqual(r["item"]["tip"], "Copy this panel as a PNG", name)
             self.a_real_picture(r["clip"], r["stack"], name)
+            # The same-origin frame itself was drawn (text in it), not only the title bar around it.
+            self.assertIsNotNone(r["frame"], name)
+            self.assertGreater(r["frame"]["colors"], 10, f"{name}: its frame drawn blank ({r['frame']})")
+        # Region Capture is there, so 'auto' could have fallen back to the share prompt: none is a real result.
+        self.assertTrue(self.got["canCapture"])
         self.assertEqual(self.got["prompts"], 0, "getDisplayMedia was called: Chrome would ask to share the tab")
 
     def test_every_other_panel_and_a_window_draw_without_the_prompt(self):
