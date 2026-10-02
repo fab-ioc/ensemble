@@ -1042,7 +1042,8 @@ class InChrome(unittest.TestCase):
         self.assertGreater(b["list"], 0, "a click there switches the view")
         self.assertEqual(b["title"], "Board · Motors")
         self.assertEqual(len(b["icon"]), 1, b["icon"])
-        self.assertTrue(b["icon"][0].endswith("/static/icons/favicon.svg"), "the window has the app's icon")
+        # #166: a tool's window takes its tool's icon, a tile in the theme's colour.
+        self.assertTrue(b["icon"][0].startswith("data:image/svg+xml,") and "ti-board" in b["icon"][0], "the window has the Board's icon")
         self.assertNotEqual(b["styled"], "0px", "the page's styles came along")
         self.assertTrue(b["heard"], "a message to the window reaches the page, with its source")
         self.assertEqual(b["backBtn"], "absent", "popBackButton: false: use the window's View Mode menu to dock back")

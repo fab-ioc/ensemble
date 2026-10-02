@@ -507,74 +507,81 @@ class TheWiring(unittest.TestCase):
         self.assertNotIn("headButtons", dock, "v0.5.0's ⋯ and −, not the classic buttons")
 
 
+def start_hub(cls, prefix="ens-strip-"):
+    """The hub in a thread, with Motors (a PO, an ask, a task with a spec)
+    and Plain (a task, no PO); test_tool_icons.py uses it too."""
+    cls.tmp = tempfile.TemporaryDirectory(prefix=prefix, ignore_cleanup_errors=True)
+    base = Path(cls.tmp.name)
+    state = base / "state"
+    state.mkdir()
+    cls.root = base / "EnsembleProjects"
+    cls.root.mkdir()
+    (base / "transcripts").mkdir()
+    (base / "cs").mkdir()
+    cls.patches = [
+        mock.patch.object(dashboard, "PROJECTS_ROOT", cls.root),
+        mock.patch.object(dashboard, "DASHBOARD_DIR", state),
+        mock.patch.object(dashboard, "PROJECTS_FILE", state / "projects.json"),
+        mock.patch.object(dashboard, "SESSION_PROJECTS_FILE", state / "session_projects.json"),
+        mock.patch.object(dashboard, "SETTINGS_FILE", state / "settings.json"),
+        mock.patch.object(dashboard, "LABELS_FILE", state / "labels.json"),
+        mock.patch.object(dashboard, "PROJ_DIR", base / "transcripts"),
+        mock.patch.object(dashboard, "CS_ROOT", base / "cs"),
+        mock.patch.object(chatroom, "ROOMS_DIR", base / "rooms"),
+        mock.patch.object(dashboard, "load_live", lambda: []),
+        mock.patch.object(dashboard, "_read_agent_session_files", lambda *a, **k: []),
+        mock.patch.object(dashboard.Handler, "_agent_peer", lambda h: ""),
+        mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None),
+        mock.patch.dict(os.environ, {"CODEX_HOME": str(base / "codex")}),
+    ]
+    for p in cls.patches:
+        p.start()
+        cls.addClassCleanup(p.stop)   # undone even when setUpClass fails
+    ok, proj, _ = dashboard.register_project("Motors")
+    assert ok, proj
+    cls.proj = proj["id"]
+    home = Path(proj.get("home") or proj["path"])
+    members = [{"identity": "claude", "agent": "claude", "cwd": str(home)},
+               {"identity": "codex", "agent": "codex", "cwd": str(home)}]
+    po = chatroom.create_room("PO talk", members)
+    dashboard.assign_session_project(po["id"], cls.proj)
+    ok, why = dashboard.set_project_po(cls.proj, po["id"])
+    assert ok, why
+    # One ask to the PO, answered, then enough talk that it is far up.
+    text, ids = points.take(chatroom.get_room(po["id"], public=False), "Make the brakes quiet", to="claude", key="k1")
+    assert ids == ["P1"], ids
+    chatroom.post_message(po["id"], "user", text, to="claude")
+    chatroom.post_message(po["id"], "claude", "Re P1: working on it.", to="user")
+    for i in range(30):
+        chatroom.post_message(po["id"], "codex", f"note {i}\n\n" + "words " * 60, to="claude")
+    points.sync(po["id"], force=True)
+    task = chatroom.create_room("Brakes that squeal", [{"identity": "claude", "agent": "claude", "cwd": str(home)}])
+    chatroom.update_room({**chatroom.get_room(task["id"], public=False), "spec": "## Goal\nQuiet brakes on a long descent."})
+    chatroom.post_message(task["id"], "user", "Why do the brakes squeal?")
+    dashboard.assign_session_project(task["id"], cls.proj)
+    cls.task = task["id"]
+    (home / "README.md").write_text("# Motors\n", encoding="utf-8")
+    ok, plain, _ = dashboard.register_project("Plain")
+    assert ok, plain
+    cls.plain = plain["id"]
+    phome = Path(plain.get("home") or plain["path"])
+    (phome / "README.md").write_text("# Plain\n", encoding="utf-8")
+    ptask = chatroom.create_room("A plain task", [{"identity": "claude", "agent": "claude", "cwd": str(phome)}])
+    chatroom.post_message(ptask["id"], "user", "Hello")
+    dashboard.assign_session_project(ptask["id"], cls.plain)
+    cls.plain_task = ptask["id"]
+    cls.server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
+    cls.server.daemon_threads = True
+    cls.server.handle_error = lambda *a: None   # a page closed mid-answer
+    threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+
+
 @unittest.skipUnless(NODE and CHROME, "needs Node and Chrome")
 class TheStrip(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.tmp = tempfile.TemporaryDirectory(prefix="ens-strip-", ignore_cleanup_errors=True)
+        start_hub(cls)
         base = Path(cls.tmp.name)
-        state = base / "state"
-        state.mkdir()
-        cls.root = base / "EnsembleProjects"
-        cls.root.mkdir()
-        (base / "transcripts").mkdir()
-        (base / "cs").mkdir()
-        cls.patches = [
-            mock.patch.object(dashboard, "PROJECTS_ROOT", cls.root),
-            mock.patch.object(dashboard, "DASHBOARD_DIR", state),
-            mock.patch.object(dashboard, "PROJECTS_FILE", state / "projects.json"),
-            mock.patch.object(dashboard, "SESSION_PROJECTS_FILE", state / "session_projects.json"),
-            mock.patch.object(dashboard, "SETTINGS_FILE", state / "settings.json"),
-            mock.patch.object(dashboard, "LABELS_FILE", state / "labels.json"),
-            mock.patch.object(dashboard, "PROJ_DIR", base / "transcripts"),
-            mock.patch.object(dashboard, "CS_ROOT", base / "cs"),
-            mock.patch.object(chatroom, "ROOMS_DIR", base / "rooms"),
-            mock.patch.object(dashboard, "load_live", lambda: []),
-            mock.patch.object(dashboard, "_read_agent_session_files", lambda *a, **k: []),
-            mock.patch.object(dashboard.Handler, "_agent_peer", lambda h: ""),
-            mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None),
-            mock.patch.dict(os.environ, {"CODEX_HOME": str(base / "codex")}),
-        ]
-        for p in cls.patches:
-            p.start()
-            cls.addClassCleanup(p.stop)   # undone even when setUpClass fails
-        ok, proj, _ = dashboard.register_project("Motors")
-        assert ok, proj
-        cls.proj = proj["id"]
-        home = Path(proj.get("home") or proj["path"])
-        members = [{"identity": "claude", "agent": "claude", "cwd": str(home)},
-                   {"identity": "codex", "agent": "codex", "cwd": str(home)}]
-        po = chatroom.create_room("PO talk", members)
-        dashboard.assign_session_project(po["id"], cls.proj)
-        ok, why = dashboard.set_project_po(cls.proj, po["id"])
-        assert ok, why
-        # One ask to the PO, answered, then enough talk that it is far up.
-        text, ids = points.take(chatroom.get_room(po["id"], public=False), "Make the brakes quiet", to="claude", key="k1")
-        assert ids == ["P1"], ids
-        chatroom.post_message(po["id"], "user", text, to="claude")
-        chatroom.post_message(po["id"], "claude", "Re P1: working on it.", to="user")
-        for i in range(30):
-            chatroom.post_message(po["id"], "codex", f"note {i}\n\n" + "words " * 60, to="claude")
-        points.sync(po["id"], force=True)
-        task = chatroom.create_room("Brakes that squeal", [{"identity": "claude", "agent": "claude", "cwd": str(home)}])
-        chatroom.update_room({**chatroom.get_room(task["id"], public=False), "spec": "## Goal\nQuiet brakes on a long descent."})
-        chatroom.post_message(task["id"], "user", "Why do the brakes squeal?")
-        dashboard.assign_session_project(task["id"], cls.proj)
-        cls.task = task["id"]
-        (home / "README.md").write_text("# Motors\n", encoding="utf-8")
-        ok, plain, _ = dashboard.register_project("Plain")
-        assert ok, plain
-        cls.plain = plain["id"]
-        phome = Path(plain.get("home") or plain["path"])
-        (phome / "README.md").write_text("# Plain\n", encoding="utf-8")
-        ptask = chatroom.create_room("A plain task", [{"identity": "claude", "agent": "claude", "cwd": str(phome)}])
-        chatroom.post_message(ptask["id"], "user", "Hello")
-        dashboard.assign_session_project(ptask["id"], cls.plain)
-        cls.plain_task = ptask["id"]
-        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
-        cls.server.daemon_threads = True
-        cls.server.handle_error = lambda *a: None   # a page closed mid-answer
-        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
         shots = os.environ.get("ENSEMBLE_SHOTS", "")
         if shots:
             Path(shots).mkdir(parents=True, exist_ok=True)
