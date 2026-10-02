@@ -24,8 +24,10 @@ Nothing told the PO about them: issues 5 and 6 sat unseen for a day. So:
   whose code repo's ``origin`` is the feedback repo, else of the project named
   ``Ensemble Dashboard``: typed into an idle PO as one line, ``[issue] #N
   title (labels): first ~300 chars — url`` or ``[issue comment] #N title:
-  login: … — url``, one line per look (a minute) while the PO stays idle. A
-  PO that is busy is tried again each minute. A PO that is not running gets
+  login: … — url``. Everything queued goes in ONE line (``[issue] N new on
+  GitHub: … | …``, each with its link, excerpts shortened to fit), so a burst
+  of comments is one wake, not one a minute. A PO that is busy is tried again
+  each minute. A PO that is not running gets
   the item in its room's chat as a line from the hub, once (like ``[due]``),
   and is typed it when it runs again within a day.
 * **State.** ``DASHBOARD_DIR/issues.json``: the repo, the issue numbers seen
@@ -71,7 +73,7 @@ COMMENT_PREFIX = "[issue comment] "
 # the CEO's own account, so the author cannot tell the PO's answer from the
 # CEO's comment.
 PO_MARK = "<!-- ensemble-po -->"
-_WAKE_MAX = 900
+_WAKE_MAX = 4000            # one line names everything new: a burst is one wake
 
 _LOCK = threading.Lock()        # one change of the state at a time
 _POLLING = threading.Lock()     # one poll at a time
@@ -215,6 +217,55 @@ def _outsider(item: dict) -> bool:
     return str(item.get("author_association") or "").upper() not in TEAM
 
 
+def issue_part(issue: dict, reopened: bool = False) -> dict:
+    """What a line naming several items says of this one: head, text, url."""
+    labels = [_clean(l.get("name"))[:40] for l in issue.get("labels") or []
+              if isinstance(l, dict) and l.get("name")]
+    if reopened:
+        labels.append("reopened")
+    if _outsider(issue):
+        labels.append(f"by {_who(issue)}, outside the team")
+    tag = f" ({', '.join(labels)})" if labels else ""
+    return {"head": f"issue #{issue['number']} {_title(issue)}{tag}",
+            "text": _excerpt(issue.get("body")) or "(no description)",
+            "url": _clean(issue.get("html_url"))}
+
+
+def comment_part(comment: dict, number: int, title: str) -> dict:
+    who = _who(comment) + (" (outside the team)" if _outsider(comment) else "")
+    return {"head": f"comment on #{number} {title}: {who}", "text": _excerpt(comment.get("body")),
+            "url": _clean(comment.get("html_url"))}
+
+
+def wake_line(items: list[dict]) -> tuple[str, list[dict]]:
+    """(the one line typed into the PO, the items it names). One item is its
+    own line; several go in one ``[issue] N new on GitHub: …`` line, each with
+    its link, their excerpts cut as short as it takes to fit ``_WAKE_MAX``
+    (down to none). Items that still do not fit stay queued for the next look."""
+    if len(items) == 1:
+        return items[0]["line"], items[:1]
+
+    def bit(it: dict, n: int) -> str:
+        if "head" not in it:                 # queued before the parts were kept
+            ln = it["line"]
+            return ln[len(COMMENT_PREFIX):] if ln.startswith(COMMENT_PREFIX) else ln[len(PREFIX):]
+        text = it.get("text") or ""
+        text = text if len(text) <= n else text[:n].rstrip() + "…"
+        return f"{it['head']}: {text} — {it['url']}" if text else f"{it['head']} — {it['url']}"
+
+    def line(told: list[dict], n: int) -> str:
+        head = f"{PREFIX}{len(told)} new on GitHub: " if len(told) > 1 else PREFIX
+        return head + " | ".join(bit(it, n) for it in told)
+
+    told = list(items)
+    while len(told) > 1:
+        for n in (EXCERPT, 200, 120, 80, 40, 0):
+            if len(line(told, n)) <= _WAKE_MAX:
+                return line(told, n), told
+        told.pop()
+    return told[0]["line"], told
+
+
 def issue_line(issue: dict, reopened: bool = False) -> str:
     labels = [_clean(l.get("name"))[:40] for l in issue.get("labels") or []
               if isinstance(l, dict) and l.get("name")]
@@ -294,11 +345,11 @@ def poll(now: float | None = None) -> list[dict]:
             return []
         queued, keys = [], {q["key"] for q in st["queue"]}
 
-        def put(key: str, line: str, number: int) -> None:
+        def put(key: str, line: str, number: int, part: dict) -> None:
             if key in keys:
                 return
             keys.add(key)
-            item = {"key": key, "line": line, "number": number, "at": now, "how": ""}
+            item = {"key": key, "line": line, "number": number, "at": now, "how": "", **part}
             st["queue"].append(item)
             queued.append(item)
 
@@ -308,10 +359,11 @@ def poll(now: float | None = None) -> list[dict]:
             open_now[n] = i
             rec = st["issues"].get(n)
             if not isinstance(rec, dict):
-                put(f"issue:{n}", issue_line(i), i["number"])
+                put(f"issue:{n}", issue_line(i), i["number"], issue_part(i))
                 st["issues"][n] = {"open": True, "seen": now}
             elif not rec.get("open"):
-                put(f"issue:{n}:reopened:{int(now)}", issue_line(i, reopened=True), i["number"])
+                put(f"issue:{n}:reopened:{int(now)}", issue_line(i, reopened=True), i["number"],
+                    issue_part(i, reopened=True))
                 rec["open"] = True
         for n, rec in st["issues"].items():
             if n not in open_now and isinstance(rec, dict):
@@ -329,7 +381,8 @@ def poll(now: float | None = None) -> list[dict]:
             st["comments"][cid] = created
             if str(c.get("body") or "").lstrip().startswith(PO_MARK) or str(num) not in open_now:
                 continue
-            put(f"comment:{cid}", comment_line(c, num, _title(open_now[str(num)])), num)
+            title = _title(open_now[str(num)])
+            put(f"comment:{cid}", comment_line(c, num, title), num, comment_part(c, num, title))
         st["comments"] = {k: v for k, v in st["comments"].items()
                           if isinstance(v, (int, float)) and now - v <= KEEP_COMMENTS_S}
         st["lastPoll"] = st["lastGood"] = now
@@ -354,7 +407,9 @@ def _repo_of(path: str) -> str:
     except (OSError, subprocess.SubprocessError):
         pass
     m = re.search(r"github\.com[:/]+([^/\s]+/[^/\s]+?)(?:\.git)?/?$", url)
-    _REPO_OF_PATH[path] = m.group(1).casefold() if m else ""
+    if not m:       # not kept: a git that failed once (a lock, a timeout) is asked again
+        return ""
+    _REPO_OF_PATH[path] = m.group(1).casefold()
     return _REPO_OF_PATH[path]
 
 
@@ -367,16 +422,20 @@ def target_project(repo: str) -> dict | None:
     return next((p for p in projects if p.get("name") == FALLBACK_PROJECT), None)
 
 
-def _chat_text(line: str) -> str:
-    what = line[len(COMMENT_PREFIX):] if line.startswith(COMMENT_PREFIX) else line[len(PREFIX):]
-    head = "Issue comment" if line.startswith(COMMENT_PREFIX) else "Issue"
-    return (f"**{head}: {what}** The PO is not running, so the hub did not wake it. "
+def _chat_text(items: list[dict]) -> str:
+    def what(line: str) -> str:
+        if line.startswith(COMMENT_PREFIX):
+            return "Issue comment: " + line[len(COMMENT_PREFIX):]
+        return "Issue: " + line[len(PREFIX):]
+    listed = "\n".join(f"- **{what(it['line'])}**" for it in items)
+    return (f"{listed}\n\nThe PO is not running, so the hub did not wake it. "
             f"It is told when it next runs, if that is within a day.")
 
 
 def _deliver_one(room_id: str, items: list[dict], now: float) -> list[tuple[dict, str]]:
-    """[(item, how)]: ``typed`` for at most one item into an idle PO, ``chat``
-    for each not yet posted when the PO is not running; [] when it is busy."""
+    """[(item, how)]: ``typed`` for the items one line names (wake_line: all
+    of them, unless too many to fit) into an idle PO; ``chat`` for every item
+    not yet posted, in one notice, when the PO is not running; [] when busy."""
     rot, cr = _d.rotation, _d.chatroom
     with rot.GATE:
         room = cr.get_room(room_id)
@@ -388,20 +447,17 @@ def _deliver_one(room_id: str, items: list[dict], now: float) -> list[tuple[dict
             return []
         sess = rot._pty(part)
         if sess is None:
-            out = []
-            for it in items:
-                if it.get("how") == "chat":
-                    continue
-                if cr.post_notice(room_id, SENDER, _chat_text(it["line"]), {"noticeKind": "issue"}):
-                    out.append((it, "chat"))
-            return out
+            new = [it for it in items if it.get("how") != "chat"]
+            if not new or not cr.post_notice(room_id, SENDER, _chat_text(new), {"noticeKind": "issue"}):
+                return []
+            return [(it, "chat") for it in new]
         if rot.awaiting_handover(room_id, ident):
             return []
         tpath, reader = rot._transcript_of(part)
         if not rot._idle(part, reader(tpath)) or rot._submitted_lately(sess):
             return []
-        it = items[0]
-        return [(it, "typed")] if _d._type_input(sess, it["line"]) else []
+        wake, told = wake_line(items)
+        return [(it, "typed") for it in told] if _d._type_input(sess, wake) else []
 
 
 def deliver(now: float | None = None) -> list[dict]:
