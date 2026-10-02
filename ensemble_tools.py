@@ -871,7 +871,7 @@ def _allocation_view(allocation) -> dict | None:
 
 
 def _seat_shown(seat):
-    if not isinstance(seat, dict):
+    if not isinstance(seat, dict) or "model" not in seat:
         return seat
     seat = {**seat, "model": _model_shown(seat.get("agent", ""), seat.get("model", ""))}
     if isinstance(seat.get("alt"), dict):
