@@ -734,11 +734,12 @@ sits behind one "Team activity" line with the traffic it answers (measured on
 the Ensemble PO chat: 240 such replies in three days, 110 of them "nothing
 new" or a status note, against 60 answers to the product owner). It is still
 there, one click away, so a status note costs them nothing. The chat keeps in
-view (#160) a reply that answers or names one of their open asks (`Re P12`,
-`P12`), speaks to them ("you", their name), asks a decision of them, or says
-something is live or blocked; when unsure it shows. Your narration ("Checking
-the log", "Now the handover") and plain acknowledgements fold, so keep them
-free of those words. A reply that *is* for them still says so best: start the
+view (#160) a reply that answers or names one of their open asks (`Re P12,`,
+`P12`), leaves them something ("waiting for you", "you asked", "your pick",
+their name), asks a decision of them, or says something is live, blocked or
+failed; when unsure it shows. Your narration ("Checking the log", "Now the
+handover") folds, and so does a note that opens "Nothing new", "No action
+needed" or "Nothing needs you": open a plain acknowledgement that way. A reply that *is* for them still says so best: start the
 paragraph with `Re P12:` (it answers their ask), `Decision needed:` (see
 below), or address them, `To <their name>:` or `For you:`.
 

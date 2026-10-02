@@ -747,9 +747,12 @@ Needs you.**
   what is theirs (`forCeo`: their messages, the answers to them, a `Re Pn:` or `To <name>:` /
   `For you:` paragraph wherever it is, a decision, a message to them, a PO-to-PO message naming
   them). **Folded only when plainly the team's** (#160, GitHub issue 5): an agent's words after a
-  hub line stay in view when they answer or name an open ask (`Re P77,` anywhere; `P232` while
-  open, in progress or unacknowledged), speak to the person ("you", their name as a word), ask a
-  decision or a hub restart, or say something is live or blocked (`ceoWhy`); when unsure, show.
+  hub line stay in view when they answer or name an open ask (`Re P77,` anywhere, not quoted;
+  `P232` while open, in progress or unacknowledged), leave the person something ("waiting for
+  you", "you asked", "your pick", their name as a word), ask a decision of them or a hub restart,
+  or say something is live, blocked or failed (`ceoWhy`); a negated one ("nothing needs you",
+  "not blocked") does not count, and a note that opens "Nothing new" / "No action needed" folds
+  unless it answers them. When unsure, show.
   Every run of the rest, hub lines and the PO's notes on them alike, is **one row**
   (`.msg-fold.gap`, the hub row's look: `--surface-sunken`, a 1px left rule, no colour): "Team
   activity · 14 messages · 10:05–11:30 · 5 progress checks, 3 reports, 4 PO notes". A click opens

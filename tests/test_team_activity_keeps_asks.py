@@ -41,7 +41,7 @@ def fold_block(src: str) -> str:
 # The real cases: (where, the hub line's kind, extra fields of what it
 # answers, the PO's words). Kept to the sentences that carry the message.
 REAL = [
-    ("Dock 10-01 16:48, after the hub's restart note (fabio had approved option A just before)", "handover", {},
+    ("Dock 10-01 16:48, after the hub's restart note (the person had approved option A just before)", "handover", {},
      "I created the task for screenshots without the share prompt, your option A, as draft #28. "
      "It waits for you to start it."),
     ("Dock 10-02 08:25, on #28's review 3", "report", {"reportKind": "review 3 (approved)", "taskId": "room-d28"},
@@ -72,7 +72,7 @@ REAL = [
      "- **Trading impact:** no orders are affected. The cost is wasted quote lines, which is part of why the "
      "chains you open get no quotes."),
     ("opTen 10-01 17:09, a new PO's first words", "rotation", {},
-     "I've taken over as PO and read the handover and roadmap.\n\n**Waiting on Fabio:** a yes on P232, which "
+     "I've taken over as PO and read the handover and roadmap.\n\n**Waiting on Fab:** a yes on P232, which "
      "would replace the fixed product lists with anything TWS lists that has options."),
     ("opTen 10-02 00:16, on a due check", "due", {},
      "The first 2-hour watcher hit its time limit before the checkpoint runs finished.\n\nWhen it ends I'll "
@@ -100,11 +100,22 @@ PLAIN = [
     ("pomsg", {}, "I noted the Dock PO's info of 10-02 08:49 in the handover, and no reply is needed. "
      "Nothing in opTen has to change."),
     ("helper", {}, "Now the handover."),
-    ("report", {"reportKind": "completed", "taskId": "room-d28"}, "Now the demo for fabio."),
+    ("report", {"reportKind": "completed", "taskId": "room-d28"}, "Now the demo for the CEO."),
     ("due", {}, "Running the 22:05 deploy now: stream-bridge only, with the two users created before the restart."),
     ("rotation", {}, "Checking the AS24 edit form for whether the Version (title) field takes free text."),
     ("pomsg", {}, "Our own new tasks may be running on Fable too. Checking."),
     ("handover", {}, "The handover is up to date for the next PO session.\n\n- **Points:** P248 is answered: dropped."),
+    # Review 1: acknowledgements that say "you", "decision" or a negated
+    # "blocked", and an answer still to come, quoted.
+    ("digest", {}, "Nothing needs a decision. #140 is under review, and #143 is fixing the second review's findings."),
+    ("digest", {}, "None of the new tasks is blocked."),
+    ("digest", {}, "#138 is not blocked. Its engineer is still working through the first review."),
+    ("digest", {}, "Nothing needs you yet. #114 is now in review."),
+    ("digest", {}, "Nothing new: #115 is waiting for you to look at the layout page again."),
+    ("digest", {}, "No action needed. The progress check says #150 is blocked by 4 failing tests, but its agent is fixing them."),
+    ("digest", {}, "Nothing new here. The screenshot decision was already made."),
+    ("digest", {}, "#128 isn't actually waiting on you or me. The board still shows its first question."),
+    ("due", {}, "Still due today: 15:40 the \"Re P197\" take-profit check. Once #141 is merged I answer \"Re P198\"."),
 ]
 
 NODE_JS = r"""
@@ -129,7 +140,9 @@ const pair = ([kind, extra, text]) => [hub(kind, extra), po(text, kind, extra)];
 out.real = real.map(([where, kind, extra, text]) => { const [h, m] = pair([kind, extra, text]); return { where, forCeo: T.forCeo(m), why: T.ceoWhy(m), hub: T.forCeo(h) }; });
 out.plain = plain.map(p => { const [h, m] = pair(p); return { text: p[2].slice(0, 50), forCeo: T.forCeo(m), why: T.ceoWhy(m) }; });
 // The same words as a message to a teammate are the team's.
-out.toMate = T.forCeo({ id: 'tm', from: 'claude', to: 'codex', text: 'Can you check P232? It is blocked.', ts: 99 });
+out.toMate = T.forCeo({ id: 'tm', from: 'claude', to: 'codex', text: 'Can you check P232? It is blocked.', ts: 99 })
+  || T.forCeo({ id: 'tm2', from: 'claude', to: 'codex', text: 'Fix it before I write Re P232, the ruling.', ts: 99 });
+out.noMsg = T.ceoWhy(null);
 // An ask that is closed no longer keeps a message in view.
 const closed = po('The handover lists P232 for the next session.', 'handover', {});
 out.openAsk = T.forCeo(closed);
@@ -139,7 +152,7 @@ out.closedAsk = T.forCeo(closed);
 out.fable = T.forCeo(po('All five tasks hit the Fable limit.', 'pomsg', {}));
 out.fab = T.forCeo(po('Fab, the tasks are back.', 'pomsg', {}));
 // A gap names the asks its messages mention: plain ones, in one run.
-const items = plain.flatMap(pair).concat([hub('points', {}), Object.assign(hub('report', { reportKind: 'completed', taskId: 'room-o1' }), { text: "[report] completed from task 'x (fabio P239)' (#1, claude): done" })]);
+const items = plain.flatMap(pair).concat([hub('points', {}), Object.assign(hub('report', { reportKind: 'completed', taskId: 'room-o1' }), { text: "[report] completed from task 'x (sam P239)' (#1, claude): done" })]);
 const gaps = T.gapsOf(items, null);
 out.gaps = gaps.length;
 out.gapN = gaps[0] ? gaps[0].idx.length : 0;
@@ -179,6 +192,7 @@ class RealCases(unittest.TestCase):
         for c in self.o["plain"]:
             self.assertFalse(c["forCeo"], c)
         self.assertFalse(self.o["toMate"], "a message to a teammate is the team's, whatever it says")
+        self.assertEqual(self.o["noMsg"], "")
 
     def test_an_ask_keeps_a_message_only_while_open(self):
         self.assertTrue(self.o["openAsk"])
@@ -190,10 +204,10 @@ class RealCases(unittest.TestCase):
 
     def test_the_gap_names_the_asks_inside(self):
         self.assertEqual(self.o["gaps"], 1, "the plain ones and the hub lines are one run")
-        self.assertEqual(self.o["asks"], "2 name your asks: P248, P239",
-                         "the closed P248 in a handover note and P239 in a task's report; never the reminder")
-        self.assertIn('<span class="gasks">2 name your asks: P248, P239</span>', self.o["row"])
-        self.assertIn("(2 name your asks: P248, P239)", self.o["row"], "the tooltip says it too")
+        self.assertEqual(self.o["asks"], "3 name your asks: P248, P197, P198, P239",
+                         "the closed P248 in a handover note, the quoted P197/P198 still to come, P239 in a task's report; never the reminder")
+        self.assertIn('<span class="gasks">3 name your asks: P248, P197, P198, P239</span>', self.o["row"])
+        self.assertIn("(3 name your asks: P248, P197, P198, P239)", self.o["row"], "the tooltip says it too")
         self.assertEqual(self.o["none"], "")
 
 
