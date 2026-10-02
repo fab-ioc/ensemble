@@ -7470,8 +7470,8 @@ def global_find(q: str, deep: bool = False, tag: str = "", seq: int = 0) -> tupl
                 if not s.get("snippet"):
                     s["snippet"] = f.get("snippet") or ""
         status = "partial" if res.get("timedOut") else "done"
-    # Tasks: named first, then by their spec, then by their conversations.
-    rank = {"title": 0, "spec": 1, "conversation": 2}
+    # Tasks: named first, then by their spec, their chat, their conversations.
+    rank = {"title": 0, "spec": 1, "chat": 2, "conversation": 3}
     t_items = []
     for rid, t in tasks.items():
         e = by_id.get(rid)
@@ -7482,7 +7482,7 @@ def global_find(q: str, deep: bool = False, tag: str = "", seq: int = 0) -> tupl
                         "project": (po or {}).get("name") or pname.get(e["projectId"], ""),
                         "title": f"{po.get('name') or ''} · PO" if po else e["title"], "po": bool(po),
                         "workflow": e["workflow"], "archived": e["archived"], "updatedAt": e["updatedAt"]})
-    t_items.sort(key=lambda x: (rank.get(x["where"], 3), -(x["hits"] or 0), -(x["updatedAt"] or 0)))
+    t_items.sort(key=lambda x: (rank.get(x["where"], 4), -(x["hits"] or 0), -(x["updatedAt"] or 0)))
     # Past sessions: the most matches first, then the newest.
     labels = load_labels()
     s_items = []

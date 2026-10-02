@@ -142,6 +142,21 @@ class Rooms(unittest.TestCase):
         tasks, _ = gs.search_rooms(es, gs.parse_query("ed-20"), {"room-c": ["#20", "ED-20"]})
         self.assertEqual(list(tasks), ["room-c"])
 
+    def test_a_task_by_its_chat(self):
+        """As the old rows matched a task's first and last message: the chat
+        finds its task, the words may be spread over title, spec and chat."""
+        self.put(room("room-a", 18, "Trade detail", msgs=["PO: the two-sided 0DTE day", "ok", "a 0dte stop"]))
+        self.put(room("room-b", 19, "TWS margin ticket", msgs=["we use it now"]))
+        self.put(room("room-c", 20, "Other", msgs=["margin"]))
+        es = gs.room_entries(self.dir)
+        tasks, msgs = gs.search_rooms(es, gs.parse_query("0DTE"))
+        self.assertEqual(tasks["room-a"]["where"], "chat")
+        self.assertEqual((tasks["room-a"]["hits"], len(msgs)), (2, 2))
+        self.assertIn("0dte stop", tasks["room-a"]["snippet"])
+        tasks, msgs = gs.search_rooms(es, gs.parse_query("margin use"))
+        self.assertEqual(({k: v["where"] for k, v in tasks.items()}, msgs), ({"room-b": "chat"}, []))
+        self.assertEqual(tasks["room-b"]["hits"], 0)
+
     def test_read_again_only_when_changed(self):
         self.put(room("room-a", 1, "One"))
         calls = []
@@ -204,8 +219,10 @@ class GlobalFind(unittest.TestCase):
         st, r = dashboard.global_find("tranche", deep=True, tag="t", seq=1)
         self.assertEqual((st, r["conversations"]), (200, "done"))
         by = {t["roomId"]: t for t in r["tasks"]["items"]}
-        self.assertEqual(set(by), {"room-a", "room-b"})
+        self.assertEqual(set(by), {"room-a", "room-b", "room-po"})
         self.assertEqual((by["room-a"]["where"], by["room-a"]["hits"]), ("conversation", 3))
+        self.assertEqual((by["room-po"]["where"], by["room-po"]["title"]), ("chat", "Proj · PO"))
+        self.assertEqual(r["tasks"]["items"][0]["roomId"], "room-po")    # its chat before conversations
         sess = {s["sessionId"]: s for s in r["sessions"]["items"]}
         self.assertEqual(set(sess), {"mine-1", "listed-1"})
         self.assertEqual([s["sessionId"] for s in r["sessions"]["items"]], ["mine-1", "listed-1"])

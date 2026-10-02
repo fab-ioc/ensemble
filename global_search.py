@@ -172,7 +172,7 @@ def room_entries(rooms_dir: Path, extra=None) -> list[dict]:
 
 def search_rooms(entries: list[dict], groups: list[list[str]], refs: dict[str, list[str]] | None = None
                  ) -> tuple[dict[str, dict], list[dict]]:
-    """Tasks by title, number or spec ({roomId: hit}) and chat messages that
+    """Tasks by title, number, spec or chat ({roomId: hit}) and chat messages that
     match on their own (newest first). ``refs``: a room's other names, as
     ``#18`` and ``ED-18``."""
     terms = terms_of(groups)
@@ -184,10 +184,20 @@ def search_rooms(entries: list[dict], groups: list[list[str]], refs: dict[str, l
             tasks[e["id"]] = {"roomId": e["id"], "where": "title", "snippet": "", "hits": 0}
         elif e["specLow"] and any(all(t in e["specLow"] or t in names for t in g) for g in groups):
             tasks[e["id"]] = {"roomId": e["id"], "where": "spec", "snippet": snippet(e["spec"], terms), "hits": 0}
+        own = []
         for m in e["msgs"]:
             if any(all(t in m["low"] for t in g) for g in groups):
+                own.append(m)
                 messages.append({"roomId": e["id"], "msgId": m["id"], "ts": m["ts"], "from": m["from"],
                                  "to": m["to"], "snippet": snippet(m["text"], terms)})
+        # A task is also found by its chat, the words spread over its title,
+        # spec and messages as the old dashboard's rows allowed.
+        if e["id"] not in tasks and e["msgs"] and any(
+                all(t in names or t in e["specLow"] or any(t in m["low"] for m in e["msgs"]) for t in g)
+                for g in groups):
+            first = own[-1] if own else next((m for m in reversed(e["msgs"]) if any(t in m["low"] for t in terms)), None)
+            tasks[e["id"]] = {"roomId": e["id"], "where": "chat", "hits": len(own),
+                              "snippet": snippet(first["text"], terms) if first else ""}
     messages.sort(key=lambda m: -m["ts"])
     return tasks, messages
 

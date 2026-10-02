@@ -5560,6 +5560,7 @@ function findRowHtml(x, i, on, parsed) {
     if (it.archived) meta.push('archived');
     else if (it.workflow === 'done') meta.push('done');
     if (it.where === 'spec') meta.push('in its spec');
+    if (it.where === 'chat') meta.push(it.hits > 1 ? `${it.hits} messages in its chat` : 'in its chat');
     if (it.where === 'conversation') meta.push(it.hits > 1 ? `${it.hits} matches in its conversations` : 'in its conversations');
   } else if (x.kind === 'sessions') {
     title = highlight(it.title || ('Session ' + String(it.sessionId || '').slice(0, 8)), parsed);
