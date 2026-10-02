@@ -113,6 +113,7 @@ import board_brief
 import usage
 # Go to file and search in files for a Workspace; a search runs as a child.
 import workspace_search
+import global_search
 # Headless PTY runtime — dashboard-owned agent processes streamed to the browser.
 from backends import ptyrun
 
@@ -7419,6 +7420,222 @@ def attach_search_rooms(results: list[dict], rooms: list[dict] | None = None) ->
     return results
 
 
+# ---- Search from the top bar, wherever you are (#161): global_search.py ------
+# The quick half (rooms and the listed sessions) answers while you type; the
+# deep half reads every transcript in a child process, one per box at a time
+# (the box's tag and count, as a Workspace's find), and is remembered for a
+# little while, so a query typed again or Enter after typing costs nothing.
+_FIND_DEEP_CACHE: dict[str, tuple[float, dict]] = {}
+_FIND_DEEP_TTL = 30.0
+_FIND_DEEP_KEEP = 20
+
+
+def _find_norm(p: str) -> str:
+    return os.path.normcase(os.path.normpath(p)) if p else ""
+
+
+def _find_room_extra(room: dict) -> dict:
+    """Which conversations a room holds: every seat's, every rotation's,
+    review's and retired agent's (by session), and its agents' folders, as
+    the task list decides a transcript is a task's (_load_sessions_uncached)."""
+    sids: set[str] = set()
+    cwds: set[str] = set()
+    for p in room.get("participants") or []:
+        if isinstance(p, dict) and p.get("kind") == "agent":
+            sids.update(participant_session_ids(p))
+            if p.get("cwd"):
+                cwds.add(_find_norm(p["cwd"]))
+    try:
+        sids.update(x["sessionId"] for x in room_past_sessions(room))
+    except Exception:       # noqa: BLE001 — a room it cannot read holds none
+        pass
+    sids.discard("")
+    return {"sids": sorted(sids), "cwds": sorted(cwds)}
+
+
+def _find_session_rows() -> list[dict]:
+    """The rows the task list built last (whatever its n). None yet (a hub
+    just started, no page open): none, rather than a minute's build while
+    someone types; the deep half finds those sessions all the same."""
+    best = None
+    for at, _gen, rows in list(_SESS_CACHE.values()):
+        if best is None or at > best[0]:
+            best = (at, rows)
+    return best[1] if best else []
+
+
+def _find_files() -> list[list[str]]:
+    """Every transcript: Claude's (less the hub's own rename calls) and Codex's."""
+    out: list[list[str]] = []
+    for jsonl in PROJ_DIR.glob("*/*.jsonl"):
+        if "rename-workspace" in jsonl.parent.name or jsonl.parent.name == _RENAME_PROJ_SLUG:
+            continue
+        out.append([str(jsonl), "claude"])
+    try:
+        cx = agents.get_agent("codex")
+        root = cx.sessions_dir() if cx is not None else None
+        if root is not None and root.exists():
+            out += [[str(f), "codex"] for f in root.glob("*/*/*/rollout-*.jsonl")]
+    except Exception:       # noqa: BLE001 — Claude's are searched all the same
+        pass
+    return out
+
+
+def _find_deep(q: str, tag: str, seq: int) -> tuple[int, dict]:
+    hit = _FIND_DEEP_CACHE.get(q)
+    if hit and time.time() - hit[0] < _FIND_DEEP_TTL:
+        return 200, hit[1]
+    req = json.dumps({"q": q, "files": _find_files(), "deadline": global_search.DEADLINE_S}).encode("utf-8")
+    argv = [sys.executable, "-X", "utf8", str(Path(global_search.__file__).resolve())]
+    key = ("find:" + tag)[:200] if tag else ""
+    try:
+        proc = _ws_search_start(key, seq, argv)
+    except OSError as e:
+        return 500, {"error": f"search_failed: {e}"}
+    if proc is None:
+        return 409, {"error": "cancelled"}
+    try:
+        out, err = proc.communicate(req, timeout=global_search.DEADLINE_S + 10)
+    except subprocess.TimeoutExpired:
+        _ws_kill(proc)
+        proc.communicate()
+        return 504, {"error": "search_timed_out"}
+    finally:
+        _ws_search_done(key, proc)
+    if proc.ws_cancelled:
+        return 409, {"error": "cancelled"}
+    try:
+        res = json.loads(out.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return 500, {"error": "search_failed", "detail": err.decode("utf-8", errors="replace")[-400:]}
+    if res.get("error"):
+        return 500, res
+    _FIND_DEEP_CACHE.pop(q, None)
+    _FIND_DEEP_CACHE[q] = (time.time(), res)
+    while len(_FIND_DEEP_CACHE) > _FIND_DEEP_KEEP:
+        _FIND_DEEP_CACHE.pop(next(iter(_FIND_DEEP_CACHE)))
+    return 200, res
+
+
+def global_find(q: str, deep: bool = False, tag: str = "", seq: int = 0) -> tuple[int, dict]:
+    """GET /api/find: tasks, past sessions and messages for the top bar's
+    drop-down. Each group is {count, items}; a group sends at most
+    global_search.ITEMS_MAX items, best first. ``deep`` reads every
+    transcript too (``conversations``: "done", or "partial" when the scan hit
+    its deadline); without it, ``conversations`` is "not searched"."""
+    q = (q or "").strip()[:global_search.QUERY_MAX]
+    groups = global_search.parse_query(q)
+    empty = {"count": 0, "items": []}
+    base = {"q": q, "tasks": empty, "sessions": empty, "messages": empty, "conversations": "not searched"}
+    if len(q) < global_search.MIN_QUERY or not groups:
+        return 200, base
+    try:
+        projects = load_projects()
+    except Exception:       # noqa: BLE001
+        projects = []
+    keys = task_numbers.project_keys(projects)
+    pname = {p.get("id"): p.get("name") or "" for p in projects}
+    po_of = {p["poRoomId"]: p for p in projects if p.get("poRoomId")}
+    entries = global_search.room_entries(chatroom.ROOMS_DIR, _find_room_extra)
+    by_id = {e["id"]: e for e in entries}
+    refs: dict[str, list[str]] = {}
+    for e in entries:
+        if e["no"]:
+            refs[e["id"]] = [f"#{e['no']}"] + ([f"{keys[e['projectId']]}-{e['no']}"] if keys.get(e["projectId"]) else [])
+    tasks, messages = global_search.search_rooms(entries, groups, refs)
+    rows = _find_session_rows()
+    row_of = {r.get("sessionId"): r for r in rows if r.get("sessionId") and not r.get("roomId")}
+    sessions = global_search.search_rows(list(row_of.values()), groups)
+    status = "not searched"
+    if deep:
+        st, res = _find_deep(q, tag, seq)
+        if st != 200:
+            return st, res
+        sid_room: dict[str, str] = {}
+        cwd_room: dict[str, str] = {}
+        for e in entries:
+            for s in (e.get("extra") or {}).get("sids", []):
+                sid_room.setdefault(s, e["id"])
+            for c in (e.get("extra") or {}).get("cwds", []):
+                # A folder several tasks ran in names none of them: its
+                # conversations without a session link are Past sessions.
+                cwd_room[c] = e["id"] if cwd_room.get(c, e["id"]) == e["id"] else ""
+        for f in res.get("found") or []:
+            sid = f.get("sessionId") or ""
+            rid = sid_room.get(sid) or cwd_room.get(_find_norm(f.get("cwd") or ""))
+            if rid and rid in by_id:
+                t = tasks.get(rid)
+                if t is None:
+                    tasks[rid] = {"roomId": rid, "where": "conversation", "snippet": f.get("snippet") or "",
+                                  "hits": f.get("hits") or 0}
+                else:
+                    t["hits"] += f.get("hits") or 0
+                continue
+            s = sessions.get(sid)
+            if s is None:
+                sessions[sid] = {"sessionId": sid, "agent": f.get("agent") or "claude", "path": f.get("path") or "",
+                                 "cwd": f.get("cwd") or "", "updatedAt": f.get("updatedAt") or 0,
+                                 "snippet": f.get("snippet") or "", "hits": f.get("hits") or 0}
+            else:
+                s["hits"] += f.get("hits") or 0
+                if not s.get("snippet"):
+                    s["snippet"] = f.get("snippet") or ""
+        status = "partial" if res.get("timedOut") else "done"
+    # Tasks: named first, then by their spec, their chat, their conversations.
+    rank = {"title": 0, "spec": 1, "chat": 2, "conversation": 3}
+    t_items = []
+    for rid, t in tasks.items():
+        e = by_id.get(rid)
+        if e is None:
+            continue
+        po = po_of.get(rid)
+        t_items.append({**t, "no": e["no"], "projectId": (po or {}).get("id") or e["projectId"],
+                        "project": (po or {}).get("name") or pname.get(e["projectId"], ""),
+                        "title": f"{po.get('name') or ''} · PO" if po else e["title"], "po": bool(po),
+                        "workflow": e["workflow"], "archived": e["archived"], "updatedAt": e["updatedAt"]})
+    t_items.sort(key=lambda x: (rank.get(x["where"], 4), -(x["hits"] or 0), -(x["updatedAt"] or 0)))
+    # Past sessions: the most matches first, then the newest.
+    labels = load_labels()
+    s_items = []
+    for sid, s in sessions.items():
+        r = row_of.get(sid)
+        if r is not None:
+            s_items.append({**s, "listed": True, "agent": r.get("agent") or "claude", "cwd": r.get("cwd") or "",
+                            "updatedAt": r.get("updatedAt") or 0,
+                            "title": r.get("label") or r.get("firstWords") or first_words(r.get("first") or "")})
+        else:
+            s_items.append({**s, "listed": False})
+    s_items.sort(key=lambda x: (-(x.get("hits") or 0), -(x.get("updatedAt") or 0)))
+    cut = s_items[:global_search.ITEMS_MAX]
+    for s in cut:
+        if s["listed"]:
+            continue
+        # A session the task list does not hold: its row for the page to open
+        # (the page puts it in PAST_ROWS and calls openDetail).
+        try:
+            row = _past_row(s["sessionId"], s["agent"], None)
+        except Exception:   # noqa: BLE001 — listed by its id alone
+            row = None
+        if row is not None:
+            row["label"] = labels.get(s["sessionId"], "")
+            s["row"] = row
+            s["title"] = row["label"] or row.get("firstWords") or ""
+            s["cwd"] = s.get("cwd") or row.get("cwd") or ""
+        s.setdefault("title", "")
+        s.pop("path", None)
+    m_items = []
+    for m in messages[:global_search.ITEMS_MAX]:
+        e = by_id.get(m["roomId"]) or {}
+        po = po_of.get(m["roomId"])
+        m_items.append({**m, "no": e.get("no"), "projectId": (po or {}).get("id") or e.get("projectId", ""),
+                        "project": (po or {}).get("name") or pname.get(e.get("projectId", ""), ""),
+                        "title": f"{po.get('name') or ''} · PO" if po else e.get("title", ""), "po": bool(po)})
+    return 200, {"q": q, "conversations": status,
+                 "tasks": {"count": len(t_items), "items": t_items[:global_search.ITEMS_MAX]},
+                 "sessions": {"count": len(s_items), "items": cut},
+                 "messages": {"count": len(messages), "items": m_items}}
+
+
 def delete_session(sid: str) -> dict:
     """Remove a session's JSONL transcript and all sidecar entries
     (labels, parents, geometries, archive). Does not touch the cwd."""
@@ -10883,6 +11100,17 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p == "/api/archived":
             self._send_json(200, sorted(load_archived()))
+            return
+        if p == "/api/find":
+            # The top bar's search: tasks, past sessions and messages (#161).
+            q = parse_qs(u.query)
+            n = q.get("seq", ["0"])[0]
+            tag = (q.get("tag", [""])[0] or "").strip()
+            if q.get("cancel", [""])[0] == "1":
+                self._send_json(*ws_search_cancel("find:" + tag, int(n) if n.isdigit() else 0))
+                return
+            self._send_json(*global_find(q.get("q", [""])[0] or "", q.get("deep", [""])[0] == "1",
+                                         tag, int(n) if n.isdigit() else 0))
             return
         if p == "/api/search":
             q_params = parse_qs(u.query)

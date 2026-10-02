@@ -63,9 +63,8 @@ class TheBar(unittest.TestCase):
         self.assertIn("body.mid .search-wrap { flex: 0 1 300px;", INDEX)
         self.assertIn("body.mid .search-wrap + .bar-gap { flex: 0 0 0;", INDEX)   # only the first gap grows
         self.assertIn("body.mid #search { background: var(--surface-sunken); }", INDEX)
-        # The key hint goes while you type, focus, or a search state shows.
-        self.assertRegex(INDEX, r"body\.mid \.search-wrap:is\(:has\(#search:focus\), :has\(#search:not\(:placeholder-shown\)\), "
-                                r":has\(\.search-state:not\(\[hidden\]\)\)\) \.search-kbd \{ display: none; \}")
+        # The key hint goes while you type or focus.
+        self.assertIn("body.mid .search-wrap:is(:has(#search:focus), :has(#search:not(:placeholder-shown))) .search-kbd { display: none; }", INDEX)
 
     def test_crumbs_are_body_size(self):
         self.assertRegex(INDEX, r"#proj-go \{ color: var\(--fg\); font-size: var\(--fs-300\); font-weight: 400;")

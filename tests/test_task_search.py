@@ -1,10 +1,11 @@
-"""The PO is not a task, and a search shows what it finds.
+"""The PO is not a task, and the list's filter reads what a row shows.
 
 index.html's "Task search" block runs here in Node (skipped without Node): the
-PO's room is left out of every task list, a quick search narrows the rows by
-what a person reads (not by the folder every task in a project shares), a deep
-search's hits land on their tasks, and the box says how many were found.
-dashboard.attach_search_rooms names the task a deep-search hit belongs to.
+PO's room is left out of every task list, and a row's words for the list's
+filter (rowHaystack) are what a person reads, not the folder every task in a
+project shares. The top bar's search has its own drop-down
+(tests/test_global_find.py). dashboard.attach_search_rooms names the task an
+old /api/search hit belongs to.
 """
 from __future__ import annotations
 
@@ -58,10 +59,7 @@ log.poIn = ALL.filter(inScope).map(r => r.roomId);
 SELECTED_PROJECT = ''; log.poAll = ALL.filter(inScope).map(r => r.sessionId);
 SELECTED_PROJECT = 'p1';
 const scoped = ALL.filter(inScope);
-const find = (q, matches) => {
-  const parsed = parseSearchQuery(q);
-  return scoped.filter(r => rowMatches(r, parsed, matches || new Map())).map(r => r.roomId);
-};
+const find = q => scoped.filter(r => haystackMatches(rowHaystack(r), parseSearchQuery(q))).map(r => r.roomId);
 log.two = find('re');          // every task's path has "repo" in it
 log.en = find('en');           // and "Ensemble"
 log.up = find('up');
@@ -70,22 +68,7 @@ log.chat = find('render');
 log.title = find('board col');
 log.none = find('zzqx');
 log.clear = find('');
-const hits = [
-  { sessionId: 'claude-1', roomId: 'room-b', hits: 5, snippet: 'first' },
-  { sessionId: 'codex-1', roomId: 'room-b', hits: 2, snippet: 'second' },
-  { sessionId: 'claude-2', roomId: 'room-po', hits: 9, snippet: 'po' },
-  { sessionId: 'abc-123', hits: 1, snippet: 'old' },
-];
-const SM = serverMatchesFrom(hits);
-log.merged = SM.get('room-b');
-log.deep = find('zzqx', SM);
-SELECTED_PROJECT = ''; log.oldDeep = ALL.filter(inScope).filter(r => rowMatches(r, parseSearchQuery('zzqx'), SM)).map(r => r.sessionId);
-log.oldPath = ALL.filter(inScope).filter(r => rowMatches(r, parseSearchQuery('sigma'), new Map())).map(r => r.sessionId);
-log.badge = [
-  searchBadge('', '', 3, 0), searchBadge('u', '', 2, 0), searchBadge('up', '', 1, 0),
-  searchBadge('up', '', null, 0), searchBadge('up', 'searching', 1, 0),
-  searchBadge('up', 'deep', 4, 7), searchBadge('up', 'deep', null, 7), searchBadge('zz', '', 0, 0),
-];
+SELECTED_PROJECT = ''; log.oldPath = ALL.filter(inScope).filter(r => haystackMatches(rowHaystack(r), parseSearchQuery('sigma'))).map(r => r.sessionId);
 console.log(JSON.stringify(log));
 """
 
@@ -124,42 +107,26 @@ class TaskSearchPage(unittest.TestCase):
 
     def test_the_po_is_not_a_search_result(self):
         self.assertNotIn("room-po", self.r["en"])
-        self.assertNotIn("room-po", self.r["deep"], "not even when the deep search found its conversation")
 
     def test_a_quick_search_narrows_to_what_a_person_reads(self):
         self.assertEqual(self.r["two"], [], "a folder every task shares is not a match")
         self.assertEqual(self.r["en"], [], "nor is the project's name in that folder")
         self.assertEqual(self.r["up"], ["room-a"])
         self.assertEqual(self.r["files"], ["room-a", "room-b"])
-        self.assertEqual(self.r["chat"], [], "a task's chat is not on its card: that is the deep search's")
+        self.assertEqual(self.r["chat"], [], "a task's chat is not on its row")
         self.assertEqual(self.r["title"], ["room-c"])
         self.assertEqual(self.r["none"], [])
         self.assertEqual(self.r["clear"], ["room-a", "room-b", "room-c"], "clearing brings every task back")
-
-    def test_a_deep_search_lands_on_its_tasks(self):
-        self.assertEqual(self.r["merged"], {"hits": 7, "snippet": "first"}, "one task, its conversations added up")
-        self.assertEqual(self.r["deep"], ["room-b"])
-        self.assertEqual(self.r["oldDeep"], ["room-b", "abc-123"], "a session outside a task still matches by its own id")
-        self.assertEqual(self.r["oldPath"], ["abc-123"], "and by its folder")
-
-    def test_the_box_says_how_many(self):
-        labels = [b["label"] for b in self.r["badge"]]
-        self.assertEqual(labels, ["", "2 found", "1 found", "⏎ deep", "searching…",
-                                  "4 found", "7 found", "0 found"])
-        self.assertEqual([b["state"] for b in self.r["badge"][4:7]], ["deep"] * 3, "a deep search keeps its tint")
-        self.assertIsNone(self.r["badge"][0]["state"])
+        self.assertEqual(self.r["oldPath"], ["abc-123"], "a session outside a task by its folder")
 
     def test_the_page_uses_it(self):
         rows = fn(INDEX, "function renderRows(")
-        self.assertIn("paintSearchBadge(filtered.length);", rows)
-        self.assertIn("const modeFiltered = ALL_ROWS.filter(passesFilter);", rows)
+        self.assertIn("const filtered = ALL_ROWS.filter(passesFilter);", rows)
         self.assertIn("const pool = ALL_ROWS.filter(r => inScope(r)", rows)
-        self.assertIn("serverMatchesFrom(r)", INDEX)
-        self.assertNotRegex(INDEX, r"SERVER_MATCHES\.(has|get)\(r\.sessionId\)", "deep matches are keyed by task")
+        self.assertNotIn("SEARCH_QUERY", INDEX, "the top bar's search no longer narrows the board (#161)")
         self.assertIn("attentionItems()", fn(INDEX, "function swRender("))
         self.assertIn("attentionItems()", fn(INDEX, "function renderAttention("))
-        self.assertIn("!parseSearchQuery(SEARCH_QUERY).groups.length", fn(INDEX, "function boardHtml("),
-                      "a search shows old Done matches too")
+        self.assertIn("rowHaystack(r)", fn(INDEX, "function swHay("), "the list's filter reads a row as the board did")
 
     def test_the_po_stays_reachable(self):
         self.assertIn("ALL_ROWS.find(r => r.roomId === rid)", fn(INDEX, "function poRowOf("),
