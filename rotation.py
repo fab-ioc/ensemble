@@ -785,8 +785,8 @@ def choose_owner_kind(room: dict, part: dict, snapshot: dict | None = None,
     at or past the warning and the other is below it, or when the current one
     is ahead of its week's pace and the other is not (or is less far ahead).
     A task that keeps its agents is not paced. Unknown readings, the other
-    kind not installed, or both past the alarm keep the current kind (the alarm is noted). Returns {agent,
-    model, fromAgent, fromModel, changed, alarm, reason, why, usage}; never
+    kind not installed, or both past the alarm keep the current kind (the
+    alarm is noted). Returns {agent, model, fromAgent, fromModel, changed, alarm, reason, why, usage}; never
     raises — a failed check keeps the current kind."""
     cur, cur_model = part.get("agent", ""), part.get("model", "")
     out = {"agent": cur, "model": cur_model, "fromAgent": cur, "fromModel": cur_model,
