@@ -1,0 +1,29 @@
+78
+▐▛███▛█Claude Codev2.1.287
+▝▜██████▀Fable 5.1 · Claude Max
+▝▝   ▝▝ ~\EnsembleProjects\Ensemble Dashboard\a_running_task_that_goes_silent_is_flagged_find_why_thre…
+● high · /effort
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Try "edit <filepath> to..."
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+2 agents
+say hi
+❯ say hi
+*Razzmatazzing…
+❯
+· esc to interrupt · ← 2 agents
+✢z
+·a
+R
+⎿  You've reached your Fable limit. Run /usage-credits to continue or switch models with /model.
+✻Baked for 0s · done 11:41 AM
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Teach auto mode about your environment?
+Automodeworksbetterwhenitknowsyourenvironment.Takesaboutaminute.
+❯1. Yes
+2. Notnow
+3. Don'tshowagain
+Enter to confirm · Esc to cancel
+❯
+← 2agents

@@ -173,7 +173,8 @@ def _effective(held: dict | None) -> dict | None:
     """The one state a terminal's entry amounts to, or None."""
     if not held:
         return None
-    who = {"room": held["room"], "identity": held["identity"], "sessionId": held["sessionId"]}
+    who = {"room": held["room"], "identity": held["identity"], "sessionId": held["sessionId"],
+           "lastEventAt": held.get("lastEventAt", 0.0)}
     if held["waits"]:
         w = max(held["waits"], key=lambda w: w["at"])
         return {"state": "waiting", "detail": w["detail"], "event": w["event"], "at": w["at"],
@@ -181,8 +182,11 @@ def _effective(held: dict | None) -> dict | None:
     base = held["base"]
     if not base or base["stale"]:
         return None
-    return {"state": base["state"], "detail": base["detail"], "event": base["event"],
-            "at": base["at"], "waits": 0, **who}
+    out = {"state": base["state"], "detail": base["detail"], "event": base["event"],
+           "at": base["at"], "waits": 0, **who}
+    if base["state"] == "idle" and base.get("limit"):
+        out["limit"] = dict(base["limit"])
+    return out
 
 
 def record(payload, owner, now: float | None = None) -> dict:
@@ -214,6 +218,7 @@ def record(payload, owner, now: float | None = None) -> dict:
         held = _STATES.pop(pty_id, None) or {"room": room, "identity": identity, "sessionId": "",
                                              "base": None, "waits": []}
         _STATES[pty_id] = held                      # newest last
+        held["lastEventAt"] = max(float(held.get("lastEventAt") or 0), at)
         before = _effective(held)
         if state:
             _apply(held, event, state, detail, at)
@@ -255,6 +260,26 @@ def invalidate(pty_id: str, at: float, own_only: bool = False) -> dict | None:
         held["waits"][:] = [w for w in held["waits"] if w["at"] > at or (own_only and w["agent"])]
         if held["base"] and held["base"]["at"] <= at:
             held["base"]["stale"] = True
+        return _effective(held)
+
+
+def set_limit(pty_id: str, hit: dict | None, session_id: str = "") -> dict | None:
+    """The turn that just ended (``Stop``/``StopFailure``) ended on a model's
+    own limit line (ED-159): the hook says only "Stop", the transcript says
+    why. ``hit`` is ``model_limit.from_transcript``'s record. Kept on the idle
+    state it explains, so the next event (a prompt, a tool call) drops it.
+    Returns what stands."""
+    with _LOCK:
+        held = _STATES.get(pty_id)
+        base = (held or {}).get("base")
+        if not base or base["state"] != "idle" or base["event"] not in ("Stop", "StopFailure"):
+            return _effective(held) if held else None
+        if session_id and held.get("sessionId") and held["sessionId"] != session_id:
+            return _effective(held)
+        if hit:
+            base["limit"] = {k: hit.get(k) for k in ("model", "family", "line", "resetAt", "at")}
+        else:
+            base.pop("limit", None)
         return _effective(held)
 
 

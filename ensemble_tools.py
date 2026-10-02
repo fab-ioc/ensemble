@@ -748,13 +748,23 @@ def _status(room: dict) -> str:
     return "stopped"
 
 
+def _model_shown(kind: str, model: str) -> str:
+    """A seat's model as a person reads it: its own, else the one it resolves
+    to and where from ("fable (default)", ED-159)."""
+    try:
+        return _d.seat_model_shown(kind, model)
+    except Exception:
+        return model or ""
+
+
 def _agents_view(room: dict) -> list[dict]:
     out = []
     for p in room.get("participants", []):
         if p.get("kind") != "agent":
             continue
         a = {"identity": p.get("identity", ""), "agent": p.get("agent", ""),
-             "model": p.get("model", ""), "role": p.get("role", "")}
+             "model": _model_shown(p.get("agent", ""), p.get("model", "")),
+             "role": p.get("role", "")}
         if _d.chatroom.is_on_mention(room, p):
             # Not a running agent: started fresh for each review request.
             a["runs"] = "reviewing now" if _d._pty_alive(p.get("ptyId")) else "on mention"
@@ -768,7 +778,8 @@ def _agents_summary(room: dict) -> list[dict]:
     for p in room.get("participants", []):
         if p.get("kind") != "agent":
             continue
-        a = {"kind": p.get("agent", ""), "model": p.get("model", ""),
+        a = {"kind": p.get("agent", ""),
+             "model": _model_shown(p.get("agent", ""), p.get("model", "")),
              "role": p.get("role", "")}
         if _d.chatroom.is_on_mention(room, p):
             a["runs"] = "reviewing now" if _d._pty_alive(p.get("ptyId")) else "on mention"
@@ -852,7 +863,21 @@ def _allocation_view(allocation) -> dict | None:
     # (rotation._record_allocation); the decision and its reason stay.
     if isinstance(out.get("handover"), dict):
         out["handover"] = {k: v for k, v in out["handover"].items() if k != "usage"}
+    # A seat that names no model shows the one it resolves to (ED-159).
+    for key in ("preferred", "chosen"):
+        if isinstance(out.get(key), list):
+            out[key] = [_seat_shown(s) for s in out[key]]
     return out
+
+
+def _seat_shown(seat):
+    if not isinstance(seat, dict) or "model" not in seat:
+        return seat
+    seat = {**seat, "model": _model_shown(seat.get("agent", ""), seat.get("model", ""))}
+    if isinstance(seat.get("alt"), dict):
+        seat["alt"] = {**seat["alt"], "model": _model_shown(seat["alt"].get("agent", ""),
+                                                            seat["alt"].get("model", ""))}
+    return seat
 
 
 def _row(room: dict, projects: dict, links: dict, labels: dict,

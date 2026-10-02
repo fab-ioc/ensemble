@@ -67,6 +67,8 @@ import agents
 import agent_models
 # What each Claude agent last said about itself through its hooks.
 import agent_hooks
+# A Claude model at its own limit: seen, remembered, seated around (ED-159).
+import model_limit
 # Which tasks need a human, and why (the /api/attention join).
 import attention
 # Multi-agent chat rooms (pairing live sessions into a collaborating "duo").
@@ -141,6 +143,7 @@ board.bind(sys.modules[__name__])
 due.bind(sys.modules[__name__])
 issues.bind(sys.modules[__name__])
 stall.bind(sys.modules[__name__])
+model_limit.bind(sys.modules[__name__])
 po_messages.bind(sys.modules[__name__])
 rotation.bind(sys.modules[__name__])
 points.bind(sys.modules[__name__])
@@ -1482,9 +1485,109 @@ def _agent_model_changes(data: dict) -> list:
 def hub_launch_model(kind: str, seat_model: str = "") -> tuple[str, str]:
     """(model, reasoning effort) the hub passes when it starts an agent of
     ``kind``: the seat's own model, else the one chosen in Settings; "" for
-    none (the agent's own default)."""
-    return agent_models.launch_choice(kind, (seat_model or "").strip(),
-                                      load_settings().get("agentModels"))
+    none (the agent's own default).
+
+    A Claude seat that names no model never runs a model at its own limit
+    (``model_limit.choose``): the next model along runs instead. A seat that
+    names one keeps it; the allocation reason warns."""
+    model, effort = agent_models.launch_choice(kind, (seat_model or "").strip(),
+                                               load_settings().get("agentModels"))
+    if kind == "claude" and not (seat_model or "").strip():
+        try:
+            pick = model_limit.choose("")
+            if pick["fallback"]:
+                # The effort was chosen for the other model: the fallback
+                # runs on its own default.
+                model, effort = pick["fallback"], ""
+        except Exception:                                    # noqa: BLE001
+            pass
+    return model, effort
+
+
+def model_note(kind: str, seat_model: str = "") -> str:
+    """What an allocation reason adds about the model a Claude seat runs: the
+    fallback from a model at its limit, or a warning for a seat that names
+    one; "" otherwise (and for Codex)."""
+    if kind != "claude":
+        return ""
+    try:
+        return model_limit.choose(seat_model)["note"]
+    except Exception:                                        # noqa: BLE001
+        return ""
+
+
+def seat_model_display(kind: str, seat_model: str = "") -> str:
+    """The model a seat runs, for a person: the seat's own, else what it
+    resolves to (``fable (default)``, ``opus (Settings)``)."""
+    seat_model = (seat_model or "").strip()
+    if seat_model:
+        return seat_model
+    try:
+        if kind == "claude":
+            return model_limit.display("")
+        if kind == "codex":
+            model = hub_launch_model("codex")[0]
+            if model:
+                return f"{model} (Settings)"
+            own = agent_models.codex_own()["model"]
+            return f"{own} (default)" if own else ""
+    except Exception:                                        # noqa: BLE001
+        pass
+    return ""
+
+
+def _hook_turn_ended(pty_id, room_id, identity, session_id) -> None:
+    """A Claude agent's turn ended (its ``Stop`` hook): whether it ended on a
+    model's own limit line, which the hook does not say (ED-159). The limit is
+    kept on the hook state (attention shows the agent blocked) and remembered
+    for seating; the PO hears of it from the stall check. A turn that ended
+    normally on a seat that named no model teaches the CLI's default."""
+    if not (isinstance(session_id, str) and re.fullmatch(r"[\w-]+", session_id or "")):
+        return
+    try:
+        tpath = find_transcript(session_id)
+        hit = model_limit.from_transcript(tpath)
+        agent_hooks.set_limit(pty_id, hit, session_id)
+        part = chatroom.participant(chatroom.get_room(room_id, public=False) or {}, identity) or {}
+        if hit:
+            model_limit.note(hit, room=room_id, identity=identity,
+                             fallback_model=model_limit.last_model(tpath) or part.get("model") or "")
+        learn_cli_default(part, tpath, hit, pty_id)
+    except Exception as e:                                   # noqa: BLE001
+        print(f"[hook] model limit check: {str(e)[:200]}", flush=True)
+
+
+def learn_cli_default(part: dict, tpath, hit: dict | None = None, pty_id: str = "") -> None:
+    """Remember the model Claude Code ran on its own (ED-159): a terminal the
+    hub started with no ``--model`` (its ``launchModel`` is ""), with nothing
+    in Claude's own settings, ran the CLI's default: the model its limit line
+    names, else the model of its last reply. A terminal started on a model
+    (the seat's, Settings', a fallback's) or not by the hub teaches nothing."""
+    sess = ptyrun.get(pty_id or part.get("ptyId") or "")
+    meta = getattr(sess, "meta", None) or {}
+    if meta.get("launchModel", None) != "" or agent_models.claude_own()["model"]:
+        return
+    model = ((hit or {}).get("model") if (hit or {}).get("family") else "") \
+        or model_limit.last_model(tpath)
+    model_limit.learn_default(model or "")
+
+
+_SHOWN: dict[str, tuple[float, str]] = {}
+
+
+def seat_model_shown(kind: str, seat_model: str = "") -> str:
+    """``seat_model_display``, cached a few seconds per kind for a seat that
+    names no model: a task list asks once per seat."""
+    seat_model = (seat_model or "").strip()
+    if seat_model or not kind:
+        return seat_model
+    now = time.time()
+    hit = _SHOWN.get(kind)
+    if hit and now - hit[0] < 5:
+        return hit[1]
+    shown = seat_model_display(kind, "")
+    _SHOWN[kind] = (now, shown)
+    return shown
 
 
 def _conversation_as_found(room: dict, part: dict) -> bool:
@@ -8611,6 +8714,8 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 "members": [{"identity": p.get("identity", ""),
                              "agent": p.get("agent", ""),
                              "model": p.get("model", ""),
+                             # What a seat with no model runs (ED-159).
+                             "modelShown": seat_model_shown(p.get("agent", ""), p.get("model", "")),
                              "role": p.get("role", ""),
                              **({"onMention": True,
                                  "reviewing": _pty_alive(p.get("ptyId"))}
@@ -9442,6 +9547,18 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
     return result(preferred_kind, "both_warning")
 
 
+def _with_model_note(reason: str, seats: list[dict]) -> str:
+    """``reason`` with what it judged of each Claude seat's model (ED-159): a
+    model at its own limit that a seat naming none would have run, and the one
+    that runs instead, or a warning for a seat that names a limited model."""
+    notes = []
+    for seat in seats:
+        note = model_note(seat.get("agent", ""), seat.get("model", ""))
+        if note and note not in notes:
+            notes.append(note)
+    return " ".join([reason, *notes]) if notes else reason
+
+
 def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
                                    installed=None) -> tuple[list[dict], dict]:
     """Choose the first-launch line-up and return it with its audit record."""
@@ -9466,7 +9583,7 @@ def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
         return chosen, {
             "preferred": preferred,
             "chosen": copy.deepcopy(chosen),
-            "reason": reason,
+            "reason": _with_model_note(reason, chosen),
             "changed": changed,
             "at": time.time(),
             "usage": {"snapshotState": snapshot.get("state"),
@@ -9731,7 +9848,8 @@ def apply_review_allocation(room_full: dict, identity: str) -> tuple[dict, dict,
         "owner": {"identity": owner.get("identity", ""), "agent": owner_kind},
         "preferred": _seat_for_kind(seat_preference, preferred_kind),
         "chosen": chosen,
-        "reason": _review_allocation_reason(decision, owner),
+        "reason": _with_model_note(_review_allocation_reason(decision, owner),
+                                   [chosen]),
         "changed": decision["changed"],
         "at": time.time(),
         "usage": {
@@ -11464,7 +11582,8 @@ class Handler(BaseHTTPRequestHandler):
         if hasattr(ag, "ensure_trusted"):
             ag.ensure_trusted(cwd)
         label = f"{room_full['title'][:40]} · {ident}"
-        meta = {"room": room_full["id"], "identity": ident, "agent": agent_key}
+        meta = {"room": room_full["id"], "identity": ident, "agent": agent_key,
+                "launchModel": model}
         codex_mcp, claude_mcp, env = self._mcp_wiring(token, collab)
         env.update(rtk_env)
         if agent_key != "codex":
@@ -11508,7 +11627,8 @@ class Handler(BaseHTTPRequestHandler):
         if hasattr(ag, "ensure_trusted"):
             ag.ensure_trusted(cwd)
         label = f"{room_full['title'][:40]} · {ident}"
-        meta = {"room": room_full["id"], "identity": ident, "agent": agent_key}
+        meta = {"room": room_full["id"], "identity": ident, "agent": agent_key,
+                "launchModel": model}
         codex_mcp, claude_mcp, env = self._mcp_wiring(token, collab, human=human)
         rtk_args, rtk_env, _ = _rtk_task_wiring(room_full, agent_key)
         env.update(rtk_env)
@@ -12892,6 +13012,12 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:                   # whatever it was, it is not the agent's problem
             res = {"ok": False, "error": "bad_payload"}
         self._send_json(200 if res.get("ok") else (400 if res.get("error") == "bad_payload" else 404), res)
+        if res.get("ok"):
+            event = payload.get("event") or {}
+            if event.get("hook_event_name") in ("Stop", "StopFailure") and not event.get("agent_id"):
+                threading.Thread(target=_hook_turn_ended, daemon=True,
+                                 args=(payload.get("ptyId"), payload.get("room"),
+                                       payload.get("identity"), event.get("session_id"))).start()
 
     def _feedback_post(self, path):
         if self.headers.get("Origin") and not self._same_origin_request():

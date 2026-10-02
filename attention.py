@@ -148,6 +148,11 @@ def _phrase(pattern: str) -> re.Pattern:
 # credential causes come before the generic "run /login" hint — a real line
 # often says both, and "invalid API key" is the useful half.
 _BLOCK_RULES: list[tuple[re.Pattern, str, str]] = [
+    # A model's own limit, apart from the plan's windows (ED-159): "You've
+    # reached your Fable limit. Run /usage-credits to continue or switch
+    # models with /model." The reason names the model (``_model_why``).
+    (_phrase(r"you'?ve reached your (?:fable|opus|sonnet|haiku) (?:[\d.]+ )?limit"), "is at its model limit", "model_limit"),
+    (_phrase(r"run /usage-credits"), "is at its model limit", "model_limit"),
     (_phrase(r"you'?ve hit your usage limit"), "hit its usage limit", "usage_limit"),
     (_phrase(r"usage limit reached"), "hit its usage limit", "usage_limit"),
     (_phrase(r"\b\d+-hour limit reached"), "hit its usage limit", "usage_limit"),
@@ -462,7 +467,32 @@ def find_block(tail: str) -> tuple[str, str, str] | None:
             break
     start, _, why, cause = cluster[0]
     end = max(h[1] for h in cluster)
-    return (why, cause, _quote_at(text, start, end))
+    quote = _quote_at(text, start, end)
+    if cause == "model_limit":
+        why = _model_why(quote)
+    return (why, cause, quote)
+
+
+def model_limit_words(model: str, until: float = 0) -> str:
+    """"blocked: model limit (Fable) until 22:17" — how a model limit reads in
+    a reason, naming the model and, when known, when it clears."""
+    name = _d.model_limit.title(model) if _d is not None and model else (model or "")
+    out = f"blocked: model limit ({name})" if name else "blocked: model limit"
+    if until:
+        out += " until " + time.strftime("%H:%M", time.localtime(until))
+    return out
+
+
+def _model_why(quote: str) -> str:
+    """The reason for a model-limit line read off the screen: the model it
+    names, and when the hub knows it clears."""
+    ml = _d.model_limit if _d is not None else None
+    hit = ml.parse_line(quote) if ml else None
+    model = (hit or {}).get("model", "")
+    until = float((hit or {}).get("resetAt") or 0)
+    if ml and model and not until:
+        until = float((ml.limited(model) or {}).get("until") or 0)
+    return "is " + model_limit_words(model, until)
 
 
 def _last_at(pat: re.Pattern, text: str) -> int:
@@ -729,9 +759,9 @@ def _summarize(room: dict, po: str | None = None) -> dict:
         "mode": room.get("mode", ""),
         "owners": cr.owners(room),
         "participants": [
-            {k: p.get(k) for k in ("identity", "kind", "agent", "role",
+            {k: p.get(k) for k in ("identity", "kind", "agent", "model", "role",
                                    "ptyId", "sessionId", "lastExit", "resumedAt",
-                                   "rotatedAt", "answeredAt")}
+                                   "rotatedAt", "answeredAt", "review")}
             for p in room.get("participants", [])
         ],
         "lastMessage": {"from": last.get("from", ""), "to": last.get("to", ""),
@@ -868,12 +898,36 @@ def _evidence(part: dict, statuses: dict[str, tuple[str, float]]) -> dict:
             or statuses.get((hook or {}).get("sessionId") or "") or ("", 0.0))
     if isinstance(said, str):
         said = (said, 0.0)
+    # A turn that ended on a model's own limit (ED-159): the hook's Stop says
+    # only that the turn ended, the transcript's last entry says why.
+    limit = None
+    if alive and (part.get("agent") or "") != "codex" and _d is not None:
+        limit = (hook or {}).get("limit") or _d.stall.limit_hit(part)
     return {
         "ptyId": pty_id, "alive": alive, "tail": tail, "idleSeconds": idle,
         "lastSubmit": submitted, "death": death, "scan": scan or {"block": None, "busy": False, "prompt": False},
         "claudeStatus": said[0], "claudeStatusAt": said[1],
-        "hook": hook, "lastOutput": printed,
+        "hook": hook, "lastOutput": printed, "limit": limit,
     }
+
+
+def _limit_block(part: dict, hit: dict) -> tuple[str, str, str, dict]:
+    """A model limit read from the transcript or the hook, as ``find_block``
+    reads one off the screen: (why, cause, quote) and the model and its reset."""
+    ml = _d.model_limit
+    model = hit.get("model") or ""
+    if not model:
+        try:
+            model = ml.last_model(_d.rotation._transcript_of(part)[0]) or part.get("model") or ""
+        except Exception:
+            model = part.get("model") or ""
+    rec = ml.limited(model) or {} if model else {}
+    until = float(hit.get("resetAt") or 0) or float(rec.get("until") or 0)
+    if until and until <= time.time():
+        until = 0.0                             # passed: no "until" to show
+    line = hit.get("line") or ""
+    return ("is " + model_limit_words(model, until), "model_limit", line,
+            {"model": ml.title(model) if model else "", "until": until})
 
 
 # How long after a hook the terminal must still be printing, with a working
@@ -1044,6 +1098,13 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
         # while the status file is a second behind is reported on the next
         # poll that reads it idle.
         block = None
+    limit_extra = {}
+    if ev["alive"] and status != "busy" and (ev.get("limit") or (block and block[1] == "model_limit")):
+        # Its turn ended on the CLI's model-limit line (ED-159): the hook or
+        # the transcript says so where the screen has scrolled it away.
+        hit = ev.get("limit") or _d.model_limit.parse_line(block[2]) or {}
+        why, cause, line, limit_extra = _limit_block(part, hit)
+        block = (why, cause, (block[2] if block and block[1] == "model_limit" else "") or line)
 
     if not ev["alive"]:
         death = ev["death"]
@@ -1084,7 +1145,7 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
     if block:
         why, cause, line = block
         return ("blocked", f"{who} {why}: “{line}”{still}",
-                {"quote": line, **still_extra, "cause": cause})
+                {"quote": line, **still_extra, "cause": cause, **limit_extra})
 
     if status == "waiting":
         return ("waiting_for_you", f"{who} is waiting on your answer to a prompt{still}", still_extra)
@@ -1119,6 +1180,18 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
         if put["kind"] == "question":
             return ("waiting_for_you", f"{who} asked: “{q}”", asked)
         return ("waiting_for_you", f"{who} is waiting on your reply: “{q}”", asked)
+
+    if _d is not None and identity in (room.get("owners") or []) \
+            and _d.stall.silent_owner_owes(room, identity):
+        # The backstop (ED-159): an owner that has produced nothing at all for
+        # SILENT_S — no transcript growth, hook event, screen change or commit
+        # — and that nothing excuses (stall.silence_excuse) is stalled, PO or
+        # not, whatever its status file says.
+        quiet = _d.stall.silent_for(room, part, ev, now)
+        if quiet >= _d.stall.SILENT_S:
+            return ("stalled", f"{who} has produced nothing for {_ago(quiet)}: no transcript "
+                    f"growth, hook event, screen change or commit",
+                    {"cause": "silent", "silentSeconds": int(quiet), "idleSeconds": ev["idleSeconds"]})
 
     idle = ev["idleSeconds"]
     if status == "busy" or (ev["scan"]["busy"] and (idle is None or idle < _MIN_QUIET)):
@@ -1368,7 +1441,7 @@ def _items() -> list[dict]:
         if extra.get("since"):
             item["askedAt"] = float(extra["since"])     # the pages say "since 15:55"
         for k in ("quote", "cause", "exitCode", "lastLines", "waitedSeconds", "askId",
-                  "askKind", "ptyIds", "heldPoMessages"):
+                  "askKind", "ptyIds", "heldPoMessages", "model", "until", "silentSeconds"):
             if k in extra and extra[k] not in (None, ""):
                 item[k] = extra[k]
         if held and "heldPoMessages" not in item:
