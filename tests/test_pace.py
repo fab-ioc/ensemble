@@ -184,6 +184,23 @@ class TheSeatChoice(unittest.TestCase):
             pinned=True)
         self.assertEqual([s["agent"] for s in chosen], ["codex", "claude"])
         self.assertIn("keeps its agents", alloc["reason"])
+        self.assertNotIn("warning", alloc["reason"])
+        chosen, alloc = dashboard.choose_first_launch_allocation(
+            lineup, _snap(30, 88), installed=lambda k: True, pace=PACE_ON, now=self.NOW,
+            pinned=True)
+        self.assertEqual([s["agent"] for s in chosen], ["codex", "claude"])
+        self.assertIn("keeps its agents, ignoring pacing and the 80% warning "
+                      "(Codex 7-day window at 88%)", alloc["reason"])
+
+    def test_a_pinned_handover_past_the_warning_says_so(self):
+        with mock.patch.object(dashboard, "pace_settings", return_value=PACE_ON), \
+                mock.patch.object(dashboard.time, "time", return_value=self.NOW):
+            kept = rotation.choose_owner_kind({"keepAgents": True},
+                                              {"agent": "codex", "model": ""},
+                                              _snap(30, 88), installed=lambda k: True)
+        self.assertEqual((kept["agent"], kept["changed"]), ("codex", False))
+        self.assertIn("ignoring pacing and the 80% warning (Codex 7-day window at 88%)",
+                      kept["reason"])
 
     def test_the_owner_handover_is_paced_too(self):
         snap = _snap(30, 52)

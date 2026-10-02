@@ -784,8 +784,8 @@ def choose_owner_kind(room: dict, part: dict, snapshot: dict | None = None,
     (``choose_agent_kind_for_seat``): the other kind when the current one is
     at or past the warning and the other is below it, or when the current one
     is ahead of its week's pace and the other is not (or is less far ahead).
-    A task that keeps its agents is not paced. Unknown readings, the other kind not installed, or both
-    past the alarm keep the current kind (the alarm is noted). Returns {agent,
+    A task that keeps its agents is not paced. Unknown readings, the other
+    kind not installed, or both past the alarm keep the current kind (the alarm is noted). Returns {agent,
     model, fromAgent, fromModel, changed, alarm, reason, why, usage}; never
     raises — a failed check keeps the current kind."""
     cur, cur_model = part.get("agent", ""), part.get("model", "")
@@ -835,14 +835,15 @@ def choose_owner_kind(room: dict, part: dict, snapshot: dict | None = None,
             if code == "switch_pace":
                 why = pace_why
             elif code == "both_ahead_of_pace":
-                why = f"both kinds are ahead of pace and {name(other)} less far: "                       + pace_why.replace(", while ", "; ")
+                why = (f"both kinds are ahead of pace and {name(other)} less far: "
+                       + pace_why.replace(", while ", "; "))
             else:
                 why = _d._usage_reason_phrase(cur, mine)
             out.update(agent=other, model=_model_for(seat, other), changed=True, why=why,
                        reason=f"Owner switched to {name(other)}: {why}.")
         elif code == "pinned":
             out["reason"] = (f"Owner kept on {name(cur)}: this task keeps its agents, "
-                             f"ignoring pacing.")
+                             f"{_d._pinned_why(cur, mine, warn)}.")
         elif code == "both_ahead_of_pace":
             out["reason"] = (f"Owner kept on {name(cur)}: both kinds are ahead of pace and "
                              f"{name(cur)} no further: " + pace_why.replace(", while ", "; ")

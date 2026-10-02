@@ -9561,6 +9561,15 @@ def _agent_kind_name(kind: str) -> str:
     return (agent.display_name if agent is not None else kind.title())
 
 
+def _pinned_why(kind: str, reading: dict, warn) -> str:
+    """Why a pinned seat stayed: past the warning it ignores that too."""
+    percent = reading.get("percent")
+    if percent is not None and float(percent) >= float(warn):
+        return (f"ignoring pacing and the {float(warn):g}% warning "
+                f"({_usage_reason_phrase(kind, reading)})")
+    return "ignoring pacing"
+
+
 def _usage_reason_phrase(kind: str, reading: dict) -> str:
     percent = reading.get("percent")
     value = f"{float(percent):g}" if percent is not None else "?"
@@ -9775,7 +9784,8 @@ def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
         reason = f"Owner switched to {_agent_kind_name(other_kind)}: {why}."
         return result(reason, True)
     elif decision["decision"] == "pinned":
-        reason = "Preferred line-up kept: this task keeps its agents, ignoring pacing."
+        reason = ("Preferred line-up kept: this task keeps its agents, "
+                  f"{_pinned_why(owner_kind, decision['figures'].get(owner_kind, {}), warn)}.")
     elif decision["decision"] == "both_ahead_of_pace":
         reason = (f"Preferred line-up kept: both kinds are ahead of pace and "
                   f"{_agent_kind_name(owner_kind)} no further: "
@@ -9930,7 +9940,7 @@ def _review_allocation_reason(decision: dict, owner: dict) -> str:
     other_kind = {"claude": "codex", "codex": "claude"}.get(preferred_kind, "")
     if code == "pinned":
         return (f"Reviewer {action} {chosen_name}: this task keeps its agents, "
-                "ignoring pacing.")
+                f"{_pinned_why(chosen_kind, figures.get(chosen_kind, {}), warn)}.")
     if code == "switch_pace":
         return (f"Reviewer {action} {chosen_name}: "
                 f"{_pace_reason_phrase(preferred_kind, paced.get(preferred_kind, {}))}, "
