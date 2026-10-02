@@ -327,7 +327,7 @@ def poll(now: float | None = None) -> list[dict]:
             if created <= after or created < since:
                 continue
             st["comments"][cid] = created
-            if PO_MARK in str(c.get("body") or "") or str(num) not in open_now:
+            if str(c.get("body") or "").lstrip().startswith(PO_MARK) or str(num) not in open_now:
                 continue
             put(f"comment:{cid}", comment_line(c, num, _title(open_now[str(num)])), num)
         st["comments"] = {k: v for k, v in st["comments"].items()
