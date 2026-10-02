@@ -266,10 +266,17 @@ def read_transcript(path: Path | None, since: int = -1) -> dict:
             msg = d.get("message") if isinstance(d.get("message"), dict) else {}
             if not last_seen:
                 last_seen = True
-                out["turnOver"] = typ == "assistant" and msg.get("stop_reason") == "end_turn"
+                # The CLI's own error line ends a turn too: "You've reached
+                # your Fable limit" is written as an assistant entry with
+                # ``isApiErrorMessage`` and stop_reason "stop_sequence", and
+                # read as mid-turn it kept three stopped tasks out of the
+                # stall check for 17 hours (ED-159).
+                out["turnOver"] = typ == "assistant" and (
+                    msg.get("stop_reason") == "end_turn" or bool(d.get("isApiErrorMessage")))
             if typ == "user" and since >= 0 and off >= since and _holds_ask(d, msg):
                 out["promptSince"] = True
-            if typ == "assistant" and out["tokens"] is None and isinstance(msg.get("usage"), dict):
+            if (typ == "assistant" and out["tokens"] is None and isinstance(msg.get("usage"), dict)
+                    and not d.get("isApiErrorMessage")):    # its usage is all zeros
                 out["tokens"] = _context_of(msg["usage"])
             if out["tokens"] is not None and (since < 0 or off < since):
                 return out
@@ -832,6 +839,12 @@ def choose_owner_kind(room: dict, part: dict, snapshot: dict | None = None,
         out.update(agent=cur, model=cur_model, changed=False, alarm=False, why="",
                    reason=f"Owner kept on {name(cur)} because the allowance check failed.")
         out["usage"] = {**out["usage"], "error": type(e).__name__}
+    try:
+        note = _d.model_note(out["agent"], out["model"])
+    except Exception:                       # noqa: BLE001
+        note = ""
+    if note:
+        out["reason"] = f"{out['reason']} {note}"
     return out
 
 
