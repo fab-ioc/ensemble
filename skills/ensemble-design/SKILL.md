@@ -746,12 +746,21 @@ Needs you.**
 - **Team activity** (#146): over a transcript the hub types into, the chat shows the person only
   what is theirs (`forCeo`: their messages, the answers to them, a `Re Pn:` or `To <name>:` /
   `For you:` paragraph wherever it is, a decision, a message to them, a PO-to-PO message naming
-  them). Every run of the rest, hub lines and the PO's notes on them alike, is **one row**
+  them). **Folded only when plainly the team's** (#160, GitHub issue 5): an agent's words after a
+  hub line stay in view when they answer or name an open ask (`Re P77,` anywhere, not quoted;
+  `P232` while open, in progress or unacknowledged), leave the person something ("waiting for
+  you", "you asked", "your pick", their name as a word), ask a decision of them or a hub restart,
+  or say something is live, blocked or failed (`ceoWhy`); a negated one ("nothing needs you",
+  "not blocked") does not count, and a note that opens "Nothing new" / "No action needed" folds
+  unless it answers them. When unsure, show.
+  Every run of the rest, hub lines and the PO's notes on them alike, is **one row**
   (`.msg-fold.gap`, the hub row's look: `--surface-sunken`, a 1px left rule, no colour): "Team
   activity · 14 messages · 10:05–11:30 · 5 progress checks, 3 reports, 4 PO notes". A click opens
   it in place (its row stays above, `aria-expanded`), as a task's group row does; a balloon link
   into a closed gap opens it. The bar (`#chatbar`) says what is behind the lines ("… 86 team
-  messages behind 8 lines") and its one button, **Team activity** (`#team-all`, pressed =
+  messages behind 8 lines"). **A gap names the asks inside it**: "2 name your asks: P231, P245"
+  (`.gasks`, after the count, `--fg` at 600 as the asks' "answered", cut last; also in its tooltip;
+  the hub's reminder of open asks is not counted). The bar's one button, **Team activity** (`#team-all`, pressed =
   `--selected-bg`), shows everything in place as before, per browser (`cd-chat-team`). It replaced
   "Just us", which still drew ~600 rows between the CEO's ~105 balloons over three days (measured in
   the #146 report). Never interleave hub rows between the person's balloons in the default view.

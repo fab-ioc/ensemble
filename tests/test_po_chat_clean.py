@@ -276,6 +276,10 @@ async function main() {
       const p = await page(w, h, mob);
       const o = {};
       o.clean = await view(p);
+      // A gap names the person's asks its folded messages mention (#160), inside its row.
+      o.gasks = await p.evalIn(`[...document.querySelectorAll('#msgs .msg-fold.gap')].map(g => { const a = g.querySelector('.gasks'); if (!a) return null;
+        const r = a.getBoundingClientRect(), rr = g.getBoundingClientRect();
+        return { text: a.textContent, title: g.title, w: Math.round(r.width), inRow: r.left >= rr.left - 1 && r.right <= rr.right + 1, fg: getComputedStyle(a).fontWeight }; })`);
       o.bars = await p.evalIn(`[...document.querySelectorAll('#msgs .msg .pt-bar')].map(b => [b.closest('.msg').dataset.mid, b.textContent])`);
       await p.shot(`po-chat-${w}-clean`);
       // The asks line: P2 with its answer's words, its thread, 👍 and Comment.
@@ -406,7 +410,7 @@ class InChrome(unittest.TestCase):
             _turn("user", "[digest] Progress digest\n\n#9 Fix login merged to main.", t0 + 30),
             _turn("assistant", "Nothing new: #9 is merged, nothing else moved.", t0 + 35),
             _turn("user", "[report] completed from task 'Fix login' (room-task1, claude): ## Done\n\nMerged.", t0 + 40),
-            _turn("assistant", "#9's report came in; all good, its card is on Done.", t0 + 45),
+            _turn("assistant", "#9's report came in; all good, the fix for P1 is on Done.", t0 + 45),
             _turn("user", "[digest] Progress digest\n\nNo change.", t0 + 50),
             _turn("assistant", "Decision needed: ship on Friday?\n\n- yes: the tests are green\n- no: wait for #10\n\nI recommend yes.", t0 + 55),
         ]
@@ -475,6 +479,18 @@ class InChrome(unittest.TestCase):
                 self.assertIn("follow-up to P1", bars["po-sid:11"])
                 self.assertIn("Ack", bars["po-sid:12"])
                 self.assertIn("Comment", bars["po-sid:12"])
+
+    def test_a_gap_names_the_asks_its_folded_messages_mention(self):
+        for w, o in self._both():
+            with self.subTest(width=w):
+                first, second = o["gasks"]
+                self.assertIsNone(first, "the first gap names no ask")
+                self.assertEqual(second["text"], "1 names your asks: P1")
+                self.assertIn("(1 names your asks: P1)", second["title"])
+                self.assertTrue(second["inRow"], second)
+                self.assertGreater(second["w"], 0)
+                self.assertEqual(second["fg"], "600")
+                self.assertLessEqual(o["clean"]["scrollX"], 1)
 
     def test_the_asks_line_shows_the_answer_with_thumbs_up_and_comment(self):
         for w, o in self._both():
