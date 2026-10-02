@@ -82,6 +82,7 @@ import board
 import po_usage
 # What a handover says is due at a time: the idle PO is typed it then.
 import due
+import issues
 # A task in a PO project that stopped without saying so: nudge, then tell the PO.
 import stall
 # Messages between two projects' POs (ensemble_message_po).
@@ -139,6 +140,7 @@ attention.bind(sys.modules[__name__])
 digest.bind(sys.modules[__name__])
 board.bind(sys.modules[__name__])
 due.bind(sys.modules[__name__])
+issues.bind(sys.modules[__name__])
 stall.bind(sys.modules[__name__])
 model_limit.bind(sys.modules[__name__])
 po_messages.bind(sys.modules[__name__])
@@ -522,6 +524,7 @@ PAGE_FILES = ("index.html", "session.html", "fileview.html",
               "static/dock/src/host.js", "static/dock/src/panels-menu.js", "static/dock/src/help.js",
               "static/dock/src/theme.js", "static/dock/src/theme-picker.js", "static/dock/src/install.js",
               "static/dock/src/popout-page.js", "static/dock/src/screenshot.js", "static/dock/src/menu-items.js",
+              "static/dock/src/draw.js",
               "static/dock/css/dock.css")
 PAGE_META = b'<meta name="ensemble-pages" content="">'
 _STAMP_CACHE: dict[str, tuple[tuple[int, int], str]] = {}
@@ -2856,6 +2859,8 @@ HUB_INPUT_KINDS = (
     ("[board] ", "board"),
     ("[digest] ", "digest"),            # digest.py: the PO's progress check
     ("[due] ", "due"),                  # due.py: what its handover says is due now
+    ("[issue] ", "issue"),              # issues.py: a new or reopened issue of the feedback repo
+    ("[issue comment] ", "issuecomment"),   # issues.py: a new comment on an open issue
     ("[report] ", "report"),            # _ring_report: a task's ensemble_report
     ("[relay] ", "relay"),              # _relay_wake: a team room's doorbell
     ("[resumed] ", "resumed"),          # RESUME_NOTE
@@ -2903,6 +2908,7 @@ _FIRST_WORDS_KIND = {
     "handover": "Handover", "rotation": "Task conversation after a handover",
     "madepo": "PO conversation", "helper": "After a hub restart", "points": "Open points",
     "pomsg": "Message from another PO", "stalled": "Stall check",
+    "issue": "GitHub issue", "issuecomment": "GitHub issue comment",
 }
 
 

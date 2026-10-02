@@ -499,8 +499,8 @@ class TheWiring(unittest.TestCase):
         self.assertIn("const PD_KEYS = { desk: 'cd-tool-strip', phone: 'cd-phone-tabs' };", INDEX)
         self.assertIn("function pdNarrow() { return isPhone(); }", INDEX)
 
-    def test_the_vendored_library_is_v0_11_0(self):
-        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.11\.0 4e01e8d")
+    def test_the_vendored_library_is_v0_12_0(self):
+        self.assertRegex((ROOT / "static" / "dock" / "VERSION").read_text(encoding="utf-8"), r"^fab-ioc/dock v0\.12\.0 2be9b7f")
 
     def test_the_title_bar_is_dock_s_default(self):
         dock = INDEX[INDEX.index("function pdEnsure()"):INDEX.index("// The middle is the conversation alone")]
@@ -800,7 +800,8 @@ class TheStrip(unittest.TestCase):
 
     def test_hidden_window_recovery_and_capture_support(self):
         self.assertEqual(self.got["consoleErrors"], [])
-        self.assertEqual(self.got["captureSupport"], {"supported": True, "unsupported": False, "secure": True})
+        # Dock v0.12.0 draws the panel itself, so Take Screenshot shows without Region Capture (CropTarget) too.
+        self.assertEqual(self.got["captureSupport"], {"supported": True, "unsupported": True, "secure": True})
         self.assertTrue(self.got["panelReopen"]["out"])
         h = self.got["hiddenReload"]
         self.assertEqual((h["mode"], h["visible"], h["out"], h["notice"]), ("window", False, False, False))
