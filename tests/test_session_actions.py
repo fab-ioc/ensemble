@@ -112,10 +112,10 @@ class TheMatrix(unittest.TestCase):
                                         ["finder", "ide", "colours"], ["close"]])
         self.assertEqual(g("rawLive", "away"), [["focus", "send"], ["rename", "auto", "moveproj", "makepo"],
                                                 ["finder", "ide", "colours"], ["close"]])
-        self.assertEqual(g("taskRunning"), [["terminals", "pause"], ["rename", "auto", "agents", "moveproj", "makepo"],
+        self.assertEqual(g("taskRunning"), [["terminals", "pause"], ["rename", "auto", "agents", "keep-agents", "moveproj", "makepo"],
                                             ["finder", "ide", "colours", "chat-colours"], ["delete"]])
         self.assertEqual(g("taskRunning", "away")[0], ["terminals", "terms-hide", "pause"])
-        self.assertEqual(g("taskOne"), [["rename", "auto", "agents", "moveproj", "makepo"],
+        self.assertEqual(g("taskOne"), [["rename", "auto", "agents", "keep-agents", "moveproj", "makepo"],
                                         ["finder", "ide", "colours", "chat-colours"], ["delete"]])
         self.assertEqual(g("draft"), g("taskOne"))
         self.assertEqual(g("orphan"), [["makepo"], ["delete"]])

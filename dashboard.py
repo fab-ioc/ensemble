@@ -1265,6 +1265,8 @@ def save_archived(arch: set[str]) -> None:
 # agent gets about 16 KB (report #78, cap 1). Applied when the prompt is
 # built, so every later turn of the conversation re-reads the smaller one.
 CODEX_TOOL_OUTPUT_TOKENS_DEFAULT = 4000
+# The weekly pace line's head start, in percentage points (ED-164).
+PACE_MARGIN_DEFAULT = 15
 
 _SETTINGS_DEFAULTS = {
     "feedbackRepo": feedback.DEFAULT_REPO,
@@ -1311,6 +1313,11 @@ _SETTINGS_DEFAULTS = {
     # Compress noisy command output for hub-launched task owners/reviewers.
     # PO rooms, adopted sessions and ordinary user terminals are never wired.
     "rtkForTasks": True,
+    # Pace each agent kind's 7-day allowance over the week (ED-164): a kind
+    # past elapsed-share-of-the-week + this many points is "ahead of pace",
+    # and a new seat goes to the other kind while it is not.
+    "paceWeek": True,
+    "paceMarginPoints": PACE_MARGIN_DEFAULT,
     # What hub-launched task agents (owners and reviewers, never a PO or an
     # adopted session) are allowed to keep of one tool result, since every
     # result is read again on every later call of the same conversation.
@@ -1688,8 +1695,19 @@ def _save_settings_locked(settings: dict) -> dict:
             except (TypeError, ValueError):
                 continue
             v = 0 if v <= 0 else max(5, min(1440 if k == "pointsRemindMin" else 1440 * 7, v))
-        if k in ("backupEnabled", "rtkForTasks"):
+        if k in ("backupEnabled", "rtkForTasks", "paceWeek"):
             v = bool(v)
+        if k == "paceMarginPoints":
+            if isinstance(v, bool):
+                continue
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                continue
+            if v != v:                                   # NaN
+                continue
+            v = max(0, min(100, v))
+            v = int(v) if v == int(v) else round(v, 1)
         if k in ("codexToolOutputTokens", "readCapBytes", "readCapLines"):
             try:
                 v = int(v)
@@ -8755,6 +8773,8 @@ def _load_sessions_uncached(n: int = 200) -> list[dict]:
                 # A draft is a task created (e.g. by a planning agent) but never
                 # launched; Open/Start launches it fresh with its spec.
                 "draft": not rm.get("launched", True),
+                # Its seats keep their kinds whatever the week's pace (ED-164).
+                "keepAgents": rm.get("keepAgents") is True,
                 **board.view(rm),
                 "hasConversation": len(agents_in) == 1 and bool((agents_in[0].get("sessionId") or "").strip()),
                 "isLive": live, "status": "busy" if (live and busy) else "idle",
@@ -9476,9 +9496,78 @@ def _kind_usage(snapshot: dict, kind: str, codex_model: str = "") -> dict:
     }
 
 
+def pace_settings() -> dict:
+    """Whether the hub paces each kind's week, and the pace line's head start
+    in points (Settings › Agent models)."""
+    settings = load_settings()
+    try:
+        margin = float(settings.get("paceMarginPoints", PACE_MARGIN_DEFAULT))
+    except (TypeError, ValueError):
+        margin = float(PACE_MARGIN_DEFAULT)
+    return {"enabled": settings.get("paceWeek", True) is not False,
+            "margin": max(0.0, min(100.0, margin))}
+
+
+def _kind_pace(snapshot: dict, kind: str, codex_model: str = "",
+               margin: float = PACE_MARGIN_DEFAULT, now: float | None = None) -> dict:
+    """``kind``'s 7-day window against its pace line (ED-164), from the pool
+    :func:`_kind_usage` judges. ``state`` "unknown" (no current 7-day reading,
+    or no reset time to date the week by) means the kind is not paced."""
+    warn = float(snapshot.get("warnPercent", usage.WARN_PERCENT))
+    source = next((s for s in snapshot.get("sources", [])
+                   if s.get("source") == kind), None)
+    if not source or source.get("state") != "ok":
+        return {"state": "unknown"}
+    pool = usage.codex_pool_for_model(source, codex_model) if kind == "codex" else None
+    named = {"pool": pool["id"], "poolLabel": pool["label"] or ""} if pool else {}
+    window = next((w for w in source.get("windows") or []
+                   if w.get("kind") == "seven_day"
+                   and not (pool and (w.get("pool") or usage.CODEX_MAIN_POOL) != pool["id"])
+                   and w.get("percent") is not None
+                   and not w.get("rolledOver") and not w.get("resetUnknown")), None)
+    if window is None:
+        return {"state": "unknown", **named}
+    mark = usage.pace_mark(window.get("resetsAt"), time.time() if now is None else now,
+                           margin, warn)
+    if mark is None:
+        return {"state": "unknown", **named}
+    percent = float(window["percent"])
+    return {"state": "known", **named, "percent": window["percent"],
+            "label": "7-day", "atLeast": not bool(window.get("trusted")),
+            "pace": mark["pace"], "elapsed": mark["elapsed"],
+            "resetsAt": window.get("resetsAt"),
+            "ahead": percent > mark["pace"],
+            "by": round(percent - mark["pace"], 1)}
+
+
+def pace_view(snapshot: dict, now: float | None = None) -> dict:
+    """Each kind's pace mark, for /api/usage and the plan chip: Codex judged by
+    the pool a seat naming no model runs on."""
+    cfg = pace_settings()
+    return {"enabled": cfg["enabled"], "marginPoints": cfg["margin"],
+            "kinds": {k: _kind_pace(snapshot, k, "", cfg["margin"], now)
+                      for k in ("claude", "codex")}}
+
+
+def _pace_reason_phrase(kind: str, reading: dict) -> str:
+    """"Codex 7-day window at 52%, ahead of pace (43% by today)"."""
+    state = "ahead of pace" if reading.get("ahead") else "within pace"
+    return (f"{_usage_reason_phrase(kind, reading)}, {state} "
+            f"({float(reading.get('pace') or 0):g}% by today)")
+
+
 def _agent_kind_name(kind: str) -> str:
     agent = agents.get_agent(kind)
     return (agent.display_name if agent is not None else kind.title())
+
+
+def _keep_agents_why(kind: str, reading: dict, warn) -> str:
+    """Why a kept seat stayed: past the warning it ignores that too."""
+    percent = reading.get("percent")
+    if percent is not None and float(percent) >= float(warn):
+        return (f"ignoring pacing and the {float(warn):g}% warning "
+                f"({_usage_reason_phrase(kind, reading)})")
+    return "ignoring pacing"
 
 
 def _usage_reason_phrase(kind: str, reading: dict) -> str:
@@ -9504,7 +9593,8 @@ def _seat_for_kind(preference: dict, kind: str) -> dict:
 
 def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
                                installed=None, current_kind: str = "",
-                               codex_model: str = "") -> dict:
+                               codex_model: str = "", pace: dict | None = None,
+                               keep_agents: bool = False, now: float | None = None) -> dict:
     """Choose one seat's kind using the allowance rules shared by task launch
     and reviews.
 
@@ -9514,11 +9604,22 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
     model-free; callers apply the seat preference with :func:`_seat_for_kind`.
     ``codex_model`` is the model the seat would run on as Codex ("" for the
     config's): it picks the Codex pool that is judged (see :func:`_kind_usage`).
+
+    Below the warning, each kind's week is paced (ED-164; ``pace`` is
+    :func:`pace_settings`, read when omitted): a preferred kind ahead of its
+    pace line gives way to the other kind while that one is not
+    (``switch_pace``); with both ahead, the one less far ahead is chosen
+    (``both_ahead_of_pace``). A ``keep_agents`` seat (a task told to keep its
+    agents) ignores pacing and the warning and leaves only for a spent kind.
     """
     other_kind = {"claude": "codex", "codex": "claude"}.get(preferred_kind, "")
+    pace = pace_settings() if pace is None else pace
     warn = snapshot.get("warnPercent", usage.WARN_PERCENT)
     alarm = snapshot.get("alarmPercent", usage.ALARM_PERCENT)
     figures = {kind: _kind_usage(snapshot, kind, codex_model) for kind in ("claude", "codex")}
+    paced = {kind: _kind_pace(snapshot, kind, codex_model,
+                              pace.get("margin", PACE_MARGIN_DEFAULT), now)
+             for kind in ("claude", "codex")}
     preferred_usage = figures.get(preferred_kind, {"state": "unknown"})
     other_usage = figures.get(other_kind, {"state": "unknown"})
     installed = installed or (lambda kind: bool(
@@ -9535,6 +9636,9 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
             "warnPercent": warn,
             "alarmPercent": alarm,
             "figures": figures,
+            "pace": {"enabled": bool(pace.get("enabled")), "keepAgents": bool(keep_agents),
+                     "marginPoints": pace.get("margin", PACE_MARGIN_DEFAULT),
+                     "kinds": paced},
         }
 
     if not installed(preferred_kind):
@@ -9556,6 +9660,12 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
         return result(preferred_kind, "unknown")
     if not other_kind or not installed(other_kind):
         return result(preferred_kind, "other_uninstalled")
+    if keep_agents:
+        # Kept regardless of pace and the warning; never on a spent kind.
+        if (float(preferred_usage["percent"]) >= alarm
+                and float(other_usage["percent"]) < alarm):
+            return result(other_kind, "switch_alarm")
+        return result(preferred_kind, "keep_agents")
     if (float(preferred_usage["percent"]) >= warn
             and float(other_usage["percent"]) < warn):
         return result(other_kind, "switch_warning")
@@ -9564,6 +9674,16 @@ def choose_agent_kind_for_seat(preferred_kind: str, snapshot: dict,
         # Both past the warning, but only one spent: never seat the spent one.
         return result(other_kind, "switch_alarm")
     if float(preferred_usage["percent"]) < warn:
+        mine, theirs = paced.get(preferred_kind, {}), paced.get(other_kind, {})
+        # Pacing only ever moves a seat to a kind below the warning, and only
+        # when both weeks can be dated: an unknown reset time is not paced.
+        if (pace.get("enabled") and mine.get("state") == "known"
+                and theirs.get("state") == "known" and mine["ahead"]
+                and float(other_usage["percent"]) < warn):
+            if not theirs["ahead"]:
+                return result(other_kind, "switch_pace")
+            return result(other_kind if theirs["by"] < mine["by"] else preferred_kind,
+                          "both_ahead_of_pace")
         return result(preferred_kind, "preferred_below_warning")
     return result(preferred_kind, "both_warning")
 
@@ -9581,9 +9701,13 @@ def _with_model_note(reason: str, seats: list[dict]) -> str:
 
 
 def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
-                                   installed=None) -> tuple[list[dict], dict]:
-    """Choose the first-launch line-up and return it with its audit record."""
+                                   installed=None, pace: dict | None = None,
+                                   keep_agents: bool = False,
+                                   now: float | None = None) -> tuple[list[dict], dict]:
+    """Choose the first-launch line-up and return it with its audit record.
+    ``keep_agents``: the task keeps its agents whatever their pace (ED-164)."""
     preferred = copy.deepcopy(preferred)
+    pace = pace_settings() if pace is None else pace
     chosen = [{"agent": seat.get("agent", ""),
                "model": seat.get("model", ""),
                "role": seat.get("role", "")}
@@ -9599,6 +9723,7 @@ def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
     codex_model = _seat_for_kind(preferred[owner_i], "codex")["model"]
     figures = {kind: _kind_usage(snapshot, kind, codex_model) for kind in ("claude", "codex")}
     owner_usage = figures.get(owner_kind, {"state": "unknown"})
+    audit = {}                              # the seat decision's pace, once made
 
     def result(reason: str, changed: bool) -> tuple[list[dict], dict]:
         return chosen, {
@@ -9609,7 +9734,8 @@ def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
             "at": time.time(),
             "usage": {"snapshotState": snapshot.get("state"),
                       "checkedAt": snapshot.get("checkedAt"),
-                      "warnPercent": warn, "alarmPercent": alarm, "kinds": figures},
+                      "warnPercent": warn, "alarmPercent": alarm, "kinds": figures,
+                      **audit},
         }
 
     unavailable_seats = [i for i, seat in enumerate(preferred)
@@ -9628,7 +9754,10 @@ def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
         return result(reason, True)
 
     decision = choose_agent_kind_for_seat(owner_kind, snapshot, installed=installed,
-                                          codex_model=codex_model)
+                                          codex_model=codex_model, pace=pace,
+                                          keep_agents=keep_agents, now=now)
+    paced = decision["pace"]["kinds"]
+    audit.update(decision=decision["decision"], pace=decision["pace"])
     if decision["decision"] == "both_alarm":
         reason = (f"Preferred line-up kept although Claude and Codex are both at or above "
                   f"the {float(alarm):g}% alarm.")
@@ -9637,15 +9766,31 @@ def choose_first_launch_allocation(preferred: list[dict], snapshot: dict,
     elif decision["decision"] == "other_uninstalled":
         name = _agent_kind_name(other_kind) if other_kind else "The other agent kind"
         reason = f"Preferred line-up kept because {name} is not installed on this machine."
-    elif decision["decision"] in ("switch_warning", "switch_alarm"):
+    elif decision["chosenKind"] == other_kind and other_kind:
         old_owner_kind = owner_kind
         chosen[owner_i] = _seat_for_kind(preferred[owner_i], other_kind)
         reviewer_i = _allocation_reviewer_index(preferred, owner_i)
         if reviewer_i is not None:
             chosen[reviewer_i] = _seat_for_kind(preferred[reviewer_i], old_owner_kind)
-        reason = (f"Owner switched to {_agent_kind_name(other_kind)}: "
-                  f"{_usage_reason_phrase(old_owner_kind, owner_usage)}.")
+        if decision["decision"] == "switch_pace":
+            why = (f"{_pace_reason_phrase(old_owner_kind, paced[old_owner_kind])}, while "
+                   f"{_pace_reason_phrase(other_kind, paced[other_kind])}")
+        elif decision["decision"] == "both_ahead_of_pace":
+            why = (f"both kinds are ahead of pace and {_agent_kind_name(other_kind)} less "
+                   f"far: {_pace_reason_phrase(old_owner_kind, paced[old_owner_kind])}; "
+                   f"{_pace_reason_phrase(other_kind, paced[other_kind])}")
+        else:
+            why = _usage_reason_phrase(old_owner_kind, owner_usage)
+        reason = f"Owner switched to {_agent_kind_name(other_kind)}: {why}."
         return result(reason, True)
+    elif decision["decision"] == "keep_agents":
+        reason = ("Preferred line-up kept: this task keeps its agents, "
+                  f"{_keep_agents_why(owner_kind, decision['figures'].get(owner_kind, {}), warn)}.")
+    elif decision["decision"] == "both_ahead_of_pace":
+        reason = (f"Preferred line-up kept: both kinds are ahead of pace and "
+                  f"{_agent_kind_name(owner_kind)} no further: "
+                  f"{_pace_reason_phrase(owner_kind, paced[owner_kind])}; "
+                  f"{_pace_reason_phrase(other_kind, paced[other_kind])}.")
     elif decision["decision"] == "preferred_below_warning":
         reason = (f"Preferred line-up kept because {_usage_reason_phrase(owner_kind, owner_usage)} "
                   f"is below the {float(warn):g}% warning.")
@@ -9695,7 +9840,8 @@ def apply_first_launch_allocation(room_full: dict) -> dict | None:
     snapshot = {}
     try:
         snapshot = usage.snapshot()
-        chosen, allocation = choose_first_launch_allocation(preferred, snapshot)
+        chosen, allocation = choose_first_launch_allocation(
+            preferred, snapshot, keep_agents=room_full.get("keepAgents") is True)
     except StartRoomError:
         raise
     except Exception as exc:                              # noqa: BLE001
@@ -9790,6 +9936,21 @@ def _review_allocation_reason(decision: dict, owner: dict) -> str:
                 f"{_usage_reason_phrase(preferred_kind, figures.get(preferred_kind, {}))} "
                 f"is at or above the {float(alarm):g}% alarm while "
                 f"{_usage_reason_phrase(owner_kind, figures.get(owner_kind, {}))} is below it.")
+    paced = (decision.get("pace") or {}).get("kinds") or {}
+    other_kind = {"claude": "codex", "codex": "claude"}.get(preferred_kind, "")
+    if code == "keep_agents":
+        return (f"Reviewer {action} {chosen_name}: this task keeps its agents, "
+                f"{_keep_agents_why(chosen_kind, figures.get(chosen_kind, {}), warn)}.")
+    if code == "switch_pace":
+        return (f"Reviewer {action} {chosen_name}: "
+                f"{_pace_reason_phrase(preferred_kind, paced.get(preferred_kind, {}))}, "
+                f"while {_pace_reason_phrase(other_kind, paced.get(other_kind, {}))}.")
+    if code == "both_ahead_of_pace":
+        return (f"Reviewer {action} {chosen_name}: both kinds are ahead of pace and "
+                f"{chosen_name} "
+                f"{'less far' if chosen_kind != preferred_kind else 'no further'}: "
+                f"{_pace_reason_phrase(preferred_kind, paced.get(preferred_kind, {}))}; "
+                f"{_pace_reason_phrase(other_kind, paced.get(other_kind, {}))}.")
     relation = f"different from owner {owner_name}"
     if code == "preferred_below_warning":
         detail = (f"{_usage_reason_phrase(preferred_kind, figures.get(preferred_kind, {}))} "
@@ -9823,6 +9984,10 @@ def apply_review_allocation(room_full: dict, identity: str) -> tuple[dict, dict,
     preferred_kind = {"claude": "codex", "codex": "claude"}.get(owner_kind, "")
     current_kind = part.get("agent", "")
     seat_preference = _participant_seat_preference(room_full, identity, part)
+    keep_agents = room_full.get("keepAgents") is True
+    if keep_agents and seat_preference.get("agent") in ("claude", "codex"):
+        # A task that keeps its agents reviews on the kind its seat names.
+        preferred_kind = seat_preference["agent"]
     snapshot = {}
     installed = lambda kind: bool(agents.get_agent(kind) and agents.get_agent(kind).installed())
     try:
@@ -9832,7 +9997,7 @@ def apply_review_allocation(room_full: dict, identity: str) -> tuple[dict, dict,
                        else _seat_for_kind(seat_preference, "codex")["model"])
         decision = choose_agent_kind_for_seat(
             preferred_kind, snapshot, installed=installed, current_kind=current_kind,
-            codex_model=codex_model)
+            codex_model=codex_model, keep_agents=keep_agents)
     except StartRoomError:
         raise
     except Exception as exc:                              # noqa: BLE001
@@ -9879,6 +10044,8 @@ def apply_review_allocation(room_full: dict, identity: str) -> tuple[dict, dict,
             "warnPercent": decision["warnPercent"],
             "alarmPercent": decision["alarmPercent"],
             "kinds": decision["figures"],
+            **({"decision": decision["decision"], "pace": decision["pace"]}
+               if decision.get("pace") else {}),
             **({"error": decision["error"]} if decision.get("error") else {}),
         },
     }
@@ -9897,6 +10064,19 @@ def apply_review_allocation(room_full: dict, identity: str) -> tuple[dict, dict,
     _patch_task_json(room_full.get("taskDir", ""), agents=assigned,
                      reviewAllocations=room_full["reviewAllocations"])
     return room_full, part, allocation
+
+
+def set_keep_agents(rid: str, on: bool) -> tuple[bool, dict | None, str]:
+    """Keep a task's seats to the kinds its line-up names, whatever the week's
+    pace (ED-164), or let them be paced again. A kept seat still leaves a
+    kind that is spent (at the alarm). Returns (ok, room, error)."""
+    room = chatroom.get_room((rid or "").strip(), public=False)
+    if room is None:
+        return False, None, "no_such_room"
+    on = bool(on)
+    updated = chatroom.patch_room(room["id"], keepAgents=on) or room
+    _patch_task_json(updated.get("taskDir", ""), keepAgents=on)
+    return True, updated, ""
 
 
 def find_project(project_id: str) -> dict | None:
@@ -11068,7 +11248,13 @@ class Handler(BaseHTTPRequestHandler):
             # else — the HTTPS call and the rollout scan happen on usage.py's
             # background thread, so this answers instantly and the page's poll
             # never waits on the network.
-            self._send_json(200, usage.snapshot())
+            snap = usage.snapshot()
+            # Each kind's weekly pace mark (ED-164), for the plan chip.
+            try:
+                snap["pace"] = pace_view(snap)
+            except Exception:                             # noqa: BLE001
+                snap["pace"] = {"enabled": False, "kinds": {}}
+            self._send_json(200, snap)
             return
         if p == "/api/settings":
             # Include the *resolved* operator display name so the UI can show the
@@ -13831,6 +14017,15 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send_json(200, {"ok": True, "priority": n,
                                   "priorityName": PRIORITY_NAMES[n]})
+            return
+        if p == "/api/room/keep-agents":
+            # "Keep these agents (ignore pacing)" in a task's ⋯ menu.
+            rid = (data.get("roomId") or "").strip()
+            ok, room, err = set_keep_agents(rid, data.get("on") is True)
+            if not ok:
+                self._send_json(404, {"error": err})
+                return
+            self._send_json(200, {"ok": True, "keepAgents": room.get("keepAgents") is True})
             return
         if p == "/api/room/workflow":
             # The owner moving a card. This endpoint is the UI's, and the UI is

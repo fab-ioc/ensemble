@@ -652,6 +652,11 @@ the final choice without a network call:
   kinds between owner and reviewer, so one task still does not spend one
   allowance twice. A changed seat uses that kind's default model unless the
   preference names an alternative model for it.
+- Below the warning the hub paces each kind's week: a kind whose 7-day use is
+  past its pace mark (`ensemble_plan_usage` `pace`) gives new owners, reviews
+  and handovers to the other kind while that one is not. Only when the product
+  owner asks, pin a task's agents with `keepAgents: true` on
+  `ensemble_create_task` / `ensemble_update_task`.
 - A seat that names no model runs on the one the person chose for its kind in
   Settings (Agent models; for Codex a reasoning effort too), else on the
   agent's own default. Leave `model` out unless the task needs a particular

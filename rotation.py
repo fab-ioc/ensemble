@@ -780,11 +780,13 @@ def _model_for(seat: dict | None, kind: str) -> str:
 
 def choose_owner_kind(room: dict, part: dict, snapshot: dict | None = None,
                       installed=None) -> dict:
-    """The fresh owner's kind at a handover, by the first-launch rule: the
-    other kind only when the current one is at or past the warning and the
-    other is below it. Unknown readings, the other kind not installed, or both
-    past the alarm keep the current kind (the alarm is noted). Returns {agent,
-    model, fromAgent, fromModel, changed, alarm, reason, why, usage}; never
+    """The fresh owner's kind at a handover, by the first-launch rule
+    (``choose_agent_kind_for_seat``): the other kind when the current one is
+    at or past the warning and the other is below it, or when the current one
+    is ahead of its week's pace and the other is not (or is less far ahead).
+    A task that keeps its agents is not paced. Unknown readings, the other
+    kind not installed, or both past the alarm keep the current kind (the
+    alarm is noted). Returns {agent, model, fromAgent, fromModel, changed, alarm, reason, why, usage}; never
     raises — a failed check keeps the current kind."""
     cur, cur_model = part.get("agent", ""), part.get("model", "")
     out = {"agent": cur, "model": cur_model, "fromAgent": cur, "fromModel": cur_model,
@@ -804,31 +806,49 @@ def choose_owner_kind(room: dict, part: dict, snapshot: dict | None = None,
         # The owner as Codex: the model it has now, or the one its seat names.
         codex_model = cur_model if cur == "codex" else _model_for(
             _preferred_seats(room)[0], "codex")
-        figures = {k: _d._kind_usage(snap, k, codex_model) for k in ("claude", "codex")}
-        out["usage"] = {"checkedAt": snap.get("checkedAt"), "warnPercent": warn,
-                        "alarmPercent": alarm, "kinds": figures}
         other = _OTHER_KIND.get(cur, "")
-        mine, theirs = figures.get(cur, {}), figures.get(other, {})
-
-        def known(r):
-            return r.get("state") == "known"
-
-        if all(known(r) and float(r["percent"]) >= alarm for r in figures.values()):
+        # The seat rule launch and reviews use (ED-164 adds the week's pace).
+        # The current kind runs the conversation, so it counts as installed.
+        decision = _d.choose_agent_kind_for_seat(
+            cur, snap, installed=lambda k: k == cur or installed(k), current_kind=cur,
+            codex_model=codex_model, keep_agents=room.get("keepAgents") is True)
+        figures, code = decision["figures"], decision["decision"]
+        paced = decision["pace"]["kinds"]
+        out["usage"] = {"checkedAt": snap.get("checkedAt"), "warnPercent": warn,
+                        "alarmPercent": alarm, "kinds": figures,
+                        "decision": code, "pace": decision["pace"]}
+        mine = figures.get(cur, {})
+        pace_why = (f"{_d._pace_reason_phrase(cur, paced.get(cur, {}))}, while "
+                    f"{_d._pace_reason_phrase(other, paced.get(other, {}))}"
+                    if other else "")
+        if code == "both_alarm":
             out.update(alarm=True, reason=f"Owner kept on {name(cur)} although Claude and "
                                           f"Codex are both at or above the {alarm:g}% alarm.")
-        elif not (other and known(mine) and known(theirs)):
+        elif code == "unknown":
             out["reason"] = (f"Owner kept on {name(cur)} because a current allowance "
                              f"reading is unavailable.")
-        elif not installed(other):
+        elif code == "other_uninstalled":
             out["reason"] = (f"Owner kept on {name(cur)} because {name(other)} is not "
                              f"installed on this machine.")
-        elif ((float(mine["percent"]) >= warn and float(theirs["percent"]) < warn)
-              or (float(mine["percent"]) >= alarm and float(theirs["percent"]) < alarm)):
+        elif decision["chosenKind"] == other and other:
             seat, _ = _preferred_seats(room)
-            why = _d._usage_reason_phrase(cur, mine)
+            if code == "switch_pace":
+                why = pace_why
+            elif code == "both_ahead_of_pace":
+                why = (f"both kinds are ahead of pace and {name(other)} less far: "
+                       + pace_why.replace(", while ", "; "))
+            else:
+                why = _d._usage_reason_phrase(cur, mine)
             out.update(agent=other, model=_model_for(seat, other), changed=True, why=why,
                        reason=f"Owner switched to {name(other)}: {why}.")
-        elif float(mine["percent"]) < warn:
+        elif code == "keep_agents":
+            out["reason"] = (f"Owner kept on {name(cur)}: this task keeps its agents, "
+                             f"{_d._keep_agents_why(cur, mine, warn)}.")
+        elif code == "both_ahead_of_pace":
+            out["reason"] = (f"Owner kept on {name(cur)}: both kinds are ahead of pace and "
+                             f"{name(cur)} no further: " + pace_why.replace(", while ", "; ")
+                             + ".")
+        elif code == "preferred_below_warning":
             out["reason"] = (f"Owner kept on {name(cur)} because "
                              f"{_d._usage_reason_phrase(cur, mine)} is below the "
                              f"{warn:g}% warning.")

@@ -114,6 +114,13 @@ function sessionActions(s, env) {
     org.push(rename, auto);
     const agents = { id: 'agents', label: 'Agents and models…', cls: 'agents-btn', data: room, title: 'Change who is assigned to this task and which model each one runs' };
     org.push(live ? off(agents, 'Running: end it first, then reassign.') : agents);
+    // ED-164: its seats keep their kinds whatever the week's pace; it can be
+    // set while it runs (it applies to the next review or handover).
+    const keep = !!s.keepAgents;
+    org.push({ id: 'keep-agents', label: 'Keep these agents (ignore pacing)', role: 'menuitemcheckbox', checked: keep,
+      cls: 'keep-agents-btn', data: { room: rid, on: keep ? 1 : 0 },
+      title: keep ? 'Its agents keep their kinds whatever the week’s pace (never a spent one). Click to pace them again.'
+                  : 'New owners, reviews and handovers are paced over the week. Click to keep the agents it names.' });
     org.push(move, makePoItem(s));
     folder.push(finder, cwd ? ideItem : off(ideItem, NO_FOLDER), colours({}));
     const on = !!(s.chatSchemeOn && cwd);

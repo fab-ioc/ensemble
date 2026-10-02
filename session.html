@@ -5282,6 +5282,7 @@ function actionState() {
     live: room.live !== false, draft: room.launched === false, status: room.status || '',
     members: (room.participants || []).filter(p => p.kind === 'agent').map(p => ({ agent: p.agent })),
     makePo: room.makePo, currentTheme: '', chatSchemeOn: SCHEME_ON, resuming: ROOM_RESUMING,
+    keepAgents: room.keepAgents === true,
   };
 }
 function actionEnv() {
@@ -5386,6 +5387,15 @@ const ACTS = {
   async 'chat-colours'() {
     const cwd = actCwd(); if (!cwd) return;
     try { await jpost('/api/chat-scheme', { cwd, on: !SCHEME_ON }); await ensureTheme(cwd); } catch (e) {}
+    ACTIONS_HTML = ''; renderActions();
+  },
+  async 'keep-agents'() {
+    // ED-164: its seats keep their kinds whatever the week's pace.
+    const want = !(ROOM_OBJ && ROOM_OBJ.keepAgents === true);
+    try {
+      const r = await jpost('/api/room/keep-agents', { roomId: ROOM, on: want });
+      if (ROOM_OBJ && r && typeof r.keepAgents === 'boolean') ROOM_OBJ.keepAgents = r.keepAgents;
+    } catch (e) {}
     ACTIONS_HTML = ''; renderActions();
   },
   agents() { toDashboard('agents'); },
