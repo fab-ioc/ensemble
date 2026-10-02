@@ -286,6 +286,14 @@ async function main() {
     for (const word of ['br', 'bra', 'brak', 'brakes', 'brakes sq']) { await p.clear('#search'); await p.type('#search', word); await sleep(320); }
     await done(p, 'brakes sq');
     out.fast = await p.evalIn('({ max: __fl.max, value: FIND.q, heads: [...document.querySelectorAll("#find-pop .fd-head")].map(h => h.textContent) })');
+    // Enter at once after typing a new query opens that query's result, not one of the last query's.
+    await p.evalIn('window.__od = []; const _od = openDetail; openDetail = (...a) => { __od.push(a[0]); return _od(...a); }; ' +
+                   'window.__ot = []; const _ot = openTaskLink; openTaskLink = (...a) => { __ot.push(a[0]); return _ot(...a); }; 0');
+    await p.type('#search', 'torque');    // typed over 'brakes sq', whose results are still there
+    await p.key('Enter');
+    await p.until('__od.length + __ot.length > 0', 30000).catch(() => null); await sleep(300);
+    out.enterFresh = await p.evalIn('({ details: __od, tasks: __ot })');
+    await p.evalIn('if (SELECTED_SID) closeDetail(); 0'); await sleep(200);
     await p.key('Escape');
     // The list's filter.
     await p.type('#sw-filter', 'brakes');
@@ -440,6 +448,8 @@ class FindInChrome(unittest.TestCase):
         self.assertEqual(e["sid"], self.task, "Enter opens the first result")
         self.assertTrue(e["open"])
         self.assertFalse(e["shown"])
+        self.assertEqual(self.got["enterFresh"], {"details": [self.own], "tasks": []},
+                         "Enter right after typing waits for the new query's result")
 
     def test_from_home_a_past_session_found_in_its_transcript(self):
         h = self.got["home"]

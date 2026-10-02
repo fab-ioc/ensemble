@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -36,6 +37,22 @@ def codex_lines(cwd: str, texts: list[str]) -> list[str]:
         out.append(json.dumps({"type": "response_item", "payload": {
             "type": "message", "role": "user", "content": [{"type": "input_text", "text": t}]}}))
     return out
+
+
+def _gone_within(pid: int, seconds: float) -> bool:
+    """Windows: whether process ``pid`` ends within ``seconds``."""
+    import ctypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.restype = ctypes.c_void_p
+    k32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    k32.CloseHandle.argtypes = [ctypes.c_void_p]
+    h = k32.OpenProcess(0x100000, False, pid)                   # SYNCHRONIZE
+    if not h:
+        return True
+    try:
+        return k32.WaitForSingleObject(h, int(seconds * 1000)) == 0
+    finally:
+        k32.CloseHandle(h)
 
 
 class Query(unittest.TestCase):
@@ -108,6 +125,64 @@ class Transcripts(unittest.TestCase):
         out = subprocess.run([sys.executable, "-X", "utf8", str(ROOT / "global_search.py")], input=req.encode(),
                              capture_output=True, timeout=60, check=True).stdout
         self.assertEqual([r["sessionId"] for r in json.loads(out)["found"]], ["c"])
+
+    def test_a_common_word_does_not_crowd_out_a_rare_one(self):
+        f = self.write("e.jsonl", [claude_line("user", f"the file {i}") for i in range(gs.LINES_PER_FILE + 100)]
+                       + [claude_line("user", "sidebar here")])
+        r = gs.scan_file(f, "claude", gs.parse_query("file sidebar"))
+        self.assertIsNotNone(r)
+        self.assertEqual(r["hits"], gs.LINES_PER_FILE + 1)
+
+    def test_words_with_no_ascii_letter_in_any_case(self):
+        f = self.write("f.jsonl", [claude_line("user", "Привет, мир"), claude_line("assistant", "ПРИВЕТ")])
+        r = gs.scan_file(f, "claude", gs.parse_query("привет"))
+        self.assertEqual(r["hits"], 2)
+        self.assertIsNotNone(gs.scan_file(f, "claude", gs.parse_query("МИР")))
+
+    def test_bookkeeping_is_not_text(self):
+        line = json.dumps({"type": "assistant", "message": {"role": "assistant", "model": "claude-opus-5-5",
+                                                            "stop_reason": "end_turn",
+                                                            "content": [{"type": "tool_use", "name": "Read",
+                                                                         "input": {"file_path": "a.py"}}]}})
+        f = self.write("g.jsonl", [line])
+        for q in ("opus", "assistant", "tool_use", "end_turn"):
+            self.assertIsNone(gs.scan_file(f, "claude", gs.parse_query(q)), q)
+        self.assertIsNotNone(gs.scan_file(f, "claude", gs.parse_query("a.py")))
+
+    @unittest.skipUnless(sys.platform == "win32", "off Windows the hub ends the child's whole process group")
+    def test_a_stopped_search_leaves_no_workers(self):
+        # The real child's main(), its scan replaced by one that says each
+        # worker's pid and waits; the hub then replaces it with a newer search.
+        (self.tmp / "slowscan.py").write_text(
+            "import os, time\n"
+            "def scan(args):\n"
+            f"    open(os.path.join({str(self.tmp)!r}, f'w{{os.getpid()}}.pid'), 'w').close()\n"
+            "    time.sleep(60)\n"
+            "    return []\n", encoding="utf-8")
+        script = ("import sys; sys.path[:0] = [%r, %r]; import global_search, slowscan; "
+                  "global_search._scan_chunk = slowscan.scan; global_search.main()") % (str(ROOT), str(self.tmp))
+        files = [[self.write(f"h{i}.jsonl", ["x"]), "claude"] for i in range(4)]
+        first = dashboard._ws_search_start("find:t", 1, [sys.executable, "-c", script])
+        try:
+            first.stdin.write(json.dumps({"q": "x", "files": files, "workers": 2}).encode())
+            first.stdin.close()
+            end = time.monotonic() + 60
+            while len(list(self.tmp.glob("w*.pid"))) < 2 and time.monotonic() < end:
+                time.sleep(0.2)
+            pids = [int(p.stem[1:]) for p in self.tmp.glob("w*.pid")]
+            self.assertEqual(len(pids), 2, "both workers started")
+            second = dashboard._ws_search_start("find:t", 2, [sys.executable, "-c", "pass"])
+            first.wait(timeout=10)
+            for pid in pids:
+                self.assertTrue(_gone_within(pid, 10), f"worker {pid} was left running")
+        finally:
+            for p in (first, locals().get("second")):
+                if p is None:
+                    continue
+                if p.poll() is None:
+                    p.kill()
+                p.communicate()
+                dashboard._ws_search_done("find:t", p)
 
     def test_a_past_deadline_stops_early(self):
         f = self.write("d.jsonl", [claude_line("user", "x")])
@@ -230,6 +305,14 @@ class GlobalFind(unittest.TestCase):
         self.assertNotIn("path", sess["mine-1"])
         self.assertEqual((sess["listed-1"]["title"], sess["listed-1"]["hits"]), ("My tranche notes", 1))
         self.assertNotIn("row", sess["listed-1"])
+
+    def test_a_folder_two_tasks_share_names_neither(self):
+        twin = room("room-c", 7, "Twin task", parts=[{"kind": "agent", "identity": "claude", "agent": "claude",
+                                                     "sessionId": "", "cwd": "C:\\tasks\\b"}])
+        (self.dir / "room-c.json").write_text(json.dumps(twin), encoding="utf-8")
+        _, r = dashboard.global_find("tranche", deep=True, tag="t", seq=1)
+        self.assertEqual({t["roomId"] for t in r["tasks"]["items"]}, {"room-a", "room-po"})
+        self.assertIn("cx-1", {s["sessionId"] for s in r["sessions"]["items"]})
 
     def test_a_number_finds_its_task(self):
         _, r = dashboard.global_find("ED-6")

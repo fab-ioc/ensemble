@@ -31,6 +31,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -38,11 +39,13 @@ QUERY_MAX = 300
 MIN_QUERY = 2
 SNIPPET_PAD = 60
 ITEMS_MAX = 50           # results sent per group; the count says how many there are
-LINES_PER_FILE = 4000    # matching lines parsed per transcript, at most
+LINES_PER_FILE = 4000    # lines parsed per transcript and term, at most
 DEADLINE_S = 40.0
-# Fields that hold ids, hashes and signatures rather than words.
+# Fields that hold ids, hashes, signatures and bookkeeping (the model, a
+# message's role, a part's type) rather than words.
 SKIP_FIELDS = {"id", "uuid", "parentUuid", "tool_use_id", "requestId", "signature",
-               "sessionId", "session_id", "call_id", "encrypted_content", "timestamp"}
+               "sessionId", "session_id", "call_id", "encrypted_content", "timestamp",
+               "model", "role", "type", "stop_reason"}
 
 
 # ---- The query ----------------------------------------------------------------
@@ -115,6 +118,7 @@ def snippet(text: str, terms: list[str], pad: int = SNIPPET_PAD) -> str:
 # ---- Rooms: tasks, POs and their chats (the quick half) ------------------------
 
 _ROOM_CACHE: dict[str, tuple[tuple[int, int], dict | None]] = {}
+_ROOM_LOCK = threading.Lock()      # the hub's request threads share the cache
 
 
 def _room_entry(d: dict) -> dict:
@@ -138,6 +142,11 @@ def _room_entry(d: dict) -> dict:
 def room_entries(rooms_dir: Path, extra=None) -> list[dict]:
     """Every room, read again only when its file changed (size or time).
     ``extra(room)``: more the caller keeps about a room, under ``"extra"``."""
+    with _ROOM_LOCK:
+        return _room_entries(rooms_dir, extra)
+
+
+def _room_entries(rooms_dir: Path, extra) -> list[dict]:
     out = []
     live: set[str] = set()
     try:
@@ -220,17 +229,22 @@ def search_rows(rows: list[dict], groups: list[list[str]]) -> dict[str, dict]:
 
 # ---- Transcripts (the deep half, in a child process) ---------------------------
 
-def _needle(term: str) -> bytes:
-    """What a file holding ``term`` must hold, lower-cased, to look for in its
+def _needles(term: str) -> tuple[bytes, ...]:
+    """What a file holding ``term`` must hold, one of, to look for in its
     lower-cased bytes: the term as it appears inside a JSON string. Bytes
     lower-case only ASCII, so a term with other letters (``café``) is looked
-    for by its longest ASCII run (``caf``); the lines found are then checked
-    as text, where case is folded properly."""
+    for by its longest ASCII run (``caf``); one with none (``привет``) by its
+    lower, capitalised and upper case forms, raw or ``\\u`` escaped. The
+    lines found are then checked as text, where case is folded properly."""
     esc = json.dumps(term, ensure_ascii=False)[1:-1].lower()
     if esc.isascii():
-        return esc.encode("ascii")
+        return (esc.encode("ascii"),)
     run = max(re.findall(r"[\x00-\x7f]+", esc), key=len, default="")
-    return run.encode("ascii") if run.strip() else esc.encode("utf-8")
+    if run.strip():
+        return (run.encode("ascii"),)
+    forms = (term.lower(), term.capitalize(), term.upper())
+    return tuple(dict.fromkeys(json.dumps(f, ensure_ascii=ascii_)[1:-1].encode("utf-8").lower()
+                               for f in forms for ascii_ in (False, True)))
 
 
 def _walk(obj, out: list[str]) -> None:
@@ -301,22 +315,25 @@ def scan_file(path: str, agent: str, groups: list[list[str]]) -> dict | None:
         return None
     low = data.lower()
     terms = terms_of(groups)
-    needles = {t: _needle(t) for t in terms}
-    present = {t for t, nd in needles.items() if nd in low}
+    needles = {t: _needles(t) for t in terms}
+    present = {t for t, nds in needles.items() if any(nd in low for nd in nds)}
     if not satisfied(present, groups):
         return None
-    # The lines holding a term, in file order, parsed once each.
+    # The lines holding a term, in file order, parsed once each; each term
+    # has its own cap, so a common word cannot crowd out a rare one's lines.
     starts: set[int] = set()
     for t in present:
-        nd = needles[t]
-        k = low.find(nd)
-        while k != -1 and len(starts) < LINES_PER_FILE:
-            s = low.rfind(b"\n", 0, k) + 1
-            starts.add(s)
-            e = low.find(b"\n", k)
-            if e == -1:
-                break
-            k = low.find(nd, e)
+        for nd in needles[t]:
+            n = 0
+            k = low.find(nd)
+            while k != -1 and n < LINES_PER_FILE:
+                s = low.rfind(b"\n", 0, k) + 1
+                starts.add(s)
+                n += 1
+                e = low.find(b"\n", k)
+                if e == -1:
+                    break
+                k = low.find(nd, e)
     seen: set[str] = set()
     hits = 0
     snip = ""
@@ -402,11 +419,19 @@ def scan_files(files: list[list[str]], groups: list[list[str]], workers: int = 0
 
 
 def main() -> None:
-    """The child: a request on stdin, the answer on stdout."""
+    """The child: a request on stdin, the answer on stdout. Its workers end
+    with it, however it ends (the hub kills a search a newer query replaced);
+    where that cannot be arranged it scans alone rather than leave them."""
+    workers = 0
+    try:
+        import workspace_search
+        workspace_search._children_die_with_me()
+    except (OSError, ImportError):
+        workers = 1
     try:
         req = json.loads(sys.stdin.buffer.read().decode("utf-8"))
         groups = parse_query(req.get("q") or "")
-        res = scan_files(req.get("files") or [], groups, int(req.get("workers") or 0),
+        res = scan_files(req.get("files") or [], groups, workers or int(req.get("workers") or 0),
                          float(req.get("deadline") or DEADLINE_S))
     except Exception as e:  # noqa: BLE001 — the hub reads the error
         res = {"error": "search_failed", "detail": repr(e)}

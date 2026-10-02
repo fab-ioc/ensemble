@@ -7453,7 +7453,9 @@ def global_find(q: str, deep: bool = False, tag: str = "", seq: int = 0) -> tupl
             for s in (e.get("extra") or {}).get("sids", []):
                 sid_room.setdefault(s, e["id"])
             for c in (e.get("extra") or {}).get("cwds", []):
-                cwd_room.setdefault(c, e["id"])
+                # A folder several tasks ran in names none of them: its
+                # conversations without a session link are Past sessions.
+                cwd_room[c] = e["id"] if cwd_room.get(c, e["id"]) == e["id"] else ""
         for f in res.get("found") or []:
             sid = f.get("sessionId") or ""
             rid = sid_room.get(sid) or cwd_room.get(_find_norm(f.get("cwd") or ""))

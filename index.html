@@ -14804,7 +14804,7 @@ window.addEventListener('storage', e => {
 // typed while the deep half runs stops it, in the page and on the hub (the
 // box's tag and count, as a Workspace's find). The results drop down under the
 // box; Enter opens the first (or the one the arrows chose), Esc closes them.
-var FIND = { q: '', res: null, phase: '', key: '', timer: 0, busy: false, ctl: null, seq: 0, enter: false, again: false };
+var FIND = { q: '', res: null, resQ: '', runQ: '', phase: '', key: '', timer: 0, busy: false, ctl: null, seq: 0, enter: false, again: false };
 const FIND_TAG = 'bar:' + Math.random().toString(36).slice(2);
 const FIND_POP = document.getElementById('find-pop');
 function findShown() { return !FIND_POP.hidden; }
@@ -14869,20 +14869,20 @@ async function findRun() {
     findPaint();
     return;
   }
-  FIND.busy = true;
+  FIND.busy = true; FIND.runQ = q;
   const seq = ++FIND.seq;
   const stale = () => FIND.q.trim() !== q;
   try {
     FIND.phase = 'quick';
     const quick = await findAsk(q, false, seq);
     if (stale()) return;
-    FIND.res = quick; FIND.phase = 'deep';
+    FIND.res = quick; FIND.resQ = q; FIND.phase = 'deep';
     if (findActive().i < 0) { const first = findItems(quick)[0]; FIND.key = first ? findKey(first) : ''; }
     findPaint();
     if (FIND.enter && findItems(quick).length) { findGoActive(); return; }
     const deep = await findAsk(q, true, seq);
     if (stale()) return;
-    FIND.res = deep; FIND.phase = 'done';
+    FIND.res = deep; FIND.resQ = q; FIND.phase = 'done';
     if (findActive().i < 0) { const first = findItems(deep)[0]; FIND.key = first ? findKey(first) : ''; }
     if (FIND.enter) findGoActive();
   } catch (e) {
@@ -14946,11 +14946,13 @@ $('#search').addEventListener('keydown', (ev) => {
   } else if (ev.key === 'Enter') {
     if (!FIND.q.trim()) return;
     ev.preventDefault();
-    if (findItems(FIND.res).length && !(FIND.busy && FIND.phase === 'quick')) { findGoActive(); return; }
+    // Only results of the query in the box: one typed a moment ago, or while
+    // an older query's deep half runs, has none yet.
+    if (FIND.resQ === FIND.q.trim() && findItems(FIND.res).length && !(FIND.busy && FIND.phase === 'quick')) { findGoActive(); return; }
     // Nothing yet: it opens the first result once there is one.
     FIND.enter = true;
     findOpen(true);
-    if (!FIND.busy) findRun();
+    if (!FIND.busy || FIND.runQ !== FIND.q.trim()) findRun();
   } else if (ev.key === 'Escape') {
     if (findShown()) { ev.preventDefault(); findOpen(false); return; }
     if (document.body.classList.contains('search-open')) { closeSearch(); $('#search-open').focus(); }
