@@ -12,7 +12,14 @@ Nothing told the PO about them: issues 5 and 6 sat unseen for a day. So:
   as broken. Pull requests are left out.
 * **What is new.** An open issue whose number was never seen, one that was
   closed at the last poll and is open again (reopened), and a comment on an
-  open issue written after the last poll by anyone but the hub's own login.
+  open issue written after the last poll, except the PO's own: those carry
+  ``PO_MARK`` (the hub's ``gh`` login is the CEO's own account, so the author
+  cannot tell them apart). The comments are asked for from the last poll that
+  read GitHub, so an outage loses none; an edit of an older comment is not new.
+* **Who wrote it.** The repo is public. An issue or comment by someone with no
+  role in it (``author_association`` not OWNER, MEMBER or COLLABORATOR) says
+  so in its line: "by <login>, outside the team". Control characters are
+  dropped from everything that reaches the terminal.
 * **Delivery.** Each is queued once and delivered to the PO of the project
   whose code repo's ``origin`` is the feedback repo, else of the project named
   ``Ensemble Dashboard``: typed into an idle PO as one line, ``[issue] #N
@@ -37,6 +44,7 @@ import re
 import subprocess
 import threading
 import time
+import unicodedata
 from datetime import datetime, timezone, timedelta
 
 import feedback
@@ -59,6 +67,10 @@ FALLBACK_PROJECT = "Ensemble Dashboard"
 SENDER = "ensemble"
 PREFIX = "[issue] "
 COMMENT_PREFIX = "[issue comment] "
+# The PO's own comments carry this (the skill says so): the hub's gh login is
+# the CEO's own account, so the author cannot tell the PO's answer from the
+# CEO's comment.
+PO_MARK = "<!-- ensemble-po -->"
 _WAKE_MAX = 900
 
 _LOCK = threading.Lock()        # one change of the state at a time
@@ -93,6 +105,7 @@ def _load() -> dict:
     d = d if isinstance(d, dict) else {}
     out = {"repo": d.get("repo") if isinstance(d.get("repo"), str) else "",
            "lastPoll": float(d.get("lastPoll") or 0) if isinstance(d.get("lastPoll"), (int, float)) else 0.0,
+           "lastGood": float(d.get("lastGood") or 0) if isinstance(d.get("lastGood"), (int, float)) else 0.0,
            "commentsAfter": d.get("commentsAfter") if isinstance(d.get("commentsAfter"), str) else ""}
     for k in ("issues", "comments"):
         out[k] = d.get(k) if isinstance(d.get(k), dict) else {}
@@ -172,19 +185,43 @@ def _ts(iso: str) -> float:
 # The lines
 # ---------------------------------------------------------------------------
 
+def _clean(text) -> str:
+    """One line of plain text: whitespace collapsed, control and other
+    non-printing characters (an ESC in an issue body) dropped before the
+    terminal sees them."""
+    s = "".join(ch if unicodedata.category(ch)[0] != "C" else " " for ch in str(text or ""))
+    return " ".join(s.split())
+
+
 def _excerpt(text) -> str:
-    s = " ".join(str(text or "").split())
+    s = _clean(text)
     return s if len(s) <= EXCERPT else s[:EXCERPT].rstrip() + "…"
 
 
 def _title(issue: dict) -> str:
-    return " ".join(str(issue.get("title") or "").split())[:200]
+    return _clean(issue.get("title"))[:200]
+
+
+TEAM = ("OWNER", "MEMBER", "COLLABORATOR")
+
+
+def _who(item: dict) -> str:
+    return _clean((item.get("user") or {}).get("login"))[:60] or "someone"
+
+
+def _outsider(item: dict) -> bool:
+    """Written by someone with no role in the repo: the repo is public, so its
+    text is a report to weigh, never the CEO's word."""
+    return str(item.get("author_association") or "").upper() not in TEAM
 
 
 def issue_line(issue: dict, reopened: bool = False) -> str:
-    labels = [l.get("name") for l in issue.get("labels") or [] if isinstance(l, dict) and l.get("name")]
+    labels = [_clean(l.get("name"))[:40] for l in issue.get("labels") or []
+              if isinstance(l, dict) and l.get("name")]
     if reopened:
         labels.append("reopened")
+    if _outsider(issue):
+        labels.append(f"by {_who(issue)}, outside the team")
     tag = f" ({', '.join(labels)})" if labels else ""
     body = _excerpt(issue.get("body")) or "(no description)"
     line = f"{PREFIX}#{issue['number']} {_title(issue)}{tag}: {body} — {issue.get('html_url', '')}"
@@ -192,7 +229,7 @@ def issue_line(issue: dict, reopened: bool = False) -> str:
 
 
 def comment_line(comment: dict, number: int, title: str) -> str:
-    who = (comment.get("user") or {}).get("login") or "someone"
+    who = _who(comment) + (" (outside the team)" if _outsider(comment) else "")
     line = (f"{COMMENT_PREFIX}#{number} {title}: {who}: {_excerpt(comment.get('body'))} "
             f"— {comment.get('html_url', '')}")
     return line[:_WAKE_MAX]
@@ -231,7 +268,10 @@ def poll(now: float | None = None) -> list[dict]:
     with _LOCK:
         st = _load()
     first = st["repo"] != repo
-    since = st["lastPoll"] - OVERLAP_S if not first and st["lastPoll"] else now - OVERLAP_S
+    # Comments are asked for from the last poll that read GitHub, not the last
+    # attempt: an outage must not skip what was written during it.
+    good = st["lastGood"] or st["lastPoll"]
+    since = good - OVERLAP_S if not first and good else now - OVERLAP_S
     issues = open_issues(repo)
     comments = None if issues is None or first else comments_since(repo, _iso(since))
     if issues is None or (comments is None and not first):
@@ -245,7 +285,7 @@ def poll(now: float | None = None) -> list[dict]:
     with _LOCK:
         st = _load()
         if st["repo"] != repo:
-            st = {"repo": repo, "lastPoll": now, "commentsAfter": _iso(now), "issues": {},
+            st = {"repo": repo, "lastPoll": now, "lastGood": now, "commentsAfter": _iso(now), "issues": {},
                   "comments": {}, "queue": []}
             for i in issues:
                 st["issues"][str(i["number"])] = {"open": True, "seen": now}
@@ -283,16 +323,16 @@ def poll(now: float | None = None) -> list[dict]:
             if not cid or num is None or cid in st["comments"]:
                 continue
             created = _ts(c.get("created_at"))
-            if created <= after:
+            # ``since`` is by update: an edit of an older comment is not a new one.
+            if created <= after or created < since:
                 continue
             st["comments"][cid] = created
-            who = str((c.get("user") or {}).get("login") or "")
-            if who.casefold() == me.casefold() or str(num) not in open_now:
+            if PO_MARK in str(c.get("body") or "") or str(num) not in open_now:
                 continue
             put(f"comment:{cid}", comment_line(c, num, _title(open_now[str(num)])), num)
         st["comments"] = {k: v for k, v in st["comments"].items()
                           if isinstance(v, (int, float)) and now - v <= KEEP_COMMENTS_S}
-        st["lastPoll"] = now
+        st["lastPoll"] = st["lastGood"] = now
         _save(st)
     for q in queued:
         _log(f"queued for the PO: {q['line'][:120]}")
