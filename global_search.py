@@ -240,7 +240,7 @@ def _needles(term: str) -> tuple[bytes, ...]:
     if esc.isascii():
         return (esc.encode("ascii"),)
     run = max(re.findall(r"[\x00-\x7f]+", esc), key=len, default="")
-    if run.strip():
+    if re.search(r"[a-z0-9]", run):     # a run of punctuation (``при-вет``) is on too many lines
         return (run.encode("ascii"),)
     forms = (term.lower(), term.capitalize(), term.upper())
     return tuple(dict.fromkeys(json.dumps(f, ensure_ascii=ascii_)[1:-1].encode("utf-8").lower()

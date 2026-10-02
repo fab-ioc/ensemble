@@ -138,6 +138,10 @@ class Transcripts(unittest.TestCase):
         r = gs.scan_file(f, "claude", gs.parse_query("привет"))
         self.assertEqual(r["hits"], 2)
         self.assertIsNotNone(gs.scan_file(f, "claude", gs.parse_query("МИР")))
+        # Punctuation is not a needle: it is on too many lines.
+        g = self.write("f2.jsonl", [claude_line("user", f"line - {i}") for i in range(gs.LINES_PER_FILE + 100)]
+                       + [claude_line("user", "Привет-мир here")])
+        self.assertIsNotNone(gs.scan_file(g, "claude", gs.parse_query("привет-мир")))
 
     def test_bookkeeping_is_not_text(self):
         line = json.dumps({"type": "assistant", "message": {"role": "assistant", "model": "claude-opus-5-5",
