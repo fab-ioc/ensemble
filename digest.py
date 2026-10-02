@@ -92,6 +92,7 @@ import time
 from pathlib import Path
 
 import due
+import issues
 import board
 import points
 import po_messages
@@ -779,6 +780,12 @@ def start_scheduler() -> None:
                 due.maybe_tick()
             except Exception as e:
                 _log(f"due check error: {str(e)[:200]}")
+            # New issues and comments of the feedback repo (issues.py): polled
+            # every 15 min on a thread of its own, delivered once a minute.
+            try:
+                issues.maybe_tick()
+            except Exception as e:
+                _log(f"issues check error: {str(e)[:200]}")
             # A task in a PO project idle with nothing open (stall.py).
             try:
                 stall.maybe_tick()
