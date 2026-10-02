@@ -626,6 +626,10 @@
      stays above what it holds (the task group's row does the same). */
   .msg-fold.gap { border-left-width:1px; }
   .msg-fold.gap .gkinds { color:var(--fg-muted); }
+  /* The person's asks its messages name (#160): the words that wait on them,
+     in --fg at 600 as the asks' "answered", before the kinds, cut last. */
+  .msg-fold.gap .gasks { flex:0 0 auto; max-width:60%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    color:var(--fg); font-weight:600; }
   /* A balloon opened from its row folds again from its header. */
   .msg .from .fold-btn { float:right; margin:-2px -4px 0 var(--s-200); padding:0 var(--s-100); background:transparent; border:none;
     color:var(--fg-muted); font-size:var(--fs-100); font-weight:400; text-transform:none; letter-spacing:0; line-height:16px; }
@@ -2202,7 +2206,10 @@ const foldShort = t => { t = String(t || '').trim(); return t.length > 40 ? t.sl
 // is an address, for the message box. The page fills CHAT_NAMES: the person's
 // name, the PO's own agent when this is a PO's room, and a task's number from
 // its room id.
-const CHAT_NAMES = { operator: 'you', po: '', taskNo: () => null };
+// pointOpen: whether an ask (P12) of the person's still waits on them or on
+// the agent: open, in progress, or answered and not yet acknowledged.
+const CHAT_NAMES = { operator: 'you', po: '', taskNo: () => null,
+  pointOpen: id => { const p = POINTS.byId.get(id); return !!p && ['open', 'planned', 'delivered'].includes(p.state); } };
 const TASK_ADDR_RE = /^([^@\s]+)@(room-[\w-]+)$/;
 // A task's number from its title as a report gives it: "26. The screen…" or "#26 …".
 function titleNo(title) {
@@ -2353,21 +2360,91 @@ const toCeoRe = (N = CHAT_NAMES) => new RegExp('^[ \\t]*(?:\\*\\*|__)?(?:To|For)
 // A PO-to-PO message that names the person, or asks for a decision.
 const namesCeo = (t, N = CHAT_NAMES) => /\b(?:CEO|product owner|Decision needed)\b/i.test(t || '')
   || (!!N.operator && N.operator !== 'you' && new RegExp('\\b' + escRe(N.operator) + '\\b', 'i').test(t || ''));
+// ---- Never folded away: what the person waits for (#160, GitHub issue 5) --
+// The PO's words after a hub line (a report, a progress check, a restart, a
+// PO-to-PO message) were team activity unless they carried "Re Pn:" or "To
+// <name>:". The PO chats of 10-01/10-02 folded 14 messages meant for the
+// person that way ("Fab, everything we built today is now live", "Re P77,
+// here's what I found", "Decisions that are yours: P232 …"; the task's report
+// in Documents lists them). So a message is team activity only when it is
+// plainly for the team: anything that answers or names one of the person's
+// open asks, speaks to them, asks a decision of them, or says something is
+// live or blocked stays in view. When unsure, it shows.
+// But a PO says "you", "decision", "blocked" or "live" in nearly every note,
+// and most often to say there is nothing for the person ("Nothing needs you",
+// "#138 is not blocked"): over 1,146 real replies to hub lines (09-28 to
+// 10-02) the bare words showed 43%, 89 of 206 plain acknowledgements among
+// them. So each signal is a shape the person is meant to act on, a negated
+// one ("nothing … needs a decision") does not count, and a note that opens
+// by saying there is nothing for them folds unless it answers them.
+// "Re P77, here's…" / "Re P77 —" / "Re P77 - done" / "Re P12 (planned
+// #9)" anywhere, not a quoted one ("I'll answer
+// "Re P198" once…").
+const RE_ANY_RE = /(?<!["“'`])\bre[ \t]+P\d{1,5}[a-z]?\b(?!["”'`])[ \t]*(?:[,:—–(]|-[ \t])/i;
+// "P231", "P12a": the asks a text names (never "7515P", never "P0" alone).
+const POINT_ID_RE = /\bP[1-9]\d{0,4}[a-z]?\b/g;
+const pointIdsIn = t => [...new Set(String(t || '').match(POINT_ID_RE) || [])];
+// A negation earlier in the same clause: "nothing needs you", "isn't
+// blocked", "no decision from me", "neither is waiting on you"; a comma or
+// "but"/"and" ends it ("#141 hasn't reported, but #142 is blocked").
+const NEG_RE = /\b(?:no|not|nothing|none|neither|nor|never|without)\b|n['’]t\b/i;
+const negated = (t, i) => NEG_RE.test(t.slice(Math.max(0, i - 50), i).split(/[.!?;:,\n]|\b(?:but|and|yet|although|though|while)\b/i).pop());
+// Some match of re that no negation before it in its sentence takes back.
+const saysPlainly = (re, t) => {
+  const g = new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g');
+  for (const m of t.matchAll(g)) if (!negated(t, m.index)) return true;
+  return false;
+};
+// Spoken to with something for them: waiting on them, for them to do,
+// what they asked, their call, a promise to tell them.
+const YOU_RE = /\b(?:wait(?:s|ing)?[ \t]+(?:on|for)[ \t]+you|for[ \t]+you\b(?!r)|you[ \t]+(?:can|could|may|might|asked|wanted|said|chose|picked|approved|need|want|will|['’]ll)\b|your[ \t]+(?:call|pick|choice|decision|go-ahead|approval|yes|ok|option|point|ask|request|Dock|P\d)|(?:needs?|asks?)[ \t]+you\b|up[ \t]+to[ \t]+you|(?:tell|show|let)[ \t]+you\b)/i;
+// The person's name as a word ("Fab, the five tasks…"; "Fable" is not "fab").
+const namesOperator = (t, N = CHAT_NAMES) => !!N.operator && N.operator !== 'you'
+  && new RegExp('\\b' + escRe(N.operator) + '\\b', 'i').test(t || '');
+// Something live: "is live", "now live", "went live", "live now"; a blocker;
+// a check that failed.
+const STATE_RE = /\b(?:is|are|now|went|goes|go|be|been|it['’]s)[ \t]+live\b|\blive[ \t]+now\b|\bblock(?:ed|er|ers)\b|\bfailed\b/i;
+// Asked of the person: a decision of theirs, their call, a hub restart
+// (theirs to do).
+const ASK_RE = /\b(?:decisions?[ \t]+(?:needed|for[ \t]+you|that[ \t]+are[ \t]+yours|are[ \t]+yours|of[ \t]+yours)|(?:you|your)[ \t]+(?:to[ \t]+)?(?:decide|call)|a[ \t]+yes[ \t]+on|needs?[ \t]+(?:a[ \t]+)?hub[ \t]+restart|restart[ \t]+the[ \t]+hub)\b/i;
+// "Nothing new: …", "No action needed. …", "Nothing needs you." in the first
+// words: the PO's own word that the note is the team's ("Nothing blocks the
+// merge: #141 is live" and "Noted. #141 is live now" are not that).
+const ACK_OPEN_RE = /^[\s*_>#-]*(?:nothing[ \t]+(?:new|to|needs?|for|here|else|has|changed|in|on|from|is|was)\b|no[ \t]+(?:action|change|reply|new|decision)\b|no-op\b|none[ \t]+of\b|neither\b[^.\n]{0,40}\b(?:needs?|is|are)\b)/i;
+// Why a message is the person's to read ('' when it is plainly the team's):
+// 'answer' (a "Re Pn", a paragraph addressed to them), and, in what is not
+// addressed to a teammate nor opens by saying it is nothing for them, 'ask'
+// (names an open ask of theirs), 'decision', 'state' (live, blocked, failed)
+// or 'spoken' (something for them, their name).
+function ceoWhy(m, N = CHAT_NAMES) {
+  if (!m) return '';
+  const t = String(m.text || '');
+  if (hasReMarks(t) || toCeoRe(N).test(t)) return 'answer';
+  if (m.to && m.to !== 'all' && m.to !== 'user') return '';
+  if (RE_ANY_RE.test(t)) return 'answer';
+  if (ACK_OPEN_RE.test(t)) return '';
+  if (pointIdsIn(t).some(id => N.pointOpen && N.pointOpen(id))) return 'ask';
+  if (saysPlainly(ASK_RE, t)) return 'decision';
+  if (saysPlainly(STATE_RE, t)) return 'state';
+  if (saysPlainly(YOU_RE, t) || namesOperator(t, N)) return 'spoken';
+  return '';
+}
 // For the person: their own messages, an answer to them (a reply to their
-// message, a "Re Pn:" paragraph wherever it is, a paragraph addressed to
-// them), a decision asked of them, a message to them, and a PO-to-PO message
-// that names them. A landmark is a line, not a balloon (foldPlan), and goes
-// with the gap around it. Everything else is team activity.
+// message, or anything ceoWhy finds), a decision asked of them, a message to
+// them, and a PO-to-PO message that names them. A landmark is a line, not a
+// balloon (foldPlan), and goes with the gap around it. A task's report and a
+// teammate's message are team activity; so is the PO's narration of its own
+// work ("Checking the log", "Now the handover").
 function forCeo(m, N = CHAT_NAMES) {
   if (!m) return false;
   if (isPersons(m)) return true;
   if (isHubInput(m) || isLandmark(m) || m.from === 'ensemble') return false;
   if (isPoMsg(m)) return namesCeo(m.text, N);
   if (isDecision(m)) return true;
-  if (m.answers) return forPersonKind(m.answers.kind) || hasReMarks(m.text) || toCeoRe(N).test(m.text || '');
-  if (m.to === 'user') return true;
-  if (taskReport(m)) return false;
-  return hasReMarks(m.text) || toCeoRe(N).test(m.text || '');
+  if (m.answers && forPersonKind(m.answers.kind)) return true;
+  if (!m.answers && m.to === 'user') return true;
+  if (!m.answers && taskReport(m)) return false;
+  return !!ceoWhy(m, N);
 }
 // Each run of team activity as one gap: { key, first, last, idx: [i…], seen }.
 // A balloon that must stay in view (held: a comment's passage, an open point)
@@ -2409,14 +2486,39 @@ function gapWords(g, items, N = CHAT_NAMES) {
     'stall check': 'stall checks', 'hub line': 'hub lines', message: 'messages' };
   return [...n].map(([k, c]) => `${c} ${c === 1 ? k : plural[k] || k}`).join(', ');
 }
+// The person's asks a gap's messages name, so none hides behind the row
+// (#160): { n: messages naming one, ids: ['P231', …] } in order of mention.
+// The hub's reminder of open asks is left out: naming them is all it does.
+function gapAsks(g, items) {
+  const ids = [];
+  let n = 0;
+  for (const i of g.idx) {
+    const m = items[i];
+    if (!m || m.divider || (isHubInput(m) && m.kind === 'points')) continue;
+    const got = pointIdsIn(isHubInput(m) ? hubBody(m) : m.text);
+    if (!got.length) continue;
+    n++;
+    got.forEach(id => { if (!ids.includes(id)) ids.push(id); });
+  }
+  return { n, ids };
+}
+// "2 name your asks: P231, P245" ('' when none does); six ids, then "+3".
+function gapAsksWords(g, items) {
+  const a = gapAsks(g, items);
+  if (!a.n) return '';
+  const shown = a.ids.slice(0, 6).join(', ') + (a.ids.length > 6 ? ` +${a.ids.length - 6}` : '');
+  return `${a.n} ${a.n === 1 ? 'names' : 'name'} your asks: ${shown}`;
+}
 // The gap's row: "Team activity · 14 messages · 5 progress checks, … · 10:05–11:30".
 function gapRowHtml(g, items, open, N = CHAT_NAMES) {
   const t0 = chatTime(items[g.first].ts), t1 = chatTime(items[g.last].ts);
   const when = t0 && t1 ? (t0 === t1 ? t0 : t0 + '–' + t1) : (t0 || t1);
   const n = g.idx.length;
-  const title = open ? 'Fold the team activity again' : `Show these ${n} message${n === 1 ? '' : 's'} in place`;
+  const asks = gapAsksWords(g, items);
+  const title = open ? 'Fold the team activity again' : `Show these ${n} message${n === 1 ? '' : 's'} in place` + (asks ? ` (${asks})` : '');
   return `<button type="button" class="msg-fold gap user hub" data-key="${esc(g.key)}" data-group="${esc(g.key)}" data-seen="${esc(g.key + '|' + g.seen)}" aria-expanded="${open}" title="${esc(title)}">`
     + `<span class="from"><span class="who hub-who">Team activity</span></span><span class="gsum">${n} message${n === 1 ? '' : 's'}${when ? ' · ' + esc(when) : ''}</span>`
+    + (asks ? `<span class="gasks">${esc(asks)}</span>` : '')
     + `<span class="fl gkinds">${esc(gapWords(g, items, N))}</span></button>`;
 }
 // ---- What the person reads by default: end ---------------------------------
