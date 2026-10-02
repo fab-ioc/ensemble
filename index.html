@@ -638,7 +638,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     background: var(--surface-sunken); font-family: var(--font-mono);
     font-size: var(--fs-200); color: var(--fg-subtle);
   }
-  .search-wrap:has(.search-state:not([hidden])) #search { padding-right: 92px; }
   #search-help {
     position: absolute; right: 6px; width: 20px; height: 20px;
     border-radius: var(--r-full); border: 0; background: transparent;
@@ -776,26 +775,40 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     font-family: var(--font-mono); font-size: var(--fs-100); line-height: 16px; padding: 0 var(--s-100);
     border: 1px solid var(--border); border-radius: var(--r-100); background: var(--surface); color: var(--fg-muted);
   }
-  body.mid .search-wrap:is(:has(#search:focus), :has(#search:not(:placeholder-shown)), :has(.search-state:not([hidden]))) .search-kbd { display: none; }
+  body.mid .search-wrap:is(:has(#search:focus), :has(#search:not(:placeholder-shown))) .search-kbd { display: none; }
   #search:focus {
     outline: none; border-color: var(--focus-ring);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus-ring) 40%, transparent);
   }
-  /* Sits left of the ? button, and the input only reserves the room while the
-     badge is actually there — otherwise every query types into a gap. */
-  .search-state {
-    position: absolute; right: 30px;
-    font-size: var(--fs-100); color: var(--fg-subtle);
-    background: var(--surface-sunken); padding: 2px 8px; border-radius: var(--r-100);
-    pointer-events: none; user-select: none;
-    border: 1px solid var(--border);
-    font-weight: 500;
+  /* The search's drop-down (#161): under the box, where findPlace puts it;
+     the whole screen under the bar on a phone (the phone block). A menu
+     dropped from the bar, so the bar's menus' shape. */
+  #find-pop {
+    position: fixed; z-index: 60; background: var(--surface-overlay);
+    border: 1px solid var(--border); border-radius: var(--r-300); box-shadow: var(--e-200);
+    padding: var(--s-100) 0; overflow-y: auto; overscroll-behavior: contain;
   }
-  .search-state.deep {
-    color: var(--c-progress-fg); border-color: transparent;
-    background: var(--c-progress-bg);
+  #find-pop[hidden], .fd-status[hidden] { display: none; }
+  .fd-status { padding: var(--s-100) var(--s-300); font-size: var(--fs-200); color: var(--fg-muted); }
+  .fd-group + .fd-group { border-top: 1px solid var(--border); margin-top: var(--s-100); padding-top: var(--s-100); }
+  .fd-head {
+    display: flex; align-items: baseline; gap: var(--s-200); padding: var(--s-100) var(--s-300);
+    font-size: var(--fs-200); font-weight: 600; color: var(--fg-subtle);
   }
-  .search-state[hidden] { display: none; }
+  .fd-n { font-weight: 500; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+  .fd-row {
+    display: flex; flex-direction: column; gap: 2px; min-width: 0;
+    padding: var(--s-100) var(--s-300); cursor: pointer;
+  }
+  .fd-row:hover { background: var(--hover); }
+  .fd-row.on { background: var(--selected-bg); }
+  .fd-t, .fd-m, .fd-s { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fd-t { font-size: var(--fs-300); color: var(--fg); }
+  .fd-row.on .fd-t { color: var(--selected-fg); }
+  .fd-m, .fd-s, .fd-more { font-size: var(--fs-200); color: var(--fg-muted); }
+  /* Muted words on a hovered or selected row step up (under 4.5:1 there in Light). */
+  .fd-row:is(:hover, .on) :is(.fd-m, .fd-s, .tno) { color: var(--fg-subtle); }
+  .fd-more { padding: var(--s-100) var(--s-300); }
   .seg {
     display: inline-flex; border: 1px solid var(--border);
     border-radius: 6px; overflow: hidden; background: var(--surface);
@@ -2289,6 +2302,29 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      (--selected-bg: it narrows what you see) and the grouping as a Subtle
      button. Each is a native select underneath, so keyboard and screen
      readers get a real list; its box and arrow are drawn away. */
+  /* The list's filter (#161), under its head; the line under it says the
+     list is filtered, with Clear. */
+  .sw-find { flex: 0 0 auto; padding: var(--s-100) var(--s-300) 0; }
+  #sw-filter {
+    width: 100%; height: 32px; padding: 0 var(--s-200); border: 1px solid var(--border); border-radius: var(--r-200);
+    background: var(--surface); color: var(--fg); font: inherit; font-size: var(--fs-200);
+  }
+  #sw-filter::placeholder { color: var(--fg-muted); }
+  #sw-filter:focus {
+    outline: none; border-color: var(--focus-ring);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus-ring) 40%, transparent);
+  }
+  .sw-filtered {
+    flex: 0 0 auto; display: flex; align-items: center; gap: var(--s-200);
+    padding: var(--s-100) var(--s-300) 0; font-size: var(--fs-200); color: var(--fg-muted);
+  }
+  .sw-filtered[hidden] { display: none; }
+  .sw-clear {
+    height: 24px; padding: 0 var(--s-100); border: 0; border-radius: var(--r-200); background: transparent;
+    color: var(--link); font: inherit; font-size: var(--fs-200); cursor: pointer;
+  }
+  .sw-clear:hover { background: var(--hover); }
+  .sw-clear:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   .sw-head {
     flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: var(--s-200);
     padding: var(--s-300) var(--s-300) var(--s-100);
@@ -3091,7 +3127,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     #switcher { width: auto; right: 0; border-right: 0; }
     body.ph-list main { display: none; }
     .sw-head { padding: var(--s-100) var(--s-200); }
-    .sw-pick select { height: var(--touch-min); }
+    .sw-pick select, #sw-filter, .sw-clear { height: var(--touch-min); }
+    .sw-find { padding: 0 var(--s-200); }
     .sw-row { min-height: var(--touch-min); padding-block: var(--s-100); }
     .sw-row .sw-st { margin-top: var(--s-200); }
     summary.sw-ghead, .sw-more, .sw-diag-btn { min-height: var(--touch-min); display: flex; align-items: center; }
@@ -3117,7 +3154,12 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
       padding: 0 var(--s-100) 0 var(--s-200); background: var(--surface);
     }
     #search { height: 40px; }
-    .search-state { right: calc(var(--touch-min) + var(--s-300)); }
+    /* The drop-down is the whole screen under the bar, its rows a finger's height. */
+    #find-pop {
+      left: 0; right: 0; bottom: 0; top: var(--top-h); max-height: none;
+      border-width: 1px 0 0; border-radius: 0; box-shadow: none;
+    }
+    .fd-row { min-height: var(--touch-min); justify-content: center; }
     #search-close {
       display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
       width: var(--touch-min); height: var(--touch-min); border: 0; border-radius: var(--r-200);
@@ -3588,10 +3630,10 @@ window.DOC_LISTENERS_PAUSED = false;
        this button and opens over the bar. -->
   <button id="search-open" class="bar-btn icon" type="button" title="Search tasks" aria-label="Search tasks">🔍</button>
   <div class="search-wrap">
-    <input id="search" type="search" placeholder="Search or jump to…" title="Search tasks (press / to come here)" aria-keyshortcuts="/">
+    <input id="search" type="search" placeholder="Search or jump to…" title="Search tasks, past sessions and messages (press / to come here)" aria-keyshortcuts="/"
+           role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="find-pop" autocomplete="off">
     <!-- The key that brings you here (the page's "/"); gone while you type. -->
     <kbd class="search-kbd" aria-hidden="true">/</kbd>
-    <span id="search-state" class="search-state" hidden></span>
     <!-- A placeholder is not documentation: the grep syntax lives behind this. -->
     <button id="search-help" type="button" title="Search syntax" aria-label="Search syntax">?</button>
     <button id="search-close" type="button" title="Close search" aria-label="Close search">✕</button>
@@ -3618,6 +3660,12 @@ window.DOC_LISTENERS_PAUSED = false;
     <label class="sw-pick sw-pick-proj"><select id="sw-proj" aria-label="Show the tasks of" title="Show every project, or one" data-noun-title="Show every {project}, or one"></select><span class="caret" aria-hidden="true">▾</span></label>
     <label class="sw-pick sw-pick-by"><select id="sw-by" aria-label="Group the list by" title="Group the list by status or by project" data-noun-title="Group the list by status or by {project}"></select><span class="caret" aria-hidden="true">▾</span></label>
   </div>
+  <!-- Narrows the rows as you type (#161); not kept across a reload. Under
+       the head, whose free end holds the list dock's ⋯ and −. -->
+  <div class="sw-find">
+    <input id="sw-filter" type="search" placeholder="Filter the list" aria-label="Filter the list" autocomplete="off" aria-describedby="sw-filtered">
+  </div>
+  <div id="sw-filtered" class="sw-filtered" role="status" hidden></div>
   <div id="sw-list"></div>
   <!-- A phone, where the list is home (#129): the project cards, with their
        Unassigned card, a page of their own. -->
@@ -3634,10 +3682,13 @@ window.DOC_LISTENERS_PAUSED = false;
     <dt>two words</dt><dd>both must appear</dd>
     <dt>a <b>OR</b> b</dt><dd>either — uppercase OR</dd>
     <dt>"a phrase"</dt><dd>literal, keeps spaces</dd>
-    <dt>Enter</dt><dd>grep the transcripts, not just the titles</dd>
+    <dt>↑ ↓ Enter</dt><dd>choose a result and open it</dd>
+    <dt>Esc</dt><dd>close the results</dd>
   </dl>
   <div class="shp-eg">"prop-risk" replay OR quoting</div>
 </div>
+<!-- The search's results (#161): tasks, past sessions, messages. -->
+<div id="find-pop" role="listbox" aria-label="Search results" hidden></div>
 <div id="me-menu" hidden>
   <!-- Theme: a submenu; its list is built from cdTheme.themes (themeListHtml), so a theme added to the head script shows here by itself. -->
   <div class="me-sub-wrap">
@@ -4398,7 +4449,6 @@ let ALL_ROWS = [];
 // Projects-first shell: a SELECTED_PROJECT drills into one project's sessions.
 let PROJECTS = null, _projTs = 0, SELECTED_PROJECT = null, _projFailed = false;
 let WS_SCOPE = '';       // Changes tab: '' = the project folder, else one task's workspace path
-let SEARCH_QUERY = '';
 // Multi-select inclusion filters. Persisted now that they live behind a menu
 // rather than as five always-visible buttons: a filter you can't see is a
 // filter you forget you set, and coming back to a list that silently hides
@@ -5402,16 +5452,7 @@ function topicCellHL(r, parsed) {
   const label = r.label ? `<span class="label">${highlight(r.label, parsed)}${jiraChips}${costChip}</span>` : '';
   const first = r.first && !r.label ? `<span class="first">${highlight(r.first, parsed)}${jiraChips}${costChip}</span>` : (r.first ? `<span class="first">${highlight(r.first, parsed)}</span>` : '');
   const last = r.last ? `<span class="last">${highlight(r.last, parsed)}</span>` : '';
-  // Show the deep-grep snippet whenever the server returned one. Redundant
-  // with a label-visible match sometimes, but "which line matched" is often
-  // useful even when the label already contains one of the terms.
-  let snippetLine = '';
-  const m = parsed.terms.length && serverMatchOf(r, SERVER_MATCHES);
-  if (m) {
-    const hitsLabel = m.hits > 1 ? ` · ${m.hits} matches` : '';
-    snippetLine = `<span class="last">🔎 ${highlight(m.snippet, parsed)}${hitsLabel}</span>`;
-  }
-  const out = label + first + last + snippetLine;
+  const out = label + first + last;
   if (out) return out;
   // Fallback: show the cwd's basename so the row isn't completely blank.
   const base = (r.cwd || '').split('/').pop().replace(/^\d+_/, '').replace(/_/g, ' ');
@@ -5420,7 +5461,6 @@ function topicCellHL(r, parsed) {
 
 // ---- Task search: begin -----------------------------------------------------
 // tests/test_task_search.py runs this block in Node.
-let SERVER_MATCHES = new Map(); // roomId (or a session's id) → {hits, snippet}
 
 // A project's PO is not one of its tasks. It is reached from its row in the list's
 // Projects group and the PO pane, so no board or search shows it as a task.
@@ -5460,57 +5500,121 @@ function projectNeeds(pj, projects) {
   return projectTasks(pj).filter(x => x.attention).length + (po && poNeedsYou(po.attention) ? 1 : 0);
 }
 
-// What a quick search reads: what the row shows. A task shows its title; its
-// folder, room id and the start and end of its chat are not on its card or row.
-// Every task in a project shares most of its path, and two letters of that or
-// of a chat ("re", "en") matched nearly every task, so the rows never narrowed.
-// Its conversation is what Enter's deep search is for.
+// What the list's filter reads of a row: what the row shows. A task shows its
+// title and number ("#18", "18" or "ED-18" finds it); its folder, room id and
+// chat are not on its row. Every task in a project shares most of its path,
+// and two letters of that or of a chat ("re", "en") matched nearly every
+// task, so the rows never narrowed. A session in no task shows its words and
+// where it ran.
 function rowHaystack(r) {
-  // A task's number is on its card too: "#18", "18" or "ED-18" finds it.
   const own = r.roomId ? [r.label, r.no ? '#' + r.no : '', taskNoText(r, true)]
     : [r.label, r.first, r.last, r.cwd, r.sessionId, r.pid || '', r.currentTheme || ''];
   return own.map(s => String(s || '')).join(' ');
 }
+// ---- Task search: end -------------------------------------------------------
 
-// A deep search finds conversations; the hub names the task each belongs to.
-// A task with several conversations is one match, its hits added up.
-function serverMatchesFrom(hits) {
-  const out = new Map();
-  for (const h of hits || []) {
-    const k = h.roomId || h.sessionId;
-    const m = out.get(k);
-    if (m) m.hits += h.hits || 0;
-    else out.set(k, { hits: h.hits || 0, snippet: h.snippet || '' });
-  }
+// ---- Global find: begin -----------------------------------------------------
+// The top bar's search (#161, GitHub issue 6): from wherever you are, a
+// drop-down under the box (the whole screen under the bar on a phone) with
+// tasks, past sessions and messages, each group with its count. The hub
+// answers (/api/find): first its quick half (titles, numbers, specs, chats
+// and the listed sessions) and then, in the same box, its deep half (every
+// Claude and Codex transcript). The page asks one thing at a time.
+// tests/test_global_find.py runs this block in Node.
+const FIND_MIN = 2;
+const FIND_GROUPS = [['tasks', 'Tasks'], ['sessions', 'Past sessions'], ['messages', 'Messages']];
+// The results in the order they are drawn: the arrows and Enter walk them.
+function findItems(res) {
+  const out = [];
+  for (const [k] of FIND_GROUPS) for (const it of ((res && res[k]) || {}).items || []) out.push({ kind: k, it });
   return out;
 }
-function serverMatchOf(r, matches) {
-  return matches.get(r.roomId) || matches.get(r.sessionId) || null;
+// A result's identity across the quick and the deep answer, so the one the
+// arrows chose stays chosen when the deep answer lands.
+function findKey(x) {
+  const it = x.it || {};
+  return x.kind + ':' + (x.kind === 'messages' ? it.roomId + '/' + it.msgId : x.kind === 'tasks' ? it.roomId : it.sessionId);
 }
-
-// Shallow-match a row against the parsed query. If the server already
-// returned this row via deep search, it counts as matched regardless.
-function rowMatches(r, parsed, matches) {
-  if (!parsed.groups.length) return true;
-  if (serverMatchOf(r, matches || SERVER_MATCHES)) return true;
-  return haystackMatches(rowHaystack(r), parsed);
-}
-
-// What the box says inside it, after the query: how many tasks it finds in the
-// list under it. `found` is null where no task list is showing, and there it
-// says Enter looks deeper, as it always did. The badge has the box's last 92px
-// and the query types up to it, so a count carries no hint or icon: "54 found"
-// fits, "🔎 54 found" covered the end of the query.
-// `phase` is '' while typing, 'searching' or 'deep'.
-function searchBadge(q, phase, found, hits) {
+// The line under the box: what the results are and, per the design's §5.5,
+// why there may be fewer than everything.
+function findStatus(q, res, phase) {
   q = (q || '').trim();
-  if (!q) return { state: null, label: '' };
-  if (phase === 'searching') return { state: 'deep', label: 'searching…' };
-  if (phase === 'deep') return { state: 'deep', label: `${found == null ? hits : found} found` };
-  if (found != null) return { state: '', label: `${found} found` };
-  return { state: '', label: q.length >= 2 ? '⏎ deep' : '' };
+  if (q.length < FIND_MIN) return 'Type two letters or more.';
+  if (!res) return phase === 'error' ? 'Search failed. Type again to retry.' : 'Searching…';
+  const n = FIND_GROUPS.reduce((s, [k]) => s + ((res[k] || {}).count || 0), 0);
+  const conv = phase === 'deep' ? 'Searching conversations…'
+    : phase === 'error' ? 'Conversations could not be searched.'
+    : res.conversations === 'partial' ? 'Conversations: stopped at the time limit, some were not read.' : '';
+  if (!n) return conv && phase === 'deep' ? `Nothing in titles, specs or chats yet. ${conv}` : (`No results for “${q}”.` + (conv ? ' ' + conv : ''));
+  return conv;
 }
-// ---- Task search: end -------------------------------------------------------
+function findFolder(p) {
+  return String(p || '').split(/[\\/]/).filter(Boolean).pop() || '';
+}
+function findRowHtml(x, i, on, parsed) {
+  const it = x.it || {};
+  let title = '', meta = [], snip = it.snippet || '';
+  if (x.kind === 'tasks') {
+    title = (it.no && !it.po ? `<span class="tno">#${esc(String(it.no))}</span> ` : '') + highlight(it.title || '(task)', parsed);
+    if (it.project && !it.po) meta.push(it.project);
+    if (it.archived) meta.push('archived');
+    else if (it.workflow === 'done') meta.push('done');
+    if (it.where === 'spec') meta.push('in its spec');
+    if (it.where === 'conversation') meta.push(it.hits > 1 ? `${it.hits} matches in its conversations` : 'in its conversations');
+  } else if (x.kind === 'sessions') {
+    title = highlight(it.title || ('Session ' + String(it.sessionId || '').slice(0, 8)), parsed);
+    meta.push(it.agent === 'codex' ? 'Codex' : 'Claude');
+    if (findFolder(it.cwd)) meta.push(findFolder(it.cwd));
+    if (it.hits > 1) meta.push(`${it.hits} matches`);
+  } else {
+    title = (it.no && !it.po ? `<span class="tno">#${esc(String(it.no))}</span> ` : '') + esc(it.title || '');
+    meta.push([it.from, it.to].filter(Boolean).join(' → '));
+    if (it.project && !it.po) meta.push(it.project);
+  }
+  return `<div class="fd-row${on ? ' on' : ''}" role="option" id="fd-${i}" data-i="${i}" aria-selected="${on ? 'true' : 'false'}">`
+    + `<span class="fd-t">${title}</span>`
+    + (meta.filter(Boolean).length ? `<span class="fd-m">${esc(meta.filter(Boolean).join(' · '))}</span>` : '')
+    + (snip ? `<span class="fd-s">${highlight(snip, parsed)}</span>` : '') + '</div>';
+}
+// The drop-down's inside: its status line, then each group that found
+// something, its count in its head ("showing the first N" when it sent fewer).
+function findHtml(q, res, phase, active) {
+  const parsed = parseSearchQuery(q);
+  const status = findStatus(q, res, phase);
+  let html = status ? `<div class="fd-status" role="status">${esc(status)}</div>` : '<div class="fd-status" role="status" hidden></div>';
+  let i = 0;
+  for (const [k, name] of FIND_GROUPS) {
+    const g = (res && res[k]) || { count: 0, items: [] };
+    const items = g.items || [];
+    if (!items.length) continue;
+    html += `<div class="fd-group" role="group" aria-labelledby="fd-h-${k}"><div class="fd-head" id="fd-h-${k}">`
+      + `<span>${esc(name)}</span><span class="fd-n">${g.count}</span></div>`
+      + items.map(it => { const h = findRowHtml({ kind: k, it }, i, i === active, parsed); i++; return h; }).join('')
+      + (g.count > items.length ? `<div class="fd-more">Showing the first ${items.length} of ${g.count}</div>` : '')
+      + '</div>';
+  }
+  return html;
+}
+
+// The left list's filter: the rows whose words hold the query (as the old
+// list did, by AND / OR / "a phrase"): a task's title and number, a
+// session's words, the project and the folder it ran in.
+function swHay(e) {
+  const r = e.row || {}, it = e.it || {};
+  const own = e.row ? rowHaystack(r) : [it.title, it.ref].join(' ');
+  return [own, e.po ? 'PO' : '', e.project, r.cwd].map(s => String(s || '')).join(' ');
+}
+function swFilterGroups(g, q) {
+  const parsed = parseSearchQuery(q);
+  if (!parsed.groups.length) return g;
+  const out = {};
+  for (const k of Object.keys(g)) out[k] = (g[k] || []).filter(e => haystackMatches(swHay(e), parsed));
+  return out;
+}
+function swCount(g) {
+  return Object.values(g || {}).reduce((s, list) => s + (list || []).length, 0);
+}
+// ---- Global find: end -------------------------------------------------------
 
 // Task priority — the five Jira levels. The server sends both the number
 // (1 = highest … 5 = lowest, the sort key) and the name; a row from an older
@@ -5788,8 +5892,7 @@ function boardHtml(rows, now, frozen, hidden) {
     let items = byCol.get(c.k) || [];
     const total = items.length;
     let aged = 0;
-    // A search shows every match, however old.
-    if (c.k === 'done' && !DONE_SHOW_ALL && !parseSearchQuery(SEARCH_QUERY).groups.length) {
+    if (c.k === 'done' && !DONE_SHOW_ALL) {
       const fresh = items.filter(r => (r.updatedAt || 0) >= cutoff);
       aged = items.length - fresh.length;
       items = fresh;
@@ -14359,7 +14462,6 @@ function renderRows() {
   const chb = !dockPj && PD.els.changes.querySelector(':scope > .ch-body');
   if (chb) chb.remove();
   renderPo();
-  paintSearchBadge(null);
   // The workspace panel is shown, never rebuilt — every branch below is free to
   // replace #view without touching it.
   const wsp = wsPlace(docked);
@@ -14371,9 +14473,8 @@ function renderRows() {
   if (wsp) wsp.hidden = !(SELECTED_PROJECT && (docked || PROJECT_TAB === 'workspace'));
   // No project: a phone's cards page (its home is the list, #129); a desktop
   // has no home page (#135): the list is home, and the middle waits for a row.
-  // A search typed there falls through to the flat table below, and so does an
-  // older server without /api/projects.
-  if (!SELECTED_PROJECT && !_projFailed && (phoneNow() || !SEARCH_QUERY.trim())) {
+  // An older server without /api/projects falls through to the flat table below.
+  if (!SELECTED_PROJECT && !_projFailed) {
     const html = phoneNow() ? projectsChromeHtml() + projectsLandingHtml() : homeEmptyHtml();
     if (writeSlot($('#view'), html)) wireProjectsChrome();
     setViewCount(phoneNow() && PROJECTS ? `${PROJECTS.projects.length} ${noun('many')}` : '');
@@ -14407,14 +14508,10 @@ function renderRows() {
     wsRenderInto(wsp, projectById(SELECTED_PROJECT));
     return;
   }
-  const parsed = parseSearchQuery(SEARCH_QUERY);
-  const active = parsed.groups.length > 0;
-  const modeFiltered = ALL_ROWS.filter(passesFilter);
-  const filtered = active ? modeFiltered.filter(r => rowMatches(r, parsed)) : modeFiltered;
-  // One number answers the question a filtered list actually raises: am I
-  // looking at everything, or a subset? That is why a task can seem to vanish
-  // when a filter is on.
-  paintSearchBadge(filtered.length);
+  // The top bar's search no longer narrows the board (#161): it has a
+  // drop-down of its own, from wherever you are.
+  const parsed = parseSearchQuery('');
+  const filtered = ALL_ROWS.filter(passesFilter);
   // Archived rows are out of the working set unless you ask for them, so they
   // are out of the denominator too. Counting them in produced "38 of 54" with
   // nothing on screen to explain the 16 — which is precisely the false alarm
@@ -14445,7 +14542,7 @@ function renderRows() {
   const frame = inner => overviewFrameHtml({ poSplit, chrome: poSplit ? viewSwitchHtml() : projectsChromeHtml(), poNote, inner, edges });
   if (!filtered.length) {
     if (writeSlot(view, frame(filterRowHtml(cols)
-      + '<p class="empty">' + (active ? 'No matches.' : 'No sessions.') + '</p>'))) wireProjectsChrome();
+      + '<p class="empty">No sessions.</p>'))) wireProjectsChrome();
     setViewCount(total ? `0 of ${total}` : '0 tasks');
     return;
   }
@@ -14455,7 +14552,7 @@ function renderRows() {
     // DOM out from under an in-flight drag. Same problem the Workspace tab
     // hit, same guard: remount only when PLACEMENT changes. Card contents are
     // patched in place below, so dots and lozenges stay live while hovering.
-    const sig = [SELECTED_PROJECT || '', SEARCH_QUERY, DONE_SHOW_ALL, poSplit, poNote,
+    const sig = [SELECTED_PROJECT || '', DONE_SHOW_ALL, poSplit, poNote,
                  isPhone(), [...hidden].join('.'),
                  filtered.map(r => (r.roomId || r.sessionId) + ':' + frozenWorkflowOf(r, frozen)).join(',')].join('|');
     if (sig !== BOARD_SIG || !view.querySelector('.board, .board-none')) {
@@ -14700,57 +14797,185 @@ window.addEventListener('storage', e => {
   _unreadPaint = setTimeout(renderRows, 150);
 });
 
-let _searchVersion = 0;
-var SEARCH_PHASE = '', SEARCH_HITS = 0;   // '' while typing, 'searching', 'deep'
-function setSearchBadge(state, label) {
-  const el = $('#search-state');
-  const cls = 'search-state' + (state ? ' ' + state : '');
-  if (el.className !== cls) el.className = cls;
-  if (el.textContent !== (label || '')) el.textContent = label || '';
-  el.hidden = !label;
+// The top bar's search (#161; the pure half is the "Global find" block). It
+// asks the hub a quarter of a second after the typing stops, one request at a
+// time: the quick half, then the deep half, for the newest query. A query
+// typed while the deep half runs stops it, in the page and on the hub (the
+// box's tag and count, as a Workspace's find). The results drop down under the
+// box; Enter opens the first (or the one the arrows chose), Esc closes them.
+var FIND = { q: '', res: null, phase: '', key: '', timer: 0, busy: false, ctl: null, seq: 0, enter: false, again: false };
+const FIND_TAG = 'bar:' + Math.random().toString(36).slice(2);
+const FIND_POP = document.getElementById('find-pop');
+function findShown() { return !FIND_POP.hidden; }
+function findPlace() {
+  if (phoneNow()) { FIND_POP.style.cssText = ''; return; }   // the phone block places it
+  const r = document.querySelector('.search-wrap').getBoundingClientRect();
+  const w = Math.min(Math.max(r.width, 480), innerWidth - 16);
+  const left = Math.max(8, Math.min(r.right - w, innerWidth - w - 8));
+  FIND_POP.style.cssText = `left:${left}px;top:${r.bottom + 4}px;width:${w}px;max-height:${Math.max(160, innerHeight - r.bottom - 16)}px`;
 }
-function paintSearchBadge(found) {
-  const b = searchBadge(SEARCH_QUERY, SEARCH_PHASE, found, SEARCH_HITS);
-  setSearchBadge(b.state, b.label);
+function findOpen(on) {
+  on = !!on && FIND.q.trim().length > 0;
+  if (on) findPlace();
+  if (FIND_POP.hidden === !on) return;
+  FIND_POP.hidden = !on;
+  $('#search').setAttribute('aria-expanded', on ? 'true' : 'false');
+  if (on) findPaint(); else $('#search').removeAttribute('aria-activedescendant');
+}
+function findActive() {
+  const items = findItems(FIND.res);
+  const i = items.findIndex(x => findKey(x) === FIND.key);
+  return { items, i };
+}
+function findPaint() {
+  if (FIND_POP.hidden) return;
+  const { i } = findActive();
+  writeSlot(FIND_POP, findHtml(FIND.q, FIND.res, FIND.phase, i));
+  if (i >= 0) {
+    $('#search').setAttribute('aria-activedescendant', 'fd-' + i);
+    const el = document.getElementById('fd-' + i);
+    if (el) el.scrollIntoView({ block: 'nearest' });
+  } else $('#search').removeAttribute('aria-activedescendant');
+}
+// Tell the hub the box no longer wants its deep search: the one running ends
+// now, and one asked for before that reaches the hub late never starts.
+function findCancel() {
+  if (FIND.ctl) { FIND.ctl.abort(); FIND.ctl = null; }
+  const qs = new URLSearchParams({ cancel: '1', tag: FIND_TAG, seq: String(FIND.seq) });
+  fetch('/api/find?' + qs, { keepalive: true }).catch(() => {});
+}
+async function findAsk(q, deep, seq) {
+  const ctl = FIND.ctl = new AbortController();
+  const qs = new URLSearchParams({ q, deep: deep ? '1' : '0', tag: FIND_TAG, seq: String(seq) });
+  const r = await fetch('/api/find?' + qs, { signal: ctl.signal });
+  const d = await r.json().catch(() => ({}));
+  if (r.status === 409) { const e = new Error('cancelled'); e.name = 'AbortError'; throw e; }
+  if (!r.ok) throw new Error(d.error || String(r.status));
+  return d;
+}
+async function findRun() {
+  clearTimeout(FIND.timer);
+  if (FIND.busy) {
+    // One request at a time: a deep search for an older query stops; the
+    // newest query goes when the request in flight is over.
+    FIND.again = true;
+    if (FIND.phase === 'deep') findCancel();
+    return;
+  }
+  const q = FIND.q.trim();
+  if (q.length < FIND_MIN || !parseSearchQuery(q).groups.length) {
+    FIND.res = null; FIND.phase = ''; FIND.enter = false;
+    findPaint();
+    return;
+  }
+  FIND.busy = true;
+  const seq = ++FIND.seq;
+  const stale = () => FIND.q.trim() !== q;
+  try {
+    FIND.phase = 'quick';
+    const quick = await findAsk(q, false, seq);
+    if (stale()) return;
+    FIND.res = quick; FIND.phase = 'deep';
+    if (findActive().i < 0) { const first = findItems(quick)[0]; FIND.key = first ? findKey(first) : ''; }
+    findPaint();
+    if (FIND.enter && findItems(quick).length) { findGoActive(); return; }
+    const deep = await findAsk(q, true, seq);
+    if (stale()) return;
+    FIND.res = deep; FIND.phase = 'done';
+    if (findActive().i < 0) { const first = findItems(deep)[0]; FIND.key = first ? findKey(first) : ''; }
+    if (FIND.enter) findGoActive();
+  } catch (e) {
+    if (e.name === 'AbortError' || stale()) return;
+    FIND.phase = 'error';
+  } finally {
+    FIND.busy = false;
+    FIND.ctl = null;
+    if (stale() || FIND.again) { FIND.again = false; findRun(); }
+    else findPaint();
+  }
+}
+function findGoActive() {
+  FIND.enter = false;
+  const { items, i } = findActive();
+  const x = items[i >= 0 ? i : 0];
+  if (x) findGo(x);
+}
+// A result opens its task or conversation; a message opens its chat at it.
+function findGo(x) {
+  const it = x.it || {};
+  findOpen(false);
+  if (FIND.busy && FIND.phase === 'deep') findCancel();
+  $('#search').blur();
+  document.body.classList.remove('search-open');
+  if (x.kind === 'messages') { openMsgLink(it.roomId, it.msgId); return; }
+  if (x.kind === 'tasks') {
+    const pj = it.po ? projectById(it.projectId) : null;
+    if (pj) openPoConv(pj);
+    else if (ALL_ROWS.some(r => r.roomId === it.roomId)) openTaskLink(it.roomId);
+    // A task the page does not list (archived): its chat in a tab of its own.
+    else window.open('/session?room=' + encodeURIComponent(it.roomId), '_blank', 'noopener');
+    return;
+  }
+  if (it.row) PAST_ROWS.set(it.sessionId, it.row);
+  if (rowBySid(it.sessionId)) openDetail(it.sessionId);
+  else toast('That conversation is no longer on this hub', 4000, 'err');
 }
 $('#search').addEventListener('input', (ev) => {
-  SEARCH_QUERY = ev.target.value;
-  // Drop any deep-search results when the query changes; they'd be stale.
-  SERVER_MATCHES = new Map();
-  SEARCH_PHASE = '';
-  _searchVersion++;
-  renderRows();
+  FIND.q = ev.target.value;
+  FIND.enter = false;
+  if (!FIND.q.trim()) {
+    if (FIND.busy && FIND.phase === 'deep') findCancel();
+    FIND.res = null;
+    findOpen(false);
+  } else findOpen(true);
+  clearTimeout(FIND.timer);
+  FIND.timer = setTimeout(findRun, 250);
 });
-
-$('#search').addEventListener('keydown', async (ev) => {
-  if (ev.key !== 'Enter') return;
-  const q = SEARCH_QUERY.trim();
-  if (q.length < 2) return;
-  ev.preventDefault();
-  const v = ++_searchVersion;
-  SEARCH_PHASE = 'searching';
-  renderRows();
-  try {
-    const r = await api('/api/search?q=' + encodeURIComponent(q));
-    if (v !== _searchVersion) return; // a newer query has been typed
-    SERVER_MATCHES = serverMatchesFrom(r);
-    SEARCH_HITS = SERVER_MATCHES.size;
-    SEARCH_PHASE = 'deep';
-    renderRows();
-  } catch (e) {
-    if (v !== _searchVersion) return;
-    SEARCH_PHASE = '';
-    renderRows();
-    toast('search failed: ' + e.message, 4000, 'err');
+$('#search').addEventListener('focus', () => { if (FIND.q.trim()) findOpen(true); });
+$('#search').addEventListener('keydown', (ev) => {
+  if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+    if (!FIND.q.trim()) return;
+    ev.preventDefault();
+    if (!findShown()) { findOpen(true); return; }
+    const { items, i } = findActive();
+    if (!items.length) return;
+    const n = ev.key === 'ArrowDown' ? (i + 1) % items.length : (i <= 0 ? items.length : i) - 1;
+    FIND.key = findKey(items[n]);
+    findPaint();
+  } else if (ev.key === 'Enter') {
+    if (!FIND.q.trim()) return;
+    ev.preventDefault();
+    if (findItems(FIND.res).length && !(FIND.busy && FIND.phase === 'quick')) { findGoActive(); return; }
+    // Nothing yet: it opens the first result once there is one.
+    FIND.enter = true;
+    findOpen(true);
+    if (!FIND.busy) findRun();
+  } else if (ev.key === 'Escape') {
+    if (findShown()) { ev.preventDefault(); findOpen(false); return; }
+    if (document.body.classList.contains('search-open')) { closeSearch(); $('#search-open').focus(); }
   }
 });
+// A press on a result keeps the focus in the box (and the drop-down open).
+FIND_POP.addEventListener('pointerdown', (ev) => ev.preventDefault());
+FIND_POP.addEventListener('click', (ev) => {
+  const row = ev.target.closest('.fd-row');
+  if (!row) return;
+  const x = findItems(FIND.res)[Number(row.dataset.i)];
+  if (x) findGo(x);
+});
+// A press anywhere else closes it; the query stays, and focus brings it back.
+document.addEventListener('pointerdown', (ev) => {
+  if (findShown() && !ev.target.closest('#find-pop, .search-wrap')) findOpen(false);
+}, true);
+window.addEventListener('resize', () => { if (findShown()) findPlace(); });
 
-// Phone: search is a button in the bar that opens the box over the bar. The box
-// closes when it loses focus empty, or on ✕, which also clears the query — so
-// whenever search is filtering the list, the box saying so is on screen.
+// Phone: search is a button in the bar that opens the box over the bar, and
+// its results take the screen under it. The box closes when it loses focus
+// empty, or on ✕, which also clears the query.
 function closeSearch() {
   const s = $('#search');
   if (s.value) { s.value = ''; s.dispatchEvent(new Event('input')); }
+  findOpen(false);
   document.body.classList.remove('search-open');
 }
 $('#search-open').addEventListener('click', () => {
@@ -14763,9 +14988,6 @@ $('#search-close').addEventListener('pointerdown', (ev) => ev.preventDefault());
 $('#search-close').addEventListener('click', () => { closeSearch(); $('#search-open').focus(); });
 $('#search').addEventListener('blur', () => {
   if (!$('#search').value.trim()) document.body.classList.remove('search-open');
-});
-$('#search').addEventListener('keydown', (ev) => {
-  if (ev.key === 'Escape' && document.body.classList.contains('search-open')) { closeSearch(); $('#search-open').focus(); }
 });
 
 // In a project, Create starts its task there (the dialog still offers every
@@ -15217,6 +15439,7 @@ var SW_SHOWN = null, SW_DONE_OPEN = false;   // var: renderRows may run before t
 // The list's element, wherever it is: its column, its dock panel, its window.
 var SW_EL = document.getElementById('switcher');
 var SW_UN = { open: false, all: false };      // Unassigned: unfolded, and showing all
+var SW_FILTER = '';                           // the list's filter box (#161); not kept across a reload
 // A phone: the project cards page, reached from the list's foot and the
 // project menu's All projects; and where the list was when it was left (its
 // scroll, the row opened), so coming back finds it there.
@@ -15265,9 +15488,17 @@ function swRender() {
   writeSlot($('#sw-by'), swGroupByHtml(by));
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const un = projectById(UNASSIGNED_ID);
-  const g = swFreeze(swGroups(ALL_ROWS, attentionItems(), projects,
-                              { project: chosen, dayStart: today / 1000, unassigned: (un && un.sessions) || [] }),
-                     el.matches(':hover') ? SW_SHOWN : null);
+  const all = swGroups(ALL_ROWS, attentionItems(), projects,
+                       { project: chosen, dayStart: today / 1000, unassigned: (un && un.sessions) || [] });
+  // The filter (#161): only the rows that hold it, the folded groups opened
+  // where they have some, and a line saying the list is filtered (§5.5).
+  const q = SW_FILTER.trim();
+  const fg = swFilterGroups(all, q);
+  const g = swFreeze(fg, el.matches(':hover') ? SW_SHOWN : null);
+  const note = $('#sw-filtered');
+  const filtering = fg !== all;
+  writeSlot(note, filtering ? `<span>Filtered: ${swCount(fg)} of ${swCount(all)} shown</span> <button type="button" class="sw-clear">Clear</button>` : '');
+  note.hidden = !filtering;
   SW_SHOWN = Object.fromEntries(Object.entries(g).map(([k, list]) => [k, list.map(e => e.key)]));
   // A task can be in two groups (Running and Unassigned): focus goes back to
   // the row in the group it was in.
@@ -15279,7 +15510,9 @@ function swRender() {
   // A phone marks the row you last opened (nothing is open while the list shows).
   const sel = phone && !SELECTED_SID ? PH_BACK.sel || {} : swSelection();
   if (!phone) rememberConv(sel);
-  const wrote = writeSlot(box, swListHtml(g, sel, SW_DONE_OPEN, SW_UN, by));
+  const wrote = writeSlot(box, filtering
+    ? swListHtml(g, sel, SW_DONE_OPEN || !!(g.done || []).length, { open: !!(g.unassigned || []).length, all: true }, by)
+    : swListHtml(g, sel, SW_DONE_OPEN, SW_UN, by));
   swDiagFit(box);   // before the focus goes back: a Details it lands on must show
   if (wrote && key) {
     // A Details the list widened away (it fits now) hands the focus to its row.
@@ -15314,9 +15547,31 @@ $('#sw-by').addEventListener('change', (ev) => {
   swRender();
 });
 $('#sw-list').addEventListener('toggle', (ev) => {
+  if (SW_FILTER.trim()) return;   // a filter opens them for itself; what you chose stays for after it
   if (ev.target.matches('details[data-group="done"]')) SW_DONE_OPEN = ev.target.open;
   if (ev.target.matches('details[data-group="unassigned"]')) SW_UN.open = ev.target.open;
 }, true);
+// The list's filter narrows its rows as you type; a new filter is never
+// frozen under the pointer (the box is in the list, under it as you type).
+function swFilterSet(q) {
+  SW_FILTER = q;
+  SW_SHOWN = null;
+  swRender();
+}
+$('#sw-filter').addEventListener('input', (ev) => swFilterSet(ev.target.value));
+$('#sw-filter').addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && ev.target.value) { ev.preventDefault(); ev.stopPropagation(); ev.target.value = ''; swFilterSet(''); }
+  else if (ev.key === 'ArrowDown') {
+    const first = $('#sw-list .sw-row');
+    if (first) { ev.preventDefault(); first.focus(); }
+  }
+});
+$('#sw-filtered').addEventListener('click', (ev) => {
+  if (!ev.target.closest('.sw-clear')) return;
+  $('#sw-filter').value = '';
+  swFilterSet('');
+  $('#sw-filter').focus();
+});
 $('#sw-list').addEventListener('click', (ev) => {
   if (ev.target.closest('.sw-more[data-more="unassigned"]')) { SW_UN.all = !SW_UN.all; swRender(); return; }
   const more = ev.target.closest('.sw-diag-btn');
